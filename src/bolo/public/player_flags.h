@@ -24,7 +24,15 @@ typedef enum {
 #define PLAYER_FLAG_WBN_STEAM_LINKED 0x02  /* server-set, trusted */
 #define PLAYER_FLAG_SUPPORTER        0x04  /* server OR client; trusted iff WBN_VERIFIED */
 #define PLAYER_FLAG_STEAM_BUILD      0x08  /* client-set, untrusted */
-/* bits 4-7 reserved */
+#define PLAYER_FLAG_ADMIN            0x10  /* server-set, trusted — joined
+                                            * from an IP in -admins list,
+                                            * has host-level lobby authority */
+#define PLAYER_FLAG_BOT              0x20  /* server-set, trusted — slot is
+                                            * driven by a brain (Lua AI) and
+                                            * never sourced from a connected
+                                            * human. Never honour from a
+                                            * client packet. */
+/* bits 6-7 reserved */
 
 #define PLAYER_CLIENT_HINT_MASK \
     (PLAYER_FLAG_SUPPORTER | PLAYER_FLAG_STEAM_BUILD)

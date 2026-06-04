@@ -121,6 +121,31 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed);
 bool brainCoreCallMethod(lua_State *L, BrainInfo *info, const char *method);
 
 /*********************************************************
+ *NAME:          brc_write_crash_log
+ *PURPOSE:
+ *  Writes a unique-per-crash brain_crash_<UTC>_pid<PID>_bot<N>.log
+ *  inside DEBUG_SESSION_DIR (read from the Lua global) or CWD when
+ *  no session dir is set. Internally called from brainCoreCallThink /
+ *  brainCoreCallMethod on Lua pcall failure. Exposed (non-static) so
+ *  tests/unit/test_brain_crash_log.c can verify the file format
+ *  without standing up a full BrainInfo + brain.think pcall.
+ *
+ *ARGUMENTS:
+ *  L                 - Lua state (used to read state.bot_index,
+ *                      state.tick, _G.DEBUG_SESSION_DIR — all
+ *                      best-effort, missing/wrong-type fields are
+ *                      tolerated)
+ *  method            - "think" / "init" / etc., used in the banner
+ *                      and filename
+ *  err_or_traceback  - The pcall payload (typically the value
+ *                      returned by the debug.traceback message
+ *                      handler: "<err>\nstack traceback:\n...")
+ *********************************************************/
+void brc_write_crash_log(lua_State *L,
+                         const char *method,
+                         const char *err_or_traceback);
+
+/*********************************************************
  *NAME:          brainCoreRegisterPathfinder
  *PURPOSE:
  *  Registers cpf_* Lua globals backed by a per-brain
@@ -292,10 +317,10 @@ void brainCoreSetYieldCallback(void (*cb)(void));
 void brainCoreRegisterVizDetail(lua_State *L);
 
 /* NOTE: pill_contrib bindings used to live here. They were specific to
- * NewAutopilot's BrainTest overlay (shift-2 cycle-through-pills), so they
- * moved to brains/NewAutopilot/c/na_overlay_pillcontrib.h to keep this
+ * GoalHunter's BrainTest overlay (shift-2 cycle-through-pills), so they
+ * moved to brains/GoalHunter/c/gh_overlay_pillcontrib.h to keep this
  * header generic. Hosts that want the overlay should also
- *   #include "na_overlay_pillcontrib.h"
+ *   #include "gh_overlay_pillcontrib.h"
  * and call naPillContribRegister(L) after brainCore* registrations. */
 
 #endif /* BRAINCORE_H */

@@ -132,7 +132,7 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
      * Indexed by shell direction 0-15 (N, NNE, NE, ENE, E, ESE, SE, SSE,
      *                                   S, SSW, SW, WSW, W, WNW, NW, NNW). */
     if (frame >= SHELL_DIR0 && frame <= SHELL_DIR15) {
-      /* Symmetric diamond, matching brains/NewAutopilot/init.lua's
+      /* Symmetric diamond, matching brains/GoalHunter/init.lua's
        * draw_shell_hitbox_viz mirror. Game-pixel offsets in 0..4
        * range (4 = right/bottom edge of the 4-px sprite). Float so
        * sub-pixel anchoring works at zoomFactor > 1. */
@@ -367,13 +367,13 @@ BYTE mapViewCalcSquare(ServerSim *sim, BYTE xValue, BYTE yValue, bool *outMine, 
 
   /* Pillbox check */
   if (serverSimPillExistsAt(sim, xValue, yValue) == TRUE) {
-    returnValue = serverSimPillGetScreenHealthAt(sim, xValue, yValue);
+    returnValue = serverSimPillGetScreenHealthAt(sim, xValue, yValue, selfPlayer);
     return returnValue;
   }
 
   /* Base check */
   if (serverSimBaseExistsAt(sim, xValue, yValue) == TRUE) {
-    baseAlliance ba = serverSimBaseGetAllianceAt(sim, xValue, yValue);
+    baseAlliance ba = serverSimBaseGetAllianceAt(sim, xValue, yValue, selfPlayer);
     switch (ba) {
     case baseOwnGood:
     case baseAllieGood:

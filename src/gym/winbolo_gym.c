@@ -30,8 +30,8 @@
 #include "winbolo_gym.h"
 
 #include "global.h"
-#include "client_mapload.h"
 #include "client_sim.h"
+#include "../server/server_lifecycle.h"
 #include "client_sim_control.h"
 #include "control_event.h"
 #include "frontend.h"
@@ -86,7 +86,10 @@ static void gymMessageHandler(const char *message, const char *title) {
 }
 
 static void gymDeliverControl(void *ctx, const ControlEvent *evt) {
-    clientSimApplyControl((ClientSim *)ctx, evt);
+    /* Apply-side handled by the auto-subscriber that clientSimConnectLocal
+     * registers; this subscriber observes events for telemetry only. */
+    (void)ctx;
+    (void)evt;
 }
 
 /* Accumulate server events into pre-allocated cache.
@@ -118,29 +121,27 @@ static void gymBufferServerEvents(WinBoloGym *g) {
     }
 }
 
-static void gymSyncSnapshot(WinBoloGym *g) {
-    clientSimNetSyncSnapshot(g->clientSim);
-}
-
 static void gymSetupGame(WinBoloGym *g) {
-    serverSimSetLobbyEnabled(g->serverSim, false);
-    serverSimStartGame(g->serverSim);
-    serverSimAddPlayer(g->serverSim, 0, "GymAgent", false);
+    /* Local headless sim — no lobby, run immediately. cfg.skipLobby
+     * drives SetLobbyEnabled(false) + StartGame inside startup;
+     * acceptRemoteClients=false short-circuits UDP/WBN/tracker/NAT. */
+    {
+        ServerInstanceConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.acceptRemoteClients = false;
+        cfg.skipLobby           = true;
+        serverInstanceStartup(g->serverSim, &cfg);
+    }
     serverSimGetGameSim(g->serverSim)->viewPlayer = 0;
 
     g->clientSim = clientSimAlloc();
-    clientSimConnectLocal(g->clientSim, g->serverSim, 0);
-    clientLoadCompressedMap(g->clientSim, g->cachedMap, g->cachedMapLen,
-                            "Gym", g->gameMode, false, 0,
-                            UNLIMITED_GAME_TIME, "GymAgent", 0, FALSE);
+    clientSimCreate(g->clientSim);
+    clientSimConnectLocal(g->clientSim, g->serverSim, "GymAgent", "", 0, 0);
     clientSimSetAiType(g->clientSim, aiYes);
-    gymSyncSnapshot(g);
-    clientSimNetSetupTankGo(g->clientSim);
 
-    /* Register the gym client as a control-event subscriber. Placed after
-     * clientLoadCompressedMap (which calls clientSimCreate) so myPlayerNum
-     * is initialized to 0 — matching the gym agent's slot — before sync's
-     * self-skip runs. */
+    /* Register a second (observe-only) subscriber for gym telemetry. The
+     * auto-subscriber that clientSimConnectLocal registered is the one
+     * that applies events; this one just watches. */
     g->controlSub = serverSimRegisterSubscriber(g->serverSim,
                                                 gymDeliverControl,
                                                 g->clientSim);
@@ -1650,8 +1651,9 @@ WBGYM_API void winbolo_step_batch(
     WinBoloObs *obs_out,
     int count
 ) {
+    int i;
     #pragma omp parallel for schedule(static)
-    for (int i = 0; i < count; i++) {
+    for (i = 0; i < count; i++) {
         winbolo_step(games[i], &actions[i], &obs_out[i]);
     }
 }
@@ -1665,8 +1667,9 @@ WBGYM_API void winbolo_fill_actions_batch(
     static const int turn_map[3] = {-1, 0, 1};
     static const int gun_range_map[3] = {-1, 0, 1};
 
+    int i;
     #pragma omp parallel for schedule(static)
-    for (int i = 0; i < count; i++) {
+    for (i = 0; i < count; i++) {
         const int32_t *a = &actions_flat[i * 8];
         WinBoloAction *out = &actions_out[i];
         out->accel            = accel_map[a[0]];
@@ -1690,8 +1693,9 @@ WBGYM_API void winbolo_obs_to_numpy_batch(
     float *sound_mask_out,
     int count
 ) {
+    int i;
     #pragma omp parallel for schedule(static)
-    for (int i = 0; i < count; i++) {
+    for (i = 0; i < count; i++) {
         const WinBoloObs *obs = &obs_array[i];
 
         /* Terrain: [29, 29, 2] — channel-last interleaved */
@@ -1763,8 +1767,9 @@ WBGYM_API void winbolo_obs_to_reward_batch(
     WinBoloRewardBatchOut *out,
     int count
 ) {
+    int i;
     #pragma omp parallel for schedule(static)
-    for (int i = 0; i < count; i++) {
+    for (i = 0; i < count; i++) {
         const WinBoloObs *obs = &obs_array[i];
 
         /* Scalars: direct copy */

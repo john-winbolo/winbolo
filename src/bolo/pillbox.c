@@ -43,7 +43,7 @@
 #include "game_sim.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
 
 /*********************************************************
 *NAME:          pillsCreate
@@ -149,9 +149,30 @@ void pillsSetPill(pillboxes *value, pillbox *item, BYTE pillNum) {
       item->owner = NEUTRAL;
     }
     (((*value)->item[pillNum]).owner) = item->owner;
+    /* Clamp armour to [0, PILLS_MAX_ARMOUR]. The damage path's
+     * unsigned-underflow guard at pillsGetDamagePos already catches
+     * overflow during gameplay, but an attacker-supplied map can
+     * load 255 directly — the repair path only caps on the way up,
+     * so an out-of-range value would persist until first repair. */
+    if (item->armour > PILLS_MAX_ARMOUR) {
+      item->armour = PILLS_MAX_ARMOUR;
+    }
     (((*value)->item[pillNum]).armour) = item->armour;
 
 
+    /* Clamp speed to the runtime range [PILLBOX_MAX_FIRERATE,
+     * PILLBOX_ATTACK_NORMAL]. The damage path floors speed at
+     * PILLBOX_MAX_FIRERATE when the pill gets hit and the cooldown
+     * tick growth ceilings at PILLBOX_ATTACK_NORMAL — values
+     * outside that window are unreachable through normal play but
+     * survive on the wire (speed=0 fires every tick; speed=255 is
+     * a passive pillbox). The "starts angry" feature still works
+     * because any value in [6, 100] is legitimate. */
+    if (item->speed < PILLBOX_MAX_FIRERATE) {
+      item->speed = PILLBOX_MAX_FIRERATE;
+    } else if (item->speed > PILLBOX_ATTACK_NORMAL) {
+      item->speed = PILLBOX_ATTACK_NORMAL;
+    }
     if (item->speed != PILLBOX_ATTACK_NORMAL) {
       (*value)->item[pillNum].coolDown = PILLBOX_COOLDOWN_TIME;
     }
@@ -499,7 +520,7 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue) {
+BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yValue, BYTE viewPlayer) {
   bool done;        /* Finished searching */
   BYTE returnValue; /* Value to return */
   BYTE count;       /* Looping Variable */
@@ -512,8 +533,8 @@ BYTE pillsGetScreenHealth(GameSim *sim, pillboxes *value, BYTE xValue, BYTE yVal
     if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].inTank == FALSE) {
       /* Pillbox has been Hit */
       done = TRUE;
-      
-      if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, sim->viewPlayer ) == FALSE) {
+
+      if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, viewPlayer ) == FALSE) {
         switch((*value)->item[count].armour) {
         case PILLBOX_15:
           returnValue = PILL_EVIL_15;
@@ -985,9 +1006,11 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
     /* Winbolo.Net stuff — allied steals are not stat-tracked. */
     if (migrate == FALSE && owner != NEUTRAL) {
       if (returnValue == NEUTRAL) {
-        winbolonetAddEvent(WINBOLO_NET_EVENT_PILL_CAPTURE, sim->isServer, owner, WINBOLO_NET_NO_PLAYER);
+        winbolonetAddEvent(WINBOLO_NET_EVENT_PILL_CAPTURE, sim->isServer, owner, WINBOLO_NET_NO_PLAYER,
+                           playersIsBot(&sim->plyrs, owner), FALSE);
       } else if (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) {
-        winbolonetAddEvent(WINBOLO_NET_EVENT_PILL_STEAL, sim->isServer, owner, returnValue);
+        winbolonetAddEvent(WINBOLO_NET_EVENT_PILL_STEAL, sim->isServer, owner, returnValue,
+                           playersIsBot(&sim->plyrs, owner), playersIsBot(&sim->plyrs, returnValue));
       }
     }
     if (sim->isServer == FALSE) {

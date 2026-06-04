@@ -50,6 +50,7 @@
 #include "game_sim.h"
 #include "gametype.h"
 #include "util.h"
+#include "../common/wb_log.h"
 
 /* Hidden-by-trees visibility test for player items (tanks or LGMs).
  * Returns FALSE when the viewer is within MIN_SIGHT_DISTANCE squares so
@@ -93,6 +94,70 @@ void playersCreate(players *plrs, bool isServer) {
     (*plrs)->item[count].clientType = CLIENT_TYPE_UNKNOWN;
     (*plrs)->playerBrainNames[count][0] = '\0';
   }
+}
+
+/*********************************************************
+*NAME:          playersResetRoundState
+*PURPOSE:
+* Resets one slot's round/world state (position, alliance,
+* LGM, transient flags) while preserving its connection
+* identity: inUse, playerName, location, clientType,
+* clientFlags, and the slot's playerBrainNames entry.
+*
+* Used by a world reset between rounds so player identity
+* survives without each caller hand-restoring it — the
+* asymmetry that previously dropped PLAYER_FLAG_BOT (and the
+* country code) on the networked game-start path.
+*
+*ARGUMENTS:
+* plrs      - Pointer to the players object
+* playerNum - Slot to reset
+*********************************************************/
+void playersResetRoundState(players *plrs, BYTE playerNum) {
+  player *p;
+
+  if (playerNum >= MAX_TANKS || (*plrs) == NULL) {
+    return;
+  }
+  p = &(*plrs)->item[playerNum];
+
+  /* Alliance holds an allocation — tear down and recreate empty. */
+  allienceDestroy(&p->allie);
+  p->allie = allienceCreate();
+
+  p->mapX = 0;
+  p->mapY = 0;
+  p->pixelX = 0;
+  p->pixelY = 0;
+  p->frame = 0;
+  p->onBoat = FALSE;
+  p->lgmMapX = 0;
+  p->lgmMapY = 0;
+  p->lgmPixelX = 0;
+  p->lgmPixelY = 0;
+  p->lgmFrame = 0;
+  p->speed = 0;
+  p->ping = 0;
+  p->isChecked = FALSE;
+  p->needUpdate = FALSE;
+}
+
+void playersClearSlot(players *plrs, BYTE playerNum) {
+  player *p;
+
+  if (plrs == NULL || (*plrs) == NULL || playerNum >= MAX_TANKS) {
+    return;
+  }
+  p = &(*plrs)->item[playerNum];
+
+  /* Round/world state, then identity back to the playersCreate baseline. */
+  playersResetRoundState(plrs, playerNum);
+  p->inUse = FALSE;
+  p->playerName[0] = '\0';
+  p->location[0] = '\0';
+  p->clientType = CLIENT_TYPE_UNKNOWN;
+  p->clientFlags = 0;
+  (*plrs)->playerBrainNames[playerNum][0] = '\0';
 }
 
 /*********************************************************
@@ -179,8 +244,11 @@ bool playersSetPlayerName(ClientSim *csParam, GameSim *sim, players *plrs, BYTE 
     if (playersNameTaken(plrs, playerName) == FALSE) {
       /* OK to change do so and then make the message */
       returnValue = TRUE;
-      /* Make Message */
-      {
+      /* The "changed name" newswire is part of the in-game UI. Suppress
+       * it during lobby renames (host edits a bot's name, players
+       * tweaking their own name pre-game) — otherwise the messages
+       * queue and flush all at once when the game starts. */
+      if (csParam != NULL && !clientSimIsInLobby(csParam)) {
         MessageArgs args;
         memset(&args, 0, sizeof(args));
         /* New name (playerName) and old name (otherName) refer to the
@@ -524,9 +592,16 @@ uint8_t playersGetAccountFlags(players *plrs, BYTE playerNum) {
   uint8_t flags = 0;
   if (plrs != NULL && (*plrs)->item[playerNum].inUse == TRUE) {
     flags = (*plrs)->item[playerNum].clientFlags
-            & (PLAYER_FLAG_WBN_VERIFIED | PLAYER_FLAG_WBN_STEAM_LINKED);
+            & (PLAYER_FLAG_WBN_VERIFIED
+               | PLAYER_FLAG_WBN_STEAM_LINKED
+               | PLAYER_FLAG_BOT);
   }
   return flags;
+}
+
+bool playersIsBot(players *plrs, BYTE playerNum) {
+  if (playerNum >= MAX_TANKS) return FALSE;
+  return (playersGetAccountFlags(plrs, playerNum) & PLAYER_FLAG_BOT) != 0;
 }
 
 /*********************************************************
@@ -906,7 +981,7 @@ BYTE playersGetNumPlayers(players *plrs) {
   } else {
 	// At this point we will print a message to the console, and then allow the function to return
 	// hopefully this will allow a logfile to be generated rather than a seg fault, so that we can perhaps track this error better.
-    fprintf(stderr, "Players is equal to zero, something has happened that shouldn't have.\n");
+    WB_LOG_ERROR(WB_LOG_CAT_SIM, "Players is equal to zero, something has happened that shouldn't have.");
   }
   return returnValue;
 }
@@ -1011,7 +1086,7 @@ BYTE playersGetFirstNotUsed(players *plrs) {
 * plrs - Pointer to the players object 
 * playerNum - The number of the player that has left
 *********************************************************/
-void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer) {
+void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer, bool announce) {
   BYTE count;                /* Looping variable */
 
 
@@ -1041,8 +1116,13 @@ void playersLeaveGame(ClientSim *csParam, GameSim *sim, players *plrs, BYTE self
         frontEndStatusTank(csParam, (BYTE) (playerNum + 1), tankNone);
         frontEndSetPlayerCheckState(csParam, (playerNumbers) playerNum, FALSE);
       }
-      /* Make a message about it */
-      sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
+      /* Make a message about it — only when asked. The in-game newswire
+       * "<name> has left the game" is wrong for a lobby removal (e.g.
+       * removing a bot before the game starts): it would sit queued and
+       * surface at game start. Callers pass announce=false in the lobby. */
+      if (announce) {
+        sim->callbacks.messageAdd(sim->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_QUIT_GAME, &args);
+      }
     }
   }
 }
@@ -1827,7 +1907,7 @@ void playersConnectionLost(ClientSim *csParam, GameSim *sim, players *plrs, BYTE
   count = 0;
   while (count < MAX_TANKS) {
     if ((*plrs)->item[count].inUse == TRUE && count != selfPlayer) {
-      playersLeaveGame(csParam, sim, plrs, selfPlayer, count, FALSE);
+      playersLeaveGame(csParam, sim, plrs, selfPlayer, count, FALSE, TRUE);
     }
     count++;
   }

@@ -23,10 +23,17 @@
 #include "bg_game.h"
 #include "mapview.h"
 #include "tileloader.h"
+#include "sdl3draw.h"             /* sdl3DrawGetRenderer */
 #include "../../common/wb_log.h"
+#include "bolo_rand.h"
 #include "global.h"
 #include "everard_map.h"
 #include "control_event.h"
+#include "server_sim_lifecycle.h"  /* setTeam — bg_game holds a per-file
+                                    * T2 grant for the bot-team assignment
+                                    * in setup (see CMakeLists.txt). */
+#include "../../server/server_lifecycle.h"
+#include "../../server/threads.h"   /* threadsWaitForMutex / threadsReleaseMutex */
 
 #include <stdio.h>
 #include <string.h>
@@ -43,15 +50,15 @@ BgGame *bgGameGetShared(void) { return sharedBg; }
 #define BG_MAX_BOTS 16
 
 /* Brain script path */
-#define BG_BRAIN_PATH "Brains/NewAutopilot/init.lua"
+#define BG_BRAIN_PATH "Brains/GoalHunter/init.lua"
 
 /* Find the brain script — try several paths.
  * Uses SDL_IOFromFile so it works with Android APK assets. */
 static bool findBrainPath(char *out, size_t outLen) {
     const char *candidates[] = {
-        "Brains/NewAutopilot/init.lua",
-        "brains/NewAutopilot/init.lua",
-        "data/Brains/NewAutopilot/init.lua",
+        "Brains/GoalHunter/init.lua",
+        "brains/GoalHunter/init.lua",
+        "data/Brains/GoalHunter/init.lua",
     };
     for (int i = 0; i < (int)(sizeof(candidates)/sizeof(candidates[0])); i++) {
         SDL_IOStream *io = SDL_IOFromFile(candidates[i], "r");
@@ -108,15 +115,26 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         /* Fall back to embedded Everard Island */
         BYTE emap[6000] = E_MAP;
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Falling back to embedded Everard Island");
-        bg->sim = serverSimCreateCompressed(emap, 5097, gameTournament, false, 0, -1);
+        bg->sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameTournament, false, 0, -1);
         if (bg->sim == NULL) {
             WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] serverSimCreateCompressed also failed");
             return false;
         }
-        serverSimSetMapName(bg->sim, "Everard Island");
     }
-    /* bg_game is a local headless sim — no lobby, run immediately */
-    serverSimSetLobbyEnabled(bg->sim, false);
+    /* Embedded sim: silence its console messages — no server console. */
+    serverSimSetQuiet(bg->sim, true);
+    /* bg_game is a local headless sim — no lobby, run immediately.
+     * acceptRemoteClients=false short-circuits UDP/WBN/tracker/NAT
+     * inside serverInstanceStartup; cfg.skipLobby transitions the
+     * sim to running state so the subsequent serverSimCreateBot
+     * calls hit the running-state branch. */
+    {
+        ServerInstanceConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.acceptRemoteClients = false;
+        cfg.skipLobby           = true;
+        serverInstanceStartup(bg->sim, &cfg);
+    }
 
     SDL_Surface *sheet = tileLoaderBuildSheet(16);
     if (!sheet) {
@@ -134,6 +152,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         serverSimDestroy(bg->sim);
         return false;
     }
+    bg->texRenderer = renderer;
 
     bg->valid = true;
     bg->createdTicks = SDL_GetTicks();
@@ -200,18 +219,10 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
     }
 
     /* Add brain bots with randomized count and teams */
-    if (!serverSimBotPoolInit(0)) {
-        WB_LOG_ERROR(WB_LOG_CAT_GUI, "[BgGame] serverSimBotPoolInit failed");
-        SDL_DestroyTexture(bg->tilesTex);
-        bg->tilesTex = NULL;
-        serverSimDestroy(bg->sim);
-        bg->valid = false;
-        return false;
-    }
     char brainPath[512];
     if (findBrainPath(brainPath, sizeof(brainPath))) {
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Found brain: %s", brainPath);
-        int numBots = BG_MIN_BOTS + (rand() % (BG_MAX_BOTS - BG_MIN_BOTS + 1));
+        int numBots = BG_MIN_BOTS + (int)bolo_rand_below((uint32_t)(BG_MAX_BOTS - BG_MIN_BOTS + 1));
         for (BYTE i = 0; i < numBots; i++) {
             char name[32];
             SDL_snprintf(name, sizeof(name), "Bot %d", i + 1);
@@ -224,7 +235,7 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         /* Randomize teams: 0 = no teams, 2-4 = number of teams */
         int numTeams = 0;
         {
-            int r = rand() % 5;  /* 0 = no teams, 1-4 maps to 2-4 teams */
+            int r = (int)bolo_rand_below(5);  /* 0 = no teams, 1-4 maps to 2-4 teams */
             if (r >= 1 && r <= 2) numTeams = 2;
             else if (r == 3) numTeams = 3;
             else if (r == 4) numTeams = 4;
@@ -232,15 +243,18 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
         if (numTeams > 0 && bg->numBots >= 2) {
             if (numTeams > bg->numBots) numTeams = bg->numBots;
             for (BYTE i = 0; i < bg->numBots; i++) {
-                serverSimSetTeam(bg->sim, i, (BYTE)((i % numTeams) + 1));
+                serverSimSetTeamBatch(bg->sim, i, (BYTE)((i % numTeams) + 1));
             }
+            /* serverInstanceStartup ran the team-alliance pass before
+             * any bot existed, so plrs->item[].allie is empty. Rebake
+             * it now that teamNumber is populated. */
+            serverSimReapplyTeamAlliances(bg->sim);
             bg->numTeams = (BYTE)numTeams;
             WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Set up %d teams for %d bots", numTeams, bg->numBots);
         } else {
             bg->numTeams = 0;
             WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] Free-for-all (no teams)");
         }
-        serverSimStartGame(bg->sim);
     } else {
         WB_LOG_INFO(WB_LOG_CAT_GUI, "[BgGame] No brain script found");
     }
@@ -255,9 +269,6 @@ bool bgGameCreate(BgGame *bg, const char *mapFile, SDL_Renderer *renderer) {
 
 void bgGameDestroy(BgGame *bg) {
     if (!bg) return;
-    if (bg->valid) {
-        serverSimDestroyBots(bg->sim);
-    }
     if (bg->tilesTex) {
         SDL_DestroyTexture(bg->tilesTex);
         bg->tilesTex = NULL;
@@ -270,27 +281,20 @@ void bgGameDestroy(BgGame *bg) {
 
 void bgGameTick(BgGame *bg) {
     if (!bg || !bg->valid || bg->numBots == 0) return;
+    if (bg->hiddenByForeground) return;
 
-    /* Real-game cadence: bot brains run at 50 Hz (game-ticks only), but
-     * the inner sim ticks at 100 Hz (keys-tick + game-tick alternation in
-     * winbolo.c). One serverSimBotTick produces input packets for both,
-     * so call serverSimTick twice to advance the sim at the right rate.
-     * Events from the first tick would be wiped by the second; preserve
-     * them so bots see both ticks' events on their next snapshot. */
+    /* serverSimApplyCommand asserts threadsCurrentlyHoldsMutex() — the
+     * bot-pool drain inside botManagerTick dispatches CMD_CHAT through
+     * that path when a bot's brain queues outbound chat, so the bg
+     * demo has to honour the same mutex contract the timer-callback
+     * tick path does. Pre-3701635 this path was contract-free; the
+     * dispatcher is now mutex-owning. */
+    threadsWaitForMutex();
+    /* One bot pass per 20ms frame produces input for both halves of the
+     * frame; serverSimTick internally runs the keys + game half-steps. */
     serverSimBotTick(bg->sim, aiFull);
     serverSimTick(bg->sim);
-    {
-        GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
-        uint8_t   savedCount = serverSimGetEventCount(bg->sim);
-        if (savedCount > 0) {
-            memcpy(savedEvents, serverSimGetEvents(bg->sim),
-                   savedCount * sizeof(GameEvent));
-        }
-        serverSimTick(bg->sim);
-        if (savedCount > 0) {
-            serverSimPrependEvents(bg->sim, savedEvents, savedCount);
-        }
-    }
+    threadsReleaseMutex();
 
     /* Update camera to follow the tracked player (freeze while dead) */
     if (bg->cameraPlayer < MAX_TANKS) {
@@ -308,18 +312,51 @@ void bgGameTick(BgGame *bg) {
 #define MAP_NAME_SCALE           1  /* 1x scale for debug text (8px tall) */
 #define MAP_NAME_MAX_ALPHA     180  /* Slightly transparent */
 
+/* Current visible alpha for the map-name label. 0 = hidden. */
+static Uint8 bgGameMapNameAlpha(const BgGame *bg, Uint64 nowMs) {
+    if (bg->mapNameFadeStartMs != 0) {
+        /* Pause-driven transition: lerp from the captured start alpha to
+         * the target (full when paused, 0 when not) over MAP_NAME_FADE_MS. */
+        Uint8 target = bg->paused ? MAP_NAME_MAX_ALPHA : 0;
+        Uint64 fadeElapsed = nowMs - bg->mapNameFadeStartMs;
+        if (fadeElapsed >= MAP_NAME_FADE_MS) return target;
+        int from = (int)bg->mapNameFadeFromAlpha;
+        int delta = ((int)target - from) * (int)fadeElapsed / (int)MAP_NAME_FADE_MS;
+        int a = from + delta;
+        if (a < 0) a = 0;
+        if (a > 255) a = 255;
+        return (Uint8)a;
+    }
+    /* Initial display: full alpha for 10s, then fade over the last 2s. */
+    Uint64 elapsed = nowMs - bg->createdTicks;
+    if (elapsed >= MAP_NAME_DISPLAY_MS) return 0;
+    if (elapsed > MAP_NAME_DISPLAY_MS - MAP_NAME_FADE_MS) {
+        Uint64 fadeElapsed = elapsed - (MAP_NAME_DISPLAY_MS - MAP_NAME_FADE_MS);
+        return (Uint8)(MAP_NAME_MAX_ALPHA - (MAP_NAME_MAX_ALPHA * fadeElapsed / MAP_NAME_FADE_MS));
+    }
+    return MAP_NAME_MAX_ALPHA;
+}
+
+void bgGameSetHiddenByForeground(BgGame *bg, bool hidden) {
+    if (bg) bg->hiddenByForeground = hidden;
+}
+
+void bgGameTogglePause(BgGame *bg) {
+    if (!bg) return;
+    Uint64 now = SDL_GetTicks();
+    /* Capture the alpha we are currently rendering so the fade starts
+     * from there (avoids a snap when toggling mid-transition or while
+     * the initial display is still on screen). */
+    bg->mapNameFadeFromAlpha = bgGameMapNameAlpha(bg, now);
+    bg->paused = !bg->paused;
+    bg->mapNameFadeStartMs = now;
+}
+
 static void bgGameRenderMapName(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) {
     if (!serverSimGetMapName(bg->sim)[0]) return;
 
-    Uint64 elapsed = SDL_GetTicks() - bg->createdTicks;
-    if (elapsed >= MAP_NAME_DISPLAY_MS) return;
-
-    /* Compute alpha: semi-transparent then fade over last 2 seconds */
-    Uint8 alpha = MAP_NAME_MAX_ALPHA;
-    if (elapsed > MAP_NAME_DISPLAY_MS - MAP_NAME_FADE_MS) {
-        Uint64 fadeElapsed = elapsed - (MAP_NAME_DISPLAY_MS - MAP_NAME_FADE_MS);
-        alpha = (Uint8)(MAP_NAME_MAX_ALPHA - (MAP_NAME_MAX_ALPHA * fadeElapsed / MAP_NAME_FADE_MS));
-    }
+    Uint8 alpha = bgGameMapNameAlpha(bg, SDL_GetTicks());
+    if (alpha == 0) return;
 
     /* Build map name without .map extension */
     char mapName[MAP_STR_SIZE];
@@ -364,16 +401,52 @@ static void bgGameRenderMapName(BgGame *bg, SDL_Renderer *renderer, int screenW,
     SDL_SetRenderScale(renderer, 1.0f, 1.0f);
 }
 
+/* If the SDL renderer has been destroyed and recreated (zoom change,
+ * skin reload) since bg->tilesTex was built, rebuild the texture
+ * against the current renderer. Cheap fast-path: a single pointer
+ * compare when the renderer is unchanged. */
+static void bgGameEnsureTexture(BgGame *bg) {
+    SDL_Renderer *cur = sdl3DrawGetRenderer();
+    if (bg->texRenderer == cur) return;
+
+    /* The previous renderer is gone — its textures are already
+     * invalidated by SDL3 when SDL_DestroyRenderer ran. Calling
+     * SDL_DestroyTexture on the stale handle is undefined behaviour,
+     * so we elide the destroy and just NULL the field. */
+    bg->tilesTex = NULL;
+    bg->texRenderer = cur;
+    if (cur == NULL) return;   /* No renderer to rebuild against yet. */
+
+    static Uint64 sLastTexErrLogMs = 0;
+    SDL_Surface *sheet = tileLoaderBuildSheet(16);
+    if (!sheet) {
+        Uint64 now = SDL_GetTicks();
+        if (now - sLastTexErrLogMs > 5000) {
+            WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                         "[BgGame] tileLoaderBuildSheet failed during "
+                         "renderer-recreate rebuild");
+            sLastTexErrLogMs = now;
+        }
+        return;
+    }
+    bg->tilesTex = SDL_CreateTextureFromSurface(cur, sheet);
+    SDL_DestroySurface(sheet);
+    if (bg->tilesTex) {
+        SDL_SetTextureScaleMode(bg->tilesTex, SDL_SCALEMODE_NEAREST);
+    } else {
+        Uint64 now = SDL_GetTicks();
+        if (now - sLastTexErrLogMs > 5000) {
+            WB_LOG_ERROR(WB_LOG_CAT_ASSET,
+                         "[BgGame] SDL_CreateTextureFromSurface failed "
+                         "during renderer-recreate rebuild");
+            sLastTexErrLogMs = now;
+        }
+    }
+}
+
 void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) {
     if (!bg || !bg->valid) return;
-
-    /* Temporarily set the sim's "self" player to the camera player so
-     * base-alliance / pill-screen-health queries colour bases and pills
-     * correctly from this player's perspective (own = good, enemy = evil).
-     * The serverSim wrappers read viewPlayer off the underlying GameSim,
-     * so we still need this mutation around the render. */
-    BYTE prevSelf = serverSimGetViewPlayer(bg->sim);
-    serverSimSetViewPlayer(bg->sim, bg->cameraPlayer);
+    bgGameEnsureTexture(bg);
 
     /* Pick zoom factor so the map content area fits the screen.
      * mapTilesW/H = number of tiles in the bounding box.
@@ -386,12 +459,12 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     int zf = zfW < zfH ? zfW : zfH;
     if (zf < 1) zf = 1;
 
-    MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1 };
-    mapViewRenderCentered(&ctx, bg->sim,
-                          bg->viewCenterX, bg->viewCenterY,
-                          0, 0, screenW, screenH, bg->cameraPlayer);
-
-    serverSimSetViewPlayer(bg->sim, prevSelf);
+    if (bg->tilesTex != NULL) {
+        MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1 };
+        mapViewRenderCentered(&ctx, bg->sim,
+                              bg->viewCenterX, bg->viewCenterY,
+                              0, 0, screenW, screenH, bg->cameraPlayer);
+    }
 
     /* Draw "Map: <name>" next to play/pause button, fading out after 10 seconds */
     bgGameRenderMapName(bg, renderer, screenW, screenH);

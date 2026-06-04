@@ -53,6 +53,16 @@
 /* Default game port used for LAN broadcast discovery */
 #define LAN_BROADCAST_PORT 27500
 
+/* LAN broadcast search abort flag. Set by discoveryAbortBroadcastSearch
+ * to break the discoveryFindBroadcastGamesAsync poll loop early; the
+ * loop polls it every 50ms. Cleared at the top of each search so a
+ * stale set from a prior session doesn't shortcut a fresh one. */
+static SDL_AtomicInt s_broadcastAbort;
+
+void discoveryAbortBroadcastSearch(void) {
+  SDL_SetAtomicInt(&s_broadcastAbort, 1);
+}
+
 /*---------------------------------------------------------
  * Game finder helper functions (platform-independent)
  *---------------------------------------------------------*/
@@ -459,6 +469,11 @@ bool discoveryFindBroadcastGamesAsync(DiscoveryServerCallback callback, void *us
   returnValue = TRUE;
   ptr = (BYTE *)buff;
 
+  /* Clear any pending abort from a prior session — without this, a
+   * caller that aborted the previous search would cause this one to
+   * exit the poll loop on its first iteration. */
+  SDL_SetAtomicInt(&s_broadcastAbort, 0);
+
   ret = bolo_net_init();
   if (ret != 0) {
     WB_LOG_ERROR(WB_LOG_CAT_NET, "discovery: Failed to initialise network for broadcast");
@@ -581,16 +596,24 @@ bool discoveryFindBroadcastGamesAsync(DiscoveryServerCallback callback, void *us
     tick = (uint32_t)SDL_GetTicks();
 
     while (timeOut <= 5000) {
+      if (SDL_GetAtomicInt(&s_broadcastAbort)) {
+        WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Broadcast scan aborted by caller");
+        break;
+      }
       if (len > 0) {
         WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Received %d bytes from %s:%u (expect %d for INFO_PACKET)",
                 len, inet_ntoa(last.sin_addr), ntohs(last.sin_port), (int)sizeof(INFO_PACKET));
       }
       if (len == (int) sizeof(INFO_PACKET)) {
-        if (strncmp(buff, BOLO_SIGNITURE, BOLO_SIGNITURE_SIZE) == 0 && buff[BOLO_VERSION_MAJORPOS] == BOLO_VERSION_MAJOR && buff[BOLO_VERSION_MINORPOS] == BOLO_VERSION_MINOR && buff[BOLO_VERSION_REVISIONPOS] == BOLO_VERSION_REVISION && buff[BOLOPACKET_REQUEST_TYPEPOS] == BOLOPACKET_INFORESPONSE) {
+        /* Magic + type only — the INFO_RESPONSE is the universal
+         * version-negotiation primitive, so we deliver mixed-version
+         * servers up to the UI; the caller pre-flights versions before
+         * attempting a join. */
+        if (strncmp(buff, BOLO_SIGNITURE, BOLO_SIGNITURE_SIZE) == 0 && buff[BOLOPACKET_REQUEST_TYPEPOS] == BOLOPACKET_INFORESPONSE) {
           WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Valid INFO_PACKET response, adding server");
           gameFinderProcessBroadcast((INFO_PACKET *) buff, &(last.sin_addr), callback, userData);
         } else {
-          WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Packet signature/version mismatch");
+          WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Packet signature/type mismatch");
         }
       }
       SDL_Delay(50);
@@ -629,6 +652,9 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
   out->freePills = 0;
   out->freeBases = 0;
   out->numPlayers = 0;
+  out->versionMajor = 0;
+  out->versionMinor = 0;
+  out->versionRevision = 0;
 
   if (bolo_net_init() != 0) {
     return FALSE;
@@ -702,8 +728,13 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
     out->freePills = info->free_pills;
     out->freeBases = info->free_bases;
     out->numPlayers = info->num_players;
-    WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, players=%u",
-                 address, port, out->rttMs, (unsigned)out->numPlayers);
+    out->versionMajor = info->h.versionMajor;
+    out->versionMinor = info->h.versionMinor;
+    out->versionRevision = info->h.versionRevision;
+    WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, v%u.%u.%u, players=%u",
+                 address, port, out->rttMs,
+                 (unsigned)out->versionMajor, (unsigned)out->versionMinor,
+                 (unsigned)out->versionRevision, (unsigned)out->numPlayers);
   }
   return TRUE;
 }

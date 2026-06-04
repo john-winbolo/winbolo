@@ -32,6 +32,7 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -44,6 +45,8 @@
 #include "screentank.h"
 #include "alliance_enums.h"
 #include "tilenum.h"
+#include "flags.h"           /* country-flag textures for tank labels */
+#include "sdl3imgui.h"       /* brain icon + per-player bot flag */
 
 /* Local copies of constants that sdl3draw.c keeps as file-local
  * #defines. Duplicating them is the simplest way to keep this
@@ -89,6 +92,11 @@ static float         gStatusBasesOrgX = -1, gStatusBasesOrgY = -1;
  * ----------------------------------------------------------------- */
 static SDL_Texture *gLabelTex[SDL3_MAX_PLAYERS];
 static char         gLabelStr[SDL3_MAX_PLAYERS][SDL3_MAX_NAME_LEN];
+/* Parsed out of the label string each time it changes: the country code to
+ * draw as a flag beside the name ("" = none), and whether the slot is a bot
+ * (draw the brain icon instead). Parallel to gLabelTex/gLabelStr. */
+static char         gLabelCountry[SDL3_MAX_PLAYERS][3];
+static bool         gLabelBot[SDL3_MAX_PLAYERS];
 
 static char gMsgTop[SDL3_MSG_LEN];
 static char gMsgBottom[SDL3_MSG_LEN];
@@ -659,9 +667,38 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
     strncpy(gLabelStr[playerNum], str, SDL3_MAX_NAME_LEN - 1);
     gLabelStr[playerNum][SDL3_MAX_NAME_LEN - 1] = '\0';
 
+    /* Split the label into the name and its trailing location. The label
+     * builder appends "@" + location only in long-label mode, and player
+     * names cannot contain '@', so the last '@' is the separator. A bot
+     * gets the brain icon (its location, if any, is dropped); a human with
+     * a 2-letter country code gets the flag. Anything else (short labels,
+     * or our own "@This Computer") is left as plain text with no icon. */
+    char nameOnly[SDL3_MAX_NAME_LEN];
+    strncpy(nameOnly, str, SDL3_MAX_NAME_LEN - 1);
+    nameOnly[SDL3_MAX_NAME_LEN - 1] = '\0';
+    gLabelCountry[playerNum][0] = '\0';
+    gLabelBot[playerNum] = false;
+
+    char *at = strrchr(nameOnly, '@');
+    if (at) {
+      const char *loc = at + 1;
+      if (sdl3ImguiPlayerIsBot(playerNum) && sdl3ImguiGetBrainIcon()) {
+        *at = '\0';
+        gLabelBot[playerNum] = true;
+      } else if (isalpha((unsigned char)loc[0]) && isalpha((unsigned char)loc[1]) &&
+                 loc[2] == '\0' && flagsGetTexture(loc)) {
+        *at = '\0';
+        gLabelCountry[playerNum][0] = loc[0];
+        gLabelCountry[playerNum][1] = loc[1];
+        gLabelCountry[playerNum][2] = '\0';
+      }
+      /* No icon available (flags not loaded, unknown country, …): leave
+       * nameOnly as the full "name@loc" string so the label is unchanged. */
+    }
+
     if (gFontMsg) {
       SDL_Color fg = {200, 200, 200, 255};
-      SDL_Surface *sFg = TTF_RenderText_Blended(gFontMsg, str, 0, fg);
+      SDL_Surface *sFg = TTF_RenderText_Blended(gFontMsg, nameOnly, 0, fg);
       if (sFg) {
         gLabelTex[playerNum] = SDL_CreateTextureFromSurface(gRenderer, sFg);
         SDL_DestroySurface(sFg);
@@ -712,6 +749,28 @@ void sdl3DrawTankLabel(char *str, BYTE playerNum,
   SDL_SetTextureBlendMode(gLabelTex[playerNum], SDL_BLENDMODE_BLEND);
   SDL_FRect d = { sx, sy, texW, texH };
   SDL_RenderTexture(gRenderer, gLabelTex[playerNum], NULL, &d);
+
+  /* Country flag (humans) or brain icon (bots) drawn just after the name,
+   * at 75% of the text height with partial alpha so the icon sits
+   * unobtrusively beside the name. Texture is shared with chat/lobby/browser
+   * renders, so the alpha mod is restored to 255 after drawing. */
+  SDL_Texture *icon = NULL;
+  float iconW = 0.0f, iconH = 0.0f;
+  if (gLabelBot[playerNum]) {
+    icon = sdl3ImguiGetBrainIcon();
+    if (icon) { iconH = texH * 0.75f; iconW = iconH; }  /* brain icon is square */
+  } else if (gLabelCountry[playerNum][0] != '\0') {
+    icon = flagsGetTexture(gLabelCountry[playerNum]);
+    if (icon) { iconH = texH * 0.75f; iconW = iconH * (float)FLAG_WIDTH / (float)FLAG_HEIGHT; }
+  }
+  if (icon) {
+    float gap = 2.0f * (float)gZoomFactor;
+    SDL_SetTextureBlendMode(icon, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureAlphaMod(icon, 170);
+    SDL_FRect id = { sx + texW + gap, sy + (texH - iconH) * 0.5f, iconW, iconH };
+    SDL_RenderTexture(gRenderer, icon, NULL, &id);
+    SDL_SetTextureAlphaMod(icon, 255);
+  }
 }
 
 void sdl3DrawStatusGetCachedTankStats(BYTE *shells, BYTE *mines, BYTE *armour, BYTE *trees) {

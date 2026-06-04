@@ -133,6 +133,38 @@ void playersCreate(players *plrs, bool isServer);
 void playersDestroy(players *plrs);
 
 /*********************************************************
+*NAME:          playersResetRoundState
+*PURPOSE:
+* Resets one slot's round/world state while preserving its
+* connection identity (inUse, playerName, location,
+* clientType, clientFlags, playerBrainNames). Used by a
+* world reset between rounds.
+*
+*ARGUMENTS:
+* plrs      - Pointer to the players object
+* playerNum - Slot to reset
+*********************************************************/
+void playersResetRoundState(players *plrs, BYTE playerNum);
+
+/*********************************************************
+*NAME:          playersClearSlot
+*PURPOSE:
+* Clears one slot back to the empty state set by
+* playersCreate: inUse FALSE, name/location/brain-name
+* blanked, clientType/clientFlags reset, and the alliance
+* object torn down and recreated empty. Unlike
+* playersResetRoundState (which preserves identity), this is
+* the full leave-path teardown: a slot left inUse with a
+* stale name is re-announced to every new client by the join
+* sync-replay's inUse-gated CTRL_PLAYER_JOIN.
+*
+*ARGUMENTS:
+* plrs      - Pointer to the players object
+* playerNum - Slot to clear
+*********************************************************/
+void playersClearSlot(players *plrs, BYTE playerNum);
+
+/*********************************************************
 *NAME:          playersSetSelf
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
@@ -313,15 +345,28 @@ void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest);
 *NAME:          playersGetAccountFlags
 *PURPOSE:
 * Returns the player's account-flag byte: bit 0 = WBN
-* participant, bit 1 = Steam participant. Mirrors
-* PLAYER_FLAG_WBN_VERIFIED / PLAYER_FLAG_WBN_STEAM_LINKED. Zero if
-* the slot is not in use.
+* participant, bit 1 = Steam participant, bit 5 = bot. Mirrors
+* PLAYER_FLAG_WBN_VERIFIED / PLAYER_FLAG_WBN_STEAM_LINKED /
+* PLAYER_FLAG_BOT. Zero if the slot is not in use.
 *
 *ARGUMENTS:
 * plrs - Pointer to the players object
 * playerNum - The player number
 *********************************************************/
 uint8_t playersGetAccountFlags(players *plrs, BYTE playerNum);
+
+/*********************************************************
+*NAME:          playersIsBot
+*PURPOSE:
+* Returns TRUE if the player slot is a bot (PLAYER_FLAG_BOT
+* set). Safe on both server and client; FALSE for out-of-
+* range or unused slots.
+*
+*ARGUMENTS:
+* plrs      - Pointer to the players object
+* playerNum - The player number
+*********************************************************/
+bool playersIsBot(players *plrs, BYTE playerNum);
 
 /*********************************************************
 *NAME:          playersMakeMessageName
@@ -508,10 +553,13 @@ BYTE playersGetFirstNotUsed(players *plrs);
 * A player has left the game.
 *
 *ARGUMENTS:
-* plrs - Pointer to the players object 
+* plrs - Pointer to the players object
 * playerNum - The number of the player that has left
+* announce  - Post the in-game "has left the game" newswire. Pass false
+*             for lobby removals so the message doesn't surface at game
+*             start.
 *********************************************************/
-void playersLeaveGame(struct ClientSim *csParam, struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer);
+void playersLeaveGame(struct ClientSim *csParam, struct GameSim *sim, players *plrs, BYTE selfPlayer, BYTE playerNum, bool isServer, bool announce);
 
 /*********************************************************
 *NAME:          playersSetMenuItems

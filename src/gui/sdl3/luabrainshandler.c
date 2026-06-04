@@ -84,11 +84,11 @@
 #include "brain_data.h"
 #include "client_sim.h"
 #include "util.h"
-#include "na_overlay_pillcontrib.h"
-#include "na_threat.h"
-#include "na_shield_stamp.h"
-#include "na_opt_log.h"
-#include "na_attack.h"
+#include "gh_overlay_pillcontrib.h"
+#include "gh_threat.h"
+#include "gh_shield_stamp.h"
+#include "gh_opt_log.h"
+#include "gh_attack.h"
 #include "../clientmutex.h"
 #include "../gamefront.h"
 #include "luabrainshandler.h"
@@ -267,9 +267,30 @@ static void push_brain_info_REMOVED(lua_State *L, const BrainInfo *info) {
   }
   lua_setfield(L, -2, "objects");
 
-  /* Received message this tick, or nil.
-   * info->message->message is a pascal string (byte 0 = length, bytes 1..N = text).
-   * Convert to a C string before passing to Lua. */
+  /* Received messages this tick — array of {sender, receivers, text}
+   * tables. info.message (singular) is the legacy alias to messages[1].
+   * Pascal-string conversion is the same as before. */
+  {
+    char msgBuf[256];
+    lua_newtable(L);
+    for (u_short mi = 0; mi < info->num_messages; mi++) {
+      const MessageInfo *m = &info->messages[mi];
+      lua_newtable(L);
+      lua_pushinteger(L, m->sender);
+      lua_setfield(L, -2, "sender");
+      lua_pushinteger(L, m->receivers ? *(m->receivers) : 0);
+      lua_setfield(L, -2, "receivers");
+      if (m->message != NULL && m->message[0] != 0) {
+        utilPtoCString((char *)m->message, msgBuf);
+        lua_pushstring(L, msgBuf);
+      } else {
+        lua_pushstring(L, "");
+      }
+      lua_setfield(L, -2, "text");
+      lua_rawseti(L, -2, mi + 1);
+    }
+    lua_setfield(L, -2, "messages");
+  }
   if (info->message != NULL) {
     char msgBuf[256];
     lua_newtable(L);
@@ -525,7 +546,7 @@ static int sdl_lua_searcher(lua_State *L) {
 }
 
 /* Helper: extract the brain directory from a path.
- * Handles paths like "brains/NewAutopilot/init.lua" and "brains/NewAutopilot/".
+ * Handles paths like "brains/GoalHunter/init.lua" and "brains/GoalHunter/".
  * Returns true and writes into brainDir if a directory was extracted. */
 static bool extract_brain_dir(const char *path, char *brainDir, size_t brainDirLen) {
   size_t pathLen = SDL_strlen(path);
@@ -575,9 +596,35 @@ static void setup_brain_package_path(lua_State *L, const char *path) {
   }
 }
 
+/* Lua print() replacement for the release client: routes brain output
+ * through wb_log (category LUA, debug level) instead of stdout, so it
+ * stays silent unless WINBOLO_LOG enables it (e.g. WINBOLO_LOG=lua=debug).
+ * Concatenates its arguments tab-separated, matching stock print(). */
+static int l_brain_log_print(lua_State *L) {
+  char buf[1024];
+  int pos = 0;
+  int n = lua_gettop(L);
+  for (int i = 1; i <= n; i++) {
+    if (i > 1 && pos < (int)sizeof(buf) - 1) buf[pos++] = '\t';
+    const char *s = luaL_tolstring(L, i, NULL);
+    if (s) {
+      int slen = (int)strlen(s);
+      int room = (int)sizeof(buf) - pos - 1;
+      if (slen > room) slen = room;
+      memcpy(buf + pos, s, (size_t)slen);
+      pos += slen;
+    }
+    lua_pop(L, 1); /* pop the luaL_tolstring result */
+  }
+  buf[pos] = '\0';
+  WB_LOG_DEBUG(WB_LOG_CAT_LUA, "%s", buf);
+  return 0;
+}
+
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, ClientSim *cs,
-                            aiType aiMode, bool debug_mode) {
+                            aiType aiMode, bool debug_mode,
+                            int player_num) {
   lua_State *L;
 
   memset(inst, 0, sizeof(*inst));
@@ -599,11 +646,18 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 
   /* Zero the BotContext* slot before any C binding can run. Lua does not
    * zero-init extraspace, and brain.open() below can reach botFromLua via
-   * na_threat / cpf bindings. botManagerAddBot writes the real pointer
+   * gh_threat / cpf bindings. botManagerAddBot writes the real pointer
    * after this function returns. */
   *(void **)lua_getextraspace(L) = NULL;
 
   luaL_openlibs(L);
+
+  /* Replace stock print() (writes to stdout) with one that routes brain
+   * output through wb_log, so brains stay silent unless WINBOLO_LOG asks
+   * for them. */
+  lua_pushcfunction(L, l_brain_log_print);
+  lua_setglobal(L, "print");
+
   brainCoreRegisterConstants(L);
 
   /* Signal to the brain whether it's running under BrainTest (debug) or
@@ -612,19 +666,43 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_pushboolean(L, debug_mode);
   lua_setglobal(L, "BRAIN_DEBUG_MODE");
 
+  /* print2 mirrors BRAIN_DEBUG_MODE: writes the per-tick log only in
+   * debug mode. The Lua side gates every print2 call on this so opt
+   * builds and non-debug runs pay zero I/O cost. */
+  lua_pushboolean(L, debug_mode);
+  lua_setglobal(L, "_PRINT2_ENABLED");
+
   lua_pushboolean(L, s_profile);
   lua_setglobal(L, "BRAIN_PROFILE");
 
   lua_pushboolean(L, s_profile_log);
   lua_setglobal(L, "BRAIN_PROFILE_LOG");
 
-  lua_pushboolean(L, s_log_json);
+  /* BRAIN_LOG_JSON drives the brain's JSONL behavior log. Force it on
+   * whenever debug mode is on — there's no scenario where you'd want
+   * debug logging without the structured trace too. _JSONL_LOGGER_ENABLED
+   * is the parallel player-0 gate inside init.lua's log-open; set it
+   * here too so player 0's brain_p0.jsonl actually opens. */
+  bool log_json_eff = s_log_json || debug_mode;
+  lua_pushboolean(L, log_json_eff);
   lua_setglobal(L, "BRAIN_LOG_JSON");
+  lua_pushboolean(L, log_json_eff);
+  lua_setglobal(L, "_JSONL_LOGGER_ENABLED");
 
   /* Pool visualizer strings (desc, loc_reason, etc.) — on in debug mode,
    * off in --opt production mode to eliminate GC pressure. */
   lua_pushboolean(L, debug_mode);
   lua_setglobal(L, "BRAIN_POOL_VIZ");
+
+  /* Per-category debug log gates. All require BRAIN_DEBUG_MODE to be on
+   * (debug builds strip the whole block via lua_strip's --strip-block
+   * "if BRAIN_DEBUG_MODE" prefix). Signal-rich categories default ON
+   * when debug is on; chatty ones default OFF so print2_bot<N>.log
+   * stays grep-able. */
+  lua_pushboolean(L, debug_mode);  lua_setglobal(L, "BRAIN_LOG_GOALS");   /* goal transitions */
+  lua_pushboolean(L, debug_mode);  lua_setglobal(L, "BRAIN_LOG_BUILDER"); /* wall/build decisions */
+  lua_pushboolean(L, false);       lua_setglobal(L, "BRAIN_LOG_SCORES");  /* FINAL_SCORES dump every replan */
+  lua_pushboolean(L, false);       lua_setglobal(L, "BRAIN_LOG_SWERVE");  /* per-tick swerve trace */
 
   /* RUN_SCRIPT_PATH: non-empty string = script to run after Brain.open; nil otherwise. */
   if (s_run_script_path[0]) {
@@ -652,20 +730,28 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     brainCoreRegisterWorldSim(L, &inst->worldsim);
   }
 
-  /* Overlay bindings intentionally NOT registered under the SDL3 game
-   * client. The buffer would fill with thousands of viz.* commands per
-   * tick (every brain HUD/marker/standoff draw), but no rendering path
-   * in src/gui/sdl3 reads it — only BrainTest's renderer does. Leaving
-   * `overlay_text` et al. as nil makes viz.lua's wrappers short-circuit
-   * via their `if not overlay_text then return end` guard, killing the
-   * per-tick Lua-boundary-crossing cost.
+  /* Overlay bindings ARE registered on both hosts. BrainTest uses
+   * this code path (it links luaBrainInstanceCreate, not a parallel
+   * variant), so omitting the bindings left every brain's viz.* call
+   * short-circuited at the Lua wrapper (`if not overlay_text then
+   * return end`) — V-dialog rows toggled but no map overlays drew.
    *
-   * The buffer struct is still initialized (and destroyed in the close
-   * path) so botManagerGetOverlayCmds() returns a valid empty buffer
-   * to any caller that polls it. */
+   * The per-tick cost the previous "omit the binding" path was
+   * avoiding is now killed at the Lua layer instead: in the release
+   * client (debug_mode == false) we set _BT_VIZ_SUPPRESS_ALL=true,
+   * which makes viz.is_on() return false for every id except
+   * hud_resources. The brain's viz wrappers gate every draw call on
+   * viz.is_on, so suppressed draws never reach the C closure — same
+   * effective cost as before, without BrainTest collateral damage. */
   overlayCmdBufferInit(&inst->overlay);
   inst->overlayPtr = &inst->overlay;
-  /* brainCoreRegisterOverlay(L, &inst->overlayPtr) intentionally omitted */
+  brainCoreRegisterOverlay(L, &inst->overlayPtr);
+
+  /* Release-client suppression: makes viz.is_on() report off for
+   * everything except hud_resources, so viz.* draw calls early-return
+   * at the Lua layer before crossing into the C overlay closures. */
+  lua_pushboolean(L, !debug_mode);
+  lua_setglobal(L, "_BT_VIZ_SUPPRESS_ALL");
 
   /* braintest_viz_register binding so brains can populate the V
    * dialog rows. Routes to a callback BrainTest sets at startup;
@@ -685,12 +771,12 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   brainCoreRegisterVizDetail(L);
   /* pill_contrib bindings (pillcontrib_clear / _begin_pill / _add_tile)
    * for the per-pill danger overlay (shift-2 in BrainTest). NULL-callback
-   * no-op outside BrainTest. NewAutopilot-specific — lives in the bot's
+   * no-op outside BrainTest. GoalHunter-specific — lives in the bot's
    * own C directory so the engine's brain runtime stays generic. */
-  naPillContribRegister(L);
-  /* na_threat — NewAutopilot threat-grid C kernel. Provides terrain
+  naPillContribRegister(L, player_num);
+  /* gh_threat — GoalHunter threat-grid C kernel. Provides terrain
    * factor cache + pill stamping. Tunables are set from Lua via
-   * na_threat.configure so cloners can tweak constants without
+   * gh_threat.configure so cloners can tweak constants without
    * recompiling. */
   naThreatRegister(L);
   naShieldStampRegister(L);
@@ -792,8 +878,8 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
         const char *e = lua_tostring(L, -1);
         WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to load '%s': %s",
                 resolvedPath, e);
-        FILE *ef = fopen("brain_error.log", "a");
-        if (ef) { fprintf(ef, "luaBrainInstance load (buffer) '%s' error: %s\n", resolvedPath, e ? e : "(null)"); fclose(ef); }
+        if (debug_mode) { FILE *ef = fopen("brain_error.log", "a");
+        if (ef) { fprintf(ef, "luaBrainInstance load (buffer) '%s' error: %s\n", resolvedPath, e ? e : "(null)"); fclose(ef); } }
         lua_close(L);
         return false;
       }
@@ -801,8 +887,8 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
       const char *e = lua_tostring(L, -1);
       WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: failed to load '%s': %s",
               resolvedPath, e);
-      FILE *ef = fopen("brain_error.log", "a");
-      if (ef) { fprintf(ef, "luaBrainInstance load (file) '%s' error: %s\n", resolvedPath, e ? e : "(null)"); fclose(ef); }
+      if (debug_mode) { FILE *ef = fopen("brain_error.log", "a");
+      if (ef) { fprintf(ef, "luaBrainInstance load (file) '%s' error: %s\n", resolvedPath, e ? e : "(null)"); fclose(ef); } }
       lua_close(L);
       return false;
     }
@@ -811,15 +897,15 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     const char *e = lua_tostring(L, -1);
     WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: error running '%s': %s",
             path, e);
-    FILE *ef = fopen("brain_error.log", "a");
-    if (ef) { fprintf(ef, "luaBrainInstance run '%s' error: %s\n", path, e ? e : "(null)"); fclose(ef); }
+    if (debug_mode) { FILE *ef = fopen("brain_error.log", "a");
+    if (ef) { fprintf(ef, "luaBrainInstance run '%s' error: %s\n", path, e ? e : "(null)"); fclose(ef); } }
     lua_close(L);
     return false;
   }
   if (!lua_istable(L, -1)) {
     WB_LOG_ERROR(WB_LOG_CAT_LUA, "luaBrainInstance: '%s' did not return a table", path);
-    FILE *ef = fopen("brain_error.log", "a");
-    if (ef) { fprintf(ef, "luaBrainInstance: '%s' did not return a table\n", path); fclose(ef); }
+    if (debug_mode) { FILE *ef = fopen("brain_error.log", "a");
+    if (ef) { fprintf(ef, "luaBrainInstance: '%s' did not return a table\n", path); fclose(ef); } }
     lua_close(L);
     return false;
   }
@@ -936,6 +1022,15 @@ void luaBrainInstanceSetDebugMode(LuaBrainInstance *inst, bool enabled) {
   if (!inst || !inst->L) return;
   lua_pushboolean(inst->L, enabled);
   lua_setglobal(inst->L, "BRAIN_DEBUG_MODE");
+  /* Keep print2 gate in sync — flipping debug mode mid-run should
+   * also start/stop the per-tick log file. */
+  lua_pushboolean(inst->L, enabled);
+  lua_setglobal(inst->L, "_PRINT2_ENABLED");
+  /* Per-category gates follow the master debug flag for the signal-rich
+   * categories; chatty ones (SCORES/SWERVE) stay off unless user toggles
+   * them in their Lua state separately. */
+  lua_pushboolean(inst->L, enabled); lua_setglobal(inst->L, "BRAIN_LOG_GOALS");
+  lua_pushboolean(inst->L, enabled); lua_setglobal(inst->L, "BRAIN_LOG_BUILDER");
 }
 
 LuaBrainSetting *luaBrainInstanceGetSettings(LuaBrainInstance *inst,
@@ -1279,9 +1374,14 @@ bool luaBrainStart(const char *path, const char *name, ClientSim *cs) {
   }
 
   clientMutexWaitFor();
+  /* Singleton path (legacy "human player loads a script directly")
+   * has no notion of a bot player_num — pillcontrib bindings will
+   * write into slot 0 and the BrainTest viewer (which only ever
+   * follows real bot indices) won't read it. Pass 0 explicitly. */
   if (!luaBrainInstanceCreate(&singletonInst, path, name,
                               cs,
-                              *clientSimGetAllowComputerTanks(cs), false)) {
+                              *clientSimGetAllowComputerTanks(cs), false,
+                              0)) {
     clientMutexRelease();
     return false;
   }

@@ -28,6 +28,12 @@
 #include "global.h"
 #include "input_packet.h"
 
+/* Forward decls — both ServerSim and ClientSim are referenced by the
+ * transport constructors. Full definitions live in server_sim.h /
+ * client_sim.h respectively; this header stays narrow on includes. */
+struct ServerSim;
+struct ClientSim;
+
 /* Forward declaration — ServerSim is defined in server_sim.h. */
 struct ServerSim;
 
@@ -46,6 +52,9 @@ struct ServerSim;
  * getSnapshot:   Retrieve the latest snapshot from the server.
  *                Returns TRUE if new state is available.
  *                Fills header, tank/shell/explosion/event arrays.
+ *                Precondition: caller holds threadsMutex (e.g. via
+ *                clientMutexWaitFor). Implementations may read shared
+ *                server state without taking the lock themselves.
  * ctx:           Opaque pointer to implementation data.
  *********************************************************/
 typedef struct {
@@ -69,16 +78,22 @@ typedef struct {
 
 /* Creates a local transport backed by a ServerSim.
  * The ServerSim must already be initialized.
- * playerNum is the local player's slot. */
-Transport transportLocalCreate(struct ServerSim *sim, BYTE playerNum);
+ * cs is the owning ClientSim — used by the per-tick snapshot apply.
+ * playerNum is the local player's slot (or 0 as placeholder; refine
+ * later via transportLocalSetPlayerNum once the join assigns a slot). */
+Transport transportLocalCreate(struct ServerSim *sim, struct ClientSim *cs, BYTE playerNum);
 
 /* Creates a passive local transport that does NOT call serverSimTick().
  * Used for bot ClientSim instances that share a ServerSim with the
  * human player's transport (which owns the ticking). */
-Transport transportLocalCreatePassive(struct ServerSim *sim, BYTE playerNum);
+Transport transportLocalCreatePassive(struct ServerSim *sim, struct ClientSim *cs, BYTE playerNum);
 
 /* Destroys local transport resources (does NOT destroy the ServerSim). */
 void transportLocalDestroy(Transport *t);
+
+/* Refine the local-transport slot after the join assigns it. The
+ * snapshot apply inside localTick uses this as its clientIdx. */
+void transportLocalSetPlayerNum(Transport *t, BYTE playerNum);
 
 /* Sets the simulated network latency in milliseconds.
  * delay_ms is converted to ticks internally (1 tick = 20ms).

@@ -9,7 +9,7 @@
  * Allowed includers: src/bolo/client_sim.c,
  * src/bolo/client_sim_control.c, src/bolo/client_snapshot.c,
  * src/bolo/transport_udp_client.c, src/bolo/viewport.c,
- * src/bolo/client_mapload.c.
+ * src/bolo/client_net.c.
  * All other callers must include client_sim.h and use the
  * public accessor API.
  *********************************************************/
@@ -19,12 +19,15 @@
 #include <stddef.h>
 #include "client_sim.h"
 #include "game_sim.h"
+#include "server_sim.h"   /* SubscriberHandle */
 #include "viewport.h"
 #include "transport.h"
 #include "client_state.h"
 #include "interpolation.h"
 #include "messages.h"
 #include "scroll.h"
+#include "brain_list.h"
+#include "upload_policy.h"
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -97,6 +100,19 @@ struct ClientSim {
     /* Is this a bot ClientSim? (bot sims must not trigger frontend UI calls) */
     bool        isBot;
 
+    /* Single-player session — the local spServerSim runs in-process via
+     * transport_local. Lobby UI hides multiplayer-only controls (Allow
+     * new players / Disallow once started) and routes setting changes
+     * directly to the server instead of through the UDP packet path. */
+    bool        isSinglePlayer;
+    /* LAN-only host session — set by gamefront when "Host LAN game"
+     * was chosen. Mirrors gameFrontIsLanOnly. The lobby UI uses this
+     * (and isSinglePlayer) to hide WBN-derived badges and skip the
+     * connectivity test. Server-side, the cfg flags are already
+     * forced off in gameFrontSetupServer so this is presentation-
+     * only on the client. */
+    bool        isLanOnly;
+
     /* Brain state (per-instance, moved from static globals in client_sim.c) */
     uint32_t    brainHoldKeys;
     uint32_t    brainTapKeys;
@@ -121,7 +137,7 @@ struct ClientSim {
     /* Per-instance message state (was messages.c globals) */
     MessageState messages;
 
-    /* Per-instance scroll state (was scroll.c globals) */
+    /* Per-instance scroll state (was scroll.c globals). */
     ScrollState scroll;
 
     /* Per-instance label state (was labels.c globals) */
@@ -172,13 +188,182 @@ struct ClientSim {
     uint8_t          lobbyPillCount;
     uint8_t          lobbyBaseCount;
     uint8_t          lobbyStartCount;
+    UploadPolicy     uploadPolicy;      /* server map-upload policy; ALLOW until first event */
     bool             mapSkipAvailable;  /* Server has map rotation with >1 map */
     bool             mapSkipVotes[16];  /* Mirror of server vote state */
     bool             mapSkipMyVote;     /* Local tracking of own vote */
 
+    /* In-game vote mirror (back-to-lobby + surrender). Indexed by
+     * (kind - 1). See netpacks.h GAME_VOTE_KIND_*. */
+    struct ClientGameVote {
+        uint8_t  kind;
+        uint8_t  active;            /* GAME_VOTE_ACTIVE_* */
+        uint8_t  triggerSrc;        /* GAME_VOTE_TRIGGER_* */
+        uint8_t  teamId;
+        uint8_t  threshold;
+        uint8_t  yesCount;
+        uint8_t  noCount;
+        uint8_t  eligibleCount;
+        uint8_t  secondsRemaining;
+        uint16_t votes;             /* bitmask of slots that voted yes */
+        bool     widgetVisible;     /* local UI state — X closes, menu reopens */
+        uint32_t concludedAtMs;     /* SDL_GetTicks() when active left RUNNING; 0 = still running / pre-start */
+    } gameVotes[2];
+
+    /* Tracks the seconds value most recently emitted for the
+     * "Returning to lobby in N" newswire line. Used to dedupe so we
+     * only push the line once per integer-second crossing of the
+     * snapshot header's returnToLobbyTicks field. 0 means no
+     * countdown active right now. */
+    uint8_t  lastReturnToLobbySecs;
+
     /* Team balance proposal from WBN */
     uint8_t  balanceProposal[16];      /* Proposed team per slot (0 = none) */
     bool     balanceProposalActive;    /* TRUE if a proposal is being displayed */
+    uint64_t lastBalanceProposalArrivedMs; /* SDL_GetTicks at the last non-empty
+                                            * CTRL_BALANCE_PROPOSAL arrival —
+                                            * latched by the dispatcher so the
+                                            * lobby UI can show a short "Teams
+                                            * balanced" success label even when
+                                            * the auto-apply clear publish that
+                                            * follows resets balanceProposalActive
+                                            * before the next render frame. */
+    uint64_t lastBalanceFailedMs;          /* SDL_GetTicks at the last
+                                            * CTRL_BALANCE_FAILED arrival.
+                                            * Lobby UI compares against the
+                                            * popup-confirm timestamp to flip
+                                            * "Asking WBN…" to a failure pill
+                                            * immediately on server error,
+                                            * bypassing the 8 s NOREPLY
+                                            * fallback. */
+    uint8_t  lastBalanceFailedReason;      /* Mirrors CTRL_BALANCE_FAILED.reasonCode. */
+
+    /* ── Layout A lobby state (client-side mirror of server) ──────
+     * Populated from PACKET_LOBBY_*_CHG broadcasts. The team metadata
+     * table starts zeroed (in_use=0 → "Team N" defaults); each
+     * TEAM_META_CHG broadcast updates one entry. Bot configs same
+     * shape, indexed by slot. */
+    uint8_t  lobbyTeamInUse[16];
+    uint8_t  lobbyTeamColor[16];
+    uint8_t  lobbyTeamPool[16];
+    char     lobbyTeamName[16][32];     /* LOBBY_TEAM_NAME_LEN */
+
+    uint8_t  lobbyBotDifficulty[16];
+    uint8_t  lobbyBotPersonality[16];
+
+    /* Per-bot brain catalogue index. 0xFF means the slot is using the
+     * server's CLI-configured default brain. Otherwise indexes into
+     * lobbyBrainList.entries[] to recover the wire path / display name.
+     * Initialised to 0xFF in clientSimCreate (memset(0) would alias
+     * a valid catalogue index). */
+    uint8_t  lobbyBotBrainIdx[16];
+
+    /* Brain codebases the server has on disk — populated from
+     * PACKET_LOBBY_BRAIN_LIST on join. Used as the option list for the
+     * AiConfig "Bot Code" combo. */
+    BrainList lobbyBrainList;
+
+    /* Server-side map directory listing — populated from
+     * PACKET_LOBBY_MAP_LIST_RSP. The chooser's listProvider sends a
+     * PACKET_LOBBY_MAP_LIST_REQ each time the user navigates into a
+     * folder; the latest response lives here. lobbyMapListPath echoes
+     * the requested path so the client can ignore stale responses
+     * if it has navigated away. */
+/* Per-directory ceiling on the Server Maps + Map Search caches.
+ * Matches MAP_CHOOSER_MAX_MAPS (imgui_mapchooser.h:38) so a
+ * directory's content is visible end-to-end. The wire side already
+ * supports arbitrary counts via PACKET_LOBBY_MAP_LIST_RSP chunking;
+ * this cap is the in-memory ClientSim ceiling. Per-ClientSim cost
+ * at 512: ~67 KB for the listing arrays, same again for the search
+ * arrays — ~130 KB total per ClientSim. */
+#define LOBBY_MAP_LIST_MAX 512
+#define LOBBY_MAP_LIST_NAME_LEN 128
+    char     lobbyMapListPath[256];
+    int      lobbyMapListCount;
+    char     lobbyMapListNames[LOBBY_MAP_LIST_MAX][LOBBY_MAP_LIST_NAME_LEN];
+    uint8_t  lobbyMapListIsFolder[LOBBY_MAP_LIST_MAX];
+    int64_t  lobbyMapListModTime[LOBBY_MAP_LIST_MAX];
+    bool     lobbyMapListReady;     /* true once a response arrives */
+    /* Most-recently requested path (set when the client sends
+     * MAP_LIST_REQ; cleared when the matching response arrives). The
+     * lobby's listProvider compares this against the current relPath
+     * to decide whether to re-issue a request on path change. */
+    char     lobbyMapListReqPath[256];
+    bool     lobbyMapListInFlight; /* true after send, false on response */
+
+    /* Monotonic counter incremented whenever the client receives a
+     * PACKET_LOBBY_MAP_CHANGE (i.e. the server told us to invalidate
+     * and re-download the map). UI poll-and-compare against a cached
+     * last-seen value to detect map changes even when the download
+     * + completion happen inside a single render frame (MP-host
+     * loopback case — the `mapDownloadComplete = false; ...; true`
+     * transition never lives long enough for a frame-boundary edge
+     * detector to catch). */
+    uint32_t lobbyMapChangeSeq;
+
+    /* Recursive search results — populated by PACKET_LOBBY_MAP_SEARCH_RSP.
+     * Same shape as the list cache but the names are RELATIVE PATHS
+     * from lobbyMapSearchPath (so a file in a subfolder reads as
+     * "Subdir/Foo.map" rather than just "Foo.map"). The query and
+     * path together form the cache key — a list listing for path X
+     * and a search for query="foo" in path X are different
+     * responses, stored side-by-side. */
+    char     lobbyMapSearchPath[256];
+    char     lobbyMapSearchQuery[128];
+    int      lobbyMapSearchCount;
+    char     lobbyMapSearchNames[LOBBY_MAP_LIST_MAX][LOBBY_MAP_LIST_NAME_LEN];
+    uint8_t  lobbyMapSearchIsFolder[LOBBY_MAP_LIST_MAX];
+    int64_t  lobbyMapSearchModTime[LOBBY_MAP_LIST_MAX];
+    bool     lobbyMapSearchReady;
+    char     lobbyMapSearchReqPath[256];
+    char     lobbyMapSearchReqQuery[128];
+    bool     lobbyMapSearchInFlight;
+
+    /* Upload progress — driven by the Upload tab and the
+     * PACKET_LOBBY_MAP_UPLOAD_ACK/DONE handlers. status: 0=idle,
+     * 1=announce-sent, 2=ack-received-sending-chunks, 3=done,
+     * 4=rejected. */
+    uint8_t  lobbyMapUploadStatus;
+    uint8_t  lobbyMapUploadRejectCode; /* server's reject byte, if any */
+    char     lobbyMapUploadFinalPath[256]; /* server-relative path */
+    /* Set by the PACKET_LOBBY_MAP_USE_LOCAL_NACK handler when the
+     * server can't fulfil the MD5-skip-upload shortcut. The Upload
+     * tab's pump loop notices this on the next frame and falls back
+     * to the regular PACKET_LOBBY_MAP_UPLOAD_BEGIN / CHUNK flow. */
+    bool     lobbyMapUseLocalNeedsFallback;
+
+    /* Winbolo.net preview result — driven by
+     * PACKET_LOBBY_PREVIEW_WBN_DONE. status: 0=idle,
+     * 1=in-flight, 2=ok, 3=error. errMsg is the server-supplied
+     * message when status == 3. */
+    uint8_t  lobbyWbnPreviewStatus;
+    char     lobbyWbnPreviewErrMsg[128];
+    char     lobbyWbnPreviewFinalPath[256];
+
+    bool     lobbyOpenHost;
+    bool     lobbyAutoLockOnGameStart;
+    bool     lobbyRanked;  /* server flagged this as a ranked game:
+                            * bots are forbidden, game type "Open" is
+                            * forbidden. Mirrored on every client so
+                            * they can render the ranked badge / lock
+                            * affordance. Toggle is host/admin only. */
+    bool     lobbyAllowNewPlayers; /* server's allowNewPlayers state —
+                                    * mirrors sim->allowNewPlayers via
+                                    * CTRL_LOBBY_SETTINGS so the host's
+                                    * "Now" checkbox reflects the real
+                                    * server state instead of a stale
+                                    * local intent. */
+    bool     lobbyWbnAvailable;    /* server's winbolonetIsRunning() —
+                                    * mirrored to remote clients so the
+                                    * lobby can hide WBN-mediated UI
+                                    * (Balance from WBN) when the host
+                                    * process isn't signed in to WBN. */
+    uint16_t lobbyServerLocks;
+
+    /* Most recent server reject — surfaced via toast/log when set.
+     * lobbyLastRejectPacket is set to 0 when no pending message. */
+    uint8_t  lobbyLastRejectPacket;
+    uint8_t  lobbyLastRejectReason;
 
     /* Steam achievement: first capture tracking (per-game) */
     bool     hasAnyBaseCaptured;
@@ -204,14 +389,68 @@ struct ClientSim {
      * transport constructors return Transport by value.
      *
      * clientSimCreate preserves these three fields across its memset
-     * (save/restore in the function body) so that clientSimResetForMapLoad
-     * can keep the connection alive while wiping map-dependent state. */
+     * (save/restore in the function body). */
     Transport transport;
     bool      hasTransport;
     bool      isUdpTransport;
+
+    /* In-process server bound by clientSimConnectLocal{,Passive}. NULL
+     * for UDP and disconnected clients. Read by the local-transport
+     * branch of CTRL_LOBBY_MAP_CHANGE to fetch the freshly-compressed
+     * map without going through the wire MAP_DOWNLOAD machinery.
+     * Preserved across clientSimCreate's memset alongside the
+     * transport fields (connection-lifetime state). */
+    struct ServerSim *boundServerSim;
+
+    /* Unified rejection-reason buffer. Local connect failures write
+     * directly here; UDP JOIN_REJECT mirrors its reason here too. The
+     * clientSimGetConnectErrorReason accessor reads from this field. */
+    char      connectErrorReason[256];
+
+    SubscriberHandle autoSubHandle;    /* Returned by serverSimRegisterClientSubscriber
+                                        * inside clientSimConnectLocal{,Passive}; cleared
+                                        * to SUBSCRIBER_HANDLE_INVALID at create-time and
+                                        * after clientSimDisconnect unregisters it. */
+
+    /* Read-only ControlEvent observer (test-only — see
+     * clientSimSetControlObserver in client_sim.h). Preserved across
+     * clientSimCreate's memset alongside the transport fields. */
+    ControlObserverCb controlObserverCb;
+    void             *controlObserverCtx;
+
+    /* Transport-internal observer. Wired by the UDP transport to react
+     * to events whose side effects live below the bolo-lib boundary
+     * (joinState transitions, re-join trigger, WBN re-auth, etc.).
+     * Separate slot from controlObserverCb so tests don't displace it. */
+    ControlObserverCb transportObserverCb;
+    void             *transportObserverCtx;
+
+    /* Pending alliance request from another player. 0xFF when none.
+     * Set by the CTRL_ALLIANCE_REQUEST arm when toPlayer == myPlayerNum;
+     * frontends poll via clientSimGetPendingAllianceRequest and clear
+     * with clientSimClearPendingAllianceRequest after popping the
+     * dialog (or auto-rejecting). */
+    BYTE pendingAllianceRequestFrom;
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
                    ClientSim_sim_must_be_first_member);
+
+/* Internal accessors for the connect-path fields. The local-transport
+ * branch of CTRL_LOBBY_MAP_CHANGE reads the bound server through
+ * clientSimGetBoundServerSim; clientSimConnectLocal{,Passive} record
+ * the binding via clientSimSetBoundServerSim. clientSimSetConnectErrorReason
+ * is the single writer used by both connect paths and (Phase 2) the UDP
+ * JOIN_REJECT handler. */
+void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
+struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
+void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
+
+/* Decompress `buf`/`len` into the ClientSim's map/pills/bases/starts,
+ * stash the map name, and prime the viewport + mine-visibility state.
+ * Does NOT call clientSimCreate; the ClientSim must already be alive
+ * and initialised. The caller is responsible for clientSimSetupSelf
+ * and for the snapshot apply that follows. */
+bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name);
 
 #endif /* CLIENT_SIM_INTERNAL_H */

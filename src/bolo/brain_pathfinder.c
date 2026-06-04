@@ -37,6 +37,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <math.h>
 #include <float.h>
 #include <SDL3/SDL.h>
@@ -136,7 +137,7 @@ static inline int next_boat_state(int cur_boat, int type) {
 /* Heap operations (array-based 4-ary min-heap)                         */
 /*                                                                      */
 /* 4-ary heap: each node has 4 children. Tree height is half a binary   */
-/* heap, sift_down does ~1.3× the comparisons but ~0.5× the cache       */
+/* heap, sift_down does ~1.3Ã— the comparisons but ~0.5Ã— the cache       */
 /* misses since 4 siblings live in adjacent memory. Net ~25% faster on  */
 /* the heap-heavy phases of A-star and Dijkstra.                       */
 /* ------------------------------------------------------------------ */
@@ -783,6 +784,16 @@ void brainPathfinderClearOverlay(BrainPathfinder *pf) {
   }
 }
 
+float brainPathfinderGetOverlay(const BrainPathfinder *pf, int x, int y) {
+  if (!pf || x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE) return 0.0f;
+  return (float)pf->overlay_grid[y * MAP_SIZE + x];
+}
+
+float brainPathfinderGetDanger(const BrainPathfinder *pf, int x, int y) {
+  if (!pf || x < 0 || x >= MAP_SIZE || y < 0 || y >= MAP_SIZE) return 0.0f;
+  return (float)pf->danger_grid[y * MAP_SIZE + x];
+}
+
 /* ------------------------------------------------------------------ */
 /* Cost computation (inner loop)                                       */
 /* ------------------------------------------------------------------ */
@@ -1130,18 +1141,24 @@ do_search:
 
       if (nx < 0 || nx > 255 || ny < 0 || ny > 255) continue;
 
-      /* Block diagonal moves through impassable corners:
-       * If both adjacent cardinal tiles have speed 0, diagonal is blocked.
-       * Also block if either cardinal neighbor is deep sea and we're not
-       * in a boat — the tank would clip through the deep sea tile and die.
-       * In a boat, block diagonals that clip through land — the game
-       * physics would touch the land tile and disembark the tank. */
+      /* Block diagonal moves through impassable corners.
+       * On foot a full-tile tank cannot squeeze diagonally past ANY solid
+       * corner tile, so block the diagonal if EITHER cardinal corner is
+       * impassable (speed 0 = building/halfbuild). The old rule required
+       * BOTH corners solid, which let the tank cut the corner between a
+       * wall and a passable-but-overlaid tile (e.g. a live pill, which is
+       * grass-like terrain + a danger overlay, not solid in the grid).
+       * Boats keep the both-zero rule plus the land-clip checks below. */
       if (DX8[d] != 0 && DY8[d] != 0) {
         int adj_x_type = pf->map[(cy * MAP_SIZE) + (cx + DX8[d])] & 0x0F;
         int adj_y_type = pf->map[((cy + DY8[d]) * MAP_SIZE) + cx] & 0x0F;
         float speed_x = pf->terrain_speed_table[adj_x_type];
         float speed_y = pf->terrain_speed_table[adj_y_type];
-        if (speed_x == 0.0f && speed_y == 0.0f) continue;
+        if (!cur_boat) {
+          if (speed_x == 0.0f || speed_y == 0.0f) continue;
+        } else {
+          if (speed_x == 0.0f && speed_y == 0.0f) continue;
+        }
         /* On foot, block diagonals that clip through deep sea */
         if (!cur_boat && (adj_x_type == TT_DEEPSEA || adj_y_type == TT_DEEPSEA)) continue;
         /* In boat, block diagonals that clip through land */
@@ -1272,12 +1289,57 @@ do_search:
  * This keeps the inner loop fast for bulk candidate evaluation. */
 static FILE *astar_log = NULL;
 static int astar_log_enabled = 0;
+static int astar_log_tick = 0;  /* current tick prefix for ASTAR log lines */
+static char astar_log_caller[2048] = "";  /* Lua call context for next cost_to */
 
 /* Separate log for the incremental Dijkstra. NOT enabled together with
  * the cost_to log because the per-tick STEP entries are high-frequency
  * and add measurable overhead. Toggle independently via
  * brainPathfinderEnableDijkstraLog(). */
 static FILE *dijkstra_log = NULL;
+
+void brainPathfinderSetLogTick(int tick) {
+  astar_log_tick = tick;
+}
+
+void brainPathfinderSetLogCaller(const char *caller) {
+  if (caller) {
+    size_t n = strlen(caller);
+    if (n >= sizeof(astar_log_caller)) n = sizeof(astar_log_caller) - 1;
+    memcpy(astar_log_caller, caller, n);
+    astar_log_caller[n] = '\0';
+  } else {
+    astar_log_caller[0] = '\0';
+  }
+}
+
+void brainPathfinderEnableLogPath(const char *path) {
+  if (astar_log) {
+    fflush(astar_log);
+    fclose(astar_log);
+    astar_log = NULL;
+  }
+  if (path) {
+    astar_log = fopen(path, "w");
+    if (astar_log) {
+      /* Line-buffer so writes appear without needing fclose. The
+       * default fully-buffered mode hides recent activity from anyone
+       * tailing the file while the brain is still running. */
+      setvbuf(astar_log, NULL, _IONBF, 0);  /* unbuffered — writes appear immediately */
+      fprintf(astar_log, "=== cost_to debug log ===\n");
+      fflush(astar_log);
+      astar_log_enabled = 1;
+    } else {
+      astar_log_enabled = 0;
+    }
+  } else {
+    astar_log_enabled = 0;
+  }
+}
+
+int brainPathfinderIsLogEnabled(void) {
+  return astar_log_enabled;
+}
 
 void brainPathfinderEnableLog(int enable) {
   astar_log_enabled = enable;
@@ -1308,11 +1370,21 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
                              int sx, int sy, int dx, int dy,
                              int in_boat, int shells, int trees,
                              int mines, int armour, int budget) {
+  return brainPathfinderCostToEx(pf, sx, sy, dx, dy, in_boat,
+                                  shells, trees, mines, armour,
+                                  budget, 1 /*allow_boat*/);
+}
+
+float brainPathfinderCostToEx(BrainPathfinder *pf,
+                               int sx, int sy, int dx, int dy,
+                               int in_boat, int shells, int trees,
+                               int mines, int armour, int budget,
+                               int allow_boat) {
   int src_ni, dest_tile, expanded;
   float result;
   FILE *alog = astar_log;
 
-  /* ── Performance counters (always tallied; only printed if alog) ── */
+  /* â”€â”€ Performance counters (always tallied; only printed if alog) â”€â”€ */
   int n_pops = 0;          /* heap_pop calls */
   int n_stale_pops = 0;    /* popped a node that was already closed */
   int n_pushes = 0;        /* heap_push calls */
@@ -1338,6 +1410,10 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
     int dst_type = pf->map[dy * MAP_SIZE + dx] & 0x0F;
     fprintf(alog, "=== cost_to(%d,%d)->(%d,%d) boat=%d sh=%d tr=%d mn=%d arm=%d budget=%d src_terrain=%d dst_terrain=%d ===\n",
             sx,sy,dx,dy,in_boat,shells,trees,mines,armour,budget,src_type,dst_type);
+    if (astar_log_caller[0]) {
+      fprintf(alog, "CALLER:\n%s\n", astar_log_caller);
+      astar_log_caller[0] = '\0';  /* consume — caller sets per-call */
+    }
   }
 
   /* Clamp */
@@ -1407,10 +1483,12 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
     closed_set(pf->closed, ci);
     expanded++;
 
-    if (alog && expanded <= 20) {
+    if (alog) {
       int tile_type = pf->map[cy * MAP_SIZE + cx] & 0x0F;
-      fprintf(alog, "  expand #%d: (%d,%d) boat=%d g=%.2f terrain=%d f_top=%.2f\n",
-              expanded, cx, cy, cur_boat, pf->g_cost[ci], tile_type, entry.f);
+      uint16_t ov = pf->overlay_grid[cy * MAP_SIZE + cx];
+      uint16_t dg = pf->danger_grid[cy * MAP_SIZE + cx];
+      fprintf(alog, "ASTAR_DBG t=%d expand #%d: (%d,%d) boat=%d g=%.2f terrain=%d ov=%d d=%d f=%.2f\n",
+              astar_log_tick, expanded, cx, cy, cur_boat, pf->g_cost[ci], tile_type, ov, dg, entry.f);
     }
 
     /* Destination reached */
@@ -1452,12 +1530,16 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
                          cur_shells, cur_trees, cur_mines, cur_armour,
                          &shells_used, &trees_used, &mines_used, &armour_used,
                          &onBoat);
-      if (alog && expanded <= 20) {
+      if (alog) {
         int n_type = pf->map[ny * MAP_SIZE + nx] & 0x0F;
-        fprintf(alog, "    neigh(%d,%d) d=%d terrain=%d cost=%.2f%s\n",
-                nx, ny, d, n_type, tc, tc >= COST_INF ? " INF" : "");
+        uint16_t n_ov = pf->overlay_grid[ny * MAP_SIZE + nx];
+        uint16_t n_dg = pf->danger_grid[ny * MAP_SIZE + nx];
+        fprintf(alog, "ASTAR_DBG t=%d   neigh(%d,%d) d=%d terrain=%d ov=%d dg=%d cost=%.2f%s\n",
+                astar_log_tick, nx, ny, d, n_type, n_ov, n_dg, tc, tc >= COST_INF ? " INF" : "");
       }
       if (tc >= COST_INF) { n_neigh_inf++; continue; }
+      /* allow_boat=0: skip nodes that would transition into boat state */
+      if (!allow_boat && onBoat) { n_neigh_inf++; continue; }
 
       ni = node_idx(nx, ny, onBoat);
       if (get_closed(pf, ni)) { n_neigh_closed++; continue; }
@@ -1516,12 +1598,16 @@ float brainPathfinderCostTo(BrainPathfinder *pf,
   pf->dest_x = -1;
   pf->dest_y = -1;
 
+  /* Flush so the log is readable while the brain is still running
+   * (Windows MSVCRT treats _IOLBF as _IOFBF for files). */
+  if (alog) fflush(alog);
+
   return result;
 }
 
-/* ── Full Dijkstra from a source ──────────────────────────────────────── */
+/* â”€â”€ Full Dijkstra from a source â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
-/* ── Precomputed neighbor edge cost grid ──
+/* â”€â”€ Precomputed neighbor edge cost grid â”€â”€
  *
  * For each (tile, direction) pair, store the static base cost of stepping
  * from that tile in that direction:
@@ -1609,7 +1695,7 @@ void brainPathfinderRebuildEdgeCosts(BrainPathfinder *pf) {
   pf->cache_dirty = 1;
 }
 
-/* ── Incremental Dijkstra ──
+/* â”€â”€ Incremental Dijkstra â”€â”€
  *
  * Splits one full Dijkstra search across multiple ticks. Brain calls
  * Start once when it wants a fresh search, then Step every tick with a
@@ -2118,7 +2204,8 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
 
   /* Walk parent chain from dest back to source via dir_at. Source tile
    * has dir_at = 0xFF and contributes 0 to g_cost (no danger added at
-   * start), so we exclude it from the subtraction. */
+   * start), so we exclude it from the subtraction. Each step's
+   * subtract is scaled by DMUL8[d] to match the slate's expansion. */
   float subtract = 0.0f;
   float dscale = chosen->danger_scale;
   int cur = node_idx(x, y, chosen_layer);
@@ -2126,20 +2213,77 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
   int safety = 2048;
   while (safety-- > 0) {
     uint8_t dval = chosen->dir_at[cur];
-    if (dval == 0xFF) break; /* source — exclude */
-
+    if (dval == 0xFF) break;
     int cx = node_x(cur);
     int cy = node_y(cur);
     int tile_key = cy * MAP_SIZE + cx;
     float p = pcontrib_lookup(user, tile_key);
-    if (p > 0.0f) {
-      int tt = pf->map[tile_key] & 0x0F;
-      float inv_spd = cur_boat ? inv_speed_boat[tt] : inv_speed_foot[tt];
-      subtract += p * dscale * inv_spd;
-    }
-
     int d = dval & 0x07;
     int parent_boat = (dval & 0x08) ? 1 : 0;
+    if (p > 0.0f) {
+      int tt = pf->map[tile_key] & 0x0F;
+      /* Mirror the three slate-expansion branches exactly so the
+       * subtract removes the same per-pill contribution the slate
+       * actually added. See the matching code around lines
+       * 1837-1903 (wall-shoot, normal, road-build short-circuit). */
+      float p_term;
+      int is_wall_tile = !cur_boat && (tt == TT_BUILDING || tt == TT_HALFBUILD);
+      if (is_wall_tile) {
+        /* Wall-shoot expansion: tc = wall_shoot_cost + danger*dscale*16/3
+         * (the LGM stops to shoot at speed ~3 so inv_spd = 16/3, not
+         * the terrain table's value which would be ~160 for a wall).
+         * Per-pill contribution to that danger term is the same
+         * formula with pcontrib in place of total danger. */
+        p_term = p * dscale * (16.0f / 3.0f);
+      } else {
+        /* Normal tile: tc = ec + danger*dscale*inv_spd + overlay + mine_pen.
+         * Per-pill contribution: p*dscale*inv_spd. */
+        float inv_spd = cur_boat ? inv_speed_boat[tt] : inv_speed_foot[tt];
+        p_term = p * dscale * inv_spd;
+        /* Road-build short-circuit: on foot in slow terrain
+         * (swamp/crater/rubble/river) with total tile danger below
+         * threshold AND the uncapped tc exceeding road_build_cost,
+         * the slate clamps tc flat at road_build_cost — effectively
+         * discarding the part of (danger + water_drain) that was
+         * over budget. Reconstruct the uncapped tc here; if the
+         * clamp would have fired, replace p_term with pcontrib's
+         * proportional share of the SURVIVING danger budget
+         * (road_build_cost - ec - overlay - mine_pen, floored at 0).
+         * Pre-existing under-subtract before this branch was added. */
+        if (!cur_boat
+            && (tt == TT_SWAMP || tt == TT_CRATER
+                || tt == TT_RUBBLE || tt == TT_RIVER)) {
+          float total_danger = (float)pf->danger_grid[tile_key]
+                             + (float)pf->danger_offset_grid[tile_key];
+          if (total_danger < 0.0f) total_danger = 0.0f;
+          if (total_danger < pf->road_build_danger_max) {
+            float ec       = pf->terrain_cost_table[tt];
+            float overlay  = (float)pf->overlay_grid[tile_key];
+            float mine_pen = (pf->map[tile_key] & 0x80) ? pf->mine_penalty : 0.0f;
+            float danger_term = total_danger * dscale * inv_spd;
+            float water_drain = 0.0f;
+            if (tt == TT_RIVER && pf->water_drain_rate > 0.0f) {
+              water_drain = pf->water_drain_rate
+                          * (pf->shell_loss_cost + pf->mine_loss_cost);
+            }
+            float tc_uncapped = ec + danger_term + overlay + mine_pen + water_drain;
+            if (tc_uncapped > pf->road_build_cost) {
+              /* Clamp fired. Effective danger contribution that
+               * survived in tc = road_build_cost minus the
+               * non-danger fixed components (water_drain is also
+               * clamped away with the rest). Pcontrib's share is
+               * proportional to its fraction of total_danger. */
+              float effective_danger = pf->road_build_cost - ec - overlay - mine_pen;
+              if (effective_danger < 0.0f) effective_danger = 0.0f;
+              p_term = (total_danger > 0.0f)
+                       ? (p / total_danger) * effective_danger
+                       : 0.0f;
+            }
+          }
+        }
+      }
+      subtract += p_term * DMUL8[d];
+    }
     int px = cx - DX8[d];
     int py = cy - DY8[d];
     if (px < 0 || px > 255 || py < 0 || py > 255) break;
@@ -2523,7 +2667,7 @@ double brainPathfinderDijkstraFrom(BrainPathfinder *pf,
   return t1 - t0;
 }
 
-/* ── Incremental cost_to ──────────────────────────────────────── */
+/* â”€â”€ Incremental cost_to â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
 /* Reset: initialize g_cost/closed/heap from a source position.
  * Call once at the start of a replan cycle. */
@@ -3152,14 +3296,16 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
   if (out_tiles == NULL || max_tiles <= 0) return 0;
 
   /* Shell length in map units. Tank passes sightLen/2 to shellsAddItem
-   * — INTEGER division. Use the same here so odd sight_len matches.
-   * For PILL shooter the engine passes PILLBOX_FIRE_DISTANCE directly. */
-  int len_units;
+   * as TURNTYPE/float — float division, so odd sight_len contributes a
+   * half-tile. For PILL shooter the engine passes PILLBOX_FIRE_DISTANCE
+   * (8.5) directly. Keep len_units float so shellLifeTicks sees the
+   * same fractional value the engine does. */
+  float len_units;
   if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
-    len_units = (int)PILLBOX_FIRE_DISTANCE;
+    len_units = PILLBOX_FIRE_DISTANCE;
   } else {
     int sl = (sight_len > 0) ? sight_len : GUNSIGHT_MAX;
-    len_units = sl / 2;   /* match engine's integer / */
+    len_units = sl / 2.0f;
   }
 
   /* Spawn position + lifetime budget come from shells.c so the
@@ -3183,6 +3329,8 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
     int my = (int)((unsigned)origin_wy >> TANK_SHIFT_MAPSIZE);
     out_tiles[count].mx = (uint8_t)mx;
     out_tiles[count].my = (uint8_t)my;
+    out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+    out_tiles[count].hit_id = 0;
     last_mx = mx;
     last_my = my;
     count++;
@@ -3195,6 +3343,8 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
     if ((mx != last_mx || my != last_my) && count < max_tiles) {
       out_tiles[count].mx = (uint8_t)mx;
       out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
       last_mx = mx;
       last_my = my;
       count++;
@@ -3216,8 +3366,109 @@ static int simulate_shot_walk(WORLD origin_wx, WORLD origin_wy,
     if (mx != last_mx || my != last_my) {
       out_tiles[count].mx = (uint8_t)mx;
       out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
       last_mx = mx;
       last_my = my;
+      count++;
+    }
+  }
+
+  return count;
+}
+
+/* Tank-aware shot simulation. Same tile walk as simulate_shot_walk but
+ * also checks for tank hitbox intersections (128 wu box, same as
+ * tankIsTankHit in tank.c) at every sub-tick position. When a tank is
+ * hit, a hit_type=BRAIN_SHOT_HIT_TANK entry is emitted and the walk
+ * stops (shell consumed). Owner tank is excluded from hit checks. */
+static int simulate_shot_walk_tanks(WORLD origin_wx, WORLD origin_wy,
+                                     TURNTYPE angle,
+                                     int shooter_type, int sight_len,
+                                     const BrainShotTankPos *tanks, int num_tanks,
+                                     uint8_t owner_player,
+                                     BrainShotTile *out_tiles, int max_tiles) {
+  if (out_tiles == NULL || max_tiles <= 0) return 0;
+
+  int len_units;
+  if (shooter_type == BRAIN_SHOT_SHOOTER_PILL) {
+    len_units = (int)PILLBOX_FIRE_DISTANCE;
+  } else {
+    int sl = (sight_len > 0) ? sight_len : GUNSIGHT_MAX;
+    len_units = sl / 2;
+  }
+
+  WORLD x, y;
+  shellSpawnPos(origin_wx, origin_wy, angle, &x, &y);
+  int ticks = shellLifeTicks(len_units);
+
+  int32_t xStep = 0, yStep = 0;
+  utilCalcDistanceHP(&xStep, &yStep, angle, SHELL_SPEED);
+  int32_t xAcc = 0, yAcc = 0;
+
+  int count = 0;
+  int last_mx = -1, last_my = -1;
+
+  /* Origin tile */
+  {
+    int mx = (int)((unsigned)origin_wx >> TANK_SHIFT_MAPSIZE);
+    int my = (int)((unsigned)origin_wy >> TANK_SHIFT_MAPSIZE);
+    out_tiles[count].mx = (uint8_t)mx;
+    out_tiles[count].my = (uint8_t)my;
+    out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+    out_tiles[count].hit_id = 0;
+    last_mx = mx; last_my = my;
+    count++;
+  }
+
+  /* Post-offset tile */
+  {
+    int mx = (int)((unsigned)x >> TANK_SHIFT_MAPSIZE);
+    int my = (int)((unsigned)y >> TANK_SHIFT_MAPSIZE);
+    if ((mx != last_mx || my != last_my) && count < max_tiles) {
+      out_tiles[count].mx = (uint8_t)mx;
+      out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
+      last_mx = mx; last_my = my;
+      count++;
+    }
+  }
+
+  for (int t = 0; t < ticks && count < max_tiles; t++) {
+    xAcc += xStep;
+    yAcc += yStep;
+    int xMove = xAcc >> 8;
+    int yMove = yAcc >> 8;
+    xAcc -= xMove << 8;
+    yAcc -= yMove << 8;
+    x = (WORLD)((int)x + xMove);
+    y = (WORLD)((int)y + yMove);
+
+    /* Tank hitbox check — 128 wu box, same as tankIsTankHit */
+    for (int i = 0; i < num_tanks; i++) {
+      if (tanks[i].player_num == owner_player) continue;
+      if (abs((int)tanks[i].wx - (int)x) < 128 &&
+          abs((int)tanks[i].wy - (int)y) < 128) {
+        int mx = (int)((unsigned)x >> TANK_SHIFT_MAPSIZE);
+        int my = (int)((unsigned)y >> TANK_SHIFT_MAPSIZE);
+        out_tiles[count].mx = (uint8_t)mx;
+        out_tiles[count].my = (uint8_t)my;
+        out_tiles[count].hit_type = BRAIN_SHOT_HIT_TANK;
+        out_tiles[count].hit_id = tanks[i].player_num;
+        count++;
+        return count;  /* shell consumed by tank hit */
+      }
+    }
+
+    int mx = (int)((unsigned)x >> TANK_SHIFT_MAPSIZE);
+    int my = (int)((unsigned)y >> TANK_SHIFT_MAPSIZE);
+    if (mx != last_mx || my != last_my) {
+      out_tiles[count].mx = (uint8_t)mx;
+      out_tiles[count].my = (uint8_t)my;
+      out_tiles[count].hit_type = BRAIN_SHOT_HIT_TILE;
+      out_tiles[count].hit_id = 0;
+      last_mx = mx; last_my = my;
       count++;
     }
   }
@@ -3258,4 +3509,21 @@ int brainPathfinderSimulateShotAngle(WORLD origin_wx, WORLD origin_wy,
   return simulate_shot_walk(origin_wx, origin_wy, (TURNTYPE)a,
                             shooter_type, sight_len,
                             out_tiles, max_tiles);
+}
+
+/* Public entry: shot simulation with tank hitbox checking. */
+int brainPathfinderSimulateShotWithTanks(WORLD origin_wx, WORLD origin_wy,
+                                          WORLD target_wx, WORLD target_wy,
+                                          int shooter_type, int sight_len,
+                                          const BrainShotTankPos *tanks, int num_tanks,
+                                          uint8_t owner_player,
+                                          BrainShotTile *out_tiles, int max_tiles) {
+  if (out_tiles == NULL || max_tiles <= 0) return 0;
+  if (origin_wx == target_wx && origin_wy == target_wy) return 0;
+  TURNTYPE angle = shellAngleFromTarget(origin_wx, origin_wy,
+                                        target_wx, target_wy);
+  return simulate_shot_walk_tanks(origin_wx, origin_wy, angle,
+                                  shooter_type, sight_len,
+                                  tanks, num_tanks, owner_player,
+                                  out_tiles, max_tiles);
 }

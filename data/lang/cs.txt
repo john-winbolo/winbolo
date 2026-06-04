@@ -268,6 +268,7 @@ STR_DLGNETINFO_KBIN=KB/s příj.:
 STR_DLGNETINFO_KBOUT=KB/s odes.:
 STR_DLGNETINFO_PACKETS_RATE=Pakety/s: {number} příj. / {number2} odes.
 STR_DLGNETINFO_KB_RATE=KB/s: {string1} příj. / {string2} odes.
+STR_DLGNETINFO_LOSS=Ztráta paketů: {number}% ({number2}/{number3} tuto sek., {number4} celkem ve hře)
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Kopírovat seed
@@ -422,6 +423,7 @@ STR_DLGLOBBY_BOT_FMT={player} [Bot]
 STR_DLGLOBBY_YOU_FMT={player} (Ty)
 STR_DLGLOBBY_STARTING_FMT=Start za {number}...
 STR_DLGLOBBY_LOSTCONNECTION=Ztratil jsi spojení se serverem.
+STR_DLGLOBBY_KICKED=Byl jsi vyhozen ze serveru.
 STR_DLGLOBBY_ME=Já
 STR_DLGLOBBY_PLAYER_COL=Hráč
 STR_DLGLOBBY_PING_COL=Ping
@@ -809,7 +811,7 @@ STR_MAPEDIT_GENSETTINGS_TITLE=Nastavení generování
 # Map editor statistics panel
 STR_MAPEDIT_STATS_TERRAIN=Rozložení terénu
 STR_MAPEDIT_STATS_OBJ_LINE={string1}: {number} / {number2}
-STR_MAPEDIT_STATS_MINES=Miny: {number} ({string1}% souše)
+STR_MAPEDIT_STATS_MINES=Miny: {number} ({string1}% pevniny)
 STR_MAPEDIT_STATS_SPATIAL=Prostorová analýza
 STR_MAPEDIT_STATS_LAND_COVERAGE=Pokrytí souší: {string1}%
 STR_MAPEDIT_STATS_LARGEST=Největší pevnina: {string1}%
@@ -943,6 +945,14 @@ STR_LV_MAP_SKIP_VOTE={player} hlasoval pro přeskočení mapy.
 STR_LV_MAP_SKIPPED=Mapa přeskočena. Nová mapa: {string1}
 STR_LV_TEAM_BALANCE=Vyrovnání týmů použito.
 
+# Log viewer — hlasování ve hře
+STR_LV_VOTE_START_LOBBY={player} zahájil hlasování o návrat do lobby.
+STR_LV_VOTE_START_SURRENDER={player} zahájil hlasování o vzdání se.
+STR_LV_VOTE_CAST_YES={player} hlasoval ano.
+STR_LV_VOTE_CAST_NO={player} hlasoval ne.
+STR_LV_VOTE_PASSED=Hlasování prošlo.
+STR_LV_VOTE_FAILED=Hlasování neprošlo.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Otevřít
 STR_LV_MENU_ACTION=Akce
@@ -1071,10 +1081,10 @@ STR_DLGLOBBY_PORTMAP_CHECKING=Kontroluji dostupnost serveru…
 STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server je dostupný
 STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server je nedostupný
 STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Pokouším se otevřít port firewallu pomocí UPnP / NAT-PMP a ověřit, že se k tobě tracker dostane přes tvou síť. Obvykle to trvá do 30 sekund.
-STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port byl automaticky přesměrován pomocí UPnP/NAT-PMP na %s:%u. Připojující se hráči se připojí přímo bez dalších kroků.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Port byl automaticky přesměrován pomocí UPnP/NAT-PMP na {string1}:{number}. Připojující se hráči se připojí přímo bez dalších kroků.
 STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Přímé přesměrování portu se nepodařilo nastavit, ale NAT traversal je aktivní. Připojující se hráči se koordinují přes tracker, aby pronikli firewallem tvé sítě. Funguje to ve většině domácích sítí; hráči za symetrickým NAT nebo NAT operátora (CGN) se nemusí podařit připojit.
-STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Zjištěn symetrický NAT — tvá síť přepisuje zdrojový port pro každý cíl, což znemožňuje, aby tě připojující se hráči dosáhli i přes NAT traversal. Pro úspěšné hostování ručně přesměruj UDP port %u na svém routeru na tento počítač.
-STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Nepodařilo se automaticky otevřít port firewallu (UPnP/NAT-PMP odmítl nebo není dostupný) a tracker nemohl potvrdit obousměrnou dostupnost. Pro úspěšné hostování ručně přesměruj UDP port %u na svém routeru na tento počítač.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Zjištěn symetrický NAT — tvá síť přepisuje zdrojový port pro každý cíl, což znemožňuje, aby tě připojující se hráči dosáhli i přes NAT traversal. Pro úspěšné hostování ručně přesměruj UDP port {number} na svém routeru na tento počítač.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Nepodařilo se automaticky otevřít port firewallu (UPnP/NAT-PMP odmítl nebo není dostupný) a tracker nemohl potvrdit obousměrnou dostupnost. Pro úspěšné hostování ručně přesměruj UDP port {number} na svém routeru na tento počítač.
 STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Dostupnost serveru
 STR_DLGLOBBY_TEST_CONNECTIVITY=Otestovat připojení
 STR_DLGLOBBY_TEST_TESTING=Testuji…
@@ -1159,3 +1169,198 @@ STR_CTRL_PROMPT_LINE2=Přepnout do Režimu ovladače?
 STR_CTRL_PROMPT_DESC=(Skryje lištu nabídek; Start otevře herní nabídku přizpůsobenou ovladači.\nZměnit lze v Nastavení.)
 STR_CTRL_PROMPT_NOTNOW=Teď ne
 STR_CTRL_PROMPT_DONTASK=Příště se neptát
+# macOS App menu and Window menu items
+STR_MENU_ABOUT_APP=O aplikaci WinBolo
+STR_MENU_PREFERENCES=Předvolby…
+STR_MENU_SERVICES=Služby
+STR_MENU_HIDE_APP=Skrýt WinBolo
+STR_MENU_HIDE_OTHERS=Skrýt ostatní
+STR_MENU_SHOW_ALL=Zobrazit vše
+STR_MENU_QUIT_APP=Ukončit WinBolo
+STR_MENU_ABOUT_LV=O aplikaci Prohlížeč záznamů
+STR_MENU_HIDE_LV=Skrýt Prohlížeč záznamů
+STR_MENU_QUIT_LV=Ukončit Prohlížeč záznamů
+STR_MENU_HIDE_ME=Skrýt Editor map
+STR_MENU_QUIT_ME=Ukončit Editor map
+STR_MENU_WINDOW=Okno
+STR_MENU_MINIMIZE=Minimalizovat
+STR_MENU_ZOOM=Zvětšení
+STR_MENU_ENTER_FULL_SCREEN=Přejít na celou obrazovku
+STR_MENU_BRING_ALL_TO_FRONT=Přenést vše do popředí
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=Najít internetovou hru…
+STR_MENU_FIND_LAN_GAME=Najít hru v LAN…
+STR_MENU_JOIN_BY_ADDRESS=Připojit podle adresy…
+STR_MENU_OPEN_MAP_EDITOR=Otevřít editor map
+STR_MENU_OPEN_LOG_VIEWER=Otevřít prohlížeč záznamů
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Zobrazovat novinky z winbolo.net při spuštění
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=Novinky
+STR_DLGNEWS_TITLE=Novinky
+STR_DLGNEWS_CONSENT_TITLE=WinBolo News
+STR_DLGNEWS_CONSENT_BODY1=WinBolo vám může při spuštění hry zobrazovat nové příspěvky z winbolo.net. WBN zkontrolujeme jednou při spuštění a toto okno otevřeme jen tehdy, když bude něco nového.
+STR_DLGNEWS_CONSENT_BODY2=Toto nastavení můžete kdykoli změnit v části Nastavení.
+STR_DLGNEWS_SHOW=Zobrazit novinky
+STR_DLGNEWS_DONT_SHOW=Nezobrazovat
+STR_DLGNEWS_LOADING=Načítání…
+STR_DLGNEWS_DONT_AUTOSHOW=Příště novinky automaticky nezobrazovat
+STR_DLGNEWS_COMMENTS_FMT=Komentáře: {number}
+
+# Lobby — Map chooser (1273-1284, 1388)
+STR_DLGLOBBY_CHOOSEMAP_TITLE=Vybrat mapu
+STR_DLGLOBBY_TAB_SERVERMAPS=Mapy serveru
+STR_DLGLOBBY_TAB_LOCALMAPS=Místní mapy
+STR_DLGLOBBY_TAB_UPLOAD=Nahrát
+STR_DLGLOBBY_TAB_GENERATE=Generovat
+STR_DLGLOBBY_TAB_WBNMAPS=Mapy Winbolo.net
+STR_DLGLOBBY_CLOSEMAP_PROMPT=Prohlédl sis jinou mapu.
+STR_DLGLOBBY_CLOSEMAP_QUESTION=Co chceš udělat?
+STR_DLGLOBBY_USETHISMAP=Použít tuto mapu
+STR_DLGLOBBY_REVERTCLOSE=Vrátit a zavřít
+STR_DLGLOBBY_KEEPPICKING=Pokračovat ve výběru
+STR_DLGLOBBY_CANCEL_MAPCHOOSER=Zrušit
+STR_DLGLOBBY_CHOOSE_MAP_BTN=Vybrat mapu
+
+# Lobby — Upload + WBN errors (1285-1297)
+STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT=Jiné nahrávání právě probíhá.
+STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Nahrávání je na tomto serveru zakázáno.
+STR_DLGLOBBY_UPLOAD_ERR_FULL=Knihovna map serveru je plná.
+STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Příliš mnoho požadavků — chvíli počkej a zkus to znovu.
+STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Nahrání zamítnuto serverem.
+STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Stahování selhalo
+STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Chybná odpověď od WinBolo.net
+STR_DLGLOBBY_WBN_ERR_NETERROR=Chyba sítě při stahování mapy
+STR_DLGLOBBY_WBN_ERR_HTTPERROR=WBN vrátil HTTP {number}
+STR_DLGLOBBY_WBN_ERR_MAPFAILED=Stažení mapy selhalo
+STR_DLGLOBBY_WBN_ERR_TOOBIG=Mapa přesahuje limit nahrávání 64 KB
+STR_DLGLOBBY_WBN_ERR_OOM=Nedostatek paměti pro nahrávání do fronty
+STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE=Chybná odpověď vyhledávání od WinBolo.net
+
+# Lobby — Allow-new-players + ranked-game controls (1298-1307)
+STR_DLGLOBBY_ALLOW_NOW=Nyní
+STR_DLGLOBBY_ALLOW_DURING=Během hry
+STR_DLGLOBBY_TOOLTIP_ALLOWNOW=Přijímat nové žádosti o připojení hned, dokud je lobby otevřené.
+STR_DLGLOBBY_TOOLTIP_ALLOWDURING=Pokračovat v přijímání nových hráčů i po zahájení hry.
+STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK=Ranked hry po zahájení hry nové hráče uzamknou.
+STR_DLGLOBBY_RANKED=Ranked hra
+STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED=Uzamčeno správcem serveru.
+STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST=Pouze hostitel nebo admin může přepínat Ranked hru.
+STR_DLGLOBBY_TOOLTIP_RANKED_BOTS=Před označením hry jako Ranked odstraň všechny boty z lobby.\nRanked zápasy jsou pouze pro lidi.
+STR_DLGLOBBY_TOOLTIP_RANKED_INFO=Ranked hry zakazují boty a vyžadují turnajový\ntyp hry — žádný „Otevřený" předem vyzbrojený\nrežim. Přepnutím se resetuje stav připravenosti\nvšech hráčů, aby mohl hostitel potvrdit nové nastavení.
+
+# Lobby — Team-grouped player list + kick modal (1308-1330)
+STR_DLGLOBBY_TEAM_HEADER=Tým {number}
+STR_DLGLOBBY_TEAM_MEMBERS_1=· 1 hráč
+STR_DLGLOBBY_TEAM_MEMBERS_N=· {number} hráčů
+STR_DLGLOBBY_TEAM_1BOT=1 bot
+STR_DLGLOBBY_TEAM_NBOTS=botů
+STR_DLGLOBBY_JOIN_TEAM=Připojit
+STR_DLGLOBBY_TOOLTIP_JOIN=Přejít do Týmu {number}.
+STR_DLGLOBBY_BOT_NAMING=Pojmenování botů:
+STR_DLGLOBBY_ADDBOT_LBL=Přidat bota
+STR_DLGLOBBY_TOOLTIP_ADDBOT=Přidat bota do Týmu {number} se jménem z vybraného souboru.
+STR_DLGLOBBY_TOOLTIP_RMTEAM=Odebrat Tým {number} (a jeho boty).
+STR_DLGLOBBY_TOOLTIP_DRAG=Přetáhni na tým pro přesunutí
+STR_DLGLOBBY_TAG_HOST=HOST
+STR_DLGLOBBY_TAG_ADMIN=ADMIN
+STR_DLGLOBBY_TAG_BOT=BOT
+STR_DLGLOBBY_PILL_READY=PŘIPRAVEN
+STR_DLGLOBBY_PILL_NOTREADY=NEPŘIPRAVEN
+STR_DLGLOBBY_TOOLTIP_CONFIG=Konfigurovat bota
+STR_DLGLOBBY_TOOLTIP_RMBOT=Odebrat bota
+STR_DLGLOBBY_TOOLTIP_KICK=Vykopnout hráče
+STR_DLGLOBBY_ADD_TEAM=Přidat tým
+STR_DLGLOBBY_UNASSIGNED_FMT=Nepřiřazeni ({number}):
+STR_DLGLOBBY_KICK_FMT=Vykopnout „{player}"?
+
+# Lobby — Bot AiConfig panel (1331-1344)
+STR_DLGLOBBY_BOTCFG_NAME=Název (vlastní)
+STR_DLGLOBBY_BOTCFG_REROLL=Přehodit
+STR_DLGLOBBY_BOTCFG_REROLL_TIP=Vybrat nový náhodný název ze sady týmu.
+STR_DLGLOBBY_BOTCFG_CODE=Kód bota
+STR_DLGLOBBY_BOTCFG_NONE=(žádný)
+STR_DLGLOBBY_BOTCFG_DIFFICULTY=Obtížnost
+STR_DLGLOBBY_BOTCFG_EASY=Lehká
+STR_DLGLOBBY_BOTCFG_NORMAL=Normální
+STR_DLGLOBBY_BOTCFG_HARD=Těžká
+STR_DLGLOBBY_BOTCFG_PERSONALITY=Osobnost
+STR_DLGLOBBY_BOTCFG_AGGRESSIVE=Agresivní
+STR_DLGLOBBY_BOTCFG_DEFENSIVE=Defenzivní
+STR_DLGLOBBY_BOTCFG_SNIPER=Sniper
+STR_DLGLOBBY_BOTCFG_DONE=Hotovo
+
+# Lobby — Balance-from-WBN dialog (1345-1358)
+STR_DLGLOBBY_BAL_BTN=Vyvážit z WBN
+STR_DLGLOBBY_BAL_POPUP_TITLE=Vyvážit týmy z WBN
+STR_DLGLOBBY_BAL_POPUP_BODY=Tím se vymaže každý tým v lobby a nahradí se dvěma dovednostně vyváženými týmy z winbolo.net. Nové rozdělení nabyde účinnosti okamžitě.
+STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR=V lobby je momentálně 1 bot. Zvolte, zda se bot má podílet na vyváženém rozdělení nebo zda má být odstraněn pro zápas pouze lidí.
+STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL=V lobby je momentálně {number} botů. Zvolte, zda se boti mají podílet na vyváženém rozdělení nebo zda mají být odstraněni pro zápas pouze lidí.
+STR_DLGLOBBY_BAL_BOTS_INCLUDED=Boti zahrnuti
+STR_DLGLOBBY_BAL_HUMANS_ONLY=Pouze lidé
+STR_DLGLOBBY_BAL_GO=Vyvážit
+STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST=Pouze hostitel nebo admin může požádat o dovednostně\nvyvážené rozdělení týmů z winbolo.net.
+STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH=Před rozdělením lobby do vyvážených týmů jsou\npotřeba alespoň dva připojení hráči.
+STR_DLGLOBBY_BAL_TOOLTIP_INFO=Požádat winbolo.net o rozdělení lobby do dvou\ndovednostně vyvážených týmů. Rozdělení se provede\nhned po odpovědi WBN — stávající týmy jsou nahrazeny.
+STR_DLGLOBBY_BAL_STATUS_ASKING=Dotazuji WBN\xe2\x80\xa6
+STR_DLGLOBBY_BAL_STATUS_BALANCED=Týmy vyváženy
+STR_DLGLOBBY_BAL_STATUS_NOREPLY=Žádná odpověď od WBN
+
+# Lobby — Reject toast (1359-1363)
+STR_DLGLOBBY_REJECT_DEFAULT=zamítnuto
+STR_DLGLOBBY_REJECT_NOTHOST=akce pouze pro hostitele
+STR_DLGLOBBY_REJECT_LOCKED=nastavení uzamčeno serverem
+STR_DLGLOBBY_REJECT_INVALID=neplatný požadavek
+STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Změna lobby zamítnuta: {string1}
+
+# Lobby — Lock badge fallback (1364)
+STR_DLGLOBBY_LOCK_BADGE=[uzamčeno]
+
+# Lobby — Ranked-shape tooltip (1365-1367)
+STR_DLGLOBBY_RANKED_SHAPE_TIP=Ranked hry vyžadují přesně dva týmy se stejným\npočtem: 1v1, 2v2 nebo 3v3 lidských hráčů.\n(Momentálně {number} {string1}, počty {number2} vs {number3}.)
+STR_DLGLOBBY_RANKED_SHAPE_TEAM=tým
+STR_DLGLOBBY_RANKED_SHAPE_TEAMS=týmy
+
+# Lobby — Game settings panel (1368-1381)
+STR_DLGLOBBY_SETTINGS_HEADER=Nastavení hry
+STR_DLGLOBBY_OPENHOST_NOTE=Hostitel povolil všem hráčům měnit nastavení hry.
+STR_DLGLOBBY_GAMETYPE_LBL=Typ hry
+STR_DLGLOBBY_AI_SECTION_LBL=Počítačoví hráči
+STR_DLGLOBBY_AI_NONE=Žádné počítačové tanky
+STR_DLGLOBBY_AI_ALLOW=Povolit počítačové tanky
+STR_DLGLOBBY_AI_ADVANTAGE=Povolit s výhodou
+STR_DLGLOBBY_AI_FULLADV=Povolit s plnou výhodou
+STR_DLGLOBBY_OTHER_LBL=Ostatní
+STR_DLGLOBBY_OPENHOST_CB=Povolit všem hráčům změnu nastavení
+STR_DLGLOBBY_OPENHOST_TOOLTIP=Když je zapnuto, každý připojený hráč může upravovat\nnastavení lobby — včetně změny mapy, přidávání\nnebo odebírání botů a přepínání týmů.
+STR_DLGLOBBY_TIMELIMIT_MIN=min
+STR_DLGLOBBY_PASSWORD_CB=Heslo
+STR_DLGLOBBY_PASSWORD_TOOLTIP=Když je zapnuto, noví klienti musí pro připojení\nzadat heslo. Již připojení hráči nejsou dotčeni.
+
+# Lobby — Desktop header (1382-1383)
+STR_DLGLOBBY_SERVERDISP_SP=Singleplayer
+STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
+
+# Lobby — Connectivity badge tooltip (1384)
+STR_DLGLOBBY_CONN_TEST_TIP=Probíhá test
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Hlasování: Vrátit se do lobby
+STR_VOTE_SURRENDER=Hlasování: Vzdát se
+STR_VOTE_DRAW_TAG= (Remíza)
+STR_VOTE_NEEDS_RUNNING_TIP=Dostupné po spuštění hry.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Před hlasováním o kapitulaci vyberte tým.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Vzdání je dostupné pouze tehdy, kdy zbývají právě dva týmy\ns lidskými hráči.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Hlasitost
+STR_VOLUME_MUTE=Ztlumit
+STR_REJECT_VERSION_MISMATCH=Server je verze {string1}, vy máte {string2} — prosím aktualizujte.
+STR_RETURNING_TO_LOBBY=Návrat do lobby
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=momentálně není povoleno
+STR_DLGLOBBY_BAL_STATUS_FAILED=WBN vyvážení selhalo

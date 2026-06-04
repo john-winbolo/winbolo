@@ -78,6 +78,8 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
   char playerName[PLAYER_NAME_LEN] = "\0"; /* Player Name */
   BYTE x; /* X and Y map pos of it */
   BYTE y;
+  BYTE px;
+  BYTE py;
   BYTE count; /* Looping variable */
 
   for (count=0;count<MAX_TANKS;count++) {
@@ -87,21 +89,38 @@ void screenTanksPrepare(ClientSim *cs, screenTanks *value, tank *tnk, BYTE leftP
 
   x = tankGetScreenMX(tnk);
   y = tankGetScreenMY(tnk);
+  px = tankGetScreenPX(tnk);
+  py = tankGetScreenPY(tnk);
 
   if (x >= leftPos && x <= rightPos && y >= top && y <= bottom) {
     (*value).numTanksScreen = 1;
     (*value).pos[0].mx = x - leftPos;
     (*value).pos[0].my = y - top;
-    (*value).pos[0].px = tankGetScreenPX(tnk);
-    (*value).pos[0].py = tankGetScreenPY(tnk);
+    (*value).pos[0].px = px;
+    (*value).pos[0].py = py;
     (*value).pos[0].frame = tankGetFrame(tnk);
     (*value).pos[0].playerNum = clientSimGetMyPlayerNum(cs);
     /* Get the tanks names */
     (*value).pos[0].playerName[0] = '\0';
     if (tankGetArmour(tnk) <= TANK_FULL_ARMOUR) {
       GameSim *gs = clientSimGetGameSim(cs);
-      playersGetPlayerName(&gs->plyrs, clientSimGetMyPlayerNum(cs), playerName, FALSE);
-      labelMakeTankLabel(cs, (*value).pos[0].playerName, playerName, langGetText(MESSAGE_THIS_COMPUTER), TRUE);
+      BYTE selfPN = clientSimGetMyPlayerNum(cs);
+      playersGetPlayerName(&gs->plyrs, selfPN, playerName, FALSE);
+      /* Prefer the resolved 2-char country code over the
+       * "This Computer" placeholder. The country code arrives via the
+       * WBN news fetch / server-side geo path and is written into
+       * plrs->item[selfPN].location — exactly the same field
+       * playersMakeScreenTanks reads for every other tank, so the self
+       * label parses through sdl3DrawTankLabel's @<loc> splitter the
+       * same as everyone else and gets the country flag drawn beside
+       * it. The placeholder only kicks in pre-handshake when no
+       * country has come back yet. */
+      const char *selfLoc = gs->plyrs->item[selfPN].location;
+      const char *labelLoc = (selfLoc[0] != '\0')
+                             ? selfLoc
+                             : langGetText(MESSAGE_THIS_COMPUTER);
+      labelMakeTankLabel(cs, (*value).pos[0].playerName, playerName,
+                         (char *)labelLoc, TRUE);
     }
   }
   /* Add the rest of the tanks as required */

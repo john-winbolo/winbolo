@@ -40,31 +40,24 @@ endif()
 # and Intel Macs. Override on the command line with -DCMAKE_OSX_ARCHITECTURES=arm64
 # for a single-arch build. iOS sets its own architectures via the toolchain.
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_ARCHITECTURES)
-    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures")
+    # FORCE because CLion / some IDE configures write an empty cache entry
+    # for CMAKE_OSX_ARCHITECTURES, which would otherwise block this default.
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures" FORCE)
 endif()
 
-set(WINBOLO_VERSION "1.18" CACHE STRING "WinBolo version number")
+include(cmake/bolo_version.cmake)
 
-execute_process(COMMAND git rev-parse --short HEAD
-                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-                OUTPUT_VARIABLE WINBOLO_GIT_HASH
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-                ERROR_QUIET)
-if(NOT WINBOLO_GIT_HASH)
-    set(WINBOLO_GIT_HASH "unknown")
+# Global macOS bundle metadata. Set once here so every MACOSX_BUNDLE target
+# (WinBolo, Log Viewer, Map Editor) picks up matching version/copyright keys
+# in its Info.plist, and so the deployment target applies to all of them.
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+    string(TIMESTAMP _WB_CURRENT_YEAR "%Y")
+    set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_BUNDLE_VERSION       "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_LONG_VERSION_STRING  "${WINBOLO_VERSION}")
+    set(MACOSX_BUNDLE_COPYRIGHT            "Copyright 1998-${_WB_CURRENT_YEAR} John Morrison")
 endif()
-string(TIMESTAMP WINBOLO_BUILD_DATE "%Y-%m-%d")
-
-# Derive network protocol version bytes from WINBOLO_VERSION.
-# Each digit of the version string (skipping dots) becomes one byte.
-# E.g. "1.18" -> MAJOR=0x01, MINOR=0x01, REVISION=0x08.
-string(REPLACE "." "" _VER_DIGITS "${WINBOLO_VERSION}")
-string(SUBSTRING "${_VER_DIGITS}" 0 1 _VER_D0)
-string(SUBSTRING "${_VER_DIGITS}" 1 1 _VER_D1)
-string(SUBSTRING "${_VER_DIGITS}" 2 1 _VER_D2)
-math(EXPR BOLO_VERSION_MAJOR "${_VER_D0}")
-math(EXPR BOLO_VERSION_MINOR "${_VER_D1}")
-math(EXPR BOLO_VERSION_REVISION "${_VER_D2}")
 
 set(CMAKE_C_STANDARD 99)
 
@@ -217,8 +210,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # Restore try_compile mode now that all probing dependencies are fetched
     set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_compile_type}")
 else()
-    # MinGW (MSYS2): vendor freetype so we don't depend on vcpkg or system packages
-    if(MINGW)
+    # MinGW (MSYS2): vendor freetype so we don't depend on vcpkg or system packages.
+    # macOS: vendor freetype so a universal2 (arm64;x86_64) build doesn't link
+    # against an arm64-only Homebrew libfreetype.dylib.
+    if(MINGW OR APPLE)
         set(SDLTTF_VENDORED ON CACHE BOOL "" FORCE)
         set(SDLTTF_HARFBUZZ OFF CACHE BOOL "" FORCE)
     endif()
@@ -349,7 +344,9 @@ if(MSVC)
         $<$<COMPILE_LANGUAGE:C,CXX>:/wd4554> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4701>
         $<$<COMPILE_LANGUAGE:C,CXX>:/wd4702> $<$<COMPILE_LANGUAGE:C,CXX>:/wd4996>
         $<$<COMPILE_LANGUAGE:C,CXX>:/guard:cf> $<$<COMPILE_LANGUAGE:C,CXX>:/GL>
-        $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<CONFIG:Debug>>:/RTC1>
+        # /RTC1 (Debug runtime checks) is incompatible with /fsanitize=address;
+        # gate it off when ENABLE_ASAN is on so the two don't fight.
+        $<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<CONFIG:Debug>,$<NOT:$<BOOL:${ENABLE_ASAN}>>>:/RTC1>
     )
     add_link_options(/GUARD:CF /INCREMENTAL:NO /LTCG)
 else()
@@ -359,6 +356,29 @@ else()
         -Wno-sign-compare
         -Wno-implicit-fallthrough
     )
+endif()
+
+# ---------------------------------------------------------------------------
+# AddressSanitizer (opt-in via -DENABLE_ASAN=ON)
+#
+# Instruments allocations to catch heap overflows, use-after-free, and
+# stack/global overflows at the moment of the bad access. Slows the
+# binary ~2-3x. On MinGW the runtime DLL (libasan*.dll, libssp*.dll)
+# must be on PATH or next to the .exe. With MSVC, /RTC1 is incompatible;
+# this block strips it from Debug when ASan is enabled.
+# ---------------------------------------------------------------------------
+
+option(ENABLE_ASAN "Build with AddressSanitizer instrumentation" OFF)
+if(ENABLE_ASAN)
+    if(MSVC)
+        # /RTC1 is gated off above when ENABLE_ASAN is on so the two
+        # don't conflict; just turn ASan on here.
+        add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/fsanitize=address>)
+    else()
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address)
+    endif()
+    message(STATUS "AddressSanitizer ENABLED")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -437,13 +457,17 @@ file(GLOB IOS_DATA_SOUNDS "${CMAKE_SOURCE_DIR}/data/sounds/*.wav")
 file(GLOB IOS_DATA_SVG "${CMAKE_SOURCE_DIR}/data/svg/*.png" "${CMAKE_SOURCE_DIR}/data/svg/*.svg")
 file(GLOB IOS_DATA_UI "${CMAKE_SOURCE_DIR}/data/ui/*.svg")
 file(GLOB IOS_LANG_FILES "${CMAKE_SOURCE_DIR}/data/lang/*.txt")
+# About-box markdown docs that live at the repo root but ship in data/
+set(IOS_ABOUT_DOCS
+    "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+    "${CMAKE_SOURCE_DIR}/AUTHORS.md"
+)
 
 # Bolo engine sources that stay per-target (HAVE_STEAM-divergent).
 # Everything else now lives in bolo_static (added via add_subdirectory
 # below). iOS doesn't define HAVE_STEAM, so PLAYER_FLAG_STEAM_BUILD is
-# never OR'd into selfFlags / clientHints by these two TUs.
+# never OR'd into selfFlags / clientHints by this TU.
 set(IOS_BOLO_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
 )
 
@@ -451,15 +475,14 @@ set(IOS_BOLO_SOURCES
 # or ENABLE_PILLMASSAGE_BUG, so bolo_static here has the matching
 # minimal feature set.
 add_subdirectory(src/bolo)
+add_subdirectory(src/server)
 add_subdirectory(brains)
 
 # Server sources needed for single-player mode
+# server_sim.c + servermessages.c now come from server_sim_static;
+# threads.c comes from threads_static.
 set(IOS_SERVER_SOURCES
-    src/server/server_sim.c src/server/servermessages.c
     src/server/server_stubs.c
-    src/server/server_dedicated_log_stubs.c
-    src/server/threads.c
-    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
     src/mapeditor/mapgen_imgui.cpp
 )
 
@@ -496,7 +519,6 @@ set(IOS_GUI_SOURCES
     src/gui/ui_mode.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/gui/sdl3/dialogs/imgui_welcome.cpp
-    src/gui/sdl3/dialogs/imgui_gamesetup.cpp
     src/gui/sdl3/dialogs/imgui_mapchooser.cpp
     src/gui/sdl3/dialogs/imgui_udpsetup.cpp
     src/gui/sdl3/dialogs/imgui_gamebrowser.cpp
@@ -511,8 +533,14 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
     src/gui/sdl3/dialogs/imgui_deck_pause.cpp
     src/gui/sdl3/dialogs/imgui_quickchat.cpp
-    src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/imgui_controller_prompt.cpp
+    src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/imgui_about.cpp
+    src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
+    src/gui/sdl3/map_preview_view.cpp
+    src/gui/sdl3/map_stars.cpp
+    src/gui/sdl3/wb_theme.cpp
 )
 
 # Shared mobile UI (touch input, legacy players panel for non-tablet mode)
@@ -522,7 +550,7 @@ set(IOS_MOBILE_SOURCES
 )
 
 # Lua brain scripts to bundle
-file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/NewAutopilot/*.lua")
+file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter/*.lua")
 
 
 add_executable(WinBoloIOS MACOSX_BUNDLE
@@ -546,6 +574,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     ${IOS_DATA_SVG}
     ${IOS_DATA_UI}
     ${IOS_LANG_FILES}
+    ${IOS_ABOUT_DOCS}
     ${IOS_ASSET_CATALOG}
 )
 
@@ -565,7 +594,7 @@ set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
 )
 set_source_files_properties(${IOS_BRAIN_SCRIPTS} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "Brains/NewAutopilot"
+    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter"
 )
 set_source_files_properties(${IOS_DATA_SOUNDS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/sounds"
@@ -578,6 +607,9 @@ set_source_files_properties(${IOS_DATA_UI} PROPERTIES
 )
 set_source_files_properties(${IOS_LANG_FILES} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/lang"
+)
+set_source_files_properties(${IOS_ABOUT_DOCS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "data"
 )
 set_source_files_properties(${IOS_DATA_ROOT} PROPERTIES
     MACOSX_PACKAGE_LOCATION ""
@@ -619,16 +651,13 @@ target_include_directories(WinBoloIOS PRIVATE
     src/gui/mobile
     src/server
     src/mapeditor
+    src/third_party/imgui_markdown
 )
 bolo_apply_include_rules(WinBoloIOS gui)
 bolo_grant_internal_source_access(WinBoloIOS
-    src/bolo/client_mapload.c
-    src/bolo/transport_udp_client.c
-    src/server/server_sim.c
-    src/server/servermessages.c
-    src/mapeditor/mapeditor_generate.c)
+    src/bolo/transport_udp_client.c)
 
-target_link_libraries(WinBoloIOS PRIVATE bolo_static bot_brains_static)
+target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
     nanosvg stb_image utf8proc zlibstatic
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
@@ -643,6 +672,7 @@ target_compile_definitions(WinBoloIOS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -658,6 +688,8 @@ endif()
 
 target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
 target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
+target_sources(WinBoloIOS PRIVATE src/common/md5.c)
+target_sources(WinBoloIOS PRIVATE src/common/mp_diag_log.c)
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
 # Hide dependency targets from the Xcode project — only WinBoloIOS should
@@ -709,7 +741,7 @@ find_package(OpenMP)
 # Classic "pillmassage" bug — pillboxes miss tanks at very close range due to
 # the original Bolo forward-prediction formula breaking down at short distances.
 # Enable for authentic behaviour matching the original game.
-option(ENABLE_PILLMASSAGE_BUG "Enable classic Bolo pillmassage close-range miss bug" ON)
+option(ENABLE_PILLMASSAGE_BUG "Enable classic Bolo pillmassage close-range miss bug" OFF)
 if(ENABLE_PILLMASSAGE_BUG)
     add_compile_definitions(ENABLE_PILLMASSAGE_BUG)
 endif()
@@ -839,14 +871,20 @@ if(ENABLE_SENTRY AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT EMSCRIPTEN)
     FetchContent_Declare(
         sentry
         GIT_REPOSITORY https://github.com/getsentry/sentry-native.git
-        GIT_TAG        0.7.17
+        GIT_TAG        0.14.2
         GIT_SHALLOW    TRUE
         SYSTEM
         EXCLUDE_FROM_ALL
     )
     set(SENTRY_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    # Crashpad has poor MinGW/GCC 15 support; use inproc backend on MinGW.
-    if(MINGW)
+    # Use the inproc backend on toolchains where crashpad's vendored
+    # mini_chromium / libc++ headers don't compile cleanly:
+    #   - MinGW / GCC 15: poor crashpad support upstream.
+    #   - Apple / Xcode 26: stricter constexpr rules + <math.h> macro
+    #     collisions inside libc++ headers (isnan / isfinite) hit
+    #     crashpad TUs that include <format> / <cmath>. Upstream
+    #     crashpad has not been updated for these yet.
+    if(MINGW OR APPLE)
         set(SENTRY_BACKEND "inproc" CACHE STRING "" FORCE)
     else()
         set(SENTRY_BACKEND "crashpad" CACHE STRING "" FORCE)
@@ -910,41 +948,103 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# bolo_static / server_static — the bulk of the sim and the shared
-# server-peer files. Added here so every desktop target below can link
-# them. Per-target conditional sources (client_mapload, transport_udp_client,
-# nat_portmap, server_sim, servermain, server_frontend_stubs, server_stubs,
-# posix_stubs) stay in their respective *_SOURCES lists.
+# bolo_static / server_sim_static / server_static — the bulk of the sim
+# and the shared server-peer files. Added here so every desktop target
+# below can link them. server_sim_static holds server_sim.c + servermessages.c;
+# server_static (the dedicated-server runtime) PUBLIC-links it.
+# Per-target conditional sources (transport_udp_client, nat_portmap,
+# servermain, server_frontend_stubs, server_stubs, posix_stubs) stay
+# in their respective *_SOURCES lists.
 # ---------------------------------------------------------------------------
 
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
 add_subdirectory(brains)
 
+# server_static and server_sim_static have a circular dependency that
+# GNU ld resolves with --start-group/--end-group ($<LINK_GROUP:RESCAN>).
+# MSVC's link.exe does multi-pass static-lib resolution natively, and
+# Apple's ld doesn't support library groups at all -- both also reject
+# $<LINK_GROUP> for the CXX link language, so emit plain library names
+# there. Use this variable in target_link_libraries wherever both libs
+# are linked together.
+if(MSVC OR APPLE)
+    set(SERVER_LINK_GROUP server_static server_sim_static)
+else()
+    set(SERVER_LINK_GROUP "$<LINK_GROUP:RESCAN,server_static,server_sim_static>")
+endif()
+
+# ---------------------------------------------------------------------------
+# winbolonet_core / winbolonet_server / winbolonet_client — three static
+# libs replacing the inline winbolonet/* source lists. Binaries pick the
+# subset they need via target_link_libraries.
+# ---------------------------------------------------------------------------
+add_library(winbolonet_core STATIC
+    src/winbolonet/http.c
+    src/winbolonet/winbolonetthread.c
+    src/winbolonet/winbolonetevents.c
+    src/winbolonet/winbolonet_core.c
+    src/winbolonet/wbn_bearer.c
+    src/winbolonet/wbn_prefs_path.c
+    src/winbolonet/wbn_country_cache.c
+)
+target_include_directories(winbolonet_core PRIVATE
+    ${cjson_SOURCE_DIR}
+    src/third_party/tweetnacl
+)
+target_link_libraries(winbolonet_core PRIVATE SDL3::SDL3 CURL::libcurl)
+bolo_apply_include_rules(winbolonet_core runtime_only)
+
+add_library(winbolonet_server STATIC
+    src/winbolonet/winbolonet_server.c
+)
+target_include_directories(winbolonet_server PRIVATE
+    ${cjson_SOURCE_DIR}
+)
+target_link_libraries(winbolonet_server PRIVATE SDL3::SDL3)
+target_compile_definitions(winbolonet_server PRIVATE
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+bolo_apply_include_rules(winbolonet_server runtime_only)
+
+add_library(winbolonet_client STATIC
+    src/winbolonet/winbolonet_client.c
+    src/winbolonet/wbn_comments.cpp
+    src/winbolonet/wbn_news.cpp
+    src/winbolonet/wbn_news_parser.cpp
+)
+target_include_directories(winbolonet_client PRIVATE
+    ${cjson_SOURCE_DIR}
+)
+target_link_libraries(winbolonet_client PRIVATE SDL3::SDL3)
+bolo_apply_include_rules(winbolonet_client runtime_only)
+
 # ---------------------------------------------------------------------------
 # WinBolo Client (cross-platform: Windows, Linux, macOS)
 # ---------------------------------------------------------------------------
 
 set(CLIENT_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/ui_mode.c
-    src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c
+    src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_gamesetup.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
+    src/gui/sdl3/map_preview_view.cpp
+    src/gui/sdl3/map_stars.cpp
+    src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c src/gui/sdl3/sound.c
-    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_dedicated_log_stubs.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/third_party/tweetnacl/tweetnacl.c
 )
 
 
@@ -1012,6 +1112,7 @@ target_compile_definitions(WinBolo PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1020,6 +1121,14 @@ target_compile_definitions(WinBolo PRIVATE
 # macOS trackpad pinch-to-zoom support
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(WinBolo PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_sources(WinBolo PRIVATE src/gui/sdl3/platform/mac_menubar.mm)
+    # Embedded Log Viewer reuses WinBolo's window — the LogViewer NSMenu
+    # shim is linked in so gamefront.c can swap menu bars on entry/exit.
+    target_sources(WinBolo PRIVATE src/logviewer/platform/mac_menubar.mm)
+    # Same story for the embedded Map Editor entry from the welcome
+    # screen — the editor swaps WinBolo's menu out and restores it on
+    # exit via its own NSMenu shim.
+    target_sources(WinBolo PRIVATE src/mapeditor/platform/mac_menubar.mm)
     target_link_libraries(WinBolo PRIVATE "-framework AppKit")
 endif()
 
@@ -1056,14 +1165,19 @@ target_include_directories(WinBolo PRIVATE
     src/logviewer/platform
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
+    src/third_party/imgui_markdown
 )
 bolo_apply_include_rules(WinBolo gui)
+# bg_game.c: dev-mode lobby-background animation that assigns bot
+# teams directly because the background loop has no ClientSim per
+# bot. The write goes through a privatised setter; the clean
+# endpoint is moving bot team-assignment into serverSimCreateBot,
+# at which point the grant deletes.
 bolo_grant_internal_source_access(WinBolo
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
+    src/gui/sdl3/bg_game.c
     src/mapeditor/mapeditor.c
     src/mapeditor/mapeditor_export.c
-    src/mapeditor/mapeditor_generate.c
     src/mapeditor/mapeditor_validate.c)
 
 if(WIN32)
@@ -1112,7 +1226,13 @@ endif()
 # bolo_static contains ml_brain.c unconditionally; when HAVE_ONNXRUNTIME
 # is set the lib was compiled with the real path and PUBLIC-links
 # onnxruntime, so consumers inherit the link without repeating it.
-target_link_libraries(WinBolo PRIVATE bolo_static server_static bot_brains_static)
+target_link_libraries(WinBolo PRIVATE
+    bolo_static
+    ${SERVER_LINK_GROUP}
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server
+    winbolonet_client)
 
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBolo PRIVATE src/common/sentry_integration.c)
@@ -1127,9 +1247,16 @@ endif()
 # Steamworks SDK integration (optional)
 set(STEAMWORKS_SDK_DIR "${CMAKE_SOURCE_DIR}/third_party/steamworks")
 if(EXISTS "${STEAMWORKS_SDK_DIR}/public/steam/steam_api.h")
+    if(APPLE)
+        set(STEAM_RUNTIME_LIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/osx/libsteam_api.dylib")
+    elseif(WIN32)
+        set(STEAM_RUNTIME_LIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/win64/steam_api64.dll")
+    else()
+        set(STEAM_RUNTIME_LIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/linux64/libsteam_api.so")
+    endif()
     add_library(steam_api SHARED IMPORTED)
     set_target_properties(steam_api PROPERTIES
-        IMPORTED_LOCATION "${STEAMWORKS_SDK_DIR}/redistributable_bin/linux64/libsteam_api.so"
+        IMPORTED_LOCATION "${STEAM_RUNTIME_LIB}"
         IMPORTED_IMPLIB "${STEAMWORKS_SDK_DIR}/redistributable_bin/win64/steam_api64.lib"
         INTERFACE_INCLUDE_DIRECTORIES "${STEAMWORKS_SDK_DIR}/public"
     )
@@ -1157,11 +1284,23 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMENT "Copying WinBolo data files to output directory"
 )
 
+# Ship the top-level docs (Third Party Notices, Authors) inside data/
+# so the About box can find them via SDL_GetBasePath()/data/.
+add_custom_command(TARGET WinBolo POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+        "${WINBOLO_DATA_DIR}/data/THIRD_PARTY_NOTICES.md"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/AUTHORS.md"
+        "${WINBOLO_DATA_DIR}/data/AUTHORS.md"
+    COMMENT "Copying About-box markdown docs to data/"
+)
+
 add_custom_command(TARGET WinBolo POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
-        "${WINBOLO_DATA_DIR}/Brains/NewAutopilot"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "${WINBOLO_DATA_DIR}/Brains/GoalHunter"
     COMMENT "Copying brain scripts to output Brains/ directory"
 )
 
@@ -1238,7 +1377,7 @@ if(EXISTS "${STEAMWORKS_SDK_DIR}/public/steam/steam_api.h")
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${STEAMWORKS_SDK_DIR}/redistributable_bin/osx/libsteam_api.dylib"
                 "$<TARGET_FILE_DIR:WinBolo>"
-            COMMENT "Copying libsteam_api.dylib to WinBolo output directory"
+            COMMENT "Copying libsteam_api.dylib to WinBolo bundle"
         )
     else()
         add_custom_command(TARGET WinBolo POST_BUILD
@@ -1248,12 +1387,19 @@ if(EXISTS "${STEAMWORKS_SDK_DIR}/public/steam/steam_api.h")
             COMMENT "Copying libsteam_api.so to WinBolo output directory"
         )
     endif()
-    add_custom_command(TARGET WinBolo POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_SOURCE_DIR}/steam_appid.txt"
-            "$<TARGET_FILE_DIR:WinBolo>"
-        COMMENT "Copying steam_appid.txt to WinBolo output directory"
-    )
+    # On macOS, $<TARGET_FILE_DIR:WinBolo> is WinBolo.app/Contents/MacOS, so
+    # copying steam_appid.txt there embeds it inside the signed bundle — it then
+    # has to be stripped before signing/notarizing. Skip it on Apple; Steam
+    # supplies the App ID via env when it launches the game. For local Mac dev
+    # testing, drop a steam_appid.txt into the cwd by hand.
+    if(NOT APPLE)
+        add_custom_command(TARGET WinBolo POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_SOURCE_DIR}/steam_appid.txt"
+                "$<TARGET_FILE_DIR:WinBolo>"
+            COMMENT "Copying steam_appid.txt to WinBolo output directory"
+        )
+    endif()
 endif()
 # On Windows, also copy vcpkg / imported DLLs (curl, zlib, etc.)
 if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
@@ -1287,10 +1433,9 @@ set(SERVER_SOURCES
     src/server/server_dedicated_log.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/headless/cmd_stdin.c
+    src/third_party/tweetnacl/tweetnacl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
 )
 
 
@@ -1300,6 +1445,7 @@ target_compile_definitions(WinBoloDS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1318,8 +1464,7 @@ bolo_grant_internal_source_access(WinBoloDS
     src/bolo/transport_udp_client.c
     src/server/servermain.c
     src/server/server_frontend_stubs.c
-    src/server/server_dedicated_log.c
-    src/mapeditor/mapeditor_generate.c)
+    src/server/server_dedicated_log.c)
 
 if(WIN32)
     target_sources(WinBoloDS PRIVATE
@@ -1345,7 +1490,13 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(WinBoloDS PRIVATE bolo_static server_static bot_brains_static)
+target_link_libraries(WinBoloDS PRIVATE
+    bolo_static
+    ${SERVER_LINK_GROUP}
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server
+    winbolonet_client)
 target_link_libraries(WinBoloDS PRIVATE minizip SDL3::SDL3 CURL::libcurl lua_static cjson utf8proc)
 
 # libplum NAT port mapping (optional). nat_portmap.c stays per-target
@@ -1358,6 +1509,8 @@ endif()
 # Sentry crash reporting (always compile — stubs when HAVE_SENTRY is off)
 target_sources(WinBoloDS PRIVATE src/common/sentry_integration.c)
 target_sources(WinBoloDS PRIVATE src/common/wb_log.c)
+target_sources(WinBoloDS PRIVATE src/common/md5.c)
+target_sources(WinBoloDS PRIVATE src/common/mp_diag_log.c)
 if(HAVE_SENTRY)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_SENTRY=1)
     if(SENTRY_DSN)
@@ -1408,8 +1561,8 @@ endif()
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/NewAutopilot"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter"
     COMMENT "Copying brain scripts to WinBoloDS output Brains/ directory"
 )
 
@@ -1456,6 +1609,7 @@ set(LOGVIEWER_IMGUI_SOURCES
 # LOGVIEWER_LIB_SOURCES because the WinBolo client already links its own copy.
 set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
+    src/gui/sdl3/dialogs/dialog_footer.cpp
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
 
@@ -1467,8 +1621,6 @@ set(LOGVIEWER_PLATFORM_SOURCES
 # WinBolo.net HTTP client + Ed25519 signing — shared with the SDL3 client and
 # servers. LogViewer uses it to fetch/post comments on logs that have a WBN key.
 set(LOGVIEWER_WBN_SOURCES
-    src/winbolonet/http.c
-    src/winbolonet/wbn_comments.cpp
     src/third_party/tweetnacl/tweetnacl.c
 )
 
@@ -1494,6 +1646,7 @@ target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1514,7 +1667,6 @@ if(WIN32)
 endif()
 
 if(APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
     set_target_properties(LogViewer PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/src/logviewer/platform/Info.plist"
@@ -1541,6 +1693,8 @@ target_include_directories(LogViewer PRIVATE
 bolo_apply_include_rules(LogViewer runtime_only)
 
 target_link_libraries(LogViewer PRIVATE
+    winbolonet_core
+    winbolonet_client
     minizip SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends
     nanosvg stb_image CURL::libcurl cjson
 )
@@ -1552,9 +1706,11 @@ if(MATH_LIB)
     target_link_libraries(LogViewer PRIVATE ${MATH_LIB})
 endif()
 
-# macOS trackpad pinch-to-zoom support
+# macOS trackpad pinch-to-zoom support, plus native NSMenu shim for the
+# standalone Log Viewer.app menu bar.
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(LogViewer PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_sources(LogViewer PRIVATE src/logviewer/platform/mac_menubar.mm)
     target_link_libraries(LogViewer PRIVATE "-framework AppKit")
 endif()
 
@@ -1587,18 +1743,15 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(HEADLESS_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
+    src/headless/cmd_stdin.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_dedicated_log_stubs.c
-    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/third_party/tweetnacl/tweetnacl.c
 )
 
 
@@ -1620,6 +1773,7 @@ target_compile_definitions(WinBoloHeadless PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1636,9 +1790,7 @@ target_include_directories(WinBoloHeadless PRIVATE
 )
 bolo_apply_include_rules(WinBoloHeadless runtime_only)
 bolo_grant_internal_source_access(WinBoloHeadless
-    src/bolo/client_mapload.c
-    src/bolo/transport_udp_client.c
-    src/mapeditor/mapeditor_generate.c)
+    src/bolo/transport_udp_client.c)
 
 if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)
@@ -1656,7 +1808,13 @@ if(TARGET maxminddb)
     target_compile_definitions(WinBoloHeadless PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(WinBoloHeadless PRIVATE bolo_static server_static bot_brains_static)
+target_link_libraries(WinBoloHeadless PRIVATE
+    bolo_static
+    ${SERVER_LINK_GROUP}
+    bot_brains_static
+    winbolonet_core
+    winbolonet_server
+    winbolonet_client)
 target_link_libraries(WinBoloHeadless PRIVATE
     SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
 
@@ -1678,8 +1836,8 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/NewAutopilot"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
@@ -1701,7 +1859,6 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(GYM_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
@@ -1709,10 +1866,7 @@ set(GYM_SOURCES
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/server_dedicated_log_stubs.c
-    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
-    src/winbolonet/winbolonet.c src/winbolonet/http.c src/winbolonet/wbn_comments.cpp
-    src/winbolonet/winbolonetthread.c src/winbolonet/winbolonetevents.c src/third_party/tweetnacl/tweetnacl.c
+    src/gym/winbolonet_stub.c
     src/gym/winbolo_gym.c
 )
 
@@ -1736,6 +1890,7 @@ target_compile_definitions(winbolo_gym PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1768,9 +1923,12 @@ if(TARGET maxminddb)
     target_compile_definitions(winbolo_gym PRIVATE HAVE_MAXMINDDB=1)
 endif()
 
-target_link_libraries(winbolo_gym PRIVATE bolo_static server_static bot_brains_static)
 target_link_libraries(winbolo_gym PRIVATE
-    SDL3::SDL3 minizip lua_static CURL::libcurl cjson utf8proc)
+    bolo_static
+    ${SERVER_LINK_GROUP}
+    bot_brains_static)
+target_link_libraries(winbolo_gym PRIVATE
+    SDL3::SDL3 minizip lua_static utf8proc)
 
 if(OpenMP_C_FOUND)
     target_link_libraries(winbolo_gym PRIVATE OpenMP::OpenMP_C)
@@ -1813,15 +1971,13 @@ endif()
 # ---------------------------------------------------------------------------
 
 set(BRAINTEST_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
-    src/server/server_dedicated_log_stubs.c
-    src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c
+    src/server/server_stubs.c
+    src/braintest/braintest_lifecycle_stub.c
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
     src/braintest/braintest_viz_registry.c
     src/braintest/braintest_vizwindow.cpp
@@ -1864,6 +2020,7 @@ target_compile_definitions(BrainTest PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1894,7 +2051,7 @@ else()
     target_compile_options(BrainTest PRIVATE -fcommon)
 endif()
 
-target_link_libraries(BrainTest PRIVATE bolo_static bot_brains_static)
+target_link_libraries(BrainTest PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(BrainTest PRIVATE
     SDL3::SDL3 minizip lua_static
     nanosvg stb_image utf8proc cjson
@@ -1908,8 +2065,8 @@ add_custom_command(TARGET BrainTest POST_BUILD
 add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BrainTest>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/NewAutopilot"
-        "$<TARGET_FILE_DIR:BrainTest>/Brains/NewAutopilot"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
+        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
@@ -1921,7 +2078,6 @@ add_custom_command(TARGET BrainTest POST_BUILD
 # ---------------------------------------------------------------------------
 
 set(MAPEDITOR_SOURCES
-    src/bolo/client_mapload.c
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c
@@ -1929,9 +2085,9 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
-    src/server/servermessages.c src/server/server_sim.c src/server/server_stubs.c
-    src/server/server_dedicated_log_stubs.c
-    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_generate.c src/mapeditor/mapeditor_maze.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    src/server/server_stubs.c
+    src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    src/gui/sdl3/dialogs/dialog_footer.cpp
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
@@ -1953,6 +2109,7 @@ target_compile_definitions(MapEditor PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
     WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
@@ -1978,15 +2135,18 @@ else()
     target_compile_options(MapEditor PRIVATE -fcommon)
 endif()
 
-target_link_libraries(MapEditor PRIVATE bolo_static bot_brains_static)
+target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
     nanosvg stb_image utf8proc
 )
 
-# macOS trackpad pinch-to-zoom support
+# macOS trackpad pinch-to-zoom support, plus native NSMenu shim for the
+# Map Editor's menu bar (used by both the standalone MapEditor.app and
+# the embedded entry from WinBolo's welcome screen).
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_sources(MapEditor PRIVATE src/gui/sdl3/macos_pinch.m)
+    target_sources(MapEditor PRIVATE src/mapeditor/platform/mac_menubar.mm)
     target_link_libraries(MapEditor PRIVATE "-framework AppKit")
 endif()
 
@@ -2012,6 +2172,33 @@ add_custom_command(TARGET MapEditor POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3_ttf::SDL3_ttf>" "$<TARGET_FILE_DIR:MapEditor>"
     COMMENT "Copying SDL3 and SDL3_ttf shared libraries to MapEditor output directory"
 )
+
+# bot_brains_static pulls in onnxruntime, so MapEditor inherits the
+# dylib dependency. Mirror the WinBolo POST_BUILD copy step so the
+# .app bundle ships with the dylib next to the executable — without
+# this, launching the standalone MapEditor.app fails at dyld load
+# time with "Library not loaded: @rpath/libonnxruntime.*.dylib".
+if(HAVE_ONNXRUNTIME)
+    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
+        add_custom_command(TARGET MapEditor POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:MapEditor>"
+            COMMENT "Copying ONNX Runtime DLL to MapEditor output directory"
+        )
+    elseif(DEFINED ONNXRUNTIME_LIBDIR)
+        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
+        foreach(_f ${_ORT_ALL_SO})
+            # Skip .dSYM bundles — they are directories, not files, so
+            # copy_if_different fails on them. They are debug symbols that
+            # don't need to ship next to the binary.
+            if(_f MATCHES "\\.dSYM$")
+                continue()
+            endif()
+            add_custom_command(TARGET MapEditor POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:MapEditor>"
+            )
+        endforeach()
+    endif()
+endif()
 if(APPLE)
     add_custom_command(TARGET MapEditor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -2068,8 +2255,23 @@ if(HAVE_SENTRY AND TARGET crashpad_handler)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:crashpad_handler>" "${DIST_DIR}/")
 endif()
 
+# Strip debug info from the staged Linux binaries before zipping.  Only Linux
+# carries embedded DWARF in the ELF binaries; Windows keeps it in separate .pdb
+# files and macOS in .dSYM bundles, so neither needs stripping here.  We strip
+# the staged copies in DIST_DIR, never the build-tree originals, so the symbols
+# uploaded to Sentry stay intact regardless of build/upload order.
+set(DIST_STRIP_CMD "")
+if(UNIX AND NOT APPLE AND CMAKE_STRIP)
+    set(DIST_STRIP_CMD
+        COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:WinBolo>"
+        COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:WinBoloDS>"
+        COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:LogViewer>"
+        COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:MapEditor>"
+        COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:BrainTest>")
+endif()
+
 add_custom_target(dist
-    DEPENDS WinBolo WinBoloDS LogViewer MapEditor
+    DEPENDS WinBolo WinBoloDS LogViewer MapEditor BrainTest
     COMMENT "Creating distribution zip ${DIST_ZIP}"
 
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${DIST_DIR}"
@@ -2081,6 +2283,7 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:WinBoloDS>" "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:LogViewer>" "${DIST_DIR}/"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:MapEditor>" "${DIST_DIR}/"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:BrainTest>" "${DIST_DIR}/"
     ${DIST_CRASHPAD_HANDLER_CMD}
 
     # Shared libraries — glob all DLLs / .so / .dylib from the build output
@@ -2096,8 +2299,16 @@ add_custom_target(dist
     # Steam Input action manifest (Steam reads from controller_config/)
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/controller_config" "${DIST_DIR}/controller_config"
 
+    # About-box docs (Authors, Third Party Notices) ship inside data/ so the
+    # About box can find them via SDL_GetBasePath()/data/.
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/data/THIRD_PARTY_NOTICES.md"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
+
     # Brain scripts
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/brains/NewAutopilot" "${DIST_DIR}/Brains/NewAutopilot"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/brains/GoalHunter" "${DIST_DIR}/Brains/GoalHunter"
+
+    # Strip debug info from the staged Linux binaries (no-op on Win/macOS)
+    ${DIST_STRIP_CMD}
 
     # Create zip (files at the archive root — no winbolo/ prefix).
     # chdir into DIST_DIR for the tar step only; the target's WORKING_DIRECTORY
@@ -2111,11 +2322,341 @@ add_custom_target(dist
     VERBATIM
 )
 
+# ---------------------------------------------------------------------------
+# macOS code-signing + notarization + stapling
+# (cmake --build <dir> --target sign_macos)
+# ---------------------------------------------------------------------------
+if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_custom_target(sign_macos
+        COMMAND "${CMAKE_SOURCE_DIR}/scripts/sign_macos.sh" "${CMAKE_BINARY_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        COMMENT "Sign + notarize + staple all .app bundles (requires Developer ID cert)"
+        VERBATIM
+        USES_TERMINAL
+    )
+
+    add_custom_target(package_macos
+        COMMAND "${CMAKE_SOURCE_DIR}/scripts/package_macos.sh" "${CMAKE_BINARY_DIR}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        DEPENDS sign_macos
+        COMMENT "Bundle signed apps + WinBoloDS into a notarized DMG (requires create-dmg)"
+        VERBATIM
+        USES_TERMINAL
+    )
+endif()
+
 enable_testing()
-add_test(NAME baseline
-         COMMAND bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
-                      $<TARGET_FILE:WinBoloHeadless>
-                      $<TARGET_FILE:WinBoloDS>)
-set_tests_properties(baseline PROPERTIES TIMEOUT 120)
+
+# Per-scenario CTest entries. Scenario names must stay in sync with the
+# dispatch_scenario case in tests/baseline/run.sh. --fast scenarios have
+# no shared state and parallelize freely. UDP scenarios share a hardcoded
+# port per helper, so each helper's scenarios get a matching RESOURCE_LOCK
+# — different helpers (different ports) still run concurrently.
+set(_baseline_fast
+    everard_island_1bot_idle
+    everard_island_1bot_sit
+    everard_island_1bot_drive
+    everard_island_1bot_shoot
+    everard_island_1bot_watch
+    forest_rig_1bot_idle
+    forest_rig_1bot_sit
+    forest_rig_1bot_drive
+    forest_rig_1bot_shoot
+    forest_rig_1bot_watch
+    slugfest_iv_1bot_idle
+    slugfest_iv_1bot_sit
+    slugfest_iv_1bot_drive
+    slugfest_iv_1bot_shoot
+    slugfest_iv_1bot_watch
+    centralize_events_fast
+    centralize_events_teams_fast
+    centralize_events_alliance_fast
+    centralize_events_name_change_fast
+    centralize_events_map_skip_fast
+)
+set(_baseline_udp_50001 ds_4bot_melee ds_2v2_team)
+set(_baseline_udp_50002 centralize_events_udp)
+set(_baseline_udp_50003
+    centralize_events_name_change_udp
+    centralize_events_map_skip_udp
+    centralize_events_alliance_leave_udp
+)
+set(_baseline_udp_50004 centralize_events_shutdown_udp)
+set(_baseline_udp_50005 centralize_events_alliance_2client_udp)
+set(_baseline_udp_50006 centralize_events_game_over_udp)
+set(_baseline_udp_50007
+    centralize_events_lobby_smoke_udp
+    centralize_events_lobby_name_change_udp
+)
+set(_baseline_udp_50008
+    centralize_events_chat_unicast_3client_udp
+    centralize_events_chat_alliance_3client_udp
+)
+
+foreach(_name IN LISTS _baseline_fast)
+    add_test(NAME baseline.${_name}
+             COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
+                          --scenario ${_name}
+                          $<TARGET_FILE:WinBoloHeadless>
+                          $<TARGET_FILE:WinBoloDS>)
+    set_tests_properties(baseline.${_name} PROPERTIES TIMEOUT 60)
+endforeach()
+
+foreach(_port 50001 50002 50003 50004 50005 50006 50007 50008)
+    foreach(_name IN LISTS _baseline_udp_${_port})
+        add_test(NAME baseline.${_name}
+                 COMMAND stdbuf -oL bash ${CMAKE_SOURCE_DIR}/tests/baseline/run.sh
+                              --scenario ${_name}
+                              $<TARGET_FILE:WinBoloHeadless>
+                              $<TARGET_FILE:WinBoloDS>)
+        set_tests_properties(baseline.${_name} PROPERTIES
+                             TIMEOUT 60
+                             RESOURCE_LOCK "udp_${_port}")
+    endforeach()
+endforeach()
+
+# ---------------------------------------------------------------------------
+# WinBoloUnitTests — in-process tests of bolo_static / server_sim_static
+# / server_static without the SDL3 GUI. Each test is a registered name
+# dispatched from tests/unit/test_main.c; CTest entries below run them
+# one at a time.
+#
+# Uses the `unittests` privileged include profile defined in
+# cmake/bolo_lib.cmake; scope and expiry documented in
+# docs/ARCHITECTURE.md.
+# ---------------------------------------------------------------------------
+set(WINBOLO_UNITTESTS_SOURCES
+    tests/unit/test_main.c
+    tests/unit/test_stubs.c
+    tests/unit/test_transport_local_passive_threads.c
+    tests/unit/test_sp_subscriber_delivery.c
+    tests/unit/test_active_local_input_to_shot.c
+    tests/unit/test_sp_shoot_through_timer.c
+    tests/unit/test_ini_reader_writer.c
+    tests/unit/test_lobby_control_variants.c
+    tests/unit/test_command_codec_roundtrip.c
+    tests/unit/test_command_rejected_apply.c
+    tests/unit/test_alliance_reset.c
+    tests/unit/test_lobby_add_bot_dispatch.c
+    tests/unit/test_command_queue_drain.c
+    tests/unit/test_game_vote_control.c
+    tests/unit/test_vote_surrender.c
+    tests/unit/test_vote_toggle_modes.c
+    tests/unit/test_lobby_set_team_clamps.c
+    tests/unit/test_md5.c
+    src/common/md5.c
+    src/common/mp_diag_log.c
+    tests/unit/test_ranked_lobby.c
+    tests/unit/test_lobby_locks.c
+    tests/unit/test_upload_cap.c
+    tests/unit/test_map_field_clamps.c
+    tests/unit/test_map_reload_rollback.c
+    tests/unit/test_upload_busy.c
+    tests/unit/test_upload_filename_safe.c
+    tests/unit/test_lobby_time_minutes_valid.c
+    tests/unit/test_lobby_bot_name.c
+    tests/unit/test_lobby_map_list_chunked.c
+    tests/unit/test_wbn_bearer_state.c
+    tests/unit/test_wbn_rekey_codec.c
+    tests/unit/test_wbn_news_parse.cpp
+    tests/unit/test_wbn_country_cache.c
+    tests/unit/test_control_event_queue.c
+    tests/unit/test_brain_crash_log.c
+    tests/unit/test_brain_inbox.c
+    tests/unit/test_bolo_rand.c
+    tests/unit/test_lobby_runtime_fixes.c
+    tests/unit/test_bot_chat_routing.c
+    tests/unit/test_brain_internal_msg_routing.c
+    tests/unit/test_subscriber_arm_orphans.c
+    tests/unit/test_identity_survives_reset.c
+    tests/unit/test_wbn_session_rotation.c
+    tests/unit/test_lobby_reset_cleanup.c
+    tests/unit/test_log_roundtrip.c
+    # Compiled standalone (libcurl-free) so the bearer-state, news-parser
+    # and country-cache tests can link without dragging the rest of
+    # winbolonet_core into the test binary. The test_stubs.c stubs cover
+    # the other winbolonet_* functions; these TUs only add the bearer,
+    # prefs-path, country-cache and parser surfaces.
+    src/winbolonet/wbn_bearer.c
+    src/winbolonet/wbn_prefs_path.c
+    src/winbolonet/wbn_country_cache.c
+    src/winbolonet/wbn_news_parser.cpp
+    # transport_udp_client.c stays per-target because of HAVE_STEAM
+    # gating (it's excluded from bolo_static for that reason). Linked
+    # here without HAVE_STEAM so client_net.c's transportUdpClient*
+    # references resolve — the tests never run the UDP code path.
+    src/bolo/transport_udp_client.c
+    # server_stubs.c (transportUdpServer* / serverLifecycle* stubs)
+    # is intentionally NOT linked here: server_static (linked below)
+    # provides the real transport_udp_server.c and server_lifecycle.c
+    # bodies, and stubbing them too would collide at link time. The
+    # client-side hooks server_lifecycle.c still references but
+    # server_static doesn't own (winbolonet* in src/winbolonet/,
+    # natPortMap* in src/bolo/nat_portmap.c) stay stubbed in
+    # test_stubs.c — acceptRemoteClients=false keeps them off the
+    # tick-time call paths.
+    src/lzw/dcodlzw.c
+    src/lzw/ecodlzw.c
+)
+
+add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
+target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c)
+target_compile_definitions(WinBoloUnitTests PRIVATE
+    HAVE_SCREEN_C=1
+    WINBOLO_VERSION="${WINBOLO_VERSION}"
+    WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+    WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+    WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+    BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+    BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+    BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+)
+
+target_include_directories(WinBoloUnitTests PRIVATE
+    src/gui/sdl3
+    src/server
+    src
+    src/winbolonet
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${cjson_SOURCE_DIR}
+)
+bolo_apply_include_rules(WinBoloUnitTests unittests)
+
+target_link_libraries(WinBoloUnitTests PRIVATE
+    bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+    SDL3::SDL3 minizip lua_static cjson utf8proc)
+
+if(WIN32)
+    target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
+    target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
+else()
+    target_sources(WinBoloUnitTests PRIVATE src/server/posix_stubs.c)
+    target_link_libraries(WinBoloUnitTests PRIVATE ${MATH_LIB} pthread)
+    target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
+endif()
+
+set_flat_output(WinBoloUnitTests "${CMAKE_BINARY_DIR}")
+
+set(_unit_test_names
+    transport_local_passive_threads
+    sp_subscriber_delivery
+    active_local_input_to_shot
+    sp_shoot_through_timer
+    ini_writer_persistence
+    ini_writer_insertion_point
+    ini_writer_security
+    lobby_settings_codec_and_apply
+    lobby_team_meta_codec_and_apply
+    lobby_bot_config_codec_and_apply
+    lobby_bot_brain_codec_and_apply
+    lobby_brain_list_codec_and_apply
+    command_codec_roundtrip_variants
+    command_codec_cmdseq_slot
+    command_codec_bounds_checks
+    command_rejected_parks_name_codes
+    command_rejected_ignores_other_slot
+    command_rejected_clear_resets_both_fields
+    lobby_add_bot_rejects_empty_brain_path
+    lobby_add_bot_rejects_ai_none
+    lobby_add_bot_rejects_not_in_lobby
+    lobby_add_bot_rejects_non_host_sender
+    command_queue_first_submit_drains
+    command_queue_second_submit_does_not_drain
+    command_queue_ack_drains_pending_tail
+    command_queue_ack_clearing_queue_skips_drain
+    vote_surrender_rejects_unassigned_caller
+    vote_surrender_starts_for_real_team_caller
+    vote_surrender_rejects_three_active_teams
+    vote_toggle_standalone_no_does_nothing
+    vote_toggle_invalid_mode_dropped
+    vote_toggle_yes_opens_vote
+    vote_toggle_no_during_running_records_answered
+    lobby_set_team_clamps_max_tanks
+    lobby_set_team_accepts_max_legal
+    lobby_set_team_accepts_unassigned
+    lobby_set_team_clamps_above_max
+    ranked_flag_persists_with_one_player
+    ranked_shape_gate
+    lobby_lock_bit_lookup
+    lobby_lock_rejects_settings
+    lobby_lock_mask_roundtrip
+    upload_cap_enforced
+    map_field_clamps_evil
+    map_field_clamps_passthrough
+    map_field_clamps_angry_start
+    map_reload_rollback
+    upload_busy_predicate
+    upload_filename_safe
+    lobby_bot_name_rejects_reserved_prefix
+    lobby_bot_name_rejects_disallowed_char
+    lobby_bot_name_rejects_collision
+    lobby_bot_name_skip_does_not_bypass_validator_prefix
+    lobby_bot_name_skip_does_not_bypass_validator_control
+    lobby_bot_name_skip_excludes_self_from_uniqueness
+    lobby_bot_name_accepts_clean_unique
+    lobby_map_list_chunked
+    lobby_map_search_chunked
+    wbn_bearer_state
+    wbn_rekey_codec
+    wbn_news_parse
+    wbn_country_cache
+    queue_init_is_valid
+    queue_enqueue_advances_nextSeq
+    queue_ack_advance_within_range
+    queue_stale_ack_above_nextSeq
+    queue_wipe_resets_both_seqs
+    queue_enqueue_into_empty_after_wipe
+    queue_hasspace_at_capacity
+    brain_crash_log_writes_file
+    brain_crash_log_falls_back_to_luaptr
+    brain_inbox_push_peek_fifo
+    brain_inbox_overflow_drops_oldest
+    brain_inbox_legacy_drain_fifo
+    brain_inbox_clear_resets
+    bolo_rand_golden_sequence
+    countdown_abort_publishes_phase
+    lobby_auto_unready_clears_humans_keeps_bots
+    mapdir_root_fallback
+    bot_chat_send_to_human_lands_in_human_inbox
+    bot_chat_send_to_other_bot_lands_in_recipient_inbox
+    bot_chat_receive_from_human_lands_in_bot_inbox
+    bot_chat_receive_from_other_bot_via_broadcast
+    internal_msg_reaches_allied_bot
+    internal_msg_skips_sender_self
+    internal_msg_skips_non_allied_bot
+    internal_msg_skips_inactive_bot_slot
+    internal_msg_handles_oversized_body
+    internal_msg_null_inputs_are_noop
+    alliance_request_flags_addressed
+    alliance_request_ignores_other_slot
+    phase_lobby_sets_inlobby
+    phase_gameover_resets_in_game
+    player_join_appends_lobby_chat
+    player_join_self_does_not_announce
+    player_leave_appends_lobby_chat
+    lobby_settings_clears_balance_proposal
+    reset_round_state_preserves_identity
+    start_game_preserves_client_flags
+    return_to_lobby_drops_wbn_keeps_identity
+    wbn_lobby_update_deferred_during_rotation
+    wbn_lobby_update_sends_when_not_rotating
+    remove_player_clears_slot
+    return_to_lobby_clears_phantom_slot
+    last_human_leave_returns_to_lobby
+    humanless_round_does_not_autoend
+    log_roundtrip_basic
+    log_roundtrip_snapshot_keeps_chain_synced
+    log_roundtrip_lobby_snapshot_is_empty_world
+    log_roundtrip_lobby_mode_drops_world_events
+    alliance_reset_codec_roundtrip
+    alliance_reset_decoder_rejects_short
+    alliance_reset_reapply_publishes_one_event
+    alliance_reset_apply_rebuilds_alliances
+)
+foreach(_name IN LISTS _unit_test_names)
+    add_test(NAME unit.${_name}
+             COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
+    set_tests_properties(unit.${_name} PROPERTIES TIMEOUT 60)
+endforeach()
 
 endif() # iOS vs Desktop

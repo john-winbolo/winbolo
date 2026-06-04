@@ -17,30 +17,66 @@
  *Filename:      client_sim_control.c
  *Purpose:
  *  Dispatcher implementation. Mutates ClientSim game state
- *  only — UI, achievement, transport-internal, and wire-
- *  protocol housekeeping live in their respective callers.
+ *  only — UI, transport-internal, and wire-protocol
+ *  housekeeping live in their respective callers.
+ *
+ *  All wire decoders in transport_udp_client.c build a
+ *  ControlEvent and route through clientSimApplyControl.
+ *  They do not mutate ClientSim state directly and do not
+ *  call frontEnd* callbacks directly. SP, bots, and network
+ *  converge on this single funnel — see docs/ARCHITECTURE.md
+ *  "Adding a new server event" for the recipe.
  *********************************************************/
 
+#include <stdio.h>
 #include <string.h>
+#include <SDL3/SDL.h>
 #include "client_sim_control.h"
 #include "client_sim_internal.h"
+#include "client_sim.h"
+#include "frontend.h"    /* frontEndAudioReturningToLobby */
+#include "messages.h"
+#include "netpacks.h"
 #include "players.h"
+#include "server_sim.h"  /* serverSimGetCompressedMap / serverSimGetMapName */
+#include "../steam/steam_wrapper.h"
+#include "global.h"
+#include "../common/wb_log.h"
+#include "../common/mp_diag_log.h"
 
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     if (cs == NULL || evt == NULL) {
         return;
     }
 
-    /* Self-skip on CTRL_PLAYER_JOIN only: the recipient's own player
-     * record is established via the join handshake / snapshot stream
-     * and must not be overwritten by sync or live publish with stale
-     * or partial data. CTRL_LOBBY_SLOT and CTRL_PLAYER_NAME do update
-     * self — the server is the source of truth for the recipient's
-     * lobby slot and name, matching the pre-migration UDP handlers
-     * which had no self-guard. */
+    /* Test-only observer hook (set via clientSimSetControlObserver).
+     * Fires before any state mutation so the observed stream matches
+     * what the dispatcher actually receives, including the self-skip
+     * branch below. The callback gets a const event and returns void —
+     * it cannot influence dispatch. */
+    if (cs->controlObserverCb != NULL) {
+        cs->controlObserverCb(cs->controlObserverCtx, evt);
+    }
+
+    /* Transport-internal observer hook. Same contract as the test
+     * observer, separate slot so the two don't displace each other.
+     * Wired by the UDP transport for joinState / re-join / WBN re-auth
+     * side effects that don't belong in the bolo lib subscriber. */
+    if (cs->transportObserverCb != NULL) {
+        cs->transportObserverCb(cs->transportObserverCtx, evt);
+    }
+
+    /* Self-skip on CTRL_PLAYER_LEAVE only: a recipient must not process
+     * their own departure. CTRL_PLAYER_JOIN is allowed for self because
+     * playersSetPlayer's self-branch (inUse already TRUE, iMyPlayerNum
+     * == iPlayerNum) updates only the location field and leaves
+     * position, name, and alliances untouched — making it the correct
+     * sink for country-code refreshes. CTRL_LOBBY_SLOT and
+     * CTRL_PLAYER_NAME similarly update self because the server is the
+     * source of truth for those fields. */
     switch (evt->type) {
-    case CTRL_PLAYER_JOIN:
-        if (evt->u.playerJoin.playerNum == cs->myPlayerNum) return;
+    case CTRL_PLAYER_LEAVE:
+        if (evt->u.playerLeave.playerNum == cs->myPlayerNum) return;
         break;
     default:
         break;
@@ -48,7 +84,16 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
 
     switch (evt->type) {
     case CTRL_ALLIANCE_REQUEST:
-        /* No state mutation — request is UI/dialog territory. */
+        /* Flag a pending request for the addressed slot. The transport
+         * observer (transport_udp_client.c) pops the SDL dialog for
+         * UDP-connected clients; the host's local-transport ClientSim
+         * exposes the field via clientSimGetPendingAllianceRequest so
+         * its frontend can poll. In-process subscribers (bots) see
+         * every publish; gate on the addressed slot so only the
+         * intended recipient flags. */
+        if (evt->u.allianceRequest.toPlayer == cs->myPlayerNum) {
+            cs->pendingAllianceRequestFrom = evt->u.allianceRequest.fromPlayer;
+        }
         break;
 
     case CTRL_ALLIANCE_ACCEPT:
@@ -62,6 +107,29 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         playersLeaveAlliance(&cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
                              evt->u.allianceLeave.playerNum, FALSE);
         break;
+
+    case CTRL_ALLIANCE_RESET: {
+        /* Mirror serverSimReapplyTeamAlliances on the receiver: clear
+         * every existing alliance, then re-accept per the matrix the
+         * server sent. Matrix is symmetric — iterate the upper triangle
+         * only. Self-bit is informational (slot is connected) and does
+         * not produce an accept. */
+        BYTE i, j;
+        for (i = 0; i < MAX_TANKS; i++) {
+            playersLeaveAlliance(&cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
+                                 i, FALSE);
+        }
+        for (i = 0; i < MAX_TANKS; i++) {
+            uint16_t mask = evt->u.allianceReset.allies[i];
+            for (j = (BYTE)(i + 1); j < MAX_TANKS; j++) {
+                if (mask & (uint16_t)(1u << j)) {
+                    playersAcceptAlliance(&cs->sim, &cs->sim.plyrs,
+                                          cs->myPlayerNum, i, j, FALSE);
+                }
+            }
+        }
+        break;
+    }
 
     case CTRL_PLAYER_JOIN: {
         BYTE pNum = evt->u.playerJoin.playerNum;
@@ -84,6 +152,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                          nameBuf, ccBuf,
                          0, 0, 0, 0, 0, FALSE,
                          numAllies, numAllies > 0 ? allies : NULL, FALSE);
+        if (pNum != cs->myPlayerNum && cs->inLobby) {
+            char joinMsg[PACKET_MAX_PLAYER_NAME + 16];
+            snprintf(joinMsg, sizeof(joinMsg), "%s has joined.", nameBuf);
+            clientSimAppendLobbyChat(cs, "***", joinMsg);
+        }
         break;
     }
 
@@ -97,6 +170,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     }
 
     case CTRL_LOBBY_SLOT:
+        mpDiagLog("[clientSim] APPLY CTRL_LOBBY_SLOT cs=%p myPlayerNum=%d slot=%u team=%u ready=%d isBot=%d name='%.12s' connected=%d",
+                  (void *)cs, (int)cs->myPlayerNum,
+                  (unsigned)evt->u.lobbySlot.playerNum,
+                  (unsigned)evt->u.lobbySlot.slot.teamNumber,
+                  (int)evt->u.lobbySlot.slot.ready,
+                  (int)evt->u.lobbySlot.slot.isBot,
+                  evt->u.lobbySlot.slot.playerName,
+                  (int)evt->u.lobbySlot.slot.connected);
         cs->lobbySlots[evt->u.lobbySlot.playerNum] = evt->u.lobbySlot.slot;
         break;
 
@@ -113,12 +194,90 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->mapSkipAvailable = evt->u.lobbySettings.mapSkipAvailable;
         cs->netStat          = evt->u.lobbySettings.netStat;
         cs->inLobby          = evt->u.lobbySettings.inLobby;
+        cs->lobbyOpenHost            = evt->u.lobbySettings.lobbyOpenHost;
+        cs->lobbyAutoLockOnGameStart = evt->u.lobbySettings.lobbyAutoLockOnGameStart;
+        cs->lobbyRanked          = evt->u.lobbySettings.lobbyRanked;
+        cs->lobbyAllowNewPlayers = evt->u.lobbySettings.lobbyAllowNewPlayers;
+        cs->lobbyWbnAvailable = evt->u.lobbySettings.lobbyWbnAvailable;
+        cs->lobbyServerLocks         = evt->u.lobbySettings.lobbyServerLocks;
+        cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
+        /* Adopt the server's authoritative game-timing settings. The
+         * server's lobbyTimeLimit field carries its current remaining
+         * gameLength (it decrements every running tick), so applying it
+         * mid-game refreshes the client's local view rather than
+         * clobbering it. The previous inLobby && !netRunning gate
+         * prevented mid-game sync-replay arrivals from ever delivering
+         * gmeLength to a late joiner; their default zero then fired
+         * the gmeLength==0 game-over branch in clientUiOnTick the
+         * first display tick after the snapshot landed. */
+        clientSimSetGameType(cs,       evt->u.lobbySettings.lobbyGameType);
+        clientSimSetHiddenMines(cs,    evt->u.lobbySettings.lobbyHiddenMines);
+        clientSimSetGmeStartDelay(cs,  evt->u.lobbySettings.lobbyStartDelay);
+        clientSimSetGmeLength(cs,      evt->u.lobbySettings.lobbyTimeLimit);
+        /* A fresh lobby snapshot supersedes any pending balance
+         * proposal — the server only re-publishes if it still has a
+         * live one. Otherwise the client's "Teams balanced" success
+         * label would linger past its intended one-shot lifetime. */
+        cs->balanceProposalActive = false;
+        memset(cs->balanceProposal, 0, sizeof(cs->balanceProposal));
+        break;
+
+    case CTRL_LOBBY_TEAM_META: {
+        uint8_t t = evt->u.lobbyTeamMeta.teamId;
+        if (t == 0 || t >= MAX_TANKS) break;
+        cs->lobbyTeamInUse[t] = evt->u.lobbyTeamMeta.in_use;
+        cs->lobbyTeamColor[t] = evt->u.lobbyTeamMeta.color;
+        cs->lobbyTeamPool[t]  = evt->u.lobbyTeamMeta.namingPool;
+        strncpy(cs->lobbyTeamName[t], evt->u.lobbyTeamMeta.name,
+                sizeof(cs->lobbyTeamName[t]) - 1);
+        cs->lobbyTeamName[t][sizeof(cs->lobbyTeamName[t]) - 1] = '\0';
+        break;
+    }
+
+    case CTRL_LOBBY_BOT_CONFIG: {
+        uint8_t s = evt->u.lobbyBotConfig.slot;
+        if (s >= MAX_TANKS) break;
+        cs->lobbyBotDifficulty[s]  = evt->u.lobbyBotConfig.difficulty;
+        cs->lobbyBotPersonality[s] = evt->u.lobbyBotConfig.personality;
+        /* Bot display name flows through the lobbySlot path; the
+         * name field on this event is informational and ignored here
+         * to avoid stomping the slot's playerName on a partial mirror. */
+        break;
+    }
+
+    case CTRL_LOBBY_BOT_BRAIN: {
+        uint8_t s   = evt->u.lobbyBotBrain.slot;
+        uint8_t idx = evt->u.lobbyBotBrain.brainIdx;
+        if (s >= MAX_TANKS) break;
+        /* Clamp out-of-range catalogue indices to the 0xFF sentinel so
+         * downstream consumers never see a byte that points past the
+         * brain catalogue. Matches the server-side write-time clamp in
+         * serverSimSetBotBrainIdxFor. */
+        if (idx != 0xFF && idx >= cs->lobbyBrainList.count) idx = 0xFF;
+        cs->lobbyBotBrainIdx[s] = idx;
+        break;
+    }
+
+    case CTRL_LOBBY_BRAIN_LIST:
+        cs->lobbyBrainList = evt->u.lobbyBrainList.list;
         break;
 
     case CTRL_LOBBY_MAP_CHANGE:
         cs->mapDownloadComplete = false;
         memset(cs->mapSkipVotes, 0, sizeof(cs->mapSkipVotes));
         cs->mapSkipMyVote = false;
+        if (!cs->isUdpTransport && cs->boundServerSim != NULL) {
+            /* Local transport: the server is in-process. Pull the
+             * freshly-compressed map directly and reinstall — there is
+             * no MAP_DOWNLOAD wire path to wait on. */
+            BYTE buf[MAP_DOWNLOAD_MAX_SIZE];
+            int  len = serverSimGetCompressedMap(cs->boundServerSim, buf);
+            if (len > 0) {
+                installCompressedMap(cs, buf, len,
+                                     serverSimGetMapName(cs->boundServerSim));
+                cs->mapDownloadComplete = true;
+            }
+        }
         break;
 
     case CTRL_MAP_DOWNLOAD_COMPLETE:
@@ -136,8 +295,28 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             }
         }
         cs->balanceProposalActive = anyNonZero;
+        /* Latch a one-shot timestamp the lobby UI reads to show a brief
+         * "Teams balanced" success label next to the Balance-from-WBN
+         * button. The server auto-applies and immediately clears the
+         * proposal, so an in-process host's render thread would only
+         * ever see balanceProposalActive=false; this timestamp survives
+         * that race. Set only on a non-empty arrival so the matching
+         * clear publish doesn't overwrite it. */
+        if (anyNonZero) {
+            cs->lastBalanceProposalArrivedMs = SDL_GetTicks();
+        }
         break;
     }
+
+    case CTRL_BALANCE_FAILED:
+        /* Latched so the lobby UI's per-frame status row can flip the
+         * "Asking WBN…" pill to the failure label as soon as we hear
+         * back from the server — no need to wait out the 8 s NOREPLY
+         * timeout. The control event is unicast to the host slot, so
+         * remote clients won't see it. */
+        cs->lastBalanceFailedMs     = SDL_GetTicks();
+        cs->lastBalanceFailedReason = evt->u.balanceFailed.reasonCode;
+        break;
 
     case CTRL_MAP_SKIP_STATE: {
         int i;
@@ -148,41 +327,290 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
-    case CTRL_GAME_PHASE:
-        switch (evt->u.gamePhase.phase) {
-        case CTRL_PHASE_LOBBY:
-            cs->netStat = netLobby;
-            cs->countdownSeconds = 0;
-            break;
-        case CTRL_PHASE_COUNTDOWN:
-            cs->netStat = netLobbyCountdown;
-            cs->countdownSeconds = evt->u.gamePhase.countdownSeconds;
-            break;
-        case CTRL_PHASE_RUNNING:
-            cs->netStat = netRunning;
-            cs->countdownSeconds = 0;
-            break;
-        case CTRL_PHASE_GAME_OVER:
-            /* Lobby-branch reset; non-lobby end-of-game is transport-internal. */
-            if (cs->inLobby) {
-                cs->netStat = netLobby;
-                cs->countdownSeconds = 0;
-            }
-            break;
+    case CTRL_GAME_VOTE_STATE: {
+        uint8_t k = evt->u.gameVoteState.kind;
+        int idx = (k == GAME_VOTE_KIND_BACK_TO_LOBBY) ? 0
+                : (k == GAME_VOTE_KIND_SURRENDER)     ? 1 : -1;
+        if (idx < 0) break;
+        struct ClientGameVote *gv = &cs->gameVotes[idx];
+        uint8_t prevActive = gv->active;
+        bool wasRunning = (prevActive == GAME_VOTE_ACTIVE_RUNNING);
+        gv->kind             = evt->u.gameVoteState.kind;
+        gv->active           = evt->u.gameVoteState.active;
+        gv->triggerSrc       = evt->u.gameVoteState.triggerSrc;
+        gv->teamId           = evt->u.gameVoteState.teamId;
+        gv->threshold        = evt->u.gameVoteState.threshold;
+        gv->yesCount         = evt->u.gameVoteState.yesCount;
+        gv->noCount          = evt->u.gameVoteState.noCount;
+        gv->eligibleCount    = evt->u.gameVoteState.eligibleCount;
+        gv->secondsRemaining = evt->u.gameVoteState.secondsRemaining;
+        gv->votes            = evt->u.gameVoteState.votes;
+        /* Auto-pop the widget when a vote starts — players can X to hide. */
+        if (!wasRunning && gv->active == GAME_VOTE_ACTIVE_RUNNING) {
+            gv->widgetVisible  = true;
+            gv->concludedAtMs  = 0;
+        }
+        /* Record conclusion time so the widget can auto-hide a few
+         * seconds after a pass/fail/cancel. */
+        if (wasRunning && gv->active != GAME_VOTE_ACTIVE_RUNNING) {
+            gv->concludedAtMs = SDL_GetTicks();
+        }
+        /* Newswire notifications on state transitions so players who
+         * have the widget closed still see what happened. */
+        const char *kindLabel = (k == GAME_VOTE_KIND_BACK_TO_LOBBY)
+                                ? "Return-to-lobby vote" : "Surrender vote";
+        if (!wasRunning && gv->active == GAME_VOTE_ACTIVE_RUNNING) {
+            const char *trig =
+                (gv->triggerSrc == GAME_VOTE_TRIGGER_BASE_MONOPOLY)
+                    ? "started (one team controls every base)"
+                : (gv->triggerSrc == GAME_VOTE_TRIGGER_POST_SURRENDER)
+                    ? "started (following a surrender)"
+                : "started";
+            char body[128];
+            snprintf(body, sizeof(body), "%s %s.", kindLabel, trig);
+            clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                             (char *)"Vote", body);
+        } else if (wasRunning && gv->active != GAME_VOTE_ACTIVE_RUNNING) {
+            const char *outcome =
+                (gv->active == GAME_VOTE_ACTIVE_PASSED)    ? "passed"
+              : (gv->active == GAME_VOTE_ACTIVE_FAILED)    ? "failed"
+              : (gv->active == GAME_VOTE_ACTIVE_CANCELLED) ? "cancelled"
+              :                                              "ended";
+            char body[160];
+            snprintf(body, sizeof(body), "%s %s (%u / %u).",
+                     kindLabel, outcome,
+                     (unsigned)gv->yesCount, (unsigned)gv->threshold);
+            clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                             (char *)"Vote", body);
         }
         break;
+    }
 
-    case CTRL_GAME_OVER:
+    case CTRL_GAME_PHASE_LOBBY:
+        cs->netStat = netLobby;
+        cs->countdownSeconds = 0;
+        /* Mirror of the RUNNING arm's inLobby flip. Without this the
+         * client stays in the in-game UI after a back-to-lobby /
+         * surrender vote passes — the server flips to lobby state and
+         * publishes this event, but the frontend's clientSimIsInLobby
+         * gate stays false until a follow-up CTRL_LOBBY_SETTINGS
+         * arrives carrying inLobby=true, which only happens on hosts
+         * with lobbyEnabled. */
+        cs->inLobby = true;
+        frontEndAudioReturningToLobby(false);
+        /* Clear the predicted-tank latch so the next round's first
+         * snapshot takes clientApplySnapshot's first-snapshot init
+         * branch (sets stocks, jump-cuts the camera via
+         * clientSimCenterTank) instead of the reconcile branch, which
+         * only snaps position and leaves stocks + camera tracking
+         * stale from the previous round. */
+        cs->clientState.hasPredictedTank = FALSE;
+        /* Drop the round that just ended. The world mirror (tanks, spent
+         * shells, in-flight explosions) is otherwise only rewritten by
+         * the next game's first snapshot, so without this the frozen
+         * last round lingers behind the lobby — departed players' tanks
+         * sitting where they stopped. Map/pill/base reset is owned by the
+         * CTRL_LOBBY_MAP_CHANGE path, not here. Runs identically on SP,
+         * host, and remote clients since it hangs off this one event. */
+        clientSimResetWorld(cs);
+        break;
+    case CTRL_GAME_PHASE_COUNTDOWN:
+        cs->netStat = netLobbyCountdown;
+        cs->countdownSeconds = evt->u.gamePhase.countdownSeconds;
+        frontEndAudioReturningToLobby(false);
+        break;
+    case CTRL_GAME_PHASE_RUNNING:
+        cs->netStat = netRunning;
+        cs->countdownSeconds = 0;
+        /* Frontends flip out of the lobby view on the running
+         * transition; previously the SP finisher set this by hand
+         * after StartGameInPlace, but now StartGameInPlace publishes
+         * the RUNNING phase event and every subscriber should pick
+         * up the lobby→game flip from this event. */
+        cs->inLobby = false;
+        /* Clear the lobby chat as the round starts so the lobby we
+         * return to shows only this round's exit reason (and any new
+         * lobby chat after). Keeping it across the game was confusing —
+         * a "X has joined" line stayed visible after X left mid-round. */
+        cs->lobbyChatHistory[0] = '\0';
+        frontEndAudioReturningToLobby(false);
+        break;
+    case CTRL_GAME_PHASE_GAME_OVER:
+        /* Reset countdown unconditionally — used to be gated on
+         * cs->inLobby, but that meant in-game game-over (vote pass /
+         * map win / surrender chain) left netStat and countdown
+         * untouched on the client, blocking the return-to-lobby UI
+         * transition. The transport-internal joinState flip for the
+         * non-lobby case is handled by the transport observer. */
+        cs->netStat = netLobby;
+        cs->countdownSeconds = 0;
+        /* Silence in-flight playback so engine/shell/explosion
+         * sounds don't keep draining behind the "Returning to
+         * lobby" caption. Restored on the next phase event. */
+        frontEndAudioReturningToLobby(true);
+        break;
+
+    case CTRL_GAME_OVER: {
+        /* Win-detection + Steam achievements. Fires once per game-over
+         * event on every audience — wire clients, SP host's in-process
+         * ClientSim, bots — because the apply funnel is the single
+         * convergence point for all three. Reads cs->sim.{bs,plyrs,game}
+         * and the per-game counters set by client_snapshot during play. */
+        BYTE numBases = basesGetNumBases(&cs->sim.bs);
+        BYTE first    = NEUTRAL;
+        bool allOwned = true;
+        bool localWon = false;
+        BYTE b;
+
+        for (b = 1; b <= numBases && allOwned; b++) {
+            BYTE owner = basesGetBaseOwner(&cs->sim.bs, b);
+            BYTE shellsAmt, minesAmt, armourAmt;
+            basesGetStats(&cs->sim.bs, b, &shellsAmt, &minesAmt, &armourAmt);
+            if (owner == NEUTRAL || armourAmt <= MIN_ARMOUR_CAPTURE) {
+                allOwned = false;
+            } else if (b == 1) {
+                first = owner;
+            } else {
+                allOwned = playersIsAllie(&cs->sim.plyrs, owner, first);
+            }
+        }
+
+        if (allOwned && numBases > 0) {
+            localWon = (cs->myPlayerNum == first) ||
+                       playersIsAllie(&cs->sim.plyrs, cs->myPlayerNum, first);
+
+            gameType gt = gameTypeGet(&cs->sim.game);
+            BYTE numPlayers = playersGetNumPlayers(&cs->sim.plyrs);
+
+            if (gt == gameTournament || gt == gameStrictTournament) {
+                if (localWon) {
+                    steam_increment_stat("STAT_TOURN_WINS", 1);
+                    if (numPlayers == 2) {
+                        steam_set_achievement("ACH_TOURN_WIN_1V1");
+                    }
+                } else {
+                    steam_increment_stat("STAT_TOURN_LOSSES", 1);
+                    if (numPlayers == 2) {
+                        steam_set_achievement("ACH_TOURN_LOSE_1V1");
+                    }
+                }
+            }
+
+            if (localWon) {
+                if (cs->myLgmLossesThisGame == 0) {
+                    steam_set_achievement("ACH_WIN_NO_LGM_LOSS");
+                }
+                if (cs->myDeathsThisGame == 0 && numPlayers == 2) {
+                    steam_set_achievement("ACH_1V1_FLAWLESS");
+                }
+            }
+
+            steam_store_stats();
+        }
+
         if (cs->inLobby) {
             cs->netStat = netLobby;
             cs->countdownSeconds = 0;
-            cs->lobbyChatHistory[0] = '\0';
+            /* Chat is cleared at game start (CTRL_GAME_PHASE_RUNNING),
+             * not here — so the win/exit message published as the round
+             * ends survives into the lobby we return to. */
         }
         break;
+    }
+
+    case CTRL_SERVER_TEXT: {
+        const char *text = evt->u.serverText.text;
+        if (text[0] == '\0') break;
+        if (cs->inLobby) {
+            clientSimAppendLobbyChat(cs, "Server", text);
+        } else {
+            /* In-game: route to newswire only. Server announcements
+             * (vote countdown, surrender, etc.) belong on the same
+             * channel as base captures / kills, and newswire is on by
+             * default. */
+            clientMessageAdd(clientSimGetMessages(cs), newsWireMessage,
+                             (char *)"Server", (char *)text);
+        }
+        break;
+    }
 
     case CTRL_SERVER_SHUTDOWN:
         /* No ClientSim field maps to UDP joinState; that field stays
          * transport-internal per the architectural commitment. */
+        break;
+
+    case CTRL_CHAT: {
+        /* In-process delivery for chat. Mirrors the UDP path in
+         * transport_udp_client.c (PACKET_CHAT_BROADCAST), but for
+         * subscribers that aren't UDP clients (host humanSim, bot
+         * ClientSims). Without this, a bot's chat — submitted via
+         * clientSimSubmitCommand and republished by the CMD_CHAT
+         * arm as CTRL_CHAT — would never materialize in any
+         * recipient's MessageState, so /info traffic between bots
+         * would be invisible. */
+        BYTE fromPlayer = evt->u.chat.fromPlayer;
+        BYTE destPlayer = evt->u.chat.destPlayer;
+        uint16_t bodyLen = evt->u.chat.bodyLen;
+        BYTE myPN = clientSimGetMyPlayerNum(cs);
+        /* Only deliver if I'm the recipient or it's a broadcast.
+         * Self-sends still surface in the sender's chat_log via the
+         * Lua side (init.lua's outbound capture), so we don't need
+         * a self-echo here. */
+        bool for_me = (destPlayer == 0xFF) || (destPlayer == myPN);
+        if (for_me && fromPlayer < MAX_TANKS && bodyLen > 0
+            && fromPlayer != myPN) {
+            char msg[PACKET_MAX_CHAT_MESSAGE + 1];
+            uint16_t copyLen = bodyLen;
+            if (copyLen > PACKET_MAX_CHAT_MESSAGE) copyLen = PACKET_MAX_CHAT_MESSAGE;
+            memcpy(msg, evt->u.chat.body, copyLen);
+            msg[copyLen] = '\0';
+            clientSimIncomingMessage(cs, fromPlayer, msg);
+        }
+        break;
+    }
+
+    case CTRL_PLAYER_LEAVE: {
+        /* Reliable player removal. The snapshot's EVENT_PLAYER_LEAVE
+         * (client_snapshot.c) also calls playersLeaveGame, but that
+         * rides an unreliable, un-retransmitted snapshot — if the
+         * snapshot carrying it was dropped, the departed player stayed
+         * frozen in place forever (remote players render from
+         * cs->sim.plyrs, not tanks[], and nothing else cleared them).
+         * CTRL_PLAYER_LEAVE is on the reliable control queue, so do the
+         * removal here too. playersLeaveGame is idempotent via its inUse
+         * guard: whichever path arrives first removes the player, the
+         * other is a no-op, so there is no duplicate quit newswire.
+         * Self never reaches here — the early self-skip switch above
+         * returned already. */
+        BYTE pNum = evt->u.playerLeave.playerNum;
+        char nameBuf[PACKET_MAX_PLAYER_NAME];
+        memcpy(nameBuf, evt->u.playerLeave.name, sizeof(nameBuf));
+        nameBuf[sizeof(nameBuf) - 1] = '\0';
+        /* announce=false in the lobby: the in-game newswire is wrong there
+         * (it would queue and pop at game start); the lobby chat line below
+         * is the right surface. In-game, announce the leave on the newswire. */
+        playersLeaveGame(cs, &cs->sim, &cs->sim.plyrs, cs->myPlayerNum,
+                         pNum, FALSE, !cs->inLobby);
+        if (cs->inLobby) {
+            char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
+            snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", nameBuf);
+            clientSimAppendLobbyChat(cs, "***", leaveMsg);
+        }
+        break;
+    }
+
+    case CTRL_COMMAND_REJECTED:
+        /* Only react to rejects attributed to our own slot. In-process
+         * subscribers (SP-host, bots) receive every published reject;
+         * the wire path is already filtered by udpClientDeliverControl.
+         * lobbyLastRejectPacket stores origCmdType (the CMD_* enum
+         * value) — its previous semantics were "non-zero = pending
+         * reject" and the toast UI in imgui_lobby.cpp only checks for
+         * non-zero, so storing a CMD_* there is compatible. */
+        if (evt->u.commandRejected.origSlot == clientSimGetMyPlayerNum(cs)) {
+            cs->lobbyLastRejectPacket = evt->u.commandRejected.origCmdType;
+            cs->lobbyLastRejectReason = evt->u.commandRejected.reasonCode;
+        }
         break;
     }
 }

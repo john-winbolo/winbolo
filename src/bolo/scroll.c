@@ -27,20 +27,173 @@
 *********************************************************/
 
 
-#include <math.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include "global.h"
 #include "scroll.h"
-#include "scroll_item_list.h"
 #include "tank.h"
 #include "players.h"
 #include "pillbox.h"
-#include "shells.h"
 #include "bases.h"
 #include "game_sim.h"
 
+/* Autoscroll tuning. */
+#define AUTOSCROLL_CONCERN_RADIUS    24  /* tiles around tank counted as "near me" */
+#define AUTOSCROLL_MAX_OFFSET         5  /* max signed view offset, in tiles */
+#define AUTOSCROLL_RECALC_DEBOUNCE   30  /* min ticks between target recomputes */
+#define AUTOSCROLL_PARKED_TICKS      60  /* stationary ticks before parked-rear can fire */
+#define AUTOSCROLL_DEAD_ZONE          1  /* skip recompute if target change ≤ this */
+
+/* Sub-tile arithmetic. The view position is tracked in 1/256-tile units
+ * internally; the BYTE *xValue/*yValue exposed to engine code is the
+ * tile-aligned floor, with the fractional remainder in ScrollState's
+ * subPosX/Y for the renderer to apply as a sub-pixel drag offset. */
+#define AUTOSCROLL_SUB_PER_TILE     256
+/* Proportional ease: each tick the offset moves (remaining / DIVISOR)
+ * toward target. Higher divisor = slower / smoother. Asymptotic — the
+ * slide is fast far from target and decelerates near it, so a new event
+ * mid-slide redirects continuously instead of completing then restarting.
+ * 32 ≈ 95% convergence in ~94 ticks (~1.9s). */
+#define AUTOSCROLL_EASE_DIVISOR      32
+/* Final-pixel snap threshold: when |remaining| ≤ this many sub-units we
+ * step it the rest of the way to exactly hit target. Without this the
+ * exponential never quite reaches and SLIDE_DONE never fires. 4 sub-units
+ * = 1/4 of a pixel, well below perceptible. */
+#define AUTOSCROLL_SNAP_THRESHOLD     4
+
+/* Facing unit vectors (sin/cos × 256), 16-step BRADIANS index.
+ * Used for the forward-bias term and the parked-rear hemisphere test. */
+static const int kForwardX[16] = {
+     0,   98,  181,  237,  256,  237,  181,   98,
+     0,  -98, -181, -237, -256, -237, -181,  -98
+};
+static const int kForwardY[16] = {
+  -256, -237, -181,  -98,    0,   98,  181,  237,
+   256,  237,  181,   98,    0,  -98, -181, -237
+};
+
+/* Debug file logging. Off for shipping builds — flip to 1 to re-enable
+ * the autoscroll.log trace. When 0 no file is opened or written. */
+#define WB_DEBUG_FILE_LOG 0
+
+/* Per-process autoscroll state (one camera per client). */
+static DWORD g_autoscrollTick = 0;
+static FILE *g_autoscrollLog = NULL;
+static bool  g_autoscrollLogTried = FALSE;
+
+static void autoscrollLogOpen(void) {
+  if (g_autoscrollLog != NULL || g_autoscrollLogTried) return;
+  g_autoscrollLogTried = TRUE;
+  g_autoscrollLog = fopen("autoscroll.log", "a");
+  if (g_autoscrollLog) {
+    fprintf(g_autoscrollLog, "--- autoscroll session start ---\n");
+    fflush(g_autoscrollLog);
+  }
+}
+
+static void autoscrollLog(const char *fmt, ...) {
+  if (!WB_DEBUG_FILE_LOG) return;
+  if (!g_autoscrollLog) autoscrollLogOpen();
+  if (!g_autoscrollLog) return;
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(g_autoscrollLog, fmt, ap);
+  va_end(ap);
+  fflush(g_autoscrollLog);
+}
+
+/* Threat classification: enemy tank, enemy pill, neutral pill.
+ * Friendlies and all bases never count. */
+static bool isThreatTank(GameSim *sim, BYTE viewPlayer, int i, int *outX, int *outY) {
+  int tx, ty;
+  if (sim->tanks[i] == NULL) return FALSE;
+  if (i == (int)viewPlayer) return FALSE;
+  if (playersIsAllie(&sim->plyrs, viewPlayer, (BYTE)i) == TRUE) return FALSE;
+  tx = (int)tankGetMX(&sim->tanks[i]);
+  ty = (int)tankGetMY(&sim->tanks[i]);
+  if (tx == 0 && ty == 0) return FALSE;  /* uninitialized slot */
+  if (outX) *outX = tx;
+  if (outY) *outY = ty;
+  return TRUE;
+}
+
+static bool isThreatPill(GameSim *sim, BYTE viewPlayer, int pillNum, pillbox *outPill) {
+  pillsGetPill(&sim->pb, outPill, pillNum);
+  if (outPill->armour == 0) return FALSE;
+  if (outPill->owner == NEUTRAL) return TRUE;        /* shoots everyone */
+  if (outPill->owner == viewPlayer) return FALSE;
+  if (playersIsAllie(&sim->plyrs, viewPlayer, outPill->owner) == TRUE) return FALSE;
+  return TRUE;
+}
+
+/* Aggregate threat direction → unit-ish offset, blended with forward bias
+ * when driving. Sign-only accumulation is intentional: precise magnitudes
+ * would re-introduce the per-tick jitter that made v2 sickening. */
+static void computeTargetOffset(GameSim *sim, BYTE viewPlayer,
+                                int tankX, int tankY, BYTE speed, TURNTYPE angle,
+                                int8_t *outOX, int8_t *outOY, int *outCount) {
+  int sumX = 0, sumY = 0;
+  int count = 0;
+  int i;
+  int tox, toy;
+
+  for (i = 0; i < MAX_TANKS; i++) {
+    int tx, ty, dx, dy;
+    if (!isThreatTank(sim, viewPlayer, i, &tx, &ty)) continue;
+    dx = tx - tankX; dy = ty - tankY;
+    if (abs(dx) > AUTOSCROLL_CONCERN_RADIUS) continue;
+    if (abs(dy) > AUTOSCROLL_CONCERN_RADIUS) continue;
+    sumX += (dx > 0) - (dx < 0);
+    sumY += (dy > 0) - (dy < 0);
+    count++;
+  }
+  for (i = 1; i <= sim->pb->numPills; i++) {
+    pillbox p;
+    int dx, dy;
+    if (!isThreatPill(sim, viewPlayer, i, &p)) continue;
+    dx = (int)p.x - tankX; dy = (int)p.y - tankY;
+    if (abs(dx) > AUTOSCROLL_CONCERN_RADIUS) continue;
+    if (abs(dy) > AUTOSCROLL_CONCERN_RADIUS) continue;
+    sumX += (dx > 0) - (dx < 0);
+    sumY += (dy > 0) - (dy < 0);
+    count++;
+  }
+
+  if (outCount) *outCount = count;
+
+  if (count == 0) {
+    tox = 0; toy = 0;
+  } else {
+    int mag = abs(sumX); if (abs(sumY) > mag) mag = abs(sumY);
+    if (mag == 0) { tox = 0; toy = 0; }
+    else {
+      tox = (sumX * AUTOSCROLL_MAX_OFFSET) / mag;
+      toy = (sumY * AUTOSCROLL_MAX_OFFSET) / mag;
+    }
+  }
+
+  if (speed > 0) {
+    /* Forward bias at 30% — keep "see what's ahead" without overpowering threats. */
+    int idx = (((int)angle + 8) >> 4) & 15;
+    int fwdX = (kForwardX[idx] * AUTOSCROLL_MAX_OFFSET) / 256;
+    int fwdY = (kForwardY[idx] * AUTOSCROLL_MAX_OFFSET) / 256;
+    tox = (tox * 7 + fwdX * 3) / 10;
+    toy = (toy * 7 + fwdY * 3) / 10;
+  }
+
+  if (tox >  AUTOSCROLL_MAX_OFFSET) tox =  AUTOSCROLL_MAX_OFFSET;
+  if (tox < -AUTOSCROLL_MAX_OFFSET) tox = -AUTOSCROLL_MAX_OFFSET;
+  if (toy >  AUTOSCROLL_MAX_OFFSET) toy =  AUTOSCROLL_MAX_OFFSET;
+  if (toy < -AUTOSCROLL_MAX_OFFSET) toy = -AUTOSCROLL_MAX_OFFSET;
+
+  *outOX = (int8_t)tox;
+  *outOY = (int8_t)toy;
+}
+
 
 void scrollCreate(ScrollState *ss) {
+  int i;
   ss->autoScroll = FALSE;
   ss->scrollX = 0;
   ss->scrollY = 0;
@@ -52,19 +205,37 @@ void scrollCreate(ScrollState *ss) {
   ss->stickyXDir = FALSE;
   ss->stickyY = FALSE;
   ss->stickyYDir = FALSE;
-  scrollItemListCreate(&ss->itemList);
+  ss->targetOffsetX = 0;
+  ss->targetOffsetY = 0;
+  ss->currentOffsetSubX = 0;
+  ss->currentOffsetSubY = 0;
+  ss->subPosX = 0;
+  ss->subPosY = 0;
+  ss->initialized = FALSE;
+  ss->lastRecalcTick = 0;
+  ss->parkedSinceTick = 0;
+  ss->gunsightWasInside = TRUE;
+  for (i = 0; i < MAX_TANKS; i++) ss->prevThreatTank[i] = FALSE;
+  for (i = 0; i < MAX_PILLS; i++) ss->prevThreatPill[i] = FALSE;
 }
 
 
 void scrollSetScrollType(ScrollState *ss, bool isAuto) {
   ss->autoScroll = isAuto;
   ss->autoScrollOverRide = FALSE;
+  ss->initialized = FALSE;     /* re-seed baseline on any mode change */
   if (isAuto == FALSE) {
     ss->scrollX = 0;
     ss->scrollY = 0;
     ss->mods = FALSE;
     ss->stickyX = FALSE;
     ss->stickyY = FALSE;
+    ss->targetOffsetX = 0;
+    ss->targetOffsetY = 0;
+    ss->currentOffsetSubX = 0;
+    ss->currentOffsetSubY = 0;
+    ss->subPosX = 0;
+    ss->subPosY = 0;
   }
 }
 
@@ -74,6 +245,13 @@ void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
   ss->autoScrollOverRide = FALSE;
   ss->stickyX = FALSE;
   ss->stickyY = FALSE;
+  ss->targetOffsetX = 0;
+  ss->targetOffsetY = 0;
+  ss->currentOffsetSubX = 0;
+  ss->currentOffsetSubY = 0;
+  ss->subPosX = 0;
+  ss->subPosY = 0;
+  ss->initialized = FALSE;
 }
 
 bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, bool isTank, BYTE gunsightX, BYTE gunsightY, BYTE speed, BYTE armour, TURNTYPE angle, bool manual, bool tankIsDead) {
@@ -128,6 +306,9 @@ bool scrollManual(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYT
   upPos = FALSE;
   downPos = FALSE;
   returnValue = FALSE;
+  ss->autoScrollOverRide = TRUE;
+  ss->subPosX = 0;
+  ss->subPosY = 0;
 
   if (angle >= BRADIANS_SSWEST && angle <= BRADIANS_NNWEST) {
     rightPos = TRUE;
@@ -178,6 +359,8 @@ bool scrollNoAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
   upPos = FALSE;
   downPos = FALSE;
   returnValue = FALSE;
+  ss->subPosX = 0;
+  ss->subPosY = 0;
 
   if (angle >= BRADIANS_SSWEST && angle <= BRADIANS_NNWEST) {
     rightPos = TRUE;
@@ -220,211 +403,277 @@ bool scrollNoAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
 
 bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, BYTE gunsightX, BYTE gunsightY, BYTE speed, TURNTYPE angle) {
   /*
-   * Priority-based viewport scrolling.
+   * Event-driven autoscroll with sub-tile precision. The view target is
+   * tank's sub-pixel world position + currentOffsetSub. The whole-tile
+   * targetOffset is only recomputed on discrete events:
    *
-   * The viewport's natural resting position leads the tank in its
-   * facing direction (capped at LEAD_MAX_TILES). Items pull the target
-   * back toward themselves, sorted by score; conflict-validation keeps
-   * higher-priority items on screen.
+   *   A. gunsight just crossed outside the view (one-shot)
+   *   B. a threat entered the concern radius that wasn't there last tick
+   *   C. parked ≥ AUTOSCROLL_PARKED_TICKS with a threat in the rear hemisphere
    *
-   * The directional veto lives in scrollItemListProcess: when the tank
-   * is moving and there's an important item ahead, behind items can't
-   * pull the target against the facing direction. That kills the
-   * leading-edge-vs-trailing-edge oscillation at its source — items
-   * behind fall off the back rather than fighting the lead.
+   * Between events targetOffset is fixed; currentOffsetSub eases toward
+   * it at AUTOSCROLL_SUB_STEP sub-units per tick. The renderer reads the
+   * decomposed sub-tile remainder (ss->subPosX/Y) every frame and folds
+   * it into the drag offset, so the view glides continuously across
+   * tile boundaries with no snap.
    *
-   * Scrolls at most 1 tile per tick.
+   * Threat set = enemy tanks + enemy pills + neutral pills. Friendlies
+   * and all bases are ignored (they don't shoot the viewing player).
    */
-  int targetX, targetY;
-  int viewRefX, viewRefY;
-  int xmove, ymove;
-  int leadDX, leadDY;
-  BYTE myPlayer;
-  WORLD tankWX, tankWY;
-  WORLD gunsightWX, gunsightWY;
-  int count;
-  shells current;
-  shells bestShell;
+  BYTE myPlayer = sim->viewPlayer;
+  BYTE inViewX = *xValue;
+  BYTE inViewY = *yValue;
+  bool triggered = FALSE;
+  const char *reason = NULL;
+  bool curThreatTank[MAX_TANKS];
+  bool curThreatPill[MAX_PILLS];
+  bool gunsightInside;
+  int i;
 
-  myPlayer = sim->viewPlayer;
-  tankGetWorld(&sim->tanks[myPlayer], &tankWX, &tankWY);
+  g_autoscrollTick++;
 
-  /* Manual-scroll override: while the player has panned the camera with
-   * keys or right stick, hold the offset where they put it.  Resume
-   * autoscroll only when the tank's on-screen position approaches an
-   * edge — same threshold as scrollNoAutoScroll, so the tank never gets
-   * close enough to clip out before tracking re-engages. */
+  /* Manual freelook: arrow keys (clientRenderFrame) set autoScrollOverRide
+   * to TRUE after nudging *xValue/*yValue. The camera stays where the
+   * player put it for as long as the tank is parked or driving safely
+   * inside the view. Autoscroll re-engages automatically the moment the
+   * player is driving AND the tank reaches within NO_SCROLL_EDGE tiles
+   * of any screen edge: that's exactly when the held view would start to
+   * lose the tank, and it matches the classic "look around while parked,
+   * snap back to follow when you drive off" feel. On re-engage we clear
+   * the override and re-seed the event baseline (initialized = FALSE) so
+   * no spurious gunsight/threat trigger fires on the handover, then fall
+   * through to the normal follow logic below which re-centres. */
   if (ss->autoScrollOverRide) {
-    int screenX = (int)objectX - (int)*xValue;
-    int screenY = (int)objectY - (int)*yValue;
-    bool nearEdge =
-        screenX <= NO_SCROLL_EDGE ||
-        screenX >= MAIN_SCREEN_SIZE_X - NO_SCROLL_EDGE ||
-        screenY <= NO_SCROLL_EDGE ||
-        screenY >= MAIN_SCREEN_SIZE_Y - NO_SCROLL_EDGE;
-    if (!nearEdge) {
+    bool nearLeft  = ((int)objectX - 1)            <  ((int)*xValue + NO_SCROLL_EDGE);
+    bool nearRight = ((int)objectX - (int)*xValue) >= (MAIN_SCREEN_SIZE_X - NO_SCROLL_EDGE);
+    bool nearTop   = ((int)objectY)                <= ((int)*yValue + NO_SCROLL_EDGE);
+    bool nearBot   = ((int)objectY - (int)*yValue) >= (MAIN_SCREEN_SIZE_Y - NO_SCROLL_EDGE);
+    bool nearEdge  = nearLeft || nearRight || nearTop || nearBot;
+
+    if (speed > 0 && nearEdge) {
+      autoscrollLog("[t=%u] OVERRIDE_RELEASE view=(%u,%u) tank=(%u,%u) tankView=(%d,%d) speed=%u angle=%d\n",
+                    (unsigned)g_autoscrollTick,
+                    (unsigned)*xValue, (unsigned)*yValue,
+                    (unsigned)objectX, (unsigned)objectY,
+                    (int)objectX - (int)*xValue, (int)objectY - (int)*yValue,
+                    (unsigned)speed, (int)angle);
+      ss->autoScrollOverRide = FALSE;
+      ss->initialized = FALSE;   /* re-seed baseline on handover */
+      /* fall through to normal autoscroll follow below */
+    } else {
+      autoscrollLog("[t=%u] OVERRIDE HOLD view=(%u,%u) tank=(%u,%u) tankView=(%d,%d) speed=%u angle=%d\n",
+                    (unsigned)g_autoscrollTick,
+                    (unsigned)*xValue, (unsigned)*yValue,
+                    (unsigned)objectX, (unsigned)objectY,
+                    (int)objectX - (int)*xValue, (int)objectY - (int)*yValue,
+                    (unsigned)speed, (int)angle);
+      ss->subPosX = 0;
+      ss->subPosY = 0;
+      ss->mods    = FALSE;
+      ss->scrollX = 0;
+      ss->scrollY = 0;
       return FALSE;
     }
-    ss->autoScrollOverRide = FALSE;
   }
 
-  /* Find the player's longest-lived live shell (the "fireball" the
-   * camera follows). When present, the screen tracks the shell instead
-   * of leading the tank. */
-  bestShell = NULL;
-  current = sim->shs;
-  while (current != NULL) {
-    if (current->owner == myPlayer && current->shellDead == FALSE) {
-      if (bestShell == NULL || current->length > bestShell->length) {
-        bestShell = current;
+  /* Event A: gunsight crossed view edge (rising-edge only). */
+  gunsightInside =
+      ((int)gunsightX >= (int)*xValue) &&
+      ((int)gunsightX - 1 < (int)*xValue + MAIN_SCREEN_SIZE_X) &&
+      ((int)gunsightY >= (int)*yValue) &&
+      ((int)gunsightY - 1 < (int)*yValue + MAIN_SCREEN_SIZE_Y);
+  if (gunsightInside == FALSE && ss->gunsightWasInside == TRUE) {
+    triggered = TRUE;
+    reason = "gunsight_edge";
+  }
+  ss->gunsightWasInside = gunsightInside;
+
+  /* Event B: build "currently threatening" set, flag newly-entered. */
+  for (i = 0; i < MAX_TANKS; i++) curThreatTank[i] = FALSE;
+  for (i = 0; i < MAX_PILLS; i++) curThreatPill[i] = FALSE;
+
+  for (i = 0; i < MAX_TANKS; i++) {
+    int tx, ty;
+    if (!isThreatTank(sim, myPlayer, i, &tx, &ty)) continue;
+    if (abs(tx - (int)objectX) > AUTOSCROLL_CONCERN_RADIUS) continue;
+    if (abs(ty - (int)objectY) > AUTOSCROLL_CONCERN_RADIUS) continue;
+    curThreatTank[i] = TRUE;
+    if (!ss->prevThreatTank[i]) {
+      triggered = TRUE;
+      if (reason == NULL) reason = "new_threat_tank";
+    }
+  }
+  for (i = 1; i <= sim->pb->numPills; i++) {
+    pillbox p;
+    if (!isThreatPill(sim, myPlayer, i, &p)) continue;
+    if (abs((int)p.x - (int)objectX) > AUTOSCROLL_CONCERN_RADIUS) continue;
+    if (abs((int)p.y - (int)objectY) > AUTOSCROLL_CONCERN_RADIUS) continue;
+    curThreatPill[i - 1] = TRUE;
+    if (!ss->prevThreatPill[i - 1]) {
+      triggered = TRUE;
+      if (reason == NULL) reason = "new_threat_pill";
+    }
+  }
+
+  /* Event C: parked ≥ N ticks with a threat in the rear hemisphere. */
+  if (speed == 0) {
+    if (ss->parkedSinceTick == 0) ss->parkedSinceTick = g_autoscrollTick;
+    if (g_autoscrollTick - ss->parkedSinceTick >= AUTOSCROLL_PARKED_TICKS) {
+      int idx = (((int)angle + 8) >> 4) & 15;
+      int fx = kForwardX[idx], fy = kForwardY[idx];
+      bool rearThreat = FALSE;
+      int j;
+      for (j = 0; j < MAX_TANKS && !rearThreat; j++) {
+        int tx, ty;
+        if (!curThreatTank[j]) continue;
+        tx = (int)tankGetMX(&sim->tanks[j]);
+        ty = (int)tankGetMY(&sim->tanks[j]);
+        if ((tx - (int)objectX) * fx + (ty - (int)objectY) * fy < 0) rearThreat = TRUE;
+      }
+      for (j = 1; j <= sim->pb->numPills && !rearThreat; j++) {
+        pillbox p;
+        if (!curThreatPill[j - 1]) continue;
+        pillsGetPill(&sim->pb, &p, j);
+        if (((int)p.x - (int)objectX) * fx + ((int)p.y - (int)objectY) * fy < 0) rearThreat = TRUE;
+      }
+      if (rearThreat) {
+        triggered = TRUE;
+        if (reason == NULL) reason = "parked_rear";
+        /* Reset the parked clock so this re-fires once per window, not every tick. */
+        ss->parkedSinceTick = g_autoscrollTick;
       }
     }
-    current = current->next;
-  }
-
-  /* Phase 1: initial target leads the tank in its facing direction.
-   * The +1 tile inset matches viewRefX so a tank-centered, no-lead
-   * viewport produces zero scroll delta. */
-  leadDX = 0;
-  leadDY = 0;
-  if (speed > 0 && bestShell == NULL) {
-    WORLD leadWX, leadWY;
-    int len2;
-    const int leadMaxWorld = 3 << 8;  /* cap lead at 3 tiles */
-    calculateProjectedPosition(tankWX, tankWY, speed, angle, 1.0f, &leadWX, &leadWY);
-    leadDX = (int)leadWX - (int)tankWX;
-    leadDY = (int)leadWY - (int)tankWY;
-    len2 = leadDX * leadDX + leadDY * leadDY;
-    if (len2 > leadMaxWorld * leadMaxWorld) {
-      double len = sqrt((double)len2);
-      leadDX = (int)((double)leadDX * (double)leadMaxWorld / len);
-      leadDY = (int)((double)leadDY * (double)leadMaxWorld / len);
-    }
-  }
-  targetX = (int)tankWX + leadDX - SCREEN_WORLD_W / 2 + (1 << 8);
-  targetY = (int)tankWY + leadDY - SCREEN_WORLD_H / 2 + (1 << 8);
-
-  viewRefX = ((int)*xValue + 1) << 8;
-  viewRefY = ((int)*yValue + 1) << 8;
-
-  /* Phase 2: build the priority item list */
-  scrollItemListCreate(&ss->itemList);
-  ss->itemList.tankAngle = angle;
-  ss->itemList.tankSpeed = speed;
-  ss->itemList.tankWX = tankWX;
-  ss->itemList.tankWY = tankWY;
-
-  /* Always add own tank (score 0 — must stay on screen) */
-  scrollItemListAddW(&ss->itemList, tankWX, tankWY, 0, 0, FALSE, tankWX, tankWY);
-
-  if (bestShell != NULL) {
-    /* Shell active: track it exclusively at score 0. */
-    scrollItemListAddW(&ss->itemList, bestShell->x, bestShell->y, 0, 0, FALSE, tankWX, tankWY);
   } else {
-    pillbox pill;
-    pillAlliance pa;
-    BYTE tx, ty;
-    WORLD otherWX, otherWY;
-    int tankMX = (int)(tankWX >> 8);
-    int tankMY = (int)(tankWY >> 8);
-
-    /* Other tanks (enemy or ally) */
-    for (count = 0; count < MAX_TANKS; count++) {
-      int baseScore;
-      if (sim->tanks[count] == NULL) continue;
-      if (count == myPlayer) continue;
-      tx = tankGetMX(&sim->tanks[count]);
-      ty = tankGetMY(&sim->tanks[count]);
-      if (tx == 0 && ty == 0) continue;
-      if (abs((int)tx - tankMX) > MAIN_SCREEN_SIZE_X ||
-          abs((int)ty - tankMY) > MAIN_SCREEN_SIZE_Y) continue;
-      if (playersIsAllie(&sim->plyrs, myPlayer, (BYTE)count) == TRUE) {
-        baseScore = 2;
-      } else {
-        baseScore = 1;
-      }
-      tankGetWorld(&sim->tanks[count], &otherWX, &otherWY);
-      if (tankGetSpeed(&sim->tanks[count]) > 0) {
-        WORLD projOX, projOY;
-        calculateProjectedPosition(otherWX, otherWY, tankGetSpeed(&sim->tanks[count]),
-                                   tankGetAngle(&sim->tanks[count]), 1.0f, &projOX, &projOY);
-        scrollItemListAddW(&ss->itemList, projOX, projOY, baseScore, 1, FALSE, tankWX, tankWY);
-      } else {
-        scrollItemListAddW(&ss->itemList, otherWX, otherWY, baseScore, 1, FALSE, tankWX, tankWY);
-      }
-    }
-
-    /* Pillboxes (1-indexed API) */
-    for (count = 1; count <= sim->pb->numPills; count++) {
-      int baseScore;
-      pillsGetPill(&sim->pb, &pill, count);
-      if (pill.armour == 0) {
-        continue;
-      }
-      if (abs((int)pill.x - tankMX) > MAIN_SCREEN_SIZE_X ||
-          abs((int)pill.y - tankMY) > MAIN_SCREEN_SIZE_Y) {
-        continue;
-      }
-      pa = pillsGetAllianceNum(sim, &sim->pb, count);
-      if (pa == pillEvil || pa == pillNeutral) {
-        baseScore = 1;
-      } else {
-        baseScore = 2;
-      }
-      scrollItemListAddM(&ss->itemList, pill.x, pill.y, baseScore, 1, FALSE, tankWX, tankWY);
-    }
-
-    /* Bases (1-indexed API) */
-    for (count = 1; count <= sim->bs->numBases; count++) {
-      base b;
-      basesGetBase(&sim->bs, &b, count);
-      if (b.armour <= BASE_DEAD) {
-        continue;
-      }
-      if (abs((int)b.x - tankMX) > MAIN_SCREEN_SIZE_X ||
-          abs((int)b.y - tankMY) > MAIN_SCREEN_SIZE_Y) {
-        continue;
-      }
-      scrollItemListAddM(&ss->itemList, b.x, b.y, 3, 2, FALSE, tankWX, tankWY);
-    }
-
-    /* Gunsight crosshairs (score 4, special — exempt from veto so the
-     * player can always see what they're aiming at, even if behind). */
-    gunsightWX = ((WORLD)gunsightX << 8) | 0x80;
-    gunsightWY = ((WORLD)gunsightY << 8) | 0x80;
-    scrollItemListAddW(&ss->itemList, gunsightWX, gunsightWY, 4, 0, TRUE, tankWX, tankWY);
+    ss->parkedSinceTick = 0;
   }
 
-  /* Phase 3: sort by score */
-  scrollItemListSort(&ss->itemList);
-
-  /* Phase 4: process — adjust target, validate conflicts, apply veto */
-  scrollItemListProcess(&ss->itemList, &targetX, &targetY);
-
-  /* Phase 5: execute scroll (at most 1 tile per tick).
-   * Tile-align so deltas come out on tile boundaries. */
-  targetX &= ~0xFF;
-  targetY &= ~0xFF;
-  xmove = targetX - viewRefX;
-  ymove = targetY - viewRefY;
-
-  if (xmove != 0 || ymove != 0) {
-    if (xmove > 0) {
-      (*xValue)++;
-    } else if (xmove < 0) {
-      if (*xValue > 0) (*xValue)--;
+  /* First tick after fresh state: the threat set and gunsight state we
+   * just observed are the BASELINE, not "newly entered" / "just crossed
+   * the edge." Suppress any triggers detected above; from tick 2 onward
+   * events fire normally based on real changes. */
+  if (!ss->initialized) {
+    if (triggered) {
+      autoscrollLog("[t=%u p=%u] INIT_SUPPRESS reason=%s baseline_captured\n",
+                    (unsigned)g_autoscrollTick, (unsigned)myPlayer,
+                    reason ? reason : "?");
     }
-    if (ymove > 0) {
-      (*yValue)++;
-    } else if (ymove < 0) {
-      if (*yValue > 0) (*yValue)--;
-    }
-
-    if (*xValue > 255 - MAIN_SCREEN_SIZE_X) *xValue = 255 - MAIN_SCREEN_SIZE_X;
-    if (*yValue > 255 - MAIN_SCREEN_SIZE_Y) *yValue = 255 - MAIN_SCREEN_SIZE_Y;
-
-    return TRUE;
+    triggered = FALSE;
+    reason = NULL;
+    ss->initialized = TRUE;
   }
 
-  return FALSE;
+  /* Persist threat set for next tick's "newly entered" detection. */
+  for (i = 0; i < MAX_TANKS; i++) ss->prevThreatTank[i] = curThreatTank[i];
+  for (i = 0; i < MAX_PILLS; i++) ss->prevThreatPill[i] = curThreatPill[i];
+
+  /* Recompute target offset on event (debounced, dead-zoned).
+   * lastRecalcTick == 0 is the never-fired sentinel: first event always
+   * passes regardless of debounce. */
+  if (triggered &&
+      (ss->lastRecalcTick == 0 ||
+       (g_autoscrollTick - ss->lastRecalcTick) >= AUTOSCROLL_RECALC_DEBOUNCE)) {
+    int8_t newOX = 0, newOY = 0;
+    int threatCount = 0;
+    int dox, doy;
+    computeTargetOffset(sim, myPlayer, (int)objectX, (int)objectY,
+                        speed, angle, &newOX, &newOY, &threatCount);
+    dox = abs((int)newOX - (int)ss->targetOffsetX);
+    doy = abs((int)newOY - (int)ss->targetOffsetY);
+    if (dox > AUTOSCROLL_DEAD_ZONE || doy > AUTOSCROLL_DEAD_ZONE) {
+      autoscrollLog("[t=%u p=%u] EVENT=%s tank=(%u,%u) speed=%u angle=%d threats=%d target=(%d,%d)->(%d,%d)\n",
+                    (unsigned)g_autoscrollTick, (unsigned)myPlayer,
+                    reason ? reason : "?",
+                    (unsigned)objectX, (unsigned)objectY,
+                    (unsigned)speed, (int)angle, threatCount,
+                    (int)ss->targetOffsetX, (int)ss->targetOffsetY,
+                    (int)newOX, (int)newOY);
+      ss->targetOffsetX = newOX;
+      ss->targetOffsetY = newOY;
+      ss->lastRecalcTick = g_autoscrollTick;
+    } else {
+      autoscrollLog("[t=%u p=%u] EVENT=%s dead_zone target=(%d,%d) new=(%d,%d)\n",
+                    (unsigned)g_autoscrollTick, (unsigned)myPlayer,
+                    reason ? reason : "?",
+                    (int)ss->targetOffsetX, (int)ss->targetOffsetY,
+                    (int)newOX, (int)newOY);
+      /* Still consumes the debounce window — "no change" is a decision. */
+      ss->lastRecalcTick = g_autoscrollTick;
+    }
+  }
+
+  /* Ease currentOffsetSub toward (targetOffset * SUB_PER_TILE) using a
+   * proportional step (1/DIVISOR of remaining per tick). This produces
+   * a continuous slide that decelerates near target and gracefully
+   * redirects when a new event shifts target mid-slide — no "fast then
+   * suddenly stop" lurches. */
+  {
+    int targetSubX = (int)ss->targetOffsetX * AUTOSCROLL_SUB_PER_TILE;
+    int targetSubY = (int)ss->targetOffsetY * AUTOSCROLL_SUB_PER_TILE;
+    int beforeSubX = ss->currentOffsetSubX;
+    int beforeSubY = ss->currentOffsetSubY;
+    int dx = targetSubX - (int)ss->currentOffsetSubX;
+    int dy = targetSubY - (int)ss->currentOffsetSubY;
+    /* Sub-pixel snap so the slide actually settles. */
+    if (dx > 0 && dx <= AUTOSCROLL_SNAP_THRESHOLD)      ss->currentOffsetSubX = (int16_t)targetSubX;
+    else if (dx < 0 && dx >= -AUTOSCROLL_SNAP_THRESHOLD) ss->currentOffsetSubX = (int16_t)targetSubX;
+    else if (dx != 0)                                    ss->currentOffsetSubX += (int16_t)(dx / AUTOSCROLL_EASE_DIVISOR + (dx > 0 ? 1 : -1));
+    if (dy > 0 && dy <= AUTOSCROLL_SNAP_THRESHOLD)      ss->currentOffsetSubY = (int16_t)targetSubY;
+    else if (dy < 0 && dy >= -AUTOSCROLL_SNAP_THRESHOLD) ss->currentOffsetSubY = (int16_t)targetSubY;
+    else if (dy != 0)                                    ss->currentOffsetSubY += (int16_t)(dy / AUTOSCROLL_EASE_DIVISOR + (dy > 0 ? 1 : -1));
+
+    if ((beforeSubX != targetSubX || beforeSubY != targetSubY) &&
+        ss->currentOffsetSubX == targetSubX &&
+        ss->currentOffsetSubY == targetSubY) {
+      autoscrollLog("[t=%u p=%u] SLIDE_DONE offset_sub=(%d,%d)\n",
+                    (unsigned)g_autoscrollTick, (unsigned)myPlayer,
+                    (int)ss->currentOffsetSubX, (int)ss->currentOffsetSubY);
+    }
+  }
+
+  /* Apply: compute desired view position in sub-tile units from the
+   * tank's raw sub-tile world position. The tank sprite is drawn from
+   * the same raw source, so tank and camera move together — bouncing
+   * in tank.x (predict/reconcile ~25Hz) shows as a small world-jitter
+   * with the tank fixed relative to the view, not as a tank shake.
+   * Decompose into the tile-aligned *xValue/*yValue (what engine code
+   * reads) plus subPosX/Y for the renderer to fold into its sub-pixel
+   * drag offset. */
+  {
+    int tankSubX = (int)(sim->tanks[myPlayer])->x - TANK_SUBTRACT;
+    int tankSubY = (int)(sim->tanks[myPlayer])->y - TANK_SUBTRACT;
+    int desiredSubX = tankSubX - SCROLL_CENTER * AUTOSCROLL_SUB_PER_TILE + (int)ss->currentOffsetSubX;
+    int desiredSubY = tankSubY - SCROLL_CENTER * AUTOSCROLL_SUB_PER_TILE + (int)ss->currentOffsetSubY;
+    int   maxSubX = (255 - MAIN_SCREEN_SIZE_X) * AUTOSCROLL_SUB_PER_TILE;
+    int   maxSubY = (255 - MAIN_SCREEN_SIZE_Y) * AUTOSCROLL_SUB_PER_TILE;
+
+    if (desiredSubX < 0)       desiredSubX = 0;
+    if (desiredSubY < 0)       desiredSubY = 0;
+    if (desiredSubX > maxSubX) desiredSubX = maxSubX;
+    if (desiredSubY > maxSubY) desiredSubY = maxSubY;
+
+    *xValue   = (BYTE)(desiredSubX / AUTOSCROLL_SUB_PER_TILE);
+    *yValue   = (BYTE)(desiredSubY / AUTOSCROLL_SUB_PER_TILE);
+    ss->subPosX = (int16_t)(desiredSubX - (int)*xValue * AUTOSCROLL_SUB_PER_TILE);
+    ss->subPosY = (int16_t)(desiredSubY - (int)*yValue * AUTOSCROLL_SUB_PER_TILE);
+
+    autoscrollLog("[t=%u p=%u] DBG rawSub=(%d,%d) angle=%d speed=%u offSub=(%d,%d) view=(%u,%u) subPos=(%d,%d)\n",
+                  (unsigned)g_autoscrollTick, (unsigned)myPlayer,
+                  tankSubX, tankSubY,
+                  (int)angle, (unsigned)speed,
+                  (int)ss->currentOffsetSubX, (int)ss->currentOffsetSubY,
+                  (unsigned)*xValue, (unsigned)*yValue,
+                  (int)ss->subPosX, (int)ss->subPosY);
+  }
+
+  ss->mods = (ss->currentOffsetSubX != ss->targetOffsetX * AUTOSCROLL_SUB_PER_TILE ||
+              ss->currentOffsetSubY != ss->targetOffsetY * AUTOSCROLL_SUB_PER_TILE);
+
+  /* Legacy burst counters: the new design doesn't use them, but other
+   * code reads scrollX/scrollY to detect "burst in progress" (e.g.
+   * brain map invalidation). Keep them at zero so those checks don't
+   * spuriously fire. */
+  ss->scrollX = 0;
+  ss->scrollY = 0;
+
+  return (*xValue != inViewX || *yValue != inViewY);
 }

@@ -29,6 +29,7 @@
 #include "imgui_dialog_utils.h"
 #include "imgui_nav_outline.h"
 #include "../imgui_steam_nav.h"
+#include "dialog_footer.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -37,7 +38,6 @@ extern "C" {
 #include "client_sim.h"
 #include "util.h"
 #include "playername_validate.h"
-#include "../../../winbolonet/winbolonet.h"
 #include "../../lang.h"
 #include "imgui_setname.h"
 }
@@ -135,6 +135,11 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                      ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse);
 
+        /* Top-right close X — same as Cancel. */
+        if (WBUI::DrawPanelCloseX()) {
+            running = false;
+        }
+
         bool wbnLocked = gameFrontGetWinbolonetUse();
 
         if (wbnLocked) {
@@ -156,19 +161,15 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                                               ImGuiInputTextFlags_EnterReturnsTrue);
         if (wbnLocked) ImGui::EndDisabled();
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
         char errPopupId[64];
         SDL_snprintf(errPopupId, sizeof(errPopupId), "%s##setname", langGetText(STR_ERR_TITLE));
 
-        float btnW = 80.0f * s;
-        float btnX = ((float)winW - btnW * 2 - 8.0f * s) / 2.0f;
-        ImGui::SetCursorPosX(btnX);
-
-        if (wbnLocked) ImGui::BeginDisabled();
-        if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0)) || enterPressed) {
+        int footer = WBUI::DialogFooter(langGetText(STR_CANCEL),
+                                        langGetText(STR_OK),
+                                        /*enterConfirms*/ true,
+                                        /*showSeparator*/ true,
+                                        /*confirmDisabled*/ wbnLocked);
+        if (footer == WBUI::FOOTER_CONFIRM || enterPressed) {
             char newName[PLAYER_NAME_LEN];
             PlayerNameValidationError nameErr = PLAYER_NAME_OK;
             bool nameOk = playerNameValidate(playerName, newName,
@@ -216,16 +217,9 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
                 running = false;
             }
         }
-        imguiHandOnHover();
-        if (wbnLocked) ImGui::EndDisabled();
-
-        ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0)) ||
-            (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-             !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+        if (footer == WBUI::FOOTER_CANCEL) {
             running = false;
         }
-        imguiHandOnHover();
 
         /* Error popup */
         static float s_fadeSetNameErr = 0.0f;

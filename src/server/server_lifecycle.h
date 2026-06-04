@@ -27,14 +27,30 @@
 
 #include "global.h"  /* GAME_TICK_LENGTH */
 #include "server_sim.h"
+#include "upload_policy.h"
 
 #define SERVER_TICK_LENGTH (GAME_TICK_LENGTH * 2)
+
+/* Override the operator-controlled upload policy and per-map storage caps.
+ * Called once at startup after transportUdpServerCreate. A maxFiles or
+ * maxStorageBytes value of 0 leaves that cap at the create-time default
+ * (64 files / 8 MiB) — lets the GUI host-and-play path use ServerInstanceConfig
+ * zero-init without explicit values. policy is always applied (0 = ALLOW). */
+void transportUdpServerSetUploadConfig(UploadPolicy policy,
+                                       uint8_t maxFiles,
+                                       uint32_t maxStorageBytes);
 
 typedef struct {
   unsigned short udpPort;
   const char    *bindAddr;        /* "" or NULL = INADDR_ANY */
   const char    *password;        /* "" or NULL = no password */
   BYTE           maxPlayers;
+
+  bool           acceptRemoteClients; /* false = skip UDP bind, WBN, tracker
+                                         and NAT portmap setup; serverInstanceTick
+                                         short-circuits per-tick UDP send/drain;
+                                         serverInstanceShutdown skips matching
+                                         teardown. */
 
   bool           useWbn;          /* false = skip winbolonetCreateServer */
   BYTE           compTanks;       /* AI type — only used when useWbn */
@@ -53,6 +69,42 @@ typedef struct {
                                      shutdown.  Hosted MP sets true;
                                      dedicated defaults false (admins
                                      control routers). */
+
+  /* Operator-controlled handling for client-pushed map uploads.
+   * Zero-init = ALLOW + transport defaults (64 files / 8 MiB), so the GUI
+   * host-and-play path needs no explicit plumbing. */
+  UploadPolicy   uploadPolicy;
+  uint8_t        uploadMaxFiles;        /* 0 = leave transport default (64) */
+  uint32_t       uploadMaxStorageBytes; /* 0 = leave transport default (8 MiB) */
+
+  /* Initial state + lobby/per-sim toggles applied by serverInstanceStartup.
+   * Zero-init means "don't touch what serverSimCreate* set" for the lobby
+   * branch, and "match the new-cfg defaults (false / 0 / NULL / aiNone)"
+   * for the rest. lobbyEnabled and skipLobby are mutually exclusive;
+   * skipLobby wins if both are set. */
+  bool           lobbyEnabled;        /* true → host wants a lobby. Joiners
+                                       * follow whatever phase the server
+                                       * reports. */
+  bool           skipLobby;           /* true → enter running state directly
+                                       * (tutorial, gym, bg_game, braintest,
+                                       * headless --fast). Mutually exclusive
+                                       * with lobbyEnabled. */
+  bool           emptyResetEnabled;   /* serverSimSetEmptyResetEnabled */
+  bool           hasPassword;         /* serverSimSetHasPassword */
+  const char    *botBrainPath;        /* serverSimSetBotBrainPath; NULL =
+                                       * leave unset */
+  BYTE           botAiType;           /* serverSimSetBotAiType; aiNone =
+                                       * leave unset */
+  bool           autoLockOnGameStart; /* serverSimSetAutoLockOnGameStart */
+  bool           ranked;              /* serverSimSetRanked. ranked forces
+                                       * autoLockOnGameStart inside startup. */
+  bool           openHost;            /* serverSimSetOpenHost */
+  uint16_t       serverLocks;         /* serverSimSetServerLocks bitmask */
+  BYTE           viewPlayer;          /* sim->sim.viewPlayer at startup —
+                                       * SP/host/headless designate which
+                                       * slot the in-process renderer
+                                       * watches. Zero-init = slot 0, the
+                                       * SP convention. */
 } ServerInstanceConfig;
 
 /* Bind UDP transport, optionally register with WBN, store tracker config
@@ -79,6 +131,17 @@ void serverInstanceTick(ServerSim *sim);
  * to all connected clients), winbolonetDestroy(TRUE) if WBN was active,
  * botManagerDestroy(sim). Does NOT destroy or free sim — caller owns. */
 void serverInstanceShutdown(ServerSim *sim);
+
+/* Round-end log-upload hooks for WinBoloDS. Only the dedicated-server
+ * binary ships server_dedicated_log.c (it touches servermain.c-owned
+ * globals and the http stack); the other server_static consumers
+ * (WinBolo, WinBoloHeadless, winbolo_gym, WinBoloUnitTests) leave
+ * these unset and the lifecycle treats them as no-ops. WinBoloDS
+ * registers serverDedicatedLogStashCurrentRound /
+ * serverDedicatedLogFlushPendingUpload via serverDedicatedLogInstall
+ * at startup. */
+void serverLifecycleSetRoundLogHooks(void (*stash)(void),
+                                     void (*flush)(void));
 
 typedef enum {
   SERVER_PORTMAP_DISABLED,    /* not requested (dedicated default,
@@ -108,6 +171,14 @@ typedef struct {
  * briefly so the caller never sees a half-written externalIp from
  * libplum's worker thread. */
 void serverInstanceGetPortmapInfo(ServerPortmapInfo *out);
+
+/* Whether the running server instance is firing NAT-keepalive "punch"
+ * packets at the public tracker (i.e. the equivalent of NOT passing
+ * -no-natpunch). FALSE when no instance is running, when keepalive is
+ * disabled via gameFront / CLI override, or when the tracker itself
+ * is off. Read by the lobby UI so it can hide the "Checking server
+ * reachability..." badge for LAN hosts and other no-punch configs. */
+bool serverInstanceIsNatPunchActive(void);
 
 /* Called from the recv path when a PACKET_PUNCH_PROBE_REPLY arrives.
  * The reflexive address is what the tracker sees as our external

@@ -32,6 +32,10 @@
 #include "global.h"
 #include "transport.h"
 #include "server_sim.h"
+#include "client_sim.h"  /* clientSimSyncFromSnapshot — per-tick snapshot apply */
+/* The passive variant is driven from a different thread than the one that
+ * ticks ServerSim, so it self-serialises on the server's threadsMutex. */
+#include "../server/threads.h"
 
 /* Size of the delayed input queue — must be a power of 2 */
 #define INPUT_QUEUE_SIZE 256
@@ -45,10 +49,23 @@ typedef struct {
     uint32_t queueReadIdx;
     uint32_t queueWriteIdx;
     bool ticksServer;           /* If false, tick() skips serverSimTick() */
+    ClientSim *cs;              /* Owning ClientSim — snapshot dest at tick end */
+    /* Per-tick event dedup. Client polls every ~10ms but the server
+     * advances every ~20ms, so the same EVENT_* lands in two snapshots
+     * back-to-back unless we gate.  Without this, harvest/explosion
+     * sounds echo, newswire lines duplicate, and Steam stats double-
+     * count.  Matches the per-event reliable-seq dedup the UDP
+     * transport gets via reliableEventAck. */
+    uint32_t lastDeliveredTick;
+    bool     hasLastDelivered;
 } TransportLocalCtx;
 
 static void localSendInput(void *ctx, const InputPacket *input) {
     TransportLocalCtx *lctx = (TransportLocalCtx *)ctx;
+
+    if (!lctx->ticksServer) {
+        threadsWaitForMutex();
+    }
 
     if (lctx->delay_ticks == 0) {
         /* Zero latency: deliver immediately */
@@ -59,6 +76,10 @@ static void localSendInput(void *ctx, const InputPacket *input) {
         lctx->inputQueue[idx] = *input;
         lctx->queueWriteIdx++;
         lctx->queueCount++;
+    }
+
+    if (!lctx->ticksServer) {
+        threadsReleaseMutex();
     }
 }
 
@@ -79,11 +100,21 @@ static bool localGetSnapshot(void *ctx, BYTE clientIdx,
                            pills, maxPills,
                            events, maxEvents,
                            false);
+    if (lctx->hasLastDelivered && hdr->serverTick == lctx->lastDeliveredTick) {
+        hdr->reliableEventCount = 0;
+    }
+    lctx->lastDeliveredTick = hdr->serverTick;
+    lctx->hasLastDelivered = true;
     return TRUE;
 }
 
 static bool localTick(void *ctx) {
     TransportLocalCtx *lctx = (TransportLocalCtx *)ctx;
+    bool selfLocked = !lctx->ticksServer;
+
+    if (selfLocked) {
+        threadsWaitForMutex();
+    }
 
     /* Deliver delayed inputs when they've aged enough */
     if (lctx->delay_ticks > 0 && lctx->queueCount > lctx->delay_ticks) {
@@ -96,14 +127,48 @@ static bool localTick(void *ctx) {
     if (lctx->ticksServer) {
         serverSimTick(lctx->sim);
     }
+
+    /* Pull and apply a snapshot every tick — the local transport now
+     * owns the client-side snapshot apply that frontends used to drive
+     * via per-frame clientSimNetSyncSnapshot calls.  Routed through
+     * localGetSnapshot so the per-tick event dedup applies here too. */
+    if (lctx->cs != NULL) {
+        SnapshotHeader snapHdr;
+        TankSnapshot snapTanks[MAX_TANKS];
+        ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
+        TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
+        BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
+        PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
+        GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
+        localGetSnapshot(ctx, lctx->playerNum, &snapHdr,
+                         snapTanks, MAX_TANKS,
+                         snapShells, MAX_SNAPSHOT_SHELLS,
+                         snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
+                         snapBases, MAX_SNAPSHOT_BASES,
+                         snapPills, MAX_SNAPSHOT_PILLS,
+                         snapEvents, MAX_SNAPSHOT_EVENTS);
+        clientSimSyncFromSnapshot(lctx->cs, &snapHdr,
+                                  snapTanks, snapHdr.tankCount,
+                                  snapShells, snapHdr.shellCount,
+                                  snapTkExplosions, snapHdr.tkExplosionCount,
+                                  snapBases, snapHdr.baseCount,
+                                  snapPills, snapHdr.pillCount,
+                                  snapEvents, snapHdr.reliableEventCount,
+                                  lctx->playerNum);
+    }
+
+    if (selfLocked) {
+        threadsReleaseMutex();
+    }
     return TRUE;
 }
 
-Transport transportLocalCreate(ServerSim *sim, BYTE playerNum) {
+Transport transportLocalCreate(ServerSim *sim, ClientSim *cs, BYTE playerNum) {
     Transport t;
     TransportLocalCtx *lctx = (TransportLocalCtx *)malloc(sizeof(TransportLocalCtx));
     memset(lctx, 0, sizeof(TransportLocalCtx));
     lctx->sim = sim;
+    lctx->cs = cs;
     lctx->playerNum = playerNum;
     lctx->delay_ticks = 0;
     lctx->ticksServer = true;
@@ -115,11 +180,18 @@ Transport transportLocalCreate(ServerSim *sim, BYTE playerNum) {
     return t;
 }
 
-Transport transportLocalCreatePassive(ServerSim *sim, BYTE playerNum) {
-    Transport t = transportLocalCreate(sim, playerNum);
+Transport transportLocalCreatePassive(ServerSim *sim, ClientSim *cs, BYTE playerNum) {
+    Transport t = transportLocalCreate(sim, cs, playerNum);
     TransportLocalCtx *lctx = (TransportLocalCtx *)t.ctx;
     lctx->ticksServer = false;
     return t;
+}
+
+void transportLocalSetPlayerNum(Transport *t, BYTE playerNum) {
+    TransportLocalCtx *lctx;
+    if (t == NULL || t->ctx == NULL) return;
+    lctx = (TransportLocalCtx *)t->ctx;
+    lctx->playerNum = playerNum;
 }
 
 void transportLocalSetDelay(Transport *t, uint16_t delay_ms) {

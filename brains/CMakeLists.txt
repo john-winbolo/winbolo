@@ -28,13 +28,15 @@ list(REMOVE_DUPLICATES _bot_c_include_dirs)
 target_include_directories(bot_brains_static PUBLIC ${_bot_c_include_dirs})
 
 # Brain C bindings call into bolo's sim, lua's C API, and (for
-# na_shield_stamp.c) SDL3. PUBLIC so consumers inherit the link
+# gh_shield_stamp.c) SDL3. PUBLIC so consumers inherit the link
 # without repeating it.
 target_link_libraries(bot_brains_static PUBLIC
     bolo_static
     lua_static
     SDL3::SDL3)
 
-if(NOT MSVC)
+if(EMSCRIPTEN)
+    target_compile_options(bot_brains_static PRIVATE -fno-common -include sys/types.h)
+elseif(NOT MSVC)
     target_compile_options(bot_brains_static PRIVATE -fcommon)
 endif()

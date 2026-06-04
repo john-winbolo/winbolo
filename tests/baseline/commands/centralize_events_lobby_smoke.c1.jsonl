@@ -1,0 +1,15 @@
+# centralize_events_lobby_smoke_udp — client 1 (slot 0).
+# DS runs with the lobby state machine live. The headless's
+# cmd-stdin pump falls back to a per-iteration counter while
+# serverTick is still 0 (no PACKET_GAME_STATE yet), so these
+# lobby ops fire on wall-clock cadence (~1ms per pump tick).
+#
+# Sequencing matters: c2 joins ~300ms after c1 and needs time
+# to complete its UDP join + map download before its own cmd
+# stream can ready it up. So c1 sets its team early but holds
+# off on ready until well after c2 has had a chance to set
+# team and ready. That way c1's ready is the trigger that
+# tips serverSimLobbyCheckAllReady over and starts countdown
+# — not c1 readying alone before c2 has joined.
+{"tick": 100,  "op": "set_team",  "slot": 0, "team": 1}
+{"tick": 4000, "op": "set_ready", "slot": 0, "ready": true}

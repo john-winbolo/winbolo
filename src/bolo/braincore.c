@@ -23,8 +23,19 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
+#include <stdarg.h>
+#include <stdint.h>
 
 #include <SDL3/SDL.h>
+
+#ifdef _WIN32
+#include <process.h>  /* _getpid */
+#define brc_getpid() _getpid()
+#else
+#include <unistd.h>
+#define brc_getpid() getpid()
+#endif
 
 #include <lua.h>
 #include <lualib.h>
@@ -39,7 +50,7 @@
 #include "braincore.h"
 #include "brain_pathfinder.h"
 
-/* C-side pill_grid from the na_threat brain module (same link unit). */
+/* C-side pill_grid from the gh_threat brain module (same link unit). */
 extern float *naThreatGetPillGrid(lua_State *L);
 
 /* ------------------------------------------------------------------ */
@@ -261,6 +272,13 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_pushinteger(L, info->allies ? *(info->allies) : 0);
   lua_setfield(L, -2, "allies");
 
+  /* Per-slot PLAYER_FLAG_BOT bitmap (bit N = slot N is a brain).
+   * Brains intersect with `allies` (and invert) to address allied
+   * humans only — see the human-goal-change broadcast in
+   * GoalHunter. */
+  lua_pushinteger(L, info->player_bots ? *(info->player_bots) : 0);
+  lua_setfield(L, -2, "player_bots");
+
   /* Tank state */
   lua_pushinteger(L, info->tankx);          lua_setfield(L, -2, "tankx");
   lua_pushinteger(L, info->tanky);          lua_setfield(L, -2, "tanky");
@@ -335,7 +353,31 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   }
   lua_setfield(L, -2, "objects");
 
-  /* Received message */
+  /* Received messages — full per-tick inbox, pushed as an array of
+   * {sender=N, receivers=N, text="..."} tables. info.message (singular)
+   * stays as a nil-or-table alias to messages[1] for legacy brains
+   * that haven't been ported to iterate info.messages yet. */
+  {
+    char msgBuf[256];
+    lua_newtable(L);  /* info.messages = {} */
+    for (u_short mi = 0; mi < info->num_messages; mi++) {
+      const MessageInfo *m = &info->messages[mi];
+      lua_newtable(L);
+      lua_pushinteger(L, m->sender);
+      lua_setfield(L, -2, "sender");
+      lua_pushinteger(L, m->receivers ? *(m->receivers) : 0);
+      lua_setfield(L, -2, "receivers");
+      if (m->message != NULL && m->message[0] != 0) {
+        utilPtoCString((char *)m->message, msgBuf);
+        lua_pushstring(L, msgBuf);
+      } else {
+        lua_pushstring(L, "");
+      }
+      lua_setfield(L, -2, "text");
+      lua_rawseti(L, -2, mi + 1);
+    }
+    lua_setfield(L, -2, "messages");
+  }
   if (info->message != NULL) {
     char msgBuf[256];
     lua_newtable(L);
@@ -469,6 +511,249 @@ void brainCoreExtractOutput(lua_State *L, BrainInfo *info) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Brain crash logging                                                 */
+/* ------------------------------------------------------------------ */
+/* Lua error in brain.think() causes the producer in bot_manager.c to
+ * remove the bot from the game (j->needRemove). Without crash logging
+ * the disappearance is silent. These helpers:
+ *   1. Install a debug.traceback message handler so pcall returns the
+ *      full Lua stack.
+ *   2. Write a unique file per crash — never overwritten — with a
+ *      searchable banner "===== BRAIN CRASH =====" and [BRAIN_CRASH]
+ *      tagged lines. Filename embeds UTC timestamp, PID, lua_State
+ *      pointer, and (if readable) state.bot_index.
+ *   3. Also tag stderr lines with [BRAIN_CRASH] so debugger consoles
+ *      surface the failure without grepping log files.
+ * No CLI switch — always on.
+ */
+static int brc_traceback_msgh(lua_State *L) {
+  const char *msg = lua_tostring(L, 1);
+  if (msg == NULL) {
+    if (luaL_callmeta(L, 1, "__tostring") && lua_type(L, -1) == LUA_TSTRING) {
+      return 1;
+    }
+    msg = lua_pushfstring(L, "(error object is a %s value)",
+                           luaL_typename(L, 1));
+  }
+  luaL_traceback(L, L, msg, 1);
+  return 1;
+}
+
+/* Best-effort read of state.bot_index (Lua-side identifier matching
+ * print2_botN.log / playerN.jsonl). Returns -1 if unavailable. Never
+ * raises. */
+static int brc_read_bot_index(lua_State *L) {
+  int top = lua_gettop(L);
+  int idx = -1;
+  lua_getglobal(L, "state");
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, "bot_index");
+    if (lua_isnumber(L, -1)) {
+      idx = (int)lua_tointeger(L, -1);
+    }
+  }
+  lua_settop(L, top);
+  return idx;
+}
+
+/* Best-effort read of an integer field from the global "state" table.
+ * Returns -1 if missing / not a number. */
+static int brc_read_state_int(lua_State *L, const char *field) {
+  int top = lua_gettop(L);
+  int v = -1;
+  lua_getglobal(L, "state");
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, field);
+    if (lua_isnumber(L, -1)) v = (int)lua_tointeger(L, -1);
+  }
+  lua_settop(L, top);
+  return v;
+}
+
+/* Best-effort copy of _G.DEBUG_SESSION_DIR into out (NUL-terminated).
+ * Returns true if set & non-empty. */
+static bool brc_read_session_dir(lua_State *L, char *out, size_t outsz) {
+  int top = lua_gettop(L);
+  bool ok = false;
+  out[0] = '\0';
+  lua_getglobal(L, "DEBUG_SESSION_DIR");
+  if (lua_isstring(L, -1)) {
+    const char *s = lua_tostring(L, -1);
+    if (s && s[0]) {
+      strncpy(out, s, outsz - 1);
+      out[outsz - 1] = '\0';
+      ok = true;
+    }
+  }
+  lua_settop(L, top);
+  return ok;
+}
+
+/* Best-effort read of _G.BRAIN_DEBUG_MODE. Returns true only when the
+ * global is explicitly truthy. Production hosts (WinBolo / WinBoloDS)
+ * set it false at brain creation, so brains there write NO crash/error
+ * files to disk — stderr surfacing still fires regardless. */
+static bool brc_debug_mode(lua_State *L) {
+  int top = lua_gettop(L);
+  lua_getglobal(L, "BRAIN_DEBUG_MODE");
+  bool on = lua_toboolean(L, -1) != 0;
+  lua_settop(L, top);
+  return on;
+}
+
+/* Rate-limit key in the Lua registry: stores the last UNIX timestamp
+ * a crash file was written for this brain. Per-brain (each brain has
+ * its own lua_State + registry) so two brains crashing at the same
+ * time both get logged; only repeats from the SAME brain are throttled.
+ * Address-of a static is the standard light-userdata key idiom. */
+static const char kBrcCrashRateLimitKey;
+
+/* Crashes within this many seconds of a previous crash on the same
+ * brain get suppressed (stderr still fires, file is skipped). 30s
+ * is short enough that a transient crash from one tick re-arms quickly
+ * but long enough that a chronic per-tick crash can't fill the disk
+ * (50 ticks/sec × 30s = at most 1 file per 1500 crashes). */
+#define BRC_CRASH_RATE_LIMIT_SECS 30
+
+/* Returns true if this crash should be suppressed (rate-limited).
+ * Updates the registry timestamp on a non-suppressed call so the next
+ * caller can see we just logged. */
+static bool brc_should_suppress_crash_file(lua_State *L, time_t now) {
+  lua_pushlightuserdata(L, (void *)&kBrcCrashRateLimitKey);
+  lua_rawget(L, LUA_REGISTRYINDEX);
+  time_t last = (time_t)lua_tointeger(L, -1);
+  lua_pop(L, 1);
+
+  if (last != 0 && (now - last) < BRC_CRASH_RATE_LIMIT_SECS) {
+    return true;
+  }
+  lua_pushlightuserdata(L, (void *)&kBrcCrashRateLimitKey);
+  lua_pushinteger(L, (lua_Integer)now);
+  lua_rawset(L, LUA_REGISTRYINDEX);
+  return false;
+}
+
+/* Write a brain crash report. err_or_traceback is the pcall payload
+ * (error string + "\nstack traceback:\n..." from the msgh). method is
+ * "think" / "init" / whatever — used in the banner and filename. Not
+ * static so the unit test in tests/unit/test_brain_crash_log.c can
+ * invoke it directly without standing up a full BrainInfo. */
+void brc_write_crash_log(lua_State *L,
+                         const char *method,
+                         const char *err_or_traceback) {
+  if (err_or_traceback == NULL) err_or_traceback = "(no error message)";
+  if (method == NULL) method = "?";
+
+  /* Timestamps: UTC (for filenames + cross-host comparison) and local
+   * (for at-a-glance reading next to other session logs). */
+  time_t now = time(NULL);
+  struct tm tm_utc, tm_local;
+#ifdef _WIN32
+  gmtime_s(&tm_utc, &now);
+  localtime_s(&tm_local, &now);
+#else
+  gmtime_r(&now, &tm_utc);
+  localtime_r(&now, &tm_local);
+#endif
+  char ts_utc[32], ts_local[32];
+  strftime(ts_utc,   sizeof(ts_utc),   "%Y%m%d_%H%M%SZ",     &tm_utc);
+  strftime(ts_local, sizeof(ts_local), "%Y-%m-%d %H:%M:%S",  &tm_local);
+
+  int bot_idx = brc_read_bot_index(L);
+  int tick    = brc_read_state_int(L, "tick");
+  int pid     = brc_getpid();
+  uintptr_t lptr = (uintptr_t)L;
+
+  char session_dir[512];
+  bool has_session = brc_read_session_dir(L, session_dir, sizeof(session_dir));
+
+  /* Debug-mode gate: production hosts (WinBolo / WinBoloDS) run brains
+   * with BRAIN_DEBUG_MODE=false, where we write NO crash files to disk.
+   * The stderr surface below still fires so crashes are never silent. */
+  bool debug_mode = brc_debug_mode(L);
+
+  /* Rate-limit: if this brain crashed within the last
+   * BRC_CRASH_RATE_LIMIT_SECS, skip the file write so a perpetually-
+   * crashing brain (we no longer remove the bot on Lua error — see
+   * bot_manager.c runBotThinkJobImpl) can't fill the disk. Stderr
+   * still fires below so the crash is never invisible. */
+  bool suppress_file = brc_should_suppress_crash_file(L, now);
+
+  /* Filename: bot index if known, else lua_State pointer. Goes inside
+   * DEBUG_SESSION_DIR if BrainTest set one (so each session's crashes
+   * are colocated with its other logs); else CWD. Unique per crash. */
+  char path[1024];
+  const char *prefix = has_session ? session_dir : ".";
+  if (bot_idx >= 0) {
+    SDL_snprintf(path, sizeof(path),
+                 "%s/brain_crash_%s_pid%d_bot%d.log",
+                 prefix, ts_utc, pid, bot_idx);
+  } else {
+    SDL_snprintf(path, sizeof(path),
+                 "%s/brain_crash_%s_pid%d_L%p.log",
+                 prefix, ts_utc, pid, (void *)lptr);
+  }
+
+  FILE *f = (suppress_file || !debug_mode) ? NULL : fopen(path, "wb");
+  if (f) {
+    fprintf(f, "===== BRAIN CRASH =====\n");
+    fprintf(f, "[BRAIN_CRASH] method=brain.%s\n", method);
+    fprintf(f, "[BRAIN_CRASH] timestamp_utc=%s\n", ts_utc);
+    fprintf(f, "[BRAIN_CRASH] timestamp_local=%s\n", ts_local);
+    fprintf(f, "[BRAIN_CRASH] debug_session_dir=%s\n",
+            has_session ? session_dir : "(none)");
+    fprintf(f, "[BRAIN_CRASH] pid=%d\n", pid);
+    fprintf(f, "[BRAIN_CRASH] lua_state=%p\n", (void *)lptr);
+    fprintf(f, "[BRAIN_CRASH] bot_index=%d\n", bot_idx);
+    fprintf(f, "[BRAIN_CRASH] state.tick=%d\n", tick);
+    fprintf(f, "[BRAIN_CRASH] ----- error + traceback below -----\n");
+    fprintf(f, "%s\n", err_or_traceback);
+    fprintf(f, "===== END BRAIN CRASH =====\n");
+    fflush(f);
+    fclose(f);
+  }
+
+  /* Stderr surface so the failure is visible without grepping. Always
+   * fires (even when the file was suppressed) so a chronically-crashing
+   * brain stays loud in the console — just with a clear note that the
+   * file isn't being re-emitted. */
+  if (suppress_file) {
+    fprintf(stderr,
+            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) "
+            "— file SUPPRESSED (rate-limit: same brain crashed within %ds)\n",
+            method, ts_local, bot_idx, tick, (void *)lptr,
+            BRC_CRASH_RATE_LIMIT_SECS);
+  } else if (!debug_mode) {
+    fprintf(stderr,
+            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) "
+            "— file logging disabled (BRAIN_DEBUG_MODE off)\n",
+            method, ts_local, bot_idx, tick, (void *)lptr);
+  } else {
+    fprintf(stderr,
+            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) — see %s\n",
+            method, ts_local, bot_idx, tick, (void *)lptr, path);
+  }
+  fprintf(stderr, "[BRAIN_CRASH] %s\n", err_or_traceback);
+  fflush(stderr);
+
+  /* One-line index entry in brain_error.log (inside the session dir if
+   * applicable) for tail-watchers; back-points at the full crash file.
+   * Skipped on rate-limit so the index doesn't grow without bound, and
+   * skipped entirely in production (BRAIN_DEBUG_MODE off). */
+  if (!suppress_file && debug_mode) {
+    char idx_path[1024];
+    SDL_snprintf(idx_path, sizeof(idx_path), "%s/brain_error.log", prefix);
+    FILE *idx = fopen(idx_path, "a");
+    if (idx) {
+      fprintf(idx,
+              "[BRAIN_CRASH] %s (%s) bot=%d tick=%d pid=%d L=%p method=%s file=%s\n",
+              ts_utc, ts_local, bot_idx, tick, pid, (void *)lptr, method, path);
+      fclose(idx);
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Brain method invocation                                             */
 /* ------------------------------------------------------------------ */
 
@@ -480,7 +765,7 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
   lua_getglobal(L, "brain");
   if (!lua_istable(L, -1)) {
     fprintf(stderr, "brainCore: 'brain' global is not a table\n");
-    { FILE *ef = fopen("brain_error.log", "a"); if (ef) { fprintf(ef, "brain global is not a table (type=%d)\n", lua_type(L, -1)); fclose(ef); } }
+    if (brc_debug_mode(L)) { FILE *ef = fopen("brain_error.log", "a"); if (ef) { fprintf(ef, "brain global is not a table (type=%d)\n", lua_type(L, -1)); fclose(ef); } }
     lua_settop(L, top);
     return false;
   }
@@ -488,14 +773,22 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
   lua_getfield(L, -1, "think");
   if (!lua_isfunction(L, -1)) {
     fprintf(stderr, "brainCore: brain.think is not a function\n");
-    { FILE *ef = fopen("brain_error.log", "a"); if (ef) { fprintf(ef, "brain.think is not a function (type=%d)\n", lua_type(L, -1)); fclose(ef); } }
+    if (brc_debug_mode(L)) { FILE *ef = fopen("brain_error.log", "a"); if (ef) { fprintf(ef, "brain.think is not a function (type=%d)\n", lua_type(L, -1)); fclose(ef); } }
     lua_settop(L, top);
     return false;
   }
 
-  brainCorePushInfo(L, info);
+  /* Push traceback msgh BELOW the function so lua_pcall reports full
+   * stack on error. Stack before pcall:
+   *   [brain, msgh, brain.think, info_arg]
+   * msgh_idx is the absolute index of msgh. */
+  lua_pushcfunction(L, brc_traceback_msgh);  /* [brain, think, msgh] */
+  lua_insert(L, -2);                          /* [brain, msgh, think] */
+  int msgh_idx = lua_gettop(L) - 1;           /* msgh is one below top */
 
-  if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+  brainCorePushInfo(L, info);                 /* [brain, msgh, think, info] */
+
+  if (lua_pcall(L, 1, 1, msgh_idx) != LUA_OK) {
     const char *errMsg = lua_tostring(L, -1);
     /* Budget-hook sentinel: Lua prepends "<chunkname>:<line>: " to
      * luaL_error messages, so the suffix is the stable match point.
@@ -512,19 +805,16 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
       lua_settop(L, top);
       return false;
     }
-    fprintf(stderr, "brainCore: brain.think() error: %s\n", errMsg ? errMsg : "(unknown)");
-    /* Write to brain_error.log so errors are never lost */
-    {
-      FILE *ef = fopen("brain_error.log", "a");
-      if (ef) {
-        fprintf(ef, "brain.think() error: %s\n", errMsg ? errMsg : "(unknown)");
-        fclose(ef);
-      }
-    }
-    /* Route error through Lua print() so BrainTest Print Output captures it */
+    /* Full crash report: timestamped per-bot file with traceback + a
+     * stderr/[BRAIN_CRASH] surface. errMsg here is the value returned
+     * by brc_traceback_msgh, i.e. "<err>\nstack traceback:\n...". */
+    brc_write_crash_log(L, "think", errMsg);
+    /* Route error through Lua print() so BrainTest Print Output captures it.
+     * Wrap in pcall so a busted print() can't re-enter this same path. */
     lua_getglobal(L, "print");
     if (lua_isfunction(L, -1)) {
-      lua_pushfstring(L, "[FATAL] brain.think() error: %s", errMsg ? errMsg : "(unknown)");
+      lua_pushfstring(L, "[BRAIN_CRASH] brain.think() error: %s",
+                      errMsg ? errMsg : "(unknown)");
       lua_pcall(L, 1, 0, 0);
     } else {
       lua_pop(L, 1);
@@ -553,19 +843,17 @@ bool brainCoreCallMethod(lua_State *L, BrainInfo *info, const char *method) {
     return true; /* optional — not an error */
   }
 
+  /* Install traceback msgh below the function so errors include the
+   * full Lua stack. Stack: [brain, msgh, method_fn, info_arg]. */
+  lua_pushcfunction(L, brc_traceback_msgh);
+  lua_insert(L, -2);
+  int msgh_idx = lua_gettop(L) - 1;
+
   brainCorePushInfo(L, info);
 
-  if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+  if (lua_pcall(L, 1, 0, msgh_idx) != LUA_OK) {
     const char *errMsg = lua_tostring(L, -1);
-    fprintf(stderr, "brainCore: brain.%s() error: %s\n",
-            method, errMsg ? errMsg : "(unknown)");
-    {
-      FILE *ef = fopen("brain_error.log", "a");
-      if (ef) {
-        fprintf(ef, "brain.%s() error: %s\n", method, errMsg ? errMsg : "(unknown)");
-        fclose(ef);
-      }
-    }
+    brc_write_crash_log(L, method, errMsg);
     lua_settop(L, top);
     return false;
   }
@@ -694,6 +982,34 @@ static int l_cpf_clear_overlay(lua_State *L) {
   return 0;
 }
 
+static int l_cpf_get_overlay(lua_State *L) {
+  CPF_GET(L);
+  int x = (int)luaL_checkinteger(L, 1);
+  int y = (int)luaL_checkinteger(L, 2);
+  lua_pushnumber(L, (double)brainPathfinderGetOverlay(pf, x, y));
+  return 1;
+}
+
+static int l_cpf_get_danger(lua_State *L) {
+  CPF_GET(L);
+  int x = (int)luaL_checkinteger(L, 1);
+  int y = (int)luaL_checkinteger(L, 2);
+  lua_pushnumber(L, (double)brainPathfinderGetDanger(pf, x, y));
+  return 1;
+}
+
+static int l_cpf_astar_log_enable(lua_State *L) {
+  const char *path = luaL_optstring(L, 1, NULL);
+  brainPathfinderEnableLogPath(path);
+  return 0;
+}
+
+static int l_cpf_astar_log_set_tick(lua_State *L) {
+  int tick = (int)luaL_checkinteger(L, 1);
+  brainPathfinderSetLogTick(tick);
+  return 0;
+}
+
 /* cpf_set_danger_offset(x, y, value) — set per-tile danger offset (negative = subtract) */
 static int l_cpf_set_danger_offset(lua_State *L) {
   CPF_GET(L);
@@ -806,8 +1122,33 @@ static int l_cpf_cost_to(lua_State *L) {
   int mines = (int)luaL_checkinteger(L, 8);
   int armour = (int)luaL_checkinteger(L, 9);
   int budget = (int)luaL_optinteger(L, 10, 4000);
-  float cost = brainPathfinderCostTo(pf, sx, sy, dx, dy, in_boat,
-                                      shells, trees, mines, armour, budget);
+  int allow_boat = (int)luaL_optinteger(L, 11, 1);
+
+  /* Capture Lua traceback so the astar log shows who called this.
+   * Only when logging is actually enabled — building a traceback string
+   * walks the whole Lua stack and allocates, and cost_to is a hot path
+   * (bulk candidate eval), so this must be free when the log is off. */
+  if (brainPathfinderIsLogEnabled()) {
+    lua_getglobal(L, "debug");
+    if (lua_istable(L, -1)) {
+      lua_getfield(L, -1, "traceback");
+      if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, "");
+        lua_pushinteger(L, 2);
+        if (lua_pcall(L, 2, 1, 0) == LUA_OK && lua_isstring(L, -1)) {
+          brainPathfinderSetLogCaller(lua_tostring(L, -1));
+        }
+        lua_pop(L, 1);  /* traceback result or error */
+      } else {
+        lua_pop(L, 1);  /* non-function */
+      }
+    }
+    lua_pop(L, 1);  /* debug table */
+  }
+
+  float cost = brainPathfinderCostToEx(pf, sx, sy, dx, dy, in_boat,
+                                        shells, trees, mines, armour,
+                                        budget, allow_boat);
   lua_pushnumber(L, (double)cost);
   return 1;
 }
@@ -1175,6 +1516,53 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
   return 1;
 }
 
+/* cpf_simulate_shot_with_tanks(origin_wx, origin_wy, target_wx, target_wy,
+ *                              shooter_type, sight_len, tanks_table, owner_player)
+ *   -> { {mx=, my=, hit_type=, hit_id=}, ... }
+ * tanks_table is an array of {wx=, wy=, player_num=} entries.
+ * hit_type: 0=tile, 1=tank hit. hit_id: player number (when hit_type==1). */
+static int l_cpf_simulate_shot_with_tanks(lua_State *L) {
+  WORLD ox = (WORLD)luaL_checkinteger(L, 1);
+  WORLD oy = (WORLD)luaL_checkinteger(L, 2);
+  WORLD tx = (WORLD)luaL_checkinteger(L, 3);
+  WORLD ty = (WORLD)luaL_checkinteger(L, 4);
+  int shooter    = (int)luaL_optinteger(L, 5, BRAIN_SHOT_SHOOTER_TANK);
+  int sight_len  = (int)luaL_optinteger(L, 6, 0);
+  luaL_checktype(L, 7, LUA_TTABLE);
+  uint8_t owner  = (uint8_t)luaL_checkinteger(L, 8);
+
+  /* Read tanks table */
+  BrainShotTankPos tanks[MAX_TANKS];
+  int num_tanks = 0;
+  int tlen = (int)lua_rawlen(L, 7);
+  for (int i = 1; i <= tlen && num_tanks < MAX_TANKS; i++) {
+    lua_rawgeti(L, 7, i);
+    lua_getfield(L, -1, "wx");
+    lua_getfield(L, -2, "wy");
+    lua_getfield(L, -3, "player_num");
+    tanks[num_tanks].wx         = (WORLD)lua_tointeger(L, -3);
+    tanks[num_tanks].wy         = (WORLD)lua_tointeger(L, -2);
+    tanks[num_tanks].player_num = (uint8_t)lua_tointeger(L, -1);
+    lua_pop(L, 4);  /* pop 3 fields + table entry */
+    num_tanks++;
+  }
+
+  BrainShotTile tiles[64];
+  int n = brainPathfinderSimulateShotWithTanks(ox, oy, tx, ty,
+            shooter, sight_len, tanks, num_tanks, owner,
+            tiles, (int)(sizeof(tiles)/sizeof(tiles[0])));
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    lua_createtable(L, 0, 4);
+    lua_pushinteger(L, tiles[i].mx);       lua_setfield(L, -2, "mx");
+    lua_pushinteger(L, tiles[i].my);       lua_setfield(L, -2, "my");
+    lua_pushinteger(L, tiles[i].hit_type); lua_setfield(L, -2, "hit_type");
+    lua_pushinteger(L, tiles[i].hit_id);   lua_setfield(L, -2, "hit_id");
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 1;
+}
+
 static int l_cpf_estimate_cost(lua_State *L) {
   CPF_GET(L);
   int sx = (int)luaL_checkinteger(L, 1);
@@ -1392,6 +1780,10 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_load_danger",                    l_cpf_load_danger },
     { "cpf_load_pill_danger_from_threat",   l_cpf_load_pill_danger_from_threat },
     { "cpf_set_overlay",          l_cpf_set_overlay },
+    { "cpf_get_overlay",          l_cpf_get_overlay },
+    { "cpf_get_danger",           l_cpf_get_danger },
+    { "cpf_astar_log_enable",     l_cpf_astar_log_enable },
+    { "cpf_astar_log_set_tick",   l_cpf_astar_log_set_tick },
     { "cpf_clear_overlay",        l_cpf_clear_overlay },
     { "cpf_set_danger_offset",    l_cpf_set_danger_offset },
     { "cpf_clear_danger_offset",  l_cpf_clear_danger_offset },
@@ -1420,6 +1812,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_estimate_cost",     l_cpf_estimate_cost },
     { "cpf_simulate_shot",        l_cpf_simulate_shot },
     { "cpf_simulate_shot_angle",  l_cpf_simulate_shot_angle },
+    { "cpf_simulate_shot_with_tanks", l_cpf_simulate_shot_with_tanks },
     { "cpf_danger_at",             l_cpf_danger_at },
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
@@ -1863,8 +2256,8 @@ void brainCoreRegisterVizDetail(lua_State *L) {
   lua_pushcfunction(L, l_overlay_detail_clear); lua_setglobal(L, "overlay_detail_clear");
 }
 
-/* NOTE: pill_contrib bindings moved to brains/NewAutopilot/c/
- * na_overlay_pillcontrib.c — they were specific to NewAutopilot's
+/* NOTE: pill_contrib bindings moved to brains/GoalHunter/c/
+ * gh_overlay_pillcontrib.c — they were specific to GoalHunter's
  * BrainTest overlay and shouldn't live in the generic brain runtime. */
 
 /* ------------------------------------------------------------------ */

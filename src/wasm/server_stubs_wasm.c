@@ -19,8 +19,8 @@
 
 #include <stddef.h>
 #include <string.h>
-#include "../bolo/global.h"
-#include "../server/server_lifecycle.h"
+#include "global.h"
+#include "server_lifecycle.h"
 
 bool isLogging = FALSE;
 bool dontSendLog = TRUE;

@@ -36,7 +36,7 @@
 #include "players.h"
 #include "brain_data.h"
 #include "log.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
 #include "bases.h"
 #include "game_sim.h"
 #include "client_sim.h"
@@ -153,6 +153,16 @@ void basesSetBase(bases *value, base *item, BYTE baseNum) {
     }
     logAddEvent(log_BaseSetOwner, baseNum, item->owner, TRUE, 0, 0, NULL);
     (((*value)->item[baseNum]).owner) = item->owner;
+    /* Clamp stocks to [0, BASE_FULL_*]. The refuel-from-stash path
+     * tops bases back up at BASE_FULL_* and the tank-give path
+     * decrements, so a runtime base never exceeds 90 — but an
+     * attacker-supplied map can load 255 directly. Drain math is
+     * straightforward subtraction (no wrap), so an out-of-range
+     * value simply takes longer to deplete than any legitimate
+     * stock ever could. */
+    if (item->armour > BASE_FULL_ARMOUR) item->armour = BASE_FULL_ARMOUR;
+    if (item->shells > BASE_FULL_SHELLS) item->shells = BASE_FULL_SHELLS;
+    if (item->mines  > BASE_FULL_MINES)  item->mines  = BASE_FULL_MINES;
     (((*value)->item[baseNum]).armour) = item->armour;
     (((*value)->item[baseNum]).shells) = item->shells;
     (((*value)->item[baseNum]).mines) = item->mines;
@@ -232,7 +242,7 @@ bool basesExistPos(bases *value, BYTE xValue, BYTE yValue) {
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-baseAlliance basesGetAlliancePos(GameSim *sim, BYTE xValue, BYTE yValue) {
+baseAlliance basesGetAlliancePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE viewPlayer) {
   bases *value = &sim->bs;
   baseAlliance returnValue; /* Value to return */
   bool done;                /* Finished looping */
@@ -247,9 +257,9 @@ baseAlliance basesGetAlliancePos(GameSim *sim, BYTE xValue, BYTE yValue) {
         returnValue = baseDead;
       } else if ((*value)->item[count].owner == NEUTRAL) {
         returnValue = baseNeutral;
-      } else if ((*value)->item[count].owner == sim->viewPlayer) {
+      } else if ((*value)->item[count].owner == viewPlayer) {
         returnValue = baseOwnGood;
-      } else if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, sim->viewPlayer) == TRUE) {
+      } else if (playersIsAllie(&sim->plyrs, (*value)->item[count].owner, viewPlayer) == TRUE) {
         returnValue = baseAllieGood;
       } else {
         returnValue = baseEvil;
@@ -353,6 +363,7 @@ void basesUpdate(GameSim *sim, tank *tnk) {
 		  {
 			if (isServer == TRUE)
 			{
+				count = 0;
 				while (count < (*value)->numBases)
 				{
 					basesUpdateStock(sim, (BYTE) (count+1));
@@ -678,7 +689,8 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
 
     /* WinBolo.net Stuff */
     if (migrate == FALSE && owner != NEUTRAL) {
-      winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_CAPTURE, isServer, owner, WINBOLO_NET_NO_PLAYER);
+      winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_CAPTURE, isServer, owner, WINBOLO_NET_NO_PLAYER,
+                         playersIsBot(&sim->plyrs, owner), FALSE);
     }
 
   }
@@ -747,9 +759,11 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         /* WinBolo.net Stuff */
         if (migrate == FALSE && owner != NEUTRAL) {
           if (returnValue == NEUTRAL) {
-            winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_CAPTURE, isServer, owner, WINBOLO_NET_NO_PLAYER);
+            winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_CAPTURE, isServer, owner, WINBOLO_NET_NO_PLAYER,
+                               playersIsBot(&sim->plyrs, owner), FALSE);
           } else {
-            winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_STEAL, isServer, owner, returnValue);
+            winbolonetAddEvent(WINBOLO_NET_EVENT_BASE_STEAL, isServer, owner, returnValue,
+                               playersIsBot(&sim->plyrs, owner), playersIsBot(&sim->plyrs, returnValue));
           }
         }
 

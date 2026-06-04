@@ -39,6 +39,7 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
 #include "imgui_nav_outline.h"
+#include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "../imgui_steam_nav.h"
@@ -802,6 +803,11 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar);
 
+        /* Top-right close X — same as Close button. */
+        if (WBUI::DrawPanelCloseX()) {
+            running = false;
+        }
+
         /* ---- Title ---- */
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.75f, 0.3f, 1.0f));
         ImGui::SetWindowFontScale(1.3f);
@@ -1179,9 +1185,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             }
 #endif
 
+            /* Close is affirmative ("done viewing logs"), not a cancel —
+             * leave it with default primary styling. */
             float closeW = ImGui::CalcTextSize(langGetText(STR_CLOSE)).x + ImGui::GetStyle().FramePadding.x * 2.0f;
             ImGui::SameLine(panelW - closeW - ImGui::GetStyle().WindowPadding.x);
-            if (ImGui::Button(langGetText(STR_CLOSE))) {
+            bool closeClicked = ImGui::Button(langGetText(STR_CLOSE));
+            if (closeClicked || WBUI::CancelKeyPressed()) {
                 running = false;
             }
             imguiHandOnHover();

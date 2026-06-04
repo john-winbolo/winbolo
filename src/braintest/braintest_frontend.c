@@ -27,6 +27,7 @@
 #include "frontend.h"
 #include "server_sim.h"
 #include "../server/threads.h"
+#include "../winbolonet/winbolonet_server.h"
 
 void frontEndUpdateTankStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
   (void)cs; (void)shells; (void)mines; (void)armour; (void)trees;
@@ -90,13 +91,27 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
   (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags;
 }
 
+void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_t ping) {
+  (void)cs; (void)value; (void)ping;
+}
+
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   (void)cs; (void)justBlack;
+}
+
+void frontEndDrawReturningToLobby(ClientSim *cs) {
+  (void)cs;
+}
+
+void frontEndAudioReturningToLobby(bool active) {
+  (void)active;
 }
 
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
   (void)cs; (void)value; (void)isChecked;
 }
+
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
 
 void frontEndSetActiveClientSim(struct ClientSim *cs) {
   (void)cs;
@@ -189,8 +204,8 @@ void netErrorOccured(void) {}
 /* WinBoloNet stubs (client_sim.c / bases.c / log.c reference these) */
 bool winbolonetIsRunning(void) { return FALSE; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
-  (void)eventType; (void)isServer; (void)playerA; (void)playerB;
+void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
+  (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
 }
 void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
@@ -198,25 +213,28 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
 }
 void winboloNetSendLock(bool isLocked) { (void)isLocked; }
 bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return FALSE; }
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
-                                 bool *hasSteam, bool *isSupporter) {
-  (void)token; (void)playerNum; (void)errorMsg;
-  if (hasSteam)    *hasSteam    = FALSE;
-  if (isSupporter) *isSupporter = FALSE;
+bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey,
+                                 char *playerKeyOut, char *errorMsg) {
+  (void)apiToken; (void)serverKey;
+  if (playerKeyOut) playerKeyOut[0] = '\0';
+  if (errorMsg)     errorMsg[0]     = '\0';
   return FALSE;
 }
 
-bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal) {
-  (void)totalPlayers; (void)teamSize; (void)outProposal;
+bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
+                                     const uint8_t *botSlots, uint8_t numBotSlots,
+                                     BalanceProposal *outProposal) {
+  (void)totalPlayers; (void)teamSize;
+  (void)botSlots; (void)numBotSlots;
+  (void)outProposal;
   return FALSE;
 }
-
-/* threads stubs (clientmutex.c references these) */
-void threadsWaitForMutex(void) {}
-bool threadsTryWaitForMutex(void) { return TRUE; }
-void threadsReleaseMutex(void) {}
 
 /* winbolonet stub (server_sim.c references this) */
 void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills) {
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
+
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
+
+void winbolonetSendLobbyUpdate(void) { }

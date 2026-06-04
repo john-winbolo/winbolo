@@ -172,7 +172,7 @@ void panelWindowRender(SDL_Renderer *renderer, int winW, int winH,
         ImGui::TextWrapped(
             "The bot's brain hasn't called braintest_panel_register("
             "\"name\", \"type\", \"lua_expr\"). Add a call in your "
-            "brain's open() — see brains/NewAutopilot/init.lua for "
+            "brain's open() — see brains/GoalHunter/init.lua for "
             "an example.");
         ImGui::End();
         ImGui::Render();

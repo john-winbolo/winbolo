@@ -421,6 +421,18 @@ void gameFrontSaveCurrentPrefs(void);
 void gameFrontSaveWindowSettings(void);
 
 /*********************************************************
+*NAME:          gameFrontPumpDirty
+*PURPOSE:
+* Consume point for the debounce dirty flag set by
+* gameFrontSaveWindowSettings. Call once per frame from
+* the main event/render loop — when a window-move/resize
+* burst settles inside the 500ms throttle window, this is
+* what flushes the trailing event so the final position
+* survives. Cheap when nothing is dirty.
+*********************************************************/
+void gameFrontPumpDirty(void);
+
+/*********************************************************
 *NAME:          gameFrontSetRemeber
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/4/99
@@ -509,6 +521,28 @@ void gameFrontRequestPlayTutorial(void);
 bool gameFrontConsumePlayTutorialRequest(void);
 
 /*********************************************************
+*NAME:          gameFrontRequestTransition
+*PURPOSE:
+* Posts a state transition the welcome dialog will pick up on
+* its next poll iteration and treat as if the equivalent ghost
+* button was clicked. Used by host-OS shims (e.g. the macOS
+* Dock menu) to trigger welcome-screen actions from outside the
+* in-window UI. Must be called from the main thread — the
+* welcome loop reads the channel on the same thread.
+*********************************************************/
+void gameFrontRequestTransition(openingStates s);
+bool gameFrontConsumeRequestedTransition(openingStates *out);
+
+/*********************************************************
+*NAME:          gameFrontIsAtWelcome
+*PURPOSE:
+* TRUE while gameFrontDialogs() is sitting inside the
+* welcomeShow() poll loop. Lets host-OS menus dim items
+* that only make sense from the welcome screen.
+*********************************************************/
+bool gameFrontIsAtWelcome(void);
+
+/*********************************************************
 *NAME:          gameFrontSetupServer
 *AUTHOR:        John Morrison
 *CREATION DATE: 3/11/99
@@ -576,34 +610,6 @@ void gameFrontEnableRejoin(void);
 *
 *********************************************************/
 bool gameFrontPreferencesExist(void);
-
-/*********************************************************
-*NAME:          gameFrontLoadInBuiltMap
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/5/00
-*LAST MODIFIED: 1/5/00
-*PURPOSE:
-* Attempts to load the built in map by loading the
-* compress resource. Returns Success
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool gameFrontLoadInBuiltMap(void);
-
-/*********************************************************
-*NAME:          gameFrontLoadTutorial
-*AUTHOR:        John Morrison
-*CREATION DATE: 1/5/00
-*LAST MODIFIED: 1/5/00
-*PURPOSE:
-* Attempts to load the built in tutorial by loading the
-* compress resource. Returns Success
-*
-*ARGUMENTS:
-*
-*********************************************************/
-bool gameFrontLoadTutorial(void);
 
 /*********************************************************
 *NAME:          gameFrontSetWinbolonetToken
@@ -684,6 +690,22 @@ void gameFrontHandleUrlOpen(char *url);
  * Called after joining a game or exiting the lobby. */
 void gameFrontUpdateSteamPresence(struct ClientSim *cs);
 
+/* Set Steam rich presence for the main menu / welcome screen.
+ * Clears any stale map/numplayers/connect tokens. */
+void gameFrontSetSteamPresenceMenu(void);
+
+/* Set Steam rich presence for the lobby screen.
+ * Includes map name, player count, and a connect string so
+ * friends can join the same lobby via Steam. */
+void gameFrontSetSteamPresenceLobby(struct ClientSim *cs);
+
+/* Throttled per-frame refreshers for the lobby and in-game loops. Safe to
+ * call every frame; they push to Steam at most a few times per second so the
+ * player count and (for hosts) the resolved external address stay current
+ * without hitting Steam's rich-presence rate limit. */
+void gameFrontTickSteamPresenceLobby(struct ClientSim *cs);
+void gameFrontTickSteamPresenceGame(struct ClientSim *cs);
+
 /*********************************************************
 *NAME:          gameFrontReloadSkins
 *AUTHOR:        John Morrison
@@ -727,15 +749,15 @@ ServerSim *gameFrontGetServerSim(void);
 BYTE gameFrontGetPlayerNum(void);
 
 /*********************************************************
-*NAME:          gameFrontLoadDeferredMap
+*NAME:          gameFrontGetSinglePlayerServerSim
 *PURPOSE:
-*  Loads the map from the transport after lobby exit.
-*  Called when the lobby dialog returns (game started)
-*  and the map was downloaded in the background.
-*RETURNS:
-*  TRUE on success, FALSE on failure.
+*  Returns the in-process spServerSim pointer for the
+*  single-player lobby path, or NULL if no single-player
+*  session is active. Used by the lobby UI to mutate
+*  server-side state directly (settings, add bot, team
+*  changes) instead of going through the UDP packet path.
 *********************************************************/
-bool gameFrontLoadDeferredMap(struct ClientSim **cs);
+struct ServerSim *gameFrontGetSinglePlayerServerSim(void);
 
 /* Dialog window position — used to place main window on same monitor */
 extern int gameFrontDialogX;

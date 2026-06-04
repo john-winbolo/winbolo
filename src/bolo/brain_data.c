@@ -74,6 +74,7 @@
 #include "client_sim.h"
 #include "client_sim_internal.h"
 #include "server_sim.h"
+#include "bot_manager.h"
 #include "../steam/steam_wrapper.h"
 
 /*********************************************************
@@ -156,6 +157,22 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   value->playernames = playersGetBrainsNamesArray(&gs->plyrs);
   value->allies = malloc(sizeof(PlayerBitMap));
   *(value->allies) = playersGetAlliesBitMap(&gs->plyrs, clientSimGetMyPlayerNum(csPtr));
+
+  /* Per-slot PLAYER_FLAG_BOT bitmap. Brains pick out allied humans
+   * via (allies & ~player_bots) — needed for the human-only chat
+   * path where the internal bot-coordination slate would otherwise
+   * spam every teammate's chat panel. */
+  value->player_bots = malloc(sizeof(PlayerBitMap));
+  {
+    PlayerBitMap botBits = 0;
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+      if (playersGetClientFlags(&gs->plyrs, i) & PLAYER_FLAG_BOT) {
+        botBits |= ((PlayerBitMap)1u << i);
+      }
+    }
+    *(value->player_bots) = botBits;
+  }
 
   /* Tank */
   tankGetWorld(&MY_TANK(csPtr), &(value->tankx), &(value->tanky));
@@ -366,14 +383,38 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   value->num_objects = *clientSimGetBrainsNumObjects(csPtr);
   *clientSimGetBrainsNumObjects(csPtr) = 0;
 
-  /* Message */
-  if (messageIsNewMessage(clientSimGetMessages(csPtr)) == TRUE) {
-    value->message = (MessageInfo*) malloc(sizeof(MessageInfo));
-    value->message->receivers = malloc(sizeof(value->message->receivers));
-    value->message->message = malloc(512);
-    value->message->sender = messageGetNewMessage(clientSimGetMessages(csPtr), (char *) value->message->message, &(value->message->receivers)); /* FIXME: Second parameter? */
-  } else {
+  /* Messages — drain the full per-tick inbox into a contiguous array
+   * of MessageInfo. Pre-change behavior was a single-slot pull that
+   * silently dropped extras when N ally bots all chatted on the same
+   * tick. value->message stays valid as an alias to messages[0] so
+   * legacy C consumers don't change. */
+  {
+    MessageState *ms = clientSimGetMessages(csPtr);
+    int n = messageInboxCount(ms);
+    value->messages = NULL;
+    value->num_messages = 0;
     value->message = NULL;
+    if (n > 0) {
+      value->messages = (MessageInfo *)malloc((size_t)n * sizeof(MessageInfo));
+      for (int i = 0; i < n; i++) {
+        char  pbuf[BRAIN_INBOX_MSG_LEN];
+        BYTE  from = messageInboxPeek(ms, i, pbuf);
+        size_t plen = (size_t)((unsigned char)pbuf[0]);
+        value->messages[i].sender    = from;
+        value->messages[i].receivers = (uint32_t *)malloc(sizeof(uint32_t));
+        if (value->messages[i].receivers != NULL) {
+          *(value->messages[i].receivers) = 0;
+        }
+        value->messages[i].message = (u_char *)malloc(BRAIN_INBOX_MSG_LEN);
+        if (value->messages[i].message != NULL) {
+          memcpy(value->messages[i].message, pbuf, plen + 1);
+          value->messages[i].message[plen + 1] = '\0';
+        }
+      }
+      value->num_messages = (u_short)n;
+      value->message      = &value->messages[0];
+      messageInboxClear(ms);
+    }
   }
 
   /* Controling the tank */
@@ -427,6 +468,7 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
   BYTE pillNum;
 
   free(value->allies);
+  free(value->player_bots);
   if (value->base != NULL) {
     free(value->base);
   }
@@ -455,10 +497,17 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
     free(value->events);
     value->events = NULL;
   }
-  if (value->message != NULL) {
-    free(value->message->receivers);
-    free(value->message->message);
-    free(value->message);
+  /* Free the per-tick messages array. value->message is just an alias
+   * into messages[0]; freeing it separately would be a double-free. */
+  if (value->messages != NULL) {
+    for (u_short mi = 0; mi < value->num_messages; mi++) {
+      free(value->messages[mi].receivers);
+      free(value->messages[mi].message);
+    }
+    free(value->messages);
+    value->messages = NULL;
+    value->message  = NULL;
+    value->num_messages = 0;
   }
 
   /* Controling the tank */
@@ -483,14 +532,28 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
 /*  brainsWantAllies = *(value->allies);
     value->wantallies = &brainsWantAllies; */
 
-  /* Message Sending */
+  /* Message Sending. Two dispatch modes share the same brain API:
+   *   messagedest == 0 → internal channel (never crosses the chat wire)
+   *     - Local brain (Brains menu on a human client): surface on the
+   *       host's AI message channel so the brain author can read what
+   *       their brain is broadcasting.
+   *     - Bot-manager bot: fan the message into every allied bot's
+   *       MessageState inbox so their brains can parse it via the
+   *       normal incoming-message path. Never reaches a human's chat.
+   *   messagedest != 0 → real player-to-player chat (unchanged). */
   if (value->sendmessage[0] != 0) {
     char msg[255];
     GameSim *gs = clientSimGetGameSim(csPtr);
     utilPtoCString((char *) value->sendmessage, msg);
     if (*(value->messagedest) == 0) {
-      /* Its a debug message */
-      clientMessageAdd(clientSimGetMessages(csPtr), AIMessage, langGetText(MESSAGE_AI), msg);
+      struct ServerSim *bound = clientSimGetBoundServerSim(csPtr);
+      if (bound == NULL) {
+        clientMessageAdd(clientSimGetMessages(csPtr), AIMessage,
+                         langGetText(MESSAGE_AI), msg);
+      } else {
+        botManagerDeliverInternalMessage(bound,
+                                         clientSimGetMyPlayerNum(csPtr), msg);
+      }
     } else {
       /* Send this message to the appropriate players */
       playersSendAiMessage(csPtr, gs, &gs->plyrs, *(value->messagedest), msg);

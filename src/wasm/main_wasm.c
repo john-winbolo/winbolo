@@ -16,6 +16,7 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
+#include "bolo_rand.h"
 #include "client_render.h"
 #include "client_sim.h"
 #include "frontend.h"
@@ -53,6 +54,7 @@ bool showGunsight = FALSE;
 bool soundEffects = TRUE;
 bool backgroundSound = TRUE;
 bool useSoundKeepalive = FALSE;
+int  soundVolume = 50;
 bool allowNewPlayers = TRUE;
 
 bool showNewswireMessages = TRUE;
@@ -146,9 +148,6 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexRelease();
       clientSimNetRecordInput(cs, &pkt);
       clientSimNetTick(cs);
-      clientMutexWaitFor();
-      clientSimNetSyncSnapshot(cs);
-      clientMutexRelease();
       simTickCounter++;
       justKeys = FALSE;
     } else {
@@ -170,7 +169,6 @@ static void windowRunGameTick(ClientSim *cs) {
       clientSimNetSendInput(cs, &pkt);
       clientSimNetTick(cs);
       clientMutexWaitFor();
-      clientSimNetSyncSnapshot(cs);
       clientSimDisplayTick(cs, brainRunning);
       clientMutexRelease();
       simTickCounter++;
@@ -294,7 +292,7 @@ int main(int argc, char *argv[]) {
   (void)argc;
   (void)argv;
 
-  srand((unsigned int)(time(NULL) ^ getpid()));
+  bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
   if (argc > 1) {
     cmdLine = argv[1];
@@ -329,15 +327,8 @@ int main(int argc, char *argv[]) {
     SDL_Quit();
     return 1;
   }
-  {
-    GameSim *gs = humanSim ? clientSimGetGameSim(humanSim) : NULL;
-    fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
-           (void*)humanSim,
-           gs ? (void*)gs->plyrs : NULL,
-           gs ? (void*)gs->mp : NULL,
-           gs ? (void*)gs->tanks[0] : NULL);
-    fflush(stderr);
-  }
+  fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p\n", (void*)humanSim);
+  fflush(stderr);
 
   /* Apply player name from URL after gameFrontStart sets defaults.
    * Gated like the Phase 7.1 Steam-persona seed: only honour ?name=
@@ -405,15 +396,8 @@ int main(int argc, char *argv[]) {
   oldTick = SDL_GetTicks();
   lastFrameTime = emscripten_get_now();
 
-  {
-    GameSim *gs = humanSim ? clientSimGetGameSim(humanSim) : NULL;
-    fprintf(stderr, "[WASM] Starting main loop; humanSim=%p plyrs=%p mp=%p tank0=%p\n",
-           (void*)humanSim,
-           gs ? (void*)gs->plyrs : NULL,
-           gs ? (void*)gs->mp : NULL,
-           gs ? (void*)gs->tanks[0] : NULL);
-    fflush(stderr);
-  }
+  fprintf(stderr, "[WASM] Starting main loop; humanSim=%p\n", (void*)humanSim);
+  fflush(stderr);
   emscripten_set_main_loop(main_loop_iteration, 0, 1);
 
   /* Cleanup (not reached with simulate_infinite_loop=1) */
@@ -545,6 +529,12 @@ void windowSoundKeepalive(void) {
   if (soundEffects == TRUE && soundIsPlayable() == TRUE) {
     soundKeepalive(useSoundKeepalive);
   }
+}
+void windowSetSoundVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  soundVolume = pct;
+  soundSetVolume(pct);
 }
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
@@ -705,6 +695,16 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   }
 }
 
+void frontEndDrawReturningToLobby(ClientSim *cs) {
+  if (hideMainView == FALSE && drawBusy == FALSE) {
+    sdl3DrawReturningToLobby(cs);
+  }
+}
+
+void frontEndAudioReturningToLobby(bool active) {
+  soundSetReturningToLobby(active);
+}
+
 void frontEndGameOver(ClientSim *cs) {
   (void)cs;
   imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBTIMELIMIT_END),
@@ -715,6 +715,7 @@ void frontEndGameOver(ClientSim *cs) {
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) { (void)cs; (void)value; }
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) { (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags; }
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) { (void)cs; (void)value; (void)isChecked; }
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
 void frontEndSetActiveClientSim(struct ClientSim *cs) { (void)cs; }
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }

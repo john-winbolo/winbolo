@@ -268,6 +268,7 @@ STR_DLGNETINFO_KBIN=KB/s In:
 STR_DLGNETINFO_KBOUT=KB/s Uit:
 STR_DLGNETINFO_PACKETS_RATE=Pakketten/sec: {number} in / {number2} uit
 STR_DLGNETINFO_KB_RATE=KB/sec: {string1} in / {string2} uit
+STR_DLGNETINFO_LOSS=Pakketverlies: {number}% ({number2}/{number3} deze sec., {number4} totaal spel)
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Seed kopiëren
@@ -422,6 +423,7 @@ STR_DLGLOBBY_BOT_FMT={player} [Bot]
 STR_DLGLOBBY_YOU_FMT={player} (Jij)
 STR_DLGLOBBY_STARTING_FMT=Starten over {number}...
 STR_DLGLOBBY_LOSTCONNECTION=Je hebt je verbinding met de server verloren.
+STR_DLGLOBBY_KICKED=Je bent uit de server gekickt.
 STR_DLGLOBBY_ME=Ik
 STR_DLGLOBBY_PLAYER_COL=Speler
 STR_DLGLOBBY_PING_COL=Ping
@@ -943,6 +945,14 @@ STR_LV_MAP_SKIP_VOTE={player} heeft gestemd om de kaart over te slaan.
 STR_LV_MAP_SKIPPED=Kaart overgeslagen. Nieuwe kaart: {string1}
 STR_LV_TEAM_BALANCE=Teambalans toegepast.
 
+# Log viewer — stemgebeurtenissen in het spel
+STR_LV_VOTE_START_LOBBY={player} heeft een stemming gestart om terug naar de lobby te gaan.
+STR_LV_VOTE_START_SURRENDER={player} heeft een stemming gestart om zich over te geven.
+STR_LV_VOTE_CAST_YES={player} heeft ja gestemd.
+STR_LV_VOTE_CAST_NO={player} heeft nee gestemd.
+STR_LV_VOTE_PASSED=Stemming aangenomen.
+STR_LV_VOTE_FAILED=Stemming verworpen.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Openen
 STR_LV_MENU_ACTION=Actie
@@ -1071,10 +1081,10 @@ STR_DLGLOBBY_PORTMAP_CHECKING=Bereikbaarheid van server controleren…
 STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Server bereikbaar
 STR_DLGLOBBY_PORTMAP_UNREACHABLE=Server onbereikbaar
 STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=Probeert een firewallpoort te openen via UPnP / NAT-PMP en bevestigt dat de tracker je via je netwerk kan terugbereiken. Dit duurt meestal minder dan 30 seconden.
-STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Poort automatisch doorgestuurd via UPnP/NAT-PMP op %s:%u. Deelnemers verbinden direct zonder verdere stappen.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=Poort automatisch doorgestuurd via UPnP/NAT-PMP op {string1}:{number}. Deelnemers verbinden direct zonder verdere stappen.
 STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Directe portforwarding kon niet worden ingesteld, maar NAT-traversal is actief. Deelnemers coördineren via de tracker om door de firewall van je netwerk te breken. Dit werkt voor de meeste thuisnetwerken; deelnemers met symmetrische NAT of carrier-grade NAT kunnen alsnog geen verbinding maken.
-STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetrische NAT gedetecteerd — je netwerk herschrijft de bronpoort voor elke bestemming, waardoor deelnemers je zelfs via NAT-traversal niet kunnen bereiken. Stuur UDP-poort %u handmatig door op je router naar deze machine om succesvol te kunnen hosten.
-STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Kon niet automatisch een firewallpoort openen (UPnP/NAT-PMP geweigerd of niet beschikbaar) en de tracker kon de bidirectionele bereikbaarheid niet bevestigen. Stuur UDP-poort %u handmatig door op je router naar deze machine om succesvol te kunnen hosten.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Symmetrische NAT gedetecteerd — je netwerk herschrijft de bronpoort voor elke bestemming, waardoor deelnemers je zelfs via NAT-traversal niet kunnen bereiken. Stuur UDP-poort {number} handmatig door op je router naar deze machine om succesvol te kunnen hosten.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Kon niet automatisch een firewallpoort openen (UPnP/NAT-PMP geweigerd of niet beschikbaar) en de tracker kon de bidirectionele bereikbaarheid niet bevestigen. Stuur UDP-poort {number} handmatig door op je router naar deze machine om succesvol te kunnen hosten.
 STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Server bereikbaarheid
 STR_DLGLOBBY_TEST_CONNECTIVITY=Verbinding testen
 STR_DLGLOBBY_TEST_TESTING=Testen…
@@ -1159,3 +1169,198 @@ STR_CTRL_PROMPT_LINE2=Overschakelen naar Controllermodus?
 STR_CTRL_PROMPT_DESC=(Verbergt de menubalk; Start opent een controllervriendelijk pauzemenu.\nLater wijzigen via Instellingen.)
 STR_CTRL_PROMPT_NOTNOW=Niet nu
 STR_CTRL_PROMPT_DONTASK=Niet meer vragen
+# macOS App menu and Window menu items
+STR_MENU_ABOUT_APP=Over WinBolo
+STR_MENU_PREFERENCES=Voorkeuren…
+STR_MENU_SERVICES=Diensten
+STR_MENU_HIDE_APP=Verberg WinBolo
+STR_MENU_HIDE_OTHERS=Verberg andere
+STR_MENU_SHOW_ALL=Toon alles
+STR_MENU_QUIT_APP=Stop WinBolo
+STR_MENU_ABOUT_LV=Over Logviewer
+STR_MENU_HIDE_LV=Verberg Logviewer
+STR_MENU_QUIT_LV=Stop Logviewer
+STR_MENU_HIDE_ME=Verberg Kaarteditor
+STR_MENU_QUIT_ME=Stop Kaarteditor
+STR_MENU_WINDOW=Venster
+STR_MENU_MINIMIZE=Zet in Dock
+STR_MENU_ZOOM=Zoom
+STR_MENU_ENTER_FULL_SCREEN=Ga naar volledig scherm
+STR_MENU_BRING_ALL_TO_FRONT=Breng alles naar voren
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=Internetspel zoeken…
+STR_MENU_FIND_LAN_GAME=LAN-spel zoeken…
+STR_MENU_JOIN_BY_ADDRESS=Deelnemen via adres…
+STR_MENU_OPEN_MAP_EDITOR=Kaarteditor openen
+STR_MENU_OPEN_LOG_VIEWER=Logviewer openen
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Nieuws van winbolo.net tonen bij opstarten
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=Nieuws
+STR_DLGNEWS_TITLE=Nieuws
+STR_DLGNEWS_CONSENT_TITLE=WinBolo News
+STR_DLGNEWS_CONSENT_BODY1=WinBolo kan bij het starten van het spel nieuwe berichten van winbolo.net tonen. WBN wordt eenmalig bij het opstarten gecontroleerd en dit venster wordt alleen geopend als er iets nieuws is.
+STR_DLGNEWS_CONSENT_BODY2=U kunt dit op elk moment wijzigen in Instellingen.
+STR_DLGNEWS_SHOW=Nieuws tonen
+STR_DLGNEWS_DONT_SHOW=Niet tonen
+STR_DLGNEWS_LOADING=Laden…
+STR_DLGNEWS_DONT_AUTOSHOW=Nieuws in de toekomst niet automatisch tonen
+STR_DLGNEWS_COMMENTS_FMT=Reacties: {number}
+
+# Map chooser (window title, tabs, action buttons, close-confirm popup)
+STR_DLGLOBBY_CHOOSEMAP_TITLE=Kies kaart
+STR_DLGLOBBY_TAB_SERVERMAPS=Server-kaarten
+STR_DLGLOBBY_TAB_LOCALMAPS=Lokale kaarten
+STR_DLGLOBBY_TAB_UPLOAD=Uploaden
+STR_DLGLOBBY_TAB_GENERATE=Genereren
+STR_DLGLOBBY_TAB_WBNMAPS=Winbolo.net-kaarten
+STR_DLGLOBBY_CLOSEMAP_PROMPT=Je hebt een andere kaart bekeken.
+STR_DLGLOBBY_CLOSEMAP_QUESTION=Wat wil je doen?
+STR_DLGLOBBY_USETHISMAP=Deze kaart gebruiken
+STR_DLGLOBBY_REVERTCLOSE=Terugzetten en sluiten
+STR_DLGLOBBY_KEEPPICKING=Blijven zoeken
+STR_DLGLOBBY_CANCEL_MAPCHOOSER=Annuleren
+STR_DLGLOBBY_CHOOSE_MAP_BTN=Kies kaart
+
+# Upload + WBN errors
+STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT=Er is al een upload bezig.
+STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Uploads uitgeschakeld op deze server.
+STR_DLGLOBBY_UPLOAD_ERR_FULL=Kaartbibliotheek van de server is vol.
+STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Te veel verzoeken \xe2\x80\x94 wacht even voordat je het opnieuw probeert.
+STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Upload geweigerd door server.
+STR_DLGLOBBY_WBN_ERR_DOWNLOAD=Downloaden mislukt
+STR_DLGLOBBY_WBN_ERR_BADRESPONSE=Ongeldige reactie van WinBolo.net
+STR_DLGLOBBY_WBN_ERR_NETERROR=Netwerkfout bij ophalen kaart
+STR_DLGLOBBY_WBN_ERR_HTTPERROR=WBN gaf HTTP {number} terug
+STR_DLGLOBBY_WBN_ERR_MAPFAILED=Downloaden van kaart mislukt
+STR_DLGLOBBY_WBN_ERR_TOOBIG=Kaart overschrijdt uploadlimiet van 64 KB
+STR_DLGLOBBY_WBN_ERR_OOM=Onvoldoende geheugen voor uploadwachtrij
+STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE=Ongeldige zoekreactie van WinBolo.net
+
+# Allow-new-players + ranked-game controls
+STR_DLGLOBBY_ALLOW_NOW=Nu
+STR_DLGLOBBY_ALLOW_DURING=Tijdens het spel
+STR_DLGLOBBY_TOOLTIP_ALLOWNOW=Nieuwe joinverzoeken nu accepteren zolang de lobby open is.
+STR_DLGLOBBY_TOOLTIP_ALLOWDURING=Nieuwe spelers blijven accepteren nadat het spel is gestart.
+STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK=Ranked-spellen blokkeren nieuwe spelers zodra het spel begint.
+STR_DLGLOBBY_RANKED=Ranked-spel
+STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED=Vergrendeld door de serverbeheerder.
+STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST=Alleen de host of een admin kan Ranked-spel in- of uitschakelen.
+STR_DLGLOBBY_TOOLTIP_RANKED_BOTS=Verwijder alle bots uit de lobby voordat je het spel\nmarkeert als Ranked. Ranked-matches zijn alleen voor mensen.
+STR_DLGLOBBY_TOOLTIP_RANKED_INFO=Ranked-spellen verbieden bots en dwingen het toernooi-\nspeltype af — geen \"Open\" vooraf bewapende modus. Door te\nschakelen wordt de gereed-status van elke speler teruggezet\nzodat de host de nieuwe configuratie kan bevestigen.
+
+# Team-grouped player list + kick modal
+STR_DLGLOBBY_TEAM_HEADER=Team {number}
+STR_DLGLOBBY_TEAM_MEMBERS_1=· 1 speler
+STR_DLGLOBBY_TEAM_MEMBERS_N=· {number} spelers
+STR_DLGLOBBY_TEAM_1BOT=1 bot
+STR_DLGLOBBY_TEAM_NBOTS=bots
+STR_DLGLOBBY_JOIN_TEAM=Deelnemen
+STR_DLGLOBBY_TOOLTIP_JOIN=Verplaats jezelf naar Team {number}.
+STR_DLGLOBBY_BOT_NAMING=Bot-naam:
+STR_DLGLOBBY_ADDBOT_LBL=Bot toevoegen
+STR_DLGLOBBY_TOOLTIP_ADDBOT=Een bot toevoegen aan Team {number}, benoemd uit de geselecteerde pool.
+STR_DLGLOBBY_TOOLTIP_RMTEAM=Team {number} verwijderen (inclusief zijn bots).
+STR_DLGLOBBY_TOOLTIP_DRAG=Sleep naar een team om te verplaatsen
+STR_DLGLOBBY_TAG_HOST=HOST
+STR_DLGLOBBY_TAG_ADMIN=ADMIN
+STR_DLGLOBBY_TAG_BOT=BOT
+STR_DLGLOBBY_PILL_READY=KLAAR
+STR_DLGLOBBY_PILL_NOTREADY=NIET KLAAR
+STR_DLGLOBBY_TOOLTIP_CONFIG=Bot configureren
+STR_DLGLOBBY_TOOLTIP_RMBOT=Bot verwijderen
+STR_DLGLOBBY_TOOLTIP_KICK=Speler verwijderen
+STR_DLGLOBBY_ADD_TEAM=Team toevoegen
+STR_DLGLOBBY_UNASSIGNED_FMT=Niet toegewezen ({number}):
+STR_DLGLOBBY_KICK_FMT=„{player}" verwijderen?
+
+# Bot AiConfig panel
+STR_DLGLOBBY_BOTCFG_NAME=Naam (overschrijven)
+STR_DLGLOBBY_BOTCFG_REROLL=Opnieuw gooien
+STR_DLGLOBBY_BOTCFG_REROLL_TIP=Kies een nieuwe willekeurige naam uit de pool van het team.
+STR_DLGLOBBY_BOTCFG_CODE=Bot-code
+STR_DLGLOBBY_BOTCFG_NONE=(geen)
+STR_DLGLOBBY_BOTCFG_DIFFICULTY=Moeilijkheid
+STR_DLGLOBBY_BOTCFG_EASY=Makkelijk
+STR_DLGLOBBY_BOTCFG_NORMAL=Normaal
+STR_DLGLOBBY_BOTCFG_HARD=Moeilijk
+STR_DLGLOBBY_BOTCFG_PERSONALITY=Persoonlijkheid
+STR_DLGLOBBY_BOTCFG_AGGRESSIVE=Agressief
+STR_DLGLOBBY_BOTCFG_DEFENSIVE=Defensief
+STR_DLGLOBBY_BOTCFG_SNIPER=Sniper
+STR_DLGLOBBY_BOTCFG_DONE=Klaar
+
+# Balance-from-WBN dialog
+STR_DLGLOBBY_BAL_BTN=Balans van WBN
+STR_DLGLOBBY_BAL_POPUP_TITLE=Teams balanceren via WBN
+STR_DLGLOBBY_BAL_POPUP_BODY=Hiermee worden alle teams in de lobby gewist en vervangen door twee op vaardigheid gebalanceerde teams van winbolo.net. De nieuwe verdeling wordt onmiddellijk van kracht.
+STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR=Er is momenteel 1 bot in de lobby. Kies of de bot deel moet nemen aan de gebalanceerde verdeling of verwijderd moet worden voor een match met alleen mensen.
+STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL=Er zijn momenteel {number} bots in de lobby. Kies of de bots deel moeten nemen aan de gebalanceerde verdeling of verwijderd moeten worden voor een match met alleen mensen.
+STR_DLGLOBBY_BAL_BOTS_INCLUDED=Bots inbegrepen
+STR_DLGLOBBY_BAL_HUMANS_ONLY=Alleen mensen
+STR_DLGLOBBY_BAL_GO=Balanceren
+STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST=Alleen de host of een admin kan een op vaardigheid\ngebalanceerde teamverdeling van winbolo.net aanvragen.
+STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH=Minimaal twee verbonden spelers zijn nodig voordat\nde lobby kan worden opgesplitst in gebalanceerde teams.
+STR_DLGLOBBY_BAL_TOOLTIP_INFO=Vraag winbolo.net om de lobby op te splitsen in twee\nop vaardigheid gebalanceerde teams. De verdeling wordt\ndireet toegepast zodra WBN reageert — bestaande teams worden vervangen.
+STR_DLGLOBBY_BAL_STATUS_ASKING=WBN raadplegen\xe2\x80\xa6
+STR_DLGLOBBY_BAL_STATUS_BALANCED=Teams gebalanceerd
+STR_DLGLOBBY_BAL_STATUS_NOREPLY=Geen reactie van WBN
+
+# Reject toast
+STR_DLGLOBBY_REJECT_DEFAULT=geweigerd
+STR_DLGLOBBY_REJECT_NOTHOST=alleen voor host
+STR_DLGLOBBY_REJECT_LOCKED=instelling vergrendeld door server
+STR_DLGLOBBY_REJECT_INVALID=ongeldig verzoek
+STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Lobbywijziging geweigerd: {string1}
+
+# Lock badge fallback
+STR_DLGLOBBY_LOCK_BADGE=[vergrendeld]
+
+# Ranked-shape tooltip
+STR_DLGLOBBY_RANKED_SHAPE_TIP=Ranked-spellen vereisen precies twee teams met gelijke\ngrootte: 1v1, 2v2 of 3v3 menselijke spelers.\n(Momenteel {number} {string1}, groottes {number2} vs. {number3}.)
+STR_DLGLOBBY_RANKED_SHAPE_TEAM=team
+STR_DLGLOBBY_RANKED_SHAPE_TEAMS=teams
+
+# Game settings panel
+STR_DLGLOBBY_SETTINGS_HEADER=Spelinstellingen
+STR_DLGLOBBY_OPENHOST_NOTE=De host heeft alle spelers toegestaan spelinstellingen te wijzigen.
+STR_DLGLOBBY_GAMETYPE_LBL=Speltype
+STR_DLGLOBBY_AI_SECTION_LBL=Computerspelers
+STR_DLGLOBBY_AI_NONE=Geen computertanks
+STR_DLGLOBBY_AI_ALLOW=Computertanks toestaan
+STR_DLGLOBBY_AI_ADVANTAGE=Toestaan met voordeel
+STR_DLGLOBBY_AI_FULLADV=Toestaan met volledig voordeel
+STR_DLGLOBBY_OTHER_LBL=Overig
+STR_DLGLOBBY_OPENHOST_CB=Alle spelers mogen instellingen wijzigen
+STR_DLGLOBBY_OPENHOST_TOOLTIP=Indien ingeschakeld kan elke verbonden speler lobby-\ninstellingen bewerken — inclusief het wisselen van de kaart,\nbots toevoegen of verwijderen en van team wisselen.
+STR_DLGLOBBY_TIMELIMIT_MIN=min
+STR_DLGLOBBY_PASSWORD_CB=Wachtwoord
+STR_DLGLOBBY_PASSWORD_TOOLTIP=Indien ingeschakeld moeten nieuwe clients het\nwachtwoord opgeven om deel te nemen. Al verbonden\nspelers worden niet beïnvloed.
+
+# Desktop header
+STR_DLGLOBBY_SERVERDISP_SP=Singleplayer
+STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
+
+# Connectivity badge tooltip
+STR_DLGLOBBY_CONN_TEST_TIP=Test bezig
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Stemmen: Terug naar lobby
+STR_VOTE_SURRENDER=Stemmen: Overgeven
+STR_VOTE_DRAW_TAG= (Gelijkspel)
+STR_VOTE_NEEDS_RUNNING_TIP=Beschikbaar zodra het spel bezig is.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Kies een team voordat je stemt om over te geven.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Overgeven is alleen beschikbaar als er precies twee teams\nmet menselijke spelers over zijn.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Volume
+STR_VOLUME_MUTE=Dempen
+STR_REJECT_VERSION_MISMATCH=Server is versie {string1}, jij hebt {string2} — update alsjeblieft.
+STR_RETURNING_TO_LOBBY=Terug naar lobby
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=nu niet toegestaan
+STR_DLGLOBBY_BAL_STATUS_FAILED=WBN-balancering mislukt

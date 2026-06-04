@@ -19,6 +19,8 @@
 #include <time.h>
 
 #include "../common/wb_log.h"
+#include "../server/threads.h"
+#include "bolo_rand.h"
 #ifdef _WIN32
 #include <process.h>
 #define getpid _getpid
@@ -68,7 +70,7 @@ static void mapEditorSetWindowIcon(SDL_Window *window) {
 }
 
 int main(int argc, char *argv[]) {
-    srand((unsigned int)(time(NULL) ^ getpid()));
+    bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
 
     const char *mapPath = NULL;
     if (argc > 1) {
@@ -87,6 +89,8 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
+
+    threadsCreate(FALSE);
 
     /* Create window */
     SDL_Window *window = SDL_CreateWindow("WinBolo Map Editor",
@@ -123,6 +127,7 @@ int main(int argc, char *argv[]) {
     TTF_Quit();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    threadsDestroy();
     SDL_Quit();
     return 0;
 }

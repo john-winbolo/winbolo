@@ -21,7 +21,6 @@
 #include "dialog_backend.h"
 
 #include "dialogs/imgui_welcome.h"
-#include "dialogs/imgui_gamesetup.h"
 #include "dialogs/imgui_udpsetup.h"
 #include "dialogs/imgui_gamebrowser.h"
 #include "dialogs/imgui_setname.h"
@@ -33,7 +32,6 @@
 
 static const DialogBackend imguiBackend = {
   imguiWelcomeShow,
-  imguiGameSetupShow,
   imguiUdpSetupShow,
   imguiGameBrowserShow,
   imguiSetNameShow,

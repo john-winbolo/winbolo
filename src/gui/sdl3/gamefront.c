@@ -47,10 +47,12 @@
 #include <time.h>
 
 #include "../../common/wb_log.h"
-#include "client_mapload.h"
+#include "bolo_rand.h"
 #include "client_sim.h"
 #include "control_event.h"
+#include "discovery.h"
 #include "global.h"
+#include "util.h"
 #include "gui_message.h"
 #include "frontend.h"
 #include "../brainsHandler.h"
@@ -67,6 +69,7 @@
 #include "input_gamepad.h"
 #include "luabrainshandler.h"
 #include "dialog_backend.h"
+#include "dialogs/imgui_mapchooser.h"
 #include "dialogs/imgui_messagebox.h"
 #include "bg_game.h"
 
@@ -75,10 +78,11 @@
 #include "playername_validate.h"
 #include "client_net.h"
 #include "../../server/server_lifecycle.h"
-#include "../../winbolonet/winbolonet.h"
+#include "../../winbolonet/winbolonet_client.h"
+#include "../../winbolonet/winbolonet_core.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
-#include "../../mapeditor/mapeditor_generate.h"
+#include "mapgen.h"
 /* Forward declaration only — don't include logviewer.h to avoid type conflicts
    between src/logviewer/ and src/bolo/ headers (both define map, bases, etc.) */
 void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
@@ -131,14 +135,16 @@ static const char *getPreferenceFilePath(void) {
 
 /* Forward declarations */
 static bool gameFrontDialogs(void);
+static bool gameFrontStartServerSim(ServerSim *sim,
+                                    const ServerInstanceConfig *cfg);
 extern void sdl3MessageHandler(const char *message, const char *title);
 
 /* Find the brain script — try several paths */
 static bool findBrainPath(char *out, size_t outLen) {
     const char *candidates[] = {
-        "Brains/NewAutopilot/init.lua",
-        "brains/NewAutopilot/init.lua",
-        "data/Brains/NewAutopilot/init.lua",
+        "Brains/GoalHunter/init.lua",
+        "brains/GoalHunter/init.lua",
+        "data/Brains/GoalHunter/init.lua",
     };
     for (int i = 0; i < 3; i++) {
         FILE *f = fopen(candidates[i], "r");
@@ -199,6 +205,18 @@ static char gameFrontLanguageCode[32] = "";
  * settings → tutorial transitions in one menu cycle. */
 static bool gameFrontPlayTutorialRequested = FALSE;
 
+/* Pending state-machine transition posted from outside the welcome
+ * loop (host-OS menus). Read by the welcome dialog at the top of each
+ * poll iteration. Single-threaded: setters and consumers all run on
+ * the main thread (AppKit menu actions land on the same thread the
+ * welcome loop pumps SDL events on), so no atomics are needed. */
+static bool          gameFrontPendingTransitionSet = FALSE;
+static openingStates gameFrontPendingTransition    = openWelcome;
+
+/* TRUE while gameFrontDialogs() is sitting inside welcomeShow(). The
+ * macOS Dock menu reads this to dim items outside the welcome screen. */
+static bool gameFrontAtWelcome = FALSE;
+
 /* Winbolo.net settings */
 char gameFrontWbnToken[FILENAME_MAX];
 char gameFrontWbnTokenExpiry[FILENAME_MAX];
@@ -210,6 +228,14 @@ int gameFrontDialogY = -1;
 
 /* Dialog states */
 openingStates dlgState = openStart;
+
+/* Remembered "entry path" used to reach the lobby — set whenever the
+ * state machine transitions to openFinished from one of the Internet
+ * / LAN browser or manual-setup screens. After the user leaves the
+ * lobby, gameFrontDialogs() consumes this once so the welcome screen
+ * is skipped and we drop back to the same browser the user came from.
+ * Defaults to openWelcome so first-launch behaviour is unchanged. */
+static openingStates s_lobbyReturnState = openWelcome;
 
 bool isServer = FALSE;
 
@@ -223,27 +249,57 @@ bool wantRejoin;
  * clientSimDestroy when leaving. */
 ClientSim *humanSim = NULL;
 
+/* LAN-only session flag. Set when the user enters via openLan*
+ * (host, browser, or manual join). Cleared on openInternet*. Mirrored
+ * onto humanSim->isLanOnly via clientSimSetIsLanOnly at humanSim
+ * creation so the lobby's "show LAN IP instead of 127.0.0.1" and
+ * "skip reachability check" branches fire. Also short-circuits WBN /
+ * tracker / NAT keepalive / UPnP at host bind time so an SP / LAN
+ * host doesn't dial out. */
+static bool s_isLanOnly = FALSE;
+
+/* Set TRUE by the openUdpJoin error path when a join attempt fails
+ * (server NACK'd the JOIN_REQUEST, name taken, password wrong, server
+ * full, etc.). The outer dialog loop's openLan / openInternet /
+ * openUdp / openLanManual / openInternetManual cases consult this
+ * flag before applying the "fall back to Welcome if the dialog
+ * exited without picking a state" guard — when set, the user
+ * deliberately wants to stay on the list/manual-entry dialog so
+ * they can pick a different game / tweak their name. Cleared the
+ * moment the outer loop notices it. */
+static bool s_joinAttemptFailed = FALSE;
+
 /* Server-authoritative single-player state */
 static ServerSim *spServerSim = NULL;
 static SubscriberHandle spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
 
 static bool spServerSimActive = FALSE;
-static bool spTransportLocalUsed = FALSE;
-static bool spServerHosted = FALSE;
 static SDL_TimerID hostedServerTimerID = 0;
+
+/* Set true by gameFrontShutdownServer the moment shutdown begins so
+ * any in-flight or already-scheduled callback bails out and returns 0
+ * (cancels the timer) instead of returning `interval` which would
+ * re-arm it. Without this, SDL_RemoveTimer + a non-zero return value
+ * can cooperate to fire one extra callback after the mutex it grabs
+ * has been destroyed. */
+static volatile bool spServerTimerShutdown = false;
 
 static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32 interval) {
   (void)userdata; (void)id;
+  if (spServerTimerShutdown) return 0;
   /* Read spServerSim under the mutex so a concurrent shutdown can NULL
    * it out without us racing with a freed pointer cached on this stack
    * frame.  serverInstanceTick re-takes the mutex internally; the
-   * threading mutex is recursive on both Windows and SDL3. */
+   * threading mutex is recursive on both Windows and SDL3.  Single
+   * non-NULL check covers both SP and listen-server now that both go
+   * through this timer. */
   threadsWaitForMutex();
-  if (spServerHosted && spServerSim != NULL) {
+  bool active = (!spServerTimerShutdown && spServerSim != NULL);
+  if (active) {
     serverInstanceTick(spServerSim);
   }
   threadsReleaseMutex();
-  return interval;
+  return active ? interval : 0;
 }
 
 /* UDP multiplayer transport state — the Transport handle itself now
@@ -254,9 +310,16 @@ static BYTE udpPlayerNum = 0;
 
 /* Send callbacks for ClientSim — route through the client_net.h wrappers.
  * (The callback layer is retained for this transition; future cleanup
- * will let ClientSim callers call clientSimNetSend* directly.) */
-static void gameFrontChatSendCallback(uint8_t destPlayer, const char *message) {
-    clientSimNetSendChat(humanSim, destPlayer, message);
+ * will let ClientSim callers call clientSimNetSend* directly.)
+ *
+ * Chat callback uses the passed cs (not the module-static humanSim) so
+ * the same function can be wired onto a bot's ClientSim too — bot chat
+ * then flows down the same path human chat does: clientSimNetSendChat
+ * → clientSimSubmitCommand → CMD_CHAT arm publishes CTRL_CHAT. */
+static void gameFrontChatSendCallback(struct ClientSim *cs, uint8_t fromPlayer,
+                                      uint8_t destPlayer, const char *message) {
+    (void)fromPlayer;
+    clientSimNetSendChat(cs, destPlayer, message);
 }
 
 static void gameFrontNameChangeSendCallback(const char *newName) {
@@ -281,23 +344,109 @@ static void gameFrontLockToggleCallback(bool allow) {
 
 /* -------------------------------------------------------
  * Steam rich presence helpers
+ *
+ * Display tokens (defined in data/steam/rich_presence_localization.vdf):
+ *   #StatusInMenu          — main menu / welcome screen
+ *   #StatusInLobbySingular — in a lobby with 1 player (uses %map%)
+ *   #StatusInLobbyPlural   — in a lobby with N players (uses %map%, %numplayers%)
+ *   #StatusInGameSolo      — playing alone (uses %map%)
+ *   #StatusInGamePlural    — playing with N players (uses %map%, %numplayers%)
  * ------------------------------------------------------- */
-void gameFrontUpdateSteamPresence(ClientSim *cs) {
-  if (cs == NULL) return;
-  char status[256];
-  BYTE numPlayers = clientSimGetNumPlayers(cs);
-  snprintf(status, sizeof(status), "On map '%s' - %d player%s",
-           clientSimGetMapName(cs), numPlayers, numPlayers == 1 ? "" : "s");
-  steam_set_rich_presence("status", status);
-  steam_set_rich_presence("steam_display", "#StatusWithMap");
-
-  /* Set connect string so friends see a "Join Game" button */
+static void gameFrontSetConnectIfAvailable(ClientSim *cs) {
+  char connect[FILENAME_MAX];
+  /* Host on an Internet game: advertise the externally-reachable address
+   * (the same one the lobby header shows) so friends connect to us, not to
+   * our loopback/private gameFrontUdpAddress. Mirrors the lobby's own
+   * address-replacement gating in imgui_lobby. */
+  if (cs != NULL && !clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs) &&
+      serverInstanceIsNatPunchActive()) {
+    ServerPortmapInfo pm;
+    serverInstanceGetPortmapInfo(&pm);
+    if (pm.externalIp[0] != '\0' && pm.externalPort != 0) {
+      snprintf(connect, sizeof(connect), "+connect %.255s:%u",
+               pm.externalIp, (unsigned)pm.externalPort);
+      steam_set_rich_presence("connect", connect);
+      return;
+    }
+  }
+  /* Client (or host before its external address has resolved): the address
+   * we joined is reachable by our friends too. */
   if (udpTransportActive && gameFrontUdpAddress[0] != '\0') {
-    char connect[FILENAME_MAX];
     snprintf(connect, sizeof(connect), "+connect %.255s:%u",
              gameFrontUdpAddress, (unsigned)gameFrontTargetUdp);
     steam_set_rich_presence("connect", connect);
   }
+}
+
+void gameFrontUpdateSteamPresence(ClientSim *cs) {
+  if (cs == NULL) return;
+  BYTE numPlayers = clientSimGetNumPlayers(cs);
+  char numStr[16];
+  snprintf(numStr, sizeof(numStr), "%d", (int)numPlayers);
+  steam_set_rich_presence("map", clientSimGetMapName(cs));
+  steam_set_rich_presence("numplayers", numStr);
+  /* "Solo" is a property of the game *mode*, not the live player count: an
+   * Internet game with one player present is still an open, joinable game
+   * and must not read as solo. Single-player is the only true solo case. */
+  steam_set_rich_presence("steam_display",
+                          clientSimIsSinglePlayer(cs) ? "#StatusInGameSolo"
+                                                      : "#StatusInGamePlural");
+  gameFrontSetConnectIfAvailable(cs);
+}
+
+void gameFrontSetSteamPresenceMenu(void) {
+  steam_clear_rich_presence();
+  steam_set_rich_presence("steam_display", "#StatusInMenu");
+}
+
+void gameFrontSetSteamPresenceLobby(ClientSim *cs) {
+  if (cs == NULL) return;
+  /* clientSimGetNumPlayers counts in-use tank slots, which omits humans
+   * who haven't been assigned a tank yet and lingers on removed bots.
+   * For the lobby, use the connected-lobby-slot count (humans + bots) —
+   * same data the lobby UI's player table renders. */
+  BYTE numPlayers = clientSimGetLobbyNumConnected(cs);
+  char numStr[16];
+  snprintf(numStr, sizeof(numStr), "%d", (int)numPlayers);
+
+  /* Only set "map" when we actually have a name. Steam treats an empty
+   * value as a delete, which would leave "%map%" literal in the rendered
+   * display string while the lobby waits for the server's lobbySettings
+   * packet to populate cs->mapName. */
+  const char *mapName = clientSimGetMapName(cs);
+  if (mapName != NULL && mapName[0] != '\0') {
+    steam_set_rich_presence("map", mapName);
+  }
+  steam_set_rich_presence("numplayers", numStr);
+  steam_set_rich_presence("steam_display",
+                          numPlayers == 1 ? "#StatusInLobbySingular"
+                                          : "#StatusInLobbyPlural");
+  gameFrontSetConnectIfAvailable(cs);
+}
+
+/* Steam rate-limits rich-presence updates, so the per-frame lobby/game
+ * loops refresh through these throttled wrappers instead of pushing every
+ * frame. Both share one timer (you're only ever in one state at a time);
+ * the first call after a quiet period fires immediately. */
+#define STEAM_PRESENCE_REFRESH_MS 3000u
+static uint32_t s_steamPresenceLastMs = 0;
+
+static bool gameFrontSteamPresenceDue(void) {
+  uint32_t now = (uint32_t)SDL_GetTicks();
+  if (s_steamPresenceLastMs != 0 &&
+      (now - s_steamPresenceLastMs) < STEAM_PRESENCE_REFRESH_MS) {
+    return false;
+  }
+  s_steamPresenceLastMs = now;
+  return true;
+}
+
+void gameFrontTickSteamPresenceLobby(ClientSim *cs) {
+  if (gameFrontSteamPresenceDue()) gameFrontSetSteamPresenceLobby(cs);
+}
+
+void gameFrontTickSteamPresenceGame(ClientSim *cs) {
+  if (gameFrontSteamPresenceDue()) gameFrontUpdateSteamPresence(cs);
 }
 
 extern bool isTutorial;
@@ -308,6 +457,7 @@ extern bool showGunsight;
 extern bool soundEffects;
 extern bool backgroundSound;
 extern bool useSoundKeepalive;
+extern int  soundVolume;
 extern bool showNewswireMessages;
 extern bool showAssistantMessages;
 extern bool showAIMessages;
@@ -330,6 +480,10 @@ static void intToStr(int val, char *buf, int bufSize) {
 static void longToStr(long val, char *buf, int bufSize) {
   snprintf(buf, bufSize, "%ld", val);
 }
+
+/* Forward declaration — pickRandomMap is defined below near gameFrontDialogs,
+ * but gameFrontStart calls it during the one-shot init block. */
+static bool pickRandomMap(char *out, size_t outLen);
 
 /* -------------------------------------------------------
  * gameFrontStart — initialise game subsystems
@@ -421,6 +575,17 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
     }
 
+#if defined(__APPLE__) && !defined(BOLO_MOBILE)
+    /* Install only the Dock-icon menu now so it is live during the
+     * welcome screen. The full menu bar comes later via
+     * mac_menubar_install() from sdl3ImguiSetup when a game starts —
+     * pre-game dialogs intentionally have no menu bar of their own. */
+    if (OKStart) {
+      extern void mac_menubar_install_dock_menu(void);
+      mac_menubar_install_dock_menu();
+    }
+#endif
+
     if (soundSetup() == FALSE) {
       /* Sound failure is non-fatal — disable sound */
       soundEffects = FALSE;
@@ -428,6 +593,22 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
     if (brainsHandlerLoadBrains() == FALSE) {
       /* Brain loading failure is non-fatal */
+    }
+
+    /* Heap-allocate the shared welcome-screen background game so it
+     * survives every SP/host transition. Hidden by gameFrontStart* while
+     * a foreground game runs; freed at app shutdown by main(). */
+    {
+      BgGame *bg = (BgGame *)SDL_calloc(1, sizeof(BgGame));
+      if (bg != NULL) {
+        char mapPath[512];
+        if (pickRandomMap(mapPath, sizeof(mapPath)) &&
+            bgGameCreate(bg, mapPath, sdl3DrawGetRenderer())) {
+          bgGameSetShared(bg);
+        } else {
+          SDL_free(bg);
+        }
+      }
     }
   }
 
@@ -480,10 +661,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
  * gameFrontEnd).
  * ------------------------------------------------------- */
 void gameFrontSaveTankPrefs(ClientSim *cs) {
-  if (cs != NULL) {
-    useAutoslow = clientSimGetTankAutoSlowdown(cs);
-    useAutohide = clientSimGetTankAutoHideGunsight(cs);
-  }
+  /* No-op since the keys dialog persists useAutoslow / useAutohide
+   * directly to INI on OK. */
+  (void)cs;
 }
 
 /* Snapshot the current key bindings via the winbolo.c global and
@@ -500,22 +680,34 @@ void gameFrontSaveCurrentPrefs(void) {
 void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   steam_clear_rich_presence();
   clientMutexWaitFor();
-  if (gamePlayed == TRUE && humanSim != NULL) {
-    useAutoslow = clientSimGetTankAutoSlowdown(humanSim);
-    useAutohide = clientSimGetTankAutoHideGunsight(humanSim);
-  }
+  /* No tank-readback here. The keys dialog persists useAutoslow /
+   * useAutohide directly to INI on OK (immediate-flush) and nothing
+   * during gameplay mutates tank->autoSlowdown after the initial
+   * clientSimSetTankAutoSlowdown — so reading it back would just
+   * round-trip the same value most of the time. The exception was
+   * the buggy case where clientSimSetTankAutoSlowdown ran before
+   * clientSimSetupSelf existed: it no-op'd on the NULL tank pointer,
+   * then tankCreate later defaulted autoSlowdown to FALSE, and this
+   * readback clobbered the user's INI choice with that default. */
+  (void)gamePlayed;
   brainsHandlerShutdown();
-  if (spServerSimActive && !spServerHosted) {
-    serverSimDestroyBots(spServerSim);
-    if (spTransportLocalUsed) {
+  /* Stop the map-preview worker. Idempotent: a no-op if the chooser
+   * was never opened (worker is spawned lazily on first preview
+   * request) or if the dialog already closed (its close edge stops
+   * the worker). Belt-and-suspenders for the quit-with-chooser-open
+   * case: without this, the still-joinable std::thread destructor
+   * runs at atexit and trips std::terminate. */
+  mapChooserStopPreviewWorker();
+  if (spServerSimActive) {
+    /* Unregister the SP humanSim subscriber before gameFrontShutdownServer
+     * destroys the ServerSim's subscriber registry.  The hostedServer-only
+     * path skips this (no subscriber was registered) by leaving the handle
+     * at SUBSCRIBER_HANDLE_INVALID and short-circuiting here. */
+    if (spHumanSubHandle != SUBSCRIBER_HANDLE_INVALID) {
       serverSimUnregisterSubscriber(spServerSim, spHumanSubHandle);
       spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
       clientSimDisconnect(humanSim);
-      spTransportLocalUsed = FALSE;
     }
-    serverSimDestroy(spServerSim);
-    spServerSim = NULL;
-    spServerSimActive = FALSE;
   }
   if (udpTransportActive) {
     clientSimSetChatSendFunc(humanSim, NULL);
@@ -543,12 +735,14 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     soundCleanup();
     langCleanup();
   }
-  if (isServer == TRUE) {
-    gameFrontShutdownServer();
-    isServer = FALSE;
-  }
+  /* Single shutdown path for both SP and listen-server: the timer is
+   * removed, ownership of spServerSim is transferred under threadsMutex
+   * so any in-flight hostedServerTimerCb bails, then serverInstanceShutdown
+   * tears down whatever acceptRemoteClients set up (a no-op in SP).
+   * gameFrontShutdownServer no-ops when spServerSimActive is FALSE. */
+  gameFrontShutdownServer();
+  isServer = FALSE;
   clientMutexRelease();
-  threadsDestroy();
 }
 
 /* -------------------------------------------------------
@@ -584,7 +778,7 @@ static bool pickRandomMap(char *out, size_t outLen) {
             WB_LOG_WARN(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: no .map files in '%s'", dir);
             return false;
         }
-        int idx = rand() % count;
+        int idx = (int)bolo_rand_below((uint32_t)count);
         SDL_snprintf(out, outLen, "%s/%s", dir, mapFiles[idx]);
         WB_LOG_DEBUG(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: picked '%s' from %d maps", out, count);
         for (int i = 0; i < count; i++) SDL_free(mapFiles[i]);
@@ -610,7 +804,7 @@ static bool pickRandomMap(char *out, size_t outLen) {
         SDL_free(list);
         return false;
     }
-    int idx = rand() % filtered;
+    int idx = (int)bolo_rand_below((uint32_t)filtered);
     SDL_snprintf(out, outLen, "%s/%s", dir, list[idx]);
     WB_LOG_DEBUG(WB_LOG_CAT_MAP, "[BgGame] pickRandomMap: picked '%s' from %d maps", out, filtered);
     SDL_free(list);
@@ -630,17 +824,25 @@ static bool gameFrontDialogs(void) {
    * view which would otherwise cause a coordinate mismatch in ImGui. */
   sdl3DrawDisableLogicalPresentation();
 
-  /* Create shared background game for all pre-game dialogs */
-  BgGame bg;
-  bool hasBg = false;
-  {
-    char mapPath[512];
-    if (pickRandomMap(mapPath, sizeof(mapPath))) {
-      hasBg = bgGameCreate(&bg, mapPath, sdl3DrawGetRenderer());
-    }
-  }
+  /* Retrieve the process-lifetime shared bg (created in gameFrontStart's
+   * one-shot init); mark it visible so bgGameTick runs while we're on
+   * the welcome / settings dialogs. */
+  BgGame *bg = bgGameGetShared();
+  bool hasBg = (bg != NULL);
+  if (hasBg) bgGameSetHiddenByForeground(bg, false);
   WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[BgGame] hasBg=%d", hasBg);
-  if (hasBg) bgGameSetShared(&bg);
+
+  /* Re-entry path after the user leaves a lobby: if the previous
+   * gameFrontSetDlgState recorded an entry browser/manual screen,
+   * jump straight back to it instead of falling through to welcome.
+   * Consumed once. */
+  if (s_lobbyReturnState != openWelcome) {
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "[gameFront] resuming from lobby exit, dlgState %d -> %d",
+                (int)dlgState, (int)s_lobbyReturnState);
+    dlgState = s_lobbyReturnState;
+    s_lobbyReturnState = openWelcome;
+  }
 
   while (done == FALSE) {
     switch (dlgState) {
@@ -649,7 +851,9 @@ static bool gameFrontDialogs(void) {
       break;
     case openWelcome: {
       const DialogBackend *db = dialogBackendGet();
+      gameFrontAtWelcome = TRUE;
       int result = db->welcomeShow();
+      gameFrontAtWelcome = FALSE;
       if (result < 0) {
         done = TRUE;
         userQuit = TRUE;
@@ -671,42 +875,61 @@ static bool gameFrontDialogs(void) {
     case openLanManual: {
       const DialogBackend *db = dialogBackendGet();
       openingStates prev = dlgState;
+      s_isLanOnly = (dlgState == openLanManual);
       db->udpSetupShow();
       /* dlgState already updated by gameFrontSetDlgState inside the dialog
        * (OnJoin/OnNew/OnCancel all call gameFrontSetDlgState before EndModal).
-       * If the dialog stub didn't change state, fall back to welcome. */
-      if (dlgState == prev) dlgState = openWelcome;
+       * If the dialog stub didn't change state, fall back to welcome
+       * — UNLESS a join attempt failed and the error path explicitly
+       * routed us back here. In that case the user has intentionally
+       * stayed on the setup screen to tweak their name / address and
+       * the welcome-fallback would just throw away their context. */
+      if (s_joinAttemptFailed) {
+        s_joinAttemptFailed = FALSE;
+      } else if (dlgState == prev) {
+        dlgState = openWelcome;
+      }
       break;
     }
     case openSetup:
     case openInternetSetup:
     case openLanSetup:
     case openUdpSetup: {
-      const DialogBackend *db = dialogBackendGet();
-      openingStates prev = dlgState;
-      if (db->gameSetupShow(humanSim)) {
-        gameFrontSetDlgState(openFinished);
-      } else {
-        /* Go back to the parent dialog, not the welcome screen */
-        if (prev == openInternetSetup) dlgState = openInternet;
-        else if (prev == openLanSetup) dlgState = openLan;
-        else if (prev == openUdpSetup) dlgState = openUdp;
-        else dlgState = openWelcome;
-      }
+      /* The gamesetup dialog was retired — settings the user used to
+       * configure here now live in the lobby and are edited inline
+       * before clicking Start.  All paths transition straight to
+       * openFinished, which creates the ServerSim with default
+       * settings and runs the appropriate finisher (lobby host, SP
+       * lobby, or tutorial). */
+      s_isLanOnly = (dlgState == openLanSetup);
+      gameFrontSetDlgState(openFinished);
       break;
     }
     case openInternet: {
       const DialogBackend *db = dialogBackendGet();
       openingStates prev = dlgState;
+      s_isLanOnly = FALSE;
       db->gameBrowserShow(langGetText(STR_GAMEFRONT_TRACKERFINDER_TITLE), TRUE);
-      if (dlgState == prev) dlgState = openWelcome;
+      /* See note in openLanManual case — preserve the browser when a
+       * join attempt was rejected so the user can pick a different
+       * game / change their name. */
+      if (s_joinAttemptFailed) {
+        s_joinAttemptFailed = FALSE;
+      } else if (dlgState == prev) {
+        dlgState = openWelcome;
+      }
       break;
     }
     case openLan: {
       const DialogBackend *db = dialogBackendGet();
       openingStates prev = dlgState;
+      s_isLanOnly = TRUE;
       db->gameBrowserShow(langGetText(STR_GAMEFRONT_LANFINDER_TITLE), FALSE);
-      if (dlgState == prev) dlgState = openWelcome;
+      if (s_joinAttemptFailed) {
+        s_joinAttemptFailed = FALSE;
+      } else if (dlgState == prev) {
+        dlgState = openWelcome;
+      }
       break;
     }
     case openTutorial:
@@ -757,6 +980,9 @@ static bool gameFrontDialogs(void) {
     case openLogViewer: {
       WbnBrowserResult wbnResult = imguiWbnBrowserShow(sdl3DrawGetWindow(),
                                                        sdl3DrawGetRenderer());
+      /* The LogViewer NSMenu install/uninstall lives inside logViewerRun
+       * itself — its save/restore stack swaps WinBolo's menu out on
+       * entry and restores it on exit, so no wrapping is needed here. */
       switch (wbnResult.action) {
       case WBN_BROWSER_PLAY_FILE:
         logViewerRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), wbnResult.filePath, true);
@@ -784,10 +1010,6 @@ static bool gameFrontDialogs(void) {
       break;
     }
   }
-
-  /* Clean up shared background game */
-  bgGameSetShared(NULL);
-  if (hasBg) bgGameDestroy(&bg);
 
   /* Restore render logical presentation for the game view (Android). */
   sdl3DrawRestoreLogicalPresentation();
@@ -876,24 +1098,108 @@ bool gameFrontSetDlgState(openingStates newState) {
   bool returnValue = TRUE;
   openingStates prevState = dlgState;
 
+  /* Capture the entry path when committing to a game/lobby so the
+   * post-lobby re-entry can skip the welcome screen. Only the browser
+   * / manual-connect screens count — single-player / tutorial / map
+   * editor / settings flows should return to welcome as before. */
+  if (newState == openUdpJoin || newState == openFinished) {
+    switch (dlgState) {
+      case openInternet:
+      case openInternetManual:
+      case openLan:
+      case openLanManual:
+        s_lobbyReturnState = dlgState;
+        break;
+      default:
+        s_lobbyReturnState = openWelcome;
+        break;
+    }
+  }
+
   if ((dlgState == openInternet || dlgState == openLan || dlgState == openUdp ||
        dlgState == openLanManual || dlgState == openInternetManual) &&
       newState == openUdpJoin) {
+    /* Pre-flight version negotiation. The legacy info-request is the
+     * universal cross-version handshake — any server answers regardless
+     * of build, so we can read the server's version triple before
+     * committing to a JOIN_REQUEST whose new-protocol length gate would
+     * silently drop on mismatch. On version mismatch surface a
+     * localized "Server is version X, you have Y" error; on timeout
+     * fall through to the standard "server unreachable" error.
+     *
+     * Skip when joining our own freshly-started server: the version
+     * is BOLO_VERSION_* by definition, and the round-trip races the
+     * host timer's first fire — under rapid open-LAN-finder /
+     * New-Game cycling on Windows the response can miss the 5-second
+     * SO_RCVTIMEO and look like a crash. spServerSimActive is set
+     * by gameFrontSetupServer two stack frames up before this
+     * recurses into openUdpJoin, so it's only true on the self-host
+     * path; every remote join (LAN finder Join, Manual Connect,
+     * tracker Join) leaves it false and still pre-flights. */
+    if (!spServerSimActive) {
+      DiscoveryPingResult dpr;
+      if (!discoveryPingServer(gameFrontUdpAddress, gameFrontTargetUdp, &dpr)) {
+        imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                          langGetText(NETERR_SERVERCONNECT),
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+        gameFrontShutdownServer();
+        dlgState = prevState;
+        s_joinAttemptFailed = TRUE;
+        return FALSE;
+      }
+      if (dpr.versionMajor    != BOLO_VERSION_MAJOR ||
+          dpr.versionMinor    != BOLO_VERSION_MINOR ||
+          dpr.versionRevision != BOLO_VERSION_REVISION) {
+        MessageArgs args;
+        memset(&args, 0, sizeof(args));
+        SDL_snprintf(args.string1, sizeof(args.string1), "%u.%u.%u",
+                     (unsigned)dpr.versionMajor,
+                     (unsigned)dpr.versionMinor,
+                     (unsigned)dpr.versionRevision);
+        SDL_snprintf(args.string2, sizeof(args.string2), "%u.%u.%u",
+                     (unsigned)BOLO_VERSION_MAJOR,
+                     (unsigned)BOLO_VERSION_MINOR,
+                     (unsigned)BOLO_VERSION_REVISION);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                          langGetTextFmt(STR_REJECT_VERSION_MISMATCH, &args),
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+        gameFrontShutdownServer();
+        dlgState = prevState;
+        s_joinAttemptFailed = TRUE;
+        return FALSE;
+      }
+    }
+
     gameFrontValidateWbnBeforeJoin();
-    humanSim = clientSimAlloc(); clientSimCreate(humanSim, 0, FALSE, 0, UNLIMITED_GAME_TIME);
+    humanSim = clientSimAlloc(); clientSimCreate(humanSim);
+    clientSimSetIsLanOnly(humanSim, s_isLanOnly);
     frontEndSetActiveClientSim(humanSim);
     if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
     fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
             gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
     fflush(stderr);
 
-    /* Create UDP client transport for the new protocol */
+    /* Create UDP client transport. The transport drives the JOIN
+     * handshake, map download + install, and inline snapshot apply
+     * by itself — the frontend only ticks it until the join state
+     * settles or inLobby flips true. */
+    /* Match the Internet-host config in gameFrontSetupServer: an Internet
+     * join turns the tracker on (NAT traversal + external-address
+     * resolution) and, if the player is signed in, sends the WBN identity
+     * token. LAN joins and SP/tutorial stay private — no tracker, no WBN.
+     * Gated on s_isLanOnly (false only for Internet games), not on the old
+     * buried default-off "Use Tracker" checkbox. WBN from the join side
+     * carries only the player's own identity — there is no server being
+     * registered here — so it follows the sign-in state. */
     clientSimConnectUdp(humanSim, gameFrontUdpAddress,
                         gameFrontTargetUdp,
-                        gameFrontName, password,
-                        gameFrontWbnUse ? gameFrontWbnToken : "",
+                        gameFrontName,
+                        winbolonetGetCountryCode(),
+                        password,
+                        (!s_isLanOnly && gameFrontWbnUse) ? gameFrontWbnToken : "",
+                        "",
                         wantRejoin,
-                        gameFrontTrackerEnabled ? gameFrontTrackerAddr : "",
+                        !s_isLanOnly ? gameFrontTrackerAddr : "",
                         gameFrontTrackerPort);
     if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
@@ -904,11 +1210,13 @@ bool gameFrontSetDlgState(openingStates newState) {
       humanSim = NULL;
       gameFrontShutdownServer();
       dlgState = prevState;
+      s_joinAttemptFailed = TRUE;
       returnValue = FALSE;
     } else {
       /* Wait for join handshake. Break early if we enter the lobby
-       * (lobby-enabled servers send PACKET_LOBBY_STATE before map chunks,
-       * so inLobby may become true while map is still downloading). */
+       * (lobby-enabled servers deliver CTRL_LOBBY_SETTINGS via sync
+       * replay before map chunks, so inLobby may become true while
+       * the map is still downloading). */
       int joinWaitTicks = 0;
       while (joinWaitTicks < 1500) {  /* 30 second timeout */
         ClientConnectState js = clientSimGetConnectState(humanSim);
@@ -946,80 +1254,19 @@ bool gameFrontSetDlgState(openingStates newState) {
         clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
 
         if (clientSimIsInLobby(humanSim)) {
-          /* Lobby path: enter lobby immediately, map downloads in background.
-           * The lobby UI shows a progress bar and gates the ready button
-           * on mapDownloadComplete. Deferred map loading happens when
-           * the lobby exits (game start). */
+          /* Lobby path: enter lobby immediately, map downloads in
+           * background. The lobby UI shows a progress bar and gates
+           * the ready button on mapDownloadComplete. Install happens
+           * inside the transport on the CTRL_GAME_PHASE LOBBY→RUNNING
+           * watcher when the host starts the game. */
           clientSimSetNetStatus(humanSim, netLobby);
-          dlgState = openFinished;
         } else {
-          /* No-lobby path: map already downloaded, load it now */
-          const BYTE *mapData;
-          int mapLen = 0;
-          gameType serverGame;
-          bool serverHiddenMines;
-          int32_t serverStartDelay, serverGameLen;
-          bool mapLoadOk = TRUE;
-
-          mapData = clientSimGetServerMapData(humanSim, &mapLen);
-          clientSimGetServerGameSettings(humanSim, &serverGame,
-                                         &serverHiddenMines,
-                                         &serverStartDelay,
-                                         &serverGameLen);
-
-          if (mapData != NULL && mapLen > 0) {
-            char savedMapName[MAP_STR_SIZE];
-            strncpy(savedMapName, clientSimGetMapName(humanSim), MAP_STR_SIZE - 1);
-            savedMapName[MAP_STR_SIZE - 1] = '\0';
-            gametype = serverGame;
-            hiddenMines = serverHiddenMines;
-            startDelay = serverStartDelay;
-            timeLen = serverGameLen;
-
-            /* Reset map-dependent state in place; clientSimResetForMapLoad
-             * keeps the transport binding so the mapData pointer (which
-             * lives inside the UDP transport's buffer) stays valid. */
-            clientSimResetForMapLoad(humanSim);
-
-            if (clientLoadCompressedMap(humanSim, (BYTE *)mapData, mapLen,
-                                       savedMapName, serverGame,
-                                       serverHiddenMines, serverStartDelay,
-                                       serverGameLen, gameFrontName,
-                                       (BYTE)udpPlayerNum, FALSE) == FALSE) {
-              mapLoadOk = FALSE;
-            } else {
-              clientSimSetLocalTransport(humanSim, false);
-              /* Re-register network callbacks (clientSimResetForMapLoad cleared them). */
-              clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
-              clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
-              clientSimSetAllianceRequestFunc(humanSim, gameFrontAllianceRequestCallback);
-              clientSimSetAllianceAcceptFunc(humanSim, gameFrontAllianceAcceptCallback);
-              clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
-              clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
-            }
-          } else {
-            mapLoadOk = FALSE;
-          }
-
-          if (!mapLoadOk) {
-            imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_GAMEFRONTERR_MAPLOAD),
-                              IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-            clientSimSetChatSendFunc(humanSim, NULL);
-            clientSimSetNameChangeSendFunc(humanSim, NULL);
-            clientSimSetLockToggleSendFunc(humanSim, NULL);
-            clientSimDisconnect(humanSim);
-            udpTransportActive = FALSE;
-            gameFrontShutdownServer();
-            dlgState = prevState;
-            returnValue = FALSE;
-          } else {
-            clientMutexWaitFor();
-            clientSimNetSetupTankGo(humanSim);
-            clientMutexRelease();
-            gameFrontUpdateSteamPresence(humanSim);
-            dlgState = openFinished;
-          }
+          /* No-lobby path: transport already installed the map inline
+           * on MAP_DOWNLOAD completion; the first snapshot apply will
+           * fire the viewport finalisation. */
+          gameFrontUpdateSteamPresence(humanSim);
         }
+        dlgState = openFinished;
       } else {
         const char *reason = clientSimGetConnectErrorReason(humanSim);
         imguiMessageBoxEx(DIALOG_BOX_TITLE,
@@ -1029,6 +1276,7 @@ bool gameFrontSetDlgState(openingStates newState) {
         humanSim = NULL;
         gameFrontShutdownServer();
         dlgState = prevState;
+        s_joinAttemptFailed = TRUE;
         returnValue = FALSE;
       }
     }
@@ -1077,95 +1325,145 @@ bool gameFrontSetDlgState(openingStates newState) {
           spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
         } else {
           BYTE emap[6000] = E_MAP;
-          spServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+          spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
         }
         if (spServerSim != NULL) {
-          /* Single-player: no lobby, run immediately */
-          serverSimSetLobbyEnabled(spServerSim, false);
-          serverSimStartGame(spServerSim);
-          serverSimAddPlayer(spServerSim, 0, gameFrontName, false);
-          serverSimSetViewPlayer(spServerSim, 0);
-          spTransportLocalUsed = TRUE;
-          spServerSimActive = TRUE;
-          /* Load map/bases/pills on client via compressed map (same as UDP path) */
-          humanSim = clientSimAlloc();
-          clientSimConnectLocal(humanSim, spServerSim, 0);
-          frontEndSetActiveClientSim(humanSim);
-          {
-            BYTE compressedMap[65536];
-            int compLen = serverSimGetCompressedMap(spServerSim, compressedMap);
-            if (compLen > 0) {
-              clientLoadCompressedMap(humanSim, compressedMap, compLen, serverSimGetMapName(spServerSim),
-                                     gametype, hiddenMines, startDelay,
-                                     timeLen, gameFrontName, 0, FALSE);
-            } else {
-              clientSimCreate(humanSim, gametype, hiddenMines, startDelay, timeLen);
-            }
-          }
-          if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
-          /* Set up networking state after ClientSim is fully initialized */
-          netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
-                   password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
-                   gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
-                   gameFrontWbnToken);
-          /* Sync tank state from initial snapshot */
-          {
-            SnapshotHeader snapHdr;
-            TankSnapshot snapTanks[MAX_TANKS];
-            ShellSnapshot snapShells[MAX_SNAPSHOT_SHELLS];
-            TkExplosionSnapshot snapTkExplosions[MAX_SNAPSHOT_TK_EXPLOSIONS];
-            BaseSnapshot snapBases[MAX_SNAPSHOT_BASES];
-            PillSnapshot snapPills[MAX_SNAPSHOT_PILLS];
-            GameEvent snapEvents[MAX_SNAPSHOT_EVENTS];
-            serverSimBuildSnapshot(spServerSim, 0, &snapHdr,
-                                   snapTanks, MAX_TANKS,
-                                   snapShells, MAX_SNAPSHOT_SHELLS,
-                                   snapTkExplosions, MAX_SNAPSHOT_TK_EXPLOSIONS,
-                                   snapBases, MAX_SNAPSHOT_BASES,
-                                   snapPills, MAX_SNAPSHOT_PILLS,
-                                   snapEvents, MAX_SNAPSHOT_EVENTS,
-                                   false);
-            clientSimSyncFromSnapshot(humanSim, &snapHdr, snapTanks, snapHdr.tankCount,
-                                   snapShells, snapHdr.shellCount,
-                                   snapTkExplosions, snapHdr.tkExplosionCount,
-                                   snapBases, snapHdr.baseCount,
-                                   snapPills, snapHdr.pillCount,
-                                   snapEvents, snapHdr.reliableEventCount, 0);
-          }
-          /* Register humanSim as a control-event subscriber. Placed after
-           * clientSimCreate (run from the clientLoadCompressedMap / else
-           * branch above) so myPlayerNum is initialized to 0 — matching the
-           * SP slot — and the dispatcher's self-skip protects this slot
-           * during sync. */
-          spHumanSubHandle = serverSimRegisterClientSubscriber(spServerSim, humanSim);
-          clientSimNetSetupTankGo(humanSim);
-          /* Destroy background game before adding real bots — bgGameDestroy
-           * calls serverSimDestroyBots which would wipe bots we add below. */
-          {
-            BgGame *sharedBg = bgGameGetShared();
-            if (sharedBg != NULL) {
-              bgGameDestroy(sharedBg);
-              bgGameSetShared(NULL);
-            }
-          }
-          /* Add bot brains for local game if AI is enabled */
-          if (!serverSimBotPoolInit(0)) {
-            fprintf(stderr, "[gameFront] serverSimBotPoolInit failed; bots disabled for this session\n");
+          /* Embedded server: silence its console messages (Thread Manager
+           * Startup, Game started!, …) — the client has no server console. */
+          serverSimSetQuiet(spServerSim, true);
+          bgGameSetHiddenByForeground(bgGameGetShared(), true);
+          /* Single-player runs through the same serverInstanceStartup +
+           * timer-thread ticking path as the host, so SP and listen-server
+           * share one shutdown path and the bot tick is owned by the
+           * timer thread only.  acceptRemoteClients=false short-circuits
+           * the UDP server / WBN / tracker / NAT-portmap bring-up. */
+          /* Resolve the brain path once for both the cfg-driven setter
+           * application inside serverInstanceStartup and the later bot
+           * setup loop. Falls back to findBrainPath when the user has
+           * not pre-set gameFrontBrainPath. */
+          char spBrainPath[FILENAME_MAX] = "";
+          if (gameFrontBrainPath[0] != '\0') {
+            SDL_strlcpy(spBrainPath, gameFrontBrainPath, sizeof(spBrainPath));
           } else {
-            /* Resolve brain path for lobby "Add Bot" support and initial bots */
-            char brainPath[FILENAME_MAX];
-            bool haveBrain = false;
-            if (gameFrontBrainPath[0] != '\0') {
-              SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
-              haveBrain = true;
-            } else if (compTanks != aiNone) {
-              haveBrain = findBrainPath(brainPath, sizeof(brainPath));
+            findBrainPath(spBrainPath, sizeof(spBrainPath));
+          }
+
+          ServerInstanceConfig cfg;
+          memset(&cfg, 0, sizeof(cfg));
+          cfg.udpPort             = gameFrontMyUdp;
+          cfg.bindAddr            = "";
+          cfg.password            = password;
+          cfg.maxPlayers          = MAX_TANKS;
+          cfg.acceptRemoteClients = false;
+          cfg.useWbn              = false;
+          cfg.compTanks           = (BYTE)compTanks;
+          cfg.useTracker          = false;
+          cfg.trackerAddr         = gameFrontTrackerAddr;
+          cfg.trackerPort         = gameFrontTrackerPort;
+          cfg.useNatKeepalive     = false;
+          cfg.useNatPortmap       = false;
+          if (isTutorial) {
+            cfg.skipLobby         = true;
+          } else {
+            cfg.lobbyEnabled      = true;
+            cfg.emptyResetEnabled = true;
+            cfg.hasPassword       = (password[0] != '\0');
+          }
+          cfg.botBrainPath = (spBrainPath[0] != '\0') ? spBrainPath : NULL;
+          cfg.botAiType    = (BYTE)((compTanks == aiNone) ? aiFull : compTanks);
+
+          /* Build the ClientSim first — clientSimConnectLocalPassive
+           * runs the full join+install body against an alive ClientSim. */
+          humanSim = clientSimAlloc();
+          clientSimCreate(humanSim);
+          clientSimSetIsLanOnly(humanSim, s_isLanOnly);
+          frontEndSetActiveClientSim(humanSim);
+
+          /* Start the host timer; serverInstanceStartup applies the
+           * lobby/skipLobby + hasPassword + brain/AI fields above. */
+          if (!gameFrontStartServerSim(spServerSim, &cfg)) {
+            WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                         "[SP-FAIL] gameFrontStartServerSim failed — "
+                         "humanSim being nulled, dlgState stays at openFinished");
+            frontEndSetActiveClientSim(NULL);
+            clientSimDestroy(humanSim);
+            humanSim = NULL;
+            serverSimDestroy(spServerSim);
+            spServerSim = NULL;
+            spServerSimActive = FALSE;
+            spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
+            returnValue = FALSE;
+          } else {
+            /* Resolve the self client type / flags. */
+            uint8_t selfType  = bolo_detect_client_type();
+            uint8_t selfFlags = 0;
+#ifdef HAVE_STEAM
+            selfFlags |= PLAYER_FLAG_STEAM_BUILD;
+#endif
+            if (bolo_steam_has_supporter_dlc()) selfFlags |= PLAYER_FLAG_SUPPORTER;
+
+            /* Run the 12-step join+install body. On success the
+             * ClientSim is populated with the map, the local tank, the
+             * first snapshot, the auto-subscriber, and a netSingle
+             * net type. */
+            bool connectOk = clientSimConnectLocalPassive(
+                humanSim, spServerSim,
+                gameFrontName,
+                winbolonetGetCountryCode(),
+                selfType, selfFlags);
+
+            if (!connectOk) {
+              WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                           "[SP-FAIL] clientSimConnectLocalPassive failed: %s — "
+                           "humanSim being nulled, dlgState stays at openFinished",
+                           clientSimGetConnectErrorReason(humanSim));
+              frontEndSetActiveClientSim(NULL);
+              clientSimDestroy(humanSim);
+              humanSim = NULL;
+              /* gameFrontStartServerSim already armed the host timer;
+               * gameFrontShutdownServer tears it down and runs
+               * serverInstanceShutdown + serverSimDestroy on
+               * spServerSim under the mutex. */
+              gameFrontShutdownServer();
+              spServerSimActive = FALSE;
+              spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
+              returnValue = FALSE;
+            } else {
+            spServerSimActive = TRUE;
+            /* Phase 2 leaves the legacy spHumanSubHandle field unset —
+             * the auto-subscriber registered by connect lives inside
+             * the ClientSim. Phase 4 deletes the field. */
+            spHumanSubHandle = SUBSCRIBER_HANDLE_INVALID;
+            if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
+            /* Set up networking state after ClientSim is fully initialized */
+            netSetup(humanSim, netSingle, gameFrontMyUdp, gameFrontUdpAddress, gameFrontTargetUdp,
+                     password, TRUE, gameFrontTrackerAddr, gameFrontTrackerPort,
+                     gameFrontTrackerEnabled, wantRejoin, gameFrontWbnUse,
+                     gameFrontWbnToken, "");
+            /* Non-tutorial SP enters the lobby; the host clicks Start
+             * to fire clientSimNetSendReady, which trips the
+             * all-ready detector and (worldPreLoaded → TRUE) runs
+             * StartGameInPlace synchronously. netSetup just overwrote
+             * netStat to netRunning, so we re-set the four lobby
+             * flags here (after netSetup, the right moment). */
+            if (!isTutorial) {
+              clientSimSetIsSinglePlayer(humanSim, true);
+              clientSimSetInLobby(humanSim, true);
+              clientSimSetNetStatus(humanSim, netLobby);
+              clientSimSetMapDownloadComplete(humanSim, true);
             }
-            /* Set botBrainPath on the ServerSim so lobby Add Bot requests work */
-            if (haveBrain) {
-              serverSimSetBotBrainPath(spServerSim, brainPath);
-              serverSimSetBotAiType(spServerSim, compTanks);
-            }
+            /* Tutorial (no-lobby) and lobby paths both rely on the
+             * first-snapshot apply inside the local transport to fire
+             * the viewport finalisation. */
+            /* Add bot brains for local game if AI is enabled.
+             * Serialise bot creation, team assignment, and the
+             * reapply-alliances pass against the host timer thread,
+             * which is already calling serverInstanceTick on spServerSim. */
+            threadsWaitForMutex();
+            /* botBrainPath / botAiType were already pushed into the
+             * sim via cfg above; here we only need brainPath as a
+             * per-bot default for the serverSimCreateBot loop. */
+            bool haveBrain = (spBrainPath[0] != '\0');
             if (compTanks != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
               for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
                 BYTE slot = (BYTE)(bi + 1);
@@ -1173,40 +1471,36 @@ bool gameFrontSetDlgState(openingStates newState) {
                 snprintf(botName, sizeof(botName), "Bot %d", slot);
                 /* Use per-bot brain path if set, otherwise fall back to default */
                 const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
-                if (botBrain[0] == '\0') botBrain = brainPath;
+                if (botBrain[0] == '\0') botBrain = spBrainPath;
                 serverSimCreateBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
                 /* Apply team number */
                 uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
                 if (team > 0) {
-                  serverSimSetTeam(spServerSim, slot, team);
-                  {
-                    ControlEvent slotEvt;
-                    memset(&slotEvt, 0, sizeof(slotEvt));
-                    serverSimFillLobbySlotEvent(spServerSim, slot, &slotEvt);
-                    serverSimPublishControl(spServerSim, &slotEvt);
-                  }
+                  clientSimNetSendTeamSet(humanSim, slot, team);
                 }
               }
               /* Apply human player team number */
               if (gameFrontBotSetupData.playerTeamNumber > 0) {
-                serverSimSetTeam(spServerSim, 0, gameFrontBotSetupData.playerTeamNumber);
-                {
-                  ControlEvent slotEvt;
-                  memset(&slotEvt, 0, sizeof(slotEvt));
-                  serverSimFillLobbySlotEvent(spServerSim, 0, &slotEvt);
-                  serverSimPublishControl(spServerSim, &slotEvt);
-                }
+                clientSimNetSendTeamSet(humanSim, 0,
+                                        gameFrontBotSetupData.playerTeamNumber);
               }
               /* Apply team alliances — players with same non-zero team become
-               * allies. serverSimStartGame already did this pass when it ran
-               * at the top of this block, but at that point neither the
-               * human player nor the bots had been added yet, so it found
-               * no pairs. Re-run it now that the lobby is populated. */
+               * allies. The alliance pass that runs as part of round
+               * start at the top of this block saw an empty lobby (the
+               * human and bots hadn't been added yet) and found no
+               * pairs. Re-run it now that the lobby is populated. */
               serverSimReapplyTeamAlliances(spServerSim);
             }
-          }
-          gameFrontUpdateSteamPresence(humanSim);
+            threadsReleaseMutex();
+            gameFrontUpdateSteamPresence(humanSim);
+            }  /* end "clientSimConnectLocalPassive succeeded" */
+          } /* end "gameFrontStartServerSim succeeded" */
         } else {
+          WB_LOG_ERROR(WB_LOG_CAT_GUI,
+                       "[SP-FAIL] spServerSim creation returned NULL "
+                       "(fileName='%s') — humanSim never allocated, "
+                       "dlgState stays at openFinished",
+                       fileName);
           if (spServerSim != NULL) {
             free(spServerSim);
             spServerSim = NULL;
@@ -1391,6 +1685,22 @@ bool gameFrontConsumePlayTutorialRequest(void) {
   return was;
 }
 
+void gameFrontRequestTransition(openingStates s) {
+  gameFrontPendingTransition    = s;
+  gameFrontPendingTransitionSet = TRUE;
+}
+
+bool gameFrontConsumeRequestedTransition(openingStates *out) {
+  if (!gameFrontPendingTransitionSet) return FALSE;
+  if (out) *out = gameFrontPendingTransition;
+  gameFrontPendingTransitionSet = FALSE;
+  return TRUE;
+}
+
+bool gameFrontIsAtWelcome(void) {
+  return gameFrontAtWelcome;
+}
+
 void gameFrontGetTrackerOptions(char *address, unsigned short *port, bool *enabled) {
   strcpy(address, gameFrontTrackerAddr);
   *port = gameFrontTrackerPort;
@@ -1510,6 +1820,12 @@ void gameFrontReloadSkins(void) {
 void gameFrontShutdownServer(void) {
   ServerSim *toFree;
   if (!spServerSimActive) return;
+  /* Tell the timer callback to bail and cancel itself BEFORE we call
+   * SDL_RemoveTimer — RemoveTimer doesn't wait for an in-flight
+   * callback, and a callback that's already past the mutex lock can
+   * return non-zero and re-arm the timer despite the remove. With
+   * the flag, any cb invocation past this point returns 0. */
+  spServerTimerShutdown = true;
   if (hostedServerTimerID != 0) {
     SDL_RemoveTimer(hostedServerTimerID);
     hostedServerTimerID = 0;
@@ -1522,7 +1838,6 @@ void gameFrontShutdownServer(void) {
   threadsWaitForMutex();
   toFree = spServerSim;
   spServerSim = NULL;
-  spServerHosted = FALSE;
   spServerSimActive = FALSE;
   threadsReleaseMutex();
 
@@ -1542,20 +1857,38 @@ bool gameFrontPreferencesExist(void) {
   return FALSE;
 }
 
+
+static bool gameFrontStartServerSim(ServerSim *sim,
+                                    const ServerInstanceConfig *cfg) {
+  if (!serverInstanceStartup(sim, cfg)) return false;
+  /* Clear the shutdown latch — gameFrontShutdownServerSim sets it true
+   * on teardown to make in-flight timer callbacks bail; if we restart
+   * a hosted server in the same process (e.g. exiting a game back to
+   * the lobby and starting another) the latch would still be true and
+   * the freshly-installed timer would self-cancel on its first fire. */
+  spServerTimerShutdown = false;
+  hostedServerTimerID = SDL_AddTimer(SERVER_TICK_LENGTH, hostedServerTimerCb, NULL);
+  if (hostedServerTimerID == 0) {
+    serverInstanceShutdown(sim);
+    return false;
+  }
+  return true;
+}
+
 bool gameFrontSetupServer(void) {
   ServerInstanceConfig cfg;
 
-  /* Welcome-screen BgGame leaves the global botManager state populated
-   * with its eye-candy bots; without clearing it here, serverFindFreeSlot
-   * skips those slots and the host's loopback JOIN_REQUEST gets a
-   * non-zero player number. Mirrors the SP path. */
-  {
-    BgGame *sharedBg = bgGameGetShared();
-    if (sharedBg != NULL) {
-      bgGameDestroy(sharedBg);
-      bgGameSetShared(NULL);
-    }
-  }
+  /* Idempotently clear any prior host session. Backing out of the
+   * lobby to the LAN/Internet game finder doesn't fire shutdown on
+   * its own — the dlgState machine just transitions back to openLan
+   * while the old timer thread, UDP socket, and ServerSim are still
+   * alive. Without this, the second "New" overwrites spServerSim
+   * (leaking the first) and memsets the global udpServer struct
+   * (orphaning the first socket and recv thread). The subsequent
+   * discoveryPingServer then sees no info-reply and hangs the main
+   * thread for the full 5-second recvfrom timeout. Shutdown no-ops
+   * when spServerSimActive is false, so this is safe on first entry. */
+  gameFrontShutdownServer();
 
   if (strncmp(fileName, "randommap:", 10) == 0) {
     MapGenConfig mcfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
@@ -1570,89 +1903,86 @@ bool gameFrontSetupServer(void) {
     spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
   } else {
     BYTE emap[6000] = E_MAP;
-    spServerSim = serverSimCreateCompressed(emap, 5097, gametype, hiddenMines, startDelay, timeLen);
+    spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
   }
   if (spServerSim == NULL) {
     return FALSE;
   }
+  /* Embedded listen server: silence its console messages — no server console. */
+  serverSimSetQuiet(spServerSim, true);
 
-  serverSimSetLobbyEnabled(spServerSim, true);
-  serverSimSetEmptyResetEnabled(spServerSim, true);
-  serverSimEnterLobby(spServerSim);
-  serverSimSetHasPassword(spServerSim, (password[0] != '\0'));
-
-  memset(&cfg, 0, sizeof(cfg));
-  cfg.udpPort         = gameFrontMyUdp;
-  cfg.bindAddr        = "";
-  cfg.password        = password;
-  cfg.maxPlayers      = MAX_TANKS;
-  cfg.useWbn          = gameFrontWbnUse;
-  cfg.compTanks       = (BYTE)compTanks;
-  cfg.useTracker      = gameFrontTrackerEnabled;
-  cfg.trackerAddr     = gameFrontTrackerAddr;
-  cfg.trackerPort     = gameFrontTrackerPort;
-  cfg.useNatKeepalive = gameFrontUseNatTraversal;
-  cfg.useNatPortmap   = gameFrontUseUpnp;
-
-  if (!serverInstanceStartup(spServerSim, &cfg)) {
-    serverSimDestroy(spServerSim);
-    spServerSim = NULL;
-    return FALSE;
-  }
-
-  hostedServerTimerID = SDL_AddTimer(SERVER_TICK_LENGTH, hostedServerTimerCb, NULL);
-  if (hostedServerTimerID == 0) {
-    serverInstanceShutdown(spServerSim);
-    serverSimDestroy(spServerSim);
-    spServerSim = NULL;
-    return FALSE;
-  }
-
-  spServerSimActive = TRUE;
-  spServerHosted = TRUE;
-  isServer = TRUE;
-  return TRUE;
-}
-
-bool gameFrontLoadInBuiltMap(void) {
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable: 4305)
-#endif
-  BYTE emap[6000] = E_MAP;
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-  return clientLoadCompressedMap(humanSim, emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen, gameFrontName, 0, FALSE);
-}
-
-bool gameFrontLoadTutorial(void) {
-  const char *candidates[3];
-  char basePathBuf[FILENAME_MAX];
-  const char *basePath = SDL_GetBasePath();
-  int i;
-  FILE *fp;
-
-  candidates[0] = "data/maps/Inbuilt Tutorial.map";
-
-  if (basePath != NULL) {
-    snprintf(basePathBuf, FILENAME_MAX, "%sdata/maps/Inbuilt Tutorial.map", basePath);
-    candidates[1] = basePathBuf;
+  /* Resolve a brain path so the lobby's "Add Bot" works regardless of
+   * whether the host set compTanks at startup. The AI Policy can be
+   * flipped on later via the lobby UI; without a pre-resolved brain
+   * the server silently drops PACKET_LOBBY_ADD_BOT. */
+  char brainPath[FILENAME_MAX] = "";
+  if (gameFrontBrainPath[0] != '\0') {
+    SDL_strlcpy(brainPath, gameFrontBrainPath, sizeof(brainPath));
   } else {
-    candidates[1] = NULL;
+    findBrainPath(brainPath, sizeof(brainPath));
   }
-  candidates[2] = "Inbuilt Tutorial.map";
+  memset(&cfg, 0, sizeof(cfg));
+  cfg.udpPort             = gameFrontMyUdp;
+  cfg.bindAddr            = "";
+  cfg.password            = password;
+  cfg.maxPlayers          = MAX_TANKS;
+  cfg.acceptRemoteClients = true;
+  /* Internet games always register on WinBolo.net so the server is
+   * publicly listed, regardless of whether the host is signed in:
+   * server/register is anonymous and returns its own server_token for
+   * later server/ calls. Being signed in (gameFrontWbnUse) only governs
+   * whether the host's own tank is WBN-identified for ratings, handled
+   * separately on the client-join path. The LAN-only block below forces
+   * this back off for Local games. */
+  cfg.useWbn              = TRUE;
+  cfg.compTanks           = (BYTE)compTanks;
+  /* Internet host: always register with the tracker (no user toggle). The
+   * tracker is what makes the game discoverable and resolves the host's
+   * external address for NAT traversal and Steam "Join Game". Address/port
+   * come from the INI ([TRACKER] Address/Port, default tracker.winbolo.com:
+   * 50000) — there is no in-app UI for it. The LAN-only block below forces
+   * this back off for Local games; the single-player/passive path disables
+   * it separately. */
+  cfg.useTracker          = TRUE;
+  cfg.trackerAddr         = gameFrontTrackerAddr;
+  cfg.trackerPort         = gameFrontTrackerPort;
+  cfg.useNatKeepalive     = gameFrontUseNatTraversal;
+  cfg.useNatPortmap       = gameFrontUseUpnp;
+  cfg.lobbyEnabled        = true;
+  cfg.emptyResetEnabled   = true;
+  cfg.hasPassword         = (password[0] != '\0');
+  cfg.botBrainPath        = (brainPath[0] != '\0') ? brainPath : NULL;
+  if (compTanks != aiNone) {
+    cfg.botAiType         = (BYTE)compTanks;
+  }
 
-  for (i = 0; i < 3; i++) {
-    if (candidates[i] == NULL) continue;
-    fp = fopen(candidates[i], "rb");
-    if (fp != NULL) {
-      fclose(fp);
-      /* clientLoadMap takes char* (not const) but doesn't mutate. */
-      return clientLoadMap(humanSim, (char *)candidates[i], gameStrictTournament, FALSE, 0, UNLIMITED_GAME_TIME, gameFrontName, FALSE);
-    }
+  /* LAN-only host: no public-facing services. winbolonetCreateServer
+   * would advertise to the global tracker, the WBN tracker reports
+   * public IPs, NAT keepalive ("punch") makes the server reachable
+   * from outside the LAN, and UPnP/PCP/NAT-PMP open router ports —
+   * none of which the user wants for a Local game. Disabling these
+   * also makes serverInstanceIsNatPunchActive() return false, which
+   * skips the lobby's "Checking server reachability…" badge for both
+   * the host and joining LAN clients. */
+  if (s_isLanOnly) {
+    cfg.useWbn          = FALSE;
+    cfg.useTracker      = FALSE;
+    cfg.useNatKeepalive = FALSE;
+    cfg.useNatPortmap   = FALSE;
   }
-  return FALSE;
+
+  if (!gameFrontStartServerSim(spServerSim, &cfg)) {
+    serverSimDestroy(spServerSim);
+    spServerSim = NULL;
+    return FALSE;
+  }
+  /* The host-side flags previously set by gameFrontFinishLobbyHost
+   * after the startup call. The lobby state itself is now driven by
+   * cfg.lobbyEnabled inside serverInstanceStartup. */
+  isServer = TRUE;
+  spServerSimActive = TRUE;
+  bgGameSetHiddenByForeground(bgGameGetShared(), true);
+  return TRUE;
 }
 
 /* -------------------------------------------------------
@@ -1946,6 +2276,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   backgroundSound = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Sound keepalive", "No", buff, FILENAME_MAX, prefsFile);
   useSoundKeepalive = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("MENU", "Sound Volume", "50", buff, FILENAME_MAX, prefsFile);
+  soundVolume = atoi(buff);
+  if (soundVolume < 0) soundVolume = 0;
+  if (soundVolume > 100) soundVolume = 100;
   GetPrivateProfileString("MENU", "Show Newswire Messages", "Yes", buff, FILENAME_MAX, prefsFile);
   showNewswireMessages = YESNO_TO_TRUEFALSE(buff[0]);
   GetPrivateProfileString("MENU", "Show Assistant Messages", "Yes", buff, FILENAME_MAX, prefsFile);
@@ -2165,6 +2499,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   WritePrivateProfileString("MENU", "Sound Effects", TRUEFALSE_TO_STR(soundEffects), prefsFile);
   WritePrivateProfileString("MENU", "Allow Background Sound", TRUEFALSE_TO_STR(backgroundSound), prefsFile);
   WritePrivateProfileString("MENU", "Sound keepalive", TRUEFALSE_TO_STR(useSoundKeepalive), prefsFile);
+  intToStr(soundVolume, buff, sizeof(buff));
+  WritePrivateProfileString("MENU", "Sound Volume", buff, prefsFile);
   WritePrivateProfileString("MENU", "Show Newswire Messages", TRUEFALSE_TO_STR(showNewswireMessages), prefsFile);
   WritePrivateProfileString("MENU", "Show Assistant Messages", TRUEFALSE_TO_STR(showAssistantMessages), prefsFile);
   WritePrivateProfileString("MENU", "Show AI Messages", TRUEFALSE_TO_STR(showAIMessages), prefsFile);
@@ -2231,85 +2567,39 @@ void gameFrontFlushWindowSettings(void) {
   s_windowSettingsDirty = false;
 }
 
+/* Throttle state shared with gameFrontPumpDirty: the pump is the consume
+ * point for s_windowSettingsDirty, so the last drag/resize burst doesn't
+ * get silently dropped when its events fall inside the 500ms window. */
+static Uint64 s_lastWindowWriteTime = 0;
+
 void gameFrontSaveWindowSettings(void) {
-  static Uint64 lastWriteTime = 0;
   Uint64 now = SDL_GetTicks();
-  if (now - lastWriteTime < 500) {
+  if (now - s_lastWindowWriteTime < 500) {
     s_windowSettingsDirty = true;
     return;
   }
   gameFrontFlushWindowSettings();
-  lastWriteTime = now;
+  s_lastWindowWriteTime = now;
+}
+
+void gameFrontPumpDirty(void) {
+  if (!s_windowSettingsDirty) return;
+  Uint64 now = SDL_GetTicks();
+  if (now - s_lastWindowWriteTime < 500) return;
+  gameFrontFlushWindowSettings();
+  s_lastWindowWriteTime = now;
 }
 
 ServerSim *gameFrontGetServerSim(void) {
   return spServerSimActive ? spServerSim : NULL;
 }
 
-BYTE gameFrontGetPlayerNum(void) {
-  if (spServerSimActive && !spServerHosted) return 0;
-  if (udpTransportActive) return udpPlayerNum;
-  return 0;
+ServerSim *gameFrontGetSinglePlayerServerSim(void) {
+  return spServerSim;
 }
 
-bool gameFrontLoadDeferredMap(ClientSim **cs) {
-  const BYTE *mapData;
-  int mapLen = 0;
-  gameType serverGame;
-  bool serverHiddenMines;
-  int32_t serverStartDelay, serverGameLen;
-
-  mapData = clientSimGetServerMapData(*cs, &mapLen);
-  clientSimGetServerGameSettings(*cs, &serverGame,
-                                 &serverHiddenMines,
-                                 &serverStartDelay,
-                                 &serverGameLen);
-
-  if (mapData == NULL || mapLen <= 0) {
-    return FALSE;
-  }
-
-  gametype = serverGame;
-  hiddenMines = serverHiddenMines;
-  startDelay = serverStartDelay;
-  timeLen = serverGameLen;
-
-  /* Preserve lobby flag and map name across reset — clientSimCreate
-   * (re-entered via clientLoadCompressedMap below) clears them. */
-  bool wasInLobby = clientSimIsInLobby(*cs);
-  char savedMapName[MAP_STR_SIZE];
-  strncpy(savedMapName, clientSimGetMapName(*cs), MAP_STR_SIZE - 1);
-  savedMapName[MAP_STR_SIZE - 1] = '\0';
-
-  /* Reset map-dependent state in place; clientSimResetForMapLoad keeps
-   * the transport binding so the mapData pointer (which lives inside
-   * the UDP transport's buffer) stays valid for clientLoadCompressedMap. */
-  clientSimResetForMapLoad(*cs);
-  sdl3DrawResetCachedText();
-
-  if (clientLoadCompressedMap(*cs, (BYTE *)mapData, mapLen,
-                             savedMapName, serverGame,
-                             serverHiddenMines, serverStartDelay,
-                             serverGameLen, gameFrontName,
-                             (BYTE)udpPlayerNum, FALSE) == FALSE) {
-    return FALSE;
-  }
-
-  clientSimSetLocalTransport(*cs, false);
-  clientSimSetInLobby(*cs, wasInLobby);
-  clientSimSetMapDownloadComplete(*cs, true);
-
-  clientSimSetChatSendFunc(*cs, gameFrontChatSendCallback);
-  clientSimSetNameChangeSendFunc(*cs, gameFrontNameChangeSendCallback);
-  clientSimSetAllianceRequestFunc(*cs, gameFrontAllianceRequestCallback);
-  clientSimSetAllianceAcceptFunc(*cs, gameFrontAllianceAcceptCallback);
-  clientSimSetAllianceLeaveFunc(*cs, gameFrontAllianceLeaveCallback);
-  clientSimSetLockToggleSendFunc(*cs, gameFrontLockToggleCallback);
-
-  clientMutexWaitFor();
-  clientSimNetSetupTankGo(*cs);
-  clientMutexRelease();
-
-  return TRUE;
+BYTE gameFrontGetPlayerNum(void) {
+  if (udpTransportActive) return udpPlayerNum;
+  return 0;
 }
 

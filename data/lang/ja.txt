@@ -268,6 +268,7 @@ STR_DLGNETINFO_KBIN=KB/s 受信:
 STR_DLGNETINFO_KBOUT=KB/s 送信:
 STR_DLGNETINFO_PACKETS_RATE=パケット/秒: {number} 受信 / {number2} 送信
 STR_DLGNETINFO_KB_RATE=KB/秒: {string1} 受信 / {string2} 送信
+STR_DLGNETINFO_LOSS=パケット損失: {number}% ({number2}/{number3} 今秒, {number4} ゲーム計)
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=シードをコピー
@@ -422,6 +423,7 @@ STR_DLGLOBBY_BOT_FMT={player} [Bot]
 STR_DLGLOBBY_YOU_FMT={player}（あなた）
 STR_DLGLOBBY_STARTING_FMT={number} 秒後に開始...
 STR_DLGLOBBY_LOSTCONNECTION=サーバーへの接続が切断されました。
+STR_DLGLOBBY_KICKED=サーバーからキックされました。
 STR_DLGLOBBY_ME=自分
 STR_DLGLOBBY_PLAYER_COL=プレイヤー
 STR_DLGLOBBY_PING_COL=Ping
@@ -943,6 +945,14 @@ STR_LV_MAP_SKIP_VOTE={player} がマップのスキップに投票しました�
 STR_LV_MAP_SKIPPED=マップがスキップされました。新しいマップ: {string1}
 STR_LV_TEAM_BALANCE=チームバランスが適用されました。
 
+# Log viewer — ゲーム内投票イベント
+STR_LV_VOTE_START_LOBBY={player} がロビーへ戻る投票を開始しました。
+STR_LV_VOTE_START_SURRENDER={player} が降伏の投票を開始しました。
+STR_LV_VOTE_CAST_YES={player} が賛成票を投じました。
+STR_LV_VOTE_CAST_NO={player} が反対票を投じました。
+STR_LV_VOTE_PASSED=投票が可決されました。
+STR_LV_VOTE_FAILED=投票が否決されました。
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=開く
 STR_LV_MENU_ACTION=アクション
@@ -1071,10 +1081,10 @@ STR_DLGLOBBY_PORTMAP_CHECKING=サーバーの到達性を確認中…
 STR_DLGLOBBY_PORTMAP_ACCESSIBLE=サーバーに到達可能
 STR_DLGLOBBY_PORTMAP_UNREACHABLE=サーバーに到達不可
 STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=UPnP / NAT-PMP でファイアウォールのポートを開き、トラッカーがネットワーク経由であなたに到達できるか確認しています。通常は 30 秒以内に完了します。
-STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=UPnP/NAT-PMP により %s:%u でポートが自動転送されました。参加者は追加の手順なしで直接接続できます。
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=UPnP/NAT-PMP により {string1}:{number} でポートが自動転送されました。参加者は追加の手順なしで直接接続できます。
 STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=ポートの直接転送は確立できませんでしたが、NAT traversal は有効です。参加者はトラッカー経由で連携し、あなたのネットワークのファイアウォールを通り抜けます。多くの家庭用ネットワークで機能しますが、対称型 NAT や CGN（キャリアグレード NAT）の参加者は接続できない場合があります。
-STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=対称型 NAT を検出しました — あなたのネットワークは送信先ごとに送信元ポートを書き換えるため、NAT traversal を使っても参加者があなたに到達できません。ホストを成功させるには、ルーターで UDP ポート %u をこのマシンへ手動で転送してください。
-STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=ファイアウォールのポートを自動的に開けず（UPnP/NAT-PMP が拒否または利用不可）、トラッカーは双方向の到達性を確認できませんでした。ホストを成功させるには、ルーターで UDP ポート %u をこのマシンへ手動で転送してください。
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=対称型 NAT を検出しました — あなたのネットワークは送信先ごとに送信元ポートを書き換えるため、NAT traversal を使っても参加者があなたに到達できません。ホストを成功させるには、ルーターで UDP ポート {number} をこのマシンへ手動で転送してください。
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=ファイアウォールのポートを自動的に開けず（UPnP/NAT-PMP が拒否または利用不可）、トラッカーは双方向の到達性を確認できませんでした。ホストを成功させるには、ルーターで UDP ポート {number} をこのマシンへ手動で転送してください。
 STR_DLGLOBBY_PORTMAP_POPUP_TITLE=サーバー到達性
 STR_DLGLOBBY_TEST_CONNECTIVITY=接続テスト
 STR_DLGLOBBY_TEST_TESTING=テスト中…
@@ -1159,3 +1169,198 @@ STR_CTRL_PROMPT_LINE2=コントローラーモードに切り替えますか？
 STR_CTRL_PROMPT_DESC=(メニューバーを非表示にします。Startボタンでコントローラー向けの一時停止メニューが開きます。\n後から設定で変更できます。)
 STR_CTRL_PROMPT_NOTNOW=後で
 STR_CTRL_PROMPT_DONTASK=次回から表示しない
+# macOS App menu and Window menu items
+STR_MENU_ABOUT_APP=WinBolo について
+STR_MENU_PREFERENCES=環境設定…
+STR_MENU_SERVICES=サービス
+STR_MENU_HIDE_APP=WinBolo を隠す
+STR_MENU_HIDE_OTHERS=ほかを隠す
+STR_MENU_SHOW_ALL=すべてを表示
+STR_MENU_QUIT_APP=WinBolo を終了
+STR_MENU_ABOUT_LV=ログビューアー について
+STR_MENU_HIDE_LV=ログビューアー を隠す
+STR_MENU_QUIT_LV=ログビューアー を終了
+STR_MENU_HIDE_ME=マップエディター を隠す
+STR_MENU_QUIT_ME=マップエディター を終了
+STR_MENU_WINDOW=ウインドウ
+STR_MENU_MINIMIZE=しまう
+STR_MENU_ZOOM=ズーム
+STR_MENU_ENTER_FULL_SCREEN=フルスクリーンにする
+STR_MENU_BRING_ALL_TO_FRONT=すべてのウインドウを手前に移動
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=インターネットゲームを検索…
+STR_MENU_FIND_LAN_GAME=LANゲームを検索…
+STR_MENU_JOIN_BY_ADDRESS=アドレスで参加…
+STR_MENU_OPEN_MAP_EDITOR=マップエディターを開く
+STR_MENU_OPEN_LOG_VIEWER=ログビューアーを開く
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=起動時にwinbolo.netのニュースを表示する
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=ニュース
+STR_DLGNEWS_TITLE=ニュース
+STR_DLGNEWS_CONSENT_TITLE=WinBolo ニュース
+STR_DLGNEWS_CONSENT_BODY1=WinBoloはゲーム起動時にwinbolo.netの新しい投稿を表示できます。WBNは起動時に一度だけ確認し、新しい情報がある場合にのみこのウィンドウを開きます。
+STR_DLGNEWS_CONSENT_BODY2=この設定はいつでも設定から変更できます。
+STR_DLGNEWS_SHOW=ニュースを表示
+STR_DLGNEWS_DONT_SHOW=表示しない
+STR_DLGNEWS_LOADING=読み込み中…
+STR_DLGNEWS_DONT_AUTOSHOW=今後ニュースを自動的に表示しない
+STR_DLGNEWS_COMMENTS_FMT=コメント: {number}
+
+# Map chooser
+STR_DLGLOBBY_CHOOSEMAP_TITLE=マップを選択
+STR_DLGLOBBY_TAB_SERVERMAPS=サーバーのマップ
+STR_DLGLOBBY_TAB_LOCALMAPS=ローカルのマップ
+STR_DLGLOBBY_TAB_UPLOAD=アップロード
+STR_DLGLOBBY_TAB_GENERATE=生成
+STR_DLGLOBBY_TAB_WBNMAPS=Winbolo.net のマップ
+STR_DLGLOBBY_CLOSEMAP_PROMPT=別のマップをプレビューしました。
+STR_DLGLOBBY_CLOSEMAP_QUESTION=どうしますか？
+STR_DLGLOBBY_USETHISMAP=このマップを使用
+STR_DLGLOBBY_REVERTCLOSE=元に戻して閉じる
+STR_DLGLOBBY_KEEPPICKING=選択を続ける
+STR_DLGLOBBY_CANCEL_MAPCHOOSER=キャンセル
+STR_DLGLOBBY_CHOOSE_MAP_BTN=マップを選択
+
+# Upload + WBN errors
+STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT=別のアップロードが進行中です。
+STR_DLGLOBBY_UPLOAD_ERR_DISABLED=このサーバーではアップロードが無効です。
+STR_DLGLOBBY_UPLOAD_ERR_FULL=サーバーのマップライブラリが満杯です。
+STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=リクエストが多すぎます \xe2\x80\x94 しばらくしてから再試行してください。
+STR_DLGLOBBY_UPLOAD_ERR_REJECTED=アップロードはサーバーに拒否されました。
+STR_DLGLOBBY_WBN_ERR_DOWNLOAD=ダウンロードに失敗しました
+STR_DLGLOBBY_WBN_ERR_BADRESPONSE=WinBolo.net から不正な応答がありました
+STR_DLGLOBBY_WBN_ERR_NETERROR=マップの取得中にネットワークエラーが発生しました
+STR_DLGLOBBY_WBN_ERR_HTTPERROR=WBN が HTTP {number} を返しました
+STR_DLGLOBBY_WBN_ERR_MAPFAILED=マップのダウンロードに失敗しました
+STR_DLGLOBBY_WBN_ERR_TOOBIG=マップが 64KB のアップロード上限を超えています
+STR_DLGLOBBY_WBN_ERR_OOM=アップロードのキューへの追加中にメモリ不足が発生しました
+STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE=WinBolo.net から不正な検索応答がありました
+
+# Allow-new-players + ranked-game controls
+STR_DLGLOBBY_ALLOW_NOW=今すぐ
+STR_DLGLOBBY_ALLOW_DURING=ゲーム中も
+STR_DLGLOBBY_TOOLTIP_ALLOWNOW=ロビーが開いている今すぐ新しい参加リクエストを受け付けます。
+STR_DLGLOBBY_TOOLTIP_ALLOWDURING=ゲーム開始後も新しいプレイヤーの参加を受け付け続けます。
+STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK=ランクマッチはゲーム開始時に新しいプレイヤーの参加をロックします。
+STR_DLGLOBBY_RANKED=ランクマッチ
+STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED=サーバー管理者によりロックされています。
+STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST=ランクマッチの切り替えはホストまたは管理者のみ行えます。
+STR_DLGLOBBY_TOOLTIP_RANKED_BOTS=ランクマッチとして設定する前に、ロビーからすべてのボットを削除してください。\nランクマッチは人間プレイヤーのみです。
+STR_DLGLOBBY_TOOLTIP_RANKED_INFO=ランクマッチはボットを禁止し、トーナメント\nゲームタイプを強制します — 「オープン」事前武装モードは使用できません。\nこれを切り替えると、ホストが新しい設定を確認できるよう\nすべてのプレイヤーの準備状態がリセットされます。
+
+# Team-grouped player list + kick modal
+STR_DLGLOBBY_TEAM_HEADER=チーム {number}
+STR_DLGLOBBY_TEAM_MEMBERS_1=· プレイヤー 1 人
+STR_DLGLOBBY_TEAM_MEMBERS_N=· プレイヤー {number} 人
+STR_DLGLOBBY_TEAM_1BOT=ボット 1 体
+STR_DLGLOBBY_TEAM_NBOTS=ボット
+STR_DLGLOBBY_JOIN_TEAM=参加
+STR_DLGLOBBY_TOOLTIP_JOIN=チーム {number} に移動します。
+STR_DLGLOBBY_BOT_NAMING=ボット名プール:
+STR_DLGLOBBY_ADDBOT_LBL=ボットを追加
+STR_DLGLOBBY_TOOLTIP_ADDBOT=選択されたプールから名前を付けて、チーム {number} にボットを追加します。
+STR_DLGLOBBY_TOOLTIP_RMTEAM=チーム {number}（とそのボット）を削除します。
+STR_DLGLOBBY_TOOLTIP_DRAG=チームにドラッグして移動
+STR_DLGLOBBY_TAG_HOST=HOST
+STR_DLGLOBBY_TAG_ADMIN=ADMIN
+STR_DLGLOBBY_TAG_BOT=BOT
+STR_DLGLOBBY_PILL_READY=準備完了
+STR_DLGLOBBY_PILL_NOTREADY=未準備
+STR_DLGLOBBY_TOOLTIP_CONFIG=ボットを設定
+STR_DLGLOBBY_TOOLTIP_RMBOT=ボットを削除
+STR_DLGLOBBY_TOOLTIP_KICK=プレイヤーをキック
+STR_DLGLOBBY_ADD_TEAM=チームを追加
+STR_DLGLOBBY_UNASSIGNED_FMT=未割り当て ({number}):
+STR_DLGLOBBY_KICK_FMT=「{player}」をキックしますか？
+
+# Bot AiConfig panel
+STR_DLGLOBBY_BOTCFG_NAME=名前（上書き）
+STR_DLGLOBBY_BOTCFG_REROLL=再抽選
+STR_DLGLOBBY_BOTCFG_REROLL_TIP=チームのプールからランダムな名前を新しく選びます。
+STR_DLGLOBBY_BOTCFG_CODE=ボットコード
+STR_DLGLOBBY_BOTCFG_NONE=（なし）
+STR_DLGLOBBY_BOTCFG_DIFFICULTY=難易度
+STR_DLGLOBBY_BOTCFG_EASY=簡単
+STR_DLGLOBBY_BOTCFG_NORMAL=普通
+STR_DLGLOBBY_BOTCFG_HARD=難しい
+STR_DLGLOBBY_BOTCFG_PERSONALITY=個性
+STR_DLGLOBBY_BOTCFG_AGGRESSIVE=攻撃的
+STR_DLGLOBBY_BOTCFG_DEFENSIVE=防御的
+STR_DLGLOBBY_BOTCFG_SNIPER=スナイパー
+STR_DLGLOBBY_BOTCFG_DONE=完了
+
+# Balance-from-WBN dialog
+STR_DLGLOBBY_BAL_BTN=WBN からバランス調整
+STR_DLGLOBBY_BAL_POPUP_TITLE=WBN からチームバランス調整
+STR_DLGLOBBY_BAL_POPUP_BODY=これによりロビーのすべてのチームがクリアされ、winbolo.net からスキルバランスが取られた 2 チームに置き換えられます。新しい分割は即時に反映されます。
+STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR=現在ロビーにボットが 1 体います。ボットをバランス分割に参加させるか、人間のみのマッチのために削除するかを選択してください。
+STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL=現在ロビーにボットが {number} 体います。ボットをバランス分割に参加させるか、人間のみのマッチのために削除するかを選択してください。
+STR_DLGLOBBY_BAL_BOTS_INCLUDED=ボットを含める
+STR_DLGLOBBY_BAL_HUMANS_ONLY=人間のみ
+STR_DLGLOBBY_BAL_GO=バランス調整
+STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST=スキルバランスのチーム分割を winbolo.net にリクエストできるのは\nホストまたは管理者のみです。
+STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH=ロビーをバランスチームに分割するには\n少なくとも 2 人の接続済みプレイヤーが必要です。
+STR_DLGLOBBY_BAL_TOOLTIP_INFO=winbolo.net にロビーをスキルバランスの取れた\n2 チームに分割するよう依頼します。WBN の応答後に\n即時反映されます — 既存のチームは置き換えられます。
+STR_DLGLOBBY_BAL_STATUS_ASKING=WBN に問い合わせ中\xe2\x80\xa6
+STR_DLGLOBBY_BAL_STATUS_BALANCED=チームのバランス調整完了
+STR_DLGLOBBY_BAL_STATUS_NOREPLY=WBN から応答なし
+
+# Reject toast
+STR_DLGLOBBY_REJECT_DEFAULT=拒否されました
+STR_DLGLOBBY_REJECT_NOTHOST=ホストのみの操作
+STR_DLGLOBBY_REJECT_LOCKED=サーバーにより設定がロックされています
+STR_DLGLOBBY_REJECT_INVALID=無効なリクエスト
+STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 ロビーの変更が拒否されました: {string1}
+
+# Lock badge fallback
+STR_DLGLOBBY_LOCK_BADGE=[ロック中]
+
+# Ranked-shape tooltip
+STR_DLGLOBBY_RANKED_SHAPE_TIP=ランクマッチは人間プレイヤーが同数の 2 チームが必要です:\n1v1、2v2、または 3v3。\n（現在 {number} {string1}、サイズ {number2} vs {number3}。）
+STR_DLGLOBBY_RANKED_SHAPE_TEAM=チーム
+STR_DLGLOBBY_RANKED_SHAPE_TEAMS=チーム
+
+# Game settings panel
+STR_DLGLOBBY_SETTINGS_HEADER=ゲーム設定
+STR_DLGLOBBY_OPENHOST_NOTE=ホストがすべてのプレイヤーにゲーム設定の変更を許可しています。
+STR_DLGLOBBY_GAMETYPE_LBL=ゲームタイプ
+STR_DLGLOBBY_AI_SECTION_LBL=コンピュータープレイヤー
+STR_DLGLOBBY_AI_NONE=コンピューター戦車なし
+STR_DLGLOBBY_AI_ALLOW=コンピューター戦車を許可
+STR_DLGLOBBY_AI_ADVANTAGE=アドバンテージ付きで許可
+STR_DLGLOBBY_AI_FULLADV=完全アドバンテージで許可
+STR_DLGLOBBY_OTHER_LBL=その他
+STR_DLGLOBBY_OPENHOST_CB=すべてのプレイヤーが設定を変更できるようにする
+STR_DLGLOBBY_OPENHOST_TOOLTIP=オンにすると、すべての接続プレイヤーがロビー設定を\n編集できます — マップの変更、ボットの追加・削除、\nチームの切り替えを含みます。
+STR_DLGLOBBY_TIMELIMIT_MIN=分
+STR_DLGLOBBY_PASSWORD_CB=パスワード
+STR_DLGLOBBY_PASSWORD_TOOLTIP=オンにすると、新しいクライアントは参加するために\nパスワードを入力する必要があります。既に接続中の\nプレイヤーには影響しません。
+
+# Desktop header
+STR_DLGLOBBY_SERVERDISP_SP=シングルプレイヤー
+STR_DLGLOBBY_SERVERDISP_INTERNET=インターネット
+
+# Connectivity badge tooltip
+STR_DLGLOBBY_CONN_TEST_TIP=テスト進行中
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=投票：ロビーに戻る
+STR_VOTE_SURRENDER=投票：降伏
+STR_VOTE_DRAW_TAG= （引き分け）
+STR_VOTE_NEEDS_RUNNING_TIP=ゲームが開始してから使用できます。
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=降伏に投票する前にチームを選択してください。
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=降伏は人間のプレイヤーがいるチームが\nちょうど2チーム残っている場合にのみ使用できます。
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=音量
+STR_VOLUME_MUTE=ミュート
+STR_REJECT_VERSION_MISMATCH=サーバーはバージョン {string1}、あなたは {string2} です — アップデートしてください。
+STR_RETURNING_TO_LOBBY=ロビーに戻ります
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=現在は許可されていません
+STR_DLGLOBBY_BAL_STATUS_FAILED=WBN バランス調整に失敗

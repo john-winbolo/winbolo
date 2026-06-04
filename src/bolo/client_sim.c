@@ -25,8 +25,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <SDL3/SDL.h>
 #include "client_sim.h"
 #include "client_sim_internal.h"
+#include "client_net.h"   /* clientSimNetSendChat — default chatSendFunc body */
 #include "client_snapshot.h"
 #include "client_state.h"
 #include "client_ui_events.h"
@@ -40,6 +42,7 @@
 #include "rubble.h"
 #include "explosions.h"
 #include "messages.h"
+#include <SDL3/SDL.h>
 #include "grass.h"
 #include "swamp.h"
 #include "lgm.h"
@@ -60,7 +63,7 @@
 #include "../gui/dnsLookups.h"
 #include "../gui/clientmutex.h"
 #include "../gui/dialogAlliance.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
 #include "frontend.h"
 
 /* Must match the value used inside shellsAddItem (shells.c redefines
@@ -135,6 +138,12 @@ static void csCallbackMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer
 /* Brain state now lives inside the ClientSim struct (see client_sim.h).
  * The static globals were removed in the Phase 0 refactor. */
 
+/* Forward declaration — definition lives further down with the other
+ * chatSendFunc helpers. clientSimCreate references this as the default
+ * value for cs->chatSendFunc. */
+void clientSimDefaultChatSend(ClientSim *cs, BYTE fromPlayer, BYTE destPlayer,
+                              const char *message);
+
 /*********************************************************
  *NAME:          clientSimAlloc
  *PURPOSE:
@@ -142,7 +151,15 @@ static void csCallbackMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer
  *  clientSimDestroy, which frees the returned pointer.
  *********************************************************/
 ClientSim *clientSimAlloc(void) {
-  return (ClientSim *)calloc(1, sizeof(ClientSim));
+  ClientSim *cs = (ClientSim *)calloc(1, sizeof(ClientSim));
+  if (cs != NULL) {
+    /* SubscriberHandle's canonical "none" sentinel is -1, not the
+     * calloc'd 0 (which encodes a real slot/gen). Patch it here so
+     * subsequent disconnect / destroy paths can distinguish
+     * "never registered" from "registered, handle == 0". */
+    cs->autoSubHandle = SUBSCRIBER_HANDLE_INVALID;
+  }
+  return cs;
 }
 
 /*********************************************************
@@ -152,31 +169,71 @@ ClientSim *clientSimAlloc(void) {
  *  This is the simulation-only initialization; rendering
  *  setup is handled separately by viewportInit().
  *
+ *  Game settings (game type, hidden mines, start delay,
+ *  length) install via clientSimSet{GameType,HiddenMines,
+ *  GmeStartDelay,GmeLength} — the UDP transport applies
+ *  them at JOIN_ACCEPT, and the local path inherits them
+ *  from the bound ServerSim.
+ *
  *ARGUMENTS:
- *  cs         - Pointer to the ClientSim to initialize
- *  game       - The game type-Open/tournament/strict tournament
- *  hiddenMines - Are hidden mines allowed
- *  srtDelay   - Game start delay (50th second increments)
- *  gmeLen     - Length of the game (in 50ths) (-1 =unlimited)
+ *  cs - Pointer to the ClientSim to initialize
  *********************************************************/
-bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDelay, int32_t gmeLen) {
-  (void)srtDelay;  /* Used by screen.c for display */
-  (void)gmeLen;    /* Used by screen.c for display */
-
-  /* Preserve the transport binding across the wipe. clientSimResetForMapLoad
-   * runs the destroy-internals + clientSimCreate sequence in place to keep
-   * the live transport (and its still-valid map blob) intact; fresh
-   * clientSimAlloc + clientSimCreate callers have zeroed transport fields
-   * anyway, so save/restore is a no-op there. */
+bool clientSimCreate(ClientSim *cs) {
+  /* Preserve transport / subscriber / brain-list / observer /
+   * server-endpoint / LAN-only state across the memset. Fresh
+   * clientSimAlloc + clientSimCreate callers have zeroed
+   * fields anyway, so save/restore is a no-op there.
+   *
+   * lobbyBrainList: server delivers it once at subscribe time
+   * and never re-broadcasts after a round.
+   *
+   * controlObserverCb/Ctx: external test-harness lifetime,
+   * independent of map reloads.
+   *
+   * serverAddress / serverPort / isLanOnly: connection-lifetime
+   * state — set once at join, never re-published. */
   Transport savedTransport = cs->transport;
   bool savedHasTransport   = cs->hasTransport;
   bool savedIsUdpTransport = cs->isUdpTransport;
+  struct ServerSim *savedBoundServerSim = cs->boundServerSim;
+  SubscriberHandle savedAutoSubHandle = cs->autoSubHandle;
+  BrainList savedBrainList = cs->lobbyBrainList;
+  ControlObserverCb savedObserverCb  = cs->controlObserverCb;
+  void             *savedObserverCtx = cs->controlObserverCtx;
+  ControlObserverCb savedTransportObserverCb  = cs->transportObserverCb;
+  void             *savedTransportObserverCtx = cs->transportObserverCtx;
+  struct in_addr savedServerAddress  = cs->serverAddress;
+  unsigned short savedServerPort     = cs->serverPort;
+  bool           savedIsLanOnly      = cs->isLanOnly;
   memset(cs, 0, sizeof(*cs));
-  cs->transport       = savedTransport;
-  cs->hasTransport    = savedHasTransport;
-  cs->isUdpTransport  = savedIsUdpTransport;
+  cs->transport          = savedTransport;
+  cs->hasTransport       = savedHasTransport;
+  cs->isUdpTransport     = savedIsUdpTransport;
+  cs->boundServerSim     = savedBoundServerSim;
+  cs->autoSubHandle      = savedAutoSubHandle;
+  cs->lobbyBrainList     = savedBrainList;
+  cs->controlObserverCb  = savedObserverCb;
+  cs->controlObserverCtx = savedObserverCtx;
+  cs->transportObserverCb  = savedTransportObserverCb;
+  cs->transportObserverCtx = savedTransportObserverCtx;
+  cs->serverAddress      = savedServerAddress;
+  cs->serverPort         = savedServerPort;
+  cs->isLanOnly          = savedIsLanOnly;
+  cs->pendingAllianceRequestFrom = 0xFF;
+  /* Default chat-send callback: route outbound chat through this cs's
+   * own transport. Bots, SP host humans, and UDP-connected humans all
+   * use the same path out of the box. Frontends that want different
+   * behavior override via clientSimSetChatSendFunc. The other 5 send
+   * callbacks (name change, alliance, vote, etc.) stay NULL —
+   * client_net.h's wrappers for those still UDP-gate, so a local-
+   * transport client can't use them yet. */
+  cs->chatSendFunc = clientSimDefaultChatSend;
   cs->myPlayerNum = 0;
   cs->sim.viewPlayer = 0;
+  /* Default to "joins accepted" so the UI renders a checked "Now"
+   * box on the very first frame, before the server's first
+   * CTRL_LOBBY_SETTINGS broadcast lands and overwrites this. */
+  cs->lobbyAllowNewPlayers = true;
 
   /* Sentinel value for "no batch start assigned" — clients never run the
    * batch placement, but startsGetStart still checks the slot when bots /
@@ -188,7 +245,6 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   /* Initialize GameSim identity and callbacks */
   cs->sim.isServer = false;
   cs->sim.isLocalTransport = true;
-  cs->sim.hiddenMines = hiddenMines;
   cs->sim.callbacks.messageAdd = csCallbackMessageAdd;
   cs->sim.callbacks.soundDist = csCallbackSoundDist;
   cs->sim.callbacks.soundDistShoot = csCallbackSoundDistShoot;
@@ -206,8 +262,8 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->labelMessage = lblShort;
   cs->labelTankLabel = lblShort;
 
-  minesCreate(&cs->sim.mns, hiddenMines);
-  gameTypeSet(&cs->sim.game, game);
+  minesCreate(&cs->sim.mns, false);
+  gameTypeSet(&cs->sim.game, 0);
   mapCreate(&cs->sim.mp);
   startsCreate(&cs->sim.ss);
   basesCreate(&cs->sim.bs);
@@ -260,6 +316,11 @@ bool clientSimCreate(ClientSim *cs, gameType game, bool hiddenMines, int srtDela
   cs->mapDownloadComplete = false;
   cs->inLobby = false;
 
+  /* 0 is a valid brain-catalogue index, so the bulk memset above can't
+   * be the "no brain assigned" marker — use 0xFF, matching the sentinel
+   * the server uses for botBrainIdx[]. */
+  memset(cs->lobbyBotBrainIdx, 0xFF, sizeof(cs->lobbyBotBrainIdx));
+
   return true;
 }
 
@@ -284,11 +345,45 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
         MY_TANK(cs) = NULL;
     }
     tankCreate(&cs->sim, &MY_TANK(cs));
+    /* LGM lifecycle must mirror the tank's. setupSelf runs on
+     * first-time slot assignment (clientSimCreate pre-allocated
+     * lgmen[0]; clientSimSetPlayerNum then moved it to
+     * lgmen[playerNum]) and on re-assignment — a mid-lobby
+     * PACKET_LOBBY_MAP_CHANGE round-trips the joiner through
+     * JOIN_REQUEST → JOIN_ACCEPT a second time, and that second
+     * setPlayerNum nulls lgmen[playerNum] because lgmen[0] is
+     * already NULL from the first move. Recreate here so MY_LGM is
+     * always valid by the time the first per-frame lgmGetStatus
+     * runs after game start. */
+    if (MY_LGM(cs) != NULL) {
+        lgmDestroy(&MY_LGM(cs));
+        MY_LGM(cs) = NULL;
+    }
+    MY_LGM(cs) = lgmCreate(playerNum);
+    SDL_assert(MY_TANK(cs) != NULL);
+    SDL_assert(MY_LGM(cs)  != NULL);
     playersSetSelf(cs, &cs->sim, &cs->sim.plyrs,
                    (playerNumbers)playerNum,
                    (char *)playerName, TRUE);
     playersSetClientType (&cs->sim.plyrs, playerNum, clientType);
     playersSetClientFlags(&cs->sim.plyrs, playerNum, clientFlags);
+}
+
+void clientSimOnAssignedSlot(ClientSim *cs, BYTE playerNum,
+                             const char *playerName,
+                             uint8_t clientType, uint8_t clientFlags) {
+    /* Single entry point for "we just learned our slot."  Both the SP
+     * local-transport connect path and the UDP JOIN_ACCEPT handler call
+     * here so they cannot drift.  Pre-consolidation, the SP path called
+     * setPlayerNum + setupSelf + frontEndApplyLocalTankPrefs by hand,
+     * the UDP path called only setPlayerNum — and MY_TANK stayed NULL
+     * for the lifetime of every UDP session, crashing every per-frame
+     * code path the moment inLobby flipped to false.  Funnel both
+     * paths through one function so future maintainers cannot drop a
+     * step on one side without breaking it on the other. */
+    clientSimSetPlayerNum(cs, playerNum);
+    clientSimSetupSelf(cs, playerNum, playerName, clientType, clientFlags);
+    frontEndApplyLocalTankPrefs(cs);
 }
 
 /*********************************************************
@@ -304,10 +399,8 @@ void clientSimSetupSelf(ClientSim *cs, BYTE playerNum,
  *  cs - Pointer to the ClientSim to destroy and free
  *********************************************************/
 /* Tears down all owned simulation state on cs but does NOT free cs
- * itself or touch the transport binding. Shared by clientSimDestroy
- * (which then frees the pointer) and clientSimResetForMapLoad (which
- * keeps the pointer and the transport so the caller can hand the
- * mid-handshake map blob into clientLoadCompressedMap). */
+ * itself or touch the transport binding. Called from
+ * clientSimDestroy, which then frees the pointer. */
 static void clientSimDestroyContents(ClientSim *cs) {
   viewportDestroy(&cs->viewport);
   cs->running = FALSE;
@@ -363,6 +456,14 @@ static void clientSimDestroyContents(ClientSim *cs) {
 
 void clientSimDestroy(ClientSim *cs) {
   if (cs == NULL) return;
+  /* Unregister the auto-subscriber BEFORE the transport teardown so
+   * boundServerSim is still valid. Callers that skip clientSimDisconnect
+   * (gym / headless / wasm) rely on destroy to clean this up too. */
+  if (cs->boundServerSim != NULL &&
+      cs->autoSubHandle != SUBSCRIBER_HANDLE_INVALID) {
+    serverSimUnregisterSubscriber(cs->boundServerSim, cs->autoSubHandle);
+    cs->autoSubHandle = SUBSCRIBER_HANDLE_INVALID;
+  }
   if (cs->hasTransport) {
     if (cs->isUdpTransport) {
       transportUdpClientDestroy(&cs->transport);
@@ -371,34 +472,9 @@ void clientSimDestroy(ClientSim *cs) {
     }
     cs->hasTransport = false;
   }
+  cs->boundServerSim = NULL;
   clientSimDestroyContents(cs);
   free(cs);
-}
-
-/*********************************************************
- *NAME:          clientSimResetForMapLoad
- *PURPOSE:
- *  Returns cs to a freshly-allocated-and-empty state without
- *  freeing cs or tearing down the transport binding. The
- *  no-lobby UDP-join path uses this between the join handshake
- *  and clientLoadCompressedMap: the compressed map blob lives
- *  inside the transport, so the transport must survive the
- *  wipe.
- *
- *  After the reset, the subsequent setupClientSim ->
- *  clientSimCreate(cs, ...) re-initialises substructs.
- *  clientSimCreate preserves cs->transport / hasTransport /
- *  isUdpTransport across its memset so the connection stays
- *  intact end-to-end.
- *
- *  Callback function pointers (chatSendFunc, etc.) are reset
- *  to NULL — that matches the prior clientSimDestroy +
- *  clientSimAlloc behaviour, and every call site already
- *  re-registers them after the reload.
- *********************************************************/
-void clientSimResetForMapLoad(ClientSim *cs) {
-  if (cs == NULL) return;
-  clientSimDestroyContents(cs);
 }
 
 /*********************************************************
@@ -501,6 +577,20 @@ void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr) {
 }
 
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
+  /* Master gate for the per-frame game-render pipeline.  Both
+   * clientUiOnTick and basesTickMessageQueue assume the local tank
+   * exists — clientUiOnTick reads MY_TANK at ~7 sites for scroll,
+   * status bars, kills/deaths, gunsight, etc.  In the gap between
+   * CTRL_GAME_PHASE_RUNNING flipping inLobby=false on the client and
+   * the first post-running snapshot's clientSimSyncFromSnapshot creating
+   * the tank, those derefs crash (stack: clientUiOnTick → tankGetSpeed
+   * → NULL+0x7).  Skip the per-frame render until the tank shows up;
+   * the lobby/menu rendering paths run elsewhere, gated by inLobby/
+   * netStatus, so the user just sees the previous frame for a tick
+   * or two rather than a NULL dereference. */
+  if (cs == NULL || cs->sim.tanks[cs->myPlayerNum] == NULL) {
+    return;
+  }
   clientUiOnTick(cs, isBrain);
   basesTickMessageQueue(&cs->sim, cs);
 }
@@ -664,6 +754,28 @@ void clientSimSetAllianceAcceptFunc(ClientSim *cs, NetAllianceAcceptFunc func) {
 void clientSimSetAllianceLeaveFunc(ClientSim *cs, NetAllianceLeaveFunc func) { cs->allianceLeaveFunc = func; }
 void clientSimSetLockToggleSendFunc(ClientSim *cs, NetLockToggleSendFunc func) { cs->lockToggleSendFunc = func; }
 
+void clientSimSetControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx) {
+  if (cs == NULL) return;
+  cs->controlObserverCb  = cb;
+  cs->controlObserverCtx = ctx;
+}
+
+void clientSimSetTransportControlObserver(ClientSim *cs, ControlObserverCb cb, void *ctx) {
+  if (cs == NULL) return;
+  cs->transportObserverCb  = cb;
+  cs->transportObserverCtx = ctx;
+}
+
+BYTE clientSimGetPendingAllianceRequest(const ClientSim *cs) {
+  if (cs == NULL) return 0xFF;
+  return cs->pendingAllianceRequestFrom;
+}
+
+void clientSimClearPendingAllianceRequest(ClientSim *cs) {
+  if (cs == NULL) return;
+  cs->pendingAllianceRequestFrom = 0xFF;
+}
+
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message) {
   size_t histLen = strlen(cs->lobbyChatHistory);
   size_t needed = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */
@@ -677,15 +789,29 @@ void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *messa
   }
 }
 
+/* Default chatSendFunc: route outbound chat through clientSimSubmitCommand
+ * via clientSimNetSendChat. Set as the default for every ClientSim —
+ * frontends that want different behavior can override via
+ * clientSimSetChatSendFunc, but the default is correct for both
+ * UDP-connected humans (carrier enqueue → server CMD_CHAT arm) and
+ * in-process bots (dispatcher under the mutex). fromPlayer is unused —
+ * the slot is stamped either from the connection (UDP) or from
+ * lctx->playerNum (local). */
+void clientSimDefaultChatSend(ClientSim *cs, BYTE fromPlayer, BYTE destPlayer,
+                              const char *message) {
+  (void)fromPlayer;
+  clientSimNetSendChat(cs, destPlayer, message);
+}
+
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message) {
   if (cs->chatSendFunc != NULL) {
-    cs->chatSendFunc(0xFF, message);
+    cs->chatSendFunc(cs, playerNum, 0xFF, message);
   }
 }
 
 void clientSimMessageSendPlayer(ClientSim *cs, BYTE playerNum, BYTE destPlayer, char *message) {
   if (cs->chatSendFunc != NULL) {
-    cs->chatSendFunc(destPlayer, message);
+    cs->chatSendFunc(cs, playerNum, destPlayer, message);
   }
 }
 
@@ -946,7 +1072,7 @@ void netSendTrackerUpdate(void) {
 /* Alliance dialog window — created/destroyed with network lifecycle */
 static void *dlgAllianceWnd = NULL;
 
-bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, char *wbnToken) {
+bool netSetup(ClientSim *cs, netType value, unsigned short myPort, char *targetIp, unsigned short targetPort, char *password, bool usCreate, char *trackerAddr, unsigned short trackerPort, bool useTracker, bool wantRejoin, bool useWinboloNet, const char *wbnApiToken, const char *wbnServerKey) {
   cs->networkGameType = value;
   cs->netStat = netRunning;
   dlgAllianceWnd = dialogAllianceCreate();
@@ -995,10 +1121,25 @@ bool clientSimIsInPillView(const ClientSim *cs)           { return cs->viewport.
 bool clientSimIsNeedScreenReCalc(const ClientSim *cs)     { return cs->viewport.needRecalc; }
 bool clientSimIsInLobby(const ClientSim *cs)              { return cs->inLobby; }
 bool clientSimIsMapDownloadComplete(const ClientSim *cs)  { return cs->mapDownloadComplete; }
+
+uint8_t clientSimGetMapDownloadPercent(const ClientSim *cs) {
+    if (cs == NULL || !cs->hasTransport) return 0;
+    if (!cs->isUdpTransport) return 100;
+    return transportUdpClientGetMapDownloadPercent((Transport *)&cs->transport);
+}
 bool clientSimIsMapSkipAvailable(const ClientSim *cs)     { return cs->mapSkipAvailable; }
 bool clientSimIsMapSkipMyVote(const ClientSim *cs)        { return cs->mapSkipMyVote; }
 bool clientSimIsLobbyHiddenMines(const ClientSim *cs)     { return cs->lobbyHiddenMines; }
 bool clientSimIsBalanceProposalActive(const ClientSim *cs){ return cs->balanceProposalActive; }
+uint64_t clientSimGetLastBalanceProposalArrivedMs(const ClientSim *cs) {
+    return cs ? cs->lastBalanceProposalArrivedMs : 0;
+}
+uint64_t clientSimGetLastBalanceFailedMs(const ClientSim *cs) {
+    return cs ? cs->lastBalanceFailedMs : 0;
+}
+uint8_t  clientSimGetLastBalanceFailedReason(const ClientSim *cs) {
+    return cs ? cs->lastBalanceFailedReason : 0;
+}
 bool clientSimIsLabelOwnTank(const ClientSim *cs)         { return cs->labelOwnTank; }
 
 buildSelect clientSimGetCurrentBuildSelect(const ClientSim *cs) { return cs->currentBuildSelect; }
@@ -1009,6 +1150,8 @@ labelLen    clientSimGetLabelTankLabel(const ClientSim *cs)     { return cs->lab
 BYTE     clientSimGetMyPlayerNum(const ClientSim *cs)       { return cs->myPlayerNum; }
 BYTE     clientSimGetXOffset(const ClientSim *cs)           { return cs->viewport.xOffset; }
 BYTE     clientSimGetYOffset(const ClientSim *cs)           { return cs->viewport.yOffset; }
+int      clientSimGetSubPosX(const ClientSim *cs)           { return (int)cs->scroll.subPosX; }
+int      clientSimGetSubPosY(const ClientSim *cs)           { return (int)cs->scroll.subPosY; }
 BYTE     clientSimGetPillViewX(const ClientSim *cs)         { return cs->viewport.pillViewX; }
 BYTE     clientSimGetPillViewY(const ClientSim *cs)         { return cs->viewport.pillViewY; }
 BYTE     clientSimGetPendingBuildAction(const ClientSim *cs){ return cs->pendingBuildAction; }
@@ -1041,9 +1184,74 @@ const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n) {
   return &cs->lobbySlots[n];
 }
 
+BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
+  if (cs == NULL) return 0;
+  BYTE count = 0;
+  for (BYTE i = 0; i < 16; i++) {
+    if (cs->lobbySlots[i].connected) count++;
+  }
+  return count;
+}
+
 bool clientSimIsMapSkipVote(const ClientSim *cs, BYTE n) {
   if (n >= 16) return false;
   return cs->mapSkipVotes[n];
+}
+
+static int clientGameVoteIdx(uint8_t kind) {
+  if (kind == GAME_VOTE_KIND_BACK_TO_LOBBY) return 0;
+  if (kind == GAME_VOTE_KIND_SURRENDER)     return 1;
+  return -1;
+}
+
+bool clientSimGetGameVote(const ClientSim *cs, uint8_t kind,
+                          ClientGameVoteSnapshot *out) {
+  if (!cs || !out) return false;
+  int idx = clientGameVoteIdx(kind);
+  if (idx < 0) return false;
+  const struct ClientGameVote *gv = &cs->gameVotes[idx];
+  out->kind             = gv->kind ? gv->kind : kind;
+  out->active           = gv->active;
+  out->triggerSrc       = gv->triggerSrc;
+  out->teamId           = gv->teamId;
+  out->threshold        = gv->threshold;
+  out->yesCount         = gv->yesCount;
+  out->noCount          = gv->noCount;
+  out->eligibleCount    = gv->eligibleCount;
+  out->secondsRemaining = gv->secondsRemaining;
+  out->votes            = gv->votes;
+  out->widgetVisible    = gv->widgetVisible;
+  out->concludedAtMs    = gv->concludedAtMs;
+  return true;
+}
+
+void clientSimSetGameVoteWidgetVisible(ClientSim *cs, uint8_t kind, bool visible) {
+  if (!cs) return;
+  int idx = clientGameVoteIdx(kind);
+  if (idx < 0) return;
+  cs->gameVotes[idx].widgetVisible = visible;
+}
+
+/* Stub kept so the public declaration stays linkable. Client-side
+ * countdown rendering didn't work in this build's render-loop
+ * topology (in-game loop exits as soon as gameOver fires when
+ * cs->inLobby is already latched true). The countdown is now
+ * server-driven again via transportUdpServerSendServerMessage. */
+void clientSimTickLobbyReturnCountdown(ClientSim *cs) {
+  (void)cs;
+}
+
+bool clientSimGameVoteMyVote(const ClientSim *cs, uint8_t kind) {
+  if (!cs) return false;
+  int idx = clientGameVoteIdx(kind);
+  if (idx < 0) return false;
+  BYTE me = cs->myPlayerNum;
+  if (me >= 16) return false;
+  return (cs->gameVotes[idx].votes & (uint16_t)(1u << me)) != 0;
+}
+
+uint8_t clientSimGetReturnToLobbySecs(const ClientSim *cs) {
+  return cs ? cs->lastReturnToLobbySecs : 0;
 }
 
 uint8_t clientSimGetBalanceProposal(const ClientSim *cs, BYTE n) {
@@ -1118,10 +1326,150 @@ void clientSimSetMineView(ClientSim *cs, screenMines v)    { cs->viewport.mineVi
 
 void clientSimSetGmeStartDelay(ClientSim *cs, int v)       { cs->gmeStartDelay = v; }
 void clientSimSetGmeLength(ClientSim *cs, int32_t v)       { cs->gmeLength = v; }
+void clientSimSetGameType(ClientSim *cs, gameType v)       { if (cs) gameTypeSet(&cs->sim.game, v); }
+void clientSimSetHiddenMines(ClientSim *cs, bool v)        { if (cs) cs->sim.hiddenMines = v; }
 void clientSimSetTimeStart(ClientSim *cs, time_t v)        { cs->timeStart = v; }
 void clientSimSetRunning(ClientSim *cs, bool v)            { cs->running = v; }
 void clientSimSetLocalTransport(ClientSim *cs, bool isLocal) {
   clientSimGetGameSim(cs)->isLocalTransport = isLocal;
+}
+
+void clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim) {
+  if (cs == NULL) return;
+  cs->boundServerSim = sim;
+}
+
+struct ServerSim *clientSimGetBoundServerSim(const ClientSim *cs) {
+  if (cs == NULL) return NULL;
+  return cs->boundServerSim;
+}
+
+void clientSimSetConnectErrorReason(ClientSim *cs, const char *str) {
+  if (cs == NULL) return;
+  if (str == NULL || str[0] == '\0') {
+    cs->connectErrorReason[0] = '\0';
+    return;
+  }
+  strncpy(cs->connectErrorReason, str, sizeof(cs->connectErrorReason) - 1);
+  cs->connectErrorReason[sizeof(cs->connectErrorReason) - 1] = '\0';
+}
+
+/* Reset the transient game world to a clean slate on entering the
+ * lobby. Mirrors serverSimResetGameWorld's subsystem rebuild so the
+ * client's GameSim drops the round that just ended — otherwise the
+ * frozen last-round world (every remote player frozen where they
+ * stopped, spent shells, in-flight explosions, mine craters) lingers
+ * behind the lobby until the next game's first full-sync snapshot
+ * repopulates it.
+ *
+ * Scope is deliberately the transient/dynamic world only. The map
+ * itself — terrain plus pill/base placement and ownership — is owned by
+ * the CTRL_LOBBY_MAP_CHANGE reinstall path and is NOT touched here, so
+ * the two reactions don't fight over mp/pb/bs. Player identity in
+ * cs->sim.plyrs (name, country, flags) is connection-scoped and
+ * survives; only round-scoped render state is cleared, matching the
+ * server.
+ *
+ * The local slot is preserved: only MY_TANK is a real tank object on
+ * the client, and the snapshot's first-sync branch repositions it but
+ * does NOT recreate it (client_snapshot.c gates on MY_TANK != NULL).
+ * Nulling it would leave windowRunGameTick dereferencing NULL the
+ * instant the next round flips inLobby false. Remote players carry no
+ * tanks[] entry — they render from cs->sim.plyrs + the interp context
+ * (client_snapshot.c's other-player branch) — so their stale positions
+ * are cleared there instead.
+ *
+ * Subsystem rebuilds use the same set and order as
+ * serverSimResetGameWorld; keep them in step. */
+void clientSimResetWorld(ClientSim *cs) {
+  BYTE i;
+  GameSim *gs;
+  if (cs == NULL) return;
+  gs = clientSimGetGameSim(cs);
+
+  /* Clear remote players' render state — frozen tank/LGM positions in
+   * the players struct plus the interpolation history feeding them. Any
+   * stray remote tanks[] object (defensive; the snapshot path doesn't
+   * create them) is torn down too. The local slot is skipped so MY_TANK
+   * stays valid. */
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (i == cs->myPlayerNum) continue;
+    if (gs->tanks[i] != NULL) {
+      tankDestroy(gs, &gs->tanks[i]);
+      gs->tanks[i] = NULL;
+    }
+    if (gs->lgmen[i] != NULL) {
+      lgmDestroy(&gs->lgmen[i]);
+      gs->lgmen[i] = NULL;
+    }
+    playersResetRoundState(&gs->plyrs, i);
+  }
+  interpCreate(&cs->interpCtx, cs->myPlayerNum);
+
+  shellsDestroy(&gs->shs);
+  gs->shs = shellsCreate();
+
+  explosionsDestroy(&gs->expl);
+  explosionsCreate(&gs->expl);
+
+  minesDestroy(&gs->mns);
+  minesCreate(&gs->mns, gs->hiddenMines);
+
+  minesExpDestroy(&gs->minesExplosions);
+  minesExpCreate(&gs->minesExplosions);
+
+  rubbleDestroy(&gs->rbl);
+  rubbleCreate(&gs->rbl);
+
+  buildingDestroy(&gs->blds);
+  buildingCreate(&gs->blds);
+
+  grassDestroy(&gs->grs);
+  grassCreate(&gs->grs);
+
+  swampDestroy(&gs->swp);
+  swampCreate(&gs->swp);
+
+  floodDestroy(&gs->ff);
+  floodCreate(&gs->ff);
+
+  tkExplosionDestroy(&gs->tankExplosions);
+  tkExplosionCreate(&gs->tankExplosions);
+
+  /* Client-only round-scoped render/predict state (interp reset above
+   * alongside the per-player clear). */
+  cs->serverShellCount = 0;
+  cs->predictedShellCount = 0;
+}
+
+bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name) {
+  GameSim *gs;
+  if (cs == NULL || buf == NULL || len <= 0) return false;
+
+  gs = clientSimGetGameSim(cs);
+  if (!mapLoadCompressedMap(&gs->mp, &gs->pb, &gs->bs, &gs->ss,
+                            (BYTE *)buf, len)) {
+    return false;
+  }
+
+  /* Initialise rendering state — clientSimCreate deliberately skips
+   * viewport init (see comment above on clientSimCreate); the map
+   * install path owns it. */
+  viewportInit(clientSimViewportMut(cs));
+
+  {
+    char *mapNameMut = clientSimGetMapNameMutable(cs);
+    if (name != NULL) {
+      strncpy(mapNameMut, name, MAP_STR_SIZE - 1);
+      mapNameMut[MAP_STR_SIZE - 1] = '\0';
+    }
+    /* name == NULL: caller doesn't know the map name; leave whatever
+     * CTRL_LOBBY_SETTINGS has populated (or empty, until it arrives). */
+  }
+
+  clientSimUpdateView(cs, redraw);
+  basesClearMines(gs);
+  return true;
 }
 
 void clientSimSetCurrentBuildSelect(ClientSim *cs, buildSelect v) {
@@ -1152,6 +1500,154 @@ void clientSimSetMapDownloadComplete(ClientSim *cs, bool v) { cs->mapDownloadCom
 void clientSimSetServerAddress(ClientSim *cs, struct in_addr v) { cs->serverAddress = v; }
 void clientSimSetServerPort(ClientSim *cs, unsigned short v)    { cs->serverPort = v; }
 void clientSimSetIsBot(ClientSim *cs, bool v)                   { cs->isBot = v; }
+
+bool clientSimIsSinglePlayer(const ClientSim *cs)               { return cs->isSinglePlayer; }
+bool clientSimIsUdpTransport(const ClientSim *cs)               { return cs && cs->isUdpTransport; }
+bool clientSimIsLanOnly(const ClientSim *cs)                    { return cs->isLanOnly; }
+void clientSimSetIsSinglePlayer(ClientSim *cs, bool v)          { cs->isSinglePlayer = v; }
+void clientSimSetIsLanOnly(ClientSim *cs, bool v)               { cs->isLanOnly = v; }
+
+bool     clientSimGetLobbyOpenHost(const ClientSim *cs)              { return cs->lobbyOpenHost; }
+bool     clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs)   { return cs->lobbyAutoLockOnGameStart; }
+bool     clientSimGetLobbyRanked(const ClientSim *cs)                { return cs ? cs->lobbyRanked : false; }
+bool     clientSimGetLobbyAllowNewPlayers(const ClientSim *cs)       { return cs ? cs->lobbyAllowNewPlayers : true; }
+bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
+uint16_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
+UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
+
+uint8_t clientSimGetLobbyTeamInUse(const ClientSim *cs, BYTE teamId) {
+  if (teamId >= 16) return 0;
+  return cs->lobbyTeamInUse[teamId];
+}
+uint8_t clientSimGetLobbyTeamColor(const ClientSim *cs, BYTE teamId) {
+  if (teamId >= 16) return 0;
+  return cs->lobbyTeamColor[teamId];
+}
+uint8_t clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId) {
+  if (teamId >= 16) return 0;
+  return cs->lobbyTeamPool[teamId];
+}
+const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId) {
+  if (teamId >= 16) return "";
+  return cs->lobbyTeamName[teamId];
+}
+
+uint8_t clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot) {
+  if (slot >= 16) return 0;
+  return cs->lobbyBotDifficulty[slot];
+}
+uint8_t clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot) {
+  if (slot >= 16) return 0;
+  return cs->lobbyBotPersonality[slot];
+}
+uint8_t clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot) {
+  if (slot >= 16) return 0xFF;
+  return cs->lobbyBotBrainIdx[slot];
+}
+
+const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {
+  return &cs->lobbyBrainList;
+}
+
+const char *clientSimGetLobbyMapListPath(const ClientSim *cs) {
+  return cs->lobbyMapListPath;
+}
+int clientSimGetLobbyMapListCount(const ClientSim *cs) {
+  return cs->lobbyMapListCount;
+}
+const char *clientSimGetLobbyMapListName(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapListCount) return "";
+  return cs->lobbyMapListNames[idx];
+}
+bool clientSimGetLobbyMapListIsFolder(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapListCount) return false;
+  return cs->lobbyMapListIsFolder[idx] != 0;
+}
+int64_t clientSimGetLobbyMapListModTime(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapListCount) return 0;
+  return cs->lobbyMapListModTime[idx];
+}
+bool clientSimGetLobbyMapListReady(const ClientSim *cs) {
+  return cs->lobbyMapListReady;
+}
+const char *clientSimGetLobbyMapListReqPath(const ClientSim *cs) {
+  return cs->lobbyMapListReqPath;
+}
+bool clientSimGetLobbyMapListInFlight(const ClientSim *cs) {
+  return cs->lobbyMapListInFlight;
+}
+uint32_t clientSimGetLobbyMapChangeSeq(const ClientSim *cs) {
+  return cs ? cs->lobbyMapChangeSeq : 0;
+}
+
+const char *clientSimGetLobbyMapSearchPath(const ClientSim *cs) {
+  return cs->lobbyMapSearchPath;
+}
+const char *clientSimGetLobbyMapSearchQuery(const ClientSim *cs) {
+  return cs->lobbyMapSearchQuery;
+}
+int clientSimGetLobbyMapSearchCount(const ClientSim *cs) {
+  return cs->lobbyMapSearchCount;
+}
+const char *clientSimGetLobbyMapSearchName(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapSearchCount) return "";
+  return cs->lobbyMapSearchNames[idx];
+}
+bool clientSimGetLobbyMapSearchIsFolder(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapSearchCount) return false;
+  return cs->lobbyMapSearchIsFolder[idx] != 0;
+}
+int64_t clientSimGetLobbyMapSearchModTime(const ClientSim *cs, int idx) {
+  if (idx < 0 || idx >= cs->lobbyMapSearchCount) return 0;
+  return cs->lobbyMapSearchModTime[idx];
+}
+bool clientSimGetLobbyMapSearchReady(const ClientSim *cs) {
+  return cs->lobbyMapSearchReady;
+}
+const char *clientSimGetLobbyMapSearchReqPath(const ClientSim *cs) {
+  return cs->lobbyMapSearchReqPath;
+}
+const char *clientSimGetLobbyMapSearchReqQuery(const ClientSim *cs) {
+  return cs->lobbyMapSearchReqQuery;
+}
+bool clientSimGetLobbyMapSearchInFlight(const ClientSim *cs) {
+  return cs->lobbyMapSearchInFlight;
+}
+
+uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->lobbyMapUploadStatus; }
+uint8_t  clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs) { return cs->lobbyMapUploadRejectCode; }
+const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs){ return cs->lobbyMapUploadFinalPath; }
+
+bool clientSimConsumeUseLocalFallback(ClientSim *cs) {
+  if (!cs || !cs->lobbyMapUseLocalNeedsFallback) return false;
+  cs->lobbyMapUseLocalNeedsFallback = false;
+  return true;
+}
+
+uint8_t clientSimGetLobbyWbnPreviewStatus(const ClientSim *cs) {
+  return cs ? cs->lobbyWbnPreviewStatus : 0;
+}
+const char *clientSimGetLobbyWbnPreviewErrMsg(const ClientSim *cs) {
+  return cs ? cs->lobbyWbnPreviewErrMsg : "";
+}
+void clientSimSetLobbyWbnPreviewStatus(ClientSim *cs, uint8_t status) {
+  if (!cs) return;
+  cs->lobbyWbnPreviewStatus = status;
+  if (status != 3) cs->lobbyWbnPreviewErrMsg[0] = '\0';
+}
+void clientSimSetLobbyWbnPreviewErrMsg(ClientSim *cs, const char *msg) {
+  if (!cs) return;
+  if (!msg) msg = "";
+  SDL_strlcpy(cs->lobbyWbnPreviewErrMsg, msg,
+              sizeof(cs->lobbyWbnPreviewErrMsg));
+}
+
+uint8_t clientSimGetLobbyLastRejectPacket(const ClientSim *cs)  { return cs->lobbyLastRejectPacket; }
+uint8_t clientSimGetLobbyLastRejectReason(const ClientSim *cs)  { return cs->lobbyLastRejectReason; }
+void    clientSimClearLobbyLastReject(ClientSim *cs) {
+  cs->lobbyLastRejectPacket = 0;
+  cs->lobbyLastRejectReason = 0;
+}
 
 /* View-control composition helpers. */
 void clientSimTankView(ClientSim *cs) {
@@ -1260,6 +1756,15 @@ bool clientSimTankScroll(ClientSim *cs) {
     return FALSE;
   }
 
+  /* When autoscroll is on, scrollAutoScroll (called from clientUiOnTick)
+   * is the sole owner of *xValue/*yValue and subPosX/Y. The legacy
+   * per-tank-tick scrollManual call here stomps on subPos (resets to 0)
+   * mid-frame, producing a visible flicker — the renderer at 60Hz can
+   * sample between the zero-out and the next scrollAutoScroll. Skip it. */
+  if (cs->scroll.autoScroll) {
+    return FALSE;
+  }
+
   x = tankGetScreenMX(&MY_TANK(cs));
   y = tankGetScreenMY(&MY_TANK(cs));
   return scrollManual(clientSimGetScroll(cs), clientSimGetXOffsetPtr(cs), clientSimGetYOffsetPtr(cs), x, y, (TURNTYPE) tankGetTravelAngel(&MY_TANK(cs)));
@@ -1332,6 +1837,32 @@ void clientSimConnectionLost(ClientSim *cs) {
   playersConnectionLost(cs, clientSimGetGameSim(cs), &clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs));
 }
 
+/*********************************************************
+ *NAME:          clientSaveMap
+ *PURPOSE:
+ * Saves the map. Returns whether the operation was
+ * successful or not.
+ *
+ *ARGUMENTS:
+ *  fileName - path and filename to save
+ *********************************************************/
+bool clientSaveMap(ClientSim *csPtr, char *fileName) {
+  bool returnValue;
+
+  returnValue = mapWrite(fileName, &clientSimGetGameSim(csPtr)->mp, &clientSimGetGameSim(csPtr)->pb, &clientSimGetGameSim(csPtr)->bs, &clientSimGetGameSim(csPtr)->ss);
+  if (returnValue == TRUE) {
+    if (clientSimGetNetType(csPtr) == netSingle) {
+      MessageArgs args;
+      memset(&args, 0, sizeof(args));
+      playersMakeMessageName(csPtr, &clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), clientSimGetMyPlayerNum(csPtr), args.playerName);
+      args.playerFlags = playersGetAccountFlags(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr));
+      playersGetCountryCode(&clientSimGetGameSim(csPtr)->plyrs, clientSimGetMyPlayerNum(csPtr), args.playerCountry);
+      clientSimGetGameSim(csPtr)->callbacks.messageAdd(clientSimGetGameSim(csPtr)->callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_SAVED_MAP, &args);
+    }
+  }
+  return returnValue;
+}
+
 /* ================================================================
  * Live-sim map / pill / base / start readers.
  * ================================================================ */
@@ -1350,7 +1881,7 @@ bool clientSimPillExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
 
 BYTE clientSimPillGetScreenHealthAt(ClientSim *cs, BYTE x, BYTE y) {
   GameSim *gs = clientSimGetGameSim(cs);
-  return pillsGetScreenHealth(gs, &gs->pb, x, y);
+  return pillsGetScreenHealth(gs, &gs->pb, x, y, gs->viewPlayer);
 }
 
 bool clientSimBaseExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
@@ -1358,7 +1889,8 @@ bool clientSimBaseExistsAt(const ClientSim *cs, BYTE x, BYTE y) {
 }
 
 baseAlliance clientSimBaseGetAllianceAt(ClientSim *cs, BYTE x, BYTE y) {
-  return basesGetAlliancePos(clientSimGetGameSim(cs), x, y);
+  GameSim *gs = clientSimGetGameSim(cs);
+  return basesGetAlliancePos(gs, x, y, gs->viewPlayer);
 }
 
 bool clientSimBaseAmOwnerAt(ClientSim *cs, BYTE player, BYTE x, BYTE y) {

@@ -34,6 +34,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #include <math.h>
 #include <stdio.h>
+#include <limits.h>
 #include <string.h>
 
 #include "../../common/wb_log.h"
@@ -46,6 +47,9 @@
 #include "sdl3draw.h"
 #include "sdl3draw_status.h"
 #include "sdl3imgui.h"
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+#include "dialogs/imgui_news.h"
+#endif
 #include "cursor.h"
 #include "mapview.h"
 #include "../clientmutex.h"
@@ -55,7 +59,6 @@
 #include "sdl_bmp.h"
 #include "glyphs.h"
 #include "global.h"
-#include "client_render.h"
 #include "client_sim.h"
 #include "../gamefront.h"
 #include "tilenum.h"
@@ -63,7 +66,9 @@
 #include "screenbullet.h"
 #include "screentank.h"
 #include "screenlgm.h"
+#include "client_render.h"
 #include "macos_pinch.h"
+#include "../lang.h"
 
 /* From gui/winbolo.h (can't include directly — Win32 headers) */
 #ifndef NO_SELECT
@@ -73,7 +78,11 @@
 #define ZOOM_FACTOR_CUSTOM 0
 #endif
 #ifndef MENU_BAR_HEIGHT
-#define MENU_BAR_HEIGHT 22
+  #ifdef __APPLE__
+    #define MENU_BAR_HEIGHT 0
+  #else
+    #define MENU_BAR_HEIGHT 22
+  #endif
 #endif
 
 static SDL_Window   *gWindow        = NULL;
@@ -164,6 +173,37 @@ static int          gTabletVpZoom = 0;
    for smooth sub-tile scrolling from touch dragging. */
 static int          gDragOffsetX = 0;
 static int          gDragOffsetY = 0;
+
+/* DEBUG: per-frame render log for autoscroll diagnostics. Captures
+ * exactly what edgeX/edgeY ends up at on the frame the renderer draws,
+ * so we can tell whether smooth engine state translates to smooth
+ * rendering or if something downstream re-introduces oscillation.
+ * Logs only when values CHANGE from last frame to keep the file small. */
+/* Debug file logging. Off for shipping builds — flip to 1 to re-enable
+ * the render.log / cursor_square.log traces. When 0 no file is opened
+ * or written. */
+#define WB_DEBUG_FILE_LOG 0
+
+static FILE *gRenderLog = NULL;
+static bool  gRenderLogTried = false;
+static int   gRenderLogPrevEngineX = -1, gRenderLogPrevEngineY = -1;
+static int   gRenderLogPrevSubX = -1, gRenderLogPrevSubY = -1;
+static int   gRenderLogPrevEdgeX = INT_MIN, gRenderLogPrevEdgeY = INT_MIN;
+static int   gRenderLogFrameCounter = 0;
+static int   gRenderLogEntryCount = 0;
+
+/* Sub-pixel autoscroll smoothing — engine-driven.
+ *
+ * scroll.c carries sub-tile precision in ScrollState (subPosX/Y in
+ * 1/256-tile units) and decomposes a continuous fractional view target
+ * into a BYTE *xValue plus that fractional remainder. Per frame the
+ * renderer just reads the remainder and folds it into edgeX/Y as a
+ * sub-pixel drag offset; nothing here interpolates. The previous
+ * prev-vs-last tile snapshot model has been removed.
+ *
+ * Side effect: tile shifts NOT driven by autoscroll (e.g. the fireball
+ * pan during the tank-explosion death sequence) snap by a whole tile
+ * each step. Death anim only, brief — accepted tradeoff. */
 
 /* Configurable status panel origins (zoomed pixel coords).
    -1 means "use desktop default" (zf * STATUS_*_LEFT/TOP).
@@ -408,6 +448,26 @@ int sdl3DrawGetZoomFactor(void) {
   return gZoomFactor;
 }
 
+/* Expose the live game-render destination rect + scale so UI code can
+ * position ImGui overlays in actual on-screen pixels.
+ *
+ *   on-screen X = gGameDestRect.x + sourceX * gGameScale
+ *
+ * In CUSTOM/ceiling-integer zoom mode the game is drawn into an
+ * off-screen render target at `gZoomFactor` and then blitted into
+ * gGameDestRect, possibly at a non-integer gGameScale. Multiplying
+ * source unscaled coords by gZoomFactor alone is wrong when the
+ * window has been resized to a fractional effective zoom (e.g.
+ * maximized between 3x and 4x). */
+void sdl3DrawGetGameRect(float *destX, float *destY,
+                          float *destW, float *destH, float *scale) {
+  if (destX) *destX = gGameDestRect.x;
+  if (destY) *destY = gGameDestRect.y;
+  if (destW) *destW = gGameDestRect.w;
+  if (destH) *destH = gGameDestRect.h;
+  if (scale) *scale = gGameScale;
+}
+
 SDL_Window *sdl3DrawGetWindow(void) {
   return gWindow;
 }
@@ -545,7 +605,7 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       }
       cursorMove((int)gameX, (int)gameY);
       BYTE cx = 0, cy = 0;
-      if (cursorPos(NULL, &cx, &cy)) {
+      if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
         if (cx > 16 || cy > 16) cx = 100;
         clientSimSetCursorPos(cs, cx, cy);
       } else {
@@ -556,7 +616,7 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
       if (ev->button.button == SDL_BUTTON_LEFT) {
         BYTE xVal = 0, yVal = 0;
-        if (cursorPos(NULL, &xVal, &yVal)) {
+        if (cursorPos(NULL, &xVal, &yVal, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
           clientMutexWaitFor();
           clientSimManMove(cs, clientSimGetCurrentBuildSelect(cs));
           clientMutexRelease();
@@ -1040,6 +1100,16 @@ void sdl3DrawCleanup(void) {
   /* ImGui cleanup before destroying renderer/window */
   sdl3ImguiCleanup();
 
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+  /* News popup teardown sits in this process-exit hook (not in
+   * sdl3ImguiCleanup) because sdl3ImguiCleanup also fires on every
+   * game-end / return-to-lobby transition — releasing the fetch
+   * handle there would prevent the View News button from working
+   * after the first game. The SDL renderer is still alive here, so
+   * newsImageCacheShutdown's SDL_DestroyTexture calls land cleanly. */
+  newsPopupShutdown();
+#endif
+
   /* Phase 5 — destroy text/label caches via the status module (which
      owns them since Phase C of plans/ctrailer.md), then close fonts
      and shut down TTF. */
@@ -1061,6 +1131,7 @@ void sdl3DrawCleanup(void) {
   if (gTankBarsTex)      { SDL_DestroyTexture(gTankBarsTex);      gTankBarsTex      = NULL; }
   if (gBaseBarsTex)      { SDL_DestroyTexture(gBaseBarsTex);      gBaseBarsTex      = NULL; }
   if (gCrosshairTex)     { SDL_DestroyTexture(gCrosshairTex);     gCrosshairTex     = NULL; }
+  if (gStaticTex)        { SDL_DestroyTexture(gStaticTex);        gStaticTex        = NULL; }
   if (gGameRenderTarget) { SDL_DestroyTexture(gGameRenderTarget); gGameRenderTarget = NULL; }
   if (gTilesTex) {
     SDL_DestroyTexture(gTilesTex);
@@ -1315,6 +1386,57 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
   edgeX += gDragOffsetX;
   edgeY += gDragOffsetY;
 
+  /* Sub-pixel autoscroll — read engine sub-tile remainder and fold
+   * into edgeX/Y as a fractional drag offset. See the comment block at
+   * the top of this file. */
+  if (cs != NULL) {
+    /* Pill view is camera-locked on the pill and must stay exactly
+     * centred — no sub-tile drift. scrollCenterObject already zeroes
+     * subPos on entry / cycling / return-to-tank, but ignore it here
+     * too so the pill can never render a fraction of a tile off centre
+     * regardless of what subPos last held. */
+    bool inPillView = clientSimIsInPillView(cs);
+    int subX    = inPillView ? 0 : clientSimGetSubPosX(cs);  /* 0..255, 1/256-tile units */
+    int subY    = inPillView ? 0 : clientSimGetSubPosY(cs);
+    int tileWpx = TILE_SIZE_X * gZoomFactor;
+    int tileHpx = TILE_SIZE_Y * gZoomFactor;
+    edgeX += subX * tileWpx / 256;
+    edgeY += subY * tileHpx / 256;
+
+    /* DEBUG: log frames where rendering offset CHANGES, capped at 600
+     * entries (~10s at 60fps) so we can see whether the renderer
+     * draws smoothly or shakes given a smooth engine input. */
+    if (WB_DEBUG_FILE_LOG) {
+    if (!gRenderLog && !gRenderLogTried) {
+      gRenderLogTried = true;
+      gRenderLog = fopen("render.log", "a");
+      if (gRenderLog) {
+        fprintf(gRenderLog, "--- render log: f=frame engine=(xOff,yOff) sub=(subX,subY) drag=(dx,dy) edge=(edgeX,edgeY) zoom=z ---\n");
+        fflush(gRenderLog);
+      }
+    }
+    gRenderLogFrameCounter++;
+    int engineX = (int)clientSimGetXOffset(cs);
+    int engineY = (int)clientSimGetYOffset(cs);
+    bool changed = (engineX != gRenderLogPrevEngineX || engineY != gRenderLogPrevEngineY ||
+                    subX != gRenderLogPrevSubX || subY != gRenderLogPrevSubY ||
+                    edgeX != gRenderLogPrevEdgeX || edgeY != gRenderLogPrevEdgeY);
+    if (gRenderLog && changed && gRenderLogEntryCount < 600) {
+      fprintf(gRenderLog, "[f=%d] engine=(%d,%d) sub=(%d,%d) drag=(%d,%d) edge=(%d,%d) zoom=%d\n",
+              gRenderLogFrameCounter, engineX, engineY, subX, subY,
+              gDragOffsetX, gDragOffsetY, edgeX, edgeY, gZoomFactor);
+      fflush(gRenderLog);
+      gRenderLogEntryCount++;
+      gRenderLogPrevEngineX = engineX;
+      gRenderLogPrevEngineY = engineY;
+      gRenderLogPrevSubX = subX;
+      gRenderLogPrevSubY = subY;
+      gRenderLogPrevEdgeX = edgeX;
+      gRenderLogPrevEdgeY = edgeY;
+    }
+    }
+  }
+
   if (sdl3LoadTiles()) {
     int tileW  = TILE_SIZE_X * gZoomFactor;
     int tileH  = TILE_SIZE_Y * gZoomFactor;
@@ -1473,30 +1595,43 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         }
       }
 
-      /* Gunsight overlay — custom 17×17 crosshair, center pixel (8,8) = aim point.
-       * Top-left is at the same position as the old 16×16 tile sprite so the
-       * center aligns with the gunsight world position. */
-      if (gs->mapX != NO_GUNSIGHT && gCrosshairTex) {
-        int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
-        int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
-        SDL_FRect gsDest = {
-          (float)(originX + (gsGameX - TILE_SIZE_X) * gZoomFactor - edgeX),
-          (float)(originY + (gsGameY - TILE_SIZE_Y) * gZoomFactor - edgeY),
-          17.0f * (float)gZoomFactor, 17.0f * (float)gZoomFactor
-        };
-        SDL_RenderTexture(gRenderer, gCrosshairTex, NULL, &gsDest);
-      }
-
       /* Build-mode cursor overlay */
       if (useCursor) {
         SDL_FRect curSrc = { (float)(MOUSE_SQUARE_X * gSheetScale), (float)(MOUSE_SQUARE_Y * gSheetScale),
                              (float)(TILE_SIZE_X * gSheetScale), (float)(TILE_SIZE_Y * gSheetScale) };
-        SDL_FRect curDest = {
-          (float)(originX + ((int)cursorLeft - 1) * tileW - edgeX),
-          (float)(originY + ((int)cursorTop  - 1) * tileH - edgeY),
-          (float)tileW, (float)tileH
-        };
+        float curDestX = (float)(originX + ((int)cursorLeft - 1) * tileW - edgeX);
+        float curDestY = (float)(originY + ((int)cursorTop  - 1) * tileH - edgeY);
+        SDL_FRect curDest = { curDestX, curDestY, (float)tileW, (float)tileH };
         SDL_RenderTexture(gRenderer, gTilesTex, &curSrc, &curDest);
+
+        /* DEBUG: log the cursor square position relative to the render
+         * origin and edgeX, so a "square doesn't match mouse" report can
+         * be cross-referenced with the cursor.log entry that produced
+         * the cursorLeft/Top values. Logs only when those inputs change. */
+        if (WB_DEBUG_FILE_LOG) {
+          static int sLastCl = -1, sLastCt = -1, sLastEdgeX = INT_MIN, sLastEdgeY = INT_MIN;
+          static FILE *sLog = NULL;
+          static bool sLogTried = false;
+          static int sCount = 0;
+          if (!sLog && !sLogTried) {
+            sLogTried = true;
+            sLog = fopen("cursor_square.log", "a");
+            if (sLog) fprintf(sLog, "--- cursor_square session start ---\n");
+          }
+          if (sLog && sCount < 2000 &&
+              ((int)cursorLeft != sLastCl || (int)cursorTop != sLastCt ||
+               edgeX != sLastEdgeX || edgeY != sLastEdgeY)) {
+            fprintf(sLog, "[sq] cur=(%u,%u) edge=(%d,%d) zf=%d destPx=(%.1f,%.1f) tileW=%d tileH=%d\n",
+                    (unsigned)cursorLeft, (unsigned)cursorTop, edgeX, edgeY, gZoomFactor,
+                    (double)curDestX, (double)curDestY, tileW, tileH);
+            fflush(sLog);
+            sLastCl = (int)cursorLeft;
+            sLastCt = (int)cursorTop;
+            sLastEdgeX = edgeX;
+            sLastEdgeY = edgeY;
+            sCount++;
+          }
+        }
       }
 
 
@@ -1509,6 +1644,22 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
       /* Tank labels (needs fonts — separate pass after tank sprites) */
       sdl3DrawTankLabels(tks);
       mapViewDrawLGMs(&mvCtx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
+
+      /* Gunsight overlay — custom 17×17 crosshair, center pixel (8,8) = aim point.
+       * Top-left is at the same position as the old 16×16 tile sprite so the
+       * center aligns with the gunsight world position. Drawn after the sprite
+       * passes so the aiming reticle stays on top of tanks (incl. boat tanks),
+       * shells, and LGMs rather than being painted over by them. */
+      if (gs->mapX != NO_GUNSIGHT && gCrosshairTex) {
+        int gsGameX = gs->mapX * TILE_SIZE_X + (int)gs->pixelX;
+        int gsGameY = gs->mapY * TILE_SIZE_Y + (int)gs->pixelY;
+        SDL_FRect gsDest = {
+          (float)(originX + (gsGameX - TILE_SIZE_X) * gZoomFactor - edgeX),
+          (float)(originY + (gsGameY - TILE_SIZE_Y) * gZoomFactor - edgeY),
+          17.0f * (float)gZoomFactor, 17.0f * (float)gZoomFactor
+        };
+        SDL_RenderTexture(gRenderer, gCrosshairTex, NULL, &gsDest);
+      }
 
       /* Phase 5 overlays (inside clip rect so they stay within the game area) */
       if (isPillView) {
@@ -1593,11 +1744,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     int winW, winH;
     SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
 
-    /* Menu bar height — ImGui default is ~20 pixels, but we'll query it later.
-       For now, use a reasonable estimate.  Zero when the menu bar is hidden
-       (controller mode) so the game render fills the freed top strip
-       instead of leaving a 22px band. */
-    float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : 22.0f;
+    /* Zero when the menu bar is hidden (controller mode) so the game render
+       fills the freed top strip instead of leaving a MENU_BAR_HEIGHT band. */
+    float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : (float)MENU_BAR_HEIGHT;
 
     /* Available area below menu */
     float availW = (float)winW;
@@ -1730,7 +1879,7 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
 
     /* Zero when the menu bar is hidden (controller mode) — see matching
        block above. */
-    float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : 22.0f;
+    float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : (float)MENU_BAR_HEIGHT;
     float availW = (float)winW;
     float availH = (float)winH - menuBarHeight;
 
@@ -1774,10 +1923,60 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
   }
 }
 
-void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
-  (void)rcWindow;
-  if (!gRenderer) return;
+/* Blit gGameRenderTarget into the window scaled to fit below the menu bar.
+ * Mirrors the end-of-frame blit in sdl3DrawMainScreen / sdl3DrawRedrawAll;
+ * keeping a copy here so the download / returning-to-lobby paths can share
+ * the same window-coordinate transform without disturbing those callers. */
+static void sdl3BlitGameRTToWindow(void) {
+  SDL_SetRenderTarget(gRenderer, NULL);
 
+  int winW, winH;
+  SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
+
+  float menuBarHeight = (float)MENU_BAR_HEIGHT;
+  float availW = (float)winW;
+  float availH = (float)winH - menuBarHeight;
+
+  float gameAspect = (float)gGameRTWidth / (float)gGameRTHeight;
+  float availAspect = availW / availH;
+  float aspectDiff = gameAspect - availAspect;
+  if (aspectDiff < 0) aspectDiff = -aspectDiff;
+
+  float destW, destH, destX, destY;
+  if (aspectDiff < 0.01f) {
+    destX = 0;
+    destY = menuBarHeight;
+    destW = availW;
+    destH = availH;
+  } else if (gameAspect > availAspect) {
+    destW = availW;
+    destH = availW / gameAspect;
+    destX = 0;
+    destY = menuBarHeight + (availH - destH) / 2.0f;
+  } else {
+    destH = availH;
+    destW = availH * gameAspect;
+    destX = (availW - destW) / 2.0f;
+    destY = menuBarHeight;
+  }
+
+  gGameDestRect.x = destX;
+  gGameDestRect.y = destY;
+  gGameDestRect.w = destW;
+  gGameDestRect.h = destH;
+  gGameScale = destW / (float)gGameRTWidth;
+
+  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
+  SDL_RenderFillRect(gRenderer, NULL);
+  SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
+  SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
+}
+
+/* Body of the download / returning-to-lobby chrome draw. Runs against
+ * whatever render target the caller has set up (either gGameRenderTarget
+ * on the desktop resizable path or the window directly on the mobile /
+ * fixed paths). */
+static void sdl3DrawDownloadScreenContent(ClientSim *cs, bool justBlack) {
   int zf = gZoomFactor;
   bool tabletMode = uiModeIsTablet();
 
@@ -1889,6 +2088,25 @@ void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
   }
 }
 
+void sdl3DrawDownloadScreen(ClientSim *cs, RECT *rcWindow, bool justBlack) {
+  (void)rcWindow;
+  if (!gRenderer) return;
+
+  sdl3DrawAdaptRenderTarget();
+  bool tabletMode = uiModeIsTablet();
+  bool useRenderTarget = !tabletMode && gGameRenderTarget != NULL;
+
+  if (useRenderTarget) {
+    SDL_SetRenderTarget(gRenderer, gGameRenderTarget);
+  }
+
+  sdl3DrawDownloadScreenContent(cs, justBlack);
+
+  if (useRenderTarget) {
+    sdl3BlitGameRTToWindow();
+  }
+}
+
 void sdl3DrawMainScreenBlack(RECT *rcWindow) {
   (void)rcWindow;
   if (gRenderer == NULL) {
@@ -1896,6 +2114,45 @@ void sdl3DrawMainScreenBlack(RECT *rcWindow) {
   }
   SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
   SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
+}
+
+void sdl3DrawReturningToLobby(ClientSim *cs) {
+  if (!gRenderer) return;
+
+  sdl3DrawAdaptRenderTarget();
+  bool tabletMode = uiModeIsTablet();
+  bool useRenderTarget = !tabletMode && gGameRenderTarget != NULL;
+
+  if (useRenderTarget) {
+    SDL_SetRenderTarget(gRenderer, gGameRenderTarget);
+  }
+
+  /* justBlack=true skips the download progress bar that was the source of
+   * the white screen. */
+  sdl3DrawDownloadScreenContent(cs, TRUE);
+
+  /* Centred caption in the playfield. Tablet mode uses a different
+   * playfield rect; only the desktop layout matters for this transition
+   * (the mobile UIs don't expose a vote-to-lobby flow). */
+  if (!tabletMode) {
+    int zf = gZoomFactor;
+    int originX = MAIN_OFFSET_X * zf;
+    int originY = MAIN_OFFSET_Y * zf;
+    int playfieldW = MAIN_SCREEN_SIZE_X * TILE_SIZE_X * zf;
+    int playfieldH = MAIN_SCREEN_SIZE_Y * TILE_SIZE_Y * zf;
+    const char *caption = langGetText(STR_RETURNING_TO_LOBBY);
+    int textW = 0, textH = 0;
+    if (gFontMsg && TTF_GetStringSize(gFontMsg, caption, 0, &textW, &textH)) {
+      float tx = (float)(originX + (playfieldW - textW) / 2);
+      float ty = (float)(originY + (playfieldH - textH) / 2);
+      SDL_Color white = {200, 200, 200, 255};
+      sdl3RenderText(gFontMsg, caption, white, tx, ty);
+    }
+  }
+
+  if (useRenderTarget) {
+    sdl3BlitGameRTToWindow();
+  }
 }
 
 int drawGetFrameRate(void) {

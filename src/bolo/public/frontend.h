@@ -248,6 +248,20 @@ void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value);
 void frontEndSetPlayer(struct ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags);
 
 /*********************************************************
+*NAME:          frontEndUpdatePlayerPing
+*PURPOSE:
+* Per-tick ping refresh.  client_snapshot calls this for every
+* player slot whose tank snapshot carries a pingMs so the HUD
+* ping column tracks the live value rather than freezing at the
+* value cached when the player joined.
+*
+*ARGUMENTS:
+*  value - The player number
+*  ping  - Player ping in ms, 0 = unknown
+*********************************************************/
+void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_t ping);
+
+/*********************************************************
 *NAME:          frontEndDrawDownload
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/3/99
@@ -262,6 +276,31 @@ void frontEndSetPlayer(struct ClientSim *cs, playerNumbers value, char *str, con
 void frontEndDrawDownload(struct ClientSim *cs, bool justBlack);
 
 /*********************************************************
+*NAME:          frontEndDrawReturningToLobby
+*PURPOSE:
+* Render the in-game window during the game-over countdown
+* phase (netStat=netLobby but inLobby=false). The previous
+* behaviour fell through to frontEndDrawDownload which drew
+* the download progress bar — at 100% it filled the whole
+* playfield with white, presenting as a multi-second white
+* screen between game end and lobby reappearance.
+*********************************************************/
+void frontEndDrawReturningToLobby(struct ClientSim *cs);
+
+/*********************************************************
+*NAME:          frontEndAudioReturningToLobby
+*PURPOSE:
+* Silences audio for the game-over → lobby transition so
+* lingering shell/explosion/engine playback doesn't keep
+* sounding behind the "Returning to lobby" screen. The
+* user's chosen volume is restored on the way out.
+*
+*ARGUMENTS:
+*  active - TRUE when entering the transition, FALSE on exit
+*********************************************************/
+void frontEndAudioReturningToLobby(bool active);
+
+/*********************************************************
 *NAME:          frontEndSetPlayerCheckState
 *AUTHOR:        John Morrison
 *CREATION DATE: 27/3/99
@@ -274,6 +313,27 @@ void frontEndDrawDownload(struct ClientSim *cs, bool justBlack);
 * isChecked - Is the item checked
 *********************************************************/
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked);
+
+/*********************************************************
+*NAME:          frontEndApplyLocalTankPrefs
+*PURPOSE:
+* Called by the client connect path right after the local
+* player's tank has been created via clientSimSetupSelf, so
+* the frontend can
+* push per-tank preferences (Auto Slowdown, Auto Hide Gunsight)
+* onto the freshly created tank pointer. Previously the
+* preferences were applied earlier in the boot sequence — before
+* clientSimSetupSelf had run — which silently no-op'd against
+* the still-NULL tank pointer; tankCreate then defaulted the
+* tank to autoSlowdown=false, and gameFrontEnd's tank-readback
+* round-tripped that default back into the INI file. Stubs in
+* non-SDL3 frontends are no-ops since they don't expose the
+* preference UI.
+*
+*ARGUMENTS:
+* cs - The local client's ClientSim whose tank was just set up
+*********************************************************/
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs);
 
 /*********************************************************
 *NAME:          frontEndSetActiveClientSim

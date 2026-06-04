@@ -208,7 +208,7 @@ bool basesExistPos(bases *value, BYTE xValue, BYTE yValue);
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-baseAlliance basesGetAlliancePos(struct GameSim *sim, BYTE xValue, BYTE yValue);
+baseAlliance basesGetAlliancePos(struct GameSim *sim, BYTE xValue, BYTE yValue, BYTE viewPlayer);
 
 /*********************************************************
 *NAME:          basesGetStatusNum

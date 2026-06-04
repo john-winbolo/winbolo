@@ -47,7 +47,9 @@
 #endif
 
 #include "../../common/wb_log.h"
-#include "client_mapload.h"
+#include "../../winbolonet/winbolonet_core.h"
+#include "bolo_rand.h"
+#include "platform_net.h"
 #include "client_render.h"
 #include "client_sim.h"
 #include "frontend.h"
@@ -69,7 +71,10 @@
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
+#include "../tiles.h"
 #include "luabrainshandler.h"
+#include "bg_game.h"
+#include "cursor.h"
 
 #include "dialog_backend.h"
 #include "dialogs/imgui_messagebox.h"
@@ -103,6 +108,9 @@ bool showGunsight = FALSE;
 bool soundEffects = TRUE;
 /* Do we play background sound */
 bool backgroundSound = TRUE;
+
+/* Master volume (0-100); applied to the audio stream gain */
+int soundVolume = 50;
 
 /* Is Sound Keepalive enabled */
 bool useSoundKeepalive = TRUE;
@@ -231,7 +239,20 @@ int main(int argc, char *argv[]) {
   const char *cmdLine = "";
   ClientSim *cs = NULL;
 
-  srand((unsigned int)(time(NULL) ^ getpid()));
+  bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
+
+  /* Hold a process-wide Winsock reference for the app's lifetime. The
+   * server-ping path (discoveryPingServer) does a WSAStartup/WSACleanup
+   * pair per call, and runs concurrently from the game-browser's
+   * fire-and-forget ping threads and the main thread's pre-flight host
+   * ping. Without this baseline the refcount can hit zero when one ping
+   * finishes while others have open sockets, and WSACleanup at zero
+   * forcibly deallocates every socket in the process and cancels pending
+   * blocking calls — corrupting the in-flight pings (observed as a
+   * 0xc0000409 stack/heap fault on internet -> new -> back -> new). The
+   * baseline keeps the count >= 1 so per-call pairs only ever go 2<->1.
+   * Process exit reclaims it; no matching cleanup needed. */
+  bolo_net_init();
 
   for (int i = 1; i < argc; i++) {
     if (cmdLine[0] == '\0') {
@@ -261,6 +282,29 @@ int main(int argc, char *argv[]) {
   wb_log_init("WinBolo", "WinBolo", "winbolo.log");
   atexit(wb_log_shutdown);
 
+  if (!serverSimBotPoolInit(0)) {
+    fprintf(stderr, "serverSimBotPoolInit failed\n");
+    return 1;
+  }
+
+  {
+    /* Resolve WinBolo.ini to an absolute path under SDL_GetPrefPath.
+     * Win32 WritePrivateProfileString with a relative filename writes
+     * to C:\Windows\<file>, which an unprivileged process can't touch,
+     * so the news / country-cache / WBN-host writes silently fail.
+     * gamefront.c::getPreferenceFilePath already uses this trick for
+     * SETTINGS keys — mirror it here so every WBN consumer hits the
+     * same file. */
+    static char winboloIniPath[FILENAME_MAX];
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%sWinBolo.ini", prefDir);
+    } else {
+      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%s", "WinBolo.ini");
+    }
+    winbolonetCoreSetPreferencesPath(winboloIniPath);
+  }
+
   steam_init();
   steam_set_join_callback(steamJoinRequested);
   /* Steam Input (Path A): start in Menu set — game launches into the
@@ -287,7 +331,25 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  /* Threads mutex must exist BEFORE gameFrontStart — the menu's
+   * background bot game (bgGameCreate → serverSimCreateBot →
+   * serverSimPublishControl → clientMutexWaitFor → threadsWaitForMutex)
+   * runs during setup dialogs. Without this, SDL_LockMutex silently
+   * no-ops on the NULL handle and the bg game's "lock" is fictional. */
+  threadsCreate(FALSE);
+
   if (gameFrontStart(cmdLine, &keys, FALSE, &cs) == FALSE) {
+    clientMutexDestroy();
+    SDL_Quit();
+    return 1;
+  }
+
+  /* The server threads mutex outlives every per-session start/end cycle:
+   * SDL's timer thread may still be running hostedServerTimerCb (which waits
+   * on this mutex) while a session shuts down, and SDL_Quit only joins the
+   * timer thread at the very end of main. Destroying the mutex before then
+   * would strand that waiter on freed memory. */
+  if (threadsCreate(FALSE) == FALSE) {
     clientMutexDestroy();
     SDL_Quit();
     return 1;
@@ -310,18 +372,11 @@ int main(int argc, char *argv[]) {
         }
         continue;
       }
-      /* lobbyResult == 1: game started — load the map that was
-       * downloaded in the background during the lobby. */
-      if (!gameFrontLoadDeferredMap(&cs)) {
-        imguiMessageBoxEx(DIALOG_BOX_TITLE, "Failed to load map from server",
-                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        winboloQuit = FALSE;
-        gameFrontEnd(&keys, TRUE, FALSE);
-        if (gameFrontStart(cmdLine, &keys, TRUE, &cs) == FALSE) {
-          winboloQuit = TRUE;
-        }
-        continue;
-      }
+      /* lobbyResult == 1: game started. Both MP and SP have already
+       * had their world installed (MP via the UDP transport's
+       * CTRL_GAME_PHASE LOBBY→RUNNING watcher; SP via the local
+       * transport's localTick path), so the main loop just flips the
+       * net status and falls into the per-frame game tick. */
       clientSimSetNetStatus(cs, netRunning);
       simTickCounter = 0;
       justKeysFlag = FALSE;
@@ -352,7 +407,8 @@ int main(int argc, char *argv[]) {
       bool done = FALSE;
       SDL_Window *sdlWin = sdl3DrawGetWindow();
 
-      threadsCreate(FALSE);
+      /* threadsCreate now runs earlier (right after clientMutexCreate)
+       * so the menu's background bot game sees a real threads mutex. */
 
       /* Flush any stale SDL_QUIT events that may have been queued during
          dialog teardown. Without this, the main loop would exit immediately
@@ -456,6 +512,14 @@ int main(int argc, char *argv[]) {
         steam_run_callbacks();
         steam_input_run_frame();
 
+        /* Keep in-game rich presence fresh — live player count, and the
+         * host's external connect address once the tracker resolves it.
+         * Throttled internally; gated to the running game so lobby/countdown
+         * frames don't stomp the lobby presence. */
+        if (cs && clientSimGetNetStatus(cs) == netRunning) {
+          gameFrontTickSteamPresenceGame(cs);
+        }
+
         /* Run game tick on main thread when timer signals */
         if (SDL_GetAtomicInt(&needsGameTick)) {
           SDL_SetAtomicInt(&needsGameTick, 0);
@@ -545,15 +609,38 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  /* Stop the hosted-server tick timer BEFORE we tear down the
+   * mutex it grabs — otherwise SDL_Quit waits for the timer thread,
+   * the timer fires hostedServerTimerCb one last time, and
+   * threadsReleaseMutex hits "mutex not owned by this thread"
+   * because clientMutexDestroy already nuked the mutex. */
+  gameFrontShutdownServer();
+
   clientMutexDestroy();
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();
+  /* Tear down the process-lifetime welcome-screen bg before the renderer
+   * and the bot pool: bgGameDestroy calls SDL_DestroyTexture on
+   * bg->tilesTex (renderer must still be alive — SDL3 docs say destroying
+   * a renderer invalidates its child textures, so destroying a texture
+   * afterwards is UB), and bg destruction publishes control events through
+   * its sim's subscribers (worker pool must still be live for that flush). */
+  {
+    BgGame *bg = bgGameGetShared();
+    if (bg != NULL) {
+      bgGameSetShared(NULL);
+      bgGameDestroy(bg);
+      SDL_free(bg);
+    }
+  }
   sdl3DrawCleanup();
   /* Tear down Steam Input before the parent Steam API — Shutdown
      calls into ISteamInput which requires the SteamAPI to be alive. */
   steam_input_shutdown();
   steam_shutdown();
+  serverSimBotPoolDestroy();
   SDL_Quit();
+  threadsDestroy();
   sentryClose();
   return 0;
 }
@@ -643,9 +730,6 @@ static void windowRunGameTick(ClientSim *cs) {
           clientMutexRelease();
           clientSimNetRecordInput(cs, &pkt);
           clientSimNetTick(cs);
-          clientMutexWaitFor();
-          clientSimNetSyncSnapshot(cs);
-          clientMutexRelease();
           simTickCounter++;
           justKeysFlag = FALSE;
         } else {
@@ -671,25 +755,15 @@ static void windowRunGameTick(ClientSim *cs) {
           clientSimGameTick(cs, &pkt, brainRunning);
           clientMutexRelease();
           clientSimNetSendInput(cs, &pkt);
-          /* Tick bot brains before the sim tick (local game only).
-           * Wall-clock cost feeds dwSysBrain so the System Info "AI Tanks"
-           * line reflects bot processing — brainHandlerRun below only
-           * covers the human's local autopilot. Advance ttick by the same
-           * duration so dwSysGame (computed as SDL_GetTicks() - ttick at
-           * the bottom of the loop) doesn't also count it as sim time. */
-          {
-            ServerSim *serverSim = gameFrontGetServerSim();
-            if (serverSim != NULL && serverSimGetNumBots(serverSim) > 0) {
-              DWORD bttick = SDL_GetTicks();
-              serverSimBotTick(serverSim, clientSimGetAiType(cs));
-              DWORD botDur = SDL_GetTicks() - bttick;
-              dwSysBrain += botDur;
-              ttick += botDur;
-            }
-          }
+          /* Bot brains tick on the server timer thread (hostedServerTimerCb
+           * -> serverInstanceTick -> botManagerTick) for both single-player
+           * and listen-server, under threadsMutex. The System Info "AI
+           * Tanks" line reads wall-clock bot cost from
+           * serverSimGetBotPoolStats().lastBrainPhaseMs (see sdl3imgui.cpp)
+           * rather than dwSysBrain, so there is no main-thread accounting
+           * to do here. */
           clientSimNetTick(cs);
           clientMutexWaitFor();
-          clientSimNetSyncSnapshot(cs);
           clientSimDisplayTick(cs, brainRunning);
           clientMutexRelease();
           simTickCounter++;
@@ -1241,6 +1315,13 @@ void windowSoundKeepalive(void) {
   }
 }
 
+void windowSetSoundVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  soundVolume = pct;
+  soundSetVolume(pct);
+}
+
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
@@ -1399,9 +1480,10 @@ void windowSaveMap(ClientSim *cs) {
 void windowKeyPressed(ClientSim *cs, int keyCode) {
   if (keyCode == keys.kiTankView) {
     clientSimTankView(cs);
-  } else if (keyCode == keys.kiPillView) {
-    clientSimPillView(cs, 0, 0);
   }
+  /* Pill view (enter + hold-to-cycle) is handled by polling in
+   * pillViewInputStep so holding the key auto-repeats through pills;
+   * dispatching it here too would double-step on the entering press. */
 }
 
 void windowButtonAdd(int keyCode) {
@@ -1432,9 +1514,53 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
                             int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
   if (hideMainView == FALSE && drawBusy == FALSE) {
-    BYTE cursorX, cursorY;
+    BYTE cursorX = 0, cursorY = 0;
     bool showCursor;
 
+    /* Track view scroll in pixels and warp the OS mouse by the same delta
+     * so the cursor stays glued to its world tile while the map slides.
+     * Total view shift = xOffset whole-tile shift + subPos sub-tile shift.
+     * The cursor cell then stays the same frame to frame (no flicker) as
+     * autoscroll bumps subPos. Skip warps larger than a few tiles — those
+     * come from respawn / scrollCenterObject / mode switch and the user
+     * wants the cursor to stay where it is, not teleport. */
+    {
+      int zf      = sdl3DrawGetZoomFactor();
+      int tileWpx = TILE_SIZE_X * zf;
+      int tileHpx = TILE_SIZE_Y * zf;
+      int subX    = clientSimGetSubPosX(cs);
+      int subY    = clientSimGetSubPosY(cs);
+      int curScrollPxX = (int)clientSimGetXOffset(cs) * tileWpx + subX * tileWpx / 256;
+      int curScrollPxY = (int)clientSimGetYOffset(cs) * tileHpx + subY * tileHpx / 256;
+      static int  sLastScrollPxX = 0;
+      static int  sLastScrollPxY = 0;
+      static bool sLastScrollPxValid = FALSE;
+      if (sLastScrollPxValid) {
+        int dpx = curScrollPxX - sLastScrollPxX;
+        int dpy = curScrollPxY - sLastScrollPxY;
+        int maxAuto = 4 * tileWpx;
+        if (abs(dpx) <= maxAuto && abs(dpy) <= maxAuto) {
+          cursorApplyScrollDelta(dpx, dpy);
+        }
+      }
+      sLastScrollPxX = curScrollPxX;
+      sLastScrollPxY = curScrollPxY;
+      sLastScrollPxValid = TRUE;
+    }
+
+    /* Refresh cursor cell every frame: the autoscroll sub-tile offset
+     * changes per tick, so the visually-rendered tile under a stationary
+     * mouse changes too. cursorPos re-derives the cell from the cached
+     * mouse pixel + current subPos and stores it in the viewport's
+     * cursorPosX/Y, which clientSimGetCursorPos then reads. */
+    {
+      BYTE cx = 0, cy = 0;
+      if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
+        clientSimSetCursorPos(cs, cx, cy);
+      } else {
+        clientSimSetCursorPos(cs, 0, 0);
+      }
+    }
     showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
 
     /* When the gamepad-driven free build cursor is active, override
@@ -1565,6 +1691,18 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   }
 }
 
+void frontEndDrawReturningToLobby(ClientSim *cs) {
+  if (hideMainView == FALSE && drawBusy == FALSE) {
+    DWORD tick = SDL_GetTicks();
+    sdl3DrawReturningToLobby(cs);
+    dwSysFrame += (SDL_GetTicks() - tick);
+  }
+}
+
+void frontEndAudioReturningToLobby(bool active) {
+  soundSetReturningToLobby(active);
+}
+
 void frontEndGameOver(ClientSim *cs) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   SDL_RemoveTimer(timerFrameID);
@@ -1598,17 +1736,35 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
     sdl3ImguiSetPlayer((unsigned char)value, str, cc);
     return;
   }
-  cc[0] = countryCode[0];
-  cc[1] = countryCode[1];
+  /* Defensive: callers may pass "" (a 1-byte string literal) when the
+   * country code is unknown, so reading [1] unconditionally would walk
+   * off the end. Substitute 'X' for missing chars to match the
+   * not-running fallback above. */
+  cc[0] = countryCode[0] ? countryCode[0] : 'X';
+  cc[1] = (countryCode[0] && countryCode[1]) ? countryCode[1] : 'X';
   cc[2] = '\0';
   WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[FLAGS] frontEndSetPlayer: player=%d name='%s' cc='%s' (0x%02X 0x%02X)", (int)value, str, cc, (unsigned char)cc[0], (unsigned char)cc[1]);
   sdl3ImguiSetPlayer((unsigned char)value, str, cc);
   sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
 }
 
+void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientSimIsRunning(cs)) return;
+  sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
+}
+
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
+}
+
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) {
+  extern bool useAutoslow;
+  extern bool useAutohide;
+  if (cs == NULL) return;
+  clientSimSetTankAutoSlowdown(cs, useAutoslow);
+  clientSimSetTankAutoHideGunsight(cs, useAutohide);
 }
 
 /* -------------------------------------------------------
@@ -1660,6 +1816,12 @@ void frontEndEnableLeaveAllyMenu(bool enabled) {
  * ------------------------------------------------------- */
 void frontEndRedrawAll(ClientSim *cs) {
   if (!clientSimIsRunning(cs)) return;
+  /* In lobby state the in-game renderer hasn't taken over yet — the
+   * lobby ImGui is the active view. Skip the game-frame blit so a
+   * subscriber-side playersSetPlayer triggered by a CTRL_PLAYER_JOIN
+   * mid-lobby (e.g. another remote adding a bot) doesn't stomp the
+   * lobby render. */
+  if (clientSimIsInLobby(cs)) return;
   windowRedrawAll(cs);
 }
 
@@ -1728,7 +1890,10 @@ bool frontEndTutorial(BYTE pos) {
   doingTutorial = TRUE;
   /* Freeze the server sim's tankUpdate before we release the mutex so
    * the tank doesn't drift forward while the modal is up. */
-  tutorialServerPaused = TRUE;
+  {
+    ServerSim *srv = gameFrontGetServerSim();
+    if (srv) serverSimSetPaused(srv, TRUE);
+  }
   clientMutexRelease();
   for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
     uint16_t mid = tutorialSteps[tutorialStepIdx].msgs[i];
@@ -1758,7 +1923,10 @@ bool frontEndTutorial(BYTE pos) {
     gameFrontSetShowTutorialButton(false);
   }
   clientMutexWaitFor();
-  tutorialServerPaused = FALSE;
+  {
+    ServerSim *srv = gameFrontGetServerSim();
+    if (srv) serverSimSetPaused(srv, FALSE);
+  }
   doingTutorial = FALSE;
   oldTick = SDL_GetTicks();
   ttick = oldTick;

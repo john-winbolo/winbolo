@@ -11,6 +11,14 @@ else()
 endif()
 
 foreach(_LIB ${_LIBS})
+    # Skip the FetchContent build tree.  It contains crashpad's test fixtures
+    # (z7_test.dll, pe_only_symbol_test.dll, with-buildid.so, ...) which are not
+    # runtime dependencies.  Every real shared lib is already mirrored next to
+    # the executables by the per-target POST_BUILD copy steps, so the top-level
+    # build dir has everything we need.
+    if(_LIB MATCHES "/_deps/")
+        continue()
+    endif()
     get_filename_component(_NAME "${_LIB}" NAME)
     execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_LIB}" "${DEST_DIR}/${_NAME}")
 endforeach()

@@ -176,8 +176,8 @@ bool serverSimBaseExistsAt(const struct ServerSim *sim, BYTE x, BYTE y) {
   abort();
 }
 
-baseAlliance serverSimBaseGetAllianceAt(struct ServerSim *sim, BYTE x, BYTE y) {
-  (void)sim; (void)x; (void)y;
+baseAlliance serverSimBaseGetAllianceAt(struct ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer) {
+  (void)sim; (void)x; (void)y; (void)viewPlayer;
   abort();
 }
 
@@ -191,8 +191,8 @@ bool serverSimPillExistsAt(const struct ServerSim *sim, BYTE x, BYTE y) {
   abort();
 }
 
-BYTE serverSimPillGetScreenHealthAt(struct ServerSim *sim, BYTE x, BYTE y) {
-  (void)sim; (void)x; (void)y;
+BYTE serverSimPillGetScreenHealthAt(struct ServerSim *sim, BYTE x, BYTE y, BYTE viewPlayer) {
+  (void)sim; (void)x; (void)y; (void)viewPlayer;
   abort();
 }
 
@@ -313,4 +313,35 @@ BYTE screenCalcCrater(BYTE aboveLeft, BYTE above, BYTE aboveRight,
 BYTE utilGetDir(TURNTYPE value) {
   (void)value;
   abort();
+}
+
+
+/* ====================================================================
+ * Part 3 — tank-label icon hooks (linker-only, return "unavailable").
+ *
+ * sdl3draw_status.c's sdl3DrawTankLabel (shared with the main game)
+ * draws a country flag or AI-brain badge beside the tank name. Those
+ * textures live in flags.c / sdl3imgui.cpp, neither of which the
+ * standalone LogViewer links. Returning NULL / false here makes
+ * sdl3DrawTankLabel fall back to rendering the full "name@loc" text,
+ * preserving the LogViewer's existing label appearance.
+ *
+ * Opaque SDL_Texture forward declaration — resolved by symbol name at
+ * link time; the real signatures live in flags.h / sdl3imgui.h.
+ * ==================================================================== */
+
+struct SDL_Texture;
+
+struct SDL_Texture *flagsGetTexture(const char countryCode[2]) {
+  (void)countryCode;
+  return NULL;
+}
+
+struct SDL_Texture *sdl3ImguiGetBrainIcon(void) {
+  return NULL;
+}
+
+bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
+  (void)playerNum;
+  return false;
 }

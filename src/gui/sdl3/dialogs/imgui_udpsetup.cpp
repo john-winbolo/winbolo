@@ -31,6 +31,7 @@
 #include "imgui_dialog_utils.h"
 #include "imgui_nav_outline.h"
 #include "../imgui_steam_nav.h"
+#include "dialog_footer.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -147,21 +148,8 @@ extern "C" int imguiUdpSetupShow(void) {
 
     bool rememberName = gameFrontGetRemeber();
 
-    /* Tracker options */
-    char trackerAddr[FILENAME_MAX];
-    unsigned short trackerPort;
-    bool trackerEnabled;
-    trackerAddr[0] = '\0';
-    gameFrontGetTrackerOptions(trackerAddr, &trackerPort, &trackerEnabled);
-
-    char trackerPortBuf[16];
-    SDL_snprintf(trackerPortBuf, sizeof(trackerPortBuf), "%u", trackerPort);
-
     /* Error message popup state */
     const char *errorMsg = nullptr;
-
-    /* Tracker popup state */
-    bool showTracker = false;
 
     int result = 0;
     bool running = true;
@@ -298,17 +286,8 @@ extern "C" int imguiUdpSetupShow(void) {
         char errPopupId[64];
         SDL_snprintf(errPopupId, sizeof(errPopupId), "%s##udp", langGetText(STR_ERR_TITLE));
 
-        /* --- Remember + Tracker Setup --- */
+        /* --- Remember --- */
         ImGui::Checkbox(langGetText(STR_DLGTCP_REMEMBER), &rememberName);
-        ImGui::SameLine(panelW - 140.0f * s);
-        if (ImGui::Button(langGetText(STR_DLGTCP_TRACKERSETUP), ImVec2(120 * s, 0))) {
-            /* Reload tracker options in case they changed */
-            gameFrontGetTrackerOptions(trackerAddr, &trackerPort, &trackerEnabled);
-            SDL_snprintf(trackerPortBuf, sizeof(trackerPortBuf), "%u", trackerPort);
-            showTracker = true;
-            ImGui::OpenPopup(langGetText(STR_DLGTRACKER_TITLE));
-        }
-        imguiHandOnHover();
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -377,13 +356,14 @@ extern "C" int imguiUdpSetupShow(void) {
 
         ImGui::Spacing();
 
-        /* --- Cancel --- */
+        /* --- Cancel --- muted grey, right-aligned (panel-screen convention). */
         {
             float cancelX = panelW - btnW - 16.0f * s;
             ImGui::SetCursorPosX(cancelX);
-            if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0)) ||
-                (ImGui::IsKeyPressed(ImGuiKey_Escape) &&
-                 !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
+            WBUI::PushCancelStyle();
+            bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0));
+            WBUI::PopCancelStyle();
+            if (cancelClicked || WBUI::CancelKeyPressed()) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }
@@ -402,53 +382,6 @@ extern "C" int imguiUdpSetupShow(void) {
                 ImGui::CloseCurrentPopup();
             }
             imguiHandOnHover();
-            ImGui::PopStyleVar();
-            ImGui::EndPopup();
-        }
-
-        /* --- Tracker Config popup --- */
-        static float s_fadeUdpTracker = 0.0f;
-        if (ImGui::BeginPopupModal(langGetText(STR_DLGTRACKER_TITLE), nullptr,
-                                   ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-                                imguiPopupFadeAlpha(&s_fadeUdpTracker));
-            ImGui::TextUnformatted(langGetText(STR_DLGTRACKER_TRACKERADDRESS));
-            ImGui::SameLine(120 * s);
-            ImGui::SetNextItemWidth(160 * s);
-            if (!trackerEnabled) ImGui::BeginDisabled();
-            ImGui::InputText("##trackerAddr", trackerAddr, FILENAME_MAX);
-            if (!trackerEnabled) ImGui::EndDisabled();
-
-            ImGui::TextUnformatted(langGetText(STR_DLGTRACKER_TRACKERPORT));
-            ImGui::SameLine(120 * s);
-            ImGui::SetNextItemWidth(160 * s);
-            if (!trackerEnabled) ImGui::BeginDisabled();
-            ImGui::InputText("##trackerPort", trackerPortBuf, sizeof(trackerPortBuf),
-                             ImGuiInputTextFlags_CharsDecimal);
-            if (!trackerEnabled) ImGui::EndDisabled();
-
-            ImGui::Checkbox(langGetText(STR_DLGTRACKER_USETRACKER), &trackerEnabled);
-
-            ImGui::Spacing();
-            {
-                char okBuf[64], cancelBuf[64];
-                snprintf(okBuf,     sizeof(okBuf),     "%s##tracker", langGetText(STR_OK));
-                snprintf(cancelBuf, sizeof(cancelBuf), "%s##tracker", langGetText(STR_CANCEL));
-                if (ImGui::Button(okBuf, ImVec2(80, 0))) {
-                    char *end;
-                    unsigned long pval = strtoul(trackerPortBuf, &end, 10);
-                    if (pval > 65535) pval = 65535;
-                    gameFrontSetTrackerOptions(trackerAddr, (unsigned short)pval,
-                                               trackerEnabled);
-                    ImGui::CloseCurrentPopup();
-                }
-                imguiHandOnHover();
-                ImGui::SameLine(0.0f, 8.0f);
-                if (ImGui::Button(cancelBuf, ImVec2(80, 0))) {
-                    ImGui::CloseCurrentPopup();
-                }
-                imguiHandOnHover();
-            }
             ImGui::PopStyleVar();
             ImGui::EndPopup();
         }

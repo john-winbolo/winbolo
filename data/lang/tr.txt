@@ -268,6 +268,7 @@ STR_DLGNETINFO_KBIN=KB/s Gelen:
 STR_DLGNETINFO_KBOUT=KB/s Giden:
 STR_DLGNETINFO_PACKETS_RATE=Paket/sn: {number} gelen / {number2} giden
 STR_DLGNETINFO_KB_RATE=KB/sn: {string1} gelen / {string2} giden
+STR_DLGNETINFO_LOSS=Paket kaybı: {number}% ({number2}/{number3} bu sn, {number4} oyun toplamı)
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Tohumu Kopyala
@@ -422,6 +423,7 @@ STR_DLGLOBBY_BOT_FMT={player} [Bot]
 STR_DLGLOBBY_YOU_FMT={player} (Sen)
 STR_DLGLOBBY_STARTING_FMT={number} saniye içinde başlıyor...
 STR_DLGLOBBY_LOSTCONNECTION=Sunucuyla bağlantınız kesildi.
+STR_DLGLOBBY_KICKED=Sunucudan atıldınız.
 STR_DLGLOBBY_ME=Ben
 STR_DLGLOBBY_PLAYER_COL=Oyuncu
 STR_DLGLOBBY_PING_COL=Gecikme
@@ -943,6 +945,14 @@ STR_LV_MAP_SKIP_VOTE={player} haritayı atlamak için oy kullandı.
 STR_LV_MAP_SKIPPED=Harita atlandı. Yeni harita: {string1}
 STR_LV_TEAM_BALANCE=Takım dengesi uygulandı.
 
+# Log viewer — oyun içi oylama olayları
+STR_LV_VOTE_START_LOBBY={player} lobiye dönmek için oylama başlattı.
+STR_LV_VOTE_START_SURRENDER={player} teslim olmak için oylama başlattı.
+STR_LV_VOTE_CAST_YES={player} evet oyu kullandı.
+STR_LV_VOTE_CAST_NO={player} hayır oyu kullandı.
+STR_LV_VOTE_PASSED=Oylama geçti.
+STR_LV_VOTE_FAILED=Oylama başarısız oldu.
+
 # Log viewer main menu
 STR_LV_MENU_OPEN=Aç
 STR_LV_MENU_ACTION=Eylem
@@ -1071,10 +1081,10 @@ STR_DLGLOBBY_PORTMAP_CHECKING=Sunucu erişilebilirliği kontrol ediliyor…
 STR_DLGLOBBY_PORTMAP_ACCESSIBLE=Sunucu erişilebilir
 STR_DLGLOBBY_PORTMAP_UNREACHABLE=Sunucuya erişilemiyor
 STR_DLGLOBBY_PORTMAP_DETAIL_PENDING=UPnP / NAT-PMP ile bir güvenlik duvarı portu açılmaya ve tracker'ın ağınız üzerinden size ulaşabildiği doğrulanmaya çalışılıyor. Bu işlem genellikle 30 saniye içinde tamamlanır.
-STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=UPnP/NAT-PMP aracılığıyla %s:%u adresinde port otomatik olarak yönlendirildi. Katılanlar ek bir adım gerekmeden doğrudan bağlanır.
+STR_DLGLOBBY_PORTMAP_DETAIL_SUCCEEDED=UPnP/NAT-PMP aracılığıyla {string1}:{number} adresinde port otomatik olarak yönlendirildi. Katılanlar ek bir adım gerekmeden doğrudan bağlanır.
 STR_DLGLOBBY_PORTMAP_DETAIL_HOLE_PUNCH=Doğrudan port yönlendirmesi kurulamadı, ancak NAT traversal aktif. Katılanlar, ağınızın güvenlik duvarını delmek için tracker üzerinden koordine olur. Çoğu ev ağında çalışır; simetrik NAT veya operatör seviyesi NAT (CGN) arkasındaki oyuncular yine de bağlanamayabilir.
-STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Simetrik NAT tespit edildi — ağınız her hedef için kaynak portunu yeniden yazıyor, bu da NAT traversal kullanılsa bile katılanların size ulaşmasını engelliyor. Başarılı bir şekilde sunmak için yönlendiricinizdeki UDP %u portunu bu makineye manuel olarak yönlendirin.
-STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Bir güvenlik duvarı portu otomatik olarak açılamadı (UPnP/NAT-PMP reddedildi veya kullanılamıyor) ve tracker çift yönlü erişilebilirliği doğrulayamadı. Başarılı bir şekilde sunmak için yönlendiricinizdeki UDP %u portunu bu makineye manuel olarak yönlendirin.
+STR_DLGLOBBY_PORTMAP_DETAIL_SYMMETRIC=Simetrik NAT tespit edildi — ağınız her hedef için kaynak portunu yeniden yazıyor, bu da NAT traversal kullanılsa bile katılanların size ulaşmasını engelliyor. Başarılı bir şekilde sunmak için yönlendiricinizdeki UDP {number} portunu bu makineye manuel olarak yönlendirin.
+STR_DLGLOBBY_PORTMAP_DETAIL_FAILED=Bir güvenlik duvarı portu otomatik olarak açılamadı (UPnP/NAT-PMP reddedildi veya kullanılamıyor) ve tracker çift yönlü erişilebilirliği doğrulayamadı. Başarılı bir şekilde sunmak için yönlendiricinizdeki UDP {number} portunu bu makineye manuel olarak yönlendirin.
 STR_DLGLOBBY_PORTMAP_POPUP_TITLE=Sunucu Erişilebilirliği
 STR_DLGLOBBY_TEST_CONNECTIVITY=Bağlantıyı test et
 STR_DLGLOBBY_TEST_TESTING=Test ediliyor…
@@ -1159,3 +1169,198 @@ STR_CTRL_PROMPT_LINE2=Kontrolcü Moduna geçilsin mi?
 STR_CTRL_PROMPT_DESC=(Menü çubuğunu gizler; Start tuşu kontrolcüye uygun bir duraklama menüsü açar.\nDaha sonra Ayarlar'dan değiştirebilirsiniz.)
 STR_CTRL_PROMPT_NOTNOW=Şimdi değil
 STR_CTRL_PROMPT_DONTASK=Bir daha sorma
+# macOS App menu and Window menu items
+STR_MENU_ABOUT_APP=WinBolo Hakkında
+STR_MENU_PREFERENCES=Tercihler…
+STR_MENU_SERVICES=Servisler
+STR_MENU_HIDE_APP=WinBolo'yu Gizle
+STR_MENU_HIDE_OTHERS=Diğerlerini Gizle
+STR_MENU_SHOW_ALL=Tümünü Göster
+STR_MENU_QUIT_APP=WinBolo'dan Çık
+STR_MENU_ABOUT_LV=Günlük Görüntüleyici Hakkında
+STR_MENU_HIDE_LV=Günlük Görüntüleyici'yi Gizle
+STR_MENU_QUIT_LV=Günlük Görüntüleyici'den Çık
+STR_MENU_HIDE_ME=Harita Düzenleyici'yi Gizle
+STR_MENU_QUIT_ME=Harita Düzenleyici'den Çık
+STR_MENU_WINDOW=Pencere
+STR_MENU_MINIMIZE=Simge Durumuna Küçült
+STR_MENU_ZOOM=Zoom
+STR_MENU_ENTER_FULL_SCREEN=Tam Ekrana Gir
+STR_MENU_BRING_ALL_TO_FRONT=Tümünü Öne Getir
+
+# macOS Dock menu — welcome-screen actions exposed via the Dock right-click
+STR_MENU_FIND_INTERNET_GAME=İnternet Oyunu Bul…
+STR_MENU_FIND_LAN_GAME=LAN Oyunu Bul…
+STR_MENU_JOIN_BY_ADDRESS=Adres ile Katıl…
+STR_MENU_OPEN_MAP_EDITOR=Harita Düzenleyiciyi Aç
+STR_MENU_OPEN_LOG_VIEWER=Günlük Görüntüleyiciyi Aç
+
+# Settings → Network: WinBolo.net news auto-show toggle.
+STR_DLGSETTINGS_NEWS_AUTOSHOW=Başlangıçta winbolo.net haberlerini göster
+
+# News popup + welcome News button strings.
+STR_DLGWELCOME_NEWS=Haberler
+STR_DLGNEWS_TITLE=Haberler
+STR_DLGNEWS_CONSENT_TITLE=WinBolo Haberleri
+STR_DLGNEWS_CONSENT_BODY1=WinBolo, oyunu başlattığınızda winbolo.net'teki yeni gönderileri gösterebilir. WBN başlangıçta bir kez kontrol edilir ve yalnızca yeni bir şey olduğunda bu pencere açılır.
+STR_DLGNEWS_CONSENT_BODY2=Bunu istediğiniz zaman Ayarlar'dan değiştirebilirsiniz.
+STR_DLGNEWS_SHOW=Haberleri göster
+STR_DLGNEWS_DONT_SHOW=Gösterme
+STR_DLGNEWS_LOADING=Yükleniyor…
+STR_DLGNEWS_DONT_AUTOSHOW=Haberleri gelecekte otomatik açma
+STR_DLGNEWS_COMMENTS_FMT=Yorumlar: {number}
+
+# Map chooser (window title, tabs, action buttons, close-confirm popup)
+STR_DLGLOBBY_CHOOSEMAP_TITLE=Harita Seç
+STR_DLGLOBBY_TAB_SERVERMAPS=Sunucu Haritaları
+STR_DLGLOBBY_TAB_LOCALMAPS=Yerel Haritalar
+STR_DLGLOBBY_TAB_UPLOAD=Yükle
+STR_DLGLOBBY_TAB_GENERATE=Oluştur
+STR_DLGLOBBY_TAB_WBNMAPS=Winbolo.net Haritaları
+STR_DLGLOBBY_CLOSEMAP_PROMPT=Farklı bir haritanın önizlemesini yaptınız.
+STR_DLGLOBBY_CLOSEMAP_QUESTION=Ne yapmak istersiniz?
+STR_DLGLOBBY_USETHISMAP=Bu Haritayı Kullan
+STR_DLGLOBBY_REVERTCLOSE=Geri Al ve Kapat
+STR_DLGLOBBY_KEEPPICKING=Seçmeye Devam Et
+STR_DLGLOBBY_CANCEL_MAPCHOOSER=İptal
+STR_DLGLOBBY_CHOOSE_MAP_BTN=Harita Seç
+
+# Upload + WBN errors
+STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT=Başka bir yükleme devam ediyor.
+STR_DLGLOBBY_UPLOAD_ERR_DISABLED=Bu sunucuda yükleme devre dışı.
+STR_DLGLOBBY_UPLOAD_ERR_FULL=Sunucunun harita kütüphanesi dolu.
+STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN=Çok fazla istek \xe2\x80\x94 yeniden denemeden önce lütfen biraz bekleyin.
+STR_DLGLOBBY_UPLOAD_ERR_REJECTED=Yükleme sunucu tarafından reddedildi.
+STR_DLGLOBBY_WBN_ERR_DOWNLOAD=İndirme başarısız
+STR_DLGLOBBY_WBN_ERR_BADRESPONSE=WinBolo.net'ten geçersiz yanıt
+STR_DLGLOBBY_WBN_ERR_NETERROR=Harita indirilirken ağ hatası
+STR_DLGLOBBY_WBN_ERR_HTTPERROR=WBN, HTTP {number} döndürdü
+STR_DLGLOBBY_WBN_ERR_MAPFAILED=Harita indirme başarısız
+STR_DLGLOBBY_WBN_ERR_TOOBIG=Harita 64 KB yükleme sınırını aşıyor
+STR_DLGLOBBY_WBN_ERR_OOM=Yükleme kuyruğu için yeterli bellek yok
+STR_DLGLOBBY_WBN_ERR_BADSEARCHRESPONSE=WinBolo.net'ten geçersiz arama yanıtı
+
+# Allow-new-players + ranked-game controls
+STR_DLGLOBBY_ALLOW_NOW=Şimdi
+STR_DLGLOBBY_ALLOW_DURING=Oyun sırasında
+STR_DLGLOBBY_TOOLTIP_ALLOWNOW=Lobi açıkken yeni katılım isteklerini şimdi kabul edin.
+STR_DLGLOBBY_TOOLTIP_ALLOWDURING=Oyun başladıktan sonra da yeni oyuncuları kabul etmeye devam edin.
+STR_DLGLOBBY_TOOLTIP_RANKED_AUTOLOCK=Ranked oyunlar, oyun başladığında yeni oyuncuları kilitler.
+STR_DLGLOBBY_RANKED=Ranked Oyun
+STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED=Sunucu yöneticisi tarafından kilitlendi.
+STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST=Yalnızca sunucu sahibi veya admin Ranked oyunu açıp kapatabilir.
+STR_DLGLOBBY_TOOLTIP_RANKED_BOTS=Oyunu Ranked olarak işaretlemeden önce lobideki\ntüm botları kaldırın. Ranked maçlar yalnızca insanlar içindir.
+STR_DLGLOBBY_TOOLTIP_RANKED_INFO=Ranked oyunlar botları yasaklar ve turnuva oyun\ntürünü zorlar — \"Açık\" önceden silahlı mod yoktur.\nBu seçeneği değiştirmek her oyuncunun hazır durumunu\nsıfırlar; böylece sunucu sahibi yeni yapılandırmayı onaylayabilir.
+
+# Team-grouped player list + kick modal
+STR_DLGLOBBY_TEAM_HEADER=Takım {number}
+STR_DLGLOBBY_TEAM_MEMBERS_1=· 1 oyuncu
+STR_DLGLOBBY_TEAM_MEMBERS_N=· {number} oyuncu
+STR_DLGLOBBY_TEAM_1BOT=1 bot
+STR_DLGLOBBY_TEAM_NBOTS=bot
+STR_DLGLOBBY_JOIN_TEAM=Katıl
+STR_DLGLOBBY_TOOLTIP_JOIN=Kendinizi Takım {number}'e taşıyın.
+STR_DLGLOBBY_BOT_NAMING=Bot Adlandırma:
+STR_DLGLOBBY_ADDBOT_LBL=Bot Ekle
+STR_DLGLOBBY_TOOLTIP_ADDBOT=Seçilen havuzdan adlandırılmış bir bot'u Takım {number}'e ekleyin.
+STR_DLGLOBBY_TOOLTIP_RMTEAM=Takım {number}'i (ve botlarını) kaldırın.
+STR_DLGLOBBY_TOOLTIP_DRAG=Taşımak için bir takımın üzerine sürükleyin
+STR_DLGLOBBY_TAG_HOST=SUNUCU SAHİBİ
+STR_DLGLOBBY_TAG_ADMIN=ADMİN
+STR_DLGLOBBY_TAG_BOT=BOT
+STR_DLGLOBBY_PILL_READY=HAZIR
+STR_DLGLOBBY_PILL_NOTREADY=HAZIR DEĞİL
+STR_DLGLOBBY_TOOLTIP_CONFIG=Bot yapılandır
+STR_DLGLOBBY_TOOLTIP_RMBOT=Botu kaldır
+STR_DLGLOBBY_TOOLTIP_KICK=Oyuncuyu at
+STR_DLGLOBBY_ADD_TEAM=Takım Ekle
+STR_DLGLOBBY_UNASSIGNED_FMT=Atanmamış ({number}):
+STR_DLGLOBBY_KICK_FMT=„{player}" atılsın mı?
+
+# Bot AiConfig panel
+STR_DLGLOBBY_BOTCFG_NAME=Ad (geçersiz kıl)
+STR_DLGLOBBY_BOTCFG_REROLL=Yeniden çevir
+STR_DLGLOBBY_BOTCFG_REROLL_TIP=Takımın havuzundan yeni bir rastgele ad seçin.
+STR_DLGLOBBY_BOTCFG_CODE=Bot Kodu
+STR_DLGLOBBY_BOTCFG_NONE=(yok)
+STR_DLGLOBBY_BOTCFG_DIFFICULTY=Zorluk
+STR_DLGLOBBY_BOTCFG_EASY=Kolay
+STR_DLGLOBBY_BOTCFG_NORMAL=Normal
+STR_DLGLOBBY_BOTCFG_HARD=Zor
+STR_DLGLOBBY_BOTCFG_PERSONALITY=Kişilik
+STR_DLGLOBBY_BOTCFG_AGGRESSIVE=Saldırgan
+STR_DLGLOBBY_BOTCFG_DEFENSIVE=Savunmacı
+STR_DLGLOBBY_BOTCFG_SNIPER=Sniper
+STR_DLGLOBBY_BOTCFG_DONE=Tamam
+
+# Balance-from-WBN dialog
+STR_DLGLOBBY_BAL_BTN=WBN'den Dengele
+STR_DLGLOBBY_BAL_POPUP_TITLE=WBN'den Takımları Dengele
+STR_DLGLOBBY_BAL_POPUP_BODY=Bu işlem lobideki tüm takımları temizler ve winbolo.net'ten gelen iki beceri dengeli takımla değiştirir. Yeni bölünme hemen geçerli olur.
+STR_DLGLOBBY_BAL_POPUP_BOT_SINGULAR=Lobide şu an 1 bot var. Botun dengeli bölünmeye katılmasını mı yoksa yalnızca insanlar maçı için kaldırılmasını mı istediğinizi seçin.
+STR_DLGLOBBY_BAL_POPUP_BOT_PLURAL=Lobide şu an {number} bot var. Botların dengeli bölünmeye katılmasını mı yoksa yalnızca insanlar maçı için kaldırılmasını mı istediğinizi seçin.
+STR_DLGLOBBY_BAL_BOTS_INCLUDED=Botlar dahil
+STR_DLGLOBBY_BAL_HUMANS_ONLY=Yalnızca insanlar
+STR_DLGLOBBY_BAL_GO=Dengele
+STR_DLGLOBBY_BAL_TOOLTIP_NOTHOST=Yalnızca sunucu sahibi veya admin, winbolo.net'ten\nbeceri dengeli takım bölünmesi isteyebilir.
+STR_DLGLOBBY_BAL_TOOLTIP_NOTENOUGH=Lobiyi dengeli takımlara bölmeden önce\nen az iki bağlı oyuncu gereklidir.
+STR_DLGLOBBY_BAL_TOOLTIP_INFO=winbolo.net'ten lobiyi iki beceri dengeli takıma\nbölmesini isteyin. Bölünme, WBN yanıt verdiğinde\nhemen uygulanır — mevcut takımlar değiştirilir.
+STR_DLGLOBBY_BAL_STATUS_ASKING=WBN sorgulanıyor\xe2\x80\xa6
+STR_DLGLOBBY_BAL_STATUS_BALANCED=Takımlar dengelendi
+STR_DLGLOBBY_BAL_STATUS_NOREPLY=WBN'den yanıt yok
+
+# Reject toast
+STR_DLGLOBBY_REJECT_DEFAULT=reddedildi
+STR_DLGLOBBY_REJECT_NOTHOST=yalnızca sunucu sahibi
+STR_DLGLOBBY_REJECT_LOCKED=ayar sunucu tarafından kilitlendi
+STR_DLGLOBBY_REJECT_INVALID=geçersiz istek
+STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Lobi değişikliği reddedildi: {string1}
+
+# Lock badge fallback
+STR_DLGLOBBY_LOCK_BADGE=[kilitli]
+
+# Ranked-shape tooltip
+STR_DLGLOBBY_RANKED_SHAPE_TIP=Ranked oyunlar tam olarak iki takım ve eşit\nbüyüklük gerektirir: 1v1, 2v2 veya 3v3 insan oyuncu.\n(Şu an {number} {string1}, büyüklükler {number2} - {number3}.)
+STR_DLGLOBBY_RANKED_SHAPE_TEAM=takım
+STR_DLGLOBBY_RANKED_SHAPE_TEAMS=takım
+
+# Game settings panel
+STR_DLGLOBBY_SETTINGS_HEADER=Oyun Ayarları
+STR_DLGLOBBY_OPENHOST_NOTE=Sunucu sahibi tüm oyuncuların oyun ayarlarını değiştirmesine izin verdi.
+STR_DLGLOBBY_GAMETYPE_LBL=Oyun Türü
+STR_DLGLOBBY_AI_SECTION_LBL=Bilgisayar Oyuncuları
+STR_DLGLOBBY_AI_NONE=Bilgisayar tankı yok
+STR_DLGLOBBY_AI_ALLOW=Bilgisayar tanklarına izin ver
+STR_DLGLOBBY_AI_ADVANTAGE=Avantajlı olarak izin ver
+STR_DLGLOBBY_AI_FULLADV=Tam avantajlı olarak izin ver
+STR_DLGLOBBY_OTHER_LBL=Diğer
+STR_DLGLOBBY_OPENHOST_CB=Tüm oyuncular ayarları değiştirebilir
+STR_DLGLOBBY_OPENHOST_TOOLTIP=Etkinleştirildiğinde her bağlı oyuncu lobi\nayarlarını düzenleyebilir — harita değiştirme,\nbot ekleme/kaldırma ve takım değiştirme dahil.
+STR_DLGLOBBY_TIMELIMIT_MIN=dk
+STR_DLGLOBBY_PASSWORD_CB=Şifre
+STR_DLGLOBBY_PASSWORD_TOOLTIP=Etkinleştirildiğinde yeni istemcilerin katılmak için\nşifreyi girmesi gerekir. Zaten bağlı oyuncular\netkilenmez.
+
+# Desktop header
+STR_DLGLOBBY_SERVERDISP_SP=Tek oyunculu
+STR_DLGLOBBY_SERVERDISP_INTERNET=İnternet
+
+# Connectivity badge tooltip
+STR_DLGLOBBY_CONN_TEST_TIP=Test devam ediyor
+
+# In-game votes
+STR_VOTE_BACK_TO_LOBBY=Oylama: Lobiye dön
+STR_VOTE_SURRENDER=Oylama: Teslim ol
+STR_VOTE_DRAW_TAG= (Beraberlik)
+STR_VOTE_NEEDS_RUNNING_TIP=Oyun başladıktan sonra kullanılabilir.
+STR_VOTE_SURRENDER_PICK_TEAM_TIP=Teslim olmak için oy kullanmadan önce bir takım seçin.
+STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Teslim olma yalnızca insan oyunculu tam olarak iki takım\nkaldığında kullanılabilir.
+
+# Volume — slider label and Mac preset submenu items
+STR_MENU_VOLUME=Ses düzeyi
+STR_VOLUME_MUTE=Sessiz
+STR_REJECT_VERSION_MISMATCH=Sunucu {string1} sürümünde, sizde {string2} var — lütfen güncelleyin.
+STR_RETURNING_TO_LOBBY=Lobiye dönülüyor
+
+# Balance — WBN-failure status pill + reject toast for non-ranked balance state
+STR_DLGLOBBY_REJECT_BAD_STATE=şu an izin verilmiyor
+STR_DLGLOBBY_BAL_STATUS_FAILED=WBN dengesi başarısız

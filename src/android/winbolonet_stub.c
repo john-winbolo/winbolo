@@ -2,13 +2,16 @@
  * winbolonet_stub.c - Stub implementations of WinBolo.net functions
  *
  * On Android we don't include the winbolonet source files (which depend
- * on libcurl). Instead we stub out all functions declared in winbolonet.h.
+ * on libcurl). Instead we stub out all functions declared in the
+ * winbolonet_core / winbolonet_server / winbolonet_client headers.
  */
 
 #include <stdint.h>
 
 #include "global.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
+#include "../winbolonet/winbolonet_server.h"
+#include "../winbolonet/winbolonet_client.h"
 
 bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
@@ -16,24 +19,10 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
   return FALSE;
 }
 
-bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg) {
-  (void)token; (void)serverKey; (void)errorMsg;
-  return FALSE;
-}
-
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 
 void winboloNetGetServerKey(char *keyBuff) {
   if (keyBuff) keyBuff[0] = '\0';
-}
-
-void winboloNetGetMyClientKey(char *keyBuff) {
-  if (keyBuff) keyBuff[0] = '\0';
-}
-
-bool winboloNetVerifyClientKey(const char *playerKey, char *userName, BYTE playerNum) {
-  (void)playerKey; (void)userName; (void)playerNum;
-  return FALSE;
 }
 
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
@@ -46,8 +35,8 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
   (void)array; (void)length; (void)numTeams;
 }
 
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
-  (void)eventType; (void)isServer; (void)playerA; (void)playerB;
+void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
+  (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
 }
 
 void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePills, bool sendNow) {
@@ -67,11 +56,16 @@ void winboloNetSendLock(bool isLocked) {
   (void)isLocked;
 }
 
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
-                                 bool *hasSteam, bool *isSupporter) {
-  (void)token; (void)playerNum; (void)errorMsg;
+bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
+  (void)playerKey; (void)playerName; (void)playerNum; (void)errorMsg;
   if (hasSteam)    *hasSteam    = FALSE;
   if (isSupporter) *isSupporter = FALSE;
+  return FALSE;
+}
+
+bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg) {
+  (void)apiToken; (void)serverKey; (void)errorMsg;
+  if (playerKeyOut) playerKeyOut[0] = '\0';
   return FALSE;
 }
 
@@ -94,7 +88,15 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
   (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
 
-bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize, BalanceProposal *outProposal) {
-  (void)totalPlayers; (void)teamSize; (void)outProposal;
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
+
+void winbolonetSendLobbyUpdate(void) { }
+
+bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
+                                     const uint8_t *botSlots, uint8_t numBotSlots,
+                                     BalanceProposal *outProposal) {
+  (void)totalPlayers; (void)teamSize;
+  (void)botSlots; (void)numBotSlots;
+  (void)outProposal;
   return FALSE;
 }

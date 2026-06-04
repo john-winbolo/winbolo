@@ -37,6 +37,11 @@
 
 #define NO_TANK "???\0"
 
+/* Mirror of PLAYER_FLAG_BOT from src/bolo/public/player_flags.h. Logviewer
+ * does not include the bolo header (its own `player` / `players` types
+ * collide with the bolo ones), so the bit value is duplicated here. */
+#define LV_PLAYER_FLAG_BOT 0x20
+
 /* Area tanks must be in to be selected in the 'select nearby' option */
 #define PLAYER_MAX_SELECT_LEFT -9
 #define PLAYER_MAX_SELECT_RIGHT 9
@@ -80,8 +85,9 @@ typedef struct {
   bool isChecked;                   /* Is this item checked */
   bool needUpdate;
   BYTE team;
-  /* Per-player account flags (v1 logs only). Bit 0 = WBN, bit 1 = Steam.
-   * Mirrors PLAYER_FLAG_WBN_VERIFIED / PLAYER_FLAG_WBN_STEAM_LINKED from src/bolo/player_flags.h. */
+  /* Per-player account flags (v1 logs only). Bit 0 = WBN, bit 1 = Steam,
+   * bit 5 = bot. Mirrors PLAYER_FLAG_WBN_VERIFIED / PLAYER_FLAG_WBN_STEAM_LINKED /
+   * PLAYER_FLAG_BOT from src/bolo/public/player_flags.h. */
   BYTE accountFlags;
 } player;
 
@@ -336,6 +342,10 @@ void lv_playersLeaveGame(BYTE playerNum, bool announce);
 *  playerNum - The player num to check
 *********************************************************/
 bool lv_playersIsInUse(BYTE playerNumber);
+
+/* Returns true when the slot's PLAYER_FLAG_BOT bit is set (brain-driven
+ * player, not a human). FALSE for unused slots and for human players. */
+bool lv_playersIsBot(BYTE playerNumber);
 
 /*********************************************************
 *NAME:          lv_playersGetLgmDetails

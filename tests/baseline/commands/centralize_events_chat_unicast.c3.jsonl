@@ -1,0 +1,6 @@
+# centralize_events_chat_unicast_3client_udp — client 3 (slot 2).
+# Sends a unicast chat back to slot 0 (c1). Fires after c1's
+# tick-300 op has had time to land so the two unicasts cannot
+# share a UDP packet boundary by accident, and still well within
+# c1's --ticks 500 budget so c1 is alive to receive it.
+{"tick": 400, "op": "chat", "dest": 0, "body": "hi c1 from c3"}

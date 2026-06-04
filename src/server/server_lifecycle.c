@@ -18,18 +18,44 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
+#include "control_event.h"
 #include "gametype.h"
 #include "nat_portmap.h"
 #include "transport_udp.h"
 #include "bot_manager.h"
-#include "../winbolonet/winbolonet.h"
+#include "../winbolonet/winbolonet_core.h"
+#include "../common/mp_diag_log.h"
+#include "../winbolonet/winbolonet_server.h"
 #include "threads.h"
 #include "server_sim_internal.h"
+#include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
+
+/* Round-end log hooks installed by WinBoloDS via
+ * serverLifecycleSetRoundLogHooks. NULL on every other binary that
+ * links server_static, so the lifecycle's stash/flush calls become
+ * no-ops there. */
+static void (*s_roundLogStash)(void) = NULL;
+static void (*s_roundLogFlush)(void) = NULL;
+
+void serverLifecycleSetRoundLogHooks(void (*stash)(void),
+                                     void (*flush)(void)) {
+  s_roundLogStash = stash;
+  s_roundLogFlush = flush;
+}
+
+static void roundLogStash(void) {
+  if (s_roundLogStash != NULL) s_roundLogStash();
+}
+
+static void roundLogFlush(void) {
+  if (s_roundLogFlush != NULL) s_roundLogFlush();
+}
 
 static char  instanceTrackerAddr[FILENAME_MAX] = "";
 static unsigned short instanceTrackerPort = 0;
 static unsigned short instanceUdpPort = 0;
+static bool  instanceAcceptRemoteClients = FALSE;
 static bool  instanceUseTracker = FALSE;
 static bool  instanceUseWbn = FALSE;
 static bool  instanceUseNatKeepalive = FALSE;
@@ -107,13 +133,36 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   const char *bindAddr = (cfg->bindAddr != NULL) ? cfg->bindAddr : "";
   const char *password = (cfg->password != NULL) ? cfg->password : "";
 
-  if (transportUdpServerCreate(cfg->udpPort, bindAddr, sim,
-                               password, cfg->maxPlayers) == FALSE) {
-    return FALSE;
+  instanceAcceptRemoteClients = cfg->acceptRemoteClients;
+
+  /* Gate the MP diagnostic log on acceptRemoteClients so bg_game's own
+   * ServerSim (which also runs serverInstanceStartup at welcome-screen
+   * boot) doesn't fill the log with its publishes.  Enable BEFORE
+   * serverSimApplyInstanceConfig below so the very first lobby-settings
+   * publish for the real MP host is captured. */
+  if (cfg->acceptRemoteClients) {
+    mpDiagLogEnable(1);
   }
 
-  instanceUseWbn = cfg->useWbn;
-  if (cfg->useWbn) {
+  if (cfg->acceptRemoteClients) {
+    sim->maxPlayers = (cfg->maxPlayers > 0) ? cfg->maxPlayers : (BYTE)MAX_TANKS;
+    if (transportUdpServerCreate(cfg->udpPort, bindAddr, sim,
+                                 password) == FALSE) {
+      return FALSE;
+    }
+    transportUdpServerSetUploadConfig(cfg->uploadPolicy,
+                                      cfg->uploadMaxFiles,
+                                      cfg->uploadMaxStorageBytes);
+    sim->uploadPolicy = cfg->uploadPolicy;
+  }
+
+  serverSimApplyInstanceConfig(sim, cfg);
+
+  instanceUseWbn = cfg->acceptRemoteClients && cfg->useWbn;
+  if (instanceUseWbn) {
+    /* Populate the WBN lobby snapshot so register carries the
+     * extended settings + human/bot counts on the first POST. */
+    serverSimRefreshWbnLobbyInfo(sim);
     winbolonetCreateServer(sim->mapName, cfg->udpPort,
                            (BYTE)gameTypeGet(&sim->sim.game),
                            cfg->compTanks,
@@ -129,22 +178,29 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     }
   }
 
-  instanceUseTracker = cfg->useTracker;
-  if (cfg->useTracker && cfg->trackerAddr != NULL) {
-    strncpy(instanceTrackerAddr, cfg->trackerAddr, FILENAME_MAX - 1);
-    instanceTrackerAddr[FILENAME_MAX - 1] = '\0';
+  if (cfg->acceptRemoteClients) {
+    instanceUseTracker = cfg->useTracker;
+    if (cfg->useTracker && cfg->trackerAddr != NULL) {
+      strncpy(instanceTrackerAddr, cfg->trackerAddr, FILENAME_MAX - 1);
+      instanceTrackerAddr[FILENAME_MAX - 1] = '\0';
+    } else {
+      instanceTrackerAddr[0] = '\0';
+    }
+    instanceTrackerPort = cfg->trackerPort;
+    instanceUseNatKeepalive = cfg->useNatKeepalive;
   } else {
+    instanceUseTracker = FALSE;
     instanceTrackerAddr[0] = '\0';
+    instanceTrackerPort = 0;
+    instanceUseNatKeepalive = FALSE;
   }
-  instanceTrackerPort = cfg->trackerPort;
-  instanceUseNatKeepalive = cfg->useNatKeepalive;
   instanceUdpPort = cfg->udpPort;
 
   trackerTime = 5500;
   wbnTime = 0;
   natKeepaliveTime = 0;
 
-  instanceUseNatPortmap = cfg->useNatPortmap;
+  instanceUseNatPortmap = cfg->acceptRemoteClients && cfg->useNatPortmap;
   memset(&instancePortMap, 0, sizeof(instancePortMap));
   natPortmapWaitTicks = 0;
   natPortmapNotified  = FALSE;
@@ -157,7 +213,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   probeReflexivePort   = 0;
   manualProbeState     = MANUAL_PROBE_IDLE;
   manualProbeWaitTicks = 0;
-  if (cfg->useNatPortmap) {
+  if (instanceUseNatPortmap) {
     natPortMapRequest(cfg->udpPort, &instancePortMap);
   }
   return TRUE;
@@ -182,88 +238,55 @@ void serverInstanceTick(ServerSim *sim) {
     transportUdpServerRecv(sim);
   }
 
+  /* Run deferred removals for slots force-disconnected mid-publish (control
+   * queue overflow). Done here, after recv processing and outside any
+   * publish, so serverSimRemovePlayer can safely fan its events out. */
+  transportUdpServerDrainPendingRemovals(sim);
+
   if (sim->state == serverStateRunning) {
     /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
-    if (botManagerGetNumBots() > 0) {
-      botManagerTick(sim, sim->botAiType);
+    if (serverSimGetNumBots(sim) > 0) {
+      serverSimBotTick(sim, sim->botAiType);
     }
-    /* Run two sim ticks per 20ms callback to match the client's
-     * 100Hz rate (alternating keys tick + game tick).
-     * Drain events after each tick so they're captured before
-     * the next tick clears the event buffer.
-     *
-     * Two timing pairs (sim1Start/End, sim2Start/End) summed into
-     * simMs — the bookkeeping between the ticks (drain + memcpy +
-     * any game-over broadcast) stays where it is but is excluded
-     * from the simulation cost. */
-    Uint64 sim1Start = 0, sim1End = 0;
-    Uint64 sim2Start = 0, sim2End = 0;
-    {
-      ServerState preTickState = sim->state;
-      sim1Start = SDL_GetPerformanceCounter();
-      serverSimTick(sim);
-      sim1End = SDL_GetPerformanceCounter();
-      /* If game ended during this tick, broadcast game-over */
-      if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
-        if (sim->lobbyEnabled) {
-          /* Capture win message now while game state is intact;
-           * it will be sent after players return to the lobby. */
-          serverSimBuildWinMessage(sim,
-                                   sim->pendingWinMessage,
-                                   sizeof(sim->pendingWinMessage));
-          serverSimSendWbnWinEvents(sim);
-          transportUdpServerBroadcastGameOver(sim);
-        }
-      }
-      if (sim->state == serverStateRunning) {
-        transportUdpServerDrainEvents(sim);
+    /* Advance the sim by one 20ms frame.  serverSimTick internally runs
+     * the keys-tick + game-tick pair and accumulates events from both
+     * half-steps into a single frame's worth of state, so the prior
+     * save/restore dance is no longer needed here.  The half-step split
+     * is private to server_sim.c. */
+    ServerState preTickState = sim->state;
+    Uint64 simStart = SDL_GetPerformanceCounter();
+    serverSimTick(sim);
+    Uint64 simEnd = SDL_GetPerformanceCounter();
+    /* If game ended during this tick, publish game-over events */
+    if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
+      /* Decide the win/exit message and WBN crediting. The policy lives in
+       * the sim core (serverSimResolveGameOver) so the dedicated server and
+       * the in-process SP/host both resolve a game over identically. */
+      serverSimResolveGameOver(sim);
+      {
+        ControlEvent phaseEvt;
+        ControlEvent overEvt;
+        memset(&phaseEvt, 0, sizeof(phaseEvt));
+        phaseEvt.type = CTRL_GAME_PHASE_GAME_OVER;
+        serverSimPublishControl(sim, &phaseEvt);
+        memset(&overEvt, 0, sizeof(overEvt));
+        overEvt.type = CTRL_GAME_OVER;
+        serverSimPublishControl(sim, &overEvt);
       }
     }
     if (sim->state == serverStateRunning) {
-      /* Save tick 1's events so bots can see them next frame.
-       * transportUdpServerDrainEvents already captured them for
-       * UDP clients, but bots read directly from the event buffer
-       * via serverSimBuildSnapshot — tick 2 would clear these. */
-      GameEvent savedEvents[MAX_SNAPSHOT_EVENTS];
-      uint8_t savedCount = sim->eventCount;
-      ServerState preTickState;
-      if (savedCount > 0) {
-        memcpy(savedEvents, sim->events,
-               savedCount * sizeof(GameEvent));
-      }
-      preTickState = sim->state;
-      sim2Start = SDL_GetPerformanceCounter();
-      serverSimTick(sim);
-      sim2End = SDL_GetPerformanceCounter();
-      /* If game ended during this tick, broadcast game-over */
-      if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
-        if (sim->lobbyEnabled) {
-          serverSimBuildWinMessage(sim,
-                                   sim->pendingWinMessage,
-                                   sizeof(sim->pendingWinMessage));
-          serverSimSendWbnWinEvents(sim);
-          transportUdpServerBroadcastGameOver(sim);
-        }
-      }
-      if (sim->state == serverStateRunning) {
+      if (instanceAcceptRemoteClients) {
         transportUdpServerDrainEvents(sim);
-        /* Prepend tick 1's events before tick 2's events */
-        if (savedCount > 0 && savedCount + sim->eventCount <= MAX_SNAPSHOT_EVENTS) {
-          memmove(sim->events + savedCount, sim->events,
-                  sim->eventCount * sizeof(GameEvent));
-          memcpy(sim->events, savedEvents,
-                 savedCount * sizeof(GameEvent));
-          sim->eventCount += savedCount;
-        }
       }
     }
     double simFreq = (double)SDL_GetPerformanceFrequency();
-    double simMs = ((double)(sim1End - sim1Start)
-                    + (double)(sim2End - sim2Start)) * 1000.0 / simFreq;
+    double simMs = (double)(simEnd - simStart) * 1000.0 / simFreq;
     serverLifecycleRecordSimMs(simMs);
     /* Send snapshots only if still running */
     if (sim->state == serverStateRunning) {
-      transportUdpServerSend(sim);
+      if (instanceAcceptRemoteClients) {
+        transportUdpServerSend(sim);
+      }
     }
   } else {
     /* Lobby/countdown/gameover: single tick for state machine processing */
@@ -272,16 +295,30 @@ void serverInstanceTick(ServerSim *sim) {
 
     /* Check if a balance proposal just completed */
     if (sim->balanceProposal.broadcastNeeded) {
-      transportUdpServerBroadcastBalanceProposal(sim, sim->balanceProposal.teamForSlot);
+      ControlEvent evt;
+      memset(&evt, 0, sizeof(evt));
+      evt.type = CTRL_BALANCE_PROPOSAL;
+      memcpy(evt.u.balanceProposal.teamForSlot,
+             sim->balanceProposal.teamForSlot, MAX_TANKS);
+      serverSimPublishControl(sim, &evt);
       sim->balanceProposal.broadcastNeeded = false;
     }
 
     /* Handle state transitions */
     if (preTickState == serverStateCountdown) {
       if (sim->state == serverStateRunning) {
-        /* Countdown finished — game started */
-        transportUdpServerBroadcastGameStart(sim);
-        if (botManagerGetNumBots() > 0) {
+        /* Countdown finished — game started.  Reset per-client and
+         * per-slot transport state before publishing the RUNNING
+         * transition so the codec encodes PACKET_GAME_START against
+         * fresh queues. */
+        transportUdpServerOnGameStart(sim);
+        {
+          ControlEvent evt;
+          memset(&evt, 0, sizeof(evt));
+          evt.type = CTRL_GAME_PHASE_RUNNING;
+          serverSimPublishControl(sim, &evt);
+        }
+        if (serverSimGetNumBots(sim) > 0) {
           botManagerOnGameStart(sim);
         }
         /* Notify WBN that we are now in-game */
@@ -293,16 +330,34 @@ void serverInstanceTick(ServerSim *sim) {
             if (sim->playerConnected[pi] &&
                 winboloNetIsPlayerParticipant(pi)) {
               winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
-                                 pi, WINBOLO_NET_NO_PLAYER);
+                                 pi, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
             }
           }
+        }
+        /* Force a snapshot to every client in the same tick as the
+         * RUNNING publish above. The running-state branch's periodic
+         * transportUdpServerSend fires on the NEXT tick (~20ms), so
+         * without this push the client receives CTRL_GAME_PHASE_RUNNING,
+         * flips inLobby=false, and renders its (stale, round-1) MY_TANK
+         * for a frame before the first authoritative snapshot lands.
+         * serverSendSnapshot drains the per-client control queue into
+         * the same packet, so RUNNING and the fresh tank state arrive
+         * bundled — pairs with the client's hasPredictedTank=FALSE
+         * reset on LOBBY to make that first snapshot run the init
+         * branch (stocks, camera centre). */
+        if (instanceAcceptRemoteClients) {
+          transportUdpServerSend(sim);
         }
       } else if (sim->state == serverStateCountdown &&
                  sim->countdownTicks > 0 &&
                  sim->countdownTicks % 50 == 0) {
         /* Broadcast countdown tick (once per second) */
         uint8_t secs = (uint8_t)((sim->countdownTicks + 49) / 50);
-        transportUdpServerBroadcastCountdown(sim, secs);
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_GAME_PHASE_COUNTDOWN;
+        evt.u.gamePhase.countdownSeconds = secs;
+        serverSimPublishControl(sim, &evt);
       }
     }
     if (preTickState == serverStateGameOver &&
@@ -314,11 +369,22 @@ void serverInstanceTick(ServerSim *sim) {
       /* Pick next map from rotation if mapdir is configured */
       if (sim->mapDirFiles != NULL) {
         serverSimMapDirPickRandom(sim);
-        transportUdpServerNotifyMapChange(sim);
       }
-      /* Re-register with WBN for the new round */
+      /* End the round's WBN session, upload the round log against the
+       * just-quit key (WBN rejects uploads to an active session), then
+       * register a fresh session for the next round. The upload has to
+       * sit between End and Begin — End sends server/quit so WBN will
+       * accept the upload, Begin overwrites winboloNetServerKey with
+       * the new round's key. handleGameOver already stashed the
+       * round's filename when the GAME_OVER phase fired; Flush is a
+       * no-op when there's nothing pending or when WBN is offline. */
       if (winbolonetIsRunning()) {
-        winbolonetReturnToLobby(
+        winbolonetEndSession();
+      }
+      roundLogFlush();
+      if (winbolonetIsRunning()) {
+        serverSimRefreshWbnLobbyInfo(sim);
+        winbolonetBeginSession(
           sim->mapName, sim->serverPort,
           (BYTE)gameTypeGet(&sim->sim.game),
           (BYTE)sim->botAiType,
@@ -329,9 +395,51 @@ void serverInstanceTick(ServerSim *sim) {
           serverSimGetNumNeutralBases(sim),
           serverSimGetNumNeutralPills(sim),
           serverSimGetNumPlayers(sim));
+        /* Push the freshly rotated server_key to every WBN-participating
+         * client so they can mint a new player_key and re-auth.  Gated
+         * inside; no-op when WBN isn't running. */
+        transportUdpServerBroadcastWbnRekey(sim);
       }
-      /* Returned to lobby — broadcast full lobby state */
-      transportUdpServerBroadcastLobbyState(sim);
+      /* Close the rotation window: the new session's server_key is now
+       * installed, so the deferred lobby_update (held dirty by
+       * serverSimReturnToLobby's map pick) flushes against the right
+       * key on the next WBN tick. Cleared unconditionally so a WBN-off
+       * run doesn't leave the flag stuck. */
+      sim->wbnSessionRotating = FALSE;
+      /* Republish the bot brain catalogue.  Mid-game joiners were gated
+       * out of the BrainList during their sync replay (see
+       * serverSimSyncSubscriber), so they need it now before the lobby
+       * UI's AiConfig combobox appears.  In-lobby clients get it as a
+       * (cheap) refresh. */
+      {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        serverSimFillLobbyBrainListEvent(sim, &evt);
+        serverSimPublishControl(sim, &evt);
+      }
+      /* Republish lobby state so every client's mirror reflects the
+       * fresh lobby. serverSimReturnToLobby's contract says the caller
+       * does this fan-out; CTRL_GAME_PHASE_LOBBY alone doesn't carry
+       * the inLobby flag or per-slot data, so without these the host's
+       * own UDP loopback ClientSim leaves cs->inLobby false and never
+       * opens the lobby dialog — the window looks frozen because there
+       * is no game view either. */
+      serverSimPublishLobbySettings(sim);
+      {
+        BYTE pi;
+        /* Republish EVERY slot, not just connected ones. A player who
+         * left mid-round had their CTRL_LOBBY_SLOT suppressed — the
+         * leave-time publish is gated to lobby/countdown state
+         * (transport_udp_server.c PACKET_QUIT), so a running-state quit
+         * never told clients to clear that slot. The client's lobbySlots
+         * mirror is only mutated by CTRL_LOBBY_SLOT (CTRL_PLAYER_LEAVE is
+         * chat-only), so without this the departed player lingers as a
+         * ghost in the returning lobby. A vacant slot fills as
+         * connected=false (serverSimFillLobbySlotEvent), which clears it. */
+        for (pi = 0; pi < MAX_TANKS; pi++) {
+          serverSimPublishLobbySlot(sim, pi);
+        }
+      }
       /* Send the win message now that players are back in the lobby */
       if (sim->pendingWinMessage[0] != '\0') {
         transportUdpServerSendServerMessage(sim->pendingWinMessage);
@@ -339,11 +447,37 @@ void serverInstanceTick(ServerSim *sim) {
       }
     }
 
-    /* Periodic lobby snapshot — twice per second (every 25 ticks)
-     * for ping/country updates and state consistency */
-    if ((sim->state == serverStateLobby || sim->state == serverStateCountdown) &&
-        sim->tick % 25 == 0) {
-      transportUdpServerBroadcastLobbyState(sim);
+    /* Retransmit unacked control events every 4 ticks (~80ms at 50 Hz)
+     * for loss recovery during lobby/countdown/gameover.  During running,
+     * the snapshot tail carries the per-client unacked tail every tick,
+     * so this scan only matters when snapshots aren't flowing.
+     *
+     * Gate on udpServer.tickCount (always-advancing) rather than sim->tick
+     * because sim->tick freezes during serverStateCountdown and
+     * serverStateGameOver (see serverSimTick in server_sim.c).  A frozen
+     * sim->tick whose residue mod 4 isn't 0 would silently disable
+     * retransmit for the entire countdown / game-over window. */
+    if (transportUdpServerGetTickCount() % 4 == 0) {
+      transportUdpServerRetransmitUnackedControl();
+    }
+
+    /* Periodic lobby-slot republish so the ping column in the lobby
+     * UI tracks live values instead of freezing between unrelated
+     * slot changes (ready toggle, bot config, etc.). CTRL_LOBBY_SLOT
+     * carries pingMs; without this heartbeat a quiet lobby shows the
+     * value from whenever someone last clicked something. 250 ticks
+     * at 50 Hz is ~5 s, well under the perceptible-staleness window
+     * and far below the wire cost the queue can absorb. Skipped in
+     * running state — snapshots already carry pingMs per tick there. */
+    if (transportUdpServerGetTickCount() % 250 == 0 &&
+        (sim->state == serverStateLobby ||
+         sim->state == serverStateCountdown)) {
+      BYTE pi;
+      for (pi = 0; pi < MAX_TANKS; pi++) {
+        if (sim->playerConnected[pi]) {
+          serverSimPublishLobbySlot(sim, pi);
+        }
+      }
     }
 
     /* Timeout check — not called via transportUdpServerSend() during lobby */
@@ -368,6 +502,15 @@ void serverInstanceTick(ServerSim *sim) {
       sim->state != serverStateCountdown &&
       serverSimCheckEmptyReset(sim)) {
     serverSimConsoleMessage("Empty reset timer expired. Resetting to lobby...");
+    /* Empty-reset bypasses serverSimReturnToLobby, so open the WBN
+     * session-rotation window here before the map pick below reports
+     * the next round's map. Cleared after BeginSession installs the
+     * new key. */
+    sim->wbnSessionRotating = TRUE;
+    /* Empty-reset fires from the running state without going through
+     * GAME_OVER, so handleGameOver never stashed the in-flight round.
+     * Do it here so the upload below picks it up. */
+    roundLogStash();
     serverSimResetGameWorld(sim);
     sim->state = serverStateLobby;
     sim->gameLength = sim->originalGameLength;
@@ -376,11 +519,16 @@ void serverInstanceTick(ServerSim *sim) {
     /* Pick next map from rotation if mapdir is configured */
     if (sim->mapDirFiles != NULL) {
       serverSimMapDirPickRandom(sim);
-      transportUdpServerNotifyMapChange(sim);
     }
-    /* Re-register with WBN for the new round */
+    /* End the WBN session, upload the round's log against the just-
+     * quit key, then begin a new session for the next round. Same
+     * sandwich as the game-over → lobby site (see comment there). */
     if (winbolonetIsRunning()) {
-      winbolonetReturnToLobby(
+      winbolonetEndSession();
+    }
+    roundLogFlush();
+    if (winbolonetIsRunning()) {
+      winbolonetBeginSession(
         sim->mapName, sim->serverPort,
         (BYTE)gameTypeGet(&sim->sim.game),
         (BYTE)sim->botAiType,
@@ -391,15 +539,51 @@ void serverInstanceTick(ServerSim *sim) {
         serverSimGetNumNeutralBases(sim),
         serverSimGetNumNeutralPills(sim),
         serverSimGetNumPlayers(sim));
+      /* Same rotation push as the game-over → lobby site. */
+      transportUdpServerBroadcastWbnRekey(sim);
     }
-    transportUdpServerBroadcastLobbyState(sim);
+    /* Close the rotation window — new key installed (or WBN off). */
+    sim->wbnSessionRotating = FALSE;
+    /* Empty-reset bypasses serverSimReturnToLobby, so the lobby phase
+     * event is never published from the state machine. Publish it
+     * explicitly so handleLobbyEnter fires and starts a fresh log for
+     * the next round (mirroring serverSimReturnToLobby's tail). */
+    {
+      ControlEvent evt;
+      memset(&evt, 0, sizeof(evt));
+      serverSimFillGamePhaseEvent(sim, &evt);
+      serverSimPublishControl(sim, &evt);
+    }
+    /* Push the freshly-reset map to every audience — same reasoning
+     * as the serverSimReturnToLobby tail. The wire helper updates
+     * the UDP server's cached compressed map / JOIN_ACCEPT / per-
+     * client download tracking; the CTRL_LOBBY_MAP_CHANGE publish
+     * fans through the bus so in-process subscribers reinstall via
+     * boundServerSim. Empty-reset is usually a no-op for the wire
+     * leg (no UDP clients at the moment the reset fires), but any
+     * SP host or replay-log subscriber bound to this sim still
+     * needs the event. */
+    if (instanceAcceptRemoteClients) {
+      transportUdpServerOnLobbyMapChange(sim);
+    }
+    {
+      ControlEvent mapEvt;
+      memset(&mapEvt, 0, sizeof(mapEvt));
+      mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
+      serverSimPublishControl(sim, &mapEvt);
+    }
   }
 
   threadsReleaseMutex();
 
   if (wbnTime > 100) {
     threadsWaitForMutex();
+    /* Refresh the WBN lobby snapshot so server/update carries current
+     * human/bot counts, then flush a deferred lobby_update if its rate
+     * window has elapsed. */
+    serverSimRefreshWbnLobbyInfo(sim);
     winbolonetServerUpdate(serverSimGetNumPlayers(sim), serverSimGetNumNeutralBases(sim), serverSimGetNumNeutralPills(sim), FALSE);
+    serverSimWbnLobbyTick(sim);
     threadsReleaseMutex();
     wbnTime = 0;
   }
@@ -467,14 +651,20 @@ void serverInstanceTick(ServerSim *sim) {
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
+  if (instanceAcceptRemoteClients) {
+    mpDiagLogEnable(0);
+  }
   if (instanceUseNatPortmap) {
     natPortMapRelease(&instancePortMap);
   }
   if (instanceUseWbn) {
     winbolonetDestroy(TRUE);
   }
-  transportUdpServerDestroy();
+  if (instanceAcceptRemoteClients) {
+    transportUdpServerDestroy();
+  }
   botManagerDestroy(sim);
+  instanceAcceptRemoteClients = FALSE;
   instanceUseWbn = FALSE;
   instanceUseTracker = FALSE;
   instanceUseNatKeepalive = FALSE;
@@ -491,6 +681,12 @@ void serverInstanceShutdown(ServerSim *sim) {
   probeReflexivePort   = 0;
   manualProbeState     = MANUAL_PROBE_IDLE;
   manualProbeWaitTicks = 0;
+}
+
+bool serverInstanceIsNatPunchActive(void) {
+  /* No mutex needed — these are plain bools written once at startup
+   * / cleared once at shutdown. */
+  return instanceUseNatKeepalive && instanceUseTracker;
 }
 
 void serverInstanceGetPortmapInfo(ServerPortmapInfo *out) {

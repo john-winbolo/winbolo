@@ -26,7 +26,9 @@ extern "C" {
  * ------------------------------------------------------- */
 extern "C" BYTE  zoomFactor;
 extern "C" bool  soundEffects;
+extern "C" int   soundVolume;
 extern "C" bool  isInMenu;
+extern "C" void  windowSetSoundVolume(int pct);
 
 /* Zoom constants (from winbolo.h) */
 #ifndef ZOOM_FACTOR_NORMAL
@@ -175,6 +177,13 @@ void imguiIosRender(void) {
         /* --- Sound --- */
         ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SOUND));
         ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &soundEffects);
+        {
+            int vol = soundVolume;
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) {
+                windowSetSoundVolume(vol);
+            }
+        }
 
         /* --- FPS --- */
         ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_PERFORMANCE));

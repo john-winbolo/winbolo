@@ -168,7 +168,7 @@ void shellAdvance1Tick(WORLD *x, WORLD *y,
  * stores it on the shell record: SHELL_LIFE * len - SHELL_START_ADD,
  * floored at 0. `len` is the value the firing tank passed (sightLen/2
  * for tanks, PILLBOX_FIRE_DISTANCE for pills). */
-int  shellLifeTicks(int len);
+int  shellLifeTicks(float len);
 
 /* Convert a (origin → target) wu vector to the integer bolo bradian
  * angle (0..255) that a shooter would need to fire along that line.

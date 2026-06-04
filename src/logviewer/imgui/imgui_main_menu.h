@@ -49,8 +49,21 @@ void lv_imgui_cache_menu_bar_height(void);
  * Returns true if Information mode, false if Select Team mode. */
 int lv_imgui_get_mode_information(void);
 
-/* Open the WinBolo.net log browser as a blocking modal.  Reused by the
- * compact-mode popup menu; same flow as the desktop File menu. */
+/* Mutators / accessors used by the macOS native menu shim. The in-window
+ * ImGui menu owns this state today; the native menu needs to read and
+ * flip the same flags so checkmarks and behaviour stay aligned. */
+void lv_imgui_set_mode_information(int isInformation);
+int  lv_imgui_get_tank_centred(void);
+void lv_imgui_toggle_tank_centred(void);
+int  lv_imgui_get_dns_lookups(void);
+void lv_imgui_toggle_dns_lookups(void);
+
+/* Wrappers around static helpers in imgui_main_menu.cpp that the macOS
+ * shim needs to invoke. zoom_at_center centres the zoom on the current
+ * window. lv_imgui_open_wbn_browser blocks until the modal closes;
+ * reused by the compact-mode popup menu so it shares the desktop File
+ * menu flow. */
+void lv_imgui_zoom_at_center(int stepIndex);
 void lv_imgui_open_wbn_browser(void);
 
 #ifdef __cplusplus

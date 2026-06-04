@@ -156,7 +156,7 @@ val assetsBrainsDir = file("src/main/assets/brains")
 
 tasks.register<Copy>("copyBrainAssets") {
     from(brainsDir) {
-        include("NewAutopilot/**/*.lua")
+        include("GoalHunter/**/*.lua")
     }
     into(assetsBrainsDir)
 }

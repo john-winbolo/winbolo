@@ -31,7 +31,6 @@ struct ClientSim;
 
 typedef struct {
   int  (*welcomeShow)(void);
-  int  (*gameSetupShow)(struct ClientSim *cs);
   int  (*udpSetupShow)(void);
   int  (*gameBrowserShow)(const char *title, int useTracker);
   void (*setNameShow)(struct ClientSim *cs, bool inGame);

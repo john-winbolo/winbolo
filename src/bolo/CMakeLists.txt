@@ -1,13 +1,11 @@
 # bolo_static — the bulk of the sim runtime in a single static library.
 #
-# 66 of the 69 src/bolo/*.c files compile here. Three stay per-target
-# in each binary's *_SOURCES because they have target-divergent compile
-# defs whose gated code paths can't be archive-dropped (the .o files
-# are always live, so a single shared compile can't satisfy every
-# consumer's view):
+# Two src/bolo/*.c files stay per-target in each binary's *_SOURCES
+# because they have target-divergent compile defs whose gated code
+# paths can't be archive-dropped (the .o files are always live, so
+# a single shared compile can't satisfy every consumer's view):
 #
-#   client_mapload.c        — HAVE_STEAM gates a PLAYER_FLAG_STEAM_BUILD bit
-#   transport_udp_client.c  — HAVE_STEAM (same flag, JOIN_REQUEST path)
+#   transport_udp_client.c  — HAVE_STEAM gates a PLAYER_FLAG_STEAM_BUILD bit (JOIN_REQUEST path)
 #   nat_portmap.c           — BOLO_PORTMAP swaps real libplum for no-op stubs
 #
 # Built with the sim_owner include-rule profile, so TUs see public/,
@@ -20,9 +18,11 @@ add_library(bolo_static STATIC
     allience.c
     bases.c
     bolo_map.c
+    bolo_rand.c
     bot_manager.c
     bot_worker_pool.c
     brain_data.c
+    brain_list.c
     brain_overlay.c
     brain_pathfinder.c
     brain_pathfinder_serial.c
@@ -49,7 +49,10 @@ add_library(bolo_static STATIC
     interpolation.c
     labels.c
     lgm.c
+    lobby_bot_pools.c
     log.c
+    mapgen.c
+    mapgen_maze.c
     messages.c
     mines.c
     minesexp.c
@@ -75,6 +78,8 @@ add_library(bolo_static STATIC
     swamp.c
     tank.c
     tankexp.c
+    transport_command_codec.c
+    transport_control_codec.c
     transport_local.c
     transport_udp_common.c
     treegrow.c
@@ -82,6 +87,7 @@ add_library(bolo_static STATIC
     udppackets.c
     util.c
     viewport.c
+    wbn_key_codec.c
 )
 
 bolo_apply_include_rules(bolo_static sim_owner)
@@ -127,6 +133,13 @@ endif()
 # uses today. Keeps tentative definitions like debug_file_output.c's
 # `char fileName[2048]` mergeable with the strong definition of the
 # same name in servermain.c (WinBoloDS).
-if(NOT MSVC)
+#
+# Emscripten/wasm-ld can't merge COMMON symbols, and there's no
+# servermain.c in the wasm link anyway. -include sys/types.h brings
+# in the BSD typedefs (u_char, u_short) that brain.h relies on under
+# non-_WIN32 platforms.
+if(EMSCRIPTEN)
+    target_compile_options(bolo_static PRIVATE -fno-common -include sys/types.h)
+elseif(NOT MSVC)
     target_compile_options(bolo_static PRIVATE -fcommon)
 endif()

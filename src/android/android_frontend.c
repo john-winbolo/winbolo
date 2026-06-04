@@ -40,6 +40,7 @@ extern bool showGunsight;
 extern bool soundEffects;
 extern bool backgroundSound;
 extern bool useSoundKeepalive;
+extern int  soundVolume;
 extern bool allowNewPlayers;
 extern bool showNewswireMessages;
 extern bool showAssistantMessages;
@@ -185,6 +186,12 @@ void windowSoundKeepalive(void) {
     soundKeepalive(useSoundKeepalive);
   }
 }
+void windowSetSoundVolume(int pct) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  soundVolume = pct;
+  soundSetVolume(pct);
+}
 void windowMenuAllowNewPlayers_toggle(ClientSim *cs) {
   allowNewPlayers = !allowNewPlayers;
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
@@ -329,6 +336,16 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   }
 }
 
+void frontEndDrawReturningToLobby(ClientSim *cs) {
+  if (hideMainView == FALSE && drawBusy == FALSE) {
+    sdl3DrawReturningToLobby(cs);
+  }
+}
+
+void frontEndAudioReturningToLobby(bool active) {
+  soundSetReturningToLobby(active);
+}
+
 void frontEndGameOver(ClientSim *cs) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Android] Game over (time limit expired)");
@@ -353,10 +370,16 @@ void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char
   sdl3ImguiSetPlayer((unsigned char)value, str, cc);
   sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
 }
+void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientSimIsRunning(cs)) return;
+  sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
+}
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
 }
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }
 

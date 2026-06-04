@@ -14,6 +14,7 @@
 
 #include "global.h"
 #include "client_sim.h"
+#include "../../winbolonet/winbolonet_server.h"
 
 /* Portable RECT */
 #ifndef _WIN32
@@ -28,8 +29,10 @@ typedef struct { long left, top, right, bottom; } RECT;
 bool cursorSetup(void) { return true; }
 void cursorCleanup(void) {}
 void cursorMove(int mouseX, int mouseY) { (void)mouseX; (void)mouseY; }
-bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue) {
+bool cursorPos(RECT *rcWindow, BYTE *xValue, BYTE *yValue,
+               int subPosX, int subPosY) {
     (void)rcWindow; (void)xValue; (void)yValue;
+    (void)subPosX; (void)subPosY;
     return false;
 }
 void cursorAcquireCursor(void) {}
@@ -44,19 +47,9 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
     return false;
 }
 
-bool winbolonetCreateClient(const char *token, const char *serverKey, char *errorMsg) {
-    (void)token; (void)serverKey; (void)errorMsg;
-    return false;
-}
-
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 
 void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
-void winboloNetGetMyClientKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
-bool winboloNetVerifyClientKey(const char *playerKey, char *userName, BYTE playerNum) {
-    (void)playerKey; (void)userName; (void)playerNum;
-    return false;
-}
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
     (void)playerNum; (void)numPlayers; (void)freeBases; (void)freePills;
 }
@@ -64,8 +57,8 @@ void winbolonetGoodbye(void) {}
 void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
     (void)array; (void)length; (void)numTeams;
 }
-void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB) {
-    (void)eventType; (void)isServer; (void)playerA; (void)playerB;
+void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
+    (void)eventType; (void)isServer; (void)playerA; (void)playerB; (void)aIsBot; (void)bIsBot;
 }
 void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePills, bool sendNow) {
     (void)numPlayers; (void)numFreeBases; (void)numFreePills; (void)sendNow;
@@ -73,11 +66,15 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
 bool winbolonetIsRunning(void) { return false; }
 bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return false; }
 void winboloNetSendLock(bool isLocked) { (void)isLocked; }
-bool winbolonetServerVerifyToken(const char *token, BYTE playerNum, char *errorMsg,
-                                 bool *hasSteam, bool *isSupporter) {
-    (void)token; (void)playerNum; (void)errorMsg;
+bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
+    (void)playerKey; (void)playerName; (void)playerNum; (void)errorMsg;
     if (hasSteam)    *hasSteam    = false;
     if (isSupporter) *isSupporter = false;
+    return false;
+}
+bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg) {
+    (void)apiToken; (void)serverKey; (void)errorMsg;
+    if (playerKeyOut) playerKeyOut[0] = '\0';
     return false;
 }
 bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
@@ -103,12 +100,12 @@ void winbolonetThreadAddRequest(const char *ep, const char *jb) { (void)ep; (voi
 
 void winbolonetEventsCreate(void) {}
 void winbolonetEventsDestroy(void) {}
-void winbolonetEventsAddItem(BYTE itemType, const char *keyA, const char *keyB) {
-    (void)itemType; (void)keyA; (void)keyB;
+void winbolonetEventsAddItem(BYTE itemType, const char *keyA, const char *keyB, bool aIsBot, bool bIsBot) {
+    (void)itemType; (void)keyA; (void)keyB; (void)aIsBot; (void)bIsBot;
 }
 int winbolonetEventsGetSize(void) { return 0; }
-BYTE winbolonetEventsRemove(char *keyA, char *keyB) {
-    (void)keyA; (void)keyB;
+BYTE winbolonetEventsRemove(char *keyA, char *keyB, bool *aIsBot, bool *bIsBot) {
+    (void)keyA; (void)keyB; (void)aIsBot; (void)bIsBot;
     return 0;
 }
 
@@ -224,6 +221,10 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
     (void)mapName; (void)numBases; (void)numPills; (void)freeBases; (void)freePills;
 }
 
+void winbolonetSetLobbyInfo(const WbnLobbyInfo *info) { (void)info; }
+
+void winbolonetSendLobbyUpdate(void) { }
+
 /* ---- skins stubs (requires minizip/zlib) ---- */
 
 bool skinsLoadSkin(char *fileName) { (void)fileName; return false; }
@@ -257,3 +258,4 @@ bool logCheckTankSame(BYTE playerNum, BYTE mx, BYTE my, BYTE pxy, BYTE opt) {
     (void)playerNum; (void)mx; (void)my; (void)pxy; (void)opt;
     return true;
 }
+void logSetLobbyMode(bool enabled) { (void)enabled; }

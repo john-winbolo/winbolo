@@ -53,6 +53,7 @@ typedef struct {
     uint8_t  flags;         /* Bit 0: autoslow, bits 2-3: gunsight adj */
     uint32_t eventAck;      /* Reliable event ACK: next expected seq (0 = none) */
     uint32_t mapEventAck;   /* Map event ACK: next expected map event seq (0 = none) */
+    uint32_t controlEventAck; /* Control event ACK: next expected control event seq (0 = none) */
     uint16_t pingMs;        /* Client's self-measured RTT in ms */
 } InputPacket;
 
@@ -74,7 +75,17 @@ typedef struct {
     uint32_t reliableBaseSeq;     /* Sequence number of first reliable event in this snapshot */
     /* mapEventCount + mapEventBaseSeq are on the wire only, not stored here —
      * map events are merged into the same snapshotEvents array on the client. */
+    /* controlEventCount + controlEventBaseSeq are on the wire only, not
+     * stored here — control events are dispatched directly to
+     * clientSimApplyControlOrdered as the snapshot is decoded. */
+    uint8_t  controlEventCount;   /* Wire-only mirror — kept here for diagnostic completeness */
+    uint32_t controlEventBaseSeq; /* Wire-only mirror — kept here for diagnostic completeness */
     uint16_t mapChecksum;         /* CRC-16 of map terrain (non-zero on full sync ticks) */
+    /* Forced return-to-lobby countdown. > 0 means the server is going
+     * to transition to gameOver in this many serverSimTick calls.
+     * 0 = no pending forced transition. Clients render their own
+     * "Returning to lobby in N" off this value. */
+    uint16_t returnToLobbyTicks;
 } SnapshotHeader;
 
 /* High bit of TankSnapshot.playerNum: when set, this entry is a "hidden stub"

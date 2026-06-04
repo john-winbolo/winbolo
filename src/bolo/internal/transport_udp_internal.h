@@ -40,6 +40,7 @@
 #include "netpacks.h"
 #include "input_packet.h"
 #include "gametype.h"
+#include "control_event.h"
 
 /* Maximum UDP datagram payload we'll send.
  * Sits under the standard 1500-byte Ethernet MTU minus IPv4 (20) + UDP (8)
@@ -70,13 +71,58 @@ static inline bool eventQueueHasSpace(const ClientEventQueue *q) {
     return (q->nextSeq - q->ackedSeq) < RELIABLE_EVENT_BUFFER_SIZE;
 }
 
+/* Per-client reliable control event queues.  Smaller than the game /
+ * map queues because control events are produced at lower rates, but
+ * sized large enough that a sync-replay burst (~15 events) plus any
+ * concurrent publishes cannot overflow under normal operation —
+ * silently dropping an overflow event would resurrect exactly the
+ * lobby-desync bug class this plan exists to fix. */
+#define CONTROL_EVENT_QUEUE_SIZE 128
+
+typedef struct {
+    uint32_t      seq;
+    ControlEvent  event;
+} ReliableControlEvent;
+
+typedef struct {
+    ReliableControlEvent buffer[CONTROL_EVENT_QUEUE_SIZE];
+    uint32_t             nextSeq;
+    uint32_t             ackedSeq;
+} ClientControlEventQueue;
+
+static inline bool controlEventQueueHasSpace(const ClientControlEventQueue *q) {
+    return (q->nextSeq - q->ackedSeq) < CONTROL_EVENT_QUEUE_SIZE;
+}
+
+/* Queue maintenance contract — the invariants that must hold at every
+ * observable point.  Call from every site that mutates ackedSeq, nextSeq,
+ * or buffer (enqueue, ack-advance, reset/wipe, slot-init).  In release
+ * builds this expands to nothing.
+ *
+ * History: every queue corruption we've shipped to date violated one of
+ * these.  The stale-ack-after-wipe bug pushed ackedSeq past nextSeq; the
+ * empty-queue-idle-timer bug doesn't violate these invariants but exposed
+ * how absent the maintenance-contract documentation was.  Wire-checking
+ * here surfaces the next sibling at first occurrence rather than waiting
+ * for the symptom. */
+static inline void controlEventQueueAssertValid(const ClientControlEventQueue *q,
+                                                const char *site) {
+    (void)site;
+    SDL_assert(q->ackedSeq <= q->nextSeq);
+    SDL_assert((q->nextSeq - q->ackedSeq) <= CONTROL_EVENT_QUEUE_SIZE);
+}
+
 /* Join retry interval in ticks (1 second) */
 #define JOIN_RETRY_INTERVAL 50
 
 /* Max join attempts before giving up */
 #define JOIN_MAX_RETRIES 10
 
-#define PACKET_HEADER_SIZE 8
+/* PACKET_HEADER_SIZE lives in netpacks.h next to the rest of the
+ * wire constants — clients that need to build a wire packet from
+ * outside the UDP transport (e.g. client_net.c building chat) can
+ * see it without dragging this header's SDL + platform_net
+ * dependencies. */
 
 /* Lobby slot wire format (variable length).
  *   Disconnected slot: connected(0) — 1 byte total.
@@ -90,15 +136,8 @@ static inline bool eventQueueHasSpace(const ClientEventQueue *q) {
  * decoders length-check each field and reject malformed packets. */
 #define LOBBY_SLOT_WIRE_SIZE (1 + 1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2 + 1 + 1)
 
-/* Lobby settings tail: mapName(36) + gameType(1) + hiddenMines(1) + aiType(1) + gameLength(4) + pillCount(1) + baseCount(1) + startCount(1) + mapSkipAvailable(1) */
-#define LOBBY_SETTINGS_SIZE  (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1)
-/* Upper bound for buffer sizing: serverState(1) + 16 max-size slots + settings tail. */
-#define LOBBY_STATE_PAYLOAD  (1 + MAX_TANKS * LOBBY_SLOT_WIRE_SIZE + LOBBY_SETTINGS_SIZE)
-
-#define INPUT_PACKET_WIRE_SIZE 21
+#define INPUT_PACKET_WIRE_SIZE 25
 #define TANK_SNAPSHOT_WIRE_SIZE 27
-/* Upper bound: slot index(1) + max-size slot. */
-#define LOBBY_UPDATE_PAYLOAD (1 + LOBBY_SLOT_WIRE_SIZE)
 
 /* ---- Serialization helpers ---- */
 
@@ -127,7 +166,7 @@ void unpackPillSnapshot(const uint8_t *buf, PillSnapshot *ps);
 
 /* ---- Socket helpers ---- */
 
-SOCKET createUdpSocket(void);
+SOCKET createUdpSocket(bool exclusive);
 void udpSendTo(SOCKET sock, const uint8_t *buf, int len,
                const struct sockaddr_in *addr);
 int udpRecvFrom(SOCKET sock, uint8_t *buf, int maxLen,
