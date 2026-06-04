@@ -82,6 +82,23 @@ static bool manualScrollKeepsTankOnScreen(ClientSim *csPtr, int newXOff, int new
   return TRUE;
 }
 
+bool clientRenderCanScroll(ClientSim *csPtr, updateType value) {
+  int xOff, yOff;
+
+  if (MY_TANK(csPtr) == NULL) return FALSE;
+  if (clientSimIsInPillView(csPtr)) return TRUE; /* pill view scrolls freely */
+
+  xOff = (int)clientSimGetXOffset(csPtr);
+  yOff = (int)clientSimGetYOffset(csPtr);
+  switch (value) {
+  case left:  return manualScrollKeepsTankOnScreen(csPtr, xOff - 1, yOff);
+  case right: return manualScrollKeepsTankOnScreen(csPtr, xOff + 1, yOff);
+  case up:    return manualScrollKeepsTankOnScreen(csPtr, xOff, yOff - 1);
+  case down:  return manualScrollKeepsTankOnScreen(csPtr, xOff, yOff + 1);
+  default:    return TRUE;
+  }
+}
+
 /* DEBUG: log every arrow-key pan that sets autoScrollOverRide. Pairs
  * with the OVERRIDE_HOLD / OVERRIDE_CLEAR entries autoscroll.log gets
  * from scroll.c so we can tell whether the producer side is actually
