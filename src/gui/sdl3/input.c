@@ -241,13 +241,19 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
   int dx = 0, dy = 0;
   int step = smoothScrollGetStepPx();
 
-  /* Keyboard contribution (dx/dy in {-1, 0, +1}). */
-  if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
-  if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
-  if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
-  if (KEY_DOWN(setKeys->kiScrollDown))  dy += 1;
-  dx *= step;
-  dy *= step;
+  /* Keyboard contribution (dx/dy in {-1, 0, +1}).  Only when smooth
+     scrolling is enabled — with it off the caller drives the scroll keys
+     through the legacy step-scroll path instead, so feeding them here too
+     would double-scroll.  The gamepad stick below is analog and always
+     uses this smooth path regardless of the preference. */
+  if (smoothScrollingEnabled) {
+    if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
+    if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
+    if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
+    if (KEY_DOWN(setKeys->kiScrollDown))  dy += 1;
+    dx *= step;
+    dy *= step;
+  }
 
   /* Gamepad contribution (right stick, normalised).  When the free
      build cursor is active the right stick steers the cursor instead
@@ -422,21 +428,25 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     smoothScrollAccumX = 0;
     smoothScrollAccumY = 0;
     sdl3DrawSetDragOffset(0, 0);
-  } else if (smoothScrollingEnabled) {
-    smoothScrollTick(cs, setKeys);
   } else {
-    /* Drop any stale sub-tile accumulation from a previous smooth-scroll session. */
-    smoothScrollAccumX = 0;
-    smoothScrollAccumY = 0;
-    scrollKeyCount++;
-    if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
-      scrollKeyCount = 0;
-      bool scrolled = FALSE;
-      if (KEY_DOWN(setKeys->kiScrollUp))    { clientRenderFrame(cs, up);    scrolled = TRUE; }
-      if (KEY_DOWN(setKeys->kiScrollDown))  { clientRenderFrame(cs, down);  scrolled = TRUE; }
-      if (KEY_DOWN(setKeys->kiScrollLeft))  { clientRenderFrame(cs, left);  scrolled = TRUE; }
-      if (KEY_DOWN(setKeys->kiScrollRight)) { clientRenderFrame(cs, right); scrolled = TRUE; }
-      if (scrolled) clientSimSetAutoScrollOverride(cs, TRUE);
+    /* smoothScrollTick always runs so the gamepad right stick scrolls
+       the map (and steers the build cursor) regardless of the keyboard
+       smooth-scroll preference — the stick is analog and inherently
+       smooth.  Its keyboard contribution is internally gated on
+       smoothScrollingEnabled; when that is off, the scroll keys fall
+       through to the legacy step-scroll below. */
+    smoothScrollTick(cs, setKeys);
+    if (!smoothScrollingEnabled) {
+      scrollKeyCount++;
+      if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
+        scrollKeyCount = 0;
+        bool scrolled = FALSE;
+        if (KEY_DOWN(setKeys->kiScrollUp))    { clientRenderFrame(cs, up);    scrolled = TRUE; }
+        if (KEY_DOWN(setKeys->kiScrollDown))  { clientRenderFrame(cs, down);  scrolled = TRUE; }
+        if (KEY_DOWN(setKeys->kiScrollLeft))  { clientRenderFrame(cs, left);  scrolled = TRUE; }
+        if (KEY_DOWN(setKeys->kiScrollRight)) { clientRenderFrame(cs, right); scrolled = TRUE; }
+        if (scrolled) clientSimSetAutoScrollOverride(cs, TRUE);
+      }
     }
   }
 
@@ -482,14 +492,16 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     return;
   }
 
+  /* smoothScrollTick always runs so the gamepad right stick scrolls (and
+     steers the build cursor) regardless of the keyboard smooth-scroll
+     preference.  Its keyboard contribution is internally gated on
+     smoothScrollingEnabled; when off, the scroll keys fall through to the
+     legacy step-scroll below. */
+  smoothScrollTick(cs, setKeys);
   if (smoothScrollingEnabled) {
-    smoothScrollTick(cs, setKeys);
     return;
   }
 
-  /* Drop any stale sub-tile accumulation from a previous smooth-scroll session. */
-  smoothScrollAccumX = 0;
-  smoothScrollAccumY = 0;
   scrollKeyCount++;
   if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
     scrollKeyCount = 0;
