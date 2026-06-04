@@ -21,10 +21,16 @@
 extern "C" {
 #endif
 
-/* Inject Steam Input Menu-set actions as ImGui gamepad-nav key events
-   into the *current* ImGui context.  Call once per frame, after
-   ImGui::NewFrame for that context.  No-op when Steam Input has no
-   active controller (Path B handles its own nav via SDL events). */
+/* Inject Steam Input Menu-set actions as ImGui keyboard-nav key events
+   (arrows / Space / Escape) into the *current* ImGui context.  Call
+   once per frame, after ImGui::NewFrame for that context.  Keyboard
+   rather than gamepad keys because Steam Input hides the pad from SDL,
+   so the backend never sets HasGamepad and gamepad-nav keys would be
+   ignored; keyboard nav gates only on NavEnableKeyboard.  Pumps
+   steam_input_run_frame() internally so standalone dialog loops (which
+   don't pump it themselves) still detect the controller and navigate.
+   No-op when Steam Input has no active controller (Path B handles its
+   own nav via SDL events). */
 void imguiSteamNavFeedCurrentContext(void);
 
 /* Idempotent activator for the Steam Input "Menu" action set.  Safe

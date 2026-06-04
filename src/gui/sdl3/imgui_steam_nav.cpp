@@ -39,19 +39,35 @@ extern "C" void imguiSteamNavActivateGameSet(void) {
 }
 
 extern "C" void imguiSteamNavFeedCurrentContext(void) {
+    /* Advance Steam Input before reading actions.  The main game loop
+       pumps steam_input_run_frame() itself, but standalone dialogs
+       (lobby/main menu, message boxes, welcome, etc.) run their own
+       event loops that don't — so without this the active controller is
+       never detected in those contexts and menu nav silently dies.
+       RunFrame is level-based, so the extra in-game call is harmless. */
+    steam_input_run_frame();
+
     if (!steam_input_has_active_controller()) return;
 
+    /* Inject as KEYBOARD nav keys, not gamepad keys.  On a Steam launch
+       Steam Input grabs the physical pad and hides it from SDL, so the
+       ImGui SDL3 backend never sets ImGuiBackendFlags_HasGamepad (it
+       clears the flag every frame and only re-sets it when SDL has an
+       open gamepad).  ImGui gates gamepad nav on that flag, so injected
+       ImGuiKey_Gamepad* events are ignored.  The keyboard nav path
+       (arrows / Space / Escape) gates only on NavEnableKeyboard, which
+       every dialog and the main context set — so these always take. */
     ImGuiIO &io = ImGui::GetIO();
-    io.AddKeyEvent(ImGuiKey_GamepadFaceDown,
+    io.AddKeyEvent(ImGuiKey_Space,
                    steam_input_is_action_pressed(SI_ACTION_MENU_ACCEPT));
-    io.AddKeyEvent(ImGuiKey_GamepadFaceRight,
+    io.AddKeyEvent(ImGuiKey_Escape,
                    steam_input_is_action_pressed(SI_ACTION_MENU_CANCEL));
-    io.AddKeyEvent(ImGuiKey_GamepadDpadUp,
+    io.AddKeyEvent(ImGuiKey_UpArrow,
                    steam_input_is_action_pressed(SI_ACTION_MENU_NAV_UP));
-    io.AddKeyEvent(ImGuiKey_GamepadDpadDown,
+    io.AddKeyEvent(ImGuiKey_DownArrow,
                    steam_input_is_action_pressed(SI_ACTION_MENU_NAV_DOWN));
-    io.AddKeyEvent(ImGuiKey_GamepadDpadLeft,
+    io.AddKeyEvent(ImGuiKey_LeftArrow,
                    steam_input_is_action_pressed(SI_ACTION_MENU_NAV_LEFT));
-    io.AddKeyEvent(ImGuiKey_GamepadDpadRight,
+    io.AddKeyEvent(ImGuiKey_RightArrow,
                    steam_input_is_action_pressed(SI_ACTION_MENU_NAV_RIGHT));
 }

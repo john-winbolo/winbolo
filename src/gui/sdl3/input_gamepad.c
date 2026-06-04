@@ -23,6 +23,7 @@
 #include "input_joystick.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../steam/steam_input_actions.h"
+#include "../../common/wb_log.h"
 
 /* Axis normalisation: int16 range to -1..1 */
 #define AXIS_NORM (1.0f / 32767.0f)
@@ -114,6 +115,9 @@ static void reset_path_a_edges(void) {
 static bool path_a_active(void) {
   bool now = steam_input_has_active_controller();
   if (now != s_path_a_was_active) {
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "gamepad: Steam Input (Path A) now %s",
+                now ? "ACTIVE" : "inactive");
     if (s_path_a_was_active && !now) {
       /* Path A just lost its controller — surface as a disconnect
          so auto-pause-on-disconnect works on Steam launches too. */
@@ -263,10 +267,19 @@ static void fireEdgeForAction(GamepadAction a) {
 
 static void openGamepadById(SDL_JoystickID id) {
   SDL_Gamepad *gp = SDL_OpenGamepad(id);
-  if (!gp) return;
+  if (!gp) {
+    WB_LOG_WARN(WB_LOG_CAT_GUI,
+                "gamepad: SDL_OpenGamepad(%u) failed: %s",
+                (unsigned)id, SDL_GetError());
+    return;
+  }
   s_activeGamepad = gp;
   s_activeId      = id;
   s_activeType    = SDL_GetGamepadType(gp);
+  WB_LOG_INFO(WB_LOG_CAT_GUI,
+              "gamepad: opened id=%u type=%d name='%s'",
+              (unsigned)id, (int)s_activeType,
+              SDL_GetGamepadName(gp) ? SDL_GetGamepadName(gp) : "?");
 }
 
 static void clearActive(void) {
@@ -319,7 +332,26 @@ void inputGamepadInit(void) {
   SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAMDECK, "1");
 
   if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
+    WB_LOG_WARN(WB_LOG_CAT_GUI,
+                "gamepad: SDL_InitSubSystem(GAMEPAD) failed: %s",
+                SDL_GetError());
     return;
+  }
+
+  /* One-shot inventory: how SDL sees attached devices at startup.  On
+     Windows with Steam Input enabled the physical pad is often hidden
+     (joystick count 0 / gamepad count 0) and input arrives via Path A
+     instead — this line disambiguates "SDL sees nothing" from "SDL sees
+     it but didn't open it". */
+  {
+    int jc = 0, gc = 0;
+    SDL_JoystickID *jl = SDL_GetJoysticks(&jc);
+    if (jl) SDL_free(jl);
+    SDL_JoystickID *gl = SDL_GetGamepads(&gc);
+    if (gl) SDL_free(gl);
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "gamepad: init ok; SDL sees %d joystick(s), %d gamepad(s)",
+                jc, gc);
   }
 
   promoteNextGamepad();
@@ -339,12 +371,19 @@ void inputGamepadProcessEvent(const SDL_Event *e) {
 
   switch (e->type) {
     case SDL_EVENT_GAMEPAD_ADDED:
+      WB_LOG_INFO(WB_LOG_CAT_GUI,
+                  "gamepad: SDL_EVENT_GAMEPAD_ADDED which=%u (active=%s)",
+                  (unsigned)e->gdevice.which,
+                  s_activeGamepad ? "yes" : "no");
       if (s_activeGamepad == NULL) {
         openGamepadById(e->gdevice.which);
       }
       break;
 
     case SDL_EVENT_GAMEPAD_REMOVED:
+      WB_LOG_INFO(WB_LOG_CAT_GUI,
+                  "gamepad: SDL_EVENT_GAMEPAD_REMOVED which=%u",
+                  (unsigned)e->gdevice.which);
       if (s_activeGamepad && e->gdevice.which == s_activeId) {
         SDL_CloseGamepad(s_activeGamepad);
         clearActive();

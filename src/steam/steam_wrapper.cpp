@@ -17,6 +17,7 @@
 
 extern "C" {
 #include "steam_wrapper.h"
+#include "../common/wb_log.h"
 }
 
 /* GameRichPresenceJoinRequested_t callback ID */
@@ -203,10 +204,11 @@ extern "C" bool steam_input_init(void) {
   ISteamInput *input = SteamAPI_SteamInput();
   if (!input) return false;
   if (!SteamAPI_ISteamInput_Init(input, false)) {
-    fprintf(stderr, "steam_input_init: SteamAPI_ISteamInput_Init failed\n");
+    WB_LOG_WARN(WB_LOG_CAT_GUI, "steam_input_init: ISteamInput_Init failed");
     return false;
   }
   s_input_initialized = true;
+  WB_LOG_INFO(WB_LOG_CAT_GUI, "steam_input_init: ISteamInput active");
   return true;
 }
 
@@ -234,16 +236,20 @@ extern "C" void steam_input_run_frame(void) {
   InputHandle_t prev = s_active_controller;
   s_active_controller = (n > 0) ? handles[0] : 0;
 
-  /* One-shot diagnostic: log the controller type the first time a
-     controller appears.  Invaluable when debugging "Steam launched
-     but no input" — confirms Steam Input sees the controller even
-     before any binding works. */
+  /* Diagnostic: log on every connect/disconnect transition.  Invaluable
+     when debugging "Steam launched but no input" — confirms whether
+     Steam Input sees a controller at all, and its type, before any
+     binding works.  Goes to the log file (stderr is invisible under a
+     Steam GUI launch). */
   if (s_active_controller != 0 && prev == 0) {
     ESteamInputType type =
         SteamAPI_ISteamInput_GetInputTypeForHandle(input, s_active_controller);
-    fprintf(stderr, "steam_input: active controller type=%d (set='%s')\n",
-            (int)type,
-            s_active_set_handle != 0 ? "<active>" : "<none>");
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+                "steam_input: controller connected, count=%d type=%d set=%s",
+                n, (int)type,
+                s_active_set_handle != 0 ? "active" : "none");
+  } else if (s_active_controller == 0 && prev != 0) {
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "steam_input: controller disconnected");
   }
 
   if (s_active_set_handle != 0 &&
