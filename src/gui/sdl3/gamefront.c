@@ -1996,16 +1996,16 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   /* Steam Deck detection: prefer the SteamDeck=1 hint/env Steam sets,
      falling back to /etc/os-release for launch paths (Desktop-mode,
      non-Steam) where the env var isn't propagated. Used below to flip
-     a few defaults ON (gunsight, autoscroll, autoslow, autohide) for
-     first-launch UX on the Deck. Saved values still override. */
+     touch/controller-oriented defaults ON (autoscroll, autoslow,
+     autohide) for first-launch UX on the Deck. Gunsight defaults ON
+     everywhere. Saved values still override. */
   bool isSteamDeck = uiModeIsSteamDeckHardware();
-#if defined(__IPHONEOS__) || defined(__ANDROID__)
   const char *gunsightDefault   = "Yes";
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
   const char *autoScrollDefault = "Yes";
   const char *autoSlowDefault   = "Yes";
   const char *autoHideDefault   = "Yes";
 #else
-  const char *gunsightDefault   = isSteamDeck ? "Yes" : "No";
   const char *autoScrollDefault = isSteamDeck ? "Yes" : "No";
   const char *autoSlowDefault   = isSteamDeck ? "Yes" : "No";
   const char *autoHideDefault   = isSteamDeck ? "Yes" : "No";
