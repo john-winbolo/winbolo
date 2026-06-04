@@ -275,9 +275,10 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
 
             const bool showTutorial = gameFrontGetShowTutorialButton();
-            /* Map Editor is mouse-driven; gamepad-only players on Steam
-               Deck have no usable workflow. Hide on Deck. */
-            const bool showMapEditor = !uiModeIsSteamDeck();
+            /* Map Editor and Log Viewer are mouse-driven; controller-only
+               players (Steam Deck, or desktop in controller mode) have no
+               usable workflow. Hide both when controller mode is active. */
+            const bool showDesktopTools = !uiShouldUseControllerMode();
             /* rawLabel, when non-null, signals a non-exit action: the click
              * handler dispatches by rawLabel string rather than setting
              * result/running. Display text still goes through
@@ -289,8 +290,8 @@ extern "C" int imguiWelcomeShow(void) {
                 { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
                 { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showMapEditor },
-                { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    true },
+                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools },
+                { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    showDesktopTools },
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
 #if !BOLO_MOBILE
