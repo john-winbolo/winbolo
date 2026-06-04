@@ -109,7 +109,7 @@ typedef enum {
  * runtime) to switch mechanisms. Keep ENHANCED so stock builds are
  * unchanged until a mechanism is explicitly selected. */
 #ifndef SCROLL_MECHANISM_DEFAULT
-#define SCROLL_MECHANISM_DEFAULT SCROLL_MECH_CLASSIC_NO_AUTOSCROLL
+#define SCROLL_MECHANISM_DEFAULT SCROLL_MECH_ENHANCED
 #endif
 
 /* Mechanism selector + tuning knobs (process-global, runtime-switchable). */
