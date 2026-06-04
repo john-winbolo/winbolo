@@ -89,6 +89,41 @@ struct ScrollState {
   bool  prevThreatPill[MAX_PILLS];
 };
 
+/* ------------------------------------------------------------------
+ * Scrolling mechanism selector (experiment scaffold).
+ *
+ * Switches the whole view-scroll algorithm. ENHANCED is John's current
+ * sub-tile / threat-aware autoscroll. The CLASSIC_* modes reproduce the
+ * original integer-tile WinBolo behaviour (no sub-tile smoothing) as a
+ * starting point to build new mechanisms on. Two orthogonal knobs let a
+ * mechanism opt into smoothness and sub-tile pixel precision; the
+ * CLASSIC modes ignore them (always integer / no smoothing).
+ * ------------------------------------------------------------------ */
+typedef enum {
+  SCROLL_MECH_CLASSIC_NO_AUTOSCROLL = 0, /* original, autoscroll off */
+  SCROLL_MECH_CLASSIC_AUTOSCROLL    = 1, /* original gunsight-edge autoscroll */
+  SCROLL_MECH_ENHANCED              = 2  /* current sub-tile / threat-aware */
+} ScrollMechanism;
+
+/* Compile-time default. Change this (or call scrollSetMechanism at
+ * runtime) to switch mechanisms. Keep ENHANCED so stock builds are
+ * unchanged until a mechanism is explicitly selected. */
+#ifndef SCROLL_MECHANISM_DEFAULT
+#define SCROLL_MECHANISM_DEFAULT SCROLL_MECH_CLASSIC_NO_AUTOSCROLL
+#endif
+
+/* Mechanism selector + tuning knobs (process-global, runtime-switchable). */
+ScrollMechanism scrollGetMechanism(void);
+void            scrollSetMechanism(ScrollMechanism mech);
+/* Smoothness level for mechanisms that support it (0 = none). The CLASSIC
+ * modes ignore it; a new mechanism reads it to scale its easing. */
+int             scrollGetSmoothness(void);
+void            scrollSetSmoothness(int level);
+/* Whether the view is tracked at sub-tile (1/256) precision. The CLASSIC
+ * modes are always integer-tile and ignore this. */
+bool            scrollGetSubTilePrecision(void);
+void            scrollSetSubTilePrecision(bool on);
+
 /* Prototypes */
 
 void scrollCreate(ScrollState *ss);
