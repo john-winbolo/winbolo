@@ -269,59 +269,64 @@ void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
   ss->initialized = FALSE;
 }
 
-/* Classic WinBolo autoscroll — STARTING POINT.
+/* Classic WinBolo autoscroll.
  *
- * Seeded as an exact copy of the landed no-autoscroll behaviour
- * (manual keys handled by the dispatch; this is the auto path: the
- * screen-edge nudge, integer-tile, no sub-tile smoothing). It is its
- * own function so the autoscroll can be built up from here without
- * touching the working scrollNoAutoScroll. The dispatch gates it on
- * forward motion, same as no-autoscroll. */
+ * When the crosshair (gunsight) touches a screen edge, push the view that
+ * way by a burst of up to CLASSIC_AS_MAX_LEAD tiles at full tank speed,
+ * scaled linearly with speed (burst = MAX_LEAD * speed / FULL_SPEED).
+ *
+ * The burst is committed up-front (a per-tick countdown in
+ * ss->scrollX/scrollY) and plays out one tile per tick. This matters
+ * because scrolling toward the crosshair moves it off the edge after the
+ * first tile — without the latched countdown the push would stop at one
+ * tile. A new burst only arms once the previous one finishes and the
+ * crosshair is at an edge again. A hard clamp keeps the tank on screen.
+ * Integer-tile, no sub-tile smoothing. */
+#define CLASSIC_AS_FULL_SPEED 16  /* tank top speed (road) */
+#define CLASSIC_AS_MAX_LEAD    5  /* max burst tiles at full speed */
 static bool scrollClassicAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue,
-                                    BYTE objectX, BYTE objectY, TURNTYPE angle) {
-  bool returnValue;
-  bool leftPos;
-  bool rightPos;
-  bool upPos;
-  bool downPos;
+                                    BYTE objectX, BYTE objectY,
+                                    BYTE gunsightX, BYTE gunsightY, BYTE speed) {
+  bool returnValue = FALSE;
+  int burst = (CLASSIC_AS_MAX_LEAD * (int)speed) / CLASSIC_AS_FULL_SPEED;
 
-  leftPos = FALSE;
-  rightPos = FALSE;
-  upPos = FALSE;
-  downPos = FALSE;
-  returnValue = FALSE;
   ss->subPosX = 0;
   ss->subPosY = 0;
 
-  if (angle >= BRADIANS_SSWEST && angle <= BRADIANS_NNWEST) {
-    rightPos = TRUE;
-  }
-  if (angle >= BRADIANS_NNEAST && angle <= BRADIANS_SSEAST) {
-    leftPos = TRUE;
-  }
-  if (angle >= BRADIANS_SEASTE  && angle <= BRADIANS_SWESTW) {
-    downPos = TRUE;
-  }
-  if (angle <= BRADIANS_NEASTE || angle >= BRADIANS_NWESTW) {
-    upPos = TRUE;
+  /* Arm a burst when the crosshair is at an edge and none is in flight. */
+  if (ss->scrollX == 0 && ss->scrollY == 0 && burst > 0) {
+    int gcol = (int)gunsightX - (int)*xValue;  /* gunsight column within view */
+    int grow = (int)gunsightY - (int)*yValue;  /* gunsight row within view    */
+    if (gcol >= MAIN_SCREEN_SIZE_X - 1) { ss->scrollX = (BYTE)burst; ss->xPositive = TRUE; }
+    else if (gcol <= 0)                 { ss->scrollX = (BYTE)burst; ss->xPositive = FALSE; }
+    if (grow >= MAIN_SCREEN_SIZE_Y - 1) { ss->scrollY = (BYTE)burst; ss->yPositive = TRUE; }
+    else if (grow <= 0)                 { ss->scrollY = (BYTE)burst; ss->yPositive = FALSE; }
   }
 
-  if ((objectX - (*xValue)) >= (MAIN_SCREEN_SIZE_X-NO_SCROLL_EDGE) && leftPos == TRUE) {
-    (*xValue)++;
+  /* Play the burst out, one tile per tick. */
+  if (ss->scrollX > 0) {
+    ss->scrollX--;
+    if (ss->xPositive) { (*xValue)++; } else { (*xValue)--; }
     returnValue = TRUE;
   }
-  if ((objectX-1) < (*xValue)+NO_SCROLL_EDGE && rightPos == TRUE) {
-    (*xValue)--;
+  if (ss->scrollY > 0) {
+    ss->scrollY--;
+    if (ss->yPositive) { (*yValue)++; } else { (*yValue)--; }
     returnValue = TRUE;
   }
-  if ((objectY - (*yValue)) >= (MAIN_SCREEN_SIZE_Y-NO_SCROLL_EDGE) && downPos == TRUE) {
-    (*yValue)++;
-    returnValue = TRUE;
+
+  /* Hard clamp: the tank must always stay on screen. */
+  if ((int)objectX <= (int)*xValue) {
+    *xValue = (BYTE)(objectX - 1); ss->scrollX = 0;
+  } else if ((int)objectX >= (int)*xValue + MAIN_SCREEN_SIZE_X) {
+    *xValue = (BYTE)(objectX - MAIN_SCREEN_SIZE_X + 1); ss->scrollX = 0;
   }
-  if (objectY <= (*yValue)+NO_SCROLL_EDGE && upPos == TRUE) {
-   (*yValue)--;
-   returnValue = TRUE;
+  if ((int)objectY <= (int)*yValue) {
+    *yValue = (BYTE)(objectY - 1); ss->scrollY = 0;
+  } else if ((int)objectY >= (int)*yValue + MAIN_SCREEN_SIZE_Y) {
+    *yValue = (BYTE)(objectY - MAIN_SCREEN_SIZE_Y + 1); ss->scrollY = 0;
   }
+
   if (ss->mods == TRUE && returnValue == TRUE) {
     ss->mods = FALSE;
   }
@@ -359,7 +364,8 @@ bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYT
     if (manual == TRUE) {
       returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
     } else if (speed > 0) {
-      returnValue = scrollClassicAutoScroll(ss, xValue, yValue, objectX, objectY, angle);
+      returnValue = scrollClassicAutoScroll(ss, xValue, yValue, objectX, objectY,
+                                            gunsightX, gunsightY, speed);
     } else {
       returnValue = FALSE;
     }
