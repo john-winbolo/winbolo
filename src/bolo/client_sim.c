@@ -1747,6 +1747,16 @@ bool clientSimTankScroll(ClientSim *cs) {
     return FALSE;
   }
 
+  /* The CLASSIC scroll mechanisms own the follow via scrollNoAutoScroll
+   * (run each tick from clientUiOnTick). This legacy per-tank-tick
+   * scrollManual is a second, more aggressive follow: its left-pull fires
+   * on rightPos==FALSE (any non-west facing), so driving east it yanks the
+   * tank back to column >=2 and fights a manual keyboard scroll-right
+   * (the column 1<->2 jitter). Let the mechanism be the sole follow. */
+  if (scrollGetMechanism() != SCROLL_MECH_ENHANCED) {
+    return FALSE;
+  }
+
   x = tankGetScreenMX(&MY_TANK(cs));
   y = tankGetScreenMY(&MY_TANK(cs));
   return scrollManual(clientSimGetScroll(cs), clientSimGetXOffsetPtr(cs), clientSimGetYOffsetPtr(cs), x, y, (TURNTYPE) tankGetTravelAngel(&MY_TANK(cs)));

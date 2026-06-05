@@ -35,6 +35,10 @@
 struct ClientSim;
 
 void clientRenderFrame(struct ClientSim *cs, updateType value);
+/* Non-mutating: would a one-tile scroll in `value` (left/right/up/down)
+ * keep the tank on screen? Lets the smooth-scroll input layer avoid
+ * ramping a sub-tile drag against an edge it can't actually cross. */
+bool clientRenderCanScroll(struct ClientSim *cs, updateType value);
 BYTE screenGetPos(const screen *value, BYTE xValue, BYTE yValue);
 bool screenIsMine(const screenMines *value, BYTE xValue, BYTE yValue);
 
