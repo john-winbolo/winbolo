@@ -49,6 +49,8 @@ int run_sp_shoot_through_timer(void);
 int run_ini_writer_persistence(void);
 int run_ini_writer_insertion_point(void);
 int run_ini_writer_security(void);
+int run_prefs_document_roundtrip(void);
+int run_prefs_keys_roundtrip(void);
 int run_lobby_settings_codec_and_apply(void);
 int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);

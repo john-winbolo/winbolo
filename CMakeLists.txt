@@ -2391,6 +2391,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
     tests/unit/test_ini_reader_writer.c
+    tests/unit/test_prefs_roundtrip.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
     tests/unit/test_command_rejected_apply.c
@@ -2503,6 +2504,8 @@ set(_unit_test_names
     ini_writer_persistence
     ini_writer_insertion_point
     ini_writer_security
+    prefs_document_roundtrip
+    prefs_keys_roundtrip
     lobby_settings_codec_and_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply

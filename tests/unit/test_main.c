@@ -31,6 +31,8 @@ static const UnitTestEntry s_tests[] = {
     { "ini_writer_persistence",          run_ini_writer_persistence          },
     { "ini_writer_insertion_point",      run_ini_writer_insertion_point      },
     { "ini_writer_security",             run_ini_writer_security             },
+    { "prefs_document_roundtrip",        run_prefs_document_roundtrip        },
+    { "prefs_keys_roundtrip",            run_prefs_keys_roundtrip            },
     { "lobby_settings_codec_and_apply",  run_lobby_settings_codec_and_apply  },
     { "lobby_team_meta_codec_and_apply", run_lobby_team_meta_codec_and_apply },
     { "lobby_bot_config_codec_and_apply",run_lobby_bot_config_codec_and_apply},
