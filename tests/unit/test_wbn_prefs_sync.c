@@ -113,3 +113,75 @@ int run_wbn_prefs_parse_updatedat(void) {
     rc = parse_updatedat_rejects_malformed(); if (rc) return rc;
     return 0;
 }
+
+/* -------------------------------------------------------------------- */
+
+#define TOK_A "0123456789abcdef0123456789abcdef"
+#define TOK_B "fedcba9876543210fedcba9876543210"
+
+static int decide_404_seeds(void) {
+    WbnSyncAction a = wbnPrefsDecideAfterGet(false, "", 404, "");
+    UT_ASSERT_MSG(a.kind == WBN_SYNC_PUT_LOCAL, "404 should PUT, got %d", a.kind);
+    UT_ASSERT_MSG(a.baseUpdatedAt[0] == '\0', "404 base should be empty (null)");
+    UT_ASSERT_MSG(!a.isConflict, "404 seed is not a conflict");
+    /* localDirty state is irrelevant to the 404 seed path. */
+    a = wbnPrefsDecideAfterGet(true, TOK_A, 404, "");
+    UT_ASSERT_MSG(a.kind == WBN_SYNC_PUT_LOCAL, "404 should PUT regardless of dirty");
+    UT_ASSERT_MSG(a.baseUpdatedAt[0] == '\0', "404 base should be empty (null)");
+    return 0;
+}
+
+static int decide_200_not_dirty_adopts(void) {
+    WbnSyncAction a = wbnPrefsDecideAfterGet(false, TOK_A, 200, TOK_B);
+    UT_ASSERT_MSG(a.kind == WBN_SYNC_ADOPT_SERVER,
+                  "200 not-dirty should adopt, got %d", a.kind);
+    UT_ASSERT_MSG(!a.isConflict, "adopt is not a conflict");
+    return 0;
+}
+
+static int decide_200_dirty_equal_puts(void) {
+    WbnSyncAction a = wbnPrefsDecideAfterGet(true, TOK_A, 200, TOK_A);
+    UT_ASSERT_MSG(a.kind == WBN_SYNC_PUT_LOCAL,
+                  "200 dirty equal should PUT, got %d", a.kind);
+    UT_ASSERT_MSG(strcmp(a.baseUpdatedAt, TOK_A) == 0,
+                  "base should be lastSynced, got '%s'", a.baseUpdatedAt);
+    UT_ASSERT_MSG(!a.isConflict, "equal tokens is not a conflict");
+    return 0;
+}
+
+static int decide_200_dirty_differ_conflicts(void) {
+    WbnSyncAction a = wbnPrefsDecideAfterGet(true, TOK_A, 200, TOK_B);
+    UT_ASSERT_MSG(a.kind == WBN_SYNC_PUT_LOCAL,
+                  "200 dirty differing should PUT, got %d", a.kind);
+    UT_ASSERT_MSG(strcmp(a.baseUpdatedAt, TOK_B) == 0,
+                  "base should be server token, got '%s'", a.baseUpdatedAt);
+    UT_ASSERT_MSG(a.isConflict, "differing tokens is a conflict");
+    return 0;
+}
+
+static int decide_401_reauths(void) {
+    WbnSyncAction a = wbnPrefsDecideAfterGet(true, TOK_A, 401, "");
+    UT_ASSERT_MSG(a.kind == WBN_SYNC_REAUTH, "401 should reauth, got %d", a.kind);
+    return 0;
+}
+
+static int decide_other_noops(void) {
+    WbnSyncAction a = wbnPrefsDecideAfterGet(true, TOK_A, -1, "");
+    UT_ASSERT_MSG(a.kind == WBN_SYNC_NOOP, "-1 should noop, got %d", a.kind);
+    a = wbnPrefsDecideAfterGet(true, TOK_A, 429, "");
+    UT_ASSERT_MSG(a.kind == WBN_SYNC_NOOP, "429 should noop, got %d", a.kind);
+    a = wbnPrefsDecideAfterGet(false, TOK_A, 500, "");
+    UT_ASSERT_MSG(a.kind == WBN_SYNC_NOOP, "500 should noop, got %d", a.kind);
+    return 0;
+}
+
+int run_wbn_prefs_decide(void) {
+    int rc;
+    rc = decide_404_seeds();               if (rc) return rc;
+    rc = decide_200_not_dirty_adopts();    if (rc) return rc;
+    rc = decide_200_dirty_equal_puts();    if (rc) return rc;
+    rc = decide_200_dirty_differ_conflicts(); if (rc) return rc;
+    rc = decide_401_reauths();             if (rc) return rc;
+    rc = decide_other_noops();             if (rc) return rc;
+    return 0;
+}

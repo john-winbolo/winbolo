@@ -199,6 +199,27 @@ void prefsClearSyncDirty(void) {
     prefsDocSave(g_doc, g_path);
 }
 
+int prefsAdoptServerDocument(const char *serverPrefsJson) {
+    if (!g_doc) return PREFS_ADOPT_MALFORMED;
+    int rc = prefsDocAdoptUploadEligible(g_doc, serverPrefsJson,
+                                         kDeviceLocalSections,
+                                         PREFS_DEVICE_LOCAL_COUNT);
+    if (rc == PREFS_ADOPT_OK) {
+        /* Adopting the server doc means the local copy now matches it:
+         * drop sync-dirty and persist (the save flushes the grafted
+         * sections too). The caller records the server token separately
+         * via prefsMarkSynced. */
+        prefsClearSyncDirty();
+    }
+    return rc;
+}
+
+void prefsMarkSynced(const char *updatedAt) {
+    if (!g_doc) return;
+    prefsSetLastSyncedUpdatedAt(updatedAt);
+    prefsClearSyncDirty();
+}
+
 void prefsGetLastSyncedUpdatedAt(char *out, size_t outSize) {
     if (!out || outSize == 0) return;
     if (!g_doc) { out[0] = '\0'; return; }

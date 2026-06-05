@@ -2511,6 +2511,8 @@ set(_unit_test_names
     prefs_api_upload_excludes_local
     prefs_api_sync_dirty
     prefs_api_device_identity
+    prefs_api_adopt_server
+    prefs_api_mark_synced
     lobby_settings_codec_and_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply
@@ -2568,6 +2570,7 @@ set(_unit_test_names
     wbn_country_cache
     wbn_prefs_parse_get
     wbn_prefs_parse_updatedat
+    wbn_prefs_decide
     queue_init_is_valid
     queue_enqueue_advances_nextSeq
     queue_ack_advance_within_range

@@ -23,6 +23,15 @@
 extern "C" {
 #endif
 
+/* Schema version stamped into a fresh document's "_version" member and
+ * the highest version this build knows how to adopt from the server. */
+#define PREFS_SCHEMA_VERSION 1
+
+/* prefsDocAdoptUploadEligible return codes. */
+#define PREFS_ADOPT_OK              0  /* server doc grafted in */
+#define PREFS_ADOPT_MALFORMED       1  /* serverPrefsJson missing / not JSON object */
+#define PREFS_ADOPT_VERSION_TOO_NEW 2  /* server _version > PREFS_SCHEMA_VERSION */
+
 typedef struct PrefsDoc PrefsDoc;
 
 /* Empty document: {"_version":1}, not dirty. NULL on OOM. */
@@ -63,6 +72,22 @@ unsigned long prefsDocGetString(const PrefsDoc *doc, const char *section,
  * surface, so control characters are NOT rejected. */
 int prefsDocSetString(PrefsDoc *doc, const char *section,
                       const char *key, const char *value);
+
+/* Adopt the upload-eligible content of a downloaded server prefs
+ * document into doc, keeping every device-local section untouched.
+ * Schema-version gated: if serverPrefsJson's _version exceeds
+ * PREFS_SCHEMA_VERSION the doc is left unchanged and
+ * PREFS_ADOPT_VERSION_TOO_NEW is returned. Otherwise every
+ * non-device-local top-level member of doc (its upload-eligible
+ * sections and _version) is removed and replaced with the
+ * non-device-local members of serverPrefsJson (defensively skipping
+ * any device-local section the server may have echoed back) plus its
+ * _version; doc is marked dirty. Device-local sections named in
+ * deviceLocalSections are never touched. Returns PREFS_ADOPT_OK,
+ * PREFS_ADOPT_VERSION_TOO_NEW, or PREFS_ADOPT_MALFORMED. */
+int prefsDocAdoptUploadEligible(PrefsDoc *doc, const char *serverPrefsJson,
+                                const char *const *deviceLocalSections,
+                                size_t count);
 
 int  prefsDocVersion(const PrefsDoc *doc);   /* "_version" */
 bool prefsDocIsDirty(const PrefsDoc *doc);   /* set by SetString */

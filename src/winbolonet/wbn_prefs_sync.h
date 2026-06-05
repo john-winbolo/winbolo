@@ -17,9 +17,42 @@
 #ifndef __WBN_PREFS_SYNC_H
 #define __WBN_PREFS_SYNC_H
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* The action a cloud-sync round decides on after the initial GET. */
+typedef enum {
+    WBN_SYNC_NOOP,         /* nothing to do (clean local, transport error) */
+    WBN_SYNC_ADOPT_SERVER, /* download the server doc into the local doc */
+    WBN_SYNC_PUT_LOCAL,    /* upload the local doc; baseUpdatedAt set below */
+    WBN_SYNC_REAUTH        /* 401: route to re-auth */
+} WbnSyncActionKind;
+
+typedef struct {
+    WbnSyncActionKind kind;
+    char baseUpdatedAt[33];  /* for PUT_LOCAL: "" means send JSON null */
+    bool isConflict;         /* PUT_LOCAL where both sides changed
+                              * (local wins, visibly) */
+} WbnSyncAction;
+
+/*********************************************************
+ *NAME:          wbnPrefsDecideAfterGet
+ *PURPOSE:
+ * Decide the sync action from the GET outcome and local state.
+ * Pure: equality only on the opaque updatedAt token, never
+ * magnitude.
+ *
+ *ARGUMENTS:
+ * localDirty      - prefsSyncDirty()
+ * lastSynced      - prefsGetLastSyncedUpdatedAt ("" if never synced)
+ * getStatus       - HTTP code from wbn_prefs_get (or -1)
+ * serverUpdatedAt - parsed updatedAt on 200 ("" otherwise)
+ *********************************************************/
+WbnSyncAction wbnPrefsDecideAfterGet(bool localDirty, const char *lastSynced,
+                                     int getStatus, const char *serverUpdatedAt);
 
 /* Result of parsing a GET /api/v1/prefs 200 body. */
 typedef struct {

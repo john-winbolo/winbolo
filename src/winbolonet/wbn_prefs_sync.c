@@ -19,6 +19,48 @@
 
 #include "cJSON.h"
 
+WbnSyncAction wbnPrefsDecideAfterGet(bool localDirty, const char *lastSynced,
+                                     int getStatus, const char *serverUpdatedAt) {
+    WbnSyncAction a;
+    a.kind = WBN_SYNC_NOOP;
+    a.baseUpdatedAt[0] = '\0';
+    a.isConflict = false;
+
+    if (lastSynced == NULL) lastSynced = "";
+    if (serverUpdatedAt == NULL) serverUpdatedAt = "";
+
+    if (getStatus == 404) {
+        /* No prefs on the account yet: seed it. baseUpdatedAt "" -> null. */
+        a.kind = WBN_SYNC_PUT_LOCAL;
+        return a;
+    }
+    if (getStatus == 200) {
+        if (!localDirty) {
+            a.kind = WBN_SYNC_ADOPT_SERVER;
+            return a;
+        }
+        a.kind = WBN_SYNC_PUT_LOCAL;
+        if (strcmp(serverUpdatedAt, lastSynced) == 0) {
+            /* Server unchanged since our last sync; our edits win. */
+            strncpy(a.baseUpdatedAt, lastSynced, sizeof(a.baseUpdatedAt) - 1);
+            a.baseUpdatedAt[sizeof(a.baseUpdatedAt) - 1] = '\0';
+        } else {
+            /* Both sides changed since last sync: genuine conflict.
+             * Local wins, visibly, off the server's current token. */
+            strncpy(a.baseUpdatedAt, serverUpdatedAt, sizeof(a.baseUpdatedAt) - 1);
+            a.baseUpdatedAt[sizeof(a.baseUpdatedAt) - 1] = '\0';
+            a.isConflict = true;
+        }
+        return a;
+    }
+    if (getStatus == 401) {
+        a.kind = WBN_SYNC_REAUTH;
+        return a;
+    }
+    /* Transport error, 429, 5xx, anything else: fail quietly and retry later. */
+    return a;
+}
+
 /* True when s is exactly 32 lowercase/uppercase hex digits. */
 static int isUpdatedAtToken(const char *s) {
     if (s == NULL) {

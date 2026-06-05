@@ -240,6 +240,78 @@ int prefsDocSetString(PrefsDoc *doc, const char *section,
     return 1;
 }
 
+static bool prefsDocNameIsDeviceLocal(const char *name,
+                                      const char *const *sections,
+                                      size_t count) {
+    if (!name || !sections) return false;
+    for (size_t i = 0; i < count; i++) {
+        if (sections[i] && strcmp(name, sections[i]) == 0) return true;
+    }
+    return false;
+}
+
+int prefsDocAdoptUploadEligible(PrefsDoc *doc, const char *serverPrefsJson,
+                                const char *const *deviceLocalSections,
+                                size_t count) {
+    if (!doc || !serverPrefsJson) return PREFS_ADOPT_MALFORMED;
+
+    cJSON *server = cJSON_Parse(serverPrefsJson);
+    if (!server) return PREFS_ADOPT_MALFORMED;
+    if (!cJSON_IsObject(server)) {
+        cJSON_Delete(server);
+        return PREFS_ADOPT_MALFORMED;
+    }
+
+    /* Version gate. A missing _version is treated as 1, matching the
+     * empty-document default. Reject (without touching doc) anything a
+     * newer client wrote. */
+    int serverVersion = 1;
+    cJSON *v = cJSON_GetObjectItemCaseSensitive(server, "_version");
+    if (v && cJSON_IsNumber(v)) serverVersion = v->valueint;
+    if (serverVersion > PREFS_SCHEMA_VERSION) {
+        cJSON_Delete(server);
+        return PREFS_ADOPT_VERSION_TOO_NEW;
+    }
+
+    /* Drop every non-device-local top-level member (upload-eligible
+     * sections and _version), leaving the device-local sections in place.
+     * Rescan from the head after each delete so the iteration stays valid. */
+    bool removedAny = true;
+    while (removedAny) {
+        removedAny = false;
+        for (cJSON *child = doc->root->child; child; child = child->next) {
+            if (child->string &&
+                !prefsDocNameIsDeviceLocal(child->string, deviceLocalSections,
+                                           count)) {
+                cJSON_DeleteItemFromObjectCaseSensitive(doc->root, child->string);
+                removedAny = true;
+                break;
+            }
+        }
+    }
+
+    /* Graft in every non-device-local member of the server document (its
+     * upload-eligible sections and _version). Device-local sections the
+     * server may have echoed back are skipped defensively. */
+    for (cJSON *child = server->child; child; child = child->next) {
+        if (!child->string) continue;
+        if (prefsDocNameIsDeviceLocal(child->string, deviceLocalSections, count)) {
+            continue;
+        }
+        cJSON *dup = cJSON_Duplicate(child, 1 /* recurse */);
+        if (!dup) {
+            cJSON_Delete(server);
+            return PREFS_ADOPT_MALFORMED;
+        }
+        cJSON_DeleteItemFromObjectCaseSensitive(doc->root, child->string);
+        cJSON_AddItemToObject(doc->root, child->string, dup);
+    }
+
+    doc->dirty = true;
+    cJSON_Delete(server);
+    return PREFS_ADOPT_OK;
+}
+
 int prefsDocVersion(const PrefsDoc *doc) {
     if (!doc) return 1;
     cJSON *v = cJSON_GetObjectItemCaseSensitive(doc->root, "_version");

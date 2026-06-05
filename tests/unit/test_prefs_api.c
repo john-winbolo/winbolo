@@ -27,6 +27,8 @@ int run_prefs_api_shutdown_flush(void) { return 0; }
 int run_prefs_api_upload_excludes_local(void) { return 0; }
 int run_prefs_api_sync_dirty(void)            { return 0; }
 int run_prefs_api_device_identity(void)       { return 0; }
+int run_prefs_api_adopt_server(void)          { return 0; }
+int run_prefs_api_mark_synced(void)           { return 0; }
 
 #else
 
@@ -360,6 +362,102 @@ int run_prefs_api_device_identity(void) {
     prefsGetLastSyncedUpdatedAt(buf, sizeof(buf));
     UT_ASSERT_MSG(strcmp(buf, "1700000000") == 0,
                   "last-synced did not persist: '%s'", buf);
+    prefsShutdown();
+
+    cleanup(jsonPath);
+    return 0;
+}
+
+/* -------------------------------------------------------------------- */
+
+int run_prefs_api_adopt_server(void) {
+    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_adopt.json";
+    cleanup(jsonPath);
+
+    prefsInit(jsonPath);
+
+    /* Local upload-eligible content. */
+    UT_ASSERT(prefsSetString("SETTINGS", "Player Name", "LocalMe"));
+    UT_ASSERT(prefsSetString("KEYS", "Forward", "8"));
+    /* Device-local content that must survive an adopt untouched. */
+    UT_ASSERT(prefsSetString("WINBOLO.NET", "Token", "secret-token"));
+    prefsSetDeviceLabel("steamdeck");
+    UT_ASSERT_MSG(prefsSyncDirty(), "local edits should be sync-dirty before adopt");
+
+    /* Server document with different upload-eligible content, schema v1. */
+    const char *serverV1 =
+        "{\"_version\":1,"
+        "\"SETTINGS\":{\"Player Name\":\"ServerMe\",\"Target Address\":\"10.0.0.1\"},"
+        "\"KEYS\":{\"Forward\":\"99\"}}";
+    int rc = prefsAdoptServerDocument(serverV1);
+    UT_ASSERT_MSG(rc == PREFS_ADOPT_OK, "adopt should apply, got %d", rc);
+
+    char buf[128];
+    /* Upload-eligible sections now match the server. */
+    prefsGetString("SETTINGS", "Player Name", "<absent>", buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "ServerMe") == 0,
+                  "SETTINGS not adopted from server: '%s'", buf);
+    prefsGetString("SETTINGS", "Target Address", "<absent>", buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "10.0.0.1") == 0,
+                  "new server key not adopted: '%s'", buf);
+    prefsGetString("KEYS", "Forward", "<absent>", buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "99") == 0, "KEYS not adopted from server: '%s'", buf);
+
+    /* Device-local sections preserved. */
+    prefsGetString("WINBOLO.NET", "Token", "<absent>", buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "secret-token") == 0,
+                  "WINBOLO.NET clobbered by adopt: '%s'", buf);
+    prefsGetDeviceLabel(buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "steamdeck") == 0,
+                  "DEVICE label clobbered by adopt: '%s'", buf);
+
+    /* Sync-dirty cleared on apply. */
+    UT_ASSERT_MSG(!prefsSyncDirty(), "adopt should clear sync-dirty");
+
+    /* A newer-schema server document is rejected and leaves the doc as-is. */
+    const char *serverV2 =
+        "{\"_version\":2,"
+        "\"SETTINGS\":{\"Player Name\":\"FromTheFuture\"}}";
+    rc = prefsAdoptServerDocument(serverV2);
+    UT_ASSERT_MSG(rc == PREFS_ADOPT_VERSION_TOO_NEW,
+                  "newer schema should be version-rejected, got %d", rc);
+    prefsGetString("SETTINGS", "Player Name", "<absent>", buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "ServerMe") == 0,
+                  "version-rejected adopt mutated the doc: '%s'", buf);
+
+    prefsShutdown();
+    cleanup(jsonPath);
+    return 0;
+}
+
+/* -------------------------------------------------------------------- */
+
+int run_prefs_api_mark_synced(void) {
+    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_marksynced.json";
+    cleanup(jsonPath);
+
+    prefsInit(jsonPath);
+
+    /* A local edit makes the doc sync-dirty and leaves no synced token. */
+    UT_ASSERT(prefsSetString("SETTINGS", "Player Name", "Me"));
+    UT_ASSERT_MSG(prefsSyncDirty(), "edit should set sync-dirty");
+
+    const char *token = "0123456789abcdef0123456789abcdef";
+    prefsMarkSynced(token);
+
+    char buf[64];
+    prefsGetLastSyncedUpdatedAt(buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, token) == 0,
+                  "mark-synced did not set token: '%s'", buf);
+    UT_ASSERT_MSG(!prefsSyncDirty(), "mark-synced did not clear sync-dirty");
+
+    /* Both persist across a reload. */
+    prefsShutdown();
+    prefsInit(jsonPath);
+    prefsGetLastSyncedUpdatedAt(buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, token) == 0,
+                  "synced token did not persist: '%s'", buf);
+    UT_ASSERT_MSG(!prefsSyncDirty(), "cleared sync-dirty did not persist");
     prefsShutdown();
 
     cleanup(jsonPath);

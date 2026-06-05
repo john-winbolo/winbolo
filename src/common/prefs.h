@@ -77,6 +77,23 @@ char *prefsSerializeForUpload(void);
 bool prefsSyncDirty(void);
 void prefsClearSyncDirty(void);
 
+/* Adopt a downloaded server prefs document into the live document,
+ * keeping every device-local section untouched. Schema-version gated: a
+ * server _version newer than this build's PREFS_SCHEMA_VERSION is
+ * rejected and the local document is left unchanged. On apply, clears
+ * sync-dirty and flushes. Returns the prefsDocAdoptUploadEligible code
+ * (PREFS_ADOPT_OK on apply, PREFS_ADOPT_VERSION_TOO_NEW when the server
+ * is newer, PREFS_ADOPT_MALFORMED on bad input) so the caller can tell
+ * apply from version-rejected from malformed. Does not set
+ * lastSyncedUpdatedAt — the caller does that with the server token via
+ * prefsMarkSynced. */
+int prefsAdoptServerDocument(const char *serverPrefsJson);
+
+/* Record a successful sync: set lastSyncedUpdatedAt to the server token,
+ * clear sync-dirty, persist. Used after a successful PUT and after an
+ * adopt. */
+void prefsMarkSynced(const char *updatedAt);
+
 /* The opaque server version token the local document was last in sync with
  * (DEVICE/LastSyncedUpdatedAt). Empty string means never synced. */
 void prefsGetLastSyncedUpdatedAt(char *out, size_t outSize);
