@@ -12,8 +12,7 @@
  *                               discarded, not used
  *
  * Stubbed out on Windows: the API itself is cross-platform, but these
- * tests lean on POSIX unlink/stat for path hygiene, matching the gating
- * of test_ini_reader_writer.c.
+ * tests lean on POSIX unlink/stat for path hygiene.
  */
 
 #include "test_harness.h"

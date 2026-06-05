@@ -36,7 +36,7 @@ void prefsInit(const char *jsonPath) {
 
     bool existed = prefsFileExists(jsonPath);
 
-    g_doc = prefsDocLoad(jsonPath, NULL); /* NULL legacy: no migration */
+    g_doc = prefsDocLoad(jsonPath);
     if (!g_doc) {
         /* Existing file present but did not parse: preserve it under a
          * .corrupt sibling (best-effort) and start from a fresh empty

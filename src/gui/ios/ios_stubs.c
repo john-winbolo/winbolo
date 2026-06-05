@@ -1,7 +1,6 @@
 /*
  * ios_stubs.c — Stub implementations for modules not included
- * in the iOS target. Covers: winbolonet, geolookup, cursor,
- * and posix_stubs (preferences I/O).
+ * in the iOS target. Covers: winbolonet, geolookup, and cursor.
  *
  * Most GUI modules (sdl3imgui, flags, input, dialogs, dns_lookups)
  * are now compiled directly from the shared sdl3 sources.
@@ -119,35 +118,6 @@ bool geoLookupCountry(const char *ipStr, char countryCode[3]) {
     return false;
 }
 bool geoLookupIsLoaded(void) { return false; }
-
-/* ---- posix_stubs (INI file preferences — not used on iOS) ---- */
-
-void preferencesGetPreferenceFile(char *dest) {
-    strcpy(dest, "WinBolo.ini");
-}
-
-void preferencesSetPreferenceFileOverride(const char *path) {
-    (void)path;
-}
-
-unsigned long GetPrivateProfileString(const char *section, const char *key,
-                                       const char *def, char *dest,
-                                       unsigned long size, const char *file) {
-    (void)section; (void)key; (void)file;
-    if (def && dest && size > 0) {
-        strncpy(dest, def, size - 1);
-        dest[size - 1] = '\0';
-        return (unsigned long)strlen(dest);
-    }
-    if (dest && size > 0) dest[0] = '\0';
-    return 0;
-}
-
-int WritePrivateProfileString(const char *section, const char *key,
-                               const char *value, const char *file) {
-    (void)section; (void)key; (void)value; (void)file;
-    return 1;
-}
 
 /* ---- map editor stubs (not available on iOS) ---- */
 

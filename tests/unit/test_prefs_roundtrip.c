@@ -1,14 +1,8 @@
 /*
- * Format-agnostic regression tests for the Profile API contract
- * (Get/WritePrivateProfileString) used to persist WinBolo preferences.
- *
- * These tests pin behaviour, not storage layout: they assert only what
- * comes back through a write->read round-trip and how missing
- * keys/sections/files resolve to the supplied default. They deliberately
- * make NO claim about the on-disk representation (no line counts, no byte
- * inspection, no [SECTION] checks, no file mode) so they stay green when
- * the backing store is swapped from INI to another format. The
- * INI-specific guarantees live in test_ini_reader_writer.c and stay there.
+ * Round-trip tests for the process-global preferences API
+ * (src/common/prefs.c): a write->read cycle through prefsSetString /
+ * prefsGetString, plus default-value semantics for missing
+ * keys/sections.
  *
  *   - prefs_document_roundtrip: a full prefs document round-trips key for
  *                               key, plus default-value semantics.
@@ -17,8 +11,8 @@
  *                               an earlier write is not clobbered by a
  *                               later one.
  *
- * Stubbed out entirely on Windows (the Profile API there is the real
- * Win32 implementation; the hand-rolled stub only ships on POSIX).
+ * Stubbed out on Windows: the prefs document is file-backed and these
+ * tests use /tmp paths.
  */
 
 #include "test_harness.h"
@@ -35,28 +29,33 @@ int run_prefs_keys_roundtrip(void)     { return 0; }
 #include <string.h>
 #include <unistd.h>
 
-#include "posix_stubs.h"
+#include "common/prefs.h"
 
-/* Each test uses its own path so parallel test runs can't collide. */
-static const char *PATH_DOCUMENT = "/tmp/winbolo_ut_prefs_document.ini";
-static const char *PATH_KEYS     = "/tmp/winbolo_ut_prefs_keys.ini";
+/* Each test uses its own document so parallel test runs can't collide. */
+static const char *PATH_DOCUMENT = "/tmp/winbolo_ut_prefs_document.json";
+static const char *PATH_KEYS     = "/tmp/winbolo_ut_prefs_keys.json";
 
-/* Sentinel returned when a key/section/file is absent. Distinct from any
+/* Sentinel returned when a key/section is absent. Distinct from any
  * value written so a missing-vs-empty mix-up can't pass silently. */
 #define UNSET "<unset>"
 
-static void read_back(const char *section, const char *key,
-                      char *buf, size_t bufSize, const char *path) {
-    GetPrivateProfileString(section, key, UNSET, buf, (DWORD)bufSize, path);
+static void cleanup(const char *path) {
+    char sibling[512];
+    unlink(path);
+    snprintf(sibling, sizeof(sibling), "%s.tmp", path);
+    unlink(sibling);
+    snprintf(sibling, sizeof(sibling), "%s.corrupt", path);
+    unlink(sibling);
 }
 
 /* -------------------------------------------------------------------- */
 
 int run_prefs_document_roundtrip(void) {
-    unlink(PATH_DOCUMENT);
+    cleanup(PATH_DOCUMENT);
+    prefsInit(PATH_DOCUMENT);
 
     /* The canonical prefs document: section/key/value triples written
-     * through the Profile API, then read back and compared. */
+     * through the prefs API, then read back and compared. */
     struct { const char *section; const char *key; const char *value; } doc[] = {
         { "SETTINGS",     "Player Name",          "Spectre"             },
         { "SETTINGS",     "Language",             "en"                  },
@@ -79,15 +78,14 @@ int run_prefs_document_roundtrip(void) {
 
     int i;
     for (i = 0; i < n; i++) {
-        UT_ASSERT_MSG(WritePrivateProfileString(doc[i].section, doc[i].key,
-                                                 doc[i].value, PATH_DOCUMENT),
+        UT_ASSERT_MSG(prefsSetString(doc[i].section, doc[i].key, doc[i].value),
                       "write failed for [%s] %s", doc[i].section, doc[i].key);
     }
 
     /* Read every key back and assert it equals what was written. */
     char buf[128];
     for (i = 0; i < n; i++) {
-        read_back(doc[i].section, doc[i].key, buf, sizeof(buf), PATH_DOCUMENT);
+        prefsGetString(doc[i].section, doc[i].key, UNSET, buf, sizeof(buf));
         UT_ASSERT_MSG(strcmp(buf, doc[i].value) == 0,
                       "round-trip mismatch for [%s] %s: wrote '%s', read '%s'",
                       doc[i].section, doc[i].key, doc[i].value, buf);
@@ -95,29 +93,25 @@ int run_prefs_document_roundtrip(void) {
 
     /* Default semantics: a missing key in an existing section returns the
      * supplied default. */
-    read_back("SETTINGS", "No Such Key", buf, sizeof(buf), PATH_DOCUMENT);
+    prefsGetString("SETTINGS", "No Such Key", UNSET, buf, sizeof(buf));
     UT_ASSERT_MSG(strcmp(buf, UNSET) == 0,
                   "missing key should return default, got '%s'", buf);
 
     /* A missing section returns the supplied default. */
-    read_back("NO SUCH SECTION", "Player Name", buf, sizeof(buf), PATH_DOCUMENT);
+    prefsGetString("NO SUCH SECTION", "Player Name", UNSET, buf, sizeof(buf));
     UT_ASSERT_MSG(strcmp(buf, UNSET) == 0,
                   "missing section should return default, got '%s'", buf);
 
-    /* Reading from a non-existent file returns the supplied default. */
-    read_back("SETTINGS", "Player Name", buf, sizeof(buf),
-              "/tmp/winbolo_ut_prefs_does_not_exist.ini");
-    UT_ASSERT_MSG(strcmp(buf, UNSET) == 0,
-                  "missing file should return default, got '%s'", buf);
-
-    unlink(PATH_DOCUMENT);
+    prefsShutdown();
+    cleanup(PATH_DOCUMENT);
     return 0;
 }
 
 /* -------------------------------------------------------------------- */
 
 int run_prefs_keys_roundtrip(void) {
-    unlink(PATH_KEYS);
+    cleanup(PATH_KEYS);
+    prefsInit(PATH_KEYS);
 
     /* Every [KEYS] binding gameFrontPutPrefs persists. Each gets a
      * distinct numeric value so a write that clobbers an earlier key
@@ -137,7 +131,7 @@ int run_prefs_keys_roundtrip(void) {
     for (i = 0; i < n; i++) {
         char value[32];
         snprintf(value, sizeof(value), "%d", 100 + i);
-        UT_ASSERT_MSG(WritePrivateProfileString("KEYS", keys[i], value, PATH_KEYS),
+        UT_ASSERT_MSG(prefsSetString("KEYS", keys[i], value),
                       "write failed for [KEYS] %s", keys[i]);
     }
 
@@ -147,13 +141,14 @@ int run_prefs_keys_roundtrip(void) {
         char expected[32];
         snprintf(expected, sizeof(expected), "%d", 100 + i);
         char buf[64];
-        read_back("KEYS", keys[i], buf, sizeof(buf), PATH_KEYS);
+        prefsGetString("KEYS", keys[i], UNSET, buf, sizeof(buf));
         UT_ASSERT_MSG(strcmp(buf, expected) == 0,
                       "binding lost or clobbered for [KEYS] %s: "
                       "wrote '%s', read '%s'", keys[i], expected, buf);
     }
 
-    unlink(PATH_KEYS);
+    prefsShutdown();
+    cleanup(PATH_KEYS);
     return 0;
 }
 

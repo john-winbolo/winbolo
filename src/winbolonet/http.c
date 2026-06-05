@@ -53,7 +53,6 @@ void randombytes(unsigned char *buf, unsigned long long len) {
 #include "../common/prefs.h"
 #include "winbolonet_core.h"
 #include "wbn_bearer.h"
-#include "wbn_prefs_path.h"
 
 static bool httpStarted = false;
 static char wbnHostString[FILENAME_MAX]; /* hostname only, no scheme */

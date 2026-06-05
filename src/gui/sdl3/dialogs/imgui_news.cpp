@@ -28,7 +28,6 @@ extern "C" {
 #include "../../../winbolonet/http.h"
 #include "../../../winbolonet/wbn_news.h"
 #include "../../../winbolonet/winbolonet_core.h"
-#include "../../../winbolonet/wbn_prefs_path.h"
 #include "../../../common/prefs.h"
 #include "../../lang.h"
 }

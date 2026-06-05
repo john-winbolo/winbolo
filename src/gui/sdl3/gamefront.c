@@ -485,8 +485,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   wantRejoin = FALSE;
 
   /* Load the process-global preferences document (WinBolo.json) before any
-   * prefs access. The map editor and log viewer still pin their own old-API
-   * path through posix_stubs when they open. */
+   * prefs access. */
   prefsInit(getPreferenceFilePath());
 
   langSetup();

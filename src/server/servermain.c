@@ -1256,9 +1256,6 @@ int main(int argc, char **argv) {
     }
   }
 
-  /* WinBolo.net host override — must run before serverInstanceStartup
-   * so winbolonetCreateServer hits the override host. */
-  winbolonetCoreSetPreferencesPath("WinBolo.ini");
   /* Load the process-global preferences document the shared winbolonet code
    * reads through (e.g. httpCreate's [WINBOLO.NET] Host). */
   prefsInit("WinBolo.json");

@@ -945,7 +945,7 @@ endif()
 # below can link them. server_sim_static holds server_sim.c + servermessages.c;
 # server_static (the dedicated-server runtime) PUBLIC-links it.
 # Per-target conditional sources (transport_udp_client, nat_portmap,
-# servermain, server_frontend_stubs, server_stubs, posix_stubs) stay
+# servermain, server_frontend_stubs, server_stubs) stay
 # in their respective *_SOURCES lists.
 # ---------------------------------------------------------------------------
 
@@ -977,7 +977,6 @@ add_library(winbolonet_core STATIC
     src/winbolonet/winbolonetevents.c
     src/winbolonet/winbolonet_core.c
     src/winbolonet/wbn_bearer.c
-    src/winbolonet/wbn_prefs_path.c
     src/winbolonet/wbn_country_cache.c
 )
 target_include_directories(winbolonet_core PRIVATE
@@ -1191,7 +1190,6 @@ if(WIN32)
 else()
     target_sources(WinBolo PRIVATE
         src/gui/skins.c
-        src/server/posix_stubs.c
     )
     target_link_libraries(WinBolo PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBolo PRIVATE -fcommon)
@@ -1448,7 +1446,6 @@ if(WIN32)
     endif()
 else()
     target_sources(WinBoloDS PRIVATE
-        src/server/posix_stubs.c
         src/gui/sdl3/lang.c
     )
     target_link_libraries(WinBoloDS PRIVATE ${MATH_LIB} pthread)
@@ -1607,11 +1604,6 @@ add_executable(LogViewer
     src/gui/sdl3/tileloader.c
     src/gui/ui_mode.c
 )
-if(NOT WIN32)
-    # posix_stubs provides preferencesGetPreferenceFile + GetPrivateProfileString /
-    # WritePrivateProfileString shared with the main game and map editor.
-    target_sources(LogViewer PRIVATE src/server/posix_stubs.c)
-endif()
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
@@ -1766,9 +1758,6 @@ if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)
     target_compile_options(WinBoloHeadless PRIVATE -fcommon)
 else()
-    target_sources(WinBoloHeadless PRIVATE
-        src/server/posix_stubs.c
-    )
     target_link_libraries(WinBoloHeadless PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloHeadless PRIVATE -fcommon)
 endif()
@@ -1881,9 +1870,6 @@ if(WIN32)
     target_link_libraries(winbolo_gym PRIVATE ws2_32 winmm user32)
     target_compile_options(winbolo_gym PRIVATE -fcommon)
 else()
-    target_sources(winbolo_gym PRIVATE
-        src/server/posix_stubs.c
-    )
     target_link_libraries(winbolo_gym PRIVATE ${MATH_LIB} pthread)
     target_compile_options(winbolo_gym PRIVATE -fcommon)
 endif()
@@ -2014,9 +2000,6 @@ if(WIN32)
     target_link_libraries(BrainTest PRIVATE ws2_32 winmm user32)
     target_compile_options(BrainTest PRIVATE -fcommon)
 else()
-    target_sources(BrainTest PRIVATE
-        src/server/posix_stubs.c
-    )
     target_link_libraries(BrainTest PRIVATE ${MATH_LIB} pthread)
     target_compile_options(BrainTest PRIVATE -fcommon)
 endif()
@@ -2099,9 +2082,6 @@ if(WIN32)
     target_link_libraries(MapEditor PRIVATE ws2_32 winmm user32)
     target_compile_options(MapEditor PRIVATE -fcommon)
 else()
-    target_sources(MapEditor PRIVATE
-        src/server/posix_stubs.c
-    )
     target_link_libraries(MapEditor PRIVATE ${MATH_LIB} pthread)
     target_compile_options(MapEditor PRIVATE -fcommon)
 endif()
@@ -2401,7 +2381,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sp_subscriber_delivery.c
     tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
-    tests/unit/test_ini_reader_writer.c
     tests/unit/test_prefs_roundtrip.c
     tests/unit/test_prefs_doc.c
     tests/unit/test_prefs_api.c
@@ -2450,9 +2429,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
     # the other winbolonet_* functions; these TUs only add the bearer,
-    # prefs-path, country-cache and parser surfaces.
+    # country-cache and parser surfaces.
     src/winbolonet/wbn_bearer.c
-    src/winbolonet/wbn_prefs_path.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
     # transport_udp_client.c stays per-target because of HAVE_STEAM
@@ -2504,7 +2482,6 @@ if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
 else()
-    target_sources(WinBoloUnitTests PRIVATE src/server/posix_stubs.c)
     target_link_libraries(WinBoloUnitTests PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
 endif()
@@ -2516,14 +2493,10 @@ set(_unit_test_names
     sp_subscriber_delivery
     active_local_input_to_shot
     sp_shoot_through_timer
-    ini_writer_persistence
-    ini_writer_insertion_point
-    ini_writer_security
     prefs_document_roundtrip
     prefs_keys_roundtrip
     prefs_doc_roundtrip
     prefs_doc_defaults
-    prefs_doc_ini_migration
     prefs_doc_special_chars
     prefs_doc_unknown_preserved
     prefs_doc_save_atomic

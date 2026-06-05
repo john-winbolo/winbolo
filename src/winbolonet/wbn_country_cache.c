@@ -40,7 +40,6 @@
 #include "global.h"
 #include "winbolonet_core.h"
 #include "wbn_country_cache_internal.h"
-#include "wbn_prefs_path.h"
 #include "../common/prefs.h"
 
 static char s_country[3] = {'\0', '\0', '\0'};

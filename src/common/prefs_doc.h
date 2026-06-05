@@ -7,8 +7,8 @@
  * INI API.
  *
  * The module is self-contained: load/parse, get/set string values,
- * serialize, atomic save, a one-time INI→JSON migration on load, and a
- * dirty flag set on mutation. It is single-threaded (cJSON is not
+ * serialize, atomic save, and a dirty flag set on mutation. It is
+ * single-threaded (cJSON is not
  * thread-safe); callers serialize a string snapshot before handing
  * work to other threads.
  */
@@ -32,18 +32,10 @@ PrefsDoc *prefsDocNew(void);
  * version 1. Not dirty. NULL on parse error / OOM. */
 PrefsDoc *prefsDocParseJson(const char *jsonText);
 
-/* Parse classic INI text (migration source): [section] -> object,
- * key=value -> string member. Stamps _version:1. Blank lines and
- * lines without '=' outside a section header are skipped. Not dirty.
- * NULL on OOM. */
-PrefsDoc *prefsDocParseIni(const char *iniText);
-
-/* Load the JSON document at path. If path does not exist and
- * legacyIniPath is non-NULL and exists, migrate from that INI and
- * return the migrated (unsaved, not-dirty) doc. If neither exists,
- * return a fresh empty doc. Returns NULL on OOM, on a read error of an
- * existing file, or if an existing JSON file does not parse. */
-PrefsDoc *prefsDocLoad(const char *path, const char *legacyIniPath);
+/* Load the JSON document at path. If path does not exist, return a
+ * fresh empty doc. Returns NULL on OOM, on a read error of an existing
+ * file, or if an existing JSON file does not parse. */
+PrefsDoc *prefsDocLoad(const char *path);
 
 /* Serialize to a newly malloc'd JSON string (caller frees). NULL on OOM. */
 char *prefsDocSerialize(const PrefsDoc *doc);

@@ -50,14 +50,7 @@ int main(int argc, char *argv[]) {
     wb_log_init("WinBolo", "LogViewer", "logviewer.log");
     atexit(wb_log_shutdown);
 
-    /* Resolve WinBolo.ini path and pin posix_stubs to it before httpCreate
-     * reads [WINBOLO.NET] Host. */
     lv_platform_config_init("LogViewer");
-
-    /* Smoke test: prove the WBN HTTP client links and initialises in the
-     * standalone LogViewer build. Read access (comments) and authenticated
-     * post will be added in a later step. */
-    winbolonetCoreSetPreferencesPath("WinBolo.ini");
 
     /* Load the process-global preferences document the shared winbolonet code
      * reads through. Mirror platform_config's SDL_GetPrefPath WinBolo location

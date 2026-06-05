@@ -83,55 +83,6 @@ static int prefsDocPutMember(cJSON *sectionObj, const char *key,
     return 1;
 }
 
-PrefsDoc *prefsDocParseIni(const char *iniText) {
-    cJSON *root = cJSON_CreateObject();
-    if (!root) return NULL;
-    if (!cJSON_AddNumberToObject(root, "_version", 1)) {
-        cJSON_Delete(root);
-        return NULL;
-    }
-
-    if (iniText) {
-        cJSON *curSection = NULL;
-        const char *p = iniText;
-        char line[1024];
-        while (*p) {
-            /* Pull one CR/LF-delimited line into a bounded buffer. */
-            size_t n = 0;
-            while (*p && *p != '\n' && *p != '\r') {
-                if (n < sizeof(line) - 1) line[n++] = *p;
-                p++;
-            }
-            line[n] = '\0';
-            while (*p == '\n' || *p == '\r') p++;
-
-            if (line[0] == '[') {
-                char *end = strchr(line + 1, ']');
-                if (end) {
-                    *end = '\0';
-                    curSection = prefsDocSection(root, line + 1);
-                    if (!curSection) {
-                        cJSON_Delete(root);
-                        return NULL;
-                    }
-                }
-                continue;
-            }
-            if (line[0] == ';' || line[0] == '#') continue; /* comment */
-            if (!curSection) continue;                      /* pre-section */
-            char *eq = strchr(line, '=');
-            if (!eq) continue;                              /* no key=value */
-            *eq = '\0';
-            if (!prefsDocPutMember(curSection, line, eq + 1)) {
-                cJSON_Delete(root);
-                return NULL;
-            }
-        }
-    }
-
-    return prefsDocWrap(root);
-}
-
 /* ------------------------------------------------------------------ */
 /* File I/O                                                            */
 /* ------------------------------------------------------------------ */
@@ -158,7 +109,7 @@ static char *prefsDocReadFile(const char *path, int *existed) {
     return buf;
 }
 
-PrefsDoc *prefsDocLoad(const char *path, const char *legacyIniPath) {
+PrefsDoc *prefsDocLoad(const char *path) {
     if (path) {
         int existed = 0;
         char *content = prefsDocReadFile(path, &existed);
@@ -169,16 +120,6 @@ PrefsDoc *prefsDocLoad(const char *path, const char *legacyIniPath) {
         }
         if (existed) return NULL; /* present but unreadable / OOM */
     }
-    if (legacyIniPath) {
-        int existed = 0;
-        char *ini = prefsDocReadFile(legacyIniPath, &existed);
-        if (ini) {
-            PrefsDoc *doc = prefsDocParseIni(ini);
-            free(ini);
-            return doc; /* migrated, not dirty */
-        }
-        if (existed) return NULL;
-    }
     return prefsDocNew();
 }
 
@@ -188,8 +129,7 @@ char *prefsDocSerialize(const PrefsDoc *doc) {
 }
 
 #ifndef _WIN32
-/* Atomic, mode-0600, fsync'd write — mirrors the secure temp-file +
- * rename pattern in src/server/posix_stubs.c's WritePrivateProfileString,
+/* Atomic, mode-0600, fsync'd write — secure temp-file + rename pattern
  * with a JSON payload. */
 static int prefsDocWriteAtomic(const char *path, const char *data) {
     char tmpPath[FILENAME_MAX];

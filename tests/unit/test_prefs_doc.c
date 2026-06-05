@@ -2,11 +2,10 @@
  * Tests for the cJSON-backed preferences document in
  * src/common/prefs_doc.c.
  *
- * The in-memory tests (round-trip, defaults, INI migration, special
- * characters, unknown-section preservation) run on every platform. The
+ * The in-memory tests (round-trip, defaults, special characters,
+ * unknown-section preservation) run on every platform. The
  * atomic-save/file test exercises POSIX-only behaviour (mode 0600,
- * fsync, no leaked .tmp) and is stubbed out on Windows like
- * test_ini_reader_writer.c.
+ * fsync, no leaked .tmp) and is stubbed out on Windows.
  */
 
 #include "test_harness.h"
@@ -94,46 +93,6 @@ int run_prefs_doc_defaults(void) {
 
 /* -------------------------------------------------------------------- */
 
-int run_prefs_doc_ini_migration(void) {
-    const char *ini =
-        "; a leading comment\n"
-        "\n"
-        "[SETTINGS]\n"
-        "Player Name=Me\n"
-        "Language=en\n"
-        "[KEYS]\n"
-        "Forward=273\n"
-        "Shoot=57\n";
-
-    PrefsDoc *doc = prefsDocParseIni(ini);
-    UT_ASSERT(doc != NULL);
-    UT_ASSERT_MSG(prefsDocVersion(doc) == 1,
-                  "migrated version %d, expected 1", prefsDocVersion(doc));
-    UT_ASSERT_MSG(!prefsDocIsDirty(doc), "migrated doc should not be dirty");
-
-    char buf[64];
-    prefsDocGetString(doc, "SETTINGS", "Player Name", "X", buf, sizeof(buf));
-    UT_ASSERT_MSG(strcmp(buf, "Me") == 0, "Player Name: '%s'", buf);
-    prefsDocGetString(doc, "SETTINGS", "Language", "X", buf, sizeof(buf));
-    UT_ASSERT_MSG(strcmp(buf, "en") == 0, "Language: '%s'", buf);
-    prefsDocGetString(doc, "KEYS", "Forward", "X", buf, sizeof(buf));
-    UT_ASSERT_MSG(strcmp(buf, "273") == 0, "Forward: '%s'", buf);
-
-    char *json = prefsDocSerialize(doc);
-    UT_ASSERT(json != NULL);
-    PrefsDoc *re = prefsDocParseJson(json);
-    UT_ASSERT(re != NULL);
-    prefsDocGetString(re, "KEYS", "Shoot", "X", buf, sizeof(buf));
-    UT_ASSERT_MSG(strcmp(buf, "57") == 0, "Shoot after round-trip: '%s'", buf);
-
-    free(json);
-    prefsDocFree(doc);
-    prefsDocFree(re);
-    return 0;
-}
-
-/* -------------------------------------------------------------------- */
-
 int run_prefs_doc_special_chars(void) {
     /* Quote, backslash, newline, tab, and an embedded INI-injection
      * payload. None of this may corrupt the JSON or materialise a
@@ -216,14 +175,10 @@ int run_prefs_doc_save_atomic(void) { return 0; }
 
 int run_prefs_doc_save_atomic(void) {
     const char *jsonPath   = "/tmp/winbolo_ut_prefsdoc_main.json";
-    const char *absentPath = "/tmp/winbolo_ut_prefsdoc_absent.json";
-    const char *legacyPath = "/tmp/winbolo_ut_prefsdoc_legacy.ini";
     char tmpSibling[256];
     snprintf(tmpSibling, sizeof(tmpSibling), "%s.tmp", jsonPath);
 
     unlink(jsonPath);
-    unlink(absentPath);
-    unlink(legacyPath);
     unlink(tmpSibling);
 
     /* Save a dirty doc atomically. */
@@ -243,7 +198,7 @@ int run_prefs_doc_save_atomic(void) {
                   "atomic-write temp sibling leaked at %s", tmpSibling);
 
     /* Load it back. */
-    PrefsDoc *loaded = prefsDocLoad(jsonPath, NULL);
+    PrefsDoc *loaded = prefsDocLoad(jsonPath);
     UT_ASSERT(loaded != NULL);
     UT_ASSERT_MSG(!prefsDocIsDirty(loaded), "loaded doc should not be dirty");
     char buf[64];
@@ -252,28 +207,10 @@ int run_prefs_doc_save_atomic(void) {
     prefsDocGetString(loaded, "KEYS", "Forward", "X", buf, sizeof(buf));
     UT_ASSERT_MSG(strcmp(buf, "273") == 0, "loaded Forward: '%s'", buf);
 
-    /* Migration-on-load: absent JSON + present legacy INI. */
-    FILE *fp = fopen(legacyPath, "w");
-    UT_ASSERT(fp != NULL);
-    fputs("[SETTINGS]\nPlayer Name=Legacy\n[KEYS]\nShoot=57\n", fp);
-    UT_ASSERT(fclose(fp) == 0);
-
-    PrefsDoc *migrated = prefsDocLoad(absentPath, legacyPath);
-    UT_ASSERT(migrated != NULL);
-    UT_ASSERT_MSG(!prefsDocIsDirty(migrated),
-                  "migrated-on-load doc should not be dirty");
-    prefsDocGetString(migrated, "SETTINGS", "Player Name", "X", buf, sizeof(buf));
-    UT_ASSERT_MSG(strcmp(buf, "Legacy") == 0, "migrated Player Name: '%s'", buf);
-    prefsDocGetString(migrated, "KEYS", "Shoot", "X", buf, sizeof(buf));
-    UT_ASSERT_MSG(strcmp(buf, "57") == 0, "migrated Shoot: '%s'", buf);
-
     prefsDocFree(doc);
     prefsDocFree(loaded);
-    prefsDocFree(migrated);
 
     unlink(jsonPath);
-    unlink(absentPath);
-    unlink(legacyPath);
     unlink(tmpSibling);
     return 0;
 }
