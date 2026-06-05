@@ -2085,6 +2085,7 @@ target_include_directories(MapEditor PRIVATE
     src/gui
     src/server
     src/mapeditor
+    ${cjson_SOURCE_DIR}
 )
 bolo_apply_include_rules(MapEditor mapeditor)
 
@@ -2103,7 +2104,7 @@ endif()
 target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
-    nanosvg stb_image utf8proc
+    nanosvg stb_image utf8proc cjson
 )
 
 # macOS trackpad pinch-to-zoom support, plus native NSMenu shim for the
@@ -2397,6 +2398,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sp_shoot_through_timer.c
     tests/unit/test_ini_reader_writer.c
     tests/unit/test_prefs_roundtrip.c
+    tests/unit/test_prefs_doc.c
+    src/common/prefs_doc.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
     tests/unit/test_command_rejected_apply.c
@@ -2511,6 +2514,12 @@ set(_unit_test_names
     ini_writer_security
     prefs_document_roundtrip
     prefs_keys_roundtrip
+    prefs_doc_roundtrip
+    prefs_doc_defaults
+    prefs_doc_ini_migration
+    prefs_doc_special_chars
+    prefs_doc_unknown_preserved
+    prefs_doc_save_atomic
     lobby_settings_codec_and_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply
