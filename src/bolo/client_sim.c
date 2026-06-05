@@ -1730,9 +1730,6 @@ bool clientSimTankIsDead(ClientSim *cs) {
 }
 
 bool clientSimTankScroll(ClientSim *cs) {
-  BYTE x;
-  BYTE y;
-
   /* Don't scroll the view while in pill view — the view is locked on the pill */
   if (clientSimIsInPillView(cs) == TRUE) {
     return FALSE;
@@ -1747,19 +1744,13 @@ bool clientSimTankScroll(ClientSim *cs) {
     return FALSE;
   }
 
-  /* The CLASSIC scroll mechanisms own the follow via scrollNoAutoScroll
-   * (run each tick from clientUiOnTick). This legacy per-tank-tick
-   * scrollManual is a second, more aggressive follow: its left-pull fires
-   * on rightPos==FALSE (any non-west facing), so driving east it yanks the
-   * tank back to column >=2 and fights a manual keyboard scroll-right
-   * (the column 1<->2 jitter). Let the mechanism be the sole follow. */
-  if (scrollGetMechanism() != SCROLL_MECH_ENHANCED) {
-    return FALSE;
-  }
-
-  x = tankGetScreenMX(&MY_TANK(cs));
-  y = tankGetScreenMY(&MY_TANK(cs));
-  return scrollManual(clientSimGetScroll(cs), clientSimGetXOffsetPtr(cs), clientSimGetYOffsetPtr(cs), x, y, (TURNTYPE) tankGetTravelAngel(&MY_TANK(cs)));
+  /* Autoscroll OFF = WinBolo-style manual scrolling: scrollNoAutoScroll
+   * (run each tick from clientUiOnTick) is the sole follow. This legacy
+   * per-tank-tick scrollManual was a second, more aggressive follow (its
+   * left-pull fires on rightPos==FALSE / any non-west facing), so driving
+   * east it yanked the tank back to column >=2 and fought a manual keyboard
+   * scroll-right (the column 1<->2 jitter). Don't run it. */
+  return FALSE;
 }
 
 void clientSimManMove(ClientSim *cs, buildSelect buildS) {
