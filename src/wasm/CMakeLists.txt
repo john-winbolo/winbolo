@@ -138,6 +138,11 @@ set(BOLO_SOURCES
 # Server modules (used by client too).
 # server_sim.c + servermessages.c come from server_sim_static.
 # threads.c (or threads_wasm.c here) comes from threads_static.
+# server_static (the dedicated-server runtime: transport_udp_server.c,
+# NAT/tracker/WBN bring-up) is NOT linked — the wasm client can't host.
+# server_stubs.c + server_stubs_wasm.c cover the server-side symbols the
+# shared sim/dialogs reference; serverInstanceStartup is a local-only stub
+# in server_stubs_wasm.c, matching the iOS/Android/BrainTest clients.
 set(SERVER_SOURCES
     ${SRC_ROOT}/server/geolookup.c
     ${SRC_ROOT}/server/server_stubs.c
@@ -181,6 +186,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_about.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/dialog_footer.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_view.cpp
     ${SRC_ROOT}/gui/sdl3/wb_theme.cpp
@@ -210,6 +216,7 @@ set(WASM_SOURCES
     ${SRC_ROOT}/common/sentry_integration.c
     ${SRC_ROOT}/common/wb_log.c
     ${SRC_ROOT}/common/md5.c
+    ${SRC_ROOT}/common/mp_diag_log.c
 )
 
 ###
@@ -234,8 +241,14 @@ target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/third_party/imgui_markdown
 )
 bolo_apply_include_rules(winbolo gui)
+# bg_game.c reaches into a privatised setTeam setter for the dev-mode
+# lobby-background animation; mirror the main build's per-file grant.
+# server_stubs_wasm.c's local-only serverInstanceStartup calls
+# serverSimApplyInstanceConfig, declared in internal/server_sim_lifecycle.h.
 bolo_grant_internal_source_access(winbolo
-    ${SRC_ROOT}/bolo/transport_udp_client.c)
+    ${SRC_ROOT}/bolo/transport_udp_client.c
+    ${SRC_ROOT}/gui/sdl3/bg_game.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c)
 
 target_compile_definitions(winbolo PRIVATE
     _GNU_SOURCE

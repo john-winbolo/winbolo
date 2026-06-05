@@ -15,6 +15,7 @@
 #include "../winbolonet/winbolonetevents.h"
 #include "../winbolonet/winbolonetthread.h"
 #include "../winbolonet/http.h"
+#include "../gui/sdl3/dialogs/imgui_news.h"
 
 struct cJSON;
 
@@ -126,3 +127,18 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorM
   if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
   return FALSE;
 }
+
+/* -------------------------------------------------------
+ * winbolonet_core.h — country code (no tracker lookup here)
+ * ------------------------------------------------------- */
+const char *winbolonetGetCountryCode(void)                         { return ""; }
+
+/* -------------------------------------------------------
+ * imgui_news.h — the news popup fetches over HTTP; no-op in WASM
+ * ------------------------------------------------------- */
+bool newsPopupIsOpen(void)                                         { return FALSE; }
+bool newsPopupHasUnread(void)                                      { return FALSE; }
+void newsPopupKickFetch(void)                                      { }
+void newsPopupTick(void)                                           { }
+void newsPopupOpenManual(void)                                     { }
+void newsPopupShutdown(void)                                       { }
