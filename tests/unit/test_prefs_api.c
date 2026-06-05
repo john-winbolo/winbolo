@@ -22,6 +22,8 @@
 int run_prefs_api_roundtrip(void)      { return 0; }
 int run_prefs_api_defaults(void)       { return 0; }
 int run_prefs_api_corrupt_backup(void) { return 0; }
+int run_prefs_api_debounce(void)       { return 0; }
+int run_prefs_api_shutdown_flush(void) { return 0; }
 
 #else
 
@@ -135,6 +137,67 @@ int run_prefs_api_corrupt_backup(void) {
                   "corrupt content was not discarded: got '%s'", buf);
 
     prefsShutdown();
+    cleanup(jsonPath);
+    return 0;
+}
+
+/* -------------------------------------------------------------------- */
+
+int run_prefs_api_debounce(void) {
+    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_debounce.json";
+    cleanup(jsonPath);
+
+    prefsInit(jsonPath);
+    prefsSetAutosaveDebounce(15000);
+
+    /* In debounce mode a set marks the document dirty without writing. */
+    UT_ASSERT(prefsSetString("SETTINGS", "Player Name", "Me"));
+    UT_ASSERT_MSG(prefsIsDirty(), "debounced set should leave document dirty");
+
+    /* Pump before the interval elapses: still pending, not flushed. */
+    prefsPumpAutosave(1000);
+    UT_ASSERT_MSG(prefsIsDirty(), "pump within interval should not flush");
+
+    /* Pump past the interval: the trailing write clears dirty. */
+    prefsPumpAutosave(20000);
+    UT_ASSERT_MSG(!prefsIsDirty(), "pump past interval should flush");
+
+    /* The flushed value is on disk. */
+    prefsShutdown();
+    prefsInit(jsonPath);
+    char buf[128];
+    prefsGetString("SETTINGS", "Player Name", "<default>", buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "Me") == 0,
+                  "debounced value did not persist to disk: '%s'", buf);
+    prefsShutdown();
+
+    cleanup(jsonPath);
+    return 0;
+}
+
+/* -------------------------------------------------------------------- */
+
+int run_prefs_api_shutdown_flush(void) {
+    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_shutdown_flush.json";
+    cleanup(jsonPath);
+
+    prefsInit(jsonPath);
+    prefsSetAutosaveDebounce(15000);
+
+    /* Dirty, unflushed pending change. */
+    UT_ASSERT(prefsSetString("SETTINGS", "Player Name", "Me"));
+    UT_ASSERT_MSG(prefsIsDirty(), "debounced set should leave document dirty");
+
+    /* Shutdown must flush before freeing. */
+    prefsShutdown();
+
+    prefsInit(jsonPath);
+    char buf[128];
+    prefsGetString("SETTINGS", "Player Name", "<default>", buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "Me") == 0,
+                  "shutdown did not flush pending change: '%s'", buf);
+    prefsShutdown();
+
     cleanup(jsonPath);
     return 0;
 }

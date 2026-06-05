@@ -38,6 +38,8 @@ static const UnitTestEntry s_tests[] = {
     { "prefs_api_roundtrip",             run_prefs_api_roundtrip             },
     { "prefs_api_defaults",              run_prefs_api_defaults              },
     { "prefs_api_corrupt_backup",        run_prefs_api_corrupt_backup        },
+    { "prefs_api_debounce",              run_prefs_api_debounce              },
+    { "prefs_api_shutdown_flush",        run_prefs_api_shutdown_flush        },
     { "lobby_settings_codec_and_apply",  run_lobby_settings_codec_and_apply  },
     { "lobby_team_meta_codec_and_apply", run_lobby_team_meta_codec_and_apply },
     { "lobby_bot_config_codec_and_apply",run_lobby_bot_config_codec_and_apply},

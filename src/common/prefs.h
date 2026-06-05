@@ -14,6 +14,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,6 +49,18 @@ int prefsSetString(const char *section, const char *key,
 int prefsFlush(void);
 
 bool prefsIsDirty(void);
+
+/* Switch this process to debounced autosave: prefsSetString then only
+ * marks the document dirty, and the caller must drive prefsPumpAutosave
+ * (and prefsFlush at shutdown / before join). Default mode is immediate
+ * flush-on-set (unchanged). intervalMs is the trailing-write delay. */
+void prefsSetAutosaveDebounce(unsigned intervalMs);
+
+/* Debounced mode only: call frequently (e.g. once per frame) with a
+ * monotonic millisecond clock. Flushes the document once intervalMs has
+ * elapsed since the most recent change. No-op in immediate mode or when
+ * not dirty. */
+void prefsPumpAutosave(uint64_t nowMs);
 
 #ifdef __cplusplus
 }

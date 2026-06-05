@@ -2503,6 +2503,8 @@ set(_unit_test_names
     prefs_api_roundtrip
     prefs_api_defaults
     prefs_api_corrupt_backup
+    prefs_api_debounce
+    prefs_api_shutdown_flush
     lobby_settings_codec_and_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply

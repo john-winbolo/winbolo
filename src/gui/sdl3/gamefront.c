@@ -487,6 +487,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   /* Load the process-global preferences document (WinBolo.json) before any
    * prefs access. */
   prefsInit(getPreferenceFilePath());
+  /* Coalesce bursts of pref edits (multi-key rebind, slider drag) into a
+   * single trailing disk write, driven from gameFrontPumpDirty and flushed
+   * before each join and at shutdown. */
+  prefsSetAutosaveDebounce(15000);
 
   langSetup();
 
@@ -688,6 +692,7 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
      position on every resize/move. Calling it here would overwrite the corrected
      position (e.g. centered within maximized bounds) with the actual position. */
   gameFrontPutPrefs(keys);
+  prefsFlush();
   if (humanSim != NULL) {
     frontEndSetActiveClientSim(NULL);
     netDestroy(humanSim);
@@ -1135,6 +1140,7 @@ bool gameFrontSetDlgState(openingStates newState) {
       }
     }
 
+    prefsFlush();
     gameFrontValidateWbnBeforeJoin();
     humanSim = clientSimAlloc(); clientSimCreate(humanSim);
     clientSimSetIsLanOnly(humanSim, s_isLanOnly);
@@ -1257,6 +1263,7 @@ bool gameFrontSetDlgState(openingStates newState) {
      * handshake every joiner uses, so the server's join handler owns
      * slot 0 registration and the lobby/name-collision checks behave
      * identically for host and joiners. */
+    prefsFlush();
     gameFrontValidateWbnBeforeJoin();
     dlgState = newState;
     if (gameFrontSetupServer() == TRUE) {
@@ -2385,6 +2392,7 @@ void gameFrontSaveWindowSettings(void) {
 }
 
 void gameFrontPumpDirty(void) {
+  prefsPumpAutosave((uint64_t)SDL_GetTicks());
   if (!s_windowSettingsDirty) return;
   Uint64 now = SDL_GetTicks();
   if (now - s_lastWindowWriteTime < 500) return;

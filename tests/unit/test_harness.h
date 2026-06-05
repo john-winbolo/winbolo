@@ -56,6 +56,8 @@ int run_prefs_doc_save_atomic(void);
 int run_prefs_api_roundtrip(void);
 int run_prefs_api_defaults(void);
 int run_prefs_api_corrupt_backup(void);
+int run_prefs_api_debounce(void);
+int run_prefs_api_shutdown_flush(void);
 int run_lobby_settings_codec_and_apply(void);
 int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);

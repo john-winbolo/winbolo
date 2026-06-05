@@ -17,6 +17,15 @@
 static PrefsDoc *g_doc;
 static char g_path[FILENAME_MAX];
 
+/* Autosave mode. In immediate mode (default) prefsSetString flushes on
+ * every set. In debounced mode it only marks the document dirty; the
+ * caller drives prefsPumpAutosave to coalesce bursts into a single
+ * trailing write, and prefsFlush/prefsShutdown cover join and exit. */
+static bool s_debounce;
+static unsigned s_intervalMs;
+static uint64_t s_lastChangeMs;
+static bool s_pendingChange;
+
 static bool prefsFileExists(const char *path) {
     FILE *fp = fopen(path, "rb");
     if (!fp) return false;
@@ -61,6 +70,10 @@ void prefsInit(const char *jsonPath) {
 }
 
 void prefsShutdown(void) {
+    /* Flush a pending debounced change so a clean exit never loses it. */
+    if (g_doc && prefsDocIsDirty(g_doc)) {
+        prefsDocSave(g_doc, g_path);
+    }
     prefsDocFree(g_doc);
     g_doc = NULL;
 }
@@ -84,6 +97,10 @@ int prefsSetString(const char *section, const char *key,
                    const char *value) {
     if (!g_doc) return 0;
     if (!prefsDocSetString(g_doc, section, key, value)) return 0;
+    if (s_debounce) {
+        s_pendingChange = true;
+        return 1;
+    }
     return prefsDocSave(g_doc, g_path);
 }
 
@@ -95,4 +112,22 @@ int prefsFlush(void) {
 
 bool prefsIsDirty(void) {
     return g_doc ? prefsDocIsDirty(g_doc) : false;
+}
+
+void prefsSetAutosaveDebounce(unsigned intervalMs) {
+    s_debounce = true;
+    s_intervalMs = intervalMs;
+}
+
+void prefsPumpAutosave(uint64_t nowMs) {
+    if (!s_debounce || !g_doc || !prefsDocIsDirty(g_doc)) return;
+    /* Re-arm the timer on each newly-seen change so a burst of sets
+     * coalesces into one trailing write. */
+    if (s_pendingChange) {
+        s_lastChangeMs = nowMs;
+        s_pendingChange = false;
+    }
+    if (nowMs - s_lastChangeMs >= s_intervalMs) {
+        prefsDocSave(g_doc, g_path);
+    }
 }
