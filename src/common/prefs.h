@@ -59,8 +59,10 @@ void prefsSetAutosaveDebounce(unsigned intervalMs);
 /* Debounced mode only: call frequently (e.g. once per frame) with a
  * monotonic millisecond clock. Flushes the document once intervalMs has
  * elapsed since the most recent change. No-op in immediate mode or when
- * not dirty. */
-void prefsPumpAutosave(uint64_t nowMs);
+ * not dirty. Returns true exactly when it performed a flush this call
+ * (false otherwise, including immediate mode, not-dirty, or when the
+ * interval has not yet elapsed). */
+bool prefsPumpAutosave(uint64_t nowMs);
 
 /* ---- Cloud sync (device-local) ---------------------------------------- */
 

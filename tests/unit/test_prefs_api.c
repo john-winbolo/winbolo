@@ -161,11 +161,13 @@ int run_prefs_api_debounce(void) {
     UT_ASSERT_MSG(prefsIsDirty(), "debounced set should leave document dirty");
 
     /* Pump before the interval elapses: still pending, not flushed. */
-    prefsPumpAutosave(1000);
+    UT_ASSERT_MSG(!prefsPumpAutosave(1000),
+                  "pump within interval should report no flush");
     UT_ASSERT_MSG(prefsIsDirty(), "pump within interval should not flush");
 
     /* Pump past the interval: the trailing write clears dirty. */
-    prefsPumpAutosave(20000);
+    UT_ASSERT_MSG(prefsPumpAutosave(20000),
+                  "pump past interval should report a flush");
     UT_ASSERT_MSG(!prefsIsDirty(), "pump past interval should flush");
 
     /* The flushed value is on disk. */

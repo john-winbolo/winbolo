@@ -1758,15 +1758,17 @@ static int gameFrontPrefsSyncThreadFunc(void *data) {
   return 0;
 }
 
-void gameFrontStartPrefsSync(void) {
-  if (s_prefsSyncThread != NULL || s_prefsSyncedThisSession) {
-    return;
-  }
-
+/* Capture the sync inputs on the main thread and start the worker.
+ * Returns true when the worker was launched, false when there was nothing
+ * to do (not signed in, serialize failed, or thread create failed). Shared
+ * by the login trigger and the debounce-flush upload trigger; the
+ * once-per-session gate and the in-flight check belong to the callers, not
+ * here. */
+static bool gameFrontLaunchPrefsSyncWorker(void) {
   char token[FILENAME_MAX], expiry[FILENAME_MAX];
   gameFrontGetWinbolonetToken(token, expiry);
   if (token[0] == '\0') {
-    return; /* not signed in: nothing to sync */
+    return false; /* not signed in: nothing to sync */
   }
 
   memset(&s_prefsSyncWork, 0, sizeof(s_prefsSyncWork));
@@ -1781,17 +1783,44 @@ void gameFrontStartPrefsSync(void) {
   gameFrontGetPlayerName(s_prefsSyncWork.displayName);
 
   if (s_prefsSyncWork.uploadSnapshot == NULL) {
-    return; /* serialize failed (OOM / pre-init): retry on a later sign-in */
+    return false; /* serialize failed (OOM / pre-init): retry later */
   }
 
-  s_prefsSyncedThisSession = true;
   s_prefsSyncThread = SDL_CreateThread(gameFrontPrefsSyncThreadFunc,
                                        "WBNPrefsSync", &s_prefsSyncWork);
   if (s_prefsSyncThread == NULL) {
     free(s_prefsSyncWork.uploadSnapshot);
     s_prefsSyncWork.uploadSnapshot = NULL;
-    s_prefsSyncedThisSession = false; /* allow a later attempt */
+    return false;
   }
+  return true;
+}
+
+void gameFrontStartPrefsSync(void) {
+  if (s_prefsSyncThread != NULL || s_prefsSyncedThisSession) {
+    return;
+  }
+  if (gameFrontLaunchPrefsSyncWorker()) {
+    s_prefsSyncedThisSession = true;
+  }
+}
+
+/* Debounce-flush upload trigger. Reuses the single shared worker
+ * (wbnPrefsSyncOnce GETs, reconciles, then PUTs — correct here because the
+ * local doc is dirty) and the gameFrontPumpPrefsSync completion handler,
+ * which clears sync-dirty on a PUSHED outcome. Unlike the login trigger it
+ * does not consult the once-per-session gate. A 429 returns the existing
+ * NOOP outcome and leaves sync-dirty set, so the next debounce flush
+ * (>=15 s later, already under the server's ~1/sec write limit) retries; we
+ * deliberately do not parse Retry-After. */
+static void gameFrontMaybeUploadPrefs(void) {
+  if (s_prefsSyncThread != NULL) {
+    return; /* a sync/upload worker is already in flight */
+  }
+  if (!gameFrontGetWinbolonetUse() || !prefsSyncDirty()) {
+    return; /* not signed in, or nothing to push */
+  }
+  gameFrontLaunchPrefsSyncWorker();
 }
 
 void gameFrontPumpPrefsSync(void) {
@@ -2534,7 +2563,10 @@ void gameFrontSaveWindowSettings(void) {
 }
 
 void gameFrontPumpDirty(void) {
-  prefsPumpAutosave((uint64_t)SDL_GetTicks());
+  /* Upload to the cloud only when the debounce actually flushed (and only
+   * if there is something dirty to sync); the 15 s debounce doubles as the
+   * back-off that keeps writes under the server's ~1/sec limit. */
+  if (prefsPumpAutosave((uint64_t)SDL_GetTicks())) gameFrontMaybeUploadPrefs();
   gameFrontPumpPrefsSync();
   if (!s_windowSettingsDirty) return;
   Uint64 now = SDL_GetTicks();

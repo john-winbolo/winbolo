@@ -155,8 +155,8 @@ void prefsSetAutosaveDebounce(unsigned intervalMs) {
     s_intervalMs = intervalMs;
 }
 
-void prefsPumpAutosave(uint64_t nowMs) {
-    if (!s_debounce || !g_doc || !prefsDocIsDirty(g_doc)) return;
+bool prefsPumpAutosave(uint64_t nowMs) {
+    if (!s_debounce || !g_doc || !prefsDocIsDirty(g_doc)) return false;
     /* Re-arm the timer on each newly-seen change so a burst of sets
      * coalesces into one trailing write. */
     if (s_pendingChange) {
@@ -165,7 +165,9 @@ void prefsPumpAutosave(uint64_t nowMs) {
     }
     if (nowMs - s_lastChangeMs >= s_intervalMs) {
         prefsDocSave(g_doc, g_path);
+        return true;
     }
+    return false;
 }
 
 /* ---- Cloud sync (device-local) ---------------------------------------- */
