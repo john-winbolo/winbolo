@@ -1285,11 +1285,12 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
-        "${WINBOLO_DATA_DIR}/Brains/GoalHunter"
-    COMMENT "Copying brain scripts to output Brains/ directory"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter"
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
+        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter
+        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
+    COMMENT "Copying brain scripts to output Brains/ directory (excludes *.md)"
 )
 
 # Copy shared libraries next to WinBolo executable (all platforms).
@@ -2265,8 +2266,12 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/data/THIRD_PARTY_NOTICES.md"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
 
-    # Brain scripts
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/brains/GoalHunter" "${DIST_DIR}/Brains/GoalHunter"
+    # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter"
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
+        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter
+        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
 
     # Strip debug info from the staged Linux binaries (no-op on Win/macOS)
     ${DIST_STRIP_CMD}
