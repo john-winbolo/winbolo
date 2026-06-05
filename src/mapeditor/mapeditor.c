@@ -13,6 +13,7 @@
 
 #include "mapeditor.h"
 #include "../common/wb_log.h"
+#include "../common/prefs.h"
 #include "mapeditor_imgui.h"
 #include "mapgen.h"
 #include "mapgen_maze.h"
@@ -54,17 +55,6 @@
 
 /* From tileloader.h */
 extern SDL_Surface *tileLoaderBuildSheet(int tileSize);
-
-/* Cross-platform INI file stubs — provided by posix_stubs on non-Win32 */
-#ifndef _WIN32
-extern void preferencesGetPreferenceFile(char *dest);
-extern void preferencesSetPreferenceFileOverride(const char *path);
-extern DWORD GetPrivateProfileString(const char *section, const char *key,
-                                      const char *def, char *dest,
-                                      DWORD size, const char *file);
-extern int WritePrivateProfileString(const char *section, const char *key,
-                                      const char *value, const char *file);
-#endif
 
 #define ME_MIN_ZOOM 1
 #define ME_MAX_ZOOM 16
@@ -1762,43 +1752,19 @@ static void meFreeMapData(MapEditorState *ed) {
 }
 
 /* -------------------------------------------------------
- * INI path helper — reuse the same WinBolo.ini the game uses
- * ------------------------------------------------------- */
-static const char *meGetPrefsPath(void) {
-    static char path[ME_PATH_MAX];
-    static bool resolved = false;
-    if (!resolved) {
-        const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
-        if (prefDir) {
-            snprintf(path, sizeof(path), "%sWinBolo.ini", prefDir);
-        } else {
-            snprintf(path, sizeof(path), "%s", "WinBolo.ini");
-        }
-        resolved = true;
-#ifndef _WIN32
-        /* Pin posix_stubs to this same file so any code that reaches via
-         * preferencesGetPreferenceFile lands on the same WinBolo.ini. */
-        preferencesSetPreferenceFileOverride(path);
-#endif
-    }
-    return path;
-}
-
-/* -------------------------------------------------------
- * Recent files — stored in [MAPEDITOR] section of WinBolo.ini
+ * Recent files — stored in [MAPEDITOR] section of the prefs document
  * Keys: Recent1 … Recent10
  * ------------------------------------------------------- */
 static void meLoadRecentFiles(MapEditorState *ed) {
     /* Existence is verified lazily on click — see meLoadFromPath +
      * meRemoveRecentFile. A startup fopen() on each entry blocks for
      * seconds when a path points at an unreachable share / dead drive. */
-    const char *ini = meGetPrefsPath();
     ed->numRecentFiles = 0;
     for (int i = 0; i < ME_MAX_RECENT_FILES; i++) {
         char key[32];
         snprintf(key, sizeof(key), "Recent%d", i + 1);
         char val[ME_PATH_MAX];
-        GetPrivateProfileString("MAPEDITOR", key, "", val, ME_PATH_MAX, ini);
+        prefsGetString("MAPEDITOR", key, "", val, ME_PATH_MAX);
         if (val[0] == '\0') break;
         SDL_strlcpy(ed->recentFiles[ed->numRecentFiles], val, ME_PATH_MAX);
         ed->numRecentFiles++;
@@ -1806,14 +1772,13 @@ static void meLoadRecentFiles(MapEditorState *ed) {
 }
 
 static void meSaveRecentFiles(MapEditorState *ed) {
-    const char *ini = meGetPrefsPath();
     for (int i = 0; i < ME_MAX_RECENT_FILES; i++) {
         char key[32];
         snprintf(key, sizeof(key), "Recent%d", i + 1);
         if (i < ed->numRecentFiles) {
-            WritePrivateProfileString("MAPEDITOR", key, ed->recentFiles[i], ini);
+            prefsSetString("MAPEDITOR", key, ed->recentFiles[i]);
         } else {
-            WritePrivateProfileString("MAPEDITOR", key, "", ini);
+            prefsSetString("MAPEDITOR", key, "");
         }
     }
 }

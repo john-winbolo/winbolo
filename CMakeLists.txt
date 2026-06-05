@@ -641,6 +641,7 @@ target_include_directories(WinBoloIOS PRIVATE
     src/server
     src/mapeditor
     src/third_party/imgui_markdown
+    ${cjson_SOURCE_DIR}
 )
 bolo_apply_include_rules(WinBoloIOS gui)
 bolo_grant_internal_source_access(WinBoloIOS
@@ -648,7 +649,7 @@ bolo_grant_internal_source_access(WinBoloIOS
 
 target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
-    nanosvg stb_image utf8proc zlibstatic
+    nanosvg stb_image utf8proc zlibstatic cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
     "-framework AVFoundation"
     "-framework GameController"
@@ -679,6 +680,8 @@ target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
 target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
 target_sources(WinBoloIOS PRIVATE src/common/md5.c)
 target_sources(WinBoloIOS PRIVATE src/common/mp_diag_log.c)
+target_sources(WinBoloIOS PRIVATE src/common/prefs.c)
+target_sources(WinBoloIOS PRIVATE src/common/prefs_doc.c)
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
 # Hide dependency targets from the Xcode project — only WinBoloIOS should
