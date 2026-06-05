@@ -129,6 +129,7 @@ int run_wbn_country_cache(void);
 int run_wbn_prefs_parse_get(void);
 int run_wbn_prefs_parse_updatedat(void);
 int run_wbn_prefs_decide(void);
+int run_wbn_prefs_build_put_body(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_inbox_push_peek_fifo(void);

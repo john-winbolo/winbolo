@@ -112,6 +112,11 @@ static void wbnCheckThread(void) {
         if (wbnWork.playerNameOut[0] != '\0') {
             gameFrontSetPlayerName(wbnWork.playerNameOut);
         }
+        /* Token is set (login) or confirmed (validate): pull the cloud prefs
+         * once for this session. Runs after the player name is set so the
+         * sync captures the account display_name to reassert over the synced
+         * Player Name. Gated, so it fires at most once per sign-in. */
+        gameFrontStartPrefsSync();
         wbnState = WBN_SUCCESS;
     } else {
         SDL_strlcpy(wbnErrorBuf, wbnWork.errorMsg, sizeof(wbnErrorBuf));
@@ -200,6 +205,8 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
         if (inGame) ImGui::BeginDisabled();
         if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
             gameFrontClearWinbolonetToken();
+            /* Re-arm the once-per-session gate so signing back in resyncs. */
+            gameFrontResetPrefsSyncSession();
         }
         imguiHandOnHover();
         if (inGame) ImGui::EndDisabled();

@@ -7,11 +7,14 @@
  * Name:          wbn_prefs_sync
  * Filename:      wbn_prefs_sync.h
  * Purpose:
- *   Pure cJSON parsers for the WinBolo.net cloud preferences
- *   sync responses (GET/PUT /api/v1/prefs). Deliberately
- *   libcurl-free so the unit tests can link them without
- *   dragging in http.c or its dependency closure. The network
- *   transport itself lives in http.c (wbn_prefs_get / _put).
+ *   cJSON parsers and the cloud-sync orchestration for the
+ *   WinBolo.net cloud preferences (GET/PUT /api/v1/prefs). The
+ *   parsers and the PUT-body builder are pure cJSON; the one
+ *   network-bound entry point (wbnPrefsSyncOnce) calls the
+ *   transport in http.c (wbn_prefs_get / _put). The unit tests
+ *   link this module libcurl-free by stubbing the two transport
+ *   symbols, so they never drag in http.c or its dependency
+ *   closure.
  *********************************************************/
 
 #ifndef __WBN_PREFS_SYNC_H
@@ -82,6 +85,65 @@ int wbnPrefsParseGet(const char *body, WbnPrefsGetResult *out);
  * Returns nonzero only on malformed JSON.
  *********************************************************/
 int wbnPrefsParseUpdatedAt(const char *body, char out[33]);
+
+/* ---- Cloud-sync orchestration (network; not unit-tested) ------------- */
+
+/*********************************************************
+ *NAME:          wbnPrefsBuildPutBody
+ *PURPOSE:
+ * Build the PUT /api/v1/prefs request body:
+ *   {"baseUpdatedAt":<token>|null,
+ *    "device":{"id":…,"label":…},
+ *    "prefs":<parsed prefsJson object>}
+ * baseUpdatedAt "" (or NULL) serializes to JSON null. prefsJson is
+ * parsed and embedded as a JSON object (not a quoted string).
+ * Returns a malloc'd JSON string the caller frees, or NULL on OOM
+ * or when prefsJson does not parse. Pure (cJSON only): unit-tested.
+ *********************************************************/
+char *wbnPrefsBuildPutBody(const char *baseUpdatedAt, const char *deviceId,
+                           const char *deviceLabel, const char *prefsJson);
+
+/* The result of one cloud-sync round (wbnPrefsSyncOnce). */
+typedef enum {
+    WBN_SYNC_OUT_NOOP,    /* nothing changed (clean, transport error, capped) */
+    WBN_SYNC_OUT_ADOPTED, /* server doc downloaded; apply it locally */
+    WBN_SYNC_OUT_PUSHED,  /* local doc uploaded; token is the new version */
+    WBN_SYNC_OUT_REAUTH   /* 401: token is stale, sign out */
+} WbnSyncOutcomeKind;
+
+typedef struct {
+    WbnSyncOutcomeKind kind;
+    char token[33];              /* ADOPTED: server updatedAt; PUSHED: new token */
+    char *serverPrefs;           /* ADOPTED only: parsed prefs JSON; caller
+                                  * frees; NULL otherwise */
+    char serverDeviceId[65];     /* ADOPTED: device that last wrote the cloud doc */
+    char serverDeviceLabel[129];
+    bool wasConflict;            /* PUSHED: local edits overwrote a diverged server */
+} WbnSyncOutcome;
+
+/*********************************************************
+ *NAME:          wbnPrefsSyncOnce
+ *PURPOSE:
+ * Run one cloud-sync round on a worker thread: GET the server
+ * prefs, decide via wbnPrefsDecideAfterGet, then adopt the server
+ * doc or upload the local snapshot. A PUT that races a concurrent
+ * writer (409) re-GETs, re-decides and retries with the fresh base,
+ * bounded to three attempts; a re-decide that flips to adopt
+ * returns ADOPTED instead. Network-bound (calls wbn_prefs_get /
+ * wbn_prefs_put) and takes every piece of document state by value,
+ * so it never touches the prefs.c globals. Not unit-tested.
+ *
+ *ARGUMENTS:
+ * userToken      - WBN bearer token
+ * uploadSnapshot - prefsSerializeForUpload() body (PUT_LOCAL only)
+ * deviceId       - this device's install id
+ * deviceLabel    - this device's human label
+ * localDirty     - prefsSyncDirty()
+ * lastSynced     - prefsGetLastSyncedUpdatedAt ("" if never synced)
+ *********************************************************/
+WbnSyncOutcome wbnPrefsSyncOnce(const char *userToken, const char *uploadSnapshot,
+                                const char *deviceId, const char *deviceLabel,
+                                bool localDirty, const char *lastSynced);
 
 #ifdef __cplusplus
 }

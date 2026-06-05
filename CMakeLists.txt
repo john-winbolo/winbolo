@@ -2571,6 +2571,7 @@ set(_unit_test_names
     wbn_prefs_parse_get
     wbn_prefs_parse_updatedat
     wbn_prefs_decide
+    wbn_prefs_build_put_body
     queue_init_is_valid
     queue_enqueue_advances_nextSeq
     queue_ack_advance_within_range

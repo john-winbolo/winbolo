@@ -111,6 +111,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_prefs_parse_get",                     run_wbn_prefs_parse_get                     },
     { "wbn_prefs_parse_updatedat",               run_wbn_prefs_parse_updatedat               },
     { "wbn_prefs_decide",                        run_wbn_prefs_decide                        },
+    { "wbn_prefs_build_put_body",                run_wbn_prefs_build_put_body                },
     { "queue_init_is_valid",                     run_queue_init_is_valid                     },
     { "queue_enqueue_advances_nextSeq",          run_queue_enqueue_advances_nextSeq          },
     { "queue_ack_advance_within_range",          run_queue_ack_advance_within_range          },

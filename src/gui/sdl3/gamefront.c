@@ -79,6 +79,8 @@
 #include "../../server/server_lifecycle.h"
 #include "../../winbolonet/winbolonet_client.h"
 #include "../../winbolonet/winbolonet_core.h"
+#include "../../winbolonet/wbn_prefs_sync.h"
+#include "../../common/prefs_doc.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
 #include "mapgen.h"
@@ -1039,6 +1041,11 @@ static void gameFrontValidateWbnBeforeJoin(void) {
            * is NOT used to update an existing name (Phase 7 / Decision 3). */
         }
         WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Steam] Authenticated with WinBolo.net via Steam");
+        /* First Steam auth of the session: the token went from empty to set,
+         * so pull the cloud prefs once. Placed after the name handling so the
+         * sync captures the name that should win over the synced Player Name.
+         * The per-join validate of an existing token below never reaches here. */
+        gameFrontStartPrefsSync();
       } else {
         WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Steam] WBN Steam auth failed: %s", errorMsg);
       }
@@ -1713,6 +1720,141 @@ void gameFrontClearWinbolonetToken(void) {
 
 bool gameFrontGetWinbolonetUse(void) {
   return gameFrontWbnUse;
+}
+
+/* -------------------------------------------------------
+ * Cloud preferences sync (download-on-login).
+ *
+ * Signing in launches exactly one sync per session off a worker
+ * thread. The document is only ever mutated on the main thread in
+ * gameFrontPumpPrefsSync, which joins the worker and applies the
+ * outcome. The worker reads everything it needs through a snapshot
+ * captured on the main thread, so it never touches prefs.c globals.
+ * ------------------------------------------------------- */
+typedef struct {
+  /* inputs (captured on the main thread) */
+  char userToken[FILENAME_MAX];
+  char *uploadSnapshot;            /* malloc'd; freed in the pump */
+  char deviceId[65];
+  char deviceLabel[129];
+  bool localDirty;
+  char lastSynced[33];
+  char displayName[PLAYER_NAME_LEN]; /* account name; reasserted after adopt */
+  /* output */
+  WbnSyncOutcome outcome;
+  SDL_AtomicInt done;
+} PrefsSyncWork;
+
+static SDL_Thread *s_prefsSyncThread = NULL;
+static PrefsSyncWork s_prefsSyncWork;
+static bool s_prefsSyncedThisSession = false;
+
+static int gameFrontPrefsSyncThreadFunc(void *data) {
+  PrefsSyncWork *w = (PrefsSyncWork *)data;
+  w->outcome = wbnPrefsSyncOnce(w->userToken, w->uploadSnapshot,
+                                w->deviceId, w->deviceLabel,
+                                w->localDirty, w->lastSynced);
+  SDL_SetAtomicInt(&w->done, 1);
+  return 0;
+}
+
+void gameFrontStartPrefsSync(void) {
+  if (s_prefsSyncThread != NULL || s_prefsSyncedThisSession) {
+    return;
+  }
+
+  char token[FILENAME_MAX], expiry[FILENAME_MAX];
+  gameFrontGetWinbolonetToken(token, expiry);
+  if (token[0] == '\0') {
+    return; /* not signed in: nothing to sync */
+  }
+
+  memset(&s_prefsSyncWork, 0, sizeof(s_prefsSyncWork));
+  SDL_SetAtomicInt(&s_prefsSyncWork.done, 0);
+  SDL_strlcpy(s_prefsSyncWork.userToken, token, sizeof(s_prefsSyncWork.userToken));
+  s_prefsSyncWork.uploadSnapshot = prefsSerializeForUpload();
+  prefsGetDeviceId(s_prefsSyncWork.deviceId, sizeof(s_prefsSyncWork.deviceId));
+  prefsGetDeviceLabel(s_prefsSyncWork.deviceLabel, sizeof(s_prefsSyncWork.deviceLabel));
+  s_prefsSyncWork.localDirty = prefsSyncDirty();
+  prefsGetLastSyncedUpdatedAt(s_prefsSyncWork.lastSynced,
+                              sizeof(s_prefsSyncWork.lastSynced));
+  gameFrontGetPlayerName(s_prefsSyncWork.displayName);
+
+  if (s_prefsSyncWork.uploadSnapshot == NULL) {
+    return; /* serialize failed (OOM / pre-init): retry on a later sign-in */
+  }
+
+  s_prefsSyncedThisSession = true;
+  s_prefsSyncThread = SDL_CreateThread(gameFrontPrefsSyncThreadFunc,
+                                       "WBNPrefsSync", &s_prefsSyncWork);
+  if (s_prefsSyncThread == NULL) {
+    free(s_prefsSyncWork.uploadSnapshot);
+    s_prefsSyncWork.uploadSnapshot = NULL;
+    s_prefsSyncedThisSession = false; /* allow a later attempt */
+  }
+}
+
+void gameFrontPumpPrefsSync(void) {
+  if (s_prefsSyncThread == NULL || !SDL_GetAtomicInt(&s_prefsSyncWork.done)) {
+    return;
+  }
+
+  SDL_WaitThread(s_prefsSyncThread, NULL);
+  s_prefsSyncThread = NULL;
+
+  WbnSyncOutcome *o = &s_prefsSyncWork.outcome;
+  switch (o->kind) {
+    case WBN_SYNC_OUT_ADOPTED:
+      if (o->serverPrefs != NULL &&
+          prefsAdoptServerDocument(o->serverPrefs) == PREFS_ADOPT_OK) {
+        prefsMarkSynced(o->token);
+        /* Record which device last wrote the cloud doc (device-local, so
+         * these writes do not re-dirty the just-synced document). */
+        prefsSetString("DEVICE", "LastSavedFromId", o->serverDeviceId);
+        prefsSetString("DEVICE", "LastSavedFromLabel", o->serverDeviceLabel);
+        /* Live-apply the downloaded settings: re-read into the live globals
+         * and push the keys/tank options onto the running client without a
+         * restart (mirrors the Key Setup confirm path). */
+        keyItems liveKeys;
+        windowGetKeys(&liveKeys);
+        gameFrontGetPrefs(&liveKeys, &useAutoslow, &useAutohide);
+        windowSetKeys(&liveKeys);
+        if (humanSim != NULL) {
+          clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
+          clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
+        }
+        /* The account display_name wins over the synced Player Name. */
+        if (s_prefsSyncWork.displayName[0] != '\0') {
+          prefsSetString("SETTINGS", "Player Name", s_prefsSyncWork.displayName);
+          gameFrontSetPlayerName(s_prefsSyncWork.displayName);
+        }
+      }
+      break;
+    case WBN_SYNC_OUT_PUSHED:
+      prefsMarkSynced(o->token);
+      break;
+    case WBN_SYNC_OUT_REAUTH:
+      /* Token is stale server-side: sign out and let a later sign-in resync. */
+      gameFrontClearWinbolonetToken();
+      gameFrontResetPrefsSyncSession();
+      break;
+    case WBN_SYNC_OUT_NOOP:
+    default:
+      break;
+  }
+
+  if (o->serverPrefs != NULL) {
+    free(o->serverPrefs);
+    o->serverPrefs = NULL;
+  }
+  if (s_prefsSyncWork.uploadSnapshot != NULL) {
+    free(s_prefsSyncWork.uploadSnapshot);
+    s_prefsSyncWork.uploadSnapshot = NULL;
+  }
+}
+
+void gameFrontResetPrefsSyncSession(void) {
+  s_prefsSyncedThisSession = false;
 }
 
 void gameFrontSetRegistryKeys(void) {
@@ -2393,6 +2535,7 @@ void gameFrontSaveWindowSettings(void) {
 
 void gameFrontPumpDirty(void) {
   prefsPumpAutosave((uint64_t)SDL_GetTicks());
+  gameFrontPumpPrefsSync();
   if (!s_windowSettingsDirty) return;
   Uint64 now = SDL_GetTicks();
   if (now - s_lastWindowWriteTime < 500) return;

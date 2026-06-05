@@ -423,6 +423,34 @@ void gameFrontSaveWindowSettings(void);
 void gameFrontPumpDirty(void);
 
 /*********************************************************
+*NAME:          gameFrontStartPrefsSync
+*PURPOSE:
+* On sign-in, launch exactly one cloud-preferences sync per
+* session off a worker thread (gated, no-op if already run or
+* if no WBN token). Captures the upload snapshot and sync state
+* on the calling (main) thread.
+*********************************************************/
+void gameFrontStartPrefsSync(void);
+
+/*********************************************************
+*NAME:          gameFrontPumpPrefsSync
+*PURPOSE:
+* Call once per frame (driven from gameFrontPumpDirty). When the
+* sync worker has finished, joins it and applies the outcome on
+* the main thread: adopts + live-applies a downloaded document,
+* records a pushed version, or signs out on re-auth.
+*********************************************************/
+void gameFrontPumpPrefsSync(void);
+
+/*********************************************************
+*NAME:          gameFrontResetPrefsSyncSession
+*PURPOSE:
+* Clear the once-per-session sync gate so a later sign-in syncs
+* again. Called from the logout path.
+*********************************************************/
+void gameFrontResetPrefsSyncSession(void);
+
+/*********************************************************
 *NAME:          gameFrontSetRemeber
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/4/99

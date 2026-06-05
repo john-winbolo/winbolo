@@ -345,3 +345,21 @@ void natPortMapRequest(unsigned short internalPort, NatPortMap *out) {
 
 void natPortMapRelease(NatPortMap *map)       { (void)map; }
 void natPortMapRenewIfNeeded(NatPortMap *map) { (void)map; }
+
+/* The cloud-prefs transport lives in http.c (libcurl + tweetnacl). The
+ * test links wbn_prefs_sync.c standalone, whose wbnPrefsSyncOnce references
+ * these two symbols; stubbing them here keeps http.o (and curl) out of the
+ * link. wbnPrefsSyncOnce itself is never exercised by the unit tests — only
+ * the pure helpers (wbnPrefsBuildPutBody, the parsers, the decision) are. */
+int wbn_prefs_get(const char *bearerToken, char **response_out) {
+  (void)bearerToken;
+  if (response_out) *response_out = NULL;
+  return -1;
+}
+
+int wbn_prefs_put(const char *bearerToken, const char *json_body,
+                  char **response_out) {
+  (void)bearerToken; (void)json_body;
+  if (response_out) *response_out = NULL;
+  return -1;
+}
