@@ -15,11 +15,20 @@
  *     GetManualProbeState: NAT/UPnP probe state owned by the
  *     server-instance lifecycle. The wasm client never hosts a server,
  *     so report idle/empty state.
+ *
+ *   - serverInstanceStartup / Tick / Shutdown: the real bodies live in
+ *     server_lifecycle.c (server_static), which the wasm client doesn't
+ *     link. Single-player passes acceptRemoteClients=false, so the only
+ *     live work startup does is serverSimApplyInstanceConfig; the
+ *     transport / WBN / NAT branches are dead. Mirrors the iOS / Android
+ *     / BrainTest local-only lifecycle stubs.
  */
 
 #include <stddef.h>
 #include <string.h>
 #include "global.h"
+#include "server_sim.h"
+#include "server_sim_lifecycle.h"  /* serverSimApplyInstanceConfig */
 #include "server_lifecycle.h"
 
 bool isLogging = FALSE;
@@ -40,3 +49,12 @@ void serverInstanceTriggerManualProbe(void) {
 ManualProbeState serverInstanceGetManualProbeState(void) {
   return MANUAL_PROBE_IDLE;
 }
+
+bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
+  if (sim == NULL || cfg == NULL) return FALSE;
+  serverSimApplyInstanceConfig(sim, cfg);
+  return TRUE;
+}
+
+void serverInstanceTick(ServerSim *sim) { (void)sim; }
+void serverInstanceShutdown(ServerSim *sim) { (void)sim; }
