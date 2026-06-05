@@ -2399,7 +2399,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_ini_reader_writer.c
     tests/unit/test_prefs_roundtrip.c
     tests/unit/test_prefs_doc.c
+    tests/unit/test_prefs_api.c
     src/common/prefs_doc.c
+    src/common/prefs.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
     tests/unit/test_command_rejected_apply.c
@@ -2520,6 +2522,9 @@ set(_unit_test_names
     prefs_doc_special_chars
     prefs_doc_unknown_preserved
     prefs_doc_save_atomic
+    prefs_api_roundtrip
+    prefs_api_defaults
+    prefs_api_corrupt_backup
     lobby_settings_codec_and_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply
