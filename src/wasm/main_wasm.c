@@ -30,6 +30,7 @@
 #include "../gui/input.h"
 #include "../gui/lang.h"
 #include "../gui/sound.h"
+#include "../gui/ui_mode.h"
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
@@ -299,6 +300,13 @@ int main(int argc, char *argv[]) {
   }
 
   SDL_Init(0);
+
+  /* Force the desktop UI (with the chrome background) for the browser
+   * build. uiModeDetect would otherwise flip to the touch layout —
+   * which omits the background bitmap — whenever a touch device is
+   * present and the canvas is under 1200px wide, as desktop browsers
+   * commonly report. Touch users can still switch via Ctrl+T. */
+  uiModeSet(UI_MODE_DESKTOP);
 
   /* Parse URL query parameters: ?name=Player&zoom=2 */
   {
