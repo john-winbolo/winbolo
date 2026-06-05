@@ -62,6 +62,36 @@ void prefsSetAutosaveDebounce(unsigned intervalMs);
  * not dirty. */
 void prefsPumpAutosave(uint64_t nowMs);
 
+/* ---- Cloud sync (device-local) ---------------------------------------- */
+
+/* Serialize the upload body: the document minus the device-local sections
+ * (WINBOLO.NET auth and the DEVICE identity/sync state), which never leave
+ * the device. _version and every upload-eligible section are kept. This is
+ * the only path that produces an upload body. Newly malloc'd, caller frees;
+ * NULL on OOM or before init. Does not mutate the live document. */
+char *prefsSerializeForUpload(void);
+
+/* Sync-dirty flag: set automatically when any upload-eligible value
+ * changes, cleared by the caller after a successful upload. Persisted in
+ * the document (DEVICE/SyncDirty) so it survives a restart. */
+bool prefsSyncDirty(void);
+void prefsClearSyncDirty(void);
+
+/* The opaque server version token the local document was last in sync with
+ * (DEVICE/LastSyncedUpdatedAt). Empty string means never synced. */
+void prefsGetLastSyncedUpdatedAt(char *out, size_t outSize);
+void prefsSetLastSyncedUpdatedAt(const char *token);
+
+/* This device's stable install id (DEVICE/DeviceId): a 32-hex-char value
+ * generated and persisted on first use, identical on every later call. */
+void prefsGetDeviceId(char *out, size_t outSize);
+
+/* A human-readable label for this device (DEVICE/DeviceLabel), default
+ * empty. The caller supplies a value (e.g. the hostname) — this module
+ * does not source one itself. */
+void prefsGetDeviceLabel(char *out, size_t outSize);
+void prefsSetDeviceLabel(const char *label);
+
 #ifdef __cplusplus
 }
 #endif

@@ -11,11 +11,28 @@
 
 #include "prefs_doc.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 static PrefsDoc *g_doc;
 static char g_path[FILENAME_MAX];
+
+/* Sections held only on this device and never uploaded: WINBOLO.NET (auth
+ * token/expiry) and DEVICE (install id, label, and sync bookkeeping). This
+ * array is the single source of truth for "never synced" — both the upload
+ * serializer and the sync-dirty trigger consult it. */
+static const char *const kDeviceLocalSections[] = { "WINBOLO.NET", "DEVICE" };
+#define PREFS_DEVICE_LOCAL_COUNT \
+    (sizeof(kDeviceLocalSections) / sizeof(kDeviceLocalSections[0]))
+
+/* DEVICE section keys. */
+static const char kSecDevice[]             = "DEVICE";
+static const char kKeyDeviceId[]           = "DeviceId";
+static const char kKeyDeviceLabel[]        = "DeviceLabel";
+static const char kKeyLastSyncedUpdatedAt[] = "LastSyncedUpdatedAt";
+static const char kKeySyncDirty[]          = "SyncDirty";
 
 /* Autosave mode. In immediate mode (default) prefsSetString flushes on
  * every set. In debounced mode it only marks the document dirty; the
@@ -93,10 +110,27 @@ unsigned long prefsGetString(const char *section, const char *key,
     return prefsDocGetString(g_doc, section, key, defaultVal, out, outSize);
 }
 
+static bool prefsSectionIsDeviceLocal(const char *section) {
+    for (size_t i = 0; i < PREFS_DEVICE_LOCAL_COUNT; i++) {
+        if (strcmp(section, kDeviceLocalSections[i]) == 0) return true;
+    }
+    return false;
+}
+
 int prefsSetString(const char *section, const char *key,
                    const char *value) {
     if (!g_doc) return 0;
     if (!prefsDocSetString(g_doc, section, key, value)) return 0;
+
+    /* A change to an upload-eligible section flags the document for cloud
+     * re-upload. Changes to device-local sections (auth, device identity
+     * and sync bookkeeping) never sync, so they must not set sync-dirty.
+     * Write the flag straight to the document so this set is not itself
+     * treated as an upload-eligible change. */
+    if (!prefsSectionIsDeviceLocal(section) && !prefsSyncDirty()) {
+        prefsDocSetString(g_doc, kSecDevice, kKeySyncDirty, "Yes");
+    }
+
     if (s_debounce) {
         s_pendingChange = true;
         return 1;
@@ -130,4 +164,95 @@ void prefsPumpAutosave(uint64_t nowMs) {
     if (nowMs - s_lastChangeMs >= s_intervalMs) {
         prefsDocSave(g_doc, g_path);
     }
+}
+
+/* ---- Cloud sync (device-local) ---------------------------------------- */
+
+/* Copy src into out, NUL-terminated and truncated to outSize. */
+static void prefsCopyOut(const char *src, char *out, size_t outSize) {
+    if (!out || outSize == 0) return;
+    size_t len = strlen(src);
+    if (len > outSize - 1) len = outSize - 1;
+    memcpy(out, src, len);
+    out[len] = '\0';
+}
+
+char *prefsSerializeForUpload(void) {
+    if (!g_doc) return NULL;
+    return prefsDocSerializeExcluding(g_doc, kDeviceLocalSections,
+                                      PREFS_DEVICE_LOCAL_COUNT);
+}
+
+bool prefsSyncDirty(void) {
+    if (!g_doc) return false;
+    char buf[8];
+    prefsDocGetString(g_doc, kSecDevice, kKeySyncDirty, "No",
+                      buf, sizeof(buf));
+    return strcmp(buf, "Yes") == 0;
+}
+
+void prefsClearSyncDirty(void) {
+    if (!g_doc) return;
+    prefsDocSetString(g_doc, kSecDevice, kKeySyncDirty, "No");
+    prefsDocSave(g_doc, g_path);
+}
+
+void prefsGetLastSyncedUpdatedAt(char *out, size_t outSize) {
+    if (!out || outSize == 0) return;
+    if (!g_doc) { out[0] = '\0'; return; }
+    prefsDocGetString(g_doc, kSecDevice, kKeyLastSyncedUpdatedAt, "",
+                      out, outSize);
+}
+
+void prefsSetLastSyncedUpdatedAt(const char *token) {
+    if (!g_doc) return;
+    prefsDocSetString(g_doc, kSecDevice, kKeyLastSyncedUpdatedAt,
+                      token ? token : "");
+    prefsDocSave(g_doc, g_path);
+}
+
+/* Generate a 32-hex-char id from non-cryptographic but process-unique
+ * entropy — wall clock, a coarse CPU clock, and a stack address — expanded
+ * through a splitmix64 step. Deliberately independent of the game's
+ * deterministic bolo_rand, which must stay reproducible; this never feeds
+ * the global rand() state either. Uniqueness, not unpredictability. */
+static void prefsGenerateDeviceId(char *out /* >= 33 bytes */) {
+    static const char hex[] = "0123456789abcdef";
+    uint64_t s = (uint64_t)time(NULL);
+    s ^= (uint64_t)clock() * 0x9E3779B97F4A7C15ULL;
+    s ^= (uint64_t)(uintptr_t)&out;
+    for (int i = 0; i < 32; i++) {
+        s += 0x9E3779B97F4A7C15ULL;
+        uint64_t z = s;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+        z = z ^ (z >> 31);
+        out[i] = hex[z & 0xF];
+    }
+    out[32] = '\0';
+}
+
+void prefsGetDeviceId(char *out, size_t outSize) {
+    if (!out || outSize == 0) return;
+    if (!g_doc) { out[0] = '\0'; return; }
+    char id[33];
+    prefsDocGetString(g_doc, kSecDevice, kKeyDeviceId, "", id, sizeof(id));
+    if (id[0] == '\0') {
+        prefsGenerateDeviceId(id);
+        prefsDocSetString(g_doc, kSecDevice, kKeyDeviceId, id);
+        prefsDocSave(g_doc, g_path); /* durable from first use */
+    }
+    prefsCopyOut(id, out, outSize);
+}
+
+void prefsGetDeviceLabel(char *out, size_t outSize) {
+    if (!out || outSize == 0) return;
+    if (!g_doc) { out[0] = '\0'; return; }
+    prefsDocGetString(g_doc, kSecDevice, kKeyDeviceLabel, "", out, outSize);
+}
+
+void prefsSetDeviceLabel(const char *label) {
+    if (!g_doc) return;
+    prefsDocSetString(g_doc, kSecDevice, kKeyDeviceLabel, label ? label : "");
+    prefsDocSave(g_doc, g_path);
 }

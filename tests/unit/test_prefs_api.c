@@ -24,6 +24,9 @@ int run_prefs_api_defaults(void)       { return 0; }
 int run_prefs_api_corrupt_backup(void) { return 0; }
 int run_prefs_api_debounce(void)       { return 0; }
 int run_prefs_api_shutdown_flush(void) { return 0; }
+int run_prefs_api_upload_excludes_local(void) { return 0; }
+int run_prefs_api_sync_dirty(void)            { return 0; }
+int run_prefs_api_device_identity(void)       { return 0; }
 
 #else
 
@@ -33,6 +36,7 @@ int run_prefs_api_shutdown_flush(void) { return 0; }
 #include <unistd.h>
 
 #include "common/prefs.h"
+#include "common/prefs_doc.h"
 
 static int file_exists(const char *path) {
     struct stat st;
@@ -196,6 +200,148 @@ int run_prefs_api_shutdown_flush(void) {
     prefsGetString("SETTINGS", "Player Name", "<default>", buf, sizeof(buf));
     UT_ASSERT_MSG(strcmp(buf, "Me") == 0,
                   "shutdown did not flush pending change: '%s'", buf);
+    prefsShutdown();
+
+    cleanup(jsonPath);
+    return 0;
+}
+
+/* -------------------------------------------------------------------- */
+
+int run_prefs_api_upload_excludes_local(void) {
+    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_upload.json";
+    cleanup(jsonPath);
+
+    prefsInit(jsonPath);
+
+    /* Upload-eligible sections. */
+    UT_ASSERT(prefsSetString("SETTINGS", "Player Name", "Spectre"));
+    UT_ASSERT(prefsSetString("KEYS", "Forward", "273"));
+    /* Device-local sections that must never leave the device. */
+    UT_ASSERT(prefsSetString("WINBOLO.NET", "Token", "secret-token"));
+    prefsSetDeviceLabel("steamdeck");
+
+    char *body = prefsSerializeForUpload();
+    UT_ASSERT_MSG(body != NULL, "upload serialization returned NULL");
+
+    PrefsDoc *up = prefsDocParseJson(body);
+    free(body);
+    UT_ASSERT_MSG(up != NULL, "upload body did not parse as JSON");
+
+    char buf[128];
+
+    /* Upload-eligible content is present. */
+    prefsDocGetString(up, "SETTINGS", "Player Name", "<absent>",
+                      buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "Spectre") == 0,
+                  "SETTINGS missing from upload body: '%s'", buf);
+    prefsDocGetString(up, "KEYS", "Forward", "<absent>", buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "273") == 0,
+                  "KEYS missing from upload body: '%s'", buf);
+    UT_ASSERT_MSG(prefsDocVersion(up) == 1,
+                  "_version missing from upload body");
+
+    /* Device-local sections are absent. */
+    prefsDocGetString(up, "WINBOLO.NET", "Token", "<absent>",
+                      buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "<absent>") == 0,
+                  "WINBOLO.NET leaked into upload body: '%s'", buf);
+    prefsDocGetString(up, "DEVICE", "DeviceLabel", "<absent>",
+                      buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "<absent>") == 0,
+                  "DEVICE leaked into upload body: '%s'", buf);
+
+    prefsDocFree(up);
+
+    /* Serializing for upload must not mutate the live document. */
+    prefsGetString("WINBOLO.NET", "Token", "<absent>", buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "secret-token") == 0,
+                  "upload serialization mutated the live document: '%s'", buf);
+
+    prefsShutdown();
+    cleanup(jsonPath);
+    return 0;
+}
+
+/* -------------------------------------------------------------------- */
+
+int run_prefs_api_sync_dirty(void) {
+    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_syncdirty.json";
+    cleanup(jsonPath);
+
+    prefsInit(jsonPath);
+    UT_ASSERT_MSG(!prefsSyncDirty(), "fresh document should not be sync-dirty");
+
+    /* An upload-eligible change sets sync-dirty. */
+    UT_ASSERT(prefsSetString("SETTINGS", "Player Name", "Me"));
+    UT_ASSERT_MSG(prefsSyncDirty(),
+                  "upload-eligible change did not set sync-dirty");
+
+    prefsClearSyncDirty();
+    UT_ASSERT_MSG(!prefsSyncDirty(), "clear did not reset sync-dirty");
+
+    /* A device-local change must not set sync-dirty. */
+    UT_ASSERT(prefsSetString("WINBOLO.NET", "Token", "abc"));
+    UT_ASSERT_MSG(!prefsSyncDirty(),
+                  "device-local change wrongly set sync-dirty");
+
+    /* Dirty again, then confirm it persists across a reload. */
+    UT_ASSERT(prefsSetString("KEYS", "Forward", "8"));
+    UT_ASSERT_MSG(prefsSyncDirty(), "sync-dirty not set before reload");
+    prefsShutdown();
+
+    prefsInit(jsonPath);
+    UT_ASSERT_MSG(prefsSyncDirty(), "sync-dirty did not persist across re-init");
+    prefsShutdown();
+
+    cleanup(jsonPath);
+    return 0;
+}
+
+/* -------------------------------------------------------------------- */
+
+int run_prefs_api_device_identity(void) {
+    const char *jsonPath = "/tmp/winbolo_ut_prefsapi_device.json";
+    cleanup(jsonPath);
+
+    prefsInit(jsonPath);
+
+    char id1[64];
+    prefsGetDeviceId(id1, sizeof(id1));
+    UT_ASSERT_MSG(strlen(id1) == 32, "device id not 32 chars: '%s'", id1);
+
+    /* Stable within the same session. */
+    char id2[64];
+    prefsGetDeviceId(id2, sizeof(id2));
+    UT_ASSERT_MSG(strcmp(id1, id2) == 0,
+                  "device id changed within a session: '%s' vs '%s'", id1, id2);
+
+    /* Label and last-synced token round-trip. */
+    prefsSetDeviceLabel("steamdeck");
+    prefsSetLastSyncedUpdatedAt("1700000000");
+
+    char buf[64];
+    prefsGetDeviceLabel(buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "steamdeck") == 0,
+                  "device label round-trip failed: '%s'", buf);
+    prefsGetLastSyncedUpdatedAt(buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "1700000000") == 0,
+                  "last-synced round-trip failed: '%s'", buf);
+
+    prefsShutdown();
+
+    /* Identity is persisted, not regenerated, across re-init. */
+    prefsInit(jsonPath);
+    prefsGetDeviceId(buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, id1) == 0,
+                  "device id regenerated across re-init: '%s' vs '%s'",
+                  buf, id1);
+    prefsGetDeviceLabel(buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "steamdeck") == 0,
+                  "device label did not persist: '%s'", buf);
+    prefsGetLastSyncedUpdatedAt(buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "1700000000") == 0,
+                  "last-synced did not persist: '%s'", buf);
     prefsShutdown();
 
     cleanup(jsonPath);

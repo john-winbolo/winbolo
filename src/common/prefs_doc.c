@@ -128,6 +128,23 @@ char *prefsDocSerialize(const PrefsDoc *doc) {
     return cJSON_PrintUnformatted(doc->root);
 }
 
+char *prefsDocSerializeExcluding(const PrefsDoc *doc,
+                                 const char *const *sections, size_t count) {
+    if (!doc) return NULL;
+    cJSON *copy = cJSON_Duplicate(doc->root, 1 /* recurse */);
+    if (!copy) return NULL;
+    if (sections) {
+        for (size_t i = 0; i < count; i++) {
+            if (sections[i]) {
+                cJSON_DeleteItemFromObjectCaseSensitive(copy, sections[i]);
+            }
+        }
+    }
+    char *json = cJSON_PrintUnformatted(copy);
+    cJSON_Delete(copy);
+    return json;
+}
+
 #ifndef _WIN32
 /* Atomic, mode-0600, fsync'd write — secure temp-file + rename pattern
  * with a JSON payload. */

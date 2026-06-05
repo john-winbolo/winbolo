@@ -2505,6 +2505,9 @@ set(_unit_test_names
     prefs_api_corrupt_backup
     prefs_api_debounce
     prefs_api_shutdown_flush
+    prefs_api_upload_excludes_local
+    prefs_api_sync_dirty
+    prefs_api_device_identity
     lobby_settings_codec_and_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply

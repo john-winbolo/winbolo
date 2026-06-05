@@ -40,6 +40,12 @@ PrefsDoc *prefsDocLoad(const char *path);
 /* Serialize to a newly malloc'd JSON string (caller frees). NULL on OOM. */
 char *prefsDocSerialize(const PrefsDoc *doc);
 
+/* Serialize the document to JSON omitting the named top-level sections.
+ * _version and all other sections are kept. Returns a newly malloc'd
+ * string (caller frees), NULL on OOM. Does not mutate the document. */
+char *prefsDocSerializeExcluding(const PrefsDoc *doc,
+                                 const char *const *sections, size_t count);
+
 /* Atomic write as JSON to path: sibling temp file created mode 0600,
  * fsync, rename over target. Clears dirty on success. 1 ok / 0 fail. */
 int prefsDocSave(PrefsDoc *doc, const char *path);
