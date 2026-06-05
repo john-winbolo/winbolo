@@ -663,6 +663,11 @@ void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
   if (drawBusy == FALSE) sdl3DrawKillsDeaths(0, 0, kills, deaths);
 }
 
+void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping) {
+  if (!clientSimIsRunning(cs)) return;
+  sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
+}
+
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
   (void)cs;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
