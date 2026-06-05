@@ -147,8 +147,13 @@ static void windowRunGameTick(ClientSim *cs) {
       clientMutexWaitFor();
       clientSimKeysTick(cs, &pkt);
       clientMutexRelease();
+      /* Deliver the keys-half input but do NOT advance the server here.
+       * The active local transport's tick runs serverSimTick, which is a
+       * full 20ms frame (both keys+game half-steps internally). Ticking it
+       * in both branches would advance the sim every 10ms — 2x too fast.
+       * Only the game-tick branch below advances it, so the server runs at
+       * the 20ms SERVER_TICK_LENGTH cadence, matching the desktop build. */
       clientSimNetRecordInput(cs, &pkt);
-      clientSimNetTick(cs);
       simTickCounter++;
       justKeys = FALSE;
     } else {
