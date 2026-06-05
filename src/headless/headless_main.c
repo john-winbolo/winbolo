@@ -85,6 +85,7 @@
 #include "../gui/gamefront.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
+#include "../common/prefs.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "cmd_stdin.h"
 
@@ -2178,6 +2179,9 @@ int main(int argc, char *argv[]) {
   }
 
   winbolonetCoreSetPreferencesPath("WinBolo.ini");
+  /* Load the process-global preferences document the shared winbolonet code
+   * reads through (e.g. httpCreate's [WINBOLO.NET] Host). */
+  prefsInit("WinBolo.json");
 
   if (!clientMutexCreate()) {
     fprintf(stderr, "Error: failed to create client mutex\n");

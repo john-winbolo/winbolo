@@ -30,6 +30,7 @@
 #include <SDL3/SDL.h>
 #include "logviewer.h"
 #include "../common/wb_log.h"
+#include "../common/prefs.h"
 #include "../winbolonet/http.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "platform/platform_config.h"
@@ -57,6 +58,21 @@ int main(int argc, char *argv[]) {
      * standalone LogViewer build. Read access (comments) and authenticated
      * post will be added in a later step. */
     winbolonetCoreSetPreferencesPath("WinBolo.ini");
+
+    /* Load the process-global preferences document the shared winbolonet code
+     * reads through. Mirror platform_config's SDL_GetPrefPath WinBolo location
+     * with the .json document. */
+    {
+        char prefsJsonPath[1024];
+        const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+        if (prefDir) {
+            SDL_snprintf(prefsJsonPath, sizeof(prefsJsonPath), "%sWinBolo.json", prefDir);
+        } else {
+            SDL_snprintf(prefsJsonPath, sizeof(prefsJsonPath), "%s", "WinBolo.json");
+        }
+        prefsInit(prefsJsonPath);
+    }
+
     httpCreate();
 
     /* NULL window/renderer signals standalone mode —

@@ -47,20 +47,10 @@ void randombytes(unsigned char *buf, unsigned long long len) {
   (void)buf; (void)len;
 }
 
-/* Provided by posix_stubs.c (server, map editor, log viewer, SDL3 client) */
-#ifndef _WIN32
-void preferencesGetPreferenceFile(char *dest);
-unsigned int GetPrivateProfileString(const char *section, const char *key,
-                                     const char *def, char *out,
-                                     unsigned int outSize,
-                                     const char *filePath);
-int WritePrivateProfileString(const char *section, const char *key,
-                              const char *value, const char *filePath);
-#endif
-
 #include "global.h"
 #include "http.h"
 #include "../common/wb_log.h"
+#include "../common/prefs.h"
 #include "winbolonet_core.h"
 #include "wbn_bearer.h"
 #include "wbn_prefs_path.h"
@@ -198,7 +188,6 @@ void httpSetHostOverride(const char *host) {
 * Returns success.
 *********************************************************/
 bool httpCreate(void) {
-  char prefs[FILENAME_MAX];
   char iniValue[FILENAME_MAX];
 
   if (wbnHostOverride[0] != '\0') {
@@ -206,19 +195,12 @@ bool httpCreate(void) {
     strncpy(iniValue, wbnHostOverride, sizeof(iniValue) - 1);
     iniValue[sizeof(iniValue) - 1] = '\0';
   } else {
-    /* Read from preferences file */
-#ifdef _WIN32
-    strncpy(prefs, winbolonetCorePrefsPath(), sizeof(prefs) - 1);
-    prefs[sizeof(prefs) - 1] = '\0';
-#else
-    preferencesGetPreferenceFile(prefs);
-#endif
-
+    /* Read from preferences */
     iniValue[0] = '\0';
-    GetPrivateProfileString("WINBOLO.NET", "Host", "wbn.winbolo.net",
-                            iniValue, (unsigned int)sizeof(iniValue), prefs);
+    prefsGetString("WINBOLO.NET", "Host", "wbn.winbolo.net",
+                   iniValue, (unsigned int)sizeof(iniValue));
     /* Write back so servers without a client config get a default entry */
-    WritePrivateProfileString("WINBOLO.NET", "Host", iniValue, prefs);
+    prefsSetString("WINBOLO.NET", "Host", iniValue);
   }
 
   buildBaseUrl(iniValue);
