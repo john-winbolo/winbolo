@@ -219,6 +219,8 @@ int run_prefs_api_upload_excludes_local(void) {
     UT_ASSERT(prefsSetString("KEYS", "Forward", "273"));
     /* Device-local sections that must never leave the device. */
     UT_ASSERT(prefsSetString("WINBOLO.NET", "Token", "secret-token"));
+    UT_ASSERT(prefsSetString("WINDOW", "Window X", "42"));
+    UT_ASSERT(prefsSetString("MAPEDITOR", "Last Map", "rocket.map"));
     prefsSetDeviceLabel("steamdeck");
 
     char *body = prefsSerializeForUpload();
@@ -250,6 +252,17 @@ int run_prefs_api_upload_excludes_local(void) {
                       buf, sizeof(buf));
     UT_ASSERT_MSG(strcmp(buf, "<absent>") == 0,
                   "DEVICE leaked into upload body: '%s'", buf);
+    prefsDocGetString(up, "WINDOW", "Window X", "<absent>", buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "<absent>") == 0,
+                  "WINDOW leaked into upload body: '%s'", buf);
+    prefsDocGetString(up, "MAPEDITOR", "Last Map", "<absent>",
+                      buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "<absent>") == 0,
+                  "MAPEDITOR leaked into upload body: '%s'", buf);
+    prefsDocGetString(up, "LOGVIEWER", "Last Log", "<absent>",
+                      buf, sizeof(buf));
+    UT_ASSERT_MSG(strcmp(buf, "<absent>") == 0,
+                  "LOGVIEWER leaked into upload body: '%s'", buf);
 
     prefsDocFree(up);
 
@@ -284,6 +297,11 @@ int run_prefs_api_sync_dirty(void) {
     UT_ASSERT(prefsSetString("WINBOLO.NET", "Token", "abc"));
     UT_ASSERT_MSG(!prefsSyncDirty(),
                   "device-local change wrongly set sync-dirty");
+
+    /* A device-local WINDOW change must not set sync-dirty either. */
+    UT_ASSERT(prefsSetString("WINDOW", "Window X", "7"));
+    UT_ASSERT_MSG(!prefsSyncDirty(),
+                  "device-local WINDOW change wrongly set sync-dirty");
 
     /* Dirty again, then confirm it persists across a reload. */
     UT_ASSERT(prefsSetString("KEYS", "Forward", "8"));

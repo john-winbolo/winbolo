@@ -23,7 +23,9 @@ static char g_path[FILENAME_MAX];
  * token/expiry) and DEVICE (install id, label, and sync bookkeeping). This
  * array is the single source of truth for "never synced" — both the upload
  * serializer and the sync-dirty trigger consult it. */
-static const char *const kDeviceLocalSections[] = { "WINBOLO.NET", "DEVICE" };
+static const char *const kDeviceLocalSections[] = { "WINBOLO.NET", "DEVICE",
+                                                    "MAPEDITOR", "LOGVIEWER",
+                                                    "WINDOW" };
 #define PREFS_DEVICE_LOCAL_COUNT \
     (sizeof(kDeviceLocalSections) / sizeof(kDeviceLocalSections[0]))
 

@@ -2152,30 +2152,30 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   showBaseLabels = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Label Own Tank", "No", buff, FILENAME_MAX);
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
-  prefsGetString("MENU", "Window Size", "1", buff, FILENAME_MAX);
+  prefsGetString("WINDOW", "Window Size", "1", buff, FILENAME_MAX);
   zoomFactor = atoi(buff);
   /* Custom window size (for ZOOM_FACTOR_CUSTOM mode) */
-  prefsGetString("MENU", "Custom Width", "0", buff, FILENAME_MAX);
+  prefsGetString("WINDOW", "Custom Width", "0", buff, FILENAME_MAX);
   {
     int customW = atoi(buff);
-    prefsGetString("MENU", "Custom Height", "0", buff, FILENAME_MAX);
+    prefsGetString("WINDOW", "Custom Height", "0", buff, FILENAME_MAX);
     int customH = atoi(buff);
     if (customW > 0 && customH > 0) {
       windowSetCustomSize(customW, customH);
     }
   }
   /* Window position */
-  prefsGetString("MENU", "Window X", "-1", buff, FILENAME_MAX);
+  prefsGetString("WINDOW", "Window X", "-1", buff, FILENAME_MAX);
   {
     int winX = atoi(buff);
-    prefsGetString("MENU", "Window Y", "-1", buff, FILENAME_MAX);
+    prefsGetString("WINDOW", "Window Y", "-1", buff, FILENAME_MAX);
     int winY = atoi(buff);
     windowSetSavedPosition(winX, winY);
   }
   /* Dialog window position (welcome screen, etc.) */
-  prefsGetString("MENU", "Dialog X", "-1", buff, FILENAME_MAX);
+  prefsGetString("WINDOW", "Dialog X", "-1", buff, FILENAME_MAX);
   gameFrontDialogX = atoi(buff);
-  prefsGetString("MENU", "Dialog Y", "-1", buff, FILENAME_MAX);
+  prefsGetString("WINDOW", "Dialog Y", "-1", buff, FILENAME_MAX);
   gameFrontDialogY = atoi(buff);
 
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
@@ -2348,30 +2348,30 @@ void gameFrontFlushWindowSettings(void) {
   char buff[FILENAME_MAX];
 
   intToStr(zoomFactor, buff, sizeof(buff));
-  prefsSetString("MENU", "Window Size", buff);
+  prefsSetString("WINDOW", "Window Size", buff);
 
   {
     int customW, customH;
     windowGetCustomSize(&customW, &customH);
     intToStr(customW, buff, sizeof(buff));
-    prefsSetString("MENU", "Custom Width", buff);
+    prefsSetString("WINDOW", "Custom Width", buff);
     intToStr(customH, buff, sizeof(buff));
-    prefsSetString("MENU", "Custom Height", buff);
+    prefsSetString("WINDOW", "Custom Height", buff);
   }
 
   {
     int winX, winY;
     windowGetSavedPosition(&winX, &winY);
     intToStr(winX, buff, sizeof(buff));
-    prefsSetString("MENU", "Window X", buff);
+    prefsSetString("WINDOW", "Window X", buff);
     intToStr(winY, buff, sizeof(buff));
-    prefsSetString("MENU", "Window Y", buff);
+    prefsSetString("WINDOW", "Window Y", buff);
   }
 
   intToStr(gameFrontDialogX, buff, sizeof(buff));
-  prefsSetString("MENU", "Dialog X", buff);
+  prefsSetString("WINDOW", "Dialog X", buff);
   intToStr(gameFrontDialogY, buff, sizeof(buff));
-  prefsSetString("MENU", "Dialog Y", buff);
+  prefsSetString("WINDOW", "Dialog Y", buff);
 
   s_windowSettingsDirty = false;
 }
