@@ -326,15 +326,23 @@ void mapViewDrawLGMs(MapViewCtx *ctx, screenLgm *lgms,
     float sx = (float)(originX - tileW + bbx * ctx->zoomFactor - edgeX);
     float sy = (float)(originY - tileH + bby * ctx->zoomFactor - edgeY);
 
-    /* Centre the LGM sprite on its authoritative hit pixel.
-     * LGM_WIDTH=3 and LGM_HEIGHT=4, so the sprite-local centre is
-     * (1.5, 2.0).  Without this offset the sprite top-left lands on
-     * the body coord, putting the head ~2 game-pixels north-west of
-     * where the engine actually thinks the LGM is — which makes
-     * hit/death animations look offset from the sprite. */
+    /* Centre the LGM sprite on its authoritative hit pixel. LGM_WIDTH=3,
+     * LGM_HEIGHT=4, so the precise sub-pixel centre is (1.5, 2.0) game
+     * pixels — kept as the internal model (the sim's hit position stays
+     * sub-pixel precise). But 1.5*zoom is a half pixel at 1x / odd zoom,
+     * which renders the sprite off the game-pixel grid every other sprite
+     * sits on. So compute the precise centre, then snap only the DISPLAYED
+     * position to the nearest whole game pixel — rounded relative to the
+     * scroll origin so the LGM stays in lockstep with smoothly-scrolling
+     * sprites instead of snapping to an absolute grid. */
     if (frame == LGM0 || frame == LGM1 || frame == LGM2) {
-      sx -= 1.5f * (float)ctx->zoomFactor;
-      sy -= 2.0f * (float)ctx->zoomFactor;
+      float z = (float)ctx->zoomFactor;
+      float baseX = (float)(originX - tileW - edgeX);
+      float baseY = (float)(originY - tileH - edgeY);
+      sx -= 1.5f * z;   /* precise sub-pixel centre */
+      sy -= 2.0f * z;
+      sx = baseX + SDL_floorf((sx - baseX) / z + 0.5f) * z;  /* display snaps to a pixel */
+      sy = baseY + SDL_floorf((sy - baseY) / z + 0.5f) * z;
     }
 
     {
@@ -810,12 +818,20 @@ void mapViewRenderCentered(MapViewCtx *ctx, ServerSim *sim,
     }
 
     /* Centre the on-foot LGM sprite on its authoritative hit pixel.
-     * Sprite-local centre is (LGM_WIDTH/2, LGM_HEIGHT/2) = (1.5, 2.0)
-     * game pixels. Helicopter frame draws full-tile from its own
-     * (0, 0) anchor so no offset there. */
+     * Precise sub-pixel centre is (1.5, 2.0) game pixels — kept as the
+     * model. 1.5*zoom is a half pixel at 1x / odd zoom, so compute the
+     * precise centre then snap only the DISPLAYED position to the nearest
+     * whole game pixel, rounded relative to the scroll origin so it stays
+     * in lockstep with smoothly-scrolling sprites. Helicopter frame draws
+     * full-tile from its own (0,0) anchor, so no offset there. */
     if (lgmInfo.frame == LGM0 || lgmInfo.frame == LGM1 || lgmInfo.frame == LGM2) {
-      lx -= 1.5f * (float)zf;
-      ly -= 2.0f * (float)zf;
+      float z = (float)zf;
+      float baseX = (float)(originX - edgeX - camMX * tileSize * zf);
+      float baseY = (float)(originY - edgeY - camMY * tileSize * zf);
+      lx -= 1.5f * z;   /* precise sub-pixel centre */
+      ly -= 2.0f * z;
+      lx = baseX + SDL_floorf((lx - baseX) / z + 0.5f) * z;  /* display snaps to a pixel */
+      ly = baseY + SDL_floorf((ly - baseY) / z + 0.5f) * z;
     }
 
     if (lx + srcW * zf >= originX && lx <= originX + viewW &&
