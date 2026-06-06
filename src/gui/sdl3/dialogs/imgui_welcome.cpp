@@ -37,6 +37,7 @@ extern "C" {
 #include "imgui_welcome.h"
 #include "../../gamefront.h"
 #include "../../lang.h"
+#include "imgui_winbolonet.h"
 }
 
 #include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
@@ -342,6 +343,17 @@ extern "C" int imguiWelcomeShow(void) {
 
             ImGui::PopStyleColor(4);
             ImGui::PopStyleVar(1);
+        }
+
+        /* Top-left WinBolo.net account status: player name + signed-in
+         * state + Login/Logout, plus the 1v1 ladder rank when signed in.
+         * Reuses the settings dialog's login popup and worker. */
+        {
+            const float statusMargin = 12.0f * s;
+            ImGui::SetCursorPos(ImVec2(statusMargin, statusMargin));
+            ImGui::BeginGroup();
+            imguiWinbolonetDrawStatusBlock();
+            ImGui::EndGroup();
         }
 
 #if !BOLO_MOBILE

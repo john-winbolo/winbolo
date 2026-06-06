@@ -211,6 +211,11 @@ char gameFrontWbnToken[FILENAME_MAX];
 char gameFrontWbnTokenExpiry[FILENAME_MAX];
 bool gameFrontWbnUse;
 
+/* WinBolo.net 1v1 ladder position, refreshed on every auth/validate.
+ * rank is -1 when unranked or unknown; total is 0 until first populated. */
+int gameFrontWbnRank = -1;
+int gameFrontWbnRankTotal = 0;
+
 /* Dialog window position (separate from game window) */
 int gameFrontDialogX = -1;
 int gameFrontDialogY = -1;
@@ -1014,13 +1019,15 @@ static void gameFrontValidateWbnBeforeJoin(void) {
       char tokenOut[256], expiryOut[256];
       char playerName[PLAYER_NAME_LEN];
       char errorMsg[512];
+      int rank = -1, rankTotal = 0;
       tokenOut[0] = '\0';
       expiryOut[0] = '\0';
       playerName[0] = '\0';
       errorMsg[0] = '\0';
 
-      if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName, errorMsg)) {
+      if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName, &rank, &rankTotal, errorMsg)) {
         gameFrontSetWinbolonetToken(tokenOut, expiryOut);
+        gameFrontSetWinbolonetRank(rank, rankTotal);
         if (playerName[0] != '\0') {
           char persisted[PLAYER_NAME_LEN];
           persisted[0] = '\0';
@@ -1055,10 +1062,12 @@ static void gameFrontValidateWbnBeforeJoin(void) {
 
   char playerName[PLAYER_NAME_LEN];
   char errorMsg[512];
+  int rank = -1, rankTotal = 0;
   playerName[0] = '\0';
   errorMsg[0] = '\0';
 
-  if (winbolonetAuthValidate(token, playerName, errorMsg)) {
+  if (winbolonetAuthValidate(token, playerName, &rank, &rankTotal, errorMsg)) {
+    gameFrontSetWinbolonetRank(rank, rankTotal);
     if (playerName[0] != '\0') {
       gameFrontSetPlayerName(playerName);
     }
@@ -1715,11 +1724,23 @@ void gameFrontClearWinbolonetToken(void) {
   gameFrontWbnToken[0] = '\0';
   gameFrontWbnTokenExpiry[0] = '\0';
   gameFrontWbnUse = FALSE;
+  gameFrontWbnRank = -1;
+  gameFrontWbnRankTotal = 0;
   gameFrontSaveWbnTokenToPrefs();
 }
 
 bool gameFrontGetWinbolonetUse(void) {
   return gameFrontWbnUse;
+}
+
+void gameFrontSetWinbolonetRank(int rank, int rankTotal) {
+  gameFrontWbnRank = rank;
+  gameFrontWbnRankTotal = rankTotal;
+}
+
+void gameFrontGetWinbolonetRank(int *rank, int *rankTotal) {
+  if (rank) *rank = gameFrontWbnRank;
+  if (rankTotal) *rankTotal = gameFrontWbnRankTotal;
 }
 
 /* -------------------------------------------------------

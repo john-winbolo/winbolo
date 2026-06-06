@@ -40,16 +40,40 @@
 extern bool winboloNetRunning;
 
 /*********************************************************
+*NAME:          wbnParseRank
+*PURPOSE:
+* Extracts the optional top-level 1v1 ladder position from
+* an auth response. `rank` is JSON null/absent when the
+* player is unranked, mapped to -1; an integer is the
+* 1-based position. `rank_total` is the ranked-player
+* count, 0 when absent. Either out-param may be NULL.
+* Tolerates older servers that omit both fields.
+*********************************************************/
+static void wbnParseRank(cJSON *resp, int *rankOut, int *rankTotalOut) {
+  if (rankOut) {
+    cJSON *rankObj = cJSON_GetObjectItem(resp, "rank");
+    *rankOut = (rankObj && cJSON_IsNumber(rankObj)) ? rankObj->valueint : -1;
+  }
+  if (rankTotalOut) {
+    cJSON *totalObj = cJSON_GetObjectItem(resp, "rank_total");
+    *rankTotalOut = (totalObj && cJSON_IsNumber(totalObj)) ? totalObj->valueint : 0;
+  }
+}
+
+/*********************************************************
 *NAME:          winbolonetAuthLogin
 *PURPOSE:
 * Authenticates via POST /api/v1/auth/login and returns
 * the token and expiry on success.
 *********************************************************/
-bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
+bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
   bool ok = FALSE;
+
+  if (rankOut) *rankOut = -1;
+  if (rankTotalOut) *rankTotalOut = 0;
 
   if (httpCreate() != TRUE) {
     strcpy(errorMsg, "Could not initialise HTTP");
@@ -79,6 +103,7 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
           strncpy(playerNameOut, nameObj->valuestring, PLAYER_NAME_LEN - 1);
           playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
         }
+        wbnParseRank(resp, rankOut, rankTotalOut);
         ok = TRUE;
       } else {
         strcpy(errorMsg, "Invalid response from WinBolo.net");
@@ -109,11 +134,14 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
 * hex-encoded Steam auth ticket. Returns token and expiry
 * on success, just like winbolonetAuthLogin.
 *********************************************************/
-bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
+bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
   bool ok = FALSE;
+
+  if (rankOut) *rankOut = -1;
+  if (rankTotalOut) *rankTotalOut = 0;
 
   if (httpCreate() != TRUE) {
     strcpy(errorMsg, "Could not initialise HTTP");
@@ -142,6 +170,7 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
           strncpy(playerNameOut, nameObj->valuestring, PLAYER_NAME_LEN - 1);
           playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
         }
+        wbnParseRank(resp, rankOut, rankTotalOut);
         ok = TRUE;
       } else {
         strcpy(errorMsg, "Invalid response from WinBolo.net");
@@ -171,11 +200,14 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
 * Validates a token via POST /api/v1/auth/validate.
 * Returns TRUE if the token is still valid.
 *********************************************************/
-bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg) {
+bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
   bool ok = FALSE;
+
+  if (rankOut) *rankOut = -1;
+  if (rankTotalOut) *rankTotalOut = 0;
 
   if (httpCreate() != TRUE) {
     strcpy(errorMsg, "Could not initialise HTTP");
@@ -199,6 +231,7 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorM
           playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
         }
       }
+      wbnParseRank(resp, rankOut, rankTotalOut);
       ok = TRUE;
     } else {
       cJSON *errObj = cJSON_GetObjectItem(resp, "error");

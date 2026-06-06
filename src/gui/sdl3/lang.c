@@ -1266,6 +1266,10 @@ static const LangEntry langTable[] = {
     {1406, "WBN balance failed"},
     /* Net Info — inbound snapshot loss for the last 1-second window */
     {1407, "Packet loss: {number}% ({number2}/{number3} this sec, {number4} game total)"},
+
+    /* WinBolo.net 1v1 ladder position in the account status block */
+    {1408, "#{number} of {number2}"},
+    {1409, "Unranked"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

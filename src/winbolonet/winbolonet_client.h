@@ -46,9 +46,11 @@
 * tokenOut      - Buffer for token (must be >= 65 bytes)
 * expiryOut     - Buffer for expiry string (must be >= 64 bytes)
 * playerNameOut - Buffer for player name (must be >= PLAYER_NAME_LEN)
+* rankOut       - 1v1 ladder position; -1 when unranked. May be NULL.
+* rankTotalOut  - Total ranked players; 0 when absent. May be NULL.
 * errorMsg      - Buffer for error message on failure
 *********************************************************/
-bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg);
+bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg);
 
 /*********************************************************
 *NAME:          winbolonetAuthSteam
@@ -63,9 +65,11 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
 * tokenOut        - Buffer for token (must be >= 65 bytes)
 * expiryOut       - Buffer for expiry string (must be >= 64 bytes)
 * playerNameOut   - Buffer for player name (must be >= PLAYER_NAME_LEN)
+* rankOut         - 1v1 ladder position; -1 when unranked. May be NULL.
+* rankTotalOut    - Total ranked players; 0 when absent. May be NULL.
 * errorMsg        - Buffer for error message on failure
 *********************************************************/
-bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg);
+bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg);
 
 /*********************************************************
 *NAME:          winbolonetAuthValidate
@@ -77,9 +81,11 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
 *ARGUMENTS:
 * token         - The auth token to validate
 * playerNameOut - Buffer for player name (must be >= PLAYER_NAME_LEN), may be NULL
+* rankOut       - 1v1 ladder position; -1 when unranked. May be NULL.
+* rankTotalOut  - Total ranked players; 0 when absent. May be NULL.
 * errorMsg      - Buffer for error message on failure
 *********************************************************/
-bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg);
+bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg);
 
 /*********************************************************
 *NAME:          winbolonetClientJoinSession

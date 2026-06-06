@@ -582,6 +582,8 @@ STR_DLGWBN_PASSWORD=Password:
 STR_DLGWBN_SIGNINGIN=Signing in...
 STR_DLGWBN_SIGNIN_OK=Sign in
 STR_DLGWBN_NEEDCREDS=Please enter your username and password.
+STR_DLGWBN_RANK=#{number} of {number2}
+STR_DLGWBN_UNRANKED=Unranked
 
 # Welcome dialog
 STR_DLGWELCOME_WINTITLE=WinBolo - Game Selection

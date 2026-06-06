@@ -54,6 +54,8 @@ struct WbnLoginWork {
     char tokenOut[256];
     char expiryOut[256];
     char playerNameOut[PLAYER_NAME_LEN];
+    int rankOut;
+    int rankTotalOut;
     char errorMsg[512];
     bool isValidate;
     bool success;
@@ -72,9 +74,9 @@ static bool wbnFocusUser = false;
 static int wbnLoginThreadFunc(void *data) {
     WbnLoginWork *w = (WbnLoginWork *)data;
     if (w->isValidate) {
-        w->success = winbolonetAuthValidate(w->token, w->playerNameOut, w->errorMsg);
+        w->success = winbolonetAuthValidate(w->token, w->playerNameOut, &w->rankOut, &w->rankTotalOut, w->errorMsg);
     } else {
-        w->success = winbolonetAuthLogin(w->username, w->password, w->tokenOut, w->expiryOut, w->playerNameOut, w->errorMsg);
+        w->success = winbolonetAuthLogin(w->username, w->password, w->tokenOut, w->expiryOut, w->playerNameOut, &w->rankOut, &w->rankTotalOut, w->errorMsg);
     }
     SDL_SetAtomicInt(&w->done, 1);
     return 0;
@@ -109,6 +111,7 @@ static void wbnCheckThread(void) {
         if (!wbnWork.isValidate) {
             gameFrontSetWinbolonetToken(wbnWork.tokenOut, wbnWork.expiryOut);
         }
+        gameFrontSetWinbolonetRank(wbnWork.rankOut, wbnWork.rankTotalOut);
         if (wbnWork.playerNameOut[0] != '\0') {
             gameFrontSetPlayerName(wbnWork.playerNameOut);
         }
@@ -152,83 +155,45 @@ static void wbnDrawSpinner(const char *label) {
     ImGui::Text("%s", label);
 }
 
-/* ---- Public API ---- */
+/* Renders the 1v1 ladder line for a signed-in player: "#N of M" or
+ * "Unranked" when the stored rank is < 0. Reads the rank gamefront
+ * captured on the last auth/validate. */
+static void wbnDrawRankLine(void) {
+    int rank = -1, rankTotal = 0;
+    gameFrontGetWinbolonetRank(&rank, &rankTotal);
+    if (rank < 0) {
+        ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_UNRANKED));
+    } else {
+        MessageArgs args = {};
+        args.number = rank;
+        args.number2 = rankTotal;
+        ImGui::TextDisabled("%s", langGetTextFmt(STR_DLGWBN_RANK, &args));
+    }
+}
 
-extern "C" void imguiWinbolonetReset(void) {
+/* Opens the shared sign-in popup, resetting its transient state. Both the
+ * settings section and the welcome-screen status block call this. */
+static void wbnOpenLoginPopup(void) {
+    wbnPopupOpen = true;
+    wbnFocusUser = true;
     wbnState = WBN_IDLE;
-    wbnPopupOpen = false;
+    wbnErrorBuf[0] = '\0';
     wbnUsername[0] = '\0';
     wbnPassword[0] = '\0';
-    wbnErrorBuf[0] = '\0';
-    wbnFocusUser = false;
-    if (wbnThread) {
-        SDL_WaitThread(wbnThread, nullptr);
-        wbnThread = nullptr;
-    }
+    ImGui::OpenPopup(langGetText(STR_DLGWBN_SIGNIN_TITLE));
 }
 
-extern "C" void imguiWinbolonetStartValidation(void) {
-    char token[256];
-    char expiry[256];
-    gameFrontGetWinbolonetToken(token, expiry);
-    if (token[0] != '\0') {
-        wbnStartValidate(token);
-    }
+/* Clears the stored token and re-arms the once-per-session prefs-sync
+ * gate so signing back in resyncs. Shared sign-out path. */
+static void wbnSignOut(void) {
+    gameFrontClearWinbolonetToken();
+    gameFrontResetPrefsSyncSession();
 }
 
-extern "C" void imguiWinbolonetDrawSection(bool inGame) {
-    /* Check for async completion */
-    wbnCheckThread();
-
-    char token[256];
-    char expiry[256];
-    gameFrontGetWinbolonetToken(token, expiry);
-    bool loggedIn = (token[0] != '\0');
-
-    if (wbnState == WBN_VALIDATING) {
-        wbnDrawSpinner(langGetText(STR_DLGWBN_CHECKING));
-        return;
-    }
-
-    if (loggedIn) {
-        ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", langGetText(STR_DLGWBN_SIGNED_IN));
-        if (expiry[0] != '\0') {
-            ImGui::SameLine();
-            MessageArgs args = {};
-            SDL_strlcpy(args.string1, expiry, sizeof(args.string1));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-            ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_EXPIRES, &args));
-            ImGui::PopStyleColor();
-        }
-        if (inGame) ImGui::BeginDisabled();
-        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
-            gameFrontClearWinbolonetToken();
-            /* Re-arm the once-per-session gate so signing back in resyncs. */
-            gameFrontResetPrefsSyncSession();
-        }
-        imguiHandOnHover();
-        if (inGame) ImGui::EndDisabled();
-    } else {
-        ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOT_SIGNED_IN));
-        if (inGame) ImGui::BeginDisabled();
-        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_IN_BTN))) {
-            wbnPopupOpen = true;
-            wbnFocusUser = true;
-            wbnState = WBN_IDLE;
-            wbnErrorBuf[0] = '\0';
-            wbnUsername[0] = '\0';
-            wbnPassword[0] = '\0';
-            ImGui::OpenPopup(langGetText(STR_DLGWBN_SIGNIN_TITLE));
-        }
-        imguiHandOnHover();
-        if (inGame) ImGui::EndDisabled();
-    }
-
-    /* ---- Login popup ---- */
+/* Renders the shared sign-in popup modal. Must be called every frame by
+ * whichever surface (settings section or welcome status block) owns the
+ * popup this frame; OpenPopup scopes it to the current ImGui window. */
+static void wbnRenderLoginPopup(void) {
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Appearing);
@@ -309,4 +274,122 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
         ImGui::PopStyleVar();
         ImGui::EndPopup();
     }
+}
+
+/* ---- Public API ---- */
+
+extern "C" void imguiWinbolonetReset(void) {
+    wbnState = WBN_IDLE;
+    wbnPopupOpen = false;
+    wbnUsername[0] = '\0';
+    wbnPassword[0] = '\0';
+    wbnErrorBuf[0] = '\0';
+    wbnFocusUser = false;
+    if (wbnThread) {
+        SDL_WaitThread(wbnThread, nullptr);
+        wbnThread = nullptr;
+    }
+}
+
+extern "C" void imguiWinbolonetStartValidation(void) {
+    char token[256];
+    char expiry[256];
+    gameFrontGetWinbolonetToken(token, expiry);
+    if (token[0] != '\0') {
+        wbnStartValidate(token);
+    }
+}
+
+extern "C" void imguiWinbolonetDrawSection(bool inGame) {
+    /* Check for async completion */
+    wbnCheckThread();
+
+    char token[256];
+    char expiry[256];
+    gameFrontGetWinbolonetToken(token, expiry);
+    bool loggedIn = (token[0] != '\0');
+
+    if (wbnState == WBN_VALIDATING) {
+        wbnDrawSpinner(langGetText(STR_DLGWBN_CHECKING));
+        return;
+    }
+
+    if (loggedIn) {
+        ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", langGetText(STR_DLGWBN_SIGNED_IN));
+        if (expiry[0] != '\0') {
+            ImGui::SameLine();
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1, expiry, sizeof(args.string1));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_EXPIRES, &args));
+            ImGui::PopStyleColor();
+        }
+        wbnDrawRankLine();
+        if (inGame) ImGui::BeginDisabled();
+        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
+            wbnSignOut();
+        }
+        imguiHandOnHover();
+        if (inGame) ImGui::EndDisabled();
+    } else {
+        ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOT_SIGNED_IN));
+        if (inGame) ImGui::BeginDisabled();
+        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_IN_BTN))) {
+            wbnOpenLoginPopup();
+        }
+        imguiHandOnHover();
+        if (inGame) ImGui::EndDisabled();
+    }
+
+    wbnRenderLoginPopup();
+}
+
+/* Compact account status block for the welcome screen: player name +
+ * Signed in / Not signed in, a Login or Logout button, and the 1v1
+ * ladder rank when signed in. Reuses the same popup/worker as the
+ * settings section. Render inside an existing ImGui window. */
+extern "C" void imguiWinbolonetDrawStatusBlock(void) {
+    /* Check for async completion */
+    wbnCheckThread();
+
+    char token[256];
+    char expiry[256];
+    gameFrontGetWinbolonetToken(token, expiry);
+    bool loggedIn = (token[0] != '\0');
+
+    if (wbnState == WBN_VALIDATING) {
+        wbnDrawSpinner(langGetText(STR_DLGWBN_CHECKING));
+        wbnRenderLoginPopup();
+        return;
+    }
+
+    if (loggedIn) {
+        char playerName[PLAYER_NAME_LEN];
+        playerName[0] = '\0';
+        gameFrontGetPlayerName(playerName);
+        if (playerName[0] != '\0') {
+            ImGui::TextUnformatted(playerName);
+            ImGui::SameLine();
+        }
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", langGetText(STR_DLGWBN_SIGNED_IN));
+        wbnDrawRankLine();
+        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
+            wbnSignOut();
+        }
+        imguiHandOnHover();
+    } else {
+        ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOT_SIGNED_IN));
+        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_IN_BTN))) {
+            wbnOpenLoginPopup();
+        }
+        imguiHandOnHover();
+    }
+
+    wbnRenderLoginPopup();
 }

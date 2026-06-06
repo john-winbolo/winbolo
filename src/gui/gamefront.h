@@ -666,6 +666,23 @@ void gameFrontClearWinbolonetToken(void);
 bool gameFrontGetWinbolonetUse(void);
 
 /*********************************************************
+*NAME:          gameFrontSetWinbolonetRank
+*PURPOSE:
+* Stores the player's WinBolo.net 1v1 ladder position.
+* rank is -1 when unranked; rankTotal is the ranked-player
+* count. Written by both auth paths, read by the UI.
+*********************************************************/
+void gameFrontSetWinbolonetRank(int rank, int rankTotal);
+
+/*********************************************************
+*NAME:          gameFrontGetWinbolonetRank
+*PURPOSE:
+* Returns the stored ladder position. rank is -1 when
+* unranked/unknown. Either out-param may be NULL.
+*********************************************************/
+void gameFrontGetWinbolonetRank(int *rank, int *rankTotal);
+
+/*********************************************************
 *NAME:          gameFrontSetRegistryKeys
 *AUTHOR:        John Morrison
 *CREATION DATE: 30/08/02
