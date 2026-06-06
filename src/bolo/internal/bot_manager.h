@@ -59,6 +59,16 @@ typedef struct {
     char            brainPath[256];
     BYTE            playerNum;
     bool            active;
+    /* Deferred-teardown guard against killing a bot mid-think.
+     * inThink is set nonzero by the worker for the whole duration of this
+     * bot's think job (snapshot sync + brain.think). If botManagerRemoveBot
+     * is called while inThink is set, it does NOT free (that would close a
+     * lua_State / ClientSim out from under luaV_execute on a worker thread)
+     * — it sets pendingRemove and returns. botManagerTick reaps
+     * pendingRemove bots at the top of the next tick, when the worker pool
+     * has joined and is provably idle. */
+    SDL_AtomicInt   inThink;
+    bool            pendingRemove;
     aiType          ai;
     /* Wall-clock duration of this bot's most recent brain.think call,
      * in milliseconds. Updated every botManagerTick. Surfaced via

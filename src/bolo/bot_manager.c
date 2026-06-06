@@ -643,6 +643,8 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     }
 
     bot->active = true;
+    bot->pendingRemove = false;
+    SDL_SetAtomicInt(&bot->inThink, 0);
     sim->botMgr.numBots++;
 
     WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d started with brain '%s'",
@@ -777,12 +779,18 @@ static void runBotThinkJob(int botIndex, void *userData) {
     BotJobCtx *j = &sim->botMgr.jobs[botIndex];
     BotContext *bot = j->bot;
 
+    /* Mark this bot as in-think for the whole job (snapshot sync + brain).
+     * botManagerRemoveBot reads this and defers the teardown rather than
+     * freeing the lua_State / ClientSim under us. Cleared on every exit. */
+    SDL_SetAtomicInt(&bot->inThink, 1);
+
     /* Pull this bot's snapshot, sync its ClientSim, and refresh its
      * brain map — formerly serial Stage-1 work, now parallelised here.
      * A dead bot (respawn wait) syncs state but skips the think. Runs
      * before t0/hook so its cost lands in the brain-phase wall-clock,
      * not the per-bot think deadline (lastThinkMs stays brain-only). */
     if (!botSyncSnapshotForJob(j)) {
+        SDL_SetAtomicInt(&bot->inThink, 0);
         return;
     }
 
@@ -819,12 +827,25 @@ static void runBotThinkJob(int botIndex, void *userData) {
 #endif
 
     if (sim->botMgr.preThinkHook) sim->botMgr.preThinkHook(-1);
+
+    SDL_SetAtomicInt(&bot->inThink, 0);
 }
 
 void botManagerTick(ServerSim *sim, aiType ai) {
     int activeCount = 0;
 
     if (sim == NULL) return;
+
+    /* Reap bots whose teardown was deferred because their think was still
+     * in flight when removal was requested. We're at the top of the tick:
+     * the previous tick's botWorkerPoolRun joined every worker, so inThink
+     * is clear for all bots and these frees are safe (no worker is inside a
+     * lua_State we're about to close). */
+    for (BYTE ri = 0; ri < MAX_TANKS; ri++) {
+        if (sim->botMgr.bots[ri].active && sim->botMgr.bots[ri].pendingRemove) {
+            botManagerRemoveBot(sim, ri);
+        }
+    }
 
     /* Apply any pending thread-pool resize from the BrainTest panel.
      * Lands here, before dispatch, so the pool destroy/create gap is
@@ -855,6 +876,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
     for (BYTE i = 0; i < MAX_TANKS; i++) {
         BotContext *bot = &sim->botMgr.bots[i];
         if (!bot->active) continue;
+        if (bot->pendingRemove) continue;  /* removal deferred; don't dispatch */
         if (gs->tanks[i] == NULL) continue;
 
         BotJobCtx *j = &sim->botMgr.jobs[i];
@@ -1112,6 +1134,17 @@ void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
     if (sim == NULL || playerNum >= MAX_TANKS) return;
     bot = &sim->botMgr.bots[playerNum];
     if (!bot->active) return;
+
+    /* Never tear a bot down while a worker thread is inside its think job:
+     * closing the lua_State / ClientSim under luaV_execute is a
+     * use-after-free (the production SIGSEGV in luaH_getint). Defer instead
+     * — botManagerTick reaps pendingRemove bots at the top of the next
+     * tick, when the worker pool has joined and is provably idle. */
+    if (SDL_GetAtomicInt(&bot->inThink) != 0) {
+        bot->pendingRemove = true;
+        return;
+    }
+    bot->pendingRemove = false;
 
     luaBrainInstanceDestroy(&bot->brain);
     serverSimUnregisterSubscriber(sim, bot->controlSub);
