@@ -216,6 +216,10 @@ bool gameFrontWbnUse;
 int gameFrontWbnRank = -1;
 int gameFrontWbnRankTotal = 0;
 
+/* Per-mode WinBolo.net play stats, refreshed on every auth/validate.
+ * `valid` is FALSE until the first response that carries a stats object. */
+static WbnStats gameFrontWbnStats;
+
 /* Dialog window position (separate from game window) */
 int gameFrontDialogX = -1;
 int gameFrontDialogY = -1;
@@ -1020,14 +1024,17 @@ static void gameFrontValidateWbnBeforeJoin(void) {
       char playerName[PLAYER_NAME_LEN];
       char errorMsg[512];
       int rank = -1, rankTotal = 0;
+      WbnStats stats;
+      stats.valid = FALSE;
       tokenOut[0] = '\0';
       expiryOut[0] = '\0';
       playerName[0] = '\0';
       errorMsg[0] = '\0';
 
-      if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName, &rank, &rankTotal, errorMsg)) {
+      if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName, &rank, &rankTotal, &stats, errorMsg)) {
         gameFrontSetWinbolonetToken(tokenOut, expiryOut);
         gameFrontSetWinbolonetRank(rank, rankTotal);
+        gameFrontSetWinbolonetStats(&stats);
         if (playerName[0] != '\0') {
           char persisted[PLAYER_NAME_LEN];
           persisted[0] = '\0';
@@ -1063,11 +1070,14 @@ static void gameFrontValidateWbnBeforeJoin(void) {
   char playerName[PLAYER_NAME_LEN];
   char errorMsg[512];
   int rank = -1, rankTotal = 0;
+  WbnStats stats;
+  stats.valid = FALSE;
   playerName[0] = '\0';
   errorMsg[0] = '\0';
 
-  if (winbolonetAuthValidate(token, playerName, &rank, &rankTotal, errorMsg)) {
+  if (winbolonetAuthValidate(token, playerName, &rank, &rankTotal, &stats, errorMsg)) {
     gameFrontSetWinbolonetRank(rank, rankTotal);
+    gameFrontSetWinbolonetStats(&stats);
     if (playerName[0] != '\0') {
       gameFrontSetPlayerName(playerName);
     }
@@ -1726,6 +1736,7 @@ void gameFrontClearWinbolonetToken(void) {
   gameFrontWbnUse = FALSE;
   gameFrontWbnRank = -1;
   gameFrontWbnRankTotal = 0;
+  gameFrontWbnStats.valid = FALSE;
   gameFrontSaveWbnTokenToPrefs();
 }
 
@@ -1741,6 +1752,14 @@ void gameFrontSetWinbolonetRank(int rank, int rankTotal) {
 void gameFrontGetWinbolonetRank(int *rank, int *rankTotal) {
   if (rank) *rank = gameFrontWbnRank;
   if (rankTotal) *rankTotal = gameFrontWbnRankTotal;
+}
+
+void gameFrontSetWinbolonetStats(const WbnStats *s) {
+  if (s) gameFrontWbnStats = *s;
+}
+
+void gameFrontGetWinbolonetStats(WbnStats *out) {
+  if (out) *out = gameFrontWbnStats;
 }
 
 /* -------------------------------------------------------

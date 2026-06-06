@@ -34,6 +34,26 @@
 #include "global.h"
 
 /*********************************************************
+* Per-mode WinBolo.net play stats, parsed from the auth/login,
+* auth/steam and auth/validate responses. Each integer is -1 when
+* the field is absent from the response: the "open" mode carries
+* only the counter fields, while "tourn"/"strict" also carry
+* score (ELO), win/loss tallies and a ladder rank (rank -1 means
+* unranked or absent). `valid` is FALSE when the response carried
+* no stats object at all.
+*********************************************************/
+typedef struct {
+  int numGames, numBases, numPills, numTanks;  /* -1 if absent */
+  int score, wins, loses;                       /* -1 if absent (e.g. open) */
+  int rank, rankTotal;                          /* rank -1 = unranked/absent */
+} WbnModeStats;
+
+typedef struct {
+  bool valid;
+  WbnModeStats open, tourn, strict;
+} WbnStats;
+
+/*********************************************************
 *NAME:          winbolonetAuthLogin
 *PURPOSE:
 * Authenticates with WinBolo.net via POST /api/v1/auth/login.
@@ -50,7 +70,7 @@
 * rankTotalOut  - Total ranked players; 0 when absent. May be NULL.
 * errorMsg      - Buffer for error message on failure
 *********************************************************/
-bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg);
+bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg);
 
 /*********************************************************
 *NAME:          winbolonetAuthSteam
@@ -69,7 +89,7 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
 * rankTotalOut    - Total ranked players; 0 when absent. May be NULL.
 * errorMsg        - Buffer for error message on failure
 *********************************************************/
-bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg);
+bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg);
 
 /*********************************************************
 *NAME:          winbolonetAuthValidate
@@ -85,7 +105,7 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
 * rankTotalOut  - Total ranked players; 0 when absent. May be NULL.
 * errorMsg      - Buffer for error message on failure
 *********************************************************/
-bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg);
+bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg);
 
 /*********************************************************
 *NAME:          winbolonetClientJoinSession

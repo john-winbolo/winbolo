@@ -61,12 +61,61 @@ static void wbnParseRank(cJSON *resp, int *rankOut, int *rankTotalOut) {
 }
 
 /*********************************************************
+*NAME:          wbnJsonInt
+*PURPOSE:
+* Reads an integer member from a JSON object, returning
+* `absent` when the object or member is missing or not a
+* number (e.g. an explicit null rank).
+*********************************************************/
+static int wbnJsonInt(cJSON *obj, const char *key, int absent) {
+  cJSON *item = cJSON_GetObjectItem(obj, key);
+  return (item && cJSON_IsNumber(item)) ? item->valueint : absent;
+}
+
+/*********************************************************
+*NAME:          wbnParseModeStats
+*PURPOSE:
+* Fills one WbnModeStats from a per-mode stats object.
+* Every absent field maps to -1, including a null rank.
+* `mode` may be NULL (e.g. the response omits that mode),
+* in which case all fields come out -1.
+*********************************************************/
+static void wbnParseModeStats(cJSON *mode, WbnModeStats *out) {
+  out->numGames = wbnJsonInt(mode, "num_games", -1);
+  out->numBases = wbnJsonInt(mode, "num_bases", -1);
+  out->numPills = wbnJsonInt(mode, "num_pills", -1);
+  out->numTanks = wbnJsonInt(mode, "num_tanks", -1);
+  out->score = wbnJsonInt(mode, "score", -1);
+  out->wins = wbnJsonInt(mode, "wins", -1);
+  out->loses = wbnJsonInt(mode, "loses", -1);
+  out->rank = wbnJsonInt(mode, "rank", -1);
+  out->rankTotal = wbnJsonInt(mode, "rank_total", -1);
+}
+
+/*********************************************************
+*NAME:          wbnParseStats
+*PURPOSE:
+* Extracts the optional per-mode `stats` object from an auth
+* response into `out`. `valid` is set when the response
+* carried a stats object; each mode's absent fields map to
+* -1 (a null rank included). Tolerates older servers that
+* omit the object entirely.
+*********************************************************/
+static void wbnParseStats(cJSON *resp, WbnStats *out) {
+  cJSON *stats = cJSON_GetObjectItem(resp, "stats");
+  out->valid = (stats != NULL && cJSON_IsObject(stats));
+  wbnParseModeStats(cJSON_GetObjectItem(stats, "open"), &out->open);
+  wbnParseModeStats(cJSON_GetObjectItem(stats, "tourn"), &out->tourn);
+  wbnParseModeStats(cJSON_GetObjectItem(stats, "strict"), &out->strict);
+}
+
+/*********************************************************
 *NAME:          winbolonetAuthLogin
 *PURPOSE:
 * Authenticates via POST /api/v1/auth/login and returns
 * the token and expiry on success.
 *********************************************************/
-bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg) {
+bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
@@ -74,6 +123,7 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
 
   if (rankOut) *rankOut = -1;
   if (rankTotalOut) *rankTotalOut = 0;
+  if (statsOut) statsOut->valid = FALSE;
 
   if (httpCreate() != TRUE) {
     strcpy(errorMsg, "Could not initialise HTTP");
@@ -104,6 +154,7 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
           playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
         }
         wbnParseRank(resp, rankOut, rankTotalOut);
+        if (statsOut) wbnParseStats(resp, statsOut);
         ok = TRUE;
       } else {
         strcpy(errorMsg, "Invalid response from WinBolo.net");
@@ -134,7 +185,7 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
 * hex-encoded Steam auth ticket. Returns token and expiry
 * on success, just like winbolonetAuthLogin.
 *********************************************************/
-bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg) {
+bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
@@ -142,6 +193,7 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
 
   if (rankOut) *rankOut = -1;
   if (rankTotalOut) *rankTotalOut = 0;
+  if (statsOut) statsOut->valid = FALSE;
 
   if (httpCreate() != TRUE) {
     strcpy(errorMsg, "Could not initialise HTTP");
@@ -171,6 +223,7 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
           playerNameOut[PLAYER_NAME_LEN - 1] = '\0';
         }
         wbnParseRank(resp, rankOut, rankTotalOut);
+        if (statsOut) wbnParseStats(resp, statsOut);
         ok = TRUE;
       } else {
         strcpy(errorMsg, "Invalid response from WinBolo.net");
@@ -200,7 +253,7 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
 * Validates a token via POST /api/v1/auth/validate.
 * Returns TRUE if the token is still valid.
 *********************************************************/
-bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, char *errorMsg) {
+bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
@@ -208,6 +261,7 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut
 
   if (rankOut) *rankOut = -1;
   if (rankTotalOut) *rankTotalOut = 0;
+  if (statsOut) statsOut->valid = FALSE;
 
   if (httpCreate() != TRUE) {
     strcpy(errorMsg, "Could not initialise HTTP");
@@ -232,6 +286,7 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut
         }
       }
       wbnParseRank(resp, rankOut, rankTotalOut);
+      if (statsOut) wbnParseStats(resp, statsOut);
       ok = TRUE;
     } else {
       cJSON *errObj = cJSON_GetObjectItem(resp, "error");

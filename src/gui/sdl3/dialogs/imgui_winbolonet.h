@@ -41,6 +41,12 @@ void imguiWinbolonetDrawSection(bool inGame);
  * same login popup/worker as imguiWinbolonetDrawSection. */
 void imguiWinbolonetDrawStatusBlock(void);
 
+/* Render the shared "My Stats" modal showing the signed-in player's
+ * per-mode WinBolo.net stats. Driven by the My Stats buttons in the
+ * welcome status block and the settings section; both draw paths call
+ * this each frame so the single dialog state is rendered once. */
+void imguiWinbolonetDrawStatsDialog(void);
+
 #ifdef __cplusplus
 }
 #endif

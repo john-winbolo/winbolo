@@ -1270,6 +1270,22 @@ static const LangEntry langTable[] = {
     /* WinBolo.net 1v1 ladder position in the account status block */
     {1408, "#{number} of {number2}"},
     {1409, "Unranked"},
+
+    /* My Stats dialog — per-mode WinBolo.net play stats */
+    {1410, "My Stats"},
+    {1411, "WinBolo.net Stats"},
+    {1412, "No stats available yet."},
+    {1413, "Open"},
+    {1414, "Tournament"},
+    {1415, "Strict"},
+    {1416, "Games:"},
+    {1417, "Bases:"},
+    {1418, "Pillboxes:"},
+    {1419, "Tanks:"},
+    {1420, "Score (ELO):"},
+    {1421, "Wins:"},
+    {1422, "Losses:"},
+    {1423, "Rank:"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

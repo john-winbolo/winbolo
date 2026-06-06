@@ -33,6 +33,7 @@
 #include "server_sim.h"
 #include "input.h"
 #include "winbolo.h"
+#include "../winbolonet/winbolonet_client.h"  /* WbnStats */
 
 
 /* Default keys — SDL_Scancode values (USB HID page 07) */
@@ -681,6 +682,22 @@ void gameFrontSetWinbolonetRank(int rank, int rankTotal);
 * unranked/unknown. Either out-param may be NULL.
 *********************************************************/
 void gameFrontGetWinbolonetRank(int *rank, int *rankTotal);
+
+/*********************************************************
+*NAME:          gameFrontSetWinbolonetStats
+*PURPOSE:
+* Stores the player's per-mode WinBolo.net play stats from
+* the last auth/validate response. Cleared on sign-out.
+*********************************************************/
+void gameFrontSetWinbolonetStats(const WbnStats *s);
+
+/*********************************************************
+*NAME:          gameFrontGetWinbolonetStats
+*PURPOSE:
+* Returns the stored per-mode play stats. `valid` is FALSE
+* when no stats have been captured this session.
+*********************************************************/
+void gameFrontGetWinbolonetStats(WbnStats *out);
 
 /*********************************************************
 *NAME:          gameFrontSetRegistryKeys

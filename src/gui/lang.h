@@ -1404,6 +1404,22 @@
 #define STR_DLGWBN_RANK                     1408
 #define STR_DLGWBN_UNRANKED                 1409
 
+/* My Stats dialog — per-mode WinBolo.net play stats. */
+#define STR_DLGWBN_STATS_BTN                1410
+#define STR_DLGWBN_STATS_TITLE              1411
+#define STR_DLGWBN_STATS_NONE               1412
+#define STR_DLGWBN_STATS_OPEN               1413
+#define STR_DLGWBN_STATS_TOURN              1414
+#define STR_DLGWBN_STATS_STRICT             1415
+#define STR_DLGWBN_STATS_GAMES              1416
+#define STR_DLGWBN_STATS_BASES              1417
+#define STR_DLGWBN_STATS_PILLS              1418
+#define STR_DLGWBN_STATS_TANKS              1419
+#define STR_DLGWBN_STATS_SCORE              1420
+#define STR_DLGWBN_STATS_WINS               1421
+#define STR_DLGWBN_STATS_LOSES              1422
+#define STR_DLGWBN_STATS_RANK               1423
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
