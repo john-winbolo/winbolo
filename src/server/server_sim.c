@@ -4472,9 +4472,10 @@ static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
 
     gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
                   GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs, NEUTRAL);
-    /* Pre-cast YES for every eligible voter. */
-    gv->votesMask    = gameVoteEligibleMask(sim, GAME_VOTE_KIND_BACK_TO_LOBBY, 0);
-    gv->answeredMask = gv->votesMask;
+    /* Initiate a real back-to-lobby vote and let players decide. Previously
+     * this pre-cast YES for every eligible voter, which made the vote pass
+     * instantly and boot straight to the lobby; now the monopoly only opens
+     * the vote (same flow as a player-initiated back-to-lobby vote). */
     publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
 
     sim->baseMonopolyTriggeredThisRound = true;
