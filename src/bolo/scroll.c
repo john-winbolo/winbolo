@@ -77,6 +77,16 @@ void scrollSetSubTilePrecision(bool on) { g_scrollSubTilePrecision = on; }
  * = 1/4 of a pixel, well below perceptible. */
 #define AUTOSCROLL_SNAP_THRESHOLD     4
 
+/* Park settle: when the tank stops, the view eases from wherever the
+ * smooth follow left it to the nearest whole tile, so the framing ends
+ * tile-aligned (Bolo players expect the map on tile boundaries). DIVISOR
+ * controls the ease speed (per-tick step = remaining / DIVISOR); SNAP is
+ * the sub-unit window within which we jump the last bit so it actually
+ * reaches the tile. Only the parked view is touched — the moving follow
+ * is unchanged. */
+#define AUTOSCROLL_SETTLE_DIVISOR     6
+#define AUTOSCROLL_SETTLE_SNAP        8
+
 /* Facing unit vectors (sin/cos × 256), 16-step BRADIANS index.
  * Used for the forward-bias term and the parked-rear hemisphere test. */
 static const int kForwardX[16] = {
@@ -513,6 +523,19 @@ bool scrollNoAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
   return returnValue;
 }
 
+/* Ease one view axis (sub-tile units) from its current position toward the
+ * nearest whole tile of the natural tank-centred target. Used to settle the
+ * parked autoscroll view onto a tile boundary. */
+static int scrollSettleToTile(int cur, int natural, int maxSub) {
+  int target = ((natural + AUTOSCROLL_SUB_PER_TILE / 2) / AUTOSCROLL_SUB_PER_TILE) * AUTOSCROLL_SUB_PER_TILE;
+  int d;
+  if (target < 0)      target = 0;
+  if (target > maxSub) target = maxSub;
+  d = target - cur;
+  if (d <= AUTOSCROLL_SETTLE_SNAP && d >= -AUTOSCROLL_SETTLE_SNAP) return target;
+  return cur + d / AUTOSCROLL_SETTLE_DIVISOR + (d > 0 ? 1 : -1);
+}
+
 bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, BYTE gunsightX, BYTE gunsightY, BYTE speed, TURNTYPE angle) {
   /*
    * Event-driven autoscroll with sub-tile precision. The view target is
@@ -762,6 +785,18 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
     if (desiredSubY < 0)       desiredSubY = 0;
     if (desiredSubX > maxSubX) desiredSubX = maxSubX;
     if (desiredSubY > maxSubY) desiredSubY = maxSubY;
+
+    /* Parked → ease the view onto the nearest whole tile. While the tank
+     * moves (speed > 0) the smooth sub-tile follow above is used verbatim;
+     * the moment it stops, settle to a tile boundary so the framing ends
+     * tile-aligned. Skipped when sub-tile precision is off (already whole-
+     * tile). cur = the view the renderer is currently showing. */
+    if (speed == 0 && g_scrollSubTilePrecision) {
+      int curSubX = (int)inViewX * AUTOSCROLL_SUB_PER_TILE + (int)ss->subPosX;
+      int curSubY = (int)inViewY * AUTOSCROLL_SUB_PER_TILE + (int)ss->subPosY;
+      desiredSubX = scrollSettleToTile(curSubX, desiredSubX, maxSubX);
+      desiredSubY = scrollSettleToTile(curSubY, desiredSubY, maxSubY);
+    }
 
     *xValue   = (BYTE)(desiredSubX / AUTOSCROLL_SUB_PER_TILE);
     *yValue   = (BYTE)(desiredSubY / AUTOSCROLL_SUB_PER_TILE);
