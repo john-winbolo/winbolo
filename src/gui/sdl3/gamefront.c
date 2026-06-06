@@ -2323,11 +2323,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(FRAME_RATE_30, def, sizeof(def));
   prefsGetString("MENU", "Frame Rate", def, buff, FILENAME_MAX);
   frameRate = atoi(buff);
-#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  /* Default ON for first-time players (no stored value yet). Existing users
+   * keep whatever "Show Gunsight" they already saved in their prefs. */
   prefsGetString("MENU", "Show Gunsight", "Yes", buff, FILENAME_MAX);
-#else
-  prefsGetString("MENU", "Show Gunsight", "No", buff, FILENAME_MAX);
-#endif
   showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX);
   soundEffects = YESNO_TO_TRUEFALSE(buff[0]);

@@ -43,9 +43,14 @@ if SND_MINE_EXPLOSION_FAR  then COMBAT_SOUNDS[SND_MINE_EXPLOSION_FAR]  = HEAT_SO
 
 local function add_heat(mx, my, amount, tick)
   local k = mkey(mx, my)
-  local cur = M.heat_intensity[k]
-  if cur then
-    local elapsed = tick - M.heat_tick[k]
+  local cur  = M.heat_intensity[k]
+  local last = M.heat_tick[k]
+  -- Require BOTH parallel entries: if the two tables ever desync (e.g. a
+  -- partial state restore leaves heat_intensity[k] set but heat_tick[k]
+  -- nil), treat it as a fresh entry rather than doing `tick - nil`, which
+  -- crashed the brain in production.
+  if cur and last then
+    local elapsed = tick - last
     if elapsed > 0 then
       cur = cur - elapsed / HEAT_DECAY_TICKS
       if cur < 0 then cur = 0 end
@@ -139,9 +144,10 @@ function M.is_area_hot(mx, my, tick)
   for dy = -radius, radius do
     for dx = -radius, radius do
       local k = mkey(mx + dx, my + dy)
-      local cur = M.heat_intensity[k]
-      if cur then
-        local elapsed = tick - M.heat_tick[k]
+      local cur  = M.heat_intensity[k]
+      local last = M.heat_tick[k]
+      if cur and last then
+        local elapsed = tick - last
         local intensity = math.max(0, cur - elapsed / HEAT_DECAY_TICKS)
         if intensity > 0.2 then return true end
       end

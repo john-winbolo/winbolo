@@ -209,6 +209,15 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
     return;
   }
 
+  /* Don't ramp a sub-tile drag into an edge we can't actually cross
+   * (manualScrollKeepsTankOnScreen would block the whole-tile commit).
+   * Zero the blocked axis so the view rests instead of sliding-and-
+   * snapping against the edge. */
+  if (dx > 0 && !clientRenderCanScroll(cs, right)) { dx = 0; smoothScrollAccumX = 0; }
+  if (dx < 0 && !clientRenderCanScroll(cs, left))  { dx = 0; smoothScrollAccumX = 0; }
+  if (dy > 0 && !clientRenderCanScroll(cs, down))  { dy = 0; smoothScrollAccumY = 0; }
+  if (dy < 0 && !clientRenderCanScroll(cs, up))    { dy = 0; smoothScrollAccumY = 0; }
+
   smoothScrollAccumX += dx * stepZoomed;
   smoothScrollAccumY += dy * stepZoomed;
 
