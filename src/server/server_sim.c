@@ -1344,13 +1344,18 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->prevBaseCount = (uint8_t)nb;
     }
 
-    /* Check game-win condition. Fires when one alliance owns every
-     * base above the capture-armour threshold. Lobby-enabled rounds
-     * always check — winning ends the round and returns to lobby via
-     * the existing serverSimEnterGameOver path. quitOnWin is the
-     * legacy dedicated-server flag that also shuts the process down
-     * when no lobby is configured. */
-    if ((sim->quitOnWin || sim->lobbyEnabled) &&
+    /* Check game-win condition. Fires when one alliance owns every base
+     * above the capture-armour threshold.
+     *
+     * On a dedicated / no-lobby server (quitOnWin) winning ends the round
+     * immediately (and shuts the process down). On a LOBBY server we do
+     * NOT boot straight to lobby: gameVoteCheckBaseMonopoly (run earlier
+     * this same tick from serverSimGameVoteTick) opens a back-to-lobby
+     * vote and the players decide. So the immediate end here is skipped
+     * for lobby games — otherwise it would pre-empt that vote every tick.
+     * The win message is still produced at game-over once the vote passes
+     * (serverSimResolveGameOver -> serverSimBuildWinMessage). */
+    if (!sim->lobbyEnabled && sim->quitOnWin &&
         serverSimCheckGameWin(sim, TRUE)) {
         mapSetChangeCallback(NULL);
         serverSimConsoleMessage("Game won!");
@@ -4427,56 +4432,53 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
 
 /* Detect "one team owns every base" and auto-start a back-to-lobby vote. */
 static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
+    (void)nowMs;
     if (sim->state != serverStateRunning) return;
     if (sim->baseMonopolyTriggeredThisRound) return;
+    /* All-bases-captured is a win condition only in the tournament modes;
+     * gameOpen never ends on base ownership. */
+    if (serverSimGetGameType(sim) == gameOpen) return;
+    /* Dedicated / no-lobby servers end the round immediately on a win
+     * (serverSimCheckGameWin in the main tick). Only lobby games turn the
+     * win into a back-to-lobby vote. */
+    if (!sim->lobbyEnabled) return;
 
-    /* Count bases per team-via-owner-player. */
-    int nBases = basesGetNumBases(&sim->sim.bs);
-    if (nBases <= 0) return;
+    /* serverSimBuildWinMessage is the canonical, alliance-based win check:
+     * TRUE iff one alliance owns every base above the capture threshold. It
+     * fires for a solo player owning every base as well as for a team, and
+     * fills winMsg with the "Game Won! Winners: ..." announcement. */
+    char winMsg[256];
+    if (!serverSimBuildWinMessage(sim, winMsg, sizeof(winMsg))) return;
 
-    uint8_t teamCount[MAX_TANKS] = {0};
-    uint8_t neutral = 0;
-    int i;
-    for (i = 0; i < nBases; i++) {
-        BYTE owner = basesGetBaseOwner(&sim->sim.bs, (BYTE)(i + 1));
-        if (owner >= MAX_TANKS) { neutral++; continue; }
-        if (!sim->playerConnected[owner]) { neutral++; continue; }
-        uint8_t t = sim->lobbyPlayers[owner].teamNumber;
-        if (t == 0 || t >= MAX_TANKS) { neutral++; continue; }
-        teamCount[t]++;
+    /* Pick a human in the winning alliance to initiate the vote, then open
+     * it exactly as if that player had used Players -> Vote: Return to
+     * lobby. serverSimGameVoteToggle (OPEN_ONLY) starts a TRIGGER_MANUAL
+     * vote, records the initiator's YES, and starts the pass countdown —
+     * identical to the menu path (solo: 5s grace then return to lobby). */
+    BYTE first = basesGetBaseOwner(&sim->sim.bs, 1);
+    int initiator = -1;
+    int p;
+    for (p = 0; p < MAX_TANKS; p++) {
+        if (!sim->playerConnected[p] || sim->lobbyPlayers[p].isBot) continue;
+        if ((BYTE)p == first || playersIsAllie(&sim->sim.plyrs, (BYTE)p, first)) {
+            initiator = p;
+            break;
+        }
     }
-    if (neutral > 0) return;
-
-    int teamsWithBases = 0;
-    uint8_t monoTeam = 0;
-    int t;
-    for (t = 1; t < MAX_TANKS; t++) {
-        if (teamCount[t] > 0) { teamsWithBases++; monoTeam = (uint8_t)t; }
+    if (initiator < 0) {
+        for (p = 0; p < MAX_TANKS; p++) {
+            if (sim->playerConnected[p] && !sim->lobbyPlayers[p].isBot) {
+                initiator = p;
+                break;
+            }
+        }
     }
-    if (teamsWithBases != 1) return;
+    if (initiator < 0) return;  /* no human to cast the vote */
 
-    /* Require >1 active team in play to make "monopoly" meaningful. */
-    if (serverSimCountActiveTeams(sim) < 2) return;
-
-    struct ServerGameVote *gv = gameVoteSlot(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
-    if (!gv) return;
-    if (gv->active == GAME_VOTE_ACTIVE_RUNNING) return;
-
-    char buf[128];
-    const char *tname = sim->teams[monoTeam].name[0]
-                        ? sim->teams[monoTeam].name : "?";
-    snprintf(buf, sizeof(buf),
-             "Team %s controls every base. Returning to lobby on unanimous vote.",
-             tname);
-    publishServerMessage(sim, buf);
-
-    gameVoteStart(sim, GAME_VOTE_KIND_BACK_TO_LOBBY,
-                  GAME_VOTE_TRIGGER_BASE_MONOPOLY, monoTeam, nowMs, NEUTRAL);
-    /* Initiate a real back-to-lobby vote and let players decide. Previously
-     * this pre-cast YES for every eligible voter, which made the vote pass
-     * instantly and boot straight to the lobby; now the monopoly only opens
-     * the vote (same flow as a player-initiated back-to-lobby vote). */
-    publishGameVoteState(sim, GAME_VOTE_KIND_BACK_TO_LOBBY);
+    publishServerMessage(sim, winMsg);
+    serverSimGameVoteToggle(sim, (uint8_t)initiator,
+                            GAME_VOTE_KIND_BACK_TO_LOBBY,
+                            GAME_VOTE_TOGGLE_OPEN_ONLY);
 
     sim->baseMonopolyTriggeredThisRound = true;
 }
