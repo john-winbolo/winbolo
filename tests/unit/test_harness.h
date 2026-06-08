@@ -189,6 +189,17 @@ int run_return_to_lobby_drops_wbn_keeps_identity(void);
 int run_wbn_lobby_update_deferred_during_rotation(void);
 int run_wbn_lobby_update_sends_when_not_rotating(void);
 
+/* Deferred WBN PLAYER_JOIN core (test_wbn_deferred_join.c). The join
+ * event is held until the slot's identity is known for the session —
+ * keyed on reauth, anonymous on grace expiry — and re-fires per round.
+ * Also pins the rotation rekey gate (verified-flag, not the wiped key). */
+int run_wbn_join_keyed_on_reauth(void);
+int run_wbn_join_anonymous_on_grace(void);
+int run_wbn_join_idempotent_reauth_no_double(void);
+int run_wbn_join_disconnect_drops(void);
+int run_wbn_join_rearm_per_session(void);
+int run_wbn_join_rekey_target_gate(void);
+
 /* Lobby/leave cleanup (test_lobby_reset_cleanup.c). Removed slots clear
  * (no phantom re-announce), and the last human leaving a running game
  * returns the server to the lobby. */

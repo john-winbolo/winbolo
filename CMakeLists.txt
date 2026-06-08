@@ -2426,6 +2426,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
+    tests/unit/test_wbn_deferred_join.c
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_log_roundtrip.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
@@ -2613,6 +2614,12 @@ set(_unit_test_names
     return_to_lobby_drops_wbn_keeps_identity
     wbn_lobby_update_deferred_during_rotation
     wbn_lobby_update_sends_when_not_rotating
+    wbn_join_keyed_on_reauth
+    wbn_join_anonymous_on_grace
+    wbn_join_idempotent_reauth_no_double
+    wbn_join_disconnect_drops
+    wbn_join_rearm_per_session
+    wbn_join_rekey_target_gate
     remove_player_clears_slot
     return_to_lobby_clears_phantom_slot
     last_human_leave_returns_to_lobby
