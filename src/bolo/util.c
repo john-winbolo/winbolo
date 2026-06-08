@@ -671,6 +671,19 @@ uint8_t bolo_detect_client_type(void) {
 #endif
 }
 
+const char *bolo_client_type_name(uint8_t type) {
+  switch (type) {
+  case CLIENT_TYPE_WINDOWS:   return "Windows";
+  case CLIENT_TYPE_LINUX:     return "Linux";
+  case CLIENT_TYPE_MACOS:     return "macOS";
+  case CLIENT_TYPE_IOS:       return "iOS";
+  case CLIENT_TYPE_ANDROID:   return "Android";
+  case CLIENT_TYPE_STEAMDECK: return "Steam Deck";
+  case CLIENT_TYPE_WEB:       return "Web";
+  default:                    return "Unknown";
+  }
+}
+
 bool bolo_steam_has_supporter_dlc(void) {
   /* TODO: SteamApps()->BIsDlcInstalled(SUPPORTER_DLC_APPID) once DLC exists */
   return false;

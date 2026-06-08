@@ -56,6 +56,54 @@ typedef struct {
 /* WBN join key: 64-char hex string + null */
 #define WBN_JOIN_KEY_WIRE_LEN 65
 
+/* ── Deferred WBN PLAYER_JOIN bookkeeping (pure core) ────────────────
+ * A slot owes WBN a PLAYER_JOIN event once we learn its identity for
+ * the current session: keyed when a reauth fills the slot's WBN key,
+ * or anonymous when a grace window elapses with no reauth.  Because
+ * winbolonetEndSession empties every per-slot key at a round boundary,
+ * the next reauth re-fires the join for the new session — which is how
+ * a "return to lobby = new game" gets a fresh join burst.
+ *
+ * Exposed as a value-only core so the join/reauth/grace/disconnect
+ * sequencing is unit-testable without sockets or the WBN HTTP layer;
+ * transport_udp_server.c holds one WbnJoinState per UdpServerClient and
+ * performs the actual winbolonetAddEvent calls off these return values. */
+typedef struct {
+    bool     pending;       /* a join event is owed for this slot/session */
+    uint32_t deadlineTick;  /* emit anonymous once the tick counter reaches this */
+} WbnJoinState;
+
+/* Arm a deferred join with an anonymous-fallback deadline graceTicks
+ * ahead of nowTick. */
+void wbnJoinArm(WbnJoinState *s, uint32_t nowTick, uint32_t graceTicks);
+
+/* A reauth verify just succeeded.  wasParticipant is whether the slot
+ * already held a WBN key for this session *before* the verify.  Clears
+ * any pending anonymous fallback and returns TRUE iff the caller should
+ * emit a keyed PLAYER_JOIN — i.e. the key went absent->present, which
+ * is a fresh join or a post-rotation re-registration.  A repeat verify
+ * on an already-keyed slot (wasParticipant) returns FALSE so an
+ * idempotent rekey resend never double-counts. */
+bool wbnJoinOnReauth(WbnJoinState *s, bool wasParticipant);
+
+/* Per-tick poll.  Returns TRUE exactly once — when the grace window has
+ * elapsed with the join still pending — so the caller emits an
+ * anonymous PLAYER_JOIN.  nowTick uses the same monotonic counter
+ * passed to wbnJoinArm. */
+bool wbnJoinOnTick(WbnJoinState *s, uint32_t nowTick);
+
+/* Slot left (or is being recycled) before the join resolved: drop the
+ * owed event so no orphan anonymous join is emitted for a player who
+ * never got a keyed one. */
+void wbnJoinClear(WbnJoinState *s);
+
+/* Should this slot receive a PACKET_WBN_REKEY on session rotation?
+ * Gated on the slot being connected and WBN-verified last round.
+ * PLAYER_FLAG_WBN_VERIFIED survives serverSimResetGameWorld, unlike the
+ * per-slot WBN key that winbolonetEndSession wipes — so this is the
+ * durable cross-round signal. */
+bool wbnRekeyTargetSelected(bool connected, uint8_t clientFlags);
+
 /* Join request packet (client -> server) */
 typedef struct {
     PacketHeader hdr;
@@ -283,6 +331,10 @@ typedef struct UdpServerClient {
      * intentional, not a bug. */
     uint8_t clientType;          /* immutable after JOIN_REQUEST */
     uint8_t clientHints;         /* immutable after JOIN_REQUEST; SUPPORTER|STEAM_BUILD only */
+    WbnJoinState wbnJoin;        /* deferred PLAYER_JOIN bookkeeping for this
+                                  * slot/session — armed at join and at each
+                                  * session rotation, resolved by reauth or
+                                  * the per-tick grace sweep. */
     SubscriberHandle controlSub; /* per-client subscription on the server's
                                   * control-event bus; the deliver callback
                                   * encodes via the codec table and unicasts

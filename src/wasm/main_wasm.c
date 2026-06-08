@@ -681,6 +681,10 @@ void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping)
   sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
 
+void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value, uint8_t clientType, uint8_t clientFlags) {
+  (void)cs; (void)value; (void)clientType; (void)clientFlags;
+}
+
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
   (void)cs;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);

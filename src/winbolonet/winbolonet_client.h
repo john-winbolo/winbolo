@@ -34,6 +34,26 @@
 #include "global.h"
 
 /*********************************************************
+* Per-mode WinBolo.net play stats, parsed from the auth/login,
+* auth/steam and auth/validate responses. Each integer is -1 when
+* the field is absent from the response: the "open" mode carries
+* only the counter fields, while "tourn"/"strict" also carry
+* score (ELO), win/loss tallies and a ladder rank (rank -1 means
+* unranked or absent). `valid` is FALSE when the response carried
+* no stats object at all.
+*********************************************************/
+typedef struct {
+  int numGames, numBases, numPills, numTanks;  /* -1 if absent */
+  int score, wins, loses;                       /* -1 if absent (e.g. open) */
+  int rank, rankTotal;                          /* rank -1 = unranked/absent */
+} WbnModeStats;
+
+typedef struct {
+  bool valid;
+  WbnModeStats open, tourn, strict;
+} WbnStats;
+
+/*********************************************************
 *NAME:          winbolonetAuthLogin
 *PURPOSE:
 * Authenticates with WinBolo.net via POST /api/v1/auth/login.
@@ -46,9 +66,11 @@
 * tokenOut      - Buffer for token (must be >= 65 bytes)
 * expiryOut     - Buffer for expiry string (must be >= 64 bytes)
 * playerNameOut - Buffer for player name (must be >= PLAYER_NAME_LEN)
+* rankOut       - 1v1 ladder position; -1 when unranked. May be NULL.
+* rankTotalOut  - Total ranked players; 0 when absent. May be NULL.
 * errorMsg      - Buffer for error message on failure
 *********************************************************/
-bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg);
+bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg);
 
 /*********************************************************
 *NAME:          winbolonetAuthSteam
@@ -63,9 +85,36 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
 * tokenOut        - Buffer for token (must be >= 65 bytes)
 * expiryOut       - Buffer for expiry string (must be >= 64 bytes)
 * playerNameOut   - Buffer for player name (must be >= PLAYER_NAME_LEN)
+* rankOut         - 1v1 ladder position; -1 when unranked. May be NULL.
+* rankTotalOut    - Total ranked players; 0 when absent. May be NULL.
 * errorMsg        - Buffer for error message on failure
 *********************************************************/
-bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg);
+bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg);
+
+/*********************************************************
+*NAME:          winbolonetAuthSteamRegister
+*PURPOSE:
+* Registers a new WinBolo.net account via
+* POST /api/v1/auth/steam/register using a hex-encoded
+* Steam auth ticket, a chosen username and an optional
+* email. On success, writes the token and expiry into the
+* provided buffers and returns TRUE.
+*
+*ARGUMENTS:
+* steamTicketHex  - Hex-encoded Steam auth ticket
+* username        - Chosen WinBolo.net username
+* email           - Optional email; omitted when NULL or empty
+* tokenOut        - Buffer for token (must be >= 65 bytes)
+* expiryOut       - Buffer for expiry string (must be >= 64 bytes)
+* playerNameOut   - Buffer for player name (must be >= PLAYER_NAME_LEN)
+* rankOut         - 1v1 ladder position; -1 when unranked. May be NULL.
+* rankTotalOut    - Total ranked players; 0 when absent. May be NULL.
+* errorMsg        - Buffer for the server's human error message on failure
+* errorCodeOut    - Buffer for the server's machine error code (e.g.
+*                   "steam_already_linked") on failure; empty when absent.
+*                   May be NULL.
+*********************************************************/
+bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *username, const char *email, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg, char *errorCodeOut);
 
 /*********************************************************
 *NAME:          winbolonetAuthValidate
@@ -77,9 +126,11 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
 *ARGUMENTS:
 * token         - The auth token to validate
 * playerNameOut - Buffer for player name (must be >= PLAYER_NAME_LEN), may be NULL
+* rankOut       - 1v1 ladder position; -1 when unranked. May be NULL.
+* rankTotalOut  - Total ranked players; 0 when absent. May be NULL.
 * errorMsg      - Buffer for error message on failure
 *********************************************************/
-bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg);
+bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg);
 
 /*********************************************************
 *NAME:          winbolonetClientJoinSession

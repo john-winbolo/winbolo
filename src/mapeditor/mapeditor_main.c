@@ -19,6 +19,7 @@
 #include <time.h>
 
 #include "../common/wb_log.h"
+#include "../common/prefs.h"
 #include "../server/threads.h"
 #include "bolo_rand.h"
 #ifdef _WIN32
@@ -91,6 +92,19 @@ int main(int argc, char *argv[]) {
     }
 
     threadsCreate(FALSE);
+
+    /* Load the process-global preferences document (WinBolo.json) before
+     * the editor reads its recent-files list. */
+    {
+        char prefsPath[1024];
+        const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+        if (prefDir) {
+            SDL_snprintf(prefsPath, sizeof(prefsPath), "%sWinBolo.json", prefDir);
+        } else {
+            SDL_snprintf(prefsPath, sizeof(prefsPath), "%s", "WinBolo.json");
+        }
+        prefsInit(prefsPath);
+    }
 
     /* Create window */
     SDL_Window *window = SDL_CreateWindow("WinBolo Map Editor",

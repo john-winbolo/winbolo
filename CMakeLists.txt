@@ -524,8 +524,10 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_lobby.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
+    src/gui/sdl3/dialogs/imgui_onboarding.cpp
     src/gui/sdl3/dialogs/imgui_about.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_stars.cpp
@@ -641,6 +643,7 @@ target_include_directories(WinBoloIOS PRIVATE
     src/server
     src/mapeditor
     src/third_party/imgui_markdown
+    ${cjson_SOURCE_DIR}
 )
 bolo_apply_include_rules(WinBoloIOS gui)
 bolo_grant_internal_source_access(WinBoloIOS
@@ -648,7 +651,7 @@ bolo_grant_internal_source_access(WinBoloIOS
 
 target_link_libraries(WinBoloIOS PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(WinBoloIOS PRIVATE SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends lua_static
-    nanosvg stb_image utf8proc zlibstatic
+    nanosvg stb_image utf8proc zlibstatic cjson
     "-framework CoreText" "-framework CoreFoundation" "-framework CoreGraphics"
     "-framework AVFoundation"
     "-framework GameController"
@@ -679,6 +682,8 @@ target_sources(WinBoloIOS PRIVATE src/steam/steam_wrapper_stub.c)
 target_sources(WinBoloIOS PRIVATE src/common/wb_log.c)
 target_sources(WinBoloIOS PRIVATE src/common/md5.c)
 target_sources(WinBoloIOS PRIVATE src/common/mp_diag_log.c)
+target_sources(WinBoloIOS PRIVATE src/common/prefs.c)
+target_sources(WinBoloIOS PRIVATE src/common/prefs_doc.c)
 set_flat_output(WinBoloIOS "${CMAKE_BINARY_DIR}")
 
 # Hide dependency targets from the Xcode project — only WinBoloIOS should
@@ -942,7 +947,7 @@ endif()
 # below can link them. server_sim_static holds server_sim.c + servermessages.c;
 # server_static (the dedicated-server runtime) PUBLIC-links it.
 # Per-target conditional sources (transport_udp_client, nat_portmap,
-# servermain, server_frontend_stubs, server_stubs, posix_stubs) stay
+# servermain, server_frontend_stubs, server_stubs) stay
 # in their respective *_SOURCES lists.
 # ---------------------------------------------------------------------------
 
@@ -974,8 +979,8 @@ add_library(winbolonet_core STATIC
     src/winbolonet/winbolonetevents.c
     src/winbolonet/winbolonet_core.c
     src/winbolonet/wbn_bearer.c
-    src/winbolonet/wbn_prefs_path.c
     src/winbolonet/wbn_country_cache.c
+    src/winbolonet/wbn_prefs_sync.c
 )
 target_include_directories(winbolonet_core PRIVATE
     ${cjson_SOURCE_DIR}
@@ -1021,7 +1026,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_stars.cpp
@@ -1188,7 +1193,6 @@ if(WIN32)
 else()
     target_sources(WinBolo PRIVATE
         src/gui/skins.c
-        src/server/posix_stubs.c
     )
     target_link_libraries(WinBolo PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBolo PRIVATE -fcommon)
@@ -1285,11 +1289,12 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
-        "${WINBOLO_DATA_DIR}/Brains/GoalHunter"
-    COMMENT "Copying brain scripts to output Brains/ directory"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter"
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
+        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter
+        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
+    COMMENT "Copying brain scripts to output Brains/ directory (excludes *.md)"
 )
 
 # Copy shared libraries next to WinBolo executable (all platforms).
@@ -1444,7 +1449,6 @@ if(WIN32)
     endif()
 else()
     target_sources(WinBoloDS PRIVATE
-        src/server/posix_stubs.c
         src/gui/sdl3/lang.c
     )
     target_link_libraries(WinBoloDS PRIVATE ${MATH_LIB} pthread)
@@ -1477,6 +1481,8 @@ target_sources(WinBoloDS PRIVATE src/common/sentry_integration.c)
 target_sources(WinBoloDS PRIVATE src/common/wb_log.c)
 target_sources(WinBoloDS PRIVATE src/common/md5.c)
 target_sources(WinBoloDS PRIVATE src/common/mp_diag_log.c)
+target_sources(WinBoloDS PRIVATE src/common/prefs_doc.c)
+target_sources(WinBoloDS PRIVATE src/common/prefs.c)
 if(HAVE_SENTRY)
     target_compile_definitions(WinBoloDS PRIVATE HAVE_SENTRY=1)
     if(SENTRY_DSN)
@@ -1574,6 +1580,7 @@ set(LOGVIEWER_IMGUI_SOURCES
 set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
 
@@ -1601,11 +1608,6 @@ add_executable(LogViewer
     src/gui/sdl3/tileloader.c
     src/gui/ui_mode.c
 )
-if(NOT WIN32)
-    # posix_stubs provides preferencesGetPreferenceFile + GetPrivateProfileString /
-    # WritePrivateProfileString shared with the main game and map editor.
-    target_sources(LogViewer PRIVATE src/server/posix_stubs.c)
-endif()
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
@@ -1760,9 +1762,6 @@ if(WIN32)
     target_link_libraries(WinBoloHeadless PRIVATE ws2_32 winmm user32)
     target_compile_options(WinBoloHeadless PRIVATE -fcommon)
 else()
-    target_sources(WinBoloHeadless PRIVATE
-        src/server/posix_stubs.c
-    )
     target_link_libraries(WinBoloHeadless PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloHeadless PRIVATE -fcommon)
 endif()
@@ -1875,9 +1874,6 @@ if(WIN32)
     target_link_libraries(winbolo_gym PRIVATE ws2_32 winmm user32)
     target_compile_options(winbolo_gym PRIVATE -fcommon)
 else()
-    target_sources(winbolo_gym PRIVATE
-        src/server/posix_stubs.c
-    )
     target_link_libraries(winbolo_gym PRIVATE ${MATH_LIB} pthread)
     target_compile_options(winbolo_gym PRIVATE -fcommon)
 endif()
@@ -2008,9 +2004,6 @@ if(WIN32)
     target_link_libraries(BrainTest PRIVATE ws2_32 winmm user32)
     target_compile_options(BrainTest PRIVATE -fcommon)
 else()
-    target_sources(BrainTest PRIVATE
-        src/server/posix_stubs.c
-    )
     target_link_libraries(BrainTest PRIVATE ${MATH_LIB} pthread)
     target_compile_options(BrainTest PRIVATE -fcommon)
 endif()
@@ -2084,6 +2077,7 @@ target_include_directories(MapEditor PRIVATE
     src/gui
     src/server
     src/mapeditor
+    ${cjson_SOURCE_DIR}
 )
 bolo_apply_include_rules(MapEditor mapeditor)
 
@@ -2092,9 +2086,6 @@ if(WIN32)
     target_link_libraries(MapEditor PRIVATE ws2_32 winmm user32)
     target_compile_options(MapEditor PRIVATE -fcommon)
 else()
-    target_sources(MapEditor PRIVATE
-        src/server/posix_stubs.c
-    )
     target_link_libraries(MapEditor PRIVATE ${MATH_LIB} pthread)
     target_compile_options(MapEditor PRIVATE -fcommon)
 endif()
@@ -2102,7 +2093,7 @@ endif()
 target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(MapEditor PRIVATE
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
-    nanosvg stb_image utf8proc
+    nanosvg stb_image utf8proc cjson
 )
 
 # macOS trackpad pinch-to-zoom support, plus native NSMenu shim for the
@@ -2265,8 +2256,12 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md" "${DIST_DIR}/data/THIRD_PARTY_NOTICES.md"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
 
-    # Brain scripts
-    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/brains/GoalHunter" "${DIST_DIR}/Brains/GoalHunter"
+    # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter"
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
+        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter
+        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
 
     # Strip debug info from the staged Linux binaries (no-op on Win/macOS)
     ${DIST_STRIP_CMD}
@@ -2390,7 +2385,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sp_subscriber_delivery.c
     tests/unit/test_active_local_input_to_shot.c
     tests/unit/test_sp_shoot_through_timer.c
-    tests/unit/test_ini_reader_writer.c
+    tests/unit/test_prefs_roundtrip.c
+    tests/unit/test_prefs_doc.c
+    tests/unit/test_prefs_api.c
+    src/common/prefs_doc.c
+    src/common/prefs.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
     tests/unit/test_command_rejected_apply.c
@@ -2418,6 +2417,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
     tests/unit/test_wbn_country_cache.c
+    tests/unit/test_wbn_prefs_sync.c
     tests/unit/test_control_event_queue.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
@@ -2428,17 +2428,18 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
+    tests/unit/test_wbn_deferred_join.c
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_log_roundtrip.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
     # the other winbolonet_* functions; these TUs only add the bearer,
-    # prefs-path, country-cache and parser surfaces.
+    # country-cache and parser surfaces.
     src/winbolonet/wbn_bearer.c
-    src/winbolonet/wbn_prefs_path.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
+    src/winbolonet/wbn_prefs_sync.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
@@ -2488,7 +2489,6 @@ if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
 else()
-    target_sources(WinBoloUnitTests PRIVATE src/server/posix_stubs.c)
     target_link_libraries(WinBoloUnitTests PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloUnitTests PRIVATE -fcommon)
 endif()
@@ -2500,9 +2500,23 @@ set(_unit_test_names
     sp_subscriber_delivery
     active_local_input_to_shot
     sp_shoot_through_timer
-    ini_writer_persistence
-    ini_writer_insertion_point
-    ini_writer_security
+    prefs_document_roundtrip
+    prefs_keys_roundtrip
+    prefs_doc_roundtrip
+    prefs_doc_defaults
+    prefs_doc_special_chars
+    prefs_doc_unknown_preserved
+    prefs_doc_save_atomic
+    prefs_api_roundtrip
+    prefs_api_defaults
+    prefs_api_corrupt_backup
+    prefs_api_debounce
+    prefs_api_shutdown_flush
+    prefs_api_upload_excludes_local
+    prefs_api_sync_dirty
+    prefs_api_device_identity
+    prefs_api_adopt_server
+    prefs_api_mark_synced
     lobby_settings_codec_and_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply
@@ -2558,6 +2572,10 @@ set(_unit_test_names
     wbn_rekey_codec
     wbn_news_parse
     wbn_country_cache
+    wbn_prefs_parse_get
+    wbn_prefs_parse_updatedat
+    wbn_prefs_decide
+    wbn_prefs_build_put_body
     queue_init_is_valid
     queue_enqueue_advances_nextSeq
     queue_ack_advance_within_range
@@ -2598,6 +2616,12 @@ set(_unit_test_names
     return_to_lobby_drops_wbn_keeps_identity
     wbn_lobby_update_deferred_during_rotation
     wbn_lobby_update_sends_when_not_rotating
+    wbn_join_keyed_on_reauth
+    wbn_join_anonymous_on_grace
+    wbn_join_idempotent_reauth_no_double
+    wbn_join_disconnect_drops
+    wbn_join_rearm_per_session
+    wbn_join_rekey_target_gate
     remove_player_clears_slot
     return_to_lobby_clears_phantom_slot
     last_human_leave_returns_to_lobby

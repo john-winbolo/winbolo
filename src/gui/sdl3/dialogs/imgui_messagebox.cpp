@@ -309,6 +309,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
 
         ImGui::End(); /* ##MsgBoxHost */
 
+        dialogDrawNavOutline();
         ImGui::Render();
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);

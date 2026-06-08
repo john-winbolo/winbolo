@@ -117,7 +117,11 @@ static inline void imguiApplyBoloTheme(void) {
 
     /* Misc */
     c[ImGuiCol_DockingPreview] = ImVec4(0.24f, 0.42f, 0.55f, 0.70f);
-    c[ImGuiCol_NavHighlight]   = ImVec4(0.40f, 0.72f, 0.88f, 1.00f);
+    /* Stock nav cursor is suppressed (alpha 0) so ImGui's unsnapped 2px
+       stroke doesn't draw; dialogDrawNavOutline() renders a crisp,
+       pixel-snapped replacement in the theme's light blue (0.40, 0.72,
+       0.88) instead. */
+    c[ImGuiCol_NavHighlight]   = ImVec4(0.40f, 0.72f, 0.88f, 0.00f);
 }
 
 #endif /* IMGUI_THEME_H */

@@ -146,7 +146,6 @@ set(BOLO_SOURCES
 set(SERVER_SOURCES
     ${SRC_ROOT}/server/geolookup.c
     ${SRC_ROOT}/server/server_stubs.c
-    ${SRC_ROOT}/server/posix_stubs.c
 )
 
 # LZW compression

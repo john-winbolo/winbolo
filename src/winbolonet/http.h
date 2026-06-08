@@ -161,6 +161,42 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback);
 int wbn_api_get(const char *path, char **response_out);
 
 /*********************************************************
+*NAME:          wbn_prefs_get
+*PURPOSE:
+* GET /api/v1/prefs for the cloud preferences sync. Signs the
+* timestamp + an empty body like the other v1 calls and sends
+* Authorization: Bearer <bearerToken> (the user WBN token).
+* Returns the HTTP status code, or -1 on transport error or
+* when bearerToken is NULL/empty.
+* On success, *response_out is a heap-allocated response string
+* the caller must free. On error, *response_out may be NULL.
+*
+*ARGUMENTS:
+* bearerToken  - User WBN bearer token (must be non-empty)
+* response_out - Receives heap-allocated response string (caller frees)
+*********************************************************/
+int wbn_prefs_get(const char *bearerToken, char **response_out);
+
+/*********************************************************
+*NAME:          wbn_prefs_put
+*PURPOSE:
+* PUT /api/v1/prefs with json_body for the cloud preferences
+* sync. Signs the timestamp + json_body and sends
+* Authorization: Bearer <bearerToken> (the user WBN token).
+* Returns the HTTP status code, or -1 on transport error or
+* when bearerToken is NULL/empty.
+* On success, *response_out is a heap-allocated response string
+* the caller must free. On error, *response_out may be NULL.
+*
+*ARGUMENTS:
+* bearerToken  - User WBN bearer token (must be non-empty)
+* json_body    - JSON request body string
+* response_out - Receives heap-allocated response string (caller frees)
+*********************************************************/
+int wbn_prefs_put(const char *bearerToken, const char *json_body,
+                  char **response_out);
+
+/*********************************************************
 *NAME:          httpGetBaseUrl
 *PURPOSE:
 * Returns the configured WBN base URL (no trailing slash,

@@ -75,7 +75,6 @@ typedef struct {
     /* WBN session key for the connected server.  Empty for direct-IP
      * joins; refreshed by PACKET_WBN_REKEY when the server rotates. */
     char wbnServerKey[WINBOLONET_KEY_LEN];
-    bool wbnReauthSent;  /* TRUE after sending re-auth, reset when WBN flag restored */
     uint32_t outSequence;
 
     /* Reliable outbound command carrier. cmdSeq is monotonic per
@@ -251,6 +250,39 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
                       (unsigned)ntohs(c->serverAddr.sin_port));
             udpClientLoggedLocalPort = 1;
         }
+    }
+}
+
+/* Mint a fresh player_key against the current WBN server_key and send a
+ * PACKET_WBN_REAUTH to the server. The wire packet MUST be built through
+ * commandCodecEncode — the server decodes it with commandCodecDecode, whose
+ * body sits at CMD_PACKET_BODY_OFFSET (header + 4), not raw header offset.
+ * Centralising the encode here keeps the one correct format. No-op without
+ * a token/server_key; logs and returns on a failed key exchange (caller
+ * decides *when* to re-auth, so there is no retry here). */
+static void udpClientSendWbnReauth(TransportUdpClientCtx *c) {
+    char playerKey[WBN_JOIN_KEY_WIRE_LEN];
+    char errMsg[256];
+
+    if (c->wbnApiToken[0] == '\0' || c->wbnServerKey[0] == '\0') return;
+
+    memset(playerKey, 0, sizeof(playerKey));
+    errMsg[0] = '\0';
+    if (!winbolonetClientJoinSession(c->wbnApiToken, c->wbnServerKey,
+                                     playerKey, errMsg)) {
+        WB_LOG_WARN(WB_LOG_CAT_NET, "[WBN] re-auth exchange failed: %s",
+                    errMsg[0] ? errMsg : "(no detail)");
+        return;
+    }
+
+    ClientCommand cmd = { .type = CMD_WBN_REAUTH };
+    memcpy(cmd.u.wbnReauth.token, playerKey, WBN_JOIN_KEY_WIRE_LEN);
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, (int)len);
+        WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
     }
 }
 
@@ -1564,38 +1596,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* A fresh lobby snapshot supersedes any pending balance proposal */
         c->clientSim->balanceProposalActive = false;
         memset(c->clientSim->balanceProposal, 0, sizeof(c->clientSim->balanceProposal));
-        /* WBN re-auth: if our slot lost its WBN flag (server re-registered
-         * with WBN between rounds) and we have a token, mint a fresh
-         * player_key against the latest server_key and re-authenticate. */
-        if (c->wbnApiToken[0] != '\0' && c->playerNum < MAX_TANKS &&
-            !(c->clientSim->lobbySlots[c->playerNum].clientFlags &
-              PLAYER_FLAG_WBN_VERIFIED)) {
-            if (!c->wbnReauthSent) {
-                char playerKey[WBN_JOIN_KEY_WIRE_LEN];
-                char errMsg[256];
-                memset(playerKey, 0, sizeof(playerKey));
-                errMsg[0] = '\0';
-                if (c->wbnServerKey[0] != '\0' &&
-                    winbolonetClientJoinSession(c->wbnApiToken,
-                                                c->wbnServerKey,
-                                                playerKey, errMsg)) {
-                    uint8_t ra[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
-                    packHeader(ra, PACKET_WBN_REAUTH, c->outSequence++);
-                    memcpy(ra + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
-                    udpClientSendTo(c, ra, sizeof(ra));
-                    c->wbnReauthSent = TRUE;
-                    WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
-                } else {
-                    WB_LOG_WARN(WB_LOG_CAT_NET,
-                            "[WBN] re-auth exchange failed: %s",
-                            errMsg[0] ? errMsg : "(no server_key)");
-                    /* Leave wbnReauthSent FALSE so the next snapshot
-                     * tick retries.  No backoff — out of scope here. */
-                }
-            }
-        } else {
-            c->wbnReauthSent = FALSE;
-        }
+        /* WBN (re-)auth is not driven from here: it is performed once per
+         * server-issued session key in the PACKET_WBN_REKEY handler. The
+         * client never inspects its own flag state to decide whether to
+         * re-authenticate. */
         break;
     }
 
@@ -1876,14 +1880,28 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* Wire: [header 8] [serverKey WBN_JOIN_KEY_WIRE_LEN] — same 65-byte
          * envelope as wbnJoinKey for symmetry; payload is a NUL-terminated
          * string within the first WINBOLONET_KEY_LEN bytes. */
+        char newKey[WINBOLONET_KEY_LEN];
+        bool keyChanged;
         if (len < PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) {
             return;
         }
-        if (!wbnKeyDecode(c->wbnServerKey, buf + PACKET_HEADER_SIZE)) {
+        memset(newKey, 0, sizeof(newKey));
+        if (!wbnKeyDecode(newKey, buf + PACKET_HEADER_SIZE)) {
             return;
         }
-        /* The lobby-snapshot poll fires re-auth when our slot loses the
-         * WBN flag; no need to push from here. */
+        /* This is the sole driver of WBN (re-)authentication. We authenticate
+         * once for each *new* session key the server hands us: the first
+         * delivery right after JOIN_ACCEPT (initial auth) and again after a
+         * return-to-lobby key rotation (the server's "re-auth now" signal).
+         * Identical resends (e.g. a recovered JOIN_ACCEPT) leave the key
+         * unchanged, so we don't re-fire and provoke an "already in game"
+         * rejection. On failure we simply don't retry — the next genuine
+         * rotation will trigger a fresh attempt. */
+        keyChanged = (strcmp(newKey, c->wbnServerKey) != 0);
+        memcpy(c->wbnServerKey, newKey, sizeof(c->wbnServerKey));
+        if (keyChanged) {
+            udpClientSendWbnReauth(c);
+        }
         break;
     }
 
@@ -2260,34 +2278,8 @@ static void udpClientTransportObserver(void *ctx, const ControlEvent *evt) {
             } else {
                 c->clientSim->lobbyAloneStartTick = 0;
             }
-
-            if (c->wbnApiToken[0] != '\0' && c->playerNum < MAX_TANKS &&
-                !(c->clientSim->lobbySlots[c->playerNum].clientFlags &
-                  PLAYER_FLAG_WBN_VERIFIED)) {
-                if (!c->wbnReauthSent) {
-                    char playerKey[WBN_JOIN_KEY_WIRE_LEN];
-                    char errMsg[256];
-                    memset(playerKey, 0, sizeof(playerKey));
-                    errMsg[0] = '\0';
-                    if (c->wbnServerKey[0] != '\0' &&
-                        winbolonetClientJoinSession(c->wbnApiToken,
-                                                    c->wbnServerKey,
-                                                    playerKey, errMsg)) {
-                        uint8_t ra[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
-                        packHeader(ra, PACKET_WBN_REAUTH, c->outSequence++);
-                        memcpy(ra + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
-                        udpClientSendTo(c, ra, sizeof(ra));
-                        c->wbnReauthSent = TRUE;
-                        WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
-                    } else {
-                        WB_LOG_WARN(WB_LOG_CAT_NET,
-                                "[WBN] re-auth exchange failed: %s",
-                                errMsg[0] ? errMsg : "(no server_key)");
-                    }
-                }
-            } else {
-                c->wbnReauthSent = FALSE;
-            }
+            /* WBN (re-)auth is driven by the server's PACKET_WBN_REKEY,
+             * not by polling our own flag state here. */
         }
         break;
 
@@ -2400,7 +2392,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     if (wbnServerKey != NULL) {
         strncpy(c->wbnServerKey, wbnServerKey, sizeof(c->wbnServerKey) - 1);
     }
-    c->wbnReauthSent = FALSE;
 
     c->wantRejoin = wantRejoin;
 
@@ -2624,29 +2615,8 @@ uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
 
 void transportUdpClientSendWbnReauth(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    char playerKey[WBN_JOIN_KEY_WIRE_LEN];
-    char errMsg[256];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (c->wbnApiToken[0] == '\0' || c->wbnServerKey[0] == '\0') return;
-
-    memset(playerKey, 0, sizeof(playerKey));
-    errMsg[0] = '\0';
-    if (!winbolonetClientJoinSession(c->wbnApiToken, c->wbnServerKey,
-                                     playerKey, errMsg)) {
-        WB_LOG_WARN(WB_LOG_CAT_NET, "[WBN] re-auth exchange failed: %s",
-                errMsg[0] ? errMsg : "(no detail)");
-        return;
-    }
-
-    ClientCommand cmd = { .type = CMD_WBN_REAUTH };
-    memcpy(cmd.u.wbnReauth.token, playerKey, WBN_JOIN_KEY_WIRE_LEN);
-
-    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
-    size_t len;
-    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
-        udpClientSendTo(c, buf, (int)len);
-    }
+    udpClientSendWbnReauth(c);
 }
 
 /* ── Layout A lobby commands — Client → Server ───────────────────── */
