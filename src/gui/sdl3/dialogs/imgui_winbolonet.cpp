@@ -35,6 +35,17 @@ extern "C" {
 #include "imgui_winbolonet.h"
 }
 
+/* WBN-verified shield texture (white-masked SVG), lazily loaded by the
+ * renderer. Stands in for the account badge on the welcome status chip
+ * and the stats dialog header. */
+extern "C" SDL_Texture *sdl3ImguiGetWbnVerifiedIcon(void);
+
+/* Shared background-game handle; non-NULL when the welcome screen is
+ * playing a demo behind the menus. The welcome menu buttons fade more
+ * (lower alpha) over a live background, so the account chip/sign-in
+ * button mirror that to match the "Single Player" button. */
+extern "C" struct BgGame *bgGameGetShared(void);
+
 /* ---- async login state ---- */
 
 enum WbnLoginState {
@@ -310,6 +321,73 @@ static void wbnDrawModeStats(const char *title, const WbnModeStats *m, bool rank
     }
 }
 
+/* Draws the signed-in account chip for the welcome screen: a translucent
+ * framed button two lines tall showing the WBN-verified shield + player
+ * name on top and the 1v1 ladder rank beneath. Returns true when clicked.
+ * The caller pushes the ghost (translucent) button colours so the chip
+ * matches the welcome menu buttons; textAlpha is the menu's dimmed text
+ * alpha, brightened to full white on hover the same way. The chip is at
+ * least as wide as a menu button (180*s) so it reads as the same family. */
+static bool wbnDrawAccountChip(float s, float textAlpha) {
+    char playerName[PLAYER_NAME_LEN];
+    playerName[0] = '\0';
+    gameFrontGetPlayerName(playerName);
+    if (playerName[0] == '\0') {
+        SDL_strlcpy(playerName, langGetText(STR_DLGWBN_SIGNED_IN), sizeof(playerName));
+    }
+
+    int rank = -1, rankTotal = 0;
+    gameFrontGetWinbolonetRank(&rank, &rankTotal);
+    char rankBuf[64];
+    if (rank < 0) {
+        SDL_strlcpy(rankBuf, langGetText(STR_DLGWBN_UNRANKED), sizeof(rankBuf));
+    } else {
+        MessageArgs args = {};
+        args.number = rank;
+        args.number2 = rankTotal;
+        SDL_strlcpy(rankBuf, langGetTextFmt(STR_DLGWBN_RANK, &args), sizeof(rankBuf));
+    }
+
+    SDL_Texture *shield = sdl3ImguiGetWbnVerifiedIcon();
+    float lineH = ImGui::GetTextLineHeight();
+    float iconSz = lineH;
+    float padX = 10.0f * s, padY = 6.0f * s;
+    float gapIcon = 6.0f * s;
+    float lineGap = 2.0f * s;
+
+    float nameW = ImGui::CalcTextSize(playerName).x;
+    float line1W = (shield ? iconSz + gapIcon : 0.0f) + nameW;
+    float rankW = ImGui::CalcTextSize(rankBuf).x;
+    float contentW = (line1W > rankW ? line1W : rankW);
+
+    float btnW = contentW + padX * 2.0f;
+    if (btnW < 180.0f * s) btnW = 180.0f * s;   /* match the menu button width */
+    ImVec2 btnSize(btnW, lineH * 2.0f + lineGap + padY * 2.0f);
+
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    bool clicked = ImGui::Button("##wbnacct", btnSize);
+    imguiHandOnHover();
+    bool hov = ImGui::IsItemHovered();
+
+    /* Dimmed text matching the menu buttons; full white on hover. */
+    int nameA = hov ? 255 : (int)(textAlpha * 255.0f);
+    int rankA = hov ? 220 : (int)(textAlpha * 0.75f * 255.0f);
+
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    float tx = p0.x + padX;
+    float ty = p0.y + padY;
+    if (shield) {
+        dl->AddImage((ImTextureID)shield, ImVec2(tx, ty),
+                     ImVec2(tx + iconSz, ty + iconSz));
+        tx += iconSz + gapIcon;
+    }
+    dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, nameA), playerName);
+    dl->AddText(ImVec2(p0.x + padX, ty + lineH + lineGap),
+                IM_COL32(210, 210, 210, rankA), rankBuf);
+
+    return clicked;
+}
+
 /* ---- Public API ---- */
 
 /* Renders the shared "My Stats" modal from gamefront's stored per-mode
@@ -327,14 +405,46 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(320, 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Appearing);
+    /* Translucent panel matching the Local game finder. */
+    ImGui::SetNextWindowBgAlpha(0.85f);
 
     static float s_fadeWbnStats = 0.0f;
     bool open = true;
-    if (!ImGui::BeginPopupModal(title, &open, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!ImGui::BeginPopupModal(title, &open,
+                                ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoTitleBar)) {
         return;
     }
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, imguiPopupFadeAlpha(&s_fadeWbnStats));
+
+    /* Gold title drawn into the body, matching the Local game finder panel
+     * (which uses NoTitleBar and renders its own title). */
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.75f, 0.3f, 1.0f));
+    ImGui::SetWindowFontScale(1.3f);
+    ImGui::TextUnformatted(langGetText(STR_DLGWBN_STATS_TITLE));
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PopStyleColor();
+
+    /* Signed-in identity: shield badge + player name. */
+    {
+        char playerName[PLAYER_NAME_LEN];
+        playerName[0] = '\0';
+        gameFrontGetPlayerName(playerName);
+        SDL_Texture *shield = sdl3ImguiGetWbnVerifiedIcon();
+        if (shield) {
+            float iconSz = ImGui::GetTextLineHeight();
+            ImGui::Image((ImTextureID)shield, ImVec2(iconSz, iconSz));
+            ImGui::SameLine();
+        }
+        if (playerName[0] != '\0') {
+            ImGui::TextUnformatted(playerName);
+            ImGui::SameLine();
+        }
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s",
+                           langGetText(STR_DLGWBN_SIGNED_IN));
+    }
+    ImGui::Spacing();
 
     WbnStats st;
     gameFrontGetWinbolonetStats(&st);
@@ -346,8 +456,40 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
         wbnDrawModeStats(langGetText(STR_DLGWBN_STATS_STRICT), &st.strict, true);
     }
 
-    int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr, langGetText(STR_OK));
-    if (f != WBUI::FOOTER_NONE) ImGui::CloseCurrentPopup();
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    /* Footer: Sign out (left, muted) and Close (right). Esc closes the
+     * dialog rather than signing out. Both buttons share a width and are
+     * centred as a group, mirroring the standard dialog footer. */
+    const char *signOutLbl = langGetText(STR_DLGWBN_SIGN_OUT);
+    const char *closeLbl    = langGetText(STR_OK);
+    float pad = ImGui::GetStyle().FramePadding.x * 2.0f;
+    float sw = ImGui::CalcTextSize(signOutLbl).x;
+    float cw = ImGui::CalcTextSize(closeLbl).x;
+    float btnW = (sw > cw ? sw : cw) + pad;
+    if (btnW < 120.0f) btnW = 120.0f;
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float availW = ImGui::GetContentRegionAvail().x;
+    float totalW = btnW * 2.0f + spacing;
+    float startX = ImGui::GetCursorPosX() + (availW - totalW) * 0.5f;
+    if (startX > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(startX);
+
+    WBUI::PushCancelStyle();
+    bool signOut = ImGui::Button(signOutLbl, ImVec2(btnW, 0));
+    WBUI::PopCancelStyle();
+    imguiHandOnHover();
+    ImGui::SameLine(0.0f, spacing);
+    bool close = ImGui::Button(closeLbl, ImVec2(btnW, 0));
+    imguiHandOnHover();
+
+    if (signOut) {
+        wbnSignOut();
+        ImGui::CloseCurrentPopup();
+    } else if (close || WBUI::CancelKeyPressed()) {
+        ImGui::CloseCurrentPopup();
+    }
 
     ImGui::PopStyleVar();
     ImGui::EndPopup();
@@ -429,10 +571,12 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
     imguiWinbolonetDrawStatsDialog();
 }
 
-/* Compact account status block for the welcome screen: player name +
- * Signed in / Not signed in, a Login or Logout button, and the 1v1
- * ladder rank when signed in. Reuses the same popup/worker as the
- * settings section. Render inside an existing ImGui window. */
+/* Compact account status block for the welcome screen. Signed out: a
+ * single translucent "Sign in to WBN" button. Signed in: a translucent
+ * account chip showing the WBN shield, player name, and 1v1 ladder rank;
+ * clicking it opens the stats dialog (which hosts Sign out). Reuses the
+ * same popup/worker as the settings section. Render inside an existing
+ * ImGui window. */
 extern "C" void imguiWinbolonetDrawStatusBlock(void) {
     /* Check for async completion */
     wbnCheckThread();
@@ -461,34 +605,50 @@ extern "C" void imguiWinbolonetDrawStatusBlock(void) {
         return;
     }
 
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    float s = dialogComputeScale((int)vp->Size.x, (int)vp->Size.y);
+
+    /* Mirror the welcome menu buttons exactly so this reads as the same
+     * family as "Single Player": same translucent ghost colours, the same
+     * background-aware alphas (fainter over a live demo, more opaque over
+     * the solid dark screen), and the same fixed 180*s x 30*s size. */
+    bool hasBg = (bgGameGetShared() != nullptr);
+#if BOLO_MOBILE
+    const float ghostBtnAlpha  = 0.6f;
+    const float ghostTextAlpha = 0.9f;
+#else
+    const float ghostBtnAlpha  = hasBg ? 0.15f : 0.6f;
+    const float ghostTextAlpha = hasBg ? 0.75f : 0.9f;
+#endif
+    const float btnW = 180.0f * s;
+    const float btnH = 30.0f * s;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * s);
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.1f, 0.1f, 0.1f, ghostBtnAlpha));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.2f, 0.2f, 0.7f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.3f, 0.3f, 0.3f, 0.9f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
+
     if (loggedIn) {
-        char playerName[PLAYER_NAME_LEN];
-        playerName[0] = '\0';
-        gameFrontGetPlayerName(playerName);
-        if (playerName[0] != '\0') {
-            ImGui::TextUnformatted(playerName);
-            ImGui::SameLine();
-        }
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", langGetText(STR_DLGWBN_SIGNED_IN));
-        wbnDrawRankLine();
-        if (ImGui::Button(langGetText(STR_DLGWBN_STATS_BTN))) {
+        /* Account chip: name + rank on a button background. Clicking opens
+         * the stats dialog, which also hosts Sign out. */
+        if (wbnDrawAccountChip(s, ghostTextAlpha)) {
             wbnShowStats = true;
         }
-        imguiHandOnHover();
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_OUT))) {
-            wbnSignOut();
-        }
-        imguiHandOnHover();
     } else {
-        ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_NOT_SIGNED_IN));
-        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_IN_BTN))) {
+        /* Hover brighten to full white, like the menu buttons. */
+        ImVec2 cur = ImGui::GetCursorScreenPos();
+        bool hov = ImGui::IsMouseHoveringRect(cur, ImVec2(cur.x + btnW, cur.y + btnH));
+        if (hov) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_IN_BTN), ImVec2(btnW, btnH))) {
             wbnOpenLoginPopup();
         }
         imguiHandOnHover();
+        if (hov) ImGui::PopStyleColor();
     }
+
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar(1);
 
     wbnRenderLoginPopup();
     imguiWinbolonetDrawStatsDialog();

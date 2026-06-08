@@ -522,7 +522,7 @@ static const LangEntry langTable[] = {
     {776,  "(expires {string1})"},
     {777,  "Sign out of WBN"},
     {778,  "Not signed in"},
-    {779,  "Sign in to WBN..."},
+    {779,  "Sign in to WBN"},
     {780,  "Sign in to WinBolo.net"},
     {781,  "Sign in with your WinBolo.net username and password. A token will be saved so you don't need to enter your password again."},
     {782,  "Username:"},
