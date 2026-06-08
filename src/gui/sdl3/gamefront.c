@@ -1807,8 +1807,7 @@ typedef struct {
   /* inputs (captured on the main thread) */
   char userToken[FILENAME_MAX];
   char *uploadSnapshot;            /* malloc'd; freed in the pump */
-  char deviceId[65];
-  char deviceLabel[129];
+  char deviceType[65];
   bool localDirty;
   char lastSynced[33];
   char displayName[PLAYER_NAME_LEN]; /* account name; reasserted after adopt */
@@ -1824,7 +1823,7 @@ static bool s_prefsSyncedThisSession = false;
 static int gameFrontPrefsSyncThreadFunc(void *data) {
   PrefsSyncWork *w = (PrefsSyncWork *)data;
   w->outcome = wbnPrefsSyncOnce(w->userToken, w->uploadSnapshot,
-                                w->deviceId, w->deviceLabel,
+                                w->deviceType,
                                 w->localDirty, w->lastSynced);
   SDL_SetAtomicInt(&w->done, 1);
   return 0;
@@ -1847,8 +1846,9 @@ static bool gameFrontLaunchPrefsSyncWorker(void) {
   SDL_SetAtomicInt(&s_prefsSyncWork.done, 0);
   SDL_strlcpy(s_prefsSyncWork.userToken, token, sizeof(s_prefsSyncWork.userToken));
   s_prefsSyncWork.uploadSnapshot = prefsSerializeForUpload();
-  prefsGetDeviceId(s_prefsSyncWork.deviceId, sizeof(s_prefsSyncWork.deviceId));
-  prefsGetDeviceLabel(s_prefsSyncWork.deviceLabel, sizeof(s_prefsSyncWork.deviceLabel));
+  SDL_strlcpy(s_prefsSyncWork.deviceType,
+              bolo_client_type_name(bolo_detect_client_type()),
+              sizeof(s_prefsSyncWork.deviceType));
   s_prefsSyncWork.localDirty = prefsSyncDirty();
   prefsGetLastSyncedUpdatedAt(s_prefsSyncWork.lastSynced,
                               sizeof(s_prefsSyncWork.lastSynced));
@@ -1909,10 +1909,9 @@ void gameFrontPumpPrefsSync(void) {
       if (o->serverPrefs != NULL &&
           prefsAdoptServerDocument(o->serverPrefs) == PREFS_ADOPT_OK) {
         prefsMarkSynced(o->token);
-        /* Record which device last wrote the cloud doc (device-local, so
-         * these writes do not re-dirty the just-synced document). */
-        prefsSetString("DEVICE", "LastSavedFromId", o->serverDeviceId);
-        prefsSetString("DEVICE", "LastSavedFromLabel", o->serverDeviceLabel);
+        /* Record which platform last wrote the cloud doc (device-local, so
+         * this write does not re-dirty the just-synced document). */
+        prefsSetString("DEVICE", "LastSavedFromType", o->serverDeviceType);
         /* Live-apply the downloaded settings: re-read into the live globals
          * and push the keys/tank options onto the running client without a
          * restart (mirrors the Key Setup confirm path). */

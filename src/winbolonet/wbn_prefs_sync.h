@@ -60,8 +60,7 @@ WbnSyncAction wbnPrefsDecideAfterGet(bool localDirty, const char *lastSynced,
 /* Result of parsing a GET /api/v1/prefs 200 body. */
 typedef struct {
     char updatedAt[33];    /* 32 hex + NUL; "" if absent */
-    char deviceId[65];     /* "" if null/absent */
-    char deviceLabel[129]; /* "" if null/absent */
+    char deviceType[65];   /* platform string; "" if null/absent */
     char *prefs;           /* malloc'd JSON string of the prefs object;
                             * caller frees; NULL if absent */
 } WbnPrefsGetResult;
@@ -93,15 +92,15 @@ int wbnPrefsParseUpdatedAt(const char *body, char out[33]);
  *PURPOSE:
  * Build the PUT /api/v1/prefs request body:
  *   {"baseUpdatedAt":<token>|null,
- *    "device":{"id":…,"label":…},
+ *    "device":{"type":…},
  *    "prefs":<parsed prefsJson object>}
  * baseUpdatedAt "" (or NULL) serializes to JSON null. prefsJson is
  * parsed and embedded as a JSON object (not a quoted string).
  * Returns a malloc'd JSON string the caller frees, or NULL on OOM
  * or when prefsJson does not parse. Pure (cJSON only): unit-tested.
  *********************************************************/
-char *wbnPrefsBuildPutBody(const char *baseUpdatedAt, const char *deviceId,
-                           const char *deviceLabel, const char *prefsJson);
+char *wbnPrefsBuildPutBody(const char *baseUpdatedAt, const char *deviceType,
+                           const char *prefsJson);
 
 /* The result of one cloud-sync round (wbnPrefsSyncOnce). */
 typedef enum {
@@ -116,8 +115,7 @@ typedef struct {
     char token[33];              /* ADOPTED: server updatedAt; PUSHED: new token */
     char *serverPrefs;           /* ADOPTED only: parsed prefs JSON; caller
                                   * frees; NULL otherwise */
-    char serverDeviceId[65];     /* ADOPTED: device that last wrote the cloud doc */
-    char serverDeviceLabel[129];
+    char serverDeviceType[65];   /* ADOPTED: platform that last wrote the cloud doc */
     bool wasConflict;            /* PUSHED: local edits overwrote a diverged server */
 } WbnSyncOutcome;
 
@@ -136,13 +134,12 @@ typedef struct {
  *ARGUMENTS:
  * userToken      - WBN bearer token
  * uploadSnapshot - prefsSerializeForUpload() body (PUT_LOCAL only)
- * deviceId       - this device's install id
- * deviceLabel    - this device's human label
+ * deviceType     - this device's platform string
  * localDirty     - prefsSyncDirty()
  * lastSynced     - prefsGetLastSyncedUpdatedAt ("" if never synced)
  *********************************************************/
 WbnSyncOutcome wbnPrefsSyncOnce(const char *userToken, const char *uploadSnapshot,
-                                const char *deviceId, const char *deviceLabel,
+                                const char *deviceType,
                                 bool localDirty, const char *lastSynced);
 
 #ifdef __cplusplus

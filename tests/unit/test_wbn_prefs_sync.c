@@ -17,7 +17,7 @@ static int parse_get_full_body(void) {
     const char *body =
         "{"
         "\"updatedAt\":\"0123456789abcdef0123456789abcdef\","
-        "\"device\":{\"id\":\"dev-123\",\"label\":\"John's Deck\"},"
+        "\"device\":{\"type\":\"Steam Deck\"},"
         "\"prefs\":{\"Sound\":\"on\",\"Volume\":7}"
         "}";
     WbnPrefsGetResult r;
@@ -25,9 +25,8 @@ static int parse_get_full_body(void) {
     UT_ASSERT_MSG(rc == 0, "expected success, got %d", rc);
     UT_ASSERT_MSG(strcmp(r.updatedAt, "0123456789abcdef0123456789abcdef") == 0,
                   "updatedAt=\"%s\"", r.updatedAt);
-    UT_ASSERT_MSG(strcmp(r.deviceId, "dev-123") == 0, "deviceId=\"%s\"", r.deviceId);
-    UT_ASSERT_MSG(strcmp(r.deviceLabel, "John's Deck") == 0,
-                  "deviceLabel=\"%s\"", r.deviceLabel);
+    UT_ASSERT_MSG(strcmp(r.deviceType, "Steam Deck") == 0,
+                  "deviceType=\"%s\"", r.deviceType);
     UT_ASSERT_MSG(r.prefs != NULL, "prefs not populated");
     /* prefs round-trips a known key */
     UT_ASSERT_MSG(strstr(r.prefs, "\"Sound\"") != NULL,
@@ -42,14 +41,13 @@ static int parse_get_null_device(void) {
     const char *body =
         "{"
         "\"updatedAt\":\"0123456789abcdef0123456789abcdef\","
-        "\"device\":{\"id\":null,\"label\":null},"
+        "\"device\":{\"type\":null},"
         "\"prefs\":{\"Sound\":\"on\"}"
         "}";
     WbnPrefsGetResult r;
     int rc = wbnPrefsParseGet(body, &r);
     UT_ASSERT_MSG(rc == 0, "expected success, got %d", rc);
-    UT_ASSERT_MSG(r.deviceId[0] == '\0', "deviceId should be empty, got \"%s\"", r.deviceId);
-    UT_ASSERT_MSG(r.deviceLabel[0] == '\0', "deviceLabel should be empty, got \"%s\"", r.deviceLabel);
+    UT_ASSERT_MSG(r.deviceType[0] == '\0', "deviceType should be empty, got \"%s\"", r.deviceType);
     UT_ASSERT_MSG(r.prefs != NULL, "prefs not populated");
     free(r.prefs);
     return 0;
@@ -190,13 +188,13 @@ int run_wbn_prefs_decide(void) {
 
 static int build_put_body_null_base(void) {
     /* Empty base serializes to JSON null (not "" or an omitted key). */
-    char *body = wbnPrefsBuildPutBody("", "dev-1", "Deck", "{\"Sound\":\"on\"}");
+    char *body = wbnPrefsBuildPutBody("", "Steam Deck", "{\"Sound\":\"on\"}");
     UT_ASSERT_MSG(body != NULL, "expected a body");
     UT_ASSERT_MSG(strstr(body, "\"baseUpdatedAt\":null") != NULL,
                   "empty base should be JSON null, got %s", body);
     free(body);
     /* NULL base behaves the same as "". */
-    body = wbnPrefsBuildPutBody(NULL, "dev-1", "Deck", "{\"Sound\":\"on\"}");
+    body = wbnPrefsBuildPutBody(NULL, "Steam Deck", "{\"Sound\":\"on\"}");
     UT_ASSERT_MSG(body != NULL, "expected a body");
     UT_ASSERT_MSG(strstr(body, "\"baseUpdatedAt\":null") != NULL,
                   "NULL base should be JSON null, got %s", body);
@@ -205,16 +203,15 @@ static int build_put_body_null_base(void) {
 }
 
 static int build_put_body_embeds_object(void) {
-    char *body = wbnPrefsBuildPutBody(TOK_A, "dev-1", "John's Deck",
+    char *body = wbnPrefsBuildPutBody(TOK_A, "Steam Deck",
                                       "{\"Sound\":\"on\",\"Volume\":7}");
     UT_ASSERT_MSG(body != NULL, "expected a body");
     UT_ASSERT_MSG(strstr(body, "\"baseUpdatedAt\":\"" TOK_A "\"") != NULL,
                   "base token missing: %s", body);
-    /* device embedded as an object carrying id + label. */
+    /* device embedded as an object carrying the platform type. */
     UT_ASSERT_MSG(strstr(body, "\"device\":{") != NULL, "device object missing: %s", body);
-    UT_ASSERT_MSG(strstr(body, "\"id\":\"dev-1\"") != NULL, "device id missing: %s", body);
-    UT_ASSERT_MSG(strstr(body, "\"label\":\"John's Deck\"") != NULL,
-                  "device label missing: %s", body);
+    UT_ASSERT_MSG(strstr(body, "\"type\":\"Steam Deck\"") != NULL,
+                  "device type missing: %s", body);
     /* prefs embedded as a nested object, not a quoted string. */
     UT_ASSERT_MSG(strstr(body, "\"prefs\":{") != NULL,
                   "prefs not embedded as object: %s", body);
@@ -225,8 +222,8 @@ static int build_put_body_embeds_object(void) {
 
 static int build_put_body_rejects_bad_prefs(void) {
     /* Unparseable / missing prefs -> NULL (the caller treats it as a no-op). */
-    UT_ASSERT(wbnPrefsBuildPutBody("", "d", "l", "not json") == NULL);
-    UT_ASSERT(wbnPrefsBuildPutBody("", "d", "l", NULL) == NULL);
+    UT_ASSERT(wbnPrefsBuildPutBody("", "t", "not json") == NULL);
+    UT_ASSERT(wbnPrefsBuildPutBody("", "t", NULL) == NULL);
     return 0;
 }
 

@@ -225,7 +225,7 @@ int run_prefs_api_upload_excludes_local(void) {
     UT_ASSERT(prefsSetString("WINBOLO.NET", "Token", "secret-token"));
     UT_ASSERT(prefsSetString("WINDOW", "Window X", "42"));
     UT_ASSERT(prefsSetString("MAPEDITOR", "Last Map", "rocket.map"));
-    prefsSetDeviceLabel("steamdeck");
+    UT_ASSERT(prefsSetString("DEVICE", "DeviceLabel", "steamdeck"));
 
     char *body = prefsSerializeForUpload();
     UT_ASSERT_MSG(body != NULL, "upload serialization returned NULL");
@@ -328,39 +328,18 @@ int run_prefs_api_device_identity(void) {
 
     prefsInit(jsonPath);
 
-    char id1[64];
-    prefsGetDeviceId(id1, sizeof(id1));
-    UT_ASSERT_MSG(strlen(id1) == 32, "device id not 32 chars: '%s'", id1);
-
-    /* Stable within the same session. */
-    char id2[64];
-    prefsGetDeviceId(id2, sizeof(id2));
-    UT_ASSERT_MSG(strcmp(id1, id2) == 0,
-                  "device id changed within a session: '%s' vs '%s'", id1, id2);
-
-    /* Label and last-synced token round-trip. */
-    prefsSetDeviceLabel("steamdeck");
+    /* The last-synced token round-trips. */
     prefsSetLastSyncedUpdatedAt("1700000000");
 
     char buf[64];
-    prefsGetDeviceLabel(buf, sizeof(buf));
-    UT_ASSERT_MSG(strcmp(buf, "steamdeck") == 0,
-                  "device label round-trip failed: '%s'", buf);
     prefsGetLastSyncedUpdatedAt(buf, sizeof(buf));
     UT_ASSERT_MSG(strcmp(buf, "1700000000") == 0,
                   "last-synced round-trip failed: '%s'", buf);
 
     prefsShutdown();
 
-    /* Identity is persisted, not regenerated, across re-init. */
+    /* The last-synced token is persisted across re-init. */
     prefsInit(jsonPath);
-    prefsGetDeviceId(buf, sizeof(buf));
-    UT_ASSERT_MSG(strcmp(buf, id1) == 0,
-                  "device id regenerated across re-init: '%s' vs '%s'",
-                  buf, id1);
-    prefsGetDeviceLabel(buf, sizeof(buf));
-    UT_ASSERT_MSG(strcmp(buf, "steamdeck") == 0,
-                  "device label did not persist: '%s'", buf);
     prefsGetLastSyncedUpdatedAt(buf, sizeof(buf));
     UT_ASSERT_MSG(strcmp(buf, "1700000000") == 0,
                   "last-synced did not persist: '%s'", buf);
@@ -383,7 +362,7 @@ int run_prefs_api_adopt_server(void) {
     UT_ASSERT(prefsSetString("KEYS", "Forward", "8"));
     /* Device-local content that must survive an adopt untouched. */
     UT_ASSERT(prefsSetString("WINBOLO.NET", "Token", "secret-token"));
-    prefsSetDeviceLabel("steamdeck");
+    UT_ASSERT(prefsSetString("DEVICE", "DeviceLabel", "steamdeck"));
     UT_ASSERT_MSG(prefsSyncDirty(), "local edits should be sync-dirty before adopt");
 
     /* Server document with different upload-eligible content, schema v1. */
@@ -409,7 +388,7 @@ int run_prefs_api_adopt_server(void) {
     prefsGetString("WINBOLO.NET", "Token", "<absent>", buf, sizeof(buf));
     UT_ASSERT_MSG(strcmp(buf, "secret-token") == 0,
                   "WINBOLO.NET clobbered by adopt: '%s'", buf);
-    prefsGetDeviceLabel(buf, sizeof(buf));
+    prefsGetString("DEVICE", "DeviceLabel", "<absent>", buf, sizeof(buf));
     UT_ASSERT_MSG(strcmp(buf, "steamdeck") == 0,
                   "DEVICE label clobbered by adopt: '%s'", buf);
 

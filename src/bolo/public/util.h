@@ -311,6 +311,10 @@ void utilSpiralOffset(int step, int *dx, int *dy);
 /* Returns the CLIENT_TYPE_* enum value for the platform we're running on. */
 uint8_t bolo_detect_client_type(void);
 
+/* Returns a coarse human-readable platform name for a CLIENT_TYPE_* value
+ * (e.g. "Windows", "Steam Deck", "Web"); "Unknown" for anything else. */
+const char *bolo_client_type_name(uint8_t type);
+
 /* Returns true iff the running Steam build owns the Supporter DLC.
  * Currently a stub — DLC AppID is not yet allocated. */
 bool bolo_steam_has_supporter_dlc(void);

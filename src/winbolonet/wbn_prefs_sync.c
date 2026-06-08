@@ -101,8 +101,7 @@ int wbnPrefsParseGet(const char *body, WbnPrefsGetResult *out) {
     }
 
     out->updatedAt[0] = '\0';
-    out->deviceId[0] = '\0';
-    out->deviceLabel[0] = '\0';
+    out->deviceType[0] = '\0';
     out->prefs = NULL;
 
     cJSON *root = cJSON_Parse(body);
@@ -135,13 +134,11 @@ int wbnPrefsParseGet(const char *body, WbnPrefsGetResult *out) {
         out->updatedAt[32] = '\0';
     }
 
-    /* device: { id, label } — both may be null/absent. */
+    /* device: { type } — may be null/absent. */
     cJSON *device = cJSON_GetObjectItemCaseSensitive(root, "device");
     if (cJSON_IsObject(device)) {
-        copyStringField(cJSON_GetObjectItemCaseSensitive(device, "id"),
-                        out->deviceId, sizeof(out->deviceId));
-        copyStringField(cJSON_GetObjectItemCaseSensitive(device, "label"),
-                        out->deviceLabel, sizeof(out->deviceLabel));
+        copyStringField(cJSON_GetObjectItemCaseSensitive(device, "type"),
+                        out->deviceType, sizeof(out->deviceType));
     }
 
     cJSON_Delete(root);
@@ -178,8 +175,8 @@ int wbnPrefsParseUpdatedAt(const char *body, char out[33]) {
 /* The server rejects bodies over this size; skip rather than 413. */
 #define WBN_PREFS_UPLOAD_CAP 65536
 
-char *wbnPrefsBuildPutBody(const char *baseUpdatedAt, const char *deviceId,
-                           const char *deviceLabel, const char *prefsJson) {
+char *wbnPrefsBuildPutBody(const char *baseUpdatedAt, const char *deviceType,
+                           const char *prefsJson) {
     if (prefsJson == NULL) {
         return NULL;
     }
@@ -201,8 +198,7 @@ char *wbnPrefsBuildPutBody(const char *baseUpdatedAt, const char *deviceId,
     }
 
     cJSON *device = cJSON_CreateObject();
-    cJSON_AddStringToObject(device, "id", deviceId != NULL ? deviceId : "");
-    cJSON_AddStringToObject(device, "label", deviceLabel != NULL ? deviceLabel : "");
+    cJSON_AddStringToObject(device, "type", deviceType != NULL ? deviceType : "");
     cJSON_AddItemToObject(root, "device", device);
 
     /* Embed the prefs as a parsed object, not a quoted string. Transfers
@@ -222,10 +218,8 @@ static void fillAdopted(WbnSyncOutcome *out, WbnPrefsGetResult *res) {
     out->token[sizeof(out->token) - 1] = '\0';
     out->serverPrefs = res->prefs;
     res->prefs = NULL;
-    strncpy(out->serverDeviceId, res->deviceId, sizeof(out->serverDeviceId) - 1);
-    out->serverDeviceId[sizeof(out->serverDeviceId) - 1] = '\0';
-    strncpy(out->serverDeviceLabel, res->deviceLabel, sizeof(out->serverDeviceLabel) - 1);
-    out->serverDeviceLabel[sizeof(out->serverDeviceLabel) - 1] = '\0';
+    strncpy(out->serverDeviceType, res->deviceType, sizeof(out->serverDeviceType) - 1);
+    out->serverDeviceType[sizeof(out->serverDeviceType) - 1] = '\0';
 }
 
 /* GET + parse helper for the sync loop. Returns the HTTP status; on a parsed
@@ -251,8 +245,7 @@ static int prefsGetAndParse(const char *userToken, WbnPrefsGetResult *res,
  * returns ADOPTED instead. */
 static WbnSyncOutcome prefsPutWithRetry(const char *userToken,
                                         const char *uploadSnapshot,
-                                        const char *deviceId,
-                                        const char *deviceLabel,
+                                        const char *deviceType,
                                         WbnSyncAction action, bool localDirty,
                                         const char *lastSynced) {
     WbnSyncOutcome out;
@@ -272,8 +265,8 @@ static WbnSyncOutcome prefsPutWithRetry(const char *userToken,
 
     int attempt;
     for (attempt = 0; attempt < 3; attempt++) {
-        char *body = wbnPrefsBuildPutBody(action.baseUpdatedAt, deviceId,
-                                          deviceLabel, uploadSnapshot);
+        char *body = wbnPrefsBuildPutBody(action.baseUpdatedAt, deviceType,
+                                          uploadSnapshot);
         if (body == NULL) {
             return out; /* NOOP */
         }
@@ -330,7 +323,7 @@ static WbnSyncOutcome prefsPutWithRetry(const char *userToken,
 }
 
 WbnSyncOutcome wbnPrefsSyncOnce(const char *userToken, const char *uploadSnapshot,
-                                const char *deviceId, const char *deviceLabel,
+                                const char *deviceType,
                                 bool localDirty, const char *lastSynced) {
     WbnSyncOutcome out;
     memset(&out, 0, sizeof(out));
@@ -353,8 +346,8 @@ WbnSyncOutcome wbnPrefsSyncOnce(const char *userToken, const char *uploadSnapsho
             out.kind = WBN_SYNC_OUT_REAUTH;
             break;
         case WBN_SYNC_PUT_LOCAL:
-            out = prefsPutWithRetry(userToken, uploadSnapshot, deviceId,
-                                    deviceLabel, action, localDirty, lastSynced);
+            out = prefsPutWithRetry(userToken, uploadSnapshot, deviceType,
+                                    action, localDirty, lastSynced);
             break;
         case WBN_SYNC_NOOP:
         default:
