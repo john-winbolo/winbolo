@@ -384,6 +384,7 @@ extern "C" int imguiOnboardingShow(void) {
         ImGui::End(); /* ##OnboardingPanel */
         ImGui::End(); /* ##OnboardingBg */
 
+        dialogDrawNavOutline();
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

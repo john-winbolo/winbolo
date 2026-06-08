@@ -82,6 +82,7 @@ extern "C" {
 #include "dialogs/dialog_footer.h"
 #include "dialogs/imgui_keysetup.h"
 #include "dialogs/imgui_about.h"
+#include "dialogs/imgui_nav_outline.h"
 #include "platform/mac_menubar.h"
 
 extern "C" void windowSetQuitting(void);
@@ -471,6 +472,7 @@ static void popOutEndContent(PopOutWindow *pw) {
 }
 
 static void popOutEndFrame(PopOutWindow *pw) {
+    dialogDrawNavOutline();
     ImGui::EndFrame();
     ImGui::Render();
     SDL_SetRenderDrawColor(pw->renderer, 30, 30, 30, 255);
@@ -3618,6 +3620,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     }
 
 
+    dialogDrawNavOutline();
     ImGui::EndFrame();
     ImGui::Render();
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), s_renderer);

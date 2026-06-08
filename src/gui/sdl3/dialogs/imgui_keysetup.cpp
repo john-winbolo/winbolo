@@ -422,6 +422,7 @@ extern "C" int imguiKeySetupShow(void) {
         ImGui::End(); /* ##KeySetupPanel */
         ImGui::End(); /* ##KeySetupBg */
 
+        dialogDrawNavOutline();
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

@@ -26,6 +26,7 @@
 
 #include <SDL3/SDL.h>
 #include "imgui.h"
+#include "imgui_nav_outline.h"
 #include "../../imgui_fonts.h"
 #include "../../../common/wb_log.h"
 #include "nanosvg.h"
