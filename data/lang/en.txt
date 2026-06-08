@@ -582,8 +582,6 @@ STR_DLGWBN_PASSWORD=Password:
 STR_DLGWBN_SIGNINGIN=Signing in...
 STR_DLGWBN_SIGNIN_OK=Sign in
 STR_DLGWBN_NEEDCREDS=Please enter your username and password.
-STR_DLGWBN_RANK=#{number} of {number2}
-STR_DLGWBN_UNRANKED=Unranked
 
 # Welcome dialog
 STR_DLGWELCOME_WINTITLE=WinBolo - Game Selection
@@ -1316,4 +1314,46 @@ STR_RETURNING_TO_LOBBY=Returning to lobby
 STR_DLGLOBBY_REJECT_BAD_STATE=not allowed right now
 STR_DLGLOBBY_BAL_STATUS_FAILED=WBN balance failed
 STR_DLGNETINFO_LOSS=Packet loss: {number}% ({number2}/{number3} this sec, {number4} game total)
+STR_DLGWBN_RANK=#{number} of {number2}
+STR_DLGWBN_UNRANKED=Unranked
+
+# My Stats dialog — per-mode WinBolo.net play stats.
+STR_DLGWBN_STATS_BTN=My Stats
+STR_DLGWBN_STATS_TITLE=WinBolo.net Stats
+STR_DLGWBN_STATS_NONE=No stats available yet.
+STR_DLGWBN_STATS_OPEN=Open
+STR_DLGWBN_STATS_TOURN=Tournament
+STR_DLGWBN_STATS_STRICT=Strict
+STR_DLGWBN_STATS_GAMES=Games:
+STR_DLGWBN_STATS_BASES=Bases:
+STR_DLGWBN_STATS_PILLS=Pillboxes:
+STR_DLGWBN_STATS_TANKS=Tanks:
+STR_DLGWBN_STATS_SCORE=Score (ELO):
+STR_DLGWBN_STATS_WINS=Wins:
+STR_DLGWBN_STATS_LOSES=Losses:
+STR_DLGWBN_STATS_RANK=Rank:
+
+# Column headers for the My Stats table
+STR_DLGWBN_STATS_COL_RANK=Rank
+STR_DLGWBN_STATS_COL_RATING=Rating
+STR_DLGWBN_STATS_COL_GAMES=Games
+STR_DLGWBN_STATS_COL_WL=W/L
+STR_DLGWBN_STATS_COL_BASES=Bases
+STR_DLGWBN_STATS_COL_PILLS=Pills
+STR_DLGWBN_STATS_COL_TANKS=Tanks
+
+# First-run online onboarding wizard
+STR_DLGONBOARD_TITLE=Welcome to WinBolo Online
+STR_DLGONBOARD_ACCOUNT_TITLE=Account
+STR_DLGONBOARD_ACCOUNT_DESC=Sign in to your WinBolo.net account, or continue without one.
+STR_DLGONBOARD_NAME_TITLE=Player Name
+STR_DLGONBOARD_NAME_DESC=Choose the name other players will see.
+STR_DLGONBOARD_KEYS_TITLE=Keys
+STR_DLGONBOARD_KEYS_DESC=Set up your controls. You can change these later in Settings.
+STR_DLGONBOARD_NEXT=Next
+STR_DLGONBOARD_SKIP=Skip
+STR_DLGONBOARD_FINISH=Finish
+
+# WinBolo.net browser signup link
+STR_DLGWBN_CREATE_ACCOUNT=No account? Create one
 

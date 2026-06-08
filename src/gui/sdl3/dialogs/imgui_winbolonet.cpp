@@ -24,6 +24,7 @@
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "imgui_markdown.h"
 #include "imgui_dialog_utils.h"
 #include "dialog_footer.h"
 
@@ -35,6 +36,8 @@ extern "C" {
 #include "imgui_winbolonet.h"
 #include "../../../steam/steam_wrapper.h"
 #include "playername_validate.h"
+#include "../sdl3draw.h"
+#include "../../tiles.h"
 }
 
 /* WBN-verified shield texture (white-masked SVG), lazily loaded by the
@@ -47,6 +50,41 @@ extern "C" SDL_Texture *sdl3ImguiGetWbnVerifiedIcon(void);
  * (lower alpha) over a live background, so the account chip/sign-in
  * button mirror that to match the "Single Player" button. */
 extern "C" struct BgGame *bgGameGetShared(void);
+
+/* ---- markdown (inline-link hint) ---- */
+
+/* imgui_markdown link callback: open only http/https links in the browser. */
+static void wbnMarkdownLinkCb(ImGui::MarkdownLinkCallbackData data) {
+    if (data.isImage) return;
+    char url[512];
+    int len = data.linkLength;
+    if (len > (int)sizeof(url) - 1) len = (int)sizeof(url) - 1;
+    if (len < 0) len = 0;
+    memcpy(url, data.link, (size_t)len);
+    url[len] = '\0';
+    if (SDL_strncmp(url, "http://", 7) == 0 || SDL_strncmp(url, "https://", 8) == 0) {
+        imguiOpenUrl(url);
+    }
+}
+
+/* Default link colour/underline plus a hand cursor on hover. */
+static void wbnMarkdownFormatCb(const ImGui::MarkdownFormatInfo &info, bool start) {
+    ImGui::defaultMarkdownFormatCallback(info, start);
+    if (!start && info.type == ImGui::MarkdownFormatType::LINK && info.itemHovered) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    }
+}
+
+static const ImGui::MarkdownConfig &wbnMarkdownConfig(void) {
+    static ImGui::MarkdownConfig cfg;
+    static bool init = false;
+    if (!init) {
+        cfg.linkCallback   = wbnMarkdownLinkCb;
+        cfg.formatCallback = wbnMarkdownFormatCb;
+        init = true;
+    }
+    return cfg;
+}
 
 /* ---- async login state ---- */
 
@@ -76,6 +114,7 @@ struct WbnLoginWork {
     char errorMsg[512];
     bool isValidate;
     bool isSteam;
+    bool steamSilent;   /* isSteam: launch re-auth (true) vs visible button (false) */
     bool isRegister;
     bool success;
     SDL_AtomicInt done;
@@ -141,8 +180,22 @@ static void wbnStartSteamReauth(const char *ticketHex) {
     SDL_SetAtomicInt(&wbnWork.done, 0);
     SDL_strlcpy(wbnWork.steamTicketHex, ticketHex, sizeof(wbnWork.steamTicketHex));
     wbnWork.isSteam = true;
+    wbnWork.steamSilent = true;
     wbnState = WBN_VALIDATING;
     wbnThread = SDL_CreateThread(wbnLoginThreadFunc, "WBNSteam", &wbnWork);
+}
+
+/* Visible counterpart of wbnStartSteamReauth: signs in an existing
+ * Steam-linked WinBolo.net account from the login popup, showing the
+ * spinner and surfacing an error on failure (rather than the silent
+ * launch re-auth). */
+static void wbnStartSteamLogin(const char *ticketHex) {
+    memset(&wbnWork, 0, sizeof(wbnWork));
+    SDL_SetAtomicInt(&wbnWork.done, 0);
+    SDL_strlcpy(wbnWork.steamTicketHex, ticketHex, sizeof(wbnWork.steamTicketHex));
+    wbnWork.isSteam = true;       /* steamSilent stays false: visible login */
+    wbnState = WBN_LOGGING_IN;
+    wbnThread = SDL_CreateThread(wbnLoginThreadFunc, "WBNSteamLogin", &wbnWork);
 }
 
 /* Signup sibling of wbnStartSteamReauth: registers a new WinBolo.net
@@ -222,7 +275,9 @@ static void wbnCheckThread(void) {
                                           wbnWork.playerNameOut, wbnWork.rankOut,
                                           wbnWork.rankTotalOut, &wbnWork.statsOut);
             steam_cancel_auth_ticket();
-            wbnState = WBN_IDLE;
+            /* Silent launch re-auth stays quiet; the visible popup button
+             * closes via the success handler. */
+            wbnState = wbnWork.steamSilent ? WBN_IDLE : WBN_SUCCESS;
         } else {
             if (!wbnWork.isValidate) {
                 gameFrontSetWinbolonetToken(wbnWork.tokenOut, wbnWork.expiryOut);
@@ -248,7 +303,18 @@ static void wbnCheckThread(void) {
             wbnState = WBN_ERROR;
         } else if (wbnWork.isSteam) {
             steam_cancel_auth_ticket();
-            wbnState = WBN_IDLE;          /* keep any existing token; silent */
+            if (wbnWork.steamSilent) {
+                wbnState = WBN_IDLE;      /* keep any existing token; silent */
+            } else {
+                /* Visible button: a fresh, valid ticket failing here almost
+                 * always means no WinBolo.net account is linked to this Steam
+                 * (the server's per-code strings for auth/steam aren't part of
+                 * the client contract, so we don't branch on them). Point the
+                 * player at the create form below. */
+                SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_ERR_STEAM_NOT_LINKED),
+                            sizeof(wbnErrorBuf));
+                wbnState = WBN_ERROR;
+            }
         } else {
             SDL_strlcpy(wbnErrorBuf, wbnWork.errorMsg, sizeof(wbnErrorBuf));
             if (!wbnWork.isValidate) {
@@ -331,15 +397,38 @@ static void wbnRenderLoginPopup(void) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
                             imguiPopupFadeAlpha(&s_fadeWbnSignIn));
         bool busy = (wbnState == WBN_LOGGING_IN);
+        char persona[256];
+        bool onSteam = steam_get_persona_name(persona, sizeof(persona));
 
         ImGui::TextWrapped("%s", langGetText(STR_DLGWBN_SIGNIN_BLURB));
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
+        float labelW = 90.0f;
+
+        /* One-click sign-in for an already-linked Steam account. Leads the
+         * popup since the player launched under Steam; the username/password
+         * block below is the alternative. */
+        if (onSteam && !busy) {
+            if (ImGui::Button(langGetText(STR_DLGWBN_SIGNIN_STEAM_BTN), ImVec2(-1, 0))) {
+                char ticketHex[2049];
+                if (gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
+                    wbnStartSteamLogin(ticketHex);
+                } else {
+                    SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_ERR_GENERIC),
+                                sizeof(wbnErrorBuf));
+                    wbnState = WBN_ERROR;
+                }
+            }
+            imguiHandOnHover();
+            ImGui::Spacing();
+            ImGui::SeparatorText(langGetText(STR_DLGWBN_OR_PASSWORD));
+            ImGui::Spacing();
+        }
+
         if (busy) ImGui::BeginDisabled();
 
-        float labelW = 90.0f;
         ImGui::TextUnformatted(langGetText(STR_DLGWBN_USERNAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(-1);
@@ -357,6 +446,19 @@ static void wbnRenderLoginPopup(void) {
                                               ImGuiInputTextFlags_EnterReturnsTrue);
 
         if (busy) ImGui::EndDisabled();
+
+        /* A password account can be linked to this Steam on the website.
+         * Rendered as markdown so the embedded "winbolo.net" link wraps
+         * inline with the dimmed sentence (ImGui's plain text can't host an
+         * inline link). */
+        if (onSteam) {
+            const char *hint = langGetText(STR_DLGWBN_LINK_HINT);
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+            ImGui::Markdown(hint, SDL_strlen(hint), wbnMarkdownConfig());
+            ImGui::PopStyleColor();
+        }
 
         ImGui::Spacing();
 
@@ -398,19 +500,15 @@ static void wbnRenderLoginPopup(void) {
             }
         }
 
-        /* Create-account affordance. Under Steam this is an inline signup
+        /* Create-account section. Under Steam: a clearly-headed inline signup
          * form (username pre-filled from the persona + optional email) that
-         * registers via the worker and signs in on success; off Steam it is
-         * the browser signup link (captcha + email verification live there).
-         * Hidden mid-login. */
+         * registers via the worker and signs in on success, with a browser
+         * fallback beneath. Off Steam: just the browser signup link (captcha +
+         * email verification live there). Hidden mid-login. */
         if (!busy) {
-            char persona[256];
-            bool onSteam = steam_get_persona_name(persona, sizeof(persona));
             ImGui::Spacing();
             if (onSteam) {
-                ImGui::Separator();
-                ImGui::Spacing();
-                ImGui::TextUnformatted(langGetText(STR_DLGWBN_CREATE_STEAM));
+                ImGui::SeparatorText(langGetText(STR_DLGWBN_CREATE_STEAM));
                 ImGui::Spacing();
 
                 /* Seed the username from the Steam persona once per open so
@@ -449,6 +547,10 @@ static void wbnRenderLoginPopup(void) {
                     }
                 }
                 imguiHandOnHover();
+
+                ImGui::Spacing();
+                ImGui::TextLinkOpenURL(langGetText(STR_DLGWBN_CREATE_BROWSER),
+                                       "https://www.winbolo.net/signup");
             } else {
                 ImGui::TextLinkOpenURL(langGetText(STR_DLGWBN_CREATE_ACCOUNT),
                                        "https://www.winbolo.net/signup");
@@ -460,40 +562,96 @@ static void wbnRenderLoginPopup(void) {
     }
 }
 
-/* Renders one "Label  value" row inside the stats dialog. A value < 0
- * means the field was absent from the response, so the row is skipped. */
-static void wbnDrawStatRow(const char *label, int value) {
-    if (value < 0) return;
-    ImGui::TextUnformatted(label);
-    ImGui::SameLine(170.0f);
-    ImGui::Text("%d", value);
+/* Draws a 16x16 tile from the game atlas inline at text height, used to
+ * mark the Bases/Pills/Tanks column headers with their map sprites. Tile
+ * coords are in 1x units; the atlas is assembled at gSheetScale, but UVs
+ * normalised against the 1x reference size (TILE_FILE_X/Y) stay correct
+ * at any scale. */
+static void wbnDrawTileIcon(int tileX, int tileY) {
+    SDL_Texture *tex = sdl3DrawGetTilesTexture();
+    if (!tex) return;
+    float sz = ImGui::GetTextLineHeight();
+    ImVec2 uv0((float)tileX / TILE_FILE_X, (float)tileY / TILE_FILE_Y);
+    ImVec2 uv1((float)(tileX + TILE_SIZE_X) / TILE_FILE_X,
+               (float)(tileY + TILE_SIZE_Y) / TILE_FILE_Y);
+    ImGui::Image((ImTextureID)tex, ImVec2(sz, sz), uv0, uv1);
 }
 
-/* Renders the stat block for one game mode. The counter fields are shown
- * for every mode; the ranked fields (score/wins/losses/rank) are only
- * shown when `ranked` is true (tourn/strict), where a rank < 0 prints
- * "Unranked" rather than a position. */
-static void wbnDrawModeStats(const char *title, const WbnModeStats *m, bool ranked) {
-    ImGui::SeparatorText(title);
-    wbnDrawStatRow(langGetText(STR_DLGWBN_STATS_GAMES), m->numGames);
-    wbnDrawStatRow(langGetText(STR_DLGWBN_STATS_BASES), m->numBases);
-    wbnDrawStatRow(langGetText(STR_DLGWBN_STATS_PILLS), m->numPills);
-    wbnDrawStatRow(langGetText(STR_DLGWBN_STATS_TANKS), m->numTanks);
-    if (ranked) {
-        wbnDrawStatRow(langGetText(STR_DLGWBN_STATS_SCORE), m->score);
-        wbnDrawStatRow(langGetText(STR_DLGWBN_STATS_WINS), m->wins);
-        wbnDrawStatRow(langGetText(STR_DLGWBN_STATS_LOSES), m->loses);
-        ImGui::TextUnformatted(langGetText(STR_DLGWBN_STATS_RANK));
-        ImGui::SameLine(170.0f);
-        if (m->rank < 0) {
-            ImGui::TextUnformatted(langGetText(STR_DLGWBN_UNRANKED));
-        } else {
-            MessageArgs args = {};
-            args.number = m->rank;
-            args.number2 = m->rankTotal;
-            ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_RANK, &args));
+/* Builds a table header cell whose label is preceded by an inline map
+ * sprite (icon to the left of the text). */
+static void wbnDrawIconHeader(int tileX, int tileY, const char *label) {
+    wbnDrawTileIcon(tileX, tileY);
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::TableHeader(label);
+}
+
+/* Formats a non-negative integer with thousands separators, e.g.
+ * 12345 -> "12,345". The separator is a fixed comma rather than locale
+ * aware: the cross-platform builds don't set a C locale, and MSVC has no
+ * printf grouping flag, so a portable manual grouping is used. */
+static void wbnFormatGrouped(int value, char *buf, size_t bufLen) {
+    char raw[16];
+    SDL_snprintf(raw, sizeof(raw), "%d", value);
+    int len = (int)SDL_strlen(raw);
+    size_t out = 0;
+    for (int i = 0; i < len && out + 1 < bufLen; i++) {
+        if (i > 0 && (len - i) % 3 == 0 && out + 2 < bufLen) {
+            buf[out++] = ',';
         }
+        buf[out++] = raw[i];
     }
+    buf[out] = '\0';
+}
+
+/* Renders one numeric cell of the stats table, dashing out values that
+ * were absent from the response (negative). */
+static void wbnDrawStatCell(int value) {
+    ImGui::TableNextColumn();
+    if (value < 0) {
+        ImGui::TextDisabled("-");
+    } else {
+        char buf[24];
+        wbnFormatGrouped(value, buf, sizeof(buf));
+        ImGui::TextUnformatted(buf);
+    }
+}
+
+/* Renders one mode's row in the stats table. Open carries only the
+ * counter fields, so its rank/rating/W-L cells dash out; ranked modes
+ * print a ladder position (or a dash when unranked), their ELO rating
+ * and a win/loss tally. */
+static void wbnDrawStatsRow(const char *mode, const WbnModeStats *m) {
+    ImGui::TableNextRow();
+
+    ImGui::TableNextColumn();
+    ImGui::TextUnformatted(mode);
+
+    ImGui::TableNextColumn();
+    if (m->rank < 0) {
+        ImGui::TextDisabled("-");
+    } else {
+        MessageArgs args = {};
+        args.number = m->rank;
+        args.number2 = m->rankTotal;
+        ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_RANK, &args));
+    }
+
+    wbnDrawStatCell(m->score);
+    wbnDrawStatCell(m->numGames);
+
+    ImGui::TableNextColumn();
+    if (m->wins < 0 && m->loses < 0) {
+        ImGui::TextDisabled("-");
+    } else {
+        char w[24], l[24];
+        wbnFormatGrouped(m->wins < 0 ? 0 : m->wins, w, sizeof(w));
+        wbnFormatGrouped(m->loses < 0 ? 0 : m->loses, l, sizeof(l));
+        ImGui::Text("%s/%s", w, l);
+    }
+
+    wbnDrawStatCell(m->numBases);
+    wbnDrawStatCell(m->numPills);
+    wbnDrawStatCell(m->numTanks);
 }
 
 /* Draws the signed-in account chip for the welcome screen: a translucent
@@ -638,9 +796,40 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
     if (!st.valid) {
         ImGui::TextWrapped("%s", langGetText(STR_DLGWBN_STATS_NONE));
     } else {
-        wbnDrawModeStats(langGetText(STR_DLGWBN_STATS_OPEN), &st.open, false);
-        wbnDrawModeStats(langGetText(STR_DLGWBN_STATS_TOURN), &st.tourn, true);
-        wbnDrawModeStats(langGetText(STR_DLGWBN_STATS_STRICT), &st.strict, true);
+        ImGuiTableFlags flags = ImGuiTableFlags_RowBg |
+                                ImGuiTableFlags_BordersInnerV |
+                                ImGuiTableFlags_BordersOuter |
+                                ImGuiTableFlags_SizingFixedFit;
+        if (ImGui::BeginTable("##wbnstats", 8, flags)) {
+            ImGui::TableSetupColumn("");   /* game mode */
+            ImGui::TableSetupColumn(langGetText(STR_DLGWBN_STATS_COL_RANK));
+            ImGui::TableSetupColumn(langGetText(STR_DLGWBN_STATS_COL_RATING));
+            ImGui::TableSetupColumn(langGetText(STR_DLGWBN_STATS_COL_GAMES));
+            ImGui::TableSetupColumn(langGetText(STR_DLGWBN_STATS_COL_WL));
+            ImGui::TableSetupColumn(langGetText(STR_DLGWBN_STATS_COL_BASES));
+            ImGui::TableSetupColumn(langGetText(STR_DLGWBN_STATS_COL_PILLS));
+            ImGui::TableSetupColumn(langGetText(STR_DLGWBN_STATS_COL_TANKS));
+
+            /* Header row drawn by hand so the count columns can show the
+             * matching map sprite beside their label. */
+            ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+            for (int c = 0; c <= 4; c++) {
+                ImGui::TableSetColumnIndex(c);
+                ImGui::TableHeader(ImGui::TableGetColumnName(c));
+            }
+            ImGui::TableSetColumnIndex(5);
+            wbnDrawIconHeader(BASE_GOOD_X, BASE_GOOD_Y, ImGui::TableGetColumnName(5));
+            ImGui::TableSetColumnIndex(6);
+            wbnDrawIconHeader(PILL_EVIL15_X, PILL_EVIL15_Y, ImGui::TableGetColumnName(6));
+            ImGui::TableSetColumnIndex(7);
+            wbnDrawIconHeader(TANK_SELF_0_X, TANK_SELF_0_Y, ImGui::TableGetColumnName(7));
+
+            wbnDrawStatsRow(langGetText(STR_DLGWBN_STATS_OPEN),   &st.open);
+            wbnDrawStatsRow(langGetText(STR_DLGWBN_STATS_TOURN),  &st.tourn);
+            wbnDrawStatsRow(langGetText(STR_DLGWBN_STATS_STRICT), &st.strict);
+
+            ImGui::EndTable();
+        }
     }
 
     ImGui::Spacing();

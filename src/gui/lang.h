@@ -1452,6 +1452,22 @@
 #define STR_DLGWBN_ERR_EMAIL_INVALID        1446
 #define STR_DLGWBN_ERR_GENERIC              1447
 
+/* Column headers for the My Stats table */
+#define STR_DLGWBN_STATS_COL_RANK           1448
+#define STR_DLGWBN_STATS_COL_RATING         1449
+#define STR_DLGWBN_STATS_COL_GAMES          1450
+#define STR_DLGWBN_STATS_COL_WL             1451
+#define STR_DLGWBN_STATS_COL_BASES          1452
+#define STR_DLGWBN_STATS_COL_PILLS          1453
+#define STR_DLGWBN_STATS_COL_TANKS          1454
+
+/* In-client Steam sign-in (existing account) + popup section labels */
+#define STR_DLGWBN_SIGNIN_STEAM_BTN         1455
+#define STR_DLGWBN_OR_PASSWORD              1456
+#define STR_DLGWBN_LINK_HINT                1457
+#define STR_DLGWBN_ERR_STEAM_NOT_LINKED     1458
+#define STR_DLGWBN_CREATE_BROWSER           1459
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

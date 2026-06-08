@@ -1032,23 +1032,21 @@ void gameFrontApplySteamAuthResult(const char *token, const char *expiry,
   gameFrontSetWinbolonetRank(rank, rankTotal);
   gameFrontSetWinbolonetStats(stats);
   if (playerName[0] != '\0') {
-    char persisted[PLAYER_NAME_LEN];
-    persisted[0] = '\0';
-    gameFrontGetPlayerName(persisted);
-
-    if (persisted[0] == '\0') {
-      /* First-launch seed: persisted name is empty.  Run the Steam
-       * persona through Phase 2 validation; fall back to the app
-       * default name on rejection. */
-      char validated[PLAYER_NAME_LEN];
-      if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, NULL)) {
-        gameFrontSetPlayerName(validated);
-      } else {
+    /* The WBN account display_name is canonical: it wins over any locally
+     * chosen name, matching the username/password sign-in path. Validate it
+     * before applying; on rejection keep an existing name, or fall back to
+     * the default when there is none. */
+    char validated[PLAYER_NAME_LEN];
+    if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, NULL)) {
+      gameFrontSetPlayerName(validated);
+    } else {
+      char persisted[PLAYER_NAME_LEN];
+      persisted[0] = '\0';
+      gameFrontGetPlayerName(persisted);
+      if (persisted[0] == '\0') {
         gameFrontSetPlayerName((char *)langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
       }
     }
-    /* Otherwise: keep the user's chosen name.  The Steam persona
-     * is NOT used to update an existing name (Phase 7 / Decision 3). */
   }
   WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Steam] Authenticated with WinBolo.net via Steam");
   /* First Steam auth of the session: the token went from empty to set,

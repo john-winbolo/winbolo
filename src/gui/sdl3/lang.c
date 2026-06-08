@@ -524,7 +524,7 @@ static const LangEntry langTable[] = {
     {778,  "Not signed in"},
     {779,  "Sign in to WBN"},
     {780,  "Sign in to WinBolo.net"},
-    {781,  "Sign in with your WinBolo.net username and password. A token will be saved so you don't need to enter your password again."},
+    {781,  "Sign in to WinBolo.net to track your rank and stats. Your session is saved so you stay signed in on this device."},
     {782,  "Username:"},
     {783,  "Password:"},
     {784,  "Signing in..."},
@@ -1308,7 +1308,7 @@ static const LangEntry langTable[] = {
     /* In-client Steam signup form (login popup) */
     {1436, "Create a WinBolo.net account"},
     {1437, "Email (optional)"},
-    {1438, "Create account"},
+    {1438, "Create account with Steam"},
     {1439, "That username is already taken."},
     {1440, "That email address is already registered."},
     {1441, "This Steam account is already linked to a WinBolo.net account."},
@@ -1318,6 +1318,22 @@ static const LangEntry langTable[] = {
     {1445, "Please enter a username."},
     {1446, "That email address isn't valid."},
     {1447, "Could not create your account. Please try again."},
+
+    /* Column headers for the My Stats table */
+    {1448, "Rank"},
+    {1449, "Rating"},
+    {1450, "Games"},
+    {1451, "W/L"},
+    {1452, "Bases"},
+    {1453, "Pills"},
+    {1454, "Tanks"},
+
+    /* In-client Steam sign-in (existing account) + popup section labels */
+    {1455, "Sign in with Steam"},
+    {1456, "or sign in with a password"},
+    {1457, "Have a password account? Link your Steam account at [winbolo.net](https://www.winbolo.net/playermodify) to sign in with one click."},
+    {1458, "No WinBolo.net account is linked to this Steam yet. Create one below."},
+    {1459, "Or create an account in your browser"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
