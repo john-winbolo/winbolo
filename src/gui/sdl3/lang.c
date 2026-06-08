@@ -524,7 +524,7 @@ static const LangEntry langTable[] = {
     {778,  "Not signed in"},
     {779,  "Sign in to WBN"},
     {780,  "Sign in to WinBolo.net"},
-    {781,  "Sign in to WinBolo.net to track your rank and stats. Your session is saved so you stay signed in on this device."},
+    {781,  "Sign in to WinBolo.net to track your rank and stats, and take part in the community forums."},
     {782,  "Username:"},
     {783,  "Password:"},
     {784,  "Signing in..."},
@@ -1306,7 +1306,7 @@ static const LangEntry langTable[] = {
     {1435, "via Steam"},
 
     /* In-client Steam signup form (login popup) */
-    {1436, "Create a WinBolo.net account"},
+    {1436, "Create an account"},
     {1437, "optional"},
     {1438, "Create account with Steam"},
     {1439, "That username is already taken."},
@@ -1333,8 +1333,9 @@ static const LangEntry langTable[] = {
     {1456, "or sign in with a password"},
     {1457, "Have a password account? Link your Steam account at [winbolo.net](https://www.winbolo.net/playermodify) to sign in with one click."},
     {1458, "No WinBolo.net account is linked to this Steam yet. Create one below."},
-    {1459, "Or create an account in your browser"},
+    {1459, "Create a standalone account in your browser"},
     {1460, "Email:"},
+    {1461, "or"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

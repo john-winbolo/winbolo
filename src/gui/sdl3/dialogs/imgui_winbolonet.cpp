@@ -45,6 +45,10 @@ extern "C" {
  * and the stats dialog header. */
 extern "C" SDL_Texture *sdl3ImguiGetWbnVerifiedIcon(void);
 
+/* White-masked Steam logo, tinted at draw time. Used on the
+ * "Sign in with Steam" button. */
+extern "C" SDL_Texture *sdl3ImguiGetSteamIcon(void);
+
 /* Shared background-game handle; non-NULL when the welcome screen is
  * playing a demo behind the menus. The welcome menu buttons fade more
  * (lower alpha) over a live background, so the account chip/sign-in
@@ -383,13 +387,163 @@ static void wbnSignOut(void) {
     gameFrontResetPrefsSyncSession();
 }
 
+/* Full-width button showing the Steam logo to the left of `label`. The
+ * white-masked Steam icon is tinted to the button text colour. Returns
+ * true when clicked. */
+static bool wbnSteamButton(const char *label) {
+    SDL_Texture *icon = sdl3ImguiGetSteamIcon();
+    ImVec2 cur = ImGui::GetCursorScreenPos();
+    float w = ImGui::GetContentRegionAvail().x;
+    float h = ImGui::GetFrameHeight();
+    bool clicked = ImGui::Button("##wbnsteambtn", ImVec2(w, h));
+
+    float lineH = ImGui::GetTextLineHeight();
+    float iconSz = lineH;
+    float gap = 6.0f;
+    float textW = ImGui::CalcTextSize(label).x;
+    float contentW = (icon ? iconSz + gap : 0.0f) + textW;
+    float tx = cur.x + (w - contentW) * 0.5f;
+    float ty = cur.y + (h - lineH) * 0.5f;
+    ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    if (icon) {
+        dl->AddImage((ImTextureID)icon, ImVec2(tx, ty),
+                     ImVec2(tx + iconSz, ty + iconSz), ImVec2(0, 0), ImVec2(1, 1), col);
+        tx += iconSz + gap;
+    }
+    dl->AddText(ImVec2(tx, ty), col, label);
+    return clicked;
+}
+
+/* Submits the username/password form: validates non-empty, then starts the
+ * login worker. Shared by the Sign in button and the Enter key. */
+static void wbnSubmitPasswordLogin(void) {
+    if (strlen(wbnUsername) == 0 || strlen(wbnPassword) == 0) {
+        SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_NEEDCREDS), sizeof(wbnErrorBuf));
+        wbnState = WBN_ERROR;
+    } else {
+        wbnStartLogin();
+    }
+}
+
+/* Left column: sign in with Steam (one click) or username/password. */
+static void wbnRenderSignInColumn(bool onSteam) {
+    ImGui::SeparatorText(langGetText(STR_DLGWBN_SIGNIN_OK));
+    ImGui::Spacing();
+
+    if (onSteam) {
+        if (wbnSteamButton(langGetText(STR_DLGWBN_SIGNIN_STEAM_BTN))) {
+            char ticketHex[2049];
+            if (gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
+                wbnStartSteamLogin(ticketHex);
+            } else {
+                SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_ERR_GENERIC),
+                            sizeof(wbnErrorBuf));
+                wbnState = WBN_ERROR;
+            }
+        }
+        imguiHandOnHover();
+        ImGui::Spacing();
+        ImGui::SeparatorText(langGetText(STR_DLGWBN_OR_PASSWORD));
+        ImGui::Spacing();
+    }
+
+    ImGui::TextUnformatted(langGetText(STR_DLGWBN_USERNAME));
+    ImGui::SetNextItemWidth(-1);
+    if (wbnFocusUser) {
+        ImGui::SetKeyboardFocusHere();
+        wbnFocusUser = false;
+    }
+    ImGui::InputText("##wbnuser", wbnUsername, sizeof(wbnUsername));
+
+    ImGui::TextUnformatted(langGetText(STR_DLGWBN_PASSWORD));
+    ImGui::SetNextItemWidth(-1);
+    bool enterPressed = ImGui::InputText("##wbnpass", wbnPassword, sizeof(wbnPassword),
+                                         ImGuiInputTextFlags_Password |
+                                         ImGuiInputTextFlags_EnterReturnsTrue);
+
+    ImGui::Spacing();
+    bool doLogin = ImGui::Button(langGetText(STR_DLGWBN_SIGNIN_OK), ImVec2(-1, 0));
+    imguiHandOnHover();
+    if (doLogin || enterPressed) {
+        wbnSubmitPasswordLogin();
+    }
+
+    /* A password account can be linked to this Steam on the website. Rendered
+     * as markdown so the embedded "winbolo.net" link wraps inline with the
+     * dimmed sentence (ImGui's plain text can't host an inline link). */
+    if (onSteam) {
+        const char *hint = langGetText(STR_DLGWBN_LINK_HINT);
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+        ImGui::Markdown(hint, SDL_strlen(hint), wbnMarkdownConfig());
+        ImGui::PopStyleColor();
+    }
+}
+
+/* Right column: create an account via Steam (inline form) or in the browser. */
+static void wbnRenderCreateColumn(bool onSteam, const char *persona) {
+    ImGui::SeparatorText(langGetText(STR_DLGWBN_CREATE_STEAM));
+    ImGui::Spacing();
+
+    if (onSteam) {
+        /* Seed the username from the Steam persona once per open so the
+         * player can freely edit (or clear) it afterwards. */
+        if (!wbnRegSeeded) {
+            SDL_strlcpy(wbnRegUsername, persona, sizeof(wbnRegUsername));
+            wbnRegSeeded = true;
+        }
+
+        ImGui::TextUnformatted(langGetText(STR_DLGWBN_USERNAME));
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##wbnreguser", wbnRegUsername, sizeof(wbnRegUsername));
+
+        ImGui::TextUnformatted(langGetText(STR_DLGWBN_EMAIL));
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##wbnregemail",
+                                 langGetText(STR_DLGWBN_EMAIL_OPTIONAL),
+                                 wbnRegEmail, sizeof(wbnRegEmail));
+
+        ImGui::Spacing();
+        if (ImGui::Button(langGetText(STR_DLGWBN_CREATE_BTN), ImVec2(-1, 0))) {
+            char validated[PLAYER_NAME_LEN];
+            char ticketHex[2049];
+            if (!playerNameValidate(wbnRegUsername, validated, sizeof(validated), nullptr)) {
+                SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_ERR_USERNAME_UNAVAILABLE),
+                            sizeof(wbnErrorBuf));
+                wbnState = WBN_ERROR;
+            } else if (gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
+                wbnStartSteamRegister(ticketHex, wbnRegUsername, wbnRegEmail);
+            } else {
+                SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_ERR_GENERIC),
+                            sizeof(wbnErrorBuf));
+                wbnState = WBN_ERROR;
+            }
+        }
+        imguiHandOnHover();
+
+        ImGui::Spacing();
+        ImGui::SeparatorText(langGetText(STR_DLGWBN_OR));
+        ImGui::Spacing();
+    }
+
+    /* Standalone (browser) signup — captcha + email verification live there. */
+    ImGui::TextLinkOpenURL(langGetText(STR_DLGWBN_CREATE_BROWSER),
+                           "https://www.winbolo.net/signup");
+}
+
 /* Renders the shared sign-in popup modal. Must be called every frame by
  * whichever surface (settings section or welcome status block) owns the
- * popup this frame; OpenPopup scopes it to the current ImGui window. */
+ * popup this frame; OpenPopup scopes it to the current ImGui window.
+ *
+ * Layout: a full-width intro, then two columns split by a vertical rule —
+ * "Sign in" on the left, "Create an account" on the right — with the error
+ * line and a Cancel button spanning the full width beneath. */
 static void wbnRenderLoginPopup(void) {
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(620, 0), ImGuiCond_Appearing);
 
     static float s_fadeWbnSignIn = 0.0f;
     if (ImGui::BeginPopupModal(langGetText(STR_DLGWBN_SIGNIN_TITLE), &wbnPopupOpen,
@@ -399,165 +553,62 @@ static void wbnRenderLoginPopup(void) {
         bool busy = (wbnState == WBN_LOGGING_IN);
         char persona[256];
         bool onSteam = steam_get_persona_name(persona, sizeof(persona));
+        const float colW = 290.0f;
 
+        /* Intro spanning both columns. */
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + colW * 2.0f);
         ImGui::TextWrapped("%s", langGetText(STR_DLGWBN_SIGNIN_BLURB));
+        ImGui::PopTextWrapPos();
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
-        float labelW = 90.0f;
-
-        /* One-click sign-in for an already-linked Steam account. Leads the
-         * popup since the player launched under Steam; the username/password
-         * block below is the alternative. */
-        if (onSteam && !busy) {
-            if (ImGui::Button(langGetText(STR_DLGWBN_SIGNIN_STEAM_BTN), ImVec2(-1, 0))) {
-                char ticketHex[2049];
-                if (gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
-                    wbnStartSteamLogin(ticketHex);
-                } else {
-                    SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_ERR_GENERIC),
-                                sizeof(wbnErrorBuf));
-                    wbnState = WBN_ERROR;
-                }
+        if (busy) {
+            wbnDrawSpinner(langGetText(STR_DLGWBN_SIGNINGIN));
+        } else {
+            ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(12.0f, 4.0f));
+            if (ImGui::BeginTable("##wbnsignincols", 2, ImGuiTableFlags_BordersInnerV)) {
+                ImGui::TableSetupColumn("##signin", ImGuiTableColumnFlags_WidthFixed, colW);
+                ImGui::TableSetupColumn("##create", ImGuiTableColumnFlags_WidthFixed, colW);
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                wbnRenderSignInColumn(onSteam);
+                ImGui::TableSetColumnIndex(1);
+                wbnRenderCreateColumn(onSteam, persona);
+                ImGui::EndTable();
             }
-            imguiHandOnHover();
-            ImGui::Spacing();
-            ImGui::SeparatorText(langGetText(STR_DLGWBN_OR_PASSWORD));
-            ImGui::Spacing();
+            ImGui::PopStyleVar();
         }
 
-        if (busy) ImGui::BeginDisabled();
-
-        ImGui::TextUnformatted(langGetText(STR_DLGWBN_USERNAME));
-        ImGui::SameLine(labelW);
-        ImGui::SetNextItemWidth(-1);
-        if (wbnFocusUser) {
-            ImGui::SetKeyboardFocusHere();
-            wbnFocusUser = false;
-        }
-        ImGui::InputText("##wbnuser", wbnUsername, sizeof(wbnUsername));
-
-        ImGui::TextUnformatted(langGetText(STR_DLGWBN_PASSWORD));
-        ImGui::SameLine(labelW);
-        ImGui::SetNextItemWidth(-1);
-        bool enterPressed = ImGui::InputText("##wbnpass", wbnPassword, sizeof(wbnPassword),
-                                              ImGuiInputTextFlags_Password |
-                                              ImGuiInputTextFlags_EnterReturnsTrue);
-
-        if (busy) ImGui::EndDisabled();
-
-        /* A password account can be linked to this Steam on the website.
-         * Rendered as markdown so the embedded "winbolo.net" link wraps
-         * inline with the dimmed sentence (ImGui's plain text can't host an
-         * inline link). */
-        if (onSteam) {
-            const char *hint = langGetText(STR_DLGWBN_LINK_HINT);
-            ImGui::Spacing();
-            ImGui::PushStyleColor(ImGuiCol_Text,
-                                  ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-            ImGui::Markdown(hint, SDL_strlen(hint), wbnMarkdownConfig());
-            ImGui::PopStyleColor();
-        }
-
-        ImGui::Spacing();
-
-        /* Error message */
+        /* Error line — spans the full width beneath the columns. */
         if (wbnState == WBN_ERROR && wbnErrorBuf[0] != '\0') {
+            ImGui::Spacing();
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
             ImGui::TextWrapped("%s", wbnErrorBuf);
             ImGui::PopStyleColor();
-            ImGui::Spacing();
         }
 
-        /* Success */
+        /* Success closes the popup. */
         if (wbnState == WBN_SUCCESS) {
             ImGui::CloseCurrentPopup();
             wbnPopupOpen = false;
             wbnState = WBN_IDLE;
         }
 
+        ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
-        /* Buttons */
-        if (busy) {
-            wbnDrawSpinner(langGetText(STR_DLGWBN_SIGNINGIN));
-        } else {
-            int footer = WBUI::DialogFooter(langGetText(STR_CANCEL),
-                                            langGetText(STR_DLGWBN_SIGNIN_OK),
-                                            /*enterConfirms*/ true);
-            if (footer == WBUI::FOOTER_CONFIRM || enterPressed) {
-                if (strlen(wbnUsername) == 0 || strlen(wbnPassword) == 0) {
-                    SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_NEEDCREDS), sizeof(wbnErrorBuf));
-                    wbnState = WBN_ERROR;
-                } else {
-                    wbnStartLogin();
-                }
-            } else if (footer == WBUI::FOOTER_CANCEL) {
-                ImGui::CloseCurrentPopup();
-                wbnPopupOpen = false;
-            }
+        /* Cancel — centred beneath everything. Esc also closes. */
+        const char *cancel = langGetText(STR_CANCEL);
+        float bw = 120.0f;
+        float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > bw) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - bw) * 0.5f);
+        if (ImGui::Button(cancel, ImVec2(bw, 0)) || WBUI::CancelKeyPressed()) {
+            ImGui::CloseCurrentPopup();
+            wbnPopupOpen = false;
         }
-
-        /* Create-account section. Under Steam: a clearly-headed inline signup
-         * form (username pre-filled from the persona + optional email) that
-         * registers via the worker and signs in on success, with a browser
-         * fallback beneath. Off Steam: just the browser signup link (captcha +
-         * email verification live there). Hidden mid-login. */
-        if (!busy) {
-            ImGui::Spacing();
-            if (onSteam) {
-                ImGui::SeparatorText(langGetText(STR_DLGWBN_CREATE_STEAM));
-                ImGui::Spacing();
-
-                /* Seed the username from the Steam persona once per open so
-                 * the player can freely edit (or clear) it afterwards. */
-                if (!wbnRegSeeded) {
-                    SDL_strlcpy(wbnRegUsername, persona, sizeof(wbnRegUsername));
-                    wbnRegSeeded = true;
-                }
-
-                ImGui::TextUnformatted(langGetText(STR_DLGWBN_USERNAME));
-                ImGui::SameLine(labelW);
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputText("##wbnreguser", wbnRegUsername, sizeof(wbnRegUsername));
-
-                ImGui::TextUnformatted(langGetText(STR_DLGWBN_EMAIL));
-                ImGui::SameLine(labelW);
-                ImGui::SetNextItemWidth(-1);
-                ImGui::InputTextWithHint("##wbnregemail",
-                                         langGetText(STR_DLGWBN_EMAIL_OPTIONAL),
-                                         wbnRegEmail, sizeof(wbnRegEmail));
-
-                ImGui::Spacing();
-                if (ImGui::Button(langGetText(STR_DLGWBN_CREATE_BTN))) {
-                    char validated[PLAYER_NAME_LEN];
-                    char ticketHex[2049];
-                    if (!playerNameValidate(wbnRegUsername, validated,
-                                            sizeof(validated), nullptr)) {
-                        SDL_strlcpy(wbnErrorBuf,
-                                    langGetText(STR_DLGWBN_ERR_USERNAME_UNAVAILABLE),
-                                    sizeof(wbnErrorBuf));
-                        wbnState = WBN_ERROR;
-                    } else if (gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
-                        wbnStartSteamRegister(ticketHex, wbnRegUsername, wbnRegEmail);
-                    } else {
-                        SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_ERR_GENERIC),
-                                    sizeof(wbnErrorBuf));
-                        wbnState = WBN_ERROR;
-                    }
-                }
-                imguiHandOnHover();
-
-                ImGui::Spacing();
-                ImGui::TextLinkOpenURL(langGetText(STR_DLGWBN_CREATE_BROWSER),
-                                       "https://www.winbolo.net/signup");
-            } else {
-                ImGui::TextLinkOpenURL(langGetText(STR_DLGWBN_CREATE_ACCOUNT),
-                                       "https://www.winbolo.net/signup");
-            }
-        }
+        imguiHandOnHover();
 
         ImGui::PopStyleVar();
         ImGui::EndPopup();
