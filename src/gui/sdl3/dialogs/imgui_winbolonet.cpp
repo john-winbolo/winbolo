@@ -280,6 +280,15 @@ static void wbnRenderLoginPopup(void) {
             }
         }
 
+        /* Browser signup link — opens the website's signup (captcha + email
+         * verification live there). Routes through the platform open-url
+         * callback the host already registered. Hidden mid-login. */
+        if (!busy) {
+            ImGui::Spacing();
+            ImGui::TextLinkOpenURL(langGetText(STR_DLGWBN_CREATE_ACCOUNT),
+                                   "https://www.winbolo.net/signup");
+        }
+
         ImGui::PopStyleVar();
         ImGui::EndPopup();
     }

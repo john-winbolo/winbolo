@@ -1432,6 +1432,9 @@
 #define STR_DLGONBOARD_SKIP                 1432
 #define STR_DLGONBOARD_FINISH               1433
 
+/* WinBolo.net browser signup link */
+#define STR_DLGWBN_CREATE_ACCOUNT           1434
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
