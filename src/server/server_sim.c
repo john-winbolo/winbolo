@@ -125,6 +125,10 @@ static void serverSimFillMapSkipStateEvent(const ServerSim *sim,
                                            ControlEvent *evt);
 static void publishMapSkipState(ServerSim *sim);
 
+/* Full lobby reset when the last human leaves — removes bots, restores
+ * the startup settings snapshot, and unlocks the lobby. Defined below. */
+static void serverSimResetLobbyToDefaults(ServerSim *sim);
+
 /* Active sim pointer — when non-NULL, servercore.c routing functions
  * access sim state directly instead of using legacy globals. */
 static THREAD_LOCAL ServerSim *activeSim = NULL;
@@ -1663,7 +1667,13 @@ LocalJoinResult serverSimLocalJoin(ServerSim *sim,
 }
 
 void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
+    bool wasBot;
     if (playerNum >= MAX_TANKS) return;
+    /* Captured before any teardown so the last-human-left reset below can
+     * tell a human departure from a bot one. Bot removals run through this
+     * same path (botManagerRemoveBot), and the reset itself removes bots —
+     * gating on a human leaver keeps that from re-entering. */
+    wasBot = botManagerIsBot(sim, playerNum);
     {
         char nm[PLAYER_NAME_LEN];
         playersGetPlayerName(&sim->sim.plyrs, playerNum, nm, TRUE);
@@ -1865,6 +1875,80 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
      * This is the identity teardown serverSimResetGameWorld's comment
      * already delegates to the leave path. */
     playersClearSlot(&sim->sim.plyrs, playerNum);
+
+    /* Last human out of the lobby — wipe the slate so the next joiner gets
+     * a fresh lobby: drop any bots, restore the operator's startup settings,
+     * and unlock. Gated on a human leaver (bots removed here don't recurse)
+     * and on the lobby state (running-game departures are handled by the
+     * return-to-lobby / empty-reset paths). */
+    if (!wasBot && sim->lobbyEnabled && sim->state == serverStateLobby &&
+        serverSimGetNumHumans(sim) == 0) {
+        serverSimResetLobbyToDefaults(sim);
+    }
+}
+
+/* Return an emptied lobby to the operator's startup configuration. Called
+ * from serverSimRemovePlayer when the last human leaves while in the lobby:
+ * remove every bot, restore the captured settings snapshot, reset team and
+ * bot-slot metadata to creation defaults, and unlock the lobby to joiners. */
+static void serverSimResetLobbyToDefaults(ServerSim *sim) {
+    BYTE i;
+    if (sim == NULL) return;
+
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+        "Lobby empty — resetting to startup defaults");
+
+    /* Drop any bots the previous occupants added. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (botManagerIsBot(sim, i)) {
+            serverSimRemoveBot(sim, i);
+        }
+    }
+
+    /* Restore the operator-configured game settings. Guarded on the snapshot
+     * being captured (always true once serverSimApplyInstanceConfig ran); if
+     * it somehow wasn't, leave the live settings untouched. */
+    if (sim->originalLobbySettings.valid) {
+        sim->sim.game            = sim->originalLobbySettings.gameType;
+        sim->sim.hiddenMines     = sim->originalLobbySettings.hiddenMines;
+        sim->botAiType           = sim->originalLobbySettings.botAiType;
+        sim->aiPolicy            = sim->originalLobbySettings.aiPolicy;
+        sim->timeLimit           = sim->originalLobbySettings.timeLimit;
+        sim->timeMinutes         = sim->originalLobbySettings.timeMinutes;
+        sim->gameLength          = sim->originalLobbySettings.gameLength;
+        sim->openHost            = sim->originalLobbySettings.openHost;
+        sim->autoLockOnGameStart = sim->originalLobbySettings.autoLockOnGameStart;
+        sim->ranked              = sim->originalLobbySettings.ranked;
+        sim->serverLocks         = sim->originalLobbySettings.serverLocks;
+    }
+
+    /* Reset team and bot-slot metadata to the creation defaults (two teams
+     * always present, default bot configs, per-slot brain back to the
+     * CLI-configured default). Mirrors serverSimInit. */
+    memset(sim->teams, 0, sizeof(sim->teams));
+    sim->teams[1].in_use     = 1;
+    sim->teams[1].color      = 0;  /* red */
+    sim->teams[1].namingPool = 0;  /* classic */
+    SDL_strlcpy(sim->teams[1].name, "Team 1", LOBBY_TEAM_NAME_LEN);
+    sim->teams[2].in_use     = 1;
+    sim->teams[2].color      = 1;  /* blue */
+    sim->teams[2].namingPool = 0;
+    SDL_strlcpy(sim->teams[2].name, "Team 2", LOBBY_TEAM_NAME_LEN);
+    memset(sim->botConfigs, 0, sizeof(sim->botConfigs));
+    memset(sim->botBrainIdx, 0xFF, sizeof(sim->botBrainIdx));
+
+    /* Unlock the lobby to new players: clear both the host-toggled
+     * allow-new-players gate and the transport-level admin lock. */
+    sim->allowNewPlayers      = TRUE;
+    sim->savedAllowNewPlayers = TRUE;
+    transportUdpServerSetLock(sim, FALSE);
+
+    /* Publish the restored settings and refresh the WBN listing. The last
+     * human just left, so no control-event subscribers remain to receive the
+     * reset; the next joiner picks up the full lobby state (settings, team
+     * metadata, bot configs) via the join-time sync replay. */
+    serverSimPublishLobbySettings(sim);
+    serverSimWbnLobbyUpdate(sim, FALSE);
 }
 
 bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
@@ -2118,6 +2202,22 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
     serverSimSetLobbyEnabled(sim, true);
     serverSimEnterLobby(sim);
   }
+
+  /* Snapshot the configured lobby settings now that every startup field
+   * is in place — serverSimResetLobbyToDefaults restores from this when
+   * the last human leaves the lobby. */
+  sim->originalLobbySettings.valid               = true;
+  sim->originalLobbySettings.gameType            = gameTypeGet(&sim->sim.game);
+  sim->originalLobbySettings.hiddenMines         = sim->sim.hiddenMines ? true : false;
+  sim->originalLobbySettings.botAiType           = sim->botAiType;
+  sim->originalLobbySettings.aiPolicy            = sim->aiPolicy;
+  sim->originalLobbySettings.timeLimit           = sim->timeLimit;
+  sim->originalLobbySettings.timeMinutes         = sim->timeMinutes;
+  sim->originalLobbySettings.gameLength          = sim->gameLength;
+  sim->originalLobbySettings.openHost            = sim->openHost;
+  sim->originalLobbySettings.autoLockOnGameStart = sim->autoLockOnGameStart;
+  sim->originalLobbySettings.ranked              = sim->ranked;
+  sim->originalLobbySettings.serverLocks         = sim->serverLocks;
 }
 
 void serverSimInstallMapDirList(ServerSim *sim,
