@@ -1304,6 +1304,20 @@ static const LangEntry langTable[] = {
 
     /* WinBolo.net Steam-auth status suffix */
     {1435, "via Steam"},
+
+    /* In-client Steam signup form (login popup) */
+    {1436, "Create a WinBolo.net account"},
+    {1437, "Email (optional)"},
+    {1438, "Create account"},
+    {1439, "That username is already taken."},
+    {1440, "That email address is already registered."},
+    {1441, "This Steam account is already linked to a WinBolo.net account."},
+    {1442, "Too many sign-up attempts. Please try again later."},
+    {1443, "That username can't be used. Please choose another."},
+    {1444, "That username is too long."},
+    {1445, "Please enter a username."},
+    {1446, "That email address isn't valid."},
+    {1447, "Could not create your account. Please try again."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

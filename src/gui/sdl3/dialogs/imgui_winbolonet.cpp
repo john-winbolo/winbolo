@@ -34,6 +34,7 @@ extern "C" {
 #include "../../lang.h"
 #include "imgui_winbolonet.h"
 #include "../../../steam/steam_wrapper.h"
+#include "playername_validate.h"
 }
 
 /* WBN-verified shield texture (white-masked SVG), lazily loaded by the
@@ -63,6 +64,8 @@ struct WbnLoginWork {
     char password[256];
     char token[256];
     char steamTicketHex[2049];
+    char regUsername[256];
+    char regEmail[256];
     /* outputs */
     char tokenOut[256];
     char expiryOut[256];
@@ -73,6 +76,7 @@ struct WbnLoginWork {
     char errorMsg[512];
     bool isValidate;
     bool isSteam;
+    bool isRegister;
     bool success;
     SDL_AtomicInt done;
 };
@@ -86,10 +90,21 @@ static char wbnUsername[256];
 static char wbnPassword[256];
 static bool wbnFocusUser = false;
 static bool wbnShowStats = false;
+/* Steam inline-signup form state (login popup). wbnRegSeeded gates the
+ * one-time persona seed of the username so re-edits aren't clobbered;
+ * both buffers and the gate reset when the popup (re)opens. */
+static char wbnRegUsername[256];
+static char wbnRegEmail[256];
+static bool wbnRegSeeded = false;
 
 static int wbnLoginThreadFunc(void *data) {
     WbnLoginWork *w = (WbnLoginWork *)data;
-    if (w->isSteam) {
+    if (w->isRegister) {
+        w->success = winbolonetAuthSteamRegister(w->steamTicketHex, w->regUsername, w->regEmail,
+                                                 w->tokenOut, w->expiryOut, w->playerNameOut,
+                                                 &w->rankOut, &w->rankTotalOut, &w->statsOut,
+                                                 w->errorMsg);
+    } else if (w->isSteam) {
         w->success = winbolonetAuthSteam(w->steamTicketHex, w->tokenOut, w->expiryOut,
                                          w->playerNameOut, &w->rankOut, &w->rankTotalOut,
                                          &w->statsOut, w->errorMsg);
@@ -130,6 +145,46 @@ static void wbnStartSteamReauth(const char *ticketHex) {
     wbnThread = SDL_CreateThread(wbnLoginThreadFunc, "WBNSteam", &wbnWork);
 }
 
+/* Signup sibling of wbnStartSteamReauth: registers a new WinBolo.net
+ * account from the Steam ticket plus the chosen username/email, then
+ * signs the player in on success. Drives the visible login spinner. */
+static void wbnStartSteamRegister(const char *ticketHex, const char *username, const char *email) {
+    memset(&wbnWork, 0, sizeof(wbnWork));
+    SDL_SetAtomicInt(&wbnWork.done, 0);
+    SDL_strlcpy(wbnWork.steamTicketHex, ticketHex, sizeof(wbnWork.steamTicketHex));
+    SDL_strlcpy(wbnWork.regUsername, username, sizeof(wbnWork.regUsername));
+    SDL_strlcpy(wbnWork.regEmail, email, sizeof(wbnWork.regEmail));
+    wbnWork.isRegister = true;
+    wbnState = WBN_LOGGING_IN;
+    wbnThread = SDL_CreateThread(wbnLoginThreadFunc, "WBNRegister", &wbnWork);
+}
+
+/* Maps a server-returned signup error code to a localized message. Codes
+ * that warrant the same user-facing text share one string; anything
+ * unrecognised (including ticket/Steam/server faults) falls through to a
+ * generic retry message. */
+static const char *wbnRegisterErrorText(const char *code) {
+    if (SDL_strcmp(code, "username_taken") == 0)
+        return langGetText(STR_DLGWBN_ERR_USERNAME_TAKEN);
+    if (SDL_strcmp(code, "email_taken") == 0)
+        return langGetText(STR_DLGWBN_ERR_EMAIL_TAKEN);
+    if (SDL_strcmp(code, "steam_already_linked") == 0)
+        return langGetText(STR_DLGWBN_ERR_STEAM_LINKED);
+    if (SDL_strcmp(code, "signup_rate_limited") == 0)
+        return langGetText(STR_DLGWBN_ERR_RATE_LIMITED);
+    if (SDL_strcmp(code, "username_unavailable") == 0 ||
+        SDL_strcmp(code, "invalid_username") == 0)
+        return langGetText(STR_DLGWBN_ERR_USERNAME_UNAVAILABLE);
+    if (SDL_strcmp(code, "username_too_long") == 0)
+        return langGetText(STR_DLGWBN_ERR_USERNAME_TOO_LONG);
+    if (SDL_strcmp(code, "missing_username") == 0 ||
+        SDL_strcmp(code, "username_required") == 0)
+        return langGetText(STR_DLGWBN_ERR_USERNAME_REQUIRED);
+    if (SDL_strcmp(code, "invalid_email") == 0)
+        return langGetText(STR_DLGWBN_ERR_EMAIL_INVALID);
+    return langGetText(STR_DLGWBN_ERR_GENERIC);
+}
+
 /* Load-time re-auth decision: refresh a Steam-authenticated (or empty,
  * ticket-available) session via Steam; otherwise validate an existing
  * token; otherwise do nothing. A password session never re-auths via
@@ -154,7 +209,15 @@ static void wbnCheckThread(void) {
     wbnThread = nullptr;
 
     if (wbnWork.success) {
-        if (wbnWork.isSteam) {
+        if (wbnWork.isRegister) {
+            /* New account created and signed in: apply the auth result and
+             * close the popup via the WBN_SUCCESS handler. */
+            gameFrontApplySteamAuthResult(wbnWork.tokenOut, wbnWork.expiryOut,
+                                          wbnWork.playerNameOut, wbnWork.rankOut,
+                                          wbnWork.rankTotalOut, &wbnWork.statsOut);
+            steam_cancel_auth_ticket();
+            wbnState = WBN_SUCCESS;
+        } else if (wbnWork.isSteam) {
             gameFrontApplySteamAuthResult(wbnWork.tokenOut, wbnWork.expiryOut,
                                           wbnWork.playerNameOut, wbnWork.rankOut,
                                           wbnWork.rankTotalOut, &wbnWork.statsOut);
@@ -178,7 +241,12 @@ static void wbnCheckThread(void) {
             wbnState = WBN_SUCCESS;
         }
     } else {
-        if (wbnWork.isSteam) {
+        if (wbnWork.isRegister) {
+            steam_cancel_auth_ticket();
+            SDL_strlcpy(wbnErrorBuf, wbnRegisterErrorText(wbnWork.errorMsg),
+                        sizeof(wbnErrorBuf));
+            wbnState = WBN_ERROR;
+        } else if (wbnWork.isSteam) {
             steam_cancel_auth_ticket();
             wbnState = WBN_IDLE;          /* keep any existing token; silent */
         } else {
@@ -236,6 +304,9 @@ static void wbnOpenLoginPopup(void) {
     wbnErrorBuf[0] = '\0';
     wbnUsername[0] = '\0';
     wbnPassword[0] = '\0';
+    wbnRegUsername[0] = '\0';
+    wbnRegEmail[0] = '\0';
+    wbnRegSeeded = false;
     ImGui::OpenPopup(langGetText(STR_DLGWBN_SIGNIN_TITLE));
 }
 
@@ -327,13 +398,61 @@ static void wbnRenderLoginPopup(void) {
             }
         }
 
-        /* Browser signup link — opens the website's signup (captcha + email
-         * verification live there). Routes through the platform open-url
-         * callback the host already registered. Hidden mid-login. */
+        /* Create-account affordance. Under Steam this is an inline signup
+         * form (username pre-filled from the persona + optional email) that
+         * registers via the worker and signs in on success; off Steam it is
+         * the browser signup link (captcha + email verification live there).
+         * Hidden mid-login. */
         if (!busy) {
+            char persona[256];
+            bool onSteam = steam_get_persona_name(persona, sizeof(persona));
             ImGui::Spacing();
-            ImGui::TextLinkOpenURL(langGetText(STR_DLGWBN_CREATE_ACCOUNT),
-                                   "https://www.winbolo.net/signup");
+            if (onSteam) {
+                ImGui::Separator();
+                ImGui::Spacing();
+                ImGui::TextUnformatted(langGetText(STR_DLGWBN_CREATE_STEAM));
+                ImGui::Spacing();
+
+                /* Seed the username from the Steam persona once per open so
+                 * the player can freely edit (or clear) it afterwards. */
+                if (!wbnRegSeeded) {
+                    SDL_strlcpy(wbnRegUsername, persona, sizeof(wbnRegUsername));
+                    wbnRegSeeded = true;
+                }
+
+                ImGui::TextUnformatted(langGetText(STR_DLGWBN_USERNAME));
+                ImGui::SameLine(labelW);
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputText("##wbnreguser", wbnRegUsername, sizeof(wbnRegUsername));
+
+                ImGui::SetNextItemWidth(-1);
+                ImGui::InputTextWithHint("##wbnregemail",
+                                         langGetText(STR_DLGWBN_EMAIL_OPTIONAL),
+                                         wbnRegEmail, sizeof(wbnRegEmail));
+
+                ImGui::Spacing();
+                if (ImGui::Button(langGetText(STR_DLGWBN_CREATE_BTN))) {
+                    char validated[PLAYER_NAME_LEN];
+                    char ticketHex[2049];
+                    if (!playerNameValidate(wbnRegUsername, validated,
+                                            sizeof(validated), nullptr)) {
+                        SDL_strlcpy(wbnErrorBuf,
+                                    langGetText(STR_DLGWBN_ERR_USERNAME_UNAVAILABLE),
+                                    sizeof(wbnErrorBuf));
+                        wbnState = WBN_ERROR;
+                    } else if (gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
+                        wbnStartSteamRegister(ticketHex, wbnRegUsername, wbnRegEmail);
+                    } else {
+                        SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_ERR_GENERIC),
+                                    sizeof(wbnErrorBuf));
+                        wbnState = WBN_ERROR;
+                    }
+                }
+                imguiHandOnHover();
+            } else {
+                ImGui::TextLinkOpenURL(langGetText(STR_DLGWBN_CREATE_ACCOUNT),
+                                       "https://www.winbolo.net/signup");
+            }
         }
 
         ImGui::PopStyleVar();
@@ -568,6 +687,9 @@ extern "C" void imguiWinbolonetReset(void) {
     wbnPopupOpen = false;
     wbnUsername[0] = '\0';
     wbnPassword[0] = '\0';
+    wbnRegUsername[0] = '\0';
+    wbnRegEmail[0] = '\0';
+    wbnRegSeeded = false;
     wbnErrorBuf[0] = '\0';
     wbnFocusUser = false;
     if (wbnThread) {

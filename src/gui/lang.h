@@ -1438,6 +1438,20 @@
 /* WinBolo.net Steam-auth status suffix */
 #define STR_DLGWBN_VIA_STEAM                1435
 
+/* In-client Steam signup form (login popup) */
+#define STR_DLGWBN_CREATE_STEAM             1436
+#define STR_DLGWBN_EMAIL_OPTIONAL           1437
+#define STR_DLGWBN_CREATE_BTN               1438
+#define STR_DLGWBN_ERR_USERNAME_TAKEN       1439
+#define STR_DLGWBN_ERR_EMAIL_TAKEN          1440
+#define STR_DLGWBN_ERR_STEAM_LINKED         1441
+#define STR_DLGWBN_ERR_RATE_LIMITED         1442
+#define STR_DLGWBN_ERR_USERNAME_UNAVAILABLE 1443
+#define STR_DLGWBN_ERR_USERNAME_TOO_LONG    1444
+#define STR_DLGWBN_ERR_USERNAME_REQUIRED    1445
+#define STR_DLGWBN_ERR_EMAIL_INVALID        1446
+#define STR_DLGWBN_ERR_GENERIC              1447
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */
