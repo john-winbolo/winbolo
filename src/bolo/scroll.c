@@ -81,16 +81,14 @@ void scrollSetSubTilePrecision(bool on) { g_scrollSubTilePrecision = on; }
  * = 1/4 of a pixel, well below perceptible. */
 #define AUTOSCROLL_SNAP_THRESHOLD     4
 
-/* Park settle: when the tank stops, the view eases from wherever the
- * smooth follow left it onto a whole tile, so the framing ends tile-aligned
- * (Bolo players expect the map on tile boundaries). DIVISOR controls the
- * ease speed (per-tick step = remaining / DIVISOR); SNAP is the sub-unit
- * window within which we jump the last bit so it actually reaches the tile.
- * The tile is chosen in the direction the tank is facing — the view eases
- * "away" toward what's ahead rather than backward — unless that tile would
- * leave the tank off-screen, in which case it falls back to the nearest tile
- * (see scrollSettleToTile). Only the parked view is touched; the moving
- * follow is unchanged. */
+/* Park settle: while moving, the view tracks the tank 1:1 (no lag). When the
+ * tank stops, the view eases onto the whole tile nearest where it ended up, so
+ * the framing settles tile-aligned instead of resting mid-tile (Bolo players
+ * expect the map on tile boundaries). DIVISOR controls the ease speed (per-
+ * tick step = remaining / DIVISOR; lower = snappier, higher = smoother/slower).
+ * SNAP is the sub-unit window within which we jump the last bit so it actually
+ * reaches the tile. The settle travels at most the sub-tile remainder (≤ half
+ * a tile) since the moving view had no lag to unwind. See scrollSettleToTile. */
 #define AUTOSCROLL_SETTLE_DIVISOR     6
 #define AUTOSCROLL_SETTLE_SNAP        8
 
@@ -246,9 +244,6 @@ void scrollCreate(ScrollState *ss) {
   ss->initialized = FALSE;
   ss->lastRecalcTick = 0;
   ss->parkedSinceTick = 0;
-  ss->settleLatched = FALSE;
-  ss->settleDirX = 0;
-  ss->settleDirY = 0;
   ss->gunsightWasInside = TRUE;
   for (i = 0; i < MAX_TANKS; i++) ss->prevThreatTank[i] = FALSE;
   for (i = 0; i < MAX_PILLS; i++) ss->prevThreatPill[i] = FALSE;
@@ -533,38 +528,18 @@ bool scrollNoAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
   return returnValue;
 }
 
-/* Settle one view axis (sub-tile units) onto a whole tile and ease toward it.
- * `dir` is the tank's facing on this axis: >0 picks the tile ahead (round up
- * toward +), <0 the tile ahead in the - direction (round down), 0 the nearest
- * tile. Picking the tile ahead pans the view "away" toward what the tank is
- * facing. Guard: if that forward tile would push the tank outside the visible
- * window [viewTile, viewTile + screenTiles - 1] we fall back to the nearest
- * tile, so settling never shoves the tank off-screen. `objectTile` is the
- * tank's tile on this axis. `natural` is non-negative (the caller clamps it
- * to [0, maxSub]) so the truncating divisions round as intended. */
-static int scrollSettleToTile(int cur, int natural, int maxSub, int dir,
-                              int objectTile, int screenTiles) {
-  int target;
+/* Ease one view axis (sub-tile units) toward the whole tile nearest the
+ * natural tank-centred target, so a stopped view settles onto a tile boundary
+ * rather than resting between tiles. */
+static int scrollSettleToTile(int cur, int natural, int maxSub) {
+  /* Aim at the whole tile nearest the natural target, then ease toward it
+   * (sub-units per tick = remaining / DIVISOR, with a SNAP window that jumps
+   * the final bit so it actually lands). `natural` is clamped to [0, maxSub]
+   * by the caller, so the truncating round is well-defined. */
+  int target = ((natural + AUTOSCROLL_SUB_PER_TILE / 2) / AUTOSCROLL_SUB_PER_TILE) * AUTOSCROLL_SUB_PER_TILE;
   int d;
-  if (dir > 0) {
-    target = ((natural + AUTOSCROLL_SUB_PER_TILE - 1) / AUTOSCROLL_SUB_PER_TILE) * AUTOSCROLL_SUB_PER_TILE;
-  } else if (dir < 0) {
-    target = (natural / AUTOSCROLL_SUB_PER_TILE) * AUTOSCROLL_SUB_PER_TILE;
-  } else {
-    target = ((natural + AUTOSCROLL_SUB_PER_TILE / 2) / AUTOSCROLL_SUB_PER_TILE) * AUTOSCROLL_SUB_PER_TILE;
-  }
   if (target < 0)      target = 0;
   if (target > maxSub) target = maxSub;
-  /* If the chosen-ahead tile would leave the tank off-screen, settle to the
-   * nearest tile instead. */
-  if (dir != 0) {
-    int viewTile = target / AUTOSCROLL_SUB_PER_TILE;
-    if (objectTile < viewTile || objectTile > viewTile + screenTiles - 1) {
-      target = ((natural + AUTOSCROLL_SUB_PER_TILE / 2) / AUTOSCROLL_SUB_PER_TILE) * AUTOSCROLL_SUB_PER_TILE;
-      if (target < 0)      target = 0;
-      if (target > maxSub) target = maxSub;
-    }
-  }
   d = target - cur;
   if (d <= AUTOSCROLL_SETTLE_SNAP && d >= -AUTOSCROLL_SETTLE_SNAP) return target;
   return cur + d / AUTOSCROLL_SETTLE_DIVISOR + (d > 0 ? 1 : -1);
@@ -714,7 +689,6 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
     }
   } else {
     ss->parkedSinceTick = 0;
-    ss->settleLatched = FALSE;   /* moving again → re-capture settle dir on next stop */
   }
 
   /* First tick after fresh state: the threat set and gunsight state we
@@ -821,27 +795,19 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
     if (desiredSubX > maxSubX) desiredSubX = maxSubX;
     if (desiredSubY > maxSubY) desiredSubY = maxSubY;
 
-    /* Parked → ease the view onto a whole tile. While the tank moves
-     * (speed > 0) the smooth sub-tile follow above is used verbatim; the
-     * moment it stops, settle to a tile boundary so the framing ends
-     * tile-aligned. The tile is picked in the direction the tank is facing so
-     * the view pans "away" toward what's ahead, unless that would push the
-     * tank off-screen (then the nearest tile is used — see scrollSettleToTile).
-     * The facing is latched on the first parked tick and held until the tank
-     * moves again, so turning in place does NOT re-pick the tile and drift
-     * the view. Skipped when sub-tile precision is off (already whole-tile).
-     * cur = the view the renderer is currently showing. */
+    /* While the tank moves the view tracks it exactly (the desiredSub above) —
+     * 1:1, no lag, smooth via the renderer's sub-pixel drag. The moment it
+     * stops, ease the view onto the whole tile nearest where it ended up, so
+     * the framing settles tile-aligned instead of resting mid-tile. Because
+     * the moving view has zero lag, there is no accumulated gap to unwind at
+     * the stop — the settle only ever travels the sub-tile remainder (≤ half a
+     * tile). Skipped when sub-tile precision is off (the view is already
+     * whole-tile). cur = the view the renderer is currently showing. */
     if (speed == 0 && g_scrollSubTilePrecision) {
       int curSubX = (int)inViewX * AUTOSCROLL_SUB_PER_TILE + (int)ss->subPosX;
       int curSubY = (int)inViewY * AUTOSCROLL_SUB_PER_TILE + (int)ss->subPosY;
-      if (!ss->settleLatched) {
-        int idx = (((int)angle + 8) >> 4) & 15;
-        ss->settleDirX = (int8_t)(kForwardX[idx] > 0 ? 1 : (kForwardX[idx] < 0 ? -1 : 0));
-        ss->settleDirY = (int8_t)(kForwardY[idx] > 0 ? 1 : (kForwardY[idx] < 0 ? -1 : 0));
-        ss->settleLatched = TRUE;
-      }
-      desiredSubX = scrollSettleToTile(curSubX, desiredSubX, maxSubX, (int)ss->settleDirX, (int)objectX, MAIN_SCREEN_SIZE_X);
-      desiredSubY = scrollSettleToTile(curSubY, desiredSubY, maxSubY, (int)ss->settleDirY, (int)objectY, MAIN_SCREEN_SIZE_Y);
+      desiredSubX = scrollSettleToTile(curSubX, desiredSubX, maxSubX);
+      desiredSubY = scrollSettleToTile(curSubY, desiredSubY, maxSubY);
     }
 
     *xValue   = (BYTE)(desiredSubX / AUTOSCROLL_SUB_PER_TILE);
