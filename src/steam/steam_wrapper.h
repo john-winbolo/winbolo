@@ -18,6 +18,11 @@ void     steam_set_rich_presence(const char *key, const char *value);
 void     steam_clear_rich_presence(void);
 bool     steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size, uint32_t *out_len);
 
+/* Cancel the auth-session ticket acquired by the most recent
+ * steam_get_auth_ticket call, releasing its HAuthTicket handle.
+ * No-op if no ticket is outstanding or Steam is not initialized. */
+void     steam_cancel_auth_ticket(void);
+
 /* True iff Steam is initialized and currently running on a Steam Deck. */
 bool     steam_is_steam_deck(void);
 

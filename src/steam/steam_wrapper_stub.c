@@ -18,6 +18,8 @@ bool steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size, uint32_t *out_len) {
   return false;
 }
 
+void steam_cancel_auth_ticket(void) {}
+
 void steam_increment_stat(const char *name, int amount) {
   (void)name; (void)amount;
 }

@@ -1070,6 +1070,7 @@ static void gameFrontValidateWbnBeforeJoin(void) {
       } else {
         WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Steam] WBN Steam auth failed: %s", errorMsg);
       }
+      steam_cancel_auth_ticket();
     }
     return;
   }
