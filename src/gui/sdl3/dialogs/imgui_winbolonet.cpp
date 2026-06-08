@@ -830,11 +830,12 @@ extern "C" void imguiWinbolonetDrawStatusBlock(void) {
         }
     } else {
         /* Sign-in button: WBN shield + label, drawn manually over an empty
-         * button so the signed-out CTA carries the same shield as the
-         * signed-in account chip. Hover brightens the text to full white,
-         * like the menu buttons. */
+         * button so the signed-out CTA reads as a WBN affordance. The shield
+         * is the login spinner's crisp vector shield — held face-on at rest,
+         * spinning while hovered — rather than the badge texture, which turns
+         * muddy when scaled down to this size. Hover also brightens the label
+         * to full white, like the menu buttons. */
         const char *label = langGetText(STR_DLGWBN_SIGN_IN_BTN);
-        SDL_Texture *shield = sdl3ImguiGetWbnVerifiedIcon();
 
         ImVec2 cur = ImGui::GetCursorScreenPos();
         bool hov = ImGui::IsMouseHoveringRect(cur, ImVec2(cur.x + btnW, cur.y + btnH));
@@ -847,27 +848,19 @@ extern "C" void imguiWinbolonetDrawStatusBlock(void) {
         float iconSz = lineH;
         float gap = 6.0f * s;
         float textW = ImGui::CalcTextSize(label).x;
-        float contentW = (shield ? iconSz + gap : 0.0f) + textW;
+        float contentW = iconSz + gap + textW;
         float tx = cur.x + (btnW - contentW) * 0.5f;
         float ty = cur.y + (btnH - lineH) * 0.5f;
         int textA = hov ? 255 : (int)(ghostTextAlpha * 255.0f);
 
+        /* phase 0 == face-on (full width); advancing phase spins it. */
+        float halfH = iconSz * 0.5f;
+        float phase = hov ? (float)SDL_GetTicks() * 0.002f : 0.0f;
         ImDrawList *dl = ImGui::GetWindowDrawList();
-        if (shield) {
-            if (hov) {
-                /* Spin the shield while hovered — same vector shield the
-                 * login spinner uses, turning about its vertical axis. */
-                float phase = (float)SDL_GetTicks() * 0.002f;
-                float halfH = iconSz * 0.5f;
-                ImVec2 centre(tx + iconSz * 0.5f, ty + halfH);
-                imguiDrawSpinningShield(dl, centre, halfH * 0.80f, halfH, phase,
-                                        IM_COL32(255, 255, 255, 255));
-            } else {
-                dl->AddImage((ImTextureID)shield, ImVec2(tx, ty),
-                             ImVec2(tx + iconSz, ty + iconSz));
-            }
-            tx += iconSz + gap;
-        }
+        imguiDrawSpinningShield(dl, ImVec2(tx + iconSz * 0.5f, ty + halfH),
+                                halfH * 0.80f, halfH, phase,
+                                IM_COL32(255, 255, 255, textA));
+        tx += iconSz + gap;
         dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, textA), label);
     }
 
