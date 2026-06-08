@@ -200,6 +200,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_lobby.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_onboarding.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_winbolonet.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_popup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_view.cpp

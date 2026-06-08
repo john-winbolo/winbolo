@@ -1186,6 +1186,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         ImGui::End(); /* ##GameBrowser panel */
         ImGui::End(); /* ##GameBrowserBg host */
 
+        dialogDrawNavOutline();
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

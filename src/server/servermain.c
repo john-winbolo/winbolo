@@ -56,6 +56,7 @@
 #include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
+#include "../common/prefs.h"
 #include "../headless/cmd_stdin.h"
 #include "wire_limits.h"
 
@@ -1304,9 +1305,9 @@ int main(int argc, char **argv) {
     }
   }
 
-  /* WinBolo.net host override — must run before serverInstanceStartup
-   * so winbolonetCreateServer hits the override host. */
-  winbolonetCoreSetPreferencesPath("WinBolo.ini");
+  /* Load the process-global preferences document the shared winbolonet code
+   * reads through (e.g. httpCreate's [WINBOLO.NET] Host). */
+  prefsInit("WinBolo.json");
   {
     int argNum = findArg(argc, argv, "wbnhost");
     if (argNum != ARG_NOT_FOUND) {

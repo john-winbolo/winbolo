@@ -113,19 +113,6 @@ bool winbolonetIsRunning(void);
 void winboloNetGetServerKey(char *keyBuff);
 
 /*********************************************************
-*NAME:          winbolonetCoreSetPreferencesPath
-*PURPOSE:
-* Sets the preferences-file path used by httpCreate on
-* Windows when reading [WINBOLO.NET] Host. Must be called
-* once at startup before any WBN call. No-op on POSIX
-* (POSIX uses preferencesGetPreferenceFile instead).
-*
-*ARGUMENTS:
-* path - Path to the preferences file (e.g. "WinBolo.ini")
-*********************************************************/
-void winbolonetCoreSetPreferencesPath(const char *path);
-
-/*********************************************************
 *NAME:          winbolonetGetCountryCode
 *PURPOSE:
 * Returns the cached country code: uppercase 2-char ISO

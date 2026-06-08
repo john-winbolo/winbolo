@@ -3971,7 +3971,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
              * park the ping/gear column at roughly 3/4 across the
              * row instead of flush against the ready/X cluster. */
             ImGui::TableSetupColumn("##tank",   ImGuiTableColumnFlags_WidthFixed, 60.0f * s);
-            ImGui::TableSetupColumn("##icons",  ImGuiTableColumnFlags_WidthFixed, 70.0f * s);
+            /* Wide enough for the worst case: country flag + platform +
+             * WBN-verified shield + Steam badge (16 + 3×14 px plus
+             * inter-icon spacing), so the verified badge can't spill into
+             * the name column. */
+            ImGui::TableSetupColumn("##icons",  ImGuiTableColumnFlags_WidthFixed, 96.0f * s);
             ImGui::TableSetupColumn("##name",   ImGuiTableColumnFlags_WidthStretch, 3.0f);
             ImGui::TableSetupColumn("##ping",   ImGuiTableColumnFlags_WidthFixed, 50.0f * s);
             ImGui::TableSetupColumn("##spacer", ImGuiTableColumnFlags_WidthStretch, 1.0f);
@@ -7028,6 +7032,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * entry and doesn't track OS-window resizes. */
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
 
+        dialogDrawNavOutline();
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

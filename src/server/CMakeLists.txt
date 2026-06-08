@@ -47,8 +47,6 @@
 #   server_dedicated_log.c     — WinBoloDS only (registers the replay-log
 #                                bus subscriber that touches
 #                                servermain.c-owned globals)
-#   posix_stubs.c              — every non-Windows target (incl. LogViewer
-#                                standalone for its WBN http INI shims)
 
 if(EMSCRIPTEN)
     add_library(threads_static STATIC threads_wasm.c)

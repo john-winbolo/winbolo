@@ -1399,6 +1399,79 @@
  * {number} = percentage, {number2} = lost count, {number3} = total expected. */
 #define STR_DLGNETINFO_LOSS                 1407
 
+/* WinBolo.net 1v1 ladder position shown in the status block.
+ * STR_DLGWBN_RANK: {number} = position, {number2} = ranked-player total. */
+#define STR_DLGWBN_RANK                     1408
+#define STR_DLGWBN_UNRANKED                 1409
+
+/* My Stats dialog — per-mode WinBolo.net play stats. */
+#define STR_DLGWBN_STATS_BTN                1410
+#define STR_DLGWBN_STATS_TITLE              1411
+#define STR_DLGWBN_STATS_NONE               1412
+#define STR_DLGWBN_STATS_OPEN               1413
+#define STR_DLGWBN_STATS_TOURN              1414
+#define STR_DLGWBN_STATS_STRICT             1415
+#define STR_DLGWBN_STATS_GAMES              1416
+#define STR_DLGWBN_STATS_BASES              1417
+#define STR_DLGWBN_STATS_PILLS              1418
+#define STR_DLGWBN_STATS_TANKS              1419
+#define STR_DLGWBN_STATS_SCORE              1420
+#define STR_DLGWBN_STATS_WINS               1421
+#define STR_DLGWBN_STATS_LOSES              1422
+#define STR_DLGWBN_STATS_RANK               1423
+
+/* First-run online onboarding wizard */
+#define STR_DLGONBOARD_TITLE                1424
+#define STR_DLGONBOARD_ACCOUNT_TITLE        1425
+#define STR_DLGONBOARD_ACCOUNT_DESC         1426
+#define STR_DLGONBOARD_NAME_TITLE           1427
+#define STR_DLGONBOARD_NAME_DESC            1428
+#define STR_DLGONBOARD_KEYS_TITLE           1429
+#define STR_DLGONBOARD_KEYS_DESC            1430
+#define STR_DLGONBOARD_NEXT                 1431
+#define STR_DLGONBOARD_SKIP                 1432
+#define STR_DLGONBOARD_FINISH               1433
+
+/* WinBolo.net browser signup link */
+#define STR_DLGWBN_CREATE_ACCOUNT           1434
+
+/* WinBolo.net Steam-auth status suffix */
+#define STR_DLGWBN_VIA_STEAM                1435
+
+/* In-client Steam signup form (login popup) */
+#define STR_DLGWBN_CREATE_STEAM             1436
+#define STR_DLGWBN_EMAIL_OPTIONAL           1437
+#define STR_DLGWBN_CREATE_BTN               1438
+#define STR_DLGWBN_ERR_USERNAME_TAKEN       1439
+#define STR_DLGWBN_ERR_EMAIL_TAKEN          1440
+#define STR_DLGWBN_ERR_STEAM_LINKED         1441
+#define STR_DLGWBN_ERR_RATE_LIMITED         1442
+#define STR_DLGWBN_ERR_USERNAME_UNAVAILABLE 1443
+#define STR_DLGWBN_ERR_USERNAME_TOO_LONG    1444
+#define STR_DLGWBN_ERR_USERNAME_REQUIRED    1445
+#define STR_DLGWBN_ERR_EMAIL_INVALID        1446
+#define STR_DLGWBN_ERR_GENERIC              1447
+
+/* Column headers for the My Stats table */
+#define STR_DLGWBN_STATS_COL_RANK           1448
+#define STR_DLGWBN_STATS_COL_RATING         1449
+#define STR_DLGWBN_STATS_COL_GAMES          1450
+#define STR_DLGWBN_STATS_COL_WL             1451
+#define STR_DLGWBN_STATS_COL_BASES          1452
+#define STR_DLGWBN_STATS_COL_PILLS          1453
+#define STR_DLGWBN_STATS_COL_TANKS          1454
+
+/* In-client Steam sign-in (existing account) + popup section labels */
+#define STR_DLGWBN_SIGNIN_STEAM_BTN         1455
+#define STR_DLGWBN_OR_PASSWORD              1456
+#define STR_DLGWBN_LINK_HINT                1457
+#define STR_DLGWBN_ERR_STEAM_NOT_LINKED     1458
+#define STR_DLGWBN_CREATE_BROWSER           1459
+#define STR_DLGWBN_EMAIL                    1460
+#define STR_DLGWBN_OR                       1461
+#define STR_DLGWBN_ERR_STEAM_TICKET         1462
+#define STR_DLGWBN_SIGNIN_HEADER            1463
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

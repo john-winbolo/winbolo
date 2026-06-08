@@ -131,36 +131,23 @@ static void keyRow(const char *label, KeySetupField field) {
 }
 
 /* -------------------------------------------------------
- * Shared form body — drawn by BOTH the standalone blocking
- * dialog (imguiKeySetupShow) AND the in-game popup wrapper
- * (imguiKeySetupRenderInGamePopup). The form layout, key-
- * capture state machine, and OK/Cancel semantics live here
- * once; each wrapper handles the surrounding context-specific
- * setup (own ImGui context vs BeginPopupModal).
- *
- * Returns:  1 = OK clicked (state has been committed)
- *          -1 = Cancel clicked / Escape pressed
- *           0 = still showing this frame
- *
- * On OK, this function commits the shared file-static state
- * to the frontend globals (useAutoslow / useAutohide), pushes
- * the typed keys via windowSetKeys, optionally pushes the
- * auto-slowdown / auto-gunsight flags onto the live tank when
- * cs != NULL (in-game path — pre-game cs is always NULL since
- * no tank exists yet), and flushes everything to INI via
- * gameFrontPutPrefs so the choice is durable immediately.
+ * Binding rows + the two checkboxes — the visible body of the
+ * key-setup form, minus any footer or commit logic. Shared by
+ * renderFormBody (standalone dialog + in-game popup) and the
+ * embedded wizard path (imguiKeySetupRenderEmbedded), so the
+ * onboarding wizard can draw the same controls inside its own
+ * already-running ImGui context without the OK/Cancel footer.
+ * Operates purely on the shared file-static form state.
  * ------------------------------------------------------- */
-static int renderFormBody(struct ClientSim *cs) {
-    if (s_waiting != ksNone) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
-                           langGetText(STR_DLGKEYSETUP_PRESS_OR_CANCEL));
-        ImGui::Separator();
-    }
-
-    /* Scrollable region containing all binding rows */
+static void renderKeyRows(float extraFooterReserve = 0.0f) {
+    /* Scrollable region containing all binding rows. footerH reserves space
+     * for the two checkboxes below the child; extraFooterReserve lets an
+     * embedding caller (the onboarding wizard) also reserve room for its own
+     * button row beneath, so the rows scroll inside the child rather than
+     * pushing the host window past its fixed height. */
     float footerH = ImGui::GetFrameHeightWithSpacing() * 3.0f +
                     ImGui::GetStyle().ItemSpacing.y * 2.0f;
-    ImGui::BeginChild("##bindings", ImVec2(0.0f, -footerH), false);
+    ImGui::BeginChild("##bindings", ImVec2(0.0f, -(footerH + extraFooterReserve)), false);
 
     constexpr ImGuiTableFlags tflags =
         ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit |
@@ -222,6 +209,36 @@ static int renderFormBody(struct ClientSim *cs) {
     ImGui::SameLine();
     ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOGUNSIGHT), &s_autoGunsight);
     ImGui::Spacing();
+}
+
+/* -------------------------------------------------------
+ * Shared form body — drawn by BOTH the standalone blocking
+ * dialog (imguiKeySetupShow) AND the in-game popup wrapper
+ * (imguiKeySetupRenderInGamePopup). The form layout, key-
+ * capture state machine, and OK/Cancel semantics live here
+ * once; each wrapper handles the surrounding context-specific
+ * setup (own ImGui context vs BeginPopupModal).
+ *
+ * Returns:  1 = OK clicked (state has been committed)
+ *          -1 = Cancel clicked / Escape pressed
+ *           0 = still showing this frame
+ *
+ * On OK, this function commits the shared file-static state
+ * to the frontend globals (useAutoslow / useAutohide), pushes
+ * the typed keys via windowSetKeys, optionally pushes the
+ * auto-slowdown / auto-gunsight flags onto the live tank when
+ * cs != NULL (in-game path — pre-game cs is always NULL since
+ * no tank exists yet), and flushes everything to INI via
+ * gameFrontPutPrefs so the choice is durable immediately.
+ * ------------------------------------------------------- */
+static int renderFormBody(struct ClientSim *cs) {
+    if (s_waiting != ksNone) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
+                           langGetText(STR_DLGKEYSETUP_PRESS_OR_CANCEL));
+        ImGui::Separator();
+    }
+
+    renderKeyRows();
 
     bool busy = (s_waiting != ksNone);
     int result = 0;
@@ -409,6 +426,7 @@ extern "C" int imguiKeySetupShow(void) {
         ImGui::End(); /* ##KeySetupPanel */
         ImGui::End(); /* ##KeySetupBg */
 
+        dialogDrawNavOutline();
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);
@@ -522,4 +540,33 @@ extern "C" void imguiKeySetupHandleInGameScancode(int scancode) {
     int *ptr = fieldPtr(s_waiting, &s_keys);
     if (ptr) *ptr = scancode;
     s_waiting = ksNone;
+}
+
+/* -------------------------------------------------------
+ * Embedded form — drawn inside a caller-owned ImGui context
+ * (the first-run onboarding wizard) without the key-setup
+ * dialog's own OK/Cancel footer. The caller seeds the shared
+ * form state once via imguiKeySetupBeginEmbedded, draws the
+ * binding rows each frame with imguiKeySetupRenderEmbedded,
+ * and persists on exit via imguiKeySetupCommitEmbedded. Key
+ * capture reuses the same imguiKeySetupIsCapturingInGameKey /
+ * imguiKeySetupHandleInGameScancode hooks as the in-game
+ * popup. Pre-game only — no live ClientSim to push onto.
+ * ------------------------------------------------------- */
+extern "C" void imguiKeySetupBeginEmbedded(void) {
+    windowGetKeys(&s_keys);
+    s_autoSlowdown = useAutoslow;
+    s_autoGunsight = useAutohide;
+    s_waiting      = ksNone;
+}
+
+extern "C" void imguiKeySetupRenderEmbedded(float reserveBottom) {
+    renderKeyRows(reserveBottom);
+}
+
+extern "C" void imguiKeySetupCommitEmbedded(void) {
+    windowSetKeys(&s_keys);
+    useAutoslow = s_autoSlowdown;
+    useAutohide = s_autoGunsight;
+    gameFrontPutPrefs(&s_keys);
 }
