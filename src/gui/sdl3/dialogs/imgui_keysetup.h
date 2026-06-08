@@ -66,9 +66,14 @@ void imguiKeySetupHandleInGameScancode(int scancode);
  * draw the rows each frame with imguiKeySetupRenderEmbedded, and
  * persist the result with imguiKeySetupCommitEmbedded when leaving
  * the step forward. Key capture reuses the in-game hooks above.
- * Pre-game only — there is no live tank to push values onto. */
+ * Pre-game only — there is no live tank to push values onto.
+ *
+ * reserveBottom is extra vertical space (pixels) to keep clear below
+ * the scrollable binding list, on top of the checkbox footer, so the
+ * caller's own controls (the wizard's Back/Skip/Next row) fit without
+ * forcing a scrollbar on the host window. */
 void imguiKeySetupBeginEmbedded(void);
-void imguiKeySetupRenderEmbedded(void);
+void imguiKeySetupRenderEmbedded(float reserveBottom);
 void imguiKeySetupCommitEmbedded(void);
 
 #ifdef __cplusplus

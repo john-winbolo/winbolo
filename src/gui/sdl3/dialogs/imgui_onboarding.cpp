@@ -200,41 +200,11 @@ extern "C" int imguiOnboardingShow(void) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        /* Centered overlay panel */
-        float panelW = 460.0f * s, panelH = 560.0f * s;
-        if (panelW > (float)winW * 0.95f) panelW = (float)winW * 0.95f;
-        if (panelH > (float)winH * 0.95f) panelH = (float)winH * 0.95f;
-
-        ImGui::SetNextWindowPos(ImVec2(((float)winW - panelW) * 0.5f, ((float)winH - panelH) * 0.5f));
-        ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
-        ImGui::SetNextWindowBgAlpha(0.85f);
-        ImGui::Begin("##OnboardingPanel", nullptr,
-                     ImGuiWindowFlags_NoTitleBar |
-                     ImGuiWindowFlags_NoResize |
-                     ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoCollapse);
-
-        /* Top-right close X — same effect as a window-close: bail to
-         * welcome without marking onboarding complete. */
-        if (WBUI::DrawPanelCloseX()) {
-            result = 0;
-            running = false;
-        }
-
-        /* Title */
-        {
-            ImGui::SetWindowFontScale(1.4f);
-            const char *title = langGetText(STR_DLGONBOARD_TITLE);
-            ImVec2 textSize = ImGui::CalcTextSize(title);
-            ImGui::SetCursorPosX((panelW - textSize.x) * 0.5f);
-            ImGui::Text("%s", title);
-            ImGui::SetWindowFontScale(1.0f);
-        }
-        ImGui::Spacing();
-
         /* Signed-in state drives which steps are active. Recomputed each
          * frame so signing in/out on the Account step immediately reshapes
-         * both navigation and the progress indicator. */
+         * both navigation and the progress indicator. Resolved before the
+         * panel is sized because the panel's sizing mode depends on which
+         * step is current. */
         char token[256], expiry[256];
         gameFrontGetWinbolonetToken(token, expiry);
         bool loggedIn = (token[0] != '\0');
@@ -255,6 +225,53 @@ extern "C" int imguiOnboardingShow(void) {
             if (seq[i] == currentStep) { curIdx = i; break; }
         }
         if (curIdx < 0) { currentStep = seq[0]; curIdx = 0; }
+
+        /* Centered overlay panel, fixed width. The Account and Name steps lay
+         * out top-to-bottom, so they auto-fit their height — no empty gap, no
+         * scrollbar. The Keys step's binding list scrolls inside its own child
+         * (which can't live in an auto-resizing window), so it gets a fixed,
+         * viewport-capped height instead. Centered via a (0.5, 0.5) pivot so
+         * the auto-computed size stays centered. */
+        float panelW = 460.0f * s;
+        if (panelW > (float)winW * 0.95f) panelW = (float)winW * 0.95f;
+        float maxPanelH = (float)winH * 0.95f;
+        bool keysStep = (currentStep == ONBOARD_STEP_KEYS);
+
+        ImGui::SetNextWindowPos(ImVec2((float)winW * 0.5f, (float)winH * 0.5f),
+                                ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGuiWindowFlags panelFlags = ImGuiWindowFlags_NoTitleBar |
+                                      ImGuiWindowFlags_NoResize |
+                                      ImGuiWindowFlags_NoMove |
+                                      ImGuiWindowFlags_NoCollapse;
+        if (keysStep) {
+            float panelH = 560.0f * s;
+            if (panelH > maxPanelH) panelH = maxPanelH;
+            ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
+        } else {
+            ImGui::SetNextWindowSizeConstraints(ImVec2(panelW, 0.0f),
+                                                ImVec2(panelW, maxPanelH));
+            panelFlags |= ImGuiWindowFlags_AlwaysAutoResize;
+        }
+        ImGui::SetNextWindowBgAlpha(0.85f);
+        ImGui::Begin("##OnboardingPanel", nullptr, panelFlags);
+
+        /* Top-right close X — same effect as a window-close: bail to
+         * welcome without marking onboarding complete. */
+        if (WBUI::DrawPanelCloseX()) {
+            result = 0;
+            running = false;
+        }
+
+        /* Title */
+        {
+            ImGui::SetWindowFontScale(1.4f);
+            const char *title = langGetText(STR_DLGONBOARD_TITLE);
+            ImVec2 textSize = ImGui::CalcTextSize(title);
+            ImGui::SetCursorPosX((panelW - textSize.x) * 0.5f);
+            ImGui::Text("%s", title);
+            ImGui::SetWindowFontScale(1.0f);
+        }
+        ImGui::Spacing();
 
         /* Progress indicator — one dot per active step, current step filled. */
         {
@@ -302,20 +319,29 @@ extern "C" int imguiOnboardingShow(void) {
                 ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", nameError);
             }
             break;
-        case ONBOARD_STEP_KEYS:
+        case ONBOARD_STEP_KEYS: {
             if (!keysBegun) {
                 imguiKeySetupBeginEmbedded();
                 keysBegun = true;
             }
-            imguiKeySetupRenderEmbedded();
+            /* Reserve room beneath the binding list for the wizard's button
+             * row (separator + spacing + the buttons + the window's bottom
+             * padding) so the list scrolls internally rather than pushing the
+             * fixed-height panel into an outer scrollbar. */
+            const ImGuiStyle &st = ImGui::GetStyle();
+            float buttonRowReserve = 30.0f * s + st.ItemSpacing.y * 4.0f +
+                                     st.WindowPadding.y;
+            imguiKeySetupRenderEmbedded(buttonRowReserve);
             break;
+        }
         default:
             break;
         }
 
-        /* Button row pinned near the bottom of the panel. */
+        /* Button row, flowing directly beneath the step body so the panel
+         * height tracks the content rather than padding out to a fixed size. */
         const float buttonH = 30.0f * s;
-        ImGui::SetCursorPosY(panelH - buttonH - 16.0f * s);
+        ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 

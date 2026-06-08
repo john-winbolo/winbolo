@@ -139,11 +139,15 @@ static void keyRow(const char *label, KeySetupField field) {
  * already-running ImGui context without the OK/Cancel footer.
  * Operates purely on the shared file-static form state.
  * ------------------------------------------------------- */
-static void renderKeyRows(void) {
-    /* Scrollable region containing all binding rows */
+static void renderKeyRows(float extraFooterReserve = 0.0f) {
+    /* Scrollable region containing all binding rows. footerH reserves space
+     * for the two checkboxes below the child; extraFooterReserve lets an
+     * embedding caller (the onboarding wizard) also reserve room for its own
+     * button row beneath, so the rows scroll inside the child rather than
+     * pushing the host window past its fixed height. */
     float footerH = ImGui::GetFrameHeightWithSpacing() * 3.0f +
                     ImGui::GetStyle().ItemSpacing.y * 2.0f;
-    ImGui::BeginChild("##bindings", ImVec2(0.0f, -footerH), false);
+    ImGui::BeginChild("##bindings", ImVec2(0.0f, -(footerH + extraFooterReserve)), false);
 
     constexpr ImGuiTableFlags tflags =
         ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingFixedFit |
@@ -556,8 +560,8 @@ extern "C" void imguiKeySetupBeginEmbedded(void) {
     s_waiting      = ksNone;
 }
 
-extern "C" void imguiKeySetupRenderEmbedded(void) {
-    renderKeyRows();
+extern "C" void imguiKeySetupRenderEmbedded(float reserveBottom) {
+    renderKeyRows(reserveBottom);
 }
 
 extern "C" void imguiKeySetupCommitEmbedded(void) {
