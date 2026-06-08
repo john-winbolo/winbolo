@@ -17,13 +17,14 @@
  * Purpose:       Standalone blocking first-run online
  *                onboarding wizard. Runs its own ImGui
  *                context and SDL event loop, same pattern
- *                as imgui_keysetup.cpp. Scaffold only: a
- *                three-step Account / Name / Keys shell
- *                with Back / Next / Skip chrome and a
- *                progress indicator; real step content and
- *                account logic land in later phases. All
- *                strings are literal English here —
- *                localization is deferred to a later phase.
+ *                as imgui_keysetup.cpp. Three steps —
+ *                Account (WinBolo.net sign-in), Player Name
+ *                (validated), and Keys (inline rebind) — with
+ *                Back / Next / Skip chrome and a progress
+ *                indicator. The Name step is skipped when the
+ *                player is already signed in, since the
+ *                account display name takes precedence. All
+ *                user-facing strings route through langGetText.
  *********************************************************/
 
 #include <SDL3/SDL.h>
@@ -36,17 +37,23 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
 #include "dialog_footer.h"
+#include "imgui_winbolonet.h"   /* imguiWinbolonetDrawSection — Account step */
+#include "imgui_keysetup.h"     /* embedded key-rebind form — Keys step */
 
 extern "C" {
 #include "../sdl3draw.h"
+#include "global.h"             /* PLAYER_NAME_LEN */
 #include "../bg_game.h"
-#include "../../gamefront.h"   /* gameFrontSetOnboardingComplete */
+#include "../../lang.h"
+#include "../../gamefront.h"   /* gameFrontSetOnboardingComplete, name + token */
+#include "playername_validate.h" /* playerNameValidate — Name step gate */
 #include "imgui_onboarding.h"
 }
 
-/* Linear wizard steps. No conditional gating in this phase — the
- * array is walked front to back; a later input-method step can slot
- * into the sequence here. */
+/* Wizard steps. Account → Name → Keys, but the Name step is shown
+ * only when the player is not signed in: when signed in the account
+ * display name wins, so navigation skips Name in both directions and
+ * the progress indicator omits its dot. */
 enum OnboardStep {
     ONBOARD_STEP_ACCOUNT = 0,
     ONBOARD_STEP_NAME,
@@ -56,10 +63,59 @@ enum OnboardStep {
 
 static const char *onboardStepTitle(int step) {
     switch (step) {
-    case ONBOARD_STEP_ACCOUNT: return "Account";
-    case ONBOARD_STEP_NAME:    return "Player Name";
-    case ONBOARD_STEP_KEYS:    return "Keys";
+    case ONBOARD_STEP_ACCOUNT: return langGetText(STR_DLGONBOARD_ACCOUNT_TITLE);
+    case ONBOARD_STEP_NAME:    return langGetText(STR_DLGONBOARD_NAME_TITLE);
+    case ONBOARD_STEP_KEYS:    return langGetText(STR_DLGONBOARD_KEYS_TITLE);
     default:                   return "";
+    }
+}
+
+static const char *onboardStepDesc(int step) {
+    switch (step) {
+    case ONBOARD_STEP_ACCOUNT: return langGetText(STR_DLGONBOARD_ACCOUNT_DESC);
+    case ONBOARD_STEP_NAME:    return langGetText(STR_DLGONBOARD_NAME_DESC);
+    case ONBOARD_STEP_KEYS:    return langGetText(STR_DLGONBOARD_KEYS_DESC);
+    default:                   return "";
+    }
+}
+
+/* The step reached by stepping forward / back from `step`, honouring
+ * the signed-in skip of the Name step. Returns -1 when there is no
+ * step in that direction (first / last of the active sequence). */
+static int onboardNextStep(int step, bool loggedIn) {
+    switch (step) {
+    case ONBOARD_STEP_ACCOUNT:
+        return loggedIn ? ONBOARD_STEP_KEYS : ONBOARD_STEP_NAME;
+    case ONBOARD_STEP_NAME:
+        return ONBOARD_STEP_KEYS;
+    default:
+        return -1;
+    }
+}
+
+static int onboardPrevStep(int step, bool loggedIn) {
+    switch (step) {
+    case ONBOARD_STEP_KEYS:
+        return loggedIn ? ONBOARD_STEP_ACCOUNT : ONBOARD_STEP_NAME;
+    case ONBOARD_STEP_NAME:
+        return ONBOARD_STEP_ACCOUNT;
+    default:
+        return -1;
+    }
+}
+
+/* Map a player-name validation failure to a localized message, mirroring
+ * the set-name dialog's error vocabulary. */
+static const char *onboardNameErrorText(PlayerNameValidationError err) {
+    switch (err) {
+    case PLAYER_NAME_ERR_EMPTY:           return langGetText(STR_DLGSETNAME_BLANK_ERR);
+    case PLAYER_NAME_ERR_RESERVED_PREFIX: return langGetText(STR_DLGSETNAME_STAR_ERR);
+    case PLAYER_NAME_ERR_RESERVED_SUFFIX: return langGetText(STR_NAME_INVALID_RESERVED_SUFFIX);
+    case PLAYER_NAME_ERR_MIXED_SCRIPTS:   return langGetText(STR_NAME_INVALID_MIXED_SCRIPTS);
+    case PLAYER_NAME_ERR_INVALID_UTF8:
+    case PLAYER_NAME_ERR_DISALLOWED_CHAR:
+    case PLAYER_NAME_ERR_TOO_LONG:
+    default:                              return langGetText(STR_NAME_INVALID_CHARS);
     }
 }
 
@@ -80,7 +136,7 @@ extern "C" int imguiOnboardingShow(void) {
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, 1024, 768);
-    dialogSetWindowTitle(window, "Welcome to WinBolo Online");
+    dialogSetWindowTitle(window, langGetText(STR_DLGONBOARD_TITLE));
     SDL_SetWindowResizable(window, true);
 #endif
     dialogRestorePosition(window);
@@ -107,6 +163,12 @@ extern "C" int imguiOnboardingShow(void) {
 
     int currentStep = ONBOARD_STEP_ACCOUNT;
 
+    /* Per-step working state. */
+    char nameBuf[PLAYER_NAME_LEN] = {};
+    bool nameSeeded = false;          /* seed nameBuf from prefs once */
+    const char *nameError = nullptr;  /* inline validation message */
+    bool keysBegun = false;           /* seed embedded key form once */
+
     bool running = true;
     int result = 0;
 
@@ -114,6 +176,14 @@ extern "C" int imguiOnboardingShow(void) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
+            /* While a key row is capturing, route the raw scancode into the
+             * embedded key form instead of letting ImGui consume it. */
+            if (imguiKeySetupIsCapturingInGameKey() &&
+                ev.type == SDL_EVENT_KEY_DOWN &&
+                ev.key.windowID == SDL_GetWindowID(window)) {
+                imguiKeySetupHandleInGameScancode((int)ev.key.scancode);
+                continue;
+            }
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
@@ -178,7 +248,7 @@ extern "C" int imguiOnboardingShow(void) {
         /* Title */
         {
             ImGui::SetWindowFontScale(1.4f);
-            const char *title = "Welcome to WinBolo Online";
+            const char *title = langGetText(STR_DLGONBOARD_TITLE);
             ImVec2 textSize = ImGui::CalcTextSize(title);
             ImGui::SetCursorPosX((panelW - textSize.x) * 0.5f);
             ImGui::Text("%s", title);
@@ -186,14 +256,28 @@ extern "C" int imguiOnboardingShow(void) {
         }
         ImGui::Spacing();
 
-        /* Progress indicator — one dot per step, current step filled. */
+        /* Signed-in state drives which steps are active. Recomputed each
+         * frame so signing in/out on the Account step immediately reshapes
+         * both navigation and the progress indicator. */
+        char token[256], expiry[256];
+        gameFrontGetWinbolonetToken(token, expiry);
+        bool loggedIn = (token[0] != '\0');
+
+        /* Active step sequence — the Name step drops out when signed in. */
+        int seq[ONBOARD_STEP_COUNT];
+        int seqLen = 0;
+        seq[seqLen++] = ONBOARD_STEP_ACCOUNT;
+        if (!loggedIn) seq[seqLen++] = ONBOARD_STEP_NAME;
+        seq[seqLen++] = ONBOARD_STEP_KEYS;
+
+        /* Progress indicator — one dot per active step, current step filled. */
         {
             char dots[ONBOARD_STEP_COUNT * 4 + 1];
             dots[0] = '\0';
-            for (int i = 0; i < ONBOARD_STEP_COUNT; ++i) {
+            for (int i = 0; i < seqLen; ++i) {
                 if (i > 0) strncat(dots, " ", sizeof(dots) - strlen(dots) - 1);
-                strncat(dots, (i == currentStep) ? "\xE2\x97\x8F" /* ● */
-                                                 : "\xE2\x97\x8B" /* ○ */,
+                strncat(dots, (seq[i] == currentStep) ? "\xE2\x97\x8F" /* ● */
+                                                      : "\xE2\x97\x8B" /* ○ */,
                         sizeof(dots) - strlen(dots) - 1);
             }
             ImVec2 dotsSize = ImGui::CalcTextSize(dots);
@@ -204,12 +288,44 @@ extern "C" int imguiOnboardingShow(void) {
         ImGui::Separator();
         ImGui::Spacing();
 
-        /* Placeholder step body — real content lands in a later phase. */
+        /* Step heading + description. */
         ImGui::SetWindowFontScale(1.2f);
         ImGui::Text("%s", onboardStepTitle(currentStep));
         ImGui::SetWindowFontScale(1.0f);
         ImGui::Spacing();
-        ImGui::TextDisabled("(set up in a later step)");
+        ImGui::TextWrapped("%s", onboardStepDesc(currentStep));
+        ImGui::Spacing();
+
+        /* Step body. */
+        switch (currentStep) {
+        case ONBOARD_STEP_ACCOUNT:
+            /* WBN sign-in widget — draws the Sign In button / signed-in
+             * status and runs its own login popup. Sign In only; the
+             * browser create-account path lands in a later phase. */
+            imguiWinbolonetDrawSection(false);
+            break;
+        case ONBOARD_STEP_NAME:
+            if (!nameSeeded) {
+                gameFrontGetPlayerName(nameBuf);
+                nameSeeded = true;
+            }
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputText("##onboardname", nameBuf, sizeof(nameBuf));
+            if (nameError) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", nameError);
+            }
+            break;
+        case ONBOARD_STEP_KEYS:
+            if (!keysBegun) {
+                imguiKeySetupBeginEmbedded();
+                keysBegun = true;
+            }
+            imguiKeySetupRenderEmbedded();
+            break;
+        default:
+            break;
+        }
 
         /* Button row pinned near the bottom of the panel. */
         const float buttonH = 30.0f * s;
@@ -218,33 +334,56 @@ extern "C" int imguiOnboardingShow(void) {
         ImGui::Spacing();
 
         const ImVec2 buttonSize(110.0f * s, buttonH);
-        bool isFirst = (currentStep == 0);
-        bool isLast = (currentStep == ONBOARD_STEP_COUNT - 1);
+        int prevStep = onboardPrevStep(currentStep, loggedIn);
+        int nextStep = onboardNextStep(currentStep, loggedIn);
+        bool isLast = (nextStep < 0);
 
-        /* Back — disabled on the first step. */
-        ImGui::BeginDisabled(isFirst);
-        if (ImGui::Button("Back", buttonSize)) {
-            if (currentStep > 0) currentStep--;
+        /* Back — disabled at the start of the active sequence. */
+        ImGui::BeginDisabled(prevStep < 0);
+        if (ImGui::Button(langGetText(STR_BACK), buttonSize)) {
+            if (prevStep >= 0) {
+                nameError = nullptr;
+                currentStep = prevStep;
+            }
         }
         ImGui::EndDisabled();
 
-        /* Skip — always present; finish via the skip path. */
+        /* Skip — abandon-and-proceed: mark complete and exit without
+         * committing the current step's pending edits. */
         ImGui::SameLine();
-        if (ImGui::Button("Skip", buttonSize)) {
+        if (ImGui::Button(langGetText(STR_DLGONBOARD_SKIP), buttonSize)) {
             result = 1;
             gameFrontSetOnboardingComplete();
             running = false;
         }
 
-        /* Next / Finish — advance, or finish on the last step. */
+        /* Next / Finish — commit the step being left, then advance or finish.
+         * A failed name validation blocks the advance and shows the error. */
         ImGui::SameLine();
-        if (ImGui::Button(isLast ? "Finish" : "Next", buttonSize)) {
-            if (isLast) {
-                result = 1;
-                gameFrontSetOnboardingComplete();
-                running = false;
-            } else {
-                currentStep++;
+        if (ImGui::Button(langGetText(isLast ? STR_DLGONBOARD_FINISH
+                                             : STR_DLGONBOARD_NEXT), buttonSize)) {
+            bool advance = true;
+            if (currentStep == ONBOARD_STEP_NAME) {
+                char validated[PLAYER_NAME_LEN];
+                PlayerNameValidationError err = PLAYER_NAME_OK;
+                if (playerNameValidate(nameBuf, validated, sizeof(validated), &err)) {
+                    gameFrontSetPlayerName(validated);
+                    nameError = nullptr;
+                } else {
+                    nameError = onboardNameErrorText(err);
+                    advance = false;
+                }
+            } else if (currentStep == ONBOARD_STEP_KEYS) {
+                imguiKeySetupCommitEmbedded();
+            }
+            if (advance) {
+                if (isLast) {
+                    result = 1;
+                    gameFrontSetOnboardingComplete();
+                    running = false;
+                } else {
+                    currentStep = nextStep;
+                }
             }
         }
 

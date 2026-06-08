@@ -1420,6 +1420,18 @@
 #define STR_DLGWBN_STATS_LOSES              1422
 #define STR_DLGWBN_STATS_RANK               1423
 
+/* First-run online onboarding wizard */
+#define STR_DLGONBOARD_TITLE                1424
+#define STR_DLGONBOARD_ACCOUNT_TITLE        1425
+#define STR_DLGONBOARD_ACCOUNT_DESC         1426
+#define STR_DLGONBOARD_NAME_TITLE           1427
+#define STR_DLGONBOARD_NAME_DESC            1428
+#define STR_DLGONBOARD_KEYS_TITLE           1429
+#define STR_DLGONBOARD_KEYS_DESC            1430
+#define STR_DLGONBOARD_NEXT                 1431
+#define STR_DLGONBOARD_SKIP                 1432
+#define STR_DLGONBOARD_FINISH               1433
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

@@ -1286,6 +1286,18 @@ static const LangEntry langTable[] = {
     {1421, "Wins:"},
     {1422, "Losses:"},
     {1423, "Rank:"},
+
+    /* First-run online onboarding wizard */
+    {1424, "Welcome to WinBolo Online"},
+    {1425, "Account"},
+    {1426, "Sign in to your WinBolo.net account, or continue without one."},
+    {1427, "Player Name"},
+    {1428, "Choose the name other players will see."},
+    {1429, "Keys"},
+    {1430, "Set up your controls. You can change these later in Settings."},
+    {1431, "Next"},
+    {1432, "Skip"},
+    {1433, "Finish"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
