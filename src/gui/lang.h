@@ -1435,6 +1435,9 @@
 /* WinBolo.net browser signup link */
 #define STR_DLGWBN_CREATE_ACCOUNT           1434
 
+/* WinBolo.net Steam-auth status suffix */
+#define STR_DLGWBN_VIA_STEAM                1435
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

@@ -1040,6 +1040,7 @@ static void gameFrontValidateWbnBeforeJoin(void) {
 
       if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName, &rank, &rankTotal, &stats, errorMsg)) {
         gameFrontSetWinbolonetToken(tokenOut, expiryOut);
+        gameFrontSetWbnAuthMethod("steam");
         gameFrontSetWinbolonetRank(rank, rankTotal);
         gameFrontSetWinbolonetStats(&stats);
         if (playerName[0] != '\0') {
@@ -1746,6 +1747,15 @@ void gameFrontClearWinbolonetToken(void) {
   gameFrontWbnRankTotal = 0;
   gameFrontWbnStats.valid = FALSE;
   gameFrontSaveWbnTokenToPrefs();
+  gameFrontSetWbnAuthMethod("");
+}
+
+void gameFrontSetWbnAuthMethod(const char *method) {
+  prefsSetString("WINBOLO.NET", "AuthMethod", method ? method : "");
+}
+
+void gameFrontGetWbnAuthMethod(char *out, size_t outSize) {
+  prefsGetString("WINBOLO.NET", "AuthMethod", "", out, outSize);
 }
 
 bool gameFrontGetWinbolonetUse(void) {

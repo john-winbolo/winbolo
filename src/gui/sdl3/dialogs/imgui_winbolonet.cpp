@@ -123,6 +123,7 @@ static void wbnCheckThread(void) {
     if (wbnWork.success) {
         if (!wbnWork.isValidate) {
             gameFrontSetWinbolonetToken(wbnWork.tokenOut, wbnWork.expiryOut);
+            gameFrontSetWbnAuthMethod("password");
         }
         gameFrontSetWinbolonetRank(wbnWork.rankOut, wbnWork.rankTotalOut);
         gameFrontSetWinbolonetStats(&wbnWork.statsOut);
@@ -397,6 +398,17 @@ static bool wbnDrawAccountChip(float s, float textAlpha) {
     return clicked;
 }
 
+/* When the active session was authenticated via Steam, append a muted
+ * "via Steam" suffix on the same line as the preceding status text. */
+static void wbnDrawViaSteamSuffix(void) {
+    char method[32];
+    gameFrontGetWbnAuthMethod(method, sizeof(method));
+    if (SDL_strcmp(method, "steam") == 0) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_VIA_STEAM));
+    }
+}
+
 /* ---- Public API ---- */
 
 /* Renders the shared "My Stats" modal from gamefront's stored per-mode
@@ -452,6 +464,7 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
         }
         ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s",
                            langGetText(STR_DLGWBN_SIGNED_IN));
+        wbnDrawViaSteamSuffix();
     }
     ImGui::Spacing();
 
@@ -544,6 +557,7 @@ extern "C" void imguiWinbolonetDrawSection(bool inGame) {
         ImGui::TextUnformatted(langGetText(STR_DLGWBN_LABEL));
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", langGetText(STR_DLGWBN_SIGNED_IN));
+        wbnDrawViaSteamSuffix();
         if (expiry[0] != '\0') {
             ImGui::SameLine();
             MessageArgs args = {};

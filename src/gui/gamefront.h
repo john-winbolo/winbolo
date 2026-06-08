@@ -664,6 +664,12 @@ void gameFrontGetWinbolonetToken(char *token, char *expiry);
 *********************************************************/
 void gameFrontClearWinbolonetToken(void);
 
+/* How the current WinBolo.net session was authenticated: "steam",
+ * "password", or "" when not signed in. Device-local (WINBOLO.NET
+ * section), never synced. */
+void gameFrontSetWbnAuthMethod(const char *method);
+void gameFrontGetWbnAuthMethod(char *out, size_t outSize);
+
 /*********************************************************
 *NAME:          gameFrontGetWinbolonetUse
 *PURPOSE:

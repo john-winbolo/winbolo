@@ -1301,6 +1301,9 @@ static const LangEntry langTable[] = {
 
     /* WinBolo.net browser signup link */
     {1434, "No account? Create one"},
+
+    /* WinBolo.net Steam-auth status suffix */
+    {1435, "via Steam"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
