@@ -84,6 +84,14 @@ struct ScrollState {
                              * game start, respawn, and mode swap. */
   DWORD lastRecalcTick;     /* last tick we updated targetOffset */
   DWORD parkedSinceTick;    /* tick when speed last became 0 (0 = not parked) */
+
+  /* Park-settle direction latch. The tile the parked view settles onto is
+   * picked in the tank's facing direction, but that direction is captured
+   * once when the tank stops and held until it moves again — otherwise
+   * turning in place would keep re-picking the tile and drift the view.
+   * settleLatched is cleared the moment speed > 0. */
+  bool   settleLatched;
+  int8_t settleDirX, settleDirY;
   bool  gunsightWasInside;  /* gunsight inside view last tick — edge-cross detector */
   bool  prevThreatTank[MAX_TANKS];
   bool  prevThreatPill[MAX_PILLS];
