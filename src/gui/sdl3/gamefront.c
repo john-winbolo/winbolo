@@ -92,6 +92,7 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
 
 #include "dialogs/imgui_wbn_browser.h"
+#include "dialogs/imgui_onboarding.h"
 
 #ifndef DEFAULT_UDP_PORT
 #define DEFAULT_UDP_PORT 27500
@@ -887,6 +888,9 @@ static bool gameFrontDialogs(void) {
       break;
     }
     case openInternet: {
+      if (!gameFrontOnboardingComplete()) {
+        if (!imguiOnboardingShow()) { dlgState = openWelcome; break; }
+      }
       const DialogBackend *db = dialogBackendGet();
       openingStates prev = dlgState;
       s_isLanOnly = FALSE;
@@ -902,6 +906,9 @@ static bool gameFrontDialogs(void) {
       break;
     }
     case openLan: {
+      if (!gameFrontOnboardingComplete()) {
+        if (!imguiOnboardingShow()) { dlgState = openWelcome; break; }
+      }
       const DialogBackend *db = dialogBackendGet();
       openingStates prev = dlgState;
       s_isLanOnly = TRUE;
@@ -2035,6 +2042,16 @@ bool gameFrontPreferencesExist(void) {
     return TRUE;
   }
   return FALSE;
+}
+
+bool gameFrontOnboardingComplete(void) {
+  char buff[FILENAME_MAX];
+  prefsGetString("SETTINGS", "Onboarding Complete", "No", buff, FILENAME_MAX);
+  return YESNO_TO_TRUEFALSE(buff[0]);
+}
+
+void gameFrontSetOnboardingComplete(void) {
+  prefsSetString("SETTINGS", "Onboarding Complete", "Yes");
 }
 
 

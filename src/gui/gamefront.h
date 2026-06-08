@@ -630,6 +630,11 @@ void gameFrontEnableRejoin(void);
 *********************************************************/
 bool gameFrontPreferencesExist(void);
 
+/* First-run online onboarding flag, backed by the SETTINGS /
+ * "Onboarding Complete" preference (Yes/No). */
+bool gameFrontOnboardingComplete(void);
+void gameFrontSetOnboardingComplete(void);
+
 /*********************************************************
 *NAME:          gameFrontSetWinbolonetToken
 *PURPOSE:
