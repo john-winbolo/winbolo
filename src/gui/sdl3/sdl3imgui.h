@@ -232,13 +232,13 @@ void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
 void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping);
 
 /*********************************************************
-*NAME:          sdl3ImguiGetGlobeIcon / GetSteamIcon
+*NAME:          sdl3ImguiGetWbnVerifiedIcon / GetSteamIcon
 *PURPOSE:
-*  Returns the SDL_Texture for the WBN globe or Steam icon.
-*  Loads the SVGs lazily on first call.  Returns NULL if
+*  Returns the SDL_Texture for the WBN-verified shield or Steam
+*  icon.  Loads the SVGs lazily on first call.  Returns NULL if
 *  the SVG could not be loaded.
 *********************************************************/
-SDL_Texture *sdl3ImguiGetGlobeIcon(void);
+SDL_Texture *sdl3ImguiGetWbnVerifiedIcon(void);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
 /*********************************************************
@@ -274,7 +274,7 @@ SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType);
 *PURPOSE:
 *  Renders a player name with its decorations as a single
 *  inline ImGui run: platform icon (gold-tinted if supporter)
-*  then WBN globe (verified) then Steam icon to the left of
+*  then WBN verified shield then Steam icon to the left of
 *  the name, optional country flag to the right when
 *  showCountry is true and countryCode is a real ISO 3166
 *  alpha-2 code. Steam badge surfaces for either a

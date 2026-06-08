@@ -137,21 +137,16 @@ static void wbnCheckThread(void) {
 
 /* Spinner helper */
 static void wbnDrawSpinner(const char *label) {
-    float radius = ImGui::GetFontSize() * 0.5f;
-    float t = (float)SDL_GetTicks() / 1000.0f;
+    float radius = ImGui::GetFontSize() * 0.6f;
+    float phase = (float)SDL_GetTicks() * 0.002f;
     ImVec2 pos = ImGui::GetCursorScreenPos();
     ImVec2 centre(pos.x + radius, pos.y + radius);
-    ImDrawList *dl = ImGui::GetWindowDrawList();
     ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
 
-    int segments = 12;
-    for (int i = 0; i < segments; i++) {
-        float a = t * 6.0f + (float)i * (2.0f * 3.14159f / (float)segments);
-        float alpha = (float)(segments - i) / (float)segments;
-        float x = centre.x + cosf(a) * radius;
-        float y = centre.y + sinf(a) * radius;
-        dl->AddCircleFilled(ImVec2(x, y), 2.0f, (col & 0x00FFFFFF) | ((ImU32)(alpha * 255.0f) << 24));
-    }
+    /* A spinning WinBolo.net shield (the verified badge) stands in for a
+     * generic spinner — narrower than tall, turning about its vertical axis. */
+    imguiDrawSpinningShield(ImGui::GetWindowDrawList(), centre,
+                            radius * 0.80f, radius, phase, col);
 
     ImGui::Dummy(ImVec2(radius * 2.0f, radius * 2.0f));
     ImGui::SameLine();

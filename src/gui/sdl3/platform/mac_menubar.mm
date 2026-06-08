@@ -485,7 +485,7 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
     NSImage  *_flagImage;          /* full-colour, drawn as-is */
     NSString *_platformBasename;   /* ui-icon name; tinted at draw time */
     BOOL      _platformGold;       /* verified && supporter → gold tint */
-    BOOL      _hasWbn;             /* draw globe.svg tinted */
+    BOOL      _hasWbn;             /* draw shield.svg tinted */
     BOOL      _hasSteam;           /* draw steam.svg tinted */
     NSString *_name;
     NSString *_pingText;
@@ -583,9 +583,9 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
     }
     x += 14.0 + 4.0;
 
-    /* WBN globe — only when WBN_VERIFIED. */
+    /* WBN-verified shield — only when WBN_VERIFIED. */
     if (_hasWbn) {
-        NSImage *wbn = macMenubarTintedUiIcon(@"globe", iconTint);
+        NSImage *wbn = macMenubarTintedUiIcon(@"shield", iconTint);
         if (wbn) {
             [wbn drawInRect:NSMakeRect(x, midY - 7.0, 14.0, 14.0)
                   fromRect:NSZeroRect

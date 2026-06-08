@@ -175,6 +175,57 @@ static inline SDL_Texture *imguiLoadSvgIconWhite(SDL_Renderer *rend, const char 
     return tex;
 }
 
+/* Draw a filled shield that appears to spin about its vertical axis, straight
+ * into an ImDrawList — no texture, so it stays crisp at any size and takes
+ * whatever colour you pass. Call once per frame with an advancing `phase`
+ * (radians) to animate; e.g. phase = SDL_GetTicks() * 0.002f.
+ *
+ *   center - shield centre, screen-space pixels
+ *   halfW  - half width at face-on, pixels (shield is taller than wide)
+ *   halfH  - half height, pixels
+ *   phase  - rotation angle; increases over time to spin
+ *   col    - base colour (alpha honoured; shaded relative to it)
+ *
+ * The 3-D feel comes from two things: the width scales with cos(phase) so the
+ * shield narrows to an edge-on sliver and swings back, and the fill is
+ * lightened head-on / darkened toward edge-on so it reads as a solid plate
+ * turning in the light rather than a flat shape being squashed. */
+static inline void imguiDrawSpinningShield(ImDrawList *dl, ImVec2 center,
+                                           float halfW, float halfH,
+                                           float phase, ImU32 col) {
+    if (!dl || halfW < 1.0f || halfH < 1.0f) return;
+
+    /* Shield outline, normalised to x,y in [-1,1] (x right, y down): flat
+     * top, short vertical shoulders, curved sides to a bottom point. Convex,
+     * so AddConvexPolyFilled fills it directly. */
+    static const ImVec2 unit[] = {
+        {-0.92f, -1.00f}, { 0.92f, -1.00f}, { 0.92f, -0.10f},
+        { 0.80f,  0.30f}, { 0.58f,  0.62f}, { 0.30f,  0.86f}, { 0.00f, 1.00f},
+        {-0.30f,  0.86f}, {-0.58f,  0.62f}, {-0.80f,  0.30f}, {-0.92f, -0.10f},
+    };
+    const int n = (int)(sizeof(unit) / sizeof(unit[0]));
+
+    const float cosP = SDL_cosf(phase);
+    const float face = SDL_fabsf(cosP);          /* 1 head-on … 0 edge-on */
+    const float w    = halfW * cosP;             /* signed; |w|→0 edge-on   */
+
+    const int   baseA = (int)((col >> IM_COL32_A_SHIFT) & 0xFF);
+    const ImU32 rgb   = col & ~IM_COL32_A_MASK;
+
+    ImVec2 pts[16];
+    for (int i = 0; i < n; ++i) {
+        pts[i].x = center.x + unit[i].x * w;
+        pts[i].y = center.y + unit[i].y * halfH;
+    }
+
+    /* Lit face / dim edge gives the turning-in-the-light read. */
+    ImU32 fill = rgb | ((ImU32)(baseA * (0.32f + 0.68f * face)) << IM_COL32_A_SHIFT);
+    dl->AddConvexPolyFilled(pts, n, fill);
+    /* Full-alpha rim keeps the silhouette crisp; at edge-on it collapses to a
+     * vertical line — exactly the shield seen on edge. */
+    dl->AddPolyline(pts, n, col, ImDrawFlags_Closed, 1.4f);
+}
+
 /* Open a URL in the system browser. Returns true on success.
  * SDL_OpenURL handles per-platform dispatch (ShellExecuteW on Windows,
  * xdg-open / open on Linux/macOS, etc.) — no need for our own #ifdef. */
