@@ -66,6 +66,7 @@
 
 #include "bolo_rand.h"
 #include "global.h"
+#include "../common/prefs.h"
 #include "everard_map.h"
 #include "tank.h"
 #include "players.h"
@@ -441,8 +442,8 @@ typedef struct {
      * Brains that don't implement them ignore the messages; the
      * flag still flips C-side so callers can query app.manualControl. */
     bool         manualControl;
-    /* SDL_Scancode values, loaded from WinBolo.ini [KEYS] at
-     * startup. Defaults match the original Mac WinBolo bindings
+    /* SDL_Scancode values, loaded from the preferences document [KEYS]
+     * section at startup. Defaults match the original Mac WinBolo bindings
      * (E forward, D backward, S left, F right). */
     int          keyForward;
     int          keyBackward;
@@ -709,10 +710,10 @@ static void recordingTruncate(RecordingBuffer *rb, int keepCount) {
     }
 }
 
-/* Read the user's WinBolo key bindings from the same INI the main
- * game uses, so manual control in BrainTest matches the muscle
- * memory the user already has. Falls back to defaults if the file
- * or the [KEYS] section is missing. Stored as SDL_Scancode values. */
+/* Read the user's WinBolo key bindings from the same preferences
+ * document the main game uses, so manual control in BrainTest matches
+ * the muscle memory the user already has. Falls back to defaults if the
+ * [KEYS] section is missing. Stored as SDL_Scancode values. */
 static void loadKeyBindings(BrainTestApp *app) {
     /* Defaults match Bolo's Mac defaults — E forward, D backward,
      * S left, F right, Space shoot, LShift mine. */
@@ -723,33 +724,22 @@ static void loadKeyBindings(BrainTestApp *app) {
     app->keyShoot    = SDL_SCANCODE_SPACE;
     app->keyLayMine  = SDL_SCANCODE_LSHIFT;
 
-#ifdef _WIN32
     char buff[64];
-    char iniPath[FILENAME_MAX];
-    /* SDL_GetPrefPath returns a heap-allocated string; must free. */
-    char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
-    if (prefDir && prefDir[0]) {
-        SDL_snprintf(iniPath, sizeof(iniPath), "%sWinBolo.ini", prefDir);
-    } else {
-        SDL_snprintf(iniPath, sizeof(iniPath), "WinBolo.ini");
-    }
-    SDL_free(prefDir);
-    /* The values stored in the INI by the main game are SDL
-     * scancodes (the same numbers SDL3 uses). Default fallbacks
-     * are scancodes for E/D/S/F/Space/LShift respectively. */
-    GetPrivateProfileStringA("KEYS", "Forward",   "8",   buff, sizeof(buff), iniPath); /* E */
+    /* The values stored by the main game are SDL scancodes (the same
+     * numbers SDL3 uses). Default fallbacks are scancodes for
+     * E/D/S/F/Space/LShift respectively. */
+    prefsGetString("KEYS", "Forward",   "8",   buff, sizeof(buff)); /* E */
     app->keyForward  = atoi(buff);
-    GetPrivateProfileStringA("KEYS", "Backwards", "7",   buff, sizeof(buff), iniPath); /* D */
+    prefsGetString("KEYS", "Backwards", "7",   buff, sizeof(buff)); /* D */
     app->keyBackward = atoi(buff);
-    GetPrivateProfileStringA("KEYS", "Left",      "22",  buff, sizeof(buff), iniPath); /* S */
+    prefsGetString("KEYS", "Left",      "22",  buff, sizeof(buff)); /* S */
     app->keyLeft     = atoi(buff);
-    GetPrivateProfileStringA("KEYS", "Right",     "9",   buff, sizeof(buff), iniPath); /* F */
+    prefsGetString("KEYS", "Right",     "9",   buff, sizeof(buff)); /* F */
     app->keyRight    = atoi(buff);
-    GetPrivateProfileStringA("KEYS", "Shoot",     "44",  buff, sizeof(buff), iniPath); /* Space */
+    prefsGetString("KEYS", "Shoot",     "44",  buff, sizeof(buff)); /* Space */
     app->keyShoot    = atoi(buff);
-    GetPrivateProfileStringA("KEYS", "Lay Mine",  "225", buff, sizeof(buff), iniPath); /* LShift */
+    prefsGetString("KEYS", "Lay Mine",  "225", buff, sizeof(buff)); /* LShift */
     app->keyLayMine  = atoi(buff);
-#endif
 
     SDL_Log("Manual key bindings (scancodes): fwd=%d back=%d left=%d "
             "right=%d shoot=%d mine=%d",
@@ -4479,6 +4469,20 @@ int main(int argc, char *argv[]) {
     clientMutexCreate();
     langSetup();
 
+    /* Load the process-global preferences document (WinBolo.json) before
+     * any prefs access (key bindings below read from it). */
+    {
+        char prefsPath[FILENAME_MAX];
+        char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+        if (prefDir && prefDir[0]) {
+            SDL_snprintf(prefsPath, sizeof(prefsPath), "%sWinBolo.json", prefDir);
+        } else {
+            SDL_snprintf(prefsPath, sizeof(prefsPath), "WinBolo.json");
+        }
+        SDL_free(prefDir);
+        prefsInit(prefsPath);
+    }
+
     /* Create window */
     app.window = SDL_CreateWindow("BrainTest",
                                   DEFAULT_WINDOW_W, DEFAULT_WINDOW_H,
@@ -4528,8 +4532,8 @@ int main(int argc, char *argv[]) {
      * always exists. */
     panelTypeRegister("text", panelRenderText);
 
-    /* Load manual-control key bindings from the user's WinBolo.ini
-     * (POSIX falls back to defaults — no INI parsing wrapper here). */
+    /* Load manual-control key bindings from the user's preferences
+     * document so manual control matches the main game. */
     loadKeyBindings(&app);
 
     /* Initialize map view lookup tables */

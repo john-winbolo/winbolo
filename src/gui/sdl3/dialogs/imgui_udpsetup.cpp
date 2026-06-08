@@ -375,6 +375,7 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::End(); /* ##UdpSetup panel */
         ImGui::End(); /* ##UdpSetupBg host */
 
+        dialogDrawNavOutline();
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

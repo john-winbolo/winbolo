@@ -29,10 +29,12 @@
 #include "server_sim_internal.h"      /* serverSimGameVoteToggle */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
 #include "threads.h"
+#include "../common/wb_log.h"
 #include "transport_udp.h"            /* transportUdpServerGetPlayerName,
                                          transportUdpServerSetBotName,
                                          transportUdpServerKickPlayer */
 #include "../winbolonet/winbolonet_server.h" /* winboloNetIsPlayerParticipant */
+#include "../winbolonet/winbolonet_core.h"   /* winbolonetIsRunning */
 
 /* Authority gate shared by the command dispatcher (this TU) and the
  * lobby command handlers in transport_udp_server.c, where the function
@@ -559,7 +561,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_WBN_REAUTH: {
-        if (!serverSimGetRanked(sim)) return CMD_REJECT_BAD_STATE;
+        /* Gate on WBN availability, not ranked mode: identity verification
+         * (globe / supporter / steam-linked badges) applies on any
+         * WBN-registered server, matching the join-time verify path. The
+         * handler re-checks winbolonetIsRunning before touching the net. */
+        if (!winbolonetIsRunning()) return CMD_REJECT_BAD_STATE;
         transportUdpServerHandleWbnReauth(sim, (BYTE)senderSlot,
                                           cmd->u.wbnReauth.token);
         return CMD_OK;

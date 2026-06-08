@@ -1,7 +1,6 @@
 /*
  * ios_stubs.c — Stub implementations for modules not included
- * in the iOS target. Covers: winbolonet, geolookup, cursor,
- * and posix_stubs (preferences I/O).
+ * in the iOS target. Covers: winbolonet, geolookup, and cursor.
  *
  * Most GUI modules (sdl3imgui, flags, input, dialogs, dns_lookups)
  * are now compiled directly from the shared sdl3 sources.
@@ -15,6 +14,7 @@
 #include "global.h"
 #include "client_sim.h"
 #include "../../winbolonet/winbolonet_server.h"
+#include "../../winbolonet/winbolonet_client.h"
 
 /* Portable RECT */
 #ifndef _WIN32
@@ -77,16 +77,20 @@ bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, ch
     if (playerKeyOut) playerKeyOut[0] = '\0';
     return false;
 }
-bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
-    (void)username; (void)password; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)errorMsg;
+bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
+    (void)username; (void)password; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)rankOut; (void)rankTotalOut; (void)statsOut; (void)errorMsg;
     return false;
 }
-bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, char *errorMsg) {
-    (void)steamTicketHex; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)errorMsg;
+bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
+    (void)steamTicketHex; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)rankOut; (void)rankTotalOut; (void)statsOut; (void)errorMsg;
     return false;
 }
-bool winbolonetAuthValidate(const char *token, char *playerNameOut, char *errorMsg) {
-    (void)token; (void)playerNameOut; (void)errorMsg;
+bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *username, const char *email, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg, char *errorCodeOut) {
+    (void)steamTicketHex; (void)username; (void)email; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)rankOut; (void)rankTotalOut; (void)statsOut; (void)errorMsg; (void)errorCodeOut;
+    return false;
+}
+bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
+    (void)token; (void)playerNameOut; (void)rankOut; (void)rankTotalOut; (void)statsOut; (void)errorMsg;
     return false;
 }
 
@@ -119,35 +123,6 @@ bool geoLookupCountry(const char *ipStr, char countryCode[3]) {
     return false;
 }
 bool geoLookupIsLoaded(void) { return false; }
-
-/* ---- posix_stubs (INI file preferences — not used on iOS) ---- */
-
-void preferencesGetPreferenceFile(char *dest) {
-    strcpy(dest, "WinBolo.ini");
-}
-
-void preferencesSetPreferenceFileOverride(const char *path) {
-    (void)path;
-}
-
-unsigned long GetPrivateProfileString(const char *section, const char *key,
-                                       const char *def, char *dest,
-                                       unsigned long size, const char *file) {
-    (void)section; (void)key; (void)file;
-    if (def && dest && size > 0) {
-        strncpy(dest, def, size - 1);
-        dest[size - 1] = '\0';
-        return (unsigned long)strlen(dest);
-    }
-    if (dest && size > 0) dest[0] = '\0';
-    return 0;
-}
-
-int WritePrivateProfileString(const char *section, const char *key,
-                               const char *value, const char *file) {
-    (void)section; (void)key; (void)value; (void)file;
-    return 1;
-}
 
 /* ---- map editor stubs (not available on iOS) ---- */
 

@@ -814,6 +814,7 @@ extern "C" void imguiSettingsShow(void) {
         ImGui::End(); /* ##SettingsPanel */
         ImGui::End(); /* ##SettingsBg */
 
+        dialogDrawNavOutline();
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

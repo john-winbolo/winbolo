@@ -59,6 +59,23 @@ void imguiKeySetupRenderInGamePopup(struct ClientSim *cs);
 bool imguiKeySetupIsCapturingInGameKey(void);
 void imguiKeySetupHandleInGameScancode(int scancode);
 
+/* Embedded variant — draws the key-binding rows and the two
+ * checkboxes inside a caller-owned ImGui context (the first-run
+ * onboarding wizard), without this dialog's own OK/Cancel footer.
+ * Seed the shared form state once with imguiKeySetupBeginEmbedded,
+ * draw the rows each frame with imguiKeySetupRenderEmbedded, and
+ * persist the result with imguiKeySetupCommitEmbedded when leaving
+ * the step forward. Key capture reuses the in-game hooks above.
+ * Pre-game only — there is no live tank to push values onto.
+ *
+ * reserveBottom is extra vertical space (pixels) to keep clear below
+ * the scrollable binding list, on top of the checkbox footer, so the
+ * caller's own controls (the wizard's Back/Skip/Next row) fit without
+ * forcing a scrollbar on the host window. */
+void imguiKeySetupBeginEmbedded(void);
+void imguiKeySetupRenderEmbedded(float reserveBottom);
+void imguiKeySetupCommitEmbedded(void);
+
 #ifdef __cplusplus
 }
 #endif

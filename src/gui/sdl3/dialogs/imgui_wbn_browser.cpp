@@ -1179,6 +1179,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         ImGui::End(); /* ##WbnBrowser */
         ImGui::End(); /* ##WbnBrowserBg */
 
+        dialogDrawNavOutline();
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

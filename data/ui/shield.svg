@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WinBolo crest shield (logo silhouette, no tank/guns). Art fills the
+     canvas edge-to-edge so it renders at the same size as the other badge
+     icons. Rendered as a white alpha mask by imguiLoadSvgIconWhite; tinted
+     gold for supporters. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="#000000">
+  <path d="M1 0.5 H23 V11.5 C23 17.7 18.5 22.5 12 24 C5.5 22.5 1 17.7 1 11.5 Z"/>
+</svg>

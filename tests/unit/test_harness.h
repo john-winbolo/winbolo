@@ -46,9 +46,23 @@ int run_transport_local_passive_threads(void);
 int run_sp_subscriber_delivery(void);
 int run_active_local_input_to_shot(void);
 int run_sp_shoot_through_timer(void);
-int run_ini_writer_persistence(void);
-int run_ini_writer_insertion_point(void);
-int run_ini_writer_security(void);
+int run_prefs_document_roundtrip(void);
+int run_prefs_keys_roundtrip(void);
+int run_prefs_doc_roundtrip(void);
+int run_prefs_doc_defaults(void);
+int run_prefs_doc_special_chars(void);
+int run_prefs_doc_unknown_preserved(void);
+int run_prefs_doc_save_atomic(void);
+int run_prefs_api_roundtrip(void);
+int run_prefs_api_defaults(void);
+int run_prefs_api_corrupt_backup(void);
+int run_prefs_api_debounce(void);
+int run_prefs_api_shutdown_flush(void);
+int run_prefs_api_upload_excludes_local(void);
+int run_prefs_api_sync_dirty(void);
+int run_prefs_api_device_identity(void);
+int run_prefs_api_adopt_server(void);
+int run_prefs_api_mark_synced(void);
 int run_lobby_settings_codec_and_apply(void);
 int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
@@ -112,6 +126,10 @@ int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
 int run_wbn_news_parse(void);
 int run_wbn_country_cache(void);
+int run_wbn_prefs_parse_get(void);
+int run_wbn_prefs_parse_updatedat(void);
+int run_wbn_prefs_decide(void);
+int run_wbn_prefs_build_put_body(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -170,6 +188,17 @@ int run_return_to_lobby_drops_wbn_keeps_identity(void);
  * round's server_key is still live. */
 int run_wbn_lobby_update_deferred_during_rotation(void);
 int run_wbn_lobby_update_sends_when_not_rotating(void);
+
+/* Deferred WBN PLAYER_JOIN core (test_wbn_deferred_join.c). The join
+ * event is held until the slot's identity is known for the session —
+ * keyed on reauth, anonymous on grace expiry — and re-fires per round.
+ * Also pins the rotation rekey gate (verified-flag, not the wiped key). */
+int run_wbn_join_keyed_on_reauth(void);
+int run_wbn_join_anonymous_on_grace(void);
+int run_wbn_join_idempotent_reauth_no_double(void);
+int run_wbn_join_disconnect_drops(void);
+int run_wbn_join_rearm_per_session(void);
+int run_wbn_join_rekey_target_gate(void);
 
 /* Lobby/leave cleanup (test_lobby_reset_cleanup.c). Removed slots clear
  * (no phantom re-announce), and the last human leaving a running game
