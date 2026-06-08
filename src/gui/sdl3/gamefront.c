@@ -2402,7 +2402,16 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   showBaseLabels = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Label Own Tank", "No", buff, FILENAME_MAX);
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
+#if defined(__IPHONEOS__) || defined(__ANDROID__) || defined(__EMSCRIPTEN__)
   prefsGetString("WINDOW", "Window Size", "1", buff, FILENAME_MAX);
+#else
+  /* First-time desktop players open at 2x so the game isn't a tiny window on
+   * modern monitors. If the monitor can't fit 2x, the window setup in
+   * winbolo.c clamps down to the largest cardinal size that does fit. Anyone
+   * who has finished onboarding keeps whatever size they previously saved. */
+  prefsGetString("WINDOW", "Window Size",
+                 gameFrontOnboardingComplete() ? "1" : "2", buff, FILENAME_MAX);
+#endif
   zoomFactor = atoi(buff);
   /* Custom window size (for ZOOM_FACTOR_CUSTOM mode) */
   prefsGetString("WINDOW", "Custom Width", "0", buff, FILENAME_MAX);
