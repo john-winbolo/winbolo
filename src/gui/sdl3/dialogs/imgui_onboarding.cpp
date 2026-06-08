@@ -21,10 +21,11 @@
  *                Account (WinBolo.net sign-in), Player Name
  *                (validated), and Keys (inline rebind) — with
  *                Back / Next / Skip chrome and a progress
- *                indicator. The Name step is skipped when the
- *                player is already signed in, since the
- *                account display name takes precedence. All
- *                user-facing strings route through langGetText.
+ *                indicator. The Account and Name steps are
+ *                skipped when the player is already signed in,
+ *                since the account already supplies the identity
+ *                and display name, leaving only the Keys step.
+ *                All user-facing strings route through langGetText.
  *********************************************************/
 
 #include <SDL3/SDL.h>
@@ -50,10 +51,10 @@ extern "C" {
 #include "imgui_onboarding.h"
 }
 
-/* Wizard steps. Account → Name → Keys, but the Name step is shown
- * only when the player is not signed in: when signed in the account
- * display name wins, so navigation skips Name in both directions and
- * the progress indicator omits its dot. */
+/* Wizard steps. Account → Name → Keys, but the Account and Name steps
+ * are shown only when the player is not signed in: when signed in the
+ * account already supplies the identity and display name, so navigation
+ * and the progress indicator collapse to just the Keys step. */
 enum OnboardStep {
     ONBOARD_STEP_ACCOUNT = 0,
     ONBOARD_STEP_NAME,
@@ -76,31 +77,6 @@ static const char *onboardStepDesc(int step) {
     case ONBOARD_STEP_NAME:    return langGetText(STR_DLGONBOARD_NAME_DESC);
     case ONBOARD_STEP_KEYS:    return langGetText(STR_DLGONBOARD_KEYS_DESC);
     default:                   return "";
-    }
-}
-
-/* The step reached by stepping forward / back from `step`, honouring
- * the signed-in skip of the Name step. Returns -1 when there is no
- * step in that direction (first / last of the active sequence). */
-static int onboardNextStep(int step, bool loggedIn) {
-    switch (step) {
-    case ONBOARD_STEP_ACCOUNT:
-        return loggedIn ? ONBOARD_STEP_KEYS : ONBOARD_STEP_NAME;
-    case ONBOARD_STEP_NAME:
-        return ONBOARD_STEP_KEYS;
-    default:
-        return -1;
-    }
-}
-
-static int onboardPrevStep(int step, bool loggedIn) {
-    switch (step) {
-    case ONBOARD_STEP_KEYS:
-        return loggedIn ? ONBOARD_STEP_ACCOUNT : ONBOARD_STEP_NAME;
-    case ONBOARD_STEP_NAME:
-        return ONBOARD_STEP_ACCOUNT;
-    default:
-        return -1;
     }
 }
 
@@ -263,12 +239,22 @@ extern "C" int imguiOnboardingShow(void) {
         gameFrontGetWinbolonetToken(token, expiry);
         bool loggedIn = (token[0] != '\0');
 
-        /* Active step sequence — the Name step drops out when signed in. */
+        /* Active step sequence — the Account and Name steps drop out when
+         * signed in, leaving Keys as the sole step. */
         int seq[ONBOARD_STEP_COUNT];
         int seqLen = 0;
-        seq[seqLen++] = ONBOARD_STEP_ACCOUNT;
+        if (!loggedIn) seq[seqLen++] = ONBOARD_STEP_ACCOUNT;
         if (!loggedIn) seq[seqLen++] = ONBOARD_STEP_NAME;
         seq[seqLen++] = ONBOARD_STEP_KEYS;
+
+        /* Locate the current step in the active sequence; snap it into range
+         * if it dropped out (e.g. it was Account but the player just signed
+         * in). curIdx then drives both the progress dots and navigation. */
+        int curIdx = -1;
+        for (int i = 0; i < seqLen; ++i) {
+            if (seq[i] == currentStep) { curIdx = i; break; }
+        }
+        if (curIdx < 0) { currentStep = seq[0]; curIdx = 0; }
 
         /* Progress indicator — one dot per active step, current step filled. */
         {
@@ -334,8 +320,8 @@ extern "C" int imguiOnboardingShow(void) {
         ImGui::Spacing();
 
         const ImVec2 buttonSize(110.0f * s, buttonH);
-        int prevStep = onboardPrevStep(currentStep, loggedIn);
-        int nextStep = onboardNextStep(currentStep, loggedIn);
+        int prevStep = (curIdx > 0)          ? seq[curIdx - 1] : -1;
+        int nextStep = (curIdx < seqLen - 1) ? seq[curIdx + 1] : -1;
         bool isLast = (nextStep < 0);
 
         /* Back — disabled at the start of the active sequence. */
