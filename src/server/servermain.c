@@ -103,6 +103,22 @@ time_t ticks = 0;
 
 static ServerSim *serverSim = NULL;
 
+/* Shutdown handshake for the game-tick timer.
+ *
+ * serverGameTimer runs on a separate thread (Win32 multimedia timer or the
+ * SDL timer thread). Neither timeKillEvent nor SDL_RemoveTimer joins an
+ * in-flight callback, so without this a tick can still be running
+ * serverInstanceTick -> serverSimBotTick -> brain think on bot lua_States
+ * while the main thread frees them in serverInstanceShutdown — the
+ * production shutdown use-after-free (SIGSEGV in luaH_getint).
+ *
+ * g_serverShuttingDown is raised first so the callback bails (and its
+ * catch-up loop stops re-entering ticks); g_serverTickLock is held for the
+ * whole callback body, so the shutdown path can acquire it to block until
+ * any in-flight tick has fully drained. See serverQuiesceGameTimer. */
+static SDL_AtomicInt g_serverShuttingDown;
+static SDL_Mutex    *g_serverTickLock = NULL;
+
 /* Tracker settings (set from command-line args, read by timer) */
 static char  sTrackerAddr[FILENAME_MAX] = "";
 static unsigned short sTrackerPort = 0;
@@ -519,16 +535,49 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
   tick = SDL_GetTicks();
 #endif
 
-  if ((tick - oldTick) > SERVER_TICK_LENGTH) {
-    while ((tick - oldTick) > SERVER_TICK_LENGTH) {
-      serverInstanceTick(serverSim);
-      ticks++;
-      oldTick += SERVER_TICK_LENGTH;
+  /* Shutdown handshake: bail before touching the sim once teardown has
+   * begun, and hold g_serverTickLock for the whole tick body so the
+   * shutdown path can block on it until an in-flight tick fully drains.
+   * The flag is re-checked after acquiring the lock (and inside the
+   * catch-up loop) to cover the case where shutdown raced in between. */
+  if (!SDL_GetAtomicInt(&g_serverShuttingDown) && g_serverTickLock != NULL) {
+    SDL_LockMutex(g_serverTickLock);
+    if (!SDL_GetAtomicInt(&g_serverShuttingDown) &&
+        (tick - oldTick) > SERVER_TICK_LENGTH) {
+      while ((tick - oldTick) > SERVER_TICK_LENGTH) {
+        if (SDL_GetAtomicInt(&g_serverShuttingDown)) break;
+        serverInstanceTick(serverSim);
+        ticks++;
+        oldTick += SERVER_TICK_LENGTH;
+      }
     }
+    SDL_UnlockMutex(g_serverTickLock);
   }
 #ifdef USING_SDL
   return interval;
 #endif
+}
+
+/* Stop the game-tick timer and guarantee no tick callback is — or will be —
+ * executing before the caller frees the sim / bot lua_States. timeKillEvent
+ * and SDL_RemoveTimer only unschedule future callbacks; they do not join an
+ * invocation already running on the timer thread. So we raise the shutdown
+ * flag (serverGameTimer then bails and its catch-up loop stops re-entering
+ * ticks), unschedule the timer, then take and release g_serverTickLock —
+ * which the callback holds across its whole body — to block until any
+ * in-flight tick has drained. Idempotent and safe to call once per exit
+ * path. */
+static void serverQuiesceGameTimer(void) {
+  SDL_SetAtomicInt(&g_serverShuttingDown, 1);
+#ifdef _WIN32
+  timeKillEvent(serverTimerGameID);
+#else
+  SDL_RemoveTimer(serverTimerGameID);
+#endif
+  if (g_serverTickLock != NULL) {
+    SDL_LockMutex(g_serverTickLock);
+    SDL_UnlockMutex(g_serverTickLock);
+  }
 }
 
 #define DEFAULT_TRACKER_ADDR "tracker.winbolo.com"
@@ -1486,6 +1535,9 @@ int main(int argc, char **argv) {
     return 0;
   }
   serverMessageConsoleMessage(serverSim,"Type \"help\" for help, \"quit\" to exit.");
+  /* Created before the timer starts so serverGameTimer always sees a valid
+   * lock; serverQuiesceGameTimer drains the timer through it on shutdown. */
+  g_serverTickLock = SDL_CreateMutex();
 #ifdef _WIN32
   oldTick = SDL_GetTicks();
   serverTimerGameID = timeSetEvent(SERVER_TICK_LENGTH, 10, serverGameTimer, 0, TIME_PERIODIC);
@@ -1502,11 +1554,8 @@ int main(int argc, char **argv) {
       if (cmdStream == NULL) {
         fprintf(stderr, "Error: failed to open -cmd-stdin file '%s'\n",
                 (char *)argv[cmdArg]);
-#ifdef _WIN32
-        timeKillEvent(serverTimerGameID);
-#else
-        SDL_RemoveTimer(serverTimerGameID);
-#endif
+        serverQuiesceGameTimer();
+        botWorkerPoolDestroy();
         threadsDestroy();
         serverInstanceShutdown(serverSim);
         serverSimDestroy(serverSim);
@@ -1524,11 +1573,12 @@ int main(int argc, char **argv) {
     }
   }
 
-#ifdef _WIN32
-  timeKillEvent(serverTimerGameID);
-#else
-  SDL_RemoveTimer(serverTimerGameID);
-#endif
+  /* Drain the game-tick timer first: blocks until no serverInstanceTick is
+   * (or can be) running, so the brain-think workers are provably idle before
+   * anything they touch is freed. Then tear the worker pool down before the
+   * lua_States it dispatches into are closed (defence in depth). */
+  serverQuiesceGameTimer();
+  botWorkerPoolDestroy();
   threadsDestroy();
 
   if (isLogging == TRUE && winbolonetIsRunning() == TRUE && argExist(argc, argv, "dontsendlog") == FALSE) {
@@ -1551,7 +1601,10 @@ int main(int argc, char **argv) {
   geoLookupDestroy();
   serverSimMapDirDestroy(serverSim);
   serverSimDestroy(serverSim);
-  botWorkerPoolDestroy();
+  if (g_serverTickLock != NULL) {
+    SDL_DestroyMutex(g_serverTickLock);
+    g_serverTickLock = NULL;
+  }
 #ifdef _WIN32
   WSACleanup();
 #endif

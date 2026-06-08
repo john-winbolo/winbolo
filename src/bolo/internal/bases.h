@@ -47,7 +47,7 @@ struct ClientSim;
 
 #define BASE_NOT_FOUND 254
 
-#define BASE_TICKS_BETWEEN_REFUEL 800
+#define BASE_TICKS_BETWEEN_REFUEL 1000
 /* A base is dead if it has 9 armour */
 #define BASE_DEAD 9
 
