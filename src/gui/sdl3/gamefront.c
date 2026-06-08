@@ -1005,6 +1005,59 @@ static bool gameFrontDialogs(void) {
   return !userQuit;
 }
 
+bool gameFrontGetSteamTicketHex(char *outHex, size_t outSize) {
+  uint8_t ticketBuf[1024];
+  uint32_t ticketLen = 0;
+  if (!steam_get_auth_ticket(ticketBuf, sizeof(ticketBuf), &ticketLen) ||
+      ticketLen == 0) {
+    return false;
+  }
+  /* Each byte expands to two hex chars plus the NUL terminator. */
+  if (outSize < (size_t)ticketLen * 2 + 1) {
+    return false;
+  }
+  uint32_t i;
+  for (i = 0; i < ticketLen; i++) {
+    snprintf(outHex + i * 2, 3, "%02x", ticketBuf[i]);
+  }
+  outHex[ticketLen * 2] = '\0';
+  return true;
+}
+
+void gameFrontApplySteamAuthResult(const char *token, const char *expiry,
+                                   const char *playerName, int rank,
+                                   int rankTotal, const WbnStats *stats) {
+  gameFrontSetWinbolonetToken(token, expiry);
+  gameFrontSetWbnAuthMethod("steam");
+  gameFrontSetWinbolonetRank(rank, rankTotal);
+  gameFrontSetWinbolonetStats(stats);
+  if (playerName[0] != '\0') {
+    char persisted[PLAYER_NAME_LEN];
+    persisted[0] = '\0';
+    gameFrontGetPlayerName(persisted);
+
+    if (persisted[0] == '\0') {
+      /* First-launch seed: persisted name is empty.  Run the Steam
+       * persona through Phase 2 validation; fall back to the app
+       * default name on rejection. */
+      char validated[PLAYER_NAME_LEN];
+      if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, NULL)) {
+        gameFrontSetPlayerName(validated);
+      } else {
+        gameFrontSetPlayerName((char *)langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
+      }
+    }
+    /* Otherwise: keep the user's chosen name.  The Steam persona
+     * is NOT used to update an existing name (Phase 7 / Decision 3). */
+  }
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Steam] Authenticated with WinBolo.net via Steam");
+  /* First Steam auth of the session: the token went from empty to set,
+   * so pull the cloud prefs once. Placed after the name handling so the
+   * sync captures the name that should win over the synced Player Name.
+   * The per-join validate of an existing token below never reaches here. */
+  gameFrontStartPrefsSync();
+}
+
 /* -------------------------------------------------------
  * gameFrontValidateWbnBeforeJoin — If a WBN token is stored,
  * validate it synchronously and update the player name from
@@ -1017,57 +1070,18 @@ static void gameFrontValidateWbnBeforeJoin(void) {
 
   /* If no WBN token exists, try automatic Steam authentication */
   if (token[0] == '\0') {
-    uint8_t ticketBuf[1024];
-    uint32_t ticketLen = 0;
-    if (steam_get_auth_ticket(ticketBuf, sizeof(ticketBuf), &ticketLen) && ticketLen > 0) {
-      char ticketHex[2049];
-      uint32_t i;
-      for (i = 0; i < ticketLen; i++) {
-        snprintf(ticketHex + i * 2, 3, "%02x", ticketBuf[i]);
-      }
-      ticketHex[ticketLen * 2] = '\0';
-
-      char tokenOut[256], expiryOut[256];
-      char playerName[PLAYER_NAME_LEN];
-      char errorMsg[512];
+    char ticketHex[2049];
+    if (gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
+      char tokenOut[256], expiryOut[256], playerName[PLAYER_NAME_LEN], errorMsg[512];
       int rank = -1, rankTotal = 0;
       WbnStats stats;
       stats.valid = FALSE;
-      tokenOut[0] = '\0';
-      expiryOut[0] = '\0';
-      playerName[0] = '\0';
-      errorMsg[0] = '\0';
+      tokenOut[0] = expiryOut[0] = playerName[0] = errorMsg[0] = '\0';
 
-      if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName, &rank, &rankTotal, &stats, errorMsg)) {
-        gameFrontSetWinbolonetToken(tokenOut, expiryOut);
-        gameFrontSetWbnAuthMethod("steam");
-        gameFrontSetWinbolonetRank(rank, rankTotal);
-        gameFrontSetWinbolonetStats(&stats);
-        if (playerName[0] != '\0') {
-          char persisted[PLAYER_NAME_LEN];
-          persisted[0] = '\0';
-          gameFrontGetPlayerName(persisted);
-
-          if (persisted[0] == '\0') {
-            /* First-launch seed: persisted name is empty.  Run the Steam
-             * persona through Phase 2 validation; fall back to the app
-             * default name on rejection. */
-            char validated[PLAYER_NAME_LEN];
-            if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, NULL)) {
-              gameFrontSetPlayerName(validated);
-            } else {
-              gameFrontSetPlayerName((char *)langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
-            }
-          }
-          /* Otherwise: keep the user's chosen name.  The Steam persona
-           * is NOT used to update an existing name (Phase 7 / Decision 3). */
-        }
-        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Steam] Authenticated with WinBolo.net via Steam");
-        /* First Steam auth of the session: the token went from empty to set,
-         * so pull the cloud prefs once. Placed after the name handling so the
-         * sync captures the name that should win over the synced Player Name.
-         * The per-join validate of an existing token below never reaches here. */
-        gameFrontStartPrefsSync();
+      if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName,
+                              &rank, &rankTotal, &stats, errorMsg)) {
+        gameFrontApplySteamAuthResult(tokenOut, expiryOut, playerName,
+                                      rank, rankTotal, &stats);
       } else {
         WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Steam] WBN Steam auth failed: %s", errorMsg);
       }

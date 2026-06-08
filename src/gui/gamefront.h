@@ -670,6 +670,19 @@ void gameFrontClearWinbolonetToken(void);
 void gameFrontSetWbnAuthMethod(const char *method);
 void gameFrontGetWbnAuthMethod(char *out, size_t outSize);
 
+/* Acquire a Steam auth-session ticket and hex-encode it into outHex
+ * (must hold at least 2049 bytes). Returns true on success. Must be
+ * called on the main thread (touches the Steam API). */
+bool gameFrontGetSteamTicketHex(char *outHex, size_t outSize);
+
+/* Apply a successful WinBolo.net Steam-auth response: store the token
+ * (auth method "steam"), rank and stats; seed the player name from the
+ * Steam persona only when no name is set yet (an existing name is kept);
+ * and trigger the once-per-session cloud prefs sync. */
+void gameFrontApplySteamAuthResult(const char *token, const char *expiry,
+                                   const char *playerName, int rank,
+                                   int rankTotal, const WbnStats *stats);
+
 /*********************************************************
 *NAME:          gameFrontGetWinbolonetUse
 *PURPOSE:
