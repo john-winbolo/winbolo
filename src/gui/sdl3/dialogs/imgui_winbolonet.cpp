@@ -829,15 +829,46 @@ extern "C" void imguiWinbolonetDrawStatusBlock(void) {
             wbnShowStats = true;
         }
     } else {
-        /* Hover brighten to full white, like the menu buttons. */
+        /* Sign-in button: WBN shield + label, drawn manually over an empty
+         * button so the signed-out CTA carries the same shield as the
+         * signed-in account chip. Hover brightens the text to full white,
+         * like the menu buttons. */
+        const char *label = langGetText(STR_DLGWBN_SIGN_IN_BTN);
+        SDL_Texture *shield = sdl3ImguiGetWbnVerifiedIcon();
+
         ImVec2 cur = ImGui::GetCursorScreenPos();
         bool hov = ImGui::IsMouseHoveringRect(cur, ImVec2(cur.x + btnW, cur.y + btnH));
-        if (hov) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-        if (ImGui::Button(langGetText(STR_DLGWBN_SIGN_IN_BTN), ImVec2(btnW, btnH))) {
+        if (ImGui::Button("##wbnsignin", ImVec2(btnW, btnH))) {
             wbnOpenLoginPopup();
         }
         imguiHandOnHover();
-        if (hov) ImGui::PopStyleColor();
+
+        float lineH = ImGui::GetTextLineHeight();
+        float iconSz = lineH;
+        float gap = 6.0f * s;
+        float textW = ImGui::CalcTextSize(label).x;
+        float contentW = (shield ? iconSz + gap : 0.0f) + textW;
+        float tx = cur.x + (btnW - contentW) * 0.5f;
+        float ty = cur.y + (btnH - lineH) * 0.5f;
+        int textA = hov ? 255 : (int)(ghostTextAlpha * 255.0f);
+
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        if (shield) {
+            if (hov) {
+                /* Spin the shield while hovered — same vector shield the
+                 * login spinner uses, turning about its vertical axis. */
+                float phase = (float)SDL_GetTicks() * 0.002f;
+                float halfH = iconSz * 0.5f;
+                ImVec2 centre(tx + iconSz * 0.5f, ty + halfH);
+                imguiDrawSpinningShield(dl, centre, halfH * 0.80f, halfH, phase,
+                                        IM_COL32(255, 255, 255, 255));
+            } else {
+                dl->AddImage((ImTextureID)shield, ImVec2(tx, ty),
+                             ImVec2(tx + iconSz, ty + iconSz));
+            }
+            tx += iconSz + gap;
+        }
+        dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, textA), label);
     }
 
     ImGui::PopStyleColor(4);
