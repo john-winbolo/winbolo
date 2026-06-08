@@ -92,6 +92,28 @@ bool winbolonetAuthLogin(const char *username, const char *password, char *token
 bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg);
 
 /*********************************************************
+*NAME:          winbolonetAuthSteamRegister
+*PURPOSE:
+* Registers a new WinBolo.net account via
+* POST /api/v1/auth/steam/register using a hex-encoded
+* Steam auth ticket, a chosen username and an optional
+* email. On success, writes the token and expiry into the
+* provided buffers and returns TRUE.
+*
+*ARGUMENTS:
+* steamTicketHex  - Hex-encoded Steam auth ticket
+* username        - Chosen WinBolo.net username
+* email           - Optional email; omitted when NULL or empty
+* tokenOut        - Buffer for token (must be >= 65 bytes)
+* expiryOut       - Buffer for expiry string (must be >= 64 bytes)
+* playerNameOut   - Buffer for player name (must be >= PLAYER_NAME_LEN)
+* rankOut         - 1v1 ladder position; -1 when unranked. May be NULL.
+* rankTotalOut    - Total ranked players; 0 when absent. May be NULL.
+* errorMsg        - Buffer for error message on failure
+*********************************************************/
+bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *username, const char *email, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg);
+
+/*********************************************************
 *NAME:          winbolonetAuthValidate
 *PURPOSE:
 * Validates a stored auth token by calling

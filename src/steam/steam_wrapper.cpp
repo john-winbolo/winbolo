@@ -88,6 +88,16 @@ extern "C" bool steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size,
   return true;
 }
 
+extern "C" bool steam_get_persona_name(char *out, size_t outSize) {
+  if (!s_initialized) return false;
+  if (!out || outSize == 0) return false;
+  const char *name = SteamFriends()->GetPersonaName();
+  if (!name) return false;
+  strncpy(out, name, outSize - 1);
+  out[outSize - 1] = '\0';
+  return true;
+}
+
 extern "C" void steam_cancel_auth_ticket(void) {
   if (!s_initialized || s_authTicket == k_HAuthTicketInvalid) return;
   SteamUser()->CancelAuthTicket(s_authTicket);
