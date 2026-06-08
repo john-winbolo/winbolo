@@ -1352,7 +1352,7 @@ STR_DLGWBN_CREATE_ACCOUNT=No account? Create one
 STR_DLGWBN_VIA_STEAM=via Steam
 
 # In-client Steam signup form (login popup)
-STR_DLGWBN_CREATE_STEAM=Create an account
+STR_DLGWBN_CREATE_STEAM=Create a WinBolo.net account
 STR_DLGWBN_EMAIL_OPTIONAL=optional
 STR_DLGWBN_CREATE_BTN=Create account with Steam
 STR_DLGWBN_ERR_USERNAME_TAKEN=That username is already taken.
@@ -1377,10 +1377,11 @@ STR_DLGWBN_STATS_COL_TANKS=Tanks
 # In-client Steam sign-in (existing account) + popup section labels
 STR_DLGWBN_SIGNIN_STEAM_BTN=Sign in with Steam
 STR_DLGWBN_OR_PASSWORD=or sign in with a password
-STR_DLGWBN_LINK_HINT=Have a password account? Link your Steam account at [winbolo.net](https://www.winbolo.net/playermodify) to sign in with one click.
+STR_DLGWBN_LINK_HINT=Have a password account? Link your Steam account at [winbolo.net](https://www.winbolo.net/playermodify).
 STR_DLGWBN_ERR_STEAM_NOT_LINKED=No WinBolo.net account is linked to this Steam yet. Create one below.
 STR_DLGWBN_CREATE_BROWSER=Create a standalone account in your browser
 STR_DLGWBN_EMAIL=Email:
 STR_DLGWBN_OR=or
 STR_DLGWBN_ERR_STEAM_TICKET=Steam couldn't verify your account. Please try again.
+STR_DLGWBN_SIGNIN_HEADER=Sign into WinBolo.net
 

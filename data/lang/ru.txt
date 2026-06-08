@@ -595,6 +595,7 @@ STR_DLGWBN_USERNAME=Имя пользователя:
 STR_DLGWBN_PASSWORD=Пароль:
 STR_DLGWBN_SIGNINGIN=Вход...
 STR_DLGWBN_SIGNIN_OK=Войти
+STR_DLGWBN_SIGNIN_HEADER=Вход в WinBolo.net
 STR_DLGWBN_NEEDCREDS=Введите имя пользователя и пароль.
 
 # Welcome dialog
@@ -1349,7 +1350,7 @@ STR_DLGONBOARD_TITLE=Добро пожаловать в WinBolo Online
 STR_DLGWBN_CREATE_ACCOUNT=Нет аккаунта? Создайте его
 STR_DLGWBN_CREATE_BROWSER=Создать отдельный аккаунт в браузере
 STR_DLGWBN_CREATE_BTN=Создать аккаунт через Steam
-STR_DLGWBN_CREATE_STEAM=Создать аккаунт
+STR_DLGWBN_CREATE_STEAM=Создать аккаунт WinBolo.net
 STR_DLGWBN_EMAIL=E-mail:
 STR_DLGWBN_EMAIL_OPTIONAL=необязательно
 STR_DLGWBN_ERR_EMAIL_INVALID=Этот адрес e-mail недействителен.
@@ -1363,7 +1364,7 @@ STR_DLGWBN_ERR_USERNAME_REQUIRED=Введите имя пользователя.
 STR_DLGWBN_ERR_USERNAME_TAKEN=Это имя пользователя уже занято.
 STR_DLGWBN_ERR_USERNAME_TOO_LONG=Это имя пользователя слишком длинное.
 STR_DLGWBN_ERR_USERNAME_UNAVAILABLE=Это имя пользователя недоступно. Выберите другое.
-STR_DLGWBN_LINK_HINT=Есть аккаунт с паролем? Свяжите аккаунт Steam на [winbolo.net](https://www.winbolo.net/playermodify), чтобы входить одним кликом.
+STR_DLGWBN_LINK_HINT=Есть аккаунт с паролем? Свяжите аккаунт Steam на [winbolo.net](https://www.winbolo.net/playermodify).
 STR_DLGWBN_OR=или
 STR_DLGWBN_OR_PASSWORD=или войти с паролем
 STR_DLGWBN_RANK=#{number} из {number2}

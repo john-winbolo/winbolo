@@ -595,6 +595,7 @@ STR_DLGWBN_USERNAME=Identifiant :
 STR_DLGWBN_PASSWORD=Mot de passe :
 STR_DLGWBN_SIGNINGIN=Connexion en cours...
 STR_DLGWBN_SIGNIN_OK=Se connecter
+STR_DLGWBN_SIGNIN_HEADER=Connexion à WinBolo.net
 STR_DLGWBN_NEEDCREDS=Veuillez saisir votre identifiant et votre mot de passe.
 
 # Welcome dialog
@@ -1351,7 +1352,7 @@ STR_DLGONBOARD_TITLE=Bienvenue dans WinBolo Online
 STR_DLGWBN_CREATE_ACCOUNT=Pas de compte ? Créez-en un
 STR_DLGWBN_CREATE_BROWSER=Créez un compte indépendant dans votre navigateur
 STR_DLGWBN_CREATE_BTN=Créer un compte avec Steam
-STR_DLGWBN_CREATE_STEAM=Créer un compte
+STR_DLGWBN_CREATE_STEAM=Créer un compte WinBolo.net
 STR_DLGWBN_EMAIL=E-mail :
 STR_DLGWBN_EMAIL_OPTIONAL=facultatif
 STR_DLGWBN_ERR_EMAIL_INVALID=Cette adresse e-mail n'est pas valide.
@@ -1365,7 +1366,7 @@ STR_DLGWBN_ERR_USERNAME_REQUIRED=Veuillez saisir un identifiant.
 STR_DLGWBN_ERR_USERNAME_TAKEN=Cet identifiant est déjà pris.
 STR_DLGWBN_ERR_USERNAME_TOO_LONG=Cet identifiant est trop long.
 STR_DLGWBN_ERR_USERNAME_UNAVAILABLE=Cet identifiant ne peut pas être utilisé. Veuillez en choisir un autre.
-STR_DLGWBN_LINK_HINT=Vous avez un compte avec mot de passe ? Liez votre compte Steam sur [winbolo.net](https://www.winbolo.net/playermodify) pour vous connecter en un clic.
+STR_DLGWBN_LINK_HINT=Vous avez un compte avec mot de passe ? Liez votre compte Steam sur [winbolo.net](https://www.winbolo.net/playermodify).
 STR_DLGWBN_OR=ou
 STR_DLGWBN_OR_PASSWORD=ou se connecter avec un mot de passe
 STR_DLGWBN_RANK=#{number} sur {number2}

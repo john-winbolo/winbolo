@@ -595,6 +595,7 @@ STR_DLGWBN_USERNAME=Uživatelské jméno:
 STR_DLGWBN_PASSWORD=Heslo:
 STR_DLGWBN_SIGNINGIN=Přihlašování...
 STR_DLGWBN_SIGNIN_OK=Přihlásit
+STR_DLGWBN_SIGNIN_HEADER=Přihlášení do WinBolo.net
 STR_DLGWBN_NEEDCREDS=Zadej prosím uživatelské jméno a heslo.
 
 # Welcome dialog
@@ -1351,7 +1352,7 @@ STR_DLGONBOARD_TITLE=Vítej v WinBolo Online
 STR_DLGWBN_CREATE_ACCOUNT=Nemáš účet? Vytvoř si ho
 STR_DLGWBN_CREATE_BROWSER=Vytvoř samostatný účet v prohlížeči
 STR_DLGWBN_CREATE_BTN=Vytvořit účet přes Steam
-STR_DLGWBN_CREATE_STEAM=Vytvořit účet
+STR_DLGWBN_CREATE_STEAM=Vytvořit účet WinBolo.net
 STR_DLGWBN_EMAIL=E-mail:
 STR_DLGWBN_EMAIL_OPTIONAL=nepovinné
 STR_DLGWBN_ERR_EMAIL_INVALID=Tato e-mailová adresa není platná.
@@ -1365,7 +1366,7 @@ STR_DLGWBN_ERR_USERNAME_REQUIRED=Zadej prosím uživatelské jméno.
 STR_DLGWBN_ERR_USERNAME_TAKEN=Toto uživatelské jméno je již obsazeno.
 STR_DLGWBN_ERR_USERNAME_TOO_LONG=Toto uživatelské jméno je příliš dlouhé.
 STR_DLGWBN_ERR_USERNAME_UNAVAILABLE=Toto uživatelské jméno nelze použít. Vyber prosím jiné.
-STR_DLGWBN_LINK_HINT=Máš účet s heslem? Propoj svůj Steam účet na [winbolo.net](https://www.winbolo.net/playermodify) a přihlašuj se jedním kliknutím.
+STR_DLGWBN_LINK_HINT=Máš účet s heslem? Propoj svůj Steam účet na [winbolo.net](https://www.winbolo.net/playermodify).
 STR_DLGWBN_OR=nebo
 STR_DLGWBN_OR_PASSWORD=nebo se přihlásit heslem
 STR_DLGWBN_RANK=#{number} z {number2}

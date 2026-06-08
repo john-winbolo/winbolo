@@ -595,6 +595,7 @@ STR_DLGWBN_USERNAME=Användarnamn:
 STR_DLGWBN_PASSWORD=Lösenord:
 STR_DLGWBN_SIGNINGIN=Loggar in...
 STR_DLGWBN_SIGNIN_OK=Logga in
+STR_DLGWBN_SIGNIN_HEADER=Logga in på WinBolo.net
 STR_DLGWBN_NEEDCREDS=Ange ditt användarnamn och lösenord.
 
 # Welcome dialog
@@ -1351,7 +1352,7 @@ STR_DLGONBOARD_TITLE=Välkommen till WinBolo Online
 STR_DLGWBN_CREATE_ACCOUNT=Inget konto? Skapa ett
 STR_DLGWBN_CREATE_BROWSER=Skapa ett fristående konto i din webbläsare
 STR_DLGWBN_CREATE_BTN=Skapa konto med Steam
-STR_DLGWBN_CREATE_STEAM=Skapa ett konto
+STR_DLGWBN_CREATE_STEAM=Skapa ett WinBolo.net-konto
 STR_DLGWBN_EMAIL=E-post:
 STR_DLGWBN_EMAIL_OPTIONAL=valfritt
 STR_DLGWBN_ERR_EMAIL_INVALID=Den e-postadressen är inte giltig.
@@ -1365,7 +1366,7 @@ STR_DLGWBN_ERR_USERNAME_REQUIRED=Ange ett användarnamn.
 STR_DLGWBN_ERR_USERNAME_TAKEN=Det användarnamnet är redan taget.
 STR_DLGWBN_ERR_USERNAME_TOO_LONG=Det användarnamnet är för långt.
 STR_DLGWBN_ERR_USERNAME_UNAVAILABLE=Det användarnamnet kan inte användas. Välj ett annat.
-STR_DLGWBN_LINK_HINT=Har du ett lösenordskonto? Länka ditt Steam-konto på [winbolo.net](https://www.winbolo.net/playermodify) för att logga in med ett klick.
+STR_DLGWBN_LINK_HINT=Har du ett lösenordskonto? Länka ditt Steam-konto på [winbolo.net](https://www.winbolo.net/playermodify).
 STR_DLGWBN_OR=eller
 STR_DLGWBN_OR_PASSWORD=eller logga in med lösenord
 STR_DLGWBN_RANK=#{number} av {number2}

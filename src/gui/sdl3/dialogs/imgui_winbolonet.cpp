@@ -432,14 +432,15 @@ static void wbnSignOut(void) {
 }
 
 /* Full-width button showing the Steam logo to the left of `label`. The
- * white-masked Steam icon is tinted to the button text colour. Returns
- * true when clicked. */
-static bool wbnSteamButton(const char *label) {
+ * white-masked Steam icon is tinted to the button text colour. `id` must be
+ * unique among Steam buttons on screen (the visible label is drawn separately,
+ * so the button's own ID carries no text). Returns true when clicked. */
+static bool wbnSteamButton(const char *id, const char *label) {
     SDL_Texture *icon = sdl3ImguiGetSteamIcon();
     ImVec2 cur = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
     float h = ImGui::GetFrameHeight();
-    bool clicked = ImGui::Button("##wbnsteambtn", ImVec2(w, h));
+    bool clicked = ImGui::Button(id, ImVec2(w, h));
 
     float lineH = ImGui::GetTextLineHeight();
     float iconSz = lineH;
@@ -472,11 +473,11 @@ static void wbnSubmitPasswordLogin(void) {
 
 /* Left column: sign in with Steam (one click) or username/password. */
 static void wbnRenderSignInColumn(bool onSteam) {
-    ImGui::SeparatorText(langGetText(STR_DLGWBN_SIGNIN_OK));
+    ImGui::SeparatorText(langGetText(STR_DLGWBN_SIGNIN_HEADER));
     ImGui::Spacing();
 
     if (onSteam) {
-        if (wbnSteamButton(langGetText(STR_DLGWBN_SIGNIN_STEAM_BTN))) {
+        if (wbnSteamButton("##wbnsigninsteam", langGetText(STR_DLGWBN_SIGNIN_STEAM_BTN))) {
             char ticketHex[2049];
             if (gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
                 wbnStartSteamLogin(ticketHex);
@@ -550,7 +551,7 @@ static void wbnRenderCreateColumn(bool onSteam, const char *persona) {
                                  wbnRegEmail, sizeof(wbnRegEmail));
 
         ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_DLGWBN_CREATE_BTN), ImVec2(-1, 0))) {
+        if (wbnSteamButton("##wbncreatesteam", langGetText(STR_DLGWBN_CREATE_BTN))) {
             char validated[PLAYER_NAME_LEN];
             char ticketHex[2049];
             if (!playerNameValidate(wbnRegUsername, validated, sizeof(validated), nullptr)) {

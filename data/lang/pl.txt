@@ -595,6 +595,7 @@ STR_DLGWBN_USERNAME=Nazwa użytkownika:
 STR_DLGWBN_PASSWORD=Hasło:
 STR_DLGWBN_SIGNINGIN=Logowanie...
 STR_DLGWBN_SIGNIN_OK=Zaloguj
+STR_DLGWBN_SIGNIN_HEADER=Zaloguj się do WinBolo.net
 STR_DLGWBN_NEEDCREDS=Wprowadź nazwę użytkownika i hasło.
 
 # Welcome dialog
@@ -1347,7 +1348,7 @@ STR_DLGONBOARD_TITLE=Witaj w WinBolo Online
 STR_DLGWBN_CREATE_ACCOUNT=Nie masz konta? Utwórz je
 STR_DLGWBN_CREATE_BROWSER=Utwórz samodzielne konto w przeglądarce
 STR_DLGWBN_CREATE_BTN=Utwórz konto ze Steam
-STR_DLGWBN_CREATE_STEAM=Utwórz konto
+STR_DLGWBN_CREATE_STEAM=Utwórz konto WinBolo.net
 STR_DLGWBN_EMAIL=E-mail:
 STR_DLGWBN_EMAIL_OPTIONAL=opcjonalny
 STR_DLGWBN_ERR_EMAIL_INVALID=Ten adres e-mail jest nieprawidłowy.
@@ -1361,7 +1362,7 @@ STR_DLGWBN_ERR_USERNAME_REQUIRED=Wprowadź nazwę użytkownika.
 STR_DLGWBN_ERR_USERNAME_TAKEN=Ta nazwa użytkownika jest już zajęta.
 STR_DLGWBN_ERR_USERNAME_TOO_LONG=Ta nazwa użytkownika jest za długa.
 STR_DLGWBN_ERR_USERNAME_UNAVAILABLE=Ta nazwa użytkownika jest niedostępna. Wybierz inną.
-STR_DLGWBN_LINK_HINT=Masz konto z hasłem? Połącz swoje konto Steam na [winbolo.net](https://www.winbolo.net/playermodify), aby logować się jednym kliknięciem.
+STR_DLGWBN_LINK_HINT=Masz konto z hasłem? Połącz swoje konto Steam na [winbolo.net](https://www.winbolo.net/playermodify).
 STR_DLGWBN_OR=lub
 STR_DLGWBN_OR_PASSWORD=lub zaloguj się hasłem
 STR_DLGWBN_RANK=#{number} z {number2}

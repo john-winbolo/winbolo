@@ -595,6 +595,7 @@ STR_DLGWBN_USERNAME=ユーザー名:
 STR_DLGWBN_PASSWORD=パスワード:
 STR_DLGWBN_SIGNINGIN=サインイン中...
 STR_DLGWBN_SIGNIN_OK=サインイン
+STR_DLGWBN_SIGNIN_HEADER=WinBolo.net にサインイン
 STR_DLGWBN_NEEDCREDS=ユーザー名とパスワードを入力してください。
 
 # Welcome dialog
@@ -1351,7 +1352,7 @@ STR_DLGONBOARD_TITLE=WinBolo Online へようこそ
 STR_DLGWBN_CREATE_ACCOUNT=アカウントをお持ちでない方はこちら
 STR_DLGWBN_CREATE_BROWSER=ブラウザで独立したアカウントを作成
 STR_DLGWBN_CREATE_BTN=Steam でアカウントを作成
-STR_DLGWBN_CREATE_STEAM=アカウントを作成
+STR_DLGWBN_CREATE_STEAM=WinBolo.net アカウントを作成
 STR_DLGWBN_EMAIL=メール:
 STR_DLGWBN_EMAIL_OPTIONAL=任意
 STR_DLGWBN_ERR_EMAIL_INVALID=このメールアドレスは無効です。
@@ -1365,7 +1366,7 @@ STR_DLGWBN_ERR_USERNAME_REQUIRED=ユーザー名を入力してください。
 STR_DLGWBN_ERR_USERNAME_TAKEN=このユーザー名はすでに使用されています。
 STR_DLGWBN_ERR_USERNAME_TOO_LONG=このユーザー名は長すぎます。
 STR_DLGWBN_ERR_USERNAME_UNAVAILABLE=このユーザー名は使用できません。別の名前を選んでください。
-STR_DLGWBN_LINK_HINT=パスワードアカウントをお持ちですか？[winbolo.net](https://www.winbolo.net/playermodify) で Steam アカウントを連携すると、ワンクリックでサインインできます。
+STR_DLGWBN_LINK_HINT=パスワードアカウントをお持ちですか？[winbolo.net](https://www.winbolo.net/playermodify) で Steam アカウントを連携してください。
 STR_DLGWBN_OR=または
 STR_DLGWBN_OR_PASSWORD=またはパスワードでサインイン
 STR_DLGWBN_RANK=#{number} / {number2}

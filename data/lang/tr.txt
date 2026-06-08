@@ -595,6 +595,7 @@ STR_DLGWBN_USERNAME=Kullanıcı adı:
 STR_DLGWBN_PASSWORD=Şifre:
 STR_DLGWBN_SIGNINGIN=Oturum açılıyor...
 STR_DLGWBN_SIGNIN_OK=Oturum aç
+STR_DLGWBN_SIGNIN_HEADER=WinBolo.net'te Oturum Aç
 STR_DLGWBN_NEEDCREDS=Lütfen kullanıcı adı ve şifrenizi girin.
 
 # Welcome dialog
@@ -1351,7 +1352,7 @@ STR_DLGONBOARD_TITLE=WinBolo Online'a Hoş Geldiniz
 STR_DLGWBN_CREATE_ACCOUNT=Hesabınız yok mu? Oluşturun
 STR_DLGWBN_CREATE_BROWSER=Tarayıcınızda bağımsız bir hesap oluşturun
 STR_DLGWBN_CREATE_BTN=Steam ile hesap oluştur
-STR_DLGWBN_CREATE_STEAM=Hesap oluştur
+STR_DLGWBN_CREATE_STEAM=WinBolo.net hesabı oluştur
 STR_DLGWBN_EMAIL=E-posta:
 STR_DLGWBN_EMAIL_OPTIONAL=isteğe bağlı
 STR_DLGWBN_ERR_EMAIL_INVALID=Bu e-posta adresi geçerli değil.
@@ -1365,7 +1366,7 @@ STR_DLGWBN_ERR_USERNAME_REQUIRED=Lütfen bir kullanıcı adı girin.
 STR_DLGWBN_ERR_USERNAME_TAKEN=Bu kullanıcı adı zaten alınmış.
 STR_DLGWBN_ERR_USERNAME_TOO_LONG=Bu kullanıcı adı çok uzun.
 STR_DLGWBN_ERR_USERNAME_UNAVAILABLE=Bu kullanıcı adı kullanılamaz. Lütfen başka bir tane seçin.
-STR_DLGWBN_LINK_HINT=Şifreli bir hesabınız var mı? Steam hesabınızı [winbolo.net](https://www.winbolo.net/playermodify) adresinde bağlayarak tek tıkla giriş yapın.
+STR_DLGWBN_LINK_HINT=Şifreli bir hesabınız var mı? Steam hesabınızı [winbolo.net](https://www.winbolo.net/playermodify) adresinde bağlayın.
 STR_DLGWBN_OR=veya
 STR_DLGWBN_OR_PASSWORD=veya şifre ile oturum aç
 STR_DLGWBN_RANK=#{number} / {number2}

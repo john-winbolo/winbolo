@@ -595,6 +595,7 @@ STR_DLGWBN_USERNAME=帳號：
 STR_DLGWBN_PASSWORD=密碼：
 STR_DLGWBN_SIGNINGIN=正在登入…
 STR_DLGWBN_SIGNIN_OK=登入
+STR_DLGWBN_SIGNIN_HEADER=登入 WinBolo.net
 STR_DLGWBN_NEEDCREDS=請輸入您的帳號和密碼。
 
 # Welcome dialog
@@ -1351,7 +1352,7 @@ STR_DLGONBOARD_TITLE=歡迎來到 WinBolo Online
 STR_DLGWBN_CREATE_ACCOUNT=沒有帳號？建立一個
 STR_DLGWBN_CREATE_BROWSER=在瀏覽器中建立獨立帳號
 STR_DLGWBN_CREATE_BTN=使用 Steam 建立帳號
-STR_DLGWBN_CREATE_STEAM=建立帳號
+STR_DLGWBN_CREATE_STEAM=建立 WinBolo.net 帳號
 STR_DLGWBN_EMAIL=電子郵件：
 STR_DLGWBN_EMAIL_OPTIONAL=選填
 STR_DLGWBN_ERR_EMAIL_INVALID=該電子郵件地址無效。
@@ -1365,7 +1366,7 @@ STR_DLGWBN_ERR_USERNAME_REQUIRED=請輸入使用者名稱。
 STR_DLGWBN_ERR_USERNAME_TAKEN=該使用者名稱已被使用。
 STR_DLGWBN_ERR_USERNAME_TOO_LONG=該使用者名稱過長。
 STR_DLGWBN_ERR_USERNAME_UNAVAILABLE=該使用者名稱無法使用，請選擇其他名稱。
-STR_DLGWBN_LINK_HINT=有密碼帳號？在 [winbolo.net](https://www.winbolo.net/playermodify) 關聯您的 Steam 帳號，即可一鍵登入。
+STR_DLGWBN_LINK_HINT=有密碼帳號？在 [winbolo.net](https://www.winbolo.net/playermodify) 關聯您的 Steam 帳號。
 STR_DLGWBN_OR=或
 STR_DLGWBN_OR_PASSWORD=或使用密碼登入
 STR_DLGWBN_RANK=第 {number} 名，共 {number2}

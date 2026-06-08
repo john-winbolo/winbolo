@@ -595,6 +595,7 @@ STR_DLGWBN_USERNAME=Gebruikersnaam:
 STR_DLGWBN_PASSWORD=Wachtwoord:
 STR_DLGWBN_SIGNINGIN=Aanmelden...
 STR_DLGWBN_SIGNIN_OK=Aanmelden
+STR_DLGWBN_SIGNIN_HEADER=Aanmelden bij WinBolo.net
 STR_DLGWBN_NEEDCREDS=Voer je gebruikersnaam en wachtwoord in.
 
 # Welcome dialog
@@ -1351,7 +1352,7 @@ STR_DLGONBOARD_TITLE=Welkom bij WinBolo Online
 STR_DLGWBN_CREATE_ACCOUNT=Geen account? Maak er een aan
 STR_DLGWBN_CREATE_BROWSER=Maak een zelfstandig account aan in je browser
 STR_DLGWBN_CREATE_BTN=Account aanmaken met Steam
-STR_DLGWBN_CREATE_STEAM=Een account aanmaken
+STR_DLGWBN_CREATE_STEAM=Een WinBolo.net-account aanmaken
 STR_DLGWBN_EMAIL=E-mail:
 STR_DLGWBN_EMAIL_OPTIONAL=optioneel
 STR_DLGWBN_ERR_EMAIL_INVALID=Dat e-mailadres is niet geldig.
@@ -1365,7 +1366,7 @@ STR_DLGWBN_ERR_USERNAME_REQUIRED=Voer een gebruikersnaam in.
 STR_DLGWBN_ERR_USERNAME_TAKEN=Die gebruikersnaam is al in gebruik.
 STR_DLGWBN_ERR_USERNAME_TOO_LONG=Die gebruikersnaam is te lang.
 STR_DLGWBN_ERR_USERNAME_UNAVAILABLE=Die gebruikersnaam kan niet worden gebruikt. Kies een andere.
-STR_DLGWBN_LINK_HINT=Heb je een account met wachtwoord? Koppel je Steam-account op [winbolo.net](https://www.winbolo.net/playermodify) om met één klik aan te melden.
+STR_DLGWBN_LINK_HINT=Heb je een account met wachtwoord? Koppel je Steam-account op [winbolo.net](https://www.winbolo.net/playermodify).
 STR_DLGWBN_OR=of
 STR_DLGWBN_OR_PASSWORD=of aanmelden met een wachtwoord
 STR_DLGWBN_RANK=#{number} van {number2}
