@@ -256,7 +256,7 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
 * email). Returns token and expiry on success, just like
 * winbolonetAuthSteam.
 *********************************************************/
-bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *username, const char *email, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
+bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *username, const char *email, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg, char *errorCodeOut) {
   cJSON *body = NULL;
   cJSON *resp = NULL;
   int status;
@@ -265,6 +265,7 @@ bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *usernam
   if (rankOut) *rankOut = -1;
   if (rankTotalOut) *rankTotalOut = 0;
   if (statsOut) statsOut->valid = FALSE;
+  if (errorCodeOut) errorCodeOut[0] = '\0';
 
   if (httpCreate() != TRUE) {
     strcpy(errorMsg, "Could not initialise HTTP");
@@ -280,6 +281,16 @@ bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *usernam
 
   status = wbn_api_call("auth/steam/register", body, &resp);
   cJSON_Delete(body);
+
+  /* The server pairs a human "error" message with a machine "code"
+   * (e.g. "steam_already_linked") on failure; capture the code so the
+   * caller can map it to a localized message. */
+  if (resp && errorCodeOut) {
+    cJSON *codeObj = cJSON_GetObjectItem(resp, "code");
+    if (codeObj && cJSON_IsString(codeObj)) {
+      strcpy(errorCodeOut, codeObj->valuestring);
+    }
+  }
 
   if (status == 200 && resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");

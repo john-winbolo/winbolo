@@ -1311,7 +1311,7 @@ static const LangEntry langTable[] = {
     {1438, "Create account with Steam"},
     {1439, "That username is already taken."},
     {1440, "That email address is already registered."},
-    {1441, "This Steam account is already linked to a WinBolo.net account."},
+    {1441, "This Steam account already has a WinBolo.net account. Use Sign in with Steam."},
     {1442, "Too many sign-up attempts. Please try again later."},
     {1443, "That username can't be used. Please choose another."},
     {1444, "That username is too long."},
@@ -1336,6 +1336,7 @@ static const LangEntry langTable[] = {
     {1459, "Create a standalone account in your browser"},
     {1460, "Email:"},
     {1461, "or"},
+    {1462, "Steam couldn't verify your account. Please try again."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

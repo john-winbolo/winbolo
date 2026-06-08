@@ -116,6 +116,7 @@ struct WbnLoginWork {
     int rankTotalOut;
     WbnStats statsOut;
     char errorMsg[512];
+    char errorCode[128];   /* register: server machine error code, if any */
     bool isValidate;
     bool isSteam;
     bool steamSilent;   /* isSteam: launch re-auth (true) vs visible button (false) */
@@ -146,7 +147,7 @@ static int wbnLoginThreadFunc(void *data) {
         w->success = winbolonetAuthSteamRegister(w->steamTicketHex, w->regUsername, w->regEmail,
                                                  w->tokenOut, w->expiryOut, w->playerNameOut,
                                                  &w->rankOut, &w->rankTotalOut, &w->statsOut,
-                                                 w->errorMsg);
+                                                 w->errorMsg, w->errorCode);
     } else if (w->isSteam) {
         w->success = winbolonetAuthSteam(w->steamTicketHex, w->tokenOut, w->expiryOut,
                                          w->playerNameOut, &w->rankOut, &w->rankTotalOut,
@@ -216,11 +217,12 @@ static void wbnStartSteamRegister(const char *ticketHex, const char *username, c
     wbnThread = SDL_CreateThread(wbnLoginThreadFunc, "WBNRegister", &wbnWork);
 }
 
-/* Maps a server-returned signup error code to a localized message. Codes
- * that warrant the same user-facing text share one string; anything
- * unrecognised (including ticket/Steam/server faults) falls through to a
- * generic retry message. */
+/* Maps a server-returned signup error code to a localized message, or NULL
+ * when the code is empty/unrecognised so the caller can fall back to the
+ * server's own message. Codes with the same user-facing text share one
+ * string. */
 static const char *wbnRegisterErrorText(const char *code) {
+    if (!code || code[0] == '\0') return NULL;
     if (SDL_strcmp(code, "username_taken") == 0)
         return langGetText(STR_DLGWBN_ERR_USERNAME_TAKEN);
     if (SDL_strcmp(code, "email_taken") == 0)
@@ -239,7 +241,21 @@ static const char *wbnRegisterErrorText(const char *code) {
         return langGetText(STR_DLGWBN_ERR_USERNAME_REQUIRED);
     if (SDL_strcmp(code, "invalid_email") == 0)
         return langGetText(STR_DLGWBN_ERR_EMAIL_INVALID);
-    return langGetText(STR_DLGWBN_ERR_GENERIC);
+    /* Steam ticket verification problems (missing/invalid/expired ticket, no
+     * Steam ID, or Steam unreachable) — all read to the player as "Steam
+     * couldn't vouch for you, try again". */
+    if (SDL_strcmp(code, "missing_ticket") == 0 ||
+        SDL_strcmp(code, "invalid_ticket") == 0 ||
+        SDL_strcmp(code, "ticket_validation_failed") == 0 ||
+        SDL_strcmp(code, "steam_id_missing") == 0 ||
+        SDL_strcmp(code, "steam_verification_failed") == 0)
+        return langGetText(STR_DLGWBN_ERR_STEAM_TICKET);
+    /* Server-side faults (misconfig / DB race / service not wired) — retry. */
+    if (SDL_strcmp(code, "steam_not_configured") == 0 ||
+        SDL_strcmp(code, "account_creation_failed") == 0 ||
+        SDL_strcmp(code, "steam_signup_unavailable") == 0)
+        return langGetText(STR_DLGWBN_ERR_GENERIC);
+    return NULL;
 }
 
 /* Load-time re-auth decision: refresh a Steam-authenticated (or empty,
@@ -302,8 +318,15 @@ static void wbnCheckThread(void) {
     } else {
         if (wbnWork.isRegister) {
             steam_cancel_auth_ticket();
-            SDL_strlcpy(wbnErrorBuf, wbnRegisterErrorText(wbnWork.errorMsg),
-                        sizeof(wbnErrorBuf));
+            /* Prefer a localized message for the known machine code; for any
+             * unmapped code show the server's own (English) message; if even
+             * that is absent, a generic retry. */
+            const char *mapped = wbnRegisterErrorText(wbnWork.errorCode);
+            if (!mapped) {
+                mapped = (wbnWork.errorMsg[0] != '\0') ? wbnWork.errorMsg
+                                                       : langGetText(STR_DLGWBN_ERR_GENERIC);
+            }
+            SDL_strlcpy(wbnErrorBuf, mapped, sizeof(wbnErrorBuf));
             wbnState = WBN_ERROR;
         } else if (wbnWork.isSteam) {
             steam_cancel_auth_ticket();
@@ -528,9 +551,13 @@ static void wbnRenderCreateColumn(bool onSteam, const char *persona) {
         ImGui::Spacing();
     }
 
-    /* Standalone (browser) signup — captcha + email verification live there. */
-    ImGui::TextLinkOpenURL(langGetText(STR_DLGWBN_CREATE_BROWSER),
-                           "https://www.winbolo.net/signup");
+    /* Standalone (browser) signup — captcha + email verification live there.
+     * Rendered as markdown so the link wraps within the column instead of
+     * overflowing it (TextLinkOpenURL is single-line). */
+    char browserMd[256];
+    SDL_snprintf(browserMd, sizeof(browserMd), "[%s](https://www.winbolo.net/signup)",
+                 langGetText(STR_DLGWBN_CREATE_BROWSER));
+    ImGui::Markdown(browserMd, SDL_strlen(browserMd), wbnMarkdownConfig());
 }
 
 /* Renders the shared sign-in popup modal. Must be called every frame by
@@ -708,12 +735,14 @@ static void wbnDrawStatsRow(const char *mode, const WbnModeStats *m) {
 }
 
 /* Draws the signed-in account chip for the welcome screen: a translucent
- * framed button two lines tall showing the WBN-verified shield + player
- * name on top and the 1v1 ladder rank beneath. Returns true when clicked.
- * The caller pushes the ghost (translucent) button colours so the chip
- * matches the welcome menu buttons; textAlpha is the menu's dimmed text
- * alpha, brightened to full white on hover the same way. The chip is at
- * least as wide as a menu button (180*s) so it reads as the same family. */
+ * framed button showing the WBN-verified shield + player name, with the
+ * strict-ladder rank on a second line once the player has at least one
+ * strict win or loss (a fresh account shows just the name on one line).
+ * Returns true when clicked. The caller pushes the ghost (translucent)
+ * button colours so the chip matches the welcome menu buttons; textAlpha
+ * is the menu's dimmed text alpha, brightened to full white on hover the
+ * same way. The chip is at least as wide as a menu button (180*s) so it
+ * reads as the same family. */
 static bool wbnDrawAccountChip(float s, float textAlpha) {
     char playerName[PLAYER_NAME_LEN];
     playerName[0] = '\0';
@@ -722,15 +751,19 @@ static bool wbnDrawAccountChip(float s, float textAlpha) {
         SDL_strlcpy(playerName, langGetText(STR_DLGWBN_SIGNED_IN), sizeof(playerName));
     }
 
-    int rank = -1, rankTotal = 0;
-    gameFrontGetWinbolonetRank(&rank, &rankTotal);
+    /* Strict-ladder rank ("#N of M"); only shown once the player has a
+     * recorded strict result, so brand-new accounts don't display a
+     * placeholder. */
+    WbnStats st;
+    gameFrontGetWinbolonetStats(&st);
+    bool hasRank = st.valid && st.strict.rank >= 0 &&
+                   (st.strict.wins > 0 || st.strict.loses > 0);
     char rankBuf[64];
-    if (rank < 0) {
-        SDL_strlcpy(rankBuf, langGetText(STR_DLGWBN_UNRANKED), sizeof(rankBuf));
-    } else {
+    rankBuf[0] = '\0';
+    if (hasRank) {
         MessageArgs args = {};
-        args.number = rank;
-        args.number2 = rankTotal;
+        args.number = st.strict.rank;
+        args.number2 = st.strict.rankTotal;
         SDL_strlcpy(rankBuf, langGetTextFmt(STR_DLGWBN_RANK, &args), sizeof(rankBuf));
     }
 
@@ -743,12 +776,14 @@ static bool wbnDrawAccountChip(float s, float textAlpha) {
 
     float nameW = ImGui::CalcTextSize(playerName).x;
     float line1W = (shield ? iconSz + gapIcon : 0.0f) + nameW;
-    float rankW = ImGui::CalcTextSize(rankBuf).x;
+    float rankW = hasRank ? ImGui::CalcTextSize(rankBuf).x : 0.0f;
     float contentW = (line1W > rankW ? line1W : rankW);
 
     float btnW = contentW + padX * 2.0f;
     if (btnW < 180.0f * s) btnW = 180.0f * s;   /* match the menu button width */
-    ImVec2 btnSize(btnW, lineH * 2.0f + lineGap + padY * 2.0f);
+    float btnH = hasRank ? (lineH * 2.0f + lineGap + padY * 2.0f)
+                         : (lineH + padY * 2.0f);
+    ImVec2 btnSize(btnW, btnH);
 
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     bool clicked = ImGui::Button("##wbnacct", btnSize);
@@ -768,8 +803,10 @@ static bool wbnDrawAccountChip(float s, float textAlpha) {
         tx += iconSz + gapIcon;
     }
     dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, nameA), playerName);
-    dl->AddText(ImVec2(p0.x + padX, ty + lineH + lineGap),
-                IM_COL32(210, 210, 210, rankA), rankBuf);
+    if (hasRank) {
+        dl->AddText(ImVec2(p0.x + padX, ty + lineH + lineGap),
+                    IM_COL32(210, 210, 210, rankA), rankBuf);
+    }
 
     return clicked;
 }

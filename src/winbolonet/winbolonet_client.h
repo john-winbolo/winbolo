@@ -109,9 +109,12 @@ bool winbolonetAuthSteam(const char *steamTicketHex, char *tokenOut, char *expir
 * playerNameOut   - Buffer for player name (must be >= PLAYER_NAME_LEN)
 * rankOut         - 1v1 ladder position; -1 when unranked. May be NULL.
 * rankTotalOut    - Total ranked players; 0 when absent. May be NULL.
-* errorMsg        - Buffer for error message on failure
+* errorMsg        - Buffer for the server's human error message on failure
+* errorCodeOut    - Buffer for the server's machine error code (e.g.
+*                   "steam_already_linked") on failure; empty when absent.
+*                   May be NULL.
 *********************************************************/
-bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *username, const char *email, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg);
+bool winbolonetAuthSteamRegister(const char *steamTicketHex, const char *username, const char *email, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg, char *errorCodeOut);
 
 /*********************************************************
 *NAME:          winbolonetAuthValidate
