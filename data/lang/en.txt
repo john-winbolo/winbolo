@@ -576,7 +576,7 @@ STR_DLGWBN_SIGN_OUT=Sign out of WBN
 STR_DLGWBN_NOT_SIGNED_IN=Not signed in
 STR_DLGWBN_SIGN_IN_BTN=Sign in to WBN
 STR_DLGWBN_SIGNIN_TITLE=Sign in to WinBolo.net
-STR_DLGWBN_SIGNIN_BLURB=Sign in with your WinBolo.net username and password. A token will be saved so you don't need to enter your password again.
+STR_DLGWBN_SIGNIN_BLURB=Sign in to WinBolo.net to track your rank and stats, and take part in the community forums.
 STR_DLGWBN_USERNAME=Username:
 STR_DLGWBN_PASSWORD=Password:
 STR_DLGWBN_SIGNINGIN=Signing in...
@@ -1333,15 +1333,6 @@ STR_DLGWBN_STATS_WINS=Wins:
 STR_DLGWBN_STATS_LOSES=Losses:
 STR_DLGWBN_STATS_RANK=Rank:
 
-# Column headers for the My Stats table
-STR_DLGWBN_STATS_COL_RANK=Rank
-STR_DLGWBN_STATS_COL_RATING=Rating
-STR_DLGWBN_STATS_COL_GAMES=Games
-STR_DLGWBN_STATS_COL_WL=W/L
-STR_DLGWBN_STATS_COL_BASES=Bases
-STR_DLGWBN_STATS_COL_PILLS=Pills
-STR_DLGWBN_STATS_COL_TANKS=Tanks
-
 # First-run online onboarding wizard
 STR_DLGONBOARD_TITLE=Welcome to WinBolo Online
 STR_DLGONBOARD_ACCOUNT_TITLE=Account
@@ -1356,4 +1347,40 @@ STR_DLGONBOARD_FINISH=Finish
 
 # WinBolo.net browser signup link
 STR_DLGWBN_CREATE_ACCOUNT=No account? Create one
+
+# WinBolo.net Steam-auth status suffix
+STR_DLGWBN_VIA_STEAM=via Steam
+
+# In-client Steam signup form (login popup)
+STR_DLGWBN_CREATE_STEAM=Create an account
+STR_DLGWBN_EMAIL_OPTIONAL=optional
+STR_DLGWBN_CREATE_BTN=Create account with Steam
+STR_DLGWBN_ERR_USERNAME_TAKEN=That username is already taken.
+STR_DLGWBN_ERR_EMAIL_TAKEN=That email address is already registered.
+STR_DLGWBN_ERR_STEAM_LINKED=This Steam account already has a WinBolo.net account. Use Sign in with Steam.
+STR_DLGWBN_ERR_RATE_LIMITED=Too many sign-up attempts. Please try again later.
+STR_DLGWBN_ERR_USERNAME_UNAVAILABLE=That username can't be used. Please choose another.
+STR_DLGWBN_ERR_USERNAME_TOO_LONG=That username is too long.
+STR_DLGWBN_ERR_USERNAME_REQUIRED=Please enter a username.
+STR_DLGWBN_ERR_EMAIL_INVALID=That email address isn't valid.
+STR_DLGWBN_ERR_GENERIC=Could not create your account. Please try again.
+
+# Column headers for the My Stats table
+STR_DLGWBN_STATS_COL_RANK=Rank
+STR_DLGWBN_STATS_COL_RATING=Rating
+STR_DLGWBN_STATS_COL_GAMES=Games
+STR_DLGWBN_STATS_COL_WL=W/L
+STR_DLGWBN_STATS_COL_BASES=Bases
+STR_DLGWBN_STATS_COL_PILLS=Pills
+STR_DLGWBN_STATS_COL_TANKS=Tanks
+
+# In-client Steam sign-in (existing account) + popup section labels
+STR_DLGWBN_SIGNIN_STEAM_BTN=Sign in with Steam
+STR_DLGWBN_OR_PASSWORD=or sign in with a password
+STR_DLGWBN_LINK_HINT=Have a password account? Link your Steam account at [winbolo.net](https://www.winbolo.net/playermodify) to sign in with one click.
+STR_DLGWBN_ERR_STEAM_NOT_LINKED=No WinBolo.net account is linked to this Steam yet. Create one below.
+STR_DLGWBN_CREATE_BROWSER=Create a standalone account in your browser
+STR_DLGWBN_EMAIL=Email:
+STR_DLGWBN_OR=or
+STR_DLGWBN_ERR_STEAM_TICKET=Steam couldn't verify your account. Please try again.
 
