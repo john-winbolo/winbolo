@@ -212,6 +212,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * first display tick after the snapshot landed. */
         clientSimSetGameType(cs,       evt->u.lobbySettings.lobbyGameType);
         clientSimSetHiddenMines(cs,    evt->u.lobbySettings.lobbyHiddenMines);
+        clientSimSetAiType(cs,         (aiType)evt->u.lobbySettings.lobbyAiType);
         clientSimSetGmeStartDelay(cs,  evt->u.lobbySettings.lobbyStartDelay);
         clientSimSetGmeLength(cs,      evt->u.lobbySettings.lobbyTimeLimit);
         /* A fresh lobby snapshot supersedes any pending balance

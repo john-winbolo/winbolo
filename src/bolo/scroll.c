@@ -45,6 +45,21 @@
 #define AUTOSCROLL_PARKED_TICKS      60  /* stationary ticks before parked-rear can fire */
 #define AUTOSCROLL_DEAD_ZONE          1  /* skip recompute if target change ≤ this */
 
+/* ------------------------------------------------------------------
+ * Scrolling mechanism selector + tuning knobs (see scroll.h). Process-
+ * global so they can be flipped at runtime; default from the compile-
+ * time SCROLL_MECHANISM_DEFAULT. */
+static ScrollMechanism g_scrollMechanism      = SCROLL_MECHANISM_DEFAULT;
+static int             g_scrollSmoothness      = 0;     /* 0 = none */
+static bool            g_scrollSubTilePrecision = TRUE;  /* ENHANCED uses sub-tile */
+
+ScrollMechanism scrollGetMechanism(void) { return g_scrollMechanism; }
+void scrollSetMechanism(ScrollMechanism mech) { g_scrollMechanism = mech; }
+int  scrollGetSmoothness(void) { return g_scrollSmoothness; }
+void scrollSetSmoothness(int level) { g_scrollSmoothness = level; }
+bool scrollGetSubTilePrecision(void) { return g_scrollSubTilePrecision; }
+void scrollSetSubTilePrecision(bool on) { g_scrollSubTilePrecision = on; }
+
 /* Sub-tile arithmetic. The view position is tracked in 1/256-tile units
  * internally; the BYTE *xValue/*yValue exposed to engine code is the
  * tile-aligned floor, with the fractional remainder in ScrollState's
@@ -254,18 +269,115 @@ void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
   ss->initialized = FALSE;
 }
 
+/* Classic WinBolo autoscroll.
+ *
+ * When the crosshair (gunsight) touches a screen edge, push the view that
+ * way by a burst of up to CLASSIC_AS_MAX_LEAD tiles at full tank speed,
+ * scaled linearly with speed (burst = MAX_LEAD * speed / FULL_SPEED).
+ *
+ * The burst is committed up-front (a per-tick countdown in
+ * ss->scrollX/scrollY) and plays out one tile per tick. This matters
+ * because scrolling toward the crosshair moves it off the edge after the
+ * first tile — without the latched countdown the push would stop at one
+ * tile. A new burst only arms once the previous one finishes and the
+ * crosshair is at an edge again. A hard clamp keeps the tank on screen.
+ * Integer-tile, no sub-tile smoothing. */
+#define CLASSIC_AS_FULL_SPEED 16  /* tank top speed (road) */
+#define CLASSIC_AS_MAX_LEAD    5  /* max burst tiles at full speed */
+static bool scrollClassicAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue,
+                                    BYTE objectX, BYTE objectY,
+                                    BYTE gunsightX, BYTE gunsightY, BYTE speed) {
+  bool returnValue = FALSE;
+  int burst = (CLASSIC_AS_MAX_LEAD * (int)speed) / CLASSIC_AS_FULL_SPEED;
+
+  ss->subPosX = 0;
+  ss->subPosY = 0;
+
+  /* Arm a burst when the crosshair is at an edge and none is in flight. */
+  if (ss->scrollX == 0 && ss->scrollY == 0 && burst > 0) {
+    int gcol = (int)gunsightX - (int)*xValue;  /* gunsight column within view */
+    int grow = (int)gunsightY - (int)*yValue;  /* gunsight row within view    */
+    if (gcol >= MAIN_SCREEN_SIZE_X - 1) { ss->scrollX = (BYTE)burst; ss->xPositive = TRUE; }
+    else if (gcol <= 0)                 { ss->scrollX = (BYTE)burst; ss->xPositive = FALSE; }
+    if (grow >= MAIN_SCREEN_SIZE_Y - 1) { ss->scrollY = (BYTE)burst; ss->yPositive = TRUE; }
+    else if (grow <= 0)                 { ss->scrollY = (BYTE)burst; ss->yPositive = FALSE; }
+  }
+
+  /* Play the burst out, one tile per tick. */
+  if (ss->scrollX > 0) {
+    ss->scrollX--;
+    if (ss->xPositive) { (*xValue)++; } else { (*xValue)--; }
+    returnValue = TRUE;
+  }
+  if (ss->scrollY > 0) {
+    ss->scrollY--;
+    if (ss->yPositive) { (*yValue)++; } else { (*yValue)--; }
+    returnValue = TRUE;
+  }
+
+  /* Hard clamp: the tank must always stay on screen. */
+  if ((int)objectX <= (int)*xValue) {
+    *xValue = (BYTE)(objectX - 1); ss->scrollX = 0;
+  } else if ((int)objectX >= (int)*xValue + MAIN_SCREEN_SIZE_X) {
+    *xValue = (BYTE)(objectX - MAIN_SCREEN_SIZE_X + 1); ss->scrollX = 0;
+  }
+  if ((int)objectY <= (int)*yValue) {
+    *yValue = (BYTE)(objectY - 1); ss->scrollY = 0;
+  } else if ((int)objectY >= (int)*yValue + MAIN_SCREEN_SIZE_Y) {
+    *yValue = (BYTE)(objectY - MAIN_SCREEN_SIZE_Y + 1); ss->scrollY = 0;
+  }
+
+  if (ss->mods == TRUE && returnValue == TRUE) {
+    ss->mods = FALSE;
+  }
+  if (returnValue == TRUE) {
+    ss->autoScrollOverRide = FALSE;
+  }
+
+  return returnValue;
+}
+
 bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, bool isTank, BYTE gunsightX, BYTE gunsightY, BYTE speed, BYTE armour, TURNTYPE angle, bool manual, bool tankIsDead) {
   bool returnValue;
 
   returnValue = TRUE;
   if (tankIsDead == TRUE) {
     returnValue = FALSE;
-  } else if (manual == TRUE) {
-    returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
-  } else if (ss->autoScroll == TRUE && isTank == TRUE && armour <= TANK_FULL_ARMOUR) {
-    returnValue = scrollAutoScroll(ss, sim, xValue, yValue, objectX, objectY, gunsightX, gunsightY, speed, angle);
+  } else if (g_scrollMechanism == SCROLL_MECH_CLASSIC_NO_AUTOSCROLL) {
+    /* Classic, autoscroll disabled: manual keys + screen-edge nudge only.
+     * The edge nudge only fires with forward motion. When the tank is
+     * parked it must NOT fire: scrollNoAutoScroll nudges off facing angle,
+     * so a still tank at the edge would shove the view back every tick and
+     * fight a manual scroll (the 144<->143 jitter). Original WinBolo let
+     * you scroll cleanly to the edge while parked. */
+    if (manual == TRUE) {
+      returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
+    } else if (speed > 0) {
+      returnValue = scrollNoAutoScroll(ss, xValue, yValue, objectX, objectY, angle);
+    } else {
+      returnValue = FALSE;
+    }
+  } else if (g_scrollMechanism == SCROLL_MECH_CLASSIC_AUTOSCROLL) {
+    /* Classic autoscroll — starts as a copy of the landed no-autoscroll
+     * behaviour (manual keys + forward-motion edge nudge, parked = no
+     * fight). Build the autoscroll up from scrollClassicAutoScroll. */
+    if (manual == TRUE) {
+      returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
+    } else if (speed > 0) {
+      returnValue = scrollClassicAutoScroll(ss, xValue, yValue, objectX, objectY,
+                                            gunsightX, gunsightY, speed);
+    } else {
+      returnValue = FALSE;
+    }
   } else {
-    returnValue = scrollNoAutoScroll(ss, xValue, yValue, objectX, objectY, angle);
+    /* SCROLL_MECH_ENHANCED — John's current sub-tile / threat-aware path. */
+    if (manual == TRUE) {
+      returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
+    } else if (ss->autoScroll == TRUE && isTank == TRUE && armour <= TANK_FULL_ARMOUR) {
+      returnValue = scrollAutoScroll(ss, sim, xValue, yValue, objectX, objectY, gunsightX, gunsightY, speed, angle);
+    } else {
+      returnValue = scrollNoAutoScroll(ss, xValue, yValue, objectX, objectY, angle);
+    }
   }
 
   return returnValue;
@@ -653,8 +765,14 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
 
     *xValue   = (BYTE)(desiredSubX / AUTOSCROLL_SUB_PER_TILE);
     *yValue   = (BYTE)(desiredSubY / AUTOSCROLL_SUB_PER_TILE);
-    ss->subPosX = (int16_t)(desiredSubX - (int)*xValue * AUTOSCROLL_SUB_PER_TILE);
-    ss->subPosY = (int16_t)(desiredSubY - (int)*yValue * AUTOSCROLL_SUB_PER_TILE);
+    if (g_scrollSubTilePrecision) {
+      ss->subPosX = (int16_t)(desiredSubX - (int)*xValue * AUTOSCROLL_SUB_PER_TILE);
+      ss->subPosY = (int16_t)(desiredSubY - (int)*yValue * AUTOSCROLL_SUB_PER_TILE);
+    } else {
+      /* Sub-tile precision off → snap the view to whole tiles. */
+      ss->subPosX = 0;
+      ss->subPosY = 0;
+    }
 
     autoscrollLog("[t=%u p=%u] DBG rawSub=(%d,%d) angle=%d speed=%u offSub=(%d,%d) view=(%u,%u) subPos=(%d,%d)\n",
                   (unsigned)g_autoscrollTick, (unsigned)myPlayer,
