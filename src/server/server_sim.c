@@ -3182,6 +3182,7 @@ void serverSimReturnToLobby(ServerSim *sim) {
 
 void serverSimLobbyCheckAllReady(ServerSim *sim) {
     BYTE numConnected = 0;
+    BYTE numHumans = 0;
     BYTE i;
 
     if (sim->state != serverStateLobby) return;
@@ -3189,9 +3190,15 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
         numConnected++;
+        if (!botManagerIsBot(sim, i)) numHumans++;
         if (!sim->lobbyPlayers[i].ready) return; /* Not all ready */
     }
     if (numConnected == 0) return;
+    /* Never auto-start a human-less lobby. Bots default to ready, so a lobby
+     * holding only ready bots (e.g. the moment the last human leaves) would
+     * otherwise trip this and launch a bot-only game. A start is always
+     * driven by a human readying up. */
+    if (numHumans == 0) return;
 
     /* In-place is the no-countdown optimisation for fresh-sim SP where
      * everything stays in-process and the UI's lobby→running flip can

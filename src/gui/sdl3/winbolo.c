@@ -1615,6 +1615,10 @@ void frontEndSetActiveClientSim(struct ClientSim *cs) {
     for (BYTE i = 0; i < MAX_TANKS; i++) {
       sdl3ImguiClearPlayer(i);
     }
+    /* Drop the previous game's newswire/kills text so it doesn't linger on
+       the message surface when the next game starts (it would otherwise stay
+       visible until the first message overwrites it). */
+    sdl3DrawResetCachedText();
   }
   s_activeUiCs = cs;
 }
