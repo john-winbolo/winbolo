@@ -33,6 +33,7 @@ extern "C" {
 #include "../../../winbolonet/winbolonet_client.h"
 #include "../../lang.h"
 #include "imgui_winbolonet.h"
+#include "../../../steam/steam_wrapper.h"
 }
 
 /* WBN-verified shield texture (white-masked SVG), lazily loaded by the
@@ -61,6 +62,7 @@ struct WbnLoginWork {
     char username[256];
     char password[256];
     char token[256];
+    char steamTicketHex[2049];
     /* outputs */
     char tokenOut[256];
     char expiryOut[256];
@@ -70,6 +72,7 @@ struct WbnLoginWork {
     WbnStats statsOut;
     char errorMsg[512];
     bool isValidate;
+    bool isSteam;
     bool success;
     SDL_AtomicInt done;
 };
@@ -86,7 +89,11 @@ static bool wbnShowStats = false;
 
 static int wbnLoginThreadFunc(void *data) {
     WbnLoginWork *w = (WbnLoginWork *)data;
-    if (w->isValidate) {
+    if (w->isSteam) {
+        w->success = winbolonetAuthSteam(w->steamTicketHex, w->tokenOut, w->expiryOut,
+                                         w->playerNameOut, &w->rankOut, &w->rankTotalOut,
+                                         &w->statsOut, w->errorMsg);
+    } else if (w->isValidate) {
         w->success = winbolonetAuthValidate(w->token, w->playerNameOut, &w->rankOut, &w->rankTotalOut, &w->statsOut, w->errorMsg);
     } else {
         w->success = winbolonetAuthLogin(w->username, w->password, w->tokenOut, w->expiryOut, w->playerNameOut, &w->rankOut, &w->rankTotalOut, &w->statsOut, w->errorMsg);
@@ -114,6 +121,32 @@ static void wbnStartValidate(const char *token) {
     wbnThread = SDL_CreateThread(wbnLoginThreadFunc, "WBNValidate", &wbnWork);
 }
 
+static void wbnStartSteamReauth(const char *ticketHex) {
+    memset(&wbnWork, 0, sizeof(wbnWork));
+    SDL_SetAtomicInt(&wbnWork.done, 0);
+    SDL_strlcpy(wbnWork.steamTicketHex, ticketHex, sizeof(wbnWork.steamTicketHex));
+    wbnWork.isSteam = true;
+    wbnState = WBN_VALIDATING;
+    wbnThread = SDL_CreateThread(wbnLoginThreadFunc, "WBNSteam", &wbnWork);
+}
+
+/* Load-time re-auth decision: refresh a Steam-authenticated (or empty,
+ * ticket-available) session via Steam; otherwise validate an existing
+ * token; otherwise do nothing. A password session never re-auths via
+ * Steam — it keeps validating. */
+static void wbnStartSessionReauth(void) {
+    char token[256], expiry[256], method[32];
+    gameFrontGetWinbolonetToken(token, expiry);
+    gameFrontGetWbnAuthMethod(method, sizeof(method));
+    char ticketHex[2049];
+    if ((token[0] == '\0' || SDL_strcmp(method, "steam") == 0) &&
+        gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
+        wbnStartSteamReauth(ticketHex);
+    } else if (token[0] != '\0') {
+        wbnStartValidate(token);
+    }
+}
+
 static void wbnCheckThread(void) {
     if (!wbnThread || !SDL_GetAtomicInt(&wbnWork.done)) return;
 
@@ -121,28 +154,41 @@ static void wbnCheckThread(void) {
     wbnThread = nullptr;
 
     if (wbnWork.success) {
-        if (!wbnWork.isValidate) {
-            gameFrontSetWinbolonetToken(wbnWork.tokenOut, wbnWork.expiryOut);
-            gameFrontSetWbnAuthMethod("password");
-        }
-        gameFrontSetWinbolonetRank(wbnWork.rankOut, wbnWork.rankTotalOut);
-        gameFrontSetWinbolonetStats(&wbnWork.statsOut);
-        if (wbnWork.playerNameOut[0] != '\0') {
-            gameFrontSetPlayerName(wbnWork.playerNameOut);
-        }
-        /* Token is set (login) or confirmed (validate): pull the cloud prefs
-         * once for this session. Runs after the player name is set so the
-         * sync captures the account display_name to reassert over the synced
-         * Player Name. Gated, so it fires at most once per sign-in. */
-        gameFrontStartPrefsSync();
-        wbnState = WBN_SUCCESS;
-    } else {
-        SDL_strlcpy(wbnErrorBuf, wbnWork.errorMsg, sizeof(wbnErrorBuf));
-        if (!wbnWork.isValidate) {
-            wbnState = WBN_ERROR;
-        } else {
-            gameFrontClearWinbolonetToken();
+        if (wbnWork.isSteam) {
+            gameFrontApplySteamAuthResult(wbnWork.tokenOut, wbnWork.expiryOut,
+                                          wbnWork.playerNameOut, wbnWork.rankOut,
+                                          wbnWork.rankTotalOut, &wbnWork.statsOut);
+            steam_cancel_auth_ticket();
             wbnState = WBN_IDLE;
+        } else {
+            if (!wbnWork.isValidate) {
+                gameFrontSetWinbolonetToken(wbnWork.tokenOut, wbnWork.expiryOut);
+                gameFrontSetWbnAuthMethod("password");
+            }
+            gameFrontSetWinbolonetRank(wbnWork.rankOut, wbnWork.rankTotalOut);
+            gameFrontSetWinbolonetStats(&wbnWork.statsOut);
+            if (wbnWork.playerNameOut[0] != '\0') {
+                gameFrontSetPlayerName(wbnWork.playerNameOut);
+            }
+            /* Token is set (login) or confirmed (validate): pull the cloud prefs
+             * once for this session. Runs after the player name is set so the
+             * sync captures the account display_name to reassert over the synced
+             * Player Name. Gated, so it fires at most once per sign-in. */
+            gameFrontStartPrefsSync();
+            wbnState = WBN_SUCCESS;
+        }
+    } else {
+        if (wbnWork.isSteam) {
+            steam_cancel_auth_ticket();
+            wbnState = WBN_IDLE;          /* keep any existing token; silent */
+        } else {
+            SDL_strlcpy(wbnErrorBuf, wbnWork.errorMsg, sizeof(wbnErrorBuf));
+            if (!wbnWork.isValidate) {
+                wbnState = WBN_ERROR;
+            } else {
+                gameFrontClearWinbolonetToken();
+                wbnState = WBN_IDLE;
+            }
         }
     }
 }
@@ -604,16 +650,18 @@ extern "C" void imguiWinbolonetDrawStatusBlock(void) {
     /* Check for async completion */
     wbnCheckThread();
 
-    /* Cold-start: validate the stored token once per session the first
-     * time the welcome screen draws, so rank/stats populate shortly after
-     * launch instead of only on the first server join. Gated by a static
-     * flag so it does not re-fire every frame; the validate is also a
-     * no-op when no token is stored. */
+    /* Cold-start: re-auth the WinBolo.net session once per session the
+     * first time the welcome screen draws, so rank/stats populate shortly
+     * after launch instead of only on the first server join. A Steam
+     * session (or an empty token with a ticket available) refreshes via
+     * Steam; a password session validates its stored token. Gated by a
+     * static flag so it does not re-fire every frame; a no-op when there
+     * is nothing to re-auth. */
     static bool s_welcomeValidated = false;
     if (!s_welcomeValidated) {
         s_welcomeValidated = true;
         if (wbnState == WBN_IDLE && !wbnThread) {
-            imguiWinbolonetStartValidation();
+            wbnStartSessionReauth();
         }
     }
 
