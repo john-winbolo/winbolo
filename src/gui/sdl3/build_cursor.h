@@ -58,6 +58,12 @@ void buildCursorExit(void);
    false when not active; outputs are then untouched. */
 bool buildCursorGetTile(BYTE *mapX, BYTE *mapY);
 
+/* Set the cursor's absolute map tile directly.  Used by the mouse path so
+   moving the mouse repositions the shared build cursor (it follows the
+   reticle), keeping mouse and gamepad placement in sync.  Marks the cursor
+   as positioned; works whether or not cursor mode is currently active. */
+void buildCursorSetTile(BYTE mapX, BYTE mapY);
+
 /* Apply a per-frame movement delta in zoomed pixels.  Whole-tile
    crossings step the cursor; sub-tile remainder is kept for next
    frame.  The camera scrolls to keep the cursor on-screen with a

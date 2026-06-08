@@ -60,6 +60,7 @@
 #include "glyphs.h"
 #include "global.h"
 #include "client_sim.h"
+#include "build_cursor.h"
 #include "../gamefront.h"
 #include "tilenum.h"
 #include "../positions.h"
@@ -606,6 +607,12 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       cursorMove((int)gameX, (int)gameY);
       BYTE cx = 0, cy = 0;
       if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
+        /* Mouse over the main view also drives the shared build cursor so
+           mouse and gamepad placement stay in sync.  cx/cy are 1-based
+           screen tiles (1..15); absolute map tile = view offset + screen
+           tile. Done before the legacy >16 guard mutates cx. */
+        buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
+                           (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
         if (cx > 16 || cy > 16) cx = 100;
         clientSimSetCursorPos(cs, cx, cy);
       } else {

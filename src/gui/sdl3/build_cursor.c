@@ -15,7 +15,8 @@
    ghost margin plus a visible breathing tile. */
 #define WB_CURSOR_MARGIN_TILES 2
 
-static bool s_active = false;
+static bool s_active     = false;
+static bool s_positioned = false;  /* has the cursor been placed at least once? */
 static BYTE s_mapX   = 128;
 static BYTE s_mapY   = 128;
 static int  s_subX   = 0;  /* sub-tile accumulator in zoomed pixels */
@@ -23,6 +24,7 @@ static int  s_subY   = 0;
 
 void buildCursorReset(void) {
   s_active = false;
+  s_positioned = false;
   s_mapX = 128;
   s_mapY = 128;
   s_subX = 0;
@@ -39,6 +41,56 @@ void buildCursorExit(void) {
   s_subY = 0;
 }
 
+/* True when the cursor's current absolute tile is within the visible
+   15x15 area (1-based screen tile indices 1..MAIN_SCREEN_SIZE_X). */
+static bool cursor_on_screen(struct ClientSim *cs);
+
+/* Move the cursor onto the screen edge where the line from its current
+   (off-screen) tile to the tank crosses into the visible area — the entry
+   point closest to the cursor's original position.  Keeps the cursor as
+   near as possible to where it was while bringing it into view.  No-op if
+   the tank position is unavailable (cursor then stays put). */
+static void clamp_to_edge_toward_tank(struct ClientSim *cs) {
+  BYTE tx = 0, ty = 0;
+  if (!clientSimGetMyTankMapPos(cs, &tx, &ty)) return;
+
+  int xOff = (int)clientSimGetXOffset(cs);
+  int yOff = (int)clientSimGetYOffset(cs);
+  float xmin = (float)(xOff + 1);
+  float xmax = (float)(xOff + MAIN_SCREEN_SIZE_X);
+  float ymin = (float)(yOff + 1);
+  float ymax = (float)(yOff + MAIN_SCREEN_SIZE_Y);
+
+  float p0x = (float)s_mapX, p0y = (float)s_mapY;   /* off-screen origin */
+  float dx  = (float)tx - p0x, dy = (float)ty - p0y;
+
+  /* Liang-Barsky: t0 is the entry parameter (portion of the segment inside
+     the rect, nearest P0).  The tank end is inside and the cursor end is
+     outside, so a single crossing exists. */
+  float t0 = 0.0f, t1 = 1.0f;
+  float p[4] = { -dx, dx, -dy, dy };
+  float q[4] = { p0x - xmin, xmax - p0x, p0y - ymin, ymax - p0y };
+  for (int i = 0; i < 4; i++) {
+    if (p[i] == 0.0f) {
+      if (q[i] < 0.0f) return;        /* parallel and outside — give up */
+    } else {
+      float r = q[i] / p[i];
+      if (p[i] < 0.0f) { if (r > t0) t0 = r; }
+      else             { if (r < t1) t1 = r; }
+    }
+  }
+  if (t0 > t1) return;
+
+  int mx = (int)(p0x + t0 * dx + 0.5f);
+  int my = (int)(p0y + t0 * dy + 0.5f);
+  if (mx < (int)xmin) mx = (int)xmin;
+  if (mx > (int)xmax) mx = (int)xmax;
+  if (my < (int)ymin) my = (int)ymin;
+  if (my > (int)ymax) my = (int)ymax;
+  s_mapX = (BYTE)mx;
+  s_mapY = (BYTE)my;
+}
+
 void buildCursorToggle(struct ClientSim *cs) {
   if (s_active) {
     buildCursorExit();
@@ -46,20 +98,29 @@ void buildCursorToggle(struct ClientSim *cs) {
   }
   if (!cs) return;
 
-  /* Snap to the gunsight tile so the player has a known starting
-     point.  clientSimGetGunsightTile only writes valid coords when
-     armour <= TANK_FULL_ARMOUR; if our tank is dead the locals stay
-     at zero, in which case fall back to the tank's own tile. */
-  BYTE gx = 0, gy = 0;
-  clientSimGetGunsightTile(cs, &gx, &gy);
-  if (gx == 0 && gy == 0) {
-    if (!clientSimGetMyTankMapPos(cs, &gx, &gy)) {
-      gx = 128;
-      gy = 128;
+  /* Toggling on must NOT move the cursor when it is already on-screen — it
+     stays exactly where it was last left (by the stick or the mouse). */
+  if (!s_positioned) {
+    /* Very first activation: seed to the gunsight tile (or the tank tile if
+       the gunsight isn't valid) so it starts somewhere visible.
+       clientSimGetGunsightTile only writes valid coords when armour <=
+       TANK_FULL_ARMOUR; if our tank is dead the locals stay at zero. */
+    BYTE gx = 0, gy = 0;
+    clientSimGetGunsightTile(cs, &gx, &gy);
+    if (gx == 0 && gy == 0) {
+      if (!clientSimGetMyTankMapPos(cs, &gx, &gy)) {
+        gx = 128;
+        gy = 128;
+      }
     }
+    s_mapX = gx;
+    s_mapY = gy;
+    s_positioned = true;
+  } else if (!cursor_on_screen(cs)) {
+    /* Off-screen: bring it to the visible edge along the line toward the
+       tank, landing on the edge tile nearest its original position. */
+    clamp_to_edge_toward_tank(cs);
   }
-  s_mapX = gx;
-  s_mapY = gy;
   s_subX = 0;
   s_subY = 0;
   s_active = true;
@@ -70,6 +131,14 @@ bool buildCursorGetTile(BYTE *mapX, BYTE *mapY) {
   if (mapX) *mapX = s_mapX;
   if (mapY) *mapY = s_mapY;
   return true;
+}
+
+void buildCursorSetTile(BYTE mapX, BYTE mapY) {
+  s_mapX = mapX;
+  s_mapY = mapY;
+  s_subX = 0;
+  s_subY = 0;
+  s_positioned = true;
 }
 
 /* Camera-follow helper.  Steps xOffset/yOffset toward the cursor when
@@ -122,18 +191,10 @@ static bool cursor_on_screen(struct ClientSim *cs) {
 void buildCursorTick(struct ClientSim *cs, int dxPx, int dyPx) {
   if (!s_active || !cs) return;
 
-  /* Mirror the mouse-cursor behaviour the user described: when the
-     cursor has drifted off-screen (the tank drove the view away while
-     the cursor stayed pinned to its absolute tile) and the player
-     starts moving it again, restart from the tank tile so they have a
-     visible reference instead of nudging an invisible reticle around
-     the map. */
-  if (!cursor_on_screen(cs)) {
-    clientSimGetMyTankMapPos(cs, &s_mapX, &s_mapY);
-    s_subX = 0;
-    s_subY = 0;
-  }
-
+  /* The cursor is pinned to its absolute map tile and may sit off-screen
+     (the tank drove the view away).  Stick movement nudges it from wherever
+     it is — it is not snapped back on-screen here; that only happens on a
+     fresh toggle-on (see clamp_to_edge_toward_tank). */
   int zoom = sdl3DrawGetZoomFactor();
   if (zoom < 1) zoom = 1;
   int tileW = TILE_SIZE_X * zoom;
