@@ -30,6 +30,9 @@ void inputGamepadInit(void);
 void inputGamepadShutdown(void);
 void inputGamepadProcessEvent(const SDL_Event *e);
 bool inputGamepadIsConnected(void);
+/* true = Steam Input (Path A) is driving the controller; false = native
+ * SDL gamepad (Path B). Useful for diagnostics / glyph selection. */
+bool inputGamepadIsSteamInput(void);
 
 /* --- Path B rebindable action set ---
  * Twelve gameplay actions the player can rebind from the Configure

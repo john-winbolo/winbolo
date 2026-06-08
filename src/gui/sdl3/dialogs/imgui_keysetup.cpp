@@ -37,6 +37,7 @@ extern "C" {
 #include "../bg_game.h"
 #include "../glyphs.h"
 #include "../input.h"
+#include "../input_gamepad.h"  /* GamepadBindings — controller tab */
 #include "../../winbolo.h"
 #include "../../lang.h"
 #include "../../ui_mode.h"
@@ -154,6 +155,97 @@ static void keyRow(const char *label, KeySetupField field) {
 }
 
 /* -------------------------------------------------------
+ * Controller (gamepad) binding tab.
+ *
+ * Edits a working copy of the runtime GamepadBindings (12 actions x
+ * primary/secondary slots). Both keyboard and controller stay live at
+ * runtime — this just lets the player view/rebind the controller half.
+ * Capture is armed per (action, slot) and resolved from a gamepad button
+ * down or a trigger crossing its threshold, fed in by the standalone
+ * event loop or the in-game event pump (mirroring the scancode path).
+ * ------------------------------------------------------- */
+static GamepadBindings s_pad;                       /* working copy */
+static int             s_padWaitAction = -1;        /* GamepadAction, or -1 */
+static GamepadSlot     s_padWaitSlot   = GP_SLOT_PRIMARY;
+
+static const char *padBindingName(const GamepadBinding *b) {
+    if (!b || b->kind == GP_BIND_NONE) return "-";
+    if (b->kind == GP_BIND_BUTTON) {
+        const char *n = SDL_GetGamepadStringForButton((SDL_GamepadButton)b->code);
+        return (n && n[0]) ? n : "?";
+    }
+    const char *n = SDL_GetGamepadStringForAxis((SDL_GamepadAxis)b->code);
+    return (n && n[0]) ? n : "?";
+}
+
+static SDL_Texture *padBindingGlyph(const GamepadBinding *b) {
+    if (!b) return nullptr;
+    if (b->kind == GP_BIND_BUTTON)  return glyphForGamepadButton((SDL_GamepadButton)b->code);
+    if (b->kind == GP_BIND_TRIGGER) return glyphForGamepadAxis((SDL_GamepadAxis)b->code);
+    return nullptr;
+}
+
+/* Commit a captured button/trigger into the slot currently armed. */
+static void padAssignCaptured(GamepadBindKind kind, int code) {
+    if (s_padWaitAction < 0 || s_padWaitAction >= GP_ACT_COUNT) return;
+    GamepadBinding b; b.kind = kind; b.code = code;
+    GamepadActionBindings *ab = &s_pad.b[s_padWaitAction];
+    if (s_padWaitSlot == GP_SLOT_PRIMARY) ab->pri = b; else ab->sec = b;
+    s_padWaitAction = -1;
+}
+
+/* Binding display for one slot (glyph + name, or the capture prompt). */
+static void padSlotDisplay(GamepadAction act, GamepadSlot slot) {
+    const GamepadBinding *b = (slot == GP_SLOT_PRIMARY) ? &s_pad.b[act].pri
+                                                        : &s_pad.b[act].sec;
+    bool waiting = (s_padWaitAction == (int)act && s_padWaitSlot == slot);
+    if (waiting) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
+                           langGetText(STR_GP_REBIND_PROMPT));
+        return;
+    }
+    const char  *name = padBindingName(b);
+    float        h    = ImGui::GetTextLineHeight();
+    float        gs   = h * 1.5f;
+    SDL_Texture *g    = padBindingGlyph(b);
+    if (g) {
+        float yoff = (gs - h) * 0.5f, cy = ImGui::GetCursorPosY();
+        ImGui::SetCursorPosY(cy - yoff);
+        ImGui::Image((ImTextureID)g, ImVec2(gs, gs));
+        ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::SetCursorPosY(cy);
+    }
+    ImGui::TextUnformatted(name);
+}
+
+/* Change/Cancel button for one slot — kept in its own table column so the
+   buttons line up across all rows. */
+static void padSlotChange(GamepadAction act, GamepadSlot slot) {
+    bool waiting = (s_padWaitAction == (int)act && s_padWaitSlot == slot);
+    ImGui::PushID((int)act * 2 + (int)slot);
+    if (waiting) {
+        if (ImGui::SmallButton(langGetText(STR_CANCEL))) s_padWaitAction = -1;
+    } else {
+        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
+            s_padWaitAction = (int)act;
+            s_padWaitSlot   = slot;
+        }
+    }
+    imguiHandOnHover();
+    ImGui::PopID();
+}
+
+/* Action | Primary glyph | Change | Secondary glyph | Change */
+static void controllerRow(const char *label, GamepadAction act) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(label);
+    ImGui::TableSetColumnIndex(1); padSlotDisplay(act, GP_SLOT_PRIMARY);
+    ImGui::TableSetColumnIndex(2); padSlotChange (act, GP_SLOT_PRIMARY);
+    ImGui::TableSetColumnIndex(3); padSlotDisplay(act, GP_SLOT_SECONDARY);
+    ImGui::TableSetColumnIndex(4); padSlotChange (act, GP_SLOT_SECONDARY);
+}
+
+/* -------------------------------------------------------
  * Shared form body — drawn by BOTH the standalone blocking
  * dialog (imguiKeySetupShow) AND the in-game popup wrapper
  * (imguiKeySetupRenderInGamePopup). The form layout, key-
@@ -174,10 +266,26 @@ static void keyRow(const char *label, KeySetupField field) {
  * gameFrontPutPrefs so the choice is durable immediately.
  * ------------------------------------------------------- */
 static int renderFormBody(struct ClientSim *cs) {
-    if (s_waiting != ksNone) {
+    /* If the controller vanished mid-capture, drop the capture so the
+     * dialog can't get stuck "busy" with the Controller tab gone. */
+    if (s_padWaitAction != -1 && !inputGamepadIsConnected()) s_padWaitAction = -1;
+
+    bool busy = (s_waiting != ksNone) || (s_padWaitAction != -1);
+
+    if (busy) {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
                            langGetText(STR_DLGKEYSETUP_PRESS_OR_CANCEL));
         ImGui::Separator();
+    }
+
+    /* Plain-text input-path indicator, always visible while a controller is
+     * connected (not relying on colour to convey it). */
+    if (inputGamepadIsConnected()) {
+        ImGui::Text("Controller input: %s",
+                    inputGamepadIsSteamInput()
+                        ? "Steam Input (Path A) - bindings managed by Steam"
+                        : "Native SDL (Path B)");
+        ImGui::Spacing();
     }
 
     /* Scrollable region containing all binding rows */
@@ -201,42 +309,101 @@ static int renderFormBody(struct ClientSim *cs) {
     };
     auto endSection = [&]() { ImGui::EndTable(); };
 
-    section(langGetText(STR_DLGKEYSETUP_DRIVETANK));
-    keyRow(langGetText(STR_DLGKEYSETUP_FASTER),    ksForward);
-    keyRow(langGetText(STR_DLGKEYSETUP_SLOWER),    ksBackward);
-    keyRow(langGetText(STR_DLGKEYSETUP_TURNLEFT),  ksTurnLeft);
-    keyRow(langGetText(STR_DLGKEYSETUP_TURNRIGHT), ksTurnRight);
-    endSection();
+    /* Shoulder buttons (L1 / R1) cycle the tabs. The SDL3 backend feeds
+       ImGuiKey_GamepadL1/R1 even while gamepad nav is disabled, so this works
+       on the native path. s_forceTab is set for one frame to drive a tab via
+       ImGuiTabItemFlags_SetSelected; s_activeTab tracks the open tab so the
+       next cycle starts from the right place (and mouse clicks stay honoured). */
+    static int s_activeTab = 0;
+    int s_forceTab = -1;
+    int tabCount = inputGamepadIsConnected() ? 2 : 1;
+    /* Don't cycle tabs while a binding is being captured — a shoulder press
+       then belongs to the binding, not to tab switching. */
+    bool capturing = (s_waiting != ksNone) || (s_padWaitAction != -1);
+    if (tabCount > 1 && !capturing) {
+        int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
+                  - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
+        if (shift != 0)
+            s_forceTab = (s_activeTab + shift + tabCount) % tabCount;
+    }
 
-    section(langGetText(STR_DLGKEYSETUP_WEAPONS));
-    keyRow(langGetText(STR_DLGKEYSETUP_SHOOT),    ksShoot);
-    keyRow(langGetText(STR_DLGKEYSETUP_LAYMINE),  ksLayMine);
-    endSection();
+    if (ImGui::BeginTabBar("##keysetuptabs")) {
+        if (ImGui::BeginTabItem(langGetText(STR_DLGKEYSETUP_TAB_KEYBOARD), nullptr,
+                                s_forceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_activeTab = 0;
+            section(langGetText(STR_DLGKEYSETUP_DRIVETANK));
+            keyRow(langGetText(STR_DLGKEYSETUP_FASTER),    ksForward);
+            keyRow(langGetText(STR_DLGKEYSETUP_SLOWER),    ksBackward);
+            keyRow(langGetText(STR_DLGKEYSETUP_TURNLEFT),  ksTurnLeft);
+            keyRow(langGetText(STR_DLGKEYSETUP_TURNRIGHT), ksTurnRight);
+            endSection();
 
-    section(langGetText(STR_DLGKEYSETUP_GUNRANGE));
-    keyRow(langGetText(STR_DLGKEYSETUP_INCREASE), ksGunIncrease);
-    keyRow(langGetText(STR_DLGKEYSETUP_DECREASE), ksGunDecrease);
-    endSection();
+            section(langGetText(STR_DLGKEYSETUP_WEAPONS));
+            keyRow(langGetText(STR_DLGKEYSETUP_SHOOT),    ksShoot);
+            keyRow(langGetText(STR_DLGKEYSETUP_LAYMINE),  ksLayMine);
+            endSection();
 
-    section(langGetText(STR_DLGKEYSETUP_VIEW));
-    keyRow(langGetText(STR_DLGKEYSETUP_TANKVIEW), ksTankView);
-    keyRow(langGetText(STR_DLGKEYSETUP_PILLVIEW), ksPillView);
-    endSection();
+            section(langGetText(STR_DLGKEYSETUP_GUNRANGE));
+            keyRow(langGetText(STR_DLGKEYSETUP_INCREASE), ksGunIncrease);
+            keyRow(langGetText(STR_DLGKEYSETUP_DECREASE), ksGunDecrease);
+            endSection();
 
-    section(langGetText(STR_DLGKEYSETUP_SCROLL));
-    keyRow(langGetText(STR_DLGKEYSETUP_SCROLLUP),    ksScrollUp);
-    keyRow(langGetText(STR_DLGKEYSETUP_SCROLLDOWN),  ksScrollDown);
-    keyRow(langGetText(STR_DLGKEYSETUP_SCROLLLEFT),  ksScrollLeft);
-    keyRow(langGetText(STR_DLGKEYSETUP_SCROLLRIGHT), ksScrollRight);
-    endSection();
+            section(langGetText(STR_DLGKEYSETUP_VIEW));
+            keyRow(langGetText(STR_DLGKEYSETUP_TANKVIEW), ksTankView);
+            keyRow(langGetText(STR_DLGKEYSETUP_PILLVIEW), ksPillView);
+            endSection();
 
-    section(langGetText(STR_DLGKEYSETUP_QUICKKEYS));
-    keyRow(langGetText(STR_DLGKEYSETUP_TREE),         ksQuickTree);
-    keyRow(langGetText(STR_DLGKEYSETUP_ROAD),         ksQuickRoad);
-    keyRow(langGetText(STR_DLGKEYSETUP_WALL),         ksQuickWall);
-    keyRow(langGetText(STR_DLGKEYSETUP_QUICKPILLBOX), ksQuickPillbox);
-    keyRow(langGetText(STR_DLGKEYSETUP_QUICKMINE),    ksQuickMine);
-    endSection();
+            section(langGetText(STR_DLGKEYSETUP_SCROLL));
+            keyRow(langGetText(STR_DLGKEYSETUP_SCROLLUP),    ksScrollUp);
+            keyRow(langGetText(STR_DLGKEYSETUP_SCROLLDOWN),  ksScrollDown);
+            keyRow(langGetText(STR_DLGKEYSETUP_SCROLLLEFT),  ksScrollLeft);
+            keyRow(langGetText(STR_DLGKEYSETUP_SCROLLRIGHT), ksScrollRight);
+            endSection();
+
+            section(langGetText(STR_DLGKEYSETUP_QUICKKEYS));
+            keyRow(langGetText(STR_DLGKEYSETUP_TREE),         ksQuickTree);
+            keyRow(langGetText(STR_DLGKEYSETUP_ROAD),         ksQuickRoad);
+            keyRow(langGetText(STR_DLGKEYSETUP_WALL),         ksQuickWall);
+            keyRow(langGetText(STR_DLGKEYSETUP_QUICKPILLBOX), ksQuickPillbox);
+            keyRow(langGetText(STR_DLGKEYSETUP_QUICKMINE),    ksQuickMine);
+            endSection();
+            ImGui::EndTabItem();
+        }
+
+        /* Controller tab — only shown when a gamepad is connected. */
+        if (inputGamepadIsConnected() &&
+            ImGui::BeginTabItem(langGetText(STR_GP_SECTION), nullptr,
+                                s_forceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_activeTab = 1;
+            ImGui::Spacing();
+            /* Action column gets at least ~33% of the table width. */
+            float padActionW = ImGui::GetContentRegionAvail().x * 0.34f;
+            if (padActionW < 120.0f) padActionW = 120.0f;
+            ImGui::BeginTable("##padbindings", 5, tflags, ImVec2(-1, 0));
+            ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
+                                    ImGuiTableColumnFlags_WidthFixed, padActionW);
+            ImGui::TableSetupColumn("Primary",   ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed, 68.0f);
+            ImGui::TableSetupColumn("Secondary", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed, 68.0f);
+            ImGui::TableHeadersRow();
+            controllerRow(langGetText(STR_GP_ACTION_FIRE),                GP_ACT_FIRE);
+            controllerRow(langGetText(STR_GP_ACTION_MINE),                GP_ACT_MINE);
+            controllerRow(langGetText(STR_GP_ACTION_GUNSIGHT_INC),        GP_ACT_GUNSIGHT_INC);
+            controllerRow(langGetText(STR_GP_ACTION_GUNSIGHT_DEC),        GP_ACT_GUNSIGHT_DEC);
+            controllerRow(langGetText(STR_GP_ACTION_BUILD_CONFIRM),       GP_ACT_BUILD_CONFIRM);
+            controllerRow(langGetText(STR_GP_ACTION_BUILD_PREV),          GP_ACT_BUILD_PREV);
+            controllerRow(langGetText(STR_GP_ACTION_BUILD_NEXT),          GP_ACT_BUILD_NEXT);
+            controllerRow(langGetText(STR_GP_ACTION_BUILD_CURSOR_TOGGLE), GP_ACT_BUILD_CURSOR_TOGGLE);
+            controllerRow(langGetText(STR_GP_ACTION_VIEW_CYCLE),          GP_ACT_VIEW_CYCLE);
+            controllerRow(langGetText(STR_GP_ACTION_VIEW_PLAYERS),        GP_ACT_VIEW_PLAYERS);
+            controllerRow(langGetText(STR_GP_ACTION_QUICK_CHAT),          GP_ACT_QUICK_CHAT);
+            controllerRow(langGetText(STR_GP_ACTION_PAUSE),               GP_ACT_PAUSE);
+            ImGui::EndTable();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
 
     ImGui::EndChild();
 
@@ -246,7 +413,6 @@ static int renderFormBody(struct ClientSim *cs) {
     ImGui::Checkbox(langGetText(STR_DLGKEYSETUP_AUTOGUNSIGHT), &s_autoGunsight);
     ImGui::Spacing();
 
-    bool busy = (s_waiting != ksNone);
     int result = 0;
 
     if (busy) ImGui::BeginDisabled();
@@ -254,11 +420,12 @@ static int renderFormBody(struct ClientSim *cs) {
                                     langGetText(STR_OK));
     if (busy) ImGui::EndDisabled();
 
-    /* Skip key/click action while capturing a key — the footer suppresses
-     * itself visually via BeginDisabled but key bindings still fire. */
+    /* Skip key/click action while capturing a binding — the footer
+     * suppresses itself visually via BeginDisabled but bindings still fire. */
     if (!busy) {
         if (footer == WBUI::FOOTER_CONFIRM) {
             windowSetKeys(&s_keys);
+            inputGamepadBindingsSetAll(&s_pad);  /* push controller bindings live */
             useAutoslow = s_autoSlowdown;
             useAutohide = s_autoGunsight;
             if (cs != NULL) {
@@ -269,11 +436,15 @@ static int renderFormBody(struct ClientSim *cs) {
                 clientSimSetTankAutoSlowdown(cs, s_autoSlowdown);
                 clientSimSetTankAutoHideGunsight(cs, s_autoGunsight);
             }
+            /* gameFrontPutPrefs writes both [KEYS] and [GAMEPAD] (the latter
+             * read back from the global we just set above). */
             gameFrontPutPrefs(&s_keys);
             s_waiting = ksNone;
+            s_padWaitAction = -1;
             result = 1;
         } else if (footer == WBUI::FOOTER_CANCEL) {
             s_waiting = ksNone;
+            s_padWaitAction = -1;
             result = -1;
         }
     }
@@ -329,11 +500,20 @@ extern "C" int imguiKeySetupShow(void) {
     ImGui_ImplSDLRenderer3_Init(renderer);
     dialogApplyScaling(s);
 
+    /* Ensure the gamepad subsystem is up and any connected pad is opened.
+     * In-game this happened in the main loop; the pre-game standalone
+     * dialog runs its own loop, so without this inputGamepadIsConnected()
+     * is false here and the Controller tab never appears. Safe to call
+     * again — the main loop re-inits cleanly when a game starts. */
+    inputGamepadInit();
+
     /* Load current bindings */
     windowGetKeys(&s_keys);
+    inputGamepadBindingsGetAll(&s_pad);
     s_autoSlowdown = useAutoslow;
     s_autoGunsight = useAutohide;
     s_waiting = ksNone;
+    s_padWaitAction = -1;
 
     /* Background game */
     BgGame *bg = bgGameGetShared();
@@ -359,6 +539,35 @@ extern "C" int imguiKeySetupShow(void) {
                     s_waiting = ksNone;
                 }
                 continue;
+            }
+
+            /* Controller binding capture — intercept a gamepad button down
+             * or a trigger crossing its threshold before ImGui sees it.
+             * Escape (keyboard) cancels. */
+            if (s_padWaitAction != -1) {
+                if (ev.type == SDL_EVENT_KEY_DOWN &&
+                    ev.key.scancode == SDL_SCANCODE_ESCAPE) {
+                    s_padWaitAction = -1;
+                    continue;
+                }
+                if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                    padAssignCaptured(GP_BIND_BUTTON, (int)ev.gbutton.button);
+                    continue;
+                }
+                if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION &&
+                    (ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ||
+                     ev.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) &&
+                    ev.gaxis.value > 16384 /* ~0.5 of 32767 */) {
+                    padAssignCaptured(GP_BIND_TRIGGER, (int)ev.gaxis.axis);
+                    continue;
+                }
+            }
+
+            /* Keep gamepad connection state current so the Controller tab
+             * appears/disappears live on hot-plug while the dialog is up. */
+            if (ev.type == SDL_EVENT_GAMEPAD_ADDED ||
+                ev.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                inputGamepadProcessEvent(&ev);
             }
 
             ImGui_ImplSDL3_ProcessEvent(&ev);
@@ -402,8 +611,9 @@ extern "C" int imguiKeySetupShow(void) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        /* Centered overlay panel */
-        float panelW = 460.0f * s, panelH = 560.0f * s;
+        /* Centered overlay panel. Wide enough for the Controller tab's
+         * Action | Primary | Change | Secondary | Change layout. */
+        float panelW = 720.0f * s, panelH = 560.0f * s;
         if (panelW > (float)winW * 0.95f) panelW = (float)winW * 0.95f;
         if (panelH > (float)winH * 0.95f) panelH = (float)winH * 0.95f;
 
@@ -512,6 +722,8 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
         ImGui::OpenPopup(title);
         s_inGameShowRequested = false;
         windowGetKeys(&s_keys);
+        inputGamepadBindingsGetAll(&s_pad);
+        s_padWaitAction = -1;
         /* Seed checkboxes from the live tank so the dialog opens
          * showing what the tank currently has — this matches the
          * old in-game popup's behavior. */
@@ -523,7 +735,7 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
     ImGuiIO &io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(420, 560), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(720, 560), ImGuiCond_Always);
 
     bool open = true;
     if (!ImGui::BeginPopupModal(title, &open,
@@ -556,4 +768,23 @@ extern "C" void imguiKeySetupHandleInGameScancode(int scancode) {
     int *ptr = fieldPtr(s_waiting, &s_keys);
     if (ptr) *ptr = scancode;
     s_waiting = ksNone;
+}
+
+/* In-game controller-binding capture — mirror of the scancode hooks above.
+ * sdl3ImguiProcessEvents routes gamepad button-down / trigger events here
+ * while a controller row is armed. Escape cancels via the scancode path. */
+extern "C" bool imguiKeySetupIsCapturingInGamePad(void) {
+    return s_padWaitAction != -1;
+}
+
+extern "C" void imguiKeySetupHandleInGamePadButton(int sdlGamepadButton) {
+    padAssignCaptured(GP_BIND_BUTTON, sdlGamepadButton);
+}
+
+extern "C" void imguiKeySetupHandleInGamePadTrigger(int sdlGamepadAxis) {
+    padAssignCaptured(GP_BIND_TRIGGER, sdlGamepadAxis);
+}
+
+extern "C" void imguiKeySetupCancelInGamePad(void) {
+    s_padWaitAction = -1;
 }

@@ -453,6 +453,10 @@ bool inputGamepadIsConnected(void) {
   return s_activeGamepad != NULL;
 }
 
+bool inputGamepadIsSteamInput(void) {
+  return steam_input_has_active_controller();
+}
+
 /* Path B only: Steam Input doesn't expose an SDL_Gamepad handle.
    Returns NULL on Path A (callers that need raw SDL handles should
    gate on inputGamepadIsConnected and degrade gracefully). */

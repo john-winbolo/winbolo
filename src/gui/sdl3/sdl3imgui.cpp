@@ -3358,6 +3358,29 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
+        /* Controller-tab binding capture for the in-game Key Setup popup.
+         * While a controller row is armed, route a gamepad button-down or a
+         * trigger crossing its threshold into the dialog; Escape cancels.
+         * State lives in imgui_keysetup.cpp (mirrors the scancode path). */
+        if (imguiKeySetupIsCapturingInGamePad()) {
+            if (ev.type == SDL_EVENT_KEY_DOWN &&
+                ev.key.scancode == SDL_SCANCODE_ESCAPE) {
+                imguiKeySetupCancelInGamePad();
+                continue;
+            }
+            if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                imguiKeySetupHandleInGamePadButton((int)ev.gbutton.button);
+                continue;
+            }
+            if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION &&
+                (ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ||
+                 ev.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) &&
+                ev.gaxis.value > 16384 /* ~0.5 of 32767 */) {
+                imguiKeySetupHandleInGamePadTrigger((int)ev.gaxis.axis);
+                continue;
+            }
+        }
+
         /* Esc on the keyboard also cancels gamepad capture mode. */
         if (s_keySetupGamepadWaitingAction != (int)GP_ACT_COUNT &&
             ev.type == SDL_EVENT_KEY_DOWN &&
@@ -3606,9 +3629,13 @@ bool sdl3ImguiIsDialogOpen(void) {
    so Steam Input must run Menu set even though clientSimIsInLobby(cs) is
    false.  Add new popups here as they're introduced. */
 static bool any_popup_modal_open(void) {
-    /* Keysetup popup state lives in imgui_keysetup.cpp (private) and isn't
-       exposed via an "is open" accessor today; the common open path is via
-       Settings so s_showSettings already covers most cases. */
+    /* Any open ImGui popup modal (e.g. the in-game Key Setup popup, whose
+       open-state isn't exposed separately) means the player is navigating UI,
+       so run the Menu action set — this is what makes the left-stick menu nav
+       work inside those popups, not just the D-pad. */
+    ImGuiContext *g = ImGui::GetCurrentContext();
+    if (g && g->OpenPopupStack.Size > 0)
+        return true;
     return deckPauseIsOpen() ||
            quickChatIsOpen() ||
            s_showSendMsg ||
@@ -3872,9 +3899,11 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_lastConnected = nowConnected;
     }
 
-    /* Pause-overlay open trigger: Start button in controller mode (Deck
-       always, desktop when the Controller Mode pref opts in — Phase 8.1). */
-    if (inputGamepadIsPauseEdge() && uiShouldUseControllerMode()) {
+    /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
+       Pause action, default Start). Opens whenever a controller is connected
+       — matches the Escape-key trigger — so pad users always have a way in,
+       even on desktop where the Controller Mode pref is off. */
+    if (inputGamepadIsPauseEdge() && inputGamepadIsConnected()) {
         deckPauseOpen();
     }
     /* Active-controller-disconnect open trigger: open pause overlay so the
@@ -3917,15 +3946,29 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             (inputGamepadIsConnected() &&
              ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        bool cancelClosedPanel = false;
         if (cancelEdge && !anyPopup && !ImGui::GetIO().WantTextInput) {
-            if      (s_showSettings)       s_showSettings = false;
-            else if (s_showSendMsg)        s_showSendMsg = false;
-            else if (s_showPlayersPanel)   s_showPlayersPanel = false;
-            else if (s_brainSettingsOpen)  s_brainSettingsOpen = false;
-            else if (s_allianceVisible)    s_allianceVisible = false;
-            else if (s_showSysInfo)        s_showSysInfo = false;
-            else if (s_showNetInfo)        s_showNetInfo = false;
-            else if (s_showGameInfo)       s_showGameInfo = false;
+            if      (s_showSettings)       { s_showSettings = false;     cancelClosedPanel = true; }
+            else if (s_showSendMsg)        { s_showSendMsg = false;      cancelClosedPanel = true; }
+            else if (s_showPlayersPanel)   { s_showPlayersPanel = false; cancelClosedPanel = true; }
+            else if (s_brainSettingsOpen)  { s_brainSettingsOpen = false;cancelClosedPanel = true; }
+            else if (s_allianceVisible)    { s_allianceVisible = false;  cancelClosedPanel = true; }
+            else if (s_showSysInfo)        { s_showSysInfo = false;      cancelClosedPanel = true; }
+            else if (s_showNetInfo)        { s_showNetInfo = false;      cancelClosedPanel = true; }
+            else if (s_showGameInfo)       { s_showGameInfo = false;     cancelClosedPanel = true; }
+        }
+
+        /* Escape opens the pause overlay when a controller is connected and
+           nothing else is in the way — mirrors the Start-button trigger so
+           keyboard + pad users both have a way in (the menu bar is hidden in
+           controller mode). Only when Escape didn't just close a panel/popup
+           and we're in an active game (not the lobby). */
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
+            inputGamepadIsConnected() &&
+            !anyPopup && !cancelClosedPanel && !ImGui::GetIO().WantTextInput &&
+            cs && !clientSimIsInLobby(cs) &&
+            !deckPauseIsOpen() && !sdl3ImguiIsDialogOpen()) {
+            deckPauseOpen();
         }
     }
 

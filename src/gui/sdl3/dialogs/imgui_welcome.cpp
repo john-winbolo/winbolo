@@ -446,9 +446,14 @@ extern "C" int imguiWelcomeShow(void) {
             /* Invisible button captures the click + drives hover state.
              * Sized to the rendered text so the hit rect is exactly the
              * label, not the surrounding gutter. */
-            ImGui::InvisibleButton("##aboutver", verSize);
+            /* EnableNav so controller / keyboard nav can reach the version
+               label (InvisibleButton is ImGuiItemFlags_NoNav otherwise). Use
+               the pressed return value so nav-activate (A / Space) opens About
+               just like a mouse click. */
+            bool verPressed = ImGui::InvisibleButton("##aboutver", verSize,
+                                                     ImGuiButtonFlags_EnableNav);
             bool hovered = ImGui::IsItemHovered();
-            if (ImGui::IsItemClicked()) {
+            if (verPressed || ImGui::IsItemClicked()) {
                 aboutPopupOpen();
             }
             if (hovered) {

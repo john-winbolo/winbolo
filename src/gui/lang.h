@@ -84,6 +84,7 @@
 
 /* Key setup dialog */
 #define STR_DLGKEYSETUP_TITLE               216
+#define STR_DLGKEYSETUP_TAB_KEYBOARD        1433
 #define STR_DLGKEYSETUP_DRIVETANK           218
 #define STR_DLGKEYSETUP_GUNRANGE            220
 #define STR_DLGKEYSETUP_WEAPONS             221

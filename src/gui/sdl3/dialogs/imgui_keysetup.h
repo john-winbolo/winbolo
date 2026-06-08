@@ -59,6 +59,15 @@ void imguiKeySetupRenderInGamePopup(struct ClientSim *cs);
 bool imguiKeySetupIsCapturingInGameKey(void);
 void imguiKeySetupHandleInGameScancode(int scancode);
 
+/* Same idea for the Controller tab: while a controller row is armed,
+ * the event pump routes a gamepad button-down (SDL_GamepadButton) or a
+ * trigger (SDL_GamepadAxis) here to bind it. Escape cancels via the
+ * scancode path above. */
+bool imguiKeySetupIsCapturingInGamePad(void);
+void imguiKeySetupHandleInGamePadButton(int sdlGamepadButton);
+void imguiKeySetupHandleInGamePadTrigger(int sdlGamepadAxis);
+void imguiKeySetupCancelInGamePad(void);
+
 #ifdef __cplusplus
 }
 #endif

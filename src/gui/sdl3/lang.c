@@ -1079,6 +1079,7 @@ static const LangEntry langTable[] = {
     {1430, "(Hides the menu bar; Start opens a controller-friendly pause menu.\nChange later in Settings.)"},
     {1431, "Not now"},
     {1432, "Don't ask again"},
+    {1433, "Keyboard"},
 
     /* macOS native menu — App / File / Window menu items mirrored by
      * src/gui/sdl3/platform/mac_menubar.mm. Not referenced by the
