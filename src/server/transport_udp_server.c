@@ -2535,6 +2535,10 @@ bool transportUdpServerStartBalanceRequest(ServerSim *sim,
 void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
                                        const char *token) {
     if (!winbolonetIsRunning() || token == NULL || token[0] == '\0') {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "[WBN] re-auth for slot %d ignored: running=%d tokenLen=%d",
+                    (int)slot, winbolonetIsRunning() ? 1 : 0,
+                    token ? (int)strlen(token) : -1);
         return;
     }
     char errorMsg[512];
@@ -2556,8 +2560,9 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
         playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, slot, flags);
         playersSetClientType (&serverSimGetGameSim(sim)->plyrs, slot,
                               udpServer.clients[slot].clientType);
-        fprintf(stderr, "[UDP SERVER] Player %d WBN re-authenticated (steam=%d)\n",
-                slot, hasSteam ? 1 : 0);
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "[WBN] Player %d re-authenticated (steam=%d)",
+                    (int)slot, hasSteam ? 1 : 0);
         if (serverSimGetState(sim) == serverStateRunning) {
             winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
                                slot, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
@@ -2567,8 +2572,8 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
             serverSimPublishLobbySlot(sim, slot);
         }
     } else {
-        fprintf(stderr, "[UDP SERVER] Player %d WBN re-auth failed: %s\n",
-                slot, errorMsg);
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "[WBN] Player %d re-auth failed: %s", (int)slot, errorMsg);
     }
 }
 
