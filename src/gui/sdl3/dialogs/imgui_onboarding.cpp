@@ -334,13 +334,21 @@ extern "C" int imguiOnboardingShow(void) {
         }
         ImGui::EndDisabled();
 
-        /* Skip — abandon-and-proceed: mark complete and exit without
-         * committing the current step's pending edits. */
+        /* Skip — skip just this step (don't commit its pending edits) and
+         * advance to the next one; e.g. Skip on the Account step proceeds to
+         * the Name step rather than abandoning the wizard. Only on the last
+         * step, where there is nothing left to skip to, does it finish and
+         * mark onboarding complete. */
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_DLGONBOARD_SKIP), buttonSize)) {
-            result = 1;
-            gameFrontSetOnboardingComplete();
-            running = false;
+            nameError = nullptr;
+            if (isLast) {
+                result = 1;
+                gameFrontSetOnboardingComplete();
+                running = false;
+            } else {
+                currentStep = nextStep;
+            }
         }
 
         /* Next / Finish — commit the step being left, then advance or finish.
