@@ -3930,6 +3930,13 @@ void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
     s_playerFlags[playerNum] = clientFlags;
 }
 
+void sdl3ImguiUpdatePlayerFlags(unsigned char playerNum, uint8_t clientType,
+                                uint8_t clientFlags) {
+    if (playerNum >= MAX_PLAYERS) return;
+    s_playerClientType[playerNum] = clientType;
+    s_playerFlags[playerNum] = clientFlags;
+}
+
 void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping) {
     if (playerNum >= MAX_PLAYERS) return;
     s_playerPing[playerNum] = ping;

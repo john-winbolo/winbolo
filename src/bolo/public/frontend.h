@@ -261,6 +261,12 @@ void frontEndSetPlayer(struct ClientSim *cs, playerNumbers value, char *str, con
 *********************************************************/
 void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_t ping);
 
+/* Push a player's latest client type + flags (e.g. WBN-verified, supporter)
+ * from a snapshot into the frontend's per-slot cache, so badges stay current
+ * without a full frontEndSetPlayer. */
+void frontEndUpdatePlayerFlags(struct ClientSim *cs, playerNumbers value,
+                               uint8_t clientType, uint8_t clientFlags);
+
 /*********************************************************
 *NAME:          frontEndDrawDownload
 *AUTHOR:        John Morrison

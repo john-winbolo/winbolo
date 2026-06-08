@@ -226,6 +226,7 @@ void sdl3ImguiClearPlayer(unsigned char playerNum);
 void sdl3ImguiSetPlayerCheckState(unsigned char playerNum, bool isChecked);
 void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
                                uint8_t clientType, uint8_t clientFlags);
+void sdl3ImguiUpdatePlayerFlags(unsigned char playerNum, uint8_t clientType, uint8_t clientFlags);
 /* Ping-only counterpart called from the per-tick snapshot apply path —
  * preserves the cached clientType/clientFlags that the full meta
  * updater would otherwise overwrite. */

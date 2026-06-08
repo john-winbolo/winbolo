@@ -95,6 +95,10 @@ void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_
   (void)cs; (void)value; (void)ping;
 }
 
+void frontEndUpdatePlayerFlags(struct ClientSim *cs, playerNumbers value, uint8_t clientType, uint8_t clientFlags) {
+  (void)cs; (void)value; (void)clientType; (void)clientFlags;
+}
+
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
   (void)cs; (void)justBlack;
 }

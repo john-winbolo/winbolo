@@ -274,6 +274,8 @@ void clientApplySnapshot(ClientSim *csPtr,
       uint8_t cur = playersGetClientFlags(&csPtr->sim.plyrs, pn);
       uint8_t next = (uint8_t)((cur & ~snapshotMask) | (tanks[i].clientFlags & snapshotMask));
       playersSetClientFlags(&csPtr->sim.plyrs, pn, next);
+      frontEndUpdatePlayerFlags(csPtr, (playerNumbers)pn,
+                                playersGetClientType(&csPtr->sim.plyrs, pn), next);
     }
     if (tanks[i].clientFlags != 0) {
       WB_LOG_TRACE(WB_LOG_CAT_CLIENT, "[WBN] player %d clientFlags=0x%02x", pn, tanks[i].clientFlags);

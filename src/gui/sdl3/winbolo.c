@@ -1650,6 +1650,12 @@ void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping)
   sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
 
+void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value,
+                               uint8_t clientType, uint8_t clientFlags) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  sdl3ImguiUpdatePlayerFlags((unsigned char)value, clientType, clientFlags);
+}
+
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
