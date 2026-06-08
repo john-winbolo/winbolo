@@ -217,6 +217,27 @@ static void wbnStartSteamRegister(const char *ticketHex, const char *username, c
     wbnThread = SDL_CreateThread(wbnLoginThreadFunc, "WBNRegister", &wbnWork);
 }
 
+/* Basic sanity check on an email address: a single '@' with a non-empty
+ * local part, a dotted domain with a non-empty TLD, and no whitespace. Not a
+ * full RFC validator — just enough to catch obvious typos before the round
+ * trip; the server is the authority on whether the address is acceptable. */
+static bool wbnEmailLooksValid(const char *email) {
+    const char *at = NULL;
+    for (const char *p = email; *p; p++) {
+        if (*p == ' ' || *p == '\t') return false;
+        if (*p == '@') {
+            if (at) return false; /* more than one '@' */
+            at = p;
+        }
+    }
+    if (!at || at == email) return false;       /* missing '@' or empty local part */
+    const char *domain = at + 1;
+    const char *dot = SDL_strrchr(domain, '.');
+    if (!dot || dot == domain) return false;     /* no dot, or dot starts domain */
+    if (dot[1] == '\0') return false;            /* nothing after the last dot */
+    return true;
+}
+
 /* Maps a server-returned signup error code to a localized message, or NULL
  * when the code is empty/unrecognised so the caller can fall back to the
  * server's own message. Codes with the same user-facing text share one
@@ -534,6 +555,10 @@ static void wbnRenderCreateColumn(bool onSteam, const char *persona) {
             char ticketHex[2049];
             if (!playerNameValidate(wbnRegUsername, validated, sizeof(validated), nullptr)) {
                 SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_ERR_USERNAME_UNAVAILABLE),
+                            sizeof(wbnErrorBuf));
+                wbnState = WBN_ERROR;
+            } else if (wbnRegEmail[0] != '\0' && !wbnEmailLooksValid(wbnRegEmail)) {
+                SDL_strlcpy(wbnErrorBuf, langGetText(STR_DLGWBN_ERR_EMAIL_INVALID),
                             sizeof(wbnErrorBuf));
                 wbnState = WBN_ERROR;
             } else if (gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
