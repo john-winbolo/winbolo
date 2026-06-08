@@ -86,12 +86,15 @@ bool clientRenderCanScroll(ClientSim *csPtr, updateType value) {
   int xOff, yOff;
 
   if (MY_TANK(csPtr) == NULL) return FALSE;
-  /* When autoscroll is ON, the view follows the gunsight automatically and
-   * keyboard scroll is the stock (enhanced) behaviour — no edge block.
-   * When autoscroll is OFF we use WinBolo-style manual scrolling, where the
-   * smooth-scroll edge block keeps the manual scroll from jittering at an
-   * edge it can not cross. */
-  if (clientSimGetScroll(csPtr)->autoScroll) return TRUE;
+  /* The same WinBolo-style edge block applies whenever the player is
+   * manually scrolling, in both modes:
+   *   - autoscroll OFF: manual scrolling is the only follow.
+   *   - autoscroll ON:  the scroll keys act as a manual override pan, and
+   *     that pan is clamped exactly like classic so it can never push the
+   *     tank off-screen (and the input-side smooth-scroll accumulator gets
+   *     zeroed at the edge instead of building up against it).
+   * The autoscroll auto-follow itself does not go through here, so its
+   * behaviour is unaffected. */
   if (clientSimIsInPillView(csPtr)) return TRUE; /* pill view scrolls freely */
 
   xOff = (int)clientSimGetXOffset(csPtr);
