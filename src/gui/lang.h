@@ -1467,6 +1467,7 @@
 #define STR_DLGWBN_LINK_HINT                1457
 #define STR_DLGWBN_ERR_STEAM_NOT_LINKED     1458
 #define STR_DLGWBN_CREATE_BROWSER           1459
+#define STR_DLGWBN_EMAIL                    1460
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

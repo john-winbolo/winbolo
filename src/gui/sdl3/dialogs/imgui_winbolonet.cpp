@@ -523,6 +523,8 @@ static void wbnRenderLoginPopup(void) {
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputText("##wbnreguser", wbnRegUsername, sizeof(wbnRegUsername));
 
+                ImGui::TextUnformatted(langGetText(STR_DLGWBN_EMAIL));
+                ImGui::SameLine(labelW);
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputTextWithHint("##wbnregemail",
                                          langGetText(STR_DLGWBN_EMAIL_OPTIONAL),

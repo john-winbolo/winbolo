@@ -1307,7 +1307,7 @@ static const LangEntry langTable[] = {
 
     /* In-client Steam signup form (login popup) */
     {1436, "Create a WinBolo.net account"},
-    {1437, "Email (optional)"},
+    {1437, "optional"},
     {1438, "Create account with Steam"},
     {1439, "That username is already taken."},
     {1440, "That email address is already registered."},
@@ -1334,6 +1334,7 @@ static const LangEntry langTable[] = {
     {1457, "Have a password account? Link your Steam account at [winbolo.net](https://www.winbolo.net/playermodify) to sign in with one click."},
     {1458, "No WinBolo.net account is linked to this Steam yet. Create one below."},
     {1459, "Or create an account in your browser"},
+    {1460, "Email:"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
