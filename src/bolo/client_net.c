@@ -24,6 +24,7 @@
 #include "lobby_bot_pools.h"                /* lobbyBotPoolCount (pool uniqueness rewrite) */
 #include "../server/threads.h"
 #include "../gui/lang.h"
+#include "../gui/dnsLookups.h"             /* server-address reverse DNS thread */
 #include "../common/wb_log.h"
 
 #include <limits.h>
@@ -37,6 +38,9 @@
 static void clientSimTeardownTransport(ClientSim *cs) {
   if (!cs->hasTransport) return;
   if (cs->isUdpTransport) {
+    /* Stop the server-address reverse-DNS thread started in
+     * clientSimConnectUdp. Safe / no-op if it was never created. */
+    dnsLookupsDestroy();
     transportUdpClientDestroy(&cs->transport);
   } else {
     transportLocalDestroy(&cs->transport);
@@ -69,6 +73,12 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
    * branches to silently take the wrong path for UDP joiners.  Set
    * here at connect time so the value is right from the first tick. */
   clientSimSetNetType(cs, netUdp);
+  /* Start the background reverse-DNS thread so the lobby / net-info screens
+   * can resolve the server IP to a hostname (visual only; never used to
+   * connect). Torn down in clientSimTeardownTransport. The prior teardown at
+   * the top of this function already stopped any earlier instance, so this
+   * never double-creates. */
+  dnsLookupsCreate(cs);
   return true;
 }
 
@@ -515,6 +525,12 @@ void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
                                          const char *relPath) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
   transportUdpClientSendLobbyMapListRequest(&cs->transport, relPath);
+}
+
+void clientSimNetSendLobbyMapPreviewRequest(ClientSim *cs,
+                                            const char *relPath) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapPreviewRequest(&cs->transport, relPath);
 }
 
 void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,

@@ -1173,7 +1173,8 @@ int main(int argc, char **argv) {
 #endif
       return 0;
     }
-    serverSimInstallMapDirList(serverSim, scannedFiles, scannedCount);
+    serverSimInstallMapDirList(serverSim, scannedFiles, scannedCount,
+                               (const char *)argv[mdArg]);
   } else {
     serverSim = serverSimCreate(mapName, game, hiddenMines, srtDelay, gmeLen);
     if (serverSim == NULL) {

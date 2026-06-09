@@ -386,6 +386,19 @@ void netDestroy(ClientSim *cs);
 void netSendTrackerUpdate(void);
 void netProcessedDnsLookup(ClientSim *cs, char *ip, char *host);
 
+/* Queues an asynchronous reverse-DNS lookup of the server address 'ip' on the
+ * background DNS thread (for the lobby / net-info UI only — visual, never used
+ * to connect). Debounced: safe to call every frame; a lookup is queued at most
+ * once per distinct IP. A no-op when the DNS thread isn't running. */
+void clientSimRequestServerHostname(ClientSim *cs, const char *ip);
+
+/* Reverse-DNS of the server address, for the lobby / net-info UI only (visual,
+ * never used to connect). Returns true and fills 'out' with the resolved
+ * hostname when a PTR record is known for 'ip'; returns false (out untouched)
+ * if 'ip' has no resolved name yet or resolved to no PTR record. Thread-safe:
+ * guards the shared fields with the client mutex. */
+bool clientSimGetServerHostname(ClientSim *cs, const char *ip, char *out, size_t outLen);
+
 /*********************************************************
  * Read accessors.
  *
@@ -742,6 +755,22 @@ bool        clientSimGetLobbyMapSearchReady(const ClientSim *cs);
 const char *clientSimGetLobbyMapSearchReqPath(const ClientSim *cs);
 const char *clientSimGetLobbyMapSearchReqQuery(const ClientSim *cs);
 bool        clientSimGetLobbyMapSearchInFlight(const ClientSim *cs);
+
+/* Server-map preview byte stream — populated asynchronously by
+ * PACKET_LOBBY_MAP_PREVIEW_BEGIN/_CHUNK/_ERR after the client sends a
+ * MAP_PREVIEW_REQ (see clientSimNetSendLobbyMapPreviewRequest). The GUI
+ * polls Ready/Error/Path each frame; on Ready it rasterises Bytes/Len
+ * into the chooser preview, then calls clientSimClearLobbyMapPreview.
+ * ReqPath echoes the path we asked for so a stale response (user moved
+ * on to another map) can be ignored. */
+bool           clientSimGetLobbyMapPreviewReady(const ClientSim *cs);
+bool           clientSimGetLobbyMapPreviewInFlight(const ClientSim *cs);
+bool           clientSimGetLobbyMapPreviewError(const ClientSim *cs);
+const char    *clientSimGetLobbyMapPreviewReqPath(const ClientSim *cs);
+const char    *clientSimGetLobbyMapPreviewPath(const ClientSim *cs);
+const uint8_t *clientSimGetLobbyMapPreviewBytes(const ClientSim *cs);
+uint32_t       clientSimGetLobbyMapPreviewLen(const ClientSim *cs);
+void           clientSimClearLobbyMapPreview(ClientSim *cs);
 
 /* Map upload progress reflection. status: 0=idle, 1=announce sent,
  * 2=ack received (chunks in flight), 3=done, 4=rejected. */

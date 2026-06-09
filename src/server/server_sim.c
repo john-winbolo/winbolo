@@ -2239,9 +2239,31 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
 }
 
 void serverSimInstallMapDirList(ServerSim *sim,
-                                char **files, int count) {
+                                char **files, int count,
+                                const char *dirPath) {
     sim->mapDirFiles = files;
     sim->mapDirCount = count;
+
+    /* Capture the dirPath as the canonical server-side map root, the
+     * same way serverSimMapDirBuild does, so serverSimEnumerateMapDir /
+     * serverSimSearchMapDir / SET_MAP path resolution all read from the
+     * directory the rotation list was built from rather than falling
+     * back to the default "data/maps". Strip a trailing slash to keep
+     * "<root>/<rel>" concatenations clean. */
+    if (dirPath != NULL) {
+        if (sim->mapDirPath != NULL) {
+            free(sim->mapDirPath);
+            sim->mapDirPath = NULL;
+        }
+        sim->mapDirPath = SDL_strdup(dirPath);
+        if (sim->mapDirPath != NULL) {
+            size_t plen = SDL_strlen(sim->mapDirPath);
+            while (plen > 1 && (sim->mapDirPath[plen - 1] == '/' ||
+                                sim->mapDirPath[plen - 1] == '\\')) {
+                sim->mapDirPath[--plen] = '\0';
+            }
+        }
+    }
 }
 
 void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled) {

@@ -1105,11 +1105,61 @@ void netDestroy(ClientSim *cs) {
   cs->lockToggleSendFunc = NULL;
 }
 
-/* DNS lookup completion callback — called from dns_lookups.c thread */
+/* DNS lookup completion callback — called from the dns_lookups.c thread.
+ * Stores the reverse-DNS of the server address for the lobby / net-info UI
+ * (visual only; the connected host is never changed). The lookup thread passes
+ * host == ip when no PTR record exists, which we record as "no name". Guarded
+ * by the client mutex so the GUI thread reading these fields can't tear. */
 void netProcessedDnsLookup(ClientSim *cs, char *ip, char *host) {
   clientMutexWaitFor();
-  playerSetLocation(&cs->sim.plyrs, ip, host);
+  strncpy(cs->serverHostResultIp, ip, sizeof(cs->serverHostResultIp) - 1);
+  cs->serverHostResultIp[sizeof(cs->serverHostResultIp) - 1] = '\0';
+  if (host != NULL && strcmp(host, ip) != 0) {
+    strncpy(cs->serverHostName, host, sizeof(cs->serverHostName) - 1);
+    cs->serverHostName[sizeof(cs->serverHostName) - 1] = '\0';
+  } else {
+    cs->serverHostName[0] = '\0'; /* address has no PTR record */
+  }
   clientMutexRelease();
+}
+
+void clientSimRequestServerHostname(ClientSim *cs, const char *ip) {
+  bool needRequest = false;
+  if (cs == NULL || ip == NULL || ip[0] == '\0') {
+    return;
+  }
+  clientMutexWaitFor();
+  /* Debounce on the last-requested IP. On a new address, clear any cached
+   * result so a stale name isn't shown for the new server while the lookup
+   * is in flight. */
+  if (strcmp(cs->serverHostReqIp, ip) != 0) {
+    strncpy(cs->serverHostReqIp, ip, sizeof(cs->serverHostReqIp) - 1);
+    cs->serverHostReqIp[sizeof(cs->serverHostReqIp) - 1] = '\0';
+    cs->serverHostResultIp[0] = '\0';
+    cs->serverHostName[0] = '\0';
+    needRequest = true;
+  }
+  clientMutexRelease();
+  if (needRequest) {
+    dnsLookupsAddRequest((char *)ip, NULL);
+  }
+}
+
+bool clientSimGetServerHostname(ClientSim *cs, const char *ip, char *out,
+                                size_t outLen) {
+  bool ok = false;
+  if (out == NULL || outLen == 0 || ip == NULL) {
+    return false;
+  }
+  clientMutexWaitFor();
+  if (cs->serverHostName[0] != '\0' &&
+      strcmp(cs->serverHostResultIp, ip) == 0) {
+    strncpy(out, cs->serverHostName, outLen - 1);
+    out[outLen - 1] = '\0';
+    ok = true;
+  }
+  clientMutexRelease();
+  return ok;
 }
 
 /* ================================================================
@@ -1617,6 +1667,38 @@ const char *clientSimGetLobbyMapSearchReqQuery(const ClientSim *cs) {
 }
 bool clientSimGetLobbyMapSearchInFlight(const ClientSim *cs) {
   return cs->lobbyMapSearchInFlight;
+}
+
+bool clientSimGetLobbyMapPreviewReady(const ClientSim *cs) {
+  return cs && cs->lobbyMapPreviewReady;
+}
+bool clientSimGetLobbyMapPreviewInFlight(const ClientSim *cs) {
+  return cs && cs->lobbyMapPreviewInFlight;
+}
+bool clientSimGetLobbyMapPreviewError(const ClientSim *cs) {
+  return cs && cs->lobbyMapPreviewError;
+}
+const char *clientSimGetLobbyMapPreviewReqPath(const ClientSim *cs) {
+  return cs ? cs->lobbyMapPreviewReqPath : "";
+}
+const char *clientSimGetLobbyMapPreviewPath(const ClientSim *cs) {
+  return cs ? cs->lobbyMapPreviewPath : "";
+}
+const uint8_t *clientSimGetLobbyMapPreviewBytes(const ClientSim *cs) {
+  return cs ? cs->lobbyMapPreviewBytes : NULL;
+}
+uint32_t clientSimGetLobbyMapPreviewLen(const ClientSim *cs) {
+  return cs ? cs->lobbyMapPreviewReceived : 0;
+}
+void clientSimClearLobbyMapPreview(ClientSim *cs) {
+  if (!cs) return;
+  cs->lobbyMapPreviewReqPath[0] = '\0';
+  cs->lobbyMapPreviewPath[0]    = '\0';
+  cs->lobbyMapPreviewInFlight   = false;
+  cs->lobbyMapPreviewReady      = false;
+  cs->lobbyMapPreviewError      = false;
+  cs->lobbyMapPreviewTotal      = 0;
+  cs->lobbyMapPreviewReceived   = 0;
 }
 
 uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->lobbyMapUploadStatus; }
