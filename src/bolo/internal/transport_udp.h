@@ -129,6 +129,19 @@ typedef enum {
 JoinCollisionVerdict joinCollisionDecide(bool incomingWillAuth,
                                          bool existingIsVerified);
 
+/* Reauth-time resolution of a pending provisional name claim.  Pure value
+ * core: given whether the desired bare name is currently held and, if so,
+ * whether the holder is WBN-verified, decide what to do with the
+ * reclaiming slot.  The squatter-suffix-pool-exhaustion fallback is a
+ * runtime concern handled at the call site, not encoded here. */
+typedef enum {
+    CLAIM_RESOLVE_PROMOTE_FREE,      /* bare name free → promote the slot to it */
+    CLAIM_RESOLVE_PREEMPT_SQUATTER,  /* unverified holder → rename it off, then promote */
+    CLAIM_RESOLVE_KEEP_TEMP,         /* verified holder → slot keeps its temp name */
+} ClaimResolveAction;
+
+ClaimResolveAction claimResolveDecide(bool bareNameHeld, bool holderIsVerified);
+
 /* Join request packet (client -> server) */
 typedef struct {
     PacketHeader hdr;

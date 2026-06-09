@@ -258,6 +258,12 @@ JoinCollisionVerdict joinCollisionDecide(bool incomingWillAuth,
     return JOIN_COLLISION_ADMIT_PROVISIONAL;
 }
 
+ClaimResolveAction claimResolveDecide(bool bareNameHeld, bool holderIsVerified) {
+    if (!bareNameHeld)    return CLAIM_RESOLVE_PROMOTE_FREE;
+    if (holderIsVerified) return CLAIM_RESOLVE_KEEP_TEMP;
+    return CLAIM_RESOLVE_PREEMPT_SQUATTER;
+}
+
 /* Server-side global state */
 static struct {
     SOCKET sock;
@@ -1560,19 +1566,29 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     /* Announce the join to WBN.  If the slot's key already rode the JOIN
      * field and verified inline (incomingIsWBN), the player is already a
      * participant — register keyed right now.  Otherwise, when WBN is
-     * running, defer: the rekey we sent above prompts a reauth that fills
-     * the key and fires a keyed join (transportUdpServerHandleWbnReauth);
-     * if no reauth lands within the grace window the per-tick sweep in
-     * transportUdpServerCheckTimeouts fires an anonymous one.  On a
-     * non-WBN server there is nothing to defer (and winbolonetAddEvent is
-     * a no-op anyway). */
+     * running, a will-authenticate joiner defers: the rekey we sent above
+     * prompts a reauth that fills the key and fires a keyed join
+     * (transportUdpServerHandleWbnReauth); if no reauth lands within the
+     * grace window the per-tick sweep in transportUdpServerCheckTimeouts
+     * fires an anonymous one.  A not-signed-in joiner owes no reauth, so
+     * its anonymous join fires now.  On a non-WBN server there is nothing
+     * to defer (and winbolonetAddEvent is a no-op anyway). */
     wbnJoinClear(&udpServer.clients[slot].wbnJoin);
     if (incomingIsWBN) {
         winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
                            (BYTE)slot, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
     } else if (winbolonetIsRunning()) {
-        wbnJoinArm(&udpServer.clients[slot].wbnJoin,
-                   udpServer.tickCount, WBN_JOIN_REGISTER_GRACE_TICKS);
+        if (incomingWillAuth) {
+            /* Signed-in joiner: a reauth is coming.  Arm the anonymous
+             * fallback so a never-landing reauth still announces the join. */
+            wbnJoinArm(&udpServer.clients[slot].wbnJoin,
+                       udpServer.tickCount, WBN_JOIN_REGISTER_GRACE_TICKS);
+        } else {
+            /* Not signed in: no reauth will ever land, so there is nothing
+             * to wait for — announce the anonymous join now. */
+            winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
+                               (BYTE)slot, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
+        }
     }
 
     if (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown) {
@@ -2753,7 +2769,14 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
                 }
             }
 
-            if (holder < 0) {
+            bool holderIsVerified =
+                holder >= 0 &&
+                (playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs,
+                                       (BYTE)holder)
+                 & PLAYER_FLAG_WBN_VERIFIED) != 0;
+
+            switch (claimResolveDecide(holder >= 0, holderIsVerified)) {
+            case CLAIM_RESOLVE_PROMOTE_FREE:
                 /* Bare name free — the squatter left during grace.  Promote
                  * straight to the bare name. */
                 serverSimSetPlayerName(sim, slot, desired);
@@ -2761,9 +2784,8 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
                 snprintf(udpServer.clients[slot].playerName,
                          PACKET_MAX_PLAYER_NAME, "%s", desired);
                 udpServer.clients[slot].nameStickySuffix = false;
-            } else if ((playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs,
-                                              (BYTE)holder)
-                        & PLAYER_FLAG_WBN_VERIFIED) == 0) {
+                break;
+            case CLAIM_RESOLVE_PREEMPT_SQUATTER: {
                 /* Unverified squatter still holds the bare name.  Rename it
                  * off first (it must vacate before the joiner claims), then
                  * promote this slot.  If the squatter's suffix pool is
@@ -2785,11 +2807,15 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
                     udpServer.clients[slot].nameStickySuffix = false;
                 }
                 /* else: squatter pool exhausted — stay on the temp name. */
+                break;
             }
-            /* else: a verified slot won the bare name (a second reclaimer won
-             * the race); keep this slot on its temp name permanently.  WBN
-             * attribution is already correct since verify ran under the bare
-             * name; only the local display stays suffixed. */
+            case CLAIM_RESOLVE_KEEP_TEMP:
+                /* A verified slot won the bare name (a second reclaimer won
+                 * the race); keep this slot on its temp name permanently.  WBN
+                 * attribution is already correct since verify ran under the
+                 * bare name; only the local display stays suffixed. */
+                break;
+            }
 
             /* Clear the claim in every outcome.  desired aliases the buffer,
              * so this clear must come after all uses of desired. */

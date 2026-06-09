@@ -217,6 +217,15 @@ int run_join_collision_unverified_will_auth_admits(void);
 int run_join_collision_verified_rejects_will_auth(void);
 int run_join_collision_verified_flag_irrelevant(void);
 
+/* Reauth-time claim-resolve core (test_join_collision.c). Given whether the
+ * desired bare name is held and the holder's verified flag, pick promote-
+ * free / preempt-squatter / keep-temp; an absent holder collapses to
+ * promote-free regardless of the flag. */
+int run_claim_resolve_free_promotes(void);
+int run_claim_resolve_unverified_preempts(void);
+int run_claim_resolve_verified_keeps_temp(void);
+int run_claim_resolve_free_ignores_holder_flag(void);
+
 /* Lobby/leave cleanup (test_lobby_reset_cleanup.c). Removed slots clear
  * (no phantom re-announce), and the last human leaving a running game
  * returns the server to the lobby. */
