@@ -32,7 +32,8 @@ void gameFrontGetLanguageCode(char *out, int outSize) {
 
 /* Pulled in by shared imgui dialogs (e.g. the reused WBN browser) that
  * call gameFrontPumpDirty to flush cloud-prefs changes. No frontend to
- * pump on LogViewer / MapEditor, so this is a no-op. */
+ * pump on LogViewer / MapEditor, so this is a no-op; the real pump lives
+ * in gamefront.c. */
 void gameFrontPumpDirty(void) {
 }
 

@@ -657,7 +657,8 @@ void printArgs() {
   fprintf(stderr, "-maxplayers   - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
   fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
-  fprintf(stderr, "-log          - Create game log file (filename optional)\n");
+  fprintf(stderr, "-log [name]   - Create game log file. Optional [name] is a filename, or a\n");
+  fprintf(stderr, "                directory (e.g. -log /tmp) to auto-name the log inside it.\n");
   fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
   fprintf(stderr, "-statusFile	 - Save list of unlocked players to a file.\n");
   fprintf(stderr, "-threads <N>  - Total concurrent bot-think runners including the main\n");
