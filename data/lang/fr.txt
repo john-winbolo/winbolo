@@ -1398,3 +1398,4 @@ STR_DLGWBN_VIA_STEAM=via Steam
 # Lobby host transfer
 STR_DLGLOBBY_MAKE_HOST=Nommer hôte
 STR_DLGLOBBY_MAKE_HOST_FMT=Nommer « {player} » comme hôte ?
+STR_DLGLOBBY_HOST_CHANGED_FMT={player} est maintenant l'hôte

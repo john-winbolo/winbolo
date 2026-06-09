@@ -1396,3 +1396,4 @@ STR_DLGWBN_UNRANKED=Sem posição
 STR_DLGWBN_VIA_STEAM=via Steam
 STR_DLGLOBBY_MAKE_HOST=Tornar anfitrião
 STR_DLGLOBBY_MAKE_HOST_FMT=Tornar "{player}" o anfitrião?
+STR_DLGLOBBY_HOST_CHANGED_FMT={player} agora é o anfitrião

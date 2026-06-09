@@ -1386,4 +1386,5 @@ STR_DLGWBN_ERR_STEAM_TICKET=Steam couldn't verify your account. Please try again
 STR_DLGWBN_SIGNIN_HEADER=Sign into WinBolo.net
 STR_DLGLOBBY_MAKE_HOST=Make host
 STR_DLGLOBBY_MAKE_HOST_FMT=Make "{player}" the host?
+STR_DLGLOBBY_HOST_CHANGED_FMT={player} is now the host
 

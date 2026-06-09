@@ -1396,3 +1396,4 @@ STR_DLGWBN_UNRANKED=Sırasız
 STR_DLGWBN_VIA_STEAM=Steam ile
 STR_DLGLOBBY_MAKE_HOST=Sunucu sahibi yap
 STR_DLGLOBBY_MAKE_HOST_FMT=„{player}" sunucu sahibi yapılsın mı?
+STR_DLGLOBBY_HOST_CHANGED_FMT={player} artık sunucu sahibi

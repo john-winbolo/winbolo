@@ -444,6 +444,7 @@ static void clientSimDestroyContents(ClientSim *cs) {
 
   /* Clear lobby chat buffer */
   cs->lobbyChatHistory[0] = '\0';
+  cs->lobbyHostSlotKnown = false;
 
   /* Clear network callbacks */
   cs->chatSendFunc = NULL;

@@ -1396,3 +1396,4 @@ STR_DLGWBN_UNRANKED=Без рангу
 STR_DLGWBN_VIA_STEAM=через Steam
 STR_DLGLOBBY_MAKE_HOST=Зробити хостом
 STR_DLGLOBBY_MAKE_HOST_FMT=Зробити «{player}» хостом?
+STR_DLGLOBBY_HOST_CHANGED_FMT={player} тепер хост

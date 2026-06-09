@@ -1396,3 +1396,4 @@ STR_DLGWBN_UNRANKED=Niet gerangschikt
 STR_DLGWBN_VIA_STEAM=via Steam
 STR_DLGLOBBY_MAKE_HOST=Host maken
 STR_DLGLOBBY_MAKE_HOST_FMT=„{player}" tot host maken?
+STR_DLGLOBBY_HOST_CHANGED_FMT={player} is nu de host

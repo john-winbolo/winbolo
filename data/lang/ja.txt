@@ -1251,6 +1251,7 @@ STR_DLGLOBBY_UNASSIGNED_FMT=未割り当て ({number}):
 STR_DLGLOBBY_KICK_FMT=「{player}」をキックしますか？
 STR_DLGLOBBY_MAKE_HOST=ホストにする
 STR_DLGLOBBY_MAKE_HOST_FMT=「{player}」をホストにしますか？
+STR_DLGLOBBY_HOST_CHANGED_FMT={player}がホストになりました
 
 # Bot AiConfig panel
 STR_DLGLOBBY_BOTCFG_NAME=名前（上書き）
