@@ -79,6 +79,7 @@ extern "C" {
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
+#include "dialogs/imgui_server_address.h"
 #include "dialogs/dialog_footer.h"
 #include "dialogs/imgui_keysetup.h"
 #include "dialogs/imgui_about.h"
@@ -717,8 +718,21 @@ static void renderNetInfoContent(ClientSim *cs) {
     int  bpsIn = 0, bpsOut = 0;
     int  snapshotsRecv = 0, snapshotsLost = 0, snapshotsLostTotal = 0;
 
-    netGetServerAddressStr(cs, str);
-    ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), str);
+    /* Server address: show the real IP/host as a clickable join-link when in a
+     * networked game (reverse-DNS resolved asynchronously, visual only). Falls
+     * back to the legacy label ("Single Player Game") otherwise. */
+    {
+        char dispIp[64];
+        unsigned dispPort = 0;
+        if (guiServerDisplayAddress(cs, dispIp, sizeof(dispIp), &dispPort)) {
+            ImGui::TextUnformatted(langGetText(STR_DLGNETINFO_SERVER));
+            ImGui::SameLine();
+            guiServerAddressLink(cs, dispIp, dispPort);
+        } else {
+            netGetServerAddressStr(cs, str);
+            ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), str);
+        }
+    }
 
     /* Client in a networked game: prepend player location to port */
     if (clientSimGetNetType(cs) != netSingle) {

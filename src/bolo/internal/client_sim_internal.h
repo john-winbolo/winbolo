@@ -174,6 +174,19 @@ struct ClientSim {
     struct in_addr serverAddress;
     unsigned short serverPort;
 
+    /* Reverse-DNS of the server address for the lobby / net-info UI only —
+     * visual information, never used to connect. Filled asynchronously by the
+     * DNS lookup thread (see netProcessedDnsLookup) and read by the GUI; both
+     * sides guard access with the client mutex. serverHostName is "" until a
+     * PTR record resolves; serverHostResultIp records which IP it belongs to
+     * so a stale name is never shown against a changed address.
+     * serverHostReqIp debounces the request: the IP a lookup was last queued
+     * for, so the per-frame GUI doesn't re-queue every frame (and re-queues
+     * after a reconnect that resets this struct). */
+    char serverHostReqIp[64];
+    char serverHostResultIp[64];
+    char serverHostName[256];
+
     /* Lobby state (client-side mirror of server lobby) */
     ClientLobbySlot  lobbySlots[16];    /* MAX_TANKS */
     int              countdownSeconds;  /* 0 = not counting down */

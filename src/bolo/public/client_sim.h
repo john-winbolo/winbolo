@@ -386,6 +386,19 @@ void netDestroy(ClientSim *cs);
 void netSendTrackerUpdate(void);
 void netProcessedDnsLookup(ClientSim *cs, char *ip, char *host);
 
+/* Queues an asynchronous reverse-DNS lookup of the server address 'ip' on the
+ * background DNS thread (for the lobby / net-info UI only — visual, never used
+ * to connect). Debounced: safe to call every frame; a lookup is queued at most
+ * once per distinct IP. A no-op when the DNS thread isn't running. */
+void clientSimRequestServerHostname(ClientSim *cs, const char *ip);
+
+/* Reverse-DNS of the server address, for the lobby / net-info UI only (visual,
+ * never used to connect). Returns true and fills 'out' with the resolved
+ * hostname when a PTR record is known for 'ip'; returns false (out untouched)
+ * if 'ip' has no resolved name yet or resolved to no PTR record. Thread-safe:
+ * guards the shared fields with the client mutex. */
+bool clientSimGetServerHostname(ClientSim *cs, const char *ip, char *out, size_t outLen);
+
 /*********************************************************
  * Read accessors.
  *
