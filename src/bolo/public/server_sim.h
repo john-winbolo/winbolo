@@ -550,10 +550,15 @@ void serverSimEnableRandomMap(ServerSim *sim,
  *  Installs the validated map rotation list. Takes
  *  ownership of `files` (the array and each strdup'd
  *  entry inside it). Caller must not free these
- *  afterward.
+ *  afterward. `dirPath` is captured as the server-side
+ *  map root (mirroring serverSimMapDirBuild) so the lobby
+ *  map chooser, SET_MAP resolution and rotation all read
+ *  from the same directory; pass NULL to leave the root
+ *  unchanged.
  *********************************************************/
 void serverSimInstallMapDirList(ServerSim *sim,
-                                char **files, int count);
+                                char **files, int count,
+                                const char *dirPath);
 
 /*********************************************************
  *NAME:          serverSimSetAutoCloseOnEmpty

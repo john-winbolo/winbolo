@@ -743,6 +743,22 @@ const char *clientSimGetLobbyMapSearchReqPath(const ClientSim *cs);
 const char *clientSimGetLobbyMapSearchReqQuery(const ClientSim *cs);
 bool        clientSimGetLobbyMapSearchInFlight(const ClientSim *cs);
 
+/* Server-map preview byte stream — populated asynchronously by
+ * PACKET_LOBBY_MAP_PREVIEW_BEGIN/_CHUNK/_ERR after the client sends a
+ * MAP_PREVIEW_REQ (see clientSimNetSendLobbyMapPreviewRequest). The GUI
+ * polls Ready/Error/Path each frame; on Ready it rasterises Bytes/Len
+ * into the chooser preview, then calls clientSimClearLobbyMapPreview.
+ * ReqPath echoes the path we asked for so a stale response (user moved
+ * on to another map) can be ignored. */
+bool           clientSimGetLobbyMapPreviewReady(const ClientSim *cs);
+bool           clientSimGetLobbyMapPreviewInFlight(const ClientSim *cs);
+bool           clientSimGetLobbyMapPreviewError(const ClientSim *cs);
+const char    *clientSimGetLobbyMapPreviewReqPath(const ClientSim *cs);
+const char    *clientSimGetLobbyMapPreviewPath(const ClientSim *cs);
+const uint8_t *clientSimGetLobbyMapPreviewBytes(const ClientSim *cs);
+uint32_t       clientSimGetLobbyMapPreviewLen(const ClientSim *cs);
+void           clientSimClearLobbyMapPreview(ClientSim *cs);
+
 /* Map upload progress reflection. status: 0=idle, 1=announce sent,
  * 2=ack received (chunks in flight), 3=done, 4=rejected. */
 uint8_t     clientSimGetLobbyMapUploadStatus(const ClientSim *cs);

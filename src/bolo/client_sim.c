@@ -1619,6 +1619,38 @@ bool clientSimGetLobbyMapSearchInFlight(const ClientSim *cs) {
   return cs->lobbyMapSearchInFlight;
 }
 
+bool clientSimGetLobbyMapPreviewReady(const ClientSim *cs) {
+  return cs && cs->lobbyMapPreviewReady;
+}
+bool clientSimGetLobbyMapPreviewInFlight(const ClientSim *cs) {
+  return cs && cs->lobbyMapPreviewInFlight;
+}
+bool clientSimGetLobbyMapPreviewError(const ClientSim *cs) {
+  return cs && cs->lobbyMapPreviewError;
+}
+const char *clientSimGetLobbyMapPreviewReqPath(const ClientSim *cs) {
+  return cs ? cs->lobbyMapPreviewReqPath : "";
+}
+const char *clientSimGetLobbyMapPreviewPath(const ClientSim *cs) {
+  return cs ? cs->lobbyMapPreviewPath : "";
+}
+const uint8_t *clientSimGetLobbyMapPreviewBytes(const ClientSim *cs) {
+  return cs ? cs->lobbyMapPreviewBytes : NULL;
+}
+uint32_t clientSimGetLobbyMapPreviewLen(const ClientSim *cs) {
+  return cs ? cs->lobbyMapPreviewReceived : 0;
+}
+void clientSimClearLobbyMapPreview(ClientSim *cs) {
+  if (!cs) return;
+  cs->lobbyMapPreviewReqPath[0] = '\0';
+  cs->lobbyMapPreviewPath[0]    = '\0';
+  cs->lobbyMapPreviewInFlight   = false;
+  cs->lobbyMapPreviewReady      = false;
+  cs->lobbyMapPreviewError      = false;
+  cs->lobbyMapPreviewTotal      = 0;
+  cs->lobbyMapPreviewReceived   = 0;
+}
+
 uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->lobbyMapUploadStatus; }
 uint8_t  clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs) { return cs->lobbyMapUploadRejectCode; }
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs){ return cs->lobbyMapUploadFinalPath; }

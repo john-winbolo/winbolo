@@ -517,6 +517,12 @@ void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
   transportUdpClientSendLobbyMapListRequest(&cs->transport, relPath);
 }
 
+void clientSimNetSendLobbyMapPreviewRequest(ClientSim *cs,
+                                            const char *relPath) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyMapPreviewRequest(&cs->transport, relPath);
+}
+
 void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
                                            const char *relPath,
                                            const char *query) {

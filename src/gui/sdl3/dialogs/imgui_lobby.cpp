@@ -687,6 +687,12 @@ static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
             relPath += sizeof(kPrefix) - 1;
         }
         clientSimNetSendLobbySetMap(cs, relPath);
+        /* Also fetch the raw bytes so the chooser's own preview pane
+         * can rasterise this map. SET_MAP updates the live lobby map
+         * but does not feed the chooser preview; the streamed
+         * MAP_PREVIEW response (drained by lobbyServerMapsPumpPreview)
+         * does. */
+        clientSimNetSendLobbyMapPreviewRequest(cs, relPath);
         s_chooseMapPreviewPending = true;
         WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[MAPPICK] server-maps SET_MAP relPath='%s' previewPending=1",
@@ -723,7 +729,7 @@ static bool lobbyServerMapsGeneratePreview(const char *entryPath,
                                             MapPreviewPixels *outBuf,
                                             void *ctx) {
     if (!entryPath || !*entryPath || !outBuf) return false;
-    ClientSim *cs = (ClientSim *)ctx;
+    (void)ctx;
 
     /* The server is authoritative for what bytes a map file
      * contains, even when "server" == in-process serverSim. In
@@ -791,15 +797,63 @@ static bool lobbyServerMapsGeneratePreview(const char *entryPath,
         return true;
     }
 
-    /* MP client. The PACKET_LOBBY_MAP_PREVIEW_REQ / BEGIN / CHUNK
-     * packets are defined and the server-side handler is in place
-     * (transport_udp_server.c) — what's still missing is the
-     * client-side transport receive logic that assembles chunks
-     * and invokes mapPreviewCacheDeliverFromMapBytes. Until that
-     * lands, MP clients see no preview on Server Maps. */
-    WB_LOG_INFO(WB_LOG_CAT_GUI,
-        "[SM-PREVIEW] MP path not yet wired for '%s'", entryPath);
+    /* MP client. The per-row thumbnail cache (this worker-thread hook)
+     * stays unimplemented for MP — it would need one streamed fetch per
+     * visible row. Instead the selected map's preview is driven on the
+     * main thread by lobbyServerMapsPumpPreview, which requests the
+     * bytes via PACKET_LOBBY_MAP_PREVIEW_REQ on select and feeds the
+     * streamed reply into mapChooserSetSelectedFile (mirroring the WBN
+     * tab). So return false here — no per-row thumbnail — but the
+     * selected-map preview pane still fills in. */
     return false;
+}
+
+/* Main-thread pump for the Server Maps preview pane (MP only). Polls
+ * the ClientSim's lobbyMapPreview* accumulator (filled async by the
+ * MAP_PREVIEW_BEGIN/_CHUNK handlers) and, once a full map's bytes have
+ * arrived for the path we asked for, spills them to a worker-private
+ * temp file and points the chooser at it via mapChooserSetSelectedFile.
+ * No-op for SP / in-process host — there generatePreview already serves
+ * the preview synchronously off the local ServerSim. */
+static void lobbyServerMapsPumpPreview(ClientSim *cs, SDL_Renderer *renderer) {
+    if (!cs || gameFrontGetServerSim() != NULL) return;
+    if (clientSimGetLobbyMapPreviewError(cs)) {
+        clientSimClearLobbyMapPreview(cs);
+        return;
+    }
+    if (!clientSimGetLobbyMapPreviewReady(cs)) return;
+
+    const char *path = clientSimGetLobbyMapPreviewPath(cs);
+    const char *want = clientSimGetLobbyMapPreviewReqPath(cs);
+    const uint8_t *bytes = clientSimGetLobbyMapPreviewBytes(cs);
+    uint32_t blen = clientSimGetLobbyMapPreviewLen(cs);
+    /* Ignore a response that no longer matches the active request. */
+    if (!path[0] || SDL_strcmp(path, want) != 0 || !bytes || blen == 0) {
+        clientSimClearLobbyMapPreview(cs);
+        return;
+    }
+
+    const char *tmpPath = "data/preview_cache/.sm_preview.map";
+    SDL_CreateDirectory("data/preview_cache");
+    FILE *fp = fopen(tmpPath, "wb");
+    if (fp) {
+        size_t wrote = fwrite(bytes, 1, blen, fp);
+        fclose(fp);
+        if (wrote == blen) {
+            /* Display name = basename minus the .map suffix. */
+            char disp[128];
+            const char *base = SDL_strrchr(path, '/');
+            base = base ? base + 1 : path;
+            SDL_strlcpy(disp, base, sizeof(disp));
+            size_t dl = SDL_strlen(disp);
+            if (dl > 4 && SDL_strcasecmp(disp + dl - 4, ".map") == 0) {
+                disp[dl - 4] = '\0';
+            }
+            mapChooserSetSelectedFile(&s_chooseMapState, renderer,
+                                      tmpPath, disp);
+        }
+    }
+    clientSimClearLobbyMapPreview(cs);
 }
 
 /* No tooltip on the Server Maps path label — the path always reads
@@ -2476,6 +2530,9 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             if (s_lastActiveTab != 0 && activeTabBefore != 0) {
                 lobbyMapTabClearSelection(&s_chooseMapState);
             }
+            /* Drain any streamed MAP_PREVIEW bytes into the preview pane
+             * (MP only; SP serves previews synchronously). */
+            lobbyServerMapsPumpPreview(cs, renderer);
             lobbyRenderMapTab(&s_chooseMapState, renderer, s);
             ImGui::EndTabItem();
         }
