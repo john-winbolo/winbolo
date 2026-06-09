@@ -40,11 +40,6 @@ extern "C" {
 #include "../../tiles.h"
 }
 
-/* WBN-verified shield texture (white-masked SVG), lazily loaded by the
- * renderer. Stands in for the account badge on the welcome status chip
- * and the stats dialog header. */
-extern "C" SDL_Texture *sdl3ImguiGetWbnVerifiedIcon(void);
-
 /* White-masked Steam logo, tinted at draw time. Used on the
  * "Sign in with Steam" button. */
 extern "C" SDL_Texture *sdl3ImguiGetSteamIcon(void);
@@ -284,6 +279,11 @@ static const char *wbnRegisterErrorText(const char *code) {
  * token; otherwise do nothing. A password session never re-auths via
  * Steam — it keeps validating. */
 static void wbnStartSessionReauth(void) {
+    /* Honour an explicit sign-out: never silently sign the player back in.
+     * Only a manual sign-in (which clears the sticky flag) re-auths. */
+    if (gameFrontGetWbnSignedOut()) {
+        return;
+    }
     char token[256], expiry[256], method[32];
     gameFrontGetWinbolonetToken(token, expiry);
     gameFrontGetWbnAuthMethod(method, sizeof(method));
@@ -304,23 +304,40 @@ static void wbnCheckThread(void) {
 
     if (wbnWork.success) {
         if (wbnWork.isRegister) {
-            /* New account created and signed in: apply the auth result and
-             * close the popup via the WBN_SUCCESS handler. */
+            /* New account created and signed in: an explicit user action,
+             * so clear any sticky sign-out before applying. */
+            gameFrontSetWbnSignedOut(false);
             gameFrontApplySteamAuthResult(wbnWork.tokenOut, wbnWork.expiryOut,
                                           wbnWork.playerNameOut, wbnWork.rankOut,
                                           wbnWork.rankTotalOut, &wbnWork.statsOut);
             steam_cancel_auth_ticket();
             wbnState = WBN_SUCCESS;
         } else if (wbnWork.isSteam) {
-            gameFrontApplySteamAuthResult(wbnWork.tokenOut, wbnWork.expiryOut,
-                                          wbnWork.playerNameOut, wbnWork.rankOut,
-                                          wbnWork.rankTotalOut, &wbnWork.statsOut);
-            steam_cancel_auth_ticket();
-            /* Silent launch re-auth stays quiet; the visible popup button
-             * closes via the success handler. */
-            wbnState = wbnWork.steamSilent ? WBN_IDLE : WBN_SUCCESS;
+            if (wbnWork.steamSilent && gameFrontGetWbnSignedOut()) {
+                /* A silent launch re-auth started before the player signed
+                 * out has landed. Honour the sign-out: discard it rather
+                 * than re-applying the token. */
+                steam_cancel_auth_ticket();
+                wbnState = WBN_IDLE;
+            } else {
+                /* The visible "Sign in with Steam" button is an explicit
+                 * sign-in: clear any sticky sign-out. A silent re-auth that
+                 * reaches here (not signed out) just refreshes the session. */
+                if (!wbnWork.steamSilent) {
+                    gameFrontSetWbnSignedOut(false);
+                }
+                gameFrontApplySteamAuthResult(wbnWork.tokenOut, wbnWork.expiryOut,
+                                              wbnWork.playerNameOut, wbnWork.rankOut,
+                                              wbnWork.rankTotalOut, &wbnWork.statsOut);
+                steam_cancel_auth_ticket();
+                /* Silent launch re-auth stays quiet; the visible popup button
+                 * closes via the success handler. */
+                wbnState = wbnWork.steamSilent ? WBN_IDLE : WBN_SUCCESS;
+            }
         } else {
             if (!wbnWork.isValidate) {
+                /* Password sign-in: an explicit user action. */
+                gameFrontSetWbnSignedOut(false);
                 gameFrontSetWinbolonetToken(wbnWork.tokenOut, wbnWork.expiryOut);
                 gameFrontSetWbnAuthMethod("password");
             }
@@ -386,7 +403,7 @@ static void wbnDrawSpinner(const char *label) {
     /* A spinning WinBolo.net shield (the verified badge) stands in for a
      * generic spinner — narrower than tall, turning about its vertical axis. */
     imguiDrawSpinningShield(ImGui::GetWindowDrawList(), centre,
-                            radius * 0.80f, radius, phase, col);
+                            radius * 0.80f, radius, phase, col, true);
 
     ImGui::Dummy(ImVec2(radius * 2.0f, radius * 2.0f));
     ImGui::SameLine();
@@ -425,9 +442,13 @@ static void wbnOpenLoginPopup(void) {
 }
 
 /* Clears the stored token and re-arms the once-per-session prefs-sync
- * gate so signing back in resyncs. Shared sign-out path. */
+ * gate so signing back in resyncs. Records a sticky sign-out so the
+ * silent re-auth paths (and any auth worker still in flight) won't sign
+ * the player back in until they explicitly sign in again. Shared
+ * sign-out path. */
 static void wbnSignOut(void) {
     gameFrontClearWinbolonetToken();
+    gameFrontSetWbnSignedOut(true);
     gameFrontResetPrefsSyncSession();
 }
 
@@ -793,7 +814,6 @@ static bool wbnDrawAccountChip(float s, float textAlpha) {
         SDL_strlcpy(rankBuf, langGetTextFmt(STR_DLGWBN_RANK, &args), sizeof(rankBuf));
     }
 
-    SDL_Texture *shield = sdl3ImguiGetWbnVerifiedIcon();
     float lineH = ImGui::GetTextLineHeight();
     float iconSz = lineH;
     float padX = 10.0f * s, padY = 6.0f * s;
@@ -801,7 +821,7 @@ static bool wbnDrawAccountChip(float s, float textAlpha) {
     float lineGap = 2.0f * s;
 
     float nameW = ImGui::CalcTextSize(playerName).x;
-    float line1W = (shield ? iconSz + gapIcon : 0.0f) + nameW;
+    float line1W = iconSz + gapIcon + nameW;
     float rankW = hasRank ? ImGui::CalcTextSize(rankBuf).x : 0.0f;
     float contentW = (line1W > rankW ? line1W : rankW);
 
@@ -823,9 +843,16 @@ static bool wbnDrawAccountChip(float s, float textAlpha) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     float tx = p0.x + padX;
     float ty = p0.y + padY;
-    if (shield) {
-        dl->AddImage((ImTextureID)shield, ImVec2(tx, ty),
-                     ImVec2(tx + iconSz, ty + iconSz));
+    /* Filled shield, same geometry as the hollow sign-in CTA so signed-in
+     * and signed-out read as the same badge (filled vs outline). Gold for
+     * supporters, matching the in-game / players-panel badge tint. */
+    {
+        float halfH = iconSz * 0.5f;
+        ImU32 shieldCol = gameFrontIsSupporter()
+                              ? IM_COL32(255, 214, 51, nameA)   /* supporter gold */
+                              : IM_COL32(255, 255, 255, nameA);
+        imguiDrawSpinningShield(dl, ImVec2(tx + iconSz * 0.5f, ty + halfH),
+                                halfH * 0.80f, halfH, 0.0f, shieldCol, true);
         tx += iconSz + gapIcon;
     }
     dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, nameA), playerName);
@@ -891,12 +918,9 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
         char playerName[PLAYER_NAME_LEN];
         playerName[0] = '\0';
         gameFrontGetPlayerName(playerName);
-        SDL_Texture *shield = sdl3ImguiGetWbnVerifiedIcon();
-        if (shield) {
-            float iconSz = ImGui::GetTextLineHeight();
-            ImGui::Image((ImTextureID)shield, ImVec2(iconSz, iconSz));
-            ImGui::SameLine();
-        }
+        imguiShieldBadge(ImGui::GetTextLineHeight(),
+                         IM_COL32(255, 255, 255, 255));
+        ImGui::SameLine();
         if (playerName[0] != '\0') {
             ImGui::TextUnformatted(playerName);
             ImGui::SameLine();
@@ -988,7 +1012,11 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
 }
 
 extern "C" void imguiWinbolonetReset(void) {
-    wbnState = WBN_IDLE;
+    /* Reset only the transient popup/input state. A running auth worker is
+     * left in flight so its result is applied through wbnCheckThread like
+     * everywhere else; the old behaviour joined and discarded it here, which
+     * silently dropped an in-flight sign-in and made the WBN state depend on
+     * which screen happened to be open when the worker landed. */
     wbnPopupOpen = false;
     wbnUsername[0] = '\0';
     wbnPassword[0] = '\0';
@@ -997,13 +1025,17 @@ extern "C" void imguiWinbolonetReset(void) {
     wbnRegSeeded = false;
     wbnErrorBuf[0] = '\0';
     wbnFocusUser = false;
-    if (wbnThread) {
-        SDL_WaitThread(wbnThread, nullptr);
-        wbnThread = nullptr;
+    if (!wbnThread) {
+        wbnState = WBN_IDLE;
     }
 }
 
 extern "C" void imguiWinbolonetStartValidation(void) {
+    /* A worker already in flight (e.g. the launch re-auth) will be applied by
+     * wbnCheckThread; don't start a second thread over the top of it. */
+    if (wbnThread) {
+        return;
+    }
     char token[256];
     char expiry[256];
     gameFrontGetWinbolonetToken(token, expiry);
@@ -1158,13 +1190,15 @@ extern "C" void imguiWinbolonetDrawStatusBlock(void) {
         float ty = cur.y + (btnH - lineH) * 0.5f;
         int textA = hov ? 255 : (int)(ghostTextAlpha * 255.0f);
 
-        /* phase 0 == face-on (full width); advancing phase spins it. */
+        /* phase 0 == face-on (full width); advancing phase spins it. Drawn
+         * hollow (outline only) so the signed-out CTA reads as an empty
+         * shield, filling in once signed in (the account-chip badge). */
         float halfH = iconSz * 0.5f;
         float phase = hov ? (float)SDL_GetTicks() * 0.002f : 0.0f;
         ImDrawList *dl = ImGui::GetWindowDrawList();
         imguiDrawSpinningShield(dl, ImVec2(tx + iconSz * 0.5f, ty + halfH),
                                 halfH * 0.80f, halfH, phase,
-                                IM_COL32(255, 255, 255, textA));
+                                IM_COL32(255, 255, 255, textA), false);
         tx += iconSz + gap;
         dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, textA), label);
     }

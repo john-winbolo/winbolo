@@ -444,6 +444,7 @@ static void clientSimDestroyContents(ClientSim *cs) {
 
   /* Clear lobby chat buffer */
   cs->lobbyChatHistory[0] = '\0';
+  cs->lobbyHostSlotKnown = false;
 
   /* Clear network callbacks */
   cs->chatSendFunc = NULL;
@@ -1435,6 +1436,9 @@ void clientSimResetWorld(ClientSim *cs) {
 
   tkExplosionDestroy(&gs->tankExplosions);
   tkExplosionCreate(&gs->tankExplosions);
+  gs->tkExpUpdateTime = 0;
+
+  treeGrowReset(gs);
 
   /* Client-only round-scoped render/predict state (interp reset above
    * alongside the per-player clear). */
@@ -1508,6 +1512,7 @@ void clientSimSetIsSinglePlayer(ClientSim *cs, bool v)          { cs->isSinglePl
 void clientSimSetIsLanOnly(ClientSim *cs, bool v)               { cs->isLanOnly = v; }
 
 bool     clientSimGetLobbyOpenHost(const ClientSim *cs)              { return cs->lobbyOpenHost; }
+BYTE     clientSimGetLobbyHostSlot(const ClientSim *cs)             { return cs ? cs->lobbyHostSlot : 0; }
 bool     clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs)   { return cs->lobbyAutoLockOnGameStart; }
 bool     clientSimGetLobbyRanked(const ClientSim *cs)                { return cs ? cs->lobbyRanked : false; }
 bool     clientSimGetLobbyAllowNewPlayers(const ClientSim *cs)       { return cs ? cs->lobbyAllowNewPlayers : true; }

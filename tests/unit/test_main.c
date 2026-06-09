@@ -60,6 +60,12 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_add_bot_rejects_ai_none",            run_lobby_add_bot_rejects_ai_none            },
     { "lobby_add_bot_rejects_not_in_lobby",       run_lobby_add_bot_rejects_not_in_lobby       },
     { "lobby_add_bot_rejects_non_host_sender",    run_lobby_add_bot_rejects_non_host_sender    },
+    { "transfer_host_promotes_target",             run_transfer_host_promotes_target             },
+    { "transfer_host_rejects_non_host_sender",     run_transfer_host_rejects_non_host_sender     },
+    { "transfer_host_openhost_does_not_grant",     run_transfer_host_openhost_does_not_grant     },
+    { "transfer_host_rejects_self",                run_transfer_host_rejects_self                },
+    { "transfer_host_rejects_unconnected",         run_transfer_host_rejects_unconnected         },
+    { "transfer_host_rejects_bot_target",          run_transfer_host_rejects_bot_target          },
     { "command_queue_first_submit_drains",        run_command_queue_first_submit_drains        },
     { "command_queue_second_submit_does_not_drain", run_command_queue_second_submit_does_not_drain },
     { "command_queue_ack_drains_pending_tail",    run_command_queue_ack_drains_pending_tail    },
@@ -167,6 +173,10 @@ static const UnitTestEntry s_tests[] = {
     { "return_to_lobby_clears_phantom_slot",       run_return_to_lobby_clears_phantom_slot       },
     { "last_human_leave_returns_to_lobby",         run_last_human_leave_returns_to_lobby         },
     { "humanless_round_does_not_autoend",          run_humanless_round_does_not_autoend          },
+    { "host_departs_promotes_lowest_human",        run_host_departs_promotes_lowest_human        },
+    { "nonhost_departs_keeps_host",                run_nonhost_departs_keeps_host                },
+    { "host_reassign_skips_bots",                  run_host_reassign_skips_bots                  },
+    { "lobby_reset_clears_host_slot",              run_lobby_reset_clears_host_slot              },
     { "log_roundtrip_basic",                     run_log_roundtrip_basic                     },
     { "log_roundtrip_snapshot_keeps_chain_synced",
                                                  run_log_roundtrip_snapshot_keeps_chain_synced },
@@ -186,6 +196,8 @@ static const UnitTestEntry s_tests[] = {
     { "alliance_reset_reapply_publishes_one_event",
                                                  run_alliance_reset_reapply_publishes_one_event },
     { "alliance_reset_apply_rebuilds_alliances", run_alliance_reset_apply_rebuilds_alliances },
+    { "treegrow_never_plants_on_deep_sea",       run_treegrow_never_plants_on_deep_sea       },
+    { "treegrow_reset_clears_stale_target",      run_treegrow_reset_clears_stale_target      },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

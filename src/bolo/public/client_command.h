@@ -64,6 +64,7 @@ typedef enum {
     CMD_LOBBY_PREVIEW_COMMIT,
     CMD_LOBBY_PREVIEW_RANDOM,
     CMD_LOBBY_KICK,
+    CMD_LOBBY_TRANSFER_HOST,
     CMD_LOBBY_SET_PASSWORD,
     CMD_BALANCE_REQUEST,
     CMD_BALANCE_APPLY,
@@ -255,6 +256,12 @@ typedef struct {
     uint8_t slot;
 } CmdLobbyKick;
 
+/* CMD_LOBBY_TRANSFER_HOST — host-only (openHost does NOT grant this).
+ * Hand the host role to another connected human. */
+typedef struct {
+    uint8_t slot;
+} CmdLobbyTransferHost;
+
 /* CMD_LOBBY_SET_PASSWORD — host or admin only (openHost does NOT
  * grant this — would let a connected player lock the host out).
  * pwLen == 0 clears the password. */
@@ -324,6 +331,7 @@ typedef struct ClientCommand {
         CmdLobbyPreviewCommit  lobbyPreviewCommit;
         CmdLobbyPreviewRandom  lobbyPreviewRandom;
         CmdLobbyKick           lobbyKick;
+        CmdLobbyTransferHost   lobbyTransferHost;
         CmdLobbySetPassword    lobbySetPassword;
         CmdBalanceRequest      balanceRequest;
         CmdBalanceApply        balanceApply;

@@ -139,3 +139,87 @@ int run_humanless_round_does_not_autoend(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* ---- 4. Host departure promotes the lowest-numbered connected human. ---- */
+int run_host_departs_promotes_lowest_human(void) {
+    ServerSim *sim = make_lobby_sim();
+    UT_ASSERT(sim != NULL);
+
+    serverSimAddPlayer(sim, 0, "Host", false);
+    serverSimAddPlayer(sim, 3, "Player3", false);
+    UT_ASSERT_MSG(serverSimGetHostSlot(sim) == 0, "host starts at slot 0");
+
+    serverSimRemovePlayer(sim, 0);
+
+    UT_ASSERT_MSG(serverSimGetHostSlot(sim) == 3,
+                  "host must pass to the lowest connected human (got %u)",
+                  (unsigned)serverSimGetHostSlot(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ---- 5. A non-host departure leaves the host slot unchanged. ---- */
+int run_nonhost_departs_keeps_host(void) {
+    ServerSim *sim = make_lobby_sim();
+    UT_ASSERT(sim != NULL);
+
+    serverSimAddPlayer(sim, 0, "Host", false);
+    serverSimAddPlayer(sim, 3, "Player3", false);
+
+    serverSimRemovePlayer(sim, 3);
+
+    UT_ASSERT_MSG(serverSimGetHostSlot(sim) == 0,
+                  "a non-host departure must not move the host (got %u)",
+                  (unsigned)serverSimGetHostSlot(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ---- 6. Host reassignment skips bots and picks the next human. ---- */
+int run_host_reassign_skips_bots(void) {
+    ServerSim *sim = make_lobby_sim();
+    UT_ASSERT(sim != NULL);
+
+    serverSimAddPlayer(sim, 0, "Host", false);
+    serverSimAddPlayer(sim, 4, "Player4", false);
+
+    /* Occupy a lower slot with a bot. A real bot needs a brain file, so
+     * mark the slot active directly — serverSimIsBot reads exactly this
+     * flag (botManagerIsBot -> botMgr.bots[i].active). */
+    sim->playerConnected[2] = TRUE;
+    sim->botMgr.bots[2].active = true;
+    UT_ASSERT(serverSimIsBot(sim, 2) == true);
+
+    serverSimRemovePlayer(sim, 0);
+
+    UT_ASSERT_MSG(serverSimGetHostSlot(sim) == 4,
+                  "host reassignment must skip the bot at slot 2 and pick "
+                  "slot 4 (got %u)", (unsigned)serverSimGetHostSlot(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ---- 7. The empty-lobby reset clears a stale host slot back to 0. ---- */
+int run_lobby_reset_clears_host_slot(void) {
+    ServerSim *sim = make_lobby_sim();
+    UT_ASSERT(sim != NULL);
+
+    serverSimAddPlayer(sim, 0, "Host", false);
+    /* Point the host at a stale slot (neither the departing slot nor a
+     * connected human) so the auto-reassign trigger does not fire and the
+     * last-human lobby reset is solely responsible for clearing hostSlot. */
+    serverSimSetHostSlot(sim, 2);
+    UT_ASSERT(serverSimGetHostSlot(sim) == 2);
+
+    serverSimRemovePlayer(sim, 0);   /* last human out -> lobby reset */
+
+    UT_ASSERT_MSG(serverSimGetHostSlot(sim) == 0,
+                  "the empty-lobby reset must zero hostSlot (got %u)",
+                  (unsigned)serverSimGetHostSlot(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}

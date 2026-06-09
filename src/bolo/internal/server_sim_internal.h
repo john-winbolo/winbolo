@@ -70,6 +70,7 @@ struct ServerSim {
 
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */
+    BYTE     hostSlot;             /* current lobby host's player slot; 0 = slot 0 */
     bool     allowNewPlayers;      /* live state — drives PACKET_LOCK_TOGGLE */
     bool     autoLockOnGameStart;  /* if true, set allowNewPlayers=false on game start */
     bool     savedAllowNewPlayers; /* what allowNewPlayers was before autoLockOnGameStart fired */

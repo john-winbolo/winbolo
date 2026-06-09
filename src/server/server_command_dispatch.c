@@ -263,9 +263,9 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_LOBBY_OPEN_HOST: {
-        /* Slot-0-only: the toggle that enables openHost cannot be
+        /* Host-only: the toggle that enables openHost cannot be
          * gated through openHost itself. */
-        if (senderSlot != 0) return CMD_REJECT_NOT_HOST;
+        if (senderSlot != serverSimGetHostSlot(sim)) return CMD_REJECT_NOT_HOST;
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {
             return CMD_REJECT_BAD_STATE;
@@ -466,7 +466,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         }
         if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
         uint8_t slot = cmd->u.lobbyKick.slot;
-        if (slot >= MAX_TANKS || slot == 0 || (int)slot == senderSlot) {
+        if (slot >= MAX_TANKS || slot == serverSimGetHostSlot(sim) || (int)slot == senderSlot) {
             return CMD_REJECT_INVALID;
         }
         const char *name = transportUdpServerGetPlayerName(slot);
@@ -474,9 +474,30 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         lobbyAutoUnreadyOnChange(sim);
         return CMD_OK;
     }
+    case CMD_LOBBY_TRANSFER_HOST: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* Host-only — openHost must NOT grant transfer (a connected
+         * player must not be able to hand off the host role). */
+        if (senderSlot != serverSimGetHostSlot(sim)) return CMD_REJECT_NOT_HOST;
+        uint8_t slot = cmd->u.lobbyTransferHost.slot;
+        /* Target must be a connected human other than the current host
+         * (self == host here, so the self/already-host cases coincide). */
+        if (slot >= MAX_TANKS ||
+            (int)slot == senderSlot ||
+            slot == serverSimGetHostSlot(sim) ||
+            !serverSimIsPlayerConnected(sim, slot) ||
+            serverSimIsBot(sim, slot)) {
+            return CMD_REJECT_INVALID;
+        }
+        serverSimSetHostSlot(sim, slot);
+        return CMD_OK;
+    }
     case CMD_LOBBY_SET_PASSWORD: {
-        /* Host (slot 0) or admin only — openHost does NOT grant this. */
-        bool isHost  = (senderSlot == 0);
+        /* Host or admin only — openHost does NOT grant this. */
+        bool isHost  = (senderSlot == serverSimGetHostSlot(sim));
         bool isAdmin = serverSimIsPlayerConnected(sim, (BYTE)senderSlot) &&
             (playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs,
                                    (BYTE)senderSlot) & PLAYER_FLAG_ADMIN);
@@ -491,7 +512,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_BALANCE_REQUEST: {
-        if (senderSlot != 0) return CMD_REJECT_NOT_HOST;
+        if (senderSlot != serverSimGetHostSlot(sim)) return CMD_REJECT_NOT_HOST;
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {
             return CMD_REJECT_BAD_STATE;
@@ -506,7 +527,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_BALANCE_APPLY: {
-        if (senderSlot != 0) return CMD_REJECT_NOT_HOST;
+        if (senderSlot != serverSimGetHostSlot(sim)) return CMD_REJECT_NOT_HOST;
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {
             return CMD_REJECT_BAD_STATE;
@@ -545,7 +566,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         return CMD_OK;
     }
     case CMD_BALANCE_DISMISS: {
-        if (senderSlot != 0) return CMD_REJECT_NOT_HOST;
+        if (senderSlot != serverSimGetHostSlot(sim)) return CMD_REJECT_NOT_HOST;
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {
             return CMD_REJECT_BAD_STATE;

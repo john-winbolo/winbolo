@@ -2224,6 +2224,10 @@ if(UNIX AND NOT APPLE AND CMAKE_STRIP)
         COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:LogViewer>"
         COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:MapEditor>"
         COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:BrainTest>")
+     if(HAVE_SENTRY AND TARGET crashpad_handler)
+        list(APPEND DIST_STRIP_CMD
+            COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:crashpad_handler>")
+    endif()
 endif()
 
 add_custom_target(dist
@@ -2431,6 +2435,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_session_rotation.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_lobby_reset_cleanup.c
+    tests/unit/test_lobby_transfer_host.c
+    tests/unit/test_treegrow_no_sea.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
@@ -2629,6 +2635,16 @@ set(_unit_test_names
     return_to_lobby_clears_phantom_slot
     last_human_leave_returns_to_lobby
     humanless_round_does_not_autoend
+    host_departs_promotes_lowest_human
+    nonhost_departs_keeps_host
+    host_reassign_skips_bots
+    lobby_reset_clears_host_slot
+    transfer_host_promotes_target
+    transfer_host_rejects_non_host_sender
+    transfer_host_openhost_does_not_grant
+    transfer_host_rejects_self
+    transfer_host_rejects_unconnected
+    transfer_host_rejects_bot_target
     log_roundtrip_basic
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
@@ -2643,6 +2659,8 @@ set(_unit_test_names
     alliance_reset_decoder_rejects_short
     alliance_reset_reapply_publishes_one_event
     alliance_reset_apply_rebuilds_alliances
+    treegrow_never_plants_on_deep_sea
+    treegrow_reset_clears_stale_target
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}

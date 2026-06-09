@@ -3207,6 +3207,9 @@ static int s_expandedBotSlot = -1;
 static int  s_kickPendingSlot = -1;
 static char s_kickPendingName[64] = {0};
 static bool s_kickPendingOpen = false;
+static int  s_makeHostPendingSlot = -1;
+static char s_makeHostPendingName[64] = {0};
+static bool s_makeHostPendingOpen = false;
 
 /* Forward decl — defined below the team renderer. */
 static void renderBotAiConfig(ClientSim *cs,
@@ -3266,13 +3269,19 @@ static void rankedShapeTooltip(const RankedEligibility &r) {
         langGetTextFmt(STR_DLGLOBBY_RANKED_SHAPE_TIP, &args));
 }
 
+/* True when myPlayerNum holds the lobby host role. Keeps the
+ * host-identity test uniform across the lobby UI. */
+static bool isLobbyHost(ClientSim *cs, int myPlayerNum) {
+    return myPlayerNum >= 0 && myPlayerNum == clientSimGetLobbyHostSlot(cs);
+}
+
 /* Compact "Allow New Players:  [ ] Now   [ ] During game" row. Host
  * only and multiplayer only (single-player has no UDP listener). Used
  * to live inside renderTeamGroupedPlayers; hoisted to the parent so
  * the PlayerPanel and MapPanel top edges stay aligned. */
 static void renderAllowNewPlayersRow(ClientSim *cs,
                                      int myPlayerNum, float s) {
-    bool isHost = (myPlayerNum == 0);
+    bool isHost = isLobbyHost(cs, myPlayerNum);
     bool isLocalAdmin = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                         (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                          & PLAYER_FLAG_ADMIN));
@@ -3980,7 +3989,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             ImGui::TableSetupColumn("##ping",   ImGuiTableColumnFlags_WidthFixed, 50.0f * s);
             ImGui::TableSetupColumn("##spacer", ImGuiTableColumnFlags_WidthStretch, 1.0f);
             ImGui::TableSetupColumn("##ready",  ImGuiTableColumnFlags_WidthFixed, 80.0f * s);
-            ImGui::TableSetupColumn("##x",      ImGuiTableColumnFlags_WidthFixed, 22.0f * s);
+            ImGui::TableSetupColumn("##x",      ImGuiTableColumnFlags_WidthFixed, 44.0f * s);
 
             /* Drive striping ourselves (per-player, not per-table-row)
              * so the bot's expanded AiConfig sub-row inherits the same
@@ -4267,15 +4276,15 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 fg, lbl);
                     ImGui::Dummy(ImVec2(pillW, pillH));
                 };
-                if (i == 0) {
-                    /* Host is always player slot 0. Themable bg /
+                if (i == clientSimGetLobbyHostSlot(cs)) {
+                    /* Badge follows the current host slot. Themable bg /
                      * border / text triple lives in wb_theme.cpp. */
                     drawNameTag(langGetText(STR_DLGLOBBY_TAG_HOST),
                                 g_theme->hostTagBg,
                                 g_theme->hostTagText,
                                 g_theme->hostTagBorder);
                 }
-                if (!isBot && i != 0 &&
+                if (!isBot && i != clientSimGetLobbyHostSlot(cs) &&
                     (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags & PLAYER_FLAG_ADMIN)) {
                     /* IP-matched admin (server -admins). Shown beside the
                      * name like HOST but in a distinct teal so it reads
@@ -4414,9 +4423,49 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RMBOT));
                     }
-                } else if (!isBot && !isMe && i != 0 && effectiveHost) {
+                } else if (!isBot && !isMe && i != clientSimGetLobbyHostSlot(cs) && effectiveHost) {
                     cyAbs(closeSz);
-                    ImVec2 closePos = ImGui::GetCursorScreenPos();
+                    ImVec2 basePos = ImGui::GetCursorScreenPos();
+                    /* Host-only "Make host" promote button, drawn to the
+                     * left of the kick X. openHost/admin (effectiveHost)
+                     * can kick but must NOT transfer the host role, so
+                     * this is gated on isLobbyHost, not effectiveHost. */
+                    if (isLobbyHost(cs, myPlayerNum)) {
+                        ImVec2 mhPos = basePos;
+                        ImGui::SetCursorScreenPos(mhPos);
+                        char mhStr[24];
+                        SDL_snprintf(mhStr, sizeof(mhStr), "##mh%d", i);
+                        bool mhClicked = ImGui::InvisibleButton(mhStr, ImVec2(closeSz, closeSz));
+                        ImU32 mhTint = ImGui::IsItemHovered()
+                            ? IM_COL32_WHITE : IM_COL32(180, 180, 180, 200);
+                        ImDrawList *mhDl = ImGui::GetWindowDrawList();
+                        /* Up-triangle "promote" glyph. Visual placeholder —
+                         * the human may swap this for a crown later. */
+                        ImVec2 apex(mhPos.x + closeSz * 0.50f, mhPos.y + closeSz * 0.20f);
+                        ImVec2 bl  (mhPos.x + closeSz * 0.15f, mhPos.y + closeSz * 0.80f);
+                        ImVec2 br  (mhPos.x + closeSz * 0.85f, mhPos.y + closeSz * 0.80f);
+                        mhDl->AddTriangleFilled(apex, bl, br, mhTint);
+                        if (mhClicked) {
+                            s_makeHostPendingSlot = i;
+                            SDL_strlcpy(s_makeHostPendingName,
+                                        clientSimGetLobbySlot(cs, (BYTE)i)->playerName,
+                                        sizeof(s_makeHostPendingName));
+                            s_makeHostPendingOpen = true;
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_MAKE_HOST));
+                        }
+                        /* Shift the kick X right so the two controls sit
+                         * side by side in the column. */
+                        basePos.x += closeSz + 4.0f * s;
+                    }
+                    /* CloseButton takes an explicit position and only calls
+                     * ItemAdd (not ItemSize), so do NOT move the layout
+                     * cursor here: a SetCursorScreenPos past the content max
+                     * leaves ImGui's IsSetPos flag unvalidated and trips the
+                     * "SetCursorPos to extend boundaries" assert at cell end.
+                     * The InvisibleButton above already grew the cell. */
+                    ImVec2 closePos = basePos;
                     char kbStr[24];
                     SDL_snprintf(kbStr, sizeof(kbStr), "##kb%d", i);
                     ImGuiID kbId = ImGui::GetID(kbStr);
@@ -4581,6 +4630,33 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80.0f * s, 0))) {
             s_kickPendingSlot = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (s_makeHostPendingOpen) {
+        ImGui::OpenPopup("##makeHostConfirm");
+        s_makeHostPendingOpen = false;
+    }
+    if (ImGui::BeginPopupModal("##makeHostConfirm", NULL,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        {
+            MessageArgs args = {};
+            SDL_strlcpy(args.playerName, s_makeHostPendingName, sizeof(args.playerName));
+            ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_MAKE_HOST_FMT, &args));
+        }
+        ImGui::Spacing();
+        if (ImGui::Button(langGetText(STR_YES), ImVec2(80.0f * s, 0))) {
+            if (s_makeHostPendingSlot >= 0 && s_makeHostPendingSlot < MAX_TANKS) {
+                clientSimNetSendLobbyTransferHost(cs, (uint8_t)s_makeHostPendingSlot);
+            }
+            s_makeHostPendingSlot = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80.0f * s, 0))) {
+            s_makeHostPendingSlot = -1;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -5060,7 +5136,7 @@ static void renderLockBadge(void) {
  * commands. Host-only or anyone if openHost. */
 static void renderGameSettingsPanel(ClientSim *cs,
                                     int myPlayerNum, float s) {
-    bool effectiveHost = (myPlayerNum == 0) || clientSimGetLobbyOpenHost(cs) ||
+    bool effectiveHost = isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
                          (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                           (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                            & PLAYER_FLAG_ADMIN));
@@ -5219,7 +5295,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
          * authority-gating controls cluster together at the top of
          * the Other column. */
         if (!clientSimIsSinglePlayer(cs)) {
-            bool isHostLocal = (myPlayerNum == 0);
+            bool isHostLocal = isLobbyHost(cs, myPlayerNum);
             bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                                  (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                                   & PLAYER_FLAG_ADMIN));
@@ -5276,7 +5352,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
          * the host out of their own server). MP only — SP has no
          * remote clients to keep out. */
         if (!clientSimIsSinglePlayer(cs)) {
-            bool isHostLocal  = (myPlayerNum == 0);
+            bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
             bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                                  (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                                   & PLAYER_FLAG_ADMIN));
@@ -5942,7 +6018,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * Skipped entirely for non-privileged players — the same
          * info already lives in the top status bar, and the panel
          * is read-only anyway. */
-        bool gsEffectiveHost = (myPlayerNum == 0)
+        bool gsEffectiveHost = isLobbyHost(cs, myPlayerNum)
             || clientSimGetLobbyOpenHost(cs)
             || (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                 (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
@@ -5985,7 +6061,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                      * intact for reference; toggle the 0/1 to A/B
                      * compare during the in-progress UI rewrite. */
 #if 1
-                    bool isHostHere = (myPlayerNum == 0);
+                    bool isHostHere = isLobbyHost(cs, myPlayerNum);
                     renderTeamGroupedPlayers(cs, myPlayerNum, s, isHostHere);
                     /* Avoid the legacy table entirely. */
                     if (false) {
@@ -6140,7 +6216,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                      * effHostMap stays visible to the preview block below
                      * so privileged users can also click the preview to
                      * jump straight into the chooser. */
-                    bool isHostLocal  = (myPlayerNum == 0);
+                    bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
                     bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
                         (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                          & PLAYER_FLAG_ADMIN));
@@ -6459,7 +6535,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * A/B compare during the in-progress UI rewrite. */
 #if 1
             {
-                bool isHostHere = (myPlayerNum == 0);
+                bool isHostHere = isLobbyHost(cs, myPlayerNum);
                 renderTeamGroupedPlayers(cs, myPlayerNum, s, isHostHere);
             }
             if (false) {
@@ -6692,7 +6768,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                  * Pre-measure N so the preview can claim everything else
                  * deterministically and the panel doesn't end up with
                  * either dead space or content pushed past the bottom. */
-                bool isHostLocal  = (myPlayerNum == 0);
+                bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
                 bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
                     (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                      & PLAYER_FLAG_ADMIN));
@@ -6879,7 +6955,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * actually opens on a Change request. "Allow players to
              * change game settings" (openHost) extends this beyond
              * the host slot to every connected player. */
-            bool isHostLocal  = (myPlayerNum == 0);
+            bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
             bool isAdminLocal = (cs && myPlayerNum < MAX_TANKS &&
                 (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                  & PLAYER_FLAG_ADMIN));
@@ -7075,6 +7151,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     s_kickPendingOpen = false;
     s_kickPendingSlot = -1;
     s_kickPendingName[0] = '\0';
+    s_makeHostPendingOpen = false;
+    s_makeHostPendingSlot = -1;
+    s_makeHostPendingName[0] = '\0';
 
     /* Add-bot debounce — the in-flight gate that disables the Add Bot
      * button until lobbyAddBotPending clears. If a click was in

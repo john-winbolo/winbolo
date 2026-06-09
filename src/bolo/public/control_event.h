@@ -175,6 +175,7 @@ typedef struct ControlEvent {
                                           * from WBN) on remote clients */
             uint16_t lobbyServerLocks;
             UploadPolicy uploadPolicy;
+            uint8_t  hostSlot;   /* current lobby host's player slot */
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */

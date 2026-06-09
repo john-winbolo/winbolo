@@ -638,6 +638,13 @@ void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendLobbyTransferHost(ClientSim *cs, uint8_t slot) {
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_TRANSFER_HOST };
+  cmd.u.lobbyTransferHost.slot = slot;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendMapSkipVote(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
   ClientCommand cmd = { .type = CMD_MAP_SKIP_VOTE };

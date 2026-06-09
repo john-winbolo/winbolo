@@ -1876,6 +1876,20 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
      * already delegates to the leave path. */
     playersClearSlot(&sim->sim.plyrs, playerNum);
 
+    /* If the departing slot was the host, hand the role to the lowest-
+     * numbered connected human. Bots can never host; if no humans remain,
+     * fall back to slot 0. The setter publishes the lobby settings. */
+    if (playerNum == sim->hostSlot) {
+        BYTE next = 0;
+        for (BYTE i = 0; i < MAX_TANKS; i++) {
+            if (sim->playerConnected[i] && !serverSimIsBot(sim, i)) {
+                next = i;
+                break;
+            }
+        }
+        serverSimSetHostSlot(sim, next);
+    }
+
     /* Last human out of the lobby — wipe the slate so the next joiner gets
      * a fresh lobby: drop any bots, restore the operator's startup settings,
      * and unlock. Gated on a human leaver (bots removed here don't recurse)
@@ -1921,6 +1935,10 @@ static void serverSimResetLobbyToDefaults(ServerSim *sim) {
         sim->ranked              = sim->originalLobbySettings.ranked;
         sim->serverLocks         = sim->originalLobbySettings.serverLocks;
     }
+
+    /* A fresh lobby always starts with slot 0 as host, regardless of who
+     * hosted the previous round. */
+    sim->hostSlot = 0;
 
     /* Reset team and bot-slot metadata to the creation defaults (two teams
      * always present, default bot configs, per-slot brain back to the
@@ -3280,6 +3298,9 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
     tkExplosionDestroy(&sim->sim.tankExplosions);
     tkExplosionCreate(&sim->sim.tankExplosions);
+    sim->sim.tkExpUpdateTime = 0;
+
+    treeGrowReset(&sim->sim);
 
     /* 3. Reload map/bases/pills/starts from cached data */
     if (sim->cachedMapData != NULL) {
@@ -4746,6 +4767,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.netStat          = serverPhaseToNetStat(sim->state);
     evt->u.lobbySettings.inLobby          = sim->lobbyEnabled ? true : false;
     evt->u.lobbySettings.lobbyOpenHost            = sim->openHost;
+    evt->u.lobbySettings.hostSlot                 = sim->hostSlot;
     evt->u.lobbySettings.lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;
     evt->u.lobbySettings.lobbyRanked              = sim->ranked;
     evt->u.lobbySettings.lobbyAllowNewPlayers     = sim->allowNewPlayers;
@@ -6334,6 +6356,16 @@ void serverSimSetOpenHost(ServerSim *sim, bool v) {
     sim->openHost = v;
     serverSimPublishLobbySettings(sim);
     lobbyAutoUnreadyOnChange(sim);
+}
+
+BYTE serverSimGetHostSlot(const ServerSim *sim) {
+    return sim ? sim->hostSlot : 0;
+}
+
+void serverSimSetHostSlot(ServerSim *sim, BYTE slot) {
+    if (sim == NULL) return;
+    sim->hostSlot = slot;
+    serverSimPublishLobbySettings(sim);
 }
 
 bool serverSimGetFirstJoinerBecomesHost(const ServerSim *sim) {

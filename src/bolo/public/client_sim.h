@@ -665,6 +665,7 @@ void clientSimSetIsLanOnly(ClientSim *cs, bool v);
  * Indexed accessors return 0 / "" / NULL for out-of-range indices.
  * ──────────────────────────────────────────────────────────────── */
 bool        clientSimGetLobbyOpenHost(const ClientSim *cs);
+BYTE        clientSimGetLobbyHostSlot(const ClientSim *cs);
 bool        clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs);
 /* Ranked-game flag (LST_RANKED). When true, the server forbids bots
  * and the "Open" game type, and removes any existing bots. UI is

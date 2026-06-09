@@ -254,8 +254,10 @@ static uint16_t s_playerPing[MAX_PLAYERS] = {};
 static uint8_t  s_playerClientType[MAX_PLAYERS] = {};
 static uint8_t  s_playerFlags[MAX_PLAYERS] = {};
 
-/* WBN/Steam icon textures */
-static SDL_Texture *s_iconWbnVerified = nullptr;
+/* WBN/Steam icon textures. The WBN-verified shield is drawn procedurally
+ * (imguiShieldBadge / imguiDrawSpinningShield) rather than from a texture, so
+ * there is no s_iconWbnVerified — the Mac menubar loads its own copy of
+ * shield.svg for native Cocoa drawing. */
 static SDL_Texture *s_iconSteam = nullptr;
 static SDL_Texture *s_iconBrain = nullptr;
 /* Large brain texture used for tank-label overlays. The small s_iconBrain
@@ -274,13 +276,12 @@ static void ensureWbnIconsLoaded(void) {
     if (s_wbnIconsLoaded) return;
     s_wbnIconsLoaded = true;
     SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
-    s_iconWbnVerified   = imguiLoadSvgIconWhite(r, "data/ui/shield.svg", WBN_ICON_SIZE);
     s_iconSteam   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
     s_iconBrain   = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
     s_iconBrainLg = imguiLoadSvgIconWhite(r, "data/ui/brain.svg",
                                           WBN_ICON_TANK_LABEL_SIZE);
-    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] shield=%p steam=%p brain=%p brainLg=%p s_renderer=%p drawRenderer=%p",
-            (void *)s_iconWbnVerified, (void *)s_iconSteam,
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] steam=%p brain=%p brainLg=%p s_renderer=%p drawRenderer=%p",
+            (void *)s_iconSteam,
             (void *)s_iconBrain, (void *)s_iconBrainLg,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
 }
@@ -3945,11 +3946,6 @@ void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping) {
     s_playerPing[playerNum] = ping;
 }
 
-SDL_Texture *sdl3ImguiGetWbnVerifiedIcon(void) {
-    ensureWbnIconsLoaded();
-    return s_iconWbnVerified;
-}
-
 SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     ensureWbnIconsLoaded();
     return s_iconSteam;
@@ -4017,15 +4013,11 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
             ImGui::SameLine();
         }
 
-        if ((flags & PLAYER_FLAG_WBN_VERIFIED) && s_iconWbnVerified) {
-            /* Shield texture is forced white (alpha mask); tint yellow for
-             * supporters, leave white otherwise — same scheme as the
-             * platform icon above. */
+        if (flags & PLAYER_FLAG_WBN_VERIFIED) {
+            /* Vector shield (crisp at this size); gold for supporters, white
+             * otherwise — same scheme as the platform icon above. */
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
-            ImGui::ImageWithBg((ImTextureID)s_iconWbnVerified,
-                               ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
-                               ImVec2(0, 0), ImVec2(1, 1),
-                               ImVec4(0, 0, 0, 0), tint);
+            imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
             ImGui::SameLine();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
@@ -4068,7 +4060,6 @@ void sdl3ImguiCleanup(void) {
     popOutDestroy(&s_popGameInfo);
     popOutDestroy(&s_popSendMsg);
     flagsDestroy();
-    if (s_iconWbnVerified) { SDL_DestroyTexture(s_iconWbnVerified); s_iconWbnVerified = nullptr; }
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
     if (s_iconBrain) { SDL_DestroyTexture(s_iconBrain); s_iconBrain = nullptr; }
     if (s_iconBrainLg) { SDL_DestroyTexture(s_iconBrainLg); s_iconBrainLg = nullptr; }
