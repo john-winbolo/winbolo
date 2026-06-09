@@ -165,6 +165,7 @@ void *dialogAllianceCreate(void) { return NULL; }
 void dialogAllianceDestroy(void *dlg) { (void)dlg; }
 bool dnsLookupsCreate(ClientSim *cs) { (void)cs; return TRUE; }
 void dnsLookupsDestroy(void) {}
+void dnsLookupsAddRequest(char *ip, void *func) { (void)ip; (void)func; }
 
 /* Network stubs — netMessageSendPlayer, netRequestAlliance, netAllianceAccept,
  * netLeaveAlliance, netSetAllowNewPlayers are provided by client_sim.c. */
