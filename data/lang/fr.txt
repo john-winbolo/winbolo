@@ -1394,3 +1394,7 @@ STR_DLGWBN_STATS_TOURN=Tournoi
 STR_DLGWBN_STATS_WINS=Victoires :
 STR_DLGWBN_UNRANKED=Non classé
 STR_DLGWBN_VIA_STEAM=via Steam
+
+# Lobby host transfer
+STR_DLGLOBBY_MAKE_HOST=Nommer hôte
+STR_DLGLOBBY_MAKE_HOST_FMT=Nommer « {player} » comme hôte ?

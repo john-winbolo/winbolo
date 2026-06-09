@@ -1394,3 +1394,7 @@ STR_DLGWBN_STATS_TOURN=Turnier
 STR_DLGWBN_STATS_WINS=Siege:
 STR_DLGWBN_UNRANKED=Unbewertet
 STR_DLGWBN_VIA_STEAM=via Steam
+
+# Lobby host transfer
+STR_DLGLOBBY_MAKE_HOST=Gastgeber machen
+STR_DLGLOBBY_MAKE_HOST_FMT=„{player}" zum Gastgeber machen?

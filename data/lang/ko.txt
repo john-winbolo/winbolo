@@ -1249,6 +1249,8 @@ STR_DLGLOBBY_TOOLTIP_KICK=플레이어 강제 퇴장
 STR_DLGLOBBY_ADD_TEAM=팀 추가
 STR_DLGLOBBY_UNASSIGNED_FMT=미배정 ({number}):
 STR_DLGLOBBY_KICK_FMT="{player}"님을 강제 퇴장시킬까요?
+STR_DLGLOBBY_MAKE_HOST=호스트로 지정
+STR_DLGLOBBY_MAKE_HOST_FMT="{player}"님을 호스트로 지정할까요?
 
 # Bot AiConfig panel
 STR_DLGLOBBY_BOTCFG_NAME=이름 (재정의)

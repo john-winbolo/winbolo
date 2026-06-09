@@ -1394,3 +1394,7 @@ STR_DLGWBN_STATS_TOURN=Torneo
 STR_DLGWBN_STATS_WINS=Victorias:
 STR_DLGWBN_UNRANKED=Sin clasificar
 STR_DLGWBN_VIA_STEAM=con Steam
+
+# Lobby host transfer
+STR_DLGLOBBY_MAKE_HOST=Hacer anfitrión
+STR_DLGLOBBY_MAKE_HOST_FMT=¿Hacer a "{player}" el anfitrión?

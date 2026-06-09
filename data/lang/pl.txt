@@ -1390,3 +1390,5 @@ STR_DLGWBN_STATS_TOURN=Turniej
 STR_DLGWBN_STATS_WINS=Wygrane:
 STR_DLGWBN_UNRANKED=Bez rangi
 STR_DLGWBN_VIA_STEAM=przez Steam
+STR_DLGLOBBY_MAKE_HOST=Ustanów gospodarzem
+STR_DLGLOBBY_MAKE_HOST_FMT=Ustanowić „{player}" gospodarzem?

@@ -1394,3 +1394,5 @@ STR_DLGWBN_STATS_TOURN=Turnaj
 STR_DLGWBN_STATS_WINS=Výhry:
 STR_DLGWBN_UNRANKED=Bez hodnocení
 STR_DLGWBN_VIA_STEAM=přes Steam
+STR_DLGLOBBY_MAKE_HOST=Nastavit hostitele
+STR_DLGLOBBY_MAKE_HOST_FMT=Nastavit „{player}" jako hostitele?

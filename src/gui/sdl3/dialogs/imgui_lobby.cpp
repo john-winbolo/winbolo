@@ -3207,6 +3207,9 @@ static int s_expandedBotSlot = -1;
 static int  s_kickPendingSlot = -1;
 static char s_kickPendingName[64] = {0};
 static bool s_kickPendingOpen = false;
+static int  s_makeHostPendingSlot = -1;
+static char s_makeHostPendingName[64] = {0};
+static bool s_makeHostPendingOpen = false;
 
 /* Forward decl — defined below the team renderer. */
 static void renderBotAiConfig(ClientSim *cs,
@@ -3986,7 +3989,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             ImGui::TableSetupColumn("##ping",   ImGuiTableColumnFlags_WidthFixed, 50.0f * s);
             ImGui::TableSetupColumn("##spacer", ImGuiTableColumnFlags_WidthStretch, 1.0f);
             ImGui::TableSetupColumn("##ready",  ImGuiTableColumnFlags_WidthFixed, 80.0f * s);
-            ImGui::TableSetupColumn("##x",      ImGuiTableColumnFlags_WidthFixed, 22.0f * s);
+            ImGui::TableSetupColumn("##x",      ImGuiTableColumnFlags_WidthFixed, 44.0f * s);
 
             /* Drive striping ourselves (per-player, not per-table-row)
              * so the bot's expanded AiConfig sub-row inherits the same
@@ -4422,7 +4425,47 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     }
                 } else if (!isBot && !isMe && i != clientSimGetLobbyHostSlot(cs) && effectiveHost) {
                     cyAbs(closeSz);
-                    ImVec2 closePos = ImGui::GetCursorScreenPos();
+                    ImVec2 basePos = ImGui::GetCursorScreenPos();
+                    /* Host-only "Make host" promote button, drawn to the
+                     * left of the kick X. openHost/admin (effectiveHost)
+                     * can kick but must NOT transfer the host role, so
+                     * this is gated on isLobbyHost, not effectiveHost. */
+                    if (isLobbyHost(cs, myPlayerNum)) {
+                        ImVec2 mhPos = basePos;
+                        ImGui::SetCursorScreenPos(mhPos);
+                        char mhStr[24];
+                        SDL_snprintf(mhStr, sizeof(mhStr), "##mh%d", i);
+                        bool mhClicked = ImGui::InvisibleButton(mhStr, ImVec2(closeSz, closeSz));
+                        ImU32 mhTint = ImGui::IsItemHovered()
+                            ? IM_COL32_WHITE : IM_COL32(180, 180, 180, 200);
+                        ImDrawList *mhDl = ImGui::GetWindowDrawList();
+                        /* Up-triangle "promote" glyph. Visual placeholder —
+                         * the human may swap this for a crown later. */
+                        ImVec2 apex(mhPos.x + closeSz * 0.50f, mhPos.y + closeSz * 0.20f);
+                        ImVec2 bl  (mhPos.x + closeSz * 0.15f, mhPos.y + closeSz * 0.80f);
+                        ImVec2 br  (mhPos.x + closeSz * 0.85f, mhPos.y + closeSz * 0.80f);
+                        mhDl->AddTriangleFilled(apex, bl, br, mhTint);
+                        if (mhClicked) {
+                            s_makeHostPendingSlot = i;
+                            SDL_strlcpy(s_makeHostPendingName,
+                                        clientSimGetLobbySlot(cs, (BYTE)i)->playerName,
+                                        sizeof(s_makeHostPendingName));
+                            s_makeHostPendingOpen = true;
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_MAKE_HOST));
+                        }
+                        /* Shift the kick X right so the two controls sit
+                         * side by side in the column. */
+                        basePos.x += closeSz + 4.0f * s;
+                    }
+                    /* CloseButton takes an explicit position and only calls
+                     * ItemAdd (not ItemSize), so do NOT move the layout
+                     * cursor here: a SetCursorScreenPos past the content max
+                     * leaves ImGui's IsSetPos flag unvalidated and trips the
+                     * "SetCursorPos to extend boundaries" assert at cell end.
+                     * The InvisibleButton above already grew the cell. */
+                    ImVec2 closePos = basePos;
                     char kbStr[24];
                     SDL_snprintf(kbStr, sizeof(kbStr), "##kb%d", i);
                     ImGuiID kbId = ImGui::GetID(kbStr);
@@ -4587,6 +4630,33 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80.0f * s, 0))) {
             s_kickPendingSlot = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (s_makeHostPendingOpen) {
+        ImGui::OpenPopup("##makeHostConfirm");
+        s_makeHostPendingOpen = false;
+    }
+    if (ImGui::BeginPopupModal("##makeHostConfirm", NULL,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        {
+            MessageArgs args = {};
+            SDL_strlcpy(args.playerName, s_makeHostPendingName, sizeof(args.playerName));
+            ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_MAKE_HOST_FMT, &args));
+        }
+        ImGui::Spacing();
+        if (ImGui::Button(langGetText(STR_YES), ImVec2(80.0f * s, 0))) {
+            if (s_makeHostPendingSlot >= 0 && s_makeHostPendingSlot < MAX_TANKS) {
+                clientSimNetSendLobbyTransferHost(cs, (uint8_t)s_makeHostPendingSlot);
+            }
+            s_makeHostPendingSlot = -1;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(80.0f * s, 0))) {
+            s_makeHostPendingSlot = -1;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -7081,6 +7151,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     s_kickPendingOpen = false;
     s_kickPendingSlot = -1;
     s_kickPendingName[0] = '\0';
+    s_makeHostPendingOpen = false;
+    s_makeHostPendingSlot = -1;
+    s_makeHostPendingName[0] = '\0';
 
     /* Add-bot debounce — the in-flight gate that disables the Add Bot
      * button until lobbyAddBotPending clears. If a click was in

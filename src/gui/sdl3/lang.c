@@ -1338,6 +1338,8 @@ static const LangEntry langTable[] = {
     {1461, "or"},
     {1462, "Steam couldn't verify your account. Please try again."},
     {1463, "Sign into WinBolo.net"},
+    {1464, "Make host"},
+    {1465, "Make \"{player}\" the host?"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
