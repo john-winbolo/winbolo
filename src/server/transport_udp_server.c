@@ -807,7 +807,7 @@ static void udpServerClearClientUploadState(int idx) {
  * OR they're an admin). */
 bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
     if (clientIdx < 0 || clientIdx >= MAX_TANKS) return FALSE;
-    if (clientIdx == 0) return TRUE;  /* slot 0 = host */
+    if (clientIdx == serverSimGetHostSlot(sim)) return TRUE;  /* the host slot */
     if (serverSimIsPlayerConnected(sim, clientIdx) &&
         (playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)clientIdx)
          & PLAYER_FLAG_ADMIN)) {

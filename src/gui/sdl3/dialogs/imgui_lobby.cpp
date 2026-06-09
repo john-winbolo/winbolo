@@ -3266,13 +3266,19 @@ static void rankedShapeTooltip(const RankedEligibility &r) {
         langGetTextFmt(STR_DLGLOBBY_RANKED_SHAPE_TIP, &args));
 }
 
+/* True when myPlayerNum holds the lobby host role. Keeps the
+ * host-identity test uniform across the lobby UI. */
+static bool isLobbyHost(ClientSim *cs, int myPlayerNum) {
+    return myPlayerNum >= 0 && myPlayerNum == clientSimGetLobbyHostSlot(cs);
+}
+
 /* Compact "Allow New Players:  [ ] Now   [ ] During game" row. Host
  * only and multiplayer only (single-player has no UDP listener). Used
  * to live inside renderTeamGroupedPlayers; hoisted to the parent so
  * the PlayerPanel and MapPanel top edges stay aligned. */
 static void renderAllowNewPlayersRow(ClientSim *cs,
                                      int myPlayerNum, float s) {
-    bool isHost = (myPlayerNum == 0);
+    bool isHost = isLobbyHost(cs, myPlayerNum);
     bool isLocalAdmin = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                         (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                          & PLAYER_FLAG_ADMIN));
@@ -4267,15 +4273,15 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 fg, lbl);
                     ImGui::Dummy(ImVec2(pillW, pillH));
                 };
-                if (i == 0) {
-                    /* Host is always player slot 0. Themable bg /
+                if (i == clientSimGetLobbyHostSlot(cs)) {
+                    /* Badge follows the current host slot. Themable bg /
                      * border / text triple lives in wb_theme.cpp. */
                     drawNameTag(langGetText(STR_DLGLOBBY_TAG_HOST),
                                 g_theme->hostTagBg,
                                 g_theme->hostTagText,
                                 g_theme->hostTagBorder);
                 }
-                if (!isBot && i != 0 &&
+                if (!isBot && i != clientSimGetLobbyHostSlot(cs) &&
                     (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags & PLAYER_FLAG_ADMIN)) {
                     /* IP-matched admin (server -admins). Shown beside the
                      * name like HOST but in a distinct teal so it reads
@@ -4414,7 +4420,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RMBOT));
                     }
-                } else if (!isBot && !isMe && i != 0 && effectiveHost) {
+                } else if (!isBot && !isMe && i != clientSimGetLobbyHostSlot(cs) && effectiveHost) {
                     cyAbs(closeSz);
                     ImVec2 closePos = ImGui::GetCursorScreenPos();
                     char kbStr[24];
@@ -5060,7 +5066,7 @@ static void renderLockBadge(void) {
  * commands. Host-only or anyone if openHost. */
 static void renderGameSettingsPanel(ClientSim *cs,
                                     int myPlayerNum, float s) {
-    bool effectiveHost = (myPlayerNum == 0) || clientSimGetLobbyOpenHost(cs) ||
+    bool effectiveHost = isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
                          (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                           (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                            & PLAYER_FLAG_ADMIN));
@@ -5219,7 +5225,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
          * authority-gating controls cluster together at the top of
          * the Other column. */
         if (!clientSimIsSinglePlayer(cs)) {
-            bool isHostLocal = (myPlayerNum == 0);
+            bool isHostLocal = isLobbyHost(cs, myPlayerNum);
             bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                                  (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                                   & PLAYER_FLAG_ADMIN));
@@ -5276,7 +5282,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
          * the host out of their own server). MP only — SP has no
          * remote clients to keep out. */
         if (!clientSimIsSinglePlayer(cs)) {
-            bool isHostLocal  = (myPlayerNum == 0);
+            bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
             bool isAdminLocal = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                                  (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                                   & PLAYER_FLAG_ADMIN));
@@ -5942,7 +5948,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * Skipped entirely for non-privileged players — the same
          * info already lives in the top status bar, and the panel
          * is read-only anyway. */
-        bool gsEffectiveHost = (myPlayerNum == 0)
+        bool gsEffectiveHost = isLobbyHost(cs, myPlayerNum)
             || clientSimGetLobbyOpenHost(cs)
             || (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                 (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
@@ -5985,7 +5991,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                      * intact for reference; toggle the 0/1 to A/B
                      * compare during the in-progress UI rewrite. */
 #if 1
-                    bool isHostHere = (myPlayerNum == 0);
+                    bool isHostHere = isLobbyHost(cs, myPlayerNum);
                     renderTeamGroupedPlayers(cs, myPlayerNum, s, isHostHere);
                     /* Avoid the legacy table entirely. */
                     if (false) {
@@ -6140,7 +6146,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                      * effHostMap stays visible to the preview block below
                      * so privileged users can also click the preview to
                      * jump straight into the chooser. */
-                    bool isHostLocal  = (myPlayerNum == 0);
+                    bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
                     bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
                         (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                          & PLAYER_FLAG_ADMIN));
@@ -6459,7 +6465,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * A/B compare during the in-progress UI rewrite. */
 #if 1
             {
-                bool isHostHere = (myPlayerNum == 0);
+                bool isHostHere = isLobbyHost(cs, myPlayerNum);
                 renderTeamGroupedPlayers(cs, myPlayerNum, s, isHostHere);
             }
             if (false) {
@@ -6692,7 +6698,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                  * Pre-measure N so the preview can claim everything else
                  * deterministically and the panel doesn't end up with
                  * either dead space or content pushed past the bottom. */
-                bool isHostLocal  = (myPlayerNum == 0);
+                bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
                 bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
                     (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                      & PLAYER_FLAG_ADMIN));
@@ -6879,7 +6885,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * actually opens on a Change request. "Allow players to
              * change game settings" (openHost) extends this beyond
              * the host slot to every connected player. */
-            bool isHostLocal  = (myPlayerNum == 0);
+            bool isHostLocal  = isLobbyHost(cs, myPlayerNum);
             bool isAdminLocal = (cs && myPlayerNum < MAX_TANKS &&
                 (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                  & PLAYER_FLAG_ADMIN));
