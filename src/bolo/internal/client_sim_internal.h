@@ -341,6 +341,7 @@ struct ClientSim {
     char     lobbyWbnPreviewFinalPath[256];
 
     bool     lobbyOpenHost;
+    BYTE     lobbyHostSlot;
     bool     lobbyAutoLockOnGameStart;
     bool     lobbyRanked;  /* server flagged this as a ranked game:
                             * bots are forbidden, game type "Open" is

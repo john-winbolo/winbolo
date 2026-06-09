@@ -4746,6 +4746,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.netStat          = serverPhaseToNetStat(sim->state);
     evt->u.lobbySettings.inLobby          = sim->lobbyEnabled ? true : false;
     evt->u.lobbySettings.lobbyOpenHost            = sim->openHost;
+    evt->u.lobbySettings.hostSlot                 = sim->hostSlot;
     evt->u.lobbySettings.lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;
     evt->u.lobbySettings.lobbyRanked              = sim->ranked;
     evt->u.lobbySettings.lobbyAllowNewPlayers     = sim->allowNewPlayers;
@@ -6334,6 +6335,16 @@ void serverSimSetOpenHost(ServerSim *sim, bool v) {
     sim->openHost = v;
     serverSimPublishLobbySettings(sim);
     lobbyAutoUnreadyOnChange(sim);
+}
+
+BYTE serverSimGetHostSlot(const ServerSim *sim) {
+    return sim ? sim->hostSlot : 0;
+}
+
+void serverSimSetHostSlot(ServerSim *sim, BYTE slot) {
+    if (sim == NULL) return;
+    sim->hostSlot = slot;
+    serverSimPublishLobbySettings(sim);
 }
 
 bool serverSimGetFirstJoinerBecomesHost(const ServerSim *sim) {

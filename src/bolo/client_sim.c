@@ -1508,6 +1508,7 @@ void clientSimSetIsSinglePlayer(ClientSim *cs, bool v)          { cs->isSinglePl
 void clientSimSetIsLanOnly(ClientSim *cs, bool v)               { cs->isLanOnly = v; }
 
 bool     clientSimGetLobbyOpenHost(const ClientSim *cs)              { return cs->lobbyOpenHost; }
+BYTE     clientSimGetLobbyHostSlot(const ClientSim *cs)             { return cs ? cs->lobbyHostSlot : 0; }
 bool     clientSimGetLobbyAutoLockOnGameStart(const ClientSim *cs)   { return cs->lobbyAutoLockOnGameStart; }
 bool     clientSimGetLobbyRanked(const ClientSim *cs)                { return cs ? cs->lobbyRanked : false; }
 bool     clientSimGetLobbyAllowNewPlayers(const ClientSim *cs)       { return cs ? cs->lobbyAllowNewPlayers : true; }
