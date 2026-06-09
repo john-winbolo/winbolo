@@ -251,6 +251,19 @@ bool wbnRekeyTargetSelected(bool connected, uint8_t clientFlags) {
     return connected && (clientFlags & PLAYER_FLAG_WBN_VERIFIED) != 0;
 }
 
+JoinCollisionVerdict joinCollisionDecide(bool incomingWillAuth,
+                                         bool existingIsVerified) {
+    if (existingIsVerified) return JOIN_COLLISION_REJECT_VERIFIED;
+    if (!incomingWillAuth)  return JOIN_COLLISION_REJECT_IN_USE;
+    return JOIN_COLLISION_ADMIT_PROVISIONAL;
+}
+
+ClaimResolveAction claimResolveDecide(bool bareNameHeld, bool holderIsVerified) {
+    if (!bareNameHeld)    return CLAIM_RESOLVE_PROMOTE_FREE;
+    if (holderIsVerified) return CLAIM_RESOLVE_KEEP_TEMP;
+    return CLAIM_RESOLVE_PREEMPT_SQUATTER;
+}
+
 /* Server-side global state */
 static struct {
     SOCKET sock;
@@ -1043,6 +1056,48 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
     }
 }
 
+/* Choose a unique "<baseName>-unverified[-N]" name, skipping index 1
+ * (the bare "-unverified" form IS the "1").  The candidate must not
+ * collide with any connected slot other than excludeSlot.  Returns true
+ * and writes the chosen name into out (capacity outLen) on success;
+ * returns false when the suffix pool (indices 0, 2..99) is exhausted. */
+static bool serverChooseUnverifiedSuffix(const char *baseName,
+                                         int excludeSlot,
+                                         char *out, size_t outLen) {
+    int suffixIdx;
+    /* Try indices 0, 2, 3, ..., 99 (1 is reserved — the bare
+     * "-unverified" form IS the "1"). */
+    for (suffixIdx = 0; suffixIdx <= 99; suffixIdx++) {
+        if (suffixIdx == 1) continue;
+        char candidate[PACKET_MAX_PLAYER_NAME];
+        if (!playerNameMakeUnverifiedSuffix(baseName, suffixIdx,
+                                            candidate,
+                                            sizeof(candidate))) {
+            continue;
+        }
+
+        /* Candidate must be unique against ALL other connected
+         * slots (not just the excluded slot). */
+        bool clash = false;
+        int k;
+        for (k = 0; k < MAX_TANKS; k++) {
+            if (!udpServer.clients[k].connected) continue;
+            if (k == excludeSlot) continue;
+            if (playerNameCompare(udpServer.clients[k].playerName,
+                                  candidate) == 0) {
+                clash = true;
+                break;
+            }
+        }
+        if (clash) continue;
+
+        strncpy(out, candidate, outLen - 1);
+        out[outLen - 1] = '\0';
+        return true;
+    }
+    return false;
+}
+
 /* Handle a join request from a new client */
 static void serverHandleJoinRequest(const uint8_t *buf, int len,
                                     const struct sockaddr_in *fromAddr,
@@ -1133,8 +1188,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
 
     /* Read flags byte if present (backwards compatible — older clients default to 0) */
     bool wantRejoin = false;
+    bool incomingWillAuth = false;
     if (len > pos) {
-        wantRejoin = (buf[pos] & 0x01) != 0;
+        wantRejoin       = (buf[pos] & JOIN_FLAG_WANT_REJOIN) != 0;
+        incomingWillAuth = (buf[pos] & JOIN_FLAG_WILL_AUTHENTICATE) != 0;
         pos++;
     }
 
@@ -1193,6 +1250,14 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         serverSendJoinReject(fromAddr, STR_REJECT_SERVER_FULL, 0, NULL);
         return;
     }
+
+    /* Clear any stale provisional-claim state before the duplicate-search
+     * loop (which sets it for a will-auth provisional admit).  A slot freed
+     * by the map-serialize failure path below leaves connected=false without
+     * routing through serverDisconnectClient, so the claim would otherwise
+     * persist and mis-route the next reuser's reauth. */
+    udpServer.clients[slot].claimPending = false;
+    udpServer.clients[slot].claimDesiredName[0] = '\0';
 
     /* Country resolution for the incoming player.  Done early so the
      * preempt path can include it in the rename newswire. Uniform
@@ -1261,16 +1326,78 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
                 (playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)i)
                  & PLAYER_FLAG_WBN_VERIFIED) != 0;
 
-            if (!incomingIsWBN && !existingIsWBN) {
-                /* Both unverified (incl. Steam, bot): existing behavior. */
-                char consoleMsg[128];
-                snprintf(consoleMsg, sizeof(consoleMsg),
-                         "Join rejected for '%s': Name already in use", name);
-                serverSimConsoleMessage(consoleMsg);
-                serverSendJoinReject(fromAddr, STR_DLGSETNAME_INUSE_ERR, 0, NULL);
-                return;
+            /* An already-verified joiner (incomingIsWBN) takes the inline
+             * verified-priority arms below.  These are dead under today's
+             * handshake — the client never holds a server key at join — but
+             * if incomingIsWBN is ever true the joiner must take the
+             * immediate-preempt path: routing a verified slot to provisional
+             * admission would strand it on a temp name forever, since a
+             * verified slot never sends a reauth. */
+            if (incomingIsWBN) {
+                if (existingIsWBN) {
+                    /* Two verified users with the same display name — Decision 7
+                     * says reject the second joiner rather than preempt. */
+                    char consoleMsg[200];
+                    snprintf(consoleMsg, sizeof(consoleMsg),
+                             "WARNING: verified-vs-verified collision for '%s'; "
+                             "rejecting joiner", name);
+                    serverSimConsoleMessage(consoleMsg);
+                    /* Roll back the WBN client/join we recorded above. */
+                    winboloNetClientLeaveGame(
+                        (BYTE)slot, serverSimGetNumPlayers(sim),
+                        serverSimGetNumNeutralBases(sim),
+                        serverSimGetNumNeutralPills(sim));
+                    serverSendJoinReject(fromAddr,
+                                         STR_NAME_TAKEN_BY_OTHER_VERIFIED, 0, NULL);
+                    return;
+                }
+
+                /* incomingIsWBN && !existingIsWBN — preempt. */
+
+                if (udpServer.clients[i].nameStickySuffix) {
+                    /* In practice unreachable: a sticky slot already stores
+                     * "<base>-unverified[-N]" so playerNameCompare wouldn't
+                     * have matched the bare incoming name.  Guard defensively
+                     * — never re-preempt a slot that has already been
+                     * suffix-renamed. */
+                    continue;
+                }
+
+                /* Find a unique -unverified[-N] candidate for the victim. */
+                char chosenName[PACKET_MAX_PLAYER_NAME];
+                bool chosenFound = serverChooseUnverifiedSuffix(
+                    udpServer.clients[i].playerName, i,
+                    chosenName, sizeof(chosenName));
+
+                if (!chosenFound) {
+                    /* Suffix pool exhausted.  Never preempt a verified
+                     * player even transitively (Decision 4 implication);
+                     * also never preempt twice — reject the verified joiner
+                     * instead. */
+                    char consoleMsg[200];
+                    snprintf(consoleMsg, sizeof(consoleMsg),
+                             "WARNING: -unverified suffix pool exhausted for "
+                             "'%s'; rejecting verified joiner", name);
+                    serverSimConsoleMessage(consoleMsg);
+                    winboloNetClientLeaveGame(
+                        (BYTE)slot, serverSimGetNumPlayers(sim),
+                        serverSimGetNumNeutralBases(sim),
+                        serverSimGetNumNeutralPills(sim));
+                    serverSendJoinReject(fromAddr,
+                                         STR_REJECT_NAME_POOL_EXHAUSTED, 0, NULL);
+                    return;
+                }
+
+                /* Apply the rename + broadcasts + newswire. */
+                serverPreemptRename(sim, i, chosenName, name, incomingCountry);
+                break; /* terminate the duplicate-search loop on first match */
             }
-            if (!incomingIsWBN && existingIsWBN) {
+
+            /* !incomingIsWBN — consult the pure verdict core. */
+            JoinCollisionVerdict verdict =
+                joinCollisionDecide(incomingWillAuth, existingIsWBN);
+
+            if (verdict == JOIN_COLLISION_REJECT_VERIFIED) {
                 /* Unverified joiner can't take a verified player's name. */
                 char consoleMsg[160];
                 snprintf(consoleMsg, sizeof(consoleMsg),
@@ -1280,103 +1407,48 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
                 serverSendJoinReject(fromAddr, STR_NAME_TAKEN_BY_VERIFIED, 0, NULL);
                 return;
             }
-            if (incomingIsWBN && existingIsWBN) {
-                /* Two verified users with the same display name — Decision 7
-                 * says reject the second joiner rather than preempt. */
-                char consoleMsg[200];
+            if (verdict == JOIN_COLLISION_REJECT_IN_USE) {
+                /* Both unverified (incl. Steam, bot): existing behavior. */
+                char consoleMsg[128];
                 snprintf(consoleMsg, sizeof(consoleMsg),
-                         "WARNING: verified-vs-verified collision for '%s'; "
-                         "rejecting joiner", name);
+                         "Join rejected for '%s': Name already in use", name);
                 serverSimConsoleMessage(consoleMsg);
-                /* Roll back the WBN client/join we recorded above. */
-                if (incomingIsWBN) {
-                    winboloNetClientLeaveGame(
-                        (BYTE)slot, serverSimGetNumPlayers(sim),
-                        serverSimGetNumNeutralBases(sim),
-                        serverSimGetNumNeutralPills(sim));
-                }
-                serverSendJoinReject(fromAddr,
-                                     STR_NAME_TAKEN_BY_OTHER_VERIFIED, 0, NULL);
+                serverSendJoinReject(fromAddr, STR_DLGSETNAME_INUSE_ERR, 0, NULL);
                 return;
             }
 
-            /* incomingIsWBN && !existingIsWBN — preempt. */
-
-            if (udpServer.clients[i].nameStickySuffix) {
-                /* In practice unreachable: a sticky slot already stores
-                 * "<base>-unverified[-N]" so playerNameCompare wouldn't
-                 * have matched the bare incoming name.  Guard defensively
-                 * — never re-preempt a slot that has already been
-                 * suffix-renamed. */
-                continue;
-            }
-
-            /* Find a unique -unverified[-N] candidate for the victim. */
-            char baseName[PACKET_MAX_PLAYER_NAME];
-            char chosenName[PACKET_MAX_PLAYER_NAME];
-            bool chosenFound = false;
-            int suffixIdx;
-
-            strncpy(baseName, udpServer.clients[i].playerName,
-                    PACKET_MAX_PLAYER_NAME - 1);
-            baseName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-
-            /* Try indices 0, 2, 3, ..., 99 (1 is reserved — the bare
-             * "-unverified" form IS the "1"). */
-            for (suffixIdx = 0; suffixIdx <= 99; suffixIdx++) {
-                if (suffixIdx == 1) continue;
-                char candidate[PACKET_MAX_PLAYER_NAME];
-                if (!playerNameMakeUnverifiedSuffix(baseName, suffixIdx,
-                                                    candidate,
-                                                    sizeof(candidate))) {
-                    continue;
-                }
-
-                /* Candidate must be unique against ALL other connected
-                 * slots (not just the victim's slot). */
-                bool clash = false;
-                int k;
-                for (k = 0; k < MAX_TANKS; k++) {
-                    if (!udpServer.clients[k].connected) continue;
-                    if (k == i) continue;
-                    if (k == slot) continue;
-                    if (playerNameCompare(udpServer.clients[k].playerName,
-                                          candidate) == 0) {
-                        clash = true;
-                        break;
-                    }
-                }
-                if (clash) continue;
-
-                strncpy(chosenName, candidate, PACKET_MAX_PLAYER_NAME - 1);
-                chosenName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-                chosenFound = true;
-                break;
-            }
-
-            if (!chosenFound) {
-                /* Suffix pool exhausted.  Never preempt a verified
-                 * player even transitively (Decision 4 implication);
-                 * also never preempt twice — reject the verified joiner
-                 * instead. */
+            /* JOIN_COLLISION_ADMIT_PROVISIONAL — a will-authenticate joiner
+             * whose desired bare name is held by an unverified squatter.
+             * Seat it under a temporary -unverified[-N] name keyed off the
+             * squatter slot and record the pending claim so reauth can
+             * promote it to the bare name. */
+            char tempName[PACKET_MAX_PLAYER_NAME];
+            if (!serverChooseUnverifiedSuffix(udpServer.clients[i].playerName, i,
+                                              tempName, sizeof(tempName))) {
+                /* Suffix pool exhausted — reject as at the join-time preempt.
+                 * This joiner is !incomingIsWBN, so there is no WBN-recorded
+                 * join to roll back. */
                 char consoleMsg[200];
                 snprintf(consoleMsg, sizeof(consoleMsg),
                          "WARNING: -unverified suffix pool exhausted for "
-                         "'%s'; rejecting verified joiner", name);
+                         "'%s'; rejecting provisional joiner", name);
                 serverSimConsoleMessage(consoleMsg);
-                if (incomingIsWBN) {
-                    winboloNetClientLeaveGame(
-                        (BYTE)slot, serverSimGetNumPlayers(sim),
-                        serverSimGetNumNeutralBases(sim),
-                        serverSimGetNumNeutralPills(sim));
-                }
                 serverSendJoinReject(fromAddr,
                                      STR_REJECT_NAME_POOL_EXHAUSTED, 0, NULL);
                 return;
             }
 
-            /* Apply the rename + broadcasts + newswire. */
-            serverPreemptRename(sim, i, chosenName, name, incomingCountry);
+            /* Record the pending claim on the joiner's slot (not the
+             * squatter's): the desired bare name is the validated incoming
+             * name, resolved at reauth. */
+            udpServer.clients[slot].claimPending = true;
+            snprintf(udpServer.clients[slot].claimDesiredName,
+                     sizeof(udpServer.clients[slot].claimDesiredName), "%s", name);
+
+            /* Seat the provisional joiner under the temp name; the bare name is
+             * recorded above and claimed at reauth.  Overwriting the local name
+             * makes all downstream seating use the temp name. */
+            snprintf(name, sizeof(name), "%s", tempName);
             break; /* terminate the duplicate-search loop on first match */
         }
     }
@@ -1502,19 +1574,29 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     /* Announce the join to WBN.  If the slot's key already rode the JOIN
      * field and verified inline (incomingIsWBN), the player is already a
      * participant — register keyed right now.  Otherwise, when WBN is
-     * running, defer: the rekey we sent above prompts a reauth that fills
-     * the key and fires a keyed join (transportUdpServerHandleWbnReauth);
-     * if no reauth lands within the grace window the per-tick sweep in
-     * transportUdpServerCheckTimeouts fires an anonymous one.  On a
-     * non-WBN server there is nothing to defer (and winbolonetAddEvent is
-     * a no-op anyway). */
+     * running, a will-authenticate joiner defers: the rekey we sent above
+     * prompts a reauth that fills the key and fires a keyed join
+     * (transportUdpServerHandleWbnReauth); if no reauth lands within the
+     * grace window the per-tick sweep in transportUdpServerCheckTimeouts
+     * fires an anonymous one.  A not-signed-in joiner owes no reauth, so
+     * its anonymous join fires now.  On a non-WBN server there is nothing
+     * to defer (and winbolonetAddEvent is a no-op anyway). */
     wbnJoinClear(&udpServer.clients[slot].wbnJoin);
     if (incomingIsWBN) {
         winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
                            (BYTE)slot, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
     } else if (winbolonetIsRunning()) {
-        wbnJoinArm(&udpServer.clients[slot].wbnJoin,
-                   udpServer.tickCount, WBN_JOIN_REGISTER_GRACE_TICKS);
+        if (incomingWillAuth) {
+            /* Signed-in joiner: a reauth is coming.  Arm the anonymous
+             * fallback so a never-landing reauth still announces the join. */
+            wbnJoinArm(&udpServer.clients[slot].wbnJoin,
+                       udpServer.tickCount, WBN_JOIN_REGISTER_GRACE_TICKS);
+        } else {
+            /* Not signed in: no reauth will ever land, so there is nothing
+             * to wait for — announce the anonymous join now. */
+            winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
+                               (BYTE)slot, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
+        }
     }
 
     if (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown) {
@@ -2013,6 +2095,8 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     serverSimUnregisterSubscriber(sim, udpServer.clients[idx].controlSub);
     udpServer.clients[idx].controlSub = SUBSCRIBER_HANDLE_INVALID;
     udpServer.clients[idx].nameStickySuffix = false;
+    udpServer.clients[idx].claimPending = false;
+    udpServer.clients[idx].claimDesiredName[0] = '\0';
     udpServer.clients[idx].inboundCmdSeq = 0;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
@@ -2287,6 +2371,8 @@ bool transportUdpServerCreate(unsigned short port,
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;
         udpServer.clients[i].nameStickySuffix = false;
+        udpServer.clients[i].claimPending = false;
+        udpServer.clients[i].claimDesiredName[0] = '\0';
         udpServer.clients[i].inboundCmdSeq = 0;
         udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
         memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
@@ -2367,6 +2453,8 @@ void transportUdpServerDestroy(void) {
             }
             udpServer.clients[i].connected = false;
             udpServer.clients[i].nameStickySuffix = false;
+            udpServer.clients[i].claimPending = false;
+            udpServer.clients[i].claimDesiredName[0] = '\0';
             serverCleanupMapDownload(i);
         }
     }
@@ -2630,9 +2718,17 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
      * so the deferred-join core can tell a fresh registration (key
      * absent->present) from an idempotent rekey resend. */
     bool wasParticipant = winboloNetIsPlayerParticipant(slot);
+    /* For a pending provisional claim the slot's display name is the temp
+     * -unverified[-N] handed out at join; WBN must verify and attribute
+     * under the real account display name, which is the stored desired bare
+     * name.  Non-claim reauths verify under the slot's own name as before. */
+    bool isPendingClaim = udpServer.clients[slot].claimPending;
+    const char *verifyName = isPendingClaim
+        ? udpServer.clients[slot].claimDesiredName
+        : udpServer.clients[slot].playerName;
     errorMsg[0] = '\0';
     if (winboloNetVerifyClientKey(token,
-                                  udpServer.clients[slot].playerName,
+                                  verifyName,
                                   slot, errorMsg,
                                   &hasSteam, &wbnIsSupporter)) {
         /* Re-merge using the clientHints captured at JOIN_REQUEST (the
@@ -2662,6 +2758,77 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
         if (serverSimGetState(sim) == serverStateLobby ||
             serverSimGetState(sim) == serverStateCountdown) {
             serverSimPublishLobbySlot(sim, slot);
+        }
+
+        /* Resolve a pending provisional claim: verify ran under the desired
+         * bare name above, so attribution is correct; now reconcile the local
+         * display.  Three outcomes by who holds the bare name now. */
+        if (isPendingClaim) {
+            const char *desired = udpServer.clients[slot].claimDesiredName;
+            int s;
+            int holder = -1;
+            for (s = 0; s < MAX_TANKS; s++) {
+                if (s == (int)slot) continue;
+                if (!udpServer.clients[s].connected) continue;
+                if (playerNameCompare(udpServer.clients[s].playerName,
+                                      desired) == 0) {
+                    holder = s;
+                    break;
+                }
+            }
+
+            bool holderIsVerified =
+                holder >= 0 &&
+                (playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs,
+                                       (BYTE)holder)
+                 & PLAYER_FLAG_WBN_VERIFIED) != 0;
+
+            switch (claimResolveDecide(holder >= 0, holderIsVerified)) {
+            case CLAIM_RESOLVE_PROMOTE_FREE:
+                /* Bare name free — the squatter left during grace.  Promote
+                 * straight to the bare name. */
+                serverSimSetPlayerName(sim, slot, desired);
+                serverSimPublishLobbySlot(sim, slot);
+                snprintf(udpServer.clients[slot].playerName,
+                         PACKET_MAX_PLAYER_NAME, "%s", desired);
+                udpServer.clients[slot].nameStickySuffix = false;
+                break;
+            case CLAIM_RESOLVE_PREEMPT_SQUATTER: {
+                /* Unverified squatter still holds the bare name.  Rename it
+                 * off first (it must vacate before the joiner claims), then
+                 * promote this slot.  If the squatter's suffix pool is
+                 * exhausted, keep this slot on its temp name. */
+                char squatterName[PACKET_MAX_PLAYER_NAME];
+                if (serverChooseUnverifiedSuffix(
+                        udpServer.clients[holder].playerName, holder,
+                        squatterName, sizeof(squatterName))) {
+                    serverPreemptRename(sim, holder, squatterName,
+                                        desired,
+                                        udpServer.clients[slot].countryCode);
+                    /* Plain set, NOT serverPreemptRename — that would emit a
+                     * spurious "renamed by verified player" naming the joiner
+                     * as its own victim. */
+                    serverSimSetPlayerName(sim, slot, desired);
+                    serverSimPublishLobbySlot(sim, slot);
+                    snprintf(udpServer.clients[slot].playerName,
+                             PACKET_MAX_PLAYER_NAME, "%s", desired);
+                    udpServer.clients[slot].nameStickySuffix = false;
+                }
+                /* else: squatter pool exhausted — stay on the temp name. */
+                break;
+            }
+            case CLAIM_RESOLVE_KEEP_TEMP:
+                /* A verified slot won the bare name (a second reclaimer won
+                 * the race); keep this slot on its temp name permanently.  WBN
+                 * attribution is already correct since verify ran under the
+                 * bare name; only the local display stays suffixed. */
+                break;
+            }
+
+            /* Clear the claim in every outcome.  desired aliases the buffer,
+             * so this clear must come after all uses of desired. */
+            udpServer.clients[slot].claimPending = false;
+            udpServer.clients[slot].claimDesiredName[0] = '\0';
         }
     } else {
         WB_LOG_WARN(WB_LOG_CAT_NET,

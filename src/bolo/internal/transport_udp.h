@@ -56,6 +56,14 @@ typedef struct {
 /* WBN join key: 64-char hex string + null */
 #define WBN_JOIN_KEY_WIRE_LEN 65
 
+/* JOIN_REQUEST flags byte (after the WBN join key on the wire).  Bit 0 is
+ * a client rejoin request; bit 1 is a client assertion that it is signed
+ * in and will authenticate via PACKET_WBN_REAUTH after JOIN_ACCEPT.  The
+ * will-authenticate bit is untrusted — it only lets the collision policy
+ * admit provisionally instead of rejecting; it never grants priority. */
+#define JOIN_FLAG_WANT_REJOIN       0x01
+#define JOIN_FLAG_WILL_AUTHENTICATE 0x02
+
 /* ── Deferred WBN PLAYER_JOIN bookkeeping (pure core) ────────────────
  * A slot owes WBN a PLAYER_JOIN event once we learn its identity for
  * the current session: keyed when a reauth fills the slot's WBN key,
@@ -103,6 +111,36 @@ void wbnJoinClear(WbnJoinState *s);
  * per-slot WBN key that winbolonetEndSession wipes — so this is the
  * durable cross-round signal. */
 bool wbnRekeyTargetSelected(bool connected, uint8_t clientFlags);
+
+/* JOIN name-collision verdict.  Pure value core so the policy is
+ * unit-testable without sockets or the WBN layer.  The will-auth flag is
+ * client-asserted and only ever downgrades a reject to a provisional
+ * admit — it never grants priority. */
+typedef enum {
+    JOIN_COLLISION_REJECT_IN_USE,      /* unverified squatter, joiner won't auth */
+    JOIN_COLLISION_REJECT_VERIFIED,    /* squatter is verified; flag irrelevant */
+    JOIN_COLLISION_ADMIT_PROVISIONAL,  /* unverified squatter, joiner will auth */
+} JoinCollisionVerdict;
+
+/* Decide the verdict for an incoming joiner whose validated name already
+ * matches a connected slot.  incomingWillAuth is the client-asserted
+ * "signed in, will authenticate" JOIN flag; existingIsVerified is whether
+ * the matched slot already holds PLAYER_FLAG_WBN_VERIFIED. */
+JoinCollisionVerdict joinCollisionDecide(bool incomingWillAuth,
+                                         bool existingIsVerified);
+
+/* Reauth-time resolution of a pending provisional name claim.  Pure value
+ * core: given whether the desired bare name is currently held and, if so,
+ * whether the holder is WBN-verified, decide what to do with the
+ * reclaiming slot.  The squatter-suffix-pool-exhaustion fallback is a
+ * runtime concern handled at the call site, not encoded here. */
+typedef enum {
+    CLAIM_RESOLVE_PROMOTE_FREE,      /* bare name free → promote the slot to it */
+    CLAIM_RESOLVE_PREEMPT_SQUATTER,  /* unverified holder → rename it off, then promote */
+    CLAIM_RESOLVE_KEEP_TEMP,         /* verified holder → slot keeps its temp name */
+} ClaimResolveAction;
+
+ClaimResolveAction claimResolveDecide(bool bareNameHeld, bool holderIsVerified);
 
 /* Join request packet (client -> server) */
 typedef struct {
@@ -341,6 +379,15 @@ typedef struct UdpServerClient {
     bool    nameStickySuffix;    /* Phase 5: server-renamed by verified-priority
                                   * collision; keep the suffixed name for the
                                   * rest of the session.  Cleared on disconnect. */
+    /* Provisional-claim bookkeeping: set when a will-authenticate joiner
+     * was admitted under a temporary -unverified[-N] name because its
+     * desired bare name was held by an unverified squatter.  Reauth
+     * (transportUdpServerHandleWbnReauth) verifies against claimDesiredName
+     * and, on success, resolves the claim — promoting this slot to the bare
+     * name and renaming the squatter.  Cleared on resolve and on
+     * disconnect/slot-reset. */
+    bool claimPending;
+    char claimDesiredName[PACKET_MAX_PLAYER_NAME];
     /* Set once at JOIN_REQUEST and not refreshed mid-connection.  Server does
      * not push updates if e.g. a Steam Deck docks mid-game; this is
      * intentional, not a bug. */

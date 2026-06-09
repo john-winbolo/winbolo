@@ -254,6 +254,7 @@ void moveMousePointer(updateType value) {
 
 bool dnsLookupsCreate(ClientSim *cs) { (void)cs; return TRUE; }
 void dnsLookupsDestroy(void) {}
+void dnsLookupsAddRequest(char *ip, void *func) { (void)ip; (void)func; }
 void netRemovePlayer(BYTE playerNum) { (void)playerNum; }
 void netRequestStartPosition(void) {}
 void netErrorOccured(void) {}
