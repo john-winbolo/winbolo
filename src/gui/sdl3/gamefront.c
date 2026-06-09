@@ -1837,6 +1837,8 @@ static bool gameFrontLaunchPrefsSyncWorker(void) {
   char token[FILENAME_MAX], expiry[FILENAME_MAX];
   gameFrontGetWinbolonetToken(token, expiry);
   if (token[0] == '\0') {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                 "wbn_prefs: launch skipped — no WBN token (not signed in)");
     return false; /* not signed in: nothing to sync */
   }
 
@@ -1853,23 +1855,36 @@ static bool gameFrontLaunchPrefsSyncWorker(void) {
   gameFrontGetPlayerName(s_prefsSyncWork.displayName);
 
   if (s_prefsSyncWork.uploadSnapshot == NULL) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "wbn_prefs: launch skipped — serialize for upload failed");
     return false; /* serialize failed (OOM / pre-init): retry later */
   }
 
   s_prefsSyncThread = SDL_CreateThread(gameFrontPrefsSyncThreadFunc,
                                        "WBNPrefsSync", &s_prefsSyncWork);
   if (s_prefsSyncThread == NULL) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "wbn_prefs: launch failed — SDL_CreateThread returned NULL");
     free(s_prefsSyncWork.uploadSnapshot);
     s_prefsSyncWork.uploadSnapshot = NULL;
     return false;
   }
+  WB_LOG_DEBUG(WB_LOG_CAT_NET,
+               "wbn_prefs: sync worker launched (localDirty=%d, snapshot=%zu bytes)",
+               s_prefsSyncWork.localDirty ? 1 : 0,
+               strlen(s_prefsSyncWork.uploadSnapshot));
   return true;
 }
 
 void gameFrontStartPrefsSync(void) {
   if (s_prefsSyncThread != NULL || s_prefsSyncedThisSession) {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                 "wbn_prefs: login sync skipped — %s",
+                 s_prefsSyncThread != NULL ? "worker already in flight"
+                                           : "already synced this session");
     return;
   }
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_prefs: login sync requested");
   if (gameFrontLaunchPrefsSyncWorker()) {
     s_prefsSyncedThisSession = true;
   }
@@ -1885,11 +1900,17 @@ void gameFrontStartPrefsSync(void) {
  * deliberately do not parse Retry-After. */
 static void gameFrontMaybeUploadPrefs(void) {
   if (s_prefsSyncThread != NULL) {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                 "wbn_prefs: debounce upload skipped — worker already in flight");
     return; /* a sync/upload worker is already in flight */
   }
   if (!gameFrontGetWinbolonetUse() || !prefsSyncDirty()) {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                 "wbn_prefs: debounce upload skipped — use=%d dirty=%d",
+                 gameFrontGetWinbolonetUse() ? 1 : 0, prefsSyncDirty() ? 1 : 0);
     return; /* not signed in, or nothing to push */
   }
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_prefs: debounce flush -> uploading prefs");
   gameFrontLaunchPrefsSyncWorker();
 }
 
@@ -1902,6 +1923,9 @@ void gameFrontPumpPrefsSync(void) {
   s_prefsSyncThread = NULL;
 
   WbnSyncOutcome *o = &s_prefsSyncWork.outcome;
+  WB_LOG_DEBUG(WB_LOG_CAT_NET,
+               "wbn_prefs: worker joined; outcome kind=%d token=%s",
+               (int)o->kind, o->token[0] ? o->token : "(none)");
   switch (o->kind) {
     case WBN_SYNC_OUT_ADOPTED:
       if (o->serverPrefs != NULL &&

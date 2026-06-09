@@ -38,7 +38,16 @@ WbnSyncAction wbnPrefsDecideAfterGet(bool localDirty, const char *lastSynced,
         return a;
     }
     if (getStatus == 200) {
-        if (!localDirty) {
+        /* The server copy wins whenever this device has nothing of its own
+         * worth defending: either the local doc is clean, or it has never
+         * synced (no recorded token — e.g. a fresh install or a deleted
+         * prefs file). A never-synced device's only "changes" are throwaway
+         * defaults (onboarding writing Player Name / keys / Onboarding
+         * Complete), which must not clobber the real account prefs already
+         * stored on the server. First contact with a populated account
+         * downloads; only a device that has synced before and then made
+         * local edits uploads. */
+        if (!localDirty || lastSynced[0] == '\0') {
             a.kind = WBN_SYNC_ADOPT_SERVER;
             return a;
         }
@@ -172,6 +181,17 @@ int wbnPrefsParseUpdatedAt(const char *body, char out[33]) {
     return 0;
 }
 
+/* Human-readable action name for diagnostic logging. */
+static const char *wbnSyncActionName(WbnSyncActionKind k) {
+    switch (k) {
+        case WBN_SYNC_NOOP:         return "NOOP";
+        case WBN_SYNC_PUT_LOCAL:    return "PUT_LOCAL";
+        case WBN_SYNC_ADOPT_SERVER: return "ADOPT_SERVER";
+        case WBN_SYNC_REAUTH:       return "REAUTH";
+        default:                    return "?";
+    }
+}
+
 /* The server rejects bodies over this size; skip rather than 413. */
 #define WBN_PREFS_UPLOAD_CAP 65536
 
@@ -273,6 +293,11 @@ static WbnSyncOutcome prefsPutWithRetry(const char *userToken,
         char *putBody = NULL;
         int putStatus = wbn_prefs_put(userToken, body, &putBody);
         free(body);
+        WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                     "wbn_prefs: PUT attempt %d -> status %d (base=%s, body=%zu bytes)",
+                     attempt + 1, putStatus,
+                     action.baseUpdatedAt[0] ? action.baseUpdatedAt : "null",
+                     strlen(uploadSnapshot));
 
         if (putStatus == 200) {
             out.kind = WBN_SYNC_OUT_PUSHED;
@@ -280,18 +305,27 @@ static WbnSyncOutcome prefsPutWithRetry(const char *userToken,
                 wbnPrefsParseUpdatedAt(putBody, out.token);
             }
             out.wasConflict = action.isConflict;
+            WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                         "wbn_prefs: PUT succeeded; new token=%s", out.token);
             free(putBody);
             return out;
         }
         if (putStatus == 401) {
             free(putBody);
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                        "wbn_prefs: PUT 401 -> re-auth required");
             out.kind = WBN_SYNC_OUT_REAUTH;
             return out;
         }
         if (putStatus != 409) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                        "wbn_prefs: PUT failed with status %d (429/5xx/transport); "
+                        "will retry on a later flush", putStatus);
             free(putBody); /* 429 / 5xx / transport error -> retry later */
             return out;
         }
+        WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                     "wbn_prefs: PUT 409 conflict; re-GETting to reconcile");
         free(putBody);
 
         /* 409: a concurrent writer moved the server. Re-GET, re-decide, retry. */
@@ -336,6 +370,14 @@ WbnSyncOutcome wbnPrefsSyncOnce(const char *userToken, const char *uploadSnapsho
 
     WbnSyncAction action = wbnPrefsDecideAfterGet(localDirty, lastSynced,
                                                   getStatus, serverUpdatedAt);
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                 "wbn_prefs: sync GET status=%d localDirty=%d lastSynced=%s "
+                 "serverUpdatedAt=%s -> action=%s%s",
+                 getStatus, localDirty ? 1 : 0,
+                 (lastSynced && lastSynced[0]) ? lastSynced : "(none)",
+                 serverUpdatedAt[0] ? serverUpdatedAt : "(none)",
+                 wbnSyncActionName(action.kind),
+                 action.isConflict ? " [conflict]" : "");
     switch (action.kind) {
         case WBN_SYNC_ADOPT_SERVER:
             if (haveGet) {
