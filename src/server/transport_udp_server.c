@@ -251,6 +251,13 @@ bool wbnRekeyTargetSelected(bool connected, uint8_t clientFlags) {
     return connected && (clientFlags & PLAYER_FLAG_WBN_VERIFIED) != 0;
 }
 
+JoinCollisionVerdict joinCollisionDecide(bool incomingWillAuth,
+                                         bool existingIsVerified) {
+    if (existingIsVerified) return JOIN_COLLISION_REJECT_VERIFIED;
+    if (!incomingWillAuth)  return JOIN_COLLISION_REJECT_IN_USE;
+    return JOIN_COLLISION_ADMIT_PROVISIONAL;
+}
+
 /* Server-side global state */
 static struct {
     SOCKET sock;

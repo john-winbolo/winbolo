@@ -206,6 +206,17 @@ int run_wbn_join_disconnect_drops(void);
 int run_wbn_join_rearm_per_session(void);
 int run_wbn_join_rekey_target_gate(void);
 
+/* JOIN name-collision verdict core (test_join_collision.c). When an
+ * incoming joiner's name matches a connected slot, a verified slot always
+ * wins; an unverified slot is rejected as in-use unless the joiner claims
+ * it will authenticate, which downgrades the reject to a provisional
+ * admit. The client-asserted will-auth flag never displaces a verified
+ * slot. */
+int run_join_collision_unverified_no_auth_rejects(void);
+int run_join_collision_unverified_will_auth_admits(void);
+int run_join_collision_verified_rejects_will_auth(void);
+int run_join_collision_verified_flag_irrelevant(void);
+
 /* Lobby/leave cleanup (test_lobby_reset_cleanup.c). Removed slots clear
  * (no phantom re-announce), and the last human leaving a running game
  * returns the server to the lobby. */

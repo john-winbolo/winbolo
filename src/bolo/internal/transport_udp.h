@@ -104,6 +104,23 @@ void wbnJoinClear(WbnJoinState *s);
  * durable cross-round signal. */
 bool wbnRekeyTargetSelected(bool connected, uint8_t clientFlags);
 
+/* JOIN name-collision verdict.  Pure value core so the policy is
+ * unit-testable without sockets or the WBN layer.  The will-auth flag is
+ * client-asserted and only ever downgrades a reject to a provisional
+ * admit — it never grants priority. */
+typedef enum {
+    JOIN_COLLISION_REJECT_IN_USE,      /* unverified squatter, joiner won't auth */
+    JOIN_COLLISION_REJECT_VERIFIED,    /* squatter is verified; flag irrelevant */
+    JOIN_COLLISION_ADMIT_PROVISIONAL,  /* unverified squatter, joiner will auth */
+} JoinCollisionVerdict;
+
+/* Decide the verdict for an incoming joiner whose validated name already
+ * matches a connected slot.  incomingWillAuth is the client-asserted
+ * "signed in, will authenticate" JOIN flag; existingIsVerified is whether
+ * the matched slot already holds PLAYER_FLAG_WBN_VERIFIED. */
+JoinCollisionVerdict joinCollisionDecide(bool incomingWillAuth,
+                                         bool existingIsVerified);
+
 /* Join request packet (client -> server) */
 typedef struct {
     PacketHeader hdr;
