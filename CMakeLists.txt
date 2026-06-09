@@ -2223,6 +2223,10 @@ if(UNIX AND NOT APPLE AND CMAKE_STRIP)
         COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:LogViewer>"
         COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:MapEditor>"
         COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:BrainTest>")
+     if(HAVE_SENTRY AND TARGET crashpad_handler)
+        list(APPEND DIST_STRIP_CMD
+            COMMAND "${CMAKE_STRIP}" "${DIST_DIR}/$<TARGET_FILE_NAME:crashpad_handler>")
+    endif()
 endif()
 
 add_custom_target(dist
@@ -2627,6 +2631,10 @@ set(_unit_test_names
     return_to_lobby_clears_phantom_slot
     last_human_leave_returns_to_lobby
     humanless_round_does_not_autoend
+    host_departs_promotes_lowest_human
+    nonhost_departs_keeps_host
+    host_reassign_skips_bots
+    lobby_reset_clears_host_slot
     log_roundtrip_basic
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world

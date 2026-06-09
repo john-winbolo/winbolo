@@ -207,6 +207,10 @@ int run_remove_player_clears_slot(void);
 int run_return_to_lobby_clears_phantom_slot(void);
 int run_last_human_leave_returns_to_lobby(void);
 int run_humanless_round_does_not_autoend(void);
+int run_host_departs_promotes_lowest_human(void);
+int run_nonhost_departs_keeps_host(void);
+int run_host_reassign_skips_bots(void);
+int run_lobby_reset_clears_host_slot(void);
 
 /* Tree-growth water regressions (test_treegrow_no_sea.c). A converged
  * grow target survives serverSimResetGameWorld and, on the next map,
