@@ -1402,6 +1402,7 @@ set(SERVER_SOURCES
     src/bolo/nat_portmap.c
     src/server/servermain.c
     src/server/server_dedicated_log.c
+    src/server/server_dedicated_log_path.c
     src/server/server_frontend_stubs.c
     src/gui/sdl3/luabrainshandler.c
     src/headless/cmd_stdin.c
@@ -2431,6 +2432,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_log_roundtrip.c
+    tests/unit/test_log_dir_path.c
+    src/server/server_dedicated_log_path.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2630,6 +2633,12 @@ set(_unit_test_names
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
+    log_path_empty_uses_autobase
+    log_path_explicit_file_verbatim
+    log_path_explicit_file_keeps_single_wbv
+    log_path_directory_autonames_inside
+    log_path_directory_trailing_slash_no_double
+    log_path_directory_arg_appends_wbv
     alliance_reset_codec_roundtrip
     alliance_reset_decoder_rejects_short
     alliance_reset_reapply_publishes_one_event
