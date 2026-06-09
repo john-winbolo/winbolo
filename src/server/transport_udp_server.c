@@ -2071,6 +2071,8 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     serverSimUnregisterSubscriber(sim, udpServer.clients[idx].controlSub);
     udpServer.clients[idx].controlSub = SUBSCRIBER_HANDLE_INVALID;
     udpServer.clients[idx].nameStickySuffix = false;
+    udpServer.clients[idx].claimPending = false;
+    udpServer.clients[idx].claimDesiredName[0] = '\0';
     udpServer.clients[idx].inboundCmdSeq = 0;
     memset(udpServer.clients[idx].playerName, 0, PACKET_MAX_PLAYER_NAME);
     udpServer.clientLocked[idx] = false;
@@ -2345,6 +2347,8 @@ bool transportUdpServerCreate(unsigned short port,
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;
         udpServer.clients[i].nameStickySuffix = false;
+        udpServer.clients[i].claimPending = false;
+        udpServer.clients[i].claimDesiredName[0] = '\0';
         udpServer.clients[i].inboundCmdSeq = 0;
         udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
         memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
@@ -2425,6 +2429,8 @@ void transportUdpServerDestroy(void) {
             }
             udpServer.clients[i].connected = false;
             udpServer.clients[i].nameStickySuffix = false;
+            udpServer.clients[i].claimPending = false;
+            udpServer.clients[i].claimDesiredName[0] = '\0';
             serverCleanupMapDownload(i);
         }
     }
