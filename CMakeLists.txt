@@ -2430,6 +2430,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_session_rotation.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_lobby_reset_cleanup.c
+    tests/unit/test_treegrow_no_sea.c
     tests/unit/test_log_roundtrip.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
@@ -2634,6 +2635,8 @@ set(_unit_test_names
     alliance_reset_decoder_rejects_short
     alliance_reset_reapply_publishes_one_event
     alliance_reset_apply_rebuilds_alliances
+    treegrow_never_plants_on_deep_sea
+    treegrow_reset_clears_stale_target
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}

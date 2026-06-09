@@ -179,6 +179,8 @@ static const UnitTestEntry s_tests[] = {
     { "alliance_reset_reapply_publishes_one_event",
                                                  run_alliance_reset_reapply_publishes_one_event },
     { "alliance_reset_apply_rebuilds_alliances", run_alliance_reset_apply_rebuilds_alliances },
+    { "treegrow_never_plants_on_deep_sea",       run_treegrow_never_plants_on_deep_sea       },
+    { "treegrow_reset_clears_stale_target",      run_treegrow_reset_clears_stale_target      },
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

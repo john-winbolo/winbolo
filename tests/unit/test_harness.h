@@ -208,6 +208,12 @@ int run_return_to_lobby_clears_phantom_slot(void);
 int run_last_human_leave_returns_to_lobby(void);
 int run_humanless_round_does_not_autoend(void);
 
+/* Tree-growth water regressions (test_treegrow_no_sea.c). A converged
+ * grow target survives serverSimResetGameWorld and, on the next map,
+ * points at open sea; the grow gate also failed to reject DEEP_SEA. */
+int run_treegrow_never_plants_on_deep_sea(void);
+int run_treegrow_reset_clears_stale_target(void);
+
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
  * the host's reliable control queue at game start with 16 players. */

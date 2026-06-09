@@ -3281,6 +3281,9 @@ void serverSimResetGameWorld(ServerSim *sim) {
     tkExplosionDestroy(&sim->sim.tankExplosions);
     tkExplosionCreate(&sim->sim.tankExplosions);
 
+    treeGrowDestroy(&sim->sim);
+    treeGrowCreate(&sim->sim);
+
     /* 3. Reload map/bases/pills/starts from cached data */
     if (sim->cachedMapData != NULL) {
         mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss,

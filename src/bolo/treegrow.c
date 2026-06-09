@@ -57,6 +57,8 @@ void treeGrowCreate(GameSim *sim) {
   sim->treeGrowSeed = (WORD)(bolo_rand() | 1);
   sim->treeGrowTime = TREEGROW_INITIAL_TIME;
   sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
+  sim->treeGrowX = 0;
+  sim->treeGrowY = 0;
 }
 
 /*********************************************************
@@ -205,10 +207,10 @@ void treeGrowCheckGrowTree(GameSim *sim) {
     sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
     sim->treeGrowTime = TREEGROW_INITIAL_TIME;
     pos = mapGetPos(mp, sim->treeGrowX, sim->treeGrowY);
-    if (pos != RIVER && pos != BUILDING && pos != HALFBUILDING && pillsExistPos(pb, sim->treeGrowX, sim->treeGrowY) == FALSE && basesExistPos(bs, sim->treeGrowX, sim->treeGrowY) == FALSE) {
+    if (pos != RIVER && pos != BUILDING && pos != HALFBUILDING && pos != DEEP_SEA && pos != BOAT && pillsExistPos(pb, sim->treeGrowX, sim->treeGrowY) == FALSE && basesExistPos(bs, sim->treeGrowX, sim->treeGrowY) == FALSE) {
       newPos = FOREST;
       if (pos >= MINE_START && pos <= MINE_END) {
-        newPos += MINE_FOREST;
+        newPos = MINE_FOREST;
       }
       mapSetPos(sim, mp, sim->treeGrowX, sim->treeGrowY, newPos, TRUE, FALSE);
       /* Remove Items from grass/swamp/rubble data stuctures */

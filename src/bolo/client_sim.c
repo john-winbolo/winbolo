@@ -1436,6 +1436,9 @@ void clientSimResetWorld(ClientSim *cs) {
   tkExplosionDestroy(&gs->tankExplosions);
   tkExplosionCreate(&gs->tankExplosions);
 
+  treeGrowDestroy(gs);
+  treeGrowCreate(gs);
+
   /* Client-only round-scoped render/predict state (interp reset above
    * alongside the per-player clear). */
   cs->serverShellCount = 0;
