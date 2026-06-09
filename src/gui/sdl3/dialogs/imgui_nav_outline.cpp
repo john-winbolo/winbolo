@@ -63,7 +63,16 @@ extern "C" void dialogDrawNavOutline(void) {
     /* Match the button frame rounding so the outline curves with the
        button corners.  3px stroke at integer positions reads cleanly. */
     const float rounding = ImGui::GetStyle().FrameRounding;
+    /* Force the geometry-based AA path for this stroke.  With the default
+       textured AA, a 3px line is drawn by bilinear-sampling a baked line
+       bitmap from the atlas; at 1:1 (non-Retina) that maps ~one texel per
+       pixel and smears the stroke into uneven thickness.  Geometry AA
+       builds the stroke from triangles at the already-snapped coords, so
+       it stays crisp at 1:1 and unchanged on Retina. */
+    ImDrawListFlags savedFlags = dl->Flags;
+    dl->Flags &= ~ImDrawListFlags_AntiAliasedLinesUseTex;
     dl->AddRect(a, b, col, rounding, ImDrawFlags_None, 3.0f);
+    dl->Flags = savedFlags;
 }
 
 extern "C" bool dialogNavIsInsideSubRegion(void) {
