@@ -93,6 +93,16 @@ static void handleGameOver(ServerSim *sim) {
     serverDedicatedLogStashCurrentRound();
 }
 
+/* Resolve the on-disk replay path into the global `fileName`, generating the
+ * timestamped auto-name from the current map and delegating the directory /
+ * file / extension handling to serverDedicatedLogComposePath (defined in
+ * server_dedicated_log_path.c). */
+static void serverDedicatedLogResolveFileName(ServerSim *sim) {
+    char autoBase[512];
+    makeLogFileName(autoBase, sim->mapName);
+    serverDedicatedLogComposePath(sim->userLogFileName, autoBase, fileName, 512);
+}
+
 static void handleLobbyEnter(ServerSim *sim) {
     BYTE i;
 
@@ -100,17 +110,7 @@ static void handleLobbyEnter(ServerSim *sim) {
         return;
     }
 
-    if (sim->userLogFileName[0] != '\0') {
-        strncpy(fileName, sim->userLogFileName, 512 - 1);
-    } else {
-        makeLogFileName(fileName, sim->mapName);
-    }
-    {
-        size_t flen = strlen(fileName);
-        if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
-            strncat(fileName, ".wbv", 512 - flen - 1);
-        }
-    }
+    serverDedicatedLogResolveFileName(sim);
     /* Flip lobby mode on BEFORE logStart so its opening snapshot is
      * the empty-world variant (no pills/bases/starts, deep-sea map,
      * no tanks). handleGameStart clears the flag and rewrites a
@@ -199,17 +199,7 @@ static void handleGameStart(ServerSim *sim) {
     }
 
     /* No-lobby case — start the log on the running transition. */
-    if (sim->userLogFileName[0] != '\0') {
-        strncpy(fileName, sim->userLogFileName, 512 - 1);
-    } else {
-        makeLogFileName(fileName, sim->mapName);
-    }
-    {
-        size_t flen = strlen(fileName);
-        if (flen <= 4 || strcmp(fileName + flen - 4, ".wbv") != 0) {
-            strncat(fileName, ".wbv", 512 - flen - 1);
-        }
-    }
+    serverDedicatedLogResolveFileName(sim);
     isLogging = logStart(fileName, sim,
                          0, MAX_TANKS, sim->hasPassword);
     if (isLogging) {

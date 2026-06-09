@@ -231,6 +231,15 @@ int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
 int run_log_roundtrip_lobby_mode_drops_world_events(void);
 
+/* -log path composition (test_log_dir_path.c). Pins -log <dir> auto-naming
+ * the replay inside the directory, vs -log <file> / bare -log. */
+int run_log_path_empty_uses_autobase(void);
+int run_log_path_explicit_file_verbatim(void);
+int run_log_path_explicit_file_keeps_single_wbv(void);
+int run_log_path_directory_autonames_inside(void);
+int run_log_path_directory_trailing_slash_no_double(void);
+int run_log_path_directory_arg_appends_wbv(void);
+
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for
  * serverSimDestroy. Returns NULL on failure. */
