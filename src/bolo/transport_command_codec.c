@@ -695,6 +695,27 @@ static bool commandDecodeLobbyKick(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_LOBBY_TRANSFER_HOST — PACKET_LOBBY_TRANSFER_HOST
+ * Wire: [header 8] [slot 1] */
+static bool commandEncodeLobbyTransferHost(const ClientCommand *cmd,
+                                           uint8_t *buf, size_t bufCap,
+                                           size_t *outLen) {
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1;
+    if (bufCap < needed) return false;
+    packHeader(buf, PACKET_LOBBY_TRANSFER_HOST, 0);
+    buf[CMD_PACKET_BODY_OFFSET] = cmd->u.lobbyTransferHost.slot;
+    *outLen = needed;
+    return true;
+}
+
+static bool commandDecodeLobbyTransferHost(const uint8_t *buf, size_t len,
+                                           ClientCommand *cmd) {
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
+    cmd->type = CMD_LOBBY_TRANSFER_HOST;
+    cmd->u.lobbyTransferHost.slot = buf[CMD_PACKET_BODY_OFFSET];
+    return true;
+}
+
 /* CMD_LOBBY_SET_PASSWORD — PACKET_LOBBY_SET_PASSWORD
  * Wire: [header 8] [pwLen 1] [pw N] */
 static bool commandEncodeLobbySetPassword(const ClientCommand *cmd,
@@ -855,6 +876,7 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_LOBBY_PREVIEW_COMMIT:  ok = commandEncodeLobbyPreviewCommit(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_RANDOM:  ok = commandEncodeLobbyPreviewRandom(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_KICK:            ok = commandEncodeLobbyKick(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_TRANSFER_HOST:   ok = commandEncodeLobbyTransferHost(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_SET_PASSWORD:    ok = commandEncodeLobbySetPassword(cmd, buf, bufCap, outLen); break;
         case CMD_BALANCE_REQUEST:       ok = commandEncodeBalanceRequest(cmd, buf, bufCap, outLen); break;
         case CMD_BALANCE_APPLY:         ok = commandEncodeBalanceApply(cmd, buf, bufCap, outLen); break;
@@ -898,6 +920,7 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_LOBBY_PREVIEW_COMMIT:  return commandDecodeLobbyPreviewCommit(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_RANDOM:  return commandDecodeLobbyPreviewRandom(buf, len, cmd);
         case PACKET_LOBBY_KICK:            return commandDecodeLobbyKick(buf, len, cmd);
+        case PACKET_LOBBY_TRANSFER_HOST:   return commandDecodeLobbyTransferHost(buf, len, cmd);
         case PACKET_LOBBY_SET_PASSWORD:    return commandDecodeLobbySetPassword(buf, len, cmd);
         case PACKET_BALANCE_REQUEST:       return commandDecodeBalanceRequest(buf, len, cmd);
         case PACKET_BALANCE_APPLY:         return commandDecodeBalanceApply(buf, len, cmd);

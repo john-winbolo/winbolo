@@ -2434,6 +2434,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_session_rotation.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_lobby_reset_cleanup.c
+    tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
     tests/unit/test_log_roundtrip.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
@@ -2635,6 +2636,12 @@ set(_unit_test_names
     nonhost_departs_keeps_host
     host_reassign_skips_bots
     lobby_reset_clears_host_slot
+    transfer_host_promotes_target
+    transfer_host_rejects_non_host_sender
+    transfer_host_openhost_does_not_grant
+    transfer_host_rejects_self
+    transfer_host_rejects_unconnected
+    transfer_host_rejects_bot_target
     log_roundtrip_basic
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world

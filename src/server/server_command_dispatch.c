@@ -474,6 +474,27 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         lobbyAutoUnreadyOnChange(sim);
         return CMD_OK;
     }
+    case CMD_LOBBY_TRANSFER_HOST: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* Host-only — openHost must NOT grant transfer (a connected
+         * player must not be able to hand off the host role). */
+        if (senderSlot != serverSimGetHostSlot(sim)) return CMD_REJECT_NOT_HOST;
+        uint8_t slot = cmd->u.lobbyTransferHost.slot;
+        /* Target must be a connected human other than the current host
+         * (self == host here, so the self/already-host cases coincide). */
+        if (slot >= MAX_TANKS ||
+            (int)slot == senderSlot ||
+            slot == serverSimGetHostSlot(sim) ||
+            !serverSimIsPlayerConnected(sim, slot) ||
+            serverSimIsBot(sim, slot)) {
+            return CMD_REJECT_INVALID;
+        }
+        serverSimSetHostSlot(sim, slot);
+        return CMD_OK;
+    }
     case CMD_LOBBY_SET_PASSWORD: {
         /* Host or admin only — openHost does NOT grant this. */
         bool isHost  = (senderSlot == serverSimGetHostSlot(sim));
