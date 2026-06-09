@@ -351,6 +351,15 @@ typedef struct UdpServerClient {
     bool    nameStickySuffix;    /* Phase 5: server-renamed by verified-priority
                                   * collision; keep the suffixed name for the
                                   * rest of the session.  Cleared on disconnect. */
+    /* Provisional-claim bookkeeping: set when a will-authenticate joiner
+     * was admitted under a temporary -unverified[-N] name because its
+     * desired bare name was held by an unverified squatter.  Reauth
+     * (transportUdpServerHandleWbnReauth) verifies against claimDesiredName
+     * and, on success, resolves the claim — promoting this slot to the bare
+     * name and renaming the squatter.  Cleared on resolve and on
+     * disconnect/slot-reset. */
+    bool claimPending;
+    char claimDesiredName[PACKET_MAX_PLAYER_NAME];
     /* Set once at JOIN_REQUEST and not refreshed mid-connection.  Server does
      * not push updates if e.g. a Steam Deck docks mid-game; this is
      * intentional, not a bug. */
