@@ -910,6 +910,18 @@ extern "C" void imguiSettingsShow(void) {
 #endif
     }
 
+    /* Flush the in-memory settings (player name, address/ports, language,
+     * keys, tank options, ...) into the prefs document now the dialog has
+     * closed, so anything changed here marks the doc sync-dirty and rides the
+     * debounced cloud upload — the same persistence Key Setup gets on OK.
+     * prefsSetString skips unchanged values, so closing without edits writes
+     * nothing and triggers no upload. */
+    {
+        keyItems liveKeys;
+        windowGetKeys(&liveKeys);
+        gameFrontPutPrefs(&liveKeys);
+    }
+
     dialogDismissKeyboard(window);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();

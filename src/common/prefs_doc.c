@@ -240,6 +240,16 @@ int prefsDocSetString(PrefsDoc *doc, const char *section,
     return 1;
 }
 
+bool prefsDocStringEquals(const PrefsDoc *doc, const char *section,
+                          const char *key, const char *value) {
+    if (!doc || !section || !key) return false;
+    cJSON *sec = cJSON_GetObjectItemCaseSensitive(doc->root, section);
+    if (!cJSON_IsObject(sec)) return false;
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(sec, key);
+    if (!cJSON_IsString(item) || item->valuestring == NULL) return false;
+    return strcmp(item->valuestring, value ? value : "") == 0;
+}
+
 static bool prefsDocNameIsDeviceLocal(const char *name,
                                       const char *const *sections,
                                       size_t count) {

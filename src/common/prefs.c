@@ -120,6 +120,11 @@ static bool prefsSectionIsDeviceLocal(const char *section) {
 int prefsSetString(const char *section, const char *key,
                    const char *value) {
     if (!g_doc) return 0;
+    /* Skip a write that changes nothing: re-setting a value to what it
+     * already holds must not dirty the document or flag a cloud re-upload.
+     * This lets callers flush a whole batch of settings (e.g. closing the
+     * Settings dialog) without uploading when nothing actually changed. */
+    if (prefsDocStringEquals(g_doc, section, key, value)) return 1;
     if (!prefsDocSetString(g_doc, section, key, value)) return 0;
 
     /* A change to an upload-eligible section flags the document for cloud

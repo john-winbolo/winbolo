@@ -73,6 +73,12 @@ unsigned long prefsDocGetString(const PrefsDoc *doc, const char *section,
 int prefsDocSetString(PrefsDoc *doc, const char *section,
                       const char *key, const char *value);
 
+/* True when [section]/key already exists as a string holding exactly
+ * value (NULL compared as ""). Lets callers skip a no-op SetString so an
+ * unchanged write does not mark the document dirty. */
+bool prefsDocStringEquals(const PrefsDoc *doc, const char *section,
+                          const char *key, const char *value);
+
 /* Adopt the upload-eligible content of a downloaded server prefs
  * document into doc, keeping every device-local section untouched.
  * Schema-version gated: if serverPrefsJson's _version exceeds
