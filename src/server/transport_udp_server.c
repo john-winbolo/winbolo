@@ -1251,6 +1251,14 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         return;
     }
 
+    /* Clear any stale provisional-claim state before the duplicate-search
+     * loop (which sets it for a will-auth provisional admit).  A slot freed
+     * by the map-serialize failure path below leaves connected=false without
+     * routing through serverDisconnectClient, so the claim would otherwise
+     * persist and mis-route the next reuser's reauth. */
+    udpServer.clients[slot].claimPending = false;
+    udpServer.clients[slot].claimDesiredName[0] = '\0';
+
     /* Country resolution for the incoming player.  Done early so the
      * preempt path can include it in the rename newswire. Uniform
      * across loopback / private-LAN / public-WAN joiners: GeoIP first,
