@@ -279,6 +279,11 @@ static const char *wbnRegisterErrorText(const char *code) {
  * token; otherwise do nothing. A password session never re-auths via
  * Steam — it keeps validating. */
 static void wbnStartSessionReauth(void) {
+    /* Honour an explicit sign-out: never silently sign the player back in.
+     * Only a manual sign-in (which clears the sticky flag) re-auths. */
+    if (gameFrontGetWbnSignedOut()) {
+        return;
+    }
     char token[256], expiry[256], method[32];
     gameFrontGetWinbolonetToken(token, expiry);
     gameFrontGetWbnAuthMethod(method, sizeof(method));
@@ -299,23 +304,40 @@ static void wbnCheckThread(void) {
 
     if (wbnWork.success) {
         if (wbnWork.isRegister) {
-            /* New account created and signed in: apply the auth result and
-             * close the popup via the WBN_SUCCESS handler. */
+            /* New account created and signed in: an explicit user action,
+             * so clear any sticky sign-out before applying. */
+            gameFrontSetWbnSignedOut(false);
             gameFrontApplySteamAuthResult(wbnWork.tokenOut, wbnWork.expiryOut,
                                           wbnWork.playerNameOut, wbnWork.rankOut,
                                           wbnWork.rankTotalOut, &wbnWork.statsOut);
             steam_cancel_auth_ticket();
             wbnState = WBN_SUCCESS;
         } else if (wbnWork.isSteam) {
-            gameFrontApplySteamAuthResult(wbnWork.tokenOut, wbnWork.expiryOut,
-                                          wbnWork.playerNameOut, wbnWork.rankOut,
-                                          wbnWork.rankTotalOut, &wbnWork.statsOut);
-            steam_cancel_auth_ticket();
-            /* Silent launch re-auth stays quiet; the visible popup button
-             * closes via the success handler. */
-            wbnState = wbnWork.steamSilent ? WBN_IDLE : WBN_SUCCESS;
+            if (wbnWork.steamSilent && gameFrontGetWbnSignedOut()) {
+                /* A silent launch re-auth started before the player signed
+                 * out has landed. Honour the sign-out: discard it rather
+                 * than re-applying the token. */
+                steam_cancel_auth_ticket();
+                wbnState = WBN_IDLE;
+            } else {
+                /* The visible "Sign in with Steam" button is an explicit
+                 * sign-in: clear any sticky sign-out. A silent re-auth that
+                 * reaches here (not signed out) just refreshes the session. */
+                if (!wbnWork.steamSilent) {
+                    gameFrontSetWbnSignedOut(false);
+                }
+                gameFrontApplySteamAuthResult(wbnWork.tokenOut, wbnWork.expiryOut,
+                                              wbnWork.playerNameOut, wbnWork.rankOut,
+                                              wbnWork.rankTotalOut, &wbnWork.statsOut);
+                steam_cancel_auth_ticket();
+                /* Silent launch re-auth stays quiet; the visible popup button
+                 * closes via the success handler. */
+                wbnState = wbnWork.steamSilent ? WBN_IDLE : WBN_SUCCESS;
+            }
         } else {
             if (!wbnWork.isValidate) {
+                /* Password sign-in: an explicit user action. */
+                gameFrontSetWbnSignedOut(false);
                 gameFrontSetWinbolonetToken(wbnWork.tokenOut, wbnWork.expiryOut);
                 gameFrontSetWbnAuthMethod("password");
             }
@@ -420,9 +442,13 @@ static void wbnOpenLoginPopup(void) {
 }
 
 /* Clears the stored token and re-arms the once-per-session prefs-sync
- * gate so signing back in resyncs. Shared sign-out path. */
+ * gate so signing back in resyncs. Records a sticky sign-out so the
+ * silent re-auth paths (and any auth worker still in flight) won't sign
+ * the player back in until they explicitly sign in again. Shared
+ * sign-out path. */
 static void wbnSignOut(void) {
     gameFrontClearWinbolonetToken();
+    gameFrontSetWbnSignedOut(true);
     gameFrontResetPrefsSyncSession();
 }
 
@@ -986,7 +1012,11 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
 }
 
 extern "C" void imguiWinbolonetReset(void) {
-    wbnState = WBN_IDLE;
+    /* Reset only the transient popup/input state. A running auth worker is
+     * left in flight so its result is applied through wbnCheckThread like
+     * everywhere else; the old behaviour joined and discarded it here, which
+     * silently dropped an in-flight sign-in and made the WBN state depend on
+     * which screen happened to be open when the worker landed. */
     wbnPopupOpen = false;
     wbnUsername[0] = '\0';
     wbnPassword[0] = '\0';
@@ -995,13 +1025,17 @@ extern "C" void imguiWinbolonetReset(void) {
     wbnRegSeeded = false;
     wbnErrorBuf[0] = '\0';
     wbnFocusUser = false;
-    if (wbnThread) {
-        SDL_WaitThread(wbnThread, nullptr);
-        wbnThread = nullptr;
+    if (!wbnThread) {
+        wbnState = WBN_IDLE;
     }
 }
 
 extern "C" void imguiWinbolonetStartValidation(void) {
+    /* A worker already in flight (e.g. the launch re-auth) will be applied by
+     * wbnCheckThread; don't start a second thread over the top of it. */
+    if (wbnThread) {
+        return;
+    }
     char token[256];
     char expiry[256];
     gameFrontGetWinbolonetToken(token, expiry);

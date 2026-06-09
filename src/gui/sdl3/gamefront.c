@@ -1066,10 +1066,13 @@ static void gameFrontValidateWbnBeforeJoin(void) {
   char token[256], expiry[256];
   gameFrontGetWinbolonetToken(token, expiry);
 
-  /* If no WBN token exists, try automatic Steam authentication */
+  /* If no WBN token exists, try automatic Steam authentication — unless the
+   * player explicitly signed out, in which case joining must not silently
+   * sign them back in. */
   if (token[0] == '\0') {
     char ticketHex[2049];
-    if (gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
+    if (!gameFrontGetWbnSignedOut() &&
+        gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
       char tokenOut[256], expiryOut[256], playerName[PLAYER_NAME_LEN], errorMsg[512];
       int rank = -1, rankTotal = 0;
       WbnStats stats;
@@ -1768,6 +1771,16 @@ void gameFrontSetWbnAuthMethod(const char *method) {
 
 void gameFrontGetWbnAuthMethod(char *out, size_t outSize) {
   prefsGetString("WINBOLO.NET", "AuthMethod", "", out, outSize);
+}
+
+void gameFrontSetWbnSignedOut(bool signedOut) {
+  prefsSetString("WINBOLO.NET", "SignedOut", signedOut ? "Yes" : "No");
+}
+
+bool gameFrontGetWbnSignedOut(void) {
+  char buf[8];
+  prefsGetString("WINBOLO.NET", "SignedOut", "No", buf, sizeof(buf));
+  return strcmp(buf, "Yes") == 0;
 }
 
 bool gameFrontGetWinbolonetUse(void) {
