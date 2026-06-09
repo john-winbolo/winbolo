@@ -830,6 +830,7 @@ extern "C" void imguiSettingsShow(void) {
 
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
+        gameFrontPumpDirty(); /* sync cloud prefs from menus (login join + debounced upload) */
         dialogFrameCapEnd(frameCapStart);
 
         /* Rebuild the font atlas in-place when the user picks a

@@ -650,8 +650,21 @@ int wbn_api_get(const char *path, char **response_out) {
 static int wbn_prefs_request_impl(const char *bearerToken, bool is_put,
                                   const char *json_body, char **response_out) {
   if (response_out) *response_out = NULL;
-  if (bearerToken == NULL || bearerToken[0] == '\0') return -1;
-  if (!httpStarted) return -1;
+  if (bearerToken == NULL || bearerToken[0] == '\0') {
+    WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_prefs %s: aborted — empty bearer token",
+                is_put ? "PUT" : "GET");
+    return -1;
+  }
+  /* Lazy-init like wbn_api_get: cloud-prefs sync can fire on a worker
+   * thread after a logout/re-login that left httpStarted false (httpDestroy
+   * clears it and a token-based re-login never re-runs httpCreate).
+   * httpCreate() is idempotent w.r.t. curl_global_init. */
+  if (!httpStarted) (void)httpCreate();
+  if (!httpStarted) {
+    WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_prefs %s: aborted — http subsystem not started",
+                is_put ? "PUT" : "GET");
+    return -1;
+  }
 
   const char *sign_body = is_put ? json_body : "";
 

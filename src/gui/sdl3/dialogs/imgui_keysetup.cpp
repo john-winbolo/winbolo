@@ -442,6 +442,7 @@ extern "C" int imguiKeySetupShow(void) {
 
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
+        gameFrontPumpDirty(); /* sync cloud prefs from menus (login join + debounced upload) */
         dialogFrameCapEnd(frameCapStart);
     }
 
