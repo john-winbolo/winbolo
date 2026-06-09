@@ -28,6 +28,7 @@
 #include "scroll.h"
 #include "brain_list.h"
 #include "upload_policy.h"
+#include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -172,6 +173,19 @@ struct ClientSim {
     /* Server address info (for brain info, replaces netClientGetServerAddress) */
     struct in_addr serverAddress;
     unsigned short serverPort;
+
+    /* Reverse-DNS of the server address for the lobby / net-info UI only —
+     * visual information, never used to connect. Filled asynchronously by the
+     * DNS lookup thread (see netProcessedDnsLookup) and read by the GUI; both
+     * sides guard access with the client mutex. serverHostName is "" until a
+     * PTR record resolves; serverHostResultIp records which IP it belongs to
+     * so a stale name is never shown against a changed address.
+     * serverHostReqIp debounces the request: the IP a lookup was last queued
+     * for, so the per-frame GUI doesn't re-queue every frame (and re-queues
+     * after a reconnect that resets this struct). */
+    char serverHostReqIp[64];
+    char serverHostResultIp[64];
+    char serverHostName[256];
 
     /* Lobby state (client-side mirror of server lobby) */
     ClientLobbySlot  lobbySlots[16];    /* MAX_TANKS */
@@ -318,6 +332,25 @@ struct ClientSim {
     char     lobbyMapSearchReqPath[256];
     char     lobbyMapSearchReqQuery[128];
     bool     lobbyMapSearchInFlight;
+
+    /* Server-map preview byte stream — driven by the Server Maps tab
+     * in MP. The chooser asks for a map's raw .map bytes via
+     * PACKET_LOBBY_MAP_PREVIEW_REQ; the server streams them back as
+     * PACKET_LOBBY_MAP_PREVIEW_BEGIN + _CHUNK (or _ERR on failure).
+     * The bytes accumulate here and are rasterised on the GUI thread
+     * once complete, the same way the WBN tab handles its async
+     * download. lobbyMapPreviewReqPath is the path we asked for;
+     * lobbyMapPreviewPath echoes the path the completed bytes belong
+     * to so the GUI can ignore a stale response after navigating. */
+    char     lobbyMapPreviewReqPath[256];
+    char     lobbyMapPreviewPath[256];
+    bool     lobbyMapPreviewInFlight;
+    bool     lobbyMapPreviewReady;   /* full byte stream received */
+    bool     lobbyMapPreviewError;   /* server replied _ERR */
+    uint8_t  lobbyMapPreviewSeq;     /* BEGIN's seq id — reject stale chunks */
+    uint32_t lobbyMapPreviewTotal;   /* expected total bytes from BEGIN */
+    uint32_t lobbyMapPreviewReceived;/* bytes accumulated so far */
+    uint8_t  lobbyMapPreviewBytes[LOBBY_MAP_UPLOAD_MAX_BYTES];
 
     /* Upload progress — driven by the Upload tab and the
      * PACKET_LOBBY_MAP_UPLOAD_ACK/DONE handlers. status: 0=idle,

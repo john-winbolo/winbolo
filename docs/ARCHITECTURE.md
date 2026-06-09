@@ -787,8 +787,12 @@ A handful of helpers stay on their direct UDP path because they
 don't fit fire-and-apply:
 
 - `clientSimNetSendInput` — every-frame, snapshot-ACK paired.
-- `clientSimNetSendLobbyMapListRequest` / `…SearchRequest` —
-  request / paginated-response.
+- `clientSimNetSendLobbyMapListRequest` / `…SearchRequest` /
+  `…MapPreviewRequest` — request / paginated-or-streamed-response. The
+  preview variant streams a map's raw bytes back
+  (`PACKET_LOBBY_MAP_PREVIEW_BEGIN/_CHUNK/_ERR`) for the chooser to
+  rasterise client-side; it applies nothing to sim state, so it can't
+  ride the command bus.
 - `clientSimNetSendLobbyMapUploadBytes` / `…MapUseLocal` — large
   payload or chunked upload that doesn't fit fire-and-apply.
 - `clientSimNetSendWbnReauth` — synchronous WBN tracker round-trip

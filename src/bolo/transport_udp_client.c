@@ -531,6 +531,106 @@ void udpClientHandleLobbyMapListRsp(ClientSim *cs,
     }
 }
 
+/* PACKET_LOBBY_MAP_PREVIEW_BEGIN — server announces the upcoming byte
+ * stream. Wire: [header 8] [pathLen 1] [path N] [seq 1] [total 4 BE].
+ * Resets the accumulator and records the seq the chunks will carry. A
+ * BEGIN whose path doesn't match the in-flight request is ignored
+ * (the user navigated away before this arrived). */
+void udpClientHandleLobbyMapPreviewBegin(ClientSim *cs,
+                                         const uint8_t *buf, int len) {
+    if (!cs) return;
+    int pos = PACKET_HEADER_SIZE;
+    if (pos + 1 > len) return;
+    uint8_t plen = buf[pos++];
+    if (plen == 0 || pos + plen + 1 + 4 > len) return;
+    char path[256];
+    memset(path, 0, sizeof(path));
+    uint8_t cp = plen;
+    if (cp >= sizeof(path)) cp = (uint8_t)(sizeof(path) - 1);
+    memcpy(path, buf + pos, cp);
+    pos += plen;
+    uint8_t seq = buf[pos++];
+    uint32_t total = ((uint32_t)buf[pos] << 24) | ((uint32_t)buf[pos + 1] << 16) |
+                     ((uint32_t)buf[pos + 2] << 8) | (uint32_t)buf[pos + 3];
+    pos += 4;
+
+    if (strncmp(path, cs->lobbyMapPreviewReqPath,
+                sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
+        return;
+    }
+    if (total == 0 || total > LOBBY_MAP_UPLOAD_MAX_BYTES) {
+        cs->lobbyMapPreviewError    = true;
+        cs->lobbyMapPreviewInFlight = false;
+        return;
+    }
+    cs->lobbyMapPreviewSeq      = seq;
+    cs->lobbyMapPreviewTotal    = total;
+    cs->lobbyMapPreviewReceived = 0;
+    cs->lobbyMapPreviewReady    = false;
+    cs->lobbyMapPreviewError    = false;
+    cs->lobbyMapPreviewInFlight = true;
+    memset(cs->lobbyMapPreviewPath, 0, sizeof(cs->lobbyMapPreviewPath));
+    SDL_strlcpy(cs->lobbyMapPreviewPath, path,
+                sizeof(cs->lobbyMapPreviewPath));
+}
+
+/* PACKET_LOBBY_MAP_PREVIEW_CHUNK — one slice of the byte stream. Wire:
+ * [header 8] [seq 1] [offset 4 BE] [len 2 BE] [bytes len]. Stale
+ * chunks (seq mismatch, or no BEGIN seen) are dropped. Completion is
+ * by cumulative byte count — the server fires each chunk once with no
+ * retransmit, so the running total reaching `total` means every chunk
+ * landed regardless of arrival order. */
+void udpClientHandleLobbyMapPreviewChunk(ClientSim *cs,
+                                         const uint8_t *buf, int len) {
+    if (!cs) return;
+    int pos = PACKET_HEADER_SIZE;
+    if (pos + 1 + 4 + 2 > len) return;
+    uint8_t seq = buf[pos++];
+    uint32_t off = ((uint32_t)buf[pos] << 24) | ((uint32_t)buf[pos + 1] << 16) |
+                   ((uint32_t)buf[pos + 2] << 8) | (uint32_t)buf[pos + 3];
+    pos += 4;
+    uint16_t n = (uint16_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+    pos += 2;
+    if (pos + n > len) return;
+
+    if (!cs->lobbyMapPreviewInFlight || cs->lobbyMapPreviewError) return;
+    if (seq != cs->lobbyMapPreviewSeq) return;
+    if ((uint64_t)off + n > cs->lobbyMapPreviewTotal) return;
+    if ((uint64_t)off + n > LOBBY_MAP_UPLOAD_MAX_BYTES) return;
+
+    memcpy(cs->lobbyMapPreviewBytes + off, buf + pos, n);
+    cs->lobbyMapPreviewReceived += n;
+    if (cs->lobbyMapPreviewReceived >= cs->lobbyMapPreviewTotal) {
+        cs->lobbyMapPreviewReceived = cs->lobbyMapPreviewTotal;
+        cs->lobbyMapPreviewReady    = true;
+        cs->lobbyMapPreviewInFlight = false;
+    }
+}
+
+/* PACKET_LOBBY_MAP_PREVIEW_ERR — server couldn't read the map. Wire:
+ * [header 8] [pathLen 1] [path N] [code 1]. Flags the request failed
+ * so the chooser shows "no preview" instead of spinning. */
+void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
+                                       const uint8_t *buf, int len) {
+    if (!cs) return;
+    int pos = PACKET_HEADER_SIZE;
+    if (pos + 1 > len) return;
+    uint8_t plen = buf[pos++];
+    if (pos + plen > len) return;
+    char path[256];
+    memset(path, 0, sizeof(path));
+    uint8_t cp = plen;
+    if (cp >= sizeof(path)) cp = (uint8_t)(sizeof(path) - 1);
+    memcpy(path, buf + pos, cp);
+    if (strncmp(path, cs->lobbyMapPreviewReqPath,
+                sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
+        return;
+    }
+    cs->lobbyMapPreviewError    = true;
+    cs->lobbyMapPreviewReady    = false;
+    cs->lobbyMapPreviewInFlight = false;
+}
+
 /* Apply one PACKET_LOBBY_MAP_SEARCH_RSP chunk to the client's search
  * accumulator.
  * Wire format:
@@ -1813,6 +1913,18 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         udpClientHandleLobbyMapSearchRsp(c->clientSim, buf, len);
         break;
 
+    case PACKET_LOBBY_MAP_PREVIEW_BEGIN:
+        udpClientHandleLobbyMapPreviewBegin(c->clientSim, buf, len);
+        break;
+
+    case PACKET_LOBBY_MAP_PREVIEW_CHUNK:
+        udpClientHandleLobbyMapPreviewChunk(c->clientSim, buf, len);
+        break;
+
+    case PACKET_LOBBY_MAP_PREVIEW_ERR:
+        udpClientHandleLobbyMapPreviewErr(c->clientSim, buf, len);
+        break;
+
     case PACKET_LOBBY_MAP_UPLOAD_ACK: {
         /* [header 8] [status 1]. 0 = ok, non-zero = reject. */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 1) break;
@@ -2653,6 +2765,36 @@ void transportUdpClientSendLobbyMapListRequest(Transport *t,
         c->clientSim->lobbyMapListCount = 0;
         c->clientSim->lobbyMapListReady = false;
         c->clientSim->lobbyMapListInFlight = true;
+    }
+}
+
+void transportUdpClientSendLobbyMapPreviewRequest(Transport *t,
+                                                  const char *relPath) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
+    int pathLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (relPath == NULL) relPath = "";
+    pathLen = (int)strlen(relPath);
+    if (pathLen == 0 || pathLen > 255) return;
+
+    packHeader(buf, PACKET_LOBBY_MAP_PREVIEW_REQ, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)pathLen;
+    memcpy(buf + PACKET_HEADER_SIZE + 1, relPath, pathLen);
+    len = PACKET_HEADER_SIZE + 1 + pathLen;
+    udpClientSendTo(c, buf, len);
+
+    if (c->clientSim) {
+        ClientSim *cs = c->clientSim;
+        memset(cs->lobbyMapPreviewReqPath, 0, sizeof(cs->lobbyMapPreviewReqPath));
+        memcpy(cs->lobbyMapPreviewReqPath, relPath, (size_t)pathLen);
+        cs->lobbyMapPreviewPath[0]   = '\0';
+        cs->lobbyMapPreviewInFlight  = true;
+        cs->lobbyMapPreviewReady     = false;
+        cs->lobbyMapPreviewError     = false;
+        cs->lobbyMapPreviewTotal     = 0;
+        cs->lobbyMapPreviewReceived  = 0;
     }
 }
 
