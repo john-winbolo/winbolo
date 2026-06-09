@@ -78,6 +78,27 @@ void treeGrowDestroy(GameSim *sim) {
 }
 
 /*********************************************************
+*NAME:          treeGrowReset
+*AUTHOR:        John Morrison
+*CREATION DATE: 22/1/99
+*LAST MODIFIED: 22/1/99
+*PURPOSE:
+*  Clears the pending grow target for a new round without
+*  re-seeding. The seed is left running so the round-boundary
+*  reset draws nothing from bolo_rand (which would shift the
+*  deterministic simulation stream).
+*
+*ARGUMENTS:
+*  sim - Pointer to the game simulation
+*********************************************************/
+void treeGrowReset(GameSim *sim) {
+  sim->treeGrowTime = TREEGROW_INITIAL_TIME;
+  sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
+  sim->treeGrowX = 0;
+  sim->treeGrowY = 0;
+}
+
+/*********************************************************
 *NAME:          treeGrowAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 22/1/99
