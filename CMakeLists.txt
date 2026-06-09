@@ -1509,6 +1509,33 @@ add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMENT "Copying SDL3 shared library to WinBoloDS output directory"
 )
 
+# bolo_static PUBLIC-links onnxruntime, so WinBoloDS inherits the dylib
+# dependency. Mirror the WinBolo/MapEditor POST_BUILD copy step so the
+# dedicated server finds the dylib next to its executable — without this,
+# launching WinBoloDS fails at dyld load time with
+# "Library not loaded: @rpath/libonnxruntime.*.dylib".
+if(HAVE_ONNXRUNTIME)
+    if(WIN32 AND DEFINED ONNXRUNTIME_DLL)
+        add_custom_command(TARGET WinBoloDS POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ONNXRUNTIME_DLL}" "$<TARGET_FILE_DIR:WinBoloDS>"
+            COMMENT "Copying ONNX Runtime DLL to WinBoloDS output directory"
+        )
+    elseif(DEFINED ONNXRUNTIME_LIBDIR)
+        file(GLOB _ORT_ALL_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
+        foreach(_f ${_ORT_ALL_SO})
+            # Skip .dSYM bundles — they are directories, not files, so
+            # copy_if_different fails on them. They are debug symbols that
+            # don't need to ship next to the binary.
+            if(_f MATCHES "\\.dSYM$")
+                continue()
+            endif()
+            add_custom_command(TARGET WinBoloDS POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_f}" "$<TARGET_FILE_DIR:WinBoloDS>"
+            )
+        endforeach()
+    endif()
+endif()
+
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:WinBoloDS>/data/lang"
