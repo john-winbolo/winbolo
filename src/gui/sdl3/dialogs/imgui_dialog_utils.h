@@ -186,6 +186,8 @@ static inline SDL_Texture *imguiLoadSvgIconWhite(SDL_Renderer *rend, const char 
  *   halfH  - half height, pixels
  *   phase  - rotation angle; increases over time to spin
  *   col    - base colour (alpha honoured; shaded relative to it)
+ *   filled - true draws the lit/dim fill plate; false draws the rim only
+ *            (a hollow outline shield that still spins)
  *
  * The 3-D feel comes from two things: the width scales with cos(phase) so the
  * shield narrows to an edge-on sliver and swings back, and the fill is
@@ -193,7 +195,8 @@ static inline SDL_Texture *imguiLoadSvgIconWhite(SDL_Renderer *rend, const char 
  * turning in the light rather than a flat shape being squashed. */
 static inline void imguiDrawSpinningShield(ImDrawList *dl, ImVec2 center,
                                            float halfW, float halfH,
-                                           float phase, ImU32 col) {
+                                           float phase, ImU32 col,
+                                           bool filled) {
     if (!dl || halfW < 1.0f || halfH < 1.0f) return;
 
     /* Shield outline, normalised to x,y in [-1,1] (x right, y down): flat
@@ -220,11 +223,29 @@ static inline void imguiDrawSpinningShield(ImDrawList *dl, ImVec2 center,
     }
 
     /* Lit face / dim edge gives the turning-in-the-light read. */
-    ImU32 fill = rgb | ((ImU32)(baseA * (0.32f + 0.68f * face)) << IM_COL32_A_SHIFT);
-    dl->AddConvexPolyFilled(pts, n, fill);
+    if (filled) {
+        ImU32 fill = rgb | ((ImU32)(baseA * (0.32f + 0.68f * face)) << IM_COL32_A_SHIFT);
+        dl->AddConvexPolyFilled(pts, n, fill);
+    }
     /* Full-alpha rim keeps the silhouette crisp; at edge-on it collapses to a
      * vertical line — exactly the shield seen on edge. */
     dl->AddPolyline(pts, n, col, ImDrawFlags_Closed, 1.4f);
+}
+
+/* Inline filled WBN shield badge, laid out like an ImGui::Image of
+ * size×size px: it reserves the square slot (so SameLine and any icon-width
+ * budgets stay unchanged) and centres the vector shield in it. Vector-drawn
+ * via imguiDrawSpinningShield (face-on, filled) so it stays crisp at small
+ * sizes and is the exact same silhouette — rim and all — as the hollow
+ * sign-in shield, rather than a blurry rasterised SVG. `col` is the
+ * fill/rim colour (white, or the supporter gold tint). */
+static inline void imguiShieldBadge(float size, ImU32 col) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float halfH = size * 0.5f;
+    imguiDrawSpinningShield(ImGui::GetWindowDrawList(),
+                            ImVec2(p.x + halfH, p.y + halfH),
+                            halfH * 0.80f, halfH, 0.0f, col, true);
+    ImGui::Dummy(ImVec2(size, size));
 }
 
 /* Open a URL in the system browser. Returns true on success.

@@ -206,6 +206,7 @@ void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
                                   const uint8_t *value, uint8_t valueLen);
 void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost);
 void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot);
+void clientSimNetSendLobbyTransferHost(ClientSim *cs, uint8_t slot);
 
 /* Host- or admin-only: set or clear the server password. NULL or
  * empty pw clears. The server stores it locally; remote clients

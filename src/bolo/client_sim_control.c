@@ -39,6 +39,7 @@
 #include "netpacks.h"
 #include "players.h"
 #include "server_sim.h"  /* serverSimGetCompressedMap / serverSimGetMapName */
+#include "../gui/lang.h" /* langGetTextFmt, STR_DLGLOBBY_HOST_CHANGED_FMT */
 #include "../steam/steam_wrapper.h"
 #include "global.h"
 #include "../common/wb_log.h"
@@ -195,6 +196,30 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->netStat          = evt->u.lobbySettings.netStat;
         cs->inLobby          = evt->u.lobbySettings.inLobby;
         cs->lobbyOpenHost            = evt->u.lobbySettings.lobbyOpenHost;
+        {
+            /* Announce a host handoff as a lobby system line. The host slot
+             * arrives here for every cause (explicit transfer, host-leave
+             * reassignment, server console command), so this one diff covers
+             * them all. Suppressed on the first settings snapshot of a lobby
+             * session (lobbyHostSlotKnown) so the initial host assignment is
+             * not reported as a change. */
+            BYTE oldHost = cs->lobbyHostSlot;
+            BYTE newHost = evt->u.lobbySettings.hostSlot;
+            cs->lobbyHostSlot = newHost;
+            if (cs->lobbyHostSlotKnown && cs->inLobby && newHost != oldHost) {
+                const ClientLobbySlot *ns = clientSimGetLobbySlot(cs, newHost);
+                if (ns != NULL && ns->connected && !ns->isBot &&
+                    ns->playerName[0] != '\0') {
+                    MessageArgs args;
+                    memset(&args, 0, sizeof(args));
+                    SDL_strlcpy(args.playerName, ns->playerName,
+                                sizeof(args.playerName));
+                    clientSimAppendLobbyChat(cs, "***",
+                        langGetTextFmt(STR_DLGLOBBY_HOST_CHANGED_FMT, &args));
+                }
+            }
+            cs->lobbyHostSlotKnown = true;
+        }
         cs->lobbyAutoLockOnGameStart = evt->u.lobbySettings.lobbyAutoLockOnGameStart;
         cs->lobbyRanked          = evt->u.lobbySettings.lobbyRanked;
         cs->lobbyAllowNewPlayers = evt->u.lobbySettings.lobbyAllowNewPlayers;
@@ -434,6 +459,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * lobby chat after). Keeping it across the game was confusing —
          * a "X has joined" line stayed visible after X left mid-round. */
         cs->lobbyChatHistory[0] = '\0';
+        cs->lobbyHostSlotKnown = false;
         frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_GAME_OVER:

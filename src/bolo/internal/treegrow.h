@@ -90,6 +90,20 @@ void treeGrowCreate(struct GameSim *sim);
 void treeGrowDestroy(struct GameSim *sim);
 
 /*********************************************************
+*NAME:          treeGrowReset
+*AUTHOR:        John Morrison
+*CREATION DATE: 22/1/99
+*LAST MODIFIED: 22/1/99
+*PURPOSE:
+*  Clears the pending grow target for a new round without
+*  re-seeding (draws nothing from bolo_rand).
+*
+*ARGUMENTS:
+*  sim - Pointer to the game simulation
+*********************************************************/
+void treeGrowReset(struct GameSim *sim);
+
+/*********************************************************
 *NAME:          treeGrowAddItem
 *AUTHOR:        John Morrison
 *CREATION DATE: 22/1/99

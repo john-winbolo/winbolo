@@ -341,6 +341,12 @@ struct ClientSim {
     char     lobbyWbnPreviewFinalPath[256];
 
     bool     lobbyOpenHost;
+    BYTE     lobbyHostSlot;
+    bool     lobbyHostSlotKnown;  /* false until the first lobby-settings
+                                   * snapshot of a lobby session lands, so
+                                   * the initial host assignment is not
+                                   * announced as a change. Reset whenever
+                                   * lobbyChatHistory is cleared. */
     bool     lobbyAutoLockOnGameStart;
     bool     lobbyRanked;  /* server flagged this as a ranked game:
                             * bots are forbidden, game type "Open" is

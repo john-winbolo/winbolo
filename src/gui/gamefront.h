@@ -670,6 +670,14 @@ void gameFrontClearWinbolonetToken(void);
 void gameFrontSetWbnAuthMethod(const char *method);
 void gameFrontGetWbnAuthMethod(char *out, size_t outSize);
 
+/* Sticky record of an explicit user sign-out. Set when the player signs
+ * out, cleared only when they explicitly sign back in. While set, the
+ * silent re-auth paths (welcome-screen launch re-auth, join-time Steam
+ * auto-auth) and any auth worker landing afterwards must not sign the
+ * player back in. Device-local (WINBOLO.NET section), never synced. */
+void gameFrontSetWbnSignedOut(bool signedOut);
+bool gameFrontGetWbnSignedOut(void);
+
 /* Acquire a Steam auth-session ticket and hex-encode it into outHex
  * (must hold at least 2049 bytes). Returns true on success. Must be
  * called on the main thread (touches the Steam API). */
@@ -722,6 +730,15 @@ void gameFrontSetWinbolonetStats(const WbnStats *s);
 * when no stats have been captured this session.
 *********************************************************/
 void gameFrontGetWinbolonetStats(WbnStats *out);
+
+/*********************************************************
+*NAME:          gameFrontIsSupporter
+*PURPOSE:
+* Returns TRUE when the local player has Supporter status —
+* the same signal applied to the in-game self badge. Used to
+* gold-tint the WinBolo.net shield on the welcome screen.
+*********************************************************/
+bool gameFrontIsSupporter(void);
 
 /*********************************************************
 *NAME:          gameFrontSetRegistryKeys

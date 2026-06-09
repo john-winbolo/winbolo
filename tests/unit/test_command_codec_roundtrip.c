@@ -378,6 +378,17 @@ int run_command_codec_roundtrip_variants(void) {
     UT_ASSERT(memcmp(out.u.wbnReauth.token, in.u.wbnReauth.token,
                      sizeof(in.u.wbnReauth.token)) == 0);
 
+    /* CMD_LOBBY_TRANSFER_HOST — single slot byte */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_LOBBY_TRANSFER_HOST;
+    in.cmdSeq = 31;
+    in.u.lobbyTransferHost.slot = 5;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_LOBBY_TRANSFER_HOST");
+    UT_ASSERT(out.type == CMD_LOBBY_TRANSFER_HOST);
+    UT_ASSERT(out.cmdSeq == 31);
+    UT_ASSERT(out.u.lobbyTransferHost.slot == 5);
+
     return 0;
 }
 

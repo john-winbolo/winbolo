@@ -30,10 +30,10 @@ void gameFrontGetLanguageCode(char *out, int outSize) {
   out[0] = '\0';
 }
 
-/* Referenced by shared imgui dialogs (e.g. imgui_wbn_browser.cpp) to force a
- * redraw of the main game frontend. LogViewer / MapEditor have no such
- * frontend to repaint, so this is a no-op; the real pump lives in
- * gamefront.c. */
+/* Pulled in by shared imgui dialogs (e.g. the reused WBN browser) that
+ * call gameFrontPumpDirty to flush cloud-prefs changes. No frontend to
+ * pump on LogViewer / MapEditor, so this is a no-op; the real pump lives
+ * in gamefront.c. */
 void gameFrontPumpDirty(void) {
 }
 

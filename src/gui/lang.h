@@ -1471,6 +1471,9 @@
 #define STR_DLGWBN_OR                       1461
 #define STR_DLGWBN_ERR_STEAM_TICKET         1462
 #define STR_DLGWBN_SIGNIN_HEADER            1463
+#define STR_DLGLOBBY_MAKE_HOST              1464
+#define STR_DLGLOBBY_MAKE_HOST_FMT          1465
+#define STR_DLGLOBBY_HOST_CHANGED_FMT       1466
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

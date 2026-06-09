@@ -807,7 +807,7 @@ static void udpServerClearClientUploadState(int idx) {
  * OR they're an admin). */
 bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
     if (clientIdx < 0 || clientIdx >= MAX_TANKS) return FALSE;
-    if (clientIdx == 0) return TRUE;  /* slot 0 = host */
+    if (clientIdx == serverSimGetHostSlot(sim)) return TRUE;  /* the host slot */
     if (serverSimIsPlayerConnected(sim, clientIdx) &&
         (playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)clientIdx)
          & PLAYER_FLAG_ADMIN)) {
@@ -2161,6 +2161,19 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
         }
     }
     serverSimConsoleMessage("Player not found.");
+}
+
+bool transportUdpServerSetHostByName(ServerSim *sim, const char *playerName) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!udpServer.clients[i].connected) continue;
+        if (serverSimIsBot(sim, (BYTE)i)) continue;
+        if (playerNameCompare(udpServer.clients[i].playerName, playerName) == 0) {
+            serverSimSetHostSlot(sim, (BYTE)i);
+            return true;
+        }
+    }
+    return false;
 }
 
 void transportUdpServerEnforcePing(ServerSim *sim) {

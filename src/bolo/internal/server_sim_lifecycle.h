@@ -60,6 +60,10 @@ void serverSimSetPassword(ServerSim *sim, const char *pw, size_t len);
 const char *serverSimGetPassword(const ServerSim *sim);
 void serverSimSetBotBrainPath(ServerSim *sim, const char *path);
 void serverSimSetOpenHost(ServerSim *sim, bool v);
+/* serverSimSetHostSlot — set the lobby host slot and publish the lobby
+ * settings. Publish-only: unlike serverSimSetOpenHost it does NOT
+ * auto-unready players. */
+void serverSimSetHostSlot(ServerSim *sim, BYTE slot);
 void serverSimSetServerLocks(ServerSim *sim, uint16_t locks);
 void serverSimSetLobbyEnabled(ServerSim *sim, bool enabled);
 void serverSimSetBotAiType(ServerSim *sim, aiType ai);

@@ -1440,6 +1440,10 @@ bool        serverSimRankedShapeReady(const ServerSim *sim);
  * authority on lobby state (see lobbyClientMayEdit). */
 bool        serverSimGetOpenHost(const ServerSim *sim);
 
+/* hostSlot — the player slot currently holding the lobby host role.
+ * Defaults to 0. */
+BYTE        serverSimGetHostSlot(const ServerSim *sim);
+
 /* serverLocks — LOBBY_LOCK_* bitmask set from CLI at server start.
  * Locked settings refuse PACKET_LOBBY_SET_SETTING with REJECT_LOCKED. */
 uint16_t    serverSimGetServerLocks(const ServerSim *sim);

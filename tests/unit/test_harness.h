@@ -78,6 +78,12 @@ int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
 int run_lobby_add_bot_rejects_non_host_sender(void);
+int run_transfer_host_promotes_target(void);
+int run_transfer_host_rejects_non_host_sender(void);
+int run_transfer_host_openhost_does_not_grant(void);
+int run_transfer_host_rejects_self(void);
+int run_transfer_host_rejects_unconnected(void);
+int run_transfer_host_rejects_bot_target(void);
 int run_command_queue_first_submit_drains(void);
 int run_command_queue_second_submit_does_not_drain(void);
 int run_command_queue_ack_drains_pending_tail(void);
@@ -207,6 +213,16 @@ int run_remove_player_clears_slot(void);
 int run_return_to_lobby_clears_phantom_slot(void);
 int run_last_human_leave_returns_to_lobby(void);
 int run_humanless_round_does_not_autoend(void);
+int run_host_departs_promotes_lowest_human(void);
+int run_nonhost_departs_keeps_host(void);
+int run_host_reassign_skips_bots(void);
+int run_lobby_reset_clears_host_slot(void);
+
+/* Tree-growth water regressions (test_treegrow_no_sea.c). A converged
+ * grow target survives serverSimResetGameWorld and, on the next map,
+ * points at open sea; the grow gate also failed to reject DEEP_SEA. */
+int run_treegrow_never_plants_on_deep_sea(void);
+int run_treegrow_reset_clears_stale_target(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
