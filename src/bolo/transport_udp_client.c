@@ -2039,8 +2039,13 @@ static bool udpClientTick(void *ctx) {
                 jbuf[joffset++] = BOLO_VERSION_REVISION;
                 memcpy(jbuf + joffset, playerKey, WBN_JOIN_KEY_WIRE_LEN);
                 joffset += WBN_JOIN_KEY_WIRE_LEN;
-                /* Flags byte: bit 0 = wantRejoin */
-                jbuf[joffset++] = c->wantRejoin ? 0x01 : 0x00;
+                /* Flags byte: bit 0 = wantRejoin, bit 1 = signed in / will authenticate.
+                 * The will-auth bit rides independently of whether the server key is
+                 * populated yet — it reflects only that the client holds a WBN token. */
+                uint8_t joinFlags = 0;
+                if (c->wantRejoin)             joinFlags |= JOIN_FLAG_WANT_REJOIN;
+                if (c->wbnApiToken[0] != '\0') joinFlags |= JOIN_FLAG_WILL_AUTHENTICATE;
+                jbuf[joffset++] = joinFlags;
                 jbuf[joffset++] = bolo_detect_client_type();
                 {
                     uint8_t clientHints = 0;

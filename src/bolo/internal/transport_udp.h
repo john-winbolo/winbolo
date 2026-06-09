@@ -56,6 +56,14 @@ typedef struct {
 /* WBN join key: 64-char hex string + null */
 #define WBN_JOIN_KEY_WIRE_LEN 65
 
+/* JOIN_REQUEST flags byte (after the WBN join key on the wire).  Bit 0 is
+ * a client rejoin request; bit 1 is a client assertion that it is signed
+ * in and will authenticate via PACKET_WBN_REAUTH after JOIN_ACCEPT.  The
+ * will-authenticate bit is untrusted — it only lets the collision policy
+ * admit provisionally instead of rejecting; it never grants priority. */
+#define JOIN_FLAG_WANT_REJOIN       0x01
+#define JOIN_FLAG_WILL_AUTHENTICATE 0x02
+
 /* ── Deferred WBN PLAYER_JOIN bookkeeping (pure core) ────────────────
  * A slot owes WBN a PLAYER_JOIN event once we learn its identity for
  * the current session: keyed when a reauth fills the slot's WBN key,

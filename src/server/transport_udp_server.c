@@ -1050,6 +1050,48 @@ static void serverPreemptRename(ServerSim *sim, int victimSlot,
     }
 }
 
+/* Choose a unique "<baseName>-unverified[-N]" name, skipping index 1
+ * (the bare "-unverified" form IS the "1").  The candidate must not
+ * collide with any connected slot other than excludeSlot.  Returns true
+ * and writes the chosen name into out (capacity outLen) on success;
+ * returns false when the suffix pool (indices 0, 2..99) is exhausted. */
+static bool serverChooseUnverifiedSuffix(const char *baseName,
+                                         int excludeSlot,
+                                         char *out, size_t outLen) {
+    int suffixIdx;
+    /* Try indices 0, 2, 3, ..., 99 (1 is reserved — the bare
+     * "-unverified" form IS the "1"). */
+    for (suffixIdx = 0; suffixIdx <= 99; suffixIdx++) {
+        if (suffixIdx == 1) continue;
+        char candidate[PACKET_MAX_PLAYER_NAME];
+        if (!playerNameMakeUnverifiedSuffix(baseName, suffixIdx,
+                                            candidate,
+                                            sizeof(candidate))) {
+            continue;
+        }
+
+        /* Candidate must be unique against ALL other connected
+         * slots (not just the excluded slot). */
+        bool clash = false;
+        int k;
+        for (k = 0; k < MAX_TANKS; k++) {
+            if (!udpServer.clients[k].connected) continue;
+            if (k == excludeSlot) continue;
+            if (playerNameCompare(udpServer.clients[k].playerName,
+                                  candidate) == 0) {
+                clash = true;
+                break;
+            }
+        }
+        if (clash) continue;
+
+        strncpy(out, candidate, outLen - 1);
+        out[outLen - 1] = '\0';
+        return true;
+    }
+    return false;
+}
+
 /* Handle a join request from a new client */
 static void serverHandleJoinRequest(const uint8_t *buf, int len,
                                     const struct sockaddr_in *fromAddr,
@@ -1140,8 +1182,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
 
     /* Read flags byte if present (backwards compatible — older clients default to 0) */
     bool wantRejoin = false;
+    bool incomingWillAuth = false;
     if (len > pos) {
-        wantRejoin = (buf[pos] & 0x01) != 0;
+        wantRejoin       = (buf[pos] & JOIN_FLAG_WANT_REJOIN) != 0;
+        incomingWillAuth = (buf[pos] & JOIN_FLAG_WILL_AUTHENTICATE) != 0;
         pos++;
     }
 
@@ -1319,47 +1363,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
             }
 
             /* Find a unique -unverified[-N] candidate for the victim. */
-            char baseName[PACKET_MAX_PLAYER_NAME];
             char chosenName[PACKET_MAX_PLAYER_NAME];
-            bool chosenFound = false;
-            int suffixIdx;
-
-            strncpy(baseName, udpServer.clients[i].playerName,
-                    PACKET_MAX_PLAYER_NAME - 1);
-            baseName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-
-            /* Try indices 0, 2, 3, ..., 99 (1 is reserved — the bare
-             * "-unverified" form IS the "1"). */
-            for (suffixIdx = 0; suffixIdx <= 99; suffixIdx++) {
-                if (suffixIdx == 1) continue;
-                char candidate[PACKET_MAX_PLAYER_NAME];
-                if (!playerNameMakeUnverifiedSuffix(baseName, suffixIdx,
-                                                    candidate,
-                                                    sizeof(candidate))) {
-                    continue;
-                }
-
-                /* Candidate must be unique against ALL other connected
-                 * slots (not just the victim's slot). */
-                bool clash = false;
-                int k;
-                for (k = 0; k < MAX_TANKS; k++) {
-                    if (!udpServer.clients[k].connected) continue;
-                    if (k == i) continue;
-                    if (k == slot) continue;
-                    if (playerNameCompare(udpServer.clients[k].playerName,
-                                          candidate) == 0) {
-                        clash = true;
-                        break;
-                    }
-                }
-                if (clash) continue;
-
-                strncpy(chosenName, candidate, PACKET_MAX_PLAYER_NAME - 1);
-                chosenName[PACKET_MAX_PLAYER_NAME - 1] = '\0';
-                chosenFound = true;
-                break;
-            }
+            bool chosenFound = serverChooseUnverifiedSuffix(
+                udpServer.clients[i].playerName, i,
+                chosenName, sizeof(chosenName));
 
             if (!chosenFound) {
                 /* Suffix pool exhausted.  Never preempt a verified
