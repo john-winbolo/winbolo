@@ -40,11 +40,6 @@ extern "C" {
 #include "../../tiles.h"
 }
 
-/* WBN-verified shield texture (white-masked SVG), lazily loaded by the
- * renderer. Stands in for the account badge on the welcome status chip
- * and the stats dialog header. */
-extern "C" SDL_Texture *sdl3ImguiGetWbnVerifiedIcon(void);
-
 /* White-masked Steam logo, tinted at draw time. Used on the
  * "Sign in with Steam" button. */
 extern "C" SDL_Texture *sdl3ImguiGetSteamIcon(void);
@@ -386,7 +381,7 @@ static void wbnDrawSpinner(const char *label) {
     /* A spinning WinBolo.net shield (the verified badge) stands in for a
      * generic spinner — narrower than tall, turning about its vertical axis. */
     imguiDrawSpinningShield(ImGui::GetWindowDrawList(), centre,
-                            radius * 0.80f, radius, phase, col);
+                            radius * 0.80f, radius, phase, col, true);
 
     ImGui::Dummy(ImVec2(radius * 2.0f, radius * 2.0f));
     ImGui::SameLine();
@@ -793,7 +788,6 @@ static bool wbnDrawAccountChip(float s, float textAlpha) {
         SDL_strlcpy(rankBuf, langGetTextFmt(STR_DLGWBN_RANK, &args), sizeof(rankBuf));
     }
 
-    SDL_Texture *shield = sdl3ImguiGetWbnVerifiedIcon();
     float lineH = ImGui::GetTextLineHeight();
     float iconSz = lineH;
     float padX = 10.0f * s, padY = 6.0f * s;
@@ -801,7 +795,7 @@ static bool wbnDrawAccountChip(float s, float textAlpha) {
     float lineGap = 2.0f * s;
 
     float nameW = ImGui::CalcTextSize(playerName).x;
-    float line1W = (shield ? iconSz + gapIcon : 0.0f) + nameW;
+    float line1W = iconSz + gapIcon + nameW;
     float rankW = hasRank ? ImGui::CalcTextSize(rankBuf).x : 0.0f;
     float contentW = (line1W > rankW ? line1W : rankW);
 
@@ -823,9 +817,16 @@ static bool wbnDrawAccountChip(float s, float textAlpha) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     float tx = p0.x + padX;
     float ty = p0.y + padY;
-    if (shield) {
-        dl->AddImage((ImTextureID)shield, ImVec2(tx, ty),
-                     ImVec2(tx + iconSz, ty + iconSz));
+    /* Filled shield, same geometry as the hollow sign-in CTA so signed-in
+     * and signed-out read as the same badge (filled vs outline). Gold for
+     * supporters, matching the in-game / players-panel badge tint. */
+    {
+        float halfH = iconSz * 0.5f;
+        ImU32 shieldCol = gameFrontIsSupporter()
+                              ? IM_COL32(255, 214, 51, nameA)   /* supporter gold */
+                              : IM_COL32(255, 255, 255, nameA);
+        imguiDrawSpinningShield(dl, ImVec2(tx + iconSz * 0.5f, ty + halfH),
+                                halfH * 0.80f, halfH, 0.0f, shieldCol, true);
         tx += iconSz + gapIcon;
     }
     dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, nameA), playerName);
@@ -891,12 +892,9 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
         char playerName[PLAYER_NAME_LEN];
         playerName[0] = '\0';
         gameFrontGetPlayerName(playerName);
-        SDL_Texture *shield = sdl3ImguiGetWbnVerifiedIcon();
-        if (shield) {
-            float iconSz = ImGui::GetTextLineHeight();
-            ImGui::Image((ImTextureID)shield, ImVec2(iconSz, iconSz));
-            ImGui::SameLine();
-        }
+        imguiShieldBadge(ImGui::GetTextLineHeight(),
+                         IM_COL32(255, 255, 255, 255));
+        ImGui::SameLine();
         if (playerName[0] != '\0') {
             ImGui::TextUnformatted(playerName);
             ImGui::SameLine();
@@ -1158,13 +1156,15 @@ extern "C" void imguiWinbolonetDrawStatusBlock(void) {
         float ty = cur.y + (btnH - lineH) * 0.5f;
         int textA = hov ? 255 : (int)(ghostTextAlpha * 255.0f);
 
-        /* phase 0 == face-on (full width); advancing phase spins it. */
+        /* phase 0 == face-on (full width); advancing phase spins it. Drawn
+         * hollow (outline only) so the signed-out CTA reads as an empty
+         * shield, filling in once signed in (the account-chip badge). */
         float halfH = iconSz * 0.5f;
         float phase = hov ? (float)SDL_GetTicks() * 0.002f : 0.0f;
         ImDrawList *dl = ImGui::GetWindowDrawList();
         imguiDrawSpinningShield(dl, ImVec2(tx + iconSz * 0.5f, ty + halfH),
                                 halfH * 0.80f, halfH, phase,
-                                IM_COL32(255, 255, 255, textA));
+                                IM_COL32(255, 255, 255, textA), false);
         tx += iconSz + gap;
         dl->AddText(ImVec2(tx, ty), IM_COL32(255, 255, 255, textA), label);
     }

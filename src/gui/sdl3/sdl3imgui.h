@@ -233,13 +233,13 @@ void sdl3ImguiUpdatePlayerFlags(unsigned char playerNum, uint8_t clientType, uin
 void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping);
 
 /*********************************************************
-*NAME:          sdl3ImguiGetWbnVerifiedIcon / GetSteamIcon
+*NAME:          sdl3ImguiGetSteamIcon
 *PURPOSE:
-*  Returns the SDL_Texture for the WBN-verified shield or Steam
-*  icon.  Loads the SVGs lazily on first call.  Returns NULL if
-*  the SVG could not be loaded.
+*  Returns the SDL_Texture for the Steam icon.  Loads the SVG
+*  lazily on first call.  Returns NULL if it could not be loaded.
+*  (The WBN-verified shield is drawn procedurally, not from a
+*  texture — see imguiShieldBadge.)
 *********************************************************/
-SDL_Texture *sdl3ImguiGetWbnVerifiedIcon(void);
 SDL_Texture *sdl3ImguiGetSteamIcon(void);
 
 /*********************************************************

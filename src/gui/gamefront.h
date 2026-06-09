@@ -724,6 +724,15 @@ void gameFrontSetWinbolonetStats(const WbnStats *s);
 void gameFrontGetWinbolonetStats(WbnStats *out);
 
 /*********************************************************
+*NAME:          gameFrontIsSupporter
+*PURPOSE:
+* Returns TRUE when the local player has Supporter status —
+* the same signal applied to the in-game self badge. Used to
+* gold-tint the WinBolo.net shield on the welcome screen.
+*********************************************************/
+bool gameFrontIsSupporter(void);
+
+/*********************************************************
 *NAME:          gameFrontSetRegistryKeys
 *AUTHOR:        John Morrison
 *CREATION DATE: 30/08/02

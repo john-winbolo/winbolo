@@ -1792,6 +1792,13 @@ void gameFrontGetWinbolonetStats(WbnStats *out) {
   if (out) *out = gameFrontWbnStats;
 }
 
+bool gameFrontIsSupporter(void) {
+  /* Mirrors the self-flag resolution used at join time. Currently this is
+   * Steam DLC ownership only (the WBN-account supporter flag is not yet
+   * plumbed to the client). */
+  return bolo_steam_has_supporter_dlc();
+}
+
 /* -------------------------------------------------------
  * Cloud preferences sync (download-on-login).
  *
