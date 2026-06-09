@@ -391,6 +391,10 @@ void transportUdpServerEnforcePing(struct ServerSim *sim);
 /* Kick a player by name (case-insensitive match). */
 void transportUdpServerKickPlayer(struct ServerSim *sim, const char *playerName);
 
+/* Resolve playerName to a connected human slot and make it the lobby
+ * host. Returns true if a matching player was found and set. */
+bool transportUdpServerSetHostByName(struct ServerSim *sim, const char *playerName);
+
 /* Dispatcher-side hooks for the ranked-only commands. The full
  * bodies live in transport_udp_server.c because they touch
  * udpServer.clients[] state, winbolonet, and SDL threading. */

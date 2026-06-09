@@ -218,7 +218,7 @@ void saveMap(char *line) {
 }
 
 void printHelp() {
-  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Status - Returns list of players who aren't locked.\n");
+  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n");
 }
 
 
@@ -248,6 +248,7 @@ void processKeys(bool isQuiet) {
 	char keyBuff[256] = "\0";
 	char saveBuff[256] = "\0";
 	char playerKick[33] = "\0";
+	char playerHost[33] = "\0";
 	size_t newbuflen;
 
 	if (isQuiet == TRUE || isNoInput == TRUE) {
@@ -314,6 +315,19 @@ void processKeys(bool isQuiet) {
 					threadsWaitForMutex();
 					transportUdpServerKickPlayer(serverSim, playerKick);
 					threadsReleaseMutex();
+				} else if (strncmp(keyBuff, "host ", 5) == 0) {
+					bool hostSet;
+					sprintf(playerHost, "%.*s", 32, keyBuff+5);
+					newbuflen = strlen(playerHost);
+					playerHost[newbuflen - 1] = '\0';
+					threadsWaitForMutex();
+					hostSet = transportUdpServerSetHostByName(serverSim, playerHost);
+					threadsReleaseMutex();
+					if (hostSet) {
+						printf("Host set to %s\n", playerHost);
+					} else {
+						printf("No such player\n");
+					}
 				} else if (strncmp(keyBuff, "quit", 4) == 0) {
 					/* Loop's while-condition will exit on next check */
 				} else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
@@ -337,6 +351,7 @@ void processKeys(bool isQuiet) {
   struct timeval timer;
   int ret;
   char playerKick[33] = "\0";
+  char playerHost[33] = "\0";
   size_t newbuflen;
 
   timer.tv_sec = 1;
@@ -401,6 +416,19 @@ void processKeys(bool isQuiet) {
         threadsWaitForMutex();
         transportUdpServerKickPlayer(serverSim, playerKick);
         threadsReleaseMutex();
+      } else if (strncmp(keyBuff, "host ", 5) == 0) {
+        bool hostSet;
+        sprintf(playerHost, "%.*s", 32, keyBuff+5);
+        newbuflen = strlen(playerHost);
+        playerHost[newbuflen - 1] = '\0';
+        threadsWaitForMutex();
+        hostSet = transportUdpServerSetHostByName(serverSim, playerHost);
+        threadsReleaseMutex();
+        if (hostSet) {
+          printf("Host set to %s\n", playerHost);
+        } else {
+          printf("No such player\n");
+        }
       } else if (strncmp(keyBuff, "quit", 4) == 0) {
         /* Loop's while-condition will exit on next check */
       } else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {

@@ -2163,6 +2163,19 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
     serverSimConsoleMessage("Player not found.");
 }
 
+bool transportUdpServerSetHostByName(ServerSim *sim, const char *playerName) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!udpServer.clients[i].connected) continue;
+        if (serverSimIsBot(sim, (BYTE)i)) continue;
+        if (playerNameCompare(udpServer.clients[i].playerName, playerName) == 0) {
+            serverSimSetHostSlot(sim, (BYTE)i);
+            return true;
+        }
+    }
+    return false;
+}
+
 void transportUdpServerEnforcePing(ServerSim *sim) {
     int i;
     if (serverSimGetState(sim) != serverStateRunning) return;
