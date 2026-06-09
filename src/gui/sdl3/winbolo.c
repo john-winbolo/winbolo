@@ -1570,8 +1570,13 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
        subtracting the camera offset.  Off-screen tiles hide the
        reticle (matching how the mouse cursor hides when it leaves
        the play area). */
+    /* Keep an active build cursor inside the visible edge as the view
+       scrolls with the tank (no-op while cursor mode is off). */
+    buildCursorClampToView(cs);
+    bool cursorFaint = false;
     BYTE bcX, bcY;
     if (buildCursorGetTile(&bcX, &bcY)) {
+      /* Cursor mode ON — draw the reticle solid at the cursor tile. */
       int sx = (int)bcX - (int)clientSimGetXOffset(cs);
       int sy = (int)bcY - (int)clientSimGetYOffset(cs);
       if (sx >= 1 && sx <= MAIN_SCREEN_SIZE_X &&
@@ -1582,7 +1587,21 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
       } else {
         showCursor = false;
       }
+    } else if (!showCursor && buildCursorGetTargetTile(&bcX, &bcY)) {
+      /* Cursor mode OFF but a target is locked, and the mouse cursor isn't
+         showing (gamepad context): draw the locked target faintly so the
+         player can still see where Build Now will place. Off-screen = hidden. */
+      int sx = (int)bcX - (int)clientSimGetXOffset(cs);
+      int sy = (int)bcY - (int)clientSimGetYOffset(cs);
+      if (sx >= 1 && sx <= MAIN_SCREEN_SIZE_X &&
+          sy >= 1 && sy <= MAIN_SCREEN_SIZE_Y) {
+        showCursor  = true;
+        cursorX     = (BYTE)sx;
+        cursorY     = (BYTE)sy;
+        cursorFaint = true;
+      }
     }
+    sdl3DrawSetCursorFaint(cursorFaint);
 
     sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,

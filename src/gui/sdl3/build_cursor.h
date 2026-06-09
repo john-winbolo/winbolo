@@ -38,6 +38,12 @@ extern "C" {
 
 struct ClientSim;
 
+/* Controller build-behaviour options (persisted in prefs, set from the
+   Controller tab of Set Keys). */
+extern bool g_buildExitExecutes;   /* exiting build mode dispatches the build */
+extern bool g_buildDoubleTapRoad;  /* double-tap the toggle builds a road under the tank */
+extern bool g_buildHoldMomentary;  /* hold the toggle = momentary mode (off on release) */
+
 /* Hard reset — turns off and clears accumulators.  Call at game
    teardown / new-game so leftover state can't survive into the next
    session. */
@@ -63,6 +69,19 @@ bool buildCursorGetTile(BYTE *mapX, BYTE *mapY);
    reticle), keeping mouse and gamepad placement in sync.  Marks the cursor
    as positioned; works whether or not cursor mode is currently active. */
 void buildCursorSetTile(BYTE mapX, BYTE mapY);
+
+/* Read the cursor's stored target tile regardless of whether cursor mode is
+   active.  Returns false only if no target has been set yet (then the caller
+   should fall back to the gunsight).  This is what "Build Now" dispatches to,
+   so a target locked in with cursor mode then turned OFF still builds — even
+   if the tank has since driven it off-screen / out of range. */
+bool buildCursorGetTargetTile(BYTE *mapX, BYTE *mapY);
+
+/* Clamp the cursor inside the visible area — only while cursor mode is ON.
+   Call once per frame so that as the tank drives and the view scrolls, the
+   cursor is dragged along the edge and never leaves the screen.  No-op when
+   cursor mode is OFF (the target stays pinned to its absolute tile). */
+void buildCursorClampToView(struct ClientSim *cs);
 
 /* Apply a per-frame movement delta in zoomed pixels.  Whole-tile
    crossings step the cursor; sub-tile remainder is kept for next

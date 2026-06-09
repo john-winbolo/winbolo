@@ -54,6 +54,7 @@ static bool s_pauseEdge          = false;
 static bool s_quickChatEdge      = false;
 static bool s_buildCursorToggleEdge = false;
 static bool s_viewPlayersEdge   = false;
+static bool s_buildCancelEdge   = false;
 static bool s_activeDisconnectedEdge = false;
 
 /* Per-trigger last-axis state for edge synthesis when a trigger is
@@ -75,6 +76,21 @@ static void seedBindingsIfNeeded(void) {
 
 /* Right-stick scroll sensitivity multiplier (also referenced from UI/prefs). */
 float g_gamepadScrollSensitivity = 1.0f;
+/* Left-stick tank-move sensitivity: scales the analog deflection fed to the
+   steering mapper, so lower values turn the tank more slowly for finer aim. */
+float g_gamepadTankSensitivity = 1.0f;
+/* Right-stick build-cursor sensitivity: scales cursor movement while the free
+   build cursor is active, independent of map-scroll sensitivity. */
+float g_gamepadBuildCursorSensitivity = 1.0f;
+
+/* DEBUG on-screen readouts (0..1): left-stick deflection magnitude and the
+   tank's actual turn speed this tick (normalised to the fastest seen). */
+float g_dbgStickMag = 0.0f;
+float g_dbgTurnMag  = 0.0f;
+/* DEBUG: right-stick deflection and resulting build-cursor move speed (0..1),
+   set by the build-cursor path in smoothScrollTick. */
+float g_dbgCursorStickMag = 0.0f;
+float g_dbgCursorMoveMag  = 0.0f;
 
 /* --- Path A (Steam Input) state --- */
 
@@ -144,6 +160,7 @@ static const char *kActionNames[GP_ACT_COUNT] = {
   "quick_chat",
   "pause",
   "view_players",
+  "build_cancel",
 };
 
 const char *inputGamepadActionName(GamepadAction a) {
@@ -259,6 +276,7 @@ static void fireEdgeForAction(GamepadAction a) {
     case GP_ACT_QUICK_CHAT:          s_quickChatEdge         = true; break;
     case GP_ACT_BUILD_CURSOR_TOGGLE: s_buildCursorToggleEdge = true; break;
     case GP_ACT_VIEW_PLAYERS:       s_viewPlayersEdge      = true; break;
+    case GP_ACT_BUILD_CANCEL:        s_buildCancelEdge       = true; break;
     default: break;
   }
 }
@@ -314,6 +332,7 @@ void inputGamepadInit(void) {
   s_quickChatEdge      = false;
   s_buildCursorToggleEdge = false;
   s_viewPlayersEdge   = false;
+  s_buildCancelEdge   = false;
   s_activeDisconnectedEdge = false;
   s_triggerWasPressed[0] = false;
   s_triggerWasPressed[1] = false;
@@ -471,7 +490,77 @@ SDL_GamepadType inputGamepadGetActiveType(void) {
   return s_activeType;
 }
 
+/* Tank-move sensitivity.  The steering mappers turn at full rate (absolute
+   steering snaps straight to the stick direction), so to make turn speed track
+   stick deflection we throttle how often a *turning* result passes through.
+     desired turn rate t = reach ^ (2*(1 - sens)),  sens in [0.10, 1.00]
+       sens 1.00 -> exponent 0 -> t = 1 for any deflection  (snap; "100%")
+       sens 0.50 -> exponent 1 -> t = reach                 (1:1; "50%")
+       sens 0.10 -> exponent 1.8 -> t = reach^1.8           (very fine)
+   Full deflection (reach = 1) always gives t = 1, so max turn speed is always
+   reachable.  t maps to a turn period of round(1/t); skipped turn frames keep
+   any drive/decel component so forward motion stays smooth. */
+static tankButton applyTankTurnSensitivity(tankButton tb, float reach) {
+  float s = g_gamepadTankSensitivity;
+  if (s < 0.10f) s = 0.10f;
+  if (s > 1.00f) s = 1.00f;
+  if (s >= 1.00f) return tb;            /* 100% — unchanged */
+
+  bool isTurn = (tb == TLEFT || tb == TRIGHT ||
+                 tb == TLEFTACCEL || tb == TRIGHTACCEL ||
+                 tb == TLEFTDECEL || tb == TRIGHTDECEL);
+  if (!isTurn) return tb;
+
+  if (reach < 0.0f) reach = 0.0f;
+  if (reach > 1.0f) reach = 1.0f;
+  float t = powf(reach, 2.0f * (1.0f - s));   /* desired turn rate 0..1 */
+  if (t >= 0.999f) return tb;                 /* full deflection -> max turn */
+
+  /* Accumulator dither: add the desired rate each turn frame and only emit a
+     turn when a whole tick has accrued.  This spreads the turns out evenly
+     (e.g. t=0.5 -> every other frame, t=0.6 -> 3 of every 5) instead of
+     bunching them, so the average turn rate is exactly t. */
+  static float turnAccum = 0.0f;
+  turnAccum += t;
+  if (turnAccum < 1.0f) {
+    if (tb == TLEFTACCEL || tb == TRIGHTACCEL) return TACCEL;
+    if (tb == TLEFTDECEL || tb == TRIGHTDECEL) return TDECEL;
+    return TNONE;
+  }
+  turnAccum -= 1.0f;
+  return tb;
+}
+
+/* Post-deadzone reach (0 at deadzone edge, 1 at MOVE_MAX_REACH). */
+static float moveReach(float dist) {
+  float r = (dist - MOVE_DEADZONE) / (MOVE_MAX_REACH - MOVE_DEADZONE);
+  if (r < 0.0f) r = 0.0f;
+  if (r > 1.0f) r = 1.0f;
+  return r;
+}
+
 tankButton inputGamepadGetMovement(BYTE tankAngle) {
+  /* DEBUG readouts: left-stick magnitude (0..1) and the tank's actual turn
+     speed this tick, normalised to the fastest turn seen so far (0..1). */
+  {
+    static BYTE  prevAngle = 0;
+    static bool  havePrev  = false;
+    static float maxTurn   = 1.0f;
+    if (havePrev) {
+      int d = (int)tankAngle - (int)prevAngle;
+      if (d > 128) d -= 256; else if (d < -128) d += 256;
+      float ad = (float)(d < 0 ? -d : d);
+      if (ad > maxTurn) maxTurn = ad;
+      float inst = (maxTurn > 0.0f) ? ad / maxTurn : 0.0f;
+      /* Smooth the per-tick (binary 0/1) rotation into a moving average so the
+         readout reflects the actual average turn rate, landing mid-range. */
+      g_dbgTurnMag = 0.85f * g_dbgTurnMag + 0.15f * inst;
+    }
+    prevAngle = tankAngle;
+    havePrev  = true;
+  }
+  g_dbgStickMag = 0.0f;
+
   if (path_a_active()) {
     float x = 0.0f, y = 0.0f;
     steam_input_get_analog_action(SI_ANALOG_TANK_MOVE, &x, &y);
@@ -489,10 +578,12 @@ tankButton inputGamepadGetMovement(BYTE tankAngle) {
       return TNONE;
     }
     s_moveWasActive = true;
-    if (joystickGetAbsoluteSteering()) {
-      return joystickGetMovementAbsolute(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH, tankAngle);
-    }
-    return joystickGetMovementRelative(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH);
+    float reach = moveReach(dist);
+    g_dbgStickMag = reach;
+    tankButton tb = joystickGetAbsoluteSteering()
+        ? joystickGetMovementAbsolute(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH, tankAngle)
+        : joystickGetMovementRelative(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH);
+    return applyTankTurnSensitivity(tb, reach);
   }
 
   if (!s_activeGamepad) {
@@ -516,12 +607,13 @@ tankButton inputGamepadGetMovement(BYTE tankAngle) {
   }
 
   s_moveWasActive = true;
+  float reach = moveReach(dist);
+  g_dbgStickMag = reach;
 
-  if (joystickGetAbsoluteSteering()) {
-    return joystickGetMovementAbsolute(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH, tankAngle);
-  } else {
-    return joystickGetMovementRelative(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH);
-  }
+  tankButton tb = joystickGetAbsoluteSteering()
+      ? joystickGetMovementAbsolute(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH, tankAngle)
+      : joystickGetMovementRelative(x, y, dist, MOVE_DEADZONE, MOVE_MAX_REACH);
+  return applyTankTurnSensitivity(tb, reach);
 }
 
 bool inputGamepadIsFireHeld(void) {
@@ -585,8 +677,11 @@ bool inputGamepadGetScrollDirection(float *dx, float *dy) {
   float reach = (clampDist - SCROLL_DEADZONE) / (SCROLL_MAX_REACH - SCROLL_DEADZONE);
   float scale = reach / dist;  /* re-scale unit vector by reach */
 
-  if (dx) *dx = x * scale * g_gamepadScrollSensitivity;
-  if (dy) *dy = y * scale * g_gamepadScrollSensitivity;
+  /* Return the raw reach-scaled unit vector; the caller applies the
+     appropriate sensitivity (scroll vs build-cursor) so the two stay
+     independent. */
+  if (dx) *dx = x * scale;
+  if (dy) *dy = y * scale;
   return true;
 }
 
@@ -669,6 +764,21 @@ bool inputGamepadIsBuildCursorToggleEdge(void) {
 
   bool v = s_buildCursorToggleEdge;
   s_buildCursorToggleEdge = false;
+  return v;
+}
+
+bool inputGamepadIsBuildCursorToggleHeld(void) {
+  if (path_a_active()) {
+    return steam_input_is_action_pressed(SI_ACTION_BUILD_CURSOR_TOGGLE);
+  }
+  if (!s_activeGamepad) return false;
+  return actionIsHeld(GP_ACT_BUILD_CURSOR_TOGGLE);
+}
+
+bool inputGamepadIsBuildCancelEdge(void) {
+  /* Native only — no Steam Input action exists for this optional binding. */
+  bool v = s_buildCancelEdge;
+  s_buildCancelEdge = false;
   return v;
 }
 

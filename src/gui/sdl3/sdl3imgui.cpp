@@ -3984,6 +3984,34 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             renderMenuBar(cs);
         }
 #endif
+        /* TEMP DEBUG overlay: left-stick magnitude and tank turn-speed
+           magnitude (both 0..1). Shown while a controller is connected in an
+           active game. Remove once stick/turn tuning is done. */
+        if (inputGamepadIsConnected() && cs && !clientSimIsInLobby(cs)) {
+            ImGuiViewport *vp = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 8.0f,
+                                           vp->WorkPos.y + 8.0f),
+                                    ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+            ImGui::SetNextWindowBgAlpha(0.55f);
+            if (ImGui::Begin("##stickdbg", nullptr,
+                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                    ImGuiWindowFlags_NoSavedSettings |
+                    ImGuiWindowFlags_AlwaysAutoResize |
+                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                    ImGuiWindowFlags_NoInputs)) {
+                ImGui::Text("stick mag: %.2f", g_dbgStickMag);
+                ImGui::ProgressBar(g_dbgStickMag, ImVec2(160, 0));
+                ImGui::Text("turn  mag: %.2f", g_dbgTurnMag);
+                ImGui::ProgressBar(g_dbgTurnMag, ImVec2(160, 0));
+                ImGui::Separator();
+                ImGui::Text("cursor stick: %.2f", g_dbgCursorStickMag);
+                ImGui::ProgressBar(g_dbgCursorStickMag, ImVec2(160, 0));
+                ImGui::Text("cursor move : %.2f", g_dbgCursorMoveMag);
+                ImGui::ProgressBar(g_dbgCursorMoveMag, ImVec2(160, 0));
+            }
+            ImGui::End();
+        }
+
         /* Pause overlay + quick-chat overlay (no-ops when closed). */
         deckPauseRender(cs);
         quickChatRender(cs);

@@ -53,6 +53,7 @@ typedef enum {
   GP_ACT_QUICK_CHAT,
   GP_ACT_PAUSE,
   GP_ACT_VIEW_PLAYERS,
+  GP_ACT_BUILD_CANCEL,   /* exit build cursor mode without building */
   GP_ACT_COUNT
 } GamepadAction;
 
@@ -106,11 +107,25 @@ bool inputGamepadIsBuilderConfirmEdge(void);   /* X press, consumed on read */
 bool inputGamepadIsPauseEdge(void);            /* Start press, consumed on read */
 bool inputGamepadIsQuickChatEdge(void);        /* D-pad LEFT press, consumed on read */
 bool inputGamepadIsBuildCursorToggleEdge(void); /* R3 press, consumed on read */
+bool inputGamepadIsBuildCursorToggleHeld(void); /* R3 live held state (gesture timing) */
+bool inputGamepadIsBuildCancelEdge(void);       /* Cancel-build press, consumed on read */
 bool inputGamepadIsViewPlayersEdge(void);      /* D-pad Right press, consumed on read */
 bool inputGamepadConsumeActiveDisconnect(void);  /* Active controller disconnect, consumed on read */
 
 /* Right-stick scroll sensitivity multiplier (clamped 0.25..4.0 by UI). */
 extern float g_gamepadScrollSensitivity;
+/* Left-stick tank-move sensitivity (clamped 0.25..2.0 by UI). Lower = finer
+   steering: small stick movements turn the tank more slowly. */
+extern float g_gamepadTankSensitivity;
+/* Right-stick build-cursor move sensitivity (clamped 0.25..2.0 by UI). Lower =
+   finer building: the build cursor moves more slowly per stick deflection. */
+extern float g_gamepadBuildCursorSensitivity;
+
+/* DEBUG on-screen readouts (0..1). */
+extern float g_dbgStickMag;
+extern float g_dbgTurnMag;
+extern float g_dbgCursorStickMag;
+extern float g_dbgCursorMoveMag;
 
 SDL_Gamepad     *inputGamepadGetActiveHandle(void);  /* may be NULL */
 SDL_GamepadType  inputGamepadGetActiveType(void);

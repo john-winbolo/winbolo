@@ -10,10 +10,31 @@
 #include "../tiles.h"
 #include "sdl3draw.h"
 
+#include <stdio.h>
+#include <stdarg.h>
+
+/* TEMP debug: writes to controller.log next to the exe. Remove later. */
+static void bcLog(const char *fmt, ...) {
+  static FILE *f = NULL;
+  if (!f) f = fopen("controller.log", "a");
+  if (!f) return;
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(f, fmt, ap);
+  va_end(ap);
+  fputc('\n', f);
+  fflush(f);
+}
+
 /* Edge margin (in tiles) before the camera scrolls to follow the
    cursor.  2 tiles leaves room for the 17-tile back buffer's 1-tile
    ghost margin plus a visible breathing tile. */
 #define WB_CURSOR_MARGIN_TILES 2
+
+/* Behaviour options (see header) — defaults match the gestures we shipped. */
+bool g_buildExitExecutes  = false;
+bool g_buildDoubleTapRoad = true;
+bool g_buildHoldMomentary = true;
 
 static bool s_active     = false;
 static bool s_positioned = false;  /* has the cursor been placed at least once? */
@@ -36,6 +57,7 @@ bool buildCursorIsActive(void) {
 }
 
 void buildCursorExit(void) {
+  bcLog("[bc] EXIT  pos=(%u,%u) positioned=%d", (unsigned)s_mapX, (unsigned)s_mapY, s_positioned);
   s_active = false;
   s_subX = 0;
   s_subY = 0;
@@ -87,6 +109,8 @@ static void clamp_to_edge_toward_tank(struct ClientSim *cs) {
   if (mx > (int)xmax) mx = (int)xmax;
   if (my < (int)ymin) my = (int)ymin;
   if (my > (int)ymax) my = (int)ymax;
+  bcLog("[bc] EDGE  off-screen (%u,%u) tank=(%u,%u) view=(%d,%d) -> (%d,%d)",
+        (unsigned)s_mapX, (unsigned)s_mapY, (unsigned)tx, (unsigned)ty, xOff, yOff, mx, my);
   s_mapX = (BYTE)mx;
   s_mapY = (BYTE)my;
 }
@@ -97,6 +121,10 @@ void buildCursorToggle(struct ClientSim *cs) {
     return;
   }
   if (!cs) return;
+
+  bcLog("[bc] TOGGLE-ON enter: stored=(%u,%u) positioned=%d onscreen=%d view=(%u,%u)",
+        (unsigned)s_mapX, (unsigned)s_mapY, s_positioned, cursor_on_screen(cs),
+        (unsigned)clientSimGetXOffset(cs), (unsigned)clientSimGetYOffset(cs));
 
   /* Toggling on must NOT move the cursor when it is already on-screen — it
      stays exactly where it was last left (by the stick or the mouse). */
@@ -124,6 +152,7 @@ void buildCursorToggle(struct ClientSim *cs) {
   s_subX = 0;
   s_subY = 0;
   s_active = true;
+  bcLog("[bc] TOGGLE-ON result: pos=(%u,%u)", (unsigned)s_mapX, (unsigned)s_mapY);
 }
 
 bool buildCursorGetTile(BYTE *mapX, BYTE *mapY) {
@@ -134,11 +163,44 @@ bool buildCursorGetTile(BYTE *mapX, BYTE *mapY) {
 }
 
 void buildCursorSetTile(BYTE mapX, BYTE mapY) {
+  bcLog("[bc] SET-TILE (mouse) (%u,%u) -> (%u,%u) active=%d",
+        (unsigned)s_mapX, (unsigned)s_mapY, (unsigned)mapX, (unsigned)mapY, s_active);
   s_mapX = mapX;
   s_mapY = mapY;
   s_subX = 0;
   s_subY = 0;
   s_positioned = true;
+}
+
+bool buildCursorGetTargetTile(BYTE *mapX, BYTE *mapY) {
+  if (!s_positioned) return false;
+  if (mapX) *mapX = s_mapX;
+  if (mapY) *mapY = s_mapY;
+  return true;
+}
+
+void buildCursorClampToView(struct ClientSim *cs) {
+  /* Only while cursor mode is ON: the cursor must never sit outside the
+     visible edge.  As the tank drives and the view scrolls, this drags the
+     cursor along the edge so it stays on-screen.  When cursor mode is OFF the
+     target tile is left pinned to its absolute position (it may scroll
+     off-screen — that's the "lock a target then run away" case). */
+  if (!s_active || !cs) return;
+  int xOff = (int)clientSimGetXOffset(cs);
+  int yOff = (int)clientSimGetYOffset(cs);
+  int xmin = xOff + 1, xmax = xOff + MAIN_SCREEN_SIZE_X;
+  int ymin = yOff + 1, ymax = yOff + MAIN_SCREEN_SIZE_Y;
+  int mx = (int)s_mapX, my = (int)s_mapY;
+  if (mx < xmin) mx = xmin;
+  if (mx > xmax) mx = xmax;
+  if (my < ymin) my = ymin;
+  if (my > ymax) my = ymax;
+  if (mx != (int)s_mapX || my != (int)s_mapY) {
+    bcLog("[bc] CLAMP-VIEW (%u,%u) -> (%d,%d) view=(%d,%d)",
+          (unsigned)s_mapX, (unsigned)s_mapY, mx, my, xOff, yOff);
+  }
+  s_mapX = (BYTE)mx;
+  s_mapY = (BYTE)my;
 }
 
 /* Camera-follow helper.  Steps xOffset/yOffset toward the cursor when
@@ -191,10 +253,6 @@ static bool cursor_on_screen(struct ClientSim *cs) {
 void buildCursorTick(struct ClientSim *cs, int dxPx, int dyPx) {
   if (!s_active || !cs) return;
 
-  /* The cursor is pinned to its absolute map tile and may sit off-screen
-     (the tank drove the view away).  Stick movement nudges it from wherever
-     it is — it is not snapped back on-screen here; that only happens on a
-     fresh toggle-on (see clamp_to_edge_toward_tank). */
   int zoom = sdl3DrawGetZoomFactor();
   if (zoom < 1) zoom = 1;
   int tileW = TILE_SIZE_X * zoom;
@@ -208,5 +266,9 @@ void buildCursorTick(struct ClientSim *cs, int dxPx, int dyPx) {
   while (s_subY >=  tileH) { if (s_mapY < 255) s_mapY++; s_subY -= tileH; }
   while (s_subY <= -tileH) { if (s_mapY > 0)   s_mapY--; s_subY += tileH; }
 
+  /* Scroll the view to follow, then clamp the cursor inside the visible edge:
+     while cursor mode is ON the cursor can never be actively moved off-screen
+     (at a map boundary the view can't scroll, so it stops at the edge tile). */
   follow_camera(cs);
+  buildCursorClampToView(cs);
 }

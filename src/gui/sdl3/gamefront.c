@@ -67,6 +67,7 @@
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
 #include "input_gamepad.h"
+#include "build_cursor.h"
 #include "luabrainshandler.h"
 #include "dialog_backend.h"
 #include "dialogs/imgui_mapchooser.h"
@@ -2113,6 +2114,30 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     g_gamepadScrollSensitivity = gs;
   }
 
+  /* Gamepad — left-stick tank turn sensitivity (0.10..1.0; 1.0 = snap). */
+  GetPrivateProfileString("SETTINGS", "Gamepad Tank Sens", "1.00", buff, FILENAME_MAX, prefsFile);
+  {
+    float ts = (float)atof(buff);
+    if (!(ts >= 0.10f && ts <= 1.0f)) ts = 1.0f;
+    g_gamepadTankSensitivity = ts;
+  }
+
+  /* Gamepad — build-cursor move sensitivity (0.25..2.0, lower = finer). */
+  GetPrivateProfileString("SETTINGS", "Gamepad Build Cursor Sens", "1.00", buff, FILENAME_MAX, prefsFile);
+  {
+    float bs = (float)atof(buff);
+    if (!(bs >= 0.25f && bs <= 2.0f)) bs = 1.0f;
+    g_gamepadBuildCursorSensitivity = bs;
+  }
+
+  /* Gamepad — build-cursor behaviour options. */
+  GetPrivateProfileString("SETTINGS", "Build Exit Executes", "No", buff, FILENAME_MAX, prefsFile);
+  g_buildExitExecutes = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("SETTINGS", "Build Double Tap Road", "Yes", buff, FILENAME_MAX, prefsFile);
+  g_buildDoubleTapRoad = YESNO_TO_TRUEFALSE(buff[0]);
+  GetPrivateProfileString("SETTINGS", "Build Hold Momentary", "Yes", buff, FILENAME_MAX, prefsFile);
+  g_buildHoldMomentary = YESNO_TO_TRUEFALSE(buff[0]);
+
   /* Phase 8.1 — Controller Mode pref (Off / On / Auto).  Default Auto on
      desktop so a player who plugs in a pad is offered the prompt; the
      prompt itself can be silenced via "Ask when controller connected".
@@ -2431,6 +2456,17 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* Gamepad — right-stick scroll sensitivity multiplier. */
   snprintf(buff, sizeof(buff), "%.2f", g_gamepadScrollSensitivity);
   WritePrivateProfileString("SETTINGS", "Gamepad Scroll Sens", buff, prefsFile);
+
+  /* Gamepad — left-stick tank-move + build-cursor move sensitivities. */
+  snprintf(buff, sizeof(buff), "%.2f", g_gamepadTankSensitivity);
+  WritePrivateProfileString("SETTINGS", "Gamepad Tank Sens", buff, prefsFile);
+  snprintf(buff, sizeof(buff), "%.2f", g_gamepadBuildCursorSensitivity);
+  WritePrivateProfileString("SETTINGS", "Gamepad Build Cursor Sens", buff, prefsFile);
+
+  /* Gamepad — build-cursor behaviour options. */
+  WritePrivateProfileString("SETTINGS", "Build Exit Executes",   TRUEFALSE_TO_STR(g_buildExitExecutes), prefsFile);
+  WritePrivateProfileString("SETTINGS", "Build Double Tap Road", TRUEFALSE_TO_STR(g_buildDoubleTapRoad), prefsFile);
+  WritePrivateProfileString("SETTINGS", "Build Hold Momentary",  TRUEFALSE_TO_STR(g_buildHoldMomentary), prefsFile);
 
   /* Phase 8.1 — Controller Mode pref + prompt-on-connect flag. */
   intToStr((int)uiControllerModeGet(), buff, sizeof(buff));

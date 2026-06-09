@@ -38,6 +38,7 @@ extern "C" {
 #include "../glyphs.h"
 #include "../input.h"
 #include "../input_gamepad.h"  /* GamepadBindings — controller tab */
+#include "../build_cursor.h"   /* build-cursor behaviour option flags */
 #include "../../winbolo.h"
 #include "../../lang.h"
 #include "../../ui_mode.h"
@@ -245,6 +246,31 @@ static void controllerRow(const char *label, GamepadAction act) {
     ImGui::TableSetColumnIndex(4); padSlotChange (act, GP_SLOT_SECONDARY);
 }
 
+/* Full-width sensitivity slider row: label in the Action column, slider in the
+   Primary column. Lower = finer control (slower movement per stick deflection).
+   Binds the global live; the OK handler flushes it to prefs. */
+/* Full-width checkbox row: the checkbox (with its label) sits in the Action
+   column so options line up under the related bindings. */
+static void checkboxRow(const char *label, bool *value) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::Checkbox(label, value);
+}
+
+static void sensitivityRow(const char *label, float *value,
+                           float vmin, float vmax, const char *fmt) {
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(label);
+    ImGui::TableSetColumnIndex(1);
+    ImGui::PushID(value);
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::SliderFloat("##sens", value, vmin, vmax, fmt)) {
+        if (*value < vmin) *value = vmin;
+        if (*value > vmax) *value = vmax;
+    }
+    ImGui::PopID();
+}
+
 /* -------------------------------------------------------
  * Shared form body — drawn by BOTH the standalone blocking
  * dialog (imguiKeySetupShow) AND the in-game popup wrapper
@@ -387,6 +413,10 @@ static int renderFormBody(struct ClientSim *cs) {
             ImGui::TableSetupColumn("Secondary", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed, 68.0f);
             ImGui::TableHeadersRow();
+            /* Left stick = tank move; its sensitivity slider sits at the top.
+               10%-100%: 100% = snap (current), 50% = turn tracks stick 1:1. */
+            sensitivityRow("Tank turn sensitivity", &g_gamepadTankSensitivity,
+                           0.10f, 1.00f, "%.2f");
             controllerRow(langGetText(STR_GP_ACTION_FIRE),                GP_ACT_FIRE);
             controllerRow(langGetText(STR_GP_ACTION_MINE),                GP_ACT_MINE);
             controllerRow(langGetText(STR_GP_ACTION_GUNSIGHT_INC),        GP_ACT_GUNSIGHT_INC);
@@ -395,6 +425,16 @@ static int renderFormBody(struct ClientSim *cs) {
             controllerRow(langGetText(STR_GP_ACTION_BUILD_PREV),          GP_ACT_BUILD_PREV);
             controllerRow(langGetText(STR_GP_ACTION_BUILD_NEXT),          GP_ACT_BUILD_NEXT);
             controllerRow(langGetText(STR_GP_ACTION_BUILD_CURSOR_TOGGLE), GP_ACT_BUILD_CURSOR_TOGGLE);
+            sensitivityRow("Build cursor sensitivity", &g_gamepadBuildCursorSensitivity,
+                           0.25f, 2.00f, "%.2fx");
+            /* Build-cursor behaviour options, grouped under the toggle. */
+            checkboxRow("Hold for momentary mode",  &g_buildHoldMomentary);
+            checkboxRow("Double-tap builds a road", &g_buildDoubleTapRoad);
+            checkboxRow("Exiting executes build",   &g_buildExitExecutes);
+            /* Cancel-build binding only matters when exiting executes a build. */
+            if (g_buildExitExecutes) {
+                controllerRow("Cancel build (no build)", GP_ACT_BUILD_CANCEL);
+            }
             controllerRow(langGetText(STR_GP_ACTION_VIEW_CYCLE),          GP_ACT_VIEW_CYCLE);
             controllerRow(langGetText(STR_GP_ACTION_VIEW_PLAYERS),        GP_ACT_VIEW_PLAYERS);
             controllerRow(langGetText(STR_GP_ACTION_QUICK_CHAT),          GP_ACT_QUICK_CHAT);

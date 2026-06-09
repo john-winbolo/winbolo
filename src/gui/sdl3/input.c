@@ -26,6 +26,7 @@
 *********************************************************/
 
 #include <SDL3/SDL.h>
+#include <math.h>
 #include "global.h"
 #include "client_sim.h"
 #include "client_render.h"
@@ -269,17 +270,34 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
      build cursor is active the right stick steers the cursor instead
      of scrolling — buildCursorTick handles its own camera follow, so
      the scroll path gets no contribution from the stick that frame. */
+  g_dbgCursorStickMag = 0.0f;
+  g_dbgCursorMoveMag  = 0.0f;
   if (inputGamepadIsConnected()) {
     float fdx = 0.0f, fdy = 0.0f;
     if (inputGamepadGetScrollDirection(&fdx, &fdy)) {
-      int gx = (int)(fdx * (float)step);
-      int gy = (int)(fdy * (float)step);
+      /* getScrollDirection returns the raw reach-scaled vector; apply the
+         relevant sensitivity here — build-cursor sensitivity while the cursor
+         is active, map-scroll sensitivity otherwise — so the two are tuned
+         independently. */
+      bool buildActive = buildCursorIsActive();
+      float sens = buildActive ? g_gamepadBuildCursorSensitivity
+                               : g_gamepadScrollSensitivity;
+      int gx = (int)(fdx * (float)step * sens);
+      int gy = (int)(fdy * (float)step * sens);
+      if (buildActive) {
+        /* DEBUG: right-stick reach and the resulting cursor move speed
+           (reach * sensitivity), both clamped to 0..1. */
+        float reach = sqrtf(fdx * fdx + fdy * fdy);
+        float mv    = reach * g_gamepadBuildCursorSensitivity;
+        g_dbgCursorStickMag = reach > 1.0f ? 1.0f : reach;
+        g_dbgCursorMoveMag  = mv > 1.0f ? 1.0f : mv;
+      }
       /* Min 1px nudge so deadzone-grazing input still moves. */
       if (gx == 0 && fdx >  0.0f) gx =  1;
       if (gx == 0 && fdx <  0.0f) gx = -1;
       if (gy == 0 && fdy >  0.0f) gy =  1;
       if (gy == 0 && fdy <  0.0f) gy = -1;
-      if (buildCursorIsActive()) {
+      if (buildActive) {
         buildCursorTick(cs, gx, gy);
       } else {
         dx += gx;
@@ -314,6 +332,21 @@ void inputCleanup(void) {
 *  No-op for SDL3.
 *********************************************************/
 void inputActivate(void) {
+}
+
+/* End build-cursor mode.  When `execute` and the "exit executes the build"
+   option are both set, dispatch the build at the cursor tile first (keeping
+   the current build selection); then exit.  Cancel passes execute=false. */
+static void buildCursorEnd(ClientSim *cs, bool execute) {
+  if (execute && g_buildExitExecutes && buildCursorIsActive()) {
+    BYTE bx = 0, by = 0;
+    if (buildCursorGetTile(&bx, &by)) {
+      clientMutexWaitFor();
+      clientSimManMoveToMap(cs, bx, by, clientSimGetCurrentBuildSelect(cs));
+      clientMutexRelease();
+    }
+  }
+  buildCursorExit();
 }
 
 /*********************************************************
@@ -378,8 +411,100 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
       sdl3DrawSelectIndentsOn(clientSimGetCurrentBuildSelect(cs), 0, 0);
     }
 
-    if (inputGamepadIsBuildCursorToggleEdge()) {
-      buildCursorToggle(cs);
+    /* Build-cursor toggle gesture:
+         - quick tap     -> toggle cursor mode (sticky);
+         - hold >200ms   -> momentary (opt): cursor on while held, off on
+                            release — "quick build, then back to autoscroll";
+         - double-tap    -> (opt) build a road directly under the tank, leaving
+                            the build selection and cursor position unchanged.
+       Turning cursor mode OFF dispatches the build first when the "exiting
+       executes the build" option is on; the Cancel binding exits without it. */
+    {
+      const Uint32 BC_HOLD_MS = 200;
+      const Uint32 BC_DTAP_MS = 300;
+      static Uint32 s_bcDownTime        = 0;
+      static bool   s_bcPressed         = false;
+      static bool   s_bcHeldMode        = false;
+      static bool   s_bcWasOffAtPress   = false;
+      static bool   s_bcModeBeforePress = false;
+      static bool   s_bcDoubleTap       = false;
+      static Uint32 s_bcLastReleaseTime = 0;
+      static bool   s_bcTapPending      = false;
+
+      Uint32 nowMs  = SDL_GetTicks();
+      bool   bcHeld = inputGamepadIsBuildCursorToggleHeld();
+
+      /* Cancel binding: leave build mode without building, whatever the
+         exit-executes option says.  Reset the gesture state too. */
+      if (inputGamepadIsBuildCancelEdge()) {
+        if (buildCursorIsActive()) buildCursorExit();
+        s_bcPressed = false; s_bcDoubleTap = false;
+        s_bcTapPending = false; s_bcHeldMode = false;
+      }
+
+      if (inputGamepadIsBuildCursorToggleEdge()) {
+        if (g_buildDoubleTapRoad && s_bcTapPending &&
+            (nowMs - s_bcLastReleaseTime) <= BC_DTAP_MS) {
+          /* Second tap of a double-tap: build a road under the tank.  Pass
+             BsRoad explicitly so the player's current build selection is left
+             alone, and don't touch the cursor position.  Undo the first tap's
+             toggle so build mode ends up where it started (plain exit — not a
+             build-on-exit). */
+          BYTE tx = 0, ty = 0;
+          if (clientSimGetMyTankMapPos(cs, &tx, &ty)) {
+            clientMutexWaitFor();
+            clientSimManMoveToMap(cs, tx, ty, BsRoad);
+            clientMutexRelease();
+          }
+          if (buildCursorIsActive() != s_bcModeBeforePress) {
+            buildCursorToggle(cs);
+          }
+          s_bcTapPending = false;
+          s_bcDoubleTap  = true;
+          s_bcPressed    = true;
+          s_bcDownTime   = nowMs;
+          s_bcHeldMode   = false;
+        } else {
+          /* Fresh press — toggle immediately (operate as usual). */
+          s_bcModeBeforePress = buildCursorIsActive();
+          s_bcWasOffAtPress   = !buildCursorIsActive();
+          if (buildCursorIsActive()) {
+            buildCursorEnd(cs, /*execute=*/true);   /* tap-off: build-on-exit */
+          } else {
+            buildCursorToggle(cs);                  /* turn on */
+          }
+          s_bcPressed    = true;
+          s_bcDownTime   = nowMs;
+          s_bcHeldMode   = false;
+          s_bcDoubleTap  = false;
+          s_bcTapPending = false;
+        }
+      }
+
+      /* Arm momentary mode once held past the threshold (only when enabled and
+         this press turned the cursor ON). */
+      if (g_buildHoldMomentary && s_bcPressed && !s_bcDoubleTap &&
+          s_bcWasOffAtPress && !s_bcHeldMode &&
+          (nowMs - s_bcDownTime) > BC_HOLD_MS) {
+        s_bcHeldMode = true;
+      }
+
+      /* Release edge (held went false). */
+      if (s_bcPressed && !bcHeld) {
+        s_bcPressed = false;
+        if (s_bcDoubleTap) {
+          s_bcDoubleTap  = false;
+          s_bcTapPending = false;
+        } else if (s_bcHeldMode) {
+          /* Momentary release: end build mode (build-on-exit if enabled). */
+          buildCursorEnd(cs, /*execute=*/true);
+          s_bcTapPending = false;
+        } else {
+          /* Quick tap: keep it sticky; remember for a possible double-tap. */
+          s_bcLastReleaseTime = nowMs;
+          s_bcTapPending      = true;
+        }
+      }
     }
 
     if (inputGamepadIsViewPlayersEdge()) {
@@ -388,15 +513,17 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 
     if (inputGamepadIsBuilderConfirmEdge()) {
       BYTE bx, by;
-      if (buildCursorGetTile(&bx, &by)) {
-        /* Free build cursor active — dispatch to the cursor tile.
-           The cursor stays on (and at the same absolute tile) so the
-           player can fire repeated builds at the same spot, mirroring
-           how the mouse cursor outline persists between clicks. */
+      if (buildCursorGetTargetTile(&bx, &by)) {
+        /* Dispatch to the build cursor's stored target tile.  This works
+           whether cursor mode is ON or OFF: once a target has been set (by
+           the stick or the mouse) it persists, so the player can target a
+           tile, turn cursor mode off, drive out of range, and still Build Now
+           there. The target stays put for repeated builds at the same spot. */
         clientMutexWaitFor();
         clientSimManMoveToMap(cs, bx, by, clientSimGetCurrentBuildSelect(cs));
         clientMutexRelease();
       } else {
+        /* No target set yet — fall back to the gunsight tile. */
         BYTE gsX = 0, gsY = 0;
         clientSimGetGunsightTile(cs, &gsX, &gsY);
         clientMutexWaitFor();

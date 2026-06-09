@@ -91,7 +91,12 @@ static SDL_Renderer *gRenderer      = NULL;
 static SDL_Texture  *gBackgroundTex = NULL;
 static SDL_Texture  *gTilesTex      = NULL;
 static SDL_Texture  *gCrosshairTex  = NULL;  /* crosshairs_17x17.png — center pixel (8,8) is aim point */
+static bool          gCursorFaint   = false; /* draw the build-mode cursor at 25% alpha (locked target, build mode off) */
 static int           gZoomFactor    = 1;
+
+void sdl3DrawSetCursorFaint(bool faint) {
+  gCursorFaint = faint;
+}
 static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * gSheetScale */
 
 /* Phase 4 render-target textures.
@@ -607,12 +612,20 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       cursorMove((int)gameX, (int)gameY);
       BYTE cx = 0, cy = 0;
       if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
-        /* Mouse over the main view also drives the shared build cursor so
-           mouse and gamepad placement stay in sync.  cx/cy are 1-based
-           screen tiles (1..15); absolute map tile = view offset + screen
-           tile. Done before the legacy >16 guard mutates cx. */
-        buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
-                           (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
+        /* While build/cursor mode is ACTIVE the mouse also drives the shared
+           build cursor so mouse and gamepad placement stay in sync.  Only when
+           active — otherwise a stray mouse motion (or a focus event) while the
+           cursor is off would overwrite the position the gamepad left it at,
+           so toggling back on would jump to the mouse instead of resuming.
+           cx/cy are 1-based screen tiles; absolute map tile = offset + tile. */
+        /* Only on real pointer movement — skip zero-delta motion events (focus
+           changes, warps) so they can't disturb the build cursor.  The build
+           cursor itself also ignores the mouse right after controller input. */
+        if (buildCursorIsActive() &&
+            (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f)) {
+          buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
+                             (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
+        }
         if (cx > 16 || cy > 16) cx = 100;
         clientSimSetCursorPos(cs, cx, cy);
       } else {
@@ -1609,7 +1622,12 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         float curDestX = (float)(originX + ((int)cursorLeft - 1) * tileW - edgeX);
         float curDestY = (float)(originY + ((int)cursorTop  - 1) * tileH - edgeY);
         SDL_FRect curDest = { curDestX, curDestY, (float)tileW, (float)tileH };
+        /* Faint (50% alpha) when drawing a locked build target with build
+           mode off; solid otherwise. Restore alpha after so other gTilesTex
+           draws this frame are unaffected. */
+        if (gCursorFaint) SDL_SetTextureAlphaMod(gTilesTex, 128);
         SDL_RenderTexture(gRenderer, gTilesTex, &curSrc, &curDest);
+        if (gCursorFaint) SDL_SetTextureAlphaMod(gTilesTex, 255);
 
         /* DEBUG: log the cursor square position relative to the render
          * origin and edgeX, so a "square doesn't match mouse" report can
