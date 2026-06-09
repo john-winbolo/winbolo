@@ -2688,9 +2688,17 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
      * so the deferred-join core can tell a fresh registration (key
      * absent->present) from an idempotent rekey resend. */
     bool wasParticipant = winboloNetIsPlayerParticipant(slot);
+    /* For a pending provisional claim the slot's display name is the temp
+     * -unverified[-N] handed out at join; WBN must verify and attribute
+     * under the real account display name, which is the stored desired bare
+     * name.  Non-claim reauths verify under the slot's own name as before. */
+    bool isPendingClaim = udpServer.clients[slot].claimPending;
+    const char *verifyName = isPendingClaim
+        ? udpServer.clients[slot].claimDesiredName
+        : udpServer.clients[slot].playerName;
     errorMsg[0] = '\0';
     if (winboloNetVerifyClientKey(token,
-                                  udpServer.clients[slot].playerName,
+                                  verifyName,
                                   slot, errorMsg,
                                   &hasSteam, &wbnIsSupporter)) {
         /* Re-merge using the clientHints captured at JOIN_REQUEST (the
@@ -2720,6 +2728,67 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
         if (serverSimGetState(sim) == serverStateLobby ||
             serverSimGetState(sim) == serverStateCountdown) {
             serverSimPublishLobbySlot(sim, slot);
+        }
+
+        /* Resolve a pending provisional claim: verify ran under the desired
+         * bare name above, so attribution is correct; now reconcile the local
+         * display.  Three outcomes by who holds the bare name now. */
+        if (isPendingClaim) {
+            const char *desired = udpServer.clients[slot].claimDesiredName;
+            int s;
+            int holder = -1;
+            for (s = 0; s < MAX_TANKS; s++) {
+                if (s == (int)slot) continue;
+                if (!udpServer.clients[s].connected) continue;
+                if (playerNameCompare(udpServer.clients[s].playerName,
+                                      desired) == 0) {
+                    holder = s;
+                    break;
+                }
+            }
+
+            if (holder < 0) {
+                /* Bare name free — the squatter left during grace.  Promote
+                 * straight to the bare name. */
+                serverSimSetPlayerName(sim, slot, desired);
+                serverSimPublishLobbySlot(sim, slot);
+                snprintf(udpServer.clients[slot].playerName,
+                         PACKET_MAX_PLAYER_NAME, "%s", desired);
+                udpServer.clients[slot].nameStickySuffix = false;
+            } else if ((playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs,
+                                              (BYTE)holder)
+                        & PLAYER_FLAG_WBN_VERIFIED) == 0) {
+                /* Unverified squatter still holds the bare name.  Rename it
+                 * off first (it must vacate before the joiner claims), then
+                 * promote this slot.  If the squatter's suffix pool is
+                 * exhausted, keep this slot on its temp name. */
+                char squatterName[PACKET_MAX_PLAYER_NAME];
+                if (serverChooseUnverifiedSuffix(
+                        udpServer.clients[holder].playerName, holder,
+                        squatterName, sizeof(squatterName))) {
+                    serverPreemptRename(sim, holder, squatterName,
+                                        desired,
+                                        udpServer.clients[slot].countryCode);
+                    /* Plain set, NOT serverPreemptRename — that would emit a
+                     * spurious "renamed by verified player" naming the joiner
+                     * as its own victim. */
+                    serverSimSetPlayerName(sim, slot, desired);
+                    serverSimPublishLobbySlot(sim, slot);
+                    snprintf(udpServer.clients[slot].playerName,
+                             PACKET_MAX_PLAYER_NAME, "%s", desired);
+                    udpServer.clients[slot].nameStickySuffix = false;
+                }
+                /* else: squatter pool exhausted — stay on the temp name. */
+            }
+            /* else: a verified slot won the bare name (a second reclaimer won
+             * the race); keep this slot on its temp name permanently.  WBN
+             * attribution is already correct since verify ran under the bare
+             * name; only the local display stays suffixed. */
+
+            /* Clear the claim in every outcome.  desired aliases the buffer,
+             * so this clear must come after all uses of desired. */
+            udpServer.clients[slot].claimPending = false;
+            udpServer.clients[slot].claimDesiredName[0] = '\0';
         }
     } else {
         WB_LOG_WARN(WB_LOG_CAT_NET,
