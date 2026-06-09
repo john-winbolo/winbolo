@@ -1888,7 +1888,7 @@ target_link_libraries(winbolo_gym PRIVATE
     ${SERVER_LINK_GROUP}
     bot_brains_static)
 target_link_libraries(winbolo_gym PRIVATE
-    SDL3::SDL3 minizip lua_static utf8proc)
+    SDL3::SDL3 minizip lua_static utf8proc cjson)
 
 if(OpenMP_C_FOUND)
     target_link_libraries(winbolo_gym PRIVATE OpenMP::OpenMP_C)
