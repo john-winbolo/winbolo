@@ -613,61 +613,37 @@ static void serverQuiesceGameTimer(void) {
 
 void printArgs() {
 #ifdef _WIN32
-  fprintf(stderr, "Usage:\nWinBoloDS -map <Filename> -port <Port> -gametype <GameType> -mines <Mines> -ai <AiType> -delay <Delay> -limit <Limit> -tracker <Tracker> -wbnhost <Host> -password <Password>\n\n");
+  fprintf(stderr, "Usage:\nWinBoloDS -map <Filename> -port <Port> -gametype <GameType> [options]\n\n");
 #else
-  fprintf(stderr, "Usage:\nLinBoloDS -map <Filename> -port <Port> -gametype <GameType> -mines <Mines> -ai <AiType> -delay <Delay> -limit <Limit> -tracker <Tracker> -wbnhost <Host> -password <Password>\n\n");
+  fprintf(stderr, "Usage:\nLinBoloDS -map <Filename> -port <Port> -gametype <GameType> [options]\n\n");
 #endif
-  fprintf(stderr, "<Filename>    - Path and file name of the map file to open (-inbuilt can be used\n");
-  fprintf(stderr, "                instead of -map to enable inbuilt map Everard Island)\n");
+  fprintf(stderr, "Map selection:\n");
+  fprintf(stderr, "-map <File>   - Path and file name of the map file to open (-inbuilt can be\n");
+  fprintf(stderr, "                used instead of -map to enable inbuilt map Everard Island)\n");
   fprintf(stderr, "-mapdir <Dir> - Directory of .map files for random rotation between rounds.\n");
   fprintf(stderr, "                Can be used with -map (initial map) or alone (random first map).\n");
   fprintf(stderr, "                Requires lobby mode. Invalid maps are skipped at startup.\n");
-  fprintf(stderr, "<Port>        - Port to run the server on\n");
-  fprintf(stderr, "<GameType>    - Specifies the game type: \"Open\" or \"Tournament\" or \"Strict\"\n");
-  fprintf(stderr, "\nOptional\n");
-  fprintf(stderr, "<Mines>       - Specifies allowing hidden mines: \"yes\" for allow,\n");
+  fprintf(stderr, "-randommap    - Generate a random procedural map instead of loading a file.\n");
+  fprintf(stderr, "                -randommap alone generates a fully random map each round.\n");
+  fprintf(stderr, "                -randommap tournament|natural|maze|fractal — specific generator type.\n");
+  fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
+  fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
+  fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
+
+  fprintf(stderr, "\nGame rules:\n");
+  fprintf(stderr, "-gametype <T> - Specifies the game type: \"Open\" or \"Tournament\" or \"Strict\"\n");
+  fprintf(stderr, "-mines <M>    - Specifies allowing hidden mines: \"yes\" for allow,\n");
   fprintf(stderr, "                \"no\" for disallow (on if not specified)\n" );
-  fprintf(stderr, "<AiType>      - Specifies allowing brains. Valid values are \"no\" for\n");
+  fprintf(stderr, "-ai <AiType>  - Specifies allowing brains. Valid values are \"no\" for\n");
   fprintf(stderr, "                disallowing, \"yes\" for allowing, \"yesAdv\" for giving\n");
   fprintf(stderr, "                them an advantage, or \"yesFull\" for full map advantage.\n");
   fprintf(stderr, "                (disallowed if not specified)\n");
-  fprintf(stderr, "<Delay>       - Specifies the start delay (in seconds) (none if not specified)\n");
-  fprintf(stderr, "<Limit>       - Specifies the game time limit (in minutes)\n");
+  fprintf(stderr, "-delay <D>    - Specifies the start delay (in seconds) (none if not specified)\n");
+  fprintf(stderr, "-limit <L>    - Specifies the game time limit (in minutes)\n");
   fprintf(stderr, "                \"-1\" for no time limit (none if not specified)\n");
-  fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
-  fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
-  fprintf(stderr, "-ticklimit <N> - End the current game (transition to GAME_OVER) after N\n");
-  fprintf(stderr, "                game-ticks of running play. Unlike -ticks, the server is\n");
-  fprintf(stderr, "                not asked to exit; in lobby mode the round returns to lobby.\n");
-  fprintf(stderr, "<Password>    - Game Password (none if not specified)\n");
-  fprintf(stderr, "<tracker>     - Internet tracker to notify. Options:\n");
-  fprintf(stderr, "                -tracker alone uses default (%s:%d)\n", DEFAULT_TRACKER_ADDR, DEFAULT_TRACKER_PORT);
-  fprintf(stderr, "                -tracker <host> uses <host> with default port %d\n", DEFAULT_TRACKER_PORT);
-  fprintf(stderr, "                -tracker <host:port> uses the specified host and port\n\n");
-  fprintf(stderr, "-quiet        - No screen input or output (silent mode)\n");
-  fprintf(stderr, "-noinput      - No keyboard input\n");
-  fprintf(stderr, "-addr         - Specify a different address to use if avaliable\n");
-  fprintf(stderr, "-autoclose    - Automatically quit the server when all players have left\n");
-  fprintf(stderr, "                the game\n");
-  fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
-  fprintf(stderr, "                Bare hostname uses https (e.g. -wbnhost wbn.winbolo.net),\n");
-  fprintf(stderr, "                or specify scheme (e.g. -wbnhost http://wbn.winbolo.net)\n");
-  fprintf(stderr, "-nowinbolonet - Do not participate in winbolo.net game tracking\n");
-  fprintf(stderr, "-logfile      - Write all output to file instead of console.\n");
-  fprintf(stderr, "-maxplayers   - Specifies the maximum number of players that can be on this\n");
-  fprintf(stderr, "                server.\n");
-  fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
-  fprintf(stderr, "-log [name]   - Create game log file. Optional [name] is a filename, or a\n");
-  fprintf(stderr, "                directory (e.g. -log /tmp) to auto-name the log inside it.\n");
-  fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
-  fprintf(stderr, "-statusFile	 - Save list of unlocked players to a file.\n");
-  fprintf(stderr, "-threads <N>  - Total concurrent bot-think runners including the main\n");
-  fprintf(stderr, "                thread. 1 disables the worker pool. Default: logical cores.\n");
-  fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
-  fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
-  fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
-  fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
-  fprintf(stderr, "                them, or a different one to fight against them.\n");
+  fprintf(stderr, "-password <P> - Game Password (none if not specified)\n");
+
+  fprintf(stderr, "\nLobby & host:\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
   fprintf(stderr, "-autolock     - Start with auto-lock-on-game-start enabled\n");
   fprintf(stderr, "-ranked       - Start with the lobby flagged Ranked (also forces auto-lock-on-game-start)\n");
@@ -678,18 +654,64 @@ void printArgs() {
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
   fprintf(stderr, "                autolock, password, ranked, openhost, map.\n");
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
+  fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
+  fprintf(stderr, "                server.\n");
+
+  fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
+  fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
+  fprintf(stderr, "                \"allow\" plays the upload in memory and drops it on the next\n");
+  fprintf(stderr, "                map change (default), \"persist\" also saves it to\n");
+  fprintf(stderr, "                data/maps/Uploads/.\n");
+  fprintf(stderr, "-uploadmaxfiles <N> - Max stored upload files in persist mode (1-255,\n");
+  fprintf(stderr, "                default 64).\n");
+  fprintf(stderr, "-uploadmaxstorage <MB> - Max upload storage in persist mode (1-4096 MB,\n");
+  fprintf(stderr, "                default 8).\n");
+
+  fprintf(stderr, "\nBots & AI:\n");
+  fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
+  fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
+  fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
+  fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
+  fprintf(stderr, "                them, or a different one to fight against them.\n");
+  fprintf(stderr, "-threads <N>  - Total concurrent bot-think runners including the main\n");
+  fprintf(stderr, "                thread. 1 disables the worker pool. Default: logical cores.\n");
+
+  fprintf(stderr, "\nNetworking:\n");
+  fprintf(stderr, "-port <Port>  - Port to run the server on\n");
+  fprintf(stderr, "-addr         - Specify a different address to use if avaliable\n");
+  fprintf(stderr, "-tracker      - Internet tracker to notify. Options:\n");
+  fprintf(stderr, "                -tracker alone uses default (%s:%d)\n", DEFAULT_TRACKER_ADDR, DEFAULT_TRACKER_PORT);
+  fprintf(stderr, "                -tracker <host> uses <host> with default port %d\n", DEFAULT_TRACKER_PORT);
+  fprintf(stderr, "                -tracker <host:port> uses the specified host and port\n");
+  fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
+  fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
+  fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
+  fprintf(stderr, "                Bare hostname uses https (e.g. -wbnhost wbn.winbolo.net),\n");
+  fprintf(stderr, "                or specify scheme (e.g. -wbnhost http://wbn.winbolo.net)\n");
+  fprintf(stderr, "-nowinbolonet - Do not participate in winbolo.net game tracking\n");
+
+  fprintf(stderr, "\nLifecycle & shutdown:\n");
+  fprintf(stderr, "-autoclose    - Automatically quit the server when all players have left\n");
+  fprintf(stderr, "                the game\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
   fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
   fprintf(stderr, "-emptyresetmins <N> - Minutes before empty server resets to lobby (default: 5)\n");
-  fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
-  fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
-  fprintf(stderr, "-randommap        - Generate a random procedural map instead of loading a file.\n");
-  fprintf(stderr, "                    -randommap alone generates a fully random map each round.\n");
-  fprintf(stderr, "                    -randommap tournament|natural|maze|fractal — specific generator type.\n");
-  fprintf(stderr, "                    -randommap <seed> — reproduce a specific map from its seed.\n");
-  fprintf(stderr, "                    -randommap tournament <seed> — type with specific seed.\n");
-  fprintf(stderr, "                    Map name shown as 'rand_<seed>' in server info.\n");
+  fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
+  fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
+  fprintf(stderr, "-ticklimit <N> - End the current game (transition to GAME_OVER) after N\n");
+  fprintf(stderr, "                game-ticks of running play. Unlike -ticks, the server is\n");
+  fprintf(stderr, "                not asked to exit; in lobby mode the round returns to lobby.\n");
+
+  fprintf(stderr, "\nLogging & diagnostics:\n");
+  fprintf(stderr, "-log [name]   - Create game log file. Optional [name] is a filename, or a\n");
+  fprintf(stderr, "                directory (e.g. -log /tmp) to auto-name the log inside it.\n");
+  fprintf(stderr, "-logfile      - Write all output to file instead of console.\n");
+  fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
+  fprintf(stderr, "-statusFile   - Save list of unlocked players to a file.\n");
+  fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
+  fprintf(stderr, "-quiet        - No screen input or output (silent mode)\n");
+  fprintf(stderr, "-noinput      - No keyboard input\n");
 }
 
 
