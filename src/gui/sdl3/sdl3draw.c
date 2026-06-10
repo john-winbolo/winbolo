@@ -896,10 +896,14 @@ bool sdl3DrawSetup(int zoomFactor) {
 
 #ifdef __EMSCRIPTEN__
   /* Pre-size the canvas so SDL3's external_size probe sees the right
-     dimensions (it temporarily sets the canvas to 1x1 and checks CSS). */
+     dimensions (it temporarily sets the canvas to 1x1 and checks CSS).
+     SDL3's Emscripten backend creates the window at the existing canvas
+     size rather than honouring the size passed to SDL_CreateWindow, so
+     this must already include the menu-bar row — otherwise the window
+     ends up 22px short and the game blits at a non-integer downscale. */
   {
     int cw = zoomFactor * SDL3_SCREEN_W;
-    int ch = zoomFactor * SDL3_SCREEN_H;
+    int ch = zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT;
     emscripten_set_canvas_element_size("#canvas", cw, ch);
     emscripten_set_element_css_size("#canvas", (double)cw, (double)ch);
   }
