@@ -1112,13 +1112,17 @@ bool sdl3DrawSetup(int zoomFactor) {
                      gFallbackFontKD, gFallbackFontLabel,
                      gTankBarsTex, gBaseBarsTex);
 
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__IPHONEOS__)
-  /* Desktop resizable: create a render target for the game content.
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+  /* Desktop + wasm: create a render target for the game content.
      The game is rendered at its logical size, then blitted scaled to the
      window below the menu bar. This allows the menu to stay at 1x size
-     while the game scales.  Skipped on Deck — logical presentation
-     already upscales the whole layout, an extra RT would re-introduce a
-     1x rasterization step that defeats the font sharpness. */
+     while the game scales, and gives windowToGameCoords a defined
+     gGameDestRect so mouse clicks map back to game cells. (On Emscripten
+     the window is never resizable, so sdl3DrawAdaptRenderTarget is a
+     no-op and this target persists for the session.) Skipped on Deck —
+     logical presentation already upscales the whole layout, an extra RT
+     would re-introduce a 1x rasterization step that defeats the font
+     sharpness. */
   if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
     gGameRTWidth  = gZoomFactor * SDL3_SCREEN_W;
     gGameRTHeight = gZoomFactor * SDL3_SCREEN_H;
