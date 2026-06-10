@@ -296,8 +296,7 @@ SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType);
 *                CLIENT_TYPE_UNKNOWN renders no platform icon.
 *  countryCode - 2-letter ISO 3166 code, "" or "XX" for
 *                unknown
-*  showCountry - whether to render the country flag (the
-*                "Show country flags in chat" preference)
+*  showCountry - whether to render the country flag
 *********************************************************/
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry);

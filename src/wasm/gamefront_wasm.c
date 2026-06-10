@@ -626,14 +626,6 @@ void gameFrontSetLanguageCode(const char *code) {
   (void)code;
 }
 
-bool gameFrontGetShowCountryFlagsInChat(void) {
-  return FALSE;
-}
-
-void gameFrontSetShowCountryFlagsInChat(bool show) {
-  (void)show;
-}
-
 void gameFrontRequestPlayTutorial(void) {
 }
 

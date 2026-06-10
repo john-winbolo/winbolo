@@ -183,11 +183,6 @@ bool gameFrontUseNatTraversal = TRUE;
  * can toggle it back on from the Settings dialog at any time. */
 static bool gameFrontShowTutorialButton = TRUE;
 
-/* Country-flag rendering in chat / newswire / players panels. Default
- * TRUE; WBN and Steam badges are always shown when present and are not
- * gated on this preference. */
-static bool gameFrontShowCountryFlagsInChat = TRUE;
-
 /* Persisted BCP-47 language code (e.g. "en", "de", "pt-br"). Empty
  * string means the user has not picked one yet — Phase 5 startup runs
  * langAutoDetect() in that case. */
@@ -1685,16 +1680,6 @@ void gameFrontSetShowTutorialButton(bool show) {
                             TRUEFALSE_TO_STR(show));
 }
 
-bool gameFrontGetShowCountryFlagsInChat(void) {
-  return gameFrontShowCountryFlagsInChat;
-}
-
-void gameFrontSetShowCountryFlagsInChat(bool show) {
-  gameFrontShowCountryFlagsInChat = show;
-  prefsSetString("SETTINGS", "Show Country Flags In Chat",
-                            TRUEFALSE_TO_STR(show));
-}
-
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -2528,10 +2513,6 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   /* Tutorial visibility — defaults to "Yes" (show on first run). */
   prefsGetString("SETTINGS", "Show Tutorial Button", "Yes", buff, FILENAME_MAX);
   gameFrontShowTutorialButton = YESNO_TO_TRUEFALSE(buff[0]);
-
-  /* Country-flag rendering in chat / newswire — defaults to "Yes". */
-  prefsGetString("SETTINGS", "Show Country Flags In Chat", "Yes", buff, FILENAME_MAX);
-  gameFrontShowCountryFlagsInChat = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Language code (BCP-47, e.g. "en", "de", "pt-br"). Empty string on
    * fresh install — startup walks SDL_GetPreferredLocales() in that

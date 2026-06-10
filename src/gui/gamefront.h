@@ -505,22 +505,6 @@ bool gameFrontGetShowTutorialButton(void);
 void gameFrontSetShowTutorialButton(bool show);
 
 /*********************************************************
-*NAME:          gameFrontGetShowCountryFlagsInChat
-*PURPOSE:
-* Whether the chat / newswire / players panels should render the
-* country flag next to a player's name. Defaults to TRUE; the WBN /
-* Steam badges are not gated by this preference.
-*********************************************************/
-bool gameFrontGetShowCountryFlagsInChat(void);
-
-/*********************************************************
-*NAME:          gameFrontSetShowCountryFlagsInChat
-*PURPOSE:
-* Sets the country-flag-in-chat preference and persists it.
-*********************************************************/
-void gameFrontSetShowCountryFlagsInChat(bool show);
-
-/*********************************************************
 *NAME:          gameFrontGetLanguageCode
 *PURPOSE:
 * Reads the persisted BCP-47 language code (e.g. "en", "de", "pt-br")

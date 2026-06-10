@@ -1105,9 +1105,6 @@
 #define STR_NAME_INVALID_RESERVED_PREFIX    1212
 #define STR_NAME_INVALID_RESERVED_SUFFIX    1213
 
-/* Settings → Display: country-flag rendering preference (Phase 4). */
-#define STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS  1214
-
 /* Verified-priority collision policy (Phase 5). */
 #define STR_NAME_RENAMED_BY_VERIFIED        1215
 #define STR_NAME_TAKEN_BY_VERIFIED          1216

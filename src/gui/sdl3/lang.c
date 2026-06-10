@@ -1019,7 +1019,6 @@ static const LangEntry langTable[] = {
     {1211, "Player name mixes incompatible scripts."},
     {1212, "Player name cannot start with '*'."},
     {1213, "Player name cannot end with '-unverified'."},
-    {1214, "Show country flags in chat"},
     {1215, "{player} was renamed because {other} joined verified"},
     {1216, "That display name belongs to a verified player. Please pick another."},
     {1217, "That display name is in use by another verified player. Please pick another."},

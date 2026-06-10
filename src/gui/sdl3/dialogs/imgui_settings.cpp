@@ -597,13 +597,6 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndPopup();
             }
 
-            {
-                bool sf = gameFrontGetShowCountryFlagsInChat();
-                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS), &sf)) {
-                    gameFrontSetShowCountryFlagsInChat(sf);
-                }
-            }
-
 #if !BOLO_MOBILE
             {
                 bool as = (bool)autoScrollingEnabled;
