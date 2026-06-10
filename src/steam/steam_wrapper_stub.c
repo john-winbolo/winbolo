@@ -43,6 +43,8 @@ void steam_set_join_callback(SteamJoinCallback cb) {
 
 bool steam_is_steam_deck(void) { return false; }
 
+bool steam_is_big_picture(void) { return false; }
+
 /* -------- Steam Input stubs -------- */
 
 bool steam_input_init(void)             { return false; }

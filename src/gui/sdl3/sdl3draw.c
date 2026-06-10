@@ -55,6 +55,7 @@
 #include "../clientmutex.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
+#include "../../steam/steam_wrapper.h"
 #include "tileloader.h"
 #include "sdl_bmp.h"
 #include "glyphs.h"
@@ -902,13 +903,22 @@ bool sdl3DrawSetup(int zoomFactor) {
     gWindow = SDL_CreateWindow("WinBolo", 0, 0,
                                SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   } else {
+#if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
     gWindow = SDL_CreateWindow("WinBolo",
                                zoomFactor * SDL3_SCREEN_W,
                                zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT,
-#if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
                                0);
 #else
-                               SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
+    /* Big Picture / Gamepad UI: launch maximised so the game fills the
+       couch-mode surface.  Window size/position prefs are not persisted in
+       this mode (see gameFrontFlushWindowSettings). */
+    SDL_WindowFlags bigPictureFlag =
+        steam_is_big_picture() ? SDL_WINDOW_MAXIMIZED : 0;
+    gWindow = SDL_CreateWindow("WinBolo",
+                               zoomFactor * SDL3_SCREEN_W,
+                               zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT,
+                               SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN |
+                               bigPictureFlag);
 #endif
   }
   if (gWindow == NULL) {

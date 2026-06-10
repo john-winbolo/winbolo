@@ -451,24 +451,28 @@ int main(int argc, char *argv[]) {
           }
         }
 
-        SDL_SetWindowSize(sdlWin, targetW, targetH);
+        /* Big Picture / Gamepad UI: leave the window maximised (set at
+           creation) — don't size or reposition it from saved desktop prefs. */
+        if (!steam_is_big_picture()) {
+          SDL_SetWindowSize(sdlWin, targetW, targetH);
 
-        /* Restore saved window position from preferences, but ensure it's on this monitor */
-        {
-          int savedX, savedY;
-          windowGetSavedPosition(&savedX, &savedY);
-          if (savedX >= 0 && savedY >= 0) {
-            /* Clamp position to keep window on the target monitor */
-            if (savedX + targetW > usable.x + usable.w) savedX = usable.x + usable.w - targetW;
-            if (savedY + targetH > usable.y + usable.h) savedY = usable.y + usable.h - targetH;
-            if (savedX < usable.x) savedX = usable.x;
-            if (savedY < usable.y) savedY = usable.y;
-            SDL_SetWindowPosition(sdlWin, savedX, savedY);
-          } else {
-            /* Center on the dialog's monitor */
-            int centeredX = usable.x + (usable.w - targetW) / 2;
-            int centeredY = usable.y + (usable.h - targetH) / 2;
-            SDL_SetWindowPosition(sdlWin, centeredX, centeredY);
+          /* Restore saved window position from preferences, but ensure it's on this monitor */
+          {
+            int savedX, savedY;
+            windowGetSavedPosition(&savedX, &savedY);
+            if (savedX >= 0 && savedY >= 0) {
+              /* Clamp position to keep window on the target monitor */
+              if (savedX + targetW > usable.x + usable.w) savedX = usable.x + usable.w - targetW;
+              if (savedY + targetH > usable.y + usable.h) savedY = usable.y + usable.h - targetH;
+              if (savedX < usable.x) savedX = usable.x;
+              if (savedY < usable.y) savedY = usable.y;
+              SDL_SetWindowPosition(sdlWin, savedX, savedY);
+            } else {
+              /* Center on the dialog's monitor */
+              int centeredX = usable.x + (usable.w - targetW) / 2;
+              int centeredY = usable.y + (usable.h - targetH) / 2;
+              SDL_SetWindowPosition(sdlWin, centeredX, centeredY);
+            }
           }
         }
         SDL_ShowWindow(sdlWin);

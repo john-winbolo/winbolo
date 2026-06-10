@@ -32,6 +32,10 @@ void     steam_cancel_auth_ticket(void);
 /* True iff Steam is initialized and currently running on a Steam Deck. */
 bool     steam_is_steam_deck(void);
 
+/* True iff Steam is initialized and the app was launched into Big Picture /
+ * Gamepad UI mode (the couch/controller-first context). */
+bool     steam_is_big_picture(void);
+
 /* Stats & achievements */
 void     steam_increment_stat(const char *name, int amount);
 void     steam_set_achievement(const char *id);

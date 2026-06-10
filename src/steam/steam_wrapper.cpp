@@ -136,6 +136,12 @@ extern "C" bool steam_is_steam_deck(void) {
   return utils && utils->IsSteamRunningOnSteamDeck();
 }
 
+extern "C" bool steam_is_big_picture(void) {
+  if (!s_initialized) return false;
+  ISteamUtils *utils = SteamUtils();
+  return utils && utils->IsSteamInBigPictureMode();
+}
+
 /* -------- Steam Input --------
  * Path A of the two-path input model.  All lookups go through lazy
  * caches keyed by the action / set name string literal pointers from

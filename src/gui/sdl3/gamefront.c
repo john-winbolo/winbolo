@@ -2844,6 +2844,13 @@ static bool s_windowSettingsDirty = false;
 void gameFrontFlushWindowSettings(void) {
   char buff[FILENAME_MAX];
 
+  /* Big Picture / Gamepad UI runs maximised and transient — don't let that
+     overwrite the user's saved desktop window size/position. */
+  if (steam_is_big_picture()) {
+    s_windowSettingsDirty = false;
+    return;
+  }
+
   intToStr(zoomFactor, buff, sizeof(buff));
   prefsSetString("WINDOW", "Window Size", buff);
 
