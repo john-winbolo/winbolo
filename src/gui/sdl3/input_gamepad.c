@@ -55,6 +55,7 @@ static bool s_quickChatEdge      = false;
 static bool s_buildCursorToggleEdge = false;
 static bool s_viewPlayersEdge   = false;
 static bool s_buildCancelEdge   = false;
+static bool s_tankViewEdge      = false;
 static bool s_activeDisconnectedEdge = false;
 
 /* Per-trigger last-axis state for edge synthesis when a trigger is
@@ -161,6 +162,8 @@ static const char *kActionNames[GP_ACT_COUNT] = {
   "pause",
   "view_players",
   "build_cancel",
+  "lock_heading",
+  "tank_view",
 };
 
 const char *inputGamepadActionName(GamepadAction a) {
@@ -277,6 +280,7 @@ static void fireEdgeForAction(GamepadAction a) {
     case GP_ACT_BUILD_CURSOR_TOGGLE: s_buildCursorToggleEdge = true; break;
     case GP_ACT_VIEW_PLAYERS:       s_viewPlayersEdge      = true; break;
     case GP_ACT_BUILD_CANCEL:        s_buildCancelEdge       = true; break;
+    case GP_ACT_TANK_VIEW:           s_tankViewEdge          = true; break;
     default: break;
   }
 }
@@ -333,6 +337,7 @@ void inputGamepadInit(void) {
   s_buildCursorToggleEdge = false;
   s_viewPlayersEdge   = false;
   s_buildCancelEdge   = false;
+  s_tankViewEdge      = false;
   s_activeDisconnectedEdge = false;
   s_triggerWasPressed[0] = false;
   s_triggerWasPressed[1] = false;
@@ -779,6 +784,20 @@ bool inputGamepadIsBuildCancelEdge(void) {
   /* Native only — no Steam Input action exists for this optional binding. */
   bool v = s_buildCancelEdge;
   s_buildCancelEdge = false;
+  return v;
+}
+
+bool inputGamepadIsLockHeadingHeld(void) {
+  /* Native only — held while the bound button is down. */
+  if (path_a_active()) return false;
+  if (!s_activeGamepad) return false;
+  return actionIsHeld(GP_ACT_LOCK_HEADING);
+}
+
+bool inputGamepadIsTankViewEdge(void) {
+  /* Native only. */
+  bool v = s_tankViewEdge;
+  s_tankViewEdge = false;
   return v;
 }
 

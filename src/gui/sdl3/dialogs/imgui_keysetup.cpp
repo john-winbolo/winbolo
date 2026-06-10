@@ -152,10 +152,11 @@ static void keyRow(const char *label, KeySetupField field) {
         }
         imguiHandOnHover();
         ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-        if (ImGui::SmallButton("Clear")) {
+        if (ImGui::SmallButton("X")) {
             *ptr = 0;   /* SDL_SCANCODE_UNKNOWN — unbound */
         }
         imguiHandOnHover();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear");
     }
     ImGui::PopID();
 }
@@ -239,12 +240,13 @@ static void padSlotChange(GamepadAction act, GamepadSlot slot) {
         }
         imguiHandOnHover();
         ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
-        if (ImGui::SmallButton("Clear")) {
+        if (ImGui::SmallButton("X")) {
             GamepadBinding none; none.kind = GP_BIND_NONE; none.code = 0;
             if (slot == GP_SLOT_PRIMARY) s_pad.b[act].pri = none;
             else                         s_pad.b[act].sec = none;
         }
         imguiHandOnHover();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear");
     }
     ImGui::PopID();
 }
@@ -262,8 +264,7 @@ static void controllerRow(const char *label, GamepadAction act) {
 /* Full-width sensitivity slider row: label in the Action column, slider in the
    Primary column. Lower = finer control (slower movement per stick deflection).
    Binds the global live; the OK handler flushes it to prefs. */
-/* Full-width checkbox row, indented under the related binding.  An optional
-   tooltip explains the option on hover. */
+/* Checkbox row, indented under the related binding.  Optional hover tooltip. */
 static void checkboxRow(const char *label, bool *value, const char *tip) {
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
@@ -275,12 +276,15 @@ static void checkboxRow(const char *label, bool *value, const char *tip) {
 }
 
 static void sensitivityRow(const char *label, float *value,
-                           float vmin, float vmax, const char *fmt) {
+                           float vmin, float vmax, const char *fmt, bool indent) {
     ImGui::TableNextRow();
-    ImGui::TableSetColumnIndex(0); ImGui::TextUnformatted(label);
+    ImGui::TableSetColumnIndex(0);
+    if (indent) ImGui::Indent();
+    ImGui::TextUnformatted(label);
+    if (indent) ImGui::Unindent();
     ImGui::TableSetColumnIndex(1);
     ImGui::PushID(value);
-    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::SetNextItemWidth(180.0f);
     if (ImGui::SliderFloat("##sens", value, vmin, vmax, fmt)) {
         if (*value < vmin) *value = vmin;
         if (*value > vmax) *value = vmax;
@@ -343,12 +347,12 @@ static int renderFormBody(struct ClientSim *cs) {
     auto section = [&](const char *sectionTitle) {
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s", sectionTitle);
-        ImGui::BeginTable(sectionTitle, 3, tflags, ImVec2(-1, 0));
+        ImGui::BeginTable(sectionTitle, 3, tflags, ImVec2(0, 0));
         ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
-                                ImGuiTableColumnFlags_WidthFixed, 140.0f);
+                                ImGuiTableColumnFlags_WidthFixed);
         ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_KEY),
-                                ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed,  116.0f);
+                                ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed);
     };
     auto endSection = [&]() { ImGui::EndTable(); };
 
@@ -420,20 +424,19 @@ static int renderFormBody(struct ClientSim *cs) {
             s_activeTab = 1;
             ImGui::Spacing();
             /* Action column gets at least ~33% of the table width. */
-            float padActionW = ImGui::GetContentRegionAvail().x * 0.34f;
-            if (padActionW < 120.0f) padActionW = 120.0f;
-            ImGui::BeginTable("##padbindings", 5, tflags, ImVec2(-1, 0));
+            ImGui::BeginTable("##padbindings", 5, tflags, ImVec2(0, 0));
             ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
-                                    ImGuiTableColumnFlags_WidthFixed, padActionW);
-            ImGui::TableSetupColumn("Primary",   ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed, 116.0f);
-            ImGui::TableSetupColumn("Secondary", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed, 116.0f);
+                                    ImGuiTableColumnFlags_WidthFixed);
+            ImGui::TableSetupColumn("Primary",   ImGuiTableColumnFlags_WidthFixed);
+            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed);
+            ImGui::TableSetupColumn("Secondary", ImGuiTableColumnFlags_WidthFixed);
+            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed);
             ImGui::TableHeadersRow();
             /* Left stick = tank move; its sensitivity slider sits at the top.
                10%-100%: 100% = snap (current), 50% = turn tracks stick 1:1. */
             sensitivityRow("Tank turn sensitivity", &g_gamepadTankSensitivity,
-                           0.10f, 1.00f, "%.2f");
+                           0.10f, 1.00f, "%.2f", /*indent=*/false);
+            controllerRow("Lock direction (while pressed)",              GP_ACT_LOCK_HEADING);
             controllerRow(langGetText(STR_GP_ACTION_FIRE),                GP_ACT_FIRE);
             controllerRow(langGetText(STR_GP_ACTION_MINE),                GP_ACT_MINE);
             controllerRow(langGetText(STR_GP_ACTION_GUNSIGHT_INC),        GP_ACT_GUNSIGHT_INC);
@@ -443,7 +446,7 @@ static int renderFormBody(struct ClientSim *cs) {
             controllerRow(langGetText(STR_GP_ACTION_BUILD_NEXT),          GP_ACT_BUILD_NEXT);
             controllerRow(langGetText(STR_GP_ACTION_BUILD_CURSOR_TOGGLE), GP_ACT_BUILD_CURSOR_TOGGLE);
             sensitivityRow("Build cursor sensitivity", &g_gamepadBuildCursorSensitivity,
-                           0.25f, 2.00f, "%.2fx");
+                           0.25f, 2.00f, "%.2fx", /*indent=*/true);
             /* Build-cursor behaviour options, grouped (indented) under the toggle. */
             checkboxRow("Hold to build, release to exit (momentary)",
                         &g_buildHoldMomentary,
@@ -463,6 +466,7 @@ static int renderFormBody(struct ClientSim *cs) {
             controllerRow("Exit build mode, no build (cancels momentary)",
                           GP_ACT_BUILD_CANCEL);
             controllerRow(langGetText(STR_GP_ACTION_VIEW_CYCLE),          GP_ACT_VIEW_CYCLE);
+            controllerRow("Tank view",                                    GP_ACT_TANK_VIEW);
             controllerRow(langGetText(STR_GP_ACTION_VIEW_PLAYERS),        GP_ACT_VIEW_PLAYERS);
             controllerRow(langGetText(STR_GP_ACTION_QUICK_CHAT),          GP_ACT_QUICK_CHAT);
             controllerRow(langGetText(STR_GP_ACTION_PAUSE),               GP_ACT_PAUSE);
@@ -678,9 +682,9 @@ extern "C" int imguiKeySetupShow(void) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        /* Centered overlay panel. Wide enough for the Controller tab's
-         * Action | Primary | Change | Secondary | Change layout. */
-        float panelW = 1280.0f * s, panelH = 560.0f * s;
+        /* Centered overlay panel. Wide enough to fit the Controller tab's
+         * widest row (the build-option checkboxes); clamped to screen below. */
+        float panelW = 920.0f * s, panelH = 560.0f * s;
         if (panelW > (float)winW * 0.95f) panelW = (float)winW * 0.95f;
         if (panelH > (float)winH * 0.95f) panelH = (float)winH * 0.95f;
 
@@ -802,7 +806,7 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
     ImGuiIO &io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(1280, 560), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(920, 560), ImGuiCond_Always);
 
     bool open = true;
     if (!ImGui::BeginPopupModal(title, &open,

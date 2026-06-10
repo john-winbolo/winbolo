@@ -58,7 +58,9 @@ typedef enum {
   GP_ACT_QUICK_CHAT,
   GP_ACT_PAUSE,
   GP_ACT_VIEW_PLAYERS,
-  GP_ACT_BUILD_CANCEL,   /* exit build cursor mode without building */
+  GP_ACT_BUILD_CANCEL,    /* exit build cursor mode without building */
+  GP_ACT_LOCK_HEADING,    /* toggle: freeze tank facing, stick only drives */
+  GP_ACT_TANK_VIEW,       /* recentre on / return to tank view */
   GP_ACT_COUNT
 } GamepadAction;
 
@@ -114,6 +116,8 @@ bool inputGamepadIsQuickChatEdge(void);        /* D-pad LEFT press, consumed on 
 bool inputGamepadIsBuildCursorToggleEdge(void); /* R3 press, consumed on read */
 bool inputGamepadIsBuildCursorToggleHeld(void); /* R3 live held state (gesture timing) */
 bool inputGamepadIsBuildCancelEdge(void);       /* Cancel-build press, consumed on read */
+bool inputGamepadIsLockHeadingHeld(void);       /* Lock-direction held (live state) */
+bool inputGamepadIsTankViewEdge(void);          /* Tank-view press, consumed on read */
 bool inputGamepadIsViewPlayersEdge(void);      /* D-pad Right press, consumed on read */
 bool inputGamepadConsumeActiveDisconnect(void);  /* Active controller disconnect, consumed on read */
 

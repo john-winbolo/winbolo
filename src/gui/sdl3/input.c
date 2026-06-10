@@ -152,12 +152,24 @@ static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
     inPill = clientSimIsInPillView(cs);
   }
 
+  /* Gamepad right stick steps pills too while in pill view (its normal map
+     scroll is suppressed here). */
+  bool padUp = false, padDown = false, padLeft = false, padRight = false;
+  if (inPill && inputGamepadIsConnected()) {
+    float gdx = 0.0f, gdy = 0.0f;
+    if (inputGamepadGetScrollDirection(&gdx, &gdy)) {
+      const float th = 0.5f;
+      padRight = gdx >  th; padLeft = gdx < -th;
+      padDown  = gdy >  th; padUp   = gdy < -th;
+    }
+  }
+
   /* Directional pill stepping — only in pill view, on the slower step
    * cadence (computed from inPill so it can't fire on the entering press). */
-  bool stepUp    = inPill && KEY_DOWN(setKeys->kiScrollUp);
-  bool stepDown  = inPill && KEY_DOWN(setKeys->kiScrollDown);
-  bool stepLeft  = inPill && KEY_DOWN(setKeys->kiScrollLeft);
-  bool stepRight = inPill && KEY_DOWN(setKeys->kiScrollRight);
+  bool stepUp    = inPill && (KEY_DOWN(setKeys->kiScrollUp)    || padUp);
+  bool stepDown  = inPill && (KEY_DOWN(setKeys->kiScrollDown)  || padDown);
+  bool stepLeft  = inPill && (KEY_DOWN(setKeys->kiScrollLeft)  || padLeft);
+  bool stepRight = inPill && (KEY_DOWN(setKeys->kiScrollRight) || padRight);
   if (!stepUp && !stepDown && !stepLeft && !stepRight) {
     pillViewStepMs = 0;
   } else if (pillViewStepMs == 0 ||
@@ -417,6 +429,17 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     tb = inputTouchGetMovement();
   }
 
+  /* Lock direction (controller, while held): drop the turn component so the
+     tank keeps its heading and the stick only drives forward/back along it. */
+  if (inputGamepadIsLockHeadingHeld()) {
+    switch (tb) {
+      case TLEFT:      case TRIGHT:      tb = TNONE;   break;
+      case TLEFTACCEL: case TRIGHTACCEL: tb = TACCEL;  break;
+      case TLEFTDECEL: case TRIGHTDECEL: tb = TDECEL;  break;
+      default: break;
+    }
+  }
+
   /* Gamepad-only actions: build-type cycle, builder confirm, view toggle. */
   if (inputGamepadIsConnected()) {
     int delta = inputGamepadGetBuildSelectChange();
@@ -527,6 +550,10 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 
     if (inputGamepadIsViewPlayersEdge()) {
       sdl3ImguiTogglePlayersPanel();
+    }
+
+    if (inputGamepadIsTankViewEdge()) {
+      clientSimTankView(cs);
     }
 
     if (inputGamepadIsBuilderConfirmEdge()) {
