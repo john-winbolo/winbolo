@@ -380,6 +380,8 @@ static Uint64 s_sendMsgCooldownEnd = 0;   /* SDL_GetTicks() value; 0 = not in co
 static bool   s_sendMsgFocusInput = false; /* Set true to focus the text input next frame */
 static int    s_sendMsgFocusFrames = 0;
 static bool   s_sendMsgHideNav = false;
+static bool   s_showCtrlSendMsg    = false; /* controller-mode simplified send dialog open */
+static bool   s_pendingCtrlSendMsg = false; /* deferred OpenPopup (must run during render) */
 #define SEND_MSG_WAIT_MS 2000
 
 /* Alliance request cooldown */
@@ -1167,6 +1169,79 @@ static void renderSendMsgPanel(ClientSim *cs) {
     }
     renderSendMsgContent(cs);
     ImGui::End();
+}
+
+/* Controller-mode message entry: a simplified modal that sends to all
+ * players (no recipient picker) with just a text field + Send and a
+ * B/Escape cancel.  Replaces the pop-out / in-window dialog when
+ * uiShouldUseControllerMode() — see sdl3ImguiShowSendMsg.  Lives in the
+ * main ImGui context so it picks up gamepad nav and the Steam OSK. */
+static void renderCtrlSendMsg(ClientSim *cs) {
+    char title[128];
+    snprintf(title, sizeof(title), "%s###ctrlsendmsg", langGetText(STR_DLGMSG_TITLE));
+
+    if (s_pendingCtrlSendMsg) {
+        ImGui::OpenPopup(title);
+        s_pendingCtrlSendMsg = false;
+        s_showCtrlSendMsg    = true;
+        s_sendMsgFocusInput  = true;
+    }
+    if (!s_showCtrlSendMsg) return;
+
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f,
+                                   vp->Pos.y + vp->Size.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_AlwaysAutoResize;
+
+    if (ImGui::BeginPopupModal(title, &s_showCtrlSendMsg, flags)) {
+        /* ImGui's NavCancel does not auto-close modals, so detect B/Escape
+           and close manually — checked before InputText() so the press
+           closes rather than just reverting the edit.  On the Steam Input
+           path B arrives as Escape. */
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            ImGui::CloseCurrentPopup();
+            s_showCtrlSendMsg = false;
+            ImGui::EndPopup();
+            return;
+        }
+
+        bool wantSelectAll = false;
+        if (s_sendMsgFocusInput) { s_sendMsgFocusInput = false; wantSelectAll = true; }
+        if (ImGui::IsWindowAppearing() || wantSelectAll) {
+            ImGui::SetKeyboardFocusHere();
+            wantSelectAll = true;
+        }
+        ImGui::SetNextItemWidth(340.0f);
+        bool pressedEnter = ImGui::InputText("##ctrlmsg", s_sendMsgBuf, sizeof(s_sendMsgBuf),
+                                             ImGuiInputTextFlags_EnterReturnsTrue);
+        if (wantSelectAll) {
+            if (ImGuiInputTextState *st = ImGui::GetInputTextState(ImGui::GetItemID()))
+                st->SelectAll();
+        }
+
+        bool inCooldown = (s_sendMsgCooldownEnd != 0 &&
+                           SDL_GetTicks() < s_sendMsgCooldownEnd);
+        if (inCooldown) ImGui::BeginDisabled();
+        bool doSend = ImGui::Button(langGetText(STR_DLGMSG_BUTTON)) ||
+                      (!inCooldown && pressedEnter);
+        if (inCooldown) ImGui::EndDisabled();
+
+        if (doSend && s_sendMsgBuf[0] != '\0') {
+            clientSimSendMessageAllPlayers(cs, s_sendMsgBuf);
+            s_sendMsgBuf[0] = '\0';
+            ImGui::CloseCurrentPopup();
+            s_showCtrlSendMsg = false;
+        }
+
+        ImGui::EndPopup();
+    } else {
+        s_showCtrlSendMsg = false;
+    }
 }
 
 /* -------------------------------------------------------
@@ -4043,6 +4118,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         /* Pause overlay + quick-chat overlay (no-ops when closed). */
         deckPauseRender(cs);
         quickChatRender(cs);
+        renderCtrlSendMsg(cs);
         /* Controller-detected prompt — also a no-op when closed.
            Rendered through the main context so it inherits
            NavEnableGamepad for A/B selection. */
@@ -4308,17 +4384,32 @@ bool sdl3ImguiIsGameInfoOpen(void) {
 void sdl3ImguiShowSendMsg(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
-        if (open) {
-            if (!s_popSendMsg.open) {
-                popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
+        if (uiShouldUseControllerMode()) {
+            /* Controller: the simplified modal (renderCtrlSendMsg).  The
+               pop-out is a separate OS window with its own ImGui context that
+               receives no controller input — Steam-nav B/Escape feeds only the
+               main context and gamepad SDL events aren't routed to pop-outs —
+               so a pad user could open it but never close it. */
+            if (open) {
+                s_pendingCtrlSendMsg = true;
+                s_sendMsgCooldownEnd = 0;
+            } else {
+                s_showCtrlSendMsg = false;
             }
-            /* Match the modal-path side effects so the user gets a fresh
-             * cooldown and a focused input regardless of which path opened
-             * Send Message. */
-            s_sendMsgCooldownEnd = 0;
-            s_sendMsgFocusInput  = true;
         } else {
-            if (s_popSendMsg.open) popOutDestroy(&s_popSendMsg);
+            /* Mouse/keyboard desktop: the draggable pop-out window. */
+            if (open) {
+                if (!s_popSendMsg.open) {
+                    popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
+                }
+                /* Match the other paths' side effects so the user gets a
+                 * fresh cooldown and a focused input regardless of which
+                 * path opened Send Message. */
+                s_sendMsgCooldownEnd = 0;
+                s_sendMsgFocusInput  = true;
+            } else {
+                if (s_popSendMsg.open) popOutDestroy(&s_popSendMsg);
+            }
         }
         return;
     }
