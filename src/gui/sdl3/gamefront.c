@@ -21,8 +21,8 @@
 *  setup dialog state machine, preferences I/O,
 *  and all functions declared in gamefront.h.
 *
-*  Uses GetPrivateProfileString / WritePrivateProfileString
-*  provided by server/posix_stubs on non-Win32 platforms.
+*  Reads and writes settings through the process-global
+*  preferences document (common/prefs.h, WinBolo.json).
 *********************************************************/
 
 /* MSVC: include crtdbg before SDL to avoid _malloca redefinition warning */
@@ -47,6 +47,7 @@
 #include <time.h>
 
 #include "../../common/wb_log.h"
+#include "../../common/prefs.h"
 #include "bolo_rand.h"
 #include "client_sim.h"
 #include "control_event.h"
@@ -81,6 +82,8 @@
 #include "../../server/server_lifecycle.h"
 #include "../../winbolonet/winbolonet_client.h"
 #include "../../winbolonet/winbolonet_core.h"
+#include "../../winbolonet/wbn_prefs_sync.h"
+#include "../../common/prefs_doc.h"
 #include "../../steam/steam_wrapper.h"
 #include "../../mapeditor/mapeditor.h"
 #include "mapgen.h"
@@ -92,31 +95,20 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
 
 #include "dialogs/imgui_wbn_browser.h"
+#include "dialogs/imgui_onboarding.h"
 
 #ifndef DEFAULT_UDP_PORT
 #define DEFAULT_UDP_PORT 27500
-#endif
-
-/* Cross-platform INI file stubs — provided by posix_stubs on non-Win32 */
-#ifndef _WIN32
-extern void preferencesGetPreferenceFile(char *dest);
-extern void preferencesSetPreferenceFileOverride(const char *path);
-extern DWORD GetPrivateProfileString(const char *section, const char *key,
-                                      const char *def, char *dest,
-                                      DWORD size, const char *file);
-extern int WritePrivateProfileString(const char *section, const char *key,
-                                      const char *value, const char *file);
 #endif
 
 /* Number of bot players for local/practice games */
 #define LOCAL_GAME_NUM_BOTS 0
 
 /* -------------------------------------------------------
- * getPreferenceFilePath — return absolute path to WinBolo.ini
+ * getPreferenceFilePath — return absolute path to WinBolo.json
  *
  * Uses SDL_GetPrefPath so settings survive across sessions
- * regardless of CWD.  On Windows this also avoids the Win32
- * WritePrivateProfileString pitfall of writing to C:\Windows.
+ * regardless of CWD.
  * ------------------------------------------------------- */
 static const char *getPreferenceFilePath(void) {
   static char path[FILENAME_MAX];
@@ -124,10 +116,10 @@ static const char *getPreferenceFilePath(void) {
   if (!resolved) {
     const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
     if (prefDir) {
-      snprintf(path, sizeof(path), "%sWinBolo.ini", prefDir);
+      snprintf(path, sizeof(path), "%sWinBolo.json", prefDir);
     } else {
       /* Fallback to relative path if SDL_GetPrefPath fails */
-      snprintf(path, sizeof(path), "%s", "WinBolo.ini");
+      snprintf(path, sizeof(path), "%s", "WinBolo.json");
     }
     resolved = true;
   }
@@ -222,6 +214,15 @@ static bool gameFrontAtWelcome = FALSE;
 char gameFrontWbnToken[FILENAME_MAX];
 char gameFrontWbnTokenExpiry[FILENAME_MAX];
 bool gameFrontWbnUse;
+
+/* WinBolo.net 1v1 ladder position, refreshed on every auth/validate.
+ * rank is -1 when unranked or unknown; total is 0 until first populated. */
+int gameFrontWbnRank = -1;
+int gameFrontWbnRankTotal = 0;
+
+/* Per-mode WinBolo.net play stats, refreshed on every auth/validate.
+ * `valid` is FALSE until the first response that carries a stats object. */
+static WbnStats gameFrontWbnStats;
 
 /* Dialog window position (separate from game window) */
 int gameFrontDialogX = -1;
@@ -498,14 +499,13 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   gameFrontUdpAddress[0] = '\0';
   wantRejoin = FALSE;
 
-  /* Pin posix_stubs / http.c / map editor / log viewer to the same WinBolo.ini
-   * the SDL3 client uses (SDL_GetPrefPath). Without this, http.c's
-   * preferencesGetPreferenceFile would hit posix_stubs' headless fallback
-   * (~/.config/winbolo/) and read [WINBOLO.NET] Host from a different file
-   * than where Token gets written. */
-#ifndef _WIN32
-  preferencesSetPreferenceFileOverride(getPreferenceFilePath());
-#endif
+  /* Load the process-global preferences document (WinBolo.json) before any
+   * prefs access. */
+  prefsInit(getPreferenceFilePath());
+  /* Coalesce bursts of pref edits (multi-key rebind, slider drag) into a
+   * single trailing disk write, driven from gameFrontPumpDirty and flushed
+   * before each join and at shutdown. */
+  prefsSetAutosaveDebounce(15000);
 
   langSetup();
 
@@ -724,6 +724,7 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
      position on every resize/move. Calling it here would overwrite the corrected
      position (e.g. centered within maximized bounds) with the actual position. */
   gameFrontPutPrefs(keys);
+  prefsFlush();
   if (humanSim != NULL) {
     frontEndSetActiveClientSim(NULL);
     netDestroy(humanSim);
@@ -907,6 +908,9 @@ static bool gameFrontDialogs(void) {
       break;
     }
     case openInternet: {
+      if (!gameFrontOnboardingComplete()) {
+        if (!imguiOnboardingShow()) { dlgState = openWelcome; break; }
+      }
       const DialogBackend *db = dialogBackendGet();
       openingStates prev = dlgState;
       s_isLanOnly = FALSE;
@@ -922,6 +926,9 @@ static bool gameFrontDialogs(void) {
       break;
     }
     case openLan: {
+      if (!gameFrontOnboardingComplete()) {
+        if (!imguiOnboardingShow()) { dlgState = openWelcome; break; }
+      }
       const DialogBackend *db = dialogBackendGet();
       openingStates prev = dlgState;
       s_isLanOnly = TRUE;
@@ -1018,6 +1025,57 @@ static bool gameFrontDialogs(void) {
   return !userQuit;
 }
 
+bool gameFrontGetSteamTicketHex(char *outHex, size_t outSize) {
+  uint8_t ticketBuf[1024];
+  uint32_t ticketLen = 0;
+  if (!steam_get_auth_ticket(ticketBuf, sizeof(ticketBuf), &ticketLen) ||
+      ticketLen == 0) {
+    return false;
+  }
+  /* Each byte expands to two hex chars plus the NUL terminator. */
+  if (outSize < (size_t)ticketLen * 2 + 1) {
+    return false;
+  }
+  uint32_t i;
+  for (i = 0; i < ticketLen; i++) {
+    snprintf(outHex + i * 2, 3, "%02x", ticketBuf[i]);
+  }
+  outHex[ticketLen * 2] = '\0';
+  return true;
+}
+
+void gameFrontApplySteamAuthResult(const char *token, const char *expiry,
+                                   const char *playerName, int rank,
+                                   int rankTotal, const WbnStats *stats) {
+  gameFrontSetWinbolonetToken(token, expiry);
+  gameFrontSetWbnAuthMethod("steam");
+  gameFrontSetWinbolonetRank(rank, rankTotal);
+  gameFrontSetWinbolonetStats(stats);
+  if (playerName[0] != '\0') {
+    /* The WBN account display_name is canonical: it wins over any locally
+     * chosen name, matching the username/password sign-in path. Validate it
+     * before applying; on rejection keep an existing name, or fall back to
+     * the default when there is none. */
+    char validated[PLAYER_NAME_LEN];
+    if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, NULL)) {
+      gameFrontSetPlayerName(validated);
+    } else {
+      char persisted[PLAYER_NAME_LEN];
+      persisted[0] = '\0';
+      gameFrontGetPlayerName(persisted);
+      if (persisted[0] == '\0') {
+        gameFrontSetPlayerName((char *)langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
+      }
+    }
+  }
+  WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Steam] Authenticated with WinBolo.net via Steam");
+  /* First Steam auth of the session: the token went from empty to set,
+   * so pull the cloud prefs once. Placed after the name handling so the
+   * sync captures the name that should win over the synced Player Name.
+   * The per-join validate of an existing token below never reaches here. */
+  gameFrontStartPrefsSync();
+}
+
 /* -------------------------------------------------------
  * gameFrontValidateWbnBeforeJoin — If a WBN token is stored,
  * validate it synchronously and update the player name from
@@ -1028,61 +1086,42 @@ static void gameFrontValidateWbnBeforeJoin(void) {
   char token[256], expiry[256];
   gameFrontGetWinbolonetToken(token, expiry);
 
-  /* If no WBN token exists, try automatic Steam authentication */
+  /* If no WBN token exists, try automatic Steam authentication — unless the
+   * player explicitly signed out, in which case joining must not silently
+   * sign them back in. */
   if (token[0] == '\0') {
-    uint8_t ticketBuf[1024];
-    uint32_t ticketLen = 0;
-    if (steam_get_auth_ticket(ticketBuf, sizeof(ticketBuf), &ticketLen) && ticketLen > 0) {
-      char ticketHex[2049];
-      uint32_t i;
-      for (i = 0; i < ticketLen; i++) {
-        snprintf(ticketHex + i * 2, 3, "%02x", ticketBuf[i]);
-      }
-      ticketHex[ticketLen * 2] = '\0';
+    char ticketHex[2049];
+    if (!gameFrontGetWbnSignedOut() &&
+        gameFrontGetSteamTicketHex(ticketHex, sizeof(ticketHex))) {
+      char tokenOut[256], expiryOut[256], playerName[PLAYER_NAME_LEN], errorMsg[512];
+      int rank = -1, rankTotal = 0;
+      WbnStats stats;
+      stats.valid = FALSE;
+      tokenOut[0] = expiryOut[0] = playerName[0] = errorMsg[0] = '\0';
 
-      char tokenOut[256], expiryOut[256];
-      char playerName[PLAYER_NAME_LEN];
-      char errorMsg[512];
-      tokenOut[0] = '\0';
-      expiryOut[0] = '\0';
-      playerName[0] = '\0';
-      errorMsg[0] = '\0';
-
-      if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName, errorMsg)) {
-        gameFrontSetWinbolonetToken(tokenOut, expiryOut);
-        if (playerName[0] != '\0') {
-          char persisted[PLAYER_NAME_LEN];
-          persisted[0] = '\0';
-          gameFrontGetPlayerName(persisted);
-
-          if (persisted[0] == '\0') {
-            /* First-launch seed: persisted name is empty.  Run the Steam
-             * persona through Phase 2 validation; fall back to the app
-             * default name on rejection. */
-            char validated[PLAYER_NAME_LEN];
-            if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, NULL)) {
-              gameFrontSetPlayerName(validated);
-            } else {
-              gameFrontSetPlayerName((char *)langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
-            }
-          }
-          /* Otherwise: keep the user's chosen name.  The Steam persona
-           * is NOT used to update an existing name (Phase 7 / Decision 3). */
-        }
-        WB_LOG_INFO(WB_LOG_CAT_PLATFORM, "[Steam] Authenticated with WinBolo.net via Steam");
+      if (winbolonetAuthSteam(ticketHex, tokenOut, expiryOut, playerName,
+                              &rank, &rankTotal, &stats, errorMsg)) {
+        gameFrontApplySteamAuthResult(tokenOut, expiryOut, playerName,
+                                      rank, rankTotal, &stats);
       } else {
         WB_LOG_WARN(WB_LOG_CAT_PLATFORM, "[Steam] WBN Steam auth failed: %s", errorMsg);
       }
+      steam_cancel_auth_ticket();
     }
     return;
   }
 
   char playerName[PLAYER_NAME_LEN];
   char errorMsg[512];
+  int rank = -1, rankTotal = 0;
+  WbnStats stats;
+  stats.valid = FALSE;
   playerName[0] = '\0';
   errorMsg[0] = '\0';
 
-  if (winbolonetAuthValidate(token, playerName, errorMsg)) {
+  if (winbolonetAuthValidate(token, playerName, &rank, &rankTotal, &stats, errorMsg)) {
+    gameFrontSetWinbolonetRank(rank, rankTotal);
+    gameFrontSetWinbolonetStats(&stats);
     if (playerName[0] != '\0') {
       gameFrontSetPlayerName(playerName);
     }
@@ -1171,6 +1210,7 @@ bool gameFrontSetDlgState(openingStates newState) {
       }
     }
 
+    prefsFlush();
     gameFrontValidateWbnBeforeJoin();
     humanSim = clientSimAlloc(); clientSimCreate(humanSim);
     clientSimSetIsLanOnly(humanSim, s_isLanOnly);
@@ -1293,6 +1333,7 @@ bool gameFrontSetDlgState(openingStates newState) {
      * handshake every joiner uses, so the server's join handler owns
      * slot 0 registration and the lobby/name-collision checks behave
      * identically for host and joiners. */
+    prefsFlush();
     gameFrontValidateWbnBeforeJoin();
     dlgState = newState;
     if (gameFrontSetupServer() == TRUE) {
@@ -1640,9 +1681,8 @@ void gameFrontSetShowTutorialButton(bool show) {
   gameFrontShowTutorialButton = show;
   /* Persist immediately so a crash or hard quit after completing the
    * tutorial doesn't leave the welcome-menu entry showing again. */
-  WritePrivateProfileString("SETTINGS", "Show Tutorial Button",
-                            TRUEFALSE_TO_STR(show),
-                            getPreferenceFilePath());
+  prefsSetString("SETTINGS", "Show Tutorial Button",
+                            TRUEFALSE_TO_STR(show));
 }
 
 bool gameFrontGetShowCountryFlagsInChat(void) {
@@ -1651,9 +1691,8 @@ bool gameFrontGetShowCountryFlagsInChat(void) {
 
 void gameFrontSetShowCountryFlagsInChat(bool show) {
   gameFrontShowCountryFlagsInChat = show;
-  WritePrivateProfileString("SETTINGS", "Show Country Flags In Chat",
-                            TRUEFALSE_TO_STR(show),
-                            getPreferenceFilePath());
+  prefsSetString("SETTINGS", "Show Country Flags In Chat",
+                            TRUEFALSE_TO_STR(show));
 }
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
@@ -1672,8 +1711,8 @@ void gameFrontSetLanguageCode(const char *code) {
   gameFrontLanguageCode[n] = '\0';
   /* Persist immediately so the picked language survives a hard quit
    * even if the user never reaches gameFrontPutPrefs. */
-  WritePrivateProfileString("SETTINGS", "Language",
-                            gameFrontLanguageCode, getPreferenceFilePath());
+  prefsSetString("SETTINGS", "Language",
+                            gameFrontLanguageCode);
 }
 
 void gameFrontRequestPlayTutorial(void) {
@@ -1719,9 +1758,8 @@ void gameFrontEnableRejoin(void) {
 }
 
 static void gameFrontSaveWbnTokenToPrefs(void) {
-  const char *prefsFile = getPreferenceFilePath();
-  WritePrivateProfileString("WINBOLO.NET", "Token", gameFrontWbnToken, prefsFile);
-  WritePrivateProfileString("WINBOLO.NET", "TokenExpiry", gameFrontWbnTokenExpiry, prefsFile);
+  prefsSetString("WINBOLO.NET", "Token", gameFrontWbnToken);
+  prefsSetString("WINBOLO.NET", "TokenExpiry", gameFrontWbnTokenExpiry);
 }
 
 void gameFrontSetWinbolonetToken(const char *token, const char *expiry) {
@@ -1740,11 +1778,245 @@ void gameFrontClearWinbolonetToken(void) {
   gameFrontWbnToken[0] = '\0';
   gameFrontWbnTokenExpiry[0] = '\0';
   gameFrontWbnUse = FALSE;
+  gameFrontWbnRank = -1;
+  gameFrontWbnRankTotal = 0;
+  gameFrontWbnStats.valid = FALSE;
   gameFrontSaveWbnTokenToPrefs();
+  gameFrontSetWbnAuthMethod("");
+}
+
+void gameFrontSetWbnAuthMethod(const char *method) {
+  prefsSetString("WINBOLO.NET", "AuthMethod", method ? method : "");
+}
+
+void gameFrontGetWbnAuthMethod(char *out, size_t outSize) {
+  prefsGetString("WINBOLO.NET", "AuthMethod", "", out, outSize);
+}
+
+void gameFrontSetWbnSignedOut(bool signedOut) {
+  prefsSetString("WINBOLO.NET", "SignedOut", signedOut ? "Yes" : "No");
+}
+
+bool gameFrontGetWbnSignedOut(void) {
+  char buf[8];
+  prefsGetString("WINBOLO.NET", "SignedOut", "No", buf, sizeof(buf));
+  return strcmp(buf, "Yes") == 0;
 }
 
 bool gameFrontGetWinbolonetUse(void) {
   return gameFrontWbnUse;
+}
+
+void gameFrontSetWinbolonetRank(int rank, int rankTotal) {
+  gameFrontWbnRank = rank;
+  gameFrontWbnRankTotal = rankTotal;
+}
+
+void gameFrontGetWinbolonetRank(int *rank, int *rankTotal) {
+  if (rank) *rank = gameFrontWbnRank;
+  if (rankTotal) *rankTotal = gameFrontWbnRankTotal;
+}
+
+void gameFrontSetWinbolonetStats(const WbnStats *s) {
+  if (s) gameFrontWbnStats = *s;
+}
+
+void gameFrontGetWinbolonetStats(WbnStats *out) {
+  if (out) *out = gameFrontWbnStats;
+}
+
+bool gameFrontIsSupporter(void) {
+  /* Mirrors the self-flag resolution used at join time. Currently this is
+   * Steam DLC ownership only (the WBN-account supporter flag is not yet
+   * plumbed to the client). */
+  return bolo_steam_has_supporter_dlc();
+}
+
+/* -------------------------------------------------------
+ * Cloud preferences sync (download-on-login).
+ *
+ * Signing in launches exactly one sync per session off a worker
+ * thread. The document is only ever mutated on the main thread in
+ * gameFrontPumpPrefsSync, which joins the worker and applies the
+ * outcome. The worker reads everything it needs through a snapshot
+ * captured on the main thread, so it never touches prefs.c globals.
+ * ------------------------------------------------------- */
+typedef struct {
+  /* inputs (captured on the main thread) */
+  char userToken[FILENAME_MAX];
+  char *uploadSnapshot;            /* malloc'd; freed in the pump */
+  char deviceType[65];
+  bool localDirty;
+  char lastSynced[33];
+  char displayName[PLAYER_NAME_LEN]; /* account name; reasserted after adopt */
+  /* output */
+  WbnSyncOutcome outcome;
+  SDL_AtomicInt done;
+} PrefsSyncWork;
+
+static SDL_Thread *s_prefsSyncThread = NULL;
+static PrefsSyncWork s_prefsSyncWork;
+static bool s_prefsSyncedThisSession = false;
+
+static int gameFrontPrefsSyncThreadFunc(void *data) {
+  PrefsSyncWork *w = (PrefsSyncWork *)data;
+  w->outcome = wbnPrefsSyncOnce(w->userToken, w->uploadSnapshot,
+                                w->deviceType,
+                                w->localDirty, w->lastSynced);
+  SDL_SetAtomicInt(&w->done, 1);
+  return 0;
+}
+
+/* Capture the sync inputs on the main thread and start the worker.
+ * Returns true when the worker was launched, false when there was nothing
+ * to do (not signed in, serialize failed, or thread create failed). Shared
+ * by the login trigger and the debounce-flush upload trigger; the
+ * once-per-session gate and the in-flight check belong to the callers, not
+ * here. */
+static bool gameFrontLaunchPrefsSyncWorker(void) {
+  char token[FILENAME_MAX], expiry[FILENAME_MAX];
+  gameFrontGetWinbolonetToken(token, expiry);
+  if (token[0] == '\0') {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                 "wbn_prefs: launch skipped — no WBN token (not signed in)");
+    return false; /* not signed in: nothing to sync */
+  }
+
+  memset(&s_prefsSyncWork, 0, sizeof(s_prefsSyncWork));
+  SDL_SetAtomicInt(&s_prefsSyncWork.done, 0);
+  SDL_strlcpy(s_prefsSyncWork.userToken, token, sizeof(s_prefsSyncWork.userToken));
+  s_prefsSyncWork.uploadSnapshot = prefsSerializeForUpload();
+  SDL_strlcpy(s_prefsSyncWork.deviceType,
+              bolo_client_type_name(bolo_detect_client_type()),
+              sizeof(s_prefsSyncWork.deviceType));
+  s_prefsSyncWork.localDirty = prefsSyncDirty();
+  prefsGetLastSyncedUpdatedAt(s_prefsSyncWork.lastSynced,
+                              sizeof(s_prefsSyncWork.lastSynced));
+  gameFrontGetPlayerName(s_prefsSyncWork.displayName);
+
+  if (s_prefsSyncWork.uploadSnapshot == NULL) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "wbn_prefs: launch skipped — serialize for upload failed");
+    return false; /* serialize failed (OOM / pre-init): retry later */
+  }
+
+  s_prefsSyncThread = SDL_CreateThread(gameFrontPrefsSyncThreadFunc,
+                                       "WBNPrefsSync", &s_prefsSyncWork);
+  if (s_prefsSyncThread == NULL) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "wbn_prefs: launch failed — SDL_CreateThread returned NULL");
+    free(s_prefsSyncWork.uploadSnapshot);
+    s_prefsSyncWork.uploadSnapshot = NULL;
+    return false;
+  }
+  WB_LOG_DEBUG(WB_LOG_CAT_NET,
+               "wbn_prefs: sync worker launched (localDirty=%d, snapshot=%zu bytes)",
+               s_prefsSyncWork.localDirty ? 1 : 0,
+               strlen(s_prefsSyncWork.uploadSnapshot));
+  return true;
+}
+
+void gameFrontStartPrefsSync(void) {
+  if (s_prefsSyncThread != NULL || s_prefsSyncedThisSession) {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                 "wbn_prefs: login sync skipped — %s",
+                 s_prefsSyncThread != NULL ? "worker already in flight"
+                                           : "already synced this session");
+    return;
+  }
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_prefs: login sync requested");
+  if (gameFrontLaunchPrefsSyncWorker()) {
+    s_prefsSyncedThisSession = true;
+  }
+}
+
+/* Debounce-flush upload trigger. Reuses the single shared worker
+ * (wbnPrefsSyncOnce GETs, reconciles, then PUTs — correct here because the
+ * local doc is dirty) and the gameFrontPumpPrefsSync completion handler,
+ * which clears sync-dirty on a PUSHED outcome. Unlike the login trigger it
+ * does not consult the once-per-session gate. A 429 returns the existing
+ * NOOP outcome and leaves sync-dirty set, so the next debounce flush
+ * (>=15 s later, already under the server's ~1/sec write limit) retries; we
+ * deliberately do not parse Retry-After. */
+static void gameFrontMaybeUploadPrefs(void) {
+  if (s_prefsSyncThread != NULL) {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                 "wbn_prefs: debounce upload skipped — worker already in flight");
+    return; /* a sync/upload worker is already in flight */
+  }
+  if (!gameFrontGetWinbolonetUse() || !prefsSyncDirty()) {
+    WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                 "wbn_prefs: debounce upload skipped — use=%d dirty=%d",
+                 gameFrontGetWinbolonetUse() ? 1 : 0, prefsSyncDirty() ? 1 : 0);
+    return; /* not signed in, or nothing to push */
+  }
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_prefs: debounce flush -> uploading prefs");
+  gameFrontLaunchPrefsSyncWorker();
+}
+
+void gameFrontPumpPrefsSync(void) {
+  if (s_prefsSyncThread == NULL || !SDL_GetAtomicInt(&s_prefsSyncWork.done)) {
+    return;
+  }
+
+  SDL_WaitThread(s_prefsSyncThread, NULL);
+  s_prefsSyncThread = NULL;
+
+  WbnSyncOutcome *o = &s_prefsSyncWork.outcome;
+  WB_LOG_DEBUG(WB_LOG_CAT_NET,
+               "wbn_prefs: worker joined; outcome kind=%d token=%s",
+               (int)o->kind, o->token[0] ? o->token : "(none)");
+  switch (o->kind) {
+    case WBN_SYNC_OUT_ADOPTED:
+      if (o->serverPrefs != NULL &&
+          prefsAdoptServerDocument(o->serverPrefs) == PREFS_ADOPT_OK) {
+        prefsMarkSynced(o->token);
+        /* Record which platform last wrote the cloud doc (device-local, so
+         * this write does not re-dirty the just-synced document). */
+        prefsSetString("DEVICE", "LastSavedFromType", o->serverDeviceType);
+        /* Live-apply the downloaded settings: re-read into the live globals
+         * and push the keys/tank options onto the running client without a
+         * restart (mirrors the Key Setup confirm path). */
+        keyItems liveKeys;
+        windowGetKeys(&liveKeys);
+        gameFrontGetPrefs(&liveKeys, &useAutoslow, &useAutohide);
+        windowSetKeys(&liveKeys);
+        if (humanSim != NULL) {
+          clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
+          clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
+        }
+        /* The account display_name wins over the synced Player Name. */
+        if (s_prefsSyncWork.displayName[0] != '\0') {
+          prefsSetString("SETTINGS", "Player Name", s_prefsSyncWork.displayName);
+          gameFrontSetPlayerName(s_prefsSyncWork.displayName);
+        }
+      }
+      break;
+    case WBN_SYNC_OUT_PUSHED:
+      prefsMarkSynced(o->token);
+      break;
+    case WBN_SYNC_OUT_REAUTH:
+      /* Token is stale server-side: sign out and let a later sign-in resync. */
+      gameFrontClearWinbolonetToken();
+      gameFrontResetPrefsSyncSession();
+      break;
+    case WBN_SYNC_OUT_NOOP:
+    default:
+      break;
+  }
+
+  if (o->serverPrefs != NULL) {
+    free(o->serverPrefs);
+    o->serverPrefs = NULL;
+  }
+  if (s_prefsSyncWork.uploadSnapshot != NULL) {
+    free(s_prefsSyncWork.uploadSnapshot);
+    s_prefsSyncWork.uploadSnapshot = NULL;
+  }
+}
+
+void gameFrontResetPrefsSyncSession(void) {
+  s_prefsSyncedThisSession = false;
 }
 
 void gameFrontSetRegistryKeys(void) {
@@ -1856,6 +2128,16 @@ bool gameFrontPreferencesExist(void) {
     return TRUE;
   }
   return FALSE;
+}
+
+bool gameFrontOnboardingComplete(void) {
+  char buff[FILENAME_MAX];
+  prefsGetString("SETTINGS", "Onboarding Complete", "No", buff, FILENAME_MAX);
+  return YESNO_TO_TRUEFALSE(buff[0]);
+}
+
+void gameFrontSetOnboardingComplete(void) {
+  prefsSetString("SETTINGS", "Onboarding Complete", "Yes");
 }
 
 
@@ -1992,7 +2274,6 @@ bool gameFrontSetupServer(void) {
 bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   char buff[FILENAME_MAX];
   char def[FILENAME_MAX];
-  const char *prefsFile = getPreferenceFilePath();
 
   /* Steam Deck detection: prefer the SteamDeck=1 hint/env Steam sets,
      falling back to /etc/os-release for launch paths (Desktop-mode,
@@ -2014,100 +2295,100 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
 
   /* Player Name */
   strcpy(def, langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
-  GetPrivateProfileString("SETTINGS", "Player Name", def, gameFrontName, sizeof(gameFrontName), prefsFile);
+  prefsGetString("SETTINGS", "Player Name", def, gameFrontName, sizeof(gameFrontName));
 
   /* Target Address */
   def[0] = '\0';
-  GetPrivateProfileString("SETTINGS", "Target Address", def, gameFrontUdpAddress, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Target Address", def, gameFrontUdpAddress, FILENAME_MAX);
 
   /* Target UDP Port */
   intToStr(DEFAULT_UDP_PORT, def, sizeof(def));
-  GetPrivateProfileString("SETTINGS", "Target UDP Port", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Target UDP Port", def, buff, FILENAME_MAX);
   gameFrontMyUdp = atoi(buff);
   gameFrontTargetUdp = atoi(buff);
   /* My UDP Port */
   intToStr(DEFAULT_UDP_PORT, def, sizeof(def));
-  GetPrivateProfileString("SETTINGS", "UDP Port", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "UDP Port", def, buff, FILENAME_MAX);
   gameFrontMyUdp = atoi(buff);
 
   /* Driving keys */
   intToStr(DEFAULT_FORWARD, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Forward", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Forward", def, buff, FILENAME_MAX);
   keys->kiForward = atoi(buff);
   intToStr(DEFAULT_BACKWARD, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Backwards", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Backwards", def, buff, FILENAME_MAX);
   keys->kiBackward = atoi(buff);
   intToStr(DEFAULT_LEFT, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Left", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Left", def, buff, FILENAME_MAX);
   keys->kiLeft = atoi(buff);
   intToStr(DEFAULT_RIGHT, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Right", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Right", def, buff, FILENAME_MAX);
   keys->kiRight = atoi(buff);
 
   /* Shooting, mines, gunsights */
   intToStr(DEFAULT_SHOOT, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Shoot", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Shoot", def, buff, FILENAME_MAX);
   keys->kiShoot = atoi(buff);
   intToStr(DEFAULT_LAY_MINE, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Lay Mine", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Lay Mine", def, buff, FILENAME_MAX);
   keys->kiLayMine = atoi(buff);
   intToStr(DEFAULT_SCROLL_GUNINCREASE, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Increase Range", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Increase Range", def, buff, FILENAME_MAX);
   keys->kiGunIncrease = atoi(buff);
   intToStr(DEFAULT_SCROLL_GUNDECREASE, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Decrease Range", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Decrease Range", def, buff, FILENAME_MAX);
   keys->kiGunDecrease = atoi(buff);
 
   /* Views */
   intToStr(DEFAULT_TANKVIEW, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Tank View", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Tank View", def, buff, FILENAME_MAX);
   keys->kiTankView = atoi(buff);
   intToStr(DEFAULT_PILLVIEW, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Pill View", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Pill View", def, buff, FILENAME_MAX);
   keys->kiPillView = atoi(buff);
   intToStr(DEFAULT_ALLYVIEW, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Ally View", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Ally View", def, buff, FILENAME_MAX);
   keys->kiAllyView = atoi(buff);
   intToStr(DEFAULT_LGMVIEW, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "LGM View", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "LGM View", def, buff, FILENAME_MAX);
   keys->kiLGMView = atoi(buff);
   intToStr(DEFAULT_BASEVIEW, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Base View", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Base View", def, buff, FILENAME_MAX);
   keys->kiBaseView = atoi(buff);
 
   /* Scrolling */
   intToStr(DEFAULT_SCROLLUP, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Scroll Up", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Scroll Up", def, buff, FILENAME_MAX);
   keys->kiScrollUp = atoi(buff);
   intToStr(DEFAULT_SCROLLDOWN, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Scroll Down", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Scroll Down", def, buff, FILENAME_MAX);
   keys->kiScrollDown = atoi(buff);
   intToStr(DEFAULT_SCROLLLEFT, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Scroll Left", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Scroll Left", def, buff, FILENAME_MAX);
   keys->kiScrollLeft = atoi(buff);
   intToStr(DEFAULT_SCROLLRIGHT, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Scroll Right", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Scroll Right", def, buff, FILENAME_MAX);
   keys->kiScrollRight = atoi(buff);
 
   /* Quick keys */
   intToStr(DEFAULT_QUICKTREE, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Quick Tree", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Quick Tree", def, buff, FILENAME_MAX);
   keys->kiQuickTree = atoi(buff);
   intToStr(DEFAULT_QUICKROAD, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Quick Road", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Quick Road", def, buff, FILENAME_MAX);
   keys->kiQuickRoad = atoi(buff);
   intToStr(DEFAULT_QUICKWALL, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Quick Wall", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Quick Wall", def, buff, FILENAME_MAX);
   keys->kiQuickWall = atoi(buff);
   intToStr(DEFAULT_QUICKPILLBOX, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Quick Pillbox", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Quick Pillbox", def, buff, FILENAME_MAX);
   keys->kiQuickPillbox = atoi(buff);
   intToStr(DEFAULT_QUICKMINE, def, sizeof(def));
-  GetPrivateProfileString("KEYS", "Quick Mine", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("KEYS", "Quick Mine", def, buff, FILENAME_MAX);
   keys->kiQuickMine = atoi(buff);
 
   /* Gamepad — right-stick scroll sensitivity multiplier (0.25..4.0). */
-  GetPrivateProfileString("SETTINGS", "Gamepad Scroll Sens", "1.00", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Gamepad Scroll Sens", "1.00", buff, FILENAME_MAX);
   {
     float gs = (float)atof(buff);
     if (!(gs >= 0.25f && gs <= 4.0f)) gs = 1.0f;
@@ -2115,7 +2396,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   }
 
   /* Gamepad — left-stick tank turn sensitivity (0.10..1.0; 1.0 = snap). */
-  GetPrivateProfileString("SETTINGS", "Gamepad Tank Sens", "1.00", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Gamepad Tank Sens", "1.00", buff, FILENAME_MAX);
   {
     float ts = (float)atof(buff);
     if (!(ts >= 0.10f && ts <= 1.0f)) ts = 1.0f;
@@ -2123,7 +2404,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   }
 
   /* Gamepad — build-cursor move sensitivity (0.25..2.0, lower = finer). */
-  GetPrivateProfileString("SETTINGS", "Gamepad Build Cursor Sens", "1.00", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Gamepad Build Cursor Sens", "1.00", buff, FILENAME_MAX);
   {
     float bs = (float)atof(buff);
     if (!(bs >= 0.25f && bs <= 2.0f)) bs = 1.0f;
@@ -2131,11 +2412,11 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   }
 
   /* Gamepad — build-cursor behaviour options. */
-  GetPrivateProfileString("SETTINGS", "Build Exit Executes", "No", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Build Exit Executes", "No", buff, FILENAME_MAX);
   g_buildExitExecutes = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("SETTINGS", "Build Double Tap Road", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Build Double Tap Road", "Yes", buff, FILENAME_MAX);
   g_buildDoubleTapRoad = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("SETTINGS", "Build Hold Momentary", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Build Hold Momentary", "Yes", buff, FILENAME_MAX);
   g_buildHoldMomentary = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Phase 8.1 — Controller Mode pref (Off / On / Auto).  Default Auto on
@@ -2143,13 +2424,13 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
      prompt itself can be silenced via "Ask when controller connected".
      Steam Deck ignores this pref (uiShouldUseControllerMode is unconditional
      on Deck). */
-  GetPrivateProfileString("SETTINGS", "Controller Mode", "2", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Controller Mode", "2", buff, FILENAME_MAX);
   {
     int v = atoi(buff);
     if (v < 0 || v > 2) v = 2;
     uiControllerModeSet((ControllerModePref)v);
   }
-  GetPrivateProfileString("SETTINGS", "Controller Prompt Ask", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Controller Prompt Ask", "Yes", buff, FILENAME_MAX);
   uiControllerPromptAskOnConnectSet(YESNO_TO_TRUEFALSE(buff[0]));
 
   /* Gamepad — Path B rebindable action table.  Start from defaults so
@@ -2185,10 +2466,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
 
       char rPriKind[FILENAME_MAX], rPriCode[FILENAME_MAX];
       char rSecKind[FILENAME_MAX], rSecCode[FILENAME_MAX];
-      GetPrivateProfileString("GAMEPAD", keyPriKind, kAbsentSentinel, rPriKind, FILENAME_MAX, prefsFile);
-      GetPrivateProfileString("GAMEPAD", keyPriCode, kAbsentSentinel, rPriCode, FILENAME_MAX, prefsFile);
-      GetPrivateProfileString("GAMEPAD", keySecKind, kAbsentSentinel, rSecKind, FILENAME_MAX, prefsFile);
-      GetPrivateProfileString("GAMEPAD", keySecCode, kAbsentSentinel, rSecCode, FILENAME_MAX, prefsFile);
+      prefsGetString("GAMEPAD", keyPriKind, kAbsentSentinel, rPriKind, FILENAME_MAX);
+      prefsGetString("GAMEPAD", keyPriCode, kAbsentSentinel, rPriCode, FILENAME_MAX);
+      prefsGetString("GAMEPAD", keySecKind, kAbsentSentinel, rSecKind, FILENAME_MAX);
+      prefsGetString("GAMEPAD", keySecCode, kAbsentSentinel, rSecCode, FILENAME_MAX);
 
       bool havePri = (strcmp(rPriKind, kAbsentSentinel) != 0 &&
                       strcmp(rPriCode, kAbsentSentinel) != 0);
@@ -2221,8 +2502,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
       } else {
         /* No new keys — try legacy single-suffix migration. */
         char rOldKind[FILENAME_MAX], rOldCode[FILENAME_MAX];
-        GetPrivateProfileString("GAMEPAD", keyOldKind, kAbsentSentinel, rOldKind, FILENAME_MAX, prefsFile);
-        GetPrivateProfileString("GAMEPAD", keyOldCode, kAbsentSentinel, rOldCode, FILENAME_MAX, prefsFile);
+        prefsGetString("GAMEPAD", keyOldKind, kAbsentSentinel, rOldKind, FILENAME_MAX);
+        prefsGetString("GAMEPAD", keyOldCode, kAbsentSentinel, rOldCode, FILENAME_MAX);
         if (strcmp(rOldKind, kAbsentSentinel) != 0 &&
             strcmp(rOldCode, kAbsentSentinel) != 0) {
           int k = atoi(rOldKind);
@@ -2241,126 +2522,135 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   }
 
   /* Remember */
-  GetPrivateProfileString("SETTINGS", "Remember Player Name", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Remember Player Name", "Yes", buff, FILENAME_MAX);
   gameFrontRemeber = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Tutorial visibility — defaults to "Yes" (show on first run). */
-  GetPrivateProfileString("SETTINGS", "Show Tutorial Button", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Show Tutorial Button", "Yes", buff, FILENAME_MAX);
   gameFrontShowTutorialButton = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Country-flag rendering in chat / newswire — defaults to "Yes". */
-  GetPrivateProfileString("SETTINGS", "Show Country Flags In Chat", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Show Country Flags In Chat", "Yes", buff, FILENAME_MAX);
   gameFrontShowCountryFlagsInChat = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Language code (BCP-47, e.g. "en", "de", "pt-br"). Empty string on
    * fresh install — startup walks SDL_GetPreferredLocales() in that
    * case (see gameFrontStart). */
-  GetPrivateProfileString("SETTINGS", "Language", "",
+  prefsGetString("SETTINGS", "Language", "",
                           gameFrontLanguageCode,
-                          (DWORD)sizeof(gameFrontLanguageCode), prefsFile);
+                          (DWORD)sizeof(gameFrontLanguageCode));
 
   /* Game Options */
-  GetPrivateProfileString("GAME OPTIONS", "Hidden Mines", "No", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("GAME OPTIONS", "Hidden Mines", "No", buff, FILENAME_MAX);
   hiddenMines = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("GAME OPTIONS", "Allow Computer Tanks", "0", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("GAME OPTIONS", "Allow Computer Tanks", "0", buff, FILENAME_MAX);
   compTanks = atoi(buff);
-  GetPrivateProfileString("GAME OPTIONS", "Game Type", "1", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("GAME OPTIONS", "Game Type", "1", buff, FILENAME_MAX);
   gametype = atoi(buff);
-  GetPrivateProfileString("GAME OPTIONS", "Start Delay", "0", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("GAME OPTIONS", "Start Delay", "0", buff, FILENAME_MAX);
   startDelay = atoi(buff);
   longToStr(UNLIMITED_GAME_TIME, def, sizeof(def));
-  GetPrivateProfileString("GAME OPTIONS", "Time Length", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("GAME OPTIONS", "Time Length", def, buff, FILENAME_MAX);
   timeLen = (int32_t)atol(buff);
-  GetPrivateProfileString("GAME OPTIONS", "Auto Slowdown", autoSlowDefault, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("GAME OPTIONS", "Auto Slowdown", autoSlowDefault, buff, FILENAME_MAX);
   *pUseAutoslow = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", autoHideDefault, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("GAME OPTIONS", "Auto Show-Hide Gunsight", autoHideDefault, buff, FILENAME_MAX);
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 
-  GetPrivateProfileString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX);
   gameFrontUseUpnp = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("SETTINGS", "Use NAT Traversal", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("SETTINGS", "Use NAT Traversal", "Yes", buff, FILENAME_MAX);
   gameFrontUseNatTraversal = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Tracker options */
-  GetPrivateProfileString("TRACKER", "Address", TRACKER_ADDRESS, gameFrontTrackerAddr, FILENAME_MAX, prefsFile);
+  prefsGetString("TRACKER", "Address", TRACKER_ADDRESS, gameFrontTrackerAddr, FILENAME_MAX);
   intToStr(TRACKER_PORT, def, sizeof(def));
-  GetPrivateProfileString("TRACKER", "Port", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("TRACKER", "Port", def, buff, FILENAME_MAX);
   gameFrontTrackerPort = atoi(buff);
-  GetPrivateProfileString("TRACKER", "Enabled", "No", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("TRACKER", "Enabled", "No", buff, FILENAME_MAX);
   gameFrontTrackerEnabled = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Menu Items */
   intToStr(FRAME_RATE_30, def, sizeof(def));
-  GetPrivateProfileString("MENU", "Frame Rate", def, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Frame Rate", def, buff, FILENAME_MAX);
   frameRate = atoi(buff);
   /* Default ON for first-time players (no prefs file yet). Existing users
    * keep whatever "Show Gunsight" they already saved in their INI. */
-  GetPrivateProfileString("MENU", "Show Gunsight", gunsightDefault, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Show Gunsight", gunsightDefault, buff, FILENAME_MAX);
   showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX);
   soundEffects = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Allow Background Sound", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Allow Background Sound", "Yes", buff, FILENAME_MAX);
   backgroundSound = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Sound keepalive", "No", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Sound keepalive", "No", buff, FILENAME_MAX);
   useSoundKeepalive = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Sound Volume", "50", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Sound Volume", "50", buff, FILENAME_MAX);
   soundVolume = atoi(buff);
   if (soundVolume < 0) soundVolume = 0;
   if (soundVolume > 100) soundVolume = 100;
-  GetPrivateProfileString("MENU", "Show Newswire Messages", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Show Newswire Messages", "Yes", buff, FILENAME_MAX);
   showNewswireMessages = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Show Assistant Messages", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Show Assistant Messages", "Yes", buff, FILENAME_MAX);
   showAssistantMessages = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Show AI Messages", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Show AI Messages", "Yes", buff, FILENAME_MAX);
   showAIMessages = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Show Network Status Messages", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Show Network Status Messages", "Yes", buff, FILENAME_MAX);
   showNetworkStatusMessages = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Show Network Debug Messages", "No", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Show Network Debug Messages", "No", buff, FILENAME_MAX);
   showNetworkDebugMessages = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Autoscroll Enabled", autoScrollDefault, buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Autoscroll Enabled", autoScrollDefault, buff, FILENAME_MAX);
   autoScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Smooth Scrolling", "Yes", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Smooth Scrolling", "Yes", buff, FILENAME_MAX);
   smoothScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Show Pill Labels", "No", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Show Pill Labels", "No", buff, FILENAME_MAX);
   showPillLabels = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Show Base Labels", "No", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Show Base Labels", "No", buff, FILENAME_MAX);
   showBaseLabels = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Label Own Tank", "No", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Label Own Tank", "No", buff, FILENAME_MAX);
   labelSelf = YESNO_TO_TRUEFALSE(buff[0]);
-  GetPrivateProfileString("MENU", "Window Size", "1", buff, FILENAME_MAX, prefsFile);
+#if defined(__IPHONEOS__) || defined(__ANDROID__) || defined(__EMSCRIPTEN__)
+  prefsGetString("WINDOW", "Window Size", "1", buff, FILENAME_MAX);
+#else
+  /* First-time desktop players open at 2x so the game isn't a tiny window on
+   * modern monitors. If the monitor can't fit 2x, the window setup in
+   * winbolo.c clamps down to the largest cardinal size that does fit. Anyone
+   * who has finished onboarding keeps whatever size they previously saved. */
+  prefsGetString("WINDOW", "Window Size",
+                 gameFrontOnboardingComplete() ? "1" : "2", buff, FILENAME_MAX);
+#endif
   zoomFactor = atoi(buff);
   /* Custom window size (for ZOOM_FACTOR_CUSTOM mode) */
-  GetPrivateProfileString("MENU", "Custom Width", "0", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("WINDOW", "Custom Width", "0", buff, FILENAME_MAX);
   {
     int customW = atoi(buff);
-    GetPrivateProfileString("MENU", "Custom Height", "0", buff, FILENAME_MAX, prefsFile);
+    prefsGetString("WINDOW", "Custom Height", "0", buff, FILENAME_MAX);
     int customH = atoi(buff);
     if (customW > 0 && customH > 0) {
       windowSetCustomSize(customW, customH);
     }
   }
   /* Window position */
-  GetPrivateProfileString("MENU", "Window X", "-1", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("WINDOW", "Window X", "-1", buff, FILENAME_MAX);
   {
     int winX = atoi(buff);
-    GetPrivateProfileString("MENU", "Window Y", "-1", buff, FILENAME_MAX, prefsFile);
+    prefsGetString("WINDOW", "Window Y", "-1", buff, FILENAME_MAX);
     int winY = atoi(buff);
     windowSetSavedPosition(winX, winY);
   }
   /* Dialog window position (welcome screen, etc.) */
-  GetPrivateProfileString("MENU", "Dialog X", "-1", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("WINDOW", "Dialog X", "-1", buff, FILENAME_MAX);
   gameFrontDialogX = atoi(buff);
-  GetPrivateProfileString("MENU", "Dialog Y", "-1", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("WINDOW", "Dialog Y", "-1", buff, FILENAME_MAX);
   gameFrontDialogY = atoi(buff);
 
-  GetPrivateProfileString("MENU", "Message Label Size", "1", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
-  GetPrivateProfileString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX, prefsFile);
+  prefsGetString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX);
   labelTank = atoi(buff);
 
   /* Winbolo.net */
-  GetPrivateProfileString("WINBOLO.NET", "Token", "", gameFrontWbnToken, FILENAME_MAX, prefsFile);
-  GetPrivateProfileString("WINBOLO.NET", "TokenExpiry", "", gameFrontWbnTokenExpiry, FILENAME_MAX, prefsFile);
+  prefsGetString("WINBOLO.NET", "Token", "", gameFrontWbnToken, FILENAME_MAX);
+  prefsGetString("WINBOLO.NET", "TokenExpiry", "", gameFrontWbnTokenExpiry, FILENAME_MAX);
   gameFrontWbnUse = (gameFrontWbnToken[0] != '\0');
 
   return TRUE;
@@ -2375,105 +2665,103 @@ void gameFrontFlushWindowSettings(void);
 void gameFrontPutPrefs(keyItems *keys) {
   char playerName[PLAYER_NAME_LEN];
   char buff[FILENAME_MAX];
-  const char *prefsFile = getPreferenceFilePath();
 
   /* Player Name */
   if (((humanSim != NULL && clientSimGetNetType(humanSim) == netSingle) || (gameFrontRemeber == TRUE && humanSim != NULL)) && dlgState != openSetup && !clientSimIsInLobby(humanSim)) {
     clientSimGetPlayerName(humanSim, playerName);
     strcpy(gameFrontName, playerName);
-    WritePrivateProfileString("SETTINGS", "Player Name", playerName, prefsFile);
+    prefsSetString("SETTINGS", "Player Name", playerName);
   } else {
-    WritePrivateProfileString("SETTINGS", "Player Name", gameFrontName, prefsFile);
+    prefsSetString("SETTINGS", "Player Name", gameFrontName);
   }
 
   /* Target Address */
-  WritePrivateProfileString("SETTINGS", "Target Address", gameFrontUdpAddress, prefsFile);
+  prefsSetString("SETTINGS", "Target Address", gameFrontUdpAddress);
 
   /* Ports */
   intToStr(gameFrontTargetUdp, buff, sizeof(buff));
-  WritePrivateProfileString("SETTINGS", "Target UDP Port", buff, prefsFile);
+  prefsSetString("SETTINGS", "Target UDP Port", buff);
   intToStr(gameFrontMyUdp, buff, sizeof(buff));
-  WritePrivateProfileString("SETTINGS", "UDP Port", buff, prefsFile);
+  prefsSetString("SETTINGS", "UDP Port", buff);
 
   /* Language — persist the BCP-47 code, not a file path. */
-  WritePrivateProfileString("SETTINGS", "Language",
-                            gameFrontLanguageCode, prefsFile);
+  prefsSetString("SETTINGS", "Language",
+                            gameFrontLanguageCode);
 
   /* Keys — driving */
   intToStr(keys->kiForward, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Forward", buff, prefsFile);
+  prefsSetString("KEYS", "Forward", buff);
   intToStr(keys->kiBackward, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Backwards", buff, prefsFile);
+  prefsSetString("KEYS", "Backwards", buff);
   intToStr(keys->kiLeft, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Left", buff, prefsFile);
+  prefsSetString("KEYS", "Left", buff);
   intToStr(keys->kiRight, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Right", buff, prefsFile);
+  prefsSetString("KEYS", "Right", buff);
 
   /* Shooting, mines, gunsight */
   intToStr(keys->kiShoot, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Shoot", buff, prefsFile);
+  prefsSetString("KEYS", "Shoot", buff);
   intToStr(keys->kiLayMine, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Lay Mine", buff, prefsFile);
+  prefsSetString("KEYS", "Lay Mine", buff);
   intToStr(keys->kiGunIncrease, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Increase Range", buff, prefsFile);
+  prefsSetString("KEYS", "Increase Range", buff);
   intToStr(keys->kiGunDecrease, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Decrease Range", buff, prefsFile);
+  prefsSetString("KEYS", "Decrease Range", buff);
 
   /* Views */
   intToStr(keys->kiTankView, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Tank View", buff, prefsFile);
+  prefsSetString("KEYS", "Tank View", buff);
   intToStr(keys->kiPillView, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Pill View", buff, prefsFile);
+  prefsSetString("KEYS", "Pill View", buff);
   intToStr(keys->kiAllyView, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Ally View", buff, prefsFile);
+  prefsSetString("KEYS", "Ally View", buff);
   intToStr(keys->kiLGMView, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "LGM View", buff, prefsFile);
+  prefsSetString("KEYS", "LGM View", buff);
   intToStr(keys->kiBaseView, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Base View", buff, prefsFile);
+  prefsSetString("KEYS", "Base View", buff);
 
   /* Scrolling */
   intToStr(keys->kiScrollUp, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Scroll Up", buff, prefsFile);
+  prefsSetString("KEYS", "Scroll Up", buff);
   intToStr(keys->kiScrollDown, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Scroll Down", buff, prefsFile);
+  prefsSetString("KEYS", "Scroll Down", buff);
   intToStr(keys->kiScrollLeft, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Scroll Left", buff, prefsFile);
+  prefsSetString("KEYS", "Scroll Left", buff);
   intToStr(keys->kiScrollRight, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Scroll Right", buff, prefsFile);
+  prefsSetString("KEYS", "Scroll Right", buff);
 
   /* Quick keys */
   intToStr(keys->kiQuickTree, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Quick Tree", buff, prefsFile);
+  prefsSetString("KEYS", "Quick Tree", buff);
   intToStr(keys->kiQuickRoad, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Quick Road", buff, prefsFile);
+  prefsSetString("KEYS", "Quick Road", buff);
   intToStr(keys->kiQuickWall, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Quick Wall", buff, prefsFile);
+  prefsSetString("KEYS", "Quick Wall", buff);
   intToStr(keys->kiQuickPillbox, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Quick Pillbox", buff, prefsFile);
+  prefsSetString("KEYS", "Quick Pillbox", buff);
   intToStr(keys->kiQuickMine, buff, sizeof(buff));
-  WritePrivateProfileString("KEYS", "Quick Mine", buff, prefsFile);
+  prefsSetString("KEYS", "Quick Mine", buff);
 
   /* Gamepad — right-stick scroll sensitivity multiplier. */
   snprintf(buff, sizeof(buff), "%.2f", g_gamepadScrollSensitivity);
-  WritePrivateProfileString("SETTINGS", "Gamepad Scroll Sens", buff, prefsFile);
+  prefsSetString("SETTINGS", "Gamepad Scroll Sens", buff);
 
   /* Gamepad — left-stick tank-move + build-cursor move sensitivities. */
   snprintf(buff, sizeof(buff), "%.2f", g_gamepadTankSensitivity);
-  WritePrivateProfileString("SETTINGS", "Gamepad Tank Sens", buff, prefsFile);
+  prefsSetString("SETTINGS", "Gamepad Tank Sens", buff);
   snprintf(buff, sizeof(buff), "%.2f", g_gamepadBuildCursorSensitivity);
-  WritePrivateProfileString("SETTINGS", "Gamepad Build Cursor Sens", buff, prefsFile);
+  prefsSetString("SETTINGS", "Gamepad Build Cursor Sens", buff);
 
   /* Gamepad — build-cursor behaviour options. */
-  WritePrivateProfileString("SETTINGS", "Build Exit Executes",   TRUEFALSE_TO_STR(g_buildExitExecutes), prefsFile);
-  WritePrivateProfileString("SETTINGS", "Build Double Tap Road", TRUEFALSE_TO_STR(g_buildDoubleTapRoad), prefsFile);
-  WritePrivateProfileString("SETTINGS", "Build Hold Momentary",  TRUEFALSE_TO_STR(g_buildHoldMomentary), prefsFile);
+  prefsSetString("SETTINGS", "Build Exit Executes",   TRUEFALSE_TO_STR(g_buildExitExecutes));
+  prefsSetString("SETTINGS", "Build Double Tap Road", TRUEFALSE_TO_STR(g_buildDoubleTapRoad));
+  prefsSetString("SETTINGS", "Build Hold Momentary",  TRUEFALSE_TO_STR(g_buildHoldMomentary));
 
   /* Phase 8.1 — Controller Mode pref + prompt-on-connect flag. */
   intToStr((int)uiControllerModeGet(), buff, sizeof(buff));
-  WritePrivateProfileString("SETTINGS", "Controller Mode", buff, prefsFile);
-  WritePrivateProfileString("SETTINGS", "Controller Prompt Ask",
-                            TRUEFALSE_TO_STR(uiControllerPromptAskOnConnectGet()),
-                            prefsFile);
+  prefsSetString("SETTINGS", "Controller Mode", buff);
+  prefsSetString("SETTINGS", "Controller Prompt Ask",
+                            TRUEFALSE_TO_STR(uiControllerPromptAskOnConnectGet()));
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where
@@ -2495,71 +2783,71 @@ void gameFrontPutPrefs(keyItems *keys) {
       snprintf(keySecKind, sizeof(keySecKind), "gpb_%s_sec_kind", name);
       snprintf(keySecCode, sizeof(keySecCode), "gpb_%s_sec_code", name);
       intToStr((int)gb.b[i].pri.kind, buff, sizeof(buff));
-      WritePrivateProfileString("GAMEPAD", keyPriKind, buff, prefsFile);
+      prefsSetString("GAMEPAD", keyPriKind, buff);
       intToStr(gb.b[i].pri.code, buff, sizeof(buff));
-      WritePrivateProfileString("GAMEPAD", keyPriCode, buff, prefsFile);
+      prefsSetString("GAMEPAD", keyPriCode, buff);
       intToStr((int)gb.b[i].sec.kind, buff, sizeof(buff));
-      WritePrivateProfileString("GAMEPAD", keySecKind, buff, prefsFile);
+      prefsSetString("GAMEPAD", keySecKind, buff);
       intToStr(gb.b[i].sec.code, buff, sizeof(buff));
-      WritePrivateProfileString("GAMEPAD", keySecCode, buff, prefsFile);
+      prefsSetString("GAMEPAD", keySecCode, buff);
     }
   }
 
   /* Remember */
-  WritePrivateProfileString("SETTINGS", "Remember Player Name", TRUEFALSE_TO_STR(gameFrontRemeber), prefsFile);
+  prefsSetString("SETTINGS", "Remember Player Name", TRUEFALSE_TO_STR(gameFrontRemeber));
 
   /* Options */
-  WritePrivateProfileString("GAME OPTIONS", "Hidden Mines", TRUEFALSE_TO_STR(hiddenMines), prefsFile);
+  prefsSetString("GAME OPTIONS", "Hidden Mines", TRUEFALSE_TO_STR(hiddenMines));
   intToStr(compTanks, buff, sizeof(buff));
-  WritePrivateProfileString("GAME OPTIONS", "Allow Computer Tanks", buff, prefsFile);
+  prefsSetString("GAME OPTIONS", "Allow Computer Tanks", buff);
   intToStr(gametype, buff, sizeof(buff));
-  WritePrivateProfileString("GAME OPTIONS", "Game Type", buff, prefsFile);
+  prefsSetString("GAME OPTIONS", "Game Type", buff);
   intToStr(startDelay, buff, sizeof(buff));
-  WritePrivateProfileString("GAME OPTIONS", "Start Delay", buff, prefsFile);
+  prefsSetString("GAME OPTIONS", "Start Delay", buff);
   intToStr(timeLen, buff, sizeof(buff));
-  WritePrivateProfileString("GAME OPTIONS", "Time Length", buff, prefsFile);
-  WritePrivateProfileString("GAME OPTIONS", "Auto Slowdown", TRUEFALSE_TO_STR(useAutoslow), prefsFile);
-  WritePrivateProfileString("GAME OPTIONS", "Auto Show-Hide Gunsight", TRUEFALSE_TO_STR(useAutohide), prefsFile);
+  prefsSetString("GAME OPTIONS", "Time Length", buff);
+  prefsSetString("GAME OPTIONS", "Auto Slowdown", TRUEFALSE_TO_STR(useAutoslow));
+  prefsSetString("GAME OPTIONS", "Auto Show-Hide Gunsight", TRUEFALSE_TO_STR(useAutohide));
 
-  WritePrivateProfileString("SETTINGS", "Use UPnP", TRUEFALSE_TO_STR(gameFrontUseUpnp), prefsFile);
-  WritePrivateProfileString("SETTINGS", "Use NAT Traversal", TRUEFALSE_TO_STR(gameFrontUseNatTraversal), prefsFile);
+  prefsSetString("SETTINGS", "Use UPnP", TRUEFALSE_TO_STR(gameFrontUseUpnp));
+  prefsSetString("SETTINGS", "Use NAT Traversal", TRUEFALSE_TO_STR(gameFrontUseNatTraversal));
 
   /* Tracker */
-  WritePrivateProfileString("TRACKER", "Address", gameFrontTrackerAddr, prefsFile);
+  prefsSetString("TRACKER", "Address", gameFrontTrackerAddr);
   intToStr(gameFrontTrackerPort, buff, sizeof(buff));
-  WritePrivateProfileString("TRACKER", "Port", buff, prefsFile);
-  WritePrivateProfileString("TRACKER", "Enabled", TRUEFALSE_TO_STR(gameFrontTrackerEnabled), prefsFile);
+  prefsSetString("TRACKER", "Port", buff);
+  prefsSetString("TRACKER", "Enabled", TRUEFALSE_TO_STR(gameFrontTrackerEnabled));
 
   /* Menu Items */
   intToStr(frameRate, buff, sizeof(buff));
-  WritePrivateProfileString("MENU", "Frame Rate", buff, prefsFile);
-  WritePrivateProfileString("MENU", "Show Gunsight", TRUEFALSE_TO_STR(showGunsight), prefsFile);
-  WritePrivateProfileString("MENU", "Sound Effects", TRUEFALSE_TO_STR(soundEffects), prefsFile);
-  WritePrivateProfileString("MENU", "Allow Background Sound", TRUEFALSE_TO_STR(backgroundSound), prefsFile);
-  WritePrivateProfileString("MENU", "Sound keepalive", TRUEFALSE_TO_STR(useSoundKeepalive), prefsFile);
+  prefsSetString("MENU", "Frame Rate", buff);
+  prefsSetString("MENU", "Show Gunsight", TRUEFALSE_TO_STR(showGunsight));
+  prefsSetString("MENU", "Sound Effects", TRUEFALSE_TO_STR(soundEffects));
+  prefsSetString("MENU", "Allow Background Sound", TRUEFALSE_TO_STR(backgroundSound));
+  prefsSetString("MENU", "Sound keepalive", TRUEFALSE_TO_STR(useSoundKeepalive));
   intToStr(soundVolume, buff, sizeof(buff));
-  WritePrivateProfileString("MENU", "Sound Volume", buff, prefsFile);
-  WritePrivateProfileString("MENU", "Show Newswire Messages", TRUEFALSE_TO_STR(showNewswireMessages), prefsFile);
-  WritePrivateProfileString("MENU", "Show Assistant Messages", TRUEFALSE_TO_STR(showAssistantMessages), prefsFile);
-  WritePrivateProfileString("MENU", "Show AI Messages", TRUEFALSE_TO_STR(showAIMessages), prefsFile);
-  WritePrivateProfileString("MENU", "Show Network Status Messages", TRUEFALSE_TO_STR(showNetworkStatusMessages), prefsFile);
-  WritePrivateProfileString("MENU", "Show Network Debug Messages", TRUEFALSE_TO_STR(showNetworkDebugMessages), prefsFile);
-  WritePrivateProfileString("MENU", "Autoscroll Enabled", TRUEFALSE_TO_STR(autoScrollingEnabled), prefsFile);
-  WritePrivateProfileString("MENU", "Smooth Scrolling", TRUEFALSE_TO_STR(smoothScrollingEnabled), prefsFile);
-  WritePrivateProfileString("MENU", "Show Pill Labels", TRUEFALSE_TO_STR(showPillLabels), prefsFile);
-  WritePrivateProfileString("MENU", "Show Base Labels", TRUEFALSE_TO_STR(showBaseLabels), prefsFile);
-  WritePrivateProfileString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf), prefsFile);
+  prefsSetString("MENU", "Sound Volume", buff);
+  prefsSetString("MENU", "Show Newswire Messages", TRUEFALSE_TO_STR(showNewswireMessages));
+  prefsSetString("MENU", "Show Assistant Messages", TRUEFALSE_TO_STR(showAssistantMessages));
+  prefsSetString("MENU", "Show AI Messages", TRUEFALSE_TO_STR(showAIMessages));
+  prefsSetString("MENU", "Show Network Status Messages", TRUEFALSE_TO_STR(showNetworkStatusMessages));
+  prefsSetString("MENU", "Show Network Debug Messages", TRUEFALSE_TO_STR(showNetworkDebugMessages));
+  prefsSetString("MENU", "Autoscroll Enabled", TRUEFALSE_TO_STR(autoScrollingEnabled));
+  prefsSetString("MENU", "Smooth Scrolling", TRUEFALSE_TO_STR(smoothScrollingEnabled));
+  prefsSetString("MENU", "Show Pill Labels", TRUEFALSE_TO_STR(showPillLabels));
+  prefsSetString("MENU", "Show Base Labels", TRUEFALSE_TO_STR(showBaseLabels));
+  prefsSetString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf));
   /* Window settings (zoom, custom size, position, dialog position) — flush immediately,
      bypassing debounce since this is the shutdown save path. */
   gameFrontFlushWindowSettings();
   intToStr(labelMsg, buff, sizeof(buff));
-  WritePrivateProfileString("MENU", "Message Label Size", buff, prefsFile);
+  prefsSetString("MENU", "Message Label Size", buff);
   intToStr(labelTank, buff, sizeof(buff));
-  WritePrivateProfileString("MENU", "Tank Label Size", buff, prefsFile);
+  prefsSetString("MENU", "Tank Label Size", buff);
 
   /* Winbolo.net */
-  WritePrivateProfileString("WINBOLO.NET", "Token", gameFrontWbnToken, prefsFile);
-  WritePrivateProfileString("WINBOLO.NET", "TokenExpiry", gameFrontWbnTokenExpiry, prefsFile);
+  prefsSetString("WINBOLO.NET", "Token", gameFrontWbnToken);
+  prefsSetString("WINBOLO.NET", "TokenExpiry", gameFrontWbnTokenExpiry);
 }
 
 /* -------------------------------------------------------
@@ -2574,33 +2862,32 @@ static bool s_windowSettingsDirty = false;
 
 void gameFrontFlushWindowSettings(void) {
   char buff[FILENAME_MAX];
-  const char *prefsFile = getPreferenceFilePath();
 
   intToStr(zoomFactor, buff, sizeof(buff));
-  WritePrivateProfileString("MENU", "Window Size", buff, prefsFile);
+  prefsSetString("WINDOW", "Window Size", buff);
 
   {
     int customW, customH;
     windowGetCustomSize(&customW, &customH);
     intToStr(customW, buff, sizeof(buff));
-    WritePrivateProfileString("MENU", "Custom Width", buff, prefsFile);
+    prefsSetString("WINDOW", "Custom Width", buff);
     intToStr(customH, buff, sizeof(buff));
-    WritePrivateProfileString("MENU", "Custom Height", buff, prefsFile);
+    prefsSetString("WINDOW", "Custom Height", buff);
   }
 
   {
     int winX, winY;
     windowGetSavedPosition(&winX, &winY);
     intToStr(winX, buff, sizeof(buff));
-    WritePrivateProfileString("MENU", "Window X", buff, prefsFile);
+    prefsSetString("WINDOW", "Window X", buff);
     intToStr(winY, buff, sizeof(buff));
-    WritePrivateProfileString("MENU", "Window Y", buff, prefsFile);
+    prefsSetString("WINDOW", "Window Y", buff);
   }
 
   intToStr(gameFrontDialogX, buff, sizeof(buff));
-  WritePrivateProfileString("MENU", "Dialog X", buff, prefsFile);
+  prefsSetString("WINDOW", "Dialog X", buff);
   intToStr(gameFrontDialogY, buff, sizeof(buff));
-  WritePrivateProfileString("MENU", "Dialog Y", buff, prefsFile);
+  prefsSetString("WINDOW", "Dialog Y", buff);
 
   s_windowSettingsDirty = false;
 }
@@ -2621,6 +2908,11 @@ void gameFrontSaveWindowSettings(void) {
 }
 
 void gameFrontPumpDirty(void) {
+  /* Upload to the cloud only when the debounce actually flushed (and only
+   * if there is something dirty to sync); the 15 s debounce doubles as the
+   * back-off that keeps writes under the server's ~1/sec limit. */
+  if (prefsPumpAutosave((uint64_t)SDL_GetTicks())) gameFrontMaybeUploadPrefs();
+  gameFrontPumpPrefsSync();
   if (!s_windowSettingsDirty) return;
   Uint64 now = SDL_GetTicks();
   if (now - s_lastWindowWriteTime < 500) return;

@@ -398,6 +398,7 @@ static EncodeResult encodeLobbySlot(const ControlEvent *evt,
  *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [inLobby 1]
  *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 2 BE]
  *   [ranked 1] [allowNewPlayers 1] [wbnAvailable 1] [uploadPolicy 1]
+ *   [lobbyStartDelay 4 BE] [hostSlot 1]
  *
  * The trailing four bytes are appended after the base layout so the
  * existing fields keep their offsets. The decoder reads each one
@@ -408,8 +409,8 @@ static EncodeResult encodeLobbySlot(const ControlEvent *evt,
 #define LOBBY_SETTINGS_WIRE_PAYLOAD_BASE \
     (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 2)
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
- * + uploadPolicy(1) + lobbyStartDelay(4). */
-#define LOBBY_SETTINGS_WIRE_PAYLOAD (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4)
+ * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1). */
+#define LOBBY_SETTINGS_WIRE_PAYLOAD (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -447,6 +448,7 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = (uint8_t)evt->u.lobbySettings.uploadPolicy;
     packU32(buf + pos, (uint32_t)evt->u.lobbySettings.lobbyStartDelay);
     pos += 4;
+    buf[pos++] = evt->u.lobbySettings.hostSlot;
     *outLen = pos;
     return ENCODE_OK;
 }
@@ -1305,6 +1307,9 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     if (len >= pos + 4) {
         outEvt->u.lobbySettings.lobbyStartDelay = (int32_t)unpackU32(buf + pos);
         pos += 4;
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.hostSlot = buf[pos++];
     }
     return true;
 }

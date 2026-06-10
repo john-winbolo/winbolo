@@ -36,6 +36,17 @@ void imguiWinbolonetStartValidation(void);
  * When inGame is true, sign-in/out is disabled (read-only status). */
 void imguiWinbolonetDrawSection(bool inGame);
 
+/* Draw the compact account status block (name + signed-in state +
+ * Login/Logout + 1v1 ladder rank) for the welcome screen. Reuses the
+ * same login popup/worker as imguiWinbolonetDrawSection. */
+void imguiWinbolonetDrawStatusBlock(void);
+
+/* Render the shared "My Stats" modal showing the signed-in player's
+ * per-mode WinBolo.net stats. Driven by the My Stats buttons in the
+ * welcome status block and the settings section; both draw paths call
+ * this each frame so the single dialog state is rendered once. */
+void imguiWinbolonetDrawStatsDialog(void);
+
 #ifdef __cplusplus
 }
 #endif

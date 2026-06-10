@@ -40,6 +40,7 @@ extern "C" {
 #include "../../gamefront.h"
 #include "../../ui_mode.h"
 #include "../../lang.h"
+#include "imgui_winbolonet.h"
 }
 
 #include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
@@ -361,6 +362,17 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PopStyleVar(1);
         }
 
+        /* Top-left WinBolo.net account status: player name + signed-in
+         * state + Login/Logout, plus the 1v1 ladder rank when signed in.
+         * Reuses the settings dialog's login popup and worker. */
+        {
+            const float statusMargin = 12.0f * s;
+            ImGui::SetCursorPos(ImVec2(statusMargin, statusMargin));
+            ImGui::BeginGroup();
+            imguiWinbolonetDrawStatusBlock();
+            ImGui::EndGroup();
+        }
+
 #if !BOLO_MOBILE
         /* Drive the news popup state machine. Renders the consent dialog
          * or the news modal when either is open, otherwise polls the
@@ -476,7 +488,6 @@ extern "C" int imguiWelcomeShow(void) {
         aboutPopupRender();
 
         dialogDrawNavOutline();
-
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);
@@ -491,6 +502,7 @@ extern "C" int imguiWelcomeShow(void) {
 
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
+        gameFrontPumpDirty(); /* sync cloud prefs from menus (login join + debounced upload) */
         dialogFrameCapEnd(frameCapStart);
     }
 

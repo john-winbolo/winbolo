@@ -9,6 +9,7 @@
 #define STEAM_WRAPPER_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 bool     steam_init(void);
@@ -17,6 +18,16 @@ void     steam_run_callbacks(void);
 void     steam_set_rich_presence(const char *key, const char *value);
 void     steam_clear_rich_presence(void);
 bool     steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size, uint32_t *out_len);
+
+/* Copy the local Steam user's persona (display) name into out. Returns
+ * false (out untouched/empty) when Steam is not initialized — callers use
+ * this both to pre-fill a signup name and to detect "running under Steam". */
+bool     steam_get_persona_name(char *out, size_t outSize);
+
+/* Cancel the auth-session ticket acquired by the most recent
+ * steam_get_auth_ticket call, releasing its HAuthTicket handle.
+ * No-op if no ticket is outstanding or Steam is not initialized. */
+void     steam_cancel_auth_ticket(void);
 
 /* True iff Steam is initialized and currently running on a Steam Deck. */
 bool     steam_is_steam_deck(void);

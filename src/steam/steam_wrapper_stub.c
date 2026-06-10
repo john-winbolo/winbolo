@@ -20,6 +20,13 @@ bool steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size, uint32_t *out_len) {
   return false;
 }
 
+bool steam_get_persona_name(char *out, size_t outSize) {
+  if (out && outSize) out[0] = '\0';
+  return false;
+}
+
+void steam_cancel_auth_ticket(void) {}
+
 void steam_increment_stat(const char *name, int amount) {
   (void)name; (void)amount;
 }

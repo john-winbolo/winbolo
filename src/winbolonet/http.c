@@ -47,23 +47,12 @@ void randombytes(unsigned char *buf, unsigned long long len) {
   (void)buf; (void)len;
 }
 
-/* Provided by posix_stubs.c (server, map editor, log viewer, SDL3 client) */
-#ifndef _WIN32
-void preferencesGetPreferenceFile(char *dest);
-unsigned int GetPrivateProfileString(const char *section, const char *key,
-                                     const char *def, char *out,
-                                     unsigned int outSize,
-                                     const char *filePath);
-int WritePrivateProfileString(const char *section, const char *key,
-                              const char *value, const char *filePath);
-#endif
-
 #include "global.h"
 #include "http.h"
 #include "../common/wb_log.h"
+#include "../common/prefs.h"
 #include "winbolonet_core.h"
 #include "wbn_bearer.h"
-#include "wbn_prefs_path.h"
 
 static bool httpStarted = false;
 static char wbnHostString[FILENAME_MAX]; /* hostname only, no scheme */
@@ -198,7 +187,6 @@ void httpSetHostOverride(const char *host) {
 * Returns success.
 *********************************************************/
 bool httpCreate(void) {
-  char prefs[FILENAME_MAX];
   char iniValue[FILENAME_MAX];
 
   if (wbnHostOverride[0] != '\0') {
@@ -206,19 +194,12 @@ bool httpCreate(void) {
     strncpy(iniValue, wbnHostOverride, sizeof(iniValue) - 1);
     iniValue[sizeof(iniValue) - 1] = '\0';
   } else {
-    /* Read from preferences file */
-#ifdef _WIN32
-    strncpy(prefs, winbolonetCorePrefsPath(), sizeof(prefs) - 1);
-    prefs[sizeof(prefs) - 1] = '\0';
-#else
-    preferencesGetPreferenceFile(prefs);
-#endif
-
+    /* Read from preferences */
     iniValue[0] = '\0';
-    GetPrivateProfileString("WINBOLO.NET", "Host", "wbn.winbolo.net",
-                            iniValue, (unsigned int)sizeof(iniValue), prefs);
+    prefsGetString("WINBOLO.NET", "Host", "wbn.winbolo.net",
+                   iniValue, (unsigned int)sizeof(iniValue));
     /* Write back so servers without a client config get a default entry */
-    WritePrivateProfileString("WINBOLO.NET", "Host", iniValue, prefs);
+    prefsSetString("WINBOLO.NET", "Host", iniValue);
   }
 
   buildBaseUrl(iniValue);
@@ -652,6 +633,144 @@ int wbn_api_get(const char *path, char **response_out) {
     free(respBuf.data);
   }
   return (int)http_code;
+}
+
+/*********************************************************
+*NAME:          wbn_prefs_request_impl
+*PURPOSE:
+* Shared low-level body for the cloud-prefs sync transport.
+* When is_put is false, issues a GET with no body and signs an
+* empty body; when true, issues a PUT of json_body and signs
+* over json_body. Always attaches the signature/timestamp
+* headers and Authorization: Bearer <bearerToken>. Refuses
+* (returns -1) when bearerToken is NULL/empty. Captures the
+* response body via DynBuf like the other helpers.
+* Returns the HTTP status code, or -1 on transport error.
+*********************************************************/
+static int wbn_prefs_request_impl(const char *bearerToken, bool is_put,
+                                  const char *json_body, char **response_out) {
+  if (response_out) *response_out = NULL;
+  if (bearerToken == NULL || bearerToken[0] == '\0') {
+    WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_prefs %s: aborted — empty bearer token",
+                is_put ? "PUT" : "GET");
+    return -1;
+  }
+  /* Lazy-init like wbn_api_get: cloud-prefs sync can fire on a worker
+   * thread after a logout/re-login that left httpStarted false (httpDestroy
+   * clears it and a token-based re-login never re-runs httpCreate).
+   * httpCreate() is idempotent w.r.t. curl_global_init. */
+  if (!httpStarted) (void)httpCreate();
+  if (!httpStarted) {
+    WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_prefs %s: aborted — http subsystem not started",
+                is_put ? "PUT" : "GET");
+    return -1;
+  }
+
+  const char *sign_body = is_put ? json_body : "";
+
+  CURL *curl = curl_easy_init();
+  if (!curl) return -1;
+
+  /* Build URL: <baseUrl>/api/v1/prefs */
+  char url[FILENAME_MAX + 64];
+  snprintf(url, sizeof(url), "%s/api/v1/prefs", wbnBaseUrl);
+
+  /* Generate timestamp and Ed25519 signature */
+  char timestamp_str[32];
+  snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)time(NULL));
+
+  char sig_hex[129];
+  wbn_sign_request(timestamp_str, sign_body, sig_hex);
+
+  char sig_header[256];
+  char ts_header[64];
+  snprintf(sig_header, sizeof(sig_header), "X-WBN-Signature: %s", sig_hex);
+  snprintf(ts_header, sizeof(ts_header), "X-WBN-Timestamp: %s", timestamp_str);
+
+  char auth_header[256];
+  snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", bearerToken);
+
+  struct curl_slist *headers = NULL;
+  headers = curl_slist_append(headers, "Content-Type: application/json");
+  headers = curl_slist_append(headers, sig_header);
+  headers = curl_slist_append(headers, ts_header);
+  headers = curl_slist_append(headers, auth_header);
+
+  DynBuf respBuf;
+  dynBufInit(&respBuf);
+  if (!respBuf.data) {
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    return -1;
+  }
+
+  curl_easy_setopt(curl, CURLOPT_URL,            url);
+  if (is_put) {
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS,    json_body);
+  } else {
+    curl_easy_setopt(curl, CURLOPT_HTTPGET,       1L);
+  }
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  dynWriteCallback);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  if (altIpAddress[0] != '\0') {
+    curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
+  }
+
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_prefs: %s %s", is_put ? "PUT" : "GET", url);
+
+  CURLcode res = curl_easy_perform(curl);
+
+  long http_code = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+  curl_slist_free_all(headers);
+  curl_easy_cleanup(curl);
+
+  if (res != CURLE_OK) {
+    WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_prefs %s: curl error: %s",
+                is_put ? "PUT" : "GET", curl_easy_strerror(res));
+    free(respBuf.data);
+    return -1;
+  }
+
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_prefs %s: HTTP %ld",
+               is_put ? "PUT" : "GET", http_code);
+
+  if (response_out) {
+    *response_out = respBuf.data;
+  } else {
+    free(respBuf.data);
+  }
+  return (int)http_code;
+}
+
+/*********************************************************
+*NAME:          wbn_prefs_get
+*PURPOSE:
+* GET /api/v1/prefs. Authorization: Bearer <bearerToken>;
+* signs the timestamp + an empty body like the other v1 calls.
+* Returns the HTTP status code, or -1 on transport error or
+* empty bearer.
+*********************************************************/
+int wbn_prefs_get(const char *bearerToken, char **response_out) {
+  return wbn_prefs_request_impl(bearerToken, false, "", response_out);
+}
+
+/*********************************************************
+*NAME:          wbn_prefs_put
+*PURPOSE:
+* PUT /api/v1/prefs with json_body. Authorization: Bearer
+* <bearerToken>; signs the timestamp + json_body.
+* Returns the HTTP status code, or -1 on transport error or
+* empty bearer.
+*********************************************************/
+int wbn_prefs_put(const char *bearerToken, const char *json_body,
+                  char **response_out) {
+  return wbn_prefs_request_impl(bearerToken, true, json_body, response_out);
 }
 
 /*********************************************************

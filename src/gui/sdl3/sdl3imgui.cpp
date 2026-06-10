@@ -83,14 +83,15 @@ extern "C" {
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
-#include "dialogs/imgui_nav_outline.h"
 #include "dialogs/imgui_deck_pause.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
 #include "imgui_steam_nav.h"
+#include "dialogs/imgui_server_address.h"
 #include "dialogs/dialog_footer.h"
 #include "dialogs/imgui_keysetup.h"
 #include "dialogs/imgui_about.h"
+#include "dialogs/imgui_nav_outline.h"
 #include "platform/mac_menubar.h"
 
 extern "C" void windowSetQuitting(void);
@@ -265,8 +266,10 @@ static uint16_t s_playerPing[MAX_PLAYERS] = {};
 static uint8_t  s_playerClientType[MAX_PLAYERS] = {};
 static uint8_t  s_playerFlags[MAX_PLAYERS] = {};
 
-/* WBN/Steam icon textures */
-static SDL_Texture *s_iconGlobe = nullptr;
+/* WBN/Steam icon textures. The WBN-verified shield is drawn procedurally
+ * (imguiShieldBadge / imguiDrawSpinningShield) rather than from a texture, so
+ * there is no s_iconWbnVerified — the Mac menubar loads its own copy of
+ * shield.svg for native Cocoa drawing. */
 static SDL_Texture *s_iconSteam = nullptr;
 static SDL_Texture *s_iconBrain = nullptr;
 /* Large brain texture used for tank-label overlays. The small s_iconBrain
@@ -285,13 +288,12 @@ static void ensureWbnIconsLoaded(void) {
     if (s_wbnIconsLoaded) return;
     s_wbnIconsLoaded = true;
     SDL_Renderer *r = s_renderer ? s_renderer : sdl3DrawGetRenderer();
-    s_iconGlobe   = imguiLoadSvgIconWhite(r, "data/ui/globe.svg", WBN_ICON_SIZE);
     s_iconSteam   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
     s_iconBrain   = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
     s_iconBrainLg = imguiLoadSvgIconWhite(r, "data/ui/brain.svg",
                                           WBN_ICON_TANK_LABEL_SIZE);
-    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] globe=%p steam=%p brain=%p brainLg=%p s_renderer=%p drawRenderer=%p",
-            (void *)s_iconGlobe, (void *)s_iconSteam,
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] steam=%p brain=%p brainLg=%p s_renderer=%p drawRenderer=%p",
+            (void *)s_iconSteam,
             (void *)s_iconBrain, (void *)s_iconBrainLg,
             (void *)s_renderer, (void *)sdl3DrawGetRenderer());
 }
@@ -500,6 +502,7 @@ static void popOutEndContent(PopOutWindow *pw) {
 }
 
 static void popOutEndFrame(PopOutWindow *pw) {
+    dialogDrawNavOutline();
     ImGui::EndFrame();
     dialogDrawNavOutline();
     ImGui::Render();
@@ -744,8 +747,21 @@ static void renderNetInfoContent(ClientSim *cs) {
     int  bpsIn = 0, bpsOut = 0;
     int  snapshotsRecv = 0, snapshotsLost = 0, snapshotsLostTotal = 0;
 
-    netGetServerAddressStr(cs, str);
-    ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), str);
+    /* Server address: show the real IP/host as a clickable join-link when in a
+     * networked game (reverse-DNS resolved asynchronously, visual only). Falls
+     * back to the legacy label ("Single Player Game") otherwise. */
+    {
+        char dispIp[64];
+        unsigned dispPort = 0;
+        if (guiServerDisplayAddress(cs, dispIp, sizeof(dispIp), &dispPort)) {
+            ImGui::TextUnformatted(langGetText(STR_DLGNETINFO_SERVER));
+            ImGui::SameLine();
+            guiServerAddressLink(cs, dispIp, dispPort);
+        } else {
+            netGetServerAddressStr(cs, str);
+            ImGui::Text("%s %s", langGetText(STR_DLGNETINFO_SERVER), str);
+        }
+    }
 
     /* Client in a networked game: prepend player location to port */
     if (clientSimGetNetType(cs) != netSingle) {
@@ -4141,6 +4157,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     }
 
 
+    dialogDrawNavOutline();
     ImGui::EndFrame();
     dialogDrawNavOutline();
     ImGui::Render();
@@ -4458,14 +4475,16 @@ void sdl3ImguiUpdatePlayerMeta(unsigned char playerNum, uint16_t ping,
     s_playerFlags[playerNum] = clientFlags;
 }
 
+void sdl3ImguiUpdatePlayerFlags(unsigned char playerNum, uint8_t clientType,
+                                uint8_t clientFlags) {
+    if (playerNum >= MAX_PLAYERS) return;
+    s_playerClientType[playerNum] = clientType;
+    s_playerFlags[playerNum] = clientFlags;
+}
+
 void sdl3ImguiUpdatePlayerPing(unsigned char playerNum, uint16_t ping) {
     if (playerNum >= MAX_PLAYERS) return;
     s_playerPing[playerNum] = ping;
-}
-
-SDL_Texture *sdl3ImguiGetGlobeIcon(void) {
-    ensureWbnIconsLoaded();
-    return s_iconGlobe;
 }
 
 SDL_Texture *sdl3ImguiGetSteamIcon(void) {
@@ -4535,8 +4554,11 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
             ImGui::SameLine();
         }
 
-        if ((flags & PLAYER_FLAG_WBN_VERIFIED) && s_iconGlobe) {
-            ImGui::Image((ImTextureID)s_iconGlobe, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        if (flags & PLAYER_FLAG_WBN_VERIFIED) {
+            /* Vector shield (crisp at this size); gold for supporters, white
+             * otherwise — same scheme as the platform icon above. */
+            ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
+            imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
             ImGui::SameLine();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
@@ -4580,7 +4602,6 @@ void sdl3ImguiCleanup(void) {
     popOutDestroy(&s_popGameInfo);
     popOutDestroy(&s_popSendMsg);
     flagsDestroy();
-    if (s_iconGlobe) { SDL_DestroyTexture(s_iconGlobe); s_iconGlobe = nullptr; }
     if (s_iconSteam) { SDL_DestroyTexture(s_iconSteam); s_iconSteam = nullptr; }
     if (s_iconBrain) { SDL_DestroyTexture(s_iconBrain); s_iconBrain = nullptr; }
     if (s_iconBrainLg) { SDL_DestroyTexture(s_iconBrainLg); s_iconBrainLg = nullptr; }

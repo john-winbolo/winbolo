@@ -82,6 +82,7 @@ void frontEndGameOver(ClientSim *cs) {
 void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) { (void)cs; (void)value; }
 void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) { (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags; }
 void frontEndUpdatePlayerPing(struct ClientSim *cs, playerNumbers value, uint16_t ping) { (void)cs; (void)value; (void)ping; }
+void frontEndUpdatePlayerFlags(struct ClientSim *cs, playerNumbers value, uint8_t clientType, uint8_t clientFlags) { (void)cs; (void)value; (void)clientType; (void)clientFlags; }
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) { (void)cs; (void)justBlack; }
 void frontEndDrawReturningToLobby(ClientSim *cs) { (void)cs; }
 void frontEndAudioReturningToLobby(bool active) { (void)active; }
@@ -135,22 +136,13 @@ BYTE messageInboxPeek(const MessageState *ms, int i, char *dest) {
   (void)ms; (void)i; if (dest) dest[0] = '\0'; return 0;
 }
 void messageInboxClear(MessageState *ms) { (void)ms; }
-void scrollCreate(ScrollState *ss) { (void)ss; }
-/* scrollSetScrollType — reached via clientSimSetAutoScroll. The server
- * build doesn't expose scroll preferences, so the toggle is a no-op. */
-void scrollSetScrollType(ScrollState *ss, bool isAuto) { (void)ss; (void)isAuto; }
-/* scrollCenterObject is called by client_snapshot.c only when the brain
- * switches pillbox view — bots never do this, but the linker still needs
- * the symbol. */
-void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY) {
-  (void)ss; (void)xValue; (void)yValue; (void)objectX; (void)objectY;
-}
-/* scrollManual is reached via clientSimTankScroll from tank.c — bots never
- * enter that path (guarded by !isServer), but the linker still needs the
- * symbol. */
-bool scrollManual(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle) {
-  (void)ss; (void)xValue; (void)yValue; (void)objectX; (void)objectY; (void)angle; return FALSE;
-}
+/* scrollCreate/scrollSetScrollType/scrollCenterObject/scrollManual are no
+ * longer stubbed here. client_sim.c now references scrollGetMechanism /
+ * scrollSetMechanism, which pulls scroll.c.o out of bolo_static, so the
+ * real (sim-only, self-contained) scroll implementations resolve those
+ * symbols. Keeping stubs too would be a duplicate definition. The server
+ * never drives scrolling — the real scrollManual/scrollUpdate paths are
+ * guarded by !isServer — so linking the real code is harmless. */
 
 
 /* clientBuildInputPacket lives in client_snapshot.c; brainDataMakeInfo
@@ -164,6 +156,7 @@ void *dialogAllianceCreate(void) { return NULL; }
 void dialogAllianceDestroy(void *dlg) { (void)dlg; }
 bool dnsLookupsCreate(ClientSim *cs) { (void)cs; return TRUE; }
 void dnsLookupsDestroy(void) {}
+void dnsLookupsAddRequest(char *ip, void *func) { (void)ip; (void)func; }
 
 /* Network stubs — netMessageSendPlayer, netRequestAlliance, netAllianceAccept,
  * netLeaveAlliance, netSetAllowNewPlayers are provided by client_sim.c. */

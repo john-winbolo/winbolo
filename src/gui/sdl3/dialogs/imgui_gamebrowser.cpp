@@ -1209,6 +1209,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
+        gameFrontPumpDirty(); /* sync cloud prefs from menus (login join + debounced upload) */
         dialogFrameCapEnd(frameCapStart);
     }
 

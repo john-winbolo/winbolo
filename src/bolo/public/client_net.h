@@ -158,6 +158,14 @@ void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
                                            const char *relPath,
                                            const char *query);
 
+/* Ask the server for the raw .map bytes of data/maps/<relPath> so the
+ * chooser can rasterise a preview without committing a SET_MAP. The
+ * reply streams back async via PACKET_LOBBY_MAP_PREVIEW_BEGIN/_CHUNK
+ * (or _ERR) into the ClientSim's lobbyMapPreview* fields; poll the
+ * Ready/Error getters. No-op without a UDP transport. */
+void clientSimNetSendLobbyMapPreviewRequest(ClientSim *cs,
+                                            const char *relPath);
+
 /* Map upload — file flavour. Read `localFilePath`, validate it via
  * boloMapValidate, and drive the chunked PACKET_LOBBY_MAP_UPLOAD_*
  * state machine over the wire. Returns false on file-not-found /
@@ -206,6 +214,7 @@ void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
                                   const uint8_t *value, uint8_t valueLen);
 void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost);
 void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot);
+void clientSimNetSendLobbyTransferHost(ClientSim *cs, uint8_t slot);
 
 /* Host- or admin-only: set or clear the server password. NULL or
  * empty pw clears. The server stores it locally; remote clients

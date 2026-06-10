@@ -75,7 +75,6 @@ typedef struct {
     /* WBN session key for the connected server.  Empty for direct-IP
      * joins; refreshed by PACKET_WBN_REKEY when the server rotates. */
     char wbnServerKey[WINBOLONET_KEY_LEN];
-    bool wbnReauthSent;  /* TRUE after sending re-auth, reset when WBN flag restored */
     uint32_t outSequence;
 
     /* Reliable outbound command carrier. cmdSeq is monotonic per
@@ -251,6 +250,39 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
                       (unsigned)ntohs(c->serverAddr.sin_port));
             udpClientLoggedLocalPort = 1;
         }
+    }
+}
+
+/* Mint a fresh player_key against the current WBN server_key and send a
+ * PACKET_WBN_REAUTH to the server. The wire packet MUST be built through
+ * commandCodecEncode — the server decodes it with commandCodecDecode, whose
+ * body sits at CMD_PACKET_BODY_OFFSET (header + 4), not raw header offset.
+ * Centralising the encode here keeps the one correct format. No-op without
+ * a token/server_key; logs and returns on a failed key exchange (caller
+ * decides *when* to re-auth, so there is no retry here). */
+static void udpClientSendWbnReauth(TransportUdpClientCtx *c) {
+    char playerKey[WBN_JOIN_KEY_WIRE_LEN];
+    char errMsg[256];
+
+    if (c->wbnApiToken[0] == '\0' || c->wbnServerKey[0] == '\0') return;
+
+    memset(playerKey, 0, sizeof(playerKey));
+    errMsg[0] = '\0';
+    if (!winbolonetClientJoinSession(c->wbnApiToken, c->wbnServerKey,
+                                     playerKey, errMsg)) {
+        WB_LOG_WARN(WB_LOG_CAT_NET, "[WBN] re-auth exchange failed: %s",
+                    errMsg[0] ? errMsg : "(no detail)");
+        return;
+    }
+
+    ClientCommand cmd = { .type = CMD_WBN_REAUTH };
+    memcpy(cmd.u.wbnReauth.token, playerKey, WBN_JOIN_KEY_WIRE_LEN);
+
+    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
+    size_t len;
+    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
+        udpClientSendTo(c, buf, (int)len);
+        WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
     }
 }
 
@@ -497,6 +529,106 @@ void udpClientHandleLobbyMapListRsp(ClientSim *cs,
         cs->lobbyMapListReady = true;
         cs->lobbyMapListInFlight = false;
     }
+}
+
+/* PACKET_LOBBY_MAP_PREVIEW_BEGIN — server announces the upcoming byte
+ * stream. Wire: [header 8] [pathLen 1] [path N] [seq 1] [total 4 BE].
+ * Resets the accumulator and records the seq the chunks will carry. A
+ * BEGIN whose path doesn't match the in-flight request is ignored
+ * (the user navigated away before this arrived). */
+void udpClientHandleLobbyMapPreviewBegin(ClientSim *cs,
+                                         const uint8_t *buf, int len) {
+    if (!cs) return;
+    int pos = PACKET_HEADER_SIZE;
+    if (pos + 1 > len) return;
+    uint8_t plen = buf[pos++];
+    if (plen == 0 || pos + plen + 1 + 4 > len) return;
+    char path[256];
+    memset(path, 0, sizeof(path));
+    uint8_t cp = plen;
+    if (cp >= sizeof(path)) cp = (uint8_t)(sizeof(path) - 1);
+    memcpy(path, buf + pos, cp);
+    pos += plen;
+    uint8_t seq = buf[pos++];
+    uint32_t total = ((uint32_t)buf[pos] << 24) | ((uint32_t)buf[pos + 1] << 16) |
+                     ((uint32_t)buf[pos + 2] << 8) | (uint32_t)buf[pos + 3];
+    pos += 4;
+
+    if (strncmp(path, cs->lobbyMapPreviewReqPath,
+                sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
+        return;
+    }
+    if (total == 0 || total > LOBBY_MAP_UPLOAD_MAX_BYTES) {
+        cs->lobbyMapPreviewError    = true;
+        cs->lobbyMapPreviewInFlight = false;
+        return;
+    }
+    cs->lobbyMapPreviewSeq      = seq;
+    cs->lobbyMapPreviewTotal    = total;
+    cs->lobbyMapPreviewReceived = 0;
+    cs->lobbyMapPreviewReady    = false;
+    cs->lobbyMapPreviewError    = false;
+    cs->lobbyMapPreviewInFlight = true;
+    memset(cs->lobbyMapPreviewPath, 0, sizeof(cs->lobbyMapPreviewPath));
+    SDL_strlcpy(cs->lobbyMapPreviewPath, path,
+                sizeof(cs->lobbyMapPreviewPath));
+}
+
+/* PACKET_LOBBY_MAP_PREVIEW_CHUNK — one slice of the byte stream. Wire:
+ * [header 8] [seq 1] [offset 4 BE] [len 2 BE] [bytes len]. Stale
+ * chunks (seq mismatch, or no BEGIN seen) are dropped. Completion is
+ * by cumulative byte count — the server fires each chunk once with no
+ * retransmit, so the running total reaching `total` means every chunk
+ * landed regardless of arrival order. */
+void udpClientHandleLobbyMapPreviewChunk(ClientSim *cs,
+                                         const uint8_t *buf, int len) {
+    if (!cs) return;
+    int pos = PACKET_HEADER_SIZE;
+    if (pos + 1 + 4 + 2 > len) return;
+    uint8_t seq = buf[pos++];
+    uint32_t off = ((uint32_t)buf[pos] << 24) | ((uint32_t)buf[pos + 1] << 16) |
+                   ((uint32_t)buf[pos + 2] << 8) | (uint32_t)buf[pos + 3];
+    pos += 4;
+    uint16_t n = (uint16_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+    pos += 2;
+    if (pos + n > len) return;
+
+    if (!cs->lobbyMapPreviewInFlight || cs->lobbyMapPreviewError) return;
+    if (seq != cs->lobbyMapPreviewSeq) return;
+    if ((uint64_t)off + n > cs->lobbyMapPreviewTotal) return;
+    if ((uint64_t)off + n > LOBBY_MAP_UPLOAD_MAX_BYTES) return;
+
+    memcpy(cs->lobbyMapPreviewBytes + off, buf + pos, n);
+    cs->lobbyMapPreviewReceived += n;
+    if (cs->lobbyMapPreviewReceived >= cs->lobbyMapPreviewTotal) {
+        cs->lobbyMapPreviewReceived = cs->lobbyMapPreviewTotal;
+        cs->lobbyMapPreviewReady    = true;
+        cs->lobbyMapPreviewInFlight = false;
+    }
+}
+
+/* PACKET_LOBBY_MAP_PREVIEW_ERR — server couldn't read the map. Wire:
+ * [header 8] [pathLen 1] [path N] [code 1]. Flags the request failed
+ * so the chooser shows "no preview" instead of spinning. */
+void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
+                                       const uint8_t *buf, int len) {
+    if (!cs) return;
+    int pos = PACKET_HEADER_SIZE;
+    if (pos + 1 > len) return;
+    uint8_t plen = buf[pos++];
+    if (pos + plen > len) return;
+    char path[256];
+    memset(path, 0, sizeof(path));
+    uint8_t cp = plen;
+    if (cp >= sizeof(path)) cp = (uint8_t)(sizeof(path) - 1);
+    memcpy(path, buf + pos, cp);
+    if (strncmp(path, cs->lobbyMapPreviewReqPath,
+                sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
+        return;
+    }
+    cs->lobbyMapPreviewError    = true;
+    cs->lobbyMapPreviewReady    = false;
+    cs->lobbyMapPreviewInFlight = false;
 }
 
 /* Apply one PACKET_LOBBY_MAP_SEARCH_RSP chunk to the client's search
@@ -1564,38 +1696,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* A fresh lobby snapshot supersedes any pending balance proposal */
         c->clientSim->balanceProposalActive = false;
         memset(c->clientSim->balanceProposal, 0, sizeof(c->clientSim->balanceProposal));
-        /* WBN re-auth: if our slot lost its WBN flag (server re-registered
-         * with WBN between rounds) and we have a token, mint a fresh
-         * player_key against the latest server_key and re-authenticate. */
-        if (c->wbnApiToken[0] != '\0' && c->playerNum < MAX_TANKS &&
-            !(c->clientSim->lobbySlots[c->playerNum].clientFlags &
-              PLAYER_FLAG_WBN_VERIFIED)) {
-            if (!c->wbnReauthSent) {
-                char playerKey[WBN_JOIN_KEY_WIRE_LEN];
-                char errMsg[256];
-                memset(playerKey, 0, sizeof(playerKey));
-                errMsg[0] = '\0';
-                if (c->wbnServerKey[0] != '\0' &&
-                    winbolonetClientJoinSession(c->wbnApiToken,
-                                                c->wbnServerKey,
-                                                playerKey, errMsg)) {
-                    uint8_t ra[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
-                    packHeader(ra, PACKET_WBN_REAUTH, c->outSequence++);
-                    memcpy(ra + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
-                    udpClientSendTo(c, ra, sizeof(ra));
-                    c->wbnReauthSent = TRUE;
-                    WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
-                } else {
-                    WB_LOG_WARN(WB_LOG_CAT_NET,
-                            "[WBN] re-auth exchange failed: %s",
-                            errMsg[0] ? errMsg : "(no server_key)");
-                    /* Leave wbnReauthSent FALSE so the next snapshot
-                     * tick retries.  No backoff — out of scope here. */
-                }
-            }
-        } else {
-            c->wbnReauthSent = FALSE;
-        }
+        /* WBN (re-)auth is not driven from here: it is performed once per
+         * server-issued session key in the PACKET_WBN_REKEY handler. The
+         * client never inspects its own flag state to decide whether to
+         * re-authenticate. */
         break;
     }
 
@@ -1809,6 +1913,18 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         udpClientHandleLobbyMapSearchRsp(c->clientSim, buf, len);
         break;
 
+    case PACKET_LOBBY_MAP_PREVIEW_BEGIN:
+        udpClientHandleLobbyMapPreviewBegin(c->clientSim, buf, len);
+        break;
+
+    case PACKET_LOBBY_MAP_PREVIEW_CHUNK:
+        udpClientHandleLobbyMapPreviewChunk(c->clientSim, buf, len);
+        break;
+
+    case PACKET_LOBBY_MAP_PREVIEW_ERR:
+        udpClientHandleLobbyMapPreviewErr(c->clientSim, buf, len);
+        break;
+
     case PACKET_LOBBY_MAP_UPLOAD_ACK: {
         /* [header 8] [status 1]. 0 = ok, non-zero = reject. */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 1) break;
@@ -1876,14 +1992,28 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* Wire: [header 8] [serverKey WBN_JOIN_KEY_WIRE_LEN] — same 65-byte
          * envelope as wbnJoinKey for symmetry; payload is a NUL-terminated
          * string within the first WINBOLONET_KEY_LEN bytes. */
+        char newKey[WINBOLONET_KEY_LEN];
+        bool keyChanged;
         if (len < PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN) {
             return;
         }
-        if (!wbnKeyDecode(c->wbnServerKey, buf + PACKET_HEADER_SIZE)) {
+        memset(newKey, 0, sizeof(newKey));
+        if (!wbnKeyDecode(newKey, buf + PACKET_HEADER_SIZE)) {
             return;
         }
-        /* The lobby-snapshot poll fires re-auth when our slot loses the
-         * WBN flag; no need to push from here. */
+        /* This is the sole driver of WBN (re-)authentication. We authenticate
+         * once for each *new* session key the server hands us: the first
+         * delivery right after JOIN_ACCEPT (initial auth) and again after a
+         * return-to-lobby key rotation (the server's "re-auth now" signal).
+         * Identical resends (e.g. a recovered JOIN_ACCEPT) leave the key
+         * unchanged, so we don't re-fire and provoke an "already in game"
+         * rejection. On failure we simply don't retry — the next genuine
+         * rotation will trigger a fresh attempt. */
+        keyChanged = (strcmp(newKey, c->wbnServerKey) != 0);
+        memcpy(c->wbnServerKey, newKey, sizeof(c->wbnServerKey));
+        if (keyChanged) {
+            udpClientSendWbnReauth(c);
+        }
         break;
     }
 
@@ -2021,8 +2151,13 @@ static bool udpClientTick(void *ctx) {
                 jbuf[joffset++] = BOLO_VERSION_REVISION;
                 memcpy(jbuf + joffset, playerKey, WBN_JOIN_KEY_WIRE_LEN);
                 joffset += WBN_JOIN_KEY_WIRE_LEN;
-                /* Flags byte: bit 0 = wantRejoin */
-                jbuf[joffset++] = c->wantRejoin ? 0x01 : 0x00;
+                /* Flags byte: bit 0 = wantRejoin, bit 1 = signed in / will authenticate.
+                 * The will-auth bit rides independently of whether the server key is
+                 * populated yet — it reflects only that the client holds a WBN token. */
+                uint8_t joinFlags = 0;
+                if (c->wantRejoin)             joinFlags |= JOIN_FLAG_WANT_REJOIN;
+                if (c->wbnApiToken[0] != '\0') joinFlags |= JOIN_FLAG_WILL_AUTHENTICATE;
+                jbuf[joffset++] = joinFlags;
                 jbuf[joffset++] = bolo_detect_client_type();
                 {
                     uint8_t clientHints = 0;
@@ -2260,34 +2395,8 @@ static void udpClientTransportObserver(void *ctx, const ControlEvent *evt) {
             } else {
                 c->clientSim->lobbyAloneStartTick = 0;
             }
-
-            if (c->wbnApiToken[0] != '\0' && c->playerNum < MAX_TANKS &&
-                !(c->clientSim->lobbySlots[c->playerNum].clientFlags &
-                  PLAYER_FLAG_WBN_VERIFIED)) {
-                if (!c->wbnReauthSent) {
-                    char playerKey[WBN_JOIN_KEY_WIRE_LEN];
-                    char errMsg[256];
-                    memset(playerKey, 0, sizeof(playerKey));
-                    errMsg[0] = '\0';
-                    if (c->wbnServerKey[0] != '\0' &&
-                        winbolonetClientJoinSession(c->wbnApiToken,
-                                                    c->wbnServerKey,
-                                                    playerKey, errMsg)) {
-                        uint8_t ra[PACKET_HEADER_SIZE + WBN_JOIN_KEY_WIRE_LEN];
-                        packHeader(ra, PACKET_WBN_REAUTH, c->outSequence++);
-                        memcpy(ra + PACKET_HEADER_SIZE, playerKey, WBN_JOIN_KEY_WIRE_LEN);
-                        udpClientSendTo(c, ra, sizeof(ra));
-                        c->wbnReauthSent = TRUE;
-                        WB_LOG_INFO(WB_LOG_CAT_NET, "[WBN] Sent re-auth for slot %d", c->playerNum);
-                    } else {
-                        WB_LOG_WARN(WB_LOG_CAT_NET,
-                                "[WBN] re-auth exchange failed: %s",
-                                errMsg[0] ? errMsg : "(no server_key)");
-                    }
-                }
-            } else {
-                c->wbnReauthSent = FALSE;
-            }
+            /* WBN (re-)auth is driven by the server's PACKET_WBN_REKEY,
+             * not by polling our own flag state here. */
         }
         break;
 
@@ -2400,7 +2509,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     if (wbnServerKey != NULL) {
         strncpy(c->wbnServerKey, wbnServerKey, sizeof(c->wbnServerKey) - 1);
     }
-    c->wbnReauthSent = FALSE;
 
     c->wantRejoin = wantRejoin;
 
@@ -2624,29 +2732,8 @@ uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
 
 void transportUdpClientSendWbnReauth(Transport *t) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    char playerKey[WBN_JOIN_KEY_WIRE_LEN];
-    char errMsg[256];
-
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (c->wbnApiToken[0] == '\0' || c->wbnServerKey[0] == '\0') return;
-
-    memset(playerKey, 0, sizeof(playerKey));
-    errMsg[0] = '\0';
-    if (!winbolonetClientJoinSession(c->wbnApiToken, c->wbnServerKey,
-                                     playerKey, errMsg)) {
-        WB_LOG_WARN(WB_LOG_CAT_NET, "[WBN] re-auth exchange failed: %s",
-                errMsg[0] ? errMsg : "(no detail)");
-        return;
-    }
-
-    ClientCommand cmd = { .type = CMD_WBN_REAUTH };
-    memcpy(cmd.u.wbnReauth.token, playerKey, WBN_JOIN_KEY_WIRE_LEN);
-
-    uint8_t buf[COMMAND_MAX_WIRE_BYTES];
-    size_t len;
-    if (commandCodecEncode(&cmd, buf, sizeof(buf), &len)) {
-        udpClientSendTo(c, buf, (int)len);
-    }
+    udpClientSendWbnReauth(c);
 }
 
 /* ── Layout A lobby commands — Client → Server ───────────────────── */
@@ -2678,6 +2765,36 @@ void transportUdpClientSendLobbyMapListRequest(Transport *t,
         c->clientSim->lobbyMapListCount = 0;
         c->clientSim->lobbyMapListReady = false;
         c->clientSim->lobbyMapListInFlight = true;
+    }
+}
+
+void transportUdpClientSendLobbyMapPreviewRequest(Transport *t,
+                                                  const char *relPath) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 256];
+    int pathLen, len;
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    if (relPath == NULL) relPath = "";
+    pathLen = (int)strlen(relPath);
+    if (pathLen == 0 || pathLen > 255) return;
+
+    packHeader(buf, PACKET_LOBBY_MAP_PREVIEW_REQ, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)pathLen;
+    memcpy(buf + PACKET_HEADER_SIZE + 1, relPath, pathLen);
+    len = PACKET_HEADER_SIZE + 1 + pathLen;
+    udpClientSendTo(c, buf, len);
+
+    if (c->clientSim) {
+        ClientSim *cs = c->clientSim;
+        memset(cs->lobbyMapPreviewReqPath, 0, sizeof(cs->lobbyMapPreviewReqPath));
+        memcpy(cs->lobbyMapPreviewReqPath, relPath, (size_t)pathLen);
+        cs->lobbyMapPreviewPath[0]   = '\0';
+        cs->lobbyMapPreviewInFlight  = true;
+        cs->lobbyMapPreviewReady     = false;
+        cs->lobbyMapPreviewError     = false;
+        cs->lobbyMapPreviewTotal     = 0;
+        cs->lobbyMapPreviewReceived  = 0;
     }
 }
 

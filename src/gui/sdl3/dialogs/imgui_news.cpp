@@ -29,7 +29,7 @@ extern "C" {
 #include "../../../winbolonet/http.h"
 #include "../../../winbolonet/wbn_news.h"
 #include "../../../winbolonet/winbolonet_core.h"
-#include "../../../winbolonet/wbn_prefs_path.h"
+#include "../../../common/prefs.h"
 #include "../../lang.h"
 }
 
@@ -39,21 +39,6 @@ extern "C" {
 #include <cstring>
 #include <string>
 #include <vector>
-
-#ifndef _WIN32
-/* Provided by posix_stubs.c. Forward-declared (rather than including
- * posix_stubs.h) so this TU doesn't pull src/server onto the dialog
- * include path. Matches the pattern in wbn_country_cache.c. */
-extern "C" {
-void preferencesGetPreferenceFile(char *dest);
-unsigned int GetPrivateProfileString(const char *section, const char *key,
-                                     const char *def, char *out,
-                                     unsigned int outSize,
-                                     const char *filePath);
-int WritePrivateProfileString(const char *section, const char *key,
-                              const char *value, const char *filePath);
-}
-#endif
 
 /* ================================================================
  * Process-wide state.
@@ -73,29 +58,14 @@ static int                   s_maxId        = 0;
 static std::vector<WbnNewsItem> s_sortedItems; /* id-desc */
 
 /* ================================================================
- * INI helpers — [NEWS] AutoShow and [NEWS] LastSeenId.
- * Prefs-path resolution mirrors wbn_country_cache.c.
+ * Prefs helpers — [NEWS] AutoShow and [NEWS] LastSeenId.
  * ================================================================ */
-
-static void resolvePrefsPath(char *out, size_t outSize) {
-    if (!out || outSize == 0) return;
-#ifdef _WIN32
-    const char *p = winbolonetCorePrefsPath();
-    if (!p) p = "";
-    strncpy(out, p, outSize - 1);
-    out[outSize - 1] = '\0';
-#else
-    preferencesGetPreferenceFile(out);
-#endif
-}
 
 const char *newsPrefGetAutoShow(void) {
     static char s_buf[16];
-    char prefs[FILENAME_MAX];
-    resolvePrefsPath(prefs, sizeof(prefs));
     s_buf[0] = '\0';
-    GetPrivateProfileString("NEWS", "AutoShow", "unset",
-                            s_buf, (unsigned int)sizeof(s_buf), prefs);
+    prefsGetString("NEWS", "AutoShow", "unset",
+                   s_buf, (unsigned int)sizeof(s_buf));
     /* Normalise unrecognised values to "unset". */
     if (strcmp(s_buf, "show") != 0 && strcmp(s_buf, "dontShow") != 0) {
         strncpy(s_buf, "unset", sizeof(s_buf) - 1);
@@ -106,26 +76,20 @@ const char *newsPrefGetAutoShow(void) {
 
 void newsPrefSetAutoShow(const char *value) {
     if (!value) return;
-    char prefs[FILENAME_MAX];
-    resolvePrefsPath(prefs, sizeof(prefs));
-    WritePrivateProfileString("NEWS", "AutoShow", value, prefs);
+    prefsSetString("NEWS", "AutoShow", value);
 }
 
 static int newsPrefGetLastSeenId(void) {
-    char prefs[FILENAME_MAX];
     char buf[32] = {0};
-    resolvePrefsPath(prefs, sizeof(prefs));
-    GetPrivateProfileString("NEWS", "LastSeenId", "0",
-                            buf, (unsigned int)sizeof(buf), prefs);
+    prefsGetString("NEWS", "LastSeenId", "0",
+                   buf, (unsigned int)sizeof(buf));
     return SDL_atoi(buf);
 }
 
 static void newsPrefSetLastSeenId(int id) {
-    char prefs[FILENAME_MAX];
     char buf[32];
-    resolvePrefsPath(prefs, sizeof(prefs));
     SDL_snprintf(buf, sizeof(buf), "%d", id);
-    WritePrivateProfileString("NEWS", "LastSeenId", buf, prefs);
+    prefsSetString("NEWS", "LastSeenId", buf);
 }
 
 /* ================================================================

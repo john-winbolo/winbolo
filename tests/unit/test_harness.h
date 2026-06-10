@@ -46,9 +46,23 @@ int run_transport_local_passive_threads(void);
 int run_sp_subscriber_delivery(void);
 int run_active_local_input_to_shot(void);
 int run_sp_shoot_through_timer(void);
-int run_ini_writer_persistence(void);
-int run_ini_writer_insertion_point(void);
-int run_ini_writer_security(void);
+int run_prefs_document_roundtrip(void);
+int run_prefs_keys_roundtrip(void);
+int run_prefs_doc_roundtrip(void);
+int run_prefs_doc_defaults(void);
+int run_prefs_doc_special_chars(void);
+int run_prefs_doc_unknown_preserved(void);
+int run_prefs_doc_save_atomic(void);
+int run_prefs_api_roundtrip(void);
+int run_prefs_api_defaults(void);
+int run_prefs_api_corrupt_backup(void);
+int run_prefs_api_debounce(void);
+int run_prefs_api_shutdown_flush(void);
+int run_prefs_api_upload_excludes_local(void);
+int run_prefs_api_sync_dirty(void);
+int run_prefs_api_device_identity(void);
+int run_prefs_api_adopt_server(void);
+int run_prefs_api_mark_synced(void);
 int run_lobby_settings_codec_and_apply(void);
 int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
@@ -64,6 +78,12 @@ int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
 int run_lobby_add_bot_rejects_non_host_sender(void);
+int run_transfer_host_promotes_target(void);
+int run_transfer_host_rejects_non_host_sender(void);
+int run_transfer_host_openhost_does_not_grant(void);
+int run_transfer_host_rejects_self(void);
+int run_transfer_host_rejects_unconnected(void);
+int run_transfer_host_rejects_bot_target(void);
 int run_command_queue_first_submit_drains(void);
 int run_command_queue_second_submit_does_not_drain(void);
 int run_command_queue_ack_drains_pending_tail(void);
@@ -112,6 +132,10 @@ int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
 int run_wbn_news_parse(void);
 int run_wbn_country_cache(void);
+int run_wbn_prefs_parse_get(void);
+int run_wbn_prefs_parse_updatedat(void);
+int run_wbn_prefs_decide(void);
+int run_wbn_prefs_build_put_body(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -171,6 +195,37 @@ int run_return_to_lobby_drops_wbn_keeps_identity(void);
 int run_wbn_lobby_update_deferred_during_rotation(void);
 int run_wbn_lobby_update_sends_when_not_rotating(void);
 
+/* Deferred WBN PLAYER_JOIN core (test_wbn_deferred_join.c). The join
+ * event is held until the slot's identity is known for the session —
+ * keyed on reauth, anonymous on grace expiry — and re-fires per round.
+ * Also pins the rotation rekey gate (verified-flag, not the wiped key). */
+int run_wbn_join_keyed_on_reauth(void);
+int run_wbn_join_anonymous_on_grace(void);
+int run_wbn_join_idempotent_reauth_no_double(void);
+int run_wbn_join_disconnect_drops(void);
+int run_wbn_join_rearm_per_session(void);
+int run_wbn_join_rekey_target_gate(void);
+
+/* JOIN name-collision verdict core (test_join_collision.c). When an
+ * incoming joiner's name matches a connected slot, a verified slot always
+ * wins; an unverified slot is rejected as in-use unless the joiner claims
+ * it will authenticate, which downgrades the reject to a provisional
+ * admit. The client-asserted will-auth flag never displaces a verified
+ * slot. */
+int run_join_collision_unverified_no_auth_rejects(void);
+int run_join_collision_unverified_will_auth_admits(void);
+int run_join_collision_verified_rejects_will_auth(void);
+int run_join_collision_verified_flag_irrelevant(void);
+
+/* Reauth-time claim-resolve core (test_join_collision.c). Given whether the
+ * desired bare name is held and the holder's verified flag, pick promote-
+ * free / preempt-squatter / keep-temp; an absent holder collapses to
+ * promote-free regardless of the flag. */
+int run_claim_resolve_free_promotes(void);
+int run_claim_resolve_unverified_preempts(void);
+int run_claim_resolve_verified_keeps_temp(void);
+int run_claim_resolve_free_ignores_holder_flag(void);
+
 /* Lobby/leave cleanup (test_lobby_reset_cleanup.c). Removed slots clear
  * (no phantom re-announce), and the last human leaving a running game
  * returns the server to the lobby. */
@@ -178,6 +233,16 @@ int run_remove_player_clears_slot(void);
 int run_return_to_lobby_clears_phantom_slot(void);
 int run_last_human_leave_returns_to_lobby(void);
 int run_humanless_round_does_not_autoend(void);
+int run_host_departs_promotes_lowest_human(void);
+int run_nonhost_departs_keeps_host(void);
+int run_host_reassign_skips_bots(void);
+int run_lobby_reset_clears_host_slot(void);
+
+/* Tree-growth water regressions (test_treegrow_no_sea.c). A converged
+ * grow target survives serverSimResetGameWorld and, on the next map,
+ * points at open sea; the grow gate also failed to reject DEEP_SEA. */
+int run_treegrow_never_plants_on_deep_sea(void);
+int run_treegrow_reset_clears_stale_target(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
@@ -201,6 +266,15 @@ int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
 int run_log_roundtrip_lobby_mode_drops_world_events(void);
+
+/* -log path composition (test_log_dir_path.c). Pins -log <dir> auto-naming
+ * the replay inside the directory, vs -log <file> / bare -log. */
+int run_log_path_empty_uses_autobase(void);
+int run_log_path_explicit_file_verbatim(void);
+int run_log_path_explicit_file_keeps_single_wbv(void);
+int run_log_path_directory_autonames_inside(void);
+int run_log_path_directory_trailing_slash_no_double(void);
+int run_log_path_directory_arg_appends_wbv(void);
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for

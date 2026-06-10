@@ -33,6 +33,7 @@
 #include "server_sim.h"
 #include "input.h"
 #include "winbolo.h"
+#include "../winbolonet/winbolonet_client.h"  /* WbnStats */
 
 
 /* Default keys — SDL_Scancode values (USB HID page 07) */
@@ -433,6 +434,34 @@ void gameFrontSaveWindowSettings(void);
 void gameFrontPumpDirty(void);
 
 /*********************************************************
+*NAME:          gameFrontStartPrefsSync
+*PURPOSE:
+* On sign-in, launch exactly one cloud-preferences sync per
+* session off a worker thread (gated, no-op if already run or
+* if no WBN token). Captures the upload snapshot and sync state
+* on the calling (main) thread.
+*********************************************************/
+void gameFrontStartPrefsSync(void);
+
+/*********************************************************
+*NAME:          gameFrontPumpPrefsSync
+*PURPOSE:
+* Call once per frame (driven from gameFrontPumpDirty). When the
+* sync worker has finished, joins it and applies the outcome on
+* the main thread: adopts + live-applies a downloaded document,
+* records a pushed version, or signs out on re-auth.
+*********************************************************/
+void gameFrontPumpPrefsSync(void);
+
+/*********************************************************
+*NAME:          gameFrontResetPrefsSyncSession
+*PURPOSE:
+* Clear the once-per-session sync gate so a later sign-in syncs
+* again. Called from the logout path.
+*********************************************************/
+void gameFrontResetPrefsSyncSession(void);
+
+/*********************************************************
 *NAME:          gameFrontSetRemeber
 *AUTHOR:        John Morrison
 *CREATION DATE: 19/4/99
@@ -611,6 +640,11 @@ void gameFrontEnableRejoin(void);
 *********************************************************/
 bool gameFrontPreferencesExist(void);
 
+/* First-run online onboarding flag, backed by the SETTINGS /
+ * "Onboarding Complete" preference (Yes/No). */
+bool gameFrontOnboardingComplete(void);
+void gameFrontSetOnboardingComplete(void);
+
 /*********************************************************
 *NAME:          gameFrontSetWinbolonetToken
 *PURPOSE:
@@ -640,12 +674,81 @@ void gameFrontGetWinbolonetToken(char *token, char *expiry);
 *********************************************************/
 void gameFrontClearWinbolonetToken(void);
 
+/* How the current WinBolo.net session was authenticated: "steam",
+ * "password", or "" when not signed in. Device-local (WINBOLO.NET
+ * section), never synced. */
+void gameFrontSetWbnAuthMethod(const char *method);
+void gameFrontGetWbnAuthMethod(char *out, size_t outSize);
+
+/* Sticky record of an explicit user sign-out. Set when the player signs
+ * out, cleared only when they explicitly sign back in. While set, the
+ * silent re-auth paths (welcome-screen launch re-auth, join-time Steam
+ * auto-auth) and any auth worker landing afterwards must not sign the
+ * player back in. Device-local (WINBOLO.NET section), never synced. */
+void gameFrontSetWbnSignedOut(bool signedOut);
+bool gameFrontGetWbnSignedOut(void);
+
+/* Acquire a Steam auth-session ticket and hex-encode it into outHex
+ * (must hold at least 2049 bytes). Returns true on success. Must be
+ * called on the main thread (touches the Steam API). */
+bool gameFrontGetSteamTicketHex(char *outHex, size_t outSize);
+
+/* Apply a successful WinBolo.net Steam-auth response: store the token
+ * (auth method "steam"), rank and stats; seed the player name from the
+ * Steam persona only when no name is set yet (an existing name is kept);
+ * and trigger the once-per-session cloud prefs sync. */
+void gameFrontApplySteamAuthResult(const char *token, const char *expiry,
+                                   const char *playerName, int rank,
+                                   int rankTotal, const WbnStats *stats);
+
 /*********************************************************
 *NAME:          gameFrontGetWinbolonetUse
 *PURPOSE:
 * Returns whether WinBolo.net is active (token exists).
 *********************************************************/
 bool gameFrontGetWinbolonetUse(void);
+
+/*********************************************************
+*NAME:          gameFrontSetWinbolonetRank
+*PURPOSE:
+* Stores the player's WinBolo.net 1v1 ladder position.
+* rank is -1 when unranked; rankTotal is the ranked-player
+* count. Written by both auth paths, read by the UI.
+*********************************************************/
+void gameFrontSetWinbolonetRank(int rank, int rankTotal);
+
+/*********************************************************
+*NAME:          gameFrontGetWinbolonetRank
+*PURPOSE:
+* Returns the stored ladder position. rank is -1 when
+* unranked/unknown. Either out-param may be NULL.
+*********************************************************/
+void gameFrontGetWinbolonetRank(int *rank, int *rankTotal);
+
+/*********************************************************
+*NAME:          gameFrontSetWinbolonetStats
+*PURPOSE:
+* Stores the player's per-mode WinBolo.net play stats from
+* the last auth/validate response. Cleared on sign-out.
+*********************************************************/
+void gameFrontSetWinbolonetStats(const WbnStats *s);
+
+/*********************************************************
+*NAME:          gameFrontGetWinbolonetStats
+*PURPOSE:
+* Returns the stored per-mode play stats. `valid` is FALSE
+* when no stats have been captured this session.
+*********************************************************/
+void gameFrontGetWinbolonetStats(WbnStats *out);
+
+/*********************************************************
+*NAME:          gameFrontIsSupporter
+*PURPOSE:
+* Returns TRUE when the local player has Supporter status —
+* the same signal applied to the in-game self badge. Used to
+* gold-tint the WinBolo.net shield on the welcome screen.
+*********************************************************/
+bool gameFrontIsSupporter(void);
 
 /*********************************************************
 *NAME:          gameFrontSetRegistryKeys

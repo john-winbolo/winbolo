@@ -25,6 +25,7 @@ static const int k_iGameRichPresenceJoinRequested_id = k_iSteamFriendsCallbacks 
 
 static bool s_initialized = false;
 static SteamJoinCallback s_join_callback = nullptr;
+static HAuthTicket s_authTicket = k_HAuthTicketInvalid;
 
 extern "C" bool steam_init(void) {
   if (s_initialized) return true;
@@ -46,6 +47,7 @@ extern "C" void steam_shutdown(void) {
   SteamAPI_Shutdown();
   s_initialized = false;
   s_join_callback = nullptr;
+  s_authTicket = k_HAuthTicketInvalid;
 }
 
 extern "C" void steam_run_callbacks(void) {
@@ -78,12 +80,33 @@ extern "C" void steam_clear_rich_presence(void) {
 extern "C" bool steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size,
                                       uint32_t *out_len) {
   if (!s_initialized) return false;
+  if (s_authTicket != k_HAuthTicketInvalid) {
+    SteamUser()->CancelAuthTicket(s_authTicket);
+    s_authTicket = k_HAuthTicketInvalid;
+  }
   uint32 len = 0;
   HAuthTicket ticket =
       SteamUser()->GetAuthSessionTicket(buf, buf_size, &len, nullptr);
   if (ticket == k_HAuthTicketInvalid) return false;
+  s_authTicket = ticket;
   if (out_len) *out_len = len;
   return true;
+}
+
+extern "C" bool steam_get_persona_name(char *out, size_t outSize) {
+  if (!s_initialized) return false;
+  if (!out || outSize == 0) return false;
+  const char *name = SteamFriends()->GetPersonaName();
+  if (!name) return false;
+  strncpy(out, name, outSize - 1);
+  out[outSize - 1] = '\0';
+  return true;
+}
+
+extern "C" void steam_cancel_auth_ticket(void) {
+  if (!s_initialized || s_authTicket == k_HAuthTicketInvalid) return;
+  SteamUser()->CancelAuthTicket(s_authTicket);
+  s_authTicket = k_HAuthTicketInvalid;
 }
 
 extern "C" void steam_increment_stat(const char *name, int amount) {

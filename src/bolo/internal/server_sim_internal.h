@@ -70,6 +70,7 @@ struct ServerSim {
 
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */
+    BYTE     hostSlot;             /* current lobby host's player slot; 0 = slot 0 */
     bool     allowNewPlayers;      /* live state — drives PACKET_LOCK_TOGGLE */
     bool     autoLockOnGameStart;  /* if true, set allowNewPlayers=false on game start */
     bool     savedAllowNewPlayers; /* what allowNewPlayers was before autoLockOnGameStart fired */
@@ -114,6 +115,26 @@ struct ServerSim {
 
     int32_t      countdownTicks;     /* Countdown timer (in ticks) */
     int32_t      originalGameLength; /* Cached for reset between rounds */
+
+    /* Operator-configured lobby settings captured once at startup (end of
+     * serverSimApplyInstanceConfig). Restored by serverSimResetLobbyToDefaults
+     * when the last human leaves the lobby, so the next joiner lands in the
+     * server's configured defaults instead of whatever the previous occupants
+     * left behind. */
+    struct {
+        bool     valid;
+        gameType gameType;
+        bool     hiddenMines;
+        aiType   botAiType;
+        uint8_t  aiPolicy;
+        bool     timeLimit;
+        uint16_t timeMinutes;
+        int32_t  gameLength;
+        bool     openHost;
+        bool     autoLockOnGameStart;
+        bool     ranked;
+        uint16_t serverLocks;
+    } originalLobbySettings;
     bool         hadPlayersEver;     /* For auto-close detection */
     bool         roundHadHuman;      /* A human was present during this running
                                       * round; gates the return-to-lobby when

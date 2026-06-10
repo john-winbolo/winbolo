@@ -287,24 +287,6 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  {
-    /* Resolve WinBolo.ini to an absolute path under SDL_GetPrefPath.
-     * Win32 WritePrivateProfileString with a relative filename writes
-     * to C:\Windows\<file>, which an unprivileged process can't touch,
-     * so the news / country-cache / WBN-host writes silently fail.
-     * gamefront.c::getPreferenceFilePath already uses this trick for
-     * SETTINGS keys — mirror it here so every WBN consumer hits the
-     * same file. */
-    static char winboloIniPath[FILENAME_MAX];
-    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
-    if (prefDir) {
-      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%sWinBolo.ini", prefDir);
-    } else {
-      SDL_snprintf(winboloIniPath, sizeof(winboloIniPath), "%s", "WinBolo.ini");
-    }
-    winbolonetCoreSetPreferencesPath(winboloIniPath);
-  }
-
   steam_init();
   steam_set_join_callback(steamJoinRequested);
   /* Steam Input (Path A): start in Menu set — game launches into the
@@ -1738,6 +1720,10 @@ void frontEndSetActiveClientSim(struct ClientSim *cs) {
     for (BYTE i = 0; i < MAX_TANKS; i++) {
       sdl3ImguiClearPlayer(i);
     }
+    /* Drop the previous game's newswire/kills text so it doesn't linger on
+       the message surface when the next game starts (it would otherwise stay
+       visible until the first message overwrites it). */
+    sdl3DrawResetCachedText();
   }
   s_activeUiCs = cs;
 }
@@ -1771,6 +1757,12 @@ void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping)
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
   if (!clientSimIsRunning(cs)) return;
   sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
+}
+
+void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value,
+                               uint8_t clientType, uint8_t clientFlags) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  sdl3ImguiUpdatePlayerFlags((unsigned char)value, clientType, clientFlags);
 }
 
 void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {

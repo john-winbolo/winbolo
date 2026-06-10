@@ -1,6 +1,8 @@
 #ifndef SERVER_DEDICATED_LOG_H
 #define SERVER_DEDICATED_LOG_H
 
+#include <stddef.h>  /* size_t */
+
 /* Registers the dedicated-server log writer as a bus subscriber
  * against the supplied ServerSim. The subscriber listens for
  * CTRL_GAME_PHASE_LOBBY / RUNNING / GAME_OVER and manages the
@@ -31,5 +33,12 @@ void serverDedicatedLogStashCurrentRound(void);
  * (registration overwrites winboloNetServerKey, invalidating the
  * URL key the upload needs). Clears the stash either way. */
 void serverDedicatedLogFlushPendingUpload(void);
+
+/* Compose the final .wbv replay path from the -log argument value.
+ * Pure (no globals / time / RNG) and cross-platform (SDL_GetPathInfo) so
+ * it is unit-testable. See the definition in server_dedicated_log.c for
+ * the directory / file / auto-name rules. Exposed for tests. */
+void serverDedicatedLogComposePath(const char *logArg, const char *autoBase,
+                                   char *out, size_t outSize);
 
 #endif /* SERVER_DEDICATED_LOG_H */

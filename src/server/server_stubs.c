@@ -76,10 +76,10 @@ void transportUdpServerSetBotName(BYTE playerNum, const char *name) {
 void transportUdpServerKickPlayer(struct ServerSim *sim, const char *name) {
   (void)sim; (void)name;
 }
-/* server_command_dispatch.c's ranked-only arms call these for WBN
- * matchmaking and re-authentication. The non-server binaries never
- * reach them at runtime (the dispatcher rejects on !serverSimGetRanked
- * first) but the symbols still need definitions for the link. */
+/* server_command_dispatch.c calls these for WBN matchmaking (balance,
+ * ranked-gated) and re-authentication (WBN-gated). The non-server
+ * binaries never run the server command dispatcher, so these are never
+ * invoked there; the symbols still need definitions for the link. */
 bool transportUdpServerStartBalanceRequest(struct ServerSim *sim,
                                            uint8_t teamSize,
                                            bool includeBots) {

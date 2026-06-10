@@ -31,6 +31,13 @@ void gameFrontGetLanguageCode(char *out, int outSize) {
   out[0] = '\0';
 }
 
+/* Pulled in by shared imgui dialogs (e.g. the reused WBN browser) that
+ * call gameFrontPumpDirty to flush cloud-prefs changes. No frontend to
+ * pump on LogViewer / MapEditor, so this is a no-op; the real pump lives
+ * in gamefront.c. */
+void gameFrontPumpDirty(void) {
+}
+
 /* Pulled in transitively by imgui_dialog_utils.h's dialogSaveCurrentPosition /
  * dialogRestorePosition. The real definitions live in gamefront.c (main game
  * only). For LogViewer / MapEditor the values are unused at runtime — those

@@ -595,6 +595,7 @@ STR_DLGWBN_USERNAME=Identifiant :
 STR_DLGWBN_PASSWORD=Mot de passe :
 STR_DLGWBN_SIGNINGIN=Connexion en cours...
 STR_DLGWBN_SIGNIN_OK=Se connecter
+STR_DLGWBN_SIGNIN_HEADER=Connexion à WinBolo.net
 STR_DLGWBN_NEEDCREDS=Veuillez saisir votre identifiant et votre mot de passe.
 
 # Welcome dialog
@@ -1364,3 +1365,65 @@ STR_RETURNING_TO_LOBBY=Retour au lobby
 # Balance — WBN-failure status pill + reject toast for non-ranked balance state
 STR_DLGLOBBY_REJECT_BAD_STATE=non autorisé pour l’instant
 STR_DLGLOBBY_BAL_STATUS_FAILED=équilibrage WBN échoué
+
+# --- Added strings (account / onboarding / stats) ---
+STR_DLGONBOARD_ACCOUNT_DESC=Connectez-vous à votre compte WinBolo.net ou continuez sans compte.
+STR_DLGONBOARD_ACCOUNT_TITLE=Compte
+STR_DLGONBOARD_FINISH=Terminer
+STR_DLGONBOARD_KEYS_DESC=Configurez vos contrôles. Vous pourrez les modifier plus tard dans Paramètres.
+STR_DLGONBOARD_KEYS_TITLE=Touches
+STR_DLGONBOARD_NAME_DESC=Choisissez le nom que verront les autres joueurs.
+STR_DLGONBOARD_NAME_TITLE=Nom du joueur
+STR_DLGONBOARD_NEXT=Suivant
+STR_DLGONBOARD_SKIP=Ignorer
+STR_DLGONBOARD_TITLE=Bienvenue dans WinBolo Online
+STR_DLGWBN_CREATE_ACCOUNT=Pas de compte ? Créez-en un
+STR_DLGWBN_CREATE_BROWSER=Créez un compte indépendant dans votre navigateur
+STR_DLGWBN_CREATE_BTN=Créer un compte avec Steam
+STR_DLGWBN_CREATE_STEAM=Créer un compte WinBolo.net
+STR_DLGWBN_EMAIL=E-mail :
+STR_DLGWBN_EMAIL_OPTIONAL=facultatif
+STR_DLGWBN_ERR_EMAIL_INVALID=Cette adresse e-mail n'est pas valide.
+STR_DLGWBN_ERR_EMAIL_TAKEN=Cette adresse e-mail est déjà enregistrée.
+STR_DLGWBN_ERR_GENERIC=Impossible de créer votre compte. Veuillez réessayer.
+STR_DLGWBN_ERR_RATE_LIMITED=Trop de tentatives d'inscription. Veuillez réessayer plus tard.
+STR_DLGWBN_ERR_STEAM_LINKED=Ce compte Steam a déjà un compte WinBolo.net. Utilisez Se connecter avec Steam.
+STR_DLGWBN_ERR_STEAM_NOT_LINKED=Aucun compte WinBolo.net n'est lié à ce Steam. Créez-en un ci-dessous.
+STR_DLGWBN_ERR_STEAM_TICKET=Steam n'a pas pu vérifier votre compte. Veuillez réessayer.
+STR_DLGWBN_ERR_USERNAME_REQUIRED=Veuillez saisir un identifiant.
+STR_DLGWBN_ERR_USERNAME_TAKEN=Cet identifiant est déjà pris.
+STR_DLGWBN_ERR_USERNAME_TOO_LONG=Cet identifiant est trop long.
+STR_DLGWBN_ERR_USERNAME_UNAVAILABLE=Cet identifiant ne peut pas être utilisé. Veuillez en choisir un autre.
+STR_DLGWBN_LINK_HINT=Vous avez un compte avec mot de passe ? Liez votre compte Steam sur [winbolo.net](https://www.winbolo.net/playermodify).
+STR_DLGWBN_OR=ou
+STR_DLGWBN_OR_PASSWORD=ou se connecter avec un mot de passe
+STR_DLGWBN_RANK=#{number} sur {number2}
+STR_DLGWBN_SIGNIN_STEAM_BTN=Se connecter avec Steam
+STR_DLGWBN_STATS_BASES=Bases :
+STR_DLGWBN_STATS_BTN=Mes stats
+STR_DLGWBN_STATS_COL_BASES=Bases
+STR_DLGWBN_STATS_COL_GAMES=Parties
+STR_DLGWBN_STATS_COL_PILLS=Pillboxes
+STR_DLGWBN_STATS_COL_RANK=Rang
+STR_DLGWBN_STATS_COL_RATING=Note
+STR_DLGWBN_STATS_COL_TANKS=Tanks
+STR_DLGWBN_STATS_COL_WL=V/D
+STR_DLGWBN_STATS_GAMES=Parties :
+STR_DLGWBN_STATS_LOSES=Défaites :
+STR_DLGWBN_STATS_NONE=Aucune stat disponible pour l'instant.
+STR_DLGWBN_STATS_OPEN=Ouvert
+STR_DLGWBN_STATS_PILLS=Pillboxes :
+STR_DLGWBN_STATS_RANK=Rang :
+STR_DLGWBN_STATS_SCORE=Score (ELO) :
+STR_DLGWBN_STATS_STRICT=Strict
+STR_DLGWBN_STATS_TANKS=Tanks :
+STR_DLGWBN_STATS_TITLE=Stats WinBolo.net
+STR_DLGWBN_STATS_TOURN=Tournoi
+STR_DLGWBN_STATS_WINS=Victoires :
+STR_DLGWBN_UNRANKED=Non classé
+STR_DLGWBN_VIA_STEAM=via Steam
+
+# Lobby host transfer
+STR_DLGLOBBY_MAKE_HOST=Nommer hôte
+STR_DLGLOBBY_MAKE_HOST_FMT=Nommer « {player} » comme hôte ?
+STR_DLGLOBBY_HOST_CHANGED_FMT={player} est maintenant l'hôte

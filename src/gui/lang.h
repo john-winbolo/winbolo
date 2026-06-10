@@ -84,7 +84,7 @@
 
 /* Key setup dialog */
 #define STR_DLGKEYSETUP_TITLE               216
-#define STR_DLGKEYSETUP_TAB_KEYBOARD        1433
+#define STR_DLGKEYSETUP_TAB_KEYBOARD        1492
 #define STR_DLGKEYSETUP_DRIVETANK           218
 #define STR_DLGKEYSETUP_GUNRANGE            220
 #define STR_DLGKEYSETUP_WEAPONS             221
@@ -1343,33 +1343,33 @@
 #define STR_DLGLOBBY_CONN_TEST_TIP          1384
 
 /* Gamepad rebinding (Configure Keys → Controller section) */
-#define STR_GP_SECTION                      1408
-#define STR_GP_REBIND_PROMPT                1409
-#define STR_GP_ACTION_FIRE                  1410
-#define STR_GP_ACTION_MINE                  1411
-#define STR_GP_ACTION_BUILD_CONFIRM         1412
-#define STR_GP_ACTION_VIEW_CYCLE            1413
-#define STR_GP_ACTION_GUNSIGHT_DEC          1414
-#define STR_GP_ACTION_GUNSIGHT_INC          1415
-#define STR_GP_ACTION_BUILD_PREV            1416
-#define STR_GP_ACTION_BUILD_NEXT            1417
-#define STR_GP_ACTION_BUILD_CURSOR_TOGGLE   1418
-#define STR_GP_ACTION_QUICK_CHAT            1419
-#define STR_GP_ACTION_PAUSE                 1420
-#define STR_GP_ACTION_VIEW_PLAYERS          1421
+#define STR_GP_SECTION                      1467
+#define STR_GP_REBIND_PROMPT                1468
+#define STR_GP_ACTION_FIRE                  1469
+#define STR_GP_ACTION_MINE                  1470
+#define STR_GP_ACTION_BUILD_CONFIRM         1471
+#define STR_GP_ACTION_VIEW_CYCLE            1472
+#define STR_GP_ACTION_GUNSIGHT_DEC          1473
+#define STR_GP_ACTION_GUNSIGHT_INC          1474
+#define STR_GP_ACTION_BUILD_PREV            1475
+#define STR_GP_ACTION_BUILD_NEXT            1476
+#define STR_GP_ACTION_BUILD_CURSOR_TOGGLE   1477
+#define STR_GP_ACTION_QUICK_CHAT            1478
+#define STR_GP_ACTION_PAUSE                 1479
+#define STR_GP_ACTION_VIEW_PLAYERS          1480
 
 /* Controller Mode pref + connect prompt */
-#define STR_CTRL_MODE_HEADER                1422
-#define STR_CTRL_MODE_OFF                   1423
-#define STR_CTRL_MODE_ON                    1424
-#define STR_CTRL_MODE_AUTO                  1425
-#define STR_CTRL_MODE_ASK                   1426
-#define STR_CTRL_PROMPT_TITLE               1427
-#define STR_CTRL_PROMPT_LINE1               1428
-#define STR_CTRL_PROMPT_LINE2               1429
-#define STR_CTRL_PROMPT_DESC                1430
-#define STR_CTRL_PROMPT_NOTNOW              1431
-#define STR_CTRL_PROMPT_DONTASK             1432
+#define STR_CTRL_MODE_HEADER                1481
+#define STR_CTRL_MODE_OFF                   1482
+#define STR_CTRL_MODE_ON                    1483
+#define STR_CTRL_MODE_AUTO                  1484
+#define STR_CTRL_MODE_ASK                   1485
+#define STR_CTRL_PROMPT_TITLE               1486
+#define STR_CTRL_PROMPT_LINE1               1487
+#define STR_CTRL_PROMPT_LINE2               1488
+#define STR_CTRL_PROMPT_DESC                1489
+#define STR_CTRL_PROMPT_NOTNOW              1490
+#define STR_CTRL_PROMPT_DONTASK             1491
 
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
@@ -1428,6 +1428,82 @@
 /* Network Info — inbound snapshot loss for the last 1-second window.
  * {number} = percentage, {number2} = lost count, {number3} = total expected. */
 #define STR_DLGNETINFO_LOSS                 1407
+
+/* WinBolo.net 1v1 ladder position shown in the status block.
+ * STR_DLGWBN_RANK: {number} = position, {number2} = ranked-player total. */
+#define STR_DLGWBN_RANK                     1408
+#define STR_DLGWBN_UNRANKED                 1409
+
+/* My Stats dialog — per-mode WinBolo.net play stats. */
+#define STR_DLGWBN_STATS_BTN                1410
+#define STR_DLGWBN_STATS_TITLE              1411
+#define STR_DLGWBN_STATS_NONE               1412
+#define STR_DLGWBN_STATS_OPEN               1413
+#define STR_DLGWBN_STATS_TOURN              1414
+#define STR_DLGWBN_STATS_STRICT             1415
+#define STR_DLGWBN_STATS_GAMES              1416
+#define STR_DLGWBN_STATS_BASES              1417
+#define STR_DLGWBN_STATS_PILLS              1418
+#define STR_DLGWBN_STATS_TANKS              1419
+#define STR_DLGWBN_STATS_SCORE              1420
+#define STR_DLGWBN_STATS_WINS               1421
+#define STR_DLGWBN_STATS_LOSES              1422
+#define STR_DLGWBN_STATS_RANK               1423
+
+/* First-run online onboarding wizard */
+#define STR_DLGONBOARD_TITLE                1424
+#define STR_DLGONBOARD_ACCOUNT_TITLE        1425
+#define STR_DLGONBOARD_ACCOUNT_DESC         1426
+#define STR_DLGONBOARD_NAME_TITLE           1427
+#define STR_DLGONBOARD_NAME_DESC            1428
+#define STR_DLGONBOARD_KEYS_TITLE           1429
+#define STR_DLGONBOARD_KEYS_DESC            1430
+#define STR_DLGONBOARD_NEXT                 1431
+#define STR_DLGONBOARD_SKIP                 1432
+#define STR_DLGONBOARD_FINISH               1433
+
+/* WinBolo.net browser signup link */
+#define STR_DLGWBN_CREATE_ACCOUNT           1434
+
+/* WinBolo.net Steam-auth status suffix */
+#define STR_DLGWBN_VIA_STEAM                1435
+
+/* In-client Steam signup form (login popup) */
+#define STR_DLGWBN_CREATE_STEAM             1436
+#define STR_DLGWBN_EMAIL_OPTIONAL           1437
+#define STR_DLGWBN_CREATE_BTN               1438
+#define STR_DLGWBN_ERR_USERNAME_TAKEN       1439
+#define STR_DLGWBN_ERR_EMAIL_TAKEN          1440
+#define STR_DLGWBN_ERR_STEAM_LINKED         1441
+#define STR_DLGWBN_ERR_RATE_LIMITED         1442
+#define STR_DLGWBN_ERR_USERNAME_UNAVAILABLE 1443
+#define STR_DLGWBN_ERR_USERNAME_TOO_LONG    1444
+#define STR_DLGWBN_ERR_USERNAME_REQUIRED    1445
+#define STR_DLGWBN_ERR_EMAIL_INVALID        1446
+#define STR_DLGWBN_ERR_GENERIC              1447
+
+/* Column headers for the My Stats table */
+#define STR_DLGWBN_STATS_COL_RANK           1448
+#define STR_DLGWBN_STATS_COL_RATING         1449
+#define STR_DLGWBN_STATS_COL_GAMES          1450
+#define STR_DLGWBN_STATS_COL_WL             1451
+#define STR_DLGWBN_STATS_COL_BASES          1452
+#define STR_DLGWBN_STATS_COL_PILLS          1453
+#define STR_DLGWBN_STATS_COL_TANKS          1454
+
+/* In-client Steam sign-in (existing account) + popup section labels */
+#define STR_DLGWBN_SIGNIN_STEAM_BTN         1455
+#define STR_DLGWBN_OR_PASSWORD              1456
+#define STR_DLGWBN_LINK_HINT                1457
+#define STR_DLGWBN_ERR_STEAM_NOT_LINKED     1458
+#define STR_DLGWBN_CREATE_BROWSER           1459
+#define STR_DLGWBN_EMAIL                    1460
+#define STR_DLGWBN_OR                       1461
+#define STR_DLGWBN_ERR_STEAM_TICKET         1462
+#define STR_DLGWBN_SIGNIN_HEADER            1463
+#define STR_DLGLOBBY_MAKE_HOST              1464
+#define STR_DLGLOBBY_MAKE_HOST_FMT          1465
+#define STR_DLGLOBBY_HOST_CHANGED_FMT       1466
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

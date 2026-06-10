@@ -93,6 +93,7 @@ int run_lobby_settings_codec_and_apply(void) {
     in.u.lobbySettings.lobbyRanked              = true;
     in.u.lobbySettings.lobbyAllowNewPlayers     = false;
     in.u.lobbySettings.lobbyWbnAvailable        = true;
+    in.u.lobbySettings.hostSlot                 = 3;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
                   "codec_roundtrip failed");
@@ -119,6 +120,8 @@ int run_lobby_settings_codec_and_apply(void) {
                   "lobbyAllowNewPlayers did not survive codec round-trip");
     UT_ASSERT_MSG(out.u.lobbySettings.lobbyWbnAvailable == true,
                   "lobbyWbnAvailable did not survive codec round-trip");
+    UT_ASSERT_MSG(out.u.lobbySettings.hostSlot == 3,
+                  "hostSlot did not survive codec round-trip");
 
     ClientSim *cs = fresh_client_sim();
     UT_ASSERT(cs != NULL);
@@ -140,6 +143,7 @@ int run_lobby_settings_codec_and_apply(void) {
     UT_ASSERT(cs->lobbyRanked              == true);
     UT_ASSERT(cs->lobbyAllowNewPlayers     == false);
     UT_ASSERT(cs->lobbyWbnAvailable        == true);
+    UT_ASSERT(cs->lobbyHostSlot            == 3);
     clientSimDestroy(cs);
     return 0;
 }

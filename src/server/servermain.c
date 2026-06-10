@@ -56,6 +56,7 @@
 #include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
 #include "../common/wb_log.h"
+#include "../common/prefs.h"
 #include "../headless/cmd_stdin.h"
 #include "wire_limits.h"
 
@@ -101,6 +102,22 @@ bool statusFile = FALSE;
 time_t ticks = 0;
 
 static ServerSim *serverSim = NULL;
+
+/* Shutdown handshake for the game-tick timer.
+ *
+ * serverGameTimer runs on a separate thread (Win32 multimedia timer or the
+ * SDL timer thread). Neither timeKillEvent nor SDL_RemoveTimer joins an
+ * in-flight callback, so without this a tick can still be running
+ * serverInstanceTick -> serverSimBotTick -> brain think on bot lua_States
+ * while the main thread frees them in serverInstanceShutdown — the
+ * production shutdown use-after-free (SIGSEGV in luaH_getint).
+ *
+ * g_serverShuttingDown is raised first so the callback bails (and its
+ * catch-up loop stops re-entering ticks); g_serverTickLock is held for the
+ * whole callback body, so the shutdown path can acquire it to block until
+ * any in-flight tick has fully drained. See serverQuiesceGameTimer. */
+static SDL_AtomicInt g_serverShuttingDown;
+static SDL_Mutex    *g_serverTickLock = NULL;
 
 /* Tracker settings (set from command-line args, read by timer) */
 static char  sTrackerAddr[FILENAME_MAX] = "";
@@ -201,7 +218,7 @@ void saveMap(char *line) {
 }
 
 void printHelp() {
-  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Status - Returns list of players who aren't locked.\n");
+  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n");
 }
 
 
@@ -231,6 +248,7 @@ void processKeys(bool isQuiet) {
 	char keyBuff[256] = "\0";
 	char saveBuff[256] = "\0";
 	char playerKick[33] = "\0";
+	char playerHost[33] = "\0";
 	size_t newbuflen;
 
 	if (isQuiet == TRUE || isNoInput == TRUE) {
@@ -297,6 +315,19 @@ void processKeys(bool isQuiet) {
 					threadsWaitForMutex();
 					transportUdpServerKickPlayer(serverSim, playerKick);
 					threadsReleaseMutex();
+				} else if (strncmp(keyBuff, "host ", 5) == 0) {
+					bool hostSet;
+					sprintf(playerHost, "%.*s", 32, keyBuff+5);
+					newbuflen = strlen(playerHost);
+					playerHost[newbuflen - 1] = '\0';
+					threadsWaitForMutex();
+					hostSet = transportUdpServerSetHostByName(serverSim, playerHost);
+					threadsReleaseMutex();
+					if (hostSet) {
+						printf("Host set to %s\n", playerHost);
+					} else {
+						printf("No such player\n");
+					}
 				} else if (strncmp(keyBuff, "quit", 4) == 0) {
 					/* Loop's while-condition will exit on next check */
 				} else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
@@ -320,6 +351,7 @@ void processKeys(bool isQuiet) {
   struct timeval timer;
   int ret;
   char playerKick[33] = "\0";
+  char playerHost[33] = "\0";
   size_t newbuflen;
 
   timer.tv_sec = 1;
@@ -384,6 +416,19 @@ void processKeys(bool isQuiet) {
         threadsWaitForMutex();
         transportUdpServerKickPlayer(serverSim, playerKick);
         threadsReleaseMutex();
+      } else if (strncmp(keyBuff, "host ", 5) == 0) {
+        bool hostSet;
+        sprintf(playerHost, "%.*s", 32, keyBuff+5);
+        newbuflen = strlen(playerHost);
+        playerHost[newbuflen - 1] = '\0';
+        threadsWaitForMutex();
+        hostSet = transportUdpServerSetHostByName(serverSim, playerHost);
+        threadsReleaseMutex();
+        if (hostSet) {
+          printf("Host set to %s\n", playerHost);
+        } else {
+          printf("No such player\n");
+        }
       } else if (strncmp(keyBuff, "quit", 4) == 0) {
         /* Loop's while-condition will exit on next check */
       } else if (strncmp(keyBuff, "\n", 1) != 0 && strncmp(keyBuff, "\0", 1) != 0) {
@@ -518,16 +563,49 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
   tick = SDL_GetTicks();
 #endif
 
-  if ((tick - oldTick) > SERVER_TICK_LENGTH) {
-    while ((tick - oldTick) > SERVER_TICK_LENGTH) {
-      serverInstanceTick(serverSim);
-      ticks++;
-      oldTick += SERVER_TICK_LENGTH;
+  /* Shutdown handshake: bail before touching the sim once teardown has
+   * begun, and hold g_serverTickLock for the whole tick body so the
+   * shutdown path can block on it until an in-flight tick fully drains.
+   * The flag is re-checked after acquiring the lock (and inside the
+   * catch-up loop) to cover the case where shutdown raced in between. */
+  if (!SDL_GetAtomicInt(&g_serverShuttingDown) && g_serverTickLock != NULL) {
+    SDL_LockMutex(g_serverTickLock);
+    if (!SDL_GetAtomicInt(&g_serverShuttingDown) &&
+        (tick - oldTick) > SERVER_TICK_LENGTH) {
+      while ((tick - oldTick) > SERVER_TICK_LENGTH) {
+        if (SDL_GetAtomicInt(&g_serverShuttingDown)) break;
+        serverInstanceTick(serverSim);
+        ticks++;
+        oldTick += SERVER_TICK_LENGTH;
+      }
     }
+    SDL_UnlockMutex(g_serverTickLock);
   }
 #ifdef USING_SDL
   return interval;
 #endif
+}
+
+/* Stop the game-tick timer and guarantee no tick callback is — or will be —
+ * executing before the caller frees the sim / bot lua_States. timeKillEvent
+ * and SDL_RemoveTimer only unschedule future callbacks; they do not join an
+ * invocation already running on the timer thread. So we raise the shutdown
+ * flag (serverGameTimer then bails and its catch-up loop stops re-entering
+ * ticks), unschedule the timer, then take and release g_serverTickLock —
+ * which the callback holds across its whole body — to block until any
+ * in-flight tick has drained. Idempotent and safe to call once per exit
+ * path. */
+static void serverQuiesceGameTimer(void) {
+  SDL_SetAtomicInt(&g_serverShuttingDown, 1);
+#ifdef _WIN32
+  timeKillEvent(serverTimerGameID);
+#else
+  SDL_RemoveTimer(serverTimerGameID);
+#endif
+  if (g_serverTickLock != NULL) {
+    SDL_LockMutex(g_serverTickLock);
+    SDL_UnlockMutex(g_serverTickLock);
+  }
 }
 
 #define DEFAULT_TRACKER_ADDR "tracker.winbolo.com"
@@ -535,60 +613,37 @@ void CALLBACK serverGameTimer(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR d
 
 void printArgs() {
 #ifdef _WIN32
-  fprintf(stderr, "Usage:\nWinBoloDS -map <Filename> -port <Port> -gametype <GameType> -mines <Mines> -ai <AiType> -delay <Delay> -limit <Limit> -tracker <Tracker> -wbnhost <Host> -password <Password>\n\n");
+  fprintf(stderr, "Usage:\nWinBoloDS -map <Filename> -port <Port> -gametype <GameType> [options]\n\n");
 #else
-  fprintf(stderr, "Usage:\nLinBoloDS -map <Filename> -port <Port> -gametype <GameType> -mines <Mines> -ai <AiType> -delay <Delay> -limit <Limit> -tracker <Tracker> -wbnhost <Host> -password <Password>\n\n");
+  fprintf(stderr, "Usage:\nLinBoloDS -map <Filename> -port <Port> -gametype <GameType> [options]\n\n");
 #endif
-  fprintf(stderr, "<Filename>    - Path and file name of the map file to open (-inbuilt can be used\n");
-  fprintf(stderr, "                instead of -map to enable inbuilt map Everard Island)\n");
+  fprintf(stderr, "Map selection:\n");
+  fprintf(stderr, "-map <File>   - Path and file name of the map file to open (-inbuilt can be\n");
+  fprintf(stderr, "                used instead of -map to enable inbuilt map Everard Island)\n");
   fprintf(stderr, "-mapdir <Dir> - Directory of .map files for random rotation between rounds.\n");
   fprintf(stderr, "                Can be used with -map (initial map) or alone (random first map).\n");
   fprintf(stderr, "                Requires lobby mode. Invalid maps are skipped at startup.\n");
-  fprintf(stderr, "<Port>        - Port to run the server on\n");
-  fprintf(stderr, "<GameType>    - Specifies the game type: \"Open\" or \"Tournament\" or \"Strict\"\n");
-  fprintf(stderr, "\nOptional\n");
-  fprintf(stderr, "<Mines>       - Specifies allowing hidden mines: \"yes\" for allow,\n");
+  fprintf(stderr, "-randommap    - Generate a random procedural map instead of loading a file.\n");
+  fprintf(stderr, "                -randommap alone generates a fully random map each round.\n");
+  fprintf(stderr, "                -randommap tournament|natural|maze|fractal — specific generator type.\n");
+  fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
+  fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
+  fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
+
+  fprintf(stderr, "\nGame rules:\n");
+  fprintf(stderr, "-gametype <T> - Specifies the game type: \"Open\" or \"Tournament\" or \"Strict\"\n");
+  fprintf(stderr, "-mines <M>    - Specifies allowing hidden mines: \"yes\" for allow,\n");
   fprintf(stderr, "                \"no\" for disallow (on if not specified)\n" );
-  fprintf(stderr, "<AiType>      - Specifies allowing brains. Valid values are \"no\" for\n");
+  fprintf(stderr, "-ai <AiType>  - Specifies allowing brains. Valid values are \"no\" for\n");
   fprintf(stderr, "                disallowing, \"yes\" for allowing, \"yesAdv\" for giving\n");
   fprintf(stderr, "                them an advantage, or \"yesFull\" for full map advantage.\n");
   fprintf(stderr, "                (disallowed if not specified)\n");
-  fprintf(stderr, "<Delay>       - Specifies the start delay (in seconds) (none if not specified)\n");
-  fprintf(stderr, "<Limit>       - Specifies the game time limit (in minutes)\n");
+  fprintf(stderr, "-delay <D>    - Specifies the start delay (in seconds) (none if not specified)\n");
+  fprintf(stderr, "-limit <L>    - Specifies the game time limit (in minutes)\n");
   fprintf(stderr, "                \"-1\" for no time limit (none if not specified)\n");
-  fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
-  fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
-  fprintf(stderr, "-ticklimit <N> - End the current game (transition to GAME_OVER) after N\n");
-  fprintf(stderr, "                game-ticks of running play. Unlike -ticks, the server is\n");
-  fprintf(stderr, "                not asked to exit; in lobby mode the round returns to lobby.\n");
-  fprintf(stderr, "<Password>    - Game Password (none if not specified)\n");
-  fprintf(stderr, "<tracker>     - Internet tracker to notify. Options:\n");
-  fprintf(stderr, "                -tracker alone uses default (%s:%d)\n", DEFAULT_TRACKER_ADDR, DEFAULT_TRACKER_PORT);
-  fprintf(stderr, "                -tracker <host> uses <host> with default port %d\n", DEFAULT_TRACKER_PORT);
-  fprintf(stderr, "                -tracker <host:port> uses the specified host and port\n\n");
-  fprintf(stderr, "-quiet        - No screen input or output (silent mode)\n");
-  fprintf(stderr, "-noinput      - No keyboard input\n");
-  fprintf(stderr, "-addr         - Specify a different address to use if avaliable\n");
-  fprintf(stderr, "-autoclose    - Automatically quit the server when all players have left\n");
-  fprintf(stderr, "                the game\n");
-  fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
-  fprintf(stderr, "                Bare hostname uses https (e.g. -wbnhost wbn.winbolo.net),\n");
-  fprintf(stderr, "                or specify scheme (e.g. -wbnhost http://wbn.winbolo.net)\n");
-  fprintf(stderr, "-nowinbolonet - Do not participate in winbolo.net game tracking\n");
-  fprintf(stderr, "-logfile      - Write all output to file instead of console.\n");
-  fprintf(stderr, "-maxplayers   - Specifies the maximum number of players that can be on this\n");
-  fprintf(stderr, "                server.\n");
-  fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
-  fprintf(stderr, "-log          - Create game log file (filename optional)\n");
-  fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
-  fprintf(stderr, "-statusFile	 - Save list of unlocked players to a file.\n");
-  fprintf(stderr, "-threads <N>  - Total concurrent bot-think runners including the main\n");
-  fprintf(stderr, "                thread. 1 disables the worker pool. Default: logical cores.\n");
-  fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
-  fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
-  fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
-  fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
-  fprintf(stderr, "                them, or a different one to fight against them.\n");
+  fprintf(stderr, "-password <P> - Game Password (none if not specified)\n");
+
+  fprintf(stderr, "\nLobby & host:\n");
   fprintf(stderr, "-nolobby      - Skip lobby, start game immediately (backward-compatible mode)\n");
   fprintf(stderr, "-autolock     - Start with auto-lock-on-game-start enabled\n");
   fprintf(stderr, "-ranked       - Start with the lobby flagged Ranked (also forces auto-lock-on-game-start)\n");
@@ -599,18 +654,64 @@ void printArgs() {
   fprintf(stderr, "                Valid: gametype, ai, mines, timelimit (alias: limit),\n");
   fprintf(stderr, "                autolock, password, ranked, openhost, map.\n");
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
+  fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
+  fprintf(stderr, "                server.\n");
+
+  fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
+  fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
+  fprintf(stderr, "                \"allow\" plays the upload in memory and drops it on the next\n");
+  fprintf(stderr, "                map change (default), \"persist\" also saves it to\n");
+  fprintf(stderr, "                data/maps/Uploads/.\n");
+  fprintf(stderr, "-uploadmaxfiles <N> - Max stored upload files in persist mode (1-255,\n");
+  fprintf(stderr, "                default 64).\n");
+  fprintf(stderr, "-uploadmaxstorage <MB> - Max upload storage in persist mode (1-4096 MB,\n");
+  fprintf(stderr, "                default 8).\n");
+
+  fprintf(stderr, "\nBots & AI:\n");
+  fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
+  fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
+  fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
+  fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
+  fprintf(stderr, "                them, or a different one to fight against them.\n");
+  fprintf(stderr, "-threads <N>  - Total concurrent bot-think runners including the main\n");
+  fprintf(stderr, "                thread. 1 disables the worker pool. Default: logical cores.\n");
+
+  fprintf(stderr, "\nNetworking:\n");
+  fprintf(stderr, "-port <Port>  - Port to run the server on\n");
+  fprintf(stderr, "-addr         - Specify a different address to use if avaliable\n");
+  fprintf(stderr, "-tracker      - Internet tracker to notify. Options:\n");
+  fprintf(stderr, "                -tracker alone uses default (%s:%d)\n", DEFAULT_TRACKER_ADDR, DEFAULT_TRACKER_PORT);
+  fprintf(stderr, "                -tracker <host> uses <host> with default port %d\n", DEFAULT_TRACKER_PORT);
+  fprintf(stderr, "                -tracker <host:port> uses the specified host and port\n");
+  fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
+  fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
+  fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
+  fprintf(stderr, "                Bare hostname uses https (e.g. -wbnhost wbn.winbolo.net),\n");
+  fprintf(stderr, "                or specify scheme (e.g. -wbnhost http://wbn.winbolo.net)\n");
+  fprintf(stderr, "-nowinbolonet - Do not participate in winbolo.net game tracking\n");
+
+  fprintf(stderr, "\nLifecycle & shutdown:\n");
+  fprintf(stderr, "-autoclose    - Automatically quit the server when all players have left\n");
+  fprintf(stderr, "                the game\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
   fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
   fprintf(stderr, "-emptyresetmins <N> - Minutes before empty server resets to lobby (default: 5)\n");
-  fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
-  fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
-  fprintf(stderr, "-randommap        - Generate a random procedural map instead of loading a file.\n");
-  fprintf(stderr, "                    -randommap alone generates a fully random map each round.\n");
-  fprintf(stderr, "                    -randommap tournament|natural|maze|fractal — specific generator type.\n");
-  fprintf(stderr, "                    -randommap <seed> — reproduce a specific map from its seed.\n");
-  fprintf(stderr, "                    -randommap tournament <seed> — type with specific seed.\n");
-  fprintf(stderr, "                    Map name shown as 'rand_<seed>' in server info.\n");
+  fprintf(stderr, "-ticks <N>    - Exit cleanly after N game-ticks of running play.\n");
+  fprintf(stderr, "                \"0\" or omitted means unlimited (default).\n");
+  fprintf(stderr, "-ticklimit <N> - End the current game (transition to GAME_OVER) after N\n");
+  fprintf(stderr, "                game-ticks of running play. Unlike -ticks, the server is\n");
+  fprintf(stderr, "                not asked to exit; in lobby mode the round returns to lobby.\n");
+
+  fprintf(stderr, "\nLogging & diagnostics:\n");
+  fprintf(stderr, "-log [name]   - Create game log file. Optional [name] is a filename, or a\n");
+  fprintf(stderr, "                directory (e.g. -log /tmp) to auto-name the log inside it.\n");
+  fprintf(stderr, "-logfile      - Write all output to file instead of console.\n");
+  fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
+  fprintf(stderr, "-statusFile   - Save list of unlocked players to a file.\n");
+  fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
+  fprintf(stderr, "-quiet        - No screen input or output (silent mode)\n");
+  fprintf(stderr, "-noinput      - No keyboard input\n");
 }
 
 
@@ -1094,7 +1195,8 @@ int main(int argc, char **argv) {
 #endif
       return 0;
     }
-    serverSimInstallMapDirList(serverSim, scannedFiles, scannedCount);
+    serverSimInstallMapDirList(serverSim, scannedFiles, scannedCount,
+                               (const char *)argv[mdArg]);
   } else {
     serverSim = serverSimCreate(mapName, game, hiddenMines, srtDelay, gmeLen);
     if (serverSim == NULL) {
@@ -1255,9 +1357,9 @@ int main(int argc, char **argv) {
     }
   }
 
-  /* WinBolo.net host override — must run before serverInstanceStartup
-   * so winbolonetCreateServer hits the override host. */
-  winbolonetCoreSetPreferencesPath("WinBolo.ini");
+  /* Load the process-global preferences document the shared winbolonet code
+   * reads through (e.g. httpCreate's [WINBOLO.NET] Host). */
+  prefsInit("WinBolo.json");
   {
     int argNum = findArg(argc, argv, "wbnhost");
     if (argNum != ARG_NOT_FOUND) {
@@ -1485,6 +1587,9 @@ int main(int argc, char **argv) {
     return 0;
   }
   serverMessageConsoleMessage(serverSim,"Type \"help\" for help, \"quit\" to exit.");
+  /* Created before the timer starts so serverGameTimer always sees a valid
+   * lock; serverQuiesceGameTimer drains the timer through it on shutdown. */
+  g_serverTickLock = SDL_CreateMutex();
 #ifdef _WIN32
   oldTick = SDL_GetTicks();
   serverTimerGameID = timeSetEvent(SERVER_TICK_LENGTH, 10, serverGameTimer, 0, TIME_PERIODIC);
@@ -1501,11 +1606,8 @@ int main(int argc, char **argv) {
       if (cmdStream == NULL) {
         fprintf(stderr, "Error: failed to open -cmd-stdin file '%s'\n",
                 (char *)argv[cmdArg]);
-#ifdef _WIN32
-        timeKillEvent(serverTimerGameID);
-#else
-        SDL_RemoveTimer(serverTimerGameID);
-#endif
+        serverQuiesceGameTimer();
+        botWorkerPoolDestroy();
         threadsDestroy();
         serverInstanceShutdown(serverSim);
         serverSimDestroy(serverSim);
@@ -1523,11 +1625,12 @@ int main(int argc, char **argv) {
     }
   }
 
-#ifdef _WIN32
-  timeKillEvent(serverTimerGameID);
-#else
-  SDL_RemoveTimer(serverTimerGameID);
-#endif
+  /* Drain the game-tick timer first: blocks until no serverInstanceTick is
+   * (or can be) running, so the brain-think workers are provably idle before
+   * anything they touch is freed. Then tear the worker pool down before the
+   * lua_States it dispatches into are closed (defence in depth). */
+  serverQuiesceGameTimer();
+  botWorkerPoolDestroy();
   threadsDestroy();
 
   if (isLogging == TRUE && winbolonetIsRunning() == TRUE && argExist(argc, argv, "dontsendlog") == FALSE) {
@@ -1550,7 +1653,10 @@ int main(int argc, char **argv) {
   geoLookupDestroy();
   serverSimMapDirDestroy(serverSim);
   serverSimDestroy(serverSim);
-  botWorkerPoolDestroy();
+  if (g_serverTickLock != NULL) {
+    SDL_DestroyMutex(g_serverTickLock);
+    g_serverTickLock = NULL;
+  }
 #ifdef _WIN32
   WSACleanup();
 #endif
