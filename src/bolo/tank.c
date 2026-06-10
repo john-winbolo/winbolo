@@ -1855,46 +1855,65 @@ bool pillsIsCapturable(pillboxes *value, BYTE xValue, BYTE yValue);
 void tankCheckPillCapture(GameSim *sim, tank *value) {
 	pillboxes *pb = &sim->pb;
 	bool isServer = sim->isServer;
-	WORLD conv;     /* Used for conversion */
-	BYTE bmx;       /* Current MAP x-coord of tank */
-	BYTE bmy;       /* Current MAP y-coord of tank */
+	BYTE bmx;       /* MAP x-coord of the probe being tested */
+	BYTE bmy;       /* MAP y-coord of the probe being tested */
 	BYTE pillNum;   /* The pill number */
 	tankCarryPb q;  /* Temp pointer for adding PBs to tank */
+	bool captured = FALSE;
+	int p;
 
 	/* Tank is alive and we are either in a server context or a non-network game */
 	if ((*value)->armour <= TANK_FULL_ARMOUR && (isServer)) {
+		/* Pickup tests a small box around the tank centre (TANK_PILL_PICKUP_INSET
+		 * each way): the centre, four edge midpoints and four corners. Much
+		 * smaller than the tank's collision footprint so a pill isn't grabbed
+		 * from a mere graze, but still "any part overlaps" rather than
+		 * centre-only, giving a little tolerance so a dead pill the building-nudge
+		 * keeps the centre a hair outside is still reachable. A live pill or wall
+		 * is solid, so the box can't reach one past a wall. */
+		WORLD tankX = (*value)->x;
+		WORLD tankY = (*value)->y;
+		WORLD top    = tankY - TANK_PILL_PICKUP_INSET;
+		WORLD bottom = tankY + TANK_PILL_PICKUP_INSET;
+		WORLD left   = tankX - TANK_PILL_PICKUP_INSET;
+		WORLD right  = tankX + TANK_PILL_PICKUP_INSET;
+		/* centre, 4 edge midpoints, 4 corners */
+		WORLD probeX[9] = { tankX, tankX, tankX, left,  right, right, right,  left,   left };
+		WORLD probeY[9] = { tankY, top,   bottom, tankY, tankY, top,   bottom, bottom, top  };
 
-		conv = (*value)->x;
-		conv >>= TANK_SHIFT_MAPSIZE;
-		bmx = (BYTE) conv;
-		conv = (*value)->y;
-		conv >>= TANK_SHIFT_MAPSIZE;
-		bmy = (BYTE) conv;
+		for (p = 0; p < 9; p++) {
+			bmx = (BYTE)(probeX[p] >> TANK_SHIFT_MAPSIZE);
+			bmy = (BYTE)(probeY[p] >> TANK_SHIFT_MAPSIZE);
 
-		/* The tank is not at the origin and the pill is capturable */
-		if (bmx != 0 && bmy != 0 && pillsIsCapturable(pb, bmx,bmy) == TRUE) {
-			pillNum = pillsGetPillNum(pb, bmx, bmy, TRUE, FALSE);
-			while (pillNum != PILL_NOT_FOUND) {
-				pillsSetPillInTank(pb,pillNum, TRUE);
-				/* We are a client.. which should only happen in a single player game */
-				if (!isServer) {
-					frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));
+			/* The probe is not at the origin and the pill is capturable. A
+			 * tile captured by an earlier probe is already inTank, so
+			 * pillsIsCapturable rejects it and duplicate probe tiles are
+			 * harmless. */
+			if (bmx != 0 && bmy != 0 && pillsIsCapturable(pb, bmx,bmy) == TRUE) {
+				pillNum = pillsGetPillNum(pb, bmx, bmy, TRUE, FALSE);
+				while (pillNum != PILL_NOT_FOUND) {
+					pillsSetPillInTank(pb,pillNum, TRUE);
+					/* We are a client.. which should only happen in a single player game */
+					if (!isServer) {
+						frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));
+					}
+					New(q);
+					q->pillNum = pillNum;
+					q->next = (*value)->carryPills;
+					(*value)->carryPills = q;
+					if ((pillsGetPillOwner(pb, pillNum)) != gameSimGetTankPlayer(sim, value)) {
+						pillsSetPillOwner(sim, pb, pillNum, gameSimGetTankPlayer(sim, value), FALSE);
+					}
+					if (pillsExistPos(pb, bmx, bmy) == TRUE) {
+						pillNum = pillsGetPillNum(pb, bmx, bmy, TRUE, FALSE);
+					} else {
+						pillNum = PILL_NOT_FOUND;
+					}
 				}
-				New(q);
-				q->pillNum = pillNum;
-				q->next = (*value)->carryPills;
-				(*value)->carryPills = q;
-				if ((pillsGetPillOwner(pb, pillNum)) != gameSimGetTankPlayer(sim, value)) {
-					pillsSetPillOwner(sim, pb, pillNum, gameSimGetTankPlayer(sim, value), FALSE);
-				}
-				if (pillsExistPos(pb, bmx, bmy) == TRUE) {
-					pillNum = pillsGetPillNum(pb, bmx, bmy, TRUE, FALSE);
-				} else {
-					pillNum = PILL_NOT_FOUND;
-				}
+				captured = TRUE;
 			}
-			if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
 		}
+		if (captured && !sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
 	}
 }
 
