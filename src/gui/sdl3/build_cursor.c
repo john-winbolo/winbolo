@@ -7,14 +7,16 @@
 
 #include "client_render.h"
 #include "client_sim.h"
+#include "input_gamepad.h"   /* WB_CONTROLLER_DEBUG */
 #include "../tiles.h"
 #include "sdl3draw.h"
 
 #include <stdio.h>
 #include <stdarg.h>
 
-/* TEMP debug: writes to controller.log next to the exe. Remove later. */
+/* Debug: writes to controller.log next to the exe when WB_CONTROLLER_DEBUG. */
 static void bcLog(const char *fmt, ...) {
+  if (!WB_CONTROLLER_DEBUG) return;
   static FILE *f = NULL;
   if (!f) f = fopen("controller.log", "a");
   if (!f) return;

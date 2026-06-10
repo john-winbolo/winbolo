@@ -3984,10 +3984,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             renderMenuBar(cs);
         }
 #endif
-        /* TEMP DEBUG overlay: left-stick magnitude and tank turn-speed
-           magnitude (both 0..1). Shown while a controller is connected in an
-           active game. Remove once stick/turn tuning is done. */
-        if (inputGamepadIsConnected() && cs && !clientSimIsInLobby(cs)) {
+        /* DEBUG overlay: left-stick / turn / build-cursor magnitudes (0..1).
+           Gated on WB_CONTROLLER_DEBUG (input_gamepad.h). */
+        if (WB_CONTROLLER_DEBUG &&
+            inputGamepadIsConnected() && cs && !clientSimIsInLobby(cs)) {
             ImGuiViewport *vp = ImGui::GetMainViewport();
             ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 8.0f,
                                            vp->WorkPos.y + 8.0f),

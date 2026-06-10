@@ -22,6 +22,11 @@
 #include "global.h"
 #include "client_enums.h"  /* tankButton */
 
+/* Set to 1 to enable controller tuning debug: the on-screen stick/turn/
+   build-cursor magnitude overlay and the build_cursor controller.log file.
+   Leave 0 for normal builds. */
+#define WB_CONTROLLER_DEBUG 0
+
 #ifdef __cplusplus
 extern "C" {
 #endif
