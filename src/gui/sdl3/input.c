@@ -298,10 +298,28 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
       if (gy == 0 && fdy >  0.0f) gy =  1;
       if (gy == 0 && fdy <  0.0f) gy = -1;
       if (buildActive) {
+        /* Build cursor is a reticle, always analog. */
         buildCursorTick(cs, gx, gy);
-      } else {
+      } else if (smoothScrollingEnabled) {
+        /* Smooth map scroll. */
         dx += gx;
         dy += gy;
+      } else {
+        /* Smooth Scrolling off: the right stick steps whole tiles like the
+           legacy keyboard scroll (rate-limited), respecting the preference
+           rather than always gliding. */
+        static BYTE padScrollCount = 0;
+        padScrollCount++;
+        if (padScrollCount >= INPUT_SCROLL_WAIT_TIME) {
+          padScrollCount = 0;
+          const float th = 0.4f;
+          bool scrolled = FALSE;
+          if (fdx >  th) { clientRenderFrame(cs, right); scrolled = TRUE; }
+          if (fdx < -th) { clientRenderFrame(cs, left);  scrolled = TRUE; }
+          if (fdy >  th) { clientRenderFrame(cs, down);  scrolled = TRUE; }
+          if (fdy < -th) { clientRenderFrame(cs, up);    scrolled = TRUE; }
+          if (scrolled) clientSimSetAutoScrollOverride(cs, TRUE);
+        }
       }
     }
   }

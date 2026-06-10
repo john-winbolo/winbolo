@@ -1056,7 +1056,7 @@ static const LangEntry langTable[] = {
     {1409, "Press a button or pull a trigger..."},
     {1410, "Fire"},
     {1411, "Lay Mine"},
-    {1412, "Confirm Build"},
+    {1412, "Execute Build"},
     {1413, "Cycle View"},
     {1414, "Decrease Gunsight"},
     {1415, "Increase Gunsight"},

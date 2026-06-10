@@ -151,6 +151,11 @@ static void keyRow(const char *label, KeySetupField field) {
             s_waiting = field;
         }
         imguiHandOnHover();
+        ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+        if (ImGui::SmallButton("Clear")) {
+            *ptr = 0;   /* SDL_SCANCODE_UNKNOWN — unbound */
+        }
+        imguiHandOnHover();
     }
     ImGui::PopID();
 }
@@ -226,13 +231,21 @@ static void padSlotChange(GamepadAction act, GamepadSlot slot) {
     ImGui::PushID((int)act * 2 + (int)slot);
     if (waiting) {
         if (ImGui::SmallButton(langGetText(STR_CANCEL))) s_padWaitAction = -1;
+        imguiHandOnHover();
     } else {
         if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
             s_padWaitAction = (int)act;
             s_padWaitSlot   = slot;
         }
+        imguiHandOnHover();
+        ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+        if (ImGui::SmallButton("Clear")) {
+            GamepadBinding none; none.kind = GP_BIND_NONE; none.code = 0;
+            if (slot == GP_SLOT_PRIMARY) s_pad.b[act].pri = none;
+            else                         s_pad.b[act].sec = none;
+        }
+        imguiHandOnHover();
     }
-    imguiHandOnHover();
     ImGui::PopID();
 }
 
@@ -249,12 +262,16 @@ static void controllerRow(const char *label, GamepadAction act) {
 /* Full-width sensitivity slider row: label in the Action column, slider in the
    Primary column. Lower = finer control (slower movement per stick deflection).
    Binds the global live; the OK handler flushes it to prefs. */
-/* Full-width checkbox row: the checkbox (with its label) sits in the Action
-   column so options line up under the related bindings. */
-static void checkboxRow(const char *label, bool *value) {
+/* Full-width checkbox row, indented under the related binding.  An optional
+   tooltip explains the option on hover. */
+static void checkboxRow(const char *label, bool *value, const char *tip) {
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
+    ImGui::Indent();
     ImGui::Checkbox(label, value);
+    if (tip && *tip && ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", tip);
+    ImGui::Unindent();
 }
 
 static void sensitivityRow(const char *label, float *value,
@@ -331,7 +348,7 @@ static int renderFormBody(struct ClientSim *cs) {
                                 ImGuiTableColumnFlags_WidthFixed, 140.0f);
         ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_KEY),
                                 ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed,  68.0f);
+        ImGui::TableSetupColumn("",        ImGuiTableColumnFlags_WidthFixed,  116.0f);
     };
     auto endSection = [&]() { ImGui::EndTable(); };
 
@@ -409,9 +426,9 @@ static int renderFormBody(struct ClientSim *cs) {
             ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
                                     ImGuiTableColumnFlags_WidthFixed, padActionW);
             ImGui::TableSetupColumn("Primary",   ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed, 68.0f);
+            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed, 116.0f);
             ImGui::TableSetupColumn("Secondary", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed, 68.0f);
+            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed, 116.0f);
             ImGui::TableHeadersRow();
             /* Left stick = tank move; its sensitivity slider sits at the top.
                10%-100%: 100% = snap (current), 50% = turn tracks stick 1:1. */
@@ -427,14 +444,24 @@ static int renderFormBody(struct ClientSim *cs) {
             controllerRow(langGetText(STR_GP_ACTION_BUILD_CURSOR_TOGGLE), GP_ACT_BUILD_CURSOR_TOGGLE);
             sensitivityRow("Build cursor sensitivity", &g_gamepadBuildCursorSensitivity,
                            0.25f, 2.00f, "%.2fx");
-            /* Build-cursor behaviour options, grouped under the toggle. */
-            checkboxRow("Hold for momentary mode",  &g_buildHoldMomentary);
-            checkboxRow("Double-tap builds a road", &g_buildDoubleTapRoad);
-            checkboxRow("Exiting executes build",   &g_buildExitExecutes);
-            /* Cancel-build binding only matters when exiting executes a build. */
-            if (g_buildExitExecutes) {
-                controllerRow("Cancel build (no build)", GP_ACT_BUILD_CANCEL);
-            }
+            /* Build-cursor behaviour options, grouped (indented) under the toggle. */
+            checkboxRow("Hold to build, release to exit (momentary)",
+                        &g_buildHoldMomentary,
+                        "Hold the build-toggle button (>200ms) to temporarily enter "
+                        "build mode; releasing it exits again -- a quick way to pop in, "
+                        "build, and pop back to driving. A quick tap still toggles "
+                        "build mode normally (stays on until pressed again).");
+            checkboxRow("Double-tap builds a road under the tank",
+                        &g_buildDoubleTapRoad,
+                        "Double-tap the build-toggle button to instantly drop a road on "
+                        "the tank's own tile -- without changing your selected build "
+                        "type or moving the build cursor.");
+            checkboxRow("Exiting build mode executes the build",
+                        &g_buildExitExecutes,
+                        "When on, leaving build mode places the build at the cursor "
+                        "tile. Use the Cancel binding below to exit without building.");
+            controllerRow("Exit build mode, no build (cancels momentary)",
+                          GP_ACT_BUILD_CANCEL);
             controllerRow(langGetText(STR_GP_ACTION_VIEW_CYCLE),          GP_ACT_VIEW_CYCLE);
             controllerRow(langGetText(STR_GP_ACTION_VIEW_PLAYERS),        GP_ACT_VIEW_PLAYERS);
             controllerRow(langGetText(STR_GP_ACTION_QUICK_CHAT),          GP_ACT_QUICK_CHAT);
@@ -653,7 +680,7 @@ extern "C" int imguiKeySetupShow(void) {
 
         /* Centered overlay panel. Wide enough for the Controller tab's
          * Action | Primary | Change | Secondary | Change layout. */
-        float panelW = 720.0f * s, panelH = 560.0f * s;
+        float panelW = 1280.0f * s, panelH = 560.0f * s;
         if (panelW > (float)winW * 0.95f) panelW = (float)winW * 0.95f;
         if (panelH > (float)winH * 0.95f) panelH = (float)winH * 0.95f;
 
@@ -775,7 +802,7 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
     ImGuiIO &io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(720, 560), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(1280, 560), ImGuiCond_Always);
 
     bool open = true;
     if (!ImGui::BeginPopupModal(title, &open,

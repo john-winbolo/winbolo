@@ -781,6 +781,11 @@ bool         clientSimTankScroll(ClientSim *cs);
 void         clientSimCenterTank(ClientSim *cs);
 void         clientSimSetAutoScroll(ClientSim *cs, bool isAuto);
 void         clientSimSetAutoScrollOverride(ClientSim *cs, bool value);
+/* Scroll-method selector. Values match ScrollMechanism (0 = winbolo v1 manual,
+   1 = winbolo v1 autoscroll, 2 = enhanced, 3 = andrew enhanced). Exposed as
+   int so GUI callers needn't include the internal scroll header. Process-global. */
+int          clientSimGetScrollMechanism(void);
+void         clientSimSetScrollMechanism(int mech);
 
 /* My-tank helpers for clients that need the local tank's current map
  * tile (e.g. gamepad build cursor).  Return false when the local tank

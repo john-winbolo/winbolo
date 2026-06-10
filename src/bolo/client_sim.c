@@ -1662,6 +1662,14 @@ void clientSimSetAutoScroll(ClientSim *cs, bool isAuto) {
   scrollSetScrollType(clientSimGetScroll(cs), isAuto);
 }
 
+int clientSimGetScrollMechanism(void) {
+  return (int)scrollGetMechanism();
+}
+
+void clientSimSetScrollMechanism(int mech) {
+  scrollSetMechanism((ScrollMechanism)mech);
+}
+
 void clientSimSetAutoScrollOverride(ClientSim *cs, bool value) {
   cs->scroll.autoScrollOverRide = value;
 }

@@ -3997,8 +3997,20 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                     ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                     ImGuiWindowFlags_NoSavedSettings |
                     ImGuiWindowFlags_AlwaysAutoResize |
-                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
-                    ImGuiWindowFlags_NoInputs)) {
+                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
+                /* Scroll-method selector (experiment). Picking manual turns
+                   autoscroll off; the others turn it on. */
+                static const char *kScrollNames[4] = {
+                    "winbolo v1 manual", "winbolo v1 autoscroll",
+                    "enhanced autoscroll", "enhanced autoscroll, Canuck's"
+                };
+                int mech = clientSimGetScrollMechanism();
+                ImGui::SetNextItemWidth(200);
+                if (ImGui::Combo("scroll", &mech, kScrollNames, 4)) {
+                    clientSimSetScrollMechanism(mech);
+                    clientSimSetAutoScroll(cs, mech != 0);
+                }
+                ImGui::Separator();
                 ImGui::Text("stick mag: %.2f", g_dbgStickMag);
                 ImGui::ProgressBar(g_dbgStickMag, ImVec2(160, 0));
                 ImGui::Text("turn  mag: %.2f", g_dbgTurnMag);

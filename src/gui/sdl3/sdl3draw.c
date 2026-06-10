@@ -612,17 +612,15 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       cursorMove((int)gameX, (int)gameY);
       BYTE cx = 0, cy = 0;
       if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
-        /* While build/cursor mode is ACTIVE the mouse also drives the shared
-           build cursor so mouse and gamepad placement stay in sync.  Only when
-           active — otherwise a stray mouse motion (or a focus event) while the
-           cursor is off would overwrite the position the gamepad left it at,
-           so toggling back on would jump to the mouse instead of resuming.
+        /* The mouse is just another way to drive the ONE shared build cursor:
+           moving the pointer in the view repositions it whether or not cursor
+           mode is active, so toggling build mode picks up exactly where the
+           pointer is (no jump between a separate mouse reticle and the gamepad
+           cursor).  Only on real movement (skip zero-delta focus/warp events)
+           and only while the pointer is in the view (handled by cursorPos) —
+           so the pointer leaving the window leaves the gamepad in control.
            cx/cy are 1-based screen tiles; absolute map tile = offset + tile. */
-        /* Only on real pointer movement — skip zero-delta motion events (focus
-           changes, warps) so they can't disturb the build cursor.  The build
-           cursor itself also ignores the mouse right after controller input. */
-        if (buildCursorIsActive() &&
-            (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f)) {
+        if (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f) {
           buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
                              (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
         }

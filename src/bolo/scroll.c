@@ -242,6 +242,14 @@ void scrollCreate(ScrollState *ss) {
   ss->gunsightWasInside = TRUE;
   for (i = 0; i < MAX_TANKS; i++) ss->prevThreatTank[i] = FALSE;
   for (i = 0; i < MAX_PILLS; i++) ss->prevThreatPill[i] = FALSE;
+  ss->peekPhase = 0;
+  ss->peekTargetX = 0;
+  ss->peekTargetY = 0;
+  ss->peekUntilTick = 0;
+  ss->peekReturnX = 0;
+  ss->peekReturnY = 0;
+  for (i = 0; i < MAX_TANKS; i++) ss->seenThreatTank[i] = FALSE;
+  for (i = 0; i < MAX_PILLS; i++) ss->seenThreatPill[i] = FALSE;
 }
 
 
@@ -347,6 +355,231 @@ static bool scrollClassicAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue,
   return returnValue;
 }
 
+/* Ease one view axis (tile + sub-tile remainder) toward a target tile with a
+   fast deceleration. Returns TRUE when arrived. 256 sub-units = 1 tile; the
+   renderer applies the remainder for smooth sub-pixel motion. */
+static bool canucksSlideAxis(BYTE *tile, int16_t *sub, int targetTile) {
+  int cur    = (int)(*tile) * 256 + (int)(*sub);
+  int target = targetTile * 256;
+  int d      = target - cur;
+  int step;
+  if (d == 0) { *sub = 0; return true; }
+  step = d / 3;                                 /* ~1/3 of the gap per tick */
+  if (step == 0) step = (d > 0) ? 64 : -64;     /* min 1/4 tile/tick near target */
+  cur += step;
+  if ((d > 0 && cur >= target) || (d < 0 && cur <= target)) {
+    *tile = (BYTE)targetTile; *sub = 0; return true;
+  }
+  if (cur < 0) cur = 0;
+  *tile = (BYTE)(cur / 256);
+  *sub  = (int16_t)(cur % 256);
+  return false;
+}
+
+/* Canuck's autoscroll — classic WinBolo v1 autoscroll with two twists:
+ *  - a crosshair touching a screen edge scrolls a moderate CANUCKS_LOOKAHEAD
+ *    tiles further in the aim direction (like v1's short lead, not a whole
+ *    screen), and
+ *  - an "alert jump": a threat that is BEHIND the tank AND off-screen, within
+ *    the concern radius (same detection / 24-tile range as enhanced), makes
+ *    the view fast-slide to centre on it, hold briefly, then slide back. Each
+ *    threat is alerted on only once (seenThreat*) until it leaves the radius.
+ * The alert jump owns the view while active; otherwise the edge-push runs. */
+#define CANUCKS_LOOKAHEAD       5   /* tiles of view past the crosshair edge */
+#define CANUCKS_PEEK_HOLD_TICKS 15  /* hold on the threat (~0.25s @ 60Hz) */
+/* Alert only on threats close enough that the player could have spotted them
+   by manually scrolling (~a screen from the tank), and never further than the
+   enhanced autoscroll's concern radius. */
+#define CANUCKS_ALERT_RADIUS \
+  ((MAIN_SCREEN_SIZE_X - 1) < AUTOSCROLL_CONCERN_RADIUS ? (MAIN_SCREEN_SIZE_X - 1) : AUTOSCROLL_CONCERN_RADIUS)
+static bool scrollCanucksAutoScroll(ScrollState *ss, GameSim *sim,
+                                    BYTE *xValue, BYTE *yValue,
+                                    BYTE objectX, BYTE objectY,
+                                    BYTE gunsightX, BYTE gunsightY, TURNTYPE angle) {
+  bool returnValue = FALSE;
+  BYTE myPlayer = sim->viewPlayer;
+  bool jump = FALSE;
+  int  threatX = 0, threatY = 0;
+  int  idx = (((int)angle + 8) >> 4) & 15;
+  int  fx = kForwardX[idx], fy = kForwardY[idx];
+  int  i;
+
+  g_autoscrollTick++;
+
+  /* Alert-jump candidate: a threat (enemy tank or pillbox; same helpers as
+     enhanced) within CANUCKS_ALERT_RADIUS that is BEHIND the tank (rear
+     hemisphere via the forward vector) AND not currently on screen, and that
+     we haven't already alerted on. The seenThreat latch clears when a threat
+     leaves the radius, so it can alert again on a fresh sneak-up. Threats
+     present at startup are pre-marked seen (baseline). */
+  for (i = 0; i < MAX_TANKS; i++) {
+    int tx, ty, scol, srow;
+    bool behind, onScreen;
+    /* Tanks move, so once one leaves range we forget it — a later approach is
+       a fresh sneak-up. */
+    if (!isThreatTank(sim, myPlayer, i, &tx, &ty) ||
+        abs(tx - (int)objectX) > CANUCKS_ALERT_RADIUS ||
+        abs(ty - (int)objectY) > CANUCKS_ALERT_RADIUS) {
+      ss->seenThreatTank[i] = FALSE;
+      continue;
+    }
+    scol = tx - (int)*xValue; srow = ty - (int)*yValue;
+    onScreen = (scol >= 0 && scol < MAIN_SCREEN_SIZE_X &&
+                srow >= 0 && srow < MAIN_SCREEN_SIZE_Y);
+    if (onScreen) { ss->seenThreatTank[i] = TRUE; continue; }  /* we can see it now */
+    behind = ((tx - (int)objectX) * fx + (ty - (int)objectY) * fy) < 0;
+    if (behind && !ss->seenThreatTank[i]) {
+      if (!ss->initialized)      { ss->seenThreatTank[i] = TRUE; }
+      else if (!jump)            { jump = TRUE; threatX = tx; threatY = ty;
+                                   ss->seenThreatTank[i] = TRUE; }
+    }
+  }
+  for (i = 1; i <= sim->pb->numPills; i++) {
+    pillbox p;
+    int scol, srow;
+    bool behind, onScreen;
+    /* A pillbox is static, so once seen it stays "known" — UNLESS it stops
+       being a placed threat (picked up / captured), which is exactly what
+       happens when it's rebuilt elsewhere: that re-arms it for a fresh alert
+       at the new spot. Leaving the alert radius does NOT forget it. */
+    if (!isThreatPill(sim, myPlayer, i, &p)) {
+      ss->seenThreatPill[i - 1] = FALSE;
+      continue;
+    }
+    if (abs((int)p.x - (int)objectX) > CANUCKS_ALERT_RADIUS ||
+        abs((int)p.y - (int)objectY) > CANUCKS_ALERT_RADIUS) {
+      continue;   /* out of range: keep its seen state */
+    }
+    scol = (int)p.x - (int)*xValue; srow = (int)p.y - (int)*yValue;
+    onScreen = (scol >= 0 && scol < MAIN_SCREEN_SIZE_X &&
+                srow >= 0 && srow < MAIN_SCREEN_SIZE_Y);
+    if (onScreen) { ss->seenThreatPill[i - 1] = TRUE; continue; }  /* scrolled across it */
+    behind = (((int)p.x - (int)objectX) * fx + ((int)p.y - (int)objectY) * fy) < 0;
+    if (behind && !ss->seenThreatPill[i - 1]) {
+      if (!ss->initialized)      { ss->seenThreatPill[i - 1] = TRUE; }
+      else if (!jump)            { jump = TRUE; threatX = (int)p.x; threatY = (int)p.y;
+                                   ss->seenThreatPill[i - 1] = TRUE; }
+    }
+  }
+  ss->initialized = TRUE;
+
+  /* Alert-jump overlay: while it's running it owns the view. */
+  if (ss->peekPhase == 1) {                    /* sliding to threat */
+    bool rx = canucksSlideAxis(xValue, &ss->subPosX, ss->peekTargetX);
+    bool ry = canucksSlideAxis(yValue, &ss->subPosY, ss->peekTargetY);
+    if (rx && ry) { ss->peekPhase = 2; ss->peekUntilTick = g_autoscrollTick + CANUCKS_PEEK_HOLD_TICKS; }
+    return TRUE;
+  }
+  if (ss->peekPhase == 2) {                    /* holding */
+    ss->subPosX = 0; ss->subPosY = 0;
+    if (g_autoscrollTick < ss->peekUntilTick) return FALSE;
+    ss->peekPhase   = 3;
+    ss->peekTargetX = ss->peekReturnX;
+    ss->peekTargetY = ss->peekReturnY;
+    return FALSE;
+  }
+  if (ss->peekPhase == 3) {                    /* sliding back */
+    bool rx = canucksSlideAxis(xValue, &ss->subPosX, ss->peekTargetX);
+    bool ry = canucksSlideAxis(yValue, &ss->subPosY, ss->peekTargetY);
+    if (rx && ry) ss->peekPhase = 0;
+    return TRUE;
+  }
+
+  /* New qualifying threat: start an alert jump. Aim to centre the threat, but
+     the OUR TANK must stay in the jumped view — clamp the view so the tank is
+     visible (this also keeps the threat in, since both are within a screen),
+     then keep it on the map. If the tank still can't fit with the threat,
+     don't jump at all. Clear any in-flight edge push first. */
+  if (jump) {
+    int vx = threatX - MAIN_SCREEN_SIZE_X / 2;
+    int vy = threatY - MAIN_SCREEN_SIZE_Y / 2;
+    int tcol, trow, gcol, grow;
+    /* Keep the tank in view (priority over centring the threat). */
+    if (vx > (int)objectX)                        vx = (int)objectX;
+    if (vx < (int)objectX - (MAIN_SCREEN_SIZE_X - 1)) vx = (int)objectX - (MAIN_SCREEN_SIZE_X - 1);
+    if (vy > (int)objectY)                        vy = (int)objectY;
+    if (vy < (int)objectY - (MAIN_SCREEN_SIZE_Y - 1)) vy = (int)objectY - (MAIN_SCREEN_SIZE_Y - 1);
+    /* Then keep it on the map. */
+    if (vx < 0) vx = 0;
+    if (vx > 255 - MAIN_SCREEN_SIZE_X) vx = 255 - MAIN_SCREEN_SIZE_X;
+    if (vy < 0) vy = 0;
+    if (vy > 255 - MAIN_SCREEN_SIZE_Y) vy = 255 - MAIN_SCREEN_SIZE_Y;
+    /* Verify both tank and threat are actually in the final view; if not (map
+       edge forced the tank out), skip the jump. It's already marked seen so it
+       won't keep retrying. */
+    tcol = (int)objectX - vx; trow = (int)objectY - vy;
+    gcol = threatX - vx;      grow = threatY - vy;
+    if (tcol >= 0 && tcol < MAIN_SCREEN_SIZE_X && trow >= 0 && trow < MAIN_SCREEN_SIZE_Y &&
+        gcol >= 0 && gcol < MAIN_SCREEN_SIZE_X && grow >= 0 && grow < MAIN_SCREEN_SIZE_Y) {
+      ss->peekReturnX = *xValue;
+      ss->peekReturnY = *yValue;
+      ss->peekTargetX = (BYTE)vx;
+      ss->peekTargetY = (BYTE)vy;
+      ss->peekPhase   = 1;
+      ss->scrollX = 0;
+      ss->scrollY = 0;
+      return TRUE;
+    }
+  }
+
+  ss->subPosX = 0;
+  ss->subPosY = 0;
+
+  /* Arm a push when the crosshair is at an edge and none is in flight: scroll
+     CANUCKS_LOOKAHEAD tiles further into the aim direction (moderate lead). */
+  if (ss->scrollX == 0 && ss->scrollY == 0) {
+    int gcol = (int)gunsightX - (int)*xValue;  /* crosshair column within view */
+    int grow = (int)gunsightY - (int)*yValue;
+    if (gcol >= MAIN_SCREEN_SIZE_X - 1) {        /* crosshair at right edge */
+      int n = gcol - (MAIN_SCREEN_SIZE_X - 1 - CANUCKS_LOOKAHEAD);
+      if (n > 0) { ss->scrollX = (BYTE)n; ss->xPositive = TRUE; }
+    } else if (gcol <= 0) {                       /* crosshair at left edge */
+      int n = CANUCKS_LOOKAHEAD - gcol;
+      if (n > 0) { ss->scrollX = (BYTE)n; ss->xPositive = FALSE; }
+    }
+    if (grow >= MAIN_SCREEN_SIZE_Y - 1) {        /* crosshair at bottom edge */
+      int n = grow - (MAIN_SCREEN_SIZE_Y - 1 - CANUCKS_LOOKAHEAD);
+      if (n > 0) { ss->scrollY = (BYTE)n; ss->yPositive = TRUE; }
+    } else if (grow <= 0) {                       /* crosshair at top edge */
+      int n = CANUCKS_LOOKAHEAD - grow;
+      if (n > 0) { ss->scrollY = (BYTE)n; ss->yPositive = FALSE; }
+    }
+  }
+
+  /* Play the push out, one tile per tick. */
+  if (ss->scrollX > 0) {
+    ss->scrollX--;
+    if (ss->xPositive) { (*xValue)++; } else { (*xValue)--; }
+    returnValue = TRUE;
+  }
+  if (ss->scrollY > 0) {
+    ss->scrollY--;
+    if (ss->yPositive) { (*yValue)++; } else { (*yValue)--; }
+    returnValue = TRUE;
+  }
+
+  /* Hard clamp: the tank must always stay on screen. */
+  if ((int)objectX <= (int)*xValue) {
+    *xValue = (BYTE)(objectX - 1); ss->scrollX = 0;
+  } else if ((int)objectX >= (int)*xValue + MAIN_SCREEN_SIZE_X) {
+    *xValue = (BYTE)(objectX - MAIN_SCREEN_SIZE_X + 1); ss->scrollX = 0;
+  }
+  if ((int)objectY <= (int)*yValue) {
+    *yValue = (BYTE)(objectY - 1); ss->scrollY = 0;
+  } else if ((int)objectY >= (int)*yValue + MAIN_SCREEN_SIZE_Y) {
+    *yValue = (BYTE)(objectY - MAIN_SCREEN_SIZE_Y + 1); ss->scrollY = 0;
+  }
+
+  if (ss->mods == TRUE && returnValue == TRUE) {
+    ss->mods = FALSE;
+  }
+  if (returnValue == TRUE) {
+    ss->autoScrollOverRide = FALSE;
+  }
+
+  return returnValue;
+}
+
 bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, bool isTank, BYTE gunsightX, BYTE gunsightY, BYTE speed, BYTE armour, TURNTYPE angle, bool manual, bool tankIsDead) {
   bool returnValue;
 
@@ -378,6 +611,16 @@ bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYT
                                             gunsightX, gunsightY, speed);
     } else {
       returnValue = FALSE;
+    }
+  } else if (g_scrollMechanism == SCROLL_MECH_ANDREW_ENHANCED) {
+    /* Canuck's — v1 autoscroll, but a crosshair at the edge scrolls hard so
+     * the tank lands 2 tiles from the opposite edge. Fires regardless of speed
+     * so aiming to the edge while parked still pushes the view. */
+    if (manual == TRUE) {
+      returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
+    } else {
+      returnValue = scrollCanucksAutoScroll(ss, sim, xValue, yValue, objectX, objectY,
+                                            gunsightX, gunsightY, angle);
     }
   } else {
     /* SCROLL_MECH_ENHANCED — John's current sub-tile / threat-aware path. */
