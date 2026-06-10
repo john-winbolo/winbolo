@@ -25,6 +25,9 @@
 #define SI_ACTION_QUICK_CHAT    "quick_chat"      /* D-pad LEFT */
 #define SI_ACTION_PAUSE         "pause"           /* Start */
 #define SI_ACTION_VIEW_PLAYERS  "view_players"    /* D-pad RIGHT — open Players panel */
+#define SI_ACTION_BUILD_CANCEL  "build_cancel"    /* exit build mode without building */
+#define SI_ACTION_LOCK_HEADING  "lock_heading"    /* hold — freeze tank facing */
+#define SI_ACTION_TANK_VIEW     "tank_view"       /* recentre on / return to tank view */
 
 /* Analog actions — InGame set */
 #define SI_ANALOG_TANK_MOVE     "tank_move"       /* Left stick */

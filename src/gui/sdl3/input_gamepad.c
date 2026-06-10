@@ -117,6 +117,8 @@ static bool s_path_a_last_build_prev      = false;
 static bool s_path_a_last_build_next      = false;
 static bool s_path_a_last_build_cursor_toggle = false;
 static bool s_path_a_last_view_players   = false;
+static bool s_path_a_last_build_cancel   = false;
+static bool s_path_a_last_tank_view      = false;
 
 static void reset_path_a_edges(void) {
   s_path_a_last_pause           = false;
@@ -127,6 +129,8 @@ static void reset_path_a_edges(void) {
   s_path_a_last_build_next      = false;
   s_path_a_last_build_cursor_toggle = false;
   s_path_a_last_view_players   = false;
+  s_path_a_last_build_cancel   = false;
+  s_path_a_last_tank_view      = false;
 }
 
 static bool path_a_active(void) {
@@ -174,11 +178,13 @@ const char *inputGamepadActionName(GamepadAction a) {
 /* Defaults reproduce the historical hardcoded mapping in this file.
    FIRE keeps its dual binding (RT primary + SOUTH secondary) so the
    pre-refactor "RT or A" behaviour is preserved.  MINE remains LT-only
-   because EAST (B) is reserved for ImGui cancel.  Every other action
-   defaults secondary to NONE.
+   as it gets no secondary.  EAST (B) stays reserved for ImGui cancel in
+   menus, but during gameplay it defaults to the three otherwise-unbound
+   actions below (build_cancel / lock_heading / tank_view).  Every other
+   action defaults secondary to NONE.
 
    fire                = RT     + SOUTH
-   mine                = LT     + NONE   (B reserved for cancel)
+   mine                = LT     + NONE
    build_confirm       = WEST   + NONE
    view_cycle          = NORTH  + NONE
    gunsight_dec        = LB     + NONE
@@ -188,7 +194,10 @@ const char *inputGamepadActionName(GamepadAction a) {
    build_cursor_toggle = R3     + NONE
    quick_chat          = DPAD_LEFT  + NONE
    pause               = START  + NONE
-   view_players        = DPAD_RIGHT + NONE */
+   view_players        = DPAD_RIGHT + NONE
+   build_cancel        = EAST   + NONE
+   lock_heading        = EAST   + NONE
+   tank_view           = EAST   + NONE */
 void inputGamepadBindingsResetDefaults(GamepadBindings *out) {
   if (!out) return;
   static const GamepadBinding kNone = { GP_BIND_NONE, 0 };
@@ -209,6 +218,9 @@ void inputGamepadBindingsResetDefaults(GamepadBindings *out) {
   out->b[GP_ACT_QUICK_CHAT].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_LEFT };
   out->b[GP_ACT_PAUSE].pri               = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_START };
   out->b[GP_ACT_VIEW_PLAYERS].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_RIGHT };
+  out->b[GP_ACT_BUILD_CANCEL].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_EAST };
+  out->b[GP_ACT_LOCK_HEADING].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_EAST };
+  out->b[GP_ACT_TANK_VIEW].pri           = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_EAST };
 }
 
 static GamepadBinding *slotPtr(GamepadActionBindings *ab, GamepadSlot s) {
@@ -781,21 +793,34 @@ bool inputGamepadIsBuildCursorToggleHeld(void) {
 }
 
 bool inputGamepadIsBuildCancelEdge(void) {
-  /* Native only — no Steam Input action exists for this optional binding. */
+  if (path_a_active()) {
+    bool now = steam_input_is_action_pressed(SI_ACTION_BUILD_CANCEL);
+    bool edge = now && !s_path_a_last_build_cancel;
+    s_path_a_last_build_cancel = now;
+    return edge;
+  }
+
   bool v = s_buildCancelEdge;
   s_buildCancelEdge = false;
   return v;
 }
 
 bool inputGamepadIsLockHeadingHeld(void) {
-  /* Native only — held while the bound button is down. */
-  if (path_a_active()) return false;
+  if (path_a_active()) {
+    return steam_input_is_action_pressed(SI_ACTION_LOCK_HEADING);
+  }
   if (!s_activeGamepad) return false;
   return actionIsHeld(GP_ACT_LOCK_HEADING);
 }
 
 bool inputGamepadIsTankViewEdge(void) {
-  /* Native only. */
+  if (path_a_active()) {
+    bool now = steam_input_is_action_pressed(SI_ACTION_TANK_VIEW);
+    bool edge = now && !s_path_a_last_tank_view;
+    s_path_a_last_tank_view = now;
+    return edge;
+  }
+
   bool v = s_tankViewEdge;
   s_tankViewEdge = false;
   return v;

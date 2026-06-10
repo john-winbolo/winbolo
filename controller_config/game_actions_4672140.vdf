@@ -38,6 +38,9 @@
                 "quick_chat"     "#act_quick_chat"
                 "pause"          "#act_pause"
                 "view_players"  "#act_view_players"
+                "build_cancel"   "#act_build_cancel"
+                "lock_heading"   "#act_lock_heading"
+                "tank_view"      "#act_tank_view"
             }
         }
 
@@ -78,6 +81,9 @@
             "act_quick_chat"    "Quick Chat"
             "act_pause"         "Pause Menu"
             "act_view_players" "View Players"
+            "act_build_cancel"  "Exit Build (No Build)"
+            "act_lock_heading"  "Lock Direction"
+            "act_tank_view"     "Tank View"
 
             "act_menu_accept"   "Accept"
             "act_menu_cancel"   "Back / Cancel"
