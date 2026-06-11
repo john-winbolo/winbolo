@@ -211,7 +211,7 @@ void inputGamepadBindingsResetDefaults(GamepadBindings *out) {
      gunsight range, and the D-pad handles views / chat. */
   out->b[GP_ACT_FIRE].pri                = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_SOUTH };
   out->b[GP_ACT_MINE].pri                = (GamepadBinding){ GP_BIND_TRIGGER, SDL_GAMEPAD_AXIS_LEFT_TRIGGER };
-  /* BUILD_CONFIRM intentionally unbound by default (build via the cursor). */
+  out->b[GP_ACT_BUILD_CONFIRM].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_RIGHT_STICK };
   out->b[GP_ACT_VIEW_CYCLE].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_UP };
   out->b[GP_ACT_GUNSIGHT_DEC].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER };
   out->b[GP_ACT_GUNSIGHT_INC].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_LEFT_SHOULDER };
@@ -223,7 +223,7 @@ void inputGamepadBindingsResetDefaults(GamepadBindings *out) {
   out->b[GP_ACT_VIEW_PLAYERS].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_RIGHT };
   out->b[GP_ACT_BUILD_CANCEL].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_EAST };
   out->b[GP_ACT_LOCK_HEADING].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_EAST };
-  out->b[GP_ACT_TANK_VIEW].pri           = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_EAST };
+  /* TANK_VIEW intentionally unbound by default. */
 }
 
 static GamepadBinding *slotPtr(GamepadActionBindings *ab, GamepadSlot s) {
