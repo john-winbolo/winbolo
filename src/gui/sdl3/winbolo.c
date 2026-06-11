@@ -1265,6 +1265,11 @@ void windowShowPillLabels_toggle(ClientSim *cs) {
   BYTE count, total;
 
   showPillLabels = !showPillLabels;
+  /* cs is NULL from the pre-game Settings dialog (no live sim). The pref is
+     flipped above; the status-label refresh below needs the sim, so skip it. */
+  if (cs == NULL) {
+    return;
+  }
   sdl3DrawSetPillsStatusClear();
   total = clientSimGetPillCount(cs);
   for (count = 1; count <= total; count++) {
@@ -1278,6 +1283,11 @@ void windowShowBaseLabels_toggle(ClientSim *cs) {
   BYTE count, total;
 
   showBaseLabels = !showBaseLabels;
+  /* cs is NULL from the pre-game Settings dialog (no live sim). The pref is
+     flipped above; the status-label refresh below needs the sim, so skip it. */
+  if (cs == NULL) {
+    return;
+  }
   sdl3DrawSetBasesStatusClear();
   total = clientSimGetBaseCount(cs);
   for (count = 1; count <= total; count++) {
