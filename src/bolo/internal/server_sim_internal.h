@@ -205,8 +205,8 @@ struct ServerSim {
     uint16_t statGapFillTicks[MAX_TANKS];       /* gap-filled ticks this window */
     uint16_t statDroppedStaleInputs[MAX_TANKS]; /* stale queue entries skipped this window */
     uint16_t statCatchupTicks[MAX_TANKS];       /* extra catch-up dequeues this window —
-                                                 * incremented by the queue catch-up
-                                                 * dequeue path; no increment site yet */
+                                                 * one per backlog-bleed apply when
+                                                 * post-dequeue depth > jitterTarget + 1 */
     uint8_t  statLastRewindTicks[MAX_TANKS];    /* gauge: most recent lag-comp rewind */
 
 #ifdef WB_NETDEBUG

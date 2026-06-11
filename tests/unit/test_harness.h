@@ -292,6 +292,12 @@ int run_stall_mine_duplicate_not_relaid(void);
 int run_stall_fire_not_harvested(void);
 int run_stall_never_fires(void);
 
+/* Backlog catch-up (test_input_catchup.c): a standing input queue above the
+ * jitter target bleeds at +1 input per sub-tick (cap 2 applies/sub-tick) so a
+ * jitter-spike backlog drains in ~1s instead of ratcheting input latency;
+ * steady state never triggers it. Always built (no WB_NETDEBUG gate). */
+int run_input_catchup(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

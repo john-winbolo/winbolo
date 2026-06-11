@@ -213,6 +213,7 @@ static const UnitTestEntry s_tests[] = {
     { "stall_mine_duplicate_not_relaid",         run_stall_mine_duplicate_not_relaid         },
     { "stall_fire_not_harvested",                run_stall_fire_not_harvested                },
     { "stall_never_fires",                       run_stall_never_fires                       },
+    { "input_catchup",                           run_input_catchup                           },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

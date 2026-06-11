@@ -1065,6 +1065,48 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
  * events from both half-steps accumulate naturally into one frame's
  * worth of state for downstream consumers (UDP drain, in-process
  * snapshot poll). */
+/* Pop entries for `count` until a fresh input (tick > lastProcessedInput)
+ * or the queue empties. Stale entries are dropped with one-shot harvest.
+ * Returns TRUE with *out filled on fresh; FALSE on empty. */
+static bool serverSimDequeueFresh(ServerSim *sim, BYTE count, InputPacket *out) {
+    while (sim->inputQueueHead[count] != sim->inputQueueTail[count]) {
+        uint8_t tail = sim->inputQueueTail[count] & (SERVER_INPUT_QUEUE_SIZE - 1);
+        *out = sim->inputQueue[count][tail];
+        sim->inputQueueTail[count]++;
+        if (out->tick > sim->lastProcessedInput[count]) {
+            return TRUE;
+        }
+        /* Stale entry (tick <= lastProcessedInput): its movement was
+         * already covered, either by a real apply or by a stall
+         * substitute, so dropping it here is correct. But a one-shot
+         * action commanded on a stall-substituted tick was NEVER
+         * executed (the substitute carries no actions), so it must be
+         * harvested and carried onto the next real input — exactly
+         * once. The discriminator is lastActionAppliedTick: an entry
+         * with tick > lastActionAppliedTick was never executed
+         * (harvest it); an entry with tick <= lastActionAppliedTick is
+         * an ordinary redundant duplicate of an already-applied action
+         * (ignore it). Fire is deliberately excluded — it is
+         * level-triggered and reload-gated, so re-issuing it carries no
+         * benefit and only adds state. Mine + build only. */
+        if (out->tick > sim->lastActionAppliedTick[count]) {
+            if (out->actions & INPUT_ACTION_LAY_MINE) {
+                sim->pendingHarvestActions[count] |= INPUT_ACTION_LAY_MINE;
+            }
+            if (out->buildAction != 0) {
+                /* A later harvested build overwrites an earlier pending
+                 * one — newest commanded build intent wins. */
+                sim->pendingHarvestBuildAction[count] = out->buildAction;
+                sim->pendingHarvestBuildX[count] = out->buildX;
+                sim->pendingHarvestBuildY[count] = out->buildY;
+            }
+            sim->lastActionAppliedTick[count] = out->tick;
+        }
+        sim->statDroppedStaleInputs[count]++;  /* stale/duplicate entry discarded */
+    }
+    return FALSE;
+}
+
 static void simRunHalfStep(ServerSim *sim) {
     BYTE count;
     bool isKeysTick;
@@ -1217,42 +1259,7 @@ static void simRunHalfStep(ServerSim *sim) {
         }
 
         /* Dequeue one input, skipping duplicates/stale */
-        while (sim->inputQueueHead[count] != sim->inputQueueTail[count]) {
-            uint8_t tail = sim->inputQueueTail[count] & (SERVER_INPUT_QUEUE_SIZE - 1);
-            currentInputs[count] = sim->inputQueue[count][tail];
-            sim->inputQueueTail[count]++;
-            if (currentInputs[count].tick > sim->lastProcessedInput[count]) {
-                hasInput[count] = TRUE;
-                break;
-            }
-            /* Stale entry (tick <= lastProcessedInput): its movement was
-             * already covered, either by a real apply or by a stall
-             * substitute, so dropping it here is correct. But a one-shot
-             * action commanded on a stall-substituted tick was NEVER
-             * executed (the substitute carries no actions), so it must be
-             * harvested and carried onto the next real input — exactly
-             * once. The discriminator is lastActionAppliedTick: an entry
-             * with tick > lastActionAppliedTick was never executed
-             * (harvest it); an entry with tick <= lastActionAppliedTick is
-             * an ordinary redundant duplicate of an already-applied action
-             * (ignore it). Fire is deliberately excluded — it is
-             * level-triggered and reload-gated, so re-issuing it carries no
-             * benefit and only adds state. Mine + build only. */
-            if (currentInputs[count].tick > sim->lastActionAppliedTick[count]) {
-                if (currentInputs[count].actions & INPUT_ACTION_LAY_MINE) {
-                    sim->pendingHarvestActions[count] |= INPUT_ACTION_LAY_MINE;
-                }
-                if (currentInputs[count].buildAction != 0) {
-                    /* A later harvested build overwrites an earlier pending
-                     * one — newest commanded build intent wins. */
-                    sim->pendingHarvestBuildAction[count] = currentInputs[count].buildAction;
-                    sim->pendingHarvestBuildX[count] = currentInputs[count].buildX;
-                    sim->pendingHarvestBuildY[count] = currentInputs[count].buildY;
-                }
-                sim->lastActionAppliedTick[count] = currentInputs[count].tick;
-            }
-            sim->statDroppedStaleInputs[count]++;  /* stale/duplicate entry discarded */
-        }
+        hasInput[count] = serverSimDequeueFresh(sim, count, &currentInputs[count]);
 
         /* Adaptive jitter buffer — track stalls and adjust target depth */
         if (sim->inputBufferFilled[count]) {
@@ -1290,6 +1297,19 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->currentTickPlayer = count;
         if (hasInput[count]) {
             serverSimApplyOneInput(sim, count, &currentInputs[count], FALSE);
+
+            /* Backlog catch-up: bleed a standing queue at +1 input per sub-tick
+             * (hard cap 2 applies total) so a jitter-spike backlog drains in ~1s
+             * instead of ratcheting input latency for the session. Depth gate is
+             * jitterTarget + 1 so steady-state never triggers it. */
+            uint8_t depth = sim->inputQueueHead[count] - sim->inputQueueTail[count];
+            if (depth > (uint8_t)(sim->jitterTarget[count] + 1)) {
+                InputPacket extra;
+                if (serverSimDequeueFresh(sim, count, &extra)) {
+                    serverSimApplyOneInput(sim, count, &extra, FALSE);
+                    sim->statCatchupTicks[count]++;
+                }
+            }
         } else {
             /* No fresh input this tick. */
             tankButton stallTb = translateInputToTankButton(sim->lastInputButtons[count]);
