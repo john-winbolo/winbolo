@@ -296,6 +296,8 @@ int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);
 int run_stall_fire_not_harvested(void);
 int run_stall_never_fires(void);
+int run_stall_brief_trough_no_advance(void);
+int run_stall_long_dry_advances(void);
 
 /* Backlog catch-up (test_input_catchup.c): a standing input queue above the
  * jitter target bleeds at +1 input per sub-tick (cap 2 applies/sub-tick) so a

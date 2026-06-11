@@ -80,14 +80,20 @@ static void nd_send(ClientSim *cs, uint32_t tick, uint8_t buttons,
  * make every later input arrive stale. Holding the numbering at exactly
  * two per net tick keeps client and server in lockstep.
  *
- * Why executed == commanded: each held tick number in [startTick, endTick)
- * is executed exactly once — by a real apply when its input is fresh, or
- * by a same-button substitute when the window starved that number — and
- * never twice, because the substitute advances lastProcessedInput so the
- * late arrival drops as stale. With one button held throughout, a
- * substitute produces the same turn the real input would have, so the
- * total turn count is conserved regardless of how the post-window re-fill
- * gate batches a few applies behind substitutes. */
+ * Executed vs commanded: with no withhold window every held tick number in
+ * [startTick, endTick) is executed exactly once, so executed == commanded
+ * (run_netdebug_commanded_vs_executed). Under a withhold window the count
+ * is conserved per tick number — a starved number is executed either by a
+ * substitute (then the late arrival drops stale) or by the late apply — but
+ * stall-advance now waits STALL_ADVANCE_DRY_TICKS half-steps before
+ * advancing, so the held button at those waiting half-steps executes AND
+ * the late input later applies: a bounded handful of double-executed turns.
+ * Overshoot is therefore >= 0 and capped at STALL_ADVANCE_DRY_TICKS
+ * (run_netdebug_overshoot_under_loss), not exactly zero. With one button
+ * held throughout, a substitute produces the same turn the real input
+ * would have, so beyond that bound the count stays conserved regardless of
+ * how the post-window re-fill gate batches a few applies behind
+ * substitutes. */
 static uint32_t nd_run_script(ClientSim *cs, uint32_t startTick,
                               const NdScript *s) {
     uint32_t commanded = 0;
@@ -237,19 +243,17 @@ int run_netdebug_overshoot_under_loss(void) {
 
     uint32_t executed = serverSimNetdebugGetExecTurnTicks(sim, NETDEBUG_PLAYER);
 
-    /* Stall-advance contract: the withhold-window stall substitutes each
-     * covered tick with the held turn AND advances lastProcessedInput past
-     * it, so the late-delivered inputs for those ticks arrive stale and
-     * drop instead of executing the turn a second time. The script holds
-     * one turn button throughout, so a substituted tick executes the same
-     * turn the late-dropped tick would have — exact equality for this
-     * script (no release falls inside the window). */
     fprintf(stderr,
             "  netdebug overshoot: commanded=%u executed=%u delta=%d\n",
             commanded, executed, (int)executed - (int)commanded);
-    UT_ASSERT_MSG(executed == commanded,
-                  "stall-advance: executed %u != commanded %u",
-                  executed, commanded);
+    /* Stall-advance now waits STALL_ADVANCE_DRY_TICKS half-steps before
+     * advancing, so a withhold window reintroduces at most that many
+     * double-executed turns; beyond the threshold the late inputs drop
+     * stale. Overshoot is bounded, not zero. */
+    UT_ASSERT(executed >= commanded);
+    UT_ASSERT_MSG(executed - commanded <= STALL_ADVANCE_DRY_TICKS,
+                  "overshoot %u exceeds bound %u", executed - commanded,
+                  STALL_ADVANCE_DRY_TICKS);
 
     clientSimDestroy(cs);
     serverSimDestroy(sim);

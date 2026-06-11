@@ -214,6 +214,8 @@ static const UnitTestEntry s_tests[] = {
     { "stall_mine_duplicate_not_relaid",         run_stall_mine_duplicate_not_relaid         },
     { "stall_fire_not_harvested",                run_stall_fire_not_harvested                },
     { "stall_never_fires",                       run_stall_never_fires                       },
+    { "stall_brief_trough_no_advance",           run_stall_brief_trough_no_advance           },
+    { "stall_long_dry_advances",                 run_stall_long_dry_advances                 },
     { "input_catchup",                           run_input_catchup                           },
     { "error_smoothing",                         run_error_smoothing                         },
 #ifdef WB_NETDEBUG

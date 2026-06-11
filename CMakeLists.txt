@@ -2757,6 +2757,8 @@ set(_unit_test_names
     stall_mine_duplicate_not_relaid
     stall_fire_not_harvested
     stall_never_fires
+    stall_brief_trough_no_advance
+    stall_long_dry_advances
     input_catchup
     edge_send_predicate
     error_smoothing

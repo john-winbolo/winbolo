@@ -1296,6 +1296,7 @@ static void simRunHalfStep(ServerSim *sim) {
         }
         sim->currentTickPlayer = count;
         if (hasInput[count]) {
+            sim->inputDryTicks[count] = 0;
             serverSimApplyOneInput(sim, count, &currentInputs[count], FALSE);
 
             /* Backlog catch-up: bleed a standing queue at +1 input per sub-tick
@@ -1311,7 +1312,11 @@ static void simRunHalfStep(ServerSim *sim) {
                 }
             }
         } else {
-            /* No fresh input this tick. */
+            /* No fresh input this tick. Count every consecutive dry
+             * half-step (including those where loop 1 left hasInput FALSE
+             * mid-rebuffer) so the stall-advance gate sees the true dry
+             * run, not just the jitter-buffer's stall count. */
+            sim->inputDryTicks[count]++;
             tankButton stallTb = translateInputToTankButton(sim->lastInputButtons[count]);
 
             /* "Established at least once" is read off lastProcessedInput,
@@ -1328,19 +1333,34 @@ static void simRunHalfStep(ServerSim *sim) {
              * counted as stalls and keep the idle path below. */
             if (sim->lastProcessedInput[count] > 0) {
                 sim->statStallTicks[count]++;
-                /* Established stream: stall-advance. A substituted tick is
-                 * a *processed* tick — synthesise an input from the last
-                 * held buttons at the next tick number and run it through
-                 * the canonical apply, which advances lastProcessedInput
-                 * past it. The real (late) input for this tick then arrives
-                 * stale and its movement is dropped rather than executing
-                 * the held turn a second time (the overshoot fix). The
-                 * synth carries no actions, so it can never fire/lay/build,
-                 * and isSubstitute suppresses the pending-harvest merge so a
-                 * harvested one-shot waits for a real input. Parity comes
-                 * from subTick (the apply body keys on its own tick), and
-                 * the apply body counts the WB_NETDEBUG turn tick — so this
-                 * branch must not count it again. */
+            }
+
+            /* Stall-advance only on a genuine multi-tick dry spell. A dry
+             * run at/below STALL_ADVANCE_DRY_TICKS is routine send-burst
+             * cadence ripple (the client batches 2 inputs/packet but the
+             * server consumes 1 per half-step, so the queue drains to empty
+             * for a half-step or two between packets); advancing there would
+             * consume the tick and drop the in-flight real input as stale,
+             * making the client reconcile constantly. Below the threshold we
+             * fall through to repeat-and-wait so the late input still applies
+             * at its true tick. Only an established stream past the threshold
+             * is treated as genuine loss and stall-advances. */
+            if (sim->lastProcessedInput[count] > 0 &&
+                sim->inputDryTicks[count] > STALL_ADVANCE_DRY_TICKS) {
+                /* Established stream, genuine loss: stall-advance. A
+                 * substituted tick is a *processed* tick — synthesise an
+                 * input from the last held buttons at the next tick number
+                 * and run it through the canonical apply, which advances
+                 * lastProcessedInput past it. The real (late) input for this
+                 * tick then arrives stale and its movement is dropped rather
+                 * than executing the held turn a second time (the overshoot
+                 * fix). The synth carries no actions, so it can never
+                 * fire/lay/build, and isSubstitute suppresses the
+                 * pending-harvest merge so a harvested one-shot waits for a
+                 * real input. Parity comes from subTick (the apply body keys
+                 * on its own tick), and the apply body counts the
+                 * WB_NETDEBUG turn tick — so this branch must not count it
+                 * again. */
                 InputPacket synth;
                 memset(&synth, 0, sizeof(synth));
                 synth.tick      = sim->lastProcessedInput[count] + 1;
@@ -1348,10 +1368,13 @@ static void simRunHalfStep(ServerSim *sim) {
                 synth.buttons   = sim->lastInputButtons[count];
                 serverSimApplyOneInput(sim, count, &synth, TRUE);
             } else {
-                /* Not yet established (dead/loading/never-streamed): keep
+                /* Brief cadence trough on an established stream, or a player
+                 * not yet established (dead/loading/never-streamed): keep
                  * today's idle simulation without consuming a tick. Repeat
                  * the last held buttons so the turn ramp (firstLeft/
-                 * firstRight) doesn't reset and pull the angle back. */
+                 * firstRight) doesn't reset and pull the angle back. Because
+                 * lastProcessedInput is not advanced here, the in-flight real
+                 * input for this tick still applies fresh when it arrives. */
 #ifdef WB_NETDEBUG
                 if (netdebugButtonTurns(stallTb)) {
                     sim->dbgExecTurnTicks[count]++;
@@ -1698,6 +1721,7 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, b
     sim->pendingHarvestBuildX[playerNum] = 0;
     sim->pendingHarvestBuildY[playerNum] = 0;
     sim->inputBufferFilled[playerNum] = 0;
+    sim->inputDryTicks[playerNum] = 0;
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
     sim->jitterStallCount[playerNum] = 0;
     sim->jitterStableTicks[playerNum] = 0;
@@ -1944,6 +1968,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->pendingHarvestBuildY[playerNum] = 0;
     sim->playerPing[playerNum] = 0;
     sim->inputBufferFilled[playerNum] = 0;
+    sim->inputDryTicks[playerNum] = 0;
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
     sim->jitterStallCount[playerNum] = 0;
     sim->jitterStableTicks[playerNum] = 0;
@@ -3599,6 +3624,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
         sim->pendingHarvestBuildX[i] = 0;
         sim->pendingHarvestBuildY[i] = 0;
         sim->inputBufferFilled[i] = 0;
+        sim->inputDryTicks[i] = 0;
         sim->jitterTarget[i] = JITTER_BUFFER_DEFAULT;
         sim->jitterStallCount[i] = 0;
         sim->jitterStableTicks[i] = 0;

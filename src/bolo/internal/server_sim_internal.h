@@ -193,10 +193,20 @@ struct ServerSim {
 #define JITTER_GROW_THRESHOLD   2   /* Consecutive stalls before growing */
 #define JITTER_SHRINK_INTERVAL 100  /* Ticks of no stalls before shrinking */
 #define LAG_COMP_MAX_TICKS 12       /* 250ms one-way max compensation (12 game ticks) */
+/* Consecutive dry half-steps before a stall is treated as genuine loss
+ * and the server stall-advances (consumes the tick). At/below this, a
+ * dry half-step is routine send-burst cadence ripple: repeat held buttons
+ * and wait, so the in-flight real input still applies at its true tick.
+ * Bounds reintroduced overshoot to this many half-steps under real loss;
+ * tune up if localhost recon/s isn't ~0, down if high-ping overshoot
+ * returns. */
+#define STALL_ADVANCE_DRY_TICKS 3
     uint8_t inputBufferFilled[MAX_TANKS];  /* true once initial fill reached */
     uint8_t  jitterTarget[MAX_TANKS];      /* Current adaptive buffer depth */
     uint8_t  jitterStallCount[MAX_TANKS];  /* Consecutive ticks queue was empty when expected */
     uint16_t jitterStableTicks[MAX_TANKS]; /* Ticks since last stall */
+    uint8_t inputDryTicks[MAX_TANKS]; /* consecutive half-steps with no fresh
+                                       * input; gates stall-advance vs wait */
 
     /* Per-player input-pipeline instrumentation — window counters reset
      * each logged second, plus one gauge. Reads/writes only; never gate
