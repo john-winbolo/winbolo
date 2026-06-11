@@ -102,7 +102,7 @@ extern bool letterboxBarsGray;
    the bars whenever the window aspect differs from the game -- fullscreen or
    a resized/maximised window alike. */
 static void sdl3LetterboxFill(void) {
-  Uint8 v = letterboxBarsGray ? 64 : 0;
+  Uint8 v = letterboxBarsGray ? 107 : 0;
   SDL_SetRenderDrawColor(gRenderer, v, v, v, 255);
   SDL_RenderFillRect(gRenderer, NULL);
 }
