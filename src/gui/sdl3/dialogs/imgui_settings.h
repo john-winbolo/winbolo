@@ -27,6 +27,11 @@ extern "C" {
 /* Show the pre-game settings dialog as a blocking modal loop. */
 void imguiSettingsShow(void);
 
+/* Render the shared Labels / Sound / Messages settings categories.  Called by
+ * both the pre-game dialog and the in-game settings overlay so the two can't
+ * drift.  cs may be NULL (pre-game, no live sim). */
+void imguiSettingsRenderCommonSections(struct ClientSim *cs);
+
 #ifdef __cplusplus
 }
 #endif

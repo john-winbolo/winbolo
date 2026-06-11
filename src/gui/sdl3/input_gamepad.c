@@ -205,16 +205,19 @@ void inputGamepadBindingsResetDefaults(GamepadBindings *out) {
     out->b[i].pri = kNone;
     out->b[i].sec = kNone;
   }
-  out->b[GP_ACT_FIRE].pri                = (GamepadBinding){ GP_BIND_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER };
-  out->b[GP_ACT_FIRE].sec                = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_SOUTH };
+  /* Default layout (Andrew's controller scheme): used when no saved or
+     cloud-synced bindings exist.  Triggers drive Fire-adjacent verbs (LT mine,
+     RT build cursor), face buttons cover build type + fire, shoulders adjust
+     gunsight range, and the D-pad handles views / chat. */
+  out->b[GP_ACT_FIRE].pri                = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_SOUTH };
   out->b[GP_ACT_MINE].pri                = (GamepadBinding){ GP_BIND_TRIGGER, SDL_GAMEPAD_AXIS_LEFT_TRIGGER };
-  out->b[GP_ACT_BUILD_CONFIRM].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_WEST };
-  out->b[GP_ACT_VIEW_CYCLE].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_NORTH };
-  out->b[GP_ACT_GUNSIGHT_DEC].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_LEFT_SHOULDER };
-  out->b[GP_ACT_GUNSIGHT_INC].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER };
-  out->b[GP_ACT_BUILD_PREV].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_UP };
-  out->b[GP_ACT_BUILD_NEXT].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_DOWN };
-  out->b[GP_ACT_BUILD_CURSOR_TOGGLE].pri = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_RIGHT_STICK };
+  /* BUILD_CONFIRM intentionally unbound by default (build via the cursor). */
+  out->b[GP_ACT_VIEW_CYCLE].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_UP };
+  out->b[GP_ACT_GUNSIGHT_DEC].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER };
+  out->b[GP_ACT_GUNSIGHT_INC].pri        = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_LEFT_SHOULDER };
+  out->b[GP_ACT_BUILD_PREV].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_NORTH };
+  out->b[GP_ACT_BUILD_NEXT].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_WEST };
+  out->b[GP_ACT_BUILD_CURSOR_TOGGLE].pri = (GamepadBinding){ GP_BIND_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER };
   out->b[GP_ACT_QUICK_CHAT].pri          = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_LEFT };
   out->b[GP_ACT_PAUSE].pri               = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_START };
   out->b[GP_ACT_VIEW_PLAYERS].pri       = (GamepadBinding){ GP_BIND_BUTTON,  SDL_GAMEPAD_BUTTON_DPAD_RIGHT };
