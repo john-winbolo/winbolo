@@ -306,6 +306,7 @@ STR_DLGKEYSETUP_PRESS_OR_CANCEL=Druk op een toets om toe te wijzen of klik op An
 STR_DLGKEYSETUP_CHANGE=Wijzigen
 STR_DLGKEYSETUP_COL_ACTION=Actie
 STR_DLGKEYSETUP_COL_KEY=Toets
+STR_DLGKEYSETUP_TAB_KEYBOARD=Toetsenbord
 STR_DLGKEYSETUP_QUICKKEYS=Sneltoetsen
 STR_DLGKEYSETUP_TREE=Boom
 STR_DLGKEYSETUP_ROAD=Weg
@@ -348,6 +349,7 @@ STR_MENU_REQUIRES=Vereist {number}x{number2} - overschrijdt beeldscherm
 STR_MENU_SMOOTH_SCROLLING=Vloeiend scrollen
 STR_MENU_AUTO_SCROLLING=Automatisch scrollen
 STR_MENU_SHOW_GUNSIGHT=Vizier tonen
+STR_MENU_LETTERBOX_GRAY=Grijze letterbox-balken
 STR_MENU_MSG_NAMES_SUB=Namen berichtverzenders
 STR_MENU_TANK_LABELS_SUB=Tanklabels
 STR_NONE=Geen
@@ -1104,7 +1106,6 @@ STR_NAME_INVALID_RESERVED_PREFIX=Spelernaam mag niet beginnen met '*'.
 STR_NAME_INVALID_RESERVED_SUFFIX=Spelernaam mag niet eindigen op '-unverified'.
 
 # Settings → Display: country-flag rendering preference
-STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Landenvlaggen tonen in chat
 
 # Verified-priority collision policy
 STR_NAME_RENAMED_BY_VERIFIED={player} is hernoemd omdat {other} geverifieerd heeft deelgenomen
@@ -1155,7 +1156,7 @@ STR_GP_ACTION_BUILD_PREV=Vorige bouwtype
 STR_GP_ACTION_BUILD_NEXT=Volgende bouwtype
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Bouwcursor in-/uitschakelen
 STR_GP_ACTION_QUICK_CHAT=Snelchat
-STR_GP_ACTION_PAUSE=Pauzeren
+STR_GP_ACTION_PAUSE=Snel menu
 STR_GP_ACTION_VIEW_PLAYERS=Spelerslijst
 
 # Controller-modus voorkeur + verbindingsprompt (Phase 8.1)

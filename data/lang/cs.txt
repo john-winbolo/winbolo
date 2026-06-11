@@ -306,6 +306,7 @@ STR_DLGKEYSETUP_PRESS_OR_CANCEL=Stiskni klávesu pro přiřazení nebo klikni na
 STR_DLGKEYSETUP_CHANGE=Změnit
 STR_DLGKEYSETUP_COL_ACTION=Akce
 STR_DLGKEYSETUP_COL_KEY=Klávesa
+STR_DLGKEYSETUP_TAB_KEYBOARD=Klávesnice
 STR_DLGKEYSETUP_QUICKKEYS=Rychlé klávesy
 STR_DLGKEYSETUP_TREE=Strom
 STR_DLGKEYSETUP_ROAD=Silnice
@@ -348,6 +349,7 @@ STR_MENU_REQUIRES=Vyžaduje {number}x{number2} — překračuje displej
 STR_MENU_SMOOTH_SCROLLING=Plynulé posouvání
 STR_MENU_AUTO_SCROLLING=Automatické posouvání
 STR_MENU_SHOW_GUNSIGHT=Zobrazit zaměřovač
+STR_MENU_LETTERBOX_GRAY=Šedé letterbox pruhy
 STR_MENU_MSG_NAMES_SUB=Jména odesílatelů zpráv
 STR_MENU_TANK_LABELS_SUB=Popisky tanků
 STR_NONE=Žádné
@@ -1104,7 +1106,6 @@ STR_NAME_INVALID_RESERVED_PREFIX=Jméno hráče nesmí začínat znakem '*'.
 STR_NAME_INVALID_RESERVED_SUFFIX=Jméno hráče nesmí končit příponou '-unverified'.
 
 # Settings → Display: country-flag rendering preference (Phase 4)
-STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Zobrazit vlajky zemí v chatu
 
 # Verified-priority collision policy (Phase 5)
 STR_NAME_RENAMED_BY_VERIFIED={player} byl přejmenován, protože {other} se připojil jako ověřený
@@ -1155,7 +1156,7 @@ STR_GP_ACTION_BUILD_PREV=Předchozí typ stavby
 STR_GP_ACTION_BUILD_NEXT=Další typ stavby
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Přepnout kurzor stavby
 STR_GP_ACTION_QUICK_CHAT=Rychlý chat
-STR_GP_ACTION_PAUSE=Pauza
+STR_GP_ACTION_PAUSE=Rychlá nabídka
 STR_GP_ACTION_VIEW_PLAYERS=Zobrazit hráče
 
 # Režim ovladače – předvolba a výzva k připojení (Phase 8.1)

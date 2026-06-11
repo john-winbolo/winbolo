@@ -306,6 +306,7 @@ STR_DLGKEYSETUP_PRESS_OR_CANCEL=Pressione uma tecla para atribuir, ou clique em 
 STR_DLGKEYSETUP_CHANGE=Alterar
 STR_DLGKEYSETUP_COL_ACTION=Ação
 STR_DLGKEYSETUP_COL_KEY=Tecla
+STR_DLGKEYSETUP_TAB_KEYBOARD=Teclado
 STR_DLGKEYSETUP_QUICKKEYS=Teclas rápidas
 STR_DLGKEYSETUP_TREE=Árvore
 STR_DLGKEYSETUP_ROAD=Estrada
@@ -348,6 +349,7 @@ STR_MENU_REQUIRES=Requer {number}x{number2} - excede a tela
 STR_MENU_SMOOTH_SCROLLING=Rolagem suave
 STR_MENU_AUTO_SCROLLING=Rolagem automática
 STR_MENU_SHOW_GUNSIGHT=Mostrar mira
+STR_MENU_LETTERBOX_GRAY=Barras letterbox cinzas
 STR_MENU_MSG_NAMES_SUB=Nomes do remetente da mensagem
 STR_MENU_TANK_LABELS_SUB=Etiquetas de tanque
 STR_NONE=Nenhum
@@ -1104,7 +1106,6 @@ STR_NAME_INVALID_RESERVED_PREFIX=O nome do jogador não pode começar com '*'.
 STR_NAME_INVALID_RESERVED_SUFFIX=O nome do jogador não pode terminar com '-unverified'.
 
 # Settings → Display: country-flag rendering preference (Phase 4)
-STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Mostrar bandeiras de países no chat
 
 # Verified-priority collision policy (Phase 5)
 STR_NAME_RENAMED_BY_VERIFIED={player} foi renomeado porque {other} entrou verificado
@@ -1155,7 +1156,7 @@ STR_GP_ACTION_BUILD_PREV=Tipo de construção anterior
 STR_GP_ACTION_BUILD_NEXT=Próximo tipo de construção
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Alternar cursor de construção
 STR_GP_ACTION_QUICK_CHAT=Chat rápido
-STR_GP_ACTION_PAUSE=Pausar
+STR_GP_ACTION_PAUSE=Menu rápido
 STR_GP_ACTION_VIEW_PLAYERS=Ver jogadores
 
 # Modo controle – preferência e aviso de conexão (Phase 8.1)
