@@ -132,6 +132,7 @@ static const UnitTestEntry s_tests[] = {
     { "brain_inbox_legacy_drain_fifo",           run_brain_inbox_legacy_drain_fifo           },
     { "brain_inbox_clear_resets",                run_brain_inbox_clear_resets                },
     { "bolo_rand_golden_sequence",               run_bolo_rand_golden_sequence               },
+    { "net_impair",                              run_net_impair                              },
     { "countdown_abort_publishes_phase",         run_countdown_abort_publishes_phase         },
     { "lobby_auto_unready_clears_humans_keeps_bots",
                                                  run_lobby_auto_unready_clears_humans_keeps_bots },

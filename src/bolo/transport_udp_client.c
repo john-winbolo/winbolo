@@ -47,6 +47,7 @@
 #include "../steam/steam_wrapper.h"
 #include "../common/wb_log.h"
 #include "../common/mp_diag_log.h"
+#include "net_impair.h"
 #include "../winbolonet/winbolonet_client.h"
 #include "../winbolonet/winbolonet_core.h"
 
@@ -213,6 +214,13 @@ typedef struct {
     uint8_t   uploadPrevStatus;
     uint64_t  uploadPrevProgressMs;
     uint32_t  uploadPrevOffset;
+
+    /* Runtime network impairment on the inbound (server->client) and
+     * outbound (client->server) datagram paths. Disabled unless the
+     * WB_NETIMPAIR env var was set and parsed at ctx create. Driven from
+     * udpClientTick off the process-global bolo_rand stream. */
+    NetImpair impairIn;
+    NetImpair impairOut;
 } TransportUdpClientCtx;
 
 #define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
@@ -228,6 +236,18 @@ static int udpClientLoggedLocalPort = 0;
 
 /* Client send wrapper — tracks packet and byte counters */
 static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
+    /* When outbound impairment is enabled, hand the datagram to the layer
+     * instead of sending directly — udpClientTick later pops the delayed
+     * packets onto the wire. An oversize datagram (offer returns false)
+     * falls through to a direct send. Counters tick exactly once per packet
+     * either way, here at offer/send time. */
+    if (netImpairEnabled(&c->impairOut) &&
+        netImpairOffer(&c->impairOut, buf, len, &c->serverAddr,
+                       (uint64_t)SDL_GetTicks())) {
+        c->packetsSentThisSec++;
+        c->bytesSentThisSec += len;
+        return;
+    }
     udpSendTo(c->sock, buf, len, &c->serverAddr);
     c->packetsSentThisSec++;
     c->bytesSentThisSec += len;
@@ -2076,7 +2096,30 @@ static bool udpClientTick(void *ctx) {
 
     /* Receive all pending packets from the wire */
     while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
-        udpClientProcessPacket(c, buf, len);
+        if (netImpairEnabled(&c->impairIn)) {
+            netImpairOffer(&c->impairIn, buf, len, &fromAddr,
+                           (uint64_t)SDL_GetTicks());
+        } else {
+            udpClientProcessPacket(c, buf, len);
+        }
+    }
+
+    /* Release any impaired datagrams now due: inbound packets into the
+     * processor, outbound packets onto the wire (to their stored addr).
+     * Both pops are no-ops while their layer is disabled. */
+    {
+        uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
+        struct sockaddr_in paddr;
+        uint64_t now = (uint64_t)SDL_GetTicks();
+        int plen;
+        while ((plen = netImpairPop(&c->impairIn, pbuf, sizeof(pbuf),
+                                    &paddr, now)) > 0) {
+            udpClientProcessPacket(c, pbuf, plen);
+        }
+        while ((plen = netImpairPop(&c->impairOut, pbuf, sizeof(pbuf),
+                                    &paddr, now)) > 0) {
+            udpSendTo(c->sock, pbuf, plen, &paddr);
+        }
     }
 
     /* Coalesced PACKET_CONTROL_ACK emission.  Only fires when a
@@ -2553,6 +2596,27 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->localTick = 0;
     c->lastPingSentTick = 0;
     c->pingMs = 0;
+
+    /* Optional runtime network impairment from WB_NETIMPAIR
+     * (e.g. WB_NETIMPAIR=delay=75,jitter=30,loss=2,burst=2). Same spec
+     * grammar as the dedicated server's -netimpair. */
+    netImpairInit(&c->impairIn);
+    netImpairInit(&c->impairOut);
+    {
+        const char *impairSpec = getenv("WB_NETIMPAIR");
+        NetImpairConfig impairCfg;
+        if (impairSpec != NULL && impairSpec[0] != '\0' &&
+            netImpairParseConfig(impairSpec, &impairCfg)) {
+            netImpairEnable(&c->impairIn, &impairCfg);
+            netImpairEnable(&c->impairOut, &impairCfg);
+            mpDiagLog("[cli] netimpair enabled: delay=%ums jitter=%ums "
+                      "loss=%u%% burst=%u",
+                      (unsigned)impairCfg.baseDelayMs,
+                      (unsigned)impairCfg.jitterMs,
+                      (unsigned)impairCfg.lossPercent,
+                      (unsigned)impairCfg.burstLossLen);
+        }
+    }
 
     t.recordInput = udpClientRecordInput;
     t.sendInput = udpClientSendInput;

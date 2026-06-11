@@ -2496,6 +2496,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_bolo_rand.c
+    tests/unit/test_net_impair.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
     tests/unit/test_brain_internal_msg_routing.c

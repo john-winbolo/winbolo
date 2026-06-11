@@ -428,6 +428,14 @@ void transportUdpServerSend(struct ServerSim *sim);
 /* Drain the recv thread's packet queue (use when recv thread is active). */
 void transportUdpServerDrainRecvQueue(struct ServerSim *sim);
 
+/* Enable runtime network impairment on both the inbound (client->server)
+ * and outbound (server->client) datagram paths from an impairment spec
+ * ("delay=75,jitter=30,loss=2,burst=2"; see netImpairParseConfig). On a
+ * parse failure impairment is left off and a warning is logged. Drives off
+ * the process-global bolo_rand stream, so seed it (bolo_srand) for a
+ * reproducible run. */
+void transportUdpServerSetNetImpair(const char *spec);
+
 /* Run deferred sim-side removals for slots force-disconnected from inside
  * a control deliver callback (queue overflow). Call at a safe point in the
  * tick, outside any control-event publish. */
