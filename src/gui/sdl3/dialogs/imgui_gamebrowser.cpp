@@ -39,9 +39,11 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_nav_outline.h"
 #include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
+#include "../imgui_steam_nav.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -55,6 +57,7 @@ extern "C" {
 #include "wire_limits.h"
 #include "../../../server/geolookup.h"
 #include "../../lang.h"
+#include "../input_source.h"
 #include "imgui_gamebrowser.h"
 }
 
@@ -351,6 +354,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -446,7 +451,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     /* Status */
     bool loadingGames = false;
-    const char *statusText = useTracker ? langGetText(STR_DLGBROWSER_TRACKER_INSTRUCTION) : langGetText(STR_DLGBROWSER_LAN_INSTRUCTION);
+    /* "Click Refresh..." prompt is keyboard/mouse-specific; suppress for gamepad. */
+    const char *statusText = (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD)
+                                 ? (useTracker ? langGetText(STR_DLGBROWSER_TRACKER_INSTRUCTION) : langGetText(STR_DLGBROWSER_LAN_INSTRUCTION))
+                                 : "";
 
     /* Error popup */
     const char *errorMsg = nullptr;
@@ -468,6 +476,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT) {
@@ -608,6 +617,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         dialogResetTextInputArea(window);
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
 
         /* Transparent full-screen host window */
         ImGui::SetNextWindowPos(ImVec2(0, 0));

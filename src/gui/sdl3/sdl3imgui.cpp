@@ -50,8 +50,8 @@
 /* Bolo types (included after SDL3 to avoid #pragma pack conflicts) */
 extern "C" {
 #include "global.h"    /* BYTE, bool, FALSE/TRUE */
-#include "client_sim.h"
-#include "wire_limits.h"
+#include "client_sim.h" /* labelLen, lblNone/lblShort/lblLong via client_enums.h */
+#include "wire_limits.h" /* PACKET_MAX_CHAT_MESSAGE */
 #include "../gamefront.h"
 #include "../lang.h"
 }
@@ -61,6 +61,8 @@ extern "C" {
 #include "sdl3draw.h"
 #include "luabrainshandler.h"
 #include "flags.h"
+#include "glyphs.h"
+#include "dialogs/imgui_keycap.h"
 
 extern "C" {
 #include "client_net.h"
@@ -72,6 +74,8 @@ extern "C" {
 extern "C" {
 #include "input.h"
 #include "input_touch.h"
+#include "input_gamepad.h"
+#include "input_source.h"
 #include "../ui_mode.h"
 }
 
@@ -79,6 +83,10 @@ extern "C" {
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
+#include "dialogs/imgui_deck_pause.h"
+#include "dialogs/imgui_quickchat.h"
+#include "dialogs/imgui_controller_prompt.h"
+#include "imgui_steam_nav.h"
 #include "dialogs/imgui_server_address.h"
 #include "dialogs/dialog_footer.h"
 #include "dialogs/imgui_keysetup.h"
@@ -177,6 +185,8 @@ extern "C" void windowComputeAspectCorrectSize(int actualW, int actualH, int act
 extern "C" void windowNewGame(void);
 extern "C" void windowQuit(void);
 extern "C" void windowSaveMap(struct ClientSim *cs);
+extern "C" void windowSuspendBackground(void);
+extern "C" void windowResumeForeground(struct ClientSim *cs);
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -203,6 +213,7 @@ extern "C" bool showNetworkDebugMessages;
 
 /* Device presets are defined in imgui_dialog_utils.h (shared with dialogs) */
 #include "dialogs/imgui_dialog_utils.h"
+#include "dialogs/imgui_nav_outline.h"
 
 /* -------------------------------------------------------
  * Module state
@@ -340,6 +351,21 @@ static int  s_joinConfirmPort       = 0;
  * symptom) so it was consolidated into the standalone dialog's
  * module. */
 
+/* Gamepad rebind working state.  Mirrors s_keySetupKeys / s_keySetupWaiting:
+   the dialog populates s_keySetupGamepadBindings on open, mutates it as
+   the player rebinds, commits on OK, and discards on Cancel.  Waiting
+   action is GP_ACT_COUNT when no capture is pending; otherwise the
+   slot field selects which slot (primary or secondary) the next
+   captured input writes to.  s_keySetupTrigArmed[] tracks whether
+   each trigger needs to release-then-press to count (true when the
+   trigger was already pulled at Change-click time, so the first
+   cross-up-from-below is a real player action and not a spurious
+   match against held state). */
+static GamepadBindings s_keySetupGamepadBindings;
+static int             s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+static GamepadSlot     s_keySetupGamepadWaitingSlot   = GP_SLOT_PRIMARY;
+static bool            s_keySetupTrigArmed[2]         = { true, true };
+
 /* Send Message panel state */
 enum SendMsgRecipient { kSendAll = 0, kSendAllies, kSendNearby, kSendSelected };
 static int    s_sendMsgRecipient  = kSendAll;
@@ -354,6 +380,8 @@ static Uint64 s_sendMsgCooldownEnd = 0;   /* SDL_GetTicks() value; 0 = not in co
 static bool   s_sendMsgFocusInput = false; /* Set true to focus the text input next frame */
 static int    s_sendMsgFocusFrames = 0;
 static bool   s_sendMsgHideNav = false;
+static bool   s_showCtrlSendMsg    = false; /* controller-mode simplified send dialog open */
+static bool   s_pendingCtrlSendMsg = false; /* deferred OpenPopup (must run during render) */
 #define SEND_MSG_WAIT_MS 2000
 
 /* Alliance request cooldown */
@@ -419,11 +447,13 @@ static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
-    imguiLoadBoloFont(18.0f);
+    imguiLoadBoloFont(18.0f * dialogDeckFontMul());
     ImGui_ImplSDL3_InitForSDLRenderer(pw->window, pw->renderer);
     ImGui_ImplSDLRenderer3_Init(pw->renderer);
 
@@ -476,6 +506,7 @@ static void popOutEndContent(PopOutWindow *pw) {
 static void popOutEndFrame(PopOutWindow *pw) {
     dialogDrawNavOutline();
     ImGui::EndFrame();
+    dialogDrawNavOutline();
     ImGui::Render();
     SDL_SetRenderDrawColor(pw->renderer, 30, 30, 30, 255);
     SDL_RenderClear(pw->renderer);
@@ -1138,6 +1169,79 @@ static void renderSendMsgPanel(ClientSim *cs) {
     }
     renderSendMsgContent(cs);
     ImGui::End();
+}
+
+/* Controller-mode message entry: a simplified modal that sends to all
+ * players (no recipient picker) with just a text field + Send and a
+ * B/Escape cancel.  Replaces the pop-out / in-window dialog when
+ * uiShouldUseControllerMode() — see sdl3ImguiShowSendMsg.  Lives in the
+ * main ImGui context so it picks up gamepad nav and the Steam OSK. */
+static void renderCtrlSendMsg(ClientSim *cs) {
+    char title[128];
+    snprintf(title, sizeof(title), "%s###ctrlsendmsg", langGetText(STR_DLGMSG_TITLE));
+
+    if (s_pendingCtrlSendMsg) {
+        ImGui::OpenPopup(title);
+        s_pendingCtrlSendMsg = false;
+        s_showCtrlSendMsg    = true;
+        s_sendMsgFocusInput  = true;
+    }
+    if (!s_showCtrlSendMsg) return;
+
+    ImGuiViewport *vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f,
+                                   vp->Pos.y + vp->Size.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_AlwaysAutoResize;
+
+    if (ImGui::BeginPopupModal(title, &s_showCtrlSendMsg, flags)) {
+        /* ImGui's NavCancel does not auto-close modals, so detect B/Escape
+           and close manually — checked before InputText() so the press
+           closes rather than just reverting the edit.  On the Steam Input
+           path B arrives as Escape. */
+        if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            ImGui::CloseCurrentPopup();
+            s_showCtrlSendMsg = false;
+            ImGui::EndPopup();
+            return;
+        }
+
+        bool wantSelectAll = false;
+        if (s_sendMsgFocusInput) { s_sendMsgFocusInput = false; wantSelectAll = true; }
+        if (ImGui::IsWindowAppearing() || wantSelectAll) {
+            ImGui::SetKeyboardFocusHere();
+            wantSelectAll = true;
+        }
+        ImGui::SetNextItemWidth(340.0f);
+        bool pressedEnter = ImGui::InputText("##ctrlmsg", s_sendMsgBuf, sizeof(s_sendMsgBuf),
+                                             ImGuiInputTextFlags_EnterReturnsTrue);
+        if (wantSelectAll) {
+            if (ImGuiInputTextState *st = ImGui::GetInputTextState(ImGui::GetItemID()))
+                st->SelectAll();
+        }
+
+        bool inCooldown = (s_sendMsgCooldownEnd != 0 &&
+                           SDL_GetTicks() < s_sendMsgCooldownEnd);
+        if (inCooldown) ImGui::BeginDisabled();
+        bool doSend = ImGui::Button(langGetText(STR_DLGMSG_BUTTON)) ||
+                      (!inCooldown && pressedEnter);
+        if (inCooldown) ImGui::EndDisabled();
+
+        if (doSend && s_sendMsgBuf[0] != '\0') {
+            clientSimSendMessageAllPlayers(cs, s_sendMsgBuf);
+            s_sendMsgBuf[0] = '\0';
+            ImGui::CloseCurrentPopup();
+            s_showCtrlSendMsg = false;
+        }
+
+        ImGui::EndPopup();
+    } else {
+        s_showCtrlSendMsg = false;
+    }
 }
 
 /* -------------------------------------------------------
@@ -1930,10 +2034,149 @@ static void renderPasswordModal(void) {
     }
 }
 
-/* The in-game Key Setup popup lives in imgui_keysetup.cpp now —
- * see imguiKeySetupRenderInGamePopup. This file used to carry a
- * parallel copy. Removing it pinned the persistence bug (only
- * one OK handler now to keep in sync with INI write). */
+/* -------------------------------------------------------
+ * Gamepad binding helpers — orphaned from their original host
+ * popup (renderKeySetupModal, removed when main moved the in-game
+ * Key Setup popup to imgui_keysetup.cpp:imguiKeySetupRenderInGamePopup).
+ * Kept here so a follow-up commit can hook them into the new popup
+ * to restore controller rebinding UI.  The keyboard-side scaffolding
+ * (keySetupRow, keySetupFieldPtr, keySetupScancodeLabel) is gone with
+ * the popup; its replacement lives in imgui_keysetup.cpp.
+ * ------------------------------------------------------- */
+
+/* Returns a stable short label for the binding's button/axis using
+ * SDL_GetGamepadStringForButton/Axis.  Used for both the procedural
+ * keycap fallback text and the default row label when no PNG art
+ * exists in the active glyph set. */
+static const char *gamepadBindingLabel(const GamepadBinding *b) {
+    if (!b) return "-";
+    if (b->kind == GP_BIND_NONE) return "-";
+    if (b->kind == GP_BIND_BUTTON) {
+        const char *n = SDL_GetGamepadStringForButton((SDL_GamepadButton)b->code);
+        return (n && n[0]) ? n : "?";
+    }
+    if (b->kind == GP_BIND_TRIGGER) {
+        const char *n = SDL_GetGamepadStringForAxis((SDL_GamepadAxis)b->code);
+        return (n && n[0]) ? n : "?";
+    }
+    return "?";
+}
+
+/* Snapshot trigger state — a trigger that's already pulled at the
+   moment of a Change-click must release before a re-press counts as
+   the player's choice.  Shared by both slot-Change buttons. */
+static void armTriggersForCapture(void) {
+    SDL_Gamepad *gp = inputGamepadGetActiveHandle();
+    for (int t = 0; t < 2; ++t) {
+        SDL_GamepadAxis ax = (t == 0) ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER
+                                      : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
+        float v = gp ? (float)SDL_GetGamepadAxis(gp, ax) * (1.0f / 32767.0f) : 0.0f;
+        s_keySetupTrigArmed[t] = (v <= 0.5f);
+    }
+}
+
+/* Renders one slot's glyph + label, or a faded "—" placeholder when
+   the binding is NONE.  Used by gamepadSetupRow for both pri and sec. */
+static void gamepadSetupRenderSlot(const GamepadBinding *b) {
+    float textLineH = ImGui::GetTextLineHeight();
+    float glyphSize = textLineH * 1.5f;
+    float glyphYOff = (glyphSize - textLineH) * 0.5f;
+    float cursorY   = ImGui::GetCursorPosY();
+
+    if (!b || b->kind == GP_BIND_NONE) {
+        /* Faded em-dash placeholder; reserves the same vertical room
+           as a real glyph so rows keep aligning. */
+        ImGui::SetCursorPosY(cursorY - glyphYOff);
+        ImGui::Dummy(ImVec2(glyphSize, glyphSize));
+        ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::SetCursorPosY(cursorY);
+        ImGui::TextDisabled("%s", "-");
+        return;
+    }
+
+    const char  *name  = gamepadBindingLabel(b);
+    SDL_Texture *glyph = NULL;
+    if (b->kind == GP_BIND_BUTTON) {
+        glyph = glyphForGamepadButton((SDL_GamepadButton)b->code);
+    } else if (b->kind == GP_BIND_TRIGGER) {
+        glyph = glyphForGamepadAxis((SDL_GamepadAxis)b->code);
+    }
+    ImGui::SetCursorPosY(cursorY - glyphYOff);
+    if (glyph) {
+        ImGui::Image((ImTextureID)glyph, ImVec2(glyphSize, glyphSize));
+    } else {
+        drawProceduralKeycapAt(ImGui::GetCursorScreenPos(), glyphSize, name);
+        ImGui::Dummy(ImVec2(glyphSize, glyphSize));
+    }
+    ImGui::SameLine(0, ImGui::GetStyle().ItemInnerSpacing.x);
+    ImGui::SetCursorPosY(cursorY);
+    ImGui::TextUnformatted(name);
+}
+
+/* Render a single gamepad-binding row with both slots:
+   "Label  [pri glyph][pri text]  [sec glyph][sec text]  [Change Pri][Change Sec]" */
+static void gamepadSetupRow(const char *label, GamepadAction action) {
+    const GamepadBinding *bp = &s_keySetupGamepadBindings.b[(int)action].pri;
+    const GamepadBinding *bs = &s_keySetupGamepadBindings.b[(int)action].sec;
+    bool waitingPri = (s_keySetupGamepadWaitingAction == (int)action &&
+                       s_keySetupGamepadWaitingSlot   == GP_SLOT_PRIMARY);
+    bool waitingSec = (s_keySetupGamepadWaitingAction == (int)action &&
+                       s_keySetupGamepadWaitingSlot   == GP_SLOT_SECONDARY);
+
+    ImGui::TableNextRow();
+    ImGui::TableSetColumnIndex(0);
+    ImGui::TextUnformatted(label);
+
+    /* Column 1: both slot glyphs side by side, separated by a tab-wide
+       gap.  When a slot is waiting for capture, its half shows the
+       prompt instead. */
+    ImGui::TableSetColumnIndex(1);
+    if (waitingPri) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
+                           langGetText(STR_GP_REBIND_PROMPT));
+    } else {
+        gamepadSetupRenderSlot(bp);
+    }
+    ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+    if (waitingSec) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
+                           langGetText(STR_GP_REBIND_PROMPT));
+    } else {
+        gamepadSetupRenderSlot(bs);
+    }
+
+    /* Column 2: two stacked SmallButtons (Change Pri / Change Sec).
+       While one slot is being captured, its button reads "Cancel"
+       and the other slot's button stays enabled but inert via PushID
+       isolation. */
+    ImGui::TableSetColumnIndex(2);
+    ImGui::PushID(0x1000 + (int)action);
+    if (waitingPri) {
+        if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
+            s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+        }
+    } else {
+        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
+            s_keySetupGamepadWaitingAction = (int)action;
+            s_keySetupGamepadWaitingSlot   = GP_SLOT_PRIMARY;
+            armTriggersForCapture();
+        }
+    }
+    ImGui::PushID(1);
+    if (waitingSec) {
+        if (ImGui::SmallButton(langGetText(STR_CANCEL))) {
+            s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+        }
+    } else {
+        if (ImGui::SmallButton(langGetText(STR_DLGKEYSETUP_CHANGE))) {
+            s_keySetupGamepadWaitingAction = (int)action;
+            s_keySetupGamepadWaitingSlot   = GP_SLOT_SECONDARY;
+            armTriggersForCapture();
+        }
+    }
+    ImGui::PopID();
+    ImGui::PopID();
+}
 
 /* -------------------------------------------------------
  * Settings panel — collects Edit + WinBolo menu options
@@ -1950,7 +2193,12 @@ static void renderSettingsPanel(ClientSim *cs) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     } else {
-        ImGui::SetNextWindowSize(ImVec2(460, 580), ImGuiCond_FirstUseEver);
+        /* Scale the panel with the Deck font/layout multiplier — the
+           font and style sizes are bumped 1.5x there, so a fixed 460px
+           window clips the wider translated labels and combos. */
+        const float deckMul = dialogDeckFontMul();
+        ImGui::SetNextWindowSize(ImVec2(520 * deckMul, 580 * deckMul),
+                                 ImGuiCond_FirstUseEver);
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showSettings;
     ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
@@ -2104,7 +2352,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             }
         }
 
-        if (uiModeIsTablet()) {
+        if (uiModeIsTablet() || inputGamepadIsConnected()) {
             bool relSteering = !inputTouchGetAbsoluteSteering();
             if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_RELSTEER), &relSteering)) {
                 inputTouchSetAbsoluteSteering(!relSteering);
@@ -2114,7 +2362,48 @@ static void renderSettingsPanel(ClientSim *cs) {
             }
         }
 
+        if (inputGamepadIsConnected()) {
+            ImGui::Separator();
+            ImGui::Text("Gamepad: connected");
+
+            float s = g_gamepadScrollSensitivity;
+            if (ImGui::SliderFloat("Scroll sensitivity", &s, 0.25f, 4.0f, "%.2fx")) {
+                if (s < 0.25f) s = 0.25f;
+                if (s > 4.0f)  s = 4.0f;
+                g_gamepadScrollSensitivity = s;
+            }
+        }
+
 #ifndef __ANDROID__
+        /* Controller Mode (Phase 8.1) — desktop-only.  On Steam Deck the
+           UI is always in controller mode regardless of pref, so don't
+           offer the radio there. */
+        if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted(langGetText(STR_CTRL_MODE_HEADER));
+            ControllerModePref cm = uiControllerModeGet();
+            int cur = (int)cm;
+            bool changed = false;
+            char rOff[64], rOn[64], rAuto[64];
+            snprintf(rOff,  sizeof(rOff),  "%s##cmode", langGetText(STR_CTRL_MODE_OFF));
+            snprintf(rOn,   sizeof(rOn),   "%s##cmode", langGetText(STR_CTRL_MODE_ON));
+            snprintf(rAuto, sizeof(rAuto), "%s##cmode", langGetText(STR_CTRL_MODE_AUTO));
+            if (ImGui::RadioButton(rOff,  cur == CONTROLLER_MODE_OFF))  { cur = CONTROLLER_MODE_OFF;  changed = true; }
+            ImGui::SameLine();
+            if (ImGui::RadioButton(rOn,   cur == CONTROLLER_MODE_ON))   { cur = CONTROLLER_MODE_ON;   changed = true; }
+            ImGui::SameLine();
+            if (ImGui::RadioButton(rAuto, cur == CONTROLLER_MODE_AUTO)) { cur = CONTROLLER_MODE_AUTO; changed = true; }
+            if (changed) {
+                uiControllerModeSet((ControllerModePref)cur);
+                gameFrontSaveCurrentPrefs();
+            }
+            bool ask = uiControllerPromptAskOnConnectGet();
+            if (ImGui::Checkbox(langGetText(STR_CTRL_MODE_ASK), &ask)) {
+                uiControllerPromptAskOnConnectSet(ask);
+                gameFrontSaveCurrentPrefs();
+            }
+        }
+
         if (!uiModeIsTablet()) {
             bool tabletMode = false;
             if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_TABLETMODE), &tabletMode)) {
@@ -2884,11 +3173,13 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename  = nullptr; /* no imgui.ini — avoid filesystem clutter */
 
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
-    imguiLoadBoloFont(18.0f);
+    imguiLoadBoloFont(18.0f * dialogDeckFontMul());
 
     /* Tablet mode: scale up ImGui for touch targets.
        Scale proportionally to the logical coordinate space height.
@@ -2903,12 +3194,24 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
         style.ItemSpacing       = ImVec2(12 * ps, 8 * ps);
         style.TouchExtraPadding = ImVec2(8 * ps, 8 * ps);
         style.ScrollbarSize     = 24.0f * ps;
+    } else if (uiModeIsSteamDeck()) {
+        /* Match the bumped font size with proportionally bumped layout
+           metrics (FramePadding, ItemSpacing, ScrollbarSize, etc.) so
+           in-game dialogs (Settings / Players / Send Message / pause
+           overlay) don't clip text or overlap.  No touch padding —
+           Deck uses desktop hover/click feel. */
+        const float deckMul = dialogDeckFontMul();
+        if (deckMul > 1.0f) {
+            ImGui::GetStyle().ScaleAllSizes(deckMul);
+        }
     }
 
     if (!ImGui_ImplSDL3_InitForSDLRenderer(window, renderer)) return false;
     if (!ImGui_ImplSDLRenderer3_Init(renderer))               return false;
 
     flagsCreate(renderer);
+    inputGamepadInit();
+    inputSourceInit();
     return true;
 }
 
@@ -2938,6 +3241,13 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             SDL_ConvertEventToRenderCoordinates(s_renderer, &ev);
         }
         ImGui_ImplSDL3_ProcessEvent(&ev);
+
+        /* Track which input device the player most recently used so
+         * tutorial dialogs can pick keyboard vs gamepad glyphs.  Sits
+         * here because every poll iteration runs this exactly once,
+         * before any subsystem-specific continue/break, regardless of
+         * whether the event is later swallowed by ImGui or a popup. */
+        inputSourceUpdate(&ev);
 
         /* DEBUG: log touch/mouse events in tablet mode — remove after debugging */
         if (uiModeIsTablet()) {
@@ -3053,6 +3363,20 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
+        /* Suspend / resume — Steam Deck Verified requirement.  Fires on
+           sleep, home-button overlay, and other backgrounding.  In a
+           network game, resume drops back to menu via the standard
+           "you have been disconnected" flow.  In single-player it just
+           resets the catchup-loop wallclock baseline. */
+        if (ev.type == SDL_EVENT_WILL_ENTER_BACKGROUND) {
+            windowSuspendBackground();
+            continue;
+        }
+        if (ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
+            windowResumeForeground(cs);
+            continue;
+        }
+
         /* Cmd+key shortcuts (non-macOS — macOS routes these through NSMenu in mac_menubar.mm) */
 #ifndef __APPLE__
         if (ev.type == SDL_EVENT_KEY_DOWN &&
@@ -3125,12 +3449,92 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
+        /* Controller-tab binding capture for the in-game Key Setup popup.
+         * While a controller row is armed, route a gamepad button-down or a
+         * trigger crossing its threshold into the dialog; Escape cancels.
+         * State lives in imgui_keysetup.cpp (mirrors the scancode path). */
+        if (imguiKeySetupIsCapturingInGamePad()) {
+            if (ev.type == SDL_EVENT_KEY_DOWN &&
+                ev.key.scancode == SDL_SCANCODE_ESCAPE) {
+                imguiKeySetupCancelInGamePad();
+                continue;
+            }
+            if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                imguiKeySetupHandleInGamePadButton((int)ev.gbutton.button);
+                continue;
+            }
+            if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION &&
+                (ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ||
+                 ev.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) &&
+                ev.gaxis.value > 16384 /* ~0.5 of 32767 */) {
+                imguiKeySetupHandleInGamePadTrigger((int)ev.gaxis.axis);
+                continue;
+            }
+        }
+
+        /* Esc on the keyboard also cancels gamepad capture mode. */
+        if (s_keySetupGamepadWaitingAction != (int)GP_ACT_COUNT &&
+            ev.type == SDL_EVENT_KEY_DOWN &&
+            ev.key.windowID == SDL_GetWindowID(s_window) &&
+            ev.key.scancode == SDL_SCANCODE_ESCAPE) {
+            s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+            continue;
+        }
+
         /* Forward key events to input system for event-driven mine key tracking.
          * Must happen before the ImGui swallow so key-up events are never lost. */
         if (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP) {
             keyItems ki;
             windowGetKeys(&ki);
             inputButtonInput(&ki, ev.key.scancode, (ev.type == SDL_EVENT_KEY_DOWN));
+        }
+
+        /* Gamepad capture for the Key Setup modal — intercept button-down
+         * events and trigger axis cross-edges before the game / input
+         * module sees them.  Stick axes are silently ignored: capture
+         * stays open until a button or trigger arrives.  Esc cancels
+         * the capture (handled in the keyboard intercept above). */
+        if (s_keySetupGamepadWaitingAction != (int)GP_ACT_COUNT) {
+            int           idx     = s_keySetupGamepadWaitingAction;
+            GamepadBinding *target = (s_keySetupGamepadWaitingSlot == GP_SLOT_SECONDARY)
+                                       ? &s_keySetupGamepadBindings.b[idx].sec
+                                       : &s_keySetupGamepadBindings.b[idx].pri;
+            if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                target->kind = GP_BIND_BUTTON;
+                target->code = (int)ev.gbutton.button;
+                s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+                continue;
+            }
+            if (ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+                SDL_GamepadAxis axis = (SDL_GamepadAxis)ev.gaxis.axis;
+                if (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ||
+                    axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
+                    int slot = (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER) ? 0 : 1;
+                    float v = (float)ev.gaxis.value * (1.0f / 32767.0f);
+                    if (v <= 0.5f) {
+                        /* Trigger released — arm so the next press counts. */
+                        s_keySetupTrigArmed[slot] = true;
+                    } else if (s_keySetupTrigArmed[slot]) {
+                        target->kind = GP_BIND_TRIGGER;
+                        target->code = (int)axis;
+                        s_keySetupGamepadWaitingAction = (int)GP_ACT_COUNT;
+                    }
+                    continue;
+                }
+                /* Stick axis: ignore (do not consume — let game/UI keep its state). */
+            }
+        }
+
+        /* Route gamepad connect/disconnect, button events, and trigger
+         * axis events to the gamepad input module.  Stick axes are
+         * still polled via SDL_GetGamepadAxis each frame; only triggers
+         * need event delivery for the rebindable edge-action path. */
+        if (ev.type == SDL_EVENT_GAMEPAD_ADDED        ||
+            ev.type == SDL_EVENT_GAMEPAD_REMOVED      ||
+            ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN  ||
+            ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP    ||
+            ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+            inputGamepadProcessEvent(&ev);
         }
 
         /* While the Key Setup modal is open, swallow all mouse + keyboard events
@@ -3311,6 +3715,34 @@ bool sdl3ImguiIsDialogOpen(void) {
            (g && g->OpenPopupStack.Size > 0);
 }
 
+/* True whenever any in-game popup modal is on screen.  When one of
+   these is up the player is navigating UI, not driving the tank —
+   so Steam Input must run Menu set even though clientSimIsInLobby(cs) is
+   false.  Add new popups here as they're introduced. */
+static bool any_popup_modal_open(void) {
+    /* Any open ImGui popup modal (e.g. the in-game Key Setup popup, whose
+       open-state isn't exposed separately) means the player is navigating UI,
+       so run the Menu action set — this is what makes the left-stick menu nav
+       work inside those popups, not just the D-pad. */
+    ImGuiContext *g = ImGui::GetCurrentContext();
+    if (g && g->OpenPopupStack.Size > 0)
+        return true;
+    return deckPauseIsOpen() ||
+           quickChatIsOpen() ||
+           s_showSendMsg ||
+           s_showPlayersPanel ||
+           s_showSettings;
+}
+
+/* Steam Input action-set follower.  Menu set wins on no-cs / lobby /
+   any-popup-open; InGame set otherwise.  Helper module owns the
+   idempotent activation. */
+static void update_steam_input_action_set(ClientSim *cs) {
+    bool wantMenu = !cs || clientSimIsInLobby(cs) || any_popup_modal_open();
+    if (wantMenu) imguiSteamNavActivateMenuSet();
+    else          imguiSteamNavActivateGameSet();
+}
+
 #ifdef __APPLE__
 /* Build a fresh MacMenuState from current globals + display geometry.
  * Fit1x..fit4x mirror the in-window Window Size enable-gating arithmetic
@@ -3480,6 +3912,15 @@ static void drainInGameNameReject(ClientSim *cs) {
 void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (!s_window || !s_renderer) return;
 
+    /* Sync Steam Input action set to current gameplay context.  Must
+       run before any consumer of action data (edge triggers below
+       and the input wiring downstream). */
+    update_steam_input_action_set(cs);
+
+    /* Feed ImGui gamepad nav from Steam Input on Path A — must run
+       before NewFrame so the events are visible to ImGui this frame. */
+    imguiSteamNavFeedCurrentContext();
+
 #ifdef __APPLE__
     if (!uiModeIsTablet()) {
         MacMenuState mms = {};
@@ -3493,12 +3934,13 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     ImGui_ImplSDL3_NewFrame();
     dialogResetTextInputArea(s_window);
 
-    /* Override ImGui's DisplaySize for tablet mode only.
-       In tablet mode, SDL logical presentation scales the whole window,
-       so ImGui needs to render in that coordinate space.
+    /* Override ImGui's DisplaySize for tablet and Deck modes.
+       In both, SDL logical presentation scales the whole window, so ImGui
+       needs to render in that coordinate space — otherwise dialogs draw
+       at native pixel coords inside a logical surface and scale wrong.
        In desktop mode, ImGui renders at native window coordinates (no override)
        because the game is blitted to a scaled rect, not the whole window. */
-    if (uiModeIsTablet()) {
+    if (uiModeIsTablet() || uiModeIsSteamDeck()) {
         int logW = 0, logH = 0;
         SDL_RendererLogicalPresentation logMode;
         SDL_GetRenderLogicalPresentation(s_renderer, &logW, &logH, &logMode);
@@ -3519,12 +3961,168 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_clearNavFocus = false;
     }
 
+    /* Phase 8.1 — controller-detected prompt.  Rising edge from no
+       gamepad → gamepad connected, when controller mode is currently off
+       and the player hasn't dismissed the prompt with "Don't ask again".
+       Skip on tablet (mobile has its own touch UX) and on Deck (already
+       always controller-mode).  Allowed in lobby — a controller plugged
+       in at the menu is exactly when the prompt is most useful.
+
+       First-frame sync: seed from the current connection state without
+       firing.  Without this, a controller plugged in before the main
+       context started rendering would always look like a "rising edge"
+       on the first frame and pop the prompt even if the player just
+       launched with the pad already attached. */
+    {
+        static bool s_initialized   = false;
+        static bool s_lastConnected = false;
+        bool nowConnected = inputGamepadIsConnected();
+        if (!s_initialized) {
+            s_lastConnected = nowConnected;
+            s_initialized   = true;
+        } else if (nowConnected && !s_lastConnected &&
+                   !uiModeIsTablet() && !uiModeIsSteamDeck() &&
+                   !uiShouldUseControllerMode() &&
+                   uiControllerPromptAskOnConnectGet() &&
+                   !controllerPromptIsOpen()) {
+            controllerPromptOpen();
+        }
+        s_lastConnected = nowConnected;
+    }
+
+    /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
+       Pause action, default Start). Opens whenever a controller is connected
+       — matches the Escape-key trigger — so pad users always have a way in,
+       even on desktop where the Controller Mode pref is off. */
+    if (inputGamepadIsPauseEdge() && inputGamepadIsConnected()) {
+        deckPauseOpen();
+    }
+    /* Active-controller-disconnect open trigger: open pause overlay so the
+       player can recover (battery dies, dongle drops).  Skip in lobby
+       (keyboard UI) and when overlay is already open. */
+    if (inputGamepadConsumeActiveDisconnect() &&
+        uiShouldUseControllerMode() && cs && !clientSimIsInLobby(cs) &&
+        !deckPauseIsOpen()) {
+        deckPauseOpen();
+    }
+    /* Quick-chat open trigger: D-pad UP, in-game only.  Gamepad-universal
+       (not Deck-gated) — desktop gamepad players also benefit.  Skipped
+       in lobby because the lobby has its own chat UI, and skipped while
+       any in-game panel / overlay is open (settings, players, send-msg,
+       pause, popups) so D-pad nav inside those windows isn't also
+       interpreted as a quick-chat open. */
+    if (inputGamepadIsQuickChatEdge() && cs && !clientSimIsInLobby(cs) &&
+        !sdl3ImguiIsDialogOpen() && !quickChatIsOpen()) {
+        quickChatOpen();
+    }
+
+    /* B button — close the topmost open in-game panel.  Modal popups
+       (pause, quick-chat) close themselves via the p_open passed to
+       BeginPopupModal; ImGui's NavCancel only closes non-modal popups.
+       Regular ImGui windows (Settings, Players, Send Message, etc.)
+       aren't auto-closed by anything, so handle them here.  Skipped
+       while a popup is on the stack or a text input is active — those
+       want B for popup-close / clear-text first.
+
+       Accept both the SDL gamepad B (desktop pad) and Escape: on a
+       Steam launch Steam Input grabs the physical pad and hides it from
+       SDL, so B never arrives as ImGuiKey_GamepadFaceRight — it's
+       injected as Escape by imguiSteamNavFeedCurrentContext (and the
+       keyboard Escape lands the same way).  Without the Escape branch
+       these panels can't be closed with B on the Deck. */
+    {
+        ImGuiContext *ctx = ImGui::GetCurrentContext();
+        bool anyPopup = (ctx && ctx->OpenPopupStack.Size > 0);
+        bool cancelEdge =
+            (inputGamepadIsConnected() &&
+             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+        bool cancelClosedPanel = false;
+        if (cancelEdge && !anyPopup && !ImGui::GetIO().WantTextInput) {
+            if      (s_showSettings)       { s_showSettings = false;     cancelClosedPanel = true; }
+            else if (s_showSendMsg)        { s_showSendMsg = false;      cancelClosedPanel = true; }
+            else if (s_showPlayersPanel)   { s_showPlayersPanel = false; cancelClosedPanel = true; }
+            else if (s_brainSettingsOpen)  { s_brainSettingsOpen = false;cancelClosedPanel = true; }
+            else if (s_allianceVisible)    { s_allianceVisible = false;  cancelClosedPanel = true; }
+            else if (s_showSysInfo)        { s_showSysInfo = false;      cancelClosedPanel = true; }
+            else if (s_showNetInfo)        { s_showNetInfo = false;      cancelClosedPanel = true; }
+            else if (s_showGameInfo)       { s_showGameInfo = false;     cancelClosedPanel = true; }
+        }
+
+        /* Escape opens the pause overlay when a controller is connected and
+           nothing else is in the way — mirrors the Start-button trigger so
+           keyboard + pad users both have a way in (the menu bar is hidden in
+           controller mode). Only when Escape didn't just close a panel/popup
+           and we're in an active game (not the lobby). */
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
+            inputGamepadIsConnected() &&
+            !anyPopup && !cancelClosedPanel && !ImGui::GetIO().WantTextInput &&
+            cs && !clientSimIsInLobby(cs) &&
+            !deckPauseIsOpen() && !sdl3ImguiIsDialogOpen()) {
+            deckPauseOpen();
+        }
+    }
+
     if (uiModeIsTablet()) {
         sdl3ImguiTabletOverlay(cs);
     } else {
 #ifndef __APPLE__
-        renderMenuBar(cs);
+        /* Hide the menu bar in controller mode — controller-only players
+           can't reach the menu strip; the pause overlay replaces it.
+           macOS routes the menu through native NSMenu so the in-window
+           bar is never drawn there. */
+        if (!uiShouldUseControllerMode()) {
+            renderMenuBar(cs);
+        }
 #endif
+        /* DEBUG overlay: left-stick / turn / build-cursor magnitudes (0..1).
+           Gated on WB_CONTROLLER_DEBUG (input_gamepad.h). */
+        if (WB_CONTROLLER_DEBUG &&
+            inputGamepadIsConnected() && cs && !clientSimIsInLobby(cs)) {
+            ImGuiViewport *vp = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 8.0f,
+                                           vp->WorkPos.y + 8.0f),
+                                    ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+            ImGui::SetNextWindowBgAlpha(0.55f);
+            if (ImGui::Begin("##stickdbg", nullptr,
+                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                    ImGuiWindowFlags_NoSavedSettings |
+                    ImGuiWindowFlags_AlwaysAutoResize |
+                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav)) {
+                /* Scroll-method selector (experiment). Picking manual turns
+                   autoscroll off; the others turn it on. */
+                static const char *kScrollNames[4] = {
+                    "winbolo v1 manual", "winbolo v1 autoscroll",
+                    "enhanced autoscroll", "enhanced autoscroll, Canuck's"
+                };
+                int mech = clientSimGetScrollMechanism();
+                ImGui::SetNextItemWidth(200);
+                if (ImGui::Combo("scroll", &mech, kScrollNames, 4)) {
+                    clientSimSetScrollMechanism(mech);
+                    clientSimSetAutoScroll(cs, mech != 0);
+                }
+                ImGui::Separator();
+                ImGui::Text("stick mag: %.2f", g_dbgStickMag);
+                ImGui::ProgressBar(g_dbgStickMag, ImVec2(160, 0));
+                ImGui::Text("turn  mag: %.2f", g_dbgTurnMag);
+                ImGui::ProgressBar(g_dbgTurnMag, ImVec2(160, 0));
+                ImGui::Separator();
+                ImGui::Text("cursor stick: %.2f", g_dbgCursorStickMag);
+                ImGui::ProgressBar(g_dbgCursorStickMag, ImVec2(160, 0));
+                ImGui::Text("cursor move : %.2f", g_dbgCursorMoveMag);
+                ImGui::ProgressBar(g_dbgCursorMoveMag, ImVec2(160, 0));
+            }
+            ImGui::End();
+        }
+
+        /* Pause overlay + quick-chat overlay (no-ops when closed). */
+        deckPauseRender(cs);
+        quickChatRender(cs);
+        renderCtrlSendMsg(cs);
+        /* Controller-detected prompt — also a no-op when closed.
+           Rendered through the main context so it inherits
+           NavEnableGamepad for A/B selection. */
+        controllerPromptRender();
     }
 
     /* Detect when a menu-bar dropdown (child menu popup) just closed.
@@ -3637,6 +4235,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
     dialogDrawNavOutline();
     ImGui::EndFrame();
+    dialogDrawNavOutline();
     ImGui::Render();
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), s_renderer);
 
@@ -3785,17 +4384,32 @@ bool sdl3ImguiIsGameInfoOpen(void) {
 void sdl3ImguiShowSendMsg(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     if (!uiModeIsTablet()) {
-        if (open) {
-            if (!s_popSendMsg.open) {
-                popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
+        if (uiShouldUseControllerMode()) {
+            /* Controller: the simplified modal (renderCtrlSendMsg).  The
+               pop-out is a separate OS window with its own ImGui context that
+               receives no controller input — Steam-nav B/Escape feeds only the
+               main context and gamepad SDL events aren't routed to pop-outs —
+               so a pad user could open it but never close it. */
+            if (open) {
+                s_pendingCtrlSendMsg = true;
+                s_sendMsgCooldownEnd = 0;
+            } else {
+                s_showCtrlSendMsg = false;
             }
-            /* Match the modal-path side effects so the user gets a fresh
-             * cooldown and a focused input regardless of which path opened
-             * Send Message. */
-            s_sendMsgCooldownEnd = 0;
-            s_sendMsgFocusInput  = true;
         } else {
-            if (s_popSendMsg.open) popOutDestroy(&s_popSendMsg);
+            /* Mouse/keyboard desktop: the draggable pop-out window. */
+            if (open) {
+                if (!s_popSendMsg.open) {
+                    popOutCreate(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
+                }
+                /* Match the other paths' side effects so the user gets a
+                 * fresh cooldown and a focused input regardless of which
+                 * path opened Send Message. */
+                s_sendMsgCooldownEnd = 0;
+                s_sendMsgFocusInput  = true;
+            } else {
+                if (s_popSendMsg.open) popOutDestroy(&s_popSendMsg);
+            }
         }
         return;
     }
@@ -3887,6 +4501,10 @@ void sdl3ImguiShowPlayersPanel(bool open) {
         s_showSettings = false;
     }
 #endif
+}
+
+void sdl3ImguiTogglePlayersPanel(void) {
+    sdl3ImguiShowPlayersPanel(!s_showPlayersPanel);
 }
 
 bool sdl3ImguiWantsKeyboard(void) {
@@ -4069,6 +4687,7 @@ void sdl3ImguiShowKeySetup(void) {
 
 void sdl3ImguiCleanup(void) {
     if (!s_window) return;
+    inputGamepadShutdown();
     popOutDestroy(&s_popSysInfo);
     popOutDestroy(&s_popNetInfo);
     popOutDestroy(&s_popGameInfo);

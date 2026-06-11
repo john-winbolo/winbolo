@@ -87,6 +87,17 @@ struct ScrollState {
   bool  gunsightWasInside;  /* gunsight inside view last tick — edge-cross detector */
   bool  prevThreatTank[MAX_TANKS];
   bool  prevThreatPill[MAX_PILLS];
+
+  /* Canuck's threat alert-jump overlay (on top of the crosshair-edge push).
+   * peekPhase: 0 none, 1 sliding to threat, 2 holding, 3 sliding back.
+   * seenThreat* latches a threat we've already alerted on so we don't jump to
+   * it again until it leaves the concern radius. */
+  BYTE  peekPhase;
+  BYTE  peekTargetX, peekTargetY;
+  DWORD peekUntilTick;
+  BYTE  peekReturnX, peekReturnY;
+  bool  seenThreatTank[MAX_TANKS];
+  bool  seenThreatPill[MAX_PILLS];
 };
 
 /* ------------------------------------------------------------------
@@ -102,7 +113,8 @@ struct ScrollState {
 typedef enum {
   SCROLL_MECH_CLASSIC_NO_AUTOSCROLL = 0, /* original, autoscroll off */
   SCROLL_MECH_CLASSIC_AUTOSCROLL    = 1, /* original gunsight-edge autoscroll */
-  SCROLL_MECH_ENHANCED              = 2  /* current sub-tile / threat-aware */
+  SCROLL_MECH_ENHANCED              = 2, /* current sub-tile / threat-aware */
+  SCROLL_MECH_ANDREW_ENHANCED       = 3  /* Andrew's variant (WIP; = enhanced for now) */
 } ScrollMechanism;
 
 /* Compile-time default. Change this (or call scrollSetMechanism at

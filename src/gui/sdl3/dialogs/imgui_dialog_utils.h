@@ -32,6 +32,28 @@
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 
+/* Pulled in early so dialogApplyScaling() below can branch on Deck mode.
+ * (Same file also re-includes near s_devicePresets — that's fine, the
+ * header has its own guard.) */
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include "../../ui_mode.h"
+#ifdef __cplusplus
+}
+#endif
+
+/* ImGui-side UI scale on Deck.  Decoupled from the SDL_ttf integer zoom
+ * factor (which the in-game HUD uses for crisp bitmap rasterisation) —
+ * ImGui doesn't benefit from integer scaling, and 2x produced 40pt fonts
+ * + 2x layout that overflowed Deck's 1280x800 surface.  1.5x gives ~30pt
+ * dialog fonts and 1.5x layout, which is the right handheld viewing
+ * scale at ~14 inches and lets the existing `panelW = X * s` patterns
+ * fit without per-dialog tweaking.  Returns 1 elsewhere. */
+static inline float dialogDeckFontMul(void) {
+    return uiModeIsSteamDeck() ? 1.5f : 1.0f;
+}
+
 /* Unified mobile platform check — use BOLO_MOBILE instead of
  * repeating __ANDROID__ || __IPHONEOS__ everywhere. */
 #if defined(__ANDROID__) || defined(__IPHONEOS__)
@@ -83,17 +105,24 @@ static inline void dialogDismissKeyboard(SDL_Window *window) { (void)window; }
  * On desktop we control the dialog window size, so scale is always 1.0.
  * On Android (and similar full-screen platforms) the dialog renders into
  * the device's full window, so we scale based on screen height.
- * Reference height is 540px (1x scale). */
+ * Reference height is 540px (1x scale).
+ * Steam Deck multiplies the result by the SDL_ttf zoom factor so every
+ * `panelW = X * s` / `Button(..., ImVec2(W * s, ...))` pattern across the
+ * dialog code automatically scales to match the bumped ImGui font. */
 static inline float dialogComputeScale(int screenW, int screenH) {
     (void)screenW;
+    float scale;
 #if BOLO_MOBILE
-    float scale = (float)screenH / 540.0f;
+    scale = (float)screenH / 540.0f;
     if (scale < 1.0f) scale = 1.0f;
-    return scale;
 #else
     (void)screenH;
-    return 1.0f;
+    scale = 1.0f;
 #endif
+    if (uiModeIsSteamDeck()) {
+        scale *= dialogDeckFontMul();
+    }
+    return scale;
 }
 
 /* Load font data via SDL_IOFromFile (works on Android assets and desktop).
@@ -382,10 +411,16 @@ static inline void dialogApplyScaling(float uiScale) {
 
     imguiLoadBoloFont(20.0f * uiScale);
 
-    /* Apply touch-friendly padding on high-scale displays (mobile, Steam Deck) */
     ImGuiStyle &style = ImGui::GetStyle();
-    style.TouchExtraPadding = ImVec2(8.0f, 8.0f);
     style.ScaleAllSizes(uiScale);
+
+    /* Touch-friendly padding for mobile (uiScale > 1 because of physical
+     * screen size).  Skipped on Deck: it routes here too (uiScale ==
+     * deckMul ≥ 2 from dialogComputeScale) but uses desktop hover/click
+     * feel, not touch. */
+    if (!uiModeIsSteamDeck()) {
+        style.TouchExtraPadding = ImVec2(8.0f, 8.0f);
+    }
 }
 
 /* Save logical presentation before a dialog (Android needs this).
@@ -496,7 +531,7 @@ static const DevicePreset s_devicePresets[] = {
   { "iPad Pro 12.9\"",      2732, 2048,  UI_MODE_TABLET  },
   { "Samsung Galaxy Tab S9", 2560, 1600, UI_MODE_TABLET  },
   /* Handheld (landscape) */
-  { "Steam Deck",           1280,  800,  UI_MODE_TABLET  },
+  { "Steam Deck",           1280,  800,  UI_MODE_STEAM_DECK },
   /* Back to desktop */
   { "Desktop",                 0,    0,  UI_MODE_DESKTOP },
 };
@@ -511,8 +546,16 @@ extern int g_currentDevicePreset;
 #endif
 
 /* Set dialog window size; only re-center if the size actually changed.
- * If a device preset is active, uses the preset dimensions instead. */
+ * If a device preset is active, uses the preset dimensions instead.
+ * In controller mode (Deck always, desktop when the player opted in via
+ * Controller Mode), leave the host window alone so dialogs render into
+ * the existing fullscreen surface — clamping to a 1024x768 default
+ * would clip below smaller-than-1024 screen heights, and forcing a
+ * resize while the player is using a controller is jarring. */
 static inline void dialogSetWindowSize(SDL_Window *window, int w, int h) {
+    if (uiShouldUseControllerMode()) {
+        return;
+    }
     if (g_currentDevicePreset >= 0 && g_currentDevicePreset < s_numDevicePresets &&
         s_devicePresets[g_currentDevicePreset].mode != UI_MODE_DESKTOP) {
         w = s_devicePresets[g_currentDevicePreset].w;
@@ -560,6 +603,7 @@ static inline void dialogApplyDevicePreset(SDL_Window *win, int idx) {
     }
 
     WB_LOG_INFO(WB_LOG_CAT_GUI, "Device preset: %s (%dx%d, %s)", p->name, p->w, p->h,
+            p->mode == UI_MODE_STEAM_DECK ? "STEAM_DECK" :
             p->mode == UI_MODE_TABLET ? "TABLET" : "DESKTOP");
 }
 
@@ -602,6 +646,33 @@ static inline void dialogRestorePosition(SDL_Window *win) {
     if (win && gameFrontDialogX >= 0 && gameFrontDialogY >= 0) {
         SDL_SetWindowPosition(win, gameFrontDialogX, gameFrontDialogY);
     }
+}
+
+/* Convert a gamepad B-button (EAST) press into a window-close request
+ * for the given dialog window.  Lets controller users cancel any
+ * standalone dialog with B, routing through the dialog's existing
+ * SDL_EVENT_WINDOW_CLOSE_REQUESTED handler so behaviour matches the X
+ * close button.  Skipped while:
+ *   - an ImGui popup is open (B closes the popup)
+ *   - text input is active (B clears the field)
+ *   - nav focus is inside a child window or table scroll region
+ *     (B pops out of the sub-region via ImGui's NavCancel)
+ * Call AFTER ImGui_ImplSDL3_ProcessEvent so ImGui still sees the raw
+ * gamepad event (it polls button state, not the event, but be safe). */
+extern "C" bool dialogNavIsInsideSubRegion(void);  /* imgui_nav_outline.cpp */
+extern "C" bool dialogNavWasInsideSubRegionAtFrameStart(void);  /* imgui_nav_outline.cpp */
+static inline bool dialogHandleGamepadCancelEvent(SDL_Window *window, SDL_Event *ev) {
+    if (!ev || !window) return false;
+    if (ev->type != SDL_EVENT_GAMEPAD_BUTTON_DOWN) return false;
+    if (ev->gbutton.button != SDL_GAMEPAD_BUTTON_EAST) return false;
+    if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup)) return false;
+    if (ImGui::GetIO().WantTextInput) return false;
+    if (dialogNavIsInsideSubRegion()) return false;
+    SDL_zero(*ev);
+    ev->type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
+    ev->window.windowID = SDL_GetWindowID(window);
+    ev->window.timestamp = SDL_GetTicksNS();
+    return true;
 }
 
 /* Check an SDL event for a winbolo:// URL drop.

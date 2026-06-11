@@ -26,6 +26,7 @@
 *********************************************************/
 
 #include <SDL3/SDL.h>
+#include <math.h>
 #include "global.h"
 #include "client_sim.h"
 #include "client_render.h"
@@ -33,9 +34,12 @@
 #include "../tiles.h"
 #include "input.h"
 #include "input_touch.h"
+#include "input_gamepad.h"
+#include "build_cursor.h"
 #include "sdl3imgui.h"
 #include "sdl3draw.h"
 #include "../ui_mode.h"
+#include "../clientmutex.h"
 
 extern bool smoothScrollingEnabled;
 
@@ -116,6 +120,7 @@ bool inputSetup(void) {
   pillViewStepMs = 0;
   smoothScrollAccumX = 0;
   smoothScrollAccumY = 0;
+  buildCursorReset();
   return TRUE;
 }
 
@@ -147,12 +152,24 @@ static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
     inPill = clientSimIsInPillView(cs);
   }
 
+  /* Gamepad right stick steps pills too while in pill view (its normal map
+     scroll is suppressed here). */
+  bool padUp = false, padDown = false, padLeft = false, padRight = false;
+  if (inPill && inputGamepadIsConnected()) {
+    float gdx = 0.0f, gdy = 0.0f;
+    if (inputGamepadGetScrollDirection(&gdx, &gdy)) {
+      const float th = 0.5f;
+      padRight = gdx >  th; padLeft = gdx < -th;
+      padDown  = gdy >  th; padUp   = gdy < -th;
+    }
+  }
+
   /* Directional pill stepping — only in pill view, on the slower step
    * cadence (computed from inPill so it can't fire on the entering press). */
-  bool stepUp    = inPill && KEY_DOWN(setKeys->kiScrollUp);
-  bool stepDown  = inPill && KEY_DOWN(setKeys->kiScrollDown);
-  bool stepLeft  = inPill && KEY_DOWN(setKeys->kiScrollLeft);
-  bool stepRight = inPill && KEY_DOWN(setKeys->kiScrollRight);
+  bool stepUp    = inPill && (KEY_DOWN(setKeys->kiScrollUp)    || padUp);
+  bool stepDown  = inPill && (KEY_DOWN(setKeys->kiScrollDown)  || padDown);
+  bool stepLeft  = inPill && (KEY_DOWN(setKeys->kiScrollLeft)  || padLeft);
+  bool stepRight = inPill && (KEY_DOWN(setKeys->kiScrollRight) || padRight);
   if (!stepUp && !stepDown && !stepLeft && !stepRight) {
     pillViewStepMs = 0;
   } else if (pillViewStepMs == 0 ||
@@ -168,34 +185,24 @@ static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
 }
 
 /*********************************************************
-*NAME:          smoothScrollTick
+*NAME:          smoothScrollAccumulate
 *PURPOSE:
-*  Smooth (pixel-level) arrow-key scrolling.  Advances a
-*  sub-tile pixel accumulator each call; commits full-tile
-*  crossings to the engine via clientRenderFrame and pushes
-*  the remainder to sdl3DrawSetDragOffset for sub-tile
-*  rendering.
+*  Pure accumulator: feeds pixel deltas (in zoomed pixels)
+*  into the smooth-scroll sub-tile accumulator. Commits
+*  whole-tile crossings to the engine via clientRenderFrame
+*  and pushes the remainder to sdl3DrawSetDragOffset for
+*  sub-tile rendering.
 *
-*  When no scroll key is held, snaps the accumulator to
-*  the nearest tile boundary so the view comes to rest
-*  cleanly.
+*  When called with dx=dy=0 and no key/stick was held,
+*  snaps the accumulator to the nearest tile boundary so
+*  the view comes to rest cleanly.
 *********************************************************/
-static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
-  int dx = 0, dy = 0;
-
-  if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
-  if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
-  if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
-  if (KEY_DOWN(setKeys->kiScrollDown))  dy += 1;
-
+static void smoothScrollAccumulate(ClientSim *cs, int dx, int dy) {
   int zoom = sdl3DrawGetZoomFactor();
   if (zoom < 1) zoom = 1;
   int tileW = TILE_SIZE_X * zoom;
   int tileH = TILE_SIZE_Y * zoom;
-  int stepZoomed = smoothScrollSpeedPx * zoom;
-  if (stepZoomed < 1) stepZoomed = 1;
 
-  /* No direction held: snap to nearest tile boundary. */
   if (dx == 0 && dy == 0) {
     if (smoothScrollAccumX != 0 || smoothScrollAccumY != 0) {
       if (smoothScrollAccumX >  tileW / 2) clientRenderFrame(cs, right);
@@ -212,14 +219,15 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
   /* Don't ramp a sub-tile drag into an edge we can't actually cross
    * (manualScrollKeepsTankOnScreen would block the whole-tile commit).
    * Zero the blocked axis so the view rests instead of sliding-and-
-   * snapping against the edge. */
+   * snapping against the edge. dx/dy here are already in zoomed pixels
+   * (smoothScrollTick multiplied by the step), so no extra scaling. */
   if (dx > 0 && !clientRenderCanScroll(cs, right)) { dx = 0; smoothScrollAccumX = 0; }
   if (dx < 0 && !clientRenderCanScroll(cs, left))  { dx = 0; smoothScrollAccumX = 0; }
   if (dy > 0 && !clientRenderCanScroll(cs, down))  { dy = 0; smoothScrollAccumY = 0; }
   if (dy < 0 && !clientRenderCanScroll(cs, up))    { dy = 0; smoothScrollAccumY = 0; }
 
-  smoothScrollAccumX += dx * stepZoomed;
-  smoothScrollAccumY += dy * stepZoomed;
+  smoothScrollAccumX += dx;
+  smoothScrollAccumY += dy;
 
   while (smoothScrollAccumX >= tileW)  { clientRenderFrame(cs, right); smoothScrollAccumX -= tileW; }
   while (smoothScrollAccumX <= -tileW) { clientRenderFrame(cs, left);  smoothScrollAccumX += tileW; }
@@ -227,6 +235,116 @@ static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
   while (smoothScrollAccumY <= -tileH) { clientRenderFrame(cs, up);    smoothScrollAccumY += tileH; }
 
   sdl3DrawSetDragOffset(smoothScrollAccumX, smoothScrollAccumY);
+}
+
+/*********************************************************
+*NAME:          smoothScrollGetStepPx
+*PURPOSE:
+*  Returns the per-frame zoomed pixel step for one unit
+*  of input (keyboard direction or full-deflection stick).
+*********************************************************/
+static int smoothScrollGetStepPx(void) {
+  int zoom = sdl3DrawGetZoomFactor();
+  if (zoom < 1) zoom = 1;
+  int stepZoomed = smoothScrollSpeedPx * zoom;
+  if (stepZoomed < 1) stepZoomed = 1;
+  return stepZoomed;
+}
+
+/*********************************************************
+*NAME:          smoothScrollTick
+*PURPOSE:
+*  Sums keyboard and gamepad scroll contributions and feeds
+*  a single (dx, dy) into smoothScrollAccumulate per call.
+*  Unifying the two prevents the keyboard path's snap-to-tile
+*  branch from clearing a sub-tile accumulator that the
+*  gamepad path is still building up.
+*********************************************************/
+static void smoothScrollTick(ClientSim *cs, keyItems *setKeys) {
+  int dx = 0, dy = 0;
+  int step = smoothScrollGetStepPx();
+
+  /* Keyboard contribution (dx/dy in {-1, 0, +1}).  Only when smooth
+     scrolling is enabled — with it off the caller drives the scroll keys
+     through the legacy step-scroll path instead, so feeding them here too
+     would double-scroll.  The gamepad stick below is analog and always
+     uses this smooth path regardless of the preference. */
+  if (smoothScrollingEnabled) {
+    if (KEY_DOWN(setKeys->kiScrollLeft))  dx -= 1;
+    if (KEY_DOWN(setKeys->kiScrollRight)) dx += 1;
+    if (KEY_DOWN(setKeys->kiScrollUp))    dy -= 1;
+    if (KEY_DOWN(setKeys->kiScrollDown))  dy += 1;
+    dx *= step;
+    dy *= step;
+  }
+
+  /* Gamepad contribution (right stick, normalised).  When the free
+     build cursor is active the right stick steers the cursor instead
+     of scrolling — buildCursorTick handles its own camera follow, so
+     the scroll path gets no contribution from the stick that frame. */
+  g_dbgCursorStickMag = 0.0f;
+  g_dbgCursorMoveMag  = 0.0f;
+  if (inputGamepadIsConnected()) {
+    float fdx = 0.0f, fdy = 0.0f;
+    if (inputGamepadGetScrollDirection(&fdx, &fdy)) {
+      /* getScrollDirection returns the raw reach-scaled vector; apply the
+         relevant sensitivity here — build-cursor sensitivity while the cursor
+         is active, map-scroll sensitivity otherwise — so the two are tuned
+         independently. */
+      bool buildActive = buildCursorIsActive();
+      float sens = buildActive ? g_gamepadBuildCursorSensitivity
+                               : g_gamepadScrollSensitivity;
+      int gx = (int)(fdx * (float)step * sens);
+      int gy = (int)(fdy * (float)step * sens);
+      if (buildActive) {
+        /* DEBUG: right-stick reach and the resulting cursor move speed
+           (reach * sensitivity), both clamped to 0..1. */
+        float reach = sqrtf(fdx * fdx + fdy * fdy);
+        float mv    = reach * g_gamepadBuildCursorSensitivity;
+        g_dbgCursorStickMag = reach > 1.0f ? 1.0f : reach;
+        g_dbgCursorMoveMag  = mv > 1.0f ? 1.0f : mv;
+      }
+      /* Min 1px nudge so deadzone-grazing input still moves. */
+      if (gx == 0 && fdx >  0.0f) gx =  1;
+      if (gx == 0 && fdx <  0.0f) gx = -1;
+      if (gy == 0 && fdy >  0.0f) gy =  1;
+      if (gy == 0 && fdy <  0.0f) gy = -1;
+      if (buildActive) {
+        /* Build cursor is a reticle, always analog. */
+        buildCursorTick(cs, gx, gy);
+      } else if (smoothScrollingEnabled) {
+        /* Smooth map scroll. */
+        dx += gx;
+        dy += gy;
+      } else {
+        /* Smooth Scrolling off: the right stick steps whole tiles like the
+           legacy keyboard scroll (rate-limited), respecting the preference
+           rather than always gliding. */
+        static BYTE padScrollCount = 0;
+        padScrollCount++;
+        if (padScrollCount >= INPUT_SCROLL_WAIT_TIME) {
+          padScrollCount = 0;
+          const float th = 0.4f;
+          bool scrolled = FALSE;
+          if (fdx >  th) { clientRenderFrame(cs, right); scrolled = TRUE; }
+          if (fdx < -th) { clientRenderFrame(cs, left);  scrolled = TRUE; }
+          if (fdy >  th) { clientRenderFrame(cs, down);  scrolled = TRUE; }
+          if (fdy < -th) { clientRenderFrame(cs, up);    scrolled = TRUE; }
+          if (scrolled) clientSimSetAutoScrollOverride(cs, TRUE);
+        }
+      }
+    }
+  }
+
+  /* Latch the manual-scroll override on any user scroll input.
+     scrollAutoScroll honours the flag and skips its recenter pull
+     until the tank's screen position reaches NO_SCROLL_EDGE, at which
+     point it clears the flag and resumes tracking. */
+  if (dx != 0 || dy != 0) {
+    clientSimSetAutoScrollOverride(cs, TRUE);
+  }
+
+  smoothScrollAccumulate(cs, dx, dy);
 }
 
 /*********************************************************
@@ -244,6 +362,21 @@ void inputCleanup(void) {
 *  No-op for SDL3.
 *********************************************************/
 void inputActivate(void) {
+}
+
+/* End build-cursor mode.  When `execute` and the "exit executes the build"
+   option are both set, dispatch the build at the cursor tile first (keeping
+   the current build selection); then exit.  Cancel passes execute=false. */
+static void buildCursorEnd(ClientSim *cs, bool execute) {
+  if (execute && g_buildExitExecutes && buildCursorIsActive()) {
+    BYTE bx = 0, by = 0;
+    if (buildCursorGetTile(&bx, &by)) {
+      clientMutexWaitFor();
+      clientSimManMoveToMap(cs, bx, by, clientSimGetCurrentBuildSelect(cs));
+      clientMutexRelease();
+    }
+  }
+  buildCursorExit();
 }
 
 /*********************************************************
@@ -285,10 +418,170 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     tb = TRIGHT;
   }
 
-  /* Combine with touch joystick input in tablet mode */
+  /* Movement priority: keyboard -> gamepad -> touch.
+     Gamepad outranks touch on devices that have both
+     (e.g. Steam Deck in dock with touchscreen monitor + pad). */
+  if (tb == TNONE && inputGamepadIsConnected()) {
+    tb = inputGamepadGetMovement(clientSimGetTank256Dir(cs));
+  }
   if (tb == TNONE && uiModeIsTablet()) {
     inputTouchSetTankAngle(clientSimGetTank256Dir(cs));
     tb = inputTouchGetMovement();
+  }
+
+  /* Lock direction (controller, while held): drop the turn component so the
+     tank keeps its heading and the stick only drives forward/back along it. */
+  if (inputGamepadIsLockHeadingHeld()) {
+    switch (tb) {
+      case TLEFT:      case TRIGHT:      tb = TNONE;   break;
+      case TLEFTACCEL: case TRIGHTACCEL: tb = TACCEL;  break;
+      case TLEFTDECEL: case TRIGHTDECEL: tb = TDECEL;  break;
+      default: break;
+    }
+  }
+
+  /* Gamepad-only actions: build-type cycle, builder confirm, view toggle. */
+  if (inputGamepadIsConnected()) {
+    int delta = inputGamepadGetBuildSelectChange();
+    if (delta != 0) {
+      clientSimCycleBuildSelect(cs, delta);
+      /* Sync the status-panel's cached gCurrentBuildSelect — the mouse
+         click path does this at sdl3draw.c:589, but the cycle only
+         updates the ClientSim field. Without this the left-side indent
+         doesn't move when D-pad cycles. */
+      sdl3DrawSelectIndentsOn(clientSimGetCurrentBuildSelect(cs), 0, 0);
+    }
+
+    /* Build-cursor toggle gesture:
+         - quick tap     -> toggle cursor mode (sticky);
+         - hold >200ms   -> momentary (opt): cursor on while held, off on
+                            release — "quick build, then back to autoscroll";
+         - double-tap    -> (opt) build a road directly under the tank, leaving
+                            the build selection and cursor position unchanged.
+       Turning cursor mode OFF dispatches the build first when the "exiting
+       executes the build" option is on; the Cancel binding exits without it. */
+    {
+      const Uint32 BC_HOLD_MS = 200;
+      const Uint32 BC_DTAP_MS = 300;
+      static Uint32 s_bcDownTime        = 0;
+      static bool   s_bcPressed         = false;
+      static bool   s_bcHeldMode        = false;
+      static bool   s_bcWasOffAtPress   = false;
+      static bool   s_bcModeBeforePress = false;
+      static bool   s_bcDoubleTap       = false;
+      static Uint32 s_bcLastReleaseTime = 0;
+      static bool   s_bcTapPending      = false;
+
+      Uint32 nowMs  = SDL_GetTicks();
+      bool   bcHeld = inputGamepadIsBuildCursorToggleHeld();
+
+      /* Cancel binding: leave build mode without building, whatever the
+         exit-executes option says.  Reset the gesture state too. */
+      if (inputGamepadIsBuildCancelEdge()) {
+        if (buildCursorIsActive()) buildCursorExit();
+        s_bcPressed = false; s_bcDoubleTap = false;
+        s_bcTapPending = false; s_bcHeldMode = false;
+      }
+
+      if (inputGamepadIsBuildCursorToggleEdge()) {
+        if (g_buildDoubleTapRoad && s_bcTapPending &&
+            (nowMs - s_bcLastReleaseTime) <= BC_DTAP_MS) {
+          /* Second tap of a double-tap: build a road under the tank.  Pass
+             BsRoad explicitly so the player's current build selection is left
+             alone, and don't touch the cursor position.  Undo the first tap's
+             toggle so build mode ends up where it started (plain exit — not a
+             build-on-exit). */
+          BYTE tx = 0, ty = 0;
+          if (clientSimGetMyTankMapPos(cs, &tx, &ty)) {
+            clientMutexWaitFor();
+            clientSimManMoveToMap(cs, tx, ty, BsRoad);
+            clientMutexRelease();
+          }
+          if (buildCursorIsActive() != s_bcModeBeforePress) {
+            buildCursorToggle(cs);
+          }
+          s_bcTapPending = false;
+          s_bcDoubleTap  = true;
+          s_bcPressed    = true;
+          s_bcDownTime   = nowMs;
+          s_bcHeldMode   = false;
+        } else {
+          /* Fresh press — toggle immediately (operate as usual). */
+          s_bcModeBeforePress = buildCursorIsActive();
+          s_bcWasOffAtPress   = !buildCursorIsActive();
+          if (buildCursorIsActive()) {
+            buildCursorEnd(cs, /*execute=*/true);   /* tap-off: build-on-exit */
+          } else {
+            buildCursorToggle(cs);                  /* turn on */
+          }
+          s_bcPressed    = true;
+          s_bcDownTime   = nowMs;
+          s_bcHeldMode   = false;
+          s_bcDoubleTap  = false;
+          s_bcTapPending = false;
+        }
+      }
+
+      /* Arm momentary mode once held past the threshold (only when enabled and
+         this press turned the cursor ON). */
+      if (g_buildHoldMomentary && s_bcPressed && !s_bcDoubleTap &&
+          s_bcWasOffAtPress && !s_bcHeldMode &&
+          (nowMs - s_bcDownTime) > BC_HOLD_MS) {
+        s_bcHeldMode = true;
+      }
+
+      /* Release edge (held went false). */
+      if (s_bcPressed && !bcHeld) {
+        s_bcPressed = false;
+        if (s_bcDoubleTap) {
+          s_bcDoubleTap  = false;
+          s_bcTapPending = false;
+        } else if (s_bcHeldMode) {
+          /* Momentary release: end build mode (build-on-exit if enabled). */
+          buildCursorEnd(cs, /*execute=*/true);
+          s_bcTapPending = false;
+        } else {
+          /* Quick tap: keep it sticky; remember for a possible double-tap. */
+          s_bcLastReleaseTime = nowMs;
+          s_bcTapPending      = true;
+        }
+      }
+    }
+
+    if (inputGamepadIsViewPlayersEdge()) {
+      sdl3ImguiTogglePlayersPanel();
+    }
+
+    if (inputGamepadIsTankViewEdge()) {
+      clientSimTankView(cs);
+    }
+
+    if (inputGamepadIsBuilderConfirmEdge()) {
+      BYTE bx, by;
+      if (buildCursorGetTargetTile(&bx, &by)) {
+        /* Dispatch to the build cursor's stored target tile.  This works
+           whether cursor mode is ON or OFF: once a target has been set (by
+           the stick or the mouse) it persists, so the player can target a
+           tile, turn cursor mode off, drive out of range, and still Build Now
+           there. The target stays put for repeated builds at the same spot. */
+        clientMutexWaitFor();
+        clientSimManMoveToMap(cs, bx, by, clientSimGetCurrentBuildSelect(cs));
+        clientMutexRelease();
+      } else {
+        /* No target set yet — fall back to the gunsight tile. */
+        BYTE gsX = 0, gsY = 0;
+        clientSimGetGunsightTile(cs, &gsX, &gsY);
+        clientMutexWaitFor();
+        clientSimManMoveToMap(cs, gsX, gsY, clientSimGetCurrentBuildSelect(cs));
+        clientMutexRelease();
+      }
+    }
+
+    if (inputGamepadIsViewToggleEdge()) {
+      static bool inPillView = false;
+      if (inPillView) { clientSimTankView(cs); inPillView = false; }
+      else            { clientSimPillView(cs, 0, 0); inPillView = true; }
+    }
   }
 
   /* Mine laying is now handled via InputPacket — see inputIsMineKeyPressed() */
@@ -317,28 +610,37 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     smoothScrollAccumX = 0;
     smoothScrollAccumY = 0;
     sdl3DrawSetDragOffset(0, 0);
-  } else if (smoothScrollingEnabled) {
-    smoothScrollTick(cs, setKeys);
   } else {
-    /* Drop any stale sub-tile accumulation from a previous smooth-scroll session. */
-    smoothScrollAccumX = 0;
-    smoothScrollAccumY = 0;
-    scrollKeyCount++;
-    if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
-      scrollKeyCount = 0;
-      if (KEY_DOWN(setKeys->kiScrollUp))    { clientRenderFrame(cs, up); }
-      if (KEY_DOWN(setKeys->kiScrollDown))  { clientRenderFrame(cs, down); }
-      if (KEY_DOWN(setKeys->kiScrollLeft))  { clientRenderFrame(cs, left); }
-      if (KEY_DOWN(setKeys->kiScrollRight)) { clientRenderFrame(cs, right); }
+    /* smoothScrollTick always runs so the gamepad right stick scrolls
+       the map (and steers the build cursor) regardless of the keyboard
+       smooth-scroll preference — the stick is analog and inherently
+       smooth.  Its keyboard contribution is internally gated on
+       smoothScrollingEnabled; when that is off, the scroll keys fall
+       through to the legacy step-scroll below. */
+    smoothScrollTick(cs, setKeys);
+    if (!smoothScrollingEnabled) {
+      scrollKeyCount++;
+      if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
+        scrollKeyCount = 0;
+        bool scrolled = FALSE;
+        if (KEY_DOWN(setKeys->kiScrollUp))    { clientRenderFrame(cs, up);    scrolled = TRUE; }
+        if (KEY_DOWN(setKeys->kiScrollDown))  { clientRenderFrame(cs, down);  scrolled = TRUE; }
+        if (KEY_DOWN(setKeys->kiScrollLeft))  { clientRenderFrame(cs, left);  scrolled = TRUE; }
+        if (KEY_DOWN(setKeys->kiScrollRight)) { clientRenderFrame(cs, right); scrolled = TRUE; }
+        if (scrolled) clientSimSetAutoScrollOverride(cs, TRUE);
+      }
     }
   }
 
   gunsightKeyCount++;
   if (gunsightKeyCount >= INPUT_GUNSIGHT_WAIT_TIME) {
-    if (KEY_DOWN(setKeys->kiGunIncrease)) {
+    /* Consume the gamepad edge once; merge with keyboard so a sub-rate
+       gamepad press isn't dropped by the WAIT_TIME branch. */
+    int padDelta = inputGamepadGetGunsightChange();
+    if (KEY_DOWN(setKeys->kiGunIncrease) || padDelta > 0) {
       lastGunsightAdj = 1;  /* increase — flows through InputPacket */
       gunsightKeyCount = 0;
-    } else if (KEY_DOWN(setKeys->kiGunDecrease)) {
+    } else if (KEY_DOWN(setKeys->kiGunDecrease) || padDelta < 0) {
       lastGunsightAdj = 2;  /* decrease — flows through InputPacket */
       gunsightKeyCount = 0;
     } else if (gunsightKeyCount > (INPUT_GUNSIGHT_WAIT_TIME + 1)) {
@@ -372,21 +674,25 @@ void inputScroll(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     return;
   }
 
+  /* smoothScrollTick always runs so the gamepad right stick scrolls (and
+     steers the build cursor) regardless of the keyboard smooth-scroll
+     preference.  Its keyboard contribution is internally gated on
+     smoothScrollingEnabled; when off, the scroll keys fall through to the
+     legacy step-scroll below. */
+  smoothScrollTick(cs, setKeys);
   if (smoothScrollingEnabled) {
-    smoothScrollTick(cs, setKeys);
     return;
   }
 
-  /* Drop any stale sub-tile accumulation from a previous smooth-scroll session. */
-  smoothScrollAccumX = 0;
-  smoothScrollAccumY = 0;
   scrollKeyCount++;
   if (scrollKeyCount >= INPUT_SCROLL_WAIT_TIME) {
     scrollKeyCount = 0;
-    if (KEY_DOWN(setKeys->kiScrollUp))    { clientRenderFrame(cs, up); }
-    if (KEY_DOWN(setKeys->kiScrollDown))  { clientRenderFrame(cs, down); }
-    if (KEY_DOWN(setKeys->kiScrollLeft))  { clientRenderFrame(cs, left); }
-    if (KEY_DOWN(setKeys->kiScrollRight)) { clientRenderFrame(cs, right); }
+    bool scrolled = FALSE;
+    if (KEY_DOWN(setKeys->kiScrollUp))    { clientRenderFrame(cs, up);    scrolled = TRUE; }
+    if (KEY_DOWN(setKeys->kiScrollDown))  { clientRenderFrame(cs, down);  scrolled = TRUE; }
+    if (KEY_DOWN(setKeys->kiScrollLeft))  { clientRenderFrame(cs, left);  scrolled = TRUE; }
+    if (KEY_DOWN(setKeys->kiScrollRight)) { clientRenderFrame(cs, right); scrolled = TRUE; }
+    if (scrolled) clientSimSetAutoScrollOverride(cs, TRUE);
   }
 }
 
@@ -403,7 +709,9 @@ bool inputIsFireKeyPressed(keyItems *setKeys, bool isMenu) {
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
     return uiModeIsTablet() ? inputTouchIsFirePressed() : FALSE;
   }
-  return KEY_DOWN(setKeys->kiShoot) || (uiModeIsTablet() && inputTouchIsFirePressed());
+  return KEY_DOWN(setKeys->kiShoot)
+      || (uiModeIsTablet() && inputTouchIsFirePressed())
+      || (inputGamepadIsConnected() && inputGamepadIsFireHeld());
 }
 
 /*********************************************************
@@ -423,8 +731,9 @@ bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu) {
     return uiModeIsTablet() ? inputTouchIsMinePressed() : FALSE;
   }
 
-  bool touchMine = uiModeIsTablet() ? inputTouchIsMinePressed() : false;
-  return KEY_DOWN(setKeys->kiLayMine) || touchMine;
+  bool touchMine   = uiModeIsTablet() ? inputTouchIsMinePressed() : false;
+  bool gamepadMine = inputGamepadIsConnected() ? inputGamepadIsMineHeld() : false;
+  return KEY_DOWN(setKeys->kiLayMine) || touchMine || gamepadMine;
 }
 
 /*********************************************************

@@ -28,6 +28,8 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_nav_outline.h"
+#include "../imgui_steam_nav.h"
 #include "dialog_footer.h"
 
 extern "C" {
@@ -70,6 +72,8 @@ extern "C" int imguiTrackerSetupShow(void) {
     imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -100,6 +104,7 @@ extern "C" int imguiTrackerSetupShow(void) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT ||
@@ -114,6 +119,8 @@ extern "C" int imguiTrackerSetupShow(void) {
         dialogResetTextInputArea(window);
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
 
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);

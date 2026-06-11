@@ -183,10 +183,10 @@ STR_TUTORIAL22=Przed tobą jest bunkier i kilka baz zaopatrzenia,\nktóre dostar
 STR_TUTORIAL23=Z cierpliwością i ostrożnością powinieneś dać radę\nzniszczyć ten bunkier. Wykorzystaj umiejętności,\nktórych się nauczyłeś, aby było łatwiej:\n\n\nUkryj się w lesie, aby bunkier cię nie widział, ścinaj\ndrzewa, buduj drogi, aby twój czołg poruszał się\nszybciej, i buduj budynki, które dadzą osłonę przed\npociskami z bunkra.
 STR_TUTORIAL24=Po pokonaniu tego bunkra ostatnim wyzwaniem\nsamouczka jest zniszczenie dwóch bunkrów\nstrzegących wyjścia, zbudowanie łodzi i ucieczka.\n\n\nZwróć szczególną uwagę na poziom pancerza czołgu —\njeśli czołg zostanie zniszczony, będziesz musiał\nzaczynać z nowym czołgiem na nowej łodzi na morzu.
 STR_TUTORIAL25=Gratulacje. Ukończyłeś samouczek WinBolo.\n\n\n\nTeraz zorganizuj kilku znajomych do gry i przekonaj\nsię, jak to jest rywalizować z inteligentnymi ludzkimi\nprzeciwnikami zamiast nieruchomych, bezmyślnych\ncelów.\n\nJeśli chciałbyś później powtórzyć samouczek, możesz\nuruchomić go ponownie z menu Ustawień.
-STR_TUTORIAL_START01=Witaj w samouczku WinBolo. Ta wyspa wprowadza\npodstawowe zasady WinBolo i prowadzi cię przez\nnie po kolei. Każda nowa zasada zostanie opisana\nw oknie podobnym do tego.\n\nPo przeczytaniu każdej wiadomości możesz przejść\ndalej, klikając przycisk "OK" myszą lub po prostu\nnaciskając klawisz <Return> na klawiaturze
+STR_TUTORIAL_START01=Witaj w samouczku WinBolo. Ta wyspa wprowadza\npodstawowe zasady WinBolo i prowadzi cię przez\nnie po kolei. Każda nowa zasada zostanie opisana\nw oknie podobnym do tego.\n\nPo przeczytaniu każdej wiadomości\nnaciśnij {DISMISS}, by kontynuować.
 STR_TUTORIAL_START02=WinBolo to jedyny autoryzowany klon klasycznej macintoshowej gry sieciowej Bolo autorstwa Stuarta Cheshire'a.\nWskazówki strategiczne i inne informacje znajdziesz na oficjalnej stronie:\n\nhttps://www.winbolo.com\n\nLub dołącz do nas na Reddicie i Discordzie\n
 STR_TUTORIAL_START03=Krótka uwaga o grze przez internet.\n\nJeśli dołączysz do gry online i wystąpi dużo błędów\nsieciowych, opuść grę natychmiast, zanim\nzepsujesz ją innym graczom.
-STR_TUTORIAL_START04=Sterujesz czołgiem, który aktualnie znajduje się na\nłodzi na morzu. Naciśnij {ACCEL}, aby czołg (i łódź)\nruszył naprzód, a {BRAKE}, aby zwolnił i się\nzatrzymał.\n\nNie naciskaj klawiszy jak przy pisaniu listu —\nprzytrzymaj je, aż czołg osiągnie żądaną prędkość,\na potem puść. Naciśnij teraz {ACCEL}, aby łódź\npopłynęła w stronę lądu.\n(Naciśnij najpierw <Return>, aby zamknąć to okno)
+STR_TUTORIAL_START04=Sterujesz czołgiem, który aktualnie znajduje się na\nłodzi na morzu. Naciśnij {ACCEL}, aby czołg (i łódź)\nruszył naprzód, a {BRAKE}, aby zwolnił i się\nzatrzymał.\n\nNie naciskaj klawiszy jak przy pisaniu listu —\nprzytrzymaj je, aż czołg osiągnie żądaną prędkość,\na potem puść. Naciśnij teraz {ACCEL}, aby łódź\npopłynęła w stronę lądu.\n(Naciśnij najpierw {DISMISS}, aby zamknąć to okno)
 STR_TUTORIAL01_TOUCH=Przed tobą jest krótka rzeka prowadząca w głąb lądu.\nPrzesuń drążek do przodu, aby pokierować łodzią\ndo końca rzeki.\n\nGdy tam dotrzesz, trzymaj drążek przesunięty\ndo przodu. Czołg zejdzie z łodzi, a łódź pozostanie\nzacumowana na końcu rzeki
 STR_TUTORIAL02_TOUCH=Jesteś teraz na trawie. Czołg porusza się po trawie\ndość szybko.\n\n\nTrzymaj drążek przesunięty do przodu, aby\nprzejechać do lasu.
 STR_TUTORIAL03_TOUCH=Jesteś teraz w lesie. Czołg porusza się w lesie\nwolniej niż na trawie.\n\n\nTrzymaj drążek przesunięty do przodu, aby\nprzejechać do bagna.
@@ -1138,6 +1138,34 @@ STR_DLGSYSINFO_SIMULATION=Symulacja
 STR_DLGSYSINFO_BOTPREP=Przygotowanie botów
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Przekroczenia Brain
 
+# Kontroler – etykiety akcji
+STR_GP_SECTION=Kontroler
+STR_GP_REBIND_PROMPT=Naciśnij przycisk lub wychyl spust...
+STR_GP_ACTION_FIRE=Strzał
+STR_GP_ACTION_MINE=Połóż minę
+STR_GP_ACTION_BUILD_CONFIRM=Potwierdź budowę
+STR_GP_ACTION_VIEW_CYCLE=Przełącz widok
+STR_GP_ACTION_GUNSIGHT_DEC=Zmniejsz zasięg celownika
+STR_GP_ACTION_GUNSIGHT_INC=Zwiększ zasięg celownika
+STR_GP_ACTION_BUILD_PREV=Poprzedni typ budowy
+STR_GP_ACTION_BUILD_NEXT=Następny typ budowy
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Przełącz kursor budowy
+STR_GP_ACTION_QUICK_CHAT=Szybki czat
+STR_GP_ACTION_PAUSE=Pauza
+STR_GP_ACTION_VIEW_PLAYERS=Lista graczy
+
+# Tryb kontrolera – ustawienie i monit o połączeniu (Phase 8.1)
+STR_CTRL_MODE_HEADER=Tryb kontrolera
+STR_CTRL_MODE_OFF=Wył.
+STR_CTRL_MODE_ON=Wł.
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Pytaj przy podłączeniu kontrolera
+STR_CTRL_PROMPT_TITLE=Wykryto kontroler
+STR_CTRL_PROMPT_LINE1=Podłączono gamepad.
+STR_CTRL_PROMPT_LINE2=Przełączyć do Trybu kontrolera?
+STR_CTRL_PROMPT_DESC=(Ukrywa pasek menu; Start otwiera przyjazne kontrolerowi menu pauzy.\nZmień w Ustawienia.)
+STR_CTRL_PROMPT_NOTNOW=Nie teraz
+STR_CTRL_PROMPT_DONTASK=Nie pytaj ponownie
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=O WinBolo
 STR_MENU_PREFERENCES=Preferencje…

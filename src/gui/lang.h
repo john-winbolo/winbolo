@@ -84,6 +84,7 @@
 
 /* Key setup dialog */
 #define STR_DLGKEYSETUP_TITLE               216
+#define STR_DLGKEYSETUP_TAB_KEYBOARD        1492
 #define STR_DLGKEYSETUP_DRIVETANK           218
 #define STR_DLGKEYSETUP_GUNRANGE            220
 #define STR_DLGKEYSETUP_WEAPONS             221
@@ -212,9 +213,9 @@
 
 /* Touch-mode (tablet/mobile) siblings of the tutorial strings whose
  * desktop wording references hardware keys or mouse clicks. The
- * sequencer picks these via tutorialResolveText() when uiModeIsTablet()
- * is true. Only the affected strings have siblings — the rest fall
- * through to the desktop entry unchanged. */
+ * sequencer picks these via tutorialResolveSegments() when
+ * uiModeIsTablet() is true. Only the affected strings have siblings —
+ * the rest fall through to the desktop entry unchanged. */
 #define STR_TUTORIAL01_TOUCH                468
 #define STR_TUTORIAL02_TOUCH                469
 #define STR_TUTORIAL03_TOUCH                470
@@ -1104,9 +1105,6 @@
 #define STR_NAME_INVALID_RESERVED_PREFIX    1212
 #define STR_NAME_INVALID_RESERVED_SUFFIX    1213
 
-/* Settings → Display: country-flag rendering preference (Phase 4). */
-#define STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS  1214
-
 /* Verified-priority collision policy (Phase 5). */
 #define STR_NAME_RENAMED_BY_VERIFIED        1215
 #define STR_NAME_TAKEN_BY_VERIFIED          1216
@@ -1340,6 +1338,35 @@
 #define STR_DLGLOBBY_SERVERDISP_INTERNET    1383
 /* Connectivity badge */
 #define STR_DLGLOBBY_CONN_TEST_TIP          1384
+
+/* Gamepad rebinding (Configure Keys → Controller section) */
+#define STR_GP_SECTION                      1467
+#define STR_GP_REBIND_PROMPT                1468
+#define STR_GP_ACTION_FIRE                  1469
+#define STR_GP_ACTION_MINE                  1470
+#define STR_GP_ACTION_BUILD_CONFIRM         1471
+#define STR_GP_ACTION_VIEW_CYCLE            1472
+#define STR_GP_ACTION_GUNSIGHT_DEC          1473
+#define STR_GP_ACTION_GUNSIGHT_INC          1474
+#define STR_GP_ACTION_BUILD_PREV            1475
+#define STR_GP_ACTION_BUILD_NEXT            1476
+#define STR_GP_ACTION_BUILD_CURSOR_TOGGLE   1477
+#define STR_GP_ACTION_QUICK_CHAT            1478
+#define STR_GP_ACTION_PAUSE                 1479
+#define STR_GP_ACTION_VIEW_PLAYERS          1480
+
+/* Controller Mode pref + connect prompt */
+#define STR_CTRL_MODE_HEADER                1481
+#define STR_CTRL_MODE_OFF                   1482
+#define STR_CTRL_MODE_ON                    1483
+#define STR_CTRL_MODE_AUTO                  1484
+#define STR_CTRL_MODE_ASK                   1485
+#define STR_CTRL_PROMPT_TITLE               1486
+#define STR_CTRL_PROMPT_LINE1               1487
+#define STR_CTRL_PROMPT_LINE2               1488
+#define STR_CTRL_PROMPT_DESC                1489
+#define STR_CTRL_PROMPT_NOTNOW              1490
+#define STR_CTRL_PROMPT_DONTASK             1491
 
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820

@@ -22,9 +22,19 @@ extern "C" {
 #endif
 
 typedef enum {
-  UI_MODE_DESKTOP = 0,
-  UI_MODE_TABLET  = 1
+  UI_MODE_DESKTOP    = 0,
+  UI_MODE_TABLET     = 1,
+  UI_MODE_STEAM_DECK = 2
 } UIMode;
+
+/* Controller-mode preference (Phase 8.1).  Off and On are explicit;
+   Auto opts in at startup if a gamepad is connected, otherwise off,
+   and never flips mid-session — the auto-open prompt covers hot-plug. */
+typedef enum {
+  CONTROLLER_MODE_OFF  = 0,
+  CONTROLLER_MODE_ON   = 1,
+  CONTROLLER_MODE_AUTO = 2
+} ControllerModePref;
 
 /*********************************************************
 *NAME:          uiModeDetect
@@ -52,9 +62,69 @@ void uiModeSet(UIMode m);
 /*********************************************************
 *NAME:          uiModeIsTablet
 *PURPOSE:
-*  Convenience: returns true if current mode is tablet.
+*  Returns true ONLY for UI_MODE_TABLET (iOS, Android,
+*  small touchscreens). Steam Deck uses the desktop UI
+*  as its baseline and does NOT inherit tablet behaviour
+*  (touch widgets, fullscreen overlay, no menu bar).
+*  Deck-specific divergences gate on uiModeIsSteamDeck().
 *********************************************************/
 bool uiModeIsTablet(void);
+
+/*********************************************************
+*NAME:          uiModeIsSteamDeck
+*PURPOSE:
+*  Convenience: returns true if current mode is Steam Deck.
+*********************************************************/
+bool uiModeIsSteamDeck(void);
+
+/*********************************************************
+*NAME:          uiModeIsSteamDeckHardware
+*PURPOSE:
+*  Hardware-only check: true if running on Steam Deck
+*  hardware (SteamDeck=1 hint/env, or /etc/os-release ID
+*  starts with "steamos"). Independent of the current UI
+*  mode, so callers can branch on real hardware before
+*  uiModeDetect() finalises s_currentMode.
+*********************************************************/
+bool uiModeIsSteamDeckHardware(void);
+
+/*********************************************************
+*NAME:          uiShouldUseControllerMode
+*PURPOSE:
+*  Phase 8.1: returns true when the UI should run in
+*  controller-first mode (menu bar hidden, Start opens the
+*  pause overlay, dialog auto-size disabled).  True when
+*  any of:
+*    - current UI mode is Steam Deck (always controller),
+*    - controllerMode pref is ON,
+*    - controllerMode is AUTO and a gamepad was connected
+*      at startup (snapshotted on first call).
+*  Does NOT flip mid-session for AUTO — the controller-
+*  detected prompt handles hot-plug.
+*********************************************************/
+bool uiShouldUseControllerMode(void);
+
+/*********************************************************
+*NAME:          uiControllerModeSet / Get
+*PURPOSE:
+*  In-process getter/setter for the controllerMode pref.
+*  The on-disk value is owned by gamefront.c; these mirror
+*  it so the pref is visible to callers (sdl3imgui /
+*  imgui_settings) without dragging gamefront.h into every
+*  TU.  Set from prefs load and from the settings UI.
+*********************************************************/
+void               uiControllerModeSet(ControllerModePref m);
+ControllerModePref uiControllerModeGet(void);
+
+/*********************************************************
+*NAME:          uiControllerPromptAskOnConnectSet/Get
+*PURPOSE:
+*  Mirrors the "ask when controller connected" pref.
+*  When the prompt's "Don't ask again" is chosen the value
+*  flips to false; the settings dialog can re-enable it.
+*********************************************************/
+void uiControllerPromptAskOnConnectSet(bool ask);
+bool uiControllerPromptAskOnConnectGet(void);
 
 #ifdef __cplusplus
 }

@@ -163,10 +163,10 @@ static const LangEntry langTable[] = {
     {407,  "With patience and caution you should be able to destroy this\npillbox. Use the skills you have learned to make it easier:\n\n\nHide in the forest so that the pillbox can't see you,\nfarm trees, build roads to make your tank move\nfaster, and build buildings to provide cover against\npillbox shots."},
     {408,  "After you manage to defeat this pillbox, your final\nchallenge of the tutorial is to take out the two\npillboxes guarding the exit, build a boat, and escape.\n\n\nTake special care to watch your tank's armour level -\nif you get your tank destroyed you'll have to start\nwith a new tank on a new boat out at sea again."},
     {409,  "Congratulations. You have completed the WinBolo\ntutorial.\n\n\n\nNow organise some friends to play with and find out\nwhat it is like to compete against intelligent human\nopponents instead of stationary unthinking targets.\n\nIf you'd like to replay the tutorial later, you can\nlaunch it again from the Settings menu."},
-    {410,  "Welcome to the WinBolo tutorial. This island introduces\nthe basic principles of WinBolo and leads you through\nthem one at a time. Each new principle will be\ndescribed in a window like this one.\n\nAfter reading each message, you can proceed by\nclicking the \"OK\" button on the mouse or simply\nby pressing the <Return> key on the keyboard"},
+    {410,  "Welcome to the WinBolo tutorial. This island introduces\nthe basic principles of WinBolo and leads you through\nthem one at a time. Each new principle will be\ndescribed in a window like this one.\n\nAfter reading each message,\npress {DISMISS} to continue."},
     {411,  "WinBolo is the only authorized clone of Stuart Cheshire's classic Macintosh network game, Bolo.\nYou can find strategy hints and other information from the official website:\n\nhttps://www.winbolo.com\n\nOr come join us on Reddit and Discord\n"},
     {412,  "One quick note about Internet play.\n\nIf you join an online game and there are a lot of network errors\nthen leave the game straight away before\nyou ruin the game for the other players."},
-    {413,  "You are in control of a tank, which is currently on a\nboat at sea. Press {ACCEL} to make the tank (and boat) go\nforwards, and press {BRAKE} to make it slow down and\nstop.\n\nDon't tap the keys as if you are typing a letter -\npress and hold them until the tank is going at the speed\nyou want and then let go. Press {ACCEL} now to make the\nboat drive forwards towards the land.\n(Press <Return> first to dismiss the window)"},
+    {413,  "You are in control of a tank, which is currently on a\nboat at sea. Press {ACCEL} to make the tank (and boat) go\nforwards, and press {BRAKE} to make it slow down and\nstop.\n\nDon't tap the keys as if you are typing a letter -\npress and hold them until the tank is going at the speed\nyou want and then let go. Press {ACCEL} now to make the\nboat drive forwards towards the land.\n(Press {DISMISS} first to dismiss the window)"},
     {414,  "You cannot build until your new man parachutes in"},
     {415,  "You cannot build that there"},
     {416,  "You don't have the trees you require to build that"},
@@ -1019,7 +1019,6 @@ static const LangEntry langTable[] = {
     {1211, "Player name mixes incompatible scripts."},
     {1212, "Player name cannot start with '*'."},
     {1213, "Player name cannot end with '-unverified'."},
-    {1214, "Show country flags in chat"},
     {1215, "{player} was renamed because {other} joined verified"},
     {1216, "That display name belongs to a verified player. Please pick another."},
     {1217, "That display name is in use by another verified player. Please pick another."},
@@ -1052,6 +1051,34 @@ static const LangEntry langTable[] = {
     {1236, "Simulation"},
     {1237, "Bot prep"},
     {1238, "Brain overruns"},
+    {1467, "Controller"},
+    {1468, "Press a button or pull a trigger..."},
+    {1469, "Fire"},
+    {1470, "Lay Mine"},
+    {1471, "Execute Build"},
+    {1472, "Cycle View"},
+    {1473, "Decrease Gunsight"},
+    {1474, "Increase Gunsight"},
+    {1475, "Previous Build Type"},
+    {1476, "Next Build Type"},
+    {1477, "Toggle Build Cursor"},
+    {1478, "Quick Chat"},
+    {1479, "Pause"},
+    {1480, "Status Overlay"},
+
+    /* Controller Mode pref + connect prompt */
+    {1481, "Controller Mode"},
+    {1482, "Off"},
+    {1483, "On"},
+    {1484, "Auto"},
+    {1485, "Ask when controller connected"},
+    {1486, "Controller detected"},
+    {1487, "A gamepad has been connected."},
+    {1488, "Switch to Controller Mode?"},
+    {1489, "(Hides the menu bar; Start opens a controller-friendly pause menu.\nChange later in Settings.)"},
+    {1490, "Not now"},
+    {1491, "Don't ask again"},
+    {1492, "Keyboard"},
 
     /* macOS native menu — App / File / Window menu items mirrored by
      * src/gui/sdl3/platform/mac_menubar.mm. Not referenced by the
@@ -1103,7 +1130,7 @@ static const LangEntry langTable[] = {
 
     /* Touch (tablet/mobile) siblings of the tutorial strings whose
      * desktop wording assumes a keyboard or mouse. Picked at display
-     * time by tutorialResolveText() when uiModeIsTablet() is true. */
+     * time by tutorialResolveSegments() when uiModeIsTablet() is true. */
     {468,  "Ahead of you is a short river leading inland. Push\nthe thumbstick forward to drive your boat to the end\nof the river.\n\nWhen you get there, keep the thumbstick pushed\nforward. The tank will disembark from the boat and the\nboat will be left moored at the end of the river"},
     {469,  "You are now on the grass. The tank moves quite\nquickly on grass.\n\n\nKeep the thumbstick pushed forward to move ahead\nto the forest."},
     {470,  "You are now in the forest. The tank moves more\nslowly in the forest than it does on grass.\n\n\nKeep the thumbstick pushed forward to move ahead\nto the swamp."},

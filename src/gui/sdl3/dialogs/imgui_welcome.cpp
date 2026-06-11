@@ -27,6 +27,8 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_nav_outline.h"
+#include "../imgui_steam_nav.h"
 #if !BOLO_MOBILE
 #include "imgui_news.h"
 #endif
@@ -36,6 +38,7 @@ extern "C" {
 #include "../bg_game.h"
 #include "imgui_welcome.h"
 #include "../../gamefront.h"
+#include "../../ui_mode.h"
 #include "../../lang.h"
 #include "imgui_winbolonet.h"
 }
@@ -119,6 +122,8 @@ extern "C" int imguiWelcomeShow(void) {
     imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -172,6 +177,7 @@ extern "C" int imguiWelcomeShow(void) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
             if (dialogHandleUrlDropEvent(&ev)) { result = 16; running = false; continue; } /* openInternetManual */
@@ -201,6 +207,8 @@ extern "C" int imguiWelcomeShow(void) {
         ImGui_ImplSDL3_NewFrame();
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
 
         /* Transparent full-screen host window */
         ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -268,6 +276,10 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
 
             const bool showTutorial = gameFrontGetShowTutorialButton();
+            /* Map Editor and Log Viewer are mouse-driven; controller-only
+               players (Steam Deck, or desktop in controller mode) have no
+               usable workflow. Hide both when controller mode is active. */
+            const bool showDesktopTools = !uiShouldUseControllerMode();
             /* rawLabel, when non-null, signals a non-exit action: the click
              * handler dispatches by rawLabel string rather than setting
              * result/running. Display text still goes through
@@ -279,8 +291,8 @@ extern "C" int imguiWelcomeShow(void) {
                 { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
                 { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    true },
-                { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    true },
+                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools },
+                { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    showDesktopTools },
 #endif
                 { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
 #if !BOLO_MOBILE
@@ -317,6 +329,11 @@ extern "C" int imguiWelcomeShow(void) {
                     }
                 }
                 imguiHandOnHover();
+                /* Default keyboard / gamepad focus on Single Player so D-pad
+                   navigation lands somewhere sensible (not Quit). */
+                if (miniModes[i].code == RESULT_SINGLEPLAYER) {
+                    ImGui::SetItemDefaultFocus();
+                }
 #if !BOLO_MOBILE
                 /* Unread dot on the News button when fresh items exist. */
                 if (miniModes[i].rawLabel &&
@@ -441,9 +458,14 @@ extern "C" int imguiWelcomeShow(void) {
             /* Invisible button captures the click + drives hover state.
              * Sized to the rendered text so the hit rect is exactly the
              * label, not the surrounding gutter. */
-            ImGui::InvisibleButton("##aboutver", verSize);
+            /* EnableNav so controller / keyboard nav can reach the version
+               label (InvisibleButton is ImGuiItemFlags_NoNav otherwise). Use
+               the pressed return value so nav-activate (A / Space) opens About
+               just like a mouse click. */
+            bool verPressed = ImGui::InvisibleButton("##aboutver", verSize,
+                                                     ImGuiButtonFlags_EnableNav);
             bool hovered = ImGui::IsItemHovered();
-            if (ImGui::IsItemClicked()) {
+            if (verPressed || ImGui::IsItemClicked()) {
                 aboutPopupOpen();
             }
             if (hovered) {

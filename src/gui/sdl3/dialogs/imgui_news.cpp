@@ -21,6 +21,7 @@
 
 #include "imgui.h"
 #include "imgui_markdown.h"
+#include "imgui_nav_outline.h"
 
 #include "../news_image_cache.h"
 
@@ -397,7 +398,11 @@ static void renderNewsModal(void) {
     ImGui::SameLine();
     ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - closeBtnW);
     bool closeClicked = ImGui::Button(langGetText(STR_CLOSE), ImVec2(closeBtnW, 0));
-    bool escClosed    = ImGui::IsKeyPressed(ImGuiKey_Escape);
+    /* Escape inside the scrollable article child pops out of it via
+       ImGui's NavCancel rather than closing the whole popup — matches the
+       dialog footer / lobby cancel paths for controller nav. */
+    bool escClosed    = ImGui::IsKeyPressed(ImGuiKey_Escape) &&
+                        !dialogNavWasInsideSubRegionAtFrameStart();
 
     bool shouldClose = !open || closeClicked || escClosed;
     if (shouldClose) {

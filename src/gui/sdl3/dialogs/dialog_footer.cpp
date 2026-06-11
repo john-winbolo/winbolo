@@ -108,7 +108,15 @@ bool DrawPanelCloseX() {
  * registers as focused from the outermost popup body. */
 bool CancelKeyPressed() {
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return false;
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) return true;
+    /* Escape inside a child window / scroll region pops out of that
+       sub-region via ImGui's NavCancel rather than closing the whole
+       dialog.  The SDL gamepad B-button path already yields here
+       (dialogHandleGamepadCancelEvent); mirror it for the keyboard /
+       Steam Input Escape path so nested-panel nav behaves the same on a
+       Steam launch, where the pad is hidden from SDL and B arrives as an
+       injected Escape.  Ctrl+W / Cmd+. stay explicit close shortcuts and
+       still close from anywhere. */
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !dialogNavWasInsideSubRegionAtFrameStart()) return true;
     if (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN()) return true;
 #ifdef __APPLE__
     if (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper) return true;

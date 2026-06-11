@@ -1,0 +1,96 @@
+"In Game Actions"
+{
+    "actions"
+    {
+        "InGame"
+        {
+            "title"    "#in_game"
+
+            "StickPadGyro"
+            {
+                "tank_move"
+                {
+                    "title"       "#act_tank_move"
+                    "input_mode"  "joystick_move"
+                }
+                "map_scroll"
+                {
+                    "title"       "#act_map_scroll"
+                    "input_mode"  "joystick_move"
+                }
+            }
+
+            "AnalogTrigger"
+            {
+            }
+
+            "Button"
+            {
+                "fire"           "#act_fire"
+                "mine"           "#act_mine"
+                "build_confirm"  "#act_build_confirm"
+                "view_cycle"     "#act_view_cycle"
+                "gunsight_dec"   "#act_gunsight_dec"
+                "gunsight_inc"   "#act_gunsight_inc"
+                "build_prev"     "#act_build_prev"
+                "build_next"     "#act_build_next"
+                "build_cursor_toggle" "#act_build_cursor_toggle"
+                "quick_chat"     "#act_quick_chat"
+                "pause"          "#act_pause"
+                "view_players"  "#act_view_players"
+                "build_cancel"   "#act_build_cancel"
+                "lock_heading"   "#act_lock_heading"
+                "tank_view"      "#act_tank_view"
+            }
+        }
+
+        "Menu"
+        {
+            "title"    "#menu"
+
+            "Button"
+            {
+                "menu_accept"     "#act_menu_accept"
+                "menu_cancel"     "#act_menu_cancel"
+                "menu_nav_up"     "#act_menu_nav_up"
+                "menu_nav_down"   "#act_menu_nav_down"
+                "menu_nav_left"   "#act_menu_nav_left"
+                "menu_nav_right"  "#act_menu_nav_right"
+            }
+        }
+    }
+
+    "localization"
+    {
+        "english"
+        {
+            "in_game"           "In Game"
+            "menu"              "Menus"
+
+            "act_tank_move"     "Drive Tank"
+            "act_map_scroll"    "Scroll Map"
+            "act_fire"          "Fire"
+            "act_mine"          "Lay Mine"
+            "act_build_confirm" "Build"
+            "act_view_cycle"    "Cycle View"
+            "act_gunsight_dec"  "Decrease Gunsight Range"
+            "act_gunsight_inc"  "Increase Gunsight Range"
+            "act_build_prev"    "Previous Build Type"
+            "act_build_next"    "Next Build Type"
+            "act_build_cursor_toggle" "Toggle Build Cursor"
+            "act_quick_chat"    "Quick Chat"
+            "act_pause"         "Pause Menu"
+            "act_view_players" "View Players"
+            "act_build_cancel"  "Exit Build (No Build)"
+            "act_lock_heading"  "Lock Direction"
+            "act_tank_view"     "Tank View"
+
+            "act_menu_accept"   "Accept"
+            "act_menu_cancel"   "Back / Cancel"
+            "act_menu_nav_up"   "Navigate Up"
+            "act_menu_nav_down" "Navigate Down"
+            "act_menu_nav_left" "Navigate Left"
+            "act_menu_nav_right" "Navigate Right"
+        }
+    }
+}

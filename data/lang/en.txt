@@ -62,6 +62,7 @@ STR_DLGGAMESETUP_DEFAULTNAME=Me
 
 # Key setup dialog
 STR_DLGKEYSETUP_TITLE=Key Setup
+STR_DLGKEYSETUP_TAB_KEYBOARD=Keyboard
 STR_DLGKEYSETUP_DRIVETANK=Drive Tank
 STR_DLGKEYSETUP_GUNRANGE=Gun Range
 STR_DLGKEYSETUP_WEAPONS=Weapons
@@ -171,10 +172,10 @@ STR_TUTORIAL22=There is a pillbox ahead, and some refuelling bases to\nprovide y
 STR_TUTORIAL23=With patience and caution you should be able to destroy this\npillbox. Use the skills you have learned to make it easier:\n\n\nHide in the forest so that the pillbox can't see you,\nfarm trees, build roads to make your tank move\nfaster, and build buildings to provide cover against\npillbox shots.
 STR_TUTORIAL24=After you manage to defeat this pillbox, your final\nchallenge of the tutorial is to take out the two\npillboxes guarding the exit, build a boat, and escape.\n\n\nTake special care to watch your tank's armour level -\nif you get your tank destroyed you'll have to start\nwith a new tank on a new boat out at sea again.
 STR_TUTORIAL25=Congratulations. You have completed the WinBolo\ntutorial.\n\n\n\nNow organise some friends to play with and find out\nwhat it is like to compete against intelligent human\nopponents instead of stationary unthinking targets.\n\nIf you'd like to replay the tutorial later, you can\nlaunch it again from the Settings menu.
-STR_TUTORIAL_START01=Welcome to the WinBolo tutorial. This island introduces\nthe basic principles of WinBolo and leads you through\nthem one at a time. Each new principle will be\ndescribed in a window like this one.\n\nAfter reading each message, you can proceed by\nclicking the "OK" button on the mouse or simply\nby pressing the <Return> key on the keyboard
+STR_TUTORIAL_START01=Welcome to the WinBolo tutorial. This island introduces\nthe basic principles of WinBolo and leads you through\nthem one at a time. Each new principle will be\ndescribed in a window like this one.\n\nAfter reading each message,\npress {DISMISS} to continue.
 STR_TUTORIAL_START02=WinBolo is the only authorized clone of Stuart Cheshire's classic Macintosh network game, Bolo.\nYou can find strategy hints and other information from the official website:\n\nhttps://www.winbolo.com\n\nOr come join us on Reddit and Discord\n
 STR_TUTORIAL_START03=One quick note about Internet play.\n\nIf you join an online game and there are a lot of network errors\nthen leave the game straight away before\nyou ruin the game for the other players.
-STR_TUTORIAL_START04=You are in control of a tank, which is currently on a\nboat at sea. Press {ACCEL} to make the tank (and boat) go\nforwards, and press {BRAKE} to make it slow down and\nstop.\n\nDon't tap the keys as if you are typing a letter -\npress and hold them until the tank is going at the speed\nyou want and then let go. Press {ACCEL} now to make the\nboat drive forwards towards the land.\n(Press <Return> first to dismiss the window)
+STR_TUTORIAL_START04=You are in control of a tank, which is currently on a\nboat at sea. Press {ACCEL} to make the tank (and boat) go\nforwards, and press {BRAKE} to make it slow down and\nstop.\n\nDon't tap the keys as if you are typing a letter -\npress and hold them until the tank is going at the speed\nyou want and then let go. Press {ACCEL} now to make the\nboat drive forwards towards the land.\n(Press {DISMISS} first to dismiss the window)
 STR_TUTORIAL01_TOUCH=Ahead of you is a short river leading inland. Push\nthe thumbstick forward to drive your boat to the end\nof the river.\n\nWhen you get there, keep the thumbstick pushed\nforward. The tank will disembark from the boat and the\nboat will be left moored at the end of the river
 STR_TUTORIAL02_TOUCH=You are now on the grass. The tank moves quite\nquickly on grass.\n\n\nKeep the thumbstick pushed forward to move ahead\nto the forest.
 STR_TUTORIAL03_TOUCH=You are now in the forest. The tank moves more\nslowly in the forest than it does on grass.\n\n\nKeep the thumbstick pushed forward to move ahead\nto the swamp.
@@ -1273,6 +1274,35 @@ STR_DLGLOBBY_SERVERDISP_INTERNET=Internet
 
 # Connectivity badge
 STR_DLGLOBBY_CONN_TEST_TIP=Test in progress
+
+# Gamepad rebinding (Configure Keys → Controller section)
+STR_GP_SECTION=Controller
+STR_GP_REBIND_PROMPT=Press a button or pull a trigger...
+STR_GP_ACTION_FIRE=Fire
+STR_GP_ACTION_MINE=Lay Mine
+STR_GP_ACTION_BUILD_CONFIRM=Execute Build
+STR_GP_ACTION_VIEW_CYCLE=Cycle View
+STR_GP_ACTION_GUNSIGHT_DEC=Decrease Gunsight
+STR_GP_ACTION_GUNSIGHT_INC=Increase Gunsight
+STR_GP_ACTION_BUILD_PREV=Previous Build Type
+STR_GP_ACTION_BUILD_NEXT=Next Build Type
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Toggle Build Cursor
+STR_GP_ACTION_QUICK_CHAT=Quick Chat
+STR_GP_ACTION_PAUSE=Pause
+STR_GP_ACTION_VIEW_PLAYERS=Status Overlay
+
+# Controller Mode pref + connect prompt
+STR_CTRL_MODE_HEADER=Controller Mode
+STR_CTRL_MODE_OFF=Off
+STR_CTRL_MODE_ON=On
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Ask when controller connected
+STR_CTRL_PROMPT_TITLE=Controller detected
+STR_CTRL_PROMPT_LINE1=A gamepad has been connected.
+STR_CTRL_PROMPT_LINE2=Switch to Controller Mode?
+STR_CTRL_PROMPT_DESC=(Hides the menu bar; Start opens a controller-friendly pause menu.\nChange later in Settings.)
+STR_CTRL_PROMPT_NOTNOW=Not now
+STR_CTRL_PROMPT_DONTASK=Don't ask again
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})

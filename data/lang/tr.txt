@@ -183,10 +183,10 @@ STR_TUTORIAL22=İleride bir bunker ve cephane sağlayan ikmal üsleri var.\nİkm
 STR_TUTORIAL23=Sabır ve dikkatle bu bunkeri yok edebilirsiniz.\nİşi kolaylaştırmak için öğrendiklerinizi kullanın:\n\n\nBunker sizi göremesin diye ormana saklanın,\nağaç toplayın, tankın daha hızlı hareket etmesi için\nyollar inşa edin ve bunker atışlarına karşı siper\nolması için binalar yapın.
 STR_TUTORIAL24=Bu bunkeri yenmeyi başardıktan sonra eğitimin\nson görevi: çıkışı koruyan iki bunkeri temizlemek,\nbir tekne inşa etmek ve kaçmak.\n\n\nTankınızın zırh seviyesine özellikle dikkat edin;\ntankınız tahrip olursa açık denizde yeni bir tekneyle\nyeni bir tankla başlamak zorunda kalırsınız.
 STR_TUTORIAL25=Tebrikler. WinBolo\neğitimini tamamladınız.\n\n\n\nŞimdi birlikte oynayacak arkadaşlar bulun ve\nhareketsiz düşünemeyen hedefler yerine zeki insan\nrakipler karşısında oynamanın nasıl bir şey olduğunu\nkeşfedin.\n\nEğitimi daha sonra tekrar oynamak isterseniz\nAyarlar menüsünden başlatabilirsiniz.
-STR_TUTORIAL_START01=WinBolo eğitimine hoş geldiniz. Bu ada WinBolo'nun\ntemel ilkelerini tanıtıyor ve bunları teker teker\nöğretiyor. Her yeni ilke bu pencere gibi\nbir pencerede açıklanacak.\n\nHer mesajı okuduktan sonra farenin "Tamam" düğmesine\ntıklayarak ya da klavyedeki <Enter> tuşuna basarak\ndevam edebilirsiniz
+STR_TUTORIAL_START01=WinBolo eğitimine hoş geldiniz. Bu ada WinBolo'nun\ntemel ilkelerini tanıtıyor ve bunları teker teker\nöğretiyor. Her yeni ilke bu pencere gibi\nbir pencerede açıklanacak.\n\nHer mesajı okuduktan sonra\ndevam etmek için {DISMISS}'a basın.
 STR_TUTORIAL_START02=WinBolo, Stuart Cheshire'in klasik Macintosh ağ oyunu Bolo'nun tek yetkili klonudur.\nStrateji ipuçlarını ve diğer bilgileri resmi web sitesinde bulabilirsiniz:\n\nhttps://www.winbolo.com\n\nReddit ve Discord'da bize katılabilirsiniz\n
 STR_TUTORIAL_START03=İnternet oyunu hakkında kısa bir not.\n\nÇevrimiçi bir oyuna katılırsanız ve çok fazla ağ hatası varsa\ndiğer oyuncuların oyununu bozmamak için\nhemen oyundan çıkın.
-STR_TUTORIAL_START04=Şu anda denizde bir tekne üzerinde bulunan bir tankı\nkontrol ediyorsunuz. Tankı (ve tekneyi) ileri götürmek\niçin {ACCEL}'a, yavaşlatmak ve durdurmak için\n{BRAKE}'e basın.\n\nTuşlara harf yazar gibi vurmayın;\ntank istediğiniz hızda olana kadar\nbasılı tutun, sonra bırakın. Tekneyi karaya doğru sürmek\niçin şimdi {ACCEL}'a basın.\n(Pencereyi kapatmak için önce <Enter>'a basın)
+STR_TUTORIAL_START04=Şu anda denizde bir tekne üzerinde bulunan bir tankı\nkontrol ediyorsunuz. Tankı (ve tekneyi) ileri götürmek\niçin {ACCEL}'a, yavaşlatmak ve durdurmak için\n{BRAKE}'e basın.\n\nTuşlara harf yazar gibi vurmayın;\ntank istediğiniz hızda olana kadar\nbasılı tutun, sonra bırakın. Tekneyi karaya doğru sürmek\niçin şimdi {ACCEL}'a basın.\n(Pencereyi kapatmak için önce {DISMISS}'a basın)
 STR_TUTORIAL01_TOUCH=Önünüzde kıyıya uzanan kısa bir nehir var. Tekneyi\nnehrin sonuna kadar sürmek için joystick'i ileri itin.\n\nOraya ulaştığınızda joystick'i ileri itmeye\ndevam edin. Tank tekneyi terk edecek ve tekne\nnehrin sonunda bağlı kalacak
 STR_TUTORIAL02_TOUCH=Artık çimendeysiniz. Tank çimende oldukça\nhızlı hareket eder.\n\n\nOrmana doğru ilerlemek için joystick'i ileri itmeye devam edin.
 STR_TUTORIAL03_TOUCH=Artık ormandayısınız. Tank ormanda çimenden\ndaha yavaş hareket eder.\n\n\nBataklığa doğru ilerlemek için joystick'i ileri itmeye devam edin.
@@ -1142,6 +1142,34 @@ STR_DLGSYSINFO_SIMULATION=Simülasyon
 STR_DLGSYSINFO_BOTPREP=Bot hazırlık
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain aşımları
 
+# Kontrolcü – eylem etiketleri
+STR_GP_SECTION=Kontrolcü
+STR_GP_REBIND_PROMPT=Bir düğmeye basın veya tetik çekin...
+STR_GP_ACTION_FIRE=Ateş Et
+STR_GP_ACTION_MINE=Mayın Döşe
+STR_GP_ACTION_BUILD_CONFIRM=İnşaatı Onayla
+STR_GP_ACTION_VIEW_CYCLE=Görünümü Değiştir
+STR_GP_ACTION_GUNSIGHT_DEC=Nişanı Azalt
+STR_GP_ACTION_GUNSIGHT_INC=Nişanı Artır
+STR_GP_ACTION_BUILD_PREV=Önceki İnşaat Türü
+STR_GP_ACTION_BUILD_NEXT=Sonraki İnşaat Türü
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=İnşaat İmlecini Aç/Kapat
+STR_GP_ACTION_QUICK_CHAT=Hızlı Sohbet
+STR_GP_ACTION_PAUSE=Duraklat
+STR_GP_ACTION_VIEW_PLAYERS=Oyuncu Listesi
+
+# Kontrolcü modu tercihi + bağlantı istemi (Phase 8.1)
+STR_CTRL_MODE_HEADER=Kontrolcü Modu
+STR_CTRL_MODE_OFF=Kapalı
+STR_CTRL_MODE_ON=Açık
+STR_CTRL_MODE_AUTO=Otomatik
+STR_CTRL_MODE_ASK=Kontrolcü bağlandığında sor
+STR_CTRL_PROMPT_TITLE=Kontrolcü algılandı
+STR_CTRL_PROMPT_LINE1=Bir oyun kumandası bağlandı.
+STR_CTRL_PROMPT_LINE2=Kontrolcü Moduna geçilsin mi?
+STR_CTRL_PROMPT_DESC=(Menü çubuğunu gizler; Start tuşu kontrolcüye uygun bir duraklama menüsü açar.\nDaha sonra Ayarlar'dan değiştirebilirsiniz.)
+STR_CTRL_PROMPT_NOTNOW=Şimdi değil
+STR_CTRL_PROMPT_DONTASK=Bir daha sorma
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=WinBolo Hakkında
 STR_MENU_PREFERENCES=Tercihler…

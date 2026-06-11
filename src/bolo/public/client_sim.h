@@ -810,12 +810,33 @@ bool         clientSimTankIsDead(ClientSim *cs);
 bool         clientSimTankScroll(ClientSim *cs);
 void         clientSimCenterTank(ClientSim *cs);
 void         clientSimSetAutoScroll(ClientSim *cs, bool isAuto);
+void         clientSimSetAutoScrollOverride(ClientSim *cs, bool value);
+/* Scroll-method selector. Values match ScrollMechanism (0 = winbolo v1 manual,
+   1 = winbolo v1 autoscroll, 2 = enhanced, 3 = andrew enhanced). Exposed as
+   int so GUI callers needn't include the internal scroll header. Process-global. */
+int          clientSimGetScrollMechanism(void);
+void         clientSimSetScrollMechanism(int mech);
+
+/* My-tank helpers for clients that need the local tank's current map
+ * tile (e.g. gamepad build cursor).  Return false when the local tank
+ * is destroyed / not yet spawned. */
+bool         clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY);
+bool         clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY);
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);
 
 /* Submits a build request for the local LGM through InputPacket,
  * gated on tank armour and net status. */
 void         clientSimManMove(ClientSim *cs, buildSelect buildS);
+
+/* Same as clientSimManMove but takes absolute map coords directly,
+ * bypassing the mouse/touch cursor + xOffset flow. Used by the
+ * gamepad build cursor which already tracks the absolute target tile. */
+void         clientSimManMoveToMap(ClientSim *cs, BYTE mapX, BYTE mapY, buildSelect buildS);
+
+/* Cycle the current build selection by `delta` (positive or negative)
+ * through the standard order: Trees -> Road -> Building -> Pillbox -> Mine. */
+void         clientSimCycleBuildSelect(ClientSim *cs, int delta);
 
 /* Alliance accessors. playerNum is 1-based (legacy screen-facade
  * convention); the function converts to 0-based internally. */

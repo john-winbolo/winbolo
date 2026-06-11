@@ -21,6 +21,8 @@
 #ifndef IMGUI_MESSAGEBOX_H
 #define IMGUI_MESSAGEBOX_H
 
+#include "../tutorial_text.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -50,6 +52,14 @@ typedef enum {
  * Returns IMGUI_MSG_RESULT_OK/YES/NO/CANCEL. */
 int imguiMessageBoxEx(const char *title, const char *message,
                       ImguiMsgType type, ImguiMsgButtons buttons);
+
+/* Same as imguiMessageBoxEx but the message body is a sequence of
+ * TutorialSeg entries — text runs interleaved with PNG glyphs and
+ * procedural keycaps for inline button hints.  Word wrap respects
+ * each glyph as a single square element of 2 * GetTextLineHeight(). */
+int imguiMessageBoxRich(const char *title,
+                        const TutorialSeg *segments, int segmentCount,
+                        ImguiMsgType type, ImguiMsgButtons buttons);
 
 /* Convenience: blocking OK-only info message box (legacy API). */
 void imguiMessageBox(const char *message, const char *title);

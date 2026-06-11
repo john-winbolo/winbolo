@@ -398,6 +398,16 @@ bool gameFrontGetPrefs(keyItems *keys, bool *useAutoslow, bool *useAutohide);
 void gameFrontPutPrefs(keyItems *keys);
 
 /*********************************************************
+*NAME:          gameFrontSaveCurrentPrefs
+*PURPOSE:
+* Convenience wrapper: snapshot the current key bindings via
+* windowGetKeys and write the full prefs file. Use from
+* user-driven toggle handlers so changes persist immediately
+* instead of only on shutdown.
+*********************************************************/
+void gameFrontSaveCurrentPrefs(void);
+
+/*********************************************************
 *NAME:          gameFrontSaveWindowSettings
 *AUTHOR:        Andrew Roth
 *CREATION DATE: 19/4/26
@@ -493,22 +503,6 @@ bool gameFrontGetShowTutorialButton(void);
 * INI file immediately so the change survives a crash or hard quit.
 *********************************************************/
 void gameFrontSetShowTutorialButton(bool show);
-
-/*********************************************************
-*NAME:          gameFrontGetShowCountryFlagsInChat
-*PURPOSE:
-* Whether the chat / newswire / players panels should render the
-* country flag next to a player's name. Defaults to TRUE; the WBN /
-* Steam badges are not gated by this preference.
-*********************************************************/
-bool gameFrontGetShowCountryFlagsInChat(void);
-
-/*********************************************************
-*NAME:          gameFrontSetShowCountryFlagsInChat
-*PURPOSE:
-* Sets the country-flag-in-chat preference and persists it.
-*********************************************************/
-void gameFrontSetShowCountryFlagsInChat(bool show);
 
 /*********************************************************
 *NAME:          gameFrontGetLanguageCode

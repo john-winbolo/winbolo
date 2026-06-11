@@ -63,9 +63,12 @@
 #include "../input.h"
 #include "../lang.h"
 #include "../sound.h"
+#include "../ui_mode.h"
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
+#include "input_gamepad.h"
+#include "build_cursor.h"
 #include "luabrainshandler.h"
 #include "dialog_backend.h"
 #include "dialogs/imgui_mapchooser.h"
@@ -179,11 +182,6 @@ bool gameFrontUseNatTraversal = TRUE;
  * Defaults to TRUE on a fresh install (key absent from INI). The player
  * can toggle it back on from the Settings dialog at any time. */
 static bool gameFrontShowTutorialButton = TRUE;
-
-/* Country-flag rendering in chat / newswire / players panels. Default
- * TRUE; WBN and Steam badges are always shown when present and are not
- * gated on this preference. */
-static bool gameFrontShowCountryFlagsInChat = TRUE;
 
 /* Persisted BCP-47 language code (e.g. "en", "de", "pt-br"). Empty
  * string means the user has not picked one yet — Phase 5 startup runs
@@ -554,6 +552,15 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       OKStart = FALSE;
     }
 
+    /* Bring up the gamepad subsystem now (before any dialogs run) so the
+       ImGui SDL3 backend can enumerate gamepads in the welcome / lobby /
+       settings / etc. dialogs and route D-pad + face buttons through nav.
+       inputGamepadInit() is still called later (when the game window is
+       set up) to register edge-trigger state for the in-game input path —
+       that second call is a no-op for the subsystem (ref-counted). */
+    SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_STEAMDECK, "1");
+    SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+
     {
       /* For custom mode, use ceiling integer zoom so render target >= window.
          sdl3DrawAdaptRenderTarget will adjust dynamically on resize. */
@@ -653,6 +660,14 @@ void gameFrontSaveTankPrefs(ClientSim *cs) {
   /* No-op since the keys dialog persists useAutoslow / useAutohide
    * directly to INI on OK. */
   (void)cs;
+}
+
+/* Snapshot the current key bindings via the winbolo.c global and
+   write the full prefs file. Cheap enough for toggle-handler use. */
+void gameFrontSaveCurrentPrefs(void) {
+  keyItems k;
+  windowGetKeys(&k);
+  gameFrontPutPrefs(&k);
 }
 
 /* -------------------------------------------------------
@@ -1665,16 +1680,6 @@ void gameFrontSetShowTutorialButton(bool show) {
                             TRUEFALSE_TO_STR(show));
 }
 
-bool gameFrontGetShowCountryFlagsInChat(void) {
-  return gameFrontShowCountryFlagsInChat;
-}
-
-void gameFrontSetShowCountryFlagsInChat(bool show) {
-  gameFrontShowCountryFlagsInChat = show;
-  prefsSetString("SETTINGS", "Show Country Flags In Chat",
-                            TRUEFALSE_TO_STR(show));
-}
-
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
   size_t n = strlen(gameFrontLanguageCode);
@@ -2255,6 +2260,24 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   char buff[FILENAME_MAX];
   char def[FILENAME_MAX];
 
+  /* Steam Deck detection: prefer the SteamDeck=1 hint/env Steam sets,
+     falling back to /etc/os-release for launch paths (Desktop-mode,
+     non-Steam) where the env var isn't propagated. Used below to flip
+     touch/controller-oriented defaults ON (autoscroll, autoslow,
+     autohide) for first-launch UX on the Deck. Gunsight defaults ON
+     everywhere. Saved values still override. */
+  bool isSteamDeck = uiModeIsSteamDeckHardware();
+  const char *gunsightDefault   = "Yes";
+#if defined(__IPHONEOS__) || defined(__ANDROID__)
+  const char *autoScrollDefault = "Yes";
+  const char *autoSlowDefault   = "Yes";
+  const char *autoHideDefault   = "Yes";
+#else
+  const char *autoScrollDefault = isSteamDeck ? "Yes" : "No";
+  const char *autoSlowDefault   = isSteamDeck ? "Yes" : "No";
+  const char *autoHideDefault   = isSteamDeck ? "Yes" : "No";
+#endif
+
   /* Player Name */
   strcpy(def, langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
   prefsGetString("SETTINGS", "Player Name", def, gameFrontName, sizeof(gameFrontName));
@@ -2349,6 +2372,140 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("KEYS", "Quick Mine", def, buff, FILENAME_MAX);
   keys->kiQuickMine = atoi(buff);
 
+  /* Gamepad — right-stick scroll sensitivity multiplier (0.25..4.0). */
+  prefsGetString("SETTINGS", "Gamepad Scroll Sens", "1.00", buff, FILENAME_MAX);
+  {
+    float gs = (float)atof(buff);
+    if (!(gs >= 0.25f && gs <= 4.0f)) gs = 1.0f;
+    g_gamepadScrollSensitivity = gs;
+  }
+
+  /* Gamepad — left-stick tank turn sensitivity (0.10..1.0; 1.0 = snap). */
+  prefsGetString("SETTINGS", "Gamepad Tank Sens", "1.00", buff, FILENAME_MAX);
+  {
+    float ts = (float)atof(buff);
+    if (!(ts >= 0.10f && ts <= 1.0f)) ts = 1.0f;
+    g_gamepadTankSensitivity = ts;
+  }
+
+  /* Gamepad — build-cursor move sensitivity (0.25..2.0, lower = finer). */
+  prefsGetString("SETTINGS", "Gamepad Build Cursor Sens", "1.00", buff, FILENAME_MAX);
+  {
+    float bs = (float)atof(buff);
+    if (!(bs >= 0.25f && bs <= 2.0f)) bs = 1.0f;
+    g_gamepadBuildCursorSensitivity = bs;
+  }
+
+  /* Gamepad — build-cursor behaviour options. */
+  prefsGetString("SETTINGS", "Build Exit Executes", "No", buff, FILENAME_MAX);
+  g_buildExitExecutes = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("SETTINGS", "Build Double Tap Road", "Yes", buff, FILENAME_MAX);
+  g_buildDoubleTapRoad = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("SETTINGS", "Build Hold Momentary", "Yes", buff, FILENAME_MAX);
+  g_buildHoldMomentary = YESNO_TO_TRUEFALSE(buff[0]);
+
+  /* Phase 8.1 — Controller Mode pref (Off / On / Auto).  Default Auto on
+     desktop so a player who plugs in a pad is offered the prompt; the
+     prompt itself can be silenced via "Ask when controller connected".
+     Steam Deck ignores this pref (uiShouldUseControllerMode is unconditional
+     on Deck). */
+  prefsGetString("SETTINGS", "Controller Mode", "2", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < 0 || v > 2) v = 2;
+    uiControllerModeSet((ControllerModePref)v);
+  }
+  prefsGetString("SETTINGS", "Controller Prompt Ask", "Yes", buff, FILENAME_MAX);
+  uiControllerPromptAskOnConnectSet(YESNO_TO_TRUEFALSE(buff[0]));
+
+  /* Gamepad — Path B rebindable action table.  Start from defaults so
+     missing prefs keys leave each action at its historical mapping;
+     present keys overlay on top.  inputGamepadInit may run after this
+     prefs load, so we seed via SetAll which marks the table as
+     initialised and prevents init from re-resetting it.
+
+     Two slots per action persist as gpb_<name>_pri_{kind,code} and
+     gpb_<name>_sec_{kind,code}.  Older prefs files used a single
+     gpb_<name>_{kind,code} pair — when the new keys are absent but
+     the old ones exist, the old values migrate into the primary slot
+     and the secondary is forced to NONE (matching the single-binding
+     behaviour the legacy file expressed).  Players who want the
+     historical FIRE=RT-or-A behaviour can re-bind the secondary or
+     remove [GAMEPAD] entirely to fall back to defaults. */
+  {
+    GamepadBindings gb;
+    inputGamepadBindingsResetDefaults(&gb);
+    /* Sentinel that survives any plausible legacy code value. */
+    static const char kAbsentSentinel[] = "__absent__";
+    for (int i = 0; i < GP_ACT_COUNT; ++i) {
+      const char *name = inputGamepadActionName((GamepadAction)i);
+      char keyOldKind[64], keyOldCode[64];
+      char keyPriKind[64], keyPriCode[64];
+      char keySecKind[64], keySecCode[64];
+      snprintf(keyOldKind, sizeof(keyOldKind), "gpb_%s_kind",     name);
+      snprintf(keyOldCode, sizeof(keyOldCode), "gpb_%s_code",     name);
+      snprintf(keyPriKind, sizeof(keyPriKind), "gpb_%s_pri_kind", name);
+      snprintf(keyPriCode, sizeof(keyPriCode), "gpb_%s_pri_code", name);
+      snprintf(keySecKind, sizeof(keySecKind), "gpb_%s_sec_kind", name);
+      snprintf(keySecCode, sizeof(keySecCode), "gpb_%s_sec_code", name);
+
+      char rPriKind[FILENAME_MAX], rPriCode[FILENAME_MAX];
+      char rSecKind[FILENAME_MAX], rSecCode[FILENAME_MAX];
+      prefsGetString("GAMEPAD", keyPriKind, kAbsentSentinel, rPriKind, FILENAME_MAX);
+      prefsGetString("GAMEPAD", keyPriCode, kAbsentSentinel, rPriCode, FILENAME_MAX);
+      prefsGetString("GAMEPAD", keySecKind, kAbsentSentinel, rSecKind, FILENAME_MAX);
+      prefsGetString("GAMEPAD", keySecCode, kAbsentSentinel, rSecCode, FILENAME_MAX);
+
+      bool havePri = (strcmp(rPriKind, kAbsentSentinel) != 0 &&
+                      strcmp(rPriCode, kAbsentSentinel) != 0);
+      bool haveSec = (strcmp(rSecKind, kAbsentSentinel) != 0 &&
+                      strcmp(rSecCode, kAbsentSentinel) != 0);
+
+      if (havePri || haveSec) {
+        /* New-format file: any present slot wins; any missing slot
+           clears to NONE.  Mixing with legacy keys is impossible — the
+           writer below only emits new keys, and a hand-edited file
+           that mixes the two is treated as new-format authoritative. */
+        gb.b[i].pri.kind = GP_BIND_NONE;
+        gb.b[i].pri.code = 0;
+        gb.b[i].sec.kind = GP_BIND_NONE;
+        gb.b[i].sec.code = 0;
+        if (havePri) {
+          int k = atoi(rPriKind);
+          int c = atoi(rPriCode);
+          if (k < 0 || k > GP_BIND_TRIGGER) k = GP_BIND_NONE;
+          gb.b[i].pri.kind = (GamepadBindKind)k;
+          gb.b[i].pri.code = c;
+        }
+        if (haveSec) {
+          int k = atoi(rSecKind);
+          int c = atoi(rSecCode);
+          if (k < 0 || k > GP_BIND_TRIGGER) k = GP_BIND_NONE;
+          gb.b[i].sec.kind = (GamepadBindKind)k;
+          gb.b[i].sec.code = c;
+        }
+      } else {
+        /* No new keys — try legacy single-suffix migration. */
+        char rOldKind[FILENAME_MAX], rOldCode[FILENAME_MAX];
+        prefsGetString("GAMEPAD", keyOldKind, kAbsentSentinel, rOldKind, FILENAME_MAX);
+        prefsGetString("GAMEPAD", keyOldCode, kAbsentSentinel, rOldCode, FILENAME_MAX);
+        if (strcmp(rOldKind, kAbsentSentinel) != 0 &&
+            strcmp(rOldCode, kAbsentSentinel) != 0) {
+          int k = atoi(rOldKind);
+          int c = atoi(rOldCode);
+          if (k < 0 || k > GP_BIND_TRIGGER) k = (int)gb.b[i].pri.kind;
+          gb.b[i].pri.kind = (GamepadBindKind)k;
+          gb.b[i].pri.code = c;
+          /* Legacy file had no concept of a secondary slot. */
+          gb.b[i].sec.kind = GP_BIND_NONE;
+          gb.b[i].sec.code = 0;
+        }
+        /* else: neither new nor old keys present; defaults stand. */
+      }
+    }
+    inputGamepadBindingsSetAll(&gb);
+  }
+
   /* Remember */
   prefsGetString("SETTINGS", "Remember Player Name", "Yes", buff, FILENAME_MAX);
   gameFrontRemeber = YESNO_TO_TRUEFALSE(buff[0]);
@@ -2356,10 +2513,6 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   /* Tutorial visibility — defaults to "Yes" (show on first run). */
   prefsGetString("SETTINGS", "Show Tutorial Button", "Yes", buff, FILENAME_MAX);
   gameFrontShowTutorialButton = YESNO_TO_TRUEFALSE(buff[0]);
-
-  /* Country-flag rendering in chat / newswire — defaults to "Yes". */
-  prefsGetString("SETTINGS", "Show Country Flags In Chat", "Yes", buff, FILENAME_MAX);
-  gameFrontShowCountryFlagsInChat = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Language code (BCP-47, e.g. "en", "de", "pt-br"). Empty string on
    * fresh install — startup walks SDL_GetPreferredLocales() in that
@@ -2380,13 +2533,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   longToStr(UNLIMITED_GAME_TIME, def, sizeof(def));
   prefsGetString("GAME OPTIONS", "Time Length", def, buff, FILENAME_MAX);
   timeLen = (int32_t)atol(buff);
-#if defined(__IPHONEOS__) || defined(__ANDROID__)
-  prefsGetString("GAME OPTIONS", "Auto Slowdown", "Yes", buff, FILENAME_MAX);
-#else
-  prefsGetString("GAME OPTIONS", "Auto Slowdown", "No", buff, FILENAME_MAX);
-#endif
+  prefsGetString("GAME OPTIONS", "Auto Slowdown", autoSlowDefault, buff, FILENAME_MAX);
   *pUseAutoslow = YESNO_TO_TRUEFALSE(buff[0]);
-  prefsGetString("GAME OPTIONS", "Auto Show-Hide Gunsight", "No", buff, FILENAME_MAX);
+  prefsGetString("GAME OPTIONS", "Auto Show-Hide Gunsight", autoHideDefault, buff, FILENAME_MAX);
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 
   prefsGetString("SETTINGS", "Use UPnP", "Yes", buff, FILENAME_MAX);
@@ -2406,9 +2555,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(FRAME_RATE_30, def, sizeof(def));
   prefsGetString("MENU", "Frame Rate", def, buff, FILENAME_MAX);
   frameRate = atoi(buff);
-  /* Default ON for first-time players (no stored value yet). Existing users
-   * keep whatever "Show Gunsight" they already saved in their prefs. */
-  prefsGetString("MENU", "Show Gunsight", "Yes", buff, FILENAME_MAX);
+  /* Default ON for first-time players (no prefs file yet). Existing users
+   * keep whatever "Show Gunsight" they already saved in their INI. */
+  prefsGetString("MENU", "Show Gunsight", gunsightDefault, buff, FILENAME_MAX);
   showGunsight = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Sound Effects", "Yes", buff, FILENAME_MAX);
   soundEffects = YESNO_TO_TRUEFALSE(buff[0]);
@@ -2430,11 +2579,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   showNetworkStatusMessages = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Show Network Debug Messages", "No", buff, FILENAME_MAX);
   showNetworkDebugMessages = YESNO_TO_TRUEFALSE(buff[0]);
-#if defined(__IPHONEOS__) || defined(__ANDROID__)
-  prefsGetString("MENU", "Autoscroll Enabled", "Yes", buff, FILENAME_MAX);
-#else
-  prefsGetString("MENU", "Autoscroll Enabled", "No", buff, FILENAME_MAX);
-#endif
+  prefsGetString("MENU", "Autoscroll Enabled", autoScrollDefault, buff, FILENAME_MAX);
   autoScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Smooth Scrolling", "Yes", buff, FILENAME_MAX);
   smoothScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
@@ -2578,6 +2723,57 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(keys->kiQuickMine, buff, sizeof(buff));
   prefsSetString("KEYS", "Quick Mine", buff);
 
+  /* Gamepad — right-stick scroll sensitivity multiplier. */
+  snprintf(buff, sizeof(buff), "%.2f", g_gamepadScrollSensitivity);
+  prefsSetString("SETTINGS", "Gamepad Scroll Sens", buff);
+
+  /* Gamepad — left-stick tank-move + build-cursor move sensitivities. */
+  snprintf(buff, sizeof(buff), "%.2f", g_gamepadTankSensitivity);
+  prefsSetString("SETTINGS", "Gamepad Tank Sens", buff);
+  snprintf(buff, sizeof(buff), "%.2f", g_gamepadBuildCursorSensitivity);
+  prefsSetString("SETTINGS", "Gamepad Build Cursor Sens", buff);
+
+  /* Gamepad — build-cursor behaviour options. */
+  prefsSetString("SETTINGS", "Build Exit Executes",   TRUEFALSE_TO_STR(g_buildExitExecutes));
+  prefsSetString("SETTINGS", "Build Double Tap Road", TRUEFALSE_TO_STR(g_buildDoubleTapRoad));
+  prefsSetString("SETTINGS", "Build Hold Momentary",  TRUEFALSE_TO_STR(g_buildHoldMomentary));
+
+  /* Phase 8.1 — Controller Mode pref + prompt-on-connect flag. */
+  intToStr((int)uiControllerModeGet(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "Controller Mode", buff);
+  prefsSetString("SETTINGS", "Controller Prompt Ask",
+                            TRUEFALSE_TO_STR(uiControllerPromptAskOnConnectGet()));
+
+  /* Gamepad — Path B rebindable action table.  Four keys per action:
+     gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where
+     kind is 0=NONE / 1=BUTTON / 2=TRIGGER and code is the integer SDL
+     enum value.  The loader applies defaults when no key for an action
+     is present so removing the [GAMEPAD] section reverts to historical
+     behaviour.  Legacy single-suffix keys (gpb_<name>_{kind,code}) are
+     migrated on load and ignored thereafter; we don't bother deleting
+     them from the file. */
+  {
+    GamepadBindings gb;
+    inputGamepadBindingsGetAll(&gb);
+    for (int i = 0; i < GP_ACT_COUNT; ++i) {
+      char keyPriKind[64], keyPriCode[64];
+      char keySecKind[64], keySecCode[64];
+      const char *name = inputGamepadActionName((GamepadAction)i);
+      snprintf(keyPriKind, sizeof(keyPriKind), "gpb_%s_pri_kind", name);
+      snprintf(keyPriCode, sizeof(keyPriCode), "gpb_%s_pri_code", name);
+      snprintf(keySecKind, sizeof(keySecKind), "gpb_%s_sec_kind", name);
+      snprintf(keySecCode, sizeof(keySecCode), "gpb_%s_sec_code", name);
+      intToStr((int)gb.b[i].pri.kind, buff, sizeof(buff));
+      prefsSetString("GAMEPAD", keyPriKind, buff);
+      intToStr(gb.b[i].pri.code, buff, sizeof(buff));
+      prefsSetString("GAMEPAD", keyPriCode, buff);
+      intToStr((int)gb.b[i].sec.kind, buff, sizeof(buff));
+      prefsSetString("GAMEPAD", keySecKind, buff);
+      intToStr(gb.b[i].sec.code, buff, sizeof(buff));
+      prefsSetString("GAMEPAD", keySecCode, buff);
+    }
+  }
+
   /* Remember */
   prefsSetString("SETTINGS", "Remember Player Name", TRUEFALSE_TO_STR(gameFrontRemeber));
 
@@ -2647,6 +2843,13 @@ static bool s_windowSettingsDirty = false;
 
 void gameFrontFlushWindowSettings(void) {
   char buff[FILENAME_MAX];
+
+  /* Big Picture / Gamepad UI runs maximised and transient — don't let that
+     overwrite the user's saved desktop window size/position. */
+  if (steam_is_big_picture()) {
+    s_windowSettingsDirty = false;
+    return;
+  }
 
   intToStr(zoomFactor, buff, sizeof(buff));
   prefsSetString("WINDOW", "Window Size", buff);

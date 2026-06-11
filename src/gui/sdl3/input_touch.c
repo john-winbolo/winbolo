@@ -16,11 +16,9 @@
 *********************************************************/
 
 #include <math.h>
-#ifdef __APPLE__
-#include <TargetConditionals.h>
-#endif
 #include "input_touch.h"
-#include "../../common/wb_log.h"
+#include "input_joystick.h"
+#include "input_gamepad.h"
 
 /* Joystick deadzone in pixels */
 #define JOYSTICK_DEADZONE 20.0f
@@ -88,15 +86,11 @@ static int          s_gunsightChange = 0;
 
 /* Proportional turning: max joystick reach in pixels */
 #define JOYSTICK_MAX_REACH 120.0f
-/* Frame counter for rate-limiting turns at small deflections */
-static Uint32       s_joyFrameCounter = 0;
 
 static bool         s_viewportTapReady = false;
 static BYTE         s_viewportTapTileX = 0;
 static BYTE         s_viewportTapTileY = 0;
 
-/* Absolute steering state */
-static bool         s_absoluteSteering = true;
 static BYTE         s_tankAngle = 0;
 
 /* --- Scroll joystick state --- */
@@ -411,208 +405,9 @@ bool inputTouchIsButtonTapped(TouchButtonID id) {
 
 /* --- Joystick --- */
 
-/* Convert joystick atan2 angle (degrees, 0=right, 90=down) to bolo
-   angle (0-255, 0=north, 64=east, 128=south, 192=west). */
-static BYTE joyAngleToBolo(float atan2Deg) {
-  /* atan2: -90=up(north), 0=right(east), 90=down(south), ±180=left(west)
-     bolo:  0=north, 64=east, 128=south, 192=west
-     mapping: bolo = (atan2Deg + 90) / 360 * 256 */
-  float bolo = (atan2Deg + 90.0f) / 360.0f * 256.0f;
-  if (bolo < 0.0f) bolo += 256.0f;
-  if (bolo >= 256.0f) bolo -= 256.0f;
-  return (BYTE)bolo;
-}
-
-static tankButton inputTouchGetMovementRelative(float dist) {
-  float dx = s_joyThumbX - s_joyAnchorX;
-  float dy = s_joyThumbY - s_joyAnchorY;
-  float angle = atan2f(dy, dx) * 180.0f / 3.14159265f;
-
-  /* Cardinal directions get 60° zones, diagonals get 30°.
-     This makes driving straight much more forgiving. */
-  tankButton dir;
-  if (angle >= -30.0f && angle < 30.0f)        dir = TRIGHT;
-  else if (angle >= 30.0f  && angle < 60.0f)   dir = TRIGHTDECEL;
-  else if (angle >= 60.0f  && angle < 120.0f)  dir = TDECEL;
-  else if (angle >= 120.0f && angle < 150.0f)  dir = TLEFTDECEL;
-  else if (angle >= 150.0f || angle < -150.0f)  dir = TLEFT;
-  else if (angle >= -150.0f && angle < -120.0f) dir = TLEFTACCEL;
-  else if (angle >= -120.0f && angle < -60.0f)  dir = TACCEL;
-  else if (angle >= -60.0f  && angle < -30.0f)  dir = TRIGHTACCEL;
-  else return TNONE;
-
-  /* Proportional turning: only rate-limit directions that involve
-     turning (left/right and diagonals).  Forward and backward are
-     always reported immediately so driving straight feels responsive. */
-  if (dir != TACCEL && dir != TDECEL) {
-    float reach = (dist - JOYSTICK_DEADZONE) / (JOYSTICK_MAX_REACH - JOYSTICK_DEADZONE);
-    if (reach > 1.0f) reach = 1.0f;
-
-    /* Map to 1-out-of-N: at minimum deflection report ~1 in 8 frames,
-       at full deflection report every frame. */
-    s_joyFrameCounter++;
-    Uint32 period = (Uint32)(1.0f + 7.0f * (1.0f - reach));  /* 1..8 */
-    if ((s_joyFrameCounter % period) != 0) {
-      return TNONE;
-    }
-  }
-
-  return dir;
-}
-
-/* Debug tick counter for absolute steering logging */
-static Uint32 s_absDebugTick = 0;
-
-/* Adaptive turn rate tracking — measure how fast the tank actually
-   turns per tick so we can rate-limit appropriately on fast terrain
-   without starving slow terrain of turn commands. */
-static BYTE  s_prevTankAngle = 0;
-static float s_observedTurnRate = 2.0f;  /* bootstrap estimate */
-
-/* Smoothed target angle — low-pass filter on joystick input to
-   remove finger wobble. Stored as float in 0-256 circular space. */
-static float s_smoothTargetAngle = -1.0f;  /* -1 = uninitialized */
-static float smoothAngle(float current, float target) {
-  /* Interpolate in circular space to handle 0/256 wraparound */
-  float diff = target - current;
-  if (diff > 128.0f) diff -= 256.0f;
-  else if (diff < -128.0f) diff += 256.0f;
-
-  float absDiff = diff < 0.0f ? -diff : diff;
-
-  /* Adaptive: large changes (intentional) track fast,
-     small changes (finger jitter) get heavily smoothed.
-     At 80+ units difference: factor=0.3 (snap quickly)
-     At 10 units difference:  factor=0.03 (heavy filtering) */
-  float factor;
-  if (absDiff > 80.0f) {
-    factor = 0.3f;
-  } else if (absDiff > 30.0f) {
-    factor = 0.03f + 0.27f * ((absDiff - 30.0f) / 50.0f);
-  } else {
-    factor = 0.03f;
-  }
-
-  float result = current + factor * diff;
-  if (result < 0.0f) result += 256.0f;
-  else if (result >= 256.0f) result -= 256.0f;
-  return result;
-}
-
-static tankButton inputTouchGetMovementAbsolute(float dist) {
-  float dx = s_joyThumbX - s_joyAnchorX;
-  float dy = s_joyThumbY - s_joyAnchorY;
-  float atan2Deg = atan2f(dy, dx) * 180.0f / 3.14159265f;
-
-  BYTE rawTarget = joyAngleToBolo(atan2Deg);
-
-  /* Smooth the target angle to filter out finger jitter */
-  if (s_smoothTargetAngle < 0.0f) {
-    s_smoothTargetAngle = (float)rawTarget;
-  } else {
-    s_smoothTargetAngle = smoothAngle(s_smoothTargetAngle, (float)rawTarget);
-  }
-  BYTE targetAngle = (BYTE)(s_smoothTargetAngle + 0.5f) % 256;
-  BYTE currentAngle = s_tankAngle;
-
-  /* Update observed turn rate (exponential moving average).
-     Measure how much the tank actually turned since last tick. */
-  int angleDelta = (int)currentAngle - (int)s_prevTankAngle;
-  if (angleDelta > 128) angleDelta -= 256;
-  else if (angleDelta < -128) angleDelta += 256;
-  float absTurnedThisTick = (float)(angleDelta < 0 ? -angleDelta : angleDelta);
-  if (absTurnedThisTick > 0.0f) {
-    /* Blend: 70% old + 30% new for smooth adaptation */
-    s_observedTurnRate = 0.7f * s_observedTurnRate + 0.3f * absTurnedThisTick;
-  }
-  s_prevTankAngle = currentAngle;
-
-  /* Compute signed difference in 0-255 circular space.
-     TRIGHT increases angle (clockwise), TLEFT decreases.
-     diff > 0 means target is clockwise from current → turn right. */
-  int diff = (int)targetAngle - (int)currentAngle;
-  if (diff > 128) diff -= 256;
-  else if (diff < -128) diff += 256;
-
-  int absDiff = diff < 0 ? -diff : diff;
-  bool turnRight = (diff > 0);
-
-  /* Joystick deflection controls acceleration:
-     small deflection = aim/rotate only, large = drive.
-     Threshold at 20% of usable range — just past deadzone to aim. */
-  float reach = (dist - JOYSTICK_DEADZONE) / (JOYSTICK_MAX_REACH - JOYSTICK_DEADZONE);
-  if (reach > 1.0f) reach = 1.0f;
-  bool wantDrive = (reach > 0.2f);
-
-  /* Adaptive deadzone: widen based on observed turn rate so fast
-     terrain settles cleanly. Minimum 10, scales up with turn speed. */
-  int deadzone = (int)(s_observedTurnRate * 3.0f);
-  if (deadzone < 10) deadzone = 10;
-  if (deadzone > 24) deadzone = 24;
-
-  /* Adaptive rate-limiting: on fast terrain, skip turn ticks when
-     close to target to prevent overshooting. Period increases as
-     absDiff shrinks relative to turn rate. */
-  s_joyFrameCounter++;
-  bool skipTurn = false;
-  if (absDiff < deadzone * 4 && absDiff >= deadzone) {
-    /* How many ticks of turning to reach target? */
-    float ticksToTarget = (float)absDiff / s_observedTurnRate;
-    /* If we'd arrive in < 3 ticks, start skipping to ease in */
-    if (ticksToTarget < 3.0f) {
-      Uint32 period = (Uint32)(4.0f - ticksToTarget);  /* 2..4 */
-      if (period < 2) period = 2;
-      if ((s_joyFrameCounter % period) != 0) {
-        skipTurn = true;
-      }
-    }
-  }
-
-  tankButton result;
-  if (absDiff < deadzone) {
-    /* Nearly aligned */
-    result = wantDrive ? TACCEL : TNONE;
-  } else if (absDiff < 64) {
-    /* Moderate difference */
-    if (skipTurn) {
-      result = wantDrive ? TACCEL : TNONE;
-    } else if (wantDrive) {
-      result = turnRight ? TRIGHTACCEL : TLEFTACCEL;
-    } else {
-      result = turnRight ? TRIGHT : TLEFT;
-    }
-  } else {
-    /* Large difference — pure turn regardless of deflection,
-       don't drive the wrong way */
-    result = turnRight ? TRIGHT : TLEFT;
-  }
-
-  /* Debug: print every 5 ticks */
-  s_absDebugTick++;
-  if ((s_absDebugTick % 5) == 0) {
-    const char *cmdName;
-    switch (result) {
-      case TACCEL: cmdName = "ACCEL"; break;
-      case TDECEL: cmdName = "DECEL"; break;
-      case TLEFT: cmdName = "LEFT"; break;
-      case TRIGHT: cmdName = "RIGHT"; break;
-      case TLEFTACCEL: cmdName = "LEFT+ACCEL"; break;
-      case TRIGHTACCEL: cmdName = "RIGHT+ACCEL"; break;
-      case TLEFTDECEL: cmdName = "LEFT+DECEL"; break;
-      case TRIGHTDECEL: cmdName = "RIGHT+DECEL"; break;
-      default: cmdName = "NONE"; break;
-    }
-    WB_LOG_TRACE(WB_LOG_CAT_GUI, "[AbsSteer] tank=%d target=%d raw=%d diff=%d absDiff=%d cmd=%s turnRate=%.1f",
-            (int)currentAngle, (int)targetAngle, (int)rawTarget, diff, absDiff, cmdName,
-            s_observedTurnRate);
-  }
-
-  return result;
-}
-
 tankButton inputTouchGetMovement(void) {
   if (!s_joyActive) {
-    s_smoothTargetAngle = -1.0f;  /* reset so next touch starts fresh */
+    joystickResetState();  /* reset so next touch starts fresh */
     return TNONE;
   }
 
@@ -621,10 +416,10 @@ tankButton inputTouchGetMovement(void) {
   float dist = sqrtf(dx * dx + dy * dy);
   if (dist < JOYSTICK_DEADZONE) return TNONE;
 
-  if (s_absoluteSteering) {
-    return inputTouchGetMovementAbsolute(dist);
+  if (joystickGetAbsoluteSteering()) {
+    return joystickGetMovementAbsolute(dx, dy, dist, JOYSTICK_DEADZONE, JOYSTICK_MAX_REACH, s_tankAngle);
   } else {
-    return inputTouchGetMovementRelative(dist);
+    return joystickGetMovementRelative(dx, dy, dist, JOYSTICK_DEADZONE, JOYSTICK_MAX_REACH);
   }
 }
 
@@ -633,11 +428,11 @@ void inputTouchSetTankAngle(BYTE angle) {
 }
 
 void inputTouchSetAbsoluteSteering(bool enabled) {
-  s_absoluteSteering = enabled;
+  joystickSetAbsoluteSteering(enabled);
 }
 
 bool inputTouchGetAbsoluteSteering(void) {
-  return s_absoluteSteering;
+  return joystickGetAbsoluteSteering();
 }
 
 void inputTouchGetJoystickState(float *anchorX, float *anchorY,
@@ -654,23 +449,7 @@ void inputTouchGetJoystickState(float *anchorX, float *anchorY,
 /* --- Haptic --- */
 
 void inputTouchTriggerHaptic(float strength, Uint32 durationMs) {
-#if defined(__ANDROID__) || (defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV))
-  int count = 0;
-  SDL_JoystickID *joysticks = SDL_GetGamepads(&count);
-  if (joysticks && count > 0) {
-    SDL_Gamepad *gp = SDL_OpenGamepad(joysticks[0]);
-    if (gp) {
-      Uint16 lo = (Uint16)(strength * 65535.0f);
-      Uint16 hi = lo;
-      SDL_RumbleGamepad(gp, lo, hi, durationMs);
-      SDL_CloseGamepad(gp);
-    }
-    SDL_free(joysticks);
-  }
-#else
-  (void)strength;
-  (void)durationMs;
-#endif
+  inputGamepadRumble(strength, durationMs);
 }
 
 /* --- Legacy API --- */

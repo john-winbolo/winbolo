@@ -1960,7 +1960,14 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 | ImGuiTableColumnFlags_NoResize, kStarColW,
                 2 /* user_id 2 = star column */);
             ImGui::TableSetupScrollFreeze(0, 1);
+            /* Headers stay navigable (so the user can press Up from the top
+             * row to reach the sortable column headers), but they must not be
+             * the spot nav lands on when entering the list — that's handled by
+             * SetItemDefaultFocus on a row below. NoNavDefaultFocus keeps the
+             * headers out of the running for default focus so the row wins. */
+            ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
             ImGui::TableHeadersRow();
+            ImGui::PopItemFlag();
 
             /* Click-to-sort. ImGui's TableSortSpecs is set by the
              * header click; we re-sort state->maps when SpecsDirty
@@ -2049,6 +2056,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 bool clicked = ImGui::Selectable(id, isSelected,
                     ImGuiSelectableFlags_SpanAllColumns
                     | ImGuiSelectableFlags_AllowOverlap);
+                if (isSelected) {
+                    ImGui::SetItemDefaultFocus();
+                }
                 ImGui::SameLine(0.0f, 0.0f);
 
                 /* Folder indent so the icon + name align with the
@@ -2167,6 +2177,13 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 }
             }
 
+            /* When no main-list row is the current selection (custom file /
+             * nothing chosen), let the first rendered row claim default nav
+             * focus so entering the list still lands on a row, not a header.
+             * selectedIdx <= -2 means a starred row is selected — that row
+             * claims focus itself, so don't fall back here. */
+            bool wantFirstRowFocus = (state->selectedIdx == -1);
+            bool firstRowFocusClaimed = false;
             for (int i = 0; i < state->numMaps; i++) {
                 const MapChooserEntry &ent = state->maps[i];
                 /* Defensive: in non-recursive mode, an entry whose
@@ -2236,6 +2253,16 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 bool clicked = ImGui::Selectable(selId, selected,
                     ImGuiSelectableFlags_SpanAllColumns
                     | ImGuiSelectableFlags_AllowOverlap);
+                /* Make the selected row the default nav landing spot so a
+                 * controller "enter list" (A) focuses the current map rather
+                 * than the sortable "Name" header. Fall back to the first row
+                 * when nothing in this list is the current selection. */
+                if (selected) {
+                    ImGui::SetItemDefaultFocus();
+                } else if (wantFirstRowFocus && !firstRowFocusClaimed) {
+                    ImGui::SetItemDefaultFocus();
+                    firstRowFocusClaimed = true;
+                }
                 /* Capture the Selectable's hover rect for the row
                  * tooltip below — IsItemHovered after the text would
                  * only fire on the narrow text strip, missing the
