@@ -265,14 +265,40 @@ static void controllerRow(const char *label, GamepadAction act) {
    Primary column. Lower = finer control (slower movement per stick deflection).
    Binds the global live; the OK handler flushes it to prefs. */
 /* Checkbox row, indented under the related binding.  Optional hover tooltip. */
-static void checkboxRow(const char *label, bool *value, const char *tip) {
-    ImGui::TableNextRow();
-    ImGui::TableSetColumnIndex(0);
-    ImGui::Indent();
-    ImGui::Checkbox(label, value);
-    if (tip && *tip && ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", tip);
-    ImGui::Unindent();
+/* Build-cursor behaviour options as plain checkboxes (not table rows), shared
+   by both controller tabs.  Rendered below the per-path content -- the bindings
+   table on the native path, the sliders under Steam Input.  These are game
+   rules, not button remaps, so they apply identically on both input paths. */
+static void renderBuildBehaviorOptions() {
+    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "%s",
+                       "Toggle Build Cursor Additional Options");
+    ImGui::Spacing();
+    auto cb = [](const char *label, bool *v, const char *tip) {
+        ImGui::Checkbox(label, v);
+        if (tip && *tip && ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", tip);
+    };
+    cb("Hold to build, release to exit (momentary)", &g_buildHoldMomentary,
+       "Hold the build-toggle button (>200ms) to temporarily enter build mode; "
+       "releasing it exits again -- a quick way to pop in, build, and pop back "
+       "to driving. A quick tap still toggles build mode normally (stays on "
+       "until pressed again).");
+    cb("Double-tap builds a road under the tank", &g_buildDoubleTapRoad,
+       "Double-tap the build-toggle button to instantly drop a road on the "
+       "tank's own tile -- without changing your selected build type or moving "
+       "the build cursor.");
+    cb("Exiting build mode executes the build where the cursor is",
+       &g_buildExitExecutes, nullptr);
+    if (g_buildExitExecutes) {
+        ImGui::Indent();
+        cb("Only when exiting press-and-hold (momentary) build mode",
+           &g_buildExitExecutesMomentaryOnly, nullptr);
+        ImGui::Unindent();
+    }
+    cb("Auto-close build mode when a build is executed",
+       &g_buildAutoCloseOnExecute,
+       "When on, using Execute Build automatically exits build cursor mode "
+       "afterwards, returning you to driving.");
 }
 
 static void sensitivityRow(const char *label, float *value,
@@ -301,6 +327,10 @@ static void sensitivityRow(const char *label, float *value,
  * already-running ImGui context without the OK/Cancel footer.
  * Operates purely on the shared file-static form state.
  * ------------------------------------------------------- */
+/* Set when the dialog opens; the tab logic consumes it once to land on the
+   Controller tab when a pad is connected (so controller users start there). */
+static bool s_requestControllerTabDefault = false;
+
 static void renderKeyRows(float extraFooterReserve = 0.0f) {
     /* Scrollable region containing all binding rows. footerH reserves space
      * for the two checkboxes below the child; extraFooterReserve lets an
@@ -335,12 +365,29 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
     static int s_activeTab = 0;
     int s_forceTab = -1;
     int tabCount = inputGamepadIsConnected() ? 2 : 1;
+    /* On open, default to the Controller tab when a pad is connected. */
+    if (s_requestControllerTabDefault) {
+        s_requestControllerTabDefault = false;
+        if (tabCount > 1) { s_activeTab = 1; s_forceTab = 1; }
+    }
     /* Don't cycle tabs while a binding is being captured — a shoulder press
-       then belongs to the binding, not to tab switching. */
+       then belongs to the binding, not to tab switching.  Also suppress on the
+       frame a capture *ends*: the very button press that completes the capture
+       (e.g. assigning L1/RT) clears s_padWaitAction the same frame ImGui still
+       reports that button's edge, which would otherwise tab us out of the
+       Controller tab the instant the bind is set. */
     bool capturing = (s_waiting != ksNone) || (s_padWaitAction != -1);
-    if (tabCount > 1 && !capturing) {
+    static bool s_wasCapturing = false;
+    bool suppressTabCycle = capturing || s_wasCapturing;
+    s_wasCapturing = capturing;
+    if (tabCount > 1 && !suppressTabCycle) {
+        /* Native pad: L1/R1 (backend feeds ImGuiKey_Gamepad* even with nav off).
+           Steam Input: the pad is hidden from SDL, so L1/R1 never arrive — use
+           the menu_tab_left/right Steam actions (mapped to triggers) instead. */
         int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
                   - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
+        if (shift == 0)
+            shift = imguiSteamNavConsumeMenuTabShift();
         if (shift != 0)
             s_forceTab = (s_activeTab + shift + tabCount) % tabCount;
     }
@@ -394,6 +441,41 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
                                 s_forceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_activeTab = 1;
             ImGui::Spacing();
+          if (inputGamepadIsSteamInput()) {
+            /* Steam Input owns the button/stick mapping via its own
+               configurator (and the action manifest we ship), so the
+               per-button remaps below would do nothing -- hide them and
+               say why.  The sensitivity sliders and build-rule options are
+               game behaviour (not remaps), so they still apply and stay. */
+            ImGui::TextWrapped(
+                "This controller is running through Steam Input. Button and "
+                "trigger mappings are configured in Steam "
+                "(Steam \xE2\x86\x92 Settings \xE2\x86\x92 Controller, or the in-game "
+                "Steam overlay), not here, so WinBolo's per-button remaps are "
+                "hidden. To rebind, open the Steam controller configurator for "
+                "WinBolo. The options below are game behaviour and still apply.");
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextDisabled("Game options (still apply under Steam Input):");
+            ImGui::Spacing();
+            ImGui::TextUnformatted("Tank turn sensitivity");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::SliderFloat("##sitanksens", &g_gamepadTankSensitivity,
+                                   0.10f, 1.00f, "%.2f")) {
+                if (g_gamepadTankSensitivity < 0.10f) g_gamepadTankSensitivity = 0.10f;
+                if (g_gamepadTankSensitivity > 1.00f) g_gamepadTankSensitivity = 1.00f;
+            }
+            ImGui::TextUnformatted("Build cursor sensitivity");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::SliderFloat("##sibuildsens", &g_gamepadBuildCursorSensitivity,
+                                   0.25f, 2.00f, "%.2fx")) {
+                if (g_gamepadBuildCursorSensitivity < 0.25f) g_gamepadBuildCursorSensitivity = 0.25f;
+                if (g_gamepadBuildCursorSensitivity > 2.00f) g_gamepadBuildCursorSensitivity = 2.00f;
+            }
+          } else {
             /* Action column gets at least ~33% of the table width. */
             ImGui::BeginTable("##padbindings", 5, tflags, ImVec2(0, 0));
             ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
@@ -418,23 +500,7 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
             controllerRow(langGetText(STR_GP_ACTION_BUILD_CURSOR_TOGGLE), GP_ACT_BUILD_CURSOR_TOGGLE);
             sensitivityRow("Build cursor sensitivity", &g_gamepadBuildCursorSensitivity,
                            0.25f, 2.00f, "%.2fx", /*indent=*/true);
-            /* Build-cursor behaviour options, grouped (indented) under the toggle. */
-            checkboxRow("Hold to build, release to exit (momentary)",
-                        &g_buildHoldMomentary,
-                        "Hold the build-toggle button (>200ms) to temporarily enter "
-                        "build mode; releasing it exits again -- a quick way to pop in, "
-                        "build, and pop back to driving. A quick tap still toggles "
-                        "build mode normally (stays on until pressed again).");
-            checkboxRow("Double-tap builds a road under the tank",
-                        &g_buildDoubleTapRoad,
-                        "Double-tap the build-toggle button to instantly drop a road on "
-                        "the tank's own tile -- without changing your selected build "
-                        "type or moving the build cursor.");
-            checkboxRow("Exiting build mode executes the build",
-                        &g_buildExitExecutes,
-                        "When on, leaving build mode places the build at the cursor "
-                        "tile. Use the Cancel binding below to exit without building.");
-            controllerRow("Exit build mode, no build (cancels momentary)",
+            controllerRow("Exit build mode, no build",
                           GP_ACT_BUILD_CANCEL);
             controllerRow(langGetText(STR_GP_ACTION_VIEW_CYCLE),          GP_ACT_VIEW_CYCLE);
             controllerRow("Tank view",                                    GP_ACT_TANK_VIEW);
@@ -442,6 +508,11 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
             controllerRow(langGetText(STR_GP_ACTION_QUICK_CHAT),          GP_ACT_QUICK_CHAT);
             controllerRow(langGetText(STR_GP_ACTION_PAUSE),               GP_ACT_PAUSE);
             ImGui::EndTable();
+          }
+            /* Build-cursor behaviour options, shared by both paths, below the
+               per-path content (bindings table on native, sliders on Steam). */
+            ImGui::Spacing();
+            renderBuildBehaviorOptions();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -481,12 +552,6 @@ static int renderFormBody(struct ClientSim *cs) {
     if (s_padWaitAction != -1 && !inputGamepadIsConnected()) s_padWaitAction = -1;
 
     bool busy = (s_waiting != ksNone) || (s_padWaitAction != -1);
-
-    if (busy) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "%s",
-                           langGetText(STR_DLGKEYSETUP_PRESS_OR_CANCEL));
-        ImGui::Separator();
-    }
 
     /* Plain-text input-path indicator, always visible while a controller is
      * connected (not relying on colour to convey it). */
@@ -547,6 +612,7 @@ extern "C" int imguiKeySetupShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return 0;
+    s_requestControllerTabDefault = true;
 
     /* Save logical presentation */
     int savedLogW = 0, savedLogH = 0;
@@ -808,6 +874,7 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
     if (s_inGameShowRequested) {
         ImGui::OpenPopup(title);
         s_inGameShowRequested = false;
+        s_requestControllerTabDefault = true;
         windowGetKeys(&s_keys);
         inputGamepadBindingsGetAll(&s_pad);
         s_padWaitAction = -1;
@@ -888,6 +955,7 @@ extern "C" void imguiKeySetupCancelInGamePad(void) {
  * popup. Pre-game only — no live ClientSim to push onto.
  * ------------------------------------------------------- */
 extern "C" void imguiKeySetupBeginEmbedded(void) {
+    s_requestControllerTabDefault = true;
     windowGetKeys(&s_keys);
     s_autoSlowdown = useAutoslow;
     s_autoGunsight = useAutohide;

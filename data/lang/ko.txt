@@ -306,6 +306,7 @@ STR_DLGKEYSETUP_PRESS_OR_CANCEL=할당할 키를 누르거나 취소를 클릭�
 STR_DLGKEYSETUP_CHANGE=변경
 STR_DLGKEYSETUP_COL_ACTION=동작
 STR_DLGKEYSETUP_COL_KEY=키
+STR_DLGKEYSETUP_TAB_KEYBOARD=키보드
 STR_DLGKEYSETUP_QUICKKEYS=빠른 키
 STR_DLGKEYSETUP_TREE=나무
 STR_DLGKEYSETUP_ROAD=도로
@@ -348,6 +349,7 @@ STR_MENU_REQUIRES={number}x{number2} 필요 - 디스플레이 초과
 STR_MENU_SMOOTH_SCROLLING=부드러운 스크롤
 STR_MENU_AUTO_SCROLLING=자동 스크롤
 STR_MENU_SHOW_GUNSIGHT=조준선 표시
+STR_MENU_LETTERBOX_GRAY=회색 레터박스 바
 STR_MENU_MSG_NAMES_SUB=메시지 발신자 이름
 STR_MENU_TANK_LABELS_SUB=탱크 라벨
 STR_NONE=없음
@@ -1104,7 +1106,6 @@ STR_NAME_INVALID_RESERVED_PREFIX=플레이어 이름은 '*'로 시작할 수 없
 STR_NAME_INVALID_RESERVED_SUFFIX=플레이어 이름은 '-unverified'로 끝날 수 없어요.
 
 # Settings → Display: country-flag rendering preference (Phase 4)
-STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=채팅에 국가 기 표시
 
 # Verified-priority collision policy (Phase 5)
 STR_NAME_RENAMED_BY_VERIFIED={other}님이 인증된 플레이어로 참가해서 {player}님의 이름이 변경됐어요
@@ -1155,7 +1156,7 @@ STR_GP_ACTION_BUILD_PREV=이전 건설 유형
 STR_GP_ACTION_BUILD_NEXT=다음 건설 유형
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=건설 커서 전환
 STR_GP_ACTION_QUICK_CHAT=빠른 채팅
-STR_GP_ACTION_PAUSE=일시 정지
+STR_GP_ACTION_PAUSE=빠른 메뉴
 STR_GP_ACTION_VIEW_PLAYERS=플레이어 목록
 
 # Controller Mode pref + connect prompt (Phase 8.1)

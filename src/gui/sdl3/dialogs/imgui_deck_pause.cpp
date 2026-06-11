@@ -68,7 +68,7 @@ static bool pauseButton(const char *action_name,
 
 void deckPauseRender(struct ClientSim *cs) {
     if (s_pendingOpen) {
-        ImGui::OpenPopup("Pause");
+        ImGui::OpenPopup("Quick menu###Pause");
         ImGui::SetNavCursorVisible(true);
         s_pendingOpen = false;
         s_open        = true;
@@ -94,7 +94,7 @@ void deckPauseRender(struct ClientSim *cs) {
        NavCancel does NOT auto-close modals (imgui.cpp line ~14949 — it
        skips windows with the Modal flag), so we also detect B/Escape
        inside the popup and close it manually. */
-    if (ImGui::BeginPopupModal("Pause", &s_open, flags)) {
+    if (ImGui::BeginPopupModal("Quick menu###Pause", &s_open, flags)) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             ImGui::CloseCurrentPopup();

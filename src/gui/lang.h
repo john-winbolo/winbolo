@@ -376,6 +376,7 @@
 #define STR_MENU_SMOOTH_SCROLLING           552
 #define STR_MENU_AUTO_SCROLLING             553
 #define STR_MENU_SHOW_GUNSIGHT              554
+#define STR_MENU_LETTERBOX_GRAY             1493
 #define STR_MENU_MSG_NAMES_SUB              555
 #define STR_MENU_TANK_LABELS_SUB            556
 #define STR_NONE                            557

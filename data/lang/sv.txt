@@ -306,6 +306,7 @@ STR_DLGKEYSETUP_PRESS_OR_CANCEL=Tryck en tangent för att tilldela, eller klicka
 STR_DLGKEYSETUP_CHANGE=Ändra
 STR_DLGKEYSETUP_COL_ACTION=Åtgärd
 STR_DLGKEYSETUP_COL_KEY=Tangent
+STR_DLGKEYSETUP_TAB_KEYBOARD=Tangentbord
 STR_DLGKEYSETUP_QUICKKEYS=Snabbtangenter
 STR_DLGKEYSETUP_TREE=Träd
 STR_DLGKEYSETUP_ROAD=Väg
@@ -348,6 +349,7 @@ STR_MENU_REQUIRES=Kräver {number}x{number2} – överstiger skärm
 STR_MENU_SMOOTH_SCROLLING=Mjuk rullning
 STR_MENU_AUTO_SCROLLING=Automatisk rullning
 STR_MENU_SHOW_GUNSIGHT=Visa sikte
+STR_MENU_LETTERBOX_GRAY=Grå letterbox-fält
 STR_MENU_MSG_NAMES_SUB=Meddelandeavsändarnamn
 STR_MENU_TANK_LABELS_SUB=Tanketiketter
 STR_NONE=Ingen
@@ -1104,7 +1106,6 @@ STR_NAME_INVALID_RESERVED_PREFIX=Spelarnamnet får inte börja med '*'.
 STR_NAME_INVALID_RESERVED_SUFFIX=Spelarnamnet får inte sluta med '-unverified'.
 
 # Settings → Display: country-flag rendering preference
-STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Visa landslagsflaggor i chatten
 
 # Verified player name conflict messages
 STR_NAME_RENAMED_BY_VERIFIED={player} döptes om eftersom {other} anslöt som verifierad
@@ -1155,7 +1156,7 @@ STR_GP_ACTION_BUILD_PREV=Föregående byggnadstyp
 STR_GP_ACTION_BUILD_NEXT=Nästa byggnadstyp
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Växla byggmarkör
 STR_GP_ACTION_QUICK_CHAT=Snabbchatt
-STR_GP_ACTION_PAUSE=Pausa
+STR_GP_ACTION_PAUSE=Snabbmeny
 STR_GP_ACTION_VIEW_PLAYERS=Visa spelare
 
 # Handkontrolläge inställning + anslutningsprompt (Phase 8.1)

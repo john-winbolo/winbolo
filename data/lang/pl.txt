@@ -306,6 +306,7 @@ STR_DLGKEYSETUP_PRESS_OR_CANCEL=Naciśnij klawisz, aby przypisać, lub kliknij A
 STR_DLGKEYSETUP_CHANGE=Zmień
 STR_DLGKEYSETUP_COL_ACTION=Akcja
 STR_DLGKEYSETUP_COL_KEY=Klawisz
+STR_DLGKEYSETUP_TAB_KEYBOARD=Klawiatura
 STR_DLGKEYSETUP_QUICKKEYS=Szybkie klawisze
 STR_DLGKEYSETUP_TREE=Drzewo
 STR_DLGKEYSETUP_ROAD=Droga
@@ -348,6 +349,7 @@ STR_MENU_REQUIRES=Wymaga {number}x{number2} — przekracza wyświetlacz
 STR_MENU_SMOOTH_SCROLLING=Płynne przewijanie
 STR_MENU_AUTO_SCROLLING=Automatyczne przewijanie
 STR_MENU_SHOW_GUNSIGHT=Pokaż celownik
+STR_MENU_LETTERBOX_GRAY=Szare pasy letterbox
 STR_MENU_MSG_NAMES_SUB=Nazwy nadawców wiadomości
 STR_MENU_TANK_LABELS_SUB=Etykiety czołgów
 STR_NONE=Brak
@@ -1102,7 +1104,6 @@ STR_NAME_INVALID_CHARS=Nazwa gracza zawiera niedozwolone znaki.
 STR_NAME_INVALID_MIXED_SCRIPTS=Nazwa gracza miesza niezgodne systemy pisma.
 STR_NAME_INVALID_RESERVED_PREFIX=Nazwa gracza nie może zaczynać się od '*'.
 STR_NAME_INVALID_RESERVED_SUFFIX=Nazwa gracza nie może kończyć się na '-unverified'.
-STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Pokaż flagi krajów w czacie
 STR_NAME_RENAMED_BY_VERIFIED={player} został(a) przemianowany(a), ponieważ {other} dołączył(a) jako zweryfikowany gracz
 STR_NAME_TAKEN_BY_VERIFIED=Ta wyświetlana nazwa należy do zweryfikowanego gracza. Wybierz inną.
 
@@ -1151,7 +1152,7 @@ STR_GP_ACTION_BUILD_PREV=Poprzedni typ budowy
 STR_GP_ACTION_BUILD_NEXT=Następny typ budowy
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Przełącz kursor budowy
 STR_GP_ACTION_QUICK_CHAT=Szybki czat
-STR_GP_ACTION_PAUSE=Pauza
+STR_GP_ACTION_PAUSE=Szybkie menu
 STR_GP_ACTION_VIEW_PLAYERS=Lista graczy
 
 # Tryb kontrolera – ustawienie i monit o połączeniu (Phase 8.1)

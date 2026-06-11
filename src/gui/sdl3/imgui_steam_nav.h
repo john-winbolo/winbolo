@@ -41,6 +41,13 @@ void imguiSteamNavActivateMenuSet(void);
    from the main game pump when no popup modal is open. */
 void imguiSteamNavActivateGameSet(void);
 
+/* Edge-latched tab cycle from the Steam Input Menu actions menu_tab_left /
+   menu_tab_right (typically the triggers).  Returns +1 (next tab), -1
+   (previous tab) on a fresh press, or 0.  Returns 0 when Steam Input isn't
+   active (the native path uses ImGuiKey_GamepadL1/R1 instead).  Consume once
+   per frame from a tab bar that wants trigger tab-switching under Steam. */
+int imguiSteamNavConsumeMenuTabShift(void);
+
 #ifdef __cplusplus
 }
 #endif

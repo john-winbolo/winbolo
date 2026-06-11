@@ -69,6 +69,11 @@ static BYTE scrollKeyCount = 0;
 static Uint32 pillViewCycleMs = 0;
 static Uint32 pillViewStepMs  = 0;
 
+/* TRUE when pill view was entered via the controller view button: that mode
+ * cycles pills on each press and snaps back to tank view on the first driving
+ * input (forward or turn).  Not set for keyboard-entered pill view. */
+static bool s_controllerPillView = false;
+
 /* Gunsight adjustment state — set by inputGetKeys, consumed by
  * screenBuildInputPacket via inputConsumeGunsightAdj().
  * 0 = no change, 1 = increase, 2 = decrease. */
@@ -152,10 +157,16 @@ static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
     inPill = clientSimIsInPillView(cs);
   }
 
+  /* Scroll-based pill stepping is disabled in build mode: the stick / scroll
+   * then drives the build cursor instead, and shouldn't also jump pills.
+   * (Building is a tank-view activity; this only matters in the edge case of
+   * being in pill view with build mode on.) */
+  bool buildActive = buildCursorIsActive();
+
   /* Gamepad right stick steps pills too while in pill view (its normal map
      scroll is suppressed here). */
   bool padUp = false, padDown = false, padLeft = false, padRight = false;
-  if (inPill && inputGamepadIsConnected()) {
+  if (inPill && !buildActive && inputGamepadIsConnected()) {
     float gdx = 0.0f, gdy = 0.0f;
     if (inputGamepadGetScrollDirection(&gdx, &gdy)) {
       const float th = 0.5f;
@@ -164,12 +175,13 @@ static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
     }
   }
 
-  /* Directional pill stepping — only in pill view, on the slower step
-   * cadence (computed from inPill so it can't fire on the entering press). */
-  bool stepUp    = inPill && (KEY_DOWN(setKeys->kiScrollUp)    || padUp);
-  bool stepDown  = inPill && (KEY_DOWN(setKeys->kiScrollDown)  || padDown);
-  bool stepLeft  = inPill && (KEY_DOWN(setKeys->kiScrollLeft)  || padLeft);
-  bool stepRight = inPill && (KEY_DOWN(setKeys->kiScrollRight) || padRight);
+  /* Directional pill stepping — only in pill view (and not while building),
+   * on the slower step cadence (computed from inPill so it can't fire on the
+   * entering press). */
+  bool stepUp    = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollUp)    || padUp);
+  bool stepDown  = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollDown)  || padDown);
+  bool stepLeft  = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollLeft)  || padLeft);
+  bool stepRight = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollRight) || padRight);
   if (!stepUp && !stepDown && !stepLeft && !stepRight) {
     pillViewStepMs = 0;
   } else if (pillViewStepMs == 0 ||
@@ -367,8 +379,11 @@ void inputActivate(void) {
 /* End build-cursor mode.  When `execute` and the "exit executes the build"
    option are both set, dispatch the build at the cursor tile first (keeping
    the current build selection); then exit.  Cancel passes execute=false. */
-static void buildCursorEnd(ClientSim *cs, bool execute) {
-  if (execute && g_buildExitExecutes && buildCursorIsActive()) {
+static void buildCursorEnd(ClientSim *cs, bool execute, bool momentary) {
+  /* "Only on momentary": when that sub-option is set, a normal tap-off exit
+     does NOT build — only leaving a press-and-hold (momentary) session does. */
+  if (execute && g_buildExitExecutes && buildCursorIsActive() &&
+      (!g_buildExitExecutesMomentaryOnly || momentary)) {
     BYTE bx = 0, by = 0;
     if (buildCursorGetTile(&bx, &by)) {
       clientMutexWaitFor();
@@ -437,6 +452,19 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
       case TLEFTACCEL: case TRIGHTACCEL: tb = TACCEL;  break;
       case TLEFTDECEL: case TRIGHTDECEL: tb = TDECEL;  break;
       default: break;
+    }
+  }
+
+  /* Controller pill-view peek: the first forward/turn driving input snaps
+   * back to tank view. Cleared if pill view was left by any other means. */
+  if (s_controllerPillView) {
+    if (!clientSimIsInPillView(cs)) {
+      s_controllerPillView = false;
+    } else if (tb == TACCEL || tb == TLEFT || tb == TRIGHT ||
+               tb == TLEFTACCEL || tb == TRIGHTACCEL ||
+               tb == TLEFTDECEL || tb == TRIGHTDECEL) {
+      clientSimTankView(cs);
+      s_controllerPillView = false;
     }
   }
 
@@ -510,7 +538,7 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
           s_bcModeBeforePress = buildCursorIsActive();
           s_bcWasOffAtPress   = !buildCursorIsActive();
           if (buildCursorIsActive()) {
-            buildCursorEnd(cs, /*execute=*/true);   /* tap-off: build-on-exit */
+            buildCursorEnd(cs, /*execute=*/true, /*momentary=*/false); /* tap-off: build-on-exit */
           } else {
             buildCursorToggle(cs);                  /* turn on */
           }
@@ -538,7 +566,7 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
           s_bcTapPending = false;
         } else if (s_bcHeldMode) {
           /* Momentary release: end build mode (build-on-exit if enabled). */
-          buildCursorEnd(cs, /*execute=*/true);
+          buildCursorEnd(cs, /*execute=*/true, /*momentary=*/true);
           s_bcTapPending = false;
         } else {
           /* Quick tap: keep it sticky; remember for a possible double-tap. */
@@ -575,12 +603,19 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
         clientSimManMoveToMap(cs, gsX, gsY, clientSimGetCurrentBuildSelect(cs));
         clientMutexRelease();
       }
+      /* Auto-close build cursor mode after the build, if the option is set.
+         Plain exit (the build already went out above — no build-on-exit). */
+      if (g_buildAutoCloseOnExecute && buildCursorIsActive()) {
+        buildCursorExit();
+      }
     }
 
     if (inputGamepadIsViewToggleEdge()) {
-      static bool inPillView = false;
-      if (inPillView) { clientSimTankView(cs); inPillView = false; }
-      else            { clientSimPillView(cs, 0, 0); inPillView = true; }
+      /* Enter pill view, or advance to the next pill if already in it. Unlike
+       * the old toggle, repeated presses cycle pills rather than returning to
+       * tank view — driving (forward/turn) does that, handled above. */
+      clientSimPillView(cs, 0, 0);
+      s_controllerPillView = true;
     }
   }
 

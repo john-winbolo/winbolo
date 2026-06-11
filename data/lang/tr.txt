@@ -306,6 +306,7 @@ STR_DLGKEYSETUP_PRESS_OR_CANCEL=Atamak için bir tuşa basın veya İptal'e tık
 STR_DLGKEYSETUP_CHANGE=Değiştir
 STR_DLGKEYSETUP_COL_ACTION=Eylem
 STR_DLGKEYSETUP_COL_KEY=Tuş
+STR_DLGKEYSETUP_TAB_KEYBOARD=Klavye
 STR_DLGKEYSETUP_QUICKKEYS=Hızlı Tuşlar
 STR_DLGKEYSETUP_TREE=Ağaç
 STR_DLGKEYSETUP_ROAD=Yol
@@ -348,6 +349,7 @@ STR_MENU_REQUIRES={number}x{number2} gerektirir - ekranı aşıyor
 STR_MENU_SMOOTH_SCROLLING=Yumuşak Kaydırma
 STR_MENU_AUTO_SCROLLING=Otomatik Kaydırma
 STR_MENU_SHOW_GUNSIGHT=Nişanı Göster
+STR_MENU_LETTERBOX_GRAY=Gri letterbox şeritleri
 STR_MENU_MSG_NAMES_SUB=Mesaj Gönderici Adları
 STR_MENU_TANK_LABELS_SUB=Tank Etiketleri
 STR_NONE=Hiçbiri
@@ -1104,7 +1106,6 @@ STR_NAME_INVALID_RESERVED_PREFIX=Oyuncu adı '*' ile başlayamaz.
 STR_NAME_INVALID_RESERVED_SUFFIX=Oyuncu adı '-unverified' ile bitemez.
 
 # Settings → Display: country-flag rendering preference (Phase 4)
-STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Sohbette ülke bayraklarını göster
 
 # Verified-priority collision policy (Phase 5)
 STR_NAME_RENAMED_BY_VERIFIED={player} yeniden adlandırıldı; çünkü {other} doğrulanmış olarak katıldı
@@ -1155,7 +1156,7 @@ STR_GP_ACTION_BUILD_PREV=Önceki İnşaat Türü
 STR_GP_ACTION_BUILD_NEXT=Sonraki İnşaat Türü
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=İnşaat İmlecini Aç/Kapat
 STR_GP_ACTION_QUICK_CHAT=Hızlı Sohbet
-STR_GP_ACTION_PAUSE=Duraklat
+STR_GP_ACTION_PAUSE=Hızlı Menü
 STR_GP_ACTION_VIEW_PLAYERS=Oyuncu Listesi
 
 # Kontrolcü modu tercihi + bağlantı istemi (Phase 8.1)

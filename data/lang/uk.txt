@@ -306,6 +306,7 @@ STR_DLGKEYSETUP_PRESS_OR_CANCEL=Натисніть клавішу для при�
 STR_DLGKEYSETUP_CHANGE=Змінити
 STR_DLGKEYSETUP_COL_ACTION=Дія
 STR_DLGKEYSETUP_COL_KEY=Клавіша
+STR_DLGKEYSETUP_TAB_KEYBOARD=Клавіатура
 STR_DLGKEYSETUP_QUICKKEYS=Швидкі клавіші
 STR_DLGKEYSETUP_TREE=Дерево
 STR_DLGKEYSETUP_ROAD=Дорога
@@ -348,6 +349,7 @@ STR_MENU_REQUIRES=Потрібно {number}x{number2} — перевищує р�
 STR_MENU_SMOOTH_SCROLLING=Плавна прокрутка
 STR_MENU_AUTO_SCROLLING=Автоматична прокрутка
 STR_MENU_SHOW_GUNSIGHT=Показати приціл
+STR_MENU_LETTERBOX_GRAY=Сірі смуги леттербоксу
 STR_MENU_MSG_NAMES_SUB=Імена відправників повідомлень
 STR_MENU_TANK_LABELS_SUB=Мітки танків
 STR_NONE=Жодних
@@ -1104,7 +1106,6 @@ STR_NAME_INVALID_RESERVED_PREFIX=Ім'я гравця не може почина
 STR_NAME_INVALID_RESERVED_SUFFIX=Ім'я гравця не може закінчуватися на «-unverified».
 
 # Settings → Display: country-flag rendering preference (Phase 4)
-STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS=Показувати прапорці країн у чаті
 
 # Verified-priority collision policy (Phase 5)
 STR_NAME_RENAMED_BY_VERIFIED={player} перейменовано, бо {other} приєднався верифікованим
@@ -1155,7 +1156,7 @@ STR_GP_ACTION_BUILD_PREV=Попередній тип будівництва
 STR_GP_ACTION_BUILD_NEXT=Наступний тип будівництва
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Перемкнути курсор будівництва
 STR_GP_ACTION_QUICK_CHAT=Швидкий чат
-STR_GP_ACTION_PAUSE=Пауза
+STR_GP_ACTION_PAUSE=Швидке меню
 STR_GP_ACTION_VIEW_PLAYERS=Список гравців
 
 # Controller mode pref + connect prompt (Phase 8.1)

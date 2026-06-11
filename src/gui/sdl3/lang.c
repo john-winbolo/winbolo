@@ -1063,7 +1063,7 @@ static const LangEntry langTable[] = {
     {1476, "Next Build Type"},
     {1477, "Toggle Build Cursor"},
     {1478, "Quick Chat"},
-    {1479, "Pause"},
+    {1479, "Quick menu"},
     {1480, "Status Overlay"},
 
     /* Controller Mode pref + connect prompt */
@@ -1079,6 +1079,7 @@ static const LangEntry langTable[] = {
     {1490, "Not now"},
     {1491, "Don't ask again"},
     {1492, "Keyboard"},
+    {1493, "Gray letterbox bars"},
 
     /* macOS native menu — App / File / Window menu items mirrored by
      * src/gui/sdl3/platform/mac_menubar.mm. Not referenced by the
