@@ -87,6 +87,13 @@ struct ClientSim {
     PredictedShell predictedShells[MAX_PREDICTED_SHELLS];
     int         predictedShellCount;
 
+    /* Reconciliation stats — current 1s window + last completed window */
+    uint16_t reconCountThisWindow;
+    float    reconErrSumPx, reconErrMaxPx;
+    uint32_t reconWindowStartTick;     /* game-tick the window opened */
+    uint16_t reconCountLastSec;
+    float    reconErrAvgPxLast, reconErrMaxPxLast;
+
     /* Pending human-player build request */
     BYTE        pendingBuildAction;
     BYTE        pendingBuildX;

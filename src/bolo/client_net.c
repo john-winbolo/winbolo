@@ -737,6 +737,17 @@ void clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,
                                 snapshotsLostTotal);
 }
 
+void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,
+                                float *avgErrPx, float *maxErrPx) {
+  if (countPerSec) *countPerSec = 0;
+  if (avgErrPx) *avgErrPx = 0.0f;
+  if (maxErrPx) *maxErrPx = 0.0f;
+  if (cs == NULL) return;
+  if (countPerSec) *countPerSec = cs->reconCountLastSec;
+  if (avgErrPx) *avgErrPx = cs->reconErrAvgPxLast;
+  if (maxErrPx) *maxErrPx = cs->reconErrMaxPxLast;
+}
+
 /* === Local-transport tuning === */
 
 void clientSimNetSetLocalDelay(ClientSim *cs, uint16_t delay_ms) {

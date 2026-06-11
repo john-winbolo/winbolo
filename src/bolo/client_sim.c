@@ -64,6 +64,7 @@
 #include "../gui/clientmutex.h"
 #include "../gui/dialogAlliance.h"
 #include "../winbolonet/winbolonet_core.h"
+#include "../common/mp_diag_log.h"
 #include "frontend.h"
 
 /* Must match the value used inside shellsAddItem (shells.c redefines
@@ -548,6 +549,31 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
 
   /* Advance existing predicted shells */
   clientSimAdvancePredictedShells(cs);
+
+  /* Roll the reconcile-stats window once per second. pkt->tick is the
+   * 100Hz sub-tick counter; >>1 yields the game-tick index, which
+   * advances 50/s, so 50 game ticks is one second. The completed window
+   * is copied into the *Last fields (read by the Net Info dialog) and
+   * logged only when a transport is active. */
+  {
+    uint32_t gameTick = pkt->tick >> 1;
+    if (gameTick - cs->reconWindowStartTick >= 50) {
+      cs->reconCountLastSec = cs->reconCountThisWindow;
+      cs->reconErrMaxPxLast = cs->reconErrMaxPx;
+      cs->reconErrAvgPxLast = (cs->reconCountThisWindow > 0)
+                                  ? (cs->reconErrSumPx / cs->reconCountThisWindow)
+                                  : 0.0f;
+      if (clientSimHasTransport(cs)) {
+        mpDiagLog("[cli] netstat recon=%u/s errAvg=%.1fpx errMax=%.1fpx",
+                  cs->reconCountLastSec, cs->reconErrAvgPxLast,
+                  cs->reconErrMaxPxLast);
+      }
+      cs->reconCountThisWindow = 0;
+      cs->reconErrSumPx = 0.0f;
+      cs->reconErrMaxPx = 0.0f;
+      cs->reconWindowStartTick = gameTick;
+    }
+  }
 }
 
 void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
@@ -1494,6 +1520,15 @@ void clientSimResetWorld(ClientSim *cs) {
    * alongside the per-player clear). */
   cs->serverShellCount = 0;
   cs->predictedShellCount = 0;
+
+  /* Reconciliation stats are predict-scoped — start each game fresh. */
+  cs->reconCountThisWindow = 0;
+  cs->reconErrSumPx = 0.0f;
+  cs->reconErrMaxPx = 0.0f;
+  cs->reconWindowStartTick = 0;
+  cs->reconCountLastSec = 0;
+  cs->reconErrAvgPxLast = 0.0f;
+  cs->reconErrMaxPxLast = 0.0f;
 }
 
 bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name) {

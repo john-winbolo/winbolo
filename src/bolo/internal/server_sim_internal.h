@@ -190,6 +190,17 @@ struct ServerSim {
     uint8_t  jitterStallCount[MAX_TANKS];  /* Consecutive ticks queue was empty when expected */
     uint16_t jitterStableTicks[MAX_TANKS]; /* Ticks since last stall */
 
+    /* Per-player input-pipeline instrumentation — window counters reset
+     * each logged second, plus one gauge. Reads/writes only; never gate
+     * sim behaviour on these. Logged once per second by the [netstat] line. */
+    uint16_t statStallTicks[MAX_TANKS];         /* stall-branch executions this window */
+    uint16_t statGapFillTicks[MAX_TANKS];       /* gap-filled ticks this window */
+    uint16_t statDroppedStaleInputs[MAX_TANKS]; /* stale queue entries skipped this window */
+    uint16_t statCatchupTicks[MAX_TANKS];       /* extra catch-up dequeues this window —
+                                                 * incremented by the queue catch-up
+                                                 * dequeue path; no increment site yet */
+    uint8_t  statLastRewindTicks[MAX_TANKS];    /* gauge: most recent lag-comp rewind */
+
     PosHistory   posHistory[MAX_TANKS];           /* Position history for lag compensation */
     PosHistory   lgmPosHistory[MAX_TANKS];        /* LGM position history for lag compensation */
 

@@ -1041,6 +1041,7 @@ static void simRunHalfStep(ServerSim *sim) {
                 hasInput[count] = TRUE;
                 break;
             }
+            sim->statDroppedStaleInputs[count]++;  /* stale/duplicate entry discarded */
         }
 
         /* Adaptive jitter buffer — track stalls and adjust target depth */
@@ -1093,6 +1094,7 @@ static void simRunHalfStep(ServerSim *sim) {
                     uint32_t gt;
                     for (gt = expected; gt < currentInputs[count].tick; gt++) {
                         bool gapIsKeys = (gt % 2) == 1;
+                        sim->statGapFillTicks[count]++;
                         if (gapIsKeys) {
                             BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
                             BYTE bmy = tankGetMY(&sim->sim.tanks[count]);
@@ -1138,6 +1140,7 @@ static void simRunHalfStep(ServerSim *sim) {
                     uint8_t compTicks = (uint8_t)(delayMs / 20);
                     if (compTicks > LAG_COMP_MAX_TICKS) compTicks = LAG_COMP_MAX_TICKS;
                     sim->sim.lagCompTicks = compTicks;
+                    sim->statLastRewindTicks[count] = compTicks;
                 }
                 tankUpdate(&sim->sim, &sim->sim.tanks[count], tb, shoot, FALSE);
 
@@ -1164,6 +1167,11 @@ static void simRunHalfStep(ServerSim *sim) {
              * the server to turn slower than the client predicted and
              * producing visible angle "pull back" on reconciliation. */
             tankButton stallTb = translateInputToTankButton(sim->lastInputButtons[count]);
+            /* Count only real stalls — idle/never-connected players sit in
+             * this branch every tick and would swamp the signal. */
+            if (sim->inputBufferFilled[count]) {
+                sim->statStallTicks[count]++;
+            }
             sim->sim.lagCompTicks = 0;
             if (isKeysTick) {
                 BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
@@ -1385,6 +1393,32 @@ static void simRunHalfStep(ServerSim *sim) {
     if (!isKeysTick) {
         serverSimLogTick(sim);
     }
+
+    /* Per-second input-pipeline summary: one [netstat] line per connected
+     * player, then reset that player's window counters. 100 sub-ticks =
+     * 1 second. q and jt are live gauges read now; rewind is a gauge too
+     * (most recent value, not reset). The rest accumulated over the window. */
+    if ((sim->tick % 100) == 0) {
+        for (count = 0; count < MAX_TANKS; count++) {
+            if (!sim->playerConnected[count]) {
+                continue;
+            }
+            {
+                uint8_t qd = (sim->inputQueueHead[count] - sim->inputQueueTail[count])
+                             & (SERVER_INPUT_QUEUE_SIZE - 1);
+                mpDiagLog("[netstat] p%d q=%u jt=%u stall=%u gap=%u stale=%u catchup=%u rewind=%u",
+                          count, qd, sim->jitterTarget[count],
+                          sim->statStallTicks[count], sim->statGapFillTicks[count],
+                          sim->statDroppedStaleInputs[count], sim->statCatchupTicks[count],
+                          sim->statLastRewindTicks[count]);
+            }
+            sim->statStallTicks[count] = 0;
+            sim->statGapFillTicks[count] = 0;
+            sim->statDroppedStaleInputs[count] = 0;
+            sim->statCatchupTicks[count] = 0;
+        }
+    }
+
     sim->tick++;
 }
 
@@ -1476,6 +1510,11 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, b
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
     sim->jitterStallCount[playerNum] = 0;
     sim->jitterStableTicks[playerNum] = 0;
+    sim->statStallTicks[playerNum] = 0;
+    sim->statGapFillTicks[playerNum] = 0;
+    sim->statDroppedStaleInputs[playerNum] = 0;
+    sim->statCatchupTicks[playerNum] = 0;
+    sim->statLastRewindTicks[playerNum] = 0;
 
     sim->playerConnected[playerNum] = TRUE;
     sim->hadPlayersEver = TRUE;
@@ -1712,6 +1751,11 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
     sim->jitterStallCount[playerNum] = 0;
     sim->jitterStableTicks[playerNum] = 0;
+    sim->statStallTicks[playerNum] = 0;
+    sim->statGapFillTicks[playerNum] = 0;
+    sim->statDroppedStaleInputs[playerNum] = 0;
+    sim->statCatchupTicks[playerNum] = 0;
+    sim->statLastRewindTicks[playerNum] = 0;
 
     /* Record ownership for rejoin before migration changes it */
     {
@@ -3357,6 +3401,11 @@ void serverSimResetGameWorld(ServerSim *sim) {
         sim->jitterTarget[i] = JITTER_BUFFER_DEFAULT;
         sim->jitterStallCount[i] = 0;
         sim->jitterStableTicks[i] = 0;
+        sim->statStallTicks[i] = 0;
+        sim->statGapFillTicks[i] = 0;
+        sim->statDroppedStaleInputs[i] = 0;
+        sim->statCatchupTicks[i] = 0;
+        sim->statLastRewindTicks[i] = 0;
     }
 
     /* 9. Reset full sync tracking */

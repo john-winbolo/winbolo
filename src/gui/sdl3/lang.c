@@ -1369,6 +1369,7 @@ static const LangEntry langTable[] = {
     {1464, "Make host"},
     {1465, "Make \"{player}\" the host?"},
     {1466, "{player} is now the host"},
+    {1467, "Reconciles: {number}/s, err avg {string1}px, max {string2}px"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

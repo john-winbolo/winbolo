@@ -41,6 +41,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <math.h>
 #include <SDL3/SDL.h>
 
 #include "../common/wb_log.h"
@@ -348,6 +349,16 @@ void clientApplySnapshot(ClientSim *csPtr,
           bool angleMismatch = ((uint16_t)(predAngle * 256.0f) != tanks[i].angle);
 
           if (dx != 0 || dy != 0 || angleMismatch) {
+            /* Record reconcile stats for this window. Position error in
+             * pixels from the world-unit deltas (16 world units per
+             * rendered pixel at base zoom); an angle-only mismatch is 0. */
+            float errPx = sqrtf((float)dx * dx + (float)dy * dy) / 16.0f;
+            csPtr->reconCountThisWindow++;
+            csPtr->reconErrSumPx += errPx;
+            if (errPx > csPtr->reconErrMaxPx) {
+              csPtr->reconErrMaxPx = errPx;
+            }
+
             /* Prediction diverged — snap to server state and replay.
              * Save the predicted angle: if the angle was actually correct
              * (quantized values match) we restore it after replay to avoid

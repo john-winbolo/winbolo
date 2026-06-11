@@ -245,6 +245,8 @@ void     clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,
                                  int *bpsRecv, int *bpsSent, int *numErrors,
                                  int *snapshotsRecv, int *snapshotsLost,
                                  int *snapshotsLostTotal);
+void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,
+                                float *avgErrPx, float *maxErrPx);
 
 /* === Local-transport tuning === */
 void     clientSimNetSetLocalDelay(ClientSim *cs, uint16_t delay_ms);

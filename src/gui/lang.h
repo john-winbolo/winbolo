@@ -1427,6 +1427,11 @@
  * {number} = percentage, {number2} = lost count, {number3} = total expected. */
 #define STR_DLGNETINFO_LOSS                 1407
 
+/* Network Info — client prediction reconciliations for the last 1-second
+ * window. {number} = reconciles/sec, {string1} = avg position error px,
+ * {string2} = max position error px. */
+#define STR_DLGNETINFO_RECONCILE            1467
+
 /* WinBolo.net 1v1 ladder position shown in the status block.
  * STR_DLGWBN_RANK: {number} = position, {number2} = ranked-player total. */
 #define STR_DLGWBN_RANK                     1408

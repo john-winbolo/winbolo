@@ -835,6 +835,19 @@ static void renderNetInfoContent(ClientSim *cs) {
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_LOSS, &args));
     }
 
+    /* Client prediction reconciliations for the last 1-second window —
+     * count plus average/peak position error. */
+    if (clientSimHasTransport(cs)) {
+        int count = 0;
+        float avgErrPx = 0.0f, maxErrPx = 0.0f;
+        clientSimGetReconcileStats(cs, &count, &avgErrPx, &maxErrPx);
+        MessageArgs args = {};
+        args.number = count;
+        SDL_snprintf(args.string1, sizeof(args.string1), "%.1f", avgErrPx);
+        SDL_snprintf(args.string2, sizeof(args.string2), "%.1f", maxErrPx);
+        ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_RECONCILE, &args));
+    }
+
     /* Ping graph */
     pingGraphSample(ping, bpsIn, bpsOut);
     if (s_pingHistoryCount > 1) {
