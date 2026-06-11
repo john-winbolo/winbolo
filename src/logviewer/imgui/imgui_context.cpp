@@ -12,6 +12,8 @@
 #include "imgui.h"
 #include "../../gui/imgui_theme.h"
 #include "../../gui/imgui_fonts.h"
+#include "../../gui/ui_mode.h"
+#include "../../gui/sdl3/dialogs/imgui_nav_outline.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include <stdio.h>
@@ -46,11 +48,29 @@ int lv_imgui_context_init(SDL_Window* window, SDL_Renderer* renderer) {
     // Enable docking and multi-viewport for flexible window layout
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     // Note: ViewportsEnable requires proper renderer support, may need to be disabled initially
-    
+
     // Set up style
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
+
+    /* Tablet/Deck: bigger hit targets and scrollbars for touch + Deck
+       readability. Mirrors sdl3imgui.cpp:2410-2419. The lv_drawGetZoomFactor
+       analogue is not exposed to this TU, so use ps=1.0f for now. */
+    if (uiModeIsTablet() || uiModeIsSteamDeck()) {
+        float ps = 1.0f;  /* TODO: scale by zoom factor */
+        ImGuiStyle &style = ImGui::GetStyle();
+        style.FramePadding      = ImVec2(12 * ps, 8 * ps);
+        style.ItemSpacing       = ImVec2(12 * ps, 8 * ps);
+        style.TouchExtraPadding = ImVec2(8 * ps, 8 * ps);
+        style.ScrollbarSize     = 24.0f * ps;
+        if (uiModeIsTablet()) {
+            io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
+            io.FontGlobalScale = 1.8f * ps;
+        }
+    }
     
     // Initialize SDL3 backend
     if (!ImGui_ImplSDL3_InitForSDLRenderer(window, renderer)) {
@@ -107,6 +127,7 @@ void lv_imgui_context_render(void) {
     if (!g_context) return;
     
     ImGui::SetCurrentContext(g_context);
+    dialogDrawNavOutline();
     ImGui::Render();
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), g_renderer);
 }

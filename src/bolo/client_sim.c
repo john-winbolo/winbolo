@@ -1749,6 +1749,32 @@ void clientSimSetAutoScroll(ClientSim *cs, bool isAuto) {
   scrollSetScrollType(clientSimGetScroll(cs), isAuto);
 }
 
+int clientSimGetScrollMechanism(void) {
+  return (int)scrollGetMechanism();
+}
+
+void clientSimSetScrollMechanism(int mech) {
+  scrollSetMechanism((ScrollMechanism)mech);
+}
+
+void clientSimSetAutoScrollOverride(ClientSim *cs, bool value) {
+  cs->scroll.autoScrollOverRide = value;
+}
+
+bool clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY) {
+  if (!cs || MY_TANK(cs) == NULL) return false;
+  if (mapX) *mapX = tankGetMX(&MY_TANK(cs));
+  if (mapY) *mapY = tankGetMY(&MY_TANK(cs));
+  return true;
+}
+
+bool clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY) {
+  if (!cs || MY_TANK(cs) == NULL) return false;
+  BYTE px, py;
+  tankGetGunsight(&MY_TANK(cs), mapX, mapY, &px, &py);
+  return true;
+}
+
 void clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown) {
   switch (msgType) {
   case MSG_NEWSWIRE:
@@ -1849,6 +1875,24 @@ void clientSimManMove(ClientSim *cs, buildSelect buildS) {
                              (BYTE) (clientSimGetCursorPosX(cs) + clientSimGetXOffset(cs)),
                              (BYTE) (clientSimGetCursorPosY(cs) + clientSimGetYOffset(cs)));
   }
+}
+
+void clientSimManMoveToMap(ClientSim *cs, BYTE mapX, BYTE mapY, buildSelect buildS) {
+  if (tankGetArmour(&MY_TANK(cs)) <= TANK_FULL_ARMOUR && clientSimGetNetStatus(cs) != netFailed) {
+    clientSimSetPendingBuild(cs, (BYTE) buildS + 1, mapX, mapY);
+  }
+}
+
+void clientSimCycleBuildSelect(ClientSim *cs, int delta) {
+  static const buildSelect order[] = { BsTrees, BsRoad, BsBuilding, BsPillbox, BsMine };
+  const int N = (int)(sizeof(order) / sizeof(order[0]));
+  buildSelect cur = clientSimGetCurrentBuildSelect(cs);
+  int idx = 0;
+  for (int i = 0; i < N; i++) {
+    if (order[i] == cur) { idx = i; break; }
+  }
+  idx = ((idx + delta) % N + N) % N;
+  clientSimSetCurrentBuildSelect(cs, order[idx]);
 }
 
 /* Alliance accessors. */

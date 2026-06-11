@@ -166,6 +166,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/ui_mode.c
     ${SRC_ROOT}/gui/skins.c
     ${SRC_ROOT}/gui/sdl3/sdl3imgui.cpp
+    ${SRC_ROOT}/gui/sdl3/imgui_steam_nav.cpp
     ${SRC_ROOT}/gui/sdl3/sdl3imgui_tablet.cpp
     ${SRC_ROOT}/gui/sdl3/luabrainshandler.c
     ${SRC_ROOT}/gui/sdl3/minimap_render.c
@@ -181,9 +182,12 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_trackersetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_winbolonet.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_messagebox.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keycap.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_lobby.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_deck_pause.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_quickchat.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_about.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/dialog_footer.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
@@ -198,6 +202,10 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/sdl_bmp.c
     ${SRC_ROOT}/gui/sdl3/input.c
     ${SRC_ROOT}/gui/sdl3/input_touch.c
+    ${SRC_ROOT}/gui/sdl3/input_joystick.c
+    ${SRC_ROOT}/gui/sdl3/input_gamepad.c
+    ${SRC_ROOT}/gui/sdl3/glyphs.c
+    ${SRC_ROOT}/gui/sdl3/build_cursor.c
     ${SRC_ROOT}/gui/sdl3/tutorial_text.c
     ${SRC_ROOT}/gui/sdl3/currentgames.c
     ${SRC_ROOT}/gui/sdl3/lang.c

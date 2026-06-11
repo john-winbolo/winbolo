@@ -94,6 +94,15 @@ WinBolo uses the following third-party libraries and code.
 - https://www.rfc-editor.org/rfc/rfc1321
 - Used for the lobby map-upload MD5 handshake (integrity check only — not cryptographically safe)
 
+## Controller Glyphs
+
+### Xelu's Free Controller & Key Prompts
+- Location: data/controller/
+- License: CC0 1.0 (public domain)
+- https://thoseawesomeguys.com/prompts/
+- Author: Nicolae (Xelu) Berbece
+- Xbox, PlayStation 5, Nintendo Switch, and keyboard/mouse glyph atlases used as the Path B (non-Steam-Input) glyph fallback for on-screen button hints
+
 ## Fonts
 
 ### Inter

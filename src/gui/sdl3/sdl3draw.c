@@ -55,10 +55,13 @@
 #include "../clientmutex.h"
 #include "../tiles.h"
 #include "../ui_mode.h"
+#include "../../steam/steam_wrapper.h"
 #include "tileloader.h"
 #include "sdl_bmp.h"
+#include "glyphs.h"
 #include "global.h"
 #include "client_sim.h"
+#include "build_cursor.h"
 #include "../gamefront.h"
 #include "tilenum.h"
 #include "../positions.h"
@@ -89,7 +92,12 @@ static SDL_Renderer *gRenderer      = NULL;
 static SDL_Texture  *gBackgroundTex = NULL;
 static SDL_Texture  *gTilesTex      = NULL;
 static SDL_Texture  *gCrosshairTex  = NULL;  /* crosshairs_17x17.png — center pixel (8,8) is aim point */
+static bool          gCursorFaint   = false; /* draw the build-mode cursor at 25% alpha (locked target, build mode off) */
 static int           gZoomFactor    = 1;
+
+void sdl3DrawSetCursorFaint(bool faint) {
+  gCursorFaint = faint;
+}
 static int           gSheetScale    = 1;  /* atlas scale: sheet is TILE_FILE * gSheetScale */
 
 /* Phase 4 render-target textures.
@@ -605,6 +613,18 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
       cursorMove((int)gameX, (int)gameY);
       BYTE cx = 0, cy = 0;
       if (cursorPos(NULL, &cx, &cy, clientSimGetSubPosX(cs), clientSimGetSubPosY(cs))) {
+        /* The mouse is just another way to drive the ONE shared build cursor:
+           moving the pointer in the view repositions it whether or not cursor
+           mode is active, so toggling build mode picks up exactly where the
+           pointer is (no jump between a separate mouse reticle and the gamepad
+           cursor).  Only on real movement (skip zero-delta focus/warp events)
+           and only while the pointer is in the view (handled by cursorPos) —
+           so the pointer leaving the window leaves the gamepad in control.
+           cx/cy are 1-based screen tiles; absolute map tile = offset + tile. */
+        if (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f) {
+          buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
+                             (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
+        }
         if (cx > 16 || cy > 16) cx = 100;
         clientSimSetCursorPos(cs, cx, cy);
       } else {
@@ -872,18 +892,33 @@ bool sdl3DrawSetup(int zoomFactor) {
 
   /* --- Create window and renderer first, so we can compute the
          effective zoom for font sizing and tile loading. --- */
-  if (uiModeIsTablet()) {
+  if (uiModeIsSteamDeck()) {
+    /* Steam Deck: fullscreen at native 1280x800, no DPI scaling.
+       Uses desktop UI baseline so menu bar / dialogs render
+       normally inside the fullscreen surface. */
+    gWindow = SDL_CreateWindow("WinBolo", 1280, 800,
+                               SDL_WINDOW_FULLSCREEN);
+  } else if (uiModeIsTablet()) {
     /* Tablet mode: fullscreen window, no fixed-size chrome */
     gWindow = SDL_CreateWindow("WinBolo", 0, 0,
                                SDL_WINDOW_FULLSCREEN | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   } else {
+#if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
     gWindow = SDL_CreateWindow("WinBolo",
                                zoomFactor * SDL3_SCREEN_W,
                                zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT,
-#if defined(__EMSCRIPTEN__) || defined(__ANDROID__)
                                0);
 #else
-                               SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
+    /* Big Picture / Gamepad UI: launch maximised so the game fills the
+       couch-mode surface.  Window size/position prefs are not persisted in
+       this mode (see gameFrontFlushWindowSettings). */
+    SDL_WindowFlags bigPictureFlag =
+        steam_is_big_picture() ? SDL_WINDOW_MAXIMIZED : 0;
+    gWindow = SDL_CreateWindow("WinBolo",
+                               zoomFactor * SDL3_SCREEN_W,
+                               zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT,
+                               SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN |
+                               bigPictureFlag);
 #endif
   }
   if (gWindow == NULL) {
@@ -905,6 +940,29 @@ bool sdl3DrawSetup(int zoomFactor) {
   }
 
   SDL_SetRenderVSync(gRenderer, 1);
+
+  /* Steam Deck: scale the desktop view via SDL logical presentation, the
+     same path mobile uses — picks an integer zoom that fits the 1280x800
+     screen, then SDL upscales the entire 515x325 desktop layout (chrome,
+     status panels, playfield, text) in one consistent step.  Fonts open
+     below at gZoomFactor so glyphs rasterize crisply rather than being
+     LINEAR-upscaled from a 1x render. */
+  if (uiModeIsSteamDeck()) {
+    int ww, wh;
+    SDL_GetCurrentRenderOutputSize(gRenderer, &ww, &wh);
+    int zoomH = wh / SDL3_SCREEN_H;   /* 800 / 325 = 2 */
+    int zoomW = ww / SDL3_SCREEN_W;   /* 1280 / 515 = 2 */
+    int bestZoom = (zoomH < zoomW) ? zoomH : zoomW;
+    if (bestZoom < 1) bestZoom = 1;
+    SDL_SetRenderLogicalPresentation(gRenderer,
+        SDL3_SCREEN_W * bestZoom, SDL3_SCREEN_H * bestZoom,
+        SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    gZoomFactor = bestZoom;
+    sdl3DrawStatusSetZoom(gZoomFactor);
+    WB_LOG_INFO(WB_LOG_CAT_GUI,
+        "sdl3DrawSetup: deck logical presentation %dx%d (zoom %d, render output %dx%d)",
+        SDL3_SCREEN_W * bestZoom, SDL3_SCREEN_H * bestZoom, bestZoom, ww, wh);
+  }
 
   /* macOS trackpad pinch-to-zoom */
   macOSPinchZoomInit();
@@ -977,6 +1035,12 @@ bool sdl3DrawSetup(int zoomFactor) {
      first sdl3DrawMainScreen call. */
   sdl3LoadTiles();
 
+  /* Glyphs module — Path A controller-icon cache.  Steam Input is
+     already initialised in winbolo.c before sdl3DrawSetup runs, so
+     glyphForAction() will resolve correctly once a controller binds.
+     No-op (returns NULL) when Steam Input isn't active. */
+  glyphsInit(gRenderer);
+
   /* Load custom crosshair (17×17 PNG, center pixel (8,8) = aim point). */
   {
     const char *basePath = SDL_GetBasePath();
@@ -1037,8 +1101,10 @@ bool sdl3DrawSetup(int zoomFactor) {
   /* Desktop resizable: create a render target for the game content.
      The game is rendered at its logical size, then blitted scaled to the
      window below the menu bar. This allows the menu to stay at 1x size
-     while the game scales. */
-  if (!uiModeIsTablet()) {
+     while the game scales.  Skipped on Deck — logical presentation
+     already upscales the whole layout, an extra RT would re-introduce a
+     1x rasterization step that defeats the font sharpness. */
+  if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
     gGameRTWidth  = gZoomFactor * SDL3_SCREEN_W;
     gGameRTHeight = gZoomFactor * SDL3_SCREEN_H;
     gGameRenderTarget = SDL_CreateTexture(gRenderer,
@@ -1085,6 +1151,9 @@ void sdl3DrawCleanup(void) {
   if (gFallbackFontTiny)  { TTF_CloseFont(gFallbackFontTiny);  gFallbackFontTiny  = NULL; }
   if (gFallbackFontLabel) { TTF_CloseFont(gFallbackFontLabel); gFallbackFontLabel = NULL; }
   TTF_Quit();
+
+  /* Glyph cache textures must be destroyed before the renderer. */
+  glyphsShutdown();
 
   if (gManStatusTex)     { SDL_DestroyTexture(gManStatusTex);     gManStatusTex     = NULL; }
   if (gTankBarsTex)      { SDL_DestroyTexture(gTankBarsTex);      gTankBarsTex      = NULL; }
@@ -1141,6 +1210,11 @@ static void sdl3DrawAdaptRenderTarget(void) {
   if (zoomFactor != ZOOM_FACTOR_CUSTOM) return;
   if (!gRenderer || !gWindow) return;
   if (uiModeIsTablet()) return;
+  /* Deck is fullscreen 1280x800 with logical presentation already set in
+     sdl3DrawSetup.  No resizes ever fire here; even if they did, this
+     function would recompute gZoomFactor and stomp the value the Deck
+     branch picked. */
+  if (uiModeIsSteamDeck()) return;
 
   int winW, winH;
   SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
@@ -1556,7 +1630,12 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         float curDestX = (float)(originX + ((int)cursorLeft - 1) * tileW - edgeX);
         float curDestY = (float)(originY + ((int)cursorTop  - 1) * tileH - edgeY);
         SDL_FRect curDest = { curDestX, curDestY, (float)tileW, (float)tileH };
+        /* Faint (50% alpha) when drawing a locked build target with build
+           mode off; solid otherwise. Restore alpha after so other gTilesTex
+           draws this frame are unaffected. */
+        if (gCursorFaint) SDL_SetTextureAlphaMod(gTilesTex, 128);
         SDL_RenderTexture(gRenderer, gTilesTex, &curSrc, &curDest);
+        if (gCursorFaint) SDL_SetTextureAlphaMod(gTilesTex, 255);
 
         /* DEBUG: log the cursor square position relative to the render
          * origin and edgeX, so a "square doesn't match mouse" report can
@@ -1587,6 +1666,7 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           }
         }
       }
+
 
       /* Sprites via mapview */
       gCurrentEdgeX = edgeX;
@@ -1697,7 +1777,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
     int winW, winH;
     SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
 
-    float menuBarHeight = (float)MENU_BAR_HEIGHT;
+    /* Zero when the menu bar is hidden (controller mode) so the game render
+       fills the freed top strip instead of leaving a MENU_BAR_HEIGHT band. */
+    float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : (float)MENU_BAR_HEIGHT;
 
     /* Available area below menu */
     float availW = (float)winW;
@@ -1828,7 +1910,9 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     int winW, winH;
     SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
 
-    float menuBarHeight = (float)MENU_BAR_HEIGHT;
+    /* Zero when the menu bar is hidden (controller mode) — see matching
+       block above. */
+    float menuBarHeight = uiShouldUseControllerMode() ? 0.0f : (float)MENU_BAR_HEIGHT;
     float availW = (float)winW;
     float availH = (float)winH - menuBarHeight;
 

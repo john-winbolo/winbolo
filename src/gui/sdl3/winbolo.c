@@ -55,6 +55,7 @@
 #include "frontend.h"
 #include "tutorial.h"
 #include "../../steam/steam_wrapper.h"
+#include "../../steam/steam_input_actions.h"
 #include "client_net.h"
 #include "server_sim.h"
 #include "../../server/threads.h"
@@ -64,6 +65,7 @@
 #include "../draw.h"
 #include "../gamefront.h"
 #include "input.h"
+#include "build_cursor.h"
 #include "../lang.h"
 #include "../sound.h"
 #include "../winbolo.h"
@@ -175,6 +177,10 @@ static bool doingTutorial = FALSE;
 static bool winboloQuit = FALSE;
 static bool finishedLoop = FALSE;
 
+/* Set on SDL_EVENT_WILL_ENTER_BACKGROUND, cleared by
+ * windowResumeForeground.  See windowSuspendBackground for details. */
+static bool s_suspended = FALSE;
+
 /* Tick counters */
 static DWORD oldTick = 0;
 static DWORD ttick = 0;
@@ -283,6 +289,11 @@ int main(int argc, char *argv[]) {
 
   steam_init();
   steam_set_join_callback(steamJoinRequested);
+  /* Steam Input (Path A): start in Menu set — game launches into the
+     main menu / lobby UI.  In-game switch handled per-frame in
+     sdl3ImguiPumpAndRender.  No-op when running without the SDK. */
+  steam_input_init();
+  steam_input_activate_action_set(SI_SET_MENU);
 
   /* Set working directory to the executable's location so that relative
      paths like "data/svg/..." resolve correctly.  On macOS this is
@@ -440,24 +451,28 @@ int main(int argc, char *argv[]) {
           }
         }
 
-        SDL_SetWindowSize(sdlWin, targetW, targetH);
+        /* Big Picture / Gamepad UI: leave the window maximised (set at
+           creation) — don't size or reposition it from saved desktop prefs. */
+        if (!steam_is_big_picture()) {
+          SDL_SetWindowSize(sdlWin, targetW, targetH);
 
-        /* Restore saved window position from preferences, but ensure it's on this monitor */
-        {
-          int savedX, savedY;
-          windowGetSavedPosition(&savedX, &savedY);
-          if (savedX >= 0 && savedY >= 0) {
-            /* Clamp position to keep window on the target monitor */
-            if (savedX + targetW > usable.x + usable.w) savedX = usable.x + usable.w - targetW;
-            if (savedY + targetH > usable.y + usable.h) savedY = usable.y + usable.h - targetH;
-            if (savedX < usable.x) savedX = usable.x;
-            if (savedY < usable.y) savedY = usable.y;
-            SDL_SetWindowPosition(sdlWin, savedX, savedY);
-          } else {
-            /* Center on the dialog's monitor */
-            int centeredX = usable.x + (usable.w - targetW) / 2;
-            int centeredY = usable.y + (usable.h - targetH) / 2;
-            SDL_SetWindowPosition(sdlWin, centeredX, centeredY);
+          /* Restore saved window position from preferences, but ensure it's on this monitor */
+          {
+            int savedX, savedY;
+            windowGetSavedPosition(&savedX, &savedY);
+            if (savedX >= 0 && savedY >= 0) {
+              /* Clamp position to keep window on the target monitor */
+              if (savedX + targetW > usable.x + usable.w) savedX = usable.x + usable.w - targetW;
+              if (savedY + targetH > usable.y + usable.h) savedY = usable.y + usable.h - targetH;
+              if (savedX < usable.x) savedX = usable.x;
+              if (savedY < usable.y) savedY = usable.y;
+              SDL_SetWindowPosition(sdlWin, savedX, savedY);
+            } else {
+              /* Center on the dialog's monitor */
+              int centeredX = usable.x + (usable.w - targetW) / 2;
+              int centeredY = usable.y + (usable.h - targetH) / 2;
+              SDL_SetWindowPosition(sdlWin, centeredX, centeredY);
+            }
           }
         }
         SDL_ShowWindow(sdlWin);
@@ -481,6 +496,7 @@ int main(int argc, char *argv[]) {
       while (done == FALSE) {
         sdl3ImguiProcessEvents(cs);
         steam_run_callbacks();
+        steam_input_run_frame();
 
         /* Keep in-game rich presence fresh — live player count, and the
          * host's external connect address once the tracker resolves it.
@@ -604,6 +620,9 @@ int main(int argc, char *argv[]) {
     }
   }
   sdl3DrawCleanup();
+  /* Tear down Steam Input before the parent Steam API — Shutdown
+     calls into ISteamInput which requires the SteamAPI to be alive. */
+  steam_input_shutdown();
   steam_shutdown();
   serverSimBotPoolDestroy();
   SDL_Quit();
@@ -646,6 +665,10 @@ static void windowRunGameTick(ClientSim *cs) {
   bool isMine = FALSE;
   bool used = FALSE;
   bool brainRunning;
+
+  /* App is in the background (Deck home button / sleep) — skip all
+     tick work.  windowResumeForeground resets the wallclock baseline. */
+  if (s_suspended) return;
 
   brainRunning = brainHandlerIsBrainRunning();
   isShoot = FALSE;
@@ -803,6 +826,49 @@ void *windowWnd(void) {
 void windowSetQuitting(void) {
   winboloQuit = TRUE;
   finishedLoop = TRUE;
+}
+
+/* -------------------------------------------------------
+ * Suspend / resume — Steam Deck Verified requirement.
+ * Driven by SDL_EVENT_WILL_ENTER_BACKGROUND (sleep / home
+ * button / overlay) and SDL_EVENT_DID_ENTER_FOREGROUND.
+ * s_suspended declared near other main-loop state above.
+ * ------------------------------------------------------- */
+void windowSuspendBackground(void) {
+  /* Pause local sim (windowRunGameTick early-outs on s_suspended) and
+     mute audio.  Network state is left as-is; UDP will time out on its
+     own.  Idempotent — duplicate WILL_ENTER_BACKGROUND events from SDL
+     are safe. */
+  s_suspended = TRUE;
+  soundSetMuted(TRUE);
+}
+
+void windowResumeForeground(ClientSim *cs) {
+  if (!s_suspended) return;
+  s_suspended = FALSE;
+
+  if (cs != NULL && clientSimGetNetType(cs) == netUdp) {
+    /* Network game: UDP timeout has almost certainly killed the
+       session and the server has moved on.  Disconnect cleanly via
+       the same flow as the in-tick connection-lost handler — show the
+       standard "you have been disconnected" message and drop back to
+       menu via finishedLoop=TRUE.  No reconnect, no state freeze. */
+    clientSimConnectionLost(cs);
+    imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                      "You have lost your connection to the server.\n"
+                      "Returning to menu.",
+                      IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+    finishedLoop = TRUE;
+    winboloQuit = FALSE;
+  } else {
+    /* Single-player / tutorial / main menu: reset the catchup-loop
+       wallclock baseline so the while ((ttick - oldTick) > GAME_TICK_LENGTH)
+       loop in windowRunGameTick doesn't try to simulate every frame
+       of the suspend duration in one go. */
+    oldTick = SDL_GetTicks();
+    ttick = oldTick;
+  }
+  soundSetMuted(FALSE);
 }
 
 /* -------------------------------------------------------
@@ -1173,11 +1239,13 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 void windowShowGunsight_toggle(ClientSim *cs) {
   showGunsight = !showGunsight;
   clientSimSetGunsight(cs, showGunsight);
+  gameFrontSaveCurrentPrefs();
 }
 
 void windowAutomaticScrolling_toggle(ClientSim *cs) {
   autoScrollingEnabled = !autoScrollingEnabled;
   if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
+  gameFrontSaveCurrentPrefs();
 }
 
 void windowSmoothScrolling_toggle(void) {
@@ -1480,6 +1548,47 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
       }
     }
     showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
+
+    /* When the gamepad-driven free build cursor is active, override
+       the mouse cursor's screen position so the existing build-mode
+       reticle render does double-duty.  The build cursor stores an
+       absolute map tile; convert to the 1-based screen tile by
+       subtracting the camera offset.  Off-screen tiles hide the
+       reticle (matching how the mouse cursor hides when it leaves
+       the play area). */
+    /* Keep an active build cursor inside the visible edge as the view
+       scrolls with the tank (no-op while cursor mode is off). */
+    buildCursorClampToView(cs);
+    bool cursorFaint = false;
+    BYTE bcX, bcY;
+    if (buildCursorGetTile(&bcX, &bcY)) {
+      /* Cursor mode ON — draw the reticle solid at the cursor tile. */
+      int sx = (int)bcX - (int)clientSimGetXOffset(cs);
+      int sy = (int)bcY - (int)clientSimGetYOffset(cs);
+      if (sx >= 1 && sx <= MAIN_SCREEN_SIZE_X &&
+          sy >= 1 && sy <= MAIN_SCREEN_SIZE_Y) {
+        showCursor = true;
+        cursorX    = (BYTE)sx;
+        cursorY    = (BYTE)sy;
+      } else {
+        showCursor = false;
+      }
+    } else if (!showCursor && buildCursorGetTargetTile(&bcX, &bcY)) {
+      /* Cursor mode OFF but a target is locked, and the mouse cursor isn't
+         showing (gamepad context): draw the locked target faintly so the
+         player can still see where Build Now will place. Off-screen = hidden. */
+      int sx = (int)bcX - (int)clientSimGetXOffset(cs);
+      int sy = (int)bcY - (int)clientSimGetYOffset(cs);
+      if (sx >= 1 && sx <= MAIN_SCREEN_SIZE_X &&
+          sy >= 1 && sy <= MAIN_SCREEN_SIZE_Y) {
+        showCursor  = true;
+        cursorX     = (BYTE)sx;
+        cursorY     = (BYTE)sy;
+        cursorFaint = true;
+      }
+    }
+    sdl3DrawSetCursorFaint(cursorFaint);
+
     sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
     sdl3DrawMainScreen(cs, value, mineView, tks, gs, sBullet, lgms,
                        NULL, showPillLabels, showBaseLabels,
@@ -1804,8 +1913,12 @@ bool frontEndTutorial(BYTE pos) {
   for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
     uint16_t mid = tutorialSteps[tutorialStepIdx].msgs[i];
     if (mid == 0) break;
-    imguiMessageBoxEx(DIALOG_BOX_TITLE, tutorialResolveText(mid),
-                      IMGUI_MSG_INFO, IMGUI_MSG_OK);
+    {
+      TutorialSeg segs[TUTORIAL_SEG_MAX];
+      int n = tutorialResolveSegments(mid, segs, TUTORIAL_SEG_MAX);
+      imguiMessageBoxRich(DIALOG_BOX_TITLE, segs, n,
+                          IMGUI_MSG_INFO, IMGUI_MSG_OK);
+    }
   }
   /* Final step: exit tutorial mode so the player can keep driving.
    * We clear the global client flag plus both sims' isTutorial so that

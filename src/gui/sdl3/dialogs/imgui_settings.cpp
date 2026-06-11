@@ -29,9 +29,11 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_nav_outline.h"
 #include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
+#include "../imgui_steam_nav.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -203,6 +205,8 @@ extern "C" void imguiSettingsShow(void) {
     imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -297,6 +301,7 @@ extern "C" void imguiSettingsShow(void) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT ||
@@ -318,6 +323,8 @@ extern "C" void imguiSettingsShow(void) {
         dialogResetTextInputArea(window);
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
 
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
@@ -590,13 +597,6 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndPopup();
             }
 
-            {
-                bool sf = gameFrontGetShowCountryFlagsInChat();
-                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_COUNTRY_FLAGS), &sf)) {
-                    gameFrontSetShowCountryFlagsInChat(sf);
-                }
-            }
-
 #if !BOLO_MOBILE
             {
                 bool as = (bool)autoScrollingEnabled;
@@ -847,6 +847,9 @@ extern "C" void imguiSettingsShow(void) {
          * the new) is handled automatically inside the next
          * RenderDrawData call — we don't need to drive it manually. */
         if (pendingFontRebuild) {
+            /* Mirror dialogApplyScaling() — `s` already includes the
+               Deck multiplier from dialogComputeScale, so the rebuilt
+               atlas matches what the dialog opened with. */
             float fontSize = (s <= 1.05f) ? 18.0f : 20.0f * s;
             ImGui::GetIO().Fonts->Clear();
             imguiLoadBoloFont(fontSize);
@@ -883,6 +886,8 @@ extern "C" void imguiSettingsShow(void) {
             imguiRegisterPlatformOpenUrl();
             ImGuiIO &ioNew = ImGui::GetIO();
             ioNew.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+            ioNew.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+            ioNew.ConfigNavCursorVisibleAlways = true;
             ioNew.IniFilename = nullptr;
 
             ImGui::StyleColorsDark();
@@ -891,6 +896,9 @@ extern "C" void imguiSettingsShow(void) {
             ImGui_ImplSDLRenderer3_Init(renderer);
             dialogApplyScaling(s);
             {
+                /* `s` already factors in the Deck multiplier from
+                   dialogComputeScale, so 20*s matches the dialog's
+                   main font size. */
                 float pickerFontSize = (s <= 1.05f) ? 18.0f : 20.0f * s;
                 chainPickerNameGlyphs(langEntries, langCount, pickerFontSize);
             }

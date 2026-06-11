@@ -190,6 +190,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/ui_mode.c
     ${PROJ_ROOT}/src/gui/sdl3/clientmutex.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3imgui.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/imgui_steam_nav.cpp
     ${PROJ_ROOT}/src/gui/sdl3/sdl3imgui_tablet.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialog_backend.c
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_udpsetup.cpp
@@ -197,9 +198,12 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_setname.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_skins.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_messagebox.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keycap.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_lobby.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_deck_pause.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_quickchat.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_onboarding.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_winbolonet.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_popup.cpp
@@ -221,6 +225,10 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/skins.c
     ${PROJ_ROOT}/src/gui/sdl3/input.c
     ${PROJ_ROOT}/src/gui/sdl3/input_touch.c
+    ${PROJ_ROOT}/src/gui/sdl3/input_joystick.c
+    ${PROJ_ROOT}/src/gui/sdl3/input_gamepad.c
+    ${PROJ_ROOT}/src/gui/sdl3/glyphs.c
+    ${PROJ_ROOT}/src/gui/sdl3/build_cursor.c
     ${PROJ_ROOT}/src/gui/sdl3/tutorial_text.c
     ${PROJ_ROOT}/src/gui/sdl3/currentgames.c
     ${PROJ_ROOT}/src/gui/sdl3/lang.c

@@ -183,10 +183,10 @@ STR_TUTORIAL22=Er is een bunker voor je en wat bevoorradingsbases voor\nmunitie.
 STR_TUTORIAL23=Met geduld en voorzichtigheid moet je deze bunker kunnen\nvernietigen. Gebruik de vaardigheden die je hebt geleerd\nom het makkelijker te maken:\n\n\nVerschuil je in het bos zodat de bunker je niet kan zien,\noogst bomen, bouw wegen om je tank sneller te laten rijden\nen bouw gebouwen om dekking te bieden tegen\nbunkerschoten.
 STR_TUTORIAL24=Nadat je deze bunker hebt verslagen, is je einduitdaging\nvan de tutorial om de twee bunkers bij de uitgang\nte vernietigen, een boot te bouwen en te ontsnappen.\n\n\nLet goed op het pantserniveau van je tank -\nals je tank vernietigd wordt, moet je opnieuw beginnen\nmet een nieuwe tank op een nieuwe boot op zee.
 STR_TUTORIAL25=Gefeliciteerd. Je hebt de WinBolo-tutorial\nvoltooid.\n\n\n\nOrganiseer nu een paar vrienden om mee te spelen en ontdek\nhoe het is om te strijden tegen intelligente menselijke\ntegenstanders in plaats van stilstaande, gedachteloze doelen.\n\nAls je de tutorial later opnieuw wilt spelen, kun je\nhem opnieuw starten vanuit het menu Instellingen.
-STR_TUTORIAL_START01=Welkom bij de WinBolo-tutorial. Dit eiland introduceert\nde basisprincipes van WinBolo en leidt je er stap voor\nstap doorheen. Elk nieuw principe wordt beschreven\nin een venster zoals dit.\n\nNa het lezen van elk bericht kun je verdergaan door\nop de knop "OK" te klikken met de muis of simpelweg\nop de <Return>-toets op het toetsenbord te drukken
+STR_TUTORIAL_START01=Welkom bij de WinBolo-tutorial. Dit eiland introduceert\nde basisprincipes van WinBolo en leidt je er stap voor\nstap doorheen. Elk nieuw principe wordt beschreven\nin een venster zoals dit.\n\nNa elk bericht:\ndruk op {DISMISS} om door te gaan.
 STR_TUTORIAL_START02=WinBolo is de enige geautoriseerde kloon van Stuart Cheshire's klassieke Macintosh-netwerkspel, Bolo.\nJe kunt strategietips en andere informatie vinden op de officiële website:\n\nhttps://www.winbolo.com\n\nOf kom je bij ons voegen op Reddit en Discord\n
 STR_TUTORIAL_START03=Een korte opmerking over online spelen.\n\nAls je een online spel joinet en er zijn veel netwerkfouten,\nverlaat het spel dan meteen voordat\nje het spel voor de andere spelers verpest.
-STR_TUTORIAL_START04=Je bestuurt een tank, die zich momenteel op een\nboot op zee bevindt. Druk op {ACCEL} om de tank (en boot) vooruit\nte laten gaan en druk op {BRAKE} om te vertragen en\nte stoppen.\n\nTik niet op de toetsen alsof je een brief typt -\nhoud ze ingedrukt totdat de tank op de gewenste snelheid\nis en laat dan los. Druk nu op {ACCEL} om de\nboot vooruit te laten rijden naar het land.\n(Druk eerst op <Return> om het venster te sluiten)
+STR_TUTORIAL_START04=Je bestuurt een tank, die zich momenteel op een\nboot op zee bevindt. Druk op {ACCEL} om de tank (en boot) vooruit\nte laten gaan en druk op {BRAKE} om te vertragen en\nte stoppen.\n\nTik niet op de toetsen alsof je een brief typt -\nhoud ze ingedrukt totdat de tank op de gewenste snelheid\nis en laat dan los. Druk nu op {ACCEL} om de\nboot vooruit te laten rijden naar het land.\n(Druk eerst op {DISMISS} om het venster te sluiten)
 STR_TUTORIAL01_TOUCH=Voor je ligt een korte rivier die landinwaarts gaat. Duw\nde joystick naar voren om je boot naar het einde\nvan de rivier te rijden.\n\nAls je er bent, houd de joystick dan\nnaar voren gedrukt. De tank stapt uit de boot en de\nboot blijft afgemeerd aan het einde van de rivier
 STR_TUTORIAL02_TOUCH=Je staat nu op het gras. De tank beweegt vrij\nsnel op gras.\n\n\nHoud de joystick naar voren om verder te gaan\nnaar het bos.
 STR_TUTORIAL03_TOUCH=Je bent nu in het bos. De tank beweegt langzamer\nin het bos dan op gras.\n\n\nHoud de joystick naar voren om verder te gaan\nnaar het moeras.
@@ -1142,6 +1142,34 @@ STR_DLGSYSINFO_SIMULATION=Simulatie
 STR_DLGSYSINFO_BOTPREP=Bot-voorbereiding
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain-overschrijdingen
 
+# Controller – actielabels
+STR_GP_SECTION=Controller
+STR_GP_REBIND_PROMPT=Druk op een knop of trek een trigger...
+STR_GP_ACTION_FIRE=Schieten
+STR_GP_ACTION_MINE=Mijn leggen
+STR_GP_ACTION_BUILD_CONFIRM=Bouw bevestigen
+STR_GP_ACTION_VIEW_CYCLE=Weergave wisselen
+STR_GP_ACTION_GUNSIGHT_DEC=Vizier verlagen
+STR_GP_ACTION_GUNSIGHT_INC=Vizier verhogen
+STR_GP_ACTION_BUILD_PREV=Vorige bouwtype
+STR_GP_ACTION_BUILD_NEXT=Volgende bouwtype
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Bouwcursor in-/uitschakelen
+STR_GP_ACTION_QUICK_CHAT=Snelchat
+STR_GP_ACTION_PAUSE=Pauzeren
+STR_GP_ACTION_VIEW_PLAYERS=Spelerslijst
+
+# Controller-modus voorkeur + verbindingsprompt (Phase 8.1)
+STR_CTRL_MODE_HEADER=Controllermodus
+STR_CTRL_MODE_OFF=Uit
+STR_CTRL_MODE_ON=Aan
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Vragen wanneer controller wordt aangesloten
+STR_CTRL_PROMPT_TITLE=Controller gedetecteerd
+STR_CTRL_PROMPT_LINE1=Er is een gamepad aangesloten.
+STR_CTRL_PROMPT_LINE2=Overschakelen naar Controllermodus?
+STR_CTRL_PROMPT_DESC=(Verbergt de menubalk; Start opent een controllervriendelijk pauzemenu.\nLater wijzigen via Instellingen.)
+STR_CTRL_PROMPT_NOTNOW=Niet nu
+STR_CTRL_PROMPT_DONTASK=Niet meer vragen
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Over WinBolo
 STR_MENU_PREFERENCES=Voorkeuren…

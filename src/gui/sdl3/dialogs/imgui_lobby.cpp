@@ -39,10 +39,12 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_nav_outline.h"
 #include "imgui_server_address.h"
 #include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
+#include "../imgui_steam_nav.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -5585,6 +5587,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -5667,6 +5671,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT) {
@@ -5889,6 +5894,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         dialogResetTextInputArea(window);
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
 
         /* Full-screen host window with safe area padding */
         ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -5982,7 +5989,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 dl->AddTriangleFilled(p1, p2, p3, col);
             }
             if (leaveClicked ||
-                ((ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !dialogNavWasInsideSubRegionAtFrameStart()) ||
                   (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                   || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -6449,7 +6456,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                 ImGui::SameLine(0, 20);
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                    ((ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !dialogNavWasInsideSubRegionAtFrameStart()) ||
                       (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                       || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)

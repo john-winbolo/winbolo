@@ -48,12 +48,14 @@
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
 #include "imgui/imgui_game_view.h"
+#include "imgui/imgui_logviewer_menu.h"
 #include "game_view.h"
 
 /* Platform abstraction */
 #include "platform/platform_config.h"
 #include "platform/platform_dialogs.h"
 #include "../gui/sdl3/macos_pinch.h"
+#include "../gui/ui_mode.h"
 #ifdef __APPLE__
 #include "platform/mac_menubar.h"
 #endif
@@ -1036,14 +1038,57 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
             lv_imgui_dialogs_render();
             lv_imgui_context_render();
         } else {
-            lv_imgui_main_menu_bar();
-            lv_imgui_cache_menu_bar_height();
-            lv_imgui_controls_window();
-            lv_imgui_game_info_window();
-            lv_imgui_events_window();
-            lv_imgui_item_info_window();
-            lv_imgui_comments_window();
+            bool compact = (uiModeIsTablet() || uiModeIsSteamDeck());
+            if (compact) {
+                /* Start opens the popup menu — replaces the desktop top
+                 * menu bar in tablet/Deck compact mode. */
+                lvMenuPollOpenInput();
+                /* Each panel _window() early-outs on its lv_g_show_* flag
+                 * (desktop-side visibility prefs).  In compact mode there
+                 * is no menu to toggle those, so save/force/restore around
+                 * the calls — never persisting any change. */
+                bool save_ctrl  = lv_g_show_controls_window;
+                bool save_evt   = lv_g_show_events_window;
+                bool save_gi    = lv_g_show_game_info_window;
+                bool save_ii    = lv_g_show_item_info_window;
+                bool save_cmt   = lv_g_show_comments_window;
+                lv_g_show_controls_window  = true;
+                lv_g_show_events_window    = (lvCompactGetActivePanel() == LV_PANEL_EVENTS);
+                lv_g_show_game_info_window = (lvCompactGetActivePanel() == LV_PANEL_GAME_INFO);
+                lv_g_show_item_info_window = (lvCompactGetActivePanel() == LV_PANEL_ITEM_INFO);
+                lv_g_show_comments_window  = (lvCompactGetActivePanel() == LV_PANEL_COMMENTS);
+
+                /* Toolbar (controls window) is always visible in compact;
+                 * it IS the toolbar (playback + speed + seek). */
+                lv_imgui_controls_window();
+                /* Single content panel, switched via the popup menu. */
+                switch (lvCompactGetActivePanel()) {
+                    case LV_PANEL_GAME_INFO: lv_imgui_game_info_window(); break;
+                    case LV_PANEL_ITEM_INFO: lv_imgui_item_info_window(); break;
+                    case LV_PANEL_COMMENTS:  lv_imgui_comments_window();  break;
+                    case LV_PANEL_EVENTS:
+                    default:                 lv_imgui_events_window();    break;
+                }
+
+                lv_g_show_controls_window  = save_ctrl;
+                lv_g_show_events_window    = save_evt;
+                lv_g_show_game_info_window = save_gi;
+                lv_g_show_item_info_window = save_ii;
+                lv_g_show_comments_window  = save_cmt;
+            } else {
+                lv_imgui_main_menu_bar();
+                lv_imgui_cache_menu_bar_height();
+                lv_imgui_controls_window();
+                lv_imgui_game_info_window();
+                lv_imgui_events_window();
+                lv_imgui_item_info_window();
+                lv_imgui_comments_window();
+            }
             lv_g_reset_window_positions = false;
+            /* Popup stacks over panels, under blocking modal dialogs. */
+            if (compact) {
+                lvMenuRender(g_lv);
+            }
             lv_imgui_dialogs_render();
             lv_imgui_context_render();
 

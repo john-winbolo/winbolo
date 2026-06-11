@@ -183,10 +183,10 @@ STR_TUTORIAL22=Il y a un pillbox devant, et quelques bases de\nravitaillement po
 STR_TUTORIAL23=Avec patience et prudence, vous devriez pouvoir détruire\nce pillbox. Utilisez les compétences que vous avez apprises\npour vous faciliter la tâche :\n\n\nCachez-vous dans la forêt pour que le pillbox ne puisse\npas vous voir, récoltez des arbres, construisez des routes\npour faire avancer votre tank plus vite, et construisez\ndes bâtiments pour vous protéger des tirs du pillbox.
 STR_TUTORIAL24=Après avoir réussi à vaincre ce pillbox, votre dernier\ndéfi du tutoriel est d'éliminer les deux pillboxes qui\ngardent la sortie, de construire un bateau et de\nvous échapper.\n\n\nFaites bien attention au niveau de blindage de votre\ntank — si votre tank est détruit, vous devrez recommencer\navec un nouveau tank sur un nouveau bateau en mer.
 STR_TUTORIAL25=Félicitations. Vous avez terminé le tutoriel WinBolo.\n\n\n\nMaintenant rassemblez quelques amis pour jouer avec\nvous et découvrez ce que c'est que d'affronter des\nadversaires humains intelligents au lieu de cibles\nfixes et sans pensée.\n\nSi vous souhaitez rejouer le tutoriel plus tard, vous pouvez\nle relancer depuis le menu Paramètres.
-STR_TUTORIAL_START01=Bienvenue dans le tutoriel WinBolo. Cette île présente\nles principes de base de WinBolo et vous guide à travers\nceux-ci un par un. Chaque nouveau principe sera décrit\ndans une fenêtre comme celle-ci.\n\nAprès avoir lu chaque message, vous pouvez continuer\nen cliquant sur le bouton « OK » avec la souris ou\nsimplement en appuyant sur la touche <Entrée>
+STR_TUTORIAL_START01=Bienvenue dans le tutoriel WinBolo. Cette île présente\nles principes de base de WinBolo et vous guide à travers\nceux-ci un par un. Chaque nouveau principe sera décrit\ndans une fenêtre comme celle-ci.\n\nAprès chaque message,\nappuyez sur {DISMISS} pour continuer.
 STR_TUTORIAL_START02=WinBolo est le seul clone autorisé du jeu en réseau classique de Stuart Cheshire pour Macintosh, Bolo.\nVous trouverez des conseils de stratégie et d'autres informations sur le site officiel :\n\nhttps://www.winbolo.com\n\nOu rejoignez-nous sur Reddit et Discord\n
 STR_TUTORIAL_START03=Une petite note sur le jeu en ligne.\n\nSi vous rejoignez une partie en ligne et qu'il y a beaucoup d'erreurs réseau,\nquittez la partie immédiatement avant de\ngâcher la partie pour les autres joueurs.
-STR_TUTORIAL_START04=Vous contrôlez un tank, qui est actuellement sur un\nbateau en mer. Appuyez sur {ACCEL} pour faire avancer\nle tank (et le bateau), et appuyez sur {BRAKE} pour le\nralentir et l'arrêter.\n\nNe tapotez pas les touches comme si vous tapiez une\nlettre — appuyez et maintenez-les jusqu'à ce que le tank\naille à la vitesse souhaitée puis relâchez-les. Appuyez\nsur {ACCEL} maintenant pour faire avancer le bateau\nvers la terre.\n(Appuyez d'abord sur <Entrée> pour fermer la fenêtre)
+STR_TUTORIAL_START04=Vous contrôlez un tank, qui est actuellement sur un\nbateau en mer. Appuyez sur {ACCEL} pour faire avancer\nle tank (et le bateau), et appuyez sur {BRAKE} pour le\nralentir et l'arrêter.\n\nNe tapotez pas les touches comme si vous tapiez une\nlettre — appuyez et maintenez-les jusqu'à ce que le tank\naille à la vitesse souhaitée puis relâchez-les. Appuyez\nsur {ACCEL} maintenant pour faire avancer le bateau\nvers la terre.\n(Appuyez d'abord sur {DISMISS} pour fermer la fenêtre)
 STR_TUTORIAL01_TOUCH=Devant vous se trouve une courte rivière menant vers\nl'intérieur des terres. Poussez le joystick vers l'avant\npour conduire votre bateau jusqu'au bout de la rivière.\n\nUne fois arrivé, continuez à pousser le joystick vers\nl'avant. Le tank débarquera du bateau et celui-ci restera\namarré au bout de la rivière
 STR_TUTORIAL02_TOUCH=Vous êtes maintenant sur l'herbe. Le tank avance\nassez rapidement sur l'herbe.\n\n\nContinuez à pousser le joystick vers l'avant pour\navancer jusqu'à la forêt.
 STR_TUTORIAL03_TOUCH=Vous êtes maintenant dans la forêt. Le tank avance\nplus lentement dans la forêt que sur l'herbe.\n\n\nContinuez à pousser le joystick vers l'avant pour\navancer jusqu'au marais.
@@ -1142,6 +1142,34 @@ STR_DLGSYSINFO_SIMULATION=Simulation
 STR_DLGSYSINFO_BOTPREP=Prép. bots
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Dépassements Brain
 
+# Manette – libellés des actions
+STR_GP_SECTION=Manette
+STR_GP_REBIND_PROMPT=Appuyez sur un bouton ou tirez une gâchette...
+STR_GP_ACTION_FIRE=Tirer
+STR_GP_ACTION_MINE=Poser une mine
+STR_GP_ACTION_BUILD_CONFIRM=Confirmer la construction
+STR_GP_ACTION_VIEW_CYCLE=Changer de vue
+STR_GP_ACTION_GUNSIGHT_DEC=Diminuer la portée du viseur
+STR_GP_ACTION_GUNSIGHT_INC=Augmenter la portée du viseur
+STR_GP_ACTION_BUILD_PREV=Type de construction précédent
+STR_GP_ACTION_BUILD_NEXT=Type de construction suivant
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Basculer le curseur de construction
+STR_GP_ACTION_QUICK_CHAT=Message rapide
+STR_GP_ACTION_PAUSE=Pause
+STR_GP_ACTION_VIEW_PLAYERS=Voir joueurs
+
+# Mode manette – préférence et invite de connexion (Phase 8.1)
+STR_CTRL_MODE_HEADER=Mode manette
+STR_CTRL_MODE_OFF=Désactivé
+STR_CTRL_MODE_ON=Activé
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Demander lors de la connexion d'une manette
+STR_CTRL_PROMPT_TITLE=Manette détectée
+STR_CTRL_PROMPT_LINE1=Une manette a été connectée.
+STR_CTRL_PROMPT_LINE2=Activer le mode manette ?
+STR_CTRL_PROMPT_DESC=(Masque la barre de menus ; Start ouvre un menu pause adapté à la manette.\nModifiable plus tard dans Paramètres.)
+STR_CTRL_PROMPT_NOTNOW=Pas maintenant
+STR_CTRL_PROMPT_DONTASK=Ne plus demander
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=À propos de WinBolo
 STR_MENU_PREFERENCES=Préférences…

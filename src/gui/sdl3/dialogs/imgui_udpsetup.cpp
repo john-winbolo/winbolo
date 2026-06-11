@@ -29,6 +29,8 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_nav_outline.h"
+#include "../imgui_steam_nav.h"
 #include "dialog_footer.h"
 
 extern "C" {
@@ -38,6 +40,7 @@ extern "C" {
 #include "global.h"
 #include "util.h"
 #include "../../lang.h"
+#include "../input_source.h"
 #include "imgui_udpsetup.h"
 }
 
@@ -115,6 +118,8 @@ extern "C" int imguiUdpSetupShow(void) {
     imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -154,6 +159,7 @@ extern "C" int imguiUdpSetupShow(void) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT) {
@@ -183,6 +189,8 @@ extern "C" int imguiUdpSetupShow(void) {
         dialogResetTextInputArea(window);
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
 
         /* Transparent full-screen host window */
         ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -288,7 +296,9 @@ extern "C" int imguiUdpSetupShow(void) {
         /* --- Action buttons --- */
         float btnW = 80.0f * s;
 
-        ImGui::TextUnformatted(langGetText(STR_DLGTCP_NEWBLURB));
+        if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
+            ImGui::TextUnformatted(langGetText(STR_DLGTCP_NEWBLURB));
+        }
         ImGui::SameLine(panelW - btnW - 16.0f * s);
         if (ImGui::Button(langGetText(STR_DLGTCP_NEW), ImVec2(btnW, 0))) {
             /* Check ports aren't equal */
@@ -309,7 +319,9 @@ extern "C" int imguiUdpSetupShow(void) {
         }
         imguiHandOnHover();
 
-        ImGui::TextUnformatted(langGetText(STR_DLGTCP_JOINBLURB));
+        if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
+            ImGui::TextUnformatted(langGetText(STR_DLGTCP_JOINBLURB));
+        }
         ImGui::SameLine(panelW - btnW - 16.0f * s);
         if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, 0))) {
             if (saveOptions(playerName, address, targetPortBuf, myPortBuf,
@@ -324,7 +336,9 @@ extern "C" int imguiUdpSetupShow(void) {
         }
         imguiHandOnHover();
 
-        ImGui::TextWrapped("%s", langGetText(STR_DLGTCP_REJOINBLURB));
+        if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD) {
+            ImGui::TextWrapped("%s", langGetText(STR_DLGTCP_REJOINBLURB));
+        }
         ImGui::SameLine(panelW - btnW - 16.0f * s);
         if (ImGui::Button(langGetText(STR_DLGTCP_REJOIN), ImVec2(btnW, 0))) {
             if (saveOptions(playerName, address, targetPortBuf, myPortBuf,

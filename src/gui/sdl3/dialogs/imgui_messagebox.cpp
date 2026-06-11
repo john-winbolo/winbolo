@@ -36,9 +36,12 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_nav_outline.h"
+#include "imgui_keycap.h"
 #include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
+#include "../imgui_steam_nav.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -135,6 +138,227 @@ static int renderMessageBoxContent(const char *message, ImguiMsgButtons buttons,
     return result;
 }
 
+/* Helpers for the rich (segment-based) renderer. */
+
+/* A flat element flattened from segments: a single word, a glyph, or
+ * a hard break.  Width/height are measured up-front so wrap and row
+ * height come out of the same numbers used to draw. */
+enum RichElemKind { RICH_WORD, RICH_GLYPH_PNG, RICH_GLYPH_KEYCAP, RICH_HARD_BREAK };
+
+typedef struct RichElem {
+    RichElemKind kind;
+    const char  *text;        /* RICH_WORD: pointer into segment text. */
+    int          textLen;     /* RICH_WORD: byte length (no NUL). */
+    SDL_Texture *glyph;       /* RICH_GLYPH_PNG. */
+    const char  *keycapLabel; /* RICH_GLYPH_KEYCAP. */
+    float        w, h;
+} RichElem;
+
+#define RICH_ELEM_MAX 512
+
+/* Flatten segments into elements.  TEXT segments split on whitespace;
+ * '\n' becomes a HARD_BREAK; glyphs become single elements sized to
+ * `glyphSize` square. */
+static int flattenSegments(const TutorialSeg *segments, int segCount,
+                           float glyphSize, RichElem *out, int max) {
+    int n = 0;
+    for (int i = 0; i < segCount && n < max; ++i) {
+        const TutorialSeg *seg = &segments[i];
+        if (seg->kind == TUTORIAL_SEG_TEXT) {
+            const char *p = seg->text;
+            if (!p) continue;
+            while (*p && n < max) {
+                if (*p == '\n') {
+                    out[n].kind = RICH_HARD_BREAK;
+                    out[n].w = 0;
+                    out[n].h = ImGui::GetTextLineHeight();
+                    n++;
+                    p++;
+                    continue;
+                }
+                if (*p == ' ' || *p == '\t') { p++; continue; }
+                const char *w = p;
+                while (*w && *w != ' ' && *w != '\t' && *w != '\n') w++;
+                int len = (int)(w - p);
+                ImVec2 ts = ImGui::CalcTextSize(p, w);
+                out[n].kind = RICH_WORD;
+                out[n].text = p;
+                out[n].textLen = len;
+                out[n].w = ts.x;
+                out[n].h = ImGui::GetTextLineHeight();
+                n++;
+                p = w;
+            }
+        } else if (seg->kind == TUTORIAL_SEG_GLYPH_PNG) {
+            out[n].kind = RICH_GLYPH_PNG;
+            out[n].glyph = seg->glyph;
+            out[n].w = glyphSize;
+            out[n].h = glyphSize;
+            n++;
+        } else if (seg->kind == TUTORIAL_SEG_GLYPH_KEYCAP) {
+            out[n].kind = RICH_GLYPH_KEYCAP;
+            out[n].keycapLabel = seg->keycapLabel ? seg->keycapLabel : "?";
+            out[n].w = glyphSize;
+            out[n].h = glyphSize;
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Render a rich-content message box (segments) and return -1 while
+ * open or a button-press result.  Layout matches renderMessageBoxContent
+ * for the icon and button rows. */
+static int renderRichMessageBoxContent(const TutorialSeg *segments, int segCount,
+                                       ImguiMsgButtons buttons,
+                                       SDL_Texture *iconTex, float scale,
+                                       bool *focusBtn) {
+    int result = -1;
+
+    float iconDisplaySize = ICON_SIZE * scale;
+    if (iconTex) {
+        ImGui::Image((ImTextureID)iconTex,
+                     ImVec2(iconDisplaySize, iconDisplaySize));
+        ImGui::SameLine();
+    }
+
+    float textStartY = ImGui::GetCursorPosY();
+    float textLineH  = ImGui::GetTextLineHeight();
+    float iconMidY = textStartY + (iconDisplaySize * 0.5f) -
+                     (textLineH * 0.5f);
+    if (iconTex && iconMidY > textStartY) {
+        ImGui::SetCursorPosY(iconMidY);
+    }
+
+    float glyphSize  = textLineH * 2.0f;
+    float wordSpace  = ImGui::GetStyle().ItemInnerSpacing.x;
+    float lineSpace  = ImGui::GetStyle().ItemSpacing.y;
+
+    /* Wrap right edge in screen space — the popup's content right. */
+    ImVec2 layoutOrigin = ImGui::GetCursorScreenPos();
+    float wrapRight     = layoutOrigin.x + ImGui::GetContentRegionAvail().x;
+    float rowStartX     = layoutOrigin.x;
+
+    static RichElem elems[RICH_ELEM_MAX];
+    int nElems = flattenSegments(segments, segCount, glyphSize,
+                                 elems, RICH_ELEM_MAX);
+
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+    float penY = layoutOrigin.y;
+
+    /* Two-pass per row: walk elements forward to find the row end and
+       its height, then draw the row at that height with each element
+       vertically centred.  Row ends at HARD_BREAK, end of input, or
+       when adding the next element would cross wrapRight. */
+    int i = 0;
+    while (i < nElems) {
+        int rowStart = i;
+        float rowW = 0;
+        float rowH = textLineH;
+        bool hardBreak = false;
+        while (i < nElems) {
+            const RichElem *e = &elems[i];
+            if (e->kind == RICH_HARD_BREAK) {
+                hardBreak = true;
+                break;
+            }
+            float advance = (i == rowStart ? 0 : wordSpace) + e->w;
+            if (i != rowStart && rowW + advance > wrapRight - rowStartX) break;
+            rowW += advance;
+            if (e->h > rowH) rowH = e->h;
+            i++;
+        }
+
+        float drawX = rowStartX;
+        for (int k = rowStart; k < i; ++k) {
+            const RichElem *e = &elems[k];
+            if (k > rowStart) drawX += wordSpace;
+            float yOffset = (rowH - e->h) * 0.5f;
+            ImVec2 p = ImVec2(drawX, penY + yOffset);
+            switch (e->kind) {
+                case RICH_WORD:
+                    dl->AddText(p, textCol, e->text, e->text + e->textLen);
+                    break;
+                case RICH_GLYPH_PNG:
+                    dl->AddImage((ImTextureID)e->glyph, p,
+                                 ImVec2(p.x + e->w, p.y + e->h));
+                    break;
+                case RICH_GLYPH_KEYCAP:
+                    drawProceduralKeycapAt(p, e->h, e->keycapLabel);
+                    break;
+                case RICH_HARD_BREAK:
+                    break;
+            }
+            drawX += e->w;
+        }
+
+        penY += rowH + lineSpace;
+        if (hardBreak) i++;
+    }
+
+    /* Reserve the consumed vertical space inside ImGui so the
+       separator and buttons start beneath the rendered rows.  Subtract
+       one trailing line-spacing — the final row added it but no row
+       follows, and ImGui::Spacing() below contributes its own gap. */
+    float consumedY = penY - layoutOrigin.y;
+    if (nElems > 0) consumedY -= lineSpace;
+    if (consumedY < 0) consumedY = 0;
+    ImGui::Dummy(ImVec2(wrapRight - rowStartX, consumedY));
+
+    float afterTextY = ImGui::GetCursorPosY();
+    float afterIconY = textStartY + iconDisplaySize +
+                       ImGui::GetStyle().ItemSpacing.y;
+    if (afterIconY > afterTextY) {
+        ImGui::SetCursorPosY(afterIconY);
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    /* Buttons — same layout as the plain-text variant. */
+    float btnW = 80.0f;
+    float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float availW = ImGui::GetContentRegionAvail().x;
+
+    if (buttons == IMGUI_MSG_OK) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - btnW) / 2.0f);
+        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
+        if (ImGui::Button(langGetText(STR_OK), ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_OK;
+        }
+    } else if (buttons == IMGUI_MSG_YES_NO) {
+        float totalW = btnW * 2 + spacing;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
+        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
+        if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_YES;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_NO;
+        }
+    } else {
+        float totalW = btnW * 3 + spacing * 2;
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - totalW) / 2.0f);
+        if (*focusBtn) { ImGui::SetKeyboardFocusHere(); *focusBtn = false; }
+        if (ImGui::Button(langGetText(STR_YES), ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_YES;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(langGetText(STR_NO), ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_NO;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, 0))) {
+            result = IMGUI_MSG_RESULT_CANCEL;
+        }
+    }
+
+    return result;
+}
+
 /* Guard against re-entrant calls (e.g. lobby + game loop both detecting
  * the same disconnect). */
 static bool s_messageBoxActive = false;
@@ -174,6 +398,8 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -203,6 +429,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
             if (ev.type == SDL_EVENT_QUIT ||
                 (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
                  ev.window.windowID == SDL_GetWindowID(window))) {
@@ -263,6 +490,8 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
         ImGui_ImplSDL3_NewFrame();
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
 
         /* Full-screen invisible host window for the modal. */
         int winW, winH;
@@ -340,6 +569,167 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
     /* Restore the caller's context (may be NULL if none existed). */
     ImGui::SetCurrentContext(callerCtx);
 
+    SDL_FlushEvent(SDL_EVENT_QUIT);
+    s_messageBoxActive = false;
+    return result;
+}
+
+extern "C" int imguiMessageBoxRich(const char *title,
+                                   const TutorialSeg *segments, int segmentCount,
+                                   ImguiMsgType type, ImguiMsgButtons buttons) {
+    SDL_Window *window = sdl3DrawGetWindow();
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (!window || !renderer) return IMGUI_MSG_RESULT_OK;
+
+    if (s_messageBoxActive) return IMGUI_MSG_RESULT_OK;
+    s_messageBoxActive = true;
+
+    ImGuiContext *callerCtx = ImGui::GetCurrentContext();
+
+    int savedLogW = 0, savedLogH = 0;
+    SDL_RendererLogicalPresentation savedLogMode = SDL_LOGICAL_PRESENTATION_DISABLED;
+    dialogSaveLogicalPresentation(renderer, &savedLogW, &savedLogH, &savedLogMode);
+
+    int screenW, screenH;
+    SDL_GetWindowSize(window, &screenW, &screenH);
+    if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
+    float s = dialogComputeScale(screenW, screenH);
+
+    SDL_Texture *bgTex = captureBackbuffer(renderer);
+
+    ImGuiContext *msgCtx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(msgCtx);
+
+    ImGuiIO &io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
+    io.IniFilename = nullptr;
+
+    ImGui::StyleColorsDark();
+    imguiApplyBoloTheme();
+    ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
+    ImGui_ImplSDLRenderer3_Init(renderer);
+    dialogApplyScaling(s);
+
+    SDL_Texture *iconTex = imguiLoadSvgIcon(renderer, iconPathForType(type), ICON_SIZE);
+
+    float dialogW = (float)screenW * DIALOG_WIDTH_FRACTION;
+    if (dialogW < DIALOG_MIN_W) dialogW = DIALOG_MIN_W;
+    if (dialogW > DIALOG_MAX_W) dialogW = DIALOG_MAX_W;
+    dialogW *= s;
+
+    int result = -1;
+    bool focusBtn = true;
+    bool openedPopup = false;
+    const char *popupId = title ? title : "Message";
+
+    while (result < 0) {
+        Uint64 frameCapStart = dialogFrameCapBegin();
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
+            if (ev.type == SDL_EVENT_QUIT ||
+                (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+                 ev.window.windowID == SDL_GetWindowID(window))) {
+                result = (buttons == IMGUI_MSG_YES_NO_CANCEL) ?
+                         IMGUI_MSG_RESULT_CANCEL : IMGUI_MSG_RESULT_OK;
+            } else if (ev.type == SDL_EVENT_KEY_DOWN) {
+                SDL_Keycode k = ev.key.key;
+                if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+                    result = (buttons == IMGUI_MSG_OK)
+                             ? IMGUI_MSG_RESULT_OK
+                             : IMGUI_MSG_RESULT_YES;
+                } else if (k == SDLK_ESCAPE) {
+                    if (buttons == IMGUI_MSG_OK)
+                        result = IMGUI_MSG_RESULT_OK;
+                    else if (buttons == IMGUI_MSG_YES_NO)
+                        result = IMGUI_MSG_RESULT_NO;
+                    else
+                        result = IMGUI_MSG_RESULT_CANCEL;
+                }
+            }
+        }
+
+        SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
+        SDL_RenderClear(renderer);
+        if (bgTex) {
+            SDL_RenderTexture(renderer, bgTex, NULL, NULL);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 140);
+            SDL_FRect dimRect = { 0, 0, (float)screenW, (float)screenH };
+            SDL_RenderFillRect(renderer, &dimRect);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+        }
+
+        ImGui_ImplSDLRenderer3_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        dialogOverrideFramebufferScale(renderer);
+        ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
+
+        int winW, winH;
+        SDL_GetWindowSize(window, &winW, &winH);
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImVec2((float)winW, (float)winH));
+        ImGui::Begin("##MsgBoxHostRich", nullptr,
+                     ImGuiWindowFlags_NoTitleBar |
+                     ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoMove |
+                     ImGuiWindowFlags_NoCollapse |
+                     ImGuiWindowFlags_NoBackground |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus |
+                     ImGuiWindowFlags_NoInputs);
+
+        if (!openedPopup) {
+            ImGui::OpenPopup(popupId);
+            openedPopup = true;
+        }
+
+        ImGui::SetNextWindowSizeConstraints(ImVec2(dialogW, 0),
+                                            ImVec2(dialogW, FLT_MAX));
+        if (ImGui::BeginPopupModal(popupId, nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoMove)) {
+            ImVec2 modalSize = ImGui::GetWindowSize();
+            ImGui::SetWindowPos(
+                ImVec2(((float)winW - modalSize.x) * 0.5f,
+                       ((float)winH - modalSize.y) * 0.5f));
+
+            int r = renderRichMessageBoxContent(segments, segmentCount,
+                                                buttons, iconTex, s, &focusBtn);
+            if (r >= 0) {
+                result = r;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::End();
+
+        dialogDrawNavOutline();
+        ImGui::Render();
+        ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
+        SDL_RenderPresent(renderer);
+        dialogFrameCapEnd(frameCapStart);
+    }
+
+    if (iconTex) SDL_DestroyTexture(iconTex);
+
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext(msgCtx);
+
+    /* See imguiMessageBoxEx for why we redraw without presenting. */
+    if (bgTex) {
+        SDL_RenderTexture(renderer, bgTex, NULL, NULL);
+        SDL_DestroyTexture(bgTex);
+    }
+
+    dialogRestoreLogicalPresentation(renderer, savedLogW, savedLogH, savedLogMode);
+    ImGui::SetCurrentContext(callerCtx);
     SDL_FlushEvent(SDL_EVENT_QUIT);
     s_messageBoxActive = false;
     return result;

@@ -60,7 +60,9 @@ void lv_imgui_toggle_dns_lookups(void);
 
 /* Wrappers around static helpers in imgui_main_menu.cpp that the macOS
  * shim needs to invoke. zoom_at_center centres the zoom on the current
- * window. open_wbn_browser_modal blocks until the modal closes. */
+ * window. lv_imgui_open_wbn_browser blocks until the modal closes;
+ * reused by the compact-mode popup menu so it shares the desktop File
+ * menu flow. */
 void lv_imgui_zoom_at_center(int stepIndex);
 void lv_imgui_open_wbn_browser(void);
 

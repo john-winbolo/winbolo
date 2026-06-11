@@ -183,10 +183,10 @@ STR_TUTORIAL22=Det finns en bunker framåt och några försörjningsbaser som\ng
 STR_TUTORIAL23=Med tålamod och försiktighet bör du kunna förstöra den\nhär bunkern. Använd de färdigheter du lärt dig för att göra\ndet lättare:\n\n\nGöm dig i skogen så att bunkern inte kan se dig,\nskörda träd, bygg vägar för att tanken ska röra sig\nsnabbare och bygg byggnader för att ge skydd mot\nbunkereld.
 STR_TUTORIAL24=Efter att du lyckats besegra den här bunkern är din sista\nutmaning i tutorialen att ta ut de två\nbunkrarna som vaktar utgången, bygga en båt och fly.\n\n\nVar noga med att hålla koll på tankens pansarnivå –\nom din tank förstörs måste du börja om\nmed en ny tank på en ny båt ute till havs.
 STR_TUTORIAL25=Grattis! Du har genomfört WinBolo-tutorialen.\n\n\n\nOrdna nu med några vänner att spela med och se\nvad det är som tävlar mot intelligenta mänskliga\nmotståndare i stället för stillastående, tanklösa mål.\n\nOm du vill spela om tutorialen senare kan du\nstarta den igen från menyn Inställningar.
-STR_TUTORIAL_START01=Välkommen till WinBolo-tutorialen. Den här ön presenterar\ngrundprinciperna i WinBolo och leder dig igenom\ndem ett i taget. Varje ny princip beskrivs\ni ett fönster som det här.\n\nEfter att ha läst varje meddelande kan du fortsätta genom\natt klicka på "OK" med musen eller helt enkelt\ntrycka på <Return>-tangenten på tangentbordet
+STR_TUTORIAL_START01=Välkommen till WinBolo-tutorialen. Den här ön presenterar\ngrundprinciperna i WinBolo och leder dig igenom\ndem ett i taget. Varje ny princip beskrivs\ni ett fönster som det här.\n\nEfter varje meddelande:\ntryck {DISMISS} för att fortsätta.
 STR_TUTORIAL_START02=WinBolo är den enda auktoriserade klonen av Stuart Cheshires klassiska Macintosh-nätverksspel Bolo.\nDu hittar strategitips och annan information på den officiella webbplatsen:\n\nhttps://www.winbolo.com\n\nEller kom och häng med oss på Reddit och Discord\n
 STR_TUTORIAL_START03=En snabb notering om Internetspel.\n\nOm du ansluter till ett onlinespel och det är många nätverksfel\nska du lämna spelet omedelbart innan\ndu förstör spelet för de andra spelarna.
-STR_TUTORIAL_START04=Du styr en tank som för närvarande befinner sig på en\nbåt till havs. Tryck {ACCEL} för att tanken (och båten) ska\nåka framåt och tryck {BRAKE} för att sakta ned och stanna.\n\nTrycka inte på tangenterna som om du skriver – tryck\noch håll dem tills tanken håller önskad hastighet\noch släpp sedan. Tryck {ACCEL} nu för att köra\nbåten framåt mot land.\n(Tryck <Return> först för att stänga fönstret)
+STR_TUTORIAL_START04=Du styr en tank som för närvarande befinner sig på en\nbåt till havs. Tryck {ACCEL} för att tanken (och båten) ska\nåka framåt och tryck {BRAKE} för att sakta ned och stanna.\n\nTrycka inte på tangenterna som om du skriver – tryck\noch håll dem tills tanken håller önskad hastighet\noch släpp sedan. Tryck {ACCEL} nu för att köra\nbåten framåt mot land.\n(Tryck {DISMISS} först för att stänga fönstret)
 STR_TUTORIAL01_TOUCH=Framför dig finns en kort flod som leder inåt land. Tryck\ntumspaken framåt för att köra din båt till\nflodens slut.\n\nNär du kommer dit, fortsätt hålla tumspaken\nframåttryckt. Tanken stiger av båten och\nbåten lämnas förtöjd vid flodens slut
 STR_TUTORIAL02_TOUCH=Du befinner dig nu på gräset. Tanken rör sig ganska\nsnabbt på gräs.\n\n\nHåll tumspaken tryckt framåt för att köra framåt\nmot skogen.
 STR_TUTORIAL03_TOUCH=Du befinner dig nu i skogen. Tanken rör sig långsammare\ni skogen än på gräs.\n\n\nHåll tumspaken tryckt framåt för att köra framåt\nmot träsket.
@@ -1142,6 +1142,34 @@ STR_DLGSYSINFO_SIMULATION=Simulering
 STR_DLGSYSINFO_BOTPREP=Bot-förberedelse
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain-överskridningar
 
+# Handkontroll – åtgärdsetiketter
+STR_GP_SECTION=Handkontroll
+STR_GP_REBIND_PROMPT=Tryck en knapp eller dra i en trigger...
+STR_GP_ACTION_FIRE=Skjut
+STR_GP_ACTION_MINE=Lägg ut mina
+STR_GP_ACTION_BUILD_CONFIRM=Bekräfta byggande
+STR_GP_ACTION_VIEW_CYCLE=Byt vy
+STR_GP_ACTION_GUNSIGHT_DEC=Minska siktet
+STR_GP_ACTION_GUNSIGHT_INC=Öka siktet
+STR_GP_ACTION_BUILD_PREV=Föregående byggnadstyp
+STR_GP_ACTION_BUILD_NEXT=Nästa byggnadstyp
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Växla byggmarkör
+STR_GP_ACTION_QUICK_CHAT=Snabbchatt
+STR_GP_ACTION_PAUSE=Pausa
+STR_GP_ACTION_VIEW_PLAYERS=Visa spelare
+
+# Handkontrolläge inställning + anslutningsprompt (Phase 8.1)
+STR_CTRL_MODE_HEADER=Handkontrolläge
+STR_CTRL_MODE_OFF=Av
+STR_CTRL_MODE_ON=På
+STR_CTRL_MODE_AUTO=Auto
+STR_CTRL_MODE_ASK=Fråga när handkontroll ansluts
+STR_CTRL_PROMPT_TITLE=Handkontroll identifierad
+STR_CTRL_PROMPT_LINE1=En gamepad har anslutits.
+STR_CTRL_PROMPT_LINE2=Byta till handkontrolläge?
+STR_CTRL_PROMPT_DESC=(Döljer menyraden; Start öppnar en handkontrollvänlig pausmeny.\nÄndra senare i Inställningar.)
+STR_CTRL_PROMPT_NOTNOW=Inte nu
+STR_CTRL_PROMPT_DONTASK=Fråga inte igen
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Om WinBolo
 STR_MENU_PREFERENCES=Inställningar…

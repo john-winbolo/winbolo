@@ -277,6 +277,11 @@ void sdl3DrawGetTabletViewport(int *x, int *y, int *w, int *h, int *zoom);
 void sdl3DrawSetDragOffset(int dx, int dy);
 void sdl3DrawGetDragOffset(int *dx, int *dy);
 
+/* When true, the build-mode cursor reticle is drawn at 50% alpha (used to
+   show a locked build target while build/cursor mode is off). Solid when
+   false. Set each frame before sdl3DrawMainScreen. */
+void sdl3DrawSetCursorFaint(bool faint);
+
 /*********************************************************
 *NAME:          sdl3DrawSetStatusPanelOrigins
 *PURPOSE:

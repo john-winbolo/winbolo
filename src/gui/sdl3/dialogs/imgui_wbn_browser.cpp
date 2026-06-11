@@ -38,9 +38,11 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "imgui_nav_outline.h"
 #include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
+#include "../imgui_steam_nav.h"
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -362,6 +364,8 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -648,6 +652,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT) {
@@ -764,6 +769,8 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         dialogResetTextInputArea(window);
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
 
         /* Transparent full-screen host window */
         ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -902,6 +909,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                     ImGui::TableNextRow();
 
                     bool isSelected = (selectedItem == i);
+                    bool wasSelected = isSelected;
                     ImGui::TableNextColumn();
                     char selectId[128];
                     SDL_snprintf(selectId, sizeof(selectId), "%s##log%d", e.map, i);
@@ -915,8 +923,16 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                         if (!e.detailLoaded) {
                             triggerDetailFetch(e.key);
                         }
-                        /* Double-click to download */
-                        if (ImGui::IsMouseDoubleClicked(0) && e.log_available) {
+                        /* Trigger View Log on:
+                           - mouse double-click
+                           - gamepad A / keyboard Enter on an already-
+                             selected row (saves the user navigating
+                             past stats + comments to find the button) */
+                        bool mouseDbl     = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+                        bool mouseSingle  = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+                        bool nonMouseActivate = !mouseSingle && !mouseDbl;
+                        if (e.log_available &&
+                            (mouseDbl || (nonMouseActivate && wasSelected))) {
                             triggerDownload(e.key);
                         }
                     }
@@ -1140,29 +1156,33 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             }
 
 #if !BOLO_MOBILE
-            if (ImGui::Button(langGetText(STR_DLGWBN_OPENFILE))) {
-                fileDlgState.done = 0;
-                fileDlgState.ok = 0;
-                fileDlgState.path[0] = '\0';
-                SDL_DialogFileFilter filters[] = {
-                    { langGetText(STR_DLGWBN_FILEFILTER), "wbv" },
-                    { NULL, NULL }
-                };
-                struct FileDlgState { char *path; size_t size; volatile int *done; int *ok; };
-                auto *ctx = new FileDlgState{fileDlgState.path, sizeof(fileDlgState.path),
-                                             &fileDlgState.done, &fileDlgState.ok};
-                SDL_ShowOpenFileDialog([](void *userdata, const char * const *filelist, int) {
-                    auto *s = (FileDlgState *)userdata;
-                    if (filelist && filelist[0]) {
-                        SDL_strlcpy(s->path, filelist[0], s->size);
-                        *s->ok = 1;
-                    }
-                    *s->done = 1;
-                    delete s;
-                }, ctx, window, filters, 1, NULL, false);
+            /* Hidden on Deck — no native file dialog reachable from a
+               controller, and the WBN list covers the same need. */
+            if (!uiModeIsSteamDeck()) {
+                if (ImGui::Button(langGetText(STR_DLGWBN_OPENFILE))) {
+                    fileDlgState.done = 0;
+                    fileDlgState.ok = 0;
+                    fileDlgState.path[0] = '\0';
+                    SDL_DialogFileFilter filters[] = {
+                        { langGetText(STR_DLGWBN_FILEFILTER), "wbv" },
+                        { NULL, NULL }
+                    };
+                    struct FileDlgState { char *path; size_t size; volatile int *done; int *ok; };
+                    auto *ctx = new FileDlgState{fileDlgState.path, sizeof(fileDlgState.path),
+                                                 &fileDlgState.done, &fileDlgState.ok};
+                    SDL_ShowOpenFileDialog([](void *userdata, const char * const *filelist, int) {
+                        auto *s = (FileDlgState *)userdata;
+                        if (filelist && filelist[0]) {
+                            SDL_strlcpy(s->path, filelist[0], s->size);
+                            *s->ok = 1;
+                        }
+                        *s->done = 1;
+                        delete s;
+                    }, ctx, window, filters, 1, NULL, false);
+                }
+                imguiHandOnHover();
+                ImGui::SameLine();
             }
-            imguiHandOnHover();
-            ImGui::SameLine();
 #endif
 
             /* Close is affirmative ("done viewing logs"), not a cancel —

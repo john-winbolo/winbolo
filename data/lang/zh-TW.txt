@@ -183,10 +183,10 @@ STR_TUTORIAL22=前方有一個碉堡，還有幾個補給基地\n為您提供彈
 STR_TUTORIAL23=憑藉耐心和謹慎，您應該能夠摧毀這個\n碉堡。使用您學到的技能讓任務更容易：\n\n\n躲在森林中使碉堡看不見您，\n採集樹木，建造道路讓坦克移動更快，\n建造建築物作為碉堡砲彈的掩護。
 STR_TUTORIAL24=成功摧毀這個碉堡後，您的最終\n教學挑戰是消滅守衛出口的兩個\n碉堡，建造船隻並逃脫。\n\n\n特別注意您坦克的裝甲等級 —\n如果坦克被摧毀，您將不得不從\n海上的新船開始，搭乘新坦克重新開始。
 STR_TUTORIAL25=恭喜！您已完成 WinBolo\n教學。\n\n\n\n現在召集一些朋友一起玩，體驗\n與聰明的人類對手對戰的感覺，\n而不是面對靜止不動的目標。\n\n若您日後想重新進行教學，\n可從設定選單中再次啟動。
-STR_TUTORIAL_START01=歡迎來到 WinBolo 教學。這座小島介紹\nWinBolo 的基本原則，並逐一引導您\n了解它們。每個新原則將在\n像這樣的視窗中說明。\n\n閱讀每條訊息後，您可以透過\n點擊滑鼠上的「確定」按鈕\n或直接按鍵盤上的 <Return> 鍵來繼續。
+STR_TUTORIAL_START01=歡迎來到 WinBolo 教學。這座小島介紹\nWinBolo 的基本原則，並逐一引導您\n了解它們。每個新原則將在\n像這樣的視窗中說明。\n\n閱讀每條訊息後，\n按 {DISMISS} 繼續。
 STR_TUTORIAL_START02=WinBolo 是 Stuart Cheshire 經典 Macintosh 網路遊戲 Bolo 的唯一授權重製版。\n您可以在官方網站找到策略提示和其他資訊：\n\nhttps://www.winbolo.com\n\n歡迎加入我們的 Reddit 和 Discord\n
 STR_TUTORIAL_START03=關於網際網路遊戲的一點說明。\n\n如果您加入線上遊戲時遇到大量網路錯誤，\n請立即離開遊戲，\n以免影響其他玩家的體驗。
-STR_TUTORIAL_START04=您正在控制一輛坦克，目前在\n海上的船隻上。按 {ACCEL} 使坦克（和船隻）\n向前行駛，按 {BRAKE} 減速並停止。\n\n不要像打字一樣輕點按鍵 —\n按住按鍵直到坦克達到您想要的速度\n再放開。現在按 {ACCEL} 讓\n船隻向前駛向陸地。\n（先按 <Return> 關閉視窗）
+STR_TUTORIAL_START04=您正在控制一輛坦克，目前在\n海上的船隻上。按 {ACCEL} 使坦克（和船隻）\n向前行駛，按 {BRAKE} 減速並停止。\n\n不要像打字一樣輕點按鍵 —\n按住按鍵直到坦克達到您想要的速度\n再放開。現在按 {ACCEL} 讓\n船隻向前駛向陸地。\n（先按 {DISMISS} 關閉視窗）
 STR_TUTORIAL01_TOUCH=前方有一條通往內陸的短河。\n向前推動搖桿將您的船駛到\n河的盡頭。\n\n到達後，繼續向前推動搖桿。\n坦克將從船上下船，\n船將停泊在河的盡頭。
 STR_TUTORIAL02_TOUCH=您現在在草地上。坦克在草地上\n移動速度相當快。\n\n\n繼續向前推動搖桿前進到森林。
 STR_TUTORIAL03_TOUCH=您現在在森林中。坦克在森林中的移動速度\n比在草地上慢。\n\n\n繼續向前推動搖桿前進到沼澤。
@@ -1142,6 +1142,34 @@ STR_DLGSYSINFO_SIMULATION=模擬
 STR_DLGSYSINFO_BOTPREP=Bot 準備
 STR_DLGSYSINFO_BRAIN_OVERRUNS=Brain 超限
 
+# Gamepad action labels
+STR_GP_SECTION=手柄
+STR_GP_REBIND_PROMPT=按下按鈕或扣下扳機…
+STR_GP_ACTION_FIRE=射擊
+STR_GP_ACTION_MINE=佈雷
+STR_GP_ACTION_BUILD_CONFIRM=確認建造
+STR_GP_ACTION_VIEW_CYCLE=切換視角
+STR_GP_ACTION_GUNSIGHT_DEC=縮短瞄準距離
+STR_GP_ACTION_GUNSIGHT_INC=延長瞄準距離
+STR_GP_ACTION_BUILD_PREV=上一建造類型
+STR_GP_ACTION_BUILD_NEXT=下一建造類型
+STR_GP_ACTION_BUILD_CURSOR_TOGGLE=切換建造游標
+STR_GP_ACTION_QUICK_CHAT=快速聊天
+STR_GP_ACTION_PAUSE=暫停
+STR_GP_ACTION_VIEW_PLAYERS=玩家列表
+
+# Controller Mode pref + connect prompt (Phase 8.1)
+STR_CTRL_MODE_HEADER=手柄模式
+STR_CTRL_MODE_OFF=關閉
+STR_CTRL_MODE_ON=開啟
+STR_CTRL_MODE_AUTO=自動
+STR_CTRL_MODE_ASK=連接手柄時詢問
+STR_CTRL_PROMPT_TITLE=偵測到手柄
+STR_CTRL_PROMPT_LINE1=已連接遊戲手柄。
+STR_CTRL_PROMPT_LINE2=是否切換至手柄模式？
+STR_CTRL_PROMPT_DESC=(隱藏選單列；按 Start 鍵開啟適合手柄操作的暫停選單。\n稍後可在設定中變更。)
+STR_CTRL_PROMPT_NOTNOW=暫不切換
+STR_CTRL_PROMPT_DONTASK=不再詢問
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=關於 WinBolo
 STR_MENU_PREFERENCES=偏好設定…
