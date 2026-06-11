@@ -333,11 +333,15 @@ static int buildInputPacket(TransportUdpClientCtx *c, uint8_t *buf) {
     return offset;
 }
 
-/* Record input into redundancy ring without sending a packet.
- * Used on keys ticks so the input is carried by the next sendInput. */
-static void udpClientRecordInput(void *ctx, const InputPacket *input) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+bool udpInputEdgeChanged(const InputPacket *prev, const InputPacket *cur) {
+    return prev->buttons != cur->buttons || prev->actions != cur->actions;
+}
 
+/* Record input into redundancy ring without sending a packet.
+ * Used on keys ticks so the input is carried by the next sendInput, and
+ * by sendInput itself so a game-tick send never promotes (see below). */
+static void udpClientRecordInputInternal(TransportUdpClientCtx *c,
+                                         const InputPacket *input) {
     if (c->joinState != UDP_CLIENT_CONNECTED) {
         return;
     }
@@ -354,13 +358,47 @@ static void udpClientRecordInput(void *ctx, const InputPacket *input) {
     c->inputRingCount++;
 }
 
+/* Transport.recordInput: stamp the input into the ring, then — if its
+ * sampled controls differ from the previously recorded input — send one
+ * packet immediately. The continuous 50/s game-tick send is the loss
+ * channel and is untouched; this is the latency win on press/release
+ * edges, where waiting up to a tick for the next cadence send is the
+ * avoidable cost. The extra copy is free on the wire: the server's
+ * tick > lastProcessedInput dedup discards it as stale if the cadence
+ * send (or a redundant copy) already carried that tick. */
+static void udpClientRecordInput(void *ctx, const InputPacket *input) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+    bool hadPrev = c->inputRingCount > 0;
+    InputPacket prev = {0};
+
+    if (hadPrev) {
+        prev = c->inputRing[(c->inputRingCount - 1) % CLIENT_INPUT_RING_SIZE];
+    }
+
+    udpClientRecordInputInternal(c, input);
+
+    /* First input after connect has no predecessor to compare against —
+     * the cadence carries it. Promotion only fires once connected, which
+     * the internal record's guard above already enforced (the ring count
+     * only advances in UDP_CLIENT_CONNECTED). */
+    if (hadPrev && c->joinState == UDP_CLIENT_CONNECTED &&
+        udpInputEdgeChanged(&prev, input)) {
+        uint8_t buf[UDP_MAX_PAYLOAD];
+        int len = buildInputPacket(c, buf);
+        udpClientSendTo(c, buf, len);
+    }
+}
+
 /* Client sendInput: record input and send packet with redundancy to server */
 static void udpClientSendInput(void *ctx, const InputPacket *input) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
     uint8_t buf[UDP_MAX_PAYLOAD];
     int len;
 
-    udpClientRecordInput(ctx, input);
+    /* Record without promotion: a game-tick send already emits the packet
+     * below, so routing through the edge-checking wrapper would send twice
+     * whenever a change lands on a game tick. */
+    udpClientRecordInputInternal(c, input);
 
     if (c->joinState != UDP_CLIENT_CONNECTED) {
         return;

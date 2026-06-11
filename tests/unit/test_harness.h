@@ -282,6 +282,11 @@ int run_log_path_directory_arg_appends_wbv(void);
  * size bound, and sim-level dedup of redundant duplicate ticks. */
 int run_input_redundancy(void);
 
+/* Edge-send predicate (test_edge_send.c): udpInputEdgeChanged flags a
+ * button/action change as an edge that promotes a recorded input to an
+ * immediate send, while ignoring the per-send tick/ACK/ping stamps. */
+int run_edge_send_predicate(void);
+
 /* Stall-advance (test_stall_advance.c): a stall-substituted tick is a
  * processed tick (lastProcessedInput advances), late inputs for it drop
  * as stale, and one-shot actions are harvested/laid exactly once under the

@@ -208,6 +208,7 @@ static const UnitTestEntry s_tests[] = {
     { "treegrow_never_plants_on_deep_sea",       run_treegrow_never_plants_on_deep_sea       },
     { "treegrow_reset_clears_stale_target",      run_treegrow_reset_clears_stale_target      },
     { "input_redundancy",                        run_input_redundancy                        },
+    { "edge_send_predicate",                     run_edge_send_predicate                     },
     { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
     { "stall_mine_late_lays_once",               run_stall_mine_late_lays_once               },
     { "stall_mine_duplicate_not_relaid",         run_stall_mine_duplicate_not_relaid         },

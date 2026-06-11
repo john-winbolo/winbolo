@@ -151,6 +151,10 @@ const char *packetTypeName(uint8_t type);
 
 int packInputPacket(uint8_t *buf, const InputPacket *pkt);
 void unpackInputPacket(const uint8_t *buf, InputPacket *pkt);
+
+/* True when cur's sampled controls differ from prev's — the edge that
+ * promotes a recorded input to an immediate send. */
+bool udpInputEdgeChanged(const InputPacket *prev, const InputPacket *cur);
 int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts);
 int unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts);
 int packShellSnapshot(uint8_t *buf, const ShellSnapshot *ss);

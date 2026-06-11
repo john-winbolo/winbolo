@@ -2519,6 +2519,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
     tests/unit/test_input_redundancy.c
+    tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_input_catchup.c
     tests/unit/test_log_roundtrip.c
@@ -2756,6 +2757,7 @@ set(_unit_test_names
     stall_fire_not_harvested
     stall_never_fires
     input_catchup
+    edge_send_predicate
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
