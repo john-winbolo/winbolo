@@ -585,7 +585,7 @@ static bool scrollCanucksAutoScroll(ScrollState *ss, GameSim *sim,
   return returnValue;
 }
 
-bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, bool isTank, BYTE gunsightX, BYTE gunsightY, BYTE speed, BYTE armour, TURNTYPE angle, bool manual, bool tankIsDead) {
+bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, bool isTank, BYTE gunsightX, BYTE gunsightY, BYTE speed, BYTE armour, TURNTYPE angle, bool manual, bool tankIsDead, WORLD ownRenderX, WORLD ownRenderY) {
   bool returnValue;
 
   returnValue = TRUE;
@@ -632,7 +632,7 @@ bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYT
     if (manual == TRUE) {
       returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
     } else if (ss->autoScroll == TRUE && isTank == TRUE && armour <= TANK_FULL_ARMOUR) {
-      returnValue = scrollAutoScroll(ss, sim, xValue, yValue, objectX, objectY, gunsightX, gunsightY, speed, angle);
+      returnValue = scrollAutoScroll(ss, sim, xValue, yValue, objectX, objectY, gunsightX, gunsightY, speed, angle, ownRenderX, ownRenderY);
     } else {
       returnValue = scrollNoAutoScroll(ss, xValue, yValue, objectX, objectY, angle);
     }
@@ -788,7 +788,7 @@ static int scrollSettleToTile(int cur, int natural, int maxSub) {
   return cur + d / AUTOSCROLL_SETTLE_DIVISOR + (d > 0 ? 1 : -1);
 }
 
-bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, BYTE gunsightX, BYTE gunsightY, BYTE speed, TURNTYPE angle) {
+bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, BYTE gunsightX, BYTE gunsightY, BYTE speed, TURNTYPE angle, WORLD ownRenderX, WORLD ownRenderY) {
   /*
    * Event-driven autoscroll with sub-tile precision. The view target is
    * tank's sub-pixel world position + currentOffsetSub. The whole-tile
@@ -1018,16 +1018,17 @@ bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue,
   }
 
   /* Apply: compute desired view position in sub-tile units from the
-   * tank's raw sub-tile world position. The tank sprite is drawn from
-   * the same raw source, so tank and camera move together — bouncing
-   * in tank.x (predict/reconcile ~25Hz) shows as a small world-jitter
-   * with the tank fixed relative to the view, not as a tank shake.
-   * Decompose into the tile-aligned *xValue/*yValue (what engine code
-   * reads) plus subPosX/Y for the renderer to fold into its sub-pixel
-   * drag offset. */
+   * tank's rendered sub-tile world position. The hull sprite is drawn
+   * from the same rendered source (render-error smoothing applies its
+   * offset to both), so tank and camera move together — a reconciliation
+   * correction slides the world under a fixed-relative tank rather than
+   * shearing the hull against the camera. With the offset at zero this is
+   * the raw tank position. Decompose into the tile-aligned *xValue/*yValue
+   * (what engine code reads) plus subPosX/Y for the renderer to fold into
+   * its sub-pixel drag offset. */
   {
-    int tankSubX = (int)(sim->tanks[myPlayer])->x - TANK_SUBTRACT;
-    int tankSubY = (int)(sim->tanks[myPlayer])->y - TANK_SUBTRACT;
+    int tankSubX = (int)ownRenderX - TANK_SUBTRACT;
+    int tankSubY = (int)ownRenderY - TANK_SUBTRACT;
     int desiredSubX = tankSubX - SCROLL_CENTER * AUTOSCROLL_SUB_PER_TILE + (int)ss->currentOffsetSubX;
     int desiredSubY = tankSubY - SCROLL_CENTER * AUTOSCROLL_SUB_PER_TILE + (int)ss->currentOffsetSubY;
     int   maxSubX = (255 - MAIN_SCREEN_SIZE_X) * AUTOSCROLL_SUB_PER_TILE;

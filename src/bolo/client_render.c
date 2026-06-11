@@ -274,9 +274,33 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
 
   if (value == redraw) {
     screenTanksPrepare(csPtr, &scnTnk, &MY_TANK(csPtr), clientSimGetXOffset(csPtr), (BYTE) (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X), clientSimGetYOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y));
+    /* Render-only error smoothing: redraw the own-tank hull (slot 0 when
+     * on screen) at the smoothed rendered pose so reconciliation
+     * corrections slide instead of snapping. screenTanksPrepare only puts
+     * the local tank in slot 0, so a slot-0 entry whose playerNum is ours
+     * is unambiguously the own hull. With err == 0 the rendered pose
+     * equals the sim pose, so this is byte-identical to the raw prepare. */
+    if (scnTnk.numTanksScreen >= 1 &&
+        scnTnk.pos[0].playerNum == clientSimGetMyPlayerNum(csPtr)) {
+      WORLD rwx, rwy;
+      float rang;
+      WORLD cx, cy;
+      clientSimGetRenderedTankPos(csPtr, &rwx, &rwy, &rang);
+      /* Same shift math as tankGetScreenMX/PX/MY/PY. */
+      cx = (WORLD)(rwx - TANK_SUBTRACT);
+      cy = (WORLD)(rwy - TANK_SUBTRACT);
+      scnTnk.pos[0].mx = (BYTE)((cx >> TANK_SHIFT_MAPSIZE) - clientSimGetXOffset(csPtr));
+      scnTnk.pos[0].my = (BYTE)((cy >> TANK_SHIFT_MAPSIZE) - clientSimGetYOffset(csPtr));
+      scnTnk.pos[0].px = (BYTE)((WORLD)(cx << TANK_SHIFT_MAPSIZE) >> TANK_SHIFT_PIXELSIZE);
+      scnTnk.pos[0].py = (BYTE)((WORLD)(cy << TANK_SHIFT_MAPSIZE) >> TANK_SHIFT_PIXELSIZE);
+      scnTnk.pos[0].frame = tankGetFrameAt(&MY_TANK(csPtr), rang);
+    }
     screenLgmPrepare(csPtr, &lgms, clientSimGetXOffset(csPtr), (BYTE) (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1 ), clientSimGetYOffset(csPtr), (BYTE) (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y-1));
     if (tankIsGunsightShow(&MY_TANK(csPtr)) == TRUE) {
-      tankGetGunsight(&MY_TANK(csPtr), &gsX, &(gs.mapY), &(gs.pixelX), &(gs.pixelY));
+      WORLD gsrx, gsry;
+      float gsra;
+      clientSimGetRenderedTankPos(csPtr, &gsrx, &gsry, &gsra);
+      tankGetGunsightAt(&MY_TANK(csPtr), gsrx, gsry, gsra, &gsX, &(gs.mapY), &(gs.pixelX), &(gs.pixelY));
       gs.mapX = gsX;
 
       if (gs.mapX >= clientSimGetXOffset(csPtr) && gs.mapX < (clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X-1) && gs.mapY >= clientSimGetYOffset(csPtr) && gs.mapY < (clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y -1 )) {

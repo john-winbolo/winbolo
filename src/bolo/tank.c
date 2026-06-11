@@ -876,6 +876,32 @@ bool tankIsGunsightShow(tank *value) {
 *  yPixel - Pointer to hold Y Pixel
 *********************************************************/
 void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yPixel) {
+  tankGetGunsightAt(value, (*value)->x, (*value)->y, (*value)->angle,
+                    xMap, yMap, xPixel, yPixel);
+}
+
+/*********************************************************
+*NAME:          tankGetGunsightAt
+*PURPOSE:
+*  Like tankGetGunsight, but computes the crosshair from the
+*  supplied pose (world position + angle) instead of the
+*  tank's own. RENDER ONLY (render-error smoothing): lets the
+*  gunsight track the smoothed pose without touching sim
+*  state. The gunsight range (sightLen) and alive/dead test
+*  still come from the tank.
+*
+*ARGUMENTS:
+*  value  - Pointer to the tank structure
+*  posX   - World X to compute the crosshair from
+*  posY   - World Y to compute the crosshair from
+*  angle  - Aim angle (bradians)
+*  xMap   - Pointer to hold Map X Co-ord
+*  yMap   - Pointer to hold Map Y Co-ord
+*  xPixel - Pointer to hold X Pixel
+*  yPixel - Pointer to hold Y Pixel
+*********************************************************/
+void tankGetGunsightAt(tank *value, WORLD posX, WORLD posY, TURNTYPE angle,
+                       BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yPixel) {
   WORLD x;
   WORLD y;
   WORLD conv;
@@ -887,10 +913,10 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
      * advance (5 in shells.c) plus the live travel distance.
      * TANK_SUBTRACT is kept so the rendering formula stays unchanged. */
     int32_t xStepHP, yStepHP, xAccHP = 0, yAccHP = 0;
-    utilCalcDistanceHP(&xStepHP, &yStepHP, (*value)->angle, SHELL_SPEED);
+    utilCalcDistanceHP(&xStepHP, &yStepHP, angle, SHELL_SPEED);
     int totalTicks = (SHELL_LIFE * (int)(*value)->sightLen) / 2;
-    x = (*value)->x;
-    y = (*value)->y;
+    x = posX;
+    y = posY;
     for (int i = 0; i < totalTicks; i++) {
       xAccHP += xStepHP;  yAccHP += yStepHP;
       x = (WORLD)(x + (xAccHP >> 8));  xAccHP &= 0xFF;
@@ -902,7 +928,7 @@ void tankGetGunsight(tank *value, BYTE *xMap, BYTE *yMap, BYTE *xPixel, BYTE *yP
      * along the aim direction to compensate. */
     {
       int leadX, leadY;
-      utilCalcDistance(&leadX, &leadY, (*value)->angle, SHELL_SPEED);
+      utilCalcDistance(&leadX, &leadY, angle, SHELL_SPEED);
       x = (WORLD)(x + leadX);
       y = (WORLD)(y + leadY);
     }
@@ -1220,12 +1246,28 @@ void tankInWater(GameSim *sim, tank *value) {
 *  value - Pointer to the tank structure
 *********************************************************/
 BYTE tankGetFrame(tank *value) {
+  return tankGetFrameAt(value, (*value)->angle);
+}
+
+/*********************************************************
+*NAME:          tankGetFrameAt
+*PURPOSE:
+*  Like tankGetFrame, but derives the sprite direction from
+*  the supplied angle instead of the tank's own. RENDER ONLY
+*  (render-error smoothing): lets the hull draw at the
+*  smoothed angle without touching sim state.
+*
+*ARGUMENTS:
+*  value - Pointer to the tank structure
+*  angle - Angle (bradians) to derive the sprite frame from
+*********************************************************/
+BYTE tankGetFrameAt(tank *value, TURNTYPE angle) {
   BYTE returnValue; /* Value to return */
 
   if ((*value)->armour > TANK_FULL_ARMOUR) {
     returnValue = TANK_TRANSPARENT;
   } else {
-    returnValue = utilGetDir((*value)->angle);
+    returnValue = utilGetDir(angle);
     if ((*value)->onBoat == TRUE) {
       returnValue += TANK_BOAT_ADD;
     }

@@ -94,6 +94,11 @@ struct ClientSim {
     uint16_t reconCountLastSec;
     float    reconErrAvgPxLast, reconErrMaxPxLast;
 
+    /* Render-only error offset: reconciliation corrections accumulate here
+     * and decay to zero; the sim never reads these. */
+    float errX, errY;       /* world units */
+    float errAngle;         /* TURNTYPE units (bradians) */
+
     /* Pending human-player build request */
     BYTE        pendingBuildAction;
     BYTE        pendingBuildX;
@@ -491,6 +496,31 @@ BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
 void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
 struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
 void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
+
+/* ── Render-only error smoothing ─────────────────────────────────────
+ * Reconciliation corrections are deposited into the per-axis render
+ * offset (errX/errY/errAngle) and decayed to zero so they slide instead
+ * of snapping. The offset lives purely in the draw path; the sim never
+ * reads it. */
+#define CLIENT_ERR_POS_CLAMP    256.0f  /* one map square, world units, per axis */
+#define CLIENT_ERR_ANGLE_CLAMP   16.0f  /* bradians */
+#define CLIENT_ERR_DECAY_TAU_MS  40.0f  /* err *= exp(-dt/tau); gone in ~120ms */
+
+/* err += delta; if |result| (per-axis position, separately the angle,
+ * with the angle wrapped into [-128,128)) exceeds its clamp, zero ALL
+ * components — a genuine teleport should snap, not slide. Returns true
+ * if the offset was zeroed. */
+bool clientErrSmoothAccumulate(float *errX, float *errY, float *errAngle,
+                               float dX, float dY, float dAngle);
+
+/* Exponential decay toward zero: err *= expf(-dtMs / CLIENT_ERR_DECAY_TAU_MS). */
+void clientErrSmoothDecay(float *errX, float *errY, float *errAngle, float dtMs);
+
+/* Rendered (not simulated) local-tank pose: world position and angle
+ * with the render-only error offset applied. RENDER CODE ONLY — using
+ * this for prediction, brains, or collision reintroduces the
+ * asymmetric-state bug the offset exists to avoid. */
+void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle);
 
 /* Decompress `buf`/`len` into the ClientSim's map/pills/bases/starts,
  * stash the map name, and prime the viewport + mine-visibility state.

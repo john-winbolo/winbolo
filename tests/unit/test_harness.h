@@ -303,12 +303,18 @@ int run_stall_never_fires(void);
  * steady state never triggers it. Always built (no WB_NETDEBUG gate). */
 int run_input_catchup(void);
 
+/* Render-only error smoothing (test_error_smoothing.c): the offset
+ * accumulate/decay/clamp/wrap math as pure functions, plus the
+ * clientSimResetWorld zeroing. Always built. */
+int run_error_smoothing(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */
 int run_netdebug_commanded_vs_executed(void);
 int run_netdebug_overshoot_under_loss(void);
 int run_netdebug_mine_once_under_loss(void);
+int run_netdebug_error_offset_clamped(void);
 #endif
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map

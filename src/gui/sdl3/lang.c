@@ -1369,7 +1369,7 @@ static const LangEntry langTable[] = {
     {1464, "Make host"},
     {1465, "Make \"{player}\" the host?"},
     {1466, "{player} is now the host"},
-    {1467, "Reconciles: {number}/s, err avg {string1}px, max {string2}px"},
+    {1467, "Reconciles: {number}/s, err avg {string1}px, max {string2}px, smoothing {string3}px"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
@@ -2027,6 +2027,7 @@ const char *langGetTextFmt(langid id, const MessageArgs *args) {
                     const char *s = NULL;
                     if (d == '1') s = args->string1;
                     else if (d == '2') s = args->string2;
+                    else if (d == '3') s = args->string3;
                     if (s) {
                         replacement = s;
                         replLen     = 0;

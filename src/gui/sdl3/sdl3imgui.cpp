@@ -839,12 +839,13 @@ static void renderNetInfoContent(ClientSim *cs) {
      * count plus average/peak position error. */
     if (clientSimHasTransport(cs)) {
         int count = 0;
-        float avgErrPx = 0.0f, maxErrPx = 0.0f;
-        clientSimGetReconcileStats(cs, &count, &avgErrPx, &maxErrPx);
+        float avgErrPx = 0.0f, maxErrPx = 0.0f, renderOffsetPx = 0.0f;
+        clientSimGetReconcileStats(cs, &count, &avgErrPx, &maxErrPx, &renderOffsetPx);
         MessageArgs args = {};
         args.number = count;
         SDL_snprintf(args.string1, sizeof(args.string1), "%.1f", avgErrPx);
         SDL_snprintf(args.string2, sizeof(args.string2), "%.1f", maxErrPx);
+        SDL_snprintf(args.string3, sizeof(args.string3), "%.1f", renderOffsetPx);
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_RECONCILE, &args));
     }
 

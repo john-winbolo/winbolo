@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 #include <SDL3/SDL.h>
 #include "client_sim.h"
 #include "client_sim_internal.h"
@@ -564,9 +565,12 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
                                   ? (cs->reconErrSumPx / cs->reconCountThisWindow)
                                   : 0.0f;
       if (clientSimHasTransport(cs)) {
-        mpDiagLog("[cli] netstat recon=%u/s errAvg=%.1fpx errMax=%.1fpx",
+        float errOffPx =
+            sqrtf(cs->errX * cs->errX + cs->errY * cs->errY) / 16.0f;
+        mpDiagLog("[cli] netstat recon=%u/s errAvg=%.1fpx errMax=%.1fpx "
+                  "renderOff=%.1fpx",
                   cs->reconCountLastSec, cs->reconErrAvgPxLast,
-                  cs->reconErrMaxPxLast);
+                  cs->reconErrMaxPxLast, errOffPx);
       }
       cs->reconCountThisWindow = 0;
       cs->reconErrSumPx = 0.0f;
@@ -603,6 +607,68 @@ void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr) {
   }
 }
 
+/* Wrap a bradian quantity into [-128, 128) so a correction across the
+ * 0/256 boundary reads as the small rotation it is, not ~256. */
+static float clientErrWrapBradians(float a) {
+  while (a >= 128.0f) a -= 256.0f;
+  while (a < -128.0f) a += 256.0f;
+  return a;
+}
+
+bool clientErrSmoothAccumulate(float *errX, float *errY, float *errAngle,
+                               float dX, float dY, float dAngle) {
+  float nx = *errX + dX;
+  float ny = *errY + dY;
+  float na = clientErrWrapBradians(*errAngle + dAngle);
+
+  if (fabsf(nx) > CLIENT_ERR_POS_CLAMP ||
+      fabsf(ny) > CLIENT_ERR_POS_CLAMP ||
+      fabsf(na) > CLIENT_ERR_ANGLE_CLAMP) {
+    *errX = 0.0f;
+    *errY = 0.0f;
+    *errAngle = 0.0f;
+    return true;
+  }
+  *errX = nx;
+  *errY = ny;
+  *errAngle = na;
+  return false;
+}
+
+void clientErrSmoothDecay(float *errX, float *errY, float *errAngle, float dtMs) {
+  float f = expf(-dtMs / CLIENT_ERR_DECAY_TAU_MS);
+  *errX *= f;
+  *errY *= f;
+  *errAngle *= f;
+}
+
+void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle) {
+  WORLD wx, wy;
+  TURNTYPE a;
+
+  tankGetWorld(&MY_TANK(cs), &wx, &wy);
+  a = tankGetAngle(&MY_TANK(cs));
+
+  if (x != NULL) {
+    float fx = (float)wx + cs->errX;
+    if (fx < 0.0f) fx = 0.0f;
+    if (fx > (float)WORLD_MAX) fx = (float)WORLD_MAX;
+    *x = (WORLD)(fx + 0.5f);
+  }
+  if (y != NULL) {
+    float fy = (float)wy + cs->errY;
+    if (fy < 0.0f) fy = 0.0f;
+    if (fy > (float)WORLD_MAX) fy = (float)WORLD_MAX;
+    *y = (WORLD)(fy + 0.5f);
+  }
+  if (angle != NULL) {
+    float fa = a + cs->errAngle;
+    while (fa < 0.0f) fa += 256.0f;
+    while (fa >= 256.0f) fa -= 256.0f;
+    *angle = fa;
+  }
+}
+
 void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
   /* Master gate for the per-frame game-render pipeline.  Both
    * clientUiOnTick and basesTickMessageQueue assume the local tank
@@ -618,6 +684,11 @@ void clientSimDisplayTick(ClientSim *cs, bool isBrain) {
   if (cs == NULL || cs->sim.tanks[cs->myPlayerNum] == NULL) {
     return;
   }
+  /* Decay the render-only error offset one display-tick step. Display
+   * ticks run at 50/s whether or not input is held, so a held-still tank
+   * still heals; the fixed 20ms step keeps the decay deterministic and
+   * frame-rate independent. */
+  clientErrSmoothDecay(&cs->errX, &cs->errY, &cs->errAngle, 20.0f);
   clientUiOnTick(cs, isBrain);
   basesTickMessageQueue(&cs->sim, cs);
 }
@@ -1529,6 +1600,11 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->reconCountLastSec = 0;
   cs->reconErrAvgPxLast = 0.0f;
   cs->reconErrMaxPxLast = 0.0f;
+
+  /* Render-only error offset is predict-scoped too — start fresh. */
+  cs->errX = 0.0f;
+  cs->errY = 0.0f;
+  cs->errAngle = 0.0f;
 }
 
 bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name) {

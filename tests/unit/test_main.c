@@ -215,10 +215,12 @@ static const UnitTestEntry s_tests[] = {
     { "stall_fire_not_harvested",                run_stall_fire_not_harvested                },
     { "stall_never_fires",                       run_stall_never_fires                       },
     { "input_catchup",                           run_input_catchup                           },
+    { "error_smoothing",                         run_error_smoothing                         },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },
     { "netdebug_mine_once_under_loss",           run_netdebug_mine_once_under_loss           },
+    { "netdebug_error_offset_clamped",           run_netdebug_error_offset_clamped           },
 #endif
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))

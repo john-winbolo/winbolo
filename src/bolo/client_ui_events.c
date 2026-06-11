@@ -83,11 +83,22 @@ void clientUiOnTick(ClientSim *csPtr, bool isBrain) {
    * threat) and sub-tile slide keep progressing. Other scroll modes
    * (manual, no-auto) only need ticks when the tank is actually moving. */
   if (tankGetSpeed(&MY_TANK(csPtr)) > 0 || clientSimGetScroll(csPtr)->autoScroll) {
-    tankGetGunsight(&MY_TANK(csPtr), &tmx, &tmy, &pmx, &pmy);
+    /* Follow the rendered (smoothed) pose, not the raw sim pose, so the
+     * camera tracks the hull the player sees — otherwise the hull would
+     * shear against a camera centred on the un-smoothed position. With
+     * err == 0 the rendered pose equals the sim pose. */
+    WORLD rwx, rwy;
+    float rang;
+    BYTE rmx, rmy;
+    clientSimGetRenderedTankPos(csPtr, &rwx, &rwy, &rang);
+    tankGetGunsightAt(&MY_TANK(csPtr), rwx, rwy, rang, &tmx, &tmy, &pmx, &pmy);
+    /* Same shift math as tankGetScreenMX/MY. */
+    rmx = (BYTE)(((WORLD)(rwx - TANK_SUBTRACT)) >> TANK_SHIFT_MAPSIZE);
+    rmy = (BYTE)(((WORLD)(rwy - TANK_SUBTRACT)) >> TANK_SHIFT_MAPSIZE);
     if (clientSimIsInPillView(csPtr) == FALSE) {
       int oldXOffset = clientSimGetXOffset(csPtr);
       int oldYOffset = clientSimGetYOffset(csPtr);
-      if (scrollUpdate(clientSimGetScroll(csPtr), clientSimGetGameSim(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), tankGetScreenMX(&MY_TANK(csPtr)), tankGetScreenMY(&MY_TANK(csPtr)), TRUE, tmx, tmy, tankGetSpeed(&MY_TANK(csPtr)), tankGetArmour(&MY_TANK(csPtr)), (TURNTYPE)(tankGetTravelAngel(&MY_TANK(csPtr))), FALSE, clientSimTankIsDead(csPtr)) == TRUE) {
+      if (scrollUpdate(clientSimGetScroll(csPtr), clientSimGetGameSim(csPtr), clientSimGetXOffsetPtr(csPtr), clientSimGetYOffsetPtr(csPtr), rmx, rmy, TRUE, tmx, tmy, tankGetSpeed(&MY_TANK(csPtr)), tankGetArmour(&MY_TANK(csPtr)), (TURNTYPE)(tankGetTravelAngel(&MY_TANK(csPtr))), FALSE, clientSimTankIsDead(csPtr), rwx, rwy) == TRUE) {
         /* OS-cursor follow is handled centrally by the per-frame mouse
          * warp in frontEndDrawMainScreen, which tracks the full scroll
          * delta (whole-tile xOffset + sub-tile subPos) and warps in

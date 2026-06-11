@@ -245,8 +245,12 @@ void     clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,
                                  int *bpsRecv, int *bpsSent, int *numErrors,
                                  int *snapshotsRecv, int *snapshotsLost,
                                  int *snapshotsLostTotal);
+/* renderOffsetPx (out, may be NULL): current render-only error-offset
+ * magnitude in pixels — the live correction being smoothed out, distinct
+ * from the per-window reconcile error counts. */
 void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,
-                                float *avgErrPx, float *maxErrPx);
+                                float *avgErrPx, float *maxErrPx,
+                                float *renderOffsetPx);
 
 /* === Local-transport tuning === */
 void     clientSimNetSetLocalDelay(ClientSim *cs, uint16_t delay_ms);

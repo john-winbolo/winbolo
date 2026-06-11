@@ -22,6 +22,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <SDL3/SDL.h>
 
 #include "global.h"
@@ -30,6 +31,7 @@
 #include "game_sim.h"              /* GameSim.tanks[] — raise the mine stock */
 #include "tank.h"                  /* tankSetMines */
 #include "client_sim.h"
+#include "client_sim_internal.h"   /* errX/errY/errAngle — render-offset clamp read */
 #include "client_net.h"
 #include "input_packet.h"
 #include "bolo_rand.h"
@@ -287,6 +289,76 @@ int run_netdebug_mine_once_under_loss(void) {
     uint32_t mines = serverSimNetdebugGetMineLays(sim, NETDEBUG_PLAYER);
     fprintf(stderr, "  netdebug mine-once: lays=%u\n", mines);
     UT_ASSERT_MSG(mines == 1, "expected exactly one mine lay, got %u", mines);
+
+    clientSimDestroy(cs);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Assert the render-only error offset stays inside item 6's clamp after
+ * each reconciliation window and at the end. The offset accumulates
+ * reconciliation corrections (the rig never runs display ticks, so it
+ * never decays — the strictest case); the clamp guarantees that even
+ * clustered stalls degrade to one hard snap at worst, never unbounded
+ * drift. Read the fields via the rig's internal ClientSim access. */
+static int nd_assert_offset_clamped(ClientSim *cs, const char *where) {
+    UT_ASSERT_MSG(fabsf(cs->errX) <= CLIENT_ERR_POS_CLAMP,
+                  "%s: |errX| %f exceeds clamp %f", where, cs->errX,
+                  CLIENT_ERR_POS_CLAMP);
+    UT_ASSERT_MSG(fabsf(cs->errY) <= CLIENT_ERR_POS_CLAMP,
+                  "%s: |errY| %f exceeds clamp %f", where, cs->errY,
+                  CLIENT_ERR_POS_CLAMP);
+    UT_ASSERT_MSG(fabsf(cs->errAngle) <= CLIENT_ERR_ANGLE_CLAMP,
+                  "%s: |errAngle| %f exceeds clamp %f", where, cs->errAngle,
+                  CLIENT_ERR_ANGLE_CLAMP);
+    return 0;
+}
+
+int run_netdebug_error_offset_clamped(void) {
+    ServerSim *sim = ut_make_running_sim("Turner");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    ClientSim *cs = nd_connect(sim, "Turner");
+    UT_ASSERT(cs != NULL);
+
+    uint32_t startTick = nd_warmup(cs);
+    serverSimNetdebugResetCounters(sim);
+
+    /* Three consecutive withhold windows (clustered stalls). Each script
+     * holds the turn through a mid-hold stall window then releases; the
+     * windows land back-to-back so reconciliation offsets can compose
+     * faster than they would decay. After each window — and at the end —
+     * the accumulated offset must still be inside the clamp. */
+    {
+        int i;
+        for (i = 0; i < 3; i++) {
+            NdScript s;
+            char where[32];
+            memset(&s, 0, sizeof(s));
+            s.holdTicks     = NETDEBUG_HOLD_TICKS;
+            s.withholdLen   = NETDEBUG_WITHHOLD_LEN;
+            s.withholdStart = nd_pick_withhold_start(startTick);
+            (void)nd_run_script(cs, startTick, &s);
+
+            SDL_snprintf(where, sizeof(where), "after window %d", i);
+            if (nd_assert_offset_clamped(cs, where) != 0) {
+                clientSimDestroy(cs);
+                serverSimDestroy(sim);
+                return 1;
+            }
+            /* Next window starts immediately after this script's hold +
+             * release ticks (the trailing bare drains consume no new tick
+             * numbers), so the stalls cluster. */
+            startTick += s.holdTicks + 8;
+        }
+    }
+
+    if (nd_assert_offset_clamped(cs, "final") != 0) {
+        clientSimDestroy(cs);
+        serverSimDestroy(sim);
+        return 1;
+    }
+    fprintf(stderr, "  netdebug error-offset: final off=(%.2f,%.2f,%.2f)\n",
+            cs->errX, cs->errY, cs->errAngle);
 
     clientSimDestroy(cs);
     serverSimDestroy(sim);

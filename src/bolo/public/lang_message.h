@@ -17,7 +17,7 @@ typedef unsigned int langid;
  *   {player}                    -> playerName
  *   {other}                     -> otherName
  *   {number}/{number2..4}       -> rendered as %d
- *   {string1}/{string2}         -> arbitrary short strings (e.g. a
+ *   {string1}/{string2}/{string3} -> arbitrary short strings (e.g. a
  *                                  pre-formatted "%.1f", a duration
  *                                  label, etc.)
  * Substitution is non-recursive — braces inside a substituted value
@@ -37,6 +37,7 @@ typedef struct {
     int  number4;
     char string1[LANG_MSGARG_STRING_LEN];
     char string2[LANG_MSGARG_STRING_LEN];
+    char string3[LANG_MSGARG_STRING_LEN];
 } MessageArgs;
 
 #endif /* LANG_MESSAGE_H */

@@ -2476,6 +2476,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/common/prefs.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
+    tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
@@ -2758,6 +2759,7 @@ set(_unit_test_names
     stall_never_fires
     input_catchup
     edge_send_predicate
+    error_smoothing
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
@@ -2766,7 +2768,7 @@ foreach(_name IN LISTS _unit_test_names)
 endforeach()
 
 if(WB_NETDEBUG)
-    foreach(_name netdebug_commanded_vs_executed netdebug_overshoot_under_loss netdebug_mine_once_under_loss)
+    foreach(_name netdebug_commanded_vs_executed netdebug_overshoot_under_loss netdebug_mine_once_under_loss netdebug_error_offset_clamped)
         add_test(NAME netdebug.${_name}
                  COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
         set_tests_properties(netdebug.${_name} PROPERTIES TIMEOUT 60)

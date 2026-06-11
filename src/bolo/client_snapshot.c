@@ -344,6 +344,11 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
         csPtr->clientState.hasPredictedTank = TRUE;
+        /* The tank just teleported onto the map from the server's chosen
+         * start — a teleport snaps, so clear any stale render offset. */
+        csPtr->errX = 0.0f;
+        csPtr->errY = 0.0f;
+        csPtr->errAngle = 0.0f;
         if (isHuman) {
           /* The local tank just became live on the map: the server's chosen
            * start has been copied into MY_TANK above, and the transport has
@@ -480,6 +485,24 @@ void clientApplySnapshot(ClientSim *csPtr,
               tankSetFirstLeft(&MY_TANK(csPtr), savedFirstLeft);
               tankSetFirstRight(&MY_TANK(csPtr), savedFirstRight);
             }
+
+            /* Deposit the correction into the render-only error offset so
+             * it slides instead of snapping. Read the post-replay pose
+             * AFTER the angle-restore block above so the offset reflects
+             * what will actually be simulated next frame; accumulate (never
+             * overwrite) so back-to-back corrections compose. A correction
+             * past the clamp zeroes the offset — a genuine teleport snaps. */
+            {
+              WORLD postX, postY;
+              TURNTYPE postAngle;
+              tankGetWorld(&MY_TANK(csPtr), &postX, &postY);
+              postAngle = tankGetAngle(&MY_TANK(csPtr));
+              clientErrSmoothAccumulate(&csPtr->errX, &csPtr->errY,
+                                        &csPtr->errAngle,
+                                        (float)predX - (float)postX,
+                                        (float)predY - (float)postY,
+                                        predAngle - postAngle);
+            }
           }
         }
 
@@ -491,6 +514,10 @@ void clientApplySnapshot(ClientSim *csPtr,
             /* alive→dead: set death type for static screen rendering */
             tankSetLastTankDeath(&MY_TANK(csPtr), LAST_DEATH_BY_SHELL);
             tankAddDeath(&csPtr->sim, &MY_TANK(csPtr));
+            /* Death is a hard transition — drop any render offset. */
+            csPtr->errX = 0.0f;
+            csPtr->errY = 0.0f;
+            csPtr->errAngle = 0.0f;
           }
           if (csPtr->lastServerArmour > TANK_FULL_ARMOUR && tanks[i].armour <= TANK_FULL_ARMOUR) {
             /* dead→alive: recenter view on respawn */
@@ -499,6 +526,10 @@ void clientApplySnapshot(ClientSim *csPtr,
               csPtr->viewport.inPillView = FALSE;
               clientSimCenterTank(csPtr);
             }
+            /* Respawn teleports the tank — snap, don't slide. */
+            csPtr->errX = 0.0f;
+            csPtr->errY = 0.0f;
+            csPtr->errAngle = 0.0f;
           }
           csPtr->lastServerArmour = tanks[i].armour;
         }
