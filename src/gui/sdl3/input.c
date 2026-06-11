@@ -367,8 +367,11 @@ void inputActivate(void) {
 /* End build-cursor mode.  When `execute` and the "exit executes the build"
    option are both set, dispatch the build at the cursor tile first (keeping
    the current build selection); then exit.  Cancel passes execute=false. */
-static void buildCursorEnd(ClientSim *cs, bool execute) {
-  if (execute && g_buildExitExecutes && buildCursorIsActive()) {
+static void buildCursorEnd(ClientSim *cs, bool execute, bool momentary) {
+  /* "Only on momentary": when that sub-option is set, a normal tap-off exit
+     does NOT build — only leaving a press-and-hold (momentary) session does. */
+  if (execute && g_buildExitExecutes && buildCursorIsActive() &&
+      (!g_buildExitExecutesMomentaryOnly || momentary)) {
     BYTE bx = 0, by = 0;
     if (buildCursorGetTile(&bx, &by)) {
       clientMutexWaitFor();
@@ -510,7 +513,7 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
           s_bcModeBeforePress = buildCursorIsActive();
           s_bcWasOffAtPress   = !buildCursorIsActive();
           if (buildCursorIsActive()) {
-            buildCursorEnd(cs, /*execute=*/true);   /* tap-off: build-on-exit */
+            buildCursorEnd(cs, /*execute=*/true, /*momentary=*/false); /* tap-off: build-on-exit */
           } else {
             buildCursorToggle(cs);                  /* turn on */
           }
@@ -538,7 +541,7 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
           s_bcTapPending = false;
         } else if (s_bcHeldMode) {
           /* Momentary release: end build mode (build-on-exit if enabled). */
-          buildCursorEnd(cs, /*execute=*/true);
+          buildCursorEnd(cs, /*execute=*/true, /*momentary=*/true);
           s_bcTapPending = false;
         } else {
           /* Quick tap: keep it sticky; remember for a possible double-tap. */
@@ -574,6 +577,11 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
         clientMutexWaitFor();
         clientSimManMoveToMap(cs, gsX, gsY, clientSimGetCurrentBuildSelect(cs));
         clientMutexRelease();
+      }
+      /* Auto-close build cursor mode after the build, if the option is set.
+         Plain exit (the build already went out above — no build-on-exit). */
+      if (g_buildAutoCloseOnExecute && buildCursorIsActive()) {
+        buildCursorExit();
       }
     }
 

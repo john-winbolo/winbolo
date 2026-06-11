@@ -265,13 +265,16 @@ static void controllerRow(const char *label, GamepadAction act) {
    Primary column. Lower = finer control (slower movement per stick deflection).
    Binds the global live; the OK handler flushes it to prefs. */
 /* Checkbox row, indented under the related binding.  Optional hover tooltip. */
-static void checkboxRow(const char *label, bool *value, const char *tip) {
+static void checkboxRow(const char *label, bool *value, const char *tip,
+                        bool extraIndent = false) {
     ImGui::TableNextRow();
     ImGui::TableSetColumnIndex(0);
     ImGui::Indent();
+    if (extraIndent) ImGui::Indent();
     ImGui::Checkbox(label, value);
     if (tip && *tip && ImGui::IsItemHovered())
         ImGui::SetTooltip("%s", tip);
+    if (extraIndent) ImGui::Unindent();
     ImGui::Unindent();
 }
 
@@ -301,6 +304,10 @@ static void sensitivityRow(const char *label, float *value,
  * already-running ImGui context without the OK/Cancel footer.
  * Operates purely on the shared file-static form state.
  * ------------------------------------------------------- */
+/* Set when the dialog opens; the tab logic consumes it once to land on the
+   Controller tab when a pad is connected (so controller users start there). */
+static bool s_requestControllerTabDefault = false;
+
 static void renderKeyRows(float extraFooterReserve = 0.0f) {
     /* Scrollable region containing all binding rows. footerH reserves space
      * for the two checkboxes below the child; extraFooterReserve lets an
@@ -335,12 +342,22 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
     static int s_activeTab = 0;
     int s_forceTab = -1;
     int tabCount = inputGamepadIsConnected() ? 2 : 1;
+    /* On open, default to the Controller tab when a pad is connected. */
+    if (s_requestControllerTabDefault) {
+        s_requestControllerTabDefault = false;
+        if (tabCount > 1) { s_activeTab = 1; s_forceTab = 1; }
+    }
     /* Don't cycle tabs while a binding is being captured — a shoulder press
        then belongs to the binding, not to tab switching. */
     bool capturing = (s_waiting != ksNone) || (s_padWaitAction != -1);
     if (tabCount > 1 && !capturing) {
+        /* Native pad: L1/R1 (backend feeds ImGuiKey_Gamepad* even with nav off).
+           Steam Input: the pad is hidden from SDL, so L1/R1 never arrive — use
+           the menu_tab_left/right Steam actions (mapped to triggers) instead. */
         int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
                   - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
+        if (shift == 0)
+            shift = imguiSteamNavConsumeMenuTabShift();
         if (shift != 0)
             s_forceTab = (s_activeTab + shift + tabCount) % tabCount;
     }
@@ -394,6 +411,48 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
                                 s_forceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_activeTab = 1;
             ImGui::Spacing();
+          if (inputGamepadIsSteamInput()) {
+            /* Steam Input owns the button/stick mapping via its own
+               configurator (and the action manifest we ship), so the
+               per-button remaps below would do nothing -- hide them and
+               say why.  The build-on-exit option is a game rule (not a
+               remap), so it still applies and stays visible. */
+            ImGui::TextWrapped(
+                "This controller is running through Steam Input. Button, "
+                "stick and trigger mappings are configured in Steam "
+                "(Steam \xE2\x86\x92 Settings \xE2\x86\x92 Controller, or the in-game "
+                "Steam overlay), not here, so WinBolo's per-button remaps and "
+                "sensitivity sliders are hidden. To rebind, open the Steam "
+                "controller configurator for WinBolo.");
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextDisabled("Game options (still apply under Steam Input):");
+            ImGui::Spacing();
+            ImGui::Checkbox("Exiting build mode executes the build where the cursor is",
+                            &g_buildExitExecutes);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "When on, leaving build mode places the build at the "
+                    "cursor tile. When off, leaving build mode just exits.");
+            if (g_buildExitExecutes) {
+                ImGui::Indent();
+                ImGui::Checkbox("Only when exiting press-and-hold (momentary) build mode",
+                                &g_buildExitExecutesMomentaryOnly);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip(
+                        "When on, the build is placed only when you release a "
+                        "press-and-hold (momentary) build session; a normal "
+                        "tap-to-exit just leaves build mode without building.");
+                ImGui::Unindent();
+            }
+            ImGui::Checkbox("Auto-close build mode when a build is executed",
+                            &g_buildAutoCloseOnExecute);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(
+                    "When on, using Execute Build automatically exits build "
+                    "cursor mode afterwards, returning you to driving.");
+          } else {
             /* Action column gets at least ~33% of the table width. */
             ImGui::BeginTable("##padbindings", 5, tflags, ImVec2(0, 0));
             ImGui::TableSetupColumn(langGetText(STR_DLGKEYSETUP_COL_ACTION),
@@ -430,10 +489,23 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
                         "Double-tap the build-toggle button to instantly drop a road on "
                         "the tank's own tile -- without changing your selected build "
                         "type or moving the build cursor.");
-            checkboxRow("Exiting build mode executes the build",
+            checkboxRow("Exiting build mode executes the build where the cursor is",
                         &g_buildExitExecutes,
                         "When on, leaving build mode places the build at the cursor "
                         "tile. Use the Cancel binding below to exit without building.");
+            /* Sub-option, only relevant (and only shown) when the above is on. */
+            if (g_buildExitExecutes) {
+                checkboxRow("Only when exiting press-and-hold (momentary) build mode",
+                            &g_buildExitExecutesMomentaryOnly,
+                            "When on, the build is placed only when you release a "
+                            "press-and-hold (momentary) build session. A normal "
+                            "tap-to-exit just leaves build mode without building.",
+                            /*extraIndent=*/true);
+            }
+            checkboxRow("Auto-close build mode when a build is executed",
+                        &g_buildAutoCloseOnExecute,
+                        "When on, using Execute Build automatically exits build "
+                        "cursor mode afterwards, returning you to driving.");
             controllerRow("Exit build mode, no build (cancels momentary)",
                           GP_ACT_BUILD_CANCEL);
             controllerRow(langGetText(STR_GP_ACTION_VIEW_CYCLE),          GP_ACT_VIEW_CYCLE);
@@ -442,6 +514,7 @@ static void renderKeyRows(float extraFooterReserve = 0.0f) {
             controllerRow(langGetText(STR_GP_ACTION_QUICK_CHAT),          GP_ACT_QUICK_CHAT);
             controllerRow(langGetText(STR_GP_ACTION_PAUSE),               GP_ACT_PAUSE);
             ImGui::EndTable();
+          }
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -547,6 +620,7 @@ extern "C" int imguiKeySetupShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return 0;
+    s_requestControllerTabDefault = true;
 
     /* Save logical presentation */
     int savedLogW = 0, savedLogH = 0;
@@ -808,6 +882,7 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
     if (s_inGameShowRequested) {
         ImGui::OpenPopup(title);
         s_inGameShowRequested = false;
+        s_requestControllerTabDefault = true;
         windowGetKeys(&s_keys);
         inputGamepadBindingsGetAll(&s_pad);
         s_padWaitAction = -1;
@@ -888,6 +963,7 @@ extern "C" void imguiKeySetupCancelInGamePad(void) {
  * popup. Pre-game only — no live ClientSim to push onto.
  * ------------------------------------------------------- */
 extern "C" void imguiKeySetupBeginEmbedded(void) {
+    s_requestControllerTabDefault = true;
     windowGetKeys(&s_keys);
     s_autoSlowdown = useAutoslow;
     s_autoGunsight = useAutohide;

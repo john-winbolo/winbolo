@@ -75,6 +75,22 @@ static bool latchedPress(bool pressed, bool *armed) {
     return emit;
 }
 
+/* Tab cycle (LT/RT under Steam Input).  Edge-latched like Accept/Cancel so a
+   held trigger steps one tab, not every frame. */
+static bool s_tabLeftArmed  = false;
+static bool s_tabRightArmed = false;
+
+extern "C" int imguiSteamNavConsumeMenuTabShift(void) {
+    if (!steam_input_has_active_controller()) return 0;
+    if (imguiKeySetupIsCapturingInGamePad()) return 0;
+    int shift = 0;
+    if (latchedPress(steam_input_is_action_pressed(SI_ACTION_MENU_TAB_RIGHT),
+                     &s_tabRightArmed)) shift += 1;
+    if (latchedPress(steam_input_is_action_pressed(SI_ACTION_MENU_TAB_LEFT),
+                     &s_tabLeftArmed))  shift -= 1;
+    return shift;
+}
+
 extern "C" void imguiSteamNavFeedCurrentContext(void) {
     /* Advance Steam Input before reading actions.  The main game loop
        pumps steam_input_run_frame() itself, but standalone dialogs

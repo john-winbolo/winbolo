@@ -2399,10 +2399,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   /* Gamepad — build-cursor behaviour options. */
   prefsGetString("SETTINGS", "Build Exit Executes", "No", buff, FILENAME_MAX);
   g_buildExitExecutes = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("SETTINGS", "Build Exit Executes Momentary Only", "No", buff, FILENAME_MAX);
+  g_buildExitExecutesMomentaryOnly = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("SETTINGS", "Build Double Tap Road", "Yes", buff, FILENAME_MAX);
   g_buildDoubleTapRoad = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("SETTINGS", "Build Hold Momentary", "Yes", buff, FILENAME_MAX);
   g_buildHoldMomentary = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("SETTINGS", "Build Auto Close On Execute", "No", buff, FILENAME_MAX);
+  g_buildAutoCloseOnExecute = YESNO_TO_TRUEFALSE(buff[0]);
 
   /* Phase 8.1 — Controller Mode pref (Off / On / Auto).  Default Auto on
      desktop so a player who plugs in a pad is offered the prompt; the
@@ -2735,8 +2739,10 @@ void gameFrontPutPrefs(keyItems *keys) {
 
   /* Gamepad — build-cursor behaviour options. */
   prefsSetString("SETTINGS", "Build Exit Executes",   TRUEFALSE_TO_STR(g_buildExitExecutes));
+  prefsSetString("SETTINGS", "Build Exit Executes Momentary Only", TRUEFALSE_TO_STR(g_buildExitExecutesMomentaryOnly));
   prefsSetString("SETTINGS", "Build Double Tap Road", TRUEFALSE_TO_STR(g_buildDoubleTapRoad));
   prefsSetString("SETTINGS", "Build Hold Momentary",  TRUEFALSE_TO_STR(g_buildHoldMomentary));
+  prefsSetString("SETTINGS", "Build Auto Close On Execute", TRUEFALSE_TO_STR(g_buildAutoCloseOnExecute));
 
   /* Phase 8.1 — Controller Mode pref + prompt-on-connect flag. */
   intToStr((int)uiControllerModeGet(), buff, sizeof(buff));

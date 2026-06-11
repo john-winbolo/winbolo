@@ -41,8 +41,13 @@ struct ClientSim;
 /* Controller build-behaviour options (persisted in prefs, set from the
    Controller tab of Set Keys). */
 extern bool g_buildExitExecutes;   /* exiting build mode dispatches the build */
+extern bool g_buildExitExecutesMomentaryOnly; /* sub-option: only execute-on-exit
+                                                  when leaving press-and-hold
+                                                  (momentary) mode, not a tap-off */
 extern bool g_buildDoubleTapRoad;  /* double-tap the toggle builds a road under the tank */
 extern bool g_buildHoldMomentary;  /* hold the toggle = momentary mode (off on release) */
+extern bool g_buildAutoCloseOnExecute; /* executing a build (Execute Build action)
+                                          auto-exits build cursor mode */
 
 /* Hard reset — turns off and clears accumulators.  Call at game
    teardown / new-game so leftover state can't survive into the next

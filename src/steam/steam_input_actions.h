@@ -40,5 +40,7 @@
 #define SI_ACTION_MENU_NAV_DOWN "menu_nav_down"
 #define SI_ACTION_MENU_NAV_LEFT "menu_nav_left"
 #define SI_ACTION_MENU_NAV_RIGHT "menu_nav_right"
+#define SI_ACTION_MENU_TAB_LEFT  "menu_tab_left"   /* LT — previous tab */
+#define SI_ACTION_MENU_TAB_RIGHT "menu_tab_right"  /* RT — next tab */
 
 #endif /* STEAM_INPUT_ACTIONS_H */

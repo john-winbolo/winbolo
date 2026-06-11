@@ -56,6 +56,8 @@
                 "menu_nav_down"   "#act_menu_nav_down"
                 "menu_nav_left"   "#act_menu_nav_left"
                 "menu_nav_right"  "#act_menu_nav_right"
+                "menu_tab_left"   "#act_menu_tab_left"
+                "menu_tab_right"  "#act_menu_tab_right"
             }
         }
     }
@@ -91,6 +93,8 @@
             "act_menu_nav_down" "Navigate Down"
             "act_menu_nav_left" "Navigate Left"
             "act_menu_nav_right" "Navigate Right"
+            "act_menu_tab_left" "Previous Tab"
+            "act_menu_tab_right" "Next Tab"
         }
     }
 }

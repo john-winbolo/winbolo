@@ -35,8 +35,10 @@ static void bcLog(const char *fmt, ...) {
 
 /* Behaviour options (see header) — defaults match the gestures we shipped. */
 bool g_buildExitExecutes  = false;
+bool g_buildExitExecutesMomentaryOnly = false;
 bool g_buildDoubleTapRoad = true;
 bool g_buildHoldMomentary = true;
+bool g_buildAutoCloseOnExecute = false;
 
 static bool s_active     = false;
 static bool s_positioned = false;  /* has the cursor been placed at least once? */
