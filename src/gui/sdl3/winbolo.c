@@ -137,6 +137,10 @@ bool smoothScrollingEnabled = TRUE;
 /* The Window scaling */
 BYTE zoomFactor = ZOOM_FACTOR_NORMAL;
 
+/* When TRUE, the letterbox/pillarbox bars shown in fullscreen (when the
+   monitor aspect differs from the game) are filled gray instead of black. */
+bool letterboxBarsGray = FALSE;
+
 /* Whether Pillbox & base labels should be shown */
 bool showPillLabels = FALSE;
 bool showBaseLabels = FALSE;

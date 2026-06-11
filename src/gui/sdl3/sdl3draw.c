@@ -91,6 +91,21 @@ static SDL_Window   *gWindow        = NULL;
 static SDL_Renderer *gRenderer      = NULL;
 static SDL_Texture  *gBackgroundTex = NULL;
 static SDL_Texture  *gTilesTex      = NULL;
+
+/* User option (winbolo.c): gray letterbox/pillarbox bars instead of black. */
+extern bool letterboxBarsGray;
+
+/* Fill the whole window before the game render target is composited into
+   gGameDestRect.  The exposed border is the letterbox/pillarbox area; make
+   it gray instead of black when the option is on.  The fill only shows where
+   bars actually exist (the game RT overdraws the rest), so this applies to
+   the bars whenever the window aspect differs from the game -- fullscreen or
+   a resized/maximised window alike. */
+static void sdl3LetterboxFill(void) {
+  Uint8 v = letterboxBarsGray ? 64 : 0;
+  SDL_SetRenderDrawColor(gRenderer, v, v, v, 255);
+  SDL_RenderFillRect(gRenderer, NULL);
+}
 static SDL_Texture  *gCrosshairTex  = NULL;  /* crosshairs_17x17.png — center pixel (8,8) is aim point */
 static bool          gCursorFaint   = false; /* draw the build-mode cursor at 25% alpha (locked target, build mode off) */
 static int           gZoomFactor    = 1;
@@ -1824,10 +1839,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
        Use BLENDMODE_NONE so that any alpha < 255 stored in the render target
        (e.g. from anti-aliased tile sprites drawn with BLENDMODE_NONE) doesn't
        cause semi-transparency when composited onto the window.
-       Black letterbox/pillarbox fill — visible when the window aspect ratio
+       Letterbox/pillarbox fill — visible when the window aspect ratio
        differs from the game (e.g. fullscreen on a widescreen monitor). */
-    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-    SDL_RenderFillRect(gRenderer, NULL);
+    sdl3LetterboxFill();
     SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
   }
@@ -1947,10 +1961,9 @@ void sdl3DrawRedrawAll(ClientSim *cs, buildSelect value, RECT *rcWindow,
     gGameDestRect.h = destH;
     gGameScale = destW / (float)gGameRTWidth;
 
-    /* Black letterbox/pillarbox fill — visible when window aspect differs
+    /* Letterbox/pillarbox fill — visible when window aspect differs
        from the game (e.g. fullscreen on a widescreen monitor). */
-    SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-    SDL_RenderFillRect(gRenderer, NULL);
+    sdl3LetterboxFill();
     SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
     SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
   }
@@ -1999,8 +2012,7 @@ static void sdl3BlitGameRTToWindow(void) {
   gGameDestRect.h = destH;
   gGameScale = destW / (float)gGameRTWidth;
 
-  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderFillRect(gRenderer, NULL);
+  sdl3LetterboxFill();
   SDL_SetTextureBlendMode(gGameRenderTarget, SDL_BLENDMODE_NONE);
   SDL_RenderTexture(gRenderer, gGameRenderTarget, NULL, &gGameDestRect);
 }

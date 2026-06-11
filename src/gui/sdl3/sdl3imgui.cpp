@@ -191,6 +191,7 @@ extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
 extern "C" bool smoothScrollingEnabled;
+extern "C" bool letterboxBarsGray;
 extern "C" bool showPillLabels;
 extern "C" bool showBaseLabels;
 extern "C" bool hideMainView;
@@ -2349,6 +2350,12 @@ static void renderSettingsPanel(ClientSim *cs) {
             bool gs = (bool)showGunsight;
             if (ImGui::Checkbox(langGetText(STR_MENU_SHOW_GUNSIGHT), &gs)) {
                 windowShowGunsight_toggle(cs);
+            }
+        }
+        {
+            bool lb = (bool)letterboxBarsGray;
+            if (ImGui::Checkbox(langGetText(STR_MENU_LETTERBOX_GRAY), &lb)) {
+                letterboxBarsGray = !letterboxBarsGray;
             }
         }
 

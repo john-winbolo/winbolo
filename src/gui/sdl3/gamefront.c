@@ -462,6 +462,7 @@ extern bool showNetworkStatusMessages;
 extern bool showNetworkDebugMessages;
 extern bool autoScrollingEnabled;
 extern bool smoothScrollingEnabled;
+extern bool letterboxBarsGray;
 extern BYTE zoomFactor;
 extern bool showPillLabels;
 extern bool showBaseLabels;
@@ -2587,6 +2588,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   autoScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Smooth Scrolling", "Yes", buff, FILENAME_MAX);
   smoothScrollingEnabled = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("MENU", "Letterbox Bars Gray", "No", buff, FILENAME_MAX);
+  letterboxBarsGray = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Show Pill Labels", "No", buff, FILENAME_MAX);
   showPillLabels = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("MENU", "Show Base Labels", "No", buff, FILENAME_MAX);
@@ -2821,6 +2824,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("MENU", "Show Network Debug Messages", TRUEFALSE_TO_STR(showNetworkDebugMessages));
   prefsSetString("MENU", "Autoscroll Enabled", TRUEFALSE_TO_STR(autoScrollingEnabled));
   prefsSetString("MENU", "Smooth Scrolling", TRUEFALSE_TO_STR(smoothScrollingEnabled));
+  prefsSetString("MENU", "Letterbox Bars Gray", TRUEFALSE_TO_STR(letterboxBarsGray));
   prefsSetString("MENU", "Show Pill Labels", TRUEFALSE_TO_STR(showPillLabels));
   prefsSetString("MENU", "Show Base Labels", TRUEFALSE_TO_STR(showBaseLabels));
   prefsSetString("MENU", "Label Own Tank", TRUEFALSE_TO_STR(labelSelf));

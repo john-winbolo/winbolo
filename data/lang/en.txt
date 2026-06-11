@@ -336,6 +336,7 @@ STR_MENU_REQUIRES=Requires {number}x{number2} - exceeds display
 STR_MENU_SMOOTH_SCROLLING=Smooth Scrolling
 STR_MENU_AUTO_SCROLLING=Automatic Scrolling
 STR_MENU_SHOW_GUNSIGHT=Show Gunsight
+STR_MENU_LETTERBOX_GRAY=Gray letterbox bars
 STR_MENU_MSG_NAMES_SUB=Message Sender Names
 STR_MENU_TANK_LABELS_SUB=Tank Labels
 STR_NONE=None
@@ -1288,7 +1289,7 @@ STR_GP_ACTION_BUILD_PREV=Previous Build Type
 STR_GP_ACTION_BUILD_NEXT=Next Build Type
 STR_GP_ACTION_BUILD_CURSOR_TOGGLE=Toggle Build Cursor
 STR_GP_ACTION_QUICK_CHAT=Quick Chat
-STR_GP_ACTION_PAUSE=Pause
+STR_GP_ACTION_PAUSE=Quick menu
 STR_GP_ACTION_VIEW_PLAYERS=Status Overlay
 
 # Controller Mode pref + connect prompt

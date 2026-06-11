@@ -69,6 +69,11 @@ static BYTE scrollKeyCount = 0;
 static Uint32 pillViewCycleMs = 0;
 static Uint32 pillViewStepMs  = 0;
 
+/* TRUE when pill view was entered via the controller view button: that mode
+ * cycles pills on each press and snaps back to tank view on the first driving
+ * input (forward or turn).  Not set for keyboard-entered pill view. */
+static bool s_controllerPillView = false;
+
 /* Gunsight adjustment state — set by inputGetKeys, consumed by
  * screenBuildInputPacket via inputConsumeGunsightAdj().
  * 0 = no change, 1 = increase, 2 = decrease. */
@@ -152,10 +157,16 @@ static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
     inPill = clientSimIsInPillView(cs);
   }
 
+  /* Scroll-based pill stepping is disabled in build mode: the stick / scroll
+   * then drives the build cursor instead, and shouldn't also jump pills.
+   * (Building is a tank-view activity; this only matters in the edge case of
+   * being in pill view with build mode on.) */
+  bool buildActive = buildCursorIsActive();
+
   /* Gamepad right stick steps pills too while in pill view (its normal map
      scroll is suppressed here). */
   bool padUp = false, padDown = false, padLeft = false, padRight = false;
-  if (inPill && inputGamepadIsConnected()) {
+  if (inPill && !buildActive && inputGamepadIsConnected()) {
     float gdx = 0.0f, gdy = 0.0f;
     if (inputGamepadGetScrollDirection(&gdx, &gdy)) {
       const float th = 0.5f;
@@ -164,12 +175,13 @@ static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
     }
   }
 
-  /* Directional pill stepping — only in pill view, on the slower step
-   * cadence (computed from inPill so it can't fire on the entering press). */
-  bool stepUp    = inPill && (KEY_DOWN(setKeys->kiScrollUp)    || padUp);
-  bool stepDown  = inPill && (KEY_DOWN(setKeys->kiScrollDown)  || padDown);
-  bool stepLeft  = inPill && (KEY_DOWN(setKeys->kiScrollLeft)  || padLeft);
-  bool stepRight = inPill && (KEY_DOWN(setKeys->kiScrollRight) || padRight);
+  /* Directional pill stepping — only in pill view (and not while building),
+   * on the slower step cadence (computed from inPill so it can't fire on the
+   * entering press). */
+  bool stepUp    = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollUp)    || padUp);
+  bool stepDown  = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollDown)  || padDown);
+  bool stepLeft  = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollLeft)  || padLeft);
+  bool stepRight = inPill && !buildActive && (KEY_DOWN(setKeys->kiScrollRight) || padRight);
   if (!stepUp && !stepDown && !stepLeft && !stepRight) {
     pillViewStepMs = 0;
   } else if (pillViewStepMs == 0 ||
@@ -443,6 +455,19 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     }
   }
 
+  /* Controller pill-view peek: the first forward/turn driving input snaps
+   * back to tank view. Cleared if pill view was left by any other means. */
+  if (s_controllerPillView) {
+    if (!clientSimIsInPillView(cs)) {
+      s_controllerPillView = false;
+    } else if (tb == TACCEL || tb == TLEFT || tb == TRIGHT ||
+               tb == TLEFTACCEL || tb == TRIGHTACCEL ||
+               tb == TLEFTDECEL || tb == TRIGHTDECEL) {
+      clientSimTankView(cs);
+      s_controllerPillView = false;
+    }
+  }
+
   /* Gamepad-only actions: build-type cycle, builder confirm, view toggle. */
   if (inputGamepadIsConnected()) {
     int delta = inputGamepadGetBuildSelectChange();
@@ -586,9 +611,11 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
     }
 
     if (inputGamepadIsViewToggleEdge()) {
-      static bool inPillView = false;
-      if (inPillView) { clientSimTankView(cs); inPillView = false; }
-      else            { clientSimPillView(cs, 0, 0); inPillView = true; }
+      /* Enter pill view, or advance to the next pill if already in it. Unlike
+       * the old toggle, repeated presses cycle pills rather than returning to
+       * tank view — driving (forward/turn) does that, handled above. */
+      clientSimPillView(cs, 0, 0);
+      s_controllerPillView = true;
     }
   }
 
