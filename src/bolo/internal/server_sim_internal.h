@@ -176,6 +176,14 @@ struct ServerSim {
     bool         playerConnected[MAX_TANKS];
     uint32_t     lastProcessedInput[MAX_TANKS];  /* Tick of last processed input per player */
     uint8_t      lastInputButtons[MAX_TANKS];    /* Last button bitmask for stall continuity */
+    uint32_t     lastActionAppliedTick[MAX_TANKS]; /* newest input tick whose one-shot
+                                                    * action (fire/mine/build) was
+                                                    * executed or harvested */
+    uint8_t      pendingHarvestActions[MAX_TANKS]; /* harvested LAY_MINE bit awaiting
+                                                    * the next applied input */
+    BYTE         pendingHarvestBuildAction[MAX_TANKS]; /* harvested build (0 = none) */
+    BYTE         pendingHarvestBuildX[MAX_TANKS];
+    BYTE         pendingHarvestBuildY[MAX_TANKS];
     uint16_t     playerPing[MAX_TANKS];           /* Per-player ping in ms (server-measured RTT) */
 
     /* Input jitter buffer — delay processing until buffer reaches target depth */

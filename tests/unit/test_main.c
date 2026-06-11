@@ -208,6 +208,11 @@ static const UnitTestEntry s_tests[] = {
     { "treegrow_never_plants_on_deep_sea",       run_treegrow_never_plants_on_deep_sea       },
     { "treegrow_reset_clears_stale_target",      run_treegrow_reset_clears_stale_target      },
     { "input_redundancy",                        run_input_redundancy                        },
+    { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
+    { "stall_mine_late_lays_once",               run_stall_mine_late_lays_once               },
+    { "stall_mine_duplicate_not_relaid",         run_stall_mine_duplicate_not_relaid         },
+    { "stall_fire_not_harvested",                run_stall_fire_not_harvested                },
+    { "stall_never_fires",                       run_stall_never_fires                       },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

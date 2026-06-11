@@ -892,6 +892,171 @@ static void serverSimLogTick(ServerSim *sim) {
     logWriteTick();
 }
 
+/* Apply a single input to player `count`'s tank: gap-fill for any ticks
+ * lost to packet loss, per-input parity selection (keys vs game arm),
+ * lag compensation, fire/mine/build, and the lastProcessedInput advance.
+ *
+ * Called from two sites: the normal dequeue (a real input,
+ * isSubstitute == FALSE) and the stall branch (a substitute synthesised
+ * from the last held buttons, isSubstitute == TRUE). A substitute carries
+ * no actions and must never invent a one-shot, so for it the pending-
+ * harvest merge, the action marker, the fire path, the input-flag handling
+ * (autoslow / gunsight) and the lag-comp computation are all skipped — it
+ * leaves the last real input's flag state in place and a substituted game
+ * tick ends with lagCompTicks == 0 because it cannot shoot. */
+static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
+                                   const InputPacket *in, bool isSubstitute) {
+    /* `local` is a macro (#define local static, brain.h), so name the
+     * working copy `applied`. */
+    InputPacket applied = *in;
+    bool inputIsKeys = (applied.tick % 2) == 1;
+    tankButton tb = translateInputToTankButton(applied.buttons);
+
+    /* Fill in gap ticks lost to packet loss.  When a UDP packet
+     * is dropped, the dequeued tick jumps ahead (e.g. 98 → 101).
+     * The missing ticks must still run so the turn ramp (firstLeft/
+     * firstRight) stays in sync with the client's prediction. */
+    {
+        uint32_t expected = sim->lastProcessedInput[count] + 1;
+        uint32_t gap = applied.tick - expected;
+        if (gap > 0 && gap < 8) {
+            tankButton gapTb = translateInputToTankButton(sim->lastInputButtons[count]);
+            uint32_t gt;
+            for (gt = expected; gt < applied.tick; gt++) {
+                bool gapIsKeys = (gt % 2) == 1;
+                sim->statGapFillTicks[count]++;
+#ifdef WB_NETDEBUG
+                if (netdebugButtonTurns(gapTb)) {
+                    sim->dbgExecTurnTicks[count]++;
+                }
+#endif
+                if (gapIsKeys) {
+                    BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
+                    BYTE bmy = tankGetMY(&sim->sim.tanks[count]);
+                    tankTurn(&sim->sim, &sim->sim.tanks[count], bmx, bmy, gapTb);
+                } else {
+                    sim->sim.lagCompTicks = 0;
+                    tankUpdate(&sim->sim, &sim->sim.tanks[count], gapTb, FALSE, FALSE);
+                }
+            }
+        }
+    }
+
+    /* Save buttons for stall continuity */
+    sim->lastInputButtons[count] = applied.buttons;
+
+    /* Flag handling is real-input only. A substitute carries flags = 0; the
+     * old stall branch never ran these calls, so applying flags=0 would
+     * force-disable autoslow each substituted tick and diverge from the
+     * client's prediction. Skipping the block leaves the tank-side flag
+     * state from the last real input in place — the old behavior. */
+    if (!isSubstitute) {
+        /* Apply autoslowdown state from client flags */
+        tankSetAutoSlowdown(&sim->sim.tanks[count],
+                            (applied.flags & INPUT_FLAG_AUTOSLOW) != 0);
+
+        /* Apply gunsight adjustment (bits 2-3 of flags) */
+        uint8_t gsAdj = (applied.flags & INPUT_FLAG_GUNSIGHT_MASK) >> INPUT_FLAG_GUNSIGHT_SHIFT;
+        if (gsAdj == 1) {
+            tankGunsightIncrease(NULL, &sim->sim, &sim->sim.tanks[count]);
+        } else if (gsAdj == 2) {
+            tankGunsightDecrease(NULL, &sim->sim, &sim->sim.tanks[count]);
+        }
+    }
+
+    sim->lastProcessedInput[count] = applied.tick;
+
+#ifdef WB_NETDEBUG
+    /* One increment per executed half-step whose button turns,
+     * covering both the keys arm and the game arm below. */
+    if (netdebugButtonTurns(tb)) {
+        sim->dbgExecTurnTicks[count]++;
+    }
+#endif
+
+    if (inputIsKeys) {
+        /* Keys tick: turning only */
+        BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
+        BYTE bmy = tankGetMY(&sim->sim.tanks[count]);
+        tankTurn(&sim->sim, &sim->sim.tanks[count], bmx, bmy, tb);
+    } else {
+        /* Game tick: full update (turning + accel + movement) */
+
+        /* Fold in one-shot actions harvested off stall-dropped stale
+         * entries (see the dequeue skip loop). Done here, in the game arm,
+         * because mine/build are only acted on for game ticks — folding on
+         * a keys tick would consume and silently drop a harvested mine.
+         * Per-field with collision deferral so two separately commanded
+         * one-shots never merge into one: if this input already carries the
+         * same one-shot, leave the pending copy for a later game tick. A
+         * substitute carries no actions and never receives pending state. */
+        if (!isSubstitute) {
+            if ((sim->pendingHarvestActions[count] & INPUT_ACTION_LAY_MINE) &&
+                !(applied.actions & INPUT_ACTION_LAY_MINE)) {
+                applied.actions |= INPUT_ACTION_LAY_MINE;
+                sim->pendingHarvestActions[count] &= ~INPUT_ACTION_LAY_MINE;
+            }
+            if (sim->pendingHarvestBuildAction[count] != 0 &&
+                applied.buildAction == 0) {
+                applied.buildAction = sim->pendingHarvestBuildAction[count];
+                applied.buildX      = sim->pendingHarvestBuildX[count];
+                applied.buildY      = sim->pendingHarvestBuildY[count];
+                sim->pendingHarvestBuildAction[count] = 0;
+                sim->pendingHarvestBuildX[count] = 0;
+                sim->pendingHarvestBuildY[count] = 0;
+            }
+        }
+
+        bool shoot = (applied.actions & INPUT_ACTION_FIRE) != 0;
+        if (isSubstitute) {
+            /* A substitute cannot shoot, so it must leave 0 comp behind
+             * (matching the old stall branch) rather than rewinding. */
+            sim->sim.lagCompTicks = 0;
+        } else {
+            uint16_t pingMs = sim->playerPing[count];
+            uint16_t delayMs = (pingMs / 2) + INTERP_BUFFER_MS;
+            uint8_t compTicks = (uint8_t)(delayMs / 20);
+            if (compTicks > LAG_COMP_MAX_TICKS) compTicks = LAG_COMP_MAX_TICKS;
+            sim->sim.lagCompTicks = compTicks;
+            sim->statLastRewindTicks[count] = compTicks;
+        }
+        tankUpdate(&sim->sim, &sim->sim.tanks[count], tb, shoot, FALSE);
+
+        /* Handle mine laying */
+        if (applied.actions & INPUT_ACTION_LAY_MINE) {
+            tankLayMine(&sim->sim, &sim->sim.tanks[count]);
+#ifdef WB_NETDEBUG
+            sim->dbgMineLays[count]++;
+#endif
+        }
+
+        /* Handle LGM build requests.  buildAction is 1-based in
+         * InputPacket (0=none, 1=BsTrees, 2=BsRoad, ...) but
+         * lgmAddRequest expects 0-based enum values. */
+        if (applied.buildAction != 0) {
+            lgmAddRequest(&sim->sim, &sim->sim.lgmen[count],
+                          &sim->sim.tanks[count],
+                          applied.buildX,
+                          applied.buildY,
+                          applied.buildAction - 1);
+        }
+    }
+
+    /* Action marker: a real apply that executed a one-shot (fire, mine,
+     * or build, all game-arm only) advances lastActionAppliedTick so a
+     * redundant duplicate of this same tick is later recognised as
+     * already-executed and not harvested. Substitutes never execute a
+     * one-shot, so they never touch the marker. */
+    if (!isSubstitute && !inputIsKeys) {
+        bool executedAction = (applied.actions & INPUT_ACTION_FIRE) ||
+                              (applied.actions & INPUT_ACTION_LAY_MINE) ||
+                              (applied.buildAction != 0);
+        if (executedAction) {
+            sim->lastActionAppliedTick[count] = applied.tick;
+        }
+    }
+}
+
 /* One half-step of the sim: dequeues one input per player and runs
  * world systems on game ticks (sim->tick % 2 == 0).  Two consecutive
  * half-steps form one 20ms frame and match the client's 100Hz keys/
@@ -1060,6 +1225,32 @@ static void simRunHalfStep(ServerSim *sim) {
                 hasInput[count] = TRUE;
                 break;
             }
+            /* Stale entry (tick <= lastProcessedInput): its movement was
+             * already covered, either by a real apply or by a stall
+             * substitute, so dropping it here is correct. But a one-shot
+             * action commanded on a stall-substituted tick was NEVER
+             * executed (the substitute carries no actions), so it must be
+             * harvested and carried onto the next real input — exactly
+             * once. The discriminator is lastActionAppliedTick: an entry
+             * with tick > lastActionAppliedTick was never executed
+             * (harvest it); an entry with tick <= lastActionAppliedTick is
+             * an ordinary redundant duplicate of an already-applied action
+             * (ignore it). Fire is deliberately excluded — it is
+             * level-triggered and reload-gated, so re-issuing it carries no
+             * benefit and only adds state. Mine + build only. */
+            if (currentInputs[count].tick > sim->lastActionAppliedTick[count]) {
+                if (currentInputs[count].actions & INPUT_ACTION_LAY_MINE) {
+                    sim->pendingHarvestActions[count] |= INPUT_ACTION_LAY_MINE;
+                }
+                if (currentInputs[count].buildAction != 0) {
+                    /* A later harvested build overwrites an earlier pending
+                     * one — newest commanded build intent wins. */
+                    sim->pendingHarvestBuildAction[count] = currentInputs[count].buildAction;
+                    sim->pendingHarvestBuildX[count] = currentInputs[count].buildX;
+                    sim->pendingHarvestBuildY[count] = currentInputs[count].buildY;
+                }
+                sim->lastActionAppliedTick[count] = currentInputs[count].tick;
+            }
             sim->statDroppedStaleInputs[count]++;  /* stale/duplicate entry discarded */
         }
 
@@ -1098,127 +1289,62 @@ static void simRunHalfStep(ServerSim *sim) {
         }
         sim->currentTickPlayer = count;
         if (hasInput[count]) {
-            bool inputIsKeys = (currentInputs[count].tick % 2) == 1;
-            tankButton tb = translateInputToTankButton(currentInputs[count].buttons);
-
-            /* Fill in gap ticks lost to packet loss.  When a UDP packet
-             * is dropped, the dequeued tick jumps ahead (e.g. 98 → 101).
-             * The missing ticks must still run so the turn ramp (firstLeft/
-             * firstRight) stays in sync with the client's prediction. */
-            {
-                uint32_t expected = sim->lastProcessedInput[count] + 1;
-                uint32_t gap = currentInputs[count].tick - expected;
-                if (gap > 0 && gap < 8) {
-                    tankButton gapTb = translateInputToTankButton(sim->lastInputButtons[count]);
-                    uint32_t gt;
-                    for (gt = expected; gt < currentInputs[count].tick; gt++) {
-                        bool gapIsKeys = (gt % 2) == 1;
-                        sim->statGapFillTicks[count]++;
-#ifdef WB_NETDEBUG
-                        if (netdebugButtonTurns(gapTb)) {
-                            sim->dbgExecTurnTicks[count]++;
-                        }
-#endif
-                        if (gapIsKeys) {
-                            BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
-                            BYTE bmy = tankGetMY(&sim->sim.tanks[count]);
-                            tankTurn(&sim->sim, &sim->sim.tanks[count], bmx, bmy, gapTb);
-                        } else {
-                            sim->sim.lagCompTicks = 0;
-                            tankUpdate(&sim->sim, &sim->sim.tanks[count], gapTb, FALSE, FALSE);
-                        }
-                    }
-                }
-            }
-
-            /* Save buttons for stall continuity */
-            sim->lastInputButtons[count] = currentInputs[count].buttons;
-
-            /* Apply autoslowdown state from client flags */
-            tankSetAutoSlowdown(&sim->sim.tanks[count],
-                                (currentInputs[count].flags & INPUT_FLAG_AUTOSLOW) != 0);
-
-            /* Apply gunsight adjustment (bits 2-3 of flags) */
-            {
-                uint8_t gsAdj = (currentInputs[count].flags & INPUT_FLAG_GUNSIGHT_MASK) >> INPUT_FLAG_GUNSIGHT_SHIFT;
-                if (gsAdj == 1) {
-                    tankGunsightIncrease(NULL, &sim->sim, &sim->sim.tanks[count]);
-                } else if (gsAdj == 2) {
-                    tankGunsightDecrease(NULL, &sim->sim, &sim->sim.tanks[count]);
-                }
-            }
-
-            sim->lastProcessedInput[count] = currentInputs[count].tick;
-
-#ifdef WB_NETDEBUG
-            /* One increment per executed half-step whose button turns,
-             * covering both the keys arm and the game arm below. */
-            if (netdebugButtonTurns(tb)) {
-                sim->dbgExecTurnTicks[count]++;
-            }
-#endif
-
-            if (inputIsKeys) {
-                /* Keys tick: turning only */
-                BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
-                BYTE bmy = tankGetMY(&sim->sim.tanks[count]);
-                tankTurn(&sim->sim, &sim->sim.tanks[count], bmx, bmy, tb);
-            } else {
-                /* Game tick: full update (turning + accel + movement) */
-                bool shoot = (currentInputs[count].actions & INPUT_ACTION_FIRE) != 0;
-                {
-                    uint16_t pingMs = sim->playerPing[count];
-                    uint16_t delayMs = (pingMs / 2) + INTERP_BUFFER_MS;
-                    uint8_t compTicks = (uint8_t)(delayMs / 20);
-                    if (compTicks > LAG_COMP_MAX_TICKS) compTicks = LAG_COMP_MAX_TICKS;
-                    sim->sim.lagCompTicks = compTicks;
-                    sim->statLastRewindTicks[count] = compTicks;
-                }
-                tankUpdate(&sim->sim, &sim->sim.tanks[count], tb, shoot, FALSE);
-
-                /* Handle mine laying */
-                if (currentInputs[count].actions & INPUT_ACTION_LAY_MINE) {
-                    tankLayMine(&sim->sim, &sim->sim.tanks[count]);
-#ifdef WB_NETDEBUG
-                    sim->dbgMineLays[count]++;
-#endif
-                }
-
-                /* Handle LGM build requests.  buildAction is 1-based in
-                 * InputPacket (0=none, 1=BsTrees, 2=BsRoad, ...) but
-                 * lgmAddRequest expects 0-based enum values. */
-                if (currentInputs[count].buildAction != 0) {
-                    lgmAddRequest(&sim->sim, &sim->sim.lgmen[count],
-                                  &sim->sim.tanks[count],
-                                  currentInputs[count].buildX,
-                                  currentInputs[count].buildY,
-                                  currentInputs[count].buildAction - 1);
-                }
-            }
+            serverSimApplyOneInput(sim, count, &currentInputs[count], FALSE);
         } else {
-            /* No input available — repeat last known buttons so the tank
-             * continues turning/moving as the client predicts.  Using TNONE
-             * here would reset firstLeft/firstRight (turn ramp), causing
-             * the server to turn slower than the client predicted and
-             * producing visible angle "pull back" on reconciliation. */
+            /* No fresh input this tick. */
             tankButton stallTb = translateInputToTankButton(sim->lastInputButtons[count]);
-            /* Count only real stalls — idle/never-connected players sit in
-             * this branch every tick and would swamp the signal. */
-            if (sim->inputBufferFilled[count]) {
+
+            /* "Established at least once" is read off lastProcessedInput,
+             * not the live inputBufferFilled flag: the dequeue loop above
+             * clears inputBufferFilled on the very drain that produces this
+             * stall (it re-enters buffering mode whenever the queue empties),
+             * so by the time we get here it is already 0 on every genuine
+             * stall — which is why the old statStallTicks gate on it was
+             * dead. lastProcessedInput > 0 is the persistent signal — a real
+             * input can only have advanced it after inputBufferFilled was
+             * set, so it means the stream filled at least once. It gates both
+             * the real-stall counter and the stall-advance: dead/loading
+             * players that never streamed have it at 0, so they are not
+             * counted as stalls and keep the idle path below. */
+            if (sim->lastProcessedInput[count] > 0) {
                 sim->statStallTicks[count]++;
-            }
-#ifdef WB_NETDEBUG
-            if (netdebugButtonTurns(stallTb)) {
-                sim->dbgExecTurnTicks[count]++;
-            }
-#endif
-            sim->sim.lagCompTicks = 0;
-            if (isKeysTick) {
-                BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
-                BYTE bmy = tankGetMY(&sim->sim.tanks[count]);
-                tankTurn(&sim->sim, &sim->sim.tanks[count], bmx, bmy, stallTb);
+                /* Established stream: stall-advance. A substituted tick is
+                 * a *processed* tick — synthesise an input from the last
+                 * held buttons at the next tick number and run it through
+                 * the canonical apply, which advances lastProcessedInput
+                 * past it. The real (late) input for this tick then arrives
+                 * stale and its movement is dropped rather than executing
+                 * the held turn a second time (the overshoot fix). The
+                 * synth carries no actions, so it can never fire/lay/build,
+                 * and isSubstitute suppresses the pending-harvest merge so a
+                 * harvested one-shot waits for a real input. Parity comes
+                 * from subTick (the apply body keys on its own tick), and
+                 * the apply body counts the WB_NETDEBUG turn tick — so this
+                 * branch must not count it again. */
+                InputPacket synth;
+                memset(&synth, 0, sizeof(synth));
+                synth.tick      = sim->lastProcessedInput[count] + 1;
+                synth.playerNum = count;
+                synth.buttons   = sim->lastInputButtons[count];
+                serverSimApplyOneInput(sim, count, &synth, TRUE);
             } else {
-                tankUpdate(&sim->sim, &sim->sim.tanks[count], stallTb, FALSE, FALSE);
+                /* Not yet established (dead/loading/never-streamed): keep
+                 * today's idle simulation without consuming a tick. Repeat
+                 * the last held buttons so the turn ramp (firstLeft/
+                 * firstRight) doesn't reset and pull the angle back. */
+#ifdef WB_NETDEBUG
+                if (netdebugButtonTurns(stallTb)) {
+                    sim->dbgExecTurnTicks[count]++;
+                }
+#endif
+                sim->sim.lagCompTicks = 0;
+                if (isKeysTick) {
+                    BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
+                    BYTE bmy = tankGetMY(&sim->sim.tanks[count]);
+                    tankTurn(&sim->sim, &sim->sim.tanks[count], bmx, bmy, stallTb);
+                } else {
+                    tankUpdate(&sim->sim, &sim->sim.tanks[count], stallTb, FALSE, FALSE);
+                }
             }
         }
     }
@@ -1546,6 +1672,11 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, b
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
     sim->lastInputButtons[playerNum] = 0;
+    sim->lastActionAppliedTick[playerNum] = 0;
+    sim->pendingHarvestActions[playerNum] = 0;
+    sim->pendingHarvestBuildAction[playerNum] = 0;
+    sim->pendingHarvestBuildX[playerNum] = 0;
+    sim->pendingHarvestBuildY[playerNum] = 0;
     sim->inputBufferFilled[playerNum] = 0;
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
     sim->jitterStallCount[playerNum] = 0;
@@ -1786,6 +1917,11 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
     sim->lastInputButtons[playerNum] = 0;
+    sim->lastActionAppliedTick[playerNum] = 0;
+    sim->pendingHarvestActions[playerNum] = 0;
+    sim->pendingHarvestBuildAction[playerNum] = 0;
+    sim->pendingHarvestBuildX[playerNum] = 0;
+    sim->pendingHarvestBuildY[playerNum] = 0;
     sim->playerPing[playerNum] = 0;
     sim->inputBufferFilled[playerNum] = 0;
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
@@ -3437,6 +3573,11 @@ void serverSimResetGameWorld(ServerSim *sim) {
         sim->inputQueueTail[i] = 0;
         sim->lastProcessedInput[i] = 0;
         sim->lastInputButtons[i] = 0;
+        sim->lastActionAppliedTick[i] = 0;
+        sim->pendingHarvestActions[i] = 0;
+        sim->pendingHarvestBuildAction[i] = 0;
+        sim->pendingHarvestBuildX[i] = 0;
+        sim->pendingHarvestBuildY[i] = 0;
         sim->inputBufferFilled[i] = 0;
         sim->jitterTarget[i] = JITTER_BUFFER_DEFAULT;
         sim->jitterStallCount[i] = 0;

@@ -45,7 +45,6 @@
 /* Left turn: translateInputToTankButton maps INPUT_BTN_LEFT to TLEFT,
  * which the server's netdebugButtonTurns() counts as a turn half-step. */
 #define NETDEBUG_TURN_BTN      INPUT_BTN_LEFT
-#define ND_BUTTONS_TURN(b)     (((b) & (INPUT_BTN_LEFT | INPUT_BTN_RIGHT)) != 0)
 
 typedef struct {
     uint32_t holdTicks;      /* consecutive turn ticks, starting at startTick */
@@ -66,100 +65,114 @@ static void nd_send(ClientSim *cs, uint32_t tick, uint8_t buttons,
     clientSimNetSendInput(cs, &pkt);
 }
 
-/* Feed the contiguous tick range [from, to) two inputs per
- * clientSimNetTick. The server runs two half-steps per tick, so feeding
- * two keeps a small backlog and the queue never stalls on a clean
- * stream. Ranges must be even-length or the trailing single-feed tick
- * leaves a half-step to stall. Returns the number of turn-carrying ticks
- * sent. */
-static uint32_t nd_feed_pairs(ClientSim *cs, uint32_t from, uint32_t to,
-                              uint8_t buttons) {
-    uint32_t turns = 0;
-    uint32_t t = from;
-    while (t < to) {
-        nd_send(cs, t, buttons, 0);
-        if (ND_BUTTONS_TURN(buttons)) turns++;
-        t++;
-        if (t < to) {
-            nd_send(cs, t, buttons, 0);
-            if (ND_BUTTONS_TURN(buttons)) turns++;
-            t++;
-        }
-        clientSimNetTick(cs);
-    }
-    return turns;
-}
-
-/* Run the scripted hold and return the commanded turn count = number of
- * scripted turn ticks delivered (withheld ticks count: they are
- * delivered late, not dropped). */
+/* Run the scripted hold and return the commanded turn count = the number
+ * of turn-carrying tick numbers actually delivered to the server (the
+ * withheld ones included — they are delivered late, not dropped).
+ *
+ * Pacing invariant: every clientSimNetTick is preceded by exactly two new
+ * tick numbers (t, t+1). A "withheld" number is one whose send we skip
+ * (delivered late or never) — never a pause in the numbering. Once the
+ * stream is established the server consumes one tick number per half-step
+ * (substituting from the held buttons when starved), so a frame that fails
+ * to produce two new numbers would skew the server permanently ahead and
+ * make every later input arrive stale. Holding the numbering at exactly
+ * two per net tick keeps client and server in lockstep.
+ *
+ * Why executed == commanded: each held tick number in [startTick, endTick)
+ * is executed exactly once — by a real apply when its input is fresh, or
+ * by a same-button substitute when the window starved that number — and
+ * never twice, because the substitute advances lastProcessedInput so the
+ * late arrival drops as stale. With one button held throughout, a
+ * substitute produces the same turn the real input would have, so the
+ * total turn count is conserved regardless of how the post-window re-fill
+ * gate batches a few applies behind substitutes. */
 static uint32_t nd_run_script(ClientSim *cs, uint32_t startTick,
                               const NdScript *s) {
     uint32_t commanded = 0;
     uint32_t endTick = startTick + s->holdTicks;  /* exclusive */
     uint8_t  turn = (uint8_t)NETDEBUG_TURN_BTN;
+    uint32_t wStart = s->withholdStart;
+    uint32_t wEnd   = (s->withholdLen != 0) ? wStart + s->withholdLen : 0;
+    bool     lateDone = (s->withholdLen == 0);
     uint32_t t;
 
-    if (s->withholdLen == 0) {
-        commanded += nd_feed_pairs(cs, startTick, endTick, turn);
-    } else {
-        uint32_t wStart = s->withholdStart;
-        uint32_t wEnd   = wStart + s->withholdLen;
+    /* Hold: one frame owns the tick pair (t, t+1). Each number is sent
+     * fresh unless it lies in the withhold window [wStart, wEnd). */
+    for (t = startTick; t < endTick; t += 2) {
+        uint32_t a = t, b = t + 1;
 
-        /* Pre-window: clean pairs up to the window. */
-        commanded += nd_feed_pairs(cs, startTick, wStart, turn);
-
-        /* Window: withhold these ticks (send nothing) and tick the
-         * client empty. The queue drains its small backlog and then the
-         * stall branch repeats the held turn through the window —
-         * lastProcessedInput freezes because no fresh input arrives. */
-        for (t = 0; t < s->withholdLen; t++) {
-            clientSimNetTick(cs);
+        /* Once we are past the window, deliver the withheld numbers as a
+         * late burst right before this frame's net tick (no extra net
+         * ticks for them). The window already substituted past these
+         * numbers, so they arrive stale: movement drops, the mine on
+         * mineTick is harvested onto the next real game input. */
+        if (!lateDone && t >= wEnd) {
+            uint32_t w;
+            for (w = wStart; w < wEnd; w++) {
+                uint8_t act = (s->mineTick != 0 && w == s->mineTick)
+                                  ? (uint8_t)INPUT_ACTION_LAY_MINE : 0;
+                nd_send(cs, w, turn, act);
+                commanded++;  /* withheld-then-late turn tick */
+            }
+            lateDone = true;
         }
 
-        /* Late delivery: burst the withheld ticks. Their tick numbers
-         * are still > the frozen lastProcessedInput, so the dequeue
-         * applies them rather than dropping them as stale. */
-        for (t = wStart; t < wEnd; t++) {
-            uint8_t act = (s->mineTick != 0 && t == s->mineTick)
-                              ? (uint8_t)INPUT_ACTION_LAY_MINE
-                              : 0;
-            nd_send(cs, t, turn, act);
+        if (s->withholdLen == 0 || a < wStart || a >= wEnd) {
+            nd_send(cs, a, turn, 0);
             commanded++;
         }
-        for (t = 0; t < (s->withholdLen / 2) + 2; t++) {
-            clientSimNetTick(cs);
+        if (b < endTick && (s->withholdLen == 0 || b < wStart || b >= wEnd)) {
+            nd_send(cs, b, turn, 0);
+            commanded++;
         }
-
-        /* Post-window: resume clean pairs, contiguous with wEnd. */
-        commanded += nd_feed_pairs(cs, wEnd, endTick, turn);
+        clientSimNetTick(cs);
     }
 
-    /* Release + tail: TNONE inputs so the held buttons stop turning,
-     * then spin to drain. Drain-time stalls now repeat TNONE and do not
-     * count as turns. */
-    nd_feed_pairs(cs, endTick, endTick + 8, 0);
+    /* If the window butted right up against endTick we may exit the loop
+     * before any post-window frame ran the late burst — flush it now. */
+    if (!lateDone) {
+        uint32_t w;
+        for (w = wStart; w < wEnd; w++) {
+            uint8_t act = (s->mineTick != 0 && w == s->mineTick)
+                              ? (uint8_t)INPUT_ACTION_LAY_MINE : 0;
+            nd_send(cs, w, turn, act);
+            commanded++;
+        }
+        lateDone = true;
+    }
+
+    /* Release: TNONE pairs, still two per net tick so they apply fresh and
+     * clear lastInputButtons. After them, bare drain spins substitute the
+     * now-TNONE buttons — no turn counts. */
+    for (t = endTick; t < endTick + 8; t += 2) {
+        nd_send(cs, t, 0, 0);
+        nd_send(cs, t + 1, 0, 0);
+        clientSimNetTick(cs);
+    }
     for (t = 0; t < 32; t++) {
         clientSimNetTick(cs);
     }
     return commanded;
 }
 
-/* Warmup mirrors test_active_local_input_to_shot: one TNONE input per
- * net-tick so the jitter buffer fills and lastProcessedInput advances
- * past 0 before the caller resets the netdebug counters. Returns the
- * next unused input tick. */
+/* Warmup: TNONE two per net tick so the server consumes exactly what we
+ * send (zero skew) and ends established — jitter buffer filled,
+ * lastProcessedInput advanced past 0 — before the caller resets the
+ * netdebug counters. Returns the next unused input tick. */
 static uint32_t nd_warmup(ClientSim *cs) {
-    uint32_t t;
-    for (t = 1; t <= NETDEBUG_WARMUP_TICKS; t++) {
+    uint32_t t = 1;
+    while (t <= NETDEBUG_WARMUP_TICKS) {  /* even count → whole pairs */
         nd_send(cs, t, 0, 0);
+        nd_send(cs, t + 1, 0, 0);
         clientSimNetTick(cs);
+        t += 2;
     }
     return t;  /* NETDEBUG_WARMUP_TICKS + 1 */
 }
 
-/* Odd-aligned mid-hold window start so every pair-fed sub-range stays
- * even-length. Seeded draw keeps placement reproducible. */
+/* Odd-aligned mid-hold window start (startTick is odd, +even keeps it odd)
+ * so the window covers whole (t, t+1) frames cleanly. Seeded draw keeps
+ * placement reproducible. */
 static uint32_t nd_pick_withhold_start(uint32_t startTick) {
     bolo_srand(NETDEBUG_SEED);
     return startTick + 36u + 2u * bolo_rand_below(10);
@@ -222,18 +235,18 @@ int run_netdebug_overshoot_under_loss(void) {
 
     uint32_t executed = serverSimNetdebugGetExecTurnTicks(sim, NETDEBUG_PLAYER);
 
-    /* Today the stall branch repeats the held turn through the withhold
-     * window AND the late inputs are applied when they finally arrive,
-     * so those ticks execute twice — executed exceeds commanded. When
-     * the stall-advance change lands (the stall stops re-running held
-     * buttons), this gate inverts to equality (± the ticks where a
-     * release falls inside a stall window): whoever lands that change
-     * must flip this assertion to ==, not delete it. */
+    /* Stall-advance contract: the withhold-window stall substitutes each
+     * covered tick with the held turn AND advances lastProcessedInput past
+     * it, so the late-delivered inputs for those ticks arrive stale and
+     * drop instead of executing the turn a second time. The script holds
+     * one turn button throughout, so a substituted tick executes the same
+     * turn the late-dropped tick would have — exact equality for this
+     * script (no release falls inside the window). */
     fprintf(stderr,
             "  netdebug overshoot: commanded=%u executed=%u delta=%d\n",
             commanded, executed, (int)executed - (int)commanded);
-    UT_ASSERT_MSG(executed > commanded,
-                  "expected overshoot: executed %u <= commanded %u",
+    UT_ASSERT_MSG(executed == commanded,
+                  "stall-advance: executed %u != commanded %u",
                   executed, commanded);
 
     clientSimDestroy(cs);

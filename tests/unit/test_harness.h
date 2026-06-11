@@ -282,6 +282,16 @@ int run_log_path_directory_arg_appends_wbv(void);
  * size bound, and sim-level dedup of redundant duplicate ticks. */
 int run_input_redundancy(void);
 
+/* Stall-advance (test_stall_advance.c): a stall-substituted tick is a
+ * processed tick (lastProcessedInput advances), late inputs for it drop
+ * as stale, and one-shot actions are harvested/laid exactly once under the
+ * lastActionAppliedTick invariant. Always built (no WB_NETDEBUG gate). */
+int run_stall_advances_processed_tick(void);
+int run_stall_mine_late_lays_once(void);
+int run_stall_mine_duplicate_not_relaid(void);
+int run_stall_fire_not_harvested(void);
+int run_stall_never_fires(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

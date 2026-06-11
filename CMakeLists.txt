@@ -2519,6 +2519,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
     tests/unit/test_input_redundancy.c
+    tests/unit/test_stall_advance.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
@@ -2748,6 +2749,11 @@ set(_unit_test_names
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
     input_redundancy
+    stall_advances_processed_tick
+    stall_mine_late_lays_once
+    stall_mine_duplicate_not_relaid
+    stall_fire_not_harvested
+    stall_never_fires
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
