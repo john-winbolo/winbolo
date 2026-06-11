@@ -277,6 +277,11 @@ int run_log_path_directory_autonames_inside(void);
 int run_log_path_directory_trailing_slash_no_double(void);
 int run_log_path_directory_arg_appends_wbv(void);
 
+/* Input-redundancy invariants (test_input_redundancy.c): the constants
+ * sizing the redundancy window, the InputPacket wire roundtrip + packet
+ * size bound, and sim-level dedup of redundant duplicate ticks. */
+int run_input_redundancy(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

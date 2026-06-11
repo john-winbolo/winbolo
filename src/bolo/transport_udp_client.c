@@ -19,7 +19,7 @@
  *Purpose:
  *  Client-side UDP network transport for multiplayer games.
  *    - Sends InputPackets to the server (with redundancy:
- *      last 3 inputs per packet for loss tolerance).
+ *      last INPUT_REDUNDANCY_COUNT inputs per packet for loss tolerance).
  *    - Receives state snapshots from server.
  *    - Handles join handshake and ping measurement.
  *********************************************************/

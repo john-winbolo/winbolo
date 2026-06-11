@@ -2518,6 +2518,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
+    tests/unit/test_input_redundancy.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
@@ -2746,6 +2747,7 @@ set(_unit_test_names
     alliance_reset_apply_rebuilds_alliances
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
+    input_redundancy
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}

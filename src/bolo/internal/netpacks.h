@@ -591,8 +591,10 @@ static inline bool lobbyBotNameAcceptable(
 /* Maximum compressed map size (256x256 LZW + bases + pills + starts) */
 #define MAP_DOWNLOAD_MAX_SIZE 65536
 
-/* Number of redundant inputs per packet (for packet loss) */
-#define INPUT_REDUNDANCY_COUNT 3
+/* Number of redundant inputs per packet (for packet loss) — each input
+ * rides in 4 consecutive 50/s packets (2 new inputs per packet), so a
+ * 3-packet loss burst no longer starves the server's input queue */
+#define INPUT_REDUNDANCY_COUNT 8
 
 /* Client timeout in ticks (20 seconds at 50 ticks/sec) */
 #define CLIENT_TIMEOUT_TICKS 1000

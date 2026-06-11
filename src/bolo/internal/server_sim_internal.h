@@ -169,7 +169,7 @@ struct ServerSim {
     unsigned short serverPort;
 
     /* Per-player input queues — allows 2 inputs per server timer callback */
-#define SERVER_INPUT_QUEUE_SIZE 8  /* Must be power of 2 */
+#define SERVER_INPUT_QUEUE_SIZE 16  /* Must be power of 2 */
     InputPacket  inputQueue[MAX_TANKS][SERVER_INPUT_QUEUE_SIZE];
     uint8_t      inputQueueHead[MAX_TANKS];  /* Next slot to write */
     uint8_t      inputQueueTail[MAX_TANKS];  /* Next slot to read */

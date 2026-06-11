@@ -1684,7 +1684,7 @@ static void serverHandleInput(const uint8_t *buf, int len,
 
         /* Only apply if this is a newer input than what we last processed */
         if (pkt.tick > serverSimGetLastProcessedInput(sim, clientIdx)) {
-            if (udpServer.clients[clientIdx].inputsThisTick >= 4) break;
+            if (udpServer.clients[clientIdx].inputsThisTick >= INPUT_REDUNDANCY_COUNT) break;
             serverSimApplyInput(sim, &pkt);
             udpServer.clients[clientIdx].inputsThisTick++;
         }
