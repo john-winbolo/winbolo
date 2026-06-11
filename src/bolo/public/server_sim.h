@@ -1630,4 +1630,14 @@ int serverSimGetTankExplosionSnapshot(ServerSim *sim,
 /* Visible mine at (x, y)? Combines map-bit + visibility list. */
 bool serverSimMineExistsAt(ServerSim *sim, BYTE x, BYTE y);
 
+#ifdef WB_NETDEBUG
+/* Net-debug rig accessors. Exist only in WB_NETDEBUG builds — they
+ * read the per-player sim-executed counters the rig measures. Reset
+ * zeroes both counter arrays; getters return 0 for an out-of-range
+ * playerNum. */
+void     serverSimNetdebugResetCounters(ServerSim *sim);
+uint32_t serverSimNetdebugGetExecTurnTicks(ServerSim *sim, BYTE playerNum);
+uint32_t serverSimNetdebugGetMineLays(ServerSim *sim, BYTE playerNum);
+#endif
+
 #endif /* SERVER_SIM_H */

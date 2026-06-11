@@ -750,6 +750,16 @@ if(ENABLE_PILLMASSAGE_BUG)
     add_compile_definitions(ENABLE_PILLMASSAGE_BUG)
 endif()
 
+# Net-debug instrumentation: per-player sim-executed counters and the
+# netdebug.* repro tests. OFF in every shipping build.
+option(WB_NETDEBUG "Build net-debug instrumentation and netdebug tests" OFF)
+if(WB_NETDEBUG)
+    # Global, not per-target: the gated counters live inside struct
+    # ServerSim, so every TU must agree on the struct layout — a partial
+    # define would diverge struct sizes across libraries.
+    add_compile_definitions(WB_NETDEBUG=1)
+endif()
+
 # libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
 # When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
 option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
@@ -2538,6 +2548,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/lzw/ecodlzw.c
 )
 
+if(WB_NETDEBUG)
+    list(APPEND WINBOLO_UNITTESTS_SOURCES tests/unit/test_netdebug_rig.c)
+endif()
+
 add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
 target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c)
 target_compile_definitions(WinBoloUnitTests PRIVATE
@@ -2738,5 +2752,13 @@ foreach(_name IN LISTS _unit_test_names)
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
     set_tests_properties(unit.${_name} PROPERTIES TIMEOUT 60)
 endforeach()
+
+if(WB_NETDEBUG)
+    foreach(_name netdebug_commanded_vs_executed netdebug_overshoot_under_loss netdebug_mine_once_under_loss)
+        add_test(NAME netdebug.${_name}
+                 COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
+        set_tests_properties(netdebug.${_name} PROPERTIES TIMEOUT 60)
+    endforeach()
+endif()
 
 endif() # iOS vs Desktop

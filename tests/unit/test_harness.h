@@ -277,6 +277,14 @@ int run_log_path_directory_autonames_inside(void);
 int run_log_path_directory_trailing_slash_no_double(void);
 int run_log_path_directory_arg_appends_wbv(void);
 
+#ifdef WB_NETDEBUG
+/* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
+ * built in WB_NETDEBUG configs. */
+int run_netdebug_commanded_vs_executed(void);
+int run_netdebug_overshoot_under_loss(void);
+int run_netdebug_mine_once_under_loss(void);
+#endif
+
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for
  * serverSimDestroy. Returns NULL on failure. */

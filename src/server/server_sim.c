@@ -188,6 +188,25 @@ static tankButton translateInputToTankButton(uint8_t buttons) {
     return TNONE;
 }
 
+#ifdef WB_NETDEBUG
+/* Net-debug rig: true when a tankButton carries a left/right turn
+ * component, including the turn+accel/decel combos. Used to count
+ * sim-executed turn half-steps. Test-only — never built in production. */
+static bool netdebugButtonTurns(tankButton tb) {
+    switch (tb) {
+        case TLEFT:
+        case TRIGHT:
+        case TLEFTACCEL:
+        case TRIGHTACCEL:
+        case TLEFTDECEL:
+        case TRIGHTDECEL:
+            return true;
+        default:
+            return false;
+    }
+}
+#endif
+
 /* Map an assistant body lang ID to the wire ID carried by
  * EVENT_ASSISTANT_MSG. Wire format unchanged — clients still receive
  * [targetPlayer, msgId] and resolve back to the matching LGM_* /
@@ -1095,6 +1114,11 @@ static void simRunHalfStep(ServerSim *sim) {
                     for (gt = expected; gt < currentInputs[count].tick; gt++) {
                         bool gapIsKeys = (gt % 2) == 1;
                         sim->statGapFillTicks[count]++;
+#ifdef WB_NETDEBUG
+                        if (netdebugButtonTurns(gapTb)) {
+                            sim->dbgExecTurnTicks[count]++;
+                        }
+#endif
                         if (gapIsKeys) {
                             BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
                             BYTE bmy = tankGetMY(&sim->sim.tanks[count]);
@@ -1126,6 +1150,14 @@ static void simRunHalfStep(ServerSim *sim) {
 
             sim->lastProcessedInput[count] = currentInputs[count].tick;
 
+#ifdef WB_NETDEBUG
+            /* One increment per executed half-step whose button turns,
+             * covering both the keys arm and the game arm below. */
+            if (netdebugButtonTurns(tb)) {
+                sim->dbgExecTurnTicks[count]++;
+            }
+#endif
+
             if (inputIsKeys) {
                 /* Keys tick: turning only */
                 BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
@@ -1147,6 +1179,9 @@ static void simRunHalfStep(ServerSim *sim) {
                 /* Handle mine laying */
                 if (currentInputs[count].actions & INPUT_ACTION_LAY_MINE) {
                     tankLayMine(&sim->sim, &sim->sim.tanks[count]);
+#ifdef WB_NETDEBUG
+                    sim->dbgMineLays[count]++;
+#endif
                 }
 
                 /* Handle LGM build requests.  buildAction is 1-based in
@@ -1172,6 +1207,11 @@ static void simRunHalfStep(ServerSim *sim) {
             if (sim->inputBufferFilled[count]) {
                 sim->statStallTicks[count]++;
             }
+#ifdef WB_NETDEBUG
+            if (netdebugButtonTurns(stallTb)) {
+                sim->dbgExecTurnTicks[count]++;
+            }
+#endif
             sim->sim.lagCompTicks = 0;
             if (isKeysTick) {
                 BYTE bmx = tankGetMX(&sim->sim.tanks[count]);
@@ -6935,4 +6975,22 @@ BYTE serverSimGetMaxPlayers(const ServerSim *sim) {
     if (sim == NULL) return MAX_TANKS;
     return (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
 }
+
+#ifdef WB_NETDEBUG
+void serverSimNetdebugResetCounters(ServerSim *sim) {
+    if (sim == NULL) return;
+    memset(sim->dbgExecTurnTicks, 0, sizeof(sim->dbgExecTurnTicks));
+    memset(sim->dbgMineLays, 0, sizeof(sim->dbgMineLays));
+}
+
+uint32_t serverSimNetdebugGetExecTurnTicks(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return 0;
+    return sim->dbgExecTurnTicks[playerNum];
+}
+
+uint32_t serverSimNetdebugGetMineLays(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return 0;
+    return sim->dbgMineLays[playerNum];
+}
+#endif
 

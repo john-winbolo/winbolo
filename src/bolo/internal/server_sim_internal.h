@@ -201,6 +201,13 @@ struct ServerSim {
                                                  * dequeue path; no increment site yet */
     uint8_t  statLastRewindTicks[MAX_TANKS];    /* gauge: most recent lag-comp rewind */
 
+#ifdef WB_NETDEBUG
+    /* Net-debug rig: sim-executed turn half-steps and mine lays per
+     * player. Test-only — never compiled into production builds. */
+    uint32_t dbgExecTurnTicks[MAX_TANKS];
+    uint32_t dbgMineLays[MAX_TANKS];
+#endif
+
     PosHistory   posHistory[MAX_TANKS];           /* Position history for lag compensation */
     PosHistory   lgmPosHistory[MAX_TANKS];        /* LGM position history for lag compensation */
 
