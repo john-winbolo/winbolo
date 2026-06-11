@@ -106,6 +106,35 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
     return;
   }
 
+  /* Universal producer rule (every frontend, transport, and bot builds here):
+   * never fall permanently behind the server's consumption. Once a slot's
+   * stream is established the server consumes one tick number per starved
+   * half-step — it substitutes the held buttons and advances lastProcessedInput
+   * (server_sim.c stall-advance). A producer whose counter has paused or
+   * under-supplies (headless/gym feed one input per net tick while the server
+   * runs two half-steps; the wasm client drops its sim backlog after a tab
+   * background; a GUI hitch that doesn't catch up) would otherwise emit tick
+   * numbers the server has already passed, and every such input would arrive
+   * stale forever. If the supplied tick has fallen at or behind the server's
+   * last-processed tick, renumber it to the smallest value past
+   * lastProcessedInput whose parity matches the input's INTENT (isGameTick:
+   * even = game, odd = keys) — taken from the parameter, never derived from the
+   * stale tick. Prediction, the input history, and the send all consume this
+   * same packet, so they pick up the jump automatically. When the producer
+   * keeps pace (normal desktop/UDP, where the client predicts ahead of the
+   * ack) tick > lastProcessedInput and this is a no-op. */
+  {
+    uint32_t lpi = csPtr->clientState.serverLastProcessedInput;
+    if (pkt->tick <= lpi) {
+      uint32_t renum = lpi + 1;
+      /* game tick wants an even number, keys tick an odd one */
+      if (((renum % 2) == 0) != isGameTick) {
+        renum++;
+      }
+      pkt->tick = renum;
+    }
+  }
+
   /* Pack autoslowdown state into flags (sent every packet so server stays in sync) */
   if (tankGetAutoSlowdown(&MY_TANK(csPtr))) {
     pkt->flags |= INPUT_FLAG_AUTOSLOW;
@@ -234,6 +263,15 @@ void clientApplySnapshot(ClientSim *csPtr,
                               BYTE playerNum) {
   int i;
   bool isHuman = !csPtr->isBot;
+
+  /* Record the server's last-processed input tick for THIS client from the
+   * header. clientBuildInputPacket uses it to keep the outgoing tick number
+   * ahead of the server's consumption — the server advances lastProcessedInput
+   * when it substitutes for a starved stream, so a producer that under-supplies
+   * or paused must jump forward rather than emit numbers the server has passed.
+   * Updated unconditionally (the header's lastProcessedInput is per-client, set
+   * even when our own tank ships as a hidden stub). */
+  csPtr->clientState.serverLastProcessedInput = hdr->lastProcessedInput;
 
   /* Update other players via interpolation */
   csPtr->interpCtx.localPlayer = playerNum;

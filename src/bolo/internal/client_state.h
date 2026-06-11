@@ -43,6 +43,16 @@ typedef struct {
     InputPacket history[CLIENT_INPUT_HISTORY_SIZE];
     uint32_t oldestUnacked;   /* Oldest tick not yet confirmed by server */
     uint32_t newestInput;     /* Most recent tick recorded */
+    uint32_t serverLastProcessedInput; /* hdr->lastProcessedInput from the most
+                                        * recent snapshot apply. The producer
+                                        * renumbers past this when its counter
+                                        * falls behind (clientBuildInputPacket),
+                                        * because the server consumes tick
+                                        * numbers when it substitutes for a
+                                        * starved stream. Zeroed with the rest
+                                        * of the connection state by
+                                        * clientStateCreate; refreshed on every
+                                        * snapshot. */
     bool initialized;
     bool hasPredictedTank;    /* TRUE once we own a separate predicted tank */
 } ClientState;

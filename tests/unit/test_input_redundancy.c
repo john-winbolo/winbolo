@@ -117,10 +117,12 @@ static int check_sim_dedup(void) {
         serverSimTick(sim);                  /* two half-steps consume two inputs */
     }
 
-    /* A couple of empty frames to drain anything left queued. */
-    serverSimTick(sim);
-    serverSimTick(sim);
-
+    /* Sample now, with no draining: the two-fresh-per-frame cadence keeps
+     * the stream in lockstep, so the last frame leaves lastProcessedInput
+     * exactly at the newest fresh tick. Empty drain frames would not help —
+     * under stall-advance an idle frame substitutes the held buttons and
+     * advances lastProcessedInput past newestTick (correct, but no longer
+     * equal to it). */
     UT_ASSERT_MSG(sim->lastProcessedInput[0] == newestTick,
                   "lastProcessedInput=%u expected newest=%u",
                   (unsigned)sim->lastProcessedInput[0], (unsigned)newestTick);
