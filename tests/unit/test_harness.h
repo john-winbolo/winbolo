@@ -304,6 +304,7 @@ int run_stall_long_dry_advances(void);
  * jitter-spike backlog drains in ~1s instead of ratcheting input latency;
  * steady state never triggers it. Always built (no WB_NETDEBUG gate). */
 int run_input_catchup(void);
+int run_catchup_ignores_redundant_duplicates(void);
 
 /* Render-only error smoothing (test_error_smoothing.c): the offset
  * accumulate/decay/clamp/wrap math as pure functions, plus the

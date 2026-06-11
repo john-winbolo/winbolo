@@ -1065,6 +1065,24 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
  * events from both half-steps accumulate naturally into one frame's
  * worth of state for downstream consumers (UDP drain, in-process
  * snapshot poll). */
+/* Backlog of fresh (not-yet-processed) input for `count`, measured as
+ * newestQueuedTick - lastProcessedInput: how many ticks behind the newest
+ * queued input the server is. Immune to the redundancy duplicates that
+ * inflate raw head-tail depth — a tick resent in N packets sits in the
+ * queue N times but contributes once here. Returns 0 when nothing fresh
+ * is queued. */
+static uint32_t serverSimFreshBacklog(ServerSim *sim, BYTE count) {
+    uint32_t lpi = sim->lastProcessedInput[count];
+    uint32_t newest = lpi;
+    uint8_t i = sim->inputQueueTail[count];
+    while (i != sim->inputQueueHead[count]) {
+        uint32_t t = sim->inputQueue[count][i & (SERVER_INPUT_QUEUE_SIZE - 1)].tick;
+        if (t > newest) newest = t;
+        i++;
+    }
+    return newest - lpi;
+}
+
 /* Pop entries for `count` until a fresh input (tick > lastProcessedInput)
  * or the queue empties. Stale entries are dropped with one-shot harvest.
  * Returns TRUE with *out filled on fresh; FALSE on empty. */
@@ -1301,10 +1319,13 @@ static void simRunHalfStep(ServerSim *sim) {
 
             /* Backlog catch-up: bleed a standing queue at +1 input per sub-tick
              * (hard cap 2 applies total) so a jitter-spike backlog drains in ~1s
-             * instead of ratcheting input latency for the session. Depth gate is
+             * instead of ratcheting input latency for the session. Gate on the
+             * fresh backlog (newest queued tick minus lastProcessedInput), not
+             * raw head-tail depth: input redundancy resends each tick in several
+             * packets, so the same unprocessed tick sits in the queue multiple
+             * times and inflates raw depth — fresh backlog counts it once.
              * jitterTarget + 1 so steady-state never triggers it. */
-            uint8_t depth = sim->inputQueueHead[count] - sim->inputQueueTail[count];
-            if (depth > (uint8_t)(sim->jitterTarget[count] + 1)) {
+            if (serverSimFreshBacklog(sim, count) > (uint32_t)(sim->jitterTarget[count] + 1)) {
                 InputPacket extra;
                 if (serverSimDequeueFresh(sim, count, &extra)) {
                     serverSimApplyOneInput(sim, count, &extra, FALSE);

@@ -2760,6 +2760,7 @@ set(_unit_test_names
     stall_brief_trough_no_advance
     stall_long_dry_advances
     input_catchup
+    catchup_ignores_redundant_duplicates
     edge_send_predicate
     error_smoothing
 )

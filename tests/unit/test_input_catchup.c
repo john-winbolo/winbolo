@@ -163,3 +163,79 @@ int run_input_catchup(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* Catch-up gates on the fresh backlog (newest queued tick minus
+ * lastProcessedInput), not raw head-tail depth. Input redundancy resends
+ * each tick in several packets and intake does not dedup unprocessed ticks,
+ * so the same fresh tick sits in the queue multiple times — raw depth is
+ * inflated but the real backlog is small. The catch-up gate must not fire
+ * on that, or a packet's two fresh inputs get applied in one half-step and
+ * the server's angle jumps ahead of the client's prediction.
+ *
+ * The fresh-backlog helper is file-static and unreachable from here, so we
+ * assert the observable consequence (statCatchupTicks) rather than the
+ * helper directly. */
+int run_catchup_ignores_redundant_duplicates(void) {
+    ServerSim *sim = ut_make_running_sim("Dupes");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    ic_establish(sim, INPUT_BTN_LEFT);  /* lastProcessedInput == 12 */
+    UT_ASSERT_MSG(sim->lastProcessedInput[IC_SLOT] == 12,
+                  "establish left lastProcessedInput at %u, expected 12",
+                  sim->lastProcessedInput[IC_SLOT]);
+    UT_ASSERT_MSG(sim->jitterTarget[IC_SLOT] == 2,
+                  "establish left jitterTarget at %u, expected 2",
+                  sim->jitterTarget[IC_SLOT]);
+    uint8_t target = sim->jitterTarget[IC_SLOT];
+
+    /* Redundancy: the same two fresh ticks (13, 14) resent across four
+     * packets each. Intake does not dedup unprocessed ticks, so all eight
+     * copies enqueue — raw depth climbs to 8 while only two ticks (13, 14)
+     * are genuinely fresh, so the fresh backlog is just 2. */
+    int r;
+    for (r = 0; r < 4; r++) {
+        ic_feed(sim, 13, INPUT_BTN_LEFT);
+        ic_feed(sim, 14, INPUT_BTN_LEFT);
+    }
+
+    /* Precondition: raw depth is inflated past the gate the old code used —
+     * the duplicate condition the bug tripped on is present. */
+    UT_ASSERT_MSG(ic_depth(sim) > (uint8_t)(target + 1),
+                  "duplicate burst did not inflate raw depth (%u <= %u) — "
+                  "test precondition not met", ic_depth(sim),
+                  (uint8_t)(target + 1));
+
+    /* Two frames process 13 and 14 and drop their six redundant copies as
+     * stale. Catch-up gates on fresh backlog (max 2 <= target + 1 = 3), so
+     * it must NOT fire despite the inflated raw depth. */
+    uint32_t staleBefore = sim->statDroppedStaleInputs[IC_SLOT];
+    serverSimTick(sim);  /* applies 13 then 14 */
+    serverSimTick(sim);  /* drops the six stale duplicates */
+    UT_ASSERT_MSG(sim->statCatchupTicks[IC_SLOT] == 0,
+                  "catch-up fired %u times on a queue inflated only by "
+                  "redundant duplicates", sim->statCatchupTicks[IC_SLOT]);
+    UT_ASSERT_MSG(sim->lastProcessedInput[IC_SLOT] == 14,
+                  "both fresh ticks not processed once (lpi %u, expected 14)",
+                  sim->lastProcessedInput[IC_SLOT]);
+    UT_ASSERT_MSG(sim->statDroppedStaleInputs[IC_SLOT] > staleBefore,
+                  "redundant duplicates were not dropped as stale");
+
+    /* Positive control: a genuine multi-tick fresh backlog still fires
+     * catch-up. Burst-enqueue eight distinct fresh ticks (15..22) — the
+     * fresh backlog is 8 > target + 1 — and drain. */
+    uint32_t catchupBefore = sim->statCatchupTicks[IC_SLOT];
+    uint32_t next = sim->lastProcessedInput[IC_SLOT] + 1;  /* 15 */
+    int i;
+    for (i = 0; i < 8; i++) {
+        ic_feed(sim, next++, INPUT_BTN_LEFT);
+    }
+    int f;
+    for (f = 0; f < 3; f++) {
+        serverSimTick(sim);
+    }
+    UT_ASSERT_MSG(sim->statCatchupTicks[IC_SLOT] > catchupBefore,
+                  "catch-up did not fire on a genuine 8-tick fresh backlog");
+
+    serverSimDestroy(sim);
+    return 0;
+}

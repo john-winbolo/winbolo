@@ -217,6 +217,7 @@ static const UnitTestEntry s_tests[] = {
     { "stall_brief_trough_no_advance",           run_stall_brief_trough_no_advance           },
     { "stall_long_dry_advances",                 run_stall_long_dry_advances                 },
     { "input_catchup",                           run_input_catchup                           },
+    { "catchup_ignores_redundant_duplicates",    run_catchup_ignores_redundant_duplicates    },
     { "error_smoothing",                         run_error_smoothing                         },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
