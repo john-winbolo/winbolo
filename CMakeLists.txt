@@ -2532,6 +2532,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_join.c
     tests/unit/test_loopback_join_loss.c
     tests/unit/test_loopback_lobby_running_loss.c
+    tests/unit/test_join_version_gate.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2779,6 +2780,7 @@ set(_unit_test_names
     loopback_join
     loopback_join_loss
     loopback_lobby_running_loss
+    join_version_gate
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}

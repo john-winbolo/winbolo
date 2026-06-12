@@ -224,6 +224,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_join",                           run_loopback_join                           },
     { "loopback_join_loss",                      run_loopback_join_loss                      },
     { "loopback_lobby_running_loss",             run_loopback_lobby_running_loss             },
+    { "join_version_gate",                       run_join_version_gate                       },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

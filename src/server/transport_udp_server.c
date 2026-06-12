@@ -1141,8 +1141,46 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     pass[MAP_STR_SIZE - 1] = '\0';
     pos += MAP_STR_SIZE;
 
-    /* Skip version bytes */
-    pos += 3;
+    /* Version gate: require an exact protocol-version triple match against
+     * the version this server was compiled with.  A self-built or stale
+     * client sending a different triple is rejected here — before the
+     * password check — so it gets the version error rather than a
+     * misleading password failure.  The three bytes keep their fixed wire
+     * offset so even an old client's JOIN stays parseable for rejection. */
+    {
+        uint8_t cliMajor = buf[pos];
+        uint8_t cliMinor = buf[pos + 1];
+        uint8_t cliRev   = buf[pos + 2];
+        pos += 3;
+        if (cliMajor != BOLO_VERSION_MAJOR ||
+            cliMinor != BOLO_VERSION_MINOR ||
+            cliRev   != BOLO_VERSION_REVISION) {
+            char serverVer[16];
+            char clientVer[16];
+            char consoleMsg[160];
+            const char *args[4];
+            snprintf(serverVer, sizeof(serverVer), "%u.%u.%u",
+                     (unsigned)BOLO_VERSION_MAJOR,
+                     (unsigned)BOLO_VERSION_MINOR,
+                     (unsigned)BOLO_VERSION_REVISION);
+            snprintf(clientVer, sizeof(clientVer), "%u.%u.%u",
+                     (unsigned)cliMajor, (unsigned)cliMinor, (unsigned)cliRev);
+            snprintf(consoleMsg, sizeof(consoleMsg),
+                     "Join rejected for '%s': Version mismatch "
+                     "(server %s, client %s)", name, serverVer, clientVer);
+            serverSimConsoleMessage(consoleMsg);
+            /* The 1389 string renders {string1}=server, {string2}=client.
+             * The client decode fills string1/string2 from arg slots 2/3
+             * (slots 0/1 are the player/other name, unused here), so pass
+             * the two versions in slots 2 and 3 with empty leading args. */
+            args[0] = "";
+            args[1] = "";
+            args[2] = serverVer;
+            args[3] = clientVer;
+            serverSendJoinReject(fromAddr, STR_REJECT_VERSION_MISMATCH, 4, args);
+            return;
+        }
+    }
 
     /* Read WBN token if present (backwards compatible — older clients won't send it) */
     memset(wbnJoinKey, 0, WBN_JOIN_KEY_WIRE_LEN);

@@ -319,6 +319,7 @@ int run_error_smoothing(void);
 int run_loopback_join(void);
 int run_loopback_join_loss(void);
 int run_loopback_lobby_running_loss(void);
+int run_join_version_gate(void);
 
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
