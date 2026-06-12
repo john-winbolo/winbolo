@@ -1137,6 +1137,10 @@ static bool serverSimDequeueFresh(ServerSim *sim, BYTE count, InputPacket *out) 
             sim->lastActionAppliedTick[count] = out->tick;
         }
         sim->statDroppedStaleInputs[count]++;  /* stale/duplicate entry discarded */
+        if (out->buttons != sim->lastInputButtons[count] &&
+            out->tick + 8 > sim->lastProcessedInput[count]) {
+            sim->statDroppedEdge[count]++;
+        }
     }
     return FALSE;
 }
@@ -1313,12 +1317,29 @@ static void simRunHalfStep(ServerSim *sim) {
                     sim->jitterTarget[count] > JITTER_BUFFER_MIN) {
                     sim->jitterTarget[count]--;
                     sim->jitterStableTicks[count] = 0;
+                    /* A long calm stretch also forgets recent drains, so the
+                     * buffer is free to settle back toward MIN. */
+                    sim->jitterStarveCount[count] = 0;
                 }
             }
         }
 
-        /* If queue drained completely, re-enter buffering mode */
+        /* If queue drained completely, re-enter buffering mode. The drain
+         * itself is the reliable too-shallow signal: under jitter the queue
+         * empties faster than the grow path above can react, because once we
+         * re-enter filling mode a later dry sub-tick takes the `continue`
+         * above and never reaches that grow logic. Count drains separately
+         * and deepen the buffer off them so jitter actually grows the target
+         * instead of pinning it at the default. */
         if (sim->inputQueueHead[count] == sim->inputQueueTail[count] && !hasInput[count]) {
+            if (sim->inputBufferFilled[count]) {
+                sim->jitterStarveCount[count]++;
+                if (sim->jitterStarveCount[count] >= JITTER_STARVE_GROW_THRESHOLD &&
+                    sim->jitterTarget[count] < JITTER_BUFFER_MAX) {
+                    sim->jitterTarget[count]++;
+                    sim->jitterStarveCount[count] = 0;
+                }
+            }
             sim->inputBufferFilled[count] = 0;
         }
     }
@@ -1652,15 +1673,17 @@ static void simRunHalfStep(ServerSim *sim) {
             {
                 uint8_t qd = (sim->inputQueueHead[count] - sim->inputQueueTail[count])
                              & (SERVER_INPUT_QUEUE_SIZE - 1);
-                mpDiagLog("[netstat] p%d q=%u jt=%u stall=%u gap=%u stale=%u catchup=%u rewind=%u",
+                mpDiagLog("[netstat] p%d q=%u jt=%u stall=%u gap=%u stale=%u dropEdge=%u catchup=%u rewind=%u",
                           count, qd, sim->jitterTarget[count],
                           sim->statStallTicks[count], sim->statGapFillTicks[count],
-                          sim->statDroppedStaleInputs[count], sim->statCatchupTicks[count],
+                          sim->statDroppedStaleInputs[count], sim->statDroppedEdge[count],
+                          sim->statCatchupTicks[count],
                           sim->statLastRewindTicks[count]);
             }
             sim->statStallTicks[count] = 0;
             sim->statGapFillTicks[count] = 0;
             sim->statDroppedStaleInputs[count] = 0;
+            sim->statDroppedEdge[count] = 0;
             sim->statCatchupTicks[count] = 0;
         }
     }
@@ -1761,6 +1784,7 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, b
     sim->inputDryTicks[playerNum] = 0;
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
     sim->jitterStallCount[playerNum] = 0;
+    sim->jitterStarveCount[playerNum] = 0;
     sim->jitterStableTicks[playerNum] = 0;
     sim->statStallTicks[playerNum] = 0;
     sim->statGapFillTicks[playerNum] = 0;
@@ -2008,6 +2032,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->inputDryTicks[playerNum] = 0;
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
     sim->jitterStallCount[playerNum] = 0;
+    sim->jitterStarveCount[playerNum] = 0;
     sim->jitterStableTicks[playerNum] = 0;
     sim->statStallTicks[playerNum] = 0;
     sim->statGapFillTicks[playerNum] = 0;
@@ -3664,6 +3689,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
         sim->inputDryTicks[i] = 0;
         sim->jitterTarget[i] = JITTER_BUFFER_DEFAULT;
         sim->jitterStallCount[i] = 0;
+        sim->jitterStarveCount[i] = 0;
         sim->jitterStableTicks[i] = 0;
         sim->statStallTicks[i] = 0;
         sim->statGapFillTicks[i] = 0;

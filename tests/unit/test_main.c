@@ -220,6 +220,7 @@ static const UnitTestEntry s_tests[] = {
     { "stall_long_dry_advances",                 run_stall_long_dry_advances                 },
     { "input_catchup",                           run_input_catchup                           },
     { "catchup_ignores_redundant_duplicates",    run_catchup_ignores_redundant_duplicates    },
+    { "jitter_buffer_grow",                      run_jitter_buffer_grow                      },
     { "error_smoothing",                         run_error_smoothing                         },
     { "loopback_join",                           run_loopback_join                           },
     { "loopback_join_loss",                      run_loopback_join_loss                      },

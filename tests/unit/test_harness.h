@@ -308,6 +308,11 @@ int run_stall_long_dry_advances(void);
 int run_input_catchup(void);
 int run_catchup_ignores_redundant_duplicates(void);
 
+/* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
+ * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
+ * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
+int run_jitter_buffer_grow(void);
+
 /* Render-only error smoothing (test_error_smoothing.c): the offset
  * accumulate/decay/clamp/wrap math as pure functions, plus the
  * clientSimResetWorld zeroing. Always built. */

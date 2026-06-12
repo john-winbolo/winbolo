@@ -188,9 +188,15 @@ struct ServerSim {
 
     /* Input jitter buffer — delay processing until buffer reaches target depth */
 #define JITTER_BUFFER_MIN       1   /* Minimum buffer depth (ticks) */
-#define JITTER_BUFFER_MAX       4   /* Maximum buffer depth (ticks) */
+#define JITTER_BUFFER_MAX       6   /* Maximum buffer depth (ticks) — 6 ≈ 60ms,
+                                     * headroom for ~25ms jitter plus the
+                                     * send-cadence bunching it rides on */
 #define JITTER_BUFFER_DEFAULT   2   /* Starting depth before we have data */
 #define JITTER_GROW_THRESHOLD   2   /* Consecutive stalls before growing */
+#define JITTER_STARVE_GROW_THRESHOLD 2 /* Drain events before growing — a queue
+                                        * that empties when input was expected
+                                        * is the reliable too-shallow signal,
+                                        * counted even while re-filling */
 #define JITTER_SHRINK_INTERVAL 100  /* Ticks of no stalls before shrinking */
 #define LAG_COMP_MAX_TICKS 14       /* 280ms max rewind (14 history entries); viewTick measures
                                      * the true view age (~ping+20ms+jitterWait), ~2x the old
@@ -204,10 +210,11 @@ struct ServerSim {
  * Bounds reintroduced overshoot to this many half-steps under real loss;
  * tune up if localhost recon/s isn't ~0, down if high-ping overshoot
  * returns. */
-#define STALL_ADVANCE_DRY_TICKS 3
+#define STALL_ADVANCE_DRY_TICKS 4
     uint8_t inputBufferFilled[MAX_TANKS];  /* true once initial fill reached */
     uint8_t  jitterTarget[MAX_TANKS];      /* Current adaptive buffer depth */
     uint8_t  jitterStallCount[MAX_TANKS];  /* Consecutive ticks queue was empty when expected */
+    uint8_t  jitterStarveCount[MAX_TANKS]; /* Recent drain events (queue emptied when input expected) */
     uint16_t jitterStableTicks[MAX_TANKS]; /* Ticks since last stall */
     uint8_t inputDryTicks[MAX_TANKS]; /* consecutive half-steps with no fresh
                                        * input; gates stall-advance vs wait */
@@ -218,6 +225,7 @@ struct ServerSim {
     uint16_t statStallTicks[MAX_TANKS];         /* stall-branch executions this window */
     uint16_t statGapFillTicks[MAX_TANKS];       /* gap-filled ticks this window */
     uint16_t statDroppedStaleInputs[MAX_TANKS]; /* stale queue entries skipped this window */
+    uint16_t statDroppedEdge[MAX_TANKS];  /* stale drops that were a recent button change (diagnostic) */
     uint16_t statCatchupTicks[MAX_TANKS];       /* extra catch-up dequeues this window —
                                                  * one per backlog-bleed apply when
                                                  * post-dequeue depth > jitterTarget + 1 */

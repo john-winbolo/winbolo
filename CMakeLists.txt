@@ -2523,6 +2523,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_input_catchup.c
+    tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
@@ -2776,6 +2777,7 @@ set(_unit_test_names
     stall_long_dry_advances
     input_catchup
     catchup_ignores_redundant_duplicates
+    jitter_buffer_grow
     edge_send_predicate
     error_smoothing
     loopback_join
