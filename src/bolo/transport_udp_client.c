@@ -2167,25 +2167,32 @@ static bool udpClientTick(void *ctx) {
      * (20ms/tick — see PING_INTERVAL_TICKS = 100 → 2s), so 3 ticks
      * is ~60ms, close to the plan's ~50ms target.  Send earlier when
      * a single TICK delivered 2+ new events at once, to free server
-     * queue slots promptly. */
+     * queue slots promptly.
+     *
+     * The ack is re-sent (coalesced to ~60ms) even when its value has
+     * not advanced, for as long as the server keeps retransmitting
+     * already-acked events: each retransmitted TICK re-arms
+     * controlAckPendingTick, and a dropped lobby ack is only recovered
+     * by re-sending the same value.  This self-terminates — the server
+     * stops sending TICKs once its ackedSeq reaches nextSeq, so the
+     * pending flag stops being re-armed and a caught-up server produces
+     * zero re-acks (no per-tick ack storm).  See controlAckResendDue. */
     if (c->joinState == UDP_CLIENT_CONNECTED &&
-        c->controlAckPendingTick != 0 &&
-        c->controlEventAck > c->lastSentControlAck) {
+        controlAckResendDue(c->controlAckPendingTick, c->localTick,
+                            c->controlEventAck, c->lastSentControlAck)) {
         bool overdue = (c->localTick - c->controlAckPendingTick) >= 3;
         bool eagerSend = (c->controlEventAck > c->lastSentControlAck + 1);
-        if (overdue || eagerSend) {
-            uint8_t ackBuf[PACKET_HEADER_SIZE + 4];
-            packHeader(ackBuf, PACKET_CONTROL_ACK, c->outSequence++);
-            packU32(ackBuf + PACKET_HEADER_SIZE, c->controlEventAck);
-            udpClientSendTo(c, ackBuf, sizeof(ackBuf));
-            mpDiagLog("[cli] CONTROL_ACK send ack=%u prevSent=%u localTick=%u overdue=%d eager=%d",
-                      (unsigned)c->controlEventAck,
-                      (unsigned)c->lastSentControlAck,
-                      (unsigned)c->localTick,
-                      (int)overdue, (int)eagerSend);
-            c->lastSentControlAck = c->controlEventAck;
-            c->controlAckPendingTick = 0;
-        }
+        uint8_t ackBuf[PACKET_HEADER_SIZE + 4];
+        packHeader(ackBuf, PACKET_CONTROL_ACK, c->outSequence++);
+        packU32(ackBuf + PACKET_HEADER_SIZE, c->controlEventAck);
+        udpClientSendTo(c, ackBuf, sizeof(ackBuf));
+        mpDiagLog("[cli] CONTROL_ACK send ack=%u prevSent=%u localTick=%u overdue=%d eager=%d",
+                  (unsigned)c->controlEventAck,
+                  (unsigned)c->lastSentControlAck,
+                  (unsigned)c->localTick,
+                  (int)overdue, (int)eagerSend);
+        c->lastSentControlAck = c->controlEventAck;
+        c->controlAckPendingTick = 0;
     }
 
     /* Handle join handshake — send/resend join requests */

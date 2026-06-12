@@ -201,6 +201,43 @@ int run_queue_enqueue_into_empty_after_wipe(void) {
     return 0;
 }
 
+int run_control_ack_resend_due(void) {
+    /* The dropped-lobby-ack hole: the standalone PACKET_CONTROL_ACK used
+     * to fire only on a value advance, so one lost ack left the server
+     * retransmitting forever until the 10s unacked-control timeout
+     * disconnected the client.  The fix re-sends the current (unchanged)
+     * ack while TICKs keep re-arming the pending flag, coalesced to ~3
+     * ticks, and stops the moment the server catches up. */
+    const uint32_t localTick = 1000;
+
+    /* Caught-up server: no TICK pending → never send (the steady-state
+     * invariant — no per-tick ack storm). */
+    UT_ASSERT_MSG(!controlAckResendDue(0, localTick, 5, 5),
+                  "no pending TICK must not send");
+    UT_ASSERT_MSG(!controlAckResendDue(0, localTick, 9, 5),
+                  "no pending TICK must not send even with un-acked advance");
+
+    /* Armed but not yet overdue (<3 ticks since arming) and value
+     * unchanged: hold for the coalesce window. */
+    UT_ASSERT_MSG(!controlAckResendDue(localTick - 2, localTick, 5, 5),
+                  "armed 2 ticks ago, unchanged value: must coalesce, not send");
+
+    /* Armed and overdue (>=3 ticks) with unchanged value: this is the
+     * dropped-ack recovery — re-send the same value. */
+    UT_ASSERT_MSG(controlAckResendDue(localTick - 3, localTick, 5, 5),
+                  "armed 3 ticks ago, unchanged value: must re-send");
+    UT_ASSERT_MSG(controlAckResendDue(localTick - 10, localTick, 5, 5),
+                  "long overdue, unchanged value: must re-send");
+
+    /* Eager path: a single TICK delivered 2+ new events (ack jumped past
+     * lastSent+1) — send immediately even before the coalesce window. */
+    UT_ASSERT_MSG(controlAckResendDue(localTick, localTick, 7, 5),
+                  "ack jumped to lastSent+2: eager send");
+    UT_ASSERT_MSG(!controlAckResendDue(localTick, localTick, 6, 5),
+                  "single new event (lastSent+1): not eager, not overdue → hold");
+    return 0;
+}
+
 int run_queue_hasspace_at_capacity(void) {
     ClientControlEventQueue q;
     queueInit(&q);

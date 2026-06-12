@@ -112,6 +112,34 @@ static inline void controlEventQueueAssertValid(const ClientControlEventQueue *q
     SDL_assert((q->nextSeq - q->ackedSeq) <= CONTROL_EVENT_QUEUE_SIZE);
 }
 
+/* Decide whether the coalesced standalone PACKET_CONTROL_ACK should be
+ * (re)sent this tick.  pendingTick is the localTick at which the most
+ * recent PACKET_CONTROL_TICK armed the ack (0 = nothing pending); the
+ * emission resets it to 0 after sending, so each subsequent TICK re-arms
+ * it.  The ack is sent — including re-sending an already-sent value —
+ * whenever a TICK is pending and either:
+ *   - overdue: ~3 ticks (~60ms at 50 Hz) have elapsed since arming,
+ *              coalescing a burst of retransmitted TICKs into one ack; or
+ *   - eager:   a single TICK delivered 2+ new events (ack jumped past
+ *              lastSent+1), to free server queue slots promptly.
+ * The value-advance gate is deliberately absent: a re-send of an
+ * unchanged ack value is exactly what recovers a dropped lobby ack while
+ * the server keeps retransmitting already-acked events.  Self-terminating:
+ * pendingTick is only re-armed by an incoming TICK, and the server stops
+ * sending TICKs the moment its ackedSeq reaches nextSeq, so a caught-up
+ * server yields zero re-sends — no per-tick ack storm in steady state. */
+static inline bool controlAckResendDue(uint32_t pendingTick,
+                                       uint32_t localTick,
+                                       uint32_t controlEventAck,
+                                       uint32_t lastSentControlAck) {
+    if (pendingTick == 0) {
+        return false;
+    }
+    bool overdue = (localTick - pendingTick) >= 3;
+    bool eager = (controlEventAck > lastSentControlAck + 1);
+    return overdue || eager;
+}
+
 /* Join retry interval in ticks (1 second) */
 #define JOIN_RETRY_INTERVAL 50
 
