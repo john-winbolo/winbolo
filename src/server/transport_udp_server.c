@@ -2381,6 +2381,7 @@ void transportUdpServerSetUploadConfig(UploadPolicy policy,
 }
 
 void transportUdpServerSetNetImpair(const char *spec) {
+#if WB_ENABLE_NETIMPAIR
     NetImpairConfig cfg;
     if (spec == NULL || !netImpairParseConfig(spec, &cfg)) {
         WB_LOG_WARN(WB_LOG_CAT_NET,
@@ -2394,6 +2395,10 @@ void transportUdpServerSetNetImpair(const char *spec) {
         "netimpair enabled: delay=%ums jitter=%ums loss=%u%% burst=%u",
         (unsigned)cfg.baseDelayMs, (unsigned)cfg.jitterMs,
         (unsigned)cfg.lossPercent, (unsigned)cfg.burstLossLen);
+#else
+    /* Impairment tooling compiled out (WB_ENABLE_NETIMPAIR == 0). */
+    (void)spec;
+#endif
 }
 
 void transportUdpServerDestroy(void) {

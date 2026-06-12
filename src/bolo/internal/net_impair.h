@@ -23,6 +23,18 @@
 #include "platform_net.h"   /* struct sockaddr_in */
 
 /*
+ * WB_ENABLE_NETIMPAIR — master compile-time switch for the network
+ * impairment tooling.  OFF (0) in every shipping build: the dedicated
+ * server's `-netimpair` flag is removed from the CLI and its usage text,
+ * and the client's WB_NETIMPAIR environment variable is ignored, so
+ * impairment can never be enabled at runtime.  To use the tooling for
+ * local lag/loss testing, change the 0 below to 1 and rebuild.
+ */
+#ifndef WB_ENABLE_NETIMPAIR
+#define WB_ENABLE_NETIMPAIR 0
+#endif
+
+/*
  * Runtime, seedable network-impairment layer.  Wraps datagram send/recv
  * on either endpoint with configurable delay, jitter, loss and burst
  * loss so a developer can reproduce a lossy/laggy path on localhost.

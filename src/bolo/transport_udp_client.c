@@ -2691,6 +2691,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
      * grammar as the dedicated server's -netimpair. */
     netImpairInit(&c->impairIn);
     netImpairInit(&c->impairOut);
+#if WB_ENABLE_NETIMPAIR
     {
         const char *impairSpec = getenv("WB_NETIMPAIR");
         NetImpairConfig impairCfg;
@@ -2706,6 +2707,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                       (unsigned)impairCfg.burstLossLen);
         }
     }
+#endif
 
     t.recordInput = udpClientRecordInput;
     t.sendInput = udpClientSendInput;
