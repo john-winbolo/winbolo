@@ -55,6 +55,7 @@ typedef struct {
     uint32_t mapEventAck;   /* Map event ACK: next expected map event seq (0 = none) */
     uint32_t controlEventAck; /* Control event ACK: next expected control event seq (0 = none) */
     uint16_t pingMs;        /* Client's self-measured RTT in ms */
+    uint32_t viewTick;      /* serverTick of the snapshot being displayed when this input was sampled; 0 = unknown (server falls back to the ping estimate). */
 } InputPacket;
 
 /*********************************************************

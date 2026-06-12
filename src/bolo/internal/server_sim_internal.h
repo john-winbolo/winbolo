@@ -192,7 +192,11 @@ struct ServerSim {
 #define JITTER_BUFFER_DEFAULT   2   /* Starting depth before we have data */
 #define JITTER_GROW_THRESHOLD   2   /* Consecutive stalls before growing */
 #define JITTER_SHRINK_INTERVAL 100  /* Ticks of no stalls before shrinking */
-#define LAG_COMP_MAX_TICKS 12       /* 250ms one-way max compensation (12 game ticks) */
+#define LAG_COMP_MAX_TICKS 14       /* 280ms max rewind (14 history entries); viewTick measures
+                                     * the true view age (~ping+20ms+jitterWait), ~2x the old
+                                     * ping/2 estimate, so the cap is raised from 12 to keep the
+                                     * high-ping case from clipping. POSITION_HISTORY_SIZE=16
+                                     * (320ms) has headroom. */
 /* Consecutive dry half-steps before a stall is treated as genuine loss
  * and the server stall-advances (consumes the tick). At/below this, a
  * dry half-step is routine send-burst cadence ripple: repeat held buttons
@@ -353,5 +357,16 @@ BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
  * the T1 surface. */
 void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
                              uint8_t kind, uint8_t toggleMode);
+
+/* Compute how many posHistory entries to rewind hit-detection for a fired
+ * input. When viewTick is known (non-zero, not ahead of simTick), rewind the
+ * real view age: (simTick - viewTick) server ticks / 2 = posHistory entries
+ * (history records once per game tick = 20ms). Otherwise fall back to the
+ * ping-based estimate (pingMs/2 + interp buffer). Result is clamped to
+ * LAG_COMP_MAX_TICKS. viewTick is client-supplied, but so is pingMs today, so
+ * the trust model is unchanged and the cap bounds any abuse. T2 so the unit
+ * test can include and drive it directly. */
+uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
+                                     uint16_t pingMs);
 
 #endif /* SERVER_SIM_INTERNAL_H */

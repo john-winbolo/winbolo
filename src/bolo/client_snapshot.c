@@ -273,6 +273,15 @@ void clientApplySnapshot(ClientSim *csPtr,
    * even when our own tank ships as a hidden stub). */
   csPtr->clientState.serverLastProcessedInput = hdr->lastProcessedInput;
 
+  /* Track a 2-deep history of applied snapshot ticks. Interp renders curr,
+   * which is one behind the newest applied frame, so the displayed view is the
+   * second-newest applied snapshot's serverTick. prevAppliedServerTick is
+   * stamped onto outgoing inputs as viewTick and stays 0 until two snapshots
+   * have been applied (then the server falls back to the ping estimate). */
+  csPtr->clientState.prevAppliedServerTick =
+      csPtr->clientState.lastAppliedServerTick;
+  csPtr->clientState.lastAppliedServerTick = hdr->serverTick;
+
   /* Update other players via interpolation */
   csPtr->interpCtx.localPlayer = playerNum;
   for (i = 0; i < tankCount; i++) {

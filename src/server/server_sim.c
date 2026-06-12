@@ -892,6 +892,24 @@ static void serverSimLogTick(ServerSim *sim) {
     logWriteTick();
 }
 
+uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
+                                     uint16_t pingMs) {
+    uint32_t ticks;
+    if (viewTick != 0 && viewTick <= simTick) {
+        /* Rewind the real view age. posHistory records once per game tick
+         * (20ms), so two server ticks map to one history entry. viewTick is
+         * client-supplied, but so is pingMs below, so the trust model is
+         * unchanged; the clamp bounds any abuse. */
+        ticks = (simTick - viewTick) / 2;
+    } else {
+        /* viewTick unknown (0) or ahead of the server (stale/garbage): keep
+         * the ping-based estimate — snapshot trip out (ping/2) + interp buffer. */
+        ticks = (((uint32_t)pingMs / 2) + INTERP_BUFFER_MS) / 20;
+    }
+    if (ticks > LAG_COMP_MAX_TICKS) ticks = LAG_COMP_MAX_TICKS;
+    return (uint8_t)ticks;
+}
+
 /* Apply a single input to player `count`'s tank: gap-fill for any ticks
  * lost to packet loss, per-input parity selection (keys vs game arm),
  * lag compensation, fire/mine/build, and the lastProcessedInput advance.
@@ -1013,10 +1031,8 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
              * (matching the old stall branch) rather than rewinding. */
             sim->sim.lagCompTicks = 0;
         } else {
-            uint16_t pingMs = sim->playerPing[count];
-            uint16_t delayMs = (pingMs / 2) + INTERP_BUFFER_MS;
-            uint8_t compTicks = (uint8_t)(delayMs / 20);
-            if (compTicks > LAG_COMP_MAX_TICKS) compTicks = LAG_COMP_MAX_TICKS;
+            uint8_t compTicks = serverSimComputeLagCompTicks(
+                sim->tick, applied.viewTick, sim->playerPing[count]);
             sim->sim.lagCompTicks = compTicks;
             sim->statLastRewindTicks[count] = compTicks;
         }

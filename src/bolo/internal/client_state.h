@@ -53,6 +53,15 @@ typedef struct {
                                         * of the connection state by
                                         * clientStateCreate; refreshed on every
                                         * snapshot. */
+    uint32_t lastAppliedServerTick; /* hdr->serverTick of the most recent applied
+                                     * snapshot. */
+    uint32_t prevAppliedServerTick; /* hdr->serverTick of the second-newest applied
+                                     * snapshot — the frame interp actually displays
+                                     * (curr is one behind the newest). Stays 0 until
+                                     * two snapshots have been applied. Stamped onto
+                                     * outgoing inputs as viewTick for exact lag
+                                     * compensation. Zeroed with the rest of the
+                                     * connection state by clientStateCreate. */
     bool initialized;
     bool hasPredictedTank;    /* TRUE once we own a separate predicted tank */
 } ClientState;

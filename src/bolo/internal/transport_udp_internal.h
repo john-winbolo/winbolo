@@ -190,7 +190,7 @@ static inline bool controlSeqResetDetected(uint32_t controlEventCount,
  * decoders length-check each field and reject malformed packets. */
 #define LOBBY_SLOT_WIRE_SIZE (1 + 1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2 + 1 + 1)
 
-#define INPUT_PACKET_WIRE_SIZE 25
+#define INPUT_PACKET_WIRE_SIZE 29
 #define TANK_SNAPSHOT_WIRE_SIZE 27
 
 /* ---- Serialization helpers ---- */

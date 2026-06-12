@@ -31,6 +31,7 @@
 #include "util.h"
 #include "messages.h"
 #include "client_sim.h"
+#include "client_net.h"                /* clientSimGetViewTick */
 #include "frontend.h"                  /* frontEndApplyLocalTankPrefs */
 #include "client_sim_internal.h"
 #include "control_event.h"
@@ -361,6 +362,7 @@ static void udpClientRecordInputInternal(TransportUdpClientCtx *c,
         stamped.mapEventAck = c->mapEventAck;
         stamped.controlEventAck = c->controlEventAck;
         stamped.pingMs = c->pingMs;
+        stamped.viewTick = clientSimGetViewTick(c->clientSim);
         c->inputRing[c->inputRingCount % CLIENT_INPUT_RING_SIZE] = stamped;
     }
     c->inputRingCount++;

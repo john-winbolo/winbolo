@@ -87,6 +87,11 @@ ClientConnectState clientSimGetConnectState(const ClientSim *cs);
 const char *clientSimGetConnectErrorReason(const ClientSim *cs);
 BYTE        clientSimGetServerPlayerNum(const ClientSim *cs);
 const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen);
+/* serverTick of the frame interp is currently displaying (second-newest applied
+ * snapshot). Stamped onto outgoing inputs as viewTick so the server can rewind
+ * hit-detection by the true view age. Returns 0 until two snapshots have been
+ * applied, which routes the server to its ping-based fallback. */
+uint32_t    clientSimGetViewTick(const ClientSim *cs);
 
 /* === Send wrappers === */
 void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message);

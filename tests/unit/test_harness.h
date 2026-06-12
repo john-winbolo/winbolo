@@ -321,6 +321,13 @@ int run_loopback_join_loss(void);
 int run_loopback_lobby_running_loss(void);
 int run_join_version_gate(void);
 
+/* Exact lag-compensation viewTick (test_viewtick_rewind.c): the pure
+ * serverSimComputeLagCompTicks rewind math (real view age, ping fallback,
+ * clamp) and the client's displayed-tick stamp (second-newest applied
+ * snapshot serverTick, 0 until two are applied). */
+int run_viewtick_rewind(void);
+int run_viewtick_displayed_tick(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

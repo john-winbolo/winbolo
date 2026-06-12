@@ -59,6 +59,7 @@ static int check_wire_roundtrip(void) {
     in.mapEventAck     = 0x1A1B1C1Du;
     in.controlEventAck = 0x2A2B2C2Du;
     in.pingMs          = 0xBEEF;
+    in.viewTick        = 0x12345678u;
 
     packed = packInputPacket(buf, &in);
     UT_ASSERT(packed == INPUT_PACKET_WIRE_SIZE);
@@ -78,6 +79,7 @@ static int check_wire_roundtrip(void) {
     UT_ASSERT(out.mapEventAck == in.mapEventAck);
     UT_ASSERT(out.controlEventAck == in.controlEventAck);
     UT_ASSERT(out.pingMs == in.pingMs);
+    UT_ASSERT(out.viewTick == in.viewTick);
 
     /* Header + 1 count byte + a full redundancy window of packed inputs. */
     UT_ASSERT(PACKET_HEADER_SIZE + 1 + INPUT_REDUNDANCY_COUNT * packed
