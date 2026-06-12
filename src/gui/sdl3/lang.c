@@ -1080,6 +1080,7 @@ static const LangEntry langTable[] = {
     {1491, "Don't ask again"},
     {1492, "Keyboard"},
     {1493, "Gray letterbox bars"},
+    {1494, "Reconciles: {number}/s, err avg {string1}px, max {string2}px, smoothing {string3}px"},
 
     /* macOS native menu — App / File / Window menu items mirrored by
      * src/gui/sdl3/platform/mac_menubar.mm. Not referenced by the
@@ -1369,7 +1370,6 @@ static const LangEntry langTable[] = {
     {1464, "Make host"},
     {1465, "Make \"{player}\" the host?"},
     {1466, "{player} is now the host"},
-    {1467, "Reconciles: {number}/s, err avg {string1}px, max {string2}px, smoothing {string3}px"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

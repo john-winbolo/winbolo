@@ -1431,7 +1431,7 @@
  * window. {number} = reconciles/sec, {string1} = avg position error px,
  * {string2} = max position error px, {string3} = live render-error-offset
  * magnitude px (the correction currently being smoothed out). */
-#define STR_DLGNETINFO_RECONCILE            1467
+#define STR_DLGNETINFO_RECONCILE            1494
 
 /* WinBolo.net 1v1 ladder position shown in the status block.
  * STR_DLGWBN_RANK: {number} = position, {number2} = ranked-player total. */

@@ -269,6 +269,7 @@ STR_DLGNETINFO_KBOUT=KB/s Giden:
 STR_DLGNETINFO_PACKETS_RATE=Paket/sn: {number} gelen / {number2} giden
 STR_DLGNETINFO_KB_RATE=KB/sn: {string1} gelen / {string2} giden
 STR_DLGNETINFO_LOSS=Paket kaybı: {number}% ({number2}/{number3} bu sn, {number4} oyun toplamı)
+STR_DLGNETINFO_RECONCILE=Uzlaştırmalar: {number}/sn, hata ort {string1}px, maks {string2}px, düzeltme {string3}px
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Tohumu Kopyala
