@@ -264,6 +264,7 @@ int run_queue_wipe_resets_both_seqs(void);
 int run_queue_enqueue_into_empty_after_wipe(void);
 int run_queue_hasspace_at_capacity(void);
 int run_control_ack_resend_due(void);
+int run_control_seq_reset_detect(void);
 int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);

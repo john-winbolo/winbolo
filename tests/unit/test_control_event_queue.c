@@ -238,6 +238,42 @@ int run_control_ack_resend_due(void) {
     return 0;
 }
 
+int run_control_seq_reset_detect(void) {
+    /* The running-phase desync: the server wipes the control queue to seq 1
+     * at game start and republishes RUNNING at seq 1, but the client's ack
+     * is still high (22) from the lobby phase.  RESET-DETECT must snap the
+     * ack down to the new space once — regardless of inLobby timing — and
+     * never re-fire on retransmits (which would loop). */
+
+    /* First sight of the running reset, not yet adopted: snap. */
+    UT_ASSERT_MSG(controlSeqResetDetected(1, 1, 22, false, true),
+                  "stale-high ack + RUNNING at baseSeq=1 + !adopted must snap");
+
+    /* Already adopted (ack advanced to 2, retransmit of seq-1 RUNNING):
+     * dedup territory, must NOT re-snap. */
+    UT_ASSERT_MSG(!controlSeqResetDetected(1, 1, 2, true, true),
+                  "adopted: retransmitted seq-1 RUNNING must not re-snap");
+
+    /* Adopted, first event still RUNNING, baseSeq below ack — the exact
+     * retransmit shape that the loop-free flag must block. */
+    UT_ASSERT_MSG(!controlSeqResetDetected(3, 1, 5, true, true),
+                  "adopted: any baseSeq<ack RUNNING tail must not re-snap");
+
+    /* Not yet adopted but the tail does not lead with RUNNING — an ordinary
+     * lobby/countdown retransmit, not a sequence-space reset. */
+    UT_ASSERT_MSG(!controlSeqResetDetected(2, 1, 22, false, false),
+                  "non-RUNNING first event must not be treated as a reset");
+
+    /* Empty tail: nothing to detect. */
+    UT_ASSERT_MSG(!controlSeqResetDetected(0, 1, 22, false, true),
+                  "empty control tail must not snap");
+
+    /* Forward progress (baseSeq == ack, normal new event) is not a reset. */
+    UT_ASSERT_MSG(!controlSeqResetDetected(1, 22, 22, false, true),
+                  "baseSeq>=ack is forward progress, not a reset");
+    return 0;
+}
+
 int run_queue_hasspace_at_capacity(void) {
     ClientControlEventQueue q;
     queueInit(&q);

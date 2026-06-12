@@ -126,6 +126,7 @@ static const UnitTestEntry s_tests[] = {
     { "queue_enqueue_into_empty_after_wipe",     run_queue_enqueue_into_empty_after_wipe     },
     { "queue_hasspace_at_capacity",              run_queue_hasspace_at_capacity              },
     { "control_ack_resend_due",                  run_control_ack_resend_due                  },
+    { "control_seq_reset_detect",                run_control_seq_reset_detect                },
     { "brain_crash_log_writes_file",             run_brain_crash_log_writes_file             },
     { "brain_crash_log_falls_back_to_luaptr",    run_brain_crash_log_falls_back_to_luaptr    },
     { "brain_inbox_push_peek_fifo",              run_brain_inbox_push_peek_fifo              },

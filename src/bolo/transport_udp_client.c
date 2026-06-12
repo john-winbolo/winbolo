@@ -117,6 +117,14 @@ typedef struct {
      * used to avoid resending an unchanged ACK. */
     uint32_t controlAckPendingTick;
     uint32_t lastSentControlAck;
+    /* Set once the client has snapped controlEventAck down into the new
+     * sequence space after the server's game-start queue wipe (seq-1
+     * RUNNING).  Cleared on the reverse game-over / lobby transition so
+     * the next game's wipe re-adopts.  Decouples RESET-DETECT from
+     * inLobby timing: under loss/reorder inLobby can flip false before
+     * the seq-1 RUNNING snapshot is processed, which used to skip the
+     * snap forever and wedge the control queue. */
+    bool runningSeqAdopted;
 
     /* Join handshake state */
     uint32_t joinAttempts;
@@ -880,6 +888,17 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
             /* Drop any pre-flip snapshot still buffered in hasSnapshot. */
             c->hasSnapshot = false;
         }
+        /* Applying RUNNING through the reliable control sequence means the
+         * client is now caught up in the running sequence space, so mark it
+         * adopted.  This covers the direct-into-running joiner (controlEventAck
+         * was already at seq 1, so RESET-DETECT's baseSeq < ack test never
+         * tripped and never set the flag): without it, a retransmitted
+         * join-sync tail would re-trip RESET-DETECT and re-apply the whole
+         * sequence.  The out-of-band RUNNING delivery that flips inLobby early
+         * does not reach this path (it bypasses the reliable ack machinery),
+         * so the snapshot-tail snap is still reached when the genuine wipe
+         * needs it. */
+        c->runningSeqAdopted = true;
         /* Dispatch the event itself — flips netStat to running, clears
          * inLobby on the sim, etc. The no-lobby joiner still needs this
          * to flip netStat → netRunning even though wasInLobby is false. */
@@ -888,6 +907,17 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
             *skipPriorGameTails = true;
         }
         return;
+    }
+    /* Clear the running-sequence adoption flag on the reverse transition so
+     * the next game-start wipe re-adopts the fresh seq space.  Round-end
+     * (running → game-over → lobby) does NOT wipe the server's control
+     * queue — only transportUdpServerOnGameStart does — so clearing here
+     * just re-arms RESET-DETECT for the next wipe.  No seq-1 RUNNING is
+     * published until that wipe, so this can't trigger a spurious re-snap
+     * within the current sequence space. */
+    if (evt->type == CTRL_GAME_PHASE_GAME_OVER ||
+        evt->type == CTRL_GAME_PHASE_LOBBY) {
+        c->runningSeqAdopted = false;
     }
     /* Default path — identical to the legacy direct-dispatch route. */
     clientSimApplyControl(c->clientSim, evt);
@@ -1328,23 +1358,23 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * because controlEventAck is still high from the lobby phase, and
          * clientSimApplyControlOrdered's own ack-reset never gets to run.
          *
-         * Gate on inLobby.  The queue-restart detection is only meaningful
-         * during the lobby→running transition itself.  Once inLobby has
-         * flipped to false (i.e. we've already processed the running flip
-         * once), every subsequent retransmit of seq=1 RUNNING is plain
-         * dedup territory — the server keeps sending it until its own
-         * ackedSeq catches up, and re-firing RESET-DETECT on every retransmit
-         * would cause a snap-then-reapply loop that starves the main loop. */
-        if (controlEventCount > 0 &&
-            c->clientSim != NULL &&
-            c->clientSim->inLobby &&
-            controlEventBaseSeq < c->controlEventAck &&
+         * Gate on a once-per-wipe adoption flag, not inLobby.  The flag
+         * fires the snap exactly once when the client first sees the
+         * running reset — whether or not inLobby has already flipped under
+         * loss/reorder — and blocks re-firing on every subsequent seq=1
+         * RUNNING retransmit (which would otherwise cause a snap-then-reapply
+         * loop that starves the main loop).  The flag is cleared on the
+         * reverse game-over / lobby transition so the next game re-adopts. */
+        if (c->clientSim != NULL &&
             pos + 3 <= len &&
-            buf[pos] == (uint8_t)CTRL_GAME_PHASE_RUNNING) {
+            controlSeqResetDetected(controlEventCount, controlEventBaseSeq,
+                                    c->controlEventAck, c->runningSeqAdopted,
+                                    buf[pos] == (uint8_t)CTRL_GAME_PHASE_RUNNING)) {
             mpDiagLog("[cli] SNAPSHOT-tail RESET-DETECT baseSeq=%u localAck=%u (server queues restarted; snapping back)",
                       (unsigned)controlEventBaseSeq,
                       (unsigned)c->controlEventAck);
             c->controlEventAck = controlEventBaseSeq;
+            c->runningSeqAdopted = true;
         }
         for (i = 0; i < controlEventCount; i++) {
             uint32_t evSeq = controlEventBaseSeq + (uint32_t)i;
@@ -2638,6 +2668,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->controlEventAck = 1;   /* First valid control event seq is 1 */
     c->controlAckPendingTick = 0;
     c->lastSentControlAck = 0;
+    c->runningSeqAdopted = false;
     c->localTick = 0;
     c->lastPingSentTick = 0;
     c->pingMs = 0;

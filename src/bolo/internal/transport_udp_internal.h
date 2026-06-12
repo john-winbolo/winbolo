@@ -140,6 +140,32 @@ static inline bool controlAckResendDue(uint32_t pendingTick,
     return overdue || eager;
 }
 
+/* Decide whether an incoming control-event tail is the server's
+ * game-start sequence-space restart that the client must adopt.  The
+ * server wipes the per-client control queue to (ackedSeq=1, nextSeq=1)
+ * in transportUdpServerOnGameStart and publishes CTRL_GAME_PHASE_RUNNING
+ * at seq 1, so the running flip lands at the bottom of a new sequence
+ * space while the client's controlEventAck is still high from the lobby
+ * phase.  When this returns true the caller snaps controlEventAck down to
+ * baseSeq so seq-1 RUNNING isn't dedup'd away.
+ *
+ * Deliberately independent of inLobby: under loss/reorder inLobby can
+ * flip false before the seq-1 RUNNING snapshot is processed.  runningSeqAdopted
+ * makes the snap fire exactly once per wipe (set true on snap, cleared on
+ * the reverse game-over/lobby transition) and stay loop-free on retransmits:
+ * after adoption the flag blocks a re-snap and seq-1 RUNNING dedups normally
+ * (baseSeq < the now-advanced ack but adopted == true → no re-fire). */
+static inline bool controlSeqResetDetected(uint32_t controlEventCount,
+                                           uint32_t controlEventBaseSeq,
+                                           uint32_t controlEventAck,
+                                           bool runningSeqAdopted,
+                                           bool firstEventIsRunning) {
+    return controlEventCount > 0 &&
+           !runningSeqAdopted &&
+           firstEventIsRunning &&
+           controlEventBaseSeq < controlEventAck;
+}
+
 /* Join retry interval in ticks (1 second) */
 #define JOIN_RETRY_INTERVAL 50
 
