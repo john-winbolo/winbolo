@@ -403,14 +403,10 @@ void clientApplySnapshot(ClientSim *csPtr,
             }
 
             /* Prediction diverged — snap to server state and replay.
-             * Save the predicted angle: if the angle was actually correct
-             * (quantized values match) we restore it after replay to avoid
-             * gunsight jitter caused by speed-quantization-induced position
-             * drift triggering unnecessary angle changes during replay. */
-            TURNTYPE savedAngle = predAngle;
-            BYTE savedFirstLeft = tankGetFirstLeft(&MY_TANK(csPtr));
-            BYTE savedFirstRight = tankGetFirstRight(&MY_TANK(csPtr));
-
+             * The predicted angle is no longer restored after replay; the
+             * render-only error smoothing below absorbs the sub-quantum
+             * corrections that the old angle-restore band-aid hid, so the
+             * honest replayed angle is kept. */
             tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), servX, servY, servAngle, FALSE);
             {
               BYTE isDead, onBoat;
@@ -473,23 +469,10 @@ void clientApplySnapshot(ClientSim *csPtr,
             }
             csPtr->sim.isPredicting = FALSE;
 
-            /* If the server's angle matched our prediction (quantized), the
-             * reconciliation was triggered only by position drift (e.g. from
-             * speed quantization).  Restore the
-             * predicted angle + turn ramp-up so the gunsight doesn't flicker
-             * from tiny position-induced turn-rate differences during replay. */
-            if (!angleMismatch) {
-              WORLD finalX, finalY;
-              tankGetWorld(&MY_TANK(csPtr), &finalX, &finalY);
-              tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), finalX, finalY, savedAngle, FALSE);
-              tankSetFirstLeft(&MY_TANK(csPtr), savedFirstLeft);
-              tankSetFirstRight(&MY_TANK(csPtr), savedFirstRight);
-            }
-
             /* Deposit the correction into the render-only error offset so
              * it slides instead of snapping. Read the post-replay pose
-             * AFTER the angle-restore block above so the offset reflects
-             * what will actually be simulated next frame; accumulate (never
+             * (after the replay loop) so the offset reflects what will
+             * actually be simulated next frame; accumulate (never
              * overwrite) so back-to-back corrections compose. A correction
              * past the clamp zeroes the offset — a genuine teleport snaps. */
             {
