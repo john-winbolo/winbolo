@@ -221,6 +221,9 @@ static const UnitTestEntry s_tests[] = {
     { "input_catchup",                           run_input_catchup                           },
     { "catchup_ignores_redundant_duplicates",    run_catchup_ignores_redundant_duplicates    },
     { "error_smoothing",                         run_error_smoothing                         },
+    { "loopback_join",                           run_loopback_join                           },
+    { "loopback_join_loss",                      run_loopback_join_loss                      },
+    { "loopback_lobby_running_loss",             run_loopback_lobby_running_loss             },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

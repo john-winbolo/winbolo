@@ -313,6 +313,13 @@ int run_catchup_ignores_redundant_duplicates(void);
  * clientSimResetWorld zeroing. Always built. */
 int run_error_smoothing(void);
 
+/* In-process loopback transport tests (loopback_harness.c): real UDP
+ * client + server over localhost sockets, with seeded impairment on the
+ * client endpoint. Convergence-bounded, never exact-trace. */
+int run_loopback_join(void);
+int run_loopback_join_loss(void);
+int run_loopback_lobby_running_loss(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

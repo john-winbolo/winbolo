@@ -2526,6 +2526,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
+    # Loopback transport tests: real UDP client + server over localhost,
+    # sharing the loopback_harness fixture.
+    tests/unit/loopback_harness.c
+    tests/unit/test_loopback_join.c
+    tests/unit/test_loopback_join_loss.c
+    tests/unit/test_loopback_lobby_running_loss.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2568,6 +2574,13 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+    # Activate the network-impairment hooks for this target's compilation of
+    # transport_udp_client.c (compiled per-target above), so the loopback
+    # tests can drive a seeded lossy path via WB_NETIMPAIR. server_static
+    # owns transport_udp_server.c and is NOT recompiled here, so every
+    # shipping target keeps WB_ENABLE_NETIMPAIR=0; client-endpoint impairment
+    # already covers both directions (impairIn + impairOut).
+    WB_ENABLE_NETIMPAIR=1
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -2763,6 +2776,9 @@ set(_unit_test_names
     catchup_ignores_redundant_duplicates
     edge_send_predicate
     error_smoothing
+    loopback_join
+    loopback_join_loss
+    loopback_lobby_running_loss
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
