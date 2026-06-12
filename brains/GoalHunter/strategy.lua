@@ -168,6 +168,16 @@ function M.update(state, world, info)
     new_phase = "middle"
     phase_reason = string.format("pills=%.0f%% (%d/%d) bases=%.0f%% (%d/%d)", friendly_ratio*100, friendly_pills, total_pills, base_ratio*100, friendly_bases, contested_bases)
   end
+
+  -- One-way ratchet: "opening" is a startup-only phase. Once we've advanced past
+  -- it (state.phase is anything non-opening), never fall back to opening — a late
+  -- base reverting to neutral shouldn't re-trigger opening-phase behavior. Hold
+  -- at "middle" instead. (Endgame<->middle still flexes freely; only opening is
+  -- latched off.)
+  if new_phase == "opening" and state.phase and state.phase ~= "opening" then
+    phase_reason = "ratchet: past opening (was: " .. phase_reason .. ")"
+    new_phase = "middle"
+  end
   state.phase_reason = phase_reason
 
   -- Hysteresis: require N consecutive ticks before switching

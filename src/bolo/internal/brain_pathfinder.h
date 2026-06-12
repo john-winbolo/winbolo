@@ -92,6 +92,12 @@ struct BrainPathfinder {
   int16_t  overlay_grid[65536];       /* modder-extensible custom cost layer */
   int16_t  influence_grid[65536];     /* territorial influence: +friendly, -hostile */
   int16_t  danger_offset_grid[65536]; /* per-search danger adjustment (negative = subtract) */
+  /* Coastal boat band: 1 where a water/boat tile lies within
+   * BRAINPF_COASTAL_BAND euclidean tiles of land. Lets the land-only SHORT
+   * Dijkstra slate take near-shore boat shortcuts without expanding the open
+   * ocean. Computed once per map in brainPathfinderSetMap. */
+  uint8_t  coastal_boat_mask[65536];
+  const BYTE *coastal_mask_map;       /* map ptr the mask was computed for (recompute on change) */
 
   /* Per-terrain-type tables (indexed 0..15) */
   float terrain_cost_table[16];      /* land mode costs */

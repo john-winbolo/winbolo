@@ -88,3 +88,13 @@ void overlayCmdHudText(OverlayCmdBuffer *buf, float x, float y, const char *text
     strncpy(cmd->text, text, OVERLAY_TEXT_MAX - 1);
     cmd->text[OVERLAY_TEXT_MAX - 1] = '\0';
 }
+
+void overlayCmdHudRect(OverlayCmdBuffer *buf, float x, float y, float w, float h,
+                       uint8_t anchor, uint8_t r, uint8_t g, uint8_t b, uint8_t a, int filled) {
+    OverlayCmd *cmd = pushCmd(buf);
+    cmd->type = filled ? OVERLAY_CMD_HUD_RECT_FILL : OVERLAY_CMD_HUD_RECT;
+    cmd->x1 = x; cmd->y1 = y;
+    cmd->x2 = w; cmd->y2 = h;
+    cmd->anchor = anchor;
+    cmd->r = r; cmd->g = g; cmd->b = b; cmd->a = a;
+}

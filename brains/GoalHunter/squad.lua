@@ -1,0 +1,1583 @@
+-- =========================================================================
+-- NewAutopilot/squad.lua — squad coordination (Phase 1: pill blitz).
+--
+-- Slice 1 (this file, so far): deterministic role allocation + broadcast +
+-- a right-side roster HUD. No behavior change yet — roles are computed and
+-- shown so the rest of the blitz machinery can be layered on top.
+--
+-- Roles (SQUAD_COORDINATION_PLAN.md §3) are a PURE FUNCTION of the active
+-- protocol-bot set (self + allies broadcasting recently), so every bot
+-- reaches the same assignment with no central authority.
+-- =========================================================================
+
+local C          = require("constants")
+local ally_state = require("ally_state")
+local cpf        = require("cpathfinder")
+local U          = require("util")
+local viz        = require("viz")
+local print2     = require("print2")
+
+local M = {}
+
+M.ROLE_COMMANDER = "c"
+M.ROLE_SOLDIER   = "s"
+M.ROLE_HARASSER  = "h"
+
+-- A commander's blitz call is OPEN while it's still in a PRE-COMMIT substate —
+-- planning, gathering/building the shield, driving in, or rallying. Once it
+-- COMMITS to firing (aim / charge / in_range_* / engage / shoot_pill / swerve)
+-- the call turns OFF: a partner can no longer join the synchronized take. The
+-- call is opened ONCE and stays open across these substates (it does NOT close
+-- just because goal._blitz momentarily flickers — e.g. DYNAMIC_COMMANDERS
+-- demoting the commander as pill HP wobbles near the hard-take threshold); it
+-- closes implicitly when the substate leaves this set, or explicitly (bcc).
+M.BLITZ_CALL_OPEN_SUB = {
+  plan_position = true, approach = true,
+  gather_trees = true, detree = true, build_walls = true,
+  blitz_wait = true,
+}
+
+-- Wipe ALL blitz/squad coordination state. Call on tank death so a respawn
+-- comes back with a clean slate — no stale negotiation, offer, reject,
+-- roster, watchdog, broadcast latch, or call registry leaking across the
+-- death. Most of these are recomputed each tick by update()/blitz_arbitrate(),
+-- but several PERSIST (pill-reject table, offered pill, negotiate watchdog,
+-- commander roster/accept/reject, comm latches) and would otherwise survive
+-- into the next life. Keep this exhaustive: every blitz/squad state field
+-- below should appear here. (Goal-level _blitz* fields die with state.goal,
+-- which the caller resets separately.)
+function M.reset_blitz_state(state)
+  -- soldier-side negotiation / commitment
+  state.squad_blitz_accepted    = nil
+  state.squad_blitz_target      = nil
+  state.squad_negotiate_cmdr    = nil
+  state.squad_negotiate_pill    = nil
+  state.squad_blitz_engage_mx   = nil
+  state.squad_blitz_engage_my   = nil
+  state.squad_blitz_bd          = nil
+  state.squad_blitz_in_position = nil
+  state.squad_blitz_aimed       = nil
+  state.squad_blitz_go          = nil
+  state.squad_blitz_repos       = nil
+  -- commander-side roster / broadcast
+  state.squad_blitz_roster      = nil
+  state.squad_blitz_reject      = nil
+  state.squad_blitz_accept      = nil
+  -- squad membership / status (recomputed each tick, cleared for cleanliness)
+  state.squad_role              = nil
+  state.squad_cmdr              = nil
+  state.squad_status            = nil
+  state.squad_help_target       = nil
+  state.squad_pns               = nil
+  state.squad_joinable_pills    = nil
+  -- commander's own open call
+  state._my_blitz_call          = nil
+  state._my_blitz_call_tick     = nil
+  -- negotiation internals / watchdog / offers / rejects (these PERSIST)
+  state._blitz_call_rejected    = nil
+  state._blitz_comm_reject      = nil
+  state._blitz_negotiate_key    = nil
+  state._blitz_negotiate_since  = nil
+  state._blitz_negotiate_scan   = nil
+  state._blitz_new_call         = nil
+  state._blitz_offer_pill       = nil
+  state._blitz_pill_reject      = nil
+  state._blitz_rebroadcast      = nil
+  state._blitz_reject           = nil
+  state._blitz_repick_tick      = nil
+  state._blitz_switch_to        = nil
+  -- committed-soldier bd refresh + commander "where are you?" query latches
+  state._blitz_bd_refresh_tick  = nil
+  state._blitz_query_ack        = nil
+  state._blitz_query_pid        = nil
+  state._blitz_query_until      = nil
+  -- known-call registry: clear + re-announce discovery from the new spawn
+  state.blitz_calls             = {}
+  state._blitz_query_send       = true
+end
+
+
+-- Build the sorted list of active protocol-bot player numbers (self + allies
+-- seen recently). Humans don't broadcast our protocol so they're excluded
+-- automatically by iter_active (they never populate ally_state slots here).
+local function protocol_pns(state, info, now)
+  local self_pn = info.player_number or -1
+  local pns = { self_pn }
+  local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
+  for pn in ally_state.iter_active(now, max_age) do
+    if pn ~= self_pn then pns[#pns + 1] = pn end
+  end
+  table.sort(pns)
+  return pns, self_pn
+end
+
+-- Deterministic role for `self_pn` given the sorted protocol set.
+-- Harassers = highest floor(frac*N) player numbers; commanders =
+-- ceil(rest / baseline) lowest of the remainder; everyone else soldier.
+function M.role_for(pns, self_pn)
+  local n = #pns
+  if n == 0 then return M.ROLE_SOLDIER end
+  local self_idx
+  for i = 1, n do if pns[i] == self_pn then self_idx = i break end end
+  if not self_idx then return M.ROLE_SOLDIER end
+
+  local frac    = C.HARASSER_FRAC or 0.20
+  local n_har   = math.floor(frac * n)
+  if n_har > 0 and self_idx > (n - n_har) then
+    return M.ROLE_HARASSER
+  end
+
+  local rest     = n - n_har
+  local baseline = C.BASELINE_SQUAD_SIZE or 3
+  local n_cmd    = math.max(1, math.ceil(rest / baseline))
+  if self_idx <= n_cmd then return M.ROLE_COMMANDER end
+  return M.ROLE_SOLDIER
+end
+
+-- Per-tick update: recompute self's role and stash it on state. The broadcast
+-- block in init.lua copies state.squad_role into bsi.role.
+-- (Hysteresis / spawn-settle is a TODO — for now the set stabilises within ~1s
+-- of spawn and the role follows it. No behavior keys off role yet.)
+-- Goal kinds a soldier will drop outright to answer a blitz (the
+-- Can this bot answer a commander's blitz on pill `help_target_id`?
+-- Returns ok(bool), reason(code|nil): "lh" low hp / "na" no ammo / "bz" busy.
+--
+-- We ONLY join a blitz once our OWN cost competition (with the blitz join
+-- discount applied in goal_selection) has already made the call's pill our
+-- goal — i.e. we're on attack_pill for the SAME pill the commander wants. The
+-- old "freely interruptible" set (explore / attack_tank / capture / place /
+-- early attack_pill on any pill / topped-off refuel) let a soldier commit to a
+-- blitz its goal_selection would never actually pursue, which produced endless
+-- accept/commit/leave churn. The discount alone now decides whether a blitz
+-- pill is worth switching to; availability just confirms we made that switch.
+function M.availability(state, info, help_target_id)
+  if (info.armour or 0) < (C.SQUAD_MIN_HELP_ARMOUR or 10) then return false, "lh" end
+  if (info.shells or 0) < (C.SQUAD_MIN_HELP_SHELLS or 3)  then return false, "na" end
+  local g    = state.goal
+  if g and g.kind == "attack_pill" and help_target_id and g.target_id == help_target_id then
+    return true, nil
+  end
+  return false, "bz"
+end
+
+-- Commander standoff arbiter: gather every soldier answering THIS commander
+-- (broadcast cmdr == self) plus self, each with their chosen standoff (bes) and
+-- reported walk distance (bd). On a conflict (standoffs within CLASH tiles) the
+-- FURTHER tank (larger bd) keeps it; tie -> lower player# keeps; the loser is
+-- told to repick. Sets state.squad_blitz_reject (brj broadcast) + a roster for
+-- the commander viz, and flips self's repick flag if the commander itself loses.
+-- True if a shot from engage spot (sfx,sfy — FLOAT tile coords) to the pill
+-- CENTER does NOT cleanly reach the pill — a wall, a HOSTILE BASE, or another
+-- pillbox stops the shell first (e.g. a blocker the commander built, or an enemy
+-- base between the soldier and the pill), or the trajectory ends short. Uses the
+-- C shot-tile simulation (spot float -> world units; pill is tile-centered).
+local function blitz_spot_shot_blocked(world, sfx, sfy, pmx, pmy)
+  local tiles = cpf.simulate_shot(math.floor(sfx * 256 + 0.5), math.floor(sfy * 256 + 0.5),
+                                  (pmx << 8) | 128, (pmy << 8) | 128, cpf.SHOT_TANK, 0)
+  if not tiles then return false end
+  for _, t in ipairs(tiles) do
+    if t.mx == pmx and t.my == pmy then return false end  -- reached the pill: clear
+    local tt = U.ttype(t.mx, t.my)
+    if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end  -- wall blocks first
+    local be = world and world.base_at and world.base_at[t.my * 256 + t.mx]
+    if be and be.base then return true end  -- a base of ANY owner blocks the shell
+    local plist = world and world.pill_at and world.pill_at[t.my * 256 + t.mx]
+    if plist then for _, e in ipairs(plist) do if e.pill and (e.pill.health or 0) > 0 then return true end end end
+  end
+  return true  -- trajectory ended without reaching the pill → no clean shot
+end
+
+function M.blitz_arbitrate(state, info, now, self_pn)
+  local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
+  local clash   = C.SQUAD_BLITZ_CLASH_TILES or 1
+  local dead    = state.tank_dead_at
+  local parts = {}
+  -- Standoff positions travel as FLOAT tile coords (4dp) so spot de-confliction
+  -- keeps sub-tile precision instead of snapping to integer tiles. Our own
+  -- engage tile -> its float CENTER; allies' come parsed from their bes float.
+  if state.squad_blitz_engage_mx then
+    parts[#parts + 1] = { pn = self_pn,
+                          fx = state.squad_blitz_engage_mx + 0.5,
+                          fy = state.squad_blitz_engage_my + 0.5,
+                          bd = state.squad_blitz_bd or 0, me = true }
+  elseif state.goal and (state.goal.standoff_fx or state.goal.standoff_mx) then
+    -- Commander: it doesn't negotiate an engage spot (soldiers do) — it plans
+    -- its OWN standoff (goal.standoff). Include it so soldiers de-conflict
+    -- against the COMMANDER's spot too, not just against each other; otherwise a
+    -- joiner can pick a standoff sitting right on top of the commander's (saw a
+    -- ~0.85-tile overlap accepted). Same float source as the bes broadcast.
+    parts[#parts + 1] = { pn = self_pn,
+                          fx = state.goal.standoff_fx or (state.goal.standoff_mx + 0.5),
+                          fy = state.goal.standoff_fy or (state.goal.standoff_my + 0.5),
+                          bd = state.squad_blitz_bd or 0, me = true }
+  end
+  for pn, slot in ally_state.iter_active(now, max_age) do
+    -- Skip a soldier that has DIED since its last broadcast: its slot lingers
+    -- active for up to max_age (~35 s), so without this a dead soldier stays on
+    -- the roster, holds an accept, occupies a squad slot, and gets de-conflicted
+    -- against — the commander would wait on / route around a ghost.
+    local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+    if pn ~= self_pn and slot.info.role == "s"
+       and tonumber(slot.info.cmdr or "") == self_pn and not is_dead then
+      local fx, fy
+      if slot.info.bes then fx, fy = slot.info.bes:match("^(%-?[%d.]+),(%-?[%d.]+)$") end
+      parts[#parts + 1] = { pn = pn, fx = fx and tonumber(fx), fy = fy and tonumber(fy),
+                            bd = tonumber(slot.info.bd or "") }
+    end
+  end
+  local reject = {}
+  for i = 1, #parts do
+    for j = i + 1, #parts do
+      local a, b = parts[i], parts[j]
+      if a.fx and b.fx then
+        local ddx, ddy = a.fx - b.fx, a.fy - b.fy
+        if math.sqrt(ddx * ddx + ddy * ddy) <= clash then  -- euclidean float distance
+          local abd, bbd = a.bd or 0, b.bd or 0
+          local loser
+          -- The commander (me) never repicks its own standoff — the soldier
+          -- yields. Otherwise the further-traveling tank keeps the spot, the
+          -- closer one (lower bd) repicks.
+          if a.me then loser = b
+          elseif b.me then loser = a
+          elseif abd < bbd then loser = a
+          elseif bbd < abd then loser = b
+          else loser = (a.pn > b.pn) and a or b end
+          reject[loser.pn] = true
+        end
+      end
+    end
+  end
+  -- Invalid-spot reject: a soldier's spot whose shot to the pill CENTER is
+  -- blocked by a wall (a blocker we built) can't hit the pill — reject it so
+  -- the soldier repicks a clear one.
+  local gmx = state.goal and state.goal.mx
+  local gmy = state.goal and state.goal.my
+  if gmx then
+    for _, p in ipairs(parts) do
+      if p.fx and p.pn ~= self_pn and not reject[p.pn]
+         and blitz_spot_shot_blocked(state.world, p.fx, p.fy, gmx, gmy) then
+        reject[p.pn] = true
+      end
+    end
+  end
+  if reject[self_pn] then state._blitz_call_rejected = true end
+  local roster, rlist, alist = {}, {}, {}
+  for _, p in ipairs(parts) do
+    if p.pn ~= self_pn then
+      local rj = reject[p.pn] and true or false
+      roster[#roster + 1] = { pn = p.pn, fx = p.fx, fy = p.fy, bd = p.bd,
+                              rejected = rj, answered = (p.fx ~= nil) }
+      -- Tag the rejected SPOT as "pn:[fx,fy]" (4dp floats) so the soldier only
+      -- repicks when we rejected the spot it is CURRENTLY offering (not a stale
+      -- earlier one) — what makes a 1-tick repick gap safe (no list burn).
+      -- Entries are ';'-separated, e.g. "3:[114.5000,141.5000];5:[130.5000,132.5000]".
+      if rj then rlist[#rlist + 1] = p.fx and string.format("%d:[%.4f,%.4f]", p.pn, p.fx, p.fy) or tostring(p.pn)
+      elseif p.fx then alist[#alist + 1] = p.pn end   -- answered + conflict-free = ACCEPTED
+    end
+  end
+  state.squad_blitz_roster = roster
+  state.squad_blitz_reject = (#rlist > 0) and table.concat(rlist, ";") or nil
+  state.squad_blitz_accept = (#alist > 0) and table.concat(alist, ",") or nil
+end
+
+-- If our commander's brj reject list names us, flag a repick (closer tank
+-- yields). SPOT-AWARE: each reject is tagged "pn:[fx,fy]" (the 4dp float spot
+-- the commander evaluated). We only repick when the reject targets the spot
+-- we're STILL offering — a reject for a different spot is stale (we already
+-- moved off it), and acting on it would burn the candidate list a tick at a
+-- time. This is what lets SQUAD_BLITZ_REPICK_GAP be 1 without thrashing.
+local function read_cmdr_brj(state, self_pn)
+  if not state.squad_cmdr then return end
+  local brj = ally_state.get_key(state.squad_cmdr, "brj")
+  if not brj then return end
+  local cur_fx = state.squad_blitz_engage_mx and (state.squad_blitz_engage_mx + 0.5) or nil
+  local cur_fy = state.squad_blitz_engage_my and (state.squad_blitz_engage_my + 0.5) or nil
+  for entry in string.gmatch(brj, "[^;]+") do
+    local pn, fx, fy = entry:match("^(%d+):%[(%-?[%d.]+),(%-?[%d.]+)%]$")
+    if pn then
+      if tonumber(pn) == self_pn then
+        -- Spot-tagged reject: fresh only if it matches our current offer (small
+        -- epsilon — the spot round-trips as a 4dp float string).
+        if (not cur_fx)
+           or (math.abs(tonumber(fx) - cur_fx) < 0.01 and math.abs(tonumber(fy) - cur_fy) < 0.01) then
+          state._blitz_call_rejected = true
+        end
+        return
+      end
+    elseif tonumber(entry) == self_pn then
+      -- Bare pn (no spot): legacy / no-offer reject → always repick.
+      state._blitz_call_rejected = true
+      return
+    end
+  end
+end
+
+function M.update(state, info, now, world)
+  local pns, self_pn = protocol_pns(state, info, now)
+  state.squad_pns  = pns
+
+  -- Blitz-call registry maintenance: drop calls whose commander went inactive
+  -- (stale/dead — ran no Lua to send a close), or whose latest broadcast no
+  -- longer shows that attack_pill (deduced close). Explicit bcc is handled in
+  -- comms.process_message; this catches the rest.
+  if state.blitz_calls then
+    local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
+    for cmdr, call in pairs(state.blitz_calls) do
+      local slot = ally_state.get(cmdr)
+      local active = slot and slot.active and (now - (slot.last_tick or 0)) <= max_age
+      -- Only let the ally's broadcast goal/substate CLOSE the call when that
+      -- broadcast is NEWER than the bco we registered. /info state is sparse
+      -- (event-driven + 30s heartbeat) and lossy, so a commander on a long
+      -- approach frequently has a slot whose last goal PREDATES its bco (seen:
+      -- a stale refuel_at_base while it was really blitzing pill 15). Trusting
+      -- that stale slot pruned a just-opened call the same tick it arrived, and
+      -- since bco is open-once it never came back. Trust the explicit bco until
+      -- a NEWER state contradicts it. Explicit bcc, commander-gone (not active),
+      -- death, and age-out still close the call.
+      --
+      -- Use state_tick (when the GOAL/TARGET were last refreshed via full /info
+      -- state) — NOT last_tick, which /info extra heartbeats bump WITHOUT
+      -- carrying goal/target. A blitzing commander streams /info extra (its
+      -- standoff fields) every tick, so last_tick stays current while its goal
+      -- field can be a stale pre-blitz value (saw capture_base linger while it
+      -- was really blitzing); that made slot_fresh wrongly true and pruned a
+      -- live call → the bco, being open-once, never re-registered.
+      local slot_fresh = slot and slot.state_tick and call.tick
+                         and slot.state_tick > call.tick
+      local goal_ok = active and slot.info and slot.info.goal == "attack_pill"
+                      and tonumber(slot.info.target or "") == call.pill
+      -- Substate-based close: once the commander's broadcast substate leaves the
+      -- open/pre-commit set (it's engaging/firing — aim/in_range/shoot/charge/…),
+      -- the call is CLOSED even if its explicit bcc was dropped. Only act when a
+      -- substate is actually present (nil = no slate yet → keep the call).
+      local sub = goal_ok and slot.info.sub or nil
+      local sub_closed = sub and not M.BLITZ_CALL_OPEN_SUB[sub]
+      local goal_contradicts = slot_fresh and not goal_ok   -- only if slot newer than bco
+      local sub_says_closed  = slot_fresh and sub_closed
+      -- Commander GONE → the call dies with it, so the pill reverts to a regular
+      -- (un-blitzed) target. Disconnect/leave-game is caught by `not active`
+      -- (slot goes inactive); death is caught here via tank_dead_at, since a
+      -- just-killed commander's last broadcast can still look active+on-pill for
+      -- up to the ally-expiry window.
+      local dead = state.tank_dead_at and state.tank_dead_at[cmdr]
+                   and slot and state.tank_dead_at[cmdr] > (slot.last_tick or 0)
+      if cmdr == self_pn or not active or goal_contradicts or sub_says_closed or dead then
+        if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_PRUNE t=%d C%s active=%s fresh=%s ally_goal=%s ally_tgt=%s sub=%s sub_closed=%s dead=%s call_pill=%s", now, tostring(cmdr), tostring(active), tostring(slot_fresh), slot and slot.info and tostring(slot.info.goal) or "nil", slot and slot.info and tostring(slot.info.target) or "nil", tostring(sub), tostring(sub_closed), tostring(dead), tostring(call.pill))) end
+        state.blitz_calls[cmdr] = nil
+      end
+    end
+  end
+
+  -- Joinable-blitz pills: open blitz calls (state.blitz_calls) whose pill is in
+  -- our help range and not in the no-spot reject window. Keyed by pill id ->
+  -- {mx,my}. Two consumers: (1) goals.lua EXEMPTS these from ally_claimed
+  -- de-confliction — the whole point of a blitz is a second tank joining, so we
+  -- must NOT be steered off a pill an ally is blitzing; (2) the blitz_join_hl
+  -- viz borders them. This is REAL-GAME logic (the exemption needs it), but the
+  -- table is left nil unless there's actually an in-range open call — the common
+  -- no-blitz case does zero work / zero allocation. Both consumers nil-check.
+  do
+    local joinable = nil
+    if state.blitz_calls and world and world.pills then
+      local pill_rej = state._blitz_pill_reject
+      for _, call in pairs(state.blitz_calls) do
+        local pp  = call.pill and world.pills[call.pill] or nil
+        local rej = pill_rej and pill_rej[call.pill]
+        -- No distance gate: any live open call is joinable. The join DISCOUNT
+        -- (blitz_join_factor, exponential, zeroes by FULL_TILES) is what scales
+        -- by distance, so the score decides who actually joins — a far call is
+        -- "joinable" but gets no discount and won't be picked over closer goals.
+        if pp and (pp.health or 0) > 0 and not (rej and now < rej) then
+          joinable = joinable or {}
+          joinable[call.pill] = { mx = pp.mx, my = pp.my }
+        end
+      end
+    end
+    state.squad_joinable_pills = joinable
+  end
+
+  local role = M.role_for(pns, self_pn)
+  -- R0 (dynamic commanders, flag-gated): harasser stays the fixed deterministic
+  -- slice; for everyone else, commander status is EMERGENT — you are a commander
+  -- only while leading a HARD pill take (your attack_pill target has HP >=
+  -- HARD_TAKE_MIN_HP); otherwise you are a soldier. Reverts automatically when
+  -- the take ends. Off by default → original deterministic roles.
+  if C.DYNAMIC_COMMANDERS and role ~= M.ROLE_HARASSER then
+    -- A bot already following another commander (squad_cmdr held from last tick,
+    -- before the reset below) stays a SOLDIER even though it adopted the same
+    -- attack_pill as the blitz target — otherwise every squad member would turn
+    -- into a commander and the squad would collapse.
+    if state.squad_cmdr then
+      role = M.ROLE_SOLDIER
+    else
+      local g = state.goal
+      local is_hard_take = false
+      if g and g.kind == "attack_pill" and g.target_id and world and world.pills then
+        local p = world.pills[g.target_id]
+        if p and (p.health or 0) >= (C.HARD_TAKE_MIN_HP or 12) then is_hard_take = true end
+      end
+      -- An established leader stays commander even after the pill's HP falls
+      -- below the hard-take threshold: if we already hold an open blitz call on
+      -- this target (_my_blitz_call) or we've committed to firing
+      -- (_blitz_committed), we ARE the leader, not a fresh elector. Without this
+      -- a solo blitzer that wears a pill down to <12 HP on a second pass gets
+      -- demoted to soldier mid-take, then the blitz_wait soldier branch finds no
+      -- commander above it and aborts with "commander gone" (it WAS the leader).
+      local is_leading = (g and g.target_id and
+                          (state._my_blitz_call == g.target_id or g._blitz_committed))
+      role = (is_hard_take or is_leading) and M.ROLE_COMMANDER or M.ROLE_SOLDIER
+      -- Don't elect a SECOND commander of a pill an ally is already blitzing:
+      -- FIRST TO THE TAKE WINS. If a live blitz call on OUR target has been open
+      -- LONGER than ours (the ally committed first), defer to it and become a
+      -- SOLDIER so we JOIN instead of running a rival blitz. A literal same-tick
+      -- race (both opened within SQUAD_CMD_RACE_TOL ticks — accounts for the
+      -- 1-tick broadcast latency) is the ONLY case broken by lower player id.
+      -- Our own call's open tick is _my_blitz_call_tick (nil = we're electing this
+      -- tick → age 0); the ally's is its first-seen tick (preserved across
+      -- re-announces). blitz_calls is already pruned of stale/engaging calls.
+      --
+      -- A COMMITTED blitz (goal._blitz_committed, set by commit_fire when we left
+      -- blitz_wait to fire) is LOCKED — we are the established leader, not a fresh
+      -- elector. Never defer once committed: our recruiting bco has closed (firing
+      -- phase isn't an open-sub), so _my_blitz_call cleared and my_age would
+      -- collapse to 0, making the deferral mistake us for a brand-new joiner and
+      -- demote us to a soldier of a LATECOMER (saw it: an in_range commander
+      -- handed its take to an ally that opened a rival call ~1000 ticks later).
+      if role == M.ROLE_COMMANDER and g and g.target_id and state.blitz_calls
+         and not g._blitz_committed then
+        local now2 = state.tick or 0
+        local tol  = C.SQUAD_CMD_RACE_TOL or 3
+        local my_open = (state._my_blitz_call == g.target_id and state._my_blitz_call_tick) or now2
+        local my_age  = now2 - my_open
+        for cmdr, call in pairs(state.blitz_calls) do
+          if cmdr ~= self_pn and call.pill == g.target_id then
+            local ally_age = now2 - (call.tick or now2)
+            -- defer if the ally has been on it clearly longer, OR it's a ~tie and
+            -- they hold the lower player id.
+            if (ally_age - my_age) > tol
+               or (math.abs(ally_age - my_age) <= tol and cmdr < self_pn) then
+              role = M.ROLE_SOLDIER
+              if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_DEFER t=%d pill=%s -> join C%s (ally_age=%d my_age=%d) instead of commanding", now2, tostring(g.target_id), tostring(cmdr), ally_age, my_age)) end
+              break
+            end
+          end
+        end
+        -- Also defer to an ally already PAST RECRUITING on our pill — its blitz
+        -- left the open set (BLITZ_CALL_OPEN_SUB), so its recruiting call closed
+        -- and it's gone from blitz_calls above, but it's still the established
+        -- taker: broadcasting attack_pill on our target in a committed substate
+        -- (firing OR winding down — aim/in_range/shoot/charge/engage/swerve/
+        -- kill_hardline, and disengage/post_engage/curve_away/loiter). Don't run
+        -- a rival blitz on a pill someone already owns. We become a SOLDIER with
+        -- no open call to join, so the pill reads as plain ally_claimed in our
+        -- pool (no blitz exemption) and we drop it / re-plan — instead of
+        -- promoting to a second commander. (sub=nil = no slate yet → don't defer.)
+        if role == M.ROLE_COMMANDER then
+          local dead = state.tank_dead_at
+          for ally_pn, slot in ally_state.iter_active(now2, C.SQUAD_ALLY_MAX_AGE or 1750) do
+            if ally_pn ~= self_pn and slot.info
+               and slot.info.goal == "attack_pill"
+               and tonumber(slot.info.target or "") == g.target_id
+               and slot.info.sub and not M.BLITZ_CALL_OPEN_SUB[slot.info.sub]
+               and not (dead and dead[ally_pn] and dead[ally_pn] > (slot.last_tick or 0)) then
+              role = M.ROLE_SOLDIER
+              if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_DEFER t=%d pill=%s -> ally p%s committed (sub=%s, past recruiting); drop, don't rival-command", now2, tostring(g.target_id), tostring(ally_pn), tostring(slot.info.sub))) end
+              break
+            end
+          end
+        end
+        -- BACKSTOP: defer to an ally commanding our pill in an OPEN (recruiting)
+        -- substate even when its call is ABSENT from blitz_calls. Path-1 (above)
+        -- needs the registry entry; path-2 needs a committed substate. A call can
+        -- be missing yet the take live — a dropped/never-heard one-shot bco, or we
+        -- elected after it was sent — leaving an ally broadcasting role=c
+        -- attack_pill on our pill in approach/plan_position with nothing for the
+        -- other paths to catch (saw two rival commanders run ~650 ticks until the
+        -- ally finally hit a committed sub). Tiebreak is deterministic LOWER pn so
+        -- both bots agree on exactly one commander; the committed latch above
+        -- (g._blitz_committed) already shields an established leader from being
+        -- demoted to a fresh elector, so this only fires pre-commit.
+        if role == M.ROLE_COMMANDER then
+          local dead = state.tank_dead_at
+          for ally_pn, slot in ally_state.iter_active(now2, C.SQUAD_ALLY_MAX_AGE or 1750) do
+            if ally_pn ~= self_pn and ally_pn < self_pn and slot.info
+               and slot.info.role == M.ROLE_COMMANDER
+               and slot.info.goal == "attack_pill"
+               and tonumber(slot.info.target or "") == g.target_id
+               and slot.info.sub and M.BLITZ_CALL_OPEN_SUB[slot.info.sub]
+               and not (dead and dead[ally_pn] and dead[ally_pn] > (slot.last_tick or 0)) then
+              role = M.ROLE_SOLDIER
+              if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_DEFER t=%d pill=%s -> ally p%s open-recruiting (sub=%s, lower pn, no registry call); join, don't rival-command", now2, tostring(g.target_id), tostring(ally_pn), tostring(slot.info.sub))) end
+              break
+            end
+          end
+        end
+      end
+    end
+  end
+  state.squad_role = role
+  state._blitz_call_rejected = nil   -- recomputed each tick (arbiter / commander brj)
+
+  -- Recruitment (slice 2): decide squad membership + a status code. No
+  -- movement behavior yet — both are broadcast (cmdr / sqst) for the panel.
+  state.squad_cmdr         = nil
+  state.squad_help_target  = nil
+  state.squad_blitz_target = nil   -- pill a squad soldier adopts (commander's target)
+  state.squad_status       = "-"
+  state.squad_negotiate_cmdr = nil -- commander we're offering a standoff to (pre-commit)
+  state.squad_negotiate_pill = nil
+  -- (squad_blitz_accepted PERSISTS across ticks — it's the committed-blitz latch.)
+  local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
+
+  -- Proactive switch-off-own-take: if we're on our OWN attack_pill but still
+  -- early (approach / plan_position) and a registry blitz call's pill is
+  -- STRICTLY cheaper for us (our pool-6 cost for it < our pool-6 cost for our
+  -- current pill), drop our solo take and go help that call instead — flip to
+  -- SOLDIER and remember which call to prefer. Our own bco auto-closes when the
+  -- role leaves commander. _blitz_switch_to biases the soldier pick below.
+  state._blitz_switch_to = nil
+  if role == M.ROLE_COMMANDER and state.goal and state.goal.kind == "attack_pill"
+     and (state.goal.substate == "approach" or state.goal.substate == "plan_position")
+     and state.goal.target_id and state.blitz_calls and state.cost_cache then
+    local mine = state.cost_cache["6:" .. state.goal.target_id]
+    local my_cost = mine and mine.cost
+    if my_cost then
+      local pick_pn, pick_cost
+      for cmdr, call in pairs(state.blitz_calls) do
+        if cmdr ~= self_pn and call.pill ~= state.goal.target_id then
+          local ce = state.cost_cache["6:" .. call.pill]
+          local c  = ce and ce.cost
+          if c and c < my_cost and (not pick_cost or c < pick_cost) then
+            pick_cost, pick_pn = c, cmdr
+          end
+        end
+      end
+      if pick_pn then
+        role = M.ROLE_SOLDIER
+        state._blitz_switch_to = pick_pn
+        print2(string.format("BLITZ_SWITCH t=%d -> help C%d (cost %.0f < own %.0f)",
+          now, pick_pn, pick_cost, my_cost))
+      end
+    end
+  end
+
+  if role ~= M.ROLE_SOLDIER then state.squad_blitz_accepted = nil end  -- only soldiers commit to a blitz
+
+  if role == M.ROLE_COMMANDER then
+    local g = state.goal
+    if g and g.kind == "attack_pill" and g.target_id then
+      state.squad_help_target  = g.target_id   -- commander's attack_pill IS the ask
+      state.squad_blitz_target = g.target_id
+      state.squad_status       = "blitz"
+      -- Arbitrate standoff conflicts among answering soldiers (+ self): the
+      -- FURTHER-traveling tank keeps a contested spot, the closer one is told to
+      -- repick (broadcast via brj). Builds the answer roster for the viz.
+      M.blitz_arbitrate(state, info, now, self_pn)
+    else
+      state.squad_blitz_roster = nil
+      state.squad_blitz_reject = nil
+      state.squad_blitz_accept = nil
+    end
+  elseif role == M.ROLE_SOLDIER then
+    -- Blitz = "join my squad, then help with the blitz." A soldier joins a
+    -- commander's squad iff: it's in a follow-the-call state, the squad isn't
+    -- full, and it's not already in that squad. Once joined it STAYS (no
+    -- re-decide each tick) while the commander keeps leading.
+    local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+    local cap = C.SQUAD_MAX_SIZE or 3
+    local dead = state.tank_dead_at
+
+    -- Open blitz calls come from the REGISTRY (state.blitz_calls), populated by
+    -- one-shot bco/bcc broadcasts + discovery — NOT re-derived from continuous
+    -- broadcasts (so we don't depend on a transient substate and can't be fooled
+    -- by a plain approach that isn't a blitz). Maintenance above already pruned
+    -- inactive/closed calls, so every entry here is a live commander wanting
+    -- help. NO distance gate — any live open call is a candidate; the join
+    -- DISCOUNT (distance-scaled, zeroes by FULL_TILES) decides via the score
+    -- which one we actually go for. Per-commander member counts come from live
+    -- soldier broadcasts.
+    local cmd_info, members = {}, {}
+    local pill_rej = state._blitz_pill_reject
+    for cmdr, call in pairs(state.blitz_calls or {}) do
+      local pp = call.pill and world and world.pills and world.pills[call.pill] or nil
+      -- Skip pills in the 30s no-spot reject window (no standoff was findable).
+      local rej = pill_rej and pill_rej[call.pill]
+      if pp and not (rej and now < rej) then
+        cmd_info[cmdr] = { target = call.pill,
+                           dist = math.abs(pp.mx - tmx) + math.abs(pp.my - tmy) }
+      end
+    end
+    for pn, slot in ally_state.iter_active(now, max_age) do
+      -- Don't count a soldier that died since its last broadcast — its slot
+      -- lingers active, but it no longer occupies a squad slot, so counting it
+      -- would falsely fill the cap and block live joiners.
+      local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+      if pn ~= self_pn and slot.info.role == "s" and slot.info.cmdr and not is_dead then
+        local c = tonumber(slot.info.cmdr)
+        if c then members[c] = (members[c] or 0) + 1 end
+      end
+    end
+    local _reg_n = 0; for _ in pairs(state.blitz_calls or {}) do _reg_n = _reg_n + 1 end
+    local _inr_n = 0; for _ in pairs(cmd_info) do _inr_n = _inr_n + 1 end
+    if BRAIN_DEBUG_MODE and _reg_n > 0 then print2(string.format("BLITZ_SCAN t=%d registry=%d in_range=%d switch_to=%s acc=%s", now, _reg_n, _inr_n, tostring(state._blitz_switch_to), tostring(state.squad_blitz_accepted))) end
+
+    -- COMMITTED already? (we accepted a blitz earlier and the commander is still
+    -- leading.) Stay in its squad and adopt the blitz pill. squad_blitz_accepted
+    -- PERSISTS across ticks (unlike squad_cmdr, which is recomputed each tick).
+    local acc = state.squad_blitz_accepted
+    if acc then
+      local cslot = ally_state.get(acc)
+      local cdead = dead and dead[acc] and cslot and dead[acc] > (cslot.last_tick or 0)
+      if cslot and cslot.active and not cdead
+         and (cslot.info.goal == "attack_pill" or cslot.info.goal == "capture_pill") then
+        -- Commander still leading. But if OUR OWN goal got pulled off the blitz
+        -- (a reactive attack_tank, a flee, a refuel, kill_lgm, etc.) we must
+        -- LEAVE the squad so the commander stops counting us — clearing
+        -- squad_blitz_accepted drops our cmdr broadcast, and blitz_arbitrate
+        -- (which filters on cmdr==self) removes us from the commander's roster
+        -- next tick. That broadcast change IS the "I'm out" notification.
+        -- A grace window lets pick_goal (runs before squad.update) ADOPT the
+        -- blitz attack_pill goal right after the accept before we judge it; a
+        -- transient goal=none between goals doesn't count as pulled.
+        local g = state.goal
+        local committed_for = now - (state._blitz_commit_tick or now)
+        local pulled = g and g.kind and g.kind ~= "none"
+                       and not ((g.kind == "attack_pill" or g.kind == "capture_pill")
+                                and (not state.squad_blitz_target or g.target_id == state.squad_blitz_target))
+        if pulled and committed_for >= (C.SQUAD_BLITZ_COMMIT_GRACE_TICKS or 5) then
+          print2(string.format("BLITZ_LEAVE t=%d C%s — pulled to goal=%s tgt=%s (blitz pill=%s), leaving squad",
+            now, tostring(acc), tostring(g.kind), tostring(g.target_id), tostring(state.squad_blitz_target)))
+          state.squad_blitz_accepted = nil
+          state._blitz_commit_tick   = nil
+          -- fall through to negotiate below (availability() will likely decline
+          -- since we're busy on the new goal → no offer, so we cleanly exit).
+        else
+          state.squad_cmdr   = acc
+          state.squad_status = "join"
+          if cslot.info.goal == "attack_pill" then
+            state.squad_blitz_target = tonumber(cslot.info.target)
+          end
+          if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_COMMITTED t=%d to C%s pill=%s", now, tostring(acc), tostring(state.squad_blitz_target))) end
+          return role
+        end
+      else
+        if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_UNCOMMIT t=%d C%s gone/changed", now, tostring(acc))) end
+        state.squad_blitz_accepted = nil  -- commander gone → uncommit, free to renegotiate
+      end
+    end
+
+    -- NEGOTIATING: pick the nearest in-range commander with a free slot and
+    -- offer to join it. We DON'T adopt the blitz pill yet — only on the
+    -- commander's explicit accept (bac). The offered standoff (bes/bd) is
+    -- computed in parallel by attack.blitz_negotiate while we keep our current
+    -- goal; rejects (brj) make it repick.
+    local best_pn, best_d, best_target, saw_full
+    for pn, ci in pairs(cmd_info) do
+      if (members[pn] or 0) >= cap then saw_full = true
+      elseif not best_d or ci.dist < best_d then best_d, best_pn, best_target = ci.dist, pn, ci.target end
+    end
+    -- A cost-switch above chose a specific cheaper call to help — prefer it over
+    -- the nearest (only if it's joinable / not full).
+    if state._blitz_switch_to and cmd_info[state._blitz_switch_to]
+       and (members[state._blitz_switch_to] or 0) < cap then
+      best_pn     = state._blitz_switch_to
+      best_target = cmd_info[best_pn].target
+    end
+    if best_pn then
+      local ok, reason = M.availability(state, info, best_target)
+      if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_PICK t=%d C%s pill=%s dist=%s avail=%s reason=%s", now, tostring(best_pn), tostring(best_target), tostring(best_d), tostring(ok), tostring(reason))) end
+      if ok then
+        -- Accepted by the commander? → COMMIT (adopt the pill next tick).
+        local bac, accepted = ally_state.get_key(best_pn, "bac"), false
+        if bac then for s in string.gmatch(bac, "%d+") do if tonumber(s) == self_pn then accepted = true; break end end end
+        -- Negotiation watchdog: track how long we've been awaiting THIS
+        -- commander/pill's accept. A healthy commander rosters a conflict-free
+        -- soldier within a tick or two; a wedged one (e.g. stuck in build_walls,
+        -- never sending bac OR brj) would otherwise pause us at goal=none forever
+        -- via the blitz-negotiation gate in goals.lua. Reset on target change.
+        local nkey = best_pn * 1000 + (best_target or 0)
+        if state._blitz_negotiate_key ~= nkey then
+          state._blitz_negotiate_key   = nkey
+          state._blitz_negotiate_since = now
+        end
+        local timeout = C.SQUAD_BLITZ_NEGOTIATE_TIMEOUT_TICKS or 250
+        if accepted then
+          state.squad_cmdr           = best_pn   -- broadcast which call we're answering
+          state.squad_negotiate_cmdr = best_pn
+          state.squad_negotiate_pill = best_target
+          state.squad_status         = "join"
+          state.squad_blitz_accepted = best_pn
+          state.squad_blitz_target   = best_target
+          state._blitz_commit_tick   = now   -- for the pulled-off-blitz grace window
+          state._blitz_negotiate_key   = nil
+          state._blitz_negotiate_since = nil
+          if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_ACCEPTED t=%d by C%s pill=%s", now, tostring(best_pn), tostring(best_target))) end
+        elseif state._blitz_negotiate_since and (now - state._blitz_negotiate_since) >= timeout then
+          -- Commander never accepted in time. Abandon: reject this pill for a
+          -- cooldown (same slate the no-spot path uses) so it drops out of
+          -- cmd_info next tick and stops re-picking, and leave squad_negotiate_*
+          -- nil so the goal-selection pause lifts (attack.blitz_negotiate clears
+          -- our engage offer this tick) — we solo / pick another goal instead of
+          -- standing idle forever.
+          state._blitz_pill_reject = state._blitz_pill_reject or {}
+          state._blitz_pill_reject[best_target] = now + (C.SQUAD_BLITZ_NEGOTIATE_REJECT_TICKS or 500)
+          state.squad_status           = "free"
+          state._blitz_negotiate_key   = nil
+          state._blitz_negotiate_since = nil
+          print2(string.format("BLITZ_NEGOTIATE_TIMEOUT t=%d C%s pill=%s — abandon (no bac in %dt), reject %dt", now, tostring(best_pn), tostring(best_target), timeout, C.SQUAD_BLITZ_NEGOTIATE_REJECT_TICKS or 500))
+        else
+          state.squad_cmdr           = best_pn   -- broadcast which call we're answering
+          state.squad_negotiate_cmdr = best_pn
+          state.squad_negotiate_pill = best_target
+          state.squad_status         = "join"
+          if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_NEGOTIATING t=%d -> C%s pill=%s (awaiting bac)", now, tostring(best_pn), tostring(best_target))) end
+          read_cmdr_brj(state, self_pn)  -- rejected → attack.blitz_negotiate repicks
+        end
+      else
+        state.squad_status = reason  -- lh / na / bz  (declines: "won't join")
+        -- Stamp a comm-line decline so the (often one-tick) "I'm busy" answer to
+        -- this commander's call is rendered, not silently dropped.
+        state._blitz_comm_reject = { tick = now, cmdr = best_pn, reason = reason }
+        state._blitz_negotiate_key   = nil
+        state._blitz_negotiate_since = nil
+      end
+    elseif saw_full then
+      state.squad_status = "full"
+      state._blitz_negotiate_key   = nil
+      state._blitz_negotiate_since = nil
+    else
+      state.squad_status = "free"
+      state._blitz_negotiate_key   = nil
+      state._blitz_negotiate_since = nil
+    end
+  end
+
+  return role
+end
+
+-- Role → display color for the roster panel.
+local ROLE_COLOR = {
+  [M.ROLE_COMMANDER] = { 255, 80,  80  },  -- red
+  [M.ROLE_SOLDIER]   = { 100, 150, 255 },  -- blue
+  [M.ROLE_HARASSER]  = { 255, 220, 60  },  -- yellow
+}
+-- Sort order in the panel: commanders, soldiers, harassers, then by pn.
+local ROLE_ORDER = { [M.ROLE_COMMANDER] = 0, [M.ROLE_SOLDIER] = 1, [M.ROLE_HARASSER] = 2 }
+
+-- Short status code → display text shown to the right of a tank #.
+local STATUS_TEXT = {
+  blitz = "blitz", join = "joining", free = "free", full = "squad full",
+  lh = "no:low_hp", na = "no:no_ammo", bz = "no:busy",
+}
+
+-- Right-side roster HUD, grouped into squads. Always-on (raw overlay binding,
+-- no toggle). Each bot draws its own view; in BrainTest you see the followed
+-- bot's roster.
+--   commander (red)   — overall status to the right
+--     soldier (blue)  — indented under its commander, status to the right
+--   harasser (yellow) — own group
+function M.draw_roster(state, info, now)
+  if not viz.is_on("squad_roster") then return end
+  local self_pn = info.player_number or -1
+  local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
+
+  -- Gather every protocol bot's {role, cmdr, status}. Self comes from live
+  -- state; allies from their broadcasts.
+  local bots = {}
+  -- Status column shows the full goal SUBSTATE (e.g. "blitz_wait"), with a
+  -- special PARALLEL pseudo-substate "blitz_negotiating" surfaced while the bot
+  -- is mid blitz-negotiation (offering a standoff, not yet committed). It's not
+  -- a real goal substate — the bot keeps doing its actual thing — but we show
+  -- it so the negotiation is visible. "blitz_committed" once accepted.
+  local self_status
+  if state.squad_blitz_accepted then        self_status = "blitz_committed"
+  elseif state.squad_negotiate_cmdr then     self_status = "blitz_negotiating"
+  else self_status = (state.goal and state.goal.substate) or state.squad_status end
+  bots[self_pn] = {
+    role   = state.squad_role or M.ROLE_SOLDIER,
+    cmdr   = state.squad_cmdr,
+    status = self_status,
+    me     = true,
+  }
+  for pn in ally_state.iter_active(now, max_age) do
+    if pn ~= self_pn then
+      local a_cmdr = tonumber(ally_state.get_key(pn, "cmdr") or "")
+      local a_status
+      -- An ally answering a commander (cmdr set) with a live offer (bd = walk
+      -- distance it reported) is negotiating; cmdr set without an offer = it
+      -- has committed. Otherwise show its real substate.
+      if a_cmdr and ally_state.get_key(pn, "bd") then a_status = "blitz_negotiating"
+      elseif a_cmdr then                               a_status = "blitz_committed"
+      else a_status = ally_state.get_key(pn, "sub") or ally_state.get_key(pn, "sqst") end
+      bots[pn] = {
+        role   = ally_state.get_key(pn, "role") or "?",
+        cmdr   = a_cmdr,
+        status = a_status,
+      }
+    end
+  end
+
+  -- Sorted player list for stable ordering.
+  local order = {}
+  for pn in pairs(bots) do order[#order + 1] = pn end
+  table.sort(order)
+
+  -- Right-anchored: larger x = further LEFT. Numbers sit at NUM_X (commanders)
+  -- / NUM_X-IND (soldiers, indented right); status text right-aligned at STAT_X.
+  local NUM_X, IND, STAT_X = 170, 22, 16
+  local y = 350
+  local row_h = 16
+
+  local function draw_row(pn, b, indent)
+    local col = ROLE_COLOR[b.role] or { 180, 180, 180 }
+    local num = string.upper(tostring(b.role or "?")) .. tostring(pn)
+                .. (b.me and " *" or "")
+    viz.hud_text("squad_roster", NUM_X - (indent and IND or 0), y, num, "topright",
+                     col[1], col[2], col[3], 255)
+    local st = b.status and (STATUS_TEXT[b.status] or b.status) or ""
+    if st ~= "" then
+      viz.hud_text("squad_roster", STAT_X, y, st, "topright", 190, 190, 190, 255)
+    end
+    y = y + row_h
+  end
+
+  viz.hud_text("squad_roster", NUM_X, y, "-- SQUADS --", "topright", 210, 210, 210, 255)
+  y = y + 20
+
+  -- Commanders + the soldiers attached to each.
+  for _, pn in ipairs(order) do
+    local b = bots[pn]
+    if b.role == M.ROLE_COMMANDER then
+      draw_row(pn, b, false)
+      for _, spn in ipairs(order) do
+        local sb = bots[spn]
+        if sb.role == M.ROLE_SOLDIER and sb.cmdr == pn then
+          draw_row(spn, sb, true)
+        end
+      end
+    end
+  end
+  -- Unattached soldiers.
+  for _, pn in ipairs(order) do
+    local b = bots[pn]
+    if b.role == M.ROLE_SOLDIER and not b.cmdr then draw_row(pn, b, true) end
+  end
+  -- Harassers (own group).
+  for _, pn in ipairs(order) do
+    local b = bots[pn]
+    if b.role == M.ROLE_HARASSER then draw_row(pn, b, false) end
+  end
+end
+
+-- help_range: the call-out range for a commander's pill take — the region in
+-- which a soldier will answer (join the blitz). The join gate is MANHATTAN
+-- distance from the soldier's tank to the commander's PILL <= SQUAD_HELP_RANGE,
+-- so this draws a diamond (not a circle) of that radius around each blitzing
+-- commander's pill: self (from state.goal) + allied commanders (from broadcast).
+function M.draw_help_range(state, info, now, world)
+  if not viz.is_on("help_range") or not viz.line then return end
+  local rng = C.SQUAD_HELP_RANGE or 30
+  local function diamond(pmx, pmy, label, cr, cg, cb)
+    local n, e, s, w = pmy - rng, pmx + rng, pmy + rng, pmx - rng
+    local cx, cy = pmx + 0.5, pmy + 0.5
+    viz.line("help_range", cx, n + 0.5, e + 0.5, cy, cr, cg, cb, 170)
+    viz.line("help_range", e + 0.5, cy, cx, s + 0.5, cr, cg, cb, 170)
+    viz.line("help_range", cx, s + 0.5, w + 0.5, cy, cr, cg, cb, 170)
+    viz.line("help_range", w + 0.5, cy, cx, n + 0.5, cr, cg, cb, 170)
+    if viz.text then viz.text("help_range", cx, n + 0.2, label, "center", cr, cg, cb, 220) end
+  end
+  -- Self, if commanding a pill take.
+  if state.squad_role == M.ROLE_COMMANDER and state.goal
+     and state.goal.kind == "attack_pill" and state.goal.mx then
+    diamond(state.goal.mx, state.goal.my, "help r=" .. rng .. " (me)", 255, 230, 120)
+  end
+  -- Allied commanders mid pill take: resolve the pill tile from their broadcast
+  -- target id against our world (attack_pill doesn't ship mx/my).
+  local self_pn = info.player_number or -1
+  for pn in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn and ally_state.get_key(pn, "role") == "c"
+       and ally_state.get_key(pn, "goal") == "attack_pill" then
+      local pid = tonumber(ally_state.get_key(pn, "target"))
+      local pp  = pid and world and world.pills and world.pills[pid] or nil
+      if pp then diamond(pp.mx, pp.my, "help r=" .. rng .. " C" .. pn, 255, 180, 80) end
+    end
+  end
+end
+
+-- Commander GO handshake: count this commander's live squad soldiers and how
+-- many have reported IN POSITION (rdy=1). Used in blitz_wait to decide GO
+-- (all ready, or timeout). A dead soldier (tank_dead_at after its last
+-- broadcast) is excluded from the total so it can't stall the quorum.
+function M.blitz_ready_status(state, now, self_pn, info)
+  local total, ready = 0, 0
+  local min_pending_bd = nil   -- closest NOT-yet-ready committed soldier's walk dist (bd)
+  local any_unseen = false     -- a pending soldier we can't see (relying on its broadcast bd)
+  local dead = state.tank_dead_at
+  -- We KNOW our allies' live positions when their tanks are in our perception:
+  -- a tank brain-object's idnum IS the player slot number (players.c
+  -- brainDataAddObject), so build pn -> live tile position. This lets us measure
+  -- a pending soldier's remaining distance OURSELVES every tick (free, exact)
+  -- instead of trusting its periodically-broadcast bd.
+  local pos_by_pn = nil
+  if info and info.objects then
+    pos_by_pn = {}
+    for _, ob in ipairs(info.objects) do
+      if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) == 0 then
+        pos_by_pn[ob.idnum] = { mx = ob.x >> 8, my = ob.y >> 8 }
+      end
+    end
+  end
+  -- Count only soldiers COMMITTED to OUR pill — i.e. broadcasting attack_pill on
+  -- our target (roster Status "y"). A soldier merely NEGOTIATING ("m") already
+  -- broadcasts cmdr=us (so it could offer a standoff) but is still on its OWN
+  -- goal and has NOT accepted a position — it must not count toward blitz_wait /
+  -- the GO quorum. Without our pill, nothing is committed yet → 0.
+  local our_pid = state.goal and state.goal.target_id
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn and our_pid then
+      local h = slot.info
+      local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+      if not is_dead and h.role == "s" and tonumber(h.cmdr or "") == self_pn
+         and h.goal == "attack_pill" and tonumber(h.target or "") == our_pid then
+        total = total + 1
+        if h.rdy == "1" then
+          ready = ready + 1
+        else
+          -- Still approaching/aiming — track the closest one's REMAINING walk
+          -- distance so the commander can tell whether anyone is still closing.
+          -- Prefer measuring it ourselves from the soldier's LIVE position to its
+          -- broadcast standoff (bes); fall back to its broadcast bd when its tank
+          -- is out of our perception (and flag it so we can query it directly).
+          local bd, seen = nil, false
+          local p = pos_by_pn and pos_by_pn[pn]
+          if p and h.bes then
+            local bx, by = h.bes:match("^(%-?[%d.]+),(%-?[%d.]+)$")
+            if bx then bd = U.mdist(p.mx, p.my, tonumber(bx), tonumber(by)); seen = true end
+          end
+          if not bd then bd = tonumber(h.bd or "") end
+          if not seen then any_unseen = true end
+          if bd and (not min_pending_bd or bd < min_pending_bd) then min_pending_bd = bd end
+        end
+      end
+    end
+  end
+  return total, ready, min_pending_bd, any_unseen
+end
+
+-- Full blitz visualizer for the followed bot. Toggle "squad_blitz". Draws:
+--   * the bot's own engage spot (magenta; green once IN POSITION; cyan once
+--     committed/charging) + setup point (orange) + a line to the pill;
+--   * a state label over the tank (role + blitz substate, plus rdy/GO);
+--   * for a commander, the rally tally (ready/total) and a GO flash;
+--   * every squadmate's broadcast engage spot (smaller, ready-colored) so you
+--     can watch the whole squad converge.
+function M.draw_blitz(state, info, now)
+  if not viz.is_on("squad_blitz") then return end
+  local g = state.goal
+  local sub = g and g.substate
+  local committed = g and g._blitz_committed
+  local self_pn = info.player_number or -1
+
+  -- ── Squadmates' engage spots (everyone sharing my commander) ───────────
+  -- "My squad" id: a commander uses its own pn; a soldier uses its cmdr.
+  local squad_id = (state.squad_role == M.ROLE_COMMANDER) and self_pn or state.squad_cmdr
+  if squad_id then
+    local dead = state.tank_dead_at
+    for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+      local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+      if pn ~= self_pn and not is_dead then
+        local h = slot.info
+        local mine = (tonumber(h.cmdr or "") == squad_id) or (pn == squad_id)
+        if mine and h.bes then
+          -- bes is the standoff's FLOAT tile center (4dp) — use as-is, no +0.5.
+          local bx, by = h.bes:match("^(%-?[%d.]+),(%-?[%d.]+)$")
+          if bx then
+            bx, by = tonumber(bx), tonumber(by)
+            local rc = (h.rdy == "1") and { 120, 255, 120 } or { 200, 120, 200 }
+            viz.circle("squad_blitz", bx, by, 0.45, rc[1], rc[2], rc[3], 160)
+            local tag = (h.role == "c") and "C" or "S"
+            viz.text("squad_blitz", bx, by - 0.8,
+                     tag .. tostring(pn) .. ((h.rdy == "1") and " RDY" or ""),
+                     "center", rc[1], rc[2], rc[3], 220)
+          end
+        end
+      end
+    end
+  end
+
+  -- ── Our own engage spot + setup point + line to pill ───────────────────
+  if g and g._blitz and state.squad_blitz_engage_mx then
+    local ex, ey = state.squad_blitz_engage_mx + 0.5, state.squad_blitz_engage_my + 0.5
+    local col = committed and { 80, 220, 255 }
+                or (state.squad_blitz_in_position and { 120, 255, 120 }
+                or { 255, 0, 255 })
+    viz.circle("squad_blitz", ex, ey, 0.6, col[1], col[2], col[3], 220)
+    local lbl = committed and "ENGAGE (GO)"
+                or (state.squad_blitz_in_position and "ENGAGE (READY)" or "ENGAGE")
+    viz.text("squad_blitz", ex, ey - 1.0, lbl, "center", col[1], col[2], col[3], 255)
+    if g.mx and g.my then
+      viz.line("squad_blitz", ex, ey, g.mx + 0.5, g.my + 0.5, col[1], col[2], col[3], 120)
+    end
+    if g.approach_mx and g.approach_my then
+      viz.circle("squad_blitz", g.approach_mx + 0.5, g.approach_my + 0.5, 0.4, 255, 180, 0, 200)
+      viz.text("squad_blitz", g.approach_mx + 0.5, g.approach_my + 0.5 - 0.7,
+               "setup", "center", 255, 180, 0, 255)
+    end
+  end
+
+  -- ── State label over the tank ──────────────────────────────────────────
+  if g and g._blitz and sub then
+    local twx, twy = info.tankx / 256.0, info.tanky / 256.0
+    local role_tag = (state.squad_role == M.ROLE_COMMANDER) and "CMDR" or "SOLDIER"
+    local line2
+    if state.squad_role == M.ROLE_COMMANDER and sub == "blitz_wait" then
+      local total, ready = M.blitz_ready_status(state, now, self_pn)
+      line2 = string.format("RALLY %d/%d", ready, total)
+    elseif sub == "blitz_wait" then
+      line2 = state.squad_blitz_in_position and "READY -- WAIT GO" or "..."
+    elseif committed then
+      line2 = "GO!"
+    end
+    viz.text("squad_blitz", twx, twy - 1.6,
+             "BLITZ " .. role_tag .. ":" .. sub, "center", 255, 230, 120, 255)
+    if line2 then
+      local lc = committed and { 80, 220, 255 } or { 255, 230, 120 }
+      viz.text("squad_blitz", twx, twy - 1.0, line2, "center", lc[1], lc[2], lc[3], 255)
+    end
+  end
+end
+
+-- Engage-standoff claims of everyone in MY squad (commander + fellow soldiers),
+-- from their broadcast `bes` (blitz engage spot) key. A negotiating soldier
+-- avoids picking a spot within 1 tile of any of these. Returns a list of {mx,my}.
+function M.blitz_claims(state, now, self_pn)
+  local cmdr = state.squad_cmdr
+  if not cmdr then return {} end
+  local claims = {}
+  local function add(pn)
+    local bes = ally_state.get_key(pn, "bes")
+    if bes then
+      local fx, fy = bes:match("^(%-?[%d.]+),(%-?[%d.]+)$")
+      if fx then claims[#claims + 1] = { fx = tonumber(fx), fy = tonumber(fy) } end
+    end
+  end
+  add(cmdr)  -- the commander's own standoff
+  local dead = state.tank_dead_at
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+    if pn ~= self_pn and not is_dead
+       and tonumber(ally_state.get_key(pn, "cmdr") or "") == cmdr then
+      add(pn)
+    end
+  end
+  return claims
+end
+
+-- Role label above each tank on the map: "C<pn>" / "S<pn> [C<cmdr>]" /
+-- "H<pn>", colored by role. Toggleable via the "squad_labels" viz id.
+local function squad_label(role, pn, cmdr)
+  if role == M.ROLE_COMMANDER then return "C" .. pn end
+  if role == M.ROLE_SOLDIER then
+    return "S" .. pn .. (cmdr and (" [C" .. cmdr .. "]") or "")
+  end
+  if role == M.ROLE_HARASSER then return "H" .. pn end
+  return "?" .. pn
+end
+
+function M.draw_labels(state, info, now)
+  if not viz.is_on("squad_labels") then return end
+  local self_pn = info.player_number or -1
+
+  -- Exact sub-tile positions of every visible tank, keyed by player number.
+  local exact = {}
+  if info.objects then
+    for _, ob in ipairs(info.objects) do
+      if ob.type == OBJECT_TANK and ob.idnum then
+        exact[ob.idnum] = { x = ob.x / 256.0, y = ob.y / 256.0 }
+      end
+    end
+  end
+
+  local function draw_at(px, py, role, pn, cmdr)
+    local c = ROLE_COLOR[role] or { 180, 180, 180 }
+    -- Just over the tank's head (a tank is ~1 tile tall).
+    viz.text("squad_labels", px, py - 0.7,
+             squad_label(role, pn, cmdr), "center", c[1], c[2], c[3], 255)
+  end
+
+  -- Self: exact own position.
+  draw_at(info.tankx / 256.0, info.tanky / 256.0,
+          state.squad_role or M.ROLE_SOLDIER, self_pn, state.squad_cmdr)
+
+  -- Allies (skip dead): exact if visible, else the broadcast tile center.
+  local dead = state.tank_dead_at
+  for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+    if pn ~= self_pn
+       and not (dead and dead[pn] and dead[pn] > (slot.last_tick or 0)) then
+      local role = ally_state.get_key(pn, "role")
+      if role then
+        local px, py
+        local e = exact[pn]
+        if e then
+          px, py = e.x, e.y
+        else
+          local tx = tonumber(ally_state.get_key(pn, "tx"))
+          local ty = tonumber(ally_state.get_key(pn, "ty"))
+          if tx and ty then px, py = tx + 0.5, ty + 0.5 end
+        end
+        if px then
+          draw_at(px, py, role, pn, tonumber(ally_state.get_key(pn, "cmdr") or ""))
+        end
+      end
+    end
+  end
+end
+
+local function role_color(r)
+  if r == "c" then return 255, 120, 120
+  elseif r == "h" then return 240, 230, 120
+  else return 120, 200, 255 end
+end
+
+-- role_live: C/S/H over each tank; self shows its live role + (for a dynamic
+-- commander) the hard-take trigger. Allies sourced from broadcast role.
+function M.draw_roles_live(state, info, now)
+  if not viz.is_on("role_live") or not viz.text then return end
+  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  local role = state.squad_role or "s"
+  local reason = ""
+  if role == "c" and state.goal and state.goal.kind == "attack_pill" and state.goal.target_id then
+    reason = " take#" .. state.goal.target_id
+  end
+  local r, g, b = role_color(role)
+  viz.text("role_live", tmx + 0.5, tmy - 1.4,
+           string.format("%s%s (me)", role:upper(), reason), "center", r, g, b, 245)
+  if info.objects then
+    for _, ob in ipairs(info.objects) do
+      if ob.type == 0 and ob.idnum and ob.idnum ~= info.player_number then
+        local ar = ally_state.get_key(ob.idnum, "role")
+        if ar and ar ~= "" then
+          local ar2, ag, ab = role_color(ar)
+          viz.text("role_live", ob.x / 256.0, ob.y / 256.0 - 1.4,
+                   ar:upper() .. ob.idnum, "center", ar2, ag, ab, 230)
+        end
+      end
+    end
+  end
+end
+
+-- blitz_call (soldier/self view): our answer to the call, our computed standoff,
+-- the walk distance we reported, and repos (commander 'pick another' count).
+function M.draw_blitz_call(state, info, now)
+  if not viz.is_on("blitz_call") then return end
+  local g = state.goal
+  local x, y, dy = 480, 90, 14
+  viz.hud_text("blitz_call", x, y, "-- BLITZ NEGOTIATION (me) --", "topright", 210, 210, 210, 255)
+  y = y + dy
+  local ans, ar, ag, ab
+  if state.squad_blitz_accepted then
+    ans, ar, ag, ab = "COMMITTED -> C" .. tostring(state.squad_blitz_accepted), 120, 230, 120
+  elseif state.squad_negotiate_cmdr then
+    ans, ar, ag, ab = "negotiating -> C" .. tostring(state.squad_negotiate_cmdr), 230, 210, 120
+  else
+    ans, ar, ag, ab = "N (no call)", 180, 180, 180
+  end
+  viz.hud_text("blitz_call", x, y, "answer: " .. ans, "topright", ar, ag, ab, 255)
+  y = y + dy
+  local so = state.squad_blitz_engage_mx
+             and string.format("standoff (%.4f,%.4f)", state.squad_blitz_engage_mx + 0.5, state.squad_blitz_engage_my + 0.5)
+             or "standoff -"
+  viz.hud_text("blitz_call", x, y, so, "topright", 200, 200, 255, 255)
+  y = y + dy
+  local repos = state.squad_blitz_repos or (g and g._blitz_repos) or 0
+  viz.hud_text("blitz_call", x, y, string.format("walk dist: %s   repos: %d",
+                   tostring(state.squad_blitz_bd or "-"), repos),
+                   "topright", 200, 200, 200, 255)
+  -- map: our standoff dot
+  if viz.circle and state.squad_blitz_engage_mx then
+    viz.circle("blitz_call", state.squad_blitz_engage_mx + 0.5, state.squad_blitz_engage_my + 0.5,
+               0.6, 140, 230, 120, 230)
+  end
+end
+
+-- True if we're leading an OPEN blitz call and at least one allied soldier is
+-- positioned to answer it: in help range (Manhattan tank->our pill) of our
+-- pill, a free slot in our squad, and not already committed to another
+-- commander. Drives the roster panel's "Waiting..." vs idle text.
+function M.blitz_has_joiner(state, info, now)
+  local g = state.goal
+  if not (g and g._blitz and g.kind == "attack_pill"
+          and not state.squad_cmdr and g.target_id and g.mx) then
+    return false
+  end
+  local self_pn = info.player_number or -1
+  local rng     = C.SQUAD_HELP_RANGE or 30
+  local cap     = C.SQUAD_MAX_SIZE or 3
+  local pmx, pmy = g.mx, g.my
+  -- Allied tank tile positions from our own game view, keyed by player number
+  -- (idnum is globally unique). attack_pill no longer broadcasts tx/ty.
+  local pos
+  if info.objects then
+    for _, ob in ipairs(info.objects) do
+      if ob.type == 0 and ob.idnum ~= nil then  -- OBJECT_TANK
+        pos = pos or {}
+        pos[ob.idnum] = { mx = ob.x >> 8, my = ob.y >> 8 }
+      end
+    end
+  end
+  if not pos then return false end
+  local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
+  local dead = state.tank_dead_at
+  local members = 0
+  for pn, slot in ally_state.iter_active(now, max_age) do
+    local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+    if pn ~= self_pn and slot.info.role == "s"
+       and tonumber(slot.info.cmdr or "") == self_pn and not is_dead then
+      members = members + 1
+    end
+  end
+  if members >= cap then return false end
+  for pn, slot in ally_state.iter_active(now, max_age) do
+    local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+    if pn ~= self_pn and not is_dead then
+      local h = slot.info
+      local committed_elsewhere = h.cmdr and tonumber(h.cmdr) ~= self_pn
+      if h.role == "s" and not committed_elsewhere then
+        local p = pos[pn]
+        if p and (math.abs(p.mx - pmx) + math.abs(p.my - pmy)) <= rng then
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
+
+-- blitz_join_hl: a bright cyan border around every pill an ally is running a
+-- JOINABLE blitz on (state.squad_joinable_pills). Taking one of these joins the
+-- blitz instead of de-conflicting away (they're exempt from ally_claimed), so
+-- the border flags "a take here joins a blitz".
+function M.draw_blitz_join_highlight(state, info, now)
+  if not viz.is_on("blitz_join_hl") or not viz.line then return end
+  local jp = state.squad_joinable_pills
+  if not jp then return end
+  for _, p in pairs(jp) do
+    local x0, y0 = p.mx - 0.2, p.my - 0.2
+    local x1, y1 = p.mx + 1.2, p.my + 1.2
+    viz.line("blitz_join_hl", x0, y0, x1, y0, 90, 220, 255, 240)
+    viz.line("blitz_join_hl", x1, y0, x1, y1, 90, 220, 255, 240)
+    viz.line("blitz_join_hl", x1, y1, x0, y1, 90, 220, 255, 240)
+    viz.line("blitz_join_hl", x0, y1, x0, y0, 90, 220, 255, 240)
+    viz.text("blitz_join_hl", p.mx + 0.5, p.my - 0.5, "JOIN BLITZ", "center", 90, 220, 255, 255)
+  end
+end
+
+-- blitz_roster (COMMANDER's negotiation view): one row per ally answering our
+-- blitz call. Columns:
+--   tank          — S<pn>
+--   Status        — the ALLY's answer (y/n/m): m = negotiating (still offering /
+--                   repicking), y = committed to the take (adopted attack_pill
+--                   on our pill), n = declined.
+--   Standoff      — their offered/claimed standoff spot (bes), "fx,fy" (4dp
+--                   float). Updates live as a negotiating ('m') soldier repicks.
+--   Dist          — their reported walk distance (bd).
+--   Ans           — OUR verdict on their standoff: ACC = accepted, REJ = invalid
+--                   (clash with another claim, or shot wall-blocked), "-" while
+--                   they haven't offered one yet.
+-- Status flips to Y once negotiation settles on a spot we accept and the ally
+-- commits; while we keep rejecting, the ally stays at M (it repicks).
+function M.draw_blitz_roster(state, info, now)
+  if not viz.is_on("blitz_roster") then return end
+  local x, y, dy = 480, 90, 14
+  local self_pn = info.player_number or -1
+  local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
+  local dead = state.tank_dead_at
+
+  -- My squad's captain (commander): myself when I'm commanding, otherwise the
+  -- commander I'm committed to / negotiating with. Shows the FULL squad from
+  -- whatever seat I'm in (captain or soldier), including me.
+  local cap_pn
+  if state.squad_role == M.ROLE_COMMANDER then cap_pn = self_pn
+  else cap_pn = state.squad_blitz_accepted or state.squad_cmdr or state.squad_negotiate_cmdr end
+
+  viz.hud_text("blitz_roster", x, y, "-- BLITZ SQUAD --", "topright", 210, 210, 210, 255)
+  y = y + dy
+  if not cap_pn then
+    viz.hud_text("blitz_roster", x, y, "(not in a blitz squad)", "topright", 150, 150, 150, 255)
+    return
+  end
+  viz.hud_text("blitz_roster", x, y, string.format("%-4s %-24s %-12s %s", "tank", "goal", "standoff", "rdy"),
+                   "topright", 200, 200, 200, 255)
+  y = y + dy
+
+  -- Member list: captain first, then its live soldiers, then self if a soldier.
+  local seen, list = {}, {}
+  local function add(pn, is_cap)
+    if pn == nil or seen[pn] then return end
+    seen[pn] = true
+    list[#list + 1] = { pn = pn, is_cap = is_cap, is_self = (pn == self_pn) }
+  end
+  add(cap_pn, true)
+  for pn, slot in ally_state.iter_active(now, max_age) do
+    local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+    if not is_dead and slot.info.role == "s" and tonumber(slot.info.cmdr or "") == cap_pn then
+      add(pn, false)
+    end
+  end
+  if self_pn ~= cap_pn
+     and (state.squad_cmdr == cap_pn or state.squad_blitz_accepted == cap_pn
+          or state.squad_negotiate_cmdr == cap_pn) then
+    add(self_pn, false)
+  end
+
+  for _, m in ipairs(list) do
+    local gkind, gtgt, gsub, bes, rdy
+    if m.is_self then
+      gkind = (state.goal and state.goal.kind) or "none"
+      gtgt  = state.goal and state.goal.target_id
+      gsub  = state.goal and state.goal.substate
+      if state.squad_blitz_engage_mx then
+        bes = string.format("%.1f,%.1f", state.squad_blitz_engage_mx + 0.5, state.squad_blitz_engage_my + 0.5)
+      elseif state.goal and (state.goal.standoff_fx or state.goal.standoff_mx) then
+        bes = string.format("%.1f,%.1f", state.goal.standoff_fx or (state.goal.standoff_mx + 0.5),
+                            state.goal.standoff_fy or (state.goal.standoff_my + 0.5))
+      end
+      rdy = state.squad_blitz_aimed
+    else
+      gkind = ally_state.get_key(m.pn, "goal") or "?"
+      gtgt  = tonumber(ally_state.get_key(m.pn, "target") or "")
+      gsub  = ally_state.get_key(m.pn, "sub")
+      local b = ally_state.get_key(m.pn, "bes")
+      if b then
+        local fx, fy = b:match("^(%-?[%d.]+),(%-?[%d.]+)$")
+        if fx then bes = string.format("%.1f,%.1f", tonumber(fx), tonumber(fy)) end
+      end
+      rdy = ally_state.get_key(m.pn, "rdy") == "1"
+    end
+    local goal_str = gkind .. ((gtgt and gtgt >= 0) and ("#" .. gtgt) or "")
+                       .. ((gsub and gsub ~= "") and ("/" .. gsub) or "")
+    local row = string.format("%-4s %-24s %-12s %s",
+                  "S" .. tostring(m.pn), goal_str, bes or "-", rdy and "RDY" or "")
+    local tw = #row * 12   -- HUD text is 8px/char at 1.5x scale = 12px
+    -- Commander → semi-transparent yellow background (visible over water; drawn first, text on top).
+    if m.is_cap then
+      viz.hud_rect("blitz_roster", x, y, tw, 13, "topright", 255, 225, 90, 90, true)
+    end
+    -- Current bot (us) → white border around the row (distinct from the yellow commander fill).
+    if m.is_self then
+      viz.hud_rect("blitz_roster", x - 2, y - 2, tw + 4, 17, "topright", 255, 255, 255, 255, false)
+    end
+    viz.hud_text("blitz_roster", x, y, row, "topright", 140, 230, 140, 255)
+    y = y + dy
+  end
+end
+
+-- blitz_wait_timeout: commander-only HUD for the progress-based GO timeout while
+-- holding in blitz_wait. Stashed by the attack.lua blitz_wait commander branch
+-- as state._blitz_wait_viz each tick it waits. Shows ready/total, the effective
+-- timeout (base + progress extension), elapsed/remaining, the closest pending
+-- soldier's walk dist (min_bd) with CLOSING/STALLED, and a bar of elapsed vs
+-- effective timeout (green while a soldier is still closing so the timeout keeps
+-- extending; red when stalled / about to fire GO).
+function M.draw_blitz_wait_timeout(state, info, now)
+  if not viz.is_on("blitz_wait_timeout") then return end
+  local v = state._blitz_wait_viz
+  if not v or (now - (v.tick or 0)) > 2 then return end   -- only while actively waiting
+  local x, y, dy = 480, 320, 14
+  local elapsed  = now - (v.ready_since or now)
+  local eff      = v.eff_timeout or 150
+  local rem      = math.max(0, eff - elapsed)
+  local closing  = v.min_bd and v.prog_bd and v.min_bd < v.prog_bd
+  viz.hud_text("blitz_wait_timeout", x, y, "-- BLITZ WAIT: GO timeout --", "topright", 210, 210, 210, 255)
+  y = y + dy
+  viz.hud_text("blitz_wait_timeout", x, y, string.format("pill#%s   ready %d/%d", tostring(v.pill), v.ready or 0, v.total or 0),
+               "topright", 200, 220, 200, 255)
+  y = y + dy
+  viz.hud_text("blitz_wait_timeout", x, y, string.format("wait %d/%d  rem %d (%.1fs)  base %d +ext %d",
+               elapsed, eff, rem, rem / 50.0, v.base_timeout or 150, v.ext or 0),
+               "topright", 200, 200, 200, 255)
+  y = y + dy
+  viz.hud_text("blitz_wait_timeout", x, y, string.format("min_bd %s (prog %s)  %s",
+               tostring(v.min_bd or "-"), tostring(v.prog_bd or "-"), closing and "CLOSING" or "STALLED"),
+               "topright", closing and 140 or 240, closing and 230 or 170, closing and 140 or 80, 255)
+  y = y + dy
+  -- Source of the progress signal: live (we can see all pending soldiers) vs a
+  -- fallback on an unseen soldier's broadcast bd, and whether we're actively
+  -- querying it for a fresh position in the final window.
+  local src = v.querying and "QUERYING unseen..." or (v.unseen and "unseen (broadcast bd)" or "live positions")
+  viz.hud_text("blitz_wait_timeout", x, y, src, "topright",
+               v.querying and 255 or 170, v.querying and 220 or 180, v.querying and 90 or 170, 255)
+  y = y + dy
+  -- Bar: elapsed vs effective timeout, filling left->right within the track.
+  local barw = 220
+  local frac = math.min(1.0, elapsed / math.max(1, eff))
+  local fillw = math.max(1, math.floor(barw * frac))
+  viz.hud_rect("blitz_wait_timeout", x, y, barw, 9, "topright", 60, 60, 60, 160, true)        -- track
+  local fr = (closing and not v.timed_out) and 120 or 235
+  local fg = (closing and not v.timed_out) and 220 or 120
+  viz.hud_rect("blitz_wait_timeout", x + (barw - fillw), y, fillw, 9, "topright", fr, fg, 90, 230, true)
+end
+
+-- blitz_joinable: HUD list of every ongoing blitz call this bot knows about
+-- (the state.blitz_calls registry) plus whether it can join each one. Mirrors
+-- the soldier join-scan gating (in help range, a free squad slot, current goal
+-- interruptible) so what's shown matches what the bot would actually join.
+-- Also rings each known pill on the map: green = joinable, grey = known but not
+-- joinable. The cmdr column is prefixed '>' for the call we're committed to and
+-- '~' for the one we're negotiating with.
+function M.draw_blitz_joinable(state, info, world, now)
+  if not viz.is_on("blitz_joinable") then return end
+  local calls   = state.blitz_calls
+  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  local cap     = C.SQUAD_MAX_SIZE or 3
+  local self_pn = info.player_number or -1
+  local max_age = C.SQUAD_ALLY_MAX_AGE or 1750
+
+  -- Live per-commander member counts (soldier broadcasts), excluding any
+  -- soldier that died since its last broadcast (slot still lingers active).
+  local members = {}
+  local dead = state.tank_dead_at
+  for pn, slot in ally_state.iter_active(now, max_age) do
+    local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
+    if pn ~= self_pn and slot.info.role == "s" and slot.info.cmdr and not is_dead then
+      local c = tonumber(slot.info.cmdr)
+      if c then members[c] = (members[c] or 0) + 1 end
+    end
+  end
+
+  local x, y, dy = 480, 230, 14
+  viz.hud_text("blitz_joinable", x, y, "-- JOINABLE BLITZES --", "topright", 210, 210, 210, 255)
+  y = y + dy
+  viz.hud_text("blitz_joinable", x, y, string.format("%-5s %-5s %-4s %-5s %s", "cmdr", "pill", "dist", "slot", "disc"),
+               "topright", 170, 170, 170, 255)
+  y = y + dy
+
+  local n = 0
+  for cmdr, call in pairs(calls or {}) do
+    n = n + 1
+    local pp  = call.pill and world and world.pills and world.pills[call.pill] or nil
+    local tag = (cmdr == state.squad_blitz_accepted) and ">C"
+                or (cmdr == state.squad_negotiate_cmdr and "~C" or " C")
+    local slots = string.format("%d/%d", members[cmdr] or 0, cap)
+    -- Every known open call is a joinable candidate now (the join discount, not
+    -- a range gate, decides whether we actually go) — so draw all rows + rings
+    -- GREEN. The old grey "far"/"pill gone" states were confusing; "far" no
+    -- longer exists, and FULL/busy stay as status TEXT (still green).
+    local dist, disc, r, g2, b = "-", "-", 120, 230, 120
+    if pp then
+      dist = tostring(math.abs(pp.mx - tmx) + math.abs(pp.my - tmy))
+      -- Join-discount multiplier the goal pool would apply to this call (mirror
+      -- of goals.blitz_join_factor — keep in sync): exponential on the dijkstra
+      -- path cost to the pill, MIN at 0 → 1.00 (no discount) at FULL_TILES.
+      -- Lower = stronger pull to join; x1.00 = too far to bother.
+      local bf, dpath = info.inboat and 1 or 0, math.huge
+      for dy2 = -1, 1 do for dx2 = -1, 1 do if dx2 ~= 0 or dy2 ~= 0 then
+        local c = cpf.smart_cost_dij_only(cpf.KIND_NORMAL, pp.mx + dx2, pp.my + dy2, bf)
+        if c and c < dpath then dpath = c end
+      end end end
+      local minmul = C.SQUAD_BLITZ_JOIN_MIN_MULT  or 0.25
+      local full_t = C.SQUAD_BLITZ_JOIN_FULL_TILES or 20
+      local f
+      if dpath >= full_t or dpath >= 9999 then f = 1.0
+      elseif dpath <= 0 then                   f = minmul
+      else                                     f = minmul ^ (1.0 - dpath / full_t) end
+      disc = string.format("x%.2f", f)
+      if viz.circle then
+        viz.circle("blitz_joinable", pp.mx + 0.5, pp.my + 0.5, 0.9, 120, 230, 120, 220)
+      end
+    end
+    viz.hud_text("blitz_joinable", x, y, string.format("%-5s %-5s %-4s %-5s %s",
+                 tag .. tostring(cmdr), "#" .. tostring(call.pill), dist, slots, disc),
+                 "topright", r, g2, b, 255)
+    y = y + dy
+  end
+  if n == 0 then
+    viz.hud_text("blitz_joinable", x, y, "(none)", "topright", 140, 140, 140, 255)
+  end
+end
+
+-- blitz_comm_lines: map lines showing the blitz negotiation channel.
+--   Commander view (we're running a call): yellow out to every in-range tank
+--     with no answer yet; green to accepted soldiers; orange to one that
+--     answered but isn't locked; a declined (No) tank's line is hidden.
+--   Soldier view (we're answering): one line to our commander — yellow while
+--     answering, orange once we have a standoff offer, green once accepted.
+function M.draw_blitz_comm(state, info, world, now)
+  if not viz.is_on("blitz_comm_lines") or not viz.line then return end
+  local self_pn = info.player_number or -1
+  -- Exact tank position in tile units (world wu / 256), not the snapped
+  -- tile center — lines anchor on the real tank, not its tile.
+  local smx, smy = info.tankx / 256.0, info.tanky / 256.0
+  -- ALLIED tank positions by player number, from our own game view. Filter out
+  -- hostiles — blitz comm lines are an ally-only concept; without this the
+  -- commander view drew "call" lines to enemy tanks that happened to be in range.
+  local pos = {}
+  if info.objects then
+    for _, ob in ipairs(info.objects) do
+      if ob.type == 0 and ob.idnum ~= nil and (ob.info & OBJECT_HOSTILE) == 0 then  -- allied OBJECT_TANK
+        pos[ob.idnum] = { ob.x / 256.0, ob.y / 256.0 }
+      end
+    end
+  end
+
+  -- A) We're LEADING a blitz (goal._blitz, not following anyone) → lines out to
+  -- in-range tanks. Keyed off the blitz flag (matches the bco "open call"
+  -- signal) rather than squad_role, which can flicker mid-take.
+  local g = state.goal
+  if g and g.kind == "attack_pill" and g._blitz and not state.squad_cmdr and g.mx then
+    local rng = C.SQUAD_HELP_RANGE or 30
+    local accepted, rostered = {}, {}
+    for s in string.gmatch(state.squad_blitz_accept or "", "%d+") do accepted[tonumber(s)] = true end
+    for _, e in ipairs(state.squad_blitz_roster or {}) do rostered[e.pn] = e end
+    for pn, p in pairs(pos) do
+      if pn ~= self_pn and (math.abs(p[1] - g.mx) + math.abs(p[2] - g.my)) <= rng then
+        local e = rostered[pn]
+        local r, gn, b = 230, 230, 60                   -- yellow: call out, no answer
+        if e and e.rejected then r, gn, b = 230, 60, 60 -- red: declined (No) — shown, not hidden
+        elseif accepted[pn] then r, gn, b = 0, 220, 0   -- green: accepted, going in
+        elseif e and e.answered then r, gn, b = 255, 160, 0 end  -- orange: answered, not locked
+        viz.line("blitz_comm_lines", smx, smy, p[1], p[2], r, gn, b, 200)
+      end
+    end
+  end
+
+  -- B) We're a soldier answering → one line to our commander.
+  local cmdr = state.squad_blitz_accepted or state.squad_negotiate_cmdr
+  if cmdr and pos[cmdr] then
+    local cp = pos[cmdr]
+    local r, gn, b
+    if state.squad_blitz_accepted then        r, gn, b = 0, 220, 0       -- green: accepted
+    elseif state.squad_blitz_engage_mx then    r, gn, b = 255, 160, 0     -- orange: have offer
+    else                                       r, gn, b = 230, 230, 60 end -- yellow: answering
+    viz.line("blitz_comm_lines", smx, smy, cp[1], cp[2], r, gn, b, 220)
+  end
+
+  -- C) Transient decline: we said "busy"/no-spot to a call this or a recent
+  -- tick. Latched for BLITZ_COMM_LATCH_TICKS so a one-tick reject is actually
+  -- visible (red line to the commander we declined). Skipped if we now have an
+  -- active (yellow/orange/green) line to that same commander.
+  local rej = state._blitz_comm_reject
+  if rej and rej.cmdr and rej.cmdr ~= cmdr and pos[rej.cmdr]
+     and (now - (rej.tick or -100000)) <= (C.BLITZ_COMM_LATCH_TICKS or 18) then
+    local cp = pos[rej.cmdr]
+    viz.line("blitz_comm_lines", smx, smy, cp[1], cp[2], 230, 60, 60, 220)
+  end
+end
+
+-- hard_take_pills: ring + HP on enemy pills at/above HARD_TAKE_MIN_HP — the
+-- targets that spawn a commander+squad when DYNAMIC_COMMANDERS is on.
+function M.draw_hard_takes(world, now)
+  if not viz.is_on("hard_take_pills") or not viz.circle or not world or not world.pills then return end
+  local minhp = C.HARD_TAKE_MIN_HP or 12
+  for _, p in pairs(world.pills) do
+    if (p.owner == "hostile" or p.owner == "neutral") and (p.health or 0) >= minhp then
+      viz.circle("hard_take_pills", p.mx + 0.5, p.my + 0.5, 1.0, 255, 150, 60, 180)
+      if viz.text then
+        viz.text("hard_take_pills", p.mx + 0.5, p.my - 0.8, "HARD " .. p.health,
+                 "center", 255, 150, 60, 225)
+      end
+    end
+  end
+end
+
+return M

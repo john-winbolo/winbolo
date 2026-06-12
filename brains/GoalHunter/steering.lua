@@ -11,6 +11,7 @@ local bpc = require("bpc")
 local viz = require("viz")
 local opt = require("optimize")
 local threat = require("threat")
+local print2 = require("print2")
 
 local M = {}
 
@@ -58,6 +59,7 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
         tank_positions[#tank_positions + 1] = {
           wx = ob.x, wy = ob.y,
           player_num = ob.idnum or 255,
+          allied = (ob.info & OBJECT_HOSTILE) == 0,  -- friendly tank we must not shoot
         }
       end
     end
@@ -82,28 +84,32 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
   local block_reason = nil
   local block_mx, block_my = nil, nil
   for ti, st in ipairs(tiles) do
-    -- Tank hit entry from simulate_shot_with_tanks
+    -- Tank hit entry from simulate_shot_with_tanks. Only an ALLIED tank
+    -- blocks the shot — hitting an enemy tank (the target, or any other
+    -- hostile that wanders into the lead-predicted lane) is a fine
+    -- outcome, so we don't suppress fire for it. Tile-matching the hit
+    -- against the aim tile was unreliable anyway: the aim tile is the
+    -- lead-PREDICTED position while the hitbox sim reports the tank's
+    -- CURRENT tile, so the same enemy read as a "blocker" one tile off.
     if st.hit_type and st.hit_type == 1 then
-      local tank_is_target = (st.mx == target_mx and st.my == target_my)
-      if do_viz then
-        local hit_tank = nil
-        for _, tp in ipairs(tank_positions) do
-          if tp.player_num == st.hit_id then hit_tank = tp; break end
-        end
-        if hit_tank then
-          local tcx = hit_tank.wx / 256.0
-          local tcy = hit_tank.wy / 256.0
-          local hr = tank_is_target and 0 or 255
-          local hg = tank_is_target and 255 or 0
-          viz.rect("shell_hit_dot", tcx - 0.5, tcy - 0.5,
-                   tcx + 0.5, tcy + 0.5, hr, hg, 0, 150)
-          viz.text("shell_hit_dot", tcx, tcy - 0.6,
-                   string.format("#%d tank#%d %s", ti, st.hit_id or 0,
-                     tank_is_target and "HIT" or "BLOCKED"),
-                   "center", hr, hg, 0, 255, 0.6)
-        end
+      local hit_tank = nil
+      for _, tp in ipairs(tank_positions) do
+        if tp.player_num == st.hit_id then hit_tank = tp; break end
       end
-      if not tank_is_target then
+      local hit_ally = hit_tank and hit_tank.allied
+      if do_viz and hit_tank then
+        local tcx = hit_tank.wx / 256.0
+        local tcy = hit_tank.wy / 256.0
+        local hr = hit_ally and 255 or 0
+        local hg = hit_ally and 0 or 255
+        viz.rect("shell_hit_dot", tcx - 0.5, tcy - 0.5,
+                 tcx + 0.5, tcy + 0.5, hr, hg, 0, 150)
+        viz.text("shell_hit_dot", tcx, tcy - 0.6,
+                 string.format("#%d tank#%d %s", ti, st.hit_id or 0,
+                   hit_ally and "ALLY-BLOCK" or "enemy-ok"),
+                 "center", hr, hg, 0, 255, 0.6)
+      end
+      if hit_ally then
         blocked = true
         block_reason = string.format("allied_tank#%d", st.hit_id or 0)
         block_mx, block_my = st.mx, st.my
@@ -144,9 +150,9 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
         if blocked then break end
       end
       local bentry = world.base_at and world.base_at[st.my * 256 + st.mx]
-      if bentry and bentry.base and bentry.base.owner == "hostile" then
+      if bentry and bentry.base then  -- a base of ANY owner stops the shell
         blocked = true
-        block_reason = "hostile_base"
+        block_reason = "base"
         block_mx, block_my = st.mx, st.my
         break
       end
@@ -201,6 +207,8 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
   end
   return not blocked
 end
+-- Exported so init.lua shares this exact implementation (no second copy).
+M.shot_path_clear = shot_path_clear
 
 -- Per-tick accumulators feeding the nav-dispatch/path breakdown in the
 -- BrainTest "Capacity tiers" panel. Reset at the top of M.steer; written
@@ -250,6 +258,10 @@ local _ap_stationary = {
   in_range_position=true, in_range_aim_pre=true,
   in_range_aim=true, in_range_aim_finetune=true, shoot_pill=true,
   build_walls=true,
+  -- blitz_wait: the blitzer deliberately HOLDS at its standoff for the GO, so
+  -- it never reaches pf.next — without this, stuck_recovery's hard-escape nukes
+  -- the goal to "none" after ~3 firings (saw a commander dropped mid-blitz_wait).
+  blitz_wait=true,
 }
 local _pp_stationary = {
   dispatch=true, wait_place=true, prewait=true, advance=true,
@@ -368,7 +380,7 @@ local function stuck_recovery(state, info, goal)
     end
     -- Block the goal destination so pick_goal doesn't re-select it.
     local gk = U.mkey(goal.mx or 0, goal.my or 0)
-    state.blocked[gk] = now + 600
+    U.set_blocked(state, gk, now + 600, "steer_stuck_dest")
     goal.kind = "none"
     goal.substate = nil
     state.pf.status = "idle"
@@ -1014,7 +1026,10 @@ local function attack_pill_steer(state, world, info, goal)
       end
     end
 
-    if sdist < 50 or tank_to_pill < standoff_to_pill then
+    -- PPT engages on standoff arrival/overshoot (the non-PPT stop decision is
+    -- reach-based, handled below). Plain `if arrived` here would stop a non-PPT
+    -- charge at a standoff that rounded out of shell reach.
+    if goal._is_ppt and (sdist < 50 or tank_to_pill < standoff_to_pill) then
       if info.speed <= 1 then
         goal.substate = "engage"
         goal.engage_tick = state.tick
@@ -1067,29 +1082,43 @@ local function attack_pill_steer(state, world, info, goal)
       return keys, taps
     end
 
-    -- Once we start braking, commit to it (no re-accelerating).
-    -- Exception: if we've stalled to a full stop well before the
-    -- arrival window (sdist > 80, vs the 50-wu arrival check above),
-    -- something blocked us — clear the brake flag so the next tick
-    -- can KEY_FASTER and try to push through.
-    if goal._charge_braking and info.speed == 0 and sdist > 80 then
-      goal._charge_braking = nil
+    -- ── non-PPT stop decision: brake on REACH, not standoff distance ──
+    -- Roll forward (toward the aimed pill) until braking from HERE would still
+    -- land a shot on the pill, then brake to a stop. The stop point is predicted
+    -- with the engine-exact decel+move model (cpf.predict_stop, terrain-capped
+    -- by the tile under the tank) and test-fired from there. This self-corrects:
+    -- if a standoff rounded just outside shell reach, we creep the extra bit
+    -- instead of parking out of range; if a stop lands a hair short, the next
+    -- tick (speed ~0 → predicted stop ≈ here) sees the miss and creeps again.
+    -- Floored at CHARGE_MIN_STANDOFF so we never drive onto the pill.
+    local tmx_now, tmy_now = info.tankx >> 8, info.tanky >> 8
+    local tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(tmx_now, tmy_now)]) or 16
+    local ang_f = info.tank_angle or info.direction
+    local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f, info.speed, tcap)
+    local stop_hits = false
+    if math.abs(corr) <= 5 then
+      local sp = cpf.simulate_shot_angle(psx, psy, ang_f, cpf.SHOT_TANK, info.gunrange or 14)
+      if sp then for _, t in ipairs(sp) do if t.mx == goal.mx and t.my == goal.my then stop_hits = true; break end end end
     end
-    local _deceling = stop_dist >= sdist or goal._charge_braking
-    if _deceling then
-      goal._charge_braking = true
-      keys = keys | KEY_SLOWER
-    else
-      keys = keys | KEY_FASTER
-    end
+    local at_floor = tank_to_pill <= (C.CHARGE_MIN_STANDOFF or 5.0) * 256
 
-    if BRAIN_DEBUG_MODE then
-      if _deceling then
-        charge_phase = string.format("DECEL spd=%d stop=%d dist=%d", info.speed, stop_dist, sdist)
+    -- Visualize the predicted brake-now stop: line tank->stop + marker, green
+    -- if a shot from there hits the pill, red if short. (charge_stop_pred toggle)
+    if BRAIN_DEBUG_MODE then local _r, _g, _b = stop_hits and 60 or 255, stop_hits and 220 or 70, 70; local _sx, _sy = psx / 256, psy / 256; viz.line("charge_stop_pred", info.tankx / 256, info.tanky / 256, _sx, _sy, _r, _g, _b, 150); viz.rect("charge_stop_pred", _sx - 0.35, _sy - 0.35, _sx + 0.35, _sy + 0.35, _r, _g, _b, 200, false); viz.text("charge_stop_pred", _sx, _sy - 0.55, stop_hits and "STOP-HIT" or "STOP-SHORT", "center", _r, _g, _b, 230, 0.3) end
+
+    if stop_hits or at_floor then
+      -- Braking now lands the shot (or we hit the no-closer floor): stop, engage.
+      if info.speed <= 1 then
+        goal.substate = "engage"
+        goal.engage_tick = state.tick
       else
-        charge_phase = string.format("ACCEL spd=%d stop=%d dist=%d", info.speed, stop_dist, sdist)
+        keys = keys | KEY_SLOWER
       end
-      viz.hud_text("charge_status", 10, 56, "CHARGE: " .. charge_phase, "topleft", 255, 255, 0)
+      if BRAIN_DEBUG_MODE then viz.hud_text("charge_status", 10, 56, string.format("CHARGE: %s d2p=%d%s", (info.speed <= 1) and "ENGAGE" or "BRAKE", tank_to_pill, at_floor and " floor" or ""), "topleft", 255, 255, 0) end
+    else
+      -- Stopping here wouldn't reach the pill yet → keep closing on it.
+      keys = keys | KEY_FASTER
+      if BRAIN_DEBUG_MODE then viz.hud_text("charge_status", 10, 56, string.format("CHARGE: CLOSE d2p=%d stop=(%d,%d)", tank_to_pill, psx >> 8, psy >> 8), "topleft", 255, 200, 80) end
     end
 
     return keys, taps
@@ -1179,6 +1208,21 @@ local function attack_pill_steer(state, world, info, goal)
   -- ── post_engage: brake while deciding ─────────────────────────────
   if goal.substate == "post_engage" then
     if info.speed > 0 then keys = keys | KEY_SLOWER end
+    return keys, taps
+  end
+
+  -- ── blitz_wait: HOLD at the setup point for the squad GO ───────────
+  -- Issue NO drive: brake to a stop if still rolling and stay put while the GO
+  -- handshake (attack.lua) runs. Face the pill so we're oriented to charge/fire
+  -- the instant GO arrives — turning in place doesn't move us off the spot.
+  -- Without this branch the substate fell through to the default approach
+  -- navigation and the tank kept driving instead of waiting.
+  if goal.substate == "blitz_wait" then
+    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
+                               goal.mx + 0.5, goal.my + 0.5)
+    local h, t = U.aim_turn_bits(U.adiff(info.direction, aim_dir), 6, 1)
+    keys = keys | h; taps = taps | t
     return keys, taps
   end
 
@@ -1671,10 +1715,22 @@ local function attack_pill_steer(state, world, info, goal)
     local shoot_tiles = (info.gunrange or C.GUNSIGHT_MAX) / 2.0
     local fire_w      = (shoot_tiles + 1.0) * 256.0
     local dist_to_pill = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
+    -- Only fire when actually POINTED at the pill (within tol). kill_hardline
+    -- steers toward its movement lookahead, so without this it lobs shells off-
+    -- axis. shot_path_clear validates the PILL-AIMED line — it blocks ANY
+    -- pillbox (except the target) + ANY base + allied tanks, and lets enemy
+    -- tanks through — so gating fire on alignment makes the shot we FIRE match
+    -- the line we validated; we never kill a stray pill/base in passing.
+    local fire_corr = U.adiff(info.direction, U.aim_at(info.tankx, info.tanky, pill_wx, pill_wy))
     if dist_to_pill <= fire_w and info.shells > C.SHELL_RESERVE
+       and math.abs(fire_corr) <= (C.HARDLINE_FIRE_AIM_TOL or 8)
        and shot_path_clear(info, world, pill_wx, pill_wy, pmx, pmy) then
       keys = keys | KEY_SHOOT
     end
+    print2(string.format("HARDLINE_DRV t=%d tank=(%d,%d) inboat=%s spd=%d dir=%d look=(%d,%d) mdir=%d corr=%d next=(%s,%s) nextT=%s keys=%d taps=%d",
+      state.tick or 0, tmx, tmy, tostring(info.inboat), info.speed or -1, info.direction or -1,
+      lookx, looky, move_dir, mcorr, tostring(nx), tostring(ny),
+      (nx and nx >= 0) and tostring(U.ttype(nx, ny)) or "?", keys, taps))
     return keys, taps
   end
 
@@ -1699,13 +1755,22 @@ local function tank_combat_steer(state, world, info, goal)
   local tmy = info.tanky >> 8
   local now = state.tick
 
-  -- Find the current target tank from perception (it moves every tick)
+  -- Find the current target tank from perception (it moves every tick).
+  -- Hunting includes GHOSTS (out-of-sight extrapolations) so we keep driving
+  -- to the predicted position; a real sighting is always preferred since it
+  -- sorts ahead and ties break on it.
   local perc = state.perc or {}
+  local cand_tanks = perc.enemy_tanks or {}
+  if perc.ghost_tanks and #perc.ghost_tanks > 0 then
+    cand_tanks = {}
+    for _, et in ipairs(perc.enemy_tanks or {}) do cand_tanks[#cand_tanks + 1] = et end
+    for _, gt in ipairs(perc.ghost_tanks) do cand_tanks[#cand_tanks + 1] = gt end
+  end
   local target = nil
   local target_dist = math.huge
 
   -- Match by proximity to goal position (tank may have moved since goal was set)
-  for _, et in ipairs(perc.enemy_tanks or {}) do
+  for _, et in ipairs(cand_tanks) do
     local d = U.mdist(et.mx, et.my, goal.mx, goal.my)
     if d < target_dist then
       target_dist = d
@@ -1716,7 +1781,7 @@ local function tank_combat_steer(state, world, info, goal)
   -- If we can't see any enemy tank near the goal, find nearest visible one
   if not target or target_dist > 8 then
     local best_d = math.huge
-    for _, et in ipairs(perc.enemy_tanks or {}) do
+    for _, et in ipairs(cand_tanks) do
       if et.dist < best_d then
         best_d = et.dist
         target = et
@@ -1741,11 +1806,67 @@ local function tank_combat_steer(state, world, info, goal)
     return keys, taps
   end
 
+  if BRAIN_DEBUG_MODE then print2(string.format("TANK_TARGET t=%d id=%s ghost=%s @(%d,%d) dist=%.1f cand_real=%d cand_ghost=%d", now, tostring(target.id), tostring(target.ghost or false), target.mx, target.my, target_dist, #(perc.enemy_tanks or {}), #(perc.ghost_tanks or {}))) end
+
   -- Update goal position to track the moving target
   goal.mx = target.mx
   goal.my = target.my
   goal.wx = U.m2w(target.mx)
   goal.wy = U.m2w(target.my)
+
+  -- ── Boat handling for tank combat ───────────────────────────────────────
+  -- We engage tanks while afloat now. Two sub-cases when WE are boated:
+  --   (a) target is also on water (boat-vs-boat): fall through, fight normally.
+  --   (b) target is on LAND: get onto land ASAP. A tank can disembark onto ANY
+  --       land tile, so head DIRECTLY to the NEAREST land we can drive straight
+  --       at — the nearest drivable land tile (in a 21x21 box) with a clear
+  --       straight WATER run to its shore. (Ranking by Dijkstra land-cost was
+  --       wrong: that measures cost to *stand on* the tile incl. walking on
+  --       land, so it chose a far shore over the near one.) If none has a clear
+  --       shot, fall through and fight from the boat.
+  -- (Both-on-land needs no special case — it's the normal path below.)
+  if info.inboat then
+    local ttgt = U.ttype(target.mx, target.my)
+    if ttgt ~= C.T_DEEPSEA and ttgt ~= C.T_RIVER then
+      local R = 10
+      local best_d2, best_mx, best_my = math.huge, nil, nil
+      for dy = -R, R do
+        for dx = -R, R do
+          local cx, cy = tmx + dx, tmy + dy
+          if U.in_map(cx, cy) then
+            local tt = U.ttype(cx, cy)
+            -- drivable land = not water, not a wall (boat climbs onto it)
+            if tt ~= C.T_DEEPSEA and tt ~= C.T_RIVER
+               and tt ~= C.T_BUILDING and tt ~= C.T_HALFBUILD then
+              local d2 = dx * dx + dy * dy
+              if d2 < best_d2 and U.water_corridor_to(tmx, tmy, cx, cy) then
+                best_d2 = d2; best_mx, best_my = cx, cy
+              end
+            end
+          end
+        end
+      end
+      if best_mx then
+        -- Straight charge at the nearest shore (we verified a clear water run).
+        -- nav_turn_speed builds speed on the straight; within 2 tiles of the
+        -- shore FORCE full throttle (override any brake) so speed clears
+        -- BOAT_FAST_EXIT_SPEED (16) and the boat climbs onto soft land instead
+        -- of being position-reverted and pinned at the edge.
+        local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(best_mx), U.m2w(best_my))
+        local corr = U.adiff(info.direction, move_dir)
+        local k, t = nav_turn_speed(corr, info.speed)
+        keys = keys | k
+        taps = taps | t
+        local land_dist = U.mdist(tmx, tmy, best_mx, best_my)
+        if land_dist <= 2 and math.abs(corr) < 60 then
+          keys = (keys | KEY_FASTER) & (~KEY_SLOWER)
+        end
+        if BRAIN_DEBUG_MODE then print2(string.format("TANK_BOAT_DISEMBARK t=%d -> land(%d,%d) spd=%d corr=%d ld=%d (enemy#%s on land @(%d,%d))", now, best_mx, best_my, info.speed or -1, corr, land_dist, tostring(target.id), target.mx, target.my)) end
+        return keys, taps
+      end
+      -- no straight-shot land in the box → fall through and fight from the boat
+    end
+  end
 
   -- Euclidean distance for engage-range check (Manhattan overcounts diagonals)
   local twx = target.wx
@@ -2022,6 +2143,7 @@ local function tank_combat_steer(state, world, info, goal)
                                    math.floor(pred_wy) >> 8)
     if _clear then
       keys = keys | KEY_SHOOT
+      if BRAIN_DEBUG_MODE then print2(string.format("TANK_FIRE t=%d id=%s ghost=%s @(%d,%d) dist=%.1f aim_corr=%.0f", now, tostring(target.id), tostring(target.ghost or false), target.mx, target.my, dist_tiles, aim_corr)) end
       goal._engage_blocked_ticks = 0
     elseif _stuck_in_place then
       goal._engage_blocked_ticks = (goal._engage_blocked_ticks or 0) + 1
@@ -3443,7 +3565,10 @@ function M.steer(state, world, info, goal)
       if not shot_fired and perc.nearest_hostile_tank
          and perc.nearest_hostile_tank.dist <= C.PILL_RANGE_MAP then
         for _, p in pairs(world.pills) do
-          if p.owner == "friendly" and p.health > 0 then
+          -- Stop pissing once the pill is down to 12 HP: each "piss" shot
+          -- also DAMAGES the friendly pill, so firing past this would chip
+          -- our own pill toward death. 12 leaves a safe buffer below full.
+          if p.owner == "friendly" and p.health > 12 then
             local pd = U.mdist(tmx, tmy, p.mx, p.my)
             if pd <= 6 then
               local aim = U.aim_at(info.tankx, info.tanky, U.m2w(p.mx), U.m2w(p.my))

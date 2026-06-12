@@ -51,8 +51,11 @@ local shot_tracker = require("shot_tracker")
 local viz      = require("viz")
 local ally_state = require("ally_state")
 ally_state.init()
+local squad = require("squad")
 local pill_table = require("pill_table")
+local PP = require("pill_portfolio")
 local lgm_registry = require("lgm_registry")
+local circles = require("circles")
 lgm_registry.init()
 
 local Brain = {}
@@ -64,158 +67,10 @@ local manual_keys = 0
 local AUTOSTART = true
 local ENABLE_LOGGING = false
 
--- Shot-path safety check (init.lua version). Same logic as
--- steering.lua's shot_path_clear. Blocks on walls, pillboxes,
--- hostile bases. Forests and enemy tanks are OK.
-local function _shot_path_clear_init(info, world, target_wx, target_wy, target_mx, target_my)
-  local tank_positions = {}
-  if info.objects then
-    for _, ob in ipairs(info.objects) do
-      if ob.type == OBJECT_TANK then  -- 0; type 2 is OBJECT_PILLBOX, not a tank
-        tank_positions[#tank_positions + 1] = {
-          wx = ob.x, wy = ob.y,
-          player_num = ob.idnum or 255,
-        }
-      end
-    end
-  end
-  local tiles
-  if #tank_positions > 0 then
-    tiles = cpf.simulate_shot_with_tanks(info.tankx, info.tanky,
-                                         target_wx, target_wy,
-                                         cpf.SHOT_TANK, 0,
-                                         tank_positions,
-                                         info.player_number or 255)
-  else
-    tiles = cpf.simulate_shot(info.tankx, info.tanky,
-                              target_wx, target_wy,
-                              cpf.SHOT_TANK, 0)
-  end
-  if not tiles then return true end
-  local origin_mx = info.tankx >> 8
-  local origin_my = info.tanky >> 8
-  local do_viz = BRAIN_DEBUG_MODE and viz.is_on("shell_hit_dot")
-  local blocked = false
-  local block_reason = nil
-  local block_mx, block_my = nil, nil
-  for ti, st in ipairs(tiles) do
-    if st.hit_type and st.hit_type == 1 then
-      local tank_is_target = (st.mx == target_mx and st.my == target_my)
-      if do_viz then
-        local hit_tank = nil
-        for _, tp in ipairs(tank_positions) do
-          if tp.player_num == st.hit_id then hit_tank = tp; break end
-        end
-        if hit_tank then
-          local tcx = hit_tank.wx / 256.0
-          local tcy = hit_tank.wy / 256.0
-          local hr = tank_is_target and 0 or 255
-          local hg = tank_is_target and 255 or 0
-          viz.rect("shell_hit_dot", tcx - 0.5, tcy - 0.5,
-                   tcx + 0.5, tcy + 0.5, hr, hg, 0, 150)
-          viz.text("shell_hit_dot", tcx, tcy - 0.6,
-                   string.format("#%d tank#%d %s", ti, st.hit_id or 0,
-                     tank_is_target and "HIT" or "BLOCKED"),
-                   "center", hr, hg, 0, 255, 0.6)
-        end
-      end
-      if not tank_is_target then
-        blocked = true
-        block_reason = string.format("allied_tank#%d", st.hit_id or 0)
-        block_mx, block_my = st.mx, st.my
-      end
-      break
-    end
-    if st.mx == target_mx and st.my == target_my then
-      if do_viz then
-        viz.rect("shell_hit_dot", st.mx + 0.1, st.my + 0.1,
-                 st.mx + 0.9, st.my + 0.9, 0, 255, 0, 80)
-        viz.text("shell_hit_dot", st.mx + 0.5, st.my + 0.5,
-                 tostring(ti), "center", 0, 255, 0, 200, 0.5)
-      end
-      break
-    end
-    if st.mx ~= origin_mx or st.my ~= origin_my then
-      local stt = U.ttype(st.mx, st.my)
-      if stt == C.T_BUILDING or stt == C.T_HALFBUILD then
-        blocked = true
-        block_reason = "wall"
-        block_mx, block_my = st.mx, st.my
-        if do_viz then
-          viz.text("shell_hit_dot", st.mx + 0.5, st.my + 0.5,
-                   tostring(ti), "center", 255, 0, 0, 200, 0.5)
-        end
-        break
-      end
-      local plist = world.pill_at and world.pill_at[st.my * 256 + st.mx]
-      if plist then
-        for _, e in ipairs(plist) do
-          if e.pill and e.pill.health and e.pill.health > 0 then
-            blocked = true
-            block_reason = string.format("pill(hp=%d)", e.pill.health)
-            block_mx, block_my = st.mx, st.my
-            break
-          end
-        end
-        if blocked then break end
-      end
-      local bentry = world.base_at and world.base_at[st.my * 256 + st.mx]
-      if bentry and bentry.base and bentry.base.owner == "hostile" then
-        blocked = true
-        block_reason = "hostile_base"
-        block_mx, block_my = st.mx, st.my
-        break
-      end
-    end
-    if do_viz and not blocked then
-      viz.rect("shell_hit_dot", st.mx + 0.2, st.my + 0.2,
-               st.mx + 0.8, st.my + 0.8, 200, 200, 200, 40)
-      viz.text("shell_hit_dot", st.mx + 0.5, st.my + 0.5,
-               tostring(ti), "center", 200, 200, 200, 150, 0.4)
-    end
-  end
-  if do_viz then
-    if blocked then
-      viz.rect("shell_hit_dot", block_mx + 0.05, block_my + 0.05,
-               block_mx + 0.95, block_my + 0.95, 255, 0, 0, 150)
-      viz.text("shell_hit_dot", block_mx + 0.5, block_my - 0.3,
-               block_reason, "center", 255, 80, 80, 255, 0.6)
-    end
-    viz.line("shell_hit_dot",
-             info.tankx / 256.0, info.tanky / 256.0,
-             target_wx / 256.0, target_wy / 256.0,
-             blocked and 255 or 100, blocked and 50 or 255, 50,
-             blocked and 180 or 80)
-    if viz.detail_circle then
-      local did = "shot_path_init"
-      local hdr = string.format("Shot path: from=(%d,%d) to=(%d,%d) result=%s",
-        origin_mx, origin_my, target_mx, target_my, blocked and "BLOCKED" or "CLEAR")
-      local mid_wx = (info.tankx + target_wx) / 2 / 256.0
-      local mid_wy = (info.tanky + target_wy) / 2 / 256.0
-      viz.detail_circle(did, mid_wx, mid_wy, 0.3, hdr)
-      if tiles then
-        for i, st in ipairs(tiles) do
-          if st.hit_type and st.hit_type == 1 then
-            viz.detail_text(did, string.format(
-              "#%d TANK#%d @tile(%d,%d)", i, st.hit_id or 0, st.mx, st.my))
-          else
-            local tt = U.ttype(st.mx, st.my)
-            local tt_name = ({
-              [C.T_BUILDING] = "wall", [C.T_HALFBUILD] = "halfwall",
-              [C.T_FOREST] = "forest", [C.T_ROAD] = "road",
-              [C.T_GRASS] = "grass", [C.T_RIVER] = "river",
-              [C.T_DEEPSEA] = "deepsea", [C.T_SWAMP] = "swamp",
-              [C.T_RUBBLE] = "rubble",
-            })[tt] or tostring(tt)
-            viz.detail_text(did, string.format(
-              "#%d tile(%d,%d) %s", i, st.mx, st.my, tt_name))
-          end
-        end
-      end
-    end
-  end
-  return not blocked
-end
+-- Shot-path safety check shared with steering.lua (single implementation
+-- lives there as M.shot_path_clear). Blocks on walls, pillboxes, hostile
+-- bases, and allied tanks. Forests and enemy tanks are OK.
+local _shot_path_clear_init = steer.shot_path_clear
 
 -- Hoisted lookup tables (don't realloc every tick of every Brain.think).
 -- Used by stuck detection / urgent-replan gating downstream — file-scope
@@ -225,6 +80,9 @@ local ATTACK_STATIONARY_SUBS = {
   in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
   in_range_aim_finetune=true, shoot_pill=true, engage=true, curve_away=true,
   rush=true, disengage=true, gather_trees=true,
+  -- blitz_wait: a blitzer deliberately HOLDS at its setup for the commander's
+  -- GO — sitting still is intentional, so it must not trip the stuck-flee timer.
+  blitz_wait=true,
 }
 local PP_STATIONARY_SUBS = {
   dispatch=true, wait_place=true, prewait=true, advance=true,
@@ -432,13 +290,22 @@ function Brain.shotsim_focused_pill_take_wu()
 end
 
 function Brain.shotsim_chosen_standoff_wu()
-  if not state.goal or not state.goal._shield_scan then return nil end
-  local s = state.goal._shield_scan.standoff
-  if not s then return nil end
-  -- Candidate cx/cy are tile-center floats (e.g. 12.5). Convert to
-  -- WU by multiplying by 256 (1 tile = 256 WU).
-  if not s.cx or not s.cy then return nil end
-  return math.floor(s.cx * 256 + 0.5), math.floor(s.cy * 256 + 0.5)
+  local g = state.goal
+  if not g then return nil end
+  -- Use the SAME source as the attack_chosen_standoff_marker so the POI always
+  -- matches the on-map marker — for every take mode, including blitz soldiers
+  -- (non-PPT, so _shield_scan is nil but goal.standoff_* is set).
+  local sfx = g.standoff_fx or (g.standoff_mx and (g.standoff_mx + 0.5))
+  local sfy = g.standoff_fy or (g.standoff_my and (g.standoff_my + 0.5))
+  if sfx and sfy then
+    return math.floor(sfx * 256 + 0.5), math.floor(sfy * 256 + 0.5)
+  end
+  -- Fallback: the shield-scan standoff candidate during pre-commit PPT planning.
+  local s = g._shield_scan and g._shield_scan.standoff
+  if s and s.cx and s.cy then
+    return math.floor(s.cx * 256 + 0.5), math.floor(s.cy * 256 + 0.5)
+  end
+  return nil
 end
 
 function Brain.shotsim_shield_candidate_wu(i)
@@ -488,6 +355,11 @@ end
 
 function Brain.open(info)
   opt.set_tick(0)
+  -- Host-callable log flush. BrainTest invokes this (via the C side) when
+  -- the sim is paused so the batched print2 log is written to disk
+  -- immediately for reading. No-op in opt/non-debug runs (force_flush
+  -- early-returns when _PRINT2_ENABLED is false).
+  _G.__brain_flush_logs = function() print2.force_flush() end
   opt("BEGIN Brain.open player=", info.player_number)
   print2("=== BRAIN STARTUP === player=", info.player_number,
          " name=", tostring(info.player_name),
@@ -646,6 +518,8 @@ function Brain.open(info)
   state.goal_set_tick     = 0    -- tick when current goal was chosen (for commitment hysteresis)
   state.goal_cooldowns    = {}   -- abandoned goals: { [key] = expiry_tick }
   state.goal_history      = {}   -- circular buffer of last N picked goals (oscillation detection)
+  state.blitz_calls       = {}   -- open blitz calls: { [commander_pn] = { pill, tick } }
+  state._blitz_query_send = true -- discovery query on join, so we learn calls already open
 
   -- /info state broadcast scratch buffers.
   --   broadcast_state_info      — scratch hash any code can write to during
@@ -923,11 +797,13 @@ function Brain.think(info)
   end
 
   -- LGM registry: self slot updated every tick from info.man_*.
-  -- A status transition (in_tank ↔ ground ↔ dead) sets the
-  -- pending_lgm_broadcast flag so the periodic /info state broadcast
-  -- block fires immediately rather than waiting for the next heartbeat
-  -- — allies need fast notification of "LGM back" so they stop yielding
-  -- to our cooldown.
+  -- No LGM status rides the periodic /info state slate (allies derive
+  -- friend/foe of any LGM they see straight off OBJECT_HOSTILE).  The
+  -- ONE thing they can't observe is when our killed LGM has respawned —
+  -- there's no engine event for that — so on a dead→alive transition we
+  -- queue a single dedicated "/info lgmback" notice (sent once, in the
+  -- broadcast block) that clears our dead-cooldown bookkeeping on every
+  -- ally's registry.
   local _lgm_self_pn = info.player_number
   if _lgm_self_pn ~= nil then
     local _lgm_self_mx = (info.man_x or 0) >> 8
@@ -938,11 +814,6 @@ function Brain.think(info)
       _lgm_self_pn, info.man_status or 0,
       _lgm_self_mx, _lgm_self_my, now)
     if _lgm_transitioned then
-      state.pending_lgm_broadcast = true
-      -- Set lgm_back flag for one broadcast when we transition FROM
-      -- dead to anything else (ground / in_tank).  Allies use this to
-      -- drop the dead-cooldown bookkeeping immediately rather than
-      -- waiting for respawn_eta.  Cleared by the broadcast block.
       local _lgm_new_status = lgm_registry.get(_lgm_self_pn).status
       if _lgm_prev_status == "dead" and _lgm_new_status ~= "dead" then
         state.pending_lgm_back = true
@@ -1105,9 +976,26 @@ function Brain.think(info)
   -- _dbg.txt) can all use the same brain-tick number.
   _G._BRAIN_TICK = now
   if BRAIN_DEBUG_MODE then
-    print2.set_bot(info.player_number or 0)
+    -- Name print2_bot<N>.log by the index BrainTest shows in its HUD / Copy
+    -- reference (_G.BT_BOT_INDEX, pushed per-bot), so the copied "botN" always
+    -- maps to print2_botN.log. Falls back to our player_number outside BrainTest.
+    print2.set_bot(_G.BT_BOT_INDEX or info.player_number or 0)
     print2.set_tick(now)
     print2("BEGIN bot tick=", now, " state.goal.kind = ", state.goal.kind, ", state.goal.substate = ", tostring(state.goal.substate))
+    -- Raw engine-object dump: EXACTLY what the engine handed the brain this tick
+    -- (info.objects — type/id/tile/host/speed). Tanks hidden in trees beyond
+    -- MIN_TREEHIDE_DIST are filtered C-side (playersGetBrainTanksInRect), so if a
+    -- tank isn't here, the brain literally never received it. type: 0=tank,
+    -- 2=pillbox (see OBJECT_* ). Opt-in: set _G._DUMP_ENGINE_OBJ = true.
+    if _G._DUMP_ENGINE_OBJ and info.objects then
+      local parts = {}
+      for _, ob in ipairs(info.objects) do
+        parts[#parts + 1] = string.format("{ty=%d id=%s (%d,%d) host=%s spd=%s}",
+          ob.type or -1, tostring(ob.idnum), (ob.x or 0) >> 8, (ob.y or 0) >> 8,
+          tostring(((ob.info or 0) & OBJECT_HOSTILE) ~= 0), tostring(ob.speed))
+      end
+      print2(string.format("ENGINE_OBJ t=%d n=%d %s", now, #info.objects, table.concat(parts, " ")))
+    end
     -- A* logging is gated on _G._ENABLE_ASTAR_LOG (default off) — the
     -- per-tile cost_to trace is verbose enough to noticeably slow the
     -- sim. Set `_G._ENABLE_ASTAR_LOG = true` (e.g. from a launcher
@@ -1130,6 +1018,52 @@ function Brain.think(info)
   -- opt.set_tick). t_early is its alias used by the early-viz/HUD timer
   -- so the first section measures from the actual tick start.
   local t_early = t_tick_start
+
+  -- Dead-tick hook: the engine now invokes us while our tank is waiting to
+  -- respawn (info.dead). We can't act and our outputs are dropped C-side, but
+  -- we reset our OWN state so we come back clean — drop any in-flight blitz
+  -- commitment/role/call latch and the current goal — then return a no-op. The
+  -- tick counter was already advanced above, so the debug panels keep tracking
+  -- instead of freezing while we're dead.
+  if info.dead then
+    state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
+    -- Wipe EVERY blitz/squad coordination field (negotiation, offers, rejects,
+    -- roster, watchdog, broadcast latches, and the call registry) so we respawn
+    -- with a clean slate instead of resuming a dead life's blitz. The registry
+    -- in particular must clear: its per-call distance/discount is computed off
+    -- the dijkstra slate, rooted at our PRE-DEATH position until it re-expands
+    -- after respawn — a far call would look cheap and trigger a silly cross-map
+    -- join. reset_blitz_state() also sets _blitz_query_send so commanders resend
+    -- bco and every call's distance is recomputed fresh from the new spawn.
+    squad.reset_blitz_state(state)
+    -- Drop all enemy-tank tracking so we don't respawn carrying stale ghosts.
+    -- A bot killed mid-fight keeps a frozen ghost of its killer at the spot it
+    -- died (last_tick = death tick); after respawn it sits there firing at the
+    -- empty tile. Wiping the track means ghosts rebuild from fresh sightings.
+    state._tank_track = nil
+    -- Blank ALL dijkstra slates to all-INF while we're dead, so we don't respawn
+    -- serving stale PRE-DEATH path costs. The normal respawn reroot only fires
+    -- the tick AFTER respawn-detect, leaving the first live tick with death-
+    -- rooted costs (that produced a cross-map blitz join). We're dead and idle
+    -- now, so reset them here; they aren't stepped while dead, so they stay
+    -- all-INF (far-tile lookups return COST_INF, no fake-cheap costs) until the
+    -- post-respawn reroot re-expands from the new spawn. Once per death episode
+    -- (the flag is cleared the first live tick below). brainPathfinderDijkstraStart
+    -- sets every g_cost cell to COST_INF; src (0,0) is irrelevant (never stepped).
+    if not state._dij_blanked then
+      state._dij_blanked = true
+      local mc_s, mc_l, ex = C.DIJKSTRA_SHORT_MAX_COST, C.DIJKSTRA_MAX_COST, C.DIJKSTRA_EXACT
+      cpf.dijkstra_start(0, now, 0, 0, 0, 0, 0, 0, 0, mc_s, ex, 1.0, 0, 1)
+      cpf.dijkstra_start(1, now, 0, 0, 0, 0, 0, 0, 0, mc_s, ex, 1.0, 0, 1)
+      cpf.dijkstra_start(2, now, 0, 0, 0, 0, 0, 0, 0, mc_l, ex, 1.0, 0, 1)
+      cpf.dijkstra_start(3, now, 0, 0, 0, 0, 0, 0, 0, mc_l, ex, 1.0, 0, 1)
+      if BRAIN_DEBUG_MODE then print2(string.format("DIJ_BLANK_ON_DEATH t=%d — all slates reset to INF while dead", now)) end
+    end
+    if BRAIN_DEBUG_MODE then print2("DEAD tick t=", now, " -- reset blitz/goal + tank tracks for respawn") end
+    return { holdkeys = 0, tapkeys = 0, build = nil,
+             wantallies = info.allies, messagedest = 0, sendmessage = nil }
+  end
+  state._dij_blanked = nil   -- alive: re-arm the on-death slate blank for next death
 
   -- Diagnostic: log when Dijkstra newly reaches a base. State-tracked
   -- by base id so we only log the first time. Called after each
@@ -1726,14 +1660,14 @@ function Brain.think(info)
       -- Can't build here: blacklist this location
       if state.builder.target and state.builder.target.x and state.builder.target.y then
         local bk = U.mkey(state.builder.target.x, state.builder.target.y)
-        state.blocked[bk] = now + 300
+        U.set_blocked(state, bk, now + 300, "no_build_site")
         log.event("assist_msg", string.format("no_build at %d,%d",
           state.builder.target.x, state.builder.target.y))
       end
     elseif msg == ASSIST_MSG_PILL_NO_REPAIR then
       -- Pill doesn't need repair: cancel repair goal
       if state.goal.kind == "repair_pill" then
-        attack.clear_attack_goal(state)
+        attack.clear_attack_goal(state, "assist: pill_no_repair")
         log.event("assist_msg", "pill_no_repair")
       end
     elseif msg == ASSIST_MSG_MAN_DEAD then
@@ -1841,11 +1775,33 @@ function Brain.think(info)
   -- pill. Includes approach now — if their tank is far from the pill
   -- (>12 tiles) the firing-lane stamp is skipped below, so the only
   -- effect from far is the small radius around the pill itself.
+  -- Substates where an ally is committed AT its pill-take spot (setup/standoff)
+  -- and shouldn't be driven through. Gates BOTH the 4-cardinal blitz stamp and
+  -- the 5x5 solo stamp below; the in_range euclidean gate keeps a stamp from
+  -- appearing while the ally is still driving in. Audited to cover the full
+  -- blitz lifecycle (plan_position/approach/gather_trees/detree/build_walls/
+  -- blitz_wait/aim/in_range_*/charge/shoot_pill/swerve) AND the solo wall-shield
+  -- take (ws_*) and hardline firing — anything where the tank holds/maneuvers
+  -- at the spot. Leaving/transient states (disengage/post_engage/loiter/
+  -- curve_away/reposition) and non-combat lifecycle states stay excluded.
   local ALLY_COMBAT_SUBS = {
-    approach=true,
+    plan_position=true, approach=true, gather_trees=true,
     aim=true, charge=true, engage=true, shoot_pill=true, swerve=true,
     in_range_position=true, in_range_aim=true, in_range_aim_pre=true,
     in_range_aim_finetune=true, build_walls=true, detree=true,
+    blitz_wait=true,
+    ws_prebuild=true, ws_prewait=true, ws_engage=true,
+    ws_advance=true, ws_rebuild=true, ws_retreat=true,
+    kill_hardline=true,
+  }
+  -- At-spot blitz substates: the ally is PARKED at its standoff, so its BROADCAST
+  -- standoff is a reliable position proxy when we can't see its tank (trees / view
+  -- limit) — exactly when converging blitzers most need to avoid each other.
+  local ALLY_AT_SPOT_SUBS = {
+    blitz_wait = true, aim = true, shoot_pill = true,
+    in_range_position = true, in_range_aim = true, in_range_aim_pre = true,
+    in_range_aim_finetune = true, ws_engage = true, ws_rebuild = true,
+    kill_hardline = true,
   }
   local ALLY_AVOID_RADIUS = 2  -- 5x5 block around the ally tank itself
   local ALLY_AVOID_COST   = C.ALLY_AVOID_COST or 800
@@ -1898,28 +1854,70 @@ function Brain.think(info)
       end
     end
 
+    -- Right-of-way: stamp the projected next tiles of any ally we're JUNIOR to
+    -- (their player id < ours) as high cost, so our pathfinder routes around
+    -- their near-future path — we give way, they don't. Project 0..LOOKAHEAD
+    -- tiles along the ally's heading (only while it's actually moving). Reads
+    -- current-tick info.objects directly (this block runs before percept.update,
+    -- so state.perc would be a tick stale). Reuses the stamp()/clear set above,
+    -- so it's wiped next tick (no trail). ob.idnum == player number for tanks.
+    if info.objects and info.player_number then
+      local LOOK = C.ALLY_YIELD_LOOKAHEAD or 2
+      for _, ob in ipairs(info.objects) do
+        if ob.type == 0 and (ob.info & OBJECT_HOSTILE) == 0   -- OBJECT_TANK, friendly
+           and ob.idnum ~= nil and info.player_number > ob.idnum
+           and (ob.speed or 0) >= (C.ALLY_YIELD_MIN_SPEED or 6) then
+          local asd = U.bsin(ob.direction or 0)
+          local acd = U.bcos(ob.direction or 0)
+          for i = 0, LOOK do
+            stamp((ob.x + asd * 2 * i) >> 8, (ob.y - acd * 2 * i) >> 8)
+          end
+        end
+      end
+    end
+
+    -- Visible tank positions keyed by player number (idnum), tile coords.
+    -- Source for the avoid-stamp centre below: we read each ally's live
+    -- position from our own game view instead of having them broadcast
+    -- tx/ty every tick.  Player numbers are globally unique, so indexing
+    -- all tanks (not just allied) is safe — only ally pns are looked up.
+    local _ally_tank_pos = nil
+    if info.objects then
+      for _, ob in ipairs(info.objects) do
+        if ob.type == 0 and ob.idnum ~= nil then  -- OBJECT_TANK
+          _ally_tank_pos = _ally_tank_pos or {}
+          _ally_tank_pos[ob.idnum] = { mx = ob.x >> 8, my = ob.y >> 8 }
+        end
+      end
+    end
+
     for ally_pn, slot in ally_state.iter_active(now_aa, 1750) do
       if ally_pn ~= info.player_number then
         local ai = slot.info
         -- Compute the "ally tank within 3 euclidean of either setup
         -- or standoff" gate up front so both the diagnostic overlay
         -- and the stamping block use the same source of truth.
-        local pmx = tonumber(ai.mx)
-        local pmy = tonumber(ai.my)
-        local atmx = tonumber(ai.tx)
-        local atmy = tonumber(ai.ty)
-        -- Parse the packed "p" field — 8 hex chars,
-        -- approach_mx/approach_my/standoff_mx/standoff_my each 2 chars.
-        -- Falls back to the legacy 4-key form if a peer is on old code.
+        -- Pill tile resolved from the broadcast target id against our own
+        -- world view (attack_pill no longer ships mx/my — target ids the
+        -- pill, the tile is local knowledge).
+        local pmx, pmy
+        local _pid  = tonumber(ai.target)
+        local _pill = (_pid and world.pills) and world.pills[_pid] or nil
+        if _pill then pmx, pmy = _pill.mx, _pill.my end
+        -- Ally tank position from our own game view (no longer broadcast
+        -- as tx/ty); nil when the ally isn't currently in view.
+        local _atp = _ally_tank_pos and _ally_tank_pos[ally_pn] or nil
+        local atmx = _atp and _atp.mx or nil
+        local atmy = _atp and _atp.my or nil
+        -- Setup/standoff geometry from the packed "p" extra (8 hex chars:
+        -- approach_mx/my + standoff_mx/my).  Static per take, so it ships
+        -- on the extra channel only when it changes.
         local smx, smy, ssx, ssy
         if ai.p and #ai.p == 8 then
           smx = tonumber(ai.p:sub(1, 2), 16)
           smy = tonumber(ai.p:sub(3, 4), 16)
           ssx = tonumber(ai.p:sub(5, 6), 16)
           ssy = tonumber(ai.p:sub(7, 8), 16)
-        else
-          smx = tonumber(ai.smx); smy = tonumber(ai.smy)
-          ssx = tonumber(ai.ssx); ssy = tonumber(ai.ssy)
         end
         local function edist(x1, y1, x2, y2)
           if not (x1 and y1 and x2 and y2) then return math.huge end
@@ -1957,10 +1955,34 @@ function Brain.think(info)
         end
 
         if ai.goal == "attack_pill" and ALLY_COMBAT_SUBS[ai.sub] then
-          if pmx and pmy and atmx and atmy then
-            -- 5x5 tank stamp gated on euclidean ≤ 3 to setup or
-            -- standoff (see above).  Stops the breadcrumb trail while
-            -- they're still driving in from far away.
+          local is_blitz = ai.sqst == "blitz" or ai.sqst == "join"
+          if is_blitz then
+            -- A blitz converges SEVERAL tanks on ONE pill. Their overlapping 5x5
+            -- + firing-lane stamps would price the whole area out, so for a blitz
+            -- participant (commander sqst="blitz" / joined soldier sqst="join") we
+            -- stamp just the 4 cardinal tiles around its spot — enough to avoid a
+            -- bump without walling off the cluster. Center on the ally's LIVE tank
+            -- position when we can see it AND it's near its standoff; otherwise,
+            -- for an ally PARKED at-spot (blitz_wait/aim/in_range_*/…) we can't see
+            -- (trees / view limit), fall back to its BROADCAST standoff (ssx/ssy)
+            -- so converging blitzers still avoid each other — each tank knows the
+            -- others' standoffs from the slate even when out of sight.
+            local cmx, cmy
+            if atmx and atmy and in_range then
+              cmx, cmy = atmx, atmy
+            elseif not (atmx and atmy) and ALLY_AT_SPOT_SUBS[ai.sub] and ssx and ssy then
+              cmx, cmy = ssx, ssy
+            end
+            if cmx then
+              stamp(cmx + 1, cmy); stamp(cmx - 1, cmy)
+              stamp(cmx, cmy + 1); stamp(cmx, cmy - 1)
+              if BRAIN_DEBUG_MODE then print2(string.format("ALLY_AVOID_BLITZ t=%d p%d center=(%d,%d) src=%s sub=%s", now_aa, ally_pn, cmx, cmy, (atmx and atmy and in_range) and "live" or "bcast", tostring(ai.sub))) end
+            end
+          elseif pmx and pmy and atmx and atmy then
+            -- Solo take: 5x5 tank stamp gated on euclidean ≤ 3 to setup or
+            -- standoff (stops the breadcrumb trail while driving in), plus a
+            -- 2-tile-wide firing lane from the ally tank to the pill. Both need
+            -- the live tank position.
             if in_range then
               for dy = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
                 for dx = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
@@ -1968,9 +1990,6 @@ function Brain.think(info)
                 end
               end
             end
-            -- Stamp firing lane: 2-tile-wide line from ally tank to
-            -- pill target. Uses broadcast tx/ty for ally position.
-            -- (Unchanged — user wants the engage-to-pill lane to stay.)
             if U.mdist(atmx, atmy, pmx, pmy) <= 12 then
               local ldx = pmy - atmy
               local ldy = -(pmx - atmx)
@@ -2057,6 +2076,12 @@ function Brain.think(info)
   end
   local t_influence = clock_us()
   opt(string.format("  influence stamp done %.2f ms", (t_influence - t_pillcontrib) / 1000))
+
+  -- Front-line circles (R2): self-throttling rebuild (~5 s) from the now-fresh
+  -- influence grid. Maintains state for circle win/loss + reinforcement (R3).
+  circles.update(state, world, state.tick or now)
+  -- Per-tick win/loss + reinforcement-need assessment (R3).
+  circles.assess(state, world, info, state.tick or now)
 
   -- Overlay grid: friendly pills = IMPASSABLE (32767 = max int16_t overlay
   -- value — a wall+shoot path costs ~30, so 32767 is effectively infinity
@@ -2242,6 +2267,20 @@ function Brain.think(info)
       end
     end
 
+    -- Respawn re-root: restart ALL slates from the new spawn position now,
+    -- instead of waiting out each slate's interval. Mains get stepped/filled
+    -- below; the backups are re-seeded empty here so far-tile lookups fall back
+    -- to "unknown" (fallback cost) rather than serving DEATH-rooted-cheap costs
+    -- until a main completes and overwrites them via the normal copy.
+    if state._dij_reroot then
+      state._dij_reroot = nil
+      start_slate(SLATE_SHORT_MAIN,   C.DIJKSTRA_SHORT_MAX_COST, in_boat, in_boat)
+      start_slate(SLATE_SHORT_BACKUP, C.DIJKSTRA_SHORT_MAX_COST, in_boat, in_boat)
+      start_slate(SLATE_LONG_MAIN,    C.DIJKSTRA_MAX_COST,       in_boat, 1)
+      start_slate(SLATE_LONG_BACKUP,  C.DIJKSTRA_MAX_COST,       in_boat, 1)
+      if BRAIN_DEBUG_MODE then print2(string.format("DIJ_REROOT t=%d src=(%d,%d) — all slates re-rooted after respawn", now, tmx, tmy)) end
+    end
+
     -- Short: land-only unless on a boat. Long: always allow boat.
     -- Long passes wait_for_done=true so its backup is ALWAYS a fully-
     -- complete map, even at low tiers where the long search may not
@@ -2316,16 +2355,24 @@ function Brain.think(info)
   -- when several bots broadcast on the same tick (previously the bus
   -- silently dropped all but one).
   if info.messages then
+    local _allies = info.allies or 0
     for _, m in ipairs(info.messages) do
       if m.text and m.text ~= "" then
         -- chat_log ring is debug-only (read only by the chat_log_overlay
-        -- HUD); skip the ring writes entirely in production. Slate update
-        -- via comms.process_message stays unconditional since coordination
-        -- logic reads it.
+        -- HUD); skip the ring writes entirely in production.
         if BRAIN_DEBUG_MODE then
           ally_state.chat_log_add("in", m.sender, m.text, now)
         end
-        comms.process_message(m.sender, m.text, now)
+        -- Coordination is ALLY-ONLY. Enemy bots run the same brain and
+        -- broadcast the same /info verbs (state slate, blitz bco/bcc/bcq), so
+        -- processing their messages would pollute our ally_state + blitz
+        -- registry and even draw comm lines / negotiate joins with enemies.
+        -- Gate on the alliance bitmask (self always allowed).
+        local _from_ally = (m.sender == state.player_number)
+                           or (_allies & (1 << (m.sender or 0))) ~= 0
+        if _from_ally then
+          comms.process_message(m.sender, m.text, now, state)
+        end
 
         local cmd = cmds.parse(m.text)
         if cmd then
@@ -2396,7 +2443,13 @@ function Brain.think(info)
   end
   if _just_respawned then
     state.stuck_for = 0
-    attack.clear_attack_goal(state)
+    state._tank_track = nil   -- drop pre-death ghosts (fallback if info.dead was missed)
+    -- Full blitz/squad wipe + registry re-discover. Fallback for when the
+    -- info.dead death-tick reset was missed (GC pause / long think / Lua error):
+    -- its distances are off the pre-death-rooted slate, so far calls look cheap
+    -- until re-discovered fresh (prevents the cross-map blitz join).
+    squad.reset_blitz_state(state)
+    attack.clear_attack_goal(state, "respawned")
     log.event("respawn", string.format("%d,%d", cur_mx, cur_my))
     if BRAIN_DEBUG_MODE then
       print(string.format(TAG .. " t=%d RESPAWN at (%d,%d) prev=(%d,%d)",
@@ -2428,12 +2481,30 @@ function Brain.think(info)
         entry.cost = math.huge
       end
     end
-    -- Wipe pool_cache so goal_selection sees an empty pool and falls
-    -- through to explore. The eval queue rebuild (~14 ticks) will
-    -- populate fresh winners from the new position.
+    -- Wipe pool_cache so goal_selection sees an empty pool and falls through to
+    -- explore until the rolling eval re-costs from the new position.
     state.pool_cache          = nil
-    state.eval_queue          = nil
-    state.eval_queue_pos      = nil
+    -- KEEP the eval_queue (just rewind it) instead of wiping it. Two wins:
+    --   1. The pool panel keeps rendering the pre-death candidates — now at INF
+    --      via the invalidated cost_cache above — so it shows every pool marked
+    --      invalid instead of going blank for ~50 ticks until a replan rebuilds.
+    --   2. The per-tick eval (update_pool_cache) re-costs those candidates
+    --      immediately rather than idling on a nil queue until the next replan,
+    --      so the warmup actually progresses from tick 1.
+    -- (The next replan's build_eval_queue still rebuilds it fresh as usual.)
+    state.eval_queue_pos      = state.eval_queue and 1 or nil  -- rewind: re-cost from the top
+    -- Re-sort the kept queue by euclidean distance to the NEW spawn position.
+    -- build_eval_queue sorted it relative to our PRE-death position, so without
+    -- this the rewound re-cost would evaluate goals near where we died first
+    -- instead of near where we respawned — closest-to-spawn should win the
+    -- limited warmup eval budget.
+    if state.eval_queue then
+      table.sort(state.eval_queue, function(a, b)
+        local da = (a.obj.mx - cur_mx)^2 + (a.obj.my - cur_my)^2
+        local db = (b.obj.mx - cur_mx)^2 + (b.obj.my - cur_my)^2
+        return da < db
+      end)
+    end
     state._pill_eval_cache    = nil
     state._pill_eval_progress = nil
     state.goal_cooldowns      = {}
@@ -2441,6 +2512,66 @@ function Brain.think(info)
     state.blocked             = {}
     state.banned_pill_angles  = {}
     state.wounded_pill        = nil
+    -- Re-engage the warmup gate: we respawned at a new position with all costs
+    -- invalidated, so (exactly like startup) force the explore fallback until
+    -- the pool re-warms — at least WARMUP_MIN_REAL_GOALS freshly-evaluated
+    -- finite goals. Without clearing this latch warm_ready stayed true and the
+    -- bot grabbed the FIRST re-costed goal (e.g. attack_pill #0) off a cache
+    -- that was otherwise still at infinity.
+    state._warm_ready     = nil
+    state._warm_count     = 0
+    state._warm_exit_done = nil
+    state._eval_swept     = nil  -- new position: require a fresh full eval sweep
+    -- Blitz-call registry: our knowledge of others' open calls is stale after a
+    -- respawn (we ran no Lua while dead), and our own call is gone. Drop both
+    -- and fire a discovery query so commanders re-announce their open calls.
+    state.blitz_calls       = {}
+    state._my_blitz_call    = nil
+    state._blitz_query_send = true
+    state._blitz_pill_reject = {}   -- stale no-spot rejects (pre-death geometry)
+    state._blitz_comm_reject = nil
+    -- Squad/blitz commitment: squad_blitz_accepted PERSISTS across ticks (it is
+    -- not recomputed each tick), and the negotiation/engage/roster fields hold
+    -- pre-death values. After respawn we are committed to nothing — drop it all
+    -- so squad.update re-derives cleanly instead of resuming a dead game's blitz.
+    state.squad_blitz_accepted    = nil
+    state.squad_negotiate_cmdr    = nil
+    state.squad_negotiate_pill    = nil
+    state.squad_blitz_target      = nil
+    state.squad_blitz_engage_mx   = nil
+    state.squad_blitz_engage_my   = nil
+    state.squad_blitz_bd          = nil
+    state.squad_blitz_repos       = nil
+    state.squad_blitz_in_position = nil
+    state.squad_blitz_aimed       = nil
+    state.squad_blitz_go          = nil
+    state.squad_blitz_reject      = nil
+    state.squad_blitz_roster      = nil
+    state.squad_blitz_accept      = nil
+    state._blitz_reject           = nil
+    state.squad_cmdr              = nil
+    -- Enemy ghost / lead-prediction tracking: stale predicted positions from
+    -- before death — drop so we don't chase a dead game's ghost for a tick or two.
+    state._prev_enemy_tanks  = nil
+    state._enemy_lgm_history = nil
+    state._kill_lgm_eval     = nil
+    -- "New tank appeared" baseline: nil so the first post-respawn tick seeds the
+    -- set instead of flagging every currently-visible enemy as newly-appeared
+    -- (the new_tank_seen check below only fires when a prior baseline exists).
+    state._prev_visible_tank_ids = nil
+    state._prev_tank_snapshot    = nil  -- tank-death detector baseline
+    -- Builder: fresh LGM after respawn — drop any stale build mode/target.
+    state.builder = { mode = "infrastructure", target = nil, need_trees = 0, last_action = nil }
+    -- Per-pill diff/spot/pickup cache: pre-death geometry, re-cost from scratch.
+    state._pill_diff_cache = nil
+    -- Capture-objective latch: stale after death.
+    state.capture_objective = nil
+    -- Re-root the Dijkstra slates at the NEW spawn next scheduler pass. Without
+    -- this the long slate / backups stay rooted at the DEATH position (their
+    -- interval is long), so far-tile cost lookups measure from where we died
+    -- (e.g. a pill we died next to reads cheap from across the map). The
+    -- scheduler restarts all 4 slates here instead of waiting out the interval.
+    state._dij_reroot = true
     -- Force-seed an explore goal so the first post-respawn tick has a
     -- sane state.goal before goal_selection runs.
     state.goal.kind     = "explore"
@@ -2462,7 +2593,7 @@ function Brain.think(info)
       local R = C.RESPAWN_CACHE_WIPE_DIST
       viz.circle("hud_goal", pmx, pmy, R, 255, 140, 0, 120)
       viz.text("hud_goal", pmx, pmy - R - 0.5,
-        string.format("WIPE R=%d", R), "center", 255, 140, 0, 200)
+        string.format("DEATH_WIPE R=%d", R), "center", 255, 140, 0, 200)
     end
   end
 
@@ -2602,7 +2733,7 @@ function Brain.think(info)
         end
       else
         local bk = U.mkey(state.goal.mx, state.goal.my)
-        state.blocked[bk] = now + 600
+        U.set_blocked(state, bk, now + 600, "refuel_base_unreachable")
         if BRAIN_DEBUG_MODE then
           print(string.format(
             TAG .. " t=%d STUCK at (%d,%d) goal=%s dest=(%d,%d) -- blocking for 600t",
@@ -2620,7 +2751,7 @@ function Brain.think(info)
           state.command_goal = nil
           if BRAIN_DEBUG_MODE then print(TAG .. " CMD: cancelled due to stuck") end
         end
-        attack.clear_attack_goal(state)
+        attack.clear_attack_goal(state, "stuck (nav)")
       end
       state.stuck_for = 0
     end
@@ -2957,19 +3088,31 @@ function Brain.think(info)
     elseif gk == "attack_pill" and not state.capture_objective then
       -- Autonomous attack (not cp command): invalid if pill died or changed side
       -- BUT NOT during swerve — swerve must complete to dodge damage,
-      -- the substate machine handles pill death after swerve finishes
+      -- the substate machine handles pill death after swerve finishes.
+      -- ALSO not when OUR target just died mid-fire: the firing substate machine
+      -- transitions firing -> swerve to dodge the still-in-flight return fire, so
+      -- replanning here would abandon the swerve and eat those shells.
       local sub = state.goal.substate
+      local FIRING_SUBS = {
+        charge = true, shoot_pill = true, engage = true,
+        in_range_aim = true, in_range_aim_finetune = true,
+      }
       if sub ~= "swerve" then
         local p = W.pill_at(world, gmx, gmy)
-        if not p or p.owner == "friendly" or p.health == 0 then
+        local pill_dead = (not p) or p.health == 0  -- killed/gone (may have return fire in flight)
+        if p and p.owner == "friendly" then
+          -- Captured (now ours): stop, nothing to dodge.
+          goal_valid = false
+        elseif pill_dead and FIRING_SUBS[sub] then
+          -- Keep the goal valid — attack.lua's firing handler enters swerve this
+          -- tick (charge:4462 / shoot_pill:4977 / engage). Don't invalidate.
+        elseif pill_dead then
           goal_valid = false
           -- Pill killed externally (not our capture): wipe the attack_pill
           -- pool cache so the urgent replan can't immediately re-select a
           -- stale pill from old cost_cache data.  The eval queue will
           -- re-evaluate fresh candidates within the next replan cycle.
-          if not (p and p.owner == "friendly") and state.pool_cache then
-            state.pool_cache[6] = nil
-          end
+          if state.pool_cache then state.pool_cache[6] = nil end
         elseif (info.shells or 0) <= 0 then
           -- Out of ammo: we can't damage the pill, so don't sit on it.
           -- Drop and replan (refuel is urgent at 0 shells). Clear pool 6
@@ -2999,11 +3142,16 @@ function Brain.think(info)
         if p and p.owner == "friendly" and p.health > 0 then goal_valid = false end
       end
     elseif gk == "attack_tank" then
-      -- Invalid if no enemy tanks visible (target escaped) or we're too weak
+      -- Invalid if no enemy tanks visible (target escaped) or we're too weak.
+      -- A GHOST of our specific target keeps the goal alive so we hunt it to
+      -- the predicted position for GHOST_TANK_TTL_TICKS instead of giving up
+      -- the moment it ducks into a forest.
       local has_target = false
-      if state.perc and state.perc.enemy_tanks then
-        if #state.perc.enemy_tanks > 0 then
-          has_target = true
+      if state.perc and state.perc.enemy_tanks and #state.perc.enemy_tanks > 0 then
+        has_target = true
+      elseif state.perc and state.perc.ghost_tanks then
+        for _, gt in ipairs(state.perc.ghost_tanks) do
+          if gt.id == state.goal.target_id then has_target = true; break end
         end
       end
       if not has_target then goal_valid = false end
@@ -3048,6 +3196,13 @@ function Brain.think(info)
           why = string.format("attack_pill@(%d,%d): pill HP=0 (killed externally)", gmx, gmy)
         end
       end
+      -- A goal=none always forces an immediate (urgent) full replan — see the
+      -- urgent_replan block below. The earlier "non-urgent" optimization for
+      -- capture_base/attack_pill churn (let goal=none ride the timer) was
+      -- removed: it made the bot idle on a base for up to GOAL_REPLAN_INTERVAL,
+      -- and a stale-cache re-pick variant could lock onto a bad goal (e.g.
+      -- charge attack_base at low armour because refuel wasn't in the stale
+      -- cache). finalize_pools is cheap enough to just run on the churn tick.
       attack.clear_attack_goal(state, why)
     end
 
@@ -3167,6 +3322,66 @@ function Brain.think(info)
     end
     local tank_appeared = tank_now_in_range and not (state.prev_tank_in_range or false)
     state.prev_tank_in_range = tank_now_in_range
+    -- Urgent replan the first tick ANY enemy tank becomes newly visible — a
+    -- tank id in perception that wasn't there last tick — regardless of the
+    -- current goal. Tracks the full visible-id SET (not just a "any tank?"
+    -- bool) so a 2nd tank arriving while one is already in view, or a tank
+    -- that left and reappeared, also triggers. Real sightings only (ghosts are
+    -- tracked separately and aren't "newly visible").
+    local new_tank_seen = false
+    do
+      local prev = state._prev_visible_tank_ids
+      local cur
+      if state.perc and state.perc.enemy_tanks then
+        for _, et in ipairs(state.perc.enemy_tanks) do
+          if et.id then
+            cur = cur or {}
+            cur[et.id] = true
+            -- Only "newly appeared" if we HAD a baseline and this id wasn't in
+            -- it. A nil baseline (startup / just respawned) seeds without firing,
+            -- so we don't spuriously urgent-replan on every already-visible tank.
+            if prev and not prev[et.id] then new_tank_seen = true end
+          end
+        end
+      end
+      state._prev_visible_tank_ids = cur
+    end
+    -- Urgent replan when a tank WE CAN SEE dies. EVENT_TANK_KILLED carries no
+    -- position/team, so we cross-reference the dead player against last tick's
+    -- visible-tank snapshot (built from info.objects): only deaths of tanks we
+    -- could actually see count. Any visible ENEMY death triggers; an ally death
+    -- triggers only if it died within TANK_DEATH_REPLAN_ALLY_RANGE of us.
+    local tank_died_seen = false
+    do
+      local snap = state._prev_tank_snapshot
+      local dead = state.tank_dead_at
+      if snap and dead then
+        local ar = C.TANK_DEATH_REPLAN_ALLY_RANGE or 20
+        for pn, dtick in pairs(dead) do
+          if dtick == now then            -- died this tick
+            local s = snap[pn]            -- and was visible to us last tick
+            if s then
+              if s.hostile then
+                tank_died_seen = true     -- any visible enemy death
+              elseif (math.abs(s.mx - cur_mx) + math.abs(s.my - cur_my)) <= ar then
+                tank_died_seen = true     -- nearby ally death
+              end
+            end
+          end
+        end
+      end
+      -- Rebuild snapshot (pos + team) of currently-visible tanks for next tick.
+      local cur = {}
+      if info.objects then
+        for _, ob in ipairs(info.objects) do
+          if ob.type == 0 and ob.idnum ~= nil then  -- OBJECT_TANK
+            cur[ob.idnum] = { mx = ob.x >> 8, my = ob.y >> 8,
+                              hostile = (ob.info & OBJECT_HOSTILE) ~= 0 }
+          end
+        end
+      end
+      state._prev_tank_snapshot = cur
+    end
     -- Trigger a one-shot urgent replan the first tick a dead pill appears on
     -- the ground.  capture_pill is HYST_EXEMPT and costs ~0.1× path, so it
     -- almost always wins immediately; only a very close attack_tank beats it.
@@ -3224,10 +3439,26 @@ function Brain.think(info)
         and state.perc and state.perc.enemy_tanks
         and #state.perc.enemy_tanks > 0
 
-    local urgent_replan = state.goal.kind == "none" or attack_tank_done
-                       or tank_appeared or dead_pill_appeared
+    -- goal=none always forces an immediate replan (else the bot idles up to a
+    -- full GOAL_REPLAN_INTERVAL — the "sit on a base for a second" bug).
+    -- Warmup exit: while on the explore fallback, replan the instant the pools
+    -- warm up (>= WARMUP_MIN_REAL_GOALS finite candidates) instead of waiting
+    -- out GOAL_MIN_COMMIT_TICKS. One-shot per explore episode (re-armed below
+    -- whenever we're not on explore).
+    if state.goal.kind ~= "explore" then state._warm_exit_done = nil end
+    local warm_exit = state.goal.kind == "explore" and not state._warm_exit_done
+                      and goals.warm_ready(state)
+    if warm_exit then state._warm_exit_done = true end
+    -- New blitz call received this/last tick → replan now so the join discount
+    -- can compete immediately (doesn't force the join; just lets it be evaluated).
+    local blitz_call_new = state._blitz_new_call or false
+    state._blitz_new_call = nil
+    local urgent_replan = state.goal.kind == "none"
+                       or warm_exit
+                       or tank_appeared or new_tank_seen or dead_pill_appeared
                        or new_base_appeared or lgm_appeared
                        or shot_by_tank or atk_pill_interruptible
+                       or blitz_call_new or tank_died_seen
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
@@ -3235,10 +3466,14 @@ function Brain.think(info)
       local reason
       if lgm_appeared           then reason = "LGM APPEARED"
       elseif tank_appeared      then reason = "TANK APPEARED"
+      elseif new_tank_seen      then reason = "TANK SEEN"
       elseif atk_pill_interruptible then reason = "TANK PREEMPT (pill loose)"
       elseif dead_pill_appeared then reason = "DEAD PILL"
       elseif new_base_appeared  then reason = "BASE DISCOVERED"
+      elseif tank_died_seen     then reason = "TANK DIED"
+      elseif blitz_call_new     then reason = "BLITZ CALL"
       elseif attack_tank_done   then reason = "ATTACK_TANK DONE"
+      elseif warm_exit          then reason = "WARMUP DONE"
       else                           reason = "GOAL=NONE"
       end
       state._last_urgent_replan = { tick = now, reason = reason }
@@ -3364,8 +3599,8 @@ function Brain.think(info)
           if waited >= C.REFUEL_ALLY_WAIT_TICKS then
             -- Timed out — ally is camping.  Block this base and replan.
             local bk = U.mkey(state.goal.mx, state.goal.my)
-            state.blocked[bk] = now + 200
-            attack.clear_attack_goal(state)
+            U.set_blocked(state, bk, now + 200, "refuel_ally_camping")
+            attack.clear_attack_goal(state, "refuel: ally camping base (wait timeout)")
             if BRAIN_DEBUG_MODE then
               print(string.format(TAG .. " t=%d REFUEL: wait_for_ally timed out at (%d,%d) after %d ticks, blocking base",
                     now, state.goal.mx, state.goal.my, waited))
@@ -3398,8 +3633,8 @@ function Brain.think(info)
         if need_mines  and (info.base.mines or 0) >= LOW then getting_something = true end
         if not getting_something then
           local bk = U.mkey(state.goal.mx, state.goal.my)
-          state.blocked[bk] = now + 200
-          attack.clear_attack_goal(state)
+          U.set_blocked(state, bk, now + 200, "refuel_base_depleted")
+          attack.clear_attack_goal(state, "refuel: base depleted")
           if BRAIN_DEBUG_MODE then
             print(string.format(TAG .. " t=%d REFUEL: base at (%d,%d) can't supply us (arm=%d sh=%d mn=%d), replanning",
                   now, state.goal.mx or 0, state.goal.my or 0,
@@ -3456,11 +3691,21 @@ function Brain.think(info)
       local t_fp0 = clock_us()
       goals.finalize_pools(state, world, info)
       opt(string.format("  finalize_pools done %.2f ms", (clock_us() - t_fp0) / 1000))
-      -- Kick off next cycle's queue immediately so it has ~49 ticks to process
+      -- Kick off next cycle's queue. Normally inline here so it has ~49
+      -- ticks to process. With C.INCREMENTAL_REPLAN on, defer it to the
+      -- next tick's update_pool_cache instead, so the replan tick pays
+      -- only finalize_pools + pick_goal (the decision) and build_eval_queue
+      -- (the SYNC sweep + sort) lands on the following tick — splitting the
+      -- per-replan spike across two ticks. pick_goal doesn't depend on the
+      -- new queue (it reads pool_cache from finalize_pools), so this is safe.
       if now <= 3 then print(TAG .. " tick=" .. now .. " calling build_eval_queue") end
-      local t_be0 = clock_us()
-      goals.build_eval_queue(state, world, info)
-      opt(string.format("  build_eval_queue done %.2f ms", (clock_us() - t_be0) / 1000))
+      if C.INCREMENTAL_REPLAN then
+        state._deferred_build_eval = true
+      else
+        local t_be0 = clock_us()
+        goals.build_eval_queue(state, world, info)
+        opt(string.format("  build_eval_queue done %.2f ms", (clock_us() - t_be0) / 1000))
+      end
       if now <= 3 then print(TAG .. " tick=" .. now .. " build_eval_queue done, calling pick_goal") end
       metrics.inc("goal_replan")
       local t_pg0 = clock_us()
@@ -3504,6 +3749,25 @@ function Brain.think(info)
       local engage_locked = state.goal.kind == "attack_pill"
                             and (state.goal.substate == "charge"
                                  or state.goal.substate == "engage")
+      -- A committed blitz must not be abandoned for routine goals (the bug
+      -- where a discounted capture_pill/reposition stole a commander out of
+      -- blitz_wait, stranding the squad). Holds through the pre-GO + aim phases
+      -- (plan_position/approach/gather_trees/detree/build_walls/blitz_wait/
+      -- aim/in_range). charge/engage are excluded — handled by engage_locked
+      -- above, which also lets a dead-pill capture take over the final rush.
+      -- Only genuinely critical goals preempt a blitz: survival (flee), an
+      -- enemy LGM to grab/kill, or a hostile tank close enough to threaten us.
+      local blitz_locked = state.goal.kind == "attack_pill" and state.goal._blitz
+                           and state.goal.substate ~= "charge"
+                           and state.goal.substate ~= "engage"
+      if blitz_locked and state.goal.target_id then
+        -- Release the hold if the target is gone/taken: dead pill -> let
+        -- capture_pill grab it; friendly -> moot. Don't cling to a dead blitz.
+        local tp = world.pills[state.goal.target_id]
+        if not tp or tp.owner == "friendly" or (tp.health or 0) <= 0 then
+          blitz_locked = false
+        end
+      end
       if swerving then
         new_goal = state.goal  -- swerve is never interrupted, not even by flee
       elseif engage_locked and new_goal.kind ~= "flee_to_base"
@@ -3511,6 +3775,13 @@ function Brain.think(info)
                              and new_goal.kind ~= "capture_pill"
                              and new_goal.kind ~= "kill_lgm" then
         new_goal = state.goal  -- keep current goal
+      elseif blitz_locked
+             and new_goal.kind ~= "flee_to_base"
+             and new_goal.kind ~= "kill_lgm"
+             and not (new_goal.kind == "attack_tank"
+                      and U.mdist(cur_mx, cur_my, new_goal.mx or 0, new_goal.my or 0)
+                          <= (C.SQUAD_BLITZ_PREEMPT_TANK_TILES or 10)) then
+        new_goal = state.goal  -- hold the blitz against non-critical goals
       end
       -- Compare on (kind, mx, my, target_id). Without target_id in
       -- the comparison, a hostile pill that gets captured + replaced
@@ -3626,7 +3897,7 @@ function Brain.think(info)
           print(string.format(TAG .. " t=%d ARRIVED/FAILED explore (%d,%d) -- marking visited",
                 now, state.goal.mx, state.goal.my))
         end
-        attack.clear_attack_goal(state)
+        attack.clear_attack_goal(state, "explore arrived/failed")
       elseif state.goal.kind == "attack_pill" or state.goal.kind == "pill_place" then
         -- Can't reach attack position: flee away from the pill.
         -- No pf_fail_logged guard here — we always want to flee, not sit stuck.
@@ -3660,11 +3931,11 @@ function Brain.think(info)
           end
           -- Block this destination so goal selection picks something else
           local bk = U.mkey(state.goal.mx, state.goal.my)
-          state.blocked[bk] = now + 600
+          U.set_blocked(state, bk, now + 600, "refuel_dest_block")
           print2(string.format(
             "PF_FAIL_BLOCK t=%d goal=%s dest=(%d,%d) pos=(%d,%d) 600t",
             now, state.goal.kind, state.goal.mx, state.goal.my, cur_mx, cur_my))
-          attack.clear_attack_goal(state)
+          attack.clear_attack_goal(state, "pathfind failed (dest blocked)")
           state.pf_fail_count = 0
         else
           -- Retry: reset pf to idle so it tries again next tick
@@ -3798,14 +4069,29 @@ function Brain.think(info)
       -- same base/pill we're about to capture), then restore everything.
       local saved_goal = state.goal
       state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
-      local block_key = U.mkey(saved_goal.mx, saved_goal.my)
-      local had_block = state.blocked[block_key]
-      state.blocked[block_key] = now + 9999
       local saved_gs = goals.save_goal_state()
+      -- Exclude the objective we're about to reach from the peek WITHOUT
+      -- touching state.blocked. state.blocked is a persistent, visualizer-
+      -- visible "tile on cooldown" map; poking it here (it used to set
+      -- now+9999) leaked a phantom "REJECT blocked 9999t" onto the pool
+      -- panel and conflated "about to capture" with "unreachable". Instead
+      -- drop this goal's pool_cache entry for the peek only, then restore it,
+      -- so pick_goal returns the NEXT-best goal and nothing persists.
+      local ex_idx, ex_val
+      if state.pool_cache then
+        for pi = 1, 13 do
+          local pce = state.pool_cache[pi]
+          if pce and pce.goal and pce.goal.mx == saved_goal.mx
+             and pce.goal.my == saved_goal.my then
+            ex_idx, ex_val = pi, pce
+            state.pool_cache[pi] = nil
+            break
+          end
+        end
+      end
       local peek = goals.pick_goal(state, world, info, true)  -- quiet: suppress logs
       goals.restore_goal_state(saved_gs)
-      if had_block then state.blocked[block_key] = had_block
-      else state.blocked[block_key] = nil end
+      if ex_idx then state.pool_cache[ex_idx] = ex_val end
       state.goal = saved_goal
       -- Use lookahead only if the next goal is elsewhere (not refueling here)
       if peek and peek.kind ~= "none"
@@ -4238,7 +4524,7 @@ function Brain.think(info)
                     if los_blocked then break end
                   end
                   local bentry = world.base_at and world.base_at[t.my * 256 + t.mx]
-                  if bentry and bentry.base and bentry.base.owner == "hostile" then
+                  if bentry and bentry.base then  -- a base of ANY owner stops the shell
                     los_blocked = true; break
                   end
                 end
@@ -4484,7 +4770,7 @@ function Brain.think(info)
     if now % 250 == 0 and not send_msg then
       send_msg = string.format(C.BRAIN_NAME .. ": en route to %s #%d -- %d sq away, pf=%s",
         cg.kind, cg.id, dist, pf.status)
-      msg_dest = 1 << state.player_number
+      msg_dest = 0  -- bot-only internal channel (don't spam human chat with status)
     end
   else
     if now % 250 == 0 then
@@ -4561,6 +4847,31 @@ function Brain.think(info)
     end
   end
 
+  -- Ghost tank overlay: where we GUESS an out-of-sight enemy tank is, and how
+  -- long until we stop hunting it. Drawn faded/purple since it's a prediction.
+  if BRAIN_DEBUG_MODE and viz.is_on("ghost_tank") and state.perc and state.perc.ghost_tanks then
+    local twx = info.tankx / 256.0
+    local twy = info.tanky / 256.0
+    for _, gt in ipairs(state.perc.ghost_tanks) do
+      local gx, gy = gt.mx + 0.5, gt.my + 0.5
+      local ttl_s = (gt.ghost_ttl_left or 0) / 50.0
+      -- Dashed-ish hollow box (two nested outlines) + a line from us to it.
+      viz.rect("ghost_tank", gt.mx + 0.1, gt.my + 0.1, gt.mx + 0.9, gt.my + 0.9, 200, 80, 255, 180, false)
+      viz.rect("ghost_tank", gt.mx + 0.25, gt.my + 0.25, gt.mx + 0.75, gt.my + 0.75, 200, 80, 255, 120, false)
+      viz.line("ghost_tank", twx, twy, gx, gy, 200, 80, 255, 90)
+      -- Heading hint: short vector along the extrapolation velocity.
+      if (gt.vx or 0) ~= 0 or (gt.vy or 0) ~= 0 then
+        local mag = math.sqrt(gt.vx * gt.vx + gt.vy * gt.vy)
+        if mag > 0 then
+          viz.line("ghost_tank", gx, gy, gx + gt.vx / mag * 1.2, gy + gt.vy / mag * 1.2, 255, 160, 255, 200)
+        end
+      end
+      viz.text("ghost_tank", gx, gy - 0.7,
+        string.format("GHOST p%d  %.1fs", gt.id or -1, ttl_s),
+        "center", 220, 140, 255, 255, 0.45)
+    end
+  end
+
   -- Coverage grid visualization (E key toggle)
   -- Shows how many hostile/neutral pills can fire on each tile (+1 per pill).
   -- Green=1, gradient to red=5+. Circle outlines show each pill's stamp radius.
@@ -4602,7 +4913,7 @@ function Brain.think(info)
   -- pick_goal see a clean slate — repair runs autonomously from here.
   if state._repair_dispatched then
     state._repair_dispatched = nil
-    attack.clear_attack_goal(state)
+    attack.clear_attack_goal(state, "repair_pill dispatched to LGM")
     if BRAIN_DEBUG_MODE then
       print(string.format(TAG .. " t=%d REPAIR dispatched, clearing goal", now))
     end
@@ -5166,6 +5477,54 @@ function Brain.think(info)
     -- gap and we don't trust their state.
     ally_state.draw(viz, state.tick, info.player_number, 1750)
     ally_state.draw_chat_log(viz, state.tick, info.player_number)
+    squad.draw_roster(state, info, state.tick)
+    squad.draw_labels(state, info, state.tick)
+    squad.draw_blitz(state, info, state.tick)
+    squad.draw_help_range(state, info, state.tick, world)
+    squad.draw_blitz_call(state, info, state.tick)
+    squad.draw_blitz_roster(state, info, state.tick)
+    squad.draw_blitz_wait_timeout(state, info, state.tick)
+    squad.draw_blitz_comm(state, info, world, state.tick)
+    squad.draw_blitz_joinable(state, info, world, state.tick)
+    squad.draw_blitz_join_highlight(state, info, state.tick)
+    -- Negotiating soldier's full standoff scan (ellipse scores + bucket): drawn
+    -- while we're offering a blitz standoff, so the score breakdown that picked
+    -- the offer is inspectable. Stashed by attack.blitz_negotiate.
+    if state._blitz_negotiate_scan and viz.is_on("blitz_negotiate_scan") then
+      local bns = state._blitz_negotiate_scan
+      attack.draw_pill_eval_spots(bns.spots, bns.mx, bns.my, "blitz_negotiate_scan", "all", bns.best_deg)
+      -- Label which pill (and commander) this negotiation is for, above the pill.
+      viz.text("blitz_negotiate_scan", bns.mx + 0.5, bns.my - 0.8,
+               string.format("NEG pill#%s -> C%s", tostring(bns.pill), tostring(bns.cmdr)),
+               "center", 255, 220, 120, 255)
+    end
+    circles.draw(viz, state.tick, world)
+    circles.draw_hud(viz, state.tick)
+    circles.draw_history(viz, state.tick)
+    circles.draw_warnings(viz, state.tick)
+    squad.draw_roles_live(state, info, state.tick)
+    squad.draw_hard_takes(world, state.tick)
+    PP.draw_roles(viz, world, state.tick)
+    PP.draw_front_band(viz)
+    -- reinforce_link: line from us to our target losing-circle safe tile.
+    if viz.is_on("reinforce_link") and state._reinforce_viz and viz.line then
+      local rv = state._reinforce_viz
+      local rtx, rty = (info.tankx >> 8) + 0.5, (info.tanky >> 8) + 0.5
+      viz.line("reinforce_link", rtx, rty, rv.mx + 0.5, rv.my + 0.5, 120, 200, 255, 220)
+      if viz.text then viz.text("reinforce_link", rtx, rty - 1.0, "REINFORCING #" .. rv.id, "center", 120, 200, 255, 235) end
+    end
+    -- repos_claims: pills an ally is repositioning (this bot honors the claim).
+    if viz.is_on("repos_claims") and viz.rect and ally_state.iter_active then
+      for apn, slot in ally_state.iter_active(state.tick, 1750) do
+        if apn ~= info.player_number and slot.info and slot.info.repos == "1" then
+          local amx, amy = tonumber(slot.info.mx), tonumber(slot.info.my)
+          if amx and amy then
+            viz.rect("repos_claims", amx, amy, amx + 1, amy + 1, 255, 120, 255, 120)
+            if viz.text then viz.text("repos_claims", amx + 0.5, amy - 0.6, "claim p" .. apn, "center", 255, 120, 255, 220) end
+          end
+        end
+      end
+    end
     pill_table.draw(viz, world, state, info)
     goals.draw_pill_spots(viz, state)
     attack.draw_pill_eval_progress(viz, state)
@@ -5294,10 +5653,13 @@ function Brain.think(info)
     arrow(30, 40, "+", (keys & KEY_MORERANGE) ~= 0, (taps & KEY_MORERANGE) ~= 0)
   end end -- BRAIN_DEBUG_MODE (arrow HUD)
 
-  -- Flush print2 log for this tick
+  -- End-of-decision marker. NOTE: the per-tick print2.flush() is deliberately
+  -- NOT here — the /info broadcast block (blitz bco/bcc/bcq TX diagnostics,
+  -- state slate) runs ~300 lines below this point, so flushing here would drop
+  -- every print2 emitted after it (they'd sit in the buffer and get cleared by
+  -- next tick's set_tick). The flush lives just before `return` instead.
   if BRAIN_DEBUG_MODE then
     print2("END state.goal.kind = ", state.goal.kind, ", state.goal.substate = ", tostring(state.goal.substate))
-    print2.flush()
   end
   -- Sub-section breakdown of (tail). Indented sub-section emits MUST
   -- come before the (tail) main emit so rebuild_sections attaches them
@@ -5368,20 +5730,28 @@ function Brain.think(info)
 
   -- Print2 watchdog: every 50 ticks, sanity-check that flushes are
   -- actually happening when the flag is on. The user wants HARD CRASHES
-  -- on silent print2 failures, so error() out if the lag is too high.
+  -- on silent print2 failures. Batching is wall-clock based (handoff
+  -- every print2 FLUSH_INTERVAL_S seconds), so reason in seconds, not
+  -- ticks: only crash if a sync-path write actually failed, or if no
+  -- handoff has happened for far longer than the interval (a real stall).
   if _G._PRINT2_ENABLED and (now % 50) == 0 and now > 10 then
     local d = print2.diagnostic()
-    local lag = now - (d.last_successful_flush_tick or -1)
-    if d.last_successful_flush_tick < 0 then
+    -- Allow up to 6x the flush interval before declaring a stall, so a
+    -- slow-but-healthy run (or a tick that just missed the boundary)
+    -- never trips it. A genuine stall (writer wedged, never draining)
+    -- still surfaces within ~30s.
+    local stall_limit = (d.flush_interval_s or 5) * 6
+    if d.consecutive_failures and d.consecutive_failures > 0 then
       local msg = string.format(TAG ..
-        " [print2 watchdog] FATAL tick=%d: NEVER FLUSHED (fails=%d open=%s)",
-        now, d.fail_count, tostring(d.file_open))
+        " [print2 watchdog] FATAL tick=%d: %d consecutive write failures (fails=%d open=%s)",
+        now, d.consecutive_failures, d.fail_count, tostring(d.file_open))
       print(msg)
       error(msg, 0)
-    elseif lag > 100 then
+    elseif (d.seconds_since_handoff or 0) > stall_limit then
       local msg = string.format(TAG ..
-        " [print2 watchdog] FATAL tick=%d: last flush was %d ticks ago (consec fails=%d open=%s)",
-        now, lag, d.consecutive_failures, tostring(d.file_open))
+        " [print2 watchdog] FATAL tick=%d: no flush for %ds (limit %ds, pending=%d open=%s)",
+        now, math.floor(d.seconds_since_handoff), stall_limit,
+        d.pending_blocks or -1, tostring(d.file_open))
       print(msg)
       error(msg, 0)
     end
@@ -5533,22 +5903,65 @@ function Brain.think(info)
     if state.last_broadcast_state_tick == nil  then state.last_broadcast_state_tick  = 0  end
     local bsi = state.broadcast_state_info
     for k in pairs(bsi) do bsi[k] = nil end
-    -- LGM fields (always populated when we have a self slot, so allies
-    -- always know our LGM status — even when our goal is "none").
-    local _bsi_self_slot = lgm_registry.get(info.player_number or -1)
-    if _bsi_self_slot and _bsi_self_slot.status ~= "unknown" then
-      bsi.lgm_st = _bsi_self_slot.status
-      if _bsi_self_slot.mx and _bsi_self_slot.my
-         and _bsi_self_slot.status ~= "dead" then
-        bsi.lgmx = tostring(_bsi_self_slot.mx)
-        bsi.lgmy = tostring(_bsi_self_slot.my)
+    -- Squad role (Phase 1): recompute deterministically + broadcast so allies
+    -- can render the roster and (later) drive recruitment.
+    squad.update(state, info, now, world)
+    -- Parallel blitz-soldier standoff offer (pre-commit; runs after squad.update
+    -- has chosen which commander we're negotiating with). Does not change our goal.
+    attack.blitz_negotiate(state, world, info, now)
+    if state.squad_role then bsi.role = state.squad_role end
+    if state.squad_cmdr then bsi.cmdr = tostring(state.squad_cmdr) end
+    if state.squad_status and state.squad_status ~= "-" then bsi.sqst = state.squad_status end
+    -- Blitz engage standoff claim (`be`): a soldier broadcasts its claimed
+    -- blitz engage spot; a commander on an attack_pill broadcasts its own
+    -- standoff so squadmates avoid it. `rdy=1` once a soldier is in position.
+    do
+      local g = state.goal
+      -- Broadcast our offered/claimed standoff (bes) when committed to a blitz
+      -- (g._blitz) OR while still NEGOTIATING one (squad_negotiate_cmdr set by
+      -- blitz_negotiate). The latter lets the commander's roster show a 'maybe'
+      -- soldier's live standoff (and watch it move as the soldier repicks),
+      -- instead of a blank "-".
+      -- Standoff (bes) travels as FLOAT tile coords, 4dp, so spot positions and
+      -- the commander's spot de-confliction keep sub-tile precision. Soldier =
+      -- its engage tile CENTER; commander = its precise float standoff (standoff_fx
+      -- /fy), falling back to the tile center.
+      if state.squad_blitz_engage_mx and state.squad_blitz_engage_my
+         and ((g and g._blitz) or state.squad_negotiate_cmdr) then
+        bsi.bes = string.format("%.4f,%.4f",
+                    state.squad_blitz_engage_mx + 0.5, state.squad_blitz_engage_my + 0.5)
+        if g and g._blitz and g.substate == "blitz_wait" and state.squad_blitz_aimed then bsi.rdy = "1" end
+      elseif state.squad_role == "c" and g and g.kind == "attack_pill"
+             and (g.standoff_fx or g.standoff_mx) then
+        bsi.bes = string.format("%.4f,%.4f",
+                    g.standoff_fx or (g.standoff_mx + 0.5),
+                    g.standoff_fy or (g.standoff_my + 0.5))
       end
-      if state.pending_lgm_back then
-        bsi.lgm_back = "1"
+      -- Commander GO signal. Tied to the live goal (_blitz_go) so it self-clears
+      -- when the take ends — a stale GO can't trigger the next blitz. _blitz_go
+      -- is set at commit time for an overwhelm charge (rush together), but
+      -- DEFERRED to shoot_pill entry for a shielded PPT commander (the slow
+      -- aim→in_range route would otherwise launch the soldier far too early).
+      if state.squad_role == "c" and g and g._blitz and g._blitz_go then
+        bsi.bgo = "1"
+      end
+      -- blitz: reported walk distance to our chosen standoff (bd) so the
+      -- commander can arbitrate conflicts; commander's reject list (brj).
+      if state.squad_blitz_bd then bsi.bd = tostring(state.squad_blitz_bd) end
+      if state.squad_role == "c" and state.squad_blitz_reject then
+        bsi.brj = state.squad_blitz_reject
+      end
+      if state.squad_role == "c" and state.squad_blitz_accept then
+        bsi.bac = state.squad_blitz_accept
+      end
+      -- blitz "where are you?" query: a commander ~1s from giving up in blitz_wait
+      -- asks an out-of-sight pending soldier for a fresh position (bwq = pill id),
+      -- latched for the query window. The soldier force-refreshes its bd in reply.
+      if state.squad_role == "c" and state._blitz_query_pid
+         and now <= (state._blitz_query_until or 0) then
+        bsi.bwq = tostring(state._blitz_query_pid)
       end
     end
-    bsi.tx = tostring(info.tankx >> 8)
-    bsi.ty = tostring(info.tanky >> 8)
     if state.goal and state.goal.kind and state.goal.kind ~= "none" then
       bsi.goal = state.goal.kind
       if state.goal.substate and state.goal.substate ~= "" then
@@ -5567,32 +5980,84 @@ function Brain.think(info)
       if state._blocker_pids and #state._blocker_pids > 0 then
         bsi.pblk = table.concat(state._blocker_pids, ",")
       end
-      -- Goal tile mx/my as a fallback for the ally_claimed match path
-      -- (goals.lua:3660-3664) when target_id isn't carried through.
-      if state.goal.mx and state.goal.my then
+      -- Goal tile mx/my: only broadcast when something actually reads it.
+      -- The de-conflict matcher (goals.lua) keys off `target` whenever an
+      -- object id is present and only falls back to mx/my for tile-targeted
+      -- goals with no target_id.  The ally-demolish path (init.lua ~2961)
+      -- reads mx/my but is gated on repos=="1" (capture_pill reposition).
+      -- For every other goal — capture_base, attack_pill, capture_pill
+      -- non-repos — `target` covers it, so mx/my would never be consulted.
+      local _need_mxmy = not (state.goal.target_id and state.goal.target_id >= 0)
+                         or (state.goal.kind == "capture_pill" and state.goal.reposition)
+      if _need_mxmy and state.goal.mx and state.goal.my then
         bsi.mx = tostring(state.goal.mx)
         bsi.my = tostring(state.goal.my)
       end
-      -- Cost: pool_cache holds per-pool winners with .cost. Find the
-      -- entry whose .goal matches our current goal (same kind + tile)
-      -- and pluck its cost. state.goal_cost was the legacy slot but
-      -- nothing ever assigned it; pool_cache is the actual source.
-      if state.pool_cache then
-        for pi = 0, 12 do
-          local pce = state.pool_cache[pi]
-          if pce and pce.goal
-             and pce.goal.kind == state.goal.kind
-             and pce.goal.mx   == state.goal.mx
-             and pce.goal.my   == state.goal.my
-             and pce.cost ~= nil then
-            local raw = pce.cost - (pce.ally_claimed_pen or 0)
-            bsi.cost = string.format("%.0f", raw)
-            break
-          end
+    end
+
+    -- One-shot "LGM back" notice: fired the single tick our LGM returns
+    -- from dead.  Takes the message slot first so it is never dropped;
+    -- the periodic state slate re-sends via differs/heartbeat if it has
+    -- to wait a tick.  Internal channel (messagedest=0), same routing as
+    -- /info state.  No LGM status is carried on the slate anymore.
+    if state.pending_lgm_back and not send_msg then
+      send_msg = "/info lgmback"
+      msg_dest = 0
+      state.pending_lgm_back = nil
+    end
+
+    -- Blitz-call registry one-shots (commander open/close, discovery query/
+    -- re-announce). One per tick, only when the slot is free. We have an open
+    -- call iff we're a commander leading an attack_pill take (a help-wanted
+    -- blitz); the target pill is goal.target_id. bco/bcc are emitted on the
+    -- open/close transition; bcq is our discovery request on (re)spawn/join;
+    -- a received bcq sets _blitz_rebroadcast so we re-announce our open call.
+    if not send_msg then
+      local cur_call = nil
+      -- Open-once / close-on-commit protocol: a call OPENS when we're leading a
+      -- blitz (goal._blitz) on an attack_pill in a pre-commit substate, and then
+      -- STAYS open across the pre-commit substates (squad.BLITZ_CALL_OPEN_SUB)
+      -- on the SAME pill — even if goal._blitz momentarily flickers (HP near the
+      -- hard-take threshold). It closes implicitly when the substate leaves that
+      -- set (we committed to firing), the target changes, we become a soldier,
+      -- or the goal ends. The _my_blitz_call latch is what keeps it open through
+      -- a _blitz flicker.
+      local _g = state.goal
+      if _g and _g.kind == "attack_pill" and not state.squad_cmdr
+         and _g.target_id and _g.target_id >= 0
+         and squad.BLITZ_CALL_OPEN_SUB[_g.substate or ""] then
+        if _g._blitz or state._my_blitz_call == _g.target_id then
+          cur_call = _g.target_id
         end
+      end
+      if BRAIN_DEBUG_MODE and _g and _g.kind == "attack_pill" and (_g._blitz or (_g.substate and _g.substate:find("blitz"))) then print2(string.format("BLITZ_TXDIAG t=%d role=%s sub=%s _blitz=%s cmdr=%s tgt=%s cur=%s my=%s", now, tostring(state.squad_role), tostring(_g.substate), tostring(_g._blitz), tostring(state.squad_cmdr), tostring(_g.target_id), tostring(cur_call), tostring(state._my_blitz_call))) end
+      if cur_call ~= state._my_blitz_call and cur_call then
+        send_msg = "/info bco " .. cur_call; msg_dest = 0
+        state._my_blitz_call = cur_call
+        state._my_blitz_call_tick = now   -- when WE opened this call (first-to-take rule)
+        state._blitz_rebroadcast = nil
+        print2(string.format("BLITZ_TX bco pill=%d t=%d (open)", cur_call, now))
+      elseif cur_call ~= state._my_blitz_call and state._my_blitz_call then
+        send_msg = "/info bcc"; msg_dest = 0
+        print2(string.format("BLITZ_TX bcc t=%d (close pill=%s)", now, tostring(state._my_blitz_call)))
+        state._my_blitz_call = cur_call   -- now nil
+        state._my_blitz_call_tick = nil
+      elseif state._blitz_rebroadcast and cur_call then
+        send_msg = "/info bco " .. cur_call; msg_dest = 0
+        state._blitz_rebroadcast = nil
+        print2(string.format("BLITZ_TX bco pill=%d t=%d (re-announce)", cur_call, now))
+      elseif state._blitz_query_send then
+        send_msg = "/info bcq"; msg_dest = 0
+        state._blitz_query_send = nil
+        print2(string.format("BLITZ_TX bcq t=%d (discovery)", now))
       end
     end
 
+    -- `cost` is NOT on the /info state slate (it drifts almost every tick
+    -- as we close on the target, which would force a near-per-tick send —
+    -- the same trap tx/ty were).  It rides the /info extra channel on a
+    -- 1 Hz cadence instead (see the bse block below); the state message
+    -- stays purely event-driven.
     local last = state.last_broadcasted_state_info
     local differs = false
     for k, v in pairs(bsi) do if last[k] ~= v then differs = true break end end
@@ -5600,8 +6065,7 @@ function Brain.think(info)
       for k, v in pairs(last) do if bsi[k] ~= v then differs = true break end end
     end
     local heartbeat_due = (now - state.last_broadcast_state_tick) >= 1500
-    local lgm_change_due = state.pending_lgm_broadcast == true
-    if (differs or heartbeat_due or lgm_change_due) and not send_msg then
+    if (differs or heartbeat_due) and not send_msg then
       send_msg = comms.format_state(bsi)
       -- Internal channel: messagedest=0 routes through the brain
       -- inbox of every allied bot in this sim and is shown locally
@@ -5613,8 +6077,6 @@ function Brain.think(info)
       for k in pairs(last) do last[k] = nil end
       for k, v in pairs(bsi) do last[k] = v end
       state.last_broadcast_state_tick = now
-      state.pending_lgm_broadcast = nil
-      state.pending_lgm_back = nil
     end
 
     -- ── Build the /info extra payload (bse) and ship it on idle ticks ──
@@ -5641,30 +6103,55 @@ function Brain.think(info)
                             state.goal.standoff_mx & 0xFF,
                             state.goal.standoff_my & 0xFF)
     end
+    -- Goal-selection cost (pool_cache winner matching our current goal).
+    -- Drifts every tick as we close on the target, so it rides the extra
+    -- channel on a ~1 Hz cadence (see cost_due below) rather than the
+    -- event-driven state slate.  Carried in EVERY extra send — not just
+    -- cadence ticks — so merge_info never evicts it from receivers, who
+    -- read it only to break a contention tie (once-per-second is ample).
+    if state.goal and state.goal.kind and state.goal.kind ~= "none"
+       and state.pool_cache then
+      for pi = 0, 12 do
+        local pce = state.pool_cache[pi]
+        if pce and pce.goal
+           and pce.goal.kind == state.goal.kind
+           and pce.goal.mx   == state.goal.mx
+           and pce.goal.my   == state.goal.my
+           and pce.cost ~= nil then
+          bse.cost = string.format("%.0f", pce.cost - (pce.ally_claimed_pen or 0))
+          break
+        end
+      end
+    end
     local last_ext = state.last_broadcasted_state_extra
     if last_ext == nil then
       last_ext = {}; state.last_broadcasted_state_extra = last_ext
     end
+    -- `cost` is kept OUT of the change trigger (it drifts every tick); a
+    -- cost-only change must not force a send.  Its own 1 Hz cadence
+    -- (cost_due) drives those refreshes instead.
     local extras_differ = false
-    for k, v in pairs(bse)      do if last_ext[k] ~= v then extras_differ = true break end end
+    for k, v in pairs(bse)      do if k ~= "cost" and last_ext[k] ~= v then extras_differ = true break end end
     if not extras_differ then
-      for k, v in pairs(last_ext) do if bse[k] ~= v then extras_differ = true break end end
+      for k, v in pairs(last_ext) do if k ~= "cost" and bse[k] ~= v then extras_differ = true break end end
     end
-    -- Only send extras when nothing else is going out this tick and
-    -- there's actual change.  Heartbeat: every 1500 ticks, re-emit
-    -- whatever extras are current so a freshly-joined or stale-slot
-    -- ally picks them up without waiting for the next goal change.
+    -- Send extras when nothing else is going out this tick and either the
+    -- non-cost payload changed, the 1 Hz cost refresh is due, or the
+    -- 30 s heartbeat fires (so a freshly-joined/stale-slot ally catches up).
     state.last_broadcast_extra_tick = state.last_broadcast_extra_tick or 0
+    state.last_broadcast_cost_tick  = state.last_broadcast_cost_tick  or 0
     local extra_heartbeat_due = (now - state.last_broadcast_extra_tick) >= 1500
+    local cost_due = bse.cost ~= nil and (now - state.last_broadcast_cost_tick) >= 50  -- 50 ticks = 1 s
     if not send_msg
        and (next(bse) ~= nil or next(last_ext) ~= nil)
-       and (extras_differ or extra_heartbeat_due) then
+       and (extras_differ or cost_due or extra_heartbeat_due) then
       send_msg = comms.format_extra(bse)
       -- Internal channel, same routing as /info state above.
       msg_dest = 0
       for k in pairs(last_ext) do last_ext[k] = nil end
       for k, v in pairs(bse)      do last_ext[k] = v end
       state.last_broadcast_extra_tick = now
+      if bse.cost ~= nil then state.last_broadcast_cost_tick = now end
     end
 
     -- Human goal-change line — fired only when the message slot is
@@ -5803,6 +6290,16 @@ function Brain.think(info)
       end
     end
   end
+
+  -- Audit hook: log EVERY real outbound message (at most one per tick). Grep
+  -- "MSG_TX" across a session to audit actual /info bus traffic — cadence and
+  -- content of state-slate, bes/bd, bco/bcc/bcq, replies, etc. (dest 0 = the
+  -- ally/bot-only internal channel; a nonzero bitmask = specific recipients).
+  if BRAIN_DEBUG_MODE and send_msg and send_msg ~= "" then print2(string.format("MSG_TX t=%d dest=%d msg=%s", now, msg_dest or 0, tostring(send_msg))) end
+
+  -- Flush print2 log for this tick. MUST be the last thing before return so it
+  -- captures the /info broadcast block above (blitz TX diagnostics included).
+  if BRAIN_DEBUG_MODE then print2.flush() end
 
   -- Output
   return {

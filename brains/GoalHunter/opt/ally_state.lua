@@ -42,12 +42,14 @@ function M.init()
       M.slots[pn] = {
         info      = {},
         last_tick = 0,
+        state_tick = 0,
         active    = false,
       }
     else
       for k in pairs(slot.info) do slot.info[k] = nil end
       if slot.extra then for k in pairs(slot.extra) do slot.extra[k] = nil end end
       slot.last_tick = 0
+      slot.state_tick = 0
       slot.active    = false
     end
   end
@@ -94,8 +96,15 @@ function M.set_info(player_num, now, new_hash)
   end
   -- Apply new keys.
   for k, v in pairs(new_hash) do info[k] = v end
-  slot.last_tick = now
-  slot.active    = true
+  slot.last_tick  = now
+  -- state_tick tracks when the GOAL/TARGET/SUB fields themselves were last
+  -- refreshed (full /info state only). merge_info (/info extra) bumps
+  -- last_tick for staleness but does NOT carry goal/target, so consumers that
+  -- need to know "is this goal current?" must compare against state_tick, not
+  -- last_tick — otherwise a stream of /info extra heartbeats makes a stale goal
+  -- look fresh (saw a live blitz call wrongly pruned this way).
+  slot.state_tick = now
+  slot.active     = true
 end
 
 -- Merge new_hash into the slot WITHOUT clearing existing keys.
@@ -174,8 +183,8 @@ end
 --
 -- Pixel layout: anchored to top-right.  Header at y=200, rows +14 px each.
 
-local _HEADER_FMT = "%-3s %-13s %-13s %-10s %-5s %-6s %s"
-local _ROW_FMT    = "%-3d %-13s %-13s %-10s %-5s %-6d %s"
+local _HEADER_FMT = "%-3s %-13s %-13s %-10s %-5s %-6s"
+local _ROW_FMT    = "%-3d %-13s %-13s %-10s %-5s %-6d"
 
 -- Keys we promote to dedicated columns.  Everything else falls into `data`.
 local _PROMOTED = { goal = true, sub = true, target = true, cost = true }
@@ -224,6 +233,35 @@ function M.draw(viz, now, self_player_num, max_age)
       end
       local info = slot.info
       y = y + row_dy
+    end
+  end
+
+  -- Free-form k=v data rendered as a SEPARATE block, left-anchored, below
+  -- the columnar table.  It is kept OUT of the table above because the
+  -- HUD is right-anchored: a variable-length data string lengthens the
+  -- whole row, which slides every column left and breaks alignment.
+  -- Left-anchoring (topleft) pins the left edge so the "p<pn>" prefixes
+  -- line up while the ragged k=v payload extends rightward.
+  local dx = 140
+  y = y + row_dy
+  y = y + row_dy
+  for pn = 0, MAX_TANKS - 1 do
+    local slot = M.slots[pn]
+    if slot ~= nil and slot.active then
+      local data = _build_data_string(slot.info)
+      if data ~= "" then
+        local stale = max_age ~= nil and (now - slot.last_tick) > max_age
+        local is_self = (self_player_num ~= nil and pn == self_player_num)
+        local r, g, b, a
+        if stale then
+          r, g, b, a = 120, 120, 120, 180
+        elseif is_self then
+          r, g, b, a = 120, 220, 255, 255
+        else
+          r, g, b, a = 160, 255, 160, 240
+        end
+        y = y + row_dy
+      end
     end
   end
 end

@@ -12,6 +12,7 @@ local U        = require("util")
 local danger   = require("danger")
 local threat   = require("threat")
 local kill_lgm = require("kill_lgm")
+local print2   = require("print2")
 
 local M = {}
 
@@ -37,6 +38,7 @@ function M.update(state, world, info)
   local neutral_pill_count = 0
   local hostile_pill_count = 0
   local attackable_pill_count = 0  -- hostile or neutral with health > 0
+  local allied_pill_count = 0      -- teammates' live pills (not mine, not a threat/target)
 
   for id, p in pairs(world.pills) do
     if p.owner == "friendly" then
@@ -46,6 +48,12 @@ function M.update(state, world, info)
       elseif p.health > 0 and p.health < C.PILLS_MAX_HEALTH then
         friendly_pills_damaged = friendly_pills_damaged + 1
       end
+    elseif p.owner == "allied" then
+      -- A teammate's CARRIED (in-tank) pill — deployed team pills are shared
+      -- and already classify as "friendly". This is in his tank: count it
+      -- toward the team total (reposition few-pills guard) but never treat it
+      -- as a threat or attack target, and don't try to manage it.
+      if p.health > 0 then allied_pill_count = allied_pill_count + 1 end
     else
       -- hostile or neutral
       if p.health == 0 and p.owner == "neutral" and not p.in_tank then
@@ -95,6 +103,7 @@ function M.update(state, world, info)
   perc.neutral_pill_count = neutral_pill_count
   perc.hostile_pill_count = hostile_pill_count
   perc.attackable_pill_count = attackable_pill_count
+  perc.allied_pill_count = allied_pill_count
 
   -- ----- Hostile tanks from info.objects (speed from C ObjectInfo) -----
   -- Velocity tracking: match tanks frame-to-frame by proximity to compute
@@ -193,9 +202,113 @@ function M.update(state, world, info)
     }
   end
 
+  -- ── Ghost tank tracking ──────────────────────────────────────────────────
+  -- Persist the last GHOST_TANK_HIST sightings (position + tick) per tank so
+  -- that when one vanishes (forest, fog, LOS break) we can extrapolate its
+  -- likely position from averaged velocity and keep it as a TARGETABLE ghost
+  -- for GHOST_TANK_TTL_TICKS — flushing out players who duck into cover.
+  -- (Done AFTER _prev_enemy_tanks is saved so ghosts never feed the per-tick
+  -- velocity matcher. Ghosts go in a SEPARATE perc.ghost_tanks list — NOT
+  -- perc.enemy_tanks — so the ~30 consumers that read enemy_tanks (threat,
+  -- crossfire, disengage, refuel urgency, opportunistic fire, …) only ever
+  -- see REAL sightings. Only the hunting paths (eval_attack_tank + steering
+  -- target acquisition) merge in ghosts.)
+  local ghost_tanks = {}
+  local track = state._tank_track or {}
+  local visible_ids = {}
+  for _, et in ipairs(enemy_tanks) do
+    if et.id ~= nil then
+      visible_ids[et.id] = true
+      local tr = track[et.id]
+      if not tr then tr = { hist = {} }; track[et.id] = tr end
+      tr.last_tick = now
+      tr.wx, tr.wy = et.wx, et.wy
+      tr.speed = et.speed
+      tr.dir = et.obj and et.obj.direction or tr.dir
+      table.insert(tr.hist, 1, { wx = et.wx, wy = et.wy, tick = now })
+      while #tr.hist > (C.GHOST_TANK_HIST or 10) do tr.hist[#tr.hist] = nil end
+      -- Average velocity (wu/tick) over the buffered span = "last known speed
+      -- + rotation averaged over the last N ticks".
+      if #tr.hist >= 2 then
+        local oldest = tr.hist[#tr.hist]
+        local span = now - oldest.tick
+        if span > 0 then
+          tr.vx = (et.wx - oldest.wx) / span
+          tr.vy = (et.wy - oldest.wy) / span
+        end
+      end
+    end
+  end
+  local ghost_ttl = C.GHOST_TANK_TTL_TICKS or 100
+  local dead_at = state.tank_dead_at
+  -- If ANY tank died this tick, flush ALL ghosts. Ghosts are a feature — we keep
+  -- firing at a tank that fled out of sight (into trees) — but a dead tank's
+  -- ghost must not draw fire. A death stamp can't always be matched to the right
+  -- track id (extrapolation drift / id reuse), so rather than risk shooting a
+  -- corpse's lingering ghost we drop EVERY out-of-sight track on any death and
+  -- re-acquire from fresh real sightings. Visible tanks are re-added below from
+  -- this tick's objects, so only ghosts are lost (they rebuild on next sighting).
+  local death_this_tick = false
+  if dead_at then
+    for _, dt in pairs(dead_at) do
+      if dt == now then death_this_tick = true; break end
+    end
+  end
+  for id, tr in pairs(track) do
+    local age = now - (tr.last_tick or now)
+    -- KILLED (not merely occluded): a tank we have a death stamp for, dated at or
+    -- after we last saw it, is gone — NOT hiding in cover. Drop the track so it
+    -- never becomes a targetable ghost; otherwise the hunting/steering paths keep
+    -- firing at its extrapolated ghost for the whole TTL (~2 s) after the kill.
+    local killed = dead_at and dead_at[id] and dead_at[id] >= (tr.last_tick or 0)
+    if visible_ids[id] then
+      -- seen this tick — the real entry is already in enemy_tanks
+    elseif killed or death_this_tick then
+      track[id] = nil  -- dead, or a tank died this tick → flush ghost immediately
+    elseif age > 0 and age <= ghost_ttl then
+      local gwx = (tr.wx or 0) + (tr.vx or 0) * age
+      local gwy = (tr.wy or 0) + (tr.vy or 0) * age
+      local gmx = math.floor(gwx / 256)
+      local gmy = math.floor(gwy / 256)
+      if gmx < 0 then gmx = 0 elseif gmx > 255 then gmx = 255 end
+      if gmy < 0 then gmy = 0 elseif gmy > 255 then gmy = 255 end
+      -- Reality check: a ghost is a GUESS at where an out-of-sight tank is. The
+      -- engine only HIDES a tank when it's FULLY in trees — center AND all 4
+      -- cardinal neighbours forest (utilIsTankInTrees). So a ghost is only
+      -- plausible at such a tile; anywhere else (open ground, or just the tree
+      -- LINE with 1-3 forest neighbours) a real tank would be visible — it
+      -- isn't, so it's gone (dead or moved off): drop the track instead of
+      -- firing at empty ground. (Was: ANY one forest neighbour kept it, which
+      -- wrongly retained ghosts on the tree line where the tank is still in
+      -- plain sight.) Also clears the post-death phantom with no distance math.
+      local in_cover =
+            U.ttype(gmx, gmy) == C.T_FOREST
+        and U.in_map(gmx - 1, gmy) and U.ttype(gmx - 1, gmy) == C.T_FOREST
+        and U.in_map(gmx + 1, gmy) and U.ttype(gmx + 1, gmy) == C.T_FOREST
+        and U.in_map(gmx, gmy - 1) and U.ttype(gmx, gmy - 1) == C.T_FOREST
+        and U.in_map(gmx, gmy + 1) and U.ttype(gmx, gmy + 1) == C.T_FOREST
+      if not in_cover then
+        track[id] = nil
+      else
+        ghost_tanks[#ghost_tanks + 1] = {
+          mx = gmx, my = gmy, dist = U.mdist(tmx, tmy, gmx, gmy),
+          obj = nil, id = id, speed = tr.speed or 0,
+          wx = gwx, wy = gwy, vx = tr.vx or 0, vy = tr.vy or 0,
+          svx = tr.vx or 0, svy = tr.vy or 0, hist = nil,
+          ghost = true, ghost_age = age, ghost_ttl_left = ghost_ttl - age,
+          dir = tr.dir,
+        }
+      end
+    elseif age > ghost_ttl then
+      track[id] = nil  -- ghost expired
+    end
+  end
+  state._tank_track = track
+
   perc.nearest_hostile_tank = nearest_hostile_tank
   perc.enemy_tank_count = enemy_tank_count
   perc.enemy_tanks = enemy_tanks
+  perc.ghost_tanks = ghost_tanks
 
   -- ----- Enemy LGM tracking: detect parachutes (dead enemy LGM) -----
   local enemy_lgm_sightings = state._enemy_lgm_sightings or {}

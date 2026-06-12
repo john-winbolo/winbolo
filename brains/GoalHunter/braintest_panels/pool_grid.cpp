@@ -40,8 +40,14 @@ static const TermDoc kTermDocs[] = {
     {"danger",  "Danger at destination × weight — hostile pills/tanks in firing range"},
     {"stale",   "Staleness penalty — target not seen recently; info may be wrong"},
     {"contest", "Contested penalty — an enemy tank is near this base"},
-    {"hyst",    "Switch penalty — GOAL_SWITCH_PENALTY(30) or GOAL_TARGET_SWITCH_PENALTY(15) + commitment(ticks*0.5, cap 75); negative in Pool 1 means already on this target"},
+    {"hyst",    "Switch penalty (ADDITIVE) — GOAL_SWITCH_PENALTY(30) or GOAL_TARGET_SWITCH_PENALTY(15) + commitment(ticks*0.5, cap 75); negative in Pool 1 means already on this target. Flat cost units, NOT a percent."},
+    {"x0.7",    "Active-goal switch bar (MULTIPLICATIVE hysteresis, GOAL_SWITCH_RATIO=0.7) — shown on the '>' current-goal row as its cost x0.7. A challenger only takes over if its (post-'hyst') cost falls BELOW this bar, i.e. it must be >=30% cheaper than the current goal. Separate from and stacked on top of the additive 'hyst' penalty."},
     {"deplete", "Depletion penalty — base observed to have low shells or armour stock"},
+    {"ur",      "Refuel urgency MULTIPLIER (0.37..1.0) — min((armour/ARMOUR_LOW)^2, (shells/SHELLS_LOW)^2) clamped to REFUEL_URGENCY_MIN(0.37). Scales the refuel cost DOWN as armour/shells fall (refuel gets cheaper the more hurt you are); 1.0 at/above the LOW thresholds."},
+    {"def",     "Refuel deficit bonus (SUBTRACTED, flat) — max((ARMOUR_LOW-armour)/ARMOUR_LOW, (SHELLS_LOW-shells)/SHELLS_LOW) x REFUEL_DEFICIT_BONUS(25). Grows as supplies deplete; 0 at/above the LOW thresholds."},
+    {"fill",    "Refuel fill MULTIPLIER (1.0..REFUEL_FULL_COST_MULT=3.0) — applies only when BOTH armour>ARMOUR_LOW and shells>SHELLS_LOW; scales cost UP as the tank tops off toward its targets, until refuel is skipped entirely when full."},
+    {"safe",    "Safe-refuel MULTIPLIER (REFUEL_NO_DANGER_DISCOUNT) — applied when the base sits in zero-danger territory (no pill/tank threat) so a safe base wins ties over an exposed one."},
+    {"lgm_wait_floor", "LGM-wait cost floor — when a returning LGM is due at this base, refuel cost is capped at this floor so the bot holds position to collect it."},
     {"urgency", "Urgency discount (negative) — more pill damage = higher priority"},
     {"diff",    "Difficulty score — terrain around pill makes the attack harder"},
     {"spot",    "Best attack spot — path cost to the nearest good firing position"},
@@ -54,16 +60,39 @@ static const TermDoc kTermDocs[] = {
     {"ammo",    "Shells-budget penalty — INF if shells < pill_hp (can't finish), otherwise 5 per shell that the take would leave us at below SHELLS_LOW (assuming exactly pill.health shots). Replaces the old has_shells gate that cleared the entire pool when shells dipped below SHELLS_LOW mid-take."},
     {"threat",  "Threat coverage × weight — hostile pill fire overlaps this base"},
     {"carry",   "Carry discount (negative) — you are already holding a pill to place"},
-    {"mult",    "Multiplier — scales the entire bracketed cost sum"},
+    {"mult",    "Constant cost multiplier for this pool (e.g. STRATEGIC_PLACE_COST_MULT) — FIXED per pool, does NOT vary per candidate. Scales the bracketed sum. Per-candidate multiplicative variation comes from other terms (place: bal, lastpill)."},
+    // place_pill_strategic (pool 8): score{} terms (placement QUALITY, higher=better spot, a sum) ...
+    {"score",   "Total placement quality = SUM of all the terms that follow; HIGHER is a better spot. Drives which spot is chosen — separate from the goal cost{} below."},
+    {"prx",     "Base proximity — soft bonus for being near a friendly base: max(0, STRATEGIC_PLACE_MAX_BASE_DIST - dist) x BASE_WEIGHT. Far spots just miss the bonus, they're not rejected."},
+    {"bdef",    "Base-defense need — bonus when the spot has <2 friendly pills within DEFENSE_RADIUS: UNDERDEFENDED_BONUS x (2 - count)."},
+    {"inf",     "Front-line influence — penalty if beyond the front (influence<0 -> -BEYOND_FRONT_PENALTY); else a bonus for sitting near the front: max(0, FRONT_PROX_CAP - influence) x FRONT_PROX_WEIGHT."},
+    {"spc",     "Pill spacing — penalty if too close to a friendly pill (<PILL_SPACING), small bonus when 2-4 tiles apart."},
+    {"los",     "Line-of-sight coverage — open sightlines from the spot (los_coverage x LOS_WEIGHT); a pill that can see more is more useful."},
+    {"thr",     "Threat at spot — hostile pill/tank fire coverage: -threat x THREAT_WEIGHT (negative). Avoids dropping a pill under fire."},
+    {"dst",     "Distance from tank — -mdist(tank,spot) x 0.5; mild preference for closer spots (less travel)."},
+    {"spk",     "Offensive spike — bonus when within 2 tiles of an offensive-push (spike) base."},
+    {"ep",      "Enemy-pill proximity — penalty if too close to a hostile pill, sweet-spot bonus at mid range, smaller bonus farther out."},
+    {"wz",      "Pill war-zone reinforcement — bonus near a contested-pill war zone, fading with distance (<=5 tiles)."},
+    {"port",    "Portfolio deficit bias — deficit x PORTFOLIO_WEIGHT; pushes placement toward the under-target category (util/front/aggro/back)."},
+    {"cov",     "Protective coverage — friendly pills + bases this spot covers within fire range; the key 'good back protector' signal."},
+    {"grd",     "Base-guardian — big bonus per currently-unguarded friendly base this spot would cover (top placement priority)."},
+    {"ctr",     "Strategic-center bias — nudge toward the chosen search center (war zone / base-vs-threat / contested pill)."},
+    // ... and the winner's cost{} = (path + base + carry_pen - carry) x mult x lastpill x bal + tankpen (goal COST, lower competes harder)
+    {"cost",    "Final goal cost for this candidate = (path + base + carry_pen - carry) x mult x lastpill x bal + tankpen, floored at 1. LOWER competes harder against other goals."},
+    {"path",    "A* travel cost from the tank to the placement spot."},
+    {"carry_pen", "Carry-value penalty (added) — raises cost when carrying the pill is currently more useful than placing it: early game, a dead pill to capture nearby, or an active attack opportunity. Zeroed when placement is urgent."},
+    {"lastpill", "Last-pill hold multiplier — x1.5 when holding your ONLY pill AND still short on utility pills (don't dump your last blocker); x1.0 otherwise."},
+    {"bal",     "Imbalance discount multiplier (<=1) — cheaper to place when a pill category is in deficit; 1.0 when balanced, capped so cost never goes free."},
     {"cpill",   "Capture pill multiplier — dead pill pickup scales the path cost down"},
     {"aim",     "Aim bonus (negative) — tank is already in your sights; cheaper to engage"},
     {"wall",    "Wall obstruction penalty — blocks between you and target beyond 1; 2 blocks=+100, 5 blocks=+400"},
-    {"loc",     "Strategic location multiplier — Phase 2; scales cost by terrain/position (e.g. deep_hostile). 1.0 = neutral."},
     {"dens",    "Density discount multiplier — Phase 4; lower when many friendly candidates of the same kind cluster nearby (n = neighbor count). 1.0 = no discount."},
     {"pickup",  "A-star cost of spot to pill, minus this pill's danger contribution."},
     { "wsim",    "Forward-sim damage cost — additive armour/ammo cost from simulating travel through danger fields; set in the wsim block." },
     { "hist",    "Oscillation history penalty — increases when the bot repeatedly picks/abandons the same goal to break loops." },
     { "ally_claimed", "Cross-pool penalty added when an ally bot is broadcasting the same goal (matched by kind + target_id, or kind + tile). attack_tank exempt; refuel_at_base gets 100; everything else +10000." },
+    { "tankpen",   "Combat-zone penalty on a NON-emergency strategic pill placement: flat +30 when an enemy tank is within 10 tiles (euclidean) of the chosen spot, +60 within 7. Discourages dropping a pill next to enemy tanks. The def_build emergency drop is exempt." },
+    { "blitz_discount", "Multiplier (<=1) on any open blitz-call pill we could join, pulling it into our winners. Distance-scaled to the standoff: ~0.25x at 7 tiles, 1.0x (none) by 20. REF base used for reject/sentinel entries." },
     { NULL, NULL }
     };
 
@@ -129,6 +158,10 @@ struct Row {
      * bidding, by being meaningfully cheaper. allyBy = that ally's player#. */
     bool   stealing;
     int    allyBy;
+    /* Blitz indicator (attack_pill only): this pill is a squad blitz — our own
+     * lead, the one we've committed to, one we're negotiating to join, or a
+     * teammate's open call. Rendered with a distinct color + "BZ" marker. */
+    bool   blitz;
 };
 
 struct Section {
@@ -211,6 +244,7 @@ static void parseRow(cJSON *jrow, Row *r, int section_idx, bool is_winners) {
     r->rejectRemaining = (int)getNum(jrow, "reject_remaining", 0);
     r->stealing = getBool(jrow, "stealing", false);
     r->allyBy   = (int)getNum(jrow, "ally_by", -1);
+    r->blitz    = getBool(jrow, "blitz", false);
 }
 
 static int parseSections(cJSON *root, Section *out, int outMax) {
@@ -326,6 +360,14 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
                                (int)(r->flashAlpha * 120));
         ImGui::GetWindowDrawList()->AddRectFilled(a, b, flash, 3.0f);
     }
+    if (r->blitz) {
+        /* Blitz tint: magenta wash + border so squad-blitz attack_pill rows
+         * stand out from solo takes. Matches the squad_blitz overlay theme. */
+        ImGui::GetWindowDrawList()->AddRectFilled(a, b,
+            IM_COL32(200, 60, 200, 45), 3.0f);
+        ImGui::GetWindowDrawList()->AddRect(a, b,
+            IM_COL32(230, 90, 230, 200), 3.0f, 0, 1.5f);
+    }
 
     /* Dim the entire row when rejected. Pop'd at the end of the row.
      * Hit area was already drawn above with full alpha. */
@@ -353,6 +395,10 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
     int displayId = (s->idx == 10) ? (r->id & 0xFFFF) : r->id;
     ImGui::TextColored(rowCol, "#%-3d", displayId);
     ImGui::SameLine();
+    if (r->blitz) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 1.0f, 1), "BZ");
+        ImGui::SameLine();
+    }
     ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1),
         "(%3d,%3d)", r->mx, r->my);
     ImGui::SameLine();
@@ -367,6 +413,15 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
     } else {
         ImGui::TextColored(ImVec4(1, 1, 0.4f, 1),
             "cost= %-6.0f", r->weighted);
+    }
+    /* Active goal ('>'): show the multiplicative switch bar (GOAL_SWITCH_RATIO,
+     * 0.7) — a challenger only takes over if its cost is below this. Makes the
+     * "why did the cheaper goal not win?" stickiness visible. (Mirror of
+     * constants.lua GOAL_SWITCH_RATIO — keep in sync.) */
+    if (r->activeGoal && r->weighted > -1e9f && r->weighted < 1e9f) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1),
+            "x0.7=%-6.0f", r->weighted * 0.7f);
     }
     ImGui::SameLine();
     /* Thresholds match step_eval_queue's tiered re-eval TTLs: close pills
@@ -401,6 +456,7 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
         if      (!strcmp(r->reject, "in_tank")) chipCol = ImVec4(0.95f,0.85f,0.20f,1);
         else if (!strcmp(r->reject, "blocked")) chipCol = ImVec4(1.00f,0.40f,0.40f,1);
         else if (!strcmp(r->reject, "stale"))   chipCol = ImVec4(0.70f,0.70f,0.70f,1);
+        else if (!strcmp(r->reject, "blitz"))   chipCol = ImVec4(0.90f,0.40f,0.90f,1); /* magenta: joinable blitz, not a solo claim */
         else                                     chipCol = ImVec4(0.85f,0.85f,0.85f,1);
         if ((!strcmp(r->reject, "blocked") || !strcmp(r->reject, "stale"))
             && r->rejectRemaining > 0) {
@@ -421,6 +477,16 @@ static void renderRow(PanelState &st, const Section *s, int i, Row *r) {
             ImGui::TextColored(ImVec4(1.0f, 0.35f, 1.0f, 1), "[STEAL<-p%d]", r->allyBy);
         else
             ImGui::TextColored(ImVec4(1.0f, 0.35f, 1.0f, 1), "[STEAL]");
+    }
+
+    /* Blitz chip — this attack_pill is an OPEN squad blitz (ours, joinable, or a
+     * teammate's call). NOT a reject: it stays a live, continually re-evaluated
+     * candidate (we join via the squad layer if we pick it). Magenta to match the
+     * BZ row style. Suppressed when the row is rejected (truly-closed take shows
+     * its reject chip instead). */
+    if (r->blitz && !isRej) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.95f, 0.40f, 0.95f, 1), "[blitz]");
     }
 
     /* Line 2: dim formula.
@@ -899,13 +965,46 @@ void renderPoolGrid(int registry_idx, const char *body) {
 
     /* Winners formula legend window. */
     if (st.showLegend) {
-        ImGui::SetNextWindowSize(ImVec2(340, 260), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(360, 400), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos(
-            ImVec2((float)winW * 0.5f - 170, (float)winH * 0.5f - 130),
+            ImVec2((float)winW * 0.5f - 180, (float)winH * 0.5f - 200),
             ImGuiCond_FirstUseEver);
         if (ImGui::Begin("Winners Formula Legend###winnersLegend",
                          &st.showLegend,
                          ImGuiWindowFlags_NoCollapse)) {
+            /* Row markers (the symbol left of each row's #id). */
+            ImGui::TextColored(ImVec4(1,1,0.5f,1), "Row markers (left of #id)");
+            ImGui::Separator();
+            if (ImGui::BeginTable("##legmark", 2,
+                    ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                    ImGuiTableFlags_SizingFixedFit)) {
+                ImGui::TableSetupColumn("Mark",    ImGuiTableColumnFlags_WidthFixed, 60.0f);
+                ImGui::TableSetupColumn("Meaning", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextColored(ImVec4(0.4f,1.0f,0.4f,1), ">");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted("Active goal: the one the bot is executing now");
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextColored(ImVec4(1,1,0.4f,1), "*");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextWrapped("Winner: lowest-cost candidate (in WINNERS, a "
+                                   "pool's winning row). Shown only when it isn't "
+                                   "also the active goal -- '>' takes precedence.");
+
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextColored(ImVec4(1.0f,0.9f,0.1f,1), "!");
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted("Override: selection forced by an override rule");
+
+                ImGui::EndTable();
+            }
+            ImGui::Spacing();
             ImGui::TextColored(ImVec4(1,1,0.5f,1), "Second-line abbreviations");
             ImGui::Separator();
             if (ImGui::BeginTable("##leg", 2,

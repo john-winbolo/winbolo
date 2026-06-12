@@ -70,9 +70,9 @@ M.TERRAIN_COST_LAND = {
 -- Land tiles are expensive because touching land destroys the boat permanently.
 -- A* should strongly prefer staying in water and only disembark near the goal.
 M.TERRAIN_COST_BOAT = {
-  [M.T_RIVER]     = 2,     -- open water, cheap
-  [M.T_DEEPSEA]   = 2,     -- open water, cheap
-  [M.T_BOAT]      = 2,     -- transition point
+  [M.T_RIVER]     = 2.5,   -- afloat: between grass (2) and forest (3)
+  [M.T_DEEPSEA]   = 2.5,   -- afloat: between grass (2) and forest (3)
+  [M.T_BOAT]      = 2.5,   -- transition point (matches afloat cost)
   [M.T_ROAD]      = 20,    -- disembark: lose boat
   [M.T_REFBASE]   = 20,    -- disembark: lose boat
   [M.T_GRASS]     = 20,    -- disembark: lose boat
@@ -351,9 +351,16 @@ M.WOUNDED_COMMIT_DISCOUNT      = 0.5
 M.PPT_HEALTH_THRESHOLD = 8     -- only PPT if pill HP >= this
 M.PPT_ANGER_THRESHOLD  = 0.34  -- ...OR force PPT when pill anger > this (~>1 hit): an angry pill reloads fast, don't charge it bare
 M.SWERVE_SKIP_ARMOUR_PER_HP = 5  -- skip the kill/curve swerve while pill.health*this <= armour (we can tank finishing it, so buck in)
+M.TANK_FINISH_MAX_HP    = 3    -- tank the finish only when remaining pill HP <= this
+M.TANK_FINISH_MAX_ANGER = 0.25 -- ...AND the pill is currently CALM (anger <= this). An angrier pill reloads fast, so don't soak its last HP — swerve instead.
 M.PPT_STANDOFF         = 7.0   -- pull in slightly closer than ATTACK_PILL_STANDOFF
 M.PPT_CHARGE_MAX_SPEED = 4     -- speed cap during PPT charge (creep, not rush)
 M.PPT_CHARGE_BRAKE_DIST = 32   -- start braking inside this many wu of standoff
+-- Legacy (non-PPT) charge brakes on REACH, not standoff distance: it rolls in
+-- until braking from the predicted stop (cpf.predict_stop) would still land a
+-- shot on the pill, fixing a standoff that rounded just outside shell range.
+-- This floor only bounds the creep so we never drive onto the pill.
+M.CHARGE_MIN_STANDOFF   = 5.0  -- never creep closer than this many tiles from the pill
 -- Max ticks to wait at the approach point for the LGM to gather enough
 -- trees for the shield walls before giving up and degrading to a
 -- no-shield (legacy aim/charge) attack. 1500 = 30 s @ 50 Hz.
@@ -365,6 +372,8 @@ M.POST_KILL_WAIT_TICKS = 15  -- ticks to hold at standoff after pill dies (in-fl
 -- Attack position planner (pick_attack_standoff in goals.lua)
 M.ATTACK_PLAN_DIRS          = 12   -- candidate directions sampled around the pill
 M.PILL_ATTACK_REPLAN_TICKS  = 150  -- re-evaluate standoff every ~3 s
+M.ATTACK_PILL_TANK_PRESENT_PENALTY = 30  -- flat cost added to EVERY attack_pill candidate when a non-rejected enemy tank exists this eval (state._attack_tank_present, set by eval_attack_tank). Biases the bot toward dealing with the live tank instead of chipping pills. Shows as the `atk_tank{30}` term in the attack_pill breakdown.
+M.PANIC_BUILD_NEAR_TILES = 12  -- reference range for the panic_build viz closeness gauge: the threat-distance bar is full when the enemy tank is adjacent and empty at this many tiles. Display-only (does not gate the build).
 M.APPROACH_SLOW_IN_RANGE_PEN = 150 -- per-tile penalty for slow terrain within pill range on approach
 -- Standoff influence bias: -inf * weight added to score, so the ring
 -- candidate on the friendly side of the pill wins over the hostile side
@@ -378,6 +387,13 @@ M.ATTACK_SCAN_DEGREES       = 5    -- degrees per step around circle (72 spots a
 M.ATTACK_SAFE_RADIUS        = 3    -- tiles around standoff to check for danger/maneuver room
 M.ATTACK_DANGER_THRESHOLD   = 30   -- max total score to be considered safe
 M.ATTACK_DANGER_HOTSPOT     = 15   -- any tile in maneuver area above this triggers B penalty
+
+-- Soldier self-planning for a standoff spot (blitz/pill-take): prefer a spot
+-- whose shot to the pill CENTER crosses fewer trees and is not blocked by an
+-- already-built wall (the commander rejects center-blocked spots, so favoring
+-- center-clear here converges the negotiation faster).
+M.STANDOFF_SHOT_TREE_PENALTY    = 8    -- per forest tile on the center shot path
+M.STANDOFF_SHOT_BLOCKED_PENALTY = 200  -- center shot blocked by a built wall (T_BUILDING/HALFBUILD)
 
 -- Pill-take spots that sit deep inside enemy influence are much harder to
 -- hold during the take. In mid/late game (phase != "opening"), multiply
@@ -440,6 +456,8 @@ M.ATTACK_RUSH_ARRIVE      = 1   -- mdist to pill to count as "arrived" during ru
 M.ATTACK_RUSH_MIN_ARMOUR  = 5     -- only rush when armour >= this (a 1-shot kill is near risk-free)
 M.ATTACK_RUSH_MAX_ANGER   = 0.34  -- pill anger must be <= this (~one PILL_ANGER_BUMP)
 M.ATTACK_RUSH_STANDOFF    = 1.5   -- tiles from pill center to park the point-blank charge
+M.HARDLINE_ENGAGE_RANGE   = 10    -- only switch to kill_hardline within this many tiles of the pill (PILL_FIRE_RANGE 8 + 2). Farther away, use the normal approach (which handles boats / disembark); the hardline land-rush only kicks in once we're near firing range.
+M.HARDLINE_FIRE_AIM_TOL   = 8     -- kill_hardline fires only when the tank's heading is within this many degrees of the pill, so the shot we fire matches the pill-aimed line shot_path_clear validated (never lob a shell off-axis into a stray pillbox/base while driving).
 
 -- Swerve durations (confirmed-kill swerve: pill dead or bullets_fired >= needed)
 M.SWERVE_TOTAL_TICKS      = 95  -- total swerve duration
@@ -495,6 +513,11 @@ M.ALLY_CLAIMED_STEAL_THRESHOLD = 100   -- (legacy additive band; superseded by t
 -- behaves the same for cheap pill captures (~20-40) and expensive base
 -- captures (~1000s). 0.10 = "must be >=10% cheaper to steal".
 M.ALLY_CLAIMED_STEAL_FRAC      = 0.10
+-- Refuel ally-claim override: a far-away ally can't reserve a base we're
+-- sitting next to. If the claiming ally is > this many tiles (euclidean)
+-- from the base and we're closer, ignore their first-come claim and take
+-- it. Claimer-not-visible (beyond our sensor range) counts as far.
+M.REFUEL_CLAIM_FAR_TILES       = 10
 M.GOAL_COMMITMENT_PER_TICK = 0.5   -- extra switch penalty per tick spent on current goal
 M.GOAL_COMMITMENT_CAP      = 75    -- max commitment penalty (reached after 150 ticks / 3s)
 M.REFUEL_FULL_COST_MULT    = 3.0   -- pool-1 cost multiplier when tank is between low and full thresholds; applied at goal-selection time so stale cache costs scale with current state. At max fullness the entry is skipped entirely.
@@ -551,7 +574,10 @@ M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
                                    -- (with squared urgency: floor cost at
                                    -- bscore × 0.37; e.g. bscore=60 → ~22)
 M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pill = +75)
+M.REPAIR_BASE_COST         = 30    -- flat floor so a close/damaged repair doesn't trivially out-rank other goals
 M.REPAIR_DAMAGE_BONUS      = 3     -- cost reduction per missing HP on friendly pill
+M.REPAIR_CONTESTED_MULT    = 3.0   -- repair cost ×N when an enemy tank is closer to the pill than us (contested → likely futile)
+M.ATTACK_PILL_BASE_COST    = 30    -- flat cost added to every attack_pill (like ATTACK_BASE_EXTRA_COST for bases) so a pill take isn't free vs other goals
 M.ATTACK_BASE_EXTRA_COST   = 80    -- flat cost added to hostile base attacks
 M.ATTACK_BASE_THREAT_WEIGHT = 3    -- multiplier for threat at base location (penalise bases behind enemy pills/tanks)
 M.GOAL_CROSSFIRE_PENALTY   = 100   -- goal cost per nearby hostile pill that can crossfire at standoff
@@ -648,9 +674,20 @@ M.ANGRY_REFUEL_THRESHOLD   = 0.6   -- pill anger above which we flee the base
 -- Goal replan scheduling
 -- -------------------------------------------------------------------------
 M.GOAL_REPLAN_INTERVAL     = 50    -- ticks between goal decisions
+M.WARMUP_MIN_REAL_GOALS    = 10    -- the rolling pool-eval warms up over ~14-49 ticks; until this many finite-cost (pickable) candidates exist across all pools the bot rides the explore fallback. Once reached: exit explore immediately (don't wait out GOAL_MIN_COMMIT) and stop showing the warmup reject row in the WINNERS panel.
 M.GOAL_POOL_COUNT          = 10    -- number of pool evaluators to spread across ticks
 M.GOAL_CANDS_PER_TICK      = 1     -- A* cost_to evaluations per tick (round-robin)
 M.STARTUP_HOLD_TICKS       = 16    -- hold still for this many ticks after brain start so the eval queue warms up before we commit to a direction
+
+-- Incremental replan (experimental toggle). A replan tick runs the full
+-- synchronous pipeline finalize_pools -> build_eval_queue -> pick_goal,
+-- which is the dominant per-tick cost spike (~6ms on busy maps). The goal
+-- DECISION (finalize_pools + pick_goal) must happen on the replan tick,
+-- but build_eval_queue only seeds the NEXT cycle's eval queue, so it can
+-- be deferred one tick to split the spike across two ticks. When true,
+-- build_eval_queue runs on the tick AFTER the replan instead of inline.
+-- Default false = original (single-tick) behavior. Flip to true to A/B.
+M.INCREMENTAL_REPLAN       = false
 
 -- -------------------------------------------------------------------------
 -- Incremental Dijkstra (split-across-ticks full-map cost search)
@@ -698,6 +735,13 @@ M.STRATEGIC_PLACE_LOS_WEIGHT    = 0.5   -- bonus per tile of LOS coverage
 M.STRATEGIC_PLACE_LOS_DIRS      = 8     -- number of directions to sample for LOS
 M.STRATEGIC_PLACE_LOS_MAX_RANGE = 8     -- max tiles to trace per LOS ray
 M.STRATEGIC_PLACE_BASE_COST     = 60    -- base cost so it loses to attack/capture but beats explore
+-- Near-enemy-tank placement penalty (combat zone): flat add to a NON-emergency
+-- place_pill_strategic cost when an enemy tank is within euclidean range of the
+-- chosen spot. CLOSE supersedes NEAR. The def_build emergency drop is exempt.
+M.STRATEGIC_PLACE_NEAR_TANK_DIST     = 10
+M.STRATEGIC_PLACE_NEAR_TANK_PENALTY  = 30
+M.STRATEGIC_PLACE_CLOSE_TANK_DIST    = 7
+M.STRATEGIC_PLACE_CLOSE_TANK_PENALTY = 60
 M.STRATEGIC_PLACE_MAX_BASE_DIST       = 15    -- don't place pills too far from bases
 M.STRATEGIC_PLACE_DEFENSE_RADIUS      = 8     -- radius to count defending pills
 M.STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 50    -- bonus per missing defender (target: 2)
@@ -730,10 +774,11 @@ M.STRATEGIC_PLACE_ENEMY_PILL_FAR_BONUS     = 10   -- small bonus for general pro
 -- Pill war reinforcement
 M.STRATEGIC_PLACE_WAR_ZONE_BONUS          = 60   -- bonus for tiles near an active pill war
 -- Portfolio model (see PILL_REPOSITION_PLAN.md / pill_portfolio.lua). Classify
--- friendly pills into back/front/aggressive and bias placement toward the
--- under-target role (35/45/20). BACK_INFLUENCE_MIN: influence above this counts
--- as "back" (solidly friendly); negative = aggressive; near-front-line = front.
-M.STRATEGIC_PLACE_BACK_INFLUENCE_MIN = 5     -- influence > this = back protector
+-- friendly pills into back/front/aggro and bias placement toward the under-target
+-- role (35/45/20). Roles (pill_portfolio.classify): front = near the front line;
+-- aggro = own tile in enemy influence OR surrounded by it; back = positive
+-- influence and outside the front range.
+M.AGGRO_NEG_NEIGHBORS                = 5      -- pill role = aggro if >= this many of its 8 adjacent tiles have negative influence (or own tile negative)
 -- Per-unit deficit bias. Strong (>= BEYOND_FRONT_PENALTY) so an under-target
 -- aggressive role can pull placement past sc3's beyond-front penalty.
 M.STRATEGIC_PLACE_PORTFOLIO_WEIGHT   = 120
@@ -764,6 +809,21 @@ M.DEFENSIVE_BUILD_ANGLE_OFFSET = 32   -- ±45° in WinBolo 256-unit circle
 M.CAPTURE_PILL_BASE_COST     = 20     -- flat floor so capture_pill never beats a trivially cheap goal
 M.CAPTURE_PILL_DIST_SCALE    = 0.05   -- coefficient on path_cost^1.5
 M.CAPTURE_PILL_DANGER_SCALE  = 0.10   -- coefficient on danger (linear, wsim handles lethality)
+-- "Free pill" discount: a dead pill that's close and safe is an easy grab — pull
+-- it under a competing attack_pill so we snatch it first. NOT binary: the
+-- discount scales between FREE_PILL_DISCOUNT (best, at zero danger / point-blank)
+-- and 1.0 (no discount) by a "badness" = max(distance-over, danger). Both ramp
+-- to full price quickly once past their thresholds.
+--   distance: free within our shooting reach × RANGE_MULT; beyond that, badness
+--     climbs to 1.0 over DIST_FALLOFF tiles.
+--   danger: threat.at at the pill tile (folds in pillbox crossfire AND enemy-tank
+--     radius, already reduced by LOS/blockers/distance). One covering pill
+--     (~PILL_DANGER_BASE) still keeps a strong discount; DANGER_FALLOFF ≈ two
+--     calm pills, where the discount has faded to ~none.
+M.CAPTURE_FREE_PILL_DISCOUNT   = 0.5   -- strongest multiplier (danger 0, in range)
+M.CAPTURE_FREE_PILL_RANGE_MULT = 1.5   -- × TANK_COMBAT_ENGAGE_RANGE = free-grab distance
+M.CAPTURE_FREE_PILL_DIST_FALLOFF   = 5  -- tiles past grab range → discount gone
+M.CAPTURE_FREE_PILL_DANGER_FALLOFF = 16 -- danger (≈ 2 calm pills) → discount gone
 
 -- Race-mode capture: bias capture pathfinding toward direct routes and relax
 -- steering speed caps so we don't lose races to opponents driving straight.
@@ -780,10 +840,11 @@ M.CAPTURE_RACE_MODE_IMMINENT = true   -- also tag race_mode whenever imminent-ca
 M.IMMINENT_CAPTURE_PATH_COST  = 30   -- path cost below which capture is "imminent"
 M.IMMINENT_CAPTURE_FLOOR      = 5    -- cost floor applied to imminent captures
 M.IMMINENT_CAPTURE_MIN_ARMOUR = 8    -- suppress override if armour below this (let flee win)
--- Fallback search around the tank when the front-line search returns no
--- candidate (no friendly base, all cells beyond MAX_BASE_DIST, etc).
-M.STRATEGIC_PLACE_FALLBACK_RADIUS = 6     -- tiles around tank to scan
-M.STRATEGIC_PLACE_FALLBACK_COST   = 80    -- worse than the strategic price
+-- Strategic-center bias: the placement scan is tank-centric, but spots near the
+-- chosen strategic center (war zone / base-vs-threat / contested pill) score
+-- higher. Bonus = max(0, CAP - dist_to_center) * WEIGHT. Optional (0 if no center).
+M.STRATEGIC_PLACE_CENTER_BIAS_CAP    = 16   -- tiles; beyond this the center bias is 0
+M.STRATEGIC_PLACE_CENTER_BIAS_WEIGHT = 4    -- score per tile closer to the strategic center
 
 -- Tank combat
 M.TANK_COMBAT_ENABLED           = true
@@ -835,6 +896,13 @@ M.TANK_COMBAT_LOS_COST_PER_TILE     = 3    -- added cost per tile of separation 
 M.TANK_COMBAT_WALL_PENALTY_PER_HP   = 20   -- cost penalty per wall HP above 1 block (WALL_HP_FULL=5)
                                             -- 0-1 block: no penalty; 2 blocks: +100; 5 blocks: +400
 M.TANK_COMBAT_LOW_SHELLS_THRESHOLD  = 20   -- shells below this trigger a cost penalty
+
+-- Ghost tank tracking: when an enemy tank goes out of sight (e.g. hides in a
+-- forest), keep it as a TARGETABLE "ghost" at an extrapolated position for a
+-- short window so the bot hunts it down instead of instantly giving up.
+M.GHOST_TANK_TTL_TICKS      = 100   -- ~2 s @ 50 Hz: keep ghosting after last sighting (only while the ghost tile or a cardinal neighbour has trees; open-ground ghosts are dropped — a tank there would be visible)
+M.GHOST_TANK_HIST           = 10    -- position samples used to average heading/speed
+M.GHOST_TANK_COST_PENALTY   = 40    -- added attack_tank cost for a ghost (prefer a tank we can actually see)
 M.TANK_COMBAT_LOW_SHELLS_COST_PER   = 1.5  -- cost per shell below threshold (0→30, 10→15, 15→7.5)
 M.TANK_COMBAT_BOAT_MULT            = 0.8   -- cost multiplier for enemy on river/boat (exposed)
 M.TANK_COMBAT_DEEPSEA_MULT         = 0.25  -- cost multiplier for enemy on deep sea (one-shot kill)
@@ -865,9 +933,10 @@ M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is 
 -- portfolio (see pill_portfolio.lua / PILL_REPOSITION_PLAN.md): cost is driven
 -- primarily by category balance (35/45/20 back/front/aggressive).
 M.PILL_REPOSITION_ENABLED       = true
-M.PILL_REPOSITION_BASE_COST     = 200   -- flat floor so reposition isn't trivially cheap
+M.PILL_REPOSITION_BASE_COST     = 350   -- flat floor so reposition isn't trivially cheap (raised: was coming up too often)
 M.PILL_REPOSITION_SURPLUS_W     = 150   -- PRIMARY: discount per pill over its category allotment
-M.PILL_REPOSITION_COVERAGE_PILL_W = 25  -- cost added per friendly pill covered in fire range (keep good spots)
+M.PILL_REPOSITION_COVERAGE_PILL_W = 25  -- cost added for ONE friendly pill covered in fire range (good mutual support: keep)
+M.PILL_REPOSITION_EXCESS_PILL_W   = 35  -- discount per friendly pill BEYOND the first in fire range (over-covered: roll surplus forward)
 M.PILL_REPOSITION_COVERAGE_BASE_W = 20  -- cost added per friendly base covered in fire range
 M.PILL_REPOSITION_ADJACENCY_W   = 30    -- discount per friendly pill in the 8 neighbors (double-take risk)
 M.PILL_REPOSITION_OVEREXTEND_W  = 60    -- discount for an aggressive pill deeper than -50 influence
@@ -876,6 +945,14 @@ M.PILL_ROLE_REEVAL_TICKS        = 3000  -- re-evaluate a pill's back/front/aggro
 M.PILL_UTILITY_TARGET_FRAC      = 0.25  -- desired share of pills available as blockers/utility; below this, hold a spare pill in tank
 M.PILL_REPOSITION_MIN_SHELLS    = 15    -- need this many shells to reposition (must shoot the pill down to 0 to pick it up)
 M.REPOSITION_DEMOLISH_GRACE_TICKS = 1500 -- ~30s: while demolishing a pill for reposition, suppress repair_pill on it (avoid shoot→repair→shoot oscillation)
+-- Reposition risk penalties (raise cost = discourage repositioning):
+M.PILL_REPOSITION_FEW_PILLS_THRESHOLD = 3   -- team total pills (deployed + carried) at/below which reposition is penalized
+M.PILL_REPOSITION_FEW_PILLS_PENALTY   = 400 -- cost added when the team has few pills (can't afford to take one offline)
+M.PILL_REPOSITION_ENEMY_TANK_PAD      = 5   -- tiles beyond PILL_FIRE_RANGE within which an enemy tank counts as "around" the pill
+M.PILL_REPOSITION_ENEMY_TANK_W        = 150 -- cost added per enemy tank within (PILL_FIRE_RANGE + pad) of the pill
+M.PILL_REPOSITION_UNPROTECTED_PENALTY = 100 -- extra cost when enemy tanks are near AND no friendly pill covers this one (no support)
+M.PILL_REPOSITION_LOCK_TICKS          = 750 -- ~15s @ 50Hz: hold a committed reposition until the pill is demolished or this elapses
+M.PILL_REPOSITION_LOCK_COST           = 30  -- locked-in reposition cost (beats routine goal churn; sub-30 survival goals still preempt)
 -- Legacy (unused; kept for reference / any external readers):
 M.PILL_REPOSITION_ORPHAN_DIST   = 15
 M.PILL_REPOSITION_THRESHOLD     = 50
@@ -947,28 +1024,12 @@ M.PHASE_WEIGHTS = {
   },
 }
 
--- Phase 2: strategic location multiplier (applied in goal_selection after
--- eval). Biases goal scoring by territorial context — consolidation cheap,
--- deep-hostile expensive. Combined with PHASE_WEIGHTS under a clamp.
-M.STRATEGIC_SUPPORT_RADIUS       = 20
-M.STRATEGIC_DEEP_HOSTILE         = 50    -- abs influence threshold
-M.STRATEGIC_FRONTIER_INF         = 20    -- |influence| < this = frontier
-M.STRATEGIC_CONSOLIDATE_INF      = 30    -- influence > this + support = consolidate
-M.STRATEGIC_FRONTIER_MULT        = 0.70
-M.STRATEGIC_CONSOLIDATE_MULT     = 0.85
-M.STRATEGIC_ISOLATED_MULT        = 2.00
-M.STRATEGIC_DEEP_ISOLATED_MULT   = 3.00
-M.STRATEGIC_COMBINED_MIN         = 0.50
-M.STRATEGIC_COMBINED_MAX         = 4.00
-M.STRATEGIC_USE_FRONT_DIR        = true  -- feature flag; disable if noisy
-M.STRATEGIC_HOME_SWEEP_RADIUS    = 20    -- tiles; reuse of SUPPORT_RADIUS sizing
-M.STRATEGIC_HOME_SWEEP_MULT      = 1.50  -- bonus when target IS the hostile pill inside friendly territory
-
 -- Forward world simulation (cworldsim)
 M.WSIM_ENABLED             = true   -- enable forward sim for goal evaluation
 M.WSIM_MAX_TICKS           = 300    -- max ticks to simulate per path
 M.WSIM_DAMAGE_COST_WEIGHT  = 10     -- cost per point of predicted armor damage
 M.WSIM_KILL_REJECT         = true   -- hard-reject goals where sim predicts death
+M.WSIM_KILL_PERSIST_TICKS  = 50     -- ~1s: keep a KILL verdict on a goal (kind@tile) for this long so it stays rejected on ticks where wsim is capped/disabled — stops the bot flapping back onto a lethal goal before refuel/hysteresis take over
 M.WSIM_KILL_REJECT_OPENING = false  -- enforce the death-reject in the opening phase too. Default false: opening is the critical land-grab window — dying to grab a base is an acceptable trade, so we don't let wsim veto an attempt.
 M.WSIM_OPENING_ENABLED     = false  -- run wsim AT ALL during the opening phase. Default false: same reasoning — taking bases early is so important that we'd rather be reckless and risk dying than have wsim's damage-cost shaping pull us off an opportunity.
 M.WSIM_LGM_DEATH_PENALTY   = 200    -- extra cost if sim predicts LGM will die
@@ -999,12 +1060,12 @@ M.BRAIN_CAPACITY_LEVELS = {
   [9]  = { dij_short=500, dij_long=450, scan_step=5,  pp_spread=6,  ttl_mult=1.0, eval_iv=1, wsim=nil,   place_r=8, tank_step=5,  sb_positions=28, sb_step=0.5 },
   [8]  = { dij_short=450, dij_long=350, scan_step=10, pp_spread=12, ttl_mult=1.1, eval_iv=1, wsim=5,     place_r=7, tank_step=10, sb_positions=28, sb_step=0.5 },
   [7]  = { dij_short=400, dij_long=275, scan_step=10, pp_spread=17, ttl_mult=1.3, eval_iv=1, wsim=5,     place_r=7, tank_step=10, sb_positions=28, sb_step=0.5 },
-  [6]  = { dij_short=350, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=6, tank_step=10, sb_positions=28, sb_step=0.5 },
-  [5]  = { dij_short=300, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5 },
-  [4]  = { dij_short=250, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5 },
-  [3]  = { dij_short=200, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=28, sb_step=0.5 },
-  [2]  = { dij_short=150, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=28, sb_step=0.5 },
-  [1]  = { dij_short=100, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5 },
+  [6]  = { dij_short=400, dij_long=200, scan_step=20, pp_spread=22, ttl_mult=1.5, eval_iv=2, wsim=3,     place_r=6, tank_step=10, sb_positions=28, sb_step=0.5 },
+  [5]  = { dij_short=400, dij_long=150, scan_step=20, pp_spread=28, ttl_mult=1.7, eval_iv=2, wsim=3,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5 },
+  [4]  = { dij_short=400, dij_long=100, scan_step=20, pp_spread=33, ttl_mult=2.0, eval_iv=3, wsim=1,     place_r=5, tank_step=20, sb_positions=28, sb_step=0.5 },
+  [3]  = { dij_short=400, dij_long=75,  scan_step=45, pp_spread=39, ttl_mult=2.5, eval_iv=3, wsim=1,     place_r=4, tank_step=45, sb_positions=28, sb_step=0.5 },
+  [2]  = { dij_short=400, dij_long=50,  scan_step=45, pp_spread=44, ttl_mult=3.0, eval_iv=4, wsim=false, place_r=3, tank_step=45, sb_positions=28, sb_step=0.5 },
+  [1]  = { dij_short=400, dij_long=25,  scan_step=45, pp_spread=50, ttl_mult=4.0, eval_iv=5, wsim=false, place_r=2, tank_step=45, sb_positions=28, sb_step=0.5 },
 }
 
 -- Tier control: per-tier ms history corroborates raise decisions; drops
@@ -1025,4 +1086,73 @@ M.CAPACITY_DEFAULT_TIER     = 10    -- start at full quality; throttle on observ
 -- published targetMs (production behavior).
 M.CAPACITY_FORCED_TARGET_MS = nil
 
+-- ── Squad coordination (Phase 1: pill blitz) ──────────────────────────────
+M.HARASSER_FRAC       = 0.20   -- fraction of the protocol-bot set that are harassers (floor)
+M.BASELINE_SQUAD_SIZE = 3      -- commanders = ceil(non-harasser count / this)
+M.SQUAD_ALLY_MAX_AGE  = 1750   -- ticks; allies staler than this drop out of the protocol set
+
+-- ── 2026-06-01 brainstorm features — ALL DEFAULT OFF (flip to test) ─────────
+-- New behaviors land behind flags so the verified post-merge brain is
+-- unchanged until each is enabled. See SQUAD_BRAINSTORM_DECISIONS_2026-06-01.md.
+M.DYNAMIC_COMMANDERS   = true   -- R0: commander = whoever is mid hard-take (else current deterministic roles)
+M.HARD_TAKE_MIN_HP     = 12     -- R0: pill HP at/above which a take is "hard" (spawns a squad/commander)
+M.CIRCLE_REINFORCE_ENABLED = true  -- R3-exec: uncommitted bots reinforce nearest losing circle
+M.CIRCLE_REINFORCE_TIMEOUT = 1500  -- R3: base ticks (~30s) to reach the safe tile; scaled by travel distance
+M.UTIL_ACTIVE_PICKUP   = true   -- R1b: actively pick up a back pill to hit the util reserve target (STUB — no-op)
+M.HARASSER_TAKE_BASES  = true   -- R4: harasser #1 goal — take unprotected enemy bases
+M.HARASSER_MINE        = true   -- R4: harasser mine back lines (STUB — no mine-laying in engine yet)
+M.HARASSER_REAR_PUSH   = true   -- R4: harasser charge up, boat to rear, push front w/ attack_tank
+-- Recruitment (slice 2): a soldier answers a nearby commander's pill take when
+-- it's in a follow-the-call state and not too low on resources.
+M.SQUAD_MIN_HELP_ARMOUR  = 10  -- below this armour a soldier won't answer (hard decline)
+M.SQUAD_MIN_HELP_SHELLS  = 3   -- below this shells a soldier won't answer (hard decline)
+M.SQUAD_REFUEL_OK_ARMOUR = 25  -- a refueling soldier may answer only if already at/above this
+M.SQUAD_REFUEL_OK_SHELLS = 10  -- ...and this (i.e. it was topping off, not desperate)
+M.SQUAD_HELP_RANGE       = 30  -- tiles; only answer a commander whose pill is within this
+M.SQUAD_CMD_RACE_TOL     = 3   -- ticks; two blitz calls on one pill opened within this of each other count as a same-tick race (broken by lower player id); otherwise first-to-the-take keeps command
+M.SQUAD_BLITZ_AIM_TOL    = 8   -- brad; a blitz soldier must be facing the pill within this before it reports rdy=1 (so on GO it can fire/charge immediately, not spin to aim)
+M.SQUAD_MAX_SIZE         = 3   -- max soldiers per squad; a full squad recruits no more
+M.SQUAD_BLITZ_COST       = 30  -- flat attack_pill cost a squad soldier assigns its commander's blitz pill: low enough to win normal goals, high enough that attack_tank/flee/refuel can still preempt
+M.SQUAD_BLITZ_BUCKET     = 5   -- a blitz standoff is picked at random from clear-LOS spots scoring within this of the best
+M.SQUAD_BLITZ_READY_TIMEOUT = 550  -- ticks (~11s @ 50Hz) the commander waits in blitz_wait for ALL soldiers to report rdy before firing GO anyway. Sized to cover a worst-case in-place aim: a 180-deg turn on swamp/crater/river/rubble (turn rate 0.25 brad/tick) is ~512 ticks (~10.4s), so the timeout must exceed that or the commander GOes before a slow-terrain soldier can finish turning to face the pill. (A genuinely stuck/dead soldier still can't stall past this.)
+M.SQUAD_BLITZ_WAIT_TIMEOUT  = 1500 -- ticks (~30s) hard backstop: a soldier holding in blitz_wait abandons the take if the commander's GO never arrives (commander silently stuck/disconnected). Faster aborts (commander died / retargeted) fire on their own signals.
+M.SQUAD_BLITZ_PROGRESS_CHECK = 100  -- ticks (~2s): commander re-checks soldier approach this often in blitz_wait; if the closest still-coming soldier got closer since last check, the ready-timeout is extended by another PROGRESS_CHECK (keep waiting on a tank that's still closing; stop extending once it stalls)
+M.SQUAD_BLITZ_BD_REFRESH_TICKS = 500  -- ticks (~10s): how often a COMMITTED, still-approaching soldier recomputes its broadcast walk distance (bd) as a FALLBACK signal. The commander measures visible soldiers' progress itself every tick from their live tank positions, so this slow, >=1-tile-quantized broadcast only matters when a soldier is out of the commander's perception — kept coarse to avoid /info spam. A direct commander query (bwq) force-refreshes it immediately when it's about to matter (see SQUAD_BLITZ_QUERY_LEAD).
+M.SQUAD_BLITZ_QUERY_LEAD = 50  -- ticks (~1s): when the blitz_wait GO timeout is this close to firing AND a still-pending soldier is out of the commander's sight (so it's relying on that soldier's coarse broadcast bd), the commander broadcasts a "where are you now?" query (bwq). The soldier answers by force-refreshing bd this tick; if the fresh answer shows it's still closing, the commander grants one more PROGRESS_CHECK window instead of giving up.
+M.SQUAD_BLITZ_CLASH_TILES = 2   -- two standoffs within this EUCLIDEAN distance (tiles) conflict; the commander makes the nearer/junior soldier repick so spots stay >= this far apart
+M.SQUAD_BLITZ_PREEMPT_TANK_TILES = 10  -- a committed blitz only yields to attack_tank when the hostile tank is within this many tiles of us (close enough to actually threaten); farther tanks don't break the blitz
+-- Ally right-of-way: brake to let a higher-priority ally (lower player number)
+-- pass when our projected path tiles cross theirs.
+M.ALLY_YIELD_MIN_SPEED  = 6   -- below this speed a tank can't reach its projected tiles, so it neither yields nor is yielded to
+M.ALLY_YIELD_LOOKAHEAD  = 2   -- how many tiles ahead (along heading) to project for both us and the ally when checking for a path crossing
+M.SQUAD_BLITZ_REPICK_GAP  = 1   -- min ticks between standoff repicks. Safe at 1: brj rejects are spot-tagged "pn:[mx,my]", so a soldier only repicks when the commander rejected the spot it is CURRENTLY offering — a stale reject for an already-abandoned spot is ignored, so there's no candidate-list burn (see read_cmdr_brj).
+-- Pick-to-join blitz discount: while negotiating to join a commander's blitz,
+-- multiply the candidate pill's pool-6 cost by a distance factor (<=1, so it
+-- only ever discounts). Distance is the dijkstra slate path cost to the pill.
+-- Piecewise: <=NEAR -> NEAR_MULT; NEAR..MID -> NEAR_MULT..MID_MULT;
+-- MID..FULL -> MID_MULT..1.0; >=FULL -> 1.0 (no discount). A pill whose entry
+-- is reject/sentinel'd (no usable cost, e.g. armour_too_low on a hard pill —
+-- the typical blitz target) gets factor * REF_COST instead so it's still joinable.
+M.SQUAD_BLITZ_JOIN_MIN_MULT    = 0.25  -- biggest blitz-join discount (factor at d=0); exponential rises to 1.0 (no discount) at FULL_TILES
+M.SQUAD_BLITZ_JOIN_FULL_TILES  = 20    -- path tiles at which the join discount fully vanishes; beyond this there's no pull to join (the score, not a range gate, decides)
+M.SQUAD_BLITZ_JOIN_REF_COST    = 120
+-- If blitz_negotiate can't find an appropriate standoff for a blitz pill, reject
+-- that pill (no re-discount / no re-pick) for this many ticks (~30s @ 50 tps).
+M.SQUAD_BLITZ_NOSPOT_REJECT_TICKS = 1500
+-- Negotiation watchdog: a soldier offering to join a blitz holds goal=none
+-- (blitz-negotiation pause gate in goals.lua) until the commander accepts. A
+-- healthy commander rosters a conflict-free soldier within a tick or two; if no
+-- accept arrives within TIMEOUT ticks (wedged commander, perpetual spot clash,
+-- unreachable), abandon the negotiation and reject that pill for REJECT ticks so
+-- the soldier stops re-picking it and does something else instead of idling.
+M.SQUAD_BLITZ_NEGOTIATE_TIMEOUT_TICKS = 250   -- ~5s awaiting accept before giving up
+M.SQUAD_BLITZ_NEGOTIATE_REJECT_TICKS  = 500   -- ~10s cooldown on the abandoned pill
+M.SQUAD_BLITZ_COMMIT_GRACE_TICKS      = 5     -- after committing to a blitz, wait this many ticks before the "pulled to another goal -> leave the squad" check fires (lets pick_goal adopt the blitz attack_pill goal post-accept)
+-- Comm-line latch: how long a one-tick "busy/declined/no-spot" response stays
+-- drawn in blitz_comm_lines so transient rejects are actually visible (~0.4s).
+M.BLITZ_COMM_LATCH_TICKS       = 18
+-- Urgent replan when a tank WE CAN SEE dies. Any visible enemy death triggers;
+-- an ally death only triggers if within this many tiles (a far ally dying
+-- doesn't change our local situation, so skip it to avoid churn).
+M.TANK_DEATH_REPLAN_ALLY_RANGE = 20
 return M

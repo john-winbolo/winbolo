@@ -22,6 +22,7 @@ local C   = require("constants")
 local U   = require("util")
 local cpf = require("cpathfinder")
 local viz = require("viz")
+local print2   = require("print2")
 local opt      = require("optimize")
 local clock_us = clock_us or function() return 0 end
 
@@ -66,7 +67,7 @@ M.WOUNDED_HP_FULL_FAV2_BLOCKERS = 2   -- 2-blocker bonus tier
 M.WOUNDED_HP_FULL_BONUS2        = 1000
 M.WOUNDED_HP_FULL_FAV3_BLOCKERS = 3   -- 3-blocker bonus tier (bigger)
 M.WOUNDED_HP_FULL_BONUS3        = 2000
-M.WOUNDED_HP_FULL_MIN_CHAIN     = 2
+M.WOUNDED_HP_FULL_MIN_CHAIN     = 1   -- TEMP experiment (was 2): allow thinner-chain subsets to qualify
 M.WOUNDED_HP_HIGH_MAX           = 13  -- HP <= this AND >= MIN
 M.WOUNDED_HP_HIGH_MIN           = 11
 M.WOUNDED_HP_HIGH_FAV_BLOCKERS  = 2   -- favor subsets w/ this many (a+p)
@@ -208,6 +209,11 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
             end
           end
         end
+        -- A base of ANY owner is solid and blocks the shot (same rule shot_path_clear uses).
+        local bentry = world.base_at and world.base_at[tmy * 256 + tmx]
+        if bentry and bentry.base then
+          outgoing_blocked_by_wall = true
+        end
       end
     end
   else
@@ -233,6 +239,11 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
                 break
               end
             end
+          end
+          -- A base of ANY owner is solid and blocks the shot (matches shot_path_clear).
+          local bentry = world.base_at and world.base_at[t.my * 256 + t.mx]
+          if bentry and bentry.base then
+            outgoing_blocked_by_wall = true
           end
         end
       end
@@ -485,7 +496,17 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
   local sy = standoff_cy or (standoff_my + 0.5)
 
   -- ── C scan path ───────────────────────────────────────────────────────────
-  if gh_shield and gh_shield.scan_c and _pill_hit then
+  -- The C fast path returns ONLY the winning aim's blockers and does NOT
+  -- surface scan.candidates — so neither the per-candidate standoff markers
+  -- (shield_scan_candidates) nor the considered-blockers union can be drawn
+  -- from it. When either of those overlays is toggled on (debug only — never in
+  -- the live game, where BRAIN_DEBUG_MODE is false and this short-circuits),
+  -- fall through to the slower Lua path which computes every candidate angle ×
+  -- aim. Matches the "viz matches code" reference path too.
+  local _want_full_scan_viz = BRAIN_DEBUG_MODE
+    and (viz.is_on("shield_blocker_union") or viz.is_on("shield_scan_candidates")
+         or _G._BT_SHOTSIM_OPEN)
+  if gh_shield and gh_shield.scan_c and _pill_hit and not _want_full_scan_viz then
     local pill_hp = pill.health or 0
     -- HP-dependent neighbor bonus params (passed to scan_c as args 13..19).
     local n_fav, fs1, fb1, fs2, fb2 = 0, 0, 0.0, 0, 0.0
@@ -1210,6 +1231,15 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     end
   end
 
+  -- Diagnostic: what the winner committed to, plus the UNION of every tile ANY
+  -- candidate/aim found usable as a blocker. A tile that "should" work shows up
+  -- here either in the winner's chosen set, or only in the union (available but
+  -- the subset chooser preferred a different/smaller set), or is ABSENT entirely
+  -- (it failed return-path / outgoing-overlap / in-front-of-standoff / buildable
+  -- for every aim). Lets us see for ANY bot, from the log, why a given tile
+  -- (e.g. one near the standoff) was or wasn't used. (winner subset == full found
+  -- list whenever blockers <= MAX_SUBSET_BLOCKERS=3, so the union is exact here.)
+
   return {
     candidates    = candidates,
     best          = best,
@@ -1503,6 +1533,78 @@ function M.draw_overlay(scan, now_tick)
         end
       else
       end
+    end
+  end
+
+  -- Pass A2: UNION of every tile considered as a blocker across ALL candidate
+  -- spots and ALL their aim angles (deduped). score_aim already produced these
+  -- lists while scoring, so this is a pure read — no extra work in the live
+  -- game (draw_overlay is BRAIN_DEBUG_MODE-gated and this block only runs when
+  -- the overlay is toggled on). Class by best role seen for the tile:
+  --   green  = actual    (existing wall / friendly pill)
+  --   yellow = potential (empty buildable tile that would shield a shot)
+  --   grey   = unreachable (buildable but the LGM can't path to it)
+  if viz.is_on("shield_blocker_union") then
+    local cand_list = scan.candidates
+    if not cand_list or #cand_list == 0 then
+      cand_list = {}
+      if scan.best then cand_list[#cand_list + 1] = scan.best end
+      if scan.standoff and scan.standoff ~= scan.best then
+        cand_list[#cand_list + 1] = scan.standoff
+      end
+    end
+    local union = {}
+    local function mark(mx, my, rank)
+      local key = my * 256 + mx
+      local cur = union[key]
+      if not cur or rank > cur.rank then union[key] = { mx = mx, my = my, rank = rank } end
+    end
+    -- rank 0 (BLACK): every tile a CONSIDERED pillbox bullet actually crosses,
+    -- for each candidate's pill->standoff shot (raw simulate_shot, NO gating).
+    -- This is "was even considered / it blocks a pill bullet" — it INCLUDES
+    -- tiles our own outgoing shot also crosses AND tiles the scorer later
+    -- rejects (too close to standoff / behind it / unbuildable / LGM-
+    -- unreachable). So: a BLACK-only tile = it was on a shot path but REJECTED;
+    -- a tile with NO box at all = it was never on any considered path.
+    if scan.pill then
+      local p_wx = (scan.pill.mx << 8) | 128
+      local p_wy = (scan.pill.my << 8) | 128
+      for _, c in ipairs(cand_list) do
+        if c and c.cx then
+          local path = cpf.simulate_shot(p_wx, p_wy,
+            math.floor(c.cx * 256 + 0.5), math.floor(c.cy * 256 + 0.5), cpf.SHOT_PILL, 0)
+          if path then
+            for _, t in ipairs(path) do
+              if not (t.mx == scan.pill.mx and t.my == scan.pill.my) then mark(t.mx, t.my, 0) end
+            end
+          end
+        end
+      end
+    end
+    -- ranks 1-3: the scorer's CLASSIFIED blockers (passed every gate), drawn on
+    -- top of black. grey=unreachable, yellow=potential, green=actual.
+    for _, c in ipairs(cand_list) do
+      if c and c.aims then
+        for ai = 1, #c.aims do
+          local a = c.aims[ai]
+          if a then
+            for _, b in ipairs(a.blockers or {}) do mark(b.mx, b.my, 3) end
+            for _, b in ipairs(a.potential_blockers or {}) do mark(b.mx, b.my, 2) end
+            for _, b in ipairs(a.unreachable_blockers or {}) do mark(b.mx, b.my, 1) end
+          end
+        end
+      end
+    end
+    local nc, nu, np, na = 0, 0, 0, 0
+    for _, t in pairs(union) do
+      local r, g, b2
+      if t.rank == 3 then r, g, b2, na = 80, 255, 80, na + 1
+      elseif t.rank == 2 then r, g, b2, np = 255, 210, 60, np + 1
+      elseif t.rank == 1 then r, g, b2, nu = 150, 150, 150, nu + 1
+      else r, g, b2, nc = 0, 0, 0, nc + 1 end
+      -- Light border so the BLACK fills are visible against dark terrain.
+    end
+    if scan.pill then
     end
   end
 

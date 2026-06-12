@@ -4,21 +4,30 @@
 -- Single source of truth for both the pill-table visualizer (pill_table.lua)
 -- and strategic placement (goals.lua eval_place_pill_strategic).
 --
--- "front" uses the same definition as the "3" influence overlay: a tile sits
--- near an influence sign-flip boundary (brainPathfinderFindFrontLine). "back"
--- is solidly friendly influence (> BACK_INFLUENCE_MIN); "aggressive" is enemy
--- influence (< 0).  See PILL_REPOSITION_PLAN.md.
+-- Roles (M.classify):
+--   front  - within FRONT_NEAR_RADIUS of the front line (near_front).
+--   aggro  - own tile in enemy influence (< 0), OR surrounded by it (>=
+--            AGGRO_NEG_NEIGHBORS of the 8 adjacent tiles negative).
+--   back   - positive influence AND outside the front range (and not surrounded).
+--   utility- a pill in a tank or reserved as an in-use blocker.
+-- See PILL_REPOSITION_PLAN.md.
 local cpf = require("cpathfinder")
 local C   = require("constants")
 
 local M = {}
 
-local FRONT_NEAR_RADIUS = 3   -- tiles: "front" if within this of a sign-flip
+-- "front" = within pill SHOOT RANGE (euclidean) of a front "3" tile, so a
+-- front pill can actually contest the line (R1, 2026-06-01). Was a flat 3-tile
+-- chebyshev box.
+local FRONT_NEAR_RADIUS = C.PILL_FIRE_RANGE or 9
 
--- Portfolio targets (share of friendly pills, excluding in-use).
-M.TARGET_BACK  = 0.25
-M.TARGET_FRONT = 0.50
-M.TARGET_AGGRO = 0.25
+-- Portfolio targets (share of friendly pills). util = blockers + carried pills
+-- (R1): an enforced 15% reserve that flexes to defense. back rolls forward into
+-- front as the line advances; front and aggro are never repositioned.
+M.TARGET_BACK  = 0.20
+M.TARGET_FRONT = 0.45
+M.TARGET_AGGRO = 0.20
+M.TARGET_UTIL  = 0.15
 
 -- A tile is on the front line if it has influence AND an orthogonal neighbor
 -- of opposite sign (mirrors brainPathfinderFindFrontLine / the "3" overlay).
@@ -35,9 +44,13 @@ function M.on_front_line(tx, ty)
 end
 
 function M.near_front(mx, my)
-  for dy = -FRONT_NEAR_RADIUS, FRONT_NEAR_RADIUS do
-    for dx = -FRONT_NEAR_RADIUS, FRONT_NEAR_RADIUS do
-      if M.on_front_line(mx + dx, my + dy) then return true end
+  local r  = FRONT_NEAR_RADIUS
+  local r2 = r * r
+  for dy = -r, r do
+    for dx = -r, r do
+      if dx * dx + dy * dy <= r2 and M.on_front_line(mx + dx, my + dy) then
+        return true
+      end
     end
   end
   return false
@@ -48,18 +61,25 @@ end
 function M.classify(mx, my, in_use)
   local inf = cpf.influence_at(mx, my)
   if in_use then return "utility", inf end
+  -- front: on/near the front line (the FRONT_NEAR_RADIUS box scan).
   if M.near_front(mx, my) then return "front", inf end
+  -- aggro: own tile in enemy influence, OR surrounded by it (>= AGGRO_NEG_NEIGHBORS
+  -- of the 8 adjacent tiles negative — catches a positive tile boxed in by enemy).
   if inf < 0 then return "aggro", inf end
-  if inf > C.STRATEGIC_PLACE_BACK_INFLUENCE_MIN then return "back", inf end
+  local neg = 0
+  for dy = -1, 1 do
+    for dx = -1, 1 do
+      if not (dx == 0 and dy == 0)
+         and (cpf.influence_at(mx + dx, my + dy) or 0) < 0 then
+        neg = neg + 1
+      end
+    end
+  end
+  if neg >= (C.AGGRO_NEG_NEIGHBORS or 5) then return "aggro", inf end
+  -- back: positive influence AND outside the front range AND not surrounded.
+  if inf > 0 then return "back", inf end
+  -- inf == 0, away from the line, not surrounded: neutral → treat as front.
   return "front", inf
-end
-
--- Fast, value-only category (no front-line scan) for hot paths like the
--- placement candidate sweep. Approximates M.classify at the boundary.
-function M.category_by_influence(inf)
-  if inf < 0 then return "aggro" end
-  if inf > C.STRATEGIC_PLACE_BACK_INFLUENCE_MIN then return "back" end
-  return "front"
 end
 
 -- Cached role for an EXISTING pill, re-evaluated every PILL_ROLE_REEVAL_TICKS
@@ -69,6 +89,8 @@ end
 -- a stagger. `tick` drives the refresh; pass the current sim tick.
 function M.role_of(pill, tick)
   if not pill then return "front" end
+  -- A pill carried IN A TANK is always utility (a mobile reserve).
+  if pill.in_tank then return "utility" end
   -- A pill currently serving as a blocker in an active pill take is "utility"
   -- (overrides its back/front/aggro role) until the take ends. Driven live by
   -- the team blocker broadcast (pill._in_use), so it reverts automatically.
@@ -84,26 +106,86 @@ function M.role_of(pill, tick)
 end
 
 -- Current friendly-pill counts per category, using the cached 60s role.
+-- In-tank pills (own = "friendly", ally = "allied") always count as utility;
+-- deployed friendly pills count by their cached role.
 function M.counts(world, tick)
   local c = { back = 0, front = 0, aggro = 0, utility = 0 }
-  if not world or not world.pills then return c end
-  for _, p in pairs(world.pills) do
-    if p.owner == "friendly" and (p.health or 0) > 0 then
-      local cat = M.role_of(p, tick)
-      c[cat] = (c[cat] or 0) + 1
+  if world and world.pills then
+    for _, p in pairs(world.pills) do
+      if p.in_tank then
+        if p.owner == "friendly" or p.owner == "allied" then
+          c.utility = c.utility + 1
+        end
+      elseif p.owner == "friendly" and (p.health or 0) > 0 then
+        local cat = M.role_of(p, tick)
+        c[cat] = (c[cat] or 0) + 1
+      end
     end
   end
   return c
 end
 
--- Target counts for a given total (excludes in-use). Guarantees >=1 back.
+-- Priority order for filling the portfolio when pills are scarce: util first,
+-- then front, then aggro, then back. The first pill a team gets should be a
+-- carried utility blocker, not a back defender; back is the LAST role to fill.
+M.FILL_PRIORITY = { "utility", "front", "aggro", "back" }
+
+-- Target counts for a given total. Each category gets the FLOOR of its share
+-- (R1: util 15 / front 45 / aggro 20 / back 20), then the leftover rounding
+-- slots are handed out in M.FILL_PRIORITY order — so for small totals util/
+-- front/aggro fill before any back pill. (No forced >=1 back anymore: back is
+-- the lowest priority; the base-guardian bonus handles must-cover bases.)
 function M.targets(total)
-  if total <= 0 then return { back = 0, front = 0, aggro = 0 } end
-  local back  = math.max(1, math.floor(total * M.TARGET_BACK + 0.5))
-  local front = math.floor(total * M.TARGET_FRONT + 0.5)
-  local aggro = total - back - front
-  if aggro < 0 then aggro = 0; front = math.max(0, total - back) end
-  return { back = back, front = front, aggro = aggro }
+  if total <= 0 then return { back = 0, front = 0, aggro = 0, utility = 0 } end
+  local t = {
+    utility = math.floor(total * M.TARGET_UTIL),
+    front   = math.floor(total * M.TARGET_FRONT),
+    aggro   = math.floor(total * M.TARGET_AGGRO),
+    back    = math.floor(total * M.TARGET_BACK),
+  }
+  local assigned = t.utility + t.front + t.aggro + t.back
+  local i = 0
+  while assigned < total do
+    local cat = M.FILL_PRIORITY[(i % #M.FILL_PRIORITY) + 1]
+    t[cat] = t[cat] + 1
+    assigned = assigned + 1
+    i = i + 1
+  end
+  return { back = t.back, front = t.front, aggro = t.aggro, utility = t.utility }
+end
+
+-- ── Visualizers (R1 / brainstorm batch) ───────────────────────────────────
+local _ROLE_COL = {
+  back    = { 120, 160, 255 },
+  front   = { 120, 255, 160 },
+  aggro   = { 255, 140, 120 },
+  utility = { 230, 210, 120 },
+}
+
+-- pill_roles: tint every friendly pill by its cached role + a letter (b/f/a/u).
+function M.draw_roles(viz, world, tick)
+  if not viz.is_on("pill_roles") or not viz.rect or not world or not world.pills then return end
+  for _, p in pairs(world.pills) do
+    if p.owner == "friendly" and (p.health or 0) > 0 then
+      local role = M.role_of(p, tick)
+      local c = _ROLE_COL[role] or { 200, 200, 200 }
+      if viz.text then
+      end
+    end
+  end
+end
+
+-- front_band: the front "3" tiles (bright dots) plus the ~9-tile euclidean band
+-- that defines the "front" category (faint rings, sparse to limit overdraw).
+function M.draw_front_band(viz)
+  if not viz.is_on("front_band") or not viz.circle then return end
+  local fpts = cpf.find_front_line()
+  local np = fpts and (#fpts // 2) or 0
+  for i = 1, np do
+    local mx, my = fpts[2 * i - 1], fpts[2 * i]
+    if (i % 5) == 0 then
+    end
+  end
 end
 
 return M

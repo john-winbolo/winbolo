@@ -81,7 +81,7 @@ local DEFAULT_TERRAIN_SPEED = {
 -- Default boat-mode terrain costs (matching constants.lua TERRAIN_COST_BOAT)
 local DEFAULT_TERRAIN_COST_BOAT = {
   [C.T_BUILDING]  = 9999,
-  [C.T_RIVER]     = 2,
+  [C.T_RIVER]     = 2.5,  -- afloat: between grass (2) and forest (3)
   [C.T_SWAMP]     = 8,
   [C.T_CRATER]    = 8,
   [C.T_ROAD]      = 1,
@@ -89,8 +89,8 @@ local DEFAULT_TERRAIN_COST_BOAT = {
   [C.T_RUBBLE]    = 8,
   [C.T_GRASS]     = 2,
   [C.T_HALFBUILD] = 9999,
-  [C.T_BOAT]      = 2,
-  [C.T_DEEPSEA]   = 2,
+  [C.T_BOAT]      = 2.5,  -- boat transition tile (matches afloat)
+  [C.T_DEEPSEA]   = 2.5,  -- afloat: between grass (2) and forest (3)
   [C.T_REFBASE]   = 1,
   [C.T_PILLBOX]   = 1,
 }
@@ -529,6 +529,18 @@ function M.simulate_shot_angle(ox, oy, angle, shooter_type, sight_len)
     angle,                              -- pass float through
     shooter_type or M.SHOT_TANK,
     sight_len or 0)
+end
+
+--- Predict the tank's resting position if it begins braking THIS tick, using
+--- the engine-exact decel + residual-move model (C cpf_predict_stop). Returns
+--- stop world coords (wx, wy). terrain_cap is the current tile's max speed
+--- (C.TERRAIN_SPEED[tile]); omit for uniform-terrain (no over-cap decel).
+function M.predict_stop(tankx, tanky, angle, speed, terrain_cap)
+  return cpf_predict_stop(
+    math.floor(tankx + 0.5), math.floor(tanky + 0.5),
+    angle,                              -- pass float through
+    speed or 0,
+    terrain_cap or 255)
 end
 
 --- Tank-aware shot simulation: same as simulate_shot but also checks

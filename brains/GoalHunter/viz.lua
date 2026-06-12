@@ -61,6 +61,20 @@ M.IDS = {
                      long  = "Write hitboxes.log + intersect.log every tick (heavy disk I/O). Off by default; flip on only when debugging shell-hit-detection issues.",
                      default_on = false },
 
+  blitz_comm_lines = { short = "Blitz comm lines",
+                       long  = "Negotiation comm lines between a blitzing commander and tanks. Commander view: YELLOW out to in-range tanks while the call is live (no answer yet); ORANGE to a tank that answered but isn't locked; GREEN to accepted soldiers (going to position); RED to a tank that declined (No). Soldier view: a line to our commander — yellow answering, orange once we have a standoff offer, green once accepted, and RED for a decline (busy / no standoff spot), latched ~BLITZ_COMM_LATCH_TICKS so even a one-tick reject is visible." },
+
+  blitz_joinable = { short = "HUD: joinable blitzes",
+                     long  = "Right-side HUD list of every ongoing blitz call this bot knows about (the blitz-call registry) with per-call join status: JOINABLE (in help range, free slot, current goal interruptible), far, FULL, busy(reason), or pill gone. Columns: cmdr/pill/dist/slots; '>'=committed, '~'=negotiating. Also rings each known pill on the map (green=joinable, grey=known)." },
+
+  squad_roster = { short = "HUD: squad roster",
+                   long  = "Right-side per-bot squad roster (role + status, \"-- SQUADS --\"). Drawn via hud_text so it's draggable/labelable like other HUD overlays.",
+                   default_on = true },
+
+  label_hud_overlays = { short = "Label HUD overlays",
+                         long  = "Prefix every HUD text overlay with its viz id (e.g. \"[circles_hud] ...\") so you can tell which toggle drives each on-screen text block. Affects all viz.hud_text overlays; off by default.",
+                         default_on = false },
+
   hud_budget = { short = "HUD: budget + kill",
                  long  = "Prominent top-of-screen banner showing last_ms / target_ms ratio (green/yellow/orange/red) plus a flashing red KILLED banner when brain.wasKilled was set last tick.  Reads _G.brain.{lastThinkMs,targetMs,wasKilled}." },
   cliff_safety   = { short = "Cliff safety",
@@ -106,11 +120,38 @@ M.IDS = {
   hud_version        = { short = "HUD: version",
                          long  = "Bottom-right GoalHunter vN.N label" },
 
+
   -- Tank / aim.
   tank_hitbox       = { short = "Tank hitbox",
                         long  = "Yellow ±128 wu hitbox outline around own tank" },
   tank_aim_marker   = { short = "Tank aim marker",
                         long  = "Yellow crosshair + corners at the aim wu point" },
+
+  blitz_call = { short = "Blitz call (self)",
+                 long  = "Soldier/self view of the blitz call: our answer (Y->commander / N), our computed standoff coords, the walk distance we reported (bd), repos count (commander 'pick another' rejections), and a map dot on our standoff." },
+
+  blitz_roster = { short = "Blitz roster (commander)",
+                   long  = "Commander/self negotiation table: one row per answering soldier — id, Status (y=committed / m=negotiating), Engage spot (bes), Dist (reported walk dist bd), EngageAnswer (our verdict: ACC / REJ=clash-or-wall-blocked / -)." },
+
+  blitz_wait_timeout = { short = "HUD: blitz_wait GO timeout",
+                         long  = "Commander-only HUD panel shown while waiting in blitz_wait: ready/total soldiers, the progress-based GO timeout (base READY_TIMEOUT + accumulated patience extension), elapsed/remaining, and the closest pending soldier's walk dist (min_bd) with a CLOSING/STALLED indicator. A bar shows elapsed vs the effective timeout (green = a soldier is still making progress so the timeout keeps extending, red = stalled/about to fire GO)." },
+
+  blitz_join_hl = { short = "Joinable-blitz pills",
+                    long  = "Cyan border + 'JOIN BLITZ' tag around each pill an ally is running an OPEN, in-range blitz call on. These pills are exempt from ally_claimed de-confliction — taking one JOINS the blitz rather than yielding to the ally." },
+
+  help_range = { short = "Commander help range",
+                 long  = "Manhattan diamond of radius SQUAD_HELP_RANGE around each blitzing commander's pill (self + allied commanders) — the region in which a soldier will answer the take. Matches the actual join gate (Manhattan dist tank->pill)." },
+
+  -- Squad coordination: a soldier's claimed blitz engage standoff + setup point.
+  squad_blitz       = { short = "Squad blitz engage",
+                        long  = "The followed bot's claimed blitz engage standoff (magenta, green when IN POSITION), the setup/approach point (orange), and a line to the pill." },
+
+  blitz_negotiate_scan = { short = "Blitz negotiate: standoff scan",
+                           long  = "While a NON-commander is negotiating a blitz, the full ellipse standoff scan it runs for the target pill: each candidate spot's LOS box, maneuver ellipse + tiles, and the A+B+D+E=total score label (bucket members overdrawn dark purple). Shows the scores the soldier is choosing its offered standoff from. Only drawn while actively offering (one frame if the offer is accepted immediately)." },
+
+  -- Squad coordination: role label above each tank (C#/S# [C#]/H#).
+  squad_labels      = { short = "Squad tank labels",
+                        long  = "Role label above each protocol tank: 'C<pn>' (commander), 'S<pn> [C<cmdr>]' (soldier + its commander), 'H<pn>' (harasser). Colored by role." },
 
   -- Pill interaction.
   pill_range_circle = { short = "Pill range circles",
@@ -129,6 +170,8 @@ M.IDS = {
                         long  = "dist=N/T spd=N/T HUD next to the tank during approach / in_range_position" },
   charge_status     = { short = "Charge status",
                         long  = "CHARGE: <phase> top-left HUD line" },
+  charge_stop_pred  = { short = "Charge stop predict",
+                        long  = "Predicted brake-now stop point (cpf.predict_stop): marker + line from tank, GREEN if a shot from there hits the pill, RED if it falls short. Lets you eyeball whether the stop predictor is accurate." },
   detree_progress   = { short = "Detree progress",
                         long  = "DETREE N/M (left=K) overlay above tank" },
 
@@ -139,6 +182,8 @@ M.IDS = {
                              long  = "Per-candidate score boxes for the 8 ring positions + standoff" },
   shield_scan_blockers   = { short = "Shield: blockers",
                              long  = "Winner's per-aim blocker borders + colored fills" },
+  shield_blocker_union   = { short = "Shield: considered blockers (union)",
+                             long  = "Union across all candidate standoff angles. BLACK = every tile a pillbox bullet crosses (raw, NO gating — was even considered, incl. tiles our own shot crosses). On top: green=actual wall/pill, yellow=potential buildable, grey=LGM-unreachable (these passed every gate). So black-only = on a shot path but REJECTED (too close/behind/unbuildable); no box = never considered. Debug-only, no live-game cost." },
   shield_scan_trajectory = { short = "Shield: trajectories",
                              long  = "Green circles on outgoing tiles + red squares on return-fire path + colored aim line" },
   shield_scan_legend     = { short = "Shield: legend",
@@ -209,6 +254,9 @@ M.IDS = {
   tank_combat_viz   = { short = "Tank combat detection",
                         long  = "Navy detection/engage range circles, gate HUD, per-enemy lines/labels" },
 
+  ghost_tank        = { short = "Ghost tank tracking",
+                        long  = "Extrapolated position + TTL of an enemy tank that went out of sight (forest/fog)" },
+
   -- Ally-state overlay (right middle): per-player table populated from
   -- the chat-based shared-state messages. One row per active slot
   -- (bot #, goal, substate, target, k=v data).
@@ -220,6 +268,8 @@ M.IDS = {
                             long  = "Map overlay: top evaluated placement spots for a BACK pill, as bold filled orange squares (most opaque = best). Pairs with the '3' influence view. Fed by the place_pill_strategic candidate scan." },
   pill_best_spots_aggro = { short = "Best AGGRO pill spots",
                             long  = "Map overlay: top evaluated placement spots for an AGGRESSIVE pill, as bold filled red squares (most opaque = best). Pairs with the '3' influence view." },
+  panic_build = { short = "Panic build (emergency)",
+                  long  = "Shown whenever a non-rejected enemy tank is present (attack_tank viable): the emergency def_build candidate spots (green=chosen, yellow=valid, red=rejected with reason), the threat tank (red), a line from us to it, and a 'PANIC BUILD' label. If a tank is present but we have no pill to drop, just a 'PANIC (no pill)' marker on the threat." },
   ally_avoid_overlay = { short = "Ally avoid zones",
                          long  = "Orange tiles around an ally tank doing a pill take (5x5 when within STANDOFF+2 of pill), plus the firing lane to the pill. Also prints `BLOCK: ON/OFF sub=… d=N/T` next to each attack_pill ally so you can see live whether the 5x5 stamp is active and how close they are to the activation threshold." },
 
@@ -243,6 +293,43 @@ M.IDS = {
 
   ally_claimed_marker = { short = "Ally claimed marker",
                           long  = "Semi-transparent gray rectangle over each pill/base another bot is currently broadcasting as their goal (sourced from ally_state slate)." },
+
+  circles = { short = "Front-line circles",
+              long  = "Radius-12 front-line regions (R2): ring colored red=LOSING (lost ground over both 1m & 5m), orange=WARN (instant enemy-count advisory), else green/yellow by influence share; center dot, safe-tile dot, and a label with id/POI/ratio. Sourced from circles.lua." },
+
+  circles_hud = { short = "HUD: circles table",
+                  long  = "Right-side HUD: one row per circle — id, ratio now/prev/origin, fp/ep fb/eb tanks, losing?, reinforcement need. For tuning LOSE_DELTA." },
+
+  circle_trend = { short = "Circle trend arrows",
+                   long  = "Per-circle influence-share deltas vs the 1 min and 5 min lookbacks with ^/v/= arrows ('?' = that window not full yet); BOTH must be down >= LOSE_DELTA to count as losing." },
+
+  reinforce_link = { short = "Reinforce link",
+                     long  = "Line from this tank to its target losing-circle safe tile when reinforcing (R3-exec), plus a REINFORCING tag. Off unless CIRCLE_REINFORCE_ENABLED and a circle is losing." },
+
+  circle_poi = { short = "Circle POI coverage",
+                 long  = "Dots on every pill/base a circle covers (its greedy-selected POIs); faint marks on POIs no circle covers. Debugs circle placement." },
+
+  circle_history = { short = "Circle history graph",
+                     long  = "Full lineage graph of circle records (alive + destroyed within the last 5 min): each at its center with index + created/(destroyed) ticks + current ratio, lines connecting each record to its predecessor. Green = alive, gray = destroyed." },
+
+  circle_warning = { short = "Circle warnings",
+                     long  = "Advisory-only (display, no dispatch): orange ring + instant enemy-vs-friendly counts on circles whose instant pill/base/tank counts flag a warning. For hooking behavior later." },
+
+  role_live = { short = "Live squad roles",
+                long  = "C/S/H tag over each tank; for a dynamic commander shows the trigger (take #pid HP). Self shows live role + reason. R0 debugging." },
+
+  hard_take_pills = { short = "Hard-take pills",
+                      long  = "Ring + HP label on every pill at/above HARD_TAKE_MIN_HP — the targets that spawn a commander+squad under DYNAMIC_COMMANDERS." },
+
+  pill_roles = { short = "Pill portfolio roles",
+                 long  = "Every friendly pill tinted by cached role: back/front/aggro/util. Shows the 20/45/20/15 balance and the shoot-range front classification." },
+
+  front_band = { short = "Front line + shoot band",
+                 long  = "Front '3' tiles plus the ~9-tile euclidean band that defines the 'front' pill category — why a pill is/isn't front." },
+
+
+  repos_claims = { short = "Reposition claims",
+                   long  = "Marks each pill an ally is repositioning (repos=1 claim this bot honors) vs the pill this bot would pick. Confirms R3a de-confliction." },
 
   enemy_lgm_marker = { short = "Enemy LGM marker",
                        long  = "Yellow X over every visible hostile LGM with a small velocity arrow when it's moving. Sourced from perc.enemy_lgms." },
@@ -566,9 +653,9 @@ function M.circle(viz_id, ...)
   assert_id(viz_id)
   if not overlay_circle then return end
   local idx = vid(viz_id)
-  -- overlay_circle args: cx, cy, radius, r, g, b, a, viz_idx, subpixel
-  local cx, cy, radius, r, g, b, a, subpixel = ...
-  local result = overlay_circle(cx, cy, radius, r, g, b, a, idx, subpixel)
+  -- overlay_circle args: cx, cy, radius, r, g, b, a, viz_idx, subpixel, filled
+  local cx, cy, radius, r, g, b, a, subpixel, filled = ...
+  local result = overlay_circle(cx, cy, radius, r, g, b, a, idx, subpixel, filled)
   if type(cx) == "number" and type(cy) == "number" and type(radius) == "number" then
     label(viz_id, cx + radius * 0.7071, cy + radius * 0.7071)
   end
@@ -582,7 +669,24 @@ function M.hud_text(viz_id, ...)
   local idx = vid(viz_id)
   -- overlay_hud_text args: x, y, text, anchor, r, g, b, a, viz_idx
   local x, y, text, anchor, r, g, b, a = ...
+  -- Optional: tag each overlay with its viz id so you can identify which
+  -- toggle owns each on-screen text block. (label_hud_overlays itself never
+  -- routes through hud_text, so no recursion.)
+  if M.is_on("label_hud_overlays") and type(text) == "string" then
+    text = "[" .. viz_id .. "] " .. text
+  end
   return overlay_hud_text(x, y, text, anchor, r, g, b, a, idx)
+end
+
+-- HUD-space rectangle (solid fill or 1px outline), same pixel-offset/anchor
+-- scheme as hud_text. Args: x, y, w, h, anchor, r, g, b [, a [, filled]].
+function M.hud_rect(viz_id, ...)
+  assert_id(viz_id)
+  if not overlay_hud_rect then return end
+  if not M.is_on(viz_id) then return end
+  local idx = vid(viz_id)
+  local x, y, w, h, anchor, r, g, b, a, filled = ...
+  return overlay_hud_rect(x, y, w, h, anchor, r, g, b, a or 255, filled and 1 or 0, idx)
 end
 
 -- =========================================================================

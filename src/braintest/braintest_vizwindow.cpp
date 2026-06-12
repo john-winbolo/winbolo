@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
@@ -89,6 +90,128 @@ static int build_sort_order(void) {
     return n;
 }
 
+/* ───────────────────────── Viz "sets" ─────────────────────────────────
+ * Three named slots that capture/restore which overlays are enabled, plus
+ * Select-all / Clear-all. A set stores the id (or label, for native rows)
+ * of every currently-on entry; Load turns those on and everything else off.
+ * Persisted to BrainTestVizSets.ini next to BrainTestViz.ini so slots and
+ * their labels survive restarts. */
+#define VIZ_SET_COUNT      3
+#define VIZ_SET_LABEL_MAX  64
+#define VIZ_SET_KEY_MAX    (VIZ_REG_ID_MAX > VIZ_REG_LABEL_MAX ? VIZ_REG_ID_MAX : VIZ_REG_LABEL_MAX)
+
+struct VizSet {
+    char label[VIZ_SET_LABEL_MAX];
+    char keys[VIZ_REG_MAX][VIZ_SET_KEY_MAX];  /* ids/labels of on entries */
+    int  keyCount;
+    bool saved;
+};
+static VizSet sVizSets[VIZ_SET_COUNT];
+static bool   sVizSetsLoaded = false;
+
+static const char *vizEntryKey(const VizRegistryEntry *e) {
+    if (!e) return "";
+    return e->id[0] ? e->id : e->label;
+}
+
+static void vizSetsPath(char *out, size_t n) {
+    char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir && prefDir[0]) SDL_snprintf(out, n, "%sBrainTestVizSets.ini", prefDir);
+    else                       SDL_snprintf(out, n, "BrainTestVizSets.ini");
+    SDL_free(prefDir);
+}
+
+static void vizSetsSave(void) {
+    char path[FILENAME_MAX];
+    vizSetsPath(path, sizeof(path));
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    for (int s = 0; s < VIZ_SET_COUNT; s++) {
+        fprintf(f, "[Set%d]\n", s);
+        fprintf(f, "label=%s\n", sVizSets[s].label);
+        fprintf(f, "saved=%d\n", sVizSets[s].saved ? 1 : 0);
+        for (int k = 0; k < sVizSets[s].keyCount; k++)
+            fprintf(f, "on=%s\n", sVizSets[s].keys[k]);
+    }
+    fclose(f);
+}
+
+static void vizSetsLoad(void) {
+    for (int s = 0; s < VIZ_SET_COUNT; s++) {
+        sVizSets[s].keyCount = 0;
+        sVizSets[s].saved    = false;
+        SDL_snprintf(sVizSets[s].label, sizeof(sVizSets[s].label), "Set %d", s + 1);
+    }
+    char path[FILENAME_MAX];
+    vizSetsPath(path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char line[256];
+    int  cur = -1;
+    while (fgets(line, sizeof(line), f)) {
+        size_t L = strlen(line);
+        while (L && (line[L - 1] == '\n' || line[L - 1] == '\r')) line[--L] = '\0';
+        if (line[0] == '[') {
+            int idx;
+            if (sscanf(line, "[Set%d]", &idx) == 1 && idx >= 0 && idx < VIZ_SET_COUNT) cur = idx;
+            else cur = -1;
+        } else if (cur >= 0) {
+            if (!strncmp(line, "label=", 6)) {
+                SDL_snprintf(sVizSets[cur].label, sizeof(sVizSets[cur].label), "%s", line + 6);
+            } else if (!strncmp(line, "saved=", 6)) {
+                sVizSets[cur].saved = atoi(line + 6) != 0;
+            } else if (!strncmp(line, "on=", 3) && sVizSets[cur].keyCount < VIZ_REG_MAX) {
+                SDL_snprintf(sVizSets[cur].keys[sVizSets[cur].keyCount], VIZ_SET_KEY_MAX, "%s", line + 3);
+                sVizSets[cur].keyCount++;
+            }
+        }
+    }
+    fclose(f);
+}
+
+/* Capture the current on-set into a slot. */
+static void vizSetCapture(int slot) {
+    VizSet *S = &sVizSets[slot];
+    S->keyCount = 0;
+    int n = vizRegistryCount();
+    for (int i = 0; i < n && S->keyCount < VIZ_REG_MAX; i++) {
+        const VizRegistryEntry *e = vizRegistryGet(i);
+        if (e && e->is_on) {
+            SDL_snprintf(S->keys[S->keyCount], VIZ_SET_KEY_MAX, "%s", vizEntryKey(e));
+            S->keyCount++;
+        }
+    }
+    S->saved = true;
+    vizSetsSave();
+}
+
+/* Turn on exactly the slot's saved entries (everything else off). */
+static void vizSetApply(int slot, void (*onToggle)(int)) {
+    VizSet *S = &sVizSets[slot];
+    if (!S->saved) return;
+    int n = vizRegistryCount();
+    for (int i = 0; i < n; i++) {
+        VizRegistryEntry *m = vizRegistryGetMutable(i);
+        if (!m) continue;
+        const char *key = vizEntryKey(m);
+        bool want = false;
+        for (int k = 0; k < S->keyCount; k++) {
+            if (!strcmp(S->keys[k], key)) { want = true; break; }
+        }
+        m->is_on = want;
+    }
+    if (onToggle) onToggle(0);  /* persist registry ini (idx ignored) */
+}
+
+static void vizSetAll(bool on, void (*onToggle)(int)) {
+    int n = vizRegistryCount();
+    for (int i = 0; i < n; i++) {
+        VizRegistryEntry *m = vizRegistryGetMutable(i);
+        if (m) m->is_on = on;
+    }
+    if (onToggle) onToggle(0);
+}
+
 void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
                      void (*onToggle)(int idx)) {
     if (!sImGuiInitialized || !renderer) return;
@@ -107,6 +230,35 @@ void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
 
     ImGui::TextColored(ImVec4(0.6f, 0.65f, 0.75f, 1.0f),
         "Click a row to toggle. Saved to BrainTestViz.ini.");
+
+    /* ── Sets: 3 save/load slots + select/clear all ── */
+    if (!sVizSetsLoaded) { vizSetsLoad(); sVizSetsLoaded = true; }
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.7f, 0.75f, 0.85f, 1.0f), "Sets");
+    ImGui::SameLine();
+    if (ImGui::Button("Select all")) vizSetAll(true,  onToggle);
+    ImGui::SameLine();
+    if (ImGui::Button("Clear all"))  vizSetAll(false, onToggle);
+    for (int s = 0; s < VIZ_SET_COUNT; s++) {
+        ImGui::PushID(s);
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::InputTextWithHint("##setlabel", "label",
+                                     sVizSets[s].label, sizeof(sVizSets[s].label))) {
+            vizSetsSave();  /* persist label edits even without re-Save */
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Save")) vizSetCapture(s);
+        ImGui::SameLine();
+        if (!sVizSets[s].saved) ImGui::BeginDisabled();
+        if (ImGui::Button("Load")) vizSetApply(s, onToggle);
+        if (!sVizSets[s].saved) ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (sVizSets[s].saved)
+            ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f), "(%d on)", sVizSets[s].keyCount);
+        else
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(empty)");
+        ImGui::PopID();
+    }
 
     /* Filter (case-insensitive substring across id, label, descs). */
     static char sFilter[128] = {0};

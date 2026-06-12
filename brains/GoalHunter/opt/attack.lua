@@ -12,6 +12,8 @@ local threat = require("threat")
 local shot_tracker = require("shot_tracker")
 local shield = require("attack_shield")
 local viz    = require("viz")
+local squad      = require("squad")
+local ally_state = require("ally_state")
 
 local smart_cost = cpf.smart_cost
 local KIND_PILL   = cpf.KIND_PILL
@@ -30,6 +32,7 @@ local PRE_ENGAGE_SUBS = {
   plan_position=true, approach=true, gather_trees=true, build_walls=true,
   aim=true, in_range_position=true, in_range_aim_pre=true,
   in_range_aim=true, in_range_aim_finetune=true, detree=true,
+  blitz_wait=true,
 }
 
 -- "Effectively stopped" gate for the substate transitions in approach
@@ -202,7 +205,12 @@ local CORE_GOAL_FIELDS = {
   kind = true, mx = true, my = true, wx = true, wy = true,
   target_id = true,
 }
-local function clear_attack_goal(state, reason)
+-- no_urgent: when true, the resulting goal=none should NOT force an urgent
+-- (this-tick) replan — it rides the normal goal timer instead. Used for
+-- routine invalidations (capture_base/attack_pill target gone) where an
+-- immediate expensive re-eval isn't worth it. Default (nil) keeps the
+-- existing urgent-on-none behavior for genuine aborts.
+local function clear_attack_goal(state, reason, no_urgent)
   -- Snapshot what we're killing BEFORE we wipe it, so the overlay can
   -- show "attack_pill/in_range_aim_finetune cleared at t=N because X".
   local kind_was = state.goal and state.goal.kind or nil
@@ -217,6 +225,15 @@ local function clear_attack_goal(state, reason)
   else
     state.goal = { kind = "none" }
   end
+  -- Blitz lifecycle: a cleared attack goal means the take ended (success or
+  -- fail), so stop broadcasting our blitz standoff claim / reported distance.
+  -- (goal._blitz_* fields were wiped above; the commander's roster/reject and
+  -- squad_blitz_target are recomputed by squad.update each tick.)
+  state.squad_blitz_engage_mx, state.squad_blitz_engage_my = nil, nil
+  state.squad_blitz_in_position = nil
+  state.squad_blitz_aimed = nil
+  state.squad_blitz_bd = nil
+  state._blitz_reject = nil   -- soldier's rejected-standoff set (parallel negotiation)
   if state.pf then state.pf.status = "idle" end
   -- Auto-derive a caller location if the call site didn't pass a reason,
   -- so the overlay still tells you which line cleared the goal.
@@ -233,6 +250,10 @@ local function clear_attack_goal(state, reason)
     kind_was = kind_was, sub_was = sub_was,
     mx_was = mx_was, my_was = my_was,
   }
+  -- Mark whether the resulting goal=none may ride the timer (no_urgent) or
+  -- must replan immediately. Set on every clear so an urgent abort right
+  -- after a non-urgent clear correctly re-enables urgency.
+  state._clear_no_urgent = no_urgent and true or nil
   if reason and BRAIN_DEBUG_MODE then
     print(string.format("[clear_attack_goal] %s", reason))
   end
@@ -248,18 +269,26 @@ local _EMPTY = {}
 function M.current_blocker_pids(state, world)
   local g = state and state.goal
   if not g or g.kind ~= "attack_pill" then return _EMPTY end
-  local sx, sy = g.standoff_mx, g.standoff_my
-  local pmx, pmy = g.mx, g.my
-  if not (sx and sy and pmx and pmy) or not (world and world.pills) then return _EMPTY end
-  local d_total = U.mdist(sx, sy, pmx, pmy)
+  if not (world and world.pills) then return _EMPTY end
+  -- A friendly pill is a blocker IFF it is one of the friendly-pill blockers in
+  -- the chosen aim of this take's shield scan — i.e. a pill plan_position's
+  -- blocker (C) search returned AND the selected aim actually uses. No geometric
+  -- guessing: read the authoritative chosen-blocker list off the goal.
+  local w = g._shield_scan and g._shield_scan.best
+  local aim = w and w.best_aim_idx and w.aims and w.aims[w.best_aim_idx] or nil
+  local blk = aim and aim.blockers
+  if not blk or #blk == 0 then return _EMPTY end
   local out
-  for pid, fp in pairs(world.pills) do
-    if fp.owner == "friendly" and (fp.health or 0) > 0 then
-      local d_fp_target = U.mdist(fp.mx, fp.my, pmx, pmy)
-      local d_fp_us     = U.mdist(fp.mx, fp.my, sx, sy)
-      if d_fp_target < (d_total - 1) and d_fp_us < d_total and d_fp_target >= 1 then
-        out = out or {}
-        out[#out + 1] = pid
+  for _, b in ipairs(blk) do
+    if b.kind == "friendly_pill" then
+      -- resolve the pill id at this blocker tile
+      for pid, fp in pairs(world.pills) do
+        if fp.owner == "friendly" and (fp.health or 0) > 0
+           and fp.mx == b.mx and fp.my == b.my then
+          out = out or {}
+          out[#out + 1] = pid
+          break
+        end
       end
     end
   end
@@ -272,10 +301,44 @@ end
 -- instead of peeling off (which costs shots/time). Only true for a live pill —
 -- once it's dead the normal swerve still runs to exit/capture.
 local function can_tank_finish(pill, info)
+  -- Tank the finish ONLY when ALL hold: pill nearly dead (HP <= 3), pill
+  -- currently calm (anger <= 0.34 this instant), AND armour is sufficient to
+  -- soak it (hp * per_hp <= armour). Otherwise swerve as usual.
   local hp = pill and (pill.health or 0) or 0
-  return hp > 0 and hp * (C.SWERVE_SKIP_ARMOUR_PER_HP or 5) <= (info.armour or 0)
+  if hp <= 0 then return false end
+  local anger = pill and (pill.anger or 0) or 0
+  return hp <= (C.TANK_FINISH_MAX_HP or 3)
+     and anger <= (C.TANK_FINISH_MAX_ANGER or 0.34)
+     and hp * (C.SWERVE_SKIP_ARMOUR_PER_HP or 5) <= (info.armour or 0)
 end
 M.can_tank_finish = can_tank_finish
+
+-- One-time COMMIT decision (made at build_walls / charge, or lazily at first
+-- fire): when this pill is down to its last HP, will we SOAK the finish (skip
+-- the swerve and eat the last shots) or always peel off? Decided ONCE and
+-- stored on the goal so the firing substates don't re-decide every tick.
+-- Soak only if armour can cover finishing a pill AND the firing spot isn't in
+-- heavy pill crossfire AND no enemy tank can hit us — the old per-tick check
+-- looked only at the target pill, so a tank could soak into a defended cluster
+-- (crossfire / enemy tank) and die. print2-logged at the moment of decision.
+local function commit_soak_finish(goal, state, info)
+  if goal._soak_finish ~= nil then return goal._soak_finish end
+  local per_hp  = C.SWERVE_SKIP_ARMOUR_PER_HP or 5
+  local need    = (C.TANK_FINISH_MAX_HP or 3) * per_hp
+  local fx      = goal.standoff_mx or (info.tankx >> 8)
+  local fy      = goal.standoff_my or (info.tanky >> 8)
+  local pdang   = threat.pill_at(fx, fy) or 0
+  local n_tanks = (state.perc and state.perc.enemy_tanks) and #state.perc.enemy_tanks or 0
+  local armour  = info.armour or 0
+  local ok, why
+  if armour < need then ok, why = false, "armour_low"
+  elseif pdang >= (C.TANK_COMBAT_DEFENDED_DANGER or 30) then ok, why = false, "crossfire"
+  elseif n_tanks > 0 then ok, why = false, "enemy_tank"
+  else ok, why = true, "ok" end
+  goal._soak_finish = ok
+  return ok
+end
+M.commit_soak_finish = commit_soak_finish
 
 -- Returns a non-nil reason string when current armour vs pill HP make
 -- pressing on with the take unsafe.  Used at the start of approach /
@@ -484,13 +547,16 @@ end
 -- or (math.huge, reason) if an impassable obstacle (other pillbox) blocks.
 local function shot_path_obstacle_count(info, goal, world)
   local pmx, pmy = goal.mx, goal.my
-  local aim_mx = goal.aim_mx or (pmx + 0.5)
-  local aim_my = goal.aim_my or (pmy + 0.5)
-  local target_wx = math.floor(aim_mx * 256 + 0.5)
-  local target_wy = math.floor(aim_my * 256 + 0.5)
-  local tiles = cpf.simulate_shot(info.tankx, info.tanky,
-                                  target_wx, target_wy,
-                                  cpf.SHOT_TANK, 0)
+  -- Fire the tank's LIVE float gun angle (info.tank_angle, straight from the
+  -- engine's MY_TANK->angle) — bit-exact with the shot the engine will actually
+  -- fire. This is the fire-time twin of standoff_shot_obstacle: that one SCORES
+  -- hypothetical standoff tiles (no live tank → it must infer the angle from
+  -- spot->pill, brad-quantized), but here the tank is parked and aimed, so
+  -- inferring/quantizing an angle to the aim-point diverged from the real shot
+  -- and false-aborted takes that actually land. Use the known heading instead.
+  local tiles = cpf.simulate_shot_angle(info.tankx, info.tanky,
+                                        info.tank_angle or 0,
+                                        cpf.SHOT_TANK, 0)
   if not tiles then return 0, "no sim" end
   local origin_mx = info.tankx >> 8
   local origin_my = info.tanky >> 8
@@ -538,6 +604,9 @@ local function shot_path_obstacle_count(info, goal, world)
       end
     end
   end
+  if not reached_pill then
+    local lastt = tiles[#tiles]
+  end
   return shots, nil, reached_pill
 end
 
@@ -563,11 +632,77 @@ end
 -- Returns a score (lower is better) or math.huge if the position is unusable.
 -- When orbit_radius is non-nil, also penalizes slow/hazardous terrain on the
 -- orbit arc (for circle-strafe attacks like bpc).
+-- Clear SHOT from a standoff tile to the pill, using the C shell SIMULATION
+-- (cpf.simulate_shot — same physics as the engine, the authoritative "what tiles
+-- does this shell actually cover" answer) rather than a naive grid line. The shot
+-- is clear iff the simulated trajectory REACHES the pill tile; if it stops short
+-- on a wall, a hostile base, or another pillbox, the shell hits that instead — a
+-- take from such a standoff would just shell the obstacle (e.g. an enemy base
+-- between us and the pill). Endpoints excluded. Shared by score_standoff AND
+-- pick_standoff's fallback so EVERY chosen standoff is verified to have a real
+-- shot at the pill.
+local function standoff_clear_shot(world, cx, cy, pill)
+  local ox = (cx << 8) | 128
+  local oy = (cy << 8) | 128
+  local tx = (pill.mx << 8) | 128
+  local ty = (pill.my << 8) | 128
+  local tiles = cpf.simulate_shot(ox, oy, tx, ty, cpf.SHOT_TANK, 0)
+  if not tiles then return true end  -- sim unavailable → don't over-reject
+  for _, t in ipairs(tiles) do
+    if t.mx == pill.mx and t.my == pill.my then
+      return true  -- shell trajectory reaches the target pill → clear shot
+    end
+    if not (t.mx == cx and t.my == cy) then  -- skip our own (origin) tile
+      -- A base of ANY owner (hostile/friendly/neutral) is solid and stops the
+      -- shell before it reaches the pill.
+      local bentry = world.base_at and world.base_at[t.my * 256 + t.mx]
+      if bentry and bentry.base then return false end
+      -- A wall stops the shell.
+      local tt = U.ttype(t.mx, t.my)
+      if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return false end
+      -- A LIVE pillbox (any owner) in the path stops the shell; a dead one is
+      -- passable rubble and doesn't.
+      local plist = world.pill_at and world.pill_at[t.my * 256 + t.mx]
+      if plist then
+        for _, e in ipairs(plist) do if e.pill and (e.pill.health or 0) > 0 then return false end end
+      end
+    end
+  end
+  return false  -- trajectory ended without ever covering the pill tile
+end
+
 local function score_standoff(world, cx, cy, pill, info, orbit_radius)
   if not U.in_map(cx, cy) then return math.huge end
 
-  -- Must have clear line of sight to the pill (no walls)
-  if PF.wall_hp_between(cx, cy, pill.mx, pill.my) > 0 then return math.huge end
+  -- Must have a clear shot to the pill (no wall or hostile base in the way).
+  if not standoff_clear_shot(world, cx, cy, pill) then return math.huge end
+
+  -- Drive-in path: the tank holds at the SETUP point (behind the standoff, out
+  -- of pill range) and charges to the standoff on GO. That short radial segment
+  -- must be cleanly drivable — TREES are fine (cover / the tank pushes through),
+  -- but a wall, pillbox, or enemy base in the way blocks the charge, so reject
+  -- the spot. Same setup radius as blitz_commit_negotiated (ideal-floored).
+  do
+    local pdx, pdy = cx - pill.mx, cy - pill.my
+    local plen = math.max(0.001, math.sqrt(pdx * pdx + pdy * pdy))
+    local ux, uy = pdx / plen, pdy / plen
+    local setup_dist = (C.ATTACK_PILL_STANDOFF or 7.4) + (C.ATTACK_APPROACH_OFFSET or 2.25)
+    local sfx = (pill.mx + 0.5) + ux * setup_dist
+    local sfy = (pill.my + 0.5) + uy * setup_dist
+    local drive_blocked = false
+    U.line_walk(sfx, sfy, cx + 0.5, cy + 0.5, function(wx, wy)
+      if wx == cx and wy == cy then return end  -- standoff tile itself is fine
+      local wt = U.ttype(wx, wy)
+      if wt == C.T_BUILDING or wt == C.T_HALFBUILD or wt == C.T_PILLBOX then
+        drive_blocked = true; return true
+      end
+      local be = world.base_at and world.base_at[wy * 256 + wx]
+      if be and be.base and be.base.owner == "hostile" then
+        drive_blocked = true; return true
+      end
+    end)
+    if drive_blocked then return math.huge end
+  end
 
   -- Forest tiles on the shot path are destroyed by each shell fired.
   -- Prefer angles that don't waste trees the brain may want to farm later.
@@ -814,6 +949,11 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
   local best_mx, best_my = nil, nil
   local fallback_dist = math.huge
   local fallback_mx, fallback_my = nil, nil
+  -- Clear-shot fallback: the closest standable candidate that the shell sim says
+  -- actually reaches the pill. Used when NO candidate passes the full scorer, so
+  -- we never fall back onto a base/wall-blocked tile and shell the obstacle.
+  local fb_clear_dist = math.huge
+  local fb_clear_mx, fb_clear_my = nil, nil
   -- Hoist viz toggle for the candidate-overlay emissions below.
   local v_take = BRAIN_DEBUG_MODE and viz.is_on("pill_take_target")
 
@@ -827,12 +967,21 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
       local cx = U.mclamp(math.floor(pill.mx + math.sin(angle) * R + 0.5))
       local cy = U.mclamp(math.floor(pill.my - math.cos(angle) * R + 0.5))
       local ck = U.mkey(cx, cy)
-      if not seen[ck] then
+      if not seen[ck] and not (state and state._blitz_reject and state._blitz_reject[ck]) then
         seen[ck] = true
         -- Always track closest as fallback
         local d = U.mdist(tmx, tmy, cx, cy)
         if d < fallback_dist then
           fallback_dist = d; fallback_mx = cx; fallback_my = cy
+        end
+        -- Closest STANDABLE candidate with a verified clear shot (sim) — the
+        -- preferred fallback when nothing passes the full scorer.
+        if d < fb_clear_dist then
+          local _tt = U.ttype(cx, cy)
+          if not U.is_water(_tt) and (C.TERRAIN_COST_LAND[_tt] or 9999) < 9999
+             and standoff_clear_shot(world, cx, cy, pill) then
+            fb_clear_dist = d; fb_clear_mx = cx; fb_clear_my = cy
+          end
         end
         local score = score_standoff(world, cx, cy, pill, info, orbit_radius)
         if score < math.huge then score = score + range_pen end
@@ -866,8 +1015,11 @@ function M.pick_standoff(world, info, pill, state, standoff_override, orbit_radi
     end
   end
 
-  local smx = best_mx or fallback_mx
-  local smy = best_my or fallback_my
+  -- Prefer a fully-scored pick; then the closest verified clear-shot tile; only
+  -- as a last resort the blind closest (may be blocked — but at that point no
+  -- orbit position has any shot at the pill, so the take will bail elsewhere).
+  local smx = best_mx or fb_clear_mx or fallback_mx
+  local smy = best_my or fb_clear_my or fallback_my
   if smx then
     if v_take then
       -- Overlay: mark chosen standoff with bright green circle
@@ -1986,6 +2138,24 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
       end
       score_d = terrain_penalty
       total_score = score_a + score_b + score_d + score_e
+      -- Soldier self-planning: prefer a spot whose shot to the pill CENTER is
+      -- clear and crosses fewer trees. Each tree eats a shot before LOS opens,
+      -- and the commander rejects center-blocked spots (blocked by a built
+      -- wall), so favoring center-clear here converges the negotiation faster.
+      do
+        local center_trees, center_blocked = 0, false
+        U.line_walk(cx, cy, pmx + 0.5, pmy + 0.5, function(wx, wy)
+          if wx == pmx and wy == pmy then return end
+          local tt = _ttype(wx, wy)
+          if tt == C.T_FOREST then center_trees = center_trees + 1
+          elseif tt == C.T_BUILDING or tt == C.T_HALFBUILD then center_blocked = true end
+          -- A base of ANY owner on the center path stops the shell like a wall.
+          local be = world.base_at and world.base_at[wy * 256 + wx]
+          if be and be.base then center_blocked = true end
+        end)
+        total_score = total_score + center_trees * (C.STANDOFF_SHOT_TREE_PENALTY or 8)
+        if center_blocked then total_score = total_score + (C.STANDOFF_SHOT_BLOCKED_PENALTY or 200) end
+      end
       -- Mid/late-game spots deep in enemy influence are much riskier to
       -- hold during the take — boost their cost so we prefer takes
       -- through friendlier or contested ground when one exists.
@@ -2470,8 +2640,186 @@ local function update_shot_accounting(goal, world)
   goal._on_target_misses    = misses
 end
 
+-- Commit a soldier's blitz take from the NEGOTIATED engage spot. The squad
+-- negotiation (blitz_negotiate, via M.pick_standoff) already chose this spot,
+-- broadcast it as bes, and the commander approved it (no clash, shot not
+-- wall-blocked) — so there is no eval-cache re-scan here. We set the standoff
+-- and head to its SETUP point (offset back from the standoff, away from the
+-- pill) via the shared `approach` substate, exactly like a regular non-PPT
+-- take — NOT the standoff tile itself. Returns true on commit, false if no
+-- spot could be resolved (caller falls back to a normal plan_position take).
+local function blitz_commit_negotiated(goal, state, world, info, pmx, pmy)
+  local smx, smy = state.squad_blitz_engage_mx, state.squad_blitz_engage_my
+  local _src = "engage"
+  if not smx then
+    local pill = goal.target_id and world and world.pills and world.pills[goal.target_id] or nil
+    if pill then smx, smy = M.pick_standoff(world, info, pill, state) end
+    _src = "fallback_pick_standoff"
+  end
+  if not smx then return false end
+  local cx, cy = smx + 0.5, smy + 0.5
+  goal.standoff_fx, goal.standoff_fy = cx, cy
+  goal.standoff_mx, goal.standoff_my = smx, smy
+  goal.aim_mx, goal.aim_my = pmx + 0.5, pmy + 0.5
+  -- Setup point: identical to every other pill-take mode (see plan_position) —
+  -- the SETUP sits at the standoff RADIUS + ATTACK_APPROACH_OFFSET from the pill,
+  -- along this spot's direction. We use the ideal radius (ATTACK_PILL_STANDOFF),
+  -- NOT the picked tile's distance, so the soldier's setup matches the
+  -- commander's (whose standoff is the precise float arc at that radius); a
+  -- tile that rounds in closer must not pull the hold point into firing range.
+  local dx, dy = cx - (pmx + 0.5), cy - (pmy + 0.5)
+  local dlen = math.sqrt(dx * dx + dy * dy)
+  if dlen > 0.01 then
+    local ux, uy = dx / dlen, dy / dlen
+    local setup_dist = (C.ATTACK_PILL_STANDOFF or 7.4) + (C.ATTACK_APPROACH_OFFSET or 2.25)
+    goal.approach_fx = (pmx + 0.5) + ux * setup_dist
+    goal.approach_fy = (pmy + 0.5) + uy * setup_dist
+    goal.approach_mx = U.mclamp(math.floor(goal.approach_fx))
+    goal.approach_my = U.mclamp(math.floor(goal.approach_fy))
+  else
+    goal.approach_fx, goal.approach_fy = cx, cy
+    goal.approach_mx, goal.approach_my = smx, smy
+  end
+  goal._is_ppt = false
+  state.squad_blitz_engage_mx, state.squad_blitz_engage_my = smx, smy
+  goal._approach_start = nil
+  goal.substate = "approach"
+  return true
+end
+
+-- Parallel blitz-soldier standoff OFFER (pre-commit, runs while the soldier is
+-- on its normal goal). For a soldier negotiating with a commander (squad layer
+-- set squad_negotiate_cmdr) but not yet committed: offer our closest valid
+-- standoff for that commander's pill (pick_standoff skips state._blitz_reject)
+-- + reported walk distance. On a reject (brj → _blitz_call_rejected) exclude the
+-- spot and offer the next-closest (repos++). Clears offer state when not
+-- negotiating. Does NOT touch the soldier's goal — that switches only on accept.
+-- Pick the offered blitz standoff from a completed ellipse-scan: the best-scoring
+-- (lowest total_score) spot with LOS that isn't blitz-rejected (de-confliction).
+-- Returns nil if the scan has no usable spot (caller falls back to pick_standoff).
+local function blitz_pick_from_scan(spots, state)
+  if not spots then return nil end
+  local rej = state._blitz_reject
+  local best_mx, best_my, best_s
+  for _, s in ipairs(spots) do
+    if s.has_los and s.mx then
+      local k = U.mkey(s.mx, s.my)
+      if not (rej and rej[k]) and (not best_s or (s.total_score or 1e9) < best_s) then
+        best_s = s.total_score or 1e9
+        best_mx, best_my = s.mx, s.my
+      end
+    end
+  end
+  return best_mx, best_my
+end
+
+function M.blitz_negotiate(state, world, info, now)
+  local cmdr = state.squad_negotiate_cmdr
+  if not cmdr or state.squad_blitz_accepted then
+    if not state.squad_blitz_accepted then
+      state.squad_blitz_engage_mx, state.squad_blitz_engage_my = nil, nil
+      state.squad_blitz_bd = nil
+      state._blitz_reject = nil
+      state.squad_blitz_repos = nil
+    else
+      -- Committed (accepted): keep bd LIVE — cost from our MOVING position to the
+      -- committed standoff — so the commander's progress-based blitz_wait timeout
+      -- can see us closing when its own perception can't reach us. The commander
+      -- measures visible soldiers itself every tick (free), so this broadcast is
+      -- only a coarse FALLBACK for when we're out of its sight: refresh slowly
+      -- (≤ REFRESH_TICKS) and only re-store on a ≥1-tile change to avoid /info
+      -- spam. EXCEPTION: if the commander is directly asking where we are (bwq,
+      -- sent ~1s before it would give up), answer immediately this tick.
+      local goal = state.goal
+      if goal and goal.kind == "attack_pill" and goal.standoff_mx
+         and not state.squad_blitz_aimed then
+        local force = false
+        local cpn = state.squad_blitz_accepted
+        if cpn then
+          local q = ally_state.get_key(cpn, "bwq")
+          if q ~= "" and tonumber(q) == goal.target_id then
+            if state._blitz_query_ack ~= q then state._blitz_query_ack = q; force = true end
+          else
+            state._blitz_query_ack = nil
+          end
+        end
+        if force or (now - (state._blitz_bd_refresh_tick or -100000)) >= (C.SQUAD_BLITZ_BD_REFRESH_TICKS or 500) then
+          state._blitz_bd_refresh_tick = now
+          local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+          local nbd = math.floor((cpf.estimate_cost(tmx, tmy, goal.standoff_mx, goal.standoff_my, 0) or 0) + 0.5)
+          if force or not state.squad_blitz_bd or math.abs(nbd - state.squad_blitz_bd) >= 1 then
+            state.squad_blitz_bd = nbd
+          end
+        end
+      end
+    end
+    state._blitz_negotiate_scan = nil  -- not negotiating → drop the scan viz
+    state._blitz_offer_pill = nil
+    return
+  end
+  local pid  = state.squad_negotiate_pill
+  local pill = pid and world and world.pills and world.pills[pid] or nil
+  if not pill then return end
+  -- Hold a STABLE offer to avoid flooding the /info bus. The offered standoff
+  -- (bes) and walk distance (bd) ride the event-driven state slate, which
+  -- re-broadcasts whenever it changes — and bd = cost(our MOVING position ->
+  -- standoff) drifts every tick, so recomputing the offer each tick would
+  -- re-broadcast continuously. Only (re)compute when we have no offer yet for
+  -- this pill, the pill changed, or the commander rejected our spot (repick).
+  if state.squad_blitz_engage_mx ~= nil
+     and state._blitz_offer_pill == pid
+     and not state._blitz_call_rejected then
+    return
+  end
+  -- Recompute the FULL standoff scoring (the ellipse scan) for this pill so the
+  -- soldier offers the best BUCKET spot — same scoring the commander/PPT uses —
+  -- not just the nearest orbit tile. Drive the chunked detailed scan (shared
+  -- cache) and pick from its scored spots; stash them for the one-frame viz
+  -- (blitz_negotiate_scan). Fall back to pick_standoff until the scan completes.
+  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  M.advance_pill_eval_chunk(state, world, info, tmx, tmy, pid, pill)
+  local cached = state._pill_eval_cache and state._pill_eval_cache[pid]
+  local smx, smy
+  if cached and cached.spots then
+    smx, smy = blitz_pick_from_scan(cached.spots, state)
+  end
+  if not smx then smx, smy = M.pick_standoff(world, info, pill, state) end
+  if not smx then
+    -- No appropriate standoff spot for this blitz pill: reject it for ~30s so the
+    -- join discount / join-scan stop re-picking it, drop the negotiation, and
+    -- stamp a comm-line "no-spot" decline so the (often one-tick) reject shows.
+    state.squad_blitz_engage_mx = nil
+    state._blitz_pill_reject = state._blitz_pill_reject or {}
+    state._blitz_pill_reject[pid] = now + (C.SQUAD_BLITZ_NOSPOT_REJECT_TICKS or 1500)
+    state._blitz_comm_reject = { tick = now, cmdr = cmdr, reason = "nospot" }
+    state.squad_negotiate_cmdr = nil
+    state.squad_negotiate_pill = nil
+    state.squad_blitz_bd = nil
+    return
+  end
+  state.squad_blitz_engage_mx, state.squad_blitz_engage_my = smx, smy
+  state._blitz_offer_pill = pid   -- mark the offer as made for this pill (hold it)
+  state.squad_blitz_bd = math.floor((cpf.estimate_cost(tmx, tmy, smx, smy, 0) or 0) + 0.5)
+  if state._blitz_call_rejected
+     and (now - (state._blitz_repick_tick or -100000)) >= (C.SQUAD_BLITZ_REPICK_GAP or 30) then
+    state._blitz_reject = state._blitz_reject or {}
+    state._blitz_reject[U.mkey(smx, smy)] = true
+    state._blitz_repick_tick = now
+    state.squad_blitz_repos = (state.squad_blitz_repos or 0) + 1
+  end
+end
+
 function M.update_attack_substate(goal, state, world, info)
   if goal.kind ~= "attack_pill" then return end
+
+  -- Blitz "in position / aimed" status is a CURRENT-TICK fact, true only while
+  -- actually sitting in blitz_wait (in position, facing the pill). Default-clear
+  -- it every tick here; the blitz_wait handler (and the in-position transitions)
+  -- re-set it below. Without this it was sticky — a soldier that reached
+  -- blitz_wait then dropped back to approach kept broadcasting rdy=1, and the
+  -- commander GO'd without actually waiting for it.
+  state.squad_blitz_in_position = nil
+  state.squad_blitz_aimed       = nil
 
   local _t_as = clock_us()
   state._attack_substate_name = goal.substate
@@ -2492,6 +2840,69 @@ function M.update_attack_substate(goal, state, world, info)
   local pmx, pmy = goal.mx, goal.my
 
   if not goal.substate then goal.substate = "plan_position" end
+
+  -- Squad blitz: a soldier attacking its commander's blitz pill flags the goal
+  -- and, once committed, heads straight to its NEGOTIATED engage spot via the
+  -- normal `approach`. If the blitz ends — commander died (squad_cmdr cleared)
+  -- or the squad retargeted — drop the take entirely.
+  -- Committed takes are NOT aborted by the blitz ending — once we've started
+  -- EXECUTING (building the shield, aiming, charging, firing) we finish the
+  -- kill. Only bail from a PRE-COMMIT substate (plan_position / approach /
+  -- blitz_wait). NOTE: _blitz_committed is only latched by the blitz_wait GO
+  -- handshake, but a full-pill commander blitz fires via the normal PPT path
+  -- (build_walls→aim→charge→…→shoot_pill) and never sets it — so the substate
+  -- gate, not _blitz_committed alone, is what protects a live shoot_pill from
+  -- the abort (saw it clobber one: 20260604_141133 bot0 t4911).
+  local _blitz_precommit = goal.substate == "plan_position"
+                           or goal.substate == "approach"
+                           or goal.substate == "blitz_wait"
+  if goal._blitz and not goal._blitz_committed and _blitz_precommit
+     and (not state.squad_blitz_target
+          or goal.target_id ~= state.squad_blitz_target) then
+    state.squad_blitz_engage_mx, state.squad_blitz_engage_my = nil, nil
+    state.squad_blitz_in_position = nil
+    clear_attack_goal(state, "blitz ended: commander gone / squad retargeted")
+    return
+  end
+  -- _blitz_solo latches when a blitz falls back to a solo protected take (nobody
+  -- joined by the time we were in position) so the blitz transition can't grab
+  -- us again — we finish the take solo with the normal blocker/wall-shield plan.
+  if state.squad_blitz_target and goal.target_id == state.squad_blitz_target
+     and not goal._blitz_solo then
+    goal._blitz = true
+    -- The blitz goal is only adopted once the negotiation is ACCEPTED (squad
+    -- layer), so reaching here means we're committed. The blitz CALL is an
+    -- ongoing PARALLEL thing — goal._blitz drives bco recruiting + the bes
+    -- standoff broadcast every tick, active for the whole approach — NOT a
+    -- blocking substate.
+    --   * Soldier (squad_cmdr set): commit the NEGOTIATED engage spot and head
+    --     to its setup point via the normal `approach`. No re-scan.
+    --   * Commander (no squad_cmdr): stay in plan_position and plan the take as
+    --     a normal PPT (standoff + wall-shield). At the in-position decision it
+    --     SKIPS the walls if squadmates joined (a double-take overwhelms with no
+    --     walls), else builds them for a solo protected take.
+    if state.squad_cmdr then
+      -- SOLDIER: commit the NEGOTIATED, de-conflicted engage spot as our
+      -- standoff. Allow this from plan_position OR approach: with discount-driven
+      -- joining the soldier is already on the blitz pill's attack_pill while it
+      -- negotiates, so its OWN plan_position scan can run and advance the goal to
+      -- approach (picking a spot that clashes with the commander, since both use
+      -- the same scorer) BEFORE the squad layer marks it committed. Re-committing
+      -- here overrides that self-scan with the negotiated spot once committed.
+      local in_precommit = goal.substate == "plan_position" or goal.substate == "approach"
+      if in_precommit and not goal._blitz_started then
+        goal._blitz_started = true
+        if not blitz_commit_negotiated(goal, state, world, info, pmx, pmy) then
+          -- No negotiated/derivable spot yet — retry the commit next tick.
+          goal._blitz_started = nil
+        else
+        end
+      end
+    elseif goal.substate == "plan_position" and not goal._blitz_started then
+      -- COMMANDER: plan its own take at plan_position (standoff + wall-shield).
+      goal._blitz_started = true
+    end
+  end
 
   -- LGM-near-pill abort: a hostile LGM within the danger radius of the
   -- target pill means the defender is right there ready to retake /
@@ -2531,12 +2942,21 @@ function M.update_attack_substate(goal, state, world, info)
         in_range_aim=true, in_range_aim_finetune=true,
       }
       local cur_sub = goal.substate or "?"
-      if FIRING_SUBS[cur_sub] then
+      -- Committed blitz: the squad converges together and commits to the kill.
+      -- Don't break off defensively just because a defender LGM is near — only
+      -- swerve once we've actually TAKEN damage (armour dropped below the value
+      -- we committed with). Until then, hold the line and keep firing.
+      local blitz_hold = goal._blitz_committed
+                         and (info.armour or 0) >= (goal._blitz_start_armour or 0)
+      if FIRING_SUBS[cur_sub] and not blitz_hold then
         print(string.format(TAG ..
           " ATTACK: LGM@(%d,%d) within %dt of pill@(%d,%d) — entering swerve from %s",
           lgm_seen.mx or -1, lgm_seen.my or -1, LGM_RADIUS, pmx, pmy, cur_sub))
         enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
         return
+      elseif blitz_hold then
+        -- Hold: keep firing through the danger. Fall through to the substate
+        -- handler below instead of swerving or aborting.
       else
         clear_attack_goal(state, string.format(
           "abort@%s — enemy LGM@(%d,%d) within %dt of pill@(%d,%d)",
@@ -2608,6 +3028,14 @@ function M.update_attack_substate(goal, state, world, info)
   -- rest of the kill is the right call. The non-PPT engage path
   -- only makes sense as the INITIAL choice for a low-HP pill.
 
+  -- The fresh-entry clear inside plan_position is gated by
+  -- _plan_position_cleared so it doesn't re-run every tick we sit there. But
+  -- that flag MUST reset once we leave plan_position, or a SECOND pass
+  -- (plan_position -> aim -> shoot_pill -> swerve -> plan_position) skips the
+  -- clear and inherits the first attack's stale _wall_build_list / _is_ppt /
+  -- _aim_locked / _shield_scan — which makes the re-entry build_walls stall.
+  if goal.substate ~= "plan_position" then goal._plan_position_cleared = nil end
+
   -- ══════════════════════════════════════════════════════════════════
   -- plan_position: full terrain analysis to find best attack spot
   -- ══════════════════════════════════════════════════════════════════
@@ -2670,7 +3098,8 @@ function M.update_attack_substate(goal, state, world, info)
       local panger = pill and pill.anger  or 0
       if php == 1
          and info.armour >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
-         and panger <= (C.ATTACK_RUSH_MAX_ANGER or 0.34) then
+         and panger <= (C.ATTACK_RUSH_MAX_ANGER or 0.34)
+         and U.mdist(info.tankx >> 8, info.tanky >> 8, pmx, pmy) <= (C.HARDLINE_ENGAGE_RANGE or 10) then
         goal._kill_rush = true
         goal.substate   = "kill_hardline"
         return
@@ -3189,6 +3618,192 @@ function M.update_attack_substate(goal, state, world, info)
   -- ══════════════════════════════════════════════════════════════════
   -- approach: navigate to standoff position, brake to stop
   -- ══════════════════════════════════════════════════════════════════
+  -- ══════════════════════════════════════════════════════════════════
+  -- blitz_wait: in position at our engage spot. Hold (issue no drive
+  -- command so the tank stays put) and run the squad GO handshake.
+  --   * soldier — reports rdy=1 (broadcast in init.lua) and watches the
+  --     commander's GO key (bgo). On GO → commit and charge.
+  --   * commander — waits until every live squad soldier is in blitz_wait
+  --     (rdy=1), or the SQUAD_BLITZ_READY_TIMEOUT elapses, then broadcasts GO
+  --     and charges.
+  -- Pre-commit commander-death abort is handled at the top of update().
+  -- ══════════════════════════════════════════════════════════════════
+  if goal.substate == "blitz_wait" then
+    state.squad_blitz_in_position = true
+    -- "Aimed" gate for our readiness report: we only tell the commander we're
+    -- ready (rdy=1, broadcast in init.lua) once we're not just in position but
+    -- actually FACING the pill within SQUAD_BLITZ_AIM_TOL brad. The blitz_wait
+    -- hold turns us onto the pill over a few ticks; until that converges we hold
+    -- back rdy, so on GO every soldier can fire/charge immediately rather than
+    -- burning the strike window spinning to face the target.
+    do
+      local _ad = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0, pmx + 0.5, pmy + 0.5)
+      state.squad_blitz_aimed = math.abs(U.adiff(info.direction, _ad)) <= (C.SQUAD_BLITZ_AIM_TOL or 8)
+    end
+
+    -- Target pill gone (someone else killed it / it died) → nothing to GO for.
+    -- Abort for a clean re-pick. Applies to commander AND soldier.
+    local _wp = goal.target_id and world.pills and world.pills[goal.target_id] or nil
+    if not (_wp and (_wp.health or 0) > 0) then
+      clear_attack_goal(state, "blitz_wait: target pill gone")
+      return
+    end
+
+    -- Commit to firing on GO. If we BUILT a shield (goal._blitz_shielded — only a
+    -- no-joiner full-pill blitz does), fire from BEHIND it via the normal aim →
+    -- in_range PPT path; it must NOT charge into its own walls. Every other case
+    -- (joiner present / soft pill / no buildable walls / soldier) charges in.
+    local function commit_fire()
+      goal._blitz_committed    = true
+      goal._blitz_start_armour = info.armour or 0  -- baseline for damage-gated swerve
+      if goal._blitz_shielded and goal._shield_scan then
+        goal.substate = "aim"
+        goal.aim_tick = now
+        goal._aim_locked = nil
+        -- GO is DEFERRED to shoot_pill entry (see the shoot_pill handler). A
+        -- shielded PPT commander spends many ticks threading aim → in_range_aim_pre
+        -- → in_range_aim → shoot_pill before it can fire; broadcasting GO now would
+        -- send the soldier charging in long before we're actually shooting from
+        -- behind the shield to support it.
+      else
+        -- Overwhelm charge: no shield to thread around, so charge FAST like the
+        -- soldiers. Clear _is_ppt — otherwise steering's charge uses the slow PPT
+        -- creep (PPT_CHARGE_MAX_SPEED) meant for landing precisely behind a wall,
+        -- and the commander crawls in while the soldiers rush (saw it stall:
+        -- 20260604_165828 bot0 t3734).
+        goal._is_ppt = false
+        goal._charge_braking = nil
+        goal.substate = "charge"
+        goal._blitz_go = true   -- charge is immediate → GO now so we all rush together
+      end
+    end
+
+    if state.squad_role == "c" then
+      local total, ready, min_bd, any_unseen = squad.blitz_ready_status(state, now, info.player_number or -1, info)
+      if total == 0 then
+        -- Nobody (left) answering. If we SKIPPED walls for a joiner who is now
+        -- gone (full-pill PPT, no shield built), degrade to a normal SOLO
+        -- PROTECTED take: re-approach so the in-position decision builds the
+        -- shield (no joiner now → it won't skip). Otherwise (shield already up,
+        -- or a soft pill) just GO solo immediately — nobody to wait for.
+        if goal._is_ppt and not goal._blitz_shielded then
+          goal._blitz             = false
+          goal._blitz_solo        = true
+          goal._blitz_committed   = nil
+          goal._blitz_ready_since = nil
+          state.squad_blitz_engage_mx, state.squad_blitz_engage_my = nil, nil
+          state.squad_blitz_bd          = nil
+          state.squad_blitz_in_position = nil
+          goal.substate = "approach"
+          return
+        end
+        state.squad_blitz_go = true
+        commit_fire()
+        return
+      end
+      if not goal._blitz_ready_since then
+        goal._blitz_ready_since   = now
+        goal._blitz_prog_tick     = now      -- last progress check
+        goal._blitz_prog_bd       = min_bd   -- closest pending soldier's walk dist then
+        goal._blitz_timeout_ext   = 0        -- accumulated patience extension
+      end
+      -- Progress-based patience: every PROGRESS_CHECK ticks, if the closest
+      -- still-approaching soldier got CLOSER to its standoff (min bd dropped),
+      -- grant another PROGRESS_CHECK ticks. A soldier still closing in keeps the
+      -- commander waiting; one that stalls (no bd drop) stops extending, so the
+      -- base READY_TIMEOUT still fires and we don't wait on a stuck tank forever.
+      -- min_bd is measured from the soldier's LIVE position whenever we can see
+      -- its tank (every tick, exact); for an out-of-sight soldier we fall back to
+      -- its broadcast bd, which only refreshes coarsely — so as the deadline
+      -- nears we directly QUERY any unseen soldier (bwq) for a fresh position and
+      -- grant one more window if the answer shows it's still closing.
+      local CHK = C.SQUAD_BLITZ_PROGRESS_CHECK or 100
+      if (now - (goal._blitz_prog_tick or now)) >= CHK then
+        if min_bd and goal._blitz_prog_bd and min_bd < goal._blitz_prog_bd then
+          goal._blitz_timeout_ext = (goal._blitz_timeout_ext or 0) + CHK
+        end
+        goal._blitz_prog_bd   = min_bd
+        goal._blitz_prog_tick = now
+      end
+      -- Final-window "where are you?" query for unseen pending soldiers.
+      local eff       = (C.SQUAD_BLITZ_READY_TIMEOUT or 150) + (goal._blitz_timeout_ext or 0)
+      local remaining = eff - (now - goal._blitz_ready_since)
+      local LEAD      = C.SQUAD_BLITZ_QUERY_LEAD or 50
+      local querying  = false
+      if any_unseen and remaining > 0 and remaining <= LEAD then
+        querying = true
+        -- (Re)latch the broadcast through the window so the soldier sees it; reset
+        -- the one-shot extension gate each fresh window.
+        if not state._blitz_query_until or now > state._blitz_query_until then
+          state._blitz_query_pid    = goal.target_id
+          state._blitz_query_until  = now + LEAD
+          goal._blitz_query_checked = false
+        end
+        -- One extension per query if the (freshly answered) min_bd shows progress.
+        if not goal._blitz_query_checked and min_bd and goal._blitz_prog_bd
+           and min_bd < goal._blitz_prog_bd then
+          goal._blitz_timeout_ext   = (goal._blitz_timeout_ext or 0) + CHK
+          goal._blitz_prog_bd       = min_bd
+          goal._blitz_query_checked = true
+        end
+      else
+        state._blitz_query_pid = nil   -- not in the window → stop asking
+      end
+      eff = (C.SQUAD_BLITZ_READY_TIMEOUT or 150) + (goal._blitz_timeout_ext or 0)
+      local timed_out = (now - goal._blitz_ready_since) >= eff
+      -- Heartbeat: why are we still waiting? (print is a no-op in the brain, so
+      -- the GO decision was previously invisible in print2 logs.)
+      if ready >= total or timed_out then
+        state.squad_blitz_go = true        -- broadcast GO (bgo) in init.lua
+        commit_fire()
+      end
+      return
+    else
+      -- Soldier: hold for the commander's GO, but never freeze forever. Abort if
+      -- the commander is no longer a live leader of THIS take:
+      --   * its tank died (tank_dead_at, fast),
+      --   * it retargeted / dropped attack_pill, or went silent/disconnected
+      --     (slot inactive at ally-expiry), checked via its broadcast,
+      --   * or the hard SQUAD_BLITZ_WAIT_TIMEOUT backstop elapses (commander
+      --     silently stuck). The squad layer clears our commitment on the same
+      --     signals (tripping the top-of-update abort); this is the in-state
+      --     guarantee we don't stand frozen.
+      local cmdr  = state.squad_cmdr
+      local cslot = cmdr and ally_state.get(cmdr) or nil
+      local cdead = cmdr and state.tank_dead_at and state.tank_dead_at[cmdr]
+                    and cslot and state.tank_dead_at[cmdr] > (cslot.last_tick or 0)
+      local con_take = cslot and cslot.active and cslot.info
+                       and cslot.info.goal == "attack_pill"
+                       and tonumber(cslot.info.target or "") == goal.target_id
+      if not cmdr or cdead or not con_take then
+        clear_attack_goal(state, "blitz_wait: commander gone/retargeted/dead")
+        return
+      end
+      if not goal._blitz_wait_since then goal._blitz_wait_since = now end
+      if (now - goal._blitz_wait_since) > (C.SQUAD_BLITZ_WAIT_TIMEOUT or 1500) then
+        clear_attack_goal(state, "blitz_wait: GO never arrived (timeout)")
+        return
+      end
+      local go = ally_state.get_key(cmdr, "bgo")
+      -- Missed-GO fallback: bgo is a one-shot broadcast (and a shielded/PPT
+      -- commander only sends it at shoot_pill entry), so it's easy to miss. If we
+      -- never saw it but the commander's OWN broadcast shows it's already FIRING
+      -- on our pill (shoot_pill / charge / engage / swerve), the GO happened and
+      -- we missed it — commit now instead of waiting out SQUAD_BLITZ_WAIT_TIMEOUT.
+      -- (aim / in_range_* are pre-fire — bgo isn't sent yet — so we keep holding.)
+      if go ~= "1" then
+        local csub = cslot.info.sub
+        if csub == "shoot_pill" or csub == "charge" or csub == "engage" or csub == "swerve" then
+          go = "1"
+        end
+      end
+      if go == "1" then
+        commit_fire()
+      end
+      return
+    end
+  end
+
   if goal.substate == "approach" then
     local _t_app0 = BRAIN_PROFILE and clock_us() or 0
     if not goal.standoff_mx then
@@ -3282,6 +3897,29 @@ function M.update_attack_substate(goal, state, world, info)
 
       if adist <= DIST_TOL and
          effectively_stopped(state, info, now, SPEED_TOL, 5, "approach") then
+        -- Blitz routing at the setup point:
+        --   * a JOINER already answered (>=1 squadmate), OR it's a non-PPT take —
+        --     SKIP walls and rally now (blitz_wait → GO). The simultaneous
+        --     overwhelm is the protection, so on GO EVERYONE charges (the
+        --     commander too: no shield was built → goal._blitz_shielded stays nil).
+        --   * full-pill PPT with NOBODY joined yet — fall through and build the
+        --     shield FIRST. The call stays JOINABLE through build_walls; a soldier
+        --     who joins mid-build just makes us finish the walls then rally
+        --     (build_walls -> blitz_wait, goal._blitz_shielded set). After a shield
+        --     IS built the commander fires the usual PPT route, never charges.
+        if goal._blitz then
+          local _joined = squad.blitz_ready_status(state, now, info.player_number or -1)
+          if _joined > 0 or not goal._is_ppt then
+            goal.substate = "blitz_wait"
+            goal._blitz_ready_since = nil
+            goal._approach_start = nil
+            goal._approach_last_progress = nil
+            goal._approach_last_dist = nil
+            state.squad_blitz_in_position = true
+            return
+          end
+          -- full-pill PPT, no joiner yet → fall through to build the shield
+        end
         -- Shield-scan-driven wall building: prefer the explicit winner;
         -- if there's no winner, fall back to the standoff candidate so
         -- we can still build out its protection slots if any exist.
@@ -3338,6 +3976,15 @@ function M.update_attack_substate(goal, state, world, info)
           needs_build = false
           why_no_build = string.format("not enough trees (%d/%d for %d walls) at standoff",
                                        info.trees or 0, trees_needed, #pots)
+        end
+        -- Full-pill PPT blitz that has NO buildable wall slots: nothing to build,
+        -- so rally now (blitz_wait → GO) instead of falling into the solo firing
+        -- path. (A non-blitz take falls straight through to the normal decision.)
+        if goal._blitz and not needs_build then
+          goal.substate = "blitz_wait"
+          goal._blitz_ready_since = nil
+          state.squad_blitz_in_position = true
+          return
         end
         local decision_msg
         if needs_build then
@@ -3440,6 +4087,7 @@ function M.update_attack_substate(goal, state, world, info)
   -- mode (which already knows how to dispatch BUILDMODE_BUILD).
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "build_walls" then
+    commit_soak_finish(goal, state, info)   -- one-time soak/swerve decision (PPT commit point)
     -- Lazy init: build the wall queue once, sorted closest-to-pill first.
     if not goal._wall_build_list then
       local pots = nil
@@ -3513,6 +4161,12 @@ function M.update_attack_substate(goal, state, world, info)
       goal.wall_my     = nil
       goal.wall_shield = nil
     end
+
+    -- Build-progress heartbeat: every 25 ticks dump the current wall target, its
+    -- tile type, the LGM's status/position + distance to the wall, the tank's
+    -- distance to the wall, and how long since the give-up timer last reset. Lets
+    -- us see WHY a wall round-trip takes hundreds of ticks (LGM traveling far,
+    -- stuck against terrain, or oscillating) instead of guessing from transitions.
 
     -- Per-wall sub-timeout: if a single queue entry has been the
     -- current target for WALL_STALL_TICKS without finishing, skip to
@@ -3594,9 +4248,20 @@ function M.update_attack_substate(goal, state, world, info)
       goal.wall_shield = false
       goal.wall_mx = nil
       goal.wall_my = nil
-      goal.substate = "aim"
-      goal.aim_tick = now
-      goal._aim_locked = nil
+      -- Shield built. A blitz now rallies (blitz_wait → GO) — the call stayed
+      -- joinable through the whole build, so any soldier who joined waits with us
+      -- and we fire together on GO (PPT fires from behind the shield). A non-blitz
+      -- take goes straight to the normal PPT firing path (aim), identical to main.
+      if goal._blitz then
+        goal.substate = "blitz_wait"
+        goal._blitz_ready_since = nil
+        goal._blitz_shielded = true  -- a shield IS up → GO fires the PPT route, not charge
+        state.squad_blitz_in_position = true
+      else
+        goal.substate = "aim"
+        goal.aim_tick = now
+        goal._aim_locked = nil
+      end
     else
       -- Point the builder at the current target wall.
       local target = list[idx]
@@ -3618,6 +4283,7 @@ function M.update_attack_substate(goal, state, world, info)
     -- Decide intent NOW: if bullets we'll fire >= pill HP, we're going for a
     -- confirmed kill; otherwise we're just chipping (defensive swerve later).
     if not goal._charge_shells then
+      commit_soak_finish(goal, state, info)   -- one-time soak/swerve decision (legacy commit point)
       goal._charge_shells = info.shells
       local pill_hp_now = pill and pill.health or 15
       goal._bullets_needed = math.min(10, pill_hp_now)
@@ -3703,7 +4369,8 @@ function M.update_attack_substate(goal, state, world, info)
       -- instead of continuing the normal aim path.
       if pill and (pill.health or 0) == 1
          and info.armour >= (C.ATTACK_RUSH_MIN_ARMOUR or 5)
-         and anger <= (C.ATTACK_RUSH_MAX_ANGER or 0.34) then
+         and anger <= (C.ATTACK_RUSH_MAX_ANGER or 0.34)
+         and U.mdist(info.tankx >> 8, info.tanky >> 8, pmx, pmy) <= (C.HARDLINE_ENGAGE_RANGE or 10) then
         goal.substate    = "kill_hardline"
         goal._kill_rush  = true
         goal._aim_locked = nil
@@ -3758,7 +4425,7 @@ function M.update_attack_substate(goal, state, world, info)
     -- Abort if can't aim within 3 seconds
     elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
       print(TAG .. " ATTACK: aim timeout, aborting")
-      clear_attack_goal(state)
+      clear_attack_goal(state, "aim timeout (>150t)")
     end
     -- Fall through to draw
   end
@@ -3926,7 +4593,7 @@ function M.update_attack_substate(goal, state, world, info)
       print(TAG .. " ATTACK: pre-aim locked, refining to chosen corner")
     elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
       print(TAG .. " ATTACK: shielded in_range_aim_pre timeout, aborting")
-      clear_attack_goal(state)
+      clear_attack_goal(state, "in_range_aim_pre timeout (>150t)")
     end
     -- Fall through to draw
   end
@@ -3954,7 +4621,7 @@ function M.update_attack_substate(goal, state, world, info)
       print(TAG .. " ATTACK: aim locked, entering in_range_aim_finetune (sim-verify)")
     elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
       print(TAG .. " ATTACK: shielded in_range_aim timeout, aborting")
-      clear_attack_goal(state)
+      clear_attack_goal(state, "in_range_aim timeout (>150t)")
     end
     -- Fall through to draw
   end
@@ -4010,6 +4677,7 @@ function M.update_attack_substate(goal, state, world, info)
       goal._shoot_shells     = info.shells
       goal._shoot_hits_total = 0
       goal._shoot_start_tick = now
+      goal._shoot_reach_checked = nil  -- re-run the "reach pill" test on the first shoot_pill tick
       -- First steering tick of shoot_pill is forced idle for the same
       -- reason finetune's first tick is: the previous substate may have
       -- been holding a turn key, so the engine's firstLeft/firstRight
@@ -4040,6 +4708,15 @@ function M.update_attack_substate(goal, state, world, info)
   -- engage: ATTACK_CURVE_AFTER_HITS hits taken or pill killed.
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "shoot_pill" then
+    -- Blitz commander on the (slow) shielded PPT path: fire the squad GO the
+    -- instant we actually start shooting from behind the shield — NOT back in
+    -- blitz_wait. The PPT route (aim → in_range_aim_pre → in_range_aim →
+    -- shoot_pill) is slow to reach in_range, so a blitz_wait GO sent the soldier
+    -- charging long before the commander could support it. Idempotent: the
+    -- overwhelm-charge path already set _blitz_go in commit_fire.
+    if state.squad_role == "c" and goal._blitz and not goal._blitz_go then
+      goal._blitz_go = true
+    end
     if not goal._shoot_armour then goal._shoot_armour = info.armour end
     local hits_taken = goal._shoot_armour - info.armour
     goal._shoot_armour = info.armour
@@ -4047,18 +4724,37 @@ function M.update_attack_substate(goal, state, world, info)
 
     local pill_hp = pill and pill.health or 0
 
+    -- The PPT path skips `charge`, so the shot accounting (set there) never
+    -- initialized. Do it here so update_shot_accounting tracks on-target/in-flight
+    -- shells for a PPT take too — without this, _on_target_in_flight stays nil,
+    -- so the pill_shot_count viz never shows and the kill-locked swerve below
+    -- can't fire (only the "pill actually dead" swerve does). A PPT take fires
+    -- until the pill is dead, so it's a kill attempt.
+    if not goal._attack_start_tick then
+      goal._attack_start_tick = now
+      goal._charge_start_hp   = pill_hp
+      goal._bullets_needed    = math.min(10, pill_hp)
+      goal._kill_attempt      = true
+    end
+
     -- Shot-path obstacle check: live-update _bullets_needed and abort
-    -- if path is blocked or ammo short. shoot_pill is stationary and
-    -- in range, so "not reached" is a real problem (aim is wrong or
-    -- something moved into the way).
+    -- if path is blocked or ammo short. The "shot does not reach pill"
+    -- test, however, only runs on the FIRST shoot_pill tick: finetune
+    -- already verified the trajectory crosses the pill, and re-simulating
+    -- it every tick is sensitive to sub-tile recoil drift / DDA rounding,
+    -- so it false-aborts takes that are actually landing. Obstacle and
+    -- ammo checks stay live (a pill/building moving into the lane, or
+    -- running dry, are real per-tick problems).
     do
+      local first_shoot_tick = not goal._shoot_reach_checked
+      goal._shoot_reach_checked = true
       local obstacle_shots, obstacle_reason, reached = shot_path_obstacle_count(info, goal, world)
       local total_needed = obstacle_shots + pill_hp
       if obstacle_shots == math.huge then
         print(string.format(TAG .. " SHOOT_PILL: impassable obstacle — %s, aborting", obstacle_reason))
         clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
         return
-      elseif not reached then
+      elseif not reached and first_shoot_tick then
         print(string.format(TAG .. " SHOOT_PILL: shot does not reach pill tile, aborting"))
         clear_attack_goal(state, "shot does not reach pill")
         return
@@ -4078,10 +4774,10 @@ function M.update_attack_substate(goal, state, world, info)
     -- and the last tick HP went DOWN. If too long without progress,
     -- abort the take so the goal selector can re-plan from scratch.
     --
-    -- Threshold: 100 ticks (~2 s @ 50 Hz). Reload is ~0.5 s so we
-    -- expect 4 shells fired in that window — none landing means
+    -- Threshold: 200 ticks (~4 s @ 50 Hz). Reload is ~0.5 s so we
+    -- expect ~8 shells fired in that window — none landing means
     -- something's actually wrong, not just bad luck.
-    local SHOOT_NO_PROGRESS_TICKS = 150
+    local SHOOT_NO_PROGRESS_TICKS = 200
     if not goal._shoot_progress_hp then
       goal._shoot_progress_hp   = pill_hp
       goal._shoot_progress_tick = now
@@ -4094,7 +4790,8 @@ function M.update_attack_substate(goal, state, world, info)
       print(string.format(TAG ..
         " ATTACK: shoot_pill no progress for %d ticks (pill_hp=%d) — aborting take",
         now - (goal._shoot_progress_tick or now), pill_hp))
-      clear_attack_goal(state)
+      clear_attack_goal(state, string.format("shoot_pill no progress %dt (hp=%d)",
+        now - (goal._shoot_progress_tick or now), pill_hp))
       -- clear_attack_goal mutates state.goal in place (wipes all
       -- non-core fields, sets kind="none"). The local `goal` here
       -- aliases the same table, so downstream reads like
@@ -4112,14 +4809,25 @@ function M.update_attack_substate(goal, state, world, info)
     local should_swerve = false
     local pill_dead     = false
     local on_target_in_flight = goal._on_target_in_flight or 0
-    -- Tank-the-finish: while the pill is alive and we can absorb the rest of
-    -- the kill (hp*5 <= armour), don't peel off — keep firing.
-    local tank_finish = can_tank_finish(pill, info)
+    -- Tank-the-finish: honor the ONE-TIME soak decision committed at
+    -- build_walls/charge (lazily committed here if this take skipped those).
+    -- Soak only applies once the pill is at its last HP, AND only while the pill
+    -- is CALM (anger <= TANK_FINISH_MAX_ANGER) — an angrier pill reloads fast, so
+    -- don't stand in to finish it; let the kill-shot swerve below dodge instead.
+    local soak_ok = commit_soak_finish(goal, state, info)
+    local tank_finish = soak_ok and pill and (pill.health or 0) > 0
+                        and (pill.health or 0) <= (C.TANK_FINISH_MAX_HP or 3)
+                        and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
     if pill_hp <= 0 then
-      -- Keep firing until the pill is ACTUALLY dead — no in-flight-prediction
-      -- early swerve (that stops a shot short when a shell diverges).
+      -- Pill actually dead → kill swerve (rush to capture after).
       should_swerve = true
       pill_dead     = true
+    elseif goal._kill_attempt and on_target_in_flight >= pill_hp and not tank_finish then
+      -- Last sure shot fired: the in-flight shells whose simulated path actually
+      -- reaches the pill already cover its remaining HP, so the kill is locked —
+      -- curve away NOW instead of standing another tick under return fire. Stays
+      -- a defensive swerve (pill not dead yet) so a diverging shell just re-engages.
+      should_swerve = true
     elseif goal._shoot_hits_total >= C.ATTACK_CURVE_AFTER_HITS and not tank_finish then
       should_swerve = true
     end
@@ -4161,9 +4869,20 @@ function M.update_attack_substate(goal, state, world, info)
 
       -- Swerve early: after taking ATTACK_CURVE_AFTER_HITS hits, dodge
       -- This triggers while crosshairs are still on pill — preemptive evasion.
-      -- Skip when we can tank the finish (hp*5 <= armour): buck in instead.
-      local should_swerve = goal._engage_hits >= C.ATTACK_CURVE_AFTER_HITS
-                            and not can_tank_finish(pill, info)
+      -- Skip when the ONE-TIME soak decision (committed at charge) says soak AND
+      -- the pill is at its last HP: buck in to finish instead of peeling off.
+      local _soak_ok = commit_soak_finish(goal, state, info)
+      local _tank_finish = _soak_ok and pill and (pill.health or 0) > 0
+                           and (pill.health or 0) <= (C.TANK_FINISH_MAX_HP or 3)
+                           and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
+      -- Last sure shot fired (in-flight on-target shells already cover the pill's
+      -- remaining HP) → kill is locked, dodge now. Only on a kill attempt, and
+      -- not while soaking the last HP of a calm pill.
+      local _kill_locked = goal._kill_attempt
+                           and (goal._on_target_in_flight or 0) >= pill_hp
+                           and pill_hp > 0 and not _tank_finish
+      local should_swerve = (goal._engage_hits >= C.ATTACK_CURVE_AFTER_HITS or _kill_locked)
+                            and not _tank_finish
 
       -- Also check if crosshairs off pill (knocked out of range)
       -- Float angle so the displayed crosshair matches the engine's
@@ -4176,8 +4895,11 @@ function M.update_attack_substate(goal, state, world, info)
 
       if should_swerve or crosshairs_off then
         local pill_anger = pill and pill.anger or 0
-        if pill_anger > C.ANGER_ATTACK_THRESHOLD then
-          -- Pill is angry — swerve to dodge
+        if pill_anger > C.ANGER_ATTACK_THRESHOLD or _kill_locked then
+          -- Pill angry, OR the kill is already locked (last sure shot fired) —
+          -- swerve to dodge (defensive, so a diverging shell re-engages). The
+          -- kill-locked case dodges regardless of anger instead of falling to
+          -- post_engage, so we never abandon the take with the pill still alive.
           enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
           print(string.format(TAG .. " ATTACK: swerving (hits=%d anger=%.2f xhair_off=%s)",
                 goal._engage_hits or 0, pill_anger, tostring(crosshairs_off)))
@@ -4190,7 +4912,7 @@ function M.update_attack_substate(goal, state, world, info)
       elseif goal.engage_tick and not goal._engage_aimed
              and (now - goal.engage_tick) > 150 then
         print(TAG .. " ATTACK: engage timeout — can't aim, aborting")
-        clear_attack_goal(state)
+        clear_attack_goal(state, "engage aim timeout (>150t)")
       end
     end
     -- Fall through to draw
@@ -4204,7 +4926,7 @@ function M.update_attack_substate(goal, state, world, info)
       -- Pill killed (by us-via-leftover-shells or by an ally) while
       -- we waited. Release to capture_pill via the normal selector
       -- instead of locking into rush — see swerve completion above.
-      clear_attack_goal(state)
+      clear_attack_goal(state, "pill died during loiter")
       print(TAG .. " ATTACK: pill died during loiter — releasing to capture_pill")
     elseif pill.anger and pill.anger < C.ANGER_ATTACK_THRESHOLD then
       -- Pill calmed down — re-engage with a FULL fresh plan. We have
@@ -4299,7 +5021,7 @@ function M.update_attack_substate(goal, state, world, info)
         -- selector lets a genuinely higher-priority goal (flee,
         -- urgent rescue) interrupt — the old "rush" substate
         -- locked us to this pill no matter what.
-        clear_attack_goal(state)
+        clear_attack_goal(state, "swerve done, pill dead")
         print(TAG .. " ATTACK: swerve done, pill dead — releasing to capture_pill")
       elseif (goal._on_target_in_flight or 0) >= pill.health then
         -- Pill still alive but enough on-target shells are in flight
@@ -4322,7 +5044,7 @@ function M.update_attack_substate(goal, state, world, info)
           if state.command_goal then
             print(TAG .. " ATTACK: command pill take done — releasing command, replanning")
             state.command_goal = nil
-            clear_attack_goal(state)
+            clear_attack_goal(state, "command take done (swerve extends exhausted)")
           else
             goal.substate = "post_engage"
             goal._post_engage_tick = now
@@ -4335,7 +5057,7 @@ function M.update_attack_substate(goal, state, world, info)
         if state.command_goal then
           print(TAG .. " ATTACK: command pill take done — releasing command, replanning")
           state.command_goal = nil
-          clear_attack_goal(state)
+          clear_attack_goal(state, "command take done (swerve complete)")
         else
           goal.substate = "post_engage"
           goal._post_engage_tick = now

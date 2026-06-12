@@ -11,6 +11,7 @@
 local C       = require("constants")
 local log     = require("logger")
 local metrics = require("metrics")
+local print2  = require("print2")
 local TAG     = "[" .. C.BRAIN_NAME .. "]"
 
 -- clock_us is registered as a global by braincore.c; fall back to 0 so the
@@ -25,6 +26,29 @@ local function owner_string(obj_info)
   if neutral then return "neutral" end
   if hostile then return "hostile" end
   return "friendly"
+end
+
+-- Classify a pill by its raw owner PLAYER NUMBER + carried state.
+--
+-- WinBolo pillboxes are SHARED team property: a DEPLOYED (built, on-map) pill
+-- is treated identically whether I or a teammate placed it — so an ally's
+-- deployed pill resolves to "friendly", and every existing my-pill consumer
+-- (reposition, repair, coverage, defend, no-friendly-fire) just works.
+-- The ONLY pill that is distinctly a teammate's is one carried IN HIS TANK,
+-- which we tag "allied" so it (a) counts toward team totals and (b) is never
+-- treated as a target/threat or repositioned (it's inside his tank).
+--
+-- Only the event path carries the real player number; the object scan only
+-- has alliance bits, so we cache owner_player on the pill and reuse it there.
+-- (Map objects are always deployed, so the scan passes in_tank=false.)
+local function classify_owner(owner_val, info, in_tank)
+  if owner_val == NEUTRAL_PLAYER then return "neutral" end
+  if owner_val == (info and info.player_number) then return "friendly" end
+  local allies = (info and info.allies) or 0
+  if (allies & (1 << owner_val)) ~= 0 then
+    return in_tank and "allied" or "friendly"
+  end
+  return "hostile"
 end
 
 local function mkey(mx, my) return my * 256 + mx end
@@ -116,8 +140,29 @@ function M.update(world, info, tick)
       local new_mx     = obj.x >> 8
       local new_my     = obj.y >> 8
       local new_health = obj.direction
-      local owner_str  = owner_string(obj.info)
       local p = world.pills[obj.idnum]
+      -- The object scan only carries alliance BITS. A visible pillbox object is
+      -- always DEPLOYED (carried pills aren't map objects), so reclassify from
+      -- the cached real owner_player with in_tank=false — an ally's deployed
+      -- pill correctly resolves to shared "friendly".
+      -- Hostility comes from the FRESH object bits: the engine computes them
+      -- alliance-aware per viewer every tick (pillbox.c → NEUTRAL / FRIENDLY via
+      -- isAllie / HOSTILE), so they're authoritative even when a pill-owner-change
+      -- EVENT was missed and the cached owner_player went stale. (Carried pills
+      -- never appear in the object scan — the inTank==FALSE gate — so the in_tank
+      -- "allied" nuance that needs owner_player can't arise here.) This is what
+      -- fixes a captured/ally pill lingering as "hostile" in pool 6 after a
+      -- missed EVENT_PILL_UPDATE, even on a fresh sighting.
+      local owner_str = owner_string(obj.info)
+      -- Self-heal a stale cache: if the cached owner_player disagrees with the
+      -- live bits on hostility, a pill-owner event was missed — drop it so the
+      -- event path re-sources the real player number.
+      if p and p.owner_player ~= nil then
+        local cached = classify_owner(p.owner_player, info, false)
+        if ((cached == "hostile" or cached == "neutral")) ~= ((owner_str == "hostile" or owner_str == "neutral")) then
+          p.owner_player = nil
+        end
+      end
       if p == nil then
         p = {
           mx            = new_mx,
@@ -217,16 +262,11 @@ function M.process_events(world, info, state)
         local new_health = d[5] or 0
         local owner_val = d[4] or 0xFF
         local in_tank = (d[7] or 0) ~= 0
-        local owner_str
-        if owner_val == NEUTRAL_PLAYER then
-          owner_str = "neutral"
-        elseif owner_val == info.player_number then
-          owner_str = "friendly"
-        else
-          -- Check alliance (we don't have full alliance info here,
-          -- so default to hostile for other players)
-          owner_str = "hostile"
-        end
+        -- Alliance-aware: the event carries the real owner player number AND
+        -- the in_tank flag, so an ally's deployed pill becomes shared "friendly"
+        -- while an ally's carried pill becomes "allied". owner_player is cached
+        -- below so the bits-only object scan can stay consistent.
+        local owner_str = classify_owner(owner_val, info, in_tank)
 
         local p = world.pills[idx]
         if p == nil then
@@ -235,6 +275,7 @@ function M.process_events(world, info, state)
             my            = d[3] or 0,
             health        = new_health,
             owner         = owner_str,
+            owner_player  = owner_val,   -- real player number (event-sourced); lets the object scan stay alliance-aware
             anger         = 0,
             anger_tick    = 0,
             last_hit_tick = 0,
@@ -280,10 +321,11 @@ function M.process_events(world, info, state)
             p.my = new_my
             pill_index_add(world, idx, p)
           end
-          p.health    = new_health
-          p.owner     = owner_str
-          p.last_seen = tick
-          p.in_tank   = in_tank
+          p.health       = new_health
+          p.owner        = owner_str
+          p.owner_player = owner_val
+          p.last_seen    = tick
+          p.in_tank      = in_tank
         end
       end
 
@@ -341,6 +383,7 @@ function M.process_events(world, info, state)
       local pn = d[1] or 0
       state.tank_dead_at = state.tank_dead_at or {}
       state.tank_dead_at[pn] = tick or 0
+      if BRAIN_DEBUG_MODE then print2(string.format("TANK_KILLED_EVENT t=%d killed_pn=%d killer=%s", tick or 0, pn, tostring(d[2]))) end
 
     elseif ev.type == EVENT_PLAYER_LEAVE and d then
       -- data: [playerNum]

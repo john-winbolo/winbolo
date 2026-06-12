@@ -157,8 +157,15 @@ function M.set_mode(state, world, info, goal)
       if closest_et then
         local aim = U.aim_at(info.tankx, info.tanky, U.m2w(closest_et.mx), U.m2w(closest_et.my))
         local found_mx, found_my, found_dist, found_aoff = nil, nil, nil, nil
+        -- Rank candidates by terrain: tier 1 = grass/road (instant build),
+        -- tier 2 = swamp/rubble/crater (LGM paves first). Forest (harvest) and
+        -- water are skipped entirely. A clear land corridor to the spot is
+        -- required either way. Iteration is farthest-first / +45 then -45, so
+        -- the FIRST spot of a tier is the geometrically preferred one; a better
+        -- (lower) tier always wins over a worse tier regardless of distance.
+        local best_tier = 99
         for dist = C.DEFENSIVE_BUILD_MAX_DIST, C.DEFENSIVE_BUILD_MIN_DIST, -1 do
-          if found_mx then break end
+          if best_tier == 1 then break end
           for _, aoff in ipairs({ C.DEFENSIVE_BUILD_ANGLE_OFFSET, -C.DEFENSIVE_BUILD_ANGLE_OFFSET }) do
             local angle = (aim + aoff) % 256
             local rad   = angle * (math.pi * 2 / 256)
@@ -167,6 +174,12 @@ function M.set_mode(state, world, info, goal)
             local cx    = U.mclamp(math.floor(tmx + dx * dist + 0.5))
             local cy    = U.mclamp(math.floor(tmy + dy * dist + 0.5))
             if not U.is_placeable(cx, cy, world) then goto next_bdef_angle end
+            local _bt = U.ttype(cx, cy)
+            local tier
+            if _bt == C.T_GRASS or _bt == C.T_ROAD then tier = 1
+            elseif _bt == C.T_SWAMP or _bt == C.T_RUBBLE or _bt == C.T_CRATER then tier = 2
+            else goto next_bdef_angle end   -- forest / other → skip
+            if tier >= best_tier then goto next_bdef_angle end  -- not better than what we have
             if PF.wall_hp_between(tmx, tmy, cx, cy) ~= 0 then goto next_bdef_angle end
             do
               local water_blocked = false
@@ -178,7 +191,8 @@ function M.set_mode(state, world, info, goal)
               if water_blocked then goto next_bdef_angle end
             end
             found_mx, found_my, found_dist, found_aoff = cx, cy, dist, aoff
-            break
+            best_tier = tier
+            if best_tier == 1 then break end   -- can't beat instant-build
             ::next_bdef_angle::
           end
         end
@@ -355,6 +369,16 @@ end
 function M.decide(state, world, info, now)
   local b = state.builder
 
+  -- Observability: every silent `return nil` below leaves no trace, which is
+  -- why a stalled wall build ("0 BUILT, no skip, no dispatch") is so hard to
+  -- diagnose. Record WHY we declined to dispatch so attack.lua's build_walls
+  -- stall banner can surface it. Cleared each call; set only on a bail.
+  state._builder_no_dispatch = nil
+  local function bail(why)
+    state._builder_no_dispatch = { tick = now, why = why, mode = b.mode }
+    return nil
+  end
+
   -- Compute LGM ETA when out on a mission (for base departure timing)
   if info.man_status == C.LGM_MOVING then
     local man_mx = info.man_x >> 8
@@ -368,11 +392,11 @@ function M.decide(state, world, info, now)
   end
 
   -- LGM must be in the tank and available
-  if info.man_status ~= C.LGM_INTANK then return nil end
+  if info.man_status ~= C.LGM_INTANK then return bail("lgm_not_in_tank") end
 
   -- Never dispatch the LGM while in a boat.  The pacing slowdown drops
   -- the tank below disembark speed, stranding it on water.
-  if info.inboat then return nil end
+  if info.inboat then return bail("inboat") end
 
   -- Don't dispatch when the next pathfinder step is water — tank is about
   -- to enter a boat and LGM would be stranded immediately.
@@ -380,7 +404,7 @@ function M.decide(state, world, info, now)
   if pf and pf.next_mx and pf.next_mx >= 0 then
     local next_tt = U.ttype(pf.next_mx, pf.next_my)
     if next_tt == C.T_RIVER or next_tt == C.T_DEEPSEA or next_tt == C.T_BOAT then
-      return nil
+      return bail("next_step_water")
     end
   end
 
@@ -735,6 +759,7 @@ function M.decide(state, world, info, now)
                               why = "drop pillbox as wall blocker",
                               wall_mx = wx, wall_my = wy,
                               blockers_used = state.goal._pillbox_blockers_used })
+        state._wall_shield_dispatch = { tick = now, wx = wx, wy = wy, action = "PBOX" }
         return { x = wx, y = wy, action = BUILDMODE_PBOX }
       end
 
@@ -754,6 +779,7 @@ function M.decide(state, world, info, now)
               "BUILDER_WALL_DISPATCH t=%d mode=%s action=FARM wall=(%d,%d) tt=%d trees=%d/%d reach=%s",
               state.tick or 0, b.mode, wx, wy, wtt, info.trees, cost, tostring(can_reach)))
           end
+          state._wall_shield_dispatch = { tick = now, wx = wx, wy = wy, action = "FARM" }
           return { x = wx, y = wy, action = BUILDMODE_FARM }
         end
         local why = b.mode == "base_shield" and "building wall to protect refuel"
@@ -764,6 +790,7 @@ function M.decide(state, world, info, now)
             "BUILDER_WALL_DISPATCH t=%d mode=%s action=BUILD wall=(%d,%d) tt=%d trees=%d/%d reach=%s",
             state.tick or 0, b.mode, wx, wy, wtt, info.trees, cost, tostring(can_reach)))
         end
+        state._wall_shield_dispatch = { tick = now, wx = wx, wy = wy, action = "BUILD" }
         return { x = wx, y = wy, action = BUILDMODE_BUILD }
       end
       -- Stash gate failure on state so the brain can surface it (and
@@ -799,8 +826,16 @@ function M.decide(state, world, info, now)
           (#parts > 0 and table.concat(parts, "+") or "(none — already built?)")))
       end
     end
-    -- Wall already exists or can't build safely — fall through to default
-    if b.mode == "wall_shield" then return nil end
+    -- Wall already exists or can't build safely — fall through to default.
+    -- If we got here in wall_shield mode WITHOUT stashing a skip this tick,
+    -- the wall-build block never ran — i.e. b.wall_target was nil (the
+    -- attack.lua build_walls -> set_mode handshake didn't line up).
+    if b.mode == "wall_shield" then
+      if not (state._wall_shield_skip and state._wall_shield_skip.tick == now) then
+        return bail(b.wall_target and "wall_shield_already_built" or "wall_shield_no_target")
+      end
+      return nil
+    end
     -- base_shield: wall built or unsafe; fall through to repair_nearby / road-ahead
   end
 

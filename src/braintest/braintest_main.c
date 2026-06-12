@@ -349,6 +349,7 @@ typedef struct {
     int          regIdxCostTo;
     int          regIdxShellHitbox;
     int          regIdxStratPlace;
+    int          regIdxTankIds;
     char        *stratPlaceText;    /* cached Lua heatmap string; freed when overlay turns off */
     /* Dijkstra heatmap (7 key) — which slate the UI displays. The
      * brain runs up to DIJKSTRA_NUM_SLATES (4) parallel searches
@@ -379,6 +380,7 @@ typedef struct {
     /* Overlay texture (256x256 RGBA, updated once per game tick) */
     SDL_Texture *overlayTex;
     uint32_t     overlayTick;   /* sim tick when overlay was last updated */
+    int          overlayFollowBot; /* followBot the cached texture was built for (-1 = none) */
     bool         overlayDirty;  /* force update on toggle change */
 
     /* Cached path (tracePath only works when A* status==1) */
@@ -885,6 +887,56 @@ static void renderFogOverlay(BrainTestApp *app, int screenW, int screenH) {
             }
         }
     }
+}
+
+/* Tank player-number labels (toggled with 0). Draws "#N" just above
+ * every tank's sprite. God-view: in playback it reads the recorded
+ * frame's tank list (already captured god-view); live it enumerates
+ * every player slot from the server sim. The followed bot is cyan,
+ * everyone else white. Unlike the Lua attempt this never depends on a
+ * single brain's view-limited info.objects. */
+static void renderTankIds(BrainTestApp *app, int screenW, int screenH) {
+    if (!vizFlag(app->regIdxTankIds)) return;
+
+    float textScale = 1.0f;
+    SDL_SetRenderScale(app->renderer, textScale, textScale);
+    char buf[8];
+
+    bool usePlayback = app->playbackMode &&
+                       app->playbackFrame >= 0 &&
+                       app->playbackFrame < app->recording.count;
+
+    if (usePlayback) {
+        const RecordingFrame *pf_ = &app->recording.frames[app->playbackFrame];
+        for (int i = 0; i < pf_->tankCount; i++) {
+            const TankSnapshot *ts = &pf_->tanks[i];
+            if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) continue; /* stub */
+            if (ts->tankStatus & 0xF0) continue;                    /* dead */
+            int pn = ts->playerNum & TANK_SNAPSHOT_PLAYER_MASK;
+            float tx = ts->worldX / 256.0f;
+            float ty = ts->worldY / 256.0f - 0.5f;
+            float sx, sy;
+            mapTileToScreen(app, tx, ty, screenW, screenH, &sx, &sy);
+            SDL_snprintf(buf, sizeof(buf), "#%d", pn);
+            if (pn == app->followBot) SDL_SetRenderDrawColor(app->renderer,  80, 230, 255, 255);
+            else                      SDL_SetRenderDrawColor(app->renderer, 255, 255, 255, 255);
+            SDL_RenderDebugText(app->renderer, sx / textScale, sy / textScale, buf);
+        }
+    } else {
+        for (int pn = 0; pn < MAX_TANKS; pn++) {
+            WORLD wx = 0, wy = 0;
+            if (!serverSimGetTankState(app->sim, (BYTE)pn, &wx, &wy)) continue;
+            float tx = wx / 256.0f;
+            float ty = wy / 256.0f - 0.5f;
+            float sx, sy;
+            mapTileToScreen(app, tx, ty, screenW, screenH, &sx, &sy);
+            SDL_snprintf(buf, sizeof(buf), "#%d", pn);
+            if (pn == app->followBot) SDL_SetRenderDrawColor(app->renderer,  80, 230, 255, 255);
+            else                      SDL_SetRenderDrawColor(app->renderer, 255, 255, 255, 255);
+            SDL_RenderDebugText(app->renderer, sx / textScale, sy / textScale, buf);
+        }
+    }
+    SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
 }
 
 static void syncDebugPathfinder(BrainTestApp *app);
@@ -2066,8 +2118,14 @@ static void updateOverlayTexture(BrainTestApp *app) {
     uint32_t cacheKey = app->playbackMode
         ? (0x80000000u | (uint32_t)app->playbackFrame)
         : serverSimGetTick(app->sim);
-    if (cacheKey == app->overlayTick && !app->overlayDirty) return;
+    /* Rebuild when the FOLLOWED bot changes (Tab) even if the tick is the
+     * same: influence/danger are read from that bot's pathfinder, and the sign
+     * flips with the focused team — without this the colored texture stayed on
+     * the previous team while the numbers (read live) flipped. */
+    if (cacheKey == app->overlayTick && app->overlayFollowBot == (int)app->followBot
+        && !app->overlayDirty) return;
     app->overlayTick = cacheKey;
+    app->overlayFollowBot = (int)app->followBot;
     app->overlayDirty = false;
 
     /* Lock the 256x256 overlay texture */
@@ -2780,7 +2838,75 @@ static void mapTileToScreenPrecise(BrainTestApp *app, float tx, float ty,
     *out_sy = (float)scy + (pixelY - (float)centerPY) * (float)zf;
 }
 
+/* ====================================================================== */
+/* HUD overlay layout — drag-to-reposition.                               */
+/*                                                                        */
+/* Press 'L' to unlock: each HUD text overlay gets a border and can be    */
+/* dragged with the left mouse button. Press 'L' again to lock & save;    */
+/* Shift+L resets to defaults. Overrides are OFFSETS from the brain's      */
+/* default (x,y) — so multi-line overlays move together and a cleared      */
+/* offset falls back to the default. Keyed by viz id NAME and persisted to */
+/* hud_layout.txt, reloaded each run. Purely a BrainTest debug-UX feature. */
+/* ====================================================================== */
+#define HUD_MAX_VIZ   256
+#define HUD_MAX_RECT  128
+static const char *HUD_LAYOUT_PATH = "hud_layout.txt";
+static bool  g_hudEdit = false;
+static struct { bool set; float dx, dy; } g_hudOff[HUD_MAX_VIZ];
+static struct { int viz_idx; float x, y, w, h; } g_hudRect[HUD_MAX_RECT];
+static int   g_hudRectN = 0;
+static bool  g_hudLabeled[HUD_MAX_VIZ];   /* per-frame: name drawn once per id */
+static int   g_hudDrag  = -1;   /* viz_idx currently being dragged, -1 = none */
+static float g_hudDragMX0, g_hudDragMY0, g_hudDragDX0, g_hudDragDY0;
+static bool  g_hudLoaded = false;
+
+static void hudLayoutSave(void) {
+    SDL_IOStream *io = SDL_IOFromFile(HUD_LAYOUT_PATH, "w");
+    if (!io) return;
+    for (int i = 0; i < HUD_MAX_VIZ; i++) {
+        if (!g_hudOff[i].set) continue;
+        const VizRegistryEntry *e = vizRegistryGet(i);
+        if (!e || e->id[0] == '\0') continue;
+        char line[128];
+        int n = SDL_snprintf(line, sizeof(line), "%s %.0f %.0f\n",
+                             e->id, (double)g_hudOff[i].dx, (double)g_hudOff[i].dy);
+        if (n > 0) SDL_WriteIO(io, line, (size_t)n);
+    }
+    SDL_CloseIO(io);
+}
+
+static void hudLayoutLoad(void) {
+    g_hudLoaded = true;
+    size_t sz = 0;
+    void *data = SDL_LoadFile(HUD_LAYOUT_PATH, &sz);
+    if (!data) return;
+    char *p = (char *)data, *end = p + sz;
+    while (p < end) {
+        char *nl = p;
+        while (nl < end && *nl != '\n') nl++;
+        if (nl < end) *nl = '\0';
+        char name[VIZ_REG_ID_MAX]; float dx = 0, dy = 0;
+        if (SDL_sscanf(p, "%63s %f %f", name, &dx, &dy) == 3) {
+            int idx = vizRegistryFind(name);
+            if (idx >= 0 && idx < HUD_MAX_VIZ) {
+                g_hudOff[idx].set = true;
+                g_hudOff[idx].dx  = dx;
+                g_hudOff[idx].dy  = dy;
+            }
+        }
+        p = nl + 1;
+    }
+    SDL_free(data);
+}
+
 static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
+    /* Load the saved layout once the viz registry is populated (the brain
+     * registers its ids on the first think). Reset the per-frame rect list
+     * used for drag hit-testing. */
+    if (!g_hudLoaded && vizRegistryCount() > 0) hudLayoutLoad();
+    g_hudRectN = 0;
+    if (g_hudEdit) SDL_memset(g_hudLabeled, 0, sizeof(g_hudLabeled));
+
     OverlayCmdBuffer *buf = serverSimGetBotOverlayCmds(app->sim, app->followBot);
     if (!buf || buf->count == 0) return;
 
@@ -2835,7 +2961,8 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
             break;
         }
         case OVERLAY_CMD_CIRCLE:
-        case OVERLAY_CMD_CIRCLE_SUBPIXEL: {
+        case OVERLAY_CMD_CIRCLE_SUBPIXEL:
+        case OVERLAY_CMD_CIRCLE_FILL: {
             float cx, cy;
             if (cmd->type == OVERLAY_CMD_CIRCLE_SUBPIXEL) {
                 mapTileToScreenPrecise(app, cmd->x1, cmd->y1, screenW, screenH, &cx, &cy);
@@ -2845,12 +2972,43 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
             float sr = cmd->radius * 16.0f * app->zoomFactor;
             int seg = (int)(sr * 2.0f);
             if (seg < 12) seg = 12;
-            for (int s = 0; s < seg; s++) {
-                float a0 = (float)s / seg * 2.0f * 3.14159265f;
-                float a1 = (float)(s + 1) / seg * 2.0f * 3.14159265f;
-                SDL_RenderLine(app->renderer,
-                    cx + cosf(a0) * sr, cy + sinf(a0) * sr,
-                    cx + cosf(a1) * sr, cy + sinf(a1) * sr);
+            if (cmd->type == OVERLAY_CMD_CIRCLE_FILL) {
+                /* Filled disc: triangle fan (center + perimeter ring). */
+                SDL_FColor fc = { cmd->r / 255.0f, cmd->g / 255.0f,
+                                  cmd->b / 255.0f, cmd->a / 255.0f };
+                int nverts = seg + 2;          /* center + seg+1 ring verts */
+                SDL_Vertex *v = (SDL_Vertex *)SDL_malloc(sizeof(SDL_Vertex) * (size_t)nverts);
+                if (v) {
+                    v[0].position.x = cx; v[0].position.y = cy;
+                    v[0].color = fc; v[0].tex_coord.x = 0; v[0].tex_coord.y = 0;
+                    for (int s = 0; s <= seg; s++) {
+                        float ang = (float)s / seg * 2.0f * 3.14159265f;
+                        v[s + 1].position.x = cx + cosf(ang) * sr;
+                        v[s + 1].position.y = cy + sinf(ang) * sr;
+                        v[s + 1].color = fc;
+                        v[s + 1].tex_coord.x = 0; v[s + 1].tex_coord.y = 0;
+                    }
+                    int nidx = seg * 3;
+                    int *idx = (int *)SDL_malloc(sizeof(int) * (size_t)nidx);
+                    if (idx) {
+                        for (int s = 0; s < seg; s++) {
+                            idx[s * 3 + 0] = 0;
+                            idx[s * 3 + 1] = s + 1;
+                            idx[s * 3 + 2] = s + 2;
+                        }
+                        SDL_RenderGeometry(app->renderer, NULL, v, nverts, idx, nidx);
+                        SDL_free(idx);
+                    }
+                    SDL_free(v);
+                }
+            } else {
+                for (int s = 0; s < seg; s++) {
+                    float a0 = (float)s / seg * 2.0f * 3.14159265f;
+                    float a1 = (float)(s + 1) / seg * 2.0f * 3.14159265f;
+                    SDL_RenderLine(app->renderer,
+                        cx + cosf(a0) * sr, cy + sinf(a0) * sr,
+                        cx + cosf(a1) * sr, cy + sinf(a1) * sr);
+                }
             }
             break;
         }
@@ -2887,9 +3045,72 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
             case OVERLAY_ANCHOR_BOTTOMRIGHT: sx = (float)screenW - sx - tw;
                                               sy = (float)screenH - sy - th; break;
             }
+            /* Apply the persisted drag offset for this overlay (per viz id). */
+            if (cmd->viz_idx != OVERLAY_VIZ_IDX_NONE
+                && cmd->viz_idx < HUD_MAX_VIZ && g_hudOff[cmd->viz_idx].set) {
+                sx += g_hudOff[cmd->viz_idx].dx;
+                sy += g_hudOff[cmd->viz_idx].dy;
+            }
             SDL_SetRenderScale(app->renderer, scale, scale);
             SDL_RenderDebugText(app->renderer, sx / scale, sy / scale, cmd->text);
             SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
+            /* Record this line's rect for drag hit-testing, and (in edit mode)
+             * outline it. Skip unregistered overlays — they can't be saved. */
+            if (cmd->viz_idx != OVERLAY_VIZ_IDX_NONE && g_hudRectN < HUD_MAX_RECT) {
+                g_hudRect[g_hudRectN].viz_idx = cmd->viz_idx;
+                g_hudRect[g_hudRectN].x = sx;  g_hudRect[g_hudRectN].y = sy;
+                g_hudRect[g_hudRectN].w = tw;  g_hudRect[g_hudRectN].h = th;
+                g_hudRectN++;
+                if (g_hudEdit) {
+                    SDL_FRect br = { sx - 2.0f, sy - 2.0f, tw + 4.0f, th + 4.0f };
+                    SDL_SetRenderDrawColor(app->renderer, 0, 220, 255,
+                        (g_hudDrag == cmd->viz_idx) ? 255 : 110);
+                    SDL_RenderRect(app->renderer, &br);
+                    /* Label the overlay with its viz id at the top-right
+                     * corner — once per id (on its first/top line). */
+                    if (cmd->viz_idx < HUD_MAX_VIZ && !g_hudLabeled[cmd->viz_idx]) {
+                        const VizRegistryEntry *ve = vizRegistryGet(cmd->viz_idx);
+                        if (ve && ve->id[0] != '\0') {
+                            g_hudLabeled[cmd->viz_idx] = true;
+                            float ls = 1.0f;   /* smaller than the 1.5x overlay text */
+                            float lw = (float)strlen(ve->id) * 8.0f * ls;
+                            SDL_SetRenderScale(app->renderer, ls, ls);
+                            SDL_SetRenderDrawColor(app->renderer, 0, 220, 255, 235);
+                            SDL_RenderDebugText(app->renderer,
+                                (sx + tw - lw) / ls, (sy - 11.0f) / ls, ve->id);
+                            SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        case OVERLAY_CMD_HUD_RECT:
+        case OVERLAY_CMD_HUD_RECT_FILL: {
+            /* HUD-space rect — same pixel-offset/anchor scheme as HUD_TEXT.
+             * x1/y1 = offset from the corner, x2/y2 = width/height. */
+            float sx = cmd->x1, sy = cmd->y1;
+            float w = cmd->x2, h = cmd->y2;
+            switch (cmd->anchor) {
+            case OVERLAY_ANCHOR_TOPRIGHT:    sx = (float)screenW - sx - w; break;
+            case OVERLAY_ANCHOR_BOTTOMLEFT:  sy = (float)screenH - sy - h; break;
+            case OVERLAY_ANCHOR_BOTTOMRIGHT: sx = (float)screenW - sx - w;
+                                              sy = (float)screenH - sy - h; break;
+            }
+            /* Same per-viz drag offset as the text rows, so bg/border track. */
+            if (cmd->viz_idx != OVERLAY_VIZ_IDX_NONE
+                && cmd->viz_idx < HUD_MAX_VIZ && g_hudOff[cmd->viz_idx].set) {
+                sx += g_hudOff[cmd->viz_idx].dx;
+                sy += g_hudOff[cmd->viz_idx].dy;
+            }
+            SDL_FRect rr = { sx, sy, w, h };
+            SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(app->renderer, cmd->r, cmd->g, cmd->b, cmd->a);
+            if (cmd->type == OVERLAY_CMD_HUD_RECT_FILL) {
+                SDL_RenderFillRect(app->renderer, &rr);
+            } else {
+                SDL_RenderRect(app->renderer, &rr);
+            }
             break;
         }
         case OVERLAY_CMD_CLEAR:
@@ -2897,6 +3118,17 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
              * top of think() to wipe its OWN buffer, not ours. */
             break;
         }
+    }
+
+    /* HUD-edit banner: shown while unlocked so it's obvious the overlays are
+     * draggable and how to lock/reset. */
+    if (g_hudEdit) {
+        float bs = 1.5f;
+        SDL_SetRenderScale(app->renderer, bs, bs);
+        SDL_SetRenderDrawColor(app->renderer, 0, 220, 255, 255);
+        SDL_RenderDebugText(app->renderer, (screenW * 0.5f - 230.0f) / bs, 4.0f / bs,
+            "HUD EDIT: drag overlays  |  L = lock & save  |  Shift+L = reset");
+        SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
     }
 }
 
@@ -3202,6 +3434,20 @@ static void appTickBrain(BrainTestApp *app) {
         SDL_snprintf(line, sizeof(line),
                      "_G._BT_PCONTRIB_NEEDED=%s",
                      need_pc ? "true" : "false");
+        for (BYTE i = 0; i < MAX_TANKS; i++) {
+            if (serverSimIsBot(app->sim, i)) {
+                serverSimBotExecLua(app->sim, i, line);
+            }
+        }
+    }
+
+    /* Push "is the ShotSim panel open" so the brain forces the full Lua
+     * shield-scan path (which populates _shield_scan.candidates) only while
+     * that panel is actually up — its Shield-candidate POIs read those. */
+    {
+        char line[48];
+        SDL_snprintf(line, sizeof(line), "_G._BT_SHOTSIM_OPEN=%s",
+                     shotSimPanelIsVisible() ? "true" : "false");
         for (BYTE i = 0; i < MAX_TANKS; i++) {
             if (serverSimIsBot(app->sim, i)) {
                 serverSimBotExecLua(app->sim, i, line);
@@ -4002,6 +4248,10 @@ static void appRender(BrainTestApp *app) {
          * the brain pushed via the overlay_* Lua API this tick). */
         renderBrainOverlay(app, screenW, screenH);
 
+        /* Tank player-number labels (key 0). Drawn last so the labels
+         * sit on top of sprites and every other overlay. */
+        renderTankIds(app, screenW, screenH);
+
         /* ── PLAYBACK RESTORE ── unwind every patch we made above
          * so the next sim tick / data poll sees live data. */
         if (patched) {
@@ -4348,6 +4598,7 @@ int main(int argc, char *argv[]) {
 
     BrainTestApp app;
     memset(&app, 0, sizeof(app));
+    app.overlayFollowBot = -1;  /* force first overlay-texture build */
     app.zoomFactor = 2;
     app.freeCamera = false;
     app.showHUD = false;
@@ -4413,16 +4664,23 @@ int main(int argc, char *argv[]) {
         "Heatmap from brain.get_strategic_place_heatmap(): best tiles to "
         "drop a pill given the current map control situation.",
         "8", false);
+    app.regIdxTankIds = vizRegistryAddNative(
+        "Tank player #s",
+        "Draw each tank's player number above its sprite (god-view)",
+        "Enumerates every tank from the server sim (or the recorded "
+        "frame in playback) and labels it with its player slot. Own "
+        "tank cyan, others white.",
+        "-", true);
     /* If any of these came back negative the registry is full or hit a
      * duplicate-id collision — vizFlag would silently no-op forever.
      * Surface it loudly at startup so it's obvious during dev. */
     {
-        int idxs[9] = { app.regIdxInfluence, app.regIdxDanger,
+        int idxs[10] = { app.regIdxInfluence, app.regIdxDanger,
                         app.regIdxFrontLine, app.regIdxPath,
                         app.regIdxFog, app.regIdxValues,
                         app.regIdxDijkstra, app.regIdxCostTo,
-                        app.regIdxStratPlace };
-        for (int i = 0; i < 9; i++) {
+                        app.regIdxStratPlace, app.regIdxTankIds };
+        for (int i = 0; i < 10; i++) {
             if (idxs[i] < 0) {
                 SDL_Log("WARN: native viz registration %d failed; "
                         "the corresponding hotkey will be inert", i);
@@ -4744,6 +5002,14 @@ int main(int argc, char *argv[]) {
             for (int i = 0; i < optNumPlayers; i++) {
                 if (serverSimIsBot(app.sim, (BYTE)i)) {
                     serverSimBotExecLua(app.sim, (BYTE)i, setSession);
+                    /* Tell the brain the SAME index BrainTest uses for the HUD
+                     * "Bot: N" / Copy reference (= followBot, the tank slot), so
+                     * its print2_bot<N>.log filename matches what you copy.
+                     * (The brain's own player_number can differ in this harness,
+                     * which made the copied "botN" not match the log file.) */
+                    char setIdx[48];
+                    SDL_snprintf(setIdx, sizeof(setIdx), "_G.BT_BOT_INDEX=%d", i);
+                    serverSimBotExecLua(app.sim, (BYTE)i, setIdx);
                 }
             }
         }
@@ -4784,6 +5050,7 @@ int main(int argc, char *argv[]) {
     const bool *keystate = SDL_GetKeyboardState(NULL);
     bool autoPauseDone = false;
     bool firstBrainSeeded = false;
+    bool prevPaused = false;
 
     while (!appQuit) {
         /* Process events */
@@ -4865,17 +5132,19 @@ int main(int argc, char *argv[]) {
                 case SDLK_SPACE:
                     app.paused = !app.paused;
                     break;
-                case SDLK_TAB:
-                    /* Cycle to next active bot. Reset pill-contrib
-                     * selection — the per-bot pill list is different
-                     * for the new bot, so the old cycle index would
-                     * be meaningless (or out of range). */
+                case SDLK_TAB: {
+                    /* Cycle to next active bot (Shift+Tab = previous).
+                     * Reset pill-contrib selection — the per-bot pill list
+                     * is different for the new bot, so the old cycle index
+                     * would be meaningless (or out of range). */
+                    int step = (ev.key.mod & SDL_KMOD_SHIFT) ? (MAX_TANKS - 1) : 1;
                     for (int tries = 0; tries < MAX_TANKS; tries++) {
-                        app.followBot = (app.followBot + 1) % MAX_TANKS;
+                        app.followBot = (app.followBot + step) % MAX_TANKS;
                         if (serverSimIsBot(app.sim, app.followBot)) break;
                     }
                     app.pillContribSel = 0;
                     break;
+                }
                 case SDLK_F:
                     app.freeCamera = !app.freeCamera;
                     break;
@@ -5060,6 +5329,33 @@ int main(int argc, char *argv[]) {
                 case SDLK_F1:
                     app.showShortcuts = !app.showShortcuts;
                     break;
+                case SDLK_L:
+                    /* HUD layout edit: L toggles lock/unlock (locking saves);
+                     * Shift+L resets all overrides to the brain defaults. */
+                    if (ev.key.mod & SDL_KMOD_SHIFT) {
+                        /* Destructive — confirm before wiping all overrides. */
+                        const SDL_MessageBoxButtonData btns[] = {
+                            { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT
+                              | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel" },
+                            { 0, 1, "Reset" },
+                        };
+                        const SDL_MessageBoxData mbd = {
+                            SDL_MESSAGEBOX_WARNING, app.window,
+                            "Reset HUD layout",
+                            "Reset all HUD overlay positions back to the brain defaults?",
+                            (int)SDL_arraysize(btns), btns, NULL
+                        };
+                        int btn = -1;
+                        if (SDL_ShowMessageBox(&mbd, &btn) && btn == 1) {
+                            for (int i = 0; i < HUD_MAX_VIZ; i++) g_hudOff[i].set = false;
+                            g_hudDrag = -1;
+                            hudLayoutSave();   /* truncates the file to empty */
+                        }
+                    } else {
+                        g_hudEdit = !g_hudEdit;
+                        if (!g_hudEdit) { hudLayoutSave(); g_hudDrag = -1; }
+                    }
+                    break;
                 case SDLK_ESCAPE:
                     appQuit = TRUE;
                     break;
@@ -5158,6 +5454,14 @@ int main(int argc, char *argv[]) {
                 if (ev.motion.windowID != SDL_GetWindowID(app.window)) break;
                 app.mouseX = ev.motion.x;
                 app.mouseY = ev.motion.y;
+                /* HUD overlay drag: move the grabbed overlay by the mouse delta
+                 * (offset from its default position). */
+                if (g_hudDrag >= 0 && g_hudDrag < HUD_MAX_VIZ) {
+                    g_hudOff[g_hudDrag].set = true;
+                    g_hudOff[g_hudDrag].dx  = g_hudDragDX0 + (ev.motion.x - g_hudDragMX0);
+                    g_hudOff[g_hudDrag].dy  = g_hudDragDY0 + (ev.motion.y - g_hudDragMY0);
+                    break;
+                }
                 {
                     int sw, sh;
                     SDL_GetWindowSize(app.window, &sw, &sh);
@@ -5217,6 +5521,28 @@ int main(int argc, char *argv[]) {
                     app.dragLastY = ev.button.y;
                     app.freeCamera = true;
                 } else if (ev.button.button == SDL_BUTTON_LEFT) {
+                    /* HUD edit mode: grab the topmost overlay under the cursor
+                     * and start dragging it; consume the click so it doesn't
+                     * also trigger a map cost-query. */
+                    if (g_hudEdit) {
+                        int hit = -1;
+                        for (int r = g_hudRectN - 1; r >= 0; r--) {
+                            if (ev.button.x >= g_hudRect[r].x - 2.0f &&
+                                ev.button.x <= g_hudRect[r].x + g_hudRect[r].w + 2.0f &&
+                                ev.button.y >= g_hudRect[r].y - 2.0f &&
+                                ev.button.y <= g_hudRect[r].y + g_hudRect[r].h + 2.0f) {
+                                hit = g_hudRect[r].viz_idx; break;
+                            }
+                        }
+                        if (hit >= 0 && hit < HUD_MAX_VIZ) {
+                            g_hudDrag    = hit;
+                            g_hudDragMX0 = ev.button.x;
+                            g_hudDragMY0 = ev.button.y;
+                            g_hudDragDX0 = g_hudOff[hit].set ? g_hudOff[hit].dx : 0.0f;
+                            g_hudDragDY0 = g_hudOff[hit].set ? g_hudOff[hit].dy : 0.0f;
+                            break;
+                        }
+                    }
                     int sw, sh;
                     SDL_GetWindowSize(app.window, &sw, &sh);
                     /* Bottom-strip click → control bar. Pre-empt the
@@ -5394,6 +5720,12 @@ int main(int argc, char *argv[]) {
                 break;
 
             case SDL_EVENT_MOUSE_BUTTON_UP:
+                /* End an HUD overlay drag and persist the new layout. */
+                if (ev.button.button == SDL_BUTTON_LEFT && g_hudDrag >= 0) {
+                    g_hudDrag = -1;
+                    hudLayoutSave();
+                    break;
+                }
                 /* Same gate as BUTTON_DOWN — but always release the
                  * scrubber drag if it was active, regardless of
                  * which window the release happened in (otherwise
@@ -5474,6 +5806,15 @@ int main(int argc, char *argv[]) {
          *    same matched pair (rather than the previous tick's
          *    overlay buffer as it would if capture ran before
          *    brain). */
+        /* On the transition into pause, force the batched brain logs to
+         * disk so the on-screen tick's print2 output is readable while
+         * paused (the per-tick flush path is dormant when not ticking).
+         * Safe here: no brain.think() is in flight between iterations. */
+        if (app.paused && !prevPaused) {
+            botManagerFlushBrainLogs(app.sim);
+        }
+        prevPaused = app.paused;
+
         int tickMs = SPEED_PRESETS[app.speedIndex];
         if (!app.paused) {
             Uint64 now = SDL_GetTicks();

@@ -487,6 +487,72 @@ void brainPathfinderDestroy(BrainPathfinder *pf) {
   free(pf);
 }
 
+/* Coastal boat band radius (euclidean tiles). A water/boat tile within this
+ * distance of land is marked so the land-only SHORT slate may still take
+ * near-shore boat shortcuts. Open ocean (farther than this from any land)
+ * stays excluded so SHORT's node budget isn't spent crossing the sea. */
+#define BRAINPF_COASTAL_BAND 5
+
+/* Rebuild coastal_boat_mask from the current map. For every water (river/
+ * deep-sea) or boat-pickup tile, mark it if ANY land tile lies within
+ * BRAINPF_COASTAL_BAND euclidean tiles. One-time per map (deep sea is
+ * immutable and coastlines are stable, so it never needs mid-game refresh). */
+static void brainPathfinderBuildCoastalMask(BrainPathfinder *pf, const BYTE *map) {
+  const int R = BRAINPF_COASTAL_BAND;
+  const int R2 = R * R;
+  memset(pf->coastal_boat_mask, 0, sizeof(pf->coastal_boat_mask));
+  if (!map) return;
+
+  /* "land" = anything that isn't open/deep water (boat tiles count as shore).
+   * First pass: bounding box of all land. On the common island map this is a
+   * small region inside a big ocean, so everything outside (box + R) is more
+   * than R from any land — guaranteed not coastal — and we skip it entirely.
+   * (A water tile INSIDE the box can still be far from land, e.g. a big inland
+   * lake, so the per-tile check below is still required inside the box.) */
+  int min_x = MAP_SIZE, min_y = MAP_SIZE, max_x = -1, max_y = -1;
+  for (int y = 0; y < MAP_SIZE; y++) {
+    for (int x = 0; x < MAP_SIZE; x++) {
+      int t = map[y * MAP_SIZE + x] & 0x0F;
+      if (t != TT_RIVER && t != TT_DEEPSEA) {
+        if (x < min_x) min_x = x;
+        if (x > max_x) max_x = x;
+        if (y < min_y) min_y = y;
+        if (y > max_y) max_y = y;
+      }
+    }
+  }
+  if (max_x < 0) return;   /* no land at all → nothing is coastal */
+
+  /* Clamp the land box expanded by R to the map; only water within it can be
+   * coastal. */
+  int lo_x = min_x - R; if (lo_x < 0) lo_x = 0;
+  int hi_x = max_x + R; if (hi_x >= MAP_SIZE) hi_x = MAP_SIZE - 1;
+  int lo_y = min_y - R; if (lo_y < 0) lo_y = 0;
+  int hi_y = max_y + R; if (hi_y >= MAP_SIZE) hi_y = MAP_SIZE - 1;
+
+  for (int y = lo_y; y <= hi_y; y++) {
+    for (int x = lo_x; x <= hi_x; x++) {
+      int idx = y * MAP_SIZE + x;
+      int type = map[idx] & 0x0F;
+      /* Only water / boat-pickup tiles are candidates for the band. */
+      if (type != TT_RIVER && type != TT_DEEPSEA && type != TT_BOAT) continue;
+      int found = 0;
+      for (int dy = -R; dy <= R && !found; dy++) {
+        int yy = y + dy;
+        if (yy < 0 || yy >= MAP_SIZE) continue;
+        for (int dx = -R; dx <= R; dx++) {
+          if (dx * dx + dy * dy > R2) continue;   /* euclidean disc */
+          int xx = x + dx;
+          if (xx < 0 || xx >= MAP_SIZE) continue;
+          int t2 = map[yy * MAP_SIZE + xx] & 0x0F;
+          if (t2 != TT_RIVER && t2 != TT_DEEPSEA) { found = 1; break; }
+        }
+      }
+      if (found) pf->coastal_boat_mask[idx] = 1;
+    }
+  }
+}
+
 void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map) {
   if (pf) {
     /* If the map pointer changed, the precomputed edge cache is stale.
@@ -496,6 +562,11 @@ void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map) {
       pf->edge_cost_valid = 0;
       pf->edge_cost_map = NULL;
       pf->cache_dirty = 1;
+    }
+    /* Recompute the coastal boat band when the map pointer changes. */
+    if (pf->coastal_mask_map != map) {
+      brainPathfinderBuildCoastalMask(pf, map);
+      pf->coastal_mask_map = map;
     }
     pf->map = map;
   }
@@ -1915,7 +1986,11 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
       int nm = ny * MAP_SIZE + nx;
       int n_type = map[nm] & 0x0F;
       int next_boat = next_boat_state(cur_boat, n_type);
-      if (!s->allow_boat && (next_boat || n_type == TT_DEEPSEA)) continue;
+      /* Land-only slate (SHORT) normally skips any boat transition / deep sea.
+       * Exception: near-shore tiles in the coastal band are allowed, so SHORT
+       * can take short boat hops along the coast without expanding open ocean. */
+      if (!s->allow_boat && (next_boat || n_type == TT_DEEPSEA)
+          && !pf->coastal_boat_mask[nm]) continue;
       int new_shells = cur_shells;
 
       float tc;

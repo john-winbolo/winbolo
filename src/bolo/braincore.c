@@ -420,6 +420,10 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_setfield(L, -2, "server_tick");
   lua_pushinteger(L, info->assistant_msg);
   lua_setfield(L, -2, "assistant_msg");
+  /* Dead-tick hook: brain runs while the tank is dead so it can reset its own
+   * state for a clean respawn; it should early-return without acting. */
+  lua_pushboolean(L, info->dead);
+  lua_setfield(L, -2, "dead");
 
   /* Game events */
   lua_newtable(L);
@@ -1516,6 +1520,57 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
   return 1;
 }
 
+/* cpf_predict_stop(tankx, tanky, angle, speed [, terrain_cap])
+ *   -> stop_wx, stop_wy
+ * Predicts where the tank comes to rest if it begins braking THIS tick,
+ * mirroring the engine's exact decel + residual-move model (tank.c tankAccel
+ * + tankMoveUnified) so the brain can decide whether a stop here lands it in
+ * firing range of a pill:
+ *   - brake = 0.25/tick (TANK_SLOWKEY_RATE); an extra 0.25/tick
+ *     (TANK_TERRAIN_DECEL_RATE) applies WHILE speed > terrain_cap (terrain
+ *     only drags speed down to its cap, never below). Auto-slowdown is the
+ *     same 0.25 and does NOT stack with the brake key, so a brake-to-stop is
+ *     a flat 0.25 ramp on uniform terrain.
+ *   - each tick (decel first, then move): residual += floor(speed); when
+ *     residual >= TANK_MIN_MOVE_SPEED (6) advance `residual` wu along
+ *     utilGet16Dir(angle) (16-dir quantized) via utilCalcDistance, reset.
+ * residualSpeed is assumed 0 at entry (the brain can't observe it → the stop
+ * can be up to one sub-move, <6 wu, short of reality). terrain_cap defaults to
+ * 255 (no terrain term: uniform terrain at/under cap) and is treated as
+ * constant for the short stop — a mid-stop speed-boundary crossing isn't
+ * modeled. */
+static int l_cpf_predict_stop(lua_State *L) {
+  const double BRAKE_RATE   = 0.25;  /* TANK_SLOWKEY_RATE */
+  const double TERRAIN_RATE = 0.25;  /* TANK_TERRAIN_DECEL_RATE */
+  const int    MIN_MOVE     = 6;     /* TANK_MIN_MOVE_SPEED */
+
+  WORLD x  = (WORLD)luaL_checkinteger(L, 1);
+  WORLD y  = (WORLD)luaL_checkinteger(L, 2);
+  float angle  = (float)luaL_checknumber(L, 3);
+  double speed = luaL_checknumber(L, 4);
+  double cap   = luaL_optnumber(L, 5, 255.0);
+
+  BYTE dir = utilGet16Dir((TURNTYPE)angle);
+  int residual = 0;
+  int guard = 0;
+  while (speed > 0.0 && guard++ < 4096) {
+    if (speed > cap) speed -= TERRAIN_RATE;   /* over-cap terrain decel */
+    speed -= BRAKE_RATE;                       /* brake key (== auto-slow) */
+    if (speed < 0.0) speed = 0.0;
+    residual += (int)speed;                    /* (BYTE)speed → floor */
+    if (residual >= MIN_MOVE) {
+      int dx = 0, dy = 0;
+      utilCalcDistance(&dx, &dy, (TURNTYPE)dir, residual);
+      x = (WORLD)((int)x + dx);
+      y = (WORLD)((int)y + dy);
+      residual = 0;
+    }
+  }
+  lua_pushinteger(L, (lua_Integer)x);
+  lua_pushinteger(L, (lua_Integer)y);
+  return 2;
+}
+
 /* cpf_simulate_shot_with_tanks(origin_wx, origin_wy, target_wx, target_wy,
  *                              shooter_type, sight_len, tanks_table, owner_player)
  *   -> { {mx=, my=, hit_type=, hit_id=}, ... }
@@ -1812,6 +1867,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_estimate_cost",     l_cpf_estimate_cost },
     { "cpf_simulate_shot",        l_cpf_simulate_shot },
     { "cpf_simulate_shot_angle",  l_cpf_simulate_shot_angle },
+    { "cpf_predict_stop",         l_cpf_predict_stop },
     { "cpf_simulate_shot_with_tanks", l_cpf_simulate_shot_with_tanks },
     { "cpf_danger_at",             l_cpf_danger_at },
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
@@ -2085,11 +2141,13 @@ static int l_overlay_rect(lua_State *L) {
   return 0;
 }
 
-/* overlay_circle(cx, cy, radius, r, g, b [, a [, viz_idx [, subpixel]]])
+/* overlay_circle(cx, cy, radius, r, g, b [, a [, viz_idx [, subpixel [, filled]]]])
  * subpixel (optional, default false): if true the circle's center
  * uses 1/256-tile precision instead of being floored to the game-pixel
  * grid. Use for markers that pin to a sub-game-pixel position (e.g.
- * shell hit dot) where the standard 1-gp quantization is visible. */
+ * shell hit dot) where the standard 1-gp quantization is visible.
+ * filled (optional, default false): draw a filled disc instead of an
+ * outline ring. Mutually exclusive with subpixel (filled wins). */
 static int l_overlay_circle(lua_State *L) {
   OVL_GET(L);
   float cx = (float)luaL_checknumber(L, 1);
@@ -2101,9 +2159,14 @@ static int l_overlay_circle(lua_State *L) {
   int a = luaL_optinteger(L, 7, 255);
   int viz_idx  = luaL_optinteger(L, 8, OVERLAY_VIZ_IDX_NONE);
   int subpixel = lua_toboolean(L, 9);
+  int filled   = lua_toboolean(L, 10);
   overlayCmdCircle(buf, cx, cy, radius, r, g, b, a);
-  if (subpixel && buf && buf->count > 0) {
-    buf->cmds[buf->count - 1].type = OVERLAY_CMD_CIRCLE_SUBPIXEL;
+  if (buf && buf->count > 0) {
+    if (filled) {
+      buf->cmds[buf->count - 1].type = OVERLAY_CMD_CIRCLE_FILL;
+    } else if (subpixel) {
+      buf->cmds[buf->count - 1].type = OVERLAY_CMD_CIRCLE_SUBPIXEL;
+    }
   }
   overlayCmdSetLastVizIdx(buf, (uint8_t)viz_idx);
   return 0;
@@ -2165,6 +2228,34 @@ static int l_overlay_hud_text(lua_State *L) {
   return 0;
 }
 
+/* overlay_hud_rect(offset_x, offset_y, w, h, anchor, r, g, b [, a [, filled [, viz_idx]]])
+ * Same anchor scheme / pixel-offset coords as overlay_hud_text. filled != 0
+ * draws a solid fill (background), else a 1px outline (border). */
+static int l_overlay_hud_rect(lua_State *L) {
+  OVL_GET(L);
+  float x = (float)luaL_checknumber(L, 1);
+  float y = (float)luaL_checknumber(L, 2);
+  float w = (float)luaL_checknumber(L, 3);
+  float h = (float)luaL_checknumber(L, 4);
+  const char *anchorStr = luaL_optstring(L, 5, "topleft");
+  int r = luaL_optinteger(L, 6, 255);
+  int g = luaL_optinteger(L, 7, 255);
+  int b = luaL_optinteger(L, 8, 255);
+  int a = luaL_optinteger(L, 9, 255);
+  int filled  = luaL_optinteger(L, 10, 0);
+  int viz_idx = luaL_optinteger(L, 11, OVERLAY_VIZ_IDX_NONE);
+
+  uint8_t anchor = OVERLAY_ANCHOR_TOPLEFT;
+  if (strcmp(anchorStr, "topright") == 0)         anchor = OVERLAY_ANCHOR_TOPRIGHT;
+  else if (strcmp(anchorStr, "bottomleft") == 0)  anchor = OVERLAY_ANCHOR_BOTTOMLEFT;
+  else if (strcmp(anchorStr, "bottomright") == 0) anchor = OVERLAY_ANCHOR_BOTTOMRIGHT;
+  else if (strcmp(anchorStr, "center") == 0)      anchor = OVERLAY_ANCHOR_CENTER;
+
+  overlayCmdHudRect(buf, x, y, w, h, anchor, r, g, b, a, filled);
+  overlayCmdSetLastVizIdx(buf, (uint8_t)viz_idx);
+  return 0;
+}
+
 /* UNUSED ON THIS BRANCH — kept in lockstep with the BrainTest source
  * line so future merges don't conflict. Registers overlay_* Lua
  * globals (debug-shape drawing) backed by a per-brain OverlayCmdBuffer.
@@ -2180,6 +2271,7 @@ void brainCoreRegisterOverlay(lua_State *L, OverlayCmdBuffer **bufPtr) {
     { "overlay_circle",   l_overlay_circle },
     { "overlay_text",     l_overlay_text },
     { "overlay_hud_text", l_overlay_hud_text },
+    { "overlay_hud_rect", l_overlay_hud_rect },
     { NULL, NULL }
   };
   int i;
