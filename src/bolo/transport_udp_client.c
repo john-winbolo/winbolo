@@ -871,17 +871,22 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
             c->mapInstalled = true;
         }
         if (wasInLobby) {
-            /* Reset reliable event acks so they match the server's reset
-             * queues. Stale events from the previous game must not be
-             * applied to the freshly-loaded map. */
-            c->reliableEventAck = 1;
-            c->mapEventAck = 1;
-            c->controlEventAck = 1;
-            /* The control-event seq space resets here too; drop any pending
-             * coalesced ACK so we don't emit a stale next-expected-seq for
-             * the new game's queue. */
+            /* The reliable-event acks are NOT reset at the lobby→running
+             * flip.  The server keeps its reliable-queue sequence counters
+             * monotonic across game start — it drops the previous game's
+             * unacked events (ackedSeq = nextSeq) but never reuses low seq
+             * numbers — so reliableEventAck / mapEventAck / controlEventAck
+             * stay valid in the same sequence space.  A stale in-flight
+             * lobby packet now carries seq numbers below the continuing ack
+             * and dedups harmlessly instead of jumping the ack back into the
+             * dead lobby space.  (lastSentControlAck likewise stays
+             * monotonic — resetting it would desync the coalesced-ack
+             * resend logic from controlEventAck.) */
+            /* Drop any pending coalesced standalone CONTROL_ACK: during
+             * running the input piggyback carries controlEventAck, so the
+             * standalone-ack path hands off here.  Harmless either way — a
+             * fresh ack still ships if the server keeps retransmitting. */
             c->controlAckPendingTick = 0;
-            c->lastSentControlAck = 0;
             /* Reset input ring so stale inputs from the previous game are
              * not sent as redundant packets in the new game. */
             c->inputRingCount = 0;
@@ -1349,14 +1354,22 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                       (unsigned)controlEventBaseSeq, (unsigned)controlEventCount,
                       (unsigned)c->controlEventAck);
         }
-        /* Server-queue-restart detection.  The server resets its per-client
-         * control queue to (ackedSeq=1, nextSeq=1) inside
+        /* NOTE: now vestigial.  transportUdpServerOnGameStart no longer
+         * restarts the control queue at seq 1 — it drops unacked events
+         * (ackedSeq = nextSeq) but keeps nextSeq monotonic, so at game start
+         * baseSeq >= controlEventAck and the baseSeq < ack test below never
+         * trips.  Left in place (inert) to keep the monotonic-seq change
+         * focused; a follow-up can remove the controlSeqResetDetected /
+         * runningSeqAdopted machinery once the monotonic behaviour has soaked.
+         *
+         * Server-queue-restart detection.  Historically the server reset its
+         * per-client control queue to (ackedSeq=1, nextSeq=1) inside
          * transportUdpServerOnGameStart, immediately before publishing
-         * CTRL_GAME_PHASE_RUNNING — so the running flip always lands at
-         * seq=1 of a new sequence space.  Without intervention the dedup
-         * gate below (evSeq >= controlEventAck) filters that seq=1 out
-         * because controlEventAck is still high from the lobby phase, and
-         * clientSimApplyControlOrdered's own ack-reset never gets to run.
+         * CTRL_GAME_PHASE_RUNNING — so the running flip landed at seq=1 of a
+         * new sequence space.  Without intervention the dedup gate below
+         * (evSeq >= controlEventAck) would filter that seq=1 out because
+         * controlEventAck was still high from the lobby phase, and
+         * clientSimApplyControlOrdered's own ack-reset never got to run.
          *
          * Gate on a once-per-wipe adoption flag, not inLobby.  The flag
          * fires the snap exactly once when the client first sees the

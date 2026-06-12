@@ -2553,33 +2553,40 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
                       (unsigned)udpServer.mapEventQueues[i].nextSeq);
         }
         if (udpServer.clients[i].connected) {
-            /* The controlEventQueues memset below destroys any un-ACKed
+            /* The controlEventQueues drop below discards any un-ACKed
                CTRL_PLAYER_JOIN still in flight from a late-countdown
                joiner.  Flag this client for an unsolicited PLAYER_LIST
                resync so its roster catches up after the reset; the new
-               game's first control event will be CTRL_GAME_PHASE_RUNNING
-               at seq=1, with no retransmit path back to the dropped
-               JOIN events. */
+               game's first control event is CTRL_GAME_PHASE_RUNNING at the
+               continuing nextSeq, with no retransmit path back to the
+               dropped JOIN events. */
             udpServer.clients[i].needsPlayerList = true;
             /* Ensure map download is considered complete so snapshots
              * are sent during the game even if a final chunk ack was lost. */
             udpServer.mapDownload[i].downloadComplete = TRUE;
         }
-        /* Reset reliable event queues — stale events from the previous game
-         * must not be resent after clients load the fresh map.  Reset all
-         * three queues here, BEFORE the caller publishes
-         * CTRL_GAME_PHASE_RUNNING, so that event enters every slot's
-         * control queue at seq 1 as the first event of the new game. */
-        udpServer.eventQueues[i].nextSeq = 1;
-        udpServer.eventQueues[i].ackedSeq = 1;
+        /* Drop the previous game's unacked reliable events, but keep the
+         * sequence counter monotonic — never reuse low seq numbers.  For
+         * all three queues set ackedSeq = nextSeq (queue now empty) and
+         * memset the buffer (clears stale delivered bodies so they can't be
+         * resent), but do NOT reset nextSeq.  The caller then publishes
+         * CTRL_GAME_PHASE_RUNNING, which enters each queue at the continuing
+         * nextSeq — the running events share the lobby's sequence space.
+         *
+         * This is the fix for the lobby→running seq-reuse desync: a stale
+         * in-flight lobby PACKET_CONTROL_TICK delayed past game start now
+         * carries seq numbers BELOW the client's continuing ack, so it
+         * dedups harmlessly instead of being mistaken for fresh running-space
+         * events (which is what happened when the queue restarted at seq 1
+         * and old high-seq lobby events looked newer than the new low-seq
+         * running events). */
+        udpServer.eventQueues[i].ackedSeq = udpServer.eventQueues[i].nextSeq;
         memset(udpServer.eventQueues[i].buffer, 0,
                sizeof(udpServer.eventQueues[i].buffer));
-        udpServer.mapEventQueues[i].nextSeq = 1;
-        udpServer.mapEventQueues[i].ackedSeq = 1;
+        udpServer.mapEventQueues[i].ackedSeq = udpServer.mapEventQueues[i].nextSeq;
         memset(udpServer.mapEventQueues[i].buffer, 0,
                sizeof(udpServer.mapEventQueues[i].buffer));
-        udpServer.controlEventQueues[i].nextSeq = 1;
-        udpServer.controlEventQueues[i].ackedSeq = 1;
+        udpServer.controlEventQueues[i].ackedSeq = udpServer.controlEventQueues[i].nextSeq;
         memset(udpServer.controlEventQueues[i].buffer, 0,
                sizeof(udpServer.controlEventQueues[i].buffer));
         /* C3: also restart the unacked-control timer baseline.  The
