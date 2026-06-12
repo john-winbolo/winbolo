@@ -122,6 +122,11 @@ bool gameFrontTrackerEnabled;
 char gameFrontWbnToken[FILENAME_MAX];
 char gameFrontWbnTokenExpiry[FILENAME_MAX];
 bool gameFrontWbnUse;
+static int gameFrontWbnRank = -1;
+static int gameFrontWbnRankTotal = 0;
+static WbnStats gameFrontWbnStats;
+static char gameFrontWbnAuthMethod[32];
+static bool gameFrontWbnSignedOut;
 
 /* Dialog states */
 openingStates dlgState = openStart;
@@ -575,6 +580,65 @@ void gameFrontClearWinbolonetToken(void) {
 
 bool gameFrontGetWinbolonetUse(void) {
   return gameFrontWbnUse;
+}
+
+void gameFrontSetWbnAuthMethod(const char *method) {
+  SDL_strlcpy(gameFrontWbnAuthMethod, method ? method : "",
+              sizeof(gameFrontWbnAuthMethod));
+}
+
+void gameFrontGetWbnAuthMethod(char *out, size_t outSize) {
+  SDL_strlcpy(out, gameFrontWbnAuthMethod, outSize);
+}
+
+void gameFrontSetWbnSignedOut(bool signedOut) {
+  gameFrontWbnSignedOut = signedOut;
+}
+
+bool gameFrontGetWbnSignedOut(void) {
+  return gameFrontWbnSignedOut;
+}
+
+void gameFrontSetWinbolonetRank(int rank, int rankTotal) {
+  gameFrontWbnRank = rank;
+  gameFrontWbnRankTotal = rankTotal;
+}
+
+void gameFrontGetWinbolonetRank(int *rank, int *rankTotal) {
+  if (rank) *rank = gameFrontWbnRank;
+  if (rankTotal) *rankTotal = gameFrontWbnRankTotal;
+}
+
+void gameFrontSetWinbolonetStats(const WbnStats *s) {
+  if (s) gameFrontWbnStats = *s;
+}
+
+void gameFrontGetWinbolonetStats(WbnStats *out) {
+  if (out) *out = gameFrontWbnStats;
+}
+
+/* Steam isn't available under Emscripten (the wrapper is stubbed), so there
+ * is never an encrypted app-ticket to hand to WinBolo.net. */
+bool gameFrontGetSteamTicketHex(char *outHex, size_t outSize) {
+  if (outHex && outSize > 0) outHex[0] = '\0';
+  return FALSE;
+}
+
+/* Cloud preferences sync runs over libcurl in the native client; the wasm
+ * build has no curl, so the session-sync hooks are no-ops here. */
+void gameFrontStartPrefsSync(void) { }
+void gameFrontResetPrefsSyncSession(void) { }
+
+void gameFrontApplySteamAuthResult(const char *token, const char *expiry,
+                                   const char *playerName, int rank,
+                                   int rankTotal, const WbnStats *stats) {
+  gameFrontSetWinbolonetToken(token, expiry);
+  gameFrontSetWbnAuthMethod("steam");
+  gameFrontSetWinbolonetRank(rank, rankTotal);
+  gameFrontSetWinbolonetStats(stats);
+  if (playerName && playerName[0] != '\0') {
+    gameFrontSetPlayerName((char *)playerName);
+  }
 }
 
 void gameFrontGetBotOptions(int *count, char *brainPath, size_t brainPathSize) {

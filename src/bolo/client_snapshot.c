@@ -41,6 +41,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <math.h>
 #include <SDL3/SDL.h>
 
 #include "../common/wb_log.h"
@@ -103,6 +104,35 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
    * autoslowdown / brain-keys / build-action paths below. */
   if (MY_TANK(csPtr) == NULL) {
     return;
+  }
+
+  /* Universal producer rule (every frontend, transport, and bot builds here):
+   * never fall permanently behind the server's consumption. Once a slot's
+   * stream is established the server consumes one tick number per starved
+   * half-step — it substitutes the held buttons and advances lastProcessedInput
+   * (server_sim.c stall-advance). A producer whose counter has paused or
+   * under-supplies (headless/gym feed one input per net tick while the server
+   * runs two half-steps; the wasm client drops its sim backlog after a tab
+   * background; a GUI hitch that doesn't catch up) would otherwise emit tick
+   * numbers the server has already passed, and every such input would arrive
+   * stale forever. If the supplied tick has fallen at or behind the server's
+   * last-processed tick, renumber it to the smallest value past
+   * lastProcessedInput whose parity matches the input's INTENT (isGameTick:
+   * even = game, odd = keys) — taken from the parameter, never derived from the
+   * stale tick. Prediction, the input history, and the send all consume this
+   * same packet, so they pick up the jump automatically. When the producer
+   * keeps pace (normal desktop/UDP, where the client predicts ahead of the
+   * ack) tick > lastProcessedInput and this is a no-op. */
+  {
+    uint32_t lpi = csPtr->clientState.serverLastProcessedInput;
+    if (pkt->tick <= lpi) {
+      uint32_t renum = lpi + 1;
+      /* game tick wants an even number, keys tick an odd one */
+      if (((renum % 2) == 0) != isGameTick) {
+        renum++;
+      }
+      pkt->tick = renum;
+    }
   }
 
   /* Pack autoslowdown state into flags (sent every packet so server stays in sync) */
@@ -234,6 +264,15 @@ void clientApplySnapshot(ClientSim *csPtr,
   int i;
   bool isHuman = !csPtr->isBot;
 
+  /* Record the server's last-processed input tick for THIS client from the
+   * header. clientBuildInputPacket uses it to keep the outgoing tick number
+   * ahead of the server's consumption — the server advances lastProcessedInput
+   * when it substitutes for a starved stream, so a producer that under-supplies
+   * or paused must jump forward rather than emit numbers the server has passed.
+   * Updated unconditionally (the header's lastProcessedInput is per-client, set
+   * even when our own tank ships as a hidden stub). */
+  csPtr->clientState.serverLastProcessedInput = hdr->lastProcessedInput;
+
   /* Update other players via interpolation */
   csPtr->interpCtx.localPlayer = playerNum;
   for (i = 0; i < tankCount; i++) {
@@ -305,6 +344,11 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetGunsightLength(&MY_TANK(csPtr), tanks[i].gunsightLen);
         tankSetReload(&MY_TANK(csPtr), tanks[i].reload);
         csPtr->clientState.hasPredictedTank = TRUE;
+        /* The tank just teleported onto the map from the server's chosen
+         * start — a teleport snaps, so clear any stale render offset. */
+        csPtr->errX = 0.0f;
+        csPtr->errY = 0.0f;
+        csPtr->errAngle = 0.0f;
         if (isHuman) {
           /* The local tank just became live on the map: the server's chosen
            * start has been copied into MY_TANK above, and the transport has
@@ -348,15 +392,21 @@ void clientApplySnapshot(ClientSim *csPtr,
           bool angleMismatch = ((uint16_t)(predAngle * 256.0f) != tanks[i].angle);
 
           if (dx != 0 || dy != 0 || angleMismatch) {
-            /* Prediction diverged — snap to server state and replay.
-             * Save the predicted angle: if the angle was actually correct
-             * (quantized values match) we restore it after replay to avoid
-             * gunsight jitter caused by speed-quantization-induced position
-             * drift triggering unnecessary angle changes during replay. */
-            TURNTYPE savedAngle = predAngle;
-            BYTE savedFirstLeft = tankGetFirstLeft(&MY_TANK(csPtr));
-            BYTE savedFirstRight = tankGetFirstRight(&MY_TANK(csPtr));
+            /* Record reconcile stats for this window. Position error in
+             * pixels from the world-unit deltas (16 world units per
+             * rendered pixel at base zoom); an angle-only mismatch is 0. */
+            float errPx = sqrtf((float)dx * dx + (float)dy * dy) / 16.0f;
+            csPtr->reconCountThisWindow++;
+            csPtr->reconErrSumPx += errPx;
+            if (errPx > csPtr->reconErrMaxPx) {
+              csPtr->reconErrMaxPx = errPx;
+            }
 
+            /* Prediction diverged — snap to server state and replay.
+             * The predicted angle is no longer restored after replay; the
+             * render-only error smoothing below absorbs the sub-quantum
+             * corrections that the old angle-restore band-aid hid, so the
+             * honest replayed angle is kept. */
             tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), servX, servY, servAngle, FALSE);
             {
               BYTE isDead, onBoat;
@@ -419,17 +469,22 @@ void clientApplySnapshot(ClientSim *csPtr,
             }
             csPtr->sim.isPredicting = FALSE;
 
-            /* If the server's angle matched our prediction (quantized), the
-             * reconciliation was triggered only by position drift (e.g. from
-             * speed quantization).  Restore the
-             * predicted angle + turn ramp-up so the gunsight doesn't flicker
-             * from tiny position-induced turn-rate differences during replay. */
-            if (!angleMismatch) {
-              WORLD finalX, finalY;
-              tankGetWorld(&MY_TANK(csPtr), &finalX, &finalY);
-              tankSetWorld(&csPtr->sim, &MY_TANK(csPtr), finalX, finalY, savedAngle, FALSE);
-              tankSetFirstLeft(&MY_TANK(csPtr), savedFirstLeft);
-              tankSetFirstRight(&MY_TANK(csPtr), savedFirstRight);
+            /* Deposit the correction into the render-only error offset so
+             * it slides instead of snapping. Read the post-replay pose
+             * (after the replay loop) so the offset reflects what will
+             * actually be simulated next frame; accumulate (never
+             * overwrite) so back-to-back corrections compose. A correction
+             * past the clamp zeroes the offset — a genuine teleport snaps. */
+            {
+              WORLD postX, postY;
+              TURNTYPE postAngle;
+              tankGetWorld(&MY_TANK(csPtr), &postX, &postY);
+              postAngle = tankGetAngle(&MY_TANK(csPtr));
+              clientErrSmoothAccumulate(&csPtr->errX, &csPtr->errY,
+                                        &csPtr->errAngle,
+                                        (float)predX - (float)postX,
+                                        (float)predY - (float)postY,
+                                        predAngle - postAngle);
             }
           }
         }
@@ -442,6 +497,10 @@ void clientApplySnapshot(ClientSim *csPtr,
             /* alive→dead: set death type for static screen rendering */
             tankSetLastTankDeath(&MY_TANK(csPtr), LAST_DEATH_BY_SHELL);
             tankAddDeath(&csPtr->sim, &MY_TANK(csPtr));
+            /* Death is a hard transition — drop any render offset. */
+            csPtr->errX = 0.0f;
+            csPtr->errY = 0.0f;
+            csPtr->errAngle = 0.0f;
           }
           if (csPtr->lastServerArmour > TANK_FULL_ARMOUR && tanks[i].armour <= TANK_FULL_ARMOUR) {
             /* dead→alive: recenter view on respawn */
@@ -450,6 +509,10 @@ void clientApplySnapshot(ClientSim *csPtr,
               csPtr->viewport.inPillView = FALSE;
               clientSimCenterTank(csPtr);
             }
+            /* Respawn teleports the tank — snap, don't slide. */
+            csPtr->errX = 0.0f;
+            csPtr->errY = 0.0f;
+            csPtr->errAngle = 0.0f;
           }
           csPtr->lastServerArmour = tanks[i].armour;
         }

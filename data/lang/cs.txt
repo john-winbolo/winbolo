@@ -269,6 +269,7 @@ STR_DLGNETINFO_KBOUT=KB/s odes.:
 STR_DLGNETINFO_PACKETS_RATE=Pakety/s: {number} příj. / {number2} odes.
 STR_DLGNETINFO_KB_RATE=KB/s: {string1} příj. / {string2} odes.
 STR_DLGNETINFO_LOSS=Ztráta paketů: {number}% ({number2}/{number3} tuto sek., {number4} celkem ve hře)
+STR_DLGNETINFO_RECONCILE=Vyrovnání: {number}/s, chyba prům {string1}px, max {string2}px, vyhlazení {string3}px
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Kopírovat seed

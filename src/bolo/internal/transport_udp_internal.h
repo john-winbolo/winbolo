@@ -112,6 +112,60 @@ static inline void controlEventQueueAssertValid(const ClientControlEventQueue *q
     SDL_assert((q->nextSeq - q->ackedSeq) <= CONTROL_EVENT_QUEUE_SIZE);
 }
 
+/* Decide whether the coalesced standalone PACKET_CONTROL_ACK should be
+ * (re)sent this tick.  pendingTick is the localTick at which the most
+ * recent PACKET_CONTROL_TICK armed the ack (0 = nothing pending); the
+ * emission resets it to 0 after sending, so each subsequent TICK re-arms
+ * it.  The ack is sent — including re-sending an already-sent value —
+ * whenever a TICK is pending and either:
+ *   - overdue: ~3 ticks (~60ms at 50 Hz) have elapsed since arming,
+ *              coalescing a burst of retransmitted TICKs into one ack; or
+ *   - eager:   a single TICK delivered 2+ new events (ack jumped past
+ *              lastSent+1), to free server queue slots promptly.
+ * The value-advance gate is deliberately absent: a re-send of an
+ * unchanged ack value is exactly what recovers a dropped lobby ack while
+ * the server keeps retransmitting already-acked events.  Self-terminating:
+ * pendingTick is only re-armed by an incoming TICK, and the server stops
+ * sending TICKs the moment its ackedSeq reaches nextSeq, so a caught-up
+ * server yields zero re-sends — no per-tick ack storm in steady state. */
+static inline bool controlAckResendDue(uint32_t pendingTick,
+                                       uint32_t localTick,
+                                       uint32_t controlEventAck,
+                                       uint32_t lastSentControlAck) {
+    if (pendingTick == 0) {
+        return false;
+    }
+    bool overdue = (localTick - pendingTick) >= 3;
+    bool eager = (controlEventAck > lastSentControlAck + 1);
+    return overdue || eager;
+}
+
+/* Decide whether an incoming control-event tail is the server's
+ * game-start sequence-space restart that the client must adopt.  The
+ * server wipes the per-client control queue to (ackedSeq=1, nextSeq=1)
+ * in transportUdpServerOnGameStart and publishes CTRL_GAME_PHASE_RUNNING
+ * at seq 1, so the running flip lands at the bottom of a new sequence
+ * space while the client's controlEventAck is still high from the lobby
+ * phase.  When this returns true the caller snaps controlEventAck down to
+ * baseSeq so seq-1 RUNNING isn't dedup'd away.
+ *
+ * Deliberately independent of inLobby: under loss/reorder inLobby can
+ * flip false before the seq-1 RUNNING snapshot is processed.  runningSeqAdopted
+ * makes the snap fire exactly once per wipe (set true on snap, cleared on
+ * the reverse game-over/lobby transition) and stay loop-free on retransmits:
+ * after adoption the flag blocks a re-snap and seq-1 RUNNING dedups normally
+ * (baseSeq < the now-advanced ack but adopted == true → no re-fire). */
+static inline bool controlSeqResetDetected(uint32_t controlEventCount,
+                                           uint32_t controlEventBaseSeq,
+                                           uint32_t controlEventAck,
+                                           bool runningSeqAdopted,
+                                           bool firstEventIsRunning) {
+    return controlEventCount > 0 &&
+           !runningSeqAdopted &&
+           firstEventIsRunning &&
+           controlEventBaseSeq < controlEventAck;
+}
+
 /* Join retry interval in ticks (1 second) */
 #define JOIN_RETRY_INTERVAL 50
 
@@ -151,6 +205,10 @@ const char *packetTypeName(uint8_t type);
 
 int packInputPacket(uint8_t *buf, const InputPacket *pkt);
 void unpackInputPacket(const uint8_t *buf, InputPacket *pkt);
+
+/* True when cur's sampled controls differ from prev's — the edge that
+ * promotes a recorded input to an immediate send. */
+bool udpInputEdgeChanged(const InputPacket *prev, const InputPacket *cur);
 int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts);
 int unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts);
 int packShellSnapshot(uint8_t *buf, const ShellSnapshot *ss);

@@ -1342,6 +1342,7 @@ STR_RETURNING_TO_LOBBY=Returning to lobby
 STR_DLGLOBBY_REJECT_BAD_STATE=not allowed right now
 STR_DLGLOBBY_BAL_STATUS_FAILED=WBN balance failed
 STR_DLGNETINFO_LOSS=Packet loss: {number}% ({number2}/{number3} this sec, {number4} game total)
+STR_DLGNETINFO_RECONCILE=Reconciles: {number}/s, err avg {string1}px, max {string2}px, smoothing {string3}px
 STR_DLGWBN_RANK=#{number} of {number2}
 STR_DLGWBN_UNRANKED=Unranked
 

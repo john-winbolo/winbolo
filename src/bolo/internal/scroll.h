@@ -141,11 +141,16 @@ void            scrollSetSubTilePrecision(bool on);
 void scrollCreate(ScrollState *ss);
 void scrollSetScrollType(ScrollState *ss, bool isAuto);
 void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY);
-bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, bool isTank, BYTE gunsightX, BYTE gunsightY, BYTE speed, BYTE armour, TURNTYPE angle, bool manual, bool tankIsDead);
+/* ownRenderX/ownRenderY: the local tank's rendered (render-error-smoothed)
+ * world position. The ENHANCED sub-tile autoscroll centres on it so the
+ * camera tracks the drawn hull instead of shearing against it; the classic
+ * whole-tile paths use objectX/objectY. With the offset at zero these equal
+ * the raw tank position. */
+bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, bool isTank, BYTE gunsightX, BYTE gunsightY, BYTE speed, BYTE armour, TURNTYPE angle, bool manual, bool tankIsDead, WORLD ownRenderX, WORLD ownRenderY);
 bool scrollCheck(BYTE xValue, BYTE yValue, BYTE objectX, BYTE objectY);
 bool scrollManual(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle);
 bool scrollNoAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, TURNTYPE angle);
-bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, BYTE gunsightX, BYTE gunsightY, BYTE speed, TURNTYPE angle);
+bool scrollAutoScroll(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYTE objectX, BYTE objectY, BYTE gunsightX, BYTE gunsightY, BYTE speed, TURNTYPE angle, WORLD ownRenderX, WORLD ownRenderY);
 
 #endif /* SCROLL_H */
 

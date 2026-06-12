@@ -269,6 +269,7 @@ STR_DLGNETINFO_KBOUT=KB/s 出：
 STR_DLGNETINFO_PACKETS_RATE=包/秒：{number} 入 / {number2} 出
 STR_DLGNETINFO_KB_RATE=KB/秒：{string1} 入 / {string2} 出
 STR_DLGNETINFO_LOSS=丢包率：{number}% ({number2}/{number3} 本秒, {number4} 本局累计)
+STR_DLGNETINFO_RECONCILE=预测校正：{number}/秒, 误差均值 {string1}px, 最大 {string2}px, 平滑 {string3}px
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=复制种子

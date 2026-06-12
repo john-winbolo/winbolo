@@ -57,6 +57,7 @@ add_library(bolo_static STATIC
     mines.c
     minesexp.c
     ml_brain.c
+    net_impair.c
     net_packet_debug.c
     obs_builder.c
     pillbox.c

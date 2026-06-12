@@ -169,13 +169,21 @@ struct ServerSim {
     unsigned short serverPort;
 
     /* Per-player input queues — allows 2 inputs per server timer callback */
-#define SERVER_INPUT_QUEUE_SIZE 8  /* Must be power of 2 */
+#define SERVER_INPUT_QUEUE_SIZE 16  /* Must be power of 2 */
     InputPacket  inputQueue[MAX_TANKS][SERVER_INPUT_QUEUE_SIZE];
     uint8_t      inputQueueHead[MAX_TANKS];  /* Next slot to write */
     uint8_t      inputQueueTail[MAX_TANKS];  /* Next slot to read */
     bool         playerConnected[MAX_TANKS];
     uint32_t     lastProcessedInput[MAX_TANKS];  /* Tick of last processed input per player */
     uint8_t      lastInputButtons[MAX_TANKS];    /* Last button bitmask for stall continuity */
+    uint32_t     lastActionAppliedTick[MAX_TANKS]; /* newest input tick whose one-shot
+                                                    * action (fire/mine/build) was
+                                                    * executed or harvested */
+    uint8_t      pendingHarvestActions[MAX_TANKS]; /* harvested LAY_MINE bit awaiting
+                                                    * the next applied input */
+    BYTE         pendingHarvestBuildAction[MAX_TANKS]; /* harvested build (0 = none) */
+    BYTE         pendingHarvestBuildX[MAX_TANKS];
+    BYTE         pendingHarvestBuildY[MAX_TANKS];
     uint16_t     playerPing[MAX_TANKS];           /* Per-player ping in ms (server-measured RTT) */
 
     /* Input jitter buffer — delay processing until buffer reaches target depth */
@@ -185,10 +193,38 @@ struct ServerSim {
 #define JITTER_GROW_THRESHOLD   2   /* Consecutive stalls before growing */
 #define JITTER_SHRINK_INTERVAL 100  /* Ticks of no stalls before shrinking */
 #define LAG_COMP_MAX_TICKS 12       /* 250ms one-way max compensation (12 game ticks) */
+/* Consecutive dry half-steps before a stall is treated as genuine loss
+ * and the server stall-advances (consumes the tick). At/below this, a
+ * dry half-step is routine send-burst cadence ripple: repeat held buttons
+ * and wait, so the in-flight real input still applies at its true tick.
+ * Bounds reintroduced overshoot to this many half-steps under real loss;
+ * tune up if localhost recon/s isn't ~0, down if high-ping overshoot
+ * returns. */
+#define STALL_ADVANCE_DRY_TICKS 3
     uint8_t inputBufferFilled[MAX_TANKS];  /* true once initial fill reached */
     uint8_t  jitterTarget[MAX_TANKS];      /* Current adaptive buffer depth */
     uint8_t  jitterStallCount[MAX_TANKS];  /* Consecutive ticks queue was empty when expected */
     uint16_t jitterStableTicks[MAX_TANKS]; /* Ticks since last stall */
+    uint8_t inputDryTicks[MAX_TANKS]; /* consecutive half-steps with no fresh
+                                       * input; gates stall-advance vs wait */
+
+    /* Per-player input-pipeline instrumentation — window counters reset
+     * each logged second, plus one gauge. Reads/writes only; never gate
+     * sim behaviour on these. Logged once per second by the [netstat] line. */
+    uint16_t statStallTicks[MAX_TANKS];         /* stall-branch executions this window */
+    uint16_t statGapFillTicks[MAX_TANKS];       /* gap-filled ticks this window */
+    uint16_t statDroppedStaleInputs[MAX_TANKS]; /* stale queue entries skipped this window */
+    uint16_t statCatchupTicks[MAX_TANKS];       /* extra catch-up dequeues this window —
+                                                 * one per backlog-bleed apply when
+                                                 * post-dequeue depth > jitterTarget + 1 */
+    uint8_t  statLastRewindTicks[MAX_TANKS];    /* gauge: most recent lag-comp rewind */
+
+#ifdef WB_NETDEBUG
+    /* Net-debug rig: sim-executed turn half-steps and mine lays per
+     * player. Test-only — never compiled into production builds. */
+    uint32_t dbgExecTurnTicks[MAX_TANKS];
+    uint32_t dbgMineLays[MAX_TANKS];
+#endif
 
     PosHistory   posHistory[MAX_TANKS];           /* Position history for lag compensation */
     PosHistory   lgmPosHistory[MAX_TANKS];        /* LGM position history for lag compensation */

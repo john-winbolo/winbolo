@@ -269,6 +269,7 @@ STR_DLGNETINFO_KBOUT=KB/s ut:
 STR_DLGNETINFO_PACKETS_RATE=Paket/sek: {number} in / {number2} ut
 STR_DLGNETINFO_KB_RATE=KB/sek: {string1} in / {string2} ut
 STR_DLGNETINFO_LOSS=Paketförlust: {number}% ({number2}/{number3} denna sek, {number4} totalt)
+STR_DLGNETINFO_RECONCILE=Avstämningar: {number}/s, felsnitt {string1}px, max {string2}px, utjämning {string3}px
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Kopiera seed

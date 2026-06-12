@@ -1080,6 +1080,7 @@ static const LangEntry langTable[] = {
     {1491, "Don't ask again"},
     {1492, "Keyboard"},
     {1493, "Gray letterbox bars"},
+    {1494, "Reconciles: {number}/s, err avg {string1}px, max {string2}px, smoothing {string3}px"},
 
     /* macOS native menu — App / File / Window menu items mirrored by
      * src/gui/sdl3/platform/mac_menubar.mm. Not referenced by the
@@ -2026,6 +2027,7 @@ const char *langGetTextFmt(langid id, const MessageArgs *args) {
                     const char *s = NULL;
                     if (d == '1') s = args->string1;
                     else if (d == '2') s = args->string2;
+                    else if (d == '3') s = args->string3;
                     if (s) {
                         replacement = s;
                         replLen     = 0;

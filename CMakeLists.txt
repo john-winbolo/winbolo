@@ -750,6 +750,16 @@ if(ENABLE_PILLMASSAGE_BUG)
     add_compile_definitions(ENABLE_PILLMASSAGE_BUG)
 endif()
 
+# Net-debug instrumentation: per-player sim-executed counters and the
+# netdebug.* repro tests. OFF in every shipping build.
+option(WB_NETDEBUG "Build net-debug instrumentation and netdebug tests" OFF)
+if(WB_NETDEBUG)
+    # Global, not per-target: the gated counters live inside struct
+    # ServerSim, so every TU must agree on the struct layout — a partial
+    # define would diverge struct sizes across libraries.
+    add_compile_definitions(WB_NETDEBUG=1)
+endif()
+
 # libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
 # When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
 option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
@@ -2466,6 +2476,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/common/prefs.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
+    tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
@@ -2496,6 +2507,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_bolo_rand.c
+    tests/unit/test_net_impair.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
     tests/unit/test_brain_internal_msg_routing.c
@@ -2507,6 +2519,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
+    tests/unit/test_input_redundancy.c
+    tests/unit/test_edge_send.c
+    tests/unit/test_stall_advance.c
+    tests/unit/test_input_catchup.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
@@ -2536,6 +2552,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/lzw/dcodlzw.c
     src/lzw/ecodlzw.c
 )
+
+if(WB_NETDEBUG)
+    list(APPEND WINBOLO_UNITTESTS_SOURCES tests/unit/test_netdebug_rig.c)
+endif()
 
 add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
 target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c)
@@ -2731,11 +2751,31 @@ set(_unit_test_names
     alliance_reset_apply_rebuilds_alliances
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
+    input_redundancy
+    stall_advances_processed_tick
+    stall_mine_late_lays_once
+    stall_mine_duplicate_not_relaid
+    stall_fire_not_harvested
+    stall_never_fires
+    stall_brief_trough_no_advance
+    stall_long_dry_advances
+    input_catchup
+    catchup_ignores_redundant_duplicates
+    edge_send_predicate
+    error_smoothing
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
     set_tests_properties(unit.${_name} PROPERTIES TIMEOUT 60)
 endforeach()
+
+if(WB_NETDEBUG)
+    foreach(_name netdebug_commanded_vs_executed netdebug_overshoot_under_loss netdebug_mine_once_under_loss netdebug_error_offset_clamped)
+        add_test(NAME netdebug.${_name}
+                 COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
+        set_tests_properties(netdebug.${_name} PROPERTIES TIMEOUT 60)
+    endforeach()
+endif()
 
 endif() # iOS vs Desktop

@@ -125,6 +125,8 @@ static const UnitTestEntry s_tests[] = {
     { "queue_wipe_resets_both_seqs",             run_queue_wipe_resets_both_seqs             },
     { "queue_enqueue_into_empty_after_wipe",     run_queue_enqueue_into_empty_after_wipe     },
     { "queue_hasspace_at_capacity",              run_queue_hasspace_at_capacity              },
+    { "control_ack_resend_due",                  run_control_ack_resend_due                  },
+    { "control_seq_reset_detect",                run_control_seq_reset_detect                },
     { "brain_crash_log_writes_file",             run_brain_crash_log_writes_file             },
     { "brain_crash_log_falls_back_to_luaptr",    run_brain_crash_log_falls_back_to_luaptr    },
     { "brain_inbox_push_peek_fifo",              run_brain_inbox_push_peek_fifo              },
@@ -132,6 +134,7 @@ static const UnitTestEntry s_tests[] = {
     { "brain_inbox_legacy_drain_fifo",           run_brain_inbox_legacy_drain_fifo           },
     { "brain_inbox_clear_resets",                run_brain_inbox_clear_resets                },
     { "bolo_rand_golden_sequence",               run_bolo_rand_golden_sequence               },
+    { "net_impair",                              run_net_impair                              },
     { "countdown_abort_publishes_phase",         run_countdown_abort_publishes_phase         },
     { "lobby_auto_unready_clears_humans_keeps_bots",
                                                  run_lobby_auto_unready_clears_humans_keeps_bots },
@@ -206,6 +209,24 @@ static const UnitTestEntry s_tests[] = {
     { "alliance_reset_apply_rebuilds_alliances", run_alliance_reset_apply_rebuilds_alliances },
     { "treegrow_never_plants_on_deep_sea",       run_treegrow_never_plants_on_deep_sea       },
     { "treegrow_reset_clears_stale_target",      run_treegrow_reset_clears_stale_target      },
+    { "input_redundancy",                        run_input_redundancy                        },
+    { "edge_send_predicate",                     run_edge_send_predicate                     },
+    { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
+    { "stall_mine_late_lays_once",               run_stall_mine_late_lays_once               },
+    { "stall_mine_duplicate_not_relaid",         run_stall_mine_duplicate_not_relaid         },
+    { "stall_fire_not_harvested",                run_stall_fire_not_harvested                },
+    { "stall_never_fires",                       run_stall_never_fires                       },
+    { "stall_brief_trough_no_advance",           run_stall_brief_trough_no_advance           },
+    { "stall_long_dry_advances",                 run_stall_long_dry_advances                 },
+    { "input_catchup",                           run_input_catchup                           },
+    { "catchup_ignores_redundant_duplicates",    run_catchup_ignores_redundant_duplicates    },
+    { "error_smoothing",                         run_error_smoothing                         },
+#ifdef WB_NETDEBUG
+    { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
+    { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },
+    { "netdebug_mine_once_under_loss",           run_netdebug_mine_once_under_loss           },
+    { "netdebug_error_offset_clamped",           run_netdebug_error_offset_clamped           },
+#endif
 };
 #define NUM_TESTS ((int)(sizeof(s_tests) / sizeof(s_tests[0])))
 

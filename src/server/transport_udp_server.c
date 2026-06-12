@@ -58,71 +58,16 @@
 #include "server_sim_lifecycle.h"
 #include "../common/wb_log.h"
 #include "../common/mp_diag_log.h"
+#include "net_impair.h"
 
 #ifdef _WIN32
 #define strcasecmp _stricmp
 #endif
 
-/* ---- Simulated server latency (set to 0 to disable) ----
- * Delays packet delivery on the server receive path by this many ms.
- * For localhost testing, set to 100 to simulate ~200ms RTT (100ms each way
- * since the server delays both receiving client inputs and sending snapshots
- * back through the same delayed receive path on the client's next poll).
- * Only compiled into the dedicated server target (WinBoloDS). */
-#define SIM_LATENCY_SERVER_MS  0
-
-#if SIM_LATENCY_SERVER_MS > 0 && !defined(HAVE_SCREEN_C)
-typedef struct {
-    uint8_t  data[2048];
-    int      len;
-    struct sockaddr_in from;
-    uint64_t deliverAt;  /* SDL tick (ms) when this packet should be released */
-} DelayedPacket;
-
-#define DELAY_QUEUE_SIZE 512
-static DelayedPacket serverDelayQueue[DELAY_QUEUE_SIZE];
-static int serverDelayHead = 0;
-static int serverDelayCount = 0;
-
-/* Receive with simulated latency — buffers packets and releases after delayMs. */
-static int udpRecvFromDelayed(SOCKET sock, uint8_t *buf, int maxLen,
-                               struct sockaddr_in *fromAddr,
-                               int delayMs, DelayedPacket *queue,
-                               int *head, int *count) {
-    /* Drain socket into delay queue */
-    while (*count < DELAY_QUEUE_SIZE) {
-        struct sockaddr_in tmpAddr;
-        socklen_t tmpLen = sizeof(tmpAddr);
-        int n = recvfrom(sock, (char *)queue[(*head + *count) % DELAY_QUEUE_SIZE].data,
-                         sizeof(queue[0].data), 0,
-                         (struct sockaddr *)&tmpAddr, &tmpLen);
-        if (n == SOCKET_ERROR) break;
-        int idx = (*head + *count) % DELAY_QUEUE_SIZE;
-        queue[idx].len = n;
-        queue[idx].from = tmpAddr;
-        queue[idx].deliverAt = SDL_GetTicks() + delayMs;
-        (*count)++;
-    }
-
-    /* Release oldest packet if its delay has elapsed */
-    if (*count > 0 && SDL_GetTicks() >= queue[*head].deliverAt) {
-        int copyLen = queue[*head].len;
-        if (copyLen > maxLen) copyLen = maxLen;
-        memcpy(buf, queue[*head].data, copyLen);
-        *fromAddr = queue[*head].from;
-        *head = (*head + 1) % DELAY_QUEUE_SIZE;
-        (*count)--;
-        return copyLen;
-    }
-    return -1;
-}
-#endif
-
 /* ---- Server dedicated recv thread ----
  * A background thread continuously polls the server socket and queues
  * packets into an SPSC ring buffer.  The timer callback drains the
- * queue each tick, keeping packet processing on the main thread.
- * Skipped when simulated latency is enabled (udpRecvFromDelayed). */
+ * queue each tick, keeping packet processing on the main thread. */
 
 #define RECV_QUEUE_SIZE 128
 
@@ -336,6 +281,27 @@ static struct {
     uint32_t     uploadMaxStorageBytes;
 } udpServer;
 
+/* Runtime network impairment (delay/jitter/loss/burst) on the server's
+ * inbound (client->server) and outbound (server->client) datagram paths.
+ * Disabled unless transportUdpServerSetNetImpair() enables them.  Driven
+ * only from the per-tick recv/drain entry points — never from the recv
+ * thread, since bolo_rand is not thread-safe. */
+static NetImpair srvImpairIn;
+static NetImpair srvImpairOut;
+
+/* Outbound datagram wrapper.  Every server->peer send routes through here
+ * so the outbound impairment layer can delay/drop/reorder it.  When
+ * impairment is disabled (or the datagram is too large for the queue),
+ * the packet goes straight onto the wire — behaviourally identical to a
+ * direct udpSendTo. */
+static void srvSendTo(const uint8_t *buf, int len,
+                      const struct sockaddr_in *addr) {
+    if (netImpairEnabled(&srvImpairOut) &&
+        netImpairOffer(&srvImpairOut, buf, len, addr, (uint64_t)SDL_GetTicks())) {
+        return;
+    }
+    udpSendTo(udpServer.sock, buf, len, addr);
+}
 
 /* Public-address override populated by transportUdpServerSetPublicAddress
  * once libplum negotiates a UPnP/NAT-PMP/PCP mapping.  When non-empty the
@@ -525,7 +491,7 @@ static void serverSendJoinReject(const struct sockaddr_in *addr, langid id,
         return;
     }
     /* wire-only: per-client handshake (response to a single client's request) */
-    udpSendTo(udpServer.sock, buf, pos, addr);
+    srvSendTo(buf, pos, addr);
 }
 
 /* Short name for a ControlEventType — diagnostic logging only. */
@@ -611,7 +577,7 @@ static void transportUdpServerSendControlTick(int clientIdx) {
 
     buf[countOffset] = (uint8_t)count;
     if (count > 0) {
-        udpSendTo(udpServer.sock, buf, pos, &client->addr);
+        srvSendTo(buf, pos, &client->addr);
         {
             char typesBuf[256];
             int tbPos = 0;
@@ -846,7 +812,7 @@ static void serverSendJoinAccept(int slot, ServerSim *sim,
     pos += 4;
 
     /* wire-only: per-client handshake (response to a single client's request) */
-    udpSendTo(udpServer.sock, acceptBuf, pos, addr);
+    srvSendTo(acceptBuf, pos, addr);
 }
 
 /* Send PACKET_WBN_REKEY to a single connected client carrying the current
@@ -869,7 +835,7 @@ static void transportUdpServerSendWbnRekey(UdpServerClient *c) {
     wbnKeyEncode(buf + PACKET_HEADER_SIZE, serverKey);
 
     /* wire-only: per-client capability refresh (no in-process audience) */
-    udpSendTo(udpServer.sock, buf, sizeof(buf), &c->addr);
+    srvSendTo(buf, sizeof(buf), &c->addr);
 }
 
 /* Broadcast PACKET_WBN_REKEY to every connected client that was
@@ -930,7 +896,7 @@ static void serverSendMapChunks(int slot) {
         pktLen = PACKET_HEADER_SIZE + 4 + chunkSize;
 
         /* wire-only: per-client reliability (acked / per-tick to one slot) */
-        udpSendTo(udpServer.sock, chunkBuf, pktLen, &client->addr);
+        srvSendTo(chunkBuf, pktLen, &client->addr);
     }
 
     dl->lastSendTick = udpServer.tickCount;
@@ -1718,7 +1684,7 @@ static void serverHandleInput(const uint8_t *buf, int len,
 
         /* Only apply if this is a newer input than what we last processed */
         if (pkt.tick > serverSimGetLastProcessedInput(sim, clientIdx)) {
-            if (udpServer.clients[clientIdx].inputsThisTick >= 4) break;
+            if (udpServer.clients[clientIdx].inputsThisTick >= INPUT_REDUNDANCY_COUNT) break;
             serverSimApplyInput(sim, &pkt);
             udpServer.clients[clientIdx].inputsThisTick++;
         }
@@ -1803,7 +1769,7 @@ static void serverHandlePing(const uint8_t *buf, int len,
         packU32(pongBuf + PACKET_HEADER_SIZE + 4, now);
     }
     /* wire-only: per-client handshake (response to a single client's request) */
-    udpSendTo(udpServer.sock, pongBuf, sizeof(pongBuf), fromAddr);
+    srvSendTo(pongBuf, sizeof(pongBuf), fromAddr);
 }
 
 /* Build and send a snapshot to one client.
@@ -1998,7 +1964,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     packU16(buf + countsPos + 22, hdr.returnToLobbyTicks);
 
     /* wire-only: per-tick snapshot — high-volume delta-encoded path with its own reliability discipline */
-    udpSendTo(udpServer.sock, buf, pos, &client->addr);
+    srvSendTo(buf, pos, &client->addr);
 }
 
 /* Disconnect a player by index.
@@ -2229,9 +2195,7 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
             {
                 uint8_t kbuf[PACKET_HEADER_SIZE];
                 packHeader(kbuf, PACKET_KICKED, 0);
-                sendto(udpServer.sock, (const char *)kbuf, sizeof(kbuf), 0,
-                       (const struct sockaddr *)&udpServer.clients[i].addr,
-                       sizeof(udpServer.clients[i].addr));
+                srvSendTo(kbuf, sizeof(kbuf), &udpServer.clients[i].addr);
             }
             serverCleanupMapDownload(i);
             serverDisconnectClient(sim, i, FALSE);
@@ -2382,10 +2346,10 @@ bool transportUdpServerCreate(unsigned short port,
         controlEventQueueAssertValid(&udpServer.controlEventQueues[i], "server-boot");
     }
 
-    /* Start dedicated recv thread (skip under simulated latency) */
-#if SIM_LATENCY_SERVER_MS > 0 && !defined(HAVE_SCREEN_C)
-    recvThread = NULL;
-#else
+    netImpairInit(&srvImpairIn);
+    netImpairInit(&srvImpairOut);
+
+    /* Start dedicated recv thread */
     SDL_SetAtomicInt(&recvQueueHead, 0);
     SDL_SetAtomicInt(&recvQueueTail, 0);
     recvDropCount = 0;
@@ -2400,7 +2364,6 @@ bool transportUdpServerCreate(unsigned short port,
             SDL_GetError());
         SDL_SetAtomicInt(&recvThreadRunning, 0);
     }
-#endif
 
     return true;
 }
@@ -2415,6 +2378,27 @@ void transportUdpServerSetUploadConfig(UploadPolicy policy,
     if (maxStorageBytes != 0) {
         udpServer.uploadMaxStorageBytes = maxStorageBytes;
     }
+}
+
+void transportUdpServerSetNetImpair(const char *spec) {
+#if WB_ENABLE_NETIMPAIR
+    NetImpairConfig cfg;
+    if (spec == NULL || !netImpairParseConfig(spec, &cfg)) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "netimpair: bad spec '%s' — impairment left off",
+            spec ? spec : "(null)");
+        return;
+    }
+    netImpairEnable(&srvImpairIn, &cfg);
+    netImpairEnable(&srvImpairOut, &cfg);
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+        "netimpair enabled: delay=%ums jitter=%ums loss=%u%% burst=%u",
+        (unsigned)cfg.baseDelayMs, (unsigned)cfg.jitterMs,
+        (unsigned)cfg.lossPercent, (unsigned)cfg.burstLossLen);
+#else
+    /* Impairment tooling compiled out (WB_ENABLE_NETIMPAIR == 0). */
+    (void)spec;
+#endif
 }
 
 void transportUdpServerDestroy(void) {
@@ -2521,7 +2505,7 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
     pkt.spare2 = 0;
 
     /* wire-only: tracker / external reply (no in-process audience) */
-    udpSendTo(udpServer.sock, (uint8_t *)&pkt, sizeof(pkt), fromAddr);
+    srvSendTo((uint8_t *)&pkt, sizeof(pkt), fromAddr);
 
     {
         struct in_addr addrCopy = fromAddr->sin_addr;
@@ -2574,33 +2558,40 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
                       (unsigned)udpServer.mapEventQueues[i].nextSeq);
         }
         if (udpServer.clients[i].connected) {
-            /* The controlEventQueues memset below destroys any un-ACKed
+            /* The controlEventQueues drop below discards any un-ACKed
                CTRL_PLAYER_JOIN still in flight from a late-countdown
                joiner.  Flag this client for an unsolicited PLAYER_LIST
                resync so its roster catches up after the reset; the new
-               game's first control event will be CTRL_GAME_PHASE_RUNNING
-               at seq=1, with no retransmit path back to the dropped
-               JOIN events. */
+               game's first control event is CTRL_GAME_PHASE_RUNNING at the
+               continuing nextSeq, with no retransmit path back to the
+               dropped JOIN events. */
             udpServer.clients[i].needsPlayerList = true;
             /* Ensure map download is considered complete so snapshots
              * are sent during the game even if a final chunk ack was lost. */
             udpServer.mapDownload[i].downloadComplete = TRUE;
         }
-        /* Reset reliable event queues — stale events from the previous game
-         * must not be resent after clients load the fresh map.  Reset all
-         * three queues here, BEFORE the caller publishes
-         * CTRL_GAME_PHASE_RUNNING, so that event enters every slot's
-         * control queue at seq 1 as the first event of the new game. */
-        udpServer.eventQueues[i].nextSeq = 1;
-        udpServer.eventQueues[i].ackedSeq = 1;
+        /* Drop the previous game's unacked reliable events, but keep the
+         * sequence counter monotonic — never reuse low seq numbers.  For
+         * all three queues set ackedSeq = nextSeq (queue now empty) and
+         * memset the buffer (clears stale delivered bodies so they can't be
+         * resent), but do NOT reset nextSeq.  The caller then publishes
+         * CTRL_GAME_PHASE_RUNNING, which enters each queue at the continuing
+         * nextSeq — the running events share the lobby's sequence space.
+         *
+         * This is the fix for the lobby→running seq-reuse desync: a stale
+         * in-flight lobby PACKET_CONTROL_TICK delayed past game start now
+         * carries seq numbers BELOW the client's continuing ack, so it
+         * dedups harmlessly instead of being mistaken for fresh running-space
+         * events (which is what happened when the queue restarted at seq 1
+         * and old high-seq lobby events looked newer than the new low-seq
+         * running events). */
+        udpServer.eventQueues[i].ackedSeq = udpServer.eventQueues[i].nextSeq;
         memset(udpServer.eventQueues[i].buffer, 0,
                sizeof(udpServer.eventQueues[i].buffer));
-        udpServer.mapEventQueues[i].nextSeq = 1;
-        udpServer.mapEventQueues[i].ackedSeq = 1;
+        udpServer.mapEventQueues[i].ackedSeq = udpServer.mapEventQueues[i].nextSeq;
         memset(udpServer.mapEventQueues[i].buffer, 0,
                sizeof(udpServer.mapEventQueues[i].buffer));
-        udpServer.controlEventQueues[i].nextSeq = 1;
-        udpServer.controlEventQueues[i].ackedSeq = 1;
+        udpServer.controlEventQueues[i].ackedSeq = udpServer.controlEventQueues[i].nextSeq;
         memset(udpServer.controlEventQueues[i].buffer, 0,
                sizeof(udpServer.controlEventQueues[i].buffer));
         /* C3: also restart the unacked-control timer baseline.  The
@@ -2645,7 +2636,7 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
         if (!udpServer.clients[i].connected) continue;
         /* Send PACKET_LOBBY_MAP_CHANGE so the client flushes its
          * stale map state before the new chunk stream lands. */
-        udpSendTo(udpServer.sock, notifyBuf, sizeof(notifyBuf),
+        srvSendTo(notifyBuf, sizeof(notifyBuf),
                   &udpServer.clients[i].addr);
         /* Re-send JOIN_ACCEPT so the client picks up the new compressed
          * map size. */
@@ -2934,8 +2925,7 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     pkt.has_password = serverSimGetPassword(sim)[0] != '\0' ? 1 : 0;
     pkt.spare2 = 0;
 
-    sendto(udpServer.sock, (const char *)&pkt, sizeof(pkt), 0,
-           (const struct sockaddr *)&dest, sizeof(dest));
+    srvSendTo((const uint8_t *)&pkt, sizeof(pkt), &dest);
 }
 
 void transportUdpServerSetPublicAddress(const char *externalIp,
@@ -2977,8 +2967,7 @@ void transportUdpServerSendNatKeepalive(ServerSim *sim,
     memcpy(&dest.sin_addr, he->h_addr_list[0], he->h_length);
     dest.sin_port = htons(trackerPort);
 
-    sendto(udpServer.sock, (const char *)buf, sizeof(buf), 0,
-           (const struct sockaddr *)&dest, sizeof(dest));
+    srvSendTo(buf, sizeof(buf), &dest);
 }
 
 void transportUdpServerSendPunchProbe(const char *trackerAddr,
@@ -3000,8 +2989,7 @@ void transportUdpServerSendPunchProbe(const char *trackerAddr,
     memcpy(&dest.sin_addr, he->h_addr_list[0], he->h_length);
     dest.sin_port = htons(trackerPort);
 
-    sendto(udpServer.sock, (const char *)buf, sizeof(buf), 0,
-           (const struct sockaddr *)&dest, sizeof(dest));
+    srvSendTo(buf, sizeof(buf), &dest);
 }
 
 void transportUdpServerDrainPunchQueue(void) {
@@ -3020,8 +3008,7 @@ void transportUdpServerDrainPunchQueue(void) {
          * arrival; its only purpose is to open our outbound NAT
          * mapping toward the joiner. */
         sentinel = 'P';
-        sendto(udpServer.sock, (const char *)&sentinel, 1, 0,
-               (const struct sockaddr *)&e->addr, sizeof(e->addr));
+        srvSendTo(&sentinel, 1, &e->addr);
         e->packetsRemaining--;
         e->ticksUntilNext = PUNCH_BURST_INTERVAL;
     }
@@ -3122,8 +3109,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             uint8_t ackBuf[PACKET_HEADER_SIZE + 4];
             packHeader(ackBuf, PACKET_COMMAND_ACK, client->outSequence++);
             packU32(ackBuf + PACKET_HEADER_SIZE, client->inboundCmdSeq);
-            sendto(udpServer.sock, (const char *)ackBuf, sizeof(ackBuf), 0,
-                   (struct sockaddr *)&client->addr, sizeof(client->addr));
+            srvSendTo(ackBuf, sizeof(ackBuf), &client->addr);
             break;
         }
         case PACKET_QUIT: {
@@ -3256,7 +3242,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
                 rsp[countPos] = (uint8_t)written;
                 rsp[finalPos] = (i >= got) ? 1 : 0;
-                udpSendTo(udpServer.sock, rsp, rpos, fromAddr);
+                srvSendTo(rsp, rpos, fromAddr);
             } while (i < got);
             break;
         }
@@ -3307,7 +3293,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 packHeader(nack, PACKET_LOBBY_MAP_USE_LOCAL_NACK, 0); \
                 nack[npos++] = (uint8_t)nameLen; \
                 if (nameLen > 0) { memcpy(nack + npos, nameBuf, nameLen); npos += nameLen; } \
-                udpSendTo(udpServer.sock, nack, npos, fromAddr); \
+                srvSendTo(nack, npos, fromAddr); \
             } while (0)
 
             if (!lobbyClientMayEdit(sim, clientIdx)) {
@@ -3398,7 +3384,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             done[dpos++] = previewed ? 0 : LOBBY_REJECT_INVALID;
             done[dpos++] = (uint8_t)relLen;
             if (relLen > 0) { memcpy(done + dpos, relBuf, relLen); dpos += relLen; }
-            udpSendTo(udpServer.sock, done, dpos, fromAddr);
+            srvSendTo(done, dpos, fromAddr);
             #undef SEND_USE_LOCAL_NACK
             break;
         }
@@ -3418,7 +3404,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_COOLDOWN;
-                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                srvSendTo(ack, sizeof(ack), fromAddr);
                 break;
             }
             udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
@@ -3426,21 +3412,21 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_NOT_HOST;
-                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                srvSendTo(ack, sizeof(ack), fromAddr);
                 break;
             }
             if (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP) {
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_LOCKED;
-                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                srvSendTo(ack, sizeof(ack), fromAddr);
                 break;
             }
             if (udpServer.uploadPolicy == UPLOAD_POLICY_OFF) {
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_DISABLED;
-                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                srvSendTo(ack, sizeof(ack), fromAddr);
                 break;
             }
             /* Single-thread the upload slot. The sim has one preview
@@ -3454,7 +3440,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_BUSY;
-                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                srvSendTo(ack, sizeof(ack), fromAddr);
                 break;
             }
             uint32_t totalLen =
@@ -3469,7 +3455,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
-                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                srvSendTo(ack, sizeof(ack), fromAddr);
                 break;
             }
             char nameBuf[128];
@@ -3480,7 +3466,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 uint8_t ack[PACKET_HEADER_SIZE + 1];
                 packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                 ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
-                udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                srvSendTo(ack, sizeof(ack), fromAddr);
                 break;
             }
 
@@ -3504,7 +3490,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     uint8_t ack[PACKET_HEADER_SIZE + 1];
                     packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
                     ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_LIMIT_HIT;
-                    udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+                    srvSendTo(ack, sizeof(ack), fromAddr);
                     break;
                 }
             }
@@ -3518,7 +3504,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             uint8_t ack[PACKET_HEADER_SIZE + 1];
             packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
             ack[PACKET_HEADER_SIZE] = 0;
-            udpSendTo(udpServer.sock, ack, sizeof(ack), fromAddr);
+            srvSendTo(ack, sizeof(ack), fromAddr);
             break;
         }
         case PACKET_LOBBY_MAP_UPLOAD_CHUNK: {
@@ -3593,7 +3579,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 done[dpos++] = (uint8_t)relLen;
                 memcpy(done + dpos, relReturn, relLen);
                 dpos += relLen;
-                udpSendTo(udpServer.sock, done, dpos, fromAddr);
+                srvSendTo(done, dpos, fromAddr);
             }
             break;
         }
@@ -3672,7 +3658,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 }
                 rsp[countPos] = (uint8_t)written;
                 rsp[finalPos] = (i >= got) ? 1 : 0;
-                udpSendTo(udpServer.sock, rsp, wpos, fromAddr);
+                srvSendTo(rsp, wpos, fromAddr);
             } while (i < got);
             break;
         }
@@ -3705,7 +3691,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 memcpy(err + wpos, relPath, pathLen);
                 wpos += pathLen;
                 err[wpos++] = 1;  /* not-found / unreadable */
-                udpSendTo(udpServer.sock, err, wpos, fromAddr);
+                srvSendTo(err, wpos, fromAddr);
                 break;
             }
 
@@ -3732,7 +3718,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 hdr[wpos++] = (uint8_t)((total >> 16) & 0xFF);
                 hdr[wpos++] = (uint8_t)((total >>  8) & 0xFF);
                 hdr[wpos++] = (uint8_t)( total        & 0xFF);
-                udpSendTo(udpServer.sock, hdr, wpos, fromAddr);
+                srvSendTo(hdr, wpos, fromAddr);
             }
 
             /* Stream chunks. ~1200 bytes per chunk keeps each UDP
@@ -3755,7 +3741,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 chunk[wpos++] = (uint8_t)( n        & 0xFF);
                 memcpy(chunk + wpos, mapBytes + off, n);
                 wpos += (int)n;
-                udpSendTo(udpServer.sock, chunk, wpos, fromAddr);
+                srvSendTo(chunk, wpos, fromAddr);
             }
             free(mapBytes);
             break;
@@ -3826,6 +3812,27 @@ static void udpServerTickPerClientCooldowns(void) {
     }
 }
 
+/* Release any datagrams now due from the impairment queues: inbound
+ * packets back into serverProcessPacket, outbound packets onto the wire.
+ * Both pops are no-ops while their layer is disabled (nothing queued), so
+ * the disabled path is byte-for-byte the direct path.  Called from the
+ * per-tick recv/drain entry points only — never the recv thread. */
+static void srvDrainImpair(ServerSim *sim) {
+    uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
+    struct sockaddr_in paddr;
+    uint64_t now = (uint64_t)SDL_GetTicks();
+    int plen;
+
+    while ((plen = netImpairPop(&srvImpairIn, pbuf, sizeof(pbuf),
+                                &paddr, now)) > 0) {
+        serverProcessPacket(sim, pbuf, plen, &paddr);
+    }
+    while ((plen = netImpairPop(&srvImpairOut, pbuf, sizeof(pbuf),
+                                &paddr, now)) > 0) {
+        udpSendTo(udpServer.sock, pbuf, plen, &paddr);
+    }
+}
+
 /* Receive all pending packets from clients (polled fallback) */
 void transportUdpServerRecv(ServerSim *sim) {
     uint8_t buf[UDP_MAX_PAYLOAD];
@@ -3843,15 +3850,15 @@ void transportUdpServerRecv(ServerSim *sim) {
 
     udpServer.tickCount++;
 
-#if SIM_LATENCY_SERVER_MS > 0 && !defined(HAVE_SCREEN_C)
-    while ((len = udpRecvFromDelayed(udpServer.sock, buf, sizeof(buf), &fromAddr,
-            SIM_LATENCY_SERVER_MS, serverDelayQueue,
-            &serverDelayHead, &serverDelayCount)) > 0) {
-#else
     while ((len = udpRecvFrom(udpServer.sock, buf, sizeof(buf), &fromAddr)) > 0) {
-#endif
-        serverProcessPacket(sim, buf, len, &fromAddr);
+        if (netImpairEnabled(&srvImpairIn)) {
+            netImpairOffer(&srvImpairIn, buf, len, &fromAddr,
+                           (uint64_t)SDL_GetTicks());
+        } else {
+            serverProcessPacket(sim, buf, len, &fromAddr);
+        }
     }
+    srvDrainImpair(sim);
 }
 
 /* Drain the recv thread's packet queue (called from timer callback) */
@@ -3874,12 +3881,18 @@ void transportUdpServerDrainRecvQueue(ServerSim *sim) {
 
     while (tail != head) {
         RecvQueueEntry *entry = &recvQueue[tail];
-        serverProcessPacket(sim, entry->data, entry->len, &entry->fromAddr);
+        if (netImpairEnabled(&srvImpairIn)) {
+            netImpairOffer(&srvImpairIn, entry->data, entry->len,
+                           &entry->fromAddr, (uint64_t)SDL_GetTicks());
+        } else {
+            serverProcessPacket(sim, entry->data, entry->len, &entry->fromAddr);
+        }
         tail = (tail + 1) % RECV_QUEUE_SIZE;
         SDL_SetAtomicInt(&recvQueueTail, tail);
         /* Re-read head in case more packets arrived during processing */
         head = SDL_GetAtomicInt(&recvQueueHead);
     }
+    srvDrainImpair(sim);
 }
 
 /* Returns true if a dedicated recv thread is running */
@@ -4099,7 +4112,7 @@ void transportUdpServerSend(ServerSim *sim) {
                       i, (unsigned)plCount, plPos);
             if (plCount > 0) {
                 /* wire-only: per-client handshake (response to a single client's request) */
-                udpSendTo(udpServer.sock, plBuf, plPos,
+                srvSendTo(plBuf, plPos,
                           &udpServer.clients[i].addr);
             }
             udpServer.clients[i].needsPlayerList = false;

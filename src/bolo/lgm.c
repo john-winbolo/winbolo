@@ -472,11 +472,6 @@ bool lgmCheckNewRequest(GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BYTE map
     }
     break;
   }
-  if (*action == LGM_TREE_REQUEST && pos != FOREST) {
-    proceed = FALSE;
-    sim->callbacks.messageAdd(sim->callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, LGM_NO_TREE, NULL);
-  }
-
   if (proceed == TRUE) {
     /* Check for a visible mine */
     if ((minesExistPos(&sim->mns, &sim->mp, mapX, mapY)) == TRUE) {

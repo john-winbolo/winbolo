@@ -40,32 +40,47 @@ int run_active_local_input_to_shot(void) {
      * the join validator accepts. */
     UT_ASSERT(clientSimConnectLocal(cs, sim, "Shooter", "", 0, 0));
 
-    /* Pre-fire warmup. Each input carries a strictly-increasing tick
-     * so the server's jitter buffer reaches its initial target depth
-     * and lastProcessedInput advances past 0 before we drop the
-     * fire packet. */
-    uint32_t input_tick;
-    for (input_tick = 1; input_tick <= WARMUP_TICKS; input_tick++) {
-        InputPacket pkt;
-        memset(&pkt, 0, sizeof(pkt));
-        pkt.tick      = input_tick;
-        pkt.playerNum = 0;
-        clientSimNetSendInput(cs, &pkt);
+    /* Pre-fire warmup. The active local transport runs TWO server
+     * half-steps per clientSimNetTick, so the producer must supply two
+     * tick numbers per net tick or the stream starves into substitutes
+     * (stall-advance) and the producer's numbering falls permanently
+     * behind. Feed pairs so the jitter buffer fills and lastProcessedInput
+     * advances past 0 without skew. */
+    uint32_t input_tick = 1;
+    int w;
+    for (w = 0; w < WARMUP_TICKS; w++) {
+        InputPacket a, b;
+        memset(&a, 0, sizeof(a)); a.tick = input_tick;     a.playerNum = 0;
+        memset(&b, 0, sizeof(b)); b.tick = input_tick + 1; b.playerNum = 0;
+        clientSimNetSendInput(cs, &a);
+        clientSimNetSendInput(cs, &b);
         clientSimNetTick(cs);
+        input_tick += 2;
     }
 
-    /* Fire input on a game-tick (even) input.tick — the keys/game
-     * split inside serverSimTick is driven by the dequeued input's
-     * tick parity, and only the game-tick branch actually fires a
-     * shell. */
-    if ((input_tick & 1u) == 1u) {
-        input_tick++;
+    /* Fire on a fresh even (game-tick) number computed from the server's
+     * live lastProcessedInput rather than an assumed counter — the
+     * keys/game split is driven by the dequeued input's parity, and only
+     * the game-tick branch fires a shell. Substitutes may have advanced
+     * the server past our warmup numbering, so read it back. Pair the
+     * fire with a keys-tick companion so the frame still supplies two
+     * numbers. */
+    uint32_t lpi = serverSimGetLastProcessedInput(sim, 0);
+    uint32_t fireTick = lpi + 2;
+    if ((fireTick & 1u) == 1u) {
+        fireTick++;                     /* even = game tick */
     }
-    InputPacket firePkt;
+    uint32_t keysTick = fireTick - 1;   /* odd, still > lpi */
+
+    InputPacket keysPkt, firePkt;
+    memset(&keysPkt, 0, sizeof(keysPkt));
+    keysPkt.tick      = keysTick;
+    keysPkt.playerNum = 0;
     memset(&firePkt, 0, sizeof(firePkt));
-    firePkt.tick      = input_tick;
+    firePkt.tick      = fireTick;
     firePkt.playerNum = 0;
     firePkt.actions   = INPUT_ACTION_FIRE;
+    clientSimNetSendInput(cs, &keysPkt);
     clientSimNetSendInput(cs, &firePkt);
 
     /* Spin the active local transport until the server's shell

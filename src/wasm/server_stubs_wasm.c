@@ -12,9 +12,9 @@
  *     it fails cleanly.
  *
  *   - serverInstanceGetPortmapInfo / TriggerManualProbe /
- *     GetManualProbeState: NAT/UPnP probe state owned by the
- *     server-instance lifecycle. The wasm client never hosts a server,
- *     so report idle/empty state.
+ *     GetManualProbeState / IsNatPunchActive: NAT/UPnP probe state owned
+ *     by the server-instance lifecycle. The wasm client never hosts a
+ *     server, so report idle/empty/inactive state.
  *
  *   - serverInstanceStartup / Tick / Shutdown: the real bodies live in
  *     server_lifecycle.c (server_static), which the wasm client doesn't
@@ -48,6 +48,10 @@ void serverInstanceTriggerManualProbe(void) {
 
 ManualProbeState serverInstanceGetManualProbeState(void) {
   return MANUAL_PROBE_IDLE;
+}
+
+bool serverInstanceIsNatPunchActive(void) {
+  return FALSE;
 }
 
 bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {

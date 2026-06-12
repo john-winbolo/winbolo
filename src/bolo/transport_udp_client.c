@@ -19,7 +19,7 @@
  *Purpose:
  *  Client-side UDP network transport for multiplayer games.
  *    - Sends InputPackets to the server (with redundancy:
- *      last 3 inputs per packet for loss tolerance).
+ *      last INPUT_REDUNDANCY_COUNT inputs per packet for loss tolerance).
  *    - Receives state snapshots from server.
  *    - Handles join handshake and ping measurement.
  *********************************************************/
@@ -47,6 +47,7 @@
 #include "../steam/steam_wrapper.h"
 #include "../common/wb_log.h"
 #include "../common/mp_diag_log.h"
+#include "net_impair.h"
 #include "../winbolonet/winbolonet_client.h"
 #include "../winbolonet/winbolonet_core.h"
 
@@ -116,6 +117,14 @@ typedef struct {
      * used to avoid resending an unchanged ACK. */
     uint32_t controlAckPendingTick;
     uint32_t lastSentControlAck;
+    /* Set once the client has snapped controlEventAck down into the new
+     * sequence space after the server's game-start queue wipe (seq-1
+     * RUNNING).  Cleared on the reverse game-over / lobby transition so
+     * the next game's wipe re-adopts.  Decouples RESET-DETECT from
+     * inLobby timing: under loss/reorder inLobby can flip false before
+     * the seq-1 RUNNING snapshot is processed, which used to skip the
+     * snap forever and wedge the control queue. */
+    bool runningSeqAdopted;
 
     /* Join handshake state */
     uint32_t joinAttempts;
@@ -213,6 +222,13 @@ typedef struct {
     uint8_t   uploadPrevStatus;
     uint64_t  uploadPrevProgressMs;
     uint32_t  uploadPrevOffset;
+
+    /* Runtime network impairment on the inbound (server->client) and
+     * outbound (client->server) datagram paths. Disabled unless the
+     * WB_NETIMPAIR env var was set and parsed at ctx create. Driven from
+     * udpClientTick off the process-global bolo_rand stream. */
+    NetImpair impairIn;
+    NetImpair impairOut;
 } TransportUdpClientCtx;
 
 #define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
@@ -228,6 +244,18 @@ static int udpClientLoggedLocalPort = 0;
 
 /* Client send wrapper — tracks packet and byte counters */
 static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
+    /* When outbound impairment is enabled, hand the datagram to the layer
+     * instead of sending directly — udpClientTick later pops the delayed
+     * packets onto the wire. An oversize datagram (offer returns false)
+     * falls through to a direct send. Counters tick exactly once per packet
+     * either way, here at offer/send time. */
+    if (netImpairEnabled(&c->impairOut) &&
+        netImpairOffer(&c->impairOut, buf, len, &c->serverAddr,
+                       (uint64_t)SDL_GetTicks())) {
+        c->packetsSentThisSec++;
+        c->bytesSentThisSec += len;
+        return;
+    }
     udpSendTo(c->sock, buf, len, &c->serverAddr);
     c->packetsSentThisSec++;
     c->bytesSentThisSec += len;
@@ -313,11 +341,15 @@ static int buildInputPacket(TransportUdpClientCtx *c, uint8_t *buf) {
     return offset;
 }
 
-/* Record input into redundancy ring without sending a packet.
- * Used on keys ticks so the input is carried by the next sendInput. */
-static void udpClientRecordInput(void *ctx, const InputPacket *input) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+bool udpInputEdgeChanged(const InputPacket *prev, const InputPacket *cur) {
+    return prev->buttons != cur->buttons || prev->actions != cur->actions;
+}
 
+/* Record input into redundancy ring without sending a packet.
+ * Used on keys ticks so the input is carried by the next sendInput, and
+ * by sendInput itself so a game-tick send never promotes (see below). */
+static void udpClientRecordInputInternal(TransportUdpClientCtx *c,
+                                         const InputPacket *input) {
     if (c->joinState != UDP_CLIENT_CONNECTED) {
         return;
     }
@@ -334,13 +366,47 @@ static void udpClientRecordInput(void *ctx, const InputPacket *input) {
     c->inputRingCount++;
 }
 
+/* Transport.recordInput: stamp the input into the ring, then — if its
+ * sampled controls differ from the previously recorded input — send one
+ * packet immediately. The continuous 50/s game-tick send is the loss
+ * channel and is untouched; this is the latency win on press/release
+ * edges, where waiting up to a tick for the next cadence send is the
+ * avoidable cost. The extra copy is free on the wire: the server's
+ * tick > lastProcessedInput dedup discards it as stale if the cadence
+ * send (or a redundant copy) already carried that tick. */
+static void udpClientRecordInput(void *ctx, const InputPacket *input) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+    bool hadPrev = c->inputRingCount > 0;
+    InputPacket prev = {0};
+
+    if (hadPrev) {
+        prev = c->inputRing[(c->inputRingCount - 1) % CLIENT_INPUT_RING_SIZE];
+    }
+
+    udpClientRecordInputInternal(c, input);
+
+    /* First input after connect has no predecessor to compare against —
+     * the cadence carries it. Promotion only fires once connected, which
+     * the internal record's guard above already enforced (the ring count
+     * only advances in UDP_CLIENT_CONNECTED). */
+    if (hadPrev && c->joinState == UDP_CLIENT_CONNECTED &&
+        udpInputEdgeChanged(&prev, input)) {
+        uint8_t buf[UDP_MAX_PAYLOAD];
+        int len = buildInputPacket(c, buf);
+        udpClientSendTo(c, buf, len);
+    }
+}
+
 /* Client sendInput: record input and send packet with redundancy to server */
 static void udpClientSendInput(void *ctx, const InputPacket *input) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
     uint8_t buf[UDP_MAX_PAYLOAD];
     int len;
 
-    udpClientRecordInput(ctx, input);
+    /* Record without promotion: a game-tick send already emits the packet
+     * below, so routing through the edge-checking wrapper would send twice
+     * whenever a change lands on a game tick. */
+    udpClientRecordInputInternal(c, input);
 
     if (c->joinState != UDP_CLIENT_CONNECTED) {
         return;
@@ -805,23 +871,39 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
             c->mapInstalled = true;
         }
         if (wasInLobby) {
-            /* Reset reliable event acks so they match the server's reset
-             * queues. Stale events from the previous game must not be
-             * applied to the freshly-loaded map. */
-            c->reliableEventAck = 1;
-            c->mapEventAck = 1;
-            c->controlEventAck = 1;
-            /* The control-event seq space resets here too; drop any pending
-             * coalesced ACK so we don't emit a stale next-expected-seq for
-             * the new game's queue. */
+            /* The reliable-event acks are NOT reset at the lobby→running
+             * flip.  The server keeps its reliable-queue sequence counters
+             * monotonic across game start — it drops the previous game's
+             * unacked events (ackedSeq = nextSeq) but never reuses low seq
+             * numbers — so reliableEventAck / mapEventAck / controlEventAck
+             * stay valid in the same sequence space.  A stale in-flight
+             * lobby packet now carries seq numbers below the continuing ack
+             * and dedups harmlessly instead of jumping the ack back into the
+             * dead lobby space.  (lastSentControlAck likewise stays
+             * monotonic — resetting it would desync the coalesced-ack
+             * resend logic from controlEventAck.) */
+            /* Drop any pending coalesced standalone CONTROL_ACK: during
+             * running the input piggyback carries controlEventAck, so the
+             * standalone-ack path hands off here.  Harmless either way — a
+             * fresh ack still ships if the server keeps retransmitting. */
             c->controlAckPendingTick = 0;
-            c->lastSentControlAck = 0;
             /* Reset input ring so stale inputs from the previous game are
              * not sent as redundant packets in the new game. */
             c->inputRingCount = 0;
             /* Drop any pre-flip snapshot still buffered in hasSnapshot. */
             c->hasSnapshot = false;
         }
+        /* Applying RUNNING through the reliable control sequence means the
+         * client is now caught up in the running sequence space, so mark it
+         * adopted.  This covers the direct-into-running joiner (controlEventAck
+         * was already at seq 1, so RESET-DETECT's baseSeq < ack test never
+         * tripped and never set the flag): without it, a retransmitted
+         * join-sync tail would re-trip RESET-DETECT and re-apply the whole
+         * sequence.  The out-of-band RUNNING delivery that flips inLobby early
+         * does not reach this path (it bypasses the reliable ack machinery),
+         * so the snapshot-tail snap is still reached when the genuine wipe
+         * needs it. */
+        c->runningSeqAdopted = true;
         /* Dispatch the event itself — flips netStat to running, clears
          * inLobby on the sim, etc. The no-lobby joiner still needs this
          * to flip netStat → netRunning even though wasInLobby is false. */
@@ -830,6 +912,17 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
             *skipPriorGameTails = true;
         }
         return;
+    }
+    /* Clear the running-sequence adoption flag on the reverse transition so
+     * the next game-start wipe re-adopts the fresh seq space.  Round-end
+     * (running → game-over → lobby) does NOT wipe the server's control
+     * queue — only transportUdpServerOnGameStart does — so clearing here
+     * just re-arms RESET-DETECT for the next wipe.  No seq-1 RUNNING is
+     * published until that wipe, so this can't trigger a spurious re-snap
+     * within the current sequence space. */
+    if (evt->type == CTRL_GAME_PHASE_GAME_OVER ||
+        evt->type == CTRL_GAME_PHASE_LOBBY) {
+        c->runningSeqAdopted = false;
     }
     /* Default path — identical to the legacy direct-dispatch route. */
     clientSimApplyControl(c->clientSim, evt);
@@ -1261,32 +1354,40 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                       (unsigned)controlEventBaseSeq, (unsigned)controlEventCount,
                       (unsigned)c->controlEventAck);
         }
-        /* Server-queue-restart detection.  The server resets its per-client
-         * control queue to (ackedSeq=1, nextSeq=1) inside
-         * transportUdpServerOnGameStart, immediately before publishing
-         * CTRL_GAME_PHASE_RUNNING — so the running flip always lands at
-         * seq=1 of a new sequence space.  Without intervention the dedup
-         * gate below (evSeq >= controlEventAck) filters that seq=1 out
-         * because controlEventAck is still high from the lobby phase, and
-         * clientSimApplyControlOrdered's own ack-reset never gets to run.
+        /* NOTE: now vestigial.  transportUdpServerOnGameStart no longer
+         * restarts the control queue at seq 1 — it drops unacked events
+         * (ackedSeq = nextSeq) but keeps nextSeq monotonic, so at game start
+         * baseSeq >= controlEventAck and the baseSeq < ack test below never
+         * trips.  Left in place (inert) to keep the monotonic-seq change
+         * focused; a follow-up can remove the controlSeqResetDetected /
+         * runningSeqAdopted machinery once the monotonic behaviour has soaked.
          *
-         * Gate on inLobby.  The queue-restart detection is only meaningful
-         * during the lobby→running transition itself.  Once inLobby has
-         * flipped to false (i.e. we've already processed the running flip
-         * once), every subsequent retransmit of seq=1 RUNNING is plain
-         * dedup territory — the server keeps sending it until its own
-         * ackedSeq catches up, and re-firing RESET-DETECT on every retransmit
-         * would cause a snap-then-reapply loop that starves the main loop. */
-        if (controlEventCount > 0 &&
-            c->clientSim != NULL &&
-            c->clientSim->inLobby &&
-            controlEventBaseSeq < c->controlEventAck &&
+         * Server-queue-restart detection.  Historically the server reset its
+         * per-client control queue to (ackedSeq=1, nextSeq=1) inside
+         * transportUdpServerOnGameStart, immediately before publishing
+         * CTRL_GAME_PHASE_RUNNING — so the running flip landed at seq=1 of a
+         * new sequence space.  Without intervention the dedup gate below
+         * (evSeq >= controlEventAck) would filter that seq=1 out because
+         * controlEventAck was still high from the lobby phase, and
+         * clientSimApplyControlOrdered's own ack-reset never got to run.
+         *
+         * Gate on a once-per-wipe adoption flag, not inLobby.  The flag
+         * fires the snap exactly once when the client first sees the
+         * running reset — whether or not inLobby has already flipped under
+         * loss/reorder — and blocks re-firing on every subsequent seq=1
+         * RUNNING retransmit (which would otherwise cause a snap-then-reapply
+         * loop that starves the main loop).  The flag is cleared on the
+         * reverse game-over / lobby transition so the next game re-adopts. */
+        if (c->clientSim != NULL &&
             pos + 3 <= len &&
-            buf[pos] == (uint8_t)CTRL_GAME_PHASE_RUNNING) {
+            controlSeqResetDetected(controlEventCount, controlEventBaseSeq,
+                                    c->controlEventAck, c->runningSeqAdopted,
+                                    buf[pos] == (uint8_t)CTRL_GAME_PHASE_RUNNING)) {
             mpDiagLog("[cli] SNAPSHOT-tail RESET-DETECT baseSeq=%u localAck=%u (server queues restarted; snapping back)",
                       (unsigned)controlEventBaseSeq,
                       (unsigned)c->controlEventAck);
             c->controlEventAck = controlEventBaseSeq;
+            c->runningSeqAdopted = true;
         }
         for (i = 0; i < controlEventCount; i++) {
             uint32_t evSeq = controlEventBaseSeq + (uint32_t)i;
@@ -2076,7 +2177,30 @@ static bool udpClientTick(void *ctx) {
 
     /* Receive all pending packets from the wire */
     while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
-        udpClientProcessPacket(c, buf, len);
+        if (netImpairEnabled(&c->impairIn)) {
+            netImpairOffer(&c->impairIn, buf, len, &fromAddr,
+                           (uint64_t)SDL_GetTicks());
+        } else {
+            udpClientProcessPacket(c, buf, len);
+        }
+    }
+
+    /* Release any impaired datagrams now due: inbound packets into the
+     * processor, outbound packets onto the wire (to their stored addr).
+     * Both pops are no-ops while their layer is disabled. */
+    {
+        uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
+        struct sockaddr_in paddr;
+        uint64_t now = (uint64_t)SDL_GetTicks();
+        int plen;
+        while ((plen = netImpairPop(&c->impairIn, pbuf, sizeof(pbuf),
+                                    &paddr, now)) > 0) {
+            udpClientProcessPacket(c, pbuf, plen);
+        }
+        while ((plen = netImpairPop(&c->impairOut, pbuf, sizeof(pbuf),
+                                    &paddr, now)) > 0) {
+            udpSendTo(c->sock, pbuf, plen, &paddr);
+        }
     }
 
     /* Coalesced PACKET_CONTROL_ACK emission.  Only fires when a
@@ -2086,25 +2210,32 @@ static bool udpClientTick(void *ctx) {
      * (20ms/tick — see PING_INTERVAL_TICKS = 100 → 2s), so 3 ticks
      * is ~60ms, close to the plan's ~50ms target.  Send earlier when
      * a single TICK delivered 2+ new events at once, to free server
-     * queue slots promptly. */
+     * queue slots promptly.
+     *
+     * The ack is re-sent (coalesced to ~60ms) even when its value has
+     * not advanced, for as long as the server keeps retransmitting
+     * already-acked events: each retransmitted TICK re-arms
+     * controlAckPendingTick, and a dropped lobby ack is only recovered
+     * by re-sending the same value.  This self-terminates — the server
+     * stops sending TICKs once its ackedSeq reaches nextSeq, so the
+     * pending flag stops being re-armed and a caught-up server produces
+     * zero re-acks (no per-tick ack storm).  See controlAckResendDue. */
     if (c->joinState == UDP_CLIENT_CONNECTED &&
-        c->controlAckPendingTick != 0 &&
-        c->controlEventAck > c->lastSentControlAck) {
+        controlAckResendDue(c->controlAckPendingTick, c->localTick,
+                            c->controlEventAck, c->lastSentControlAck)) {
         bool overdue = (c->localTick - c->controlAckPendingTick) >= 3;
         bool eagerSend = (c->controlEventAck > c->lastSentControlAck + 1);
-        if (overdue || eagerSend) {
-            uint8_t ackBuf[PACKET_HEADER_SIZE + 4];
-            packHeader(ackBuf, PACKET_CONTROL_ACK, c->outSequence++);
-            packU32(ackBuf + PACKET_HEADER_SIZE, c->controlEventAck);
-            udpClientSendTo(c, ackBuf, sizeof(ackBuf));
-            mpDiagLog("[cli] CONTROL_ACK send ack=%u prevSent=%u localTick=%u overdue=%d eager=%d",
-                      (unsigned)c->controlEventAck,
-                      (unsigned)c->lastSentControlAck,
-                      (unsigned)c->localTick,
-                      (int)overdue, (int)eagerSend);
-            c->lastSentControlAck = c->controlEventAck;
-            c->controlAckPendingTick = 0;
-        }
+        uint8_t ackBuf[PACKET_HEADER_SIZE + 4];
+        packHeader(ackBuf, PACKET_CONTROL_ACK, c->outSequence++);
+        packU32(ackBuf + PACKET_HEADER_SIZE, c->controlEventAck);
+        udpClientSendTo(c, ackBuf, sizeof(ackBuf));
+        mpDiagLog("[cli] CONTROL_ACK send ack=%u prevSent=%u localTick=%u overdue=%d eager=%d",
+                  (unsigned)c->controlEventAck,
+                  (unsigned)c->lastSentControlAck,
+                  (unsigned)c->localTick,
+                  (int)overdue, (int)eagerSend);
+        c->lastSentControlAck = c->controlEventAck;
+        c->controlAckPendingTick = 0;
     }
 
     /* Handle join handshake — send/resend join requests */
@@ -2550,9 +2681,33 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->controlEventAck = 1;   /* First valid control event seq is 1 */
     c->controlAckPendingTick = 0;
     c->lastSentControlAck = 0;
+    c->runningSeqAdopted = false;
     c->localTick = 0;
     c->lastPingSentTick = 0;
     c->pingMs = 0;
+
+    /* Optional runtime network impairment from WB_NETIMPAIR
+     * (e.g. WB_NETIMPAIR=delay=75,jitter=30,loss=2,burst=2). Same spec
+     * grammar as the dedicated server's -netimpair. */
+    netImpairInit(&c->impairIn);
+    netImpairInit(&c->impairOut);
+#if WB_ENABLE_NETIMPAIR
+    {
+        const char *impairSpec = getenv("WB_NETIMPAIR");
+        NetImpairConfig impairCfg;
+        if (impairSpec != NULL && impairSpec[0] != '\0' &&
+            netImpairParseConfig(impairSpec, &impairCfg)) {
+            netImpairEnable(&c->impairIn, &impairCfg);
+            netImpairEnable(&c->impairOut, &impairCfg);
+            mpDiagLog("[cli] netimpair enabled: delay=%ums jitter=%ums "
+                      "loss=%u%% burst=%u",
+                      (unsigned)impairCfg.baseDelayMs,
+                      (unsigned)impairCfg.jitterMs,
+                      (unsigned)impairCfg.lossPercent,
+                      (unsigned)impairCfg.burstLossLen);
+        }
+    }
+#endif
 
     t.recordInput = udpClientRecordInput;
     t.sendInput = udpClientSendInput;

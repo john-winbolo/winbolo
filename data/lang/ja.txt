@@ -269,6 +269,7 @@ STR_DLGNETINFO_KBOUT=KB/s 送信:
 STR_DLGNETINFO_PACKETS_RATE=パケット/秒: {number} 受信 / {number2} 送信
 STR_DLGNETINFO_KB_RATE=KB/秒: {string1} 受信 / {string2} 送信
 STR_DLGNETINFO_LOSS=パケット損失: {number}% ({number2}/{number3} 今秒, {number4} ゲーム計)
+STR_DLGNETINFO_RECONCILE=予測補正: {number}/秒, 誤差平均 {string1}px, 最大 {string2}px, 平滑化 {string3}px
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=シードをコピー

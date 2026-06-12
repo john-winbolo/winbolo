@@ -269,6 +269,7 @@ STR_DLGNETINFO_KBOUT=KB/s wyj.:
 STR_DLGNETINFO_PACKETS_RATE=Pakiety/s: {number} wej. / {number2} wyj.
 STR_DLGNETINFO_KB_RATE=KB/sec: {string1} wej. / {string2} wyj.
 STR_DLGNETINFO_LOSS=Utrata pakietów: {number}% ({number2}/{number3} tę sek., {number4} łącznie w grze)
+STR_DLGNETINFO_RECONCILE=Uzgodnienia: {number}/s, błąd śr {string1}px, max {string2}px, wygładzanie {string3}px
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Kopiuj seed

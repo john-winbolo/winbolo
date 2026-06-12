@@ -143,6 +143,7 @@ int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_bolo_rand_golden_sequence(void);
+int run_net_impair(void);
 
 /* Lobby runtime fixes (test_lobby_runtime_fixes.c). */
 int run_countdown_abort_publishes_phase(void);
@@ -262,6 +263,8 @@ int run_queue_stale_ack_above_nextSeq(void);
 int run_queue_wipe_resets_both_seqs(void);
 int run_queue_enqueue_into_empty_after_wipe(void);
 int run_queue_hasspace_at_capacity(void);
+int run_control_ack_resend_due(void);
+int run_control_seq_reset_detect(void);
 int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
@@ -275,6 +278,49 @@ int run_log_path_explicit_file_keeps_single_wbv(void);
 int run_log_path_directory_autonames_inside(void);
 int run_log_path_directory_trailing_slash_no_double(void);
 int run_log_path_directory_arg_appends_wbv(void);
+
+/* Input-redundancy invariants (test_input_redundancy.c): the constants
+ * sizing the redundancy window, the InputPacket wire roundtrip + packet
+ * size bound, and sim-level dedup of redundant duplicate ticks. */
+int run_input_redundancy(void);
+
+/* Edge-send predicate (test_edge_send.c): udpInputEdgeChanged flags a
+ * button/action change as an edge that promotes a recorded input to an
+ * immediate send, while ignoring the per-send tick/ACK/ping stamps. */
+int run_edge_send_predicate(void);
+
+/* Stall-advance (test_stall_advance.c): a stall-substituted tick is a
+ * processed tick (lastProcessedInput advances), late inputs for it drop
+ * as stale, and one-shot actions are harvested/laid exactly once under the
+ * lastActionAppliedTick invariant. Always built (no WB_NETDEBUG gate). */
+int run_stall_advances_processed_tick(void);
+int run_stall_mine_late_lays_once(void);
+int run_stall_mine_duplicate_not_relaid(void);
+int run_stall_fire_not_harvested(void);
+int run_stall_never_fires(void);
+int run_stall_brief_trough_no_advance(void);
+int run_stall_long_dry_advances(void);
+
+/* Backlog catch-up (test_input_catchup.c): a standing input queue above the
+ * jitter target bleeds at +1 input per sub-tick (cap 2 applies/sub-tick) so a
+ * jitter-spike backlog drains in ~1s instead of ratcheting input latency;
+ * steady state never triggers it. Always built (no WB_NETDEBUG gate). */
+int run_input_catchup(void);
+int run_catchup_ignores_redundant_duplicates(void);
+
+/* Render-only error smoothing (test_error_smoothing.c): the offset
+ * accumulate/decay/clamp/wrap math as pure functions, plus the
+ * clientSimResetWorld zeroing. Always built. */
+int run_error_smoothing(void);
+
+#ifdef WB_NETDEBUG
+/* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
+ * built in WB_NETDEBUG configs. */
+int run_netdebug_commanded_vs_executed(void);
+int run_netdebug_overshoot_under_loss(void);
+int run_netdebug_mine_once_under_loss(void);
+int run_netdebug_error_offset_clamped(void);
+#endif
 
 /* Build a ready-to-tick ServerSim from the embedded Everard Island map
  * with one player added at slot 0. Caller is responsible for

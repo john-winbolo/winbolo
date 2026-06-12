@@ -50,6 +50,7 @@
 #include "mapgen.h"
 #include "log.h"
 #include "transport_udp.h"
+#include "net_impair.h"   /* WB_ENABLE_NETIMPAIR master switch */
 #include "bot_manager.h"
 #include "bot_worker_pool.h"
 #include "server_dedicated_log.h"
@@ -710,6 +711,13 @@ void printArgs() {
   fprintf(stderr, "-dontsendlog  - Don't upload game log to winbolo.net\n");
   fprintf(stderr, "-statusFile   - Save list of unlocked players to a file.\n");
   fprintf(stderr, "-seed <N>     - Seed the RNG with N (64-bit unsigned) for reproducible runs.\n");
+#if WB_ENABLE_NETIMPAIR
+  fprintf(stderr, "-netimpair <spec> - Apply network impairment to both directions for testing.\n");
+  fprintf(stderr, "                spec is comma-separated keys, e.g.\n");
+  fprintf(stderr, "                -netimpair delay=75,jitter=30,loss=2,burst=2\n");
+  fprintf(stderr, "                (delay/jitter in ms, loss in %%, burst = drops per loss event).\n");
+  fprintf(stderr, "                Combine with -seed for a reproducible impaired run.\n");
+#endif
   fprintf(stderr, "-quiet        - No screen input or output (silent mode)\n");
   fprintf(stderr, "-noinput      - No keyboard input\n");
 }
@@ -1497,6 +1505,15 @@ int main(int argc, char **argv) {
 #endif
       return 0;
     }
+
+#if WB_ENABLE_NETIMPAIR
+    {
+      int impairArg = findArg(argc, argv, "netimpair");
+      if (impairArg != ARG_NOT_FOUND && argv[impairArg][0] != '-') {
+        transportUdpServerSetNetImpair((char *)argv[impairArg]);
+      }
+    }
+#endif
   }
   dontSendLog = argExist(argc, argv, "dontsendlog");
 

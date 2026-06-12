@@ -114,25 +114,19 @@ int run_transport_local_passive_threads(void) {
     SDL_SetAtomicInt(&rargs.done, 1);
     SDL_WaitThread(reader, NULL);
 
-    /* Final drain on the test thread: serverSimTick consumes one
-     * input from sim's queue per call, and lastProcessedInput tracks
-     * the highest tick consumed. Bail out once it stabilises. */
-    uint32_t last_seen = serverSimGetLastProcessedInput(sim, 0);
-    uint32_t stable_iters = 0;
+    /* Final drain on the test thread. The reader over-ticks the throttled
+     * writer, so the server's input stream is usually starved: under
+     * stall-advance every starved half-step substitutes the held buttons and
+     * advances lastProcessedInput, so it climbs continuously and never
+     * "stabilises" (the old stop-when-stable loop therefore spun to its cap
+     * and read a runaway value). Drain a bounded number of ticks to flush any
+     * residual real inputs still sitting in the delay queue, then sample. */
     int drain_iters;
-    for (drain_iters = 0; drain_iters < 4000; drain_iters++) {
+    for (drain_iters = 0; drain_iters < 256; drain_iters++) {
         threadsWaitForMutex();
         transport.tick(transport.ctx);
         serverSimTick(sim);
         threadsReleaseMutex();
-        uint32_t now = serverSimGetLastProcessedInput(sim, 0);
-        if (now == last_seen) {
-            stable_iters++;
-            if (stable_iters >= 50) break;
-        } else {
-            stable_iters = 0;
-            last_seen = now;
-        }
     }
 
     uint32_t observed = serverSimGetLastProcessedInput(sim, 0);
@@ -145,16 +139,17 @@ int run_transport_local_passive_threads(void) {
     serverSimDestroy(sim);
     threadsDestroy();
 
-    /* Strong invariant: every writer-issued input below the queue's
-     * residual high-water-mark is dequeued exactly once and observed
-     * by the server tick, so the highest processed tick equals
-     * EXPECTED_DRAINED. Without the passive transport's self-lock
-     * (added by the §3.3 change), a torn write on the queue indices
-     * can drop or duplicate an input, which surfaces here as
-     * lastProcessedInput < EXPECTED_DRAINED — TSan should flag the
-     * underlying race in the same run. */
-    UT_ASSERT_MSG(observed == EXPECTED_DRAINED,
-                  "EXPECTED_DRAINED=%u observed=%u — torn write or lost input",
+    /* lastProcessedInput is no longer an exact delivery tally: under
+     * stall-advance the starved server substitutes for the stream and
+     * advances it past the real inputs, so it ends well above
+     * EXPECTED_DRAINED rather than exactly at it. The floor still holds —
+     * the server processed at least every tick the writer issued — and that
+     * is what we assert. The enduring purpose of this test is the concurrent
+     * sendInput / transport.tick access on the passive transport's delay
+     * queue without external locking; a torn write on the queue indices still
+     * trips TSan/ASan in the same run (and the self-lock is what stops it). */
+    UT_ASSERT_MSG(observed >= EXPECTED_DRAINED,
+                  "EXPECTED_DRAINED=%u observed=%u — lost input under concurrent access",
                   (unsigned)EXPECTED_DRAINED, (unsigned)observed);
 
     return 0;

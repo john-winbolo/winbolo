@@ -896,10 +896,14 @@ bool sdl3DrawSetup(int zoomFactor) {
 
 #ifdef __EMSCRIPTEN__
   /* Pre-size the canvas so SDL3's external_size probe sees the right
-     dimensions (it temporarily sets the canvas to 1x1 and checks CSS). */
+     dimensions (it temporarily sets the canvas to 1x1 and checks CSS).
+     SDL3's Emscripten backend creates the window at the existing canvas
+     size rather than honouring the size passed to SDL_CreateWindow, so
+     this must already include the menu-bar row — otherwise the window
+     ends up 22px short and the game blits at a non-integer downscale. */
   {
     int cw = zoomFactor * SDL3_SCREEN_W;
-    int ch = zoomFactor * SDL3_SCREEN_H;
+    int ch = zoomFactor * SDL3_SCREEN_H + MENU_BAR_HEIGHT;
     emscripten_set_canvas_element_size("#canvas", cw, ch);
     emscripten_set_element_css_size("#canvas", (double)cw, (double)ch);
   }
@@ -1112,13 +1116,17 @@ bool sdl3DrawSetup(int zoomFactor) {
                      gFallbackFontKD, gFallbackFontLabel,
                      gTankBarsTex, gBaseBarsTex);
 
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__IPHONEOS__)
-  /* Desktop resizable: create a render target for the game content.
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__)
+  /* Desktop + wasm: create a render target for the game content.
      The game is rendered at its logical size, then blitted scaled to the
      window below the menu bar. This allows the menu to stay at 1x size
-     while the game scales.  Skipped on Deck — logical presentation
-     already upscales the whole layout, an extra RT would re-introduce a
-     1x rasterization step that defeats the font sharpness. */
+     while the game scales, and gives windowToGameCoords a defined
+     gGameDestRect so mouse clicks map back to game cells. (On Emscripten
+     the window is never resizable, so sdl3DrawAdaptRenderTarget is a
+     no-op and this target persists for the session.) Skipped on Deck —
+     logical presentation already upscales the whole layout, an extra RT
+     would re-introduce a 1x rasterization step that defeats the font
+     sharpness. */
   if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
     gGameRTWidth  = gZoomFactor * SDL3_SCREEN_W;
     gGameRTHeight = gZoomFactor * SDL3_SCREEN_H;

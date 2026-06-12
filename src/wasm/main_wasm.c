@@ -220,27 +220,35 @@ static void main_loop_iteration(void) {
 
   /* Game tick accumulation (replaces SDL_AddTimer).
    *
-   * After a JS GC pause or tab throttle, `elapsed` can spike to hundreds of
-   * ms.  Running every backlogged sim tick in a single render frame causes
-   * a visible hitch — but dropping ticks outright would lose
-   * transport->tick() calls (UDP packet send/recv) and break multiplayer.
+   * Sim ticks owed since the last rendered frame are derived from wall-clock
+   * time.  Two kinds of gap need different handling:
    *
-   * Compromise: cap per-frame sim ticks at MAX_CATCHUP so no single render
-   * frame stalls, and let leftover backlog stay in gameTickAccum to drain
-   * naturally over the following frames.  Each subsequent frame runs up to
-   * MAX_CATCHUP ticks until the debt clears, so windowRunGameTick (and the
-   * transport->tick inside it) eventually fire for every missed tick.
+   *   - Ordinary jank (a JS GC pause, a couple of dropped frames): a gap of
+   *     tens to a couple hundred ms.  Replay it, but spread the catch-up over
+   *     a few frames (MAX_CATCHUP) so no single frame hitches.  This keeps a
+   *     networked game's transport->tick() calls flowing through a brief
+   *     stall instead of skipping packet send/recv.
    *
-   * Only MAX_ELAPSED_MS itself is hard-capped — a multi-second tab
-   * suspension shouldn't trigger an unbounded catch-up sequence. */
+   *   - Background / suspend: when the tab is hidden the browser throttles or
+   *     pauses requestAnimationFrame, so on return `gap` jumps to a second or
+   *     more.  Replaying that backlog fast-forwards the game on return, and
+   *     it buys nothing: past CLIENT_TIMEOUT_TICKS (~1000 ticks of no
+   *     traffic) the server has already dropped us and the client has already
+   *     declared SERVER_SHUTDOWN, so the owed ticks are dead either way.  In
+   *     single-player there is simply nothing to catch up to.  Drop the debt
+   *     and resume from real time. */
   if (clientSimHasTransport(cs)) {
-    const double MAX_ELAPSED_MS = 200.0;  /* hard limit on accumulated debt */
-    const int    MAX_CATCHUP    = 4;      /* at most 4 sim ticks per render frame */
+    const double MAX_ELAPSED_MS  = 200.0;  /* per-frame catch-up bound (ordinary jank) */
+    const double STALL_RESET_MS  = 500.0;  /* gap above this = background/suspend → drop */
+    const int    MAX_CATCHUP     = 4;      /* at most 4 sim ticks per render frame */
     double now = emscripten_get_now();
-    double elapsed = now - lastFrameTime;
+    double gap = now - lastFrameTime;
     lastFrameTime = now;
-    if (elapsed > MAX_ELAPSED_MS) elapsed = MAX_ELAPSED_MS;
-    gameTickAccum += elapsed;
+    if (gap > STALL_RESET_MS) {
+      gameTickAccum = 0.0;
+    } else {
+      gameTickAccum += (gap > MAX_ELAPSED_MS) ? MAX_ELAPSED_MS : gap;
+    }
 
     int ticksThisFrame = 0;
     while (gameTickAccum >= GAME_TICK_LENGTH && ticksThisFrame < MAX_CATCHUP) {

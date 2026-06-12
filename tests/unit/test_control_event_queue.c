@@ -201,6 +201,79 @@ int run_queue_enqueue_into_empty_after_wipe(void) {
     return 0;
 }
 
+int run_control_ack_resend_due(void) {
+    /* The dropped-lobby-ack hole: the standalone PACKET_CONTROL_ACK used
+     * to fire only on a value advance, so one lost ack left the server
+     * retransmitting forever until the 10s unacked-control timeout
+     * disconnected the client.  The fix re-sends the current (unchanged)
+     * ack while TICKs keep re-arming the pending flag, coalesced to ~3
+     * ticks, and stops the moment the server catches up. */
+    const uint32_t localTick = 1000;
+
+    /* Caught-up server: no TICK pending → never send (the steady-state
+     * invariant — no per-tick ack storm). */
+    UT_ASSERT_MSG(!controlAckResendDue(0, localTick, 5, 5),
+                  "no pending TICK must not send");
+    UT_ASSERT_MSG(!controlAckResendDue(0, localTick, 9, 5),
+                  "no pending TICK must not send even with un-acked advance");
+
+    /* Armed but not yet overdue (<3 ticks since arming) and value
+     * unchanged: hold for the coalesce window. */
+    UT_ASSERT_MSG(!controlAckResendDue(localTick - 2, localTick, 5, 5),
+                  "armed 2 ticks ago, unchanged value: must coalesce, not send");
+
+    /* Armed and overdue (>=3 ticks) with unchanged value: this is the
+     * dropped-ack recovery — re-send the same value. */
+    UT_ASSERT_MSG(controlAckResendDue(localTick - 3, localTick, 5, 5),
+                  "armed 3 ticks ago, unchanged value: must re-send");
+    UT_ASSERT_MSG(controlAckResendDue(localTick - 10, localTick, 5, 5),
+                  "long overdue, unchanged value: must re-send");
+
+    /* Eager path: a single TICK delivered 2+ new events (ack jumped past
+     * lastSent+1) — send immediately even before the coalesce window. */
+    UT_ASSERT_MSG(controlAckResendDue(localTick, localTick, 7, 5),
+                  "ack jumped to lastSent+2: eager send");
+    UT_ASSERT_MSG(!controlAckResendDue(localTick, localTick, 6, 5),
+                  "single new event (lastSent+1): not eager, not overdue → hold");
+    return 0;
+}
+
+int run_control_seq_reset_detect(void) {
+    /* The running-phase desync: the server wipes the control queue to seq 1
+     * at game start and republishes RUNNING at seq 1, but the client's ack
+     * is still high (22) from the lobby phase.  RESET-DETECT must snap the
+     * ack down to the new space once — regardless of inLobby timing — and
+     * never re-fire on retransmits (which would loop). */
+
+    /* First sight of the running reset, not yet adopted: snap. */
+    UT_ASSERT_MSG(controlSeqResetDetected(1, 1, 22, false, true),
+                  "stale-high ack + RUNNING at baseSeq=1 + !adopted must snap");
+
+    /* Already adopted (ack advanced to 2, retransmit of seq-1 RUNNING):
+     * dedup territory, must NOT re-snap. */
+    UT_ASSERT_MSG(!controlSeqResetDetected(1, 1, 2, true, true),
+                  "adopted: retransmitted seq-1 RUNNING must not re-snap");
+
+    /* Adopted, first event still RUNNING, baseSeq below ack — the exact
+     * retransmit shape that the loop-free flag must block. */
+    UT_ASSERT_MSG(!controlSeqResetDetected(3, 1, 5, true, true),
+                  "adopted: any baseSeq<ack RUNNING tail must not re-snap");
+
+    /* Not yet adopted but the tail does not lead with RUNNING — an ordinary
+     * lobby/countdown retransmit, not a sequence-space reset. */
+    UT_ASSERT_MSG(!controlSeqResetDetected(2, 1, 22, false, false),
+                  "non-RUNNING first event must not be treated as a reset");
+
+    /* Empty tail: nothing to detect. */
+    UT_ASSERT_MSG(!controlSeqResetDetected(0, 1, 22, false, true),
+                  "empty control tail must not snap");
+
+    /* Forward progress (baseSeq == ack, normal new event) is not a reset. */
+    UT_ASSERT_MSG(!controlSeqResetDetected(1, 22, 22, false, true),
+                  "baseSeq>=ack is forward progress, not a reset");
+    return 0;
+}
+
 int run_queue_hasspace_at_capacity(void) {
     ClientControlEventQueue q;
     queueInit(&q);
