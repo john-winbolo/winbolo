@@ -40,8 +40,25 @@ local file = nil
 local last_successful_flush_tick = -1
 local consecutive_failures        = 0
 
--- High-res timer (os.clock is CPU time in seconds)
+-- High-res timer (os.clock is CPU time in seconds), used for the
+-- per-line [x.xxms] within-tick stamp.
 local clock = os.clock
+
+-- C threaded log writer (global injected by C; same one optimize.lua
+-- uses). nil when unavailable → synchronous file fallback below.
+local na_opt_log = na_opt_log
+
+-- Design B batching: each tick's lines are serialized into one block and
+-- appended to `pending`. The accumulated blocks are handed to the writer
+-- thread (off the timed think path) only every FLUSH_INTERVAL_S seconds
+-- of wall time, or immediately on force_flush() (called by the host when
+-- the sim is paused so the log is current while you read it).
+local pending           = {}      -- array of per-tick block strings
+local last_handoff      = 0       -- os.time() of last handoff (0 = never)
+local log_path          = nil     -- resolved per-bot path, set on first handoff
+local writer_started    = false   -- have we ensured the na_opt_log thread is up?
+local FLUSH_INTERVAL_S  = 5
+local wallclock         = os.time
 
 function M.set_tick(t)
   if not _G._PRINT2_ENABLED then return end
@@ -102,51 +119,110 @@ end
 -- Try to open the per-bot rolling log file. Hard-fails if io.open
 -- returns nil — the user wants visible crashes when print2 is broken.
 -- Filename is print2_bot<N>.log so each bot writes to its own file.
-local function try_open(dir)
-  local tag = bot_idx and tostring(bot_idx) or "unknown"
-  local path = string.format("%s/print2_bot%s.log", dir, tag)
+local function try_open_path(path)
   local f, err = io.open(path, "a")
   if not f then
     fail_hard("io.open", path .. " : " .. tostring(err))
   end
-  -- Line-buffer so the log is readable while the brain is still running
-  -- (default full buffering hides recent writes until process exit).
-  if f.setvbuf then pcall(f.setvbuf, f, "line") end
+  -- Full-buffer: the handoff explicitly flushes once per batch (~5s), so
+  -- we don't want per-line OS writes. The threaded path (na_opt_log) is
+  -- preferred and avoids this handle entirely.
+  if f.setvbuf then pcall(f.setvbuf, f, "full") end
   file = f
   print(string.format("[print2] opened %s", path))
 end
 
-function M.flush()
-  if not _G._PRINT2_ENABLED then return end
-  if #buffer == 0 then return end
-  -- One-time open per Lua state (per bot). Once open, we keep the
-  -- handle for the life of the process — never close, never reopen.
-  -- Fall back to cwd when no session dir is set (e.g. BrainTest run
-  -- without --profile-log / --log-json).
-  if not file then
-    local dir = _G.DEBUG_SESSION_DIR
-    if not dir or dir == "" then dir = "." end
-    try_open(dir)
-  end
+-- Resolve the per-bot log path once. Falls back to cwd when no session
+-- dir is set (e.g. BrainTest run without --profile-log / --log-json).
+local function resolve_path()
+  if log_path then return log_path end
+  local dir = _G.DEBUG_SESSION_DIR
+  if not dir or dir == "" then dir = "." end
+  local tag = bot_idx and tostring(bot_idx) or "unknown"
+  log_path = string.format("%s/print2_bot%s.log", dir, tag)
+  return log_path
+end
 
-  local ok, err = pcall(function()
-    file:write("===TICK ", tick, "===\n")
-    for _, entry in ipairs(buffer) do
-      file:write(entry.src, "\t", entry.line, "\t", entry.msg, "\n")
+-- Hand the accumulated `pending` blocks to the writer thread (or the
+-- synchronous fallback) and reset. The disk I/O happens off the timed
+-- think path when na_opt_log is present, so this is cheap to call.
+local function handoff()
+  if #pending == 0 then
+    last_handoff = wallclock()
+    return
+  end
+  local text = table.concat(pending)
+  for i = #pending, 1, -1 do pending[i] = nil end
+  local path = resolve_path()
+
+  if na_opt_log then
+    -- Threaded path: writer thread opens path, appends text, closes.
+    -- The writer thread is started lazily by whoever needs it first. We
+    -- can't assume the profiler (optimize.lua) started it — append is a
+    -- silent no-op when the thread isn't running, which would drop the
+    -- whole log. So ensure it ourselves. open() is idempotent (returns
+    -- false if already running) and we only use append (per-path), never
+    -- the single shared "main file", so this never collides with the
+    -- profiler's own na_opt_log usage.
+    if not writer_started then
+      na_opt_log.open(path)
+      writer_started = true
     end
-    file:flush()
-  end)
-
-  if not ok then
-    fail_hard("write/flush", err)
+    na_opt_log.append(path, text)
+  else
+    -- Synchronous fallback: persistent handle, full-buffered, one
+    -- flush per handoff (every ~5s) — not per tick.
+    if not file then try_open_path(path) end
+    local ok, err = pcall(function()
+      file:write(text)
+      file:flush()
+    end)
+    if not ok then
+      fail_hard("write/flush", err)
+    end
   end
 
+  last_handoff = wallclock()
   last_successful_flush_tick = tick
   consecutive_failures = 0
 end
 
--- Optional explicit close (called from Brain.close if defined)
+-- Per-tick: serialize this tick's buffer into one block string, append
+-- it to `pending`, and hand the batch to the writer only every
+-- FLUSH_INTERVAL_S seconds. Near-zero cost on the ticks in between.
+function M.flush()
+  if not _G._PRINT2_ENABLED then return end
+  if #buffer > 0 then
+    local parts = { "===TICK ", tostring(tick), "===\n" }
+    for _, entry in ipairs(buffer) do
+      parts[#parts + 1] = entry.src
+      parts[#parts + 1] = "\t"
+      parts[#parts + 1] = tostring(entry.line)
+      parts[#parts + 1] = "\t"
+      parts[#parts + 1] = entry.msg
+      parts[#parts + 1] = "\n"
+    end
+    pending[#pending + 1] = table.concat(parts)
+  end
+
+  if last_handoff == 0 then last_handoff = wallclock() end
+  if (wallclock() - last_handoff) >= FLUSH_INTERVAL_S then
+    handoff()
+  end
+end
+
+-- Host-invoked: drain `pending` to disk right now, ignoring the timer.
+-- Called when the sim is paused (think() has stopped, so the per-tick
+-- flush path is dormant) so the log reflects the latest tick on screen.
+function M.force_flush()
+  if not _G._PRINT2_ENABLED then return end
+  handoff()
+end
+
+-- Optional explicit close (called from Brain.close if defined). Drains
+-- any pending blocks first so nothing is lost at shutdown.
 function M.close()
+  handoff()
   if file then
     file:close()
     file = nil
@@ -157,8 +233,15 @@ end
 -- failure count, and a human-readable status. Lets external code (or the
 -- brain itself) detect "print2 has been silent for a while".
 function M.diagnostic()
+  -- Wall-clock seconds since the last handoff to the writer. Batching is
+  -- time-based (every FLUSH_INTERVAL_S), so the watchdog must reason in
+  -- seconds, not ticks. 0 before the first tick has set last_handoff.
+  local secs = (last_handoff > 0) and (wallclock() - last_handoff) or 0
   return {
     last_successful_flush_tick = last_successful_flush_tick,
+    seconds_since_handoff      = secs,
+    flush_interval_s           = FLUSH_INTERVAL_S,
+    pending_blocks             = #pending,
     consecutive_failures       = consecutive_failures,
     fail_count                 = _fail_count,
     file_open                  = file ~= nil,

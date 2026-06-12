@@ -148,6 +148,11 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   tx = tankGetMX(&MY_TANK(csPtr));
   ty = tankGetMY(&MY_TANK(csPtr));
 
+  /* Dead-tick hook: TRUE while the tank is waiting to respawn. The think is
+   * still invoked (so the brain can reset its own state for a clean respawn)
+   * but its outputs are ignored by the caller. */
+  value->dead = (tankGetDeathWait(&MY_TANK(csPtr)) > 0) ? TRUE : FALSE;
+
   /* Max's */
   value->max_players = MAX_TANKS;//-1; /* FIXME: Huh? */
   value->max_refbases = basesGetNumBases(&gs->bs);//-1;

@@ -13,7 +13,7 @@
 --
 -- Sources:
 --   * self (info.man_*)                  → update_self()
---   * ally /info state broadcasts        → update_from_ally_state()
+--   * ally "/info lgmback" one-shot      → note_back()
 --   * visible OBJECT_BUILDMAN sightings  → (later step)
 --   * EVENT_LGM_LOST world events        → note_death()
 --
@@ -80,22 +80,20 @@ function M.update_self(self_pn, man_status, man_mx, man_my, now)
   return transitioned
 end
 
--- Ally broadcast update: called from the inbox processor when an
--- /info state message arrives carrying lgm_st / lgmx / lgmy fields.
--- Sender's slot is updated from those fields.
-function M.update_from_ally_state(sender_pn, info_hash, now)
+-- Ally "LGM back" notice: called from comms.process_message when a
+-- "/info lgmback" one-shot arrives.  The sender's killed LGM has
+-- respawned; clear the death bookkeeping so is_dead() stops reporting
+-- them down and the registry HUD shows them alive again.  Position is no
+-- longer broadcast, so we can't know tank-vs-ground precisely — record
+-- "in_tank" as the conventional "alive and accounted for" status.
+function M.note_back(sender_pn, now)
   local s = M.slots[sender_pn]
-  if s == nil or info_hash == nil then return end
-  local st = info_hash.lgm_st
-  if st ~= "in_tank" and st ~= "ground" and st ~= "dead" then return end
-  s.status      = st
-  s.mx          = tonumber(info_hash.lgmx)
-  s.my          = tonumber(info_hash.lgmy)
+  if s == nil then return end
+  s.status      = "in_tank"
+  s.mx, s.my    = nil, nil
+  s.dead_at, s.killer_pn, s.respawn_eta = nil, nil, nil
   s.last_update = now
   s.source      = "ally_bcast"
-  if st ~= "dead" then
-    s.dead_at, s.killer_pn, s.respawn_eta = nil, nil, nil
-  end
 end
 
 -- EVENT_LGM_LOST: stamp death bookkeeping on the victim's slot.
@@ -158,11 +156,11 @@ function M.draw_hud(viz, now, self_pn)
       local is_self = (self_pn ~= nil and pn == self_pn)
       local r, g, b, a = col[1], col[2], col[3], col[4]
       if is_self then r, g, b = 255, 255, 100 end   -- highlight self
-      local tile_str = (s.mx and s.my) and string.format("%d,%d", s.mx, s.my) or "—"
+      local tile_str = (s.mx and s.my) and string.format("%d,%d", s.mx, s.my) or "-"
       local src_str  = s.source or "?"
       local resp_str = (s.status == "dead" and s.respawn_eta)
                        and string.format("%ds", math.max(0, math.floor((s.respawn_eta - now) / 50)))
-                       or  "—"
+                       or  "-"
       viz.hud_text("lgm_registry_hud", x, y,
                    string.format("%-4d %-7s %-9s %-5s %-7s",
                                  pn, s.status, tile_str, src_str, resp_str),

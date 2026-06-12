@@ -304,6 +304,12 @@ typedef struct
 	u_short num_events;         // Count of game events this tick
 	GameEvent *events;          // Pointer to event array
 
+	// Dead-tick hook: TRUE when the brain is invoked for a tank that is dead
+	// (waiting to respawn). The think still runs so the brain can reset its
+	// own state for a clean respawn, but its outputs are ignored (a dead tank
+	// can't act) and it should early-return without acting on world data.
+	BYTE dead;
+
 	} BrainInfo;
 
 #pragma pack(pop)

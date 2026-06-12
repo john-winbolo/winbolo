@@ -5,6 +5,7 @@
 local C       = require("constants")
 local metrics = require("metrics")
 local changes = require("changes")
+local print2  = require("print2")
 -- viz is required for line_walk's optional debug-overlay drawing.
 -- It must come AFTER changes/metrics to keep the load order stable
 -- (no circular requires; viz doesn't pull anything from util).
@@ -65,6 +66,16 @@ function M.mkey(mx, my)
 end
 function M.mkey_x(k)     return k % C.MAP_W       end
 function M.mkey_y(k)     return k // C.MAP_W      end
+
+-- Set a tile-block (retry/no-build) cooldown WITH a debug breadcrumb, so
+-- "why is (x,y) blocked for Nt?" is one grep in print2_bot*.log instead of
+-- guessing from the duration. `src` is a short tag naming the call site/reason.
+-- The print2 line is stripped from opt/, so production is just the table write.
+function M.set_blocked(state, key, until_tick, src)
+  state.blocked = state.blocked or {}
+  state.blocked[key] = until_tick
+  print2(string.format("BLOCK set (%d,%d) until=%d (+%dt) src=%s", key % C.MAP_W, key // C.MAP_W, until_tick, until_tick - (state.tick or 0), tostring(src)))
+end
 
 function M.mdist(mx1, my1, mx2, my2)
   return math.abs(mx1 - mx2) + math.abs(my1 - my2)

@@ -136,6 +136,8 @@ void mainImGuiRenderShortcuts(bool *visible) {
         {"V",       "Toggle V dialog (visualization filter)"},
         {"S",       "Toggle Shot Simulator panel"},
         {"D",       "Toggle viz-detail inspector (clickable map primitives + body text)"},
+        {"L",       "HUD edit: unlock/lock overlay drag (lock saves layout)"},
+        {"Shift+L", "HUD edit: reset overlay positions to defaults (confirm)"},
         {"F1",      "Toggle this shortcut list"},
         {"Esc",     "Quit"},
         {NULL,      NULL},

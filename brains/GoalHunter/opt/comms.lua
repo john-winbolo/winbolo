@@ -37,6 +37,8 @@
 -- =========================================================================
 
 local ally_state = require("ally_state")
+local lgm_registry = require("lgm_registry")
+local print2 = require("print2")
 
 local M = {}
 
@@ -46,8 +48,48 @@ local M = {}
 -- anything else (human chat, ! commands, unknown verbs) is silently
 -- ignored so adding new verbs later doesn't break older brains.
 -- -------------------------------------------------------------------------
-function M.process_message(sender, text, tick)
+function M.process_message(sender, text, tick, state)
   if not text then return end
+
+  -- One-shot "LGM back": the sender's killed LGM has respawned.  Clear
+  -- our dead-cooldown bookkeeping for them immediately (the engine fires
+  -- no "revived" event, so this is the only signal we get).
+  if text == "/info lgmback" then
+    lgm_registry.note_back(sender, tick)
+    return
+  end
+
+  -- Blitz-call registry (one-shot events). A commander broadcasts "open" once
+  -- when it starts a help-wanted blitz on a pill, "close" once when it ends.
+  -- "query" is a discovery request from a (re)spawned/joining bot — holders of
+  -- an open call re-announce. We remember open calls in state.blitz_calls so
+  -- the proactive-join scan can read them without continuous broadcast.
+  local bco_pill = text:match("^/info bco (%d+)$")
+  if bco_pill then
+    if state then
+      state.blitz_calls = state.blitz_calls or {}
+      local pillnum = tonumber(bco_pill)
+      local prev = state.blitz_calls[sender]
+      -- New (or retargeted) open call → request an immediate replan so we can
+      -- respond fast. It doesn't commit us: the join discount just lets the pill
+      -- compete against our other goals this tick instead of waiting for the timer.
+      if not prev or prev.pill ~= pillnum then state._blitz_new_call = true end
+      -- Preserve the FIRST-SEEN tick of this call across re-announces (bcq
+      -- responses re-send the same bco) so "who started the take first" stays
+      -- accurate — the commander-deferral / first-to-the-take rule reads it.
+      local first_tick = (prev and prev.pill == pillnum and prev.tick) or tick
+      state.blitz_calls[sender] = { pill = pillnum, tick = first_tick }
+    end
+    return
+  end
+  if text == "/info bcc" then
+    if state and state.blitz_calls then state.blitz_calls[sender] = nil end
+    return
+  end
+  if text == "/info bcq" then
+    if state then state._blitz_rebroadcast = true end  -- re-announce our open call (if any)
+    return
+  end
 
   local state_payload = text:match("^/info state(.*)$")
   if state_payload then

@@ -960,7 +960,11 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
    * here so a successful tick clears stale state from a prior abort. */
   inst->wasKilled = false;
   ok = brainCoreCallThink(inst->L, &inst->bInfo, &inst->wasKilled);
-  brainDataExtractInfo(inst->cs, &inst->bInfo);
+  /* Dead tick: the brain ran only to reset its own state for respawn; don't
+   * extract its (no-op) key/build outputs back into the (dead) tank. */
+  if (!inst->bInfo.dead) {
+    brainDataExtractInfo(inst->cs, &inst->bInfo);
+  }
 
   return ok;
 }

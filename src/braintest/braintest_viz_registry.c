@@ -102,13 +102,64 @@ static const char *entry_ini_key(const VizRegistryEntry *e, char *buf, size_t bu
 
 void vizRegistrySaveIni(const char *path) {
     if (!path) return;
+
+    /* Brain overlays register LAZILY — an overlay only enters the
+     * registry the first time its code path runs (e.g. the shoot_pill
+     * HUD doesn't register until a bot enters that substate). A plain
+     * truncate-and-write would therefore drop the saved on/off for every
+     * overlay that hasn't registered THIS session, so toggles for
+     * conditional overlays get silently lost on the (always-fires) exit
+     * save. Fix: read the existing INI first and pass through any keys we
+     * don't currently have a registry entry for, so their saved state
+     * survives until their overlay registers again and loads it. */
+
+    /* Snapshot current registry keys — authoritative this session. */
+    static char regKeys[VIZ_REG_MAX][128];
+    for (int i = 0; i < g_count; i++) {
+        entry_ini_key(&g_entries[i], regKeys[i], sizeof(regKeys[i]));
+    }
+
+    /* Gather passthrough lines for keys NOT in the current registry. */
+    static char passthrough[VIZ_REG_MAX][256];
+    int passCount = 0;
+    FILE *in = fopen(path, "r");
+    if (in) {
+        char line[512];
+        while (passCount < VIZ_REG_MAX && fgets(line, sizeof(line), in)) {
+            size_t len = strlen(line);
+            while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
+                line[--len] = '\0';
+            }
+            if (line[0] == '\0' || line[0] == '#') continue;
+            const char *eq = strchr(line, '=');
+            if (!eq) continue;
+            char key[128];
+            size_t klen = (size_t)(eq - line);
+            if (klen >= sizeof(key)) klen = sizeof(key) - 1;
+            memcpy(key, line, klen);
+            key[klen] = '\0';
+            bool in_reg = false;
+            for (int i = 0; i < g_count; i++) {
+                if (strcmp(regKeys[i], key) == 0) { in_reg = true; break; }
+            }
+            if (in_reg) continue;  /* written authoritatively below */
+            copy_str(passthrough[passCount], sizeof(passthrough[passCount]), line);
+            passCount++;
+        }
+        fclose(in);
+    }
+
     FILE *f = fopen(path, "w");
     if (!f) return;
-    char key[256];
+    char key[128];
     for (int i = 0; i < g_count; i++) {
         VizRegistryEntry *e = &g_entries[i];
         entry_ini_key(e, key, sizeof(key));
         fprintf(f, "%s=%s\n", key, e->is_on ? "on" : "off");
+    }
+    /* Preserve saved state for overlays not registered this session. */
+    for (int i = 0; i < passCount; i++) {
+        fprintf(f, "%s\n", passthrough[i]);
     }
     fclose(f);
 }

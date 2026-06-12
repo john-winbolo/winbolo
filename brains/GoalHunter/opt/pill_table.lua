@@ -46,10 +46,15 @@ function M.draw(viz, world, state, info)
   -- current portfolio — instead we assign it the role it SHOULD fill.
   local counts = { back = 0, front = 0, aggro = 0, utility = 0 }
   local rows = {}
-  local intank = {}
+  local intank_n = 0
   for id, p in pairs(world.pills) do
     if p.in_tank then
-      intank[#intank + 1] = { id = id }
+      -- A pill carried in a tank is ALWAYS utility (own = friendly, ally = allied).
+      if p.owner == "friendly" or p.owner == "allied" then
+        counts.utility = counts.utility + 1
+        intank_n = intank_n + 1
+        rows[#rows + 1] = { id = id, label = "[tank] util", key = "utility" }
+      end
     elseif p.owner == "friendly" and (p.health or 0) > 0 then
       local cat = PP.role_of(p, state and state.tick)   -- cached 60s role
       local inf = cpf.influence_at(p.mx, p.my)
@@ -60,31 +65,14 @@ function M.draw(viz, world, state, info)
     end
   end
 
-  -- Targets over the EVENTUAL total (placed + the in-tank pills we'll build).
+  -- Targets over the full pool (back/front/aggro/util incl. carried).
   local placed_total = counts.back + counts.front + counts.aggro
-  local targets = PP.targets(placed_total + #intank)
+  local targets = PP.targets(placed_total + counts.utility)
   local need = {
     back  = targets.back  - counts.back,
     front = targets.front - counts.front,
     aggro = targets.aggro - counts.aggro,
   }
-
-  -- Greedily assign each in-tank pill the biggest remaining deficit role,
-  -- so the table reflects what each carried pill should be built as.
-  local rem = { back = need.back, front = need.front, aggro = need.aggro }
-  local function pick_role()
-    local best, bestd = "front", -1e9
-    for _, c in ipairs({ "back", "front", "aggro" }) do
-      if rem[c] > bestd then bestd = rem[c]; best = c end
-    end
-    return best
-  end
-  for _, t in ipairs(intank) do
-    local role = pick_role()
-    rem[role] = rem[role] - 1
-    rows[#rows + 1] = { id = t.id, label = "[tank->" .. role .. "]",
-                        key = role, intank = true }
-  end
   table.sort(rows, function(a, b) return a.id < b.id end)
 
   -- Left-MIDDLE anchor.
