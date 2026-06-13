@@ -152,6 +152,10 @@ typedef struct {
     bool    *chunkAcked;       /* Which chunks the client has acked */
     uint16_t chunksAcked;      /* Number of acked chunks */
     bool     downloadComplete; /* True when all chunks acked */
+    bool     mapReady;         /* True only after the client's MAP_ACK 0xFFFF
+                                * ready round-trip. Gates the bulk map send so a
+                                * spoofed JOIN can't reflect/amplify the map at a
+                                * forged source address. */
     uint32_t lastSendTick;     /* Last tick we sent chunks (for resend timing) */
 } ClientMapDownload;
 
@@ -938,6 +942,10 @@ static void serverSendMapChunks(int slot) {
     UdpServerClient *client = &udpServer.clients[slot];
     uint16_t i;
 
+    /* Anti-reflection gate: never send bulk map data until the client has
+     * proven it can receive a reply (MAP_ACK 0xFFFF round-trip). This is the
+     * single chokepoint — no caller can blast the map before the round-trip. */
+    if (!dl->mapReady) return;
     if (dl->downloadComplete) return;
 
     for (i = 0; i < dl->totalChunks; i++) {
@@ -981,6 +989,7 @@ static void serverInitMapDownload(int slot) {
     dl->totalChunks = (uint16_t)((dl->mapSize + MAP_DOWNLOAD_CHUNK_SIZE - 1) / MAP_DOWNLOAD_CHUNK_SIZE);
     dl->chunksAcked = 0;
     dl->downloadComplete = FALSE;
+    dl->mapReady = FALSE;
     dl->lastSendTick = 0;
 
     if (dl->chunkAcked != NULL) {
@@ -1691,11 +1700,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * the codec encoder to this client's socket as part of
      * serverSimRegisterSubscriber above. */
 
-    /* Initialize map download and send first batch of chunks */
+    /* Initialize map download. The chunks are not sent here: the bulk map
+     * send waits for the client's MAP_ACK 0xFFFF ready round-trip so a spoofed
+     * JOIN can't reflect the map at a forged source address. */
     serverInitMapDownload(slot);
-    fprintf(stderr, "[UDP SERVER] Sending %u map chunks to slot %d\n",
-            udpServer.mapDownload[slot].totalChunks, slot);
-    serverSendMapChunks(slot);
 
     /* The sync-replay just enqueued a CTRL_PLAYER_JOIN for every in-use
      * player into this client's controlEventQueue, so the JOIN-time
@@ -3281,6 +3289,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
 
                 if (chunkIdx == 0xFFFF) {
                     fprintf(stderr, "[UDP SERVER] Client %d ready for map\n", clientIdx);
+                    /* The ready round-trip is the proof the address can receive
+                     * a reply: open the amplification gate, then send. */
+                    dl->mapReady = TRUE;
                     if (!dl->downloadComplete) {
                         serverSendMapChunks(clientIdx);
                     }
