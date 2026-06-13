@@ -52,6 +52,20 @@ static uint32_t jbg_establish(ServerSim *sim, uint8_t buttons) {
     return t;
 }
 
+/* Enqueue one input on a strictly increasing tick that is always ahead of the
+ * server's lastProcessedInput. A drain triggers the stall-advance path, which
+ * synthesises inputs and advances lastProcessedInput during the dry spell;
+ * without this guard a free-running counter falls behind it and the next fed
+ * input lands stale (dropped, never a fresh dequeue — so stable ticks never
+ * accumulate and the buffer can't shrink). */
+static void jbg_feed_fresh(ServerSim *sim, uint32_t *next, uint8_t buttons) {
+    uint32_t lpi = sim->lastProcessedInput[JBG_SLOT];
+    if (*next <= lpi) {
+        *next = lpi + 1;
+    }
+    jbg_feed(sim, (*next)++, buttons);
+}
+
 /* One jitter-induced drain cycle: top the queue up to the current target
  * depth, then run enough half-steps to consume it completely. The queue
  * emptying with no fresh input is exactly one drain event. Feeding exactly
@@ -61,7 +75,7 @@ static void jbg_starve_cycle(ServerSim *sim, uint32_t *next, uint8_t buttons) {
     uint8_t target = sim->jitterTarget[JBG_SLOT];
     int i;
     for (i = 0; i < target; i++) {
-        jbg_feed(sim, (*next)++, buttons);
+        jbg_feed_fresh(sim, next, buttons);
     }
     /* target + 2 half-steps drains `target` inputs with margin. Once drained
      * the buffer re-enters filling mode and later empty half-steps take the
@@ -103,14 +117,23 @@ int run_jitter_buffer_grow(void) {
                   "(reached %u)", JITTER_BUFFER_MAX, sim->jitterTarget[JBG_SLOT]);
 
     /* (b) A calm link with a steadily full queue shrinks the target back to
-     * MIN. Feed two fresh inputs per frame and never let the queue drain;
-     * each successful dequeue is a stable tick, and JITTER_SHRINK_INTERVAL
-     * stable ticks drop the target by one. Loop until it settles at MIN (the
-     * cap is generous: ~50 frames per shrink, MAX->MIN is five shrinks). */
+     * MIN. First re-prime with a full burst of fresh inputs so the very next
+     * dequeue is fresh: that resets the dry-spell counter the grow drains left
+     * high and stops the stall-advance path before it can race
+     * lastProcessedInput past the feed. */
+    int k;
+    for (k = 0; k < JITTER_BUFFER_MAX; k++) {
+        jbg_feed_fresh(sim, &next, INPUT_BTN_LEFT);
+    }
+
+    /* Then feed two fresh inputs per frame and never let the queue drain: each
+     * successful dequeue is a stable tick, and JITTER_SHRINK_INTERVAL stable
+     * ticks drop the target by one. Loop until it settles at MIN (the cap is
+     * generous: ~50 frames per shrink, MAX->MIN is five shrinks). */
     int f;
     for (f = 0; f < 400 && sim->jitterTarget[JBG_SLOT] > JITTER_BUFFER_MIN; f++) {
-        jbg_feed(sim, next++, INPUT_BTN_LEFT);
-        jbg_feed(sim, next++, INPUT_BTN_LEFT);
+        jbg_feed_fresh(sim, &next, INPUT_BTN_LEFT);
+        jbg_feed_fresh(sim, &next, INPUT_BTN_LEFT);
         serverSimTick(sim);
         UT_ASSERT_MSG(sim->jitterTarget[JBG_SLOT] <= JITTER_BUFFER_MAX,
                       "jitterTarget %u exceeded MAX %u during shrink",
