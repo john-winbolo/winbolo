@@ -87,6 +87,7 @@ const char *packetTypeName(uint8_t type) {
     case PACKET_PONG:           return "PONG";
     case PACKET_GAME_EVENT:     return "GAME_EVENT";
     case PACKET_MAP_DOWNLOAD:   return "MAP_DOWNLOAD";
+    case PACKET_MAP_RESYNC_REQUEST: return "MAP_RESYNC_REQUEST";
     case PACKET_PLAYER_LIST:    return "PLAYER_LIST";
     case PACKET_NAME_CHANGE:        return "NAME_CHANGE";
     case PACKET_ALLIANCE_REQUEST:   return "ALLIANCE_REQUEST";

@@ -340,6 +340,15 @@ int run_join_version_gate(void);
  * MAP_ACK 0xFFFF ready round-trip is sent, after which chunks flow. */
 int run_map_amp_gate(void);
 
+/* Map-desync resync queue logic (test_map_resync.c): the resync cut empties
+ * the slot's map-event queue (ackedSeq == nextSeq); baked-in changes are not
+ * re-sent and a post-cut change delivers exactly once; a duplicate request
+ * while a resync is in flight does not re-cut (no event loss); the send gate
+ * yields zero map events while in progress and resumes after. */
+int run_map_resync_cut_and_deliver_once(void);
+int run_map_resync_duplicate_request_no_recut(void);
+int run_map_resync_send_gate_holds(void);
+
 /* Connection-id NAT-rebind migration (test_conn_migration.c): the pure
  * connId match-and-rehome decision, plus an end-to-end loopback join that
  * confirms the server stores a connId and inputs ride the new framing. */

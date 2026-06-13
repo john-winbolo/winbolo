@@ -156,6 +156,15 @@ typedef struct {
                                 * ready round-trip. Gates the bulk map send so a
                                 * spoofed JOIN can't reflect/amplify the map at a
                                 * forged source address. */
+    bool     resyncInProgress; /* True while serving a client-requested live map
+                                * resync (map desync recovery). While set, the
+                                * snapshot builder holds this slot's map events
+                                * (packs zero) so the freshly compressed blob and
+                                * the held terrain changes can't double-apply. */
+    uint32_t resyncGen;        /* Generation id echoed into every chunk: 0 for a
+                                * normal join download, the client-chosen nonzero
+                                * id for a resync. Lets the client drop chunks
+                                * from a superseded request. */
     uint32_t lastSendTick;     /* Last tick we sent chunks (for resend timing) */
 } ClientMapDownload;
 
@@ -232,6 +241,12 @@ static struct {
 
     /* Per-client reliable map event queues (EVENT_MAP_CHANGE only) */
     ClientEventQueue mapEventQueues[MAX_TANKS];
+
+    /* Cumulative count of EVENT_MAP_CHANGE events dropped per slot because the
+     * map-event queue was full (client too far behind on its acks). A dropped
+     * terrain change is a permanent desync the client recovers from with a map
+     * resync request — this counter says how often recovery is being leaned on. */
+    uint32_t mapEventQueueDrops[MAX_TANKS];
 
     /* Per-client reliable control event queues — every control event
      * (lobby, chat, alliance, game phase, etc.) lands here so the
@@ -949,7 +964,9 @@ static void serverSendMapChunks(int slot) {
     if (dl->downloadComplete) return;
 
     for (i = 0; i < dl->totalChunks; i++) {
-        uint8_t chunkBuf[PACKET_HEADER_SIZE + 4 + MAP_DOWNLOAD_CHUNK_SIZE];
+        /* Wire layout: [header 8][resyncGen u32][chunkIdx u16][chunkSize u16][data].
+         * 8 + 4 + 4 + 900 = 916 bytes, well within UDP_MAX_PAYLOAD (1400). */
+        uint8_t chunkBuf[PACKET_HEADER_SIZE + 4 + 4 + MAP_DOWNLOAD_CHUNK_SIZE];
         uint32_t offset;
         uint16_t chunkSize;
         int pktLen;
@@ -963,11 +980,14 @@ static void serverSendMapChunks(int slot) {
         }
 
         packHeader(chunkBuf, PACKET_MAP_DOWNLOAD, client->outSequence++);
-        packU16(chunkBuf + PACKET_HEADER_SIZE, i);
-        packU16(chunkBuf + PACKET_HEADER_SIZE + 2, chunkSize);
-        memcpy(chunkBuf + PACKET_HEADER_SIZE + 4,
+        /* resyncGen: 0 for a join download, the request's nonzero id for a
+         * resync — the client routes/rejects chunks by it. */
+        packU32(chunkBuf + PACKET_HEADER_SIZE, dl->resyncGen);
+        packU16(chunkBuf + PACKET_HEADER_SIZE + 4, i);
+        packU16(chunkBuf + PACKET_HEADER_SIZE + 6, chunkSize);
+        memcpy(chunkBuf + PACKET_HEADER_SIZE + 8,
                dl->compressedMap + offset, chunkSize);
-        pktLen = PACKET_HEADER_SIZE + 4 + chunkSize;
+        pktLen = PACKET_HEADER_SIZE + 8 + chunkSize;
 
         /* wire-only: per-client reliability (acked / per-tick to one slot) */
         srvSendTo(chunkBuf, pktLen, &client->addr);
@@ -990,6 +1010,8 @@ static void serverInitMapDownload(int slot) {
     dl->chunksAcked = 0;
     dl->downloadComplete = FALSE;
     dl->mapReady = FALSE;
+    dl->resyncInProgress = FALSE;
+    dl->resyncGen = 0;
     dl->lastSendTick = 0;
 
     if (dl->chunkAcked != NULL) {
@@ -2032,9 +2054,16 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
         }
     }
 
-    /* Pack reliable map events from dedicated per-client queue */
+    /* Pack reliable map events from dedicated per-client queue.
+     * While a live map resync is in flight for this slot, hold its map
+     * events: the freshly compressed blob already carries every change up to
+     * the cut (ackedSeq == nextSeq at resync init), and changes during the
+     * transfer sit undrained at seq >= cut. Sending them now would apply them
+     * on top of the OLD map before the new blob installs. The base seq still
+     * advertises ackedSeq so the client's ack floor stays correct; the held
+     * events flow once resyncInProgress clears on download completion. */
     mapEventBaseSeq = mapQ->ackedSeq;
-    {
+    if (!udpServer.mapDownload[clientIdx].resyncInProgress) {
         uint32_t seq;
         for (seq = mapQ->ackedSeq; seq < mapQ->nextSeq; seq++) {
             uint32_t idx = seq % RELIABLE_EVENT_BUFFER_SIZE;
@@ -2710,6 +2739,11 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
             /* Ensure map download is considered complete so snapshots
              * are sent during the game even if a final chunk ack was lost. */
             udpServer.mapDownload[i].downloadComplete = TRUE;
+            /* This force-completes the download without serverInitMapDownload,
+             * so clear any in-flight resync explicitly — otherwise the send
+             * gate above would keep holding this slot's map events forever. */
+            udpServer.mapDownload[i].resyncInProgress = FALSE;
+            udpServer.mapDownload[i].resyncGen = 0;
         }
         /* Drop the previous game's unacked reliable events, but keep the
          * sequence counter monotonic — never reuse low seq numbers.  For
@@ -3305,6 +3339,74 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     if (dl->chunksAcked >= dl->totalChunks) {
                         dl->downloadComplete = TRUE;
                         fprintf(stderr, "[UDP SERVER] Client %d map download complete\n", clientIdx);
+                        /* A completed resync lifts the send gate: the held map
+                         * events (seq >= cut) flow on the next snapshot and
+                         * apply on top of the freshly installed blob. */
+                        if (dl->resyncInProgress) {
+                            dl->resyncInProgress = FALSE;
+                            dl->resyncGen = 0;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        case PACKET_MAP_RESYNC_REQUEST: {
+            /* Client detected its terrain diverged (a dropped EVENT_MAP_CHANGE)
+             * and asks for a fresh copy of the live map. Body: [resyncGen u32].
+             * Only an established slot may ask — this is a data re-send the
+             * client is already entitled to, not a state assertion.
+             *
+             * The compress + queue-cut must be atomic w.r.t. serverSimTick:
+             * if a sim tick assigned a new EVENT_MAP_CHANGE a seq between the
+             * compress and the cut, that change would be both baked into the
+             * blob AND retained at seq >= cut, and apply twice. Packet handling
+             * and the sim tick run on the same thread (the recv thread only
+             * enqueues raw datagrams into recvQueue; serverProcessPacket and
+             * serverSimTick are both driven from the timer/drain thread), so a
+             * synchronous handler is naturally atomic. Keep it synchronous. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 4) {
+                uint32_t reqGen = unpackU32(buf + PACKET_HEADER_SIZE);
+                ClientMapDownload *dl = &udpServer.mapDownload[clientIdx];
+
+                udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
+
+                if (dl->resyncInProgress) {
+                    /* Idempotent: a resync is already in flight for this slot.
+                     * Do NOT re-compress or re-cut — re-cutting would advance
+                     * ackedSeq past changes enqueued since the first cut and
+                     * drop them (the exact desync this recovers from). Just
+                     * re-poke the chunk send in case the first burst was lost. */
+                    serverSendMapChunks(clientIdx);
+                } else {
+                    /* Idle slot: refresh the live blob, re-init this slot's
+                     * download from it, then cut the map-event queue so the
+                     * blob and the queue can't both carry the same change. */
+                    int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+                    if (mapLen > 0 && mapLen <= (int)MAP_DOWNLOAD_MAX_SIZE) {
+                        udpServer.compressedMapSize = (uint32_t)mapLen;
+                        serverInitMapDownload(clientIdx);
+                        /* The cut: the blob carries every change up to
+                         * nextSeq-1, so empty the queue. Changes during the
+                         * transfer land at seq >= nextSeq and are held by the
+                         * send gate until completion. */
+                        udpServer.mapEventQueues[clientIdx].ackedSeq =
+                            udpServer.mapEventQueues[clientIdx].nextSeq;
+                        dl->resyncGen = reqGen;
+                        dl->resyncInProgress = TRUE;
+                        /* Established slot: the address is already validated, so
+                         * open the amplification gate directly — no second
+                         * MAP_ACK 0xFFFF ready round-trip needed. */
+                        dl->mapReady = TRUE;
+                        serverSendMapChunks(clientIdx);
+                        fprintf(stderr,
+                                "[UDP SERVER] Client %d map resync gen=%u (%d bytes)\n",
+                                clientIdx, reqGen, mapLen);
+                    } else {
+                        fprintf(stderr,
+                                "[UDP SERVER] Client %d map resync: compress failed (%d)\n",
+                                clientIdx, mapLen);
                     }
                 }
             }
@@ -4078,6 +4180,35 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
     int i, c;
 
     if (!udpServer.running) return;
+
+    /* Once-per-second map-event-drop summary. A dropped EVENT_MAP_CHANGE
+     * silently desyncs a client's terrain until it requests a map resync, so
+     * surface how often the drop guard is firing. Mirrors the [netimpair]
+     * once-per-second pattern; only emitted when at least one slot has dropped
+     * something, to keep clean logs quiet. */
+    {
+        static uint64_t lastMapDropLogMs = 0;
+        uint64_t nowMs = (uint64_t)SDL_GetTicks();
+        if (nowMs - lastMapDropLogMs >= 1000) {
+            uint32_t total = 0;
+            for (c = 0; c < MAX_TANKS; c++) total += udpServer.mapEventQueueDrops[c];
+            lastMapDropLogMs = nowMs;
+            if (total > 0) {
+                char perSlot[256];
+                int p = 0;
+                perSlot[0] = '\0';
+                for (c = 0; c < MAX_TANKS; c++) {
+                    if (udpServer.mapEventQueueDrops[c] == 0) continue;
+                    p += snprintf(perSlot + p, sizeof(perSlot) - (size_t)p,
+                                  " p%d=%u", c,
+                                  (unsigned)udpServer.mapEventQueueDrops[c]);
+                    if (p >= (int)sizeof(perSlot)) break;
+                }
+                mpDiagLog("[netstat] mapEventDrops total=%u%s", (unsigned)total, perSlot);
+            }
+        }
+    }
+
     if (serverSimGetEventCount(sim) == 0 && serverSimGetMapEventCount(sim) == 0) return;
 
     for (c = 0; c < MAX_TANKS; c++) {
@@ -4099,8 +4230,10 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             ClientEventQueue *mq = &udpServer.mapEventQueues[c];
             for (i = 0; i < (int)serverSimGetMapEventCount(sim); i++) {
                 if (!eventQueueHasSpace(mq)) {
+                    int dropped = (int)serverSimGetMapEventCount(sim) - i;
+                    udpServer.mapEventQueueDrops[c] += (uint32_t)dropped;
                     fprintf(stderr, "[UDP SERVER] Map event queue full for client %d, dropping %d events\n",
-                            c, (int)serverSimGetMapEventCount(sim) - i);
+                            c, dropped);
                     break;
                 }
                 uint32_t idx = mq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
