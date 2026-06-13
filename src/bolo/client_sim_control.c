@@ -460,6 +460,38 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * a "X has joined" line stayed visible after X left mid-round. */
         cs->lobbyChatHistory[0] = '\0';
         cs->lobbyHostSlotKnown = false;
+        /* Wipe per-game client state that a ClientSim surviving the lobby
+         * cycle would otherwise carry into the new game. None of this is
+         * refreshed wholesale by the snapshot apply, so without an explicit
+         * reset it leaks across games on a lobby-enabled server. */
+        /* Message scroller: queued-but-unshown chat would scroll in the
+         * instant the new game's ticks resume. */
+        messageReset(&cs->messages);
+        /* Steam per-game achievement counters (consumed at CTRL_GAME_OVER).
+         * Left un-reset, a death in any prior game permanently blocks the
+         * flawless / no-LGM-loss achievements for the rest of the session. */
+        cs->myDeathsThisGame = 0;
+        cs->myLgmLossesThisGame = 0;
+        cs->hasAnyBaseCaptured = false;
+        cs->hasAnyPillCaptured = false;
+        cs->maxPlayersSeenThisGame = 0;
+        memset(cs->deathTimestamps, 0, sizeof(cs->deathTimestamps));
+        cs->deathTimestampIdx = 0;
+        /* A pending alliance dialog from the previous game is stale once a
+         * new game (with fresh alliances) begins. */
+        cs->pendingAllianceRequestFrom = 0xFF;
+        /* In-game vote mirror (back-to-lobby / surrender). Zero is the
+         * create-time "no vote" state. */
+        memset(cs->gameVotes, 0, sizeof(cs->gameVotes));
+        /* An unsent build request queued at the previous game's end would
+         * otherwise fire on the new game's first input tick. */
+        cs->pendingBuildAction = 0;
+        cs->pendingBuildX = 0;
+        cs->pendingBuildY = 0;
+        /* Reseed the death-detection armour to "alive" (<= TANK_FULL_ARMOUR)
+         * so the new game's first snapshot doesn't register a spurious
+         * death or respawn edge against the previous game's last value. */
+        cs->lastServerArmour = 0;
         frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_GAME_OVER:

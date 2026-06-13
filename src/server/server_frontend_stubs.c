@@ -107,6 +107,7 @@ void screenTanksAddItem(screenTanks *value, BYTE mx, BYTE my, BYTE px, BYTE py, 
 void clientUiOnTick(ClientSim *cs, bool isBrain) { (void)cs; (void)isBrain; }
 void messageCreate(MessageState *ms) { (void)ms; }
 void messageDestroy(MessageState *ms) { (void)ms; }
+void messageReset(MessageState *ms) { (void)ms; }
 /* messageSet* — message-stream visibility toggles reached via
  * clientSimShowMessages. Bots have no message UI, so the toggles are
  * no-ops on the server build. */

@@ -198,6 +198,37 @@ void messageDestroy(MessageState *ms) {
   ms->inboxCount = 0;
 }
 
+void messageReset(MessageState *ms) {
+  BYTE count;
+
+  if (ms == NULL) {
+    return;
+  }
+  /* Drop everything a finished game leaves behind so it does not bleed
+   * into the next one on a ClientSim that survives the lobby cycle: the
+   * pending scroll queue (codepoint pairs accepted but not yet shifted
+   * onto the visible row — these would otherwise scroll in the moment
+   * the new game's ticks resume), the brain inbox, and the currently
+   * displayed cells. The show* visibility toggles are user preferences,
+   * so they are deliberately left untouched. */
+  ms->messageTime = 0;
+  ms->lastMessage = globalMessage;
+  ms->newMessage[0] = '\0';
+  ms->newMessageFrom = 0;
+  ms->queueHead = 0;
+  ms->queueTail = 0;
+  ms->queueCount = 0;
+  ms->inboxHead = 0;
+  ms->inboxTail = 0;
+  ms->inboxCount = 0;
+  for (count = 0; count < MESSAGE_WIDTH; count++) {
+    ms->topCells[count] = MESSAGE_BLANK;
+    ms->bottomCells[count] = MESSAGE_BLANK;
+  }
+  encodeCellsToUtf8(ms->topCells,    MESSAGE_WIDTH - 1, ms->topLine,    sizeof(ms->topLine));
+  encodeCellsToUtf8(ms->bottomCells, MESSAGE_WIDTH - 1, ms->bottomLine, sizeof(ms->bottomLine));
+}
+
 /* Push one codepoint pair onto the ring. If the ring is full, drops the
  * oldest pending pair (advances head) so producers never block. */
 static void messageQueuePush(MessageState *ms, uint32_t topCp, uint32_t botCp) {

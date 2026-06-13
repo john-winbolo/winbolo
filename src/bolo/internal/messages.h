@@ -174,6 +174,10 @@ struct MessageState {
 
 void messageCreate(MessageState *ms);
 void messageDestroy(MessageState *ms);
+/* Clear queued/displayed messages and the brain inbox without disturbing
+ * the show* visibility toggles. Used at game start so a ClientSim reused
+ * across a lobby cycle does not carry the previous game's pending chat. */
+void messageReset(MessageState *ms);
 void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom);
 struct ServerSim;
 void serverMessageAdd(struct ServerSim *sim, messageType msgType, char *top, char *bottom);
