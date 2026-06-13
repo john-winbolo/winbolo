@@ -80,6 +80,7 @@
 #include "util.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
+#include "client_net.h"
 #include "server_sim.h"
 #include "../steam/steam_wrapper.h"
 
@@ -272,6 +273,15 @@ void clientApplySnapshot(ClientSim *csPtr,
    * Updated unconditionally (the header's lastProcessedInput is per-client, set
    * even when our own tank ships as a hidden stub). */
   csPtr->clientState.serverLastProcessedInput = hdr->lastProcessedInput;
+
+  /* Track a 2-deep history of applied snapshot ticks. Interp renders curr,
+   * which is one behind the newest applied frame, so the displayed view is the
+   * second-newest applied snapshot's serverTick. prevAppliedServerTick is
+   * stamped onto outgoing inputs as viewTick and stays 0 until two snapshots
+   * have been applied (then the server falls back to the ping estimate). */
+  csPtr->clientState.prevAppliedServerTick =
+      csPtr->clientState.lastAppliedServerTick;
+  csPtr->clientState.lastAppliedServerTick = hdr->serverTick;
 
   /* Update other players via interpolation */
   csPtr->interpCtx.localPlayer = playerNum;
@@ -670,6 +680,16 @@ void clientApplySnapshot(ClientSim *csPtr,
     csPtr->serverShellCount = di;
   }
 
+  /* Forward-project other players' shells for human clients so incoming
+   * shells render at their true present position instead of ~RTT/2 in the
+   * past. Anchored to this snapshot by the local player's ping and advanced
+   * per game tick until the next snapshot re-anchors. Bots keep reading the
+   * raw serverShellSnaps above and get no projection layer. */
+  if (isHuman) {
+    clientSimRebuildProjectedShells(
+        csPtr, playersGetPing(&csPtr->sim.plyrs, playerNum));
+  }
+
   /* Tank fireballs are spawned via EVENT_TK_EXPLOSION (handled below) and
    * simulated locally by tkExplosionUpdate — no per-tick replication. */
   (void)tkExplSnaps; (void)tkExplosionCount;
@@ -1057,10 +1077,14 @@ void clientApplySnapshot(ClientSim *csPtr,
    * processing so the client map includes changes from this snapshot */
   if (hdr->mapChecksum != 0) {
     uint16_t clientChecksum = mapCalcChecksum(&csPtr->sim.mp);
-    if (clientChecksum != hdr->mapChecksum) {
+    bool mapMatched = (clientChecksum == hdr->mapChecksum);
+    if (!mapMatched) {
       WB_LOG_WARN(WB_LOG_CAT_CLIENT, "Map checksum mismatch: server=%04x client=%04x",
               hdr->mapChecksum, clientChecksum);
     }
+    /* Drive map-resync recovery: the transport requests a fresh map on a
+     * mismatch (debounced) and clears its backoff on a match. */
+    clientSimNetReportMapChecksum(csPtr, mapMatched);
   }
 
   /* Invalidate tile cache after applying snapshot state (human only) */

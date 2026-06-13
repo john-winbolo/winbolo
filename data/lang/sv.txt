@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=Skickar meddelande till {number} spelare
 STR_DLGNETINFO_TITLE=Nätverksinfo
 STR_DLGNETINFO_SERVERPING=Serverpingning: {number} ms
 STR_DLGNETINFO_STATUS=Status:
-STR_DLGNETINFO_ERRORS=Nätverksfel: {number}
+STR_DLGNETINFO_ERRORS=Nätverksfel: {number}  ·  {number2} omsynk
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Lösenord krävs
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Paket/sek: {number} in / {number2} ut
 STR_DLGNETINFO_KB_RATE=KB/sek: {string1} in / {string2} ut
 STR_DLGNETINFO_LOSS=Paketförlust: {number}% ({number2}/{number3} denna sek, {number4} totalt)
 STR_DLGNETINFO_RECONCILE=Avstämningar: {number}/s, felsnitt {string1}px, max {string2}px, utjämning {string3}px
+STR_KICK_MAP_DESYNC=Kartan är inte synkroniserad med servern — anslut igen.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Kopiera seed

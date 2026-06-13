@@ -272,6 +272,7 @@ bool clientSimCreate(ClientSim *cs) {
   playersCreate(&cs->sim.plyrs, FALSE);
   cs->sim.shs = shellsCreate();
   cs->serverShellCount = 0;
+  cs->projectedShellCount = 0;
   explosionsCreate(&cs->sim.expl);
   rubbleCreate(&cs->sim.rbl);
   buildingCreate(&cs->sim.blds);
@@ -414,6 +415,7 @@ static void clientSimDestroyContents(ClientSim *cs) {
   basesDestroy(&cs->sim.bs);
   shellsDestroy(&cs->sim.shs);
   cs->serverShellCount = 0;
+  cs->projectedShellCount = 0;
   explosionsDestroy(&cs->sim.expl);
   rubbleDestroy(&cs->sim.rbl);
   buildingDestroy(&cs->sim.blds);
@@ -550,6 +552,10 @@ void clientSimGameTick(ClientSim *cs, const InputPacket *pkt, bool isBrain) {
 
   /* Advance existing predicted shells */
   clientSimAdvancePredictedShells(cs);
+
+  /* Advance render-only projected shells (other players', human clients).
+   * Empty for bots, so this is a no-op there. */
+  clientSimAdvanceProjectedShells(cs);
 
   /* Roll the reconcile-stats window once per second. pkt->tick is the
    * 100Hz sub-tick counter; >>1 yields the game-tick index, which
@@ -737,6 +743,46 @@ static void clientSimAddPredictedShellAt(ClientSim *cs, WORLD wx, WORLD wy, TURN
 }
 
 /*********************************************************
+ *NAME:          clientShellVisualBlocked
+ *PURPOSE:
+ *  Shared visual collision short-circuit for client shells.
+ *  Returns true if a shell at (newX,newY) should be culled
+ *  because it hit a pillbox, impassable terrain, a hostile
+ *  base, or overlaps another player's interpolated tank.
+ *  Purely cosmetic — the server does authoritative collision.
+ *  onBoat governs water passability (predicted shells carry
+ *  the launching tank's flag; projected snapshot shells, which
+ *  don't carry it, pass false).
+ *********************************************************/
+static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
+                                     uint8_t owner, bool onBoat) {
+  BYTE mapX = (BYTE)(newX >> TANK_SHIFT_MAPSIZE);
+  BYTE mapY = (BYTE)(newY >> TANK_SHIFT_MAPSIZE);
+  BYTE p;
+  if (pillsIsPillHit(&cs->sim.pb, mapX, mapY) ||
+      (!mapIsPassable(&cs->sim.mp, mapX, mapY, onBoat) &&
+       !basesExistPos(&cs->sim.bs, mapX, mapY)) ||
+      (basesExistPos(&cs->sim.bs, mapX, mapY) &&
+       (onBoat || basesCanHit(&cs->sim, mapX, mapY, owner)))) {
+    return true;
+  }
+  /* Overlap with other players' tanks (interpolated positions) */
+  for (p = 0; p < MAX_TANKS; p++) {
+    WORLD tkX, tkY;
+    TURNTYPE tkAngle;
+    bool tkOnBoat;
+    if (p == cs->interpCtx.localPlayer) continue;
+    if (!interpIsAlive(&cs->interpCtx, p)) continue;
+    if (interpGetPosition(&cs->interpCtx, p, 1.0f, &tkX, &tkY, &tkAngle, &tkOnBoat)) {
+      if (abs((int)newX - (int)tkX) < 128 && abs((int)newY - (int)tkY) < 128) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/*********************************************************
  *NAME:          clientSimAdvancePredictedShells
  *PURPOSE:
  *  Moves each predicted shell forward by one tick and
@@ -747,7 +793,6 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
   for (i = 0; i < cs->predictedShellCount; ) {
     PredictedShell *ps = &cs->predictedShells[i];
     WORLD newX, newY;
-    BYTE mapX, mapY;
     if (ps->length <= SHELL_DEATH) {
       /* Shell expired — remove by swapping with last */
       cs->predictedShells[i] = cs->predictedShells[cs->predictedShellCount - 1];
@@ -760,46 +805,167 @@ void clientSimAdvancePredictedShells(ClientSim *cs) {
     newX = (WORLD)(int)ps->fx;
     newY = (WORLD)(int)ps->fy;
 
-    /* Client-side collision check: remove predicted shell if it hits
-     * a pillbox, impassable terrain, or a hostile base. This is purely
-     * visual — the server does the authoritative collision. */
-    mapX = (BYTE)(newX >> TANK_SHIFT_MAPSIZE);
-    mapY = (BYTE)(newY >> TANK_SHIFT_MAPSIZE);
-    if (pillsIsPillHit(&cs->sim.pb, mapX, mapY) ||
-        (!mapIsPassable(&cs->sim.mp, mapX, mapY, ps->onBoat) &&
-         !basesExistPos(&cs->sim.bs, mapX, mapY)) ||
-        (basesExistPos(&cs->sim.bs, mapX, mapY) &&
-         (ps->onBoat || basesCanHit(&cs->sim, mapX, mapY, ps->owner)))) {
+    if (clientShellVisualBlocked(cs, newX, newY, ps->owner, ps->onBoat)) {
       cs->predictedShells[i] = cs->predictedShells[cs->predictedShellCount - 1];
       cs->predictedShellCount--;
       continue;
     }
 
-    /* Check collision with other players' tanks (interpolated positions) */
-    {
-      BYTE p;
-      bool tankHit = false;
-      for (p = 0; p < MAX_TANKS && !tankHit; p++) {
-        WORLD tkX, tkY;
-        TURNTYPE tkAngle;
-        bool tkOnBoat;
-        if (p == cs->interpCtx.localPlayer) continue;
-        if (!interpIsAlive(&cs->interpCtx, p)) continue;
-        if (interpGetPosition(&cs->interpCtx, p, 1.0f, &tkX, &tkY, &tkAngle, &tkOnBoat)) {
-          if (abs((int)newX - (int)tkX) < 128 && abs((int)newY - (int)tkY) < 128) {
-            tankHit = true;
-          }
-        }
-      }
-      if (tankHit) {
-        cs->predictedShells[i] = cs->predictedShells[cs->predictedShellCount - 1];
-        cs->predictedShellCount--;
+    ps->x = newX;
+    ps->y = newY;
+    ps->length--;
+    i++;
+  }
+}
+
+/*********************************************************
+ *NAME:          clientShellProjectAgeTicks
+ *PURPOSE:
+ *  Converts a one-way-latency ping (ms) into a snapshot age
+ *  in 20ms game ticks — the unit the projection velocity
+ *  steps in — clamped to PROJECTION_MAX_TICKS so a wild ping
+ *  estimate cannot fling a shell arbitrarily far ahead.
+ *********************************************************/
+int clientShellProjectAgeTicks(uint16_t pingMs) {
+  int ageTicks = ((int)pingMs / 2) / 20;   /* one-way latency in game ticks */
+  if (ageTicks > PROJECTION_MAX_TICKS) {
+    ageTicks = PROJECTION_MAX_TICKS;
+  }
+  if (ageTicks < 0) {
+    ageTicks = 0;
+  }
+  return ageTicks;
+}
+
+/*********************************************************
+ *NAME:          clientShellProject
+ *PURPOSE:
+ *  Pure dead-reckoning of a snapshot shell: derives the
+ *  per-game-tick velocity from angle+SHELL_SPEED (same basis
+ *  as predicted shells) and returns the anchored float
+ *  position snap + velocity*ageTicks. No ClientSim needed.
+ *********************************************************/
+void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
+                        int ageTicks, float *outFx, float *outFy,
+                        float *outVx, float *outVy) {
+  int32_t xStepHP, yStepHP;
+  float vx, vy;
+  utilCalcDistanceHP(&xStepHP, &yStepHP, (TURNTYPE)angle, SHELL_SPEED);
+  vx = (float)xStepHP / 256.0f;
+  vy = (float)yStepHP / 256.0f;
+  *outVx = vx;
+  *outVy = vy;
+  *outFx = (float)snapX + vx * (float)ageTicks;
+  *outFy = (float)snapY + vy * (float)ageTicks;
+}
+
+/* Cross-snapshot match tolerance for projected shells, in world units.
+ * A shell travels SHELL_SPEED units per tick, so this is a few ticks of
+ * travel: within it an incoming shell is taken to be the same shell as one
+ * we were already carrying (re-anchored, keeping its smooth accumulator);
+ * beyond it the old shell is dropped and the new one anchored fresh. */
+#define PROJECTION_MATCH_DIST (4 * SHELL_SPEED)
+
+/*********************************************************
+ *NAME:          clientSimRebuildProjectedShells
+ *PURPOSE:
+ *  (Re)builds the projected-shell array from the current
+ *  serverShellSnaps (already own-filtered for humans),
+ *  anchoring each to snap + velocity*age. Incoming shells
+ *  that match one carried from the previous snapshot (same
+ *  owner, nearest position within PROJECTION_MATCH_DIST)
+ *  keep that shell's float accumulator so frame-to-frame
+ *  age-estimate jitter doesn't twitch the rendered position;
+ *  unmatched incoming shells anchor fresh; carried shells
+ *  with no match are dropped. Human clients only.
+ *********************************************************/
+void clientSimRebuildProjectedShells(ClientSim *cs, uint16_t pingMs) {
+  ProjectedShell next[MAX_SNAPSHOT_SHELLS];
+  bool usedPrev[MAX_SNAPSHOT_SHELLS];
+  int nextCount = 0;
+  int ageTicks = clientShellProjectAgeTicks(pingMs);
+  int i, j;
+
+  for (j = 0; j < cs->projectedShellCount; j++) {
+    usedPrev[j] = false;
+  }
+
+  for (i = 0; i < cs->serverShellCount && nextCount < MAX_SNAPSHOT_SHELLS; i++) {
+    const ShellSnapshot *s = &cs->serverShellSnaps[i];
+    ProjectedShell *ns = &next[nextCount];
+    float fx, fy, vx, vy;
+    int best = -1;
+    float bestDistSq = (float)PROJECTION_MATCH_DIST * (float)PROJECTION_MATCH_DIST;
+
+    clientShellProject(s->worldX, s->worldY, s->angle, ageTicks, &fx, &fy, &vx, &vy);
+
+    for (j = 0; j < cs->projectedShellCount; j++) {
+      const ProjectedShell *prev = &cs->projectedShells[j];
+      float dx, dy, distSq;
+      if (usedPrev[j] || prev->owner != s->owner) {
         continue;
+      }
+      dx = prev->fx - fx;
+      dy = prev->fy - fy;
+      distSq = dx * dx + dy * dy;
+      if (distSq <= bestDistSq) {
+        bestDistSq = distSq;
+        best = j;
       }
     }
 
-    ps->x = newX;
-    ps->y = newY;
+    if (best >= 0) {
+      usedPrev[best] = true;
+      ns->fx = cs->projectedShells[best].fx;
+      ns->fy = cs->projectedShells[best].fy;
+    } else {
+      ns->fx = fx;
+      ns->fy = fy;
+    }
+    ns->vx = vx;
+    ns->vy = vy;
+    ns->angle = s->angle;
+    ns->owner = s->owner;
+    ns->length = s->length;
+    ns->active = true;
+    nextCount++;
+  }
+
+  memcpy(cs->projectedShells, next, (size_t)nextCount * sizeof(ProjectedShell));
+  cs->projectedShellCount = nextCount;
+}
+
+/*********************************************************
+ *NAME:          clientSimAdvanceProjectedShells
+ *PURPOSE:
+ *  Moves each projected shell forward one game tick between
+ *  snapshots and culls any that expire or hit the shared
+ *  visual collision short-circuit. onBoat is unknown for
+ *  snapshot shells, so false is used: a boat-launched shell
+ *  over water may cull a tick early and respawn on the next
+ *  snapshot — an accepted visual approximation.
+ *********************************************************/
+void clientSimAdvanceProjectedShells(ClientSim *cs) {
+  int i;
+  for (i = 0; i < cs->projectedShellCount; ) {
+    ProjectedShell *ps = &cs->projectedShells[i];
+    WORLD newX, newY;
+    if (ps->length <= SHELL_DEATH) {
+      cs->projectedShells[i] = cs->projectedShells[cs->projectedShellCount - 1];
+      cs->projectedShellCount--;
+      continue;
+    }
+    ps->fx += ps->vx;
+    ps->fy += ps->vy;
+    newX = (WORLD)(int)ps->fx;
+    newY = (WORLD)(int)ps->fy;
+
+    if (clientShellVisualBlocked(cs, newX, newY, ps->owner, false)) {
+      cs->projectedShells[i] = cs->projectedShells[cs->projectedShellCount - 1];
+      cs->projectedShellCount--;
+      continue;
+    }
+
     ps->length--;
     i++;
   }
@@ -1311,6 +1477,7 @@ int      clientSimGetGmeStartDelay(const ClientSim *cs)     { return cs->gmeStar
 int      clientSimGetCountdownSeconds(const ClientSim *cs)  { return cs->countdownSeconds; }
 int      clientSimGetServerShellCount(const ClientSim *cs)  { return cs->serverShellCount; }
 int      clientSimGetPredictedShellCount(const ClientSim *cs){ return cs->predictedShellCount; }
+int      clientSimGetProjectedShellCount(const ClientSim *cs){ return cs->projectedShellCount; }
 int      clientSimGetBrainEventCount(const ClientSim *cs)   { return cs->brainEventCount; }
 int32_t  clientSimGetGmeLength(const ClientSim *cs)         { return cs->gmeLength; }
 int32_t  clientSimGetLobbyTimeLimit(const ClientSim *cs)    { return cs->lobbyTimeLimit; }
@@ -1417,7 +1584,11 @@ const ShellSnapshot *clientSimGetServerShellSnaps(const ClientSim *cs) {
 
 const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs) {
   return cs->predictedShells;
-  
+
+}
+
+const ProjectedShell *clientSimGetProjectedShells(const ClientSim *cs) {
+  return cs->projectedShells;
 }
 
 const GameEvent *clientSimGetBrainEvents(const ClientSim *cs) {
@@ -1591,6 +1762,7 @@ void clientSimResetWorld(ClientSim *cs) {
    * alongside the per-player clear). */
   cs->serverShellCount = 0;
   cs->predictedShellCount = 0;
+  cs->projectedShellCount = 0;
 
   /* Reconciliation stats are predict-scoped — start each game fresh. */
   cs->reconCountThisWindow = 0;

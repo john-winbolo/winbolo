@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS={number}명의 플레이어에게 메시지 전송 중
 STR_DLGNETINFO_TITLE=네트워크 정보
 STR_DLGNETINFO_SERVERPING=서버 핑: {number} ms
 STR_DLGNETINFO_STATUS=상태:
-STR_DLGNETINFO_ERRORS=네트워크 오류: {number}
+STR_DLGNETINFO_ERRORS=네트워크 오류: {number}  ·  재동기화 {number2}회
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=비밀번호 필요
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=패킷/초: {number} 수신 / {number2} 송신
 STR_DLGNETINFO_KB_RATE=KB/초: {string1} 수신 / {string2} 송신
 STR_DLGNETINFO_LOSS=패킷 손실: {number}% ({number2}/{number3} 이번 초, {number4} 게임 합계)
 STR_DLGNETINFO_RECONCILE=예측 보정: {number}/초, 오차 평균 {string1}px, 최대 {string2}px, 평활화 {string3}px
+STR_KICK_MAP_DESYNC=맵이 서버와 동기화되지 않았습니다 — 다시 접속해 주세요.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=시드 복사

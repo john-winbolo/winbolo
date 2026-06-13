@@ -815,6 +815,7 @@ static void renderNetInfoContent(ClientSim *cs) {
     {
         MessageArgs args = {};
         args.number = numErrors;
+        args.number2 = clientSimHasTransport(cs) ? clientSimGetMapResyncCount(cs) : 0;
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_ERRORS, &args));
     }
     /* Inbound snapshot loss.  Computed from serverTick gaps — counts

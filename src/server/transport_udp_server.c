@@ -152,6 +152,19 @@ typedef struct {
     bool    *chunkAcked;       /* Which chunks the client has acked */
     uint16_t chunksAcked;      /* Number of acked chunks */
     bool     downloadComplete; /* True when all chunks acked */
+    bool     mapReady;         /* True only after the client's MAP_ACK 0xFFFF
+                                * ready round-trip. Gates the bulk map send so a
+                                * spoofed JOIN can't reflect/amplify the map at a
+                                * forged source address. */
+    bool     resyncInProgress; /* True while serving a client-requested live map
+                                * resync (map desync recovery). While set, the
+                                * snapshot builder holds this slot's map events
+                                * (packs zero) so the freshly compressed blob and
+                                * the held terrain changes can't double-apply. */
+    uint32_t resyncGen;        /* Generation id echoed into every chunk: 0 for a
+                                * normal join download, the client-chosen nonzero
+                                * id for a resync. Lets the client drop chunks
+                                * from a superseded request. */
     uint32_t lastSendTick;     /* Last tick we sent chunks (for resend timing) */
 } ClientMapDownload;
 
@@ -228,6 +241,12 @@ static struct {
 
     /* Per-client reliable map event queues (EVENT_MAP_CHANGE only) */
     ClientEventQueue mapEventQueues[MAX_TANKS];
+
+    /* Cumulative count of EVENT_MAP_CHANGE events dropped per slot because the
+     * map-event queue was full (client too far behind on its acks). A dropped
+     * terrain change is a permanent desync the client recovers from with a map
+     * resync request — this counter says how often recovery is being leaned on. */
+    uint32_t mapEventQueueDrops[MAX_TANKS];
 
     /* Per-client reliable control event queues — every control event
      * (lobby, chat, alliance, game phase, etc.) lands here so the
@@ -335,6 +354,62 @@ static int serverFindClient(const struct sockaddr_in *addr) {
             udpServer.clients[i].addr.sin_port == addr->sin_port) {
             return i;
         }
+    }
+    return -1;
+}
+
+/* connId rides the wire as two 32-bit halves through the existing packU32
+ * helpers — low half first, then high. Client send/read must agree with these. */
+static void packConnId(uint8_t *buf, uint64_t connId) {
+    packU32(buf,     (uint32_t)(connId & 0xffffffffULL));
+    packU32(buf + 4, (uint32_t)(connId >> 32));
+}
+static uint64_t unpackConnId(const uint8_t *buf) {
+    uint32_t lo = unpackU32(buf);
+    uint32_t hi = unpackU32(buf + 4);
+    return ((uint64_t)hi << 32) | (uint64_t)lo;
+}
+
+/* Generate a per-session connection id. SplitMix64 over its own state, seeded
+ * once from the high-resolution performance counter — deliberately independent
+ * of the process-global bolo_rand stream so a join never perturbs the
+ * deterministic sim sequence (baseline replays depend on that stream). Never
+ * returns 0, which the wire reserves for "no connId". */
+static uint64_t serverNextConnId(void) {
+    static uint64_t state;
+    static bool seeded = false;
+    uint64_t z;
+    if (!seeded) {
+        state = (uint64_t)SDL_GetPerformanceCounter();
+        state ^= 0x9e3779b97f4a7c15ULL * (uint64_t)SDL_GetTicks();
+        seeded = true;
+    }
+    state += 0x9e3779b97f4a7c15ULL;
+    z = state;
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    z = z ^ (z >> 31);
+    return z ? z : 0x9e3779b97f4a7c15ULL;
+}
+
+/* Resolve the slot owning an inbound INPUT by its connection id (see header). */
+int transportUdpServerFindByConnId(const UdpServerClient *clients,
+                                   uint64_t connId,
+                                   const struct sockaddr_in *fromAddr,
+                                   bool *outRehome) {
+    int i;
+    if (outRehome) *outRehome = false;
+    if (connId == 0 || clients == NULL) return -1;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!clients[i].connected || clients[i].connId != connId) {
+            continue;
+        }
+        if (outRehome &&
+            (clients[i].addr.sin_addr.s_addr != fromAddr->sin_addr.s_addr ||
+             clients[i].addr.sin_port != fromAddr->sin_port)) {
+            *outRehome = true;
+        }
+        return i;
     }
     return -1;
 }
@@ -523,6 +598,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_LOBBY_BRAIN_LIST: return "LOBBY_BRAIN_LIST";
     case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
+    case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     default:                    return "<unknown>";
     }
 }
@@ -675,6 +751,12 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
          * failure pill. Skip the fan-out for everyone else. */
         return;
     }
+    if (evt->type == CTRL_SHELL_DEATH &&
+        evt->u.shellDeath.owner != client->playerNum) {
+        /* Owner-only: the firing player is the sole recipient (mirrors
+         * CTRL_COMMAND_REJECTED). Drop for every other slot. */
+        return;
+    }
 
     /* Enqueue into this client's reliable control queue. */
     q = &udpServer.controlEventQueues[idx];
@@ -799,7 +881,7 @@ bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
  * tick, and compressed map size. */
 static void serverSendJoinAccept(int slot, ServerSim *sim,
                                  const struct sockaddr_in *addr) {
-    uint8_t acceptBuf[PACKET_HEADER_SIZE + 9];
+    uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8];
     int pos;
 
     packHeader(acceptBuf, PACKET_JOIN_ACCEPT,
@@ -810,6 +892,9 @@ static void serverSendJoinAccept(int slot, ServerSim *sim,
     pos += 4;
     packU32(acceptBuf + pos, udpServer.compressedMapSize);
     pos += 4;
+    /* connId the client echoes on its INPUT packets for NAT-rebind re-homing. */
+    packConnId(acceptBuf + pos, udpServer.clients[slot].connId);
+    pos += 8;
 
     /* wire-only: per-client handshake (response to a single client's request) */
     srvSendTo(acceptBuf, pos, addr);
@@ -872,10 +957,19 @@ static void serverSendMapChunks(int slot) {
     UdpServerClient *client = &udpServer.clients[slot];
     uint16_t i;
 
+    /* Anti-reflection gate: never send bulk map data until the client has
+     * proven it can receive a reply (MAP_ACK 0xFFFF round-trip). This is the
+     * single chokepoint — no caller can blast the map before the round-trip. */
+    if (!dl->mapReady) return;
     if (dl->downloadComplete) return;
 
     for (i = 0; i < dl->totalChunks; i++) {
-        uint8_t chunkBuf[PACKET_HEADER_SIZE + 4 + MAP_DOWNLOAD_CHUNK_SIZE];
+        /* Wire layout: [header 8][resyncGen u32][mapSize u32][chunkIdx u16]
+         * [chunkSize u16][data]. The total mapSize makes the transfer
+         * self-describing so a resync (which has no JOIN_ACCEPT to carry the
+         * size) can size its buffer from the first chunk.
+         * 8 + 4 + 4 + 4 + 900 = 920 bytes, within UDP_MAX_PAYLOAD (1400). */
+        uint8_t chunkBuf[PACKET_HEADER_SIZE + 4 + 4 + 4 + MAP_DOWNLOAD_CHUNK_SIZE];
         uint32_t offset;
         uint16_t chunkSize;
         int pktLen;
@@ -889,11 +983,15 @@ static void serverSendMapChunks(int slot) {
         }
 
         packHeader(chunkBuf, PACKET_MAP_DOWNLOAD, client->outSequence++);
-        packU16(chunkBuf + PACKET_HEADER_SIZE, i);
-        packU16(chunkBuf + PACKET_HEADER_SIZE + 2, chunkSize);
-        memcpy(chunkBuf + PACKET_HEADER_SIZE + 4,
+        /* resyncGen: 0 for a join download, the request's nonzero id for a
+         * resync — the client routes/rejects chunks by it. */
+        packU32(chunkBuf + PACKET_HEADER_SIZE, dl->resyncGen);
+        packU32(chunkBuf + PACKET_HEADER_SIZE + 4, dl->mapSize);
+        packU16(chunkBuf + PACKET_HEADER_SIZE + 8, i);
+        packU16(chunkBuf + PACKET_HEADER_SIZE + 10, chunkSize);
+        memcpy(chunkBuf + PACKET_HEADER_SIZE + 12,
                dl->compressedMap + offset, chunkSize);
-        pktLen = PACKET_HEADER_SIZE + 4 + chunkSize;
+        pktLen = PACKET_HEADER_SIZE + 12 + chunkSize;
 
         /* wire-only: per-client reliability (acked / per-tick to one slot) */
         srvSendTo(chunkBuf, pktLen, &client->addr);
@@ -915,6 +1013,9 @@ static void serverInitMapDownload(int slot) {
     dl->totalChunks = (uint16_t)((dl->mapSize + MAP_DOWNLOAD_CHUNK_SIZE - 1) / MAP_DOWNLOAD_CHUNK_SIZE);
     dl->chunksAcked = 0;
     dl->downloadComplete = FALSE;
+    dl->mapReady = FALSE;
+    dl->resyncInProgress = FALSE;
+    dl->resyncGen = 0;
     dl->lastSendTick = 0;
 
     if (dl->chunkAcked != NULL) {
@@ -1141,8 +1242,46 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     pass[MAP_STR_SIZE - 1] = '\0';
     pos += MAP_STR_SIZE;
 
-    /* Skip version bytes */
-    pos += 3;
+    /* Version gate: require an exact protocol-version triple match against
+     * the version this server was compiled with.  A self-built or stale
+     * client sending a different triple is rejected here — before the
+     * password check — so it gets the version error rather than a
+     * misleading password failure.  The three bytes keep their fixed wire
+     * offset so even an old client's JOIN stays parseable for rejection. */
+    {
+        uint8_t cliMajor = buf[pos];
+        uint8_t cliMinor = buf[pos + 1];
+        uint8_t cliRev   = buf[pos + 2];
+        pos += 3;
+        if (cliMajor != BOLO_VERSION_MAJOR ||
+            cliMinor != BOLO_VERSION_MINOR ||
+            cliRev   != BOLO_VERSION_REVISION) {
+            char serverVer[16];
+            char clientVer[16];
+            char consoleMsg[160];
+            const char *args[4];
+            snprintf(serverVer, sizeof(serverVer), "%u.%u.%u",
+                     (unsigned)BOLO_VERSION_MAJOR,
+                     (unsigned)BOLO_VERSION_MINOR,
+                     (unsigned)BOLO_VERSION_REVISION);
+            snprintf(clientVer, sizeof(clientVer), "%u.%u.%u",
+                     (unsigned)cliMajor, (unsigned)cliMinor, (unsigned)cliRev);
+            snprintf(consoleMsg, sizeof(consoleMsg),
+                     "Join rejected for '%s': Version mismatch "
+                     "(server %s, client %s)", name, serverVer, clientVer);
+            serverSimConsoleMessage(consoleMsg);
+            /* The 1389 string renders {string1}=server, {string2}=client.
+             * The client decode fills string1/string2 from arg slots 2/3
+             * (slots 0/1 are the player/other name, unused here), so pass
+             * the two versions in slots 2 and 3 with empty leading args. */
+            args[0] = "";
+            args[1] = "";
+            args[2] = serverVer;
+            args[3] = clientVer;
+            serverSendJoinReject(fromAddr, STR_REJECT_VERSION_MISMATCH, 4, args);
+            return;
+        }
+    }
 
     /* Read WBN token if present (backwards compatible — older clients won't send it) */
     memset(wbnJoinKey, 0, WBN_JOIN_KEY_WIRE_LEN);
@@ -1421,6 +1560,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
 
     /* Accept the player */
     udpServer.clients[slot].connected = true;
+    udpServer.clients[slot].connId = serverNextConnId();
     udpServer.clients[slot].nameStickySuffix = false;
     udpServer.clients[slot].addr = *fromAddr;
     udpServer.clients[slot].playerNum = (uint8_t)slot;
@@ -1586,11 +1726,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * the codec encoder to this client's socket as part of
      * serverSimRegisterSubscriber above. */
 
-    /* Initialize map download and send first batch of chunks */
+    /* Initialize map download. The chunks are not sent here: the bulk map
+     * send waits for the client's MAP_ACK 0xFFFF ready round-trip so a spoofed
+     * JOIN can't reflect the map at a forged source address. */
     serverInitMapDownload(slot);
-    fprintf(stderr, "[UDP SERVER] Sending %u map chunks to slot %d\n",
-            udpServer.mapDownload[slot].totalChunks, slot);
-    serverSendMapChunks(slot);
 
     /* The sync-replay just enqueued a CTRL_PLAYER_JOIN for every in-use
      * player into this client's controlEventQueue, so the JOIN-time
@@ -1621,11 +1760,37 @@ static void serverHandleInput(const uint8_t *buf, int len,
                               const struct sockaddr_in *fromAddr,
                               ServerSim *sim) {
     int clientIdx;
-    int pos = PACKET_HEADER_SIZE;
+    /* INPUT framing: [header 8][connId 8][count 1][29-byte inputs…]. */
+    int pos = PACKET_HEADER_SIZE + 8;
     uint8_t inputCount;
+    uint64_t connId = 0;
+    bool rehome = false;
     int i;
 
-    clientIdx = serverFindClient(fromAddr);
+    /* Match the session by connId first so a client whose NAT mapping rebound
+     * keeps its slot; fall back to IP:port when the connId is absent (0) or
+     * matches no slot. The connId is only present on a packet long enough to
+     * hold it — a short/old frame leaves it 0 and takes the IP:port path. */
+    if (len >= PACKET_HEADER_SIZE + 8) {
+        connId = unpackConnId(buf + PACKET_HEADER_SIZE);
+    }
+    clientIdx = transportUdpServerFindByConnId(udpServer.clients, connId,
+                                               fromAddr, &rehome);
+    if (clientIdx >= 0) {
+        if (rehome) {
+            char oldAddr[32];
+            snprintf(oldAddr, sizeof(oldAddr), "%s:%u",
+                     inet_ntoa(udpServer.clients[clientIdx].addr.sin_addr),
+                     (unsigned)ntohs(udpServer.clients[clientIdx].addr.sin_port));
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                "slot %d NAT rebind: %s -> %s:%u (connId match, re-homing)",
+                clientIdx, oldAddr, inet_ntoa(fromAddr->sin_addr),
+                (unsigned)ntohs(fromAddr->sin_port));
+            udpServer.clients[clientIdx].addr = *fromAddr;
+        }
+    } else {
+        clientIdx = serverFindClient(fromAddr);
+    }
     if (clientIdx < 0) return; /* Unknown client */
 
     udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
@@ -1827,8 +1992,10 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     countsPos = pos;
     pos += 24; /* 8 count bytes + 4 byte reliableBaseSeq + 4 byte mapEventBaseSeq + 4 byte controlEventBaseSeq + 2 byte mapChecksum + 2 byte returnToLobbyTicks */
 
-    /* Pack tank snapshots — variable length: stubs are 1 byte, full
-     * entries are TANK_SNAPSHOT_WIRE_SIZE bytes. */
+    /* Pack tank snapshots — variable length: a stub is 1 byte; a full entry is
+     * a presence-mask-driven run of at most TANK_SNAPSHOT_WIRE_SIZE bytes
+     * (packTankSnapshot returns the actual size, usually far smaller because
+     * zero field groups are omitted). Reserve the conservative max here. */
     for (i = 0; i < hdr.tankCount; i++) {
         bool isStub = (tankSnaps[i].playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) != 0;
         int needed = isStub ? 1 : TANK_SNAPSHOT_WIRE_SIZE;
@@ -1891,9 +2058,16 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
         }
     }
 
-    /* Pack reliable map events from dedicated per-client queue */
+    /* Pack reliable map events from dedicated per-client queue.
+     * While a live map resync is in flight for this slot, hold its map
+     * events: the freshly compressed blob already carries every change up to
+     * the cut (ackedSeq == nextSeq at resync init), and changes during the
+     * transfer sit undrained at seq >= cut. Sending them now would apply them
+     * on top of the OLD map before the new blob installs. The base seq still
+     * advertises ackedSeq so the client's ack floor stays correct; the held
+     * events flow once resyncInProgress clears on download completion. */
     mapEventBaseSeq = mapQ->ackedSeq;
-    {
+    if (!udpServer.mapDownload[clientIdx].resyncInProgress) {
         uint32_t seq;
         for (seq = mapQ->ackedSeq; seq < mapQ->nextSeq; seq++) {
             uint32_t idx = seq % RELIABLE_EVENT_BUFFER_SIZE;
@@ -2569,6 +2743,11 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
             /* Ensure map download is considered complete so snapshots
              * are sent during the game even if a final chunk ack was lost. */
             udpServer.mapDownload[i].downloadComplete = TRUE;
+            /* This force-completes the download without serverInitMapDownload,
+             * so clear any in-flight resync explicitly — otherwise the send
+             * gate above would keep holding this slot's map events forever. */
+            udpServer.mapDownload[i].resyncInProgress = FALSE;
+            udpServer.mapDownload[i].resyncGen = 0;
         }
         /* Drop the previous game's unacked reliable events, but keep the
          * sequence counter monotonic — never reuse low seq numbers.  For
@@ -2868,6 +3047,13 @@ uint8_t transportUdpServerGetClientType(BYTE playerNum) {
     return udpServer.clients[playerNum].clientType;
 }
 
+uint64_t transportUdpServerGetClientConnId(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS || !udpServer.clients[playerNum].connected) {
+        return 0;
+    }
+    return udpServer.clients[playerNum].connId;
+}
+
 /* Send an INFO_RESPONSE packet to the tracker so the game is listed. */
 void transportUdpServerSendTrackerUpdate(ServerSim *sim,
                                          const char *trackerAddr,
@@ -3141,6 +3327,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
 
                 if (chunkIdx == 0xFFFF) {
                     fprintf(stderr, "[UDP SERVER] Client %d ready for map\n", clientIdx);
+                    /* The ready round-trip is the proof the address can receive
+                     * a reply: open the amplification gate, then send. */
+                    dl->mapReady = TRUE;
                     if (!dl->downloadComplete) {
                         serverSendMapChunks(clientIdx);
                     }
@@ -3154,6 +3343,74 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                     if (dl->chunksAcked >= dl->totalChunks) {
                         dl->downloadComplete = TRUE;
                         fprintf(stderr, "[UDP SERVER] Client %d map download complete\n", clientIdx);
+                        /* A completed resync lifts the send gate: the held map
+                         * events (seq >= cut) flow on the next snapshot and
+                         * apply on top of the freshly installed blob. */
+                        if (dl->resyncInProgress) {
+                            dl->resyncInProgress = FALSE;
+                            dl->resyncGen = 0;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        case PACKET_MAP_RESYNC_REQUEST: {
+            /* Client detected its terrain diverged (a dropped EVENT_MAP_CHANGE)
+             * and asks for a fresh copy of the live map. Body: [resyncGen u32].
+             * Only an established slot may ask — this is a data re-send the
+             * client is already entitled to, not a state assertion.
+             *
+             * The compress + queue-cut must be atomic w.r.t. serverSimTick:
+             * if a sim tick assigned a new EVENT_MAP_CHANGE a seq between the
+             * compress and the cut, that change would be both baked into the
+             * blob AND retained at seq >= cut, and apply twice. Packet handling
+             * and the sim tick run on the same thread (the recv thread only
+             * enqueues raw datagrams into recvQueue; serverProcessPacket and
+             * serverSimTick are both driven from the timer/drain thread), so a
+             * synchronous handler is naturally atomic. Keep it synchronous. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 4) {
+                uint32_t reqGen = unpackU32(buf + PACKET_HEADER_SIZE);
+                ClientMapDownload *dl = &udpServer.mapDownload[clientIdx];
+
+                udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
+
+                if (dl->resyncInProgress) {
+                    /* Idempotent: a resync is already in flight for this slot.
+                     * Do NOT re-compress or re-cut — re-cutting would advance
+                     * ackedSeq past changes enqueued since the first cut and
+                     * drop them (the exact desync this recovers from). Just
+                     * re-poke the chunk send in case the first burst was lost. */
+                    serverSendMapChunks(clientIdx);
+                } else {
+                    /* Idle slot: refresh the live blob, re-init this slot's
+                     * download from it, then cut the map-event queue so the
+                     * blob and the queue can't both carry the same change. */
+                    int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+                    if (mapLen > 0 && mapLen <= (int)MAP_DOWNLOAD_MAX_SIZE) {
+                        udpServer.compressedMapSize = (uint32_t)mapLen;
+                        serverInitMapDownload(clientIdx);
+                        /* The cut: the blob carries every change up to
+                         * nextSeq-1, so empty the queue. Changes during the
+                         * transfer land at seq >= nextSeq and are held by the
+                         * send gate until completion. */
+                        udpServer.mapEventQueues[clientIdx].ackedSeq =
+                            udpServer.mapEventQueues[clientIdx].nextSeq;
+                        dl->resyncGen = reqGen;
+                        dl->resyncInProgress = TRUE;
+                        /* Established slot: the address is already validated, so
+                         * open the amplification gate directly — no second
+                         * MAP_ACK 0xFFFF ready round-trip needed. */
+                        dl->mapReady = TRUE;
+                        serverSendMapChunks(clientIdx);
+                        fprintf(stderr,
+                                "[UDP SERVER] Client %d map resync gen=%u (%d bytes)\n",
+                                clientIdx, reqGen, mapLen);
+                    } else {
+                        fprintf(stderr,
+                                "[UDP SERVER] Client %d map resync: compress failed (%d)\n",
+                                clientIdx, mapLen);
                     }
                 }
             }
@@ -3831,6 +4088,24 @@ static void srvDrainImpair(ServerSim *sim) {
                                 &paddr, now)) > 0) {
         udpSendTo(udpServer.sock, pbuf, plen, &paddr);
     }
+
+#if WB_ENABLE_NETIMPAIR
+    /* Once-per-second impairment-queue summary so genuine injected loss
+     * (overflow = the 512-slot queue filled, the only drop path when loss=0)
+     * can be told apart from jitter-induced reordering — which is not loss at
+     * all but shows up on the per-player [netstat] line as stale= when an
+     * overtaken packet arrives after a newer one and is discarded. If overflow
+     * holds at 0 while stale climbs, the "loss" is reordering, not drops. */
+    if (netImpairEnabled(&srvImpairIn) || netImpairEnabled(&srvImpairOut)) {
+        static uint64_t lastImpairLogMs = 0;
+        if (now - lastImpairLogMs >= 1000) {
+            lastImpairLogMs = now;
+            mpDiagLog("[netimpair] in: q=%d overflow=%u  out: q=%d overflow=%u",
+                      srvImpairIn.count, (unsigned)srvImpairIn.overflowDrops,
+                      srvImpairOut.count, (unsigned)srvImpairOut.overflowDrops);
+        }
+    }
+#endif
 }
 
 /* Receive all pending packets from clients (polled fallback) */
@@ -3909,6 +4184,35 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
     int i, c;
 
     if (!udpServer.running) return;
+
+    /* Once-per-second map-event-drop summary. A dropped EVENT_MAP_CHANGE
+     * silently desyncs a client's terrain until it requests a map resync, so
+     * surface how often the drop guard is firing. Mirrors the [netimpair]
+     * once-per-second pattern; only emitted when at least one slot has dropped
+     * something, to keep clean logs quiet. */
+    {
+        static uint64_t lastMapDropLogMs = 0;
+        uint64_t nowMs = (uint64_t)SDL_GetTicks();
+        if (nowMs - lastMapDropLogMs >= 1000) {
+            uint32_t total = 0;
+            for (c = 0; c < MAX_TANKS; c++) total += udpServer.mapEventQueueDrops[c];
+            lastMapDropLogMs = nowMs;
+            if (total > 0) {
+                char perSlot[256];
+                int p = 0;
+                perSlot[0] = '\0';
+                for (c = 0; c < MAX_TANKS; c++) {
+                    if (udpServer.mapEventQueueDrops[c] == 0) continue;
+                    p += snprintf(perSlot + p, sizeof(perSlot) - (size_t)p,
+                                  " p%d=%u", c,
+                                  (unsigned)udpServer.mapEventQueueDrops[c]);
+                    if (p >= (int)sizeof(perSlot)) break;
+                }
+                mpDiagLog("[netstat] mapEventDrops total=%u%s", (unsigned)total, perSlot);
+            }
+        }
+    }
+
     if (serverSimGetEventCount(sim) == 0 && serverSimGetMapEventCount(sim) == 0) return;
 
     for (c = 0; c < MAX_TANKS; c++) {
@@ -3930,8 +4234,10 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             ClientEventQueue *mq = &udpServer.mapEventQueues[c];
             for (i = 0; i < (int)serverSimGetMapEventCount(sim); i++) {
                 if (!eventQueueHasSpace(mq)) {
+                    int dropped = (int)serverSimGetMapEventCount(sim) - i;
+                    udpServer.mapEventQueueDrops[c] += (uint32_t)dropped;
                     fprintf(stderr, "[UDP SERVER] Map event queue full for client %d, dropping %d events\n",
-                            c, (int)serverSimGetMapEventCount(sim) - i);
+                            c, dropped);
                     break;
                 }
                 uint32_t idx = mq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;

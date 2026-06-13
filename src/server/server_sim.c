@@ -311,6 +311,25 @@ static void serverSimCbExplosion(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py) 
     serverSimAddEvent(sim, &ev);
 }
 
+/* A shell owned by `owner` ended (collision or expiry). Publish a
+ * unicast CTRL_SHELL_DEATH so the firing client can match fireTick to
+ * its predicted shell, cull the ghost, and draw the impact at
+ * (impactWX, impactWY). udpClientDeliverControl filters to the owner. */
+static void serverSimCbShellDeath(void *ctx, uint32_t fireTick, BYTE owner,
+                                  WORLD impactWX, WORLD impactWY,
+                                  uint8_t outcome) {
+    ServerSim *sim = (ServerSim *)ctx;
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SHELL_DEATH;
+    evt.u.shellDeath.fireTick = fireTick;
+    evt.u.shellDeath.impactWX = (uint16_t)impactWX;
+    evt.u.shellDeath.impactWY = (uint16_t)impactWY;
+    evt.u.shellDeath.owner    = owner;
+    evt.u.shellDeath.outcome  = outcome;
+    serverSimPublishControl(sim, &evt);
+}
+
 static void serverSimCbTkExplosion(void *ctx, WORLD x, WORLD y,
                                    TURNTYPE angle, BYTE length,
                                    BYTE explodeType, BYTE creator) {
@@ -467,6 +486,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.mineVisible = serverSimCbMineVisible;
     sim->sim.callbacks.explosion = serverSimCbExplosion;
     sim->sim.callbacks.tkExplosion = serverSimCbTkExplosion;
+    sim->sim.callbacks.shellDeath = serverSimCbShellDeath;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -892,6 +912,24 @@ static void serverSimLogTick(ServerSim *sim) {
     logWriteTick();
 }
 
+uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
+                                     uint16_t pingMs) {
+    uint32_t ticks;
+    if (viewTick != 0 && viewTick <= simTick) {
+        /* Rewind the real view age. posHistory records once per game tick
+         * (20ms), so two server ticks map to one history entry. viewTick is
+         * client-supplied, but so is pingMs below, so the trust model is
+         * unchanged; the clamp bounds any abuse. */
+        ticks = (simTick - viewTick) / 2;
+    } else {
+        /* viewTick unknown (0) or ahead of the server (stale/garbage): keep
+         * the ping-based estimate — snapshot trip out (ping/2) + interp buffer. */
+        ticks = (((uint32_t)pingMs / 2) + INTERP_BUFFER_MS) / 20;
+    }
+    if (ticks > LAG_COMP_MAX_TICKS) ticks = LAG_COMP_MAX_TICKS;
+    return (uint8_t)ticks;
+}
+
 /* Apply a single input to player `count`'s tank: gap-fill for any ticks
  * lost to packet loss, per-input parity selection (keys vs game arm),
  * lag compensation, fire/mine/build, and the lastProcessedInput advance.
@@ -1013,14 +1051,18 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
              * (matching the old stall branch) rather than rewinding. */
             sim->sim.lagCompTicks = 0;
         } else {
-            uint16_t pingMs = sim->playerPing[count];
-            uint16_t delayMs = (pingMs / 2) + INTERP_BUFFER_MS;
-            uint8_t compTicks = (uint8_t)(delayMs / 20);
-            if (compTicks > LAG_COMP_MAX_TICKS) compTicks = LAG_COMP_MAX_TICKS;
+            uint8_t compTicks = serverSimComputeLagCompTicks(
+                sim->tick, applied.viewTick, sim->playerPing[count]);
             sim->sim.lagCompTicks = compTicks;
             sim->statLastRewindTicks[count] = compTicks;
         }
+        /* Stamp the originating input tick so a shell created inside this
+         * tankUpdate carries it (shellsAddItem reads sim->fireInputTick).
+         * Reset to 0 immediately after so pill shells / later world systems
+         * in this tick don't inherit a stale player tick. */
+        sim->sim.fireInputTick = applied.tick;
         tankUpdate(&sim->sim, &sim->sim.tanks[count], tb, shoot, FALSE);
+        sim->sim.fireInputTick = 0;
 
         /* Handle mine laying */
         if (applied.actions & INPUT_ACTION_LAY_MINE) {
@@ -1121,6 +1163,10 @@ static bool serverSimDequeueFresh(ServerSim *sim, BYTE count, InputPacket *out) 
             sim->lastActionAppliedTick[count] = out->tick;
         }
         sim->statDroppedStaleInputs[count]++;  /* stale/duplicate entry discarded */
+        if (out->buttons != sim->lastInputButtons[count] &&
+            out->tick + 8 > sim->lastProcessedInput[count]) {
+            sim->statDroppedEdge[count]++;
+        }
     }
     return FALSE;
 }
@@ -1297,12 +1343,29 @@ static void simRunHalfStep(ServerSim *sim) {
                     sim->jitterTarget[count] > JITTER_BUFFER_MIN) {
                     sim->jitterTarget[count]--;
                     sim->jitterStableTicks[count] = 0;
+                    /* A long calm stretch also forgets recent drains, so the
+                     * buffer is free to settle back toward MIN. */
+                    sim->jitterStarveCount[count] = 0;
                 }
             }
         }
 
-        /* If queue drained completely, re-enter buffering mode */
+        /* If queue drained completely, re-enter buffering mode. The drain
+         * itself is the reliable too-shallow signal: under jitter the queue
+         * empties faster than the grow path above can react, because once we
+         * re-enter filling mode a later dry sub-tick takes the `continue`
+         * above and never reaches that grow logic. Count drains separately
+         * and deepen the buffer off them so jitter actually grows the target
+         * instead of pinning it at the default. */
         if (sim->inputQueueHead[count] == sim->inputQueueTail[count] && !hasInput[count]) {
+            if (sim->inputBufferFilled[count]) {
+                sim->jitterStarveCount[count]++;
+                if (sim->jitterStarveCount[count] >= JITTER_STARVE_GROW_THRESHOLD &&
+                    sim->jitterTarget[count] < JITTER_BUFFER_MAX) {
+                    sim->jitterTarget[count]++;
+                    sim->jitterStarveCount[count] = 0;
+                }
+            }
             sim->inputBufferFilled[count] = 0;
         }
     }
@@ -1636,15 +1699,17 @@ static void simRunHalfStep(ServerSim *sim) {
             {
                 uint8_t qd = (sim->inputQueueHead[count] - sim->inputQueueTail[count])
                              & (SERVER_INPUT_QUEUE_SIZE - 1);
-                mpDiagLog("[netstat] p%d q=%u jt=%u stall=%u gap=%u stale=%u catchup=%u rewind=%u",
+                mpDiagLog("[netstat] p%d q=%u jt=%u stall=%u gap=%u stale=%u dropEdge=%u catchup=%u rewind=%u",
                           count, qd, sim->jitterTarget[count],
                           sim->statStallTicks[count], sim->statGapFillTicks[count],
-                          sim->statDroppedStaleInputs[count], sim->statCatchupTicks[count],
+                          sim->statDroppedStaleInputs[count], sim->statDroppedEdge[count],
+                          sim->statCatchupTicks[count],
                           sim->statLastRewindTicks[count]);
             }
             sim->statStallTicks[count] = 0;
             sim->statGapFillTicks[count] = 0;
             sim->statDroppedStaleInputs[count] = 0;
+            sim->statDroppedEdge[count] = 0;
             sim->statCatchupTicks[count] = 0;
         }
     }
@@ -1745,6 +1810,7 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, b
     sim->inputDryTicks[playerNum] = 0;
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
     sim->jitterStallCount[playerNum] = 0;
+    sim->jitterStarveCount[playerNum] = 0;
     sim->jitterStableTicks[playerNum] = 0;
     sim->statStallTicks[playerNum] = 0;
     sim->statGapFillTicks[playerNum] = 0;
@@ -1992,6 +2058,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->inputDryTicks[playerNum] = 0;
     sim->jitterTarget[playerNum] = JITTER_BUFFER_DEFAULT;
     sim->jitterStallCount[playerNum] = 0;
+    sim->jitterStarveCount[playerNum] = 0;
     sim->jitterStableTicks[playerNum] = 0;
     sim->statStallTicks[playerNum] = 0;
     sim->statGapFillTicks[playerNum] = 0;
@@ -3648,6 +3715,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
         sim->inputDryTicks[i] = 0;
         sim->jitterTarget[i] = JITTER_BUFFER_DEFAULT;
         sim->jitterStallCount[i] = 0;
+        sim->jitterStarveCount[i] = 0;
         sim->jitterStableTicks[i] = 0;
         sim->statStallTicks[i] = 0;
         sim->statGapFillTicks[i] = 0;

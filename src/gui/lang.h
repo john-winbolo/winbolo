@@ -1433,6 +1433,10 @@
  * magnitude px (the correction currently being smoothed out). */
 #define STR_DLGNETINFO_RECONCILE            1494
 
+/* Shown when the client gives up after repeated unrecoverable map-desync
+ * resyncs and disconnects, asking the player to rejoin. */
+#define STR_KICK_MAP_DESYNC                 1495
+
 /* WinBolo.net 1v1 ladder position shown in the status block.
  * STR_DLGWBN_RANK: {number} = position, {number2} = ranked-player total. */
 #define STR_DLGWBN_RANK                     1408

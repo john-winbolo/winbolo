@@ -313,9 +313,12 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
       gs.mapX = NO_GUNSIGHT;
     }
 
-    /* Server shell snapshots (other players' shells only — own shells filtered
-     * during snapshot sync in clientApplySnapshot) */
-    {
+    /* Other players' shells. Humans draw the forward-projected layer so
+     * incoming shells appear at their true present position rather than
+     * ~RTT/2 in the past; bots (e.g. BrainTest overlay) draw the raw
+     * serverShellSnaps the brain perceives. Own shells are filtered during
+     * snapshot sync, so neither source contains them. */
+    if (clientSimIsBot(csPtr)) {
       int si;
       BYTE myPlayer = clientSimGetInterpCtx(csPtr)->localPlayer;
       for (si = 0; si < clientSimGetServerShellCount(csPtr); si++) {
@@ -337,6 +340,34 @@ void clientRenderFrame(ClientSim *csPtr, updateType value) {
           conv >>= TANK_SHIFT_PIXELSIZE;
           spy = (BYTE)conv;
           sframe = (BYTE)(utilGetDir((TURNTYPE)clientSimGetServerShellSnaps(csPtr)[si].angle) + SHELL_START_EXPLODE + 1);
+          screenBulletsAddItem(&sBullets, (BYTE)(smx - clientSimGetXOffset(csPtr)), (BYTE)(smy - clientSimGetYOffset(csPtr)), spx, spy, sframe);
+        }
+      }
+    } else {
+      int si;
+      BYTE myPlayer = clientSimGetInterpCtx(csPtr)->localPlayer;
+      for (si = 0; si < clientSimGetProjectedShellCount(csPtr); si++) {
+        const ProjectedShell *ps = &clientSimGetProjectedShells(csPtr)[si];
+        WORLD sx = (WORLD)(int)ps->fx;
+        WORLD sy = (WORLD)(int)ps->fy;
+        BYTE smx = (BYTE)(sx >> TANK_SHIFT_MAPSIZE);
+        BYTE smy = (BYTE)(sy >> TANK_SHIFT_MAPSIZE);
+        if (ps->owner == myPlayer) {
+          continue;
+        }
+        if (smx >= clientSimGetXOffset(csPtr) && smx < (BYTE)(clientSimGetXOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_X - 1) &&
+            smy >= clientSimGetYOffset(csPtr) && smy < (BYTE)(clientSimGetYOffset(csPtr) + MAIN_BACK_BUFFER_SIZE_Y - 1)) {
+          WORLD conv;
+          BYTE spx, spy, sframe;
+          conv = sx;
+          conv <<= TANK_SHIFT_MAPSIZE;
+          conv >>= TANK_SHIFT_PIXELSIZE;
+          spx = (BYTE)conv;
+          conv = sy;
+          conv <<= TANK_SHIFT_MAPSIZE;
+          conv >>= TANK_SHIFT_PIXELSIZE;
+          spy = (BYTE)conv;
+          sframe = (BYTE)(utilGetDir((TURNTYPE)ps->angle) + SHELL_START_EXPLODE + 1);
           screenBulletsAddItem(&sBullets, (BYTE)(smx - clientSimGetXOffset(csPtr)), (BYTE)(smy - clientSimGetYOffset(csPtr)), spx, spy, sframe);
         }
       }

@@ -55,6 +55,7 @@ typedef struct {
     uint32_t mapEventAck;   /* Map event ACK: next expected map event seq (0 = none) */
     uint32_t controlEventAck; /* Control event ACK: next expected control event seq (0 = none) */
     uint16_t pingMs;        /* Client's self-measured RTT in ms */
+    uint32_t viewTick;      /* serverTick of the snapshot being displayed when this input was sampled; 0 = unknown (server falls back to the ping estimate). */
 } InputPacket;
 
 /*********************************************************
@@ -98,9 +99,27 @@ typedef struct {
 #define TANK_SNAPSHOT_HIDDEN_FLAG 0x80
 #define TANK_SNAPSHOT_PLAYER_MASK 0x7F
 
+/* Field-presence bitmask for a non-stub TankSnapshot entry (the byte that
+ * follows playerNum).  An always-present 11-byte core — playerNum, this mask,
+ * worldX, worldY, angle, speed, tankStatus — is followed by only the groups
+ * whose bit is set.  A group's bit is set iff any field in it is non-zero, so
+ * the encoder omits the bytes that are zero anyway (for a non-owner tank the
+ * owner-only resources, reload, etc. are always zero) and the decoder restores
+ * absent fields to 0 — byte-for-byte equivalent to sending them all.  The
+ * packer and unpacker must reference these same symbols. */
+#define TANK_PRESENT_OWNER_RES 0x01  /* armour, shells, mines, trees, gunsightLen (5B) */
+#define TANK_PRESENT_RELOAD    0x02  /* reload (1B) */
+#define TANK_PRESENT_DEATHWAIT 0x04  /* deathWait (1B) */
+#define TANK_PRESENT_LGM       0x08  /* lgmFrame, lgmMX, lgmMY, lgmPX, lgmPY (5B) */
+#define TANK_PRESENT_TURNRAMP  0x10  /* firstLeft, firstRight (2B) */
+#define TANK_PRESENT_PING      0x20  /* pingMs (2B) */
+#define TANK_PRESENT_FLAGS     0x40  /* clientFlags (1B) */
+/* 0x80 reserved (always 0 for now). */
+
 /* Per-tank data within a snapshot (wire format).  Variable-length: a stub
  * (playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) is 1 byte on the wire; a full entry
- * is TANK_SNAPSHOT_WIRE_SIZE bytes. */
+ * is an 11-byte core plus a presence mask selecting which field groups follow,
+ * at most TANK_SNAPSHOT_WIRE_SIZE bytes. */
 typedef struct {
     uint8_t  playerNum;
     uint16_t worldX;

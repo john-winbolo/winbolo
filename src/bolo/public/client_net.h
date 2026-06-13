@@ -87,6 +87,11 @@ ClientConnectState clientSimGetConnectState(const ClientSim *cs);
 const char *clientSimGetConnectErrorReason(const ClientSim *cs);
 BYTE        clientSimGetServerPlayerNum(const ClientSim *cs);
 const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen);
+/* serverTick of the frame interp is currently displaying (second-newest applied
+ * snapshot). Stamped onto outgoing inputs as viewTick so the server can rewind
+ * hit-detection by the true view age. Returns 0 until two snapshots have been
+ * applied, which routes the server to its ping-based fallback. */
+uint32_t    clientSimGetViewTick(const ClientSim *cs);
 
 /* === Send wrappers === */
 void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message);
@@ -245,6 +250,11 @@ void     clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,
                                  int *bpsRecv, int *bpsSent, int *numErrors,
                                  int *snapshotsRecv, int *snapshotsLost,
                                  int *snapshotsLostTotal);
+/* Cumulative successful map resyncs (desync recovery) this session. */
+int      clientSimGetMapResyncCount(ClientSim *cs);
+/* Feed the per-full-sync map-checksum compare result to the transport's
+ * resync state machine (request on mismatch / clear backoff on match). */
+void     clientSimNetReportMapChecksum(ClientSim *cs, bool matched);
 /* renderOffsetPx (out, may be NULL): current render-only error-offset
  * magnitude in pixels — the live correction being smoothed out, distinct
  * from the per-window reconcile error counts. */

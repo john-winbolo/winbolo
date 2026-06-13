@@ -31,6 +31,7 @@
 #include "util.h"
 #include "messages.h"
 #include "client_sim.h"
+#include "client_net.h"                /* clientSimGetViewTick */
 #include "frontend.h"                  /* frontEndApplyLocalTankPrefs */
 #include "client_sim_internal.h"
 #include "control_event.h"
@@ -77,6 +78,10 @@ typedef struct {
      * joins; refreshed by PACKET_WBN_REKEY when the server rotates. */
     char wbnServerKey[WINBOLONET_KEY_LEN];
     uint32_t outSequence;
+    /* Per-session connection id handed back in JOIN_ACCEPT and echoed on every
+     * INPUT so the server can re-home this slot after a NAT rebind. 0 until a
+     * JOIN_ACCEPT carrying one arrives (old/short accept leaves it 0). */
+    uint64_t connId;
 
     /* Reliable outbound command carrier. cmdSeq is monotonic per
      * connection (resets in transportUdpClientCreate). The queue holds
@@ -150,6 +155,23 @@ typedef struct {
      * so a mid-lobby map swap re-gates snapshots until the new map is
      * installed. */
     bool     mapInstalled;
+
+    /* Map desync recovery (resync) — a parallel download that runs while the
+     * client keeps playing (joinState stays CONNECTED) and hot-swaps the map
+     * in on completion. Mirrors the join-download fields above. */
+    BYTE    *mapResyncBuf;             /* Parallel reassembly buffer (owned) */
+    bool    *mapResyncChunkReceived;   /* Bitfield: which chunks we've gotten */
+    uint32_t mapResyncTotal;           /* Total expected bytes (from chunk mapSize) */
+    uint16_t mapResyncChunksExpected;  /* Total chunks expected */
+    uint16_t mapResyncChunksReceived;  /* Unique chunks received */
+    uint32_t activeResyncGen;          /* gen of the in-flight resync (0 = none) */
+    uint32_t resyncGenCounter;         /* Monotonic source for fresh nonzero gens */
+    bool     resyncActive;             /* A resync request is outstanding/installing */
+    bool     firstResyncChunkSeen;     /* Stop request retransmit once chunks arrive */
+    uint32_t lastResyncRequestTick;    /* localTick of last request send (retransmit) */
+    uint32_t resyncAttempts;           /* Resyncs that did not resolve the mismatch */
+    uint32_t resyncSuppressUntilTick;  /* Gate new requests until here (grace window) */
+    uint32_t mapResyncCount;           /* Cumulative successful resyncs (Net Info) */
 
     /* Join reject reason from server, rendered locally via langGetTextFmt
      * after Phase 9d wire format change. Sized for the longest expected
@@ -318,13 +340,31 @@ static void udpClientSendWbnReauth(TransportUdpClientCtx *c) {
  * called from the connected-state branch of udpClientTick. */
 static void udpClientUploadPump(TransportUdpClientCtx *c);
 
-/* Build an input packet into buf, returns length */
+/* connId rides the wire as two 32-bit halves through the existing packU32
+ * helpers — low half first, then high. Server send/read must agree with these. */
+static void packConnId(uint8_t *buf, uint64_t connId) {
+    packU32(buf,     (uint32_t)(connId & 0xffffffffULL));
+    packU32(buf + 4, (uint32_t)(connId >> 32));
+}
+static uint64_t unpackConnId(const uint8_t *buf) {
+    uint32_t lo = unpackU32(buf);
+    uint32_t hi = unpackU32(buf + 4);
+    return ((uint64_t)hi << 32) | (uint64_t)lo;
+}
+
+/* Build an input packet into buf, returns length.
+ * Wire layout: [header 8][connId 8][count 1][29-byte inputs…]. */
 static int buildInputPacket(TransportUdpClientCtx *c, uint8_t *buf) {
     int offset;
     int i, count;
 
     packHeader(buf, PACKET_INPUT, c->outSequence++);
     offset = PACKET_HEADER_SIZE;
+
+    /* connId framing prefix — the server reads this before the input count to
+     * re-home the slot on a NAT rebind. */
+    packConnId(buf + offset, c->connId);
+    offset += 8;
 
     count = INPUT_REDUNDANCY_COUNT;
     if (c->inputRingCount < (uint32_t)count) {
@@ -361,6 +401,7 @@ static void udpClientRecordInputInternal(TransportUdpClientCtx *c,
         stamped.mapEventAck = c->mapEventAck;
         stamped.controlEventAck = c->controlEventAck;
         stamped.pingMs = c->pingMs;
+        stamped.viewTick = clientSimGetViewTick(c->clientSim);
         c->inputRing[c->inputRingCount % CLIENT_INPUT_RING_SIZE] = stamped;
     }
     c->inputRingCount++;
@@ -803,6 +844,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
     case CTRL_COMMAND_REJECTED: return "COMMAND_REJECTED";
     case CTRL_BALANCE_FAILED:   return "BALANCE_FAILED";
+    case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     default:                    return "<unknown>";
     }
 }
@@ -928,6 +970,120 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
     clientSimApplyControl(c->clientSim, evt);
 }
 
+/* Map resync (desync recovery) timing/limits. localTick runs at 100/s. */
+#define MAP_RESYNC_REQUEST_RESEND_TICKS 75   /* ~0.75s between request resends */
+#define MAP_RESYNC_GRACE_TICKS         1000  /* ~10s = 2 full-sync intervals */
+#define MAP_RESYNC_MAX_ATTEMPTS        10    /* give up + disconnect after this */
+
+/* Free the parallel resync buffer and its chunk bitfield. */
+static void udpClientFreeResyncBuf(TransportUdpClientCtx *c) {
+    if (c->mapResyncBuf != NULL) {
+        free(c->mapResyncBuf);
+        c->mapResyncBuf = NULL;
+    }
+    if (c->mapResyncChunkReceived != NULL) {
+        free(c->mapResyncChunkReceived);
+        c->mapResyncChunkReceived = NULL;
+    }
+    c->mapResyncTotal = 0;
+    c->mapResyncChunksExpected = 0;
+    c->mapResyncChunksReceived = 0;
+}
+
+/* Abandon any in-flight resync (e.g. a wholesale map change supersedes it).
+ * Keeps mapResyncCount (cumulative) and resyncGenCounter (monotonic). */
+static void udpClientResetResync(TransportUdpClientCtx *c) {
+    udpClientFreeResyncBuf(c);
+    c->resyncActive = false;
+    c->firstResyncChunkSeen = false;
+    c->activeResyncGen = 0;
+    c->resyncAttempts = 0;
+    c->resyncSuppressUntilTick = 0;
+}
+
+/* Fresh nonzero resync generation id (wrap-skips 0). */
+static uint32_t udpClientNextResyncGen(TransportUdpClientCtx *c) {
+    c->resyncGenCounter++;
+    if (c->resyncGenCounter == 0) c->resyncGenCounter = 1;
+    return c->resyncGenCounter;
+}
+
+static void udpClientSendMapResyncRequest(TransportUdpClientCtx *c, uint32_t gen) {
+    uint8_t reqBuf[PACKET_HEADER_SIZE + 4];
+    packHeader(reqBuf, PACKET_MAP_RESYNC_REQUEST, c->outSequence++);
+    packU32(reqBuf + PACKET_HEADER_SIZE, gen);
+    udpClientSendTo(c, reqBuf, sizeof(reqBuf));
+}
+
+/* Handle a resync map chunk (resyncGen != 0). Reassembles into the parallel
+ * buffer and hot-swaps the terrain in on the last chunk. */
+static void udpClientHandleResyncChunk(TransportUdpClientCtx *c, uint32_t gen,
+                                       uint32_t mapSize, uint16_t chunkIdx,
+                                       uint16_t chunkSize, const uint8_t *data) {
+    uint32_t offset;
+
+    /* Only accept chunks for the request we currently have outstanding —
+     * a stale gen from a superseded resync is dropped. */
+    if (!c->resyncActive || gen != c->activeResyncGen) return;
+    if (mapSize == 0 || mapSize > MAP_DOWNLOAD_MAX_SIZE) return;
+
+    /* Allocate the buffer from the self-describing mapSize on the first chunk. */
+    if (c->mapResyncBuf == NULL) {
+        c->mapResyncTotal = mapSize;
+        c->mapResyncChunksExpected =
+            (uint16_t)((mapSize + MAP_DOWNLOAD_CHUNK_SIZE - 1) / MAP_DOWNLOAD_CHUNK_SIZE);
+        c->mapResyncChunksReceived = 0;
+        c->mapResyncBuf = (BYTE *)malloc(mapSize);
+        c->mapResyncChunkReceived =
+            (bool *)calloc(c->mapResyncChunksExpected, sizeof(bool));
+        if (c->mapResyncBuf == NULL || c->mapResyncChunkReceived == NULL) {
+            udpClientFreeResyncBuf(c);
+            return;
+        }
+    }
+
+    if (chunkIdx >= c->mapResyncChunksExpected) return;
+    offset = (uint32_t)chunkIdx * MAP_DOWNLOAD_CHUNK_SIZE;
+    if (offset + chunkSize > c->mapResyncTotal) return;
+
+    /* First chunk seen: the request got through, stop resending it (the
+     * server's own unacked-chunk loop carries the rest). */
+    c->firstResyncChunkSeen = true;
+
+    memcpy(c->mapResyncBuf + offset, data, chunkSize);
+    if (!c->mapResyncChunkReceived[chunkIdx]) {
+        c->mapResyncChunkReceived[chunkIdx] = true;
+        c->mapResyncChunksReceived++;
+    }
+
+    /* Ack this chunk via the normal MAP_ACK path the join download uses. */
+    {
+        uint8_t ackBuf[PACKET_HEADER_SIZE + 2];
+        packHeader(ackBuf, PACKET_MAP_ACK, c->outSequence++);
+        packU16(ackBuf + PACKET_HEADER_SIZE, chunkIdx);
+        udpClientSendTo(c, ackBuf, sizeof(ackBuf));
+    }
+
+    if (c->mapResyncChunksReceived >= c->mapResyncChunksExpected) {
+        /* Atomic terrain swap — joinState never changed, so snapshots and
+         * entities kept flowing. NULL name keeps the current map name. The
+         * server-held map events (seq >= cut) flow on the next snapshots and
+         * apply on top of the freshly installed blob. */
+        installCompressedMap(c->clientSim, c->mapResyncBuf,
+                             (int)c->mapResyncTotal, NULL);
+        c->mapResyncCount++;
+        c->resyncActive = false;
+        c->firstResyncChunkSeen = false;
+        c->activeResyncGen = 0;
+        /* Suppress new requests for a grace window: the next full-sync
+         * checksum confirms convergence and clears the backoff counter. */
+        c->resyncSuppressUntilTick = c->localTick + MAP_RESYNC_GRACE_TICKS;
+        udpClientFreeResyncBuf(c);
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "map resync install complete (count=%u)", (unsigned)c->mapResyncCount);
+    }
+}
+
 /* Process a single incoming packet (used by both direct and delayed paths) */
 static void udpClientProcessPacket(TransportUdpClientCtx *c,
                                    const uint8_t *buf, int len) {
@@ -947,8 +1103,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     switch (pktType) {
     case PACKET_JOIN_ACCEPT:
         /* Accept packet format:
-         *   [header 8] [playerNum 1] [serverTick 4] [mapSize 4]
-         * Total: 8 + 9 = 17 bytes */
+         *   [header 8] [playerNum 1] [serverTick 4] [mapSize 4] [connId 8]
+         * Total: 8 + 9 + 8 = 25 bytes. The connId trailer is optional: an
+         * old/short accept (8 + 9) leaves connId 0 and the server then
+         * re-homes off IP:port instead of the connId. */
         WB_LOG_INFO(WB_LOG_CAT_NET,
             "PACKET_JOIN_ACCEPT received: state=%d len=%d (need>=%d)",
             (int)c->joinState, len, PACKET_HEADER_SIZE + 9);
@@ -975,6 +1133,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             mapSize = unpackU32(buf + pos);
             pos += 4;
 
+            /* Optional connId trailer — only read when the accept is long
+             * enough, else leave c->connId 0 (server falls back to IP:port). */
+            if (len >= PACKET_HEADER_SIZE + 9 + 8) {
+                c->connId = unpackConnId(buf + pos);
+                pos += 8;
+            }
+
             if (mapSize == 0 || mapSize > MAP_DOWNLOAD_MAX_SIZE) {
                 c->joinState = UDP_CLIENT_ERROR;
                 break;
@@ -996,6 +1161,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             c->mapDownloadTotal = mapSize;
             c->mapDownloadReceived = 0;
             c->mapInstalled = false;
+
+            /* A fresh full download (initial join or a wholesale map change)
+             * supersedes any in-flight resync — drop its buffer and state so a
+             * stale resync can't install over the new map or wedge detection. */
+            udpClientResetResync(c);
 
             /* Calculate expected chunks */
             c->mapChunksExpected = (uint16_t)((mapSize + MAP_DOWNLOAD_CHUNK_SIZE - 1) / MAP_DOWNLOAD_CHUNK_SIZE);
@@ -1023,18 +1193,39 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         }
         break;
 
-    case PACKET_MAP_DOWNLOAD:
+    case PACKET_MAP_DOWNLOAD: {
         /* Map chunk format:
-         *   [header 8] [chunkIndex 2] [chunkSize 2] [data...] */
+         *   [header 8] [resyncGen 4] [mapSize 4] [chunkIdx 2] [chunkSize 2] [data...]
+         * resyncGen 0 = join download; nonzero = a map-resync transfer. */
+        uint32_t resyncGen;
+        uint32_t chunkMapSize;
+        uint16_t chunkIdx;
+        uint16_t chunkSize;
+        const uint8_t *chunkData;
+        uint32_t offset;
+
+        if (len < PACKET_HEADER_SIZE + 12) break;
+        resyncGen    = unpackU32(buf + PACKET_HEADER_SIZE);
+        chunkMapSize = unpackU32(buf + PACKET_HEADER_SIZE + 4);
+        chunkIdx     = unpackU16(buf + PACKET_HEADER_SIZE + 8);
+        chunkSize    = unpackU16(buf + PACKET_HEADER_SIZE + 10);
+        chunkData    = buf + PACKET_HEADER_SIZE + 12;
+        if (len < PACKET_HEADER_SIZE + 12 + chunkSize) break;
+
+        if (resyncGen != 0) {
+            /* Map-resync chunk — reassemble in the parallel buffer; the join
+             * state is untouched so play continues uninterrupted. */
+            udpClientHandleResyncChunk(c, resyncGen, chunkMapSize,
+                                       chunkIdx, chunkSize, chunkData);
+            break;
+        }
+
+        /* Join download path (resyncGen 0). Keep using JOIN_ACCEPT's size —
+         * the chunk's mapSize is redundant here. */
         if (c->joinState == UDP_CLIENT_DOWNLOADING_MAP &&
-            len >= PACKET_HEADER_SIZE + 4 && c->mapDownloadBuf != NULL) {
-            uint16_t chunkIdx = unpackU16(buf + PACKET_HEADER_SIZE);
-            uint16_t chunkSize = unpackU16(buf + PACKET_HEADER_SIZE + 2);
-            uint32_t offset;
-            const uint8_t *chunkData = buf + PACKET_HEADER_SIZE + 4;
+            c->mapDownloadBuf != NULL) {
 
             if (chunkIdx >= c->mapChunksExpected) break;
-            if (len < PACKET_HEADER_SIZE + 4 + chunkSize) break;
 
             offset = (uint32_t)chunkIdx * MAP_DOWNLOAD_CHUNK_SIZE;
             if (offset + chunkSize > c->mapDownloadTotal) break;
@@ -1090,6 +1281,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
         }
         break;
+    }
 
     case PACKET_JOIN_REJECT: {
         /* Wire format (Phase 9d):
@@ -1243,18 +1435,17 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->snapshotHdr.baseCount = baseCount;
         c->snapshotHdr.pillCount = pillCount;
 
-        /* Unpack tanks — variable length: stubs are 1 byte, full entries
-         * are TANK_SNAPSHOT_WIRE_SIZE bytes.  The first byte's high bit
-         * (TANK_SNAPSHOT_HIDDEN_FLAG) tells us which. */
+        /* Unpack tanks — variable length: a stub is 1 byte; a full entry is a
+         * presence-mask-driven run that unpackTankSnapshot length-checks
+         * against the bytes remaining, returning 0 on truncation. */
         if (tankCount > MAX_TANKS) tankCount = MAX_TANKS;
         {
             bool tankBoundsOk = TRUE;
             for (i = 0; i < tankCount; i++) {
-                int needed;
-                if (pos + 1 > len) { tankBoundsOk = FALSE; break; }
-                needed = (buf[pos] & TANK_SNAPSHOT_HIDDEN_FLAG) ? 1 : TANK_SNAPSHOT_WIRE_SIZE;
-                if (pos + needed > len) { tankBoundsOk = FALSE; break; }
-                pos += unpackTankSnapshot(buf + pos, &c->snapshotTanks[i]);
+                int n = unpackTankSnapshot(buf + pos, (size_t)(len - pos),
+                                           &c->snapshotTanks[i]);
+                if (n == 0) { tankBoundsOk = FALSE; break; }
+                pos += n;
             }
             if (!tankBoundsOk) break;
         }
@@ -2203,6 +2394,16 @@ static bool udpClientTick(void *ctx) {
         }
     }
 
+    /* Map-resync request retransmit: the request datagram can be lost, so
+     * resend it until the first resync chunk arrives, then stop — the server's
+     * own unacked-chunk loop carries the rest of the transfer. */
+    if (c->joinState == UDP_CLIENT_CONNECTED && c->resyncActive &&
+        !c->firstResyncChunkSeen &&
+        (c->localTick - c->lastResyncRequestTick) >= MAP_RESYNC_REQUEST_RESEND_TICKS) {
+        udpClientSendMapResyncRequest(c, c->activeResyncGen);
+        c->lastResyncRequestTick = c->localTick;
+    }
+
     /* Coalesced PACKET_CONTROL_ACK emission.  Only fires when a
      * PACKET_CONTROL_TICK has armed controlAckPendingTick — during
      * running, PACKET_INPUT already carries controlEventAck so no
@@ -2750,6 +2951,7 @@ void transportUdpClientDestroy(Transport *t) {
     if (c->mapChunkReceived != NULL) {
         free(c->mapChunkReceived);
     }
+    udpClientFreeResyncBuf(c);
     if (c->uploadBuf != NULL) {
         free(c->uploadBuf);
     }
@@ -2861,6 +3063,66 @@ const char *transportUdpClientGetJoinRejectReason(Transport *t) {
     if (t == NULL || t->ctx == NULL) return NULL;
     c = (TransportUdpClientCtx *)t->ctx;
     return c->joinRejectReason;
+}
+
+uint32_t transportUdpClientGetMapResyncCount(Transport *t) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return 0;
+    c = (TransportUdpClientCtx *)t->ctx;
+    return c->mapResyncCount;
+}
+
+/* Called once per full-sync snapshot with the result of the map-checksum
+ * compare. Owns the whole resync state machine: on a mismatch it starts a
+ * resync (subject to suppression + an outstanding-request guard) or, once the
+ * backoff cap is hit, disconnects with a localized reason; on a match it clears
+ * the backoff counter. The detection itself lives in clientApplySnapshot. */
+void transportUdpClientReportMapChecksum(Transport *t, bool matched) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return;
+    c = (TransportUdpClientCtx *)t->ctx;
+
+    /* Only meaningful for a connected, playing client. */
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    if (matched) {
+        /* Converged (or never diverged): clear the backoff once no resync is
+         * in flight, so a later genuine divergence starts fresh. */
+        if (!c->resyncActive) {
+            c->resyncAttempts = 0;
+            c->resyncSuppressUntilTick = 0;
+        }
+        return;
+    }
+
+    /* Mismatch. One outstanding request at a time, and stay quiet during the
+     * post-install grace window — otherwise every full-sync would re-request. */
+    if (c->resyncActive) return;
+    if (c->localTick < c->resyncSuppressUntilTick) return;
+
+    if (c->resyncAttempts >= MAP_RESYNC_MAX_ATTEMPTS) {
+        /* Repeated full resyncs didn't fix it — almost certainly a checksum
+         * disagreement (a bug), not real divergence. Give up cleanly rather
+         * than loop a 64KB transfer forever. Reuse the connection-lost path
+         * the frontend already handles mid-game; carry a localized reason. */
+        clientSimSetConnectErrorReason(c->clientSim, langGetText(STR_KICK_MAP_DESYNC));
+        c->joinState = UDP_CLIENT_SERVER_SHUTDOWN;
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "map desync unresolved after %u resyncs -> disconnect",
+            (unsigned)c->resyncAttempts);
+        return;
+    }
+
+    /* Start a new resync. */
+    c->activeResyncGen = udpClientNextResyncGen(c);
+    c->resyncActive = true;
+    c->firstResyncChunkSeen = false;
+    c->lastResyncRequestTick = c->localTick;
+    c->resyncAttempts++;
+    udpClientSendMapResyncRequest(c, c->activeResyncGen);
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+        "map checksum mismatch -> resync request gen=%u attempt=%u",
+        (unsigned)c->activeResyncGen, (unsigned)c->resyncAttempts);
 }
 
 const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen) {

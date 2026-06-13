@@ -190,8 +190,11 @@ static inline bool controlSeqResetDetected(uint32_t controlEventCount,
  * decoders length-check each field and reject malformed packets. */
 #define LOBBY_SLOT_WIRE_SIZE (1 + 1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2 + 1 + 1)
 
-#define INPUT_PACKET_WIRE_SIZE 25
-#define TANK_SNAPSHOT_WIRE_SIZE 27
+#define INPUT_PACKET_WIRE_SIZE 29
+/* Upper bound on one non-stub tank entry: the 11-byte core (incl. presence
+ * mask) plus every field group present at once. NOT the typical on-wire size —
+ * most entries are far smaller because absent (zero) groups are omitted. */
+#define TANK_SNAPSHOT_WIRE_SIZE 28
 
 /* ---- Serialization helpers ---- */
 
@@ -210,7 +213,7 @@ void unpackInputPacket(const uint8_t *buf, InputPacket *pkt);
  * promotes a recorded input to an immediate send. */
 bool udpInputEdgeChanged(const InputPacket *prev, const InputPacket *cur);
 int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts);
-int unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts);
+int unpackTankSnapshot(const uint8_t *buf, size_t avail, TankSnapshot *ts);
 int packShellSnapshot(uint8_t *buf, const ShellSnapshot *ss);
 void unpackShellSnapshot(const uint8_t *buf, ShellSnapshot *ss);
 int packTkExplosionSnapshot(uint8_t *buf, const TkExplosionSnapshot *tke);

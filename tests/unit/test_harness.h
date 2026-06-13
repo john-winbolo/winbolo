@@ -74,6 +74,9 @@ int run_command_codec_bounds_checks(void);
 int run_command_rejected_parks_name_codes(void);
 int run_command_rejected_ignores_other_slot(void);
 int run_command_rejected_clear_resets_both_fields(void);
+int run_shell_death_codec_roundtrip(void);
+int run_shell_death_culls_matching_predicted_shell(void);
+int run_shell_death_rejected_culls_without_impact(void);
 int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
@@ -308,10 +311,57 @@ int run_stall_long_dry_advances(void);
 int run_input_catchup(void);
 int run_catchup_ignores_redundant_duplicates(void);
 
+/* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
+ * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
+ * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
+int run_jitter_buffer_grow(void);
+int run_shell_projection(void);
+
+/* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
+ * pack -> unpack roundtrip over representative tank entries — field fidelity,
+ * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */
+int run_snapshot_compaction(void);
+
 /* Render-only error smoothing (test_error_smoothing.c): the offset
  * accumulate/decay/clamp/wrap math as pure functions, plus the
  * clientSimResetWorld zeroing. Always built. */
 int run_error_smoothing(void);
+
+/* In-process loopback transport tests (loopback_harness.c): real UDP
+ * client + server over localhost sockets, with seeded impairment on the
+ * client endpoint. Convergence-bounded, never exact-trace. */
+int run_loopback_join(void);
+int run_loopback_join_loss(void);
+int run_loopback_lobby_running_loss(void);
+int run_join_version_gate(void);
+
+/* Map-send amplification gate (test_map_amp_gate.c): a crafted JOIN over a raw
+ * loopback socket draws a JOIN_ACCEPT but no PACKET_MAP_DOWNLOAD until a
+ * MAP_ACK 0xFFFF ready round-trip is sent, after which chunks flow. */
+int run_map_amp_gate(void);
+
+/* Map-desync resync queue logic (test_map_resync.c): the resync cut empties
+ * the slot's map-event queue (ackedSeq == nextSeq); baked-in changes are not
+ * re-sent and a post-cut change delivers exactly once; a duplicate request
+ * while a resync is in flight does not re-cut (no event loss); the send gate
+ * yields zero map events while in progress and resumes after. */
+int run_map_resync_cut_and_deliver_once(void);
+int run_map_resync_duplicate_request_no_recut(void);
+int run_map_resync_send_gate_holds(void);
+int run_map_resync_stale_gen_rejected(void);
+
+/* Connection-id NAT-rebind migration (test_conn_migration.c): the pure
+ * connId match-and-rehome decision, plus an end-to-end loopback join that
+ * confirms the server stores a connId and inputs ride the new framing. */
+int run_conn_migration_rehome(void);
+int run_conn_migration_e2e(void);
+
+/* Exact lag-compensation viewTick (test_viewtick_rewind.c): the pure
+ * serverSimComputeLagCompTicks rewind math (real view age, ping fallback,
+ * clamp) and the client's displayed-tick stamp (second-newest applied
+ * snapshot serverTick, 0 until two are applied). */
+int run_viewtick_rewind(void);
+int run_viewtick_displayed_tick(void);
 
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and

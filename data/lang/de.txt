@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=Sende Nachricht an {number} Spieler
 STR_DLGNETINFO_TITLE=Netzwerkinfo
 STR_DLGNETINFO_SERVERPING=Server-Ping: {number} ms
 STR_DLGNETINFO_STATUS=Status:
-STR_DLGNETINFO_ERRORS=Netzwerkfehler: {number}
+STR_DLGNETINFO_ERRORS=Netzwerkfehler: {number}  ·  {number2} Resyncs
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Passwort erforderlich
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Pakete/Sek.: {number} ein / {number2} aus
 STR_DLGNETINFO_KB_RATE=KB/sec: {string1} ein / {string2} aus
 STR_DLGNETINFO_LOSS=Paketverlust: {number}% ({number2}/{number3} diese Sek., {number4} gesamt)
 STR_DLGNETINFO_RECONCILE=Abgleiche: {number}/s, Fehler Ø {string1}px, max {string2}px, Glättung {string3}px
+STR_KICK_MAP_DESYNC=Karte nicht mehr synchron mit dem Server — bitte neu verbinden.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Seed kopieren

@@ -98,7 +98,7 @@ STR_DLGMSG_SENDPLAYERS=Sending message to {number} players
 STR_DLGNETINFO_TITLE=Network Info
 STR_DLGNETINFO_SERVERPING=Server ping: {number} ms
 STR_DLGNETINFO_STATUS=Status:
-STR_DLGNETINFO_ERRORS=Net errors: {number}
+STR_DLGNETINFO_ERRORS=Net errors: {number}  ·  {number2} resync
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Password Required
@@ -1343,6 +1343,7 @@ STR_DLGLOBBY_REJECT_BAD_STATE=not allowed right now
 STR_DLGLOBBY_BAL_STATUS_FAILED=WBN balance failed
 STR_DLGNETINFO_LOSS=Packet loss: {number}% ({number2}/{number3} this sec, {number4} game total)
 STR_DLGNETINFO_RECONCILE=Reconciles: {number}/s, err avg {string1}px, max {string2}px, smoothing {string3}px
+STR_KICK_MAP_DESYNC=Map out of sync with the server — please rejoin.
 STR_DLGWBN_RANK=#{number} of {number2}
 STR_DLGWBN_UNRANKED=Unranked
 

@@ -2478,6 +2478,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_command_codec_roundtrip.c
     tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
+    tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_command_queue_drain.c
@@ -2523,9 +2524,23 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_input_catchup.c
+    tests/unit/test_jitter_buffer_grow.c
+    tests/unit/test_shell_projection.c
+    tests/unit/test_snapshot_compaction.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
+    # Loopback transport tests: real UDP client + server over localhost,
+    # sharing the loopback_harness fixture.
+    tests/unit/loopback_harness.c
+    tests/unit/test_loopback_join.c
+    tests/unit/test_loopback_join_loss.c
+    tests/unit/test_loopback_lobby_running_loss.c
+    tests/unit/test_join_version_gate.c
+    tests/unit/test_map_amp_gate.c
+    tests/unit/test_map_resync.c
+    tests/unit/test_conn_migration.c
+    tests/unit/test_viewtick_rewind.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2568,6 +2583,13 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+    # Activate the network-impairment hooks for this target's compilation of
+    # transport_udp_client.c (compiled per-target above), so the loopback
+    # tests can drive a seeded lossy path via WB_NETIMPAIR. server_static
+    # owns transport_udp_server.c and is NOT recompiled here, so every
+    # shipping target keeps WB_ENABLE_NETIMPAIR=0; client-endpoint impairment
+    # already covers both directions (impairIn + impairOut).
+    WB_ENABLE_NETIMPAIR=1
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -2627,6 +2649,9 @@ set(_unit_test_names
     command_rejected_parks_name_codes
     command_rejected_ignores_other_slot
     command_rejected_clear_resets_both_fields
+    shell_death_codec_roundtrip
+    shell_death_culls_matching_predicted_shell
+    shell_death_rejected_culls_without_impact
     lobby_add_bot_rejects_empty_brain_path
     lobby_add_bot_rejects_ai_none
     lobby_add_bot_rejects_not_in_lobby
@@ -2761,8 +2786,24 @@ set(_unit_test_names
     stall_long_dry_advances
     input_catchup
     catchup_ignores_redundant_duplicates
+    jitter_buffer_grow
+    shell_projection
+    snapshot_compaction
     edge_send_predicate
     error_smoothing
+    loopback_join
+    loopback_join_loss
+    loopback_lobby_running_loss
+    join_version_gate
+    map_amp_gate
+    map_resync_cut_and_deliver_once
+    map_resync_duplicate_request_no_recut
+    map_resync_send_gate_holds
+    map_resync_stale_gen_rejected
+    conn_migration_rehome
+    conn_migration_e2e
+    viewtick_rewind
+    viewtick_displayed_tick
 )
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
