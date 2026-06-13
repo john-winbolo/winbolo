@@ -198,85 +198,132 @@ void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
 }
 
 /* Serialize one TankSnapshot into buf. Returns bytes written: 1 for a stub
- * (out-of-view), TANK_SNAPSHOT_WIRE_SIZE for a full entry. */
+ * (out-of-view), otherwise an 11-byte core (playerNum, presence mask, worldX,
+ * worldY, angle, speed, tankStatus) followed by only the field groups whose
+ * values are non-zero. A group's TANK_PRESENT_* bit is set iff any of its
+ * fields is non-zero; absent groups are restored to 0 by the unpacker, so this
+ * is byte-for-byte equivalent to always sending every field. */
 int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts) {
+    uint8_t mask = 0;
+    int pos;
+
     buf[0] = ts->playerNum;
     if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) {
         return 1;
     }
-    packU16(buf + 1, ts->worldX);
-    packU16(buf + 3, ts->worldY);
-    packU16(buf + 5, ts->angle);
-    packU16(buf + 7, ts->speed);
-    buf[9] = ts->tankStatus;
-    buf[10] = ts->lgmFrame;
-    buf[11] = ts->lgmMX;
-    buf[12] = ts->lgmMY;
-    buf[13] = ts->lgmPX;
-    buf[14] = ts->lgmPY;
-    buf[15] = ts->armour;
-    buf[16] = ts->shells;
-    buf[17] = ts->mines;
-    buf[18] = ts->trees;
-    buf[19] = ts->firstLeft;
-    buf[20] = ts->firstRight;
-    buf[21] = ts->gunsightLen;
-    buf[22] = ts->deathWait;
-    buf[23] = ts->reload;
-    packU16(buf + 24, ts->pingMs);
-    buf[26] = ts->clientFlags;
-    return 27;
+
+    if (ts->armour || ts->shells || ts->mines || ts->trees || ts->gunsightLen) {
+        mask |= TANK_PRESENT_OWNER_RES;
+    }
+    if (ts->reload)    mask |= TANK_PRESENT_RELOAD;
+    if (ts->deathWait) mask |= TANK_PRESENT_DEATHWAIT;
+    if (ts->lgmFrame || ts->lgmMX || ts->lgmMY || ts->lgmPX || ts->lgmPY) {
+        mask |= TANK_PRESENT_LGM;
+    }
+    if (ts->firstLeft || ts->firstRight) mask |= TANK_PRESENT_TURNRAMP;
+    if (ts->pingMs)      mask |= TANK_PRESENT_PING;
+    if (ts->clientFlags) mask |= TANK_PRESENT_FLAGS;
+
+    buf[1] = mask;
+    packU16(buf + 2, ts->worldX);
+    packU16(buf + 4, ts->worldY);
+    packU16(buf + 6, ts->angle);
+    packU16(buf + 8, ts->speed);
+    buf[10] = ts->tankStatus;
+    pos = 11;
+
+    if (mask & TANK_PRESENT_OWNER_RES) {
+        buf[pos++] = ts->armour;
+        buf[pos++] = ts->shells;
+        buf[pos++] = ts->mines;
+        buf[pos++] = ts->trees;
+        buf[pos++] = ts->gunsightLen;
+    }
+    if (mask & TANK_PRESENT_RELOAD)    buf[pos++] = ts->reload;
+    if (mask & TANK_PRESENT_DEATHWAIT) buf[pos++] = ts->deathWait;
+    if (mask & TANK_PRESENT_LGM) {
+        buf[pos++] = ts->lgmFrame;
+        buf[pos++] = ts->lgmMX;
+        buf[pos++] = ts->lgmMY;
+        buf[pos++] = ts->lgmPX;
+        buf[pos++] = ts->lgmPY;
+    }
+    if (mask & TANK_PRESENT_TURNRAMP) {
+        buf[pos++] = ts->firstLeft;
+        buf[pos++] = ts->firstRight;
+    }
+    if (mask & TANK_PRESENT_PING) {
+        packU16(buf + pos, ts->pingMs);
+        pos += 2;
+    }
+    if (mask & TANK_PRESENT_FLAGS) buf[pos++] = ts->clientFlags;
+    return pos;
 }
 
-/* Returns bytes consumed: 1 for a stub, TANK_SNAPSHOT_WIRE_SIZE for full. */
-int unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts) {
+/* Deserialize one TankSnapshot from buf, reading at most `avail` bytes. All
+ * fields are zeroed first so any group the packer omitted decodes back to 0.
+ * Returns bytes consumed (1 for a stub), or 0 if the buffer is too short at
+ * any step — a truncated or hostile packet. */
+int unpackTankSnapshot(const uint8_t *buf, size_t avail, TankSnapshot *ts) {
+    uint8_t mask;
+    size_t pos;
+
+    memset(ts, 0, sizeof(*ts));
+    if (avail < 1) return 0;
     ts->playerNum = buf[0];
     if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) {
-        ts->worldX = 0;
-        ts->worldY = 0;
-        ts->angle = 0;
-        ts->speed = 0;
-        ts->tankStatus = 0;
-        ts->lgmFrame = 0;
-        ts->lgmMX = 0;
-        ts->lgmMY = 0;
-        ts->lgmPX = 0;
-        ts->lgmPY = 0;
-        ts->armour = 0;
-        ts->shells = 0;
-        ts->mines = 0;
-        ts->trees = 0;
-        ts->firstLeft = 0;
-        ts->firstRight = 0;
-        ts->gunsightLen = 0;
-        ts->deathWait = 0;
-        ts->reload = 0;
-        ts->pingMs = 0;
-        ts->clientFlags = 0;
         return 1;
     }
-    ts->worldX = unpackU16(buf + 1);
-    ts->worldY = unpackU16(buf + 3);
-    ts->angle = unpackU16(buf + 5);
-    ts->speed = unpackU16(buf + 7);
-    ts->tankStatus = buf[9];
-    ts->lgmFrame = buf[10];
-    ts->lgmMX = buf[11];
-    ts->lgmMY = buf[12];
-    ts->lgmPX = buf[13];
-    ts->lgmPY = buf[14];
-    ts->armour = buf[15];
-    ts->shells = buf[16];
-    ts->mines = buf[17];
-    ts->trees = buf[18];
-    ts->firstLeft = buf[19];
-    ts->firstRight = buf[20];
-    ts->gunsightLen = buf[21];
-    ts->deathWait = buf[22];
-    ts->reload = buf[23];
-    ts->pingMs = unpackU16(buf + 24);
-    ts->clientFlags = buf[26];
-    return 27;
+
+    /* core: playerNum(1) + mask(1) + worldX/Y/angle/speed(8) + tankStatus(1) */
+    if (avail < 11) return 0;
+    mask = buf[1];
+    ts->worldX = unpackU16(buf + 2);
+    ts->worldY = unpackU16(buf + 4);
+    ts->angle = unpackU16(buf + 6);
+    ts->speed = unpackU16(buf + 8);
+    ts->tankStatus = buf[10];
+    pos = 11;
+
+    if (mask & TANK_PRESENT_OWNER_RES) {
+        if (avail < pos + 5) return 0;
+        ts->armour = buf[pos++];
+        ts->shells = buf[pos++];
+        ts->mines = buf[pos++];
+        ts->trees = buf[pos++];
+        ts->gunsightLen = buf[pos++];
+    }
+    if (mask & TANK_PRESENT_RELOAD) {
+        if (avail < pos + 1) return 0;
+        ts->reload = buf[pos++];
+    }
+    if (mask & TANK_PRESENT_DEATHWAIT) {
+        if (avail < pos + 1) return 0;
+        ts->deathWait = buf[pos++];
+    }
+    if (mask & TANK_PRESENT_LGM) {
+        if (avail < pos + 5) return 0;
+        ts->lgmFrame = buf[pos++];
+        ts->lgmMX = buf[pos++];
+        ts->lgmMY = buf[pos++];
+        ts->lgmPX = buf[pos++];
+        ts->lgmPY = buf[pos++];
+    }
+    if (mask & TANK_PRESENT_TURNRAMP) {
+        if (avail < pos + 2) return 0;
+        ts->firstLeft = buf[pos++];
+        ts->firstRight = buf[pos++];
+    }
+    if (mask & TANK_PRESENT_PING) {
+        if (avail < pos + 2) return 0;
+        ts->pingMs = unpackU16(buf + pos);
+        pos += 2;
+    }
+    if (mask & TANK_PRESENT_FLAGS) {
+        if (avail < pos + 1) return 0;
+        ts->clientFlags = buf[pos++];
+    }
+    return (int)pos;
 }
 
 /* Serialize one ShellSnapshot into buf. Returns bytes written (7). */

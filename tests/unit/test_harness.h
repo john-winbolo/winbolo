@@ -317,6 +317,11 @@ int run_catchup_ignores_redundant_duplicates(void);
 int run_jitter_buffer_grow(void);
 int run_shell_projection(void);
 
+/* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
+ * pack -> unpack roundtrip over representative tank entries — field fidelity,
+ * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */
+int run_snapshot_compaction(void);
+
 /* Render-only error smoothing (test_error_smoothing.c): the offset
  * accumulate/decay/clamp/wrap math as pure functions, plus the
  * clientSimResetWorld zeroing. Always built. */

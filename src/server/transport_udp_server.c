@@ -1958,8 +1958,10 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     countsPos = pos;
     pos += 24; /* 8 count bytes + 4 byte reliableBaseSeq + 4 byte mapEventBaseSeq + 4 byte controlEventBaseSeq + 2 byte mapChecksum + 2 byte returnToLobbyTicks */
 
-    /* Pack tank snapshots — variable length: stubs are 1 byte, full
-     * entries are TANK_SNAPSHOT_WIRE_SIZE bytes. */
+    /* Pack tank snapshots — variable length: a stub is 1 byte; a full entry is
+     * a presence-mask-driven run of at most TANK_SNAPSHOT_WIRE_SIZE bytes
+     * (packTankSnapshot returns the actual size, usually far smaller because
+     * zero field groups are omitted). Reserve the conservative max here. */
     for (i = 0; i < hdr.tankCount; i++) {
         bool isStub = (tankSnaps[i].playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) != 0;
         int needed = isStub ? 1 : TANK_SNAPSHOT_WIRE_SIZE;
