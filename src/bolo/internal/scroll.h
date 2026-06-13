@@ -98,6 +98,20 @@ struct ScrollState {
   BYTE  peekReturnX, peekReturnY;
   bool  seenThreatTank[MAX_TANKS];
   bool  seenThreatPill[MAX_PILLS];
+
+  /* v1WithThreats threat bias: a world-relative view offset toward the threats
+   * around the tank, layered on top of unmodified v1 autoscroll and active
+   * only while moving. It is NOT perpendicular to facing, so steering doesn't
+   * swing the camera. threatLat* is the offset actually applied last tick (in
+   * tiles), removed before re-running v1 so the underlying classic trajectory
+   * is unaffected; threatLatDesired* is the debounced target it eases toward.
+   * threatLatSub* is the same applied offset tracked at sub-tile (1/256)
+   * resolution: it eases smoothly and its fractional part is handed to the
+   * renderer via subPos so the camera glides instead of stepping a whole tile;
+   * threatLat* is just its whole-tile part, kept for exact base recovery. */
+  int8_t  threatLatX, threatLatY;
+  int8_t  threatLatDesiredX, threatLatDesiredY;
+  int16_t threatLatSubX, threatLatSubY;
 };
 
 /* ------------------------------------------------------------------
@@ -114,14 +128,16 @@ typedef enum {
   SCROLL_MECH_CLASSIC_NO_AUTOSCROLL = 0, /* original, autoscroll off */
   SCROLL_MECH_CLASSIC_AUTOSCROLL    = 1, /* original gunsight-edge autoscroll */
   SCROLL_MECH_ENHANCED              = 2, /* current sub-tile / threat-aware */
-  SCROLL_MECH_ANDREW_ENHANCED       = 3  /* Andrew's variant (WIP; = enhanced for now) */
+  SCROLL_MECH_ANDREW_ENHANCED       = 3, /* Andrew's variant (WIP; = enhanced for now) */
+  SCROLL_MECH_V1_WITH_THREATS       = 4  /* v1 autoscroll + moving-only lateral
+                                          * bias toward the side with threats */
 } ScrollMechanism;
 
 /* Compile-time default. Change this (or call scrollSetMechanism at
- * runtime) to switch mechanisms. Keep ENHANCED so stock builds are
- * unchanged until a mechanism is explicitly selected. */
+ * runtime) to switch mechanisms. Hardcoded to V1_WITH_THREATS so the new
+ * mechanism is active without touching the GUI selector. */
 #ifndef SCROLL_MECHANISM_DEFAULT
-#define SCROLL_MECHANISM_DEFAULT SCROLL_MECH_ENHANCED
+#define SCROLL_MECHANISM_DEFAULT SCROLL_MECH_V1_WITH_THREATS
 #endif
 
 /* Mechanism selector + tuning knobs (process-global, runtime-switchable). */

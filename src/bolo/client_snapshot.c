@@ -506,6 +506,12 @@ void clientApplySnapshot(ClientSim *csPtr,
             /* alive→dead: set death type for static screen rendering */
             tankSetLastTankDeath(&MY_TANK(csPtr), LAST_DEATH_BY_SHELL);
             tankAddDeath(&csPtr->sim, &MY_TANK(csPtr));
+            /* Dying drops pill view back to the tank: the death static is
+             * suppressed while in pill view, so without this you'd watch the
+             * pill through your own death instead of seeing the static. */
+            if (isHuman) {
+              csPtr->viewport.inPillView = FALSE;
+            }
             /* Death is a hard transition — drop any render offset. */
             csPtr->errX = 0.0f;
             csPtr->errY = 0.0f;
