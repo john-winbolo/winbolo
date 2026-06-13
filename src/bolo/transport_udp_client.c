@@ -171,6 +171,10 @@ typedef struct {
     uint32_t lastResyncRequestTick;    /* localTick of last request send (retransmit) */
     uint32_t resyncAttempts;           /* Resyncs that did not resolve the mismatch */
     uint32_t resyncSuppressUntilTick;  /* Gate new requests until here (grace window) */
+    uint32_t lastResyncProgressTick;   /* localTick of last forward progress (request
+                                        * sent at start, or a chunk received); drives
+                                        * the stall watchdog that abandons a wedged
+                                        * resync so the disconnect cap can fire */
     uint32_t mapResyncCount;           /* Cumulative successful resyncs (Net Info) */
 
     /* Join reject reason from server, rendered locally via langGetTextFmt
@@ -974,6 +978,10 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
 #define MAP_RESYNC_REQUEST_RESEND_TICKS 75   /* ~0.75s between request resends */
 #define MAP_RESYNC_GRACE_TICKS         1000  /* ~10s = 2 full-sync intervals */
 #define MAP_RESYNC_MAX_ATTEMPTS        10    /* give up + disconnect after this */
+#define MAP_RESYNC_STALL_TICKS         500   /* ~5s of no chunk progress -> abandon
+                                              * the in-flight resync (server stopped
+                                              * sending / state lost) so the next
+                                              * checksum mismatch re-arms */
 
 /* Free the parallel resync buffer and its chunk bitfield. */
 static void udpClientFreeResyncBuf(TransportUdpClientCtx *c) {
@@ -1049,6 +1057,8 @@ static void udpClientHandleResyncChunk(TransportUdpClientCtx *c, uint32_t gen,
     /* First chunk seen: the request got through, stop resending it (the
      * server's own unacked-chunk loop carries the rest). */
     c->firstResyncChunkSeen = true;
+    /* Forward progress — reset the stall watchdog. */
+    c->lastResyncProgressTick = c->localTick;
 
     memcpy(c->mapResyncBuf + offset, data, chunkSize);
     if (!c->mapResyncChunkReceived[chunkIdx]) {
@@ -2404,6 +2414,30 @@ static bool udpClientTick(void *ctx) {
         c->lastResyncRequestTick = c->localTick;
     }
 
+    /* Map-resync stall watchdog.  Once the first chunk arrives the request
+     * retransmit above stops, so a transfer that then stalls — later chunks
+     * lost past the server's resend window, or the server dropped its download
+     * state on a game restart — would leave resyncActive stuck forever:
+     * clientSimNetReportMapChecksum early-returns while a resync is "active",
+     * so neither a fresh resync nor the disconnect cap ever fires and the
+     * client renders wrong terrain indefinitely.  If there's been no forward
+     * progress (request sent at start, or a chunk received) for a while,
+     * abandon the in-flight resync.  Keep resyncAttempts so the next checksum
+     * mismatch re-arms and eventually trips MAP_RESYNC_MAX_ATTEMPTS. */
+    if (c->joinState == UDP_CLIENT_CONNECTED && c->resyncActive &&
+        (c->localTick - c->lastResyncProgressTick) >= MAP_RESYNC_STALL_TICKS) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "map resync stalled (no progress for %u ticks) -> abandon (attempt %u)",
+            (unsigned)(c->localTick - c->lastResyncProgressTick),
+            (unsigned)c->resyncAttempts);
+        udpClientFreeResyncBuf(c);
+        c->resyncActive = false;
+        c->firstResyncChunkSeen = false;
+        c->activeResyncGen = 0;
+        /* resyncAttempts intentionally retained — this failed attempt counts
+         * toward the disconnect cap. */
+    }
+
     /* Coalesced PACKET_CONTROL_ACK emission.  Only fires when a
      * PACKET_CONTROL_TICK has armed controlAckPendingTick — during
      * running, PACKET_INPUT already carries controlEventAck so no
@@ -3118,6 +3152,7 @@ void transportUdpClientReportMapChecksum(Transport *t, bool matched) {
     c->resyncActive = true;
     c->firstResyncChunkSeen = false;
     c->lastResyncRequestTick = c->localTick;
+    c->lastResyncProgressTick = c->localTick;
     c->resyncAttempts++;
     udpClientSendMapResyncRequest(c, c->activeResyncGen);
     WB_LOG_INFO(WB_LOG_CAT_NET,

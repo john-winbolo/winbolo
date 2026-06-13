@@ -926,7 +926,13 @@ void clientSimRebuildProjectedShells(ClientSim *cs, uint16_t pingMs) {
     ns->vy = vy;
     ns->angle = s->angle;
     ns->owner = s->owner;
-    ns->length = s->length;
+    /* The projection flew the shell ageTicks forward, so it has ageTicks less
+     * life remaining. Without this a projected shell renders up to ageTicks
+     * past its true impact during a snapshot gap. Clamp at 0 — a shell already
+     * at/past impact is culled by clientSimAdvanceProjectedShells. */
+    ns->length = (s->length > (uint8_t)ageTicks)
+                     ? (uint8_t)(s->length - ageTicks)
+                     : 0;
     ns->active = true;
     nextCount++;
   }
