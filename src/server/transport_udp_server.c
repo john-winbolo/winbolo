@@ -964,9 +964,12 @@ static void serverSendMapChunks(int slot) {
     if (dl->downloadComplete) return;
 
     for (i = 0; i < dl->totalChunks; i++) {
-        /* Wire layout: [header 8][resyncGen u32][chunkIdx u16][chunkSize u16][data].
-         * 8 + 4 + 4 + 900 = 916 bytes, well within UDP_MAX_PAYLOAD (1400). */
-        uint8_t chunkBuf[PACKET_HEADER_SIZE + 4 + 4 + MAP_DOWNLOAD_CHUNK_SIZE];
+        /* Wire layout: [header 8][resyncGen u32][mapSize u32][chunkIdx u16]
+         * [chunkSize u16][data]. The total mapSize makes the transfer
+         * self-describing so a resync (which has no JOIN_ACCEPT to carry the
+         * size) can size its buffer from the first chunk.
+         * 8 + 4 + 4 + 4 + 900 = 920 bytes, within UDP_MAX_PAYLOAD (1400). */
+        uint8_t chunkBuf[PACKET_HEADER_SIZE + 4 + 4 + 4 + MAP_DOWNLOAD_CHUNK_SIZE];
         uint32_t offset;
         uint16_t chunkSize;
         int pktLen;
@@ -983,11 +986,12 @@ static void serverSendMapChunks(int slot) {
         /* resyncGen: 0 for a join download, the request's nonzero id for a
          * resync — the client routes/rejects chunks by it. */
         packU32(chunkBuf + PACKET_HEADER_SIZE, dl->resyncGen);
-        packU16(chunkBuf + PACKET_HEADER_SIZE + 4, i);
-        packU16(chunkBuf + PACKET_HEADER_SIZE + 6, chunkSize);
-        memcpy(chunkBuf + PACKET_HEADER_SIZE + 8,
+        packU32(chunkBuf + PACKET_HEADER_SIZE + 4, dl->mapSize);
+        packU16(chunkBuf + PACKET_HEADER_SIZE + 8, i);
+        packU16(chunkBuf + PACKET_HEADER_SIZE + 10, chunkSize);
+        memcpy(chunkBuf + PACKET_HEADER_SIZE + 12,
                dl->compressedMap + offset, chunkSize);
-        pktLen = PACKET_HEADER_SIZE + 8 + chunkSize;
+        pktLen = PACKET_HEADER_SIZE + 12 + chunkSize;
 
         /* wire-only: per-client reliability (acked / per-tick to one slot) */
         srvSendTo(chunkBuf, pktLen, &client->addr);

@@ -743,6 +743,16 @@ void clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,
                                 snapshotsLostTotal);
 }
 
+int clientSimGetMapResyncCount(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
+  return (int)transportUdpClientGetMapResyncCount(&cs->transport);
+}
+
+void clientSimNetReportMapChecksum(ClientSim *cs, bool matched) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientReportMapChecksum(&cs->transport, matched);
+}
+
 void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,
                                 float *avgErrPx, float *maxErrPx,
                                 float *renderOffsetPx) {

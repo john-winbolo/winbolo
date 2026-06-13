@@ -332,6 +332,16 @@ void transportUdpClientSendWbnReauth(Transport *t);
  * Returns NULL if no reject reason is available. */
 const char *transportUdpClientGetJoinRejectReason(Transport *t);
 
+/* Cumulative count of successful map resyncs (desync recovery) this session,
+ * for the Net Info overlay. */
+uint32_t transportUdpClientGetMapResyncCount(Transport *t);
+
+/* Report the result of a full-sync map-checksum compare (matched / mismatch).
+ * Drives the map-resync state machine: starts a resync on a mismatch (subject
+ * to suppression + backoff) or disconnects after the backoff cap. Called from
+ * the snapshot apply path; a no-op unless the client is connected. */
+void transportUdpClientReportMapChecksum(Transport *t, bool matched);
+
 /* Returns the downloaded map data after successful join.
  * Returns NULL if no map has been downloaded yet.
  * outLen receives the length of the compressed data. */

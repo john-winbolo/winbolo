@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=Надсилання повідомлення {number} г
 STR_DLGNETINFO_TITLE=Мережева інформація
 STR_DLGNETINFO_SERVERPING=Пінг сервера: {number} мс
 STR_DLGNETINFO_STATUS=Статус:
-STR_DLGNETINFO_ERRORS=Мережеві помилки: {number}
+STR_DLGNETINFO_ERRORS=Мережеві помилки: {number}  ·  {number2} ресинхр.
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Потрібен пароль
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Пакетів/с: {number} вхід / {number2} в�
 STR_DLGNETINFO_KB_RATE=КБ/с: {string1} вхід / {string2} вихід
 STR_DLGNETINFO_LOSS=Втрата пакетів: {number}% ({number2}/{number3} за сек, {number4} за гру)
 STR_DLGNETINFO_RECONCILE=Реконсил.: {number}/с, сер. відх. {string1}px, макс {string2}px, згладж. {string3}px
+STR_KICK_MAP_DESYNC=Карта розсинхронізована із сервером — перепідключіться.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Копіювати seed

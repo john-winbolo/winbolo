@@ -235,6 +235,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_resync_cut_and_deliver_once",         run_map_resync_cut_and_deliver_once         },
     { "map_resync_duplicate_request_no_recut",   run_map_resync_duplicate_request_no_recut   },
     { "map_resync_send_gate_holds",              run_map_resync_send_gate_holds              },
+    { "map_resync_stale_gen_rejected",           run_map_resync_stale_gen_rejected           },
     { "conn_migration_rehome",                   run_conn_migration_rehome                   },
     { "conn_migration_e2e",                      run_conn_migration_e2e                      },
     { "viewtick_rewind",                         run_viewtick_rewind                         },

@@ -348,6 +348,7 @@ int run_map_amp_gate(void);
 int run_map_resync_cut_and_deliver_once(void);
 int run_map_resync_duplicate_request_no_recut(void);
 int run_map_resync_send_gate_holds(void);
+int run_map_resync_stale_gen_rejected(void);
 
 /* Connection-id NAT-rebind migration (test_conn_migration.c): the pure
  * connId match-and-rehome decision, plus an end-to-end loopback join that

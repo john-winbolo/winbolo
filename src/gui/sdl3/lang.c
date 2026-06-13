@@ -105,7 +105,7 @@ static const LangEntry langTable[] = {
     {265,  "Network Info"},
     {268,  "Server ping: {number} ms"},
     {270,  "Status:"},
-    {271,  "Net errors: {number}"},
+    {271,  "Net errors: {number}  \xC2\xB7  {number2} resync"},
     {272,  "Password Required"},
     {273,  "This game requires a password:"},
     {275,  "Enter the new player name for your tank:"},
@@ -1081,6 +1081,7 @@ static const LangEntry langTable[] = {
     {1492, "Keyboard"},
     {1493, "Gray letterbox bars"},
     {1494, "Reconciles: {number}/s, err avg {string1}px, max {string2}px, smoothing {string3}px"},
+    {1495, "Map out of sync with the server \xE2\x80\x94 please rejoin."},
 
     /* macOS native menu — App / File / Window menu items mirrored by
      * src/gui/sdl3/platform/mac_menubar.mm. Not referenced by the

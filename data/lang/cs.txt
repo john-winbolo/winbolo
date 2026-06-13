@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=Odesílání zprávy {number} hráčům
 STR_DLGNETINFO_TITLE=Informace o síti
 STR_DLGNETINFO_SERVERPING=Ping serveru: {number} ms
 STR_DLGNETINFO_STATUS=Stav:
-STR_DLGNETINFO_ERRORS=Chyby sítě: {number}
+STR_DLGNETINFO_ERRORS=Chyby sítě: {number}  ·  {number2} resync
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Vyžadováno heslo
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Pakety/s: {number} příj. / {number2} odes.
 STR_DLGNETINFO_KB_RATE=KB/s: {string1} příj. / {string2} odes.
 STR_DLGNETINFO_LOSS=Ztráta paketů: {number}% ({number2}/{number3} tuto sek., {number4} celkem ve hře)
 STR_DLGNETINFO_RECONCILE=Vyrovnání: {number}/s, chyba prům {string1}px, max {string2}px, vyhlazení {string3}px
+STR_KICK_MAP_DESYNC=Mapa není synchronizovaná se serverem — připojte se prosím znovu.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Kopírovat seed

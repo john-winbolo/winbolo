@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=Bericht sturen naar {number} spelers
 STR_DLGNETINFO_TITLE=Netwerkinfo
 STR_DLGNETINFO_SERVERPING=Serverping: {number} ms
 STR_DLGNETINFO_STATUS=Status:
-STR_DLGNETINFO_ERRORS=Netwerkfouten: {number}
+STR_DLGNETINFO_ERRORS=Netwerkfouten: {number}  ·  {number2} resyncs
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Wachtwoord vereist
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Pakketten/sec: {number} in / {number2} uit
 STR_DLGNETINFO_KB_RATE=KB/sec: {string1} in / {string2} uit
 STR_DLGNETINFO_LOSS=Pakketverlies: {number}% ({number2}/{number3} deze sec., {number4} totaal spel)
 STR_DLGNETINFO_RECONCILE=Reconciliaties: {number}/s, fout gem {string1}px, max {string2}px, afvlakking {string3}px
+STR_KICK_MAP_DESYNC=Kaart niet meer synchroon met de server — maak opnieuw verbinding.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Seed kopiëren

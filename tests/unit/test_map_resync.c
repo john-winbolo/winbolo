@@ -185,3 +185,31 @@ int run_map_resync_send_gate_holds(void) {
 
     return 0;
 }
+
+/* Mirror of the client-side resync-chunk acceptance decision in
+ * udpClientHandleResyncChunk (transport_udp_client.c) plus the resyncGen
+ * routing in the PACKET_MAP_DOWNLOAD parser: a chunk is consumed as a resync
+ * chunk only when a resync is outstanding and the chunk's generation matches
+ * the active request; resyncGen 0 is the join-download path. The routing is
+ * static in the transport, so the decision is modelled here (no sockets). */
+static bool resyncChunkAccepted(uint32_t chunkGen, bool resyncActive,
+                                uint32_t activeGen) {
+    if (chunkGen == 0) return false;   /* join download, not a resync chunk */
+    if (!resyncActive) return false;   /* no resync outstanding */
+    return chunkGen == activeGen;      /* reject a stale/superseded generation */
+}
+
+int run_map_resync_stale_gen_rejected(void) {
+    /* Outstanding resync uses generation 7. */
+    UT_ASSERT_MSG(resyncChunkAccepted(7, true, 7),
+                  "matching gen must be accepted");
+    UT_ASSERT_MSG(!resyncChunkAccepted(6, true, 7),
+                  "stale (superseded) gen must be rejected");
+    UT_ASSERT_MSG(!resyncChunkAccepted(8, true, 7),
+                  "wrong (newer) gen must be rejected");
+    UT_ASSERT_MSG(!resyncChunkAccepted(7, false, 7),
+                  "no resync active -> chunk rejected");
+    UT_ASSERT_MSG(!resyncChunkAccepted(0, true, 7),
+                  "gen 0 is the join path, not a resync chunk");
+    return 0;
+}

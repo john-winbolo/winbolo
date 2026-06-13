@@ -250,6 +250,11 @@ void     clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,
                                  int *bpsRecv, int *bpsSent, int *numErrors,
                                  int *snapshotsRecv, int *snapshotsLost,
                                  int *snapshotsLostTotal);
+/* Cumulative successful map resyncs (desync recovery) this session. */
+int      clientSimGetMapResyncCount(ClientSim *cs);
+/* Feed the per-full-sync map-checksum compare result to the transport's
+ * resync state machine (request on mismatch / clear backoff on match). */
+void     clientSimNetReportMapChecksum(ClientSim *cs, bool matched);
 /* renderOffsetPx (out, may be NULL): current render-only error-offset
  * magnitude in pixels — the live correction being smoothed out, distinct
  * from the per-window reconcile error counts. */

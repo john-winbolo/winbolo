@@ -657,6 +657,7 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_GP_REBIND_PROMPT", STR_GP_REBIND_PROMPT },
     { "STR_GP_SECTION", STR_GP_SECTION },
     { "STR_KICK_ANNOUNCE", STR_KICK_ANNOUNCE },
+    { "STR_KICK_MAP_DESYNC", STR_KICK_MAP_DESYNC },
     { "STR_LEAVE_ALLIANCE", STR_LEAVE_ALLIANCE },
     { "STR_LONG", STR_LONG },
     { "STR_LV_ABOUT_TITLE", STR_LV_ABOUT_TITLE },
@@ -1208,4 +1209,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  1195
+#define K_LANG_NAME_TABLE_SIZE  1196

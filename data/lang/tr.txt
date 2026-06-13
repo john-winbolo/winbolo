@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS={number} oyuncuya mesaj gönderiliyor
 STR_DLGNETINFO_TITLE=Ağ Bilgisi
 STR_DLGNETINFO_SERVERPING=Sunucu gecikmesi: {number} ms
 STR_DLGNETINFO_STATUS=Durum:
-STR_DLGNETINFO_ERRORS=Ağ hataları: {number}
+STR_DLGNETINFO_ERRORS=Ağ hataları: {number}  ·  {number2} yeniden eşitleme
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Şifre Gerekli
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Paket/sn: {number} gelen / {number2} giden
 STR_DLGNETINFO_KB_RATE=KB/sn: {string1} gelen / {string2} giden
 STR_DLGNETINFO_LOSS=Paket kaybı: {number}% ({number2}/{number3} bu sn, {number4} oyun toplamı)
 STR_DLGNETINFO_RECONCILE=Uzlaştırmalar: {number}/sn, hata ort {string1}px, maks {string2}px, düzeltme {string3}px
+STR_KICK_MAP_DESYNC=Harita sunucuyla eşitlenmedi — lütfen yeniden katılın.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Tohumu Kopyala

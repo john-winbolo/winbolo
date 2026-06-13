@@ -80,6 +80,7 @@
 #include "util.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
+#include "client_net.h"
 #include "server_sim.h"
 #include "../steam/steam_wrapper.h"
 
@@ -1076,10 +1077,14 @@ void clientApplySnapshot(ClientSim *csPtr,
    * processing so the client map includes changes from this snapshot */
   if (hdr->mapChecksum != 0) {
     uint16_t clientChecksum = mapCalcChecksum(&csPtr->sim.mp);
-    if (clientChecksum != hdr->mapChecksum) {
+    bool mapMatched = (clientChecksum == hdr->mapChecksum);
+    if (!mapMatched) {
       WB_LOG_WARN(WB_LOG_CAT_CLIENT, "Map checksum mismatch: server=%04x client=%04x",
               hdr->mapChecksum, clientChecksum);
     }
+    /* Drive map-resync recovery: the transport requests a fresh map on a
+     * mismatch (debounced) and clears its backoff on a match. */
+    clientSimNetReportMapChecksum(csPtr, mapMatched);
   }
 
   /* Invalidate tile cache after applying snapshot state (human only) */
