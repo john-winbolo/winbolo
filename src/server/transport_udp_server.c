@@ -579,6 +579,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_LOBBY_BRAIN_LIST: return "LOBBY_BRAIN_LIST";
     case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
+    case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     default:                    return "<unknown>";
     }
 }
@@ -729,6 +730,12 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
     if (evt->type == CTRL_BALANCE_FAILED && client->playerNum != 0) {
         /* The balance flow is host-driven; only slot 0 needs the
          * failure pill. Skip the fan-out for everyone else. */
+        return;
+    }
+    if (evt->type == CTRL_SHELL_DEATH &&
+        evt->u.shellDeath.owner != client->playerNum) {
+        /* Owner-only: the firing player is the sole recipient (mirrors
+         * CTRL_COMMAND_REJECTED). Drop for every other slot. */
         return;
     }
 
@@ -3962,6 +3969,24 @@ static void srvDrainImpair(ServerSim *sim) {
                                 &paddr, now)) > 0) {
         udpSendTo(udpServer.sock, pbuf, plen, &paddr);
     }
+
+#if WB_ENABLE_NETIMPAIR
+    /* Once-per-second impairment-queue summary so genuine injected loss
+     * (overflow = the 512-slot queue filled, the only drop path when loss=0)
+     * can be told apart from jitter-induced reordering — which is not loss at
+     * all but shows up on the per-player [netstat] line as stale= when an
+     * overtaken packet arrives after a newer one and is discarded. If overflow
+     * holds at 0 while stale climbs, the "loss" is reordering, not drops. */
+    if (netImpairEnabled(&srvImpairIn) || netImpairEnabled(&srvImpairOut)) {
+        static uint64_t lastImpairLogMs = 0;
+        if (now - lastImpairLogMs >= 1000) {
+            lastImpairLogMs = now;
+            mpDiagLog("[netimpair] in: q=%d overflow=%u  out: q=%d overflow=%u",
+                      srvImpairIn.count, (unsigned)srvImpairIn.overflowDrops,
+                      srvImpairOut.count, (unsigned)srvImpairOut.overflowDrops);
+        }
+    }
+#endif
 }
 
 /* Receive all pending packets from clients (polled fallback) */

@@ -827,6 +827,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
     case CTRL_COMMAND_REJECTED: return "COMMAND_REJECTED";
     case CTRL_BALANCE_FAILED:   return "BALANCE_FAILED";
+    case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
     default:                    return "<unknown>";
     }
 }

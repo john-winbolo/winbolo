@@ -311,6 +311,25 @@ static void serverSimCbExplosion(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py) 
     serverSimAddEvent(sim, &ev);
 }
 
+/* A shell owned by `owner` ended (collision or expiry). Publish a
+ * unicast CTRL_SHELL_DEATH so the firing client can match fireTick to
+ * its predicted shell, cull the ghost, and draw the impact at
+ * (impactWX, impactWY). udpClientDeliverControl filters to the owner. */
+static void serverSimCbShellDeath(void *ctx, uint32_t fireTick, BYTE owner,
+                                  WORLD impactWX, WORLD impactWY,
+                                  uint8_t outcome) {
+    ServerSim *sim = (ServerSim *)ctx;
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SHELL_DEATH;
+    evt.u.shellDeath.fireTick = fireTick;
+    evt.u.shellDeath.impactWX = (uint16_t)impactWX;
+    evt.u.shellDeath.impactWY = (uint16_t)impactWY;
+    evt.u.shellDeath.owner    = owner;
+    evt.u.shellDeath.outcome  = outcome;
+    serverSimPublishControl(sim, &evt);
+}
+
 static void serverSimCbTkExplosion(void *ctx, WORLD x, WORLD y,
                                    TURNTYPE angle, BYTE length,
                                    BYTE explodeType, BYTE creator) {
@@ -467,6 +486,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.mineVisible = serverSimCbMineVisible;
     sim->sim.callbacks.explosion = serverSimCbExplosion;
     sim->sim.callbacks.tkExplosion = serverSimCbTkExplosion;
+    sim->sim.callbacks.shellDeath = serverSimCbShellDeath;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -1036,7 +1056,13 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
             sim->sim.lagCompTicks = compTicks;
             sim->statLastRewindTicks[count] = compTicks;
         }
+        /* Stamp the originating input tick so a shell created inside this
+         * tankUpdate carries it (shellsAddItem reads sim->fireInputTick).
+         * Reset to 0 immediately after so pill shells / later world systems
+         * in this tick don't inherit a stale player tick. */
+        sim->sim.fireInputTick = applied.tick;
         tankUpdate(&sim->sim, &sim->sim.tanks[count], tb, shoot, FALSE);
+        sim->sim.fireInputTick = 0;
 
         /* Handle mine laying */
         if (applied.actions & INPUT_ACTION_LAY_MINE) {

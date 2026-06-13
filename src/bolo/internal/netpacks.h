@@ -432,6 +432,12 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                               { reasonCode u8 } — fired when
                                               the balance worker finishes
                                               without a usable proposal */
+#define PACKET_SHELL_DEATH             204  /* server → shell owner (unicast)
+                                              { fireTick u32, impactWX u16,
+                                                impactWY u16, owner u8,
+                                                outcome u8 } — the firing
+                                              client culls its predicted shell
+                                              and draws the impact */
 
 #define PACKET_GAME_VOTE_STATE         195  /* server → all clients
                                               { kind 1, active 1,

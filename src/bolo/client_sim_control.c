@@ -639,5 +639,30 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             cs->lobbyLastRejectReason = evt->u.commandRejected.reasonCode;
         }
         break;
+
+    case CTRL_SHELL_DEATH: {
+        /* Server closure for one of our predicted shells: cull the ghost so
+         * it stops flying on past the server's impact at high ping. Owner-only
+         * on the wire, but in-process subscribers (SP-host, bots) receive
+         * every published event, so gate on owner == our slot (mirrors
+         * CTRL_COMMAND_REJECTED). Match by fireTick and remove via the
+         * swap-with-last predicted-shell cull idiom. */
+        if (evt->u.shellDeath.owner != clientSimGetMyPlayerNum(cs)) {
+            break;
+        }
+        int i;
+        for (i = 0; i < cs->predictedShellCount; i++) {
+            if (cs->predictedShells[i].fireTick == evt->u.shellDeath.fireTick) {
+                cs->predictedShells[i] =
+                    cs->predictedShells[cs->predictedShellCount - 1];
+                cs->predictedShellCount--;
+                break;  /* one fire per tick — at most one match */
+            }
+        }
+        /* No impact drawn here: the owner already receives the authoritative
+         * EVENT_EXPLOSION for this shell on the snapshot tail (drawn for every
+         * client with no owner filter), so drawing one here would double up. */
+        break;
+    }
     }
 }

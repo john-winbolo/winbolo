@@ -37,6 +37,22 @@
 struct GameSim;
 struct ClientSim;
 
+/* Why a shell ended, reported by the server to the shell's owner via
+ * CTRL_SHELL_DEATH (control_event.h). Terrain/pill/base collisions all
+ * collapse to SHELL_OUTCOME_IMPACT because the client treats them
+ * identically (cull the predicted ghost, draw the impact). Defined here
+ * rather than in control_event.h so shells.c can name these without
+ * pulling in the public control-event header (which would drag client_sim
+ * et al. into the engine tier). REJECTED is never emitted by shells.c —
+ * it is reserved on the wire for a denied fire and handled client-side. */
+typedef enum {
+  SHELL_OUTCOME_REJECTED = 0, /* fire denied — no shell ever existed */
+  SHELL_OUTCOME_EXPIRED,      /* shell reached end of life with no hit */
+  SHELL_OUTCOME_IMPACT,       /* hit terrain / pillbox / base */
+  SHELL_OUTCOME_TANK_HIT,     /* hit a tank (damaged, not killed) */
+  SHELL_OUTCOME_TANK_KILL     /* hit a tank and killed it */
+} ShellOutcome;
+
 /* Empty / Non Empty / Head / Tail Macros */
 #define IsEmpty(list) ((list) ==NULL)
 #define NonEmpty(list) (!IsEmpty(list))
@@ -83,6 +99,10 @@ struct shellsObj {
   bool onBoat;      /* Was the shell launched from a boat */
   bool packSent;    /* Has this shell been included in a network packet yet */
   BYTE creator;     /* Creator machines player Number */
+  uint32_t fireTick; /* Originating client input tick that fired this shell
+                        (0 for pill / gap-fill / network-extracted shells).
+                        Echoed in CTRL_SHELL_DEATH so the firing client can
+                        match the death to its predicted shell by fireTick. */
   bool shellDead;   /* Used to over come the if shell dies straight away and
                        hasn't been sent it never does. So we mark it dead
                        and it doesn't get updated any more but exists till
@@ -272,8 +292,11 @@ void shellsCalcScreenBullets(shells *value, screenBullets *sBullets, BYTE leftPo
 *  onBoat   - Was the shell launched from a boat
 *  numTanks - Number of tanks in the array
 *  isServer - TRUE if we are a server
+*  outOutcome - NULL-tolerant out-param; on a collision, set to the
+*               SHELL_OUTCOME_* describing what was hit (TANK_HIT /
+*               TANK_KILL / IMPACT). Untouched when no collision occurs.
 *********************************************************/
-bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, TURNTYPE angle, BYTE owner, bool onBoat, BYTE numTanks, uint8_t compensationTicks);
+bool shellsCalcCollision(struct GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, TURNTYPE angle, BYTE owner, bool onBoat, BYTE numTanks, uint8_t compensationTicks, uint8_t *outOutcome);
 
 /*********************************************************
 *NAME:          shellsCheckRoad

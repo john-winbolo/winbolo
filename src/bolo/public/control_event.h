@@ -81,6 +81,11 @@ typedef enum {
      * the lobby's "Asking WBN…" pill can flip to a failure label
      * immediately instead of waiting out the 8 s NOREPLY timeout. */
     CTRL_BALANCE_FAILED,
+    /* CTRL_SHELL_DEATH — server tells a shell's owner their shell ended.
+     * Unicast to `owner` via udpClientDeliverControl. The client matches
+     * fireTick against its predicted shells to cull the ghost and draw the
+     * impact at the authoritative position. */
+    CTRL_SHELL_DEATH,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -309,6 +314,24 @@ typedef struct ControlEvent {
         struct {
             uint8_t reasonCode;
         } balanceFailed;
+
+        /* CTRL_SHELL_DEATH — server tells a shell's owner their shell ended.
+         * Unicast to `owner` via udpClientDeliverControl. The client matches
+         * fireTick against its predicted shells and culls the ghost so it
+         * stops flying on past the server's impact at high ping. outcome is a
+         * SHELL_OUTCOME_* (shells.h); the server emits EXPIRED / IMPACT /
+         * TANK_HIT / TANK_KILL, with SHELL_OUTCOME_REJECTED reserved on the
+         * wire (never emitted today). impactWX/impactWY/outcome are carried
+         * for forward use (e.g. a future kill cue at the death position) and
+         * are NOT consumed by the client today — the impact visual already
+         * comes from the authoritative EVENT_EXPLOSION the owner receives. */
+        struct {
+            uint32_t fireTick;   /* originating client input tick (matches predictedShells[].fireTick) */
+            uint16_t impactWX;   /* world X of the death/impact (tank position for REJECTED) */
+            uint16_t impactWY;
+            uint8_t  owner;      /* shell owner's player slot — the sole recipient */
+            uint8_t  outcome;    /* SHELL_OUTCOME_* */
+        } shellDeath;
     } u;
 } ControlEvent;
 

@@ -2478,6 +2478,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_command_codec_roundtrip.c
     tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
+    tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_command_queue_drain.c
@@ -2645,6 +2646,9 @@ set(_unit_test_names
     command_rejected_parks_name_codes
     command_rejected_ignores_other_slot
     command_rejected_clear_resets_both_fields
+    shell_death_codec_roundtrip
+    shell_death_culls_matching_predicted_shell
+    shell_death_rejected_culls_without_impact
     lobby_add_bot_rejects_empty_brain_path
     lobby_add_bot_rejects_ai_none
     lobby_add_bot_rejects_not_in_lobby

@@ -75,6 +75,13 @@ typedef struct GameSimCallbacks {
     void (*explosion)(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py);
     void (*tkExplosion)(void *ctx, WORLD x, WORLD y, TURNTYPE angle,
                         BYTE length, BYTE explodeType, BYTE creator);
+    /* Server-only: a shell owned by `owner` ended. Wired to publish a
+     * unicast CTRL_SHELL_DEATH so the firing client can match fireTick to
+     * its predicted shell, cull the ghost, and draw the impact at
+     * (impactWX, impactWY). NULL on the client (not authoritative over
+     * shell death). outcome is a SHELL_OUTCOME_* (shells.h). */
+    void (*shellDeath)(void *ctx, uint32_t fireTick, BYTE owner,
+                       WORLD impactWX, WORLD impactWY, uint8_t outcome);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */
 } GameSimCallbacks;
 
@@ -105,6 +112,12 @@ struct GameSim {
     /* Game rules */
     gameType    game;
     bool        hiddenMines;
+
+    /* Originating client input tick of the fire currently being applied,
+     * set by the server right before the firing tankUpdate and read by
+     * shellsAddItem to stamp the shell's fireTick. 0 outside a player fire
+     * (pill shells, gap-fill, substitutes, client). */
+    uint32_t    fireInputTick;
 
     /* Identity — lets shared code know if it's running as server */
     BYTE        viewPlayer; /* which player's perspective we render from */
