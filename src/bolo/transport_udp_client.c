@@ -78,6 +78,10 @@ typedef struct {
      * joins; refreshed by PACKET_WBN_REKEY when the server rotates. */
     char wbnServerKey[WINBOLONET_KEY_LEN];
     uint32_t outSequence;
+    /* Per-session connection id handed back in JOIN_ACCEPT and echoed on every
+     * INPUT so the server can re-home this slot after a NAT rebind. 0 until a
+     * JOIN_ACCEPT carrying one arrives (old/short accept leaves it 0). */
+    uint64_t connId;
 
     /* Reliable outbound command carrier. cmdSeq is monotonic per
      * connection (resets in transportUdpClientCreate). The queue holds
@@ -319,13 +323,31 @@ static void udpClientSendWbnReauth(TransportUdpClientCtx *c) {
  * called from the connected-state branch of udpClientTick. */
 static void udpClientUploadPump(TransportUdpClientCtx *c);
 
-/* Build an input packet into buf, returns length */
+/* connId rides the wire as two 32-bit halves through the existing packU32
+ * helpers — low half first, then high. Server send/read must agree with these. */
+static void packConnId(uint8_t *buf, uint64_t connId) {
+    packU32(buf,     (uint32_t)(connId & 0xffffffffULL));
+    packU32(buf + 4, (uint32_t)(connId >> 32));
+}
+static uint64_t unpackConnId(const uint8_t *buf) {
+    uint32_t lo = unpackU32(buf);
+    uint32_t hi = unpackU32(buf + 4);
+    return ((uint64_t)hi << 32) | (uint64_t)lo;
+}
+
+/* Build an input packet into buf, returns length.
+ * Wire layout: [header 8][connId 8][count 1][29-byte inputs…]. */
 static int buildInputPacket(TransportUdpClientCtx *c, uint8_t *buf) {
     int offset;
     int i, count;
 
     packHeader(buf, PACKET_INPUT, c->outSequence++);
     offset = PACKET_HEADER_SIZE;
+
+    /* connId framing prefix — the server reads this before the input count to
+     * re-home the slot on a NAT rebind. */
+    packConnId(buf + offset, c->connId);
+    offset += 8;
 
     count = INPUT_REDUNDANCY_COUNT;
     if (c->inputRingCount < (uint32_t)count) {
@@ -949,8 +971,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     switch (pktType) {
     case PACKET_JOIN_ACCEPT:
         /* Accept packet format:
-         *   [header 8] [playerNum 1] [serverTick 4] [mapSize 4]
-         * Total: 8 + 9 = 17 bytes */
+         *   [header 8] [playerNum 1] [serverTick 4] [mapSize 4] [connId 8]
+         * Total: 8 + 9 + 8 = 25 bytes. The connId trailer is optional: an
+         * old/short accept (8 + 9) leaves connId 0 and the server then
+         * re-homes off IP:port instead of the connId. */
         WB_LOG_INFO(WB_LOG_CAT_NET,
             "PACKET_JOIN_ACCEPT received: state=%d len=%d (need>=%d)",
             (int)c->joinState, len, PACKET_HEADER_SIZE + 9);
@@ -976,6 +1000,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             pos += 4; /* skip serverTick */
             mapSize = unpackU32(buf + pos);
             pos += 4;
+
+            /* Optional connId trailer — only read when the accept is long
+             * enough, else leave c->connId 0 (server falls back to IP:port). */
+            if (len >= PACKET_HEADER_SIZE + 9 + 8) {
+                c->connId = unpackConnId(buf + pos);
+                pos += 8;
+            }
 
             if (mapSize == 0 || mapSize > MAP_DOWNLOAD_MAX_SIZE) {
                 c->joinState = UDP_CLIENT_ERROR;

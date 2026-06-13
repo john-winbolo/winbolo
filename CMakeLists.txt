@@ -2534,6 +2534,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_join_loss.c
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_join_version_gate.c
+    tests/unit/test_conn_migration.c
     tests/unit/test_viewtick_rewind.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
@@ -2784,6 +2785,8 @@ set(_unit_test_names
     loopback_join_loss
     loopback_lobby_running_loss
     join_version_gate
+    conn_migration_rehome
+    conn_migration_e2e
     viewtick_rewind
     viewtick_displayed_tick
 )

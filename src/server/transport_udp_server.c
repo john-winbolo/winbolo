@@ -339,6 +339,62 @@ static int serverFindClient(const struct sockaddr_in *addr) {
     return -1;
 }
 
+/* connId rides the wire as two 32-bit halves through the existing packU32
+ * helpers — low half first, then high. Client send/read must agree with these. */
+static void packConnId(uint8_t *buf, uint64_t connId) {
+    packU32(buf,     (uint32_t)(connId & 0xffffffffULL));
+    packU32(buf + 4, (uint32_t)(connId >> 32));
+}
+static uint64_t unpackConnId(const uint8_t *buf) {
+    uint32_t lo = unpackU32(buf);
+    uint32_t hi = unpackU32(buf + 4);
+    return ((uint64_t)hi << 32) | (uint64_t)lo;
+}
+
+/* Generate a per-session connection id. SplitMix64 over its own state, seeded
+ * once from the high-resolution performance counter — deliberately independent
+ * of the process-global bolo_rand stream so a join never perturbs the
+ * deterministic sim sequence (baseline replays depend on that stream). Never
+ * returns 0, which the wire reserves for "no connId". */
+static uint64_t serverNextConnId(void) {
+    static uint64_t state;
+    static bool seeded = false;
+    uint64_t z;
+    if (!seeded) {
+        state = (uint64_t)SDL_GetPerformanceCounter();
+        state ^= 0x9e3779b97f4a7c15ULL * (uint64_t)SDL_GetTicks();
+        seeded = true;
+    }
+    state += 0x9e3779b97f4a7c15ULL;
+    z = state;
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+    z = z ^ (z >> 31);
+    return z ? z : 0x9e3779b97f4a7c15ULL;
+}
+
+/* Resolve the slot owning an inbound INPUT by its connection id (see header). */
+int transportUdpServerFindByConnId(const UdpServerClient *clients,
+                                   uint64_t connId,
+                                   const struct sockaddr_in *fromAddr,
+                                   bool *outRehome) {
+    int i;
+    if (outRehome) *outRehome = false;
+    if (connId == 0 || clients == NULL) return -1;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!clients[i].connected || clients[i].connId != connId) {
+            continue;
+        }
+        if (outRehome &&
+            (clients[i].addr.sin_addr.s_addr != fromAddr->sin_addr.s_addr ||
+             clients[i].addr.sin_port != fromAddr->sin_port)) {
+            *outRehome = true;
+        }
+        return i;
+    }
+    return -1;
+}
+
 /* Data passed to the balance thread — snapshot of values needed for the
  * HTTP call so the thread doesn't read ServerSim without the mutex. */
 typedef struct {
@@ -799,7 +855,7 @@ bool lobbyClientMayEdit(ServerSim *sim, int clientIdx) {
  * tick, and compressed map size. */
 static void serverSendJoinAccept(int slot, ServerSim *sim,
                                  const struct sockaddr_in *addr) {
-    uint8_t acceptBuf[PACKET_HEADER_SIZE + 9];
+    uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8];
     int pos;
 
     packHeader(acceptBuf, PACKET_JOIN_ACCEPT,
@@ -810,6 +866,9 @@ static void serverSendJoinAccept(int slot, ServerSim *sim,
     pos += 4;
     packU32(acceptBuf + pos, udpServer.compressedMapSize);
     pos += 4;
+    /* connId the client echoes on its INPUT packets for NAT-rebind re-homing. */
+    packConnId(acceptBuf + pos, udpServer.clients[slot].connId);
+    pos += 8;
 
     /* wire-only: per-client handshake (response to a single client's request) */
     srvSendTo(acceptBuf, pos, addr);
@@ -1459,6 +1518,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
 
     /* Accept the player */
     udpServer.clients[slot].connected = true;
+    udpServer.clients[slot].connId = serverNextConnId();
     udpServer.clients[slot].nameStickySuffix = false;
     udpServer.clients[slot].addr = *fromAddr;
     udpServer.clients[slot].playerNum = (uint8_t)slot;
@@ -1659,11 +1719,37 @@ static void serverHandleInput(const uint8_t *buf, int len,
                               const struct sockaddr_in *fromAddr,
                               ServerSim *sim) {
     int clientIdx;
-    int pos = PACKET_HEADER_SIZE;
+    /* INPUT framing: [header 8][connId 8][count 1][29-byte inputs…]. */
+    int pos = PACKET_HEADER_SIZE + 8;
     uint8_t inputCount;
+    uint64_t connId = 0;
+    bool rehome = false;
     int i;
 
-    clientIdx = serverFindClient(fromAddr);
+    /* Match the session by connId first so a client whose NAT mapping rebound
+     * keeps its slot; fall back to IP:port when the connId is absent (0) or
+     * matches no slot. The connId is only present on a packet long enough to
+     * hold it — a short/old frame leaves it 0 and takes the IP:port path. */
+    if (len >= PACKET_HEADER_SIZE + 8) {
+        connId = unpackConnId(buf + PACKET_HEADER_SIZE);
+    }
+    clientIdx = transportUdpServerFindByConnId(udpServer.clients, connId,
+                                               fromAddr, &rehome);
+    if (clientIdx >= 0) {
+        if (rehome) {
+            char oldAddr[32];
+            snprintf(oldAddr, sizeof(oldAddr), "%s:%u",
+                     inet_ntoa(udpServer.clients[clientIdx].addr.sin_addr),
+                     (unsigned)ntohs(udpServer.clients[clientIdx].addr.sin_port));
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                "slot %d NAT rebind: %s -> %s:%u (connId match, re-homing)",
+                clientIdx, oldAddr, inet_ntoa(fromAddr->sin_addr),
+                (unsigned)ntohs(fromAddr->sin_port));
+            udpServer.clients[clientIdx].addr = *fromAddr;
+        }
+    } else {
+        clientIdx = serverFindClient(fromAddr);
+    }
     if (clientIdx < 0) return; /* Unknown client */
 
     udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
@@ -2904,6 +2990,13 @@ uint8_t transportUdpServerGetClientType(BYTE playerNum) {
         return CLIENT_TYPE_UNKNOWN;
     }
     return udpServer.clients[playerNum].clientType;
+}
+
+uint64_t transportUdpServerGetClientConnId(BYTE playerNum) {
+    if (playerNum >= MAX_TANKS || !udpServer.clients[playerNum].connected) {
+        return 0;
+    }
+    return udpServer.clients[playerNum].connId;
 }
 
 /* Send an INFO_RESPONSE packet to the tracker so the game is listed. */

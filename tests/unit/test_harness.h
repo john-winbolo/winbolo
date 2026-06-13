@@ -326,6 +326,12 @@ int run_loopback_join_loss(void);
 int run_loopback_lobby_running_loss(void);
 int run_join_version_gate(void);
 
+/* Connection-id NAT-rebind migration (test_conn_migration.c): the pure
+ * connId match-and-rehome decision, plus an end-to-end loopback join that
+ * confirms the server stores a connId and inputs ride the new framing. */
+int run_conn_migration_rehome(void);
+int run_conn_migration_e2e(void);
+
 /* Exact lag-compensation viewTick (test_viewtick_rewind.c): the pure
  * serverSimComputeLagCompTicks rewind math (real view age, ping fallback,
  * clamp) and the client's displayed-tick stamp (second-newest applied
