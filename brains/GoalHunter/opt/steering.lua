@@ -367,8 +367,12 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   if state.goal and state.goal.kind == "capture_pill" then
     cpf.set_overlay(dest_mx, dest_my, 0)
   end
+  -- Live ally-tank dodge: pass the per-tick obstacle tile set (built in init.lua
+  -- from blitz participants we can see) so the Dijkstra tracer veers around them
+  -- at trace time — instant, no slate recompute. nil when no blitz is converging.
+  local avoid = state._nav_avoid_tiles
   local _t_s0 = BRAIN_PROFILE and clock_us() or 0
-  local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET)
+  local status, nx, ny = cpf.path_to(tmx, tmy, dest_mx, dest_my, in_boat, shells, trees, mines, armour, C.ASTAR_BUDGET, false, avoid, C.NAV_AVOID_PENALTY)
   if BRAIN_PROFILE then
     _path_search_us = _path_search_us + (clock_us() - _t_s0)
     -- Snapshot which method (dij/astar) cpf.path_to actually used
@@ -890,6 +894,14 @@ local function attack_pill_steer(state, world, info, goal)
     local swx, swy = math.floor(sfx * 256 + 0.5), math.floor(sfy * 256 + 0.5)
     local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
 
+    -- PPT-charge gate for THIS substate only: the slow PPT creep / standoff-stop
+    -- exists to thread precisely behind a BUILT wall. A blitz overwhelm with no
+    -- shield (a soldier, or a commander that skipped walls) has nothing to thread,
+    -- so it should close FAST via the non-PPT reach-based path below (full speed,
+    -- brake at shot range) even though the pill's HP set goal._is_ppt at plan
+    -- time. Shielded PPT takes and solo PPT still creep.
+    local _charge_ppt = goal._is_ppt and not (goal._blitz and not goal._blitz_shielded)
+
     if info.gunrange < C.GUNSIGHT_MAX then
       keys = keys | KEY_MORERANGE
     end
@@ -959,7 +971,7 @@ local function attack_pill_steer(state, world, info, goal)
     -- PPT engages on standoff arrival/overshoot (the non-PPT stop decision is
     -- reach-based, handled below). Plain `if arrived` here would stop a non-PPT
     -- charge at a standoff that rounded out of shell reach.
-    if goal._is_ppt and (sdist < 50 or tank_to_pill < standoff_to_pill) then
+    if _charge_ppt and (sdist < 50 or tank_to_pill < standoff_to_pill) then
       if info.speed <= 1 then
         goal.substate = "engage"
         goal.engage_tick = state.tick
@@ -978,7 +990,7 @@ local function attack_pill_steer(state, world, info, goal)
     -- around the wall. So creep toward the standoff at PPT_CHARGE_MAX_SPEED
     -- and brake inside PPT_CHARGE_BRAKE_DIST. Slower entry costs a few
     -- extra hits in transit but lands on the spot precisely.
-    if goal._is_ppt then
+    if _charge_ppt then
       local cap   = C.PPT_CHARGE_MAX_SPEED  or 4
       local brake = C.PPT_CHARGE_BRAKE_DIST or 32
       if sdist <= brake then
@@ -1006,7 +1018,11 @@ local function attack_pill_steer(state, world, info, goal)
     local tmx_now, tmy_now = info.tankx >> 8, info.tanky >> 8
     local tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(tmx_now, tmy_now)]) or 16
     local ang_f = info.tank_angle or info.direction
-    local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f, info.speed, tcap)
+    -- info.speed is the engine speed ×4 (brain_data.c: actual_speed*4, 64=road top).
+    -- predict_stop's model is in ENGINE units (decel 0.25/tick, TERRAIN_SPEED cap),
+    -- so divide by 4 or the stop blows up ~16x (saw 9.3 tiles at grass-cap).
+    local espeed = (info.speed or 0) / 4
+    local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f, espeed, tcap)
     local stop_hits = false
     if math.abs(corr) <= 5 then
       local sp = cpf.simulate_shot_angle(psx, psy, ang_f, cpf.SHOT_TANK, info.gunrange or 14)
@@ -1016,6 +1032,12 @@ local function attack_pill_steer(state, world, info, goal)
 
     -- Visualize the predicted brake-now stop: line tank->stop + marker, green
     -- if a shot from there hits the pill, red if short. (charge_stop_pred toggle)
+    -- DEBUG: why aren't the hover details showing? Logs whether we reach the
+    -- charge branch, whether the layer is on, and whether the detail binding exists.
+    -- Per-step brake-sim dump (toggle charge_stop_pred). Each simulation tick is
+    -- a hoverable point in the "D" inspector showing speed/decel/move; the stop
+    -- marker carries the full step list. Shows exactly how the engine model ramps
+    -- speed down and advances the 16-dir residual each tick.
 
     if stop_hits or at_floor then
       -- Braking now lands the shot (or we hit the no-closer floor): stop, engage.
@@ -2438,6 +2460,19 @@ function M.steer(state, world, info, goal)
     -- a BPC_STANDOFF fallback — unreachable because the if branch
     -- above already matches attack_pill. The legacy ATTACK_PILL_STANDOFF
     -- fallback at line 1630-1640 covers the no-standoff_mx case.)
+    end
+
+    -- Precise final-approach: once A* has gotten us within APPROACH_PRECISE_DIST
+    -- of the exact float approach point (nav_wx/wy = approach_fx/fy), switch to
+    -- the exact-center creep so we actually reach the in-position threshold
+    -- (16 wu) instead of parking at the loose 64 wu default and stalling. A* only
+    -- has to get us close; this nav owns the last bit (game-unit precision).
+    if goal.kind == "attack_pill" and goal.substate == "approach" and nav_wx then
+      local _dappr = U.wdist(info.tankx, info.tanky, nav_wx, nav_wy)
+      if _dappr <= (C.APPROACH_PRECISE_DIST or 384) then
+        needs_exact_center = true
+        center_tol = C.APPROACH_PRECISE_TOL or 16
+      end
     end
 
     -- Follow the A* next-step waypoint, with path lookahead to reduce wiggle

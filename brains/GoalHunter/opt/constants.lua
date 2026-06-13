@@ -192,6 +192,15 @@ M.PILL_DANGER_NEARBY_MULT   = 1.5     -- 1.5x cost while stamp is active
 -- treating it as a hard wall — and well above the tiny noise the prior
 -- value (10) added.
 M.ALLY_AVOID_COST           = 800
+-- Blitz participant's EXACT tile: a converging blitzer marks the single tile a
+-- fellow blitz tank currently occupies as effectively impassable so others route
+-- around it (not the soft 800 used for the solo 5x5). Massive but sub-32767 so a
+-- single occupied tile reroutes without hard-walling a tight cluster's approach.
+M.ALLY_BLITZ_TILE_COST      = 12000
+-- Penalty added to an ally tank's tile when the Dijkstra route tracer dodges it
+-- at trace time (cpf.path_to obstacles). Large so an occupied tile is a last
+-- resort, but finite so a fully-boxed tank still finds a step.
+M.NAV_AVOID_PENALTY         = 1000000
 -- Ally-pill-take priority window: when an ally is broadcasting
 -- attack_pill on a target, REJECT our capture_pill candidate for the
 -- same pill for this many ticks (~2 s @ 50Hz). Gives them first dibs
@@ -366,6 +375,19 @@ M.CHARGE_MIN_STANDOFF   = 5.0  -- never creep closer than this many tiles from t
 -- no-shield (legacy aim/charge) attack. 1500 = 30 s @ 50 Hz.
 M.PPT_GATHER_TIMEOUT   = 1500
 M.ATTACK_APPROACH_OFFSET = 2.25 -- tiles beyond standoff to start approach from
+-- Precise final-approach homing: A* only has to get us within APPROACH_PRECISE_DIST
+-- of the exact float approach point (approach_fx/fy); inside that the nav switches
+-- to the exact-center creep so we land within APPROACH_PRECISE_TOL wu of it (the
+-- in-position transition needs 16 wu — the loose 64 wu nav default parked us short
+-- of it and stalled). Sized so the tank can brake from speed to the creep cap.
+M.APPROACH_PRECISE_DIST = 384  -- wu (~1.5 tiles): engage exact creep within this of approach_fx
+M.APPROACH_PRECISE_TOL  = 16   -- wu: homing tolerance (matches attack.lua approach DIST_TOL)
+-- predict_stop: speed at/below which the brake sim stops early. MUST be 0 — the
+-- sim loops `while speed > min_speed`, so any value >0 makes it return the tank's
+-- CURRENT position (0 steps) whenever entry speed <= it, badly under-predicting
+-- the stop at low speed (e.g. 4 → predicted 0 wu vs real ~24 wu) and causing a
+-- speed limit-cycle in charge. Left as a tunable but keep at 0 (full sim).
+M.PREDICT_STOP_MIN_SPEED = 0
 M.FLEE_PILL_DIST       = 10  -- tiles to flee away from pill when giving up
 M.POST_KILL_WAIT_TICKS = 15  -- ticks to hold at standoff after pill dies (in-flight shots clear in ~5)
 
@@ -943,6 +965,7 @@ M.PILL_REPOSITION_OVEREXTEND_W  = 60    -- discount for an aggressive pill deepe
 M.PILL_REPOSITION_LEGACY_CAP    = 75    -- cap on the legacy "bad spot" discount (orphan/crossfire/terrain); secondary to surplus
 M.PILL_ROLE_REEVAL_TICKS        = 3000  -- re-evaluate a pill's back/front/aggro role every 60s (influence shifts over time)
 M.PILL_UTILITY_TARGET_FRAC      = 0.25  -- desired share of pills available as blockers/utility; below this, hold a spare pill in tank
+M.ALLY_BLOCKER_REJECT_TICKS     = 150   -- ticks a pill stays rejected from our pools after an ally declares it a blocker while we were targeting it (yield window so we don't immediately re-pick it)
 M.PILL_REPOSITION_MIN_SHELLS    = 15    -- need this many shells to reposition (must shoot the pill down to 0 to pick it up)
 M.REPOSITION_DEMOLISH_GRACE_TICKS = 1500 -- ~30s: while demolishing a pill for reposition, suppress repair_pill on it (avoid shoot→repair→shoot oscillation)
 -- Reposition risk penalties (raise cost = discourage repositioning):
@@ -978,6 +1001,19 @@ M.PHASE_HYSTERESIS_TICKS  = 100    -- ~2 seconds of consistent signal before swi
 M.ENDGAME_PILL_RATIO      = 0.70   -- >70% of pills = endgame
 M.ENDGAME_BASE_RATIO      = 0.80   -- >80% of bases = endgame
 M.FRONT_LINE_INTERVAL     = 50     -- recompute front line every ~1 second
+
+-- How far (tiles, Manhattan tank→goal) the phase-weight bias fades to neutral
+-- (1.0), PER goal type. The phase preference is a LOCAL strategy — full weight at
+-- the tank, lerping to 1.0 by this distance. Big = the bias reaches far (we'll
+-- travel for it); small = only nearby goals feel it. Per-pool so e.g. opening
+-- capture_base reaches across the map (bases are the priority) while a far
+-- capture_pill stops pulling us off course. `default` covers any pool not listed.
+M.PHASE_WEIGHT_DIST_FALLOFF = {
+  default      = 40,
+  capture_base = 90,   -- bases are the opening priority — chase them far
+  capture_pill = 18,   -- don't cross the map for a dead pill
+  attack_pill  = 30,
+}
 
 -- Phase-dependent goal cost multipliers.
 -- < 1.0 = cheaper (more attractive), > 1.0 = more expensive (less attractive).
@@ -1116,7 +1152,7 @@ M.SQUAD_BLITZ_COST       = 30  -- flat attack_pill cost a squad soldier assigns 
 M.SQUAD_BLITZ_BUCKET     = 5   -- a blitz standoff is picked at random from clear-LOS spots scoring within this of the best
 M.SQUAD_BLITZ_READY_TIMEOUT = 550  -- ticks (~11s @ 50Hz) the commander waits in blitz_wait for ALL soldiers to report rdy before firing GO anyway. Sized to cover a worst-case in-place aim: a 180-deg turn on swamp/crater/river/rubble (turn rate 0.25 brad/tick) is ~512 ticks (~10.4s), so the timeout must exceed that or the commander GOes before a slow-terrain soldier can finish turning to face the pill. (A genuinely stuck/dead soldier still can't stall past this.)
 M.SQUAD_BLITZ_WAIT_TIMEOUT  = 1500 -- ticks (~30s) hard backstop: a soldier holding in blitz_wait abandons the take if the commander's GO never arrives (commander silently stuck/disconnected). Faster aborts (commander died / retargeted) fire on their own signals.
-M.SQUAD_BLITZ_PROGRESS_CHECK = 100  -- ticks (~2s): commander re-checks soldier approach this often in blitz_wait; if the closest still-coming soldier got closer since last check, the ready-timeout is extended by another PROGRESS_CHECK (keep waiting on a tank that's still closing; stop extending once it stalls)
+M.SQUAD_BLITZ_PROGRESS_CHECK = 250  -- ticks (~5s): commander re-checks soldier approach this often in blitz_wait; if the closest still-coming soldier got closer since last check, the ready-timeout is extended by another PROGRESS_CHECK (keep waiting on a tank that's still closing; stop extending once it stalls). Also the size of the grace a near-deadline "where are you?" query (SQUAD_BLITZ_QUERY_LEAD) buys an unseen-but-closing soldier.
 M.SQUAD_BLITZ_BD_REFRESH_TICKS = 500  -- ticks (~10s): how often a COMMITTED, still-approaching soldier recomputes its broadcast walk distance (bd) as a FALLBACK signal. The commander measures visible soldiers' progress itself every tick from their live tank positions, so this slow, >=1-tile-quantized broadcast only matters when a soldier is out of the commander's perception — kept coarse to avoid /info spam. A direct commander query (bwq) force-refreshes it immediately when it's about to matter (see SQUAD_BLITZ_QUERY_LEAD).
 M.SQUAD_BLITZ_QUERY_LEAD = 50  -- ticks (~1s): when the blitz_wait GO timeout is this close to firing AND a still-pending soldier is out of the commander's sight (so it's relying on that soldier's coarse broadcast bd), the commander broadcasts a "where are you now?" query (bwq). The soldier answers by force-refreshing bd this tick; if the fresh answer shows it's still closing, the commander grants one more PROGRESS_CHECK window instead of giving up.
 M.SQUAD_BLITZ_CLASH_TILES = 2   -- two standoffs within this EUCLIDEAN distance (tiles) conflict; the commander makes the nearer/junior soldier repick so spots stay >= this far apart

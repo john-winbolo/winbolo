@@ -171,6 +171,7 @@ M.IDS = {
   charge_status     = { short = "Charge status",
                         long  = "CHARGE: <phase> top-left HUD line" },
   charge_stop_pred  = { short = "Charge stop predict",
+                        default_on = true,  -- TEMP: forced on for stop-predictor testing — revert to default (off) when done
                         long  = "Predicted brake-now stop point (cpf.predict_stop): marker + line from tank, GREEN if a shot from there hits the pill, RED if it falls short. Lets you eyeball whether the stop predictor is accurate." },
   detree_progress   = { short = "Detree progress",
                         long  = "DETREE N/M (left=K) overlay above tank" },
@@ -272,6 +273,10 @@ M.IDS = {
                   long  = "Shown whenever a non-rejected enemy tank is present (attack_tank viable): the emergency def_build candidate spots (green=chosen, yellow=valid, red=rejected with reason), the threat tank (red), a line from us to it, and a 'PANIC BUILD' label. If a tank is present but we have no pill to drop, just a 'PANIC (no pill)' marker on the threat." },
   ally_avoid_overlay = { short = "Ally avoid zones",
                          long  = "Orange tiles around an ally tank doing a pill take (5x5 when within STANDOFF+2 of pill), plus the firing lane to the pill. Also prints `BLOCK: ON/OFF sub=… d=N/T` next to each attack_pill ally so you can see live whether the 5x5 stamp is active and how close they are to the activation threshold." },
+  blocker_pills = { short = "Blocker pills (in-use)",
+                    long  = "Friendly pills flagged _in_use (serving as a take's blocker → role utility, protected from reposition). Filled orange tile + 'BLOCKER:src' label where src is 'me' (our own current_blocker_pids) or 'pN' (ally N's pblk broadcast). The BLOCKER_VIZ print2 logs our own blocker ids + team in-use count. If a pill you expect protected isn't orange, no bot is declaring it as a blocker." },
+  nav_veer = { short = "Nav veer (ally dodge)",
+               long  = "The live trace-time obstacle set fed to the Dijkstra route tracer: each converging blitz ally's exact tile as a solid RED square (follows the tank instantly, no slate lag), plus the resulting VEERED route from our tank to the current goal as a cyan polyline — so you can watch the path bend around allies in real time. Compare with the green optimal-path overlay to see the dodge." },
 
   -- plan_position chunked-sweep progress (low-tier multi-tick sweep).
   plan_position_progress = { short = "Plan-pos progress",

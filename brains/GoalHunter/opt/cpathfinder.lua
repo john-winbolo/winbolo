@@ -253,7 +253,7 @@ end
 -- panel can label "search (dijkstra)" vs "search (A*)".
 M._last_method = "dij"
 
-function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget, skip_dijkstra)
+function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget, skip_dijkstra, obstacles, avoid_penalty)
   -- Try Dijkstra first — same cost surface, no duplicate A* search.
   -- Uses KIND_NORMAL (0) for general navigation.
   -- Passes current tank position so it finds the next step from HERE,
@@ -263,7 +263,9 @@ function M.path_to(sx, sy, dx, dy, in_boat, shells, trees, mines, armour, budget
   -- died — slate still treats it as alive/impassable). Forces a
   -- fresh A* search every tick instead of trusting the cached slate.
   if C.DIJKSTRA_USE_FOR_GOALS and not skip_dijkstra then
-    local nx, ny = cpf_dijkstra_next_step(M.KIND_NORMAL, sx, sy, dx, dy)
+    -- obstacles: optional live tile-key set (y*256+x) the tracer veers around
+    -- at trace time (instant ally-tank dodge, no slate recompute).
+    local nx, ny = cpf_dijkstra_next_step(M.KIND_NORMAL, sx, sy, dx, dy, obstacles, avoid_penalty)
     if nx then
       M._last_method = "dij"
       return 1, nx, ny
@@ -342,6 +344,13 @@ end
 --- O(1) raw lookup of one slate.
 function M.dijkstra_cost_at(slate, x, y, boat)
   return cpf_dijkstra_cost_at(slate, x, y, boat or 0)
+end
+
+-- Obstacle-aware next step (for viz / callers that want the veered route
+-- directly). obstacles: flat array of packed tile keys (y*256+x); penalty
+-- defaults large. Returns nx, ny or nil.
+function M.dijkstra_next_step(kind, sx, sy, dx, dy, obstacles, penalty)
+  return cpf_dijkstra_next_step(kind, sx, sy, dx, dy, obstacles, penalty)
 end
 
 --- Smart lookup: searches all slates of matching kind in started_tick
@@ -535,12 +544,18 @@ end
 --- the engine-exact decel + residual-move model (C cpf_predict_stop). Returns
 --- stop world coords (wx, wy). terrain_cap is the current tile's max speed
 --- (C.TERRAIN_SPEED[tile]); omit for uniform-terrain (no over-cap decel).
-function M.predict_stop(tankx, tanky, angle, speed, terrain_cap)
+-- trace (optional): when true, also returns a 3rd value, an array of per-tick
+-- {speed, decel, dist, after, resid} for debugging the brake ramp.
+-- min_speed (optional): stop the sim once speed drops to/below this rather than
+-- running the slow creep tail down to 0. Defaults to PREDICT_STOP_MIN_SPEED.
+function M.predict_stop(tankx, tanky, angle, speed, terrain_cap, trace, min_speed)
   return cpf_predict_stop(
     math.floor(tankx + 0.5), math.floor(tanky + 0.5),
     angle,                              -- pass float through
     speed or 0,
-    terrain_cap or 255)
+    terrain_cap or 255,
+    trace and true or false,
+    min_speed or C.PREDICT_STOP_MIN_SPEED or 0)
 end
 
 --- Tank-aware shot simulation: same as simulate_shot but also checks

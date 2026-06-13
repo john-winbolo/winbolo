@@ -266,14 +266,17 @@ local _EMPTY = {}
 -- pre-existing friendly pills on the firing line between our committed standoff
 -- and the target pill (same geometry as the standoff-scorer's barrier bonus).
 -- Returns a list of pill ids (the shared empty table when not in a take).
+-- Friendly pills serving as blockers for our current take, broadcast (pblk) so
+-- allies don't reposition/capture them mid-take. A friendly pill is a blocker IFF
+-- it is one of the friendly-pill blockers in the chosen aim of this take's shield
+-- scan — i.e. one plan_position's blocker (C) search returned AND the selected
+-- aim actually uses (a pre-existing pill counts even though we didn't build it).
+-- Read the authoritative chosen-blocker list off the goal; no geometric guessing,
+-- so the set is stable (changes only when the chosen aim does — no per-tick churn).
 function M.current_blocker_pids(state, world)
   local g = state and state.goal
   if not g or g.kind ~= "attack_pill" then return _EMPTY end
   if not (world and world.pills) then return _EMPTY end
-  -- A friendly pill is a blocker IFF it is one of the friendly-pill blockers in
-  -- the chosen aim of this take's shield scan — i.e. a pill plan_position's
-  -- blocker (C) search returned AND the selected aim actually uses. No geometric
-  -- guessing: read the authoritative chosen-blocker list off the goal.
   local w = g._shield_scan and g._shield_scan.best
   local aim = w and w.best_aim_idx and w.aims and w.aims[w.best_aim_idx] or nil
   local blk = aim and aim.blockers
@@ -281,7 +284,6 @@ function M.current_blocker_pids(state, world)
   local out
   for _, b in ipairs(blk) do
     if b.kind == "friendly_pill" then
-      -- resolve the pill id at this blocker tile
       for pid, fp in pairs(world.pills) do
         if fp.owner == "friendly" and (fp.health or 0) > 0
            and fp.mx == b.mx and fp.my == b.my then
@@ -3936,6 +3938,20 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
 
+    -- Pill softened below the blitz threshold while we waited: a coordinated
+    -- overwhelm is overkill for a near-dead pill, so stop waiting for the GO
+    -- handshake and just finish it (solo). commit_fire broadcasts GO so any
+    -- joiner stops waiting too. Only pre-fire (commit_fire latches it).
+    if _wp and (_wp.health or 0) > 0 and (_wp.health or 0) < (C.HARD_TAKE_MIN_HP or 12) then
+      goal._blitz = false
+      goal._blitz_solo = true
+      state.squad_blitz_go = true
+      commit_fire()
+      print2(string.format("BLITZ_ABANDON t=%d pill=#%d hp=%d < %d — finishing solo from blitz_wait",
+            now, goal.target_id or -1, _wp.health or 0, C.HARD_TAKE_MIN_HP or 12))
+      return
+    end
+
     if state.squad_role == "c" then
       local total, ready, min_bd, any_unseen = squad.blitz_ready_status(state, now, info.player_number or -1, info)
       if total == 0 then
@@ -4197,19 +4213,32 @@ function M.update_attack_substate(goal, state, world, info)
         --     (build_walls -> blitz_wait, goal._blitz_shielded set). After a shield
         --     IS built the commander fires the usual PPT route, never charges.
         if goal._blitz then
-          local _joined = squad.blitz_ready_status(state, now, info.player_number or -1)
-          if _joined > 0 or not goal._is_ppt then
-            goal.substate = "blitz_wait"
-            goal._blitz_ready_since = nil
-            goal._approach_start = nil
-            goal._approach_last_progress = nil
-            goal._approach_last_dist = nil
-            state.squad_blitz_in_position = true
-            print2(string.format("BLITZ_INPOS t=%d joined=%d _is_ppt=%s -> blitz_wait (skip walls)",
-                  now, _joined, tostring(goal._is_ppt)))
-            return
+          -- Pill already softened below the blitz threshold by the time we got
+          -- in position: skip the coordinated blitz_wait entirely and finish it
+          -- solo (fall through to the normal in-position decision below). A
+          -- near-dead pill doesn't warrant a multi-tank overwhelm / GO handshake.
+          local _wp  = world.pills and world.pills[goal.target_id]
+          local _php = _wp and _wp.health or 0
+          if _php > 0 and _php < (C.HARD_TAKE_MIN_HP or 12) then
+            goal._blitz = false
+            goal._blitz_solo = true
+            print2(string.format("BLITZ_ABANDON t=%d pill=#%d hp=%d < %d — finishing solo (skip blitz_wait)",
+                  now, goal.target_id or -1, _php, C.HARD_TAKE_MIN_HP or 12))
+          else
+            local _joined = squad.blitz_ready_status(state, now, info.player_number or -1)
+            if _joined > 0 or not goal._is_ppt then
+              goal.substate = "blitz_wait"
+              goal._blitz_ready_since = nil
+              goal._approach_start = nil
+              goal._approach_last_progress = nil
+              goal._approach_last_dist = nil
+              state.squad_blitz_in_position = true
+              print2(string.format("BLITZ_INPOS t=%d joined=%d _is_ppt=%s -> blitz_wait (skip walls)",
+                    now, _joined, tostring(goal._is_ppt)))
+              return
+            end
+            -- full-pill PPT, no joiner yet → fall through to build the shield
           end
-          -- full-pill PPT, no joiner yet → fall through to build the shield
         end
         -- Shield-scan-driven wall building: prefer the explicit winner;
         -- if there's no winner, fall back to the standoff candidate so

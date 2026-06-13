@@ -1374,6 +1374,7 @@ function Brain.think(info)
   }
   local ALLY_AVOID_RADIUS = 2  -- 5x5 block around the ally tank itself
   local ALLY_AVOID_COST   = C.ALLY_AVOID_COST or 800
+  local ALLY_BLITZ_TILE_COST = C.ALLY_BLITZ_TILE_COST or 12000  -- single exact tile of a blitz participant
   -- Tank-5x5 only stamps when the ally tank is within
   -- TANK_STAMP_NEAR_TILES *euclidean* of either their setup
   -- (approach) point or their standoff point.  Both points are
@@ -1409,14 +1410,14 @@ function Brain.think(info)
       state._ally_avoid_stamped = stamped
     end
 
-    local function stamp(x, y)
+    local function stamp(x, y, cost)
       if x < 0 or x > 255 or y < 0 or y > 255 then return end
       local pkey = y * 256 + x
       if world.pill_at and world.pill_at[pkey] then return end
       if world.base_at and world.base_at[pkey] then return end
       local mk = U.mkey(x, y)
       if stuck_bl and stuck_bl[mk] then return end  -- defer to stuck_blacklist
-      cpf.set_overlay(x, y, ALLY_AVOID_COST)
+      cpf.set_overlay(x, y, cost or ALLY_AVOID_COST)
       stamped[mk] = true
     end
 
@@ -1447,12 +1448,21 @@ function Brain.think(info)
     -- position from our own game view instead of having them broadcast
     -- tx/ty every tick.  Player numbers are globally unique, so indexing
     -- all tanks (not just allied) is safe — only ally pns are looked up.
+    -- Live obstacle set for the route tracer: exact tiles of OTHER tanks we'd
+    -- bump, packed as y*256+x. Passed to cpf.path_to so navigation veers around
+    -- them instantly (see steering.cpf_path_to). Always on — you can collide with
+    -- an ally in ordinary nav, not just during a blitz.
+    local nav_avoid_tiles = {}
     local _ally_tank_pos = nil
     if info.objects then
       for _, ob in ipairs(info.objects) do
         if ob.type == 0 and ob.idnum ~= nil then  -- OBJECT_TANK
           _ally_tank_pos = _ally_tank_pos or {}
           _ally_tank_pos[ob.idnum] = { mx = ob.x >> 8, my = ob.y >> 8 }
+          -- Every visible FRIENDLY tank except ourselves is an avoid-tile.
+          if (ob.info & OBJECT_HOSTILE) == 0 and ob.idnum ~= info.player_number then
+            nav_avoid_tiles[#nav_avoid_tiles + 1] = (ob.y >> 8) * 256 + (ob.x >> 8)
+          end
         end
       end
     end
@@ -1505,25 +1515,28 @@ function Brain.think(info)
         if ai.goal == "attack_pill" and ALLY_COMBAT_SUBS[ai.sub] then
           local is_blitz = ai.sqst == "blitz" or ai.sqst == "join"
           if is_blitz then
-            -- A blitz converges SEVERAL tanks on ONE pill. Their overlapping 5x5
-            -- + firing-lane stamps would price the whole area out, so for a blitz
+            -- A blitz converges SEVERAL tanks on ONE pill. Overlapping 5x5 +
+            -- firing-lane stamps would price the whole area out, so for a blitz
             -- participant (commander sqst="blitz" / joined soldier sqst="join") we
-            -- stamp just the 4 cardinal tiles around its spot — enough to avoid a
-            -- bump without walling off the cluster. Center on the ally's LIVE tank
-            -- position when we can see it AND it's near its standoff; otherwise,
-            -- for an ally PARKED at-spot (blitz_wait/aim/in_range_*/…) we can't see
-            -- (trees / view limit), fall back to its BROADCAST standoff (ssx/ssy)
-            -- so converging blitzers still avoid each other — each tank knows the
-            -- others' standoffs from the slate even when out of sight.
+            -- mark ONLY the single tile it currently occupies as effectively
+            -- impassable (ALLY_BLITZ_TILE_COST) — enough to keep others from
+            -- driving onto it, without walling off the cluster. Use the ally's
+            -- LIVE tank tile whenever we can see it (no in_range gate, so the
+            -- block FOLLOWS the ally as it drives into position); fall back to its
+            -- BROADCAST standoff (ssx/ssy) only when it's out of sight but parked
+            -- at-spot (blitz_wait/aim/in_range_*/…), so converging blitzers still
+            -- avoid each other from the slate when trees/view hide the tank.
             local cmx, cmy
-            if atmx and atmy and in_range then
+            if atmx and atmy then
               cmx, cmy = atmx, atmy
-            elseif not (atmx and atmy) and ALLY_AT_SPOT_SUBS[ai.sub] and ssx and ssy then
+            elseif ALLY_AT_SPOT_SUBS[ai.sub] and ssx and ssy then
               cmx, cmy = ssx, ssy
             end
             if cmx then
-              stamp(cmx + 1, cmy); stamp(cmx - 1, cmy)
-              stamp(cmx, cmy + 1); stamp(cmx, cmy - 1)
+              stamp(cmx, cmy, ALLY_BLITZ_TILE_COST)
+              -- Visible tanks are already in nav_avoid_tiles from the objects
+              -- sweep above; here only add the out-of-view broadcast standoff.
+              if not (atmx and atmy) then nav_avoid_tiles[#nav_avoid_tiles + 1] = cmy * 256 + cmx end
             end
           elseif pmx and pmy and atmx and atmy then
             -- Solo take: 5x5 tank stamp gated on euclidean ≤ 3 to setup or
@@ -1554,6 +1567,10 @@ function Brain.think(info)
         end
       end
     end
+    -- Publish the obstacle set for steering.cpf_path_to (nil when no blitz).
+    state._nav_avoid_tiles = (#nav_avoid_tiles > 0) and nav_avoid_tiles or nil
+    -- nav_veer viz: obstacle tiles (red) + the resulting veered route to our goal
+    -- (cyan), traced live via the obstacle-aware next-step so the dodge is visible.
   end
 
   -- Push per-pill contribution maps to the host (BrainTest reads
@@ -2722,6 +2739,7 @@ function Brain.think(info)
     -- (bsi.pblk); here we union the whole team's blocker ids each tick and flag
     -- those pills _in_use so PP.role_of reports "utility". Rebuilt live, so a
     -- pill reverts to back/front/aggro as soon as the take stops broadcasting.
+    local _ally_blk = nil   -- pids ALLIES declared as blockers this tick (for the yield check below)
     do
       local util = {}
       local mine = attack.current_blocker_pids and attack.current_blocker_pids(state, world) or nil
@@ -2731,7 +2749,9 @@ function Brain.think(info)
         for pn, slot in ally_state.iter_active(now, 1750) do
           if pn ~= info.player_number and slot.info and slot.info.pblk then
             for s in string.gmatch(slot.info.pblk, "%d+") do
-              util[tonumber(s)] = true
+              local id = tonumber(s)
+              util[id] = true
+              _ally_blk = _ally_blk or {}; _ally_blk[id] = true
             end
           end
         end
@@ -2740,6 +2760,35 @@ function Brain.think(info)
         p._in_use = util[pid] and true or nil
       end
     end
+
+    -- Yield on an incoming blocker declaration: if our CURRENT goal is acting on a
+    -- pill an ALLY just declared a blocker (a capture/reposition of it would move
+    -- or consume it), drop it — block that pill in its pool(s) so we don't re-pick
+    -- it, and clear the goal for a fresh choice. Even a committed/locked
+    -- reposition bails. Only capture_pill targets a friendly pill this way; other
+    -- goals (defend/repair) leave the pill where it is and are left alone.
+    if _ally_blk and state.goal and state.goal.kind == "capture_pill"
+       and state.goal.target_id and _ally_blk[state.goal.target_id] then
+      local _bid = state.goal.target_id
+      if state.cost_cache then
+        for _, e in pairs(state.cost_cache) do
+          if e._id == _bid then
+            e._reject = "ally_blocker"
+            e._reject_remaining = C.ALLY_BLOCKER_REJECT_TICKS or 150
+            e.formula = nil
+          end
+        end
+      end
+      state._reposition_lock_tick = nil
+      state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
+      state._force_replan_reason = "ally_blocker"
+    end
+
+    -- blocker_pills viz: every _in_use (blocker/utility, reposition-protected)
+    -- pill as a filled orange tile, labelled with where the flag came from
+    -- ("me" = our own current_blocker_pids, "pN" = ally N's pblk broadcast).
+    -- If a pill you expect protected isn't orange, nobody is declaring it: check
+    -- the BLOCKER_VIZ print2 (mine={...}) and the ally's pblk.
 
     -- Purge stale per-pill plan_position cache entries (pills that
     -- have been destroyed / picked up / captured friendly since last

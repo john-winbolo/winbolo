@@ -319,10 +319,19 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
 
 /* Trace the Dijkstra parent chain from (dx,dy) back to the source.
  * Returns the first step on the optimal path.
- * Returns 1 on success (out_next_x/y populated), 0 if unreachable. */
+ * Returns 1 on success (out_next_x/y populated), 0 if unreachable.
+ *
+ * obstacles/n_obstacles/penalty: an OPTIONAL live obstacle set evaluated at
+ * trace time (no slate recompute). Each entry is a packed tile key (y*256+x).
+ * When the optimal next tile is an obstacle, the step veers to the cheapest
+ * non-obstacle neighbour by effective cost (g_cost + penalty), so moving
+ * allies are dodged instantly without baking anything into the slate. Pass
+ * obstacles=NULL / n_obstacles=0 for the plain optimal-path behaviour. */
 int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                                      int sx, int sy,
                                      int dx, int dy,
+                                     const int *obstacles, int n_obstacles,
+                                     float penalty,
                                      int *out_next_x, int *out_next_y);
 
 /* Find the slate index that the brain should reuse next when starting a

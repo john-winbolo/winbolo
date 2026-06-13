@@ -5059,7 +5059,10 @@ end
 -- the no-spot reject window, or we're mid-take on our own pill (only switch off
 -- while still in `approach`). Distance keeps the nearest joiners cheapest.
 local function apply_blitz_join_discount(state, info, world)
-  if not info or state.squad_blitz_accepted then return end  -- accepted → apply_blitz_target owns it
+  -- info.tankx may be absent when the pool panel reads a partial _last_info stub
+  -- before a full think populates it; the standoff estimate below needs the tank
+  -- position, so bail (the real discount applies next think with full info).
+  if not info or not info.tankx or state.squad_blitz_accepted then return end  -- accepted → apply_blitz_target owns it
   local calls = state.blitz_calls
   if not calls then return end
   local cache = state.cost_cache
@@ -6482,6 +6485,18 @@ local function goal_selection(state, world, info, quiet)
         -- Apply phase-dependent weight as a multiplier on the full cost.
         local pool_name = POOL_NAMES[idx]
         local pw = phase_weights and pool_name and phase_weights[pool_name] or 1.0
+        -- Distance-attenuate the phase bias toward neutral (1.0): the phase
+        -- preference is a LOCAL strategy, so a discounted goal far across the map
+        -- shouldn't get pulled in (and distance already dominates a far penalised
+        -- one). Full weight at the tank, lerping to 1.0 by PHASE_WEIGHT_DIST_FALLOFF.
+        if pw ~= 1.0 and entry.goal and entry.goal.mx then
+          local _fot = C.PHASE_WEIGHT_DIST_FALLOFF
+          local _fo  = (type(_fot) == "table" and ((pool_name and _fot[pool_name]) or _fot.default))
+                       or (type(_fot) == "number" and _fot) or 40
+          local _gd = U.mdist(info.tankx >> 8, info.tanky >> 8, entry.goal.mx, entry.goal.my)
+          local _f  = math.min(1.0, _gd / _fo)
+          pw = 1.0 + (pw - 1.0) * (1 - _f)
+        end
         if cost and cost > 0 then
           cost = cost * pw
         end

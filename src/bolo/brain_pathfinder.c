@@ -2375,9 +2375,20 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
  * find the tank's current position (sx,sy) in the chain, and return
  * the next step from there toward the destination.
  * Returns 1 on success, 0 if unreachable or tank not on path. */
+/* Live-obstacle membership: small linear scan over packed (y*256+x) keys.
+ * n is tiny (a handful of ally tank tiles), so a scan beats any structure. */
+static int obs_contains(const int *obs, int n, int x, int y) {
+  if (!obs || n <= 0) return 0;
+  int key = y * 256 + x;
+  for (int i = 0; i < n; i++) if (obs[i] == key) return 1;
+  return 0;
+}
+
 int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                                      int sx, int sy,
                                      int dx, int dy,
+                                     const int *obstacles, int n_obstacles,
+                                     float penalty,
                                      int *out_next_x, int *out_next_y) {
   if (!pf) return 0;
   if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
@@ -2428,8 +2439,27 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
     for (int i = chain_len - 1; i >= 0; i--) {
       if (node_x(chain[i]) == sx && node_y(chain[i]) == sy) {
         if (i <= 0) return 0; /* Already at destination */
-        if (out_next_x) *out_next_x = node_x(chain[i - 1]);
-        if (out_next_y) *out_next_y = node_y(chain[i - 1]);
+        int nnx = node_x(chain[i - 1]);
+        int nny = node_y(chain[i - 1]);
+        /* Live-obstacle veer: the optimal next tile is occupied (e.g. an ally
+         * tank). Pick the cheapest non-obstacle neighbour of (sx,sy) by
+         * effective cost (g_cost + penalty), still descending the field, so we
+         * dodge around it this tick and rejoin the gradient. */
+        if (obs_contains(obstacles, n_obstacles, nnx, nny)) {
+          float best_eff = COST_INF;
+          for (int d = 0; d < 8; d++) {
+            int ax = sx + DX8[d], ay = sy + DY8[d];
+            if (ax < 0 || ax > 255 || ay < 0 || ay > 255) continue;
+            float gl = s->g_cost[node_idx(ax, ay, 0)];
+            float gb = s->g_cost[node_idx(ax, ay, 1)];
+            float g  = (gb < gl) ? gb : gl;
+            if (g >= COST_INF) continue;
+            float eff = g + (obs_contains(obstacles, n_obstacles, ax, ay) ? penalty : 0.0f);
+            if (eff < best_eff) { best_eff = eff; nnx = ax; nny = ay; }
+          }
+        }
+        if (out_next_x) *out_next_x = nnx;
+        if (out_next_y) *out_next_y = nny;
         return 1;
       }
     }
@@ -2452,8 +2482,11 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
       float ng_land = s->g_cost[node_idx(nx, ny, 0)];
       float ng_boat = s->g_cost[node_idx(nx, ny, 1)];
       float ng = (ng_boat < ng_land) ? ng_boat : ng_land;
-      if (ng < best_g) {
-        best_g = ng;
+      /* Live-obstacle veer (same as the on-path case): treat occupied tiles as
+       * far more expensive so the drifted tank routes around them too. */
+      float ng_eff = ng + (obs_contains(obstacles, n_obstacles, nx, ny) ? penalty : 0.0f);
+      if (ng_eff < best_g) {
+        best_g = ng_eff;
         best_nx = nx;
         best_ny = ny;
       }

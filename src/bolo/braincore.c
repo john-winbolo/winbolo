@@ -1326,7 +1326,10 @@ static int l_cpf_dijkstra_lookup_subtract_by_kind(lua_State *L) {
   return 1;
 }
 
-/* cpf_dijkstra_next_step(kind, sx, sy, dx, dy) → nx, ny or nil */
+/* cpf_dijkstra_next_step(kind, sx, sy, dx, dy [, obstacles, penalty]) → nx, ny or nil
+ * obstacles: optional flat array of packed tile keys (y*256+x) to dodge at trace
+ * time; penalty: extra cost added to those tiles (default large). */
+#define CPF_MAX_OBSTACLES 64
 static int l_cpf_dijkstra_next_step(lua_State *L) {
   CPF_GET(L);
   int kind = (int)luaL_checkinteger(L, 1);
@@ -1334,8 +1337,22 @@ static int l_cpf_dijkstra_next_step(lua_State *L) {
   int sy = (int)luaL_checkinteger(L, 3);
   int dx = (int)luaL_checkinteger(L, 4);
   int dy = (int)luaL_checkinteger(L, 5);
+  int obstacles[CPF_MAX_OBSTACLES];
+  int n_obs = 0;
+  float penalty = (float)luaL_optnumber(L, 7, 1.0e6);
+  if (lua_istable(L, 6)) {
+    int len = (int)lua_rawlen(L, 6);
+    if (len > CPF_MAX_OBSTACLES) len = CPF_MAX_OBSTACLES;
+    for (int i = 1; i <= len; i++) {
+      lua_rawgeti(L, 6, i);
+      obstacles[n_obs++] = (int)lua_tointeger(L, -1);
+      lua_pop(L, 1);
+    }
+  }
   int nx = -1, ny = -1;
-  if (brainPathfinderDijkstraNextStep(pf, kind, sx, sy, dx, dy, &nx, &ny)) {
+  if (brainPathfinderDijkstraNextStep(pf, kind, sx, sy, dx, dy,
+                                      n_obs > 0 ? obstacles : NULL, n_obs, penalty,
+                                      &nx, &ny)) {
     lua_pushinteger(L, nx);
     lua_pushinteger(L, ny);
     return 2;
@@ -1549,25 +1566,53 @@ static int l_cpf_predict_stop(lua_State *L) {
   float angle  = (float)luaL_checknumber(L, 3);
   double speed = luaL_checknumber(L, 4);
   double cap   = luaL_optnumber(L, 5, 255.0);
+  /* min_speed (7th arg): stop the sim once speed drops to/below this instead of
+   * all the way to 0, dropping the slow sub-MIN_MOVE creep tail that the brain
+   * can't really observe anyway. 0 = full ramp to rest (original behaviour). */
+  double min_speed = luaL_optnumber(L, 7, 0.0);
+
+  /* Optional per-step trace (6th arg true): returns a 3rd value, an array of
+   * {speed, decel, dist, after, resid} sub-tables — one per simulation tick —
+   * so the brain can print exactly how the brake ramp + 16-dir residual moves
+   * played out. Off by default (existing callers pass 5 args). */
+  int want_trace = lua_toboolean(L, 6);
+  int trace_idx = 0, n = 0;
+  if (want_trace) { lua_newtable(L); trace_idx = lua_gettop(L); }
 
   BYTE dir = utilGet16Dir((TURNTYPE)angle);
   int residual = 0;
   int guard = 0;
-  while (speed > 0.0 && guard++ < 4096) {
-    if (speed > cap) speed -= TERRAIN_RATE;   /* over-cap terrain decel */
+  while (speed > min_speed && guard++ < 4096) {
+    double s_before = speed;
+    double decel = BRAKE_RATE;
+    if (speed > cap) { speed -= TERRAIN_RATE; decel += TERRAIN_RATE; } /* over-cap terrain drag */
     speed -= BRAKE_RATE;                       /* brake key (== auto-slow) */
     if (speed < 0.0) speed = 0.0;
     residual += (int)speed;                    /* (BYTE)speed → floor */
+    int moved = 0;
     if (residual >= MIN_MOVE) {
       int dx = 0, dy = 0;
       utilCalcDistance(&dx, &dy, (TURNTYPE)dir, residual);
       x = (WORLD)((int)x + dx);
       y = (WORLD)((int)y + dy);
+      moved = residual;
       residual = 0;
+    }
+    if (want_trace) {
+      lua_newtable(L);
+      lua_pushnumber(L, s_before);  lua_setfield(L, -2, "speed");  /* speed entering this tick */
+      lua_pushnumber(L, decel);     lua_setfield(L, -2, "decel");  /* total decel applied */
+      lua_pushinteger(L, moved);    lua_setfield(L, -2, "dist");   /* wu advanced this tick (0 = sub-move held) */
+      lua_pushnumber(L, speed);     lua_setfield(L, -2, "after");  /* speed after decel */
+      lua_pushinteger(L, residual); lua_setfield(L, -2, "resid");  /* residual carried to next tick */
+      lua_pushinteger(L, (lua_Integer)x); lua_setfield(L, -2, "x"); /* tank wu pos after this tick */
+      lua_pushinteger(L, (lua_Integer)y); lua_setfield(L, -2, "y");
+      lua_rawseti(L, trace_idx, ++n);
     }
   }
   lua_pushinteger(L, (lua_Integer)x);
   lua_pushinteger(L, (lua_Integer)y);
+  if (want_trace) { lua_pushvalue(L, trace_idx); return 3; }  /* x, y, trace */
   return 2;
 }
 
