@@ -312,6 +312,7 @@ int run_catchup_ignores_redundant_duplicates(void);
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
 int run_jitter_buffer_grow(void);
+int run_shell_projection(void);
 
 /* Render-only error smoothing (test_error_smoothing.c): the offset
  * accumulate/decay/clamp/wrap math as pure functions, plus the

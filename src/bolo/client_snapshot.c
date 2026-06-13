@@ -673,6 +673,16 @@ void clientApplySnapshot(ClientSim *csPtr,
     csPtr->serverShellCount = di;
   }
 
+  /* Forward-project other players' shells for human clients so incoming
+   * shells render at their true present position instead of ~RTT/2 in the
+   * past. Anchored to this snapshot by the local player's ping and advanced
+   * per game tick until the next snapshot re-anchors. Bots keep reading the
+   * raw serverShellSnaps above and get no projection layer. */
+  if (isHuman) {
+    clientSimRebuildProjectedShells(
+        csPtr, playersGetPing(&csPtr->sim.plyrs, playerNum));
+  }
+
   /* Tank fireballs are spawned via EVENT_TK_EXPLOSION (handled below) and
    * simulated locally by tkExplosionUpdate — no per-tick replication. */
   (void)tkExplSnaps; (void)tkExplosionCount;
