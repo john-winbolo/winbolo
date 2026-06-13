@@ -2545,6 +2545,7 @@ void serverSimEnterLobby(ServerSim *sim) {
 
 void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
   sim->sim.viewPlayer = cfg->viewPlayer;
+  sim->maxBots        = cfg->maxBots;
 
   serverSimSetEmptyResetEnabled(sim, cfg->emptyResetEnabled);
   serverSimSetHasPassword(sim, cfg->hasPassword);
@@ -7250,6 +7251,22 @@ bool serverSimIsAcceptingJoins(const ServerSim *sim) {
 BYTE serverSimGetMaxPlayers(const ServerSim *sim) {
     if (sim == NULL) return MAX_TANKS;
     return (sim->maxPlayers > 0) ? sim->maxPlayers : (BYTE)MAX_TANKS;
+}
+
+BYTE serverSimGetMaxBots(const ServerSim *sim) {
+    if (sim == NULL) return 0;
+    return sim->maxBots;
+}
+
+BYTE serverSimGetLobbyBotCount(const ServerSim *sim) {
+    if (sim == NULL) return 0;
+    BYTE count = 0;
+    for (BYTE i = 0; i < MAX_TANKS; i++) {
+        if (sim->playerConnected[i] && sim->lobbyPlayers[i].isBot) {
+            count++;
+        }
+    }
+    return count;
 }
 
 #ifdef WB_NETDEBUG
