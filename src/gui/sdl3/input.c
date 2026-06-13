@@ -154,10 +154,10 @@ static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
    * held after the player pressed Tank View must not re-enter, otherwise the
    * held key fights the exit and traps them in pill view until the pill dies.
    * Exit is the Tank View key (handled elsewhere). */
-  bool keyDown = KEY_DOWN(setKeys->kiPillView);
-  bool keyEdge = keyDown && !pillViewKeyWasDown;
-  pillViewKeyWasDown = keyDown;
-  if (!keyDown) {
+  bool pillKeyDown = KEY_DOWN(setKeys->kiPillView);
+  bool keyEdge = pillKeyDown && !pillViewKeyWasDown;
+  pillViewKeyWasDown = pillKeyDown;
+  if (!pillKeyDown) {
     pillViewCycleMs = 0;
   } else if (inPill) {
     if (keyEdge || pillViewCycleMs == 0 ||
