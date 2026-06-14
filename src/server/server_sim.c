@@ -3868,12 +3868,18 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * near each other (see serverSimStartGame for the rationale). */
     {
         BYTE batchTeam[MAX_TANKS];
+        BYTE reserved0[MAX_TANKS];
+        BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
         for (i = 0; i < MAX_TANKS; i++) {
+            BYTE r = sim->lobbyPlayers[i].startIdx;  /* 1-based, 0xFF = none */
             batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
+            reserved0[i] = (r == 0xFF || r < 1 || r > numStarts)
+                         ? MAX_STARTS                  /* none / stale-after-map-change */
+                         : (BYTE)(r - 1);              /* 1-based public -> 0-based engine */
         }
         startsAssignBatch(&sim->sim, &sim->sim.ss,
                           sim->playerConnected, batchTeam,
-                          sim->sim.pendingStartIdx);
+                          sim->sim.pendingStartIdx, reserved0);
     }
 
     /* Create tanks for all connected players */
@@ -3994,12 +4000,18 @@ void serverSimStartGame(ServerSim *sim) {
      * sees siblings already placed earlier in this loop. */
     {
         BYTE batchTeam[MAX_TANKS];
+        BYTE reserved0[MAX_TANKS];
+        BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
         for (i = 0; i < MAX_TANKS; i++) {
+            BYTE r = sim->lobbyPlayers[i].startIdx;  /* 1-based, 0xFF = none */
             batchTeam[i] = sim->lobbyPlayers[i].teamNumber;
+            reserved0[i] = (r == 0xFF || r < 1 || r > numStarts)
+                         ? MAX_STARTS                  /* none / stale-after-map-change */
+                         : (BYTE)(r - 1);              /* 1-based public -> 0-based engine */
         }
         startsAssignBatch(&sim->sim, &sim->sim.ss,
                           sim->playerConnected, batchTeam,
-                          sim->sim.pendingStartIdx);
+                          sim->sim.pendingStartIdx, reserved0);
     }
 
     /* Create tanks for all connected players */

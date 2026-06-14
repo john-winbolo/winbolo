@@ -2522,6 +2522,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
     tests/unit/test_starts_pick_incremental.c
+    tests/unit/test_starts_assign_batch.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -2781,6 +2782,11 @@ set(_unit_test_names
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken
+    starts_batch_reserved_lands_exact
+    starts_batch_unreserved_avoids_reserved
+    starts_batch_stale_reservation_falls_through
+    starts_batch_duplicate_honors_first
+    starts_batch_null_reservations_place_normally
     input_redundancy
     stall_advances_processed_tick
     stall_mine_late_lays_once

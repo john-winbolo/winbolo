@@ -708,10 +708,14 @@ static void startsBatchSortBySize(int *order, int n, const StartsBatchGroup *gro
 *                 back to the per-player algorithm). Scatter
 *                 and direction conversion happen later, when
 *                 startsGetStart consumes the slot.
+*  reservedStartIdx0 - [MAX_TANKS] optional pre-reserved start
+*                 per slot, 0-based (MAX_STARTS = none), or NULL
+*                 for no reservations. A reserved slot locks its
+*                 exact start and is excluded from placement.
 *********************************************************/
 void startsAssignBatch(GameSim *sim, starts *value,
                        const bool *connected, const BYTE *teamNumber,
-                       BYTE *outStartIdx) {
+                       BYTE *outStartIdx, const BYTE *reservedStartIdx0) {
   StartsBatchGroup groups[MAX_TANKS];
   int teamToGroup[MAX_TANKS + 1]; /* teamNumber 1..16 -> group index, -1 if unseen */
   int unanchored[MAX_TANKS];
@@ -722,6 +726,11 @@ void startsAssignBatch(GameSim *sim, starts *value,
   bool stripeUsed[MAX_TANKS];
   bool startClaimed[MAX_STARTS];
   BYTE startToPlayer[MAX_STARTS];
+  bool slotReserved[MAX_TANKS];     /* slot holds an honored reservation */
+  bool reservedLocked[MAX_STARTS];  /* 0-based start already locked by a reservation */
+  int reservedSumX[MAX_TANKS];      /* per-group reserved-start centroid accumulator */
+  int reservedSumY[MAX_TANKS];
+  int reservedCnt[MAX_TANKS];
   int leftPos;
   int rightPos;
   int topPos;
@@ -751,12 +760,32 @@ void startsAssignBatch(GameSim *sim, starts *value,
   }
   numStarts = (*value)->numStarts;
 
-  /* Step 1: build groups */
+  /* Decide which reservations to honor. A connected slot with a valid,
+   * not-yet-claimed 0-based reservation is honored; duplicates keep the
+   * first claimant and the rest fall through to ordinary placement, as
+   * does an out-of-range (stale) reservation. */
+  for (i = 0; i < MAX_TANKS; i++) slotReserved[i] = FALSE;
+  for (i = 0; i < MAX_STARTS; i++) reservedLocked[i] = FALSE;
+  if (reservedStartIdx0 != NULL) {
+    for (i = 0; i < MAX_TANKS; i++) {
+      BYTE r;
+      if (!connected[i]) continue;
+      r = reservedStartIdx0[i];
+      if (r >= numStarts) continue;       /* MAX_STARTS sentinel or stale index */
+      if (reservedLocked[r]) continue;     /* duplicate: honor the first */
+      reservedLocked[r] = TRUE;
+      slotReserved[i] = TRUE;
+    }
+  }
+
+  /* Step 1: build groups (reserved slots are placed by the lock below, not
+   * by the cluster passes, so they stay out of the groups). */
   numGroups = 0;
   for (i = 0; i <= MAX_TANKS; i++) teamToGroup[i] = -1;
   for (i = 0; i < MAX_TANKS; i++) {
     BYTE tn;
     if (!connected[i]) continue;
+    if (slotReserved[i]) continue;
     tn = teamNumber[i];
     if (tn > 0 && tn <= MAX_TANKS && teamToGroup[tn] >= 0) {
       g = teamToGroup[tn];
@@ -770,6 +799,25 @@ void startsAssignBatch(GameSim *sim, starts *value,
       if (tn > 0 && tn <= MAX_TANKS) teamToGroup[tn] = g;
     }
     groups[g].players[groups[g].size++] = i;
+  }
+
+  /* Accumulate each team group's reserved-start centroid so the anchor
+   * override below can pull its unreserved members near their locked
+   * teammates. Reserved solo slots (team 0) have no group and are skipped. */
+  for (g = 0; g < numGroups; g++) {
+    reservedSumX[g] = 0;
+    reservedSumY[g] = 0;
+    reservedCnt[g] = 0;
+  }
+  for (i = 0; i < MAX_TANKS; i++) {
+    BYTE tn;
+    if (!connected[i] || !slotReserved[i]) continue;
+    tn = teamNumber[i];
+    if (tn == 0 || tn > MAX_TANKS || teamToGroup[tn] < 0) continue;
+    g = teamToGroup[tn];
+    reservedSumX[g] += (*value)->item[reservedStartIdx0[i]].x;
+    reservedSumY[g] += (*value)->item[reservedStartIdx0[i]].y;
+    reservedCnt[g]++;
   }
 
   /* Step 2: anchors from owned bases (teams only) */
@@ -896,6 +944,16 @@ void startsAssignBatch(GameSim *sim, starts *value,
     }
   }
 
+  /* Anchor override: a team with locked reservations seeds its group anchor
+   * from the centroid of those reserved starts, so its last unreserved member
+   * clusters with its already-placed teammates instead of scattering. */
+  for (g = 0; g < numGroups; g++) {
+    if (groups[g].isSolo || reservedCnt[g] == 0) continue;
+    groups[g].anchored = TRUE;
+    groups[g].anchorX = reservedSumX[g] / reservedCnt[g];
+    groups[g].anchorY = reservedSumY[g] / reservedCnt[g];
+  }
+
   /* Step 4: assign starts to teams, largest first.
    * When starts are scarce (sum of team sizes > valid starts), apportion
    * via Hamilton's method: floor each team's quota and distribute leftover
@@ -919,6 +977,16 @@ void startsAssignBatch(GameSim *sim, starts *value,
     for (i = 0; i < MAX_STARTS; i++) {
       startClaimed[i] = FALSE;
       startToPlayer[i] = MAX_TANKS;
+    }
+    /* Lock honored reservations: pre-claim each reserved start for its slot
+     * so the placement passes below skip it; Step 6 emits the slot's
+     * outStartIdx from startToPlayer for free. */
+    for (i = 0; i < MAX_TANKS; i++) {
+      BYTE r;
+      if (!connected[i] || !slotReserved[i]) continue;
+      r = reservedStartIdx0[i];
+      startClaimed[r] = TRUE;
+      startToPlayer[r] = i;
     }
     numTeams = 0;
     for (g = 0; g < numGroups; g++) {

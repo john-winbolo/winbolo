@@ -264,6 +264,16 @@ int run_starts_pick_cluster_nearest_teammate(void);
 int run_starts_pick_farthest_when_solo(void);
 int run_starts_pick_none_when_all_taken(void);
 
+/* Batch start-assignment reservations (test_starts_assign_batch.c). The
+ * reservedStartIdx0 lock that honors lobby start picks at game start:
+ * reserved slots land exactly, unreserved slots fill the rest, stale and
+ * duplicate reservations degrade to ordinary placement, NULL is a no-op. */
+int run_starts_batch_reserved_lands_exact(void);
+int run_starts_batch_unreserved_avoids_reserved(void);
+int run_starts_batch_stale_reservation_falls_through(void);
+int run_starts_batch_duplicate_honors_first(void);
+int run_starts_batch_null_reservations_place_normally(void);
+
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
  * the host's reliable control queue at game start with 16 players. */
