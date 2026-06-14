@@ -49,4 +49,14 @@
     FGROUP(TANK_PRESENT_PING,  U16, pingMs)                  \
     FGROUP(TANK_PRESENT_FLAGS, U8, clientFlags)
 
+/* Fixed-layout map-transfer chunk headers (big-endian, sit at
+ * PACKET_HEADER_SIZE). The variable-length data and the chunk loop that
+ * follow each header stay hand-written. */
+#define MAP_DOWNLOAD_CHUNK_HEADER_FIELDS(F) \
+    F(U32, resyncGen) F(U32, mapSize) F(U16, chunkIdx) F(U16, chunkSize)
+#define MAP_UPLOAD_CHUNK_HEADER_FIELDS(F) \
+    F(U32, offset) F(U16, dataLen)
+#define MAP_PREVIEW_CHUNK_HEADER_FIELDS(F) \
+    F(U8, seq) F(U32, offset) F(U16, len)
+
 #endif /* WINBOLO_WIRE_MESSAGES_H */

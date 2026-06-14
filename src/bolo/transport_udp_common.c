@@ -214,6 +214,12 @@ DEFINE_WIRE_CODEC(TkExplosionSnapshot, "tk_explosion_snapshot", TK_EXPLOSION_SNA
 DEFINE_WIRE_CODEC(BaseSnapshot,        "base_snapshot",         BASE_SNAPSHOT_FIELDS)
 DEFINE_WIRE_CODEC(PillSnapshot,        "pill_snapshot",         PILL_SNAPSHOT_FIELDS)
 
+/* Fixed map-transfer chunk headers. Each precedes a hand-written data payload
+ * and chunk loop (reassembly and length validation stay hand-rolled). */
+DEFINE_WIRE_CODEC(MapDownloadChunkHeader, "map_download_chunk_hdr", MAP_DOWNLOAD_CHUNK_HEADER_FIELDS)
+DEFINE_WIRE_CODEC(MapUploadChunkHeader,   "map_upload_chunk_hdr",   MAP_UPLOAD_CHUNK_HEADER_FIELDS)
+DEFINE_WIRE_CODEC(MapPreviewChunkHeader,  "map_preview_chunk_hdr",  MAP_PREVIEW_CHUNK_HEADER_FIELDS)
+
 /* Serialize one GameEvent into buf. Returns bytes written (1 + dataSize). */
 int packGameEvent(uint8_t *buf, const GameEvent *ev) {
     int dataLen = gameEventDataSize(ev->type);
