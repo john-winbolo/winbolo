@@ -856,7 +856,13 @@ bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYT
     /* v1 autoscroll plus a moving-only sideways bias toward the side with
      * threats. Manual panning drops the lateral offset so the recovered v1
      * base stays correct. Parked with no offset = does nothing (exactly v1);
-     * a residual offset is allowed to unwind even while parked. */
+     * a residual offset is allowed to unwind even while parked.
+     *
+     * When autoscroll is switched off in the menu (ss->autoScroll == FALSE)
+     * this reverts to classic manual scrolling — manual keys plus a forward-
+     * motion edge nudge, no nudge while parked — so the toggle actually
+     * disables autoscroll. scrollSetScrollType has already zeroed the lateral
+     * offset on the way off, so there is nothing left to unwind here. */
     if (manual == TRUE) {
       ss->threatLatX = 0;
       ss->threatLatY = 0;
@@ -865,6 +871,12 @@ bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYT
       ss->threatLatSubX = 0;
       ss->threatLatSubY = 0;
       returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
+    } else if (ss->autoScroll == FALSE) {
+      if (speed > 0) {
+        returnValue = scrollNoAutoScroll(ss, xValue, yValue, objectX, objectY, angle);
+      } else {
+        returnValue = FALSE;
+      }
     } else if (speed > 0 || ss->threatLatSubX != 0 || ss->threatLatSubY != 0) {
       returnValue = scrollV1WithThreatsAutoScroll(ss, sim, xValue, yValue, objectX, objectY,
                                                   gunsightX, gunsightY, speed, angle);
