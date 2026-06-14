@@ -260,6 +260,7 @@ int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts) {
         pos += 2;
     }
     if (mask & TANK_PRESENT_FLAGS) buf[pos++] = ts->clientFlags;
+    WIRE_CORPUS_TAP("tank_snapshot", buf, (size_t)pos);
     return pos;
 }
 
