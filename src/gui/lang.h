@@ -442,6 +442,16 @@
 #define STR_DLGLOBBY_CHAT                   613
 #define STR_DLGLOBBY_CHAT_GENERAL           1497
 #define STR_DLGLOBBY_CHAT_TEAM              1498
+/* Compass octant labels for a lobby player's reserved map start */
+#define STR_COMPASS_N                       1499
+#define STR_COMPASS_NE                      1500
+#define STR_COMPASS_E                       1501
+#define STR_COMPASS_SE                      1502
+#define STR_COMPASS_S                       1503
+#define STR_COMPASS_SW                      1504
+#define STR_COMPASS_W                       1505
+#define STR_COMPASS_NW                      1506
+#define STR_COMPASS_C                       1507
 #define STR_DLGLOBBY_READY                  614
 #define STR_DLGLOBBY_UNREADY                615
 #define STR_DLGLOBBY_BALANCE_TEAMS          616

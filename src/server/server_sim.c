@@ -7195,7 +7195,15 @@ static void serverSimApplyMapChange(ServerSim *sim) {
      * valid keep it (reservations are not auto-moved otherwise). */
     {
         BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
+        BYTE before[MAX_TANKS];
         BYTE k;
+        /* Snapshot reservations before reconcile so we can publish exactly
+         * the slots whose reservation actually moved — covers both a
+         * reassign and a stale drop to 0xFF that couldn't be re-picked
+         * (more players than starts), without touching unchanged slots. */
+        for (k = 0; k < MAX_TANKS; k++) {
+            before[k] = sim->lobbyPlayers[k].startIdx;
+        }
         for (k = 0; k < MAX_TANKS; k++) {
             if (!sim->playerConnected[k]) continue;
             if (sim->lobbyPlayers[k].startIdx == 0xFF) continue;
@@ -7208,11 +7216,12 @@ static void serverSimApplyMapChange(ServerSim *sim) {
             if (!sim->playerConnected[k]) continue;
             if (sim->lobbyPlayers[k].startIdx == 0xFF) {
                 serverSimAssignLobbyStartOnJoin(sim, k);
-                /* Publish only when a start was actually assigned — a slot
-                 * that stays unreserved was already 0xFF on the wire. */
-                if (sim->lobbyPlayers[k].startIdx != 0xFF) {
-                    serverSimPublishLobbySlot(sim, k);
-                }
+            }
+        }
+        for (k = 0; k < MAX_TANKS; k++) {
+            if (!sim->playerConnected[k]) continue;
+            if (sim->lobbyPlayers[k].startIdx != before[k]) {
+                serverSimPublishLobbySlot(sim, k);
             }
         }
     }
