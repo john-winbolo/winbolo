@@ -194,6 +194,23 @@ void startsAssignBatch(struct GameSim *sim, starts *value,
                        BYTE *outStartIdx);
 
 /*********************************************************
+*NAME:          startsPickIncremental
+*PURPOSE:
+*  Picks one free start for a single joiner, 0-based in/out.
+*  taken[] is 0-based per start (TRUE = already reserved).
+*  teammateStarts0[] lists the 0-based start indices reserved
+*  by the joiner's teammates (teammateCount may be 0). With
+*  teammates, returns the free valid start with the smallest
+*  distance to the nearest teammate reservation (cluster);
+*  otherwise returns the free valid start maximising the min
+*  distance to every taken start (farthest-first). Returns
+*  MAX_STARTS when no free valid start exists.
+*********************************************************/
+BYTE startsPickIncremental(struct GameSim *sim, starts *value,
+                           const bool *taken,
+                           const BYTE *teammateStarts0, int teammateCount);
+
+/*********************************************************
 *NAME:          startsGetRandStart
 *AUTHOR:        John Morrison
 *CREATION DATE: 7/1/99

@@ -4423,6 +4423,25 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     }
                 }
 
+                /* ── Column 4: reserved map start (#n, or — when none) ──
+                 * Reuses the otherwise-empty spacer column so the start
+                 * number sits between the ping and ready cells without a
+                 * table-wide column reshuffle. The compass suffix is
+                 * added later, once the player list has the parsed map. */
+                ImGui::TableSetColumnIndex(4);
+                rowTopY = ImGui::GetCursorPosY();
+                {
+                    uint8_t sIdx = clientSimGetLobbySlot(cs, (BYTE)(i))->startIdx;
+                    char startLbl[16];
+                    if (clientSimGetLobbySlot(cs, (BYTE)(i))->connected && sIdx != 0xFF) {
+                        SDL_snprintf(startLbl, sizeof(startLbl), "#%d", (int)sIdx);
+                    } else {
+                        SDL_snprintf(startLbl, sizeof(startLbl), "—");
+                    }
+                    cyTextAbs();
+                    ImGui::TextDisabled("%s", startLbl);
+                }
+
                 /* ── Column 5: ready / not ready badge (humans only — bots
                  *   are always ready and don't need a pill) ─────────────── */
                 ImGui::TableSetColumnIndex(5);

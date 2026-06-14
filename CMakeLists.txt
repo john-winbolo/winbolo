@@ -2521,6 +2521,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
+    tests/unit/test_starts_pick_incremental.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -2777,6 +2778,9 @@ set(_unit_test_names
     alliance_reset_apply_rebuilds_alliances
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
+    starts_pick_cluster_nearest_teammate
+    starts_pick_farthest_when_solo
+    starts_pick_none_when_all_taken
     input_redundancy
     stall_advances_processed_tick
     stall_mine_late_lays_once

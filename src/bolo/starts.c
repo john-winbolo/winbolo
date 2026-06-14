@@ -1047,6 +1047,93 @@ void startsAssignBatch(GameSim *sim, starts *value,
 }
 
 /*********************************************************
+*NAME:          startsPickIncremental
+*AUTHOR:        John Morrison
+*CREATION DATE: 24/4/26
+*LAST MODIFIED: 24/4/26
+*PURPOSE:
+*  Picks one free start for a single joiner, sharing the
+*  distance and validity logic with startsAssignBatch.
+*  taken[] is 0-based per start (TRUE = already reserved).
+*  teammateStarts0[] lists the 0-based start indices reserved
+*  by the joiner's teammates (teammateCount may be 0). With
+*  teammates, returns the free valid start with the smallest
+*  distance to the nearest teammate reservation (cluster);
+*  otherwise returns the free valid start maximising the min
+*  distance to every taken start (farthest-first). Returns
+*  MAX_STARTS when no free valid start exists.
+*
+*ARGUMENTS:
+*  sim             - Pointer to the game simulation
+*  value           - Pointer to the starts structure
+*  taken           - [numStarts] reservation flags, 0-based
+*  teammateStarts0 - 0-based teammate reservation indices
+*  teammateCount   - Number of entries in teammateStarts0
+*********************************************************/
+BYTE startsPickIncremental(struct GameSim *sim, starts *value,
+                           const bool *taken,
+                           const BYTE *teammateStarts0, int teammateCount) {
+  BYTE numStarts;
+  BYTE i;
+  int bestStart = -1;
+
+  if (value == NULL || *value == NULL || (*value)->numStarts == 0) {
+    return MAX_STARTS;
+  }
+  numStarts = (*value)->numStarts;
+
+  if (teammateCount > 0) {
+    /* Cluster: smallest distance to the nearest teammate reservation. */
+    int bestDist = INT_MAX;
+    for (i = 0; i < numStarts; i++) {
+      int minD = INT_MAX;
+      int j;
+      if (taken[i]) continue;
+      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+      for (j = 0; j < teammateCount; j++) {
+        BYTE t0 = teammateStarts0[j];
+        int d;
+        if (t0 >= numStarts) continue;
+        d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
+                              (*value)->item[t0].x, (*value)->item[t0].y);
+        if (d < minD) minD = d;
+      }
+      if (minD == INT_MAX) continue; /* no usable teammate reference */
+      if (bestStart < 0 || minD < bestDist) {
+        bestDist = minD;
+        bestStart = i;
+      }
+    }
+  } else {
+    /* Farthest-first: maximise the min distance to all taken starts. */
+    int bestMinDist = -1;
+    for (i = 0; i < numStarts; i++) {
+      int minD = INT_MAX;
+      BYTE j;
+      if (taken[i]) continue;
+      if (startsIsValidSquare(sim, (*value)->item[i].x, (*value)->item[i].y) == FALSE) continue;
+      for (j = 0; j < numStarts; j++) {
+        int d;
+        if (!taken[j]) continue;
+        d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
+                              (*value)->item[j].x, (*value)->item[j].y);
+        if (d < minD) minD = d;
+      }
+      if (minD == INT_MAX) minD = MAP_ARRAY_SIZE; /* nothing taken — any start qualifies */
+      if (minD > bestMinDist) {
+        bestMinDist = minD;
+        bestStart = i;
+      }
+    }
+  }
+
+  if (bestStart < 0) {
+    return MAX_STARTS;
+  }
+  return (BYTE)bestStart;
+}
+
+/*********************************************************
 *NAME:          startsGetStart
 *AUTHOR:        John Morrison
 *CREATION DATE: 7/1/99

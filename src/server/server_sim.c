@@ -119,6 +119,11 @@ void serverSimStartGame(ServerSim *sim);
  * path; defined alongside lobbyAutoUnreadyOnChange below. */
 static void serverSimApplyMapChange(ServerSim *sim);
 
+/* Reserves a free lobby start for one slot, clustered near its
+ * teammates. Defined below; called from the join path and the
+ * map-change reconcile. */
+static void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot);
+
 /* Forward declarations for map-skip publish path — definitions live
  * further down the file. */
 static void serverSimFillMapSkipStateEvent(const ServerSim *sim,
@@ -1859,6 +1864,9 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, b
         sim->lobbyPlayers[playerNum].teamNumber = defaultTeam;
     }
 
+    /* Reserve a clustered start now the team is known (humans and bots). */
+    serverSimAssignLobbyStartOnJoin(sim, playerNum);
+
     /* Set active sim so routing functions access sim state during tankCreate */
     activeSim = sim;
 
@@ -2353,6 +2361,10 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
     sim->lobbyPlayers[playerNum].isBot      = true;
     sim->lobbyPlayers[playerNum].ready      = true;
     sim->lobbyPlayers[playerNum].teamNumber = cfg->teamNumber;
+    /* Re-pick the reservation now the bot's final team is known — the
+     * earlier pick in addPlayerInternal ran while it still held the
+     * default team. The slot republishes on its next lobby change. */
+    serverSimAssignLobbyStartOnJoin(sim, playerNum);
     return true;
 }
 
@@ -7176,6 +7188,35 @@ static void serverSimApplyMapChange(ServerSim *sim) {
     mpDiagLog("[srv] applyMapChange map='%.32s' cachedLen=%d random=%d",
               sim->mapName, sim->cachedMapDataLen,
               (int)sim->randomMapEnabled);
+
+    /* A reservation from the previous map can index past the new map's
+     * start list; drop those, then re-cluster every now-unassigned slot
+     * into the new map's free starts. Slots whose reservation is still
+     * valid keep it (reservations are not auto-moved otherwise). */
+    {
+        BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
+        BYTE k;
+        for (k = 0; k < MAX_TANKS; k++) {
+            if (!sim->playerConnected[k]) continue;
+            if (sim->lobbyPlayers[k].startIdx == 0xFF) continue;
+            if (sim->lobbyPlayers[k].startIdx < 1 ||
+                sim->lobbyPlayers[k].startIdx > numStarts) {
+                sim->lobbyPlayers[k].startIdx = 0xFF;
+            }
+        }
+        for (k = 0; k < MAX_TANKS; k++) {
+            if (!sim->playerConnected[k]) continue;
+            if (sim->lobbyPlayers[k].startIdx == 0xFF) {
+                serverSimAssignLobbyStartOnJoin(sim, k);
+                /* Publish only when a start was actually assigned — a slot
+                 * that stays unreserved was already 0xFF on the wire. */
+                if (sim->lobbyPlayers[k].startIdx != 0xFF) {
+                    serverSimPublishLobbySlot(sim, k);
+                }
+            }
+        }
+    }
+
     transportUdpServerOnLobbyMapChange(sim);
     {
         ControlEvent evt;
@@ -7186,6 +7227,64 @@ static void serverSimApplyMapChange(ServerSim *sim) {
     serverSimPublishLobbySettings(sim);
     lobbyAutoUnreadyOnChange(sim);
     serverSimWbnLobbyUpdate(sim, FALSE);
+}
+
+/* Reserve a free lobby start for one slot, storing it in lobbyStartIdx.
+ * No-op (leaves startIdx at 0xFF) outside lobby state, for an unconnected
+ * slot, or when the lobby map has no starts. Builds the taken set from
+ * every other connected slot's reservation and the teammate set from
+ * same-team holders, then picks a clustered (or farthest-first when
+ * teamless) start. The slot's own current reservation is ignored, so
+ * this is safe to call to re-pick a slot that already holds one. Does
+ * not publish — callers republish the slot (the join/team-set/add paths
+ * already do, and the map-change reconcile publishes reassigned slots),
+ * which keeps the reservation out of the add-time event stream. Runs for
+ * humans and bots alike. */
+static void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot) {
+    BYTE numStarts;
+    bool taken[MAX_STARTS];
+    BYTE teammateStarts0[MAX_TANKS];
+    int  teammateCount = 0;
+    BYTE myTeam;
+    BYTE picked;
+    BYTE i;
+    BYTE k;
+
+    if (sim == NULL) return;
+    if (sim->state != serverStateLobby) return;
+    if (slot >= MAX_TANKS) return;
+    if (!sim->playerConnected[slot]) return;
+    numStarts = startsGetNumStarts(&sim->sim.ss);
+    if (numStarts == 0) return;
+
+    for (i = 0; i < MAX_STARTS; i++) {
+        taken[i] = false;
+    }
+    myTeam = sim->lobbyPlayers[slot].teamNumber;
+
+    /* taken[] = every connected slot's reservation (1-based -> 0-based);
+     * teammateStarts0[] = same-team holders' reservations. Team 0
+     * (unassigned) has no teammates, so it falls to farthest-first. */
+    for (k = 0; k < MAX_TANKS; k++) {
+        BYTE r;
+        if (k == slot) continue; /* never count our own current reservation */
+        if (!sim->playerConnected[k]) continue;
+        r = sim->lobbyPlayers[k].startIdx;
+        if (r == 0xFF) continue;
+        if (r < 1 || r > numStarts) continue;
+        taken[r - 1] = true;
+        if (myTeam != 0 && sim->lobbyPlayers[k].teamNumber == myTeam) {
+            teammateStarts0[teammateCount++] = (BYTE)(r - 1);
+        }
+    }
+
+    picked = startsPickIncremental(&sim->sim, &sim->sim.ss, taken,
+                                   teammateStarts0, teammateCount);
+    if (picked >= numStarts) {
+        sim->lobbyPlayers[slot].startIdx = 0xFF;
+    } else {
+        sim->lobbyPlayers[slot].startIdx = (BYTE)(picked + 1);
+    }
 }
 
 /* Auto-unready: any meaningful lobby change clears every human's
