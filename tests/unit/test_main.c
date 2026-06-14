@@ -172,6 +172,8 @@ static const UnitTestEntry s_tests[] = {
     { "return_to_lobby_drops_wbn_keeps_identity", run_return_to_lobby_drops_wbn_keeps_identity },
     { "wbn_lobby_update_deferred_during_rotation", run_wbn_lobby_update_deferred_during_rotation },
     { "wbn_lobby_update_sends_when_not_rotating",  run_wbn_lobby_update_sends_when_not_rotating  },
+    { "maprotate_restarts_round_and_rearms",       run_maprotate_restarts_round_and_rearms       },
+    { "maprotate_defers_wbn_update_until_key_rotated", run_maprotate_defers_wbn_update_until_key_rotated },
     { "wbn_join_keyed_on_reauth",                  run_wbn_join_keyed_on_reauth                  },
     { "wbn_join_anonymous_on_grace",               run_wbn_join_anonymous_on_grace               },
     { "wbn_join_idempotent_reauth_no_double",      run_wbn_join_idempotent_reauth_no_double      },

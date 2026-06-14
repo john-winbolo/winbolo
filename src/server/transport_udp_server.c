@@ -2385,6 +2385,52 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
     serverSimConsoleMessage("Player not found.");
 }
 
+void transportUdpServerDisconnectAll(ServerSim *sim) {
+    int i;
+    bool anyConnected = false;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (udpServer.clients[i].connected) {
+            anyConnected = true;
+            break;
+        }
+    }
+
+    /* Tell every connected client the round is over before tearing their
+     * slots down, so they return to the server browser cleanly instead of
+     * waiting out the keepalive timeout. The per-client codec subscriber
+     * unicasts PACKET_SERVER_SHUTDOWN during this publish (same mechanism
+     * transportUdpServerDestroy uses). */
+    if (anyConnected) {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_SERVER_SHUTDOWN;
+        serverSimPublishControl(sim, &evt);
+    }
+
+    /* Boot every human client. serverDisconnectClient handles the
+     * transport-side teardown for real UDP clients; serverSimRemovePlayer then
+     * clears the sim-side player (gated on the sim's own connected flag, which
+     * serverDisconnectClient leaves set). Bots are deliberately kept: they are
+     * server configuration, not joined players, so they persist across a map
+     * rotation exactly as they do across a normal lobby round (the caller
+     * re-arms them for the new round via botManagerOnGameStart). A bot has no
+     * udpServer.clients entry, so it is skipped by the connected check; the
+     * removal is additionally gated on !serverSimIsBot so it survives. Removal
+     * is index-based and doesn't compact the arrays, so a plain forward loop is
+     * safe. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (udpServer.clients[i].connected) {
+            serverCleanupMapDownload(i);
+            serverDisconnectClient(sim, i, FALSE);
+        }
+        if (serverSimIsPlayerConnected(sim, (BYTE)i) &&
+            !serverSimIsBot(sim, (BYTE)i)) {
+            serverSimRemovePlayer(sim, (BYTE)i);
+        }
+    }
+}
+
 bool transportUdpServerSetHostByName(ServerSim *sim, const char *playerName) {
     int i;
     for (i = 0; i < MAX_TANKS; i++) {

@@ -219,6 +219,101 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   return TRUE;
 }
 
+/* Boot-all map-rotation round restart. Pairs serverSimMapRotateRound's
+ * sim-core reset with the surrounding transport teardown and WBN session
+ * rotation, mirroring the gameOver->lobby and empty-reset dances but starting
+ * a fresh no-lobby running round instead of returning to a lobby.
+ *
+ * Always stashes the finished round's log here: the dedicated-log
+ * subscriber's handleGameOver no-ops in no-lobby mode (it defers to the
+ * process-shutdown path that doesn't run in rotation), so neither the win
+ * trigger's CTRL_GAME_PHASE_GAME_OVER publish nor the empty trigger stashes
+ * for us. serverDedicatedLogStashCurrentRound is idempotent (no-ops once the
+ * log is stopped), so an extra call is harmless. */
+static void serverLifecycleRotateRound(ServerSim *sim) {
+  /* Boot everyone first — the round is over and nobody carries forward. */
+  if (instanceAcceptRemoteClients) {
+    transportUdpServerDisconnectAll(sim);
+  }
+
+  roundLogStash();
+
+  /* Sim-core reset: opens the WBN rotation window, picks the next map and
+   * starts a fresh running round (state -> running). serverSimStartGame inside
+   * recreated the server-side tanks for every still-connected player, which
+   * after the disconnect-all above is just the bots (humans were booted). */
+  serverSimMapRotateRound(sim);
+
+  /* Re-arm any kept bots for the new round: reload their ClientSim map from the
+   * freshly-loaded world, recreate their tanks and reset brain state. Mirrors
+   * the countdown->running transition's botManagerOnGameStart call — the
+   * no-lobby rotation path skips that transition, so it must do this itself, or
+   * a -maprotate -bots server would keep stale round-1 bot state. */
+  if (serverSimGetNumBots(sim) > 0) {
+    botManagerOnGameStart(sim);
+  }
+
+  /* WBN session rotation around the round-log upload. End the finished round's
+   * session (server/quit) so WBN accepts the upload against the still-live
+   * key, flush the upload, then register the next round's session — which
+   * overwrites winboloNetServerKey with the freshly-picked map's key. Same
+   * sandwich as the gameOver->lobby and empty-reset sites. Done after
+   * serverSimMapRotateRound so BeginSession reports the new map / base / pill
+   * counts, not the round that just ended. */
+  if (winbolonetIsRunning()) {
+    /* Flush any WBN events still queued from the finished round (win
+     * crediting, final kills) against the live key before tearing the
+     * session down — mirrors the gameOver->lobby block's pre-EndSession
+     * flush. Player counts read 0 here (everyone was just booted); only
+     * the queued events matter. */
+    winbolonetServerUpdate(serverSimGetNumPlayers(sim),
+                           serverSimGetNumNeutralBases(sim),
+                           serverSimGetNumNeutralPills(sim), TRUE);
+    winbolonetEndSession();
+  }
+  roundLogFlush();
+  if (winbolonetIsRunning()) {
+    serverSimRefreshWbnLobbyInfo(sim);
+    winbolonetBeginSession(
+      sim->mapName, sim->serverPort,
+      (BYTE)gameTypeGet(&sim->sim.game),
+      (BYTE)sim->botAiType,
+      (BYTE)sim->sim.hiddenMines,
+      sim->hasPassword,
+      basesGetNumBases(&sim->sim.bs),
+      pillsGetNumPills(&sim->sim.pb),
+      serverSimGetNumNeutralBases(sim),
+      serverSimGetNumNeutralPills(sim),
+      serverSimGetNumPlayers(sim));
+    /* Clients were just booted, so this is a no-op here; kept for symmetry
+     * with the other rotation sites (gated inside on connected clients). */
+    transportUdpServerBroadcastWbnRekey(sim);
+  }
+  /* New key installed (or WBN off) — close the rotation window so any deferred
+   * lobby_update flushes against the right session on the next WBN tick. */
+  sim->wbnSessionRotating = FALSE;
+
+  /* Start the next round's log and push the fresh map to any in-process
+   * subscriber (SP host loopback, replay-log writer). serverSimMapRotateRound
+   * already moved the sim to running; publish RUNNING (the dedicated-log
+   * subscriber opens a fresh round log on it) and the map change. */
+  {
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_GAME_PHASE_RUNNING;
+    serverSimPublishControl(sim, &evt);
+  }
+  if (instanceAcceptRemoteClients) {
+    transportUdpServerOnLobbyMapChange(sim);
+  }
+  {
+    ControlEvent mapEvt;
+    memset(&mapEvt, 0, sizeof(mapEvt));
+    mapEvt.type = CTRL_LOBBY_MAP_CHANGE;
+    serverSimPublishControl(sim, &mapEvt);
+  }
+}
+
 void serverInstanceTick(ServerSim *sim) {
   /* Measure the entire tick wall-clock — outside the mutex acquire so
    * the EWMA captures contention wait time too. Single bottom-of-function
@@ -272,6 +367,12 @@ void serverInstanceTick(ServerSim *sim) {
         memset(&overEvt, 0, sizeof(overEvt));
         overEvt.type = CTRL_GAME_OVER;
         serverSimPublishControl(sim, &overEvt);
+      }
+      /* No-lobby map rotation: a win boots everyone and restarts a fresh
+       * round here, inside the tick, so sim->state leaves gameOver before
+       * the main loop's exit check observes it — the server never quits. */
+      if (serverSimIsMapRotateEnabled(sim)) {
+        serverLifecycleRotateRound(sim);
       }
     }
     if (sim->state == serverStateRunning) {
@@ -484,12 +585,20 @@ void serverInstanceTick(ServerSim *sim) {
     transportUdpServerCheckTimeouts(sim);
   }
 
-  /* Auto-close check — works in any state.
-   * When auto-close triggers, force a no-lobby shutdown regardless
-   * of lobby mode, since there are no players to return to lobby for. */
-  if (sim->autoCloseOnEmpty && serverSimCheckAutoClose(sim)) {
-    sim->lobbyEnabled = FALSE;
-    serverSimEnterGameOver(sim);
+  /* Auto-close / empty-rotation check — works in any state. The shared
+   * serverSimCheckAutoClose latches hadPlayersEver and fires once the server
+   * empties after having had players. In map-rotation mode an empty server
+   * rotates to a fresh round instead of shutting down; otherwise -autoclose
+   * forces a no-lobby shutdown (no players to return to a lobby for). */
+  if ((sim->autoCloseOnEmpty || serverSimIsMapRotateEnabled(sim)) &&
+      serverSimCheckAutoClose(sim)) {
+    if (serverSimIsMapRotateEnabled(sim)) {
+      serverSimConsoleMessage("Server empty - rotating to a new round.");
+      serverLifecycleRotateRound(sim);
+    } else {
+      sim->lobbyEnabled = FALSE;
+      serverSimEnterGameOver(sim);
+    }
   }
 
   /* Empty reset check — when enabled and no players are connected,

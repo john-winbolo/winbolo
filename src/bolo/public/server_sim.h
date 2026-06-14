@@ -569,6 +569,35 @@ void serverSimInstallMapDirList(ServerSim *sim,
 void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled);
 
 /*********************************************************
+ *NAME:          serverSimSetMapRotate
+ *PURPOSE:
+ *  Enables no-lobby map-rotation mode. In this mode a win
+ *  or an empty server boots every player, picks the next
+ *  map from -mapdir and restarts a fresh running round
+ *  instead of quitting. Implies no-lobby; the server only
+ *  stops on Ctrl-C / the quit console command.
+ *********************************************************/
+void serverSimSetMapRotate(ServerSim *sim, bool enabled);
+
+/*********************************************************
+ *NAME:          serverSimIsMapRotateEnabled
+ *PURPOSE:
+ *  Returns whether no-lobby map-rotation mode is enabled.
+ *********************************************************/
+bool serverSimIsMapRotateEnabled(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimMapRotateRound
+ *PURPOSE:
+ *  Sim-core half of a map-rotation round restart: opens the
+ *  WBN session-rotation window, picks the next map and starts
+ *  a fresh empty running round. The caller (the server
+ *  lifecycle) boots all clients first and runs the WBN
+ *  session rotation / round-log upload around this call.
+ *********************************************************/
+void serverSimMapRotateRound(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimSetEmptyResetMinutes
  *PURPOSE:
  *  Sets the number of minutes an empty server waits
