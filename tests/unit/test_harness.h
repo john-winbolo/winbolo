@@ -344,6 +344,11 @@ int run_loopback_join_loss(void);
 int run_loopback_lobby_running_loss(void);
 int run_join_version_gate(void);
 
+/* Per-source-IP JOIN rate limit (test_join_rate_limit.c): a burst of valid
+ * JOINs from distinct loopback ephemeral ports (one source IP) draws at most
+ * JOIN_RL_BURST accepts, while a JOIN from a distinct source IP is unaffected. */
+int run_join_rate_limit(void);
+
 /* Map-send amplification gate (test_map_amp_gate.c): a crafted JOIN over a raw
  * loopback socket draws a JOIN_ACCEPT but no PACKET_MAP_DOWNLOAD until a
  * MAP_ACK 0xFFFF ready round-trip is sent, after which chunks flow. */

@@ -222,6 +222,19 @@ ClaimResolveAction claimResolveDecide(bool bareNameHeld, bool holderIsVerified) 
     return CLAIM_RESOLVE_PREEMPT_SQUATTER;
 }
 
+/* Per-source-IP JOIN rate limit. A blind spoofer can walk source ports to
+ * fire one JOIN per slot and exhaust MAX_TANKS, so the limiter keys on the
+ * source IP alone and tracks only a small LRU of recent sources. */
+#define JOIN_RL_MAX_SOURCES 64    /* LRU of recent source IPs */
+#define JOIN_RL_BURST       5     /* token-bucket capacity per source IP */
+#define JOIN_RL_REFILL_MS   2000  /* +1 token every 2 s */
+
+typedef struct {
+    uint32_t srcAddr;  /* network-order sin_addr.s_addr; 0 = empty entry */
+    uint32_t tokens;   /* tokens remaining */
+    uint64_t lastMs;   /* SDL_GetTicks() at last touch */
+} JoinRateEntry;
+
 /* Server-side global state */
 static struct {
     SOCKET sock;
@@ -298,6 +311,11 @@ static struct {
     UploadPolicy uploadPolicy;
     uint8_t      uploadMaxFiles;
     uint32_t     uploadMaxStorageBytes;
+
+    /* LRU token buckets for the per-source-IP JOIN rate limit. A zeroed
+     * table reads as all-empty (srcAddr 0), so the existing
+     * memset(&udpServer, 0, …) is the only reset needed. */
+    JoinRateEntry joinRate[JOIN_RL_MAX_SOURCES];
 } udpServer;
 
 /* Runtime network impairment (delay/jitter/loss/burst) on the server's
@@ -356,6 +374,62 @@ static int serverFindClient(const struct sockaddr_in *addr) {
         }
     }
     return -1;
+}
+
+/* Token-bucket join rate limit keyed on source IP (port ignored: a spoofer
+ * walks ports). Returns true and consumes a token if allowed; false if the
+ * source is over-rate. LRU-evicts the least-recently-seen source on overflow.
+ * A real join never originates from 0.0.0.0, so reusing srcAddr==0 as the
+ * empty-entry sentinel can't collide with a legitimate source. */
+static bool serverJoinRateLimitAllow(const struct sockaddr_in *fromAddr) {
+    uint32_t key = fromAddr->sin_addr.s_addr;
+    uint64_t now = SDL_GetTicks();
+    JoinRateEntry *match = NULL;
+    JoinRateEntry *empty = NULL;
+    JoinRateEntry *oldest = NULL;
+    JoinRateEntry *e;
+    int i;
+
+    for (i = 0; i < JOIN_RL_MAX_SOURCES; i++) {
+        JoinRateEntry *cur = &udpServer.joinRate[i];
+        if (cur->srcAddr == key) { match = cur; break; }
+        if (cur->srcAddr == 0) {
+            if (empty == NULL) empty = cur;
+        } else if (oldest == NULL || cur->lastMs < oldest->lastMs) {
+            oldest = cur;
+        }
+    }
+
+    if (match != NULL) {
+        e = match;
+        /* Refill whole tokens for the elapsed time, capped at the burst, and
+         * advance lastMs by the consumed whole windows so the sub-window
+         * remainder still counts toward the next refill. */
+        if (e->tokens < JOIN_RL_BURST) {
+            uint64_t elapsed = now - e->lastMs;
+            uint64_t refill  = elapsed / JOIN_RL_REFILL_MS;
+            if (refill > 0) {
+                if (refill > JOIN_RL_BURST - e->tokens) {
+                    refill = JOIN_RL_BURST - e->tokens;
+                }
+                e->tokens += (uint32_t)refill;
+                e->lastMs += refill * JOIN_RL_REFILL_MS;
+            }
+        }
+    } else {
+        /* Fresh source: take an empty slot, else evict the least-recently
+         * seen one. A new bucket starts full. */
+        e = (empty != NULL) ? empty : oldest;
+        e->srcAddr = key;
+        e->tokens  = JOIN_RL_BURST;
+        e->lastMs  = now;
+    }
+
+    if (e->tokens == 0) {
+        return false;
+    }
+    e->tokens--;
+    return true;
 }
 
 /* connId rides the wire as two 32-bit halves through the existing packU32
@@ -1212,6 +1286,17 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         if (!udpServer.mapDownload[slot].downloadComplete) {
             serverSendMapChunks(slot);
         }
+        return;
+    }
+
+    /* Per-source-IP rate limit, after the already-connected resend path so
+     * established clients are never throttled, and before any slot work so an
+     * over-rate spoofer can't reach allocation. Drop silently on reject — a
+     * JOIN_REJECT here would reflect to a possibly-spoofed source. */
+    if (!serverJoinRateLimitAllow(fromAddr)) {
+        WB_LOG_DEBUG(WB_LOG_CAT_NET,
+            "join rate-limited from %s:%u",
+            inet_ntoa(fromAddr->sin_addr), (unsigned)ntohs(fromAddr->sin_port));
         return;
     }
 

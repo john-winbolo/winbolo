@@ -2538,6 +2538,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_join_loss.c
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_join_version_gate.c
+    tests/unit/test_join_rate_limit.c
     tests/unit/test_map_amp_gate.c
     tests/unit/test_map_resync.c
     tests/unit/test_conn_migration.c
@@ -2815,6 +2816,7 @@ set(_unit_test_names
     loopback_join_loss
     loopback_lobby_running_loss
     join_version_gate
+    join_rate_limit
     map_amp_gate
     map_resync_cut_and_deliver_once
     map_resync_duplicate_request_no_recut
