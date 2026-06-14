@@ -107,6 +107,13 @@ bool mapPreviewViewScreenToWorld(const MapPreviewView *v,
                                  float sx, float sy,
                                  int *outMapSqX, int *outMapSqY);
 
+/* Reserved-start position accessors over the parsed preview. Return 0 /
+ * false when no map has parsed. i is 1-based, matching the rest of the
+ * start-index conventions. */
+BYTE mapPreviewViewGetStartCount(const MapPreviewView *v);
+bool mapPreviewViewGetStart(const MapPreviewView *v, BYTE i,
+                            BYTE *outX, BYTE *outY);
+
 /* Drive interactions for the frame: pan via mouse drag, zoom via
  * wheel / pinch, arrow-key pan. Caller indicates whether the view's
  * Image is currently hovered. */

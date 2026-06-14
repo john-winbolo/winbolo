@@ -38,6 +38,8 @@ extern "C" {
 #include "map_preview_view.h"
 #include "macos_pinch.h"
 #include "../lang.h"
+#include "client_sim.h"   /* clientSimGetLobbySlot, ClientLobbySlot */
+#include "client_net.h"   /* clientSimNetSendLobbyClaimStart */
 }
 
 /* Singleton popup state. */
@@ -50,6 +52,13 @@ static bool             g_changeRequested  = false;
 /* Controls whether the "Change" button renders. Lobby sets this
  * per-frame based on local edit authority (host / admin / openHost). */
 static bool             g_showChangeButton = true;
+
+/* Lobby start-picker context, set per-frame via
+ * mapPreviewPopupSetStartPicker and cleared at the end of each
+ * RenderModal so a non-lobby frame can't draw labels off a stale cs. */
+static ClientSim       *g_startPickerCs           = NULL;
+static int              g_startPickerMySlot       = -1;
+static bool             g_startPickerEffectiveHost = false;
 
 static void ensureView(void) {
     if (!g_popupView) g_popupView = mapPreviewViewCreate();
@@ -110,9 +119,101 @@ void mapPreviewPopupRenderOffscreen(SDL_Renderer *renderer, int winW, int winH) 
     (void)renderer; (void)winW; (void)winH;
 }
 
+/* Connected slot reserving start i (1-based), or -1 if free. */
+static int startHolderSlot(ClientSim *cs, BYTE i) {
+    for (int k = 0; k < MAX_TANKS; k++) {
+        const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)k);
+        if (sl && sl->connected && sl->startIdx == i) return k;
+    }
+    return -1;
+}
+
+/* Draw a reserving-player name (solid) or "(open)" (translucent) beside
+ * each start, then claim a free start on a click (not a pan-drag). All
+ * positions go through the Phase-2 transform (texture px), mapped into
+ * the displayed image rect [imgMin, imgMin + contentSize]. */
+static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
+                                     bool imgHovered) {
+    ClientSim *cs = g_startPickerCs;
+    if (!cs || !g_popupView) return;
+    int texW = 0, texH = 0;
+    mapPreviewViewGetTextureSize(g_popupView, &texW, &texH);
+    if (texW <= 0 || texH <= 0) return;
+
+    BYTE numStarts = mapPreviewViewGetStartCount(g_popupView);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+
+    for (BYTE i = 1; i <= numStarts; i++) {
+        BYTE mx, my;
+        if (!mapPreviewViewGetStart(g_popupView, i, &mx, &my)) continue;
+        float texX, texY;
+        /* Invalid at minimap zoom — labels simply hide (don't drift). */
+        if (!mapPreviewViewWorldToScreen(g_popupView, mx, my, &texX, &texY))
+            continue;
+        float sx = imgMin.x + (texX / (float)texW) * contentSize.x;
+        float sy = imgMin.y + (texY / (float)texH) * contentSize.y;
+        /* Off the image rect — don't bleed labels past the panel. */
+        if (sx < imgMin.x || sx > imgMin.x + contentSize.x ||
+            sy < imgMin.y || sy > imgMin.y + contentSize.y) continue;
+
+        int holder = startHolderSlot(cs, i);
+        const char *label;
+        ImU32 fg, bg;
+        if (holder >= 0) {
+            label = clientSimGetLobbySlot(cs, (BYTE)holder)->playerName;
+            fg = IM_COL32(255, 255, 255, 255);
+            bg = IM_COL32(0, 0, 0, 185);
+        } else {
+            label = langGetText(STR_DLGLOBBY_START_OPEN);
+            fg = IM_COL32(220, 220, 220, 150);
+            bg = IM_COL32(0, 0, 0, 90);
+        }
+        ImVec2 ts = ImGui::CalcTextSize(label);
+        /* Center the pill on the start and nudge it above the boat. */
+        ImVec2 p(sx - ts.x * 0.5f, sy - ts.y - 4.0f);
+        dl->AddRectFilled(ImVec2(p.x - 3, p.y - 1),
+                          ImVec2(p.x + ts.x + 3, p.y + ts.y + 1), bg, 3.0f);
+        dl->AddText(p, fg, label);
+    }
+
+    /* Click-to-claim: a left release over the image with negligible drag
+     * (a real pan-drag exceeds ImGui's drag threshold so GetMouseDragDelta
+     * is non-zero and we skip it). Self slot, free starts only. */
+    if (!imgHovered || !ImGui::IsMouseReleased(ImGuiMouseButton_Left)) return;
+    ImVec2 dd = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+    if (dd.x * dd.x + dd.y * dd.y >= 16.0f) return;  /* a drag, not a click */
+    if (g_startPickerMySlot < 0) return;
+
+    ImVec2 m = ImGui::GetMousePos();
+    float texX = (m.x - imgMin.x) / contentSize.x * (float)texW;
+    float texY = (m.y - imgMin.y) / contentSize.y * (float)texH;
+    int mapSqX, mapSqY;
+    if (!mapPreviewViewScreenToWorld(g_popupView, texX, texY, &mapSqX, &mapSqY))
+        return;
+
+    /* Nearest start to the click, within ~2 map squares. */
+    int best = -1;
+    long bestD2 = 0;
+    for (BYTE i = 1; i <= numStarts; i++) {
+        BYTE mx, my;
+        if (!mapPreviewViewGetStart(g_popupView, i, &mx, &my)) continue;
+        long ex = (long)mx - mapSqX;
+        long ey = (long)my - mapSqY;
+        long d2 = ex * ex + ey * ey;
+        if (best < 0 || d2 < bestD2) { best = i; bestD2 = d2; }
+    }
+    if (best < 1 || bestD2 > 8) return;          /* nothing close enough */
+    if (startHolderSlot(cs, (BYTE)best) >= 0) return;  /* occupied — ignore */
+    clientSimNetSendLobbyClaimStart(cs, (BYTE)g_startPickerMySlot, (BYTE)best);
+}
+
 void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
     (void)renderer;
-    if (!g_popupOpen) return;
+    if (!g_popupOpen) {
+        g_startPickerCs     = NULL;  /* consume even when closed */
+        g_startPickerMySlot = -1;
+        return;
+    }
     /* Non-modal so the chat / ready / team UI behind it stays
      * interactive. Default geometry mirrors the Choose Map dialog
      * (small top/left gutter, height leaves ~3 chat lines visible
@@ -174,9 +275,11 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             SDL_Texture *tex = mapPreviewViewGetTexture(g_popupView);
             if (tex) {
                 ImGui::Image((ImTextureID)tex, contentSize);
+                ImVec2 imgMin     = ImGui::GetItemRectMin();
+                bool   imgHovered = ImGui::IsItemHovered();
                 MapPreviewInputOpts opts = { true, true, true, true };
-                mapPreviewViewHandleInput(g_popupView,
-                                          ImGui::IsItemHovered(), &opts);
+                mapPreviewViewHandleInput(g_popupView, imgHovered, &opts);
+                renderStartPickerOverlay(imgMin, contentSize, imgHovered);
             }
             /* Zoom indicator overlay — aligned to the bottom-right of
              * the IMAGE rect, sitting just above the button row so it
@@ -225,6 +328,11 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
         }
     }
     ImGui::End();
+
+    /* Consume the per-frame picker context so the next frame must
+     * re-set it (a non-lobby caller of the popup gets no overlay). */
+    g_startPickerCs     = NULL;
+    g_startPickerMySlot = -1;
 }
 
 void mapPreviewPopupClose(void) {
@@ -252,6 +360,13 @@ void mapPreviewPopupRefreshOpen(const BYTE *compressedData, int compressedLen) {
 
 void mapPreviewPopupSetShowChange(bool show) {
     g_showChangeButton = show;
+}
+
+void mapPreviewPopupSetStartPicker(struct ClientSim *cs, int myPlayerNum,
+                                   bool effectiveHost) {
+    g_startPickerCs            = cs;
+    g_startPickerMySlot        = myPlayerNum;
+    g_startPickerEffectiveHost = effectiveHost;
 }
 
 bool mapPreviewPopupConsumeChangeRequest(void) {

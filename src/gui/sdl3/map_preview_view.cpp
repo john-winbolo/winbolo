@@ -1081,6 +1081,18 @@ extern "C" bool mapPreviewViewIsReady(const MapPreviewView *v) {
     return v && v->dataLoaded;
 }
 
+extern "C" BYTE mapPreviewViewGetStartCount(const MapPreviewView *v) {
+    if (!v || !v->preview) return 0;
+    return clientMapPreviewGetStartCount(v->preview);
+}
+
+extern "C" bool mapPreviewViewGetStart(const MapPreviewView *v, BYTE i,
+                                       BYTE *outX, BYTE *outY) {
+    if (!v || !v->preview) return false;
+    BYTE dir;
+    return clientMapPreviewGetStart(v->preview, i, outX, outY, &dir);
+}
+
 extern "C" float mapPreviewViewGetZoom(const MapPreviewView *v) {
     return v ? v->zoomLevel : 1.0f;
 }

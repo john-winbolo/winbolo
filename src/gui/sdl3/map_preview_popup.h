@@ -82,6 +82,17 @@ bool mapPreviewPopupConsumeChangeRequest(void);
  * is true (legacy behaviour). Set per-frame from the lobby. */
 void mapPreviewPopupSetShowChange(bool show);
 
+struct ClientSim;
+/* Per-frame lobby context for start labels / click-to-claim. cs == NULL
+ * disables the overlay. effectiveHost gates nothing here (labels are
+ * read-only and claims are self-only this phase) but is stored for the
+ * later host arm-and-click enhancement. The context is consumed and
+ * cleared by each mapPreviewPopupRenderModal, so a frame that doesn't
+ * set it leaves the overlay off — keeping a stale ClientSim pointer
+ * from leaking into non-lobby callers of the popup. */
+void mapPreviewPopupSetStartPicker(struct ClientSim *cs, int myPlayerNum,
+                                   bool effectiveHost);
+
 /* Call on dialog exit to free all resources. */
 void mapPreviewPopupDestroy(void);
 

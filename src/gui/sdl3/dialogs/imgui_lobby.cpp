@@ -7237,6 +7237,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             bool mapChangeAllowed = effHostMap &&
                 !(cs && (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP));
             mapPreviewPopupSetShowChange(mapChangeAllowed);
+            mapPreviewPopupSetStartPicker(cs, myPlayerNum, effHostMap);
             mapPreviewPopupRenderModal(renderer);
             if (mapPreviewPopupConsumeChangeRequest() && mapChangeAllowed) {
                 lobbyChooseMapOpen(cs, renderer);

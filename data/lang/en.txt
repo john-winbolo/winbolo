@@ -416,6 +416,9 @@ STR_COMPASS_C=C
 
 # "Unassigned" entry in the lobby player-list start combo (release)
 STR_DLGLOBBY_START_UNASSIGNED=Unassigned
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(open)
 STR_DLGLOBBY_READY=Ready
 STR_DLGLOBBY_UNREADY=Unready
 STR_DLGLOBBY_BALANCE_TEAMS=Balance Teams

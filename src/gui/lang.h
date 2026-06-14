@@ -454,6 +454,8 @@
 #define STR_COMPASS_C                       1507
 /* "Unassigned" entry in the lobby player-list start combo (release) */
 #define STR_DLGLOBBY_START_UNASSIGNED       1508
+/* Map-preview label for a start with no reservation (a click target) */
+#define STR_DLGLOBBY_START_OPEN             1509
 #define STR_DLGLOBBY_READY                  614
 #define STR_DLGLOBBY_UNREADY                615
 #define STR_DLGLOBBY_BALANCE_TEAMS          616
