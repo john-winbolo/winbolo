@@ -274,8 +274,17 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
         if (mapPreviewViewIsReady(g_popupView)) {
             SDL_Texture *tex = mapPreviewViewGetTexture(g_popupView);
             if (tex) {
+                ImVec2 imgMin = ImGui::GetCursorScreenPos();
                 ImGui::Image((ImTextureID)tex, contentSize);
-                ImVec2 imgMin     = ImGui::GetItemRectMin();
+                /* Overlay an InvisibleButton on the image rect so a
+                 * click-drag pans the map instead of dragging the whole
+                 * popup window around the lobby. The button takes the
+                 * drag as an active item (which suppresses ImGui's
+                 * drag-body-to-move-window); the title bar still moves
+                 * the window. Mirrors the Choose Map dialog's preview. */
+                ImGui::SetCursorScreenPos(imgMin);
+                ImGui::SetNextItemAllowOverlap();
+                ImGui::InvisibleButton("##MapPreviewPan", contentSize);
                 bool   imgHovered = ImGui::IsItemHovered();
                 MapPreviewInputOpts opts = { true, true, true, true };
                 mapPreviewViewHandleInput(g_popupView, imgHovered, &opts);
