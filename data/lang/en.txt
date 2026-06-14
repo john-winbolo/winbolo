@@ -419,6 +419,10 @@ STR_DLGLOBBY_START_UNASSIGNED=Unassigned
 
 # Map-preview label for a start with no reservation (a click target)
 STR_DLGLOBBY_START_OPEN=(open)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} joined {string1}.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} left {string1}.
 STR_DLGLOBBY_READY=Ready
 STR_DLGLOBBY_UNREADY=Unready
 STR_DLGLOBBY_BALANCE_TEAMS=Balance Teams

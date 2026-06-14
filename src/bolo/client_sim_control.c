@@ -45,6 +45,21 @@
 #include "../common/wb_log.h"
 #include "../common/mp_diag_log.h"
 
+/* Localized lobby team label: the host-assigned team name, or "Team N"
+ * when the team is unnamed (matching the lobby roster header). */
+static void clientSimLobbyTeamLabel(const ClientSim *cs, BYTE team,
+                                    char *out, size_t outLen) {
+    const char *name = clientSimGetLobbyTeamName(cs, team);
+    if (name != NULL && name[0] != '\0') {
+        SDL_strlcpy(out, name, outLen);
+        return;
+    }
+    MessageArgs args;
+    memset(&args, 0, sizeof(args));
+    args.number = team;
+    SDL_strlcpy(out, langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args), outLen);
+}
+
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     if (cs == NULL || evt == NULL) {
         return;
@@ -179,6 +194,48 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                   (int)evt->u.lobbySlot.slot.isBot,
                   evt->u.lobbySlot.slot.playerName,
                   (int)evt->u.lobbySlot.slot.connected);
+        {
+            /* Announce team membership changes as Team-chat system lines,
+             * generated locally from the slot update so the in-process host
+             * sees them too. cs->lobbySlots[pn] is still the pre-update
+             * mirror here (the overwrite below is last), so old-vs-new gives
+             * the transition. CTRL_LOBBY_SLOT is republished on every lobby
+             * change, so the oldTeam != newTeam guard fires only on a real
+             * transition. This one site covers join (oldTeam 0), leave
+             * (newTeam 0), and switch (both). Lines are shown only to the
+             * affected team's members. */
+            BYTE pn = evt->u.lobbySlot.playerNum;
+            const ClientLobbySlot *oldSlot = &cs->lobbySlots[pn];
+            const ClientLobbySlot *newSlot = &evt->u.lobbySlot.slot;
+            BYTE oldTeam = oldSlot->connected ? oldSlot->teamNumber : 0;
+            BYTE newTeam = newSlot->connected ? newSlot->teamNumber : 0;
+            BYTE myPN    = clientSimGetMyPlayerNum(cs);
+            const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPN);
+            BYTE myTeam  = (mySlot != NULL) ? mySlot->teamNumber : 0;
+
+            if (cs->inLobby && pn != myPN && oldTeam != newTeam) {
+                if (oldTeam != 0 && oldTeam == myTeam) {
+                    MessageArgs a;
+                    memset(&a, 0, sizeof(a));
+                    SDL_strlcpy(a.playerName, oldSlot->playerName,
+                                sizeof(a.playerName));
+                    clientSimLobbyTeamLabel(cs, oldTeam, a.string1,
+                                            sizeof(a.string1));
+                    clientSimAppendLobbyTeamChat(cs, "***",
+                        langGetTextFmt(STR_DLGLOBBY_TEAM_LEFT_FMT, &a));
+                }
+                if (newTeam != 0 && newTeam == myTeam) {
+                    MessageArgs a;
+                    memset(&a, 0, sizeof(a));
+                    SDL_strlcpy(a.playerName, newSlot->playerName,
+                                sizeof(a.playerName));
+                    clientSimLobbyTeamLabel(cs, newTeam, a.string1,
+                                            sizeof(a.string1));
+                    clientSimAppendLobbyTeamChat(cs, "***",
+                        langGetTextFmt(STR_DLGLOBBY_TEAM_JOINED_FMT, &a));
+                }
+            }
+        }
         cs->lobbySlots[evt->u.lobbySlot.playerNum] = evt->u.lobbySlot.slot;
         break;
 

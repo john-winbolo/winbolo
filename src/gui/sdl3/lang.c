@@ -373,6 +373,8 @@ static const LangEntry langTable[] = {
     {1507, "C"},
     {1508, "Unassigned"},
     {1509, "(open)"},
+    {1510, "{player} joined {string1}."},
+    {1511, "{player} left {string1}."},
     {614,  "Ready"},
     {615,  "Unready"},
     {616,  "Balance Teams"},

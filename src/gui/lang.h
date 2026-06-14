@@ -456,6 +456,9 @@
 #define STR_DLGLOBBY_START_UNASSIGNED       1508
 /* Map-preview label for a start with no reservation (a click target) */
 #define STR_DLGLOBBY_START_OPEN             1509
+/* Team-chat system lines when a player joins/leaves the local team */
+#define STR_DLGLOBBY_TEAM_JOINED_FMT        1510
+#define STR_DLGLOBBY_TEAM_LEFT_FMT          1511
 #define STR_DLGLOBBY_READY                  614
 #define STR_DLGLOBBY_UNREADY                615
 #define STR_DLGLOBBY_BALANCE_TEAMS          616
