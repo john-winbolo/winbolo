@@ -22,6 +22,7 @@
  *********************************************************/
 
 #include "transport_udp_internal.h"
+#include "wire_codec.h"
 #include "../common/wb_log.h"
 
 /* ================================================================
@@ -334,6 +335,7 @@ int packShellSnapshot(uint8_t *buf, const ShellSnapshot *ss) {
     buf[4] = ss->angle;
     buf[5] = ss->owner;
     buf[6] = ss->length;
+    WIRE_CORPUS_TAP("shell_snapshot", buf, SHELL_SNAPSHOT_WIRE_SIZE);
     return SHELL_SNAPSHOT_WIRE_SIZE;
 }
 
@@ -353,6 +355,7 @@ int packTkExplosionSnapshot(uint8_t *buf, const TkExplosionSnapshot *tke) {
     buf[5] = tke->length;
     buf[6] = tke->explodeType;
     buf[7] = tke->creator;
+    WIRE_CORPUS_TAP("tk_explosion_snapshot", buf, TK_EXPLOSION_SNAPSHOT_WIRE_SIZE);
     return TK_EXPLOSION_SNAPSHOT_WIRE_SIZE;
 }
 
@@ -388,6 +391,7 @@ int packBaseSnapshot(uint8_t *buf, const BaseSnapshot *bs) {
     buf[1] = bs->armour;
     buf[2] = bs->shells;
     buf[3] = bs->mines;
+    WIRE_CORPUS_TAP("base_snapshot", buf, BASE_SNAPSHOT_WIRE_SIZE);
     return BASE_SNAPSHOT_WIRE_SIZE;
 }
 
@@ -405,6 +409,7 @@ int packPillSnapshot(uint8_t *buf, const PillSnapshot *ps) {
     buf[3] = ps->armour;
     buf[4] = ps->speed;
     buf[5] = ps->inTank;
+    WIRE_CORPUS_TAP("pill_snapshot", buf, PILL_SNAPSHOT_WIRE_SIZE);
     return PILL_SNAPSHOT_WIRE_SIZE;
 }
 
