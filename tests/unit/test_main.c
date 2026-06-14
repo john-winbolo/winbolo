@@ -267,6 +267,9 @@ static const UnitTestEntry s_tests[] = {
     { "conn_migration_e2e",                      run_conn_migration_e2e                      },
     { "viewtick_rewind",                         run_viewtick_rewind                         },
     { "viewtick_displayed_tick",                 run_viewtick_displayed_tick                 },
+    { "wire_corpus",                             run_wire_corpus                             },
+    { "wire_corpus_capture",                     run_wire_corpus_capture                     },
+    { "packet_type_names",                       run_packet_type_names                       },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

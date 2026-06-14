@@ -2545,6 +2545,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_map_resync.c
     tests/unit/test_conn_migration.c
     tests/unit/test_viewtick_rewind.c
+    # Wire-codec corpus: the tap sink, the fast differential test (reads
+    # committed fixtures), and the on-demand capture generator (uses the
+    # loopback harness above).
+    tests/unit/wire_corpus.c
+    tests/unit/test_wire_corpus.c
+    tests/unit/test_wire_corpus_capture.c
+    tests/unit/test_packet_type_names.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2559,6 +2566,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
     # references resolve — the tests never run the UDP code path.
     src/bolo/transport_udp_client.c
+    # transport_udp_common.c is also compiled per-target so this target's
+    # WB_WIRE_CORPUS_CAPTURE reaches its WIRE_CORPUS_TAP calls; bolo_static
+    # ships it without the flag. This object provides every transport_udp_common
+    # symbol, so bolo_static's copy is not pulled from the archive (no
+    # duplicate symbols). The file references no bolo_static-only define, so the
+    # per-target build is behaviourally identical bar the tap.
+    src/bolo/transport_udp_common.c
     # server_stubs.c (transportUdpServer* / serverLifecycle* stubs)
     # is intentionally NOT linked here: server_static (linked below)
     # provides the real transport_udp_server.c and server_lifecycle.c
@@ -2594,6 +2608,11 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # shipping target keeps WB_ENABLE_NETIMPAIR=0; client-endpoint impairment
     # already covers both directions (impairIn + impairOut).
     WB_ENABLE_NETIMPAIR=1
+    # Compile the WIRE_CORPUS_TAP calls into this target's per-target
+    # transport_udp_common.c (shipping builds leave them out), and point the
+    # differential test at the committed fixture directory.
+    WB_WIRE_CORPUS_CAPTURE=1
+    WB_WIRE_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wire"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -2823,7 +2842,12 @@ set(_unit_test_names
     conn_migration_e2e
     viewtick_rewind
     viewtick_displayed_tick
+    wire_corpus
+    packet_type_names
 )
+# wire_corpus_capture is intentionally omitted: it runs a loopback session to
+# regenerate fixtures and is invoked on demand via
+# `WinBoloUnitTests --test wire_corpus_capture`, not under CTest.
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})

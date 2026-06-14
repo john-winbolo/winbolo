@@ -999,11 +999,11 @@ static void serverSendMapChunks(int slot) {
 
         packHeader(chunkBuf, PACKET_MAP_DOWNLOAD, client->outSequence++);
         /* resyncGen: 0 for a join download, the request's nonzero id for a
-         * resync — the client routes/rejects chunks by it. */
-        packU32(chunkBuf + PACKET_HEADER_SIZE, dl->resyncGen);
-        packU32(chunkBuf + PACKET_HEADER_SIZE + 4, dl->mapSize);
-        packU16(chunkBuf + PACKET_HEADER_SIZE + 8, i);
-        packU16(chunkBuf + PACKET_HEADER_SIZE + 10, chunkSize);
+         * resync — the client routes/rejects chunks by it. Fixed header is
+         * generated; the data memcpy and chunk loop below stay hand-written. */
+        MapDownloadChunkHeader hdr = { dl->resyncGen, dl->mapSize,
+                                       (uint16_t)i, chunkSize };
+        packMapDownloadChunkHeader(chunkBuf + PACKET_HEADER_SIZE, &hdr);
         memcpy(chunkBuf + PACKET_HEADER_SIZE + 12,
                dl->compressedMap + offset, chunkSize);
         pktLen = PACKET_HEADER_SIZE + 12 + chunkSize;
@@ -3833,15 +3833,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0 ||
                 !udpServer.clientUploadActive[clientIdx]) break;
-            if (len < PACKET_HEADER_SIZE + 6) break;
-            uint32_t offset =
-                ((uint32_t)buf[PACKET_HEADER_SIZE + 0] << 24) |
-                ((uint32_t)buf[PACKET_HEADER_SIZE + 1] << 16) |
-                ((uint32_t)buf[PACKET_HEADER_SIZE + 2] <<  8) |
-                ((uint32_t)buf[PACKET_HEADER_SIZE + 3]);
-            uint16_t dataLen =
-                ((uint16_t)buf[PACKET_HEADER_SIZE + 4] << 8) |
-                ((uint16_t)buf[PACKET_HEADER_SIZE + 5]);
+            /* Fixed header is generated; the data memcpy and reassembly
+             * below stay hand-written. */
+            MapUploadChunkHeader hdr;
+            if (unpackMapUploadChunkHeader(buf + PACKET_HEADER_SIZE,
+                                           (size_t)(len - PACKET_HEADER_SIZE), &hdr) == 0) break;
+            uint32_t offset = hdr.offset; uint16_t dataLen = hdr.dataLen;
             uint32_t total = udpServer.clientUploadTotal[clientIdx];
             if (dataLen == 0 || dataLen > 1024 ||
                 offset + dataLen > total ||
@@ -4048,15 +4045,11 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 size_t n = mapLen - off;
                 if (n > kChunkBytes) n = kChunkBytes;
                 packHeader(chunk, PACKET_LOBBY_MAP_PREVIEW_CHUNK, 0);
-                int wpos = PACKET_HEADER_SIZE;
-                chunk[wpos++] = seq;
-                uint32_t o = (uint32_t)off;
-                chunk[wpos++] = (uint8_t)((o >> 24) & 0xFF);
-                chunk[wpos++] = (uint8_t)((o >> 16) & 0xFF);
-                chunk[wpos++] = (uint8_t)((o >>  8) & 0xFF);
-                chunk[wpos++] = (uint8_t)( o        & 0xFF);
-                chunk[wpos++] = (uint8_t)((n >>  8) & 0xFF);
-                chunk[wpos++] = (uint8_t)( n        & 0xFF);
+                /* Fixed header is generated; the data memcpy stays
+                 * hand-written. */
+                MapPreviewChunkHeader hdr = { seq, (uint32_t)off, (uint16_t)n };
+                packMapPreviewChunkHeader(chunk + PACKET_HEADER_SIZE, &hdr);
+                int wpos = PACKET_HEADER_SIZE + 7;
                 memcpy(chunk + wpos, mapBytes + off, n);
                 wpos += (int)n;
                 srvSendTo(chunk, wpos, fromAddr);
