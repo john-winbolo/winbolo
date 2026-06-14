@@ -45,6 +45,21 @@
 #include "../common/wb_log.h"
 #include "../common/mp_diag_log.h"
 
+/* Localized lobby team label: the host-assigned team name, or "Team N"
+ * when the team is unnamed (matching the lobby roster header). */
+static void clientSimLobbyTeamLabel(const ClientSim *cs, BYTE team,
+                                    char *out, size_t outLen) {
+    const char *name = clientSimGetLobbyTeamName(cs, team);
+    if (name != NULL && name[0] != '\0') {
+        SDL_strlcpy(out, name, outLen);
+        return;
+    }
+    MessageArgs args;
+    memset(&args, 0, sizeof(args));
+    args.number = team;
+    SDL_strlcpy(out, langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args), outLen);
+}
+
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     if (cs == NULL || evt == NULL) {
         return;
@@ -179,6 +194,48 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                   (int)evt->u.lobbySlot.slot.isBot,
                   evt->u.lobbySlot.slot.playerName,
                   (int)evt->u.lobbySlot.slot.connected);
+        {
+            /* Announce team membership changes as Team-chat system lines,
+             * generated locally from the slot update so the in-process host
+             * sees them too. cs->lobbySlots[pn] is still the pre-update
+             * mirror here (the overwrite below is last), so old-vs-new gives
+             * the transition. CTRL_LOBBY_SLOT is republished on every lobby
+             * change, so the oldTeam != newTeam guard fires only on a real
+             * transition. This one site covers join (oldTeam 0), leave
+             * (newTeam 0), and switch (both). Lines are shown only to the
+             * affected team's members. */
+            BYTE pn = evt->u.lobbySlot.playerNum;
+            const ClientLobbySlot *oldSlot = &cs->lobbySlots[pn];
+            const ClientLobbySlot *newSlot = &evt->u.lobbySlot.slot;
+            BYTE oldTeam = oldSlot->connected ? oldSlot->teamNumber : 0;
+            BYTE newTeam = newSlot->connected ? newSlot->teamNumber : 0;
+            BYTE myPN    = clientSimGetMyPlayerNum(cs);
+            const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPN);
+            BYTE myTeam  = (mySlot != NULL) ? mySlot->teamNumber : 0;
+
+            if (cs->inLobby && pn != myPN && oldTeam != newTeam) {
+                if (oldTeam != 0 && oldTeam == myTeam) {
+                    MessageArgs a;
+                    memset(&a, 0, sizeof(a));
+                    SDL_strlcpy(a.playerName, oldSlot->playerName,
+                                sizeof(a.playerName));
+                    clientSimLobbyTeamLabel(cs, oldTeam, a.string1,
+                                            sizeof(a.string1));
+                    clientSimAppendLobbyTeamChat(cs, "***",
+                        langGetTextFmt(STR_DLGLOBBY_TEAM_LEFT_FMT, &a));
+                }
+                if (newTeam != 0 && newTeam == myTeam) {
+                    MessageArgs a;
+                    memset(&a, 0, sizeof(a));
+                    SDL_strlcpy(a.playerName, newSlot->playerName,
+                                sizeof(a.playerName));
+                    clientSimLobbyTeamLabel(cs, newTeam, a.string1,
+                                            sizeof(a.string1));
+                    clientSimAppendLobbyTeamChat(cs, "***",
+                        langGetTextFmt(STR_DLGLOBBY_TEAM_JOINED_FMT, &a));
+                }
+            }
+        }
         cs->lobbySlots[evt->u.lobbySlot.playerNum] = evt->u.lobbySlot.slot;
         break;
 
@@ -459,6 +516,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * lobby chat after). Keeping it across the game was confusing —
          * a "X has joined" line stayed visible after X left mid-round. */
         cs->lobbyChatHistory[0] = '\0';
+        cs->lobbyTeamChatHistory[0] = '\0';
         cs->lobbyHostSlotKnown = false;
         /* Wipe per-game client state that a ClientSim surviving the lobby
          * cycle would otherwise carry into the new game. None of this is
@@ -611,11 +669,16 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         BYTE destPlayer = evt->u.chat.destPlayer;
         uint16_t bodyLen = evt->u.chat.bodyLen;
         BYTE myPN = clientSimGetMyPlayerNum(cs);
+        const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPN);
+        BYTE myTeam = mySlot ? mySlot->teamNumber : 0;
         /* Only deliver if I'm the recipient or it's a broadcast.
-         * Self-sends still surface in the sender's chat_log via the
-         * Lua side (init.lua's outbound capture), so we don't need
+         * Team-addressed chat reaches me when it carries my (non-zero)
+         * team. Self-sends still surface in the sender's chat_log via
+         * the Lua side (init.lua's outbound capture), so we don't need
          * a self-echo here. */
-        bool for_me = (destPlayer == 0xFF) || (destPlayer == myPN);
+        bool for_me = (destPlayer == 0xFF) || (destPlayer == myPN)
+            || (CHAT_DEST_IS_TEAM(destPlayer) && myTeam != 0
+                && CHAT_DEST_TEAM_OF(destPlayer) == myTeam);
         if (for_me && fromPlayer < MAX_TANKS && bodyLen > 0
             && fromPlayer != myPN) {
             char msg[PACKET_MAX_CHAT_MESSAGE + 1];
@@ -623,7 +686,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             if (copyLen > PACKET_MAX_CHAT_MESSAGE) copyLen = PACKET_MAX_CHAT_MESSAGE;
             memcpy(msg, evt->u.chat.body, copyLen);
             msg[copyLen] = '\0';
-            clientSimIncomingMessage(cs, fromPlayer, msg);
+            if (CHAT_DEST_IS_TEAM(destPlayer) && clientSimIsInLobby(cs)) {
+                clientSimAppendLobbyTeamChat(
+                    cs, clientSimGetLobbySlot(cs, fromPlayer)->playerName, msg);
+            } else {
+                clientSimIncomingMessage(cs, fromPlayer, msg);
+            }
         }
         break;
     }

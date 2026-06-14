@@ -415,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=跳過地圖
 STR_DLGLOBBY_CANCELSKIP=取消跳過
 STR_DLGLOBBY_VOTES={number}/{number2} 票跳過
 STR_DLGLOBBY_CHAT=聊天
+STR_DLGLOBBY_CHAT_GENERAL=綜合
+STR_DLGLOBBY_CHAT_TEAM=隊伍
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=北
+STR_COMPASS_NE=東北
+STR_COMPASS_E=東
+STR_COMPASS_SE=東南
+STR_COMPASS_S=南
+STR_COMPASS_SW=西南
+STR_COMPASS_W=西
+STR_COMPASS_NW=西北
+STR_COMPASS_C=中
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=未分配
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=（空位）
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} 加入了 {string1}。
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} 離開了 {string1}。
 STR_DLGLOBBY_READY=準備
 STR_DLGLOBBY_UNREADY=取消準備
 STR_DLGLOBBY_BALANCE_TEAMS=平衡隊伍

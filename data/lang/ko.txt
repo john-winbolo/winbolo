@@ -415,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=맵 건너뛰기
 STR_DLGLOBBY_CANCELSKIP=건너뛰기 취소
 STR_DLGLOBBY_VOTES={number}/{number2}표로 건너뛰기
 STR_DLGLOBBY_CHAT=채팅
+STR_DLGLOBBY_CHAT_GENERAL=일반
+STR_DLGLOBBY_CHAT_TEAM=팀
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=북
+STR_COMPASS_NE=북동
+STR_COMPASS_E=동
+STR_COMPASS_SE=남동
+STR_COMPASS_S=남
+STR_COMPASS_SW=남서
+STR_COMPASS_W=서
+STR_COMPASS_NW=북서
+STR_COMPASS_C=중
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=미지정
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(빈 자리)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} 님이 {string1}에 참가했습니다.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} 님이 {string1}에서 나갔습니다.
 STR_DLGLOBBY_READY=준비
 STR_DLGLOBBY_UNREADY=준비 취소
 STR_DLGLOBBY_BALANCE_TEAMS=팀 밸런스

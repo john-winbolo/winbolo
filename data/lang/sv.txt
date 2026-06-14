@@ -415,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Hoppa över karta
 STR_DLGLOBBY_CANCELSKIP=Avbryt hopp
 STR_DLGLOBBY_VOTES={number}/{number2} röster för att hoppa över
 STR_DLGLOBBY_CHAT=Chatt
+STR_DLGLOBBY_CHAT_GENERAL=Allmänt
+STR_DLGLOBBY_CHAT_TEAM=Lag
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=N
+STR_COMPASS_NE=NO
+STR_COMPASS_E=O
+STR_COMPASS_SE=SO
+STR_COMPASS_S=S
+STR_COMPASS_SW=SV
+STR_COMPASS_W=V
+STR_COMPASS_NW=NV
+STR_COMPASS_C=C
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Inte tilldelad
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(öppen)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} gick med i {string1}.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} lämnade {string1}.
 STR_DLGLOBBY_READY=Redo
 STR_DLGLOBBY_UNREADY=Inte redo
 STR_DLGLOBBY_BALANCE_TEAMS=Balansera lag

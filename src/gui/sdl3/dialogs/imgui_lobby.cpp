@@ -23,6 +23,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cfloat>   /* FLT_MAX — unbounded max for window size constraints */
+#include <cmath>    /* atan2 / floor — lobby start compass octant math */
 #include <algorithm>  /* std::sort — used for chooser list order */
 #include <atomic>
 #include <mutex>
@@ -3033,6 +3034,81 @@ struct MapBounds {
 static BYTE        *popupCompressedData = NULL;
 static int          popupCompressedLen  = 0;
 
+/* Cached compass octant (an STR_COMPASS_* lang id, 0 = unknown) per map
+ * start, indexed 1-based by startIdx. MAX_STARTS is 16, so [17] covers
+ * indices 1..16. Rebuilt only when the lobby map bytes change (see
+ * rebuildStartCompassCache), so the player-list column never decompresses
+ * the map per frame. */
+static int          s_startCompassId[MAX_STARTS + 1] = {0};
+
+/* Compass octant of a start at (sx,sy) within the start bounding box
+ * [minX..maxX, minY..maxY]. Map Y increases downward, so north = smaller
+ * y. Returns a STR_* lang id for N/NE/E/SE/S/SW/W/NW, or C (centre) when
+ * the start sits within ~1/8 of the bbox extent of the centre on both
+ * axes. */
+static int lobbyStartCompassStr(int sx, int sy, int minX, int minY,
+                                int maxX, int maxY) {
+    int cx = (minX + maxX) / 2;
+    int cy = (minY + maxY) / 2;
+    int dx = sx - cx;
+    int dy = sy - cy;
+    int tolX = (maxX - minX) / 8; if (tolX < 1) tolX = 1;
+    int tolY = (maxY - minY) / 8; if (tolY < 1) tolY = 1;
+    if (abs(dx) <= tolX && abs(dy) <= tolY) {
+        return STR_COMPASS_C;
+    }
+    /* atan2 with -dy flips screen-down y back to math-up north. Result in
+     * (-180,180]: 0=E, 90=N, 180=W, -90=S. Snap into 8 sectors of 45deg
+     * each, biasing by half a sector so each label is centred on its
+     * cardinal/intercardinal direction. */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+    double deg = atan2((double)(-dy), (double)dx) * 180.0 / M_PI;
+    int sector = (int)floor((deg + 22.5) / 45.0);
+    sector = ((sector % 8) + 8) % 8;
+    static const int kSectorStr[8] = {
+        STR_COMPASS_E,  STR_COMPASS_NE, STR_COMPASS_N,  STR_COMPASS_NW,
+        STR_COMPASS_W,  STR_COMPASS_SW, STR_COMPASS_S,  STR_COMPASS_SE,
+    };
+    return kSectorStr[sector];
+}
+
+/* Rebuild s_startCompassId from a runtime compressed map buffer. Loads a
+ * transient MapPreview (the same bytes buildMapPreview consumes), computes
+ * the bounding box over all starts, then fills one compass id per start.
+ * Clears the cache on failure or an empty start list. */
+static void rebuildStartCompassCache(const BYTE *data, int len) {
+    memset(s_startCompassId, 0, sizeof(s_startCompassId));
+    MapPreview *mp = clientMapPreviewLoadFromBuffer(data, len);
+    if (!mp) {
+        return;
+    }
+    BYTE n = clientMapPreviewGetStartCount(mp);
+    if (n == 0) {
+        clientMapPreviewDestroy(mp);
+        return;
+    }
+    if (n > MAX_STARTS) n = MAX_STARTS;
+    int minX = 255, minY = 255, maxX = 0, maxY = 0;
+    BYTE i;
+    for (i = 1; i <= n; i++) {
+        BYTE x, y, dir;
+        if (!clientMapPreviewGetStart(mp, i, &x, &y, &dir)) continue;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+    }
+    for (i = 1; i <= n; i++) {
+        BYTE x, y, dir;
+        if (!clientMapPreviewGetStart(mp, i, &x, &y, &dir)) continue;
+        s_startCompassId[i] =
+            lobbyStartCompassStr(x, y, minX, minY, maxX, maxY);
+    }
+    clientMapPreviewDestroy(mp);
+}
+
 /* Build a 256x256 RGBA minimap from compressed map data.
  * Returns an SDL_Texture* or NULL on failure.
  * bounds is filled with the bounding box of non-sea terrain. */
@@ -4423,6 +4499,90 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                     }
                 }
 
+                /* ── Column 4: reserved map start, shown as the compass
+                 * octant (N/NE/.../C) of where that start sits on the
+                 * map, or — when the slot holds no reservation. Reuses
+                 * the otherwise-empty spacer column so the label sits
+                 * between the ping and ready cells without a table-wide
+                 * column reshuffle. The octant comes from the cached
+                 * s_startCompassId table (rebuilt on map change). */
+                ImGui::TableSetColumnIndex(4);
+                rowTopY = ImGui::GetCursorPosY();
+                {
+                    const ClientLobbySlot *cslot = clientSimGetLobbySlot(cs, (BYTE)(i));
+                    uint8_t sIdx = cslot->startIdx;
+                    /* A host edits any connected row; a non-host edits only
+                     * its own. Everyone else sees the read-only compass.
+                     * No optimistic apply — selecting just sends the
+                     * command; the marker moves when CTRL_LOBBY_SLOT lands. */
+                    bool canEditStart = cslot->connected && (effectiveHost || isMe);
+                    if (!canEditStart) {
+                        const char *startLbl = "—";
+                        if (cslot->connected && sIdx != 0xFF &&
+                            sIdx <= MAX_STARTS && s_startCompassId[sIdx] != 0) {
+                            startLbl = langGetText(s_startCompassId[sIdx]);
+                        }
+                        cyTextAbs();
+                        ImGui::TextDisabled("%s", startLbl);
+                    } else {
+                        char preview[64];
+                        if (sIdx != 0xFF && sIdx <= MAX_STARTS &&
+                            s_startCompassId[sIdx] != 0) {
+                            SDL_snprintf(preview, sizeof(preview),
+                                         "#%u \xC2\xB7 %s", (unsigned)sIdx,
+                                         langGetText(s_startCompassId[sIdx]));
+                        } else {
+                            SDL_snprintf(preview, sizeof(preview), "%s",
+                                         langGetText(STR_DLGLOBBY_START_UNASSIGNED));
+                        }
+                        cyAbs(ImGui::GetFrameHeight());
+                        char comboId[24];
+                        SDL_snprintf(comboId, sizeof(comboId), "##start%d", i);
+                        ImGui::SetNextItemWidth(96.0f * s);
+                        if (ImGui::BeginCombo(comboId, preview)) {
+                            for (int k = 1; k <= MAX_STARTS; k++) {
+                                if (s_startCompassId[k] == 0) continue;
+                                /* Connected holder of start k, if any. */
+                                int holder = -1;
+                                for (int h = 0; h < MAX_TANKS; h++) {
+                                    const ClientLobbySlot *hs =
+                                        clientSimGetLobbySlot(cs, (BYTE)h);
+                                    if (hs->connected && hs->startIdx == k) {
+                                        holder = h;
+                                        break;
+                                    }
+                                }
+                                bool occupiedByOther = (holder >= 0 && holder != i);
+                                /* Non-host self-claim: only free starts + own. */
+                                if (!effectiveHost && occupiedByOther) continue;
+                                char entry[96];
+                                if (occupiedByOther) {
+                                    SDL_snprintf(entry, sizeof(entry),
+                                                 "#%u \xC2\xB7 %s (%s)", (unsigned)k,
+                                                 langGetText(s_startCompassId[k]),
+                                                 clientSimGetLobbySlot(cs, (BYTE)holder)->playerName);
+                                } else {
+                                    SDL_snprintf(entry, sizeof(entry),
+                                                 "#%u \xC2\xB7 %s", (unsigned)k,
+                                                 langGetText(s_startCompassId[k]));
+                                }
+                                bool selected = (sIdx == (uint8_t)k);
+                                if (ImGui::Selectable(entry, selected)) {
+                                    clientSimNetSendLobbyClaimStart(cs, (BYTE)i, (BYTE)k);
+                                }
+                                if (selected) ImGui::SetItemDefaultFocus();
+                            }
+                            bool relSel = (sIdx == 0xFF);
+                            if (ImGui::Selectable(
+                                    langGetText(STR_DLGLOBBY_START_UNASSIGNED), relSel)) {
+                                clientSimNetSendLobbyClaimStart(cs, (BYTE)i, 0xFF);
+                            }
+                            if (relSel) ImGui::SetItemDefaultFocus();
+                            ImGui::EndCombo();
+                        }
+                    }
+                }
+
                 /* ── Column 5: ready / not ready badge (humans only — bots
                  *   are always ready and don't need a pill) ─────────────── */
                 ImGui::TableSetColumnIndex(5);
@@ -5523,7 +5683,7 @@ static void renderGameSettingsPanel(ClientSim *cs,
  * which stomps a single-frame focus request. */
 static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
                                         BYTE myPlayerNum, bool hasTransport,
-                                        float s) {
+                                        float s, BYTE destPlayer) {
     float btnW = 60.0f * s;
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
     if (s_chatRefocusFrames > 0) {
@@ -5544,11 +5704,14 @@ static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
     bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
     if (chatEmpty) ImGui::EndDisabled();
     if ((sendClicked || enterPressed) && !chatEmpty && hasTransport) {
-        clientSimNetSendChat(cs, 0xFF, chatInput);
+        clientSimNetSendChat(cs, destPlayer, chatInput);
         const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
         const char *myName = (mySlot && mySlot->connected)
             ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
-        clientSimAppendLobbyChat(cs, myName, chatInput);
+        if (CHAT_DEST_IS_TEAM(destPlayer))
+            clientSimAppendLobbyTeamChat(cs, myName, chatInput);
+        else
+            clientSimAppendLobbyChat(cs, myName, chatInput);
         chatInput[0] = '\0';
         s_chatRefocusFrames = 2;
         s_chatHideNav = true;
@@ -5650,9 +5813,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
 #if BOLO_MOBILE
     /* Tab state for mobile tabbed layout */
-    int activeTab = 0;      /* 0=Players, 1=Map, 2=Chat */
+    int activeTab = 0;      /* 0=Players, 1=Map, 2=Chat(General), 3=Team */
     bool chatUnread = false;
     int lastChatLen = 0;
+    bool teamChatUnread = false;
+    int lastTeamChatLen = 0;
 #endif
 
     /* Query safe area insets for notch avoidance */
@@ -5870,6 +6035,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 if (popupCompressedData) {
                     SDL_memcpy(popupCompressedData, mapData, mapLen);
                     popupCompressedLen = mapLen;
+                    /* Recompute the per-start compass cache from the new
+                     * map bytes — only here, so the player-list column
+                     * never decompresses the map per frame. */
+                    rebuildStartCompassCache(popupCompressedData,
+                                             popupCompressedLen);
                     /* If the user has the big map-preview popup open
                      * right now, refresh its underlying data in place
                      * so it seamlessly updates to the new map instead
@@ -6074,6 +6244,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 chatUnread = true;
             }
             lastChatLen = chatLen;
+            int teamChatLen = (int)SDL_strlen(clientSimGetLobbyTeamChatHistory(cs));
+            if (teamChatLen > lastTeamChatLen && activeTab != 3) {
+                teamChatUnread = true;
+            }
+            lastTeamChatLen = teamChatLen;
 
             if (ImGui::BeginTabBar("##LobbyTabs")) {
                 /* --- Players tab --- */
@@ -6401,12 +6576,55 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         }
                         ImGui::EndChild();
 
-                        lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s);
+                        lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s, 0xFF);
 
                         ImGui::EndTabItem();
                     }
                     if (chatTabColorPushed) {
                         ImGui::PopStyleColor(2);
+                    }
+                }
+
+                /* --- Team tab (only when on a team; own unread state) --- */
+                {
+                    const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
+                    BYTE myTeam = mySlot ? mySlot->teamNumber : 0;
+                    if (myTeam != 0) {
+                        bool teamTabColorPushed = false;
+                        if (teamChatUnread) {
+                            ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.5f, 0.0f, 0.0f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                            teamTabColorPushed = true;
+                        }
+                        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_TEAM))) {
+                            activeTab = 3;
+                            teamChatUnread = false;
+                            if (teamTabColorPushed) {
+                                ImGui::PopStyleColor(2);
+                                teamTabColorPushed = false;
+                            }
+                            float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
+                            float inputH = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+                            float chatHistH = tabH - inputH;
+                            if (chatHistH < 20.0f) chatHistH = 20.0f;
+
+                            ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders);
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::TextUnformatted(clientSimGetLobbyTeamChatHistory(cs));
+                            ImGui::PopTextWrapPos();
+                            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
+                                ImGui::SetScrollHereY(1.0f);
+                            }
+                            ImGui::EndChild();
+
+                            lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s,
+                                                        (BYTE)(CHAT_DEST_TEAM_BASE + myTeam));
+
+                            ImGui::EndTabItem();
+                        }
+                        if (teamTabColorPushed) {
+                            ImGui::PopStyleColor(2);
+                        }
                     }
                 }
 
@@ -6714,24 +6932,48 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * scrim's hole-punch. */
             ImVec2 chatBlockCursor = ImGui::GetCursorScreenPos();
             ImGui::BeginChild("##ChatBlock", ImVec2(playerPanelW, bottomH), ImGuiChildFlags_None);
-            ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_CHAT));
             {
-                float inputRowH = ImGui::GetFrameHeightWithSpacing();
-                float chatHeight = ImGui::GetContentRegionAvail().y - inputRowH;
-                if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
-                    chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
-                ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
-                /* Wrap long lines at the child's right edge (see the
-                 * lobby Chat tab above). */
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextUnformatted(clientSimGetLobbyChatHistory(cs));
-                ImGui::PopTextWrapPos();
-                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
-                    ImGui::SetScrollHereY(1.0f);
+                const ClientLobbySlot *myChatSlot = clientSimGetLobbySlot(cs, myPlayerNum);
+                BYTE myTeam = myChatSlot ? myChatSlot->teamNumber : 0;
+                if (ImGui::BeginTabBar("##ChatTabs")) {
+                    if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_GENERAL))) {
+                        float inputRowH = ImGui::GetFrameHeightWithSpacing();
+                        float chatHeight = ImGui::GetContentRegionAvail().y - inputRowH;
+                        if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
+                            chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
+                        ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
+                        /* Wrap long lines at the child's right edge (see the
+                         * lobby Chat tab above). */
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextUnformatted(clientSimGetLobbyChatHistory(cs));
+                        ImGui::PopTextWrapPos();
+                        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
+                            ImGui::SetScrollHereY(1.0f);
+                        }
+                        ImGui::EndChild();
+                        lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s, 0xFF);
+                        ImGui::EndTabItem();
+                    }
+                    if (myTeam != 0 && ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_TEAM))) {
+                        float inputRowH = ImGui::GetFrameHeightWithSpacing();
+                        float chatHeight = ImGui::GetContentRegionAvail().y - inputRowH;
+                        if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
+                            chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
+                        ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
+                        ImGui::PushTextWrapPos(0.0f);
+                        ImGui::TextUnformatted(clientSimGetLobbyTeamChatHistory(cs));
+                        ImGui::PopTextWrapPos();
+                        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
+                            ImGui::SetScrollHereY(1.0f);
+                        }
+                        ImGui::EndChild();
+                        lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s,
+                                                    (BYTE)(CHAT_DEST_TEAM_BASE + myTeam));
+                        ImGui::EndTabItem();
+                    }
+                    ImGui::EndTabBar();
                 }
-                ImGui::EndChild();
             }
-            lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s);
             ImGui::EndChild();
             /* Record chat block rect for the map-chooser scrim. Use the
              * stored cursor position (chatBlockCursor) plus the panel's
@@ -6995,6 +7237,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             bool mapChangeAllowed = effHostMap &&
                 !(cs && (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP));
             mapPreviewPopupSetShowChange(mapChangeAllowed);
+            mapPreviewPopupSetStartPicker(cs, myPlayerNum, effHostMap);
             mapPreviewPopupRenderModal(renderer);
             if (mapPreviewPopupConsumeChangeRequest() && mapChangeAllowed) {
                 lobbyChooseMapOpen(cs, renderer);

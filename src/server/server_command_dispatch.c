@@ -65,6 +65,51 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         lobbyAutoUnreadyOnChange(sim);
         return CMD_OK;
     }
+    case CMD_LOBBY_CLAIM_START: {
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        const CmdLobbyClaimStart *p = &cmd->u.lobbyClaimStart;
+        BYTE target = p->targetSlot;
+        BYTE idx    = p->startIdx;
+        BYTE numStarts = startsGetNumStarts(&sim->sim.ss);
+        if (target >= MAX_TANKS || !serverSimIsPlayerConnected(sim, target)) {
+            return CMD_REJECT_INVALID;
+        }
+        if (idx != 0xFF && (idx < 1 || idx > numStarts)) {
+            return CMD_REJECT_INVALID;
+        }
+        bool isHost = lobbyClientMayEdit(sim, senderSlot);
+        if ((int)target != senderSlot && !isHost) {
+            return CMD_REJECT_NOT_HOST;
+        }
+        /* Connected slot currently holding idx (none when idx == 0xFF). */
+        BYTE holder = 0xFF;
+        if (idx != 0xFF) {
+            for (BYTE k = 0; k < MAX_TANKS; k++) {
+                if (!serverSimIsPlayerConnected(sim, k)) continue;
+                const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, k);
+                if (lp && lp->startIdx == idx) { holder = k; break; }
+            }
+        }
+        if (holder != 0xFF && holder != target) {
+            /* Non-host may not take a start someone else holds. */
+            if (!isHost) return CMD_REJECT_INVALID;
+            const LobbyPlayer *tlp = serverSimGetLobbyPlayer(sim, target);
+            BYTE oldTarget = tlp ? tlp->startIdx : 0xFF;
+            serverSimSetLobbyStartIdx(sim, target, idx);
+            serverSimSetLobbyStartIdx(sim, holder, oldTarget);
+            serverSimPublishLobbySlot(sim, target);
+            serverSimPublishLobbySlot(sim, holder);
+        } else {
+            /* Free start, release, or already mine. */
+            serverSimSetLobbyStartIdx(sim, target, idx);
+            serverSimPublishLobbySlot(sim, target);
+        }
+        lobbyAutoUnreadyOnChange(sim);
+        return CMD_OK;
+    }
     case CMD_READY: {
         if (!serverSimIsLobbyEnabled(sim)) return CMD_REJECT_BAD_STATE;
         /* Ranked-shape gate: silently drop ready=true that doesn't
@@ -177,6 +222,22 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
     }
     case CMD_CHAT: {
         const CmdChat *p = &cmd->u.chat;
+        BYTE dest = p->destPlayer;
+        /* Reject out-of-range high values: anything >= 0x80 that is
+         * neither broadcast (0xFF), the server-message sentinel (0xFE),
+         * nor a valid team address (0x81..0x90). */
+        if (dest >= 0x80 && dest != 0xFF && dest != 0xFE
+            && CHAT_DEST_IS_TEAM(dest) == 0) {
+            return CMD_REJECT_INVALID;
+        }
+        if (CHAT_DEST_IS_TEAM(dest)) {
+            const LobbyPlayer *sender =
+                serverSimGetLobbyPlayer(sim, (BYTE)senderSlot);
+            BYTE senderTeam = sender ? sender->teamNumber : 0;
+            if (senderTeam == 0 || CHAT_DEST_TEAM_OF(dest) != senderTeam) {
+                return CMD_REJECT_INVALID;  /* not your team / unassigned phantom */
+            }
+        }
         ControlEvent evt;
         memset(&evt, 0, sizeof(evt));
         evt.type = CTRL_CHAT;

@@ -415,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=マップをスキップ
 STR_DLGLOBBY_CANCELSKIP=スキップをキャンセル
 STR_DLGLOBBY_VOTES={number}/{number2} 票でスキップ
 STR_DLGLOBBY_CHAT=チャット
+STR_DLGLOBBY_CHAT_GENERAL=一般
+STR_DLGLOBBY_CHAT_TEAM=チーム
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=北
+STR_COMPASS_NE=北東
+STR_COMPASS_E=東
+STR_COMPASS_SE=南東
+STR_COMPASS_S=南
+STR_COMPASS_SW=南西
+STR_COMPASS_W=西
+STR_COMPASS_NW=北西
+STR_COMPASS_C=中
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=未割り当て
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(空き)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} が {string1} に参加しました。
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} が {string1} から退出しました。
 STR_DLGLOBBY_READY=準備完了
 STR_DLGLOBBY_UNREADY=準備解除
 STR_DLGLOBBY_BALANCE_TEAMS=チームバランス

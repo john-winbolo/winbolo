@@ -77,6 +77,29 @@ static bool commandDecodeTeamSet(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_LOBBY_CLAIM_START — PACKET_LOBBY_CLAIM_START
+ * Wire: [header 8] [targetSlot 1] [startIdx 1] */
+static bool commandEncodeLobbyClaimStart(const ClientCommand *cmd,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 2;
+    if (bufCap < needed) return false;
+    packHeader(buf, PACKET_LOBBY_CLAIM_START, 0);
+    buf[CMD_PACKET_BODY_OFFSET]     = cmd->u.lobbyClaimStart.targetSlot;
+    buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.lobbyClaimStart.startIdx;
+    *outLen = needed;
+    return true;
+}
+
+static bool commandDecodeLobbyClaimStart(const uint8_t *buf, size_t len,
+                                         ClientCommand *cmd) {
+    if (len < CMD_PACKET_BODY_OFFSET + 2) return false;
+    cmd->type = CMD_LOBBY_CLAIM_START;
+    cmd->u.lobbyClaimStart.targetSlot = buf[CMD_PACKET_BODY_OFFSET];
+    cmd->u.lobbyClaimStart.startIdx   = buf[CMD_PACKET_BODY_OFFSET + 1];
+    return true;
+}
+
 /* CMD_READY — PACKET_LOBBY_READY
  * Wire: [header 8] [playerNum 1 — legacy] [ready 1] */
 static bool commandEncodeReady(const ClientCommand *cmd,
@@ -854,6 +877,7 @@ bool commandCodecEncode(const ClientCommand *cmd,
     bool ok = false;
     switch (cmd->type) {
         case CMD_TEAM_SET:              ok = commandEncodeTeamSet(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_CLAIM_START:     ok = commandEncodeLobbyClaimStart(cmd, buf, bufCap, outLen); break;
         case CMD_READY:                 ok = commandEncodeReady(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_BOT_CONFIG:      ok = commandEncodeLobbyBotConfig(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_TEAM_META:       ok = commandEncodeLobbyTeamMeta(cmd, buf, bufCap, outLen); break;
@@ -898,6 +922,7 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
     uint8_t pktType = buf[2];
     switch (pktType) {
         case PACKET_LOBBY_TEAM_SET:        return commandDecodeTeamSet(buf, len, cmd);
+        case PACKET_LOBBY_CLAIM_START:     return commandDecodeLobbyClaimStart(buf, len, cmd);
         case PACKET_LOBBY_READY:           return commandDecodeReady(buf, len, cmd);
         case PACKET_LOBBY_BOT_CONFIG:      return commandDecodeLobbyBotConfig(buf, len, cmd);
         case PACKET_LOBBY_TEAM_META:       return commandDecodeLobbyTeamMeta(buf, len, cmd);

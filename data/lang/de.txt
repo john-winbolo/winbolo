@@ -415,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Karte überspringen
 STR_DLGLOBBY_CANCELSKIP=Überspringen abbrechen
 STR_DLGLOBBY_VOTES={number}/{number2} Stimmen zum Überspringen
 STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_CHAT_GENERAL=Allgemein
+STR_DLGLOBBY_CHAT_TEAM=Team
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=N
+STR_COMPASS_NE=NO
+STR_COMPASS_E=O
+STR_COMPASS_SE=SO
+STR_COMPASS_S=S
+STR_COMPASS_SW=SW
+STR_COMPASS_W=W
+STR_COMPASS_NW=NW
+STR_COMPASS_C=Z
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Nicht zugewiesen
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(offen)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} ist {string1} beigetreten.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} hat {string1} verlassen.
 STR_DLGLOBBY_READY=Bereit
 STR_DLGLOBBY_UNREADY=Nicht bereit
 STR_DLGLOBBY_BALANCE_TEAMS=Teams ausgleichen

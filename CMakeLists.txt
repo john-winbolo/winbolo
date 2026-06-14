@@ -2476,6 +2476,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/common/prefs.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
+    tests/unit/test_lobby_claim_start_dispatch.c
     tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
     tests/unit/test_shell_death_event.c
@@ -2521,6 +2522,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
+    tests/unit/test_starts_pick_incremental.c
+    tests/unit/test_starts_assign_batch.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -2664,6 +2667,13 @@ set(_unit_test_names
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
     command_codec_roundtrip_variants
+    command_codec_lobby_claim_start
+    lobby_claim_start_host_swaps_occupied
+    lobby_claim_start_host_swap_into_none
+    lobby_claim_start_non_host_occupied_rejected
+    lobby_claim_start_non_host_other_slot_rejected
+    lobby_claim_start_self_free_and_release
+    lobby_claim_start_validation
     command_codec_cmdseq_slot
     command_codec_bounds_checks
     command_rejected_parks_name_codes
@@ -2796,6 +2806,14 @@ set(_unit_test_names
     alliance_reset_apply_rebuilds_alliances
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
+    starts_pick_cluster_nearest_teammate
+    starts_pick_farthest_when_solo
+    starts_pick_none_when_all_taken
+    starts_batch_reserved_lands_exact
+    starts_batch_unreserved_avoids_reserved
+    starts_batch_stale_reservation_falls_through
+    starts_batch_duplicate_honors_first
+    starts_batch_null_reservations_place_normally
     input_redundancy
     stall_advances_processed_tick
     stall_mine_late_lays_once

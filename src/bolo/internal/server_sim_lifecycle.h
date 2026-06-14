@@ -18,6 +18,12 @@ void serverSimLobbyCheckAllReady(ServerSim *sim);
  * and by client_net.c's local-transport branches. */
 void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready);
 
+/* Per-slot reserved-start write. Stores idx (1-based map start, or 0xFF
+ * for none) in lobbyPlayers[slot].startIdx with no clustering or
+ * publish — the CMD_LOBBY_CLAIM_START dispatcher arm validates the
+ * index and republishes the affected slots itself. */
+void serverSimSetLobbyStartIdx(ServerSim *sim, BYTE slot, BYTE idx);
+
 /* Per-slot team assignment. Writes lobbyPlayers[playerNum].teamNumber
  * and rebakes the alliance graph so any same-team pairs become allies
  * before the call returns. Drivers: UDP PACKET_LOBBY_TEAM_SET /

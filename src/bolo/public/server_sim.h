@@ -120,6 +120,7 @@ typedef struct {
   uint8_t teamNumber;  /* 1-16 (0 = unassigned) */
   bool ready;
   bool isBot;          /* Managed by bot system, not by player packets */
+  uint8_t startIdx;    /* reserved map start, 1-based; 0xFF = none */
 } LobbyPlayer;
 
 /* Per-team metadata — used by the Layout A lobby UI for color tinting,
