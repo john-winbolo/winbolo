@@ -223,6 +223,15 @@ DEFINE_WIRE_CODEC(TkExplosionSnapshot, "tk_explosion_snapshot", TK_EXPLOSION_SNA
 DEFINE_WIRE_CODEC(BaseSnapshot,        "base_snapshot",         BASE_SNAPSHOT_FIELDS)
 DEFINE_WIRE_CODEC(PillSnapshot,        "pill_snapshot",         PILL_SNAPSHOT_FIELDS)
 
+/* Tie the generated wire size to the hand-maintained *_WIRE_SIZE constants that
+ * the server's pre-pack buffer guards still use, so a field added to a list
+ * without bumping the constant fails the build rather than under-counting. */
+_Static_assert(WIRE_SIZE_OF(SHELL_SNAPSHOT_FIELDS)        == SHELL_SNAPSHOT_WIRE_SIZE,        "shell wire size drift");
+_Static_assert(WIRE_SIZE_OF(TK_EXPLOSION_SNAPSHOT_FIELDS) == TK_EXPLOSION_SNAPSHOT_WIRE_SIZE, "tk explosion wire size drift");
+_Static_assert(WIRE_SIZE_OF(BASE_SNAPSHOT_FIELDS)         == BASE_SNAPSHOT_WIRE_SIZE,         "base wire size drift");
+_Static_assert(WIRE_SIZE_OF(PILL_SNAPSHOT_FIELDS)         == PILL_SNAPSHOT_WIRE_SIZE,         "pill wire size drift");
+_Static_assert(WIRE_MASKED_SIZE_OF(TANK_SNAPSHOT_FIELDS)  == TANK_SNAPSHOT_WIRE_SIZE,         "tank wire size drift");
+
 /* Fixed map-transfer chunk headers. Each precedes a hand-written data payload
  * and chunk loop (reassembly and length validation stay hand-rolled). */
 DEFINE_WIRE_CODEC(MapDownloadChunkHeader, "map_download_chunk_hdr", MAP_DOWNLOAD_CHUNK_HEADER_FIELDS)
