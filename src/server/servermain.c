@@ -1096,8 +1096,24 @@ int main(int argc, char **argv) {
     exit(0);
   }
 #endif
-  /* IP-to-country geolocation (DB-IP Lite) */
-  bool geoLookupOk = geoLookupCreate("data/dbip-country-lite.mmdb");
+  /* IP-to-country geolocation (DB-IP Lite). Resolve the database relative to
+     the executable directory so the server works regardless of the CWD it was
+     launched from; fall back to the CWD-relative path if that fails. */
+  bool geoLookupOk = FALSE;
+#ifdef USING_SDL
+  {
+    const char *basePath = SDL_GetBasePath();
+    if (basePath != NULL) {
+      char mmdbPath[FILENAME_MAX];
+      snprintf(mmdbPath, sizeof(mmdbPath), "%sdata/dbip-country-lite.mmdb",
+               basePath);
+      geoLookupOk = geoLookupCreate(mmdbPath);
+    }
+  }
+#endif
+  if (geoLookupOk == FALSE) {
+    geoLookupOk = geoLookupCreate("data/dbip-country-lite.mmdb");
+  }
 
   /* Create server simulation */
   if (strncmp(mapName, "-randommap", 10) == 0) {
