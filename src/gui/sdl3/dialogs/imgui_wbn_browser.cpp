@@ -419,6 +419,27 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     static std::atomic<bool> downloading(false);
     static DownloadResult downloadResult = {};
     static std::atomic<bool> downloadDone(false);
+    /* Live byte counters published by the curl progress callback on the
+     * download thread; read by the UI to draw the progress bar. */
+    static std::atomic<long long> downloadBytesNow(0);
+    static std::atomic<long long> downloadBytesTotal(0);
+    /* Key of the log currently downloading, so the progress UI attaches to
+     * that row and not to whatever the user selects next. */
+    static char downloadingKey[33] = {};
+
+    /* Per-instance worker handles. The result/flag state above is static
+     * (persists for the program lifetime), so workers are joined on close:
+     * a detached worker must never reach curl after httpDestroy(), nor write
+     * these statics into a later dialog instance. downloadCancel lets close
+     * abort an in-flight download promptly rather than block on its timeout. */
+    std::thread fetchThread, detailThread, downloadThread;
+    volatile int downloadCancel = 0;
+
+    /* Clear any worker state left over from a previous dialog instance. */
+    fetching = false;        fetchDone = false;
+    detailFetching = false;  detailDone = false;
+    downloading = false;     downloadDone = false;
+    downloadBytesNow = 0;    downloadBytesTotal = 0;
 
     /* Async comment post — owned handle, freed when result is consumed */
     static WbnCommentPost *commentPost = nullptr;
@@ -435,6 +456,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     /* Trigger initial fetch of recent logs */
     auto triggerFetch = [&](BrowserTab tab, int page) {
         if (fetching || !httpOk) return;
+        if (fetchThread.joinable()) fetchThread.join(); /* reap previous (already finished) */
         tabs[tab].fetching = true;
         fetching = true;
         fetchDone = false;
@@ -445,7 +467,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         SDL_strlcpy(req.player, searchPlayer, sizeof(req.player));
         SDL_strlcpy(req.mapFilter, searchMap, sizeof(req.mapFilter));
 
-        std::thread([req]() {
+        fetchThread = std::thread([req]() {
             FetchResult res = {};
             res.tab = req.tab;
             res.page = req.page;
@@ -527,19 +549,20 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             }
             fetchDone = true;
             fetching = false;
-        }).detach();
+        });
     };
 
     /* Trigger detail fetch */
     auto triggerDetailFetch = [&](const char *key) {
         if (detailFetching) return;
+        if (detailThread.joinable()) detailThread.join(); /* reap previous (already finished) */
         detailFetching = true;
         detailDone = false;
 
         char keyCopy[33];
         SDL_strlcpy(keyCopy, key, sizeof(keyCopy));
 
-        std::thread([keyCopy]() {
+        detailThread = std::thread([keyCopy]() {
             DetailResult res = {};
             SDL_strlcpy(res.key, keyCopy, sizeof(res.key));
             res.success = false;
@@ -570,19 +593,36 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             }
             detailDone = true;
             detailFetching = false;
-        }).detach();
+        });
+    };
+
+    /* Curl progress sink — runs on the download thread, publishes byte
+     * counts into the atomics the UI reads. Non-capturing so it converts
+     * to the C WbnProgressFn function pointer. Keeps the seeded total when
+     * curl hasn't reported a Content-Length yet (total == 0). */
+    WbnProgressFn downloadProgressFn = [](void *user, int64_t now, int64_t total) {
+        (void)user;
+        downloadBytesNow = (long long)now;
+        if (total > 0) downloadBytesTotal = (long long)total;
     };
 
     /* Trigger download */
-    auto triggerDownload = [&](const char *key) {
+    auto triggerDownload = [&](const char *key, long long knownSize) {
         if (downloading) return;
+        if (downloadThread.joinable()) downloadThread.join(); /* reap previous (already finished) */
+        downloadCancel = 0;
+        SDL_strlcpy(downloadingKey, key, sizeof(downloadingKey));
         downloading = true;
         downloadDone = false;
+        /* Seed from the JSON log_size so the bar is meaningful from the
+         * first frame, before curl reports the real total. */
+        downloadBytesNow = 0;
+        downloadBytesTotal = knownSize;
 
         char keyCopy[33];
         SDL_strlcpy(keyCopy, key, sizeof(keyCopy));
 
-        std::thread([keyCopy]() {
+        downloadThread = std::thread([keyCopy, downloadProgressFn, &downloadCancel]() {
             DownloadResult res = {};
             SDL_strlcpy(res.key, keyCopy, sizeof(res.key));
             res.success = false;
@@ -597,7 +637,9 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             res.toMemory = true;
             uint8_t *data = nullptr;
             size_t dataSize = 0;
-            int status = wbn_api_download_to_memory(apiPath, &data, &dataSize);
+            int status = wbn_api_download_to_memory_progress(apiPath, &data, &dataSize,
+                                                             downloadProgressFn, nullptr,
+                                                             &downloadCancel);
             if (status == 200 && data && dataSize > 0) {
                 res.memoryData = data;
                 res.memorySize = dataSize;
@@ -617,7 +659,9 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
 
                 SDL_snprintf(res.filePath, sizeof(res.filePath), "%s/%s.wbv", dirPath, keyCopy);
 
-                int status = wbn_api_download(apiPath, res.filePath);
+                int status = wbn_api_download_progress(apiPath, res.filePath,
+                                                       downloadProgressFn, nullptr,
+                                                       &downloadCancel);
                 if (status == 200) {
                     res.success = true;
                 } else {
@@ -634,7 +678,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             }
             downloadDone = true;
             downloading = false;
-        }).detach();
+        });
     };
 
     /* Auto-fetch recent on open */
@@ -933,7 +977,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                         bool nonMouseActivate = !mouseSingle && !mouseDbl;
                         if (e.log_available &&
                             (mouseDbl || (nonMouseActivate && wasSelected))) {
-                            triggerDownload(e.key);
+                            triggerDownload(e.key, (long long)e.log_size);
                         }
                     }
                     imguiHandOnHover();
@@ -1096,18 +1140,35 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
                 /* Download button */
                 ImGui::Separator();
                 if (e.log_available) {
-                    bool isDownloading = downloading;
-                    if (isDownloading) ImGui::BeginDisabled();
-                    if (ImGui::Button(isDownloading ? langGetText(STR_DLGWBN_DOWNLOADING) : langGetText(STR_DLGWBN_VIEWLOG))) {
-                        triggerDownload(e.key);
+                    /* A download is exclusive (triggerDownload no-ops while one
+                       runs), so disable the button for any in-flight download,
+                       but only show "Downloading"/progress on the row that is
+                       actually transferring. */
+                    bool anyDownloading  = downloading;
+                    bool thisDownloading = anyDownloading && (strcmp(e.key, downloadingKey) == 0);
+                    if (anyDownloading) ImGui::BeginDisabled();
+                    if (ImGui::Button(thisDownloading ? langGetText(STR_DLGWBN_DOWNLOADING) : langGetText(STR_DLGWBN_VIEWLOG))) {
+                        triggerDownload(e.key, (long long)e.log_size);
                     }
                     imguiHandOnHover();
-                    if (isDownloading) ImGui::EndDisabled();
-                    if (isDownloading) {
+                    if (anyDownloading) ImGui::EndDisabled();
+                    if (thisDownloading) {
                         ImGui::SameLine();
-                        float progress = (float)fmod(ImGui::GetTime() * 0.4, 1.0);
-                        ImGui::SetNextItemWidth(150);
-                        ImGui::ProgressBar(progress, ImVec2(0, 0), langGetText(STR_DLGWBN_DOWNLOADING));
+                        long long now   = downloadBytesNow.load();
+                        long long total = downloadBytesTotal.load();
+                        if (total > 0) {
+                            float progress = (float)((double)now / (double)total);
+                            if (progress < 0.0f) progress = 0.0f;
+                            if (progress > 1.0f) progress = 1.0f;
+                            char overlay[32];
+                            SDL_snprintf(overlay, sizeof(overlay), "%.0f%%", progress * 100.0f);
+                            ImGui::ProgressBar(progress, ImVec2(150, 0), overlay);
+                        } else {
+                            /* No Content-Length yet — indeterminate animation
+                               (a scrolling block, not a fill that loops). */
+                            ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(), ImVec2(150, 0),
+                                               langGetText(STR_DLGWBN_DOWNLOADING));
+                        }
                     }
                 } else {
                     ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", langGetText(STR_DLGWBN_NOLOG));
@@ -1216,6 +1277,23 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
 
     /* Cleanup */
     destroyStarIcons();
+
+    /* Stop and reap all workers before tearing down curl global state:
+     * httpDestroy() -> curl_global_cleanup() is unsafe while any thread is
+     * still inside a curl transfer. Signal the download to abort first so a
+     * large in-flight transfer doesn't block close on its 120s timeout. */
+    downloadCancel = 1;
+    if (downloadThread.joinable()) downloadThread.join();
+    if (detailThread.joinable())   detailThread.join();
+    if (fetchThread.joinable())    fetchThread.join();
+
+    /* Free a memory download that finished but was never consumed by the
+     * loop (closed the same frame it completed). When it is being returned
+     * (PLAY_MEMORY) ownership has passed to the caller, so leave it. */
+    if (downloadResult.memoryData && finalResult.action != WBN_BROWSER_PLAY_MEMORY) {
+        free(downloadResult.memoryData);
+        downloadResult.memoryData = nullptr;
+    }
 
     if (httpOk) {
         httpDestroy();

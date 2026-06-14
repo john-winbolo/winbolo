@@ -206,6 +206,22 @@ int wbn_prefs_put(const char *bearerToken, const char *json_body,
 const char *httpGetBaseUrl(void);
 
 /*********************************************************
+*NAME:          WbnProgressFn
+*PURPOSE:
+* Progress callback invoked periodically during a download.
+* dlNow is the number of bytes transferred so far; dlTotal
+* is the total expected size, or 0 when the server did not
+* advertise a Content-Length. Called on the download thread,
+* so implementations must be thread-safe.
+*
+*ARGUMENTS:
+* userData - Opaque pointer passed through from the caller
+* dlNow    - Bytes received so far
+* dlTotal  - Total bytes expected (0 if unknown)
+*********************************************************/
+typedef void (*WbnProgressFn)(void *userData, int64_t dlNow, int64_t dlTotal);
+
+/*********************************************************
 *NAME:          wbn_api_download
 *PURPOSE:
 * Downloads a file from WBN to disk. Builds the full URL
@@ -217,6 +233,29 @@ const char *httpGetBaseUrl(void);
 * dest_path - Local filesystem path to write the file to
 *********************************************************/
 int wbn_api_download(const char *path, const char *dest_path);
+
+/*********************************************************
+*NAME:          wbn_api_download_progress
+*PURPOSE:
+* Like wbn_api_download, but reports transfer progress via
+* progressFn as bytes arrive. Pass progressFn = NULL for no
+* reporting (identical to wbn_api_download).
+*
+* The caller may abort the transfer mid-flight by setting
+* *cancel_flag to non-zero (treat as volatile/atomic);
+* in that case the partial file is removed and -2 returned.
+*
+*ARGUMENTS:
+* path             - API path after /api/v1/
+* dest_path        - Local filesystem path to write the file to
+* progressFn       - Progress callback, or NULL
+* progressUserData - Opaque pointer passed to progressFn
+* cancel_flag      - Pointer to an int polled during transfer
+*                    (NULL = no cancellation)
+*********************************************************/
+int wbn_api_download_progress(const char *path, const char *dest_path,
+                              WbnProgressFn progressFn, void *progressUserData,
+                              volatile int *cancel_flag);
 
 /*********************************************************
 *NAME:          wbn_api_download_to_memory
@@ -233,6 +272,32 @@ int wbn_api_download(const char *path, const char *dest_path);
 * size_out - Receives buffer size in bytes
 *********************************************************/
 int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *size_out);
+
+/*********************************************************
+*NAME:          wbn_api_download_to_memory_progress
+*PURPOSE:
+* Like wbn_api_download_to_memory, but reports transfer
+* progress via progressFn as bytes arrive. Pass progressFn
+* = NULL for no reporting.
+*
+* The caller may abort the transfer mid-flight by setting
+* *cancel_flag to non-zero (treat as volatile/atomic);
+* in that case any partial buffer is freed and -2 returned.
+*
+*ARGUMENTS:
+* path             - API path after /api/v1/
+* data_out         - Receives heap-allocated buffer (caller frees)
+* size_out         - Receives buffer size in bytes
+* progressFn       - Progress callback, or NULL
+* progressUserData - Opaque pointer passed to progressFn
+* cancel_flag      - Pointer to an int polled during transfer
+*                    (NULL = no cancellation)
+*********************************************************/
+int wbn_api_download_to_memory_progress(const char *path,
+                                        uint8_t **data_out, size_t *size_out,
+                                        WbnProgressFn progressFn,
+                                        void *progressUserData,
+                                        volatile int *cancel_flag);
 
 /*********************************************************
 *NAME:          wbn_api_download_to_memory_cancellable
