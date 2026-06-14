@@ -1456,29 +1456,24 @@ static void spWbnPoll(ClientSim *cs, SDL_Renderer *renderer) {
         safeName += ".map";
     }
 
-    /* Stash a copy of the downloaded bytes at a stable preview
-     * path so the WBN chooser's right-side preview can show the
-     * map. The chooser's row carries a synthetic "wbn:<id>" path
-     * which isn't a real file, so without this the preview pane
-     * stays at "No preview available" even after a successful
-     * download. The file is overwritten on every WBN pick. */
+    /* Drive the WBN chooser's right-side preview straight from the
+     * downloaded bytes — no temp file. The chooser's row carries a
+     * synthetic "wbn:<id>" path which isn't a real file, so the
+     * normal preview-on-click attempt fails; this hands it the map
+     * image in RAM instead, which it converts and renders in place. */
     {
-        const char *previewPath = "data/maps/.wbn_preview.map";
-        FILE *pp = fopen(previewPath, "wb");
-        if (pp) {
-            fwrite(res.bytes.data(), 1, res.bytes.size(), pp);
-            fclose(pp);
-            /* displayName drops the trailing .map for the panel
-             * title — matches the other tabs. */
-            std::string displayName = res.mapName;
-            if (displayName.size() >= 4 &&
-                SDL_strcasecmp(displayName.c_str() + displayName.size() - 4,
-                                ".map") == 0) {
-                displayName.resize(displayName.size() - 4);
-            }
-            mapChooserSetSelectedFile(&s_chooseMapWbnState, renderer,
-                                      previewPath, displayName.c_str());
+        /* displayName drops the trailing .map for the panel title —
+         * matches the other tabs. */
+        std::string displayName = res.mapName;
+        if (displayName.size() >= 4 &&
+            SDL_strcasecmp(displayName.c_str() + displayName.size() - 4,
+                            ".map") == 0) {
+            displayName.resize(displayName.size() - 4);
         }
+        mapChooserSetSelectedMapBytes(
+            &s_chooseMapWbnState, renderer,
+            reinterpret_cast<const uint8_t *>(res.bytes.data()),
+            (int)res.bytes.size(), displayName.c_str());
     }
 
     /* MP host: chunked upload state machine on the transport.

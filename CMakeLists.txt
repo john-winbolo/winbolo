@@ -2494,6 +2494,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_upload_cap.c
     tests/unit/test_map_field_clamps.c
     tests/unit/test_map_reload_rollback.c
+    tests/unit/test_map_read_memory.c
     tests/unit/test_upload_busy.c
     tests/unit/test_upload_filename_safe.c
     tests/unit/test_lobby_time_minutes_valid.c
@@ -2701,6 +2702,10 @@ set(_unit_test_names
     map_field_clamps_passthrough
     map_field_clamps_angry_start
     map_reload_rollback
+    map_read_memory_matches_file
+    map_read_memory_handbuilt
+    map_convert_file_to_compressed
+    map_read_memory_rejects_garbage
     upload_busy_predicate
     upload_filename_safe
     lobby_bot_name_rejects_reserved_prefix

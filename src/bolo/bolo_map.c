@@ -100,6 +100,101 @@ void mapDestroy(map *value) {
 }
 
 /*********************************************************
+*NAME:          MapReader
+*PURPOSE:
+*  Backs the BMAP file parser with either a stdio FILE*
+*  (mapRead, reading an on-disk .map) or an in-memory
+*  byte buffer (mapReadFromMemory, e.g. a WBN map held
+*  in RAM after download). The mapRead* helpers below
+*  take a MapReader* so a single parser serves both and
+*  the file path stays byte-for-byte identical.
+*********************************************************/
+typedef struct {
+  FILE       *fp;        /* non-NULL: file-backed */
+  const BYTE *buf;       /* non-NULL: memory-backed */
+  size_t      len;       /* memory: total bytes available */
+  size_t      pos;       /* memory: read cursor */
+  int         pushback;  /* memory: one-byte ungetc slot, -1 if empty */
+  bool        eof;       /* memory: a read ran past the buffer end */
+} MapReader;
+
+static void mrInitFile(MapReader *r, FILE *fp) {
+  r->fp = fp; r->buf = NULL; r->len = 0; r->pos = 0;
+  r->pushback = -1; r->eof = false;
+}
+
+static void mrInitMem(MapReader *r, const BYTE *buf, size_t len) {
+  r->fp = NULL; r->buf = buf; r->len = len; r->pos = 0;
+  r->pushback = -1; r->eof = false;
+}
+
+/* Mirrors fgetc: returns the next byte (0..255) or EOF. */
+static int mrGetc(MapReader *r) {
+  if (r->fp != NULL) return fgetc(r->fp);
+  if (r->pushback >= 0) { int c = r->pushback; r->pushback = -1; return c; }
+  if (r->pos >= r->len) { r->eof = true; return EOF; }
+  return r->buf[r->pos++];
+}
+
+/* Mirrors ungetc: pushes one byte back so the next read returns it.
+ * A successful push clears the end-of-input state, as stdio does. */
+static int mrUngetc(MapReader *r, int c) {
+  if (r->fp != NULL) return ungetc(c, r->fp);
+  if (c == EOF || r->pushback >= 0) return EOF;
+  r->pushback = c & 0xff;
+  r->eof = false;
+  return c & 0xff;
+}
+
+/* Mirrors fread: returns the number of whole `size`-byte elements
+ * read. A pending ungetc byte is consumed first, exactly as stdio. */
+static size_t mrRead(MapReader *r, void *ptr, size_t size, size_t n) {
+  if (r->fp != NULL) return fread(ptr, size, n, r->fp);
+  size_t want = size * n;
+  if (want == 0) return 0;
+  BYTE  *out = (BYTE *)ptr;
+  size_t got = 0;
+  if (r->pushback >= 0) { out[got++] = (BYTE)r->pushback; r->pushback = -1; }
+  size_t avail = (r->pos < r->len) ? (r->len - r->pos) : 0;
+  size_t need  = want - got;
+  size_t take  = (need < avail) ? need : avail;
+  if (take > 0) {
+    memcpy(out + got, r->buf + r->pos, take);
+    r->pos += take;
+    got += take;
+  }
+  if (got < want) r->eof = true;
+  return (size > 0) ? (got / size) : 0;
+}
+
+/* Mirrors fgets: reads up to size-1 bytes, stopping after a newline,
+ * NUL-terminates, and returns dest (or NULL if nothing was read). */
+static char *mrGets(MapReader *r, char *dest, int size) {
+  if (r->fp != NULL) return fgets(dest, size, r->fp);
+  if (size <= 0) return NULL;
+  int i = 0;
+  while (i < size - 1) {
+    int c = mrGetc(r);
+    if (c == EOF) break;
+    dest[i++] = (char)c;
+    if (c == '\n') break;
+  }
+  if (i == 0) return NULL;
+  dest[i] = '\0';
+  return dest;
+}
+
+/* Mirrors feof / ferror. Memory reads never hard-error. */
+static bool mrEof(MapReader *r) {
+  if (r->fp != NULL) return feof(r->fp) != 0;
+  return r->eof;
+}
+static bool mrError(MapReader *r) {
+  if (r->fp != NULL) return ferror(r->fp) != 0;
+  return false;
+}
+
+/*********************************************************
 *NAME:          mapReadPills
 *AUTHOR:        John Morrison
 *CREATION DATE: 21/10/98
@@ -113,20 +208,20 @@ void mapDestroy(map *value) {
 *  fp    - Pointer to the file being read from
 *  value - Pointer to the pillbox structure
 *********************************************************/
-bool mapReadPills(FILE *fp, pillboxes *value) {
+static bool mapReadPills(MapReader *fp, pillboxes *value) {
   int total;        /* Total number of pills to be read in */
   int count;        /* Looping variable */
   size_t ret;          /* Number of bytes read */
   bool returnValue; /* Value to return */
   pillbox readInto; /* The pillbox being read into */
-  
+
   count = 1;
   total = pillsGetNumPills(value);
   returnValue = TRUE;
   readInto.inTank = FALSE;
 
-  while (count <= total && returnValue == TRUE && !feof(fp)) {
-    ret = fread(&readInto, SIZEOFBMAP_PILL_INFO, 1, fp);
+  while (count <= total && returnValue == TRUE && !mrEof(fp)) {
+    ret = mrRead(fp, &readInto, SIZEOFBMAP_PILL_INFO, 1);
     if (ret != 1) {
       returnValue = FALSE;
     } else {
@@ -152,7 +247,7 @@ bool mapReadPills(FILE *fp, pillboxes *value) {
 *  fp    - Pointer to the file being read from
 *  value - Pointer to the pillbox structure
 *********************************************************/
-bool mapReadBases(FILE *fp, bases *value) {
+static bool mapReadBases(MapReader *fp, bases *value) {
   int count;        /* Looping variable */
   int total;        /* Total number of bases to read */
   size_t ret;          /* Number of bytes read */
@@ -163,8 +258,8 @@ bool mapReadBases(FILE *fp, bases *value) {
   total = basesGetNumBases(value);
   returnValue = TRUE;
 
-  while (count <= total && returnValue == TRUE && !feof(fp)) {
-    ret = fread(&readInto,SIZEOFBAMP_BASE_INFO,1,fp);
+  while (count <= total && returnValue == TRUE && !mrEof(fp)) {
+    ret = mrRead(fp, &readInto, SIZEOFBAMP_BASE_INFO, 1);
     if (ret != 1) {
       returnValue = FALSE;
     } else {
@@ -190,7 +285,7 @@ bool mapReadBases(FILE *fp, bases *value) {
 *  fp    - Pointer to the file being read from
 *  value - Pointer to the pillbox structure
 *********************************************************/
-bool mapReadStarts(FILE *fp, starts *value) {
+static bool mapReadStarts(MapReader *fp, starts *value) {
   int total;        /* Total number of entries to read */
   int count;        /* Looping variable */
   size_t ret;          /* Number of bytes read */
@@ -200,8 +295,8 @@ bool mapReadStarts(FILE *fp, starts *value) {
   count = 1;
   total = startsGetNumStarts(value);
   returnValue = TRUE;
-  while (count <= total && returnValue == TRUE && !feof(fp)) {
-    ret = fread(&readInto,SIZEOFBMAP_START_INFO,1,fp);
+  while (count <= total && returnValue == TRUE && !mrEof(fp)) {
+    ret = mrRead(fp, &readInto, SIZEOFBMAP_START_INFO, 1);
     if (ret != 1) {
       returnValue = FALSE;
     } else {
@@ -230,7 +325,7 @@ bool mapReadStarts(FILE *fp, starts *value) {
 *  startX - The start x co-ordinate
 *  endX   - The end x co-ordinate
 *********************************************************/
-bool mapProcessRun(FILE *fp,map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE endX) {
+static bool mapProcessRun(MapReader *fp,map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE endX) {
   bool returnValue;  /* Value to return */
   bool needRead;     /* State variable - Do we need to read the next byte */
   mapRunState state; /* Current run state */  
@@ -248,8 +343,8 @@ bool mapProcessRun(FILE *fp,map *value,BYTE elems, MAP_Y yValue, BYTE startX, BY
   mapPos = startX;
   len = 0;
 
-  item = (BYTE) fgetc(fp);
-  while (count < elems && !ferror(fp)) {
+  item = (BYTE) mrGetc(fp);
+  while (count < elems && !mrError(fp)) {
     needRead = FALSE;
     highNibble = lowNibble = item;
     /* Extract Nibbles */
@@ -327,9 +422,9 @@ bool mapProcessRun(FILE *fp,map *value,BYTE elems, MAP_Y yValue, BYTE startX, BY
       }
     }
     count++;
-    item = (BYTE) fgetc(fp);
+    item = (BYTE) mrGetc(fp);
   }
-  count2 = ungetc(item, fp);
+  count2 = mrUngetc(fp, item);
   /* Check all read correctly */
   if (count != elems || mapPos != endX || count2 == EOF)  { /*  || mapPos != endX */ 
     returnValue = FALSE;
@@ -351,7 +446,7 @@ bool mapProcessRun(FILE *fp,map *value,BYTE elems, MAP_Y yValue, BYTE startX, BY
 *  fp    - Pointer to the file being read from
 *  value - Pointer to the map data structure
 *********************************************************/
-bool mapReadRuns(FILE *fp, map *value) {
+static bool mapReadRuns(MapReader *fp, map *value) {
   bmapRunHeader runHead; /* The header of each run */
   size_t bytesRead;         /* The number of bytes read from the header */
   bool returnValue;      /* Value to return */
@@ -361,9 +456,9 @@ bool mapReadRuns(FILE *fp, map *value) {
   returnValue = TRUE;
   done = FALSE;
 
-  bytesRead = fread(&runHead,SIZEOFBMAP_RUN_HEADER,1,fp);
+  bytesRead = mrRead(fp, &runHead, SIZEOFBMAP_RUN_HEADER, 1);
 
-  while (!feof(fp) && done == FALSE) {
+  while (!mrEof(fp) && done == FALSE) {
     if (bytesRead != 1) {
     /* Something bad happened reading */
       done = TRUE;
@@ -384,7 +479,7 @@ bool mapReadRuns(FILE *fp, map *value) {
         returnValue = FALSE;
       }
     }
-    bytesRead = fread(&runHead,SIZEOFBMAP_RUN_HEADER,1,fp);
+    bytesRead = mrRead(fp, &runHead, SIZEOFBMAP_RUN_HEADER, 1);
   }
 
   return returnValue;
@@ -406,56 +501,52 @@ bool mapReadRuns(FILE *fp, map *value) {
 *  bs      - Pointer to the bases structure
 *  pb      - Pointer to the pillbox structure
 *********************************************************/
-bool mapRead(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss) {
-  FILE *fp;           /* File pointer */
+/* Shared BMAP parse core. Reads from `r` (file- or memory-backed)
+ * into the supplied structures and applies the same post-load
+ * fix-ups (centre, base/pill terrain) as the historical mapRead. */
+static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, starts *ss) {
   bool returnValue;   /* Value to return */
   char id[LENGTH_ID+1]; /* The map ID Should read "BMAPBOLO" */
   BYTE mapVersion;    /* Version of the map file */
   BYTE current;       /* Item being read */
-  char *str;          /* return value of fgets */
+  char *str;          /* return value of mrGets */
 
   returnValue = TRUE;
-  fp = fopen(fileName,"rb");
-  if (!fp) {
+  str = mrGets(r, id, (LENGTH_ID+1));
+  if (str == NULL || strcmp(id,MAP_HEADER) != 0) {
     returnValue = FALSE;
   }
-  if (returnValue == TRUE && fp) {
-    str = fgets(id, (LENGTH_ID+1), fp);
-    if (str == NULL || strcmp(id,MAP_HEADER) != 0) {
-      returnValue = FALSE;
-    }
-  }
-  if (returnValue == TRUE && fp) {
-    mapVersion = (BYTE) fgetc(fp);
+  if (returnValue == TRUE) {
+    mapVersion = (BYTE) mrGetc(r);
     if (mapVersion != CURRENT_MAP_VERSION) {
       returnValue = FALSE;
     }
   }
-  if (returnValue == TRUE && fp) {
-    current = (BYTE) fgetc(fp);
+  if (returnValue == TRUE) {
+    current = (BYTE) mrGetc(r);
     pillsSetNumPills(pb,current);
-    current = (BYTE) fgetc(fp);
-    basesSetNumBases(bs,current); 
-    current = (BYTE) fgetc(fp);
+    current = (BYTE) mrGetc(r);
+    basesSetNumBases(bs,current);
+    current = (BYTE) mrGetc(r);
     startsSetNumStarts(ss,current);
     if (pillsGetNumPills(pb) > MAX_PILLS || basesGetNumBases(bs) > MAX_BASES || startsGetNumStarts(ss) > MAX_STARTS) {
       returnValue = FALSE;
     }
   }
-  if (returnValue == TRUE && fp) {
-    returnValue = mapReadPills(fp,pb);
+  if (returnValue == TRUE) {
+    returnValue = mapReadPills(r,pb);
   }
-  if (returnValue == TRUE && fp) {
-    returnValue = mapReadBases(fp,bs);
+  if (returnValue == TRUE) {
+    returnValue = mapReadBases(r,bs);
   }
-  if (returnValue == TRUE && fp) {
-    returnValue = mapReadStarts(fp,ss);
+  if (returnValue == TRUE) {
+    returnValue = mapReadStarts(r,ss);
   }
-  if (returnValue == TRUE && fp) {
-    returnValue = mapReadRuns(fp,value);
+  if (returnValue == TRUE) {
+    returnValue = mapReadRuns(r,value);
   }
 
-  if (returnValue == TRUE && fp) {
+  if (returnValue == TRUE) {
     mapCenter(value, pb, bs, ss);
   }
 
@@ -480,11 +571,49 @@ bool mapRead(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss) {
     }
   }
 
-  if (fp) {
-    fclose(fp);
-  }
   return returnValue;
-   
+}
+
+bool mapRead(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss) {
+  FILE *fp;           /* File pointer */
+  MapReader r;        /* File-backed reader */
+  bool returnValue;   /* Value to return */
+
+  fp = fopen(fileName,"rb");
+  if (!fp) {
+    return FALSE;
+  }
+  mrInitFile(&r, fp);
+  returnValue = mapReadStream(&r, value, pb, bs, ss);
+  fclose(fp);
+  return returnValue;
+}
+
+/*********************************************************
+*NAME:          mapReadFromMemory
+*AUTHOR:        John Morrison
+*PURPOSE:
+*  Identical to mapRead but parses an on-disk .map file
+*  image held in memory (e.g. a WinBolo.net map fetched
+*  over HTTP) rather than reading from disk. No temp file
+*  is created. Returns whether the operation succeeded.
+*
+*ARGUMENTS:
+*  data    - Pointer to the .map file bytes
+*  len     - Number of bytes available at data
+*  value   - Pointer to the map data structure
+*  pb      - Pointer to the pillbox structure
+*  bs      - Pointer to the bases structure
+*  ss      - Pointer to the starts structure
+*********************************************************/
+bool mapReadFromMemory(const BYTE *data, int len, map *value, pillboxes *pb, bases *bs, starts *ss) {
+  MapReader r;        /* Memory-backed reader */
+
+  if (data == NULL || len <= 0) {
+    return FALSE;
+  }
+  mrInitMem(&r, data, (size_t)len);
+  return mapReadStream(&r, value, pb, bs, ss);
 }
 
 
