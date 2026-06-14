@@ -1321,6 +1321,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=拒否されました
 STR_DLGLOBBY_REJECT_NOTHOST=ホストのみの操作
 STR_DLGLOBBY_REJECT_LOCKED=サーバーにより設定がロックされています
 STR_DLGLOBBY_REJECT_INVALID=無効なリクエスト
+STR_DLGLOBBY_REJECT_BOT_LIMIT=ボット数の上限に達しました
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 ロビーの変更が拒否されました: {string1}
 
 # Lock badge fallback

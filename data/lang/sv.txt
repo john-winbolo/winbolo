@@ -1318,6 +1318,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=avvisad
 STR_DLGLOBBY_REJECT_NOTHOST=endast för värden
 STR_DLGLOBBY_REJECT_LOCKED=inställning låst av server
 STR_DLGLOBBY_REJECT_INVALID=ogiltig förfrågan
+STR_DLGLOBBY_REJECT_BOT_LIMIT=botgränsen nådd
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Lobbyändring avvisad: {string1}
 
 # Lock badge fallback

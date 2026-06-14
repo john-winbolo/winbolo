@@ -1318,6 +1318,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=відхилено
 STR_DLGLOBBY_REJECT_NOTHOST=дія лише для хоста
 STR_DLGLOBBY_REJECT_LOCKED=налаштування заблоковано сервером
 STR_DLGLOBBY_REJECT_INVALID=невірний запит
+STR_DLGLOBBY_REJECT_BOT_LIMIT=досягнуто ліміту ботів
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Зміну лобі відхилено: {string1}
 
 # Лобі — Значок блокування (1364)

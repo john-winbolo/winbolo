@@ -164,8 +164,8 @@ int run_lobby_add_bot_rejects_when_at_maxbots(void) {
     seed_lobby_bots(sim, 1, 2);                 /* slots 1,2 fill the cap */
     UT_ASSERT_MSG(serverSimGetLobbyBotCount(sim) == 2,
                   "precondition: at the cap before the add attempt");
-    UT_ASSERT_MSG(apply_add_bot(sim, 0) == CMD_REJECT_INVALID,
-                  "add-bot at the -maxbots cap must return CMD_REJECT_INVALID");
+    UT_ASSERT_MSG(apply_add_bot(sim, 0) == CMD_REJECT_BOT_LIMIT,
+                  "add-bot at the -maxbots cap must return CMD_REJECT_BOT_LIMIT");
     serverSimDestroy(sim);
     return 0;
 }

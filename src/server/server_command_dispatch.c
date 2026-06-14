@@ -346,7 +346,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         /* Enforce the operator-configured -maxbots cap (0 = no cap). */
         BYTE maxBots = serverSimGetMaxBots(sim);
         if (maxBots > 0 && serverSimGetLobbyBotCount(sim) >= maxBots) {
-            return CMD_REJECT_INVALID;
+            return CMD_REJECT_BOT_LIMIT;
         }
         const CmdLobbyAddBot *p = &cmd->u.lobbyAddBot;
         char validatedName[PACKET_MAX_PLAYER_NAME];

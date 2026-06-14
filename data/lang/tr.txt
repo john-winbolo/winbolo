@@ -1318,6 +1318,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=reddedildi
 STR_DLGLOBBY_REJECT_NOTHOST=yalnızca sunucu sahibi
 STR_DLGLOBBY_REJECT_LOCKED=ayar sunucu tarafından kilitlendi
 STR_DLGLOBBY_REJECT_INVALID=geçersiz istek
+STR_DLGLOBBY_REJECT_BOT_LIMIT=bot sınırına ulaşıldı
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Lobi değişikliği reddedildi: {string1}
 
 # Lock badge fallback

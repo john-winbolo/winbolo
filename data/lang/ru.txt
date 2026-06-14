@@ -1316,6 +1316,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=отклонено
 STR_DLGLOBBY_REJECT_NOTHOST=действие только для хоста
 STR_DLGLOBBY_REJECT_LOCKED=настройка заблокирована сервером
 STR_DLGLOBBY_REJECT_INVALID=неверный запрос
+STR_DLGLOBBY_REJECT_BOT_LIMIT=достигнут лимит ботов
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Изменение лобби отклонено: {string1}
 
 # Лобби — Значок блокировки (1364)
