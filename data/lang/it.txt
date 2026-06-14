@@ -1317,6 +1317,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=rifiutato
 STR_DLGLOBBY_REJECT_NOTHOST=azione riservata all'host
 STR_DLGLOBBY_REJECT_LOCKED=impostazione bloccata dal server
 STR_DLGLOBBY_REJECT_INVALID=richiesta non valida
+STR_DLGLOBBY_REJECT_BOT_LIMIT=limite di bot raggiunto
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Modifica al lobby rifiutata: {string1}
 
 # Lobby — badge di blocco

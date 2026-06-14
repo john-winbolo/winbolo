@@ -1318,6 +1318,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=abgelehnt
 STR_DLGLOBBY_REJECT_NOTHOST=nur für Gastgeber
 STR_DLGLOBBY_REJECT_LOCKED=Einstellung vom Server gesperrt
 STR_DLGLOBBY_REJECT_INVALID=ungültige Anfrage
+STR_DLGLOBBY_REJECT_BOT_LIMIT=Bot-Limit erreicht
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Lobby-Änderung abgelehnt: {string1}
 
 # Lock badge fallback

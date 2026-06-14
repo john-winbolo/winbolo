@@ -343,6 +343,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_BAD_STATE;
         }
         if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        /* Enforce the operator-configured -maxbots cap (0 = no cap). */
+        BYTE maxBots = serverSimGetMaxBots(sim);
+        if (maxBots > 0 && serverSimGetLobbyBotCount(sim) >= maxBots) {
+            return CMD_REJECT_BOT_LIMIT;
+        }
         const CmdLobbyAddBot *p = &cmd->u.lobbyAddBot;
         char validatedName[PACKET_MAX_PLAYER_NAME];
         bool haveName = (p->nameLen > 0);

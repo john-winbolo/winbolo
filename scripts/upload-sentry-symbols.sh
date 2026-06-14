@@ -71,18 +71,27 @@ echo "  Project: $PROJECT"
 echo "  Path:    $BUILD_PATH"
 echo ""
 
-# Find our own binaries plus third-party PDBs from _deps (SDL3, libcurl,
+# Find our own binaries plus third-party debug info from _deps (SDL3, libcurl,
 # onnxruntime, sentry/crashpad, etc.) so vendor frames symbolicate too.
+#   - Windows      : .pdb files
+#   - macOS        : .dSYM bundles AND .dylib files (cmake RelWithDebInfo
+#                    embeds DWARF in the dylib; no .dSYM is generated)
+#   - Linux        : .so shared objects with embedded DWARF
 # Excludes specific subtrees that ship test fixtures sentry-cli chokes on:
 #   - crashpad's bundled zlib test data (malformed .zip files)
 #   - breakpad's testdata PDBs (e.g. kernel32.pdb) which would upload as noise
+#   - sentry/crashpad/breakpad .so test fixtures and fuzzer corpora
 find "$BUILD_PATH" \
     \( -path "*/_deps/sentry-src/external/crashpad/third_party/zlib*" \
     -o -path "*/_deps/sentry-src/external/breakpad/src/processor/testdata*" \
     -o -path "*/_deps/sentry-src/external/breakpad/src/tools/windows/dump_syms/testdata*" \
+    -o -path "*/_deps/sentry-src/tests/fixtures*" \
+    -o -path "*/_deps/sentry-src/external/crashpad/snapshot/elf/elf_image_reader_fuzzer_corpus*" \
     \) -prune -o \( \
     -name "*.pdb" -o \
     -name "*.dSYM" -o \
+    -name "*.dylib" -o \
+    -name "*.so" -o \
     -name "WinBolo" -o \
     -name "WinBolo.exe" -o \
     -name "WinBoloDS" -o \

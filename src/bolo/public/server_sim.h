@@ -1329,6 +1329,11 @@ bool          serverSimIsLobbyEnabled(const ServerSim *sim);
 bool          serverSimIsAcceptingJoins(const ServerSim *sim);
 /* Cap on join slots; 0 in the struct field falls back to MAX_TANKS. */
 BYTE          serverSimGetMaxPlayers(const ServerSim *sim);
+/* Cap on AI bots addable in the lobby; 0 = no cap. */
+BYTE          serverSimGetMaxBots(const ServerSim *sim);
+/* Number of connected slots flagged as lobby bots — the value the
+ * -maxbots cap is compared against. */
+BYTE          serverSimGetLobbyBotCount(const ServerSim *sim);
 bool          serverSimHasPassword(const ServerSim *sim);
 bool          serverSimIsRandomMapEnabled(const ServerSim *sim);
 bool          serverSimIsQuiet(const ServerSim *sim);

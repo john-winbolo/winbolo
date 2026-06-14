@@ -45,6 +45,8 @@ typedef struct {
   const char    *bindAddr;        /* "" or NULL = INADDR_ANY */
   const char    *password;        /* "" or NULL = no password */
   BYTE           maxPlayers;
+  BYTE           maxBots;          /* cap on AI bots addable in the lobby;
+                                      0 = no cap */
 
   bool           acceptRemoteClients; /* false = skip UDP bind, WBN, tracker
                                          and NAT portmap setup; serverInstanceTick

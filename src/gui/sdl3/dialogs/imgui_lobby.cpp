@@ -5152,6 +5152,7 @@ static void renderLobbyRejectToast(ClientSim *cs, float s) {
         case 12: reason = langGetText(STR_NAME_INVALID_MIXED_SCRIPTS);     break;  /* CMD_REJECT_NAME_MIXED_SCRIPTS */
         case 13: reason = langGetText(STR_NAME_INVALID_CHARS);             break;  /* CMD_REJECT_NAME_INVALID */
         case 14: reason = langGetText(STR_DLGSETNAME_INUSE_ERR);           break;  /* CMD_REJECT_NAME_TAKEN */
+        case 15: reason = langGetText(STR_DLGLOBBY_REJECT_BOT_LIMIT);      break;  /* CMD_REJECT_BOT_LIMIT */
         default: break;
     }
     ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));

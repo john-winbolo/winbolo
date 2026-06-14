@@ -1317,6 +1317,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=rechazado
 STR_DLGLOBBY_REJECT_NOTHOST=acción solo para el anfitrión
 STR_DLGLOBBY_REJECT_LOCKED=ajuste bloqueado por el servidor
 STR_DLGLOBBY_REJECT_INVALID=solicitud inválida
+STR_DLGLOBBY_REJECT_BOT_LIMIT=límite de bots alcanzado
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Cambio en el lobby rechazado: {string1}
 
 # Lobby — insignia de bloqueo

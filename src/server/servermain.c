@@ -670,6 +670,9 @@ void printArgs() {
 
   fprintf(stderr, "\nBots & AI:\n");
   fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
+  fprintf(stderr, "-maxbots <N>  - Maximum number of AI bots that can be in the lobby\n");
+  fprintf(stderr, "                (default: 0 = no limit). Caps lobby \"Add Bot\" requests\n");
+  fprintf(stderr, "                and clamps -bots.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
   fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
   fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
@@ -1026,6 +1029,7 @@ int main(int argc, char **argv) {
   char *useAddr;
   char debugFileName[2048];
   int maxPlayers;
+  int maxBots;
   char key[WINBOLONET_KEY_LEN]; /* WBN Key */
 
   strcpy(debugFileName,"server_test.txt");
@@ -1040,6 +1044,7 @@ int main(int argc, char **argv) {
   isQuiet = FALSE;
   isNoInput = FALSE;
   maxPlayers = 0;
+  maxBots = 0;
 
   alarmRaised = alarmNone;
 #ifdef _WIN32
@@ -1075,6 +1080,13 @@ int main(int argc, char **argv) {
     maxPlayers = atoi((char *) argv[findArg(argc, argv, "maxplayers")]);
     if (maxPlayers < 0 || maxPlayers > MAX_TANKS) {
       maxPlayers = 0;
+    }
+  }
+
+  if (argExist(argc, argv, "maxbots") == TRUE) {
+    maxBots = atoi((char *) argv[findArg(argc, argv, "maxbots")]);
+    if (maxBots < 0 || maxBots > MAX_TANKS) {
+      maxBots = 0;
     }
   }
 
@@ -1411,6 +1423,12 @@ int main(int argc, char **argv) {
       numBots = atoi((char *)argv[argNum]);
       if (numBots < 0) numBots = 0;
       if (numBots > MAX_TANKS) numBots = MAX_TANKS;
+      if (maxBots > 0 && numBots > maxBots) {
+        fprintf(stderr,
+                "Warning: -bots %d exceeds -maxbots %d, capping at %d\n",
+                numBots, maxBots, maxBots);
+        numBots = maxBots;
+      }
     }
     argNum = findArg(argc, argv, "brain");
     if (argNum != ARG_NOT_FOUND) {
@@ -1498,6 +1516,7 @@ int main(int argc, char **argv) {
     instCfg.bindAddr            = useAddr;
     instCfg.password            = pass;
     instCfg.maxPlayers          = (BYTE)maxPlayers;
+    instCfg.maxBots             = (BYTE)maxBots;
     instCfg.acceptRemoteClients = TRUE;
     instCfg.useWbn              = (argExist(argc, argv, "nowinbolonet") == FALSE);
     instCfg.compTanks           = (BYTE)ai;
