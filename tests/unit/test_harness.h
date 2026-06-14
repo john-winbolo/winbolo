@@ -129,6 +129,15 @@ int run_map_field_clamps_evil(void);
 int run_map_field_clamps_passthrough(void);
 int run_map_field_clamps_angry_start(void);
 int run_map_reload_rollback(void);
+
+/* In-memory BMAP parser (test_map_read_memory.c). mapReadFromMemory
+ * must agree byte-for-byte with mapRead on valid maps, the WBN
+ * preview conversion (file bytes -> compressed -> preview) must
+ * round-trip, and malformed buffers must be rejected. */
+int run_map_read_memory_matches_file(void);
+int run_map_read_memory_handbuilt(void);
+int run_map_convert_file_to_compressed(void);
+int run_map_read_memory_rejects_garbage(void);
 int run_upload_busy_predicate(void);
 int run_upload_filename_safe(void);
 int run_lobby_time_minutes_valid(void);

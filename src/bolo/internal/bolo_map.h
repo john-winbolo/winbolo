@@ -179,89 +179,13 @@ void mapCreate(map *value);
 *********************************************************/
 void mapDestroy(map *value);
 
-/*********************************************************
-*NAME:          mapReadPills
-*AUTHOR:        John Morrison
-*CREATION DATE: 21/10/98
-*LAST MODIFIED: 21/10/98
-*PURPOSE:
-*  Reads the pill information from a map file
-*  into the pill structure. Returns if the 
-*  operation was successful or not
-*
-*ARGUMENTS:
-*  fp    - Pointer to the file being read from
-*  value - Pointer to the pillbox structure
-*********************************************************/
-bool mapReadPills(FILE *fp, pillboxes *value);
-
-/*********************************************************
-*NAME:          mapReadBases
-*AUTHOR:        John Morrison
-*CREATION DATE: 21/10/98
-*LAST MODIFIED: 21/10/98
-*PURPOSE:
-*  Reads the base information from a map file
-*  into the base structure. Returns if the 
-*  operation was successful or not
-*
-*ARGUMENTS:
-*  fp    - Pointer to the file being read from
-*  value - Pointer to the pillbox structure
-*********************************************************/
-bool mapReadBases(FILE *fp, bases *value);
-
-/*********************************************************
-*NAME:          mapReadStarts
-*AUTHOR:        John Morrison
-*CREATION DATE: 21/10/98
-*LAST MODIFIED: 21/10/98
-*PURPOSE:
-*  Reads the player start information from a map file
-*  into the player starts structure. Returns if the 
-*  operation was successful or not
-*
-*ARGUMENTS:
-*  fp    - Pointer to the file being read from
-*  value - Pointer to the pillbox structure
-*********************************************************/
-bool mapReadStarts(FILE *fp, starts *value);
-
-/*********************************************************
-*NAME:          mapProcessRun
-*AUTHOR:        John Morrison
-*CREATION DATE: 21/10/98
-*LAST MODIFIED: 21/10/98
-*PURPOSE:
-*  Process a single map run and puts values into map
-*  data structure.
-*  Returns whether operation was successful or not
-*
-*ARGUMENTS:
-*  fp     - Pointer to the file being read from
-*  value  - Pointer to the map data structure
-*  elems  - Number of elements in the run
-*  yValue - The y Map co-ordinate
-*  startX - The start x co-ordinate
-*  endX   - The end x co-ordinate
-*********************************************************/
-bool mapProcessRun(FILE *fp,map *value,BYTE elems, MAP_Y yValue, BYTE startX, BYTE endX);
-
-/*********************************************************
-*NAME:          mapReadRuns
-*AUTHOR:        John Morrison
-*CREATION DATE: 21/10/98
-*LAST MODIFIED: 21/10/98
-*PURPOSE:
-*  Reads the map runs into the map data structure
-*  Returns if the operation was successful or not
-*
-*ARGUMENTS:
-*  fp    - Pointer to the file being read from
-*  value - Pointer to the map data structure
-*********************************************************/
-bool mapReadRuns(FILE *fp, map *value);
-
+/* The BMAP record/run readers (mapReadPills / mapReadBases /
+ * mapReadStarts / mapProcessRun / mapReadRuns) are now file-static
+ * inside bolo_map.c. They read through an internal MapReader that
+ * backs either a FILE* (mapRead) or a memory buffer
+ * (mapReadFromMemory), so they no longer take a FILE* and are not
+ * part of the public surface. The logviewer keeps its own lv_*
+ * copies. */
 
 /*********************************************************
 *NAME:          mapRead
@@ -280,6 +204,24 @@ bool mapReadRuns(FILE *fp, map *value);
 *  pb      - Pointer to the pillbox structure
 *********************************************************/
 bool mapRead(char *fileName, map *value, pillboxes *pb, bases *bs, starts *ss);
+
+/*********************************************************
+*NAME:          mapReadFromMemory
+*AUTHOR:        John Morrison
+*PURPOSE:
+*  Like mapRead, but parses a .map file image held in
+*  memory instead of reading from disk. No temp file is
+*  written. Returns if the operation was successful.
+*
+*ARGUMENTS:
+*  data    - Pointer to the .map file bytes
+*  len     - Number of bytes available at data
+*  value   - Pointer to the map data structure
+*  pb      - Pointer to the pillbox structure
+*  bs      - Pointer to the bases structure
+*  ss      - Pointer to the starts structure
+*********************************************************/
+bool mapReadFromMemory(const BYTE *data, int len, map *value, pillboxes *pb, bases *bs, starts *ss);
 
 /*********************************************************
 *NAME:          mapGetPos

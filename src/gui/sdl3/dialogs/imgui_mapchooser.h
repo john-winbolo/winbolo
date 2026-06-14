@@ -339,6 +339,17 @@ void mapChooserSetSelectedFile(MapChooserState *state,
                                 const char *path,
                                 const char *displayName);
 
+/* Like mapChooserSetSelectedFile, but takes an on-disk .map file
+ * image held in memory (e.g. a WBN download kept in RAM) instead of
+ * a path. The bytes are parsed and re-serialized to the runtime
+ * compressed format in memory so the texture, interactive preview
+ * and click-to-enlarge popup all render with no temp file written.
+ * No-op if state or bytes is NULL or len <= 0. */
+void mapChooserSetSelectedMapBytes(MapChooserState *state,
+                                   SDL_Renderer *renderer,
+                                   const BYTE *bytes, int len,
+                                   const char *displayName);
+
 /* Pop the most recent "go to folder" click out of the chooser, if
  * any. Returns true and fills outPath when the user clicked the
  * right-anchored folder link below the preview (set up via the
