@@ -378,6 +378,10 @@ int run_viewtick_displayed_tick(void);
 int run_wire_corpus(void);
 int run_wire_corpus_capture(void);
 
+/* packetTypeName mapping pin (test_packet_type_names.c): every PACKET_* maps to
+ * its exact debug string and an undefined type id resolves to "UNKNOWN". */
+int run_packet_type_names(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */
