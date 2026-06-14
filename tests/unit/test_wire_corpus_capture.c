@@ -22,6 +22,10 @@
 #include "wire_corpus.h"
 #include "test_harness.h"
 
+#ifndef WB_WIRE_FIXTURE_DIR
+#define WB_WIRE_FIXTURE_DIR "tests/fixtures/wire"
+#endif
+
 #define CAP_BYTES          64
 #define CAP_MAX_LABELS     16
 #define CAP_PER_LABEL      4    /* distinct instances kept per message */
@@ -85,7 +89,7 @@ int run_wire_corpus_capture(void) {
     size_t i, total;
     int b;
 
-    if (dir == NULL || dir[0] == '\0') dir = ".";
+    if (dir == NULL || dir[0] == '\0') dir = WB_WIRE_FIXTURE_DIR;
 
     memset(&h, 0, sizeof(h));
     wireCorpusReset();

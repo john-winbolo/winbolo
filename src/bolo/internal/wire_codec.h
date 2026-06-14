@@ -56,8 +56,15 @@
                                      StructType *s) {                   \
         size_t pos = 0; FIELDS(WIRE_UNPACK_FIELD) return (int)pos; }
 
-#define DEFINE_WIRE_CODEC(Name, FIELDS) \
-    DEFINE_WIRE_CODEC_NAMED(Name, Name, FIELDS)
+/* Production instantiation: external linkage (prototypes live in
+ * transport_udp_internal.h), with the corpus tap baked into pack so a capture
+ * build records the message under `label`. */
+#define DEFINE_WIRE_CODEC(Name, label, FIELDS)                    \
+    int pack##Name(uint8_t *buf, const Name *s) {                 \
+        size_t pos = 0; FIELDS(WIRE_PACK_FIELD)                   \
+        WIRE_CORPUS_TAP(label, buf, pos); return (int)pos; }      \
+    int unpack##Name(const uint8_t *buf, size_t avail, Name *s) { \
+        size_t pos = 0; FIELDS(WIRE_UNPACK_FIELD) return (int)pos; }
 
 /* Corpus capture hook. Compiled out (and referencing nothing) unless the
  * capture build flag is set. The implementation lives in a test TU. */

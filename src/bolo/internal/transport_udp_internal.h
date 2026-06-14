@@ -215,15 +215,16 @@ bool udpInputEdgeChanged(const InputPacket *prev, const InputPacket *cur);
 int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts);
 int unpackTankSnapshot(const uint8_t *buf, size_t avail, TankSnapshot *ts);
 int packShellSnapshot(uint8_t *buf, const ShellSnapshot *ss);
-void unpackShellSnapshot(const uint8_t *buf, ShellSnapshot *ss);
+int unpackShellSnapshot(const uint8_t *buf, size_t avail, ShellSnapshot *ss);
 int packTkExplosionSnapshot(uint8_t *buf, const TkExplosionSnapshot *tke);
-void unpackTkExplosionSnapshot(const uint8_t *buf, TkExplosionSnapshot *tke);
+int unpackTkExplosionSnapshot(const uint8_t *buf, size_t avail,
+                              TkExplosionSnapshot *tke);
 int packGameEvent(uint8_t *buf, const GameEvent *ev);
 int unpackGameEvent(const uint8_t *buf, GameEvent *ev);
 int packBaseSnapshot(uint8_t *buf, const BaseSnapshot *bs);
-void unpackBaseSnapshot(const uint8_t *buf, BaseSnapshot *bs);
+int unpackBaseSnapshot(const uint8_t *buf, size_t avail, BaseSnapshot *bs);
 int packPillSnapshot(uint8_t *buf, const PillSnapshot *ps);
-void unpackPillSnapshot(const uint8_t *buf, PillSnapshot *ps);
+int unpackPillSnapshot(const uint8_t *buf, size_t avail, PillSnapshot *ps);
 
 /* ---- Socket helpers ---- */
 

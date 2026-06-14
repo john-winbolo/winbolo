@@ -1460,36 +1460,57 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (!tankBoundsOk) break;
         }
 
-        /* Unpack shells */
+        /* Unpack shells — each entry is length-checked against the bytes
+         * remaining, returning 0 on truncation. */
         if (shellCount > MAX_SNAPSHOT_SHELLS) shellCount = MAX_SNAPSHOT_SHELLS;
-        if (len < pos + shellCount * SHELL_SNAPSHOT_WIRE_SIZE) break;
-        for (i = 0; i < shellCount; i++) {
-            unpackShellSnapshot(buf + pos, &c->snapshotShells[i]);
-            pos += SHELL_SNAPSHOT_WIRE_SIZE;
+        {
+            bool shellBoundsOk = TRUE;
+            for (i = 0; i < shellCount; i++) {
+                int n = unpackShellSnapshot(buf + pos, (size_t)(len - pos),
+                                            &c->snapshotShells[i]);
+                if (n == 0) { shellBoundsOk = FALSE; break; }
+                pos += n;
+            }
+            if (!shellBoundsOk) break;
         }
 
         /* Unpack tank explosions */
         if (tkExplosionCount > MAX_SNAPSHOT_TK_EXPLOSIONS) tkExplosionCount = MAX_SNAPSHOT_TK_EXPLOSIONS;
-        if (len < pos + tkExplosionCount * TK_EXPLOSION_SNAPSHOT_WIRE_SIZE) break;
-        for (i = 0; i < tkExplosionCount; i++) {
-            unpackTkExplosionSnapshot(buf + pos, &c->snapshotTkExplosions[i]);
-            pos += TK_EXPLOSION_SNAPSHOT_WIRE_SIZE;
+        {
+            bool tkBoundsOk = TRUE;
+            for (i = 0; i < tkExplosionCount; i++) {
+                int n = unpackTkExplosionSnapshot(buf + pos, (size_t)(len - pos),
+                                                  &c->snapshotTkExplosions[i]);
+                if (n == 0) { tkBoundsOk = FALSE; break; }
+                pos += n;
+            }
+            if (!tkBoundsOk) break;
         }
 
         /* Unpack bases */
         if (baseCount > MAX_SNAPSHOT_BASES) baseCount = MAX_SNAPSHOT_BASES;
-        if (len < pos + baseCount * BASE_SNAPSHOT_WIRE_SIZE) break;
-        for (i = 0; i < baseCount; i++) {
-            unpackBaseSnapshot(buf + pos, &c->snapshotBases[i]);
-            pos += BASE_SNAPSHOT_WIRE_SIZE;
+        {
+            bool baseBoundsOk = TRUE;
+            for (i = 0; i < baseCount; i++) {
+                int n = unpackBaseSnapshot(buf + pos, (size_t)(len - pos),
+                                           &c->snapshotBases[i]);
+                if (n == 0) { baseBoundsOk = FALSE; break; }
+                pos += n;
+            }
+            if (!baseBoundsOk) break;
         }
 
         /* Unpack pills */
         if (pillCount > MAX_SNAPSHOT_PILLS) pillCount = MAX_SNAPSHOT_PILLS;
-        if (len < pos + pillCount * PILL_SNAPSHOT_WIRE_SIZE) break;
-        for (i = 0; i < pillCount; i++) {
-            unpackPillSnapshot(buf + pos, &c->snapshotPills[i]);
-            pos += PILL_SNAPSHOT_WIRE_SIZE;
+        {
+            bool pillBoundsOk = TRUE;
+            for (i = 0; i < pillCount; i++) {
+                int n = unpackPillSnapshot(buf + pos, (size_t)(len - pos),
+                                           &c->snapshotPills[i]);
+                if (n == 0) { pillBoundsOk = FALSE; break; }
+                pos += n;
+            }
+            if (!pillBoundsOk) break;
         }
 
         /* Unpack reliable game events with dedup.

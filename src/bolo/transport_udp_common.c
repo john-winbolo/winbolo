@@ -23,6 +23,7 @@
 
 #include "transport_udp_internal.h"
 #include "wire_codec.h"
+#include "wire_messages.h"
 #include "../common/wb_log.h"
 
 /* ================================================================
@@ -328,45 +329,13 @@ int unpackTankSnapshot(const uint8_t *buf, size_t avail, TankSnapshot *ts) {
     return (int)pos;
 }
 
-/* Serialize one ShellSnapshot into buf. Returns bytes written (7). */
-int packShellSnapshot(uint8_t *buf, const ShellSnapshot *ss) {
-    packU16(buf, ss->worldX);
-    packU16(buf + 2, ss->worldY);
-    buf[4] = ss->angle;
-    buf[5] = ss->owner;
-    buf[6] = ss->length;
-    WIRE_CORPUS_TAP("shell_snapshot", buf, SHELL_SNAPSHOT_WIRE_SIZE);
-    return SHELL_SNAPSHOT_WIRE_SIZE;
-}
-
-void unpackShellSnapshot(const uint8_t *buf, ShellSnapshot *ss) {
-    ss->worldX = unpackU16(buf);
-    ss->worldY = unpackU16(buf + 2);
-    ss->angle = buf[4];
-    ss->owner = buf[5];
-    ss->length = buf[6];
-}
-
-/* Serialize one TkExplosionSnapshot into buf. Returns bytes written (8). */
-int packTkExplosionSnapshot(uint8_t *buf, const TkExplosionSnapshot *tke) {
-    packU16(buf, tke->worldX);
-    packU16(buf + 2, tke->worldY);
-    buf[4] = tke->angle;
-    buf[5] = tke->length;
-    buf[6] = tke->explodeType;
-    buf[7] = tke->creator;
-    WIRE_CORPUS_TAP("tk_explosion_snapshot", buf, TK_EXPLOSION_SNAPSHOT_WIRE_SIZE);
-    return TK_EXPLOSION_SNAPSHOT_WIRE_SIZE;
-}
-
-void unpackTkExplosionSnapshot(const uint8_t *buf, TkExplosionSnapshot *tke) {
-    tke->worldX = unpackU16(buf);
-    tke->worldY = unpackU16(buf + 2);
-    tke->angle = buf[4];
-    tke->length = buf[5];
-    tke->explodeType = buf[6];
-    tke->creator = buf[7];
-}
+/* Flat fixed-layout leaf snapshot codecs, generated from the field lists in
+ * wire_messages.h. pack returns bytes written; unpack returns bytes consumed
+ * or 0 if `avail` is too short for a field. */
+DEFINE_WIRE_CODEC(ShellSnapshot,       "shell_snapshot",        SHELL_SNAPSHOT_FIELDS)
+DEFINE_WIRE_CODEC(TkExplosionSnapshot, "tk_explosion_snapshot", TK_EXPLOSION_SNAPSHOT_FIELDS)
+DEFINE_WIRE_CODEC(BaseSnapshot,        "base_snapshot",         BASE_SNAPSHOT_FIELDS)
+DEFINE_WIRE_CODEC(PillSnapshot,        "pill_snapshot",         PILL_SNAPSHOT_FIELDS)
 
 /* Serialize one GameEvent into buf. Returns bytes written (1 + dataSize). */
 int packGameEvent(uint8_t *buf, const GameEvent *ev) {
@@ -384,42 +353,6 @@ int unpackGameEvent(const uint8_t *buf, GameEvent *ev) {
     memset(ev->data, 0, sizeof(ev->data));
     memcpy(ev->data, buf + 1, dataLen);
     return 1 + dataLen;
-}
-
-int packBaseSnapshot(uint8_t *buf, const BaseSnapshot *bs) {
-    buf[0] = bs->owner;
-    buf[1] = bs->armour;
-    buf[2] = bs->shells;
-    buf[3] = bs->mines;
-    WIRE_CORPUS_TAP("base_snapshot", buf, BASE_SNAPSHOT_WIRE_SIZE);
-    return BASE_SNAPSHOT_WIRE_SIZE;
-}
-
-void unpackBaseSnapshot(const uint8_t *buf, BaseSnapshot *bs) {
-    bs->owner = buf[0];
-    bs->armour = buf[1];
-    bs->shells = buf[2];
-    bs->mines = buf[3];
-}
-
-int packPillSnapshot(uint8_t *buf, const PillSnapshot *ps) {
-    buf[0] = ps->x;
-    buf[1] = ps->y;
-    buf[2] = ps->owner;
-    buf[3] = ps->armour;
-    buf[4] = ps->speed;
-    buf[5] = ps->inTank;
-    WIRE_CORPUS_TAP("pill_snapshot", buf, PILL_SNAPSHOT_WIRE_SIZE);
-    return PILL_SNAPSHOT_WIRE_SIZE;
-}
-
-void unpackPillSnapshot(const uint8_t *buf, PillSnapshot *ps) {
-    ps->x = buf[0];
-    ps->y = buf[1];
-    ps->owner = buf[2];
-    ps->armour = buf[3];
-    ps->speed = buf[4];
-    ps->inTank = buf[5];
 }
 
 /* ================================================================
