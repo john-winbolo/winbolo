@@ -1314,6 +1314,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=odrzucono
 STR_DLGLOBBY_REJECT_NOTHOST=akcja tylko dla gospodarza
 STR_DLGLOBBY_REJECT_LOCKED=ustawienie zablokowane przez serwer
 STR_DLGLOBBY_REJECT_INVALID=nieprawidłowe żądanie
+STR_DLGLOBBY_REJECT_BOT_LIMIT=osiągnięto limit botów
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Zmiana lobby odrzucona: {string1}
 
 # Lobby — Lock badge fallback (1364)

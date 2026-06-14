@@ -1344,6 +1344,7 @@ STR_DLGLOBBY_BAL_STATUS_FAILED=WBN balance failed
 STR_DLGNETINFO_LOSS=Packet loss: {number}% ({number2}/{number3} this sec, {number4} game total)
 STR_DLGNETINFO_RECONCILE=Reconciles: {number}/s, err avg {string1}px, max {string2}px, smoothing {string3}px
 STR_KICK_MAP_DESYNC=Map out of sync with the server — please rejoin.
+STR_DLGLOBBY_REJECT_BOT_LIMIT=bot limit reached
 STR_DLGWBN_RANK=#{number} of {number2}
 STR_DLGWBN_UNRANKED=Unranked
 

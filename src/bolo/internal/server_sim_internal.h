@@ -99,6 +99,7 @@ struct ServerSim {
     bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
+    BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     bool     worldPreLoaded;       /* TRUE while the world is fresh from
                                     * serverSimCreate*; FALSE after the first
                                     * serverSimResetGameWorld. Drives the

@@ -1318,6 +1318,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=geweigerd
 STR_DLGLOBBY_REJECT_NOTHOST=alleen voor host
 STR_DLGLOBBY_REJECT_LOCKED=instelling vergrendeld door server
 STR_DLGLOBBY_REJECT_INVALID=ongeldig verzoek
+STR_DLGLOBBY_REJECT_BOT_LIMIT=botlimiet bereikt
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Lobbywijziging geweigerd: {string1}
 
 # Lock badge fallback

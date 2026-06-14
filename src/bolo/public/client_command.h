@@ -96,7 +96,12 @@ typedef enum {
     CMD_REJECT_NAME_RESERVED_SUFFIX,
     CMD_REJECT_NAME_MIXED_SCRIPTS,
     CMD_REJECT_NAME_INVALID,
-    CMD_REJECT_NAME_TAKEN
+    CMD_REJECT_NAME_TAKEN,
+    /* Lobby add-bot refused because the server's -maxbots cap is
+     * already reached. Surfaced to the host via the reject toast as a
+     * dedicated "bot limit reached" line rather than the generic
+     * CMD_REJECT_INVALID. */
+    CMD_REJECT_BOT_LIMIT
 } CmdResult;
 
 /* CMD_TEAM_SET — set the team number for a lobby slot. Sender must

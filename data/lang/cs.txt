@@ -1318,6 +1318,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=zamítnuto
 STR_DLGLOBBY_REJECT_NOTHOST=akce pouze pro hostitele
 STR_DLGLOBBY_REJECT_LOCKED=nastavení uzamčeno serverem
 STR_DLGLOBBY_REJECT_INVALID=neplatný požadavek
+STR_DLGLOBBY_REJECT_BOT_LIMIT=dosažen limit botů
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Změna lobby zamítnuta: {string1}
 
 # Lobby — Lock badge fallback (1364)

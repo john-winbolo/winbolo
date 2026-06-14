@@ -1082,6 +1082,7 @@ static const LangEntry langTable[] = {
     {1493, "Gray letterbox bars"},
     {1494, "Reconciles: {number}/s, err avg {string1}px, max {string2}px, smoothing {string3}px"},
     {1495, "Map out of sync with the server \xE2\x80\x94 please rejoin."},
+    {1496, "bot limit reached"},
 
     /* macOS native menu — App / File / Window menu items mirrored by
      * src/gui/sdl3/platform/mac_menubar.mm. Not referenced by the
