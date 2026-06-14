@@ -199,6 +199,12 @@ int run_return_to_lobby_drops_wbn_keeps_identity(void);
 int run_wbn_lobby_update_deferred_during_rotation(void);
 int run_wbn_lobby_update_sends_when_not_rotating(void);
 
+/* No-lobby map-rotation round restart (test_maprotate_rotation.c). The
+ * restart re-arms the empty-server check and opens the WBN session-rotation
+ * window so the next round's map is never reported on the old server_key. */
+int run_maprotate_restarts_round_and_rearms(void);
+int run_maprotate_defers_wbn_update_until_key_rotated(void);
+
 /* Deferred WBN PLAYER_JOIN core (test_wbn_deferred_join.c). The join
  * event is held until the slot's identity is known for the session —
  * keyed on reauth, anonymous on grace expiry — and re-fires per round.

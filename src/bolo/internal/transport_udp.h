@@ -562,6 +562,12 @@ void transportUdpServerRetransmitUnackedControl(void);
  * existing lobby-snapshot machinery.  No-op when WBN isn't running. */
 void transportUdpServerBroadcastWbnRekey(struct ServerSim *sim);
 
+/* Boot every connected client and bot, notifying real clients with
+ * PACKET_SERVER_SHUTDOWN first so they leave cleanly. Used by the no-lobby
+ * map-rotation path at a round boundary — the next round carries nobody
+ * forward. */
+void transportUdpServerDisconnectAll(struct ServerSim *sim);
+
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */
 void transportUdpServerSetBotName(BYTE playerNum, const char *name);

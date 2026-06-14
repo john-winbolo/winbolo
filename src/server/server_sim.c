@@ -408,6 +408,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->hadPlayersEver = FALSE;
     sim->quitOnWin = FALSE;
     sim->autoCloseOnEmpty = FALSE;
+    sim->mapRotateEnabled = FALSE;
     sim->pendingWinMessage[0] = '\0';
     sim->emptyResetEnabled = TRUE;
     sim->emptyResetMinutes = 5;
@@ -2623,6 +2624,14 @@ void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled) {
     sim->autoCloseOnEmpty = enabled;
 }
 
+void serverSimSetMapRotate(ServerSim *sim, bool enabled) {
+    sim->mapRotateEnabled = enabled;
+}
+
+bool serverSimIsMapRotateEnabled(const ServerSim *sim) {
+    return sim != NULL && sim->mapRotateEnabled;
+}
+
 void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed) {
     sim->balanceProposal.broadcastNeeded = needed;
 }
@@ -3995,6 +4004,56 @@ void serverSimStartGame(ServerSim *sim) {
 
     /* A snapshot will be written on the first running tick
      * (tick 0 % FULL_SYNC_INTERVAL == 0). */
+}
+
+void serverSimMapRotateRound(ServerSim *sim) {
+    /* No-lobby map-rotation round restart. The lifecycle has already booted
+     * every client, so unlike serverSimReturnToLobby there is no player
+     * save/restore or alliance carry-forward — the next round starts empty.
+     * The reusable pieces are the same: pick the next map and reset the
+     * world, then start a fresh running round straight away (no lobby wait).
+     *
+     * Pairs with serverLifecycleRotateRound, which does the surrounding
+     * disconnect-all, WBN session rotation and round-log upload. The split
+     * mirrors serverSimReturnToLobby / its lifecycle caller: the WBN dance
+     * and transport teardown are lifecycle concerns; this is the sim core. */
+
+    /* Open the WBN session-rotation window before touching the map. The
+     * map pick below renames the map under the still-live old server_key;
+     * serverSimWbnLobbyUpdate holds any such change dirty while this is set.
+     * The lifecycle clears it after winbolonetBeginSession installs the new
+     * round's key — exactly as serverSimReturnToLobby relies on. */
+    sim->wbnSessionRotating = TRUE;
+
+    /* Drop vote / map-skip state scoped to the round we're leaving. */
+    serverSimGameVoteResetAll(sim);
+    serverSimMapSkipVotesReset(sim);
+
+    /* serverSimChangeMap (reached via serverSimMapDirPickRandom) only runs
+     * in lobby state, so drop into it for the pick. serverSimStartGame
+     * below moves us back to running. Both existing rotation sites do the
+     * same transient lobby hop (the empty-reset path explicitly, the
+     * gameOver path via serverSimReturnToLobby). */
+    sim->state = serverStateLobby;
+    if (sim->mapDirFiles != NULL) {
+        serverSimMapDirPickRandom(sim);
+    }
+
+    /* Full world reset + tank (re)creation + state -> running. With no
+     * players connected this just reloads the freshly-picked map's cached
+     * data and starts an empty round waiting for joiners. */
+    serverSimStartGame(sim);
+
+    sim->gameLength = sim->originalGameLength;
+    sim->emptyResetTicks = -1;
+
+    /* serverSimStartGame latches hadPlayersEver = TRUE, which would make the
+     * lifecycle's empty-server check fire on the very next tick (the round
+     * starts with zero players) and rotate again immediately. Re-arm it so
+     * the empty trigger can only fire once someone joins and then leaves. */
+    sim->hadPlayersEver = FALSE;
+
+    serverSimConsoleMessage("Map rotation: started new round.");
 }
 
 bool serverSimChangeMap(ServerSim *sim, char *mapFileName) {

@@ -2515,6 +2515,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
+    tests/unit/test_maprotate_rotation.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
     tests/unit/test_lobby_reset_cleanup.c

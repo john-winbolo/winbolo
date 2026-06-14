@@ -695,6 +695,10 @@ void printArgs() {
   fprintf(stderr, "-autoclose    - Automatically quit the server when all players have left\n");
   fprintf(stderr, "                the game\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
+  fprintf(stderr, "-maprotate    - No-lobby map rotation: on a win or when the server empties,\n");
+  fprintf(stderr, "                boot all players, pick the next -mapdir map and restart a\n");
+  fprintf(stderr, "                fresh round. Never auto-quits (Ctrl-C / quit only). Implies\n");
+  fprintf(stderr, "                -nolobby and requires -mapdir.\n");
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
   fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
   fprintf(stderr, "-emptyresetmins <N> - Minutes before empty server resets to lobby (default: 5)\n");
@@ -1246,8 +1250,16 @@ int main(int argc, char **argv) {
   }
 
   statusFile = argExist(argc, argv, "statusFile");
-  serverSimSetQuitOnWin(serverSim, argExist(argc, argv, "quitonwin") == TRUE);
+  /* -maprotate: no-lobby server that rotates maps forever. A win or an empty
+   * server boots everyone, picks the next -mapdir map and restarts a fresh
+   * round; it never auto-quits. Implies no-lobby (set below) and forces
+   * quit-on-win so a win drives the round to game-over, where the lifecycle
+   * intercepts it and rotates instead of shutting the process down. */
+  bool mapRotate = (argExist(argc, argv, "maprotate") == TRUE);
+  serverSimSetQuitOnWin(serverSim,
+                        (argExist(argc, argv, "quitonwin") == TRUE) || mapRotate);
   serverSimSetAutoCloseOnEmpty(serverSim, argExist(argc, argv, "autoclose") == TRUE);
+  serverSimSetMapRotate(serverSim, mapRotate);
 
   {
     int argNum = findArg(argc, argv, "ticks");
@@ -1339,9 +1351,18 @@ int main(int argc, char **argv) {
   /* -nolobby: skip lobby, start running immediately (backward-compatible
    * mode). serverInstanceStartup runs SetLobbyEnabled(false) + StartGame
    * from cfg.skipLobby; emptyReset is force-disabled in this mode. */
-  bool skipLobby = (argExist(argc, argv, "nolobby") == TRUE);
+  bool skipLobby = (argExist(argc, argv, "nolobby") == TRUE) || mapRotate;
   if (skipLobby) {
     emptyResetEnabled = false;
+  }
+
+  /* -maprotate needs a -mapdir to rotate through. */
+  if (mapRotate && findArg(argc, argv, "mapdir") == ARG_NOT_FOUND) {
+    fprintf(stderr, "Error: -maprotate requires -mapdir\n");
+#ifdef USING_SDL
+    SDL_Quit();
+#endif
+    return 0;
   }
 
   /* -mapdir: build validated map list for rotation between rounds.
@@ -1349,7 +1370,10 @@ int main(int argc, char **argv) {
   {
     int argNum = findArg(argc, argv, "mapdir");
     if (argNum != ARG_NOT_FOUND && serverSimGetMapDirFiles(serverSim) == NULL) {
-      if (skipLobby) {
+      /* -mapdir normally requires lobby mode (no-lobby has no round boundary
+       * to rotate at). -maprotate is the exception: it is a no-lobby mode
+       * built around rotating at each round end. */
+      if (skipLobby && !mapRotate) {
         fprintf(stderr, "Error: -mapdir requires lobby mode (incompatible with -nolobby)\n");
 #ifdef USING_SDL
         SDL_Quit();

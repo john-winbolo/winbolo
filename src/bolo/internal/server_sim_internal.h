@@ -142,6 +142,10 @@ struct ServerSim {
                                       * game start doesn't loop. */
     bool         quitOnWin;          /* Server should check for win condition */
     bool         autoCloseOnEmpty;   /* Server should close when all players leave */
+    bool         mapRotateEnabled;   /* No-lobby map-rotation mode: a win or an
+                                      * empty server boots everyone, picks the
+                                      * next map, and restarts a fresh round
+                                      * instead of quitting. Set by -maprotate. */
     char         pendingWinMessage[512]; /* Win message to send after returning to lobby */
     bool         emptyResetEnabled;  /* Reset to lobby when empty for emptyResetMinutes */
     int          emptyResetMinutes;  /* Minutes before empty reset (default 5) */
