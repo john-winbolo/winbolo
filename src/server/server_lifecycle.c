@@ -239,8 +239,19 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
   roundLogStash();
 
   /* Sim-core reset: opens the WBN rotation window, picks the next map and
-   * starts a fresh empty running round (state -> running). */
+   * starts a fresh running round (state -> running). serverSimStartGame inside
+   * recreated the server-side tanks for every still-connected player, which
+   * after the disconnect-all above is just the bots (humans were booted). */
   serverSimMapRotateRound(sim);
+
+  /* Re-arm any kept bots for the new round: reload their ClientSim map from the
+   * freshly-loaded world, recreate their tanks and reset brain state. Mirrors
+   * the countdown->running transition's botManagerOnGameStart call — the
+   * no-lobby rotation path skips that transition, so it must do this itself, or
+   * a -maprotate -bots server would keep stale round-1 bot state. */
+  if (serverSimGetNumBots(sim) > 0) {
+    botManagerOnGameStart(sim);
+  }
 
   /* WBN session rotation around the round-log upload. End the finished round's
    * session (server/quit) so WBN accepts the upload against the still-live
@@ -582,7 +593,7 @@ void serverInstanceTick(ServerSim *sim) {
   if ((sim->autoCloseOnEmpty || serverSimIsMapRotateEnabled(sim)) &&
       serverSimCheckAutoClose(sim)) {
     if (serverSimIsMapRotateEnabled(sim)) {
-      serverSimConsoleMessage("Server empty — rotating to a new round.");
+      serverSimConsoleMessage("Server empty - rotating to a new round.");
       serverLifecycleRotateRound(sim);
     } else {
       sim->lobbyEnabled = FALSE;
