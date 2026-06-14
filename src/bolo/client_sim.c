@@ -448,6 +448,7 @@ static void clientSimDestroyContents(ClientSim *cs) {
 
   /* Clear lobby chat buffer */
   cs->lobbyChatHistory[0] = '\0';
+  cs->lobbyTeamChatHistory[0] = '\0';
   cs->lobbyHostSlotKnown = false;
 
   /* Clear network callbacks */
@@ -1059,6 +1060,19 @@ void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *messa
   }
 }
 
+void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *message) {
+  size_t histLen = strlen(cs->lobbyTeamChatHistory);
+  size_t needed = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */
+  if (histLen + needed < sizeof(cs->lobbyTeamChatHistory)) {
+    if (histLen > 0) {
+      strcat(cs->lobbyTeamChatHistory, "\n");
+    }
+    strcat(cs->lobbyTeamChatHistory, name);
+    strcat(cs->lobbyTeamChatHistory, ": ");
+    strcat(cs->lobbyTeamChatHistory, message);
+  }
+}
+
 /* Default chatSendFunc: route outbound chat through clientSimSubmitCommand
  * via clientSimNetSendChat. Set as the default for every ClientSim —
  * frontends that want different behavior can override via
@@ -1498,6 +1512,7 @@ time_t   clientSimGetTimeStart(const ClientSim *cs)         { return cs->timeSta
 
 const char *clientSimGetMapName(const ClientSim *cs)          { return cs->mapName; }
 const char *clientSimGetLobbyChatHistory(const ClientSim *cs) { return cs->lobbyChatHistory; }
+const char *clientSimGetLobbyTeamChatHistory(const ClientSim *cs) { return cs->lobbyTeamChatHistory; }
 const char *clientSimGetMyLastPlayerName(const ClientSim *cs) { return cs->myLastPlayerName; }
 
 const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n) {

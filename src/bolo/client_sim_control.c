@@ -459,6 +459,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * lobby chat after). Keeping it across the game was confusing —
          * a "X has joined" line stayed visible after X left mid-round. */
         cs->lobbyChatHistory[0] = '\0';
+        cs->lobbyTeamChatHistory[0] = '\0';
         cs->lobbyHostSlotKnown = false;
         /* Wipe per-game client state that a ClientSim surviving the lobby
          * cycle would otherwise carry into the new game. None of this is
@@ -611,11 +612,16 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         BYTE destPlayer = evt->u.chat.destPlayer;
         uint16_t bodyLen = evt->u.chat.bodyLen;
         BYTE myPN = clientSimGetMyPlayerNum(cs);
+        const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPN);
+        BYTE myTeam = mySlot ? mySlot->teamNumber : 0;
         /* Only deliver if I'm the recipient or it's a broadcast.
-         * Self-sends still surface in the sender's chat_log via the
-         * Lua side (init.lua's outbound capture), so we don't need
+         * Team-addressed chat reaches me when it carries my (non-zero)
+         * team. Self-sends still surface in the sender's chat_log via
+         * the Lua side (init.lua's outbound capture), so we don't need
          * a self-echo here. */
-        bool for_me = (destPlayer == 0xFF) || (destPlayer == myPN);
+        bool for_me = (destPlayer == 0xFF) || (destPlayer == myPN)
+            || (CHAT_DEST_IS_TEAM(destPlayer) && myTeam != 0
+                && CHAT_DEST_TEAM_OF(destPlayer) == myTeam);
         if (for_me && fromPlayer < MAX_TANKS && bodyLen > 0
             && fromPlayer != myPN) {
             char msg[PACKET_MAX_CHAT_MESSAGE + 1];
@@ -623,7 +629,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             if (copyLen > PACKET_MAX_CHAT_MESSAGE) copyLen = PACKET_MAX_CHAT_MESSAGE;
             memcpy(msg, evt->u.chat.body, copyLen);
             msg[copyLen] = '\0';
-            clientSimIncomingMessage(cs, fromPlayer, msg);
+            if (CHAT_DEST_IS_TEAM(destPlayer) && clientSimIsInLobby(cs)) {
+                clientSimAppendLobbyTeamChat(
+                    cs, clientSimGetLobbySlot(cs, fromPlayer)->playerName, msg);
+            } else {
+                clientSimIncomingMessage(cs, fromPlayer, msg);
+            }
         }
         break;
     }

@@ -440,6 +440,8 @@
 #define STR_DLGLOBBY_CANCELSKIP             611
 #define STR_DLGLOBBY_VOTES                  612
 #define STR_DLGLOBBY_CHAT                   613
+#define STR_DLGLOBBY_CHAT_GENERAL           1497
+#define STR_DLGLOBBY_CHAT_TEAM              1498
 #define STR_DLGLOBBY_READY                  614
 #define STR_DLGLOBBY_UNREADY                615
 #define STR_DLGLOBBY_BALANCE_TEAMS          616

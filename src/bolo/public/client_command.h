@@ -165,6 +165,16 @@ typedef struct {
     char     body[PACKET_MAX_CHAT_MESSAGE];
 } CmdChat;
 
+/* Team-addressed chat. destPlayer carries the target team in a bounded
+ * range above the slot/sentinel space: CHAT_DEST_TEAM_BASE + teamNumber,
+ * team 1..16 -> 0x81..0x90. Use the bounded predicate, NOT (d & 0x80) —
+ * 0x80 aliases the 0xFF broadcast sentinel and would swallow broadcast
+ * chat. Every routing site checks 0xFF (broadcast) first, then
+ * CHAT_DEST_IS_TEAM, then slot unicast. */
+#define CHAT_DEST_TEAM_BASE 0x80
+#define CHAT_DEST_IS_TEAM(d) ((d) >= 0x81 && (d) <= 0x90)
+#define CHAT_DEST_TEAM_OF(d) ((uint8_t)((d) - CHAT_DEST_TEAM_BASE))
+
 /* CMD_ALLIANCE_REQUEST — sender wants to ally with toPlayer.
  * Sender is senderSlot (the wire's fromPlayer byte is vestigial). */
 typedef struct {

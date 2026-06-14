@@ -729,6 +729,21 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
                           idx, (int)from);
                 return;
             }
+        } else if (CHAT_DEST_IS_TEAM(dest)) {
+            /* Team-addressed: only members of the addressed team receive,
+             * and the real-player sender is skipped (local echo covers it). */
+            const LobbyPlayer *lp =
+                serverSimGetLobbyPlayer(serverSimGetActive(), client->playerNum);
+            if (!lp || lp->teamNumber != CHAT_DEST_TEAM_OF(dest)) {
+                mpDiagLog("[srv] deliver FILTER slot=%d type=CHAT reason=not-on-team dest=%d clientPlayerNum=%d",
+                          idx, (int)dest, (int)client->playerNum);
+                return;
+            }
+            if (from < MAX_TANKS && client->playerNum == from) {
+                mpDiagLog("[srv] deliver FILTER slot=%d type=CHAT reason=sender-skip from=%d",
+                          idx, (int)from);
+                return;
+            }
         } else {
             /* Unicast: only the addressed slot receives. */
             if (client->playerNum != dest) {

@@ -212,6 +212,7 @@ struct ClientSim {
     bool             mapDownloadComplete; /* Gate for ready button */
     bool             inLobby;           /* TRUE if server is lobby-enabled */
     char             lobbyChatHistory[4096]; /* Lobby chat buffer with player names */
+    char             lobbyTeamChatHistory[4096]; /* Team-only lobby chat buffer */
 
     /* Lobby game settings (received from server in LOBBY_STATE packet) */
     gameType         lobbyGameType;

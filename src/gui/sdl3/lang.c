@@ -360,6 +360,8 @@ static const LangEntry langTable[] = {
     {611,  "Cancel Skip"},
     {612,  "{number}/{number2} votes to skip"},
     {613,  "Chat"},
+    {1497, "General"},
+    {1498, "Team"},
     {614,  "Ready"},
     {615,  "Unready"},
     {616,  "Balance Teams"},

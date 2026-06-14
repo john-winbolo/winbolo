@@ -177,6 +177,22 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
     }
     case CMD_CHAT: {
         const CmdChat *p = &cmd->u.chat;
+        BYTE dest = p->destPlayer;
+        /* Reject out-of-range high values: anything >= 0x80 that is
+         * neither broadcast (0xFF), the server-message sentinel (0xFE),
+         * nor a valid team address (0x81..0x90). */
+        if (dest >= 0x80 && dest != 0xFF && dest != 0xFE
+            && CHAT_DEST_IS_TEAM(dest) == 0) {
+            return CMD_REJECT_INVALID;
+        }
+        if (CHAT_DEST_IS_TEAM(dest)) {
+            const LobbyPlayer *sender =
+                serverSimGetLobbyPlayer(sim, (BYTE)senderSlot);
+            BYTE senderTeam = sender ? sender->teamNumber : 0;
+            if (senderTeam == 0 || CHAT_DEST_TEAM_OF(dest) != senderTeam) {
+                return CMD_REJECT_INVALID;  /* not your team / unassigned phantom */
+            }
+        }
         ControlEvent evt;
         memset(&evt, 0, sizeof(evt));
         evt.type = CTRL_CHAT;
