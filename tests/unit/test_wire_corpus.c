@@ -18,6 +18,10 @@
  * WIRE_SIZE and unpack(pack(s)) round-trips struct-identical. Once per message
  * it asserts WIRE_SIZE_OF(fields) equals the per-message WIRE_SIZE.
  *
+ * It also checks the generated presence-bitmask TankSnapshot codec against a
+ * verbatim copy of the pre-migration hand-rolled codec across every group
+ * combination, plus the golden fixture and the stub path.
+ *
  * No sockets and no file writes: it only reads committed fixtures.
  */
 #include <stdint.h>
@@ -145,10 +149,262 @@ MSG_CHECK_FN(check_base, BaseSnapshot, packBaseSnapshot, unpackBaseSnapshot,
 MSG_CHECK_FN(check_pill, PillSnapshot, packPillSnapshot, unpackPillSnapshot,
              "pill_snapshot", PILL_SNAPSHOT_WIRE_SIZE, PILL_SNAPSHOT_FIELDS)
 
+/* ---- TankSnapshot: differential check against a pre-migration oracle -------
+ *
+ * packTankRef / unpackTankRef are the hand-rolled presence-bitmask codec copied
+ * verbatim from transport_udp_common.c as it stood before the masked codec
+ * replaced it (the corpus tap removed). They are the reference the generated
+ * packTankSnapshot / unpackTankSnapshot must match byte-for-byte and
+ * struct-for-struct. */
+static int packTankRef(uint8_t *buf, const TankSnapshot *s) {
+    uint8_t mask = 0;
+    int pos;
+
+    buf[0] = s->playerNum;
+    if (s->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) {
+        return 1;
+    }
+
+    if (s->armour || s->shells || s->mines || s->trees || s->gunsightLen) {
+        mask |= TANK_PRESENT_OWNER_RES;
+    }
+    if (s->reload)    mask |= TANK_PRESENT_RELOAD;
+    if (s->deathWait) mask |= TANK_PRESENT_DEATHWAIT;
+    if (s->lgmFrame || s->lgmMX || s->lgmMY || s->lgmPX || s->lgmPY) {
+        mask |= TANK_PRESENT_LGM;
+    }
+    if (s->firstLeft || s->firstRight) mask |= TANK_PRESENT_TURNRAMP;
+    if (s->pingMs)      mask |= TANK_PRESENT_PING;
+    if (s->clientFlags) mask |= TANK_PRESENT_FLAGS;
+
+    buf[1] = mask;
+    packU16(buf + 2, s->worldX);
+    packU16(buf + 4, s->worldY);
+    packU16(buf + 6, s->angle);
+    packU16(buf + 8, s->speed);
+    buf[10] = s->tankStatus;
+    pos = 11;
+
+    if (mask & TANK_PRESENT_OWNER_RES) {
+        buf[pos++] = s->armour;
+        buf[pos++] = s->shells;
+        buf[pos++] = s->mines;
+        buf[pos++] = s->trees;
+        buf[pos++] = s->gunsightLen;
+    }
+    if (mask & TANK_PRESENT_RELOAD)    buf[pos++] = s->reload;
+    if (mask & TANK_PRESENT_DEATHWAIT) buf[pos++] = s->deathWait;
+    if (mask & TANK_PRESENT_LGM) {
+        buf[pos++] = s->lgmFrame;
+        buf[pos++] = s->lgmMX;
+        buf[pos++] = s->lgmMY;
+        buf[pos++] = s->lgmPX;
+        buf[pos++] = s->lgmPY;
+    }
+    if (mask & TANK_PRESENT_TURNRAMP) {
+        buf[pos++] = s->firstLeft;
+        buf[pos++] = s->firstRight;
+    }
+    if (mask & TANK_PRESENT_PING) {
+        packU16(buf + pos, s->pingMs);
+        pos += 2;
+    }
+    if (mask & TANK_PRESENT_FLAGS) buf[pos++] = s->clientFlags;
+    return pos;
+}
+
+static int unpackTankRef(const uint8_t *buf, size_t avail, TankSnapshot *s) {
+    uint8_t mask;
+    size_t pos;
+
+    memset(s, 0, sizeof(*s));
+    if (avail < 1) return 0;
+    s->playerNum = buf[0];
+    if (s->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) {
+        return 1;
+    }
+
+    if (avail < 11) return 0;
+    mask = buf[1];
+    s->worldX = unpackU16(buf + 2);
+    s->worldY = unpackU16(buf + 4);
+    s->angle = unpackU16(buf + 6);
+    s->speed = unpackU16(buf + 8);
+    s->tankStatus = buf[10];
+    pos = 11;
+
+    if (mask & TANK_PRESENT_OWNER_RES) {
+        if (avail < pos + 5) return 0;
+        s->armour = buf[pos++];
+        s->shells = buf[pos++];
+        s->mines = buf[pos++];
+        s->trees = buf[pos++];
+        s->gunsightLen = buf[pos++];
+    }
+    if (mask & TANK_PRESENT_RELOAD) {
+        if (avail < pos + 1) return 0;
+        s->reload = buf[pos++];
+    }
+    if (mask & TANK_PRESENT_DEATHWAIT) {
+        if (avail < pos + 1) return 0;
+        s->deathWait = buf[pos++];
+    }
+    if (mask & TANK_PRESENT_LGM) {
+        if (avail < pos + 5) return 0;
+        s->lgmFrame = buf[pos++];
+        s->lgmMX = buf[pos++];
+        s->lgmMY = buf[pos++];
+        s->lgmPX = buf[pos++];
+        s->lgmPY = buf[pos++];
+    }
+    if (mask & TANK_PRESENT_TURNRAMP) {
+        if (avail < pos + 2) return 0;
+        s->firstLeft = buf[pos++];
+        s->firstRight = buf[pos++];
+    }
+    if (mask & TANK_PRESENT_PING) {
+        if (avail < pos + 2) return 0;
+        s->pingMs = unpackU16(buf + pos);
+        pos += 2;
+    }
+    if (mask & TANK_PRESENT_FLAGS) {
+        if (avail < pos + 1) return 0;
+        s->clientFlags = buf[pos++];
+    }
+    return (int)pos;
+}
+
+/* Zero the fields of every group absent from `combo`, keyed on the field list,
+ * so a filled tank reduces to exactly the entry `combo` describes. */
+#define TANK_CLR_F(type, name)
+#define TANK_CLR_FMASK()
+#define TANK_CLR_FGROUP(bit, type, name)  if (!(combo & (bit))) s.name = 0;
+
+/* Fill every data field with a distinct non-zero value (pass 0, exposes
+ * intra-group reorders) or the type maximum (pass 1). playerNum keeps the
+ * 0x80 stub bit clear so this is a full entry, not a stub. */
+static void fillTank(TankSnapshot *s, int pass) {
+    memset(s, 0, sizeof(*s));
+    if (pass == 0) {
+        s->playerNum = 0x11;
+        s->worldX = 0x1234; s->worldY = 0x5678;
+        s->angle = 0x9abc;  s->speed = 0x0def;
+        s->tankStatus = 0x21;
+        s->armour = 0x31; s->shells = 0x32; s->mines = 0x33;
+        s->trees = 0x34;  s->gunsightLen = 0x35;
+        s->reload = 0x41;
+        s->deathWait = 0x51;
+        s->lgmFrame = 0x61; s->lgmMX = 0x62; s->lgmMY = 0x63;
+        s->lgmPX = 0x64;    s->lgmPY = 0x65;
+        s->firstLeft = 0x71; s->firstRight = 0x72;
+        s->pingMs = 0x8081;
+        s->clientFlags = 0x91;
+    } else {
+        s->playerNum = 0x7F;
+        s->worldX = 0xFFFF; s->worldY = 0xFFFF;
+        s->angle = 0xFFFF;  s->speed = 0xFFFF;
+        s->tankStatus = 0xFF;
+        s->armour = 0xFF; s->shells = 0xFF; s->mines = 0xFF;
+        s->trees = 0xFF;  s->gunsightLen = 0xFF;
+        s->reload = 0xFF;
+        s->deathWait = 0xFF;
+        s->lgmFrame = 0xFF; s->lgmMX = 0xFF; s->lgmMY = 0xFF;
+        s->lgmPX = 0xFF;    s->lgmPY = 0xFF;
+        s->firstLeft = 0xFF; s->firstRight = 0xFF;
+        s->pingMs = 0xFFFF;
+        s->clientFlags = 0xFF;
+    }
+}
+
+static int check_tank(void) {
+    uint8_t vecs[WC_MAX_VECTORS][WC_BYTES];
+    size_t  lens[WC_MAX_VECTORS];
+    int n, k, combo, pass;
+
+    UT_ASSERT_MSG(WIRE_MASKED_SIZE_OF(TANK_SNAPSHOT_FIELDS) ==
+                      TANK_SNAPSHOT_WIRE_SIZE,
+                  "tank_snapshot (size) WIRE_MASKED_SIZE_OF mismatch");
+
+    /* (golden) generated unpack matches the oracle and re-packs the fixture. */
+    n = loadFixture("tank_snapshot", vecs, lens, WC_MAX_VECTORS);
+    for (k = 0; k < n; k++) {
+        TankSnapshot s, r;
+        uint8_t gen[WC_BYTES];
+        memset(&s, 0, sizeof(s));
+        memset(&r, 0, sizeof(r));
+        UT_ASSERT_MSG(unpackTankSnapshot(vecs[k], lens[k], &s) == (int)lens[k],
+                      "tank_snapshot golden unpack short read");
+        UT_ASSERT_MSG(unpackTankRef(vecs[k], lens[k], &r) == (int)lens[k],
+                      "tank_snapshot golden oracle unpack short read");
+        UT_ASSERT_MSG(memcmp(&s, &r, sizeof(s)) == 0,
+                      "tank_snapshot golden generated vs oracle struct differ");
+        memset(gen, 0, sizeof(gen));
+        UT_ASSERT_MSG(packTankSnapshot(gen, &s) == (int)lens[k],
+                      "tank_snapshot golden pack wrong length");
+        UT_ASSERT_MSG(memcmp(gen, vecs[k], lens[k]) == 0,
+                      "tank_snapshot golden pack != fixture");
+    }
+
+    /* (exhaustive group combos) all 128 group subsets, two value patterns. */
+    for (pass = 0; pass < 2; pass++) {
+        TankSnapshot filled;
+        fillTank(&filled, pass);
+        for (combo = 0; combo < 128; combo++) {
+            TankSnapshot s, sg, sr;
+            uint8_t g[WC_BYTES], r[WC_BYTES];
+            int ng, nr, ug, ur;
+            s = filled;
+            TANK_SNAPSHOT_FIELDS(TANK_CLR_F, TANK_CLR_FMASK, TANK_CLR_FGROUP)
+            memset(g, 0, sizeof(g));
+            memset(r, 0, sizeof(r));
+            ng = packTankSnapshot(g, &s);
+            nr = packTankRef(r, &s);
+            UT_ASSERT_MSG(ng == nr, "tank_snapshot combo pack length differ");
+            UT_ASSERT_MSG(memcmp(g, r, (size_t)ng) == 0,
+                          "tank_snapshot combo pack bytes differ");
+            memset(&sg, 0, sizeof(sg));
+            memset(&sr, 0, sizeof(sr));
+            ug = unpackTankSnapshot(g, (size_t)ng, &sg);
+            ur = unpackTankRef(r, (size_t)nr, &sr);
+            UT_ASSERT_MSG(ug == ur, "tank_snapshot combo unpack length differ");
+            UT_ASSERT_MSG(memcmp(&sg, &sr, sizeof(sg)) == 0,
+                          "tank_snapshot combo unpack struct differ");
+        }
+    }
+
+    /* (stub) hidden-flag entry is 1 byte; everything else decodes to 0. */
+    {
+        TankSnapshot s, out, outr, expect;
+        uint8_t g[WC_BYTES], r[WC_BYTES];
+        memset(&s, 0, sizeof(s));
+        s.playerNum = (uint8_t)(0x80 | 0x05);
+        memset(g, 0, sizeof(g));
+        memset(r, 0, sizeof(r));
+        UT_ASSERT_MSG(packTankSnapshot(g, &s) == 1, "tank_snapshot stub pack len");
+        UT_ASSERT_MSG(packTankRef(r, &s) == 1, "tank_snapshot stub oracle pack len");
+        UT_ASSERT_MSG(g[0] == s.playerNum && r[0] == s.playerNum,
+                      "tank_snapshot stub byte");
+        memset(&out, 0, sizeof(out));
+        memset(&outr, 0, sizeof(outr));
+        UT_ASSERT_MSG(unpackTankSnapshot(g, 1, &out) == 1,
+                      "tank_snapshot stub unpack len");
+        UT_ASSERT_MSG(unpackTankRef(r, 1, &outr) == 1,
+                      "tank_snapshot stub oracle unpack len");
+        memset(&expect, 0, sizeof(expect));
+        expect.playerNum = s.playerNum;
+        UT_ASSERT_MSG(memcmp(&out, &expect, sizeof(out)) == 0,
+                      "tank_snapshot stub decoded non-zero beyond playerNum");
+        UT_ASSERT_MSG(memcmp(&out, &outr, sizeof(out)) == 0,
+                      "tank_snapshot stub generated vs oracle differ");
+    }
+    return 0;
+}
+
 int run_wire_corpus(void) {
     if (check_shell() != 0) return 1;
     if (check_tk() != 0) return 1;
     if (check_base() != 0) return 1;
     if (check_pill() != 0) return 1;
+    if (check_tank() != 0) return 1;
     return 0;
 }
