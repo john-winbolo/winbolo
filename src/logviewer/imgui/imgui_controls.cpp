@@ -223,7 +223,13 @@ void lv_imgui_controls_window(void) {
             } else {
                 snprintf(seek_fmt, sizeof(seek_fmt), "%s", s_current_time);
             }
-            if (ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, seek_fmt)) {
+            /* NoRoundToFormat is essential here: seek_fmt is a pre-rendered
+             * label ("12:34 / 51:32 (0.4%)"), not a numeric printf format.
+             * Without this flag ImGui rounds the dragged value by round-tripping
+             * it through seek_fmt -- which parses back to 0 -- pinning the
+             * slider (and every seek) to the start of the log. */
+            if (ImGui::SliderFloat("##seek", &s_seek_ratio, 0.0f, 1.0f, seek_fmt,
+                                   ImGuiSliderFlags_NoRoundToFormat)) {
                 s_is_seeking = true;
             }
 
