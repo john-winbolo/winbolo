@@ -1830,6 +1830,7 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName, b
      * Players can self-reassign via the team picker after joining. */
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
+    sim->lobbyPlayers[playerNum].startIdx = 0xFF;
     {
         uint8_t defaultTeam = 1;
         if (playerNum == 0) {
@@ -2153,6 +2154,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->lobbyPlayers[playerNum].teamNumber = 0;
     sim->lobbyPlayers[playerNum].ready = FALSE;
     sim->lobbyPlayers[playerNum].isBot = FALSE;
+    sim->lobbyPlayers[playerNum].startIdx = 0xFF;
     sim->mapSkipVotes[playerNum] = false;
 
     /* Check if disconnect pushes skip votes over threshold */
@@ -2271,6 +2273,11 @@ static void serverSimResetLobbyToDefaults(ServerSim *sim) {
         if (botManagerIsBot(sim, i)) {
             serverSimRemoveBot(sim, i);
         }
+    }
+
+    /* Clear per-slot start reservations back to the none sentinel. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        sim->lobbyPlayers[i].startIdx = 0xFF;
     }
 
     /* Restore the operator-configured game settings. Guarded on the snapshot
@@ -5234,6 +5241,7 @@ void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
         slot.teamNumber = sim->lobbyPlayers[i].teamNumber;
         slot.ready      = sim->lobbyPlayers[i].ready;
         slot.isBot      = sim->lobbyPlayers[i].isBot;
+        slot.startIdx   = sim->lobbyPlayers[i].startIdx;
         /* sim->playerPing[i] is only refreshed by queueInput; in lobby
          * no inputs flow, so it sits at 0 the whole time. The PING/PONG
          * handler keeps udpServer.clients[i].pingMs live across every

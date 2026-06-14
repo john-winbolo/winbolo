@@ -77,6 +77,7 @@ typedef struct {
     char countryCode[3];   /* ISO 3166-1 alpha-2 (e.g. "US") */
     uint8_t clientFlags;   /* PLAYER_FLAG_* bits */
     uint8_t clientType;    /* ClientType enum */
+    uint8_t startIdx;      /* reserved map start, 1-based; 0xFF = none */
 } ClientLobbySlot;
 
 /* Callback typedefs for new transport message sending.
