@@ -452,6 +452,8 @@
 #define STR_COMPASS_W                       1505
 #define STR_COMPASS_NW                      1506
 #define STR_COMPASS_C                       1507
+/* "Unassigned" entry in the lobby player-list start combo (release) */
+#define STR_DLGLOBBY_START_UNASSIGNED       1508
 #define STR_DLGLOBBY_READY                  614
 #define STR_DLGLOBBY_UNREADY                615
 #define STR_DLGLOBBY_BALANCE_TEAMS          616

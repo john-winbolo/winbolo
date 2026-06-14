@@ -2476,6 +2476,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/common/prefs.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
+    tests/unit/test_lobby_claim_start_dispatch.c
     tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
     tests/unit/test_shell_death_event.c
@@ -2647,6 +2648,13 @@ set(_unit_test_names
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
     command_codec_roundtrip_variants
+    command_codec_lobby_claim_start
+    lobby_claim_start_host_swaps_occupied
+    lobby_claim_start_host_swap_into_none
+    lobby_claim_start_non_host_occupied_rejected
+    lobby_claim_start_non_host_other_slot_rejected
+    lobby_claim_start_self_free_and_release
+    lobby_claim_start_validation
     command_codec_cmdseq_slot
     command_codec_bounds_checks
     command_rejected_parks_name_codes

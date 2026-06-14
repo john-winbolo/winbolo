@@ -2383,6 +2383,13 @@ void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     serverSimReapplyTeamAlliances(sim);
 }
 
+void serverSimSetLobbyStartIdx(ServerSim *sim, BYTE slot, BYTE idx) {
+    if (slot >= MAX_TANKS) {
+        return;
+    }
+    sim->lobbyPlayers[slot].startIdx = idx;
+}
+
 void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready) {
     if (playerNum >= MAX_TANKS) {
         return;

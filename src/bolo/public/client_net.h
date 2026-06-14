@@ -108,6 +108,13 @@ void clientSimNetSendLockToggle(ClientSim *cs, bool allow);
  * bots / drags one human into another team's column. Self-team
  * callers pass clientSimGetMyPlayerNum(cs). */
 void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber);
+/* Reserve startIdx (1-based map start, or 0xFF to release) for targetSlot.
+ * targetSlot == own slot is a self-claim (server requires a free start);
+ * targetSlot != own slot is host-only and swaps an occupied target.
+ * Server-authoritative — the marker moves when the CTRL_LOBBY_SLOT
+ * broadcast arrives, never on send. */
+void clientSimNetSendLobbyClaimStart(ClientSim *cs, BYTE targetSlot,
+                                     BYTE startIdx);
 void clientSimNetSendReady(ClientSim *cs, bool ready);
 void clientSimNetSendAddBot(ClientSim *cs);
 /* Add-bot with explicit team, brain, and pool-picked name. The

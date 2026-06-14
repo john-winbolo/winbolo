@@ -392,6 +392,40 @@ int run_command_codec_roundtrip_variants(void) {
     return 0;
 }
 
+/* CMD_LOBBY_CLAIM_START — {targetSlot, startIdx} two-byte body, with
+ * the 0xFF release sentinel exercised so the codec carries it intact. */
+int run_command_codec_lobby_claim_start(void) {
+    ClientCommand in, out;
+
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_LOBBY_CLAIM_START;
+    in.cmdSeq = 40;
+    in.u.lobbyClaimStart.targetSlot = 3;
+    in.u.lobbyClaimStart.startIdx   = 7;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_LOBBY_CLAIM_START");
+    UT_ASSERT(out.type == CMD_LOBBY_CLAIM_START);
+    UT_ASSERT(out.cmdSeq == 40);
+    UT_ASSERT(out.u.lobbyClaimStart.targetSlot == 3);
+    UT_ASSERT(out.u.lobbyClaimStart.startIdx   == 7);
+
+    /* Release sentinel round-trips unchanged. */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_LOBBY_CLAIM_START;
+    in.cmdSeq = 41;
+    in.u.lobbyClaimStart.targetSlot = 11;
+    in.u.lobbyClaimStart.startIdx   = 0xFF;
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0,
+                  "CMD_LOBBY_CLAIM_START release");
+    UT_ASSERT(out.type == CMD_LOBBY_CLAIM_START);
+    UT_ASSERT(out.cmdSeq == 41);
+    UT_ASSERT(out.u.lobbyClaimStart.targetSlot == 11);
+    UT_ASSERT(out.u.lobbyClaimStart.startIdx   == 0xFF);
+
+    return 0;
+}
+
 /* Focused check on the 4-byte cmdSeq slot the codec wrapper owns,
  * independent of any variant body. Catches off-by-four errors in the
  * wire-offset arithmetic that the per-variant suite would mask if

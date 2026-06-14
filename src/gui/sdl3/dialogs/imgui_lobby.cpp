@@ -4511,13 +4511,76 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 {
                     const ClientLobbySlot *cslot = clientSimGetLobbySlot(cs, (BYTE)(i));
                     uint8_t sIdx = cslot->startIdx;
-                    const char *startLbl = "—";
-                    if (cslot->connected && sIdx != 0xFF &&
-                        sIdx <= MAX_STARTS && s_startCompassId[sIdx] != 0) {
-                        startLbl = langGetText(s_startCompassId[sIdx]);
+                    /* A host edits any connected row; a non-host edits only
+                     * its own. Everyone else sees the read-only compass.
+                     * No optimistic apply — selecting just sends the
+                     * command; the marker moves when CTRL_LOBBY_SLOT lands. */
+                    bool canEditStart = cslot->connected && (effectiveHost || isMe);
+                    if (!canEditStart) {
+                        const char *startLbl = "—";
+                        if (cslot->connected && sIdx != 0xFF &&
+                            sIdx <= MAX_STARTS && s_startCompassId[sIdx] != 0) {
+                            startLbl = langGetText(s_startCompassId[sIdx]);
+                        }
+                        cyTextAbs();
+                        ImGui::TextDisabled("%s", startLbl);
+                    } else {
+                        char preview[64];
+                        if (sIdx != 0xFF && sIdx <= MAX_STARTS &&
+                            s_startCompassId[sIdx] != 0) {
+                            SDL_snprintf(preview, sizeof(preview),
+                                         "#%u \xC2\xB7 %s", (unsigned)sIdx,
+                                         langGetText(s_startCompassId[sIdx]));
+                        } else {
+                            SDL_snprintf(preview, sizeof(preview), "%s",
+                                         langGetText(STR_DLGLOBBY_START_UNASSIGNED));
+                        }
+                        cyAbs(ImGui::GetFrameHeight());
+                        char comboId[24];
+                        SDL_snprintf(comboId, sizeof(comboId), "##start%d", i);
+                        ImGui::SetNextItemWidth(96.0f * s);
+                        if (ImGui::BeginCombo(comboId, preview)) {
+                            for (int k = 1; k <= MAX_STARTS; k++) {
+                                if (s_startCompassId[k] == 0) continue;
+                                /* Connected holder of start k, if any. */
+                                int holder = -1;
+                                for (int h = 0; h < MAX_TANKS; h++) {
+                                    const ClientLobbySlot *hs =
+                                        clientSimGetLobbySlot(cs, (BYTE)h);
+                                    if (hs->connected && hs->startIdx == k) {
+                                        holder = h;
+                                        break;
+                                    }
+                                }
+                                bool occupiedByOther = (holder >= 0 && holder != i);
+                                /* Non-host self-claim: only free starts + own. */
+                                if (!effectiveHost && occupiedByOther) continue;
+                                char entry[96];
+                                if (occupiedByOther) {
+                                    SDL_snprintf(entry, sizeof(entry),
+                                                 "#%u \xC2\xB7 %s (%s)", (unsigned)k,
+                                                 langGetText(s_startCompassId[k]),
+                                                 clientSimGetLobbySlot(cs, (BYTE)holder)->playerName);
+                                } else {
+                                    SDL_snprintf(entry, sizeof(entry),
+                                                 "#%u \xC2\xB7 %s", (unsigned)k,
+                                                 langGetText(s_startCompassId[k]));
+                                }
+                                bool selected = (sIdx == (uint8_t)k);
+                                if (ImGui::Selectable(entry, selected)) {
+                                    clientSimNetSendLobbyClaimStart(cs, (BYTE)i, (BYTE)k);
+                                }
+                                if (selected) ImGui::SetItemDefaultFocus();
+                            }
+                            bool relSel = (sIdx == 0xFF);
+                            if (ImGui::Selectable(
+                                    langGetText(STR_DLGLOBBY_START_UNASSIGNED), relSel)) {
+                                clientSimNetSendLobbyClaimStart(cs, (BYTE)i, 0xFF);
+                            }
+                            if (relSel) ImGui::SetItemDefaultFocus();
+                            ImGui::EndCombo();
+                        }
                     }
-                    cyTextAbs();
-                    ImGui::TextDisabled("%s", startLbl);
                 }
 
                 /* ── Column 5: ready / not ready badge (humans only — bots

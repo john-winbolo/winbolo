@@ -428,6 +428,15 @@ void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendLobbyClaimStart(ClientSim *cs, BYTE targetSlot,
+                                     BYTE startIdx) {
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_CLAIM_START };
+  cmd.u.lobbyClaimStart.targetSlot = targetSlot;
+  cmd.u.lobbyClaimStart.startIdx   = startIdx;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendReady(ClientSim *cs, bool ready) {
   if (cs == NULL || !cs->hasTransport) return;
   ClientCommand cmd = { .type = CMD_READY };

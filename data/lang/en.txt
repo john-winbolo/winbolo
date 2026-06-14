@@ -413,6 +413,9 @@ STR_COMPASS_SW=SW
 STR_COMPASS_W=W
 STR_COMPASS_NW=NW
 STR_COMPASS_C=C
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Unassigned
 STR_DLGLOBBY_READY=Ready
 STR_DLGLOBBY_UNREADY=Unready
 STR_DLGLOBBY_BALANCE_TEAMS=Balance Teams

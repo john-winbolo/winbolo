@@ -69,7 +69,8 @@ typedef enum {
     CMD_BALANCE_REQUEST,
     CMD_BALANCE_APPLY,
     CMD_BALANCE_DISMISS,
-    CMD_WBN_REAUTH
+    CMD_WBN_REAUTH,
+    CMD_LOBBY_CLAIM_START
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -111,6 +112,15 @@ typedef struct {
     uint8_t slot;
     uint8_t team;
 } CmdTeamSet;
+
+/* CMD_LOBBY_CLAIM_START — set a slot's reserved start. targetSlot ==
+ * senderSlot is a self-claim (target start must be free or 0xFF release);
+ * targetSlot != senderSlot is host-only (lobbyClientMayEdit) and swaps when
+ * the target start is occupied. startIdx is 1-based (0xFF = release). */
+typedef struct {
+    uint8_t targetSlot;
+    uint8_t startIdx;
+} CmdLobbyClaimStart;
 
 /* CMD_READY — toggle ready state for the sender's slot. The wire
  * carries a playerNum byte for backward compatibility but the
@@ -352,6 +362,7 @@ typedef struct ClientCommand {
         CmdBalanceApply        balanceApply;
         CmdBalanceDismiss      balanceDismiss;
         CmdWbnReauth           wbnReauth;
+        CmdLobbyClaimStart     lobbyClaimStart;
     } u;
 } ClientCommand;
 

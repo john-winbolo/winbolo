@@ -445,6 +445,8 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                                 outcome u8 } — the firing
                                               client culls its predicted shell
                                               and draws the impact */
+#define PACKET_LOBBY_CLAIM_START       205  /* client → server
+                                              { targetSlot, startIdx } */
 
 #define PACKET_GAME_VOTE_STATE         195  /* server → all clients
                                               { kind 1, active 1,
