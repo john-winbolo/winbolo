@@ -415,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Pular mapa
 STR_DLGLOBBY_CANCELSKIP=Cancelar pulo
 STR_DLGLOBBY_VOTES={number}/{number2} votos para pular
 STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_CHAT_GENERAL=Geral
+STR_DLGLOBBY_CHAT_TEAM=Equipe
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=N
+STR_COMPASS_NE=NE
+STR_COMPASS_E=E
+STR_COMPASS_SE=SE
+STR_COMPASS_S=S
+STR_COMPASS_SW=SO
+STR_COMPASS_W=O
+STR_COMPASS_NW=NO
+STR_COMPASS_C=C
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Não atribuído
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(aberto)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} entrou em {string1}.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} saiu de {string1}.
 STR_DLGLOBBY_READY=Pronto
 STR_DLGLOBBY_UNREADY=Não pronto
 STR_DLGLOBBY_BALANCE_TEAMS=Equilibrar equipes

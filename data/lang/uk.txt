@@ -415,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Пропустити карту
 STR_DLGLOBBY_CANCELSKIP=Скасувати пропуск
 STR_DLGLOBBY_VOTES={number}/{number2} голосів за пропуск
 STR_DLGLOBBY_CHAT=Чат
+STR_DLGLOBBY_CHAT_GENERAL=Загальний
+STR_DLGLOBBY_CHAT_TEAM=Команда
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=Пн
+STR_COMPASS_NE=ПнСх
+STR_COMPASS_E=Сх
+STR_COMPASS_SE=ПдСх
+STR_COMPASS_S=Пд
+STR_COMPASS_SW=ПдЗх
+STR_COMPASS_W=Зх
+STR_COMPASS_NW=ПнЗх
+STR_COMPASS_C=Ц
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Не призначено
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(вільно)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} приєднався до {string1}.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} покинув {string1}.
 STR_DLGLOBBY_READY=Готовий
 STR_DLGLOBBY_UNREADY=Не готовий
 STR_DLGLOBBY_BALANCE_TEAMS=Збалансувати команди

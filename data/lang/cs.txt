@@ -415,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Přeskočit mapu
 STR_DLGLOBBY_CANCELSKIP=Zrušit přeskočení
 STR_DLGLOBBY_VOTES={number}/{number2} hlasů pro přeskočení
 STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_CHAT_GENERAL=Obecné
+STR_DLGLOBBY_CHAT_TEAM=Tým
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=S
+STR_COMPASS_NE=SV
+STR_COMPASS_E=V
+STR_COMPASS_SE=JV
+STR_COMPASS_S=J
+STR_COMPASS_SW=JZ
+STR_COMPASS_W=Z
+STR_COMPASS_NW=SZ
+STR_COMPASS_C=C
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Nepřiřazeno
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(volné)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} se připojil k {string1}.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} opustil {string1}.
 STR_DLGLOBBY_READY=Připraven
 STR_DLGLOBBY_UNREADY=Nepřipraven
 STR_DLGLOBBY_BALANCE_TEAMS=Vyrovnat týmy

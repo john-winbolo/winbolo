@@ -415,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Kaart overslaan
 STR_DLGLOBBY_CANCELSKIP=Overslaan annuleren
 STR_DLGLOBBY_VOTES={number}/{number2} stemmen om over te slaan
 STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_CHAT_GENERAL=Algemeen
+STR_DLGLOBBY_CHAT_TEAM=Team
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=N
+STR_COMPASS_NE=NO
+STR_COMPASS_E=O
+STR_COMPASS_SE=ZO
+STR_COMPASS_S=Z
+STR_COMPASS_SW=ZW
+STR_COMPASS_W=W
+STR_COMPASS_NW=NW
+STR_COMPASS_C=C
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Niet toegewezen
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(open)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} heeft {string1} betreden.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} heeft {string1} verlaten.
 STR_DLGLOBBY_READY=Klaar
 STR_DLGLOBBY_UNREADY=Niet klaar
 STR_DLGLOBBY_BALANCE_TEAMS=Teams balanceren
