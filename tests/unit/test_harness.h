@@ -372,6 +372,16 @@ int run_conn_migration_e2e(void);
 int run_viewtick_rewind(void);
 int run_viewtick_displayed_tick(void);
 
+/* Differential check of the generated flat-leaf-snapshot codecs against the
+ * hand-rolled packers (test_wire_corpus.c). The capture entry regenerates the
+ * golden fixtures from a loopback session and is run on demand only. */
+int run_wire_corpus(void);
+int run_wire_corpus_capture(void);
+
+/* packetTypeName mapping pin (test_packet_type_names.c): every PACKET_* maps to
+ * its exact debug string and an undefined type id resolves to "UNKNOWN". */
+int run_packet_type_names(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

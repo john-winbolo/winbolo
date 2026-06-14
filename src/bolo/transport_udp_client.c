@@ -695,13 +695,12 @@ void udpClientHandleLobbyMapPreviewChunk(ClientSim *cs,
                                          const uint8_t *buf, int len) {
     if (!cs) return;
     int pos = PACKET_HEADER_SIZE;
-    if (pos + 1 + 4 + 2 > len) return;
-    uint8_t seq = buf[pos++];
-    uint32_t off = ((uint32_t)buf[pos] << 24) | ((uint32_t)buf[pos + 1] << 16) |
-                   ((uint32_t)buf[pos + 2] << 8) | (uint32_t)buf[pos + 3];
-    pos += 4;
-    uint16_t n = (uint16_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
-    pos += 2;
+    /* Fixed header is generated; the byte-stream reassembly below stays
+     * hand-written. */
+    MapPreviewChunkHeader hdr;
+    if (unpackMapPreviewChunkHeader(buf + pos, (size_t)(len - pos), &hdr) == 0) return;
+    uint8_t seq = hdr.seq; uint32_t off = hdr.offset; uint16_t n = hdr.len;
+    pos += 7;
     if (pos + n > len) return;
 
     if (!cs->lobbyMapPreviewInFlight || cs->lobbyMapPreviewError) return;
@@ -1214,11 +1213,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         const uint8_t *chunkData;
         uint32_t offset;
 
-        if (len < PACKET_HEADER_SIZE + 12) break;
-        resyncGen    = unpackU32(buf + PACKET_HEADER_SIZE);
-        chunkMapSize = unpackU32(buf + PACKET_HEADER_SIZE + 4);
-        chunkIdx     = unpackU16(buf + PACKET_HEADER_SIZE + 8);
-        chunkSize    = unpackU16(buf + PACKET_HEADER_SIZE + 10);
+        /* Fixed header is generated; the data pointer and chunk reassembly
+         * below stay hand-written. */
+        MapDownloadChunkHeader hdr;
+        if (unpackMapDownloadChunkHeader(buf + PACKET_HEADER_SIZE,
+                                         (size_t)(len - PACKET_HEADER_SIZE), &hdr) == 0) break;
+        resyncGen = hdr.resyncGen; chunkMapSize = hdr.mapSize;
+        chunkIdx = hdr.chunkIdx;   chunkSize = hdr.chunkSize;
         chunkData    = buf + PACKET_HEADER_SIZE + 12;
         if (len < PACKET_HEADER_SIZE + 12 + chunkSize) break;
 
@@ -1460,36 +1461,57 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (!tankBoundsOk) break;
         }
 
-        /* Unpack shells */
+        /* Unpack shells — each entry is length-checked against the bytes
+         * remaining, returning 0 on truncation. */
         if (shellCount > MAX_SNAPSHOT_SHELLS) shellCount = MAX_SNAPSHOT_SHELLS;
-        if (len < pos + shellCount * SHELL_SNAPSHOT_WIRE_SIZE) break;
-        for (i = 0; i < shellCount; i++) {
-            unpackShellSnapshot(buf + pos, &c->snapshotShells[i]);
-            pos += SHELL_SNAPSHOT_WIRE_SIZE;
+        {
+            bool shellBoundsOk = TRUE;
+            for (i = 0; i < shellCount; i++) {
+                int n = unpackShellSnapshot(buf + pos, (size_t)(len - pos),
+                                            &c->snapshotShells[i]);
+                if (n == 0) { shellBoundsOk = FALSE; break; }
+                pos += n;
+            }
+            if (!shellBoundsOk) break;
         }
 
         /* Unpack tank explosions */
         if (tkExplosionCount > MAX_SNAPSHOT_TK_EXPLOSIONS) tkExplosionCount = MAX_SNAPSHOT_TK_EXPLOSIONS;
-        if (len < pos + tkExplosionCount * TK_EXPLOSION_SNAPSHOT_WIRE_SIZE) break;
-        for (i = 0; i < tkExplosionCount; i++) {
-            unpackTkExplosionSnapshot(buf + pos, &c->snapshotTkExplosions[i]);
-            pos += TK_EXPLOSION_SNAPSHOT_WIRE_SIZE;
+        {
+            bool tkBoundsOk = TRUE;
+            for (i = 0; i < tkExplosionCount; i++) {
+                int n = unpackTkExplosionSnapshot(buf + pos, (size_t)(len - pos),
+                                                  &c->snapshotTkExplosions[i]);
+                if (n == 0) { tkBoundsOk = FALSE; break; }
+                pos += n;
+            }
+            if (!tkBoundsOk) break;
         }
 
         /* Unpack bases */
         if (baseCount > MAX_SNAPSHOT_BASES) baseCount = MAX_SNAPSHOT_BASES;
-        if (len < pos + baseCount * BASE_SNAPSHOT_WIRE_SIZE) break;
-        for (i = 0; i < baseCount; i++) {
-            unpackBaseSnapshot(buf + pos, &c->snapshotBases[i]);
-            pos += BASE_SNAPSHOT_WIRE_SIZE;
+        {
+            bool baseBoundsOk = TRUE;
+            for (i = 0; i < baseCount; i++) {
+                int n = unpackBaseSnapshot(buf + pos, (size_t)(len - pos),
+                                           &c->snapshotBases[i]);
+                if (n == 0) { baseBoundsOk = FALSE; break; }
+                pos += n;
+            }
+            if (!baseBoundsOk) break;
         }
 
         /* Unpack pills */
         if (pillCount > MAX_SNAPSHOT_PILLS) pillCount = MAX_SNAPSHOT_PILLS;
-        if (len < pos + pillCount * PILL_SNAPSHOT_WIRE_SIZE) break;
-        for (i = 0; i < pillCount; i++) {
-            unpackPillSnapshot(buf + pos, &c->snapshotPills[i]);
-            pos += PILL_SNAPSHOT_WIRE_SIZE;
+        {
+            bool pillBoundsOk = TRUE;
+            for (i = 0; i < pillCount; i++) {
+                int n = unpackPillSnapshot(buf + pos, (size_t)(len - pos),
+                                           &c->snapshotPills[i]);
+                if (n == 0) { pillBoundsOk = FALSE; break; }
+                pos += n;
+            }
+            if (!pillBoundsOk) break;
         }
 
         /* Unpack reliable game events with dedup.
@@ -3379,12 +3401,9 @@ static void udpClientUploadSendChunk(TransportUdpClientCtx *c,
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_CHUNK, c->outSequence++);
-    buf[PACKET_HEADER_SIZE + 0] = (uint8_t)((offset >> 24) & 0xFF);
-    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)((offset >> 16) & 0xFF);
-    buf[PACKET_HEADER_SIZE + 2] = (uint8_t)((offset >>  8) & 0xFF);
-    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)( offset        & 0xFF);
-    buf[PACKET_HEADER_SIZE + 4] = (uint8_t)((dataLen >> 8) & 0xFF);
-    buf[PACKET_HEADER_SIZE + 5] = (uint8_t)( dataLen       & 0xFF);
+    /* Fixed header is generated; the data memcpy stays hand-written. */
+    MapUploadChunkHeader hdr = { offset, dataLen };
+    packMapUploadChunkHeader(buf + PACKET_HEADER_SIZE, &hdr);
     memcpy(buf + PACKET_HEADER_SIZE + 6, data, dataLen);
     len = PACKET_HEADER_SIZE + 6 + dataLen;
     udpClientSendTo(c, buf, len);
