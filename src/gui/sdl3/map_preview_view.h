@@ -91,6 +91,22 @@ SDL_Texture *mapPreviewViewGetTexture(MapPreviewView *v);
 void mapPreviewViewGetTextureSize(const MapPreviewView *v,
                                   int *outW, int *outH);
 
+/* Map-square (mapSqX,mapSqY) -> texture-local pixel of that tile's
+ * TOP-LEFT (same point viewRenderStarts uses as a start's dest origin;
+ * add half a scaled tile to center). Operates in the displayed
+ * texture's pixel space (mapPreviewViewGetTextureSize). Returns false
+ * if no valid sprite-mode transform is cached (e.g. minimap zoom). */
+bool mapPreviewViewWorldToScreen(const MapPreviewView *v,
+                                 int mapSqX, int mapSqY,
+                                 float *outX, float *outY);
+
+/* Texture-local pixel (sx,sy) -> map-square under it. Inverse of the
+ * above. Returns false if no transform is cached or the result falls
+ * outside the 0..255 map-square range. */
+bool mapPreviewViewScreenToWorld(const MapPreviewView *v,
+                                 float sx, float sy,
+                                 int *outMapSqX, int *outMapSqY);
+
 /* Drive interactions for the frame: pan via mouse drag, zoom via
  * wheel / pinch, arrow-key pan. Caller indicates whether the view's
  * Image is currently hovered. */

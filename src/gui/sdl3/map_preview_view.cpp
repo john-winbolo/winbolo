@@ -161,6 +161,16 @@ struct MapPreviewView {
 
     /* macOS pinch accumulator. */
     float pinchAccum;
+
+    /* Transform state snapshot — captured each time viewRenderStarts runs,
+     * so world<->screen inverts the same math the starts were drawn with.
+     * Valid only in sprite mode (the minimap path doesn't draw starts). */
+    bool   startsTransformValid;
+    int    startsScreenW;
+    int    startsScreenH;
+    float  startsTileScale;
+    WORLD  startsCenterX;
+    WORLD  startsCenterY;
 };
 
 /* ── Adjacency-aware tile calculation (lifted verbatim) ──────────── */
@@ -227,6 +237,15 @@ static void viewRenderStarts(MapPreviewView *v, SDL_Renderer *renderer,
     float camPXf = (float)centerPX - halfX;
     float camPYf = (float)centerPY - halfY;
 
+    /* Snapshot the exact transform inputs so world<->screen helpers
+     * invert this frame's math even if pan/zoom changes before they run. */
+    v->startsScreenW = screenW;
+    v->startsScreenH = screenH;
+    v->startsTileScale = tileScale;
+    v->startsCenterX = v->centerX;
+    v->startsCenterY = v->centerY;
+    v->startsTransformValid = true;
+
     SDL_SetTextureAlphaMod(v->tilesTex, 200);
 
     BYTE numStarts = clientMapPreviewGetStartCount(v->preview);
@@ -249,6 +268,43 @@ static void viewRenderStarts(MapPreviewView *v, SDL_Renderer *renderer,
     SDL_SetTextureAlphaMod(v->tilesTex, 255);
 }
 
+extern "C" bool mapPreviewViewWorldToScreen(const MapPreviewView *v,
+                                            int mapSqX, int mapSqY,
+                                            float *outX, float *outY) {
+    if (!v || !v->startsTransformValid) return false;
+    int tileSize = TILE_SIZE_X;
+    int centerPX = ((int)v->startsCenterX * tileSize) >> 8;
+    int centerPY = ((int)v->startsCenterY * tileSize) >> 8;
+    float halfX = (float)v->startsScreenW / (2.0f * v->startsTileScale);
+    float halfY = (float)v->startsScreenH / (2.0f * v->startsTileScale);
+    float camPXf = (float)centerPX - halfX;
+    float camPYf = (float)centerPY - halfY;
+    if (outX) *outX = ((float)(mapSqX * tileSize) - camPXf) * v->startsTileScale;
+    if (outY) *outY = ((float)(mapSqY * tileSize) - camPYf) * v->startsTileScale;
+    return true;
+}
+
+extern "C" bool mapPreviewViewScreenToWorld(const MapPreviewView *v,
+                                            float sx, float sy,
+                                            int *outMapSqX, int *outMapSqY) {
+    if (!v || !v->startsTransformValid) return false;
+    int tileSize = TILE_SIZE_X;
+    int centerPX = ((int)v->startsCenterX * tileSize) >> 8;
+    int centerPY = ((int)v->startsCenterY * tileSize) >> 8;
+    float halfX = (float)v->startsScreenW / (2.0f * v->startsTileScale);
+    float halfY = (float)v->startsScreenH / (2.0f * v->startsTileScale);
+    float camPXf = (float)centerPX - halfX;
+    float camPYf = (float)centerPY - halfY;
+    float tileXf = (sx / v->startsTileScale + camPXf) / (float)tileSize;
+    float tileYf = (sy / v->startsTileScale + camPYf) / (float)tileSize;
+    int mx = (int)floorf(tileXf);
+    int my = (int)floorf(tileYf);
+    if (mx < 0 || mx > 255 || my < 0 || my > 255) return false;
+    if (outMapSqX) *outMapSqX = mx;
+    if (outMapSqY) *outMapSqY = my;
+    return true;
+}
+
 /* Minimap-colour rendering — one coloured rect per map tile, sized to
  * whatever fits the current sub-0.5 zoom. Replaces tile-sprite drawing
  * for the far-zoomed-out view. Includes pill/base/start dots and the
@@ -256,6 +312,9 @@ static void viewRenderStarts(MapPreviewView *v, SDL_Renderer *renderer,
 static void viewRenderMinimapToOffscreen(MapPreviewView *v,
                                          SDL_Renderer *renderer,
                                          int screenW, int screenH) {
+    /* Minimap mode doesn't draw starts, so any cached sprite-mode
+     * transform is stale here — invalidate it. */
+    v->startsTransformValid = false;
     /* tilePx ≥ 1; at 0.0625× it's 1 (16 game px × 0.0625 = 1). */
     float tilePxF = (float)TILE_SIZE_X * v->zoomLevel;
     int tilePx = (int)tilePxF;
@@ -786,6 +845,7 @@ extern "C" MapPreviewView *mapPreviewViewCreate(void) {
     v->zoomLevel = 1.0f;
     v->centerX   = 128 << 8;
     v->centerY   = 128 << 8;
+    v->startsTransformValid = false;
     return v;
 }
 
