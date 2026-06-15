@@ -206,23 +206,22 @@ struct MapPreviewView {
     int     startOwnerCount;
 };
 
-/* Ownership code (0-based start index) -> boat atlas table + RGB color-mod.
- * Ally uses the green boat; self uses the same green boat darkened (no
- * dark-green boat sprite exists) so your start reads as a darker green;
- * enemy uses the red boat; unclaimed uses the default self boat. */
+/* Ownership code (0-based start index) -> boat atlas table + alpha. Self uses
+ * the normal (black) self boat; ally the green boat; enemy the red boat;
+ * an unclaimed start uses the self boat at 50% alpha so it reads as "not yet
+ * taken". When there's no ownership info (e.g. the map chooser), everything
+ * is the opaque self boat. */
 static void boatStyleForOwner(const MapPreviewView *v, int startIdx1,
-                              const int **outX, const int **outY,
-                              Uint8 *outR, Uint8 *outG, Uint8 *outB) {
+                              const int **outX, const int **outY, Uint8 *outA) {
     *outX = kBoatAtlasX; *outY = kBoatAtlasY;
-    *outR = 255; *outG = 255; *outB = 255;
+    *outA = 255;
     int k = startIdx1 - 1;
-    if (k < 0 || k >= v->startOwnerCount) return;
+    if (k < 0 || k >= v->startOwnerCount) return;   /* no info -> opaque self */
     switch (v->startOwners[k]) {
-        case 1: *outX = kGoodBoatAtlasX; *outY = kGoodBoatAtlasY;        /* self  */
-                *outR = 130; *outG = 130; *outB = 130; break; /* darken -> dark green */
+        case 1: break;                                                  /* self  black */
         case 2: *outX = kGoodBoatAtlasX; *outY = kGoodBoatAtlasY; break; /* ally  green */
         case 3: *outX = kEvilBoatAtlasX; *outY = kEvilBoatAtlasY; break; /* enemy red */
-        default: break;                                                  /* free  */
+        default: *outA = 128; break;                  /* unclaimed -> 50% transparent */
     }
 }
 
@@ -299,8 +298,6 @@ static void viewRenderStarts(MapPreviewView *v, SDL_Renderer *renderer,
     v->startsCenterY = v->centerY;
     v->startsTransformValid = true;
 
-    SDL_SetTextureAlphaMod(v->tilesTex, 255);
-
     BYTE numStarts = clientMapPreviewGetStartCount(v->preview);
     for (BYTE i = 1; i <= numStarts; i++) {
         BYTE sx, sy, sdir;
@@ -311,18 +308,18 @@ static void viewRenderStarts(MapPreviewView *v, SDL_Renderer *renderer,
             dy + scaledTileF < 0 || dy > screenH) continue;
         int dir = sdir;
         const int *batX, *batY;
-        Uint8 cr, cg, cb;
-        boatStyleForOwner(v, i, &batX, &batY, &cr, &cg, &cb);
+        Uint8 ba;
+        boatStyleForOwner(v, i, &batX, &batY, &ba);   /* self black / ally green
+                                                       * / enemy red / free 50% */
         SDL_FRect src = {
             (float)batX[dir], (float)batY[dir],
             (float)tileSize, (float)tileSize
         };
         SDL_FRect dest = { dx, dy, scaledTileF, scaledTileF };
-        SDL_SetTextureColorMod(v->tilesTex, cr, cg, cb);
+        SDL_SetTextureAlphaMod(v->tilesTex, ba);
         SDL_RenderTexture(renderer, v->tilesTex, &src, &dest);
     }
 
-    SDL_SetTextureColorMod(v->tilesTex, 255, 255, 255);
     SDL_SetTextureAlphaMod(v->tilesTex, 255);
 }
 

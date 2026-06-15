@@ -3298,31 +3298,21 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
     s_hoveredStartChoice = -1;   /* consume */
 }
 
-/* Interaction layer for the inline map preview: an invisible button over the
- * Image (a plain Image can't be a drag source). Clicking a FREE start moves
- * you there; pressing a movable claimed start and dragging reassigns its
- * player; it's also the drop target for the player-list move-handles.
- * Returns true if it consumed the click (so the caller skips opening the
- * zoom popup); otherwise the invisible button is left as the last item and a
- * plain click still opens the popup via mapPreviewPopupOnClick. */
+/* Interaction layer for the inline map preview. Called right after the map
+ * Image, which stays the last item (so the caller's mapPreviewPopupOnClick
+ * still works). No invisible button — that grabbed nav focus and drew a
+ * light-blue focus outline. Clicking a FREE start moves you there; pressing a
+ * movable claimed start and dragging reassigns its player (a manual drag).
+ * Returns true if it consumed the click so the caller skips the zoom popup. */
 static bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
                                  ImVec2 imgMin, float innerSize,
                                  int bx0, int by0, int bx1, int by1) {
     static int s_miniDragHolder = -1;   /* lobby slot being dragged, or -1 */
     bool consumed = false;
-    ImGui::SetCursorScreenPos(imgMin);
-    /* NoNav so clicking it doesn't grab keyboard/nav focus and draw the
-     * light-blue focus outline (it's a map, not a text field). */
-    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
-    ImGui::InvisibleButton("##miniMapInteract", ImVec2(innerSize, innerSize));
-    ImGui::PopItemFlag();
-    bool hov = ImGui::IsItemHovered();
     ImDrawList *dl = ImGui::GetWindowDrawList();
     ImVec2 mp = ImGui::GetMousePos();
+    bool hov = ImGui::IsItemHovered();   /* the map Image (last item) */
 
-    /* Manual drag-to-move in progress. We don't use ImGui drag-drop for the
-     * minimap-internal drag: source and target are the same item, and ImGui
-     * suppresses the source's hover so the drop never registers. */
     if (s_miniDragHolder >= 0) {
         consumed = true;
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
@@ -3349,11 +3339,12 @@ static bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap
         return consumed;
     }
 
-    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    if (!hov) return consumed;
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     /* On press: a free start under the cursor → claim it for yourself; a
      * movable claimed start → begin a manual drag-to-move. Both consume the
      * click so the zoom popup doesn't open. */
-    if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         int st = lobbyPreviewStartAtScreen(imgMin, innerSize, bx0, by0, bx1, by1,
                                            mp, 25.0f);
         int holder = (st >= 1) ? lobbyStartHolderSlot(cs, st) : -1;
@@ -3364,20 +3355,6 @@ static bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap
             s_miniDragHolder = holder;
             consumed = true;
         }
-    }
-
-    /* Drop target for the player-list "+" move handles (cross-widget drag). */
-    if (ImGui::BeginDragDropTarget()) {
-        const ImGuiPayload *pl = ImGui::AcceptDragDropPayload(
-            "WB_START_ASSIGN", ImGuiDragDropFlags_AcceptBeforeDelivery);
-        if (pl && pl->IsDelivery() && pl->DataSize == (int)sizeof(uint8_t)) {
-            int st = lobbyPreviewStartAtScreen(imgMin, innerSize, bx0, by0, bx1, by1,
-                                               ImGui::GetMousePos(), 25.0f);
-            if (st >= 1)
-                clientSimNetSendLobbyClaimStart(cs, *(const uint8_t *)pl->Data,
-                                                (BYTE)st);
-        }
-        ImGui::EndDragDropTarget();
     }
     return consumed;
 }
