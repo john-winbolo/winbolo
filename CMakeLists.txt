@@ -2483,6 +2483,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/common/prefs.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
+    tests/unit/test_lobby_claim_start_dispatch.c
     tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
     tests/unit/test_shell_death_event.c
@@ -2501,6 +2502,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_upload_cap.c
     tests/unit/test_map_field_clamps.c
     tests/unit/test_map_reload_rollback.c
+    tests/unit/test_map_read_memory.c
     tests/unit/test_upload_busy.c
     tests/unit/test_upload_filename_safe.c
     tests/unit/test_lobby_time_minutes_valid.c
@@ -2528,6 +2530,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
+    tests/unit/test_starts_pick_incremental.c
+    tests/unit/test_starts_assign_batch.c
+    tests/unit/test_starts_open_ideal.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -2561,6 +2566,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wire_corpus.c
     tests/unit/test_wire_corpus_capture.c
     tests/unit/test_packet_type_names.c
+    tests/unit/test_client_type.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2680,6 +2686,13 @@ set(_unit_test_names
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
     command_codec_roundtrip_variants
+    command_codec_lobby_claim_start
+    lobby_claim_start_host_swaps_occupied
+    lobby_claim_start_host_swap_into_none
+    lobby_claim_start_non_host_occupied_rejected
+    lobby_claim_start_non_host_other_slot_rejected
+    lobby_claim_start_self_free_and_release
+    lobby_claim_start_validation
     command_codec_cmdseq_slot
     command_codec_bounds_checks
     command_rejected_parks_name_codes
@@ -2717,6 +2730,10 @@ set(_unit_test_names
     map_field_clamps_passthrough
     map_field_clamps_angry_start
     map_reload_rollback
+    map_read_memory_matches_file
+    map_read_memory_handbuilt
+    map_convert_file_to_compressed
+    map_read_memory_rejects_garbage
     upload_busy_predicate
     upload_filename_safe
     lobby_bot_name_rejects_reserved_prefix
@@ -2812,6 +2829,18 @@ set(_unit_test_names
     alliance_reset_apply_rebuilds_alliances
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
+    starts_pick_cluster_nearest_teammate
+    starts_pick_farthest_when_solo
+    starts_pick_none_when_all_taken
+    starts_batch_reserved_lands_exact
+    starts_batch_unreserved_avoids_reserved
+    starts_batch_stale_reservation_falls_through
+    starts_batch_duplicate_honors_first
+    starts_batch_null_reservations_place_normally
+    starts_batch_solo_random_seed
+    starts_batch_teams_cluster_and_separate
+    starts_batch_team_anchor_jitter_varies
+    starts_open_ideal_friendly_pill_eligible
     input_redundancy
     stall_advances_processed_tick
     stall_mine_late_lays_once
@@ -2845,6 +2874,8 @@ set(_unit_test_names
     wire_corpus
     packet_type_names
     mdns_discovery
+    client_type_matches_platform
+    client_type_name_round_trips
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

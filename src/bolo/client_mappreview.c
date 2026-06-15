@@ -87,6 +87,48 @@ MapPreview *clientMapPreviewLoadFromFile(const char *path) {
   return mp;
 }
 
+MapPreview *clientMapPreviewLoadFromMapBytes(const BYTE *data, int len) {
+  MapPreview *mp;
+  if (data == NULL || len <= 0) return NULL;
+  mp = clientMapPreviewAlloc();
+  if (mp == NULL) return NULL;
+  if (!mapReadFromMemory(data, len, &mp->mp, &mp->pb, &mp->bs, &mp->ss)) {
+    clientMapPreviewDestroy(mp);
+    return NULL;
+  }
+  return mp;
+}
+
+/* Worst-case serialized size of a runtime compressed map. Mirrors the
+ * 256 KiB scratch the random-map generator hands mapSaveCompressedMap. */
+#define CLIENT_MAP_COMPRESSED_MAX (256 * 1024)
+
+BYTE *clientMapConvertFileToCompressed(const BYTE *fileData, int fileLen, int *outLen) {
+  MapPreview *mp;
+  BYTE *out;
+  int len;
+
+  if (outLen != NULL) *outLen = 0;
+  if (fileData == NULL || fileLen <= 0) return NULL;
+
+  mp = clientMapPreviewLoadFromMapBytes(fileData, fileLen);
+  if (mp == NULL) return NULL;
+
+  out = (BYTE *)malloc(CLIENT_MAP_COMPRESSED_MAX);
+  if (out == NULL) {
+    clientMapPreviewDestroy(mp);
+    return NULL;
+  }
+  len = mapSaveCompressedMap(&mp->mp, &mp->pb, &mp->bs, &mp->ss, out);
+  clientMapPreviewDestroy(mp);
+  if (len <= 0) {
+    free(out);
+    return NULL;
+  }
+  if (outLen != NULL) *outLen = len;
+  return out;
+}
+
 void clientMapPreviewDestroy(MapPreview *mp) {
   if (mp == NULL) return;
   if (mp->owns) {

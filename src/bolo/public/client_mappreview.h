@@ -58,6 +58,28 @@ MapPreview *clientMapPreviewLoadFromBuffer(const BYTE *data, int len);
 MapPreview *clientMapPreviewLoadFromFile(const char *path);
 
 /*********************************************************
+ *NAME:          clientMapPreviewLoadFromMapBytes
+ *PURPOSE:
+ *  Allocates a MapPreview and parses an on-disk .map file
+ *  image held in memory (e.g. a WinBolo.net download kept
+ *  in RAM) into it. No temp file is written. Returns NULL
+ *  on failure (the partial allocation is freed first).
+ *********************************************************/
+MapPreview *clientMapPreviewLoadFromMapBytes(const BYTE *data, int len);
+
+/*********************************************************
+ *NAME:          clientMapConvertFileToCompressed
+ *PURPOSE:
+ *  Parses an on-disk .map file image held in memory and
+ *  re-serializes it to the runtime compressed map format
+ *  (the format clientMapPreviewLoadFromBuffer and the map
+ *  preview popup consume). Returns a malloc'd buffer the
+ *  caller must free, writing its length to *outLen, or
+ *  NULL on parse failure. No temp file is written.
+ *********************************************************/
+BYTE *clientMapConvertFileToCompressed(const BYTE *fileData, int fileLen, int *outLen);
+
+/*********************************************************
  *NAME:          clientMapPreviewWrap
  *PURPOSE:
  *  Allocates a MapPreview that wraps caller-owned

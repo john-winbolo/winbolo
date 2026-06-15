@@ -415,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Haritayı Atla
 STR_DLGLOBBY_CANCELSKIP=Atlamayı İptal Et
 STR_DLGLOBBY_VOTES={number}/{number2} oy haritayı atlamak için
 STR_DLGLOBBY_CHAT=Sohbet
+STR_DLGLOBBY_CHAT_GENERAL=Genel
+STR_DLGLOBBY_CHAT_TEAM=Takım
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=K
+STR_COMPASS_NE=KD
+STR_COMPASS_E=D
+STR_COMPASS_SE=GD
+STR_COMPASS_S=G
+STR_COMPASS_SW=GB
+STR_COMPASS_W=B
+STR_COMPASS_NW=KB
+STR_COMPASS_C=M
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Atanmamış
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(açık)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} {string1} ekibine katıldı.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} {string1} ekibinden ayrıldı.
 STR_DLGLOBBY_READY=Hazır
 STR_DLGLOBBY_UNREADY=Hazır Değil
 STR_DLGLOBBY_BALANCE_TEAMS=Takımları Dengele

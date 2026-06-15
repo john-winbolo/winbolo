@@ -188,10 +188,36 @@ void startsGetStart(struct GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTY
 *  to startsGetStart, which consumes the slot lazily so the
 *  per-square nudge sees siblings already created earlier
 *  in the batch loop.
+*
+*  reservedStartIdx0 (optional, may be NULL) carries a 0-based
+*  pre-reserved start per slot (MAX_STARTS = none). A connected
+*  slot with a valid reservation locks that exact start: it is
+*  excluded from the cluster/farthest-first placement and emitted
+*  at its reserved index, leaving only the unreserved slots to
+*  fill the remaining free starts. Duplicate reservations honor
+*  the first; an out-of-range reservation is treated as none.
+*  NULL means no reservations (original behaviour).
 *********************************************************/
 void startsAssignBatch(struct GameSim *sim, starts *value,
                        const bool *connected, const BYTE *teamNumber,
-                       BYTE *outStartIdx);
+                       BYTE *outStartIdx, const BYTE *reservedStartIdx0);
+
+/*********************************************************
+*NAME:          startsPickIncremental
+*PURPOSE:
+*  Picks one free start for a single joiner, 0-based in/out.
+*  taken[] is 0-based per start (TRUE = already reserved).
+*  teammateStarts0[] lists the 0-based start indices reserved
+*  by the joiner's teammates (teammateCount may be 0). With
+*  teammates, returns the free valid start with the smallest
+*  distance to the nearest teammate reservation (cluster);
+*  otherwise returns the free valid start maximising the min
+*  distance to every taken start (farthest-first). Returns
+*  MAX_STARTS when no free valid start exists.
+*********************************************************/
+BYTE startsPickIncremental(struct GameSim *sim, starts *value,
+                           const bool *taken,
+                           const BYTE *teammateStarts0, int teammateCount);
 
 /*********************************************************
 *NAME:          startsGetRandStart

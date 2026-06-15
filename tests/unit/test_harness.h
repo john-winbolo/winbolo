@@ -69,6 +69,13 @@ int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
 int run_lobby_brain_list_codec_and_apply(void);
 int run_command_codec_roundtrip_variants(void);
+int run_command_codec_lobby_claim_start(void);
+int run_lobby_claim_start_host_swaps_occupied(void);
+int run_lobby_claim_start_host_swap_into_none(void);
+int run_lobby_claim_start_non_host_occupied_rejected(void);
+int run_lobby_claim_start_non_host_other_slot_rejected(void);
+int run_lobby_claim_start_self_free_and_release(void);
+int run_lobby_claim_start_validation(void);
 int run_command_codec_cmdseq_slot(void);
 int run_command_codec_bounds_checks(void);
 int run_command_rejected_parks_name_codes(void);
@@ -122,6 +129,15 @@ int run_map_field_clamps_evil(void);
 int run_map_field_clamps_passthrough(void);
 int run_map_field_clamps_angry_start(void);
 int run_map_reload_rollback(void);
+
+/* In-memory BMAP parser (test_map_read_memory.c). mapReadFromMemory
+ * must agree byte-for-byte with mapRead on valid maps, the WBN
+ * preview conversion (file bytes -> compressed -> preview) must
+ * round-trip, and malformed buffers must be rejected. */
+int run_map_read_memory_matches_file(void);
+int run_map_read_memory_handbuilt(void);
+int run_map_convert_file_to_compressed(void);
+int run_map_read_memory_rejects_garbage(void);
 int run_upload_busy_predicate(void);
 int run_upload_filename_safe(void);
 int run_lobby_time_minutes_valid(void);
@@ -256,6 +272,29 @@ int run_lobby_reset_clears_host_slot(void);
  * points at open sea; the grow gate also failed to reject DEEP_SEA. */
 int run_treegrow_never_plants_on_deep_sea(void);
 int run_treegrow_reset_clears_stale_target(void);
+
+/* Incremental start-picker (test_starts_pick_incremental.c). The one-slot
+ * cluster / farthest-first selection that auto-assigns a lobby start on
+ * join, shared with startsAssignBatch's distance + validity logic. */
+int run_starts_pick_cluster_nearest_teammate(void);
+int run_starts_pick_farthest_when_solo(void);
+int run_starts_pick_none_when_all_taken(void);
+
+/* Batch start-assignment reservations (test_starts_assign_batch.c). The
+ * reservedStartIdx0 lock that honors lobby start picks at game start:
+ * reserved slots land exactly, unreserved slots fill the rest, stale and
+ * duplicate reservations degrade to ordinary placement, NULL is a no-op. */
+int run_starts_batch_reserved_lands_exact(void);
+int run_starts_batch_unreserved_avoids_reserved(void);
+int run_starts_batch_stale_reservation_falls_through(void);
+int run_starts_batch_duplicate_honors_first(void);
+int run_starts_batch_null_reservations_place_normally(void);
+/* Randomized solo placement, team clustering, and unanchored-team anchor
+ * jitter in startsAssignBatch; friendly-pill "ideal" rule in the open path. */
+int run_starts_batch_solo_random_seed(void);
+int run_starts_batch_teams_cluster_and_separate(void);
+int run_starts_batch_team_anchor_jitter_varies(void);
+int run_starts_open_ideal_friendly_pill_eligible(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
@@ -397,6 +436,13 @@ int run_packet_type_names(void);
  * the advertiser builder + browser parse path, asserting the SRV port, the
  * inLobby/locked flags, every TXT field, and two-instance resolution. */
 int run_mdns_discovery(void);
+
+/* Self-reported client platform pin (test_client_type.c): the JOIN-time
+ * bolo_detect_client_type() resolves to the build host's CLIENT_TYPE_*
+ * (the baseline harness normalizes this field away, so it's pinned here),
+ * and bolo_client_type_name() maps every enumerator to its exact name. */
+int run_client_type_matches_platform(void);
+int run_client_type_name_round_trips(void);
 
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and

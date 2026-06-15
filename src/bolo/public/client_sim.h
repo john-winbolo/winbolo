@@ -77,6 +77,7 @@ typedef struct {
     char countryCode[3];   /* ISO 3166-1 alpha-2 (e.g. "US") */
     uint8_t clientFlags;   /* PLAYER_FLAG_* bits */
     uint8_t clientType;    /* ClientType enum */
+    uint8_t startIdx;      /* reserved map start, 1-based; 0xFF = none */
 } ClientLobbySlot;
 
 /* Callback typedefs for new transport message sending.
@@ -348,6 +349,8 @@ void clientSimClearPendingAllianceRequest(ClientSim *cs);
 
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message);
+/* Team lobby chat helper — appends "name: message\n" to lobbyTeamChatHistory */
+void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *message);
 
 /* Player-to-player chat delivery: routes to lobby chat or in-game inbox
    depending on whether the client is still in the lobby. */
@@ -525,6 +528,7 @@ time_t         clientSimGetTimeStart(const ClientSim *cs);
 /* String (char[]) accessors */
 const char *clientSimGetMapName(const ClientSim *cs);
 const char *clientSimGetLobbyChatHistory(const ClientSim *cs);
+const char *clientSimGetLobbyTeamChatHistory(const ClientSim *cs);
 const char *clientSimGetMyLastPlayerName(const ClientSim *cs);
 
 /* Indexed-array accessors (bounds-checked; out-of-range
