@@ -883,6 +883,16 @@ STR_MAPEDIT_STAMP_IMPORT=Importar...
 STR_MAPEDIT_STAMP_UNTITLED=Sin título
 STR_MAPEDIT_STAMP_SAVE_TITLE=Guardar plantilla
 STR_MAPEDIT_STAMP_SAVE_BLURB=Introduce un nombre para esta plantilla:
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Inicio #{number}\nHaz clic para elegir; clic derecho para asignar a otro jugador
+STR_STARTPICK_TIP_FREE=Inicio #{number}\nHaz clic para elegir este inicio
+STR_STARTPICK_TIP_HELD_HOST=Inicio #{number} - {player}\nArrastra para mover; clic derecho para asignar a otro jugador
+STR_STARTPICK_TIP_HELD=Inicio #{number} - {player}
+STR_STARTPICK_YOU=tú
+STR_STARTPICK_SWAP_WITH=Intercambiar este inicio con:
+STR_STARTPICK_ASSIGN_TO=Asignar inicio a:
+STR_STARTPICK_SLOT_FALLBACK=(plaza)
 STR_MAPEDIT_STAMP_SAVE_NAME=Nombre
 STR_MAPEDIT_SAVE_BTN=Guardar
 

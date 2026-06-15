@@ -423,6 +423,16 @@ STR_DLGLOBBY_START_OPEN=(open)
 # Team-chat system lines when a player joins/leaves the local team
 STR_DLGLOBBY_TEAM_JOINED_FMT={player} joined {string1}.
 STR_DLGLOBBY_TEAM_LEFT_FMT={player} left {string1}.
+
+# Map-preview start-picker tooltips and the assign-to-someone menu
+STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nClick to choose; right-click to assign to someone else
+STR_STARTPICK_TIP_FREE=Start #{number}\nClick to choose this start
+STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nDrag to move; right-click to assign to someone else
+STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_YOU=you
+STR_STARTPICK_SWAP_WITH=Swap this start with:
+STR_STARTPICK_ASSIGN_TO=Assign start to:
+STR_STARTPICK_SLOT_FALLBACK=(slot)
 STR_DLGLOBBY_READY=Ready
 STR_DLGLOBBY_UNREADY=Unready
 STR_DLGLOBBY_BALANCE_TEAMS=Balance Teams

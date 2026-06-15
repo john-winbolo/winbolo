@@ -1452,3 +1452,13 @@ STR_DLGWBN_VIA_STEAM=Steam ile
 STR_DLGLOBBY_MAKE_HOST=Sunucu sahibi yap
 STR_DLGLOBBY_MAKE_HOST_FMT=„{player}" sunucu sahibi yapılsın mı?
 STR_DLGLOBBY_HOST_CHANGED_FMT={player} artık sunucu sahibi
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Başlangıç #{number}\nSeçmek için tıklayın; birine atamak için sağ tıklayın
+STR_STARTPICK_TIP_FREE=Başlangıç #{number}\nBu başlangıcı seçmek için tıklayın
+STR_STARTPICK_TIP_HELD_HOST=Başlangıç #{number} - {player}\nTaşımak için sürükleyin; birine atamak için sağ tıklayın
+STR_STARTPICK_TIP_HELD=Başlangıç #{number} - {player}
+STR_STARTPICK_YOU=sen
+STR_STARTPICK_SWAP_WITH=Bu başlangıcı şununla değiştir:
+STR_STARTPICK_ASSIGN_TO=Başlangıcı şuna ata:
+STR_STARTPICK_SLOT_FALLBACK=(slot)

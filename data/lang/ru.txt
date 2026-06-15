@@ -1450,3 +1450,13 @@ STR_DLGWBN_VIA_STEAM=через Steam
 STR_DLGLOBBY_MAKE_HOST=Сделать хостом
 STR_DLGLOBBY_MAKE_HOST_FMT=Сделать «{player}» хостом?
 STR_DLGLOBBY_HOST_CHANGED_FMT={player} теперь хост
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Старт #{number}\nНажмите, чтобы выбрать; правой кнопкой — назначить другому игроку
+STR_STARTPICK_TIP_FREE=Старт #{number}\nНажмите, чтобы выбрать этот старт
+STR_STARTPICK_TIP_HELD_HOST=Старт #{number} — {player}\nПеретащите, чтобы переместить; правой кнопкой — назначить другому игроку
+STR_STARTPICK_TIP_HELD=Старт #{number} — {player}
+STR_STARTPICK_YOU=вы
+STR_STARTPICK_SWAP_WITH=Поменять этот старт с:
+STR_STARTPICK_ASSIGN_TO=Назначить старт игроку:
+STR_STARTPICK_SLOT_FALLBACK=(слот)
