@@ -24,9 +24,11 @@ void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready);
  * index and republishes the affected slots itself. */
 void serverSimSetLobbyStartIdx(ServerSim *sim, BYTE slot, BYTE idx);
 
-/* Per-slot team assignment. Writes lobbyPlayers[playerNum].teamNumber
- * and rebakes the alliance graph so any same-team pairs become allies
- * before the call returns. Drivers: UDP PACKET_LOBBY_TEAM_SET /
+/* Per-slot team assignment. Writes lobbyPlayers[playerNum].teamNumber,
+ * rebakes the alliance graph so any same-team pairs become allies, then
+ * re-clusters the slot's reserved start to the new team (the slot's own
+ * current start stays a candidate; no-op outside lobby state). All three
+ * complete before the call returns. Drivers: UDP PACKET_LOBBY_TEAM_SET /
  * PACKET_LOBBY_ADD_BOT handlers, the SP-host local-transport branch
  * of clientSimNetSendTeamSet, the headless cmd-stdin CMD_OP_SET_TEAM
  * handler. Loop callers use serverSimSetTeamBatch instead — see that

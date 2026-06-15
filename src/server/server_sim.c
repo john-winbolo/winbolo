@@ -2381,6 +2381,14 @@ void serverSimSetTeamBatch(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
 void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     serverSimSetTeamBatch(sim, playerNum, teamNumber);
     serverSimReapplyTeamAlliances(sim);
+    /* Re-cluster the slot's reserved start to its new team now the team is
+     * written. The helper frees the slot's own current reservation back into
+     * the candidate pool (so the existing start can be re-chosen) and clusters
+     * toward same-team holders, or falls to farthest-first when the new team
+     * has no other members. No-ops outside lobby state or for an unconnected
+     * slot, so the headless/batch drivers are unaffected. Callers republish
+     * the slot themselves. */
+    serverSimAssignLobbyStartOnJoin(sim, playerNum);
 }
 
 void serverSimSetLobbyStartIdx(ServerSim *sim, BYTE slot, BYTE idx) {
