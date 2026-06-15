@@ -3265,12 +3265,14 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
             tp = ImVec2(fx - offPx - ts.x, fy - ts.y * 0.5f);
         else                              /* N/S/diagonal/centre: centred */
             tp = ImVec2(cxp - ts.x * 0.5f, cyp - ts.y * 0.5f);
-        /* Colour the label by ownership: ally green, enemy red, else white. */
+        /* Colour the whole label by ownership: you/allies a bright mint green
+         * (distinct from the grass/forest greens so it stands out), enemies
+         * red, unclaimed white. */
         ImU32 txtCol = IM_COL32(255, 255, 255, 255);
         if (nameListIdx[i] >= 0) {
             LobbyStartOwner o = lobbyStartClassify(cs, holderOf[i], myPlayerNum);
-            if (o == LSO_ALLY)       txtCol = IM_COL32(120, 230, 120, 255);
-            else if (o == LSO_ENEMY) txtCol = IM_COL32(235, 90, 90, 255);
+            if (o == LSO_ENEMY) txtCol = IM_COL32(235, 90, 90, 255);
+            else                txtCol = IM_COL32(80, 255, 170, 255);
         }
         dl->AddText(font, fsz, ImVec2(tp.x + 1.0f, tp.y + 1.0f),
                     IM_COL32(0, 0, 0, 205), buf);
@@ -3309,7 +3311,11 @@ static bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap
     static int s_miniDragHolder = -1;   /* lobby slot being dragged, or -1 */
     bool consumed = false;
     ImGui::SetCursorScreenPos(imgMin);
+    /* NoNav so clicking it doesn't grab keyboard/nav focus and draw the
+     * light-blue focus outline (it's a map, not a text field). */
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
     ImGui::InvisibleButton("##miniMapInteract", ImVec2(innerSize, innerSize));
+    ImGui::PopItemFlag();
     bool hov = ImGui::IsItemHovered();
     ImDrawList *dl = ImGui::GetWindowDrawList();
     ImVec2 mp = ImGui::GetMousePos();
