@@ -1452,3 +1452,13 @@ STR_DLGWBN_VIA_STEAM=via Steam
 STR_DLGLOBBY_MAKE_HOST=Tornar anfitrião
 STR_DLGLOBBY_MAKE_HOST_FMT=Tornar "{player}" o anfitrião?
 STR_DLGLOBBY_HOST_CHANGED_FMT={player} agora é o anfitrião
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Início #{number}\nClique para escolher; clique com o botão direito para atribuir a outra pessoa
+STR_STARTPICK_TIP_FREE=Início #{number}\nClique para escolher este início
+STR_STARTPICK_TIP_HELD_HOST=Início #{number} - {player}\nArraste para mover; clique com o botão direito para atribuir a outra pessoa
+STR_STARTPICK_TIP_HELD=Início #{number} - {player}
+STR_STARTPICK_YOU=você
+STR_STARTPICK_SWAP_WITH=Trocar este início com:
+STR_STARTPICK_ASSIGN_TO=Atribuir início a:
+STR_STARTPICK_SLOT_FALLBACK=(vaga)

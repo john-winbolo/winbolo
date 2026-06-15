@@ -1448,3 +1448,13 @@ STR_DLGWBN_VIA_STEAM=przez Steam
 STR_DLGLOBBY_MAKE_HOST=Ustanów gospodarzem
 STR_DLGLOBBY_MAKE_HOST_FMT=Ustanowić „{player}" gospodarzem?
 STR_DLGLOBBY_HOST_CHANGED_FMT={player} jest teraz gospodarzem
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKliknij, aby wybrać; prawy przycisk, aby przypisać komuś innemu
+STR_STARTPICK_TIP_FREE=Start #{number}\nKliknij, aby wybrać ten start
+STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nPrzeciągnij, aby przenieść; prawy przycisk, aby przypisać komuś innemu
+STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_YOU=ty
+STR_STARTPICK_SWAP_WITH=Zamień ten start z:
+STR_STARTPICK_ASSIGN_TO=Przypisz start do:
+STR_STARTPICK_SLOT_FALLBACK=(slot)

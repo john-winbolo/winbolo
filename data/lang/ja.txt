@@ -1452,3 +1452,13 @@ STR_DLGWBN_STATS_TOURN=トーナメント
 STR_DLGWBN_STATS_WINS=勝利:
 STR_DLGWBN_UNRANKED=ランクなし
 STR_DLGWBN_VIA_STEAM=Steam 経由
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=スタート #{number}\nクリックで選択、右クリックで他のプレイヤーに割り当て
+STR_STARTPICK_TIP_FREE=スタート #{number}\nクリックでこのスタートを選択
+STR_STARTPICK_TIP_HELD_HOST=スタート #{number} - {player}\nドラッグで移動、右クリックで他のプレイヤーに割り当て
+STR_STARTPICK_TIP_HELD=スタート #{number} - {player}
+STR_STARTPICK_YOU=あなた
+STR_STARTPICK_SWAP_WITH=このスタートを交換する相手：
+STR_STARTPICK_ASSIGN_TO=スタートを割り当てる相手：
+STR_STARTPICK_SLOT_FALLBACK=（スロット）

@@ -459,6 +459,15 @@
 /* Team-chat system lines when a player joins/leaves the local team */
 #define STR_DLGLOBBY_TEAM_JOINED_FMT        1510
 #define STR_DLGLOBBY_TEAM_LEFT_FMT          1511
+/* Map-preview start-picker tooltips and the assign-to-someone menu */
+#define STR_STARTPICK_TIP_FREE_HOST         1512
+#define STR_STARTPICK_TIP_FREE              1513
+#define STR_STARTPICK_TIP_HELD_HOST         1514
+#define STR_STARTPICK_TIP_HELD              1515
+#define STR_STARTPICK_YOU                   1516
+#define STR_STARTPICK_SWAP_WITH             1517
+#define STR_STARTPICK_ASSIGN_TO             1518
+#define STR_STARTPICK_SLOT_FALLBACK         1519
 #define STR_DLGLOBBY_READY                  614
 #define STR_DLGLOBBY_UNREADY                615
 #define STR_DLGLOBBY_BALANCE_TEAMS          616

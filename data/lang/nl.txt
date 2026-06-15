@@ -1452,3 +1452,13 @@ STR_DLGWBN_VIA_STEAM=via Steam
 STR_DLGLOBBY_MAKE_HOST=Host maken
 STR_DLGLOBBY_MAKE_HOST_FMT=„{player}" tot host maken?
 STR_DLGLOBBY_HOST_CHANGED_FMT={player} is nu de host
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKlik om te kiezen; rechtsklikken om aan iemand anders toe te wijzen
+STR_STARTPICK_TIP_FREE=Start #{number}\nKlik om deze startpositie te kiezen
+STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nSlepen om te verplaatsen; rechtsklikken om aan iemand anders toe te wijzen
+STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_YOU=jij
+STR_STARTPICK_SWAP_WITH=Ruil deze start met:
+STR_STARTPICK_ASSIGN_TO=Start toewijzen aan:
+STR_STARTPICK_SLOT_FALLBACK=(positie)

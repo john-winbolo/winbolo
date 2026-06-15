@@ -1452,3 +1452,13 @@ STR_DLGWBN_STATS_TOURN=토너먼트
 STR_DLGWBN_STATS_WINS=승리:
 STR_DLGWBN_UNRANKED=순위 없음
 STR_DLGWBN_VIA_STEAM=Steam으로
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=시작점 #{number}\n클릭해서 선택하거나, 우클릭해서 다른 사람에게 배정하세요
+STR_STARTPICK_TIP_FREE=시작점 #{number}\n클릭해서 이 시작점을 선택하세요
+STR_STARTPICK_TIP_HELD_HOST=시작점 #{number} - {player}\n드래그해서 이동하거나, 우클릭해서 다른 사람에게 배정하세요
+STR_STARTPICK_TIP_HELD=시작점 #{number} - {player}
+STR_STARTPICK_YOU=나
+STR_STARTPICK_SWAP_WITH=이 시작점을 교환할 대상:
+STR_STARTPICK_ASSIGN_TO=시작점을 배정할 대상:
+STR_STARTPICK_SLOT_FALLBACK=(슬롯)

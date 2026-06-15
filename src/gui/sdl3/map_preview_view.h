@@ -131,6 +131,13 @@ void mapPreviewViewHandleInput(MapPreviewView *v, bool hovered,
  * tiles. Useful for "loading..." placeholders. */
 bool mapPreviewViewIsReady(const MapPreviewView *v);
 
+/* Set per-start ownership for marker colouring. owners is 0-based, parallel
+ * to start order (start index i+1): 0=unclaimed, 1=self, 2=ally, 3=enemy.
+ * Selects the boat sprite at sprite zoom and the dot colour at minimap zoom.
+ * Pass owners=NULL / count=0 to clear (everything renders as the default). */
+void mapPreviewViewSetStartOwners(MapPreviewView *v,
+                                  const uint8_t *owners, int count);
+
 /* Current zoom level (1.0f = native tile size). */
 float mapPreviewViewGetZoom(const MapPreviewView *v);
 
