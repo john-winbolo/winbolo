@@ -430,10 +430,16 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     /* Per-instance worker handles. The result/flag state above is static
      * (persists for the program lifetime), so workers are joined on close:
      * a detached worker must never reach curl after httpDestroy(), nor write
-     * these statics into a later dialog instance. downloadCancel lets close
-     * abort an in-flight download promptly rather than block on its timeout. */
+     * these statics into a later dialog instance. The cancel flags let close
+     * abort an in-flight transfer promptly rather than block on its timeout.
+     *
+     * These are plain `volatile int`, not std::atomic: they cross the C ABI
+     * into http.c / libcurl's xferinfo callback (which takes `volatile int*`)
+     * and are one-way "set once to abort" flags polled on the worker thread.
+     * volatile is the matching idiom for that boundary; the std::atomic counters
+     * above are C++-side display state and never leave this translation unit. */
     std::thread fetchThread, detailThread, downloadThread;
-    volatile int downloadCancel = 0;
+    volatile int fetchCancel = 0, detailCancel = 0, downloadCancel = 0;
 
     /* Clear any worker state left over from a previous dialog instance. */
     fetching = false;        fetchDone = false;
@@ -457,6 +463,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     auto triggerFetch = [&](BrowserTab tab, int page) {
         if (fetching || !httpOk) return;
         if (fetchThread.joinable()) fetchThread.join(); /* reap previous (already finished) */
+        fetchCancel = 0;
         tabs[tab].fetching = true;
         fetching = true;
         fetchDone = false;
@@ -467,7 +474,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         SDL_strlcpy(req.player, searchPlayer, sizeof(req.player));
         SDL_strlcpy(req.mapFilter, searchMap, sizeof(req.mapFilter));
 
-        fetchThread = std::thread([req]() {
+        fetchThread = std::thread([req, &fetchCancel]() {
             FetchResult res = {};
             res.tab = req.tab;
             res.page = req.page;
@@ -500,7 +507,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             }
 
             char *response = nullptr;
-            int status = wbn_api_get(path, &response);
+            int status = wbn_api_get_cancellable(path, &response, &fetchCancel);
 
             if (status == 200 && response) {
                 cJSON *json = cJSON_Parse(response);
@@ -556,13 +563,14 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
     auto triggerDetailFetch = [&](const char *key) {
         if (detailFetching) return;
         if (detailThread.joinable()) detailThread.join(); /* reap previous (already finished) */
+        detailCancel = 0;
         detailFetching = true;
         detailDone = false;
 
         char keyCopy[33];
         SDL_strlcpy(keyCopy, key, sizeof(keyCopy));
 
-        detailThread = std::thread([keyCopy]() {
+        detailThread = std::thread([keyCopy, &detailCancel]() {
             DetailResult res = {};
             SDL_strlcpy(res.key, keyCopy, sizeof(res.key));
             res.success = false;
@@ -571,7 +579,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             SDL_snprintf(path, sizeof(path), "logs/%s", keyCopy);
 
             char *response = nullptr;
-            int status = wbn_api_get(path, &response);
+            int status = wbn_api_get_cancellable(path, &response, &detailCancel);
 
             if (status == 200 && response) {
                 cJSON *json = cJSON_Parse(response);
@@ -1280,9 +1288,10 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
 
     /* Stop and reap all workers before tearing down curl global state:
      * httpDestroy() -> curl_global_cleanup() is unsafe while any thread is
-     * still inside a curl transfer. Signal the download to abort first so a
-     * large in-flight transfer doesn't block close on its 120s timeout. */
-    downloadCancel = 1;
+     * still inside a curl transfer. Signal every worker to abort first so an
+     * in-flight transfer against a slow/unresponsive server doesn't block
+     * close on its curl timeout (download 120s, fetch/detail 30s). */
+    fetchCancel = detailCancel = downloadCancel = 1;
     if (downloadThread.joinable()) downloadThread.join();
     if (detailThread.joinable())   detailThread.join();
     if (fetchThread.joinable())    fetchThread.join();

@@ -161,6 +161,24 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback);
 int wbn_api_get(const char *path, char **response_out);
 
 /*********************************************************
+*NAME:          wbn_api_get_cancellable
+*PURPOSE:
+* Like wbn_api_get, but the caller may abort the request
+* mid-flight by setting *cancel_flag to non-zero (treat as
+* volatile/atomic). On cancellation the partial response is
+* freed and -2 is returned. Pass cancel_flag = NULL for no
+* cancellation (identical to wbn_api_get).
+*
+*ARGUMENTS:
+* path         - API path after /api/v1/ (e.g. "logs/recent?limit=20")
+* response_out - Receives heap-allocated response string (caller frees)
+* cancel_flag  - Pointer to an int polled during transfer
+*                (NULL = no cancellation)
+*********************************************************/
+int wbn_api_get_cancellable(const char *path, char **response_out,
+                            volatile int *cancel_flag);
+
+/*********************************************************
 *NAME:          wbn_prefs_get
 *PURPOSE:
 * GET /api/v1/prefs for the cloud preferences sync. Signs the

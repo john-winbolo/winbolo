@@ -552,7 +552,38 @@ const char *httpGetBaseUrl(void) {
   return wbnBaseUrl;
 }
 
+/*********************************************************
+*NAME:          XferProgressCtx / wbnXferInfoProgress
+*PURPOSE:
+* Bridges libcurl's xferinfo callback to a WbnProgressFn,
+* forwarding the received/total byte counts to the caller
+* and aborting the transfer when the caller's cancel flag
+* becomes non-zero. Shared by the GET and download paths.
+*********************************************************/
+typedef struct {
+  WbnProgressFn fn;
+  void         *user;
+  volatile int *cancel;
+} XferProgressCtx;
+
+static int wbnXferInfoProgress(void *userPtr,
+                               curl_off_t dltotal, curl_off_t dlnow,
+                               curl_off_t ultotal, curl_off_t ulnow) {
+  (void)ultotal; (void)ulnow;
+  XferProgressCtx *ctx = (XferProgressCtx *)userPtr;
+  if (ctx) {
+    if (ctx->cancel && *ctx->cancel) return 1; /* -> CURLE_ABORTED_BY_CALLBACK */
+    if (ctx->fn) ctx->fn(ctx->user, (int64_t)dlnow, (int64_t)dltotal);
+  }
+  return 0;
+}
+
 int wbn_api_get(const char *path, char **response_out) {
+  return wbn_api_get_cancellable(path, response_out, NULL);
+}
+
+int wbn_api_get_cancellable(const char *path, char **response_out,
+                            volatile int *cancel_flag) {
   if (response_out) *response_out = NULL;
   /* Lazy-init: the WBN map browser uses this API even when the
    * client isn't logged in / WBN subsystem isn't otherwise active.
@@ -566,6 +597,7 @@ int wbn_api_get(const char *path, char **response_out) {
         path ? path : "(null)");
     return -1;
   }
+  if (cancel_flag && *cancel_flag) return -2;
 
   CURL *curl = curl_easy_init();
   if (!curl) return -1;
@@ -598,6 +630,8 @@ int wbn_api_get(const char *path, char **response_out) {
     return -1;
   }
 
+  XferProgressCtx progressCtx = { NULL, NULL, cancel_flag };
+
   curl_easy_setopt(curl, CURLOPT_URL,            url);
   curl_easy_setopt(curl, CURLOPT_HTTPGET,         1L);
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
@@ -605,6 +639,11 @@ int wbn_api_get(const char *path, char **response_out) {
   curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &respBuf);
   curl_easy_setopt(curl, CURLOPT_TIMEOUT,        30L);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  if (cancel_flag) {
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS,       0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, wbnXferInfoProgress);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA,     &progressCtx);
+  }
   if (altIpAddress[0] != '\0') {
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
   }
@@ -619,6 +658,10 @@ int wbn_api_get(const char *path, char **response_out) {
   curl_slist_free_all(headers);
   curl_easy_cleanup(curl);
 
+  if (res == CURLE_ABORTED_BY_CALLBACK) {
+    free(respBuf.data);
+    return -2;
+  }
   if (res != CURLE_OK) {
     WB_LOG_WARN(WB_LOG_CAT_NET, "wbn_api_get [%s]: curl error: %s", path, curl_easy_strerror(res));
     free(respBuf.data);
@@ -784,30 +827,6 @@ static size_t fileWriteCallback(char *ptr, size_t size, size_t nmemb, void *user
 }
 
 /*********************************************************
-*NAME:          XferProgressCtx / wbnXferInfoProgress
-*PURPOSE:
-* Bridges libcurl's xferinfo callback to a WbnProgressFn,
-* forwarding the received/total byte counts to the caller.
-*********************************************************/
-typedef struct {
-  WbnProgressFn fn;
-  void         *user;
-  volatile int *cancel;
-} XferProgressCtx;
-
-static int wbnXferInfoProgress(void *userPtr,
-                               curl_off_t dltotal, curl_off_t dlnow,
-                               curl_off_t ultotal, curl_off_t ulnow) {
-  (void)ultotal; (void)ulnow;
-  XferProgressCtx *ctx = (XferProgressCtx *)userPtr;
-  if (ctx) {
-    if (ctx->cancel && *ctx->cancel) return 1; /* -> CURLE_ABORTED_BY_CALLBACK */
-    if (ctx->fn) ctx->fn(ctx->user, (int64_t)dlnow, (int64_t)dltotal);
-  }
-  return 0;
-}
-
-/*********************************************************
 *NAME:          wbn_api_download / wbn_api_download_progress
 *PURPOSE:
 * Downloads a file from WBN to disk. The _progress variant
@@ -895,94 +914,18 @@ int wbn_api_download_progress(const char *path, const char *dest_path,
 }
 
 /*********************************************************
-*NAME:          wbn_api_download_to_memory
+*NAME:          wbn_api_download_to_memory_cancellable
 *PURPOSE:
-* Downloads a file from WBN into a heap-allocated buffer.
-* Returns the HTTP status code, or -1 on transport error.
+* Cancellable in-memory download. Thin wrapper over
+* wbn_api_download_to_memory_progress with no progress
+* callback — the cancel_flag is passed straight through.
 *********************************************************/
-/* Thin xferinfo callback used by the _cancellable variant: aborts
- * curl mid-transfer when the caller's flag becomes non-zero. */
-static int wbnXferInfoCancel(void *userPtr,
-                             curl_off_t dltotal, curl_off_t dlnow,
-                             curl_off_t ultotal, curl_off_t ulnow) {
-  (void)dltotal; (void)dlnow; (void)ultotal; (void)ulnow;
-  volatile int *flag = (volatile int *)userPtr;
-  if (flag && *flag) return 1; /* non-zero -> CURLE_ABORTED_BY_CALLBACK */
-  return 0;
-}
-
 int wbn_api_download_to_memory_cancellable(const char *path,
                                            uint8_t **data_out,
                                            size_t *size_out,
                                            volatile int *cancel_flag) {
-  if (data_out) *data_out = NULL;
-  if (size_out) *size_out = 0;
-  if (!httpStarted) return -1;
-  if (cancel_flag && *cancel_flag) return -2;
-
-  CURL *curl = curl_easy_init();
-  if (!curl) return -1;
-
-  char url[FILENAME_MAX + 256];
-  snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, path);
-
-  char timestamp_str[32];
-  snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)time(NULL));
-  char sig_hex[129];
-  wbn_sign_request(timestamp_str, "", sig_hex);
-
-  char sig_header[256];
-  char ts_header[64];
-  snprintf(sig_header, sizeof(sig_header), "X-WBN-Signature: %s", sig_hex);
-  snprintf(ts_header, sizeof(ts_header), "X-WBN-Timestamp: %s", timestamp_str);
-
-  struct curl_slist *headers = NULL;
-  headers = curl_slist_append(headers, sig_header);
-  headers = curl_slist_append(headers, ts_header);
-
-  DynBuf respBuf;
-  dynBufInit(&respBuf);
-  if (!respBuf.data) {
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-    return -1;
-  }
-
-  curl_easy_setopt(curl, CURLOPT_URL,             url);
-  curl_easy_setopt(curl, CURLOPT_HTTPGET,          1L);
-  curl_easy_setopt(curl, CURLOPT_HTTPHEADER,      headers);
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,   dynWriteCallback);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA,       &respBuf);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT,         120L);
-  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION,  1L);
-  curl_easy_setopt(curl, CURLOPT_NOPROGRESS,      0L);
-  curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, wbnXferInfoCancel);
-  curl_easy_setopt(curl, CURLOPT_XFERINFODATA,    (void *)cancel_flag);
-  if (altIpAddress[0] != '\0') {
-    curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
-  }
-
-  CURLcode res = curl_easy_perform(curl);
-  long http_code = 0;
-  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-  curl_slist_free_all(headers);
-  curl_easy_cleanup(curl);
-
-  if (res == CURLE_ABORTED_BY_CALLBACK) {
-    free(respBuf.data);
-    return -2;
-  }
-  if (res != CURLE_OK) {
-    free(respBuf.data);
-    return -1;
-  }
-  if (http_code == 200 && data_out && size_out) {
-    *data_out = (uint8_t *)respBuf.data;
-    *size_out = respBuf.size;
-  } else {
-    free(respBuf.data);
-  }
-  return (int)http_code;
+  return wbn_api_download_to_memory_progress(path, data_out, size_out,
+                                             NULL, NULL, cancel_flag);
 }
 
 int wbn_api_download_to_memory(const char *path, uint8_t **data_out, size_t *size_out) {
