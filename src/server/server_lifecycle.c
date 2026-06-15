@@ -328,9 +328,11 @@ void serverInstanceTick(ServerSim *sim) {
   wbnTime++;
 
   transportUdpServerDrainPunchQueue();
-  transportUdpServerPollMdnsAdvertiser(sim);
 
   threadsWaitForMutex();
+  /* Reads sim state (player/base/pill counts, lobby phase) for the mDNS TXT
+   * records, so it runs under the tick mutex to avoid a torn read. */
+  transportUdpServerPollMdnsAdvertiser(sim);
   /* Receive packets — queues inputs for both ticks */
   if (transportUdpServerHasRecvThread()) {
     transportUdpServerDrainRecvQueue(sim);
