@@ -2525,6 +2525,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_treegrow_no_sea.c
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
+    tests/unit/test_starts_open_ideal.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
@@ -2819,6 +2820,10 @@ set(_unit_test_names
     starts_batch_stale_reservation_falls_through
     starts_batch_duplicate_honors_first
     starts_batch_null_reservations_place_normally
+    starts_batch_solo_random_seed
+    starts_batch_teams_cluster_and_separate
+    starts_batch_team_anchor_jitter_varies
+    starts_open_ideal_friendly_pill_eligible
     input_redundancy
     stall_advances_processed_tick
     stall_mine_late_lays_once
