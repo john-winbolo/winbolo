@@ -201,7 +201,7 @@ void minimapDrawObjects(uint8_t *pixels,
             if (minimapOwnerColor(owner, ownerCol)) {
                 col = ownerCol;
             }
-            /* Your own start: a black border ring (5x5) under the green so it
+            /* Your own start: a gray border ring (5x5) under the green so it
              * stands out from allies (same green, no border). */
             if (owner == 1) {
                 for (dy = -2; dy <= 2; dy++) {
@@ -209,9 +209,9 @@ void minimapDrawObjects(uint8_t *pixels,
                         int nx = sx + dx, ny = sy + dy;
                         if (nx >= 0 && nx < MINIMAP_SIZE && ny >= 0 && ny < MINIMAP_SIZE) {
                             int idx = (ny * MINIMAP_SIZE + nx) * 4;
-                            pixels[idx]   = 0;
-                            pixels[idx+1] = 0;
-                            pixels[idx+2] = 0;
+                            pixels[idx]   = 105;
+                            pixels[idx+1] = 105;
+                            pixels[idx+2] = 105;
                             pixels[idx+3] = 255;
                         }
                     }
