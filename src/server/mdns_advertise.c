@@ -138,12 +138,10 @@ static bool mdnsFindLocalAddr(struct in_addr *out) {
  * drives directly. Reads only the MdnsServerInfo POD.
  *---------------------------------------------------------*/
 
-/* Service-instance and host names. The instance label is fixed for v1
- * (browsers read the data from SRV/A/TXT, not the label); the host name
- * is the SRV target and the A record name. Both carry the trailing dot
- * that is part of the wire name. */
-static const char kInstanceName[] = "WinBolo." MDNS_WINBOLO_SERVICE;
-static const char kHostName[]     = "winbolo.local.";
+/* Host name — the SRV target and the A record name. Carries the trailing
+ * dot that is part of the wire name; shared across hosts (the SRV port and
+ * A address are what actually disambiguate them). */
+static const char kHostName[] = "winbolo.local.";
 
 /* mDNS record TTL in seconds. */
 #define MDNS_WINBOLO_TTL 60
@@ -153,11 +151,33 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
                                  char *txtScratch, size_t txtScratchSize) {
   size_t n = 0;
   size_t cursor = 0;
+  const char *instance;
+  size_t instanceLen;
+  const unsigned char *ip;
+  int instWritten;
 
   if (info == NULL || records == NULL || txtScratch == NULL ||
       capacity < MDNS_WINBOLO_RECORD_COUNT) {
     return 0;
   }
+
+  /* Unique per-host service-instance label, formatted into the front of the
+   * caller's scratch (it can't be a static const — two LAN hosts must not
+   * collapse into one DNS-SD instance). The address octets + game port make
+   * it unique; '-' separators keep it a single DNS label (dots would split
+   * it into sub-labels on the wire). */
+  ip = (const unsigned char *)&info->addr.s_addr;
+  instWritten = snprintf(txtScratch, txtScratchSize,
+                         "WinBolo-%u-%u-%u-%u-%u.%s",
+                         (unsigned)ip[0], (unsigned)ip[1], (unsigned)ip[2],
+                         (unsigned)ip[3], (unsigned)info->port,
+                         MDNS_WINBOLO_SERVICE);
+  if (instWritten < 0 || (size_t)instWritten >= txtScratchSize) {
+    return 0;
+  }
+  instance    = txtScratch;
+  instanceLen = (size_t)instWritten;
+  cursor      = (size_t)instWritten + 1; /* keep the NUL after the label */
 
   /* records[0]: PTR _winbolo._udp.local. -> instance (the shared
    * service-enumeration answer). */
@@ -165,16 +185,16 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
   records[n].name.str    = MDNS_WINBOLO_SERVICE;
   records[n].name.length = sizeof(MDNS_WINBOLO_SERVICE) - 1;
   records[n].type        = MDNS_RECORDTYPE_PTR;
-  records[n].data.ptr.name.str    = kInstanceName;
-  records[n].data.ptr.name.length = sizeof(kInstanceName) - 1;
+  records[n].data.ptr.name.str    = instance;
+  records[n].data.ptr.name.length = instanceLen;
   records[n].rclass      = MDNS_CLASS_IN;
   records[n].ttl         = MDNS_WINBOLO_TTL;
   n++;
 
   /* records[1]: SRV instance -> host:port (the real bound game port). */
   memset(&records[n], 0, sizeof(records[n]));
-  records[n].name.str    = kInstanceName;
-  records[n].name.length = sizeof(kInstanceName) - 1;
+  records[n].name.str    = instance;
+  records[n].name.length = instanceLen;
   records[n].type        = MDNS_RECORDTYPE_SRV;
   records[n].data.srv.priority = 0;
   records[n].data.srv.weight   = 0;
@@ -210,8 +230,8 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
       return 0;                                                               \
     }                                                                         \
     memset(&records[n], 0, sizeof(records[n]));                              \
-    records[n].name.str        = kInstanceName;                              \
-    records[n].name.length     = sizeof(kInstanceName) - 1;                  \
+    records[n].name.str        = instance;                                  \
+    records[n].name.length     = instanceLen;                               \
     records[n].type            = MDNS_RECORDTYPE_TXT;                        \
     records[n].data.txt.key.str    = (KEY);                                  \
     records[n].data.txt.key.length = sizeof(KEY) - 1;                        \

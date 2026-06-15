@@ -393,6 +393,11 @@ int run_wire_corpus_capture(void);
  * its exact debug string and an undefined type id resolves to "UNKNOWN". */
 int run_packet_type_names(void);
 
+/* mDNS LAN discovery (test_mdns_discovery.c): unicast-loopback round-trip of
+ * the advertiser builder + browser parse path, asserting the SRV port, the
+ * inLobby/locked flags, every TXT field, and two-instance resolution. */
+int run_mdns_discovery(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

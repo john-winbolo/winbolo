@@ -2551,6 +2551,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_map_resync.c
     tests/unit/test_conn_migration.c
     tests/unit/test_viewtick_rewind.c
+    # mDNS discovery: unicast-loopback round-trip through the real advertiser
+    # builder + browser parse path (no multicast socket).
+    tests/unit/test_mdns_discovery.c
     # Wire-codec corpus: the tap sink, the fast differential test (reads
     # committed fixtures), and the on-demand capture generator (uses the
     # loopback harness above).
@@ -2633,7 +2636,11 @@ bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
     bolo_static ${SERVER_LINK_GROUP} bot_brains_static
-    SDL3::SDL3 minizip lua_static cjson utf8proc)
+    SDL3::SDL3 minizip lua_static cjson utf8proc
+    # mdns is header-only; linked for its include dir so test_mdns_discovery.c
+    # sees mdns.h / mdns_records.h (bolo_static / server_static link it PRIVATE,
+    # so the include dir doesn't propagate transitively).
+    mdns)
 
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
@@ -2837,6 +2844,7 @@ set(_unit_test_names
     viewtick_displayed_tick
     wire_corpus
     packet_type_names
+    mdns_discovery
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

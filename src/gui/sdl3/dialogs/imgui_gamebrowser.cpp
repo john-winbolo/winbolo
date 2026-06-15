@@ -429,6 +429,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     static std::atomic<bool> searching(false);
     static std::atomic<bool> searchDone(false);
     static std::thread searchThread;
+    /* LAN mDNS browse runs on its own thread alongside the broadcast worker
+     * (non-tracker searches only); both feed broadcastServerCallback, which
+     * dedupes by address+port under serversMtx. */
+    static std::thread mdnsThread;
     static currentGames searchResultCg = nullptr;
     static char searchResultMotd[4096] = {};
     static bool searchResultOk = false;
@@ -438,6 +442,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         searchDone = false;
         searching = false;
         if (searchThread.joinable()) searchThread.join();
+        if (mdnsThread.joinable()) mdnsThread.join();
         if (searchResultCg) { currentGamesDestroy(&searchResultCg); searchResultCg = nullptr; }
     }
 
@@ -495,6 +500,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             searchDone = false;
             if (searchThread.joinable()) {
                 searchThread.join();
+            }
+            /* The mDNS worker (LAN searches) shares the 5s window and is
+             * effectively done too; join it so it doesn't linger. */
+            if (mdnsThread.joinable()) {
+                mdnsThread.join();
             }
             searching = false;
 
@@ -739,6 +749,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (searchThread.joinable()) {
                     searchThread.join();
                 }
+                if (mdnsThread.joinable()) {
+                    mdnsThread.join();
+                }
                 /* Old search fully stopped: supersede any pings from the
                  * previous list so their results can't land on the rebuilt
                  * indices, and drop pending/in-flight work. */
@@ -770,6 +783,19 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     searchResultOk = ret;
                     searchDone = true;
                 });
+
+                /* LAN searches also browse via mDNS on a parallel thread,
+                 * feeding the same dedup callback. The broadcast worker above
+                 * owns the searchDone/searchResultOk signal; this thread just
+                 * contributes additional servers. */
+                if (!sp.tracker) {
+                    mdnsThread = std::thread([]() {
+                        static BroadcastCbData mcbd;
+                        mcbd.servers = &servers;
+                        mcbd.serversMtx = &serversMtx;
+                        discoveryFindMdnsGamesAsync(broadcastServerCallback, &mcbd);
+                    });
+                }
             }
 
             ImGui::Separator();
@@ -1224,9 +1250,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * themselves block on their own ephemeral-port sockets and don't
      * touch port 27500, so they don't need to be joined. */
     discoveryAbortBroadcastSearch();
+    discoveryAbortMdnsSearch();
     resetPings();
     if (searchThread.joinable()) {
         searchThread.join();
+    }
+    if (mdnsThread.joinable()) {
+        mdnsThread.join();
     }
 
     /* Destroy refresh icon texture */
