@@ -54,7 +54,12 @@ COMMANDS="$DIR/commands"
 #                 so the value depends on where the test is running.
 #                 The bare "country" field carried by CTRL_PLAYER_JOIN
 #                 and CTRL_PLAYER_LEAVE has the same problem.
-NORMALIZE_EVENTS_SED='s/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/; s/"countryCode":"[^"]*"/"countryCode":"??"/g; s/"country":"[^"]*"/"country":"??"/g'
+#   clientType  — bolo_detect_client_type() reports the compile-time
+#                 platform of the headless client (Windows=1, Linux=2,
+#                 macOS=3), so the value depends on where the test is
+#                 built. The fixtures were recorded on Linux (=2); the
+#                 runner's platform isn't a regression target.
+NORMALIZE_EVENTS_SED='s/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/; s/"countryCode":"[^"]*"/"countryCode":"??"/g; s/"country":"[^"]*"/"country":"??"/g; s/"clientType":[0-9]+/"clientType":2/g'
 
 # Diff two JSONL files after the field normalization above, with a
 # lexical sort. sort -u collapses duplicate (untickled) lines because
