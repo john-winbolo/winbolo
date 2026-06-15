@@ -432,6 +432,135 @@ static bool serverJoinRateLimitAllow(const struct sockaddr_in *fromAddr) {
     return true;
 }
 
+/* ── Address-proof retry cookie (anti-spoof) ─────────────────────────────
+ * Before a JOIN is allowed to allocate a slot the joiner must echo a cookie
+ * the server can recompute for its source address.  The cookie is an HMAC of
+ * (address ‖ port ‖ time-window) under a per-process secret, so it is
+ * stateless on the server: a blind/IP-spoofed JOIN can't produce one without
+ * receiving the challenge at the real address.  The cookie is server-only —
+ * the client never computes it, it just stores and echoes the opaque bytes. */
+#define COOKIE_WINDOW_SEC 16
+
+/* Per-process secret keying the cookies.  Lazily seeded once from the
+ * high-resolution counter (independent of bolo_rand, like serverNextConnId)
+ * and never leaves the process. */
+static const uint8_t *serverCookieSecret(void) {
+    static uint8_t secret[32];
+    static bool seeded = false;
+    if (!seeded) {
+        uint64_t s = (uint64_t)SDL_GetPerformanceCounter();
+        int i;
+        s ^= 0x9e3779b97f4a7c15ULL * (uint64_t)SDL_GetTicks();
+        for (i = 0; i < 4; i++) {
+            uint64_t z;
+            s += 0x9e3779b97f4a7c15ULL;
+            z = s;
+            z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+            z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+            z ^= (z >> 31);
+            memcpy(secret + i * 8, &z, 8);
+        }
+        seeded = true;
+    }
+    return secret;
+}
+
+/* Standard HMAC (RFC 2104) over MD5: 64-byte block, ipad/opad. The cookie is
+ * an address proof, not a confidentiality primitive — MD5's break doesn't help
+ * an attacker forge one without the secret, and it avoids a new crypto dep. */
+static void hmacMd5(const uint8_t *key, size_t keyLen,
+                    const uint8_t *msg, size_t msgLen, uint8_t out[16]) {
+    uint8_t k0[64];
+    uint8_t ipad[64];
+    uint8_t opad[64];
+    uint8_t inner[16];
+    Md5Ctx ctx;
+    size_t i;
+
+    /* Block-pad the key. A key longer than the block would be hashed first;
+     * our secret is a fixed 32 bytes so that arm is effectively unused. */
+    memset(k0, 0, sizeof(k0));
+    if (keyLen > sizeof(k0)) {
+        md5Compute(key, keyLen, k0);
+    } else {
+        memcpy(k0, key, keyLen);
+    }
+    for (i = 0; i < sizeof(k0); i++) {
+        ipad[i] = (uint8_t)(k0[i] ^ 0x36);
+        opad[i] = (uint8_t)(k0[i] ^ 0x5c);
+    }
+    md5Init(&ctx);
+    md5Update(&ctx, ipad, sizeof(ipad));
+    md5Update(&ctx, msg, msgLen);
+    md5Final(inner, &ctx);
+
+    md5Init(&ctx);
+    md5Update(&ctx, opad, sizeof(opad));
+    md5Update(&ctx, inner, sizeof(inner));
+    md5Final(out, &ctx);
+}
+
+/* The current cookie time-window.
+ * Test-only clock seam: WB_COOKIE_WINDOW_OFFSET shifts the window counter so a
+ * test can simulate cookie expiry without waiting real time. Default 0; unset
+ * in production. Security-neutral — an attacker can't set a server-side env var
+ * remotely and holds no secret, so a shifted window only affects the server's
+ * own consistent issue/accept (worst case a self-inflicted reject). Read per
+ * call (not cached) so a test can advance the clock mid-run. */
+static uint64_t serverCookieCurrentWindow(void) {
+    uint64_t w = (SDL_GetTicks() / 1000ULL) / COOKIE_WINDOW_SEC;
+    const char *off = getenv("WB_COOKIE_WINDOW_OFFSET");
+    if (off != NULL) w += (uint64_t)strtoll(off, NULL, 10);
+    return w;
+}
+
+/* HMAC-MD5 of (sin_addr ‖ sin_port ‖ window) under the per-process secret.
+ * Byte order is irrelevant for security — the secret never leaves the process,
+ * so only self-consistency between issue and accept matters. */
+static void serverCookieCompute(const struct sockaddr_in *addr, uint64_t window,
+                                uint8_t out[JOIN_COOKIE_LEN]) {
+    uint8_t msg[4 + 2 + 8];
+    memcpy(msg + 0, &addr->sin_addr.s_addr, 4);
+    memcpy(msg + 4, &addr->sin_port, 2);
+    memcpy(msg + 6, &window, 8);
+    hmacMd5(serverCookieSecret(), 32, msg, sizeof(msg), out);
+}
+
+/* Accept a JOIN cookie for the current window or the one before it (so a
+ * cookie issued near a boundary still validates). Constant-time compare:
+ * OR-accumulate the byte diffs so a partial match can't be timed byte by byte.
+ * A NULL cookie (none echoed) never validates. */
+static bool serverCookieAccept(const struct sockaddr_in *addr,
+                               const uint8_t *cookieOrNull) {
+    uint64_t w;
+    uint8_t expect[JOIN_COOKIE_LEN];
+    int diff;
+    int i;
+
+    if (cookieOrNull == NULL) return false;
+    w = serverCookieCurrentWindow();
+
+    serverCookieCompute(addr, w, expect);
+    diff = 0;
+    for (i = 0; i < JOIN_COOKIE_LEN; i++) diff |= expect[i] ^ cookieOrNull[i];
+    if (diff == 0) return true;
+
+    serverCookieCompute(addr, w - 1, expect);
+    diff = 0;
+    for (i = 0; i < JOIN_COOKIE_LEN; i++) diff |= expect[i] ^ cookieOrNull[i];
+    return diff == 0;
+}
+
+/* Issue a fresh challenge: [header PACKET_JOIN_CHALLENGE][cookie for window w].
+ * Smaller than a JOIN_REQUEST, so it can't amplify a spoofed source. */
+static void serverSendJoinChallenge(const struct sockaddr_in *addr) {
+    uint8_t buf[PACKET_HEADER_SIZE + JOIN_COOKIE_LEN];
+    packHeader(buf, PACKET_JOIN_CHALLENGE, 0);
+    serverCookieCompute(addr, serverCookieCurrentWindow(),
+                        buf + PACKET_HEADER_SIZE);
+    srvSendTo(buf, sizeof(buf), addr);
+}
+
 /* connId rides the wire as two 32-bit halves through the existing packU32
  * helpers — low half first, then high. Client send/read must agree with these. */
 static void packConnId(uint8_t *buf, uint64_t connId) {
@@ -1289,17 +1418,6 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         return;
     }
 
-    /* Per-source-IP rate limit, after the already-connected resend path so
-     * established clients are never throttled, and before any slot work so an
-     * over-rate spoofer can't reach allocation. Drop silently on reject — a
-     * JOIN_REJECT here would reflect to a possibly-spoofed source. */
-    if (!serverJoinRateLimitAllow(fromAddr)) {
-        WB_LOG_DEBUG(WB_LOG_CAT_NET,
-            "join rate-limited from %s:%u",
-            inet_ntoa(fromAddr->sin_addr), (unsigned)ntohs(fromAddr->sin_port));
-        return;
-    }
-
     memcpy(name, buf + pos, PACKET_MAX_PLAYER_NAME);
     name[PACKET_MAX_PLAYER_NAME - 1] = '\0';
     pos += PACKET_MAX_PLAYER_NAME;
@@ -1406,6 +1524,15 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         wireFallbackCountry[1] = (char)buf[pos++];
     }
 
+    /* Optional trailing address-proof cookie. Old/initial JOINs omit it
+     * (NULL) and draw a challenge below; a returning JOIN echoes the 16
+     * bytes from a prior PACKET_JOIN_CHALLENGE. */
+    const uint8_t *joinCookie = NULL;
+    if (len >= pos + JOIN_COOKIE_LEN) {
+        joinCookie = buf + pos;
+        pos += JOIN_COOKIE_LEN;
+    }
+
     /* Check password */
     {
         const char *expected = serverSimGetPassword(sim);
@@ -1427,6 +1554,28 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
                  "Join rejected for '%s': Game is locked", name);
         serverSimConsoleMessage(consoleMsg);
         serverSendJoinReject(fromAddr, STR_REJECT_GAME_LOCKED, 0, NULL);
+        return;
+    }
+
+    /* Address proof: a slot is allocated only after the joiner echoes a valid
+     * retry cookie. The cookie — not the rate limiter — is what prevents slot
+     * exhaustion now, so an unproven JOIN (no/stale cookie) is the only thing
+     * the per-source-IP rate limit guards: it bounds the cheap
+     * challenge/reflection path against a blind or spoofed flood. A proven
+     * (valid-cookie) JOIN is never rate-limited, so many legitimate clients
+     * behind one NAT or public IP still join promptly. Drop an over-rate
+     * unproven JOIN silently — a reply would reflect to a possibly-spoofed
+     * source — otherwise issue a fresh challenge (smaller than the JOIN, so it
+     * can't amplify). All of this runs before any slot work. */
+    if (!serverCookieAccept(fromAddr, joinCookie)) {
+        if (!serverJoinRateLimitAllow(fromAddr)) {
+            WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                "join rate-limited from %s:%u",
+                inet_ntoa(fromAddr->sin_addr),
+                (unsigned)ntohs(fromAddr->sin_port));
+            return;
+        }
+        serverSendJoinChallenge(fromAddr);
         return;
     }
 

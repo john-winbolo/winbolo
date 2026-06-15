@@ -8,26 +8,35 @@
  * are dropped silently — before any slot allocation — with no reply (a
  * JOIN_REJECT would reflect to a possibly-spoofed source).
  *
+ * The cookie gate is what prevents slot exhaustion, so the rate limiter only
+ * guards the unproven path: a cookie-less JOIN that passes the limiter draws a
+ * PACKET_JOIN_CHALLENGE, while one dropped by the limiter draws nothing (a
+ * valid-cookie JOIN is never rate-limited). Counting challenges therefore tests
+ * the limiter directly, without depending on slot allocation.
+ *
  * Like test_join_version_gate.c this stands up the loopback harness (whose
  * built-in UDP client is a real loopback joiner) and then drives hand-built
  * JOIN_REQUESTs from raw UDP sockets the test owns. Two assertions:
  *
- *   (A) Cooldown fires (portable, all 127.0.0.1): a burst of valid JOINs,
+ *   (A) Cooldown fires (portable, all 127.0.0.1): a burst of cookie-less JOINs,
  *       each from a distinct ephemeral 127.0.0.1 port (so each looks like a
  *       new source to the server's per-port client lookup, rather than an
  *       already-connected resend), shares the single 127.0.0.1 token bucket.
- *       The count of distinct JOIN_ACCEPTs must be ≤ the burst capacity —
- *       far under the 16 slots otherwise reachable — and ≥ 1.
+ *       The count of distinct PACKET_JOIN_CHALLENGE replies must be ≤ the burst
+ *       capacity — far under the 16 sources otherwise admitted — and ≥ 1. The
+ *       harness's own real client spends ~2 tokens completing its handshake, so
+ *       the ≤ bound is inclusive of that.
  *
  *   (B) Distinct sources independent (Linux only): a JOIN from 127.0.0.2
- *       draws a JOIN_ACCEPT even though 127.0.0.1 is in cooldown. If binding
- *       127.0.0.2 isn't possible (non-Linux loopback), the case logs a skip
- *       and does not fail.
+ *       draws a PACKET_JOIN_CHALLENGE from its own fresh bucket even though
+ *       127.0.0.1 is in cooldown. If binding 127.0.0.2 isn't possible
+ *       (non-Linux loopback), the case logs a skip and does not fail.
  *
- * The crafted body mirrors the client's JOIN_REQUEST layout exactly (correct
- * version triple + a valid ASCII name) so it clears the length, version, and
- * name gates and reaches the rate limiter. Refill over the test's millisecond
- * span is ~0, so the bucket drains deterministically after the burst.
+ * The crafted body mirrors the client's JOIN_REQUEST layout (correct version
+ * triple + a valid ASCII name) and omits the trailing cookie, so it clears the
+ * length, version, and name gates, passes (or is dropped by) the rate limiter,
+ * and — when it passes — is challenged at the cookie gate. Refill over the
+ * test's millisecond span is ~0, so the bucket drains deterministically.
  */
 
 #include <stdint.h>
@@ -122,8 +131,8 @@ int run_join_rate_limit(void) {
     SOCKET socks[JRL_NUM_SOCKETS];
     uint8_t joinBuf[JRL_NUM_SOCKETS][1024];
     int joinLen[JRL_NUM_SOCKETS];
-    bool accepted[JRL_NUM_SOCKETS];
-    int acceptCount = 0;
+    bool challenged[JRL_NUM_SOCKETS];
+    int challengeCount = 0;
     int i, pump;
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "Joiner", /*lobbyMode*/ false,
@@ -138,29 +147,31 @@ int run_join_rate_limit(void) {
     /* ---- (A) Cooldown fires: burst from distinct 127.0.0.1 ports ---- */
     for (i = 0; i < JRL_NUM_SOCKETS; i++) {
         char name[PACKET_MAX_PLAYER_NAME];
-        socks[i]    = jrlOpenSocketOnIp("127.0.0.1");
-        accepted[i] = false;
+        socks[i]      = jrlOpenSocketOnIp("127.0.0.1");
+        challenged[i] = false;
         if (socks[i] == INVALID_SOCKET) {
             int j;
             for (j = 0; j < i; j++) closesocket(socks[j]);
             loopbackHarnessStop(&h);
             UT_FAIL("could not open raw UDP socket %d for burst JOIN", i);
         }
-        /* Distinct names so accepts are bounded purely by the rate limiter,
-         * not by JOIN name-collision rejections between our own sockets. */
+        /* Distinct, valid names so each JOIN clears name validation; name
+         * collisions are moot here since a cookie-less JOIN is challenged
+         * before slot allocation is ever reached. */
         snprintf(name, sizeof(name), "RL%d", i);
         joinLen[i] = jrlBuildJoin(joinBuf[i], name);
     }
 
     for (pump = 0; pump < JRL_PUMP_MAX; pump++) {
         uint8_t in[1024];
-        /* Resend each not-yet-accepted socket's JOIN periodically to ride out
-         * best-effort loopback delivery and the recv-thread drain. An
-         * already-accepted source's resend hits the already-connected resend
-         * path (no token spent), so this can't inflate the accept count. */
+        /* Resend each not-yet-challenged socket's JOIN periodically to ride out
+         * best-effort loopback delivery and the recv-thread drain. A JOIN the
+         * limiter drops is silent (no challenge), so an un-challenged socket's
+         * resend can only ever be dropped or — if a token frees up — draw its
+         * first challenge; it can't inflate the distinct-challenge count. */
         if (pump % 8 == 0) {
             for (i = 0; i < JRL_NUM_SOCKETS; i++) {
-                if (!accepted[i]) {
+                if (!challenged[i]) {
                     sendto(socks[i], (const char *)joinBuf[i], joinLen[i], 0,
                            (const struct sockaddr *)&serverAddr,
                            sizeof(serverAddr));
@@ -171,9 +182,10 @@ int run_join_rate_limit(void) {
         for (i = 0; i < JRL_NUM_SOCKETS; i++) {
             int n;
             while ((n = jrlTryRecv(socks[i], in, sizeof(in))) > 0) {
-                if (getPacketType(in, n) == PACKET_JOIN_ACCEPT && !accepted[i]) {
-                    accepted[i] = true;
-                    acceptCount++;
+                if (getPacketType(in, n) == PACKET_JOIN_CHALLENGE &&
+                    !challenged[i]) {
+                    challenged[i] = true;
+                    challengeCount++;
                 }
             }
         }
@@ -181,18 +193,18 @@ int run_join_rate_limit(void) {
 
     for (i = 0; i < JRL_NUM_SOCKETS; i++) closesocket(socks[i]);
 
-    fprintf(stderr, "  join rate limit: %d/%d distinct-port JOINs accepted "
-            "(burst=%d)\n", acceptCount, JRL_NUM_SOCKETS, JRL_BURST);
+    fprintf(stderr, "  join rate limit: %d/%d distinct-port JOINs challenged "
+            "(burst=%d)\n", challengeCount, JRL_NUM_SOCKETS, JRL_BURST);
 
-    if (acceptCount < 1) {
+    if (challengeCount < 1) {
         loopbackHarnessStop(&h);
-        UT_FAIL("no JOIN was accepted from the 127.0.0.1 burst within %d pumps",
-                JRL_PUMP_MAX);
+        UT_FAIL("no JOIN drew a challenge from the 127.0.0.1 burst within "
+                "%d pumps", JRL_PUMP_MAX);
     }
-    if (acceptCount > JRL_BURST) {
+    if (challengeCount > JRL_BURST) {
         loopbackHarnessStop(&h);
-        UT_FAIL("rate limit let %d JOINs through from one source IP, "
-                "expected <= %d", acceptCount, JRL_BURST);
+        UT_FAIL("rate limit let %d JOINs past the limiter from one source IP, "
+                "expected <= %d", challengeCount, JRL_BURST);
     }
 
     /* ---- (B) Distinct sources independent: 127.0.0.2 (Linux only) ---- */
@@ -204,9 +216,9 @@ int run_join_rate_limit(void) {
         } else {
             uint8_t altJoin[1024];
             int altLen = jrlBuildJoin(altJoin, "RLalt");
-            bool altAccept = false;
+            bool altChallenge = false;
 
-            for (pump = 0; pump < JRL_PUMP_MAX && !altAccept; pump++) {
+            for (pump = 0; pump < JRL_PUMP_MAX && !altChallenge; pump++) {
                 uint8_t in[1024];
                 int n;
                 if (pump % 8 == 0) {
@@ -216,19 +228,19 @@ int run_join_rate_limit(void) {
                 }
                 loopbackHarnessPump(&h);
                 while ((n = jrlTryRecv(altSock, in, sizeof(in))) > 0) {
-                    if (getPacketType(in, n) == PACKET_JOIN_ACCEPT) {
-                        altAccept = true;
+                    if (getPacketType(in, n) == PACKET_JOIN_CHALLENGE) {
+                        altChallenge = true;
                     }
                 }
             }
             closesocket(altSock);
 
-            fprintf(stderr, "  join rate limit: 127.0.0.2 accepted=%d "
-                    "(127.0.0.1 in cooldown)\n", (int)altAccept);
-            if (!altAccept) {
+            fprintf(stderr, "  join rate limit: 127.0.0.2 challenged=%d "
+                    "(127.0.0.1 in cooldown)\n", (int)altChallenge);
+            if (!altChallenge) {
                 loopbackHarnessStop(&h);
                 UT_FAIL("JOIN from distinct source 127.0.0.2 drew no "
-                        "JOIN_ACCEPT within %d pumps", JRL_PUMP_MAX);
+                        "PACKET_JOIN_CHALLENGE within %d pumps", JRL_PUMP_MAX);
             }
         }
     }

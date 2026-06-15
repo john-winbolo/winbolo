@@ -11,14 +11,18 @@
  * This stands up the loopback harness (a real server on an ephemeral port) and
  * drives a hand-built JOIN_REQUEST from a raw UDP socket the test owns, then
  * inspects the actual datagrams the server sends back:
- *   1. After a valid JOIN (and repeated resends), the replies contain a
- *      JOIN_ACCEPT but NOT a single PACKET_MAP_DOWNLOAD — no map before ready.
+ *   1. The crafted JOIN first completes the server's address-proof cookie
+ *      handshake (a cookie-less JOIN draws a PACKET_JOIN_CHALLENGE; echoing the
+ *      cookie draws the JOIN_ACCEPT). After the accept, the replies contain NO
+ *      PACKET_MAP_DOWNLOAD — no map before the ready round-trip.
  *   2. After sending PACKET_MAP_ACK 0xFFFF from the same socket, the server
  *      now sends PACKET_MAP_DOWNLOAD chunks — the round-trip opened the gate.
  *
  * The crafted JOIN mirrors the client's JOIN_REQUEST layout (see
- * test_join_version_gate.c) so it clears the length/name/version gates and
- * reaches a full join with map-download init.
+ * test_join_version_gate.c) so it clears the length/name/version gates,
+ * completes the cookie handshake, and reaches a full join with map-download
+ * init. The cookie gate is independent of the map amplification gate this test
+ * pins — mapReady is still false right after the cookie-completed accept.
  */
 
 #include <stdint.h>
@@ -40,11 +44,13 @@
  * the accept to give any (wrongly) eager chunk send a chance to show up. */
 #define AG_PUMP_MAX 200
 
-/* Build a JOIN_REQUEST into buf with the server's own version triple. Layout
+/* Build a JOIN_REQUEST into buf with the server's own version triple and a
+ * trailing address-proof cookie (the given bytes, or zeros if NULL). Layout
  * mirrors transport_udp_client.c's builder: header + name + pass + 3 version
  * bytes + WBN token + flags + clientType + clientHints + 2-byte
- * fallbackCountry. Returns the total length. */
-static int agBuildJoin(uint8_t *buf, const char *name) {
+ * fallbackCountry + JOIN_COOKIE_LEN cookie. Returns the total length. */
+static int agBuildJoin(uint8_t *buf, const char *name,
+                       const uint8_t *cookieOrNull) {
     int pos = PACKET_HEADER_SIZE;
     packHeader(buf, PACKET_JOIN_REQUEST, 0);
 
@@ -67,6 +73,13 @@ static int agBuildJoin(uint8_t *buf, const char *name) {
     buf[pos++] = 0;   /* clientHints */
     buf[pos++] = 0;   /* fallbackCountry[0] */
     buf[pos++] = 0;   /* fallbackCountry[1] */
+
+    if (cookieOrNull != NULL) {
+        memcpy(buf + pos, cookieOrNull, JOIN_COOKIE_LEN);
+    } else {
+        memset(buf + pos, 0, JOIN_COOKIE_LEN);
+    }
+    pos += JOIN_COOKIE_LEN;
     return pos;
 }
 
@@ -88,20 +101,26 @@ static SOCKET agOpenSocket(void) {
     return s;
 }
 
-/* Pump the harness AG_PUMP_MAX times, resending `pkt` every 8 pumps to ride
- * out best-effort delivery, and record whether a JOIN_ACCEPT and/or a
- * PACKET_MAP_DOWNLOAD chunk was seen across all replies on `sock`. */
-static void agPumpCollect(LoopbackHarness *h, SOCKET sock,
-                          const uint8_t *pkt, int pktLen,
-                          const struct sockaddr_in *serverAddr,
-                          bool *outAccept, bool *outMapDownload) {
+/* Pump the harness AG_PUMP_MAX times and record whether a JOIN_ACCEPT, a
+ * PACKET_MAP_DOWNLOAD chunk, and/or a PACKET_JOIN_CHALLENGE was seen across all
+ * replies on `sock`; on a challenge, *outCookie (if non-NULL) receives the
+ * cookie bytes. `resendEvery` controls retransmits: 0 sends `pkt` exactly once
+ * (used for JOINs, so each spends only a single per-source rate-limit token),
+ * >0 resends every that-many pumps (used for the non-rate-limited MAP_ACK). */
+static void agCollect(LoopbackHarness *h, SOCKET sock,
+                      const uint8_t *pkt, int pktLen,
+                      const struct sockaddr_in *serverAddr, int resendEvery,
+                      bool *outAccept, bool *outMapDownload,
+                      bool *outChallenge, uint8_t *outCookie) {
     int i;
     *outAccept = false;
     *outMapDownload = false;
+    *outChallenge = false;
     for (i = 0; i < AG_PUMP_MAX; i++) {
         uint8_t in[2048];
         int n;
-        if (i % 8 == 0) {
+        bool doSend = (resendEvery > 0) ? (i % resendEvery == 0) : (i == 0);
+        if (doSend) {
             sendto(sock, (const char *)pkt, pktLen, 0,
                    (const struct sockaddr *)serverAddr, sizeof(*serverAddr));
         }
@@ -109,8 +128,15 @@ static void agPumpCollect(LoopbackHarness *h, SOCKET sock,
         while ((n = (int)recvfrom(sock, (char *)in, sizeof(in), 0,
                                   NULL, NULL)) > 0) {
             uint8_t type = getPacketType(in, n);
-            if (type == PACKET_JOIN_ACCEPT)       *outAccept = true;
-            else if (type == PACKET_MAP_DOWNLOAD) *outMapDownload = true;
+            if (type == PACKET_JOIN_ACCEPT)            *outAccept = true;
+            else if (type == PACKET_MAP_DOWNLOAD)      *outMapDownload = true;
+            else if (type == PACKET_JOIN_CHALLENGE &&
+                     n >= PACKET_HEADER_SIZE + JOIN_COOKIE_LEN) {
+                *outChallenge = true;
+                if (outCookie != NULL) {
+                    memcpy(outCookie, in + PACKET_HEADER_SIZE, JOIN_COOKIE_LEN);
+                }
+            }
         }
     }
 }
@@ -119,10 +145,11 @@ int run_map_amp_gate(void) {
     LoopbackHarness h;
     struct sockaddr_in serverAddr;
     uint8_t joinBuf[1024];
+    uint8_t cookie[JOIN_COOKIE_LEN];
     uint8_t ackBuf[PACKET_HEADER_SIZE + 2];
     int joinLen;
     SOCKET sock;
-    bool gotAccept, gotMapDownload;
+    bool gotAccept, gotMapDownload, gotChallenge;
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "AmpHost", /*lobbyMode*/ false,
                                        /*impairSpec*/ NULL, /*seed*/ 1u),
@@ -139,17 +166,36 @@ int run_map_amp_gate(void) {
         UT_FAIL("could not open raw UDP socket for crafted JOIN");
     }
 
-    /* ---- Phase 1: JOIN with no ready ack -> accept, but NO map chunks ---- */
-    joinLen = agBuildJoin(joinBuf, "AmpGate");
-    agPumpCollect(&h, sock, joinBuf, joinLen, &serverAddr,
-                  &gotAccept, &gotMapDownload);
+    /* ---- Cookie handshake: cookie-less JOIN draws a challenge ---- */
+    joinLen = agBuildJoin(joinBuf, "AmpGate", NULL);
+    agCollect(&h, sock, joinBuf, joinLen, &serverAddr, /*resendEvery*/ 0,
+              &gotAccept, &gotMapDownload, &gotChallenge, cookie);
+    fprintf(stderr, "  amp gate (cookie-less): challenge=%d accept=%d\n",
+            (int)gotChallenge, (int)gotAccept);
+    if (!gotChallenge) {
+        closesocket(sock);
+        loopbackHarnessStop(&h);
+        UT_FAIL("crafted JOIN drew no PACKET_JOIN_CHALLENGE within %d pumps",
+                AG_PUMP_MAX);
+    }
+    if (gotAccept) {
+        closesocket(sock);
+        loopbackHarnessStop(&h);
+        UT_FAIL("crafted cookie-less JOIN was accepted (no address proof)");
+    }
+
+    /* ---- Phase 1: cookie echoed -> accept, but NO map chunks yet ---- */
+    joinLen = agBuildJoin(joinBuf, "AmpGate", cookie);
+    agCollect(&h, sock, joinBuf, joinLen, &serverAddr, /*resendEvery*/ 0,
+              &gotAccept, &gotMapDownload, &gotChallenge, NULL);
     fprintf(stderr, "  amp gate (join only): accept=%d mapDownload=%d\n",
             (int)gotAccept, (int)gotMapDownload);
 
     if (!gotAccept) {
         closesocket(sock);
         loopbackHarnessStop(&h);
-        UT_FAIL("crafted JOIN drew no JOIN_ACCEPT within %d pumps", AG_PUMP_MAX);
+        UT_FAIL("cookie-echoed JOIN drew no JOIN_ACCEPT within %d pumps",
+                AG_PUMP_MAX);
     }
     if (gotMapDownload) {
         closesocket(sock);
@@ -161,8 +207,9 @@ int run_map_amp_gate(void) {
     /* ---- Phase 2: send MAP_ACK 0xFFFF -> chunks now flow ---- */
     packHeader(ackBuf, PACKET_MAP_ACK, 0);
     packU16(ackBuf + PACKET_HEADER_SIZE, 0xFFFF); /* 0xFFFF = "ready for map" */
-    agPumpCollect(&h, sock, ackBuf, (int)sizeof(ackBuf), &serverAddr,
-                  &gotAccept, &gotMapDownload);
+    agCollect(&h, sock, ackBuf, (int)sizeof(ackBuf), &serverAddr,
+              /*resendEvery*/ 8, &gotAccept, &gotMapDownload, &gotChallenge,
+              NULL);
     fprintf(stderr, "  amp gate (after ready): mapDownload=%d\n",
             (int)gotMapDownload);
 

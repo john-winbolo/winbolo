@@ -349,6 +349,12 @@ int run_join_version_gate(void);
  * JOIN_RL_BURST accepts, while a JOIN from a distinct source IP is unaffected. */
 int run_join_rate_limit(void);
 
+/* JOIN address-proof cookie handshake (test_cookie_handshake.c): a cookie-less
+ * JOIN draws a PACKET_JOIN_CHALLENGE and no slot; echoing the challenge cookie
+ * completes the join; a garbage cookie never completes; a cookie expires once
+ * the server's time-window advances (via the WB_COOKIE_WINDOW_OFFSET seam). */
+int run_cookie_handshake(void);
+
 /* Map-send amplification gate (test_map_amp_gate.c): a crafted JOIN over a raw
  * loopback socket draws a JOIN_ACCEPT but no PACKET_MAP_DOWNLOAD until a
  * MAP_ACK 0xFFFF ready round-trip is sent, after which chunks flow. */

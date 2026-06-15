@@ -237,6 +237,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_lobby_running_loss",             run_loopback_lobby_running_loss             },
     { "join_version_gate",                       run_join_version_gate                       },
     { "join_rate_limit",                         run_join_rate_limit                         },
+    { "cookie_handshake",                        run_cookie_handshake                        },
     { "map_amp_gate",                            run_map_amp_gate                            },
     { "map_resync_cut_and_deliver_once",         run_map_resync_cut_and_deliver_once         },
     { "map_resync_duplicate_request_no_recut",   run_map_resync_duplicate_request_no_recut   },
