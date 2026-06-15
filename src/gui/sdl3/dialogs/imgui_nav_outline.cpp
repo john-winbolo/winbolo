@@ -37,6 +37,15 @@ extern "C" void dialogDrawNavOutline(void) {
 
     if (g->NavId == 0) return;
     if (!g->NavCursorVisible) return;
+    /* Only draw if the focused item was actually submitted this frame.
+       ImGui's built-in highlight is rendered from inside each widget, so it
+       vanishes automatically when the focused item stops being submitted
+       (e.g. a bot row whose remove-X was just clicked). This outline instead
+       draws once per frame from the retained NavRectRel, which would linger
+       at the removed item's old location. NavIdIsAlive is reset each frame in
+       NavUpdate and set true by ItemAdd when the NavId item is submitted, so
+       this gate mirrors the built-in behaviour. */
+    if (!g->NavIdIsAlive) return;
     ImGuiWindow *win = g->NavWindow;
     if (!win) return;
 
