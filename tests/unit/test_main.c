@@ -267,6 +267,8 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_join_loss",                      run_loopback_join_loss                      },
     { "loopback_lobby_running_loss",             run_loopback_lobby_running_loss             },
     { "join_version_gate",                       run_join_version_gate                       },
+    { "join_rate_limit",                         run_join_rate_limit                         },
+    { "cookie_handshake",                        run_cookie_handshake                        },
     { "map_amp_gate",                            run_map_amp_gate                            },
     { "map_resync_cut_and_deliver_once",         run_map_resync_cut_and_deliver_once         },
     { "map_resync_duplicate_request_no_recut",   run_map_resync_duplicate_request_no_recut   },
@@ -279,6 +281,7 @@ static const UnitTestEntry s_tests[] = {
     { "wire_corpus",                             run_wire_corpus                             },
     { "wire_corpus_capture",                     run_wire_corpus_capture                     },
     { "packet_type_names",                       run_packet_type_names                       },
+    { "mdns_discovery",                          run_mdns_discovery                          },
     { "client_type_matches_platform",            run_client_type_matches_platform            },
     { "client_type_name_round_trips",            run_client_type_name_round_trips            },
 #ifdef WB_NETDEBUG

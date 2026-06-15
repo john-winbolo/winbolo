@@ -448,6 +448,14 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_CLAIM_START       205  /* client → server
                                               { targetSlot, startIdx } */
 
+#define PACKET_JOIN_CHALLENGE          206  /* server → joiner: a retry cookie
+                                              proving the joiner's source
+                                              address before any slot is
+                                              allocated (anti-spoof) */
+#define JOIN_COOKIE_LEN                16   /* HMAC-MD5 digest carried in the
+                                              JOIN_REQUEST tail and the
+                                              JOIN_CHALLENGE body */
+
 #define PACKET_GAME_VOTE_STATE         195  /* server → all clients
                                               { kind 1, active 1,
                                                 triggerSrc 1, teamId 1,

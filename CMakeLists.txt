@@ -283,6 +283,13 @@ else()
     target_compile_options(nanosvg PRIVATE -Wno-unused-function)
 endif()
 
+# mdns — header-only mDNS/DNS-SD library (vendored, public domain). All
+# functions are static inline, so no implementation TU: an INTERFACE lib
+# carries only the include directory. The one consumer (mdns_advertise.c)
+# applies -Wno-unused-function / /wd4505 locally for the static-inline noise.
+add_library(mdns INTERFACE)
+target_include_directories(mdns SYSTEM INTERFACE src/third_party/mdns)
+
 # stb_image — header-only image loader (vendored)
 add_library(stb_image STATIC src/third_party/stb/stb_image_impl.c)
 target_include_directories(stb_image SYSTEM PUBLIC src/third_party/stb)
@@ -2543,10 +2550,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_join_loss.c
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_join_version_gate.c
+    tests/unit/test_join_rate_limit.c
+    tests/unit/test_cookie_handshake.c
     tests/unit/test_map_amp_gate.c
     tests/unit/test_map_resync.c
     tests/unit/test_conn_migration.c
     tests/unit/test_viewtick_rewind.c
+    # mDNS discovery: unicast-loopback round-trip through the real advertiser
+    # builder + browser parse path (no multicast socket).
+    tests/unit/test_mdns_discovery.c
     # Wire-codec corpus: the tap sink, the fast differential test (reads
     # committed fixtures), and the on-demand capture generator (uses the
     # loopback harness above).
@@ -2630,7 +2642,11 @@ bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
     bolo_static ${SERVER_LINK_GROUP} bot_brains_static
-    SDL3::SDL3 minizip lua_static cjson utf8proc)
+    SDL3::SDL3 minizip lua_static cjson utf8proc
+    # mdns is header-only; linked for its include dir so test_mdns_discovery.c
+    # sees mdns.h / mdns_records.h (bolo_static / server_static link it PRIVATE,
+    # so the include dir doesn't propagate transitively).
+    mdns)
 
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
@@ -2844,6 +2860,8 @@ set(_unit_test_names
     loopback_join_loss
     loopback_lobby_running_loss
     join_version_gate
+    join_rate_limit
+    cookie_handshake
     map_amp_gate
     map_resync_cut_and_deliver_once
     map_resync_duplicate_request_no_recut
@@ -2855,6 +2873,7 @@ set(_unit_test_names
     viewtick_displayed_tick
     wire_corpus
     packet_type_names
+    mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips
 )

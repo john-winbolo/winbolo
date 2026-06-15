@@ -88,6 +88,13 @@ WinBolo uses the following third-party libraries and code.
 - Authors: Juliette Foucaut, Doug Binks
 - Used to render the in-game news popup (headings, emphasis, links, images)
 
+### mdns
+- Location: src/third_party/mdns/
+- Version: 1.4.3
+- License: Public domain
+- https://github.com/mjansson/mdns
+- Author: Mattias Jansson
+
 ### MD5 (RFC 1321 reference)
 - Location: src/bolo/md5.c, src/bolo/public/md5.h
 - License: Public domain
