@@ -289,6 +289,12 @@ int run_starts_batch_unreserved_avoids_reserved(void);
 int run_starts_batch_stale_reservation_falls_through(void);
 int run_starts_batch_duplicate_honors_first(void);
 int run_starts_batch_null_reservations_place_normally(void);
+/* Randomized solo placement, team clustering, and unanchored-team anchor
+ * jitter in startsAssignBatch; friendly-pill "ideal" rule in the open path. */
+int run_starts_batch_solo_random_seed(void);
+int run_starts_batch_teams_cluster_and_separate(void);
+int run_starts_batch_team_anchor_jitter_varies(void);
+int run_starts_open_ideal_friendly_pill_eligible(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed

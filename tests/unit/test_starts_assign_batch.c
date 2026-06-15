@@ -30,6 +30,7 @@
 #include "game_sim.h"
 #include "bolo_map.h"     /* mapSetPos */
 #include "starts.h"       /* startsAssignBatch */
+#include "bolo_rand.h"    /* bolo_srand */
 #include "server_sim.h"   /* ut_make_running_sim, serverSimGetGameSim */
 #include "test_harness.h"
 
@@ -194,6 +195,148 @@ int run_starts_batch_null_reservations_place_normally(void) {
     UT_ASSERT_MSG(out[0] != MAX_STARTS && out[0] < K_NUM_STARTS,
                   "NULL reservations should place the slot normally, got %u",
                   (unsigned)out[0]);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (f) A lone solo with nothing else claimed must not always pick the
+ *     lowest-index start. Step 5's farthest-first pass ties every valid
+ *     start when nothing is claimed yet; choosing randomly among the ties
+ *     is the single-player fix. Re-seeding and re-running should spread the
+ *     placement across several starts. */
+int run_starts_batch_solo_random_seed(void) {
+    ServerSim *sim = ut_make_running_sim("SoloRand");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    build_starts(gs);
+
+    bool connected[MAX_TANKS];
+    BYTE team[MAX_TANKS];
+    BYTE reserved[MAX_TANKS];
+    BYTE out[MAX_TANKS];
+    reset_inputs(connected, team, reserved);
+    connected[0] = true;
+
+    bool seen[K_NUM_STARTS] = {false};
+    int distinct = 0;
+    int s;
+    for (s = 0; s < 64; s++) {
+        bolo_srand((uint64_t)(s + 1));
+        startsAssignBatch(gs, &gs->ss, connected, team, out, NULL);
+        UT_ASSERT_MSG(out[0] < K_NUM_STARTS,
+                      "solo should be placed, got %u", (unsigned)out[0]);
+        if (!seen[out[0]]) { seen[out[0]] = true; distinct++; }
+    }
+    UT_ASSERT_MSG(distinct >= 2,
+                  "lone solo placement should vary across seeds, saw %d distinct",
+                  distinct);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Six starts: a left cluster (x<=60) and a right cluster (x>=190), all on
+ * y=100. The map's own pills/bases are cleared so only this layout drives
+ * placement; two base-less teams then fall to the stripe grid, which splits
+ * the wide bbox along X — one cluster per team. */
+static void build_two_clusters(GameSim *gs) {
+    static const BYTE cx[6] = {40, 50, 60, 190, 200, 210};
+    int i;
+    gs->pb->numPills = 0;   /* no pills near the synthetic starts */
+    gs->bs->numBases = 0;   /* no owned/neutral bases to steer anchors */
+    for (i = 0; i < 6; i++) {
+        mapSetPos(gs, &gs->mp, cx[i], 100, DEEP_SEA, FALSE, TRUE);
+        gs->ss->item[i].x = cx[i];
+        gs->ss->item[i].y = 100;
+        gs->ss->item[i].dir = 0;
+    }
+    gs->ss->numStarts = 6;
+}
+
+/* (g) Two base-less teams split across the map: each team's members cluster
+ *     on one side, and the two teams land on opposite sides. */
+int run_starts_batch_teams_cluster_and_separate(void) {
+    ServerSim *sim = ut_make_running_sim("Teams");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    build_two_clusters(gs);
+
+    bool connected[MAX_TANKS];
+    BYTE team[MAX_TANKS];
+    BYTE reserved[MAX_TANKS];
+    BYTE out[MAX_TANKS];
+    int i;
+    int xa0;
+    int xa1;
+    int xb0;
+    reset_inputs(connected, team, reserved);
+    connected[0] = connected[1] = connected[2] = connected[3] = true;
+    team[0] = team[1] = 1;   /* team 1: slots 0,1 */
+    team[2] = team[3] = 2;   /* team 2: slots 2,3 */
+
+    bolo_srand(12345);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL);
+
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(out[i] < 6, "slot %d unplaced (%u)", i, (unsigned)out[i]);
+    }
+    xa0 = gs->ss->item[out[0]].x;
+    xa1 = gs->ss->item[out[1]].x;
+    xb0 = gs->ss->item[out[2]].x;
+    /* Each team's two members sit on the same side of the x=125 midline... */
+    UT_ASSERT_MSG((xa0 < 125) == (xa1 < 125),
+                  "team 1 split across sides: %d,%d", xa0, xa1);
+    UT_ASSERT_MSG((gs->ss->item[out[2]].x < 125) == (gs->ss->item[out[3]].x < 125),
+                  "team 2 split across sides: %d,%d",
+                  gs->ss->item[out[2]].x, gs->ss->item[out[3]].x);
+    /* ...and the two teams sit on opposite sides. */
+    UT_ASSERT_MSG((xa0 < 125) != (xb0 < 125),
+                  "teams landed on the same side: a=%d b=%d", xa0, xb0);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (h) The unanchored-team anchor is jittered, so the exact pair of starts a
+ *     team claims within its cluster varies across seeds. Without the jitter
+ *     the anchor is the fixed cluster centroid and the pair is constant. */
+int run_starts_batch_team_anchor_jitter_varies(void) {
+    ServerSim *sim = ut_make_running_sim("Jitter");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    build_two_clusters(gs);
+
+    bool connected[MAX_TANKS];
+    BYTE team[MAX_TANKS];
+    BYTE reserved[MAX_TANKS];
+    BYTE out[MAX_TANKS];
+    int seenPair[16];
+    int nSeen = 0;
+    int s;
+    reset_inputs(connected, team, reserved);
+    connected[0] = connected[1] = connected[2] = connected[3] = true;
+    team[0] = team[1] = 1;
+    team[2] = team[3] = 2;
+
+    for (s = 0; s < 64; s++) {
+        int lo;
+        int hi;
+        int key;
+        int j;
+        int found = 0;
+        bolo_srand((uint64_t)(s * 7 + 1));
+        startsAssignBatch(gs, &gs->ss, connected, team, out, NULL);
+        lo = out[0] < out[1] ? out[0] : out[1];
+        hi = out[0] < out[1] ? out[1] : out[0];
+        key = lo * 100 + hi;
+        for (j = 0; j < nSeen; j++) {
+            if (seenPair[j] == key) { found = 1; break; }
+        }
+        if (!found && nSeen < 16) { seenPair[nSeen++] = key; }
+    }
+    UT_ASSERT_MSG(nSeen >= 2,
+                  "team 1's claimed pair should vary across seeds, saw %d", nSeen);
     serverSimDestroy(sim);
     return 0;
 }

@@ -305,10 +305,11 @@ static bool startsIsOwnerFriendly(GameSim *sim, BYTE owner, BYTE playerNum) {
 *LAST MODIFIED: 24/4/26
 *PURPOSE:
 *  Returns a start position for open games. Iterates all
-*  start positions looking for one with no nearby tanks or
-*  pillboxes. Falls back to a position near only friendly
-*  units, then to any valid start. Uses spiral scatter to
-*  find a nearby valid deep-sea square.
+*  start positions looking for one with no nearby tanks and
+*  no enemy or neutral pillboxes (friendly pills are fine).
+*  Falls back to a position near only friendly units, then
+*  to any valid start. Uses spiral scatter to find a nearby
+*  valid deep-sea square.
 *
 *ARGUMENTS:
 *  sim       - Pointer to the game simulation
@@ -330,7 +331,7 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
   int fallbackChoice; /* Tier 3: a start with hostile units nearby (last resort) */
   int chosen;
   bool anyTankNearby;
-  bool anyPillNearby;
+  bool nonFriendlyPillNearby; /* enemy or neutral pill within range */
   bool hostileTankNearby;
   bool hostilePillNearby;
   BYTE tankCount;
@@ -356,7 +357,7 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
     }
 
     anyTankNearby = FALSE;
-    anyPillNearby = FALSE;
+    nonFriendlyPillNearby = FALSE;
     hostileTankNearby = FALSE;
     hostilePillNearby = FALSE;
 
@@ -382,16 +383,19 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
       }
       dist = startsMapDistance(sx, sy, sim->pb->item[pillCount].x, sim->pb->item[pillCount].y);
       if (dist <= START_PILL_RANGE) {
-        anyPillNearby = TRUE;
         pillOwner = sim->pb->item[pillCount].owner;
-        if (pillOwner != NEUTRAL && startsIsOwnerFriendly(sim, pillOwner, playerNum) == FALSE) {
-          hostilePillNearby = TRUE;
+        if (startsIsOwnerFriendly(sim, pillOwner, playerNum) == FALSE) {
+          /* Neutral or enemy: disqualifies "ideal" */
+          nonFriendlyPillNearby = TRUE;
+          if (pillOwner != NEUTRAL) {
+            hostilePillNearby = TRUE;
+          }
         }
       }
     }
 
-    /* Ideal: no units nearby at all */
-    if (anyTankNearby == FALSE && anyPillNearby == FALSE) {
+    /* Ideal: no tanks nearby and no enemy/neutral pills (friendly pills ok) */
+    if (anyTankNearby == FALSE && nonFriendlyPillNearby == FALSE) {
       startsScatterFind(sim, sx, sy, x, y);
       bt = startsConvertDir((*value)->item[idx].dir);
       *dir = (TURNTYPE)(bt * START_TIMES_16);
@@ -935,11 +939,26 @@ void startsAssignBatch(GameSim *sim, starts *value,
         }
       }
       if (bestS >= 0) {
+        int jitterX;
+        int jitterY;
         stripeUsed[bestS] = TRUE;
         g = unanchored[t];
         groups[g].anchored = TRUE;
         groups[g].anchorX = stripeCentX[bestS];
         groups[g].anchorY = stripeCentY[bestS];
+        /* Jitter the anchor by up to a quarter-cell so the cluster sits
+         * somewhere different each game without leaving its region. Members
+         * pick closest-to-anchor independently, so the anchor is the only
+         * lever that moves the whole cluster intact; jittering a member
+         * instead would just fling one teammate away from the group. */
+        jitterX = spanX / (divX * 4);
+        jitterY = spanY / (divY * 4);
+        if (jitterX > 0) {
+          groups[g].anchorX += (int)bolo_rand_below((uint32_t)(jitterX * 2 + 1)) - jitterX;
+        }
+        if (jitterY > 0) {
+          groups[g].anchorY += (int)bolo_rand_below((uint32_t)(jitterY * 2 + 1)) - jitterY;
+        }
       }
     }
   }
@@ -1071,10 +1090,18 @@ void startsAssignBatch(GameSim *sim, starts *value,
     }
   }
 
-  /* Step 5: solos via farthest-first from already-claimed starts */
+  /* Step 5: solos via farthest-first from already-claimed starts.
+   * Farthest-first is a chain: each pick is measured against what's already
+   * claimed, so picks 2..N follow deterministically from the first. We keep
+   * every candidate tied for the best min-distance and choose randomly among
+   * them, which (a) breaks the degenerate "nothing claimed yet" case where
+   * all valid starts tie at MAP_ARRAY_SIZE — that is the single-player game,
+   * which otherwise always picked the lowest-index start — and (b) varies the
+   * seed so the whole spread differs between games while staying maximal. */
   for (g = 0; g < numGroups; g++) {
-    int bestStart = -1;
     int bestMinDist = -1;
+    BYTE bestCandidates[MAX_STARTS];
+    BYTE numBest = 0;
     BYTE soloPlayer;
     if (!groups[g].isSolo) continue;
     soloPlayer = groups[g].players[0];
@@ -1091,12 +1118,16 @@ void startsAssignBatch(GameSim *sim, starts *value,
         if (d < minD) minD = d;
       }
       if (minD == INT_MAX) minD = MAP_ARRAY_SIZE; /* no claims yet — any start is "infinitely far" */
-      if (minD > bestMinDist) {
+      if (numBest == 0 || minD > bestMinDist) {
         bestMinDist = minD;
-        bestStart = i;
+        numBest = 0;
+        bestCandidates[numBest++] = i;
+      } else if (minD == bestMinDist) {
+        bestCandidates[numBest++] = i;
       }
     }
-    if (bestStart >= 0) {
+    if (numBest > 0) {
+      BYTE bestStart = bestCandidates[bolo_rand_below((uint32_t)numBest)];
       startClaimed[bestStart] = TRUE;
       startToPlayer[bestStart] = soloPlayer;
     }
