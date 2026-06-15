@@ -415,6 +415,13 @@ int run_wire_corpus_capture(void);
  * its exact debug string and an undefined type id resolves to "UNKNOWN". */
 int run_packet_type_names(void);
 
+/* Self-reported client platform pin (test_client_type.c): the JOIN-time
+ * bolo_detect_client_type() resolves to the build host's CLIENT_TYPE_*
+ * (the baseline harness normalizes this field away, so it's pinned here),
+ * and bolo_client_type_name() maps every enumerator to its exact name. */
+int run_client_type_matches_platform(void);
+int run_client_type_name_round_trips(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */
