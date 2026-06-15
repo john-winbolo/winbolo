@@ -4970,3 +4970,61 @@ void transportUdpServerPrintStatus(bool toFile) {
     }
 }
 
+#ifdef WB_FUZZ
+/* ================================================================
+ * Fuzz-only dispatcher seam (hardening plan §1.2, tier 2)
+ *
+ * Drives serverProcessPacket directly with attacker-controlled bytes —
+ * no socket, no recv thread. serverProcessPacket and the file-static
+ * `udpServer` it mutates have internal linkage, so this seam must live in
+ * the same TU. Compiled only under -DWB_FUZZ (the dedicated fuzz build);
+ * every shipping build leaves these symbols out entirely.
+ *
+ * The harness owns the ServerSim lifetime and calls Init once before
+ * feeding packets. State accumulates across inputs by design — that is the
+ * standard libFuzzer persistent-target pattern and explores deeper handler
+ * paths than a per-input reset would.
+ * ================================================================ */
+
+/* Minimal server context: mirrors the non-socket, non-thread portion of
+ * transportUdpServerCreate. sock stays INVALID_SOCKET so srvSendTo's
+ * underlying udpSendTo is a no-op and no datagrams leave the process. */
+void transportUdpServerFuzzInit(ServerSim *sim) {
+    int i;
+    (void)sim;
+    memset(&udpServer, 0, sizeof(udpServer));
+    memset(punchQueue, 0, sizeof(punchQueue));
+    udpServer.sock = INVALID_SOCKET;
+    udpServer.running = true;
+    udpServer.tickCount = 0;
+    udpServer.uploadMaxFiles        = 64;
+    udpServer.uploadMaxStorageBytes = 8u * 1024u * 1024u;
+    udpServer.compressedMapSize = 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        udpServer.clients[i].connected = false;
+        udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
+        memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
+        udpServer.controlEventQueues[i].nextSeq = 1;
+        udpServer.controlEventQueues[i].ackedSeq = 1;
+        udpServer.controlSyncInProgress[i] = false;
+    }
+    netImpairInit(&srvImpairIn);
+    netImpairInit(&srvImpairOut);
+}
+
+/* One datagram, as if received on the game socket from a LAN peer. buf is
+ * copied into a mutable local because some handlers write into it in place. */
+void transportUdpServerFuzzProcessPacket(ServerSim *sim,
+                                         const uint8_t *data, size_t size) {
+    uint8_t buf[2048];
+    struct sockaddr_in from;
+    if (size == 0 || size > sizeof(buf)) return;
+    memcpy(buf, data, size);
+    memset(&from, 0, sizeof(from));
+    from.sin_family = AF_INET;
+    from.sin_addr.s_addr = htonl(0x7f000001u); /* 127.0.0.1 */
+    from.sin_port = htons((unsigned short)40000);
+    serverProcessPacket(sim, buf, (int)size, &from);
+}
+#endif /* WB_FUZZ */
+

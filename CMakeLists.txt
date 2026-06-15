@@ -767,6 +767,31 @@ if(WB_NETDEBUG)
     add_compile_definitions(WB_NETDEBUG=1)
 endif()
 
+# Fuzzing: libFuzzer targets over the wire parsers and the server packet
+# dispatcher (hardening plan §1.2). Linux + Clang only. This is a DEDICATED
+# build config, not mixed with a normal build: when ON, the whole build is
+# instrumented with AddressSanitizer + libFuzzer coverage. Normal MSVC/GCC
+# builds never set WB_FUZZ, so they are untouched. The WB_FUZZ define is
+# global (not per-target) so server_static's transport_udp_server.c picks up
+# the WB_FUZZ-gated dispatcher seam — same rationale as WB_NETDEBUG above.
+# AFL++ is the fallback if requiring Clang is unwanted (see tests/fuzz/README.md).
+option(WB_FUZZ "Build libFuzzer fuzz targets (Linux + Clang only)" OFF)
+if(WB_FUZZ)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR
+            "WB_FUZZ requires Clang for -fsanitize=fuzzer,address. Configure a "
+            "separate build dir with -DCMAKE_C_COMPILER=clang "
+            "-DCMAKE_CXX_COMPILER=clang++, or use the AFL++ fallback documented "
+            "in tests/fuzz/README.md.")
+    endif()
+    add_compile_definitions(WB_FUZZ=1)
+    # Instrument every TU for coverage + ASan; only the fuzz executables below
+    # additionally link libFuzzer's main via -fsanitize=fuzzer.
+    add_compile_options(-fsanitize=fuzzer-no-link,address -g -O1
+                        -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
+endif()
+
 # libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
 # When OFF, src/bolo/nat_portmap.c compiles to no-op stubs.
 option(BOLO_PORTMAP "Enable UPnP/NAT-PMP automatic port mapping" ON)
@@ -2892,6 +2917,109 @@ if(WB_NETDEBUG)
                  COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
         set_tests_properties(netdebug.${_name} PROPERTIES TIMEOUT 60)
     endforeach()
+endif()
+
+# ---- Fuzz targets (WB_FUZZ, Linux + Clang) -------------------------------
+# Two libFuzzer executables and, for each, a corpus-replay ctest: the binary
+# is run over its committed corpus + crash set with -runs=0 (load and execute
+# each input once, no mutation), so it is bounded, deterministic, and fails
+# the build on any regression. Open-ended discovery is a separate, non-ctest
+# job — see tests/fuzz/run_discovery.sh.
+if(WB_FUZZ)
+    set(WB_FUZZ_CORPUS_DIR "${CMAKE_SOURCE_DIR}/tests/fuzz/corpus")
+    set(WB_FUZZ_CRASH_DIR  "${CMAKE_SOURCE_DIR}/tests/fuzz/crashes")
+
+    # Tier 1 — pure bounded wire codecs + command codec. bolo_static only.
+    add_executable(fuzz_wire_codec tests/fuzz/fuzz_wire_codec.c)
+    bolo_apply_include_rules(fuzz_wire_codec unittests)
+    target_link_libraries(fuzz_wire_codec PRIVATE bolo_static SDL3::SDL3 ${MATH_LIB} pthread)
+    # -fcommon: the bolo/lzw sources rely on tentative-definition merging that
+    # Clang's default -fno-common would reject. Mirrors WinBoloUnitTests.
+    target_compile_options(fuzz_wire_codec PRIVATE -fcommon)
+    target_link_options(fuzz_wire_codec PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_wire_codec "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.wire_codec
+             COMMAND $<TARGET_FILE:fuzz_wire_codec> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/wire_codec ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.wire_codec PROPERTIES TIMEOUT 120)
+
+    # Tier 2 — full server dispatcher via the WB_FUZZ-gated seam. Links
+    # server_static (which owns transport_udp_server.c, now carrying the seam).
+    # test_stubs.c + the steam stub resolve the winbolonet / natPortMap /
+    # frontend callbacks the server graph references but server_static doesn't
+    # own — the same stub surface WinBoloUnitTests links.
+    # The loose (non-library) sources WinBoloUnitTests compiles directly to
+    # close the link: mpDiagLog, md5*, lzw*, and the client transport
+    # (transport_udp_client.c is NOT in bolo_static — client_sim/client_net in
+    # the listen-server path reference it). Matching the unit-test set verbatim
+    # keeps the link closure identical to a known-good target.
+    add_executable(fuzz_server_dispatch
+        tests/fuzz/fuzz_server_dispatch.c
+        tests/unit/test_stubs.c
+        src/steam/steam_wrapper_stub.c
+        src/common/prefs_doc.c
+        src/common/prefs.c
+        src/common/md5.c
+        src/common/mp_diag_log.c
+        src/server/server_dedicated_log_path.c
+        src/winbolonet/wbn_bearer.c
+        src/winbolonet/wbn_country_cache.c
+        src/winbolonet/wbn_news_parser.cpp
+        src/winbolonet/wbn_prefs_sync.c
+        src/bolo/transport_udp_client.c
+        src/lzw/dcodlzw.c
+        src/lzw/ecodlzw.c)
+    bolo_apply_include_rules(fuzz_server_dispatch unittests)
+    # Same include set WinBoloUnitTests gives test_stubs.c (luabrainshandler.h
+    # lives in src/gui/sdl3, etc.).
+    target_include_directories(fuzz_server_dispatch PRIVATE
+        src/gui/sdl3 src/server src src/winbolonet
+        ${CMAKE_SOURCE_DIR}/tests/unit ${cjson_SOURCE_DIR})
+    # Version/build defines the loose sources need (transport_udp_client.c
+    # bakes BOLO_VERSION_* into its JOIN packet). Mirrors WinBoloUnitTests,
+    # minus the test-only NETIMPAIR / wire-capture seams.
+    target_compile_definitions(fuzz_server_dispatch PRIVATE
+        HAVE_SCREEN_C=1
+        WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+        BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+        BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+        BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
+    target_link_libraries(fuzz_server_dispatch PRIVATE
+        bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+        SDL3::SDL3 minizip lua_static cjson utf8proc mdns ${MATH_LIB} pthread)
+    target_compile_options(fuzz_server_dispatch PRIVATE -fcommon)
+    target_link_options(fuzz_server_dispatch PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_server_dispatch "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.server_dispatch
+             COMMAND $<TARGET_FILE:fuzz_server_dispatch> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/server_dispatch ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.server_dispatch PROPERTIES TIMEOUT 120)
+
+    # Stage the FetchContent-built shared libs next to the fuzz binaries so the
+    # $ORIGIN RPATH resolves them at run time (these copies normally ride the
+    # game/server targets, which a fuzz-only build doesn't produce). Mirrors
+    # the WinBolo POST_BUILD copy. Tier 1 needs only SDL3; tier 2 also pulls in
+    # onnxruntime via bot_brains_static.
+    add_custom_command(TARGET fuzz_wire_codec POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_wire_codec>")
+    add_custom_command(TARGET fuzz_server_dispatch POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_server_dispatch>")
+    if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_LIBDIR)
+        file(GLOB _FUZZ_ORT_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
+        foreach(_f ${_FUZZ_ORT_SO})
+            if(_f MATCHES "\\.dSYM$")
+                continue()
+            endif()
+            add_custom_command(TARGET fuzz_server_dispatch POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_f}" "$<TARGET_FILE_DIR:fuzz_server_dispatch>")
+        endforeach()
+    endif()
 endif()
 
 endif() # iOS vs Desktop
