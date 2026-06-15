@@ -82,6 +82,32 @@ static const int kBoatAtlasY[16] = {
     TANK_SELFBOAT_8_Y,  TANK_SELFBOAT_9_Y,  TANK_SELFBOAT_10_Y, TANK_SELFBOAT_11_Y,
     TANK_SELFBOAT_12_Y, TANK_SELFBOAT_13_Y, TANK_SELFBOAT_14_Y, TANK_SELFBOAT_15_Y
 };
+/* Ally (green) and enemy (red) boat variants — selected per start ownership
+ * so claimed starts render in the in-game allegiance colours. */
+static const int kGoodBoatAtlasX[16] = {
+    TANK_GOODBOAT_0_X,  TANK_GOODBOAT_1_X,  TANK_GOODBOAT_2_X,  TANK_GOODBOAT_3_X,
+    TANK_GOODBOAT_4_X,  TANK_GOODBOAT_5_X,  TANK_GOODBOAT_6_X,  TANK_GOODBOAT_7_X,
+    TANK_GOODBOAT_8_X,  TANK_GOODBOAT_9_X,  TANK_GOODBOAT_10_X, TANK_GOODBOAT_11_X,
+    TANK_GOODBOAT_12_X, TANK_GOODBOAT_13_X, TANK_GOODBOAT_14_X, TANK_GOODBOAT_15_X
+};
+static const int kGoodBoatAtlasY[16] = {
+    TANK_GOODBOAT_0_Y,  TANK_GOODBOAT_1_Y,  TANK_GOODBOAT_2_Y,  TANK_GOODBOAT_3_Y,
+    TANK_GOODBOAT_4_Y,  TANK_GOODBOAT_5_Y,  TANK_GOODBOAT_6_Y,  TANK_GOODBOAT_7_Y,
+    TANK_GOODBOAT_8_Y,  TANK_GOODBOAT_9_Y,  TANK_GOODBOAT_10_Y, TANK_GOODBOAT_11_Y,
+    TANK_GOODBOAT_12_Y, TANK_GOODBOAT_13_Y, TANK_GOODBOAT_14_Y, TANK_GOODBOAT_15_Y
+};
+static const int kEvilBoatAtlasX[16] = {
+    TANK_EVILBOAT_0_X,  TANK_EVILBOAT_1_X,  TANK_EVILBOAT_2_X,  TANK_EVILBOAT_3_X,
+    TANK_EVILBOAT_4_X,  TANK_EVILBOAT_5_X,  TANK_EVILBOAT_6_X,  TANK_EVILBOAT_7_X,
+    TANK_EVILBOAT_8_X,  TANK_EVILBOAT_9_X,  TANK_EVILBOAT_10_X, TANK_EVILBOAT_11_X,
+    TANK_EVILBOAT_12_X, TANK_EVILBOAT_13_X, TANK_EVILBOAT_14_X, TANK_EVILBOAT_15_X
+};
+static const int kEvilBoatAtlasY[16] = {
+    TANK_EVILBOAT_0_Y,  TANK_EVILBOAT_1_Y,  TANK_EVILBOAT_2_Y,  TANK_EVILBOAT_3_Y,
+    TANK_EVILBOAT_4_Y,  TANK_EVILBOAT_5_Y,  TANK_EVILBOAT_6_Y,  TANK_EVILBOAT_7_Y,
+    TANK_EVILBOAT_8_Y,  TANK_EVILBOAT_9_Y,  TANK_EVILBOAT_10_Y, TANK_EVILBOAT_11_Y,
+    TANK_EVILBOAT_12_Y, TANK_EVILBOAT_13_Y, TANK_EVILBOAT_14_Y, TANK_EVILBOAT_15_Y
+};
 
 struct MapPreviewView {
     /* Source — either compressed buffer or a file path. The latter
@@ -171,7 +197,34 @@ struct MapPreviewView {
     float  startsTileScale;
     WORLD  startsCenterX;
     WORLD  startsCenterY;
+
+    /* Per-start ownership for colouring (0-based, start index i+1):
+     * 0=unclaimed, 1=self, 2=ally, 3=enemy. Set per-frame by the lobby via
+     * mapPreviewViewSetStartOwners; selects the boat sprite (sprite zoom)
+     * and the dot colour (minimap zoom). */
+    uint8_t startOwners[16];   /* MAX_STARTS */
+    int     startOwnerCount;
 };
+
+/* Ownership code (0-based start index) -> boat atlas table + RGB color-mod.
+ * Ally uses the green boat; self uses the same green boat darkened (no
+ * dark-green boat sprite exists) so your start reads as a darker green;
+ * enemy uses the red boat; unclaimed uses the default self boat. */
+static void boatStyleForOwner(const MapPreviewView *v, int startIdx1,
+                              const int **outX, const int **outY,
+                              Uint8 *outR, Uint8 *outG, Uint8 *outB) {
+    *outX = kBoatAtlasX; *outY = kBoatAtlasY;
+    *outR = 255; *outG = 255; *outB = 255;
+    int k = startIdx1 - 1;
+    if (k < 0 || k >= v->startOwnerCount) return;
+    switch (v->startOwners[k]) {
+        case 1: *outX = kGoodBoatAtlasX; *outY = kGoodBoatAtlasY;        /* self  */
+                *outR = 130; *outG = 130; *outB = 130; break; /* darken -> dark green */
+        case 2: *outX = kGoodBoatAtlasX; *outY = kGoodBoatAtlasY; break; /* ally  green */
+        case 3: *outX = kEvilBoatAtlasX; *outY = kEvilBoatAtlasY; break; /* enemy red */
+        default: break;                                                  /* free  */
+    }
+}
 
 /* ── Adjacency-aware tile calculation (lifted verbatim) ──────────── */
 
@@ -246,7 +299,7 @@ static void viewRenderStarts(MapPreviewView *v, SDL_Renderer *renderer,
     v->startsCenterY = v->centerY;
     v->startsTransformValid = true;
 
-    SDL_SetTextureAlphaMod(v->tilesTex, 200);
+    SDL_SetTextureAlphaMod(v->tilesTex, 255);
 
     BYTE numStarts = clientMapPreviewGetStartCount(v->preview);
     for (BYTE i = 1; i <= numStarts; i++) {
@@ -257,14 +310,19 @@ static void viewRenderStarts(MapPreviewView *v, SDL_Renderer *renderer,
         if (dx + scaledTileF < 0 || dx > screenW ||
             dy + scaledTileF < 0 || dy > screenH) continue;
         int dir = sdir;
+        const int *batX, *batY;
+        Uint8 cr, cg, cb;
+        boatStyleForOwner(v, i, &batX, &batY, &cr, &cg, &cb);
         SDL_FRect src = {
-            (float)kBoatAtlasX[dir], (float)kBoatAtlasY[dir],
+            (float)batX[dir], (float)batY[dir],
             (float)tileSize, (float)tileSize
         };
         SDL_FRect dest = { dx, dy, scaledTileF, scaledTileF };
+        SDL_SetTextureColorMod(v->tilesTex, cr, cg, cb);
         SDL_RenderTexture(renderer, v->tilesTex, &src, &dest);
     }
 
+    SDL_SetTextureColorMod(v->tilesTex, 255, 255, 255);
     SDL_SetTextureAlphaMod(v->tilesTex, 255);
 }
 
@@ -405,7 +463,19 @@ static void viewRenderMinimapToOffscreen(MapPreviewView *v,
         float dx = (float)sx * tilePxF - camPxF;
         float dy = (float)sy * tilePxF - camPyF;
         SDL_FRect dot = { dx, dy, (float)dotSize, (float)dotSize };
-        SDL_SetRenderDrawColor(renderer, 255, 255, 0, 255);
+        /* Colour the dot by ownership (matches the minimap preview): self
+         * black, ally green, enemy red, unclaimed yellow. */
+        Uint8 r = 255, g = 255, b = 0;
+        int k = (int)i - 1;
+        if (k >= 0 && k < v->startOwnerCount) {
+            switch (v->startOwners[k]) {
+                case 1: r = 0;   g = 110; b = 0;   break; /* self  dark green */
+                case 2: r = 0;   g = 210; b = 0;   break; /* ally  green */
+                case 3: r = 230; g = 50;  b = 50;  break; /* enemy red */
+                default: break;                            /* free  yellow */
+            }
+        }
+        SDL_SetRenderDrawColor(renderer, r, g, b, 255);
         SDL_RenderFillRect(renderer, &dot);
     }
 }
@@ -1091,6 +1161,15 @@ extern "C" bool mapPreviewViewGetStart(const MapPreviewView *v, BYTE i,
     if (!v || !v->preview) return false;
     BYTE dir;
     return clientMapPreviewGetStart(v->preview, i, outX, outY, &dir);
+}
+
+extern "C" void mapPreviewViewSetStartOwners(MapPreviewView *v,
+                                             const uint8_t *owners, int count) {
+    if (!v) return;
+    if (!owners || count <= 0) { v->startOwnerCount = 0; return; }
+    if (count > 16) count = 16;   /* MAX_STARTS */
+    memcpy(v->startOwners, owners, (size_t)count);
+    v->startOwnerCount = count;
 }
 
 extern "C" float mapPreviewViewGetZoom(const MapPreviewView *v) {

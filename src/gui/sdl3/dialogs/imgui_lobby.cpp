@@ -86,6 +86,7 @@ extern "C" {
 #include "cJSON.h"
 }
 #include "../wb_theme.h"
+#include "../lobby_start_markers.h"  /* shared start-ownership marker helpers */
 
 #define MAX_TANKS 16
 #define WBN_ICON_SIZE 14
@@ -3041,6 +3042,21 @@ static int          popupCompressedLen  = 0;
  * the map per frame. */
 static int          s_startCompassId[MAX_STARTS + 1] = {0};
 
+/* Cached start map-square positions (1-based, parallel to s_startCompassId)
+ * plus the start bounding box and count, for the ownership-marker overlay
+ * on the map previews. Rebuilt alongside the compass cache on map change so
+ * the overlay never decompresses the map per frame. */
+static BYTE         s_startMapX[MAX_STARTS + 1] = {0};
+static BYTE         s_startMapY[MAX_STARTS + 1] = {0};
+static int          s_startBboxMinX = 0, s_startBboxMinY = 0;
+static int          s_startBboxMaxX = 0, s_startBboxMaxY = 0;
+static BYTE         s_startCount = 0;
+
+/* 1-based start currently hovered in a start dropdown (the combo in the
+ * player list), so the inline preview can outline it. Set while a dropdown
+ * entry is hovered; consumed (cleared) by the preview overlay each frame. */
+static int          s_hoveredStartChoice = -1;
+
 /* Compass octant of a start at (sx,sy) within the start bounding box
  * [minX..maxX, minY..maxY]. Map Y increases downward, so north = smaller
  * y. Returns a STR_* lang id for N/NE/E/SE/S/SW/W/NW, or C (centre) when
@@ -3080,6 +3096,11 @@ static int lobbyStartCompassStr(int sx, int sy, int minX, int minY,
  * Clears the cache on failure or an empty start list. */
 static void rebuildStartCompassCache(const BYTE *data, int len) {
     memset(s_startCompassId, 0, sizeof(s_startCompassId));
+    memset(s_startMapX, 0, sizeof(s_startMapX));
+    memset(s_startMapY, 0, sizeof(s_startMapY));
+    s_startCount = 0;
+    s_startBboxMinX = s_startBboxMinY = 0;
+    s_startBboxMaxX = s_startBboxMaxY = 0;
     MapPreview *mp = clientMapPreviewLoadFromBuffer(data, len);
     if (!mp) {
         return;
@@ -3103,10 +3124,219 @@ static void rebuildStartCompassCache(const BYTE *data, int len) {
     for (i = 1; i <= n; i++) {
         BYTE x, y, dir;
         if (!clientMapPreviewGetStart(mp, i, &x, &y, &dir)) continue;
+        s_startMapX[i] = x;
+        s_startMapY[i] = y;
         s_startCompassId[i] =
             lobbyStartCompassStr(x, y, minX, minY, maxX, maxY);
     }
+    s_startCount    = n;
+    s_startBboxMinX = minX;
+    s_startBboxMinY = minY;
+    s_startBboxMaxX = maxX;
+    s_startBboxMaxY = maxY;
     clientMapPreviewDestroy(mp);
+}
+
+/* Per-start ownership codes (0-based, start index i+1) for the minimap
+ * colouring: 0=unclaimed, 1=self, 2=ally, 3=enemy. Also returns an FNV-1a
+ * signature so the caller can detect when a recolour rebuild is needed
+ * (claims/team changes don't trigger a map re-download). Returns the count. */
+static int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
+                                   uint8_t *owners, int maxN, uint32_t *outSig) {
+    int n = (int)clientSimGetLobbyStartCount(cs);
+    if (n > maxN) n = maxN;
+    if (n < 0)    n = 0;
+    uint32_t sig = 2166136261u;
+    for (int i = 1; i <= n; i++) {
+        uint8_t o = (uint8_t)lobbyStartClassify(cs, lobbyStartHolderSlot(cs, i),
+                                                myPlayerNum);
+        owners[i - 1] = o;
+        sig = (sig ^ o) * 16777619u;
+    }
+    sig = (sig ^ (uint32_t)n) * 16777619u;
+    if (outSig) *outSig = sig;
+    return n;
+}
+
+/* 1-based start whose displayed position is within radiusPx of pt (the
+ * ~25px hover catch area), or -1. Shared by the overlay's hover border and
+ * the mini-map drag-drop target. */
+static int lobbyPreviewStartAtScreen(ImVec2 imgMin, float previewSize,
+                                     int bx0, int by0, int bx1, int by1,
+                                     ImVec2 pt, float radiusPx) {
+    if (s_startCount == 0) return -1;
+    float spanX = (float)((bx1 + 1) - bx0);
+    float spanY = (float)((by1 + 1) - by0);
+    if (spanX <= 0.0f || spanY <= 0.0f) return -1;
+    int best = -1;
+    float bestD2 = 0.0f;
+    float r2 = radiusPx * radiusPx;
+    for (int i = 1; i <= (int)s_startCount; i++) {
+        float fx = imgMin.x + (((float)s_startMapX[i] + 0.5f - bx0) / spanX) * previewSize;
+        float fy = imgMin.y + (((float)s_startMapY[i] + 0.5f - by0) / spanY) * previewSize;
+        float ex = fx - pt.x, ey = fy - pt.y, d2 = ex * ex + ey * ey;
+        if (d2 > r2) continue;
+        if (best < 0 || d2 < bestD2) { best = i; bestD2 = d2; }
+    }
+    return best;
+}
+
+/* Draw reserved-start ownership markers over the inline map preview Image.
+ * Maps each cached start map-square into the displayed (cropped) image rect,
+ * colours it by who claimed it (self/ally/enemy/unclaimed), and labels
+ * claimed starts with the minimal unique prefix of the holder's name placed
+ * toward the map edge (per the start's compass octant) so labels avoid the
+ * playable centre. (imgMin, previewSize) is the on-screen Image rect; the
+ * b* ints are the source-pixel crop the Image's UVs map from. */
+static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
+                                         ImVec2 imgMin, float previewSize,
+                                         int bx0, int by0, int bx1, int by1) {
+    if (s_startCount == 0) return;
+    float spanX = (float)((bx1 + 1) - bx0);
+    float spanY = (float)((by1 + 1) - by0);
+    if (spanX <= 0.0f || spanY <= 0.0f) return;
+
+    /* Pass 1: holder slot + a compact name list for disambiguation. */
+    const char *holderNames[MAX_STARTS + 1] = {0};
+    int holderOf[MAX_STARTS + 1];
+    int nameListIdx[MAX_STARTS + 1];
+    int nHolders = 0;
+    for (int i = 1; i <= (int)s_startCount; i++) {
+        holderOf[i]    = lobbyStartHolderSlot(cs, i);
+        nameListIdx[i] = -1;
+        if (holderOf[i] >= 0) {
+            const char *nm = clientSimGetLobbySlot(cs, (BYTE)holderOf[i])->playerName;
+            if (nm && nm[0]) {
+                nameListIdx[i] = nHolders;
+                holderNames[nHolders++] = nm;
+            }
+        }
+    }
+
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImFont *font   = ImGui::GetFont();
+    float fsz      = ImGui::GetFontSize() * 0.85f;
+    float tilePx   = (spanX > 0.0f) ? (previewSize / spanX) : 1.0f;
+
+    for (int i = 1; i <= (int)s_startCount; i++) {
+        /* Start map-square centre -> displayed image pixel. */
+        float fx = imgMin.x + (((float)s_startMapX[i] + 0.5f - bx0) / spanX) * previewSize;
+        float fy = imgMin.y + (((float)s_startMapY[i] + 0.5f - by0) / spanY) * previewSize;
+        if (fx < imgMin.x || fx > imgMin.x + previewSize ||
+            fy < imgMin.y || fy > imgMin.y + previewSize) continue;
+
+        /* Label: "#<n>" alone, or "#<n> <initials>" when claimed (the
+         * disambiguating prefix to the right of the number). */
+        char buf[40];
+        if (nameListIdx[i] >= 0) {
+            int plen = lobbyStartUniquePrefixLen(holderNames, nHolders, nameListIdx[i]);
+            char pfx[24];
+            if (plen > (int)sizeof(pfx) - 1) plen = (int)sizeof(pfx) - 1;
+            memcpy(pfx, holderNames[nameListIdx[i]], (size_t)plen);
+            pfx[plen] = '\0';
+            SDL_snprintf(buf, sizeof(buf), "#%d %s", i, pfx);
+        } else {
+            SDL_snprintf(buf, sizeof(buf), "#%d", i);
+        }
+
+        /* Centre the whole field one tile toward the map edge per active
+         * compass axis (e.g. a SW start -> one tile down & one tile west),
+         * so the centre point is the same whether or not an initial is
+         * present. */
+        LobbyCompassDir dir = lobbyStartCompassDir(
+            s_startMapX[i], s_startMapY[i],
+            s_startBboxMinX, s_startBboxMinY, s_startBboxMaxX, s_startBboxMaxY);
+        float ox, oy;
+        lobbyCompassOffset(dir, &ox, &oy);
+        int dirX = (ox > 0.3f) ? 1 : (ox < -0.3f ? -1 : 0);
+        int dirY = (oy > 0.3f) ? 1 : (oy < -0.3f ? -1 : 0);
+        float offPx = tilePx;            /* one tile, but at least 10 px */
+        if (offPx < 10.0f) offPx = 10.0f;
+        float cxp = fx + (float)dirX * offPx;
+        float cyp = fy + (float)dirY * offPx;
+        ImVec2 ts = font->CalcTextSizeA(fsz, FLT_MAX, 0.0f, buf);
+        /* For a purely E/W label, anchor the near text edge at the offset
+         * point so the field grows away from the start (centring would let
+         * it grow back over the start); otherwise centre on the point. */
+        ImVec2 tp;
+        if (dirY == 0 && dirX > 0)        /* East: left edge anchored right */
+            tp = ImVec2(fx + offPx, fy - ts.y * 0.5f);
+        else if (dirY == 0 && dirX < 0)   /* West: right edge anchored left */
+            tp = ImVec2(fx - offPx - ts.x, fy - ts.y * 0.5f);
+        else                              /* N/S/diagonal/centre: centred */
+            tp = ImVec2(cxp - ts.x * 0.5f, cyp - ts.y * 0.5f);
+        dl->AddText(font, fsz, ImVec2(tp.x + 1.0f, tp.y + 1.0f),
+                    IM_COL32(0, 0, 0, 205), buf);
+        dl->AddText(font, fsz, tp, IM_COL32(255, 255, 255, 255), buf);
+    }
+
+    /* 1px white border around a start, marking it as "the one in focus":
+     * the start under the cursor (~25px catch, also the drag-drop target)
+     * and the start whose dropdown entry is currently hovered. */
+    auto outlineStart = [&](int st) {
+        if (st < 1 || st > (int)s_startCount) return;
+        float fx = imgMin.x + (((float)s_startMapX[st] + 0.5f - bx0) / spanX) * previewSize;
+        float fy = imgMin.y + (((float)s_startMapY[st] + 0.5f - by0) / spanY) * previewSize;
+        float dotPx = 3.0f * previewSize / spanX;
+        float half  = dotPx * 0.5f + 1.5f;
+        if (half < 4.0f) half = 4.0f;
+        dl->AddRect(ImVec2(fx - half, fy - half), ImVec2(fx + half, fy + half),
+                    IM_COL32(255, 255, 255, 255), 0.0f, 0, 1.0f);
+    };
+    outlineStart(lobbyPreviewStartAtScreen(imgMin, previewSize, bx0, by0, bx1, by1,
+                                           ImGui::GetMousePos(), 25.0f));
+    outlineStart(s_hoveredStartChoice);
+    s_hoveredStartChoice = -1;   /* consume */
+}
+
+/* Interaction layer for the inline map preview: an invisible button over the
+ * Image (a plain Image can't be a drag source). Hover highlights the panel
+ * border + cursor; pressing on a movable claimed start (the white-bordered
+ * one) and dragging reassigns its player; it's also the drop target for the
+ * player-list "+" handles. Leaves the invisible button as the last item, so
+ * the caller's mapPreviewPopupOnClick (IsItemClicked) still opens the popup
+ * on a plain click. */
+static void lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
+                                 ImVec2 imgMin, float innerSize,
+                                 int bx0, int by0, int bx1, int by1) {
+    static int s_miniDragHolder = -1;   /* start-holder captured at press */
+    ImGui::SetCursorScreenPos(imgMin);
+    ImGui::InvisibleButton("##miniMapInteract", ImVec2(innerSize, innerSize));
+    bool hov = ImGui::IsItemHovered();
+    if (hov) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImGui::GetWindowDrawList()->AddRect(
+            ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+            IM_COL32(255, 255, 255, 140), 0.0f, 0, 2.0f);
+    }
+    /* Capture the start under the cursor at press so it doesn't change mid
+     * drag; only a claimed start the local player may move is draggable. */
+    if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        int st = lobbyPreviewStartAtScreen(imgMin, innerSize, bx0, by0, bx1, by1,
+                                           ImGui::GetMousePos(), 25.0f);
+        int holder = (st >= 1) ? lobbyStartHolderSlot(cs, st) : -1;
+        s_miniDragHolder = (holder >= 0 && (effHostMap || holder == myPlayerNum))
+                               ? holder : -1;
+    }
+    if (s_miniDragHolder >= 0 &&
+        ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+        uint8_t slot = (uint8_t)s_miniDragHolder;
+        ImGui::SetDragDropPayload("WB_START_ASSIGN", &slot, sizeof(slot));
+        ImGui::Text("%s", clientSimGetLobbySlot(cs, (BYTE)s_miniDragHolder)->playerName);
+        ImGui::EndDragDropSource();
+    }
+    if (ImGui::BeginDragDropTarget()) {
+        const ImGuiPayload *pl = ImGui::AcceptDragDropPayload(
+            "WB_START_ASSIGN", ImGuiDragDropFlags_AcceptBeforeDelivery);
+        if (pl && pl->IsDelivery() && pl->DataSize == (int)sizeof(uint8_t)) {
+            int st = lobbyPreviewStartAtScreen(imgMin, innerSize, bx0, by0, bx1, by1,
+                                               ImGui::GetMousePos(), 25.0f);
+            if (st >= 1)
+                clientSimNetSendLobbyClaimStart(cs, *(const uint8_t *)pl->Data,
+                                                (BYTE)st);
+        }
+        ImGui::EndDragDropTarget();
+    }
 }
 
 /* Build a 256x256 RGBA minimap from compressed map data.
@@ -3114,10 +3344,12 @@ static void rebuildStartCompassCache(const BYTE *data, int len) {
  * bounds is filled with the bounding box of non-sea terrain. */
 static SDL_Texture *buildMapPreview(SDL_Renderer *renderer,
                                      const BYTE *compressedData, int dataLen,
-                                     MapBounds *bounds) {
+                                     MapBounds *bounds,
+                                     const uint8_t *startOwners, int ownerCount) {
     MinimapBounds mb;
-    SDL_Texture *tex = minimapFromCompressed(renderer, compressedData, dataLen,
-                                             &mb, NULL, NULL, NULL);
+    SDL_Texture *tex = minimapFromCompressedOwned(renderer, compressedData, dataLen,
+                                                  &mb, NULL, NULL, NULL,
+                                                  startOwners, ownerCount);
     if (bounds) {
         bounds->minX = mb.minX;
         bounds->minY = mb.minY;
@@ -3759,6 +3991,19 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
      * "+ Add Team" lives in the footer below the teams list (see
      * the bottom of this function). */
     (void)effectiveHost;  /* still used by the footer "Add Team" below */
+
+    /* Start-picker column alignment. The per-row start dropdown is
+     * centered in the horizontal gap between the right edge of the
+     * widest player name(+HOST/ADMIN/BOT tag) across every row and the
+     * left edge of the Ready/Not-ready cell, so all the dropdowns line
+     * up in one column for everyone. Measured this frame, applied the
+     * next (a one-frame lag is invisible for a near-static lobby). */
+    static float s_startComboCenterX = 0.0f;
+    const float  appliedStartCenterX = s_startComboCenterX;
+    float startColNameMaxRight = 0.0f;  /* widest name(+tag) right edge */
+    float startColPingRightX   = 0.0f;  /* ping/gear column right edge */
+    float startColReadyLeftX   = 0.0f;  /* Ready cell left edge */
+
     for (int teamId = 1; teamId < 16; teamId++) {
         /* Teams 1 and 2 are always rendered (the lobby's two default
          * sides) — the host always has somewhere to drop the first
@@ -4435,6 +4680,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 g_theme->botTagText,
                                 g_theme->botTagBorder);
                 }
+                /* Track the rightmost name/tag edge across all rows so the
+                 * start dropdowns can line up in a shared column. The last
+                 * item drawn here is the name text or its trailing tag pill. */
+                startColNameMaxRight = ImMax(startColNameMaxRight,
+                                             ImGui::GetItemRectMax().x);
 
                 /* ── Column 3: gear (bots) or ping (humans) ──────── */
                 ImGui::TableSetColumnIndex(3);
@@ -4508,6 +4758,13 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * s_startCompassId table (rebuilt on map change). */
                 ImGui::TableSetColumnIndex(4);
                 rowTopY = ImGui::GetCursorPosY();
+                /* Spacer-column left edge == right edge of the ping/gear
+                 * column. Used as a floor for the dropdown's left bound so
+                 * it never overlaps the ping text / bot gear when names are
+                 * short. Constant across rows; capture once. */
+                if (startColPingRightX == 0.0f) {
+                    startColPingRightX = ImGui::GetCursorScreenPos().x;
+                }
                 {
                     const ClientLobbySlot *cslot = clientSimGetLobbySlot(cs, (BYTE)(i));
                     uint8_t sIdx = cslot->startIdx;
@@ -4523,6 +4780,12 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             startLbl = langGetText(s_startCompassId[sIdx]);
                         }
                         cyTextAbs();
+                        if (appliedStartCenterX > 0.0f) {
+                            float tw = ImGui::CalcTextSize(startLbl).x;
+                            ImVec2 sp = ImGui::GetCursorScreenPos();
+                            sp.x = appliedStartCenterX - tw * 0.5f;
+                            ImGui::SetCursorScreenPos(sp);
+                        }
                         ImGui::TextDisabled("%s", startLbl);
                     } else {
                         char preview[64];
@@ -4535,10 +4798,16 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             SDL_snprintf(preview, sizeof(preview), "%s",
                                          langGetText(STR_DLGLOBBY_START_UNASSIGNED));
                         }
+                        const float comboW = 96.0f * s;
                         cyAbs(ImGui::GetFrameHeight());
+                        if (appliedStartCenterX > 0.0f) {
+                            ImVec2 sp = ImGui::GetCursorScreenPos();
+                            sp.x = appliedStartCenterX - comboW * 0.5f;
+                            ImGui::SetCursorScreenPos(sp);
+                        }
                         char comboId[24];
                         SDL_snprintf(comboId, sizeof(comboId), "##start%d", i);
-                        ImGui::SetNextItemWidth(96.0f * s);
+                        ImGui::SetNextItemWidth(comboW);
                         if (ImGui::BeginCombo(comboId, preview)) {
                             for (int k = 1; k <= MAX_STARTS; k++) {
                                 if (s_startCompassId[k] == 0) continue;
@@ -4570,6 +4839,9 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                 if (ImGui::Selectable(entry, selected)) {
                                     clientSimNetSendLobbyClaimStart(cs, (BYTE)i, (BYTE)k);
                                 }
+                                /* Outline this start on the preview while its
+                                 * dropdown entry is hovered. */
+                                if (ImGui::IsItemHovered()) s_hoveredStartChoice = k;
                                 if (selected) ImGui::SetItemDefaultFocus();
                             }
                             bool relSel = (sIdx == 0xFF);
@@ -4580,6 +4852,50 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             if (relSel) ImGui::SetItemDefaultFocus();
                             ImGui::EndCombo();
                         }
+
+                        /* Drag handle — same 4-arrow "move" glyph as the
+                         * team-drag handle in column 0. Drag it onto a start
+                         * on the mini-map preview to set this player's start. */
+                        ImGui::SameLine(0.0f, 4.0f * s);
+                        cyAbs(ImGui::GetFrameHeight());
+                        float plusSz = ImGui::GetFrameHeight();
+                        ImVec2 plusPos = ImGui::GetCursorScreenPos();
+                        char plusId[24];
+                        SDL_snprintf(plusId, sizeof(plusId), "##setstart%d", i);
+                        ImGui::InvisibleButton(plusId, ImVec2(plusSz, plusSz));
+                        bool plusHov = ImGui::IsItemHovered();
+                        {
+                            ImDrawList *pdl = ImGui::GetWindowDrawList();
+                            ImU32 pc = plusHov ? IM_COL32(230, 230, 230, 230)
+                                               : IM_COL32(140, 140, 140, 200);
+                            float cxp = plusPos.x + plusSz * 0.5f;
+                            float cyp = plusPos.y + plusSz * 0.5f;
+                            float a   = plusSz * 0.34f;
+                            float hh  = plusSz * 0.15f;
+                            float th  = 1.2f;
+                            /* Crossbars. */
+                            pdl->AddLine(ImVec2(cxp - a, cyp), ImVec2(cxp + a, cyp), pc, th);
+                            pdl->AddLine(ImVec2(cxp, cyp - a), ImVec2(cxp, cyp + a), pc, th);
+                            /* Four arrowheads. */
+                            pdl->AddLine(ImVec2(cxp - a, cyp), ImVec2(cxp - a + hh, cyp - hh), pc, th);
+                            pdl->AddLine(ImVec2(cxp - a, cyp), ImVec2(cxp - a + hh, cyp + hh), pc, th);
+                            pdl->AddLine(ImVec2(cxp + a, cyp), ImVec2(cxp + a - hh, cyp - hh), pc, th);
+                            pdl->AddLine(ImVec2(cxp + a, cyp), ImVec2(cxp + a - hh, cyp + hh), pc, th);
+                            pdl->AddLine(ImVec2(cxp, cyp - a), ImVec2(cxp - hh, cyp - a + hh), pc, th);
+                            pdl->AddLine(ImVec2(cxp, cyp - a), ImVec2(cxp + hh, cyp - a + hh), pc, th);
+                            pdl->AddLine(ImVec2(cxp, cyp + a), ImVec2(cxp - hh, cyp + a - hh), pc, th);
+                            pdl->AddLine(ImVec2(cxp, cyp + a), ImVec2(cxp + hh, cyp + a - hh), pc, th);
+                        }
+                        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                            uint8_t slot = (uint8_t)i;
+                            ImGui::SetDragDropPayload("WB_START_ASSIGN", &slot, sizeof(slot));
+                            ImGui::Text("%s", clientSimGetLobbySlot(cs, (BYTE)i)->playerName);
+                            ImGui::EndDragDropSource();
+                        }
+                        if (plusHov) {
+                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            ImGui::SetTooltip("Drag to a start on the mini map to set");
+                        }
                     }
                 }
 
@@ -4587,6 +4903,12 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  *   are always ready and don't need a pill) ─────────────── */
                 ImGui::TableSetColumnIndex(5);
                 rowTopY = ImGui::GetCursorPosY();
+                /* Ready column geometry. The pill is right-aligned within
+                 * this fixed-width column so it sits snug against the right
+                 * of the row (just left of the kick-X), with extra breathing
+                 * room after the start dropdown. matches TableSetupColumn. */
+                const float readyColW   = 80.0f * s;
+                const float readyInsetX = 4.0f * s;
                 if (!isBot) {
                     bool isReady = clientSimGetLobbySlot(cs, (BYTE)(i))->ready;
                     const char *lbl = isReady ? langGetText(STR_DLGLOBBY_PILL_READY) : langGetText(STR_DLGLOBBY_PILL_NOTREADY);
@@ -4608,6 +4930,16 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                      * rather than the row's geometric center. */
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 2.0f);
                     ImVec2 pillPos = ImGui::GetCursorScreenPos();
+                    /* Right-align within the column; clamp so a very wide
+                     * pill never spills out the left of the cell. */
+                    float cellLeftX = pillPos.x;
+                    pillPos.x = cellLeftX + readyColW - pillW - readyInsetX;
+                    if (pillPos.x < cellLeftX) pillPos.x = cellLeftX;
+                    /* The pill's left edge is the right bound of the gap the
+                     * start dropdown centers in. Track the leftmost (widest
+                     * pill) across rows so the dropdown clears every pill. */
+                    if (startColReadyLeftX == 0.0f || pillPos.x < startColReadyLeftX)
+                        startColReadyLeftX = pillPos.x;
                     ImU32 bgCol = isReady ? IM_COL32(42, 80, 44, 255)
                                           : IM_COL32(58, 58, 58, 255);
                     ImU32 fgCol = isReady ? IM_COL32(120, 210, 120, 255)
@@ -4754,6 +5086,21 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             ImGui::EndDragDropTarget();
         }
         ImGui::Spacing();
+    }
+
+    /* Update the shared start-dropdown center from this frame's measured
+     * bounds, for use next frame. The left bound is whichever sits further
+     * right — the widest name(+tag) or the ping/gear column — plus a small
+     * pad, so the dropdown is centered in the clear gap before Ready and
+     * never collides with the ping text / bot gear. Guarded so a degenerate
+     * frame (no rows, or no room) leaves the previous value untouched
+     * rather than snapping the column. */
+    if (startColReadyLeftX > 0.0f) {
+        float startColLeftBound =
+            ImMax(startColNameMaxRight, startColPingRightX) + 8.0f * s;
+        if (startColReadyLeftX > startColLeftBound) {
+            s_startComboCenterX = (startColLeftBound + startColReadyLeftX) * 0.5f;
+        }
     }
 
     /* "Add Team" lives at the bottom of the team list so it reads as
@@ -5778,6 +6125,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     /* Map preview texture state */
     SDL_Texture *mapPreviewTex = NULL;
     bool mapPreviewBuilt = false;
+    /* Signature of the start-ownership the current preview texture was built
+     * with; drives in-place recolour when claims/teams change. The "seen"
+     * pair debounces it so a burst of changes (e.g. bots auto-claiming starts
+     * over several frames at SP startup) can't thrash the texture rebuild. */
+    uint32_t mapPreviewOwnerSig = 0xFFFFFFFFu;
+    uint32_t mapPreviewOwnerSeen = 0xFFFFFFFFu;
+    int      mapPreviewOwnerStable = 0;
     bool prevMapDownloadComplete = clientSimIsMapDownloadComplete(cs);
     MapBounds mapBounds = {0, 0, MAP_PREVIEW_SIZE - 1, MAP_PREVIEW_SIZE - 1};
     /* Snapshot of the active map name; used to drop the stale
@@ -6022,7 +6376,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                  * — no flicker through "Map unavailable" / "Downloading…"
                  * placeholders. */
                 SDL_Texture *prev = mapPreviewTex;
-                mapPreviewTex = buildMapPreview(renderer, mapData, mapLen, &mapBounds);
+                uint8_t owners0[MAX_STARTS];
+                uint32_t sig0 = 0;
+                int nOwn0 = lobbyComputeStartOwners(cs, (int)gameFrontGetPlayerNum(),
+                                                    owners0, MAX_STARTS, &sig0);
+                mapPreviewTex = buildMapPreview(renderer, mapData, mapLen, &mapBounds,
+                                                nOwn0 ? owners0 : NULL, nOwn0);
+                mapPreviewOwnerSig = sig0;
                 if (prev) SDL_DestroyTexture(prev);
                 WB_LOG_INFO(WB_LOG_CAT_GUI,
                     "[LOBBY/PREVIEW] rebuild done: tex=%p bounds=(%d..%d, %d..%d)",
@@ -6051,6 +6411,36 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
             }
             mapPreviewBuilt = true;
+        }
+
+        /* Recolour the preview in place when start ownership / teams change.
+         * Claims don't trigger a map re-download, so the build-once path
+         * above won't catch them. Cheap: rebuilds the 256² minimap only when
+         * the ownership signature actually moves. */
+        if (mapPreviewTex && popupCompressedData && popupCompressedLen > 0) {
+            uint8_t owners[MAX_STARTS];
+            uint32_t sig = 0;
+            int nOwn = lobbyComputeStartOwners(cs, (int)gameFrontGetPlayerNum(),
+                                               owners, MAX_STARTS, &sig);
+            /* Debounce: wait until ownership has held steady for a few frames
+             * before the (heavy) texture rebuild, so a burst of changes can't
+             * rebuild every frame and stall the UI. */
+            if (sig == mapPreviewOwnerSeen) {
+                if (mapPreviewOwnerStable < 1000) mapPreviewOwnerStable++;
+            } else {
+                mapPreviewOwnerSeen   = sig;
+                mapPreviewOwnerStable = 0;
+            }
+            if (sig != mapPreviewOwnerSig && mapPreviewOwnerStable >= 3) {
+                SDL_Texture *fresh = buildMapPreview(renderer, popupCompressedData,
+                                                     popupCompressedLen, &mapBounds,
+                                                     nOwn ? owners : NULL, nOwn);
+                if (fresh) {
+                    SDL_DestroyTexture(mapPreviewTex);
+                    mapPreviewTex = fresh;
+                }
+                mapPreviewOwnerSig = sig;
+            }
         }
 
         /* Query window size */
@@ -6445,7 +6835,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                      * block atomically swaps it for a fresh texture
                      * once the new bytes arrive. */
                     if (mapPreviewTex) {
-                        int pad = 4;
+                        int pad = 10;   /* extra zoom-out margin so edge-start initials have room */
                         int bx0 = mapBounds.minX - pad; if (bx0 < 0) bx0 = 0;
                         int by0 = mapBounds.minY - pad; if (by0 < 0) by0 = 0;
                         int bx1 = mapBounds.maxX + pad; if (bx1 >= MAP_PREVIEW_SIZE) bx1 = MAP_PREVIEW_SIZE - 1;
@@ -6473,12 +6863,31 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         float previewMaxW = ImGui::GetContentRegionAvail().x;
                         float previewSize = previewMaxW < previewMaxH ? previewMaxW : previewMaxH;
                         if (previewSize < 10.0f) previewSize = 10.0f;
-                        float offsetX = (previewMaxW - previewSize) * 0.5f;
+                        /* Inset the map by a ~2-tile gap so initials pushed
+                         * toward the edges have room to draw around it. */
+                        float spanTiles = (float)((bx1 + 1) - bx0);
+                        float gapPx = (spanTiles > 0.0f) ? (2.0f * previewSize / spanTiles) : 0.0f;
+                        if (gapPx < 30.0f) gapPx = 30.0f;   /* room for edge initials */
+                        if (gapPx > previewSize * 0.30f) gapPx = previewSize * 0.30f;
+                        float innerSize = previewSize - 2.0f * gapPx;
+                        float boxTopY = ImGui::GetCursorPosY();
+                        float offsetX = (previewMaxW - innerSize) * 0.5f;
                         if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
-                        ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(previewSize, previewSize), uv0, uv1);
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                        }
+                        ImGui::SetCursorPosY(boxTopY + gapPx);
+                        ImVec2 imgScreen = ImGui::GetCursorScreenPos();
+                        /* Fill the inset gap with deep-water blue. */
+                        ImGui::GetWindowDrawList()->AddRectFilled(
+                            ImVec2(imgScreen.x - gapPx, imgScreen.y - gapPx),
+                            ImVec2(imgScreen.x + innerSize + gapPx, imgScreen.y + innerSize + gapPx),
+                            IM_COL32(0, 0, 80, 255));
+                        ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
+                        ImVec2 miniMin = ImGui::GetItemRectMin();
+                        lobbyPreviewInteract(cs, (int)myPlayerNum, effHostMap, miniMin,
+                                             innerSize, bx0, by0, bx1, by1);
+                        drawLobbyPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
+                                                     bx0, by0, bx1, by1);
+                        /* Reserve the full box so the gap also sits below. */
+                        ImGui::SetCursorPosY(boxTopY + previewSize);
                         /* Click always opens the view-only zoomed preview
                          * popup — for everyone, including privileged users
                          * (e.g. when "allow all players to change settings"
@@ -7003,7 +7412,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * the new one is ready to slot in. */
             if (mapPreviewTex) {
                 /* Compute UV coordinates to zoom into the interesting area with padding */
-                int pad = 4;
+                int pad = 10;   /* extra zoom-out margin so edge-start initials have room */
                 int bx0 = mapBounds.minX - pad; if (bx0 < 0) bx0 = 0;
                 int by0 = mapBounds.minY - pad; if (by0 < 0) by0 = 0;
                 int bx1 = mapBounds.maxX + pad; if (bx1 >= MAP_PREVIEW_SIZE) bx1 = MAP_PREVIEW_SIZE - 1;
@@ -7066,13 +7475,33 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 float previewSize = M - N - 6.0f;  /* small breathing room */
                 if (previewSize > panelWidth) previewSize = panelWidth;
                 if (previewSize < 64.0f)     previewSize = 64.0f;
-                /* Center the preview */
-                float offsetX = (panelWidth - previewSize) * 0.5f;
+                /* Inset the map by a ~2-tile gap inside the reserved box so
+                 * initials pushed toward the edges have room to draw around
+                 * it. Image + overlay shrink together, keeping dots aligned. */
+                float spanTiles = (float)((bx1 + 1) - bx0);
+                float gapPx = (spanTiles > 0.0f) ? (2.0f * previewSize / spanTiles) : 0.0f;
+                if (gapPx < 30.0f) gapPx = 30.0f;   /* room for edge initials */
+                if (gapPx > previewSize * 0.30f) gapPx = previewSize * 0.30f;
+                float innerSize = previewSize - 2.0f * gapPx;
+                float boxTopY = ImGui::GetCursorPosY();
+                float offsetX = (panelWidth - innerSize) * 0.5f;
                 if (offsetX > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
-                ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(previewSize, previewSize), uv0, uv1);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                }
+                ImGui::SetCursorPosY(boxTopY + gapPx);
+                ImVec2 imgScreen = ImGui::GetCursorScreenPos();
+                /* Fill the inset gap with deep-water blue (matches the minimap
+                 * DEEP_SEA colour) so the surround reads as sea, not panel. */
+                ImGui::GetWindowDrawList()->AddRectFilled(
+                    ImVec2(imgScreen.x - gapPx, imgScreen.y - gapPx),
+                    ImVec2(imgScreen.x + innerSize + gapPx, imgScreen.y + innerSize + gapPx),
+                    IM_COL32(0, 0, 80, 255));
+                ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
+                ImVec2 miniMin = ImGui::GetItemRectMin();
+                lobbyPreviewInteract(cs, (int)myPlayerNum, effHostMap, miniMin,
+                                     innerSize, bx0, by0, bx1, by1);
+                drawLobbyPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
+                                             bx0, by0, bx1, by1);
+                /* Reserve the full box so the gap also sits below the map. */
+                ImGui::SetCursorPosY(boxTopY + previewSize);
                 /* Click always opens the view-only zoomed preview popup —
                  * for everyone, including privileged users (e.g. when
                  * "allow all players to change settings" is on). The
