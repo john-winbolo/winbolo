@@ -64,6 +64,17 @@
 #define strcasecmp _stricmp
 #endif
 
+/* OS cryptographic RNG, used to seed the address-proof cookie secret. */
+#if defined(_WIN32)
+#  include <bcrypt.h>
+#elif defined(__linux__)
+#  include <sys/random.h>  /* getrandom */
+#  include <fcntl.h>       /* open, O_RDONLY (/dev/urandom fallback) */
+#  include <unistd.h>      /* read, close */
+#else
+#  include <stdlib.h>      /* arc4random_buf (macOS/BSD) */
+#endif
+
 /* ---- Server dedicated recv thread ----
  * A background thread continuously polls the server socket and queues
  * packets into an SPSC ring buffer.  The timer callback drains the
@@ -222,9 +233,13 @@ ClaimResolveAction claimResolveDecide(bool bareNameHeld, bool holderIsVerified) 
     return CLAIM_RESOLVE_PREEMPT_SQUATTER;
 }
 
-/* Per-source-IP JOIN rate limit. A blind spoofer can walk source ports to
- * fire one JOIN per slot and exhaust MAX_TANKS, so the limiter keys on the
- * source IP alone and tracks only a small LRU of recent sources. */
+/* Per-source-IP JOIN rate limit. Keys on the source IP alone (a spoofer can
+ * walk source ports), tracking a small LRU of recent sources. Scope: this
+ * contains port-walking from a *single* source IP; it does NOT rate-limit a
+ * flood from random/spoofed source IPs, which gets a fresh bucket per packet
+ * and keeps evicting the LRU. That's acceptable — the address-proof cookie
+ * prevents slot exhaustion regardless of flood shape, and the challenge it
+ * draws is smaller than the JOIN (de-amplifying). */
 #define JOIN_RL_MAX_SOURCES 64    /* LRU of recent source IPs */
 #define JOIN_RL_BURST       5     /* token-bucket capacity per source IP */
 #define JOIN_RL_REFILL_MS   2000  /* +1 token every 2 s */
@@ -380,7 +395,12 @@ static int serverFindClient(const struct sockaddr_in *addr) {
  * walks ports). Returns true and consumes a token if allowed; false if the
  * source is over-rate. LRU-evicts the least-recently-seen source on overflow.
  * A real join never originates from 0.0.0.0, so reusing srcAddr==0 as the
- * empty-entry sentinel can't collide with a legitimate source. */
+ * empty-entry sentinel can't collide with a legitimate source.
+ *
+ * This throttles port-walking from one source IP; it does not throttle a
+ * random-source-IP flood (each packet lands in a fresh bucket and evicts the
+ * LRU). The cookie gate is what actually prevents slot exhaustion, so that
+ * residual is acceptable. */
 static bool serverJoinRateLimitAllow(const struct sockaddr_in *fromAddr) {
     uint32_t key = fromAddr->sin_addr.s_addr;
     uint64_t now = SDL_GetTicks();
@@ -441,26 +461,67 @@ static bool serverJoinRateLimitAllow(const struct sockaddr_in *fromAddr) {
  * the client never computes it, it just stores and echoes the opaque bytes. */
 #define COOKIE_WINDOW_SEC 16
 
-/* Per-process secret keying the cookies.  Lazily seeded once from the
- * high-resolution counter (independent of bolo_rand, like serverNextConnId)
- * and never leaves the process. */
+/* Fill buf with n bytes from the OS cryptographic RNG. Returns true on
+ * success. Deliberately NOT the project's randombytes() (a no-op tweetnacl
+ * linkage stub) — the cookie secret must come from a real CSPRNG. */
+static bool serverFillRandomBytes(uint8_t *buf, size_t n) {
+#if defined(_WIN32)
+    /* STATUS_SUCCESS == 0. */
+    return BCryptGenRandom(NULL, buf, (ULONG)n,
+                           BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
+#elif defined(__linux__)
+    {
+        ssize_t got = getrandom(buf, n, 0);
+        if (got == (ssize_t)n) {
+            return true;
+        }
+        /* Old kernel / ENOSYS, or a short read: fall back to /dev/urandom. */
+        {
+            int fd = open("/dev/urandom", O_RDONLY);
+            size_t off = 0;
+            if (fd < 0) {
+                return false;
+            }
+            while (off < n) {
+                ssize_t r = read(fd, buf + off, n - off);
+                if (r <= 0) {
+                    close(fd);
+                    return false;
+                }
+                off += (size_t)r;
+            }
+            close(fd);
+            return true;
+        }
+    }
+#else
+    arc4random_buf(buf, n);
+    return true;
+#endif
+}
+
+/* Per-process secret keying the cookies. Filled once on first use from the
+ * OS CSPRNG so it is unpredictable to a remote attacker: even an attacker who
+ * observes a valid (addr,port,window,cookie) tuple from an honest handshake
+ * can't recover the secret or forge cookies for a spoofed address. Never
+ * leaves the process.
+ *
+ * Fails closed: if no RNG path succeeds, the secret is left unseeded and this
+ * returns NULL so callers refuse to issue or accept cookies, rather than
+ * keying them off a guessable value (a predictable secret would defeat the
+ * whole anti-spoof feature). A later call retries the RNG. */
 static const uint8_t *serverCookieSecret(void) {
     static uint8_t secret[32];
     static bool seeded = false;
     if (!seeded) {
-        uint64_t s = (uint64_t)SDL_GetPerformanceCounter();
-        int i;
-        s ^= 0x9e3779b97f4a7c15ULL * (uint64_t)SDL_GetTicks();
-        for (i = 0; i < 4; i++) {
-            uint64_t z;
-            s += 0x9e3779b97f4a7c15ULL;
-            z = s;
-            z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-            z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-            z ^= (z >> 31);
-            memcpy(secret + i * 8, &z, 8);
+        if (serverFillRandomBytes(secret, sizeof(secret))) {
+            seeded = true;
+        } else {
+            WB_LOG_ERROR(WB_LOG_CAT_NET,
+                "cookie secret: no OS CSPRNG available; refusing to key "
+                "address-proof cookies from a predictable source");
+            return NULL;
         }
-        seeded = true;
     }
     return secret;
 }
@@ -516,14 +577,21 @@ static uint64_t serverCookieCurrentWindow(void) {
 
 /* HMAC-MD5 of (sin_addr ‖ sin_port ‖ window) under the per-process secret.
  * Byte order is irrelevant for security — the secret never leaves the process,
- * so only self-consistency between issue and accept matters. */
-static void serverCookieCompute(const struct sockaddr_in *addr, uint64_t window,
+ * so only self-consistency between issue and accept matters. Returns false
+ * (out untouched) when the CSPRNG secret is unavailable, so the caller fails
+ * closed instead of computing a cookie under a missing key. */
+static bool serverCookieCompute(const struct sockaddr_in *addr, uint64_t window,
                                 uint8_t out[JOIN_COOKIE_LEN]) {
+    const uint8_t *secret = serverCookieSecret();
     uint8_t msg[4 + 2 + 8];
+    if (secret == NULL) {
+        return false;
+    }
     memcpy(msg + 0, &addr->sin_addr.s_addr, 4);
     memcpy(msg + 4, &addr->sin_port, 2);
     memcpy(msg + 6, &window, 8);
-    hmacMd5(serverCookieSecret(), 32, msg, sizeof(msg), out);
+    hmacMd5(secret, 32, msg, sizeof(msg), out);
+    return true;
 }
 
 /* Accept a JOIN cookie for the current window or the one before it (so a
@@ -540,12 +608,13 @@ static bool serverCookieAccept(const struct sockaddr_in *addr,
     if (cookieOrNull == NULL) return false;
     w = serverCookieCurrentWindow();
 
-    serverCookieCompute(addr, w, expect);
+    /* No secret (CSPRNG unavailable) → fail closed: nothing validates. */
+    if (!serverCookieCompute(addr, w, expect)) return false;
     diff = 0;
     for (i = 0; i < JOIN_COOKIE_LEN; i++) diff |= expect[i] ^ cookieOrNull[i];
     if (diff == 0) return true;
 
-    serverCookieCompute(addr, w - 1, expect);
+    if (!serverCookieCompute(addr, w - 1, expect)) return false;
     diff = 0;
     for (i = 0; i < JOIN_COOKIE_LEN; i++) diff |= expect[i] ^ cookieOrNull[i];
     return diff == 0;
@@ -556,8 +625,12 @@ static bool serverCookieAccept(const struct sockaddr_in *addr,
 static void serverSendJoinChallenge(const struct sockaddr_in *addr) {
     uint8_t buf[PACKET_HEADER_SIZE + JOIN_COOKIE_LEN];
     packHeader(buf, PACKET_JOIN_CHALLENGE, 0);
-    serverCookieCompute(addr, serverCookieCurrentWindow(),
-                        buf + PACKET_HEADER_SIZE);
+    /* Fail closed: with no secret we can't issue a valid challenge, so send
+     * nothing rather than a cookie keyed off a missing/guessable secret. */
+    if (!serverCookieCompute(addr, serverCookieCurrentWindow(),
+                             buf + PACKET_HEADER_SIZE)) {
+        return;
+    }
     srvSendTo(buf, sizeof(buf), addr);
 }
 
@@ -1548,6 +1621,35 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         pos += JOIN_COOKIE_LEN;
     }
 
+    /* Address proof, gated before the password / game-lock / full checks: a
+     * slot is allocated only after the joiner echoes a valid retry cookie, and
+     * the password and game-locked rejects below run only for a proven address
+     * so they can't be reflected to a spoofed source. The version reject
+     * earlier is intentionally left ahead of this gate — an old, cookie-
+     * incapable client must get a clean version reject rather than a silent
+     * timeout (that residual reflection is de-amplifying — the version reject
+     * precedes this gate, so it is not itself rate-limited).
+     *
+     * The cookie — not the rate limiter — is what prevents slot exhaustion, so
+     * an unproven JOIN (no/stale cookie) is the only thing the per-source-IP
+     * rate limit guards: it bounds the cheap challenge/reflection path. A
+     * proven (valid-cookie) JOIN is never rate-limited, so many legitimate
+     * clients behind one NAT or public IP still join promptly. Drop an
+     * over-rate unproven JOIN silently — a reply would reflect to a
+     * possibly-spoofed source — otherwise issue a fresh challenge (smaller
+     * than the JOIN, so it can't amplify). */
+    if (!serverCookieAccept(fromAddr, joinCookie)) {
+        if (!serverJoinRateLimitAllow(fromAddr)) {
+            WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                "join rate-limited from %s:%u",
+                inet_ntoa(fromAddr->sin_addr),
+                (unsigned)ntohs(fromAddr->sin_port));
+            return;
+        }
+        serverSendJoinChallenge(fromAddr);
+        return;
+    }
+
     /* Check password */
     {
         const char *expected = serverSimGetPassword(sim);
@@ -1569,28 +1671,6 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
                  "Join rejected for '%s': Game is locked", name);
         serverSimConsoleMessage(consoleMsg);
         serverSendJoinReject(fromAddr, STR_REJECT_GAME_LOCKED, 0, NULL);
-        return;
-    }
-
-    /* Address proof: a slot is allocated only after the joiner echoes a valid
-     * retry cookie. The cookie — not the rate limiter — is what prevents slot
-     * exhaustion now, so an unproven JOIN (no/stale cookie) is the only thing
-     * the per-source-IP rate limit guards: it bounds the cheap
-     * challenge/reflection path against a blind or spoofed flood. A proven
-     * (valid-cookie) JOIN is never rate-limited, so many legitimate clients
-     * behind one NAT or public IP still join promptly. Drop an over-rate
-     * unproven JOIN silently — a reply would reflect to a possibly-spoofed
-     * source — otherwise issue a fresh challenge (smaller than the JOIN, so it
-     * can't amplify). All of this runs before any slot work. */
-    if (!serverCookieAccept(fromAddr, joinCookie)) {
-        if (!serverJoinRateLimitAllow(fromAddr)) {
-            WB_LOG_DEBUG(WB_LOG_CAT_NET,
-                "join rate-limited from %s:%u",
-                inet_ntoa(fromAddr->sin_addr),
-                (unsigned)ntohs(fromAddr->sin_port));
-            return;
-        }
-        serverSendJoinChallenge(fromAddr);
         return;
     }
 

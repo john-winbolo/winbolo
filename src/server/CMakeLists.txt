@@ -153,6 +153,14 @@ endif()
 # threads_static themselves.
 target_link_libraries(server_static PUBLIC threads_static)
 
+# bcrypt: BCryptGenRandom seeds the address-proof cookie secret in
+# transport_udp_server.c on Windows. PUBLIC so each server_static consumer's
+# link line picks it up after the static lib (mirrors how ws2_32 reaches
+# consumers for the socket calls).
+if(WIN32)
+    target_link_libraries(server_static PUBLIC bcrypt)
+endif()
+
 if(EMSCRIPTEN)
     target_compile_options(server_static PRIVATE -fno-common -include sys/types.h)
 elseif(NOT MSVC)
