@@ -254,7 +254,11 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
         ImU32 fg, bg;
         if (holderOf[i] >= 0) {
             label = clientSimGetLobbySlot(cs, (BYTE)holderOf[i])->playerName;
-            fg = IM_COL32(255, 255, 255, 255);
+            /* Name coloured by ownership: ally green, enemy red, else white. */
+            LobbyStartOwner o = lobbyStartClassify(cs, holderOf[i], g_startPickerMySlot);
+            fg = (o == LSO_ALLY)  ? IM_COL32(120, 230, 120, 255)
+               : (o == LSO_ENEMY) ? IM_COL32(235, 90, 90, 255)
+                                  : IM_COL32(255, 255, 255, 255);
             bg = IM_COL32(0, 0, 0, 185);
         } else {
             label = langGetText(STR_DLGLOBBY_START_OPEN);
@@ -304,16 +308,12 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         }
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-            if (moved) {
-                /* A real drag: reassign the dragged player to the target. */
-                if (hover >= 1)
-                    clientSimNetSendLobbyClaimStart(cs, (BYTE)g_startDragSlot,
-                                                    (BYTE)hover);
-            } else if (mySlot >= 0 && g_startDragFrom >= 1) {
-                /* No movement: it was a click → choose for yourself. */
-                clientSimNetSendLobbyClaimStart(cs, (BYTE)mySlot,
-                                                (BYTE)g_startDragFrom);
-            }
+            /* A real drag reassigns the dragged player to the target. A
+             * no-move click on an occupied start does nothing (choosing a
+             * start for yourself is only via clicking a FREE start). */
+            if (moved && hover >= 1)
+                clientSimNetSendLobbyClaimStart(cs, (BYTE)g_startDragSlot,
+                                                (BYTE)hover);
             g_startDragSlot = -1;
             g_startDragFrom = -1;
         }
@@ -321,16 +321,42 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
     }
 
     if (imgHovered && hover >= 1) {
-        int  holder   = startHolderSlot(cs, (BYTE)hover);
-        bool canGrab  = (holder >= 0) && (host || holder == mySlot);
+        int  holder      = startHolderSlot(cs, (BYTE)hover);
+        bool free        = (holder < 0);
+        bool mine        = (holder == mySlot);
+        bool canGrab     = (holder >= 0) && (host || mine);  /* drag to move */
+        bool canClick    = free && mySlot >= 0;              /* click to choose */
 
-        ImGui::SetMouseCursor(canGrab ? ImGuiMouseCursor_ResizeAll
-                                      : ImGuiMouseCursor_Hand);
-        if (host)
-            ImGui::SetTooltip("Start #%d\nClick to choose; drag to move; "
-                              "right-click to assign to someone else", hover);
-        else
-            ImGui::SetTooltip("Start #%d\nClick to choose this start", hover);
+        ImGui::SetMouseCursor(canGrab  ? ImGuiMouseCursor_ResizeAll
+                            : canClick ? ImGuiMouseCursor_Hand
+                                       : ImGuiMouseCursor_Arrow);
+
+        /* Tooltip reflects what's actually possible: no "click to choose"
+         * for a start someone else holds (left-click does nothing there). */
+        char tip[192];
+        if (free) {
+            if (host)
+                SDL_snprintf(tip, sizeof(tip), "Start #%d\nClick to choose; "
+                             "right-click to assign to someone else", hover);
+            else
+                SDL_snprintf(tip, sizeof(tip),
+                             "Start #%d\nClick to choose this start", hover);
+        } else {
+            const char *who = mine ? "you"
+                : clientSimGetLobbySlot(cs, (BYTE)holder)->playerName;
+            if (host)
+                SDL_snprintf(tip, sizeof(tip), "Start #%d - %s\nDrag to move; "
+                             "right-click to assign to someone else", hover, who);
+            else
+                SDL_snprintf(tip, sizeof(tip), "Start #%d - %s", hover, who);
+        }
+        /* Hover tooltip ~75% transparent so it doesn't block the map. */
+        ImVec4 pbg = ImGui::GetStyleColorVec4(ImGuiCol_PopupBg); pbg.w *= 0.25f;
+        ImVec4 pbd = ImGui::GetStyleColorVec4(ImGuiCol_Border);  pbd.w *= 0.25f;
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, pbg);
+        ImGui::PushStyleColor(ImGuiCol_Border, pbd);
+        ImGui::SetTooltip("%s", tip);
+        ImGui::PopStyleColor(2);
 
         /* Right-click opens the assign menu (edit permission). */
         if (host && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
@@ -339,14 +365,14 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
         }
 
         if (canGrab) {
-            /* Press begins a potential drag; a click (no move) is handled as
-             * "choose for yourself" on release in the drag branch above. */
+            /* Press begins a potential drag-to-move; a no-move click does
+             * nothing (handled in the drag branch above). */
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 g_startDragSlot = holder;
                 g_startDragFrom = hover;
             }
-        } else if (mySlot >= 0 && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-            /* Free / not-grabbable start: a plain click chooses it for you. */
+        } else if (canClick && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            /* Free start: a plain click chooses it for you. */
             ImVec2 dd = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
             if (dd.x * dd.x + dd.y * dd.y < 16.0f)
                 clientSimNetSendLobbyClaimStart(cs, (BYTE)mySlot, (BYTE)hover);
@@ -357,7 +383,9 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
      * divider between teams; entries you can't assign are disabled. */
     if (ImGui::BeginPopup("##assignStart")) {
         int st = g_assignMenuStart;
-        ImGui::TextDisabled("Assign start to:");
+        bool occupied = (st >= 1 && startHolderSlot(cs, (BYTE)st) >= 0);
+        ImGui::TextDisabled(occupied ? "Swap this start with:"
+                                     : "Assign start to:");
         ImGui::Separator();
         bool firstGroup = true;
         for (int team = 0; team <= 15; team++) {

@@ -3265,9 +3265,16 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
             tp = ImVec2(fx - offPx - ts.x, fy - ts.y * 0.5f);
         else                              /* N/S/diagonal/centre: centred */
             tp = ImVec2(cxp - ts.x * 0.5f, cyp - ts.y * 0.5f);
+        /* Colour the label by ownership: ally green, enemy red, else white. */
+        ImU32 txtCol = IM_COL32(255, 255, 255, 255);
+        if (nameListIdx[i] >= 0) {
+            LobbyStartOwner o = lobbyStartClassify(cs, holderOf[i], myPlayerNum);
+            if (o == LSO_ALLY)       txtCol = IM_COL32(120, 230, 120, 255);
+            else if (o == LSO_ENEMY) txtCol = IM_COL32(235, 90, 90, 255);
+        }
         dl->AddText(font, fsz, ImVec2(tp.x + 1.0f, tp.y + 1.0f),
                     IM_COL32(0, 0, 0, 205), buf);
-        dl->AddText(font, fsz, tp, IM_COL32(255, 255, 255, 255), buf);
+        dl->AddText(font, fsz, tp, txtCol, buf);
     }
 
     /* 1px white border around a start, marking it as "the one in focus":
@@ -3290,41 +3297,70 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
 }
 
 /* Interaction layer for the inline map preview: an invisible button over the
- * Image (a plain Image can't be a drag source). Hover highlights the panel
- * border + cursor; pressing on a movable claimed start (the white-bordered
- * one) and dragging reassigns its player; it's also the drop target for the
- * player-list "+" handles. Leaves the invisible button as the last item, so
- * the caller's mapPreviewPopupOnClick (IsItemClicked) still opens the popup
- * on a plain click. */
-static void lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
+ * Image (a plain Image can't be a drag source). Clicking a FREE start moves
+ * you there; pressing a movable claimed start and dragging reassigns its
+ * player; it's also the drop target for the player-list move-handles.
+ * Returns true if it consumed the click (so the caller skips opening the
+ * zoom popup); otherwise the invisible button is left as the last item and a
+ * plain click still opens the popup via mapPreviewPopupOnClick. */
+static bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap,
                                  ImVec2 imgMin, float innerSize,
                                  int bx0, int by0, int bx1, int by1) {
-    static int s_miniDragHolder = -1;   /* start-holder captured at press */
+    static int s_miniDragHolder = -1;   /* lobby slot being dragged, or -1 */
+    bool consumed = false;
     ImGui::SetCursorScreenPos(imgMin);
     ImGui::InvisibleButton("##miniMapInteract", ImVec2(innerSize, innerSize));
     bool hov = ImGui::IsItemHovered();
-    if (hov) {
-        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-        ImGui::GetWindowDrawList()->AddRect(
-            ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-            IM_COL32(255, 255, 255, 140), 0.0f, 0, 2.0f);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImVec2 mp = ImGui::GetMousePos();
+
+    /* Manual drag-to-move in progress. We don't use ImGui drag-drop for the
+     * minimap-internal drag: source and target are the same item, and ImGui
+     * suppresses the source's hover so the drop never registers. */
+    if (s_miniDragHolder >= 0) {
+        consumed = true;
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            s_miniDragHolder = -1;
+            return consumed;
+        }
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        const ClientLobbySlot *ds = clientSimGetLobbySlot(cs, (BYTE)s_miniDragHolder);
+        if (ds && ds->playerName[0]) {
+            ImVec2 ts = ImGui::CalcTextSize(ds->playerName);
+            ImVec2 p(mp.x + 12.0f, mp.y - ts.y * 0.5f);
+            dl->AddRectFilled(ImVec2(p.x - 3, p.y - 1),
+                              ImVec2(p.x + ts.x + 3, p.y + ts.y + 1),
+                              IM_COL32(0, 0, 0, 200), 3.0f);
+            dl->AddText(p, IM_COL32(255, 255, 255, 255), ds->playerName);
+        }
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            int st = lobbyPreviewStartAtScreen(imgMin, innerSize, bx0, by0, bx1, by1,
+                                               mp, 25.0f);
+            if (st >= 1)
+                clientSimNetSendLobbyClaimStart(cs, (BYTE)s_miniDragHolder, (BYTE)st);
+            s_miniDragHolder = -1;
+        }
+        return consumed;
     }
-    /* Capture the start under the cursor at press so it doesn't change mid
-     * drag; only a claimed start the local player may move is draggable. */
+
+    if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    /* On press: a free start under the cursor → claim it for yourself; a
+     * movable claimed start → begin a manual drag-to-move. Both consume the
+     * click so the zoom popup doesn't open. */
     if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         int st = lobbyPreviewStartAtScreen(imgMin, innerSize, bx0, by0, bx1, by1,
-                                           ImGui::GetMousePos(), 25.0f);
+                                           mp, 25.0f);
         int holder = (st >= 1) ? lobbyStartHolderSlot(cs, st) : -1;
-        s_miniDragHolder = (holder >= 0 && (effHostMap || holder == myPlayerNum))
-                               ? holder : -1;
+        if (st >= 1 && holder < 0 && myPlayerNum >= 0) {
+            clientSimNetSendLobbyClaimStart(cs, (BYTE)myPlayerNum, (BYTE)st);
+            consumed = true;
+        } else if (holder >= 0 && (effHostMap || holder == myPlayerNum)) {
+            s_miniDragHolder = holder;
+            consumed = true;
+        }
     }
-    if (s_miniDragHolder >= 0 &&
-        ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-        uint8_t slot = (uint8_t)s_miniDragHolder;
-        ImGui::SetDragDropPayload("WB_START_ASSIGN", &slot, sizeof(slot));
-        ImGui::Text("%s", clientSimGetLobbySlot(cs, (BYTE)s_miniDragHolder)->playerName);
-        ImGui::EndDragDropSource();
-    }
+
+    /* Drop target for the player-list "+" move handles (cross-widget drag). */
     if (ImGui::BeginDragDropTarget()) {
         const ImGuiPayload *pl = ImGui::AcceptDragDropPayload(
             "WB_START_ASSIGN", ImGuiDragDropFlags_AcceptBeforeDelivery);
@@ -3337,6 +3373,7 @@ static void lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap
         }
         ImGui::EndDragDropTarget();
     }
+    return consumed;
 }
 
 /* Build a 256x256 RGBA minimap from compressed map data.
@@ -3953,6 +3990,33 @@ static void renderAllowNewPlayersRow(ClientSim *cs,
     }
 }
 
+/* Copy src into out, truncating with a trailing "..." if it's wider than
+ * maxW pixels. Keeps long player names from overflowing the name column and
+ * pushing the start dropdown into the Ready button on small windows. */
+static void lobbyTruncateName(const char *src, float maxW, char *out, size_t outSz) {
+    if (outSz == 0) return;
+    if (!src) { out[0] = '\0'; return; }
+    if (maxW <= 1.0f || ImGui::CalcTextSize(src).x <= maxW) {
+        SDL_strlcpy(out, src, outSz);
+        return;
+    }
+    float budget = maxW - ImGui::CalcTextSize("...").x;
+    int len = (int)SDL_strlen(src);
+    int n = 0;
+    float w = 0.0f;
+    while (n < len) {
+        float cw = ImGui::CalcTextSize(src + n, src + n + 1).x;
+        if (w + cw > budget) break;
+        w += cw;
+        n++;
+    }
+    if (n > (int)outSz - 4) n = (int)outSz - 4;
+    if (n < 0) n = 0;
+    memcpy(out, src, (size_t)n);
+    out[n] = '\0';
+    SDL_strlcat(out, "...", outSz);
+}
+
 static void renderTeamGroupedPlayers(ClientSim *cs,
                                      int myPlayerNum, float s, bool isHost) {
     /* Lazy-load the badge / bot-cpu icons. Used to be done inside
@@ -3999,7 +4063,9 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
      * up in one column for everyone. Measured this frame, applied the
      * next (a one-frame lag is invisible for a near-static lobby). */
     static float s_startComboCenterX = 0.0f;
+    static float s_startComboReadyLeft = 0.0f;  /* Ready cell left edge (last frame) */
     const float  appliedStartCenterX = s_startComboCenterX;
+    const float  appliedReadyLeft    = s_startComboReadyLeft;
     float startColNameMaxRight = 0.0f;  /* widest name(+tag) right edge */
     float startColPingRightX   = 0.0f;  /* ping/gear column right edge */
     float startColReadyLeftX   = 0.0f;  /* Ready cell left edge */
@@ -4605,16 +4671,28 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 ImGui::TableSetColumnIndex(2);
                 rowTopY = ImGui::GetCursorPosY();
                 cyTextAbs();
-                if (isBot) {
-                    ImGui::PushStyleColor(ImGuiCol_Text,
-                                          wbThemeColor(g_theme->botBadge));
-                    ImGui::Text("%s", clientSimGetLobbySlot(cs, (BYTE)(i))->playerName);
-                    ImGui::PopStyleColor();
-                } else if (isMe) {
-                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f),
-                                       "%s", clientSimGetLobbySlot(cs, (BYTE)(i))->playerName);
-                } else {
-                    ImGui::Text("%s", clientSimGetLobbySlot(cs, (BYTE)(i))->playerName);
+                /* Truncate the name to its column width (less room reserved for
+                 * a HOST/ADMIN/BOT tag) so it can't overflow and push the start
+                 * dropdown into the Ready button on small windows. */
+                {
+                    bool rowHasTag = (i == clientSimGetLobbyHostSlot(cs)) || isBot ||
+                        (!isBot && (clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags
+                                    & PLAYER_FLAG_ADMIN));
+                    float nameAvail  = ImGui::GetContentRegionAvail().x;
+                    float tagReserve = rowHasTag ? 56.0f * s : 0.0f;
+                    char nameBuf[64];
+                    lobbyTruncateName(clientSimGetLobbySlot(cs, (BYTE)(i))->playerName,
+                                      nameAvail - tagReserve, nameBuf, sizeof(nameBuf));
+                    if (isBot) {
+                        ImGui::PushStyleColor(ImGuiCol_Text,
+                                              wbThemeColor(g_theme->botBadge));
+                        ImGui::Text("%s", nameBuf);
+                        ImGui::PopStyleColor();
+                    } else if (isMe) {
+                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s", nameBuf);
+                    } else {
+                        ImGui::Text("%s", nameBuf);
+                    }
                 }
 
 
@@ -4803,6 +4881,11 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                         if (appliedStartCenterX > 0.0f) {
                             ImVec2 sp = ImGui::GetCursorScreenPos();
                             sp.x = appliedStartCenterX - comboW * 0.5f;
+                            /* Scootch left if the centered combo would overlap
+                             * the Ready cell on the right. */
+                            if (appliedReadyLeft > 0.0f &&
+                                sp.x + comboW > appliedReadyLeft - 4.0f * s)
+                                sp.x = appliedReadyLeft - 4.0f * s - comboW;
                             ImGui::SetCursorScreenPos(sp);
                         }
                         char comboId[24];
@@ -4851,50 +4934,6 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             }
                             if (relSel) ImGui::SetItemDefaultFocus();
                             ImGui::EndCombo();
-                        }
-
-                        /* Drag handle — same 4-arrow "move" glyph as the
-                         * team-drag handle in column 0. Drag it onto a start
-                         * on the mini-map preview to set this player's start. */
-                        ImGui::SameLine(0.0f, 4.0f * s);
-                        cyAbs(ImGui::GetFrameHeight());
-                        float plusSz = ImGui::GetFrameHeight();
-                        ImVec2 plusPos = ImGui::GetCursorScreenPos();
-                        char plusId[24];
-                        SDL_snprintf(plusId, sizeof(plusId), "##setstart%d", i);
-                        ImGui::InvisibleButton(plusId, ImVec2(plusSz, plusSz));
-                        bool plusHov = ImGui::IsItemHovered();
-                        {
-                            ImDrawList *pdl = ImGui::GetWindowDrawList();
-                            ImU32 pc = plusHov ? IM_COL32(230, 230, 230, 230)
-                                               : IM_COL32(140, 140, 140, 200);
-                            float cxp = plusPos.x + plusSz * 0.5f;
-                            float cyp = plusPos.y + plusSz * 0.5f;
-                            float a   = plusSz * 0.34f;
-                            float hh  = plusSz * 0.15f;
-                            float th  = 1.2f;
-                            /* Crossbars. */
-                            pdl->AddLine(ImVec2(cxp - a, cyp), ImVec2(cxp + a, cyp), pc, th);
-                            pdl->AddLine(ImVec2(cxp, cyp - a), ImVec2(cxp, cyp + a), pc, th);
-                            /* Four arrowheads. */
-                            pdl->AddLine(ImVec2(cxp - a, cyp), ImVec2(cxp - a + hh, cyp - hh), pc, th);
-                            pdl->AddLine(ImVec2(cxp - a, cyp), ImVec2(cxp - a + hh, cyp + hh), pc, th);
-                            pdl->AddLine(ImVec2(cxp + a, cyp), ImVec2(cxp + a - hh, cyp - hh), pc, th);
-                            pdl->AddLine(ImVec2(cxp + a, cyp), ImVec2(cxp + a - hh, cyp + hh), pc, th);
-                            pdl->AddLine(ImVec2(cxp, cyp - a), ImVec2(cxp - hh, cyp - a + hh), pc, th);
-                            pdl->AddLine(ImVec2(cxp, cyp - a), ImVec2(cxp + hh, cyp - a + hh), pc, th);
-                            pdl->AddLine(ImVec2(cxp, cyp + a), ImVec2(cxp - hh, cyp + a - hh), pc, th);
-                            pdl->AddLine(ImVec2(cxp, cyp + a), ImVec2(cxp + hh, cyp + a - hh), pc, th);
-                        }
-                        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-                            uint8_t slot = (uint8_t)i;
-                            ImGui::SetDragDropPayload("WB_START_ASSIGN", &slot, sizeof(slot));
-                            ImGui::Text("%s", clientSimGetLobbySlot(cs, (BYTE)i)->playerName);
-                            ImGui::EndDragDropSource();
-                        }
-                        if (plusHov) {
-                            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                            ImGui::SetTooltip("Drag to a start on the mini map to set");
                         }
                     }
                 }
@@ -5101,6 +5140,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
         if (startColReadyLeftX > startColLeftBound) {
             s_startComboCenterX = (startColLeftBound + startColReadyLeftX) * 0.5f;
         }
+        s_startComboReadyLeft = startColReadyLeftX;  /* for next-frame clamp */
     }
 
     /* "Add Team" lives at the bottom of the team list so it reads as
@@ -6882,18 +6922,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             IM_COL32(0, 0, 80, 255));
                         ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
                         ImVec2 miniMin = ImGui::GetItemRectMin();
-                        lobbyPreviewInteract(cs, (int)myPlayerNum, effHostMap, miniMin,
-                                             innerSize, bx0, by0, bx1, by1);
+                        bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
+                                                effHostMap, miniMin, innerSize,
+                                                bx0, by0, bx1, by1);
                         drawLobbyPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
                                                      bx0, by0, bx1, by1);
                         /* Reserve the full box so the gap also sits below. */
                         ImGui::SetCursorPosY(boxTopY + previewSize);
-                        /* Click always opens the view-only zoomed preview
-                         * popup — for everyone, including privileged users
-                         * (e.g. when "allow all players to change settings"
-                         * is on). The popup's "Choose map" button (shown to
-                         * users who may change the map) opens the chooser. */
-                        if (popupCompressedData) {
+                        /* A click that didn't land on a start opens the zoomed
+                         * popup (clicking a free start moves you there). */
+                        if (popupCompressedData && !miniConsumed) {
                             mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
                                                    mapBounds.minX, mapBounds.minY,
                                                    mapBounds.maxX, mapBounds.maxY);
@@ -7496,17 +7534,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     IM_COL32(0, 0, 80, 255));
                 ImGui::Image((ImTextureID)mapPreviewTex, ImVec2(innerSize, innerSize), uv0, uv1);
                 ImVec2 miniMin = ImGui::GetItemRectMin();
-                lobbyPreviewInteract(cs, (int)myPlayerNum, effHostMap, miniMin,
-                                     innerSize, bx0, by0, bx1, by1);
+                bool miniConsumed = lobbyPreviewInteract(cs, (int)myPlayerNum,
+                                        effHostMap, miniMin, innerSize,
+                                        bx0, by0, bx1, by1);
                 drawLobbyPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
                                              bx0, by0, bx1, by1);
                 /* Reserve the full box so the gap also sits below the map. */
                 ImGui::SetCursorPosY(boxTopY + previewSize);
-                /* Click always opens the view-only zoomed preview popup —
-                 * for everyone, including privileged users (e.g. when
-                 * "allow all players to change settings" is on). The
-                 * popup's "Choose map" button opens the chooser. */
-                if (popupCompressedData) {
+                /* A click that didn't land on a start opens the zoomed popup
+                 * (clicking a free start moves you there instead). */
+                if (popupCompressedData && !miniConsumed) {
                     mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
                                            mapBounds.minX, mapBounds.minY,
                                            mapBounds.maxX, mapBounds.maxY);

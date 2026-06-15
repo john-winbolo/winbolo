@@ -133,7 +133,7 @@ static int            s_startOwnerOverrideCount = 0;
  * allegiance colours: self black, ally green, enemy red. */
 static bool minimapOwnerColor(uint8_t owner, uint8_t out[3]) {
     switch (owner) {
-        case 1: out[0] = 28;  out[1] = 28;  out[2] = 28;  return true; /* self  dark gray */
+        case 1: out[0] = 0;   out[1] = 210; out[2] = 0;   return true; /* self  green (+black border) */
         case 2: out[0] = 0;   out[1] = 210; out[2] = 0;   return true; /* ally  green */
         case 3: out[0] = 230; out[1] = 50;  out[2] = 50;  return true; /* enemy red */
         default: return false;                                          /* free  yellow */
@@ -194,11 +194,28 @@ void minimapDrawObjects(uint8_t *pixels,
             int sy = ss->item[i].y;
             /* Colour by ownership when an override is in effect, else the
              * caller's default (yellow). */
+            uint8_t owner = (s_startOwnerOverride && i < s_startOwnerOverrideCount)
+                                ? s_startOwnerOverride[i] : 0;
             const uint8_t *col = startColor;
             uint8_t ownerCol[3];
-            if (s_startOwnerOverride && i < s_startOwnerOverrideCount &&
-                minimapOwnerColor(s_startOwnerOverride[i], ownerCol)) {
+            if (minimapOwnerColor(owner, ownerCol)) {
                 col = ownerCol;
+            }
+            /* Your own start: a black border ring (5x5) under the green so it
+             * stands out from allies (same green, no border). */
+            if (owner == 1) {
+                for (dy = -2; dy <= 2; dy++) {
+                    for (dx = -2; dx <= 2; dx++) {
+                        int nx = sx + dx, ny = sy + dy;
+                        if (nx >= 0 && nx < MINIMAP_SIZE && ny >= 0 && ny < MINIMAP_SIZE) {
+                            int idx = (ny * MINIMAP_SIZE + nx) * 4;
+                            pixels[idx]   = 0;
+                            pixels[idx+1] = 0;
+                            pixels[idx+2] = 0;
+                            pixels[idx+3] = 255;
+                        }
+                    }
+                }
             }
             for (dy = -1; dy <= 1; dy++) {
                 for (dx = -1; dx <= 1; dx++) {
