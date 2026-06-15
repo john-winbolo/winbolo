@@ -383,6 +383,17 @@ int run_loopback_join_loss(void);
 int run_loopback_lobby_running_loss(void);
 int run_join_version_gate(void);
 
+/* Per-source-IP JOIN rate limit (test_join_rate_limit.c): a burst of valid
+ * JOINs from distinct loopback ephemeral ports (one source IP) draws at most
+ * JOIN_RL_BURST accepts, while a JOIN from a distinct source IP is unaffected. */
+int run_join_rate_limit(void);
+
+/* JOIN address-proof cookie handshake (test_cookie_handshake.c): a cookie-less
+ * JOIN draws a PACKET_JOIN_CHALLENGE and no slot; echoing the challenge cookie
+ * completes the join; a garbage cookie never completes; a cookie expires once
+ * the server's time-window advances (via the WB_COOKIE_WINDOW_OFFSET seam). */
+int run_cookie_handshake(void);
+
 /* Map-send amplification gate (test_map_amp_gate.c): a crafted JOIN over a raw
  * loopback socket draws a JOIN_ACCEPT but no PACKET_MAP_DOWNLOAD until a
  * MAP_ACK 0xFFFF ready round-trip is sent, after which chunks flow. */
@@ -420,6 +431,11 @@ int run_wire_corpus_capture(void);
 /* packetTypeName mapping pin (test_packet_type_names.c): every PACKET_* maps to
  * its exact debug string and an undefined type id resolves to "UNKNOWN". */
 int run_packet_type_names(void);
+
+/* mDNS LAN discovery (test_mdns_discovery.c): unicast-loopback round-trip of
+ * the advertiser builder + browser parse path, asserting the SRV port, the
+ * inLobby/locked flags, every TXT field, and two-instance resolution. */
+int run_mdns_discovery(void);
 
 /* Self-reported client platform pin (test_client_type.c): the JOIN-time
  * bolo_detect_client_type() resolves to the build host's CLIENT_TYPE_*

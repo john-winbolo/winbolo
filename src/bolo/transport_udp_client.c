@@ -135,6 +135,13 @@ typedef struct {
     uint32_t joinAttempts;
     uint32_t ticksSinceJoinSent;
 
+    /* Address-proof retry cookie. The server gates slot allocation on a valid
+     * cookie; the client never computes one — it stores the opaque bytes from
+     * a PACKET_JOIN_CHALLENGE and echoes them in the JOIN tail. Zeros (and
+     * haveJoinCookie=false) until the first challenge arrives. */
+    uint8_t  joinCookie[JOIN_COOKIE_LEN];
+    bool     haveJoinCookie;
+
     /* Ping */
     uint32_t lastPingSentTick;
     uint32_t pingClientTime;  /* Monotonic counter used as ping timestamp */
@@ -1326,6 +1333,26 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
+    case PACKET_JOIN_CHALLENGE:
+        /* [header 8][JOIN_COOKIE_LEN cookie] — server proof-of-address
+         * challenge. Store the opaque cookie and resend the JOIN echoing it.
+         * Only meaningful while still joining. */
+        if (c->joinState == UDP_CLIENT_JOINING &&
+            len >= PACKET_HEADER_SIZE + JOIN_COOKIE_LEN) {
+            memcpy(c->joinCookie, buf + PACKET_HEADER_SIZE, JOIN_COOKIE_LEN);
+            if (!c->haveJoinCookie) {
+                /* The challenge is an extra round-trip the joiner didn't
+                 * budget for; reset the retry counter once on first
+                 * acquisition so it can't exhaust JOIN_MAX_RETRIES. Gated on
+                 * the false→true transition so a misbehaving server replaying
+                 * challenges can't loop the reset and stall the handshake. */
+                c->haveJoinCookie = true;
+                c->joinAttempts = 0;
+            }
+            c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL; /* resend immediately */
+        }
+        break;
+
     case PACKET_STATE_SNAPSHOT: {
         uint32_t seq = unpackU32(buf + 4);
         int pos = PACKET_HEADER_SIZE;
@@ -2170,6 +2197,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 clientSimApplyControl(c->clientSim, &evt);
                 c->joinState = UDP_CLIENT_JOINING;
                 c->joinAttempts = 0;
+                /* Re-prove the address: a re-join must re-acquire a cookie. */
+                c->haveJoinCookie = false;
                 c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL; /* send immediately */
             }
         }
@@ -2507,10 +2536,10 @@ static bool udpClientTick(void *ctx) {
             } else {
                 /* Buffer holds: header + name + pass + 3 version bytes
                  * + WBN token + flags + clientType + clientHints
-                 * + 2-byte trailing fallbackCountry (additive, per the
-                 * connect-driven model). Server treats the trailing
-                 * field as optional for backward compatibility. */
-                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_JOIN_KEY_WIRE_LEN + 1 + 2 + 2];
+                 * + 2-byte trailing fallbackCountry + JOIN_COOKIE_LEN
+                 * address-proof cookie (additive, per the connect-driven
+                 * model). Server treats the trailing fields as optional. */
+                uint8_t jbuf[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 + WBN_JOIN_KEY_WIRE_LEN + 1 + 2 + 2 + JOIN_COOKIE_LEN];
                 int joffset = PACKET_HEADER_SIZE;
                 char playerKey[WBN_JOIN_KEY_WIRE_LEN];
                 memset(playerKey, 0, sizeof(playerKey));
@@ -2561,6 +2590,15 @@ static bool udpClientTick(void *ctx) {
                  * fallback when the joiner's IP doesn't resolve. */
                 jbuf[joffset++] = (uint8_t)c->fallbackCountry[0];
                 jbuf[joffset++] = (uint8_t)c->fallbackCountry[1];
+                /* Address-proof cookie (always present, fixed offset): the
+                 * bytes from the last PACKET_JOIN_CHALLENGE, or zeros before
+                 * one has arrived. A cookie-less/zero JOIN draws a challenge. */
+                if (c->haveJoinCookie) {
+                    memcpy(jbuf + joffset, c->joinCookie, JOIN_COOKIE_LEN);
+                } else {
+                    memset(jbuf + joffset, 0, JOIN_COOKIE_LEN);
+                }
+                joffset += JOIN_COOKIE_LEN;
                 /* Join requests bypass delay — they're control plane */
                 udpClientSendTo(c, jbuf, joffset);
                 WB_LOG_DEBUG(WB_LOG_CAT_NET,
@@ -2751,6 +2789,8 @@ static void udpClientTransportObserver(void *ctx, const ControlEvent *evt) {
             c->mapInstalled) {
             c->joinState = UDP_CLIENT_JOINING;
             c->joinAttempts = 0;
+            /* Re-prove the address: a re-join must re-acquire a cookie. */
+            c->haveJoinCookie = false;
             c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL;  /* send immediately */
         }
         break;
@@ -2922,6 +2962,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
 
     c->joinState = UDP_CLIENT_JOINING;
     c->joinAttempts = 0;
+    c->haveJoinCookie = false; /* acquire a cookie via PACKET_JOIN_CHALLENGE */
     c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL; /* Send immediately on first tick */
     c->outSequence = 1;
 

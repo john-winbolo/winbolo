@@ -40,6 +40,7 @@ add_library(bolo_static STATIC
     crc.c
     debug_file_output.c
     discovery.c
+    discovery_mdns.c
     explosions.c
     floodfill.c
     gametype.c
@@ -92,6 +93,19 @@ add_library(bolo_static STATIC
 )
 
 bolo_apply_include_rules(bolo_static sim_owner)
+
+# discovery_mdns.c is the only bolo TU that pulls in the all-static-inline
+# mdns.h; suppress the unused-function noise for that one file. Under
+# Emscripten the file compiles to no-op stubs (no mdns.h), so the mdns
+# include dir is not linked there.
+if(NOT EMSCRIPTEN)
+    target_link_libraries(bolo_static PRIVATE mdns)
+    if(MSVC)
+        set_source_files_properties(discovery_mdns.c PROPERTIES COMPILE_OPTIONS "/wd4505")
+    else()
+        set_source_files_properties(discovery_mdns.c PROPERTIES COMPILE_OPTIONS "-Wno-unused-function")
+    endif()
+endif()
 
 set_target_properties(bolo_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

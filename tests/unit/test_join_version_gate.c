@@ -41,12 +41,14 @@
  * server tick after it's drained, so a few dozen pumps is ample. */
 #define VG_PUMP_MAX 200
 
-/* Build a JOIN_REQUEST into buf with the given version triple. Returns the
- * total length. Layout mirrors transport_udp_client.c's builder: header +
- * name + pass + 3 version bytes + WBN token + flags + clientType +
- * clientHints + 2-byte fallbackCountry. */
+/* Build a JOIN_REQUEST into buf with the given version triple and a trailing
+ * address-proof cookie (the given bytes, or zeros if NULL). Returns the total
+ * length. Layout mirrors transport_udp_client.c's builder: header + name +
+ * pass + 3 version bytes + WBN token + flags + clientType + clientHints +
+ * 2-byte fallbackCountry + JOIN_COOKIE_LEN cookie. */
 static int vgBuildJoin(uint8_t *buf, const char *name,
-                       uint8_t major, uint8_t minor, uint8_t rev) {
+                       uint8_t major, uint8_t minor, uint8_t rev,
+                       const uint8_t *cookieOrNull) {
     int pos = PACKET_HEADER_SIZE;
     packHeader(buf, PACKET_JOIN_REQUEST, 0);
 
@@ -69,6 +71,13 @@ static int vgBuildJoin(uint8_t *buf, const char *name,
     buf[pos++] = 0;   /* clientHints */
     buf[pos++] = 0;   /* fallbackCountry[0] */
     buf[pos++] = 0;   /* fallbackCountry[1] */
+
+    if (cookieOrNull != NULL) {
+        memcpy(buf + pos, cookieOrNull, JOIN_COOKIE_LEN);
+    } else {
+        memset(buf + pos, 0, JOIN_COOKIE_LEN);
+    }
+    pos += JOIN_COOKIE_LEN;
     return pos;
 }
 
@@ -99,18 +108,22 @@ static int vgTryRecv(SOCKET s, uint8_t *buf, int cap) {
 }
 
 /* Drive the crafted JOIN at sock and pump the harness, collecting the first
- * JOIN_ACCEPT / JOIN_REJECT seen. On a reject, *outRejectLangid receives the
- * langid. Sets *outGotAccept / *outGotReject. Resends the JOIN periodically
- * since UDP delivery (and the server's recv-thread drain) is best-effort. */
+ * JOIN_ACCEPT / JOIN_REJECT / JOIN_CHALLENGE seen. On a reject,
+ * *outRejectLangid receives the langid; on a challenge, *outCookie (if
+ * non-NULL) receives the 16 cookie bytes. Sets the matching *outGot* flag.
+ * Resends the JOIN periodically since UDP delivery (and the server's
+ * recv-thread drain) is best-effort. */
 static void vgDriveJoin(LoopbackHarness *h, SOCKET sock,
                         const uint8_t *joinBuf, int joinLen,
                         const struct sockaddr_in *serverAddr,
                         bool *outGotAccept, bool *outGotReject,
-                        uint16_t *outRejectLangid) {
+                        uint16_t *outRejectLangid,
+                        bool *outGotChallenge, uint8_t *outCookie) {
     int i;
-    *outGotAccept   = false;
-    *outGotReject   = false;
+    *outGotAccept    = false;
+    *outGotReject    = false;
     *outRejectLangid = 0;
+    *outGotChallenge = false;
 
     for (i = 0; i < VG_PUMP_MAX; i++) {
         uint8_t in[1024];
@@ -131,9 +144,15 @@ static void vgDriveJoin(LoopbackHarness *h, SOCKET sock,
                 *outRejectLangid =
                     (uint16_t)((in[PACKET_HEADER_SIZE] << 8) |
                                in[PACKET_HEADER_SIZE + 1]);
+            } else if (type == PACKET_JOIN_CHALLENGE &&
+                       n >= PACKET_HEADER_SIZE + JOIN_COOKIE_LEN) {
+                *outGotChallenge = true;
+                if (outCookie != NULL) {
+                    memcpy(outCookie, in + PACKET_HEADER_SIZE, JOIN_COOKIE_LEN);
+                }
             }
         }
-        if (*outGotReject || *outGotAccept) return;
+        if (*outGotReject || *outGotAccept || *outGotChallenge) return;
     }
 }
 
@@ -141,9 +160,10 @@ int run_join_version_gate(void) {
     LoopbackHarness h;
     struct sockaddr_in serverAddr;
     uint8_t joinBuf[1024];
+    uint8_t cookie[JOIN_COOKIE_LEN];
     int joinLen;
     SOCKET badSock, goodSock;
-    bool gotAccept, gotReject;
+    bool gotAccept, gotReject, gotChallenge;
     uint16_t rejectLangid;
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "Joiner", /*lobbyMode*/ false,
@@ -163,9 +183,9 @@ int run_join_version_gate(void) {
     }
     joinLen = vgBuildJoin(joinBuf, "VerGate",
                           BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR,
-                          (uint8_t)(BOLO_VERSION_REVISION - 1));
+                          (uint8_t)(BOLO_VERSION_REVISION - 1), NULL);
     vgDriveJoin(&h, badSock, joinBuf, joinLen, &serverAddr,
-                &gotAccept, &gotReject, &rejectLangid);
+                &gotAccept, &gotReject, &rejectLangid, &gotChallenge, NULL);
     fprintf(stderr, "  version gate (wrong): reject=%d langid=%u accept=%d\n",
             (int)gotReject, (unsigned)rejectLangid, (int)gotAccept);
     closesocket(badSock);
@@ -185,7 +205,12 @@ int run_join_version_gate(void) {
         UT_FAIL("wrong-version JOIN was accepted");
     }
 
-    /* ---- Positive: correct version triple discriminates ---- */
+    /* ---- Positive: correct version triple discriminates ----
+     * The version gate runs before the address-proof cookie gate, so a
+     * correct-version JOIN clears the version check and is challenged for a
+     * cookie rather than version-rejected. Confirm it draws a challenge (not a
+     * 1389 reject, not an accept yet), then complete the handshake by echoing
+     * the cookie and confirm the accept. */
     goodSock = vgOpenSocket();
     if (goodSock == INVALID_SOCKET) {
         loopbackHarnessStop(&h);
@@ -193,22 +218,46 @@ int run_join_version_gate(void) {
     }
     joinLen = vgBuildJoin(joinBuf, "VerGate2",
                           BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR,
-                          BOLO_VERSION_REVISION);
+                          BOLO_VERSION_REVISION, NULL);
     vgDriveJoin(&h, goodSock, joinBuf, joinLen, &serverAddr,
-                &gotAccept, &gotReject, &rejectLangid);
-    fprintf(stderr, "  version gate (correct): reject=%d langid=%u accept=%d\n",
-            (int)gotReject, (unsigned)rejectLangid, (int)gotAccept);
-    closesocket(goodSock);
+                &gotAccept, &gotReject, &rejectLangid, &gotChallenge, cookie);
+    fprintf(stderr, "  version gate (correct): reject=%d langid=%u accept=%d "
+            "challenge=%d\n", (int)gotReject, (unsigned)rejectLangid,
+            (int)gotAccept, (int)gotChallenge);
 
     if (gotReject && rejectLangid == STR_REJECT_VERSION_MISMATCH) {
+        closesocket(goodSock);
         loopbackHarnessStop(&h);
         UT_FAIL("correct-version JOIN was version-rejected (langid %u)",
                 (unsigned)rejectLangid);
     }
+    if (!gotChallenge) {
+        closesocket(goodSock);
+        loopbackHarnessStop(&h);
+        UT_FAIL("correct-version JOIN drew no challenge (so it did not clear "
+                "the version gate) within %d pumps", VG_PUMP_MAX);
+    }
+    if (gotAccept) {
+        closesocket(goodSock);
+        loopbackHarnessStop(&h);
+        UT_FAIL("correct-version JOIN was accepted without echoing a cookie");
+    }
+
+    /* Echo the cookie — the join now completes. */
+    joinLen = vgBuildJoin(joinBuf, "VerGate2",
+                          BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR,
+                          BOLO_VERSION_REVISION, cookie);
+    vgDriveJoin(&h, goodSock, joinBuf, joinLen, &serverAddr,
+                &gotAccept, &gotReject, &rejectLangid, &gotChallenge, NULL);
+    fprintf(stderr, "  version gate (cookie echoed): accept=%d reject=%d "
+            "langid=%u\n", (int)gotAccept, (int)gotReject,
+            (unsigned)rejectLangid);
+    closesocket(goodSock);
+
     if (!gotAccept) {
         loopbackHarnessStop(&h);
-        UT_FAIL("correct-version JOIN drew neither JOIN_ACCEPT nor a "
-                "non-version reject within %d pumps", VG_PUMP_MAX);
+        UT_FAIL("correct-version JOIN with a valid cookie drew no JOIN_ACCEPT "
+                "within %d pumps", VG_PUMP_MAX);
     }
 
     loopbackHarnessStop(&h);

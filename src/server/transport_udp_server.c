@@ -64,6 +64,17 @@
 #define strcasecmp _stricmp
 #endif
 
+/* OS cryptographic RNG, used to seed the address-proof cookie secret. */
+#if defined(_WIN32)
+#  include <bcrypt.h>
+#elif defined(__linux__)
+#  include <sys/random.h>  /* getrandom */
+#  include <fcntl.h>       /* open, O_RDONLY (/dev/urandom fallback) */
+#  include <unistd.h>      /* read, close */
+#else
+#  include <stdlib.h>      /* arc4random_buf (macOS/BSD) */
+#endif
+
 /* ---- Server dedicated recv thread ----
  * A background thread continuously polls the server socket and queues
  * packets into an SPSC ring buffer.  The timer callback drains the
@@ -222,6 +233,23 @@ ClaimResolveAction claimResolveDecide(bool bareNameHeld, bool holderIsVerified) 
     return CLAIM_RESOLVE_PREEMPT_SQUATTER;
 }
 
+/* Per-source-IP JOIN rate limit. Keys on the source IP alone (a spoofer can
+ * walk source ports), tracking a small LRU of recent sources. Scope: this
+ * contains port-walking from a *single* source IP; it does NOT rate-limit a
+ * flood from random/spoofed source IPs, which gets a fresh bucket per packet
+ * and keeps evicting the LRU. That's acceptable — the address-proof cookie
+ * prevents slot exhaustion regardless of flood shape, and the challenge it
+ * draws is smaller than the JOIN (de-amplifying). */
+#define JOIN_RL_MAX_SOURCES 64    /* LRU of recent source IPs */
+#define JOIN_RL_BURST       5     /* token-bucket capacity per source IP */
+#define JOIN_RL_REFILL_MS   2000  /* +1 token every 2 s */
+
+typedef struct {
+    uint32_t srcAddr;  /* network-order sin_addr.s_addr; 0 = empty entry */
+    uint32_t tokens;   /* tokens remaining */
+    uint64_t lastMs;   /* SDL_GetTicks() at last touch */
+} JoinRateEntry;
+
 /* Server-side global state */
 static struct {
     SOCKET sock;
@@ -298,6 +326,11 @@ static struct {
     UploadPolicy uploadPolicy;
     uint8_t      uploadMaxFiles;
     uint32_t     uploadMaxStorageBytes;
+
+    /* LRU token buckets for the per-source-IP JOIN rate limit. A zeroed
+     * table reads as all-empty (srcAddr 0), so the existing
+     * memset(&udpServer, 0, …) is the only reset needed. */
+    JoinRateEntry joinRate[JOIN_RL_MAX_SOURCES];
 } udpServer;
 
 /* Runtime network impairment (delay/jitter/loss/burst) on the server's
@@ -356,6 +389,249 @@ static int serverFindClient(const struct sockaddr_in *addr) {
         }
     }
     return -1;
+}
+
+/* Token-bucket join rate limit keyed on source IP (port ignored: a spoofer
+ * walks ports). Returns true and consumes a token if allowed; false if the
+ * source is over-rate. LRU-evicts the least-recently-seen source on overflow.
+ * A real join never originates from 0.0.0.0, so reusing srcAddr==0 as the
+ * empty-entry sentinel can't collide with a legitimate source.
+ *
+ * This throttles port-walking from one source IP; it does not throttle a
+ * random-source-IP flood (each packet lands in a fresh bucket and evicts the
+ * LRU). The cookie gate is what actually prevents slot exhaustion, so that
+ * residual is acceptable. */
+static bool serverJoinRateLimitAllow(const struct sockaddr_in *fromAddr) {
+    uint32_t key = fromAddr->sin_addr.s_addr;
+    uint64_t now = SDL_GetTicks();
+    JoinRateEntry *match = NULL;
+    JoinRateEntry *empty = NULL;
+    JoinRateEntry *oldest = NULL;
+    JoinRateEntry *e;
+    int i;
+
+    for (i = 0; i < JOIN_RL_MAX_SOURCES; i++) {
+        JoinRateEntry *cur = &udpServer.joinRate[i];
+        if (cur->srcAddr == key) { match = cur; break; }
+        if (cur->srcAddr == 0) {
+            if (empty == NULL) empty = cur;
+        } else if (oldest == NULL || cur->lastMs < oldest->lastMs) {
+            oldest = cur;
+        }
+    }
+
+    if (match != NULL) {
+        e = match;
+        /* Refill whole tokens for the elapsed time, capped at the burst, and
+         * advance lastMs by the consumed whole windows so the sub-window
+         * remainder still counts toward the next refill. */
+        if (e->tokens < JOIN_RL_BURST) {
+            uint64_t elapsed = now - e->lastMs;
+            uint64_t refill  = elapsed / JOIN_RL_REFILL_MS;
+            if (refill > 0) {
+                if (refill > JOIN_RL_BURST - e->tokens) {
+                    refill = JOIN_RL_BURST - e->tokens;
+                }
+                e->tokens += (uint32_t)refill;
+                e->lastMs += refill * JOIN_RL_REFILL_MS;
+            }
+        }
+    } else {
+        /* Fresh source: take an empty slot, else evict the least-recently
+         * seen one. A new bucket starts full. */
+        e = (empty != NULL) ? empty : oldest;
+        e->srcAddr = key;
+        e->tokens  = JOIN_RL_BURST;
+        e->lastMs  = now;
+    }
+
+    if (e->tokens == 0) {
+        return false;
+    }
+    e->tokens--;
+    return true;
+}
+
+/* ── Address-proof retry cookie (anti-spoof) ─────────────────────────────
+ * Before a JOIN is allowed to allocate a slot the joiner must echo a cookie
+ * the server can recompute for its source address.  The cookie is an HMAC of
+ * (address ‖ port ‖ time-window) under a per-process secret, so it is
+ * stateless on the server: a blind/IP-spoofed JOIN can't produce one without
+ * receiving the challenge at the real address.  The cookie is server-only —
+ * the client never computes it, it just stores and echoes the opaque bytes. */
+#define COOKIE_WINDOW_SEC 16
+
+/* Fill buf with n bytes from the OS cryptographic RNG. Returns true on
+ * success. Deliberately NOT the project's randombytes() (a no-op tweetnacl
+ * linkage stub) — the cookie secret must come from a real CSPRNG. */
+static bool serverFillRandomBytes(uint8_t *buf, size_t n) {
+#if defined(_WIN32)
+    /* STATUS_SUCCESS == 0. */
+    return BCryptGenRandom(NULL, buf, (ULONG)n,
+                           BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
+#elif defined(__linux__)
+    {
+        ssize_t got = getrandom(buf, n, 0);
+        if (got == (ssize_t)n) {
+            return true;
+        }
+        /* Old kernel / ENOSYS, or a short read: fall back to /dev/urandom. */
+        {
+            int fd = open("/dev/urandom", O_RDONLY);
+            size_t off = 0;
+            if (fd < 0) {
+                return false;
+            }
+            while (off < n) {
+                ssize_t r = read(fd, buf + off, n - off);
+                if (r <= 0) {
+                    close(fd);
+                    return false;
+                }
+                off += (size_t)r;
+            }
+            close(fd);
+            return true;
+        }
+    }
+#else
+    arc4random_buf(buf, n);
+    return true;
+#endif
+}
+
+/* Per-process secret keying the cookies. Filled once on first use from the
+ * OS CSPRNG so it is unpredictable to a remote attacker: even an attacker who
+ * observes a valid (addr,port,window,cookie) tuple from an honest handshake
+ * can't recover the secret or forge cookies for a spoofed address. Never
+ * leaves the process.
+ *
+ * Fails closed: if no RNG path succeeds, the secret is left unseeded and this
+ * returns NULL so callers refuse to issue or accept cookies, rather than
+ * keying them off a guessable value (a predictable secret would defeat the
+ * whole anti-spoof feature). A later call retries the RNG. */
+static const uint8_t *serverCookieSecret(void) {
+    static uint8_t secret[32];
+    static bool seeded = false;
+    if (!seeded) {
+        if (serverFillRandomBytes(secret, sizeof(secret))) {
+            seeded = true;
+        } else {
+            WB_LOG_ERROR(WB_LOG_CAT_NET,
+                "cookie secret: no OS CSPRNG available; refusing to key "
+                "address-proof cookies from a predictable source");
+            return NULL;
+        }
+    }
+    return secret;
+}
+
+/* Standard HMAC (RFC 2104) over MD5: 64-byte block, ipad/opad. The cookie is
+ * an address proof, not a confidentiality primitive — MD5's break doesn't help
+ * an attacker forge one without the secret, and it avoids a new crypto dep. */
+static void hmacMd5(const uint8_t *key, size_t keyLen,
+                    const uint8_t *msg, size_t msgLen, uint8_t out[16]) {
+    uint8_t k0[64];
+    uint8_t ipad[64];
+    uint8_t opad[64];
+    uint8_t inner[16];
+    Md5Ctx ctx;
+    size_t i;
+
+    /* Block-pad the key. A key longer than the block would be hashed first;
+     * our secret is a fixed 32 bytes so that arm is effectively unused. */
+    memset(k0, 0, sizeof(k0));
+    if (keyLen > sizeof(k0)) {
+        md5Compute(key, keyLen, k0);
+    } else {
+        memcpy(k0, key, keyLen);
+    }
+    for (i = 0; i < sizeof(k0); i++) {
+        ipad[i] = (uint8_t)(k0[i] ^ 0x36);
+        opad[i] = (uint8_t)(k0[i] ^ 0x5c);
+    }
+    md5Init(&ctx);
+    md5Update(&ctx, ipad, sizeof(ipad));
+    md5Update(&ctx, msg, msgLen);
+    md5Final(inner, &ctx);
+
+    md5Init(&ctx);
+    md5Update(&ctx, opad, sizeof(opad));
+    md5Update(&ctx, inner, sizeof(inner));
+    md5Final(out, &ctx);
+}
+
+/* The current cookie time-window.
+ * Test-only clock seam: WB_COOKIE_WINDOW_OFFSET shifts the window counter so a
+ * test can simulate cookie expiry without waiting real time. Default 0; unset
+ * in production. Security-neutral — an attacker can't set a server-side env var
+ * remotely and holds no secret, so a shifted window only affects the server's
+ * own consistent issue/accept (worst case a self-inflicted reject). Read per
+ * call (not cached) so a test can advance the clock mid-run. */
+static uint64_t serverCookieCurrentWindow(void) {
+    uint64_t w = (SDL_GetTicks() / 1000ULL) / COOKIE_WINDOW_SEC;
+    const char *off = getenv("WB_COOKIE_WINDOW_OFFSET");
+    if (off != NULL) w += (uint64_t)strtoll(off, NULL, 10);
+    return w;
+}
+
+/* HMAC-MD5 of (sin_addr ‖ sin_port ‖ window) under the per-process secret.
+ * Byte order is irrelevant for security — the secret never leaves the process,
+ * so only self-consistency between issue and accept matters. Returns false
+ * (out untouched) when the CSPRNG secret is unavailable, so the caller fails
+ * closed instead of computing a cookie under a missing key. */
+static bool serverCookieCompute(const struct sockaddr_in *addr, uint64_t window,
+                                uint8_t out[JOIN_COOKIE_LEN]) {
+    const uint8_t *secret = serverCookieSecret();
+    uint8_t msg[4 + 2 + 8];
+    if (secret == NULL) {
+        return false;
+    }
+    memcpy(msg + 0, &addr->sin_addr.s_addr, 4);
+    memcpy(msg + 4, &addr->sin_port, 2);
+    memcpy(msg + 6, &window, 8);
+    hmacMd5(secret, 32, msg, sizeof(msg), out);
+    return true;
+}
+
+/* Accept a JOIN cookie for the current window or the one before it (so a
+ * cookie issued near a boundary still validates). Constant-time compare:
+ * OR-accumulate the byte diffs so a partial match can't be timed byte by byte.
+ * A NULL cookie (none echoed) never validates. */
+static bool serverCookieAccept(const struct sockaddr_in *addr,
+                               const uint8_t *cookieOrNull) {
+    uint64_t w;
+    uint8_t expect[JOIN_COOKIE_LEN];
+    int diff;
+    int i;
+
+    if (cookieOrNull == NULL) return false;
+    w = serverCookieCurrentWindow();
+
+    /* No secret (CSPRNG unavailable) → fail closed: nothing validates. */
+    if (!serverCookieCompute(addr, w, expect)) return false;
+    diff = 0;
+    for (i = 0; i < JOIN_COOKIE_LEN; i++) diff |= expect[i] ^ cookieOrNull[i];
+    if (diff == 0) return true;
+
+    if (!serverCookieCompute(addr, w - 1, expect)) return false;
+    diff = 0;
+    for (i = 0; i < JOIN_COOKIE_LEN; i++) diff |= expect[i] ^ cookieOrNull[i];
+    return diff == 0;
+}
+
+/* Issue a fresh challenge: [header PACKET_JOIN_CHALLENGE][cookie for window w].
+ * Smaller than a JOIN_REQUEST, so it can't amplify a spoofed source. */
+static void serverSendJoinChallenge(const struct sockaddr_in *addr) {
+    uint8_t buf[PACKET_HEADER_SIZE + JOIN_COOKIE_LEN];
+    packHeader(buf, PACKET_JOIN_CHALLENGE, 0);
+    /* Fail closed: with no secret we can't issue a valid challenge, so send
+     * nothing rather than a cookie keyed off a missing/guessable secret. */
+    if (!serverCookieCompute(addr, serverCookieCurrentWindow(),
+                             buf + PACKET_HEADER_SIZE)) {
+        return;
+    }
+    srvSendTo(buf, sizeof(buf), addr);
 }
 
 /* connId rides the wire as two 32-bit halves through the existing packU32
@@ -1334,6 +1610,44 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     if (len >= pos + 2) {
         wireFallbackCountry[0] = (char)buf[pos++];
         wireFallbackCountry[1] = (char)buf[pos++];
+    }
+
+    /* Optional trailing address-proof cookie. Old/initial JOINs omit it
+     * (NULL) and draw a challenge below; a returning JOIN echoes the 16
+     * bytes from a prior PACKET_JOIN_CHALLENGE. */
+    const uint8_t *joinCookie = NULL;
+    if (len >= pos + JOIN_COOKIE_LEN) {
+        joinCookie = buf + pos;
+        pos += JOIN_COOKIE_LEN;
+    }
+
+    /* Address proof, gated before the password / game-lock / full checks: a
+     * slot is allocated only after the joiner echoes a valid retry cookie, and
+     * the password and game-locked rejects below run only for a proven address
+     * so they can't be reflected to a spoofed source. The version reject
+     * earlier is intentionally left ahead of this gate — an old, cookie-
+     * incapable client must get a clean version reject rather than a silent
+     * timeout (that residual reflection is de-amplifying — the version reject
+     * precedes this gate, so it is not itself rate-limited).
+     *
+     * The cookie — not the rate limiter — is what prevents slot exhaustion, so
+     * an unproven JOIN (no/stale cookie) is the only thing the per-source-IP
+     * rate limit guards: it bounds the cheap challenge/reflection path. A
+     * proven (valid-cookie) JOIN is never rate-limited, so many legitimate
+     * clients behind one NAT or public IP still join promptly. Drop an
+     * over-rate unproven JOIN silently — a reply would reflect to a
+     * possibly-spoofed source — otherwise issue a fresh challenge (smaller
+     * than the JOIN, so it can't amplify). */
+    if (!serverCookieAccept(fromAddr, joinCookie)) {
+        if (!serverJoinRateLimitAllow(fromAddr)) {
+            WB_LOG_DEBUG(WB_LOG_CAT_NET,
+                "join rate-limited from %s:%u",
+                inet_ntoa(fromAddr->sin_addr),
+                (unsigned)ntohs(fromAddr->sin_port));
+            return;
+        }
+        serverSendJoinChallenge(fromAddr);
+        return;
     }
 
     /* Check password */

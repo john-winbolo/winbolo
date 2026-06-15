@@ -68,6 +68,14 @@ typedef struct {
   gameType       game;
   aiType         ai;
   bool           password;
+  bool           inLobby;  /* server is in its lobby (pre-game) phase.
+                            * Populated only by the mDNS producer; the
+                            * broadcast/tracker INFO_PACKET paths can't
+                            * report it and leave it false. */
+  bool           locked;   /* server is locked / not accepting joins.
+                            * Populated only by the mDNS producer; the
+                            * broadcast/tracker INFO_PACKET paths can't
+                            * report it and leave it false. */
 } DiscoveryServer;
 
 /*********************************************************
@@ -101,6 +109,20 @@ bool discoveryFindBroadcastGamesAsync(DiscoveryServerCallback callback, void *us
  * at the start of the next discoveryFindBroadcastGamesAsync, so a stale
  * set from a prior session doesn't shortcut a fresh search. */
 void discoveryAbortBroadcastSearch(void);
+
+/* Asynchronous LAN mDNS search. Opens an ephemeral mDNS socket, sends a
+ * PTR query for the _winbolo._udp.local service, and for ~5s resolves each
+ * responding host into a DiscoveryServer (including the inLobby/locked
+ * fields the broadcast/tracker paths can't report) and invokes callback.
+ * Returns true if the query was sent successfully. Self-contained — owns
+ * its own socket, safe to run on a worker thread alongside the broadcast
+ * search (both can feed the same callback). */
+bool discoveryFindMdnsGamesAsync(DiscoveryServerCallback callback, void *userData);
+
+/* Signal the in-flight discoveryFindMdnsGamesAsync (if any) to abort its
+ * poll window early. Mirrors discoveryAbortBroadcastSearch: safe from any
+ * thread, auto-cleared at the start of the next mDNS search. */
+void discoveryAbortMdnsSearch(void);
 
 /* Send an info request to a single server and wait up to 5 seconds for
  * a response. On success fills *out (rttMs >= 0) and returns true; on
