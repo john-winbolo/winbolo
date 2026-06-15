@@ -22,6 +22,7 @@
 #include "gametype.h"
 #include "nat_portmap.h"
 #include "transport_udp.h"
+#include "mdns_advertise.h"
 #include "bot_manager.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../common/mp_diag_log.h"
@@ -154,6 +155,9 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
                                       cfg->uploadMaxFiles,
                                       cfg->uploadMaxStorageBytes);
     sim->uploadPolicy = cfg->uploadPolicy;
+    if (cfg->mdnsAdvertise) {
+      transportUdpServerStartMdnsAdvertiser(cfg->udpPort);
+    }
   }
 
   serverSimApplyInstanceConfig(sim, cfg);
@@ -324,6 +328,7 @@ void serverInstanceTick(ServerSim *sim) {
   wbnTime++;
 
   transportUdpServerDrainPunchQueue();
+  transportUdpServerPollMdnsAdvertiser(sim);
 
   threadsWaitForMutex();
   /* Receive packets — queues inputs for both ticks */
@@ -770,6 +775,7 @@ void serverInstanceShutdown(ServerSim *sim) {
     winbolonetDestroy(TRUE);
   }
   if (instanceAcceptRemoteClients) {
+    transportUdpServerStopMdnsAdvertiser();
     transportUdpServerDestroy();
   }
   botManagerDestroy(sim);

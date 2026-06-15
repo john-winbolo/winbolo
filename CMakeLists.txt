@@ -283,6 +283,13 @@ else()
     target_compile_options(nanosvg PRIVATE -Wno-unused-function)
 endif()
 
+# mdns — header-only mDNS/DNS-SD library (vendored, public domain). All
+# functions are static inline, so no implementation TU: an INTERFACE lib
+# carries only the include directory. The one consumer (mdns_advertise.c)
+# applies -Wno-unused-function / /wd4505 locally for the static-inline noise.
+add_library(mdns INTERFACE)
+target_include_directories(mdns SYSTEM INTERFACE src/third_party/mdns)
+
 # stb_image — header-only image loader (vendored)
 add_library(stb_image STATIC src/third_party/stb/stb_image_impl.c)
 target_include_directories(stb_image SYSTEM PUBLIC src/third_party/stb)

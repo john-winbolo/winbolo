@@ -72,6 +72,11 @@ typedef struct {
                                      dedicated defaults false (admins
                                      control routers). */
 
+  bool           mdnsAdvertise;   /* advertise the game on the LAN via mDNS
+                                     (_winbolo._udp.local). Listen-server
+                                     hosts set true; dedicated defaults
+                                     false (opt in with -mdns). */
+
   /* Operator-controlled handling for client-pushed map uploads.
    * Zero-init = ALLOW + transport defaults (64 files / 8 MiB), so the GUI
    * host-and-play path needs no explicit plumbing. */

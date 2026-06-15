@@ -693,6 +693,8 @@ void printArgs() {
   fprintf(stderr, "                Bare hostname uses https (e.g. -wbnhost wbn.winbolo.net),\n");
   fprintf(stderr, "                or specify scheme (e.g. -wbnhost http://wbn.winbolo.net)\n");
   fprintf(stderr, "-nowinbolonet - Do not participate in winbolo.net game tracking\n");
+  fprintf(stderr, "-mdns         - Advertise the game on the local network via mDNS\n");
+  fprintf(stderr, "                (_winbolo._udp.local); off by default for dedicated servers\n");
 
   fprintf(stderr, "\nLifecycle & shutdown:\n");
   fprintf(stderr, "-autoclose    - Automatically quit the server when all players have left\n");
@@ -1540,6 +1542,9 @@ int main(int argc, char **argv) {
       instCfg.useNatPortmap   = (argExist(argc, argv, "upnp") == TRUE);
       instCfg.useNatKeepalive = sTrackerUse && !natPunchOptOut;
     }
+    /* LAN mDNS advertising is opt-in for dedicated servers (the memset
+     * above leaves it false by default); -mdns turns it on. */
+    instCfg.mdnsAdvertise = (argExist(argc, argv, "mdns") == TRUE);
     if (serverInstanceStartup(serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
       serverSimDestroy(serverSim);

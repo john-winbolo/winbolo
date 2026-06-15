@@ -68,6 +68,14 @@ typedef struct {
   gameType       game;
   aiType         ai;
   bool           password;
+  bool           inLobby;  /* server is in its lobby (pre-game) phase.
+                            * Populated only by the mDNS producer; the
+                            * broadcast/tracker INFO_PACKET paths can't
+                            * report it and leave it false. */
+  bool           locked;   /* server is locked / not accepting joins.
+                            * Populated only by the mDNS producer; the
+                            * broadcast/tracker INFO_PACKET paths can't
+                            * report it and leave it false. */
 } DiscoveryServer;
 
 /*********************************************************

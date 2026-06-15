@@ -97,7 +97,17 @@ add_library(server_static STATIC EXCLUDE_FROM_ALL
     geolookup.c
     server_lifecycle.c
     transport_udp_server.c
+    mdns_advertise.c
 )
+
+# mdns_advertise.c is the only TU that pulls in the all-static-inline
+# mdns.h; suppress the unused-function noise for that one file rather
+# than the whole library.
+if(MSVC)
+    set_source_files_properties(mdns_advertise.c PROPERTIES COMPILE_OPTIONS "/wd4505")
+else()
+    set_source_files_properties(mdns_advertise.c PROPERTIES COMPILE_OPTIONS "-Wno-unused-function")
+endif()
 
 bolo_apply_include_rules(server_static sim_owner)
 
@@ -129,6 +139,13 @@ endif()
 # propagate to consumers in the wrong order: explicit grouping at
 # the consume site is what makes the cycle resolvable.
 target_link_libraries(server_static PRIVATE server_sim_static)
+
+# mdns.h (header-only) include directory for mdns_advertise.c. Not linked
+# under Emscripten — mdns_advertise.c compiles to no-op stubs there (no
+# multicast sockets / getifaddrs in the WASM runtime).
+if(NOT EMSCRIPTEN)
+    target_link_libraries(server_static PRIVATE mdns)
+endif()
 
 # threads_static owns threads.c (and its threads_wasm.c sibling under
 # Emscripten). PUBLIC so consumers of server_static — the four desktop
