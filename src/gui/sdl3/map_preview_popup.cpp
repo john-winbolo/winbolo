@@ -334,21 +334,19 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
         /* Tooltip reflects what's actually possible: no "click to choose"
          * for a start someone else holds (left-click does nothing there). */
         char tip[192];
+        MessageArgs targs = {};
+        targs.number = hover;
         if (free) {
-            if (host)
-                SDL_snprintf(tip, sizeof(tip), "Start #%d\nClick to choose; "
-                             "right-click to assign to someone else", hover);
-            else
-                SDL_snprintf(tip, sizeof(tip),
-                             "Start #%d\nClick to choose this start", hover);
+            SDL_snprintf(tip, sizeof(tip), "%s",
+                         langGetTextFmt(host ? STR_STARTPICK_TIP_FREE_HOST
+                                             : STR_STARTPICK_TIP_FREE, &targs));
         } else {
-            const char *who = mine ? "you"
+            const char *who = mine ? langGetText(STR_STARTPICK_YOU)
                 : clientSimGetLobbySlot(cs, (BYTE)holder)->playerName;
-            if (host)
-                SDL_snprintf(tip, sizeof(tip), "Start #%d - %s\nDrag to move; "
-                             "right-click to assign to someone else", hover, who);
-            else
-                SDL_snprintf(tip, sizeof(tip), "Start #%d - %s", hover, who);
+            SDL_strlcpy(targs.playerName, who, sizeof(targs.playerName));
+            SDL_snprintf(tip, sizeof(tip), "%s",
+                         langGetTextFmt(host ? STR_STARTPICK_TIP_HELD_HOST
+                                             : STR_STARTPICK_TIP_HELD, &targs));
         }
         /* Hover tooltip ~75% transparent so it doesn't block the map. */
         ImVec4 pbg = ImGui::GetStyleColorVec4(ImGuiCol_PopupBg); pbg.w *= 0.25f;
@@ -384,8 +382,8 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
     if (ImGui::BeginPopup("##assignStart")) {
         int st = g_assignMenuStart;
         bool occupied = (st >= 1 && startHolderSlot(cs, (BYTE)st) >= 0);
-        ImGui::TextDisabled(occupied ? "Swap this start with:"
-                                     : "Assign start to:");
+        ImGui::TextDisabled("%s", langGetText(occupied ? STR_STARTPICK_SWAP_WITH
+                                                       : STR_STARTPICK_ASSIGN_TO));
         ImGui::Separator();
         bool firstGroup = true;
         for (int team = 0; team <= 15; team++) {
@@ -402,7 +400,8 @@ static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
                 bool allowed = host || k == mySlot;
                 char lbl[80];
                 SDL_snprintf(lbl, sizeof(lbl), "%s##assign%d",
-                             sl->playerName[0] ? sl->playerName : "(slot)", k);
+                             sl->playerName[0] ? sl->playerName
+                                 : langGetText(STR_STARTPICK_SLOT_FALLBACK), k);
                 if (!allowed) ImGui::BeginDisabled();
                 if (ImGui::Selectable(lbl) && st >= 1) {
                     clientSimNetSendLobbyClaimStart(cs, (BYTE)k, (BYTE)st);

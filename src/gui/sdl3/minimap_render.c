@@ -129,11 +129,12 @@ static const uint8_t *s_startOwnerOverride      = NULL;
 static int            s_startOwnerOverrideCount = 0;
 
 /* Map an ownership code to a start-dot colour. Returns false for unclaimed
- * (0) so the caller keeps the default (yellow). Mirrors the in-game tank
- * allegiance colours: self black, ally green, enemy red. */
+ * (0) so the caller keeps the default (yellow). Self and allies are both
+ * green; the caller additionally draws a gray border ring under the self
+ * dot so it reads apart from allies. Enemies are red. */
 static bool minimapOwnerColor(uint8_t owner, uint8_t out[3]) {
     switch (owner) {
-        case 1: out[0] = 0;   out[1] = 210; out[2] = 0;   return true; /* self  green (+black border) */
+        case 1: out[0] = 0;   out[1] = 210; out[2] = 0;   return true; /* self  green (+gray border) */
         case 2: out[0] = 0;   out[1] = 210; out[2] = 0;   return true; /* ally  green */
         case 3: out[0] = 230; out[1] = 50;  out[2] = 50;  return true; /* enemy red */
         default: return false;                                          /* free  yellow */

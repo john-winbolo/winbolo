@@ -978,6 +978,16 @@ STR_LV_VOTE_START_LOBBY={player} zahájil hlasování o návrat do lobby.
 STR_LV_VOTE_START_SURRENDER={player} zahájil hlasování o vzdání se.
 STR_LV_VOTE_CAST_YES={player} hlasoval ano.
 STR_LV_VOTE_CAST_NO={player} hlasoval ne.
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKlikni pro výběr; pravým tlačítkem přiřaď jinému hráči
+STR_STARTPICK_TIP_FREE=Start #{number}\nKlikni pro výběr tohoto startu
+STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nPřetáhni pro přesun; pravým tlačítkem přiřaď jinému hráči
+STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_YOU=ty
+STR_STARTPICK_SWAP_WITH=Vyměnit tento start s:
+STR_STARTPICK_ASSIGN_TO=Přiřadit start hráči:
+STR_STARTPICK_SLOT_FALLBACK=(slot)
 STR_LV_VOTE_PASSED=Hlasování prošlo.
 STR_LV_VOTE_FAILED=Hlasování neprošlo.
 

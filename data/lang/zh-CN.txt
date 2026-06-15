@@ -1452,3 +1452,13 @@ STR_DLGWBN_STATS_TOURN=锦标赛
 STR_DLGWBN_STATS_WINS=胜场：
 STR_DLGWBN_UNRANKED=未排名
 STR_DLGWBN_VIA_STEAM=通过 Steam
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=出生点 #{number}\n点击选择；右键分配给其他玩家
+STR_STARTPICK_TIP_FREE=出生点 #{number}\n点击选择此出生点
+STR_STARTPICK_TIP_HELD_HOST=出生点 #{number} - {player}\n拖动以移动；右键分配给其他玩家
+STR_STARTPICK_TIP_HELD=出生点 #{number} - {player}
+STR_STARTPICK_YOU=你
+STR_STARTPICK_SWAP_WITH=将此出生点与以下位置对调：
+STR_STARTPICK_ASSIGN_TO=将出生点分配给：
+STR_STARTPICK_SLOT_FALLBACK=（槽位）

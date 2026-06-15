@@ -77,8 +77,8 @@ SDL_Texture *minimapFromCompressed(SDL_Renderer *renderer,
 
 /* Like minimapFromCompressed but colours each start dot by ownership.
  * startOwners is 0-based, parallel to start order (start index i+1): codes
- * 0=unclaimed (default yellow), 1=self (black), 2=ally (green), 3=enemy
- * (red). Pass startOwners=NULL for the default behaviour. */
+ * 0=unclaimed (default yellow), 1=self (green + gray border ring), 2=ally
+ * (green), 3=enemy (red). Pass startOwners=NULL for the default behaviour. */
 SDL_Texture *minimapFromCompressedOwned(SDL_Renderer *renderer,
                                         const BYTE *compressedData, int dataLen,
                                         MinimapBounds *bounds,
