@@ -10,11 +10,10 @@
  * architecture plan's A.5 differential guard — it exercises the generated
  * unpack output rather than the retired hand-rolled offset arithmetic.
  *
- * NOT exercised here: `unpackGameEvent`, which takes no `avail` and trusts its
- * caller to have guaranteed the bytes (the variable-length residue codegen
- * left hand-written). Its real over-read surface lives in the reliable-event
- * loop inside the snapshot handler, reached through the tier-2 dispatcher
- * target, not by calling the leaf in isolation.
+ * `unpackGameEvent` is the variable-length residue codegen left hand-written;
+ * it now takes an `avail` bound (a truncated trailing event used to over-read
+ * the datagram — caught by fuzz_client_snapshot, fixed at the leaf), so it is
+ * fuzzed here directly alongside the generated codecs.
  */
 #include <stddef.h>
 #include <stdint.h>
@@ -34,6 +33,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     MapUploadChunkHeader   ul;
     MapPreviewChunkHeader  pv;
     ClientCommand          cmd;
+    GameEvent              ev;
 
     (void)unpackTankSnapshot(data, size, &tank);
     (void)unpackShellSnapshot(data, size, &shell);
@@ -43,6 +43,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     (void)unpackMapDownloadChunkHeader(data, size, &dl);
     (void)unpackMapUploadChunkHeader(data, size, &ul);
     (void)unpackMapPreviewChunkHeader(data, size, &pv);
+    (void)unpackGameEvent(data, size, &ev);
     (void)commandCodecDecode(data, size, &cmd);
 
     return 0;

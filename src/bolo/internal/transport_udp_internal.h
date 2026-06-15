@@ -220,7 +220,7 @@ int packTkExplosionSnapshot(uint8_t *buf, const TkExplosionSnapshot *tke);
 int unpackTkExplosionSnapshot(const uint8_t *buf, size_t avail,
                               TkExplosionSnapshot *tke);
 int packGameEvent(uint8_t *buf, const GameEvent *ev);
-int unpackGameEvent(const uint8_t *buf, GameEvent *ev);
+int unpackGameEvent(const uint8_t *buf, size_t avail, GameEvent *ev);
 int packBaseSnapshot(uint8_t *buf, const BaseSnapshot *bs);
 int unpackBaseSnapshot(const uint8_t *buf, size_t avail, BaseSnapshot *bs);
 int packPillSnapshot(uint8_t *buf, const PillSnapshot *ps);

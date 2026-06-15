@@ -5012,19 +5012,24 @@ void transportUdpServerFuzzInit(ServerSim *sim) {
     netImpairInit(&srvImpairOut);
 }
 
-/* One datagram, as if received on the game socket from a LAN peer. buf is
- * copied into a mutable local because some handlers write into it in place. */
+/* One datagram, as if received on the game socket from a LAN peer. The buffer
+ * is heap-allocated to the EXACT input length (handlers need it mutable, and
+ * an exact size lets ASan's redzone catch any read/write past len — an
+ * oversized buffer would mask the very over-reads this target hunts). */
 void transportUdpServerFuzzProcessPacket(ServerSim *sim,
                                          const uint8_t *data, size_t size) {
-    uint8_t buf[2048];
+    uint8_t *buf;
     struct sockaddr_in from;
-    if (size == 0 || size > sizeof(buf)) return;
+    if (size == 0 || size > 65535) return;
+    buf = (uint8_t *)malloc(size);
+    if (buf == NULL) return;
     memcpy(buf, data, size);
     memset(&from, 0, sizeof(from));
     from.sin_family = AF_INET;
     from.sin_addr.s_addr = htonl(0x7f000001u); /* 127.0.0.1 */
     from.sin_port = htons((unsigned short)40000);
     serverProcessPacket(sim, buf, (int)size, &from);
+    free(buf);
 }
 #endif /* WB_FUZZ */
 

@@ -25,6 +25,7 @@ is the default because it needs no external driver.
 |---|---|
 | `fuzz_wire_codec` (tier 1) | The bounded generated `unpack*` codecs + `commandCodecDecode` — the single bounds-checked path Cluster A codegen produced. Pure, no context. Doubles as the architecture plan's A.5 differential guard. |
 | `fuzz_server_dispatch` (tier 2) | The full `serverProcessPacket` switch and the hand-written count-loops / chunk reassembly codegen did **not** touch (COMMAND_TICK, MAP_ACK, the reliable event loops, lobby/map handlers) — the highest remaining over-read surface. Runs socket-free and thread-free via the `WB_FUZZ`-gated seam. |
+| `fuzz_client_snapshot` | The client `PACKET_STATE_SNAPSHOT` decoder — specifically the count-driven reliable-event loop and its `unpackGameEvent` call (the suspected over-read at `transport_udp_client.c:~1550`). Input is the snapshot body; the seam frames a header and feeds it on an exact-size, ASan-guarded buffer. |
 
 ## Build
 
@@ -32,7 +33,7 @@ is the default because it needs no external driver.
 cmake -B build-fuzz -DWB_FUZZ=ON \
       -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 # Build just the fuzz targets (pulls only their library deps, not the whole game):
-cmake --build build-fuzz --target fuzz_wire_codec fuzz_server_dispatch
+cmake --build build-fuzz --target fuzz_wire_codec fuzz_server_dispatch fuzz_client_snapshot
 ```
 
 `WB_FUZZ` is a **dedicated build config** — when ON the whole build is
@@ -73,7 +74,8 @@ tests/fuzz/run_discovery.sh server_dispatch 300 build-fuzz
 
 `transport_udp_client.c:~1550` guards the reliable-event loop with
 `if (pos + 1 > len) break;` (one byte) but then calls `unpackGameEvent`, which
-`memcpy`s up to `gameEventDataSize(type)` bytes with no `avail` bound — a
-truncated event over-reads. That loop is reached through the snapshot handler,
-not the leaf in isolation; surfacing it cleanly is a motivating case for
-extending tier 2 with a client-snapshot dispatcher target.
+`memcpy`s up to `gameEventDataSize(type)` bytes (`GAME_EVENT_MAX_DATA` = 8 for
+unknown types) with no `avail` bound — a truncated final event over-reads the
+datagram. `fuzz_client_snapshot` exists to reach exactly this loop; discovery
+should find the truncated-event input that trips it. When it does, drop the
+minimized artifact into `crashes/` so the replay ctest guards the fix.

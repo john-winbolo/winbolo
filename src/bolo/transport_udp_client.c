@@ -1547,8 +1547,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         for (i = 0; i < reliableEventCount; i++) {
             uint32_t evSeq = reliableBaseSeq + (uint32_t)i;
             GameEvent ev;
-            if (pos + 1 > len) break;  /* Truncated packet — stop */
-            pos += unpackGameEvent(buf + pos, &ev);
+            int n = unpackGameEvent(buf + pos, (size_t)(len - pos), &ev);
+            if (n == 0) break;  /* Truncated event — stop */
+            pos += n;
             actuallyUnpacked++;
             /* Only apply events we haven't seen yet */
             if (evSeq >= c->reliableEventAck) {
@@ -1573,8 +1574,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         for (i = 0; i < mapEventCount; i++) {
             uint32_t evSeq = mapEventBaseSeq + (uint32_t)i;
             GameEvent ev;
-            if (pos + 1 > len) break;  /* Truncated packet — stop */
-            pos += unpackGameEvent(buf + pos, &ev);
+            int n = unpackGameEvent(buf + pos, (size_t)(len - pos), &ev);
+            if (n == 0) break;  /* Truncated event — stop */
+            pos += n;
             actuallyUnpackedMap++;
             if (evSeq >= c->mapEventAck) {
                 if (newEventCount < MAX_SNAPSHOT_EVENTS) {
@@ -3730,3 +3732,47 @@ uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t) {
         return (uint8_t)pct;
     }
 }
+
+#ifdef WB_FUZZ
+/* ================================================================
+ * Fuzz-only client-snapshot seam (hardening plan §1.2)
+ *
+ * Drives udpClientProcessPacket's PACKET_STATE_SNAPSHOT path with attacker-
+ * controlled bytes. udpClientProcessPacket and TransportUdpClientCtx have
+ * internal linkage, so the seam lives in this TU. Compiled only under
+ * -DWB_FUZZ; absent from every shipping build.
+ *
+ * The fuzz input is the snapshot *body* — the seam frames it with a valid
+ * STATE_SNAPSHOT header so every input reaches the decoder. Crucially the
+ * datagram is heap-allocated to its EXACT length: the over-read this target
+ * hunts (the reliable-event loop's 1-byte guard vs. unpackGameEvent's
+ * up-to-8-byte memcpy) only trips ASan's redzone when the buffer ends exactly
+ * at len. An oversized buffer would silently absorb the read and hide the bug.
+ * ================================================================ */
+static TransportUdpClientCtx g_fuzzClientCtx;
+
+void transportUdpClientFuzzInit(ClientSim *sim) {
+    memset(&g_fuzzClientCtx, 0, sizeof(g_fuzzClientCtx));
+    g_fuzzClientCtx.sock = INVALID_SOCKET;
+    g_fuzzClientCtx.joinState = UDP_CLIENT_CONNECTED;
+    g_fuzzClientCtx.clientSim = sim;
+}
+
+void transportUdpClientFuzzProcessSnapshot(const uint8_t *body, size_t size) {
+    size_t n = (size_t)PACKET_HEADER_SIZE + size;
+    uint8_t *buf = (uint8_t *)malloc(n);   /* exact size -> ASan-guarded tail */
+    if (buf == NULL) return;
+    buf[0] = (uint8_t)BOLO_NEW_MAGIC_0;
+    buf[1] = (uint8_t)BOLO_NEW_MAGIC_1;
+    buf[2] = (uint8_t)PACKET_STATE_SNAPSHOT;
+    buf[3] = 0;
+    buf[4] = 0; buf[5] = 0; buf[6] = 0; buf[7] = 1; /* seq=1 (unpackU32 buf+4) */
+    if (size > 0) memcpy(buf + PACKET_HEADER_SIZE, body, size);
+    /* Re-arm the stale-snapshot high-water gate so each input decodes fresh. */
+    g_fuzzClientCtx.lastSnapshotSeq = 0;
+    g_fuzzClientCtx.lastSnapshotServerTick = 0;
+    g_fuzzClientCtx.hasSnapshot = false;
+    udpClientProcessPacket(&g_fuzzClientCtx, buf, (int)n);
+    free(buf);
+}
+#endif /* WB_FUZZ */
