@@ -301,6 +301,12 @@ SDL_Texture *sdl3ImguiGetPlatformIcon(uint8_t clientType);
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry);
 
+/* Draws the country flag for an alpha-2 code and, on hover, a localized
+ * country-name tooltip. Returns true iff a flag image was drawn (false for
+ * the "XX" sentinel, a null/too-short code, or a missing SVG). Caller owns
+ * layout (SameLine, cursor positioning). */
+bool drawCountryFlagWithTip(const char *countryCode);
+
 #ifdef __cplusplus
 }
 #endif

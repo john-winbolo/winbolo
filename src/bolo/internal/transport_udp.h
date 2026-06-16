@@ -247,6 +247,15 @@ void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
                                    int *snapshotsRecv, int *snapshotsLost,
                                    int *snapshotsLostTotal);
 
+/* Measurement-only client timing estimates (client_timing.{c,h}):
+ * clock offset in 10ms server-tick units, snapshot inter-arrival jitter in
+ * milliseconds, RTT floor in milliseconds, and pipeline depth in server-tick
+ * units.  Out pointers may be NULL.  Nothing consumes these to alter timing
+ * or pacing yet — they back the Net Info readout. */
+void transportUdpClientGetTimingStats(Transport *t, int *clockOffsetTicks,
+                                      int *jitterMs, int *rttMs,
+                                      int *pipelineDepthTicks);
+
 /* Enqueue a ClientCommand on the reliable carrier. Assigns cmdSeq,
  * appends to the per-connection out-queue, and eager-sends a
  * PACKET_COMMAND_TICK if the queue was empty. Retransmits until the

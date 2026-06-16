@@ -531,6 +531,7 @@ int main(int argc, char *argv[]) {
           DWORD tick = SDL_GetTicks();
           clientMutexWaitFor();
           if (finishedLoop == FALSE) {
+            clientSimRenderPrepare(cs, tick);
             clientRenderFrame(cs, redraw);
           }
           clientMutexRelease();

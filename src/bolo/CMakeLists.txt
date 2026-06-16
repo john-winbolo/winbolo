@@ -36,6 +36,7 @@ add_library(bolo_static STATIC
     client_sim_control.c
     client_snapshot.c
     client_state.c
+    client_timing.c
     client_ui_events.c
     crc.c
     debug_file_output.c

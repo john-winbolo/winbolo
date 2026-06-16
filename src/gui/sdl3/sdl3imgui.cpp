@@ -37,6 +37,10 @@
 /* SDL3 before bolo headers — see note above */
 #include <SDL3/SDL.h>
 
+#include <cctype>   /* toupper — country-code normalization */
+#include <cstdlib>  /* bsearch — country-name lookup */
+#include <cstring>  /* strcmp — bsearch comparator */
+
 #include "../../common/wb_log.h"
 
 /* ImGui */
@@ -55,6 +59,11 @@ extern "C" {
 #include "../gamefront.h"
 #include "../lang.h"
 }
+
+/* Maps an uppercased alpha-2 code to its localized STR_COUNTRY_* name id
+ * (generated; sorted by code for bsearch). Needs langid + STR_COUNTRY_*
+ * from lang.h above. */
+#include "countries.inc"
 
 /* Our own header */
 #include "sdl3imgui.h"
@@ -878,6 +887,18 @@ static void renderNetInfoContent(ClientSim *cs) {
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_RECONCILE, &args));
     }
 
+    /* Measurement-only timing estimator (client_timing). Dev-internal
+     * readout to validate the estimates on real / -netimpair links before
+     * anything consumes them — plain literals, not localized. */
+    if (clientSimHasTransport(cs)) {
+        int clockOffsetTicks = 0, jitterMs = 0, timingRttMs = 0, depthTicks = 0;
+        clientSimGetTimingStats(cs, &clockOffsetTicks, &jitterMs, &timingRttMs,
+                                &depthTicks);
+        ImGui::Text("Timing: rtt %dms  jitter %dms", timingRttMs, jitterMs);
+        ImGui::Text("  clock off %dt  pipe depth %dt", clockOffsetTicks,
+                    depthTicks);
+    }
+
     /* Ping graph */
     pingGraphSample(ping, bpsIn, bpsOut);
     if (s_pingHistoryCount > 1) {
@@ -1369,9 +1390,7 @@ static void renderPlayersPanel(ClientSim *cs) {
         /* Flag icon — skipped for bots (no real country; renderPlayerName
          * below shows a brain icon in the platform-icon slot instead). */
         if (!(s_playerFlags[i] & PLAYER_FLAG_BOT) && s_playerCountry[i][0] != '\0') {
-            SDL_Texture *flagTex = flagsGetTexture(s_playerCountry[i]);
-            if (flagTex) {
-                ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+            if (drawCountryFlagWithTip(s_playerCountry[i])) {
                 ImGui::SameLine();
             }
         }
@@ -2709,9 +2728,7 @@ static void renderMenuBar(ClientSim *cs) {
              * takes the platform-icon slot and stands in for both. */
             if (s_playerEnabled[i] && !(s_playerFlags[i] & PLAYER_FLAG_BOT)
                 && s_playerCountry[i][0] != '\0') {
-                SDL_Texture *flagTex = flagsGetTexture(s_playerCountry[i]);
-                if (flagTex) {
-                    ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                if (drawCountryFlagWithTip(s_playerCountry[i])) {
                     ImGui::SameLine();
                 }
             }
@@ -4558,10 +4575,36 @@ static const ImVec4 SUPPORTER_TINT = ImVec4(1.00f, 0.84f, 0.20f, 1.00f);
 static const ImVec4 NO_TINT        = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
 
 static const char *platformName(uint8_t ct) {
-    static const char *names[CLIENT_TYPE_COUNT] = {
-        "", "Windows", "Linux", "macOS", "iOS", "Android", "Steam Deck", "Web"
+    static const langid ids[CLIENT_TYPE_COUNT] = {
+        0, STR_PLATFORM_WINDOWS, STR_PLATFORM_LINUX, STR_PLATFORM_MACOS,
+        STR_PLATFORM_IOS, STR_PLATFORM_ANDROID, STR_PLATFORM_STEAMDECK,
+        STR_PLATFORM_WEB
     };
-    return (ct < CLIENT_TYPE_COUNT) ? names[ct] : "";
+    if (ct == 0 || ct >= CLIENT_TYPE_COUNT) return "";   /* CLIENT_TYPE_UNKNOWN -> no name */
+    return langGetText(ids[ct]);
+}
+
+static int countryNameCmp(const void *key, const void *elem) {
+    return strcmp((const char *)key, ((const CountryNameEntry *)elem)->code);
+}
+
+bool drawCountryFlagWithTip(const char *countryCode) {
+    if (!countryCode || countryCode[0] == '\0' || countryCode[1] == '\0')
+        return false;
+    char up[3] = { (char)toupper((unsigned char)countryCode[0]),
+                   (char)toupper((unsigned char)countryCode[1]), '\0' };
+    if (up[0] == 'X' && up[1] == 'X') return false;        /* sentinel */
+    SDL_Texture *flagTex = flagsGetTexture(countryCode);
+    if (!flagTex) return false;
+    ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+    if (ImGui::IsItemHovered()) {
+        const CountryNameEntry *e = (const CountryNameEntry *)bsearch(
+            up, kCountryNames, K_COUNTRY_NAMES_SIZE,
+            sizeof(kCountryNames[0]), countryNameCmp);
+        if (e) ImGui::SetTooltip("%s", langGetText(e->id));
+        else   ImGui::SetTooltip("%s", up);   /* fall back to uppercase code */
+    }
+    return true;
 }
 
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
@@ -4572,7 +4615,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
         /* Bot slot: brain icon stands in for the platform badge and the
          * WBN/Steam badges are skipped — a bot can never be either. */
         ImGui::Image((ImTextureID)s_iconBrain, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("AI player");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_AI));
         ImGui::SameLine();
     } else {
         SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
@@ -4586,10 +4629,13 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                                ImVec4(0, 0, 0, 0), tint);
             if (ImGui::IsItemHovered()) {
                 const char *plat = platformName(clientType);
-                if (flags & PLAYER_FLAG_SUPPORTER)
-                    ImGui::SetTooltip("%s — Supporter", plat);
-                else
+                if (flags & PLAYER_FLAG_SUPPORTER) {
+                    MessageArgs args = {};
+                    SDL_snprintf(args.string1, sizeof(args.string1), "%s", plat);
+                    ImGui::SetTooltip("%s", langGetTextFmt(STR_PLAYER_TIP_SUPPORTER_FMT, &args));
+                } else {
                     ImGui::SetTooltip("%s", plat);
+                }
             }
             ImGui::SameLine();
         }
@@ -4599,10 +4645,16 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
              * otherwise — same scheme as the platform icon above. */
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
             imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
             ImGui::SameLine();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
             ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
+                                                    ? STR_PLAYER_TIP_STEAM_LINKED
+                                                    : STR_PLAYER_TIP_STEAM_BUILD));
             ImGui::SameLine();
         }
     }
@@ -4614,12 +4666,10 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
     if (name && name[0] != '\0') {
         ImGui::TextUnformatted(name);
         if (showCountry && countryCode && countryCode[0] != '\0' &&
-            !(countryCode[0] == 'X' && countryCode[1] == 'X')) {
-            SDL_Texture *flagTex = flagsGetTexture(countryCode);
-            if (flagTex) {
-                ImGui::SameLine();
-                ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
-            }
+            !(countryCode[0] == 'X' && countryCode[1] == 'X') &&
+            flagsGetTexture(countryCode)) {
+            ImGui::SameLine();
+            drawCountryFlagWithTip(countryCode);
         }
     }
 }

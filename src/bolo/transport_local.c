@@ -163,6 +163,14 @@ static bool localTick(void *ctx) {
     return TRUE;
 }
 
+/* The local (in-process) transport has no socket to drain — its snapshots
+ * are pulled and applied inline in localTick — so the render-path drain is a
+ * no-op for it.  Remote tanks on a listen-server host still interpolate via
+ * the render seam; only the socket receive has nothing to do here. */
+static void localDrainSnapshots(void *ctx) {
+    (void)ctx;
+}
+
 Transport transportLocalCreate(ServerSim *sim, ClientSim *cs, BYTE playerNum) {
     Transport t;
     TransportLocalCtx *lctx = (TransportLocalCtx *)malloc(sizeof(TransportLocalCtx));
@@ -176,6 +184,7 @@ Transport transportLocalCreate(ServerSim *sim, ClientSim *cs, BYTE playerNum) {
     t.sendInput = localSendInput;
     t.tick = localTick;
     t.getSnapshot = localGetSnapshot;
+    t.drainSnapshots = localDrainSnapshots;
     t.ctx = lctx;
     return t;
 }

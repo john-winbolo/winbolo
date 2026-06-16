@@ -95,7 +95,7 @@ void interpCreate(InterpContext *ctx, BYTE localPlayer) {
 }
 
 void interpUpdate(InterpContext *ctx, BYTE playerNum,
-                  const InterpSnapshot *snap, uint32_t tick) {
+                  const InterpSnapshot *snap, uint32_t tick, uint32_t nowMs) {
   InterpPlayer *p;
   if (playerNum >= MAX_TANKS || playerNum == ctx->localPlayer) {
     return;
@@ -109,22 +109,36 @@ void interpUpdate(InterpContext *ctx, BYTE playerNum,
     p->curr = *snap;
     p->hasData = TRUE;
     p->snapshotTick = tick;
+    p->currArrivalMs = nowMs;
+    p->prevArrivalMs = nowMs;
     p->missedTicks = 0;
+    return;
+  }
+
+  /* Idempotent on serverTick: a snapshot that is not strictly newer than the
+   * last applied one is a re-delivery of an already-applied frame (the same
+   * packet drained from both the pump and the render seam, or a reorder).
+   * Skipping it keeps the prev→curr→pending pipeline from shifting twice. */
+  if (tick <= p->snapshotTick) {
     return;
   }
 
   if (p->hasPending) {
     /* Shift: curr → prev, pending → curr, new → pending */
     p->prev = p->curr;
+    p->prevArrivalMs = p->currArrivalMs;
     p->hasPrev = TRUE;
     p->curr = p->pending;
+    p->currArrivalMs = p->pendingArrivalMs;
   } else {
     /* Second snapshot: curr → prev, new goes to pending */
     p->prev = p->curr;
+    p->prevArrivalMs = p->currArrivalMs;
     p->hasPrev = TRUE;
   }
 
   p->pending = *snap;
+  p->pendingArrivalMs = nowMs;
   p->hasPending = TRUE;
   p->snapshotTick = tick;
   p->missedTicks = 0;
@@ -251,4 +265,159 @@ bool interpIsAlive(const InterpContext *ctx, BYTE playerNum) {
     return p->pending.alive;
   }
   return p->curr.alive;
+}
+
+/* Above this a snapshot inter-arrival interval is treated as garbage/stale
+ * and the smooth path bows out (a real interval is ~20ms; loss stretches it,
+ * but past this the discrete freeze owns the motion). */
+#define INTERP_MAX_INTERVAL_MS 200
+
+/* Lerp one snapshot toward another at t in [0,1] (t clamped by the caller). */
+static void interpLerpSnap(const InterpSnapshot *a, const InterpSnapshot *b,
+                           float t, WORLD *outX, WORLD *outY,
+                           TURNTYPE *outAngle, bool *outOnBoat) {
+  *outX = (WORLD)((float)a->worldX + ((float)b->worldX - (float)a->worldX) * t);
+  *outY = (WORLD)((float)a->worldY + ((float)b->worldY - (float)a->worldY) * t);
+  *outAngle = interpAngleLerp(a->angle, b->angle, t);
+  *outOnBoat = (t < 0.5f) ? a->onBoat : b->onBoat;
+}
+
+bool interpGetRenderPosition(const InterpContext *ctx, BYTE playerNum,
+                             uint32_t renderNowMs, float extraDelayMs,
+                             WORLD *outX, WORLD *outY,
+                             TURNTYPE *outAngle, bool *outOnBoat) {
+  const InterpPlayer *p;
+  int32_t target;
+  int32_t toNewest;
+
+  if (playerNum >= MAX_TANKS || playerNum == ctx->localPlayer) {
+    return FALSE;
+  }
+  p = &ctx->players[playerNum];
+
+  /* Need a forward buffer (curr + pending) to interpolate toward; a long
+   * stall or a dead player bows out to the discrete/dead handling. */
+  if (!p->hasData || !p->hasPending) {
+    return FALSE;
+  }
+  if (p->missedTicks > INTERP_MAX_MISSED_TICKS) {
+    return FALSE;
+  }
+  if (!p->pending.alive) {
+    return FALSE;
+  }
+
+  /* Render one nominal snapshot behind the newest arrival, plus the adaptive
+   * extra delay.  Signed arithmetic keeps the SDL tick wraparound defined. */
+  target = (int32_t)(renderNowMs -
+                     (uint32_t)((float)INTERP_NOMINAL_SNAPSHOT_MS + extraDelayMs));
+
+  /* At/after the newest sample: nothing newer to move toward — clamp to the
+   * newest (pending).  This is the brief-loss case; clamping avoids snap-back. */
+  toNewest = (int32_t)((uint32_t)target - p->pendingArrivalMs);
+  if (toNewest >= 0) {
+    *outX = p->pending.worldX;
+    *outY = p->pending.worldY;
+    *outAngle = p->pending.angle;
+    *outOnBoat = p->pending.onBoat;
+    return TRUE;
+  }
+
+  /* curr → pending segment. */
+  {
+    int32_t fromCurr = (int32_t)((uint32_t)target - p->currArrivalMs);
+    if (fromCurr >= 0) {
+      uint32_t interval = p->pendingArrivalMs - p->currArrivalMs;
+      float t;
+      if (interval == 0 || interval > INTERP_MAX_INTERVAL_MS) {
+        return FALSE;
+      }
+      t = (float)fromCurr / (float)interval;
+      if (t > 1.0f) t = 1.0f;
+      interpLerpSnap(&p->curr, &p->pending, t, outX, outY, outAngle, outOnBoat);
+      return TRUE;
+    }
+  }
+
+  /* prev → curr segment (reached when the extra delay pushes the target back
+   * a full snapshot, i.e. depth 2). */
+  if (p->hasPrev) {
+    int32_t fromPrev = (int32_t)((uint32_t)target - p->prevArrivalMs);
+    uint32_t interval = p->currArrivalMs - p->prevArrivalMs;
+    if (interval == 0 || interval > INTERP_MAX_INTERVAL_MS) {
+      return FALSE;
+    }
+    if (fromPrev <= 0) {
+      /* Older than prev: clamp to prev (deepest the buffer holds). */
+      *outX = p->prev.worldX;
+      *outY = p->prev.worldY;
+      *outAngle = p->prev.angle;
+      *outOnBoat = p->prev.onBoat;
+      return TRUE;
+    }
+    {
+      float t = (float)fromPrev / (float)interval;
+      if (t > 1.0f) t = 1.0f;
+      interpLerpSnap(&p->prev, &p->curr, t, outX, outY, outAngle, outOnBoat);
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+InterpRenderDecision interpRenderControl(InterpRenderCtl *ctl,
+                                         float jitterMs, uint32_t nowMs) {
+  InterpRenderDecision d;
+  int32_t dt;
+  float target;
+  float cur;
+  float diff;
+
+  /* Frame-pacing / stress gate: the first frame, a zero/negative gap, or a
+   * gap spike means the render clock can't smoothly drive fractional t, so
+   * this frame uses the discrete apply (today's behaviour). */
+  dt = (ctl->lastRenderMs == 0) ? 0 : (int32_t)(nowMs - ctl->lastRenderMs);
+  d.discrete = (ctl->lastRenderMs == 0) || dt <= 0 || dt > INTERP_FRAME_STRESS_MS;
+
+  /* Target extra delay: only jitter above the quantization floor is real and
+   * allowed to deepen the buffer, bounded to one extra snapshot. */
+  target = jitterMs - (float)INTERP_JITTER_FLOOR_MS;
+  if (target < 0.0f) target = 0.0f;
+  if (target > (float)INTERP_MAX_EXTRA_DELAY_MS) {
+    target = (float)INTERP_MAX_EXTRA_DELAY_MS;
+  }
+
+  /* Slew currentDelayMs toward target with a hysteresis deadband and an
+   * asymmetric rate limit: slow to grow (push past today's depth), fast to
+   * shrink (relax toward today's one-snapshot behaviour).  The controller is
+   * frozen on a stressed frame so a spike can't ratchet the depth. */
+  cur = ctl->currentDelayMs;
+  if (!d.discrete) {
+    diff = target - cur;
+    if (diff > INTERP_DEPTH_HYST_MS) {
+      /* Grow only when the target meaningfully exceeds the current depth
+       * (deadband suppresses growth on tiny jitter), and only slowly. */
+      float step = INTERP_DEPTH_GROW_MS_PER_S * (float)dt / 1000.0f;
+      cur += (diff < step) ? diff : step;
+    } else if (diff < 0.0f) {
+      /* Relax toward today's behaviour with no deadband — quick to shrink,
+       * landing exactly on the target so a clean link returns to depth 1. */
+      float step = INTERP_DEPTH_SHRINK_MS_PER_S * (float)dt / 1000.0f;
+      cur += (-diff < step) ? diff : -step;
+    }
+    if (cur < 0.0f) cur = 0.0f;
+    if (cur > (float)INTERP_MAX_EXTRA_DELAY_MS) {
+      cur = (float)INTERP_MAX_EXTRA_DELAY_MS;
+    }
+    ctl->currentDelayMs = cur;
+    ctl->lastRenderMs = nowMs;
+  } else {
+    /* Anchor the clock so the next frame measures a real gap, but leave the
+     * depth untouched. */
+    ctl->lastRenderMs = nowMs;
+  }
+
+  d.extraDelayMs = ctl->currentDelayMs;
+  return d;
 }

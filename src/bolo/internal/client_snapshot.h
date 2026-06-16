@@ -41,4 +41,10 @@ void clientApplySnapshot(struct ClientSim *cs,
                          const GameEvent *events, int eventCount,
                          BYTE playerNum);
 
+/* Per-render-frame display update for other players' tanks: interpolates
+ * each remote tank against a render clock and writes the result to the
+ * players struct.  Moved out of clientApplySnapshot's per-arrival path. */
+void clientSnapshotRenderInterp(struct ClientSim *cs, uint32_t nowMs,
+                                float extraDelayMs, bool discrete);
+
 #endif /* CLIENT_SNAPSHOT_H */

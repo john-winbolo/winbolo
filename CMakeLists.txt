@@ -2569,6 +2569,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
+    tests/unit/test_ping_smoother.c
+    tests/unit/test_client_timing.c
+    tests/unit/test_interp_render.c
     tests/unit/test_snapshot_compaction.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
@@ -2579,6 +2582,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_join.c
     tests/unit/test_loopback_join_loss.c
     tests/unit/test_loopback_lobby_running_loss.c
+    tests/unit/test_gate1_integration.c
     tests/unit/test_join_version_gate.c
     tests/unit/test_join_rate_limit.c
     tests/unit/test_cookie_handshake.c
@@ -2885,12 +2889,17 @@ set(_unit_test_names
     catchup_ignores_redundant_duplicates
     jitter_buffer_grow
     shell_projection
+    ping_smoother
+    client_timing
+    interp_render
     snapshot_compaction
     edge_send_predicate
     error_smoothing
     loopback_join
     loopback_join_loss
     loopback_lobby_running_loss
+    gate1_viewtick_loopback
+    gate1_host_noop
     join_version_gate
     join_rate_limit
     cookie_handshake

@@ -4614,14 +4614,12 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                      * chip / gear — keeps every glyph in the row
                      * landing on a consistent optical center. */
                     const float iconBiasY = 2.0f;
-                    if (clientSimGetLobbySlot(cs, (BYTE)(i))->countryCode[0] != '\0') {
-                        SDL_Texture *flagTex = flagsGetTexture(clientSimGetLobbySlot(cs, (BYTE)(i))->countryCode);
-                        if (flagTex) {
-                            cyAbs((float)FLAG_HEIGHT);
-                            ImGui::SetCursorPosY(ImGui::GetCursorPosY() - iconBiasY);
-                            ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
-                            ImGui::SameLine();
-                        }
+                    const char *cc = clientSimGetLobbySlot(cs, (BYTE)(i))->countryCode;
+                    if (cc[0] != '\0' && !(cc[0] == 'X' && cc[1] == 'X') && flagsGetTexture(cc)) {
+                        cyAbs((float)FLAG_HEIGHT);
+                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - iconBiasY);
+                        drawCountryFlagWithTip(cc);
+                        ImGui::SameLine();
                     }
                     /* All WBN/Steam/platform icons in renderPlayerName are
                      * WBN_ICON_SIZE tall — center them as one block. */
@@ -6703,9 +6701,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                 /* Player Name (with flag) */
                                 ImGui::TableSetColumnIndex(0);
                                 if (slot->countryCode[0] != '\0') {
-                                    SDL_Texture *flagTex = flagsGetTexture(slot->countryCode);
-                                    if (flagTex) {
-                                        ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                                    if (drawCountryFlagWithTip(slot->countryCode)) {
                                         ImGui::SameLine();
                                     }
                                 }
@@ -7239,9 +7235,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         /* Player Name (with flag icon) */
                         ImGui::TableSetColumnIndex(1);
                         if (slot->countryCode[0] != '\0') {
-                            SDL_Texture *flagTex = flagsGetTexture(slot->countryCode);
-                            if (flagTex) {
-                                ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                            if (drawCountryFlagWithTip(slot->countryCode)) {
                                 ImGui::SameLine();
                             }
                         }

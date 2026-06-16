@@ -368,6 +368,22 @@ int run_catchup_ignores_redundant_duplicates(void);
 int run_jitter_buffer_grow(void);
 int run_shell_projection(void);
 
+/* Ping RTT smoothers (test_ping_smoother.c): the min-over-window and EWMA
+ * primitives — window-minimum tracking as samples slide out, EWMA constant
+ * convergence, and a monotonic overshoot-free step response. */
+int run_ping_smoother(void);
+
+/* Client timing estimator (test_client_timing.c): min-over-window clock
+ * offset / pipeline depth / RTT and inter-arrival jitter over synthetic clean
+ * and jittered snapshot sequences — floor convergence and spike rejection. */
+int run_client_timing(void);
+
+/* Render-time interpolation (test_interp_render.c): interpUpdate serverTick
+ * idempotency seq-guard, the render-clock fractional-t mapping, and the
+ * adaptive display-delay controller (bounded <=1 extra snapshot, hysteresis,
+ * asymmetric slew, frame-spike safe-degrade). */
+int run_interp_render(void);
+
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */
@@ -384,6 +400,12 @@ int run_error_smoothing(void);
 int run_loopback_join(void);
 int run_loopback_join_loss(void);
 int run_loopback_lobby_running_loss(void);
+
+/* Gate-#1 render-path integration (test_gate1_integration.c): the viewTick
+ * ±1-snapshot invariant over the real loopback transport, and the
+ * listen-server host render-prepare no-op (own tank + recon unchanged). */
+int run_gate1_viewtick_loopback(void);
+int run_gate1_host_noop(void);
 int run_join_version_gate(void);
 
 /* Per-source-IP JOIN rate limit (test_join_rate_limit.c): a burst of valid
