@@ -1131,8 +1131,17 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             len >= PACKET_HEADER_SIZE + 9) {
             int pos = PACKET_HEADER_SIZE;
             uint32_t mapSize;
+            BYTE assignedSlot = buf[pos++];
 
-            c->playerNum = buf[pos++];
+            /* A valid server only ever assigns slots 0..MAX_TANKS-1. An
+             * out-of-range slot from a hostile or buggy server would make
+             * myPlayerNum index the player/tank/lobby arrays out of bounds
+             * throughout the client — reject the join instead. */
+            if (assignedSlot >= MAX_TANKS) {
+                c->joinState = UDP_CLIENT_ERROR;
+                break;
+            }
+            c->playerNum = assignedSlot;
 
             /* Slot-assignment funnel — same function the SP
              * local-transport path calls.  Both transports MUST funnel
