@@ -2010,7 +2010,10 @@ static void renderAllianceRequest(ClientSim *cs) {
     if (ImGui::Begin(title, &s_allianceVisible,
                      ImGuiWindowFlags_AlwaysAutoResize |
                      ImGuiWindowFlags_NoCollapse |
-                     ImGuiWindowFlags_NoSavedSettings)) {
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus |
+                     ImGuiWindowFlags_NoNavInputs)) {
         autoPanelCapture(s_allianceLayout);
         {
             MessageArgs args = {};
@@ -2026,9 +2029,10 @@ static void renderAllianceRequest(ClientSim *cs) {
         }
         imguiHandOnHover();
         ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0)))
+        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0))) {
             s_allianceVisible = false;
-            imguiHandOnHover();
+        }
+        imguiHandOnHover();
     }
     ImGui::End();
     if (!s_allianceVisible) autoPanelReset(s_allianceLayout);
