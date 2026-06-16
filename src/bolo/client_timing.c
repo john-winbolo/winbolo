@@ -111,6 +111,7 @@ void clientTimingSeedFromJoin(ClientTiming *t, uint32_t serverTickAtAccept,
 
 void clientTimingOnSnapshot(ClientTiming *t, uint32_t serverTick,
                             uint32_t lastProcessedInput,
+                            uint32_t lastSentInputTick,
                             uint32_t localArrivalTick) {
     int32_t offset;
     int32_t depth;
@@ -123,10 +124,12 @@ void clientTimingOnSnapshot(ClientTiming *t, uint32_t serverTick,
     ctWindowPush(&t->offsetWin, offset);
     t->offsetTicks = ctWindowMin(&t->offsetWin);
 
-    /* Pipeline depth in server-tick units.  Negative is not expected
-     * (lastProcessedInput trails serverTick) but is left signed so a
-     * transient reorder doesn't wrap. */
-    depth = (int32_t)serverTick - (int32_t)lastProcessedInput;
+    /* Pipeline depth in InputPacket.tick units: the inputs the client has sent
+     * but the server has not yet processed.  Both terms share the input-tick
+     * clock, so this is epoch-free.  Negative is not expected (lastProcessedInput
+     * trails lastSentInputTick) but is left signed so a transient reorder doesn't
+     * wrap. */
+    depth = (int32_t)lastSentInputTick - (int32_t)lastProcessedInput;
     ctWindowPush(&t->depthWin, depth);
     t->depthTicks = ctWindowMin(&t->depthWin);
 

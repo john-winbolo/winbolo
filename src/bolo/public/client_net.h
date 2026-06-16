@@ -284,9 +284,10 @@ void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,
 
 /* Measurement-only client timing estimates: clock offset (10ms server-tick
  * units), snapshot inter-arrival jitter (ms), RTT floor (ms), and pipeline
- * depth (server-tick units).  All min-over-window smoothed.  Out pointers may
- * be NULL; all zero on a non-UDP or absent transport.  Surfaced in Net Info;
- * nothing consumes them to alter timing yet. */
+ * depth (10ms input-tick units — sent-but-unprocessed inputs in flight).  All
+ * min-over-window smoothed.  Out pointers may be NULL; all zero on a non-UDP or
+ * absent transport.  Surfaced in Net Info; nothing consumes them to alter
+ * timing yet. */
 void clientSimGetTimingStats(ClientSim *cs, int *clockOffsetTicks,
                              int *jitterMs, int *rttMs,
                              int *pipelineDepthTicks);

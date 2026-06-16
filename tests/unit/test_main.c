@@ -272,6 +272,8 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_join",                           run_loopback_join                           },
     { "loopback_join_loss",                      run_loopback_join_loss                      },
     { "loopback_lobby_running_loss",             run_loopback_lobby_running_loss             },
+    { "gate1_viewtick_loopback",                 run_gate1_viewtick_loopback                 },
+    { "gate1_host_noop",                         run_gate1_host_noop                         },
     { "join_version_gate",                       run_join_version_gate                       },
     { "join_rate_limit",                         run_join_rate_limit                         },
     { "cookie_handshake",                        run_cookie_handshake                        },

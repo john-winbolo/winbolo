@@ -98,6 +98,12 @@ typedef struct {
     /* Input redundancy ring buffer */
     InputPacket inputRing[CLIENT_INPUT_RING_SIZE];
     uint32_t inputRingCount;  /* Total inputs recorded */
+    uint32_t lastSentInputTick; /* tick of the most recent input written to the
+                                 * ring — the newest input the client has put on
+                                 * the wire, in InputPacket.tick/simTickCounter
+                                 * space.  Differenced against the snapshot
+                                 * header's lastProcessedInput (same clock) for
+                                 * the estimator's pipeline depth. */
 
     /* Latest received snapshot */
     bool hasSnapshot;
@@ -424,6 +430,7 @@ static void udpClientRecordInputInternal(TransportUdpClientCtx *c,
         stamped.pingMs = c->pingMs;
         stamped.viewTick = clientSimGetViewTick(c->clientSim);
         c->inputRing[c->inputRingCount % CLIENT_INPUT_RING_SIZE] = stamped;
+        c->lastSentInputTick = stamped.tick;
     }
     c->inputRingCount++;
 }
@@ -1445,11 +1452,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
         }
         c->lastSnapshotServerTick = c->snapshotHdr.serverTick;
-        /* Refine the timing estimator: clock offset and pipeline depth from
-         * the header's serverTick/lastProcessedInput, inter-arrival jitter
-         * from the gap since the previous snapshot's local arrival tick. */
+        /* Refine the timing estimator: clock offset from the header's
+         * serverTick vs local arrival tick, pipeline depth from the newest
+         * sent input tick vs the header's lastProcessedInput (both in
+         * InputPacket.tick space), inter-arrival jitter from the gap since the
+         * previous snapshot's local arrival tick. */
         clientTimingOnSnapshot(&c->timing, c->snapshotHdr.serverTick,
-                               c->snapshotHdr.lastProcessedInput, c->localTick);
+                               c->snapshotHdr.lastProcessedInput,
+                               c->lastSentInputTick, c->localTick);
         c->snapshotsRecvThisSec++;
         tankCount = buf[pos++];
         shellCount = buf[pos++];

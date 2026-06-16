@@ -400,6 +400,12 @@ int run_error_smoothing(void);
 int run_loopback_join(void);
 int run_loopback_join_loss(void);
 int run_loopback_lobby_running_loss(void);
+
+/* Gate-#1 render-path integration (test_gate1_integration.c): the viewTick
+ * ±1-snapshot invariant over the real loopback transport, and the
+ * listen-server host render-prepare no-op (own tank + recon unchanged). */
+int run_gate1_viewtick_loopback(void);
+int run_gate1_host_noop(void);
 int run_join_version_gate(void);
 
 /* Per-source-IP JOIN rate limit (test_join_rate_limit.c): a burst of valid

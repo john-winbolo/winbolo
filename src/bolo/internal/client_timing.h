@@ -69,9 +69,12 @@ typedef struct {
     ClientTimingWindow offsetWin;
     int32_t offsetTicks;  /* cached floor (min), or the join seed pre-snapshot */
 
-    /* Pipeline depth = serverTick - lastProcessedInput, in server-tick
-     * (10ms) units: how far the server's clock leads the last input it has
-     * processed from us.  Min-over-window tracks the floor depth. */
+    /* Pipeline depth = lastSentInputTick - lastProcessedInput, in
+     * InputPacket.tick (10ms) units: the count of inputs the client has sent
+     * but the server has not yet processed — the real in-flight depth.  Both
+     * terms share the input-tick clock, so this is epoch-free (unlike
+     * serverTick - lastProcessedInput, which mixes the server's tick clock with
+     * the input-tick clock).  Min-over-window tracks the floor depth. */
     ClientTimingWindow depthWin;
     int32_t depthTicks;   /* cached floor (min) */
 
@@ -104,11 +107,13 @@ void clientTimingReset(ClientTiming *t);
 void clientTimingSeedFromJoin(ClientTiming *t, uint32_t serverTickAtAccept,
                               uint32_t joinRttTicks);
 
-/* Fold one snapshot header: refines the clock offset and pipeline depth
- * from (serverTick, lastProcessedInput), and the inter-arrival jitter from
- * the gap since the previous snapshot's localArrivalTick. */
+/* Fold one snapshot header: refines the clock offset from (serverTick,
+ * localArrivalTick), the pipeline depth from (lastSentInputTick,
+ * lastProcessedInput) — both in InputPacket.tick space — and the inter-arrival
+ * jitter from the gap since the previous snapshot's localArrivalTick. */
 void clientTimingOnSnapshot(ClientTiming *t, uint32_t serverTick,
                             uint32_t lastProcessedInput,
+                            uint32_t lastSentInputTick,
                             uint32_t localArrivalTick);
 
 /* Fold one RTT sample (milliseconds) — the same raw pong sample the ping
@@ -120,7 +125,7 @@ void clientTimingOnRtt(ClientTiming *t, uint16_t rttMs);
 /* Clock offset, signed, in 10ms tick units (see struct comment). */
 int32_t clientTimingClockOffsetTicks(const ClientTiming *t);
 
-/* Pipeline depth, in server-tick (10ms) units. */
+/* Pipeline depth, in InputPacket.tick (10ms) units. */
 int32_t clientTimingPipelineDepthTicks(const ClientTiming *t);
 
 /* Snapshot inter-arrival jitter, in milliseconds (gap spread * 10ms/tick). */

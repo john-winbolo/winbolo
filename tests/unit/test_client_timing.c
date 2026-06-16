@@ -5,9 +5,10 @@
  *
  * Model recap (see client_timing.h): clock offset = localArrivalTick -
  * serverTick (both 10ms/100Hz counters, no conversion), min-over-window;
- * pipeline depth = serverTick - lastProcessedInput; inter-arrival jitter =
- * max-min spread of the per-snapshot local-tick gap; RTT = min-over-window
- * of raw pong samples.
+ * pipeline depth = lastSentInputTick - lastProcessedInput (both in the
+ * InputPacket.tick clock, so epoch-free); inter-arrival jitter = max-min
+ * spread of the per-snapshot local-tick gap; RTT = min-over-window of raw
+ * pong samples.
  *
  * A steady link advances the local arrival tick and serverTick by 2 each per
  * snapshot (~20ms apart at 10ms/tick), so localArrivalTick - serverTick is a
@@ -40,8 +41,8 @@ int run_client_timing(void) {
     UT_ASSERT_MSG(clientTimingClockOffsetTicks(&t) == -200,
                   "seed offset %d", clientTimingClockOffsetTicks(&t));
     /* First snapshot at serverTick 100, localArrival 20 → offset -80
-     * overrides the -200 seed. */
-    clientTimingOnSnapshot(&t, 100, 94, 20);
+     * overrides the -200 seed (depth terms don't affect the offset). */
+    clientTimingOnSnapshot(&t, 100, 94, 100, 20);
     UT_ASSERT_MSG(clientTimingClockOffsetTicks(&t) == -80,
                   "post-snapshot offset %d", clientTimingClockOffsetTicks(&t));
   }
@@ -56,9 +57,12 @@ int run_client_timing(void) {
     clientTimingReset(&t);
     for (i = 0; i < N; i++) {
       uint32_t serverTick = (uint32_t)(100 + 2 * i);
-      uint32_t lastInput = serverTick - (uint32_t)DEPTH;
+      /* Sent input tick runs in its own (input) clock, distinct from the
+       * server's tick clock; lastProcessedInput trails it by DEPTH. */
+      uint32_t lastSentInput = (uint32_t)(50 + 2 * i);
+      uint32_t lastInput = lastSentInput - (uint32_t)DEPTH;
       uint32_t localArrival = (uint32_t)(20 + 2 * i);
-      clientTimingOnSnapshot(&t, serverTick, lastInput, localArrival);
+      clientTimingOnSnapshot(&t, serverTick, lastInput, lastSentInput, localArrival);
       clientTimingOnRtt(&t, 50);
     }
     /* offset = (20+2i) - (100+2i) = -80, constant. */
@@ -91,9 +95,10 @@ int run_client_timing(void) {
     clientTimingReset(&t);
     for (i = 0; i < N; i++) {
       uint32_t serverTick = (uint32_t)(100 + 2 * i);
-      uint32_t lastInput = serverTick - (uint32_t)DEPTH;
+      uint32_t lastSentInput = (uint32_t)(50 + 2 * i);
+      uint32_t lastInput = lastSentInput - (uint32_t)DEPTH;
       uint32_t localArrival = (uint32_t)(20 + 2 * i + spikeDelay[i]);
-      clientTimingOnSnapshot(&t, serverTick, lastInput, localArrival);
+      clientTimingOnSnapshot(&t, serverTick, lastInput, lastSentInput, localArrival);
       clientTimingOnRtt(&t, rtt[i]);
       if (clientTimingJitterMs(&t) > 0) sawJitter = true;
     }
