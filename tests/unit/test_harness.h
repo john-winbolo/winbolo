@@ -449,6 +449,12 @@ int run_client_type_name_round_trips(void);
 int run_players_oob_index_safe(void);
 int run_control_oob_player_dropped(void);
 
+/* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
+ * suspends the polled in-game readers only for blocking surfaces (text
+ * input, a focus-stealing modal, a popup/menu on the stack, a defocused
+ * window) and never for the transient alliance/vote notifications. */
+int run_input_gate_taxonomy(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

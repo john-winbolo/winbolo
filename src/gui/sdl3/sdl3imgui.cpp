@@ -58,6 +58,7 @@ extern "C" {
 
 /* Our own header */
 #include "sdl3imgui.h"
+#include "input_gate.h"
 #include "sdl3draw.h"
 #include "luabrainshandler.h"
 #include "flags.h"
@@ -4446,10 +4447,23 @@ void sdl3ImguiTogglePlayersPanel(void) {
 bool sdl3ImguiWantsKeyboard(void) {
     if (!s_window) return false;
     ImGuiIO &io = ImGui::GetIO();
-    if (io.WantTextInput) return true;
-    if (ImGui::GetCurrentContext()->ActiveId != 0) return true;
-    if (sdl3ImguiIsDialogOpen()) return true;
-    return false;
+    ImGuiContext *g = ImGui::GetCurrentContext();
+
+    InputGateState st;
+    st.textInputActive             = io.WantTextInput;
+    st.blockingModalOpen           = s_showSysInfo || s_showNetInfo ||
+                                     s_showGameInfo || s_showSendMsg ||
+                                     s_showPlayersPanel || s_showSettings ||
+                                     s_brainSettingsOpen;
+    /* Every popup currently on the stack is blocking (menu-bar dropdowns and
+       the password / change-name / key-setup / pause / quick-chat modals).
+       The transient notifications — alliance request and vote widgets — are
+       plain Begin() windows, not popups, so they never land here. */
+    st.menuOpen                    = (g && g->OpenPopupStack.Size > 0);
+    st.allianceNotificationVisible = s_allianceVisible;  /* never suspends */
+    st.voteVisible                 = false;              /* votes never suspend */
+    st.appHasFocus                 = true;               /* input.c owns the OS-focus gate */
+    return gameInputSuspended(&st);
 }
 
 void sdl3ImguiClearNavFocus(void) {
