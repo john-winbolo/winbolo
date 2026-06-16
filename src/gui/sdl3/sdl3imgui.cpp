@@ -37,6 +37,10 @@
 /* SDL3 before bolo headers — see note above */
 #include <SDL3/SDL.h>
 
+#include <cctype>   /* toupper — country-code normalization */
+#include <cstdlib>  /* bsearch — country-name lookup */
+#include <cstring>  /* strcmp — bsearch comparator */
+
 #include "../../common/wb_log.h"
 
 /* ImGui */
@@ -55,6 +59,11 @@ extern "C" {
 #include "../gamefront.h"
 #include "../lang.h"
 }
+
+/* Maps an uppercased alpha-2 code to its localized STR_COUNTRY_* name id
+ * (generated; sorted by code for bsearch). Needs langid + STR_COUNTRY_*
+ * from lang.h above. */
+#include "countries.inc"
 
 /* Our own header */
 #include "sdl3imgui.h"
@@ -4551,6 +4560,29 @@ static const char *platformName(uint8_t ct) {
     return (ct < CLIENT_TYPE_COUNT) ? names[ct] : "";
 }
 
+static int countryNameCmp(const void *key, const void *elem) {
+    return strcmp((const char *)key, ((const CountryNameEntry *)elem)->code);
+}
+
+bool drawCountryFlagWithTip(const char *countryCode) {
+    if (!countryCode || countryCode[0] == '\0' || countryCode[1] == '\0')
+        return false;
+    char up[3] = { (char)toupper((unsigned char)countryCode[0]),
+                   (char)toupper((unsigned char)countryCode[1]), '\0' };
+    if (up[0] == 'X' && up[1] == 'X') return false;        /* sentinel */
+    SDL_Texture *flagTex = flagsGetTexture(countryCode);
+    if (!flagTex) return false;
+    ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+    if (ImGui::IsItemHovered()) {
+        const CountryNameEntry *e = (const CountryNameEntry *)bsearch(
+            up, kCountryNames, K_COUNTRY_NAMES_SIZE,
+            sizeof(kCountryNames[0]), countryNameCmp);
+        if (e) ImGui::SetTooltip("%s", langGetText(e->id));
+        else   ImGui::SetTooltip("%s", up);   /* fall back to uppercase code */
+    }
+    return true;
+}
+
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry) {
     ensurePlatformIconsLoaded();
@@ -4601,12 +4633,10 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
     if (name && name[0] != '\0') {
         ImGui::TextUnformatted(name);
         if (showCountry && countryCode && countryCode[0] != '\0' &&
-            !(countryCode[0] == 'X' && countryCode[1] == 'X')) {
-            SDL_Texture *flagTex = flagsGetTexture(countryCode);
-            if (flagTex) {
-                ImGui::SameLine();
-                ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
-            }
+            !(countryCode[0] == 'X' && countryCode[1] == 'X') &&
+            flagsGetTexture(countryCode)) {
+            ImGui::SameLine();
+            drawCountryFlagWithTip(countryCode);
         }
     }
 }
