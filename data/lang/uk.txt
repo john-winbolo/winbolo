@@ -1735,3 +1735,9 @@ STR_COUNTRY_YT=Майотта
 STR_COUNTRY_ZA=Південно-Африканська Республіка
 STR_COUNTRY_ZM=Замбія
 STR_COUNTRY_ZW=Зімбабве
+
+# About modal — credits & links
+STR_DLGABOUT_ADDITIONAL_PROG=Додаткове програмування 2.0: Andrew Roth
+STR_DLGABOUT_THIRD_PARTY=Повідомлення про сторонні компоненти
+STR_DLGABOUT_AUTHORS=Автори
+STR_DLGABOUT_FORUMS=Форуми

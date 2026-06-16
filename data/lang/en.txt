@@ -1725,3 +1725,9 @@ STR_COUNTRY_ZA=South Africa
 STR_COUNTRY_ZM=Zambia
 STR_COUNTRY_ZW=Zimbabwe
 
+# About modal — credits & links
+STR_DLGABOUT_ADDITIONAL_PROG=Additional 2.0 programming by Andrew Roth
+STR_DLGABOUT_THIRD_PARTY=Third Party Notices
+STR_DLGABOUT_AUTHORS=Authors
+STR_DLGABOUT_FORUMS=Forums
+

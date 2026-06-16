@@ -1733,3 +1733,9 @@ STR_COUNTRY_YT=Mayotte
 STR_COUNTRY_ZA=Jihoafrická republika
 STR_COUNTRY_ZM=Zambie
 STR_COUNTRY_ZW=Zimbabwe
+
+# About modal — credits & links
+STR_DLGABOUT_ADDITIONAL_PROG=Dodatečné programování verze 2.0 od Andrew Rotha
+STR_DLGABOUT_THIRD_PARTY=Oznámení třetích stran
+STR_DLGABOUT_AUTHORS=Autoři
+STR_DLGABOUT_FORUMS=Fóra
