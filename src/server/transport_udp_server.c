@@ -1470,7 +1470,9 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         "join request from %s:%u len=%d",
         inet_ntoa(fromAddr->sin_addr),
         (unsigned)ntohs(fromAddr->sin_port), len);
+#ifndef WB_FUZZ
     fprintf(stderr, "[UDP SERVER] Join request received, len=%d\n", len);
+#endif
     /* Full JOIN_REQUEST payload after header: name + pass + 3 version bytes
      * + WBN token + 1 flags byte + 2 client-identity bytes (clientType,
      * clientHints).  No backward-compat path — older clients are rejected. */
@@ -1482,8 +1484,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
             joinReqMin, len,
             inet_ntoa(fromAddr->sin_addr),
             (unsigned)ntohs(fromAddr->sin_port));
+#ifndef WB_FUZZ
         fprintf(stderr, "[UDP SERVER] Join request malformed (need %d, got %d)\n",
                 joinReqMin, len);
+#endif
         return; /* Malformed */
     }
 

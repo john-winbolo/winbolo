@@ -60,6 +60,32 @@ tests/fuzz/run_discovery.sh wire_codec 300 build-fuzz
 tests/fuzz/run_discovery.sh server_dispatch 300 build-fuzz
 ```
 
+The fuzz build strips the app's own logging (`WINBOLO_LOG_LEVEL=OFF` plus the
+`WB_FUZZ`-gated hot-path `fprintf`s), so the only output is libFuzzer's — the
+log stays small over a multi-hour run and still reports the total executions.
+`run_discovery.sh` passes `-print_final_stats=1`; the count is on the
+`stat::number_of_executed_units:` line, and libFuzzer also prints periodic
+`#<n> ... exec/s` pulses and a closing `Done <n> runs`.
+
+### Long unattended runs (parallel)
+
+`run_discovery.sh` is single-process. For an overnight run, drive the binary
+directly with `-jobs`/`-workers` so every core fuzzes; each worker writes a
+`fuzz-<id>.log`, and the total executions is the sum of their final stats:
+
+```sh
+mkdir -p ~/fuzz-build/fuzz-corpus-client_snapshot
+( cd ~/fuzz-build && nohup ./fuzz_client_snapshot \
+    -max_total_time=21600 -jobs=$(nproc) -workers=$(nproc) -print_final_stats=1 \
+    -artifact_prefix=<repo>/tests/fuzz/crashes/ \
+    fuzz-corpus-client_snapshot <repo>/tests/fuzz/corpus/client_snapshot \
+    >/dev/null 2>&1 & )
+
+# In the morning: total executions across workers, and any new crashes
+awk '/number_of_executed_units/{s+=$2} END{print s" total execs"}' ~/fuzz-build/fuzz-*.log
+ls <repo>/tests/fuzz/crashes/
+```
+
 ## Corpus
 
 - `corpus/wire_codec/` — seeded from the committed wire fixtures

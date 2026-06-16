@@ -785,6 +785,11 @@ if(WB_FUZZ)
             "in tests/fuzz/README.md.")
     endif()
     add_compile_definitions(WB_FUZZ=1)
+    # Strip wb_log compile-time so the only thing on the fuzzer's stderr is
+    # libFuzzer's own stats (exec count, coverage) — a multi-hour run's log
+    # stays small and still reports the total runs. Raw [UDP SERVER] fprintfs
+    # in the hot path are separately gated under WB_FUZZ in the source.
+    set(WINBOLO_LOG_LEVEL "OFF" CACHE STRING "fuzz build strips wb_log" FORCE)
     # Instrument every TU for coverage + ASan; only the fuzz executables below
     # additionally link libFuzzer's main via -fsanitize=fuzzer.
     add_compile_options(-fsanitize=fuzzer-no-link,address -g -O1

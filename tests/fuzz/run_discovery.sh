@@ -34,7 +34,12 @@ fi
 # anything worth keeping into tests/fuzz/corpus/<target>/ deliberately.
 work="$builddir/fuzz-corpus-${target}"
 mkdir -p "$work" "$crashes"
+# -print_final_stats reports the total executed inputs at exit
+# (stat::number_of_executed_units) alongside libFuzzer's periodic
+# "#<n> ... exec/s" lines — the run count stays visible even with the app's
+# own logging stripped (WB_FUZZ build).
 exec "$bin" \
     -max_total_time="$seconds" \
+    -print_final_stats=1 \
     -artifact_prefix="$crashes/" \
     "$work" "$corpus"
