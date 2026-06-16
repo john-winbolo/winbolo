@@ -1735,3 +1735,9 @@ STR_COUNTRY_YT=Mayotte
 STR_COUNTRY_ZA=Südafrika
 STR_COUNTRY_ZM=Sambia
 STR_COUNTRY_ZW=Simbabwe
+
+# About modal — credits & links
+STR_DLGABOUT_ADDITIONAL_PROG=Zusätzliche Programmierung 2.0 von Andrew Roth
+STR_DLGABOUT_THIRD_PARTY=Drittanbieter-Hinweise
+STR_DLGABOUT_AUTHORS=Autoren
+STR_DLGABOUT_FORUMS=Foren

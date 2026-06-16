@@ -1735,3 +1735,9 @@ STR_COUNTRY_YT=Mayotte
 STR_COUNTRY_ZA=Güney Afrika
 STR_COUNTRY_ZM=Zambiya
 STR_COUNTRY_ZW=Zimbabve
+
+# About modal — credits & links
+STR_DLGABOUT_ADDITIONAL_PROG=Ek 2.0 programlama: Andrew Roth
+STR_DLGABOUT_THIRD_PARTY=Üçüncü Taraf Bildirimleri
+STR_DLGABOUT_AUTHORS=Yazarlar
+STR_DLGABOUT_FORUMS=Forumlar

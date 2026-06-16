@@ -1820,6 +1820,12 @@
 #define STR_COUNTRY_ZW 1788
 /* END generated country name IDs */
 
+/* About modal — credits & links */
+#define STR_DLGABOUT_ADDITIONAL_PROG        1789
+#define STR_DLGABOUT_THIRD_PARTY            1790
+#define STR_DLGABOUT_AUTHORS                1791
+#define STR_DLGABOUT_FORUMS                 1792
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

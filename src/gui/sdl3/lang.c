@@ -1667,6 +1667,12 @@ static const LangEntry langTable[] = {
     {1787, "Zambia"},
     {1788, "Zimbabwe"},
 /* END generated country names */
+
+    /* About modal — credits & links */
+    {1789, "Additional 2.0 programming by Andrew Roth"},
+    {1790, "Third Party Notices"},
+    {1791, "Authors"},
+    {1792, "Forums"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

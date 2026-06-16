@@ -501,7 +501,7 @@ static void renderAboutModalBody(void) {
     ImGui::Text("Copyright 1998-%s John Morrison", WINBOLO_BUILD_YEAR);
     ImGui::TextUnformatted(langGetText(STR_DLGABOUT_BOLOCOPYRIGHT));
     ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight() * 0.6f));
-    ImGui::TextUnformatted("Additional 2.0 programming by Andrew Roth");
+    ImGui::TextUnformatted(langGetText(STR_DLGABOUT_ADDITIONAL_PROG));
 
     ImGui::Spacing();
     ImGui::TextLinkOpenURL("www.winbolo.com", "https://www.winbolo.com/");
@@ -512,13 +512,13 @@ static void renderAboutModalBody(void) {
     /* Third Party Notices / Authors open internal markdown popups, so they're
      * plain TextLinks (not URL links) — tucked under the web links to free the
      * row below for the Forums / Reddit / Discord buttons. */
-    if (ImGui::TextLink("Third Party Notices")) {
+    if (ImGui::TextLink(langGetText(STR_DLGABOUT_THIRD_PARTY))) {
         openMarkdownPopup("third_party");
     }
     ImGui::SameLine();
     ImGui::TextUnformatted("   ");
     ImGui::SameLine();
-    if (ImGui::TextLink("Authors")) {
+    if (ImGui::TextLink(langGetText(STR_DLGABOUT_AUTHORS))) {
         openMarkdownPopup("authors");
     }
     ImGui::EndGroup();
@@ -533,7 +533,12 @@ static void renderAboutModalBody(void) {
         auto btnW = [&](const char *l) {
             return ImGui::CalcTextSize(l).x + st.FramePadding.x * 2.0f;
         };
-        float rowW = btnW(WB_BTN_PAD "Forums") + btnW(WB_BTN_PAD "Reddit") +
+        /* Forums label is localised, so its padded form is built at runtime
+         * (Reddit / Discord are brand names and stay verbatim via iconLeadingButton). */
+        char forumsLabel[160];
+        SDL_snprintf(forumsLabel, sizeof(forumsLabel), WB_BTN_PAD "%s",
+                     langGetText(STR_DLGABOUT_FORUMS));
+        float rowW = btnW(forumsLabel) + btnW(WB_BTN_PAD "Reddit") +
                      btnW(WB_BTN_PAD "Discord") + gap * 2.0f;
         float avail = ImGui::GetContentRegionAvail().x;
         if (avail > rowW)
@@ -544,7 +549,7 @@ static void renderAboutModalBody(void) {
         ImDrawList *dl = ImGui::GetWindowDrawList();
         ImVec2 bp = ImGui::GetCursorScreenPos();
         float fs = ImGui::GetFontSize();
-        if (ImGui::Button(WB_BTN_PAD "Forums")) {
+        if (ImGui::Button(forumsLabel)) {
             imguiOpenUrl("https://www.winbolo.net/forums");
         }
         imguiHandOnHover();
