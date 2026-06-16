@@ -521,7 +521,10 @@ extern "C" int imguiWelcomeShow(void) {
                 bool pressed = ImGui::InvisibleButton(links[i].id, ImVec2(icon, icon),
                                                       ImGuiButtonFlags_EnableNav);
                 bool hov = ImGui::IsItemHovered();
-                if (pressed || ImGui::IsItemClicked()) imguiOpenUrl(links[i].url);
+                /* InvisibleButton already activates on release; a separate
+                 * IsItemClicked() (fires on press-down) would open the URL a
+                 * second time on the same click, spawning two browser tabs. */
+                if (pressed) imguiOpenUrl(links[i].url);
                 if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 if (links[i].tex) {
                     ImU32 tint = hov ? IM_COL32(255, 255, 255, 255)
