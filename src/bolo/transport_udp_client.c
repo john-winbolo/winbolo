@@ -3784,4 +3784,25 @@ void transportUdpClientFuzzProcessSnapshot(const uint8_t *body, size_t size) {
     udpClientProcessPacket(&g_fuzzClientCtx, buf, (int)n);
     free(buf);
 }
+
+/* Drive the PACKET_JOIN_ACCEPT handler. The fuzz input is the accept body
+ * ([playerNum][serverTick][mapSize][optional connId]); the seam frames the
+ * header on an exact-size buffer and forces the JOINING state the handler
+ * requires. Exercises the server-assigned-slot validation and the
+ * mapSize/connId parsing — a path no other fuzz target reaches. */
+void transportUdpClientFuzzProcessJoinAccept(const uint8_t *body, size_t size) {
+    size_t n = (size_t)PACKET_HEADER_SIZE + size;
+    uint8_t *buf = (uint8_t *)malloc(n);
+    if (buf == NULL) return;
+    buf[0] = (uint8_t)BOLO_NEW_MAGIC_0;
+    buf[1] = (uint8_t)BOLO_NEW_MAGIC_1;
+    buf[2] = (uint8_t)PACKET_JOIN_ACCEPT;
+    buf[3] = 0;
+    buf[4] = 0; buf[5] = 0; buf[6] = 0; buf[7] = 0;
+    if (size > 0) memcpy(buf + PACKET_HEADER_SIZE, body, size);
+    /* JOIN_ACCEPT is only processed mid-handshake. */
+    g_fuzzClientCtx.joinState = UDP_CLIENT_JOINING;
+    udpClientProcessPacket(&g_fuzzClientCtx, buf, (int)n);
+    free(buf);
+}
 #endif /* WB_FUZZ */

@@ -2592,6 +2592,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wire_corpus_capture.c
     tests/unit/test_packet_type_names.c
     tests/unit/test_client_type.c
+    tests/unit/test_wire_player_bounds.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2901,6 +2902,8 @@ set(_unit_test_names
     mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips
+    players_oob_index_safe
+    control_oob_player_dropped
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
@@ -3041,6 +3044,48 @@ if(WB_FUZZ)
                      ${WB_FUZZ_CORPUS_DIR}/client_snapshot ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.client_snapshot PROPERTIES TIMEOUT 120)
 
+    # JOIN_ACCEPT target. Same link closure as the client snapshot target —
+    # only the entry point differs (drives the join-handshake seam).
+    add_executable(fuzz_join_accept
+        tests/fuzz/fuzz_join_accept.c
+        tests/unit/test_stubs.c
+        src/steam/steam_wrapper_stub.c
+        src/common/prefs_doc.c
+        src/common/prefs.c
+        src/common/md5.c
+        src/common/mp_diag_log.c
+        src/server/server_dedicated_log_path.c
+        src/winbolonet/wbn_bearer.c
+        src/winbolonet/wbn_country_cache.c
+        src/winbolonet/wbn_news_parser.cpp
+        src/winbolonet/wbn_prefs_sync.c
+        src/bolo/transport_udp_client.c
+        src/lzw/dcodlzw.c
+        src/lzw/ecodlzw.c)
+    bolo_apply_include_rules(fuzz_join_accept unittests)
+    target_include_directories(fuzz_join_accept PRIVATE
+        src/gui/sdl3 src/server src src/winbolonet
+        ${CMAKE_SOURCE_DIR}/tests/unit ${cjson_SOURCE_DIR})
+    target_compile_definitions(fuzz_join_accept PRIVATE
+        HAVE_SCREEN_C=1
+        WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+        BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+        BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+        BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
+    target_link_libraries(fuzz_join_accept PRIVATE
+        bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+        SDL3::SDL3 minizip lua_static cjson utf8proc mdns ${MATH_LIB} pthread)
+    target_compile_options(fuzz_join_accept PRIVATE -fcommon)
+    target_link_options(fuzz_join_accept PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_join_accept "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.join_accept
+             COMMAND $<TARGET_FILE:fuzz_join_accept> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/join_accept ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.join_accept PROPERTIES TIMEOUT 120)
+
     # Stage the FetchContent-built shared libs next to the fuzz binaries so the
     # $ORIGIN RPATH resolves them at run time (these copies normally ride the
     # game/server targets, which a fuzz-only build doesn't produce). Mirrors
@@ -3055,6 +3100,9 @@ if(WB_FUZZ)
     add_custom_command(TARGET fuzz_client_snapshot POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_client_snapshot>")
+    add_custom_command(TARGET fuzz_join_accept POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_join_accept>")
     if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_LIBDIR)
         file(GLOB _FUZZ_ORT_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
         foreach(_f ${_FUZZ_ORT_SO})
@@ -3067,6 +3115,9 @@ if(WB_FUZZ)
             add_custom_command(TARGET fuzz_client_snapshot POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_f}" "$<TARGET_FILE_DIR:fuzz_client_snapshot>")
+            add_custom_command(TARGET fuzz_join_accept POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_f}" "$<TARGET_FILE_DIR:fuzz_join_accept>")
         endforeach()
     endif()
 endif()
