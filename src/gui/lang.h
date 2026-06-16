@@ -468,6 +468,20 @@
 #define STR_STARTPICK_SWAP_WITH             1517
 #define STR_STARTPICK_ASSIGN_TO             1518
 #define STR_STARTPICK_SLOT_FALLBACK         1519
+
+/* Player-row badge tooltips */
+#define STR_PLAYER_TIP_AI                   1520
+#define STR_PLATFORM_WINDOWS                1521
+#define STR_PLATFORM_LINUX                  1522
+#define STR_PLATFORM_MACOS                  1523
+#define STR_PLATFORM_IOS                    1524
+#define STR_PLATFORM_ANDROID                1525
+#define STR_PLATFORM_STEAMDECK              1526
+#define STR_PLATFORM_WEB                    1527
+#define STR_PLAYER_TIP_SUPPORTER_FMT        1528
+#define STR_PLAYER_TIP_WBN_VERIFIED         1529
+#define STR_PLAYER_TIP_STEAM_LINKED         1530
+#define STR_PLAYER_TIP_STEAM_BUILD          1531
 #define STR_DLGLOBBY_READY                  614
 #define STR_DLGLOBBY_UNREADY                615
 #define STR_DLGLOBBY_BALANCE_TEAMS          616
