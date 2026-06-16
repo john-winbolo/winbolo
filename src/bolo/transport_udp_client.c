@@ -145,7 +145,11 @@ typedef struct {
     /* Ping */
     uint32_t lastPingSentTick;
     uint32_t pingClientTime;  /* Monotonic counter used as ping timestamp */
-    uint16_t pingMs;
+    uint16_t pingMs;          /* Min-over-window RTT — feeds shell projection
+                               * and the InputPacket lag-comp fallback. */
+    PingMinWindow pingMinWin; /* Backing state for pingMs. */
+    PingEwma pingEwma;        /* Backing state for pingDisplayMs. */
+    uint16_t pingDisplayMs;   /* EWMA RTT — feeds the HUD/scoreboard displays. */
     uint32_t localTick;  /* Local tick counter for timing */
 
     /* Map download state */
@@ -1744,8 +1748,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             uint32_t clientTime = unpackU32(buf + PACKET_HEADER_SIZE);
             uint32_t now = SDL_GetTicks();
             if (now >= clientTime) {
-                c->pingMs = (uint16_t)(now - clientTime);
-                playersSetPing(&c->clientSim->sim.plyrs, c->playerNum, c->pingMs);
+                uint16_t sample = (uint16_t)(now - clientTime);
+                c->pingMs = pingMinWindowPush(&c->pingMinWin, sample);
+                c->pingDisplayMs = pingEwmaUpdate(&c->pingEwma, sample);
+                /* Display consumers (scoreboard, HUD) read the EWMA; shell
+                 * projection reads the min-over-window value below. */
+                playersSetPing(&c->clientSim->sim.plyrs, c->playerNum,
+                               c->pingDisplayMs);
+                clientSimSetProjectionPing(c->clientSim, c->pingMs);
             }
             /* Immediately echo the server timestamp back so the server can
              * measure RTT.  Use clientTime=0 as a marker so the server
@@ -2504,7 +2514,7 @@ static bool udpClientTick(void *ctx) {
      * PACKET_CONTROL_TICK has armed controlAckPendingTick — during
      * running, PACKET_INPUT already carries controlEventAck so no
      * dedicated ACK packet is needed.  localTick advances at 50 Hz
-     * (20ms/tick — see PING_INTERVAL_TICKS = 100 → 2s), so 3 ticks
+     * (20ms/tick — see PING_INTERVAL_TICKS = 20 → ~0.4s), so 3 ticks
      * is ~60ms, close to the plan's ~50ms target.  Send earlier when
      * a single TICK delivered 2+ new events at once, to free server
      * queue slots promptly.
@@ -2994,6 +3004,9 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->localTick = 0;
     c->lastPingSentTick = 0;
     c->pingMs = 0;
+    c->pingDisplayMs = 0;
+    pingMinWindowReset(&c->pingMinWin);
+    pingEwmaReset(&c->pingEwma);
 
     /* Optional runtime network impairment from WB_NETIMPAIR
      * (e.g. WB_NETIMPAIR=delay=75,jitter=30,loss=2,burst=2). Same spec
@@ -3132,11 +3145,50 @@ bool transportUdpClientGetSnapshot(Transport *t,
     return true;
 }
 
+void pingMinWindowReset(PingMinWindow *w) {
+    memset(w, 0, sizeof(*w));
+}
+
+uint16_t pingMinWindowPush(PingMinWindow *w, uint16_t sample) {
+    uint16_t minVal;
+    uint8_t i;
+    w->samples[w->head] = sample;
+    w->head = (uint8_t)((w->head + 1) % PING_MIN_WINDOW_LEN);
+    if (w->count < PING_MIN_WINDOW_LEN) {
+        w->count++;
+    }
+    minVal = w->samples[0];
+    for (i = 1; i < w->count; i++) {
+        if (w->samples[i] < minVal) {
+            minVal = w->samples[i];
+        }
+    }
+    return minVal;
+}
+
+void pingEwmaReset(PingEwma *e) {
+    e->valueQ8 = 0;
+    e->init = false;
+}
+
+uint16_t pingEwmaUpdate(PingEwma *e, uint16_t sample) {
+    if (!e->init) {
+        e->valueQ8 = (uint32_t)sample << 8;
+        e->init = true;
+    } else {
+        /* valueQ8 += (sample*256 - valueQ8) / 4, signed so a falling RTT
+         * decays the value as readily as a rising one. */
+        int32_t delta = (int32_t)((uint32_t)sample << 8) - (int32_t)e->valueQ8;
+        e->valueQ8 = (uint32_t)((int32_t)e->valueQ8 + delta / 4);
+    }
+    return (uint16_t)((e->valueQ8 + 128) >> 8);
+}
+
 uint16_t transportUdpClientGetPing(Transport *t) {
     TransportUdpClientCtx *c;
     if (t == NULL || t->ctx == NULL) return 0;
     c = (TransportUdpClientCtx *)t->ctx;
-    return c->pingMs;
+    return c->pingDisplayMs;
 }
 
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,

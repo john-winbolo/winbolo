@@ -264,6 +264,7 @@ static const UnitTestEntry s_tests[] = {
     { "catchup_ignores_redundant_duplicates",    run_catchup_ignores_redundant_duplicates    },
     { "jitter_buffer_grow",                      run_jitter_buffer_grow                      },
     { "shell_projection",                        run_shell_projection                        },
+    { "ping_smoother",                           run_ping_smoother                           },
     { "snapshot_compaction",                     run_snapshot_compaction                     },
     { "error_smoothing",                         run_error_smoothing                         },
     { "loopback_join",                           run_loopback_join                           },

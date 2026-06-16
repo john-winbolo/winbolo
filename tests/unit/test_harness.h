@@ -368,6 +368,11 @@ int run_catchup_ignores_redundant_duplicates(void);
 int run_jitter_buffer_grow(void);
 int run_shell_projection(void);
 
+/* Ping RTT smoothers (test_ping_smoother.c): the min-over-window and EWMA
+ * primitives — window-minimum tracking as samples slide out, EWMA constant
+ * convergence, and a monotonic overshoot-free step response. */
+int run_ping_smoother(void);
+
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */

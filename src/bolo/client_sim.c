@@ -273,6 +273,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->sim.shs = shellsCreate();
   cs->serverShellCount = 0;
   cs->projectedShellCount = 0;
+  cs->projectionPingMs = 0;
   explosionsCreate(&cs->sim.expl);
   rubbleCreate(&cs->sim.rbl);
   buildingCreate(&cs->sim.blds);
@@ -880,6 +881,10 @@ void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
  *  unmatched incoming shells anchor fresh; carried shells
  *  with no match are dropped. Human clients only.
  *********************************************************/
+void clientSimSetProjectionPing(ClientSim *cs, uint16_t pingMs) {
+  cs->projectionPingMs = pingMs;
+}
+
 void clientSimRebuildProjectedShells(ClientSim *cs, uint16_t pingMs) {
   ProjectedShell next[MAX_SNAPSHOT_SHELLS];
   bool usedPrev[MAX_SNAPSHOT_SHELLS];
@@ -1784,6 +1789,7 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->serverShellCount = 0;
   cs->predictedShellCount = 0;
   cs->projectedShellCount = 0;
+  cs->projectionPingMs = 0;
 
   /* Reconciliation stats are predict-scoped — start each game fresh. */
   cs->reconCountThisWindow = 0;

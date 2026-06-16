@@ -94,6 +94,10 @@ struct ClientSim {
     ProjectedShell projectedShells[MAX_SNAPSHOT_SHELLS];
     int         projectedShellCount;
 
+    /* Min-over-window RTT the transport stamps in each PONG; the snapshot
+     * path anchors forward-projection to it rather than the display ping. */
+    uint16_t    projectionPingMs;
+
     /* Reconciliation stats — current 1s window + last completed window */
     uint16_t reconCountThisWindow;
     float    reconErrSumPx, reconErrMaxPx;

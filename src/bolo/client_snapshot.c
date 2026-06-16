@@ -686,8 +686,7 @@ void clientApplySnapshot(ClientSim *csPtr,
    * per game tick until the next snapshot re-anchors. Bots keep reading the
    * raw serverShellSnaps above and get no projection layer. */
   if (isHuman) {
-    clientSimRebuildProjectedShells(
-        csPtr, playersGetPing(&csPtr->sim.plyrs, playerNum));
+    clientSimRebuildProjectedShells(csPtr, csPtr->projectionPingMs);
   }
 
   /* Tank fireballs are spawned via EVENT_TK_EXPLOSION (handled below) and
