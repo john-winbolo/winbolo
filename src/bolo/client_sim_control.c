@@ -98,6 +98,27 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
+    /* Wire-supplied player numbers index the fixed players array
+     * (item[MAX_TANKS]); an out-of-range value from a hostile or buggy
+     * server would index out of bounds in the alliance handlers below
+     * (playersLeaveAlliance writes item[playerNum].allie). Reject such
+     * events at this trust boundary — a valid server never sends them. */
+    switch (evt->type) {
+    case CTRL_ALLIANCE_LEAVE:
+        if (evt->u.allianceLeave.playerNum >= MAX_TANKS) return;
+        break;
+    case CTRL_ALLIANCE_ACCEPT:
+        if (evt->u.allianceAccept.acceptedBy >= MAX_TANKS ||
+            evt->u.allianceAccept.newMember >= MAX_TANKS) return;
+        break;
+    case CTRL_ALLIANCE_REQUEST:
+        if (evt->u.allianceRequest.toPlayer >= MAX_TANKS ||
+            evt->u.allianceRequest.fromPlayer >= MAX_TANKS) return;
+        break;
+    default:
+        break;
+    }
+
     switch (evt->type) {
     case CTRL_ALLIANCE_REQUEST:
         /* Flag a pending request for the addressed slot. The transport
