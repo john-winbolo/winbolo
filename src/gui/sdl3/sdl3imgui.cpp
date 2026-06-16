@@ -882,6 +882,18 @@ static void renderNetInfoContent(ClientSim *cs) {
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_RECONCILE, &args));
     }
 
+    /* Measurement-only timing estimator (client_timing). Dev-internal
+     * readout to validate the estimates on real / -netimpair links before
+     * anything consumes them — plain literals, not localized. */
+    if (clientSimHasTransport(cs)) {
+        int clockOffsetTicks = 0, jitterMs = 0, timingRttMs = 0, depthTicks = 0;
+        clientSimGetTimingStats(cs, &clockOffsetTicks, &jitterMs, &timingRttMs,
+                                &depthTicks);
+        ImGui::Text("Timing: rtt %dms  jitter %dms", timingRttMs, jitterMs);
+        ImGui::Text("  clock off %dt  pipe depth %dt", clockOffsetTicks,
+                    depthTicks);
+    }
+
     /* Ping graph */
     pingGraphSample(ping, bpsIn, bpsOut);
     if (s_pingHistoryCount > 1) {

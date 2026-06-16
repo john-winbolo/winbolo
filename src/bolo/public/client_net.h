@@ -82,6 +82,19 @@ bool clientSimNetGetSnapshot(ClientSim *cs, SnapshotHeader *hdr,
                              GameEvent *events, int maxEvents);
 bool clientSimNetSyncSnapshot(ClientSim *cs);
 
+/* Drain the transport's socket and apply any pending snapshots without
+ * advancing per-tick state (no localTick advance, resends, acks, ping, or
+ * timeouts).  No-op for the local transport.  Caller holds the client mutex. */
+void clientSimNetDrainSnapshots(ClientSim *cs);
+
+/* Per-render-frame seam (3.3 + 3.2): drains the freshest snapshots, advances
+ * the adaptive display-delay controller from measured jitter, and recomputes
+ * remote tanks' interpolated display positions against the render clock.
+ * Call once per frame from the front-end render loop, inside the client-mutex
+ * bracket that already guards clientRenderFrame, passing the render clock
+ * (e.g. SDL_GetTicks()). */
+void clientSimRenderPrepare(ClientSim *cs, uint32_t nowMs);
+
 /* === State queries === */
 ClientConnectState clientSimGetConnectState(const ClientSim *cs);
 const char *clientSimGetConnectErrorReason(const ClientSim *cs);
@@ -268,6 +281,16 @@ void     clientSimNetReportMapChecksum(ClientSim *cs, bool matched);
 void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,
                                 float *avgErrPx, float *maxErrPx,
                                 float *renderOffsetPx);
+
+/* Measurement-only client timing estimates: clock offset (10ms server-tick
+ * units), snapshot inter-arrival jitter (ms), RTT floor (ms), and pipeline
+ * depth (10ms input-tick units — sent-but-unprocessed inputs in flight).  All
+ * min-over-window smoothed.  Out pointers may be NULL; all zero on a non-UDP or
+ * absent transport.  Surfaced in Net Info; nothing consumes them to alter
+ * timing yet. */
+void clientSimGetTimingStats(ClientSim *cs, int *clockOffsetTicks,
+                             int *jitterMs, int *rttMs,
+                             int *pipelineDepthTicks);
 
 /* === Local-transport tuning === */
 void     clientSimNetSetLocalDelay(ClientSim *cs, uint16_t delay_ms);

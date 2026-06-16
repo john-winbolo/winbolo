@@ -25,6 +25,7 @@
  *********************************************************/
 
 #include "transport_udp_internal.h"
+#include "client_timing.h"
 #include "bases.h"
 #include "pillbox.h"
 #include "players.h"
@@ -97,6 +98,12 @@ typedef struct {
     /* Input redundancy ring buffer */
     InputPacket inputRing[CLIENT_INPUT_RING_SIZE];
     uint32_t inputRingCount;  /* Total inputs recorded */
+    uint32_t lastSentInputTick; /* tick of the most recent input written to the
+                                 * ring — the newest input the client has put on
+                                 * the wire, in InputPacket.tick/simTickCounter
+                                 * space.  Differenced against the snapshot
+                                 * header's lastProcessedInput (same clock) for
+                                 * the estimator's pipeline depth. */
 
     /* Latest received snapshot */
     bool hasSnapshot;
@@ -145,8 +152,17 @@ typedef struct {
     /* Ping */
     uint32_t lastPingSentTick;
     uint32_t pingClientTime;  /* Monotonic counter used as ping timestamp */
-    uint16_t pingMs;
+    uint16_t pingMs;          /* Min-over-window RTT — feeds shell projection
+                               * and the InputPacket lag-comp fallback. */
+    PingMinWindow pingMinWin; /* Backing state for pingMs. */
+    PingEwma pingEwma;        /* Backing state for pingDisplayMs. */
+    uint16_t pingDisplayMs;   /* EWMA RTT — feeds the HUD/scoreboard displays. */
     uint32_t localTick;  /* Local tick counter for timing */
+
+    /* Measurement-only clock/jitter/RTT estimator, fed at JOIN_ACCEPT, each
+     * snapshot header, and each PONG.  Surfaced in the Net Info readout;
+     * nothing consumes it to alter timing or pacing yet. */
+    ClientTiming timing;
 
     /* Map download state */
     BYTE    *mapDownloadBuf;     /* Buffer for reassembling compressed map */
@@ -414,6 +430,7 @@ static void udpClientRecordInputInternal(TransportUdpClientCtx *c,
         stamped.pingMs = c->pingMs;
         stamped.viewTick = clientSimGetViewTick(c->clientSim);
         c->inputRing[c->inputRingCount % CLIENT_INPUT_RING_SIZE] = stamped;
+        c->lastSentInputTick = stamped.tick;
     }
     c->inputRingCount++;
 }
@@ -1154,7 +1171,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             clientSimOnAssignedSlot(c->clientSim, c->playerNum,
                                     c->playerName, 0, 0);
 
-            pos += 4; /* skip serverTick */
+            /* Seed the timing estimator's clock offset from the accept's
+             * serverTick (the snapshot-derived estimate refines it shortly).
+             * No clean join round-trip is measured here — the JOIN handshake
+             * can span challenge/cookie retries — so pass 0 rather than
+             * invent an RTT sample. */
+            clientTimingSeedFromJoin(&c->timing, unpackU32(buf + pos), 0);
+            pos += 4;
             mapSize = unpackU32(buf + pos);
             pos += 4;
 
@@ -1429,6 +1452,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
         }
         c->lastSnapshotServerTick = c->snapshotHdr.serverTick;
+        /* Refine the timing estimator: clock offset from the header's
+         * serverTick vs local arrival tick, pipeline depth from the newest
+         * sent input tick vs the header's lastProcessedInput (both in
+         * InputPacket.tick space), inter-arrival jitter from the gap since the
+         * previous snapshot's local arrival tick. */
+        clientTimingOnSnapshot(&c->timing, c->snapshotHdr.serverTick,
+                               c->snapshotHdr.lastProcessedInput,
+                               c->lastSentInputTick, c->localTick);
         c->snapshotsRecvThisSec++;
         tankCount = buf[pos++];
         shellCount = buf[pos++];
@@ -1744,8 +1775,15 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             uint32_t clientTime = unpackU32(buf + PACKET_HEADER_SIZE);
             uint32_t now = SDL_GetTicks();
             if (now >= clientTime) {
-                c->pingMs = (uint16_t)(now - clientTime);
-                playersSetPing(&c->clientSim->sim.plyrs, c->playerNum, c->pingMs);
+                uint16_t sample = (uint16_t)(now - clientTime);
+                c->pingMs = pingMinWindowPush(&c->pingMinWin, sample);
+                c->pingDisplayMs = pingEwmaUpdate(&c->pingEwma, sample);
+                clientTimingOnRtt(&c->timing, sample);
+                /* Display consumers (scoreboard, HUD) read the EWMA; shell
+                 * projection reads the min-over-window value below. */
+                playersSetPing(&c->clientSim->sim.plyrs, c->playerNum,
+                               c->pingDisplayMs);
+                clientSimSetProjectionPing(c->clientSim, c->pingMs);
             }
             /* Immediately echo the server timestamp back so the server can
              * measure RTT.  Use clientTime=0 as a marker so the server
@@ -2412,12 +2450,54 @@ static void udpClientSendPunchRequest(TransportUdpClientCtx *c) {
            (const struct sockaddr *)&dest, sizeof(dest));
 }
 
-/* Client tick: receive packets from server, handle join flow, ping */
-static bool udpClientTick(void *ctx) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+/* Receive-and-apply seam: drain the socket and apply any snapshots (and all
+ * other inbound packet processing — control, PONG, handshake, map) without
+ * advancing any per-tick state.  Called both from udpClientTick (where the
+ * recv loop used to be) and, once per render frame, from the main-thread
+ * render seam so a frame composes from the freshest snapshot.  No localTick
+ * advance, resends, acks, ping, or timeouts happen here — those stay in
+ * udpClientTick.  Safe to call from the render path because the pump and the
+ * render run on the same serialized main thread (the SDL timers only set
+ * atomics), so inbound processing here is byte-for-byte identical to running
+ * it from the pump. */
+static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
     uint8_t buf[UDP_MAX_PAYLOAD];
     struct sockaddr_in fromAddr;
     int len;
+
+    /* Receive all pending packets from the wire */
+    while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
+        if (netImpairEnabled(&c->impairIn)) {
+            netImpairOffer(&c->impairIn, buf, len, &fromAddr,
+                           (uint64_t)SDL_GetTicks());
+        } else {
+            udpClientProcessPacket(c, buf, len);
+        }
+    }
+
+    /* Release any impaired INBOUND datagrams now due into the processor.
+     * No-op while the impairment layer is disabled.  (Outbound impairment
+     * release is a send and stays on the per-tick path in udpClientTick.) */
+    {
+        uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
+        struct sockaddr_in paddr;
+        uint64_t now = (uint64_t)SDL_GetTicks();
+        int plen;
+        while ((plen = netImpairPop(&c->impairIn, pbuf, sizeof(pbuf),
+                                    &paddr, now)) > 0) {
+            udpClientProcessPacket(c, pbuf, plen);
+        }
+    }
+}
+
+static void udpClientDrainSnapshotsVtable(void *ctx) {
+    if (ctx == NULL) return;
+    udpClientDrainSnapshots((TransportUdpClientCtx *)ctx);
+}
+
+/* Client tick: receive packets from server, handle join flow, ping */
+static bool udpClientTick(void *ctx) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
 
     c->localTick++;
 
@@ -2438,28 +2518,19 @@ static bool udpClientTick(void *ctx) {
         c->ppsWindowStart = c->localTick;
     }
 
-    /* Receive all pending packets from the wire */
-    while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
-        if (netImpairEnabled(&c->impairIn)) {
-            netImpairOffer(&c->impairIn, buf, len, &fromAddr,
-                           (uint64_t)SDL_GetTicks());
-        } else {
-            udpClientProcessPacket(c, buf, len);
-        }
-    }
+    /* Receive and apply all pending inbound packets (recv loop + inbound
+     * impairment release).  Factored into a seam the render path also calls
+     * once per frame; it advances no per-tick state. */
+    udpClientDrainSnapshots(c);
 
-    /* Release any impaired datagrams now due: inbound packets into the
-     * processor, outbound packets onto the wire (to their stored addr).
-     * Both pops are no-ops while their layer is disabled. */
+    /* Release any impaired OUTBOUND datagrams now due onto the wire (to their
+     * stored addr).  This is a send and stays on the per-tick path; it is a
+     * no-op while the outbound impairment layer is disabled. */
     {
         uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
         struct sockaddr_in paddr;
         uint64_t now = (uint64_t)SDL_GetTicks();
         int plen;
-        while ((plen = netImpairPop(&c->impairIn, pbuf, sizeof(pbuf),
-                                    &paddr, now)) > 0) {
-            udpClientProcessPacket(c, pbuf, plen);
-        }
         while ((plen = netImpairPop(&c->impairOut, pbuf, sizeof(pbuf),
                                     &paddr, now)) > 0) {
             udpSendTo(c->sock, pbuf, plen, &paddr);
@@ -2504,7 +2575,7 @@ static bool udpClientTick(void *ctx) {
      * PACKET_CONTROL_TICK has armed controlAckPendingTick — during
      * running, PACKET_INPUT already carries controlEventAck so no
      * dedicated ACK packet is needed.  localTick advances at 50 Hz
-     * (20ms/tick — see PING_INTERVAL_TICKS = 100 → 2s), so 3 ticks
+     * (20ms/tick — see PING_INTERVAL_TICKS = 20 → ~0.4s), so 3 ticks
      * is ~60ms, close to the plan's ~50ms target.  Send earlier when
      * a single TICK delivered 2+ new events at once, to free server
      * queue slots promptly.
@@ -2902,6 +2973,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         t.sendInput = udpClientSendInput;
         t.tick = udpClientTick;
         t.getSnapshot = udpClientGetSnapshotVtable;
+        t.drainSnapshots = udpClientDrainSnapshotsVtable;
         t.ctx = c;
         return t;
     }
@@ -2928,6 +3000,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
             t.sendInput = udpClientSendInput;
             t.tick = udpClientTick;
             t.getSnapshot = udpClientGetSnapshotVtable;
+            t.drainSnapshots = udpClientDrainSnapshotsVtable;
             t.ctx = c;
             return t;
         }
@@ -2994,6 +3067,10 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->localTick = 0;
     c->lastPingSentTick = 0;
     c->pingMs = 0;
+    c->pingDisplayMs = 0;
+    pingMinWindowReset(&c->pingMinWin);
+    pingEwmaReset(&c->pingEwma);
+    clientTimingReset(&c->timing);
 
     /* Optional runtime network impairment from WB_NETIMPAIR
      * (e.g. WB_NETIMPAIR=delay=75,jitter=30,loss=2,burst=2). Same spec
@@ -3022,6 +3099,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     t.sendInput = udpClientSendInput;
     t.tick = udpClientTick;
     t.getSnapshot = udpClientGetSnapshotVtable;
+    t.drainSnapshots = udpClientDrainSnapshotsVtable;
     t.ctx = c;
     return t;
 }
@@ -3132,11 +3210,50 @@ bool transportUdpClientGetSnapshot(Transport *t,
     return true;
 }
 
+void pingMinWindowReset(PingMinWindow *w) {
+    memset(w, 0, sizeof(*w));
+}
+
+uint16_t pingMinWindowPush(PingMinWindow *w, uint16_t sample) {
+    uint16_t minVal;
+    uint8_t i;
+    w->samples[w->head] = sample;
+    w->head = (uint8_t)((w->head + 1) % PING_MIN_WINDOW_LEN);
+    if (w->count < PING_MIN_WINDOW_LEN) {
+        w->count++;
+    }
+    minVal = w->samples[0];
+    for (i = 1; i < w->count; i++) {
+        if (w->samples[i] < minVal) {
+            minVal = w->samples[i];
+        }
+    }
+    return minVal;
+}
+
+void pingEwmaReset(PingEwma *e) {
+    e->valueQ8 = 0;
+    e->init = false;
+}
+
+uint16_t pingEwmaUpdate(PingEwma *e, uint16_t sample) {
+    if (!e->init) {
+        e->valueQ8 = (uint32_t)sample << 8;
+        e->init = true;
+    } else {
+        /* valueQ8 += (sample*256 - valueQ8) / 4, signed so a falling RTT
+         * decays the value as readily as a rising one. */
+        int32_t delta = (int32_t)((uint32_t)sample << 8) - (int32_t)e->valueQ8;
+        e->valueQ8 = (uint32_t)((int32_t)e->valueQ8 + delta / 4);
+    }
+    return (uint16_t)((e->valueQ8 + 128) >> 8);
+}
+
 uint16_t transportUdpClientGetPing(Transport *t) {
     TransportUdpClientCtx *c;
     if (t == NULL || t->ctx == NULL) return 0;
     c = (TransportUdpClientCtx *)t->ctx;
-    return c->pingMs;
+    return c->pingDisplayMs;
 }
 
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
@@ -3164,6 +3281,24 @@ void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
     if (snapshotsRecv) *snapshotsRecv = (int)c->snapshotsRecvLast;
     if (snapshotsLost) *snapshotsLost = (int)c->snapshotsLostLast;
     if (snapshotsLostTotal) *snapshotsLostTotal = (int)c->snapshotsLostTotal;
+}
+
+void transportUdpClientGetTimingStats(Transport *t, int *clockOffsetTicks,
+                                      int *jitterMs, int *rttMs,
+                                      int *pipelineDepthTicks) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) {
+        if (clockOffsetTicks) *clockOffsetTicks = 0;
+        if (jitterMs) *jitterMs = 0;
+        if (rttMs) *rttMs = 0;
+        if (pipelineDepthTicks) *pipelineDepthTicks = 0;
+        return;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (clockOffsetTicks) *clockOffsetTicks = (int)clientTimingClockOffsetTicks(&c->timing);
+    if (jitterMs) *jitterMs = (int)clientTimingJitterMs(&c->timing);
+    if (rttMs) *rttMs = (int)clientTimingRttMs(&c->timing);
+    if (pipelineDepthTicks) *pipelineDepthTicks = (int)clientTimingPipelineDepthTicks(&c->timing);
 }
 
 const char *transportUdpClientGetJoinRejectReason(Transport *t) {

@@ -79,6 +79,11 @@ struct ClientSim {
     /* Interpolation state for other players' tanks */
     InterpContext interpCtx;
 
+    /* Adaptive display-delay controller for render-time interpolation.
+     * Zero-initialised by the clientSimCreate memset (depth 1, first frame
+     * discrete). */
+    InterpRenderCtl interpRenderCtl;
+
     /* Server shell snapshots for UDP mode */
     ShellSnapshot serverShellSnaps[MAX_SNAPSHOT_SHELLS];
     int         serverShellCount;
@@ -93,6 +98,10 @@ struct ClientSim {
      * position. Empty for bots, which read raw serverShellSnaps. */
     ProjectedShell projectedShells[MAX_SNAPSHOT_SHELLS];
     int         projectedShellCount;
+
+    /* Min-over-window RTT the transport stamps in each PONG; the snapshot
+     * path anchors forward-projection to it rather than the display ping. */
+    uint16_t    projectionPingMs;
 
     /* Reconciliation stats — current 1s window + last completed window */
     uint16_t reconCountThisWindow;

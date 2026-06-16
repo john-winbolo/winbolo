@@ -622,8 +622,8 @@ static inline bool lobbyBotNameAcceptable(
 /* Client timeout in ticks (20 seconds at 50 ticks/sec) */
 #define CLIENT_TIMEOUT_TICKS 1000
 
-/* Ping interval in ticks (2 seconds) */
-#define PING_INTERVAL_TICKS 100
+/* Ping interval in ticks (~0.4 seconds at the 50 Hz game-tick clock) */
+#define PING_INTERVAL_TICKS 20
 
 #define INFOREQUESTHEADER { 'B','o','l','o', BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION, BOLOPACKET_INFOREQUEST }
 #define TOKENHEADER { 'B','o','l','o', BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION, BOLOPACKET_TOKEN }
