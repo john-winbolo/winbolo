@@ -26,8 +26,10 @@
  *  This is a pure measurement module.  It has no transport, socket, or
  *  SDL dependency — it takes plain counters at three ingress points
  *  (join accept, snapshot header, pong) and exposes read accessors.  It
- *  is unit-tested standalone with synthetic sequences.  Nothing consumes
- *  the estimates to alter timing or pacing yet.
+ *  is unit-tested standalone with synthetic sequences.  The jitter estimate
+ *  is consumed by the render-clock interpolation (clientSimRenderPrepare ->
+ *  interpRenderControl) to set the adaptive display delay; the clock offset,
+ *  RTT, and pipeline depth are read-only (Net Info readout).
  *
  *  Both clocks share a unit: localTick and serverTick each advance at
  *  100Hz in 10ms units, so the clock offset is localArrivalTick -
