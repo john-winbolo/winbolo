@@ -253,7 +253,7 @@ void processKeys(bool isQuiet) {
 	size_t newbuflen;
 
 	if (isQuiet == TRUE || isNoInput == TRUE) {
-		while (!(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
+		while (!serverSimIsTerminalGameOver(serverSim)) {
 			if (alarmRaised == alarmInterrupt) {
 				break;
 			}
@@ -266,7 +266,7 @@ void processKeys(bool isQuiet) {
 			CloseHandle(hThread);
 		}
 
-		while (strncmp(keyBuff, "quit", 4) != 0 && !(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
+		while (strncmp(keyBuff, "quit", 4) != 0 && !serverSimIsTerminalGameOver(serverSim)) {
 			if (alarmRaised == alarmInterrupt) {
 				strcpy(keyBuff, "quit");
 				continue;
@@ -361,7 +361,7 @@ void processKeys(bool isQuiet) {
   FD_SET(STDIN_FILENO, &fdmask);
 
   if (isQuiet == TRUE || isNoInput == TRUE) {
-    while (!(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
+    while (!serverSimIsTerminalGameOver(serverSim)) {
       if (alarmRaised == alarmInterrupt) {
         break;
       } else if (alarmRaised == alarmLock) {
@@ -378,7 +378,7 @@ void processKeys(bool isQuiet) {
       sleep(1);
     }
   } else {
-    while (strncmp(keyBuff, "quit", 4) != 0 && !(serverSimGetState(serverSim) == serverStateGameOver && !serverSimIsLobbyEnabled(serverSim))) {
+    while (strncmp(keyBuff, "quit", 4) != 0 && !serverSimIsTerminalGameOver(serverSim)) {
       if (strncmp(keyBuff, "help", 4) == 0) {
         printHelp();
       } else if (strncmp(keyBuff, "unlock", 6) == 0) {
@@ -482,8 +482,7 @@ void processKeys(bool isQuiet) {
 static void processCmdStdin(CmdStdin *cs) {
     while (1) {
         if (alarmRaised == alarmInterrupt) break;
-        if (serverSimGetState(serverSim) == serverStateGameOver &&
-            !serverSimIsLobbyEnabled(serverSim)) {
+        if (serverSimIsTerminalGameOver(serverSim)) {
             break;
         }
 

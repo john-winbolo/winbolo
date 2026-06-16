@@ -190,6 +190,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_lobby_update_sends_when_not_rotating",  run_wbn_lobby_update_sends_when_not_rotating  },
     { "maprotate_restarts_round_and_rearms",       run_maprotate_restarts_round_and_rearms       },
     { "maprotate_defers_wbn_update_until_key_rotated", run_maprotate_defers_wbn_update_until_key_rotated },
+    { "maprotate_gameover_is_not_terminal",        run_maprotate_gameover_is_not_terminal        },
     { "wbn_join_keyed_on_reauth",                  run_wbn_join_keyed_on_reauth                  },
     { "wbn_join_anonymous_on_grace",               run_wbn_join_anonymous_on_grace               },
     { "wbn_join_idempotent_reauth_no_double",      run_wbn_join_idempotent_reauth_no_double      },

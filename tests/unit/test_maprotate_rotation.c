@@ -115,3 +115,44 @@ int run_maprotate_defers_wbn_update_until_key_rotated(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* Plain no-lobby ServerSim (e.g. -nolobby / -quitonwin): game-over is terminal. */
+static ServerSim *make_plain_nolobby_sim(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+                                               gameOpen, false, 0, -1);
+    if (sim == NULL) return NULL;
+    serverSimSetLobbyEnabled(sim, false);
+    return sim;
+}
+
+/* A win drives a map-rotation round to game-over, then the lifecycle rotates
+ * instead of quitting. The dedicated server's exit poll must treat that
+ * game-over as non-terminal — otherwise it races the rotation (which flips
+ * state back to running within the tick) and shuts the process down, the
+ * "-maprotate exits like -quitonwin" bug. A plain no-lobby server must still
+ * report game-over as terminal so its existing shutdown-on-win is preserved. */
+int run_maprotate_gameover_is_not_terminal(void) {
+    ServerSim *sim = make_rotate_sim();
+    UT_ASSERT(sim != NULL);
+
+    serverSimStartGame(sim);
+    serverSimEnterGameOver(sim);   /* what a win does in the running tick */
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateGameOver,
+                  "enterGameOver must leave the sim in game-over");
+    UT_ASSERT_MSG(serverSimIsTerminalGameOver(sim) == FALSE,
+                  "a map-rotation game-over must not terminate the server — it "
+                  "rotates to the next round instead");
+    serverSimDestroy(sim);
+
+    ServerSim *plain = make_plain_nolobby_sim();
+    UT_ASSERT(plain != NULL);
+    serverSimStartGame(plain);
+    serverSimEnterGameOver(plain);
+    UT_ASSERT_MSG(serverSimGetState(plain) == serverStateGameOver,
+                  "enterGameOver must leave the plain sim in game-over");
+    UT_ASSERT_MSG(serverSimIsTerminalGameOver(plain) == TRUE,
+                  "a plain no-lobby game-over must still terminate the server");
+    serverSimDestroy(plain);
+    return 0;
+}

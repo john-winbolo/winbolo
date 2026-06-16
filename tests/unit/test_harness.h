@@ -223,6 +223,7 @@ int run_wbn_lobby_update_sends_when_not_rotating(void);
  * window so the next round's map is never reported on the old server_key. */
 int run_maprotate_restarts_round_and_rearms(void);
 int run_maprotate_defers_wbn_update_until_key_rotated(void);
+int run_maprotate_gameover_is_not_terminal(void);
 
 /* Deferred WBN PLAYER_JOIN core (test_wbn_deferred_join.c). The join
  * event is held until the slot's identity is known for the session —
