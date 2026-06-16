@@ -49,6 +49,7 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "../bg_game.h"
 #include "../flags.h"
+#include "../sdl3imgui.h"
 #include "../../gamefront.h"
 #include "../../currentgames.h"
 #include "discovery.h"
@@ -900,10 +901,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     ImGui::TableNextColumn();
                     if (e.countryCode[0] != '\0' &&
                         e.countryCode[0] != 'X') {
-                        SDL_Texture *flagTex = flagsGetTexture(e.countryCode);
-                        if (flagTex) {
-                            ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
-                        } else {
+                        if (!drawCountryFlagWithTip(e.countryCode)) {
                             ImGui::TextDisabled("%c%c", e.countryCode[0], e.countryCode[1]);
                         }
                     } else if (e.countryCode[0] != '\0') {
