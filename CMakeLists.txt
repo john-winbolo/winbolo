@@ -2570,6 +2570,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_ping_smoother.c
+    tests/unit/test_client_timing.c
     tests/unit/test_snapshot_compaction.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
@@ -2886,6 +2887,7 @@ set(_unit_test_names
     jitter_buffer_grow
     shell_projection
     ping_smoother
+    client_timing
     snapshot_compaction
     edge_send_predicate
     error_smoothing

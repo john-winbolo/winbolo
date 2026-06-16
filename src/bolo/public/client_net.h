@@ -269,6 +269,15 @@ void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,
                                 float *avgErrPx, float *maxErrPx,
                                 float *renderOffsetPx);
 
+/* Measurement-only client timing estimates: clock offset (10ms server-tick
+ * units), snapshot inter-arrival jitter (ms), RTT floor (ms), and pipeline
+ * depth (server-tick units).  All min-over-window smoothed.  Out pointers may
+ * be NULL; all zero on a non-UDP or absent transport.  Surfaced in Net Info;
+ * nothing consumes them to alter timing yet. */
+void clientSimGetTimingStats(ClientSim *cs, int *clockOffsetTicks,
+                             int *jitterMs, int *rttMs,
+                             int *pipelineDepthTicks);
+
 /* === Local-transport tuning === */
 void     clientSimNetSetLocalDelay(ClientSim *cs, uint16_t delay_ms);
 uint16_t clientSimNetGetLocalDelay(const ClientSim *cs);

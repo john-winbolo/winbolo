@@ -373,6 +373,11 @@ int run_shell_projection(void);
  * convergence, and a monotonic overshoot-free step response. */
 int run_ping_smoother(void);
 
+/* Client timing estimator (test_client_timing.c): min-over-window clock
+ * offset / pipeline depth / RTT and inter-arrival jitter over synthetic clean
+ * and jittered snapshot sequences — floor convergence and spike rejection. */
+int run_client_timing(void);
+
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */

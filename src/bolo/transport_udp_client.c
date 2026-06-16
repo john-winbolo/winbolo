@@ -25,6 +25,7 @@
  *********************************************************/
 
 #include "transport_udp_internal.h"
+#include "client_timing.h"
 #include "bases.h"
 #include "pillbox.h"
 #include "players.h"
@@ -151,6 +152,11 @@ typedef struct {
     PingEwma pingEwma;        /* Backing state for pingDisplayMs. */
     uint16_t pingDisplayMs;   /* EWMA RTT — feeds the HUD/scoreboard displays. */
     uint32_t localTick;  /* Local tick counter for timing */
+
+    /* Measurement-only clock/jitter/RTT estimator, fed at JOIN_ACCEPT, each
+     * snapshot header, and each PONG.  Surfaced in the Net Info readout;
+     * nothing consumes it to alter timing or pacing yet. */
+    ClientTiming timing;
 
     /* Map download state */
     BYTE    *mapDownloadBuf;     /* Buffer for reassembling compressed map */
@@ -1158,7 +1164,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             clientSimOnAssignedSlot(c->clientSim, c->playerNum,
                                     c->playerName, 0, 0);
 
-            pos += 4; /* skip serverTick */
+            /* Seed the timing estimator's clock offset from the accept's
+             * serverTick (the snapshot-derived estimate refines it shortly).
+             * No clean join round-trip is measured here — the JOIN handshake
+             * can span challenge/cookie retries — so pass 0 rather than
+             * invent an RTT sample. */
+            clientTimingSeedFromJoin(&c->timing, unpackU32(buf + pos), 0);
+            pos += 4;
             mapSize = unpackU32(buf + pos);
             pos += 4;
 
@@ -1433,6 +1445,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
         }
         c->lastSnapshotServerTick = c->snapshotHdr.serverTick;
+        /* Refine the timing estimator: clock offset and pipeline depth from
+         * the header's serverTick/lastProcessedInput, inter-arrival jitter
+         * from the gap since the previous snapshot's local arrival tick. */
+        clientTimingOnSnapshot(&c->timing, c->snapshotHdr.serverTick,
+                               c->snapshotHdr.lastProcessedInput, c->localTick);
         c->snapshotsRecvThisSec++;
         tankCount = buf[pos++];
         shellCount = buf[pos++];
@@ -1751,6 +1768,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 uint16_t sample = (uint16_t)(now - clientTime);
                 c->pingMs = pingMinWindowPush(&c->pingMinWin, sample);
                 c->pingDisplayMs = pingEwmaUpdate(&c->pingEwma, sample);
+                clientTimingOnRtt(&c->timing, sample);
                 /* Display consumers (scoreboard, HUD) read the EWMA; shell
                  * projection reads the min-over-window value below. */
                 playersSetPing(&c->clientSim->sim.plyrs, c->playerNum,
@@ -3007,6 +3025,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->pingDisplayMs = 0;
     pingMinWindowReset(&c->pingMinWin);
     pingEwmaReset(&c->pingEwma);
+    clientTimingReset(&c->timing);
 
     /* Optional runtime network impairment from WB_NETIMPAIR
      * (e.g. WB_NETIMPAIR=delay=75,jitter=30,loss=2,burst=2). Same spec
@@ -3216,6 +3235,24 @@ void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
     if (snapshotsRecv) *snapshotsRecv = (int)c->snapshotsRecvLast;
     if (snapshotsLost) *snapshotsLost = (int)c->snapshotsLostLast;
     if (snapshotsLostTotal) *snapshotsLostTotal = (int)c->snapshotsLostTotal;
+}
+
+void transportUdpClientGetTimingStats(Transport *t, int *clockOffsetTicks,
+                                      int *jitterMs, int *rttMs,
+                                      int *pipelineDepthTicks) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) {
+        if (clockOffsetTicks) *clockOffsetTicks = 0;
+        if (jitterMs) *jitterMs = 0;
+        if (rttMs) *rttMs = 0;
+        if (pipelineDepthTicks) *pipelineDepthTicks = 0;
+        return;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (clockOffsetTicks) *clockOffsetTicks = (int)clientTimingClockOffsetTicks(&c->timing);
+    if (jitterMs) *jitterMs = (int)clientTimingJitterMs(&c->timing);
+    if (rttMs) *rttMs = (int)clientTimingRttMs(&c->timing);
+    if (pipelineDepthTicks) *pipelineDepthTicks = (int)clientTimingPipelineDepthTicks(&c->timing);
 }
 
 const char *transportUdpClientGetJoinRejectReason(Transport *t) {

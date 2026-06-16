@@ -779,6 +779,18 @@ void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,
   }
 }
 
+void clientSimGetTimingStats(ClientSim *cs, int *clockOffsetTicks,
+                             int *jitterMs, int *rttMs,
+                             int *pipelineDepthTicks) {
+  if (clockOffsetTicks) *clockOffsetTicks = 0;
+  if (jitterMs) *jitterMs = 0;
+  if (rttMs) *rttMs = 0;
+  if (pipelineDepthTicks) *pipelineDepthTicks = 0;
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientGetTimingStats(&cs->transport, clockOffsetTicks, jitterMs,
+                                   rttMs, pipelineDepthTicks);
+}
+
 /* === Local-transport tuning === */
 
 void clientSimNetSetLocalDelay(ClientSim *cs, uint16_t delay_ms) {

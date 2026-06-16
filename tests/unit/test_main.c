@@ -265,6 +265,7 @@ static const UnitTestEntry s_tests[] = {
     { "jitter_buffer_grow",                      run_jitter_buffer_grow                      },
     { "shell_projection",                        run_shell_projection                        },
     { "ping_smoother",                           run_ping_smoother                           },
+    { "client_timing",                           run_client_timing                           },
     { "snapshot_compaction",                     run_snapshot_compaction                     },
     { "error_smoothing",                         run_error_smoothing                         },
     { "loopback_join",                           run_loopback_join                           },
