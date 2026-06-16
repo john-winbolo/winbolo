@@ -63,6 +63,7 @@ function M.reset_blitz_state(state)
   state.squad_blitz_roster      = nil
   state.squad_blitz_reject      = nil
   state.squad_blitz_accept      = nil
+  state._blitz_spot_since       = nil   -- first-come spot-claim timestamps (commander arbiter)
   -- squad membership / status (recomputed each tick, cleared for cleanliness)
   state.squad_role              = nil
   state.squad_cmdr              = nil
@@ -222,9 +223,29 @@ function M.blitz_arbitrate(state, info, now, self_pn)
       local fx, fy
       if slot.info.bes then fx, fy = slot.info.bes:match("^(%-?[%d.]+),(%-?[%d.]+)$") end
       parts[#parts + 1] = { pn = pn, fx = fx and tonumber(fx), fy = fy and tonumber(fy),
-                            bd = tonumber(slot.info.bd or "") }
+                            bd = tonumber(slot.info.bd or ""),
+                            committed = (slot.info.sub == "blitz_wait") or (slot.info.rdy == "1") }
     end
   end
+  -- First-come-first-serve claim tracking: remember the tick each soldier first
+  -- offered its CURRENT spot. A tank that has already settled on a spot keeps it;
+  -- a later arrival on the same spot is the one told to repick. (The old rule
+  -- picked by walk distance, which both churned the tank already in position and
+  -- flapped on noisy bd estimates.) A soldier that repicks resets its own claim,
+  -- and entries for soldiers no longer in the roster are pruned each pass.
+  state._blitz_spot_since = state._blitz_spot_since or {}
+  local since_tbl, live = state._blitz_spot_since, {}
+  for _, p in ipairs(parts) do
+    if p.fx and not p.me then
+      local key = string.format("%.4f,%.4f", p.fx, p.fy)
+      local rec = since_tbl[p.pn]
+      if not rec or rec.key ~= key then rec = { key = key, since = now }; since_tbl[p.pn] = rec end
+      p.since = rec.since
+      live[p.pn] = true
+    end
+  end
+  for pn in pairs(since_tbl) do if not live[pn] then since_tbl[pn] = nil end end
+
   local reject = {}
   for i = 1, #parts do
     for j = i + 1, #parts do
@@ -232,16 +253,24 @@ function M.blitz_arbitrate(state, info, now, self_pn)
       if a.fx and b.fx then
         local ddx, ddy = a.fx - b.fx, a.fy - b.fy
         if math.sqrt(ddx * ddx + ddy * ddy) <= clash then  -- euclidean float distance
-          local abd, bbd = a.bd or 0, b.bd or 0
           local loser
           -- The commander (me) never repicks its own standoff — the soldier
-          -- yields. Otherwise the further-traveling tank keeps the spot, the
-          -- closer one (lower bd) repicks.
+          -- yields. Otherwise first-come-first-serve: a soldier already IN
+          -- POSITION (blitz_wait / aimed) outranks one still approaching, and
+          -- among equal commitment whoever claimed the spot earlier keeps it.
+          -- Never make a settled tank move — that's pure churn.
           if a.me then loser = b
           elseif b.me then loser = a
-          elseif abd < bbd then loser = a
-          elseif bbd < abd then loser = b
-          else loser = (a.pn > b.pn) and a or b end
+          else
+            local ac, bc = a.committed and true or false, b.committed and true or false
+            if ac ~= bc then
+              loser = ac and b or a                      -- the one not yet in position repicks
+            else
+              local as, bs = a.since or now, b.since or now
+              if as ~= bs then loser = (as > bs) and a or b   -- later claimant repicks
+              else loser = (a.pn > b.pn) and a or b end       -- stable final tiebreak
+            end
+          end
           reject[loser.pn] = true
         end
       end

@@ -125,14 +125,21 @@ function M.set_mode(state, world, info, goal)
     b.wall_target = { mx = goal.shield_wall_mx, my = goal.shield_wall_my }
   end
 
-  -- Strategic pill placement: dispatch LGM to place pill when within 1 tile of target
+  -- Strategic pill placement: dispatch LGM to place the pill. Normal placement
+  -- waits until the tank is within 1 tile for precise positioning; an EMERGENCY
+  -- def_build (_place_emergency) just needs the pill OUT THERE, so it dispatches
+  -- the LGM to run to the spot from wherever the tank is. Either way decide()'s
+  -- place_pill handler still gates on lgm_can_reach + lgm_path_safe, so it only
+  -- actually fires when the LGM can walk there.
   if kind == "place_pill_strategic" then
     local tmx = info.tankx >> 8
     local tmy = info.tanky >> 8
     local pdist = U.mdist(tmx, tmy, goal.mx, goal.my)
-    local _pp_ok = pdist <= 1 and (info.carried_pills or 0) > 0
+    local close_enough = (goal._place_emergency and pdist <= C.PLACE_EMERGENCY_MAX_DIST)
+                         or pdist <= 1
+    local _pp_ok = close_enough and (info.carried_pills or 0) > 0
        and info.man_status == C.LGM_INTANK and not info.inboat
-    print2(string.format("PLACE_PILL_SETMODE t=%d goal=(%d,%d) tank=(%d,%d) pdist=%d carried=%d man=%d inboat=%s -> %s", state.tick or 0, goal.mx, goal.my, tmx, tmy, pdist, info.carried_pills or 0, info.man_status or -1, tostring(info.inboat), _pp_ok and "place_pill" or "no-dispatch"))
+    print2(string.format("PLACE_PILL_SETMODE t=%d goal=(%d,%d) tank=(%d,%d) pdist=%d emerg=%s carried=%d man=%d inboat=%s -> %s", state.tick or 0, goal.mx, goal.my, tmx, tmy, pdist, tostring(goal._place_emergency or false), info.carried_pills or 0, info.man_status or -1, tostring(info.inboat), _pp_ok and "place_pill" or "no-dispatch"))
     if _pp_ok then
       b.mode = "place_pill"
       b.pill_target = { mx = goal.mx, my = goal.my }

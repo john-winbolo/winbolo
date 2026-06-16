@@ -906,10 +906,34 @@ local function attack_pill_steer(state, world, info, goal)
       keys = keys | KEY_MORERANGE
     end
 
-    -- Turn so crosshairs align with the purple aim dot (not standoff center).
-    -- This way the tank is already aimed when it arrives.
+    -- Turn so crosshairs align with a CLEAR line of fire to the pill. Test the
+    -- pill tile's center plus its 4 corners and aim at whichever sub-point the
+    -- shell can actually reach without first hitting a wall, another pill, an
+    -- enemy base, or a half-wall. simulate_shot_angle is bit-exact with the
+    -- engine and terminates at the first obstacle, so a path that reaches the
+    -- target tile is unobstructed by construction. Falls back to the planned
+    -- aim dot (center) when every sub-point is blocked.
     local aim_tx = goal.aim_mx or (goal.mx + 0.5)
     local aim_ty = goal.aim_my or (goal.my + 0.5)
+    do
+      local cands = {
+        {goal.mx + 0.5, goal.my + 0.5},
+        {goal.mx + 0.2, goal.my + 0.2}, {goal.mx + 0.8, goal.my + 0.2},
+        {goal.mx + 0.2, goal.my + 0.8}, {goal.mx + 0.8, goal.my + 0.8},
+      }
+      for _, c in ipairs(cands) do
+        local ang = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0, c[1], c[2])
+        local p = cpf.simulate_shot_angle(info.tankx, info.tanky, ang,
+                                          cpf.SHOT_TANK, info.gunrange or 14)
+        local clear = false
+        if p then
+          for _, t in ipairs(p) do
+            if t.mx == goal.mx and t.my == goal.my then clear = true; break end
+          end
+        end
+        if clear then aim_tx, aim_ty = c[1], c[2]; break end
+      end
+    end
     local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0, aim_tx, aim_ty)
     local corr = U.adiff(info.direction, aim_dir)
 
@@ -926,8 +950,12 @@ local function attack_pill_steer(state, world, info, goal)
       return keys, taps
     end
 
-    -- Fine turn toward aim point
-    if     corr >  1 then taps = taps | KEY_TURNRIGHT
+    -- Turn toward the aim point WHILE charging. A real correction uses a HELD
+    -- turn (full rate) so a fast charge actually tracks the target instead of
+    -- drifting past it; only the last brad or two uses a fine tap.
+    if     corr >  3 then keys = keys | KEY_TURNRIGHT
+    elseif corr < -3 then keys = keys | KEY_TURNLEFT
+    elseif corr >  1 then taps = taps | KEY_TURNRIGHT
     elseif corr < -1 then taps = taps | KEY_TURNLEFT
     end
 
@@ -937,15 +965,15 @@ local function attack_pill_steer(state, world, info, goal)
     local tank_to_pill = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
     local standoff_to_pill = U.wdist(swx, swy, pill_wx, pill_wy)
     
-    -- Shoot during charge if inside standoff range AND a shell-sim
-    -- says the trajectory actually crosses the pill tile. The old
-    -- `corr <= 5` brad gate let through edge-of-pill shots that
-    -- physically miss (5 brads ≈ 7°; at 7-tile range that's ~0.85
-    -- tile lateral error — wider than the pill). Sim is bit-exact
-    -- with the engine.
+    -- Shoot during charge whenever a shell-sim says the trajectory actually
+    -- crosses the pill tile -- the sim IS the range + line-of-fire check, so no
+    -- static standoff-distance gate is needed (the old `dist <= standoff` gate
+    -- pinned the tank just outside standoff, never firing even though the shell
+    -- clearly reached). The `corr <= 5` brad pre-gate just skips the sim when
+    -- we're way off; the sim itself rejects edge-of-pill shots that physically
+    -- miss. Sim is bit-exact with the engine.
     local dist_to_pill = tank_to_pill
-    if dist_to_pill <= C.ATTACK_PILL_STANDOFF * 256
-       and math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE then
+    if math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE then
       -- Pre-gate: rough corr check first (cheap) to avoid the sim
       -- when we're way off. Sim only when within 5 brads.
       local angle_f = info.tank_angle or info.direction

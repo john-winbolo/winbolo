@@ -824,6 +824,11 @@ M.STRATEGIC_PLACE_COST_MULT          = 0.1
 M.DEFENSIVE_BUILD_MIN_DIST     = 2    -- tiles from tank (inner bound)
 M.DEFENSIVE_BUILD_MAX_DIST     = 5    -- tiles from tank (outer bound, tried first)
 M.DEFENSIVE_BUILD_ANGLE_OFFSET = 32   -- ±45° in WinBolo 256-unit circle
+-- Emergency def_build dispatches the LGM to run to the spot from wherever the
+-- tank is (no within-1-tile gate). Cap how far we'll send the LGM: spots are
+-- picked at <= DEFENSIVE_BUILD_MAX_DIST, +1 slack for tank drift between
+-- candidate selection and dispatch. Beyond this the LGM walk is too slow/risky.
+M.PLACE_EMERGENCY_MAX_DIST     = 6    -- tiles: max tank->spot for emergency LGM dispatch
 -- capture_pill cost: path^1.5 * DIST_SCALE + threat * DANGER_WEIGHT.
 --   Close+safe   → very low cost (always high priority)
 --   Close+hot    → danger term pushes cost up, deprioritises vs safer goals
@@ -1147,7 +1152,7 @@ M.SQUAD_REFUEL_OK_SHELLS = 10  -- ...and this (i.e. it was topping off, not desp
 M.SQUAD_HELP_RANGE       = 30  -- tiles; only answer a commander whose pill is within this
 M.SQUAD_CMD_RACE_TOL     = 3   -- ticks; two blitz calls on one pill opened within this of each other count as a same-tick race (broken by lower player id); otherwise first-to-the-take keeps command
 M.SQUAD_BLITZ_AIM_TOL    = 8   -- brad; a blitz soldier must be facing the pill within this before it reports rdy=1 (so on GO it can fire/charge immediately, not spin to aim)
-M.SQUAD_MAX_SIZE         = 3   -- max soldiers per squad; a full squad recruits no more
+M.SQUAD_MAX_SIZE         = 2   -- max SOLDIERS per squad; with the commander that's 3 tanks total per blitz. A full squad recruits no more
 M.SQUAD_BLITZ_COST       = 30  -- flat attack_pill cost a squad soldier assigns its commander's blitz pill: low enough to win normal goals, high enough that attack_tank/flee/refuel can still preempt
 M.SQUAD_BLITZ_BUCKET     = 5   -- a blitz standoff is picked at random from clear-LOS spots scoring within this of the best
 M.SQUAD_BLITZ_READY_TIMEOUT = 550  -- ticks (~11s @ 50Hz) the commander waits in blitz_wait for ALL soldiers to report rdy before firing GO anyway. Sized to cover a worst-case in-place aim: a 180-deg turn on swamp/crater/river/rubble (turn rate 0.25 brad/tick) is ~512 ticks (~10.4s), so the timeout must exceed that or the commander GOes before a slow-terrain soldier can finish turning to face the pill. (A genuinely stuck/dead soldier still can't stall past this.)

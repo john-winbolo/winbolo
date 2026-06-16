@@ -87,7 +87,13 @@ end
 -- pill as the line moves — but classifying live every tick both costs the
 -- near_front scan and makes categories flicker. Cache on the pill; refresh on
 -- a stagger. `tick` drives the refresh; pass the current sim tick.
-function M.role_of(pill, tick)
+-- force_fresh: ignore the 60s cache and reclassify NOW. Used before committing
+-- an irreversible decision off a pill's role (e.g. repositioning a "back" pill)
+-- so a stale cache — or a front line that has since advanced over the pill —
+-- can't trigger a move the rest of the team (who reclassified more recently)
+-- disagrees with. Roles are per-bot and never shared, so the only defence
+-- against acting on a stale role is to refresh it at the decision point.
+function M.role_of(pill, tick, force_fresh)
   if not pill then return "front" end
   -- A pill carried IN A TANK is always utility (a mobile reserve).
   if pill.in_tank then return "utility" end
@@ -96,7 +102,7 @@ function M.role_of(pill, tick)
   -- the team blocker broadcast (pill._in_use), so it reverts automatically.
   if pill._in_use then return "utility" end
   tick = tick or 0
-  local stale = (not pill.role) or (not pill.role_tick)
+  local stale = force_fresh or (not pill.role) or (not pill.role_tick)
     or (tick - pill.role_tick) >= (C.PILL_ROLE_REEVAL_TICKS or 3000)
   if stale then
     pill.role      = (M.classify(pill.mx, pill.my, false))

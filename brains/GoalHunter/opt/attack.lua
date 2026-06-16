@@ -4476,10 +4476,21 @@ function M.update_attack_substate(goal, state, world, info)
           clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
           return
         end
-        goal.substate = "charge"
-        goal._charge_braking = nil
-        print(string.format(TAG .. " ATTACK: detree done (shots=%d/%d), charging",
-              fired, needed))
+        -- A blitz SOLDIER (committed to a commander, no GO yet) must rally in
+        -- blitz_wait after clearing its lane — the overwhelm has to be
+        -- simultaneous, so it waits for the commander's GO rather than charging
+        -- in alone while the captain is still settling at its standoff.
+        if goal._blitz and state.squad_cmdr and not goal._blitz_committed then
+          goal.substate = "blitz_wait"
+          goal._blitz_ready_since = nil
+          print(string.format(TAG .. " ATTACK: detree done (shots=%d/%d), rally in blitz_wait for GO",
+                fired, needed))
+        else
+          goal.substate = "charge"
+          goal._charge_braking = nil
+          print(string.format(TAG .. " ATTACK: detree done (shots=%d/%d), charging",
+                fired, needed))
+        end
       end
     end
     -- Steering handles shooting; fall through to draw

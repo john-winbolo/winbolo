@@ -1468,12 +1468,15 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
             elseif tt == C.T_SWAMP or tt == C.T_RUBBLE or tt == C.T_CRATER then tier = 2
             else rej = "needs_clearing" end   -- forest / other
             if tier and PF.wall_hp_between(tmx, tmy, cx, cy) ~= 0 then rej = "wall_between"; tier = nil end
-            if tier then
-              for step = 1, dist - 1 do
-                local ix = U.mclamp(math.floor(tmx + dx * step + 0.5))
-                local iy = U.mclamp(math.floor(tmy + dy * step + 0.5))
-                if U.is_water(U.ttype(ix, iy)) then rej = "water"; tier = nil; break end
-              end
+            -- Real reachability: the LGM has to WALK from the tank to the spot
+            -- to drop the pill, so require the tick-by-tick walk sim to find a
+            -- route. This catches water, walls, and water-locked spits that the
+            -- old coarse straight-line sample missed (it picked spots only
+            -- reachable across water, so the pill never got placed). The tank
+            -- no longer has to reach the spot itself — the LGM runs out — so
+            -- this is the LGM's path, from the tank's current tile.
+            if tier and cpf.lgm_travel_ticks_map(tmx, tmy, cx, cy, 0, 0, 2000, 150) == -1 then
+              rej = "unreachable"; tier = nil
             end
           end
           if tier and tier < best_tier then best_cx, best_cy, best_tier = cx, cy, tier end
@@ -2278,10 +2281,17 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
     -- And only when back is in surplus (see back_surplus above).
     if back_surplus > 0
        and p.owner == "friendly" and p.health > 0 and not p._in_use
+       -- Cheap cached pre-filter, THEN a forced fresh reclassify before we'll
+       -- commit to moving it. The cached "back" can be up to 60s stale; the
+       -- front line may have advanced over the pill since, in which case our
+       -- allies already see it as "front" and would never move it. The fresh
+       -- check (only reached for cached-back pills, thanks to short-circuit)
+       -- makes our reposition decision agree with the current influence field.
        and PP.role_of(p, state.tick) == "back"
+       and PP.role_of(p, state.tick, true) == "back"
        and not (ally_repos and (ally_repos[pid]
                                 or ally_repos["t:" .. p.mx .. "," .. p.my])) then
-      local cat = PP.role_of(p, state.tick)   -- cached 60s role
+      local cat = PP.role_of(p, state.tick)   -- fresh role (just refreshed above)
       local inf = cpf.influence_at(p.mx, p.my)
 
       -- Coverage within fire range (exclude self from the pill count).
@@ -6601,11 +6611,15 @@ local function goal_selection(state, world, info, quiet)
       -- from both additive SW+CM penalty AND the multiplicative ratio
       -- gate (the gate only fires for entries with c.hysteresis set,
       -- which we leave nil here).
-      if HYST_EXEMPT[c.goal.kind] or c._engage_break_lock then
+      if HYST_EXEMPT[c.goal.kind] or c.goal._place_emergency or c._engage_break_lock then
         -- Exempt goals skip the type-switch penalty (switching from
         -- another group is free). But within the same group, the
         -- target-switch penalty still applies to prevent spinning
         -- between targets (e.g. two capture_base candidates).
+        -- _place_emergency: the threat-reactive "build while fighting" drop.
+        -- It exists precisely for the panic scenario, so it must be free to
+        -- preempt kill_lgm/attack_tank instead of being buried under the
+        -- +switch+commitment penalty (which it can never out-cost otherwise).
         local cg = goal_group(c.goal.kind)
         if cg == cur_group
            and (c.goal.mx ~= state.goal.mx or c.goal.my ~= state.goal.my) then
