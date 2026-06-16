@@ -378,6 +378,12 @@ int run_ping_smoother(void);
  * and jittered snapshot sequences — floor convergence and spike rejection. */
 int run_client_timing(void);
 
+/* Render-time interpolation (test_interp_render.c): interpUpdate serverTick
+ * idempotency seq-guard, the render-clock fractional-t mapping, and the
+ * adaptive display-delay controller (bounded <=1 extra snapshot, hysteresis,
+ * asymmetric slew, frame-spike safe-degrade). */
+int run_interp_render(void);
+
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */

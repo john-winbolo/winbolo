@@ -79,6 +79,11 @@ struct ClientSim {
     /* Interpolation state for other players' tanks */
     InterpContext interpCtx;
 
+    /* Adaptive display-delay controller for render-time interpolation.
+     * Zero-initialised by the clientSimCreate memset (depth 1, first frame
+     * discrete). */
+    InterpRenderCtl interpRenderCtl;
+
     /* Server shell snapshots for UDP mode */
     ShellSnapshot serverShellSnaps[MAX_SNAPSHOT_SHELLS];
     int         serverShellCount;

@@ -2440,12 +2440,54 @@ static void udpClientSendPunchRequest(TransportUdpClientCtx *c) {
            (const struct sockaddr *)&dest, sizeof(dest));
 }
 
-/* Client tick: receive packets from server, handle join flow, ping */
-static bool udpClientTick(void *ctx) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+/* Receive-and-apply seam: drain the socket and apply any snapshots (and all
+ * other inbound packet processing — control, PONG, handshake, map) without
+ * advancing any per-tick state.  Called both from udpClientTick (where the
+ * recv loop used to be) and, once per render frame, from the main-thread
+ * render seam so a frame composes from the freshest snapshot.  No localTick
+ * advance, resends, acks, ping, or timeouts happen here — those stay in
+ * udpClientTick.  Safe to call from the render path because the pump and the
+ * render run on the same serialized main thread (the SDL timers only set
+ * atomics), so inbound processing here is byte-for-byte identical to running
+ * it from the pump. */
+static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
     uint8_t buf[UDP_MAX_PAYLOAD];
     struct sockaddr_in fromAddr;
     int len;
+
+    /* Receive all pending packets from the wire */
+    while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
+        if (netImpairEnabled(&c->impairIn)) {
+            netImpairOffer(&c->impairIn, buf, len, &fromAddr,
+                           (uint64_t)SDL_GetTicks());
+        } else {
+            udpClientProcessPacket(c, buf, len);
+        }
+    }
+
+    /* Release any impaired INBOUND datagrams now due into the processor.
+     * No-op while the impairment layer is disabled.  (Outbound impairment
+     * release is a send and stays on the per-tick path in udpClientTick.) */
+    {
+        uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
+        struct sockaddr_in paddr;
+        uint64_t now = (uint64_t)SDL_GetTicks();
+        int plen;
+        while ((plen = netImpairPop(&c->impairIn, pbuf, sizeof(pbuf),
+                                    &paddr, now)) > 0) {
+            udpClientProcessPacket(c, pbuf, plen);
+        }
+    }
+}
+
+static void udpClientDrainSnapshotsVtable(void *ctx) {
+    if (ctx == NULL) return;
+    udpClientDrainSnapshots((TransportUdpClientCtx *)ctx);
+}
+
+/* Client tick: receive packets from server, handle join flow, ping */
+static bool udpClientTick(void *ctx) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
 
     c->localTick++;
 
@@ -2466,28 +2508,19 @@ static bool udpClientTick(void *ctx) {
         c->ppsWindowStart = c->localTick;
     }
 
-    /* Receive all pending packets from the wire */
-    while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
-        if (netImpairEnabled(&c->impairIn)) {
-            netImpairOffer(&c->impairIn, buf, len, &fromAddr,
-                           (uint64_t)SDL_GetTicks());
-        } else {
-            udpClientProcessPacket(c, buf, len);
-        }
-    }
+    /* Receive and apply all pending inbound packets (recv loop + inbound
+     * impairment release).  Factored into a seam the render path also calls
+     * once per frame; it advances no per-tick state. */
+    udpClientDrainSnapshots(c);
 
-    /* Release any impaired datagrams now due: inbound packets into the
-     * processor, outbound packets onto the wire (to their stored addr).
-     * Both pops are no-ops while their layer is disabled. */
+    /* Release any impaired OUTBOUND datagrams now due onto the wire (to their
+     * stored addr).  This is a send and stays on the per-tick path; it is a
+     * no-op while the outbound impairment layer is disabled. */
     {
         uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
         struct sockaddr_in paddr;
         uint64_t now = (uint64_t)SDL_GetTicks();
         int plen;
-        while ((plen = netImpairPop(&c->impairIn, pbuf, sizeof(pbuf),
-                                    &paddr, now)) > 0) {
-            udpClientProcessPacket(c, pbuf, plen);
-        }
         while ((plen = netImpairPop(&c->impairOut, pbuf, sizeof(pbuf),
                                     &paddr, now)) > 0) {
             udpSendTo(c->sock, pbuf, plen, &paddr);
@@ -2930,6 +2963,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
         t.sendInput = udpClientSendInput;
         t.tick = udpClientTick;
         t.getSnapshot = udpClientGetSnapshotVtable;
+        t.drainSnapshots = udpClientDrainSnapshotsVtable;
         t.ctx = c;
         return t;
     }
@@ -2956,6 +2990,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
             t.sendInput = udpClientSendInput;
             t.tick = udpClientTick;
             t.getSnapshot = udpClientGetSnapshotVtable;
+            t.drainSnapshots = udpClientDrainSnapshotsVtable;
             t.ctx = c;
             return t;
         }
@@ -3054,6 +3089,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     t.sendInput = udpClientSendInput;
     t.tick = udpClientTick;
     t.getSnapshot = udpClientGetSnapshotVtable;
+    t.drainSnapshots = udpClientDrainSnapshotsVtable;
     t.ctx = c;
     return t;
 }

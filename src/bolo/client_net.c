@@ -18,6 +18,8 @@
 #include "frontend.h"                      /* frontEndApplyLocalTankPrefs */
 #include "transport.h"
 #include "transport_udp.h"
+#include "client_snapshot.h"                /* clientSnapshotRenderInterp */
+#include "interpolation.h"                  /* interpRenderControl */
 #include "netpacks.h"                      /* MAP_DOWNLOAD_MAX_SIZE, lobbyBotNameAcceptable */
 #include "input_packet.h"
 #include "global.h"
@@ -319,6 +321,33 @@ bool clientSimNetSyncSnapshot(ClientSim *cs) {
                             snapEvents, snapHdr.reliableEventCount,
                             cs->myPlayerNum);
   return true;
+}
+
+void clientSimNetDrainSnapshots(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (cs->transport.drainSnapshots != NULL) {
+    cs->transport.drainSnapshots(cs->transport.ctx);
+  }
+}
+
+void clientSimRenderPrepare(ClientSim *cs, uint32_t nowMs) {
+  int jitterMs = 0;
+  InterpRenderDecision d;
+
+  if (cs == NULL) return;
+
+  /* 3.3 — drain the socket so the frame composes from the freshest snapshot
+   * (no-op for the local transport).  Must run under the client mutex, which
+   * the caller already holds around clientRenderFrame. */
+  clientSimNetDrainSnapshots(cs);
+
+  /* 3.2 — advance the adaptive display-delay controller from measured
+   * snapshot jitter, then recompute every remote tank's display position by
+   * interpolating against the render clock.  Falls back to today's discrete
+   * apply when the controller flags the render clock as stressed. */
+  clientSimGetTimingStats(cs, NULL, &jitterMs, NULL, NULL);
+  d = interpRenderControl(&cs->interpRenderCtl, (float)jitterMs, nowMs);
+  clientSnapshotRenderInterp(cs, nowMs, d.extraDelayMs, d.discrete);
 }
 
 /* === State queries === */

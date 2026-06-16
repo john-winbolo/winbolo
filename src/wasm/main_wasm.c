@@ -263,6 +263,7 @@ static void main_loop_iteration(void) {
   tick = SDL_GetTicks();
   clientMutexWaitFor();
   if (finishedLoop == FALSE) {
+    clientSimRenderPrepare(cs, tick);
     clientRenderFrame(cs, redraw);
   }
   clientMutexRelease();

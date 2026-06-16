@@ -266,6 +266,7 @@ static const UnitTestEntry s_tests[] = {
     { "shell_projection",                        run_shell_projection                        },
     { "ping_smoother",                           run_ping_smoother                           },
     { "client_timing",                           run_client_timing                           },
+    { "interp_render",                           run_interp_render                           },
     { "snapshot_compaction",                     run_snapshot_compaction                     },
     { "error_smoothing",                         run_error_smoothing                         },
     { "loopback_join",                           run_loopback_join                           },
