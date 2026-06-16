@@ -98,6 +98,58 @@ local function rebuild_index(world)
   world.base_at = base_at
 end
 
+-- Fold allies' advertised carried-pill ids (comms `carry=` field) into the
+-- pill table as allied/in-tank entries. In-tank pills are dropped by the C
+-- per-tick pill scan (pillsGetBrainPillsInRect requires inTank==FALSE) and the
+-- EVENT_PILL_UPDATE that flips in_tank is view-rect gated in non-advantage AI
+-- mode — so a bot out of view never learns the team is holding a pill. The
+-- carrier knows its own carried ids first-hand (it stood on the pill at
+-- pickup) and advertises them; we synthesize a minimal allied/in-tank entry
+-- here so the portfolio counts + de-confliction stay consistent team-wide.
+--   ally_carry: { [pill_id] = carrier_player_num }   (self excluded by caller)
+function M.sync_ally_carried(world, ally_carry, now)
+  local prev = world._ally_carry_ids
+  local cur = nil
+  for id, pn in pairs(ally_carry) do
+    local p = world.pills[id]
+    -- Never clobber first-hand knowledge refreshed THIS tick by a real event
+    -- (last_seen == now) — the in-view truth always wins over the advert.
+    if not (p and (p.last_seen or 0) >= now) then
+      if p == nil then
+        p = { mx = 0, my = 0, health = 0, anger = 0, anger_tick = 0,
+              last_hit_tick = 0, under_attack = false, attack_tick = 0,
+              attack_damage = 0 }
+        world.pills[id] = p
+        pill_index_add(world, id, p)
+      end
+      p.owner        = "allied"
+      p.owner_player = pn
+      p.in_tank      = true
+      p.carrier      = pn
+      p.last_seen    = now
+      p._synth_carry = pn
+    end
+    cur = cur or {}; cur[id] = true
+  end
+  -- Evict phantom carries no longer advertised (carrier deployed / left view /
+  -- died): a purely-synthesized in-tank ghost would otherwise linger forever.
+  -- Only drop entries WE synthesized that no real event has refreshed this
+  -- tick — a far bot honestly doesn't know where the pill landed until it sees
+  -- it, which is no worse than the pre-fix "team doesn't have that pill" state.
+  if prev then
+    for id in pairs(prev) do
+      if not (cur and cur[id]) then
+        local p = world.pills[id]
+        if p and p._synth_carry and p.in_tank and (p.last_seen or 0) < now then
+          pill_index_remove(world, id, p.mx, p.my)
+          world.pills[id] = nil
+        end
+      end
+    end
+  end
+  world._ally_carry_ids = cur
+end
+
 function M.update(world, info, tick)
   world.tick = tick  -- store for staleness reporting
 

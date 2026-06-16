@@ -373,6 +373,36 @@ function M.update(state, world, info)
     end
   end
 
+  -- Friendly-fire repair guard: stamp any friendly pill a friendly shot (own OR
+  -- ally) is sitting on / right next to, so eval_repair_pill won't heal a pill
+  -- the team is shooting down to reposition. Observing the actual bullet is more
+  -- reliable than the repos broadcast (no latency) AND covers our OWN shots, so
+  -- we don't heal the pill we were just about to move. Own shots classify
+  -- friendly (OBJECT_HOSTILE==0), same as shot_tracker relies on. cheb<=1
+  -- window absorbs fast shells skipping a tile between snapshot ticks.
+  local fshot_tiles = nil
+  for _, ob in ipairs(info.objects) do
+    if ob.type == 1 and (ob.info & OBJECT_HOSTILE) == 0 then  -- 1 = OBJECT_SHOT
+      fshot_tiles = fshot_tiles or {}
+      fshot_tiles[U.mkey(ob.x >> 8, ob.y >> 8)] = true
+    end
+  end
+  if fshot_tiles then
+    for _, p in pairs(world.pills) do
+      if p.owner == "friendly" and p.health > 0 and not p.in_tank then
+        for ddy = -1, 1 do
+          for ddx = -1, 1 do
+            local nx, ny = p.mx + ddx, p.my + ddy
+            if nx >= 0 and nx <= 255 and ny >= 0 and ny <= 255
+               and fshot_tiles[U.mkey(nx, ny)] then
+              p._friendly_shot_tick = now
+            end
+          end
+        end
+      end
+    end
+  end
+
   -- ----- Allied LGM protection (aIndy: avoid driving over allied LGMs) -----
   -- ----- Enemy LGM tracking (live sightings in 15x15 view) --------------
   -- Both passes share one scan over info.objects.  Enemy LGMs are
@@ -388,6 +418,13 @@ function M.update(state, world, info)
     if ob.type == OBJECT_BUILDMAN then
       local lmx = ob.x >> 8
       local lmy = ob.y >> 8
+      -- Owner classification trace: one line per LGM the brain actually
+      -- received this tick. OBJECT_HOSTILE comes straight from the C scan
+      -- (players.c playersGetBrainLgmsInRect: hostile unless allied). An LGM
+      -- that's our OWN (self-skipped in C), tree-hidden >3 tiles out, or
+      -- otherwise not in info.objects will simply never log here — its absence
+      -- is the answer to "why didn't the bot see whose LGM that is".
+      if BRAIN_DEBUG_MODE then print2(string.format("LGM_PERCEIVE t=%d idnum=%s tile=(%d,%d) hostile=%s -> %s", now, tostring(ob.idnum), lmx, lmy, tostring((ob.info & OBJECT_HOSTILE) ~= 0), ((ob.info & OBJECT_HOSTILE) == 0) and "ALLY/FRIENDLY" or "ENEMY")) end
       if (ob.info & OBJECT_HOSTILE) == 0 then
         allied_lgm_positions[#allied_lgm_positions + 1] = { mx = lmx, my = lmy }
       else

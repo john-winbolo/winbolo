@@ -16,10 +16,12 @@ local C   = require("constants")
 
 local M = {}
 
--- "front" = within pill SHOOT RANGE (euclidean) of a front "3" tile, so a
--- front pill can actually contest the line (R1, 2026-06-01). Was a flat 3-tile
--- chebyshev box.
-local FRONT_NEAR_RADIUS = C.PILL_FIRE_RANGE or 9
+-- "front" = within FRONT_NEAR_RADIUS tiles (euclidean) of a front "3" tile.
+-- Narrowed to 2 (2026-06-16): only pills hugging the contested line count as
+-- front. History: flat 3-tile chebyshev box -> pill SHOOT RANGE (8, so any pill
+-- that could fire at the line) -> 2, since shoot-range-wide pulled in pills well
+-- behind the line and inflated the "front" bucket.
+local FRONT_NEAR_RADIUS = C.FRONT_NEAR_RADIUS or 2
 
 -- Portfolio targets (share of friendly pills). util = blockers + carried pills
 -- (R1): an enforced 15% reserve that flexes to defense. back rolls forward into

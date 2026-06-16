@@ -938,14 +938,6 @@ local function attack_pill_steer(state, world, info, goal)
 
   -- ── charge: accelerate toward standoff, decel to stop on green circle ──
   if goal.substate == "charge" then
-    local sfx = goal.standoff_fx or (goal.mx + 0.5)
-    local sfy = goal.standoff_fy or (goal.my + 0.5)
-    -- Round-to-nearest matches in_range_position (line 914) and the
-    -- attack-side dist viz; truncating here would split the standoff
-    -- by 1 wu vs the substate that owns the transition decision.
-    local swx, swy = math.floor(sfx * 256 + 0.5), math.floor(sfy * 256 + 0.5)
-    local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
-
     -- PPT-charge gate for THIS substate only: the slow PPT creep / standoff-stop
     -- exists to thread precisely behind a BUILT wall. A blitz overwhelm with no
     -- shield (a soldier, or a commander that skipped walls) has nothing to thread,
@@ -953,6 +945,32 @@ local function attack_pill_steer(state, world, info, goal)
     -- brake at shot range) even though the pill's HP set goal._is_ppt at plan
     -- time. Shielded PPT takes and solo PPT still creep.
     local _charge_ppt = goal._is_ppt and not (goal._blitz and not goal._blitz_shielded)
+
+    -- First non-PPT charge tick: pull the engage spot in from the planned 7.4-tile
+    -- ring to ATTACK_PILL_STANDOFF_CHARGE (7.0) along the same bearing, so a spot
+    -- that rounded just outside shell reach engages without an extra creep. PPT
+    -- keeps its precisely-placed shielded standoff. Done at charge time (not plan)
+    -- because a PPT can demote to non-PPT before/at charge entry — only pull once
+    -- the charge is actually running non-PPT. Gated to fire once per attack.
+    if not _charge_ppt and not goal._charge_pulled then
+      local pcx, pcy = goal.mx + 0.5, goal.my + 0.5
+      local dx, dy = (goal.standoff_fx or pcx) - pcx, (goal.standoff_fy or pcy) - pcy
+      local d = math.sqrt(dx * dx + dy * dy)
+      if d > 0.001 then
+        local R2 = C.ATTACK_PILL_STANDOFF_CHARGE or 7.0
+        goal.standoff_fx = pcx + dx / d * R2
+        goal.standoff_fy = pcy + dy / d * R2
+      end
+      goal._charge_pulled = true
+    end
+
+    local sfx = goal.standoff_fx or (goal.mx + 0.5)
+    local sfy = goal.standoff_fy or (goal.my + 0.5)
+    -- Round-to-nearest matches in_range_position (line 914) and the
+    -- attack-side dist viz; truncating here would split the standoff
+    -- by 1 wu vs the substate that owns the transition decision.
+    local swx, swy = math.floor(sfx * 256 + 0.5), math.floor(sfy * 256 + 0.5)
+    local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
 
     if info.gunrange < C.GUNSIGHT_MAX then
       keys = keys | KEY_MORERANGE
@@ -3490,13 +3508,37 @@ function M.steer(state, world, info, goal)
       -- + fire trigger.
       if info.speed > 0 then keys = keys | KEY_SLOWER end
     elseif _approach_brake_active then
-      _throttle_branch = "ap_brake_zone"
-      local sdist_wu = _approach_sdist_wu
-      local desired = math.max(4, math.floor(sdist_wu * 0.03))
-      if info.speed > desired + 4 then
-        keys = keys | KEY_SLOWER
-      elseif info.speed < desired and sdist_wu > 128 then
-        keys = keys | KEY_FASTER
+      -- Aligned fast-path: when we're aimed straight at the approach point we
+      -- can skip the slow proportional creep and drive at full speed, braking
+      -- only once the engine-exact stop predictor (cpf.predict_stop, the model
+      -- behind the charge_stop_pred viz) says braking-from-here would carry us
+      -- to/past the approach point. predict_stop projects along the tank's
+      -- facing, so it's only trustworthy when facing ≈ the target; when NOT
+      -- aligned (still turning / circling toward the spot) we fall back to the
+      -- gentle proportional brake so we don't overshoot while cornering.
+      local afx = goal.approach_fx or (goal.approach_mx and (goal.approach_mx + 0.5))
+      local afy = goal.approach_fy or (goal.approach_my and (goal.approach_my + 0.5))
+      if afx and abs_corr <= 12 then   -- ~17° heading error: lined up
+        _throttle_branch = "ap_linedup_fast"
+        local awx = math.floor(afx * 256 + 0.5)
+        local awy = math.floor(afy * 256 + 0.5)
+        local adist = U.wdist(info.tankx, info.tanky, awx, awy)
+        local tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(tmx, tmy)]) or 16
+        local ang_f = info.tank_angle or info.direction
+        local espeed = (info.speed or 0) / 4   -- info.speed is engine speed ×4
+        local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f, espeed, tcap)
+        local stop_dist = U.wdist(info.tankx, info.tanky, psx, psy)
+        if stop_dist >= adist then keys = keys | KEY_SLOWER else keys = keys | KEY_FASTER end
+        if BRAIN_DEBUG_MODE then local _hit = (stop_dist >= adist - 16) and (stop_dist <= adist + 24); local _r, _g, _b = _hit and 60 or 255, _hit and 220 or 160, 60; viz.line("approach_stop_pred", info.tankx / 256, info.tanky / 256, psx / 256, psy / 256, _r, _g, _b, 160); viz.rect("approach_stop_pred", psx / 256 - 0.3, psy / 256 - 0.3, psx / 256 + 0.3, psy / 256 + 0.3, _r, _g, _b, 200, false); viz.rect("approach_stop_pred", awx / 256 - 0.15, awy / 256 - 0.15, awx / 256 + 0.15, awy / 256 + 0.15, 80, 160, 255, 220, true); viz.text("approach_stop_pred", psx / 256, psy / 256 - 0.5, string.format("stopd=%d adist=%d", stop_dist, adist), "center", _r, _g, _b, 230, 0.3) end
+      else
+        _throttle_branch = "ap_brake_zone"
+        local sdist_wu = _approach_sdist_wu
+        local desired = math.max(4, math.floor(sdist_wu * 0.03))
+        if info.speed > desired + 4 then
+          keys = keys | KEY_SLOWER
+        elseif info.speed < desired and sdist_wu > 128 then
+          keys = keys | KEY_FASTER
+        end
       end
     elseif facing_away and C.FACING_AWAY_BRAKE_ENABLED then
       _throttle_branch = "facing_away"

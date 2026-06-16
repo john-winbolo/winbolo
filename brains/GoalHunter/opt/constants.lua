@@ -115,6 +115,7 @@ M.PILL_DANGER_ANGER = 200  -- additional penalty when fully angry (anger=1.0, qu
 M.PILL_DANGER_EDGE_FALLOFF = 0.5
 M.PILL_RANGE_MAP    = 9    -- danger stamp radius (1 beyond actual fire range of 8)
 M.PILL_FIRE_RANGE   = 8    -- actual pillbox firing range: PILLBOX_RANGE(2048) / 256 = 8 tiles
+M.FRONT_NEAR_RADIUS = 2    -- tiles (euclidean) a front-line tile must be within for a pill to count "front" (was PILL_FIRE_RANGE=8; narrowed so only pills hugging the line are front, not whole-fire-range neighbours)
 M.MIN_TREEHIDE_DIST_MAP = 3  -- MIN_TREEHIDE_DIST (768) in map tiles
 M.CROSSFIRE_MULTIPLIER_ENABLED = false  -- multiply danger by number of pills covering each tile
 
@@ -327,6 +328,7 @@ M.STALE_SKIP_TICKS       = 500   -- skip object entirely if unseen this long (~1
 -- that range: close enough for shells to hit, far enough that pill shots are
 -- harder to land.  Standoff ring is placed at 7 tiles (shell range) not 6.
 M.ATTACK_PILL_STANDOFF = 7.4  -- desired engagement distance from pill (max shell range)
+M.ATTACK_PILL_STANDOFF_CHARGE = 7.0  -- non-PPT charge pulls the engage spot in to here on the first charge tick (PPT keeps its shielded standoff)
 M.ATTACK_PILL_RANGE    = 9.5  -- max distance to start shooting
 M.ATTACK_PILL_MIN_ARMOUR = 1  -- minimum armour to attempt pill take
 
@@ -599,6 +601,7 @@ M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pil
 M.REPAIR_BASE_COST         = 30    -- flat floor so a close/damaged repair doesn't trivially out-rank other goals
 M.REPAIR_DAMAGE_BONUS      = 3     -- cost reduction per missing HP on friendly pill
 M.REPAIR_CONTESTED_MULT    = 3.0   -- repair cost ×N when an enemy tank is closer to the pill than us (contested → likely futile)
+M.REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400  -- 8 s @ 50 Hz: after a friendly shot (own or ally) lands on a friendly pill, refuse to repair it — the team is shooting it down to reposition (perception sets pill._friendly_shot_tick)
 M.ATTACK_PILL_BASE_COST    = 30    -- flat cost added to every attack_pill (like ATTACK_BASE_EXTRA_COST for bases) so a pill take isn't free vs other goals
 M.ATTACK_BASE_EXTRA_COST   = 80    -- flat cost added to hostile base attacks
 M.ATTACK_BASE_THREAT_WEIGHT = 3    -- multiplier for threat at base location (penalise bases behind enemy pills/tanks)
@@ -748,6 +751,7 @@ M.DIJKSTRA_PILL_DANGER_SCALE    = 0.1   -- danger weighting for the "pill take" 
 -- Strategic pill placement (idle deployment near front line / friendly base)
 M.STRATEGIC_PLACE_ENABLED       = true
 M.STRATEGIC_PLACE_SEARCH_RADIUS = 8     -- tiles around midpoint to search
+M.STRATEGIC_PLACE_AGGRO_SEARCH_RADIUS = 10  -- wider scan when filling the AGGRO role: aggro tiles sit beyond the front (negative influence), deeper than the default radius reaches from the tank's (rear) position. Lets a good forward aggro tile up to 10 tiles out be found + placed.
 M.STRATEGIC_PLACE_FRONT_WEIGHT  = 3.0   -- bonus per tile of proximity to front line
 M.STRATEGIC_PLACE_BASE_WEIGHT   = 2.0   -- bonus per tile of proximity to nearest friendly base
 M.STRATEGIC_PLACE_THREAT_WEIGHT = 1.5   -- penalty per unit of threat.at(pos)

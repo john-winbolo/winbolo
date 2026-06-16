@@ -2448,6 +2448,25 @@ function Brain.think(info)
     end
   end
 
+  -- Reconcile allies' advertised carried pills (comms carry=) into world.pills
+  -- so an in-tank pill the team holds is consistent for everyone, including bots
+  -- that never saw the pickup. ally_state persists the carry field until the
+  -- carrier's next /info state drops it (deploy), so this runs every tick off
+  -- the latest slates. max_age 1600 (~32s) outlives the 30s heartbeat so a
+  -- carry doesn't flicker-evict right at the heartbeat boundary.
+  do
+    local ac = {}
+    for pn, slot in ally_state.iter_active(now, 1600) do
+      if pn ~= state.player_number and slot.info and slot.info.carry then
+        for idstr in tostring(slot.info.carry):gmatch("%d+") do
+          local id = tonumber(idstr)
+          if id then ac[id] = pn end
+        end
+      end
+    end
+    W.sync_ally_carried(world, ac, now)
+  end
+
   -- Paused: accept commands but do nothing else
   if state.paused then
     log.log_tick(state, info, state.goal, 0, 0, nil)
@@ -6104,6 +6123,24 @@ function Brain.think(info)
         bsi.mx = tostring(state.goal.mx)
         bsi.my = tostring(state.goal.my)
       end
+    end
+
+    -- Carried-pill advertisement (carry=id,id,...). Broadcast REGARDLESS of
+    -- goal: in-tank pills aren't in the C pill scan and the EVENT_PILL_UPDATE
+    -- that sets in_tank is view-gated, so allies out of view never learn the
+    -- team holds these. We know our own carried ids first-hand (we stood on the
+    -- pill at pickup), so we advertise them; receivers fold them into world.pills
+    -- (W.sync_ally_carried) so OUR PILLS / portfolio stays consistent team-wide.
+    -- Sorted so the string is stable tick-to-tick (no spurious change-detect
+    -- re-sends); change-detect + the 30 s heartbeat below ship it.
+    do
+      local ids = nil
+      for id, p in pairs(world.pills) do
+        if p.in_tank and p.owner_player == info.player_number then
+          ids = ids or {}; ids[#ids + 1] = id
+        end
+      end
+      if ids then table.sort(ids); bsi.carry = table.concat(ids, ",") end
     end
 
     -- One-shot "LGM back" notice: fired the single tick our LGM returns

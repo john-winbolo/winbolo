@@ -683,6 +683,11 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
              and p.health < C.PILLS_MAX_HEALTH
              and not (dmx and p.mx == dmx and p.my == dmy)
              and not (ally_demolish and ally_demolish[p.my * C.MAP_W + p.mx])
+             -- A friendly shot (own or ally) just landed on it → the team is
+             -- shooting it down to reposition; don't heal it for 8 s.
+             and not (p._friendly_shot_tick
+                      and (state.tick - p._friendly_shot_tick)
+                          < (C.REPAIR_FRIENDLY_FIRE_REJECT_TICKS or 400))
     end, boat, ammo, state, info, KIND_NORMAL)
   if not pill then return nil end
   local damage = C.PILLS_MAX_HEALTH - pill.health
@@ -1584,10 +1589,10 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- ── Scoring grid ────────────────────────────────────────────────────────
   -- Capacity tier place_r: cap the heatmap search radius. (2R+1)² tiles
   -- get scored, so halving R quarters the work.
+  -- R is finalised just below, once the portfolio deficit (pf_need_cat) is
+  -- known — an aggro build widens the scan. The CPU/capacity clamp is applied
+  -- after that widening so a constrained tick still bounds the work.
   local R = C.STRATEGIC_PLACE_SEARCH_RADIUS
-  if state._capacity and state._capacity.place_r and state._capacity.place_r < R then
-    R = state._capacity.place_r
-  end
   local best_score = -math.huge
   local best_mx, best_my = nil, nil
   local all_cands = {}
@@ -1610,6 +1615,19 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     if d > pf_max_deficit then pf_max_deficit = d; pf_need_cat = cat end
   end
   state._place_need_cat = pf_need_cat   -- shared with the heatmap viz
+
+  -- Aggro builds sit deeper in enemy influence than the default radius reaches:
+  -- the scan is tank-centric and the tank usually sits behind the front, so a
+  -- good aggro tile (negative influence, beyond the line) can be >8 tiles out.
+  -- When aggro is the role we're filling, widen the scan to find + place one up
+  -- to AGGRO_SEARCH_RADIUS tiles away. Capacity clamp applied AFTER so a CPU-
+  -- constrained tick still bounds the (2R+1)^2 cell count.
+  if pf_need_cat == "aggro" and (C.STRATEGIC_PLACE_AGGRO_SEARCH_RADIUS or 0) > R then
+    R = C.STRATEGIC_PLACE_AGGRO_SEARCH_RADIUS
+  end
+  if state._capacity and state._capacity.place_r and state._capacity.place_r < R then
+    R = state._capacity.place_r
+  end
 
   -- Util-reserve guard: a pill in our tank counts as "utility" (PP.counts
   -- treats in_tank + in_use pills as util). The utility reserve is for pill
