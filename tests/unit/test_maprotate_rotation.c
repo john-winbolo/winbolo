@@ -35,7 +35,8 @@
 #include "global.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* ServerSim fields: wbnSessionRotating, wbnLobbyDirty, hadPlayersEver */
-#include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled / WbnLobbyUpdate */
+#include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled / WbnLobbyUpdate / ApplyInstanceConfig */
+#include "server_lifecycle.h"      /* ServerInstanceConfig */
 #include "everard_map.h"           /* E_MAP */
 #include "test_harness.h"
 
@@ -154,5 +155,32 @@ int run_maprotate_gameover_is_not_terminal(void) {
     UT_ASSERT_MSG(serverSimIsTerminalGameOver(plain) == TRUE,
                   "a plain no-lobby game-over must still terminate the server");
     serverSimDestroy(plain);
+    return 0;
+}
+
+/* The first map-rotation round boots up empty (no players yet). The boot start
+ * must re-arm the empty-server check, or serverSimCheckAutoClose fires on the
+ * very next tick and rotates before anyone can join — the "rotates the map
+ * immediately at startup" bug. Drives the real no-lobby boot path
+ * (serverSimApplyInstanceConfig with skipLobby) rather than poking the flag. */
+int run_maprotate_boot_does_not_rotate_while_empty(void) {
+    ServerSim *sim = make_rotate_sim();
+    UT_ASSERT(sim != NULL);
+
+    ServerInstanceConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.skipLobby = true;
+    cfg.botAiType = (BYTE)aiNone;
+    serverSimApplyInstanceConfig(sim, &cfg);
+
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "no-lobby boot must start a running round");
+    UT_ASSERT_MSG(sim->hadPlayersEver == FALSE,
+                  "boot must re-arm the empty-server check so the empty first "
+                  "round does not rotate before anyone joins");
+    UT_ASSERT_MSG(serverSimCheckAutoClose(sim) == FALSE,
+                  "an empty just-booted round must not trigger a rotation");
+
+    serverSimDestroy(sim);
     return 0;
 }
