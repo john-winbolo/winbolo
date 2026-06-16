@@ -192,6 +192,7 @@ static const UnitTestEntry s_tests[] = {
     { "maprotate_defers_wbn_update_until_key_rotated", run_maprotate_defers_wbn_update_until_key_rotated },
     { "maprotate_gameover_is_not_terminal",        run_maprotate_gameover_is_not_terminal        },
     { "maprotate_boot_does_not_rotate_while_empty", run_maprotate_boot_does_not_rotate_while_empty },
+    { "maprotate_vote_return_is_not_terminal",     run_maprotate_vote_return_is_not_terminal     },
     { "wbn_join_keyed_on_reauth",                  run_wbn_join_keyed_on_reauth                  },
     { "wbn_join_anonymous_on_grace",               run_wbn_join_anonymous_on_grace               },
     { "wbn_join_idempotent_reauth_no_double",      run_wbn_join_idempotent_reauth_no_double      },

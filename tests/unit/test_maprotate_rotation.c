@@ -184,3 +184,33 @@ int run_maprotate_boot_does_not_rotate_while_empty(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* A passed back-to-lobby vote runs the returnToLobbyTicks countdown, which
+ * serverSimTick expires into game-over — the same transient state a win
+ * produces. Under -maprotate that game-over must be non-terminal so the server
+ * boots everyone and rotates instead of quitting (same root cause and fix as
+ * the win path; this pins the vote trigger). */
+int run_maprotate_vote_return_is_not_terminal(void) {
+    ServerSim *sim = make_rotate_sim();
+    UT_ASSERT(sim != NULL);
+
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+
+    /* Mimic a passed manual back-to-lobby vote: countdown armed, then let the
+     * tick run it down to game-over. */
+    sim->returnToLobbyByVote = true;
+    sim->returnToLobbyTicks = 4;
+    int guard = 0;
+    while (serverSimGetState(sim) == serverStateRunning && guard++ < 50) {
+        serverSimTick(sim);
+    }
+
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateGameOver,
+                  "the vote countdown must expire into game-over");
+    UT_ASSERT_MSG(serverSimIsTerminalGameOver(sim) == FALSE,
+                  "a vote-driven map-rotation game-over must not terminate the "
+                  "server — it rotates to the next round");
+    serverSimDestroy(sim);
+    return 0;
+}
