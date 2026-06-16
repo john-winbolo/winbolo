@@ -4550,10 +4550,13 @@ static const ImVec4 SUPPORTER_TINT = ImVec4(1.00f, 0.84f, 0.20f, 1.00f);
 static const ImVec4 NO_TINT        = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
 
 static const char *platformName(uint8_t ct) {
-    static const char *names[CLIENT_TYPE_COUNT] = {
-        "", "Windows", "Linux", "macOS", "iOS", "Android", "Steam Deck", "Web"
+    static const langid ids[CLIENT_TYPE_COUNT] = {
+        0, STR_PLATFORM_WINDOWS, STR_PLATFORM_LINUX, STR_PLATFORM_MACOS,
+        STR_PLATFORM_IOS, STR_PLATFORM_ANDROID, STR_PLATFORM_STEAMDECK,
+        STR_PLATFORM_WEB
     };
-    return (ct < CLIENT_TYPE_COUNT) ? names[ct] : "";
+    if (ct == 0 || ct >= CLIENT_TYPE_COUNT) return "";   /* CLIENT_TYPE_UNKNOWN -> no name */
+    return langGetText(ids[ct]);
 }
 
 static int countryNameCmp(const void *key, const void *elem) {
@@ -4587,7 +4590,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
         /* Bot slot: brain icon stands in for the platform badge and the
          * WBN/Steam badges are skipped — a bot can never be either. */
         ImGui::Image((ImTextureID)s_iconBrain, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("AI player");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_AI));
         ImGui::SameLine();
     } else {
         SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
@@ -4601,10 +4604,13 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                                ImVec4(0, 0, 0, 0), tint);
             if (ImGui::IsItemHovered()) {
                 const char *plat = platformName(clientType);
-                if (flags & PLAYER_FLAG_SUPPORTER)
-                    ImGui::SetTooltip("%s — Supporter", plat);
-                else
+                if (flags & PLAYER_FLAG_SUPPORTER) {
+                    MessageArgs args = {};
+                    SDL_snprintf(args.string1, sizeof(args.string1), "%s", plat);
+                    ImGui::SetTooltip("%s", langGetTextFmt(STR_PLAYER_TIP_SUPPORTER_FMT, &args));
+                } else {
                     ImGui::SetTooltip("%s", plat);
+                }
             }
             ImGui::SameLine();
         }
@@ -4614,10 +4620,16 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
              * otherwise — same scheme as the platform icon above. */
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
             imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
             ImGui::SameLine();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
             ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
+                                                    ? STR_PLAYER_TIP_STEAM_LINKED
+                                                    : STR_PLAYER_TIP_STEAM_BUILD));
             ImGui::SameLine();
         }
     }
