@@ -1373,9 +1373,7 @@ static void renderPlayersPanel(ClientSim *cs) {
         /* Flag icon — skipped for bots (no real country; renderPlayerName
          * below shows a brain icon in the platform-icon slot instead). */
         if (!(s_playerFlags[i] & PLAYER_FLAG_BOT) && s_playerCountry[i][0] != '\0') {
-            SDL_Texture *flagTex = flagsGetTexture(s_playerCountry[i]);
-            if (flagTex) {
-                ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+            if (drawCountryFlagWithTip(s_playerCountry[i])) {
                 ImGui::SameLine();
             }
         }
@@ -2709,9 +2707,7 @@ static void renderMenuBar(ClientSim *cs) {
              * takes the platform-icon slot and stands in for both. */
             if (s_playerEnabled[i] && !(s_playerFlags[i] & PLAYER_FLAG_BOT)
                 && s_playerCountry[i][0] != '\0') {
-                SDL_Texture *flagTex = flagsGetTexture(s_playerCountry[i]);
-                if (flagTex) {
-                    ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                if (drawCountryFlagWithTip(s_playerCountry[i])) {
                     ImGui::SameLine();
                 }
             }
