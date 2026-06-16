@@ -588,6 +588,19 @@ void serverSimSetMapRotate(ServerSim *sim, bool enabled);
 bool serverSimIsMapRotateEnabled(const ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimIsTerminalGameOver
+ *PURPOSE:
+ *  Returns whether the current game-over state should shut
+ *  the dedicated server down. False for lobby servers (they
+ *  return to the lobby) and map-rotation servers (they boot
+ *  everyone and rotate); true only for a plain no-lobby
+ *  server. The command loop polls this to decide whether to
+ *  exit, so it must never treat a transient rotation
+ *  game-over as terminal.
+ *********************************************************/
+bool serverSimIsTerminalGameOver(const ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimMapRotateRound
  *PURPOSE:
  *  Sim-core half of a map-rotation round restart: opens the

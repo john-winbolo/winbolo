@@ -35,7 +35,8 @@
 #include "global.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* ServerSim fields: wbnSessionRotating, wbnLobbyDirty, hadPlayersEver */
-#include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled / WbnLobbyUpdate */
+#include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled / WbnLobbyUpdate / ApplyInstanceConfig */
+#include "server_lifecycle.h"      /* ServerInstanceConfig */
 #include "everard_map.h"           /* E_MAP */
 #include "test_harness.h"
 
@@ -112,6 +113,104 @@ int run_maprotate_defers_wbn_update_until_key_rotated(void) {
                   "(got %d)", wbnStubLobbyUpdateCalls);
 
     wbnStubRunning = FALSE;
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Plain no-lobby ServerSim (e.g. -nolobby / -quitonwin): game-over is terminal. */
+static ServerSim *make_plain_nolobby_sim(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+                                               gameOpen, false, 0, -1);
+    if (sim == NULL) return NULL;
+    serverSimSetLobbyEnabled(sim, false);
+    return sim;
+}
+
+/* A win drives a map-rotation round to game-over, then the lifecycle rotates
+ * instead of quitting. The dedicated server's exit poll must treat that
+ * game-over as non-terminal — otherwise it races the rotation (which flips
+ * state back to running within the tick) and shuts the process down, the
+ * "-maprotate exits like -quitonwin" bug. A plain no-lobby server must still
+ * report game-over as terminal so its existing shutdown-on-win is preserved. */
+int run_maprotate_gameover_is_not_terminal(void) {
+    ServerSim *sim = make_rotate_sim();
+    UT_ASSERT(sim != NULL);
+
+    serverSimStartGame(sim);
+    serverSimEnterGameOver(sim);   /* what a win does in the running tick */
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateGameOver,
+                  "enterGameOver must leave the sim in game-over");
+    UT_ASSERT_MSG(serverSimIsTerminalGameOver(sim) == FALSE,
+                  "a map-rotation game-over must not terminate the server — it "
+                  "rotates to the next round instead");
+    serverSimDestroy(sim);
+
+    ServerSim *plain = make_plain_nolobby_sim();
+    UT_ASSERT(plain != NULL);
+    serverSimStartGame(plain);
+    serverSimEnterGameOver(plain);
+    UT_ASSERT_MSG(serverSimGetState(plain) == serverStateGameOver,
+                  "enterGameOver must leave the plain sim in game-over");
+    UT_ASSERT_MSG(serverSimIsTerminalGameOver(plain) == TRUE,
+                  "a plain no-lobby game-over must still terminate the server");
+    serverSimDestroy(plain);
+    return 0;
+}
+
+/* The first map-rotation round boots up empty (no players yet). The boot start
+ * must re-arm the empty-server check, or serverSimCheckAutoClose fires on the
+ * very next tick and rotates before anyone can join — the "rotates the map
+ * immediately at startup" bug. Drives the real no-lobby boot path
+ * (serverSimApplyInstanceConfig with skipLobby) rather than poking the flag. */
+int run_maprotate_boot_does_not_rotate_while_empty(void) {
+    ServerSim *sim = make_rotate_sim();
+    UT_ASSERT(sim != NULL);
+
+    ServerInstanceConfig cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.skipLobby = true;
+    cfg.botAiType = (BYTE)aiNone;
+    serverSimApplyInstanceConfig(sim, &cfg);
+
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "no-lobby boot must start a running round");
+    UT_ASSERT_MSG(sim->hadPlayersEver == FALSE,
+                  "boot must re-arm the empty-server check so the empty first "
+                  "round does not rotate before anyone joins");
+    UT_ASSERT_MSG(serverSimCheckAutoClose(sim) == FALSE,
+                  "an empty just-booted round must not trigger a rotation");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A passed back-to-lobby vote runs the returnToLobbyTicks countdown, which
+ * serverSimTick expires into game-over — the same transient state a win
+ * produces. Under -maprotate that game-over must be non-terminal so the server
+ * boots everyone and rotates instead of quitting (same root cause and fix as
+ * the win path; this pins the vote trigger). */
+int run_maprotate_vote_return_is_not_terminal(void) {
+    ServerSim *sim = make_rotate_sim();
+    UT_ASSERT(sim != NULL);
+
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+
+    /* Mimic a passed manual back-to-lobby vote: countdown armed, then let the
+     * tick run it down to game-over. */
+    sim->returnToLobbyByVote = true;
+    sim->returnToLobbyTicks = 4;
+    int guard = 0;
+    while (serverSimGetState(sim) == serverStateRunning && guard++ < 50) {
+        serverSimTick(sim);
+    }
+
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateGameOver,
+                  "the vote countdown must expire into game-over");
+    UT_ASSERT_MSG(serverSimIsTerminalGameOver(sim) == FALSE,
+                  "a vote-driven map-rotation game-over must not terminate the "
+                  "server — it rotates to the next round");
     serverSimDestroy(sim);
     return 0;
 }

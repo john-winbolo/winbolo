@@ -2605,6 +2605,15 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   if (cfg->skipLobby) {
     serverSimSetLobbyEnabled(sim, false);
     serverSimStartGame(sim);
+    /* serverSimStartGame latches hadPlayersEver = TRUE, but a map-rotation
+     * server's first round boots up empty and waits for joiners. Left set, the
+     * lifecycle's empty-server check would fire on the very next tick and
+     * rotate before anyone joins. Re-arm it so the empty rotation only fires
+     * once a player has joined and then left — serverSimMapRotateRound does the
+     * same for every later round. */
+    if (sim->mapRotateEnabled) {
+      sim->hadPlayersEver = FALSE;
+    }
   } else if (cfg->lobbyEnabled) {
     serverSimSetLobbyEnabled(sim, true);
     serverSimEnterLobby(sim);
@@ -2665,6 +2674,22 @@ void serverSimSetMapRotate(ServerSim *sim, bool enabled) {
 
 bool serverSimIsMapRotateEnabled(const ServerSim *sim) {
     return sim != NULL && sim->mapRotateEnabled;
+}
+
+bool serverSimIsTerminalGameOver(const ServerSim *sim) {
+    /* A game-over that shuts the dedicated server down, as opposed to one it
+     * recovers from. A lobby server returns to the lobby; a map-rotation server
+     * boots everyone and starts the next round. Only a plain no-lobby server
+     * (e.g. -nolobby / -quitonwin) treats a win as a process shutdown.
+     *
+     * The dedicated-server command loop polls this without the tick lock, so it
+     * stays a pure read of these flags. On a win or a passed back-to-lobby vote
+     * the rotation flips state from gameOver back to running inside a single
+     * tick; a loop that quit on that transient gameOver would race the rotation
+     * and shut the process down (the "-maprotate exits like -quitonwin" bug). */
+    return serverSimGetState(sim) == serverStateGameOver &&
+           !serverSimIsLobbyEnabled(sim) &&
+           !serverSimIsMapRotateEnabled(sim);
 }
 
 void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed) {
