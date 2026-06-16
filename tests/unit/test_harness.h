@@ -443,6 +443,8 @@ int run_mdns_discovery(void);
  * and bolo_client_type_name() maps every enumerator to its exact name. */
 int run_client_type_matches_platform(void);
 int run_client_type_name_round_trips(void);
+int run_players_oob_index_safe(void);
+int run_control_oob_player_dropped(void);
 
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and

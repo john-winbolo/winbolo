@@ -1470,7 +1470,9 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         "join request from %s:%u len=%d",
         inet_ntoa(fromAddr->sin_addr),
         (unsigned)ntohs(fromAddr->sin_port), len);
+#ifndef WB_FUZZ
     fprintf(stderr, "[UDP SERVER] Join request received, len=%d\n", len);
+#endif
     /* Full JOIN_REQUEST payload after header: name + pass + 3 version bytes
      * + WBN token + 1 flags byte + 2 client-identity bytes (clientType,
      * clientHints).  No backward-compat path — older clients are rejected. */
@@ -1482,8 +1484,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
             joinReqMin, len,
             inet_ntoa(fromAddr->sin_addr),
             (unsigned)ntohs(fromAddr->sin_port));
+#ifndef WB_FUZZ
         fprintf(stderr, "[UDP SERVER] Join request malformed (need %d, got %d)\n",
                 joinReqMin, len);
+#endif
         return; /* Malformed */
     }
 
@@ -4969,4 +4973,67 @@ void transportUdpServerPrintStatus(bool toFile) {
         fclose(fp);
     }
 }
+
+#ifdef WB_FUZZ
+/* ================================================================
+ * Fuzz-only dispatcher seam (hardening plan §1.2, tier 2)
+ *
+ * Drives serverProcessPacket directly with attacker-controlled bytes —
+ * no socket, no recv thread. serverProcessPacket and the file-static
+ * `udpServer` it mutates have internal linkage, so this seam must live in
+ * the same TU. Compiled only under -DWB_FUZZ (the dedicated fuzz build);
+ * every shipping build leaves these symbols out entirely.
+ *
+ * The harness owns the ServerSim lifetime and calls Init once before
+ * feeding packets. State accumulates across inputs by design — that is the
+ * standard libFuzzer persistent-target pattern and explores deeper handler
+ * paths than a per-input reset would.
+ * ================================================================ */
+
+/* Minimal server context: mirrors the non-socket, non-thread portion of
+ * transportUdpServerCreate. sock stays INVALID_SOCKET so srvSendTo's
+ * underlying udpSendTo is a no-op and no datagrams leave the process. */
+void transportUdpServerFuzzInit(ServerSim *sim) {
+    int i;
+    (void)sim;
+    memset(&udpServer, 0, sizeof(udpServer));
+    memset(punchQueue, 0, sizeof(punchQueue));
+    udpServer.sock = INVALID_SOCKET;
+    udpServer.running = true;
+    udpServer.tickCount = 0;
+    udpServer.uploadMaxFiles        = 64;
+    udpServer.uploadMaxStorageBytes = 8u * 1024u * 1024u;
+    udpServer.compressedMapSize = 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        udpServer.clients[i].connected = false;
+        udpServer.clients[i].controlSub = SUBSCRIBER_HANDLE_INVALID;
+        memset(&udpServer.mapDownload[i], 0, sizeof(ClientMapDownload));
+        udpServer.controlEventQueues[i].nextSeq = 1;
+        udpServer.controlEventQueues[i].ackedSeq = 1;
+        udpServer.controlSyncInProgress[i] = false;
+    }
+    netImpairInit(&srvImpairIn);
+    netImpairInit(&srvImpairOut);
+}
+
+/* One datagram, as if received on the game socket from a LAN peer. The buffer
+ * is heap-allocated to the EXACT input length (handlers need it mutable, and
+ * an exact size lets ASan's redzone catch any read/write past len — an
+ * oversized buffer would mask the very over-reads this target hunts). */
+void transportUdpServerFuzzProcessPacket(ServerSim *sim,
+                                         const uint8_t *data, size_t size) {
+    uint8_t *buf;
+    struct sockaddr_in from;
+    if (size == 0 || size > 65535) return;
+    buf = (uint8_t *)malloc(size);
+    if (buf == NULL) return;
+    memcpy(buf, data, size);
+    memset(&from, 0, sizeof(from));
+    from.sin_family = AF_INET;
+    from.sin_addr.s_addr = htonl(0x7f000001u); /* 127.0.0.1 */
+    from.sin_port = htons((unsigned short)40000);
+    serverProcessPacket(sim, buf, (int)size, &from);
+    free(buf);
+}
+#endif /* WB_FUZZ */
 

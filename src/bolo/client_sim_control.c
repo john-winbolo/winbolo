@@ -98,6 +98,42 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         break;
     }
 
+    /* Wire-supplied player numbers index the fixed players array
+     * (item[MAX_TANKS]) and the lobbySlots[MAX_TANKS] mirror; an out-of-range
+     * value from a hostile or buggy server would index out of bounds in the
+     * handlers below (e.g. playersLeaveAlliance / playersLeaveGame write
+     * item[playerNum].allie; CTRL_LOBBY_SLOT writes lobbySlots[playerNum]).
+     * Reject such events at this trust boundary — a valid server never sends
+     * them. The handlers' own indices that derive from loop counters or the
+     * server-assigned myPlayerNum are in range by construction. */
+    switch (evt->type) {
+    case CTRL_ALLIANCE_LEAVE:
+        if (evt->u.allianceLeave.playerNum >= MAX_TANKS) return;
+        break;
+    case CTRL_ALLIANCE_ACCEPT:
+        if (evt->u.allianceAccept.acceptedBy >= MAX_TANKS ||
+            evt->u.allianceAccept.newMember >= MAX_TANKS) return;
+        break;
+    case CTRL_ALLIANCE_REQUEST:
+        if (evt->u.allianceRequest.toPlayer >= MAX_TANKS ||
+            evt->u.allianceRequest.fromPlayer >= MAX_TANKS) return;
+        break;
+    case CTRL_PLAYER_JOIN:
+        if (evt->u.playerJoin.playerNum >= MAX_TANKS) return;
+        break;
+    case CTRL_PLAYER_NAME:
+        if (evt->u.playerName.playerNum >= MAX_TANKS) return;
+        break;
+    case CTRL_PLAYER_LEAVE:
+        if (evt->u.playerLeave.playerNum >= MAX_TANKS) return;
+        break;
+    case CTRL_LOBBY_SLOT:
+        if (evt->u.lobbySlot.playerNum >= MAX_TANKS) return;
+        break;
+    default:
+        break;
+    }
+
     switch (evt->type) {
     case CTRL_ALLIANCE_REQUEST:
         /* Flag a pending request for the addressed slot. The transport

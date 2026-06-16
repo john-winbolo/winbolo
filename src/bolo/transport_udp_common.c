@@ -247,11 +247,16 @@ int packGameEvent(uint8_t *buf, const GameEvent *ev) {
     return 1 + dataLen;
 }
 
-/* Deserialize one GameEvent from buf. Returns bytes consumed (1 + dataSize). */
-int unpackGameEvent(const uint8_t *buf, GameEvent *ev) {
+/* Deserialize one GameEvent from buf, reading at most `avail` bytes. Returns
+ * bytes consumed (1 + dataSize), or 0 if the buffer is too short for the type
+ * byte or its data — mirroring the generated unpack* codecs so a truncated
+ * trailing event can't over-read the datagram. */
+int unpackGameEvent(const uint8_t *buf, size_t avail, GameEvent *ev) {
     int dataLen;
+    if (avail < 1) return 0;
     ev->type = buf[0];
     dataLen = gameEventDataSize(ev->type);
+    if (avail < (size_t)(1 + dataLen)) return 0;
     memset(ev->data, 0, sizeof(ev->data));
     memcpy(ev->data, buf + 1, dataLen);
     return 1 + dataLen;

@@ -284,6 +284,8 @@ static const UnitTestEntry s_tests[] = {
     { "mdns_discovery",                          run_mdns_discovery                          },
     { "client_type_matches_platform",            run_client_type_matches_platform            },
     { "client_type_name_round_trips",            run_client_type_name_round_trips            },
+    { "players_oob_index_safe",                  run_players_oob_index_safe                  },
+    { "control_oob_player_dropped",              run_control_oob_player_dropped              },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

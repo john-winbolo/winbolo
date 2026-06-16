@@ -3431,8 +3431,10 @@ void serverSimConsoleMessage(const char *msg) {
     if (sim != NULL && sim->sim.callbacks.consoleMessage != NULL) {
         sim->sim.callbacks.consoleMessage(sim->sim.callbacks.ctx, (char *)msg);
     } else {
+#ifndef WB_FUZZ
         /* Fallback: print to stdout if no active sim */
         fprintf(stdout, "%s\n", msg);
+#endif
     }
 }
 
