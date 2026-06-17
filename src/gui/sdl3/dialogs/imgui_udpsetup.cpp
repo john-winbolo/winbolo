@@ -29,6 +29,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "server_address_parse.h"
 #include "imgui_nav_outline.h"
 #include "../imgui_steam_nav.h"
 #include "dialog_footer.h"
@@ -46,6 +47,37 @@ extern "C" {
 
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
+
+/* CallbackEdit userdata: tracks the address field length so a paste (a jump of
+ * >= 2 chars in one edit) can be told apart from single keystrokes, and points
+ * at the target-port buffer so a pasted port can be routed into it. */
+struct AddressPasteCtx {
+    int prevLen;
+    char *portBuf;
+    size_t portBufSize;
+};
+
+static int udpAddressEditCallback(ImGuiInputTextCallbackData *data) {
+    AddressPasteCtx *ctx = (AddressPasteCtx *)data->UserData;
+    /* Only a multi-char insertion (paste / IME commit) is worth parsing; typing
+     * a ':' by hand grows the buffer by one and must not split the field. */
+    if (data->BufTextLen - ctx->prevLen >= 2) {
+        char host[FILENAME_MAX];
+        char port[16];
+        if (parseServerAddressPaste(data->Buf, host, sizeof(host), port,
+                                    sizeof(port))) {
+            if (strcmp(data->Buf, host) != 0) {
+                data->DeleteChars(0, data->BufTextLen);
+                data->InsertChars(0, host);
+            }
+            if (port[0] != '\0' && ctx->portBuf) {
+                SDL_strlcpy(ctx->portBuf, port, ctx->portBufSize);
+            }
+        }
+    }
+    ctx->prevLen = data->BufTextLen;
+    return 0;
+}
 
 /* Validate inputs and save to gamefront. Returns true if valid. */
 static bool saveOptions(char *playerName, char *address,
@@ -148,6 +180,12 @@ extern "C" int imguiUdpSetupShow(void) {
 
     bool rememberName = gameFrontGetRemeber();
 
+    /* Paste-splitting state for the address field (host[:port] / winbolo://). */
+    AddressPasteCtx addrCtx;
+    addrCtx.prevLen = (int)strlen(address);
+    addrCtx.portBuf = targetPortBuf;
+    addrCtx.portBufSize = sizeof(targetPortBuf);
+
     /* Error message popup state */
     const char *errorMsg = nullptr;
 
@@ -236,7 +274,9 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_MACHINENAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##address", address, FILENAME_MAX);
+        ImGui::InputText("##address", address, FILENAME_MAX,
+                         ImGuiInputTextFlags_CallbackEdit,
+                         udpAddressEditCallback, &addrCtx);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_THEREUDP));
         ImGui::SameLine(labelW);
@@ -261,7 +301,9 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_MACHINENAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##address", address, FILENAME_MAX);
+        ImGui::InputText("##address", address, FILENAME_MAX,
+                         ImGuiInputTextFlags_CallbackEdit,
+                         udpAddressEditCallback, &addrCtx);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_THEREUDP));
         ImGui::SameLine(labelW);
