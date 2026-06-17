@@ -508,6 +508,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     /* Auto-refresh on open */
     bool autoRefresh = true;
+    bool autoRefreshEnabled = true;   /* user toggle (Internet tab); gates the periodic re-poll */
     /* Last good WinBolo.net MOTD lines; kept across a failed refresh. */
     std::vector<std::string> motdLines;
     bool autoPollEnabled = true;   /* Internet path: cleared on any fetch failure, re-armed on manual refresh */
@@ -777,7 +778,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             /* Refresh button on the right side of the title bar */
             bool doRefresh = autoRefresh;
             /* Internet tab: re-poll periodically while open, until a fetch fails. */
-            if (useTracker && autoPollEnabled && !searching && lastFetchTime != 0 &&
+            if (useTracker && autoRefreshEnabled && autoPollEnabled && !searching && lastFetchTime != 0 &&
                 SDL_GetTicks() - lastFetchTime >= kInternetAutoRefreshMs) {
                 doRefresh = true;
             }
@@ -1144,6 +1145,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             int lobbyIdx = (filterLobby < 0) ? 0 : (filterLobby == 1 ? 1 : 2);
             if (ImGui::Combo("##filterLobby", &lobbyIdx, lobbyOpts, 3)) {
                 filterLobby = (lobbyIdx == 0) ? -1 : (lobbyIdx == 1 ? 1 : 0);
+            }
+
+            if (useTracker) {
+                const char *arLabel = langGetText(STR_DLGBROWSER_AUTO_REFRESH);
+                float cbW = ImGui::CalcTextSize(arLabel).x + ImGui::GetFrameHeight()
+                          + ImGui::GetStyle().ItemInnerSpacing.x;
+                float rightX = ImGui::GetContentRegionMax().x - cbW;
+                ImGui::SameLine();
+                if (ImGui::GetCursorPosX() < rightX) ImGui::SetCursorPosX(rightX);
+                ImGui::Checkbox(arLabel, &autoRefreshEnabled);
             }
         }
 

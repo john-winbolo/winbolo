@@ -1674,6 +1674,14 @@ static const LangEntry langTable[] = {
     {1791, "Authors"},
     {1792, "Forums"},
     {1793, "In game"},
+    {1794, "Ver"},
+    {1795, "+AI"},
+    {1796, "+Mines"},
+    {1797, "No new players"},
+    {1798, "Password required"},
+    {1799, "Auto-locks on game start"},
+    {1800, "Spectate"},
+    {1801, "Auto-refresh"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
