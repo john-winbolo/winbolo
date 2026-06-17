@@ -44,13 +44,16 @@
 
 #include "channel_mux.h"   /* ChannelMux, CHANNEL_BULK, CHANNEL_STREAM_BUF */
 
-/* Transfer kinds carried in the stream header's first byte. PREVIEW is the
- * only kind wired today; UPLOAD / DOWNLOAD are reserved for the bulk transfers
- * that move onto this channel next. */
+/* Transfer kinds carried in the stream header's first byte: a map preview
+ * (server->client, lobby chooser), an upload (client->server), a join map
+ * download (server->client), and a live map resync (server->client, desync
+ * recovery — distinguished from DOWNLOAD so the receiver routes it to the
+ * parallel resync buffer and applies the generation gate). */
 enum {
     BULK_KIND_UPLOAD   = 1,
     BULK_KIND_DOWNLOAD = 2,
-    BULK_KIND_PREVIEW  = 3
+    BULK_KIND_PREVIEW  = 3,
+    BULK_KIND_RESYNC   = 4
 };
 
 /* App-level stream header that precedes a blob on CHANNEL_BULK. Big-endian on

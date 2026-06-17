@@ -400,60 +400,11 @@ static int check_tank(void) {
     return 0;
 }
 
-/* ---- Fixed map-transfer chunk headers ------------------------------------
- *
- * No committed fixtures: each header is anchored to an explicit expected
- * big-endian byte vector (pack a known struct == the vector; unpack the vector
- * == the struct), plus the all-zero / all-max boundary round-trip. The boundary
- * struct is named `s` so FIELD_SET_MAX (which writes s.name) expands over it. */
-
-static int check_map_download_chunk_hdr(void) {
-    static const uint8_t anchor[] = {
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c };
-    MapDownloadChunkHeader a, out;
-    uint8_t g[WC_BYTES];
-    int pass;
-
-    /* memset before assigning so padding bytes are zero on both sides of the
-     * struct memcmp (unpack memsets its output too). */
-    memset(&a, 0, sizeof(a));
-    a.resyncGen = 0x01020304u; a.mapSize = 0x05060708u;
-    a.chunkIdx = 0x090au;      a.chunkSize = 0x0b0cu;
-
-    UT_ASSERT_MSG(WIRE_SIZE_OF(MAP_DOWNLOAD_CHUNK_HEADER_FIELDS) == 12,
-                  "map_download_chunk_hdr WIRE_SIZE_OF mismatch");
-    memset(g, 0, sizeof(g));
-    UT_ASSERT_MSG(packMapDownloadChunkHeader(g, &a) == 12,
-                  "map_download_chunk_hdr anchor pack length");
-    UT_ASSERT_MSG(memcmp(g, anchor, sizeof(anchor)) == 0,
-                  "map_download_chunk_hdr anchor bytes");
-    memset(&out, 0, sizeof(out));
-    UT_ASSERT_MSG(unpackMapDownloadChunkHeader(anchor, sizeof(anchor), &out) == 12,
-                  "map_download_chunk_hdr anchor unpack length");
-    UT_ASSERT_MSG(memcmp(&a, &out, sizeof(a)) == 0,
-                  "map_download_chunk_hdr anchor struct");
-    for (pass = 0; pass < 2; pass++) {
-        MapDownloadChunkHeader s, su;
-        memset(&s, 0, sizeof(s));
-        if (pass == 1) { MAP_DOWNLOAD_CHUNK_HEADER_FIELDS(FIELD_SET_MAX) }
-        memset(g, 0, sizeof(g));
-        UT_ASSERT_MSG(packMapDownloadChunkHeader(g, &s) == 12,
-                      "map_download_chunk_hdr boundary pack length");
-        memset(&su, 0, sizeof(su));
-        UT_ASSERT_MSG(unpackMapDownloadChunkHeader(g, 12, &su) == 12,
-                      "map_download_chunk_hdr boundary unpack length");
-        UT_ASSERT_MSG(memcmp(&s, &su, sizeof(s)) == 0,
-                      "map_download_chunk_hdr boundary round-trip differ");
-    }
-    return 0;
-}
-
 int run_wire_corpus(void) {
     if (check_shell() != 0) return 1;
     if (check_tk() != 0) return 1;
     if (check_base() != 0) return 1;
     if (check_pill() != 0) return 1;
     if (check_tank() != 0) return 1;
-    if (check_map_download_chunk_hdr() != 0) return 1;
     return 0;
 }

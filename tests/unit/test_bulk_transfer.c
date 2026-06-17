@@ -8,12 +8,18 @@
  * oversized header is rejected by the sink without corrupting the stream; two
  * transfers back-to-back on one direction reassemble as two distinct blobs
  * (no interleave); and the send-side serializer rejects a second transfer
- * requested mid-flight rather than interleaving it.
+ * requested mid-flight rather than interleaving it. Two further cases cover the
+ * map-transfer kinds that ride this channel: DOWNLOAD and RESYNC blobs
+ * reassemble byte-identical under loss + reorder, and a recovery-time sweep
+ * streams a map-sized blob across a loss sweep (0/10/20/30%), reporting the
+ * ticks-to-reassembly (x 20 ms) — the reproducible number that says whether
+ * selective-ack would ever be worth adding (the no-loss run is the baseline).
  *
  * All randomness is drawn from bolo_rand under a fixed seed, so every case is
  * deterministic. No sockets, no threads.
  */
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -492,6 +498,280 @@ static int t_upload_kind(void) {
     return 0;
 }
 
+/* ---- recovery harness: stream one blob A->B through a lossy pipe ---- */
+
+/* A minimal sink with a single caller-owned dst, so the recovery sweep can use
+ * a map-sized blob without bloating the fixed-array TestSink. */
+typedef struct {
+    uint8_t *dst;
+    uint32_t cap;
+    bool     done;
+    uint8_t  kind;
+    uint32_t gen;
+    uint32_t len;
+} RecoverSink;
+
+static uint8_t *recoverOnBegin(void *ctx, const BulkStreamHeader *h) {
+    RecoverSink *s = (RecoverSink *)ctx;
+    if (h->totalSize == 0 || h->totalSize > s->cap) return NULL;
+    return s->dst;
+}
+
+static void recoverOnComplete(void *ctx, const BulkStreamHeader *h, uint8_t *buf) {
+    RecoverSink *s = (RecoverSink *)ctx;
+    (void)buf;
+    s->done = true;
+    s->kind = h->kind;
+    s->gen  = h->gen;
+    s->len  = h->totalSize;
+}
+
+/* Stream src (blobLen bytes) under a stream header of (kind, gen) from A to B
+ * through a lossy + reorder pipe (one frame per direction per tick). Returns the
+ * tick count from the first content frame A emits to full reassembly on B, or -1
+ * if it never completed / setup failed. dst (>= blobLen) receives the bytes;
+ * *outKind / *outGen get the completed header's fields. Deterministic per seed. */
+static int streamBlobRecover(uint8_t kind, uint32_t gen, const uint8_t *src,
+                             uint32_t blobLen, int lossPct, uint64_t seed,
+                             uint8_t *dst, uint32_t dstCap,
+                             uint8_t *outKind, uint32_t *outGen) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    Pipe *ab = (Pipe *)calloc(1, sizeof(*ab));
+    Pipe *ba = (Pipe *)calloc(1, sizeof(*ba));
+    BulkSender snd;
+    BulkReceiver rcv;
+    BulkStreamHeader h;
+    RecoverSink rs;
+    BulkRecvSink sink;
+    uint8_t frame[MAXFRAME];
+    int ticks = -1, firstContentTick = -1, tick;
+
+    bolo_srand(seed);
+    bulkSenderInit(&snd);
+    bulkReceiverInit(&rcv);
+    if (!a || !b || !ab || !ba) goto done;
+    channelMuxInit(a);
+    channelMuxInit(b);
+    rs.dst = dst; rs.cap = dstCap; rs.done = false;
+    rs.kind = 0; rs.gen = 0; rs.len = 0;
+    sink.onBegin = recoverOnBegin;
+    sink.onComplete = recoverOnComplete;
+    sink.ctx = &rs;
+
+    memset(&h, 0, sizeof(h));
+    h.kind = kind; h.gen = gen; h.totalSize = blobLen; h.pathLen = 0;
+    h.path[0] = '\0';
+    if (!bulkSenderBegin(&snd, &h, src, blobLen)) goto done;
+
+    for (tick = 0; tick < 200000 && !rs.done; tick++) {
+        int la, lb;
+        uint8_t out[CHANNEL_MAX_SEG];
+        uint16_t olen;
+        bulkSenderPump(&snd, a);
+        channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+        channelTick(b, (uint32_t)tick, LINK_RTT_MS);
+
+        la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        if (firstContentTick < 0 && la > 2) firstContentTick = tick;
+        pipeEnqueue(ab, frame, la, tick,
+                    (int)bolo_rand_below(100) < lossPct, 4);
+
+        lb = channelBuildFrame(b, frame, FRAME_BUDGET);
+        pipeEnqueue(ba, frame, lb, tick,
+                    (int)bolo_rand_below(100) < lossPct, 4);
+
+        pipeDeliver(ab, b, tick);
+        pipeDeliver(ba, a, tick);
+
+        while (channelReceive(b, CHANNEL_BULK, out, &olen)) {
+            bulkReceiverFeed(&rcv, out, olen, &sink);
+        }
+    }
+
+    if (rs.done && firstContentTick >= 0) {
+        ticks = (tick - 1) - firstContentTick;
+        if (outKind) *outKind = rs.kind;
+        if (outGen)  *outGen  = rs.gen;
+    }
+done:
+    free(a); free(b); free(ab); free(ba);
+    bulkSenderReset(&snd);
+    return ticks;
+}
+
+/* ---- case 6: DOWNLOAD and RESYNC kinds reassemble byte-identical ---- */
+
+static int t_download_resync_kinds(void) {
+    const uint32_t BLOB = 8000;       /* spans many bulk segments */
+    uint8_t *src = (uint8_t *)malloc(BLOB);
+    uint8_t *dst = (uint8_t *)malloc(BLOB);
+    int rc = 1, ticks;
+    uint8_t gotKind = 0;
+    uint32_t gotGen = 0, i;
+    if (!src || !dst) goto done;
+    for (i = 0; i < BLOB; i++) src[i] = (uint8_t)((i * 131u + 7u) & 0xFF);
+
+    /* Join download (gen 0) under burst-ish loss + reorder. */
+    ticks = streamBlobRecover(BULK_KIND_DOWNLOAD, 0, src, BLOB, 20,
+                              0xD0117AD1ULL, dst, BLOB, &gotKind, &gotGen);
+    if (ticks < 0 || gotKind != BULK_KIND_DOWNLOAD || gotGen != 0 ||
+        memcmp(dst, src, BLOB) != 0) {
+        UT_FAIL("DOWNLOAD-kind blob did not reassemble byte-identical under loss");
+    }
+
+    /* Live resync (nonzero gen). */
+    memset(dst, 0, BLOB);
+    ticks = streamBlobRecover(BULK_KIND_RESYNC, 9, src, BLOB, 20,
+                              0x9E5114CULL, dst, BLOB, &gotKind, &gotGen);
+    if (ticks < 0 || gotKind != BULK_KIND_RESYNC || gotGen != 9 ||
+        memcmp(dst, src, BLOB) != 0) {
+        UT_FAIL("RESYNC-kind blob did not reassemble byte-identical under loss");
+    }
+    rc = 0;
+done:
+    free(src); free(dst);
+    return rc;
+}
+
+/* ---- case 7: recovery-time sweep — the SACK-revisit number ----
+ *
+ * Streams a fixed map-sized blob A->B and counts ticks from the first emitted
+ * bulk segment to first full reassembly across a loss sweep. The no-loss run is
+ * the baseline; the per-loss figure (recoveryTicks x 20 ms) is the reproducible
+ * number that says whether selective-ack would ever be worth adding. */
+static int t_recovery_sweep(void) {
+    const uint32_t BLOB = 60000;   /* map-sized; header+blob exceeds one window */
+    static const int losses[] = { 0, 10, 20, 30 };
+    uint8_t *src = (uint8_t *)malloc(BLOB);
+    uint8_t *dst = (uint8_t *)malloc(BLOB);
+    int rc = 1;
+    uint32_t i;
+    size_t k;
+    if (!src || !dst) goto done;
+    /* Deterministic, no-RNG fill so the payload is identical every run. */
+    for (i = 0; i < BLOB; i++) src[i] = (uint8_t)((i * 2654435761u) >> 13);
+
+    for (k = 0; k < sizeof(losses) / sizeof(losses[0]); k++) {
+        int loss = losses[k];
+        int ticks;
+        memset(dst, 0, BLOB);
+        ticks = streamBlobRecover(BULK_KIND_DOWNLOAD, 0, src, BLOB, loss,
+                                  0x5ACC0DEULL + (uint64_t)loss,
+                                  dst, BLOB, NULL, NULL);
+        if (ticks < 0 || memcmp(dst, src, BLOB) != 0) {
+            UT_FAIL("recovery sweep: %u-byte blob did not reassemble at loss=%d%%",
+                    (unsigned)BLOB, loss);
+        }
+        fprintf(stderr,
+                "  bulk recovery: loss=%2d%%  %5d ticks  (%6d ms)%s\n",
+                loss, ticks, ticks * 20, loss == 0 ? "  [baseline]" : "");
+    }
+    rc = 0;
+done:
+    free(src); free(dst);
+    return rc;
+}
+
+/* ---- case 8: a CHANNEL_BULK re-base drops the in-flight transfer cleanly ----
+ *
+ * Mirrors the lobby-map-change path: a partial transfer is staged on the sender
+ * (staging bytes pending + unacked segments in the window), then the channel is
+ * re-based (bulkSenderReset + channelResetSend(CHANNEL_BULK) on the server,
+ * channelResetExpected on the client). A fresh transfer started at the new
+ * baseline must reassemble byte-identical — proving the reset cleared the
+ * un-segmentized staging tail (without that clear, the old transfer's leftover
+ * bytes would segmentize into the new stream and the receiver would misparse). */
+static int t_rebase_drops_inflight(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    Pipe *ab = (Pipe *)calloc(1, sizeof(*ab));
+    Pipe *ba = (Pipe *)calloc(1, sizeof(*ba));
+    BulkSender snd;
+    BulkReceiver rcv;
+    RecoverSink rs;
+    BulkRecvSink sink;
+    BulkStreamHeader h;
+    uint8_t *blobA = (uint8_t *)malloc(40000);
+    uint8_t *blobB = (uint8_t *)malloc(9000);
+    uint8_t *dst   = (uint8_t *)malloc(9000);
+    uint8_t frame[MAXFRAME];
+    int rc = 1, tick;
+    uint32_t i, b3;
+
+    bolo_srand(0x5EBA5E11ULL);
+    bulkSenderInit(&snd);
+    bulkReceiverInit(&rcv);
+    if (!a || !b || !ab || !ba || !blobA || !blobB || !dst) goto done;
+    channelMuxInit(a);
+    channelMuxInit(b);
+    for (i = 0; i < 40000; i++) blobA[i] = (uint8_t)((i * 7u + 3u) & 0xFF);
+    for (i = 0; i < 9000;  i++) blobB[i] = (uint8_t)((i * 251u + 5u) & 0xFF);
+
+    /* Stage transfer A and pump once so the window fills and the staging buffer
+     * still holds the un-segmentized tail (40000 + header > one 96-segment
+     * window of 256-byte segments). Deliver nothing — A is left in flight. */
+    memset(&h, 0, sizeof(h));
+    h.kind = BULK_KIND_DOWNLOAD; h.gen = 1; h.totalSize = 40000;
+    if (!bulkSenderBegin(&snd, &h, blobA, 40000)) goto done;
+    bulkSenderPump(&snd, a);
+    if (a->streamCount == 0) goto done;                       /* expect a pending tail */
+    if (a->ch[CHANNEL_BULK].nextSeq == a->ch[CHANNEL_BULK].ackedSeq) goto done; /* unacked segs */
+
+    /* Re-base: drop the sender's staged blob and reset the bulk channel. */
+    bulkSenderReset(&snd);
+    b3 = channelResetSend(a, CHANNEL_BULK);
+    if (a->streamCount != 0) {
+        UT_FAIL("channelResetSend left %u staging bytes on CHANNEL_BULK",
+                (unsigned)a->streamCount);
+    }
+    if (a->ch[CHANNEL_BULK].ackedSeq != a->ch[CHANNEL_BULK].nextSeq ||
+        b3 != a->ch[CHANNEL_BULK].nextSeq) {
+        UT_FAIL("channelResetSend did not collapse the bulk send window");
+    }
+    /* The client adopts the carried baseline (the CTRL_CHANNEL_RESET ch3). */
+    channelResetExpected(b, CHANNEL_BULK, b3);
+
+    /* Stream a fresh transfer B at the new baseline; it must reassemble clean. */
+    rs.dst = dst; rs.cap = 9000; rs.done = false;
+    rs.kind = 0; rs.gen = 0; rs.len = 0;
+    sink.onBegin = recoverOnBegin;
+    sink.onComplete = recoverOnComplete;
+    sink.ctx = &rs;
+    memset(&h, 0, sizeof(h));
+    h.kind = BULK_KIND_DOWNLOAD; h.gen = 2; h.totalSize = 9000;
+    if (!bulkSenderBegin(&snd, &h, blobB, 9000)) goto done;
+
+    for (tick = 0; tick < 100000 && !rs.done; tick++) {
+        int la, lb;
+        uint8_t out[CHANNEL_MAX_SEG];
+        uint16_t olen;
+        bulkSenderPump(&snd, a);
+        channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+        channelTick(b, (uint32_t)tick, LINK_RTT_MS);
+        la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        pipeEnqueue(ab, frame, la, tick, false, 0);
+        lb = channelBuildFrame(b, frame, FRAME_BUDGET);
+        pipeEnqueue(ba, frame, lb, tick, false, 0);
+        pipeDeliver(ab, b, tick);
+        pipeDeliver(ba, a, tick);
+        while (channelReceive(b, CHANNEL_BULK, out, &olen)) {
+            bulkReceiverFeed(&rcv, out, olen, &sink);
+        }
+    }
+    if (!rs.done || rs.gen != 2 || rs.len != 9000 ||
+        memcmp(dst, blobB, 9000) != 0) {
+        UT_FAIL("post-rebase transfer did not reassemble byte-identical");
+    }
+    rc = 0;
+done:
+    free(a); free(b); free(ab); free(ba);
+    free(blobA); free(blobB); free(dst);
+    bulkSenderReset(&snd);
+    if (rc) UT_FAIL("CHANNEL_BULK re-base did not drop the in-flight transfer cleanly");
+    return 0;
+}
+
 int run_bulk_transfer(void) {
     int rc = t_header_roundtrip();
     if (rc != 0) return rc;
@@ -503,5 +783,11 @@ int run_bulk_transfer(void) {
     if (rc != 0) return rc;
     rc = t_serializer_guard();
     if (rc != 0) return rc;
-    return t_upload_kind();
+    rc = t_upload_kind();
+    if (rc != 0) return rc;
+    rc = t_download_resync_kinds();
+    if (rc != 0) return rc;
+    rc = t_rebase_drops_inflight();
+    if (rc != 0) return rc;
+    return t_recovery_sweep();
 }

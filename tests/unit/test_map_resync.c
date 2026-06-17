@@ -186,15 +186,16 @@ int run_map_resync_send_gate_holds(void) {
     return 0;
 }
 
-/* Mirror of the client-side resync-chunk acceptance decision in
- * udpClientHandleResyncChunk (transport_udp_client.c) plus the resyncGen
- * routing in the PACKET_MAP_DOWNLOAD parser: a chunk is consumed as a resync
- * chunk only when a resync is outstanding and the chunk's generation matches
- * the active request; resyncGen 0 is the join-download path. The routing is
- * static in the transport, so the decision is modelled here (no sockets). */
+/* Mirror of the client-side resync acceptance decision in clientBulkOnBegin
+ * (transport_udp_client.c) for a BULK_KIND_RESYNC stream header: the resync
+ * blob is accepted only when a resync is outstanding and the header's
+ * generation matches the active request; a stale/superseded gen is dropped (the
+ * gen gate). A join download arrives under BULK_KIND_DOWNLOAD, not as a resync,
+ * modelled here as chunkGen 0. The dispatch is static in the transport, so the
+ * decision is modelled here (no sockets). */
 static bool resyncChunkAccepted(uint32_t chunkGen, bool resyncActive,
                                 uint32_t activeGen) {
-    if (chunkGen == 0) return false;   /* join download, not a resync chunk */
+    if (chunkGen == 0) return false;   /* join download, not a resync */
     if (!resyncActive) return false;   /* no resync outstanding */
     return chunkGen == activeGen;      /* reject a stale/superseded generation */
 }

@@ -150,12 +150,14 @@ static int run_empty_flow(void) {
 
     /* Every channel with no traffic must be untouched on both sides.
      * CHANNEL_CONTROL is skipped: control events ride it and the join
-     * sync-replay has advanced it. */
+     * sync-replay has advanced it. CHANNEL_BULK is skipped too: the join map
+     * download now streams on it, so it has legitimately advanced by connect
+     * time (the channels under test here are the no-traffic ones). */
     {
         uint8_t ch;
         for (ch = 0; ch < CHANNEL_COUNT; ch++) {
             uint32_t cExp = 0, cAck = 0, sExp = 0, sAck = 0;
-            if (ch == CHANNEL_CONTROL) continue;
+            if (ch == CHANNEL_CONTROL || ch == CHANNEL_BULK) continue;
             transportUdpClientChannelTestStats(ct, ch, &cExp, &cAck, NULL);
             transportUdpServerChannelTestStats(slot, ch, &sExp, &sAck, NULL);
             if (cExp != 0 || cAck != 0 || sExp != 0 || sAck != 0) {

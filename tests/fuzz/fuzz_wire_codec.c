@@ -29,7 +29,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     TkExplosionSnapshot expl;
     BaseSnapshot        base;
     PillSnapshot        pill;
-    MapDownloadChunkHeader dl;
     ClientCommand          cmd;
     GameEvent              ev;
 
@@ -38,7 +37,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     (void)unpackTkExplosionSnapshot(data, size, &expl);
     (void)unpackBaseSnapshot(data, size, &base);
     (void)unpackPillSnapshot(data, size, &pill);
-    (void)unpackMapDownloadChunkHeader(data, size, &dl);
     (void)unpackGameEvent(data, size, &ev);
     (void)commandCodecDecode(data, size, &cmd);
 

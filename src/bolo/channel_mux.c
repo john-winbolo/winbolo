@@ -365,6 +365,14 @@ uint32_t channelResetSend(ChannelMux *m, uint8_t ch) {
     }
     c->ackedSeq = c->nextSeq;
     c->txNext = c->nextSeq;
+    /* The stream channel also carries un-segmentized bytes in the shared
+     * staging buffer; collapsing the window without dropping them would let a
+     * stale tail segmentize into the post-reset sequence space and corrupt the
+     * re-based stream. Drop the pending bytes so the reset is complete. */
+    if (ch == CHANNEL_BULK) {
+        m->streamHead = 0;
+        m->streamCount = 0;
+    }
     return c->nextSeq;
 }
 

@@ -77,7 +77,6 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_JOIN_REQUEST, "JOIN_REQUEST") \
     X(PACKET_CHAT_MESSAGE, "CHAT_MESSAGE") \
     X(PACKET_PING, "PING") \
-    X(PACKET_MAP_ACK, "MAP_ACK") \
     X(PACKET_QUIT, "QUIT") \
     X(PACKET_STATE_SNAPSHOT, "STATE_SNAPSHOT") \
     X(PACKET_JOIN_ACCEPT, "JOIN_ACCEPT") \
@@ -91,7 +90,6 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_PILL_STATE, "PILL_STATE") \
     X(PACKET_PONG, "PONG") \
     X(PACKET_GAME_EVENT, "GAME_EVENT") \
-    X(PACKET_MAP_DOWNLOAD, "MAP_DOWNLOAD") \
     X(PACKET_MAP_RESYNC_REQUEST, "MAP_RESYNC_REQUEST") \
     X(PACKET_PLAYER_LIST, "PLAYER_LIST") \
     X(PACKET_NAME_CHANGE, "NAME_CHANGE") \
@@ -229,10 +227,6 @@ BOLO_STATIC_ASSERT(WIRE_SIZE_OF(TK_EXPLOSION_SNAPSHOT_FIELDS) == TK_EXPLOSION_SN
 BOLO_STATIC_ASSERT(WIRE_SIZE_OF(BASE_SNAPSHOT_FIELDS)         == BASE_SNAPSHOT_WIRE_SIZE,         base_wire_size_drift);
 BOLO_STATIC_ASSERT(WIRE_SIZE_OF(PILL_SNAPSHOT_FIELDS)         == PILL_SNAPSHOT_WIRE_SIZE,         pill_wire_size_drift);
 BOLO_STATIC_ASSERT(WIRE_MASKED_SIZE_OF(TANK_SNAPSHOT_FIELDS)  == TANK_SNAPSHOT_WIRE_SIZE,         tank_wire_size_drift);
-
-/* Fixed map-transfer chunk headers. Each precedes a hand-written data payload
- * and chunk loop (reassembly and length validation stay hand-rolled). */
-DEFINE_WIRE_CODEC(MapDownloadChunkHeader, "map_download_chunk_hdr", MAP_DOWNLOAD_CHUNK_HEADER_FIELDS)
 
 /* Serialize one GameEvent into buf. Returns bytes written (1 + dataSize). */
 int packGameEvent(uint8_t *buf, const GameEvent *ev) {

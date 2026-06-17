@@ -1145,8 +1145,10 @@ static EncodeResult encodeShellDeath(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
-/* CTRL_CHANNEL_RESET — carrier-only (channel 2): the two per-channel
- * baselines as big-endian u32s. No full-packet wrapper — this event has no
+/* CTRL_CHANNEL_RESET — carrier-only (channel 2): a channel mask byte followed
+ * by one big-endian u32 baseline for each set mask bit, in ascending channel
+ * order (bit 0 -> game, bit 1 -> map, bit 3 -> bulk; bit 2 is the control
+ * carrier and is never reset). No full-packet wrapper — this event has no
  * standalone wire form, it rides the reliable control channel exclusively. The
  * recipient argument is ignored; the per-client values live in the event. */
 
@@ -1155,11 +1157,26 @@ static EncodeResult encodeChannelResetBody(const ControlEvent *evt,
                                            const struct UdpServerClient *recipient,
                                            uint8_t *buf, size_t bufCap,
                                            size_t *outLen) {
+    uint8_t mask = evt->u.channelReset.channelMask;
+    const uint32_t baselines[4] = {
+        evt->u.channelReset.ch0Baseline,
+        evt->u.channelReset.ch1Baseline,
+        0u,                              /* ch2 (control) never carried */
+        evt->u.channelReset.ch3Baseline,
+    };
+    size_t pos = 0;
+    int c;
     (void)recipient;
-    if (bufCap < 8) return ENCODE_OVERFLOW;
-    packU32(buf, evt->u.channelReset.ch0Baseline);
-    packU32(buf + 4, evt->u.channelReset.ch1Baseline);
-    *outLen = 8;
+    if (bufCap < 1) return ENCODE_OVERFLOW;
+    buf[pos++] = mask;
+    for (c = 0; c < 4; c++) {
+        if (mask & (1u << c)) {
+            if (pos + 4 > bufCap) return ENCODE_OVERFLOW;
+            packU32(buf + pos, baselines[c]);
+            pos += 4;
+        }
+    }
+    *outLen = pos;
     return ENCODE_OK;
 }
 
@@ -1613,11 +1630,29 @@ static bool decodeShellDeathBody(const uint8_t *buf, size_t len,
 
 static bool decodeChannelResetBody(const uint8_t *buf, size_t len,
                                    ControlEvent *outEvt) {
-    if (len < 8) return false;
+    uint8_t mask;
+    size_t pos = 1;
+    int c;
+    uint32_t *const fields[4] = {
+        &outEvt->u.channelReset.ch0Baseline,
+        &outEvt->u.channelReset.ch1Baseline,
+        NULL,                            /* ch2 (control) never carried */
+        &outEvt->u.channelReset.ch3Baseline,
+    };
+    if (len < 1) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_CHANNEL_RESET;
-    outEvt->u.channelReset.ch0Baseline = unpackU32(buf);
-    outEvt->u.channelReset.ch1Baseline = unpackU32(buf + 4);
+    mask = buf[0];
+    for (c = 0; c < 4; c++) {
+        if (mask & (1u << c)) {
+            uint32_t v;
+            if (pos + 4 > len) return false;
+            v = unpackU32(buf + pos);
+            pos += 4;
+            if (fields[c] != NULL) *fields[c] = v;
+        }
+    }
+    outEvt->u.channelReset.channelMask = mask;
     return true;
 }
 

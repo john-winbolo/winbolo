@@ -36,47 +36,71 @@ int run_channel_reset_codec_roundtrip(void) {
     UT_ASSERT_MSG(enc != NULL, "no body encoder for CTRL_CHANNEL_RESET");
     UT_ASSERT_MSG(dec != NULL, "no body decoder for CTRL_CHANNEL_RESET");
 
-    /* A spread of values including distinct ch0/ch1 and a high-bit-set u32 to
-     * catch byte-order or sign mistakes. */
-    static const struct { uint32_t b0, b1; } cases[] = {
-        { 0u,          0u          },
-        { 1u,          2u          },
-        { 512u,        128u        },
-        { 0x01020304u, 0xFFFEFDFCu },
-        { 0xFFFFFFFFu, 0x80000000u },
+    /* A spread of values including distinct ch0/ch1/ch3, varied masks, and a
+     * high-bit-set u32 to catch byte-order or sign mistakes. The wire body is
+     * a mask byte plus one u32 per set bit (ascending channel order), so the
+     * expected length is 1 + 4*popcount(mask). */
+    static const struct { uint8_t mask; uint32_t b0, b1, b3; } cases[] = {
+        { 0u,                                       0u,          0u,          0u          },
+        { 1u << CHANNEL_GAME,                       7u,          0u,          0u          },
+        { 1u << CHANNEL_MAP,                        0u,          9u,          0u          },
+        { 1u << CHANNEL_BULK,                       0u,          0u,          512u        },
+        { (1u<<CHANNEL_GAME)|(1u<<CHANNEL_MAP),     1u,          2u,          0u          },
+        { (1u<<CHANNEL_GAME)|(1u<<CHANNEL_BULK),    0x01020304u, 0u,          0xFFFEFDFCu },
+        { (1u<<CHANNEL_GAME)|(1u<<CHANNEL_MAP)|(1u<<CHANNEL_BULK),
+                                                    0xFFFFFFFFu, 0x80000000u, 0x0BADF00Du },
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         ControlEvent in, out;
         uint8_t buf[64];
         size_t outLen = 0;
+        size_t want;
+        int bits = 0, b;
+        for (b = 0; b < 8; b++) if (cases[i].mask & (1u << b)) bits++;
+        want = 1 + 4 * (size_t)bits;
         memset(&in, 0, sizeof(in));
         memset(&out, 0xAB, sizeof(out));
         in.type = CTRL_CHANNEL_RESET;
+        in.u.channelReset.channelMask = cases[i].mask;
         in.u.channelReset.ch0Baseline = cases[i].b0;
         in.u.channelReset.ch1Baseline = cases[i].b1;
+        in.u.channelReset.ch3Baseline = cases[i].b3;
 
         UT_ASSERT_MSG(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK,
                       "encode failed (case %zu)", i);
-        UT_ASSERT_MSG(outLen == 8, "body is %zu bytes, want 8 (case %zu)",
-                      outLen, i);
+        UT_ASSERT_MSG(outLen == want, "body is %zu bytes, want %zu (case %zu)",
+                      outLen, want, i);
         UT_ASSERT_MSG(dec(buf, outLen, &out), "decode failed (case %zu)", i);
         UT_ASSERT(out.type == CTRL_CHANNEL_RESET);
-        UT_ASSERT_MSG(out.u.channelReset.ch0Baseline == cases[i].b0,
-                      "ch0 baseline 0x%08X != 0x%08X (case %zu)",
-                      (unsigned)out.u.channelReset.ch0Baseline,
-                      (unsigned)cases[i].b0, i);
-        UT_ASSERT_MSG(out.u.channelReset.ch1Baseline == cases[i].b1,
-                      "ch1 baseline 0x%08X != 0x%08X (case %zu)",
-                      (unsigned)out.u.channelReset.ch1Baseline,
-                      (unsigned)cases[i].b1, i);
+        UT_ASSERT_MSG(out.u.channelReset.channelMask == cases[i].mask,
+                      "mask 0x%02X != 0x%02X (case %zu)",
+                      (unsigned)out.u.channelReset.channelMask,
+                      (unsigned)cases[i].mask, i);
+        /* Only baselines for set bits are carried; the rest decode as 0. */
+        UT_ASSERT_MSG(out.u.channelReset.ch0Baseline ==
+                      ((cases[i].mask & (1u << CHANNEL_GAME)) ? cases[i].b0 : 0u),
+                      "ch0 baseline mismatch (case %zu)", i);
+        UT_ASSERT_MSG(out.u.channelReset.ch1Baseline ==
+                      ((cases[i].mask & (1u << CHANNEL_MAP)) ? cases[i].b1 : 0u),
+                      "ch1 baseline mismatch (case %zu)", i);
+        UT_ASSERT_MSG(out.u.channelReset.ch3Baseline ==
+                      ((cases[i].mask & (1u << CHANNEL_BULK)) ? cases[i].b3 : 0u),
+                      "ch3 baseline mismatch (case %zu)", i);
     }
 
-    /* A body one byte short of the 8-byte payload must be refused. */
+    /* A body whose mask promises a baseline the bytes don't supply must be
+     * refused (mask sets one channel but no u32 follows). */
     {
         ControlEvent out;
-        uint8_t shortBuf[7] = {0};
+        uint8_t shortBuf[3] = { (uint8_t)(1u << CHANNEL_GAME), 0, 0 };
         UT_ASSERT_MSG(!dec(shortBuf, sizeof(shortBuf), &out),
-                      "decoder accepted a body one byte short");
+                      "decoder accepted a body short of its promised baseline");
+    }
+    /* An empty body (zero length) is refused — the mask byte is mandatory. */
+    {
+        ControlEvent out;
+        UT_ASSERT_MSG(!dec(NULL, 0, &out),
+                      "decoder accepted a zero-length body");
     }
     return 0;
 }

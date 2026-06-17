@@ -525,18 +525,20 @@ public/internal split provides.
 | Packet kind | Lives in |
 | --- | --- |
 | Backed by a `ControlEventType` variant (state changes — joins, leaves, alliances, chat, lobby, phases, balance, shutdown) | `src/bolo/transport_control_codec.c` (encoder + decoder) |
-| Fixed-layout binary message (per-tick snapshots; map-transfer chunk headers) | field list in `src/bolo/internal/wire_messages.h` + a `DEFINE_WIRE_CODEC[_MASKED]` line in `src/bolo/transport_udp_common.c` — see "Fixed-layout wire messages" below |
-| Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, NAME_CHANGE_REJECT, MAP_DOWNLOAD chunks, PONG, PLAYER_LIST resync) | `src/bolo/transport_udp_server.c` / `src/bolo/transport_udp_client.c` |
+| Fixed-layout binary message (per-tick snapshots) | field list in `src/bolo/internal/wire_messages.h` + a `DEFINE_WIRE_CODEC[_MASKED]` line in `src/bolo/transport_udp_common.c` — see "Fixed-layout wire messages" below |
+| Bulk byte transfer (map preview / download / resync) | streamed on `CHANNEL_BULK` behind a bulk-transfer stream header — `src/bolo/bulk_transfer.c` |
+| Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, NAME_CHANGE_REJECT, PONG, PLAYER_LIST resync) | `src/bolo/transport_udp_server.c` / `src/bolo/transport_udp_client.c` |
 
 ### Fixed-layout wire messages — the field-list codec
 
 Fixed binary structs on the wire — the per-tick snapshots (`TankSnapshot`,
-`ShellSnapshot`, `TkExplosionSnapshot`, `BaseSnapshot`, `PillSnapshot`) and the
-map-transfer chunk headers (`MapDownloadChunkHeader`, `MapUploadChunkHeader`,
-`MapPreviewChunkHeader`) — are **declared once as a field list and their codec is
-generated**, not hand-numbered. (Control-event and client-command payloads are a
-different layer: they keep their own codecs in `transport_control_codec.c` /
-`transport_command_codec.c`, described above.)
+`ShellSnapshot`, `TkExplosionSnapshot`, `BaseSnapshot`, `PillSnapshot`) — are
+**declared once as a field list and their codec is generated**, not
+hand-numbered. (Control-event and client-command payloads are a different layer:
+they keep their own codecs in `transport_control_codec.c` /
+`transport_command_codec.c`, described above. Bulk byte transfers — map preview,
+download, resync — are a third layer: they stream on `CHANNEL_BULK` behind the
+`bulk_transfer.c` stream header, not a fixed-layout field list.)
 
 The machinery lives in `src/bolo/internal/wire_codec.h`; the field lists in
 `src/bolo/internal/wire_messages.h`; the instantiations sit next to each other in
@@ -572,11 +574,11 @@ Two forms:
   `TankSnapshot` is the worked example.
 
 **What stays hand-written (the honest boundary):** variable-length records
-(length-prefixed strings, count-driven loops) and chunk reassembly. For a
-chunked or count-driven message you generate the *fixed leaf record / header*
-(e.g. `MapDownloadChunkHeader`) and leave the surrounding loop, length
-validation, and reassembly hand-rolled. Don't try to express a length-prefixed
-string or a repeat count in a field list.
+(length-prefixed strings, count-driven loops) and stream reassembly. For a
+count-driven message you generate the *fixed leaf record* and leave the
+surrounding loop and length validation hand-rolled; a sized byte blob (a map)
+rides `CHANNEL_BULK` and is reassembled by `bulk_transfer.c`, not a field list.
+Don't try to express a length-prefixed string or a repeat count in a field list.
 
 **Verification — the byte-identity net.** `tests/unit/test_wire_corpus.c` is a
 differential test: generated pack/unpack must round-trip and be **byte-identical
@@ -685,8 +687,11 @@ publish recipe does not apply to them:
   that tail is fed by the bus — the snapshot module is the carrier,
   not the publisher.
 - **Per-client handshake and reliability.** `JOIN_ACCEPT`,
-  `JOIN_REJECT`, `NAME_CHANGE_REJECT`, `MAP_DOWNLOAD` chunks, and
-  `PONG` are point-to-point transport mechanics. The reliable bus
+  `JOIN_REJECT`, `NAME_CHANGE_REJECT`, and `PONG` are point-to-point
+  transport mechanics. (The compressed map is no longer one of these:
+  join download and resync now stream on the reliable `CHANNEL_BULK`
+  via `bulk_transfer.c`, so they ride the channel-mux carrier rather
+  than a bespoke `MAP_DOWNLOAD`/`MAP_ACK` wire pair.) The reliable bus
   has two parallel carriers for events that DO ride a queue:
   - **Down-leg.** `PACKET_CONTROL_TICK` (server → client) and
     `PACKET_CONTROL_ACK` (client → server) drain the per-client
@@ -1354,7 +1359,7 @@ snapshot tick. Both call sites are gated on
 `winbolonetIsRunning()` so non-WBN servers pay nothing.
 
 `PACKET_WBN_REKEY` sits alongside the existing wire-only
-exceptions (JOIN_ACCEPT, MAP_DOWNLOAD, PONG, PLAYER_LIST resync):
+exceptions (JOIN_ACCEPT, PONG, PLAYER_LIST resync):
 per-client reliability with no in-process audience. Routing through
 `ControlEvent` would put a WBN-specific concept on the sim's T1
 surface where nothing else in the sim references it.

@@ -233,15 +233,16 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_PILL_STATE      119   /* Pill health/ownership change */
 #define PACKET_PONG            120   /* Ping response */
 #define PACKET_GAME_EVENT      121   /* Explosion, mine hit, etc. */
-#define PACKET_MAP_DOWNLOAD    122   /* Compressed map data chunk (server -> client) */
-#define PACKET_MAP_ACK         105   /* Map chunk acknowledgment (client -> server) */
+/* 122 (MAP_DOWNLOAD) and 105 (MAP_ACK) retired: the compressed map now streams
+ * on CHANNEL_BULK behind a bulk-transfer stream header (join download +
+ * resync), so there is no per-chunk carrier or ack packet. */
 #define PACKET_MAP_RESYNC_REQUEST 158 /* client -> server: re-send the live map
                                        * after the client detects its terrain has
                                        * diverged (a dropped EVENT_MAP_CHANGE).
                                        * Body: [resyncGen u32] — a client-chosen
-                                       * nonzero id echoed back in each chunk so
-                                       * stale chunks from a superseded resync are
-                                       * rejected. */
+                                       * nonzero id carried in the resync stream
+                                       * header so a superseded resync is dropped
+                                       * by the client's gen gate. */
 #define PACKET_QUIT            106   /* Graceful disconnect (client -> server) */
 #define PACKET_PLAYER_LIST     107   /* All connected players (server -> new client) */
 #define PACKET_NAME_CHANGE     123   /* Player name change (bidirectional) */
@@ -612,10 +613,9 @@ static inline bool lobbyBotNameAcceptable(
 /* PACKET_MAX_PLAYER_NAME lives in public/wire_limits.h (included above
  * via the file-top include list) alongside PACKET_MAX_CHAT_MESSAGE. */
 
-/* Map download chunk size — fits comfortably in a UDP datagram */
-#define MAP_DOWNLOAD_CHUNK_SIZE 900
-
-/* Maximum compressed map size (256x256 LZW + bases + pills + starts) */
+/* Maximum compressed map size (256x256 LZW + bases + pills + starts). The map
+ * streams on CHANNEL_BULK (no per-chunk packet), but this still bounds the blob
+ * the sender stages and the receiver allocates. */
 #define MAP_DOWNLOAD_MAX_SIZE 65536
 
 /* Number of redundant inputs per packet (for packet loss) — each input

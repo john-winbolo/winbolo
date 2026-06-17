@@ -263,20 +263,6 @@ int unpackBaseSnapshot(const uint8_t *buf, size_t avail, BaseSnapshot *bs);
 int packPillSnapshot(uint8_t *buf, const PillSnapshot *ps);
 int unpackPillSnapshot(const uint8_t *buf, size_t avail, PillSnapshot *ps);
 
-/* Fixed-layout headers that precede the hand-written data/loop of each
- * map-transfer stream. Only the header is generated; the chunk loop,
- * reassembly, and length validation around each stay hand-written. */
-typedef struct {
-    uint32_t resyncGen;
-    uint32_t mapSize;
-    uint16_t chunkIdx;
-    uint16_t chunkSize;
-} MapDownloadChunkHeader;
-
-int packMapDownloadChunkHeader(uint8_t *buf, const MapDownloadChunkHeader *h);
-int unpackMapDownloadChunkHeader(const uint8_t *buf, size_t avail,
-                                 MapDownloadChunkHeader *h);
-
 /* ---- Socket helpers ---- */
 
 SOCKET createUdpSocket(bool exclusive);

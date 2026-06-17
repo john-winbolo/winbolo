@@ -342,12 +342,19 @@ typedef struct ControlEvent {
             uint8_t  outcome;    /* SHELL_OUTCOME_* */
         } shellDeath;
 
-        /* CTRL_CHANNEL_RESET — new game/map receive baselines the client must
-         * adopt at game start. ch0Baseline is the game channel's post-reset
-         * sequence floor, ch1Baseline the map channel's. */
+        /* CTRL_CHANNEL_RESET — per-channel receive baselines the client must
+         * adopt when the server re-bases a reliable channel. channelMask names
+         * which channels this event re-bases (bit c set => channel index c);
+         * each named channel's post-reset sequence floor is carried in the
+         * matching baseline field below. The game-start reset re-bases the game
+         * (ch0) and map (ch1) channels together; a lobby map change re-bases the
+         * bulk (ch3) channel alone so an in-flight map download drops cleanly.
+         * The control channel (ch2) is the carrier and is never reset. */
         struct {
-            uint32_t ch0Baseline;
-            uint32_t ch1Baseline;
+            uint8_t  channelMask;   /* bit c set => ch<c>Baseline is valid     */
+            uint32_t ch0Baseline;   /* CHANNEL_GAME  floor (bit 0)             */
+            uint32_t ch1Baseline;   /* CHANNEL_MAP   floor (bit 1)             */
+            uint32_t ch3Baseline;   /* CHANNEL_BULK  floor (bit 3)             */
         } channelReset;
     } u;
 } ControlEvent;

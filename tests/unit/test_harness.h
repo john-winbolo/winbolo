@@ -428,6 +428,13 @@ int run_loopback_map_preview(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);
+/* Map join-download + live resync over CHANNEL_BULK (test_loopback_download.c):
+ * a lobby join download completes under loss; a mid-game joiner downloads while
+ * the server is Running (the bulk-carrier deadlock case); and a reported
+ * checksum mismatch drives a resync that installs and bumps the resync count. */
+int run_loopback_download_join(void);
+int run_loopback_download_midgame(void);
+int run_loopback_resync(void);
 
 /* Gate-#1 render-path integration (test_gate1_integration.c): the viewTick
  * ±1-snapshot invariant over the real loopback transport, and the
@@ -454,8 +461,9 @@ int run_join_rate_limit(void);
 int run_cookie_handshake(void);
 
 /* Map-send amplification gate (test_map_amp_gate.c): a crafted JOIN over a raw
- * loopback socket draws a JOIN_ACCEPT but no PACKET_MAP_DOWNLOAD until a
- * MAP_ACK 0xFFFF ready round-trip is sent, after which chunks flow. */
+ * loopback socket draws only a small JOIN_CHALLENGE (no accept, no CHANNEL_BULK
+ * carrier) until the address-proof cookie is echoed, after which the accept and
+ * the map stream flow — the cookie is the sole amplification gate. */
 int run_map_amp_gate(void);
 
 /* Map-desync resync queue logic (test_map_resync.c): the resync cut empties

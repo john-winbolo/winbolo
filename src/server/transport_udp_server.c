@@ -157,32 +157,50 @@ static int SDLCALL serverRecvThreadFunc(void *userdata) {
  * SERVER SIDE
  * ================================================================ */
 
-/* Per-client map download tracking */
+/* Map transfer flavor armed on a slot's bulk channel. */
+typedef enum {
+    MAP_XFER_NONE = 0,
+    MAP_XFER_DOWNLOAD,   /* join / mid-game-join full map download */
+    MAP_XFER_RESYNC      /* live map re-send for desync recovery   */
+} MapTransferKind;
+
+/* Per-client map download tracking. The compressed map streams to the client
+ * on CHANNEL_BULK via the per-slot BulkSender (bulk_transfer.c); there is no
+ * separate chunker, ack packet, or resend loop — the channel's own
+ * reliability carries and retransmits the bytes. */
 typedef struct {
     BYTE    *compressedMap;     /* Per-client copy of compressed map (owned, must free) */
     uint32_t mapSize;          /* Total compressed map size */
-    uint16_t totalChunks;      /* Total number of chunks */
-    bool    *chunkAcked;       /* Which chunks the client has acked */
-    uint16_t chunksAcked;      /* Number of acked chunks */
-    bool     downloadComplete; /* True when all chunks acked */
-    bool     mapReady;         /* True only after the client's MAP_ACK 0xFFFF
-                                * ready round-trip. Gates the bulk map send so a
-                                * spoofed JOIN can't reflect/amplify the map at a
-                                * forged source address. */
+    bool     downloadComplete; /* True once the join download's bytes are acked
+                                * (ackedSeq >= xferEndSeq) or force-set at game
+                                * start. Gates snapshot send + map-event flush. */
     bool     resyncInProgress; /* True while serving a client-requested live map
                                 * resync (map desync recovery). While set, the
                                 * snapshot builder holds this slot's map events
                                 * (packs zero) so the freshly compressed blob and
                                 * the held terrain changes can't double-apply. */
-    uint32_t resyncGen;        /* Generation id echoed into every chunk: 0 for a
-                                * normal join download, the client-chosen nonzero
-                                * id for a resync. Lets the client drop chunks
-                                * from a superseded request. */
-    uint32_t lastSendTick;     /* Last tick we sent chunks (for resend timing) */
+    uint32_t resyncGen;        /* Generation id of the in-flight resync (0 = none),
+                                * carried in the bulk stream header so the client
+                                * drops a superseded request and the freshly
+                                * installed blob wins the gen gate. */
+    /* Bulk-stream transfer arming. The transfer is armed (xferKind set) at join
+     * / resync, begun once the bulk channel is idle (serverBeginMapTransferIfReady),
+     * and read complete from the channel's ackedSeq (serverCompleteMapTransferIfAcked). */
+    MapTransferKind xferKind;  /* armed transfer flavor (NONE once finished)    */
+    bool     xferBegun;        /* bulkSenderBegin has been issued               */
+    uint32_t xferStartSeq;     /* CHANNEL_BULK nextSeq captured at begin         */
+    uint32_t xferEndSeq;       /* startSeq + segment count; done when ackedSeq>= */
 } ClientMapDownload;
 
 #define UPLOAD_MAX_BYTES (64u * 1024u)
 #define LOBBY_REQ_COOLDOWN_TICKS 25  /* ~0.5s at 50 Hz */
+
+/* Standalone PACKET_CHANNEL frames a downloading client gets per tick while
+ * snapshots are gated (no snapshot trailer to carry the bulk stream). One
+ * frame carries ~5 segments under the datagram budget, so this clears a full
+ * CHANNEL_BULK window (96 segments) in a tick rather than throttling the map to
+ * ~one frame/tick; the unacked window then bounds bytes in flight. */
+#define MAP_DOWNLOAD_FRAMES_PER_TICK 24
 
 /* Anonymous-fallback ceiling for a deferred WBN PLAYER_JOIN: how long
  * we wait for the joiner's rekey->reauth round-trip (two network hops
@@ -1194,55 +1212,81 @@ void transportUdpServerBroadcastWbnRekey(ServerSim *sim) {
 }
 
 /* Send map chunks to a client that is downloading */
-static void serverSendMapChunks(int slot) {
+/* Begin the armed map transfer once the bulk channel is quiescent. The
+ * BulkSender's busy flag clears at staging-complete, not drain-complete, so a
+ * correct endSeq needs the stream truly idle: no pending staging bytes and the
+ * send window fully acked. startSeq is captured before any byte is staged, so
+ * endSeq = startSeq + segment count is exact (channelStreamRefill only ever
+ * forms a short final segment for a contiguous blob). No readiness round-trip
+ * gates this: the join cookie already proved the address (serverHandleJoinRequest),
+ * and a resync targets an already-established slot. */
+static void serverBeginMapTransferIfReady(int slot) {
     ClientMapDownload *dl = &udpServer.mapDownload[slot];
-    UdpServerClient *client = &udpServer.clients[slot];
-    uint16_t i;
+    ChannelMux *m = &udpServer.channelMux[slot];
+    ChannelState *bulk = &m->ch[CHANNEL_BULK];
+    BulkStreamHeader sh;
+    uint32_t headerLen, totalBytes, segs;
 
-    /* Anti-reflection gate: never send bulk map data until the client has
-     * proven it can receive a reply (MAP_ACK 0xFFFF round-trip). This is the
-     * single chokepoint — no caller can blast the map before the round-trip. */
-    if (!dl->mapReady) return;
-    if (dl->downloadComplete) return;
+    if (dl->xferKind == MAP_XFER_NONE || dl->xferBegun) return;
+    if (bulkSenderBusy(&udpServer.bulkSend[slot])) return;  /* preview draining */
+    if (m->streamCount != 0) return;                        /* staging not empty  */
+    if (bulk->ackedSeq != bulk->nextSeq) return;            /* window not drained */
+    if (dl->compressedMap == NULL || dl->mapSize == 0) return;
 
-    for (i = 0; i < dl->totalChunks; i++) {
-        /* Wire layout: [header 8][resyncGen u32][mapSize u32][chunkIdx u16]
-         * [chunkSize u16][data]. The total mapSize makes the transfer
-         * self-describing so a resync (which has no JOIN_ACCEPT to carry the
-         * size) can size its buffer from the first chunk.
-         * 8 + 4 + 4 + 4 + 900 = 920 bytes, within UDP_MAX_PAYLOAD (1400). */
-        uint8_t chunkBuf[PACKET_HEADER_SIZE + 4 + 4 + 4 + MAP_DOWNLOAD_CHUNK_SIZE];
-        uint32_t offset;
-        uint16_t chunkSize;
-        int pktLen;
+    memset(&sh, 0, sizeof(sh));
+    sh.kind = (dl->xferKind == MAP_XFER_RESYNC) ? BULK_KIND_RESYNC
+                                                : BULK_KIND_DOWNLOAD;
+    sh.gen = dl->resyncGen;          /* 0 for a join download */
+    sh.totalSize = dl->mapSize;
+    sh.pathLen = 0;
+    sh.path[0] = '\0';
 
-        if (dl->chunkAcked[i]) continue;
-
-        offset = (uint32_t)i * MAP_DOWNLOAD_CHUNK_SIZE;
-        chunkSize = (uint16_t)(dl->mapSize - offset);
-        if (chunkSize > MAP_DOWNLOAD_CHUNK_SIZE) {
-            chunkSize = MAP_DOWNLOAD_CHUNK_SIZE;
-        }
-
-        packHeader(chunkBuf, PACKET_MAP_DOWNLOAD, client->outSequence++);
-        /* resyncGen: 0 for a join download, the request's nonzero id for a
-         * resync — the client routes/rejects chunks by it. Fixed header is
-         * generated; the data memcpy and chunk loop below stay hand-written. */
-        MapDownloadChunkHeader hdr = { dl->resyncGen, dl->mapSize,
-                                       (uint16_t)i, chunkSize };
-        packMapDownloadChunkHeader(chunkBuf + PACKET_HEADER_SIZE, &hdr);
-        memcpy(chunkBuf + PACKET_HEADER_SIZE + 12,
-               dl->compressedMap + offset, chunkSize);
-        pktLen = PACKET_HEADER_SIZE + 12 + chunkSize;
-
-        /* wire-only: per-client reliability (acked / per-tick to one slot) */
-        srvSendTo(chunkBuf, pktLen, &client->addr);
+    dl->xferStartSeq = bulk->nextSeq;
+    if (!bulkSenderBegin(&udpServer.bulkSend[slot], &sh,
+                         dl->compressedMap, dl->mapSize)) {
+        return;   /* allocation failure — retry next tick */
     }
-
-    dl->lastSendTick = udpServer.tickCount;
+    headerLen = (uint32_t)BULK_STREAM_HEADER_FIXED + sh.pathLen;
+    totalBytes = headerLen + dl->mapSize;
+    segs = (totalBytes + CHANNEL_BULK_SEG - 1) / CHANNEL_BULK_SEG;
+    dl->xferEndSeq = dl->xferStartSeq + segs;
+    dl->xferBegun = true;
 }
 
-/* Initialize map download tracking for a client */
+/* Read transfer completion from the bulk channel. Once the peer has acked every
+ * segment of the armed transfer (ackedSeq >= xferEndSeq) the same gates the old
+ * chunk-ack path drove re-fire: a join download flips downloadComplete (snapshot
+ * send + map-event flush lift); a resync clears resyncInProgress/resyncGen (the
+ * held map events flush and the client's installedMapGen gate takes over). */
+static void serverCompleteMapTransferIfAcked(int slot) {
+    ClientMapDownload *dl = &udpServer.mapDownload[slot];
+    ChannelState *bulk = &udpServer.channelMux[slot].ch[CHANNEL_BULK];
+
+    if (dl->xferKind == MAP_XFER_NONE || !dl->xferBegun) return;
+    if (bulk->ackedSeq < dl->xferEndSeq) return;
+
+    if (dl->xferKind == MAP_XFER_DOWNLOAD) {
+        dl->downloadComplete = TRUE;
+        fprintf(stderr, "[UDP SERVER] Client %d map download complete\n", slot);
+    } else { /* MAP_XFER_RESYNC */
+        dl->resyncInProgress = FALSE;
+        dl->resyncGen = 0;
+    }
+    dl->xferKind = MAP_XFER_NONE;
+    dl->xferBegun = false;
+}
+
+/* Per-tick service: begin an armed transfer when the channel is idle, then
+ * fire completion when the peer has acked it through. Safe to call every tick
+ * for any connected slot; a no-op when nothing is armed. */
+static void serverServiceMapTransfer(int slot) {
+    serverBeginMapTransferIfReady(slot);
+    serverCompleteMapTransferIfAcked(slot);
+}
+
+/* Initialize map download tracking for a client and arm a join download on the
+ * bulk channel. The blob begins streaming once the channel is idle and the
+ * per-tick carrier (transportUdpServerSend) feeds it. */
 static void serverInitMapDownload(int slot) {
     ClientMapDownload *dl = &udpServer.mapDownload[slot];
 
@@ -1252,18 +1296,13 @@ static void serverInitMapDownload(int slot) {
     dl->compressedMap = (BYTE *)malloc(udpServer.compressedMapSize);
     memcpy(dl->compressedMap, udpServer.compressedMap, udpServer.compressedMapSize);
     dl->mapSize = udpServer.compressedMapSize;
-    dl->totalChunks = (uint16_t)((dl->mapSize + MAP_DOWNLOAD_CHUNK_SIZE - 1) / MAP_DOWNLOAD_CHUNK_SIZE);
-    dl->chunksAcked = 0;
     dl->downloadComplete = FALSE;
-    dl->mapReady = FALSE;
     dl->resyncInProgress = FALSE;
     dl->resyncGen = 0;
-    dl->lastSendTick = 0;
-
-    if (dl->chunkAcked != NULL) {
-        free(dl->chunkAcked);
-    }
-    dl->chunkAcked = (bool *)calloc(dl->totalChunks, sizeof(bool));
+    dl->xferKind = MAP_XFER_DOWNLOAD;
+    dl->xferBegun = false;
+    dl->xferStartSeq = 0;
+    dl->xferEndSeq = 0;
 }
 
 /* Clean up map download tracking for a client */
@@ -1273,12 +1312,9 @@ static void serverCleanupMapDownload(int slot) {
         free(dl->compressedMap);
         dl->compressedMap = NULL;
     }
-    if (dl->chunkAcked != NULL) {
-        free(dl->chunkAcked);
-        dl->chunkAcked = NULL;
-    }
     dl->downloadComplete = FALSE;
-    dl->chunksAcked = 0;
+    dl->xferKind = MAP_XFER_NONE;
+    dl->xferBegun = false;
 }
 
 static void serverSendServerMessage(ServerSim *sim, langid id, int argCount,
@@ -1454,10 +1490,8 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
          * REKEY wasn't, which would otherwise leave the client without
          * a wbnServerKey until the next return-to-lobby rotation. */
         transportUdpServerSendWbnRekey(&udpServer.clients[slot]);
-        /* Resend map chunks if download not complete */
-        if (!udpServer.mapDownload[slot].downloadComplete) {
-            serverSendMapChunks(slot);
-        }
+        /* No map re-poke needed: an incomplete download is still armed/in-flight
+         * on CHANNEL_BULK and the channel retransmits its own unacked segments. */
         return;
     }
 
@@ -2010,9 +2044,11 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * the codec encoder to this client's socket as part of
      * serverSimRegisterSubscriber above. */
 
-    /* Initialize map download. The chunks are not sent here: the bulk map
-     * send waits for the client's MAP_ACK 0xFFFF ready round-trip so a spoofed
-     * JOIN can't reflect the map at a forged source address. */
+    /* Initialize map download. The blob is not streamed here: it is armed and
+     * begins on CHANNEL_BULK once the channel is idle, carried by the per-tick
+     * frame in transportUdpServerSend. No anti-reflection round-trip gates it —
+     * the join cookie (serverCookieAccept) already proved this address can
+     * receive a reply, so a spoofed JOIN never reaches a slot to be exploited. */
     serverInitMapDownload(slot);
 
     /* The sync-replay just enqueued a CTRL_PLAYER_JOIN for every in-use
@@ -3121,9 +3157,13 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
             udpServer.mapDownload[i].downloadComplete = TRUE;
             /* This force-completes the download without serverInitMapDownload,
              * so clear any in-flight resync explicitly — otherwise the send
-             * gate above would keep holding this slot's map events forever. */
+             * gate above would keep holding this slot's map events forever.
+             * Also disarm any pending bulk transfer so a stale arming can't
+             * re-fire a completion against the new game's channel state. */
             udpServer.mapDownload[i].resyncInProgress = FALSE;
             udpServer.mapDownload[i].resyncGen = 0;
+            udpServer.mapDownload[i].xferKind = MAP_XFER_NONE;
+            udpServer.mapDownload[i].xferBegun = false;
         }
         /* Drop the previous game's unacked reliable events, but keep the
          * sequence counter monotonic — never reuse low seq numbers.  For
@@ -3182,6 +3222,8 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
             size_t bodyLen = 0;
             memset(&resetEvt, 0, sizeof(resetEvt));
             resetEvt.type = CTRL_CHANNEL_RESET;
+            resetEvt.u.channelReset.channelMask =
+                (uint8_t)((1u << CHANNEL_GAME) | (1u << CHANNEL_MAP));
             resetEvt.u.channelReset.ch0Baseline = b0;
             resetEvt.u.channelReset.ch1Baseline = b1;
             if (enc != NULL &&
@@ -3240,7 +3282,43 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
         /* Re-send JOIN_ACCEPT so the client picks up the new compressed
          * map size. */
         serverSendJoinAccept(i, sim, &udpServer.clients[i].addr);
-        /* Reset chunk tracking; subsequent ticks resume sending chunks. */
+        /* Drop any in-flight map transfer and re-base CHANNEL_BULK so the new
+         * map's stream starts clean on both ends: bulkSenderReset drops the old
+         * staged blob, channelResetSend(CHANNEL_BULK) collapses the send window
+         * and clears the staging tail, and a CTRL_CHANNEL_RESET carries the new
+         * bulk baseline so the client lifts its receive baseline and abandons
+         * the old partial. Without this the old transfer's stragglers would
+         * segmentize into the new stream and the single BulkReceiver would
+         * misparse it. */
+        bulkSenderReset(&udpServer.bulkSend[i]);
+        {
+            uint32_t b3 = channelResetSend(&udpServer.channelMux[i], CHANNEL_BULK);
+            ControlEvent resetEvt;
+            ControlEncodeBodyFn enc =
+                transportControlCodecBodyEncoder(CTRL_CHANNEL_RESET);
+            uint8_t msg[CHANNEL_CONTROL_SEG];
+            size_t bodyLen = 0;
+            memset(&resetEvt, 0, sizeof(resetEvt));
+            resetEvt.type = CTRL_CHANNEL_RESET;
+            resetEvt.u.channelReset.channelMask = (uint8_t)(1u << CHANNEL_BULK);
+            resetEvt.u.channelReset.ch3Baseline = b3;
+            if (enc != NULL &&
+                enc(&resetEvt, &udpServer.clients[i], msg + 3,
+                    sizeof(msg) - 3, &bodyLen) == ENCODE_OK) {
+                msg[0] = (uint8_t)CTRL_CHANNEL_RESET;
+                packU16(msg + 1, (uint16_t)bodyLen);
+                if (!channelSend(&udpServer.channelMux[i], CHANNEL_CONTROL,
+                                 msg, (uint16_t)(3 + bodyLen))) {
+                    if (!udpServer.pendingSimRemove[i]) {
+                        WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                     "control channel overflow sending bulk reset "
+                                     "for slot %d, deferring disconnect", i);
+                        udpServer.pendingSimRemove[i] = true;
+                    }
+                }
+            }
+        }
+        /* Arm a fresh join download from the new blob (re-gates snapshots). */
         serverInitMapDownload(i);
     }
 
@@ -3748,44 +3826,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             }
             break;
         }
-        case PACKET_MAP_ACK: {
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx >= 0 && len >= PACKET_HEADER_SIZE + 2) {
-                uint16_t chunkIdx = unpackU16(buf + PACKET_HEADER_SIZE);
-                ClientMapDownload *dl = &udpServer.mapDownload[clientIdx];
-
-                udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
-
-                if (chunkIdx == 0xFFFF) {
-                    fprintf(stderr, "[UDP SERVER] Client %d ready for map\n", clientIdx);
-                    /* The ready round-trip is the proof the address can receive
-                     * a reply: open the amplification gate, then send. */
-                    dl->mapReady = TRUE;
-                    if (!dl->downloadComplete) {
-                        serverSendMapChunks(clientIdx);
-                    }
-                } else if (chunkIdx < dl->totalChunks && !dl->downloadComplete) {
-                    if (!dl->chunkAcked[chunkIdx]) {
-                        dl->chunkAcked[chunkIdx] = TRUE;
-                        dl->chunksAcked++;
-                        fprintf(stderr, "[UDP SERVER] Client %d acked chunk %u/%u\n",
-                                clientIdx, dl->chunksAcked, dl->totalChunks);
-                    }
-                    if (dl->chunksAcked >= dl->totalChunks) {
-                        dl->downloadComplete = TRUE;
-                        fprintf(stderr, "[UDP SERVER] Client %d map download complete\n", clientIdx);
-                        /* A completed resync lifts the send gate: the held map
-                         * events (seq >= cut) flow on the next snapshot and
-                         * apply on top of the freshly installed blob. */
-                        if (dl->resyncInProgress) {
-                            dl->resyncInProgress = FALSE;
-                            dl->resyncGen = 0;
-                        }
-                    }
-                }
-            }
-            break;
-        }
         case PACKET_MAP_RESYNC_REQUEST: {
             /* Client detected its terrain diverged (a dropped EVENT_MAP_CHANGE)
              * and asks for a fresh copy of the live map. Body: [resyncGen u32].
@@ -3808,20 +3848,26 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
 
                 if (dl->resyncInProgress) {
-                    /* Idempotent: a resync is already in flight for this slot.
-                     * Do NOT re-compress or re-cut — re-cutting would advance
-                     * ackedSeq past changes enqueued since the first cut and
-                     * drop them (the exact desync this recovers from). Just
-                     * re-poke the chunk send in case the first burst was lost. */
-                    serverSendMapChunks(clientIdx);
+                    /* Idempotent: a resync is already armed/in-flight for this
+                     * slot. Do NOT re-compress or re-cut — re-cutting would
+                     * advance ackedSeq past changes enqueued since the first cut
+                     * and drop them (the exact desync this recovers from). The
+                     * bulk channel retransmits its own unacked segments, so
+                     * there is nothing to re-poke. */
                 } else {
-                    /* Idle slot: refresh the live blob, re-init this slot's
-                     * download from it, then cut the map-event queue so the
-                     * blob and the queue can't both carry the same change. */
+                    /* Idle slot: refresh the live blob into this slot's copy,
+                     * cut the map-event queue so the blob and the queue can't
+                     * both carry the same change, then arm a resync transfer.
+                     * It begins on CHANNEL_BULK once the channel is idle
+                     * (serverServiceMapTransfer) and rides the snapshot trailer. */
                     int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
                     if (mapLen > 0 && mapLen <= (int)MAP_DOWNLOAD_MAX_SIZE) {
                         udpServer.compressedMapSize = (uint32_t)mapLen;
-                        serverInitMapDownload(clientIdx);
+                        if (dl->compressedMap != NULL) free(dl->compressedMap);
+                        dl->compressedMap = (BYTE *)malloc(udpServer.compressedMapSize);
+                        memcpy(dl->compressedMap, udpServer.compressedMap,
+                               udpServer.compressedMapSize);
+                        dl->mapSize = udpServer.compressedMapSize;
                         /* The cut: the blob carries every change up to
                          * nextSeq-1, so empty the queue. Changes during the
                          * transfer land at seq >= nextSeq and are held by the
@@ -3836,11 +3882,13 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                          * stale change still in flight on the channel can't
                          * apply on top of the freshly downloaded blob. */
                         udpServer.mapGen[clientIdx] = reqGen;
-                        /* Established slot: the address is already validated, so
-                         * open the amplification gate directly — no second
-                         * MAP_ACK 0xFFFF ready round-trip needed. */
-                        dl->mapReady = TRUE;
-                        serverSendMapChunks(clientIdx);
+                        /* Arm the resync stream (downloadComplete stays true for
+                         * this established slot — only resyncInProgress gates the
+                         * held map events). */
+                        dl->xferKind = MAP_XFER_RESYNC;
+                        dl->xferBegun = false;
+                        dl->xferStartSeq = 0;
+                        dl->xferEndSeq = 0;
                         fprintf(stderr,
                                 "[UDP SERVER] Client %d map resync gen=%u (%d bytes)\n",
                                 clientIdx, reqGen, mapLen);
@@ -4731,10 +4779,35 @@ void transportUdpServerSend(ServerSim *sim) {
     /* Broadcast snapshots to connected clients that have finished map download */
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.clients[i].connected) continue;
+
+        /* Begin an armed map transfer when the bulk channel is idle and fire
+         * completion once the peer has acked it through (drives both the join
+         * download and a live resync). */
+        serverServiceMapTransfer(i);
+
         if (!udpServer.mapDownload[i].downloadComplete) {
-            /* Still downloading map — resend un-acked chunks every 25 ticks (0.5s) */
-            if (udpServer.tickCount - udpServer.mapDownload[i].lastSendTick >= 25) {
-                serverSendMapChunks(i);
+            /* Still downloading the map: stream it on CHANNEL_BULK. Snapshots
+             * are gated until complete, so this standalone carrier is the only
+             * server->client bulk path — including for a mid-game joiner while
+             * the server is Running (the snapshot trailer that carries the bulk
+             * stream in other states is itself gated behind downloadComplete, so
+             * without this a running joiner would deadlock). Emit several frames
+             * a tick so a large map isn't throttled to ~one frame/tick; the
+             * unacked window bounds the bytes actually in flight. */
+            int frames;
+            bulkSenderPump(&udpServer.bulkSend[i], &udpServer.channelMux[i]);
+            channelTick(&udpServer.channelMux[i], udpServer.tickCount,
+                        udpServer.clients[i].pingMs);
+            for (frames = 0; frames < MAP_DOWNLOAD_FRAMES_PER_TICK; frames++) {
+                uint8_t cbuf[UDP_MAX_PAYLOAD];
+                int frameLen = channelBuildFrame(
+                    &udpServer.channelMux[i], cbuf + PACKET_HEADER_SIZE,
+                    UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                if (frameLen <= 2) break;   /* nothing left to carry this tick */
+                packHeader(cbuf, PACKET_CHANNEL,
+                           udpServer.clients[i].outSequence++);
+                srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen,
+                          &udpServer.clients[i].addr);
             }
             continue;
         }
@@ -4823,25 +4896,29 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
 
         /* Service the parallel channel layer once per tick.  During running
          * the snapshot trailer (serverSendSnapshot) is the carrier, so this
-         * only ticks + carries when snapshots aren't flowing: tick the mux,
-         * build one frame, and send a standalone PACKET_CHANNEL when it is
-         * non-empty (an empty 2-byte frame is suppressed so a quiet lobby
-         * stays storm-free). */
+         * only ticks + carries when snapshots aren't flowing (lobby / countdown
+         * / gameover — transportUdpServerSend isn't called there): begin/complete
+         * an armed map transfer, tick the mux, and emit standalone PACKET_CHANNEL
+         * frames carrying the channel data. A quiet lobby builds one empty frame
+         * and suppresses it; a map download in lobby has a backlog, so emit up to
+         * MAP_DOWNLOAD_FRAMES_PER_TICK frames (each build is destructive, so the
+         * loop stops as soon as a frame comes back empty). */
         if (serverSimGetState(sim) != serverStateRunning) {
+            int frames;
+            serverServiceMapTransfer(i);
             bulkSenderPump(&udpServer.bulkSend[i], &udpServer.channelMux[i]);
             channelTick(&udpServer.channelMux[i], udpServer.tickCount,
                         udpServer.clients[i].pingMs);
-            {
+            for (frames = 0; frames < MAP_DOWNLOAD_FRAMES_PER_TICK; frames++) {
                 uint8_t cbuf[UDP_MAX_PAYLOAD];
                 int frameLen = channelBuildFrame(
                     &udpServer.channelMux[i], cbuf + PACKET_HEADER_SIZE,
                     UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
-                if (frameLen > 2) {
-                    packHeader(cbuf, PACKET_CHANNEL,
-                               udpServer.clients[i].outSequence++);
-                    srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen,
-                              &udpServer.clients[i].addr);
-                }
+                if (frameLen <= 2) break;   /* nothing (more) to carry this tick */
+                packHeader(cbuf, PACKET_CHANNEL,
+                           udpServer.clients[i].outSequence++);
+                srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen,
+                          &udpServer.clients[i].addr);
             }
         }
 

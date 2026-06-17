@@ -166,13 +166,13 @@ typedef struct {
      * nothing consumes it to alter timing or pacing yet. */
     ClientTiming timing;
 
-    /* Map download state */
+    /* Map download state. The compressed map arrives on CHANNEL_BULK behind a
+     * bulk-transfer stream header; the BulkReceiver (c->bulkRecv) reassembles it
+     * into mapDownloadBuf, which JOIN_ACCEPT sized from the accept's mapSize.
+     * mapDownloadReceived reaches mapDownloadTotal only on full reassembly. */
     BYTE    *mapDownloadBuf;     /* Buffer for reassembling compressed map */
-    uint32_t mapDownloadTotal;   /* Total expected bytes */
-    uint32_t mapDownloadReceived;/* Bytes received so far */
-    uint16_t mapChunksExpected;  /* Total chunks expected */
-    uint16_t mapChunksReceived;  /* Number of unique chunks received */
-    bool    *mapChunkReceived;   /* Bitfield: which chunks we've gotten */
+    uint32_t mapDownloadTotal;   /* Total expected bytes (from JOIN_ACCEPT) */
+    uint32_t mapDownloadReceived;/* Bytes reassembled (== total on completion) */
     /* True once the buffered map has been installed onto the ClientSim
      * (mp/pb/bs/ss populated). Distinct from mapDownloadComplete on the
      * ClientSim (bytes-received) — this tracks "applied". Reset to false
@@ -184,11 +184,10 @@ typedef struct {
     /* Map desync recovery (resync) — a parallel download that runs while the
      * client keeps playing (joinState stays CONNECTED) and hot-swaps the map
      * in on completion. Mirrors the join-download fields above. */
-    BYTE    *mapResyncBuf;             /* Parallel reassembly buffer (owned) */
-    bool    *mapResyncChunkReceived;   /* Bitfield: which chunks we've gotten */
-    uint32_t mapResyncTotal;           /* Total expected bytes (from chunk mapSize) */
-    uint16_t mapResyncChunksExpected;  /* Total chunks expected */
-    uint16_t mapResyncChunksReceived;  /* Unique chunks received */
+    BYTE    *mapResyncBuf;             /* Parallel reassembly buffer (owned),
+                                        * allocated by the bulk receiver's onBegin
+                                        * from the resync stream header's size */
+    uint32_t mapResyncTotal;           /* Total expected bytes (from the header) */
     uint32_t activeResyncGen;          /* gen of the in-flight resync (0 = none) */
     uint32_t resyncGenCounter;         /* Monotonic source for fresh nonzero gens */
     bool     resyncActive;             /* A resync request is outstanding/installing */
@@ -705,58 +704,23 @@ void udpClientHandleLobbyMapListRsp(ClientSim *cs,
     }
 }
 
-/* Bulk-receiver sink for the map preview transfer carried on CHANNEL_BULK.
- * onBegin matches the stream header against the in-flight request and points
- * the receiver at the client's preview accumulator; onComplete flips the
- * preview ready once the whole blob has landed. `ctx` is the transport ctx so
- * both hooks can reach the attached ClientSim. */
-static uint8_t *clientBulkPreviewOnBegin(void *ctx, const BulkStreamHeader *h) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
-    ClientSim *cs = c ? c->clientSim : NULL;
-    if (cs == NULL) return NULL;
-    if (h->kind != BULK_KIND_PREVIEW) return NULL;
-
-    /* A preview whose path doesn't match the in-flight request is dropped —
-     * the user navigated away before this arrived. */
-    if (strncmp(h->path, cs->lobbyMapPreviewReqPath,
-                sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
-        return NULL;
-    }
-    if (h->totalSize == 0 || h->totalSize > LOBBY_MAP_UPLOAD_MAX_BYTES) {
-        cs->lobbyMapPreviewError    = true;
-        cs->lobbyMapPreviewInFlight = false;
-        return NULL;
-    }
-    cs->lobbyMapPreviewTotal    = h->totalSize;
-    cs->lobbyMapPreviewReceived = 0;
-    cs->lobbyMapPreviewReady    = false;
-    cs->lobbyMapPreviewError    = false;
-    cs->lobbyMapPreviewInFlight = true;
-    memset(cs->lobbyMapPreviewPath, 0, sizeof(cs->lobbyMapPreviewPath));
-    SDL_strlcpy(cs->lobbyMapPreviewPath, h->path,
-                sizeof(cs->lobbyMapPreviewPath));
-    return cs->lobbyMapPreviewBytes;
-}
-
-static void clientBulkPreviewOnComplete(void *ctx, const BulkStreamHeader *h,
-                                        uint8_t *buf) {
-    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
-    ClientSim *cs = c ? c->clientSim : NULL;
-    (void)buf;
-    if (cs == NULL) return;
-    cs->lobbyMapPreviewReceived = h->totalSize;
-    cs->lobbyMapPreviewReady    = true;
-    cs->lobbyMapPreviewInFlight = false;
-}
+/* Unified bulk-receiver sink for CHANNEL_BULK. onBegin dispatches the parsed
+ * stream header by kind (preview / join download / live resync) to the matching
+ * receive buffer; onComplete finalises that kind. Defined after the resync
+ * helpers it relies on (udpClientFreeResyncBuf, the grace-window constant), so
+ * forward-declared here for clientDrainBulk. */
+static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h);
+static void     clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
+                                     uint8_t *buf);
 
 /* Drain every stream fragment waiting on CHANNEL_BULK through the bulk
- * receiver, dispatching completed transfers (map preview) into the client
- * preview state. */
+ * receiver, dispatching completed transfers (preview / download / resync) by
+ * kind into the matching client state. */
 static void clientDrainBulk(TransportUdpClientCtx *c) {
     if (c->clientSim == NULL) return;
     BulkRecvSink sink;
-    sink.onBegin    = clientBulkPreviewOnBegin;
-    sink.onComplete = clientBulkPreviewOnComplete;
+    sink.onBegin    = clientBulkOnBegin;
+    sink.onComplete = clientBulkOnComplete;
     sink.ctx        = c;
     uint8_t chanBuf[CHANNEL_MAX_SEG];
     uint16_t chanLen;
@@ -911,29 +875,49 @@ static const char *mpDiagCtrlName(int type) {
  * enough that a new-game event past the live window could fall outside it, the
  * recovery is a retransmit, not a drop — flag that visibility. This event has
  * no sim semantics and must never reach clientSimApplyControl. */
+static void udpClientFreeResyncBuf(TransportUdpClientCtx *c);  /* defined below */
 static void clientApplyChannelReset(TransportUdpClientCtx *c,
                                     const ControlEvent *evt) {
-    static const struct { uint8_t ch; const char *name; } kChans[2] = {
+    static const struct { uint8_t ch; const char *name; } kChans[3] = {
         { CHANNEL_GAME, "game" },
         { CHANNEL_MAP,  "map"  },
+        { CHANNEL_BULK, "bulk" },
     };
-    uint32_t baselines[2] = { evt->u.channelReset.ch0Baseline,
-                              evt->u.channelReset.ch1Baseline };
+    uint32_t baselines[3] = { evt->u.channelReset.ch0Baseline,
+                              evt->u.channelReset.ch1Baseline,
+                              evt->u.channelReset.ch3Baseline };
+    uint8_t mask = evt->u.channelReset.channelMask;
     int i;
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < 3; i++) {
         uint8_t ch = kChans[i].ch;
         uint32_t baseline = baselines[i];
-        uint32_t expected = c->channelMux.ch[ch].expectedSeq;
-        uint32_t window   = c->channelMux.ch[ch].window;
+        uint32_t expected, window;
+        if (!(mask & (1u << ch))) continue;   /* this reset doesn't re-base ch */
+        expected = c->channelMux.ch[ch].expectedSeq;
+        window   = c->channelMux.ch[ch].window;
         if (baseline > expected && window > 8 &&
             (baseline - expected) > (window - 8)) {
             WB_LOG_WARN(WB_LOG_CAT_NET,
-                "channel %s baseline reset gap %u nears window %u — a new-game "
-                "event past the live window recovers by retransmit, not drop",
+                "channel %s baseline reset gap %u nears window %u — an event "
+                "past the live window recovers by retransmit, not drop",
                 kChans[i].name, (unsigned)(baseline - expected),
                 (unsigned)window);
         }
         channelResetExpected(&c->channelMux, ch, baseline);
+        /* A bulk re-base abandons any in-flight transfer: drop the receiver's
+         * mid-body partial (so its dst can't dangle) and discard a half-built
+         * resync buffer. The new transfer's stream starts at the new baseline
+         * and re-allocates via onBegin. mapDownloadBuf is re-pointed by the next
+         * download's onBegin, so nothing to free there. */
+        if (ch == CHANNEL_BULK) {
+            bulkReceiverInit(&c->bulkRecv);
+            if (c->mapResyncBuf != NULL) {
+                udpClientFreeResyncBuf(c);
+                c->resyncActive = false;
+                c->firstResyncChunkSeen = false;
+                c->activeResyncGen = 0;
+            }
+        }
     }
 }
 
@@ -1067,19 +1051,16 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
                                               * sending / state lost) so the next
                                               * checksum mismatch re-arms */
 
-/* Free the parallel resync buffer and its chunk bitfield. */
+/* Free the parallel resync reassembly buffer. The bulk receiver holds a pointer
+ * to this buffer (its dst) only between onBegin and onComplete; callers that
+ * free it mid-transfer (the stall watchdog, a CHANNEL_BULK re-base) must first
+ * bulkReceiverInit so no dangling dst remains. */
 static void udpClientFreeResyncBuf(TransportUdpClientCtx *c) {
     if (c->mapResyncBuf != NULL) {
         free(c->mapResyncBuf);
         c->mapResyncBuf = NULL;
     }
-    if (c->mapResyncChunkReceived != NULL) {
-        free(c->mapResyncChunkReceived);
-        c->mapResyncChunkReceived = NULL;
-    }
     c->mapResyncTotal = 0;
-    c->mapResyncChunksExpected = 0;
-    c->mapResyncChunksReceived = 0;
 }
 
 /* Abandon any in-flight resync (e.g. a wholesale map change supersedes it).
@@ -1107,79 +1088,128 @@ static void udpClientSendMapResyncRequest(TransportUdpClientCtx *c, uint32_t gen
     udpClientSendTo(c, reqBuf, sizeof(reqBuf));
 }
 
-/* Handle a resync map chunk (resyncGen != 0). Reassembles into the parallel
- * buffer and hot-swaps the terrain in on the last chunk. */
-static void udpClientHandleResyncChunk(TransportUdpClientCtx *c, uint32_t gen,
-                                       uint32_t mapSize, uint16_t chunkIdx,
-                                       uint16_t chunkSize, const uint8_t *data) {
-    uint32_t offset;
+/* Bulk-receiver onBegin (CHANNEL_BULK): a full stream header parsed. Dispatch by
+ * kind to the matching receive buffer; return NULL to reject (the body is then
+ * consumed and discarded so the stream stays aligned). */
+static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+    ClientSim *cs = c ? c->clientSim : NULL;
+    if (cs == NULL) return NULL;
 
-    /* Only accept chunks for the request we currently have outstanding —
-     * a stale gen from a superseded resync is dropped. */
-    if (!c->resyncActive || gen != c->activeResyncGen) return;
-    if (mapSize == 0 || mapSize > MAP_DOWNLOAD_MAX_SIZE) return;
-
-    /* Allocate the buffer from the self-describing mapSize on the first chunk. */
-    if (c->mapResyncBuf == NULL) {
-        c->mapResyncTotal = mapSize;
-        c->mapResyncChunksExpected =
-            (uint16_t)((mapSize + MAP_DOWNLOAD_CHUNK_SIZE - 1) / MAP_DOWNLOAD_CHUNK_SIZE);
-        c->mapResyncChunksReceived = 0;
-        c->mapResyncBuf = (BYTE *)malloc(mapSize);
-        c->mapResyncChunkReceived =
-            (bool *)calloc(c->mapResyncChunksExpected, sizeof(bool));
-        if (c->mapResyncBuf == NULL || c->mapResyncChunkReceived == NULL) {
-            udpClientFreeResyncBuf(c);
-            return;
+    switch (h->kind) {
+    case BULK_KIND_PREVIEW:
+        /* A preview whose path doesn't match the in-flight request is dropped —
+         * the user navigated away before this arrived. */
+        if (strncmp(h->path, cs->lobbyMapPreviewReqPath,
+                    sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
+            return NULL;
         }
+        if (h->totalSize == 0 || h->totalSize > LOBBY_MAP_UPLOAD_MAX_BYTES) {
+            cs->lobbyMapPreviewError    = true;
+            cs->lobbyMapPreviewInFlight = false;
+            return NULL;
+        }
+        cs->lobbyMapPreviewTotal    = h->totalSize;
+        cs->lobbyMapPreviewReceived = 0;
+        cs->lobbyMapPreviewReady    = false;
+        cs->lobbyMapPreviewError    = false;
+        cs->lobbyMapPreviewInFlight = true;
+        memset(cs->lobbyMapPreviewPath, 0, sizeof(cs->lobbyMapPreviewPath));
+        SDL_strlcpy(cs->lobbyMapPreviewPath, h->path,
+                    sizeof(cs->lobbyMapPreviewPath));
+        return cs->lobbyMapPreviewBytes;
+
+    case BULK_KIND_DOWNLOAD:
+        /* Join download: reassemble into the buffer JOIN_ACCEPT sized from the
+         * accept's mapSize. The header's totalSize must match it. */
+        if (c->joinState != UDP_CLIENT_DOWNLOADING_MAP) return NULL;
+        if (c->mapDownloadBuf == NULL) return NULL;
+        if (h->totalSize != c->mapDownloadTotal) return NULL;
+        c->mapDownloadReceived = 0;
+        return c->mapDownloadBuf;
+
+    case BULK_KIND_RESYNC:
+        /* Live resync: accept only the request currently outstanding; a stale
+         * gen from a superseded resync is dropped (the gen gate). Allocate the
+         * parallel buffer from the header's self-describing size. */
+        if (!c->resyncActive || h->gen != c->activeResyncGen) return NULL;
+        if (h->totalSize == 0 || h->totalSize > MAP_DOWNLOAD_MAX_SIZE) return NULL;
+        udpClientFreeResyncBuf(c);          /* drop any prior partial */
+        c->mapResyncBuf = (BYTE *)malloc(h->totalSize);
+        if (c->mapResyncBuf == NULL) return NULL;
+        c->mapResyncTotal = h->totalSize;
+        /* The stream started: stop resending the request and mark progress for
+         * the stall watchdog. */
+        c->firstResyncChunkSeen = true;
+        c->lastResyncProgressTick = c->localTick;
+        return c->mapResyncBuf;
+
+    default:
+        return NULL;
     }
+}
 
-    if (chunkIdx >= c->mapResyncChunksExpected) return;
-    offset = (uint32_t)chunkIdx * MAP_DOWNLOAD_CHUNK_SIZE;
-    if (offset + chunkSize > c->mapResyncTotal) return;
+/* Bulk-receiver onComplete (CHANNEL_BULK): the whole blob for `buf` (the buffer
+ * onBegin returned) has landed. Finalise by kind — the same finishes the old
+ * per-chunk paths drove. */
+static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
+                                 uint8_t *buf) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+    ClientSim *cs = c ? c->clientSim : NULL;
+    (void)buf;
+    if (cs == NULL) return;
 
-    /* First chunk seen: the request got through, stop resending it (the
-     * server's own unacked-chunk loop carries the rest). */
-    c->firstResyncChunkSeen = true;
-    /* Forward progress — reset the stall watchdog. */
-    c->lastResyncProgressTick = c->localTick;
+    switch (h->kind) {
+    case BULK_KIND_PREVIEW:
+        cs->lobbyMapPreviewReceived = h->totalSize;
+        cs->lobbyMapPreviewReady    = true;
+        cs->lobbyMapPreviewInFlight = false;
+        break;
 
-    memcpy(c->mapResyncBuf + offset, data, chunkSize);
-    if (!c->mapResyncChunkReceived[chunkIdx]) {
-        c->mapResyncChunkReceived[chunkIdx] = true;
-        c->mapResyncChunksReceived++;
-    }
+    case BULK_KIND_DOWNLOAD:
+        /* Whole map reassembled. Install immediately (lobby or running), flip to
+         * CONNECTED, and publish CTRL_MAP_DOWNLOAD_COMPLETE — the finish the old
+         * final-chunk path drove. Order: length -> state -> install -> flag ->
+         * event (matching the retired handler). */
+        c->mapDownloadReceived = h->totalSize;
+        c->joinState = UDP_CLIENT_CONNECTED;
+        installCompressedMap(cs, c->mapDownloadBuf,
+                             (int)c->mapDownloadTotal, NULL);
+        c->mapInstalled = true;
+        {
+            ControlEvent evt = { .type = CTRL_MAP_DOWNLOAD_COMPLETE };
+            clientSimApplyControl(cs, &evt);
+        }
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "map download complete via bulk -> CONNECTED (playerNum=%u)",
+            (unsigned)c->playerNum);
+        break;
 
-    /* Ack this chunk via the normal MAP_ACK path the join download uses. */
-    {
-        uint8_t ackBuf[PACKET_HEADER_SIZE + 2];
-        packHeader(ackBuf, PACKET_MAP_ACK, c->outSequence++);
-        packU16(ackBuf + PACKET_HEADER_SIZE, chunkIdx);
-        udpClientSendTo(c, ackBuf, sizeof(ackBuf));
-    }
-
-    if (c->mapResyncChunksReceived >= c->mapResyncChunksExpected) {
+    case BULK_KIND_RESYNC:
         /* Atomic terrain swap — joinState never changed, so snapshots and
          * entities kept flowing. NULL name keeps the current map name. The
          * server-held map events (seq >= cut) flow on the next snapshots and
          * apply on top of the freshly installed blob. */
-        installCompressedMap(c->clientSim, c->mapResyncBuf,
-                             (int)c->mapResyncTotal, NULL);
+        installCompressedMap(cs, c->mapResyncBuf, (int)c->mapResyncTotal, NULL);
         c->mapResyncCount++;
         c->resyncActive = false;
         c->firstResyncChunkSeen = false;
         /* Advance the installed map generation to this resync's gen before
          * clearing the transient activeResyncGen. Map-channel events tagged
-         * older than this are now dropped on the drain — the blob just
-         * installed already carries every change up to the resync cut. */
+         * older than this drop on the drain — the blob just installed already
+         * carries every change up to the resync cut. */
         c->installedMapGen = c->activeResyncGen;
         c->activeResyncGen = 0;
-        /* Suppress new requests for a grace window: the next full-sync
-         * checksum confirms convergence and clears the backoff counter. */
+        /* Suppress new requests for a grace window: the next full-sync checksum
+         * confirms convergence and clears the backoff counter. */
         c->resyncSuppressUntilTick = c->localTick + MAP_RESYNC_GRACE_TICKS;
         udpClientFreeResyncBuf(c);
         WB_LOG_INFO(WB_LOG_CAT_NET,
             "map resync install complete (count=%u)", (unsigned)c->mapResyncCount);
+        break;
+
+    default:
+        break;
     }
 }
 
@@ -1281,123 +1311,23 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
              * stale resync can't install over the new map or wedge detection. */
             udpClientResetResync(c);
 
-            /* Calculate expected chunks */
-            c->mapChunksExpected = (uint16_t)((mapSize + MAP_DOWNLOAD_CHUNK_SIZE - 1) / MAP_DOWNLOAD_CHUNK_SIZE);
-            c->mapChunksReceived = 0;
-            if (c->mapChunkReceived != NULL) {
-                free(c->mapChunkReceived);
-            }
-            c->mapChunkReceived = (bool *)calloc(c->mapChunksExpected, sizeof(bool));
-            if (c->mapChunkReceived == NULL) {
-                free(c->mapDownloadBuf);
-                c->mapDownloadBuf = NULL;
-                c->joinState = UDP_CLIENT_ERROR;
-                break;
-            }
+            /* Re-base the bulk receiver for the fresh download stream: drop any
+             * mid-body partial so its dst can't dangle into a freed buffer and
+             * the next stream header (the new download) parses clean. On a
+             * wholesale map change the server also re-bases CHANNEL_BULK and
+             * carries the new baseline in a CTRL_CHANNEL_RESET; this is the
+             * app-side half of that re-base. */
+            bulkReceiverInit(&c->bulkRecv);
 
             c->joinState = UDP_CLIENT_DOWNLOADING_MAP;
 
-            /* Send ack to tell server we're ready for map chunks */
-            {
-                uint8_t ackBuf[PACKET_HEADER_SIZE + 2];
-                packHeader(ackBuf, PACKET_MAP_ACK, c->outSequence++);
-                packU16(ackBuf + PACKET_HEADER_SIZE, 0xFFFF); /* 0xFFFF = "ready for map" */
-                udpClientSendTo(c, ackBuf, sizeof(ackBuf));
-            }
+            /* No "ready for map" round-trip is sent: the map streams on
+             * CHANNEL_BULK and the per-tick standalone PACKET_CHANNEL (now sent
+             * during DOWNLOADING_MAP) acks it as it arrives. Address ownership
+             * was already proven by the join cookie, so the server begins
+             * streaming right after this accept. */
         }
         break;
-
-    case PACKET_MAP_DOWNLOAD: {
-        /* Map chunk format:
-         *   [header 8] [resyncGen 4] [mapSize 4] [chunkIdx 2] [chunkSize 2] [data...]
-         * resyncGen 0 = join download; nonzero = a map-resync transfer. */
-        uint32_t resyncGen;
-        uint32_t chunkMapSize;
-        uint16_t chunkIdx;
-        uint16_t chunkSize;
-        const uint8_t *chunkData;
-        uint32_t offset;
-
-        /* Fixed header is generated; the data pointer and chunk reassembly
-         * below stay hand-written. */
-        MapDownloadChunkHeader hdr;
-        if (unpackMapDownloadChunkHeader(buf + PACKET_HEADER_SIZE,
-                                         (size_t)(len - PACKET_HEADER_SIZE), &hdr) == 0) break;
-        resyncGen = hdr.resyncGen; chunkMapSize = hdr.mapSize;
-        chunkIdx = hdr.chunkIdx;   chunkSize = hdr.chunkSize;
-        chunkData    = buf + PACKET_HEADER_SIZE + 12;
-        if (len < PACKET_HEADER_SIZE + 12 + chunkSize) break;
-
-        if (resyncGen != 0) {
-            /* Map-resync chunk — reassemble in the parallel buffer; the join
-             * state is untouched so play continues uninterrupted. */
-            udpClientHandleResyncChunk(c, resyncGen, chunkMapSize,
-                                       chunkIdx, chunkSize, chunkData);
-            break;
-        }
-
-        /* Join download path (resyncGen 0). Keep using JOIN_ACCEPT's size —
-         * the chunk's mapSize is redundant here. */
-        if (c->joinState == UDP_CLIENT_DOWNLOADING_MAP &&
-            c->mapDownloadBuf != NULL) {
-
-            if (chunkIdx >= c->mapChunksExpected) break;
-
-            offset = (uint32_t)chunkIdx * MAP_DOWNLOAD_CHUNK_SIZE;
-            if (offset + chunkSize > c->mapDownloadTotal) break;
-
-            /* Copy chunk data */
-            memcpy(c->mapDownloadBuf + offset, chunkData, chunkSize);
-
-            /* Track which chunks we've received */
-            if (!c->mapChunkReceived[chunkIdx]) {
-                c->mapChunkReceived[chunkIdx] = TRUE;
-                c->mapChunksReceived++;
-                c->mapDownloadReceived += chunkSize;
-            }
-
-            /* Ack this chunk */
-            {
-                uint8_t ackBuf[PACKET_HEADER_SIZE + 2];
-                packHeader(ackBuf, PACKET_MAP_ACK, c->outSequence++);
-                packU16(ackBuf + PACKET_HEADER_SIZE, chunkIdx);
-                udpClientSendTo(c, ackBuf, sizeof(ackBuf));
-            }
-
-            /* Check if all chunks received */
-            if (c->mapChunksReceived >= c->mapChunksExpected) {
-                WB_LOG_INFO(WB_LOG_CAT_NET,
-                    "map download complete: chunks=%u/%u bytes=%u/%u "
-                    "-> CONNECTED (playerNum=%u)",
-                    (unsigned)c->mapChunksReceived,
-                    (unsigned)c->mapChunksExpected,
-                    (unsigned)c->mapDownloadReceived,
-                    (unsigned)c->mapDownloadTotal,
-                    (unsigned)c->playerNum);
-                c->joinState = UDP_CLIENT_CONNECTED;
-                /* Install the buffered map immediately, whether the server
-                 * is running or in the lobby. The lobby case used to defer
-                 * install to the LOBBY→RUNNING transition, but that left a
-                 * remote client showing the PREVIOUS round's map (its
-                 * captured bases/pills) behind the lobby, while the
-                 * in-process host — which installs inline on
-                 * CTRL_LOBBY_MAP_CHANGE — showed the fresh neutral map. That
-                 * transport split is the asymmetric-runtime bug class; both
-                 * paths now reinstall on a lobby map (re)download. The
-                 * LOBBY→RUNNING transition's queue/ack reset still runs; its
-                 * own install step is gated on !mapInstalled, so it is a
-                 * no-op now. Order: install → flag → event. */
-                installCompressedMap(c->clientSim, c->mapDownloadBuf,
-                                     (int)c->mapDownloadTotal, NULL);
-                c->mapInstalled = true;
-                {
-                    ControlEvent evt = { .type = CTRL_MAP_DOWNLOAD_COMPLETE };
-                    clientSimApplyControl(c->clientSim, &evt);
-                }
-            }
-        }
-        break;
-    }
 
     case PACKET_JOIN_REJECT: {
         /* Wire format (Phase 9d):
@@ -2604,8 +2534,14 @@ static bool udpClientTick(void *ctx) {
      * an input trailer this tick — send a standalone PACKET_CHANNEL when the
      * frame is non-empty (an empty 2-byte frame is suppressed so steady state
      * stays storm-free).  channelBuildFrame is destructive, so a frame already
-     * drained onto an input this tick leaves nothing to send here. */
-    if (c->joinState == UDP_CLIENT_CONNECTED) {
+     * drained onto an input this tick leaves nothing to send here.
+     *
+     * Also fire during DOWNLOADING_MAP: the join map now streams on CHANNEL_BULK
+     * and this standalone frame is the only carrier of the client's CHANNEL_BULK
+     * acks during the download. Without it the server's send window stalls one
+     * window in and a larger map wedges the join. */
+    if (c->joinState == UDP_CLIENT_CONNECTED ||
+        c->joinState == UDP_CLIENT_DOWNLOADING_MAP) {
         channelTick(&c->channelMux, c->localTick, c->pingMs);
         {
             uint8_t cbuf[UDP_MAX_PAYLOAD];
@@ -2643,22 +2579,25 @@ static bool udpClientTick(void *ctx) {
         c->lastResyncRequestTick = c->localTick;
     }
 
-    /* Map-resync stall watchdog.  Once the first chunk arrives the request
-     * retransmit above stops, so a transfer that then stalls — later chunks
-     * lost past the server's resend window, or the server dropped its download
-     * state on a game restart — would leave resyncActive stuck forever:
-     * clientSimNetReportMapChecksum early-returns while a resync is "active",
-     * so neither a fresh resync nor the disconnect cap ever fires and the
-     * client renders wrong terrain indefinitely.  If there's been no forward
-     * progress (request sent at start, or a chunk received) for a while,
-     * abandon the in-flight resync.  Keep resyncAttempts so the next checksum
-     * mismatch re-arms and eventually trips MAP_RESYNC_MAX_ATTEMPTS. */
+    /* Map-resync stall watchdog.  Once the stream starts the request retransmit
+     * above stops, so a transfer that then stalls — the server dropped its
+     * resync state on a game restart, or the link went quiet — would leave
+     * resyncActive stuck forever: clientSimNetReportMapChecksum early-returns
+     * while a resync is "active", so neither a fresh resync nor the disconnect
+     * cap ever fires and the client renders wrong terrain indefinitely.  If
+     * there's been no forward progress (request sent at start, or the stream
+     * header arrived) for a while, abandon the in-flight resync.  Keep
+     * resyncAttempts so the next checksum mismatch re-arms and eventually trips
+     * MAP_RESYNC_MAX_ATTEMPTS. Re-init the bulk receiver first: it may hold the
+     * resync buffer as its dst mid-body, and freeing that buffer without
+     * dropping the dst would dangle it. */
     if (c->joinState == UDP_CLIENT_CONNECTED && c->resyncActive &&
         (c->localTick - c->lastResyncProgressTick) >= MAP_RESYNC_STALL_TICKS) {
         WB_LOG_WARN(WB_LOG_CAT_NET,
             "map resync stalled (no progress for %u ticks) -> abandon (attempt %u)",
             (unsigned)(c->localTick - c->lastResyncProgressTick),
             (unsigned)c->resyncAttempts);
+        bulkReceiverInit(&c->bulkRecv);
         udpClientFreeResyncBuf(c);
         c->resyncActive = false;
         c->firstResyncChunkSeen = false;
@@ -3205,9 +3144,6 @@ void transportUdpClientDestroy(Transport *t) {
     if (c->mapDownloadBuf != NULL) {
         free(c->mapDownloadBuf);
     }
-    if (c->mapChunkReceived != NULL) {
-        free(c->mapChunkReceived);
-    }
     udpClientFreeResyncBuf(c);
     if (c->uploadBuf != NULL) {
         free(c->uploadBuf);
@@ -3514,10 +3450,19 @@ const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen) {
 
 uint8_t transportUdpClientGetMapDownloadPercent(Transport *t) {
     TransportUdpClientCtx *c;
+    uint32_t have;
     if (t == NULL || t->ctx == NULL) return 100;
     c = (TransportUdpClientCtx *)t->ctx;
     if (c->mapDownloadTotal == 0) return 100;
-    uint32_t pct = (c->mapDownloadReceived * 100u) / c->mapDownloadTotal;
+    /* mapDownloadReceived only reaches total on full reassembly, so read live
+     * progress from the bulk receiver's body counter while the download stream
+     * is in flight (the receiver's dst is mapDownloadBuf during a join download). */
+    have = c->mapDownloadReceived;
+    if (have < c->mapDownloadTotal &&
+        c->bulkRecv.dst == c->mapDownloadBuf && c->mapDownloadBuf != NULL) {
+        have = c->bulkRecv.bodyReceived;
+    }
+    uint32_t pct = (have * 100u) / c->mapDownloadTotal;
     return pct > 100 ? 100 : (uint8_t)pct;
 }
 
