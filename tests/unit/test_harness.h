@@ -477,6 +477,12 @@ int run_client_type_name_round_trips(void);
 int run_players_oob_index_safe(void);
 int run_control_oob_player_dropped(void);
 
+/* A control-queue overflow detected inside a publish must defer the disconnect
+ * (serverDisconnectClient + serverSimRemovePlayer both publish) rather than run
+ * it synchronously and re-enter serverSimPublishControl
+ * (test_control_overflow_disconnect.c). */
+int run_control_overflow_defers_disconnect(void);
+
 /* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
  * suspends the polled in-game readers only for blocking surfaces (text
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused

@@ -2603,6 +2603,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_packet_type_names.c
     tests/unit/test_client_type.c
     tests/unit/test_wire_player_bounds.c
+    tests/unit/test_control_overflow_disconnect.c
     tests/unit/test_input_gate.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of

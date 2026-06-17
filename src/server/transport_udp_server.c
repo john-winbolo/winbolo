@@ -287,11 +287,13 @@ static struct {
      * by the UDP server around the register call; consumed by the
      * carrier path (Phase 5).  Unused in Phase 3. */
     bool                    controlSyncInProgress[MAX_TANKS];
-    /* Slots that were force-disconnected from inside a control-event
-     * deliver callback (queue overflow) and still need their sim-side
-     * teardown (serverSimRemovePlayer). That call publishes events, so it
-     * can't run mid-publish; it is deferred to
-     * transportUdpServerDrainPendingRemovals at a safe point in the tick. */
+    /* Slots that overflowed their control-event queue inside a deliver
+     * callback (mid-publish) and need a deferred disconnect. The disconnect
+     * publishes (the "X has left." broadcast plus the PLAYER_LEFT fan-out from
+     * serverSimRemovePlayer), so it can't run mid-publish; the whole teardown
+     * is deferred to transportUdpServerDrainPendingRemovals at a safe point in
+     * the tick. The slot stays connected until then, so it can't be reused in
+     * the meantime. */
     bool                    pendingSimRemove[MAX_TANKS];
     /* Most recent tick at which controlEventQueues[i].ackedSeq advanced
      * (or the tick the slot connected, for a fresh slot).  Bounds how
@@ -1053,22 +1055,30 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
     q = &udpServer.controlEventQueues[idx];
     if (!controlEventQueueHasSpace(q)) {
         /* Don't silently drop — every control event carries state-sync
-         * semantics.  Log and disconnect.  The 500-tick unacked-control
-         * timeout (Phase 7) catches the offending client first in
-         * practice; this is the belt-and-braces. */
-        WB_LOG_ERROR(WB_LOG_CAT_NET,
-                     "control queue overflow for slot %d, disconnecting",
-                     idx);
-        mpDiagLog("[srv] OVERFLOW slot=%d type=%s ackedSeq=%u nextSeq=%u -> disconnecting",
-                  idx, mpDiagCtrlName((int)evt->type),
-                  (unsigned)q->ackedSeq, (unsigned)q->nextSeq);
-        serverDisconnectClient(serverSimGetActive(), idx, false);
-        /* serverDisconnectClient handles the transport teardown and stops
-         * the recursion (connected=false), but the sim-side removal
-         * (serverSimRemovePlayer) publishes events and so can't run inside
-         * this deliver callback. Defer it; otherwise the slot keeps
-         * playerConnected/inUse set and leaks as a phantom. */
-        udpServer.pendingSimRemove[idx] = true;
+         * semantics.  Disconnect the lagging client.  The 500-tick
+         * unacked-control timeout catches it first in practice; this is the
+         * belt-and-braces.
+         *
+         * We're in a control-event deliver callback, i.e. mid-publish. The
+         * disconnect both broadcasts "X has left." and fans out PLAYER_LEFT,
+         * so neither serverDisconnectClient nor serverSimRemovePlayer can run
+         * here without re-entering serverSimPublishControl (whose reentrancy
+         * guard would fire, and under NDEBUG would corrupt the in-flight
+         * fan-out). Defer the whole disconnect to
+         * transportUdpServerDrainPendingRemovals, which runs at a safe point in
+         * the tick outside any publish. The slot stays connected until then —
+         * so it can't be reused meanwhile, and further events to it simply
+         * re-hit this full queue and return. Flag-guard the log so that re-hit
+         * doesn't spam. */
+        if (!udpServer.pendingSimRemove[idx]) {
+            WB_LOG_ERROR(WB_LOG_CAT_NET,
+                         "control queue overflow for slot %d, deferring disconnect",
+                         idx);
+            mpDiagLog("[srv] OVERFLOW slot=%d type=%s ackedSeq=%u nextSeq=%u -> deferring disconnect",
+                      idx, mpDiagCtrlName((int)evt->type),
+                      (unsigned)q->ackedSeq, (unsigned)q->nextSeq);
+            udpServer.pendingSimRemove[idx] = true;
+        }
         return;
     }
     /* If the queue was empty (ackedSeq == nextSeq) we have to restart the
@@ -2494,6 +2504,11 @@ static bool serverClientsAllLocked(void) {
 static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     char msg[128];
     if (!udpServer.clients[idx].connected) return;
+    /* An actual disconnect supersedes any deferred overflow-disconnect for
+     * this slot (see the queue-overflow branch in udpClientDeliverControl):
+     * clear the flag so the drain can't later tear down a fresh occupant that
+     * reused the slot after this teardown frees it. */
+    udpServer.pendingSimRemove[idx] = false;
 
     {
         UdpServerClient *c = &udpServer.clients[idx];
@@ -2605,10 +2620,14 @@ void transportUdpServerDrainPendingRemovals(ServerSim *sim) {
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.pendingSimRemove[i]) continue;
         udpServer.pendingSimRemove[i] = false;
-        /* Skip if the slot was reused by a fresh join since the overflow —
-         * serverDisconnectClient cleared connected; a reconnect sets it
-         * again, and we must not tear the new player down. */
-        if (udpServer.clients[i].connected) continue;
+        /* The slot was flagged on a control-queue overflow detected inside a
+         * publish (udpClientDeliverControl); the whole disconnect was deferred
+         * to here so its leave broadcast + PLAYER_LEFT fan-out run outside any
+         * publish. If the slot is no longer connected, another path already
+         * disconnected it (and cleared this flag before any reuse), so there is
+         * nothing to tear down. */
+        if (!udpServer.clients[i].connected) continue;
+        serverDisconnectClient(sim, i, false);
         serverSimRemovePlayer(sim, (BYTE)i);
     }
 }
@@ -4990,12 +5009,100 @@ void transportUdpServerPrintStatus(bool toFile) {
  * paths than a per-input reset would.
  * ================================================================ */
 
+/* The fixed peer the dispatcher seam attributes every fuzz datagram to. The
+ * warm-up JOIN below and transportUdpServerFuzzProcessPacket share this exact
+ * (addr,port) so serverFindClient resolves a fuzz datagram to the pre-connected
+ * slot — change one without the other and the post-JOIN handlers go dark. */
+static void fuzzServerPeerAddr(struct sockaddr_in *from) {
+    memset(from, 0, sizeof(*from));
+    from->sin_family = AF_INET;
+    from->sin_addr.s_addr = htonl(0x7f000001u); /* 127.0.0.1 */
+    from->sin_port = htons((unsigned short)40000);
+}
+
+/* Drive one real JOIN to completion so the dispatcher starts with a connected
+ * client. Without it, serverFindClient() returns -1 for the fuzz peer and every
+ * post-JOIN handler (COMMAND_TICK, INPUT, CONTROL_ACK, the reliable event
+ * loops, map reassembly) bails at its `clientIdx < 0` guard — i.e. the hand-
+ * written count-loops this target exists to reach stay unfuzzed.
+ *
+ * The join is cookie-gated: normally the joiner echoes a cookie from a prior
+ * PACKET_JOIN_CHALLENGE, but that challenge reply is a no-op over the seam's
+ * INVALID_SOCKET, so a two-pass handshake can't observe it. Instead we mint the
+ * cookie directly (same secret/window the acceptor checks) and submit a single
+ * well-formed JOIN_REQUEST through the very dispatch path the fuzzer drives.
+ *
+ * The body layout mirrors serverHandleJoinRequest's reader exactly. One subtle
+ * ordering contract: the optional 2-byte fallbackCountry is read *before* the
+ * trailing cookie, so it must be present here — omit it and the handler eats
+ * the cookie's first two bytes as a country code and the address proof fails. */
+static bool fuzzServerWarmJoin(ServerSim *sim) {
+    uint8_t pkt[PACKET_HEADER_SIZE + PACKET_MAX_PLAYER_NAME + MAP_STR_SIZE + 3 +
+                WBN_JOIN_KEY_WIRE_LEN + 1 /*flags*/ + 2 /*type,hints*/ +
+                2 /*country*/ + JOIN_COOKIE_LEN];
+    struct sockaddr_in from;
+    size_t pos;
+
+    fuzzServerPeerAddr(&from);
+    memset(pkt, 0, sizeof(pkt));
+    packHeader(pkt, PACKET_JOIN_REQUEST, 0);
+    pos = PACKET_HEADER_SIZE;
+
+    /* Player name (NUL-padded, validator-clean ASCII). */
+    memcpy(pkt + pos, "FuzzPeer", 8);
+    pos += PACKET_MAX_PLAYER_NAME;
+
+    /* Password: empty — the fuzz ServerSim is created without one. */
+    pos += MAP_STR_SIZE;
+
+    /* Protocol version triple: the CMake-defined values this server gates on,
+     * so it always matches and can't take the version-reject branch. */
+    pkt[pos++] = (uint8_t)BOLO_VERSION_MAJOR;
+    pkt[pos++] = (uint8_t)BOLO_VERSION_MINOR;
+    pkt[pos++] = (uint8_t)BOLO_VERSION_REVISION;
+
+    /* WBN join key empty → joins as a non-WBN player (skips token verify). */
+    pos += WBN_JOIN_KEY_WIRE_LEN;
+
+    pos += 1; /* flags: 0 (no rejoin, won't-authenticate) */
+    pos += 2; /* clientType, clientHints: 0 (unknown client) */
+
+    /* fallbackCountry — present so the cookie that follows stays aligned. */
+    pkt[pos++] = 'X';
+    pkt[pos++] = 'X';
+
+    /* Address-proof cookie for the current window. Fails closed if the CSPRNG
+     * secret is unavailable; we then skip the warm-up and the target degrades
+     * to its pre-warm (JOIN-gated) behaviour rather than connecting. */
+    if (!serverCookieCompute(&from, serverCookieCurrentWindow(), pkt + pos)) {
+        return false;
+    }
+    pos += JOIN_COOKIE_LEN;
+
+    /* serverProcessPacket's sim-mutating handlers assert the server mutex is
+     * held; take it here exactly as serverInstanceTick does in production. */
+    threadsWaitForMutex();
+    serverProcessPacket(sim, pkt, (int)pos, &from);
+    threadsReleaseMutex();
+
+    /* Caller decides how to treat a join that didn't connect: init aborts (a
+     * dead gate from the first input is a build-level regression), the per-
+     * input re-arm shrugs and lets the input bounce off the gate. */
+    return serverFindClient(&from) >= 0;
+}
+
 /* Minimal server context: mirrors the non-socket, non-thread portion of
  * transportUdpServerCreate. sock stays INVALID_SOCKET so srvSendTo's
- * underlying udpSendTo is a no-op and no datagrams leave the process. */
+ * underlying udpSendTo is a no-op and no datagrams leave the process. After
+ * the context is up we drive one JOIN so the dispatcher begins with a
+ * connected client (see fuzzServerWarmJoin). */
 void transportUdpServerFuzzInit(ServerSim *sim) {
     int i;
-    (void)sim;
+    /* The seam drives serverProcessPacket directly (no recv thread), but its
+     * sim-mutating handlers assert the server mutex is held. Create the mutex
+     * here so the seam can take it around each serverProcessPacket call, the
+     * way serverInstanceTick holds it in production. Idempotent. */
+    threadsCreate(true);
     memset(&udpServer, 0, sizeof(udpServer));
     memset(punchQueue, 0, sizeof(punchQueue));
     udpServer.sock = INVALID_SOCKET;
@@ -5014,6 +5121,18 @@ void transportUdpServerFuzzInit(ServerSim *sim) {
     }
     netImpairInit(&srvImpairIn);
     netImpairInit(&srvImpairOut);
+
+    /* Open the JOIN gate: leave one client connected at the fuzz peer address
+     * so the post-JOIN dispatcher paths are reachable from the first input. A
+     * join that doesn't connect here means the target is neutered before a
+     * single input runs — a build-level regression, so fail loudly. The
+     * -runs=0 corpus-replay ctest exercises this path on every build, turning
+     * a silent dead gate into a red test. */
+    if (!fuzzServerWarmJoin(sim)) {
+        fprintf(stderr, "fuzzServerWarmJoin: peer not connected after JOIN — "
+                        "server_dispatch would fuzz the dead JOIN gate\n");
+        abort();
+    }
 }
 
 /* One datagram, as if received on the game socket from a LAN peer. The buffer
@@ -5025,14 +5144,33 @@ void transportUdpServerFuzzProcessPacket(ServerSim *sim,
     uint8_t *buf;
     struct sockaddr_in from;
     if (size == 0 || size > 65535) return;
+    fuzzServerPeerAddr(&from); /* same peer the warm-up JOIN registered */
+
+    /* Keep the post-JOIN surface live across inputs. State persists by design,
+     * so an earlier input that disconnected the peer (a QUIT, an idle-timeout
+     * path, a handler that drops the client) would otherwise leave every later
+     * input bouncing off the JOIN gate. Re-arm if needed — the input that did
+     * the disconnect already exercised that path; this just restores the
+     * connected-client context the next input wants to fuzz. */
+    if (serverFindClient(&from) < 0) {
+        (void)fuzzServerWarmJoin(sim);
+    }
+
     buf = (uint8_t *)malloc(size);
     if (buf == NULL) return;
     memcpy(buf, data, size);
-    memset(&from, 0, sizeof(from));
-    from.sin_family = AF_INET;
-    from.sin_addr.s_addr = htonl(0x7f000001u); /* 127.0.0.1 */
-    from.sin_port = htons((unsigned short)40000);
+    /* Hold the server mutex across dispatch, mirroring serverInstanceTick — the
+     * sim-mutating handlers (COMMAND_TICK → serverSimApplyCommand, etc.) assert
+     * it. The re-arm above self-locks, so this is a fresh, non-nested region. */
+    threadsWaitForMutex();
     serverProcessPacket(sim, buf, (int)size, &from);
+    /* Mirror serverInstanceTick: drain deferred overflow-disconnects after
+     * recv, outside any publish, under the same mutex. Keeps the fuzz server's
+     * state consistent and exercises the deferred-disconnect path
+     * (serverDisconnectClient + leave broadcast + serverSimRemovePlayer) that
+     * the control-queue-overflow handler now defers here. */
+    transportUdpServerDrainPendingRemovals(sim);
+    threadsReleaseMutex();
     free(buf);
 }
 #endif /* WB_FUZZ */
