@@ -406,6 +406,12 @@ int run_loopback_lobby_running_loss(void);
  * listen-server host render-prepare no-op (own tank + recon unchanged). */
 int run_gate1_viewtick_loopback(void);
 int run_gate1_host_noop(void);
+
+/* Estimator-jitter -> render-interpolation wiring (test_interp_jitter_e2e.c):
+ * loss-induced jitter over the loopback transport grows the adaptive display
+ * delay end-to-end via clientSimRenderPrepare; a clean link leaves it at 0. */
+int run_interp_jitter_e2e(void);
+
 int run_join_version_gate(void);
 
 /* Per-source-IP JOIN rate limit (test_join_rate_limit.c): a burst of valid

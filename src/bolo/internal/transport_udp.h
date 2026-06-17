@@ -247,11 +247,12 @@ void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
                                    int *snapshotsRecv, int *snapshotsLost,
                                    int *snapshotsLostTotal);
 
-/* Measurement-only client timing estimates (client_timing.{c,h}):
- * clock offset in 10ms server-tick units, snapshot inter-arrival jitter in
- * milliseconds, RTT floor in milliseconds, and pipeline depth in server-tick
- * units.  Out pointers may be NULL.  Nothing consumes these to alter timing
- * or pacing yet — they back the Net Info readout. */
+/* Client timing estimates (client_timing.{c,h}): clock offset in 10ms
+ * server-tick units, snapshot inter-arrival jitter in milliseconds, RTT floor
+ * in milliseconds, and pipeline depth in server-tick units.  Out pointers may
+ * be NULL.  The jitter value drives the render-clock interpolation's adaptive
+ * display delay (clientSimRenderPrepare -> interpRenderControl); clock offset,
+ * RTT, and pipeline depth are read-only (Net Info readout). */
 void transportUdpClientGetTimingStats(Transport *t, int *clockOffsetTicks,
                                       int *jitterMs, int *rttMs,
                                       int *pipelineDepthTicks);

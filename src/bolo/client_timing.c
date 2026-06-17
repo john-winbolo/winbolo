@@ -35,6 +35,18 @@
 #define CLIENT_TIMING_SNAPSHOT_WINDOW 48
 #define CLIENT_TIMING_RTT_WINDOW 8
 
+/* Clamp a 64-bit tick difference into int32 range.  serverTick /
+ * lastProcessedInput come straight off the wire (unpackU32), so a hostile or
+ * buggy server can send values near 0x80000000; doing the difference in
+ * int32 would risk signed-overflow UB (and negating INT32_MIN is UB too).
+ * The legitimate differences are tiny, so the clamp only ever bites
+ * pathological input — it just keeps the stored sample well-defined. */
+static int32_t ctClampI32(int64_t v) {
+    if (v > INT32_MAX) return INT32_MAX;
+    if (v < INT32_MIN) return INT32_MIN;
+    return (int32_t)v;
+}
+
 static void ctWindowInit(ClientTimingWindow *w, uint8_t capacity) {
     memset(w, 0, sizeof(*w));
     if (capacity > CLIENT_TIMING_WINDOW_MAX) {
@@ -106,7 +118,8 @@ void clientTimingSeedFromJoin(ClientTiming *t, uint32_t serverTickAtAccept,
      * 10ms local ticks, so half is joinRttTicks / 2) advances the estimate
      * forward to account for the snapshot being half a round-trip stale.
      * joinRttTicks==0 leaves the raw seed. */
-    t->offsetTicks = -(int32_t)serverTickAtAccept + (int32_t)(joinRttTicks / 2);
+    t->offsetTicks = ctClampI32(-(int64_t)serverTickAtAccept +
+                                (int64_t)(joinRttTicks / 2));
 }
 
 void clientTimingOnSnapshot(ClientTiming *t, uint32_t serverTick,
@@ -120,7 +133,7 @@ void clientTimingOnSnapshot(ClientTiming *t, uint32_t serverTick,
      * localArrivalTick - serverTick directly.  Min-over-window selects the
      * least-delayed snapshot (the smallest local arrival relative to the
      * server). */
-    offset = (int32_t)localArrivalTick - (int32_t)serverTick;
+    offset = ctClampI32((int64_t)localArrivalTick - (int64_t)serverTick);
     ctWindowPush(&t->offsetWin, offset);
     t->offsetTicks = ctWindowMin(&t->offsetWin);
 
@@ -129,14 +142,15 @@ void clientTimingOnSnapshot(ClientTiming *t, uint32_t serverTick,
      * clock, so this is epoch-free.  Negative is not expected (lastProcessedInput
      * trails lastSentInputTick) but is left signed so a transient reorder doesn't
      * wrap. */
-    depth = (int32_t)lastSentInputTick - (int32_t)lastProcessedInput;
+    depth = ctClampI32((int64_t)lastSentInputTick - (int64_t)lastProcessedInput);
     ctWindowPush(&t->depthWin, depth);
     t->depthTicks = ctWindowMin(&t->depthWin);
 
     /* Inter-arrival gap in local ticks.  The first snapshot only establishes
      * the baseline; from the second on, fold the gap. */
     if (t->haveArrival && localArrivalTick >= t->prevArrivalTick) {
-        int32_t gap = (int32_t)(localArrivalTick - t->prevArrivalTick);
+        int32_t gap = ctClampI32((int64_t)localArrivalTick -
+                                 (int64_t)t->prevArrivalTick);
         ctWindowPush(&t->gapWin, gap);
         t->gapFloorTicks = ctWindowMin(&t->gapWin);
         t->jitterTicks = ctWindowMax(&t->gapWin) - t->gapFloorTicks;

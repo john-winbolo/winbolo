@@ -2583,6 +2583,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_join_loss.c
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_gate1_integration.c
+    tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
     tests/unit/test_join_rate_limit.c
     tests/unit/test_cookie_handshake.c
@@ -2899,6 +2900,7 @@ set(_unit_test_names
     loopback_lobby_running_loss
     gate1_viewtick_loopback
     gate1_host_noop
+    interp_jitter_e2e
     join_version_gate
     join_rate_limit
     cookie_handshake
