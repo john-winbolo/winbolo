@@ -1735,3 +1735,9 @@ STR_COUNTRY_YT=マヨット
 STR_COUNTRY_ZA=南アフリカ
 STR_COUNTRY_ZM=ザンビア
 STR_COUNTRY_ZW=ジンバブエ
+
+# About modal — credits & links
+STR_DLGABOUT_ADDITIONAL_PROG=Andrew Roth による追加の 2.0 プログラミング
+STR_DLGABOUT_THIRD_PARTY=サードパーティに関する通知
+STR_DLGABOUT_AUTHORS=制作者
+STR_DLGABOUT_FORUMS=フォーラム

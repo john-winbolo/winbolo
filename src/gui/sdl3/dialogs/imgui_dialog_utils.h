@@ -205,6 +205,57 @@ static inline SDL_Texture *imguiLoadSvgIconWhite(SDL_Renderer *rend, const char 
     return tex;
 }
 
+/* Like imguiLoadSvgIconWhite, but fits to the icon's *artwork* bounds rather
+ * than the SVG's declared page size. Many icon SVGs (e.g. the Discord mark)
+ * don't fill their square viewBox — the art is short and wide and floats in
+ * the canvas — so a plain page-fit renders them small, off-centre and visually
+ * lighter than icons whose art fills the box (e.g. Reddit). This centres the
+ * union of the drawn shapes and scales it to fill `size` (less a small margin
+ * so edge strokes aren't clipped), giving every icon a consistent weight. */
+static inline SDL_Texture *imguiLoadSvgIconWhiteFit(SDL_Renderer *rend, const char *path, int size) {
+    NSVGimage *image = nsvgParseFromFile(path, "px", 96.0f);
+    if (!image) return nullptr;
+
+    float minx = 1e30f, miny = 1e30f, maxx = -1e30f, maxy = -1e30f;
+    bool any = false;
+    for (NSVGshape *sh = image->shapes; sh; sh = sh->next) {
+        if (!(sh->flags & NSVG_FLAGS_VISIBLE)) continue;
+        if (sh->bounds[0] < minx) minx = sh->bounds[0];
+        if (sh->bounds[1] < miny) miny = sh->bounds[1];
+        if (sh->bounds[2] > maxx) maxx = sh->bounds[2];
+        if (sh->bounds[3] > maxy) maxy = sh->bounds[3];
+        any = true;
+    }
+    float cw = maxx - minx, ch = maxy - miny;
+    if (!any || cw < 1e-3f || ch < 1e-3f) { nsvgDelete(image); return nullptr; }
+
+    const float margin = 0.08f;                       /* keep strokes off the edge */
+    float avail = (float)size * (1.0f - 2.0f * margin);
+    float scale = avail / (cw > ch ? cw : ch);
+    float offX  = ((float)size - cw * scale) * 0.5f - minx * scale;
+    float offY  = ((float)size - ch * scale) * 0.5f - miny * scale;
+
+    int w = size, h = size;
+    unsigned char *pixels = (unsigned char *)SDL_malloc((size_t)(w * h * 4));
+    if (!pixels) { nsvgDelete(image); return nullptr; }
+    memset(pixels, 0, (size_t)(w * h * 4));
+    NSVGrasterizer *rast = nsvgCreateRasterizer();
+    nsvgRasterize(rast, image, offX, offY, scale, pixels, w, h, w * 4);
+    nsvgDeleteRasterizer(rast);
+    nsvgDelete(image);
+    for (int i = 0; i < w * h; ++i) {
+        pixels[i * 4 + 0] = 255;
+        pixels[i * 4 + 1] = 255;
+        pixels[i * 4 + 2] = 255;
+    }
+    SDL_Surface *surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, pixels, w * 4);
+    if (!surface) { SDL_free(pixels); return nullptr; }
+    SDL_Texture *tex = SDL_CreateTextureFromSurface(rend, surface);
+    SDL_DestroySurface(surface);
+    SDL_free(pixels);
+    return tex;
+}
+
 /* Draw a filled shield that appears to spin about its vertical axis, straight
  * into an ImDrawList — no texture, so it stays crisp at any size and takes
  * whatever colour you pass. Call once per frame with an advancing `phase`

@@ -88,6 +88,49 @@ static SDL_Texture *loadPng(SDL_Renderer *renderer, const char *filename) {
     return tex;
 }
 
+/* Reddit / Discord glyphs for the bottom-right social links. Rasterised white
+ * (like the About-box icons) so they read over any terrain, and cached for the
+ * program lifetime — the renderer outlives every show of this screen. */
+static SDL_Texture *s_welcomeReddit  = nullptr;
+static SDL_Texture *s_welcomeDiscord = nullptr;
+/* Fraction of each icon texture below the artwork's lowest pixel. The SVGs are
+ * square but their glyphs don't fill the canvas (and Reddit/Discord differ), so
+ * the texture's bottom edge isn't the glyph's bottom edge. We use this to
+ * bottom-align the *visible* mark with the version text rather than the square. */
+static float s_welcomeRedditInsetB  = 0.0f;
+static float s_welcomeDiscordInsetB = 0.0f;
+
+/* Bottom transparent inset of an SVG, as a fraction of its height: the gap from
+ * the lowest drawn point to the canvas bottom. Matches imguiLoadSvgIconWhite's
+ * fit (aspect-preserving, centred), so it maps straight onto the texture. */
+static float welcomeSvgBottomInset(const char *path) {
+    NSVGimage *img = nsvgParseFromFile(path, "px", 96.0f);
+    if (!img) return 0.0f;
+    if (img->width < 1.0f || img->height < 1.0f) { nsvgDelete(img); return 0.0f; }
+    float maxY = 0.0f;
+    bool any = false;
+    for (NSVGshape *sh = img->shapes; sh; sh = sh->next) {
+        if (!(sh->flags & NSVG_FLAGS_VISIBLE)) continue;
+        if (!any || sh->bounds[3] > maxY) maxY = sh->bounds[3];
+        any = true;
+    }
+    /* Square fit (these SVGs) => scale = size/height, offY = 0, so the texture
+     * inset fraction equals the document inset fraction. */
+    float inset = any ? (img->height - maxY) / img->height : 0.0f;
+    nsvgDelete(img);
+    return inset < 0.0f ? 0.0f : inset;
+}
+
+static void ensureWelcomeSocialIcons(SDL_Renderer *r) {
+    static bool tried = false;
+    if (tried || !r) return;
+    tried = true;
+    s_welcomeReddit       = imguiLoadSvgIconWhite(r, "data/ui/reddit.svg", 48);
+    s_welcomeDiscord      = imguiLoadSvgIconWhite(r, "data/ui/discord.svg", 48);
+    s_welcomeRedditInsetB  = welcomeSvgBottomInset("data/ui/reddit.svg");
+    s_welcomeDiscordInsetB = welcomeSvgBottomInset("data/ui/discord.svg");
+}
+
 extern "C" int imguiWelcomeShow(void) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -439,6 +482,62 @@ extern "C" int imguiWelcomeShow(void) {
 
             ImGui::PopStyleColor(3);
             ImGui::PopStyleVar(3);
+        }
+
+        /* Reddit / Discord links — bottom-right, left of the version label and
+         * centred on its baseline. Drawn icon-only in the version-label style
+         * (invisible button + a tinted drawlist image with a 1px shadow) rather
+         * than framed ImageButtons, so they sit cleanly over the terrain. */
+        {
+            ensureWelcomeSocialIcons(renderer);
+            const float icon   = 27.5f * s;
+            const float gap    = 10.0f * s;   /* between the two icons          */
+            const float pad    = 12.0f * s;   /* between the icons and the text */
+            const float margin = 12.0f * s;
+
+            /* Mirror the version label's own placement so the icons tuck just
+             * to its left and share its vertical centre. */
+            char shortVer[32];
+            SDL_snprintf(shortVer, sizeof(shortVer), "v%s", WINBOLO_VERSION);
+            ImVec2 verSize = ImGui::CalcTextSize(shortVer);
+            float verX = (float)winW - verSize.x - margin;
+            float verY = (float)winH - verSize.y - margin;
+
+            float rowW  = icon * 2.0f + gap;
+            float rowX  = verX - pad - rowW;
+            float textBottom = verY + verSize.y;
+
+            struct { SDL_Texture *tex; const char *id; const char *url; float insetB; } links[2] = {
+                { s_welcomeReddit,  "##wreddit",  "https://www.reddit.com/r/winbolo", s_welcomeRedditInsetB },
+                { s_welcomeDiscord, "##wdiscord", "https://discord.gg/znGR3VMaqd",    s_welcomeDiscordInsetB },
+            };
+            ImDrawList *sdl = ImGui::GetWindowDrawList();
+            for (int i = 0; i < 2; ++i) {
+                /* Drop each icon by its own transparent bottom band so the
+                 * visible glyph — not the square — sits on the text baseline. */
+                float rowY = textBottom - icon * (1.0f - links[i].insetB);
+                ImGui::SetCursorPos(ImVec2(rowX + (float)i * (icon + gap), rowY));
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                bool pressed = ImGui::InvisibleButton(links[i].id, ImVec2(icon, icon),
+                                                      ImGuiButtonFlags_EnableNav);
+                bool hov = ImGui::IsItemHovered();
+                /* InvisibleButton already activates on release; a separate
+                 * IsItemClicked() (fires on press-down) would open the URL a
+                 * second time on the same click, spawning two browser tabs. */
+                if (pressed) imguiOpenUrl(links[i].url);
+                if (hov) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (links[i].tex) {
+                    ImU32 tint = hov ? IM_COL32(255, 255, 255, 255)
+                                     : IM_COL32(235, 235, 235, 210);
+                    sdl->AddImage((ImTextureID)links[i].tex,
+                                  ImVec2(p.x + 1.0f, p.y + 1.0f),
+                                  ImVec2(p.x + icon + 1.0f, p.y + icon + 1.0f),
+                                  ImVec2(0, 0), ImVec2(1, 1), IM_COL32(0, 0, 0, 150));
+                    sdl->AddImage((ImTextureID)links[i].tex, p,
+                                  ImVec2(p.x + icon, p.y + icon),
+                                  ImVec2(0, 0), ImVec2(1, 1), tint);
+                }
+            }
         }
 
         /* Version label — bottom-right of screen. Click to open About;

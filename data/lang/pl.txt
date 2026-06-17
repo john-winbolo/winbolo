@@ -1729,3 +1729,9 @@ STR_COUNTRY_YT=Majotta
 STR_COUNTRY_ZA=Republika Południowej Afryki
 STR_COUNTRY_ZM=Zambia
 STR_COUNTRY_ZW=Zimbabwe
+
+# About modal — credits & links
+STR_DLGABOUT_ADDITIONAL_PROG=Dodatkowe programowanie 2.0 autorstwa Andrew Roth
+STR_DLGABOUT_THIRD_PARTY=Informacje o komponentach zewnętrznych
+STR_DLGABOUT_AUTHORS=Autorzy
+STR_DLGABOUT_FORUMS=Fora dyskusyjne
