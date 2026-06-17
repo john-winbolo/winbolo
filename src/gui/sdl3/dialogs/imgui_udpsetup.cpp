@@ -47,6 +47,89 @@ extern "C" {
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
 
+/* Parses a pasted server address into host + optional decimal port string.
+ * Accepts:  host  |  host:port  |  ip  |  ip:port  |  scheme://host[:port][/...]
+ * (e.g. "winbolo://1.2.3.4:5000"). Leading scheme and any trailing /path or
+ * surrounding whitespace are stripped. A trailing ":port" is only split off
+ * when it is 1-5 digits in the 1..65535 range — otherwise the input is kept
+ * verbatim as the host. WinBolo is IPv4-only, so a lone ':' is unambiguous.
+ * Returns true and fills outHost (and outPort, empty if none) on success. */
+static bool parseServerAddressPaste(const char *in, char *outHost, size_t hostSz,
+                                    char *outPort, size_t portSz) {
+    if (!in || !outHost || hostSz == 0 || !outPort || portSz == 0) {
+        return false;
+    }
+    outPort[0] = '\0';
+
+    /* Skip leading whitespace. */
+    while (*in == ' ' || *in == '\t') in++;
+
+    /* Strip a "scheme://" prefix (winbolo://, http://, ...). */
+    const char *p = in;
+    const char *sep = strstr(p, "://");
+    if (sep) p = sep + 3;
+
+    /* Copy host[:port] up to a path slash / whitespace / end. */
+    char work[FILENAME_MAX];
+    size_t n = 0;
+    while (p[n] && p[n] != '/' && p[n] != ' ' && p[n] != '\t' &&
+           p[n] != '\r' && p[n] != '\n' && n + 1 < sizeof(work)) {
+        work[n] = p[n];
+        n++;
+    }
+    work[n] = '\0';
+    if (work[0] == '\0') return false;
+
+    /* Split a trailing ":port" only if it is a valid port number. */
+    char *colon = strrchr(work, ':');
+    if (colon && colon[1] != '\0') {
+        bool digits = true;
+        for (const char *q = colon + 1; *q; q++) {
+            if (*q < '0' || *q > '9') { digits = false; break; }
+        }
+        unsigned long val = digits ? strtoul(colon + 1, nullptr, 10) : 0;
+        if (digits && val >= 1 && val <= 65535) {
+            SDL_strlcpy(outPort, colon + 1, portSz);
+            *colon = '\0';
+        }
+    }
+    if (work[0] == '\0') return false;
+
+    SDL_strlcpy(outHost, work, hostSz);
+    return true;
+}
+
+/* CallbackEdit userdata: tracks the address field length so a paste (a jump of
+ * >= 2 chars in one edit) can be told apart from single keystrokes, and points
+ * at the target-port buffer so a pasted port can be routed into it. */
+struct AddressPasteCtx {
+    int prevLen;
+    char *portBuf;
+    size_t portBufSize;
+};
+
+static int udpAddressEditCallback(ImGuiInputTextCallbackData *data) {
+    AddressPasteCtx *ctx = (AddressPasteCtx *)data->UserData;
+    /* Only a multi-char insertion (paste / IME commit) is worth parsing; typing
+     * a ':' by hand grows the buffer by one and must not split the field. */
+    if (data->BufTextLen - ctx->prevLen >= 2) {
+        char host[FILENAME_MAX];
+        char port[16];
+        if (parseServerAddressPaste(data->Buf, host, sizeof(host), port,
+                                    sizeof(port))) {
+            if (strcmp(data->Buf, host) != 0) {
+                data->DeleteChars(0, data->BufTextLen);
+                data->InsertChars(0, host);
+            }
+            if (port[0] != '\0' && ctx->portBuf) {
+                SDL_strlcpy(ctx->portBuf, port, ctx->portBufSize);
+            }
+        }
+    }
+    ctx->prevLen = data->BufTextLen;
+    return 0;
+}
+
 /* Validate inputs and save to gamefront. Returns true if valid. */
 static bool saveOptions(char *playerName, char *address,
                         char *targetPortBuf, char *myPortBuf,
@@ -148,6 +231,12 @@ extern "C" int imguiUdpSetupShow(void) {
 
     bool rememberName = gameFrontGetRemeber();
 
+    /* Paste-splitting state for the address field (host[:port] / winbolo://). */
+    AddressPasteCtx addrCtx;
+    addrCtx.prevLen = (int)strlen(address);
+    addrCtx.portBuf = targetPortBuf;
+    addrCtx.portBufSize = sizeof(targetPortBuf);
+
     /* Error message popup state */
     const char *errorMsg = nullptr;
 
@@ -236,7 +325,9 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_MACHINENAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##address", address, FILENAME_MAX);
+        ImGui::InputText("##address", address, FILENAME_MAX,
+                         ImGuiInputTextFlags_CallbackEdit,
+                         udpAddressEditCallback, &addrCtx);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_THEREUDP));
         ImGui::SameLine(labelW);
@@ -261,7 +352,9 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_MACHINENAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##address", address, FILENAME_MAX);
+        ImGui::InputText("##address", address, FILENAME_MAX,
+                         ImGuiInputTextFlags_CallbackEdit,
+                         udpAddressEditCallback, &addrCtx);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_THEREUDP));
         ImGui::SameLine(labelW);
