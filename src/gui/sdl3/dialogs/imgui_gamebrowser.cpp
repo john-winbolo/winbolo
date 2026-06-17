@@ -648,10 +648,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 std::lock_guard<std::mutex> slock(serversMtx);
                 if (pr.index >= 0 && pr.index < (int)servers.size()) {
                     servers[pr.index].pingMs = pr.pingMs;
-                    servers[pr.index].freePills = pr.freePills;
-                    servers[pr.index].freeBases = pr.freeBases;
-                    if (pr.numPlayers > 0) {
-                        servers[pr.index].numPlayers = (BYTE)pr.numPlayers;
+                    /* Internet path: counts come from the WinBolo.net JSON and
+                     * must not be overwritten by the latency ping (a server that
+                     * doesn't answer the info-ping would zero them). LAN has no
+                     * such source, so the ping still fills the counts there. */
+                    if (!useTracker) {
+                        servers[pr.index].freePills = pr.freePills;
+                        servers[pr.index].freeBases = pr.freeBases;
+                        if (pr.numPlayers > 0) {
+                            servers[pr.index].numPlayers = (BYTE)pr.numPlayers;
+                        }
                     }
                 }
             }
