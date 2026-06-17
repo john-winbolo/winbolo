@@ -44,6 +44,8 @@ typedef struct {
   int  timeMinutes;                          /* "time_minutes" */
   int  freeBases;                            /* "free_bases" */
   int  freePills;                            /* "free_pills" */
+  int  numBases;                             /* "num_bases" — total bases */
+  int  numPills;                             /* "num_pills" — total pills */
   int  numPlayers;                           /* "num_players" — in-game count incl bots */
   int  numHumans;                            /* "num_humans" */
   int  numBots;                              /* "num_bots" */

@@ -100,6 +100,8 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     dst->timeMinutes = readIntField(src, "time_minutes");
     dst->freeBases   = readIntField(src, "free_bases");
     dst->freePills   = readIntField(src, "free_pills");
+    dst->numBases    = readIntField(src, "num_bases");
+    dst->numPills    = readIntField(src, "num_pills");
 
     dst->numPlayers = readIntField(src, "num_players");
     dst->numHumans  = readIntField(src, "num_humans");

@@ -566,6 +566,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.numPlayers = (BYTE)w.numPlayers;
                         e.freeBases = (WORD)w.freeBases;
                         e.freePills = (WORD)w.freePills;
+                        e.numBases = (BYTE)w.numBases;
+                        e.numPills = (BYTE)w.numPills;
                         /* Country comes straight from the JSON on this path. */
                         SDL_strlcpy(e.countryCode, w.country, sizeof(e.countryCode));
 
@@ -1054,13 +1056,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         ImGui::EndTooltip();
                     }
 
-                    /* Bases (free, from JSON) */
+                    /* Bases (free/total, from JSON) */
                     ImGui::TableNextColumn();
-                    ImGui::Text("%u", e.freeBases);
+                    ImGui::Text("%u/%u", e.freeBases, e.numBases);
 
-                    /* Pills (free, from JSON) */
+                    /* Pills (free/total, from JSON) */
                     ImGui::TableNextColumn();
-                    ImGui::Text("%u", e.freePills);
+                    ImGui::Text("%u/%u", e.freePills, e.numPills);
 
                     /* Type — folds in AI and mines markers */
                     ImGui::TableNextColumn();

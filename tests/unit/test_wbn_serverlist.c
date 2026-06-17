@@ -43,6 +43,8 @@ static int parse_full_entry(void) {
         "\"time_minutes\":30,"
         "\"free_bases\":4,"
         "\"free_pills\":8,"
+        "\"num_bases\":16,"
+        "\"num_pills\":12,"
         "\"num_players\":5,"
         "\"num_humans\":3,"
         "\"num_bots\":2,"
@@ -72,6 +74,7 @@ static int parse_full_entry(void) {
     UT_ASSERT_MSG(s->allowNewPlayers && !s->autoLock, "new-players/auto-lock");
     UT_ASSERT_MSG(s->timeLimit && s->timeMinutes == 30, "time limit/minutes");
     UT_ASSERT_MSG(s->freeBases == 4 && s->freePills == 8, "free bases/pills");
+    UT_ASSERT_MSG(s->numBases == 16 && s->numPills == 12, "total bases/pills");
     UT_ASSERT_MSG(s->numPlayers == 5 && s->numHumans == 3 && s->numBots == 2,
                   "player counts");
     UT_ASSERT_MSG(s->maxPlayers == 16, "maxPlayers=%d", s->maxPlayers);
