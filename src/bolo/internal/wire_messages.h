@@ -56,7 +56,5 @@
     F(U32, resyncGen) F(U32, mapSize) F(U16, chunkIdx) F(U16, chunkSize)
 #define MAP_UPLOAD_CHUNK_HEADER_FIELDS(F) \
     F(U32, offset) F(U16, dataLen)
-#define MAP_PREVIEW_CHUNK_HEADER_FIELDS(F) \
-    F(U8, seq) F(U32, offset) F(U16, len)
 
 #endif /* WINBOLO_WIRE_MESSAGES_H */

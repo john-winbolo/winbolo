@@ -172,6 +172,11 @@ int run_net_impair(void);
  * instances and an in-test frame shuttle. No sockets, no threads. */
 int run_channel_mux(void);
 
+/* Bulk-transfer framing (test_bulk_transfer.c): the off-socket stream-header
+ * round-trip, byte-identical blob reassembly under loss + reorder, header
+ * robustness, pipelining and the send-side serializer guard. */
+int run_bulk_transfer(void);
+
 /* CTRL_CHANNEL_RESET — the game-start baseline reset (test_channel_reset.c):
  * the body-codec round-trip and the per-client baseline values
  * transportUdpServerOnGameStart sends across two fabricated slots. */
@@ -417,6 +422,9 @@ int run_loopback_quiet_lobby_control_loss(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);
+/* Server-map preview over CHANNEL_BULK (test_loopback_preview.c): a real .map
+ * file streamed back under loss and reassembled byte-identical on the client. */
+int run_loopback_map_preview(void);
 
 /* Gate-#1 render-path integration (test_gate1_integration.c): the viewTick
  * ±1-snapshot invariant over the real loopback transport, and the

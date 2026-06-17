@@ -376,21 +376,12 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                               { pathLen 1, path N }
                                               path is relative to
                                               data/maps/ (e.g.
-                                              "Uploads/Foo.map"). */
-#define PACKET_LOBBY_MAP_PREVIEW_BEGIN 190  /* server → client first
-                                              { pathLen 1, path N,
-                                                seq 1, totalLen 4 }
-                                              seq id allows the
-                                              receiver to skip
-                                              stale chunks from a
-                                              prior request for the
-                                              same path. */
-#define PACKET_LOBBY_MAP_PREVIEW_CHUNK 191  /* server → client
-                                              { seq 1, offset 4,
-                                                chunkLen 2, bytes M }
-                                              fragments the .map
-                                              bytes referenced by
-                                              the most recent BEGIN. */
+                                              "Uploads/Foo.map").
+                                              The map bytes stream back
+                                              over CHANNEL_BULK behind a
+                                              bulk-transfer stream header;
+                                              190/191 (the old BEGIN/CHUNK
+                                              carriers) are retired. */
 #define PACKET_LOBBY_MAP_PREVIEW_ERR   192  /* server → client
                                               { pathLen 1, path N,
                                                 err 1 } 1=not-found

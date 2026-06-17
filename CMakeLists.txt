@@ -2584,6 +2584,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_lobby_running_loss.c
     tests/unit/test_loopback_quiet_lobby_control_loss.c
     tests/unit/test_loopback_channel.c
+    tests/unit/test_loopback_preview.c
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
@@ -2605,6 +2606,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # ChannelMux reliability primitive: the off-socket loss/reorder/dup/
     # window/boundary matrix (two muxes + an in-test frame shuttle).
     tests/unit/test_channel_mux.c
+    # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
+    # byte-identical blob reassembly under loss, header robustness,
+    # pipelining and the send-side serializer guard.
+    tests/unit/test_bulk_transfer.c
     # CTRL_CHANNEL_RESET: body-codec round-trip and the per-client game-start
     # baselines transportUdpServerOnGameStart sends across two fabricated slots.
     tests/unit/test_channel_reset.c
@@ -2910,6 +2915,7 @@ set(_unit_test_names
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_channel
+    loopback_map_preview
     gate1_viewtick_loopback
     gate1_host_noop
     interp_jitter_e2e
@@ -2927,6 +2933,7 @@ set(_unit_test_names
     viewtick_displayed_tick
     wire_corpus
     channel_mux
+    bulk_transfer
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines
     packet_type_names

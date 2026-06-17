@@ -40,6 +40,7 @@
 #include "transport_control_codec.h"
 #include "transport_command_codec.h"
 #include "channel_mux.h"
+#include "bulk_transfer.h"
 #include "wbn_key_codec.h"
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
@@ -297,6 +298,10 @@ typedef struct {
     /* Count of channel frames consumed (trailer + standalone), for test
      * observability of the otherwise-silent parallel layer. */
     uint32_t   channelFramesRx;
+    /* Reassembly state machine for sized blobs arriving on CHANNEL_BULK (map
+     * preview today). Fed from the stream fragments channelReceive pops; on a
+     * completed transfer it dispatches by kind into the client preview state. */
+    BulkReceiver bulkRecv;
 } TransportUdpClientCtx;
 
 #define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
@@ -696,78 +701,63 @@ void udpClientHandleLobbyMapListRsp(ClientSim *cs,
     }
 }
 
-/* PACKET_LOBBY_MAP_PREVIEW_BEGIN — server announces the upcoming byte
- * stream. Wire: [header 8] [pathLen 1] [path N] [seq 1] [total 4 BE].
- * Resets the accumulator and records the seq the chunks will carry. A
- * BEGIN whose path doesn't match the in-flight request is ignored
- * (the user navigated away before this arrived). */
-void udpClientHandleLobbyMapPreviewBegin(ClientSim *cs,
-                                         const uint8_t *buf, int len) {
-    if (!cs) return;
-    int pos = PACKET_HEADER_SIZE;
-    if (pos + 1 > len) return;
-    uint8_t plen = buf[pos++];
-    if (plen == 0 || pos + plen + 1 + 4 > len) return;
-    char path[256];
-    memset(path, 0, sizeof(path));
-    uint8_t cp = plen;
-    if (cp >= sizeof(path)) cp = (uint8_t)(sizeof(path) - 1);
-    memcpy(path, buf + pos, cp);
-    pos += plen;
-    uint8_t seq = buf[pos++];
-    uint32_t total = ((uint32_t)buf[pos] << 24) | ((uint32_t)buf[pos + 1] << 16) |
-                     ((uint32_t)buf[pos + 2] << 8) | (uint32_t)buf[pos + 3];
-    pos += 4;
+/* Bulk-receiver sink for the map preview transfer carried on CHANNEL_BULK.
+ * onBegin matches the stream header against the in-flight request and points
+ * the receiver at the client's preview accumulator; onComplete flips the
+ * preview ready once the whole blob has landed. `ctx` is the transport ctx so
+ * both hooks can reach the attached ClientSim. */
+static uint8_t *clientBulkPreviewOnBegin(void *ctx, const BulkStreamHeader *h) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+    ClientSim *cs = c ? c->clientSim : NULL;
+    if (cs == NULL) return NULL;
+    if (h->kind != BULK_KIND_PREVIEW) return NULL;
 
-    if (strncmp(path, cs->lobbyMapPreviewReqPath,
+    /* A preview whose path doesn't match the in-flight request is dropped —
+     * the user navigated away before this arrived. */
+    if (strncmp(h->path, cs->lobbyMapPreviewReqPath,
                 sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
-        return;
+        return NULL;
     }
-    if (total == 0 || total > LOBBY_MAP_UPLOAD_MAX_BYTES) {
+    if (h->totalSize == 0 || h->totalSize > LOBBY_MAP_UPLOAD_MAX_BYTES) {
         cs->lobbyMapPreviewError    = true;
         cs->lobbyMapPreviewInFlight = false;
-        return;
+        return NULL;
     }
-    cs->lobbyMapPreviewSeq      = seq;
-    cs->lobbyMapPreviewTotal    = total;
+    cs->lobbyMapPreviewTotal    = h->totalSize;
     cs->lobbyMapPreviewReceived = 0;
     cs->lobbyMapPreviewReady    = false;
     cs->lobbyMapPreviewError    = false;
     cs->lobbyMapPreviewInFlight = true;
     memset(cs->lobbyMapPreviewPath, 0, sizeof(cs->lobbyMapPreviewPath));
-    SDL_strlcpy(cs->lobbyMapPreviewPath, path,
+    SDL_strlcpy(cs->lobbyMapPreviewPath, h->path,
                 sizeof(cs->lobbyMapPreviewPath));
+    return cs->lobbyMapPreviewBytes;
 }
 
-/* PACKET_LOBBY_MAP_PREVIEW_CHUNK — one slice of the byte stream. Wire:
- * [header 8] [seq 1] [offset 4 BE] [len 2 BE] [bytes len]. Stale
- * chunks (seq mismatch, or no BEGIN seen) are dropped. Completion is
- * by cumulative byte count — the server fires each chunk once with no
- * retransmit, so the running total reaching `total` means every chunk
- * landed regardless of arrival order. */
-void udpClientHandleLobbyMapPreviewChunk(ClientSim *cs,
-                                         const uint8_t *buf, int len) {
-    if (!cs) return;
-    int pos = PACKET_HEADER_SIZE;
-    /* Fixed header is generated; the byte-stream reassembly below stays
-     * hand-written. */
-    MapPreviewChunkHeader hdr;
-    if (unpackMapPreviewChunkHeader(buf + pos, (size_t)(len - pos), &hdr) == 0) return;
-    uint8_t seq = hdr.seq; uint32_t off = hdr.offset; uint16_t n = hdr.len;
-    pos += 7;
-    if (pos + n > len) return;
+static void clientBulkPreviewOnComplete(void *ctx, const BulkStreamHeader *h,
+                                        uint8_t *buf) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)ctx;
+    ClientSim *cs = c ? c->clientSim : NULL;
+    (void)buf;
+    if (cs == NULL) return;
+    cs->lobbyMapPreviewReceived = h->totalSize;
+    cs->lobbyMapPreviewReady    = true;
+    cs->lobbyMapPreviewInFlight = false;
+}
 
-    if (!cs->lobbyMapPreviewInFlight || cs->lobbyMapPreviewError) return;
-    if (seq != cs->lobbyMapPreviewSeq) return;
-    if ((uint64_t)off + n > cs->lobbyMapPreviewTotal) return;
-    if ((uint64_t)off + n > LOBBY_MAP_UPLOAD_MAX_BYTES) return;
-
-    memcpy(cs->lobbyMapPreviewBytes + off, buf + pos, n);
-    cs->lobbyMapPreviewReceived += n;
-    if (cs->lobbyMapPreviewReceived >= cs->lobbyMapPreviewTotal) {
-        cs->lobbyMapPreviewReceived = cs->lobbyMapPreviewTotal;
-        cs->lobbyMapPreviewReady    = true;
-        cs->lobbyMapPreviewInFlight = false;
+/* Drain every stream fragment waiting on CHANNEL_BULK through the bulk
+ * receiver, dispatching completed transfers (map preview) into the client
+ * preview state. */
+static void clientDrainBulk(TransportUdpClientCtx *c) {
+    if (c->clientSim == NULL) return;
+    BulkRecvSink sink;
+    sink.onBegin    = clientBulkPreviewOnBegin;
+    sink.onComplete = clientBulkPreviewOnComplete;
+    sink.ctx        = c;
+    uint8_t chanBuf[CHANNEL_MAX_SEG];
+    uint16_t chanLen;
+    while (channelReceive(&c->channelMux, CHANNEL_BULK, chanBuf, &chanLen)) {
+        bulkReceiverFeed(&c->bulkRecv, chanBuf, chanLen, &sink);
     }
 }
 
@@ -1753,6 +1743,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
         }
 
+        /* Drain any bulk-channel stream fragments (map preview) regardless of
+         * the map-install gate below — a bulk transfer is independent of the
+         * game/map tails and must not be stranded by an un-installed map. */
+        clientDrainBulk(c);
+
         /* Map-install gate, moved past the control drain so
          * CTRL_GAME_PHASE_RUNNING in this same snapshot has a chance
          * to flip mapInstalled = true (via clientSimApplyControlOrdered)
@@ -1906,6 +1901,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                                                  c->playerNum);
                     }
                 }
+                /* Bulk-channel stream fragments (map preview) ride the same
+                 * standalone frame in a quiet lobby — reassemble them too. */
+                clientDrainBulk(c);
             }
         }
         break;
@@ -2395,14 +2393,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
     case PACKET_LOBBY_MAP_SEARCH_RSP:
         udpClientHandleLobbyMapSearchRsp(c->clientSim, buf, len);
-        break;
-
-    case PACKET_LOBBY_MAP_PREVIEW_BEGIN:
-        udpClientHandleLobbyMapPreviewBegin(c->clientSim, buf, len);
-        break;
-
-    case PACKET_LOBBY_MAP_PREVIEW_CHUNK:
-        udpClientHandleLobbyMapPreviewChunk(c->clientSim, buf, len);
         break;
 
     case PACKET_LOBBY_MAP_PREVIEW_ERR:
@@ -3146,6 +3136,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     /* Bring up the parallel channel mux for this connection. */
     channelMuxInit(&c->channelMux);
     c->channelFramesRx = 0;
+    bulkReceiverInit(&c->bulkRecv);
 
     /* Optional runtime network impairment from WB_NETIMPAIR
      * (e.g. WB_NETIMPAIR=delay=75,jitter=30,loss=2,burst=2). Same spec

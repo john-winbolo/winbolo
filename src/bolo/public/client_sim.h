@@ -818,8 +818,8 @@ const char *clientSimGetLobbyMapSearchReqPath(const ClientSim *cs);
 const char *clientSimGetLobbyMapSearchReqQuery(const ClientSim *cs);
 bool        clientSimGetLobbyMapSearchInFlight(const ClientSim *cs);
 
-/* Server-map preview byte stream — populated asynchronously by
- * PACKET_LOBBY_MAP_PREVIEW_BEGIN/_CHUNK/_ERR after the client sends a
+/* Server-map preview byte stream — populated asynchronously by the
+ * CHANNEL_BULK preview receiver (or _ERR) after the client sends a
  * MAP_PREVIEW_REQ (see clientSimNetSendLobbyMapPreviewRequest). The GUI
  * polls Ready/Error/Path each frame; on Ready it rasterises Bytes/Len
  * into the chooser preview, then calls clientSimClearLobbyMapPreview.

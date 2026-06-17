@@ -47,6 +47,7 @@
 #include "transport_control_codec.h"
 #include "transport_command_codec.h"
 #include "channel_mux.h"
+#include "bulk_transfer.h"
 #include "wbn_key_codec.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
@@ -298,6 +299,11 @@ static struct {
     /* Count of channel frames consumed from this slot (trailer + standalone),
      * for test observability of the otherwise-silent parallel layer. */
     uint32_t                channelFramesRx[MAX_TANKS];
+    /* Per-client server->client bulk transfer serializer. Holds the in-flight
+     * blob (map preview today) and feeds it onto CHANNEL_BULK as the stream
+     * window drains; busy while a transfer is mid-flight so two never
+     * interleave on one client's byte stream. */
+    BulkSender              bulkSend[MAX_TANKS];
     /* Suppress immediate-send-on-enqueue during the sync-replay burst
      * fired by serverSimRegisterSubscriber, so one carrier datagram
      * packs all replayed events instead of one per event.  Set/cleared
@@ -1872,6 +1878,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     /* Bring up this slot's parallel channel mux alongside the queues. */
     channelMuxInit(&udpServer.channelMux[slot]);
     udpServer.channelFramesRx[slot] = 0;
+    bulkSenderInit(&udpServer.bulkSend[slot]);
 
     /* Merge client-supplied hints with server-determined WBN trust into a
      * single clientFlags byte, then run the four-step join sequence so a
@@ -2335,6 +2342,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
      * mux on this client's clock+RTT, then append one channel frame after
      * the event tails, keeping the datagram within UDP_MAX_PAYLOAD.  The
      * client recovers it as the bytes past the snapshot's parsed end. */
+    bulkSenderPump(&udpServer.bulkSend[clientIdx], &udpServer.channelMux[clientIdx]);
     channelTick(&udpServer.channelMux[clientIdx], udpServer.tickCount,
                 client->pingMs);
     {
@@ -2470,6 +2478,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     channelMuxInit(&udpServer.channelMux[idx]);
     udpServer.channelFramesRx[idx] = 0;
     udpServer.mapGen[idx] = 0;
+    bulkSenderReset(&udpServer.bulkSend[idx]);
 
     /* Release any in-flight upload state. Without this, a client
      * who drops mid-upload would leave clientUploadActive set,
@@ -4247,9 +4256,10 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_LOBBY_MAP_PREVIEW_REQ: {
             /* [header 8] [pathLen 1] [path N]. Reads data/maps/<path>
              * from the server's filesystem and streams the bytes back
-             * in chunks. Client rasterises locally — server has no
-             * dep on a renderer or image encoder, and the protocol
-             * is the same shape in SP-host (loopback) and MP. */
+             * over CHANNEL_BULK behind a stream header. Client rasterises
+             * locally — server has no dep on a renderer or image encoder,
+             * and the protocol is the same shape in SP-host (loopback)
+             * and MP. */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 len < PACKET_HEADER_SIZE + 1) break;
@@ -4277,49 +4287,51 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                 break;
             }
 
-            /* Monotonic per-(client) sequence so the receiver can
-             * tell stale chunks from a prior request for the same
-             * path apart from current ones. udpServer is a single
-             * global so a process-wide counter is fine; collisions
-             * across long sessions wrap around harmlessly. */
-            static uint8_t s_previewSeq = 0;
-            uint8_t seq = ++s_previewSeq;
-
-            /* BEGIN announces the total transfer size + the seq
-             * id. Sent first; chunks reference seq + offset. */
-            {
-                uint8_t hdr[PACKET_HEADER_SIZE + 1 + 256 + 1 + 4];
-                packHeader(hdr, PACKET_LOBBY_MAP_PREVIEW_BEGIN, 0);
+            /* One transfer at a time on this client's bulk byte stream: if a
+             * transfer is already in flight, reject with PREVIEW_ERR and let
+             * the client re-request via PREVIEW_REQ once it drains. */
+            if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) {
+                uint8_t err[PACKET_HEADER_SIZE + 1 + 256 + 1];
+                packHeader(err, PACKET_LOBBY_MAP_PREVIEW_ERR, 0);
                 int wpos = PACKET_HEADER_SIZE;
-                hdr[wpos++] = pathLen;
-                memcpy(hdr + wpos, relPath, pathLen);
+                err[wpos++] = pathLen;
+                memcpy(err + wpos, relPath, pathLen);
                 wpos += pathLen;
-                hdr[wpos++] = seq;
-                uint32_t total = (uint32_t)mapLen;
-                hdr[wpos++] = (uint8_t)((total >> 24) & 0xFF);
-                hdr[wpos++] = (uint8_t)((total >> 16) & 0xFF);
-                hdr[wpos++] = (uint8_t)((total >>  8) & 0xFF);
-                hdr[wpos++] = (uint8_t)( total        & 0xFF);
-                srvSendTo(hdr, wpos, fromAddr);
+                err[wpos++] = 3;  /* transient: bulk channel busy */
+                srvSendTo(err, wpos, fromAddr);
+                free(mapBytes);
+                break;
             }
 
-            /* Stream chunks. ~1200 bytes per chunk keeps each UDP
-             * datagram comfortably under the typical 1400-byte
-             * Ethernet MTU after header / IP / UDP overhead. */
-            const size_t kChunkBytes = 1200;
-            uint8_t chunk[PACKET_HEADER_SIZE + 1 + 4 + 2 + 1200];
-            for (size_t off = 0; off < mapLen; off += kChunkBytes) {
-                size_t n = mapLen - off;
-                if (n > kChunkBytes) n = kChunkBytes;
-                packHeader(chunk, PACKET_LOBBY_MAP_PREVIEW_CHUNK, 0);
-                /* Fixed header is generated; the data memcpy stays
-                 * hand-written. */
-                MapPreviewChunkHeader hdr = { seq, (uint32_t)off, (uint16_t)n };
-                packMapPreviewChunkHeader(chunk + PACKET_HEADER_SIZE, &hdr);
-                int wpos = PACKET_HEADER_SIZE + 7;
-                memcpy(chunk + wpos, mapBytes + off, n);
-                wpos += (int)n;
-                srvSendTo(chunk, wpos, fromAddr);
+            /* Monotonic per-process preview sequence, carried in the stream
+             * header so the client can match a completed blob to the request
+             * it issued. udpServer is a single global, so a process-wide
+             * counter is fine; collisions across long sessions wrap harmlessly. */
+            static uint32_t s_previewSeq = 0;
+            uint32_t seq = ++s_previewSeq;
+
+            /* Frame the preview as a sized blob on CHANNEL_BULK: the stream
+             * header (kind/gen/total/path) then the map bytes, fed onto the
+             * reliable stream by bulkSenderPump as the window drains. */
+            BulkStreamHeader sh;
+            memset(&sh, 0, sizeof(sh));
+            sh.kind = BULK_KIND_PREVIEW;
+            sh.gen = seq;
+            sh.totalSize = (uint32_t)mapLen;
+            sh.pathLen = pathLen;
+            memcpy(sh.path, relPath, pathLen);
+            sh.path[pathLen] = '\0';
+
+            if (!bulkSenderBegin(&udpServer.bulkSend[clientIdx], &sh,
+                                 mapBytes, (uint32_t)mapLen)) {
+                uint8_t err[PACKET_HEADER_SIZE + 1 + 256 + 1];
+                packHeader(err, PACKET_LOBBY_MAP_PREVIEW_ERR, 0);
+                int wpos = PACKET_HEADER_SIZE;
+                err[wpos++] = pathLen;
+                memcpy(err + wpos, relPath, pathLen);
+                wpos += pathLen;
+                err[wpos++] = 3;  /* internal: could not stage transfer */
+                srvSendTo(err, wpos, fromAddr);
             }
             free(mapBytes);
             break;
@@ -4787,6 +4799,7 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
          * non-empty (an empty 2-byte frame is suppressed so a quiet lobby
          * stays storm-free). */
         if (serverSimGetState(sim) != serverStateRunning) {
+            bulkSenderPump(&udpServer.bulkSend[i], &udpServer.channelMux[i]);
             channelTick(&udpServer.channelMux[i], udpServer.tickCount,
                         udpServer.clients[i].pingMs);
             {

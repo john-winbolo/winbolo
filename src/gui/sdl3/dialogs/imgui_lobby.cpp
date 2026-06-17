@@ -815,7 +815,7 @@ static bool lobbyServerMapsGeneratePreview(const char *entryPath,
 
 /* Main-thread pump for the Server Maps preview pane (MP only). Polls
  * the ClientSim's lobbyMapPreview* accumulator (filled async by the
- * MAP_PREVIEW_BEGIN/_CHUNK handlers) and, once a full map's bytes have
+ * CHANNEL_BULK preview receiver) and, once a full map's bytes have
  * arrived for the path we asked for, spills them to a worker-private
  * temp file and points the chooser at it via mapChooserSetSelectedFile.
  * No-op for SP / in-process host — there generatePreview already serves

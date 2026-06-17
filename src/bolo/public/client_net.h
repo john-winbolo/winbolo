@@ -185,8 +185,8 @@ void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
 
 /* Ask the server for the raw .map bytes of data/maps/<relPath> so the
  * chooser can rasterise a preview without committing a SET_MAP. The
- * reply streams back async via PACKET_LOBBY_MAP_PREVIEW_BEGIN/_CHUNK
- * (or _ERR) into the ClientSim's lobbyMapPreview* fields; poll the
+ * reply streams back async over CHANNEL_BULK behind a bulk-transfer
+ * stream header (or _ERR) into the ClientSim's lobbyMapPreview* fields; poll the
  * Ready/Error getters. No-op without a UDP transport. */
 void clientSimNetSendLobbyMapPreviewRequest(ClientSim *cs,
                                             const char *relPath);

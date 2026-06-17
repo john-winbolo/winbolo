@@ -271,8 +271,8 @@ void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
                                                  const char *relPath,
                                                  const char *query);
 /* Request the raw .map bytes of data/maps/<relPath> for an in-chooser
- * preview. Reply streams back via PACKET_LOBBY_MAP_PREVIEW_BEGIN/_CHUNK
- * (or _ERR) into the ClientSim's lobbyMapPreview* accumulator. */
+ * preview. Reply streams back over CHANNEL_BULK behind a bulk-transfer
+ * stream header (or _ERR) into the ClientSim's lobbyMapPreview* accumulator. */
 void transportUdpClientSendLobbyMapPreviewRequest(Transport *t,
                                                   const char *relPath);
 void transportUdpClientSendLobbyMapUploadBegin(Transport *t, uint32_t totalLen,
@@ -324,14 +324,10 @@ void udpClientHandleLobbyMapListRsp(struct ClientSim *cs,
                                     const uint8_t *buf, int len);
 void udpClientHandleLobbyMapSearchRsp(struct ClientSim *cs,
                                       const uint8_t *buf, int len);
-/* Client-side parsers for the streamed MAP_PREVIEW response. BEGIN
- * announces seq + total size and resets the accumulator; CHUNK appends
- * bytes at the carried offset; ERR flags the request failed. `buf`
- * includes the 8-byte packet header. */
-void udpClientHandleLobbyMapPreviewBegin(struct ClientSim *cs,
-                                         const uint8_t *buf, int len);
-void udpClientHandleLobbyMapPreviewChunk(struct ClientSim *cs,
-                                         const uint8_t *buf, int len);
+/* Client-side handler for a failed MAP_PREVIEW request. The map bytes
+ * themselves now arrive over CHANNEL_BULK and are reassembled by the
+ * transport's bulk receiver; ERR flags the request failed. `buf` includes
+ * the 8-byte packet header. */
 void udpClientHandleLobbyMapPreviewErr(struct ClientSim *cs,
                                        const uint8_t *buf, int len);
 
