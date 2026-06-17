@@ -69,17 +69,23 @@ enum {
 #define CHANNEL_GAME_SEG        16
 #define CHANNEL_MAP_WINDOW     128  /* map events are also GameEvents          */
 #define CHANNEL_MAP_SEG         16
-#define CHANNEL_CONTROL_WINDOW 128  /* provisional sizing                      */
-#define CHANNEL_CONTROL_SEG    256  /* provisional: control events can reach
-                                     * ~MAX_CONTROL_PACKET; final sizing set
-                                     * when control traffic moves here         */
+#define CHANNEL_CONTROL_WINDOW 64   /* covers the join sync-replay burst plus
+                                     * concurrent publishes with margin        */
+#define CHANNEL_CONTROL_SEG   1024  /* one control event = one segment = one
+                                     * datagram. Must hold the worst-case
+                                     * control message (the full BRAIN_LIST:
+                                     * type(1) + bodyLen(2) + body(897) = 900)
+                                     * yet stay budget-safe: a segment plus the
+                                     * channel-frame overhead and packet header
+                                     * must fit UDP_MAX_PAYLOAD with room for
+                                     * coalesced acks. 1024 clears both.        */
 #define CHANNEL_BULK_WINDOW     96  /* provisional: bandwidth-delay product set
                                      * when bulk transfer moves here           */
 #define CHANNEL_BULK_SEG       256  /* stream segments                         */
 
 /* Largest segSize over all channels, so a caller can size one scratch
  * receive buffer that fits a segment from any channel. */
-#define CHANNEL_MAX_SEG 256
+#define CHANNEL_MAX_SEG 1024
 
 /* Capacity of the stream channel's pending-byte staging buffer. Bytes
  * handed to channelStreamSend wait here until the window has room to turn
@@ -183,6 +189,22 @@ int channelRecvFrame(ChannelMux *m, const uint8_t *buf, int len);
  * message; for the stream channel each pop is the next stream fragment, to
  * be concatenated by the caller. Returns false when nothing is ready. */
 bool channelReceive(ChannelMux *m, uint8_t ch, uint8_t *out, uint16_t *outLen);
+
+/* Truncate the send side of a channel forward at a game boundary: drop the
+ * unacked send tail (ackedSeq = txNext = nextSeq) and clear those ring
+ * entries, so the previous game's undelivered segments are never resent. The
+ * sequence space stays monotonic — low seqs are not reused, new channelSends
+ * continue from nextSeq. Returns the post-reset nextSeq, the baseline the
+ * peer must adopt with channelResetExpected. */
+uint32_t channelResetSend(ChannelMux *m, uint8_t ch);
+
+/* Truncate the receive side of a channel forward to match a peer's send
+ * reset: advance expectedSeq to newExpected and discard any buffered segment
+ * below it. A straggler with seq < newExpected is then dropped by the
+ * existing dedup; a segment already buffered at seq >= newExpected becomes
+ * deliverable. newExpected must not rewind — a value at or below the current
+ * expectedSeq is a no-op. */
+void channelResetExpected(ChannelMux *m, uint8_t ch, uint32_t newExpected);
 
 /* Advance the retransmit clock. tick is the current tick; rttMs is the
  * current RTT estimate used to derive the retransmit timeout. */

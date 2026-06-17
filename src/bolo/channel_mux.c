@@ -350,3 +350,43 @@ bool channelReceive(ChannelMux *m, uint8_t ch, uint8_t *out, uint16_t *outLen) {
     c->expectedSeq++;
     return true;
 }
+
+uint32_t channelResetSend(ChannelMux *m, uint8_t ch) {
+    if (m == NULL || ch >= CHANNEL_COUNT) {
+        return 0;
+    }
+    ChannelState *c = &m->ch[ch];
+    /* Clear the live (unacked) ring entries, then collapse the window: the
+     * tail is gone, so channelBuildFrame finds nothing to retransmit. The
+     * loop spans at most one window since live seqs are always contiguous. */
+    uint32_t seq;
+    for (seq = c->ackedSeq; seq < c->nextSeq; seq++) {
+        c->sendLen[seq % c->window] = 0;
+    }
+    c->ackedSeq = c->nextSeq;
+    c->txNext = c->nextSeq;
+    return c->nextSeq;
+}
+
+void channelResetExpected(ChannelMux *m, uint8_t ch, uint32_t newExpected) {
+    if (m == NULL || ch >= CHANNEL_COUNT) {
+        return;
+    }
+    ChannelState *c = &m->ch[ch];
+    if (newExpected <= c->expectedSeq) {
+        return; /* no rewind: at or below the current baseline is a no-op */
+    }
+    /* Discard buffered segments below the new baseline. Only seqs in
+     * [expectedSeq, expectedSeq + window) can be present, so capping the
+     * clear at the window bounds the loop and never touches a slot holding a
+     * still-deliverable seq >= newExpected. */
+    uint32_t clearEnd = newExpected;
+    if (clearEnd > c->expectedSeq + c->window) {
+        clearEnd = c->expectedSeq + c->window;
+    }
+    uint32_t seq;
+    for (seq = c->expectedSeq; seq < clearEnd; seq++) {
+        c->recvPresent[seq % c->window] = false;
+    }
+    c->expectedSeq = newExpected;
+}

@@ -8,9 +8,11 @@
  * The matrix proves the full reliability burden: clean delivery, loss,
  * reorder, duplication, burst loss, a multi-seed soak, window / flow
  * control, overflow, per-channel independence, the stream flavor, frame
- * coalescing under a tight budget, malformed-input rejection, and the
- * named live-play regressions (lobby-ack resend, seq-space across game
- * start, drop-don't-reset).
+ * coalescing under a tight budget, a worst-case control event fitting one
+ * datagram, malformed-input rejection, the named
+ * live-play regressions (lobby-ack resend, seq-space across game start,
+ * drop-don't-reset), and the game-boundary baseline reset (send-tail drop,
+ * coordinated send/recv truncation, buffer-before-lift, no-rewind).
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -822,6 +824,73 @@ done:
     return 0;
 }
 
+/* ---- worst-case control event fits one segment / one datagram ---- */
+
+/* The largest control event (a full BRAIN_LIST is ~900 B as a channel
+ * message) must be accepted, build as a single segment within the datagram
+ * budget, and round-trip byte-identical — proving CHANNEL_CONTROL_SEG leaves
+ * room under UDP_MAX_PAYLOAD once the packet header and channel-frame overhead
+ * are charged. */
+static int t_control_max_event_fits_wire(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t out[CHANNEL_MAX_SEG];
+    uint8_t *msg = (uint8_t *)malloc(CHANNEL_MAX_SEG);
+    int rc = 1;
+    /* The 8-byte packet header wraps the channel frame on the wire, so the
+     * frame itself must fit UDP_MAX_PAYLOAD (1400) minus that header. */
+    const int kPacketHeader = 8;
+    const int kWireBudget = 1400 - kPacketHeader;
+    const uint16_t worstCase = 900; /* full BRAIN_LIST channel message */
+    if (!a || !b || !msg) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+    if (worstCase > CHANNEL_CONTROL_SEG) {
+        goto done; /* the segment must hold the worst-case event */
+    }
+    uint16_t i;
+    for (i = 0; i < worstCase; i++) {
+        msg[i] = (uint8_t)(i * 31 + 7);
+    }
+
+    /* channelSend accepts the worst-case event. */
+    if (!channelSend(a, CHANNEL_CONTROL, msg, worstCase)) {
+        goto done;
+    }
+    /* It builds as a single segment within the datagram budget ... */
+    channelTick(a, 0, LINK_RTT_MS);
+    int la = channelBuildFrame(a, frame, kWireBudget);
+    if (parseSegCount(frame, la) != 1) {
+        goto done; /* one event, one segment, one datagram */
+    }
+    if (la + kPacketHeader > 1400) {
+        goto done; /* frame plus packet header must fit a UDP datagram */
+    }
+    /* ... and round-trips byte-identical. */
+    if (channelRecvFrame(b, frame, la) != la) {
+        goto done;
+    }
+    uint16_t olen = 0;
+    if (!channelReceive(b, CHANNEL_CONTROL, out, &olen)) {
+        goto done;
+    }
+    if (olen != worstCase || memcmp(out, msg, worstCase) != 0) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    free(msg);
+    if (rc) {
+        UT_FAIL("worst-case control event did not fit / round-trip on the wire");
+    }
+    return 0;
+}
+
 /* ---- malformed input: random / truncated bytes never crash or over-read ---- */
 
 static int t_malformed_input(void) {
@@ -1062,6 +1131,360 @@ done:
     return 0;
 }
 
+/* ---- baseline reset: forward truncation at a game boundary ---- */
+
+/* Return the first segment's sequence number (via seqOut) and the segCount of
+ * a built frame, or -1 on a malformed/short frame. */
+static int firstSegInfo(const uint8_t *buf, int len, uint32_t *seqOut) {
+    if (len < 1) {
+        return -1;
+    }
+    int pos = 0;
+    uint8_t ackCount = buf[pos++];
+    if (pos + ackCount * 5 > len) {
+        return -1;
+    }
+    pos += ackCount * 5;
+    if (pos + 1 > len) {
+        return -1;
+    }
+    uint8_t segCount = buf[pos++];
+    if (segCount > 0) {
+        if (pos + 7 > len) {
+            return -1;
+        }
+        *seqOut = ((uint32_t)buf[pos + 1] << 24) | ((uint32_t)buf[pos + 2] << 16) |
+                  ((uint32_t)buf[pos + 3] << 8) | (uint32_t)buf[pos + 4];
+    }
+    return segCount;
+}
+
+/* Drive a no-loss exchange until `total` messages have delivered in order on
+ * channel `ch`, leaving the sender fully acked. tickIO carries the tick
+ * forward so callers can keep driving the same pair. Returns 0 on success. */
+static int pumpDeliver(ChannelMux *a, ChannelMux *b, uint8_t ch,
+                       uint32_t total, int *tickIO) {
+    uint8_t frame[MAXFRAME];
+    uint8_t out[CHANNEL_MAX_SEG];
+    uint32_t sent = 0;
+    int tick = *tickIO;
+    int guard = 0;
+    while (b->ch[ch].expectedSeq < total && guard++ < 100000) {
+        channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+        channelTick(b, (uint32_t)tick, LINK_RTT_MS);
+        while (sent < total) {
+            uint8_t msg[8];
+            putIdx(msg, sent);
+            if (!channelSend(a, ch, msg, 8)) {
+                break;
+            }
+            sent++;
+        }
+        int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        channelRecvFrame(b, frame, la);
+        uint16_t olen;
+        while (channelReceive(b, ch, out, &olen)) {
+        }
+        int lb = channelBuildFrame(b, frame, FRAME_BUDGET);
+        channelRecvFrame(a, frame, lb);
+        tick++;
+    }
+    *tickIO = tick;
+    return (b->ch[ch].expectedSeq == total &&
+            a->ch[ch].ackedSeq == total) ? 0 : 1;
+}
+
+/* channelResetSend drops the dead tail: the unacked window collapses, nothing
+ * is retransmitted past it, and new sends resume at the returned baseline. */
+static int t_reset_drops_dead_tail(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    uint8_t frame[MAXFRAME];
+    int rc = 1;
+    if (!a) {
+        goto done;
+    }
+    channelMuxInit(a);
+    const uint32_t n = 10;
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        uint8_t msg[8];
+        putIdx(msg, i);
+        if (!channelSend(a, CHANNEL_CONTROL, msg, 8)) {
+            goto done;
+        }
+    }
+    /* Transmit the tail once (nothing acked), so there is a live tail to drop. */
+    channelTick(a, 0, LINK_RTT_MS);
+    int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+    if (parseSegCount(frame, la) <= 0) {
+        goto done; /* the tail should have gone out */
+    }
+
+    uint32_t baseline = channelResetSend(a, CHANNEL_CONTROL);
+    if (baseline != n) {
+        goto done;
+    }
+    if (a->ch[CHANNEL_CONTROL].ackedSeq != n ||
+        a->ch[CHANNEL_CONTROL].nextSeq != n ||
+        a->ch[CHANNEL_CONTROL].txNext != n) {
+        goto done; /* window must have collapsed to empty */
+    }
+
+    /* Well past the RTO, the dropped tail must not reappear. */
+    channelTick(a, 100, LINK_RTT_MS);
+    la = channelBuildFrame(a, frame, FRAME_BUDGET);
+    if (parseSegCount(frame, la) != 0) {
+        goto done;
+    }
+
+    /* A new send continues from the baseline, not from a reused low seq. */
+    uint8_t nm[8];
+    putIdx(nm, 0x99);
+    if (!channelSend(a, CHANNEL_CONTROL, nm, 8)) {
+        goto done;
+    }
+    if (a->ch[CHANNEL_CONTROL].nextSeq != n + 1) {
+        goto done;
+    }
+    channelTick(a, 200, LINK_RTT_MS);
+    la = channelBuildFrame(a, frame, FRAME_BUDGET);
+    uint32_t seq = 0;
+    if (firstSegInfo(frame, la, &seq) != 1 || seq != baseline) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    if (rc) {
+        UT_FAIL("send reset did not drop the dead tail / continue at baseline");
+    }
+    return 0;
+}
+
+/* A coordinated reset across two muxes: the sender truncates its send
+ * baseline and the receiver lifts expected to match. A straggler from the old
+ * game is then dropped by dedup; a new message at the baseline delivers once. */
+static int t_reset_coordinated(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t strag[MAXFRAME];
+    uint8_t out[CHANNEL_MAX_SEG];
+    int rc = 1;
+    if (!a || !b) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+
+    int tick = 0;
+    if (pumpDeliver(a, b, CHANNEL_CONTROL, 5, &tick)) {
+        goto done; /* previous game settled: 5 delivered and acked */
+    }
+    /* Old-game unacked tail: seq 5,6,7 sent but never delivered. */
+    uint32_t i;
+    for (i = 5; i < 8; i++) {
+        uint8_t msg[8];
+        putIdx(msg, i);
+        if (!channelSend(a, CHANNEL_CONTROL, msg, 8)) {
+            goto done;
+        }
+    }
+    channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+    int sl = channelBuildFrame(a, strag, FRAME_BUDGET); /* captures 5,6,7 */
+    uint32_t stragSeq = 0;
+    if (firstSegInfo(strag, sl, &stragSeq) <= 0 || stragSeq != 5) {
+        goto done;
+    }
+
+    /* Game-start coordinated reset. */
+    uint32_t baseline = channelResetSend(a, CHANNEL_CONTROL);
+    if (baseline != 8 || a->ch[CHANNEL_CONTROL].nextSeq != 8) {
+        goto done;
+    }
+    channelResetExpected(b, CHANNEL_CONTROL, baseline);
+    if (b->ch[CHANNEL_CONTROL].expectedSeq != 8) {
+        goto done;
+    }
+
+    /* The captured old-game straggler arriving after the reset is dropped. */
+    channelRecvFrame(b, strag, sl);
+    uint16_t olen;
+    if (channelReceive(b, CHANNEL_CONTROL, out, &olen)) {
+        goto done;
+    }
+    if (b->ch[CHANNEL_CONTROL].expectedSeq != 8) {
+        goto done;
+    }
+
+    /* A new-game message at the baseline delivers exactly once, in order. */
+    tick++;
+    uint8_t nm[8];
+    putIdx(nm, 0xABCD);
+    if (!channelSend(a, CHANNEL_CONTROL, nm, 8) ||
+        a->ch[CHANNEL_CONTROL].nextSeq != 9) {
+        goto done;
+    }
+    channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+    int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+    channelRecvFrame(b, frame, la);
+    int deliveries = 0;
+    while (channelReceive(b, CHANNEL_CONTROL, out, &olen)) {
+        if (getIdx(out) != 0xABCD) {
+            goto done;
+        }
+        deliveries++;
+    }
+    if (deliveries != 1) {
+        goto done;
+    }
+    /* Replaying the straggler still dedups — no double delivery. */
+    channelRecvFrame(b, strag, sl);
+    if (channelReceive(b, CHANNEL_CONTROL, out, &olen)) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    if (rc) {
+        UT_FAIL("coordinated reset mishandled straggler / new delivery");
+    }
+    return 0;
+}
+
+/* A new-baseline message buffered before the receiver lifts expected still
+ * delivers once expected is raised; an old-seq straggler after the reset is
+ * dropped. */
+static int t_reset_buffer_before_lift(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t strag[MAXFRAME];
+    uint8_t out[CHANNEL_MAX_SEG];
+    int rc = 1;
+    if (!a || !b) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+
+    int tick = 0;
+    if (pumpDeliver(a, b, CHANNEL_CONTROL, 5, &tick)) {
+        goto done; /* b->expectedSeq = 5, a fully acked */
+    }
+    /* Old tail seq 5,6,7 sent (will be the straggler), captured but not yet
+     * delivered. */
+    uint32_t i;
+    for (i = 5; i < 8; i++) {
+        uint8_t msg[8];
+        putIdx(msg, i);
+        if (!channelSend(a, CHANNEL_CONTROL, msg, 8)) {
+            goto done;
+        }
+    }
+    channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+    int sl = channelBuildFrame(a, strag, FRAME_BUDGET); /* 5,6,7 */
+
+    uint32_t baseline = channelResetSend(a, CHANNEL_CONTROL);
+    if (baseline != 8) {
+        goto done;
+    }
+
+    /* New-game message lands at the baseline (seq 8) and is delivered to the
+     * receiver while its expected is still 5 — buffered, not yet deliverable. */
+    uint8_t nm[8];
+    putIdx(nm, 0x42);
+    if (!channelSend(a, CHANNEL_CONTROL, nm, 8)) {
+        goto done;
+    }
+    tick++;
+    channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+    int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+    channelRecvFrame(b, frame, la);
+    uint16_t olen;
+    if (channelReceive(b, CHANNEL_CONTROL, out, &olen)) {
+        goto done; /* gap at 5..7 — nothing yet */
+    }
+    if (b->ch[CHANNEL_CONTROL].expectedSeq != 5) {
+        goto done;
+    }
+
+    /* Lifting expected to the baseline makes the buffered seq-8 deliverable. */
+    channelResetExpected(b, CHANNEL_CONTROL, baseline);
+    if (b->ch[CHANNEL_CONTROL].expectedSeq != 8) {
+        goto done;
+    }
+    int deliveries = 0;
+    while (channelReceive(b, CHANNEL_CONTROL, out, &olen)) {
+        if (getIdx(out) != 0x42) {
+            goto done;
+        }
+        deliveries++;
+    }
+    if (deliveries != 1 || b->ch[CHANNEL_CONTROL].expectedSeq != 9) {
+        goto done;
+    }
+
+    /* The old-seq straggler arriving after the reset is dropped. */
+    channelRecvFrame(b, strag, sl);
+    if (channelReceive(b, CHANNEL_CONTROL, out, &olen)) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    if (rc) {
+        UT_FAIL("buffered-before-lift delivery or post-reset straggler failed");
+    }
+    return 0;
+}
+
+/* channelResetExpected never rewinds: a value at or below the current
+ * expected is a no-op, and the send-side invariants survive a reset. */
+static int t_reset_no_rewind(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    int rc = 1;
+    if (!a || !b) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+
+    int tick = 0;
+    if (pumpDeliver(a, b, CHANNEL_CONTROL, 10, &tick)) {
+        goto done; /* b->expectedSeq = 10 */
+    }
+    channelResetExpected(b, CHANNEL_CONTROL, 5); /* below current — no-op */
+    if (b->ch[CHANNEL_CONTROL].expectedSeq != 10) {
+        goto done;
+    }
+    channelResetExpected(b, CHANNEL_CONTROL, 10); /* equal — no-op */
+    if (b->ch[CHANNEL_CONTROL].expectedSeq != 10) {
+        goto done;
+    }
+    if (checkSendInvariants(a, a->ch[CHANNEL_CONTROL].window) ||
+        checkSendInvariants(b, b->ch[CHANNEL_CONTROL].window)) {
+        goto done;
+    }
+    /* A send reset keeps ackedSeq <= nextSeq. */
+    uint32_t baseline = channelResetSend(a, CHANNEL_CONTROL);
+    if (baseline != 10 ||
+        a->ch[CHANNEL_CONTROL].ackedSeq > a->ch[CHANNEL_CONTROL].nextSeq) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    if (rc) {
+        UT_FAIL("expected reset rewound or broke the send invariants");
+    }
+    return 0;
+}
+
 int run_channel_mux(void) {
     /* The control channel must carry its sequence space straight across a
      * lobby->running phase change with no reset; that is the load-bearing
@@ -1102,6 +1525,9 @@ int run_channel_mux(void) {
     if (t_coalescing_budget()) {
         return 1;
     }
+    if (t_control_max_event_fits_wire()) {
+        return 1;
+    }
     if (t_malformed_input()) {
         return 1;
     }
@@ -1109,6 +1535,18 @@ int run_channel_mux(void) {
         return 1;
     }
     if (t_drop_dont_reset()) {
+        return 1;
+    }
+    if (t_reset_drops_dead_tail()) {
+        return 1;
+    }
+    if (t_reset_coordinated()) {
+        return 1;
+    }
+    if (t_reset_buffer_before_lift()) {
+        return 1;
+    }
+    if (t_reset_no_rewind()) {
         return 1;
     }
     if (t_soak()) {
