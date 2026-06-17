@@ -448,43 +448,6 @@ static int check_map_download_chunk_hdr(void) {
     return 0;
 }
 
-static int check_map_upload_chunk_hdr(void) {
-    static const uint8_t anchor[] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
-    MapUploadChunkHeader a, out;
-    uint8_t g[WC_BYTES];
-    int pass;
-
-    memset(&a, 0, sizeof(a));
-    a.offset = 0x01020304u; a.dataLen = 0x0506u;
-
-    UT_ASSERT_MSG(WIRE_SIZE_OF(MAP_UPLOAD_CHUNK_HEADER_FIELDS) == 6,
-                  "map_upload_chunk_hdr WIRE_SIZE_OF mismatch");
-    memset(g, 0, sizeof(g));
-    UT_ASSERT_MSG(packMapUploadChunkHeader(g, &a) == 6,
-                  "map_upload_chunk_hdr anchor pack length");
-    UT_ASSERT_MSG(memcmp(g, anchor, sizeof(anchor)) == 0,
-                  "map_upload_chunk_hdr anchor bytes");
-    memset(&out, 0, sizeof(out));
-    UT_ASSERT_MSG(unpackMapUploadChunkHeader(anchor, sizeof(anchor), &out) == 6,
-                  "map_upload_chunk_hdr anchor unpack length");
-    UT_ASSERT_MSG(memcmp(&a, &out, sizeof(a)) == 0,
-                  "map_upload_chunk_hdr anchor struct");
-    for (pass = 0; pass < 2; pass++) {
-        MapUploadChunkHeader s, su;
-        memset(&s, 0, sizeof(s));
-        if (pass == 1) { MAP_UPLOAD_CHUNK_HEADER_FIELDS(FIELD_SET_MAX) }
-        memset(g, 0, sizeof(g));
-        UT_ASSERT_MSG(packMapUploadChunkHeader(g, &s) == 6,
-                      "map_upload_chunk_hdr boundary pack length");
-        memset(&su, 0, sizeof(su));
-        UT_ASSERT_MSG(unpackMapUploadChunkHeader(g, 6, &su) == 6,
-                      "map_upload_chunk_hdr boundary unpack length");
-        UT_ASSERT_MSG(memcmp(&s, &su, sizeof(s)) == 0,
-                      "map_upload_chunk_hdr boundary round-trip differ");
-    }
-    return 0;
-}
-
 int run_wire_corpus(void) {
     if (check_shell() != 0) return 1;
     if (check_tk() != 0) return 1;
@@ -492,6 +455,5 @@ int run_wire_corpus(void) {
     if (check_pill() != 0) return 1;
     if (check_tank() != 0) return 1;
     if (check_map_download_chunk_hdr() != 0) return 1;
-    if (check_map_upload_chunk_hdr() != 0) return 1;
     return 0;
 }

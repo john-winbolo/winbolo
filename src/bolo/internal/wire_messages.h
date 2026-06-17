@@ -54,7 +54,5 @@
  * follow each header stay hand-written. */
 #define MAP_DOWNLOAD_CHUNK_HEADER_FIELDS(F) \
     F(U32, resyncGen) F(U32, mapSize) F(U16, chunkIdx) F(U16, chunkSize)
-#define MAP_UPLOAD_CHUNK_HEADER_FIELDS(F) \
-    F(U32, offset) F(U16, dataLen)
 
 #endif /* WINBOLO_WIRE_MESSAGES_H */

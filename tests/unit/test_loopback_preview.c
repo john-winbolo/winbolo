@@ -66,7 +66,8 @@ int run_loopback_map_preview(void) {
     }
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "Preview", /*lobbyMode*/ true,
-                                       /*impairSpec*/ "loss=10", /*seed*/ 0x9E1Du),
+                                       /*impairSpec*/ "loss=5,burst=2",
+                                       /*seed*/ 0xC0FFEEu),
                   "harness start (preview) failed");
 
     connectedAt = loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL);
@@ -88,7 +89,7 @@ int run_loopback_map_preview(void) {
 
     settledAt = loopbackHarnessPumpUntil(&h, PREVIEW_MAX, pred_preview_settled, NULL);
 
-    fprintf(stderr, "  loopback preview (loss=10): connected@%d settled@%d "
+    fprintf(stderr, "  loopback preview (loss=5,burst=2): connected@%d settled@%d "
                     "ready=%d error=%d len=%u\n",
             connectedAt, settledAt,
             (int)clientSimGetLobbyMapPreviewReady(h.cs),

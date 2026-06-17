@@ -272,17 +272,10 @@ typedef struct {
     uint16_t chunkIdx;
     uint16_t chunkSize;
 } MapDownloadChunkHeader;
-typedef struct {
-    uint32_t offset;
-    uint16_t dataLen;
-} MapUploadChunkHeader;
 
 int packMapDownloadChunkHeader(uint8_t *buf, const MapDownloadChunkHeader *h);
 int unpackMapDownloadChunkHeader(const uint8_t *buf, size_t avail,
                                  MapDownloadChunkHeader *h);
-int packMapUploadChunkHeader(uint8_t *buf, const MapUploadChunkHeader *h);
-int unpackMapUploadChunkHeader(const uint8_t *buf, size_t avail,
-                               MapUploadChunkHeader *h);
 
 /* ---- Socket helpers ---- */
 

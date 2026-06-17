@@ -279,6 +279,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_quiet_lobby_control_loss",       run_loopback_quiet_lobby_control_loss       },
     { "loopback_channel",                        run_loopback_channel                        },
     { "loopback_map_preview",                    run_loopback_map_preview                    },
+    { "loopback_map_upload",                     run_loopback_map_upload                     },
     { "gate1_viewtick_loopback",                 run_gate1_viewtick_loopback                 },
     { "gate1_host_noop",                         run_gate1_host_noop                         },
     { "interp_jitter_e2e",                       run_interp_jitter_e2e                       },

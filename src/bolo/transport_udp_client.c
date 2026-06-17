@@ -256,30 +256,36 @@ typedef struct {
      * it uniformly (loopback, LAN, missing MMDB). */
     char fallbackCountry[3];
 
-    /* Lobby map upload — the chunked PACKET_LOBBY_MAP_UPLOAD_* state
-     * machine that used to live in imgui_lobby's per-frame pump. The
-     * frontend kicks it off via transportUdpClientStartLobbyMapUpload*
-     * and reads progress back via clientSimGetLobbyMapUpload* status +
-     * Percent getters. Pump fires from udpClientTick once per tick. */
+    /* Lobby map upload — the PACKET_LOBBY_MAP_UPLOAD_* state machine that
+     * used to live in imgui_lobby's per-frame pump. The frontend kicks it
+     * off via transportUdpClientStartLobbyMapUpload* and reads progress back
+     * via clientSimGetLobbyMapUpload* status + Percent getters. Pump fires
+     * from udpClientTick once per tick. After the BEGIN/USE_LOCAL handshake
+     * is ACKed the map bytes ride CHANNEL_BULK via uploadSend (a BulkSender),
+     * reliably reassembled by the server's bulk receiver. */
     bool      uploadActive;
     uint8_t  *uploadBuf;                  /* malloc'd, sized to uploadTotal */
     uint32_t  uploadTotal;
-    uint32_t  uploadOffset;               /* bytes already sent via CHUNK */
+    uint32_t  uploadOffset;               /* blob bytes handed to the channel,
+                                           * for the progress-percent getter   */
     char      uploadName[128];            /* wire-side filename announced to server */
+    BulkSender uploadSend;                /* feeds the map bytes onto CHANNEL_BULK */
+    bool      uploadBulkStarted;          /* bulkSenderBegin issued post-ACK */
+    bool      uploadFedDone;              /* whole blob handed to the channel */
     /* USE_LOCAL pre-check: when the source path resolves under
      * data/maps/, the kick computes md5 + the data/maps-relative
      * filename and sends PACKET_LOBBY_MAP_USE_LOCAL first. On
-     * USE_LOCAL_NACK the pump transitions to BEGIN+CHUNK using the
-     * bytes already buffered. */
+     * USE_LOCAL_NACK the pump transitions to the BEGIN + bulk-stream flow
+     * using the bytes already buffered. */
     bool      uploadUseLocalPending;      /* USE_LOCAL sent, awaiting ACK/NACK */
     bool      uploadBeginSent;            /* BEGIN sent (USE_LOCAL never tried, or NACKed) */
     /* Watchdog timestamps (SDL ticks ms). Reset on forward progress:
-     * status flip, offset advance, or the transition to awaiting-DONE
-     * after the last chunk. */
+     * status flip, a bulk-channel ack advance, or the transition to
+     * awaiting-DONE once the whole blob has been handed to the channel. */
     uint64_t  uploadStartedMs;
     uint8_t   uploadPrevStatus;
     uint64_t  uploadPrevProgressMs;
-    uint32_t  uploadPrevOffset;
+    uint32_t  uploadPrevAcked;            /* last observed CHANNEL_BULK ackedSeq */
 
     /* Runtime network impairment on the inbound (server->client) and
      * outbound (client->server) datagram paths. Disabled unless the
@@ -305,9 +311,7 @@ typedef struct {
 } TransportUdpClientCtx;
 
 #define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
-#define UPLOAD_STALL_TIMEOUT_MS 10000  /* no chunk progress */
-#define UPLOAD_CHUNK_SIZE       1024
-#define UPLOAD_CHUNKS_PER_TICK  8
+#define UPLOAD_STALL_TIMEOUT_MS 10000  /* no bulk-ack progress */
 
 /* Diagnostic-only: one-shot guard so we log the kernel-assigned local
  * port once per process the first time getsockname() returns a non-zero
@@ -3137,6 +3141,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     channelMuxInit(&c->channelMux);
     c->channelFramesRx = 0;
     bulkReceiverInit(&c->bulkRecv);
+    bulkSenderInit(&c->uploadSend);
 
     /* Optional runtime network impairment from WB_NETIMPAIR
      * (e.g. WB_NETIMPAIR=delay=75,jitter=30,loss=2,burst=2). Same spec
@@ -3207,6 +3212,7 @@ void transportUdpClientDestroy(Transport *t) {
     if (c->uploadBuf != NULL) {
         free(c->uploadBuf);
     }
+    bulkSenderReset(&c->uploadSend);
     free(c);
     t->ctx = NULL;
 }
@@ -3700,26 +3706,6 @@ static void udpClientUploadSendUseLocal(TransportUdpClientCtx *c,
     }
 }
 
-static void udpClientUploadSendChunk(TransportUdpClientCtx *c,
-                                      uint32_t offset,
-                                      const uint8_t *data,
-                                      uint16_t dataLen) {
-    uint8_t buf[PACKET_HEADER_SIZE + 4 + 2 + 1024];
-    int len;
-
-    if (dataLen == 0 || data == NULL) return;
-    if (dataLen > UPLOAD_CHUNK_SIZE) return;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
-
-    packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_CHUNK, c->outSequence++);
-    /* Fixed header is generated; the data memcpy stays hand-written. */
-    MapUploadChunkHeader hdr = { offset, dataLen };
-    packMapUploadChunkHeader(buf + PACKET_HEADER_SIZE, &hdr);
-    memcpy(buf + PACKET_HEADER_SIZE + 6, data, dataLen);
-    len = PACKET_HEADER_SIZE + 6 + dataLen;
-    udpClientSendTo(c, buf, len);
-}
-
 void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
                                                 uint32_t totalLen,
                                                 const char *name) {
@@ -3735,35 +3721,30 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t,
                                  name, relPath, md5);
 }
 
-void transportUdpClientSendLobbyMapUploadChunk(Transport *t,
-                                                uint32_t offset,
-                                                const uint8_t *data,
-                                                uint16_t dataLen) {
-    udpClientUploadSendChunk((TransportUdpClientCtx *)t->ctx, offset,
-                              data, dataLen);
-}
-
 /* === Lobby map upload — state machine =============================
  *
  * Moved from imgui_lobby.cpp (lobbyUploadKick / lobbyUploadPump). The
- * transport owns the bytes, the BEGIN/USE_LOCAL handshake, the chunk
- * pump (paced from udpClientTick), and the watchdog. */
+ * transport owns the bytes, the BEGIN/USE_LOCAL handshake, the bulk-stream
+ * send (paced from udpClientTick), and the watchdog. */
 
 static void udpClientUploadCleanup(TransportUdpClientCtx *c) {
     if (c->uploadBuf != NULL) {
         free(c->uploadBuf);
         c->uploadBuf = NULL;
     }
+    bulkSenderReset(&c->uploadSend);
     c->uploadActive          = false;
     c->uploadTotal           = 0;
     c->uploadOffset          = 0;
     c->uploadName[0]         = '\0';
+    c->uploadBulkStarted     = false;
+    c->uploadFedDone         = false;
     c->uploadUseLocalPending = false;
     c->uploadBeginSent       = false;
     c->uploadStartedMs       = 0;
     c->uploadPrevStatus      = 0;
     c->uploadPrevProgressMs  = 0;
-    c->uploadPrevOffset      = 0;
+    c->uploadPrevAcked       = 0;
 }
 
 /* Shared kick: stash the bytes on the transport, optionally try
@@ -3818,7 +3799,7 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
 }
 
 /* Per-tick pump. Drives the upload through the USE_LOCAL → BEGIN →
- * CHUNK → DONE/REJECT lifecycle. */
+ * bulk-stream → DONE/REJECT lifecycle. */
 static void udpClientUploadPump(TransportUdpClientCtx *c) {
     uint8_t st;
     uint64_t now, sinceProgress, sinceStart;
@@ -3839,22 +3820,27 @@ static void udpClientUploadPump(TransportUdpClientCtx *c) {
         return;
     }
 
-    /* Watchdog. Treat the moment the last chunk goes out as one final
-     * forward-progress event (lobby-misc item 10): after the last
-     * CHUNK send, offset stays pinned at uploadTotal while we wait
-     * for MAP_UPLOAD_DONE; without this reset the stall timer would
-     * count against a server that's merely slow to load + reply. */
+    /* Watchdog. Progress is measured by the bulk channel's ack advancing
+     * (the server confirming delivered upload segments) rather than a local
+     * offset walk. Treat the moment the whole blob has been handed to the
+     * channel as one final forward-progress event: thereafter we only wait
+     * for MAP_UPLOAD_DONE, and the stall timer must not count against a
+     * server merely slow to load + reply. */
     now = SDL_GetTicks();
-    advanced = (c->uploadPrevStatus != st) ||
-               (c->uploadPrevOffset != c->uploadOffset);
-    if (st >= 2 && c->uploadOffset == c->uploadTotal &&
-        c->uploadPrevOffset < c->uploadTotal) {
-        advanced = true;
-    }
-    if (advanced) {
-        c->uploadPrevStatus     = st;
-        c->uploadPrevOffset     = c->uploadOffset;
-        c->uploadPrevProgressMs = now;
+    {
+        uint32_t acked = c->channelMux.ch[CHANNEL_BULK].ackedSeq;
+        advanced = (c->uploadPrevStatus != st) ||
+                   (c->uploadPrevAcked != acked);
+        if (c->uploadBulkStarted && !c->uploadFedDone &&
+            !bulkSenderBusy(&c->uploadSend)) {
+            c->uploadFedDone = true;
+            advanced = true;
+        }
+        if (advanced) {
+            c->uploadPrevStatus     = st;
+            c->uploadPrevAcked      = acked;
+            c->uploadPrevProgressMs = now;
+        }
     }
     if (c->uploadStartedMs == 0) c->uploadStartedMs = now;
     sinceProgress = now - c->uploadPrevProgressMs;
@@ -3867,7 +3853,7 @@ static void udpClientUploadPump(TransportUdpClientCtx *c) {
         timedOut = true;
     } else if (st >= 2 && sinceProgress > UPLOAD_STALL_TIMEOUT_MS) {
         WB_LOG_WARN(WB_LOG_CAT_NET,
-            "upload watchdog: no chunk progress in %llums — freeing",
+            "upload watchdog: no bulk-ack progress in %llums — freeing",
             (unsigned long long)sinceProgress);
         timedOut = true;
     }
@@ -3877,8 +3863,8 @@ static void udpClientUploadPump(TransportUdpClientCtx *c) {
     }
 
     /* USE_LOCAL was NACKed: the server doesn't have a matching file at
-     * the relative path / MD5. Fall back to BEGIN + CHUNK against the
-     * bytes already buffered. */
+     * the relative path / MD5. Fall back to BEGIN + the bulk-stream flow
+     * against the bytes already buffered. */
     if (c->uploadUseLocalPending &&
         clientSimConsumeUseLocalFallback(c->clientSim)) {
         udpClientUploadSendBegin(c, c->uploadTotal, c->uploadName);
@@ -3890,20 +3876,33 @@ static void udpClientUploadPump(TransportUdpClientCtx *c) {
     /* Still waiting on ACK to BEGIN (status flips to 2 on ACK). */
     if (st != 2) return;
 
-    /* Chunk pump — UPLOAD_CHUNKS_PER_TICK chunks per tick paces a 1 MB
-     * upload to roughly 130 ticks (~2.5 s at 50 fps) without flooding
-     * the server's receive window. */
-    {
-        int i;
-        for (i = 0; i < UPLOAD_CHUNKS_PER_TICK &&
-                    c->uploadOffset < c->uploadTotal; i++) {
-            uint32_t remaining = c->uploadTotal - c->uploadOffset;
-            uint16_t cur = (remaining > UPLOAD_CHUNK_SIZE)
-                           ? UPLOAD_CHUNK_SIZE
-                           : (uint16_t)remaining;
-            udpClientUploadSendChunk(c, c->uploadOffset,
-                                      c->uploadBuf + c->uploadOffset, cur);
-            c->uploadOffset += cur;
+    /* Approved: stage the map bytes onto CHANNEL_BULK once, then feed the
+     * stream as the window drains. The channel handles fragmentation and
+     * retransmit, so a lost middle segment recovers instead of corrupting. */
+    if (!c->uploadBulkStarted) {
+        BulkStreamHeader h;
+        size_t nameLen = strlen(c->uploadName);
+        if (nameLen > BULK_PATH_MAX) nameLen = BULK_PATH_MAX;
+        memset(&h, 0, sizeof(h));
+        h.kind = BULK_KIND_UPLOAD;
+        h.gen = 0;
+        h.totalSize = c->uploadTotal;
+        h.pathLen = (uint8_t)nameLen;
+        if (nameLen > 0) memcpy(h.path, c->uploadName, nameLen);
+        h.path[nameLen] = '\0';
+        if (bulkSenderBegin(&c->uploadSend, &h, c->uploadBuf, c->uploadTotal)) {
+            c->uploadBulkStarted = true;
+        }
+    }
+    if (c->uploadBulkStarted) {
+        bulkSenderPump(&c->uploadSend, &c->channelMux);
+        /* Mirror fed-bytes into uploadOffset for the progress getter. */
+        if (bulkSenderBusy(&c->uploadSend)) {
+            uint32_t headerLen = c->uploadSend.total - c->uploadTotal;
+            c->uploadOffset = (c->uploadSend.offset > headerLen)
+                              ? (c->uploadSend.offset - headerLen) : 0;
+        } else {
+            c->uploadOffset = c->uploadTotal;
         }
     }
 }

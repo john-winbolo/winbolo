@@ -128,7 +128,6 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_LOBBY_MAP_SEARCH_REQ, "LOBBY_MAP_SEARCH_REQ") \
     X(PACKET_LOBBY_MAP_SEARCH_RSP, "LOBBY_MAP_SEARCH_RSP") \
     X(PACKET_LOBBY_MAP_UPLOAD_BEGIN, "LOBBY_MAP_UPLOAD_BEGIN") \
-    X(PACKET_LOBBY_MAP_UPLOAD_CHUNK, "LOBBY_MAP_UPLOAD_CHUNK") \
     X(PACKET_LOBBY_MAP_UPLOAD_ACK, "LOBBY_MAP_UPLOAD_ACK") \
     X(PACKET_LOBBY_MAP_UPLOAD_DONE, "LOBBY_MAP_UPLOAD_DONE") \
     X(PACKET_LOBBY_MAP_USE_LOCAL, "LOBBY_MAP_USE_LOCAL") \
@@ -234,7 +233,6 @@ BOLO_STATIC_ASSERT(WIRE_MASKED_SIZE_OF(TANK_SNAPSHOT_FIELDS)  == TANK_SNAPSHOT_W
 /* Fixed map-transfer chunk headers. Each precedes a hand-written data payload
  * and chunk loop (reassembly and length validation stay hand-rolled). */
 DEFINE_WIRE_CODEC(MapDownloadChunkHeader, "map_download_chunk_hdr", MAP_DOWNLOAD_CHUNK_HEADER_FIELDS)
-DEFINE_WIRE_CODEC(MapUploadChunkHeader,   "map_upload_chunk_hdr",   MAP_UPLOAD_CHUNK_HEADER_FIELDS)
 
 /* Serialize one GameEvent into buf. Returns bytes written (1 + dataSize). */
 int packGameEvent(uint8_t *buf, const GameEvent *ev) {

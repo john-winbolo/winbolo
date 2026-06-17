@@ -318,8 +318,11 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_SET_BOT_BRAIN  166  /* { slot 1, pathLen 1, path N } */
 #define PACKET_LOBBY_SET_MAP        167  /* { pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } */
-#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { totalLen 4, nameLen 1, name N } */
-#define PACKET_LOBBY_MAP_UPLOAD_CHUNK  170  /* { offset 4, dataLen 2, data N } */
+#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { totalLen 4, nameLen 1, name N }
+                                              * the map bytes then stream over
+                                              * CHANNEL_BULK behind a bulk-
+                                              * transfer stream header; 170 (the
+                                              * old CHUNK carrier) is retired. */
 #define PACKET_LOBBY_MAP_USE_LOCAL     196  /* client -> server: "I want to
                                               * install this map; if you
                                               * already have a file with

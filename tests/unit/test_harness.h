@@ -425,6 +425,9 @@ int run_loopback_channel(void);
 /* Server-map preview over CHANNEL_BULK (test_loopback_preview.c): a real .map
  * file streamed back under loss and reassembled byte-identical on the client. */
 int run_loopback_map_preview(void);
+/* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
+ * uploaded under loss completes and the server decodes the reassembled bytes. */
+int run_loopback_map_upload(void);
 
 /* Gate-#1 render-path integration (test_gate1_integration.c): the viewTick
  * ±1-snapshot invariant over the real loopback transport, and the

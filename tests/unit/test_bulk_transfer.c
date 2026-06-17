@@ -447,6 +447,51 @@ done:
     return 0;
 }
 
+/* ---- case 6: the kind byte is opaque — an UPLOAD blob reassembles the same
+ *      way a PREVIEW one does (the framing carries any transferKind) ---- */
+
+static int t_upload_kind(void) {
+    TestSink sink;
+    BulkReceiver rcv;
+    BulkRecvSink rsink;
+    BulkStreamHeader h;
+    uint8_t wire[BULK_STREAM_HEADER_MAX + 64];
+    uint8_t blob[40];
+    uint32_t pos;
+    int i;
+
+    sinkInit(&sink);
+    rsink.onBegin = sinkOnBegin;
+    rsink.onComplete = sinkOnComplete;
+    rsink.ctx = &sink;
+    bulkReceiverInit(&rcv);
+
+    for (i = 0; i < (int)sizeof(blob); i++) blob[i] = (uint8_t)(0xC0 + i);
+    memset(&h, 0, sizeof(h));
+    h.kind = BULK_KIND_UPLOAD;
+    h.gen = 0;
+    h.totalSize = sizeof(blob);
+    h.pathLen = 9;
+    memcpy(h.path, "Foo.map", 7);
+    h.path[7] = '\0';
+    h.pathLen = (uint8_t)strlen(h.path);
+    pos = (uint32_t)bulkPackStreamHeader(wire, &h);
+    memcpy(wire + pos, blob, sizeof(blob));
+    pos += sizeof(blob);
+
+    /* Feed in two arbitrary splits to exercise the header/body boundary. */
+    bulkReceiverFeed(&rcv, wire, 5, &rsink);
+    bulkReceiverFeed(&rcv, wire + 5, pos - 5, &rsink);
+
+    if (sink.completions != 1 || sink.blobKind[0] != BULK_KIND_UPLOAD ||
+        sink.blobLen[0] != sizeof(blob) ||
+        strcmp(sink.blobPath[0], "Foo.map") != 0 ||
+        memcmp(sink.blob[0], blob, sizeof(blob)) != 0) {
+        UT_FAIL("UPLOAD-kind blob did not reassemble");
+    }
+    return 0;
+}
+
 int run_bulk_transfer(void) {
     int rc = t_header_roundtrip();
     if (rc != 0) return rc;
@@ -456,5 +501,7 @@ int run_bulk_transfer(void) {
     if (rc != 0) return rc;
     rc = t_pipelining();
     if (rc != 0) return rc;
-    return t_serializer_guard();
+    rc = t_serializer_guard();
+    if (rc != 0) return rc;
+    return t_upload_kind();
 }

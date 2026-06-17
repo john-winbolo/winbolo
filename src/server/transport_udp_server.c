@@ -304,6 +304,9 @@ static struct {
      * window drains; busy while a transfer is mid-flight so two never
      * interleave on one client's byte stream. */
     BulkSender              bulkSend[MAX_TANKS];
+    /* Per-client client->server bulk receiver. Reassembles a map upload
+     * streamed on CHANNEL_BULK after the BEGIN/ACK handshake approves it. */
+    BulkReceiver            bulkRecvUp[MAX_TANKS];
     /* Suppress immediate-send-on-enqueue during the sync-replay burst
      * fired by serverSimRegisterSubscriber, so one carrier datagram
      * packs all replayed events instead of one per event.  Set/cleared
@@ -330,11 +333,11 @@ static struct {
 
     /* Per-client map upload state. clientUploadActive=true between
      * PACKET_LOBBY_MAP_UPLOAD_BEGIN and the final write-out at
-     * MAP_UPLOAD_DONE. clientUploadHave tracks the highest contiguous
-     * byte received. clientUploadBuf is a fixed slot of UPLOAD_MAX_BYTES. */
+     * MAP_UPLOAD_DONE. clientUploadTotal is the approved byte count the
+     * incoming bulk transfer must match. clientUploadBuf is a fixed slot of
+     * UPLOAD_MAX_BYTES the bulk receiver reassembles into. */
     bool     clientUploadActive[MAX_TANKS];
     uint32_t clientUploadTotal[MAX_TANKS];
-    uint32_t clientUploadHave[MAX_TANKS];
     uint8_t  clientUploadBuf[MAX_TANKS][UPLOAD_MAX_BYTES];
     char     clientUploadName[MAX_TANKS][128];
     uint8_t  clientReqCooldownTicks[MAX_TANKS];
@@ -1096,9 +1099,9 @@ static void udpServerClearClientUploadState(int idx) {
     if (idx < 0 || idx >= MAX_TANKS) return;
     udpServer.clientUploadActive[idx]   = false;
     udpServer.clientUploadTotal[idx]    = 0;
-    udpServer.clientUploadHave[idx]     = 0;
     udpServer.clientUploadName[idx][0]  = '\0';
     udpServer.clientReqCooldownTicks[idx] = 0;
+    bulkReceiverInit(&udpServer.bulkRecvUp[idx]);
 }
 
 /* Authority check used by every lobby command handler.
@@ -1879,6 +1882,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     channelMuxInit(&udpServer.channelMux[slot]);
     udpServer.channelFramesRx[slot] = 0;
     bulkSenderInit(&udpServer.bulkSend[slot]);
+    bulkReceiverInit(&udpServer.bulkRecvUp[slot]);
 
     /* Merge client-supplied hints with server-determined WBN trust into a
      * single clientFlags byte, then run the four-step join sequence so a
@@ -2035,6 +2039,99 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     lobbyAutoUnreadyOnChange(sim);
 }
 
+/* Reassembled-upload completion: hand the bytes to the sim (in-memory reload,
+ * plus a persist stage under PERSIST policy), clear the per-client upload slot,
+ * and reply MAP_UPLOAD_DONE. The bytes already sit in clientUploadBuf because
+ * the bulk receiver's onBegin pointed it there. */
+static void serverFinishUpload(ServerSim *sim, int clientIdx) {
+    uint32_t total = udpServer.clientUploadTotal[clientIdx];
+    const char *origName = udpServer.clientUploadName[clientIdx];
+
+    char displayName[MAP_STR_SIZE];
+    SDL_strlcpy(displayName, origName, sizeof(displayName));
+    {
+        size_t dlen = SDL_strlen(displayName);
+        if (dlen >= 4 &&
+            SDL_strcasecmp(displayName + dlen - 4, ".map") == 0) {
+            displayName[dlen - 4] = '\0';
+        }
+    }
+
+    bool previewed = serverSimReloadCompressedInMemory(
+        sim, udpServer.clientUploadBuf[clientIdx], (int)total, displayName);
+
+    if (previewed && udpServer.uploadPolicy == UPLOAD_POLICY_PERSIST) {
+        memcpy(udpServer.pendingPersistBytes,
+               udpServer.clientUploadBuf[clientIdx], total);
+        udpServer.pendingPersistLen = total;
+        SDL_strlcpy(udpServer.pendingPersistName, displayName,
+                    sizeof(udpServer.pendingPersistName));
+        udpServer.pendingPersistActive = true;
+    }
+
+    udpServer.clientUploadActive[clientIdx] = false;
+    udpServer.clientUploadTotal[clientIdx]  = 0;
+
+    char relReturn[256];
+    SDL_snprintf(relReturn, sizeof(relReturn), "Uploads/%s", origName);
+    int relLen = (int)SDL_strlen(relReturn);
+    if (relLen > 255) relLen = 255;
+    uint8_t done[PACKET_HEADER_SIZE + 2 + 256];
+    int dpos = PACKET_HEADER_SIZE;
+    packHeader(done, PACKET_LOBBY_MAP_UPLOAD_DONE, 0);
+    done[dpos++] = previewed ? 0 : LOBBY_REJECT_INVALID;
+    done[dpos++] = (uint8_t)relLen;
+    memcpy(done + dpos, relReturn, relLen);
+    dpos += relLen;
+    srvSendTo(done, dpos, &udpServer.clients[clientIdx].addr);
+}
+
+/* Bulk-receiver sink for a client->server map upload on CHANNEL_BULK. onBegin
+ * validates the announced size against the approved BEGIN and the hard cap,
+ * then points the receiver at the per-client upload buffer; onComplete runs
+ * the reload/persist + DONE reply. */
+typedef struct {
+    ServerSim *sim;
+    int        clientIdx;
+} ServerUploadSinkCtx;
+
+static uint8_t *serverBulkUploadOnBegin(void *vctx, const BulkStreamHeader *h) {
+    ServerUploadSinkCtx *ctx = (ServerUploadSinkCtx *)vctx;
+    int idx = ctx->clientIdx;
+    if (h->kind != BULK_KIND_UPLOAD) return NULL;
+    if (!udpServer.clientUploadActive[idx]) return NULL;        /* no approved BEGIN */
+    if (h->totalSize != udpServer.clientUploadTotal[idx]) return NULL; /* size mismatch */
+    if (h->totalSize == 0 || h->totalSize > LOBBY_MAP_UPLOAD_MAX_BYTES) return NULL;
+    return udpServer.clientUploadBuf[idx];
+}
+
+static void serverBulkUploadOnComplete(void *vctx, const BulkStreamHeader *h,
+                                       uint8_t *buf) {
+    ServerUploadSinkCtx *ctx = (ServerUploadSinkCtx *)vctx;
+    (void)h;
+    (void)buf;
+    serverFinishUpload(ctx->sim, ctx->clientIdx);
+}
+
+/* Drain every stream fragment waiting on this client's CHANNEL_BULK through the
+ * upload receiver. Called wherever the client's channel frames are ingested. */
+static void serverDrainBulk(ServerSim *sim, int clientIdx) {
+    ServerUploadSinkCtx ctx;
+    BulkRecvSink sink;
+    uint8_t chanBuf[CHANNEL_MAX_SEG];
+    uint16_t chanLen;
+    ctx.sim = sim;
+    ctx.clientIdx = clientIdx;
+    sink.onBegin = serverBulkUploadOnBegin;
+    sink.onComplete = serverBulkUploadOnComplete;
+    sink.ctx = &ctx;
+    while (channelReceive(&udpServer.channelMux[clientIdx], CHANNEL_BULK,
+                          chanBuf, &chanLen)) {
+        bulkReceiverFeed(&udpServer.bulkRecvUp[clientIdx], chanBuf, chanLen,
+                         &sink);
+    }
+}
+
 /* Handle input packet from a connected client */
 static void serverHandleInput(const uint8_t *buf, int len,
                               const struct sockaddr_in *fromAddr,
@@ -2118,6 +2215,7 @@ static void serverHandleInput(const uint8_t *buf, int len,
         channelRecvFrame(&udpServer.channelMux[clientIdx],
                          buf + pos, len - pos) >= 0) {
         udpServer.channelFramesRx[clientIdx]++;
+        serverDrainBulk(sim, clientIdx);
     }
 }
 
@@ -2479,6 +2577,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.channelFramesRx[idx] = 0;
     udpServer.mapGen[idx] = 0;
     bulkSenderReset(&udpServer.bulkSend[idx]);
+    bulkReceiverInit(&udpServer.bulkRecvUp[idx]);
 
     /* Release any in-flight upload state. Without this, a client
      * who drops mid-upload would leave clientUploadActive set,
@@ -3597,6 +3696,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                  buf + PACKET_HEADER_SIZE,
                                  len - PACKET_HEADER_SIZE) >= 0) {
                 udpServer.channelFramesRx[clientIdx]++;
+                serverDrainBulk(sim, clientIdx);
             }
             break;
         }
@@ -3849,7 +3949,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
              * UPLOAD_DONE — no byte transfer needed. On any miss
              * (permission, path/name unsafe, file missing, MD5
              * mismatch) reply MAP_USE_LOCAL_NACK and let the client
-             * fall back to the regular UPLOAD_BEGIN/CHUNK flow. */
+             * fall back to the regular UPLOAD_BEGIN + bulk-stream flow. */
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
@@ -4091,87 +4191,16 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
 
             udpServer.clientUploadActive[clientIdx] = true;
             udpServer.clientUploadTotal[clientIdx]  = totalLen;
-            udpServer.clientUploadHave[clientIdx]   = 0;
             SDL_strlcpy(udpServer.clientUploadName[clientIdx], nameBuf,
                         sizeof(udpServer.clientUploadName[clientIdx]));
+            /* Fresh receiver for this transfer; the bulk stream that follows
+             * carries the bytes (no offset reassembly). */
+            bulkReceiverInit(&udpServer.bulkRecvUp[clientIdx]);
 
             uint8_t ack[PACKET_HEADER_SIZE + 1];
             packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
             ack[PACKET_HEADER_SIZE] = 0;
             srvSendTo(ack, sizeof(ack), fromAddr);
-            break;
-        }
-        case PACKET_LOBBY_MAP_UPLOAD_CHUNK: {
-            /* [header 8] [offset 4] [dataLen 2] [data N]. Server
-             * accumulates into the per-client buffer and on completion
-             * hands the bytes to the sim, then replies with
-             * MAP_UPLOAD_DONE. */
-            int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0 ||
-                !udpServer.clientUploadActive[clientIdx]) break;
-            /* Fixed header is generated; the data memcpy and reassembly
-             * below stay hand-written. */
-            MapUploadChunkHeader hdr;
-            if (unpackMapUploadChunkHeader(buf + PACKET_HEADER_SIZE,
-                                           (size_t)(len - PACKET_HEADER_SIZE), &hdr) == 0) break;
-            uint32_t offset = hdr.offset; uint16_t dataLen = hdr.dataLen;
-            uint32_t total = udpServer.clientUploadTotal[clientIdx];
-            if (dataLen == 0 || dataLen > 1024 ||
-                offset + dataLen > total ||
-                len < PACKET_HEADER_SIZE + 6 + dataLen) break;
-            memcpy(udpServer.clientUploadBuf[clientIdx] + offset,
-                   buf + PACKET_HEADER_SIZE + 6, dataLen);
-            if (offset + dataLen > udpServer.clientUploadHave[clientIdx]) {
-                udpServer.clientUploadHave[clientIdx] = offset + dataLen;
-            }
-
-            if (udpServer.clientUploadHave[clientIdx] == total) {
-                const char *origName = udpServer.clientUploadName[clientIdx];
-
-                char displayName[MAP_STR_SIZE];
-                SDL_strlcpy(displayName, origName, sizeof(displayName));
-                {
-                    size_t dlen = SDL_strlen(displayName);
-                    if (dlen >= 4 &&
-                        SDL_strcasecmp(displayName + dlen - 4,
-                                       ".map") == 0) {
-                        displayName[dlen - 4] = '\0';
-                    }
-                }
-
-                bool previewed = serverSimReloadCompressedInMemory(
-                    sim,
-                    udpServer.clientUploadBuf[clientIdx],
-                    (int)total,
-                    displayName);
-
-                if (previewed && udpServer.uploadPolicy == UPLOAD_POLICY_PERSIST) {
-                    memcpy(udpServer.pendingPersistBytes,
-                           udpServer.clientUploadBuf[clientIdx], total);
-                    udpServer.pendingPersistLen = total;
-                    SDL_strlcpy(udpServer.pendingPersistName, displayName,
-                                sizeof(udpServer.pendingPersistName));
-                    udpServer.pendingPersistActive = true;
-                }
-
-                udpServer.clientUploadActive[clientIdx] = false;
-                udpServer.clientUploadHave[clientIdx]   = 0;
-                udpServer.clientUploadTotal[clientIdx]  = 0;
-
-                char relReturn[256];
-                SDL_snprintf(relReturn, sizeof(relReturn), "Uploads/%s",
-                             origName);
-                int relLen = (int)SDL_strlen(relReturn);
-                if (relLen > 255) relLen = 255;
-                uint8_t done[PACKET_HEADER_SIZE + 2 + 256];
-                int dpos = PACKET_HEADER_SIZE;
-                packHeader(done, PACKET_LOBBY_MAP_UPLOAD_DONE, 0);
-                done[dpos++] = previewed ? 0 : LOBBY_REJECT_INVALID;
-                done[dpos++] = (uint8_t)relLen;
-                memcpy(done + dpos, relReturn, relLen);
-                dpos += relLen;
-                srvSendTo(done, dpos, fromAddr);
-            }
             break;
         }
         case PACKET_LOBBY_MAP_SEARCH_REQ: {

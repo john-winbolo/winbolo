@@ -277,9 +277,6 @@ void transportUdpClientSendLobbyMapPreviewRequest(Transport *t,
                                                   const char *relPath);
 void transportUdpClientSendLobbyMapUploadBegin(Transport *t, uint32_t totalLen,
                                                const char *name);
-void transportUdpClientSendLobbyMapUploadChunk(Transport *t, uint32_t offset,
-                                               const uint8_t *data,
-                                               uint16_t dataLen);
 /* Pre-upload optimisation: try to skip the byte transfer if the server
  * already has an identical file at relPath (relative to data/maps/).
  * Server replies PACKET_LOBBY_MAP_UPLOAD_DONE on match, or

@@ -2585,6 +2585,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_quiet_lobby_control_loss.c
     tests/unit/test_loopback_channel.c
     tests/unit/test_loopback_preview.c
+    tests/unit/test_loopback_upload.c
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
@@ -2916,6 +2917,7 @@ set(_unit_test_names
     loopback_quiet_lobby_control_loss
     loopback_channel
     loopback_map_preview
+    loopback_map_upload
     gate1_viewtick_loopback
     gate1_host_noop
     interp_jitter_e2e
