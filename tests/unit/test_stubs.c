@@ -266,6 +266,11 @@ void netErrorOccured(void) {}
 bool wbnStubRunning = FALSE;
 int  wbnStubLobbyUpdateCalls = 0;
 
+/* winboloNetSendLock spy: the auto-lock-on-game-start tests watch these to
+ * prove the lock state is reported to WinBolo.net (and with which value). */
+int  wbnStubSendLockCalls = 0;
+bool wbnStubLastLockReported = FALSE;
+
 bool winbolonetIsRunning(void) { return wbnStubRunning; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
@@ -275,7 +280,10 @@ void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
   (void)playerNum; (void)numPlayers; (void)freeBases; (void)freePills;
 }
-void winboloNetSendLock(bool isLocked) { (void)isLocked; }
+void winboloNetSendLock(bool isLocked) {
+  wbnStubSendLockCalls++;
+  wbnStubLastLockReported = isLocked;
+}
 bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return FALSE; }
 bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName,
                                BYTE playerNum, char *errorMsg,

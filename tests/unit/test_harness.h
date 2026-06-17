@@ -274,6 +274,15 @@ int run_nonhost_departs_keeps_host(void);
 int run_host_reassign_skips_bots(void);
 int run_lobby_reset_clears_host_slot(void);
 
+/* Auto-lock on game start (test_autolock_on_game_start.c). The lobby stays
+ * open to joiners, but the round start closes the join gate and the
+ * transport lock and reports the lock to WinBolo.net. */
+int run_autolock_lobby_stays_open(void);
+int run_autolock_locks_on_start_wire(void);
+int run_autolock_locks_on_start_inplace(void);
+int run_autolock_join_blocked_after_start(void);
+int run_no_autolock_stays_open_on_start(void);
+
 /* Tree-growth water regressions (test_treegrow_no_sea.c). A converged
  * grow target survives serverSimResetGameWorld and, on the next map,
  * points at open sea; the grow gate also failed to reject DEEP_SEA. */

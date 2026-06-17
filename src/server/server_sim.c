@@ -3881,6 +3881,19 @@ static void serverSimStaggerBaseTimers(ServerSim *sim) {
     }
 }
 
+/* On game start, honour autoLockOnGameStart: if the lobby is still open to
+ * new players, close it and raise the transport admin lock so the locked
+ * state reaches connected clients and WinBolo.net (winboloNetSendLock).
+ * Mirrors the console "lock" command, driven by the lobby setting at the
+ * moment the round begins. */
+static void serverSimApplyAutoLockOnGameStart(ServerSim *sim) {
+    sim->savedAllowNewPlayers = sim->allowNewPlayers;
+    if (sim->autoLockOnGameStart && sim->allowNewPlayers) {
+        sim->allowNewPlayers = FALSE;
+        transportUdpServerSetLock(sim, TRUE);
+    }
+}
+
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
@@ -3943,13 +3956,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
 
     sim->state = serverStateRunning;
 
-    /* Layout A: autoLockOnGameStart. Save current allowNewPlayers so
-     * we can restore it when the game ends. */
-    sim->savedAllowNewPlayers = sim->allowNewPlayers;
-    if (sim->autoLockOnGameStart && sim->allowNewPlayers) {
-        sim->allowNewPlayers = FALSE;
-        transportUdpServerSetLock(sim, FALSE);
-    }
+    serverSimApplyAutoLockOnGameStart(sim);
 
     /* Reset per-client reliable-event queues BEFORE publishing the
      * RUNNING phase, so CTRL_GAME_PHASE_RUNNING enters every queue at
@@ -4075,6 +4082,7 @@ void serverSimStartGame(ServerSim *sim) {
     serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
+    serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
 
     /* A snapshot will be written on the first running tick
