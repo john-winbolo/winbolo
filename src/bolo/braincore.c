@@ -1718,6 +1718,32 @@ static int l_cpf_lgm_travel_ticks_map(lua_State *L) {
   return 1;
 }
 
+/* cpf_set_lgm_blocked(tiles) — tiles is an array of { mx, my } pairs (each a
+ * 2-element table). Clears the LGM-impassable overlay, then marks each tile so
+ * the LGM travel sim treats it as a wall. The bot's brain map is PURE TERRAIN
+ * (botUpdateBrainMap stamps no pills/bases), so the sim can't see them — the
+ * brain stamps both live pills and enemy bases here each tick to match the
+ * engine's mapGetManSpeed (see brain_pathfinder.c lgmGetBrainManSpeed). */
+static int l_cpf_set_lgm_blocked(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderClearLgmBlock(pf);
+  if (lua_istable(L, 1)) {
+    int n = (int)lua_rawlen(L, 1);
+    int i;
+    for (i = 1; i <= n; i++) {
+      lua_rawgeti(L, 1, i);          /* push tiles[i] */
+      if (lua_istable(L, -1)) {
+        BYTE mx, my;
+        lua_rawgeti(L, -1, 1); mx = (BYTE)luaL_checkinteger(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, -1, 2); my = (BYTE)luaL_checkinteger(L, -1); lua_pop(L, 1);
+        brainPathfinderSetLgmBlock(pf, mx, my);
+      }
+      lua_pop(L, 1);                 /* pop tiles[i] */
+    }
+  }
+  return 0;
+}
+
 static int l_cpf_estimate_tank_travel_ticks(lua_State *L) {
   CPF_GET(L);
   int sx = (int)luaL_checkinteger(L, 1);
@@ -1917,6 +1943,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_danger_at",             l_cpf_danger_at },
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
+    { "cpf_set_lgm_blocked",       l_cpf_set_lgm_blocked },
     { "cpf_estimate_tank_travel_ticks", l_cpf_estimate_tank_travel_ticks },
     { "cpf_dijkstra_shells_at",    l_cpf_dijkstra_shells_at },
     { "cpf_astar_shells_at",       l_cpf_astar_shells_at },

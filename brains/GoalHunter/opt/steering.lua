@@ -848,8 +848,15 @@ local function reposition_steer(state, world, info, goal)
   local corr    = U.adiff(info.direction, aim_dir)
   local h, t = U.aim_turn_bits(corr, 6, 1)
   keys = keys | h; taps = taps | t
-  -- Friendly pill won't shoot back, so fire down to the last shell.
-  if math.abs(corr) <= 1 and (info.shells or 0) > 0 then
+  -- Only fire when the shell actually has a clear line to OUR pill. Without
+  -- this the bot would happily shell whatever sits between us and the pill —
+  -- an enemy base (waking it), another pillbox, a wall, or a friendly tank.
+  -- shot_path_clear is the shared tank-aware sim (blocks on walls/half-walls,
+  -- any live pillbox, allied tanks, and bases of any owner) and excludes the
+  -- target tile, so the trajectory reaching our pill counts as clear.
+  local los_clear = shot_path_clear(info, world, pill_wx, pill_wy, goal.mx, goal.my)
+  -- Friendly pill won't shoot back, so once aligned + clear, fire to the last shell.
+  if math.abs(corr) <= 1 and (info.shells or 0) > 0 and los_clear then
     keys = keys | KEY_SHOOT
   end
   return keys, taps

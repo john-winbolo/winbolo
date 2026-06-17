@@ -622,6 +622,16 @@ function M.lgm_travel_ticks_map(smx, smy, dmx, dmy, bless_mx, bless_my, max_tick
   return cpf_lgm_travel_ticks_map(smx, smy, dmx, dmy, bless_mx, bless_my, max_ticks, stuck_ticks)
 end
 
+--- Mark the tiles the LGM cannot walk onto so the LGM travel sim treats them
+--- as walls. The bot's brain map (pf->map) is PURE TERRAIN — it carries no pill
+--- or base overlay — so the sim can't see live pills (engine manspeed 0) or
+--- enemy bases (basesCantDrive) on its own. The brain stamps both here each
+--- tick. `tiles` is an array of { mx, my } pairs; the overlay is cleared and
+--- rebuilt each call. Call once per tick before any lgm_travel_ticks_map check.
+function M.set_lgm_blocked(tiles)
+  return cpf_set_lgm_blocked(tiles or {})
+end
+
 --- Estimate tank travel time in game ticks along a straight line.
 --- Simulates tick-by-tick movement using the brain's terrain speed table,
 --- tracking boat state transitions. No obstacle avoidance — if the line

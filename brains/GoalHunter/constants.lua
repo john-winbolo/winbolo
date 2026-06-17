@@ -605,6 +605,13 @@ M.REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400  -- 8 s @ 50 Hz: after a friendly shot
 M.ATTACK_PILL_BASE_COST    = 30    -- flat cost added to every attack_pill (like ATTACK_BASE_EXTRA_COST for bases) so a pill take isn't free vs other goals
 M.ATTACK_BASE_EXTRA_COST   = 80    -- flat cost added to hostile base attacks
 M.ATTACK_BASE_THREAT_WEIGHT = 3    -- multiplier for threat at base location (penalise bases behind enemy pills/tanks)
+-- Commit-to-finish: once we put a shot INTO a hostile base, lock onto finishing
+-- it (init.lua goal-override). Stays committed until ATTACK_BASE_COMMIT_TICKS
+-- after the last shot (refreshed each shot), then releases. Only flee or a tank/
+-- LGM within ATTACK_BASE_PREEMPT_SHOOT_TILES preempts — don't chase a far tank/
+-- LGM off a base we're nearly done shooting down.
+M.ATTACK_BASE_COMMIT_TICKS        = 500   -- ~10 s @ 50 Hz since the last shot landed
+M.ATTACK_BASE_PREEMPT_SHOOT_TILES = 8     -- tank/LGM must be within this (≈ shooting distance) to break the base commit
 M.GOAL_CROSSFIRE_PENALTY   = 100   -- goal cost per nearby hostile pill that can crossfire at standoff
 M.EXPLORE_BASE_COST        = 500   -- base cost for exploration fallback
 
@@ -977,6 +984,7 @@ M.PILL_UTILITY_TARGET_FRAC      = 0.25  -- desired share of pills available as b
 M.ALLY_BLOCKER_REJECT_TICKS     = 150   -- ticks a pill stays rejected from our pools after an ally declares it a blocker while we were targeting it (yield window so we don't immediately re-pick it)
 M.PILL_REPOSITION_MIN_SHELLS    = 15    -- need this many shells to reposition (must shoot the pill down to 0 to pick it up)
 M.REPOSITION_DEMOLISH_GRACE_TICKS = 1500 -- ~30s: while demolishing a pill for reposition, suppress repair_pill on it (avoid shoot→repair→shoot oscillation)
+M.REPAIR_REPOSITION_BLOCK_TICKS = 400  -- 8s @ 50Hz: block repair_pill on a pill we're repositioning (driven by the live goal each tick) AND for this long AFTER the reposition goal ends — so a freed pool can't immediately heal the pill we just shot down. Covers the gap REPOSITION_DEMOLISH_GRACE missed (it only refreshes while reposition_steer is firing).
 -- Reposition risk penalties (raise cost = discourage repositioning):
 M.PILL_REPOSITION_FEW_PILLS_THRESHOLD = 3   -- team total pills (deployed + carried) at/below which reposition is penalized
 M.PILL_REPOSITION_FEW_PILLS_PENALTY   = 400 -- cost added when the team has few pills (can't afford to take one offline)

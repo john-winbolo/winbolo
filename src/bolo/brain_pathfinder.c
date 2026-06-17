@@ -3159,8 +3159,23 @@ static const BYTE lgm_man_speed[16] = {
 };
 
 static BYTE lgmGetBrainManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my) {
+  /* Enemy bases the brain stamped as impassable: the terrain type is "refbase"
+   * (walkable) but the engine's mapGetManSpeed returns 0 there for a non-ally,
+   * non-neutral base above capture armour. Mirror that so the LGM sim doesn't
+   * march straight into an enemy base. */
+  if (pf->lgm_block[my * MAP_SIZE + mx]) return 0;
   uint8_t type = pf->map[my * MAP_SIZE + mx] & 0x0F;
   return lgm_man_speed[type];
+}
+
+void brainPathfinderClearLgmBlock(BrainPathfinder *pf) {
+  if (!pf) return;
+  memset(pf->lgm_block, 0, sizeof(pf->lgm_block));
+}
+
+void brainPathfinderSetLgmBlock(BrainPathfinder *pf, BYTE mx, BYTE my) {
+  if (!pf) return;
+  pf->lgm_block[my * MAP_SIZE + mx] = 1;
 }
 
 int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,

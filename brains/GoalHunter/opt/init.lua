@@ -2568,8 +2568,13 @@ function Brain.think(info)
           -- and the normal pickup runs. Stay valid while it's still friendly
           -- and alive and we have ammo to finish the job.
           local lp = world.pills[state.goal.target_id]
+          -- Abort if our LGM is dead: a reposition shoots the pill down to 0
+          -- then needs the LGM to pick it up. With no LGM that just leaves our
+          -- own pill destroyed. (LGM_MOVING is fine — that's the LGM out doing
+          -- the pickup; only LGM_DEAD means we can't finish.)
           if not lp or lp.owner ~= "friendly" or (lp.health or 0) <= 0
-             or (info.shells or 0) <= 0 then
+             or (info.shells or 0) <= 0
+             or info.man_status == C.LGM_DEAD then
             goal_valid = false
           end
         else
@@ -2623,7 +2628,11 @@ function Brain.think(info)
       if p and not p.under_attack then goal_valid = false end
     elseif gk == "repair_pill" then
       local p = W.pill_at(world, gmx, gmy)
-      if not p or p.owner ~= "friendly" or p.health >= C.PILLS_MAX_HEALTH then goal_valid = false end
+      -- Abort if our LGM is dead — no one to do the repair (the eval already
+      -- requires LGM_INTANK to START; this drops a committed goal the moment
+      -- the LGM is killed, so we don't sit on a pill we can't fix).
+      if not p or p.owner ~= "friendly" or p.health >= C.PILLS_MAX_HEALTH
+         or info.man_status == C.LGM_DEAD then goal_valid = false end
     elseif gk == "place_pill_strategic" then
       -- Invalid if we no longer carry a pill, or pill was placed at target
       if (info.carried_pills or 0) == 0 and info.man_status == C.LGM_INTANK then
@@ -2750,6 +2759,44 @@ function Brain.think(info)
       if repositioning or not state.last_team_reposition_tick then
         state.last_team_reposition_tick = now
       end
+    end
+
+    -- Self reposition repair-block: while OUR goal is moving a pill (and for
+    -- REPAIR_REPOSITION_BLOCK_TICKS after it ends), never let repair_pill heal
+    -- the pill we just shot down. Driven by the live goal EVERY tick — more
+    -- reliable than reposition_steer's _demolish, which stops refreshing the
+    -- instant the pill dies (substate→nil) and leaves a window when the goal
+    -- frees to 'none' and a damaged-pill repair suddenly wins (the bug at
+    -- bot2 t=15138). Stamp the goal tile AND the target pill's actual tile.
+    if state.goal and state.goal.kind == "capture_pill" and state.goal.reposition then
+      local rb = state._reposition_block or {}
+      rb.tick  = now
+      rb.tiles = {}
+      if state.goal.mx and state.goal.my then
+        rb.tiles[state.goal.my * C.MAP_W + state.goal.mx] = true
+      end
+      local tp = state.goal.target_id and world.pills[state.goal.target_id]
+      if tp and tp.mx and tp.my then
+        rb.tiles[tp.my * C.MAP_W + tp.mx] = true
+      end
+      state._reposition_block = rb
+    end
+
+    -- attack_base commit latch: once we put a shot INTO a base we're attacking,
+    -- commit to finishing it. Detected by our shell count dropping while the
+    -- executing goal is attack_base; refreshed on every shot so it stays live
+    -- through the whole take, expiring ATTACK_BASE_COMMIT_TICKS after the last
+    -- shot. The goal-override below holds the goal against everything but flee
+    -- or a tank/LGM in shooting distance — so we finish the job instead of
+    -- wandering off to a cheaper routine goal mid-bombardment.
+    do
+      local g = state.goal
+      if g and g.kind == "attack_base" and g.mx
+         and state._base_commit_prev_shells
+         and (info.shells or 0) < state._base_commit_prev_shells then
+        state._base_commit = { mx = g.mx, my = g.my, tick = now }
+      end
+      state._base_commit_prev_shells = info.shells or 0
     end
 
     -- Pill blocker / utility tracking: a pre-existing friendly pill on the
@@ -3215,12 +3262,32 @@ function Brain.think(info)
           blitz_locked = false
         end
       end
+      -- Committed base attack: once a shot is in (latch above), finish the job.
+      -- Holds the goal against all routine goals regardless of cost; releases
+      -- only when the base is dead/captured/gone (let capture_base + the urgent
+      -- capture discount take over) or the commit window has lapsed.
+      local base_commit_locked = state.goal.kind == "attack_base"
+                                 and state._base_commit
+                                 and (now - state._base_commit.tick)
+                                     < (C.ATTACK_BASE_COMMIT_TICKS or 500)
+      if base_commit_locked then
+        local bb = W.base_at(world, state.goal.mx, state.goal.my)
+        if not bb or bb.owner ~= "hostile" or (bb.health or 0) <= 0 then
+          base_commit_locked = false
+        end
+      end
       if swerving then
         new_goal = state.goal  -- swerve is never interrupted, not even by flee
       elseif engage_locked and new_goal.kind ~= "flee_to_base"
                              and new_goal.kind ~= "attack_tank"
-                             and new_goal.kind ~= "capture_pill"
-                             and new_goal.kind ~= "kill_lgm" then
+                             and new_goal.kind ~= "kill_lgm"
+                             and not (new_goal.kind == "capture_pill" and not new_goal.reposition) then
+        -- Hold the charge. A capture_pill REPOSITION (moving our OWN pill) is
+        -- never urgent and must not interrupt a charge — follow the take
+        -- through. A non-reposition capture (dead/neutral-pill grab, e.g. the
+        -- pill we're charging just died) still preempts, as do attack_tank,
+        -- kill_lgm (LGM spike) and flee. Only the capture_pill exemption
+        -- narrowed here.
         new_goal = state.goal  -- keep current goal
       elseif blitz_locked
              and new_goal.kind ~= "flee_to_base"
@@ -3229,6 +3296,14 @@ function Brain.think(info)
                       and U.mdist(cur_mx, cur_my, new_goal.mx or 0, new_goal.my or 0)
                           <= (C.SQUAD_BLITZ_PREEMPT_TANK_TILES or 10)) then
         new_goal = state.goal  -- hold the blitz against non-critical goals
+      elseif base_commit_locked
+             and new_goal.kind ~= "flee_to_base"
+             and not ((new_goal.kind == "attack_tank" or new_goal.kind == "kill_lgm")
+                      and U.mdist(cur_mx, cur_my, new_goal.mx or 0, new_goal.my or 0)
+                          <= (C.ATTACK_BASE_PREEMPT_SHOOT_TILES or 8)) then
+        -- Finish the base: only survival or a tank/LGM in shooting distance
+        -- breaks the commit; a far tank/LGM doesn't pull us off the base.
+        new_goal = state.goal
       end
       -- Compare on (kind, mx, my, target_id). Without target_id in
       -- the comparison, a hostile pill that gets captured + replaced

@@ -171,10 +171,10 @@ M.IDS = {
   charge_status     = { short = "Charge status",
                         long  = "CHARGE: <phase> top-left HUD line" },
   charge_stop_pred  = { short = "Charge stop predict",
-                        default_on = true,  -- TEMP: forced on for stop-predictor testing — revert to default (off) when done
                         long  = "Predicted brake-now stop point (cpf.predict_stop): marker + line from tank, GREEN if a shot from there hits the pill, RED if it falls short. Lets you eyeball whether the stop predictor is accurate." },
+  stop_predict_live = { short = "Stop predict (live)",
+                        long  = "Always-available stop-distance prediction: one orange square per simulated brake step from the tank to the engine-exact brake-now stop point, drawn EVERY tick regardless of substate (charge_stop_pred / approach_stop_pred only draw during those phases). Plus a STOP <dist> spd=<n> label at the stop point." },
   approach_stop_pred = { short = "Approach stop predict",
-                        default_on = true,  -- TEMP: lined-up fast approach tuning
                         long  = "attack_pill approach 'lined-up fast-path': when heading error is small the tank cruises at full speed and brakes off cpf.predict_stop instead of the slow proportional creep. Only drawn while aligned. Line+box = predicted brake-now stop point; small blue box = the approach point we're landing on. GREEN when the predicted stop lands on it, ORANGE while still closing." },
   detree_progress   = { short = "Detree progress",
                         long  = "DETREE N/M (left=K) overlay above tank" },

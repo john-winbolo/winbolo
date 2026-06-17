@@ -9,6 +9,7 @@
 
 local C        = require("constants")
 local U        = require("util")
+local cpf      = require("cpathfinder")
 local danger   = require("danger")
 local threat   = require("threat")
 local kill_lgm = require("kill_lgm")
@@ -371,6 +372,37 @@ function M.update(state, world, info)
     if p.health == 0 and terrain_prev[U.mkey(p.mx, p.my)] == C.T_DEEPSEA then
       perc.deepsea_pill_ids[pid] = true
     end
+  end
+
+  -- LGM-impassable tiles for the reach sim. The bot's brain map (pf->map) is
+  -- PURE TERRAIN — it carries no pill/base overlay — so the LGM travel sim
+  -- can't see either on its own, and the bot would march its LGM straight into
+  -- one and the build never starts. Mirror the engine's mapGetManSpeed here:
+  --   * LIVE pills of ANY owner block (MAP_MANSPEED_TPILLBOX = 0); dead/carried
+  --     pills don't (dead = passable rubble, carried = off-map).
+  --   * Enemy bases block (basesCantDrive: non-ally, non-neutral, armour above
+  --     capture). The brain only sees hostile-base armour fogged to 1 alive / 0
+  --     capturable, so health>0 = "above capture". Alliance-checked off
+  --     owner_player since owner_str lumps ally bases in with "hostile".
+  -- Rebuilt every tick before goal selection's reachability checks run.
+  do
+    local allies  = info.allies or 0
+    local self_pn = info.player_number
+    local blocked = {}
+    for _, p in pairs(world.pills) do
+      if (p.health or 0) > 0 and not p.in_tank then
+        blocked[#blocked + 1] = { p.mx, p.my }
+      end
+    end
+    for _, b in pairs(world.bases) do
+      local op = b.owner_player
+      if op and op ~= NEUTRAL_PLAYER and op ~= self_pn
+         and (allies & (1 << op)) == 0
+         and (b.health or 0) > (C.BASE_MIN_ARMOUR_CAPTURE or 0) then
+        blocked[#blocked + 1] = { b.mx, b.my }
+      end
+    end
+    cpf.set_lgm_blocked(blocked)
   end
 
   -- Friendly-fire repair guard: stamp any friendly pill a friendly shot (own OR

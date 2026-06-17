@@ -309,7 +309,13 @@ local function lgm_can_reach(info, dmx, dmy)
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
   if math.abs(dmx - tmx) + math.abs(dmy - tmy) <= 1 then return true end
-  local ticks = cpf_lgm_travel_ticks_map(tmx, tmy, dmx, dmy, 0, 0, 2000, 150)
+  -- Bless the DESTINATION tile so it's always steppable in the sim: the LGM
+  -- works on its target square (build spot / pill to repair / pickup), so a
+  -- live pill or base AT the destination must not self-block. Pills/bases in
+  -- the PATH are still blocked (perception stamps them via set_lgm_blocked),
+  -- which is the whole point — a friendly pill between us and the spot really
+  -- does stop the LGM. An empty build spot is unaffected (already walkable).
+  local ticks = cpf_lgm_travel_ticks_map(tmx, tmy, dmx, dmy, dmx, dmy, 2000, 150)
   return ticks ~= -1
 end
 
@@ -444,8 +450,11 @@ function M.decide(state, world, info, now)
     local effective_max = DIST_BASE + (DIST_DANGEROUS - DIST_BASE) * t
     local in_range = dist <= effective_max
     local has_trees = info.trees > 0
+    -- Bless the pill tile (destination): the LGM walks onto the damaged pill to
+    -- repair it, so the live-pill stamp must not block its own target. Path
+    -- pills/bases still block.
     local ticks = (in_range and has_trees)
-      and cpf_lgm_travel_ticks_map(tmx, tmy, px, py, 0, 0, 2000, 150)
+      and cpf_lgm_travel_ticks_map(tmx, tmy, px, py, px, py, 2000, 150)
       or -1
     local can_dispatch = in_range and has_trees and ticks > 0
 

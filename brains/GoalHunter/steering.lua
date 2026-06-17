@@ -894,14 +894,22 @@ local function reposition_steer(state, world, info, goal)
   local corr    = U.adiff(info.direction, aim_dir)
   local h, t = U.aim_turn_bits(corr, 6, 1)
   keys = keys | h; taps = taps | t
-  -- Friendly pill won't shoot back, so fire down to the last shell.
-  if math.abs(corr) <= 1 and (info.shells or 0) > 0 then
+  -- Only fire when the shell actually has a clear line to OUR pill. Without
+  -- this the bot would happily shell whatever sits between us and the pill —
+  -- an enemy base (waking it), another pillbox, a wall, or a friendly tank.
+  -- shot_path_clear is the shared tank-aware sim (blocks on walls/half-walls,
+  -- any live pillbox, allied tanks, and bases of any owner) and excludes the
+  -- target tile, so the trajectory reaching our pill counts as clear.
+  local los_clear = shot_path_clear(info, world, pill_wx, pill_wy, goal.mx, goal.my)
+  -- Friendly pill won't shoot back, so once aligned + clear, fire to the last shell.
+  if math.abs(corr) <= 1 and (info.shells or 0) > 0 and los_clear then
     keys = keys | KEY_SHOOT
   end
+  if BRAIN_DEBUG_MODE and not los_clear then print2(string.format("REPOS_NOFIRE t=%d pill#%d@(%d,%d) corr=%.1f blocked-LOS (holding fire)", state.tick or 0, goal.target_id or 0, goal.mx, goal.my, corr)) end
   if BRAIN_DEBUG_MODE and viz.is_on("hud_attack_status") then
     viz.hud_text("hud_attack_status", 10, 44,
-      string.format("Reposition shoot: pill#%d hp=%d shells=%d",
-                    goal.target_id or 0, pill.health or 0, info.shells or 0),
+      string.format("Reposition shoot: pill#%d hp=%d shells=%d los=%s",
+                    goal.target_id or 0, pill.health or 0, info.shells or 0, tostring(los_clear)),
       "topleft", 255, 180, 80)
   end
   return keys, taps
@@ -1166,7 +1174,7 @@ local function attack_pill_steer(state, world, info, goal)
 
     -- Visualize the predicted brake-now stop: line tank->stop + marker, green
     -- if a shot from there hits the pill, red if short. (charge_stop_pred toggle)
-    if BRAIN_DEBUG_MODE then local _r, _g, _b = stop_hits and 60 or 255, stop_hits and 220 or 70, 70; local _sx, _sy = psx / 256, psy / 256; viz.line("charge_stop_pred", info.tankx / 256, info.tanky / 256, _sx, _sy, _r, _g, _b, 150); viz.rect("charge_stop_pred", _sx - 0.35, _sy - 0.35, _sx + 0.35, _sy + 0.35, _r, _g, _b, 200, false); viz.text("charge_stop_pred", _sx, _sy - 0.55, stop_hits and "STOP-HIT" or "STOP-SHORT", "center", _r, _g, _b, 230, 0.3) end
+    if BRAIN_DEBUG_MODE and viz.is_on("charge_stop_pred") then local _r, _g, _b = stop_hits and 60 or 255, stop_hits and 220 or 70, 70; local _sx, _sy = psx / 256, psy / 256; viz.line("charge_stop_pred", info.tankx / 256, info.tanky / 256, _sx, _sy, _r, _g, _b, 150); viz.rect("charge_stop_pred", _sx - 0.35, _sy - 0.35, _sx + 0.35, _sy + 0.35, _r, _g, _b, 200, false); viz.text("charge_stop_pred", _sx, _sy - 0.55, stop_hits and "STOP-HIT" or "STOP-SHORT", "center", _r, _g, _b, 230, 0.3) end
     -- DEBUG: why aren't the hover details showing? Logs whether we reach the
     -- charge branch, whether the layer is on, and whether the detail binding exists.
     if BRAIN_DEBUG_MODE then print2(string.format("STOPSIM_DBG t=%d charge spd=%d viz_on=%s detail_fn=%s", state.tick, info.speed, tostring(viz.is_on("charge_stop_pred")), tostring(overlay_detail ~= nil))) end
@@ -3529,7 +3537,7 @@ function M.steer(state, world, info, goal)
         local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f, espeed, tcap)
         local stop_dist = U.wdist(info.tankx, info.tanky, psx, psy)
         if stop_dist >= adist then keys = keys | KEY_SLOWER else keys = keys | KEY_FASTER end
-        if BRAIN_DEBUG_MODE then local _hit = (stop_dist >= adist - 16) and (stop_dist <= adist + 24); local _r, _g, _b = _hit and 60 or 255, _hit and 220 or 160, 60; viz.line("approach_stop_pred", info.tankx / 256, info.tanky / 256, psx / 256, psy / 256, _r, _g, _b, 160); viz.rect("approach_stop_pred", psx / 256 - 0.3, psy / 256 - 0.3, psx / 256 + 0.3, psy / 256 + 0.3, _r, _g, _b, 200, false); viz.rect("approach_stop_pred", awx / 256 - 0.15, awy / 256 - 0.15, awx / 256 + 0.15, awy / 256 + 0.15, 80, 160, 255, 220, true); viz.text("approach_stop_pred", psx / 256, psy / 256 - 0.5, string.format("stopd=%d adist=%d", stop_dist, adist), "center", _r, _g, _b, 230, 0.3) end
+        if BRAIN_DEBUG_MODE and viz.is_on("approach_stop_pred") then local _hit = (stop_dist >= adist - 16) and (stop_dist <= adist + 24); local _r, _g, _b = _hit and 60 or 255, _hit and 220 or 160, 60; viz.line("approach_stop_pred", info.tankx / 256, info.tanky / 256, psx / 256, psy / 256, _r, _g, _b, 160); viz.rect("approach_stop_pred", psx / 256 - 0.3, psy / 256 - 0.3, psx / 256 + 0.3, psy / 256 + 0.3, _r, _g, _b, 200, false); viz.rect("approach_stop_pred", awx / 256 - 0.15, awy / 256 - 0.15, awx / 256 + 0.15, awy / 256 + 0.15, 80, 160, 255, 220, true); viz.text("approach_stop_pred", psx / 256, psy / 256 - 0.5, string.format("stopd=%d adist=%d", stop_dist, adist), "center", _r, _g, _b, 230, 0.3) end
       else
         _throttle_branch = "ap_brake_zone"
         local sdist_wu = _approach_sdist_wu

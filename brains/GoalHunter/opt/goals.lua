@@ -677,12 +677,23 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
   end
   -- Tiles allies broadcast as their reposition target (init.lua, from repos=1).
   local ally_demolish = state._ally_demolish_tiles
+  -- Our own reposition target (live goal, refreshed every tick + an 8 s tail
+  -- after the goal ends). The authoritative block — the _demolish tile guard
+  -- above stops refreshing the moment the pill dies, leaving a window where the
+  -- freed pool heals the pill we just shot down.
+  local repos_block
+  local rb = state._reposition_block
+  if rb and rb.tiles
+     and (state.tick - (rb.tick or 0)) < (C.REPAIR_REPOSITION_BLOCK_TICKS or 400) then
+    repos_block = rb.tiles
+  end
   local pill, pid, pcost, pcands = nearest_where(world.pills, world, tmx, tmy,
     function(p)
       return p.owner == "friendly" and p.health > 0
              and p.health < C.PILLS_MAX_HEALTH
              and not (dmx and p.mx == dmx and p.my == dmy)
              and not (ally_demolish and ally_demolish[p.my * C.MAP_W + p.mx])
+             and not (repos_block and repos_block[p.my * C.MAP_W + p.mx])
              -- A friendly shot (own or ally) just landed on it → the team is
              -- shooting it down to reposition; don't heal it for 8 s.
              and not (p._friendly_shot_tick

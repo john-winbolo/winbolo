@@ -406,6 +406,7 @@ function M.process_events(world, info, state)
             my          = 0,
             health      = new_health,
             owner       = owner_str,
+            owner_player = owner_val,   -- real player number; lets the LGM-block stamp do an alliance check (owner_str lumps ally bases in with "hostile")
             last_seen   = tick,
             last_health = new_health,
             obs_shells  = d[4],
@@ -420,6 +421,7 @@ function M.process_events(world, info, state)
           b.last_health = b.health
           b.health      = new_health
           b.owner       = owner_str
+          b.owner_player = owner_val
           b.last_seen   = tick
           b.obs_shells  = d[4]
           b.obs_armour  = new_health
