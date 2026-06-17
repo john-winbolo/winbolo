@@ -489,6 +489,17 @@ int run_control_overflow_defers_disconnect(void);
  * window) and never for the transient alliance/vote notifications. */
 int run_input_gate_taxonomy(void);
 
+/* Pasted server-address splitting for the manual join dialog
+ * (test_server_address_parse.c). */
+int run_addrparse_host_only(void);
+int run_addrparse_host_port(void);
+int run_addrparse_scheme(void);
+int run_addrparse_trailing_path(void);
+int run_addrparse_whitespace(void);
+int run_addrparse_port_bounds(void);
+int run_addrparse_bad_port(void);
+int run_addrparse_empty(void);
+
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and
  * built in WB_NETDEBUG configs. */

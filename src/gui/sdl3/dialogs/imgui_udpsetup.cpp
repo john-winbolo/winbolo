@@ -29,6 +29,7 @@
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
+#include "server_address_parse.h"
 #include "imgui_nav_outline.h"
 #include "../imgui_steam_nav.h"
 #include "dialog_footer.h"
@@ -46,58 +47,6 @@ extern "C" {
 
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
-
-/* Parses a pasted server address into host + optional decimal port string.
- * Accepts:  host  |  host:port  |  ip  |  ip:port  |  scheme://host[:port][/...]
- * (e.g. "winbolo://1.2.3.4:5000"). Leading scheme and any trailing /path or
- * surrounding whitespace are stripped. A trailing ":port" is only split off
- * when it is 1-5 digits in the 1..65535 range — otherwise the input is kept
- * verbatim as the host. WinBolo is IPv4-only, so a lone ':' is unambiguous.
- * Returns true and fills outHost (and outPort, empty if none) on success. */
-static bool parseServerAddressPaste(const char *in, char *outHost, size_t hostSz,
-                                    char *outPort, size_t portSz) {
-    if (!in || !outHost || hostSz == 0 || !outPort || portSz == 0) {
-        return false;
-    }
-    outPort[0] = '\0';
-
-    /* Skip leading whitespace. */
-    while (*in == ' ' || *in == '\t') in++;
-
-    /* Strip a "scheme://" prefix (winbolo://, http://, ...). */
-    const char *p = in;
-    const char *sep = strstr(p, "://");
-    if (sep) p = sep + 3;
-
-    /* Copy host[:port] up to a path slash / whitespace / end. */
-    char work[FILENAME_MAX];
-    size_t n = 0;
-    while (p[n] && p[n] != '/' && p[n] != ' ' && p[n] != '\t' &&
-           p[n] != '\r' && p[n] != '\n' && n + 1 < sizeof(work)) {
-        work[n] = p[n];
-        n++;
-    }
-    work[n] = '\0';
-    if (work[0] == '\0') return false;
-
-    /* Split a trailing ":port" only if it is a valid port number. */
-    char *colon = strrchr(work, ':');
-    if (colon && colon[1] != '\0') {
-        bool digits = true;
-        for (const char *q = colon + 1; *q; q++) {
-            if (*q < '0' || *q > '9') { digits = false; break; }
-        }
-        unsigned long val = digits ? strtoul(colon + 1, nullptr, 10) : 0;
-        if (digits && val >= 1 && val <= 65535) {
-            SDL_strlcpy(outPort, colon + 1, portSz);
-            *colon = '\0';
-        }
-    }
-    if (work[0] == '\0') return false;
-
-    SDL_strlcpy(outHost, work, hostSz);
-    return true;
-}
 
 /* CallbackEdit userdata: tracks the address field length so a paste (a jump of
  * >= 2 chars in one edit) can be told apart from single keystrokes, and points

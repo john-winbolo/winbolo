@@ -2605,6 +2605,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wire_player_bounds.c
     tests/unit/test_control_overflow_disconnect.c
     tests/unit/test_input_gate.c
+    tests/unit/test_server_address_parse.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2670,6 +2671,7 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
 
 target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
+    src/gui/sdl3/dialogs
     src/server
     src
     src/winbolonet
@@ -2923,6 +2925,14 @@ set(_unit_test_names
     players_oob_index_safe
     control_oob_player_dropped
     input_gate_taxonomy
+    addrparse_host_only
+    addrparse_host_port
+    addrparse_scheme
+    addrparse_trailing_path
+    addrparse_whitespace
+    addrparse_port_bounds
+    addrparse_bad_port
+    addrparse_empty
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
