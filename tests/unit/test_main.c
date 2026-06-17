@@ -158,6 +158,8 @@ static const UnitTestEntry s_tests[] = {
     { "bolo_rand_golden_sequence",               run_bolo_rand_golden_sequence               },
     { "net_impair",                              run_net_impair                              },
     { "channel_mux",                             run_channel_mux                             },
+    { "channel_reset_codec_roundtrip",           run_channel_reset_codec_roundtrip           },
+    { "channel_reset_two_slot_baselines",        run_channel_reset_two_slot_baselines        },
     { "countdown_abort_publishes_phase",         run_countdown_abort_publishes_phase         },
     { "lobby_auto_unready_clears_humans_keeps_bots",
                                                  run_lobby_auto_unready_clears_humans_keeps_bots },

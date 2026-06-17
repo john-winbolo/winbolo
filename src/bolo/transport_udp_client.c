@@ -902,7 +902,44 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_COMMAND_REJECTED: return "COMMAND_REJECTED";
     case CTRL_BALANCE_FAILED:   return "BALANCE_FAILED";
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
+    case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
     default:                    return "<unknown>";
+    }
+}
+
+/* Apply a CTRL_CHANNEL_RESET: lift the game (channel 0) and map (channel 1)
+ * receive baselines to the server's new game-start floors, so a previous-game
+ * straggler (seq below the baseline) dedup-drops instead of replaying in the
+ * new game. The reset rides the in-order control channel ahead of
+ * CTRL_GAME_PHASE_RUNNING, so the lift lands before the running flip. Reads
+ * each channel's current expectedSeq / window at the call site (channel_mux
+ * exposes them as plain fields): when the stale tail being skipped is wide
+ * enough that a new-game event past the live window could fall outside it, the
+ * recovery is a retransmit, not a drop — flag that visibility. This event has
+ * no sim semantics and must never reach clientSimApplyControl. */
+static void clientApplyChannelReset(TransportUdpClientCtx *c,
+                                    const ControlEvent *evt) {
+    static const struct { uint8_t ch; const char *name; } kChans[2] = {
+        { CHANNEL_GAME, "game" },
+        { CHANNEL_MAP,  "map"  },
+    };
+    uint32_t baselines[2] = { evt->u.channelReset.ch0Baseline,
+                              evt->u.channelReset.ch1Baseline };
+    int i;
+    for (i = 0; i < 2; i++) {
+        uint8_t ch = kChans[i].ch;
+        uint32_t baseline = baselines[i];
+        uint32_t expected = c->channelMux.ch[ch].expectedSeq;
+        uint32_t window   = c->channelMux.ch[ch].window;
+        if (baseline > expected && window > 8 &&
+            (baseline - expected) > (window - 8)) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "channel %s baseline reset gap %u nears window %u — a new-game "
+                "event past the live window recovers by retransmit, not drop",
+                kChans[i].name, (unsigned)(baseline - expected),
+                (unsigned)window);
+        }
+        channelResetExpected(&c->channelMux, ch, baseline);
     }
 }
 
@@ -912,16 +949,15 @@ static const char *mpDiagCtrlName(int type) {
  * inside the standalone PACKET_GAME_START handler (install buffered
  * map, reset all three reliable-event acks, clear the input ring, drop
  * any pre-flip snapshot) and they must fire BEFORE the same snapshot's
- * game-event and map-event tails are applied. Those side effects and
- * the skip-prior-tails signal only apply on a real lobby→running flip;
+ * game-event and map-event tails are applied. Those side effects only
+ * apply on a real lobby→running flip;
  * a no-lobby joiner's first event is also CTRL_GAME_PHASE_RUNNING (a
  * sync-replay echo from serverSimFillGamePhaseEvent), and for that
  * joiner the same snapshot's tails are current-game state that must
  * not be dropped. We capture wasInLobby up front and gate on it. */
 static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
                                          const ControlEvent *evt,
-                                         uint32_t evSeq,
-                                         bool *skipPriorGameTails) {
+                                         uint32_t evSeq) {
     {
         char extra[256];
         extra[0] = '\0';
@@ -1005,11 +1041,12 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
         c->runningSeqAdopted = true;
         /* Dispatch the event itself — flips netStat to running, clears
          * inLobby on the sim, etc. The no-lobby joiner still needs this
-         * to flip netStat → netRunning even though wasInLobby is false. */
+         * to flip netStat → netRunning even though wasInLobby is false.
+         * Pre-flip game/map tails no longer need a skip signal here: the
+         * CTRL_CHANNEL_RESET that precedes RUNNING on the control channel has
+         * already lifted the game/map receive baselines, so a previous-game
+         * straggler is dedup-dropped at the channel before it reaches a drain. */
         clientSimApplyControl(c->clientSim, evt);
-        if (skipPriorGameTails != NULL && wasInLobby) {
-            *skipPriorGameTails = true;
-        }
         return;
     }
     /* Clear the running-sequence adoption flag on the reverse transition so
@@ -1434,10 +1471,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         int newEventCount = (c->hasSnapshot) ? c->snapshotHdr.reliableEventCount : 0;
         int actuallyUnpacked = 0;
         int actuallyUnpackedMap = 0;
-        bool skipPriorGameTails = false;
-        /* Game and map event indices into snapshotEvents where the
-         * prior-game tails landed.  Used to retroactively drop those
-         * entries if CTRL_GAME_PHASE_RUNNING fires on this snapshot. */
+        /* Index into snapshotEvents where this snapshot's channel-drained
+         * game-event tail begins — the splice point for the map tail staged
+         * behind it (game-then-map order). */
         int eventTailStartIdx = newEventCount;
 
         /* Ignore stale snapshots. lastSnapshotSeq stays 0 until the
@@ -1673,11 +1709,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * control events from channel 2 (CHANNEL_CONTROL) EAGERLY — before the
          * map-install gate and the ch0/ch1 game/map drain below.  Each event is
          * applied via clientSimApplyControlOrdered so a lobby→running flip can
-         * install the new map and arm skipPriorGameTails ahead of the
-         * game/map tails, preserving the former "control before game/map"
-         * ordering.  Per-message wire layout: type(1) + bodyLen(2) + body(N);
-         * the channel guarantees in-order exactly-once delivery, so no per-event
-         * dedup or ack is applied. */
+         * install the new map ahead of the game/map tails, preserving the
+         * "control before game/map" ordering; the CTRL_CHANNEL_RESET that
+         * precedes the flip lifts the game/map receive baselines here so a
+         * previous-game straggler is dropped before those drains run.  Per-
+         * message wire layout: type(1) + bodyLen(2) + body(N); the channel
+         * guarantees in-order exactly-once delivery, so no per-event dedup or
+         * ack is applied. */
         if (pos < len &&
             channelRecvFrame(&c->channelMux, buf + pos, len - pos) >= 0) {
             c->channelFramesRx++;
@@ -1702,7 +1740,16 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                               dec == NULL ? "no decoder" : "decode failed");
                     continue;
                 }
-                clientSimApplyControlOrdered(c, &evt, 0, &skipPriorGameTails);
+                /* The game-start baseline reset lifts the game/map receive
+                 * baselines (dropping previous-game stragglers) and carries no
+                 * sim semantics — apply it here and never forward it to the sim
+                 * dispatcher. It precedes the running flip on this channel, so
+                 * the lift lands before the ch0/ch1 drains below. */
+                if (evt.type == CTRL_CHANNEL_RESET) {
+                    clientApplyChannelReset(c, &evt);
+                    continue;
+                }
+                clientSimApplyControlOrdered(c, &evt, 0);
             }
         }
 
@@ -1723,11 +1770,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
         /* Drain reliable game events from channel 0 into the game-tail slot —
          * ahead of the map tail staged above, so they apply in the same
-         * game-then-map order the snapshot game tail used and fall under the
-         * same skipPriorGameTails rollback below.  The channel trailer was
-         * ingested above (before the control drain).  The channel guarantees
-         * in-order exactly-once delivery, so no per-event ack or dedup is
-         * applied. */
+         * game-then-map order the snapshot game tail used.  The channel trailer
+         * was ingested above (before the control drain), where any game-start
+         * baseline lift already ran, so a previous-game straggler is gone and
+         * only current-game events drain here.  The channel guarantees in-order
+         * exactly-once delivery, so no per-event ack or dedup is applied. */
         {
             GameEvent chanGameEv[MAX_SNAPSHOT_EVENTS];
             uint8_t chanBuf[CHANNEL_MAX_SEG];
@@ -1742,10 +1789,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
             /* Drain channel 1 (map) events: payload [gen u32][GameEvent]. Stage
              * survivors onto the map tail so they sit behind the game events the
-             * splice places ahead of them (game-then-map order) and fall under
-             * the skipPriorGameTails rollback below. Drop any event tagged older
-             * than the installed map generation — a stale change a resync already
-             * superseded. */
+             * splice places ahead of them (game-then-map order). Drop any event
+             * tagged older than the installed map generation — a stale change a
+             * resync already superseded. */
             while (newEventCount < MAX_SNAPSHOT_EVENTS &&
                    channelReceive(&c->channelMux, CHANNEL_MAP, chanBuf, &chanLen)) {
                 GameEvent mapEv;
@@ -1763,14 +1809,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 chanGameEv, chanCount, MAX_SNAPSHOT_EVENTS);
         }
 
-        /* If CTRL_GAME_PHASE_RUNNING fired in this snapshot's tail, the
-         * game/map events decoded earlier in the same packet are pre-
-         * flip and must not reach the sim — they would replay against
-         * the freshly-installed new-game map. Roll the staged-event
-         * count back so they're never passed to clientSimSyncFromSnapshot. */
-        if (skipPriorGameTails) {
-            newEventCount = eventTailStartIdx;
-        }
+        /* No pre-flip game/map tail rollback is needed: any previous-game
+         * straggler on the game/map channels has already been dedup-dropped by
+         * the CTRL_CHANNEL_RESET baseline lift that precedes the running flip on
+         * the control channel, so only current-game events reach the drains
+         * above. */
 
         c->snapshotHdr.reliableEventCount = (uint8_t)newEventCount;
         c->snapshotHdr.reliableBaseSeq = reliableBaseSeq;
@@ -1810,8 +1853,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
              * snapshot path's "control before game/map tails".  A standalone
              * frame is only sent while the game is not running, so it never
              * coincides with an in-frame running-flip and needs no map-install
-             * / skipPriorGameTails gating (NULL).  The channel guarantees
-             * in-order exactly-once delivery, so no dedup is added. */
+             * gating.  The channel guarantees in-order exactly-once delivery, so
+             * no dedup is added. */
             if (c->clientSim != NULL) {
                 uint8_t chanBuf[CHANNEL_MAX_SEG];
                 uint16_t chanLen;
@@ -1833,7 +1876,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                                   dec == NULL ? "no decoder" : "decode failed");
                         continue;
                     }
-                    clientSimApplyControlOrdered(c, &evt, 0, NULL);
+                    /* Baseline reset: lift game/map receive baselines, never
+                     * forward to the sim (see the snapshot path above). */
+                    if (evt.type == CTRL_CHANNEL_RESET) {
+                        clientApplyChannelReset(c, &evt);
+                        continue;
+                    }
+                    clientSimApplyControlOrdered(c, &evt, 0);
                 }
                 while (channelReceive(&c->channelMux, CHANNEL_GAME,
                                       chanBuf, &chanLen)) {

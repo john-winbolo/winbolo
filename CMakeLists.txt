@@ -2605,6 +2605,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # ChannelMux reliability primitive: the off-socket loss/reorder/dup/
     # window/boundary matrix (two muxes + an in-test frame shuttle).
     tests/unit/test_channel_mux.c
+    # CTRL_CHANNEL_RESET: body-codec round-trip and the per-client game-start
+    # baselines transportUdpServerOnGameStart sends across two fabricated slots.
+    tests/unit/test_channel_reset.c
     tests/unit/test_packet_type_names.c
     tests/unit/test_client_type.c
     tests/unit/test_wire_player_bounds.c
@@ -2924,6 +2927,8 @@ set(_unit_test_names
     viewtick_displayed_tick
     wire_corpus
     channel_mux
+    channel_reset_codec_roundtrip
+    channel_reset_two_slot_baselines
     packet_type_names
     mdns_discovery
     client_type_matches_platform

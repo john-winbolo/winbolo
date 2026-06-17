@@ -86,6 +86,15 @@ typedef enum {
      * fireTick against its predicted shells to cull the ghost and draw the
      * impact at the authoritative position. */
     CTRL_SHELL_DEATH,
+    /* CTRL_CHANNEL_RESET — at game start the server drops its previous-game
+     * unacked send tail on the game (channel 0) and map (channel 1) reliable
+     * channels and tells this client the new per-channel baselines. The client
+     * lifts its game/map receive baselines to match, so any previous-game
+     * straggler (seq below the baseline) dedup-drops instead of applying in the
+     * new game. Carries no sim semantics — it must never reach the sim
+     * dispatcher; the client consumes it at the channel-drain site. Per-client:
+     * the baselines are this recipient's own channel state, set at enqueue. */
+    CTRL_CHANNEL_RESET,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -332,6 +341,14 @@ typedef struct ControlEvent {
             uint8_t  owner;      /* shell owner's player slot — the sole recipient */
             uint8_t  outcome;    /* SHELL_OUTCOME_* */
         } shellDeath;
+
+        /* CTRL_CHANNEL_RESET — new game/map receive baselines the client must
+         * adopt at game start. ch0Baseline is the game channel's post-reset
+         * sequence floor, ch1Baseline the map channel's. */
+        struct {
+            uint32_t ch0Baseline;
+            uint32_t ch1Baseline;
+        } channelReset;
     } u;
 } ControlEvent;
 

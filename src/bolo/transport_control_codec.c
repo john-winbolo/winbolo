@@ -1145,6 +1145,24 @@ static EncodeResult encodeShellDeath(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* CTRL_CHANNEL_RESET — carrier-only (channel 2): the two per-channel
+ * baselines as big-endian u32s. No full-packet wrapper — this event has no
+ * standalone wire form, it rides the reliable control channel exclusively. The
+ * recipient argument is ignored; the per-client values live in the event. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeChannelResetBody(const ControlEvent *evt,
+                                           const struct UdpServerClient *recipient,
+                                           uint8_t *buf, size_t bufCap,
+                                           size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 8) return ENCODE_OVERFLOW;
+    packU32(buf, evt->u.channelReset.ch0Baseline);
+    packU32(buf + 4, evt->u.channelReset.ch1Baseline);
+    *outLen = 8;
+    return ENCODE_OK;
+}
+
 /* ================================================================
  * Decoders — body-only (the existing wire-packet dispatcher in
  * transportControlCodecDecoder already strips the PacketHeader
@@ -1593,6 +1611,16 @@ static bool decodeShellDeathBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeChannelResetBody(const uint8_t *buf, size_t len,
+                                   ControlEvent *outEvt) {
+    if (len < 8) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_CHANNEL_RESET;
+    outEvt->u.channelReset.ch0Baseline = unpackU32(buf);
+    outEvt->u.channelReset.ch1Baseline = unpackU32(buf + 4);
+    return true;
+}
+
 /* ================================================================
  * Encoder lookup — indexed by ControlEventType. Variants without
  * a wire form leave NULL slots (CTRL_MAP_DOWNLOAD_COMPLETE is
@@ -1669,6 +1697,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ALLIANCE_RESET]        = encodeAllianceResetBody,
     [CTRL_BALANCE_FAILED]        = encodeBalanceFailedBody,
     [CTRL_SHELL_DEATH]           = encodeShellDeathBody,
+    [CTRL_CHANNEL_RESET]         = encodeChannelResetBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -1701,6 +1730,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ALLIANCE_RESET]        = decodeAllianceResetBody,
     [CTRL_BALANCE_FAILED]        = decodeBalanceFailedBody,
     [CTRL_SHELL_DEATH]           = decodeShellDeathBody,
+    [CTRL_CHANNEL_RESET]         = decodeChannelResetBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

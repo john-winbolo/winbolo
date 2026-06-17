@@ -172,6 +172,12 @@ int run_net_impair(void);
  * instances and an in-test frame shuttle. No sockets, no threads. */
 int run_channel_mux(void);
 
+/* CTRL_CHANNEL_RESET — the game-start baseline reset (test_channel_reset.c):
+ * the body-codec round-trip and the per-client baseline values
+ * transportUdpServerOnGameStart sends across two fabricated slots. */
+int run_channel_reset_codec_roundtrip(void);
+int run_channel_reset_two_slot_baselines(void);
+
 /* Lobby runtime fixes (test_lobby_runtime_fixes.c). */
 int run_countdown_abort_publishes_phase(void);
 int run_lobby_auto_unready_clears_humans_keeps_bots(void);

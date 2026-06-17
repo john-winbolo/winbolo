@@ -894,6 +894,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";
+    case CTRL_CHANNEL_RESET:    return "CHANNEL_RESET";
     default:                    return "<unknown>";
     }
 }
@@ -3025,12 +3026,13 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
          * nextSeq — the running events share the lobby's sequence space.
          *
          * This is the fix for the lobby→running seq-reuse desync: a stale
-         * in-flight lobby PACKET_CONTROL_TICK delayed past game start now
-         * carries seq numbers BELOW the client's continuing ack, so it
-         * dedups harmlessly instead of being mistaken for fresh running-space
-         * events (which is what happened when the queue restarted at seq 1
-         * and old high-seq lobby events looked newer than the new low-seq
-         * running events). */
+         * in-flight lobby event delayed past game start now carries seq
+         * numbers BELOW the client's continuing ack, so it dedups harmlessly
+         * instead of being mistaken for fresh running-space events (which is
+         * what happened when the queue restarted at seq 1 and old high-seq
+         * lobby events looked newer than the new low-seq running events).
+         * The reliable game/map channels get the same forward truncation via
+         * the per-client CHANNEL_RESET below. */
         udpServer.eventQueues[i].ackedSeq = udpServer.eventQueues[i].nextSeq;
         memset(udpServer.eventQueues[i].buffer, 0,
                sizeof(udpServer.eventQueues[i].buffer));
@@ -3047,6 +3049,49 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
          * where the stale baseline is still observable. */
         udpServer.controlEventLastAckProgressTick[i] = udpServer.tickCount;
         controlEventQueueAssertValid(&udpServer.controlEventQueues[i], "game-start-wipe");
+
+        /* Drop this client's previous-game send tail on the reliable game
+         * (channel 0) and map (channel 1) channels and tell it the new
+         * baselines so its receive side lifts past any in-flight straggler.
+         * channelResetSend collapses each channel's unacked window and returns
+         * the post-reset sequence floor (its nextSeq); the per-client
+         * CTRL_CHANNEL_RESET carries those two floors. Both ride the in-order
+         * control channel (channel 2) ahead of the CTRL_GAME_PHASE_RUNNING the
+         * caller publishes immediately after this returns, so the client
+         * applies the baseline lift before the running flip and a previous-game
+         * game/map event left in flight dedup-drops in the new game. The
+         * baselines are this client's own channel state — the control encoder
+         * stays recipient-agnostic, so the per-client value lives in the event,
+         * not the encoder. A full control window defers the disconnect off this
+         * path (mirrors the deliver-callback overflow). */
+        if (udpServer.clients[i].connected) {
+            uint32_t b0 = channelResetSend(&udpServer.channelMux[i], CHANNEL_GAME);
+            uint32_t b1 = channelResetSend(&udpServer.channelMux[i], CHANNEL_MAP);
+            ControlEvent resetEvt;
+            ControlEncodeBodyFn enc =
+                transportControlCodecBodyEncoder(CTRL_CHANNEL_RESET);
+            uint8_t msg[CHANNEL_CONTROL_SEG];
+            size_t bodyLen = 0;
+            memset(&resetEvt, 0, sizeof(resetEvt));
+            resetEvt.type = CTRL_CHANNEL_RESET;
+            resetEvt.u.channelReset.ch0Baseline = b0;
+            resetEvt.u.channelReset.ch1Baseline = b1;
+            if (enc != NULL &&
+                enc(&resetEvt, &udpServer.clients[i], msg + 3,
+                    sizeof(msg) - 3, &bodyLen) == ENCODE_OK) {
+                msg[0] = (uint8_t)CTRL_CHANNEL_RESET;
+                packU16(msg + 1, (uint16_t)bodyLen);
+                if (!channelSend(&udpServer.channelMux[i], CHANNEL_CONTROL,
+                                 msg, (uint16_t)(3 + bodyLen))) {
+                    if (!udpServer.pendingSimRemove[i]) {
+                        WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                     "control channel overflow sending baseline "
+                                     "reset for slot %d, deferring disconnect", i);
+                        udpServer.pendingSimRemove[i] = true;
+                    }
+                }
+            }
+        }
     }
     WB_LOG_INFO(WB_LOG_CAT_NET, "ctrl queue reset all slots (game start)");
     mpDiagLog("[srv] GAME_START wipe END (all connected slots flagged needsPlayerList)");
@@ -4896,6 +4941,71 @@ bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
     mq->buffer[idx].seq = mq->nextSeq;
     mq->nextSeq++;
     return true;
+}
+
+/* Test-only: queue one whole game event on a slot's reliable game channel
+ * (CHANNEL_GAME), exactly as the real producer does in
+ * transportUdpServerSendGameEventsToChannel — pack the GameEvent and
+ * channelSend it. Lets a test stage a distinguishable ch0 event (the
+ * straggler-gate test leaves one unacked across game start). Returns false if
+ * the slot is invalid, the event is NULL/unpackable, or the channel window is
+ * full. */
+bool transportUdpServerTestAddGameEvent(int slot, const GameEvent *ev) {
+    uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
+    int evLen;
+    if (slot < 0 || slot >= MAX_TANKS || ev == NULL) return false;
+    evLen = packGameEvent(evBuf, ev);
+    if (evLen <= 0) return false;
+    return channelSend(&udpServer.channelMux[slot], CHANNEL_GAME, evBuf,
+                       (uint16_t)evLen);
+}
+
+/* Test-only: fabricate a connected slot with a fresh channel mux, so a server
+ * unit test can drive transportUdpServerOnGameStart over two distinct slots
+ * without standing up sockets. Mirrors the per-slot state the join path sets
+ * that OnGameStart reads (connected, playerNum, completed download, an
+ * initialised channel mux); the reliable queues stay zero-initialised, which
+ * the game-start wipe and its assert accept. */
+void transportUdpServerTestForceConnect(int slot, BYTE playerNum) {
+    if (slot < 0 || slot >= MAX_TANKS) return;
+    udpServer.clients[slot].connected = true;
+    udpServer.clients[slot].playerNum = playerNum;
+    udpServer.mapDownload[slot].downloadComplete = TRUE;
+    channelMuxInit(&udpServer.channelMux[slot]);
+}
+
+/* Test-only: find the CTRL_CHANNEL_RESET this slot has queued on its reliable
+ * control channel (CHANNEL_CONTROL) and decode its two baselines. Scans the
+ * live send window for the message tagged CTRL_CHANNEL_RESET (the only place
+ * OnGameStart writes one). Returns false if none is queued or it fails to
+ * decode. */
+bool transportUdpServerTestPeekChannelReset(int slot, uint32_t *ch0Baseline,
+                                            uint32_t *ch1Baseline) {
+    ChannelState *cs;
+    uint32_t seq;
+    if (slot < 0 || slot >= MAX_TANKS) return false;
+    cs = &udpServer.channelMux[slot].ch[CHANNEL_CONTROL];
+    for (seq = cs->nextSeq; seq > cs->ackedSeq; ) {
+        uint32_t idx;
+        const uint8_t *m;
+        uint16_t mlen;
+        uint16_t bodyLen;
+        ControlEvent evt;
+        ControlDecodeBodyFn dec;
+        seq--;
+        idx = seq % cs->window;
+        m = cs->sendData + (size_t)idx * cs->segSize;
+        mlen = cs->sendLen[idx];
+        if (mlen < 3 || m[0] != (uint8_t)CTRL_CHANNEL_RESET) continue;
+        bodyLen = unpackU16(m + 1);
+        if ((size_t)(3 + bodyLen) > (size_t)mlen) continue;
+        dec = transportControlCodecBodyDecoder(CTRL_CHANNEL_RESET);
+        if (dec == NULL || !dec(m + 3, bodyLen, &evt)) return false;
+        if (ch0Baseline) *ch0Baseline = evt.u.channelReset.ch0Baseline;
+        if (ch1Baseline) *ch1Baseline = evt.u.channelReset.ch1Baseline;
+        return true;
+    }
+    return false;
 }
 
 void transportUdpServerSetLock(ServerSim *sim, bool locked) {

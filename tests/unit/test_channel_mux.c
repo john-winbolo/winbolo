@@ -12,7 +12,8 @@
  * datagram, malformed-input rejection, the named
  * live-play regressions (lobby-ack resend, seq-space across game start,
  * drop-don't-reset), and the game-boundary baseline reset (send-tail drop,
- * coordinated send/recv truncation, buffer-before-lift, no-rewind).
+ * coordinated send/recv truncation, buffer-before-lift, near-window
+ * retransmit recovery, no-rewind).
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -1441,6 +1442,121 @@ done:
     return 0;
 }
 
+/* Window-bound reset: a near-window stale tail on the game channel. With the
+ * gap (baseline - oldExpected) at a full window, a new-game event at the
+ * baseline that arrives BEFORE the receiver lifts expected falls outside the
+ * live window and is dropped — not silently lost: the sender's retransmit
+ * recovers it once expected is lifted, delivering exactly once. */
+static int t_reset_window_bound_recovery(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t out[CHANNEL_MAX_SEG];
+    int rc = 1;
+    if (!a || !b) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+    const uint8_t ch = CHANNEL_GAME;
+    const uint32_t window = a->ch[ch].window;   /* CHANNEL_GAME_WINDOW */
+    const uint32_t base = 4;                     /* a few delivered first */
+
+    int tick = 0;
+    if (pumpDeliver(a, b, ch, base, &tick)) {
+        goto done; /* both settled at `base` */
+    }
+
+    /* Fill the send window with an undelivered old-game tail: exactly `window`
+     * messages from seq `base`, none delivered to b (b->expectedSeq stays
+     * `base`). The next send must be refused — the window is full. */
+    uint32_t i;
+    for (i = 0; i < window; i++) {
+        uint8_t msg[8];
+        putIdx(msg, base + i);
+        if (!channelSend(a, ch, msg, 8)) {
+            goto done; /* the whole window should fit */
+        }
+    }
+    {
+        uint8_t msg[8];
+        putIdx(msg, base + window);
+        if (channelSend(a, ch, msg, 8)) {
+            goto done; /* window full — must refuse */
+        }
+    }
+
+    /* Game-start reset: the tail collapses, the baseline is one window above the
+     * receiver's still-current expected. */
+    uint32_t baseline = channelResetSend(a, ch);
+    if (baseline != base + window) {
+        goto done;
+    }
+    if (b->ch[ch].expectedSeq != base) {
+        goto done; /* receiver hasn't lifted yet */
+    }
+
+    /* A new-game event lands at the baseline and is delivered to b while its
+     * expected is still `base` — the gap is a full window, so it cannot be
+     * buffered (it would alias a live slot) and must be dropped, not delivered
+     * out of order. */
+    uint8_t nm[8];
+    putIdx(nm, 0xBEEF);
+    if (!channelSend(a, ch, nm, 8) || a->ch[ch].nextSeq != base + window + 1) {
+        goto done;
+    }
+    tick++;
+    channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+    int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+    channelRecvFrame(b, frame, la);
+    uint16_t olen;
+    if (channelReceive(b, ch, out, &olen)) {
+        goto done; /* nothing is deliverable across a full-window gap */
+    }
+    if (b->ch[ch].expectedSeq != base) {
+        goto done; /* the out-of-window seg must not have advanced expected */
+    }
+
+    /* Lift the receive baseline (the CTRL_CHANNEL_RESET apply). The seq-baseline
+     * event was dropped, not buffered, so nothing delivers immediately. */
+    channelResetExpected(b, ch, baseline);
+    if (b->ch[ch].expectedSeq != baseline) {
+        goto done;
+    }
+    if (channelReceive(b, ch, out, &olen)) {
+        goto done; /* recovery is by retransmit, not an instant delivery */
+    }
+
+    /* The sender keeps retransmitting the unacked baseline event; once it
+     * arrives within the lifted window it delivers exactly once. */
+    int deliveries = 0;
+    for (tick++; tick < 400 && deliveries == 0; tick++) {
+        channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+        channelTick(b, (uint32_t)tick, LINK_RTT_MS);
+        int lx = channelBuildFrame(a, frame, FRAME_BUDGET);
+        channelRecvFrame(b, frame, lx);
+        while (channelReceive(b, ch, out, &olen)) {
+            if (getIdx(out) != 0xBEEF) {
+                goto done; /* wrong event recovered */
+            }
+            deliveries++;
+        }
+        int ly = channelBuildFrame(b, frame, FRAME_BUDGET);
+        channelRecvFrame(a, frame, ly);
+    }
+    if (deliveries != 1) {
+        goto done; /* silent drop, or a double delivery */
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    if (rc) {
+        UT_FAIL("near-window reset did not recover the baseline event by retransmit");
+    }
+    return 0;
+}
+
 /* channelResetExpected never rewinds: a value at or below the current
  * expected is a no-op, and the send-side invariants survive a reset. */
 static int t_reset_no_rewind(void) {
@@ -1544,6 +1660,9 @@ int run_channel_mux(void) {
         return 1;
     }
     if (t_reset_buffer_before_lift()) {
+        return 1;
+    }
+    if (t_reset_window_bound_recovery()) {
         return 1;
     }
     if (t_reset_no_rewind()) {

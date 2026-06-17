@@ -44,6 +44,12 @@
  *      arriving on CHANNEL_MAP) must be dropped, while a new-generation change
  *      is applied — proving a stale change can't land on top of a freshly
  *      installed map.
+ *
+ *   8. Previous-game straggler gate.  A game event staged on channel 0 and left
+ *      in flight across game start must never reach the sim in the new game
+ *      (the server drops its send tail and the client lifts its receive
+ *      baseline via CTRL_CHANNEL_RESET), while a fresh post-flip game event
+ *      still applies.
  */
 
 #include <stdint.h>
@@ -55,6 +61,7 @@
 #include "client_sim.h"
 #include "client_net.h"
 #include "client_connect_state.h"
+#include "client_enums.h"          /* netStatus / netRunning */
 #include "client_sim_internal.h"   /* ClientSim::transport (Transport handle) */
 #include "input_packet.h"
 #include "channel_mux.h"           /* CHANNEL_GAME / CHANNEL_MAP / CHANNEL_COUNT / CHANNEL_MAX_SEG */
@@ -68,6 +75,9 @@
 #define EMPTY_PUMPS      300   /* steady state long enough for trailers to flow */
 #define ROUNDTRIP_MAX   3000   /* delivery + ack convergence under impairment */
 #define SETTLE_PUMPS     300   /* let the join control-replay drain before baselining */
+#define RUNNING_MAX     2000   /* countdown (250) + RUNNING delivery under loss */
+#define FLIP_SETTLE      150   /* flush any game-start transition events post-flip */
+#define STRAGGLER_STAB   400   /* idle window the stale event must not break */
 
 static bool pred_connected(LoopbackHarness *h, void *user) {
     (void)user;
@@ -669,6 +679,130 @@ static int run_map_event_generation_gate(void) {
     return 0;
 }
 
+/* Case 8: previous-game straggler gate. A distinguishable game event is staged
+ * on the slot's reliable game channel (channel 0) and left in flight under loss
+ * across game start; after the lobby→running flip it must never reach the sim,
+ * while a fresh post-flip game event does. The server drops the stale tail at
+ * game start (channelResetSend) and sends a CTRL_CHANNEL_RESET; the client lifts
+ * its game receive baseline, so the straggler dedup-drops.
+ *
+ * Observable: clientSimGetBrainEventCount — every game event the client applies
+ * buffers a brain event (run_game_event_channel relies on the same path), and an
+ * idle running tank produces no channel-0 traffic (run_empty_flow proves
+ * expectedSeq stays 0 across a long idle window). So once the count is zeroed
+ * after the flip has settled, the stale straggler — which the server no longer
+ * sends and the client's lifted baseline would drop anyway — cannot move it,
+ * while injecting a fresh event does. */
+static int run_straggler_gate(void) {
+    LoopbackHarness h;
+    int connectedAt;
+    uint32_t inputTick = 1;
+    int slot;
+    int runningAt = -1;
+    bool freshApplied = false;
+    int i;
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "Straggler", /*lobbyMode*/ true,
+                                       /*impairSpec*/ "loss=5,burst=2",
+                                       /*seed*/ 0x57A661u),
+                  "harness start (straggler gate) failed");
+
+    connectedAt = loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL);
+    if (connectedAt < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+    UT_ASSERT_MSG(clientSimIsInLobby(h.cs),
+                  "client connected but not in lobby phase");
+    slot = (int)clientSimGetMyPlayerNum(h.cs);
+
+    /* Stage a previous-game channel-0 event left in flight across game start.
+     * EVENT_TANK_KILLED is a non-sound, non-culled game event that buffers a
+     * brain event when applied. */
+    {
+        GameEvent stale;
+        memset(&stale, 0, sizeof(stale));
+        stale.type = EVENT_TANK_KILLED;
+        stale.data[0] = 0xAA;  /* distinguishing marker */
+        UT_ASSERT_MSG(transportUdpServerTestAddGameEvent(slot, &stale),
+                      "stale game-event injection rejected");
+    }
+
+    /* Drive all-ready → countdown → running. */
+    UT_ASSERT_MSG(loopbackHarnessTriggerGameStart(&h),
+                  "trigger game start failed (no slot assigned?)");
+    for (i = 1; i <= RUNNING_MAX; i++) {
+        inputTick = feed_input(&h, inputTick);
+        loopbackHarnessPump(&h);
+        if (clientSimGetNetStatus(h.cs) == netRunning) {
+            runningAt = i;
+            break;
+        }
+    }
+    if (runningAt < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached running phase within %d pumps", RUNNING_MAX);
+    }
+
+    /* Let any game-start transition events flush, then zero the observable. The
+     * stale straggler can only have been delivered pre-flip (the server dropped
+     * it at game start and never resends it), so anything before this point is
+     * neutralised here. */
+    for (i = 1; i <= FLIP_SETTLE; i++) {
+        inputTick = feed_input(&h, inputTick);
+        loopbackHarnessPump(&h);
+    }
+    clientSimSetBrainEventCount(h.cs, 0);
+
+    /* Stability window: the count must stay 0 — the stale straggler must never
+     * reach the sim in the new game, and an idle tank generates no game events. */
+    for (i = 1; i <= STRAGGLER_STAB; i++) {
+        inputTick = feed_input(&h, inputTick);
+        loopbackHarnessPump(&h);
+    }
+    if (clientSimGetBrainEventCount(h.cs) != 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("a game event reached the sim after game start with none injected "
+                "(brainEvents=%d) — previous-game straggler leaked",
+                clientSimGetBrainEventCount(h.cs));
+    }
+
+    /* A fresh post-flip game event DOES apply — the gate drops only the stale
+     * tail, not new-game traffic. */
+    {
+        GameEvent fresh;
+        memset(&fresh, 0, sizeof(fresh));
+        fresh.type = EVENT_TANK_KILLED;
+        fresh.data[0] = 0xBB;
+        UT_ASSERT_MSG(transportUdpServerTestAddGameEvent(slot, &fresh),
+                      "fresh game-event injection rejected");
+    }
+    for (i = 1; i <= ROUNDTRIP_MAX; i++) {
+        inputTick = feed_input(&h, inputTick);
+        loopbackHarnessPump(&h);
+        if (clientSimGetBrainEventCount(h.cs) > 0) {
+            freshApplied = true;
+            break;
+        }
+    }
+
+    fprintf(stderr, "  straggler gate: running@%d freshApplied=%d after %d pump(s)\n",
+            runningAt, (int)freshApplied, i);
+
+    if (!freshApplied) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("fresh post-flip game event never applied within %d pumps",
+                ROUNDTRIP_MAX);
+    }
+    if (clientSimGetConnectState(h.cs) != CLIENT_CONNECT_CONNECTED) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client dropped during the straggler-gate exchange");
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
 int run_loopback_channel(void) {
     int rc = run_empty_flow();
     if (rc != 0) return rc;
@@ -682,5 +816,7 @@ int run_loopback_channel(void) {
     if (rc != 0) return rc;
     rc = run_map_event_channel_recovery();
     if (rc != 0) return rc;
-    return run_map_event_generation_gate();
+    rc = run_map_event_generation_gate();
+    if (rc != 0) return rc;
+    return run_straggler_gate();
 }

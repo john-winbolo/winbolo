@@ -677,6 +677,18 @@ bool transportUdpServerTestPendingRemove(int slot);
  * the real hold → tagged channelSend(CHANNEL_MAP) drain. Call between ticks. */
 bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
                                        uint8_t y, uint8_t terrain);
+/* Queue one whole game event on a slot's reliable game channel (CHANNEL_GAME),
+ * as the real producer does — lets a test stage a distinguishable ch0 event
+ * (e.g. one left unacked across game start). False on a bad slot/event or a
+ * full window. */
+bool transportUdpServerTestAddGameEvent(int slot, const GameEvent *ev);
+/* Fabricate a connected slot with a fresh channel mux so a server unit test can
+ * drive transportUdpServerOnGameStart over two distinct slots without sockets. */
+void transportUdpServerTestForceConnect(int slot, BYTE playerNum);
+/* Decode the CTRL_CHANNEL_RESET this slot has queued on CHANNEL_CONTROL into its
+ * two channel baselines. False if none is queued / it fails to decode. */
+bool transportUdpServerTestPeekChannelReset(int slot, uint32_t *ch0Baseline,
+                                            uint32_t *ch1Baseline);
 void transportUdpServerChannelTestStats(int slot, uint8_t ch,
                                         uint32_t *expectedSeq,
                                         uint32_t *ackedSeq,
