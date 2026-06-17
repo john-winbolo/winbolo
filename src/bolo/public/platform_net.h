@@ -120,6 +120,39 @@ static inline void bolo_net_cleanup(void) {
 #endif
 }
 
+/*
+ * bolo_resolve_ipv4() — Thread-safe hostname -> IPv4 resolution.
+ *
+ *   gethostbyname() returns a pointer into a shared static buffer and is
+ *   not thread-safe: when several threads resolve names at once (e.g. the
+ *   game-browser ping worker pool) one call clobbers the buffer another is
+ *   still reading, leaving h_addr_list[0] NULL and faulting on the deref.
+ *   getaddrinfo() instead fills a caller-owned list that we free here.
+ *
+ *   `host` may be a dotted-quad or a DNS name. On success the resolved
+ *   IPv4 address (network byte order) is written to *outAddr and 0 is
+ *   returned. On failure non-zero is returned and *outAddr is unchanged.
+ */
+static inline int bolo_resolve_ipv4(const char *host, struct in_addr *outAddr) {
+  struct addrinfo hints;
+  struct addrinfo *res = NULL;
+  if (host == NULL || host[0] == '\0' || outAddr == NULL) {
+    return -1;
+  }
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_DGRAM;
+  if (getaddrinfo(host, NULL, &hints, &res) != 0 || res == NULL) {
+    if (res != NULL) {
+      freeaddrinfo(res);
+    }
+    return -1;
+  }
+  *outAddr = ((struct sockaddr_in *)res->ai_addr)->sin_addr;
+  freeaddrinfo(res);
+  return 0;
+}
+
 /* (LAN-IP discovery helper lives in imgui_lobby.cpp directly — it's
  * the only consumer and putting it in this header tickled MSVC's C89
  * strict-mode warnings.) */

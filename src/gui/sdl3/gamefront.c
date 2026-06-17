@@ -1276,8 +1276,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           saddr.sin_family = AF_INET;
           saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
           if (saddr.sin_addr.s_addr == INADDR_NONE) {
-            struct hostent *he = gethostbyname(gameFrontUdpAddress);
-            if (he) memcpy(&saddr.sin_addr, he->h_addr_list[0], he->h_length);
+            bolo_resolve_ipv4(gameFrontUdpAddress, &saddr.sin_addr);
           }
           clientSimSetServerAddress(humanSim, saddr.sin_addr);
           clientSimSetServerPort(humanSim, gameFrontTargetUdp);
