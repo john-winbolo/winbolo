@@ -102,8 +102,8 @@ struct ServerEntry {
     /* Country code for flag (from DNS lookup or mock) */
     char countryCode[3]; /* 2-char ISO + NUL */
 
-    /* Lobby status (derived from hasLobby + inLobby) */
-    int lobbyStatus;     /* 1=in lobby, 0=in game (derived from hasLobby+inLobby) */
+    /* Lobby status (derived from inLobby) */
+    int lobbyStatus;     /* 1=in lobby, 0=in game (derived from inLobby) */
 
     /* From WinBolo.net game list (Internet path) */
     char serverKey[64];
@@ -591,7 +591,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         }
 
                         e.pingMs = -1; /* pending — ping still fires below */
-                        e.lobbyStatus = (w.hasLobby && w.inLobby) ? 1 : 0;
+                        e.lobbyStatus = w.inLobby ? 1 : 0;
 
                         /* Hide servers older than BROWSER_MIN_VERSION. */
                         if (!browserVersionAllowed(e.version)) {
@@ -979,7 +979,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                     /* St — lobby vs in-game marker (placeholder letter until icons land) */
                     ImGui::TableNextColumn();
-                    if (e.hasLobby && e.inLobby) {
+                    if (e.inLobby) {
                         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "L");
                         ImGui::SetItemTooltip("%s", langGetText(STR_DLGBROWSER_FILTER_INLOBBY));
                     } else {
