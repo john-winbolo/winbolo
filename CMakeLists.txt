@@ -2603,6 +2603,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_packet_type_names.c
     tests/unit/test_client_type.c
     tests/unit/test_wire_player_bounds.c
+    tests/unit/test_input_gate.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2920,6 +2921,7 @@ set(_unit_test_names
     client_type_name_round_trips
     players_oob_index_safe
     control_oob_player_dropped
+    input_gate_taxonomy
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

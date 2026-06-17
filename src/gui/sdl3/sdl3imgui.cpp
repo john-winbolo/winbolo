@@ -67,6 +67,7 @@ extern "C" {
 
 /* Our own header */
 #include "sdl3imgui.h"
+#include "input_gate.h"
 #include "sdl3draw.h"
 #include "luabrainshandler.h"
 #include "flags.h"
@@ -266,6 +267,10 @@ static sdl3ImguiExtraRenderFn s_extraRenderFn = nullptr;
    Cleared each frame after use to reset ImGui nav focus so that menu open/close
    does not restore focus to the Send Message window. */
 static bool s_clearNavFocus = false;
+
+/* Set when a panel/chat opens; the render loop retracts any open menu-bar
+   dropdown on the next authority pass so the two don't render active at once. */
+static bool s_closeMenuPopups = false;
 
 /* Player slot state — updated by frontEndSetPlayer / frontEndClearPlayer */
 #define MAX_PLAYERS 16
@@ -2028,7 +2033,10 @@ static void renderAllianceRequest(ClientSim *cs) {
     if (ImGui::Begin(title, &s_allianceVisible,
                      ImGuiWindowFlags_AlwaysAutoResize |
                      ImGuiWindowFlags_NoCollapse |
-                     ImGuiWindowFlags_NoSavedSettings)) {
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus |
+                     ImGuiWindowFlags_NoNavInputs)) {
         autoPanelCapture(s_allianceLayout);
         {
             MessageArgs args = {};
@@ -2044,9 +2052,10 @@ static void renderAllianceRequest(ClientSim *cs) {
         }
         imguiHandOnHover();
         ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0)))
+        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0))) {
             s_allianceVisible = false;
-            imguiHandOnHover();
+        }
+        imguiHandOnHover();
     }
     ImGui::End();
     if (!s_allianceVisible) autoPanelReset(s_allianceLayout);
@@ -2669,7 +2678,7 @@ static void renderMenuBar(ClientSim *cs) {
 #endif
             if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M")) {
                 s_showSendMsg = !s_showSendMsg;
-                if (s_showSendMsg) s_sendMsgFocusInput = true;
+                if (s_showSendMsg) { s_sendMsgFocusInput = true; s_closeMenuPopups = true; }
             }
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
@@ -3340,13 +3349,16 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 if (!uiModeIsTablet()) {
                     togglePopOut(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
+                    s_closeMenuPopups = true;
                 } else {
 #endif
                     if (s_showSendMsg) {
                         s_sendMsgFocusInput = true;
+                        s_closeMenuPopups = true;
                     } else {
                         s_showSendMsg = true;
                         s_sendMsgFocusInput = true;
+                        s_closeMenuPopups = true;
                     }
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 }
@@ -3493,11 +3505,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* While the Key Setup modal is open, swallow all mouse + keyboard events
          * so they never reach the game. */
         ImGuiIO &io = ImGui::GetIO();
-        /* A click outside all ImGui windows (game area) should clear nav focus
-           so that menu open/close does not restore focus to Send Message. */
-        if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !io.WantCaptureMouse) {
-            s_clearNavFocus = true;
-        }
         if (io.WantCaptureKeyboard || io.WantCaptureMouse) {
             bool isGameInput = (ev.type == SDL_EVENT_MOUSE_MOTION       ||
                                 ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN  ||
@@ -4078,24 +4085,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         controllerPromptRender();
     }
 
-    /* Detect when a menu-bar dropdown (child menu popup) just closed.
-       When this happens, clear nav focus so the panel that had focus before
-       the menu was opened does not regain focus unexpectedly. */
-    {
-        static bool s_menuPopupWasOpen = false;
-        ImGuiContext *g = ImGui::GetCurrentContext();
-        bool menuPopupOpen = false;
-        for (int i = 0; i < g->OpenPopupStack.Size; i++) {
-            ImGuiWindow *w = g->OpenPopupStack[i].Window;
-            if (w && (w->Flags & ImGuiWindowFlags_ChildMenu)) {
-                menuPopupOpen = true;
-                break;
-            }
-        }
-        if (s_menuPopupWasOpen && !menuPopupOpen) {
-            ImGui::SetWindowFocus(nullptr);
-        }
-        s_menuPopupWasOpen = menuPopupOpen;
+    /* Retract any open menu-bar dropdown when a panel/chat was just opened, so
+       the two don't render active at once. Modals (pause, quick-chat, password,
+       change-name, key-setup) are left open. */
+    if (s_closeMenuPopups) {
+        ImGui::ClosePopupsExceptModals();
+        s_closeMenuPopups = false;
     }
 
     renderBrainSettingsWindow();
@@ -4360,6 +4355,7 @@ void sdl3ImguiShowSendMsg(bool open) {
                  * path opened Send Message. */
                 s_sendMsgCooldownEnd = 0;
                 s_sendMsgFocusInput  = true;
+                s_closeMenuPopups    = true;
             } else {
                 if (s_popSendMsg.open) popOutHide(&s_popSendMsg);
             }
@@ -4372,6 +4368,7 @@ void sdl3ImguiShowSendMsg(bool open) {
         /* Reset cooldown so the Send button is always enabled on fresh open */
         s_sendMsgCooldownEnd = 0;
         s_sendMsgFocusInput = true;
+        s_closeMenuPopups = true;
 #if BOLO_MOBILE
         s_showSettings = false;
         s_showPlayersPanel = false;
@@ -4387,6 +4384,7 @@ bool sdl3ImguiIsSendMsgOpen(void) {
 void sdl3ImguiShowSettings(void) {
     s_showSettings = !s_showSettings;
     if (s_showSettings) {
+        s_closeMenuPopups = true;
         s_settingsNameBuf[0] = '\0';
         gameFrontGetPlayerName(s_settingsNameBuf);
 #if BOLO_MOBILE
@@ -4444,10 +4442,12 @@ extern "C" void sdl3ImguiShowBrainSettings(void) {
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
     s_brainSettingsOpen  = true;
+    s_closeMenuPopups    = true;
 }
 
 void sdl3ImguiShowPlayersPanel(bool open) {
     s_showPlayersPanel = open;
+    if (open) s_closeMenuPopups = true;
 #if BOLO_MOBILE
     if (open) {
         s_showSendMsg = false;
@@ -4463,10 +4463,23 @@ void sdl3ImguiTogglePlayersPanel(void) {
 bool sdl3ImguiWantsKeyboard(void) {
     if (!s_window) return false;
     ImGuiIO &io = ImGui::GetIO();
-    if (io.WantTextInput) return true;
-    if (ImGui::GetCurrentContext()->ActiveId != 0) return true;
-    if (sdl3ImguiIsDialogOpen()) return true;
-    return false;
+    ImGuiContext *g = ImGui::GetCurrentContext();
+
+    InputGateState st;
+    st.textInputActive             = io.WantTextInput;
+    st.blockingModalOpen           = s_showSysInfo || s_showNetInfo ||
+                                     s_showGameInfo || s_showSendMsg ||
+                                     s_showPlayersPanel || s_showSettings ||
+                                     s_brainSettingsOpen;
+    /* Every popup currently on the stack is blocking (menu-bar dropdowns and
+       the password / change-name / key-setup / pause / quick-chat modals).
+       The transient notifications — alliance request and vote widgets — are
+       plain Begin() windows, not popups, so they never land here. */
+    st.menuOpen                    = (g && g->OpenPopupStack.Size > 0);
+    st.allianceNotificationVisible = s_allianceVisible;  /* never suspends */
+    st.voteVisible                 = false;              /* votes never suspend */
+    st.appHasFocus                 = true;               /* input.c owns the OS-focus gate */
+    return gameInputSuspended(&st);
 }
 
 void sdl3ImguiClearNavFocus(void) {

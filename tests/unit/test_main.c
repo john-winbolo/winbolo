@@ -295,6 +295,7 @@ static const UnitTestEntry s_tests[] = {
     { "client_type_name_round_trips",            run_client_type_name_round_trips            },
     { "players_oob_index_safe",                  run_players_oob_index_safe                  },
     { "control_oob_player_dropped",              run_control_oob_player_dropped              },
+    { "input_gate_taxonomy",                     run_input_gate_taxonomy                     },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },
