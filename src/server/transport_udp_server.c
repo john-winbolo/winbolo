@@ -4659,7 +4659,6 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
     if (serverSimGetEventCount(sim) == 0 && serverSimGetMapEventCount(sim) == 0) return;
 
     for (c = 0; c < MAX_TANKS; c++) {
-        ClientEventQueue *cq;
         WORLD cwx = 0, cwy = 0;
         BYTE clientMX = 0, clientMY = 0;
         bool hasPos;
@@ -4693,7 +4692,6 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         /* Game events (sounds, kills, etc.) only matter once the client
          * is in-game with a loaded map — skip if still downloading. */
         if (!udpServer.mapDownload[c].downloadComplete) continue;
-        cq = &udpServer.eventQueues[c];
 
         hasPos = serverSimGetTankState(sim, (BYTE)c, &cwx, &cwy);
         if (hasPos) {
@@ -4766,23 +4764,39 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                     int dy = (clientMY > serverSimGetEvents(sim)[i].data[1]) ? (clientMY - serverSimGetEvents(sim)[i].data[1]) : (serverSimGetEvents(sim)[i].data[1] - clientMY);
                     if (dx >= SDIST_NONE || dy >= SDIST_NONE) continue;
                 }
-                if (!eventQueueHasSpace(cq)) {
-                    fprintf(stderr, "[UDP SERVER] Game event queue full for client %d\n", c);
+                uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
+                int evLen = packGameEvent(evBuf, &serverSimGetEvents(sim)[i]);
+                if (!channelSend(&udpServer.channelMux[c], CHANNEL_GAME,
+                                 evBuf, (uint16_t)evLen)) {
+                    /* Channel window full — defer the disconnect off the
+                     * event loop, mirroring the control-queue overflow path:
+                     * set the deferred-removal flag (drained at a safe point
+                     * by transportUdpServerDrainPendingRemovals) and stop. The
+                     * flag guard keeps a re-hit from spamming the log. */
+                    if (!udpServer.pendingSimRemove[c]) {
+                        WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                     "game channel overflow for slot %d, deferring disconnect",
+                                     c);
+                        udpServer.pendingSimRemove[c] = true;
+                    }
                     break;
                 }
-                uint32_t idx = cq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
-                cq->buffer[idx].event = serverSimGetEvents(sim)[i];
-                cq->buffer[idx].seq = cq->nextSeq;
-                cq->nextSeq++;
             }
         }
         for (s = 0; s < MAX_SOUND_TYPES; s++) {
             if (bestSoundIdx[s] >= 0) {
-                if (!eventQueueHasSpace(cq)) break;
-                uint32_t idx = cq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
-                cq->buffer[idx].event = serverSimGetEvents(sim)[bestSoundIdx[s]];
-                cq->buffer[idx].seq = cq->nextSeq;
-                cq->nextSeq++;
+                uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
+                int evLen = packGameEvent(evBuf, &serverSimGetEvents(sim)[bestSoundIdx[s]]);
+                if (!channelSend(&udpServer.channelMux[c], CHANNEL_GAME,
+                                 evBuf, (uint16_t)evLen)) {
+                    if (!udpServer.pendingSimRemove[c]) {
+                        WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                     "game channel overflow for slot %d, deferring disconnect",
+                                     c);
+                        udpServer.pendingSimRemove[c] = true;
+                    }
+                    break;
+                }
             }
         }
         #undef MAX_SOUND_TYPES
@@ -5012,6 +5026,11 @@ void transportUdpServerChannelTestStats(int slot, uint8_t ch,
     if (expectedSeq) *expectedSeq = udpServer.channelMux[slot].ch[ch].expectedSeq;
     if (ackedSeq)    *ackedSeq    = udpServer.channelMux[slot].ch[ch].ackedSeq;
     if (framesRx)    *framesRx    = udpServer.channelFramesRx[slot];
+}
+
+bool transportUdpServerTestPendingRemove(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return false;
+    return udpServer.pendingSimRemove[slot];
 }
 
 void transportUdpServerSetLock(ServerSim *sim, bool locked) {

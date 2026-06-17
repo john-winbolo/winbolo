@@ -262,6 +262,38 @@ int unpackGameEvent(const uint8_t *buf, size_t avail, GameEvent *ev) {
     return 1 + dataLen;
 }
 
+/* Splice channel-delivered game events into `events` ahead of the map-tail
+ * events already staged at [tailStart, tailStart+tailCount).  The `chanCount`
+ * events in `chan` are placed at tailStart and the existing tail is shifted up
+ * behind them, preserving the game-then-map order the snapshot game tail used.
+ * Counts are clamped to `cap` (placing channel events first, truncating the
+ * tail if room runs out) so the splice can never index past `events[cap]`.
+ * Returns the new total event count. */
+int spliceGameEventsBeforeTail(GameEvent *events, int tailStart, int tailCount,
+                               const GameEvent *chan, int chanCount, int cap) {
+    int room;
+    if (chanCount <= 0) {
+        return tailStart + tailCount;
+    }
+    if (chanCount > cap - tailStart) {
+        chanCount = cap - tailStart;
+    }
+    if (chanCount < 0) {
+        chanCount = 0;
+    }
+    room = cap - (tailStart + chanCount);
+    if (tailCount > room) {
+        tailCount = room;
+    }
+    if (tailCount < 0) {
+        tailCount = 0;
+    }
+    memmove(&events[tailStart + chanCount], &events[tailStart],
+            (size_t)tailCount * sizeof(GameEvent));
+    memcpy(&events[tailStart], chan, (size_t)chanCount * sizeof(GameEvent));
+    return tailStart + chanCount + tailCount;
+}
+
 /* ================================================================
  * Socket helpers
  * ================================================================ */

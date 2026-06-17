@@ -1757,6 +1757,33 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             break;
         }
 
+        /* Ingest this snapshot's channel trailer, then drain reliable game
+         * events from channel 0 into the game-tail slot — ahead of the map
+         * tail staged above, so they apply in the same game-then-map order
+         * the snapshot game tail used and fall under the same
+         * skipPriorGameTails rollback below.  The channel guarantees in-order
+         * exactly-once delivery, so no per-event ack or dedup is applied. */
+        if (pos < len &&
+            channelRecvFrame(&c->channelMux, buf + pos, len - pos) >= 0) {
+            c->channelFramesRx++;
+        }
+        {
+            GameEvent chanGameEv[MAX_SNAPSHOT_EVENTS];
+            uint8_t chanBuf[CHANNEL_MAX_SEG];
+            uint16_t chanLen;
+            int chanCount = 0;
+            int mapTailCount = newEventCount - eventTailStartIdx;
+            while (chanCount < MAX_SNAPSHOT_EVENTS &&
+                   channelReceive(&c->channelMux, CHANNEL_GAME, chanBuf, &chanLen)) {
+                if (unpackGameEvent(chanBuf, chanLen, &chanGameEv[chanCount]) > 0) {
+                    chanCount++;
+                }
+            }
+            newEventCount = spliceGameEventsBeforeTail(
+                c->snapshotEvents, eventTailStartIdx, mapTailCount,
+                chanGameEv, chanCount, MAX_SNAPSHOT_EVENTS);
+        }
+
         /* If CTRL_GAME_PHASE_RUNNING fired in this snapshot's tail, the
          * game/map events decoded earlier in the same packet are pre-
          * flip and must not reach the sim — they would replay against
@@ -1789,13 +1816,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->hasSnapshot = false;   /* Consumed inline — per-frame
                                    * syncSnapshot no-ops until the
                                    * next arrival. */
-
-        /* Anything past the snapshot's parsed end is the parallel channel
-         * layer's trailer. */
-        if (pos < len &&
-            channelRecvFrame(&c->channelMux, buf + pos, len - pos) >= 0) {
-            c->channelFramesRx++;
-        }
         break;
     }
 
@@ -1805,6 +1825,23 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         if (channelRecvFrame(&c->channelMux, buf + PACKET_HEADER_SIZE,
                              len - PACKET_HEADER_SIZE) >= 0) {
             c->channelFramesRx++;
+            /* Drain reliable game events from channel 0 and apply them
+             * directly.  A standalone frame is only sent while the game is not
+             * running, so it never coincides with an in-frame running-flip and
+             * needs no map-install / new-game-flip gating.  The channel
+             * guarantees in-order exactly-once delivery, so no dedup is added. */
+            if (c->clientSim != NULL) {
+                uint8_t chanBuf[CHANNEL_MAX_SEG];
+                uint16_t chanLen;
+                GameEvent gev;
+                while (channelReceive(&c->channelMux, CHANNEL_GAME,
+                                      chanBuf, &chanLen)) {
+                    if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
+                        clientSimApplyGameEvents(c->clientSim, &gev, 1,
+                                                 c->playerNum);
+                    }
+                }
+            }
         }
         break;
 

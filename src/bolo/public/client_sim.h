@@ -258,6 +258,12 @@ void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
                                const PillSnapshot *pillSnaps, int pillCount,
                                const GameEvent *events, int eventCount,
                                BYTE playerNum);
+/* Buffer reliable game events for brain consumption and apply their
+ * effect/sim side effects. Carries no snapshot-frame state, so both the
+ * snapshot apply path and the reliable-channel drain route game events
+ * through it. `events` may be NULL. */
+void clientSimApplyGameEvents(ClientSim *cs, const GameEvent *events,
+                              int eventCount, BYTE playerNum);
 void clientSimDisplayTick(ClientSim *cs, bool isBrain);
 
 /* Advance predicted shells by one tick (move forward, decrement length) */
