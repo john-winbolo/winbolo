@@ -8,19 +8,23 @@
  * when no such datagram flows.  These two cases drive the wiring end-to-end
  * over the real loopback transport.
  *
- *   1. Empty flow — a running session with no channel traffic.  Frames are
- *      still exchanged (the 2-byte empty frame rides every trailer), but no
- *      message is ever queued, so every channel's expectedSeq / ackedSeq must
- *      stay at 0 and neither side disconnects: the empty channel is inert.
+ *   1. Empty flow — a running session with no game/map traffic.  Frames are
+ *      still exchanged (the 2-byte empty frame rides every trailer); the
+ *      game (0), map (1) and bulk (3) channels carry no message, so their
+ *      expectedSeq / ackedSeq must stay at 0 and neither side disconnects.
+ *      CHANNEL_CONTROL (2) is excluded: control events now ride it, and the
+ *      join sync-replay advances it.
  *
  *   2. Synthetic round-trip under loss + jitter + dup.  A message is injected
  *      on a server channel via the test-only hook; under impairment it must
- *      still arrive intact on the client (drained via channelReceive) and the
- *      client's ack must make it back so the server's ackedSeq advances —
- *      proving retransmit / cumulative-ack survive a hostile path.  It runs on
- *      CHANNEL_CONTROL: the client transport now consumes CHANNEL_GAME itself
- *      (case 3), so a raw byte payload injected there would be drained out from
- *      under the receive peek and mis-decoded as a game event.
+ *      still cross the path (the client transport drains it, advancing
+ *      expectedSeq) and the client's cumulative ack must make it back (the
+ *      server's ackedSeq advances) — proving retransmit / cumulative-ack
+ *      survive a hostile path.  It runs on CHANNEL_CONTROL; every message
+ *      channel (0-2) is now consumed by the client transport, so the round-trip
+ *      is observed via the channel's expectedSeq / ackedSeq bookkeeping rather
+ *      than a raw receive peek (the drain owns the bytes and decode-skips a
+ *      non-control payload harmlessly).
  *
  *   3. Real game events ride channel 0.  A running session fires under loss;
  *      each shot expires into an EVENT_EXPLOSION the server routes onto
@@ -63,6 +67,7 @@
 #define CONNECT_MAX     2000   /* join + map download */
 #define EMPTY_PUMPS      300   /* steady state long enough for trailers to flow */
 #define ROUNDTRIP_MAX   3000   /* delivery + ack convergence under impairment */
+#define SETTLE_PUMPS     300   /* let the join control-replay drain before baselining */
 
 static bool pred_connected(LoopbackHarness *h, void *user) {
     (void)user;
@@ -133,11 +138,14 @@ static int run_empty_flow(void) {
         }
     }
 
-    /* Every channel's sequence state must be untouched on both sides. */
+    /* Every channel with no traffic must be untouched on both sides.
+     * CHANNEL_CONTROL is skipped: control events ride it and the join
+     * sync-replay has advanced it. */
     {
         uint8_t ch;
         for (ch = 0; ch < CHANNEL_COUNT; ch++) {
             uint32_t cExp = 0, cAck = 0, sExp = 0, sAck = 0;
+            if (ch == CHANNEL_CONTROL) continue;
             transportUdpClientChannelTestStats(ct, ch, &cExp, &cAck, NULL);
             transportUdpServerChannelTestStats(slot, ch, &sExp, &sAck, NULL);
             if (cExp != 0 || cAck != 0 || sExp != 0 || sAck != 0) {
@@ -168,8 +176,7 @@ static int run_roundtrip_impaired(void) {
     Transport *ct;
     static const uint8_t kMsg[] = "channel-roundtrip!";
     const uint16_t kLen = (uint16_t)sizeof(kMsg);  /* includes NUL */
-    bool gotMsg = false;
-    bool msgOk  = false;
+    bool converged = false;
     int i;
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "ChanRT", /*lobbyMode*/ false,
@@ -186,61 +193,62 @@ static int run_roundtrip_impaired(void) {
     slot = (int)clientSimGetMyPlayerNum(h.cs);
     ct   = &h.cs->transport;
 
+    /* The join sync-replay has already put control events on CHANNEL_CONTROL,
+     * so baseline the channel's seqs after letting it settle, then require the
+     * injected message to advance BOTH past their baselines. */
+    {
+        int s;
+        for (s = 0; s < SETTLE_PUMPS; s++) {
+            inputTick = feed_input(&h, inputTick);
+            loopbackHarnessPump(&h);
+        }
+    }
+    uint32_t baseSrvAck = 0, baseCliExp = 0;
+    transportUdpServerChannelTestStats(slot, CHANNEL_CONTROL, NULL, &baseSrvAck, NULL);
+    transportUdpClientChannelTestStats(ct, CHANNEL_CONTROL, &baseCliExp, NULL, NULL);
+
     /* Inject a single message on the server's control channel for this slot.
-     * CHANNEL_CONTROL is not consumed by the client transport, so it stays in
-     * the receive ring for the peek below. */
+     * The client transport now consumes CHANNEL_CONTROL (decoding each message
+     * as a control event), so the raw bytes can't be peeked back — the
+     * round-trip is proven via the channel's own bookkeeping instead: the
+     * message crosses the impaired path (client expectedSeq advances as the
+     * transport drains it) and the cumulative ack returns (server ackedSeq
+     * advances). The payload need not decode as a control event; the drain
+     * skips it harmlessly while still advancing expectedSeq. */
     UT_ASSERT_MSG(transportUdpServerChannelTestSend(slot, CHANNEL_CONTROL,
                                                     kMsg, kLen),
                   "test channel send rejected");
 
-    /* Pump (feeding input so the client's ack rides back) until the message
-     * arrives intact AND the server sees the ack advance its ackedSeq. */
+    /* Pump (feeding input so the client's ack rides back) until the injected
+     * message has been delivered (client expectedSeq advanced past baseline)
+     * AND acked (server ackedSeq advanced past baseline). */
     for (i = 1; i <= ROUNDTRIP_MAX; i++) {
-        uint32_t srvAck = 0;
+        uint32_t srvAck = 0, cliExp = 0;
 
         inputTick = feed_input(&h, inputTick);
         loopbackHarnessPump(&h);
 
-        if (!gotMsg) {
-            uint8_t out[CHANNEL_MAX_SEG];
-            uint16_t outLen = 0;
-            if (transportUdpClientChannelTestReceive(ct, CHANNEL_CONTROL,
-                                                     out, &outLen)) {
-                gotMsg = true;
-                msgOk  = (outLen == kLen && memcmp(out, kMsg, kLen) == 0);
-            }
-        }
-
         transportUdpServerChannelTestStats(slot, CHANNEL_CONTROL, NULL, &srvAck, NULL);
-        if (gotMsg && srvAck >= 1) {
+        transportUdpClientChannelTestStats(ct, CHANNEL_CONTROL, &cliExp, NULL, NULL);
+        if (cliExp > baseCliExp && srvAck > baseSrvAck) {
+            converged = true;
             break;
         }
     }
 
     fprintf(stderr, "  channel round-trip (impaired): converged after %d pump(s) "
-                    "(cap %d) gotMsg=%d msgOk=%d\n", i, ROUNDTRIP_MAX,
-            (int)gotMsg, (int)msgOk);
+                    "(cap %d) delivered+acked=%d\n", i, ROUNDTRIP_MAX,
+            (int)converged);
 
-    if (!gotMsg) {
-        loopbackHarnessStop(&h);
-        UT_FAIL("message never delivered to client within %d pumps", ROUNDTRIP_MAX);
-    }
-    if (!msgOk) {
-        loopbackHarnessStop(&h);
-        UT_FAIL("delivered message did not match the injected bytes");
-    }
-    {
+    if (!converged) {
         uint32_t srvAck = 0, cliExp = 0;
         transportUdpServerChannelTestStats(slot, CHANNEL_CONTROL, NULL, &srvAck, NULL);
         transportUdpClientChannelTestStats(ct, CHANNEL_CONTROL, &cliExp, NULL, NULL);
-        if (srvAck < 1) {
-            loopbackHarnessStop(&h);
-            UT_FAIL("server ackedSeq never advanced (=%u)", (unsigned)srvAck);
-        }
-        if (cliExp < 1) {
-            loopbackHarnessStop(&h);
-            UT_FAIL("client expectedSeq never advanced (=%u)", (unsigned)cliExp);
-        }
+        loopbackHarnessStop(&h);
+        UT_FAIL("injected control message never delivered+acked within %d pumps "
+                "(client expectedSeq=%u/base %u server ackedSeq=%u/base %u)",
+                ROUNDTRIP_MAX, (unsigned)cliExp, (unsigned)baseCliExp,
+                (unsigned)srvAck, (unsigned)baseSrvAck);
     }
 
     loopbackHarnessStop(&h);

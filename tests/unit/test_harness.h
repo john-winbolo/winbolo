@@ -405,6 +405,9 @@ int run_error_smoothing(void);
 int run_loopback_join(void);
 int run_loopback_join_loss(void);
 int run_loopback_lobby_running_loss(void);
+/* Quiet-lobby reliable control delivery under loss with no input flowing:
+ * proves control acks ride the standalone PACKET_CHANNEL trailer. */
+int run_loopback_quiet_lobby_control_loss(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);

@@ -898,91 +898,35 @@ static const char *mpDiagCtrlName(int type) {
     }
 }
 
-/* Pack and send a PACKET_CONTROL_TICK to one client containing every
- * still-unacked event in that client's control queue, up to UDP_MAX_PAYLOAD.
- * Per-event wire layout matches the snapshot control-event tail:
- * type(1) + bodyLen(2 BE) + body(N).  No-op when the queue is fully
- * acked or the client is disconnected. */
-static void transportUdpServerSendControlTick(int clientIdx) {
-    UdpServerClient *client;
-    ClientControlEventQueue *q;
-    uint8_t buf[UDP_MAX_PAYLOAD];
-    int pos;
-    int countOffset;
-    int count = 0;
-    uint32_t seq;
-    uint32_t baseSeq;
-
-    if (clientIdx < 0 || clientIdx >= MAX_TANKS) return;
-    client = &udpServer.clients[clientIdx];
-    q = &udpServer.controlEventQueues[clientIdx];
-    if (!client->connected) return;
-    if (q->ackedSeq == q->nextSeq) return;  /* nothing to send */
-
-    packHeader(buf, PACKET_CONTROL_TICK, client->outSequence++);
-    pos = PACKET_HEADER_SIZE;
-    baseSeq = q->ackedSeq;
-    packU32(buf + pos, baseSeq);
-    pos += 4;
-    countOffset = pos;
-    pos += 1;  /* count byte — backfilled after the loop */
-
-    for (seq = q->ackedSeq; seq < q->nextSeq; seq++) {
-        uint32_t idx = seq % CONTROL_EVENT_QUEUE_SIZE;
-        ControlEncodeBodyFn enc;
-        size_t bodyLen = 0;
-        if (q->buffer[idx].seq != seq) break;  /* wrapped — slot reused */
-        enc = transportControlCodecBodyEncoder(q->buffer[idx].event.type);
-        if (enc == NULL) continue;
-        if (pos + 3 > (int)sizeof(buf)) break;
-        if (enc(&q->buffer[idx].event, client,
-                buf + pos + 3, sizeof(buf) - pos - 3, &bodyLen) != ENCODE_OK) {
-            break;
-        }
-        buf[pos]   = (uint8_t)q->buffer[idx].event.type;
-        packU16(buf + pos + 1, (uint16_t)bodyLen);
-        pos += 3 + (int)bodyLen;
-        count++;
-        if (count >= 255) break;  /* cap to uint8_t */
-    }
-
-    buf[countOffset] = (uint8_t)count;
-    if (count > 0) {
-        srvSendTo(buf, pos, &client->addr);
-        {
-            char typesBuf[256];
-            int tbPos = 0;
-            uint32_t s;
-            typesBuf[0] = '\0';
-            for (s = baseSeq; s < baseSeq + (uint32_t)count && tbPos < (int)sizeof(typesBuf) - 32; s++) {
-                uint32_t idx2 = s % CONTROL_EVENT_QUEUE_SIZE;
-                tbPos += snprintf(typesBuf + tbPos, sizeof(typesBuf) - tbPos,
-                                  "%s%s(seq=%u)", tbPos == 0 ? "" : ",",
-                                  mpDiagCtrlName((int)q->buffer[idx2].event.type),
-                                  (unsigned)s);
-            }
-            mpDiagLog("[srv] CONTROL_TICK send slot=%d baseSeq=%u count=%d bytes=%d ackedSeq=%u nextSeq=%u types=[%s]",
-                      clientIdx, (unsigned)baseSeq, count, pos,
-                      (unsigned)q->ackedSeq, (unsigned)q->nextSeq, typesBuf);
-        }
-    } else {
-        mpDiagLog("[srv] CONTROL_TICK send slot=%d count=0 (no encodable events; ackedSeq=%u nextSeq=%u)",
-                  clientIdx, (unsigned)q->ackedSeq, (unsigned)q->nextSeq);
-    }
+/* Control events now ride reliable channel 2 (CHANNEL_CONTROL); the channel's
+ * own full-tail resend handles retransmission, carried on the snapshot trailer
+ * during running and a standalone PACKET_CHANNEL otherwise.  This entry point
+ * is retained as a no-op so its remaining server_lifecycle.c caller compiles
+ * and harmlessly does nothing. */
+void transportUdpServerRetransmitUnackedControl(void) {
 }
 
-/* Retransmit unacked control events to every connected client.  Driven
- * by server_lifecycle.c at a 4-tick (~80ms) cadence during
- * lobby/countdown/gameover — running phases get retransmit for free via
- * the snapshot tail. */
-void transportUdpServerRetransmitUnackedControl(void) {
-    int i;
-    for (i = 0; i < MAX_TANKS; i++) {
-        if (udpServer.clients[i].connected &&
-            udpServer.controlEventQueues[i].ackedSeq <
-            udpServer.controlEventQueues[i].nextSeq) {
-            transportUdpServerSendControlTick(i);
-        }
+/* Flush one client's channel onto the wire immediately as a standalone
+ * PACKET_CHANNEL.  Used to carry a just-published control event when no later
+ * carrier tick is guaranteed to follow — the server teardown publishes
+ * CTRL_SERVER_SHUTDOWN and then tears the slot down in the same call, with no
+ * snapshot or check-timeouts pass after it.  During running the snapshot
+ * trailer is the carrier, so callers skip this path there. */
+static void transportUdpServerFlushChannel(int clientIdx) {
+    UdpServerClient *client;
+    uint8_t cbuf[UDP_MAX_PAYLOAD];
+    int frameLen;
+    if (clientIdx < 0 || clientIdx >= MAX_TANKS) return;
+    client = &udpServer.clients[clientIdx];
+    if (!client->connected) return;
+    channelTick(&udpServer.channelMux[clientIdx], udpServer.tickCount,
+                client->pingMs);
+    frameLen = channelBuildFrame(&udpServer.channelMux[clientIdx],
+                                 cbuf + PACKET_HEADER_SIZE,
+                                 UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+    if (frameLen > 2) {
+        packHeader(cbuf, PACKET_CHANNEL, client->outSequence++);
+        srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &client->addr);
     }
 }
 
@@ -995,8 +939,6 @@ void transportUdpServerRetransmitUnackedControl(void) {
 static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
     UdpServerClient *client = (UdpServerClient *)ctx;
     int idx;
-    ClientControlEventQueue *q;
-    uint32_t seq;
 
     idx = (int)(client - udpServer.clients);
     if (!client->connected) {
@@ -1068,93 +1010,65 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
         return;
     }
 
-    /* Enqueue into this client's reliable control queue. */
-    q = &udpServer.controlEventQueues[idx];
-    if (!controlEventQueueHasSpace(q)) {
-        /* Don't silently drop — every control event carries state-sync
-         * semantics.  Disconnect the lagging client.  The 500-tick
-         * unacked-control timeout catches it first in practice; this is the
-         * belt-and-braces.
-         *
-         * We're in a control-event deliver callback, i.e. mid-publish. The
-         * disconnect both broadcasts "X has left." and fans out PLAYER_LEFT,
-         * so neither serverDisconnectClient nor serverSimRemovePlayer can run
-         * here without re-entering serverSimPublishControl (whose reentrancy
-         * guard would fire, and under NDEBUG would corrupt the in-flight
-         * fan-out). Defer the whole disconnect to
-         * transportUdpServerDrainPendingRemovals, which runs at a safe point in
-         * the tick outside any publish. The slot stays connected until then —
-         * so it can't be reused meanwhile, and further events to it simply
-         * re-hit this full queue and return. Flag-guard the log so that re-hit
-         * doesn't spam. */
-        if (!udpServer.pendingSimRemove[idx]) {
-            WB_LOG_ERROR(WB_LOG_CAT_NET,
-                         "control queue overflow for slot %d, deferring disconnect",
-                         idx);
-            mpDiagLog("[srv] OVERFLOW slot=%d type=%s ackedSeq=%u nextSeq=%u -> deferring disconnect",
-                      idx, mpDiagCtrlName((int)evt->type),
-                      (unsigned)q->ackedSeq, (unsigned)q->nextSeq);
-            udpServer.pendingSimRemove[idx] = true;
-        }
-        return;
-    }
-    /* If the queue was empty (ackedSeq == nextSeq) we have to restart the
-     * unacked-control timeout clock — controlEventLastAckProgressTick was
-     * last touched on the previous ack, which could be many seconds ago
-     * during a quiet lobby.  Without this reset, the very first event
-     * after a long idle period gets compared against a stale baseline and
-     * the next checkTimeouts call fires CONTROL_UNACKED_TIMEOUT_TICKS
-     * immediately, kicking the client before its ACK has a chance to
-     * round-trip back.  Observed in mp-logging-90800.txt:60→87. */
-    if (q->ackedSeq == q->nextSeq) {
-        udpServer.controlEventLastAckProgressTick[idx] = udpServer.tickCount;
-    }
-    seq = q->nextSeq;
-    q->buffer[seq % CONTROL_EVENT_QUEUE_SIZE].seq   = seq;
-    q->buffer[seq % CONTROL_EVENT_QUEUE_SIZE].event = *evt;
-    q->nextSeq++;
-    controlEventQueueAssertValid(q, "enqueue");
+    /* Route onto the reliable control channel (CHANNEL_CONTROL).  Per-event
+     * wire layout matches the body-only codec table: type(1) + bodyLen(2 BE)
+     * + body(N); the receiver dispatches each event through
+     * transportControlCodecBodyDecoder.  The channel carries and retransmits
+     * the event in both phases — its frame rides the snapshot trailer during
+     * running and a standalone PACKET_CHANNEL otherwise — so no phase-gated
+     * immediate send is needed here.
+     *
+     * An event with no body encoder is dropped (it was never deliverable),
+     * matching the former send-time `enc == NULL` skip.  A full window means
+     * the client has stopped acking control: defer its disconnect off this
+     * publish path (mirrors the game/map channel overflow at the snapshot
+     * drain), flag-guarded so a re-hit on the still-connected slot can't spam
+     * the log.  serverDisconnectClient / serverSimRemovePlayer cannot run from
+     * inside this deliver callback without re-entering serverSimPublishControl
+     * and tripping its reentrancy guard, so the teardown waits for
+     * transportUdpServerDrainPendingRemovals at a safe point in the tick. */
     {
-        int qDepth = (int)(q->nextSeq - q->ackedSeq);
-        int phase = (int)serverSimGetState(serverSimGetActive());
-        int syncInProg = udpServer.controlSyncInProgress[idx] ? 1 : 0;
-        const char *extra = "";
-        char extraBuf[128];
-        extraBuf[0] = '\0';
-        if (evt->type == CTRL_LOBBY_SLOT) {
-            snprintf(extraBuf, sizeof(extraBuf),
-                     " lobbySlot[player=%d team=%d ready=%d connected=%d isBot=%d name='%.12s']",
-                     (int)evt->u.lobbySlot.playerNum,
-                     (int)evt->u.lobbySlot.slot.teamNumber,
-                     (int)evt->u.lobbySlot.slot.ready,
-                     (int)evt->u.lobbySlot.slot.connected,
-                     (int)evt->u.lobbySlot.slot.isBot,
-                     evt->u.lobbySlot.slot.playerName);
-            extra = extraBuf;
-        } else if (evt->type == CTRL_PLAYER_JOIN) {
-            snprintf(extraBuf, sizeof(extraBuf),
-                     " playerJoin[player=%d name='%.16s']",
-                     (int)evt->u.playerJoin.playerNum,
-                     evt->u.playerJoin.name);
-            extra = extraBuf;
+        ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(evt->type);
+        uint8_t msg[CHANNEL_CONTROL_SEG];
+        size_t bodyLen = 0;
+        if (enc == NULL) {
+            mpDiagLog("[srv] deliver SKIP slot=%d type=%s reason=no-encoder",
+                      idx, mpDiagCtrlName((int)evt->type));
+            return;
         }
-        mpDiagLog("[srv] ENQ slot=%d seq=%u type=%s qDepth=%d phase=%d syncInProg=%d%s",
-                  idx, (unsigned)seq, mpDiagCtrlName((int)evt->type),
-                  qDepth, phase, syncInProg, extra);
+        if (enc(evt, client, msg + 3, sizeof(msg) - 3, &bodyLen) != ENCODE_OK) {
+            mpDiagLog("[srv] deliver SKIP slot=%d type=%s reason=encode",
+                      idx, mpDiagCtrlName((int)evt->type));
+            return;
+        }
+        msg[0] = (uint8_t)evt->type;
+        packU16(msg + 1, (uint16_t)bodyLen);
+        if (!channelSend(&udpServer.channelMux[idx], CHANNEL_CONTROL,
+                         msg, (uint16_t)(3 + bodyLen))) {
+            if (!udpServer.pendingSimRemove[idx]) {
+                WB_LOG_ERROR(WB_LOG_CAT_NET,
+                             "control channel overflow for slot %d, deferring disconnect",
+                             idx);
+                mpDiagLog("[srv] OVERFLOW slot=%d type=%s -> deferring disconnect",
+                          idx, mpDiagCtrlName((int)evt->type));
+                udpServer.pendingSimRemove[idx] = true;
+            }
+            return;
+        }
+        mpDiagLog("[srv] CTRL->ch2 slot=%d type=%s bodyLen=%u",
+                  idx, mpDiagCtrlName((int)evt->type), (unsigned)bodyLen);
     }
 
-    /* Sync-replay coalescing: suppress immediate sends during the
-     * subscriber's synchronous replay burst.  The subscriber-registration
-     * wrapper fires one TICK after the burst completes. */
-    if (udpServer.controlSyncInProgress[idx]) return;
-
-    if (serverSimGetState(serverSimGetActive()) == serverStateRunning) {
-        /* Snapshot tail picks it up automatically on the next tick. */
-        return;
+    /* Carry it now when outside running: the per-tick standalone PACKET_CHANNEL
+     * would otherwise pick it up, but a control event published with no later
+     * tick (CTRL_SERVER_SHUTDOWN, emitted as the server tears the slot down)
+     * must flush synchronously.  During running the snapshot trailer is the
+     * carrier; during the join sync-replay the burst is coalesced into one
+     * flush after registration. */
+    if (!udpServer.controlSyncInProgress[idx] &&
+        serverSimGetState(serverSimGetActive()) != serverStateRunning) {
+        transportUdpServerFlushChannel(idx);
     }
-    /* Non-running phase: emit a PACKET_CONTROL_TICK now carrying the
-     * new event plus any other still-unacked events in the queue. */
-    transportUdpServerSendControlTick(idx);
 }
 
 bool lobbyAnyOtherUploadActive(const bool *active, int exceptIdx) {
@@ -2014,12 +1928,11 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * the codec encoder to this client's socket — replacing the old
      * composite PACKET_LOBBY_STATE handshake.
      *
-     * controlSyncInProgress brackets the synchronous replay burst
-     * (~10-15 events) so udpClientDeliverControl skips its immediate-
-     * send-on-enqueue path; the post-burst flush below packs the whole
-     * burst into a single PACKET_CONTROL_TICK when non-running.  During
-     * running, no explicit flush is needed — the snapshot tail naturally
-     * bundles the queued events into the next outgoing snapshot. */
+     * The replay burst is queued onto CHANNEL_CONTROL by udpClientDeliverControl
+     * and carried by the channel's own framing — the snapshot trailer during
+     * running, a standalone PACKET_CHANNEL otherwise — so no explicit post-burst
+     * flush is needed.  controlSyncInProgress is still bracketed here for the
+     * dormant queue machinery; the channel ignores it. */
     mpDiagLog("[srv] SYNC START slot=%d phase=%d (about to register subscriber + replay)",
               slot, (int)serverSimGetState(sim));
     udpServer.controlSyncInProgress[slot] = true;
@@ -2027,19 +1940,13 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         serverSimRegisterSubscriber(sim, udpClientDeliverControl,
                                     &udpServer.clients[slot]);
     udpServer.controlSyncInProgress[slot] = false;
-    {
-        ClientControlEventQueue *qd = &udpServer.controlEventQueues[slot];
-        mpDiagLog("[srv] SYNC END slot=%d queuedEvents=%u (ackedSeq=%u nextSeq=%u) phase=%d -> %s",
-                  slot,
-                  (unsigned)(qd->nextSeq - qd->ackedSeq),
-                  (unsigned)qd->ackedSeq, (unsigned)qd->nextSeq,
-                  (int)serverSimGetState(sim),
-                  serverSimGetState(sim) == serverStateRunning
-                      ? "deferring flush to next snapshot"
-                      : "flushing via PACKET_CONTROL_TICK");
-    }
+    mpDiagLog("[srv] SYNC END slot=%d phase=%d (replay queued onto CHANNEL_CONTROL)",
+              slot, (int)serverSimGetState(sim));
+    /* Flush the coalesced replay burst now when outside running (mirrors the
+     * per-event eager flush the sync guard suppressed); during running the
+     * next snapshot trailer carries it. */
     if (serverSimGetState(sim) != serverStateRunning) {
-        transportUdpServerSendControlTick(slot);
+        transportUdpServerFlushChannel(slot);
     }
 
     /* Announce the join to WBN.  If the slot's key already rode the JOIN
@@ -2187,30 +2094,8 @@ static void serverHandleInput(const uint8_t *buf, int len,
         if (pkt.mapEventAck > udpServer.mapEventQueues[clientIdx].ackedSeq) {
             udpServer.mapEventQueues[clientIdx].ackedSeq = pkt.mapEventAck;
         }
-        {
-            ClientControlEventQueue *cq = &udpServer.controlEventQueues[clientIdx];
-            uint32_t newAck = pkt.controlEventAck;
-            /* Ignore acks beyond nextSeq — they come from the client's
-             * view of the OLD sequence space, after the server has
-             * already wiped its queue at game-start.  Accepting a
-             * stale-future ack would set ackedSeq > nextSeq, breaking
-             * the snapshot pack loop's `seq < nextSeq` condition and
-             * silently stranding every subsequent event (CTRL_GAME_PHASE_RUNNING
-             * being the canonical victim).  The client will send a fresh
-             * ack from the new sequence space on its next round-trip. */
-            if (newAck > cq->nextSeq) {
-                mpDiagLog("[srv] ACK-input STALE slot=%d ack=%u > nextSeq=%u (post-wipe stale, ignoring)",
-                          clientIdx, (unsigned)newAck, (unsigned)cq->nextSeq);
-            } else if (newAck > cq->ackedSeq) {
-                uint32_t oldAck = cq->ackedSeq;
-                cq->ackedSeq = newAck;
-                udpServer.controlEventLastAckProgressTick[clientIdx] = udpServer.tickCount;
-                controlEventQueueAssertValid(cq, "ack-advance(input)");
-                mpDiagLog("[srv] ACK-advance(input) slot=%d %u -> %u (nextSeq=%u)",
-                          clientIdx, (unsigned)oldAck, (unsigned)newAck,
-                          (unsigned)cq->nextSeq);
-            }
-        }
+        /* Control events now ride CHANNEL_CONTROL; their acks arrive on the
+         * channel frame trailer (ingested below), not in pkt.controlEventAck. */
 
         /* Only apply if this is a newer input than what we last processed */
         if (pkt.tick > serverSimGetLastProcessedInput(sim, clientIdx)) {
@@ -2226,46 +2111,6 @@ static void serverHandleInput(const uint8_t *buf, int len,
                          buf + pos, len - pos) >= 0) {
         udpServer.channelFramesRx[clientIdx]++;
     }
-}
-
-/* Handle PACKET_CONTROL_ACK from a connected client — advance the
- * per-client control-event ackedSeq.  Carries the client's next-expected
- * control seq; never goes backwards.  Also bumps lastReceivedTick so
- * the no-traffic timeout stays satisfied while only the ACK channel is
- * flowing (e.g. quiet lobby). */
-static void serverHandleControlAck(const uint8_t *buf, int len,
-                                   const struct sockaddr_in *fromAddr) {
-    int clientIdx;
-    uint32_t ack;
-    if (len < PACKET_HEADER_SIZE + 4) return;
-    clientIdx = serverFindClient(fromAddr);
-    if (clientIdx < 0) return;
-    ack = unpackU32(buf + PACKET_HEADER_SIZE);
-    {
-        ClientControlEventQueue *cq = &udpServer.controlEventQueues[clientIdx];
-        /* Reject stale-future acks (see serverHandleInput's matching
-         * branch).  A client whose ACK was in flight at the moment of
-         * a game-start queue wipe will look like ack=<old nextSeq>
-         * arriving at a server with nextSeq=2.  Accepting that ack
-         * would push ackedSeq past nextSeq and silently strand every
-         * subsequent event in the new sequence space. */
-        if (ack > cq->nextSeq) {
-            mpDiagLog("[srv] ACK-CTRL_ACK STALE slot=%d ack=%u > nextSeq=%u (post-wipe stale, ignoring)",
-                      clientIdx, (unsigned)ack, (unsigned)cq->nextSeq);
-        } else if (ack > cq->ackedSeq) {
-            uint32_t oldAck = cq->ackedSeq;
-            cq->ackedSeq = ack;
-            udpServer.controlEventLastAckProgressTick[clientIdx] = udpServer.tickCount;
-            controlEventQueueAssertValid(cq, "ack-advance(CTRL_ACK)");
-            mpDiagLog("[srv] ACK-advance(CTRL_ACK pkt) slot=%d %u -> %u (nextSeq=%u)",
-                      clientIdx, (unsigned)oldAck, (unsigned)ack,
-                      (unsigned)cq->nextSeq);
-        } else {
-            mpDiagLog("[srv] ACK pkt no-op slot=%d ack=%u currentAcked=%u",
-                      clientIdx, (unsigned)ack, (unsigned)cq->ackedSeq);
-        }
-    }
-    udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
 }
 
 /* Handle ping from client — respond with pong */
@@ -2332,7 +2177,6 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     GameEvent eventSnaps[MAX_SNAPSHOT_EVENTS];
     ClientEventQueue *evQ = &udpServer.eventQueues[clientIdx];
     ClientEventQueue *mapQ = &udpServer.mapEventQueues[clientIdx];
-    ClientControlEventQueue *controlQ = &udpServer.controlEventQueues[clientIdx];
     UdpServerClient *client = &udpServer.clients[clientIdx];
 
     /* Build snapshot from sim state (same code as local transport) */
@@ -2465,48 +2309,11 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
         }
     }
 
-    /* Pack reliable control events from dedicated per-client queue.
-     * Per-event wire layout: type(1) + bodyLen(2) + body(N). The
-     * receiver dispatches each event to its decoder via the body-only
-     * codec table (transportControlCodecBodyDecoder). */
-    controlEventBaseSeq = controlQ->ackedSeq;
-    {
-        uint32_t seq;
-        char typesBuf[256];
-        int tbPos = 0;
-        typesBuf[0] = '\0';
-        for (seq = controlQ->ackedSeq; seq < controlQ->nextSeq; seq++) {
-            uint32_t idx = seq % CONTROL_EVENT_QUEUE_SIZE;
-            ControlEncodeBodyFn enc;
-            size_t bodyLen = 0;
-            if (controlQ->buffer[idx].seq != seq) break; /* wrapped — slot got reused */
-            enc = transportControlCodecBodyEncoder(controlQ->buffer[idx].event.type);
-            if (enc == NULL) continue; /* no body codec — silently skip */
-            if (pos + 3 > (int)sizeof(buf)) break;
-            if (enc(&controlQ->buffer[idx].event, client,
-                    buf + pos + 3, sizeof(buf) - pos - 3, &bodyLen) != ENCODE_OK) {
-                break;
-            }
-            buf[pos]   = (uint8_t)controlQ->buffer[idx].event.type;
-            packU16(buf + pos + 1, (uint16_t)bodyLen);
-            pos += 3 + (int)bodyLen;
-            if (tbPos < (int)sizeof(typesBuf) - 32) {
-                tbPos += snprintf(typesBuf + tbPos, sizeof(typesBuf) - tbPos,
-                                  "%s%s(seq=%u)", tbPos == 0 ? "" : ",",
-                                  mpDiagCtrlName((int)controlQ->buffer[idx].event.type),
-                                  (unsigned)seq);
-            }
-            controlEventCount++;
-            if (controlEventCount >= 255) break; /* Cap to uint8_t max */
-        }
-        if (controlEventCount > 0) {
-            mpDiagLog("[srv] SNAPSHOT-tail slot=%d baseSeq=%u count=%u (ackedSeq=%u nextSeq=%u) types=[%s]",
-                      clientIdx, (unsigned)controlEventBaseSeq,
-                      controlEventCount,
-                      (unsigned)controlQ->ackedSeq, (unsigned)controlQ->nextSeq,
-                      typesBuf);
-        }
-    }
+    /* Control events ride reliable channel 2 (CHANNEL_CONTROL), carried by the
+     * channel-frame trailer appended below — not this snapshot tail.  The
+     * controlEventCount / controlEventBaseSeq header fields stay in the fixed
+     * 32-byte layout but are packed as 0 (their wire slot is removed in the
+     * later sweep). */
 
     /* Fill in counts */
     buf[countsPos]     = hdr.tankCount;
@@ -3725,9 +3532,6 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_PING:
             serverHandlePing(buf, len, fromAddr);
-            break;
-        case PACKET_CONTROL_ACK:
-            serverHandleControlAck(buf, len, fromAddr);
             break;
         case PACKET_CHANNEL: {
             /* Standalone channel frame (client → server, sent when no input

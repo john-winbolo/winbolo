@@ -455,7 +455,8 @@ static void udpClientRecordInputInternal(TransportUdpClientCtx *c,
         InputPacket stamped = *input;
         stamped.eventAck = c->reliableEventAck;
         stamped.mapEventAck = c->mapEventAck;
-        stamped.controlEventAck = c->controlEventAck;
+        /* Control events ride reliable channel 2; their ack travels on the
+         * channel-frame trailer, not stamped.controlEventAck (dormant). */
         stamped.pingMs = c->pingMs;
         stamped.viewTick = clientSimGetViewTick(c->clientSim);
         c->inputRing[c->inputRingCount % CLIENT_INPUT_RING_SIZE] = stamped;
@@ -1668,93 +1669,44 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             }
         }
 
-        /* Decode the control-event tail.  Events are applied EAGERLY
-         * via clientSimApplyControlOrdered — they must run before the
-         * snapshot's game/map tails make it to the sim so the lobby
-         * →running flip can install the new map and drop any pre-flip
-         * tail.  Per-event wire layout: type(1) + bodyLen(2) + body(N).
-         * The body decoder is looked up by ControlEventType through the
-         * body-only codec table. */
-        if (controlEventCount > 0) {
-            mpDiagLog("[cli] SNAPSHOT-tail recv baseSeq=%u count=%u localAck=%u",
-                      (unsigned)controlEventBaseSeq, (unsigned)controlEventCount,
-                      (unsigned)c->controlEventAck);
+        /* Ingest this snapshot's channel trailer up front, then drain reliable
+         * control events from channel 2 (CHANNEL_CONTROL) EAGERLY — before the
+         * map-install gate and the ch0/ch1 game/map drain below.  Each event is
+         * applied via clientSimApplyControlOrdered so a lobby→running flip can
+         * install the new map and arm skipPriorGameTails ahead of the
+         * game/map tails, preserving the former "control before game/map"
+         * ordering.  Per-message wire layout: type(1) + bodyLen(2) + body(N);
+         * the channel guarantees in-order exactly-once delivery, so no per-event
+         * dedup or ack is applied. */
+        if (pos < len &&
+            channelRecvFrame(&c->channelMux, buf + pos, len - pos) >= 0) {
+            c->channelFramesRx++;
         }
-        /* NOTE: now vestigial.  transportUdpServerOnGameStart no longer
-         * restarts the control queue at seq 1 — it drops unacked events
-         * (ackedSeq = nextSeq) but keeps nextSeq monotonic, so at game start
-         * baseSeq >= controlEventAck and the baseSeq < ack test below never
-         * trips.  Left in place (inert) to keep the monotonic-seq change
-         * focused; a follow-up can remove the controlSeqResetDetected /
-         * runningSeqAdopted machinery once the monotonic behaviour has soaked.
-         *
-         * Server-queue-restart detection.  Historically the server reset its
-         * per-client control queue to (ackedSeq=1, nextSeq=1) inside
-         * transportUdpServerOnGameStart, immediately before publishing
-         * CTRL_GAME_PHASE_RUNNING — so the running flip landed at seq=1 of a
-         * new sequence space.  Without intervention the dedup gate below
-         * (evSeq >= controlEventAck) would filter that seq=1 out because
-         * controlEventAck was still high from the lobby phase, and
-         * clientSimApplyControlOrdered's own ack-reset never got to run.
-         *
-         * Gate on a once-per-wipe adoption flag, not inLobby.  The flag
-         * fires the snap exactly once when the client first sees the
-         * running reset — whether or not inLobby has already flipped under
-         * loss/reorder — and blocks re-firing on every subsequent seq=1
-         * RUNNING retransmit (which would otherwise cause a snap-then-reapply
-         * loop that starves the main loop).  The flag is cleared on the
-         * reverse game-over / lobby transition so the next game re-adopts. */
-        if (c->clientSim != NULL &&
-            pos + 3 <= len &&
-            controlSeqResetDetected(controlEventCount, controlEventBaseSeq,
-                                    c->controlEventAck, c->runningSeqAdopted,
-                                    buf[pos] == (uint8_t)CTRL_GAME_PHASE_RUNNING)) {
-            mpDiagLog("[cli] SNAPSHOT-tail RESET-DETECT baseSeq=%u localAck=%u (server queues restarted; snapping back)",
-                      (unsigned)controlEventBaseSeq,
-                      (unsigned)c->controlEventAck);
-            c->controlEventAck = controlEventBaseSeq;
-            c->runningSeqAdopted = true;
-        }
-        for (i = 0; i < controlEventCount; i++) {
-            uint32_t evSeq = controlEventBaseSeq + (uint32_t)i;
-            uint8_t type;
-            uint16_t bodyLen;
-            ControlEvent evt;
-            ControlDecodeBodyFn dec;
-            if (pos + 3 > len) break;          /* Truncated header */
-            type = buf[pos++];
-            bodyLen = unpackU16(buf + pos); pos += 2;
-            if (pos + bodyLen > len) break;    /* Truncated body */
-            dec = transportControlCodecBodyDecoder((ControlEventType)type);
-            if (dec == NULL || !dec(buf + pos, bodyLen, &evt)) {
-                mpDiagLog("[cli] SNAPSHOT-tail decode SKIP seq=%u type=%s reason=%s",
-                          (unsigned)evSeq, mpDiagCtrlName((int)type),
-                          dec == NULL ? "no decoder" : "decode failed");
-                pos += bodyLen;
-                /* Advance the ack past the skipped event. Without this,
-                 * an undecodable event at the tail of the queue stalls
-                 * controlEventAck and the server retransmits until the
-                 * unacked-control timeout fires and disconnects both
-                 * sides. The event is dropped — retransmitting won't
-                 * make it decodable — but the queue stays healthy. */
-                if (evSeq >= c->controlEventAck) {
-                    c->controlEventAck = evSeq + 1;
+        if (c->clientSim != NULL) {
+            uint8_t ctlBuf[CHANNEL_MAX_SEG];
+            uint16_t ctlLen;
+            while (channelReceive(&c->channelMux, CHANNEL_CONTROL,
+                                  ctlBuf, &ctlLen)) {
+                uint8_t type;
+                uint16_t bodyLen;
+                ControlEvent evt;
+                ControlDecodeBodyFn dec;
+                if (ctlLen < 3) continue;
+                type = ctlBuf[0];
+                bodyLen = unpackU16(ctlBuf + 1);
+                if ((size_t)(3 + bodyLen) > (size_t)ctlLen) continue;
+                dec = transportControlCodecBodyDecoder((ControlEventType)type);
+                if (dec == NULL || !dec(ctlBuf + 3, bodyLen, &evt)) {
+                    mpDiagLog("[cli] ch2 control decode SKIP type=%s reason=%s",
+                              mpDiagCtrlName((int)type),
+                              dec == NULL ? "no decoder" : "decode failed");
+                    continue;
                 }
-                continue;
-            }
-            pos += bodyLen;
-            if (evSeq >= c->controlEventAck) {
-                clientSimApplyControlOrdered(c, &evt, evSeq,
-                                             &skipPriorGameTails);
-                c->controlEventAck = evSeq + 1;
-            } else {
-                mpDiagLog("[cli] SNAPSHOT-tail dedup seq=%u type=%s localAck=%u",
-                          (unsigned)evSeq, mpDiagCtrlName((int)type),
-                          (unsigned)c->controlEventAck);
+                clientSimApplyControlOrdered(c, &evt, 0, &skipPriorGameTails);
             }
         }
 
-        /* Map-install gate, moved past the control-tail decode so
+        /* Map-install gate, moved past the control drain so
          * CTRL_GAME_PHASE_RUNNING in this same snapshot has a chance
          * to flip mapInstalled = true (via clientSimApplyControlOrdered)
          * before we decide to apply.  If the control tail didn't carry
@@ -1769,16 +1721,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             break;
         }
 
-        /* Ingest this snapshot's channel trailer, then drain reliable game
-         * events from channel 0 into the game-tail slot — ahead of the map
-         * tail staged above, so they apply in the same game-then-map order
-         * the snapshot game tail used and fall under the same
-         * skipPriorGameTails rollback below.  The channel guarantees in-order
-         * exactly-once delivery, so no per-event ack or dedup is applied. */
-        if (pos < len &&
-            channelRecvFrame(&c->channelMux, buf + pos, len - pos) >= 0) {
-            c->channelFramesRx++;
-        }
+        /* Drain reliable game events from channel 0 into the game-tail slot —
+         * ahead of the map tail staged above, so they apply in the same
+         * game-then-map order the snapshot game tail used and fall under the
+         * same skipPriorGameTails rollback below.  The channel trailer was
+         * ingested above (before the control drain).  The channel guarantees
+         * in-order exactly-once delivery, so no per-event ack or dedup is
+         * applied. */
         {
             GameEvent chanGameEv[MAX_SNAPSHOT_EVENTS];
             uint8_t chanBuf[CHANNEL_MAX_SEG];
@@ -1855,15 +1804,37 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         if (channelRecvFrame(&c->channelMux, buf + PACKET_HEADER_SIZE,
                              len - PACKET_HEADER_SIZE) >= 0) {
             c->channelFramesRx++;
-            /* Drain reliable game events from channel 0 and apply them
-             * directly.  A standalone frame is only sent while the game is not
-             * running, so it never coincides with an in-frame running-flip and
-             * needs no map-install / new-game-flip gating.  The channel
-             * guarantees in-order exactly-once delivery, so no dedup is added. */
+            /* Drain reliable control events from channel 2 first, then game
+             * (channel 0) and map (channel 1) events, applying them directly.
+             * Control is applied ordered ahead of game/map to match the
+             * snapshot path's "control before game/map tails".  A standalone
+             * frame is only sent while the game is not running, so it never
+             * coincides with an in-frame running-flip and needs no map-install
+             * / skipPriorGameTails gating (NULL).  The channel guarantees
+             * in-order exactly-once delivery, so no dedup is added. */
             if (c->clientSim != NULL) {
                 uint8_t chanBuf[CHANNEL_MAX_SEG];
                 uint16_t chanLen;
                 GameEvent gev;
+                while (channelReceive(&c->channelMux, CHANNEL_CONTROL,
+                                      chanBuf, &chanLen)) {
+                    uint8_t type;
+                    uint16_t bodyLen;
+                    ControlEvent evt;
+                    ControlDecodeBodyFn dec;
+                    if (chanLen < 3) continue;
+                    type = chanBuf[0];
+                    bodyLen = unpackU16(chanBuf + 1);
+                    if ((size_t)(3 + bodyLen) > (size_t)chanLen) continue;
+                    dec = transportControlCodecBodyDecoder((ControlEventType)type);
+                    if (dec == NULL || !dec(chanBuf + 3, bodyLen, &evt)) {
+                        mpDiagLog("[cli] ch2 control decode SKIP type=%s reason=%s",
+                                  mpDiagCtrlName((int)type),
+                                  dec == NULL ? "no decoder" : "decode failed");
+                        continue;
+                    }
+                    clientSimApplyControlOrdered(c, &evt, 0, NULL);
+                }
                 while (channelReceive(&c->channelMux, CHANNEL_GAME,
                                       chanBuf, &chanLen)) {
                     if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
@@ -2244,67 +2215,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
      * same snapshot's prior-game tails would otherwise replay against
      * the new map. */
 
-    case PACKET_CONTROL_TICK: {
-        /* Server → client reliable carrier for control events during
-         * non-running phases (lobby / countdown / gameover).  Wire layout
-         * matches the snapshot control-event tail: each event is
-         * type(1) + bodyLen(2 BE) + body(N), and we dedup against
-         * controlEventAck so retransmits don't re-apply. */
-        int pos = PACKET_HEADER_SIZE;
-        uint32_t baseSeq;
-        uint8_t count;
-        int i;
-        if (len < pos + 5) break;
-        baseSeq = unpackU32(buf + pos); pos += 4;
-        count = buf[pos++];
-        mpDiagLog("[cli] CONTROL_TICK recv baseSeq=%u count=%u localAck=%u",
-                  (unsigned)baseSeq, (unsigned)count,
-                  (unsigned)c->controlEventAck);
-        for (i = 0; i < count; i++) {
-            uint32_t evSeq = baseSeq + (uint32_t)i;
-            uint8_t type;
-            uint16_t bodyLen;
-            ControlEvent evt;
-            ControlDecodeBodyFn dec;
-            if (pos + 3 > len) break;
-            type = buf[pos++];
-            bodyLen = unpackU16(buf + pos); pos += 2;
-            if (pos + bodyLen > len) break;
-            dec = transportControlCodecBodyDecoder((ControlEventType)type);
-            if (dec == NULL || !dec(buf + pos, bodyLen, &evt)) {
-                mpDiagLog("[cli] CONTROL_TICK decode SKIP seq=%u type=%s reason=%s",
-                          (unsigned)evSeq, mpDiagCtrlName((int)type),
-                          dec == NULL ? "no decoder" : "decode failed");
-                pos += bodyLen;
-                /* Same belt-and-suspenders as the snapshot-tail path:
-                 * undecodable events at the tail of the queue otherwise
-                 * stall the ack and trigger the unacked-control timeout
-                 * disconnect. Drop the event but keep the queue moving. */
-                if (evSeq >= c->controlEventAck) {
-                    c->controlEventAck = evSeq + 1;
-                }
-                continue;
-            }
-            pos += bodyLen;
-            if (evSeq >= c->controlEventAck) {
-                /* PACKET_CONTROL_TICK arrives outside the snapshot
-                 * context — no game/map tails ride alongside it, so
-                 * skipPriorGameTails has nothing to skip. */
-                clientSimApplyControlOrdered(c, &evt, evSeq, NULL);
-                c->controlEventAck = evSeq + 1;
-            } else {
-                mpDiagLog("[cli] CONTROL_TICK dedup seq=%u type=%s localAck=%u",
-                          (unsigned)evSeq, mpDiagCtrlName((int)type),
-                          (unsigned)c->controlEventAck);
-            }
-        }
-        /* Schedule a coalesced ACK — the actual send rides
-         * udpClientTick's per-tick driver below. */
-        if (c->controlAckPendingTick == 0) {
-            c->controlAckPendingTick = c->localTick;
-        }
-        break;
-    }
+    /* PACKET_CONTROL_TICK / PACKET_CONTROL_ACK are retired: control events ride
+     * reliable channel 2 (CHANNEL_CONTROL), drained in the PACKET_STATE_SNAPSHOT
+     * and PACKET_CHANNEL paths above, and acked by the channel-frame trailer. */
 
     case PACKET_COMMAND_ACK: {
         if (len < PACKET_HEADER_SIZE + 4) break;
@@ -2711,40 +2624,9 @@ static bool udpClientTick(void *ctx) {
          * toward the disconnect cap. */
     }
 
-    /* Coalesced PACKET_CONTROL_ACK emission.  Only fires when a
-     * PACKET_CONTROL_TICK has armed controlAckPendingTick — during
-     * running, PACKET_INPUT already carries controlEventAck so no
-     * dedicated ACK packet is needed.  localTick advances at 50 Hz
-     * (20ms/tick — see PING_INTERVAL_TICKS = 20 → ~0.4s), so 3 ticks
-     * is ~60ms, close to the plan's ~50ms target.  Send earlier when
-     * a single TICK delivered 2+ new events at once, to free server
-     * queue slots promptly.
-     *
-     * The ack is re-sent (coalesced to ~60ms) even when its value has
-     * not advanced, for as long as the server keeps retransmitting
-     * already-acked events: each retransmitted TICK re-arms
-     * controlAckPendingTick, and a dropped lobby ack is only recovered
-     * by re-sending the same value.  This self-terminates — the server
-     * stops sending TICKs once its ackedSeq reaches nextSeq, so the
-     * pending flag stops being re-armed and a caught-up server produces
-     * zero re-acks (no per-tick ack storm).  See controlAckResendDue. */
-    if (c->joinState == UDP_CLIENT_CONNECTED &&
-        controlAckResendDue(c->controlAckPendingTick, c->localTick,
-                            c->controlEventAck, c->lastSentControlAck)) {
-        bool overdue = (c->localTick - c->controlAckPendingTick) >= 3;
-        bool eagerSend = (c->controlEventAck > c->lastSentControlAck + 1);
-        uint8_t ackBuf[PACKET_HEADER_SIZE + 4];
-        packHeader(ackBuf, PACKET_CONTROL_ACK, c->outSequence++);
-        packU32(ackBuf + PACKET_HEADER_SIZE, c->controlEventAck);
-        udpClientSendTo(c, ackBuf, sizeof(ackBuf));
-        mpDiagLog("[cli] CONTROL_ACK send ack=%u prevSent=%u localTick=%u overdue=%d eager=%d",
-                  (unsigned)c->controlEventAck,
-                  (unsigned)c->lastSentControlAck,
-                  (unsigned)c->localTick,
-                  (int)overdue, (int)eagerSend);
-        c->lastSentControlAck = c->controlEventAck;
-        c->controlAckPendingTick = 0;
-    }
+    /* Control-event acks now ride the channel-frame trailer (the per-tick
+     * standalone PACKET_CHANNEL below, or an input trailer during running),
+     * so the dedicated coalesced PACKET_CONTROL_ACK emitter is retired. */
 
     /* Handle join handshake — send/resend join requests */
     if (c->joinState == UDP_CLIENT_JOINING) {
