@@ -1017,6 +1017,76 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             }
                         }
                         imguiHandOnHover();
+                        /* Row detail popup — the SpanAllColumns selectable owns the
+                         * whole row's hover, so attach the tooltip here. Carries
+                         * only detail that isn't already a column: AI level, hidden
+                         * mines, time limit, lobby flags and the player roster. */
+                        if (ImGui::IsItemHovered()) {
+                            char buf[512];
+                            ImGui::BeginTooltip();
+
+                            /* Header: server identity */
+                            ImGui::TextUnformatted(label);
+                            ImGui::Separator();
+
+                            /* AI level (the Type column only flags its presence) */
+                            if (e.ai != aiNone) {
+                                int aiStr = STR_YES;
+                                if (e.ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
+                                else if (e.ai == aiFull)    aiStr = STR_DLGGAMEINFO_FULLADV;
+                                SDL_snprintf(buf, sizeof(buf), "%s %s",
+                                             langGetText(STR_DLGGAMEINFO_AILABEL),
+                                             langGetText(aiStr));
+                                ImGui::TextUnformatted(buf);
+                            }
+
+                            /* Hidden mines */
+                            if (e.mines) {
+                                ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_HIDDENMINES_SHORT));
+                            }
+
+                            /* Time limit */
+                            if (e.timeLimit) {
+                                SDL_snprintf(buf, sizeof(buf), "%s: %d",
+                                             langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT),
+                                             e.timeMinutes);
+                            } else {
+                                SDL_snprintf(buf, sizeof(buf), "%s: %s",
+                                             langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT),
+                                             langGetText(STR_DLGGAMEINFO_UNLIMITED));
+                            }
+                            ImGui::TextUnformatted(buf);
+
+                            /* Flags */
+                            if (e.ranked) {
+                                ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_RANKED));
+                            }
+                            if (e.randomMap) {
+                                ImGui::TextUnformatted(langGetText(STR_MAPCHOOSER_RANDOMMAP));
+                            }
+                            if (e.autoLock) {
+                                ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_AUTOLOCK_HINT));
+                            }
+                            if (e.password) {
+                                ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_LOCK_PASSWORD));
+                            }
+                            if (!e.allowNewPlayers) {
+                                ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_LOCK_NONEWPLAYERS));
+                            }
+
+                            /* Player roster — names aren't shown in the row */
+                            if (!e.players.empty() || e.numBots > 0) {
+                                ImGui::Separator();
+                                for (const auto &name : e.players) {
+                                    ImGui::TextUnformatted(name.c_str());
+                                }
+                                for (int b = 0; b < e.numBots; b++) {
+                                    ImGui::TextUnformatted("[bot]");
+                                }
+                            }
+
+                            ImGui::EndTooltip();
+                        }
                         /* Second line: map name with ranked (*) / random (rnd)
                          * markers. Placeholder marker text, not localized. */
                         char mapLine[MAP_STR_SIZE + 32];
@@ -1037,24 +1107,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         ImGui::TextDisabled("%c%c", e.countryCode[0], e.countryCode[1]);
                     }
 
-                    /* Players — n/m (Nh Nb) with a hover roster */
+                    /* Players — n/m (Nh Nb); roster lives in the row detail tooltip */
                     ImGui::TableNextColumn();
                     ImGui::Text("%d/%d (%dh %db)", e.numPlayers, e.maxPlayers,
                                 e.numHumans, e.numBots);
-                    if ((!e.players.empty() || e.numBots > 0 || e.autoLock) &&
-                        ImGui::IsItemHovered()) {
-                        ImGui::BeginTooltip();
-                        for (const auto &name : e.players) {
-                            ImGui::TextUnformatted(name.c_str());
-                        }
-                        for (int b = 0; b < e.numBots; b++) {
-                            ImGui::TextUnformatted("[bot]");
-                        }
-                        if (e.autoLock) {
-                            ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_AUTOLOCK_HINT));
-                        }
-                        ImGui::EndTooltip();
-                    }
 
                     /* Bases (free/total, from JSON) */
                     ImGui::TableNextColumn();
