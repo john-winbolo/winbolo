@@ -1947,7 +1947,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     controlEventQueueAssertValid(&udpServer.controlEventQueues[slot], "join-init");
 
     /* Bring up this slot's parallel channel mux alongside the queues. */
-    channelMuxInit(&udpServer.channelMux[slot], CHANNEL_MAX_WINDOW);
+    channelMuxInit(&udpServer.channelMux[slot]);
     udpServer.channelFramesRx[slot] = 0;
 
     /* Merge client-supplied hints with server-determined WBN trust into a
@@ -2637,7 +2637,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     controlEventQueueAssertValid(&udpServer.controlEventQueues[idx], "disconnect-reset");
 
     /* Reset the channel mux so a re-using slot starts fresh. */
-    channelMuxInit(&udpServer.channelMux[idx], CHANNEL_MAX_WINDOW);
+    channelMuxInit(&udpServer.channelMux[idx]);
     udpServer.channelFramesRx[idx] = 0;
 
     /* Release any in-flight upload state. Without this, a client

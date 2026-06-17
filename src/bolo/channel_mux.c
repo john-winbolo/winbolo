@@ -54,18 +54,47 @@ static uint32_t channelRtoTicks(const ChannelMux *m) {
     return rto;
 }
 
-void channelMuxInit(ChannelMux *m, uint32_t windowPerChannel) {
+void channelMuxInit(ChannelMux *m) {
     if (m == NULL) {
         return;
     }
     memset(m, 0, sizeof(*m));
-    if (windowPerChannel < 1) {
-        windowPerChannel = 1;
-    }
-    if (windowPerChannel > CHANNEL_MAX_WINDOW) {
-        windowPerChannel = CHANNEL_MAX_WINDOW;
-    }
-    m->window = windowPerChannel;
+
+    ChannelState *game = &m->ch[CHANNEL_GAME];
+    game->window = CHANNEL_GAME_WINDOW;
+    game->segSize = CHANNEL_GAME_SEG;
+    game->sendLen = m->gameSendLen;
+    game->sendData = &m->gameSendData[0][0];
+    game->recvPresent = m->gameRecvPresent;
+    game->recvLen = m->gameRecvLen;
+    game->recvData = &m->gameRecvData[0][0];
+
+    ChannelState *map = &m->ch[CHANNEL_MAP];
+    map->window = CHANNEL_MAP_WINDOW;
+    map->segSize = CHANNEL_MAP_SEG;
+    map->sendLen = m->mapSendLen;
+    map->sendData = &m->mapSendData[0][0];
+    map->recvPresent = m->mapRecvPresent;
+    map->recvLen = m->mapRecvLen;
+    map->recvData = &m->mapRecvData[0][0];
+
+    ChannelState *control = &m->ch[CHANNEL_CONTROL];
+    control->window = CHANNEL_CONTROL_WINDOW;
+    control->segSize = CHANNEL_CONTROL_SEG;
+    control->sendLen = m->controlSendLen;
+    control->sendData = &m->controlSendData[0][0];
+    control->recvPresent = m->controlRecvPresent;
+    control->recvLen = m->controlRecvLen;
+    control->recvData = &m->controlRecvData[0][0];
+
+    ChannelState *bulk = &m->ch[CHANNEL_BULK];
+    bulk->window = CHANNEL_BULK_WINDOW;
+    bulk->segSize = CHANNEL_BULK_SEG;
+    bulk->sendLen = m->bulkSendLen;
+    bulk->sendData = &m->bulkSendData[0][0];
+    bulk->recvPresent = m->bulkRecvPresent;
+    bulk->recvLen = m->bulkRecvLen;
+    bulk->recvData = &m->bulkRecvData[0][0];
 }
 
 void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs) {
@@ -80,18 +109,18 @@ bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len) {
     if (m == NULL || ch >= CHANNEL_COUNT || ch == CHANNEL_BULK) {
         return false; /* usage error: bad id or wrong flavor */
     }
-    if (len > CHANNEL_MAX_SEG) {
+    ChannelState *c = &m->ch[ch];
+    if (len > c->segSize) {
         return false; /* a message must fit one segment */
     }
-    ChannelState *c = &m->ch[ch];
     /* Window-bounded: never let more than `window` segments be unacked. */
-    if ((c->nextSeq - c->ackedSeq) >= m->window) {
+    if ((c->nextSeq - c->ackedSeq) >= c->window) {
         return false; /* overflow signal — caller/transport disconnects */
     }
-    uint32_t idx = c->nextSeq % CHANNEL_MAX_WINDOW;
+    uint32_t idx = c->nextSeq % c->window;
     c->sendLen[idx] = len;
     if (len > 0 && msg != NULL) {
-        memcpy(c->sendData[idx], msg, len);
+        memcpy(c->sendData + idx * c->segSize, msg, len);
     }
     c->nextSeq++;
     return true;
@@ -100,13 +129,13 @@ bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len) {
 /* Turn pending stream bytes into segments while the window has room. */
 static void channelStreamRefill(ChannelMux *m) {
     ChannelState *c = &m->ch[CHANNEL_BULK];
-    while (m->streamCount > 0 && (c->nextSeq - c->ackedSeq) < m->window) {
-        uint32_t n = channelMin32(CHANNEL_MAX_SEG, m->streamCount);
-        uint32_t idx = c->nextSeq % CHANNEL_MAX_WINDOW;
+    while (m->streamCount > 0 && (c->nextSeq - c->ackedSeq) < c->window) {
+        uint32_t n = channelMin32(c->segSize, m->streamCount);
+        uint32_t idx = c->nextSeq % c->window;
+        uint8_t *seg = c->sendData + idx * c->segSize;
         uint32_t k;
         for (k = 0; k < n; k++) {
-            c->sendData[idx][k] =
-                m->streamBuf[(m->streamHead + k) % CHANNEL_STREAM_BUF];
+            seg[k] = m->streamBuf[(m->streamHead + k) % CHANNEL_STREAM_BUF];
         }
         c->sendLen[idx] = (uint16_t)n;
         m->streamHead = (m->streamHead + n) % CHANNEL_STREAM_BUF;
@@ -201,7 +230,7 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
         bool emitted = false;
         uint32_t seq = c->txNext;
         for (; seq < c->nextSeq; seq++) {
-            uint32_t idx = seq % CHANNEL_MAX_WINDOW;
+            uint32_t idx = seq % c->window;
             uint16_t slen = c->sendLen[idx];
             if (segCount == 255 ||
                 pos + CHANNEL_SEG_HEADER_SIZE + slen > budget) {
@@ -212,7 +241,7 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
             packU16(buf + pos + 5, slen);
             pos += CHANNEL_SEG_HEADER_SIZE;
             if (slen > 0) {
-                memcpy(buf + pos, c->sendData[idx], slen);
+                memcpy(buf + pos, c->sendData + idx * c->segSize, slen);
             }
             pos += slen;
             segCount++;
@@ -238,17 +267,17 @@ static void channelApplySegment(ChannelMux *m, uint8_t ch, uint32_t seq,
     if (seq < c->expectedSeq) {
         return; /* already delivered — dedup */
     }
-    if (seq >= c->expectedSeq + m->window) {
+    if (seq >= c->expectedSeq + c->window) {
         return; /* beyond the reorder window — drop, sender will resend */
     }
-    uint32_t idx = seq % CHANNEL_MAX_WINDOW;
+    uint32_t idx = seq % c->window;
     if (c->recvPresent[idx]) {
         return; /* already buffered — dedup */
     }
     c->recvPresent[idx] = true;
     c->recvLen[idx] = slen;
     if (slen > 0) {
-        memcpy(c->recvData[idx], payload, slen);
+        memcpy(c->recvData + idx * c->segSize, payload, slen);
     }
 }
 
@@ -296,7 +325,7 @@ int channelRecvFrame(ChannelMux *m, const uint8_t *buf, int len) {
         if (pos + (int)slen > len) {
             return -1; /* payload runs past the buffer */
         }
-        if (ch < CHANNEL_COUNT && slen <= CHANNEL_MAX_SEG) {
+        if (ch < CHANNEL_COUNT && slen <= m->ch[ch].segSize) {
             channelApplySegment(m, ch, seq, buf + pos, slen);
         }
         pos += slen;
@@ -309,13 +338,13 @@ bool channelReceive(ChannelMux *m, uint8_t ch, uint8_t *out, uint16_t *outLen) {
         return false;
     }
     ChannelState *c = &m->ch[ch];
-    uint32_t idx = c->expectedSeq % CHANNEL_MAX_WINDOW;
+    uint32_t idx = c->expectedSeq % c->window;
     if (!c->recvPresent[idx]) {
         return false; /* gap not yet filled — nothing to deliver in order */
     }
     *outLen = c->recvLen[idx];
     if (c->recvLen[idx] > 0) {
-        memcpy(out, c->recvData[idx], c->recvLen[idx]);
+        memcpy(out, c->recvData + idx * c->segSize, c->recvLen[idx]);
     }
     c->recvPresent[idx] = false;
     c->expectedSeq++;

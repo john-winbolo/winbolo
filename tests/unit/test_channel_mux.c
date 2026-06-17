@@ -105,8 +105,15 @@ static uint32_t getIdx(const uint8_t *b) {
     return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) |
            ((uint32_t)b[2] << 8) | (uint32_t)b[3];
 }
-static uint16_t msgLenFor(uint32_t i) {
-    return (uint16_t)(4 + (i % 17)); /* 4..20 bytes */
+/* A varied message length that always fits the channel's segment and leaves
+ * room for the 4-byte index tag. On a 16-byte channel this yields 4..16; on a
+ * 256-byte channel 4..20. */
+static uint16_t msgLenFor(uint32_t i, uint16_t segSize) {
+    uint16_t span = (uint16_t)(segSize - 4);
+    if (span > 16) {
+        span = 16;
+    }
+    return (uint16_t)(4 + (i % (span + 1)));
 }
 
 /* Per-channel send-side invariants that must hold at every observable
@@ -129,7 +136,7 @@ static int checkSendInvariants(const ChannelMux *m, uint32_t window) {
 /* Drive `total` messages on one message channel from a -> b under the
  * given impairment, asserting in-order exactly-once delivery and the
  * send-side invariants every tick. Returns 0 on success. */
-static int runMsgExchange(uint32_t window, uint8_t ch, int total,
+static int runMsgExchange(uint8_t ch, int total,
                           Impair imp, int maxTicks, uint64_t seed) {
     bolo_srand(seed);
     ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
@@ -140,8 +147,10 @@ static int runMsgExchange(uint32_t window, uint8_t ch, int total,
     if (!a || !b || !ab || !ba) {
         goto done;
     }
-    channelMuxInit(a, window);
-    channelMuxInit(b, window);
+    channelMuxInit(a);
+    channelMuxInit(b);
+    uint32_t window = a->ch[ch].window;        /* this channel's own depth   */
+    uint16_t segSize = (uint16_t)a->ch[ch].segSize;
 
     uint32_t nextToSend = 0;
     uint32_t nextExpected = 0;
@@ -156,7 +165,7 @@ static int runMsgExchange(uint32_t window, uint8_t ch, int total,
         /* Enqueue as many messages as the window currently allows. */
         while (nextToSend < (uint32_t)total) {
             uint8_t msg[CHANNEL_MAX_SEG];
-            uint16_t mlen = msgLenFor(nextToSend);
+            uint16_t mlen = msgLenFor(nextToSend, segSize);
             memset(msg, (int)(nextToSend & 0xff), mlen);
             putIdx(msg, nextToSend);
             if (!channelSend(a, ch, msg, mlen)) {
@@ -199,7 +208,7 @@ static int runMsgExchange(uint32_t window, uint8_t ch, int total,
             if (idx != nextExpected) {
                 goto done; /* out of order / gap / double delivery */
             }
-            if (olen != msgLenFor(idx)) {
+            if (olen != msgLenFor(idx, segSize)) {
                 goto done; /* wrong payload length */
             }
             nextExpected++;
@@ -228,7 +237,7 @@ done:
 static int t_clean_path(void) {
     Impair imp;
     memset(&imp, 0, sizeof(imp));
-    if (runMsgExchange(16, CHANNEL_CONTROL, 200, imp, 5000, 0xC1EA41ULL)) {
+    if (runMsgExchange(CHANNEL_CONTROL, 200, imp, 5000, 0xC1EA41ULL)) {
         UT_FAIL("clean path did not deliver in order");
     }
 
@@ -242,8 +251,8 @@ static int t_clean_path(void) {
     if (!a || !b) {
         goto done;
     }
-    channelMuxInit(a, 16);
-    channelMuxInit(b, 16);
+    channelMuxInit(a);
+    channelMuxInit(b);
     int tick;
     for (tick = 0; tick < 200; tick++) {
         channelTick(a, (uint32_t)tick, LINK_RTT_MS);
@@ -286,7 +295,7 @@ static int t_loss(void) {
     memset(&imp, 0, sizeof(imp));
     imp.dropPctAB = 30;
     imp.dropPctBA = 30;
-    if (runMsgExchange(16, CHANNEL_GAME, 400, imp, 40000, 0x10551ULL)) {
+    if (runMsgExchange(CHANNEL_GAME, 400, imp, 40000, 0x10551ULL)) {
         UT_FAIL("loss path did not recover every message in order");
     }
     return 0;
@@ -296,7 +305,7 @@ static int t_reorder(void) {
     Impair imp;
     memset(&imp, 0, sizeof(imp));
     imp.maxJitter = 5; /* jitter reorders frames without dropping them */
-    if (runMsgExchange(16, CHANNEL_CONTROL, 400, imp, 20000, 0x9E04DEULL)) {
+    if (runMsgExchange(CHANNEL_CONTROL, 400, imp, 20000, 0x9E04DEULL)) {
         UT_FAIL("reordered frames did not deliver in order");
     }
     return 0;
@@ -306,7 +315,7 @@ static int t_duplicate(void) {
     Impair imp;
     memset(&imp, 0, sizeof(imp));
     imp.dupPct = 60; /* frequent duplication, no loss */
-    if (runMsgExchange(16, CHANNEL_MAP, 400, imp, 20000, 0xD0B1EULL)) {
+    if (runMsgExchange(CHANNEL_MAP, 400, imp, 20000, 0xD0B1EULL)) {
         UT_FAIL("duplicated frames were not deduped");
     }
     return 0;
@@ -317,7 +326,7 @@ static int t_burst_loss(void) {
     memset(&imp, 0, sizeof(imp));
     imp.burstStart = 20;
     imp.burstLen = 40; /* 40 consecutive a->b frames vanish */
-    if (runMsgExchange(16, CHANNEL_CONTROL, 300, imp, 40000, 0xB0451ULL)) {
+    if (runMsgExchange(CHANNEL_CONTROL, 300, imp, 40000, 0xB0451ULL)) {
         UT_FAIL("did not recover from a burst loss");
     }
     return 0;
@@ -332,8 +341,9 @@ static int t_soak(void) {
         imp.dropPctBA = 20;
         imp.dupPct = 15;
         imp.maxJitter = 4;
-        uint32_t window = 8 + (uint32_t)(seed % 24); /* 8..31 */
-        if (runMsgExchange(window, (uint8_t)(seed % 3), 2000, imp, 200000,
+        /* Cycle the three message channels so the soak exercises each one's
+         * own window and segment size. */
+        if (runMsgExchange((uint8_t)(seed % 3), 2000, imp, 200000,
                            0x50A4000ULL + (uint64_t)seed)) {
             UT_FAIL("combined soak failed at seed %d", seed);
         }
@@ -365,26 +375,27 @@ static int t_window_flow(void) {
     uint8_t frame[MAXFRAME];
     uint8_t out[CHANNEL_MAX_SEG];
     int rc = 1;
-    const uint32_t window = 4;
     if (!a || !b) {
         goto done;
     }
-    channelMuxInit(a, window);
-    channelMuxInit(b, window);
+    channelMuxInit(a);
+    channelMuxInit(b);
+    /* Drive CHANNEL_MAP and fill its own window. */
+    const uint32_t window = a->ch[CHANNEL_MAP].window;
 
     /* Fill the window: exactly `window` sends succeed, the next fails. */
     uint32_t i;
     for (i = 0; i < window; i++) {
         uint8_t msg[4];
         putIdx(msg, i);
-        if (!channelSend(a, CHANNEL_CONTROL, msg, 4)) {
+        if (!channelSend(a, CHANNEL_MAP, msg, 4)) {
             goto done; /* should have fit */
         }
     }
     {
         uint8_t msg[4];
         putIdx(msg, window);
-        if (channelSend(a, CHANNEL_CONTROL, msg, 4)) {
+        if (channelSend(a, CHANNEL_MAP, msg, 4)) {
             goto done; /* window was full — must reject */
         }
     }
@@ -408,7 +419,7 @@ static int t_window_flow(void) {
         int lx = channelBuildFrame(a, frame, FRAME_BUDGET);
         channelRecvFrame(b, frame, lx);
         uint16_t olen;
-        while (channelReceive(b, CHANNEL_CONTROL, out, &olen)) {
+        while (channelReceive(b, CHANNEL_MAP, out, &olen)) {
         }
         int ly = channelBuildFrame(b, frame, FRAME_BUDGET);
         channelRecvFrame(a, frame, ly);
@@ -417,7 +428,7 @@ static int t_window_flow(void) {
     {
         uint8_t msg[4];
         putIdx(msg, window);
-        if (!channelSend(a, CHANNEL_CONTROL, msg, 4)) {
+        if (!channelSend(a, CHANNEL_MAP, msg, 4)) {
             goto done; /* ack should have freed the window */
         }
     }
@@ -434,11 +445,11 @@ done:
 static int t_overflow(void) {
     ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
     int rc = 1;
-    const uint32_t window = 6;
     if (!a) {
         goto done;
     }
-    channelMuxInit(a, window);
+    channelMuxInit(a);
+    const uint32_t window = a->ch[CHANNEL_CONTROL].window;
     uint32_t i;
     for (i = 0; i < window; i++) {
         uint8_t msg[8] = {0};
@@ -478,7 +489,7 @@ static int t_flavor_usage(void) {
     if (!a) {
         goto done;
     }
-    channelMuxInit(a, 8);
+    channelMuxInit(a);
     /* message send on the stream channel is rejected */
     if (channelSend(a, CHANNEL_BULK, msg, 4)) {
         goto done;
@@ -491,10 +502,19 @@ static int t_flavor_usage(void) {
     if (channelSend(a, CHANNEL_COUNT, msg, 4)) {
         goto done;
     }
-    /* an oversized message is rejected */
+    /* a message past the control channel's larger segment is rejected */
     uint8_t big[CHANNEL_MAX_SEG + 8];
     memset(big, 7, sizeof(big));
-    if (channelSend(a, CHANNEL_CONTROL, big, CHANNEL_MAX_SEG + 1)) {
+    if (channelSend(a, CHANNEL_CONTROL, big, CHANNEL_CONTROL_SEG + 1)) {
+        goto done;
+    }
+    /* each channel enforces its own segment: a send one byte over the game
+     * or map channel's smaller segment is rejected even though it would fit
+     * the control channel. */
+    if (channelSend(a, CHANNEL_GAME, big, CHANNEL_GAME_SEG + 1)) {
+        goto done;
+    }
+    if (channelSend(a, CHANNEL_MAP, big, CHANNEL_MAP_SEG + 1)) {
         goto done;
     }
     /* none of the rejected calls advanced any channel */
@@ -562,19 +582,19 @@ static int t_multichannel_independence(void) {
     uint8_t stripped[MAXFRAME];
     uint8_t out[CHANNEL_MAX_SEG];
     int rc = 1;
-    const uint32_t window = 8;
+    const uint32_t ch0Backlog = 8;
     const int ch1Total = 300;
     if (!a || !b) {
         goto done;
     }
     bolo_srand(0xC0FFEEULL);
-    channelMuxInit(a, window);
-    channelMuxInit(b, window);
+    channelMuxInit(a);
+    channelMuxInit(b);
 
-    /* Saturate ch0 with a full window of messages that will be stripped on
-     * the wire — ch0 can never deliver. */
+    /* Give ch0 a standing backlog of messages that will be stripped on the
+     * wire — ch0 can never deliver and its tail keeps retransmitting. */
     uint32_t i;
-    for (i = 0; i < window; i++) {
+    for (i = 0; i < ch0Backlog; i++) {
         uint8_t msg[4];
         putIdx(msg, i);
         channelSend(a, CHANNEL_GAME, msg, 4);
@@ -649,8 +669,8 @@ static int t_stream(void) {
     for (i = 0; i < STREAM_LEN; i++) {
         src[i] = (uint8_t)bolo_rand();
     }
-    channelMuxInit(a, 32);
-    channelMuxInit(b, 32);
+    channelMuxInit(a);
+    channelMuxInit(b);
 
     /* Hand the whole stream to the staging buffer up front. */
     if (!channelStreamSend(a, CHANNEL_BULK, src, (uint32_t)STREAM_LEN)) {
@@ -716,8 +736,8 @@ static int t_coalescing_budget(void) {
     if (!a || !b) {
         goto done;
     }
-    channelMuxInit(a, 32);
-    channelMuxInit(b, 32);
+    channelMuxInit(a);
+    channelMuxInit(b);
 
     /* Queue several small messages, then build under a budget that fits
      * only a couple of segments. */
@@ -770,8 +790,8 @@ static int t_coalescing_budget(void) {
             free(d);
             goto done;
         }
-        channelMuxInit(c, 8);
-        channelMuxInit(d, 8);
+        channelMuxInit(c);
+        channelMuxInit(d);
         uint8_t msg[4];
         putIdx(msg, 0);
         channelSend(c, CHANNEL_CONTROL, msg, 4);
@@ -811,7 +831,7 @@ static int t_malformed_input(void) {
     if (!m) {
         goto done;
     }
-    channelMuxInit(m, 16);
+    channelMuxInit(m);
 
     int iter;
     for (iter = 0; iter < 20000; iter++) {
@@ -854,7 +874,7 @@ static int t_malformed_input(void) {
         if (!fresh) {
             goto done;
         }
-        channelMuxInit(fresh, 16);
+        channelMuxInit(fresh);
         int r = channelRecvFrame(fresh, good, t); /* every prefix length */
         if (r > t) {
             free(fresh);
@@ -884,7 +904,7 @@ static int t_lobby_ack_resend(void) {
     Impair imp;
     memset(&imp, 0, sizeof(imp));
     imp.dropBAUntil = 120; /* ack channel dark for 120 ticks */
-    if (runMsgExchange(8, CHANNEL_CONTROL, 100, imp, 40000, 0xACC2E5ULL)) {
+    if (runMsgExchange(CHANNEL_CONTROL, 100, imp, 40000, 0xACC2E5ULL)) {
         UT_FAIL("dropped-ack tail did not recover / double-delivered");
     }
     return 0;
@@ -903,8 +923,8 @@ static int t_seq_space_across_game_start(void) {
         goto done;
     }
     bolo_srand(0x57A47ULL);
-    channelMuxInit(a, 16);
-    channelMuxInit(b, 16);
+    channelMuxInit(a);
+    channelMuxInit(b);
 
     const int lobbyMsgs = 12;  /* messages before the phase boundary */
     const int runningMsgs = 12; /* messages after — same seq space     */
@@ -975,13 +995,12 @@ static int t_drop_dont_reset(void) {
     uint8_t frame[MAXFRAME];
     uint8_t out[CHANNEL_MAX_SEG];
     int rc = 1;
-    const uint32_t window = 12;
     const int total = 500;
     if (!a || !b || !ab || !ba) {
         goto done;
     }
-    channelMuxInit(a, window);
-    channelMuxInit(b, window);
+    channelMuxInit(a);
+    channelMuxInit(b);
 
     uint32_t sent = 0, recv = 0;
     uint32_t prevAcked = 0, prevExpected = 0;

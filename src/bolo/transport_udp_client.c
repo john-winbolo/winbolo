@@ -3131,7 +3131,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     clientTimingReset(&c->timing);
 
     /* Bring up the parallel channel mux for this connection. */
-    channelMuxInit(&c->channelMux, CHANNEL_MAX_WINDOW);
+    channelMuxInit(&c->channelMux);
     c->channelFramesRx = 0;
 
     /* Optional runtime network impairment from WB_NETIMPAIR

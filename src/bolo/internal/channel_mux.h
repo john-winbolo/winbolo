@@ -55,17 +55,31 @@ enum {
     CHANNEL_COUNT   = 4
 };
 
-/* Largest payload one segment may carry (one datagram-sized chunk). A
- * message-flavor send larger than this is rejected; a stream-flavor send
- * is split into pieces no larger than this. */
-#define CHANNEL_MAX_SEG 256
+/* Per-channel window depth and segment size. Each channel sizes its rings
+ * to its own traffic instead of one uniform pair, so the high-rate game
+ * channel can be deep with tiny segments while control / bulk keep room for
+ * large messages — without the cross-product memory blowup a uniform raise
+ * would cost. window is the physical depth of that channel's send / receive
+ * rings: live (unacked / buffered) sequence numbers are always contiguous
+ * and fewer than the window, so indexing a ring by (seq % window) never
+ * aliases two live entries. segSize is the largest payload one segment may
+ * carry; a message-flavor send larger than it is rejected, a stream-flavor
+ * send is split into pieces no larger than it. */
+#define CHANNEL_GAME_WINDOW    512  /* game events <= GAME_EVENT_MAX_WIRE_SIZE */
+#define CHANNEL_GAME_SEG        16
+#define CHANNEL_MAP_WINDOW     128  /* map events are also GameEvents          */
+#define CHANNEL_MAP_SEG         16
+#define CHANNEL_CONTROL_WINDOW 128  /* provisional sizing                      */
+#define CHANNEL_CONTROL_SEG    256  /* provisional: control events can reach
+                                     * ~MAX_CONTROL_PACKET; final sizing set
+                                     * when control traffic moves here         */
+#define CHANNEL_BULK_WINDOW     96  /* provisional: bandwidth-delay product set
+                                     * when bulk transfer moves here           */
+#define CHANNEL_BULK_SEG       256  /* stream segments                         */
 
-/* Physical depth of the per-channel send / receive rings. The runtime
- * flow-control window passed to channelMuxInit is capped to this. Live
- * (unacked / buffered) sequence numbers are always contiguous and fewer
- * than the window, so indexing a ring by (seq % CHANNEL_MAX_WINDOW) never
- * aliases two live entries. */
-#define CHANNEL_MAX_WINDOW 64
+/* Largest segSize over all channels, so a caller can size one scratch
+ * receive buffer that fits a segment from any channel. */
+#define CHANNEL_MAX_SEG 256
 
 /* Capacity of the stream channel's pending-byte staging buffer. Bytes
  * handed to channelStreamSend wait here until the window has room to turn
@@ -74,8 +88,14 @@ enum {
 
 /* Per-channel reliability state. ackedSeq / expectedSeq are exclusive
  * upper bounds (matching the shipped queue model: "confirmed up to here,
- * exclusive"). */
+ * exclusive"). The ring storage lives in the owning ChannelMux, sized to
+ * this channel's {window, segSize}; channelMuxInit points window / segSize
+ * and the five ring pointers below at it. A ring entry's payload starts at
+ * (sendData + idx * segSize); sendLen[idx] gives its length. */
 typedef struct {
+    uint32_t window;       /* this channel's ring depth                */
+    uint32_t segSize;      /* this channel's max segment payload        */
+
     /* Send side. */
     uint32_t nextSeq;      /* next sequence number to assign           */
     uint32_t ackedSeq;     /* peer has received every seq < ackedSeq   */
@@ -83,22 +103,48 @@ typedef struct {
                             * rewound to ackedSeq on a retransmit timeout */
     uint32_t lastTxTick;   /* tick of the most recent transmission      */
     bool     everSent;     /* lastTxTick is meaningful once true        */
-    uint16_t sendLen[CHANNEL_MAX_WINDOW];
-    uint8_t  sendData[CHANNEL_MAX_WINDOW][CHANNEL_MAX_SEG];
+    uint16_t *sendLen;     /* [window]                                  */
+    uint8_t  *sendData;    /* [window * segSize], row stride = segSize  */
 
     /* Receive side. */
     uint32_t expectedSeq;  /* next in-order seq to deliver (the ack we emit) */
     bool     ackDirty;     /* an ack for this channel is waiting to be sent  */
-    bool     recvPresent[CHANNEL_MAX_WINDOW];
-    uint16_t recvLen[CHANNEL_MAX_WINDOW];
-    uint8_t  recvData[CHANNEL_MAX_WINDOW][CHANNEL_MAX_SEG];
+    bool     *recvPresent; /* [window]                                  */
+    uint16_t *recvLen;     /* [window]                                  */
+    uint8_t  *recvData;    /* [window * segSize], row stride = segSize  */
 } ChannelState;
 
 typedef struct ChannelMux {
-    uint32_t window;       /* flow-control cap, <= CHANNEL_MAX_WINDOW */
     uint32_t curTick;      /* last tick handed to channelTick         */
     uint32_t rttMs;        /* last RTT estimate handed to channelTick */
     ChannelState ch[CHANNEL_COUNT];
+
+    /* Per-channel ring storage, each sized to its own {window, segSize}.
+     * ChannelState pointers above are wired here in channelMuxInit, so the
+     * whole mux stays a plain value type with no heap allocation. */
+    uint16_t gameSendLen[CHANNEL_GAME_WINDOW];
+    uint8_t  gameSendData[CHANNEL_GAME_WINDOW][CHANNEL_GAME_SEG];
+    bool     gameRecvPresent[CHANNEL_GAME_WINDOW];
+    uint16_t gameRecvLen[CHANNEL_GAME_WINDOW];
+    uint8_t  gameRecvData[CHANNEL_GAME_WINDOW][CHANNEL_GAME_SEG];
+
+    uint16_t mapSendLen[CHANNEL_MAP_WINDOW];
+    uint8_t  mapSendData[CHANNEL_MAP_WINDOW][CHANNEL_MAP_SEG];
+    bool     mapRecvPresent[CHANNEL_MAP_WINDOW];
+    uint16_t mapRecvLen[CHANNEL_MAP_WINDOW];
+    uint8_t  mapRecvData[CHANNEL_MAP_WINDOW][CHANNEL_MAP_SEG];
+
+    uint16_t controlSendLen[CHANNEL_CONTROL_WINDOW];
+    uint8_t  controlSendData[CHANNEL_CONTROL_WINDOW][CHANNEL_CONTROL_SEG];
+    bool     controlRecvPresent[CHANNEL_CONTROL_WINDOW];
+    uint16_t controlRecvLen[CHANNEL_CONTROL_WINDOW];
+    uint8_t  controlRecvData[CHANNEL_CONTROL_WINDOW][CHANNEL_CONTROL_SEG];
+
+    uint16_t bulkSendLen[CHANNEL_BULK_WINDOW];
+    uint8_t  bulkSendData[CHANNEL_BULK_WINDOW][CHANNEL_BULK_SEG];
+    bool     bulkRecvPresent[CHANNEL_BULK_WINDOW];
+    uint16_t bulkRecvLen[CHANNEL_BULK_WINDOW];
+    uint8_t  bulkRecvData[CHANNEL_BULK_WINDOW][CHANNEL_BULK_SEG];
 
     /* Stream channel (CHANNEL_BULK) pending-byte ring. */
     uint8_t  streamBuf[CHANNEL_STREAM_BUF];
@@ -106,9 +152,10 @@ typedef struct ChannelMux {
     uint32_t streamCount;  /* bytes waiting to be segmentized   */
 } ChannelMux;
 
-/* Initialise a caller-owned ChannelMux. windowPerChannel is clamped to
- * [1, CHANNEL_MAX_WINDOW]. */
-void channelMuxInit(ChannelMux *m, uint32_t windowPerChannel);
+/* Initialise a caller-owned ChannelMux: zero the reliability state and point
+ * each channel's ring pointers at that channel's storage with its window /
+ * segSize. */
+void channelMuxInit(ChannelMux *m);
 
 /* Queue one whole message on a message-flavor channel (0-2). Returns
  * false on a usage error (stream channel, oversized message, bad id) or
