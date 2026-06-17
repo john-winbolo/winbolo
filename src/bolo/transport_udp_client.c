@@ -39,6 +39,7 @@
 #include "client_sim_control.h"
 #include "transport_control_codec.h"
 #include "transport_command_codec.h"
+#include "channel_mux.h"
 #include "wbn_key_codec.h"
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
@@ -278,6 +279,17 @@ typedef struct {
      * udpClientTick off the process-global bolo_rand stream. */
     NetImpair impairIn;
     NetImpair impairOut;
+
+    /* Reliable-ordered channel multiplexer (channel_mux.c), running empty and
+     * in parallel with the existing reliable-event acks.  A channel frame
+     * rides every outgoing input as a trailer, and a standalone PACKET_CHANNEL
+     * carries it when no input flows (lobby/countdown).  Inbound frames are
+     * recovered as the bytes past a snapshot's parsed end or from a standalone
+     * PACKET_CHANNEL. */
+    ChannelMux channelMux;
+    /* Count of channel frames consumed (trailer + standalone), for test
+     * observability of the otherwise-silent parallel layer. */
+    uint32_t   channelFramesRx;
 } TransportUdpClientCtx;
 
 #define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
@@ -403,6 +415,16 @@ static int buildInputPacket(TransportUdpClientCtx *c, uint8_t *buf) {
     for (i = count - 1; i >= 0; i--) {
         uint32_t idx = (c->inputRingCount - 1 - (uint32_t)i) % CLIENT_INPUT_RING_SIZE;
         offset += packInputPacket(buf + offset, &c->inputRing[idx]);
+    }
+
+    /* Parallel channel layer rides as a trailer after the fixed inputs; the
+     * server recovers it as the bytes past the last input.  channelTick runs
+     * once per tick in udpClientTick, so only build the frame here. */
+    {
+        int budget = UDP_MAX_PAYLOAD - offset;
+        if (budget >= 2) {
+            offset += channelBuildFrame(&c->channelMux, buf + offset, budget);
+        }
     }
 
     return offset;
@@ -1767,8 +1789,24 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->hasSnapshot = false;   /* Consumed inline — per-frame
                                    * syncSnapshot no-ops until the
                                    * next arrival. */
+
+        /* Anything past the snapshot's parsed end is the parallel channel
+         * layer's trailer. */
+        if (pos < len &&
+            channelRecvFrame(&c->channelMux, buf + pos, len - pos) >= 0) {
+            c->channelFramesRx++;
+        }
         break;
     }
+
+    case PACKET_CHANNEL:
+        /* Standalone channel frame (server → client, sent when no snapshot
+         * rides this tick).  Body is one frame directly after the header. */
+        if (channelRecvFrame(&c->channelMux, buf + PACKET_HEADER_SIZE,
+                             len - PACKET_HEADER_SIZE) >= 0) {
+            c->channelFramesRx++;
+        }
+        break;
 
     case PACKET_PONG:
         if (len >= PACKET_HEADER_SIZE + 8) {
@@ -2523,6 +2561,26 @@ static bool udpClientTick(void *ctx) {
      * once per frame; it advances no per-tick state. */
     udpClientDrainSnapshots(c);
 
+    /* Service the parallel channel layer once per tick.  Tick the mux on the
+     * local clock + RTT estimate, then — for anything not already carried by
+     * an input trailer this tick — send a standalone PACKET_CHANNEL when the
+     * frame is non-empty (an empty 2-byte frame is suppressed so steady state
+     * stays storm-free).  channelBuildFrame is destructive, so a frame already
+     * drained onto an input this tick leaves nothing to send here. */
+    if (c->joinState == UDP_CLIENT_CONNECTED) {
+        channelTick(&c->channelMux, c->localTick, c->pingMs);
+        {
+            uint8_t cbuf[UDP_MAX_PAYLOAD];
+            int frameLen = channelBuildFrame(&c->channelMux,
+                                             cbuf + PACKET_HEADER_SIZE,
+                                             UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+            if (frameLen > 2) {
+                packHeader(cbuf, PACKET_CHANNEL, c->outSequence++);
+                udpClientSendTo(c, cbuf, PACKET_HEADER_SIZE + frameLen);
+            }
+        }
+    }
+
     /* Release any impaired OUTBOUND datagrams now due onto the wire (to their
      * stored addr).  This is a send and stays on the per-tick path; it is a
      * no-op while the outbound impairment layer is disabled. */
@@ -3072,6 +3130,10 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     pingEwmaReset(&c->pingEwma);
     clientTimingReset(&c->timing);
 
+    /* Bring up the parallel channel mux for this connection. */
+    channelMuxInit(&c->channelMux, CHANNEL_MAX_WINDOW);
+    c->channelFramesRx = 0;
+
     /* Optional runtime network impairment from WB_NETIMPAIR
      * (e.g. WB_NETIMPAIR=delay=75,jitter=30,loss=2,burst=2). Same spec
      * grammar as the dedicated server's -netimpair. */
@@ -3254,6 +3316,31 @@ uint16_t transportUdpClientGetPing(Transport *t) {
     if (t == NULL || t->ctx == NULL) return 0;
     c = (TransportUdpClientCtx *)t->ctx;
     return c->pingDisplayMs;
+}
+
+/* ── Test-only channel-mux scaffolding ───────────────────────────────────
+ * Honest test access to the otherwise-silent parallel channel layer: drain
+ * the next in-order message off a channel, and read back its receive/send
+ * sequence state and the count of frames consumed.  Not used by shipping
+ * code — only the loopback channel integration test drives these. */
+bool transportUdpClientChannelTestReceive(Transport *t, uint8_t ch,
+                                          uint8_t *out, uint16_t *outLen) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    return channelReceive(&c->channelMux, ch, out, outLen);
+}
+
+void transportUdpClientChannelTestStats(Transport *t, uint8_t ch,
+                                        uint32_t *expectedSeq,
+                                        uint32_t *ackedSeq,
+                                        uint32_t *framesRx) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL || ch >= CHANNEL_COUNT) return;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (expectedSeq) *expectedSeq = c->channelMux.ch[ch].expectedSeq;
+    if (ackedSeq)    *ackedSeq    = c->channelMux.ch[ch].ackedSeq;
+    if (framesRx)    *framesRx    = c->channelFramesRx;
 }
 
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,

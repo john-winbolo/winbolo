@@ -405,6 +405,9 @@ int run_error_smoothing(void);
 int run_loopback_join(void);
 int run_loopback_join_loss(void);
 int run_loopback_lobby_running_loss(void);
+/* Parallel channel layer over the loopback transport: empty-flow inertness
+ * plus a synthetic message round-trip under loss + jitter + dup. */
+int run_loopback_channel(void);
 
 /* Gate-#1 render-path integration (test_gate1_integration.c): the viewTick
  * ±1-snapshot invariant over the real loopback transport, and the

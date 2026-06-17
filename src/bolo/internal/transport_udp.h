@@ -651,4 +651,25 @@ void transportUdpServerSendPunchProbe(const char *trackerAddr,
  * lifecycle tick. */
 void transportUdpServerDrainPunchQueue(void);
 
+/* ── Test-only channel-mux scaffolding ───────────────────────────────────
+ * Honest access to the parallel reliable-ordered channel layer (channel_mux.c)
+ * for the loopback channel integration test.  No shipping code calls these:
+ * production traffic still rides the legacy queues, and the channel runs empty.
+ *   *Send:    queue a whole message on a slot/channel's send side.
+ *   *Receive: pop the next in-order message off a channel's receive side.
+ *   *Stats:   read receive-side expectedSeq, send-side ackedSeq, and the
+ *             running count of channel frames consumed on that endpoint. */
+bool transportUdpServerChannelTestSend(int slot, uint8_t ch,
+                                       const uint8_t *msg, uint16_t len);
+void transportUdpServerChannelTestStats(int slot, uint8_t ch,
+                                        uint32_t *expectedSeq,
+                                        uint32_t *ackedSeq,
+                                        uint32_t *framesRx);
+bool transportUdpClientChannelTestReceive(Transport *t, uint8_t ch,
+                                          uint8_t *out, uint16_t *outLen);
+void transportUdpClientChannelTestStats(Transport *t, uint8_t ch,
+                                        uint32_t *expectedSeq,
+                                        uint32_t *ackedSeq,
+                                        uint32_t *framesRx);
+
 #endif /* TRANSPORT_UDP_H */

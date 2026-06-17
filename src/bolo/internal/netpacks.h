@@ -456,6 +456,16 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                               JOIN_REQUEST tail and the
                                               JOIN_CHALLENGE body */
 
+#define PACKET_CHANNEL                 207  /* bidirectional: one channel frame
+                                              (the format defined in
+                                              channel_mux.c) directly after
+                                              PACKET_HEADER_SIZE; no other
+                                              fields. Sent standalone when no
+                                              snapshot / input rides this tick;
+                                              otherwise the same frame is
+                                              appended as a trailer on the
+                                              snapshot / input datagram. */
+
 #define PACKET_GAME_VOTE_STATE         195  /* server → all clients
                                               { kind 1, active 1,
                                                 triggerSrc 1, teamId 1,

@@ -46,6 +46,7 @@
 #include "brain_list_internal.h"   /* BRAIN_LIST_PATH_LEN — ADD_BOT pathLen bound */
 #include "transport_control_codec.h"
 #include "transport_command_codec.h"
+#include "channel_mux.h"
 #include "wbn_key_codec.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
@@ -281,6 +282,15 @@ static struct {
      * carrier path can retransmit it until ACKed.  Phase 3 keeps the
      * legacy udpSendTo running in parallel; nothing reads back yet. */
     ClientControlEventQueue controlEventQueues[MAX_TANKS];
+    /* Per-client reliable-ordered channel multiplexer (channel_mux.c).
+     * Runs empty and in parallel with the queues above: a channel frame
+     * rides every snapshot as a trailer, and a standalone PACKET_CHANNEL
+     * carries it when no snapshot flows.  Indexed by clientIdx like the
+     * queues; channelMuxInit on join, re-init on disconnect. */
+    ChannelMux              channelMux[MAX_TANKS];
+    /* Count of channel frames consumed from this slot (trailer + standalone),
+     * for test observability of the otherwise-silent parallel layer. */
+    uint32_t                channelFramesRx[MAX_TANKS];
     /* Suppress immediate-send-on-enqueue during the sync-replay burst
      * fired by serverSimRegisterSubscriber, so one carrier datagram
      * packs all replayed events instead of one per event.  Set/cleared
@@ -1936,6 +1946,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.controlEventLastAckProgressTick[slot] = udpServer.tickCount;
     controlEventQueueAssertValid(&udpServer.controlEventQueues[slot], "join-init");
 
+    /* Bring up this slot's parallel channel mux alongside the queues. */
+    channelMuxInit(&udpServer.channelMux[slot], CHANNEL_MAX_WINDOW);
+    udpServer.channelFramesRx[slot] = 0;
+
     /* Merge client-supplied hints with server-determined WBN trust into a
      * single clientFlags byte, then run the four-step join sequence so a
      * single CTRL_PLAYER_JOIN fans out with name, country, clientType,
@@ -2196,6 +2210,13 @@ static void serverHandleInput(const uint8_t *buf, int len,
             serverSimApplyInput(sim, &pkt);
             udpServer.clients[clientIdx].inputsThisTick++;
         }
+    }
+
+    /* Anything past the inputs is the parallel channel layer's trailer. */
+    if (pos < len &&
+        channelRecvFrame(&udpServer.channelMux[clientIdx],
+                         buf + pos, len - pos) >= 0) {
+        udpServer.channelFramesRx[clientIdx]++;
     }
 }
 
@@ -2480,6 +2501,20 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     packU16(buf + countsPos + 20, hdr.mapChecksum);
     packU16(buf + countsPos + 22, hdr.returnToLobbyTicks);
 
+    /* Parallel channel layer rides as a trailer on the snapshot: tick the
+     * mux on this client's clock+RTT, then append one channel frame after
+     * the event tails, keeping the datagram within UDP_MAX_PAYLOAD.  The
+     * client recovers it as the bytes past the snapshot's parsed end. */
+    channelTick(&udpServer.channelMux[clientIdx], udpServer.tickCount,
+                client->pingMs);
+    {
+        int budget = UDP_MAX_PAYLOAD - pos;
+        if (budget >= 2) {
+            pos += channelBuildFrame(&udpServer.channelMux[clientIdx],
+                                     buf + pos, budget);
+        }
+    }
+
     /* wire-only: per-tick snapshot — high-volume delta-encoded path with its own reliability discipline */
     srvSendTo(buf, pos, &client->addr);
 }
@@ -2600,6 +2635,10 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     udpServer.controlSyncInProgress[idx] = false;
     udpServer.controlEventLastAckProgressTick[idx] = udpServer.tickCount;
     controlEventQueueAssertValid(&udpServer.controlEventQueues[idx], "disconnect-reset");
+
+    /* Reset the channel mux so a re-using slot starts fresh. */
+    channelMuxInit(&udpServer.channelMux[idx], CHANNEL_MAX_WINDOW);
+    udpServer.channelFramesRx[idx] = 0;
 
     /* Release any in-flight upload state. Without this, a client
      * who drops mid-upload would leave clientUploadActive set,
@@ -3667,6 +3706,19 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         case PACKET_CONTROL_ACK:
             serverHandleControlAck(buf, len, fromAddr);
             break;
+        case PACKET_CHANNEL: {
+            /* Standalone channel frame (client → server, sent when no input
+             * rides this tick).  Body is one frame directly after the header. */
+            int clientIdx = serverFindClient(fromAddr);
+            if (clientIdx < 0) break;
+            udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
+            if (channelRecvFrame(&udpServer.channelMux[clientIdx],
+                                 buf + PACKET_HEADER_SIZE,
+                                 len - PACKET_HEADER_SIZE) >= 0) {
+                udpServer.channelFramesRx[clientIdx]++;
+            }
+            break;
+        }
         case PACKET_COMMAND_TICK: {
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0) break;
@@ -4836,6 +4888,29 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
     for (i = 0; i < MAX_TANKS; i++) {
         if (!udpServer.clients[i].connected) continue;
 
+        /* Service the parallel channel layer once per tick.  During running
+         * the snapshot trailer (serverSendSnapshot) is the carrier, so this
+         * only ticks + carries when snapshots aren't flowing: tick the mux,
+         * build one frame, and send a standalone PACKET_CHANNEL when it is
+         * non-empty (an empty 2-byte frame is suppressed so a quiet lobby
+         * stays storm-free). */
+        if (serverSimGetState(sim) != serverStateRunning) {
+            channelTick(&udpServer.channelMux[i], udpServer.tickCount,
+                        udpServer.clients[i].pingMs);
+            {
+                uint8_t cbuf[UDP_MAX_PAYLOAD];
+                int frameLen = channelBuildFrame(
+                    &udpServer.channelMux[i], cbuf + PACKET_HEADER_SIZE,
+                    UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                if (frameLen > 2) {
+                    packHeader(cbuf, PACKET_CHANNEL,
+                               udpServer.clients[i].outSequence++);
+                    srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen,
+                              &udpServer.clients[i].addr);
+                }
+            }
+        }
+
         /* Anonymous-fallback for a deferred WBN PLAYER_JOIN: the joiner's
          * reauth never landed within the grace window (direct-IP, not
          * signed in, or WBN unreachable), so announce the join un-keyed. */
@@ -4916,6 +4991,27 @@ uint16_t transportUdpServerGetClientPing(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return 0;
     if (!udpServer.clients[playerNum].connected) return 0;
     return udpServer.clients[playerNum].pingMs;
+}
+
+/* ── Test-only channel-mux scaffolding ───────────────────────────────────
+ * Honest test access to the otherwise-silent parallel channel layer: queue a
+ * message on a slot's channel, and read back its send-side ack / receive-side
+ * sequence state and the count of frames consumed.  Not used by shipping
+ * code — only the loopback channel integration test drives these. */
+bool transportUdpServerChannelTestSend(int slot, uint8_t ch,
+                                       const uint8_t *msg, uint16_t len) {
+    if (slot < 0 || slot >= MAX_TANKS) return false;
+    return channelSend(&udpServer.channelMux[slot], ch, msg, len);
+}
+
+void transportUdpServerChannelTestStats(int slot, uint8_t ch,
+                                        uint32_t *expectedSeq,
+                                        uint32_t *ackedSeq,
+                                        uint32_t *framesRx) {
+    if (slot < 0 || slot >= MAX_TANKS || ch >= CHANNEL_COUNT) return;
+    if (expectedSeq) *expectedSeq = udpServer.channelMux[slot].ch[ch].expectedSeq;
+    if (ackedSeq)    *ackedSeq    = udpServer.channelMux[slot].ch[ch].ackedSeq;
+    if (framesRx)    *framesRx    = udpServer.channelFramesRx[slot];
 }
 
 void transportUdpServerSetLock(ServerSim *sim, bool locked) {
