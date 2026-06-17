@@ -1038,6 +1038,7 @@ add_library(winbolonet_core STATIC
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_prefs_sync.c
+    src/winbolonet/wbn_serverlist.c
 )
 target_include_directories(winbolonet_core PRIVATE
     ${cjson_SOURCE_DIR}
@@ -2543,6 +2544,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_news_parse.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
+    tests/unit/test_wbn_serverlist.c
     tests/unit/test_control_event_queue.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
@@ -2615,6 +2617,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
     src/winbolonet/wbn_prefs_sync.c
+    src/winbolonet/wbn_serverlist.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
@@ -2793,6 +2796,10 @@ set(_unit_test_names
     wbn_prefs_parse_updatedat
     wbn_prefs_decide
     wbn_prefs_build_put_body
+    wbn_serverlist_parse
+    wbn_serverlist_players
+    wbn_serverlist_motd
+    wbn_serverlist_malformed
     queue_init_is_valid
     queue_enqueue_advances_nextSeq
     queue_ack_advance_within_range

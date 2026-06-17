@@ -368,3 +368,12 @@ int wbn_prefs_put(const char *bearerToken, const char *json_body,
   if (response_out) *response_out = NULL;
   return -1;
 }
+
+/* The public game-list transport lives in http.c; stubbed here to keep curl
+ * out of the link. wbnFetchServerList is never exercised by the unit tests —
+ * only the pure wbnServerListParse is. */
+int wbn_api_get_public(const char *path, char **response_out) {
+  (void)path;
+  if (response_out) *response_out = NULL;
+  return -1;
+}
