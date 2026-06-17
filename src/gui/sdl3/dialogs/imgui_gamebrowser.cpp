@@ -29,6 +29,7 @@
 #include <condition_variable>
 #include <deque>
 #include <vector>
+#include <string>
 
 #include <SDL3/SDL.h>
 
@@ -52,6 +53,7 @@ extern "C" {
 #include "../sdl3imgui.h"
 #include "../../gamefront.h"
 #include "../../currentgames.h"
+#include "../../../winbolonet/wbn_serverlist.h"
 #include "discovery.h"
 #include "global.h"
 #include "gametype.h"
@@ -100,8 +102,26 @@ struct ServerEntry {
     /* Country code for flag (from DNS lookup or mock) */
     char countryCode[3]; /* 2-char ISO + NUL */
 
-    /* Lobby status (mocked) */
+    /* Lobby status (derived from hasLobby + inLobby) */
     int lobbyStatus;     /* 0=none, 1=in lobby, 2=starting */
+
+    /* From WinBolo.net game list (Internet path) */
+    char serverKey[64];
+    int  numHumans;
+    int  numBots;
+    int  maxPlayers;
+    bool ranked;
+    bool inLobby;
+    bool hasLobby;
+    bool allowNewPlayers;
+    bool autoLock;
+    bool allowSpectators;
+    int  spectatorCount;
+    bool timeLimit;
+    int  timeMinutes;
+    bool randomMap;
+    char mapMd5[33];
+    std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
 
 static const char *gameTypeStr(gameType g) {
@@ -437,6 +457,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     static currentGames searchResultCg = nullptr;
     static char searchResultMotd[4096] = {};
     static bool searchResultOk = false;
+    static WbnServerList searchResultList = {};
 
     /* Clean up any leftover state from a previous detached search */
     if (searchDone) {
@@ -510,29 +531,57 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             searching = false;
 
             if (useTracker) {
-                /* Tracker mode: convert currentGames linked list to our vector */
+                /* Internet mode: map the WinBolo.net game list into our vector */
                 std::vector<ServerEntry> newServers;
-                if (searchResultOk && searchResultCg) {
-                    int total = currentGamesItemCount(&searchResultCg);
-                    for (int i = 0; i < total; i++) {
+                if (searchResultOk) {
+                    for (int i = 0; i < searchResultList.count; i++) {
+                        const WbnServerListEntry &w = searchResultList.servers[i];
                         ServerEntry e = {};
-                        e.pingMs = -1; /* pending */
-                        e.freePills = 0;
-                        e.freeBases = 0;
-                        e.lobbyStatus = (i % 5 == 0) ? 1 : (i % 7 == 0) ? 2 : 0; /* mock */
 
-                        currentGamesGetItem(&searchResultCg, i + 1,
-                            e.address, &e.port, e.mapName, e.version,
-                            &e.numPlayers, &e.numBases, &e.numPills,
-                            &e.mines, &e.game, &e.ai, &e.password);
+                        SDL_strlcpy(e.address, w.address, sizeof(e.address));
+                        e.port = (unsigned short)w.port;
+                        SDL_strlcpy(e.mapName, w.map, sizeof(e.mapName));
+                        SDL_strlcpy(e.version, w.version, sizeof(e.version));
+                        e.game = (gameType)w.gameType;
+                        e.ai = (aiType)w.ai;
+                        e.mines = w.mines;
+                        e.password = w.password;
+                        e.numPlayers = (BYTE)w.numPlayers;
+                        e.freeBases = (WORD)w.freeBases;
+                        e.freePills = (WORD)w.freePills;
+                        /* Country comes straight from the JSON on this path. */
+                        SDL_strlcpy(e.countryCode, w.country, sizeof(e.countryCode));
+
+                        SDL_strlcpy(e.serverKey, w.serverKey, sizeof(e.serverKey));
+                        SDL_strlcpy(e.mapMd5, w.mapMd5, sizeof(e.mapMd5));
+                        e.numHumans = w.numHumans;
+                        e.numBots = w.numBots;
+                        e.maxPlayers = w.maxPlayers;
+                        e.ranked = w.ranked;
+                        e.inLobby = w.inLobby;
+                        e.hasLobby = w.hasLobby;
+                        e.allowNewPlayers = w.allowNewPlayers;
+                        e.autoLock = w.autoLock;
+                        e.allowSpectators = w.allowSpectators;
+                        e.spectatorCount = w.spectatorCount;
+                        e.timeLimit = w.timeLimit;
+                        e.timeMinutes = w.timeMinutes;
+                        e.randomMap = w.randomMap;
+
+                        e.players.clear();
+                        for (int p = 0; p < w.numPlayerNames; p++) {
+                            e.players.emplace_back(w.players[p]);
+                        }
+
+                        e.pingMs = -1; /* pending — ping still fires below */
+                        e.lobbyStatus = (w.hasLobby && w.inLobby) ? 1 : 0;
 
                         /* Hide servers older than BROWSER_MIN_VERSION. */
                         if (!browserVersionAllowed(e.version)) {
                             continue;
                         }
 
-                        resolveCountryCode(e);
-                        newServers.push_back(e);
+                        newServers.push_back(std::move(e));
                     }
                 }
 
@@ -542,10 +591,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     selectedItem = -1;
                 }
 
-                if (searchResultCg) {
-                    currentGamesDestroy(&searchResultCg);
-                    searchResultCg = nullptr;
-                }
+                wbnServerListFree(&searchResultList);
 
                 if (searchResultOk) {
                     int total = (int)servers.size();
@@ -758,6 +804,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                  * indices, and drop pending/in-flight work. */
                 resetPings();
 
+                wbnServerListFree(&searchResultList);
                 searchResultCg = currentGamesCreate();
                 searchResultMotd[0] = '\0';
                 searchResultOk = false;
@@ -772,9 +819,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 searchThread = std::thread([sp]() {
                     bool ret = false;
                     if (sp.tracker) {
-                        char addr[FILENAME_MAX];
-                        memcpy(addr, sp.addr, FILENAME_MAX);
-                        ret = discoveryFindTrackedGames(&searchResultCg, addr, sp.port, searchResultMotd);
+                        ret = wbnFetchServerList(&searchResultList);
                     } else {
                         static BroadcastCbData cbd;
                         cbd.servers = &servers;
