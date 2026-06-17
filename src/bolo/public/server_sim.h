@@ -120,6 +120,7 @@ typedef struct {
   uint8_t teamNumber;  /* 1-16 (0 = unassigned) */
   bool ready;
   bool isBot;          /* Managed by bot system, not by player packets */
+  uint8_t startIdx;    /* reserved map start, 1-based; 0xFF = none */
 } LobbyPlayer;
 
 /* Per-team metadata — used by the Layout A lobby UI for color tinting,
@@ -567,6 +568,35 @@ void serverSimInstallMapDirList(ServerSim *sim,
  *  players leave.
  *********************************************************/
 void serverSimSetAutoCloseOnEmpty(ServerSim *sim, bool enabled);
+
+/*********************************************************
+ *NAME:          serverSimSetMapRotate
+ *PURPOSE:
+ *  Enables no-lobby map-rotation mode. In this mode a win
+ *  or an empty server boots every player, picks the next
+ *  map from -mapdir and restarts a fresh running round
+ *  instead of quitting. Implies no-lobby; the server only
+ *  stops on Ctrl-C / the quit console command.
+ *********************************************************/
+void serverSimSetMapRotate(ServerSim *sim, bool enabled);
+
+/*********************************************************
+ *NAME:          serverSimIsMapRotateEnabled
+ *PURPOSE:
+ *  Returns whether no-lobby map-rotation mode is enabled.
+ *********************************************************/
+bool serverSimIsMapRotateEnabled(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimMapRotateRound
+ *PURPOSE:
+ *  Sim-core half of a map-rotation round restart: opens the
+ *  WBN session-rotation window, picks the next map and starts
+ *  a fresh empty running round. The caller (the server
+ *  lifecycle) boots all clients first and runs the WBN
+ *  session rotation / round-log upload around this call.
+ *********************************************************/
+void serverSimMapRotateRound(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimSetEmptyResetMinutes
@@ -1300,6 +1330,11 @@ bool          serverSimIsLobbyEnabled(const ServerSim *sim);
 bool          serverSimIsAcceptingJoins(const ServerSim *sim);
 /* Cap on join slots; 0 in the struct field falls back to MAX_TANKS. */
 BYTE          serverSimGetMaxPlayers(const ServerSim *sim);
+/* Cap on AI bots addable in the lobby; 0 = no cap. */
+BYTE          serverSimGetMaxBots(const ServerSim *sim);
+/* Number of connected slots flagged as lobby bots — the value the
+ * -maxbots cap is compared against. */
+BYTE          serverSimGetLobbyBotCount(const ServerSim *sim);
 bool          serverSimHasPassword(const ServerSim *sim);
 bool          serverSimIsRandomMapEnabled(const ServerSim *sim);
 bool          serverSimIsQuiet(const ServerSim *sim);

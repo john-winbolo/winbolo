@@ -87,6 +87,13 @@ struct ClientSim {
     PredictedShell predictedShells[MAX_PREDICTED_SHELLS];
     int         predictedShellCount;
 
+    /* Render-only forward-projected shells for human clients. Parallel to
+     * serverShellSnaps (never mutated): anchored to each snapshot by age and
+     * advanced per game tick so incoming shells render at their present
+     * position. Empty for bots, which read raw serverShellSnaps. */
+    ProjectedShell projectedShells[MAX_SNAPSHOT_SHELLS];
+    int         projectedShellCount;
+
     /* Reconciliation stats — current 1s window + last completed window */
     uint16_t reconCountThisWindow;
     float    reconErrSumPx, reconErrMaxPx;
@@ -205,6 +212,7 @@ struct ClientSim {
     bool             mapDownloadComplete; /* Gate for ready button */
     bool             inLobby;           /* TRUE if server is lobby-enabled */
     char             lobbyChatHistory[4096]; /* Lobby chat buffer with player names */
+    char             lobbyTeamChatHistory[4096]; /* Team-only lobby chat buffer */
 
     /* Lobby game settings (received from server in LOBBY_STATE packet) */
     gameType         lobbyGameType;

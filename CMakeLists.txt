@@ -283,6 +283,13 @@ else()
     target_compile_options(nanosvg PRIVATE -Wno-unused-function)
 endif()
 
+# mdns — header-only mDNS/DNS-SD library (vendored, public domain). All
+# functions are static inline, so no implementation TU: an INTERFACE lib
+# carries only the include directory. The one consumer (mdns_advertise.c)
+# applies -Wno-unused-function / /wd4505 locally for the static-inline noise.
+add_library(mdns INTERFACE)
+target_include_directories(mdns SYSTEM INTERFACE src/third_party/mdns)
+
 # stb_image — header-only image loader (vendored)
 add_library(stb_image STATIC src/third_party/stb/stb_image_impl.c)
 target_include_directories(stb_image SYSTEM PUBLIC src/third_party/stb)
@@ -2476,8 +2483,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/common/prefs.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
+    tests/unit/test_lobby_claim_start_dispatch.c
     tests/unit/test_error_smoothing.c
     tests/unit/test_command_rejected_apply.c
+    tests/unit/test_shell_death_event.c
     tests/unit/test_alliance_reset.c
     tests/unit/test_lobby_add_bot_dispatch.c
     tests/unit/test_command_queue_drain.c
@@ -2493,6 +2502,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_upload_cap.c
     tests/unit/test_map_field_clamps.c
     tests/unit/test_map_reload_rollback.c
+    tests/unit/test_map_read_memory.c
     tests/unit/test_upload_busy.c
     tests/unit/test_upload_filename_safe.c
     tests/unit/test_lobby_time_minutes_valid.c
@@ -2514,18 +2524,49 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
+    tests/unit/test_maprotate_rotation.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
     tests/unit/test_lobby_reset_cleanup.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
+    tests/unit/test_starts_pick_incremental.c
+    tests/unit/test_starts_assign_batch.c
+    tests/unit/test_starts_open_ideal.c
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
     tests/unit/test_input_catchup.c
+    tests/unit/test_jitter_buffer_grow.c
+    tests/unit/test_shell_projection.c
+    tests/unit/test_snapshot_compaction.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
     src/server/server_dedicated_log_path.c
+    # Loopback transport tests: real UDP client + server over localhost,
+    # sharing the loopback_harness fixture.
+    tests/unit/loopback_harness.c
+    tests/unit/test_loopback_join.c
+    tests/unit/test_loopback_join_loss.c
+    tests/unit/test_loopback_lobby_running_loss.c
+    tests/unit/test_join_version_gate.c
+    tests/unit/test_join_rate_limit.c
+    tests/unit/test_cookie_handshake.c
+    tests/unit/test_map_amp_gate.c
+    tests/unit/test_map_resync.c
+    tests/unit/test_conn_migration.c
+    tests/unit/test_viewtick_rewind.c
+    # mDNS discovery: unicast-loopback round-trip through the real advertiser
+    # builder + browser parse path (no multicast socket).
+    tests/unit/test_mdns_discovery.c
+    # Wire-codec corpus: the tap sink, the fast differential test (reads
+    # committed fixtures), and the on-demand capture generator (uses the
+    # loopback harness above).
+    tests/unit/wire_corpus.c
+    tests/unit/test_wire_corpus.c
+    tests/unit/test_wire_corpus_capture.c
+    tests/unit/test_packet_type_names.c
+    tests/unit/test_client_type.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2540,6 +2581,13 @@ set(WINBOLO_UNITTESTS_SOURCES
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
     # references resolve — the tests never run the UDP code path.
     src/bolo/transport_udp_client.c
+    # transport_udp_common.c is also compiled per-target so this target's
+    # WB_WIRE_CORPUS_CAPTURE reaches its WIRE_CORPUS_TAP calls; bolo_static
+    # ships it without the flag. This object provides every transport_udp_common
+    # symbol, so bolo_static's copy is not pulled from the archive (no
+    # duplicate symbols). The file references no bolo_static-only define, so the
+    # per-target build is behaviourally identical bar the tap.
+    src/bolo/transport_udp_common.c
     # server_stubs.c (transportUdpServer* / serverLifecycle* stubs)
     # is intentionally NOT linked here: server_static (linked below)
     # provides the real transport_udp_server.c and server_lifecycle.c
@@ -2568,6 +2616,18 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
+    # Activate the network-impairment hooks for this target's compilation of
+    # transport_udp_client.c (compiled per-target above), so the loopback
+    # tests can drive a seeded lossy path via WB_NETIMPAIR. server_static
+    # owns transport_udp_server.c and is NOT recompiled here, so every
+    # shipping target keeps WB_ENABLE_NETIMPAIR=0; client-endpoint impairment
+    # already covers both directions (impairIn + impairOut).
+    WB_ENABLE_NETIMPAIR=1
+    # Compile the WIRE_CORPUS_TAP calls into this target's per-target
+    # transport_udp_common.c (shipping builds leave them out), and point the
+    # differential test at the committed fixture directory.
+    WB_WIRE_CORPUS_CAPTURE=1
+    WB_WIRE_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wire"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -2582,7 +2642,11 @@ bolo_apply_include_rules(WinBoloUnitTests unittests)
 
 target_link_libraries(WinBoloUnitTests PRIVATE
     bolo_static ${SERVER_LINK_GROUP} bot_brains_static
-    SDL3::SDL3 minizip lua_static cjson utf8proc)
+    SDL3::SDL3 minizip lua_static cjson utf8proc
+    # mdns is header-only; linked for its include dir so test_mdns_discovery.c
+    # sees mdns.h / mdns_records.h (bolo_static / server_static link it PRIVATE,
+    # so the include dir doesn't propagate transitively).
+    mdns)
 
 if(WIN32)
     target_link_libraries(WinBoloUnitTests PRIVATE ws2_32 winmm user32)
@@ -2622,11 +2686,21 @@ set(_unit_test_names
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
     command_codec_roundtrip_variants
+    command_codec_lobby_claim_start
+    lobby_claim_start_host_swaps_occupied
+    lobby_claim_start_host_swap_into_none
+    lobby_claim_start_non_host_occupied_rejected
+    lobby_claim_start_non_host_other_slot_rejected
+    lobby_claim_start_self_free_and_release
+    lobby_claim_start_validation
     command_codec_cmdseq_slot
     command_codec_bounds_checks
     command_rejected_parks_name_codes
     command_rejected_ignores_other_slot
     command_rejected_clear_resets_both_fields
+    shell_death_codec_roundtrip
+    shell_death_culls_matching_predicted_shell
+    shell_death_rejected_culls_without_impact
     lobby_add_bot_rejects_empty_brain_path
     lobby_add_bot_rejects_ai_none
     lobby_add_bot_rejects_not_in_lobby
@@ -2656,6 +2730,10 @@ set(_unit_test_names
     map_field_clamps_passthrough
     map_field_clamps_angry_start
     map_reload_rollback
+    map_read_memory_matches_file
+    map_read_memory_handbuilt
+    map_convert_file_to_compressed
+    map_read_memory_rejects_garbage
     upload_busy_predicate
     upload_filename_safe
     lobby_bot_name_rejects_reserved_prefix
@@ -2751,6 +2829,18 @@ set(_unit_test_names
     alliance_reset_apply_rebuilds_alliances
     treegrow_never_plants_on_deep_sea
     treegrow_reset_clears_stale_target
+    starts_pick_cluster_nearest_teammate
+    starts_pick_farthest_when_solo
+    starts_pick_none_when_all_taken
+    starts_batch_reserved_lands_exact
+    starts_batch_unreserved_avoids_reserved
+    starts_batch_stale_reservation_falls_through
+    starts_batch_duplicate_honors_first
+    starts_batch_null_reservations_place_normally
+    starts_batch_solo_random_seed
+    starts_batch_teams_cluster_and_separate
+    starts_batch_team_anchor_jitter_varies
+    starts_open_ideal_friendly_pill_eligible
     input_redundancy
     stall_advances_processed_tick
     stall_mine_late_lays_once
@@ -2761,9 +2851,35 @@ set(_unit_test_names
     stall_long_dry_advances
     input_catchup
     catchup_ignores_redundant_duplicates
+    jitter_buffer_grow
+    shell_projection
+    snapshot_compaction
     edge_send_predicate
     error_smoothing
+    loopback_join
+    loopback_join_loss
+    loopback_lobby_running_loss
+    join_version_gate
+    join_rate_limit
+    cookie_handshake
+    map_amp_gate
+    map_resync_cut_and_deliver_once
+    map_resync_duplicate_request_no_recut
+    map_resync_send_gate_holds
+    map_resync_stale_gen_rejected
+    conn_migration_rehome
+    conn_migration_e2e
+    viewtick_rewind
+    viewtick_displayed_tick
+    wire_corpus
+    packet_type_names
+    mdns_discovery
+    client_type_matches_platform
+    client_type_name_round_trips
 )
+# wire_corpus_capture is intentionally omitted: it runs a loopback session to
+# regenerate fixtures and is invoked on demand via
+# `WinBoloUnitTests --test wire_corpus_capture`, not under CTest.
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})

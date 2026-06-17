@@ -22,6 +22,8 @@
  *********************************************************/
 
 #include "transport_udp_internal.h"
+#include "wire_codec.h"
+#include "wire_messages.h"
 #include "../common/wb_log.h"
 
 /* ================================================================
@@ -66,104 +68,115 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     return buf[2];
 }
 
+/* Packet-type -> debug name. The one declarative list every type/name
+ * mapping derives from; the switch below expands it, and the unit test
+ * re-expands it to pin every string. Types absent here resolve to
+ * "UNKNOWN" (a logging helper only — not a wire field). */
+#define PACKET_NAME_TABLE(X) \
+    X(PACKET_INPUT, "INPUT") \
+    X(PACKET_JOIN_REQUEST, "JOIN_REQUEST") \
+    X(PACKET_CHAT_MESSAGE, "CHAT_MESSAGE") \
+    X(PACKET_PING, "PING") \
+    X(PACKET_MAP_ACK, "MAP_ACK") \
+    X(PACKET_QUIT, "QUIT") \
+    X(PACKET_STATE_SNAPSHOT, "STATE_SNAPSHOT") \
+    X(PACKET_JOIN_ACCEPT, "JOIN_ACCEPT") \
+    X(PACKET_JOIN_REJECT, "JOIN_REJECT") \
+    X(PACKET_PLAYER_JOINED, "PLAYER_JOINED") \
+    X(PACKET_PLAYER_LEFT, "PLAYER_LEFT") \
+    X(PACKET_CHAT_BROADCAST, "CHAT_BROADCAST") \
+    X(PACKET_FULL_STATE, "FULL_STATE") \
+    X(PACKET_MAP_DELTA, "MAP_DELTA") \
+    X(PACKET_BASE_STATE, "BASE_STATE") \
+    X(PACKET_PILL_STATE, "PILL_STATE") \
+    X(PACKET_PONG, "PONG") \
+    X(PACKET_GAME_EVENT, "GAME_EVENT") \
+    X(PACKET_MAP_DOWNLOAD, "MAP_DOWNLOAD") \
+    X(PACKET_MAP_RESYNC_REQUEST, "MAP_RESYNC_REQUEST") \
+    X(PACKET_PLAYER_LIST, "PLAYER_LIST") \
+    X(PACKET_NAME_CHANGE, "NAME_CHANGE") \
+    X(PACKET_ALLIANCE_REQUEST, "ALLIANCE_REQUEST") \
+    X(PACKET_ALLIANCE_ACCEPT, "ALLIANCE_ACCEPT") \
+    X(PACKET_ALLIANCE_LEAVE, "ALLIANCE_LEAVE") \
+    X(PACKET_ALLIANCE_UPDATE, "ALLIANCE_UPDATE") \
+    X(PACKET_LOCK_TOGGLE, "LOCK_TOGGLE") \
+    X(PACKET_SERVER_SHUTDOWN, "SERVER_SHUTDOWN") \
+    X(PACKET_LOBBY_TEAM_SET, "LOBBY_TEAM_SET") \
+    X(PACKET_LOBBY_READY, "LOBBY_READY") \
+    X(PACKET_LOBBY_ADD_BOT, "LOBBY_ADD_BOT") \
+    X(PACKET_LOBBY_REMOVE_BOT, "LOBBY_REMOVE_BOT") \
+    X(PACKET_LOBBY_UPDATE, "LOBBY_UPDATE") \
+    X(PACKET_LOBBY_SETTINGS, "LOBBY_SETTINGS") \
+    X(PACKET_LOBBY_SET_SETTING, "LOBBY_SET_SETTING") \
+    X(PACKET_LOBBY_SETTING_CHG, "LOBBY_SETTING_CHG") \
+    X(PACKET_LOBBY_OPEN_HOST, "LOBBY_OPEN_HOST") \
+    X(PACKET_LOBBY_OPEN_HOST_CHG, "LOBBY_OPEN_HOST_CHG") \
+    X(PACKET_LOBBY_TEAM_META, "LOBBY_TEAM_META") \
+    X(PACKET_LOBBY_TEAM_META_CHG, "LOBBY_TEAM_META_CHG") \
+    X(PACKET_LOBBY_TEAM_CLEAR, "LOBBY_TEAM_CLEAR") \
+    X(PACKET_LOBBY_BOT_CONFIG, "LOBBY_BOT_CONFIG") \
+    X(PACKET_LOBBY_BOT_CONFIG_CHG, "LOBBY_BOT_CONFIG_CHG") \
+    X(PACKET_LOBBY_KICK, "LOBBY_KICK") \
+    X(PACKET_KICKED, "KICKED") \
+    X(PACKET_LOBBY_SET_BOT_BRAIN, "LOBBY_SET_BOT_BRAIN") \
+    X(PACKET_LOBBY_BOT_BRAIN_CHG, "LOBBY_BOT_BRAIN_CHG") \
+    X(PACKET_LOBBY_BRAIN_LIST, "LOBBY_BRAIN_LIST") \
+    X(PACKET_LOBBY_SET_MAP, "LOBBY_SET_MAP") \
+    X(PACKET_LOBBY_SET_PASSWORD, "LOBBY_SET_PASSWORD") \
+    X(PACKET_LOBBY_MAP_LIST_REQ, "LOBBY_MAP_LIST_REQ") \
+    X(PACKET_LOBBY_MAP_LIST_RSP, "LOBBY_MAP_LIST_RSP") \
+    X(PACKET_LOBBY_MAP_SEARCH_REQ, "LOBBY_MAP_SEARCH_REQ") \
+    X(PACKET_LOBBY_MAP_SEARCH_RSP, "LOBBY_MAP_SEARCH_RSP") \
+    X(PACKET_LOBBY_MAP_UPLOAD_BEGIN, "LOBBY_MAP_UPLOAD_BEGIN") \
+    X(PACKET_LOBBY_MAP_UPLOAD_CHUNK, "LOBBY_MAP_UPLOAD_CHUNK") \
+    X(PACKET_LOBBY_MAP_UPLOAD_ACK, "LOBBY_MAP_UPLOAD_ACK") \
+    X(PACKET_LOBBY_MAP_UPLOAD_DONE, "LOBBY_MAP_UPLOAD_DONE") \
+    X(PACKET_LOBBY_MAP_USE_LOCAL, "LOBBY_MAP_USE_LOCAL") \
+    X(PACKET_LOBBY_MAP_USE_LOCAL_NACK, "LOBBY_MAP_USE_LOCAL_NACK") \
+    X(PACKET_LOBBY_MAP_PREVIEW_REQ, "LOBBY_MAP_PREVIEW_REQ") \
+    X(PACKET_LOBBY_MAP_PREVIEW_BEGIN, "LOBBY_MAP_PREVIEW_BEGIN") \
+    X(PACKET_LOBBY_MAP_PREVIEW_CHUNK, "LOBBY_MAP_PREVIEW_CHUNK") \
+    X(PACKET_LOBBY_MAP_PREVIEW_ERR, "LOBBY_MAP_PREVIEW_ERR") \
+    X(PACKET_LOBBY_PREVIEW_CANCEL, "LOBBY_PREVIEW_CANCEL") \
+    X(PACKET_LOBBY_PREVIEW_COMMIT, "LOBBY_PREVIEW_COMMIT") \
+    X(PACKET_LOBBY_PREVIEW_RANDOM, "LOBBY_PREVIEW_RANDOM") \
+    X(PACKET_LOBBY_CLAIM_START, "LOBBY_CLAIM_START") \
+    X(PACKET_COUNTDOWN, "COUNTDOWN") \
+    X(PACKET_GAME_START, "GAME_START") \
+    X(PACKET_GAME_OVER, "GAME_OVER") \
+    X(PACKET_LOBBY_MAP_CHANGE, "LOBBY_MAP_CHANGE") \
+    X(PACKET_WBN_REAUTH, "WBN_REAUTH") \
+    X(PACKET_WBN_REKEY, "WBN_REKEY") \
+    X(PACKET_BALANCE_REQUEST, "BALANCE_REQUEST") \
+    X(PACKET_BALANCE_PROPOSAL, "BALANCE_PROPOSAL") \
+    X(PACKET_BALANCE_APPLY, "BALANCE_APPLY") \
+    X(PACKET_BALANCE_DISMISS, "BALANCE_DISMISS") \
+    X(PACKET_MAP_SKIP_VOTE, "MAP_SKIP_VOTE") \
+    X(PACKET_MAP_SKIP_STATE, "MAP_SKIP_STATE") \
+    X(PACKET_GAME_VOTE_TOGGLE, "GAME_VOTE_TOGGLE") \
+    X(PACKET_GAME_VOTE_STATE, "GAME_VOTE_STATE") \
+    X(PACKET_PUNCH_REQUEST, "PUNCH_REQUEST") \
+    X(PACKET_PUNCH_NOTIFY, "PUNCH_NOTIFY") \
+    X(PACKET_PUNCH_REQUEST_ACK, "PUNCH_REQUEST_ACK") \
+    X(PACKET_PUNCH_PROBE_REQUEST, "PUNCH_PROBE_REQUEST") \
+    X(PACKET_PUNCH_PROBE_REPLY, "PUNCH_PROBE_REPLY") \
+    X(PACKET_CONTROL_TICK, "CONTROL_TICK") \
+    X(PACKET_CONTROL_ACK, "CONTROL_ACK") \
+    X(PACKET_COMMAND_TICK, "COMMAND_TICK") \
+    X(PACKET_COMMAND_ACK, "COMMAND_ACK") \
+    X(PACKET_COMMAND_REJECTED, "COMMAND_REJECTED") \
+    X(PACKET_BALANCE_FAILED, "BALANCE_FAILED")
+
 const char *packetTypeName(uint8_t type) {
     switch (type) {
-    case PACKET_INPUT:          return "INPUT";
-    case PACKET_JOIN_REQUEST:   return "JOIN_REQUEST";
-    case PACKET_CHAT_MESSAGE:   return "CHAT_MESSAGE";
-    case PACKET_PING:           return "PING";
-    case PACKET_MAP_ACK:        return "MAP_ACK";
-    case PACKET_QUIT:           return "QUIT";
-    case PACKET_STATE_SNAPSHOT: return "STATE_SNAPSHOT";
-    case PACKET_JOIN_ACCEPT:    return "JOIN_ACCEPT";
-    case PACKET_JOIN_REJECT:    return "JOIN_REJECT";
-    case PACKET_PLAYER_JOINED:  return "PLAYER_JOINED";
-    case PACKET_PLAYER_LEFT:    return "PLAYER_LEFT";
-    case PACKET_CHAT_BROADCAST: return "CHAT_BROADCAST";
-    case PACKET_FULL_STATE:     return "FULL_STATE";
-    case PACKET_MAP_DELTA:      return "MAP_DELTA";
-    case PACKET_BASE_STATE:     return "BASE_STATE";
-    case PACKET_PILL_STATE:     return "PILL_STATE";
-    case PACKET_PONG:           return "PONG";
-    case PACKET_GAME_EVENT:     return "GAME_EVENT";
-    case PACKET_MAP_DOWNLOAD:   return "MAP_DOWNLOAD";
-    case PACKET_PLAYER_LIST:    return "PLAYER_LIST";
-    case PACKET_NAME_CHANGE:        return "NAME_CHANGE";
-    case PACKET_ALLIANCE_REQUEST:   return "ALLIANCE_REQUEST";
-    case PACKET_ALLIANCE_ACCEPT:    return "ALLIANCE_ACCEPT";
-    case PACKET_ALLIANCE_LEAVE:     return "ALLIANCE_LEAVE";
-    case PACKET_ALLIANCE_UPDATE:    return "ALLIANCE_UPDATE";
-    case PACKET_LOCK_TOGGLE:        return "LOCK_TOGGLE";
-    case PACKET_SERVER_SHUTDOWN:    return "SERVER_SHUTDOWN";
-    case PACKET_LOBBY_TEAM_SET:     return "LOBBY_TEAM_SET";
-    case PACKET_LOBBY_READY:        return "LOBBY_READY";
-    case PACKET_LOBBY_ADD_BOT:      return "LOBBY_ADD_BOT";
-    case PACKET_LOBBY_REMOVE_BOT:   return "LOBBY_REMOVE_BOT";
-    case PACKET_LOBBY_UPDATE:       return "LOBBY_UPDATE";
-    case PACKET_LOBBY_SETTINGS:     return "LOBBY_SETTINGS";
-    case PACKET_LOBBY_SET_SETTING:  return "LOBBY_SET_SETTING";
-    case PACKET_LOBBY_SETTING_CHG:  return "LOBBY_SETTING_CHG";
-    case PACKET_LOBBY_OPEN_HOST:    return "LOBBY_OPEN_HOST";
-    case PACKET_LOBBY_OPEN_HOST_CHG: return "LOBBY_OPEN_HOST_CHG";
-    case PACKET_LOBBY_TEAM_META:    return "LOBBY_TEAM_META";
-    case PACKET_LOBBY_TEAM_META_CHG: return "LOBBY_TEAM_META_CHG";
-    case PACKET_LOBBY_TEAM_CLEAR:   return "LOBBY_TEAM_CLEAR";
-    case PACKET_LOBBY_BOT_CONFIG:   return "LOBBY_BOT_CONFIG";
-    case PACKET_LOBBY_BOT_CONFIG_CHG: return "LOBBY_BOT_CONFIG_CHG";
-    case PACKET_LOBBY_KICK:         return "LOBBY_KICK";
-    case PACKET_KICKED:             return "KICKED";
-    case PACKET_LOBBY_SET_BOT_BRAIN: return "LOBBY_SET_BOT_BRAIN";
-    case PACKET_LOBBY_BOT_BRAIN_CHG: return "LOBBY_BOT_BRAIN_CHG";
-    case PACKET_LOBBY_BRAIN_LIST:   return "LOBBY_BRAIN_LIST";
-    case PACKET_LOBBY_SET_MAP:      return "LOBBY_SET_MAP";
-    case PACKET_LOBBY_SET_PASSWORD: return "LOBBY_SET_PASSWORD";
-    case PACKET_LOBBY_MAP_LIST_REQ: return "LOBBY_MAP_LIST_REQ";
-    case PACKET_LOBBY_MAP_LIST_RSP: return "LOBBY_MAP_LIST_RSP";
-    case PACKET_LOBBY_MAP_SEARCH_REQ: return "LOBBY_MAP_SEARCH_REQ";
-    case PACKET_LOBBY_MAP_SEARCH_RSP: return "LOBBY_MAP_SEARCH_RSP";
-    case PACKET_LOBBY_MAP_UPLOAD_BEGIN: return "LOBBY_MAP_UPLOAD_BEGIN";
-    case PACKET_LOBBY_MAP_UPLOAD_CHUNK: return "LOBBY_MAP_UPLOAD_CHUNK";
-    case PACKET_LOBBY_MAP_UPLOAD_ACK:   return "LOBBY_MAP_UPLOAD_ACK";
-    case PACKET_LOBBY_MAP_UPLOAD_DONE:  return "LOBBY_MAP_UPLOAD_DONE";
-    case PACKET_LOBBY_MAP_USE_LOCAL:     return "LOBBY_MAP_USE_LOCAL";
-    case PACKET_LOBBY_MAP_USE_LOCAL_NACK: return "LOBBY_MAP_USE_LOCAL_NACK";
-    case PACKET_LOBBY_MAP_PREVIEW_REQ:   return "LOBBY_MAP_PREVIEW_REQ";
-    case PACKET_LOBBY_MAP_PREVIEW_BEGIN: return "LOBBY_MAP_PREVIEW_BEGIN";
-    case PACKET_LOBBY_MAP_PREVIEW_CHUNK: return "LOBBY_MAP_PREVIEW_CHUNK";
-    case PACKET_LOBBY_MAP_PREVIEW_ERR:   return "LOBBY_MAP_PREVIEW_ERR";
-    case PACKET_LOBBY_PREVIEW_CANCEL: return "LOBBY_PREVIEW_CANCEL";
-    case PACKET_LOBBY_PREVIEW_COMMIT: return "LOBBY_PREVIEW_COMMIT";
-    case PACKET_LOBBY_PREVIEW_RANDOM: return "LOBBY_PREVIEW_RANDOM";
-    case PACKET_COUNTDOWN:          return "COUNTDOWN";
-    case PACKET_GAME_START:         return "GAME_START";
-    case PACKET_GAME_OVER:          return "GAME_OVER";
-    case PACKET_LOBBY_MAP_CHANGE:   return "LOBBY_MAP_CHANGE";
-    case PACKET_WBN_REAUTH:        return "WBN_REAUTH";
-    case PACKET_WBN_REKEY:         return "WBN_REKEY";
-    case PACKET_BALANCE_REQUEST:   return "BALANCE_REQUEST";
-    case PACKET_BALANCE_PROPOSAL:  return "BALANCE_PROPOSAL";
-    case PACKET_BALANCE_APPLY:     return "BALANCE_APPLY";
-    case PACKET_BALANCE_DISMISS:   return "BALANCE_DISMISS";
-    case PACKET_MAP_SKIP_VOTE:     return "MAP_SKIP_VOTE";
-    case PACKET_MAP_SKIP_STATE:    return "MAP_SKIP_STATE";
-    case PACKET_GAME_VOTE_TOGGLE:  return "GAME_VOTE_TOGGLE";
-    case PACKET_GAME_VOTE_STATE:   return "GAME_VOTE_STATE";
-    case PACKET_PUNCH_REQUEST:       return "PUNCH_REQUEST";
-    case PACKET_PUNCH_NOTIFY:        return "PUNCH_NOTIFY";
-    case PACKET_PUNCH_REQUEST_ACK:   return "PUNCH_REQUEST_ACK";
-    case PACKET_PUNCH_PROBE_REQUEST: return "PUNCH_PROBE_REQUEST";
-    case PACKET_PUNCH_PROBE_REPLY:   return "PUNCH_PROBE_REPLY";
-    case PACKET_CONTROL_TICK:      return "CONTROL_TICK";
-    case PACKET_CONTROL_ACK:       return "CONTROL_ACK";
-    case PACKET_COMMAND_TICK:      return "COMMAND_TICK";
-    case PACKET_COMMAND_ACK:       return "COMMAND_ACK";
-    case PACKET_COMMAND_REJECTED:  return "COMMAND_REJECTED";
-    case PACKET_BALANCE_FAILED:    return "BALANCE_FAILED";
-    default:                        return "UNKNOWN";
+#define X(sym, str) case sym: return str;
+    PACKET_NAME_TABLE(X)
+#undef X
+    default: return "UNKNOWN";
     }
 }
 
-/* Serialize one InputPacket into buf. Returns bytes written (25). */
+/* Serialize one InputPacket into buf. Returns bytes written (29). */
 int packInputPacket(uint8_t *buf, const InputPacket *pkt) {
     packU32(buf, pkt->tick);
     buf[4] = pkt->playerNum;
@@ -177,7 +190,8 @@ int packInputPacket(uint8_t *buf, const InputPacket *pkt) {
     packU32(buf + 15, pkt->mapEventAck);
     packU32(buf + 19, pkt->controlEventAck);
     packU16(buf + 23, pkt->pingMs);
-    return 25;
+    packU32(buf + 25, pkt->viewTick);
+    return 29;
 }
 
 void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
@@ -193,127 +207,37 @@ void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
     pkt->mapEventAck = unpackU32(buf + 15);
     pkt->controlEventAck = unpackU32(buf + 19);
     pkt->pingMs = unpackU16(buf + 23);
+    pkt->viewTick = unpackU32(buf + 25);
 }
 
-/* Serialize one TankSnapshot into buf. Returns bytes written: 1 for a stub
- * (out-of-view), TANK_SNAPSHOT_WIRE_SIZE for a full entry. */
-int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts) {
-    buf[0] = ts->playerNum;
-    if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) {
-        return 1;
-    }
-    packU16(buf + 1, ts->worldX);
-    packU16(buf + 3, ts->worldY);
-    packU16(buf + 5, ts->angle);
-    packU16(buf + 7, ts->speed);
-    buf[9] = ts->tankStatus;
-    buf[10] = ts->lgmFrame;
-    buf[11] = ts->lgmMX;
-    buf[12] = ts->lgmMY;
-    buf[13] = ts->lgmPX;
-    buf[14] = ts->lgmPY;
-    buf[15] = ts->armour;
-    buf[16] = ts->shells;
-    buf[17] = ts->mines;
-    buf[18] = ts->trees;
-    buf[19] = ts->firstLeft;
-    buf[20] = ts->firstRight;
-    buf[21] = ts->gunsightLen;
-    buf[22] = ts->deathWait;
-    buf[23] = ts->reload;
-    packU16(buf + 24, ts->pingMs);
-    buf[26] = ts->clientFlags;
-    return 27;
-}
+/* Variable-length tank entry: a 1-byte stub when playerNum carries
+ * TANK_SNAPSHOT_HIDDEN_FLAG, otherwise an 11-byte core plus the present groups.
+ * Generated from TANK_SNAPSHOT_FIELDS in wire_messages.h. */
+DEFINE_WIRE_CODEC_MASKED(TankSnapshot, "tank_snapshot", playerNum,
+                         TANK_SNAPSHOT_HIDDEN_FLAG, TANK_SNAPSHOT_FIELDS)
 
-/* Returns bytes consumed: 1 for a stub, TANK_SNAPSHOT_WIRE_SIZE for full. */
-int unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts) {
-    ts->playerNum = buf[0];
-    if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) {
-        ts->worldX = 0;
-        ts->worldY = 0;
-        ts->angle = 0;
-        ts->speed = 0;
-        ts->tankStatus = 0;
-        ts->lgmFrame = 0;
-        ts->lgmMX = 0;
-        ts->lgmMY = 0;
-        ts->lgmPX = 0;
-        ts->lgmPY = 0;
-        ts->armour = 0;
-        ts->shells = 0;
-        ts->mines = 0;
-        ts->trees = 0;
-        ts->firstLeft = 0;
-        ts->firstRight = 0;
-        ts->gunsightLen = 0;
-        ts->deathWait = 0;
-        ts->reload = 0;
-        ts->pingMs = 0;
-        ts->clientFlags = 0;
-        return 1;
-    }
-    ts->worldX = unpackU16(buf + 1);
-    ts->worldY = unpackU16(buf + 3);
-    ts->angle = unpackU16(buf + 5);
-    ts->speed = unpackU16(buf + 7);
-    ts->tankStatus = buf[9];
-    ts->lgmFrame = buf[10];
-    ts->lgmMX = buf[11];
-    ts->lgmMY = buf[12];
-    ts->lgmPX = buf[13];
-    ts->lgmPY = buf[14];
-    ts->armour = buf[15];
-    ts->shells = buf[16];
-    ts->mines = buf[17];
-    ts->trees = buf[18];
-    ts->firstLeft = buf[19];
-    ts->firstRight = buf[20];
-    ts->gunsightLen = buf[21];
-    ts->deathWait = buf[22];
-    ts->reload = buf[23];
-    ts->pingMs = unpackU16(buf + 24);
-    ts->clientFlags = buf[26];
-    return 27;
-}
+/* Flat fixed-layout leaf snapshot codecs, generated from the field lists in
+ * wire_messages.h. pack returns bytes written; unpack returns bytes consumed
+ * or 0 if `avail` is too short for a field. */
+DEFINE_WIRE_CODEC(ShellSnapshot,       "shell_snapshot",        SHELL_SNAPSHOT_FIELDS)
+DEFINE_WIRE_CODEC(TkExplosionSnapshot, "tk_explosion_snapshot", TK_EXPLOSION_SNAPSHOT_FIELDS)
+DEFINE_WIRE_CODEC(BaseSnapshot,        "base_snapshot",         BASE_SNAPSHOT_FIELDS)
+DEFINE_WIRE_CODEC(PillSnapshot,        "pill_snapshot",         PILL_SNAPSHOT_FIELDS)
 
-/* Serialize one ShellSnapshot into buf. Returns bytes written (7). */
-int packShellSnapshot(uint8_t *buf, const ShellSnapshot *ss) {
-    packU16(buf, ss->worldX);
-    packU16(buf + 2, ss->worldY);
-    buf[4] = ss->angle;
-    buf[5] = ss->owner;
-    buf[6] = ss->length;
-    return SHELL_SNAPSHOT_WIRE_SIZE;
-}
+/* Tie the generated wire size to the hand-maintained *_WIRE_SIZE constants that
+ * the server's pre-pack buffer guards still use, so a field added to a list
+ * without bumping the constant fails the build rather than under-counting. */
+BOLO_STATIC_ASSERT(WIRE_SIZE_OF(SHELL_SNAPSHOT_FIELDS)        == SHELL_SNAPSHOT_WIRE_SIZE,        shell_wire_size_drift);
+BOLO_STATIC_ASSERT(WIRE_SIZE_OF(TK_EXPLOSION_SNAPSHOT_FIELDS) == TK_EXPLOSION_SNAPSHOT_WIRE_SIZE, tk_explosion_wire_size_drift);
+BOLO_STATIC_ASSERT(WIRE_SIZE_OF(BASE_SNAPSHOT_FIELDS)         == BASE_SNAPSHOT_WIRE_SIZE,         base_wire_size_drift);
+BOLO_STATIC_ASSERT(WIRE_SIZE_OF(PILL_SNAPSHOT_FIELDS)         == PILL_SNAPSHOT_WIRE_SIZE,         pill_wire_size_drift);
+BOLO_STATIC_ASSERT(WIRE_MASKED_SIZE_OF(TANK_SNAPSHOT_FIELDS)  == TANK_SNAPSHOT_WIRE_SIZE,         tank_wire_size_drift);
 
-void unpackShellSnapshot(const uint8_t *buf, ShellSnapshot *ss) {
-    ss->worldX = unpackU16(buf);
-    ss->worldY = unpackU16(buf + 2);
-    ss->angle = buf[4];
-    ss->owner = buf[5];
-    ss->length = buf[6];
-}
-
-/* Serialize one TkExplosionSnapshot into buf. Returns bytes written (8). */
-int packTkExplosionSnapshot(uint8_t *buf, const TkExplosionSnapshot *tke) {
-    packU16(buf, tke->worldX);
-    packU16(buf + 2, tke->worldY);
-    buf[4] = tke->angle;
-    buf[5] = tke->length;
-    buf[6] = tke->explodeType;
-    buf[7] = tke->creator;
-    return TK_EXPLOSION_SNAPSHOT_WIRE_SIZE;
-}
-
-void unpackTkExplosionSnapshot(const uint8_t *buf, TkExplosionSnapshot *tke) {
-    tke->worldX = unpackU16(buf);
-    tke->worldY = unpackU16(buf + 2);
-    tke->angle = buf[4];
-    tke->length = buf[5];
-    tke->explodeType = buf[6];
-    tke->creator = buf[7];
-}
+/* Fixed map-transfer chunk headers. Each precedes a hand-written data payload
+ * and chunk loop (reassembly and length validation stay hand-rolled). */
+DEFINE_WIRE_CODEC(MapDownloadChunkHeader, "map_download_chunk_hdr", MAP_DOWNLOAD_CHUNK_HEADER_FIELDS)
+DEFINE_WIRE_CODEC(MapUploadChunkHeader,   "map_upload_chunk_hdr",   MAP_UPLOAD_CHUNK_HEADER_FIELDS)
+DEFINE_WIRE_CODEC(MapPreviewChunkHeader,  "map_preview_chunk_hdr",  MAP_PREVIEW_CHUNK_HEADER_FIELDS)
 
 /* Serialize one GameEvent into buf. Returns bytes written (1 + dataSize). */
 int packGameEvent(uint8_t *buf, const GameEvent *ev) {
@@ -331,40 +255,6 @@ int unpackGameEvent(const uint8_t *buf, GameEvent *ev) {
     memset(ev->data, 0, sizeof(ev->data));
     memcpy(ev->data, buf + 1, dataLen);
     return 1 + dataLen;
-}
-
-int packBaseSnapshot(uint8_t *buf, const BaseSnapshot *bs) {
-    buf[0] = bs->owner;
-    buf[1] = bs->armour;
-    buf[2] = bs->shells;
-    buf[3] = bs->mines;
-    return BASE_SNAPSHOT_WIRE_SIZE;
-}
-
-void unpackBaseSnapshot(const uint8_t *buf, BaseSnapshot *bs) {
-    bs->owner = buf[0];
-    bs->armour = buf[1];
-    bs->shells = buf[2];
-    bs->mines = buf[3];
-}
-
-int packPillSnapshot(uint8_t *buf, const PillSnapshot *ps) {
-    buf[0] = ps->x;
-    buf[1] = ps->y;
-    buf[2] = ps->owner;
-    buf[3] = ps->armour;
-    buf[4] = ps->speed;
-    buf[5] = ps->inTank;
-    return PILL_SNAPSHOT_WIRE_SIZE;
-}
-
-void unpackPillSnapshot(const uint8_t *buf, PillSnapshot *ps) {
-    ps->x = buf[0];
-    ps->y = buf[1];
-    ps->owner = buf[2];
-    ps->armour = buf[3];
-    ps->speed = buf[4];
-    ps->inTank = buf[5];
 }
 
 /* ================================================================

@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS={number}명의 플레이어에게 메시지 전송 중
 STR_DLGNETINFO_TITLE=네트워크 정보
 STR_DLGNETINFO_SERVERPING=서버 핑: {number} ms
 STR_DLGNETINFO_STATUS=상태:
-STR_DLGNETINFO_ERRORS=네트워크 오류: {number}
+STR_DLGNETINFO_ERRORS=네트워크 오류: {number}  ·  재동기화 {number2}회
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=비밀번호 필요
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=패킷/초: {number} 수신 / {number2} 송신
 STR_DLGNETINFO_KB_RATE=KB/초: {string1} 수신 / {string2} 송신
 STR_DLGNETINFO_LOSS=패킷 손실: {number}% ({number2}/{number3} 이번 초, {number4} 게임 합계)
 STR_DLGNETINFO_RECONCILE=예측 보정: {number}/초, 오차 평균 {string1}px, 최대 {string2}px, 평활화 {string3}px
+STR_KICK_MAP_DESYNC=맵이 서버와 동기화되지 않았습니다 — 다시 접속해 주세요.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=시드 복사
@@ -414,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=맵 건너뛰기
 STR_DLGLOBBY_CANCELSKIP=건너뛰기 취소
 STR_DLGLOBBY_VOTES={number}/{number2}표로 건너뛰기
 STR_DLGLOBBY_CHAT=채팅
+STR_DLGLOBBY_CHAT_GENERAL=일반
+STR_DLGLOBBY_CHAT_TEAM=팀
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=북
+STR_COMPASS_NE=북동
+STR_COMPASS_E=동
+STR_COMPASS_SE=남동
+STR_COMPASS_S=남
+STR_COMPASS_SW=남서
+STR_COMPASS_W=서
+STR_COMPASS_NW=북서
+STR_COMPASS_C=중
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=미지정
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(빈 자리)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} 님이 {string1}에 참가했습니다.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} 님이 {string1}에서 나갔습니다.
 STR_DLGLOBBY_READY=준비
 STR_DLGLOBBY_UNREADY=준비 취소
 STR_DLGLOBBY_BALANCE_TEAMS=팀 밸런스
@@ -1320,6 +1344,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=거부됨
 STR_DLGLOBBY_REJECT_NOTHOST=호스트 전용 작업
 STR_DLGLOBBY_REJECT_LOCKED=서버에 의해 설정이 잠겼어요
 STR_DLGLOBBY_REJECT_INVALID=잘못된 요청
+STR_DLGLOBBY_REJECT_BOT_LIMIT=봇 제한에 도달했습니다
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 로비 변경이 거부됐어요: {string1}
 
 # Lock badge fallback
@@ -1427,3 +1452,13 @@ STR_DLGWBN_STATS_TOURN=토너먼트
 STR_DLGWBN_STATS_WINS=승리:
 STR_DLGWBN_UNRANKED=순위 없음
 STR_DLGWBN_VIA_STEAM=Steam으로
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=시작점 #{number}\n클릭해서 선택하거나, 우클릭해서 다른 사람에게 배정하세요
+STR_STARTPICK_TIP_FREE=시작점 #{number}\n클릭해서 이 시작점을 선택하세요
+STR_STARTPICK_TIP_HELD_HOST=시작점 #{number} - {player}\n드래그해서 이동하거나, 우클릭해서 다른 사람에게 배정하세요
+STR_STARTPICK_TIP_HELD=시작점 #{number} - {player}
+STR_STARTPICK_YOU=나
+STR_STARTPICK_SWAP_WITH=이 시작점을 교환할 대상:
+STR_STARTPICK_ASSIGN_TO=시작점을 배정할 대상:
+STR_STARTPICK_SLOT_FALLBACK=(슬롯)

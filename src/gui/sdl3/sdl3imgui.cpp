@@ -419,6 +419,19 @@ static PopOutWindow s_popSendMsg  = {};
 static ImGuiContext *s_mainImguiCtx = nullptr;
 
 static bool popOutCreate(PopOutWindow *pw, const char *title, int w, int h) {
+    /* Re-show an existing pop-out rather than recreating it. We deliberately
+     * keep the SDL_Window + Metal SDL_Renderer alive across closes: destroying
+     * a Metal renderer mid-run releases Metal objects that the Steam overlay
+     * (gameoverlayrenderer.dylib) has cached, and the overlay then messages the
+     * freed object on the next present of the main window -> SIGSEGV. The
+     * renderers are only torn down for real at shutdown (sdl3ImguiShutdown). */
+    if (pw->window) {
+        pw->open = true;
+        SDL_ShowWindow(pw->window);
+        SDL_RaiseWindow(pw->window);
+        return true;
+    }
+
     pw->window = SDL_CreateWindow(title, w, h, 0);
     if (!pw->window) return false;
 
@@ -482,6 +495,16 @@ static void popOutDestroy(PopOutWindow *pw) {
     *pw = {};
 }
 
+/* Runtime "close": hide the window and stop rendering it, but keep the
+ * SDL_Renderer + ImGui context alive. See popOutCreate for why we must not
+ * call SDL_DestroyRenderer while the app (and the Steam overlay) keeps
+ * presenting the main window. */
+static void popOutHide(PopOutWindow *pw) {
+    if (!pw->window || !pw->open) return;
+    pw->open = false;
+    SDL_HideWindow(pw->window);
+}
+
 static bool popOutBeginFrame(PopOutWindow *pw) {
     if (!pw->open || !pw->window) return false;
 
@@ -518,7 +541,7 @@ static void popOutEndFrame(PopOutWindow *pw) {
 
 static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h) {
     if (pw->open) {
-        popOutDestroy(pw);
+        popOutHide(pw);
     } else {
         popOutCreate(pw, title, w, h);
     }
@@ -815,6 +838,7 @@ static void renderNetInfoContent(ClientSim *cs) {
     {
         MessageArgs args = {};
         args.number = numErrors;
+        args.number2 = clientSimHasTransport(cs) ? clientSimGetMapResyncCount(cs) : 0;
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_ERRORS, &args));
     }
     /* Inbound snapshot loss.  Computed from serverTick gaps — counts
@@ -3223,7 +3247,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 }
 
                 if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && ev.window.windowID == pwID) {
-                    popOutDestroy(pw);
+                    popOutHide(pw);
                     consumedByPopOut = true;
                 }
             }
@@ -4235,7 +4259,7 @@ void sdl3ImguiShowSysInfo(bool open) {
                 popOutCreate(&s_popSysInfo, langGetText(STR_DLGSYSINFO_TITLE), 440, 600);
             }
         } else {
-            if (s_popSysInfo.open) popOutDestroy(&s_popSysInfo);
+            if (s_popSysInfo.open) popOutHide(&s_popSysInfo);
         }
         return;
     }
@@ -4258,7 +4282,7 @@ void sdl3ImguiShowNetInfo(bool open) {
                 popOutCreate(&s_popNetInfo, langGetText(STR_DLGNETINFO_TITLE), 360, 420);
             }
         } else {
-            if (s_popNetInfo.open) popOutDestroy(&s_popNetInfo);
+            if (s_popNetInfo.open) popOutHide(&s_popNetInfo);
         }
         return;
     }
@@ -4280,7 +4304,7 @@ void sdl3ImguiShowGameInfo(bool open) {
                 popOutCreate(&s_popGameInfo, langGetText(STR_DLGGAMEINFO_TITLE), 320, 200);
             }
         } else {
-            if (s_popGameInfo.open) popOutDestroy(&s_popGameInfo);
+            if (s_popGameInfo.open) popOutHide(&s_popGameInfo);
         }
         return;
     }
@@ -4320,7 +4344,7 @@ void sdl3ImguiShowSendMsg(bool open) {
                 s_sendMsgCooldownEnd = 0;
                 s_sendMsgFocusInput  = true;
             } else {
-                if (s_popSendMsg.open) popOutDestroy(&s_popSendMsg);
+                if (s_popSendMsg.open) popOutHide(&s_popSendMsg);
             }
         }
         return;

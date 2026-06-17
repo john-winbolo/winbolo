@@ -1,0 +1,117 @@
+/*
+ * No-lobby map-rotation round restart (test_maprotate_rotation.c).
+ *
+ * -maprotate runs a no-lobby server that, at each round boundary (a win or
+ * the server emptying), boots everyone, picks the next map and restarts a
+ * fresh running round instead of quitting. serverSimMapRotateRound is the
+ * sim-core half of that restart; the surrounding disconnect-all and WBN
+ * session rotation live in the server lifecycle.
+ *
+ * Two contracts are pinned here, both at the server_sim layer where the
+ * unit binary can reach them without a live transport / WBN HTTP stack:
+ *
+ *  1. The restart re-arms the empty-server check. serverSimStartGame latches
+ *     hadPlayersEver = TRUE, but the fresh round starts with zero players —
+ *     left set, the lifecycle's empty check would fire on the very next tick
+ *     and rotate again forever. The rotation must clear it.
+ *
+ *  2. The restart opens the WBN session-rotation window before touching the
+ *     map. The new round's map is picked while the just-finished round's
+ *     server_key is still live, so serverSimWbnLobbyUpdate must hold any such
+ *     change dirty until winbolonetBeginSession installs the new key (which
+ *     the lifecycle signals by clearing wbnSessionRotating). This mirrors the
+ *     guard test_wbn_session_rotation.c pins for serverSimReturnToLobby — the
+ *     no-lobby rotation skips that function, so it needs its own coverage.
+ *
+ * Uses the WBN stub's lobby_update call counter (test_stubs.c) as the stand-in
+ * for "a lobby_update went out", same as the session-rotation test.
+ */
+
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <SDL3/SDL.h>
+
+#include "global.h"
+#include "server_sim.h"
+#include "server_sim_internal.h"   /* ServerSim fields: wbnSessionRotating, wbnLobbyDirty, hadPlayersEver */
+#include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled / WbnLobbyUpdate */
+#include "everard_map.h"           /* E_MAP */
+#include "test_harness.h"
+
+/* Test-controllable WBN stub surface from test_stubs.c. */
+extern bool wbnStubRunning;
+extern int  wbnStubLobbyUpdateCalls;
+
+/* No-lobby, map-rotation-mode ServerSim from the embedded Everard map. */
+static ServerSim *make_rotate_sim(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+                                               gameOpen, false, 0, -1);
+    if (sim == NULL) return NULL;
+    serverSimSetLobbyEnabled(sim, false);
+    serverSimSetMapRotate(sim, true);
+    return sim;
+}
+
+/* A rotation restarts a fresh running round and re-arms the empty-server
+ * check, so an empty fresh round can't trigger an immediate second rotation. */
+int run_maprotate_restarts_round_and_rearms(void) {
+    ServerSim *sim = make_rotate_sim();
+    UT_ASSERT(sim != NULL);
+
+    wbnStubRunning = TRUE;
+    wbnStubLobbyUpdateCalls = 0;
+
+    /* Pretend the round that just ended had players, so the re-arm to FALSE
+     * is observable (a fresh sim is already FALSE). */
+    sim->hadPlayersEver = TRUE;
+
+    serverSimMapRotateRound(sim);
+
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "map rotation must start a fresh running round");
+    UT_ASSERT_MSG(sim->hadPlayersEver == FALSE,
+                  "map rotation must re-arm the empty-server check so the "
+                  "fresh empty round does not rotate again immediately");
+
+    wbnStubRunning = FALSE;
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The next round's map must never be reported to WBN on the just-finished
+ * round's server_key. The rotation opens the window; the held update flushes
+ * only once the lifecycle closes it after installing the new key. */
+int run_maprotate_defers_wbn_update_until_key_rotated(void) {
+    ServerSim *sim = make_rotate_sim();
+    UT_ASSERT(sim != NULL);
+
+    wbnStubRunning = TRUE;
+    wbnStubLobbyUpdateCalls = 0;
+
+    serverSimMapRotateRound(sim);
+    UT_ASSERT_MSG(sim->wbnSessionRotating == TRUE,
+                  "map rotation must open the WBN session-rotation window");
+
+    /* A map-change-driven update inside the window must be deferred even when
+     * forced — the guard outranks force, so nothing reaches the old key. */
+    serverSimWbnLobbyUpdate(sim, TRUE);
+    UT_ASSERT_MSG(wbnStubLobbyUpdateCalls == 0,
+                  "no lobby_update may be sent on the old key while rotating "
+                  "(got %d)", wbnStubLobbyUpdateCalls);
+    UT_ASSERT_MSG(sim->wbnLobbyDirty == TRUE,
+                  "the suppressed update must be held dirty for later flush");
+
+    /* Lifecycle closes the window after winbolonetBeginSession installs the
+     * new key; the held update now flushes against the new session. */
+    sim->wbnSessionRotating = FALSE;
+    serverSimWbnLobbyUpdate(sim, TRUE);
+    UT_ASSERT_MSG(wbnStubLobbyUpdateCalls == 1,
+                  "deferred lobby_update must flush once the window closes "
+                  "(got %d)", wbnStubLobbyUpdateCalls);
+
+    wbnStubRunning = FALSE;
+    serverSimDestroy(sim);
+    return 0;
+}

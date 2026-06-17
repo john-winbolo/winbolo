@@ -2878,6 +2878,83 @@ void mapChooserSetSelectedFile(MapChooserState *state,
     updatePreview(state, renderer);
 }
 
+void mapChooserSetSelectedMapBytes(MapChooserState *state,
+                                   SDL_Renderer *renderer,
+                                   const BYTE *bytes, int len,
+                                   const char *displayName) {
+    if (!state || !bytes || len <= 0) return;
+
+    /* The bytes are an on-disk .map file image (e.g. a WBN download
+     * held in RAM). Convert to the runtime compressed format in
+     * memory so the chooser's texture, interactive widget and the
+     * click-to-enlarge popup — all of which speak compressed — work
+     * with no temp file on disk. */
+    int compLen = 0;
+    BYTE *comp = clientMapConvertFileToCompressed(bytes, len, &compLen);
+    if (!comp || compLen <= 0) { free(comp); return; }
+
+    mapPreviewPopupClose();
+    state->randomMapSelected = false;
+
+    /* Replace the stashed compressed map (popup / keep-camera read
+     * this). Copy into an SDL-managed buffer so the rest of the
+     * chooser's SDL_free path stays consistent. */
+    if (state->compressedData) {
+        SDL_free(state->compressedData);
+        state->compressedData = NULL;
+        state->compressedLen = 0;
+    }
+    state->compressedData = (BYTE *)SDL_malloc(compLen);
+    if (state->compressedData) {
+        SDL_memcpy(state->compressedData, comp, compLen);
+        state->compressedLen = compLen;
+    }
+    free(comp);
+    if (!state->compressedData) return;
+
+    /* Static preview texture + stats, straight from the compressed
+     * map — mirrors generateRandomPreview's population. */
+    if (state->previewTex) {
+        SDL_DestroyTexture(state->previewTex);
+        state->previewTex = NULL;
+    }
+    MinimapBounds mb = {0, 0, 0, 0};
+    MapPreview *mp = clientMapPreviewLoadFromBuffer(state->compressedData,
+                                                    state->compressedLen);
+    if (mp) {
+        state->previewTex = minimapCreateTexture(renderer, mp, &mb, 0);
+        state->previewPills  = clientMapPreviewGetPillCount(mp);
+        state->previewBases  = clientMapPreviewGetBaseCount(mp);
+        state->previewStarts = clientMapPreviewGetStartCount(mp);
+        clientMapPreviewDestroy(mp);
+    }
+    state->previewBoundsMinX = mb.minX;
+    state->previewBoundsMinY = mb.minY;
+    state->previewBoundsMaxX = mb.maxX;
+    state->previewBoundsMaxY = mb.maxY;
+
+    /* Mirror into the interactive widget. */
+    if (state->previewView) {
+        mapPreviewViewLoadCompressed(state->previewView,
+                                     state->compressedData,
+                                     state->compressedLen);
+        mapPreviewViewSetInitialBounds(state->previewView,
+            mb.minX, mb.minY, mb.maxX, mb.maxY);
+    }
+
+    /* Selection bookkeeping — mirrors the previous post-download
+     * file flow (selectedIdx = -1, name set). selectedPath is a
+     * synthetic marker so the "wbn:" loading spinner stops and no
+     * code mistakes it for a real on-disk file. */
+    state->selectedIdx = -1;
+    if (displayName) {
+        SDL_strlcpy(state->selectedName, displayName,
+                    sizeof(state->selectedName));
+    }
+    SDL_snprintf(state->selectedPath, FILENAME_MAX, "wbnmem:%s",
+                 displayName ? displayName : "");
+}
+
 void mapChooserDestroy(MapChooserState *state) {
     if (state->previewTex) {
         SDL_DestroyTexture(state->previewTex);

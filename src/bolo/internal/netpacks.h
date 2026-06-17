@@ -235,6 +235,13 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_GAME_EVENT      121   /* Explosion, mine hit, etc. */
 #define PACKET_MAP_DOWNLOAD    122   /* Compressed map data chunk (server -> client) */
 #define PACKET_MAP_ACK         105   /* Map chunk acknowledgment (client -> server) */
+#define PACKET_MAP_RESYNC_REQUEST 158 /* client -> server: re-send the live map
+                                       * after the client detects its terrain has
+                                       * diverged (a dropped EVENT_MAP_CHANGE).
+                                       * Body: [resyncGen u32] — a client-chosen
+                                       * nonzero id echoed back in each chunk so
+                                       * stale chunks from a superseded resync are
+                                       * rejected. */
 #define PACKET_QUIT            106   /* Graceful disconnect (client -> server) */
 #define PACKET_PLAYER_LIST     107   /* All connected players (server -> new client) */
 #define PACKET_NAME_CHANGE     123   /* Player name change (bidirectional) */
@@ -432,6 +439,22 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                               { reasonCode u8 } — fired when
                                               the balance worker finishes
                                               without a usable proposal */
+#define PACKET_SHELL_DEATH             204  /* server → shell owner (unicast)
+                                              { fireTick u32, impactWX u16,
+                                                impactWY u16, owner u8,
+                                                outcome u8 } — the firing
+                                              client culls its predicted shell
+                                              and draws the impact */
+#define PACKET_LOBBY_CLAIM_START       205  /* client → server
+                                              { targetSlot, startIdx } */
+
+#define PACKET_JOIN_CHALLENGE          206  /* server → joiner: a retry cookie
+                                              proving the joiner's source
+                                              address before any slot is
+                                              allocated (anti-spoof) */
+#define JOIN_COOKIE_LEN                16   /* HMAC-MD5 digest carried in the
+                                              JOIN_REQUEST tail and the
+                                              JOIN_CHALLENGE body */
 
 #define PACKET_GAME_VOTE_STATE         195  /* server → all clients
                                               { kind 1, active 1,

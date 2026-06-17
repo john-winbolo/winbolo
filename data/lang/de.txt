@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=Sende Nachricht an {number} Spieler
 STR_DLGNETINFO_TITLE=Netzwerkinfo
 STR_DLGNETINFO_SERVERPING=Server-Ping: {number} ms
 STR_DLGNETINFO_STATUS=Status:
-STR_DLGNETINFO_ERRORS=Netzwerkfehler: {number}
+STR_DLGNETINFO_ERRORS=Netzwerkfehler: {number}  ·  {number2} Resyncs
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Passwort erforderlich
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Pakete/Sek.: {number} ein / {number2} aus
 STR_DLGNETINFO_KB_RATE=KB/sec: {string1} ein / {string2} aus
 STR_DLGNETINFO_LOSS=Paketverlust: {number}% ({number2}/{number3} diese Sek., {number4} gesamt)
 STR_DLGNETINFO_RECONCILE=Abgleiche: {number}/s, Fehler Ø {string1}px, max {string2}px, Glättung {string3}px
+STR_KICK_MAP_DESYNC=Karte nicht mehr synchron mit dem Server — bitte neu verbinden.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Seed kopieren
@@ -414,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Karte überspringen
 STR_DLGLOBBY_CANCELSKIP=Überspringen abbrechen
 STR_DLGLOBBY_VOTES={number}/{number2} Stimmen zum Überspringen
 STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_CHAT_GENERAL=Allgemein
+STR_DLGLOBBY_CHAT_TEAM=Team
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=N
+STR_COMPASS_NE=NO
+STR_COMPASS_E=O
+STR_COMPASS_SE=SO
+STR_COMPASS_S=S
+STR_COMPASS_SW=SW
+STR_COMPASS_W=W
+STR_COMPASS_NW=NW
+STR_COMPASS_C=Z
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Nicht zugewiesen
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(offen)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} ist {string1} beigetreten.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} hat {string1} verlassen.
 STR_DLGLOBBY_READY=Bereit
 STR_DLGLOBBY_UNREADY=Nicht bereit
 STR_DLGLOBBY_BALANCE_TEAMS=Teams ausgleichen
@@ -1317,6 +1341,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=abgelehnt
 STR_DLGLOBBY_REJECT_NOTHOST=nur für Gastgeber
 STR_DLGLOBBY_REJECT_LOCKED=Einstellung vom Server gesperrt
 STR_DLGLOBBY_REJECT_INVALID=ungültige Anfrage
+STR_DLGLOBBY_REJECT_BOT_LIMIT=Bot-Limit erreicht
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Lobby-Änderung abgelehnt: {string1}
 
 # Lock badge fallback
@@ -1429,3 +1454,13 @@ STR_DLGWBN_VIA_STEAM=via Steam
 STR_DLGLOBBY_MAKE_HOST=Gastgeber machen
 STR_DLGLOBBY_MAKE_HOST_FMT=„{player}" zum Gastgeber machen?
 STR_DLGLOBBY_HOST_CHANGED_FMT={player} ist jetzt der Gastgeber
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKlicken zum Auswählen; rechtsklicken zum Zuweisen an einen anderen
+STR_STARTPICK_TIP_FREE=Start #{number}\nKlicken, um diesen Startpunkt zu wählen
+STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nZiehen zum Verschieben; rechtsklicken zum Zuweisen an einen anderen
+STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_YOU=Sie
+STR_STARTPICK_SWAP_WITH=Diesen Startpunkt tauschen mit:
+STR_STARTPICK_ASSIGN_TO=Startpunkt zuweisen an:
+STR_STARTPICK_SLOT_FALLBACK=(Slot)

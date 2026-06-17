@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=正在向 {number} 名玩家发送消息
 STR_DLGNETINFO_TITLE=网络信息
 STR_DLGNETINFO_SERVERPING=服务器延迟：{number} ms
 STR_DLGNETINFO_STATUS=状态：
-STR_DLGNETINFO_ERRORS=网络错误：{number}
+STR_DLGNETINFO_ERRORS=网络错误：{number}  ·  {number2} 次重新同步
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=需要密码
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=包/秒：{number} 入 / {number2} 出
 STR_DLGNETINFO_KB_RATE=KB/秒：{string1} 入 / {string2} 出
 STR_DLGNETINFO_LOSS=丢包率：{number}% ({number2}/{number3} 本秒, {number4} 本局累计)
 STR_DLGNETINFO_RECONCILE=预测校正：{number}/秒, 误差均值 {string1}px, 最大 {string2}px, 平滑 {string3}px
+STR_KICK_MAP_DESYNC=地图与服务器不同步 — 请重新加入。
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=复制种子
@@ -414,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=跳过地图
 STR_DLGLOBBY_CANCELSKIP=取消跳过
 STR_DLGLOBBY_VOTES={number}/{number2} 票跳过
 STR_DLGLOBBY_CHAT=聊天
+STR_DLGLOBBY_CHAT_GENERAL=综合
+STR_DLGLOBBY_CHAT_TEAM=队伍
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=北
+STR_COMPASS_NE=东北
+STR_COMPASS_E=东
+STR_COMPASS_SE=东南
+STR_COMPASS_S=南
+STR_COMPASS_SW=西南
+STR_COMPASS_W=西
+STR_COMPASS_NW=西北
+STR_COMPASS_C=中
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=未分配
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=（空位）
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} 加入了 {string1}。
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} 离开了 {string1}。
 STR_DLGLOBBY_READY=准备就绪
 STR_DLGLOBBY_UNREADY=取消准备
 STR_DLGLOBBY_BALANCE_TEAMS=平衡队伍
@@ -1320,6 +1344,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=已拒绝
 STR_DLGLOBBY_REJECT_NOTHOST=仅主机可操作
 STR_DLGLOBBY_REJECT_LOCKED=设置已被服务器锁定
 STR_DLGLOBBY_REJECT_INVALID=无效请求
+STR_DLGLOBBY_REJECT_BOT_LIMIT=已达到机器人上限
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 大厅变更被拒绝：{string1}
 
 # Lock badge fallback
@@ -1427,3 +1452,13 @@ STR_DLGWBN_STATS_TOURN=锦标赛
 STR_DLGWBN_STATS_WINS=胜场：
 STR_DLGWBN_UNRANKED=未排名
 STR_DLGWBN_VIA_STEAM=通过 Steam
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=出生点 #{number}\n点击选择；右键分配给其他玩家
+STR_STARTPICK_TIP_FREE=出生点 #{number}\n点击选择此出生点
+STR_STARTPICK_TIP_HELD_HOST=出生点 #{number} - {player}\n拖动以移动；右键分配给其他玩家
+STR_STARTPICK_TIP_HELD=出生点 #{number} - {player}
+STR_STARTPICK_YOU=你
+STR_STARTPICK_SWAP_WITH=将此出生点与以下位置对调：
+STR_STARTPICK_ASSIGN_TO=将出生点分配给：
+STR_STARTPICK_SLOT_FALLBACK=（槽位）

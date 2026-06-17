@@ -99,6 +99,7 @@ struct ServerSim {
     bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
+    BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */
     bool     worldPreLoaded;       /* TRUE while the world is fresh from
                                     * serverSimCreate*; FALSE after the first
                                     * serverSimResetGameWorld. Drives the
@@ -142,6 +143,10 @@ struct ServerSim {
                                       * game start doesn't loop. */
     bool         quitOnWin;          /* Server should check for win condition */
     bool         autoCloseOnEmpty;   /* Server should close when all players leave */
+    bool         mapRotateEnabled;   /* No-lobby map-rotation mode: a win or an
+                                      * empty server boots everyone, picks the
+                                      * next map, and restarts a fresh round
+                                      * instead of quitting. Set by -maprotate. */
     char         pendingWinMessage[512]; /* Win message to send after returning to lobby */
     bool         emptyResetEnabled;  /* Reset to lobby when empty for emptyResetMinutes */
     int          emptyResetMinutes;  /* Minutes before empty reset (default 5) */
@@ -188,11 +193,21 @@ struct ServerSim {
 
     /* Input jitter buffer — delay processing until buffer reaches target depth */
 #define JITTER_BUFFER_MIN       1   /* Minimum buffer depth (ticks) */
-#define JITTER_BUFFER_MAX       4   /* Maximum buffer depth (ticks) */
+#define JITTER_BUFFER_MAX       6   /* Maximum buffer depth (ticks) — 6 ≈ 60ms,
+                                     * headroom for ~25ms jitter plus the
+                                     * send-cadence bunching it rides on */
 #define JITTER_BUFFER_DEFAULT   2   /* Starting depth before we have data */
 #define JITTER_GROW_THRESHOLD   2   /* Consecutive stalls before growing */
+#define JITTER_STARVE_GROW_THRESHOLD 2 /* Drain events before growing — a queue
+                                        * that empties when input was expected
+                                        * is the reliable too-shallow signal,
+                                        * counted even while re-filling */
 #define JITTER_SHRINK_INTERVAL 100  /* Ticks of no stalls before shrinking */
-#define LAG_COMP_MAX_TICKS 12       /* 250ms one-way max compensation (12 game ticks) */
+#define LAG_COMP_MAX_TICKS 14       /* 280ms max rewind (14 history entries); viewTick measures
+                                     * the true view age (~ping+20ms+jitterWait), ~2x the old
+                                     * ping/2 estimate, so the cap is raised from 12 to keep the
+                                     * high-ping case from clipping. POSITION_HISTORY_SIZE=16
+                                     * (320ms) has headroom. */
 /* Consecutive dry half-steps before a stall is treated as genuine loss
  * and the server stall-advances (consumes the tick). At/below this, a
  * dry half-step is routine send-burst cadence ripple: repeat held buttons
@@ -200,10 +215,11 @@ struct ServerSim {
  * Bounds reintroduced overshoot to this many half-steps under real loss;
  * tune up if localhost recon/s isn't ~0, down if high-ping overshoot
  * returns. */
-#define STALL_ADVANCE_DRY_TICKS 3
+#define STALL_ADVANCE_DRY_TICKS 4
     uint8_t inputBufferFilled[MAX_TANKS];  /* true once initial fill reached */
     uint8_t  jitterTarget[MAX_TANKS];      /* Current adaptive buffer depth */
     uint8_t  jitterStallCount[MAX_TANKS];  /* Consecutive ticks queue was empty when expected */
+    uint8_t  jitterStarveCount[MAX_TANKS]; /* Recent drain events (queue emptied when input expected) */
     uint16_t jitterStableTicks[MAX_TANKS]; /* Ticks since last stall */
     uint8_t inputDryTicks[MAX_TANKS]; /* consecutive half-steps with no fresh
                                        * input; gates stall-advance vs wait */
@@ -214,6 +230,7 @@ struct ServerSim {
     uint16_t statStallTicks[MAX_TANKS];         /* stall-branch executions this window */
     uint16_t statGapFillTicks[MAX_TANKS];       /* gap-filled ticks this window */
     uint16_t statDroppedStaleInputs[MAX_TANKS]; /* stale queue entries skipped this window */
+    uint16_t statDroppedEdge[MAX_TANKS];  /* stale drops that were a recent button change (diagnostic) */
     uint16_t statCatchupTicks[MAX_TANKS];       /* extra catch-up dequeues this window —
                                                  * one per backlog-bleed apply when
                                                  * post-dequeue depth > jitterTarget + 1 */
@@ -353,5 +370,16 @@ BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
  * the T1 surface. */
 void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
                              uint8_t kind, uint8_t toggleMode);
+
+/* Compute how many posHistory entries to rewind hit-detection for a fired
+ * input. When viewTick is known (non-zero, not ahead of simTick), rewind the
+ * real view age: (simTick - viewTick) server ticks / 2 = posHistory entries
+ * (history records once per game tick = 20ms). Otherwise fall back to the
+ * ping-based estimate (pingMs/2 + interp buffer). Result is clamped to
+ * LAG_COMP_MAX_TICKS. viewTick is client-supplied, but so is pingMs today, so
+ * the trust model is unchanged and the cap bounds any abuse. T2 so the unit
+ * test can include and drive it directly. */
+uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
+                                     uint16_t pingMs);
 
 #endif /* SERVER_SIM_INTERNAL_H */

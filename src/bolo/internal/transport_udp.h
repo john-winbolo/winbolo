@@ -332,6 +332,16 @@ void transportUdpClientSendWbnReauth(Transport *t);
  * Returns NULL if no reject reason is available. */
 const char *transportUdpClientGetJoinRejectReason(Transport *t);
 
+/* Cumulative count of successful map resyncs (desync recovery) this session,
+ * for the Net Info overlay. */
+uint32_t transportUdpClientGetMapResyncCount(Transport *t);
+
+/* Report the result of a full-sync map-checksum compare (matched / mismatch).
+ * Drives the map-resync state machine: starts a resync on a mismatch (subject
+ * to suppression + backoff) or disconnects after the backoff cap. Called from
+ * the snapshot apply path; a no-op unless the client is connected. */
+void transportUdpClientReportMapChecksum(Transport *t, bool matched);
+
 /* Returns the downloaded map data after successful join.
  * Returns NULL if no map has been downloaded yet.
  * outLen receives the length of the compressed data. */
@@ -357,6 +367,11 @@ uint8_t transportUdpClientGetMapDownloadPercent(Transport *t);
 typedef struct UdpServerClient {
     struct sockaddr_in addr;
     bool connected;
+    uint64_t connId;             /* Random per-session id the client echoes on
+                                  * its INPUT packets. Lets the slot survive a
+                                  * NAT rebind: a connId match from a new source
+                                  * address re-homes addr. 0 until assigned at
+                                  * join; 0 on the wire means "absent". */
     uint8_t playerNum;
     char playerName[PACKET_MAX_PLAYER_NAME];
     uint32_t lastReceivedTick;   /* For timeout detection */
@@ -547,6 +562,12 @@ void transportUdpServerRetransmitUnackedControl(void);
  * existing lobby-snapshot machinery.  No-op when WBN isn't running. */
 void transportUdpServerBroadcastWbnRekey(struct ServerSim *sim);
 
+/* Boot every connected client and bot, notifying real clients with
+ * PACKET_SERVER_SHUTDOWN first so they leave cleanly. Used by the no-lobby
+ * map-rotation path at a round boundary — the next round carries nobody
+ * forward. */
+void transportUdpServerDisconnectAll(struct ServerSim *sim);
+
 /* Set a bot's name in the server transport client array so it appears
  * in lobby state/update broadcasts. Call after botManagerAddBot(). */
 void transportUdpServerSetBotName(BYTE playerNum, const char *name);
@@ -564,6 +585,20 @@ const char *transportUdpServerGetClientCountryCode(BYTE playerNum);
  * recorded at join time. Returns CLIENT_TYPE_UNKNOWN if slot invalid
  * or disconnected. Durable across serverSimResetGameWorld. */
 uint8_t transportUdpServerGetClientType(BYTE playerNum);
+
+/* Get a slot's connection id (0 if slot invalid or unassigned). */
+uint64_t transportUdpServerGetClientConnId(BYTE playerNum);
+
+/* Resolve the slot owning an inbound INPUT by its connection id. Returns the
+ * matching connected slot, or -1 when connId is 0 or matches no slot (the
+ * caller then falls back to an IP:port lookup). On a match from a source
+ * address that differs from the slot's stored one, *outRehome is set true so
+ * the caller re-homes the slot. A pure read of the client table — it does not
+ * mutate, so the match-and-rehome decision is testable in isolation. */
+int transportUdpServerFindByConnId(const UdpServerClient *clients,
+                                   uint64_t connId,
+                                   const struct sockaddr_in *fromAddr,
+                                   bool *outRehome);
 
 /* Send an INFO_RESPONSE packet to the tracker server so the game
  * appears in the server browser. */

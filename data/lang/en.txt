@@ -98,7 +98,7 @@ STR_DLGMSG_SENDPLAYERS=Sending message to {number} players
 STR_DLGNETINFO_TITLE=Network Info
 STR_DLGNETINFO_SERVERPING=Server ping: {number} ms
 STR_DLGNETINFO_STATUS=Status:
-STR_DLGNETINFO_ERRORS=Net errors: {number}
+STR_DLGNETINFO_ERRORS=Net errors: {number}  ·  {number2} resync
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Password Required
@@ -400,6 +400,39 @@ STR_DLGLOBBY_SKIPMAP=Skip Map
 STR_DLGLOBBY_CANCELSKIP=Cancel Skip
 STR_DLGLOBBY_VOTES={number}/{number2} votes to skip
 STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_CHAT_GENERAL=General
+STR_DLGLOBBY_CHAT_TEAM=Team
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=N
+STR_COMPASS_NE=NE
+STR_COMPASS_E=E
+STR_COMPASS_SE=SE
+STR_COMPASS_S=S
+STR_COMPASS_SW=SW
+STR_COMPASS_W=W
+STR_COMPASS_NW=NW
+STR_COMPASS_C=C
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Unassigned
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(open)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} joined {string1}.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} left {string1}.
+
+# Map-preview start-picker tooltips and the assign-to-someone menu
+STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nClick to choose; right-click to assign to someone else
+STR_STARTPICK_TIP_FREE=Start #{number}\nClick to choose this start
+STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nDrag to move; right-click to assign to someone else
+STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_YOU=you
+STR_STARTPICK_SWAP_WITH=Swap this start with:
+STR_STARTPICK_ASSIGN_TO=Assign start to:
+STR_STARTPICK_SLOT_FALLBACK=(slot)
 STR_DLGLOBBY_READY=Ready
 STR_DLGLOBBY_UNREADY=Unready
 STR_DLGLOBBY_BALANCE_TEAMS=Balance Teams
@@ -1343,6 +1376,8 @@ STR_DLGLOBBY_REJECT_BAD_STATE=not allowed right now
 STR_DLGLOBBY_BAL_STATUS_FAILED=WBN balance failed
 STR_DLGNETINFO_LOSS=Packet loss: {number}% ({number2}/{number3} this sec, {number4} game total)
 STR_DLGNETINFO_RECONCILE=Reconciles: {number}/s, err avg {string1}px, max {string2}px, smoothing {string3}px
+STR_KICK_MAP_DESYNC=Map out of sync with the server — please rejoin.
+STR_DLGLOBBY_REJECT_BOT_LIMIT=bot limit reached
 STR_DLGWBN_RANK=#{number} of {number2}
 STR_DLGWBN_UNRANKED=Unranked
 

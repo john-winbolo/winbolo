@@ -87,6 +87,11 @@ ClientConnectState clientSimGetConnectState(const ClientSim *cs);
 const char *clientSimGetConnectErrorReason(const ClientSim *cs);
 BYTE        clientSimGetServerPlayerNum(const ClientSim *cs);
 const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen);
+/* serverTick of the frame interp is currently displaying (second-newest applied
+ * snapshot). Stamped onto outgoing inputs as viewTick so the server can rewind
+ * hit-detection by the true view age. Returns 0 until two snapshots have been
+ * applied, which routes the server to its ping-based fallback. */
+uint32_t    clientSimGetViewTick(const ClientSim *cs);
 
 /* === Send wrappers === */
 void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message);
@@ -103,6 +108,13 @@ void clientSimNetSendLockToggle(ClientSim *cs, bool allow);
  * bots / drags one human into another team's column. Self-team
  * callers pass clientSimGetMyPlayerNum(cs). */
 void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber);
+/* Reserve startIdx (1-based map start, or 0xFF to release) for targetSlot.
+ * targetSlot == own slot is a self-claim (server requires a free start);
+ * targetSlot != own slot is host-only and swaps an occupied target.
+ * Server-authoritative — the marker moves when the CTRL_LOBBY_SLOT
+ * broadcast arrives, never on send. */
+void clientSimNetSendLobbyClaimStart(ClientSim *cs, BYTE targetSlot,
+                                     BYTE startIdx);
 void clientSimNetSendReady(ClientSim *cs, bool ready);
 void clientSimNetSendAddBot(ClientSim *cs);
 /* Add-bot with explicit team, brain, and pool-picked name. The
@@ -245,6 +257,11 @@ void     clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,
                                  int *bpsRecv, int *bpsSent, int *numErrors,
                                  int *snapshotsRecv, int *snapshotsLost,
                                  int *snapshotsLostTotal);
+/* Cumulative successful map resyncs (desync recovery) this session. */
+int      clientSimGetMapResyncCount(ClientSim *cs);
+/* Feed the per-full-sync map-checksum compare result to the transport's
+ * resync state machine (request on mismatch / clear backoff on match). */
+void     clientSimNetReportMapChecksum(ClientSim *cs, bool matched);
 /* renderOffsetPx (out, may be NULL): current render-only error-offset
  * magnitude in pixels — the live correction being smoothed out, distinct
  * from the per-window reconcile error counts. */

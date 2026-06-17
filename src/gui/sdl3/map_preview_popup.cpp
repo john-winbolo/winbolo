@@ -26,6 +26,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cfloat>   /* FLT_MAX — unbounded text measure */
+#include <cmath>    /* sqrtf */
 
 #include <SDL3/SDL.h>
 
@@ -38,7 +40,10 @@ extern "C" {
 #include "map_preview_view.h"
 #include "macos_pinch.h"
 #include "../lang.h"
+#include "client_sim.h"   /* clientSimGetLobbySlot, ClientLobbySlot */
+#include "client_net.h"   /* clientSimNetSendLobbyClaimStart */
 }
+#include "lobby_start_markers.h"   /* shared start-ownership marker helpers */
 
 /* Singleton popup state. */
 static bool             g_popupOpen        = false;
@@ -50,6 +55,21 @@ static bool             g_changeRequested  = false;
 /* Controls whether the "Change" button renders. Lobby sets this
  * per-frame based on local edit authority (host / admin / openHost). */
 static bool             g_showChangeButton = true;
+
+/* Lobby start-picker context, set per-frame via
+ * mapPreviewPopupSetStartPicker and cleared at the end of each
+ * RenderModal so a non-lobby frame can't draw labels off a stale cs. */
+static ClientSim       *g_startPickerCs           = NULL;
+static int              g_startPickerMySlot       = -1;
+static bool             g_startPickerEffectiveHost = false;
+
+/* Drag-to-move state. >=0 while dragging a claim to a new start:
+ * g_startDragSlot is the lobby slot whose claim is moving, g_startDragFrom
+ * the 1-based start it began on. */
+static int              g_startDragSlot = -1;
+static int              g_startDragFrom = -1;
+/* 1-based start the right-click "assign to someone" menu is acting on. */
+static int              g_assignMenuStart = -1;
 
 static void ensureView(void) {
     if (!g_popupView) g_popupView = mapPreviewViewCreate();
@@ -110,9 +130,300 @@ void mapPreviewPopupRenderOffscreen(SDL_Renderer *renderer, int winW, int winH) 
     (void)renderer; (void)winW; (void)winH;
 }
 
+/* Connected slot reserving start i (1-based), or -1 if free. */
+static int startHolderSlot(ClientSim *cs, BYTE i) {
+    for (int k = 0; k < MAX_TANKS; k++) {
+        const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)k);
+        if (sl && sl->connected && sl->startIdx == i) return k;
+    }
+    return -1;
+}
+
+/* 1-based start nearest the cursor within a comfortable pixel radius, among
+ * starts currently visible in the popup image; -1 if none. Shared by the
+ * pan-suppression pre-pass and the overlay's interaction so both agree on
+ * what the pointer is over. */
+static int startPickerHoverStart(ImVec2 imgMin, ImVec2 contentSize) {
+    if (!g_popupView) return -1;
+    int texW = 0, texH = 0;
+    mapPreviewViewGetTextureSize(g_popupView, &texW, &texH);
+    if (texW <= 0 || texH <= 0) return -1;
+    BYTE numStarts = mapPreviewViewGetStartCount(g_popupView);
+    int cap = numStarts > MAX_STARTS ? MAX_STARTS : numStarts;
+    ImVec2 mp = ImGui::GetMousePos();
+    int best = -1;
+    float bestD2 = 0.0f;
+    for (int i = 1; i <= cap; i++) {
+        BYTE mx, my;
+        if (!mapPreviewViewGetStart(g_popupView, (BYTE)i, &mx, &my)) continue;
+        float tx, ty;
+        if (!mapPreviewViewWorldToScreen(g_popupView, mx, my, &tx, &ty)) continue;
+        float sx = imgMin.x + (tx / (float)texW) * contentSize.x;
+        float sy = imgMin.y + (ty / (float)texH) * contentSize.y;
+        if (sx < imgMin.x || sx > imgMin.x + contentSize.x ||
+            sy < imgMin.y || sy > imgMin.y + contentSize.y) continue;
+        /* Hit area = the (invisible) ~5-tile-diameter circle, min 80 px,
+         * scaling with zoom. Radius = half of that. */
+        float hitR = 40.0f;  /* 80 px diameter minimum */
+        float bx, by;
+        if (mapPreviewViewWorldToScreen(g_popupView, mx + 1, my, &bx, &by)) {
+            float spxPerTile = fabsf((bx - tx) / (float)texW * contentSize.x);
+            float r = 2.5f * spxPerTile;
+            if (r > hitR) hitR = r;
+        }
+        float ex = sx - mp.x, ey = sy - mp.y, d2 = ex * ex + ey * ey;
+        if (d2 > hitR * hitR) continue;
+        if (best < 0 || d2 < bestD2) { best = i; bestD2 = d2; }
+    }
+    return best;
+}
+
+/* True when the start picker wants the left-drag (a drag is active, or the
+ * cursor is over a movable claimed start), so the caller can stop
+ * mapPreviewViewHandleInput from panning the map out from under the drag. */
+static bool startPickerWantsDrag(ImVec2 imgMin, ImVec2 contentSize,
+                                 bool imgHovered) {
+    if (g_startDragSlot >= 0) return true;
+    if (!imgHovered || !g_startPickerCs) return false;
+    int hov = startPickerHoverStart(imgMin, contentSize);
+    if (hov < 1) return false;
+    int holder = startHolderSlot(g_startPickerCs, (BYTE)hov);
+    return holder >= 0 &&
+           (g_startPickerEffectiveHost || holder == g_startPickerMySlot);
+}
+
+/* Fill owners[] (0-based, start index i+1) from the picker context so the map
+ * render can colour each start: 0=unclaimed,1=self,2=ally,3=enemy. Returns
+ * the count (0 when there's no lobby context, e.g. a non-lobby caller). */
+static int startPickerComputeOwners(uint8_t *owners, int maxN) {
+    ClientSim *cs = g_startPickerCs;
+    if (!cs || !g_popupView) return 0;
+    int n = mapPreviewViewGetStartCount(g_popupView);
+    if (n > maxN) n = maxN;
+    for (int i = 1; i <= n; i++) {
+        int holder = startHolderSlot(cs, (BYTE)i);
+        owners[i - 1] = (uint8_t)lobbyStartClassify(cs, holder, g_startPickerMySlot);
+    }
+    return n;
+}
+
+/* Draw a reserving-player name (solid) or "(open)" (translucent) beside
+ * each start, then claim a free start on a click (not a pan-drag). All
+ * positions go through the Phase-2 transform (texture px), mapped into
+ * the displayed image rect [imgMin, imgMin + contentSize]. */
+static void renderStartPickerOverlay(ImVec2 imgMin, ImVec2 contentSize,
+                                     bool imgHovered) {
+    ClientSim *cs = g_startPickerCs;
+    if (!cs || !g_popupView) return;
+    int texW = 0, texH = 0;
+    mapPreviewViewGetTextureSize(g_popupView, &texW, &texH);
+    if (texW <= 0 || texH <= 0) return;
+
+    BYTE numStarts = mapPreviewViewGetStartCount(g_popupView);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    int capStarts = numStarts > MAX_STARTS ? MAX_STARTS : numStarts;
+
+    /* Ownership colouring lives in the map render (boat sprite / dot colour),
+     * not here — this overlay draws holder name labels and the hover ring,
+     * and drives the pointer interaction. */
+    int hover = startPickerHoverStart(imgMin, contentSize);
+
+    bool  shown[MAX_STARTS + 1] = {false};
+    float scrX[MAX_STARTS + 1], scrY[MAX_STARTS + 1];
+    int   holderOf[MAX_STARTS + 1];
+
+    for (int i = 1; i <= capStarts; i++) {
+        holderOf[i] = -1;
+        BYTE mx, my;
+        if (!mapPreviewViewGetStart(g_popupView, (BYTE)i, &mx, &my)) continue;
+        holderOf[i] = startHolderSlot(cs, (BYTE)i);
+        float texX, texY;
+        /* Invalid at minimap zoom — labels simply hide (don't drift). */
+        if (!mapPreviewViewWorldToScreen(g_popupView, mx, my, &texX, &texY)) continue;
+        float sx = imgMin.x + (texX / (float)texW) * contentSize.x;
+        float sy = imgMin.y + (texY / (float)texH) * contentSize.y;
+        /* Off the image rect — don't bleed labels past the panel. */
+        if (sx < imgMin.x || sx > imgMin.x + contentSize.x ||
+            sy < imgMin.y || sy > imgMin.y + contentSize.y) continue;
+        shown[i] = true; scrX[i] = sx; scrY[i] = sy;
+
+        /* Holder name (full, as in main) above the boat, or "(open)" for a
+         * free start. The boat itself is already coloured by ownership. The
+         * ONLY hover style change is "(open)" going full white. */
+        const char *label;
+        ImU32 fg, bg;
+        if (holderOf[i] >= 0) {
+            label = clientSimGetLobbySlot(cs, (BYTE)holderOf[i])->playerName;
+            /* Name coloured by ownership: ally green, enemy red, else white. */
+            LobbyStartOwner o = lobbyStartClassify(cs, holderOf[i], g_startPickerMySlot);
+            fg = (o == LSO_ALLY)  ? IM_COL32(120, 230, 120, 255)
+               : (o == LSO_ENEMY) ? IM_COL32(235, 90, 90, 255)
+                                  : IM_COL32(255, 255, 255, 255);
+            bg = IM_COL32(0, 0, 0, 185);
+        } else {
+            label = langGetText(STR_DLGLOBBY_START_OPEN);
+            bool hot = (i == hover);
+            /* Hover brightens the "(open)" label, but stays short of full
+             * white so it doesn't read as harshly. */
+            fg = hot ? IM_COL32(235, 235, 235, 215) : IM_COL32(220, 220, 220, 150);
+            bg = hot ? IM_COL32(0, 0, 0, 130)       : IM_COL32(0, 0, 0, 90);
+        }
+        ImVec2 ts = ImGui::CalcTextSize(label);
+        ImVec2 p(sx - ts.x * 0.5f, sy - ts.y - 6.0f);  /* centred above boat */
+        dl->AddRectFilled(ImVec2(p.x - 3, p.y - 1),
+                          ImVec2(p.x + ts.x + 3, p.y + ts.y + 1), bg, 3.0f);
+        dl->AddText(p, fg, label);
+    }
+
+    /* ---- Pointer interaction ----
+     * Left-click a start = choose it for yourself. Drag a movable claimed
+     * start = move that player to another start. Right-click (with edit
+     * permission) = assign-to-someone menu. */
+    ImVec2 mp     = ImGui::GetMousePos();
+    bool   host   = g_startPickerEffectiveHost;
+    int    mySlot = g_startPickerMySlot;
+
+    if (g_startDragSlot >= 0) {
+        /* Esc cancels the drag without reassigning. */
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            g_startDragSlot = -1;
+            g_startDragFrom = -1;
+            return;
+        }
+        ImVec2 dd = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+        bool moved = (dd.x * dd.x + dd.y * dd.y >= 16.0f);
+        /* While actually dragging, carry the player's NAME on the cursor
+         * (the start boats are static). */
+        if (moved) {
+            const ClientLobbySlot *ds = clientSimGetLobbySlot(cs, (BYTE)g_startDragSlot);
+            if (ds && ds->playerName[0]) {
+                const char *nm = ds->playerName;
+                ImVec2 ts = ImGui::CalcTextSize(nm);
+                ImVec2 p(mp.x + 12.0f, mp.y - ts.y * 0.5f);
+                dl->AddRectFilled(ImVec2(p.x - 3, p.y - 1),
+                                  ImVec2(p.x + ts.x + 3, p.y + ts.y + 1),
+                                  IM_COL32(0, 0, 0, 200), 3.0f);
+                dl->AddText(p, IM_COL32(255, 255, 255, 255), nm);
+            }
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        }
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            /* A real drag reassigns the dragged player to the target. A
+             * no-move click on an occupied start does nothing (choosing a
+             * start for yourself is only via clicking a FREE start). */
+            if (moved && hover >= 1)
+                clientSimNetSendLobbyClaimStart(cs, (BYTE)g_startDragSlot,
+                                                (BYTE)hover);
+            g_startDragSlot = -1;
+            g_startDragFrom = -1;
+        }
+        return;
+    }
+
+    if (imgHovered && hover >= 1) {
+        int  holder      = startHolderSlot(cs, (BYTE)hover);
+        bool free        = (holder < 0);
+        bool mine        = (holder == mySlot);
+        bool canGrab     = (holder >= 0) && (host || mine);  /* drag to move */
+        bool canClick    = free && mySlot >= 0;              /* click to choose */
+
+        ImGui::SetMouseCursor(canGrab  ? ImGuiMouseCursor_ResizeAll
+                            : canClick ? ImGuiMouseCursor_Hand
+                                       : ImGuiMouseCursor_Arrow);
+
+        /* Tooltip reflects what's actually possible: no "click to choose"
+         * for a start someone else holds (left-click does nothing there). */
+        char tip[192];
+        MessageArgs targs = {};
+        targs.number = hover;
+        if (free) {
+            SDL_snprintf(tip, sizeof(tip), "%s",
+                         langGetTextFmt(host ? STR_STARTPICK_TIP_FREE_HOST
+                                             : STR_STARTPICK_TIP_FREE, &targs));
+        } else {
+            const char *who = mine ? langGetText(STR_STARTPICK_YOU)
+                : clientSimGetLobbySlot(cs, (BYTE)holder)->playerName;
+            SDL_strlcpy(targs.playerName, who, sizeof(targs.playerName));
+            SDL_snprintf(tip, sizeof(tip), "%s",
+                         langGetTextFmt(host ? STR_STARTPICK_TIP_HELD_HOST
+                                             : STR_STARTPICK_TIP_HELD, &targs));
+        }
+        /* Hover tooltip ~75% transparent so it doesn't block the map. */
+        ImVec4 pbg = ImGui::GetStyleColorVec4(ImGuiCol_PopupBg); pbg.w *= 0.25f;
+        ImVec4 pbd = ImGui::GetStyleColorVec4(ImGuiCol_Border);  pbd.w *= 0.25f;
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, pbg);
+        ImGui::PushStyleColor(ImGuiCol_Border, pbd);
+        ImGui::SetTooltip("%s", tip);
+        ImGui::PopStyleColor(2);
+
+        /* Right-click opens the assign menu (edit permission). */
+        if (host && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            g_assignMenuStart = hover;
+            ImGui::OpenPopup("##assignStart");
+        }
+
+        if (canGrab) {
+            /* Press begins a potential drag-to-move; a no-move click does
+             * nothing (handled in the drag branch above). */
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                g_startDragSlot = holder;
+                g_startDragFrom = hover;
+            }
+        } else if (canClick && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            /* Free start: a plain click chooses it for you. */
+            ImVec2 dd = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+            if (dd.x * dd.x + dd.y * dd.y < 16.0f)
+                clientSimNetSendLobbyClaimStart(cs, (BYTE)mySlot, (BYTE)hover);
+        }
+    }
+
+    /* Assign menu: every connected tank in game, grouped by team with a
+     * divider between teams; entries you can't assign are disabled. */
+    if (ImGui::BeginPopup("##assignStart")) {
+        int st = g_assignMenuStart;
+        bool occupied = (st >= 1 && startHolderSlot(cs, (BYTE)st) >= 0);
+        ImGui::TextDisabled("%s", langGetText(occupied ? STR_STARTPICK_SWAP_WITH
+                                                       : STR_STARTPICK_ASSIGN_TO));
+        ImGui::Separator();
+        bool firstGroup = true;
+        for (int team = 0; team <= 15; team++) {
+            bool groupOpened = false;
+            for (int k = 0; k < MAX_TANKS; k++) {
+                const ClientLobbySlot *sl = clientSimGetLobbySlot(cs, (BYTE)k);
+                if (!sl || !sl->connected) continue;
+                if ((int)sl->teamNumber != team) continue;
+                if (!groupOpened) {
+                    if (!firstGroup) ImGui::Separator();  /* HR between teams */
+                    firstGroup  = false;
+                    groupOpened = true;
+                }
+                bool allowed = host || k == mySlot;
+                char lbl[80];
+                SDL_snprintf(lbl, sizeof(lbl), "%s##assign%d",
+                             sl->playerName[0] ? sl->playerName
+                                 : langGetText(STR_STARTPICK_SLOT_FALLBACK), k);
+                if (!allowed) ImGui::BeginDisabled();
+                if (ImGui::Selectable(lbl) && st >= 1) {
+                    clientSimNetSendLobbyClaimStart(cs, (BYTE)k, (BYTE)st);
+                    ImGui::CloseCurrentPopup();
+                }
+                if (!allowed) ImGui::EndDisabled();
+            }
+        }
+        ImGui::EndPopup();
+    }
+}
+
 void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
     (void)renderer;
-    if (!g_popupOpen) return;
+    if (!g_popupOpen) {
+        g_startPickerCs     = NULL;  /* consume even when closed */
+        g_startPickerMySlot = -1;
+        g_startDragSlot     = -1;    /* never resume a drag across re-open */
+        g_startDragFrom     = -1;
+        g_assignMenuStart   = -1;
+        return;
+    }
     /* Non-modal so the chat / ready / team UI behind it stays
      * interactive. Default geometry mirrors the Choose Map dialog
      * (small top/left gutter, height leaves ~3 chat lines visible
@@ -166,6 +477,10 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
          * SDL_SetRenderTarget is safe here, same pattern the chooser
          * uses. */
         if (contentSize.x > 0 && contentSize.y > 0 && g_popupView) {
+            /* Colour each start by ownership before the boats/dots render. */
+            uint8_t owners[MAX_STARTS];
+            int nOwn = startPickerComputeOwners(owners, MAX_STARTS);
+            mapPreviewViewSetStartOwners(g_popupView, nOwn ? owners : NULL, nOwn);
             mapPreviewViewRenderOffscreen(g_popupView, renderer,
                                            (int)contentSize.x,
                                            (int)contentSize.y);
@@ -173,10 +488,24 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
         if (mapPreviewViewIsReady(g_popupView)) {
             SDL_Texture *tex = mapPreviewViewGetTexture(g_popupView);
             if (tex) {
+                ImVec2 imgMin = ImGui::GetCursorScreenPos();
                 ImGui::Image((ImTextureID)tex, contentSize);
-                MapPreviewInputOpts opts = { true, true, true, true };
-                mapPreviewViewHandleInput(g_popupView,
-                                          ImGui::IsItemHovered(), &opts);
+                /* Overlay an InvisibleButton on the image rect so a
+                 * click-drag pans the map instead of dragging the whole
+                 * popup window around the lobby. The button takes the
+                 * drag as an active item (which suppresses ImGui's
+                 * drag-body-to-move-window); the title bar still moves
+                 * the window. Mirrors the Choose Map dialog's preview. */
+                ImGui::SetCursorScreenPos(imgMin);
+                ImGui::SetNextItemAllowOverlap();
+                ImGui::InvisibleButton("##MapPreviewPan", contentSize);
+                bool   imgHovered = ImGui::IsItemHovered();
+                /* Yield the left-drag to the start picker when over a movable
+                 * marker (or mid-drag) so the map doesn't pan under the drag. */
+                bool panSuppress = startPickerWantsDrag(imgMin, contentSize, imgHovered);
+                MapPreviewInputOpts opts = { !panSuppress, true, true, true };
+                mapPreviewViewHandleInput(g_popupView, imgHovered, &opts);
+                renderStartPickerOverlay(imgMin, contentSize, imgHovered);
             }
             /* Zoom indicator overlay — aligned to the bottom-right of
              * the IMAGE rect, sitting just above the button row so it
@@ -225,12 +554,18 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
         }
     }
     ImGui::End();
+
+    /* Consume the per-frame picker context so the next frame must
+     * re-set it (a non-lobby caller of the popup gets no overlay). */
+    g_startPickerCs     = NULL;
+    g_startPickerMySlot = -1;
 }
 
 void mapPreviewPopupClose(void) {
     if (g_popupOpen) {
         g_popupOpen = false;
     }
+    g_assignMenuStart = -1;
 }
 
 bool mapPreviewPopupIsOpen(void) {
@@ -252,6 +587,13 @@ void mapPreviewPopupRefreshOpen(const BYTE *compressedData, int compressedLen) {
 
 void mapPreviewPopupSetShowChange(bool show) {
     g_showChangeButton = show;
+}
+
+void mapPreviewPopupSetStartPicker(struct ClientSim *cs, int myPlayerNum,
+                                   bool effectiveHost) {
+    g_startPickerCs            = cs;
+    g_startPickerMySlot        = myPlayerNum;
+    g_startPickerEffectiveHost = effectiveHost;
 }
 
 bool mapPreviewPopupConsumeChangeRequest(void) {

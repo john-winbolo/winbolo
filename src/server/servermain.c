@@ -670,6 +670,9 @@ void printArgs() {
 
   fprintf(stderr, "\nBots & AI:\n");
   fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
+  fprintf(stderr, "-maxbots <N>  - Maximum number of AI bots that can be in the lobby\n");
+  fprintf(stderr, "                (default: 0 = no limit). Caps lobby \"Add Bot\" requests\n");
+  fprintf(stderr, "                and clamps -bots.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
   fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
   fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
@@ -690,11 +693,17 @@ void printArgs() {
   fprintf(stderr, "                Bare hostname uses https (e.g. -wbnhost wbn.winbolo.net),\n");
   fprintf(stderr, "                or specify scheme (e.g. -wbnhost http://wbn.winbolo.net)\n");
   fprintf(stderr, "-nowinbolonet - Do not participate in winbolo.net game tracking\n");
+  fprintf(stderr, "-mdns         - Advertise the game on the local network via mDNS\n");
+  fprintf(stderr, "                (_winbolo._udp.local); off by default for dedicated servers\n");
 
   fprintf(stderr, "\nLifecycle & shutdown:\n");
   fprintf(stderr, "-autoclose    - Automatically quit the server when all players have left\n");
   fprintf(stderr, "                the game\n");
   fprintf(stderr, "-quitonwin    - Quit server when a player/alliance wins\n");
+  fprintf(stderr, "-maprotate    - No-lobby map rotation: on a win or when the server empties,\n");
+  fprintf(stderr, "                boot all players, pick the next -mapdir map and restart a\n");
+  fprintf(stderr, "                fresh round. Never auto-quits (Ctrl-C / quit only). Implies\n");
+  fprintf(stderr, "                -nolobby and requires -mapdir.\n");
   fprintf(stderr, "-noemptyreset - Disable automatic lobby reset when server is empty\n");
   fprintf(stderr, "                (enabled by default, resets after 5 minutes)\n");
   fprintf(stderr, "-emptyresetmins <N> - Minutes before empty server resets to lobby (default: 5)\n");
@@ -1022,6 +1031,7 @@ int main(int argc, char **argv) {
   char *useAddr;
   char debugFileName[2048];
   int maxPlayers;
+  int maxBots;
   char key[WINBOLONET_KEY_LEN]; /* WBN Key */
 
   strcpy(debugFileName,"server_test.txt");
@@ -1036,6 +1046,7 @@ int main(int argc, char **argv) {
   isQuiet = FALSE;
   isNoInput = FALSE;
   maxPlayers = 0;
+  maxBots = 0;
 
   alarmRaised = alarmNone;
 #ifdef _WIN32
@@ -1074,14 +1085,37 @@ int main(int argc, char **argv) {
     }
   }
 
+  if (argExist(argc, argv, "maxbots") == TRUE) {
+    maxBots = atoi((char *) argv[findArg(argc, argv, "maxbots")]);
+    if (maxBots < 0 || maxBots > MAX_TANKS) {
+      maxBots = 0;
+    }
+  }
+
 #ifdef USING_SDL
   if (!SDL_Init(0)) {
     fprintf(stderr, "Error starting SDL - %s\n", SDL_GetError());
     exit(0);
   }
 #endif
-  /* IP-to-country geolocation (DB-IP Lite) */
-  bool geoLookupOk = geoLookupCreate("data/dbip-country-lite.mmdb");
+  /* IP-to-country geolocation (DB-IP Lite). Resolve the database relative to
+     the executable directory so the server works regardless of the CWD it was
+     launched from; fall back to the CWD-relative path if that fails. */
+  bool geoLookupOk = FALSE;
+#ifdef USING_SDL
+  {
+    const char *basePath = SDL_GetBasePath();
+    if (basePath != NULL) {
+      char mmdbPath[FILENAME_MAX];
+      snprintf(mmdbPath, sizeof(mmdbPath), "%sdata/dbip-country-lite.mmdb",
+               basePath);
+      geoLookupOk = geoLookupCreate(mmdbPath);
+    }
+  }
+#endif
+  if (geoLookupOk == FALSE) {
+    geoLookupOk = geoLookupCreate("data/dbip-country-lite.mmdb");
+  }
 
   /* Create server simulation */
   if (strncmp(mapName, "-randommap", 10) == 0) {
@@ -1246,8 +1280,16 @@ int main(int argc, char **argv) {
   }
 
   statusFile = argExist(argc, argv, "statusFile");
-  serverSimSetQuitOnWin(serverSim, argExist(argc, argv, "quitonwin") == TRUE);
+  /* -maprotate: no-lobby server that rotates maps forever. A win or an empty
+   * server boots everyone, picks the next -mapdir map and restarts a fresh
+   * round; it never auto-quits. Implies no-lobby (set below) and forces
+   * quit-on-win so a win drives the round to game-over, where the lifecycle
+   * intercepts it and rotates instead of shutting the process down. */
+  bool mapRotate = (argExist(argc, argv, "maprotate") == TRUE);
+  serverSimSetQuitOnWin(serverSim,
+                        (argExist(argc, argv, "quitonwin") == TRUE) || mapRotate);
   serverSimSetAutoCloseOnEmpty(serverSim, argExist(argc, argv, "autoclose") == TRUE);
+  serverSimSetMapRotate(serverSim, mapRotate);
 
   {
     int argNum = findArg(argc, argv, "ticks");
@@ -1339,9 +1381,18 @@ int main(int argc, char **argv) {
   /* -nolobby: skip lobby, start running immediately (backward-compatible
    * mode). serverInstanceStartup runs SetLobbyEnabled(false) + StartGame
    * from cfg.skipLobby; emptyReset is force-disabled in this mode. */
-  bool skipLobby = (argExist(argc, argv, "nolobby") == TRUE);
+  bool skipLobby = (argExist(argc, argv, "nolobby") == TRUE) || mapRotate;
   if (skipLobby) {
     emptyResetEnabled = false;
+  }
+
+  /* -maprotate needs a -mapdir to rotate through. */
+  if (mapRotate && findArg(argc, argv, "mapdir") == ARG_NOT_FOUND) {
+    fprintf(stderr, "Error: -maprotate requires -mapdir\n");
+#ifdef USING_SDL
+    SDL_Quit();
+#endif
+    return 0;
   }
 
   /* -mapdir: build validated map list for rotation between rounds.
@@ -1349,7 +1400,10 @@ int main(int argc, char **argv) {
   {
     int argNum = findArg(argc, argv, "mapdir");
     if (argNum != ARG_NOT_FOUND && serverSimGetMapDirFiles(serverSim) == NULL) {
-      if (skipLobby) {
+      /* -mapdir normally requires lobby mode (no-lobby has no round boundary
+       * to rotate at). -maprotate is the exception: it is a no-lobby mode
+       * built around rotating at each round end. */
+      if (skipLobby && !mapRotate) {
         fprintf(stderr, "Error: -mapdir requires lobby mode (incompatible with -nolobby)\n");
 #ifdef USING_SDL
         SDL_Quit();
@@ -1387,6 +1441,12 @@ int main(int argc, char **argv) {
       numBots = atoi((char *)argv[argNum]);
       if (numBots < 0) numBots = 0;
       if (numBots > MAX_TANKS) numBots = MAX_TANKS;
+      if (maxBots > 0 && numBots > maxBots) {
+        fprintf(stderr,
+                "Warning: -bots %d exceeds -maxbots %d, capping at %d\n",
+                numBots, maxBots, maxBots);
+        numBots = maxBots;
+      }
     }
     argNum = findArg(argc, argv, "brain");
     if (argNum != ARG_NOT_FOUND) {
@@ -1474,6 +1534,7 @@ int main(int argc, char **argv) {
     instCfg.bindAddr            = useAddr;
     instCfg.password            = pass;
     instCfg.maxPlayers          = (BYTE)maxPlayers;
+    instCfg.maxBots             = (BYTE)maxBots;
     instCfg.acceptRemoteClients = TRUE;
     instCfg.useWbn              = (argExist(argc, argv, "nowinbolonet") == FALSE);
     instCfg.compTanks           = (BYTE)ai;
@@ -1497,6 +1558,9 @@ int main(int argc, char **argv) {
       instCfg.useNatPortmap   = (argExist(argc, argv, "upnp") == TRUE);
       instCfg.useNatKeepalive = sTrackerUse && !natPunchOptOut;
     }
+    /* LAN mDNS advertising is opt-in for dedicated servers (the memset
+     * above leaves it false by default); -mdns turns it on. */
+    instCfg.mdnsAdvertise = (argExist(argc, argv, "mdns") == TRUE);
     if (serverInstanceStartup(serverSim, &instCfg) == FALSE) {
       fprintf(stderr, "Error creating network transport\n");
       serverSimDestroy(serverSim);

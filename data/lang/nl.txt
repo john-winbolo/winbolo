@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=Bericht sturen naar {number} spelers
 STR_DLGNETINFO_TITLE=Netwerkinfo
 STR_DLGNETINFO_SERVERPING=Serverping: {number} ms
 STR_DLGNETINFO_STATUS=Status:
-STR_DLGNETINFO_ERRORS=Netwerkfouten: {number}
+STR_DLGNETINFO_ERRORS=Netwerkfouten: {number}  ·  {number2} resyncs
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Wachtwoord vereist
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Pakketten/sec: {number} in / {number2} uit
 STR_DLGNETINFO_KB_RATE=KB/sec: {string1} in / {string2} uit
 STR_DLGNETINFO_LOSS=Pakketverlies: {number}% ({number2}/{number3} deze sec., {number4} totaal spel)
 STR_DLGNETINFO_RECONCILE=Reconciliaties: {number}/s, fout gem {string1}px, max {string2}px, afvlakking {string3}px
+STR_KICK_MAP_DESYNC=Kaart niet meer synchroon met de server — maak opnieuw verbinding.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Seed kopiëren
@@ -414,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Kaart overslaan
 STR_DLGLOBBY_CANCELSKIP=Overslaan annuleren
 STR_DLGLOBBY_VOTES={number}/{number2} stemmen om over te slaan
 STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_CHAT_GENERAL=Algemeen
+STR_DLGLOBBY_CHAT_TEAM=Team
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=N
+STR_COMPASS_NE=NO
+STR_COMPASS_E=O
+STR_COMPASS_SE=ZO
+STR_COMPASS_S=Z
+STR_COMPASS_SW=ZW
+STR_COMPASS_W=W
+STR_COMPASS_NW=NW
+STR_COMPASS_C=C
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Niet toegewezen
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(open)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} heeft {string1} betreden.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} heeft {string1} verlaten.
 STR_DLGLOBBY_READY=Klaar
 STR_DLGLOBBY_UNREADY=Niet klaar
 STR_DLGLOBBY_BALANCE_TEAMS=Teams balanceren
@@ -1317,6 +1341,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=geweigerd
 STR_DLGLOBBY_REJECT_NOTHOST=alleen voor host
 STR_DLGLOBBY_REJECT_LOCKED=instelling vergrendeld door server
 STR_DLGLOBBY_REJECT_INVALID=ongeldig verzoek
+STR_DLGLOBBY_REJECT_BOT_LIMIT=botlimiet bereikt
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Lobbywijziging geweigerd: {string1}
 
 # Lock badge fallback
@@ -1427,3 +1452,13 @@ STR_DLGWBN_VIA_STEAM=via Steam
 STR_DLGLOBBY_MAKE_HOST=Host maken
 STR_DLGLOBBY_MAKE_HOST_FMT=„{player}" tot host maken?
 STR_DLGLOBBY_HOST_CHANGED_FMT={player} is nu de host
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKlik om te kiezen; rechtsklikken om aan iemand anders toe te wijzen
+STR_STARTPICK_TIP_FREE=Start #{number}\nKlik om deze startpositie te kiezen
+STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nSlepen om te verplaatsen; rechtsklikken om aan iemand anders toe te wijzen
+STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_YOU=jij
+STR_STARTPICK_SWAP_WITH=Ruil deze start met:
+STR_STARTPICK_ASSIGN_TO=Start toewijzen aan:
+STR_STARTPICK_SLOT_FALLBACK=(positie)

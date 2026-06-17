@@ -77,6 +77,7 @@ typedef struct {
     char countryCode[3];   /* ISO 3166-1 alpha-2 (e.g. "US") */
     uint8_t clientFlags;   /* PLAYER_FLAG_* bits */
     uint8_t clientType;    /* ClientType enum */
+    uint8_t startIdx;      /* reserved map start, 1-based; 0xFF = none */
 } ClientLobbySlot;
 
 /* Callback typedefs for new transport message sending.
@@ -133,6 +134,23 @@ typedef struct {
     uint32_t fireTick;   /* The input tick that created this shell */
     bool active;
 } PredictedShell;
+
+/* A render-only forward-projection of another player's shell. Anchored to
+ * the latest snapshot and dead-reckoned forward by the snapshot's age so a
+ * human sees incoming shells at their true present position rather than
+ * ~RTT/2 in the past. Built for human clients only; the bot AI keeps reading
+ * the raw serverShellSnaps. Shells fly deterministically until impact, so the
+ * straight-line projection is exact between hits. */
+typedef struct {
+    float fx;            /* float position accumulator (world units) */
+    float fy;
+    float vx;            /* per-game-tick velocity (SHELL_SPEED * cos/sin) */
+    float vy;
+    uint8_t angle;       /* snapshot angle (bradians 0-255), for render frame */
+    uint8_t owner;
+    uint8_t length;      /* remaining life, decremented per advance */
+    bool active;
+} ProjectedShell;
 
 #ifndef CLIENTSIM_TYPEDEF
 #define CLIENTSIM_TYPEDEF
@@ -248,6 +266,34 @@ void clientSimAdvancePredictedShells(ClientSim *cs);
 /* No-op — predicted shells expire naturally via length counter */
 void clientSimReconcilePredictedShells(ClientSim *cs, uint32_t lastProcessedInput);
 
+/* Forward-projection of other players' shells (render-only, human clients).
+ * Projects each snapshot shell by its age so incoming shells are drawn at
+ * their true present position instead of ~RTT/2 in the past, returning dodge
+ * time at high ping. The projection is capped so a wild ping estimate cannot
+ * fling a shell arbitrarily far ahead. */
+#define PROJECTION_MAX_TICKS 10   /* ~200ms / 20ms game tick */
+
+/* Convert a one-way-latency ping (ms) to a capped snapshot age in game ticks
+ * (20ms each), the unit the projection velocity steps in. Pure helper. */
+int  clientShellProjectAgeTicks(uint16_t pingMs);
+
+/* Pure projection: derive the per-tick velocity from angle+SHELL_SPEED and the
+ * anchored float position snap + velocity*ageTicks. Unit-testable without a
+ * ClientSim. */
+void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
+                        int ageTicks, float *outFx, float *outFy,
+                        float *outVx, float *outVy);
+
+/* (Re)build the projected-shell array from the current serverShellSnaps,
+ * anchoring each to snap + velocity*age and matching against the previous
+ * frame's shells by owner+nearest-position so the float accumulator carries
+ * smoothly across snapshots. Call for human clients only. */
+void clientSimRebuildProjectedShells(ClientSim *cs, uint16_t pingMs);
+
+/* Advance projected shells one game tick (move forward, cull on visual
+ * collision, decrement length) between snapshots. */
+void clientSimAdvanceProjectedShells(ClientSim *cs);
+
 /* Brain state accessors — used by screen.c for brain input handling.
  * Each takes a ClientSim* so multiple instances can have independent brain state. */
 uint32_t *clientSimGetBrainHoldKeys(ClientSim *cs);
@@ -303,6 +349,8 @@ void clientSimClearPendingAllianceRequest(ClientSim *cs);
 
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message);
+/* Team lobby chat helper — appends "name: message\n" to lobbyTeamChatHistory */
+void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *message);
 
 /* Player-to-player chat delivery: routes to lobby chat or in-game inbox
    depending on whether the client is still in the lobby. */
@@ -464,6 +512,7 @@ int            clientSimGetGmeStartDelay(const ClientSim *cs);
 int            clientSimGetCountdownSeconds(const ClientSim *cs);
 int            clientSimGetServerShellCount(const ClientSim *cs);
 int            clientSimGetPredictedShellCount(const ClientSim *cs);
+int            clientSimGetProjectedShellCount(const ClientSim *cs);
 int            clientSimGetBrainEventCount(const ClientSim *cs);
 int32_t        clientSimGetGmeLength(const ClientSim *cs);
 int32_t        clientSimGetLobbyTimeLimit(const ClientSim *cs);
@@ -479,6 +528,7 @@ time_t         clientSimGetTimeStart(const ClientSim *cs);
 /* String (char[]) accessors */
 const char *clientSimGetMapName(const ClientSim *cs);
 const char *clientSimGetLobbyChatHistory(const ClientSim *cs);
+const char *clientSimGetLobbyTeamChatHistory(const ClientSim *cs);
 const char *clientSimGetMyLastPlayerName(const ClientSim *cs);
 
 /* Indexed-array accessors (bounds-checked; out-of-range
@@ -552,6 +602,7 @@ uint8_t clientSimGetReturnToLobbySecs(const ClientSim *cs);
 BYTE                 *clientSimGetBrainMap(ClientSim *cs);
 const ShellSnapshot  *clientSimGetServerShellSnaps(const ClientSim *cs);
 const PredictedShell *clientSimGetPredictedShells(const ClientSim *cs);
+const ProjectedShell *clientSimGetProjectedShells(const ClientSim *cs);
 const GameEvent      *clientSimGetBrainEvents(const ClientSim *cs);
 
 /* Struct-by-value accessor. */

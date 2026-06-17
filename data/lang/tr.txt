@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS={number} oyuncuya mesaj gönderiliyor
 STR_DLGNETINFO_TITLE=Ağ Bilgisi
 STR_DLGNETINFO_SERVERPING=Sunucu gecikmesi: {number} ms
 STR_DLGNETINFO_STATUS=Durum:
-STR_DLGNETINFO_ERRORS=Ağ hataları: {number}
+STR_DLGNETINFO_ERRORS=Ağ hataları: {number}  ·  {number2} yeniden eşitleme
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Şifre Gerekli
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Paket/sn: {number} gelen / {number2} giden
 STR_DLGNETINFO_KB_RATE=KB/sn: {string1} gelen / {string2} giden
 STR_DLGNETINFO_LOSS=Paket kaybı: {number}% ({number2}/{number3} bu sn, {number4} oyun toplamı)
 STR_DLGNETINFO_RECONCILE=Uzlaştırmalar: {number}/sn, hata ort {string1}px, maks {string2}px, düzeltme {string3}px
+STR_KICK_MAP_DESYNC=Harita sunucuyla eşitlenmedi — lütfen yeniden katılın.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Tohumu Kopyala
@@ -414,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Haritayı Atla
 STR_DLGLOBBY_CANCELSKIP=Atlamayı İptal Et
 STR_DLGLOBBY_VOTES={number}/{number2} oy haritayı atlamak için
 STR_DLGLOBBY_CHAT=Sohbet
+STR_DLGLOBBY_CHAT_GENERAL=Genel
+STR_DLGLOBBY_CHAT_TEAM=Takım
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=K
+STR_COMPASS_NE=KD
+STR_COMPASS_E=D
+STR_COMPASS_SE=GD
+STR_COMPASS_S=G
+STR_COMPASS_SW=GB
+STR_COMPASS_W=B
+STR_COMPASS_NW=KB
+STR_COMPASS_C=M
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Atanmamış
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(açık)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} {string1} ekibine katıldı.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} {string1} ekibinden ayrıldı.
 STR_DLGLOBBY_READY=Hazır
 STR_DLGLOBBY_UNREADY=Hazır Değil
 STR_DLGLOBBY_BALANCE_TEAMS=Takımları Dengele
@@ -1317,6 +1341,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=reddedildi
 STR_DLGLOBBY_REJECT_NOTHOST=yalnızca sunucu sahibi
 STR_DLGLOBBY_REJECT_LOCKED=ayar sunucu tarafından kilitlendi
 STR_DLGLOBBY_REJECT_INVALID=geçersiz istek
+STR_DLGLOBBY_REJECT_BOT_LIMIT=bot sınırına ulaşıldı
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Lobi değişikliği reddedildi: {string1}
 
 # Lock badge fallback
@@ -1427,3 +1452,13 @@ STR_DLGWBN_VIA_STEAM=Steam ile
 STR_DLGLOBBY_MAKE_HOST=Sunucu sahibi yap
 STR_DLGLOBBY_MAKE_HOST_FMT=„{player}" sunucu sahibi yapılsın mı?
 STR_DLGLOBBY_HOST_CHANGED_FMT={player} artık sunucu sahibi
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Başlangıç #{number}\nSeçmek için tıklayın; birine atamak için sağ tıklayın
+STR_STARTPICK_TIP_FREE=Başlangıç #{number}\nBu başlangıcı seçmek için tıklayın
+STR_STARTPICK_TIP_HELD_HOST=Başlangıç #{number} - {player}\nTaşımak için sürükleyin; birine atamak için sağ tıklayın
+STR_STARTPICK_TIP_HELD=Başlangıç #{number} - {player}
+STR_STARTPICK_YOU=sen
+STR_STARTPICK_SWAP_WITH=Bu başlangıcı şununla değiştir:
+STR_STARTPICK_ASSIGN_TO=Başlangıcı şuna ata:
+STR_STARTPICK_SLOT_FALLBACK=(slot)

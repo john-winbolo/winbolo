@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=Odesílání zprávy {number} hráčům
 STR_DLGNETINFO_TITLE=Informace o síti
 STR_DLGNETINFO_SERVERPING=Ping serveru: {number} ms
 STR_DLGNETINFO_STATUS=Stav:
-STR_DLGNETINFO_ERRORS=Chyby sítě: {number}
+STR_DLGNETINFO_ERRORS=Chyby sítě: {number}  ·  {number2} resync
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Vyžadováno heslo
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Pakety/s: {number} příj. / {number2} odes.
 STR_DLGNETINFO_KB_RATE=KB/s: {string1} příj. / {string2} odes.
 STR_DLGNETINFO_LOSS=Ztráta paketů: {number}% ({number2}/{number3} tuto sek., {number4} celkem ve hře)
 STR_DLGNETINFO_RECONCILE=Vyrovnání: {number}/s, chyba prům {string1}px, max {string2}px, vyhlazení {string3}px
+STR_KICK_MAP_DESYNC=Mapa není synchronizovaná se serverem — připojte se prosím znovu.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Kopírovat seed
@@ -414,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Přeskočit mapu
 STR_DLGLOBBY_CANCELSKIP=Zrušit přeskočení
 STR_DLGLOBBY_VOTES={number}/{number2} hlasů pro přeskočení
 STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_CHAT_GENERAL=Obecné
+STR_DLGLOBBY_CHAT_TEAM=Tým
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=S
+STR_COMPASS_NE=SV
+STR_COMPASS_E=V
+STR_COMPASS_SE=JV
+STR_COMPASS_S=J
+STR_COMPASS_SW=JZ
+STR_COMPASS_W=Z
+STR_COMPASS_NW=SZ
+STR_COMPASS_C=C
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Nepřiřazeno
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(volné)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} se připojil k {string1}.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} opustil {string1}.
 STR_DLGLOBBY_READY=Připraven
 STR_DLGLOBBY_UNREADY=Nepřipraven
 STR_DLGLOBBY_BALANCE_TEAMS=Vyrovnat týmy
@@ -954,6 +978,16 @@ STR_LV_VOTE_START_LOBBY={player} zahájil hlasování o návrat do lobby.
 STR_LV_VOTE_START_SURRENDER={player} zahájil hlasování o vzdání se.
 STR_LV_VOTE_CAST_YES={player} hlasoval ano.
 STR_LV_VOTE_CAST_NO={player} hlasoval ne.
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nKlikni pro výběr; pravým tlačítkem přiřaď jinému hráči
+STR_STARTPICK_TIP_FREE=Start #{number}\nKlikni pro výběr tohoto startu
+STR_STARTPICK_TIP_HELD_HOST=Start #{number} - {player}\nPřetáhni pro přesun; pravým tlačítkem přiřaď jinému hráči
+STR_STARTPICK_TIP_HELD=Start #{number} - {player}
+STR_STARTPICK_YOU=ty
+STR_STARTPICK_SWAP_WITH=Vyměnit tento start s:
+STR_STARTPICK_ASSIGN_TO=Přiřadit start hráči:
+STR_STARTPICK_SLOT_FALLBACK=(slot)
 STR_LV_VOTE_PASSED=Hlasování prošlo.
 STR_LV_VOTE_FAILED=Hlasování neprošlo.
 
@@ -1317,6 +1351,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=zamítnuto
 STR_DLGLOBBY_REJECT_NOTHOST=akce pouze pro hostitele
 STR_DLGLOBBY_REJECT_LOCKED=nastavení uzamčeno serverem
 STR_DLGLOBBY_REJECT_INVALID=neplatný požadavek
+STR_DLGLOBBY_REJECT_BOT_LIMIT=dosažen limit botů
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Změna lobby zamítnuta: {string1}
 
 # Lobby — Lock badge fallback (1364)

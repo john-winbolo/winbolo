@@ -91,6 +91,29 @@ SDL_Texture *mapPreviewViewGetTexture(MapPreviewView *v);
 void mapPreviewViewGetTextureSize(const MapPreviewView *v,
                                   int *outW, int *outH);
 
+/* Map-square (mapSqX,mapSqY) -> texture-local pixel of that tile's
+ * TOP-LEFT (same point viewRenderStarts uses as a start's dest origin;
+ * add half a scaled tile to center). Operates in the displayed
+ * texture's pixel space (mapPreviewViewGetTextureSize). Returns false
+ * if no valid sprite-mode transform is cached (e.g. minimap zoom). */
+bool mapPreviewViewWorldToScreen(const MapPreviewView *v,
+                                 int mapSqX, int mapSqY,
+                                 float *outX, float *outY);
+
+/* Texture-local pixel (sx,sy) -> map-square under it. Inverse of the
+ * above. Returns false if no transform is cached or the result falls
+ * outside the 0..255 map-square range. */
+bool mapPreviewViewScreenToWorld(const MapPreviewView *v,
+                                 float sx, float sy,
+                                 int *outMapSqX, int *outMapSqY);
+
+/* Reserved-start position accessors over the parsed preview. Return 0 /
+ * false when no map has parsed. i is 1-based, matching the rest of the
+ * start-index conventions. */
+BYTE mapPreviewViewGetStartCount(const MapPreviewView *v);
+bool mapPreviewViewGetStart(const MapPreviewView *v, BYTE i,
+                            BYTE *outX, BYTE *outY);
+
 /* Drive interactions for the frame: pan via mouse drag, zoom via
  * wheel / pinch, arrow-key pan. Caller indicates whether the view's
  * Image is currently hovered. */
@@ -107,6 +130,13 @@ void mapPreviewViewHandleInput(MapPreviewView *v, bool hovered,
 /* True iff source map data has fully parsed and the widget can show
  * tiles. Useful for "loading..." placeholders. */
 bool mapPreviewViewIsReady(const MapPreviewView *v);
+
+/* Set per-start ownership for marker colouring. owners is 0-based, parallel
+ * to start order (start index i+1): 0=unclaimed, 1=self, 2=ally, 3=enemy.
+ * Selects the boat sprite at sprite zoom and the dot colour at minimap zoom.
+ * Pass owners=NULL / count=0 to clear (everything renders as the default). */
+void mapPreviewViewSetStartOwners(MapPreviewView *v,
+                                  const uint8_t *owners, int count);
 
 /* Current zoom level (1.0f = native tile size). */
 float mapPreviewViewGetZoom(const MapPreviewView *v);

@@ -545,6 +545,16 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
               (unsigned)evt->u.balanceFailed.reasonCode);
       break;
 
+    case CTRL_SHELL_DEATH:
+      fprintf(f, ",\"fireTick\":%u,\"impactWX\":%u,\"impactWY\":%u,"
+                 "\"owner\":%u,\"outcome\":%u",
+              (unsigned)evt->u.shellDeath.fireTick,
+              (unsigned)evt->u.shellDeath.impactWX,
+              (unsigned)evt->u.shellDeath.impactWY,
+              (unsigned)evt->u.shellDeath.owner,
+              (unsigned)evt->u.shellDeath.outcome);
+      break;
+
     case CTRL_EVENT_TYPE_COUNT:
       /* Sentinel — never actually delivered. */
       break;

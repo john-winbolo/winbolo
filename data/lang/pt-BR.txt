@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=Enviando mensagem para {number} jogadores
 STR_DLGNETINFO_TITLE=Informações de rede
 STR_DLGNETINFO_SERVERPING=Ping do servidor: {number} ms
 STR_DLGNETINFO_STATUS=Status:
-STR_DLGNETINFO_ERRORS=Erros de rede: {number}
+STR_DLGNETINFO_ERRORS=Erros de rede: {number}  ·  {number2} ressinc.
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Senha necessária
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Pacotes/s: {number} entrada / {number2} saída
 STR_DLGNETINFO_KB_RATE=KB/sec: {string1} entrada / {string2} saída
 STR_DLGNETINFO_LOSS=Perda de pacotes: {number}% ({number2}/{number3} este seg., {number4} total da partida)
 STR_DLGNETINFO_RECONCILE=Reconciliações: {number}/s, erro méd {string1}px, máx {string2}px, suaviz {string3}px
+STR_KICK_MAP_DESYNC=Mapa fora de sincronia com o servidor — reconecte-se.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Copiar seed
@@ -414,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Pular mapa
 STR_DLGLOBBY_CANCELSKIP=Cancelar pulo
 STR_DLGLOBBY_VOTES={number}/{number2} votos para pular
 STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_CHAT_GENERAL=Geral
+STR_DLGLOBBY_CHAT_TEAM=Equipe
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=N
+STR_COMPASS_NE=NE
+STR_COMPASS_E=E
+STR_COMPASS_SE=SE
+STR_COMPASS_S=S
+STR_COMPASS_SW=SO
+STR_COMPASS_W=O
+STR_COMPASS_NW=NO
+STR_COMPASS_C=C
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Não atribuído
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(aberto)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} entrou em {string1}.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} saiu de {string1}.
 STR_DLGLOBBY_READY=Pronto
 STR_DLGLOBBY_UNREADY=Não pronto
 STR_DLGLOBBY_BALANCE_TEAMS=Equilibrar equipes
@@ -1316,6 +1340,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=rejeitado
 STR_DLGLOBBY_REJECT_NOTHOST=ação exclusiva do anfitrião
 STR_DLGLOBBY_REJECT_LOCKED=configuração bloqueada pelo servidor
 STR_DLGLOBBY_REJECT_INVALID=requisição inválida
+STR_DLGLOBBY_REJECT_BOT_LIMIT=limite de bots atingido
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Alteração no lobby rejeitada: {string1}
 
 # Lobby — emblema de bloqueio
@@ -1427,3 +1452,13 @@ STR_DLGWBN_VIA_STEAM=via Steam
 STR_DLGLOBBY_MAKE_HOST=Tornar anfitrião
 STR_DLGLOBBY_MAKE_HOST_FMT=Tornar "{player}" o anfitrião?
 STR_DLGLOBBY_HOST_CHANGED_FMT={player} agora é o anfitrião
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Início #{number}\nClique para escolher; clique com o botão direito para atribuir a outra pessoa
+STR_STARTPICK_TIP_FREE=Início #{number}\nClique para escolher este início
+STR_STARTPICK_TIP_HELD_HOST=Início #{number} - {player}\nArraste para mover; clique com o botão direito para atribuir a outra pessoa
+STR_STARTPICK_TIP_HELD=Início #{number} - {player}
+STR_STARTPICK_YOU=você
+STR_STARTPICK_SWAP_WITH=Trocar este início com:
+STR_STARTPICK_ASSIGN_TO=Atribuir início a:
+STR_STARTPICK_SLOT_FALLBACK=(vaga)

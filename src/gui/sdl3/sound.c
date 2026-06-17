@@ -415,16 +415,12 @@ bool soundSetup(void) {
 void soundCleanup(void) {
     int i;
 
-    /* Free all sound data */
-    for (i = 0; i < NUM_SOUNDS; i++) {
-        if (sounds[i].data) {
-            SDL_free(sounds[i].data);
-            sounds[i].data = NULL;
-            sounds[i].size = 0;
-        }
-    }
+    isPlayable = FALSE;
 
-    /* Destroy audio stream first - this also closes the associated device */
+    /* Destroy the audio stream first - this stops and joins the mixing
+     * callback thread. It must happen before we free anything the callback
+     * reads (the sound data borrowed by active slots), otherwise the still
+     * running callback can dereference freed memory. */
     if (audioStream) {
         SDL_DestroyAudioStream(audioStream);
         audioStream = NULL;
@@ -440,13 +436,21 @@ void soundCleanup(void) {
         keepaliveData = NULL;
     }
 
-    /* Destroy mutex */
+    /* Now that no callback can run, free all sound data. Active slots may
+     * still reference these buffers, but the mixer thread is gone. */
+    for (i = 0; i < NUM_SOUNDS; i++) {
+        if (sounds[i].data) {
+            SDL_free(sounds[i].data);
+            sounds[i].data = NULL;
+            sounds[i].size = 0;
+        }
+    }
+
+    /* Destroy mutex last - the callback that used it is no longer running */
     if (slotsMutex) {
         SDL_DestroyMutex(slotsMutex);
         slotsMutex = NULL;
     }
-
-    isPlayable = FALSE;
 }
 
 /*********************************************************

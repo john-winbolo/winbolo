@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=Enviando mensaje a {number} jugadores
 STR_DLGNETINFO_TITLE=Información de red
 STR_DLGNETINFO_SERVERPING=Ping del servidor: {number} ms
 STR_DLGNETINFO_STATUS=Estado:
-STR_DLGNETINFO_ERRORS=Errores de red: {number}
+STR_DLGNETINFO_ERRORS=Errores de red: {number}  ·  {number2} resinc.
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Contraseña requerida
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Paquetes/s: {number} entrada / {number2} salida
 STR_DLGNETINFO_KB_RATE=KB/s: {string1} entrada / {string2} salida
 STR_DLGNETINFO_LOSS=Pérdida de paquetes: {number}% ({number2}/{number3} este seg., {number4} total partida)
 STR_DLGNETINFO_RECONCILE=Reconciliaciones: {number}/s, err med {string1}px, máx {string2}px, suaviz {string3}px
+STR_KICK_MAP_DESYNC=El mapa no está sincronizado con el servidor — vuelve a unirte.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Copiar semilla
@@ -414,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Saltar mapa
 STR_DLGLOBBY_CANCELSKIP=Cancelar salto
 STR_DLGLOBBY_VOTES={number}/{number2} votos para saltar
 STR_DLGLOBBY_CHAT=Chat
+STR_DLGLOBBY_CHAT_GENERAL=General
+STR_DLGLOBBY_CHAT_TEAM=Equipo
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=N
+STR_COMPASS_NE=NE
+STR_COMPASS_E=E
+STR_COMPASS_SE=SE
+STR_COMPASS_S=S
+STR_COMPASS_SW=SO
+STR_COMPASS_W=O
+STR_COMPASS_NW=NO
+STR_COMPASS_C=C
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Sin asignar
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(libre)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} se unió a {string1}.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} salió de {string1}.
 STR_DLGLOBBY_READY=Listo
 STR_DLGLOBBY_UNREADY=No listo
 STR_DLGLOBBY_BALANCE_TEAMS=Equilibrar equipos
@@ -859,6 +883,16 @@ STR_MAPEDIT_STAMP_IMPORT=Importar...
 STR_MAPEDIT_STAMP_UNTITLED=Sin título
 STR_MAPEDIT_STAMP_SAVE_TITLE=Guardar plantilla
 STR_MAPEDIT_STAMP_SAVE_BLURB=Introduce un nombre para esta plantilla:
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Inicio #{number}\nHaz clic para elegir; clic derecho para asignar a otro jugador
+STR_STARTPICK_TIP_FREE=Inicio #{number}\nHaz clic para elegir este inicio
+STR_STARTPICK_TIP_HELD_HOST=Inicio #{number} - {player}\nArrastra para mover; clic derecho para asignar a otro jugador
+STR_STARTPICK_TIP_HELD=Inicio #{number} - {player}
+STR_STARTPICK_YOU=tú
+STR_STARTPICK_SWAP_WITH=Intercambiar este inicio con:
+STR_STARTPICK_ASSIGN_TO=Asignar inicio a:
+STR_STARTPICK_SLOT_FALLBACK=(plaza)
 STR_MAPEDIT_STAMP_SAVE_NAME=Nombre
 STR_MAPEDIT_SAVE_BTN=Guardar
 
@@ -1316,6 +1350,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=rechazado
 STR_DLGLOBBY_REJECT_NOTHOST=acción solo para el anfitrión
 STR_DLGLOBBY_REJECT_LOCKED=ajuste bloqueado por el servidor
 STR_DLGLOBBY_REJECT_INVALID=solicitud inválida
+STR_DLGLOBBY_REJECT_BOT_LIMIT=límite de bots alcanzado
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Cambio en el lobby rechazado: {string1}
 
 # Lobby — insignia de bloqueo

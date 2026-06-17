@@ -690,10 +690,15 @@ static void windowRunGameTick(ClientSim *cs) {
    * Only check for UDP transports (serverSim == NULL means not local). */
   if (clientSimHasTransport(cs) && gameFrontGetServerSim() == NULL &&
       clientSimGetConnectState(cs) == CLIENT_CONNECT_SERVER_SHUTDOWN) {
+    /* A localized reason is set when the client itself gave up (e.g. an
+     * unrecoverable map desync); a plain server shutdown leaves it NULL and
+     * falls back to the generic lost-connection message. */
+    const char *reason = clientSimGetConnectErrorReason(cs);
     clientSimConnectionLost(cs);
     imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                      "You have lost your connection to the server.\n"
-                      "Returning to menu.",
+                      reason ? reason
+                             : "You have lost your connection to the server.\n"
+                               "Returning to menu.",
                       IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     finishedLoop = TRUE;
     winboloQuit = FALSE;

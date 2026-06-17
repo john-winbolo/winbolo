@@ -345,6 +345,11 @@ const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen) {
   return transportUdpClientGetMapData((Transport *)&cs->transport, outLen);
 }
 
+uint32_t clientSimGetViewTick(const ClientSim *cs) {
+  if (cs == NULL) return 0;
+  return cs->clientState.prevAppliedServerTick;
+}
+
 /* === Send wrappers ===
  * Command helpers build a ClientCommand from their arguments and hand
  * it to clientSimSubmitCommand, which routes through the reliable
@@ -420,6 +425,15 @@ void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber) {
   ClientCommand cmd = { .type = CMD_TEAM_SET };
   cmd.u.teamSet.slot = slot;
   cmd.u.teamSet.team = teamNumber;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
+void clientSimNetSendLobbyClaimStart(ClientSim *cs, BYTE targetSlot,
+                                     BYTE startIdx) {
+  if (cs == NULL || !cs->hasTransport) return;
+  ClientCommand cmd = { .type = CMD_LOBBY_CLAIM_START };
+  cmd.u.lobbyClaimStart.targetSlot = targetSlot;
+  cmd.u.lobbyClaimStart.startIdx   = startIdx;
   clientSimSubmitCommand(cs, &cmd);
 }
 
@@ -736,6 +750,16 @@ void clientSimGetUdpNetStats(ClientSim *cs, int *ppsRecv, int *ppsSent,
                                 bpsRecv, bpsSent, numErrors,
                                 snapshotsRecv, snapshotsLost,
                                 snapshotsLostTotal);
+}
+
+int clientSimGetMapResyncCount(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
+  return (int)transportUdpClientGetMapResyncCount(&cs->transport);
+}
+
+void clientSimNetReportMapChecksum(ClientSim *cs, bool matched) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientReportMapChecksum(&cs->transport, matched);
 }
 
 void clientSimGetReconcileStats(ClientSim *cs, int *countPerSec,

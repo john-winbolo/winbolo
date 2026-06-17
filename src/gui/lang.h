@@ -440,6 +440,34 @@
 #define STR_DLGLOBBY_CANCELSKIP             611
 #define STR_DLGLOBBY_VOTES                  612
 #define STR_DLGLOBBY_CHAT                   613
+#define STR_DLGLOBBY_CHAT_GENERAL           1497
+#define STR_DLGLOBBY_CHAT_TEAM              1498
+/* Compass octant labels for a lobby player's reserved map start */
+#define STR_COMPASS_N                       1499
+#define STR_COMPASS_NE                      1500
+#define STR_COMPASS_E                       1501
+#define STR_COMPASS_SE                      1502
+#define STR_COMPASS_S                       1503
+#define STR_COMPASS_SW                      1504
+#define STR_COMPASS_W                       1505
+#define STR_COMPASS_NW                      1506
+#define STR_COMPASS_C                       1507
+/* "Unassigned" entry in the lobby player-list start combo (release) */
+#define STR_DLGLOBBY_START_UNASSIGNED       1508
+/* Map-preview label for a start with no reservation (a click target) */
+#define STR_DLGLOBBY_START_OPEN             1509
+/* Team-chat system lines when a player joins/leaves the local team */
+#define STR_DLGLOBBY_TEAM_JOINED_FMT        1510
+#define STR_DLGLOBBY_TEAM_LEFT_FMT          1511
+/* Map-preview start-picker tooltips and the assign-to-someone menu */
+#define STR_STARTPICK_TIP_FREE_HOST         1512
+#define STR_STARTPICK_TIP_FREE              1513
+#define STR_STARTPICK_TIP_HELD_HOST         1514
+#define STR_STARTPICK_TIP_HELD              1515
+#define STR_STARTPICK_YOU                   1516
+#define STR_STARTPICK_SWAP_WITH             1517
+#define STR_STARTPICK_ASSIGN_TO             1518
+#define STR_STARTPICK_SLOT_FALLBACK         1519
 #define STR_DLGLOBBY_READY                  614
 #define STR_DLGLOBBY_UNREADY                615
 #define STR_DLGLOBBY_BALANCE_TEAMS          616
@@ -1432,6 +1460,14 @@
  * {string2} = max position error px, {string3} = live render-error-offset
  * magnitude px (the correction currently being smoothed out). */
 #define STR_DLGNETINFO_RECONCILE            1494
+
+/* Shown when the client gives up after repeated unrecoverable map-desync
+ * resyncs and disconnects, asking the player to rejoin. */
+#define STR_KICK_MAP_DESYNC                 1495
+
+/* Reject toast — server refused an Add Bot because the lobby is already
+ * at the operator-configured -maxbots cap. */
+#define STR_DLGLOBBY_REJECT_BOT_LIMIT       1496
 
 /* WinBolo.net 1v1 ladder position shown in the status block.
  * STR_DLGWBN_RANK: {number} = position, {number2} = ranked-player total. */

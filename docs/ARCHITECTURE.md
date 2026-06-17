@@ -525,8 +525,79 @@ public/internal split provides.
 | Packet kind | Lives in |
 | --- | --- |
 | Backed by a `ControlEventType` variant (state changes — joins, leaves, alliances, chat, lobby, phases, balance, shutdown) | `src/bolo/transport_control_codec.c` (encoder + decoder) |
-| Per-tick world snapshot (positions, shells, deltas) | existing snapshot module |
+| Fixed-layout binary message (per-tick snapshots; map-transfer chunk headers) | field list in `src/bolo/internal/wire_messages.h` + a `DEFINE_WIRE_CODEC[_MASKED]` line in `src/bolo/transport_udp_common.c` — see "Fixed-layout wire messages" below |
 | Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, NAME_CHANGE_REJECT, MAP_DOWNLOAD chunks, PONG, PLAYER_LIST resync) | `src/bolo/transport_udp_server.c` / `src/bolo/transport_udp_client.c` |
+
+### Fixed-layout wire messages — the field-list codec
+
+Fixed binary structs on the wire — the per-tick snapshots (`TankSnapshot`,
+`ShellSnapshot`, `TkExplosionSnapshot`, `BaseSnapshot`, `PillSnapshot`) and the
+map-transfer chunk headers (`MapDownloadChunkHeader`, `MapUploadChunkHeader`,
+`MapPreviewChunkHeader`) — are **declared once as a field list and their codec is
+generated**, not hand-numbered. (Control-event and client-command payloads are a
+different layer: they keep their own codecs in `transport_control_codec.c` /
+`transport_command_codec.c`, described above.)
+
+The machinery lives in `src/bolo/internal/wire_codec.h`; the field lists in
+`src/bolo/internal/wire_messages.h`; the instantiations sit next to each other in
+`src/bolo/transport_udp_common.c`. A field list is a one-line-per-field X-macro,
+in wire order:
+
+```c
+#define SHELL_SNAPSHOT_FIELDS(F) \
+    F(U16, worldX) F(U16, worldY) F(U8, angle) F(U8, owner) F(U8, length)
+```
+
+and a single line emits `packShellSnapshot` / `unpackShellSnapshot`:
+
+```c
+DEFINE_WIRE_CODEC(ShellSnapshot, "shell_snapshot", SHELL_SNAPSHOT_FIELDS)
+```
+
+From that one list the machinery generates pack, unpack, and the wire size
+(`WIRE_SIZE_OF`), so **encoder and decoder cannot drift**, offsets are computed
+rather than counted, and every generated `unpack` carries a per-field `avail`
+bounds check (it returns 0 on a short/hostile buffer). Field types are `U8`,
+`U16`, `U32`, big-endian via the existing `packU16`/`packU32` helpers.
+
+Two forms:
+
+- **Flat** — `DEFINE_WIRE_CODEC(Name, "label", FIELDS)` for a fixed field list.
+- **Presence-bitmask** — `DEFINE_WIRE_CODEC_MASKED(Name, "label", stubField,
+  stubFlag, FIELDS)` for omit-zero messages. The list uses `F(type, name)` for
+  always-present core fields, `FMASK()` to mark the mask byte's wire slot, and
+  `FGROUP(bit, type, name)` for fields sent only when their group bit is set
+  (the bit is set iff any field carrying it is non-zero; absent groups decode
+  back to 0). `stubField`/`stubFlag` give the 1-byte stub short-circuit.
+  `TankSnapshot` is the worked example.
+
+**What stays hand-written (the honest boundary):** variable-length records
+(length-prefixed strings, count-driven loops) and chunk reassembly. For a
+chunked or count-driven message you generate the *fixed leaf record / header*
+(e.g. `MapDownloadChunkHeader`) and leave the surrounding loop, length
+validation, and reassembly hand-rolled. Don't try to express a length-prefixed
+string or a repeat count in a field list.
+
+**Verification — the byte-identity net.** `tests/unit/test_wire_corpus.c` is a
+differential test: generated pack/unpack must round-trip and be **byte-identical
+to committed golden fixtures** (`tests/fixtures/wire/*.hex`) captured from a
+scripted loopback session (the `wire_corpus_capture` test regenerates them).
+Presence-bitmask messages additionally diff against a reference oracle across
+every group combination. An unintended wire change fails this test — it is the
+only source of truth for "byte-identical".
+
+#### Recipe — adding or changing a fixed-layout message
+
+1. **Edit the field list** in `wire_messages.h` (add/reorder a field, in wire
+   order). For a brand-new message, add the struct + `pack`/`unpack` prototypes
+   to the internal header and one `DEFINE_WIRE_CODEC[_MASKED]` line in
+   `transport_udp_common.c`; call sites use `packName`/`unpackName` directly.
+2. **Re-run `test_wire_corpus`.** For an existing message a layout change is
+   expected to fail the golden until you intend it; for a new message, run
+   `wire_corpus_capture` once to write the golden fixture, commit it, and add a
+   `check_*` (round-trip + boundary, and the oracle path if masked).
+3. Never hand-count byte offsets for these messages, and never let pack and
+   unpack become two separately-maintained functions again.
 
 ### Recipe — adding a new event type
 

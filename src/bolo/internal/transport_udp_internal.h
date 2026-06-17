@@ -190,8 +190,11 @@ static inline bool controlSeqResetDetected(uint32_t controlEventCount,
  * decoders length-check each field and reject malformed packets. */
 #define LOBBY_SLOT_WIRE_SIZE (1 + 1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2 + 1 + 1)
 
-#define INPUT_PACKET_WIRE_SIZE 25
-#define TANK_SNAPSHOT_WIRE_SIZE 27
+#define INPUT_PACKET_WIRE_SIZE 29
+/* Upper bound on one non-stub tank entry: the 11-byte core (incl. presence
+ * mask) plus every field group present at once. NOT the typical on-wire size —
+ * most entries are far smaller because absent (zero) groups are omitted. */
+#define TANK_SNAPSHOT_WIRE_SIZE 28
 
 /* ---- Serialization helpers ---- */
 
@@ -210,17 +213,47 @@ void unpackInputPacket(const uint8_t *buf, InputPacket *pkt);
  * promotes a recorded input to an immediate send. */
 bool udpInputEdgeChanged(const InputPacket *prev, const InputPacket *cur);
 int packTankSnapshot(uint8_t *buf, const TankSnapshot *ts);
-int unpackTankSnapshot(const uint8_t *buf, TankSnapshot *ts);
+int unpackTankSnapshot(const uint8_t *buf, size_t avail, TankSnapshot *ts);
 int packShellSnapshot(uint8_t *buf, const ShellSnapshot *ss);
-void unpackShellSnapshot(const uint8_t *buf, ShellSnapshot *ss);
+int unpackShellSnapshot(const uint8_t *buf, size_t avail, ShellSnapshot *ss);
 int packTkExplosionSnapshot(uint8_t *buf, const TkExplosionSnapshot *tke);
-void unpackTkExplosionSnapshot(const uint8_t *buf, TkExplosionSnapshot *tke);
+int unpackTkExplosionSnapshot(const uint8_t *buf, size_t avail,
+                              TkExplosionSnapshot *tke);
 int packGameEvent(uint8_t *buf, const GameEvent *ev);
 int unpackGameEvent(const uint8_t *buf, GameEvent *ev);
 int packBaseSnapshot(uint8_t *buf, const BaseSnapshot *bs);
-void unpackBaseSnapshot(const uint8_t *buf, BaseSnapshot *bs);
+int unpackBaseSnapshot(const uint8_t *buf, size_t avail, BaseSnapshot *bs);
 int packPillSnapshot(uint8_t *buf, const PillSnapshot *ps);
-void unpackPillSnapshot(const uint8_t *buf, PillSnapshot *ps);
+int unpackPillSnapshot(const uint8_t *buf, size_t avail, PillSnapshot *ps);
+
+/* Fixed-layout headers that precede the hand-written data/loop of each
+ * map-transfer stream. Only the header is generated; the chunk loop,
+ * reassembly, and length validation around each stay hand-written. */
+typedef struct {
+    uint32_t resyncGen;
+    uint32_t mapSize;
+    uint16_t chunkIdx;
+    uint16_t chunkSize;
+} MapDownloadChunkHeader;
+typedef struct {
+    uint32_t offset;
+    uint16_t dataLen;
+} MapUploadChunkHeader;
+typedef struct {
+    uint8_t  seq;
+    uint32_t offset;
+    uint16_t len;
+} MapPreviewChunkHeader;
+
+int packMapDownloadChunkHeader(uint8_t *buf, const MapDownloadChunkHeader *h);
+int unpackMapDownloadChunkHeader(const uint8_t *buf, size_t avail,
+                                 MapDownloadChunkHeader *h);
+int packMapUploadChunkHeader(uint8_t *buf, const MapUploadChunkHeader *h);
+int unpackMapUploadChunkHeader(const uint8_t *buf, size_t avail,
+                               MapUploadChunkHeader *h);
+int packMapPreviewChunkHeader(uint8_t *buf, const MapPreviewChunkHeader *h);
+int unpackMapPreviewChunkHeader(const uint8_t *buf, size_t avail,
+                                MapPreviewChunkHeader *h);
 
 /* ---- Socket helpers ---- */
 

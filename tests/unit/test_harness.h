@@ -69,15 +69,28 @@ int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
 int run_lobby_brain_list_codec_and_apply(void);
 int run_command_codec_roundtrip_variants(void);
+int run_command_codec_lobby_claim_start(void);
+int run_lobby_claim_start_host_swaps_occupied(void);
+int run_lobby_claim_start_host_swap_into_none(void);
+int run_lobby_claim_start_non_host_occupied_rejected(void);
+int run_lobby_claim_start_non_host_other_slot_rejected(void);
+int run_lobby_claim_start_self_free_and_release(void);
+int run_lobby_claim_start_validation(void);
 int run_command_codec_cmdseq_slot(void);
 int run_command_codec_bounds_checks(void);
 int run_command_rejected_parks_name_codes(void);
 int run_command_rejected_ignores_other_slot(void);
 int run_command_rejected_clear_resets_both_fields(void);
+int run_shell_death_codec_roundtrip(void);
+int run_shell_death_culls_matching_predicted_shell(void);
+int run_shell_death_rejected_culls_without_impact(void);
 int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
 int run_lobby_add_bot_rejects_non_host_sender(void);
+int run_lobby_bot_count_counts_only_connected_bots(void);
+int run_lobby_maxbots_cap_boundary(void);
+int run_lobby_add_bot_rejects_when_at_maxbots(void);
 int run_transfer_host_promotes_target(void);
 int run_transfer_host_rejects_non_host_sender(void);
 int run_transfer_host_openhost_does_not_grant(void);
@@ -116,6 +129,15 @@ int run_map_field_clamps_evil(void);
 int run_map_field_clamps_passthrough(void);
 int run_map_field_clamps_angry_start(void);
 int run_map_reload_rollback(void);
+
+/* In-memory BMAP parser (test_map_read_memory.c). mapReadFromMemory
+ * must agree byte-for-byte with mapRead on valid maps, the WBN
+ * preview conversion (file bytes -> compressed -> preview) must
+ * round-trip, and malformed buffers must be rejected. */
+int run_map_read_memory_matches_file(void);
+int run_map_read_memory_handbuilt(void);
+int run_map_convert_file_to_compressed(void);
+int run_map_read_memory_rejects_garbage(void);
 int run_upload_busy_predicate(void);
 int run_upload_filename_safe(void);
 int run_lobby_time_minutes_valid(void);
@@ -196,6 +218,12 @@ int run_return_to_lobby_drops_wbn_keeps_identity(void);
 int run_wbn_lobby_update_deferred_during_rotation(void);
 int run_wbn_lobby_update_sends_when_not_rotating(void);
 
+/* No-lobby map-rotation round restart (test_maprotate_rotation.c). The
+ * restart re-arms the empty-server check and opens the WBN session-rotation
+ * window so the next round's map is never reported on the old server_key. */
+int run_maprotate_restarts_round_and_rearms(void);
+int run_maprotate_defers_wbn_update_until_key_rotated(void);
+
 /* Deferred WBN PLAYER_JOIN core (test_wbn_deferred_join.c). The join
  * event is held until the slot's identity is known for the session —
  * keyed on reauth, anonymous on grace expiry — and re-fires per round.
@@ -244,6 +272,29 @@ int run_lobby_reset_clears_host_slot(void);
  * points at open sea; the grow gate also failed to reject DEEP_SEA. */
 int run_treegrow_never_plants_on_deep_sea(void);
 int run_treegrow_reset_clears_stale_target(void);
+
+/* Incremental start-picker (test_starts_pick_incremental.c). The one-slot
+ * cluster / farthest-first selection that auto-assigns a lobby start on
+ * join, shared with startsAssignBatch's distance + validity logic. */
+int run_starts_pick_cluster_nearest_teammate(void);
+int run_starts_pick_farthest_when_solo(void);
+int run_starts_pick_none_when_all_taken(void);
+
+/* Batch start-assignment reservations (test_starts_assign_batch.c). The
+ * reservedStartIdx0 lock that honors lobby start picks at game start:
+ * reserved slots land exactly, unreserved slots fill the rest, stale and
+ * duplicate reservations degrade to ordinary placement, NULL is a no-op. */
+int run_starts_batch_reserved_lands_exact(void);
+int run_starts_batch_unreserved_avoids_reserved(void);
+int run_starts_batch_stale_reservation_falls_through(void);
+int run_starts_batch_duplicate_honors_first(void);
+int run_starts_batch_null_reservations_place_normally(void);
+/* Randomized solo placement, team clustering, and unanchored-team anchor
+ * jitter in startsAssignBatch; friendly-pill "ideal" rule in the open path. */
+int run_starts_batch_solo_random_seed(void);
+int run_starts_batch_teams_cluster_and_separate(void);
+int run_starts_batch_team_anchor_jitter_varies(void);
+int run_starts_open_ideal_friendly_pill_eligible(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
@@ -308,10 +359,90 @@ int run_stall_long_dry_advances(void);
 int run_input_catchup(void);
 int run_catchup_ignores_redundant_duplicates(void);
 
+/* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
+ * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
+ * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */
+int run_jitter_buffer_grow(void);
+int run_shell_projection(void);
+
+/* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
+ * pack -> unpack roundtrip over representative tank entries — field fidelity,
+ * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */
+int run_snapshot_compaction(void);
+
 /* Render-only error smoothing (test_error_smoothing.c): the offset
  * accumulate/decay/clamp/wrap math as pure functions, plus the
  * clientSimResetWorld zeroing. Always built. */
 int run_error_smoothing(void);
+
+/* In-process loopback transport tests (loopback_harness.c): real UDP
+ * client + server over localhost sockets, with seeded impairment on the
+ * client endpoint. Convergence-bounded, never exact-trace. */
+int run_loopback_join(void);
+int run_loopback_join_loss(void);
+int run_loopback_lobby_running_loss(void);
+int run_join_version_gate(void);
+
+/* Per-source-IP JOIN rate limit (test_join_rate_limit.c): a burst of valid
+ * JOINs from distinct loopback ephemeral ports (one source IP) draws at most
+ * JOIN_RL_BURST accepts, while a JOIN from a distinct source IP is unaffected. */
+int run_join_rate_limit(void);
+
+/* JOIN address-proof cookie handshake (test_cookie_handshake.c): a cookie-less
+ * JOIN draws a PACKET_JOIN_CHALLENGE and no slot; echoing the challenge cookie
+ * completes the join; a garbage cookie never completes; a cookie expires once
+ * the server's time-window advances (via the WB_COOKIE_WINDOW_OFFSET seam). */
+int run_cookie_handshake(void);
+
+/* Map-send amplification gate (test_map_amp_gate.c): a crafted JOIN over a raw
+ * loopback socket draws a JOIN_ACCEPT but no PACKET_MAP_DOWNLOAD until a
+ * MAP_ACK 0xFFFF ready round-trip is sent, after which chunks flow. */
+int run_map_amp_gate(void);
+
+/* Map-desync resync queue logic (test_map_resync.c): the resync cut empties
+ * the slot's map-event queue (ackedSeq == nextSeq); baked-in changes are not
+ * re-sent and a post-cut change delivers exactly once; a duplicate request
+ * while a resync is in flight does not re-cut (no event loss); the send gate
+ * yields zero map events while in progress and resumes after. */
+int run_map_resync_cut_and_deliver_once(void);
+int run_map_resync_duplicate_request_no_recut(void);
+int run_map_resync_send_gate_holds(void);
+int run_map_resync_stale_gen_rejected(void);
+
+/* Connection-id NAT-rebind migration (test_conn_migration.c): the pure
+ * connId match-and-rehome decision, plus an end-to-end loopback join that
+ * confirms the server stores a connId and inputs ride the new framing. */
+int run_conn_migration_rehome(void);
+int run_conn_migration_e2e(void);
+
+/* Exact lag-compensation viewTick (test_viewtick_rewind.c): the pure
+ * serverSimComputeLagCompTicks rewind math (real view age, ping fallback,
+ * clamp) and the client's displayed-tick stamp (second-newest applied
+ * snapshot serverTick, 0 until two are applied). */
+int run_viewtick_rewind(void);
+int run_viewtick_displayed_tick(void);
+
+/* Differential check of the generated flat-leaf-snapshot codecs against the
+ * hand-rolled packers (test_wire_corpus.c). The capture entry regenerates the
+ * golden fixtures from a loopback session and is run on demand only. */
+int run_wire_corpus(void);
+int run_wire_corpus_capture(void);
+
+/* packetTypeName mapping pin (test_packet_type_names.c): every PACKET_* maps to
+ * its exact debug string and an undefined type id resolves to "UNKNOWN". */
+int run_packet_type_names(void);
+
+/* mDNS LAN discovery (test_mdns_discovery.c): unicast-loopback round-trip of
+ * the advertiser builder + browser parse path, asserting the SRV port, the
+ * inLobby/locked flags, every TXT field, and two-instance resolution. */
+int run_mdns_discovery(void);
+
+/* Self-reported client platform pin (test_client_type.c): the JOIN-time
+ * bolo_detect_client_type() resolves to the build host's CLIENT_TYPE_*
+ * (the baseline harness normalizes this field away, so it's pinned here),
+ * and bolo_client_type_name() maps every enumerator to its exact name. */
+int run_client_type_matches_platform(void);
+int run_client_type_name_round_trips(void);
 
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and

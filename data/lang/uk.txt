@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS=Надсилання повідомлення {number} г
 STR_DLGNETINFO_TITLE=Мережева інформація
 STR_DLGNETINFO_SERVERPING=Пінг сервера: {number} мс
 STR_DLGNETINFO_STATUS=Статус:
-STR_DLGNETINFO_ERRORS=Мережеві помилки: {number}
+STR_DLGNETINFO_ERRORS=Мережеві помилки: {number}  ·  {number2} ресинхр.
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=Потрібен пароль
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=Пакетів/с: {number} вхід / {number2} в�
 STR_DLGNETINFO_KB_RATE=КБ/с: {string1} вхід / {string2} вихід
 STR_DLGNETINFO_LOSS=Втрата пакетів: {number}% ({number2}/{number3} за сек, {number4} за гру)
 STR_DLGNETINFO_RECONCILE=Реконсил.: {number}/с, сер. відх. {string1}px, макс {string2}px, згладж. {string3}px
+STR_KICK_MAP_DESYNC=Карта розсинхронізована із сервером — перепідключіться.
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=Копіювати seed
@@ -414,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=Пропустити карту
 STR_DLGLOBBY_CANCELSKIP=Скасувати пропуск
 STR_DLGLOBBY_VOTES={number}/{number2} голосів за пропуск
 STR_DLGLOBBY_CHAT=Чат
+STR_DLGLOBBY_CHAT_GENERAL=Загальний
+STR_DLGLOBBY_CHAT_TEAM=Команда
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=Пн
+STR_COMPASS_NE=ПнСх
+STR_COMPASS_E=Сх
+STR_COMPASS_SE=ПдСх
+STR_COMPASS_S=Пд
+STR_COMPASS_SW=ПдЗх
+STR_COMPASS_W=Зх
+STR_COMPASS_NW=ПнЗх
+STR_COMPASS_C=Ц
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=Не призначено
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(вільно)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} приєднався до {string1}.
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} покинув {string1}.
 STR_DLGLOBBY_READY=Готовий
 STR_DLGLOBBY_UNREADY=Не готовий
 STR_DLGLOBBY_BALANCE_TEAMS=Збалансувати команди
@@ -1317,6 +1341,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=відхилено
 STR_DLGLOBBY_REJECT_NOTHOST=дія лише для хоста
 STR_DLGLOBBY_REJECT_LOCKED=налаштування заблоковано сервером
 STR_DLGLOBBY_REJECT_INVALID=невірний запит
+STR_DLGLOBBY_REJECT_BOT_LIMIT=досягнуто ліміту ботів
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 Зміну лобі відхилено: {string1}
 
 # Лобі — Значок блокування (1364)
@@ -1427,3 +1452,13 @@ STR_DLGWBN_VIA_STEAM=через Steam
 STR_DLGLOBBY_MAKE_HOST=Зробити хостом
 STR_DLGLOBBY_MAKE_HOST_FMT=Зробити «{player}» хостом?
 STR_DLGLOBBY_HOST_CHANGED_FMT={player} тепер хост
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=Старт #{number}\nНатисніть, щоб вибрати; правий клік — призначити іншому
+STR_STARTPICK_TIP_FREE=Старт #{number}\nНатисніть, щоб вибрати цей старт
+STR_STARTPICK_TIP_HELD_HOST=Старт #{number} — {player}\nПеретягніть, щоб перемістити; правий клік — призначити іншому
+STR_STARTPICK_TIP_HELD=Старт #{number} — {player}
+STR_STARTPICK_YOU=ви
+STR_STARTPICK_SWAP_WITH=Поміняти цей старт із:
+STR_STARTPICK_ASSIGN_TO=Призначити старт:
+STR_STARTPICK_SLOT_FALLBACK=(слот)

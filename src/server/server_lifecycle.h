@@ -45,6 +45,8 @@ typedef struct {
   const char    *bindAddr;        /* "" or NULL = INADDR_ANY */
   const char    *password;        /* "" or NULL = no password */
   BYTE           maxPlayers;
+  BYTE           maxBots;          /* cap on AI bots addable in the lobby;
+                                      0 = no cap */
 
   bool           acceptRemoteClients; /* false = skip UDP bind, WBN, tracker
                                          and NAT portmap setup; serverInstanceTick
@@ -69,6 +71,11 @@ typedef struct {
                                      shutdown.  Hosted MP sets true;
                                      dedicated defaults false (admins
                                      control routers). */
+
+  bool           mdnsAdvertise;   /* advertise the game on the LAN via mDNS
+                                     (_winbolo._udp.local). Listen-server
+                                     hosts set true; dedicated defaults
+                                     false (opt in with -mdns). */
 
   /* Operator-controlled handling for client-pushed map uploads.
    * Zero-init = ALLOW + transport defaults (64 files / 8 MiB), so the GUI

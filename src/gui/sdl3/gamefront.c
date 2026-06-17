@@ -2217,6 +2217,10 @@ bool gameFrontSetupServer(void) {
   cfg.trackerPort         = gameFrontTrackerPort;
   cfg.useNatKeepalive     = gameFrontUseNatTraversal;
   cfg.useNatPortmap       = gameFrontUseUpnp;
+  /* Advertise on the LAN via mDNS. Left on for Local games too — LAN
+   * discovery is exactly what those want — so the LAN-only block below
+   * does not clear it. */
+  cfg.mdnsAdvertise       = true;
   cfg.lobbyEnabled        = true;
   cfg.emptyResetEnabled   = true;
   cfg.hasPassword         = (password[0] != '\0');

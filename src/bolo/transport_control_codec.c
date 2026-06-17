@@ -338,7 +338,8 @@ static EncodeResult encodePlayerName(const ControlEvent *evt,
  *   [header 8] [playerNum 1] [connected 1]
  *   If connected:
  *     [nameLen 1] [name nameLen bytes] [teamNumber 1] [ready 1]
- *     [isBot 1] [pingMs 2 BE] [cc 2] [clientType 1] [clientFlags 1] */
+ *     [isBot 1] [pingMs 2 BE] [cc 2] [clientType 1] [clientFlags 1]
+ *     [startIdx 1] */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySlotBody(const ControlEvent *evt,
@@ -352,7 +353,7 @@ static EncodeResult encodeLobbySlotBody(const ControlEvent *evt,
         nameLen = strnlen(slot->playerName, PACKET_MAX_PLAYER_NAME - 1);
     }
     const size_t needed = 1 + 1
-                          + (slot->connected ? (1 + nameLen + 1 + 1 + 1 + 2 + 2 + 1 + 1) : 0);
+                          + (slot->connected ? (1 + nameLen + 1 + 1 + 1 + 2 + 2 + 1 + 1 + 1) : 0);
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     buf[pos++] = evt->u.lobbySlot.playerNum;
@@ -372,6 +373,7 @@ static EncodeResult encodeLobbySlotBody(const ControlEvent *evt,
         buf[pos++] = (uint8_t)slot->countryCode[1];
         buf[pos++] = slot->clientType;
         buf[pos++] = slot->clientFlags;
+        buf[pos++] = slot->startIdx;
     }
     *outLen = pos;
     return ENCODE_OK;
@@ -1106,6 +1108,43 @@ static EncodeResult encodeBalanceFailed(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* Wire: [header 8] [fireTick 4 BE] [impactWX 2 BE] [impactWY 2 BE]
+ * [owner 1] [outcome 1] — 10-byte body. Unicast to the shell's owner;
+ * per-recipient filtering lives in udpClientDeliverControl (matching
+ * CTRL_COMMAND_REJECTED) so non-owner slots never see it. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeShellDeathBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    if (bufCap < 10) return ENCODE_OVERFLOW;
+    packU32(buf, evt->u.shellDeath.fireTick);
+    packU16(buf + 4, evt->u.shellDeath.impactWX);
+    packU16(buf + 6, evt->u.shellDeath.impactWY);
+    buf[8] = evt->u.shellDeath.owner;
+    buf[9] = evt->u.shellDeath.outcome;
+    *outLen = 10;
+    return ENCODE_OK;
+}
+
+static EncodeResult encodeShellDeath(const ControlEvent *evt,
+                                     const struct UdpServerClient *recipient,
+                                     uint8_t *buf, size_t bufCap,
+                                     size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_SHELL_DEATH, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeShellDeathBody(evt, recipient,
+                                          buf + PACKET_HEADER_SIZE,
+                                          bufCap - PACKET_HEADER_SIZE,
+                                          &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
 /* ================================================================
  * Decoders — body-only (the existing wire-packet dispatcher in
  * transportControlCodecDecoder already strips the PacketHeader
@@ -1247,7 +1286,7 @@ static bool decodeLobbySlotBody(const uint8_t *buf, size_t len,
         if (pos + 1 > len) return false;
         uint8_t nameLen = buf[pos++];
         if (nameLen > PACKET_MAX_PLAYER_NAME - 1) return false;
-        if (pos + nameLen + 9 > len) return false;
+        if (pos + nameLen + 10 > len) return false;
         if (nameLen > 0) memcpy(slot->playerName, buf + pos, nameLen);
         slot->playerName[nameLen] = '\0';
         pos += nameLen;
@@ -1263,6 +1302,7 @@ static bool decodeLobbySlotBody(const uint8_t *buf, size_t len,
         slot->clientFlags = buf[pos++];
         if (slot->clientType >= CLIENT_TYPE_COUNT)
             slot->clientType = CLIENT_TYPE_UNKNOWN;
+        slot->startIdx = buf[pos++];
     }
     return true;
 }
@@ -1540,6 +1580,19 @@ static bool decodeBalanceFailedBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeShellDeathBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    if (len < 10) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SHELL_DEATH;
+    outEvt->u.shellDeath.fireTick = unpackU32(buf);
+    outEvt->u.shellDeath.impactWX = unpackU16(buf + 4);
+    outEvt->u.shellDeath.impactWY = unpackU16(buf + 6);
+    outEvt->u.shellDeath.owner    = buf[8];
+    outEvt->u.shellDeath.outcome  = buf[9];
+    return true;
+}
+
 /* ================================================================
  * Encoder lookup — indexed by ControlEventType. Variants without
  * a wire form leave NULL slots (CTRL_MAP_DOWNLOAD_COMPLETE is
@@ -1576,6 +1629,7 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_COMMAND_REJECTED]   = encodeCommandRejected,
     [CTRL_ALLIANCE_RESET]     = encodeAllianceReset,
     [CTRL_BALANCE_FAILED]     = encodeBalanceFailed,
+    [CTRL_SHELL_DEATH]        = encodeShellDeath,
 };
 
 /* ================================================================
@@ -1614,6 +1668,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_COMMAND_REJECTED]      = encodeCommandRejectedBody,
     [CTRL_ALLIANCE_RESET]        = encodeAllianceResetBody,
     [CTRL_BALANCE_FAILED]        = encodeBalanceFailedBody,
+    [CTRL_SHELL_DEATH]           = encodeShellDeathBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -1645,6 +1700,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_COMMAND_REJECTED]      = decodeCommandRejectedBody,
     [CTRL_ALLIANCE_RESET]        = decodeAllianceResetBody,
     [CTRL_BALANCE_FAILED]        = decodeBalanceFailedBody,
+    [CTRL_SHELL_DEATH]           = decodeShellDeathBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {
@@ -1675,6 +1731,7 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_GAME_VOTE_STATE:      return decodeGameVoteStateBody;
         case PACKET_COMMAND_REJECTED:     return decodeCommandRejectedBody;
         case PACKET_BALANCE_FAILED:       return decodeBalanceFailedBody;
+        case PACKET_SHELL_DEATH:          return decodeShellDeathBody;
         default:                      return NULL;
     }
 }

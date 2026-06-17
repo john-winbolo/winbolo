@@ -121,6 +121,26 @@ void minimapRenderPixels(const MapPreview *view,
     }
 }
 
+/* Optional per-start ownership colouring for the lobby preview. 0-based,
+ * parallel to startsObj order: 0=unclaimed, 1=self, 2=ally, 3=enemy. Set
+ * only for the duration of a minimapFromCompressedOwned call (single-thread
+ * main-thread use); other callers leave it NULL and get the default colour. */
+static const uint8_t *s_startOwnerOverride      = NULL;
+static int            s_startOwnerOverrideCount = 0;
+
+/* Map an ownership code to a start-dot colour. Returns false for unclaimed
+ * (0) so the caller keeps the default (yellow). Self and allies are both
+ * green; the caller additionally draws a gray border ring under the self
+ * dot so it reads apart from allies. Enemies are red. */
+static bool minimapOwnerColor(uint8_t owner, uint8_t out[3]) {
+    switch (owner) {
+        case 1: out[0] = 0;   out[1] = 210; out[2] = 0;   return true; /* self  green (+gray border) */
+        case 2: out[0] = 0;   out[1] = 210; out[2] = 0;   return true; /* ally  green */
+        case 3: out[0] = 230; out[1] = 50;  out[2] = 50;  return true; /* enemy red */
+        default: return false;                                          /* free  yellow */
+    }
+}
+
 void minimapDrawObjects(uint8_t *pixels,
                         const MapPreview *view,
                         const uint8_t pillColor[3],
@@ -173,14 +193,39 @@ void minimapDrawObjects(uint8_t *pixels,
         for (i = 0; i < ss->numStarts; i++) {
             int sx = ss->item[i].x;
             int sy = ss->item[i].y;
+            /* Colour by ownership when an override is in effect, else the
+             * caller's default (yellow). */
+            uint8_t owner = (s_startOwnerOverride && i < s_startOwnerOverrideCount)
+                                ? s_startOwnerOverride[i] : 0;
+            const uint8_t *col = startColor;
+            uint8_t ownerCol[3];
+            if (minimapOwnerColor(owner, ownerCol)) {
+                col = ownerCol;
+            }
+            /* Your own start: a gray border ring (5x5) under the green so it
+             * stands out from allies (same green, no border). */
+            if (owner == 1) {
+                for (dy = -2; dy <= 2; dy++) {
+                    for (dx = -2; dx <= 2; dx++) {
+                        int nx = sx + dx, ny = sy + dy;
+                        if (nx >= 0 && nx < MINIMAP_SIZE && ny >= 0 && ny < MINIMAP_SIZE) {
+                            int idx = (ny * MINIMAP_SIZE + nx) * 4;
+                            pixels[idx]   = 105;
+                            pixels[idx+1] = 105;
+                            pixels[idx+2] = 105;
+                            pixels[idx+3] = 255;
+                        }
+                    }
+                }
+            }
             for (dy = -1; dy <= 1; dy++) {
                 for (dx = -1; dx <= 1; dx++) {
                     int nx = sx + dx, ny = sy + dy;
                     if (nx >= 0 && nx < MINIMAP_SIZE && ny >= 0 && ny < MINIMAP_SIZE) {
                         int idx = (ny * MINIMAP_SIZE + nx) * 4;
-                        pixels[idx]   = startColor[0];
-                        pixels[idx+1] = startColor[1];
-                        pixels[idx+2] = startColor[2];
+                        pixels[idx]   = col[0];
+                        pixels[idx+1] = col[1];
+                        pixels[idx+2] = col[2];
                         pixels[idx+3] = 255;
                     }
                 }
@@ -231,6 +276,23 @@ SDL_Texture *minimapFromCompressed(SDL_Renderer *renderer,
     tex = minimapCreateTexture(renderer, mp, bounds, 0);
 
     clientMapPreviewDestroy(mp);
+    return tex;
+}
+
+SDL_Texture *minimapFromCompressedOwned(SDL_Renderer *renderer,
+                                        const BYTE *compressedData, int dataLen,
+                                        MinimapBounds *bounds,
+                                        int *outPills, int *outBases, int *outStarts,
+                                        const uint8_t *startOwners, int ownerCount) {
+    SDL_Texture *tex;
+    /* Install the per-start ownership colours for the duration of the build,
+     * then clear so other callers (map editor, chooser) keep the default. */
+    s_startOwnerOverride      = startOwners;
+    s_startOwnerOverrideCount = startOwners ? ownerCount : 0;
+    tex = minimapFromCompressed(renderer, compressedData, dataLen, bounds,
+                                outPills, outBases, outStarts);
+    s_startOwnerOverride      = NULL;
+    s_startOwnerOverrideCount = 0;
     return tex;
 }
 

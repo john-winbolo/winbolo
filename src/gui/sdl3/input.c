@@ -68,6 +68,10 @@ static BYTE scrollKeyCount = 0;
 #define PILLVIEW_STEP_INTERVAL_MS  250
 static Uint32 pillViewCycleMs = 0;
 static Uint32 pillViewStepMs  = 0;
+/* Previous physical state of the pill-view key, for edge detection. Entering
+ * pill view requires a fresh key-down edge so a key still held after the
+ * player hit Tank View can't immediately re-enter and trap them. */
+static bool   pillViewKeyWasDown = FALSE;
 
 /* TRUE when pill view was entered via the controller view button: that mode
  * cycles pills on each press and snaps back to tank view on the first driving
@@ -144,14 +148,25 @@ static bool pillViewInputStep(ClientSim *cs, keyItems *setKeys) {
   bool inPill = clientSimIsInPillView(cs);
   Uint32 now  = SDL_GetTicks();
 
-  /* Pill-view toggle key: enters pill view when not already in it, else
-   * advances to the next pill. First press acts immediately, then repeats
-   * on the cycle cadence. */
-  bool cycle = KEY_DOWN(setKeys->kiPillView);
-  if (!cycle) {
+  /* Pill-view toggle key. While already in pill view, holding it auto-cycles
+   * through the pills on the cadence (a fresh press also steps immediately).
+   * When NOT in pill view, only a fresh key-down edge enters — a key still
+   * held after the player pressed Tank View must not re-enter, otherwise the
+   * held key fights the exit and traps them in pill view until the pill dies.
+   * Exit is the Tank View key (handled elsewhere). */
+  bool pillKeyDown = KEY_DOWN(setKeys->kiPillView);
+  bool keyEdge = pillKeyDown && !pillViewKeyWasDown;
+  pillViewKeyWasDown = pillKeyDown;
+  if (!pillKeyDown) {
     pillViewCycleMs = 0;
-  } else if (pillViewCycleMs == 0 ||
-             (now - pillViewCycleMs) >= PILLVIEW_CYCLE_INTERVAL_MS) {
+  } else if (inPill) {
+    if (keyEdge || pillViewCycleMs == 0 ||
+        (now - pillViewCycleMs) >= PILLVIEW_CYCLE_INTERVAL_MS) {
+      pillViewCycleMs = now;
+      clientSimPillView(cs, 0, 0);
+      inPill = clientSimIsInPillView(cs);
+    }
+  } else if (keyEdge) {
     pillViewCycleMs = now;
     clientSimPillView(cs, 0, 0);
     inPill = clientSimIsInPillView(cs);

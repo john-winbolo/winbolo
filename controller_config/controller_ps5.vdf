@@ -130,7 +130,8 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGame mine, Lay Mine, , "
+							"binding"		"game_action InGame build_cancel, Exit Build (No Build), , "
+							"binding"		"game_action InGame lock_heading, Lock Direction, , "
 						}
 					}
 				}
@@ -146,7 +147,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGame build_confirm, Send LGM (build at gunsight), , "
+							"binding"		"game_action InGame build_next, Next Build Type, , "
 						}
 					}
 				}
@@ -162,7 +163,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGame view_cycle, Cycle View, , "
+							"binding"		"game_action InGame build_prev, Previous Build Type, , "
 						}
 					}
 				}
@@ -218,7 +219,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGame fire, Fire, , "
+							"binding"		"game_action InGame build_cursor_toggle, Toggle Build Cursor, , "
 						}
 						"settings"
 						{
@@ -342,23 +343,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGame build_prev, Previous Build Type, , "
-						}
-					}
-				}
-				"disabled_activators"
-				{
-				}
-			}
-			"dpad_south"
-			{
-				"activators"
-				{
-					"Full_Press"
-					{
-						"bindings"
-						{
-							"binding"		"game_action InGame build_next, Next Build Type, , "
+							"binding"		"game_action InGame view_cycle, Cycle View, , "
 						}
 					}
 				}
@@ -422,7 +407,7 @@
 					{
 						"bindings"
 						{
-							"binding"		"game_action InGame build_cursor_toggle, Toggle Build Cursor, , "
+							"binding"		"game_action InGame build_confirm, Build, , "
 						}
 					}
 				}

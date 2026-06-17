@@ -92,6 +92,20 @@ void scrollSetSubTilePrecision(bool on) { g_scrollSubTilePrecision = on; }
 #define AUTOSCROLL_SETTLE_DIVISOR     6
 #define AUTOSCROLL_SETTLE_SNAP        8
 
+/* v1WithThreats: max view shift (tiles) the threat bias can add on top of
+ * unmodified v1 autoscroll, and how gently it eases in — sub-tile units per
+ * tick toward the target (256 = one tile, so 40 ≈ a tile every ~6 ticks). The
+ * offset is tracked at sub-tile resolution and its fractional part is handed to
+ * the renderer via subPos, so the camera glides instead of stepping a whole
+ * tile at a time. Both tunable. */
+#define V1THREATS_LATERAL_MAX         4
+#define V1THREATS_EASE_SUB_PER_TICK   40
+/* Tiles of view shift per net threat vote on an axis, clamped to LATERAL_MAX.
+ * Scaling by agreement (rather than normalising the dominant axis to MAX) keeps
+ * a lone or far threat from yanking the camera to a full corner: 1 vote -> 2
+ * tiles, 2 aligned -> the 4-tile cap. */
+#define V1THREATS_LATERAL_GAIN        2
+
 /* Facing unit vectors (sin/cos × 256), 16-step BRADIANS index.
  * Used for the forward-bias term and the parked-rear hemisphere test. */
 static const int kForwardX[16] = {
@@ -255,6 +269,12 @@ void scrollCreate(ScrollState *ss) {
   ss->peekReturnY = 0;
   for (i = 0; i < MAX_TANKS; i++) ss->seenThreatTank[i] = FALSE;
   for (i = 0; i < MAX_PILLS; i++) ss->seenThreatPill[i] = FALSE;
+  ss->threatLatX = 0;
+  ss->threatLatY = 0;
+  ss->threatLatDesiredX = 0;
+  ss->threatLatDesiredY = 0;
+  ss->threatLatSubX = 0;
+  ss->threatLatSubY = 0;
 }
 
 
@@ -274,6 +294,12 @@ void scrollSetScrollType(ScrollState *ss, bool isAuto) {
     ss->currentOffsetSubY = 0;
     ss->subPosX = 0;
     ss->subPosY = 0;
+    ss->threatLatX = 0;
+    ss->threatLatY = 0;
+    ss->threatLatDesiredX = 0;
+    ss->threatLatDesiredY = 0;
+    ss->threatLatSubX = 0;
+    ss->threatLatSubY = 0;
   }
 }
 
@@ -289,6 +315,12 @@ void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
   ss->currentOffsetSubY = 0;
   ss->subPosX = 0;
   ss->subPosY = 0;
+  ss->threatLatX = 0;
+  ss->threatLatY = 0;
+  ss->threatLatDesiredX = 0;
+  ss->threatLatDesiredY = 0;
+  ss->threatLatSubX = 0;
+  ss->threatLatSubY = 0;
   ss->initialized = FALSE;
 }
 
@@ -358,6 +390,209 @@ static bool scrollClassicAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue,
   }
 
   return returnValue;
+}
+
+/* v1WithThreats autoscroll — unmodified v1 (scrollClassicAutoScroll) with a
+ * single addition that is active ONLY while moving: a view shift toward the
+ * threats around you, so threats near your path stay framed instead of being
+ * cropped by the forward lead.
+ *
+ * It never alters v1's own framing. Each tick the offset applied last tick is
+ * removed, v1 runs on that recovered base exactly as it would standalone, then
+ * the offset is re-applied on top and the tank re-clamped on screen. With zero
+ * offset (no threats, balanced threats, or parked-and-settled) this is
+ * byte-for-byte v1.
+ *
+ * The bias is WORLD-relative, not facing-relative: each threat within the
+ * concern radius votes the sign of its world direction (sign-only, the same
+ * anti-jitter choice computeTargetOffset uses) and the summed votes pick the
+ * offset, normalised to at most V1THREATS_LATERAL_MAX. Because it never
+ * projects onto facing, simply steering the tank does not move the camera —
+ * the target only changes when a threat actually crosses to your other side.
+ * The target is recomputed on the recalc debounce with a one-tile dead-zone.
+ * The offset is tracked at sub-tile resolution and eased toward the target at
+ * V1THREATS_EASE_SUB_PER_TICK sub-units/tick; its whole part lands in the view
+ * tile and the fractional remainder goes to subPos, so the camera glides
+ * smoothly rather than lurching or stepping a tile at a time. */
+static bool scrollV1WithThreatsAutoScroll(ScrollState *ss, GameSim *sim,
+                                          BYTE *xValue, BYTE *yValue,
+                                          BYTE objectX, BYTE objectY,
+                                          BYTE gunsightX, BYTE gunsightY,
+                                          BYTE speed, TURNTYPE angle) {
+  BYTE myPlayer = sim->viewPlayer;
+  BYTE inX = *xValue, inY = *yValue;
+  int  baseX, baseY;
+  int  rx, ry;
+  int  totalSubX, totalSubY, vx, vy;
+  int  latSubX, latSubY;                /* eased sub-tile offset (trace) */
+  bool clamped = FALSE;
+
+  g_autoscrollTick++;
+
+  /* Recover the v1 base view by removing last tick's applied lateral offset. */
+  rx = (int)*xValue - (int)ss->threatLatX;
+  ry = (int)*yValue - (int)ss->threatLatY;
+  if (rx < 0) rx = 0; else if (rx > 255) rx = 255;
+  if (ry < 0) ry = 0; else if (ry > 255) ry = 255;
+  *xValue = (BYTE)rx;
+  *yValue = (BYTE)ry;
+
+  /* Run v1 unchanged on the recovered base. */
+  scrollClassicAutoScroll(ss, xValue, yValue, objectX, objectY,
+                          gunsightX, gunsightY, speed);
+  baseX = (int)*xValue;
+  baseY = (int)*yValue;
+
+  /* Recompute the desired lateral offset (moving only, debounced). */
+  if (speed == 0) {
+    ss->threatLatDesiredX = 0;
+    ss->threatLatDesiredY = 0;
+  } else if (ss->lastRecalcTick == 0 ||
+             (g_autoscrollTick - ss->lastRecalcTick) >= AUTOSCROLL_RECALC_DEBOUNCE) {
+    /* World-relative threat bias: sum the sign of each threat's world
+     * direction (NOT projected onto facing), so steering the tank never moves
+     * the camera — the target only shifts when a threat genuinely crosses to
+     * your other side. Sign-only is the same anti-jitter choice as
+     * computeTargetOffset. */
+    int sumX = 0, sumY = 0;
+    int nVote = 0;
+    int candX, candY, i;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+      int tx, ty, dx, dy;
+      if (!isThreatTank(sim, myPlayer, i, &tx, &ty)) continue;
+      dx = tx - (int)objectX; dy = ty - (int)objectY;
+      if (abs(dx) > AUTOSCROLL_CONCERN_RADIUS) continue;
+      if (abs(dy) > AUTOSCROLL_CONCERN_RADIUS) continue;
+      sumX += (dx > 0) - (dx < 0);
+      sumY += (dy > 0) - (dy < 0);
+      nVote++;
+    }
+    for (i = 1; i <= sim->pb->numPills; i++) {
+      pillbox p;
+      int dx, dy;
+      if (!isThreatPill(sim, myPlayer, i, &p)) continue;
+      dx = (int)p.x - (int)objectX; dy = (int)p.y - (int)objectY;
+      if (abs(dx) > AUTOSCROLL_CONCERN_RADIUS) continue;
+      if (abs(dy) > AUTOSCROLL_CONCERN_RADIUS) continue;
+      sumX += (dx > 0) - (dx < 0);
+      sumY += (dy > 0) - (dy < 0);
+      nVote++;
+    }
+
+    /* Scale by how many threats agree on a direction, clamped to LATERAL_MAX,
+     * rather than normalising the dominant axis to MAX. The latter sent even a
+     * single far threat to a full ±MAX corner and flipped corners as the tank
+     * drove past it; the clamped gain keeps a lone threat to a gentle nudge. */
+    candX = sumX * V1THREATS_LATERAL_GAIN;
+    candY = sumY * V1THREATS_LATERAL_GAIN;
+    if (candX >  V1THREATS_LATERAL_MAX) candX =  V1THREATS_LATERAL_MAX;
+    if (candX < -V1THREATS_LATERAL_MAX) candX = -V1THREATS_LATERAL_MAX;
+    if (candY >  V1THREATS_LATERAL_MAX) candY =  V1THREATS_LATERAL_MAX;
+    if (candY < -V1THREATS_LATERAL_MAX) candY = -V1THREATS_LATERAL_MAX;
+
+    /* Dead-zone: only commit a target that moved more than a tile, so a
+     * flickering vote (a threat hovering on an axis) doesn't keep restarting a
+     * slide. */
+    if (abs(candX - (int)ss->threatLatDesiredX) > AUTOSCROLL_DEAD_ZONE ||
+        abs(candY - (int)ss->threatLatDesiredY) > AUTOSCROLL_DEAD_ZONE) {
+      ss->threatLatDesiredX = (int8_t)candX;
+      ss->threatLatDesiredY = (int8_t)candY;
+    }
+    ss->lastRecalcTick = g_autoscrollTick;
+    /* What the recompute saw: votes, the summed world direction, the candidate
+     * target, and the (dead-zoned) target the offset will now ease toward. */
+    autoscrollLog("[t=%u] V1THR RECALC ang=%d votes=%d sum=(%d,%d) cand=(%d,%d) -> desired=(%d,%d)\n",
+                  (unsigned)g_autoscrollTick, (int)angle, nVote, sumX, sumY,
+                  candX, candY,
+                  (int)ss->threatLatDesiredX, (int)ss->threatLatDesiredY);
+  }
+
+  /* Ease the sub-tile lateral offset toward the target (desired tiles × 256) at
+   * a constant glide speed, so the camera slides smoothly across tile
+   * boundaries instead of stepping a whole tile at a time. */
+  {
+    int tgtSubX = (int)ss->threatLatDesiredX * AUTOSCROLL_SUB_PER_TILE;
+    int tgtSubY = (int)ss->threatLatDesiredY * AUTOSCROLL_SUB_PER_TILE;
+    int dX = tgtSubX - (int)ss->threatLatSubX;
+    int dY = tgtSubY - (int)ss->threatLatSubY;
+    if (abs(dX) <= V1THREATS_EASE_SUB_PER_TICK) ss->threatLatSubX = (int16_t)tgtSubX;
+    else ss->threatLatSubX += (int16_t)((dX > 0 ? 1 : -1) * V1THREATS_EASE_SUB_PER_TICK);
+    if (abs(dY) <= V1THREATS_EASE_SUB_PER_TICK) ss->threatLatSubY = (int16_t)tgtSubY;
+    else ss->threatLatSubY += (int16_t)((dY > 0 ? 1 : -1) * V1THREATS_EASE_SUB_PER_TICK);
+  }
+  latSubX = (int)ss->threatLatSubX;
+  latSubY = (int)ss->threatLatSubY;
+
+  /* Apply on top of the v1 base in sub-tile units, then keep the tank on screen
+   * and the view on the map — BOTH clamped in sub-tile units, not whole tiles.
+   * A whole-tile clamp here made the camera bounce: when the desired offset
+   * pushed the tank toward an edge, the view snapped a full tile back past the
+   * edge, the ease climbed to the edge again over a few ticks, and it snapped
+   * back again — a ~1-tile sawtooth. Clamping to the exact sub-tile limit lets
+   * the view rest against the edge instead. The whole part lands in *xValue;
+   * the fractional remainder goes to subPos for the renderer to glide (snapped
+   * to whole tiles when sub-tile precision is off). Store both the surviving
+   * sub offset and its whole part so next tick's recovery and ease are exact. */
+  totalSubX = baseX * AUTOSCROLL_SUB_PER_TILE + latSubX;
+  totalSubY = baseY * AUTOSCROLL_SUB_PER_TILE + latSubY;
+  {
+    int loSubX  = ((int)objectX - MAIN_SCREEN_SIZE_X + 1) * AUTOSCROLL_SUB_PER_TILE;
+    int hiSubX  = ((int)objectX - 1)                      * AUTOSCROLL_SUB_PER_TILE;
+    int loSubY  = ((int)objectY - MAIN_SCREEN_SIZE_Y + 1) * AUTOSCROLL_SUB_PER_TILE;
+    int hiSubY  = ((int)objectY - 1)                      * AUTOSCROLL_SUB_PER_TILE;
+    int maxSubX = (255 - MAIN_SCREEN_SIZE_X)              * AUTOSCROLL_SUB_PER_TILE;
+    int maxSubY = (255 - MAIN_SCREEN_SIZE_Y)              * AUTOSCROLL_SUB_PER_TILE;
+
+    /* Tank on screen. */
+    if      (totalSubX < loSubX) { totalSubX = loSubX; clamped = TRUE; }
+    else if (totalSubX > hiSubX) { totalSubX = hiSubX; clamped = TRUE; }
+    if      (totalSubY < loSubY) { totalSubY = loSubY; clamped = TRUE; }
+    else if (totalSubY > hiSubY) { totalSubY = hiSubY; clamped = TRUE; }
+    /* View on map (wins at map edges, exactly as the whole-tile clamp did). */
+    if (totalSubX < 0) totalSubX = 0; else if (totalSubX > maxSubX) totalSubX = maxSubX;
+    if (totalSubY < 0) totalSubY = 0; else if (totalSubY > maxSubY) totalSubY = maxSubY;
+  }
+  vx = totalSubX / AUTOSCROLL_SUB_PER_TILE;
+  vy = totalSubY / AUTOSCROLL_SUB_PER_TILE;
+
+  *xValue = (BYTE)vx;
+  *yValue = (BYTE)vy;
+  if (g_scrollSubTilePrecision) {
+    ss->subPosX = (int16_t)(totalSubX - vx * AUTOSCROLL_SUB_PER_TILE);
+    ss->subPosY = (int16_t)(totalSubY - vy * AUTOSCROLL_SUB_PER_TILE);
+  } else {
+    ss->subPosX = 0;
+    ss->subPosY = 0;
+  }
+
+  ss->threatLatX    = (int8_t)(vx - baseX);
+  ss->threatLatY    = (int8_t)(vy - baseY);
+  ss->threatLatSubX = (int16_t)(totalSubX - baseX * AUTOSCROLL_SUB_PER_TILE);
+  ss->threatLatSubY = (int16_t)(totalSubY - baseY * AUTOSCROLL_SUB_PER_TILE);
+
+  /* Per-tick trace. Read left to right to see where movement comes from:
+   *   in      = view handed in (carries last tick's whole-tile offset)
+   *   recov   = base after removing that offset (what v1 should see)
+   *   v1base  = view after running unmodified v1 on recov (v1's own move)
+   *   des     = lateral target tiles for the current threats
+   *   latSub  = eased sub-tile offset this tick (256 = one tile)
+   *   out     = final view tile written; subPos = fractional glide remainder
+   *   survLat = whole-tile offset that survived the clamp
+   * A jump shows up as a big v1base step (v1's doing) or des changing (threats
+   * actually moved); CLAMPED means the edge ate part of the offset. */
+  autoscrollLog("[t=%u] V1THR spd=%u ang=%d in=(%u,%u) recov=(%d,%d) v1base=(%d,%d) "
+                "des=(%d,%d) latSub=(%d,%d) out=(%u,%u) subPos=(%d,%d) survLat=(%d,%d)%s\n",
+                (unsigned)g_autoscrollTick, (unsigned)speed, (int)angle,
+                (unsigned)inX, (unsigned)inY, rx, ry, baseX, baseY,
+                (int)ss->threatLatDesiredX, (int)ss->threatLatDesiredY,
+                latSubX, latSubY,
+                (unsigned)*xValue, (unsigned)*yValue,
+                (int)ss->subPosX, (int)ss->subPosY,
+                (int)ss->threatLatX, (int)ss->threatLatY,
+                clamped ? " CLAMPED" : "");
+
+  return (*xValue != inX || *yValue != inY);
 }
 
 /* Ease one view axis (tile + sub-tile remainder) toward a target tile with a
@@ -614,6 +849,37 @@ bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYT
     } else if (speed > 0) {
       returnValue = scrollClassicAutoScroll(ss, xValue, yValue, objectX, objectY,
                                             gunsightX, gunsightY, speed);
+    } else {
+      returnValue = FALSE;
+    }
+  } else if (g_scrollMechanism == SCROLL_MECH_V1_WITH_THREATS) {
+    /* v1 autoscroll plus a moving-only sideways bias toward the side with
+     * threats. Manual panning drops the lateral offset so the recovered v1
+     * base stays correct. Parked with no offset = does nothing (exactly v1);
+     * a residual offset is allowed to unwind even while parked.
+     *
+     * When autoscroll is switched off in the menu (ss->autoScroll == FALSE)
+     * this reverts to classic manual scrolling — manual keys plus a forward-
+     * motion edge nudge, no nudge while parked — so the toggle actually
+     * disables autoscroll. scrollSetScrollType has already zeroed the lateral
+     * offset on the way off, so there is nothing left to unwind here. */
+    if (manual == TRUE) {
+      ss->threatLatX = 0;
+      ss->threatLatY = 0;
+      ss->threatLatDesiredX = 0;
+      ss->threatLatDesiredY = 0;
+      ss->threatLatSubX = 0;
+      ss->threatLatSubY = 0;
+      returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
+    } else if (ss->autoScroll == FALSE) {
+      if (speed > 0) {
+        returnValue = scrollNoAutoScroll(ss, xValue, yValue, objectX, objectY, angle);
+      } else {
+        returnValue = FALSE;
+      }
+    } else if (speed > 0 || ss->threatLatSubX != 0 || ss->threatLatSubY != 0) {
+      returnValue = scrollV1WithThreatsAutoScroll(ss, sim, xValue, yValue, objectX, objectY,
+                                                  gunsightX, gunsightY, speed, angle);
     } else {
       returnValue = FALSE;
     }

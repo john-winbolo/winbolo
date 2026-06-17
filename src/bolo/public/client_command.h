@@ -69,7 +69,8 @@ typedef enum {
     CMD_BALANCE_REQUEST,
     CMD_BALANCE_APPLY,
     CMD_BALANCE_DISMISS,
-    CMD_WBN_REAUTH
+    CMD_WBN_REAUTH,
+    CMD_LOBBY_CLAIM_START
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -96,7 +97,12 @@ typedef enum {
     CMD_REJECT_NAME_RESERVED_SUFFIX,
     CMD_REJECT_NAME_MIXED_SCRIPTS,
     CMD_REJECT_NAME_INVALID,
-    CMD_REJECT_NAME_TAKEN
+    CMD_REJECT_NAME_TAKEN,
+    /* Lobby add-bot refused because the server's -maxbots cap is
+     * already reached. Surfaced to the host via the reject toast as a
+     * dedicated "bot limit reached" line rather than the generic
+     * CMD_REJECT_INVALID. */
+    CMD_REJECT_BOT_LIMIT
 } CmdResult;
 
 /* CMD_TEAM_SET — set the team number for a lobby slot. Sender must
@@ -106,6 +112,15 @@ typedef struct {
     uint8_t slot;
     uint8_t team;
 } CmdTeamSet;
+
+/* CMD_LOBBY_CLAIM_START — set a slot's reserved start. targetSlot ==
+ * senderSlot is a self-claim (target start must be free or 0xFF release);
+ * targetSlot != senderSlot is host-only (lobbyClientMayEdit) and swaps when
+ * the target start is occupied. startIdx is 1-based (0xFF = release). */
+typedef struct {
+    uint8_t targetSlot;
+    uint8_t startIdx;
+} CmdLobbyClaimStart;
 
 /* CMD_READY — toggle ready state for the sender's slot. The wire
  * carries a playerNum byte for backward compatibility but the
@@ -159,6 +174,16 @@ typedef struct {
     uint16_t bodyLen;
     char     body[PACKET_MAX_CHAT_MESSAGE];
 } CmdChat;
+
+/* Team-addressed chat. destPlayer carries the target team in a bounded
+ * range above the slot/sentinel space: CHAT_DEST_TEAM_BASE + teamNumber,
+ * team 1..16 -> 0x81..0x90. Use the bounded predicate, NOT (d & 0x80) —
+ * 0x80 aliases the 0xFF broadcast sentinel and would swallow broadcast
+ * chat. Every routing site checks 0xFF (broadcast) first, then
+ * CHAT_DEST_IS_TEAM, then slot unicast. */
+#define CHAT_DEST_TEAM_BASE 0x80
+#define CHAT_DEST_IS_TEAM(d) ((d) >= 0x81 && (d) <= 0x90)
+#define CHAT_DEST_TEAM_OF(d) ((uint8_t)((d) - CHAT_DEST_TEAM_BASE))
 
 /* CMD_ALLIANCE_REQUEST — sender wants to ally with toPlayer.
  * Sender is senderSlot (the wire's fromPlayer byte is vestigial). */
@@ -337,6 +362,7 @@ typedef struct ClientCommand {
         CmdBalanceApply        balanceApply;
         CmdBalanceDismiss      balanceDismiss;
         CmdWbnReauth           wbnReauth;
+        CmdLobbyClaimStart     lobbyClaimStart;
     } u;
 } ClientCommand;
 

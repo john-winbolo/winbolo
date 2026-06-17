@@ -97,7 +97,7 @@ STR_DLGMSG_SENDPLAYERS={number} 人のプレイヤーにメッセージを送信
 STR_DLGNETINFO_TITLE=ネットワーク情報
 STR_DLGNETINFO_SERVERPING=サーバーPing: {number} ms
 STR_DLGNETINFO_STATUS=ステータス:
-STR_DLGNETINFO_ERRORS=ネットエラー: {number}
+STR_DLGNETINFO_ERRORS=ネットエラー: {number}  ·  再同期 {number2} 回
 
 # Password dialog
 STR_DLGPASSWORD_TITLE=パスワードが必要です
@@ -270,6 +270,7 @@ STR_DLGNETINFO_PACKETS_RATE=パケット/秒: {number} 受信 / {number2} 送信
 STR_DLGNETINFO_KB_RATE=KB/秒: {string1} 受信 / {string2} 送信
 STR_DLGNETINFO_LOSS=パケット損失: {number}% ({number2}/{number3} 今秒, {number4} ゲーム計)
 STR_DLGNETINFO_RECONCILE=予測補正: {number}/秒, 誤差平均 {string1}px, 最大 {string2}px, 平滑化 {string3}px
+STR_KICK_MAP_DESYNC=マップがサーバーと同期していません — 再接続してください。
 
 # Game Info panel additions
 STR_DLGGAMEINFO_COPYSEED=シードをコピー
@@ -414,6 +415,29 @@ STR_DLGLOBBY_SKIPMAP=マップをスキップ
 STR_DLGLOBBY_CANCELSKIP=スキップをキャンセル
 STR_DLGLOBBY_VOTES={number}/{number2} 票でスキップ
 STR_DLGLOBBY_CHAT=チャット
+STR_DLGLOBBY_CHAT_GENERAL=一般
+STR_DLGLOBBY_CHAT_TEAM=チーム
+
+# Compass octant labels for a lobby player's reserved map start
+STR_COMPASS_N=北
+STR_COMPASS_NE=北東
+STR_COMPASS_E=東
+STR_COMPASS_SE=南東
+STR_COMPASS_S=南
+STR_COMPASS_SW=南西
+STR_COMPASS_W=西
+STR_COMPASS_NW=北西
+STR_COMPASS_C=中
+
+# "Unassigned" entry in the lobby player-list start combo (release)
+STR_DLGLOBBY_START_UNASSIGNED=未割り当て
+
+# Map-preview label for a start with no reservation (a click target)
+STR_DLGLOBBY_START_OPEN=(空き)
+
+# Team-chat system lines when a player joins/leaves the local team
+STR_DLGLOBBY_TEAM_JOINED_FMT={player} が {string1} に参加しました。
+STR_DLGLOBBY_TEAM_LEFT_FMT={player} が {string1} から退出しました。
 STR_DLGLOBBY_READY=準備完了
 STR_DLGLOBBY_UNREADY=準備解除
 STR_DLGLOBBY_BALANCE_TEAMS=チームバランス
@@ -1320,6 +1344,7 @@ STR_DLGLOBBY_REJECT_DEFAULT=拒否されました
 STR_DLGLOBBY_REJECT_NOTHOST=ホストのみの操作
 STR_DLGLOBBY_REJECT_LOCKED=サーバーにより設定がロックされています
 STR_DLGLOBBY_REJECT_INVALID=無効なリクエスト
+STR_DLGLOBBY_REJECT_BOT_LIMIT=ボット数の上限に達しました
 STR_DLGLOBBY_REJECT_FMT=\xe2\x9a\xa0 ロビーの変更が拒否されました: {string1}
 
 # Lock badge fallback
@@ -1427,3 +1452,13 @@ STR_DLGWBN_STATS_TOURN=トーナメント
 STR_DLGWBN_STATS_WINS=勝利:
 STR_DLGWBN_UNRANKED=ランクなし
 STR_DLGWBN_VIA_STEAM=Steam 経由
+
+# Map-preview start picker
+STR_STARTPICK_TIP_FREE_HOST=スタート #{number}\nクリックで選択、右クリックで他のプレイヤーに割り当て
+STR_STARTPICK_TIP_FREE=スタート #{number}\nクリックでこのスタートを選択
+STR_STARTPICK_TIP_HELD_HOST=スタート #{number} - {player}\nドラッグで移動、右クリックで他のプレイヤーに割り当て
+STR_STARTPICK_TIP_HELD=スタート #{number} - {player}
+STR_STARTPICK_YOU=あなた
+STR_STARTPICK_SWAP_WITH=このスタートを交換する相手：
+STR_STARTPICK_ASSIGN_TO=スタートを割り当てる相手：
+STR_STARTPICK_SLOT_FALLBACK=（スロット）
