@@ -83,6 +83,7 @@ static bool browserVersionAllowed(const char *ver) {
 struct ServerEntry {
     /* From tracker/broadcast */
     char address[FILENAME_MAX];
+    char hostName[256];   /* reverse-DNS name of address; "" until resolved / on PTR miss */
     unsigned short port;
     char mapName[MAP_STR_SIZE];
     char version[FILENAME_MAX];
@@ -156,6 +157,7 @@ struct PingResult {
     WORD freePills;
     WORD freeBases;
     WORD numPlayers;
+    char hostName[256];
 };
 
 /* Resolve hostname to IP (if needed) and look up country via GeoIP database */
@@ -186,6 +188,27 @@ static void resolveCountryCode(ServerEntry &e) {
     geoLookupCountry(ipStr, e.countryCode);
 }
 
+/* Reverse-resolve a server address (usually a bare IP) to a hostname.
+ * Returns true and fills hostOut on success; leaves hostOut untouched on failure
+ * (including no PTR record, via NI_NAMEREQD). */
+static bool resolveHostName(const char *address, char *hostOut, size_t hostOutSize) {
+    struct addrinfo hints = {}, *res = nullptr;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    if (getaddrinfo(address, nullptr, &hints, &res) != 0 || !res) {
+        return false;
+    }
+    char host[NI_MAXHOST];
+    int rc = getnameinfo(res->ai_addr, (socklen_t)res->ai_addrlen,
+                         host, sizeof(host), nullptr, 0, NI_NAMEREQD);
+    freeaddrinfo(res);
+    if (rc != 0) {
+        return false;
+    }
+    SDL_strlcpy(hostOut, host, hostOutSize);
+    return true;
+}
+
 /* Send an info request to a server and measure RTT.
  * Thin wrapper around discoveryPingServer; the bolo helper owns the
  * socket and the wire-format parsing. */
@@ -196,6 +219,11 @@ static PingResult pingServer(const PingWork &work) {
     res.freePills = 0;
     res.freeBases = 0;
     res.numPlayers = 0;
+    res.hostName[0] = '\0';
+
+    /* Reverse-DNS the address regardless of whether the UDP info-ping
+     * answers, so even unresponsive servers get a hostname. */
+    resolveHostName(work.address, res.hostName, sizeof(res.hostName));
 
     DiscoveryPingResult dpr;
     if (discoveryPingServer(work.address, work.port, &dpr)) {
@@ -652,6 +680,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 std::lock_guard<std::mutex> slock(serversMtx);
                 if (pr.index >= 0 && pr.index < (int)servers.size()) {
                     servers[pr.index].pingMs = pr.pingMs;
+                    /* Copy the reverse-DNS name only when it resolved, so a PTR
+                     * miss never clobbers a previously shown name/IP. Applies to
+                     * both the LAN and Internet paths. */
+                    if (pr.hostName[0] != '\0') {
+                        SDL_strlcpy(servers[pr.index].hostName, pr.hostName,
+                                    sizeof(servers[pr.index].hostName));
+                    }
                     /* Internet path: counts come from the WinBolo.net JSON and
                      * must not be overwritten by the latency ping (a server that
                      * doesn't answer the info-ping would zero them). LAN has no
@@ -981,7 +1016,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     ImGui::TableNextColumn();
                     {
                         char label[256];
-                        SDL_snprintf(label, sizeof(label), "%s:%u", e.address, e.port);
+                        SDL_snprintf(label, sizeof(label), "%s:%u",
+                                     e.hostName[0] != '\0' ? e.hostName : e.address, e.port);
                         bool isSelected = (selectedItem == i);
                         if (ImGui::Selectable(label, isSelected,
                                               ImGuiSelectableFlags_SpanAllColumns |
