@@ -1682,6 +1682,8 @@ static const LangEntry langTable[] = {
     {1799, "Auto-locks on game start"},
     {1800, "Spectate"},
     {1801, "Auto-refresh"},
+    {1802, "Lobby"},
+    {1803, "In Game"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

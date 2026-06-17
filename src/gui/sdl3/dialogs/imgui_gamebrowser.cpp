@@ -348,6 +348,10 @@ extern "C" void broadcastServerCallback(const DiscoveryServer *server, void *use
 static SDL_Texture *s_refreshIcon = nullptr;
 static bool s_refreshIconAttempted = false;
 
+/* ---- Lock icon (loaded from SVG, white so it can be tinted per state) ---- */
+static SDL_Texture *s_lockIcon = nullptr;
+static bool s_lockIconAttempted = false;
+
 extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Copy title — the caller passes langGetText() which returns a shared
      * static buffer that gets overwritten by any later langGetText() call
@@ -769,6 +773,32 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[GameBrowser] Refresh icon loaded: %s", s_refreshIcon ? "yes" : "no");
             }
 
+            /* Load lock icon on first use (white mask so it can be tinted per state) */
+            if (!s_lockIcon && !s_lockIconAttempted) {
+                s_lockIconAttempted = true;
+                int iconSize = (int)(24.0f * s);
+                if (iconSize < 16) iconSize = 16;
+
+                /* Try several path candidates */
+                const char *candidates[] = {
+                    "data/ui/lock.svg",
+                    NULL /* filled in below with basePath variant */
+                };
+                char basePathBuf[FILENAME_MAX] = {};
+                const char *base = SDL_GetBasePath();
+                if (base) {
+                    SDL_snprintf(basePathBuf, sizeof(basePathBuf), "%sdata/ui/lock.svg", base);
+                    candidates[1] = basePathBuf;
+                }
+                for (int i = 0; i < 2 && !s_lockIcon; i++) {
+                    if (candidates[i]) {
+                        WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[GameBrowser] Trying lock icon: %s", candidates[i]);
+                        s_lockIcon = imguiLoadSvgIconWhite(renderer, candidates[i], iconSize);
+                    }
+                }
+                WB_LOG_DEBUG(WB_LOG_CAT_ASSET, "[GameBrowser] Lock icon loaded: %s", s_lockIcon ? "yes" : "no");
+            }
+
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.75f, 0.3f, 1.0f));
             ImGui::SetWindowFontScale(1.3f);
             ImGui::Text("%s", title);
@@ -922,7 +952,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         if (ImGui::BeginTable("##ServerTable", 10, tableFlags, ImVec2(0, tableH))) {
             /* Column setup */
             ImGui::TableSetupScrollFreeze(0, 1); /* freeze header row */
-            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 28.0f);  /* St */
+            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 24.0f);  /* lock */
+            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 62.0f);  /* St */
             ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_SERVER),  ImGuiTableColumnFlags_WidthStretch, 0.0f);  /* Server / Map */
             ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 24.0f);  /* flag */
             ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_PLAYERS), ImGuiTableColumnFlags_WidthFixed, 90.0f);
@@ -930,8 +961,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_PILLS),   ImGuiTableColumnFlags_WidthFixed, 55.0f);
             ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_TYPE),    ImGuiTableColumnFlags_WidthFixed, 80.0f);
             ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_VER),     ImGuiTableColumnFlags_WidthFixed, 45.0f);
-            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_PING),    ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 50.0f);
-            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 24.0f);  /* lock */
+            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_PING),    ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 50.0f);  /* RTT */
             ImGui::TableHeadersRow();
 
             /* Sort */
@@ -943,14 +973,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     std::sort(servers.begin(), servers.end(), [col, asc](const ServerEntry &a, const ServerEntry &b) {
                         int cmp = 0;
                         switch (col) {
-                        case 1: cmp = strcmp(a.hostName[0] ? a.hostName : a.address,
+                        case 2: cmp = strcmp(a.hostName[0] ? a.hostName : a.address,
                                              b.hostName[0] ? b.hostName : b.address); break;
-                        case 3: cmp = (int)a.numPlayers - (int)b.numPlayers; break;
-                        case 4: cmp = (int)a.freeBases - (int)b.freeBases; break;
-                        case 5: cmp = (int)a.freePills - (int)b.freePills; break;
-                        case 6: cmp = (int)a.game - (int)b.game; break;
-                        case 7: cmp = strcmp(a.version, b.version); break;
-                        case 8: {
+                        case 4: cmp = (int)a.numPlayers - (int)b.numPlayers; break;
+                        case 5: cmp = (int)a.freeBases - (int)b.freeBases; break;
+                        case 6: cmp = (int)a.freePills - (int)b.freePills; break;
+                        case 7: cmp = (int)a.game - (int)b.game; break;
+                        case 8: cmp = strcmp(a.version, b.version); break;
+                        case 9: {
                             int pa = (a.pingMs >= 0) ? a.pingMs : 99999;
                             int pb = (b.pingMs >= 0) ? b.pingMs : 99999;
                             cmp = pa - pb;
@@ -977,14 +1007,45 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                     ImGui::TableNextRow();
 
-                    /* St — lobby vs in-game marker (placeholder letter until icons land) */
+                    /* Lock — most-restrictive marker first (icon when loaded, tinted by state) */
+                    ImGui::TableNextColumn();
+                    {
+                        bool showLock = false;
+                        ImVec4 lockTint;
+                        const char *lockTip = nullptr;
+                        const char *lockLetter = nullptr;
+                        if (!e.allowNewPlayers) {
+                            showLock = true;
+                            lockTint = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+                            lockTip = langGetText(STR_DLGBROWSER_LOCK_NONEWPLAYERS);
+                            lockLetter = "N";
+                        } else if (e.password) {
+                            showLock = true;
+                            lockTint = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
+                            lockTip = langGetText(STR_DLGBROWSER_LOCK_PASSWORD);
+                            lockLetter = "P";
+                        }
+                        if (showLock) {
+                            if (s_lockIcon) {
+                                float h = ImGui::GetTextLineHeight();
+                                /* ImGui 1.91.9+ removed tint_col from Image(); ImageWithBg
+                                 * carries it (transparent bg, tint as the last arg). */
+                                ImGui::ImageWithBg((ImTextureID)s_lockIcon, ImVec2(h, h),
+                                                   ImVec2(0, 0), ImVec2(1, 1),
+                                                   ImVec4(0, 0, 0, 0), lockTint);
+                            } else {
+                                ImGui::TextColored(lockTint, "%s", lockLetter);
+                            }
+                            ImGui::SetItemTooltip("%s", lockTip);
+                        }
+                    }
+
+                    /* St — green "Lobby" / yellow "In Game" */
                     ImGui::TableNextColumn();
                     if (e.inLobby) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "L");
-                        ImGui::SetItemTooltip("%s", langGetText(STR_DLGBROWSER_FILTER_INLOBBY));
+                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "%s", langGetText(STR_DLGBROWSER_ST_LOBBY));
                     } else {
-                        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "G");
-                        ImGui::SetItemTooltip("%s", langGetText(STR_DLGBROWSER_FILTER_INGAME));
+                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "%s", langGetText(STR_DLGBROWSER_ST_INGAME));
                     }
 
                     /* Server / Map — host line (selectable) + map line in one cell */
@@ -1027,11 +1088,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             ImGui::TextUnformatted(label);
                             ImGui::Separator();
 
-                            /* AI level (the Type column only flags its presence) */
-                            if (e.ai != aiNone) {
-                                int aiStr = STR_YES;
-                                if (e.ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
-                                else if (e.ai == aiFull)    aiStr = STR_DLGGAMEINFO_FULLADV;
+                            /* AI level — always shown ("No" when off) since the
+                             * Type column drops AI entirely when it's absent. */
+                            {
+                                int aiStr = STR_NO;
+                                if      (e.ai == aiYes)          aiStr = STR_YES;
+                                else if (e.ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
+                                else if (e.ai == aiFull)         aiStr = STR_DLGGAMEINFO_FULLADV;
                                 SDL_snprintf(buf, sizeof(buf), "%s %s",
                                              langGetText(STR_DLGGAMEINFO_AILABEL),
                                              langGetText(aiStr));
@@ -1150,16 +1213,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         ImGui::TextDisabled("...");
                     } else {
                         ImGui::TextDisabled("--");
-                    }
-
-                    /* lock — most-restrictive marker first (placeholder letters) */
-                    ImGui::TableNextColumn();
-                    if (!e.allowNewPlayers) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "N");
-                        ImGui::SetItemTooltip("%s", langGetText(STR_DLGBROWSER_LOCK_NONEWPLAYERS));
-                    } else if (e.password) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "P");
-                        ImGui::SetItemTooltip("%s", langGetText(STR_DLGBROWSER_LOCK_PASSWORD));
                     }
                 }
             }
@@ -1449,6 +1502,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Destroy refresh icon texture */
     if (s_refreshIcon) { SDL_DestroyTexture(s_refreshIcon); s_refreshIcon = nullptr; }
     s_refreshIconAttempted = false;
+    if (s_lockIcon) { SDL_DestroyTexture(s_lockIcon); s_lockIcon = nullptr; }
+    s_lockIconAttempted = false;
 
     /* Tear down ImGui */
     dialogDismissKeyboard(window);
