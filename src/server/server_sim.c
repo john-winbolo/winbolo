@@ -3371,6 +3371,7 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.ranked          = sim->ranked ? true : false;
     info.allowNewPlayers = sim->allowNewPlayers ? true : false;
     info.autoLock        = sim->autoLockOnGameStart ? true : false;
+    info.hasLobby        = serverSimIsLobbyEnabled(sim);
     info.timeLimit       = serverSimGetTimeLimit(sim) ? true : false;
     info.timeMinutes     = serverSimGetTimeMinutes(sim);
     info.lobbyLocks      = sim->serverLocks;
