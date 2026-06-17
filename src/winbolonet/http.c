@@ -578,12 +578,8 @@ static int wbnXferInfoProgress(void *userPtr,
   return 0;
 }
 
-int wbn_api_get(const char *path, char **response_out) {
-  return wbn_api_get_cancellable(path, response_out, NULL);
-}
-
-int wbn_api_get_cancellable(const char *path, char **response_out,
-                            volatile int *cancel_flag) {
+static int wbn_api_get_impl(const char *path, char **response_out,
+                            volatile int *cancel_flag, bool sign) {
   if (response_out) *response_out = NULL;
   /* Lazy-init: the WBN map browser uses this API even when the
    * client isn't logged in / WBN subsystem isn't otherwise active.
@@ -606,21 +602,23 @@ int wbn_api_get_cancellable(const char *path, char **response_out,
   char url[FILENAME_MAX + 256];
   snprintf(url, sizeof(url), "%s/api/v1/%s", wbnBaseUrl, path);
 
-  /* Generate timestamp and Ed25519 signature (sign empty body for GET) */
-  char timestamp_str[32];
-  snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)time(NULL));
-
-  char sig_hex[129];
-  wbn_sign_request(timestamp_str, "", sig_hex);
-
-  char sig_header[256];
-  char ts_header[64];
-  snprintf(sig_header, sizeof(sig_header), "X-WBN-Signature: %s", sig_hex);
-  snprintf(ts_header, sizeof(ts_header), "X-WBN-Timestamp: %s", timestamp_str);
-
   struct curl_slist *headers = NULL;
-  headers = curl_slist_append(headers, sig_header);
-  headers = curl_slist_append(headers, ts_header);
+  if (sign) {
+    /* Generate timestamp and Ed25519 signature (sign empty body for GET) */
+    char timestamp_str[32];
+    snprintf(timestamp_str, sizeof(timestamp_str), "%ld", (long)time(NULL));
+
+    char sig_hex[129];
+    wbn_sign_request(timestamp_str, "", sig_hex);
+
+    char sig_header[256];
+    char ts_header[64];
+    snprintf(sig_header, sizeof(sig_header), "X-WBN-Signature: %s", sig_hex);
+    snprintf(ts_header, sizeof(ts_header), "X-WBN-Timestamp: %s", timestamp_str);
+
+    headers = curl_slist_append(headers, sig_header);
+    headers = curl_slist_append(headers, ts_header);
+  }
 
   DynBuf respBuf;
   dynBufInit(&respBuf);
@@ -676,6 +674,19 @@ int wbn_api_get_cancellable(const char *path, char **response_out,
     free(respBuf.data);
   }
   return (int)http_code;
+}
+
+int wbn_api_get(const char *path, char **response_out) {
+  return wbn_api_get_impl(path, response_out, NULL, true);
+}
+
+int wbn_api_get_cancellable(const char *path, char **response_out,
+                            volatile int *cancel_flag) {
+  return wbn_api_get_impl(path, response_out, cancel_flag, true);
+}
+
+int wbn_api_get_public(const char *path, char **response_out) {
+  return wbn_api_get_impl(path, response_out, NULL, false);
 }
 
 /*********************************************************
