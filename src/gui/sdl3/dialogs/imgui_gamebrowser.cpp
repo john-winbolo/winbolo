@@ -497,6 +497,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     /* Auto-refresh on open */
     bool autoRefresh = true;
+    bool autoPollEnabled = true;   /* Internet path: cleared on any fetch failure, re-armed on manual refresh */
+    Uint64 lastFetchTime = 0;      /* SDL_GetTicks() when the last Internet fetch finished; 0 = none yet */
+    constexpr Uint64 kInternetAutoRefreshMs = 20000;  /* ~20s; list freshness window is 5min, so faster is pointless */
 
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
@@ -532,8 +535,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
             if (useTracker) {
                 /* Internet mode: map the WinBolo.net game list into our vector */
-                std::vector<ServerEntry> newServers;
                 if (searchResultOk) {
+                    std::vector<ServerEntry> newServers;
                     for (int i = 0; i < searchResultList.count; i++) {
                         const WbnServerListEntry &w = searchResultList.servers[i];
                         ServerEntry e = {};
@@ -583,22 +586,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                         newServers.push_back(std::move(e));
                     }
-                }
-
-                {
-                    std::lock_guard<std::mutex> lock(serversMtx);
-                    servers = std::move(newServers);
-                    selectedItem = -1;
-                }
-
-                wbnServerListFree(&searchResultList);
-
-                if (searchResultOk) {
+                    {
+                        std::lock_guard<std::mutex> lock(serversMtx);
+                        servers = std::move(newServers);
+                        selectedItem = -1;
+                    }
                     int total = (int)servers.size();
                     if (total > 0) {
                         statusText = langGetText(STR_DLGBROWSER_GAMES_LOADED);
-                        loadingGames = false;
-
                         /* Queue async pings to each server (bounded pool) */
                         for (int i = 0; i < total; i++) {
                             PingWork pw = {};
@@ -609,12 +604,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         }
                     } else {
                         statusText = langGetText(STR_DLGBROWSER_NO_GAMES);
-                        loadingGames = false;
                     }
                 } else {
+                    /* Fetch failed (transport error or 429): keep the last good
+                     * list shown and stop auto-polling until the user refreshes. */
                     statusText = langGetText(STR_DLGBROWSER_SEARCH_FAILED);
-                    loadingGames = false;
+                    autoPollEnabled = false;
                 }
+                wbnServerListFree(&searchResultList);
+                loadingGames = false;
+                lastFetchTime = SDL_GetTicks();
             } else {
                 /* LAN mode: servers were added incrementally by the callback,
                  * pings already fired per-server. Just update status. */
@@ -755,6 +754,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
             /* Refresh button on the right side of the title bar */
             bool doRefresh = autoRefresh;
+            /* Internet tab: re-poll periodically while open, until a fetch fails. */
+            if (useTracker && autoPollEnabled && !searching && lastFetchTime != 0 &&
+                SDL_GetTicks() - lastFetchTime >= kInternetAutoRefreshMs) {
+                doRefresh = true;
+            }
             if (s_refreshIcon) {
                 float iconH = ImGui::GetTextLineHeight() * 1.3f;
                 ImVec2 iconSz(iconH, iconH);
@@ -782,11 +786,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
             if (doRefresh) {
                 autoRefresh = false;
+                autoPollEnabled = true;
                 statusText = langGetText(STR_DLGBROWSER_SEARCHING);
                 loadingGames = true;
-                selectedItem = -1;
 
-                {
+                if (!useTracker) {
+                    selectedItem = -1;
                     std::lock_guard<std::mutex> lock(serversMtx);
                     servers.clear();
                 }
