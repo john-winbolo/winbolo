@@ -167,6 +167,11 @@ int run_brain_inbox_clear_resets(void);
 int run_bolo_rand_golden_sequence(void);
 int run_net_impair(void);
 
+/* ChannelMux reliability primitive (test_channel_mux.c): the full
+ * off-socket loss/reorder/dup/window/boundary matrix over two ChannelMux
+ * instances and an in-test frame shuttle. No sockets, no threads. */
+int run_channel_mux(void);
+
 /* Lobby runtime fixes (test_lobby_runtime_fixes.c). */
 int run_countdown_abort_publishes_phase(void);
 int run_lobby_auto_unready_clears_humans_keeps_bots(void);

@@ -2600,6 +2600,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/wire_corpus.c
     tests/unit/test_wire_corpus.c
     tests/unit/test_wire_corpus_capture.c
+    # ChannelMux reliability primitive: the off-socket loss/reorder/dup/
+    # window/boundary matrix (two muxes + an in-test frame shuttle).
+    tests/unit/test_channel_mux.c
     tests/unit/test_packet_type_names.c
     tests/unit/test_client_type.c
     tests/unit/test_wire_player_bounds.c
@@ -2916,6 +2919,7 @@ set(_unit_test_names
     viewtick_rewind
     viewtick_displayed_tick
     wire_corpus
+    channel_mux
     packet_type_names
     mdns_discovery
     client_type_matches_platform
