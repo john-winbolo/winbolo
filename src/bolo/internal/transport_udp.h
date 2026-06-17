@@ -671,6 +671,12 @@ int spliceGameEventsBeforeTail(GameEvent *events, int tailStart, int tailCount,
 bool transportUdpServerChannelTestSend(int slot, uint8_t ch,
                                        const uint8_t *msg, uint16_t len);
 bool transportUdpServerTestPendingRemove(int slot);
+/* Stage one terrain change for a slot as a real tick does: mutate the live
+ * server map (so its checksum tracks the change) and enqueue an
+ * EVENT_MAP_CHANGE into the slot's map-event hold queue, so it flows through
+ * the real hold → tagged channelSend(CHANNEL_MAP) drain. Call between ticks. */
+bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
+                                       uint8_t y, uint8_t terrain);
 void transportUdpServerChannelTestStats(int slot, uint8_t ch,
                                         uint32_t *expectedSeq,
                                         uint32_t *ackedSeq,
@@ -681,5 +687,14 @@ void transportUdpClientChannelTestStats(Transport *t, uint8_t ch,
                                         uint32_t *expectedSeq,
                                         uint32_t *ackedSeq,
                                         uint32_t *framesRx);
+/* Begin a real map resync now (fresh generation + request), bypassing the
+ * checksum-mismatch trigger; the server accept + blob install advance
+ * installedMapGen as the harness pumps. Returns false if one is already
+ * outstanding. */
+bool transportUdpClientTestBeginResync(Transport *t);
+/* Read installedMapGen (the generation gate floor) and mapResyncCount
+ * (cumulative successful installs). */
+void transportUdpClientTestMapState(Transport *t, uint32_t *installedMapGen,
+                                    uint32_t *mapResyncCount);
 
 #endif /* TRANSPORT_UDP_H */

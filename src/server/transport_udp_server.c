@@ -277,6 +277,13 @@ static struct {
      * resync request — this counter says how often recovery is being leaned on. */
     uint32_t mapEventQueueDrops[MAX_TANKS];
 
+    /* Per-client map generation, tagged onto every map-change event sent on
+     * CHANNEL_MAP. Persistent across resyncs (distinct from the transient
+     * mapDownload[].resyncGen, which resets to 0 once a resync completes):
+     * set to the request's gen when a resync is accepted, so the client can
+     * drop a stale in-flight map change that the fresh blob already carries. */
+    uint32_t mapGen[MAX_TANKS];
+
     /* Per-client reliable control event queues — every control event
      * (lobby, chat, alliance, game phase, etc.) lands here so the
      * carrier path can retransmit it until ACKed.  Phase 3 keeps the
@@ -1940,6 +1947,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.mapEventQueues[slot].nextSeq = 1;
     udpServer.mapEventQueues[slot].ackedSeq = 1;
     memset(udpServer.mapEventQueues[slot].buffer, 0, sizeof(udpServer.mapEventQueues[slot].buffer));
+    udpServer.mapGen[slot] = 0;
     udpServer.controlEventQueues[slot].nextSeq = 1;
     udpServer.controlEventQueues[slot].ackedSeq = 1;
     memset(udpServer.controlEventQueues[slot].buffer, 0, sizeof(udpServer.controlEventQueues[slot].buffer));
@@ -2422,24 +2430,38 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
         }
     }
 
-    /* Pack reliable map events from dedicated per-client queue.
-     * While a live map resync is in flight for this slot, hold its map
-     * events: the freshly compressed blob already carries every change up to
-     * the cut (ackedSeq == nextSeq at resync init), and changes during the
-     * transfer sit undrained at seq >= cut. Sending them now would apply them
-     * on top of the OLD map before the new blob installs. The base seq still
-     * advertises ackedSeq so the client's ack floor stays correct; the held
-     * events flow once resyncInProgress clears on download completion. */
+    /* Drain held map-change events onto reliable channel 1 (CHANNEL_MAP),
+     * tagged with this slot's map generation: payload = [gen u32][GameEvent].
+     * mapEventQueues stays the hold buffer — while a download or live resync is
+     * in flight the freshly compressed blob already carries every change up to
+     * the cut, and changes during the transfer sit undrained, so hold them
+     * (gate on downloadComplete && !resyncInProgress) and flush once both gates
+     * clear. Each successful channelSend advances ackedSeq to free the slot.
+     * A full window defers the disconnect off this path, mirroring the
+     * game-channel overflow. The snapshot map tail now carries nothing
+     * (mapEventCount stays 0). */
     mapEventBaseSeq = mapQ->ackedSeq;
-    if (!udpServer.mapDownload[clientIdx].resyncInProgress) {
+    if (udpServer.mapDownload[clientIdx].downloadComplete &&
+        !udpServer.mapDownload[clientIdx].resyncInProgress) {
         uint32_t seq;
         for (seq = mapQ->ackedSeq; seq < mapQ->nextSeq; seq++) {
             uint32_t idx = seq % RELIABLE_EVENT_BUFFER_SIZE;
-            if (pos + GAME_EVENT_MAX_WIRE_SIZE > (int)sizeof(buf)) break;
+            uint8_t mapMsg[4 + GAME_EVENT_MAX_WIRE_SIZE];
+            int evLen;
             if (mapQ->buffer[idx].seq != seq) break; /* Buffer wrapped — stop */
-            pos += packGameEvent(buf + pos, &mapQ->buffer[idx].event);
-            mapEventCount++;
-            if (mapEventCount >= 255) break; /* Cap to uint8_t max */
+            packU32(mapMsg, udpServer.mapGen[clientIdx]);
+            evLen = packGameEvent(mapMsg + 4, &mapQ->buffer[idx].event);
+            if (!channelSend(&udpServer.channelMux[clientIdx], CHANNEL_MAP,
+                             mapMsg, (uint16_t)(4 + evLen))) {
+                if (!udpServer.pendingSimRemove[clientIdx]) {
+                    WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                 "map channel overflow for slot %d, deferring disconnect",
+                                 clientIdx);
+                    udpServer.pendingSimRemove[clientIdx] = true;
+                }
+                break;
+            }
+            mapQ->ackedSeq = seq + 1; /* Sent reliably — free the hold slot. */
         }
     }
 
@@ -2639,6 +2661,7 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     /* Reset the channel mux so a re-using slot starts fresh. */
     channelMuxInit(&udpServer.channelMux[idx]);
     udpServer.channelFramesRx[idx] = 0;
+    udpServer.mapGen[idx] = 0;
 
     /* Release any in-flight upload state. Without this, a client
      * who drops mid-upload would leave clientUploadActive set,
@@ -3849,6 +3872,12 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             udpServer.mapEventQueues[clientIdx].nextSeq;
                         dl->resyncGen = reqGen;
                         dl->resyncInProgress = TRUE;
+                        /* Tag map-change events sent from here on with this
+                         * request's generation. The client drops any map event
+                         * tagged older than the generation it installs, so a
+                         * stale change still in flight on the channel can't
+                         * apply on top of the freshly downloaded blob. */
+                        udpServer.mapGen[clientIdx] = reqGen;
                         /* Established slot: the address is already validated, so
                          * open the amplification gate directly — no second
                          * MAP_ACK 0xFFFF ready round-trip needed. */
@@ -5031,6 +5060,38 @@ void transportUdpServerChannelTestStats(int slot, uint8_t ch,
 bool transportUdpServerTestPendingRemove(int slot) {
     if (slot < 0 || slot >= MAX_TANKS) return false;
     return udpServer.pendingSimRemove[slot];
+}
+
+/* Test-only: stage one terrain change for a slot exactly as a real sim tick
+ * does — mutate the live server map AND enqueue an EVENT_MAP_CHANGE into the
+ * slot's map-event hold queue (mirroring simMapChangeCallback →
+ * transportUdpServerDrainEvents). Mutating the map keeps its snapshot checksum
+ * in step with the change the client applies, so the client doesn't see a
+ * spurious terrain divergence and self-trigger a resync. The event then flows
+ * through the real hold → channel drain → tagged channelSend(CHANNEL_MAP) path,
+ * so the loopback test exercises the live wiring rather than poking the channel
+ * directly. Call between ticks: the map-change callback is dormant then, so the
+ * server-side mapSetPos won't double-enqueue. Returns false if the slot is
+ * invalid or its hold queue is full. */
+bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
+                                       uint8_t y, uint8_t terrain) {
+    ClientEventQueue *mq;
+    uint32_t idx;
+    if (slot < 0 || slot >= MAX_TANKS) return false;
+    mq = &udpServer.mapEventQueues[slot];
+    if (!eventQueueHasSpace(mq)) return false;
+    if (sim != NULL) {
+        mapSetPos(&sim->sim, &sim->sim.mp, x, y, terrain, FALSE, TRUE);
+    }
+    idx = mq->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
+    mq->buffer[idx].event.type = EVENT_MAP_CHANGE;
+    memset(mq->buffer[idx].event.data, 0, sizeof(mq->buffer[idx].event.data));
+    mq->buffer[idx].event.data[0] = x;
+    mq->buffer[idx].event.data[1] = y;
+    mq->buffer[idx].event.data[2] = terrain;
+    mq->buffer[idx].seq = mq->nextSeq;
+    mq->nextSeq++;
+    return true;
 }
 
 void transportUdpServerSetLock(ServerSim *sim, bool locked) {

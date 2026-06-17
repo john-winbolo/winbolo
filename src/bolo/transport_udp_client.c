@@ -200,6 +200,13 @@ typedef struct {
                                         * the stall watchdog that abandons a wedged
                                         * resync so the disconnect cap can fire */
     uint32_t mapResyncCount;           /* Cumulative successful resyncs (Net Info) */
+    uint32_t installedMapGen;          /* Generation of the most recently installed
+                                        * map (0 until the first resync installs).
+                                        * Persistent across resyncs (distinct from
+                                        * the transient activeResyncGen): a
+                                        * CHANNEL_MAP event tagged older than this
+                                        * is a stale change the fresh blob already
+                                        * carries and is dropped on the drain. */
 
     /* Join reject reason from server, rendered locally via langGetTextFmt
      * after Phase 9d wire format change. Sized for the longest expected
@@ -1129,6 +1136,11 @@ static void udpClientHandleResyncChunk(TransportUdpClientCtx *c, uint32_t gen,
         c->mapResyncCount++;
         c->resyncActive = false;
         c->firstResyncChunkSeen = false;
+        /* Advance the installed map generation to this resync's gen before
+         * clearing the transient activeResyncGen. Map-channel events tagged
+         * older than this are now dropped on the drain — the blob just
+         * installed already carries every change up to the resync cut. */
+        c->installedMapGen = c->activeResyncGen;
         c->activeResyncGen = 0;
         /* Suppress new requests for a grace window: the next full-sync
          * checksum confirms convergence and clears the backoff counter. */
@@ -1772,13 +1784,31 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             uint8_t chanBuf[CHANNEL_MAX_SEG];
             uint16_t chanLen;
             int chanCount = 0;
-            int mapTailCount = newEventCount - eventTailStartIdx;
+            int mapTailCount;
             while (chanCount < MAX_SNAPSHOT_EVENTS &&
                    channelReceive(&c->channelMux, CHANNEL_GAME, chanBuf, &chanLen)) {
                 if (unpackGameEvent(chanBuf, chanLen, &chanGameEv[chanCount]) > 0) {
                     chanCount++;
                 }
             }
+            /* Drain channel 1 (map) events: payload [gen u32][GameEvent]. Stage
+             * survivors onto the map tail so they sit behind the game events the
+             * splice places ahead of them (game-then-map order) and fall under
+             * the skipPriorGameTails rollback below. Drop any event tagged older
+             * than the installed map generation — a stale change a resync already
+             * superseded. */
+            while (newEventCount < MAX_SNAPSHOT_EVENTS &&
+                   channelReceive(&c->channelMux, CHANNEL_MAP, chanBuf, &chanLen)) {
+                GameEvent mapEv;
+                uint32_t evGen;
+                if (chanLen < 4) continue;
+                evGen = unpackU32(chanBuf);
+                if (evGen < c->installedMapGen) continue;
+                if (unpackGameEvent(chanBuf + 4, (size_t)(chanLen - 4), &mapEv) > 0) {
+                    c->snapshotEvents[newEventCount++] = mapEv;
+                }
+            }
+            mapTailCount = newEventCount - eventTailStartIdx;
             newEventCount = spliceGameEventsBeforeTail(
                 c->snapshotEvents, eventTailStartIdx, mapTailCount,
                 chanGameEv, chanCount, MAX_SNAPSHOT_EVENTS);
@@ -1837,6 +1867,21 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 while (channelReceive(&c->channelMux, CHANNEL_GAME,
                                       chanBuf, &chanLen)) {
                     if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
+                        clientSimApplyGameEvents(c->clientSim, &gev, 1,
+                                                 c->playerNum);
+                    }
+                }
+                /* Channel 1 (map) events, applied after the game events
+                 * (game-then-map order). Payload [gen u32][GameEvent]; drop any
+                 * tagged older than the installed map generation. */
+                while (channelReceive(&c->channelMux, CHANNEL_MAP,
+                                      chanBuf, &chanLen)) {
+                    uint32_t evGen;
+                    if (chanLen < 4) continue;
+                    evGen = unpackU32(chanBuf);
+                    if (evGen < c->installedMapGen) continue;
+                    if (unpackGameEvent(chanBuf + 4, (size_t)(chanLen - 4),
+                                        &gev) > 0) {
                         clientSimApplyGameEvents(c->clientSim, &gev, 1,
                                                  c->playerNum);
                     }
@@ -3378,6 +3423,39 @@ void transportUdpClientChannelTestStats(Transport *t, uint8_t ch,
     if (expectedSeq) *expectedSeq = c->channelMux.ch[ch].expectedSeq;
     if (ackedSeq)    *ackedSeq    = c->channelMux.ch[ch].ackedSeq;
     if (framesRx)    *framesRx    = c->channelFramesRx;
+}
+
+/* Test-only: begin a real map resync now, without waiting for a checksum
+ * mismatch. Drives the genuine machinery — a fresh monotonic generation, the
+ * resync request to the server, then (as the harness pumps) the server accept,
+ * blob download, and install that advances installedMapGen. Lets the loopback
+ * test exercise the generation gate through the real request/accept/install
+ * path. Returns false if a resync is already outstanding. */
+bool transportUdpClientTestBeginResync(Transport *t) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->resyncActive) return false;
+    c->activeResyncGen = udpClientNextResyncGen(c);
+    c->resyncActive = true;
+    c->firstResyncChunkSeen = false;
+    c->lastResyncRequestTick = c->localTick;
+    c->lastResyncProgressTick = c->localTick;
+    c->resyncAttempts++;
+    udpClientSendMapResyncRequest(c, c->activeResyncGen);
+    return true;
+}
+
+/* Test-only: read the client's map-generation state — installedMapGen (the
+ * generation the gate compares against) and mapResyncCount (cumulative
+ * successful installs, so a test can assert whether a resync actually ran). */
+void transportUdpClientTestMapState(Transport *t, uint32_t *installedMapGen,
+                                    uint32_t *mapResyncCount) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (installedMapGen) *installedMapGen = c->installedMapGen;
+    if (mapResyncCount)  *mapResyncCount  = c->mapResyncCount;
 }
 
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,

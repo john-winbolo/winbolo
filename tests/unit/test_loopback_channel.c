@@ -28,6 +28,18 @@
  *      advances) and apply it through the shared game-event path (brain event
  *      buffer grows) — the migration-parity check that the channel carries the
  *      same observable game events the per-client event queue used to.
+ *
+ *   6. Map-change recovery on channel 1.  A terrain change is staged under loss
+ *      (server map mutated + map event held); it must recover over CHANNEL_MAP
+ *      and apply on the client (the cell's terrain changes) WITHOUT a full map
+ *      resync — the robustness win over the old "dropped change -> desync ->
+ *      resync" path.
+ *
+ *   7. Map generation gate.  After the client installs a fresh map generation
+ *      via a real resync, a map event tagged with the older generation (still
+ *      arriving on CHANNEL_MAP) must be dropped, while a new-generation change
+ *      is applied — proving a stale change can't land on top of a freshly
+ *      installed map.
  */
 
 #include <stdint.h>
@@ -41,8 +53,9 @@
 #include "client_connect_state.h"
 #include "client_sim_internal.h"   /* ClientSim::transport (Transport handle) */
 #include "input_packet.h"
-#include "channel_mux.h"           /* CHANNEL_GAME / CHANNEL_COUNT / CHANNEL_MAX_SEG */
+#include "channel_mux.h"           /* CHANNEL_GAME / CHANNEL_MAP / CHANNEL_COUNT / CHANNEL_MAX_SEG */
 #include "transport_udp.h"         /* test-only channel hooks, spliceGameEventsBeforeTail */
+#include "transport_udp_internal.h" /* packU32 / packGameEvent (map-channel payload) */
 #include "server_sim.h"            /* serverSimAddEvent (overflow case) */
 #include "test_harness.h"
 #include "loopback_harness.h"
@@ -429,6 +442,225 @@ static int run_game_channel_overflow(void) {
     return 0;
 }
 
+/* Find a land cell whose current terrain differs from `target` (so applying
+ * `target` is an observable change) and is not the avoided cell. Scans the map
+ * interior, which is solid land on the Everard map the harness loads. Returns
+ * false if none found in the scanned span. */
+static bool find_changeable_cell(ClientSim *cs, uint8_t target,
+                                 uint8_t avoidX, uint8_t avoidY,
+                                 uint8_t *outX, uint8_t *outY) {
+    int x, y;
+    for (y = 96; y < 160; y++) {
+        for (x = 96; x < 160; x++) {
+            uint8_t t;
+            if ((uint8_t)x == avoidX && (uint8_t)y == avoidY) continue;
+            t = clientSimGetMapTerrain(cs, (uint8_t)x, (uint8_t)y);
+            if (t != DEEP_SEA && t != RIVER && t != target) {
+                *outX = (uint8_t)x;
+                *outY = (uint8_t)y;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/* Case 6: a staged terrain change recovers over channel 1 under loss and is
+ * applied on the client without forcing a full map resync. */
+static int run_map_event_channel_recovery(void) {
+    LoopbackHarness h;
+    int connectedAt;
+    uint32_t inputTick = 1;
+    Transport *ct;
+    int slot;
+    uint8_t cx = 0, cy = 0;
+    uint32_t resync0 = 0, resync1 = 0;
+    bool applied = false;
+    int i;
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "ChanMap", /*lobbyMode*/ false,
+                                       /*impairSpec*/ "loss=10", /*seed*/ 0x3A9Fu),
+                  "harness start (map recovery) failed");
+
+    connectedAt = loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL);
+    if (connectedAt < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+
+    ct   = &h.cs->transport;
+    slot = (int)clientSimGetMyPlayerNum(h.cs);
+
+    if (!find_changeable_cell(h.cs, CRATER, 0xFF, 0xFF, &cx, &cy)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("no changeable land cell found in the scanned span");
+    }
+    transportUdpClientTestMapState(ct, NULL, &resync0);
+
+    /* Stage a real terrain change (server map mutated + map event held), then
+     * let CHANNEL_MAP retransmit recover it under loss. */
+    UT_ASSERT_MSG(transportUdpServerTestAddMapEvent(h.sim, slot, cx, cy, CRATER),
+                  "map event injection rejected");
+
+    for (i = 1; i <= ROUNDTRIP_MAX; i++) {
+        inputTick = feed_input(&h, inputTick);
+        loopbackHarnessPump(&h);
+        if (clientSimGetMapTerrain(h.cs, cx, cy) == CRATER) {
+            applied = true;
+            break;
+        }
+    }
+
+    fprintf(stderr, "  map-event recovery (impaired): converged after %d pump(s) "
+                    "(cap %d) applied=%d\n", i, ROUNDTRIP_MAX, (int)applied);
+
+    if (!applied) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("map change never recovered+applied via channel 1 within %d pumps",
+                ROUNDTRIP_MAX);
+    }
+
+    /* The robustness win: it recovered over the channel, no full resync. */
+    transportUdpClientTestMapState(ct, NULL, &resync1);
+    if (resync1 != resync0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("map change forced a resync (count %u -> %u)",
+                (unsigned)resync0, (unsigned)resync1);
+    }
+    if (clientSimGetConnectState(h.cs) != CLIENT_CONNECT_CONNECTED) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client dropped while recovering a map change");
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* Case 7: after a real resync installs a fresh map generation, an
+ * older-generation map event on channel 1 is dropped while a current-generation
+ * change is applied. */
+static int run_map_event_generation_gate(void) {
+    LoopbackHarness h;
+    int connectedAt;
+    uint32_t inputTick = 1;
+    Transport *ct;
+    int slot;
+    uint8_t ax = 0, ay = 0, bx = 0, by = 0;
+    uint8_t origA;
+    uint32_t installedGen = 0, resyncCount = 0;
+    bool installed = false;
+    bool applied = false;
+    int i;
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "ChanGate", /*lobbyMode*/ false,
+                                       /*impairSpec*/ "loss=10", /*seed*/ 0x6B1Du),
+                  "harness start (generation gate) failed");
+
+    connectedAt = loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL);
+    if (connectedAt < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+
+    ct   = &h.cs->transport;
+    slot = (int)clientSimGetMyPlayerNum(h.cs);
+
+    /* Drive a real resync end-to-end so the client installs generation >= 1. */
+    UT_ASSERT_MSG(transportUdpClientTestBeginResync(ct), "begin resync rejected");
+    for (i = 1; i <= CONNECT_MAX; i++) {
+        loopbackHarnessPump(&h);
+        transportUdpClientTestMapState(ct, &installedGen, &resyncCount);
+        if (resyncCount >= 1) {
+            installed = true;
+            break;
+        }
+    }
+    if (!installed) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("resync never installed within %d pumps", CONNECT_MAX);
+    }
+    if (installedGen < 1) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("installedMapGen did not advance (=%u)", (unsigned)installedGen);
+    }
+
+    /* Two distinct changeable cells: A for the stale event, B for the fresh. */
+    if (!find_changeable_cell(h.cs, CRATER, 0xFF, 0xFF, &ax, &ay) ||
+        !find_changeable_cell(h.cs, CRATER, ax, ay, &bx, &by)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("could not find two changeable land cells");
+    }
+    origA = clientSimGetMapTerrain(h.cs, ax, ay);
+
+    /* Stale: a map event tagged with the pre-resync generation 0, injected
+     * straight onto channel 1. installedMapGen is now >= 1, so it must be
+     * dropped — cell A stays unchanged. */
+    {
+        uint8_t payload[4 + GAME_EVENT_MAX_WIRE_SIZE];
+        GameEvent ev;
+        int evLen;
+        memset(&ev, 0, sizeof(ev));
+        ev.type = EVENT_MAP_CHANGE;
+        ev.data[0] = ax;
+        ev.data[1] = ay;
+        ev.data[2] = CRATER;
+        packU32(payload, 0u);                  /* stale generation */
+        evLen = packGameEvent(payload + 4, &ev);
+        UT_ASSERT_MSG(transportUdpServerChannelTestSend(slot, CHANNEL_MAP, payload,
+                                                        (uint16_t)(4 + evLen)),
+                      "stale map-channel send rejected");
+    }
+
+    /* Fresh: a real change tagged with the current generation via the
+     * hold -> drain path. The channel delivers in order, so cell B becoming
+     * CRATER proves the stale event ahead of it was delivered and dropped —
+     * not merely still in flight. */
+    UT_ASSERT_MSG(transportUdpServerTestAddMapEvent(h.sim, slot, bx, by, CRATER),
+                  "fresh map event injection rejected");
+
+    for (i = 1; i <= ROUNDTRIP_MAX; i++) {
+        inputTick = feed_input(&h, inputTick);
+        loopbackHarnessPump(&h);
+        if (clientSimGetMapTerrain(h.cs, bx, by) == CRATER) {
+            applied = true;
+            break;
+        }
+    }
+
+    fprintf(stderr, "  map generation gate: resyncCount=%u installedGen=%u "
+                    "freshApplied=%d after %d pump(s)\n",
+            (unsigned)resyncCount, (unsigned)installedGen, (int)applied, i);
+
+    if (!applied) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("fresh-generation map change never applied (cell B) within %d pumps",
+                ROUNDTRIP_MAX);
+    }
+    /* The stale event was delivered before B (in-order channel) but dropped. */
+    if (clientSimGetMapTerrain(h.cs, ax, ay) != origA) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("stale-generation map event was applied (cell A changed from %u)",
+                (unsigned)origA);
+    }
+    /* No extra resync was triggered by any of this. */
+    {
+        uint32_t resyncNow = 0;
+        transportUdpClientTestMapState(ct, NULL, &resyncNow);
+        if (resyncNow != resyncCount) {
+            loopbackHarnessStop(&h);
+            UT_FAIL("unexpected extra resync (count %u -> %u)",
+                    (unsigned)resyncCount, (unsigned)resyncNow);
+        }
+    }
+    if (clientSimGetConnectState(h.cs) != CLIENT_CONNECT_CONNECTED) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("client dropped during the generation-gate exchange");
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
 int run_loopback_channel(void) {
     int rc = run_empty_flow();
     if (rc != 0) return rc;
@@ -438,5 +670,9 @@ int run_loopback_channel(void) {
     if (rc != 0) return rc;
     rc = run_game_event_splice();
     if (rc != 0) return rc;
-    return run_game_channel_overflow();
+    rc = run_game_channel_overflow();
+    if (rc != 0) return rc;
+    rc = run_map_event_channel_recovery();
+    if (rc != 0) return rc;
+    return run_map_event_generation_gate();
 }
