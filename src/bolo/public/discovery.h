@@ -16,10 +16,10 @@
  *Name:          Discovery
  *Filename:      discovery.h
  *Purpose:
- *  Game discovery: tracker TCP queries, LAN UDP broadcast
- *  scanning, and per-server info ping. Surface uses POD
- *  result types — the wire-protocol INFO_PACKET never
- *  escapes this module.
+ *  Game discovery: LAN UDP broadcast and mDNS scanning,
+ *  and per-server info ping. Surface uses POD result
+ *  types — the wire-protocol INFO_PACKET never escapes
+ *  this module.
  *********************************************************/
 
 #ifndef DISCOVERY_H
@@ -28,12 +28,6 @@
 #include "global.h"        /* BYTE / WORD / MAP_STR_SIZE / bool */
 #include "gametype.h"      /* gameType */
 #include "client_enums.h"  /* aiType */
-
-/* currentGames is a typedef for struct currentGamesObj * in
- * src/gui/currentgames.h. discoveryFindTrackedGames only passes
- * it through by pointer, so we forward-declare the underlying
- * struct rather than reaching into the gui subtree. */
-struct currentGamesObj;
 
 /* Result of a single discoveryPingServer() call. rttMs is the round-trip
  * time in milliseconds when the function returns true; the rest of the
@@ -77,20 +71,6 @@ typedef struct {
                             * broadcast/tracker INFO_PACKET paths can't
                             * report it and leave it false. */
 } DiscoveryServer;
-
-/*********************************************************
- *NAME:          discoveryFindTrackedGames
- *PURPOSE:
- * Connects to a tracker server via TCP and downloads the
- * list of current games. Returns success.
- *
- *ARGUMENTS:
- *  cg             - Pointer to the currentGames structure
- *  trackerAddress - Address of the tracker to use
- *  port           - Port of the tracker
- *  motd           - Buffer to hold the message of the day
- *********************************************************/
-bool discoveryFindTrackedGames(struct currentGamesObj **cg, char *trackerAddress, unsigned short port, char *motd);
 
 /* Callback delivered for each LAN server that responds to a broadcast
  * search. The DiscoveryServer pointer is valid only for the duration
