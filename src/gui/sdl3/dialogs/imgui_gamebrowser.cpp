@@ -455,7 +455,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * dedupes by address+port under serversMtx. */
     static std::thread mdnsThread;
     static currentGames searchResultCg = nullptr;
-    static char searchResultMotd[4096] = {};
     static bool searchResultOk = false;
     static WbnServerList searchResultList = {};
 
@@ -474,7 +473,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Filter state */
     int filterGameType = -1; /* -1 = all */
     bool filterLocked = false;
-    int filterLobby = -1;    /* -1 = all, 0 = none, 1 = in lobby, 2 = starting */
+    int filterLobby = -1;    /* -1 = all, 0 = in game, 1 = in lobby */
 
     /* Status */
     bool loadingGames = false;
@@ -489,14 +488,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     /* Set Name popup */
     char nameEditBuf[PLAYER_NAME_LEN] = {};
 
-    /* Tracker setup popup (TODO: tracker UI not yet implemented) */
-    (void)0;
-
     int result = -1;
     bool running = true;
 
     /* Auto-refresh on open */
     bool autoRefresh = true;
+    /* Last good WinBolo.net MOTD lines; kept across a failed refresh. */
+    std::vector<std::string> motdLines;
     bool autoPollEnabled = true;   /* Internet path: cleared on any fetch failure, re-armed on manual refresh */
     Uint64 lastFetchTime = 0;      /* SDL_GetTicks() when the last Internet fetch finished; 0 = none yet */
     constexpr Uint64 kInternetAutoRefreshMs = 20000;  /* ~20s; list freshness window is 5min, so faster is pointless */
@@ -590,6 +588,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         std::lock_guard<std::mutex> lock(serversMtx);
                         servers = std::move(newServers);
                         selectedItem = -1;
+                    }
+                    /* Copy the MOTD out before wbnServerListFree below; a later
+                     * failed fetch zeroes the whole struct, so this keeps the
+                     * last good MOTD alongside the kept server list. */
+                    motdLines.clear();
+                    for (int m = 0; m < searchResultList.numMotd; m++) {
+                        motdLines.emplace_back(searchResultList.motd[m]);
                     }
                     int total = (int)servers.size();
                     if (total > 0) {
@@ -797,12 +802,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 }
 
                 bool ut = (useTracker != 0);
-                char tAddr[FILENAME_MAX] = {};
-                unsigned short tPort = 0;
-                if (ut) {
-                    bool dummy;
-                    gameFrontGetTrackerOptions(tAddr, &tPort, &dummy);
-                }
 
                 if (searchThread.joinable()) {
                     searchThread.join();
@@ -817,14 +816,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                 wbnServerListFree(&searchResultList);
                 searchResultCg = currentGamesCreate();
-                searchResultMotd[0] = '\0';
                 searchResultOk = false;
                 searching = true;
 
-                struct SearchParams { char addr[FILENAME_MAX]; unsigned short port; bool tracker; };
+                struct SearchParams { bool tracker; };
                 SearchParams sp = {};
-                snprintf(sp.addr, FILENAME_MAX, "%s", tAddr);
-                sp.port = tPort;
                 sp.tracker = ut;
 
                 searchThread = std::thread([sp]() {
@@ -856,6 +852,17 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
 
             ImGui::Separator();
+            ImGui::Spacing();
+        }
+
+        /* ---- WinBolo.net MOTD (Internet path only) ---- */
+        /* Server-supplied content, not a localized UI string. Rendered wrapped
+         * in the default text colour with trailing spacing; kept across a
+         * failed refresh so it doesn't flicker. */
+        if (useTracker && !motdLines.empty()) {
+            for (const auto &line : motdLines) {
+                ImGui::TextWrapped("%s", line.c_str());
+            }
             ImGui::Spacing();
         }
 
@@ -1077,13 +1084,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::SetNextItemWidth(130.0f * s);
             const char *lobbyOpts[] = {
                 langGetText(STR_DLGBROWSER_FILTER_ALLLOBBY),
-                langGetText(STR_NONE),
                 langGetText(STR_DLGBROWSER_FILTER_INLOBBY),
-                langGetText(STR_DLGBROWSER_FILTER_STARTING),
+                langGetText(STR_DLGBROWSER_FILTER_INGAME),
             };
-            int lobbyIdx = (filterLobby < 0) ? 0 : filterLobby + 1;
-            if (ImGui::Combo("##filterLobby", &lobbyIdx, lobbyOpts, 4)) {
-                filterLobby = (lobbyIdx == 0) ? -1 : lobbyIdx - 1;
+            /* index 0=All(-1), 1=In lobby(lobbyStatus 1), 2=In game(lobbyStatus 0) */
+            int lobbyIdx = (filterLobby < 0) ? 0 : (filterLobby == 1 ? 1 : 2);
+            if (ImGui::Combo("##filterLobby", &lobbyIdx, lobbyOpts, 3)) {
+                filterLobby = (lobbyIdx == 0) ? -1 : (lobbyIdx == 1 ? 1 : 0);
             }
         }
 

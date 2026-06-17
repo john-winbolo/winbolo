@@ -1673,6 +1673,7 @@ static const LangEntry langTable[] = {
     {1790, "Third Party Notices"},
     {1791, "Authors"},
     {1792, "Forums"},
+    {1793, "In game"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
