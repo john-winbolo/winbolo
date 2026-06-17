@@ -48,7 +48,6 @@ static int parse_full_entry(void) {
         "\"num_players\":5,"
         "\"num_humans\":3,"
         "\"num_bots\":2,"
-        "\"max_players\":16,"
         "\"players\":[\"alice\",\"bob\",\"carol\"]"
         "}]"
         "}";
@@ -77,7 +76,6 @@ static int parse_full_entry(void) {
     UT_ASSERT_MSG(s->numBases == 16 && s->numPills == 12, "total bases/pills");
     UT_ASSERT_MSG(s->numPlayers == 5 && s->numHumans == 3 && s->numBots == 2,
                   "player counts");
-    UT_ASSERT_MSG(s->maxPlayers == 16, "maxPlayers=%d", s->maxPlayers);
     UT_ASSERT_MSG(s->numPlayerNames == 3, "numPlayerNames=%d", s->numPlayerNames);
     UT_ASSERT_MSG(strcmp(s->players[1], "bob") == 0, "players1=\"%s\"", s->players[1]);
 

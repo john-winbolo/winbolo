@@ -106,7 +106,6 @@ static void parseServerEntry(const cJSON *src, WbnServerListEntry *dst) {
     dst->numPlayers = readIntField(src, "num_players");
     dst->numHumans  = readIntField(src, "num_humans");
     dst->numBots    = readIntField(src, "num_bots");
-    dst->maxPlayers = readIntField(src, "max_players");
 
     /* players: array of usernames; skip blanks, clamp to MAX_TANKS. */
     dst->numPlayerNames = 0;

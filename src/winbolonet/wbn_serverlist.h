@@ -49,7 +49,6 @@ typedef struct {
   int  numPlayers;                           /* "num_players" — in-game count incl bots */
   int  numHumans;                            /* "num_humans" */
   int  numBots;                              /* "num_bots" */
-  int  maxPlayers;                           /* "max_players" */
   char players[MAX_TANKS][PLAYER_NAME_LEN];  /* "players" usernames, blanks filtered out */
   int  numPlayerNames;                       /* count of real entries in players[] */
 } WbnServerListEntry;

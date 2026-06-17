@@ -109,7 +109,6 @@ struct ServerEntry {
     char serverKey[64];
     int  numHumans;
     int  numBots;
-    int  maxPlayers;
     bool ranked;
     bool inLobby;
     bool hasLobby;
@@ -575,7 +574,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         SDL_strlcpy(e.mapMd5, w.mapMd5, sizeof(e.mapMd5));
                         e.numHumans = w.numHumans;
                         e.numBots = w.numBots;
-                        e.maxPlayers = w.maxPlayers;
                         e.ranked = w.ranked;
                         e.inLobby = w.inLobby;
                         e.hasLobby = w.hasLobby;
@@ -1107,9 +1105,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         ImGui::TextDisabled("%c%c", e.countryCode[0], e.countryCode[1]);
                     }
 
-                    /* Players — n/m (Nh Nb); roster lives in the row detail tooltip */
+                    /* Players — n (Nh Nb); roster lives in the row detail tooltip */
                     ImGui::TableNextColumn();
-                    ImGui::Text("%d/%d (%dh %db)", e.numPlayers, e.maxPlayers,
+                    ImGui::Text("%d (%dh %db)", e.numPlayers,
                                 e.numHumans, e.numBots);
 
                     /* Bases (free/total, from JSON) */
