@@ -3077,7 +3077,9 @@ function Brain.think(info)
     if state.goal.kind == "refuel_at_base" then
       local need_armour = info.armour < state.armour_target
       local need_shells = info.shells < state.shell_target
-      local need_mines  = info.mines < 10
+      -- Mines never hold the bot at base (REFUEL_MIN_MINES defaults 0). The
+      -- mine-hoard surcharge in goals.lua handles "don't linger for mines".
+      local need_mines  = info.mines < (C.REFUEL_MIN_MINES or 0)
       refuel_needed = need_armour or need_shells or need_mines
       refuel_complete = not refuel_needed
 

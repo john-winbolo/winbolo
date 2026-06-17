@@ -64,16 +64,6 @@ local function tank_combat_shells(state, info)
   return count * C.REFUEL_PER_ENEMY_TANK
 end
 
-local function needs_full_armour(state, info)
-  if not (state.perc and state.perc.enemy_tanks) then return false end
-  for _, et in ipairs(state.perc.enemy_tanks) do
-    if (et.dist or math.huge) <= C.REFUEL_ENEMY_TANK_RANGE then
-      return true
-    end
-  end
-  return false
-end
-
 -- Sets state.shell_target and state.armour_target. Called once per tick
 -- at the end of M.update, so the rest of the brain (init.lua refuel check,
 -- goals.lua pool-1 scaling, nearest_resupply_base filters) reads a single
@@ -86,9 +76,10 @@ local function compute_refuel_targets(state, world, info)
   local target = math.max(baseline, mission + C.SHELL_RESERVE, combat)
   state.shell_target = math.min(target, C.TANK_FULL_SHELLS)
 
-  state.armour_target = needs_full_armour(state, info)
-                        and C.TANK_FULL_ARMOUR
-                        or C.ARMOUR_COMBAT
+  -- Armour ceiling is full: the bot fills toward 40 when bases are plentiful,
+  -- but the scarcity top-off ramp (goals.lua refuel_shape) makes it leave near
+  -- ARMOUR_LOW (15) when the team is base-starved. ARMOUR_LOW is the real floor.
+  state.armour_target = C.TANK_FULL_ARMOUR
 end
 
 -- Compute center of gravity of friendly bases + pills

@@ -498,6 +498,67 @@ local function resolve_attack_goal(pill, pid, world, info, state)
 end
 
 
+-- Shared refuel cost-shape (pool 1). Used by BOTH the live cost-competition
+-- path and the term-breakdown panel so the displayed shape can never diverge
+-- from the real cost. Returns: bonus (deficit discount), mult (top-off
+-- multiplier, scarcity-scaled), fill (0..1 between LOW and target), scarcity,
+-- mine_cost (additive), urgency, arm_def, sh_def.
+--
+-- "Gotta share": the top-off ramp (REFUEL_FULL_COST_MULT) is steepened by team
+-- base-scarcity (team tanks per friendly base) plus how many teammates are
+-- crowding this base right now, so a bot leaves near the LOW floor when bases
+-- are scarce and fills toward target only when they're plentiful. Mines never
+-- gate leaving; topping past REFUEL_MINE_FREE just adds an exponential cost.
+local function refuel_shape(info, state, now)
+  local arm = info.armour or 0
+  local sh  = info.shells or 0
+  local arm_target = state.armour_target or C.TANK_FULL_ARMOUR
+  local sh_target  = state.shell_target  or C.TANK_FULL_SHELLS
+  local arm_def = math.max(0, (C.ARMOUR_LOW - arm) / C.ARMOUR_LOW)
+  local sh_def  = math.max(0, (C.SHELLS_LOW - sh) / C.SHELLS_LOW)
+  local bonus   = C.REFUEL_DEFICIT_BONUS * math.max(arm_def, sh_def)
+  local fill = 0.0
+  if arm > C.ARMOUR_LOW and sh > C.SHELLS_LOW then
+    local fa = (arm - C.ARMOUR_LOW) / math.max(1, arm_target - C.ARMOUR_LOW)
+    local fs = (sh  - C.SHELLS_LOW) / math.max(1, sh_target  - C.SHELLS_LOW)
+    fill = math.min(fa, fs)
+  end
+  local scarcity = 1.0
+  if C.REFUEL_SHARE_ENABLED then
+    local team = 1                                  -- our team size (self + ally bits)
+    local ab = info.allies or 0
+    while ab > 0 do team = team + (ab & 1); ab = ab >> 1 end
+    local fbases = (state.perc and state.perc.friendly_base_count) or 0
+    local apb = team / math.max(1, fbases)          -- team tanks per friendly base
+    local local_near = 0
+    if info.tankx and info.tanky then
+      local tx, ty = info.tankx >> 8, info.tanky >> 8
+      for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+        local si = slot.info
+        if pn ~= info.player_number and si and si.mx and si.my
+           and U.mdist(tx, ty, tonumber(si.mx) or tx, tonumber(si.my) or ty)
+               <= (C.REFUEL_SHARE_LOCAL_TILES or 20) then
+          local_near = local_near + 1
+        end
+      end
+    end
+    scarcity = 1.0 + (C.REFUEL_SHARE_RATIO_K or 0) * math.max(0, apb - 1)
+                   + (C.REFUEL_SHARE_LOCAL_K or 0) * local_near
+    scarcity = math.min(scarcity, C.REFUEL_SHARE_SCARCITY_CAP or 8.0)
+  end
+  local mult = 1.0 + fill * (C.REFUEL_FULL_COST_MULT - 1.0) * scarcity
+  local mines_over = math.max(0, (info.mines or 0) - (C.REFUEL_MINE_FREE or 5))
+  local mine_cost = 0.0
+  if mines_over > 0 then
+    mine_cost = (C.REFUEL_MINE_HOARD_WEIGHT or 0)
+                * ((C.REFUEL_MINE_HOARD_BASE or 1.3) ^ mines_over - 1.0)
+  end
+  local urgency = math.max(C.REFUEL_URGENCY_MIN,
+                           math.min(math.min(1.0, arm / C.ARMOUR_LOW),
+                                    math.min(1.0, sh  / C.SHELLS_LOW)))
+  return bonus, mult, fill, scarcity, mine_cost, urgency, arm_def, sh_def
+end
+
 -- =========================================================================
 -- Pool evaluators — each evaluates one category of goal candidates.
 -- Called one-per-tick by update_pool_cache() to spread the cost.
@@ -6712,23 +6773,8 @@ local function goal_selection(state, world, info, quiet)
     -- stash onto every per-base pool-1 cost_cache entry. eval_refuel
     -- already baked the multiplicative urgency into pool_cache[1].cost,
     -- so we recompute it here purely for the breakdown display.
-    local _ref_arm_def = math.max(0, (C.ARMOUR_LOW - info.armour) / C.ARMOUR_LOW)
-    local _ref_sh_def  = math.max(0, (C.SHELLS_LOW  - info.shells) / C.SHELLS_LOW)
-    local _ref_deficit = math.max(_ref_arm_def, _ref_sh_def)
-    local _ref_bonus   = C.REFUEL_DEFICIT_BONUS * _ref_deficit
-    local _ref_mult    = 1.0
-    local _ref_fill    = 0.0
-    if info.armour > C.ARMOUR_LOW and info.shells > C.SHELLS_LOW then
-      local _fa = (info.armour - C.ARMOUR_LOW)
-                  / math.max(1, state.armour_target - C.ARMOUR_LOW)
-      local _fs = (info.shells - C.SHELLS_LOW)
-                  / math.max(1, state.shell_target  - C.SHELLS_LOW)
-      _ref_fill = math.min(_fa, _fs)
-      _ref_mult = 1.0 + _ref_fill * (C.REFUEL_FULL_COST_MULT - 1.0)
-    end
-    local _ref_arm_u   = math.min(1.0, info.armour / C.ARMOUR_LOW)
-    local _ref_sh_u    = math.min(1.0, info.shells / C.SHELLS_LOW)
-    local _ref_urgency = math.max(C.REFUEL_URGENCY_MIN, math.min(_ref_arm_u, _ref_sh_u))
+    local _ref_bonus, _ref_mult, _ref_fill, _ref_scarcity, _ref_mine_cost,
+          _ref_urgency, _ref_arm_def, _ref_sh_def = refuel_shape(info, state, now)
     -- Stash on every pool-1 cache entry so the panel sees the same shape
     -- it'd see if it called the live computation itself. _lgm_wait_floor
     -- starts as nil and only gets set on the at-this-base entry below.
@@ -6740,6 +6786,8 @@ local function goal_selection(state, world, info, quiet)
           e._defic_bonus    = _ref_bonus
           e._fill_mult      = _ref_mult
           e._fill           = _ref_fill
+          e._scarcity       = _ref_scarcity
+          e._mine_cost      = _ref_mine_cost
           e._arm            = info.armour
           e._sh             = info.shells
           e._arm_def        = _ref_arm_def
@@ -6796,7 +6844,8 @@ local function goal_selection(state, world, info, quiet)
           local bonus = _ref_bonus
           local mult  = _ref_mult
           local base_cost = (entry.cost or 0) - bonus
-          local final_cost = base_cost * mult
+          -- Scarcity-scaled top-off (mult) + exponential mine-hoard surcharge.
+          local final_cost = base_cost * mult + _ref_mine_cost
           -- LGM-wait floor: clamp cost down when waiting for LGM.
           -- Floor scales with threat at the base: safe spots clamp lower so
           -- sitting still is cheaper when there's no reason to move. Linear
@@ -8052,23 +8101,9 @@ function M.get_pool_breakdown_json(state)
   do
     local li = state._last_info
     if li and li.armour then
-      local arm = li.armour
-      local sh  = li.shells or 0
-      local arm_target = state.armour_target or C.TANK_FULL_ARMOUR
-      local sh_target  = state.shell_target  or C.TANK_FULL_SHELLS
-      local arm_def = math.max(0, (C.ARMOUR_LOW - arm) / C.ARMOUR_LOW)
-      local sh_def  = math.max(0, (C.SHELLS_LOW - sh) / C.SHELLS_LOW)
-      local bonus   = C.REFUEL_DEFICIT_BONUS * math.max(arm_def, sh_def)
-      local mult, fill = 1.0, 0.0
-      if arm > C.ARMOUR_LOW and sh > C.SHELLS_LOW then
-        local fa = (arm - C.ARMOUR_LOW) / math.max(1, arm_target - C.ARMOUR_LOW)
-        local fs = (sh  - C.SHELLS_LOW) / math.max(1, sh_target  - C.SHELLS_LOW)
-        fill = math.min(fa, fs)
-        mult = 1.0 + fill * (C.REFUEL_FULL_COST_MULT - 1.0)
-      end
-      local urgency = math.max(C.REFUEL_URGENCY_MIN,
-                               math.min(math.min(1.0, arm / C.ARMOUR_LOW),
-                                        math.min(1.0, sh  / C.SHELLS_LOW)))
+      -- Same shared shape the real cost path uses (scarcity + mine surcharge).
+      local bonus, mult, fill, scarcity, mine_cost, urgency, arm_def, sh_def =
+        refuel_shape(li, state, state.tick or 0)
       for _, e in pairs(cache) do
         if e._p == 1 then
           e._urgency     = urgency
@@ -8076,8 +8111,10 @@ function M.get_pool_breakdown_json(state)
           e._defic_bonus = bonus
           e._fill_mult   = mult
           e._fill        = fill
-          e._arm         = arm
-          e._sh          = sh
+          e._scarcity    = scarcity
+          e._mine_cost   = mine_cost
+          e._arm         = li.armour
+          e._sh          = li.shells or 0
           e._arm_def     = arm_def
           e._sh_def      = sh_def
           e.formula      = nil  -- force live re-render with shape tokens
