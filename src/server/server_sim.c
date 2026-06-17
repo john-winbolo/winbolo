@@ -111,6 +111,10 @@ extern void serverMessageConsoleMessage(ServerSim *sim, char *msg);
 static int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut);
 static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
 
+/* Caches the active map's BMAPBOLO MD5; called from serverSimCreate
+ * before its definition further down the file. */
+static void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path);
+
 /* Forward declarations for lobby functions used before their definitions */
 void serverSimLobbyCheckAllReady(ServerSim *sim);
 void serverSimStartGame(ServerSim *sim);
@@ -561,6 +565,9 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
         serverSimDestroy(sim);
         return NULL;
     }
+
+    /* Hash the canonical BMAPBOLO file so WBN can match it on register. */
+    serverSimCacheMapMd5FromFile(sim, mapFileName);
 
     /* Store map name (basename without path or .map extension) for info packet responses */
     {
