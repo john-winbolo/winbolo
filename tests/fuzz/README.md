@@ -93,6 +93,15 @@ ls <repo>/tests/fuzz/crashes/
   `WIRE_CORPUS_TAP`). Regenerate with `tests/fuzz/seed_from_fixtures.sh`.
 - `corpus/server_dispatch/` — hand-seeded minimal datagrams with valid
   `'W''B'`-magic headers (ping, join, map-ack, quit, command-tick, input).
+  The seam's `LLVMFuzzerInitialize` drives one real cookie-gated JOIN to
+  completion (`fuzzServerWarmJoin`), so the dispatcher starts with a client
+  connected at the seam's fixed peer address. Without this the post-JOIN
+  handlers — COMMAND_TICK, INPUT, CONTROL_ACK, the reliable event loops and
+  map reassembly, i.e. the hand-written count-loops this target exists to
+  reach — all bail at their `serverFindClient() < 0` guard, leaving coverage
+  pinned near the JOIN gate. To enrich these seeds with real post-JOIN traffic,
+  capture the client→server datagrams a loopback session produces and drop them
+  here as whole datagrams (the seam replays one datagram per input).
 - `crashes/` — minimized regressions. A crash found in discovery lands here and
   is replayed by the ctest on every build. Commit new crash inputs alongside
   the fix.
