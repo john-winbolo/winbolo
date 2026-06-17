@@ -245,15 +245,12 @@ local function nearest_where(collection, world, tmx, tmy, filter, in_boat, ammo,
           end
         end
       end
-      -- Skip objects unseen for too long (stale data — likely captured/changed)
-      if obj.last_seen and now > 0 and (now - obj.last_seen) > C.STALE_SKIP_TICKS then
-        candidates[#candidates + 1] = {
-          id = id, mx = obj.mx, my = obj.my, cost = -1,
-          own = obj.owner or "?", hp = obj.health or 0,
-          reject = string.format("stale (unseen %d ticks)", now - obj.last_seen),
-        }
-        goto skip
-      end
+      -- Staleness is handled as a GROWING COST below (soft penalty), not a hard
+      -- skip. A pill/base we haven't re-seen in a while may be captured/changed,
+      -- so we deprioritize it — but never REMOVE it, or a death (which freezes
+      -- last_seen) would permanently hide every object the bot can't currently
+      -- see, even ones it legitimately knows about. Kept as a last-resort
+      -- candidate it self-recovers by eventually re-engaging + re-seeing it.
       do
         -- For live pills/bases with high overlay cost, use the cheapest
         -- adjacent tile instead of the object tile itself (can't drive
@@ -2890,8 +2887,10 @@ local function filter_attack_pill(obj, state)
     local bk = U.mkey(obj.mx, obj.my)
     if state.blocked[bk] and (state.tick or 0) < state.blocked[bk] then return false end
   end
-  local now = state and state.tick or 0
-  if obj.last_seen and now > 0 and (now - obj.last_seen) > C.STALE_SKIP_TICKS then return false end
+  -- NOTE: deliberately NO staleness hard-skip here. A pill we haven't re-seen
+  -- in a while stays in the pool (just cost-penalized in attack_pill_adjustments)
+  -- so it's never permanently dropped — the old `(now-last_seen)>STALE_SKIP`
+  -- return-false permanently hid pills whenever a death froze last_seen.
   return true
 end
 

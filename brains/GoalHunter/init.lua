@@ -2334,6 +2334,11 @@ function Brain.think(info)
       start_slate(SLATE_SHORT_BACKUP, C.DIJKSTRA_SHORT_MAX_COST, in_boat, in_boat)
       start_slate(SLATE_LONG_MAIN,    C.DIJKSTRA_MAX_COST,       in_boat, 1)
       start_slate(SLATE_LONG_BACKUP,  C.DIJKSTRA_MAX_COST,       in_boat, 1)
+      -- The backups are now empty; far-tile lookups return INF until a
+      -- main→backup copy refills them. That copy now happens the moment each
+      -- main completes (see the step loop below), so the surface goes live in
+      -- ~2.5s instead of waiting out the recompute interval (~15s of INF after
+      -- a respawn). No special-case flag needed — it's the general behavior.
       if BRAIN_DEBUG_MODE then print2(string.format("DIJ_REROOT t=%d src=(%d,%d) — all slates re-rooted after respawn", now, tmx, tmy)) end
     end
 
@@ -2377,9 +2382,24 @@ function Brain.think(info)
         total_exp = total_exp + (expanded or 0)
         if done then
           refresh_slate(idx)
+          -- Go live as soon as a fresh surface is ready: copy the just-completed
+          -- main into its backup immediately, instead of waiting for the next
+          -- scheduled restart to do it. The schedule only THROTTLES how often we
+          -- re-root/recompute (CPU); there's no reason to keep serving an older
+          -- backup once a newer COMPLETE one exists. Removes the ~2.5s per-cycle
+          -- staleness window, and the ~15s of INF far-tile costs after a respawn
+          -- (the reroot empties the backup; this refills it the moment the
+          -- re-rooted main finishes). Copy only fires on `done`, so the backup is
+          -- always a complete surface by construction.
+          local backup = (idx == SLATE_SHORT_MAIN) and SLATE_SHORT_BACKUP
+                      or (idx == SLATE_LONG_MAIN)  and SLATE_LONG_BACKUP or nil
+          if backup then
+            cpf.dijkstra_copy_slate(idx, backup)
+            refresh_slate(backup)
+          end
           if BRAIN_DEBUG_MODE then print2(string.format(
-            "dij DONE slate=%d at_tick=%d (took %d ticks, expanded=%d)",
-            idx, now, now - d.slates[idx].started_tick, expanded)) end
+            "dij DONE slate=%d at_tick=%d (took %d ticks, expanded=%d) -> backup %s",
+            idx, now, now - d.slates[idx].started_tick, expanded, tostring(backup))) end
         end
       end
       local step_us = clock_us() - t_step
