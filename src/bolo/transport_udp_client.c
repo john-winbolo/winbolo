@@ -2430,13 +2430,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
  * host (target) IP+port the tracker should forward to. */
 static void udpClientSendPunchRequest(TransportUdpClientCtx *c) {
     struct sockaddr_in dest;
-    struct hostent *he;
+    struct in_addr trackerIp;
     uint8_t buf[PACKET_HEADER_SIZE + 6];
 
     if (c->sock == INVALID_SOCKET) return;
     if (c->trackerAddr[0] == '\0') return;
-    he = gethostbyname(c->trackerAddr);
-    if (he == NULL) return;
+    if (bolo_resolve_ipv4(c->trackerAddr, &trackerIp) != 0) return;
 
     packHeader(buf, PACKET_PUNCH_REQUEST, c->outSequence++);
     memcpy(buf + PACKET_HEADER_SIZE, &c->targetIp.s_addr, 4);
@@ -2444,7 +2443,7 @@ static void udpClientSendPunchRequest(TransportUdpClientCtx *c) {
 
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
-    memcpy(&dest.sin_addr, he->h_addr_list[0], he->h_length);
+    dest.sin_addr = trackerIp;
     dest.sin_port = htons(c->trackerPort);
     sendto(c->sock, (const char *)buf, sizeof(buf), 0,
            (const struct sockaddr *)&dest, sizeof(dest));
@@ -2928,7 +2927,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                                    unsigned short trackerPort) {
     Transport t;
     TransportUdpClientCtx *c;
-    struct hostent *he;
 
     WB_LOG_INFO(WB_LOG_CAT_NET,
         "client connect: server=%s:%u name='%s' wantRejoin=%d "
@@ -2984,16 +2982,14 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->serverAddr.sin_port = htons(serverPort);
     c->serverAddr.sin_addr.s_addr = inet_addr(serverAddr);
     if (c->serverAddr.sin_addr.s_addr == INADDR_NONE) {
-        he = gethostbyname(serverAddr);
-        if (he != NULL) {
-            memcpy(&c->serverAddr.sin_addr, he->h_addr_list[0], he->h_length);
+        if (bolo_resolve_ipv4(serverAddr, &c->serverAddr.sin_addr) == 0) {
             WB_LOG_DEBUG(WB_LOG_CAT_NET,
                 "client connect: resolved %s -> %s",
                 serverAddr,
                 inet_ntoa(c->serverAddr.sin_addr));
         } else {
             WB_LOG_ERROR(WB_LOG_CAT_NET,
-                "client connect: gethostbyname('%s') failed",
+                "client connect: DNS lookup for '%s' failed",
                 serverAddr ? serverAddr : "(null)");
             c->joinState = UDP_CLIENT_ERROR;
             t.recordInput = udpClientRecordInput;

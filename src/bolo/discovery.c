@@ -338,7 +338,6 @@ bool discoveryFindTrackedGames(currentGames *cg, char *trackerAddress, unsigned 
   int ret;
   struct sockaddr_in con;
   SOCKET sock;
-  struct hostent *phe;
   BYTE *buff;
   BYTE *ptr;
   int len = 0;
@@ -374,12 +373,9 @@ bool discoveryFindTrackedGames(currentGames *cg, char *trackerAddress, unsigned 
     con.sin_port = htons(port);
     con.sin_addr.s_addr = inet_addr(trackerAddress);
     if (con.sin_addr.s_addr == INADDR_NONE) {
-      phe = gethostbyname(trackerAddress);
-      if (phe == 0) {
+      if (bolo_resolve_ipv4(trackerAddress, &con.sin_addr) != 0) {
         returnValue = FALSE;
         WB_LOG_WARN(WB_LOG_CAT_NET, "discovery: Tracker DNS lookup failed");
-      } else {
-        con.sin_addr.s_addr = *((uint32_t*)phe->h_addr_list[0]);
       }
     }
   }
@@ -665,13 +661,11 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
   dest.sin_port = htons(port);
   dest.sin_addr.s_addr = inet_addr(address);
   if (dest.sin_addr.s_addr == INADDR_NONE) {
-    struct hostent *phe = gethostbyname(address);
-    if (phe == NULL) {
+    if (bolo_resolve_ipv4(address, &dest.sin_addr) != 0) {
       WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Ping DNS lookup failed for %s", address);
       bolo_net_cleanup();
       return FALSE;
     }
-    dest.sin_addr.s_addr = *((uint32_t *)phe->h_addr_list[0]);
   }
 
   sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
