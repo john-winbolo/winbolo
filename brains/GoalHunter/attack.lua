@@ -4410,6 +4410,32 @@ function M.update_attack_substate(goal, state, world, info)
   -- ══════════════════════════════════════════════════════════════════
   if goal.substate == "build_walls" then
     commit_soak_finish(goal, state, info)   -- one-time soak/swerve decision (PPT commit point)
+    -- Early blitz on join (flag-gated): we only entered build_walls because we
+    -- were a full-pill PPT with NOBODY joined at the in-position checkpoint. Keep
+    -- building while joiners are still APPROACHING — the half-built shield is our
+    -- protection until enough tanks actually arrive. Only once at least
+    -- BLITZ_MIN_READY_TO_CHARGE blitzers are IN POSITION AND READY (rdy=1) does
+    -- the simultaneous overwhelm replace the shield: abandon the remaining blocks
+    -- and rally NOW. The commander itself always counts as 1 (it's at its
+    -- standoff), so _ready ready soldiers means (_ready + 1) ready blitzers; a
+    -- still-approaching tank beyond the threshold keeps closing and joins on GO.
+    -- Mirror the in-position skip-walls route: blitz_wait WITHOUT _blitz_shielded,
+    -- so on GO everyone (commander included) charges rather than firing from cover.
+    if C.BLITZ_ABORT_BUILD_ON_READY and goal._blitz then
+      local _total, _ready = squad.blitz_ready_status(state, now, info.player_number or -1)
+      _ready = _ready or 0
+      if (_ready + 1) >= (C.BLITZ_MIN_READY_TO_CHARGE or 2) then
+        goal.wall_shield = false
+        goal.wall_mx = nil
+        goal.wall_my = nil
+        goal.substate = "blitz_wait"
+        goal._blitz_ready_since = nil
+        goal._blitz_shielded = nil   -- unshielded → GO charges, doesn't fire from cover
+        state.squad_blitz_in_position = true
+        print2(string.format("BLITZ_BUILD_ABORT t=%d ready_blitzers=%d (soldiers=%d/%d)>=%d idx=%s/%s -> blitz_wait (skip remaining walls)", now, _ready + 1, _ready, _total or 0, C.BLITZ_MIN_READY_TO_CHARGE or 2, tostring(goal._wall_build_idx), tostring(goal._wall_build_list and #goal._wall_build_list)))
+        return
+      end
+    end
     -- Lazy init: build the wall queue once, sorted closest-to-pill first.
     if not goal._wall_build_list then
       local pots = nil

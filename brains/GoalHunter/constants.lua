@@ -551,6 +551,25 @@ M.REFUEL_FULL_COST_MULT    = 3.0   -- pool-1 cost multiplier when tank is betwee
 -- deficit_ratio = max((ARMOUR_LOW - armour)/ARMOUR_LOW, (SHELLS_LOW - shells)/SHELLS_LOW)
 M.REFUEL_BASE_COST         = 45    -- flat floor so refuel-at-own-base isn't ~0
 M.REFUEL_DEFICIT_BONUS     = 25    -- max discount when fully depleted
+-- "Gotta share" scarcity shaping. REFUEL_FULL_COST_MULT (above) is the cost of
+-- topping off PAST the LOW watermarks (SHELLS_LOW=20 / ARMOUR_LOW=15) toward
+-- target. We steepen that ramp when the team is starved for bases, so a bot
+-- leaves near the floor (~20 shells / ~15 armour) to free the base for
+-- teammates, and keep it gentle (fill toward target) when bases are plentiful.
+-- scarcity = 1 + RATIO_K*max(0, team_tanks/friendly_bases - 1) + LOCAL_K*nearby_allies
+-- effective top-off mult = 1 + fill*(REFUEL_FULL_COST_MULT-1)*scarcity
+M.REFUEL_SHARE_ENABLED      = true
+M.REFUEL_SHARE_RATIO_K      = 1.5  -- how hard base-scarcity (team tanks per friendly base, over 1.0) steepens the top-off ramp. Losing game (few bases, many tanks) => leave at the floor. 0 disables the ratio term.
+M.REFUEL_SHARE_LOCAL_K      = 0.5  -- extra ramp per teammate currently within REFUEL_SHARE_LOCAL_TILES (more bots crowding this base now => leave sooner)
+M.REFUEL_SHARE_LOCAL_TILES  = 20   -- tiles; an ally tank inside this counts as "locally competing" for the base
+M.REFUEL_SHARE_SCARCITY_CAP = 8.0  -- clamp on the scarcity multiplier so the ramp can't explode
+-- Mines: never hold the bot at base (REFUEL_MIN_MINES=0 → mines never count as
+-- "need"), and topping mines past REFUEL_MINE_FREE adds an exponential staying-
+-- cost so a mine-rich tank leaves sooner. cost = WEIGHT*(BASE^(mines-FREE) - 1).
+M.REFUEL_MIN_MINES         = 0     -- mines below this still count as a refuel need (0 = never wait for mines)
+M.REFUEL_MINE_FREE         = 5     -- mines up to here add no staying-cost
+M.REFUEL_MINE_HOARD_BASE   = 1.3   -- exponential base for the per-extra-mine cost past FREE
+M.REFUEL_MINE_HOARD_WEIGHT = 8     -- scale on the exponential mine-hoard cost term
 M.ANGRY_PILL_AT_BASE_PENALTY = 200 -- added to pool-1 cost when an angry hostile pill is in fire range of the base
 -- Critical-armour flee: when true, injects a cost=40 flee_to_base candidate
 -- into pool 1 so the tank retreats to a safe base. When false (default),
@@ -1174,6 +1193,8 @@ M.SQUAD_BLITZ_BD_REFRESH_TICKS = 500  -- ticks (~10s): how often a COMMITTED, st
 M.SQUAD_BLITZ_QUERY_LEAD = 50  -- ticks (~1s): when the blitz_wait GO timeout is this close to firing AND a still-pending soldier is out of the commander's sight (so it's relying on that soldier's coarse broadcast bd), the commander broadcasts a "where are you now?" query (bwq). The soldier answers by force-refreshing bd this tick; if the fresh answer shows it's still closing, the commander grants one more PROGRESS_CHECK window instead of giving up.
 M.SQUAD_BLITZ_CLASH_TILES = 2   -- two standoffs within this EUCLIDEAN distance (tiles) conflict; the commander makes the nearer/junior soldier repick so spots stay >= this far apart
 M.SQUAD_BLITZ_PREEMPT_TANK_TILES = 10  -- a committed blitz only yields to attack_tank when the hostile tank is within this many tiles of us (close enough to actually threaten); farther tanks don't break the blitz
+M.BLITZ_ABORT_BUILD_ON_READY = true  -- if a soldier JOINS while the commander is mid build_walls (laying its guard pills/shield), abandon the remaining blocks and rally NOW (build_walls -> blitz_wait, unshielded charge route). The joiner's simultaneous overwhelm replaces the shield as protection — same routing as if the joiner had answered before the in-position decision. Off = finish the shield first, then rally (original behavior).
+M.BLITZ_MIN_READY_TO_CHARGE = 2  -- (used with BLITZ_ABORT_BUILD_ON_READY) minimum READY blitzers — total tanks in position and aimed (rdy=1) — required before the commander abandons the build and charges. The commander itself always counts as 1 (it's at its standoff). 2 = commander + one ready soldier; a still-approaching 3rd is left to keep closing and joins the charge when it arrives. Default 2 = original abort-on-join behavior.
 -- Ally right-of-way: brake to let a higher-priority ally (lower player number)
 -- pass when our projected path tiles cross theirs.
 M.ALLY_YIELD_MIN_SPEED  = 6   -- below this speed a tank can't reach its projected tiles, so it neither yields nor is yielded to
