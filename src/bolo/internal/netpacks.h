@@ -357,18 +357,8 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* server reply to MAP_SEARCH_REQ */
 
-/* Reliable control-event carrier (lobby / countdown / gameover) and its
- * dedicated ACK packet.  During running, control events ride in the
- * snapshot's control-event tail; outside running, snapshots don't flow,
- * so PACKET_CONTROL_TICK carries the unacked tail of each per-client
- * control queue and the client ACKs with PACKET_CONTROL_ACK.
- *   PACKET_CONTROL_TICK wire format:
- *     [header 8] [controlEventBaseSeq 4 BE] [count 1]
- *     [count × ( type 1 + bodyLen 2 BE + body N )]
- *   PACKET_CONTROL_ACK wire format:
- *     [header 8] [controlEventAck 4 BE]  — next expected control seq */
-#define PACKET_CONTROL_TICK     187  /* server -> client */
-#define PACKET_CONTROL_ACK      188  /* client -> server */
+/* 187/188 retired: control events ride CHANNEL_CONTROL, acked by the
+ * channel-frame trailer.  The former standalone carrier and its ACK are gone. */
 
 /* Server Maps preview-fetch protocol. The client never reads
  * server map files directly: in MP the file lives on a remote

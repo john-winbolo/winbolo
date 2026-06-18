@@ -11,8 +11,8 @@
  * These are pure tests against the real ClientEventQueue / eventQueueHasSpace
  * (transport_udp_internal.h). The server's cut, enqueue, and send-gate bodies
  * are static inside transport_udp_server.c and not linkable here, so the three
- * one-line operations are mirrored exactly below — same approach as
- * test_control_event_queue.c. Each mirror cites the real site it copies.
+ * one-line operations are mirrored exactly below. Each mirror cites the real
+ * site it copies.
  */
 
 #include <stdbool.h>

@@ -4,7 +4,7 @@
  * Control events ride reliable channel 2 (CHANNEL_CONTROL).  During a quiet
  * lobby the client sends no input, so its control acks can only travel on the
  * per-tick standalone PACKET_CHANNEL trailer it emits every connected tick —
- * the retired PACKET_CONTROL_ACK path is gone.  This test proves that path
+ * the retired standalone control-ack path is gone.  This test proves that path
  * carries acks: a client joins a lobby under loss=5 / burst=2 and is never fed
  * input; the server then floods it with more than CHANNEL_CONTROL_WINDOW (64)
  * control events, paced so the window drains between batches.

@@ -122,12 +122,10 @@ typedef struct {
     /* Reliable event dedup */
     uint32_t reliableEventAck;  /* Next expected reliable game event seq (init to 1) */
     uint32_t mapEventAck;       /* Next expected reliable map event seq (init to 1) */
-    /* Coalesce PACKET_CONTROL_ACK emission to ~50ms — only relevant
-     * during non-running phases when PACKET_CONTROL_TICK is the
-     * carrier.  controlAckPendingTick: localTick when the first
-     * post-ACK tick arrived (0 = no ack pending).  lastSentControlAck:
-     * the control ack value carried in the most recent ACK packet,
-     * used to avoid resending an unchanged ACK. */
+    /* Vestige of the retired standalone control-ack coalescer (control
+     * events now ride CHANNEL_CONTROL, acked by the channel-frame trailer).
+     * Both fields are still reset on connect/flip but no longer have a
+     * reader; left in place pending a follow-up removal. */
     uint32_t controlAckPendingTick;
     uint32_t lastSentControlAck;
 
@@ -2124,8 +2122,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
      * same snapshot's prior-game tails would otherwise replay against
      * the new map. */
 
-    /* PACKET_CONTROL_TICK / PACKET_CONTROL_ACK are retired: control events ride
-     * reliable channel 2 (CHANNEL_CONTROL), drained in the PACKET_STATE_SNAPSHOT
+    /* Control events ride CHANNEL_CONTROL: drained in the PACKET_STATE_SNAPSHOT
      * and PACKET_CHANNEL paths above, and acked by the channel-frame trailer. */
 
     case PACKET_COMMAND_ACK: {
@@ -2536,7 +2533,7 @@ static bool udpClientTick(void *ctx) {
 
     /* Control-event acks now ride the channel-frame trailer (the per-tick
      * standalone PACKET_CHANNEL below, or an input trailer during running),
-     * so the dedicated coalesced PACKET_CONTROL_ACK emitter is retired. */
+     * so the dedicated coalesced control-ack emitter is retired. */
 
     /* Handle join handshake — send/resend join requests */
     if (c->joinState == UDP_CLIENT_JOINING) {
