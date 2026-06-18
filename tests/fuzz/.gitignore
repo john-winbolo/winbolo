@@ -1,0 +1,5 @@
+# Committed seeds are *.bin. libFuzzer writes SHA-named finds (no extension)
+# into whatever corpus dir it is given; run_discovery.sh aims those at the
+# build tree, but ignore stray non-seed corpus entries here as a safety net.
+corpus/*/*
+!corpus/*/*.bin

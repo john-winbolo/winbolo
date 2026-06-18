@@ -264,6 +264,11 @@ void clientApplySnapshot(ClientSim *csPtr,
                               BYTE playerNum) {
   int i;
   bool isHuman = !csPtr->isBot;
+  /* Wall-clock arrival stamp for this snapshot, shared by every tank in it.
+   * The render-time interpolation advances a fractional t against this. The
+   * apply runs synchronously on the receive path, so this is the arrival
+   * time within microseconds. */
+  uint32_t arrivalMs = SDL_GetTicks();
 
   /* Record the server's last-processed input tick for THIS client from the
    * header. clientBuildInputPacket uses it to keep the outgoing tick number
@@ -597,7 +602,7 @@ void clientApplySnapshot(ClientSim *csPtr,
       snap.lgmPX = tanks[i].lgmPX;
       snap.lgmPY = tanks[i].lgmPY;
       snap.lgmFrame = tanks[i].lgmFrame > 0 ? tanks[i].lgmFrame - 1 : 0;
-      interpUpdate(&csPtr->interpCtx, pn, &snap, hdr->serverTick);
+      interpUpdate(&csPtr->interpCtx, pn, &snap, hdr->serverTick, arrivalMs);
 
       /* Auto-register player if not yet known */
       if (csPtr->sim.plyrs != NULL && playersIsInUse(&csPtr->sim.plyrs, pn) == FALSE) {
@@ -614,32 +619,11 @@ void clientApplySnapshot(ClientSim *csPtr,
         (*csPtr->sim.plyrs).item[pn].speed = (uint8_t)(tanks[i].speed >> 6);
       }
 
-      /* Update players struct for rendering */
-      if (csPtr->sim.plyrs != NULL) {
-        WORLD interpX, interpY;
-        TURNTYPE interpAngle;
-        bool interpOnBoat;
-        if (interpGetPosition(&csPtr->interpCtx, pn, 1.0f,
-                              &interpX, &interpY,
-                              &interpAngle, &interpOnBoat)) {
-          BYTE mx = (BYTE)(interpX >> TANK_SHIFT_MAPSIZE);
-          BYTE px = (BYTE)((interpX & 0xFF) >> TANK_SHIFT_RIGHT2);
-          BYTE my = (BYTE)(interpY >> TANK_SHIFT_MAPSIZE);
-          BYTE py = (BYTE)((interpY & 0xFF) >> TANK_SHIFT_RIGHT2);
-          BYTE frame = utilGetDir(interpAngle);
-          playersUpdate(&csPtr->sim.plyrs, pn, mx, my, px, py, frame,
-                        interpOnBoat,
-                        snap.lgmMX, snap.lgmMY, snap.lgmPX, snap.lgmPY,
-                        snap.lgmFrame);
-        } else if (!snap.alive) {
-          /* Dead player: move tank off-screen but keep LGM visible —
-           * the LGM outlives its owner tank and the server still sends
-           * its position in every snapshot. */
-          playersUpdate(&csPtr->sim.plyrs, pn, 0, 0, 0, 0, 0, FALSE,
-                        snap.lgmMX, snap.lgmMY, snap.lgmPX, snap.lgmPY,
-                        snap.lgmFrame);
-        }
-      }
+      /* The display position write (interpGetPosition + playersUpdate) used
+       * to happen here, once per snapshot arrival.  It now runs once per
+       * render frame in clientSnapshotRenderInterp, advancing a fractional t
+       * from a render clock against the prev→curr arrival timestamps stamped
+       * by interpUpdate above. */
     }
   }
 
@@ -686,8 +670,7 @@ void clientApplySnapshot(ClientSim *csPtr,
    * per game tick until the next snapshot re-anchors. Bots keep reading the
    * raw serverShellSnaps above and get no projection layer. */
   if (isHuman) {
-    clientSimRebuildProjectedShells(
-        csPtr, playersGetPing(&csPtr->sim.plyrs, playerNum));
+    clientSimRebuildProjectedShells(csPtr, csPtr->projectionPingMs);
   }
 
   /* Tank fireballs are spawned via EVENT_TK_EXPLOSION (handled below) and
@@ -1090,5 +1073,86 @@ void clientApplySnapshot(ClientSim *csPtr,
   /* Invalidate tile cache after applying snapshot state (human only) */
   if (isHuman) {
     csPtr->viewport.needRecalc = TRUE;
+  }
+
+  /* Bots have no per-frame render seam to drive interpolation and rely on
+   * the snapshot for other tanks' positions (the brain reads them from the
+   * players struct via playersGetBrainTanksInRect).  Apply the display
+   * update inline and discretely — exactly the per-arrival behaviour that
+   * used to live in the tank loop above.  Human clients do this once per
+   * render frame in clientSnapshotRenderInterp instead. */
+  if (!isHuman) {
+    clientSnapshotRenderInterp(csPtr, arrivalMs, 0.0f, /*discrete=*/true);
+  }
+}
+
+/*********************************************************
+*NAME:          clientSnapshotRenderInterp
+*PURPOSE:
+*  Per-render-frame display update for other players' tanks.  Computes each
+*  remote tank's interpolated position from a render clock against the
+*  prev→curr snapshot timeline (the work that used to run once per snapshot
+*  arrival inside clientApplySnapshot) and writes it to the players struct
+*  via playersUpdate.  The own tank is skipped (interp never holds the local
+*  player), so the listen-server host's own tank is unaffected.
+*
+*ARGUMENTS:
+*  cs           - Pointer to the ClientSim
+*  nowMs        - Render clock (ms)
+*  extraDelayMs - Adaptive extra display delay beyond the 1-snapshot base
+*  discrete     - When true (render clock stressed) fall back to today's
+*                 discrete t=1.0 apply
+*********************************************************/
+void clientSnapshotRenderInterp(ClientSim *cs, uint32_t nowMs,
+                                float extraDelayMs, bool discrete) {
+  BYTE pn;
+
+  if (cs == NULL || cs->sim.plyrs == NULL) {
+    return;
+  }
+
+  for (pn = 0; pn < MAX_TANKS; pn++) {
+    WORLD interpX, interpY;
+    TURNTYPE interpAngle;
+    bool interpOnBoat;
+    bool drew = FALSE;
+
+    /* Smooth render-clock interpolation when the clock is healthy; otherwise
+     * (or when there's no forward buffer yet, or the player is dead/frozen)
+     * fall back to the discrete apply — interpGetPosition at t=1.0, exactly
+     * today's behaviour. */
+    if (!discrete) {
+      drew = interpGetRenderPosition(&cs->interpCtx, pn, nowMs, extraDelayMs,
+                                     &interpX, &interpY, &interpAngle,
+                                     &interpOnBoat);
+    }
+    if (!drew) {
+      drew = interpGetPosition(&cs->interpCtx, pn, 1.0f, &interpX, &interpY,
+                               &interpAngle, &interpOnBoat);
+    }
+
+    if (drew) {
+      BYTE lgmMX = 0, lgmMY = 0, lgmPX = 0, lgmPY = 0, lgmFrame = 0;
+      BYTE mx = (BYTE)(interpX >> TANK_SHIFT_MAPSIZE);
+      BYTE px = (BYTE)((interpX & 0xFF) >> TANK_SHIFT_RIGHT2);
+      BYTE my = (BYTE)(interpY >> TANK_SHIFT_MAPSIZE);
+      BYTE py = (BYTE)((interpY & 0xFF) >> TANK_SHIFT_RIGHT2);
+      BYTE frame = utilGetDir(interpAngle);
+      interpGetLgm(&cs->interpCtx, pn, &lgmMX, &lgmMY, &lgmPX, &lgmPY,
+                   &lgmFrame);
+      playersUpdate(&cs->sim.plyrs, pn, mx, my, px, py, frame, interpOnBoat,
+                    lgmMX, lgmMY, lgmPX, lgmPY, lgmFrame);
+    } else if (interpHasData(&cs->interpCtx, pn) &&
+               !interpIsAlive(&cs->interpCtx, pn)) {
+      /* Dead player: move tank off-screen but keep LGM visible — the LGM
+       * outlives its owner tank and the server still sends its position in
+       * every snapshot.  (An alive-but-stale player whose interp froze
+       * keeps its last drawn position; we do not move it.) */
+      BYTE lgmMX = 0, lgmMY = 0, lgmPX = 0, lgmPY = 0, lgmFrame = 0;
+      interpGetLgm(&cs->interpCtx, pn, &lgmMX, &lgmMY, &lgmPX, &lgmPY,
+                   &lgmFrame);
+      playersUpdate(&cs->sim.plyrs, pn, 0, 0, 0, 0, 0, FALSE,
+                    lgmMX, lgmMY, lgmPX, lgmPY, lgmFrame);
+    }
   }
 }

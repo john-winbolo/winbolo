@@ -60,6 +60,9 @@ typedef struct {
   bool hasPrev;            /* Two snapshots received (can interpolate) */
   bool hasPending;         /* true when pending holds a newer snapshot than curr */
   uint32_t missedTicks;    /* Consecutive ticks with no update */
+  uint32_t currArrivalMs;    /* wall-clock ms when curr was received */
+  uint32_t prevArrivalMs;    /* wall-clock ms when prev was received */
+  uint32_t pendingArrivalMs; /* wall-clock ms when pending was received */
 } InterpPlayer;
 
 /* The full interpolation context for all other players */
@@ -90,9 +93,14 @@ void interpCreate(InterpContext *ctx, BYTE localPlayer);
 *  playerNum - Which player this snapshot is for
 *  snap      - The new snapshot data
 *  tick      - Server tick number
+*  nowMs     - Wall-clock arrival time (ms), used by the render-time
+*              interpolation to advance a fractional t against a render
+*              clock.  A snapshot whose tick is not newer than the last
+*              applied one is ignored (idempotent on serverTick), so the
+*              same snapshot drained from two call sites can't shift twice.
 *********************************************************/
 void interpUpdate(InterpContext *ctx, BYTE playerNum,
-                  const InterpSnapshot *snap, uint32_t tick);
+                  const InterpSnapshot *snap, uint32_t tick, uint32_t nowMs);
 
 /*********************************************************
 *NAME:          interpMarkMissing
@@ -174,5 +182,93 @@ bool interpHasData(const InterpContext *ctx, BYTE playerNum);
 *  playerNum - Which player
 *********************************************************/
 bool interpIsAlive(const InterpContext *ctx, BYTE playerNum);
+
+/* === Render-time interpolation (driven off a render clock) === */
+
+/* Nominal spacing between server snapshots (ms).  The server emits a
+ * snapshot every 20ms, so rendering the prev→curr segment over one such
+ * interval after curr's arrival places the display one snapshot behind the
+ * newest arrival — today's structural buffer depth. */
+#define INTERP_NOMINAL_SNAPSHOT_MS 20
+
+/* Adaptive display delay never exceeds two snapshots (one nominal interval
+ * of extra delay on top of the one-snapshot base). */
+#define INTERP_MAX_EXTRA_DELAY_MS INTERP_NOMINAL_SNAPSHOT_MS
+
+/* A clean loopback link's measured jitter floors at ~20-30ms purely from
+ * arrival-timestamp quantization; only jitter above this floor is treated as
+ * real and allowed to deepen the buffer, so a clean link stays at depth 1. */
+#define INTERP_JITTER_FLOOR_MS 30
+
+/* Render-clock stress threshold: a frame gap larger than this means the
+ * render clock is too irregular to drive smooth fractional interpolation, so
+ * the render path falls back to today's discrete (t=1.0) apply for that frame. */
+#define INTERP_FRAME_STRESS_MS 50
+
+/* Hysteresis deadband and asymmetric slew rates for the adaptive depth: the
+ * controller is quick to relax toward today's one-snapshot behaviour (fast
+ * shrink) and slow to push past it (rate-limited grow). */
+#define INTERP_DEPTH_HYST_MS        3.0f
+#define INTERP_DEPTH_GROW_MS_PER_S  20.0f
+#define INTERP_DEPTH_SHRINK_MS_PER_S 80.0f
+
+/* Persistent per-client controller state for the adaptive display delay.
+ * Zero-initialised (lastRenderMs == 0 => first frame => discrete). */
+typedef struct {
+  uint32_t lastRenderMs;   /* render clock at the previous control update */
+  float    currentDelayMs; /* smoothed extra delay beyond the 1-snapshot base */
+} InterpRenderCtl;
+
+/* Output of one control update. */
+typedef struct {
+  float extraDelayMs; /* extra display delay (ms) on top of the 1-snapshot base */
+  bool  discrete;     /* true => render clock stressed, use discrete t=1.0 */
+} InterpRenderDecision;
+
+/*********************************************************
+*NAME:          interpRenderControl
+*PURPOSE:
+*  Advances the adaptive display-delay controller one render frame.
+*  Derives a target extra delay from measured snapshot jitter (above the
+*  quantization floor), bounded to one extra snapshot, then slews
+*  currentDelayMs toward it with hysteresis and an asymmetric rate limit
+*  (slow grow, fast shrink).  Flags the frame discrete when the render
+*  clock is stressed (first frame, zero/negative gap, or a gap spike).
+*
+*ARGUMENTS:
+*  ctl      - Persistent controller state (updated in place)
+*  jitterMs - Measured snapshot inter-arrival jitter (ms)
+*  nowMs    - Current render clock (ms)
+*********************************************************/
+InterpRenderDecision interpRenderControl(InterpRenderCtl *ctl,
+                                         float jitterMs, uint32_t nowMs);
+
+/*********************************************************
+*NAME:          interpGetRenderPosition
+*PURPOSE:
+*  Render-clock entity interpolation for a player.  Renders at a target time
+*  of (renderNowMs - one nominal snapshot - extraDelayMs) and interpolates
+*  between whichever two of the prev/curr/pending samples bracket that target
+*  by wall-clock arrival time (the clean-link depth-1 case lands in the
+*  curr→pending segment, ~1 snapshot behind the newest arrival).  This is the
+*  smooth path; it does NOT extrapolate — brief loss clamps to the newest
+*  sample (no snap-back) and a long stall returns FALSE.
+*
+*ARGUMENTS:
+*  ctx          - Pointer to the InterpContext
+*  playerNum    - Which player to interpolate
+*  renderNowMs  - Current render clock (ms)
+*  extraDelayMs - Adaptive extra display delay beyond the 1-snapshot base
+*  outX/outY/outAngle/outOnBoat - Interpolated outputs
+*
+*RETURNS:
+*  TRUE and writes the outputs when a smooth interpolated position is
+*  available; FALSE when the caller should fall back to the discrete apply
+*  (no forward buffer yet, player dead/frozen, or a stale/garbage interval).
+*********************************************************/
+bool interpGetRenderPosition(const InterpContext *ctx, BYTE playerNum,
+                             uint32_t renderNowMs, float extraDelayMs,
+                             WORLD *outX, WORLD *outY,
+                             TURNTYPE *outAngle, bool *outOnBoat);
 
 #endif /* INTERPOLATION_H */

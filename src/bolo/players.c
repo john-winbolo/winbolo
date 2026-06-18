@@ -577,7 +577,8 @@ void playersGetPlayerLocation(players *plrs, BYTE playerNum, char *dest) {
 }
 
 void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest) {
-  if (plrs != NULL && (*plrs)->item[playerNum].inUse == TRUE) {
+  if (plrs != NULL && playerNum < MAX_TANKS &&
+      (*plrs)->item[playerNum].inUse == TRUE) {
     dest[0] = (*plrs)->item[playerNum].location[0];
     dest[1] = (*plrs)->item[playerNum].location[1];
     dest[2] = '\0';
@@ -590,7 +591,8 @@ void playersGetCountryCode(players *plrs, BYTE playerNum, char *dest) {
 
 uint8_t playersGetAccountFlags(players *plrs, BYTE playerNum) {
   uint8_t flags = 0;
-  if (plrs != NULL && (*plrs)->item[playerNum].inUse == TRUE) {
+  if (plrs != NULL && playerNum < MAX_TANKS &&
+      (*plrs)->item[playerNum].inUse == TRUE) {
     flags = (*plrs)->item[playerNum].clientFlags
             & (PLAYER_FLAG_WBN_VERIFIED
                | PLAYER_FLAG_WBN_STEAM_LINKED
@@ -621,6 +623,11 @@ void playersMakeMessageName(ClientSim *cs, players *plrs, BYTE selfPlayer, BYTE 
   char label[FILENAME_MAX];   /* Used to hold the string made by label */
 
   label[0] = '\0';
+  if (playerNum >= MAX_TANKS) {
+    /* Out-of-range player number from the wire — never index item[] with it. */
+    strcpy(dest, NO_TANK);
+    return;
+  }
   if (playerNum == selfPlayer) {
     labelMakeMessage(cs, label, (*plrs)->item[playerNum].playerName, langGetText(MESSAGE_THIS_COMPUTER));
     strcpy(dest, label);
@@ -684,6 +691,9 @@ bool playersIsAllie(players *plrs, BYTE playerA, BYTE playerB) {
   if (playerA == playerB) {
     returnValue = TRUE;
   } else if (playerA == NEUTRAL || playerB == NEUTRAL) {
+    returnValue = FALSE;
+  } else if (playerA >= MAX_TANKS || playerB >= MAX_TANKS) {
+    /* Out-of-range player number from the wire — never index item[] with it. */
     returnValue = FALSE;
   } else {
     /* Check for exist */

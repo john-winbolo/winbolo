@@ -290,6 +290,11 @@ void clientShellProject(uint16_t snapX, uint16_t snapY, uint8_t angle,
  * smoothly across snapshots. Call for human clients only. */
 void clientSimRebuildProjectedShells(ClientSim *cs, uint16_t pingMs);
 
+/* Store the min-over-window RTT (ms) the snapshot path uses to anchor
+ * remote-shell forward-projection. The transport sets this each PONG; it is
+ * the functional (not display) ping. */
+void clientSimSetProjectionPing(ClientSim *cs, uint16_t pingMs);
+
 /* Advance projected shells one game tick (move forward, cull on visual
  * collision, decrement length) between snapshots. */
 void clientSimAdvanceProjectedShells(ClientSim *cs);

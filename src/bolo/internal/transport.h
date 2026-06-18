@@ -55,6 +55,13 @@ struct ServerSim;
  *                Precondition: caller holds threadsMutex (e.g. via
  *                clientMutexWaitFor). Implementations may read shared
  *                server state without taking the lock themselves.
+ * drainSnapshots: Receive and apply any pending snapshots (and other inbound
+ *                packets) without advancing per-tick state — no localTick
+ *                advance, resends, acks, ping, or timeouts.  Called from the
+ *                per-tick pump and, once per render frame, from the render
+ *                seam so a frame composes from the freshest snapshot.  The
+ *                local transport has no socket, so its entry is a no-op.
+ *                Precondition: same as getSnapshot (caller holds the lock).
  * ctx:           Opaque pointer to implementation data.
  *********************************************************/
 typedef struct {
@@ -69,6 +76,7 @@ typedef struct {
                         BaseSnapshot *bases, int maxBases,
                         PillSnapshot *pills, int maxPills,
                         GameEvent *events, int maxEvents);
+    void (*drainSnapshots)(void *ctx);
     void *ctx;
 } Transport;
 

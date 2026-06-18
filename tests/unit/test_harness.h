@@ -158,6 +158,10 @@ int run_wbn_prefs_parse_get(void);
 int run_wbn_prefs_parse_updatedat(void);
 int run_wbn_prefs_decide(void);
 int run_wbn_prefs_build_put_body(void);
+int run_wbn_serverlist_parse(void);
+int run_wbn_serverlist_players(void);
+int run_wbn_serverlist_motd(void);
+int run_wbn_serverlist_malformed(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -223,6 +227,9 @@ int run_wbn_lobby_update_sends_when_not_rotating(void);
  * window so the next round's map is never reported on the old server_key. */
 int run_maprotate_restarts_round_and_rearms(void);
 int run_maprotate_defers_wbn_update_until_key_rotated(void);
+int run_maprotate_gameover_is_not_terminal(void);
+int run_maprotate_boot_does_not_rotate_while_empty(void);
+int run_maprotate_vote_return_is_not_terminal(void);
 
 /* Deferred WBN PLAYER_JOIN core (test_wbn_deferred_join.c). The join
  * event is held until the slot's identity is known for the session —
@@ -266,6 +273,15 @@ int run_host_departs_promotes_lowest_human(void);
 int run_nonhost_departs_keeps_host(void);
 int run_host_reassign_skips_bots(void);
 int run_lobby_reset_clears_host_slot(void);
+
+/* Auto-lock on game start (test_autolock_on_game_start.c). The lobby stays
+ * open to joiners, but the round start closes the join gate and the
+ * transport lock and reports the lock to WinBolo.net. */
+int run_autolock_lobby_stays_open(void);
+int run_autolock_locks_on_start_wire(void);
+int run_autolock_locks_on_start_inplace(void);
+int run_autolock_join_blocked_after_start(void);
+int run_no_autolock_stays_open_on_start(void);
 
 /* Tree-growth water regressions (test_treegrow_no_sea.c). A converged
  * grow target survives serverSimResetGameWorld and, on the next map,
@@ -365,6 +381,22 @@ int run_catchup_ignores_redundant_duplicates(void);
 int run_jitter_buffer_grow(void);
 int run_shell_projection(void);
 
+/* Ping RTT smoothers (test_ping_smoother.c): the min-over-window and EWMA
+ * primitives — window-minimum tracking as samples slide out, EWMA constant
+ * convergence, and a monotonic overshoot-free step response. */
+int run_ping_smoother(void);
+
+/* Client timing estimator (test_client_timing.c): min-over-window clock
+ * offset / pipeline depth / RTT and inter-arrival jitter over synthetic clean
+ * and jittered snapshot sequences — floor convergence and spike rejection. */
+int run_client_timing(void);
+
+/* Render-time interpolation (test_interp_render.c): interpUpdate serverTick
+ * idempotency seq-guard, the render-clock fractional-t mapping, and the
+ * adaptive display-delay controller (bounded <=1 extra snapshot, hysteresis,
+ * asymmetric slew, frame-spike safe-degrade). */
+int run_interp_render(void);
+
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */
@@ -381,6 +413,18 @@ int run_error_smoothing(void);
 int run_loopback_join(void);
 int run_loopback_join_loss(void);
 int run_loopback_lobby_running_loss(void);
+
+/* Gate-#1 render-path integration (test_gate1_integration.c): the viewTick
+ * ±1-snapshot invariant over the real loopback transport, and the
+ * listen-server host render-prepare no-op (own tank + recon unchanged). */
+int run_gate1_viewtick_loopback(void);
+int run_gate1_host_noop(void);
+
+/* Estimator-jitter -> render-interpolation wiring (test_interp_jitter_e2e.c):
+ * loss-induced jitter over the loopback transport grows the adaptive display
+ * delay end-to-end via clientSimRenderPrepare; a clean link leaves it at 0. */
+int run_interp_jitter_e2e(void);
+
 int run_join_version_gate(void);
 
 /* Per-source-IP JOIN rate limit (test_join_rate_limit.c): a burst of valid
@@ -443,6 +487,31 @@ int run_mdns_discovery(void);
  * and bolo_client_type_name() maps every enumerator to its exact name. */
 int run_client_type_matches_platform(void);
 int run_client_type_name_round_trips(void);
+int run_players_oob_index_safe(void);
+int run_control_oob_player_dropped(void);
+
+/* A control-queue overflow detected inside a publish must defer the disconnect
+ * (serverDisconnectClient + serverSimRemovePlayer both publish) rather than run
+ * it synchronously and re-enter serverSimPublishControl
+ * (test_control_overflow_disconnect.c). */
+int run_control_overflow_defers_disconnect(void);
+
+/* In-game input gate taxonomy (test_input_gate.c). gameInputSuspended()
+ * suspends the polled in-game readers only for blocking surfaces (text
+ * input, a focus-stealing modal, a popup/menu on the stack, a defocused
+ * window) and never for the transient alliance/vote notifications. */
+int run_input_gate_taxonomy(void);
+
+/* Pasted server-address splitting for the manual join dialog
+ * (test_server_address_parse.c). */
+int run_addrparse_host_only(void);
+int run_addrparse_host_port(void);
+int run_addrparse_scheme(void);
+int run_addrparse_trailing_path(void);
+int run_addrparse_whitespace(void);
+int run_addrparse_port_bounds(void);
+int run_addrparse_bad_port(void);
+int run_addrparse_empty(void);
 
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and

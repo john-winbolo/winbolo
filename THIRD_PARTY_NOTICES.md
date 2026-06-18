@@ -143,3 +143,11 @@ WinBolo uses the following third-party libraries and code.
 - https://db-ip.com/db/download/ip-to-country-lite
 - Author: DB-IP (https://db-ip.com)
 - Used by the server (and the in-client game browser) for IP-to-country lookups via libmaxminddb. Rebuilt monthly; download the latest .mmdb and replace the file in place.
+
+### flag-icons
+- Location: data/flags/
+- License: MIT
+- https://github.com/lipis/flag-icons
+- Author: Panayiotis Lipiridis and contributors
+- Version: v7.5.0 (commit 7aa5b2bdddd570ece62c812c0cb588ccdc099e2e)
+- The flag SVG art in data/flags/ comes from this project. data/flags/countries.csv is derived from its country.json: the English country names keyed by the 2-char flag basenames.

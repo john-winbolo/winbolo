@@ -37,6 +37,10 @@
 /* SDL3 before bolo headers — see note above */
 #include <SDL3/SDL.h>
 
+#include <cctype>   /* toupper — country-code normalization */
+#include <cstdlib>  /* bsearch — country-name lookup */
+#include <cstring>  /* strcmp — bsearch comparator */
+
 #include "../../common/wb_log.h"
 
 /* ImGui */
@@ -56,8 +60,14 @@ extern "C" {
 #include "../lang.h"
 }
 
+/* Maps an uppercased alpha-2 code to its localized STR_COUNTRY_* name id
+ * (generated; sorted by code for bsearch). Needs langid + STR_COUNTRY_*
+ * from lang.h above. */
+#include "countries.inc"
+
 /* Our own header */
 #include "sdl3imgui.h"
+#include "input_gate.h"
 #include "sdl3draw.h"
 #include "luabrainshandler.h"
 #include "flags.h"
@@ -86,6 +96,7 @@ extern "C" {
 #include "dialogs/imgui_deck_pause.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
+#include "dialogs/imgui_controller_disconnect.h"
 #include "imgui_steam_nav.h"
 #include "dialogs/imgui_server_address.h"
 #include "dialogs/dialog_footer.h"
@@ -186,8 +197,9 @@ extern "C" void windowComputeAspectCorrectSize(int actualW, int actualH, int act
 extern "C" void windowNewGame(void);
 extern "C" void windowQuit(void);
 extern "C" void windowSaveMap(struct ClientSim *cs);
-extern "C" void windowSuspendBackground(void);
+extern "C" void windowSuspendBackground(struct ClientSim *cs);
 extern "C" void windowResumeForeground(struct ClientSim *cs);
+extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -257,6 +269,10 @@ static sdl3ImguiExtraRenderFn s_extraRenderFn = nullptr;
    Cleared each frame after use to reset ImGui nav focus so that menu open/close
    does not restore focus to the Send Message window. */
 static bool s_clearNavFocus = false;
+
+/* Set when a panel/chat opens; the render loop retracts any open menu-bar
+   dropdown on the next authority pass so the two don't render active at once. */
+static bool s_closeMenuPopups = false;
 
 /* Player slot state — updated by frontEndSetPlayer / frontEndClearPlayer */
 #define MAX_PLAYERS 16
@@ -873,6 +889,18 @@ static void renderNetInfoContent(ClientSim *cs) {
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGNETINFO_RECONCILE, &args));
     }
 
+    /* Measurement-only timing estimator (client_timing). Dev-internal
+     * readout to validate the estimates on real / -netimpair links before
+     * anything consumes them — plain literals, not localized. */
+    if (clientSimHasTransport(cs)) {
+        int clockOffsetTicks = 0, jitterMs = 0, timingRttMs = 0, depthTicks = 0;
+        clientSimGetTimingStats(cs, &clockOffsetTicks, &jitterMs, &timingRttMs,
+                                &depthTicks);
+        ImGui::Text("Timing: rtt %dms  jitter %dms", timingRttMs, jitterMs);
+        ImGui::Text("  clock off %dt  pipe depth %dt", clockOffsetTicks,
+                    depthTicks);
+    }
+
     /* Ping graph */
     pingGraphSample(ping, bpsIn, bpsOut);
     if (s_pingHistoryCount > 1) {
@@ -1364,9 +1392,7 @@ static void renderPlayersPanel(ClientSim *cs) {
         /* Flag icon — skipped for bots (no real country; renderPlayerName
          * below shows a brain icon in the platform-icon slot instead). */
         if (!(s_playerFlags[i] & PLAYER_FLAG_BOT) && s_playerCountry[i][0] != '\0') {
-            SDL_Texture *flagTex = flagsGetTexture(s_playerCountry[i]);
-            if (flagTex) {
-                ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+            if (drawCountryFlagWithTip(s_playerCountry[i])) {
                 ImGui::SameLine();
             }
         }
@@ -2009,7 +2035,10 @@ static void renderAllianceRequest(ClientSim *cs) {
     if (ImGui::Begin(title, &s_allianceVisible,
                      ImGuiWindowFlags_AlwaysAutoResize |
                      ImGuiWindowFlags_NoCollapse |
-                     ImGuiWindowFlags_NoSavedSettings)) {
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoBringToFrontOnFocus |
+                     ImGuiWindowFlags_NoNavInputs)) {
         autoPanelCapture(s_allianceLayout);
         {
             MessageArgs args = {};
@@ -2025,9 +2054,10 @@ static void renderAllianceRequest(ClientSim *cs) {
         }
         imguiHandOnHover();
         ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0)))
+        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0))) {
             s_allianceVisible = false;
-            imguiHandOnHover();
+        }
+        imguiHandOnHover();
     }
     ImGui::End();
     if (!s_allianceVisible) autoPanelReset(s_allianceLayout);
@@ -2650,7 +2680,7 @@ static void renderMenuBar(ClientSim *cs) {
 #endif
             if (ImGui::MenuItem(langGetText(STR_MENU_SEND_MESSAGE), KMOD_PRIMARY_LABEL "M")) {
                 s_showSendMsg = !s_showSendMsg;
-                if (s_showSendMsg) s_sendMsgFocusInput = true;
+                if (s_showSendMsg) { s_sendMsgFocusInput = true; s_closeMenuPopups = true; }
             }
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
@@ -2700,9 +2730,7 @@ static void renderMenuBar(ClientSim *cs) {
              * takes the platform-icon slot and stands in for both. */
             if (s_playerEnabled[i] && !(s_playerFlags[i] & PLAYER_FLAG_BOT)
                 && s_playerCountry[i][0] != '\0') {
-                SDL_Texture *flagTex = flagsGetTexture(s_playerCountry[i]);
-                if (flagTex) {
-                    ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+                if (drawCountryFlagWithTip(s_playerCountry[i])) {
                     ImGui::SameLine();
                 }
             }
@@ -3305,7 +3333,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            "you have been disconnected" flow.  In single-player it just
            resets the catchup-loop wallclock baseline. */
         if (ev.type == SDL_EVENT_WILL_ENTER_BACKGROUND) {
-            windowSuspendBackground();
+            windowSuspendBackground(cs);
             continue;
         }
         if (ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
@@ -3323,13 +3351,16 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 if (!uiModeIsTablet()) {
                     togglePopOut(&s_popSendMsg, langGetText(STR_MENU_SEND_MESSAGE), 400, 200);
+                    s_closeMenuPopups = true;
                 } else {
 #endif
                     if (s_showSendMsg) {
                         s_sendMsgFocusInput = true;
+                        s_closeMenuPopups = true;
                     } else {
                         s_showSendMsg = true;
                         s_sendMsgFocusInput = true;
+                        s_closeMenuPopups = true;
                     }
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 }
@@ -3476,11 +3507,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* While the Key Setup modal is open, swallow all mouse + keyboard events
          * so they never reach the game. */
         ImGuiIO &io = ImGui::GetIO();
-        /* A click outside all ImGui windows (game area) should clear nav focus
-           so that menu open/close does not restore focus to Send Message. */
-        if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN && !io.WantCaptureMouse) {
-            s_clearNavFocus = true;
-        }
         if (io.WantCaptureKeyboard || io.WantCaptureMouse) {
             bool isGameInput = (ev.type == SDL_EVENT_MOUSE_MOTION       ||
                                 ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN  ||
@@ -3933,13 +3959,27 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (inputGamepadIsPauseEdge() && inputGamepadIsConnected()) {
         deckPauseOpen();
     }
-    /* Active-controller-disconnect open trigger: open pause overlay so the
-       player can recover (battery dies, dongle drops).  Skip in lobby
-       (keyboard UI) and when overlay is already open. */
-    if (inputGamepadConsumeActiveDisconnect() &&
-        uiShouldUseControllerMode() && cs && !clientSimIsInLobby(cs) &&
-        !deckPauseIsOpen()) {
-        deckPauseOpen();
+    /* Active-controller-disconnect: show the "Controller Disconnected" dialog
+       so the player can reconnect or switch to keyboard/mouse (battery dies,
+       dongle drops).  Gated on the controller-mode *pref*, not
+       uiShouldUseControllerMode() — the latter already flipped to false the
+       instant the pad dropped, so a keyboard-only player never sees it.  In a
+       solo game (single-player / tutorial) freeze the sim via the shared pause
+       path; multiplayer keeps running.  Shown in-game and in the in-game lobby.
+       Skipped on tablet (mobile has its own touch UX) — like the
+       controller-detected prompt — because the dialog is only rendered in the
+       non-tablet branch below; opening it here would freeze a solo game behind
+       a modal that never draws. */
+    if (inputGamepadConsumeActiveDisconnect() && !uiModeIsTablet() &&
+        (uiControllerModeGet() != CONTROLLER_MODE_OFF || uiModeIsSteamDeck()) &&
+        !controllerDisconnectIsOpen()) {
+        controllerDisconnectOpen();
+        windowControllerLostPause(cs, true);
+    }
+    /* Auto-dismiss when a controller is (re)connected. */
+    if (controllerDisconnectIsOpen() && inputGamepadIsConnected()) {
+        controllerDisconnectClose();
+        windowControllerLostPause(cs, false);
     }
     /* Quick-chat open trigger: D-pad UP, in-game only.  Gamepad-universal
        (not Deck-gated) — desktop gamepad players also benefit.  Skipped
@@ -4005,9 +4045,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 #ifndef __APPLE__
         /* Hide the menu bar in controller mode — controller-only players
            can't reach the menu strip; the pause overlay replaces it.
-           macOS routes the menu through native NSMenu so the in-window
-           bar is never drawn there. */
-        if (!uiShouldUseControllerMode()) {
+           Also keep it hidden while the controller-disconnected dialog is up:
+           the menus must not reappear until the player picks "keyboard and
+           mouse" (which turns controller mode off), not the moment the pad
+           dropped.  macOS routes the menu through native NSMenu so the
+           in-window bar is never drawn there. */
+        if (!uiShouldUseControllerMode() && !controllerDisconnectIsOpen()) {
             renderMenuBar(cs);
         }
 #endif
@@ -4059,26 +4102,22 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
            Rendered through the main context so it inherits
            NavEnableGamepad for A/B selection. */
         controllerPromptRender();
+
+        /* Controller-disconnected dialog.  Returns true the frame the
+           "keyboard and mouse" button is pressed — it has already switched
+           controller mode off and closed itself, so just unpause any solo
+           game (no-op in multiplayer). */
+        if (controllerDisconnectRender()) {
+            windowControllerLostPause(cs, false);
+        }
     }
 
-    /* Detect when a menu-bar dropdown (child menu popup) just closed.
-       When this happens, clear nav focus so the panel that had focus before
-       the menu was opened does not regain focus unexpectedly. */
-    {
-        static bool s_menuPopupWasOpen = false;
-        ImGuiContext *g = ImGui::GetCurrentContext();
-        bool menuPopupOpen = false;
-        for (int i = 0; i < g->OpenPopupStack.Size; i++) {
-            ImGuiWindow *w = g->OpenPopupStack[i].Window;
-            if (w && (w->Flags & ImGuiWindowFlags_ChildMenu)) {
-                menuPopupOpen = true;
-                break;
-            }
-        }
-        if (s_menuPopupWasOpen && !menuPopupOpen) {
-            ImGui::SetWindowFocus(nullptr);
-        }
-        s_menuPopupWasOpen = menuPopupOpen;
+    /* Retract any open menu-bar dropdown when a panel/chat was just opened, so
+       the two don't render active at once. Modals (pause, quick-chat, password,
+       change-name, key-setup) are left open. */
+    if (s_closeMenuPopups) {
+        ImGui::ClosePopupsExceptModals();
+        s_closeMenuPopups = false;
     }
 
     renderBrainSettingsWindow();
@@ -4343,6 +4382,7 @@ void sdl3ImguiShowSendMsg(bool open) {
                  * path opened Send Message. */
                 s_sendMsgCooldownEnd = 0;
                 s_sendMsgFocusInput  = true;
+                s_closeMenuPopups    = true;
             } else {
                 if (s_popSendMsg.open) popOutHide(&s_popSendMsg);
             }
@@ -4355,6 +4395,7 @@ void sdl3ImguiShowSendMsg(bool open) {
         /* Reset cooldown so the Send button is always enabled on fresh open */
         s_sendMsgCooldownEnd = 0;
         s_sendMsgFocusInput = true;
+        s_closeMenuPopups = true;
 #if BOLO_MOBILE
         s_showSettings = false;
         s_showPlayersPanel = false;
@@ -4370,6 +4411,7 @@ bool sdl3ImguiIsSendMsgOpen(void) {
 void sdl3ImguiShowSettings(void) {
     s_showSettings = !s_showSettings;
     if (s_showSettings) {
+        s_closeMenuPopups = true;
         s_settingsNameBuf[0] = '\0';
         gameFrontGetPlayerName(s_settingsNameBuf);
 #if BOLO_MOBILE
@@ -4427,10 +4469,12 @@ extern "C" void sdl3ImguiShowBrainSettings(void) {
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
     s_brainSettingsOpen  = true;
+    s_closeMenuPopups    = true;
 }
 
 void sdl3ImguiShowPlayersPanel(bool open) {
     s_showPlayersPanel = open;
+    if (open) s_closeMenuPopups = true;
 #if BOLO_MOBILE
     if (open) {
         s_showSendMsg = false;
@@ -4446,10 +4490,23 @@ void sdl3ImguiTogglePlayersPanel(void) {
 bool sdl3ImguiWantsKeyboard(void) {
     if (!s_window) return false;
     ImGuiIO &io = ImGui::GetIO();
-    if (io.WantTextInput) return true;
-    if (ImGui::GetCurrentContext()->ActiveId != 0) return true;
-    if (sdl3ImguiIsDialogOpen()) return true;
-    return false;
+    ImGuiContext *g = ImGui::GetCurrentContext();
+
+    InputGateState st;
+    st.textInputActive             = io.WantTextInput;
+    st.blockingModalOpen           = s_showSysInfo || s_showNetInfo ||
+                                     s_showGameInfo || s_showSendMsg ||
+                                     s_showPlayersPanel || s_showSettings ||
+                                     s_brainSettingsOpen;
+    /* Every popup currently on the stack is blocking (menu-bar dropdowns and
+       the password / change-name / key-setup / pause / quick-chat modals).
+       The transient notifications — alliance request and vote widgets — are
+       plain Begin() windows, not popups, so they never land here. */
+    st.menuOpen                    = (g && g->OpenPopupStack.Size > 0);
+    st.allianceNotificationVisible = s_allianceVisible;  /* never suspends */
+    st.voteVisible                 = false;              /* votes never suspend */
+    st.appHasFocus                 = true;               /* input.c owns the OS-focus gate */
+    return gameInputSuspended(&st);
 }
 
 void sdl3ImguiClearNavFocus(void) {
@@ -4545,10 +4602,36 @@ static const ImVec4 SUPPORTER_TINT = ImVec4(1.00f, 0.84f, 0.20f, 1.00f);
 static const ImVec4 NO_TINT        = ImVec4(1.00f, 1.00f, 1.00f, 1.00f);
 
 static const char *platformName(uint8_t ct) {
-    static const char *names[CLIENT_TYPE_COUNT] = {
-        "", "Windows", "Linux", "macOS", "iOS", "Android", "Steam Deck", "Web"
+    static const langid ids[CLIENT_TYPE_COUNT] = {
+        0, STR_PLATFORM_WINDOWS, STR_PLATFORM_LINUX, STR_PLATFORM_MACOS,
+        STR_PLATFORM_IOS, STR_PLATFORM_ANDROID, STR_PLATFORM_STEAMDECK,
+        STR_PLATFORM_WEB
     };
-    return (ct < CLIENT_TYPE_COUNT) ? names[ct] : "";
+    if (ct == 0 || ct >= CLIENT_TYPE_COUNT) return "";   /* CLIENT_TYPE_UNKNOWN -> no name */
+    return langGetText(ids[ct]);
+}
+
+static int countryNameCmp(const void *key, const void *elem) {
+    return strcmp((const char *)key, ((const CountryNameEntry *)elem)->code);
+}
+
+bool drawCountryFlagWithTip(const char *countryCode) {
+    if (!countryCode || countryCode[0] == '\0' || countryCode[1] == '\0')
+        return false;
+    char up[3] = { (char)toupper((unsigned char)countryCode[0]),
+                   (char)toupper((unsigned char)countryCode[1]), '\0' };
+    if (up[0] == 'X' && up[1] == 'X') return false;        /* sentinel */
+    SDL_Texture *flagTex = flagsGetTexture(countryCode);
+    if (!flagTex) return false;
+    ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+    if (ImGui::IsItemHovered()) {
+        const CountryNameEntry *e = (const CountryNameEntry *)bsearch(
+            up, kCountryNames, K_COUNTRY_NAMES_SIZE,
+            sizeof(kCountryNames[0]), countryNameCmp);
+        if (e) ImGui::SetTooltip("%s", langGetText(e->id));
+        else   ImGui::SetTooltip("%s", up);   /* fall back to uppercase code */
+    }
+    return true;
 }
 
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
@@ -4559,7 +4642,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
         /* Bot slot: brain icon stands in for the platform badge and the
          * WBN/Steam badges are skipped — a bot can never be either. */
         ImGui::Image((ImTextureID)s_iconBrain, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("AI player");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_AI));
         ImGui::SameLine();
     } else {
         SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
@@ -4573,10 +4656,13 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                                ImVec4(0, 0, 0, 0), tint);
             if (ImGui::IsItemHovered()) {
                 const char *plat = platformName(clientType);
-                if (flags & PLAYER_FLAG_SUPPORTER)
-                    ImGui::SetTooltip("%s — Supporter", plat);
-                else
+                if (flags & PLAYER_FLAG_SUPPORTER) {
+                    MessageArgs args = {};
+                    SDL_snprintf(args.string1, sizeof(args.string1), "%s", plat);
+                    ImGui::SetTooltip("%s", langGetTextFmt(STR_PLAYER_TIP_SUPPORTER_FMT, &args));
+                } else {
                     ImGui::SetTooltip("%s", plat);
+                }
             }
             ImGui::SameLine();
         }
@@ -4586,10 +4672,16 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
              * otherwise — same scheme as the platform icon above. */
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
             imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
             ImGui::SameLine();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
             ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
+                                                    ? STR_PLAYER_TIP_STEAM_LINKED
+                                                    : STR_PLAYER_TIP_STEAM_BUILD));
             ImGui::SameLine();
         }
     }
@@ -4601,12 +4693,10 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
     if (name && name[0] != '\0') {
         ImGui::TextUnformatted(name);
         if (showCountry && countryCode && countryCode[0] != '\0' &&
-            !(countryCode[0] == 'X' && countryCode[1] == 'X')) {
-            SDL_Texture *flagTex = flagsGetTexture(countryCode);
-            if (flagTex) {
-                ImGui::SameLine();
-                ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
-            }
+            !(countryCode[0] == 'X' && countryCode[1] == 'X') &&
+            flagsGetTexture(countryCode)) {
+            ImGui::SameLine();
+            drawCountryFlagWithTip(countryCode);
         }
     }
 }

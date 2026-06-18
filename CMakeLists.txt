@@ -509,7 +509,6 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sound.c
     src/gui/sdl3/lang.c
-    src/gui/sdl3/currentgames.c
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
     src/gui/sdl3/minimap_render.c
@@ -541,6 +540,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_deck_pause.cpp
     src/gui/sdl3/dialogs/imgui_quickchat.cpp
     src/gui/sdl3/dialogs/imgui_controller_prompt.cpp
+    src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp
     src/gui/sdl3/dialogs/imgui_onboarding.cpp
     src/gui/sdl3/dialogs/imgui_about.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
@@ -765,6 +765,36 @@ if(WB_NETDEBUG)
     # ServerSim, so every TU must agree on the struct layout — a partial
     # define would diverge struct sizes across libraries.
     add_compile_definitions(WB_NETDEBUG=1)
+endif()
+
+# Fuzzing: libFuzzer targets over the wire parsers and the server packet
+# dispatcher (hardening plan §1.2). Linux + Clang only. This is a DEDICATED
+# build config, not mixed with a normal build: when ON, the whole build is
+# instrumented with AddressSanitizer + libFuzzer coverage. Normal MSVC/GCC
+# builds never set WB_FUZZ, so they are untouched. The WB_FUZZ define is
+# global (not per-target) so server_static's transport_udp_server.c picks up
+# the WB_FUZZ-gated dispatcher seam — same rationale as WB_NETDEBUG above.
+# AFL++ is the fallback if requiring Clang is unwanted (see tests/fuzz/README.md).
+option(WB_FUZZ "Build libFuzzer fuzz targets (Linux + Clang only)" OFF)
+if(WB_FUZZ)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR
+            "WB_FUZZ requires Clang for -fsanitize=fuzzer,address. Configure a "
+            "separate build dir with -DCMAKE_C_COMPILER=clang "
+            "-DCMAKE_CXX_COMPILER=clang++, or use the AFL++ fallback documented "
+            "in tests/fuzz/README.md.")
+    endif()
+    add_compile_definitions(WB_FUZZ=1)
+    # Strip wb_log compile-time so the only thing on the fuzzer's stderr is
+    # libFuzzer's own stats (exec count, coverage) — a multi-hour run's log
+    # stays small and still reports the total runs. Raw [UDP SERVER] fprintfs
+    # in the hot path are separately gated under WB_FUZZ in the source.
+    set(WINBOLO_LOG_LEVEL "OFF" CACHE STRING "fuzz build strips wb_log" FORCE)
+    # Instrument every TU for coverage + ASan; only the fuzz executables below
+    # additionally link libFuzzer's main via -fsanitize=fuzzer.
+    add_compile_options(-fsanitize=fuzzer-no-link,address -g -O1
+                        -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address)
 endif()
 
 # libplum — automatic UPnP / NAT-PMP / PCP port mapping for hosted servers.
@@ -1008,6 +1038,7 @@ add_library(winbolonet_core STATIC
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_prefs_sync.c
+    src/winbolonet/wbn_serverlist.c
 )
 target_include_directories(winbolonet_core PRIVATE
     ${cjson_SOURCE_DIR}
@@ -1053,7 +1084,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
     src/gui/sdl3/map_stars.cpp
@@ -1061,7 +1092,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     src/gui/sdl3/tutorial_text.c
-    src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c src/gui/sdl3/sound.c
+    src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -1792,7 +1823,7 @@ set(HEADLESS_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
-    src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
+    src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
     src/headless/cmd_stdin.c
@@ -1905,7 +1936,7 @@ set(GYM_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
-    src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
+    src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -2513,6 +2544,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_news_parse.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
+    tests/unit/test_wbn_serverlist.c
     tests/unit/test_control_event_queue.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
@@ -2528,6 +2560,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
     tests/unit/test_lobby_reset_cleanup.c
+    tests/unit/test_autolock_on_game_start.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
     tests/unit/test_starts_pick_incremental.c
@@ -2539,6 +2572,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
+    tests/unit/test_ping_smoother.c
+    tests/unit/test_client_timing.c
+    tests/unit/test_interp_render.c
     tests/unit/test_snapshot_compaction.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
@@ -2549,6 +2585,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_join.c
     tests/unit/test_loopback_join_loss.c
     tests/unit/test_loopback_lobby_running_loss.c
+    tests/unit/test_gate1_integration.c
+    tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
     tests/unit/test_join_rate_limit.c
     tests/unit/test_cookie_handshake.c
@@ -2567,6 +2605,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wire_corpus_capture.c
     tests/unit/test_packet_type_names.c
     tests/unit/test_client_type.c
+    tests/unit/test_wire_player_bounds.c
+    tests/unit/test_control_overflow_disconnect.c
+    tests/unit/test_input_gate.c
+    tests/unit/test_server_address_parse.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2576,6 +2618,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
     src/winbolonet/wbn_prefs_sync.c
+    src/winbolonet/wbn_serverlist.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
@@ -2632,6 +2675,7 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
 
 target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
+    src/gui/sdl3/dialogs
     src/server
     src
     src/winbolonet
@@ -2753,6 +2797,10 @@ set(_unit_test_names
     wbn_prefs_parse_updatedat
     wbn_prefs_decide
     wbn_prefs_build_put_body
+    wbn_serverlist_parse
+    wbn_serverlist_players
+    wbn_serverlist_motd
+    wbn_serverlist_malformed
     queue_init_is_valid
     queue_enqueue_advances_nextSeq
     queue_ack_advance_within_range
@@ -2853,12 +2901,18 @@ set(_unit_test_names
     catchup_ignores_redundant_duplicates
     jitter_buffer_grow
     shell_projection
+    ping_smoother
+    client_timing
+    interp_render
     snapshot_compaction
     edge_send_predicate
     error_smoothing
     loopback_join
     loopback_join_loss
     loopback_lobby_running_loss
+    gate1_viewtick_loopback
+    gate1_host_noop
+    interp_jitter_e2e
     join_version_gate
     join_rate_limit
     cookie_handshake
@@ -2876,6 +2930,17 @@ set(_unit_test_names
     mdns_discovery
     client_type_matches_platform
     client_type_name_round_trips
+    players_oob_index_safe
+    control_oob_player_dropped
+    input_gate_taxonomy
+    addrparse_host_only
+    addrparse_host_port
+    addrparse_scheme
+    addrparse_trailing_path
+    addrparse_whitespace
+    addrparse_port_bounds
+    addrparse_bad_port
+    addrparse_empty
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
@@ -2892,6 +2957,206 @@ if(WB_NETDEBUG)
                  COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
         set_tests_properties(netdebug.${_name} PROPERTIES TIMEOUT 60)
     endforeach()
+endif()
+
+# ---- Fuzz targets (WB_FUZZ, Linux + Clang) -------------------------------
+# Two libFuzzer executables and, for each, a corpus-replay ctest: the binary
+# is run over its committed corpus + crash set with -runs=0 (load and execute
+# each input once, no mutation), so it is bounded, deterministic, and fails
+# the build on any regression. Open-ended discovery is a separate, non-ctest
+# job — see tests/fuzz/run_discovery.sh.
+if(WB_FUZZ)
+    set(WB_FUZZ_CORPUS_DIR "${CMAKE_SOURCE_DIR}/tests/fuzz/corpus")
+    set(WB_FUZZ_CRASH_DIR  "${CMAKE_SOURCE_DIR}/tests/fuzz/crashes")
+
+    # Tier 1 — pure bounded wire codecs + command codec. bolo_static only.
+    add_executable(fuzz_wire_codec tests/fuzz/fuzz_wire_codec.c)
+    bolo_apply_include_rules(fuzz_wire_codec unittests)
+    target_link_libraries(fuzz_wire_codec PRIVATE bolo_static SDL3::SDL3 ${MATH_LIB} pthread)
+    # -fcommon: the bolo/lzw sources rely on tentative-definition merging that
+    # Clang's default -fno-common would reject. Mirrors WinBoloUnitTests.
+    target_compile_options(fuzz_wire_codec PRIVATE -fcommon)
+    target_link_options(fuzz_wire_codec PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_wire_codec "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.wire_codec
+             COMMAND $<TARGET_FILE:fuzz_wire_codec> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/wire_codec ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.wire_codec PROPERTIES TIMEOUT 120)
+
+    # Tier 2 — full server dispatcher via the WB_FUZZ-gated seam. Links
+    # server_static (which owns transport_udp_server.c, now carrying the seam).
+    # test_stubs.c + the steam stub resolve the winbolonet / natPortMap /
+    # frontend callbacks the server graph references but server_static doesn't
+    # own — the same stub surface WinBoloUnitTests links.
+    # The loose (non-library) sources WinBoloUnitTests compiles directly to
+    # close the link: mpDiagLog, md5*, lzw*, and the client transport
+    # (transport_udp_client.c is NOT in bolo_static — client_sim/client_net in
+    # the listen-server path reference it). Matching the unit-test set verbatim
+    # keeps the link closure identical to a known-good target.
+    add_executable(fuzz_server_dispatch
+        tests/fuzz/fuzz_server_dispatch.c
+        tests/unit/test_stubs.c
+        src/steam/steam_wrapper_stub.c
+        src/common/prefs_doc.c
+        src/common/prefs.c
+        src/common/md5.c
+        src/common/mp_diag_log.c
+        src/server/server_dedicated_log_path.c
+        src/winbolonet/wbn_bearer.c
+        src/winbolonet/wbn_country_cache.c
+        src/winbolonet/wbn_news_parser.cpp
+        src/winbolonet/wbn_prefs_sync.c
+        src/bolo/transport_udp_client.c
+        src/lzw/dcodlzw.c
+        src/lzw/ecodlzw.c)
+    bolo_apply_include_rules(fuzz_server_dispatch unittests)
+    # Same include set WinBoloUnitTests gives test_stubs.c (luabrainshandler.h
+    # lives in src/gui/sdl3, etc.).
+    target_include_directories(fuzz_server_dispatch PRIVATE
+        src/gui/sdl3 src/server src src/winbolonet
+        ${CMAKE_SOURCE_DIR}/tests/unit ${cjson_SOURCE_DIR})
+    # Version/build defines the loose sources need (transport_udp_client.c
+    # bakes BOLO_VERSION_* into its JOIN packet). Mirrors WinBoloUnitTests,
+    # minus the test-only NETIMPAIR / wire-capture seams.
+    target_compile_definitions(fuzz_server_dispatch PRIVATE
+        HAVE_SCREEN_C=1
+        WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+        BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+        BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+        BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
+    target_link_libraries(fuzz_server_dispatch PRIVATE
+        bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+        SDL3::SDL3 minizip lua_static cjson utf8proc mdns ${MATH_LIB} pthread)
+    target_compile_options(fuzz_server_dispatch PRIVATE -fcommon)
+    target_link_options(fuzz_server_dispatch PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_server_dispatch "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.server_dispatch
+             COMMAND $<TARGET_FILE:fuzz_server_dispatch> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/server_dispatch ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.server_dispatch PROPERTIES TIMEOUT 120)
+
+    # Client snapshot target. Same link closure as the dispatcher (it drives
+    # the client transport seam, which lives in transport_udp_client.c and
+    # pulls the same client_sim / stub graph).
+    add_executable(fuzz_client_snapshot
+        tests/fuzz/fuzz_client_snapshot.c
+        tests/unit/test_stubs.c
+        src/steam/steam_wrapper_stub.c
+        src/common/prefs_doc.c
+        src/common/prefs.c
+        src/common/md5.c
+        src/common/mp_diag_log.c
+        src/server/server_dedicated_log_path.c
+        src/winbolonet/wbn_bearer.c
+        src/winbolonet/wbn_country_cache.c
+        src/winbolonet/wbn_news_parser.cpp
+        src/winbolonet/wbn_prefs_sync.c
+        src/bolo/transport_udp_client.c
+        src/lzw/dcodlzw.c
+        src/lzw/ecodlzw.c)
+    bolo_apply_include_rules(fuzz_client_snapshot unittests)
+    target_include_directories(fuzz_client_snapshot PRIVATE
+        src/gui/sdl3 src/server src src/winbolonet
+        ${CMAKE_SOURCE_DIR}/tests/unit ${cjson_SOURCE_DIR})
+    target_compile_definitions(fuzz_client_snapshot PRIVATE
+        HAVE_SCREEN_C=1
+        WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+        BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+        BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+        BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
+    target_link_libraries(fuzz_client_snapshot PRIVATE
+        bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+        SDL3::SDL3 minizip lua_static cjson utf8proc mdns ${MATH_LIB} pthread)
+    target_compile_options(fuzz_client_snapshot PRIVATE -fcommon)
+    target_link_options(fuzz_client_snapshot PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_client_snapshot "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.client_snapshot
+             COMMAND $<TARGET_FILE:fuzz_client_snapshot> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/client_snapshot ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.client_snapshot PROPERTIES TIMEOUT 120)
+
+    # JOIN_ACCEPT target. Same link closure as the client snapshot target —
+    # only the entry point differs (drives the join-handshake seam).
+    add_executable(fuzz_join_accept
+        tests/fuzz/fuzz_join_accept.c
+        tests/unit/test_stubs.c
+        src/steam/steam_wrapper_stub.c
+        src/common/prefs_doc.c
+        src/common/prefs.c
+        src/common/md5.c
+        src/common/mp_diag_log.c
+        src/server/server_dedicated_log_path.c
+        src/winbolonet/wbn_bearer.c
+        src/winbolonet/wbn_country_cache.c
+        src/winbolonet/wbn_news_parser.cpp
+        src/winbolonet/wbn_prefs_sync.c
+        src/bolo/transport_udp_client.c
+        src/lzw/dcodlzw.c
+        src/lzw/ecodlzw.c)
+    bolo_apply_include_rules(fuzz_join_accept unittests)
+    target_include_directories(fuzz_join_accept PRIVATE
+        src/gui/sdl3 src/server src src/winbolonet
+        ${CMAKE_SOURCE_DIR}/tests/unit ${cjson_SOURCE_DIR})
+    target_compile_definitions(fuzz_join_accept PRIVATE
+        HAVE_SCREEN_C=1
+        WINBOLO_VERSION="${WINBOLO_VERSION}"
+        WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
+        WINBOLO_BUILD_DATE="${WINBOLO_BUILD_DATE}"
+        WINBOLO_BUILD_YEAR="${WINBOLO_BUILD_YEAR}"
+        BOLO_VERSION_MAJOR=${BOLO_VERSION_MAJOR}
+        BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
+        BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION})
+    target_link_libraries(fuzz_join_accept PRIVATE
+        bolo_static ${SERVER_LINK_GROUP} bot_brains_static
+        SDL3::SDL3 minizip lua_static cjson utf8proc mdns ${MATH_LIB} pthread)
+    target_compile_options(fuzz_join_accept PRIVATE -fcommon)
+    target_link_options(fuzz_join_accept PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_join_accept "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.join_accept
+             COMMAND $<TARGET_FILE:fuzz_join_accept> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/join_accept ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.join_accept PROPERTIES TIMEOUT 120)
+
+    # Stage the FetchContent-built shared libs next to the fuzz binaries so the
+    # $ORIGIN RPATH resolves them at run time (these copies normally ride the
+    # game/server targets, which a fuzz-only build doesn't produce). Mirrors
+    # the WinBolo POST_BUILD copy. Tier 1 needs only SDL3; tier 2 also pulls in
+    # onnxruntime via bot_brains_static.
+    add_custom_command(TARGET fuzz_wire_codec POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_wire_codec>")
+    add_custom_command(TARGET fuzz_server_dispatch POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_server_dispatch>")
+    add_custom_command(TARGET fuzz_client_snapshot POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_client_snapshot>")
+    add_custom_command(TARGET fuzz_join_accept POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_join_accept>")
+    if(HAVE_ONNXRUNTIME AND DEFINED ONNXRUNTIME_LIBDIR)
+        file(GLOB _FUZZ_ORT_SO "${ONNXRUNTIME_LIBDIR}/libonnxruntime*")
+        foreach(_f ${_FUZZ_ORT_SO})
+            if(_f MATCHES "\\.dSYM$")
+                continue()
+            endif()
+            add_custom_command(TARGET fuzz_server_dispatch POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_f}" "$<TARGET_FILE_DIR:fuzz_server_dispatch>")
+            add_custom_command(TARGET fuzz_client_snapshot POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_f}" "$<TARGET_FILE_DIR:fuzz_client_snapshot>")
+            add_custom_command(TARGET fuzz_join_accept POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_f}" "$<TARGET_FILE_DIR:fuzz_join_accept>")
+        endforeach()
+    endif()
 endif()
 
 endif() # iOS vs Desktop

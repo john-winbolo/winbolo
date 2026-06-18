@@ -2605,6 +2605,15 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   if (cfg->skipLobby) {
     serverSimSetLobbyEnabled(sim, false);
     serverSimStartGame(sim);
+    /* serverSimStartGame latches hadPlayersEver = TRUE, but a map-rotation
+     * server's first round boots up empty and waits for joiners. Left set, the
+     * lifecycle's empty-server check would fire on the very next tick and
+     * rotate before anyone joins. Re-arm it so the empty rotation only fires
+     * once a player has joined and then left — serverSimMapRotateRound does the
+     * same for every later round. */
+    if (sim->mapRotateEnabled) {
+      sim->hadPlayersEver = FALSE;
+    }
   } else if (cfg->lobbyEnabled) {
     serverSimSetLobbyEnabled(sim, true);
     serverSimEnterLobby(sim);
@@ -2665,6 +2674,22 @@ void serverSimSetMapRotate(ServerSim *sim, bool enabled) {
 
 bool serverSimIsMapRotateEnabled(const ServerSim *sim) {
     return sim != NULL && sim->mapRotateEnabled;
+}
+
+bool serverSimIsTerminalGameOver(const ServerSim *sim) {
+    /* A game-over that shuts the dedicated server down, as opposed to one it
+     * recovers from. A lobby server returns to the lobby; a map-rotation server
+     * boots everyone and starts the next round. Only a plain no-lobby server
+     * (e.g. -nolobby / -quitonwin) treats a win as a process shutdown.
+     *
+     * The dedicated-server command loop polls this without the tick lock, so it
+     * stays a pure read of these flags. On a win or a passed back-to-lobby vote
+     * the rotation flips state from gameOver back to running inside a single
+     * tick; a loop that quit on that transient gameOver would race the rotation
+     * and shut the process down (the "-maprotate exits like -quitonwin" bug). */
+    return serverSimGetState(sim) == serverStateGameOver &&
+           !serverSimIsLobbyEnabled(sim) &&
+           !serverSimIsMapRotateEnabled(sim);
 }
 
 void serverSimSetBalanceBroadcastNeeded(ServerSim *sim, bool needed) {
@@ -3346,6 +3371,7 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.ranked          = sim->ranked ? true : false;
     info.allowNewPlayers = sim->allowNewPlayers ? true : false;
     info.autoLock        = sim->autoLockOnGameStart ? true : false;
+    info.hasLobby        = serverSimIsLobbyEnabled(sim);
     info.timeLimit       = serverSimGetTimeLimit(sim) ? true : false;
     info.timeMinutes     = serverSimGetTimeMinutes(sim);
     info.lobbyLocks      = sim->serverLocks;
@@ -3431,8 +3457,10 @@ void serverSimConsoleMessage(const char *msg) {
     if (sim != NULL && sim->sim.callbacks.consoleMessage != NULL) {
         sim->sim.callbacks.consoleMessage(sim->sim.callbacks.ctx, (char *)msg);
     } else {
+#ifndef WB_FUZZ
         /* Fallback: print to stdout if no active sim */
         fprintf(stdout, "%s\n", msg);
+#endif
     }
 }
 
@@ -3853,6 +3881,19 @@ static void serverSimStaggerBaseTimers(ServerSim *sim) {
     }
 }
 
+/* On game start, honour autoLockOnGameStart: if the lobby is still open to
+ * new players, close it and raise the transport admin lock so the locked
+ * state reaches connected clients and WinBolo.net (winboloNetSendLock).
+ * Mirrors the console "lock" command, driven by the lobby setting at the
+ * moment the round begins. */
+static void serverSimApplyAutoLockOnGameStart(ServerSim *sim) {
+    sim->savedAllowNewPlayers = sim->allowNewPlayers;
+    if (sim->autoLockOnGameStart && sim->allowNewPlayers) {
+        sim->allowNewPlayers = FALSE;
+        transportUdpServerSetLock(sim, TRUE);
+    }
+}
+
 void serverSimStartGameInPlace(ServerSim *sim) {
     BYTE i;
 
@@ -3915,13 +3956,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
 
     sim->state = serverStateRunning;
 
-    /* Layout A: autoLockOnGameStart. Save current allowNewPlayers so
-     * we can restore it when the game ends. */
-    sim->savedAllowNewPlayers = sim->allowNewPlayers;
-    if (sim->autoLockOnGameStart && sim->allowNewPlayers) {
-        sim->allowNewPlayers = FALSE;
-        transportUdpServerSetLock(sim, FALSE);
-    }
+    serverSimApplyAutoLockOnGameStart(sim);
 
     /* Reset per-client reliable-event queues BEFORE publishing the
      * RUNNING phase, so CTRL_GAME_PHASE_RUNNING enters every queue at
@@ -4047,6 +4082,7 @@ void serverSimStartGame(ServerSim *sim) {
     serverSimStaggerBaseTimers(sim);
 
     sim->state = serverStateRunning;
+    serverSimApplyAutoLockOnGameStart(sim);
     serverSimConsoleMessage("Game started!");
 
     /* A snapshot will be written on the first running tick

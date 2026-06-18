@@ -166,6 +166,43 @@ static inline bool controlSeqResetDetected(uint32_t controlEventCount,
            controlEventBaseSeq < controlEventAck;
 }
 
+/* ---- Ping RTT smoothers (pure, transport-struct-independent) ----
+ *
+ * The PONG handler feeds each raw RTT sample to both smoothers. The
+ * min-over-window value drives shell forward-projection and the server's
+ * viewTick==0 lag-comp fallback (stamped into InputPacket) — taking the
+ * floor of recent samples rejects transient upward spikes so projection
+ * doesn't over-advance. The EWMA value drives the player-facing displays
+ * (HUD own-ping, scoreboard) where a steady, lightly-smoothed number reads
+ * better than a jumpy minimum. */
+
+/* Min over the last PING_MIN_WINDOW_LEN samples. At the ~0.4s ping cadence
+ * this is a ~3.2s floor window. */
+#define PING_MIN_WINDOW_LEN 8
+
+typedef struct {
+    uint16_t samples[PING_MIN_WINDOW_LEN];
+    uint8_t  count;   /* number of valid samples (saturates at LEN) */
+    uint8_t  head;    /* index of the next slot to overwrite */
+} PingMinWindow;
+
+void     pingMinWindowReset(PingMinWindow *w);
+/* Push a sample and return the minimum over the currently stored window. */
+uint16_t pingMinWindowPush(PingMinWindow *w, uint16_t sample);
+
+/* EWMA with alpha = 1/4, carried in Q8 fixed point so the running value
+ * keeps sub-millisecond resolution instead of truncating toward the input
+ * each step. */
+typedef struct {
+    uint32_t valueQ8;
+    bool     init;
+} PingEwma;
+
+void     pingEwmaReset(PingEwma *e);
+/* Fold one sample in (first sample seeds the value) and return the rounded
+ * milliseconds estimate. */
+uint16_t pingEwmaUpdate(PingEwma *e, uint16_t sample);
+
 /* Join retry interval in ticks (1 second) */
 #define JOIN_RETRY_INTERVAL 50
 
@@ -220,7 +257,7 @@ int packTkExplosionSnapshot(uint8_t *buf, const TkExplosionSnapshot *tke);
 int unpackTkExplosionSnapshot(const uint8_t *buf, size_t avail,
                               TkExplosionSnapshot *tke);
 int packGameEvent(uint8_t *buf, const GameEvent *ev);
-int unpackGameEvent(const uint8_t *buf, GameEvent *ev);
+int unpackGameEvent(const uint8_t *buf, size_t avail, GameEvent *ev);
 int packBaseSnapshot(uint8_t *buf, const BaseSnapshot *bs);
 int unpackBaseSnapshot(const uint8_t *buf, size_t avail, BaseSnapshot *bs);
 int packPillSnapshot(uint8_t *buf, const PillSnapshot *ps);

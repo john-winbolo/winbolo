@@ -9,6 +9,8 @@ bool steam_init(void)          { return false; }
 void steam_shutdown(void)      {}
 void steam_run_callbacks(void) {}
 
+bool steam_overlay_is_active(void) { return false; }
+
 void steam_set_rich_presence(const char *key, const char *value) {
   (void)key; (void)value;
 }

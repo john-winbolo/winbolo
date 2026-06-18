@@ -174,6 +174,51 @@ static void ensureLogoLoaded(SDL_Renderer *r) {
     }
 }
 
+/* Brand glyphs for the WBN social buttons (Reddit, Discord). Rasterised white
+ * — like the Forums shield — so they read on the button regardless of the
+ * SVG's authored colour. Cached for the program lifetime; the source SVGs are
+ * supersampled to 48px and downsampled by ImGui to the button glyph size. */
+static SDL_Texture *s_redditIcon  = nullptr;
+static SDL_Texture *s_discordIcon = nullptr;
+
+static void ensureSocialIconsLoaded(SDL_Renderer *r) {
+    static bool tried = false;
+    if (tried || !r) return;
+    tried = true;
+    s_redditIcon  = imguiLoadSvgIconWhiteFit(r, "data/ui/reddit.svg", 48);
+    s_discordIcon = imguiLoadSvgIconWhiteFit(r, "data/ui/discord.svg", 48);
+}
+
+/* Leading pad on every icon button's label: reserves the icon slot and sets
+ * the gap between the icon and the text. Shared so the Forums shield button
+ * and the SVG-icon buttons stay identical, and so the row-centring code can
+ * measure widths from the same padded labels. */
+#define WB_BTN_PAD "      "
+
+/* Text button with a white icon overlaid in a leading pad, matching the WBN
+ * shield Forums button. `tex` is a white-channel icon (imguiLoadSvgIconWhite);
+ * a null tex degrades to a plain (but still padded) text button. */
+static bool iconLeadingButton(const char *label, SDL_Texture *tex) {
+    ImDrawList       *dl = ImGui::GetWindowDrawList();
+    ImVec2            bp = ImGui::GetCursorScreenPos();
+    float             fs = ImGui::GetFontSize();
+    const ImGuiStyle &st = ImGui::GetStyle();
+
+    char padded[160];
+    SDL_snprintf(padded, sizeof(padded), WB_BTN_PAD "%s", label);
+    bool clicked = ImGui::Button(padded);
+
+    if (tex) {
+        float btnH = fs + st.FramePadding.y * 2.0f;
+        float cx   = bp.x + st.FramePadding.x + fs * 0.5f;
+        float cy   = bp.y + btnH * 0.5f;
+        dl->AddImage((ImTextureID)tex,
+                     ImVec2(cx - fs * 0.5f, cy - fs * 0.5f),
+                     ImVec2(cx + fs * 0.5f, cy + fs * 0.5f));
+    }
+    return clicked;
+}
+
 
 
 static int formatShortVer(char *buf, size_t buflen) {
@@ -363,6 +408,7 @@ static void renderAboutModalBody(void) {
      * before then on Android (welcome screen creates it). */
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     ensureLogoLoaded(renderer);
+    ensureSocialIconsLoaded(renderer);
 
     /* Shimmer state update + offscreen composition. The displayed image is
      * either the bare logo or the offscreen-composited shimmer frame; ImGui
@@ -455,7 +501,7 @@ static void renderAboutModalBody(void) {
     ImGui::Text("Copyright 1998-%s John Morrison", WINBOLO_BUILD_YEAR);
     ImGui::TextUnformatted(langGetText(STR_DLGABOUT_BOLOCOPYRIGHT));
     ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight() * 0.6f));
-    ImGui::TextUnformatted("Additional 2.0 programming by Andrew Roth");
+    ImGui::TextUnformatted(langGetText(STR_DLGABOUT_ADDITIONAL_PROG));
 
     ImGui::Spacing();
     ImGui::TextLinkOpenURL("www.winbolo.com", "https://www.winbolo.com/");
@@ -463,23 +509,66 @@ static void renderAboutModalBody(void) {
     ImGui::TextUnformatted("   ");
     ImGui::SameLine();
     ImGui::TextLinkOpenURL("www.winbolo.net", "https://www.winbolo.net/");
+    /* Third Party Notices / Authors open internal markdown popups, so they're
+     * plain TextLinks (not URL links) — tucked under the web links to free the
+     * row below for the Forums / Reddit / Discord buttons. */
+    if (ImGui::TextLink(langGetText(STR_DLGABOUT_THIRD_PARTY))) {
+        openMarkdownPopup("third_party");
+    }
+    ImGui::SameLine();
+    ImGui::TextUnformatted("   ");
+    ImGui::SameLine();
+    if (ImGui::TextLink(langGetText(STR_DLGABOUT_AUTHORS))) {
+        openMarkdownPopup("authors");
+    }
     ImGui::EndGroup();
 
     ImGui::Spacing();
-    if (ImGui::Button("Third Party Notices")) {
-        openMarkdownPopup("third_party");
+    /* Forums / Reddit / Discord as one centred row with a slightly wider gap
+     * between buttons. Widths are measured from the padded labels up front so
+     * the whole row can be centred in the content region. */
+    {
+        const ImGuiStyle &st = ImGui::GetStyle();
+        const float gap = st.ItemSpacing.x * 2.0f;
+        auto btnW = [&](const char *l) {
+            return ImGui::CalcTextSize(l).x + st.FramePadding.x * 2.0f;
+        };
+        /* Forums label is localised, so its padded form is built at runtime
+         * (Reddit / Discord are brand names and stay verbatim via iconLeadingButton). */
+        char forumsLabel[160];
+        SDL_snprintf(forumsLabel, sizeof(forumsLabel), WB_BTN_PAD "%s",
+                     langGetText(STR_DLGABOUT_FORUMS));
+        float rowW = btnW(forumsLabel) + btnW(WB_BTN_PAD "Reddit") +
+                     btnW(WB_BTN_PAD "Discord") + gap * 2.0f;
+        float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > rowW)
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - rowW) * 0.5f);
+
+        /* Forums carries the vector WBN shield (same silhouette as the
+         * WBN-verified player badge), overlaid in the leading pad. */
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        ImVec2 bp = ImGui::GetCursorScreenPos();
+        float fs = ImGui::GetFontSize();
+        if (ImGui::Button(forumsLabel)) {
+            imguiOpenUrl("https://www.winbolo.net/forums");
+        }
+        imguiHandOnHover();
+        float btnH = fs + st.FramePadding.y * 2.0f;
+        ImVec2 ctr(bp.x + st.FramePadding.x + fs * 0.5f, bp.y + btnH * 0.5f);
+        imguiDrawSpinningShield(dl, ctr, fs * 0.40f, fs * 0.5f, 0.0f,
+                                ImGui::GetColorU32(ImGuiCol_Text), true);
+
+        ImGui::SameLine(0.0f, gap);
+        if (iconLeadingButton("Reddit", s_redditIcon)) {
+            imguiOpenUrl("https://www.reddit.com/r/winbolo");
+        }
+        imguiHandOnHover();
+        ImGui::SameLine(0.0f, gap);
+        if (iconLeadingButton("Discord", s_discordIcon)) {
+            imguiOpenUrl("https://discord.gg/znGR3VMaqd");
+        }
+        imguiHandOnHover();
     }
-    imguiHandOnHover();
-    ImGui::SameLine();
-    if (ImGui::Button("Authors")) {
-        openMarkdownPopup("authors");
-    }
-    imguiHandOnHover();
-    ImGui::SameLine();
-    if (ImGui::Button("Forums")) {
-        imguiOpenUrl("https://www.winbolo.net/forums");
-    }
-    imguiHandOnHover();
 
     int f = WBUI::DialogFooter(/*cancelLabel*/ nullptr, langGetText(STR_OK));
     if (f != WBUI::FOOTER_NONE) ImGui::CloseCurrentPopup();
