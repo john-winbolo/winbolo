@@ -634,7 +634,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             }
         }
 
-        if (allOwned && numBases > 0) {
+        /* Steam stats/achievements are for the local human only — bots run
+         * this same game-over path with their own ClientSim and must not
+         * credit wins/losses to the local user. */
+        if (allOwned && numBases > 0 && !cs->isBot) {
             localWon = (cs->myPlayerNum == first) ||
                        playersIsAllie(&cs->sim.plyrs, cs->myPlayerNum, first);
 
