@@ -192,6 +192,12 @@ static bool s_suspended = FALSE;
  * up.  See windowSteamOverlayActivated. */
 static bool s_overlayPaused = FALSE;
 
+/* Set while the "Controller Disconnected" dialog is up during a solo game.
+ * Same freeze as s_overlayPaused, driven by the controller-lost handler.
+ * Multiplayer keeps running (the dialog still shows).  See
+ * windowControllerLostPause. */
+static bool s_controllerLostPaused = FALSE;
+
 /* Tick counters */
 static DWORD oldTick = 0;
 static DWORD ttick = 0;
@@ -693,11 +699,12 @@ static void windowRunGameTick(ClientSim *cs) {
   bool used = FALSE;
   bool brainRunning;
 
-  /* App is backgrounded (Deck home button / sleep) or the Steam overlay
-     is open in single-player — skip all tick work.  The matching resume
-     (windowResumeForeground / windowSteamOverlayActivated) resets the
+  /* App is backgrounded (Deck home button / sleep), the Steam overlay is
+     open, or the controller-disconnected dialog is up in a solo game — skip
+     all tick work.  The matching resume (windowResumeForeground /
+     windowSteamOverlayActivated / windowControllerLostPause) resets the
      wallclock baseline so we don't fast-forward the paused interval. */
-  if (s_suspended || s_overlayPaused) return;
+  if (s_suspended || s_overlayPaused || s_controllerLostPaused) return;
 
   brainRunning = brainHandlerIsBrainRunning();
   isShoot = FALSE;
@@ -882,7 +889,7 @@ static bool windowIsSoloSession(ClientSim *cs) {
    or opens the overlay. */
 static void windowUpdateServerPause(ClientSim *cs) {
   gameFrontSetServerPaused(windowIsSoloSession(cs) &&
-                           (s_suspended || s_overlayPaused));
+                           (s_suspended || s_overlayPaused || s_controllerLostPaused));
 }
 
 void windowSuspendBackground(ClientSim *cs) {
@@ -946,6 +953,28 @@ static void windowSteamOverlayActivated(ClientSim *cs, bool active) {
     windowUpdateServerPause(cs);
     /* Reset the catch-up baseline, mirroring the single-player branch of
        windowResumeForeground. */
+    oldTick = SDL_GetTicks();
+    ttick = oldTick;
+    soundSetMuted(FALSE);
+  }
+}
+
+/* Controller-disconnected dialog opened/closed.  Solo sessions only (single-
+   player or tutorial): freeze the client and server sim while the dialog is up
+   and rebase the catch-up wallclock on close, mirroring
+   windowSteamOverlayActivated.  Multiplayer is a no-op — the dialog still
+   shows but the networked game keeps running. */
+void windowControllerLostPause(ClientSim *cs, bool active) {
+  if (active) {
+    if (!windowIsSoloSession(cs)) return;
+    if (s_controllerLostPaused) return;          /* idempotent */
+    s_controllerLostPaused = TRUE;
+    windowUpdateServerPause(cs);
+    soundSetMuted(TRUE);
+  } else {
+    if (!s_controllerLostPaused) return;
+    s_controllerLostPaused = FALSE;
+    windowUpdateServerPause(cs);
     oldTick = SDL_GetTicks();
     ttick = oldTick;
     soundSetMuted(FALSE);

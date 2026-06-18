@@ -1196,6 +1196,11 @@ STR_CTRL_PROMPT_LINE2=Overschakelen naar Controllermodus?
 STR_CTRL_PROMPT_DESC=(Verbergt de menubalk; Start opent een controllervriendelijk pauzemenu.\nLater wijzigen via Instellingen.)
 STR_CTRL_PROMPT_NOTNOW=Niet nu
 STR_CTRL_PROMPT_DONTASK=Niet meer vragen
+
+# Controller-verbroken dialoog
+STR_CTRL_DISC_TITLE=Controller verbroken
+STR_CTRL_DISC_MESSAGE=Je gamepad is verbroken. Je kunt hem opnieuw aansluiten of overschakelen naar toetsenbordbesturing.
+STR_CTRL_DISC_BUTTON=Doorgaan met toetsenbord en muis
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Over WinBolo
 STR_MENU_PREFERENCES=Voorkeuren…

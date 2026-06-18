@@ -96,6 +96,7 @@ extern "C" {
 #include "dialogs/imgui_deck_pause.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
+#include "dialogs/imgui_controller_disconnect.h"
 #include "imgui_steam_nav.h"
 #include "dialogs/imgui_server_address.h"
 #include "dialogs/dialog_footer.h"
@@ -198,6 +199,7 @@ extern "C" void windowQuit(void);
 extern "C" void windowSaveMap(struct ClientSim *cs);
 extern "C" void windowSuspendBackground(struct ClientSim *cs);
 extern "C" void windowResumeForeground(struct ClientSim *cs);
+extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -3957,13 +3959,23 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (inputGamepadIsPauseEdge() && inputGamepadIsConnected()) {
         deckPauseOpen();
     }
-    /* Active-controller-disconnect open trigger: open pause overlay so the
-       player can recover (battery dies, dongle drops).  Skip in lobby
-       (keyboard UI) and when overlay is already open. */
+    /* Active-controller-disconnect: show the "Controller Disconnected" dialog
+       so the player can reconnect or switch to keyboard/mouse (battery dies,
+       dongle drops).  Gated on the controller-mode *pref*, not
+       uiShouldUseControllerMode() — the latter already flipped to false the
+       instant the pad dropped, so a keyboard-only player never sees it.  In a
+       solo game (single-player / tutorial) freeze the sim via the shared pause
+       path; multiplayer keeps running.  Shown everywhere (in-game and lobby). */
     if (inputGamepadConsumeActiveDisconnect() &&
-        uiShouldUseControllerMode() && cs && !clientSimIsInLobby(cs) &&
-        !deckPauseIsOpen()) {
-        deckPauseOpen();
+        (uiControllerModeGet() != CONTROLLER_MODE_OFF || uiModeIsSteamDeck()) &&
+        !controllerDisconnectIsOpen()) {
+        controllerDisconnectOpen();
+        windowControllerLostPause(cs, true);
+    }
+    /* Auto-dismiss when a controller is (re)connected. */
+    if (controllerDisconnectIsOpen() && inputGamepadIsConnected()) {
+        controllerDisconnectClose();
+        windowControllerLostPause(cs, false);
     }
     /* Quick-chat open trigger: D-pad UP, in-game only.  Gamepad-universal
        (not Deck-gated) — desktop gamepad players also benefit.  Skipped
@@ -4029,9 +4041,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 #ifndef __APPLE__
         /* Hide the menu bar in controller mode — controller-only players
            can't reach the menu strip; the pause overlay replaces it.
-           macOS routes the menu through native NSMenu so the in-window
-           bar is never drawn there. */
-        if (!uiShouldUseControllerMode()) {
+           Also keep it hidden while the controller-disconnected dialog is up:
+           the menus must not reappear until the player picks "keyboard and
+           mouse" (which turns controller mode off), not the moment the pad
+           dropped.  macOS routes the menu through native NSMenu so the
+           in-window bar is never drawn there. */
+        if (!uiShouldUseControllerMode() && !controllerDisconnectIsOpen()) {
             renderMenuBar(cs);
         }
 #endif
@@ -4083,6 +4098,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
            Rendered through the main context so it inherits
            NavEnableGamepad for A/B selection. */
         controllerPromptRender();
+
+        /* Controller-disconnected dialog.  Returns true the frame the
+           "keyboard and mouse" button is pressed — it has already switched
+           controller mode off and closed itself, so just unpause any solo
+           game (no-op in multiplayer). */
+        if (controllerDisconnectRender()) {
+            windowControllerLostPause(cs, false);
+        }
     }
 
     /* Retract any open menu-bar dropdown when a panel/chat was just opened, so

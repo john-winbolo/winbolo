@@ -1196,6 +1196,11 @@ STR_CTRL_PROMPT_LINE2=Byta till handkontrolläge?
 STR_CTRL_PROMPT_DESC=(Döljer menyraden; Start öppnar en handkontrollvänlig pausmeny.\nÄndra senare i Inställningar.)
 STR_CTRL_PROMPT_NOTNOW=Inte nu
 STR_CTRL_PROMPT_DONTASK=Fråga inte igen
+
+# Dialogruta för bortkopplad handkontroll
+STR_CTRL_DISC_TITLE=Handkontroll bortkopplad
+STR_CTRL_DISC_MESSAGE=Din gamepad har kopplats bort. Du kan ansluta den igen eller byta till tangentbordskontrollen.
+STR_CTRL_DISC_BUTTON=Fortsätt med tangentbord och mus
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Om WinBolo
 STR_MENU_PREFERENCES=Inställningar…

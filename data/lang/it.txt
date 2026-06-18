@@ -1196,6 +1196,11 @@ STR_CTRL_PROMPT_LINE2=Passare alla modalità controller?
 STR_CTRL_PROMPT_DESC=(Nasconde la barra dei menu; Start apre un menu pausa ottimizzato per il controller.\nModificabile in seguito in Impostazioni.)
 STR_CTRL_PROMPT_NOTNOW=Non ora
 STR_CTRL_PROMPT_DONTASK=Non chiedere più
+
+# Dialogo controller disconnesso
+STR_CTRL_DISC_TITLE=Controller disconnesso
+STR_CTRL_DISC_MESSAGE=Il tuo gamepad è stato disconnesso. Puoi ricollegarlo o passare ai controlli da tastiera.
+STR_CTRL_DISC_BUTTON=Continua con tastiera e mouse
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Informazioni su WinBolo
 STR_MENU_PREFERENCES=Preferenze…

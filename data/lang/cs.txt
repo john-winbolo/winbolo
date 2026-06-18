@@ -1206,6 +1206,11 @@ STR_CTRL_PROMPT_LINE2=Přepnout do Režimu ovladače?
 STR_CTRL_PROMPT_DESC=(Skryje lištu nabídek; Start otevře herní nabídku přizpůsobenou ovladači.\nZměnit lze v Nastavení.)
 STR_CTRL_PROMPT_NOTNOW=Teď ne
 STR_CTRL_PROMPT_DONTASK=Příště se neptát
+
+# Dialog odpojení ovladače
+STR_CTRL_DISC_TITLE=Ovladač odpojen
+STR_CTRL_DISC_MESSAGE=Váš gamepad byl odpojen. Můžete ho znovu připojit nebo přepnout na ovládání klávesnicí.
+STR_CTRL_DISC_BUTTON=Pokračovat s klávesnicí a myší
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=O aplikaci WinBolo
 STR_MENU_PREFERENCES=Předvolby…
