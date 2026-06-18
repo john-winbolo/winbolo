@@ -53,6 +53,7 @@ typedef struct {
 
 /* Global sound state */
 static bool isPlayable = FALSE;
+static bool s_muted = FALSE;   /* logical mute state, tracked across (un)playable */
 static SDL_AudioStream *audioStream = NULL;
 static SDL_AudioSpec deviceSpec;
 
@@ -679,6 +680,9 @@ bool soundIsPlayable(void) {
 *********************************************************/
 void soundSetMuted(bool mute) {
     int i;
+    /* Track the logical mute state even when audio isn't playable, so
+       soundIsMuted() reflects intent for save/restore callers. */
+    s_muted = mute;
     if (!isPlayable || !audioStream)
         return;
     if (mute) {
@@ -696,6 +700,10 @@ void soundSetMuted(bool mute) {
         }
         SDL_ResumeAudioStreamDevice(audioStream);
     }
+}
+
+bool soundIsMuted(void) {
+    return s_muted;
 }
 
 void soundSetVolume(int pct) {

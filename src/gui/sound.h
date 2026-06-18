@@ -115,6 +115,15 @@ bool soundIsPlayable(void);
 void soundSetMuted(bool mute);
 
 /*********************************************************
+*NAME:          soundIsMuted
+*PURPOSE:
+*  Returns the current logical mute state, so a pause path
+*  can save it on entry and restore it on exit rather than
+*  unconditionally unmuting.
+*********************************************************/
+bool soundIsMuted(void);
+
+/*********************************************************
 *NAME:          soundSetVolume
 *PURPOSE:
 *  Sets the master output gain on the audio stream.
