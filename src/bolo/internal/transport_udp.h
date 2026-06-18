@@ -387,7 +387,6 @@ typedef struct UdpServerClient {
     uint16_t pingMs;             /* Last measured ping */
     uint32_t lastPongSentMs;     /* SDL_GetTicks() when last PONG was sent */
     char countryCode[3];         /* ISO 3166-1 alpha-2 from GeoIP lookup */
-    bool needsPlayerList;        /* Send existing player names after map download */
     uint16_t inputsThisTick;     /* Inputs applied this tick cycle (for rate limiting) */
     bool wantRejoin;             /* Client requested rejoin (restore pills/bases) */
     uint8_t pingWarnStrikes;     /* consecutive pings >= warn threshold */

@@ -12,4 +12,3 @@
 {"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"HeadlessBot","country":"AU","clientType":2,"clientFlags":0,"allies":[1]}
 {"tick":0,"type":"CTRL_SERVER_TEXT","text":"HeadlessBot has joined."}
 {"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
-{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"Bot 1","country":"","clientType":0,"clientFlags":32,"allies":[]}

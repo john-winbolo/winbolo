@@ -244,7 +244,8 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                        * header so a superseded resync is dropped
                                        * by the client's gen gate. */
 #define PACKET_QUIT            106   /* Graceful disconnect (client -> server) */
-#define PACKET_PLAYER_LIST     107   /* All connected players (server -> new client) */
+/* 107 retired (PLAYER_LIST): the roster is maintained by reliable
+ * CTRL_PLAYER_JOIN/CTRL_PLAYER_LEFT events on CHANNEL_CONTROL. */
 #define PACKET_NAME_CHANGE     123   /* Player name change (bidirectional) */
 
 /* Alliance packets (new protocol) */

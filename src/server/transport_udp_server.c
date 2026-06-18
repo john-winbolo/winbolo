@@ -2030,11 +2030,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
 
     /* The sync-replay just enqueued a CTRL_PLAYER_JOIN for every in-use
      * player into this client's controlEventQueue, so the JOIN-time
-     * roster is covered by the reliable bus path.  The needsPlayerList
-     * flag is set here only so the same per-tick resync that catches
-     * the game-start race (see transportUdpServerOnGameStart) also fires
-     * once for fresh joiners — belt-and-braces; harmless overlap. */
-    udpServer.clients[slot].needsPlayerList = true;
+     * roster is covered by the reliable bus path. */
 
     /* Surface the join in everyone's lobby chat and unready any humans
      * who were ready. The chat line rides CTRL_SERVER_TEXT, which the
@@ -3082,7 +3078,7 @@ bool transportUdpServerHasAnyClient(void) {
 void transportUdpServerOnGameStart(ServerSim *sim) {
     int i;
     (void)sim;
-    mpDiagLog("[srv] GAME_START wipe BEGIN (about to reset all queues + set needsPlayerList)");
+    mpDiagLog("[srv] GAME_START BEGIN (rebasing game/map channel send baselines)");
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
             mpDiagLog("[srv] GAME_START wipe slot=%d pre ev(ack=%u next=%u) mapEv(ack=%u next=%u)",
@@ -3093,10 +3089,6 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
                       (unsigned)udpServer.mapEventQueues[i].nextSeq);
         }
         if (udpServer.clients[i].connected) {
-            /* Flag this client for an unsolicited PLAYER_LIST resync so its
-               roster catches up after the reset; the new game's first control
-               event is CTRL_GAME_PHASE_RUNNING. */
-            udpServer.clients[i].needsPlayerList = true;
             /* Ensure map download is considered complete so snapshots
              * are sent during the game even if a final chunk ack was lost. */
             udpServer.mapDownload[i].downloadComplete = TRUE;
@@ -3177,7 +3169,7 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
         }
     }
     WB_LOG_INFO(WB_LOG_CAT_NET, "ctrl queue reset all slots (game start)");
-    mpDiagLog("[srv] GAME_START wipe END (all connected slots flagged needsPlayerList)");
+    mpDiagLog("[srv] GAME_START END (game/map channel send baselines rebased)");
 }
 
 void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
@@ -4740,67 +4732,6 @@ void transportUdpServerSend(ServerSim *sim) {
                           &udpServer.clients[i].addr);
             }
             continue;
-        }
-
-        /* Send existing player list before the first snapshot.
-         * This must happen after map download so the client's players
-         * struct (recreated during map load) is ready.
-         * Format: [header][count]
-         *   [playerNum 1][name 32][cc 2][clientType 1][clientFlags 1]
-         *   [numAllies 1][ally0 1][ally1 1]...
-         * Each player entry is variable-length due to allies. */
-        if (udpServer.clients[i].needsPlayerList) {
-            uint8_t plBuf[UDP_MAX_PAYLOAD];
-            int plPos = PACKET_HEADER_SIZE;
-            uint8_t plCount = 0;
-            int j;
-
-            plPos++; /* reserve byte for count */
-            for (j = 0; j < MAX_TANKS; j++) {
-                BYTE allies[MAX_TANKS];
-                BYTE numAllies;
-                char playerName[PACKET_MAX_PLAYER_NAME];
-                if (j == i) continue;
-                /* Include both UDP clients and bot players (sim-connected but no UDP client) */
-                if (!udpServer.clients[j].connected && !serverSimIsPlayerConnected(sim, j)) continue;
-
-                numAllies = playersMakeNetAlliences(
-                    &serverSimGetGameSim(sim)->plyrs, (BYTE)j, allies);
-
-                /* Check we have room: 1 + 32 + 2 + 2 + 1 + numAllies */
-                if (plPos + 1 + PACKET_MAX_PLAYER_NAME + 2 + 2 + 1 + numAllies
-                    > (int)sizeof(plBuf))
-                    break;
-
-                plBuf[plPos++] = (uint8_t)j;
-                memset(plBuf + plPos, 0, PACKET_MAX_PLAYER_NAME);
-                /* Get name from players struct (works for both UDP clients and bots) */
-                memset(playerName, 0, sizeof(playerName));
-                playersGetPlayerName(&serverSimGetGameSim(sim)->plyrs, (BYTE)j, playerName, TRUE);
-                snprintf((char *)(plBuf + plPos), PACKET_MAX_PLAYER_NAME, "%s", playerName);
-                plPos += PACKET_MAX_PLAYER_NAME;
-                /* Country code (2 bytes) */
-                plBuf[plPos++] = (uint8_t)udpServer.clients[j].countryCode[0];
-                plBuf[plPos++] = (uint8_t)udpServer.clients[j].countryCode[1];
-                plBuf[plPos++] = playersGetClientType(&serverSimGetGameSim(sim)->plyrs, (BYTE)j);
-                plBuf[plPos++] = playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)j);
-                plBuf[plPos++] = numAllies;
-                if (numAllies > 0) {
-                    memcpy(plBuf + plPos, allies, numAllies);
-                    plPos += numAllies;
-                }
-                plCount++;
-            }
-            packHeader(plBuf, PACKET_PLAYER_LIST, 0);
-            plBuf[PACKET_HEADER_SIZE] = plCount;
-            mpDiagLog("[srv] PLAYER_LIST send slot=%d count=%u bytes=%d",
-                      i, (unsigned)plCount, plPos);
-            if (plCount > 0) {
-                /* wire-only: per-client handshake (response to a single client's request) */
-                srvSendTo(plBuf, plPos,
-                          &udpServer.clients[i].addr);
-            }
-            udpServer.clients[i].needsPlayerList = false;
         }
 
         serverSendSnapshot(sim, i);

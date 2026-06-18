@@ -209,7 +209,7 @@ static EncodeResult encodeAllianceReset(const ControlEvent *evt,
  *   [clientType 1] [clientFlags 1] [numAllies 1] [ally 1 × numAllies]
  * The trailing numAllies/allies pair is an additive change from the
  * pre-codec wire format — receiving clients now have the join's full
- * alliance bitmap on the wire instead of waiting for PACKET_PLAYER_LIST. */
+ * alliance bitmap on the wire from the join event itself. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodePlayerJoinBody(const ControlEvent *evt,
