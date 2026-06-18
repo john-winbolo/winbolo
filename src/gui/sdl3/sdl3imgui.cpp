@@ -200,6 +200,7 @@ extern "C" void windowSaveMap(struct ClientSim *cs);
 extern "C" void windowSuspendBackground(struct ClientSim *cs);
 extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
+extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -4096,6 +4097,21 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
         /* Pause overlay + quick-chat overlay (no-ops when closed). */
         deckPauseRender(cs);
+        /* Freeze a solo game while the pause overlay is up — single-player /
+           tutorial only; multiplayer keeps running or the player is booted for
+           idling.  Edge-detect the overlay open/close so the shared solo-pause
+           path toggles exactly once each way, mirroring the disconnect dialog.
+           Checked after deckPauseRender so deckPauseIsOpen() reflects this
+           frame's state (the open trigger sets a pending flag the render
+           consumes). */
+        {
+            static bool s_lastDeckPause = false;
+            bool nowDeckPause = deckPauseIsOpen();
+            if (nowDeckPause != s_lastDeckPause) {
+                windowDeckPause(cs, nowDeckPause);
+                s_lastDeckPause = nowDeckPause;
+            }
+        }
         quickChatRender(cs);
         renderCtrlSendMsg(cs);
         /* Controller-detected prompt — also a no-op when closed.
