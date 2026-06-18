@@ -2617,6 +2617,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
     tests/unit/test_bulk_transfer.c
+    # Send-side overflow guards on channelStreamSend / bulkSenderBegin: a
+    # wrap-prone length is rejected with no state change.
+    tests/unit/test_overflow_guards.c
     # CTRL_CHANNEL_RESET: body-codec round-trip and the per-client game-start
     # baselines transportUdpServerOnGameStart sends across two fabricated slots.
     tests/unit/test_channel_reset.c
@@ -2948,6 +2951,7 @@ set(_unit_test_names
     wire_corpus
     channel_mux
     bulk_transfer
+    overflow_guards
     channel_reset_codec_roundtrip
     channel_reset_two_slot_baselines
     packet_type_names

@@ -182,6 +182,11 @@ int run_channel_mux(void);
  * robustness, pipelining and the send-side serializer guard. */
 int run_bulk_transfer(void);
 
+/* Send-side overflow guards (test_overflow_guards.c): channelStreamSend and
+ * bulkSenderBegin reject a wrap-prone length via the existing false path with
+ * no state change. */
+int run_overflow_guards(void);
+
 /* CTRL_CHANNEL_RESET — the game-start baseline reset (test_channel_reset.c):
  * the body-codec round-trip and the per-client baseline values
  * transportUdpServerOnGameStart sends across two fabricated slots. */

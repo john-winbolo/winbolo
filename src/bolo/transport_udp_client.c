@@ -884,6 +884,13 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
                 kChans[i].name, (unsigned)(baseline - expected),
                 (unsigned)window);
         }
+        /* A hostile server can forward-jump this receive baseline via a
+         * CTRL_CHANNEL_RESET (skipping the client past buffered seqs). That is
+         * memory-safe — channelResetExpected's discard loop is window-bounded —
+         * and not a real exposure: the server is already authoritative over its
+         * own clients' game/map/bulk streams, and the control channel carrying
+         * the reset is connId-authenticated, so a third party can't inject it.
+         * Recorded so the forward-jump isn't re-flagged as a finding. */
         channelResetExpected(&c->channelMux, ch, baseline);
         /* A bulk re-base abandons any in-flight transfer: drop the receiver's
          * mid-body partial (so its dst can't dangle) and discard a half-built
@@ -1366,8 +1373,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         /* Header: serverTick(4) + lastProcessedInput(4) + tankCount(1)
          * + shellCount(1) + tkExplosionCount(1)
          * + baseCount(1) + pillCount(1)
-         * + mapChecksum(2) + returnToLobbyTicks(2) = 17 bytes */
-        if (len < pos + 17) { c->netErrors++; break; }
+         * + mapChecksum(2) + returnToLobbyTicks(2) = SNAPSHOT_HEADER_WIRE_SIZE */
+        if (len < pos + SNAPSHOT_HEADER_WIRE_SIZE) { c->netErrors++; break; }
 
         c->snapshotHdr.serverTick = unpackU32(buf + pos);
         pos += 4;

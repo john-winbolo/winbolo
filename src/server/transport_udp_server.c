@@ -2299,13 +2299,20 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
      * Format: serverTick(4) + lastProcessedInput(4) + tankCount(1)
      * + shellCount(1) + tkExplosionCount(1)
      * + baseCount(1) + pillCount(1)
-     * + mapChecksum(2) + returnToLobbyTicks(2) = 17 bytes */
+     * + mapChecksum(2) + returnToLobbyTicks(2) = SNAPSHOT_HEADER_WIRE_SIZE.
+     * The static assert ties that constant to this field breakdown, and the
+     * reserve below derives from it, so this packer and the client's size
+     * guard can't drift. */
+    BOLO_STATIC_ASSERT(SNAPSHOT_HEADER_WIRE_SIZE == 4 + 4 + 5 + 2 + 2,
+                       snapshot_header_wire_size);
     packU32(buf + pos, hdr.serverTick);
     pos += 4;
     packU32(buf + pos, hdr.lastProcessedInput);
     pos += 4;
     countsPos = pos;
-    pos += 9; /* 5 count bytes + 2 byte mapChecksum + 2 byte returnToLobbyTicks */
+    /* Reserve the 5 count bytes + 2-byte mapChecksum + 2-byte
+     * returnToLobbyTicks — the header bytes after the two u32s above. */
+    pos += SNAPSHOT_HEADER_WIRE_SIZE - 8;
 
     /* Pack tank snapshots — variable length: a stub is 1 byte; a full entry is
      * a presence-mask-driven run of at most TANK_SNAPSHOT_WIRE_SIZE bytes

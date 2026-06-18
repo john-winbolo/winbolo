@@ -86,6 +86,14 @@ bool bulkSenderBegin(BulkSender *s, const BulkStreamHeader *h,
         return false;   /* serializer guard: a transfer is already in flight */
     }
     uint32_t headerLen = (uint32_t)BULK_STREAM_HEADER_FIXED + h->pathLen;
+    /* Defense-in-depth on a generic primitive: every current caller bounds its
+     * blob (e.g. the upload sink clamps to LOBBY_MAP_UPLOAD_MAX_BYTES), so this
+     * never trips today. Reject rather than wrap if header+blob would overflow
+     * the 32-bit allocation size — same no-state-change failure path as the
+     * serializer guard above. */
+    if (blobLen > UINT32_MAX - headerLen) {
+        return false;
+    }
     uint32_t total = headerLen + blobLen;
     uint8_t *buf = (uint8_t *)malloc(total);
     if (buf == NULL) {

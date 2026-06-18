@@ -155,6 +155,7 @@ static const UnitTestEntry s_tests[] = {
     { "net_impair",                              run_net_impair                              },
     { "channel_mux",                             run_channel_mux                             },
     { "bulk_transfer",                           run_bulk_transfer                           },
+    { "overflow_guards",                         run_overflow_guards                         },
     { "channel_reset_codec_roundtrip",           run_channel_reset_codec_roundtrip           },
     { "channel_reset_two_slot_baselines",        run_channel_reset_two_slot_baselines        },
     { "countdown_abort_publishes_phase",         run_countdown_abort_publishes_phase         },

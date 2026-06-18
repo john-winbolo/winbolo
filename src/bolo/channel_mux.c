@@ -152,7 +152,13 @@ bool channelStreamSend(ChannelMux *m, uint8_t ch, const uint8_t *data,
     if (len == 0) {
         return true;
     }
-    if (m->streamCount + len > CHANNEL_STREAM_BUF) {
+    /* streamCount never exceeds CHANNEL_STREAM_BUF, so the subtraction stays
+     * non-negative; phrasing the capacity check this way (rather than
+     * streamCount + len) keeps it overflow-safe when len is large. Every
+     * current caller streams bounded chunks, so this is defense-in-depth on a
+     * generic primitive — the reject is the existing pending-buffer-full
+     * signal, no state change. */
+    if (len > CHANNEL_STREAM_BUF - m->streamCount) {
         return false; /* pending buffer full — overflow signal */
     }
     if (data != NULL) {

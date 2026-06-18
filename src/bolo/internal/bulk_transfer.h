@@ -114,7 +114,14 @@ void bulkSenderPump(BulkSender *s, ChannelMux *m);
 typedef struct {
     /* A full header was parsed (IDLE -> BODY). Return a buffer of at least
      * h->totalSize bytes to receive the blob, or NULL to reject this transfer
-     * (its body is consumed and discarded so the stream stays aligned). */
+     * (its body is consumed and discarded so the stream stays aligned).
+     *
+     * SECURITY: h->totalSize is WIRE-SUPPLIED and ATTACKER-CONTROLLED (up to
+     * 4 GB). The receiver's body fill trusts it as the buffer bound, so the
+     * sink MUST validate and bound totalSize itself and return NULL to reject
+     * anything it will not allocate (e.g. the upload sink caps it at
+     * LOBBY_MAP_UPLOAD_MAX_BYTES). A sink that allocates blindly off totalSize
+     * hands a remote peer the allocation size. */
     uint8_t *(*onBegin)(void *ctx, const BulkStreamHeader *h);
     /* h->totalSize body bytes have been written into the buffer onBegin
      * returned. */
