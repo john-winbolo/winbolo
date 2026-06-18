@@ -6211,6 +6211,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     int result = 0;
     bool running = true;
 
+    /* Controller mode: land the initial nav focus on the Ready button — the
+     * action a pad user most wants on entry — instead of leaving focus
+     * unset. Deferred until Ready is actually enabled (the map download may
+     * still be in flight), and consumed once so the player can navigate away
+     * freely afterwards. Armed only in controller mode; keyboard/mouse is
+     * unaffected. */
+#if !BOLO_MOBILE
+    bool focusReadyPending = uiShouldUseControllerMode();
+#endif
+
     /* Show the lobby in Steam immediately on entry; the throttled tick at
      * the top of the loop keeps the player count / connect address current
      * (e.g. once the host's external address resolves via the tracker). */
@@ -7696,6 +7706,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::PushStyleColor(ImGuiCol_Button,         ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.20f, 0.65f, 0.20f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive,   ImVec4(0.10f, 0.45f, 0.10f, 1.0f));
+                }
+                /* One-shot initial focus for controller players — only once
+                 * Ready is enabled, so we don't try to focus a disabled item. */
+                if (focusReadyPending && canReady) {
+                    ImGui::SetKeyboardFocusHere();
+                    focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(-1, 0))) {
                     if (hasTransport) {
