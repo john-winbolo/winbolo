@@ -473,6 +473,13 @@ M.WALL_SHIELD_LGM_MAX_TICKS   = 2000 -- max ticks to simulate LGM travel
 M.PPT_BLOCKERS_ENOUGH         = 1   -- protected-take build phase ends in SUCCESS as soon as this many blockers are NEWLY placed (wall or dropped pillbox) — but ONLY when a blitz is underway (see PPT_BLOCKERS_ENOUGH_MIN_INWAIT / BLITZ_MIN_READY_TO_CHARGE). Solo, the full planned shield is built. 1 = one blocker is enough cover once the squad is overwhelming the pill.
 M.PPT_BLOCKERS_ENOUGH_MIN_INWAIT = 1  -- the one-blocker early-success also applies while the commander is still building IF at least this many soldiers are already parked in blitz_wait (sharing the pill's fire). Pairs with BLITZ_MIN_READY_TO_CHARGE (the ready-to-charge quorum) as the other trigger.
 M.WALL_SHIELD_LGM_STUCK_TICKS = 150  -- same-tile timeout for LGM simulation (~3 seconds)
+-- Last-wall early end: once the FINAL wall blocker is dispatched (LGM out
+-- building it) and the estimated LGM round-trip — go to the slot + LGM_BUILD_TIME
+-- + walk back to the tank — is <= this many ticks, count the build phase over and
+-- let the take proceed while the LGM finishes the last wall in parallel. The
+-- already-built blockers protect the tank. ~5 s @ 50 Hz. Only fires for the last
+-- blocker of a multi-wall shield (>=1 other blocker already up).
+M.PPT_LAST_WALL_EARLY_TICKS = 250
 
 -- Base shield: build a wall between the base and a hostile pill while refueling.
 -- Only when pill is calm (anger low enough that LGM can build before shots arrive)

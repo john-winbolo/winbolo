@@ -4261,6 +4261,9 @@ function M.update_attack_substate(goal, state, world, info)
       goal._wall_build_idx   = 1
       goal._wall_build_start = now
       goal._wall_build_last_progress = now
+      goal._last_wall_early  = nil  -- reset the last-wall early-end latch per build
+      state._wall_shield_dispatch = nil  -- clear stale dispatch so the last-wall
+                                         -- early-end can't match a prior goal's
       -- Snapshot initial tile types per slot so we can tell pre-existing cover
       -- from blockers we actually placed (used by the early-success gate — one
       -- newly-built blocker is enough — and the "0 BUILT" diagnostic banner).
@@ -4439,7 +4442,43 @@ function M.update_attack_substate(goal, state, world, info)
     if built_enough and idx <= #list and not stalled then
     end
 
-    if idx > #list or stalled or built_enough then
+    -- Last-wall early end: we're on the FINAL blocker of a multi-wall shield
+    -- (>=1 other blocker already up so the tank has cover), the LGM has been
+    -- SENT OUT specifically for THIS last blocker, and the estimated round-trip
+    -- for it to reach the slot, build, and walk back is short. Then don't sit
+    -- idle on the last wall + the walk home — proceed with the take in parallel
+    -- (the engine finishes the in-flight build even after we leave build_walls;
+    -- leaving only suppresses NEW dispatches, it doesn't recall the LGM).
+    --
+    -- "Sent out for the last blocker" = the builder's most recent wall dispatch
+    -- targets this exact slot with a blocker action (BUILD or PBOX — NOT FARM, a
+    -- forest harvest means the wall isn't going up yet), AND the LGM has left the
+    -- tank to do it. Without the dispatch match we could skip while the LGM is
+    -- merely walking back from a PREVIOUS wall (idx just advanced to the last
+    -- slot but it was never dispatched), abandoning the last blocker entirely.
+    local last = list[#list]
+    local disp = state._wall_shield_dispatch
+    local sent_for_last = disp and (disp.action == "BUILD" or disp.action == "PBOX")
+                          and disp.wx == last.mx and disp.wy == last.my
+    if not goal._last_wall_early and idx == #list and #list >= 2 and not stalled
+       and sent_for_last
+       and info.man_status ~= C.LGM_INTANK and info.man_status ~= C.LGM_DEAD
+       and info.man_x and (now % 10 == 0) then
+      local tmx_t, tmy_t = info.tankx >> 8, info.tanky >> 8
+      local lgm_mx, lgm_my = info.man_x >> 8, info.man_y >> 8
+      local to_wall = cpf.lgm_travel_ticks_map(lgm_mx, lgm_my, last.mx, last.my,
+        last.mx, last.my, C.WALL_SHIELD_LGM_MAX_TICKS, C.WALL_SHIELD_LGM_STUCK_TICKS)
+      local back = cpf.lgm_travel_ticks_map(last.mx, last.my, tmx_t, tmy_t,
+        last.mx, last.my, C.WALL_SHIELD_LGM_MAX_TICKS, C.WALL_SHIELD_LGM_STUCK_TICKS)
+      if to_wall and to_wall > 0 and back and back > 0 then
+        local round_trip = to_wall + (C.LGM_BUILD_TIME or 0) + back
+        if round_trip <= (C.PPT_LAST_WALL_EARLY_TICKS or 250) then
+          goal._last_wall_early = true
+        end
+      end
+    end
+
+    if idx > #list or stalled or built_enough or goal._last_wall_early then
       -- Debug-only: tally built / pre-existing / unbuilt for the on-screen
       -- decision banner. The brain itself doesn't act on these counts.
       goal.wall_shield = false
