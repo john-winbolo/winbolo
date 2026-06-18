@@ -454,6 +454,7 @@ M.WALL_SHIELD_RETREAT_ANGLE    = 90  -- degrees perpendicular to pill->wall line
 M.WALL_SHIELD_LGM_SAFE_TICKS  = 10  -- min ticks after LGM returns before shooting
 M.WALL_SHIELD_LGM_TRIP_WEIGHT = 0.5 -- weight for LGM round-trip ticks in wall candidate scoring
 M.WALL_SHIELD_LGM_MAX_TICKS   = 2000 -- max ticks to simulate LGM travel
+M.PPT_BLOCKERS_ENOUGH         = 1   -- protected-take build phase ends in SUCCESS as soon as this many blockers are NEWLY placed (wall or dropped pillbox). 1 = one blocker is enough cover for a pill take; the build doesn't grind through the rest of the planned shield. Raise to require more cover before firing.
 M.WALL_SHIELD_LGM_STUCK_TICKS = 150  -- same-tile timeout for LGM simulation (~3 seconds)
 
 -- Base shield: build a wall between the base and a hostile pill while refueling.
@@ -1192,7 +1193,7 @@ M.SQUAD_REFUEL_OK_SHELLS = 10  -- ...and this (i.e. it was topping off, not desp
 M.SQUAD_HELP_RANGE       = 30  -- tiles; only answer a commander whose pill is within this
 M.SQUAD_CMD_RACE_TOL     = 3   -- ticks; two blitz calls on one pill opened within this of each other count as a same-tick race (broken by lower player id); otherwise first-to-the-take keeps command
 M.SQUAD_BLITZ_AIM_TOL    = 8   -- brad; a blitz soldier must be facing the pill within this before it reports rdy=1 (so on GO it can fire/charge immediately, not spin to aim)
-M.SQUAD_MAX_SIZE         = 2   -- max SOLDIERS per squad; with the commander that's 3 tanks total per blitz. A full squad recruits no more
+M.SQUAD_MAX_SIZE         = 1   -- max SOLDIERS per squad; with the commander that's 2 tanks total per blitz. A full squad recruits no more
 M.SQUAD_BLITZ_COST       = 30  -- flat attack_pill cost a squad soldier assigns its commander's blitz pill: low enough to win normal goals, high enough that attack_tank/flee/refuel can still preempt
 M.SQUAD_BLITZ_BUCKET     = 5   -- a blitz standoff is picked at random from clear-LOS spots scoring within this of the best
 M.SQUAD_BLITZ_GO_EARLY_READY = 2   -- commander fires GO as soon as this many TOTAL blitzers are ready (in position + aimed), without waiting for the rest or the READY_TIMEOUT. Counts the commander as 1 (same convention as BLITZ_MIN_READY_TO_CHARGE), so 2 = commander + 1 ready soldier already goes; a still-approaching extra joins on the broadcast GO. Set to 3 to require commander + 2 soldiers.

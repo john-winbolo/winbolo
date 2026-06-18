@@ -4512,10 +4512,10 @@ function M.update_attack_substate(goal, state, world, info)
       goal._wall_build_idx   = 1
       goal._wall_build_start = now
       goal._wall_build_last_progress = now
-      -- Snapshot initial tile types per slot so we can tell pre-existing
-      -- cover from walls we actually placed at exit time (needed for the
-      -- "0 BUILT" diagnostic banner). Debug-only: nothing else reads it.
-      if BRAIN_DEBUG_MODE then
+      -- Snapshot initial tile types per slot so we can tell pre-existing cover
+      -- from blockers we actually placed (used by the early-success gate — one
+      -- newly-built blocker is enough — and the "0 BUILT" diagnostic banner).
+      do
         local initial_tt = {}
         local preexisting = 0
         for i, p in ipairs(sorted) do
@@ -4701,7 +4701,27 @@ function M.update_attack_substate(goal, state, world, info)
     -- build state populated).
     goal._build_timeout_total = BUILD_GIVE_UP_TICKS
 
-    if idx > #list or stalled then
+    -- Early success: a single blocker is enough for a protected take. As soon as
+    -- we've NEWLY placed at least PPT_BLOCKERS_ENOUGH completed blocker(s) — a
+    -- wall or a dropped pillbox on a slot that wasn't cover when we started —
+    -- end the build phase successfully instead of grinding through the rest of
+    -- the queue. (Counts only T_BUILDING/T_PILLBOX, not a still-rising halfwall.)
+    local newly_built = 0
+    do
+      local initial_tt = goal._wall_build_initial_tt or {}
+      for i, p in ipairs(list) do
+        local tt1 = U.ttype(p.mx, p.my)
+        local now_block = (tt1 == C.T_BUILDING or tt1 == C.T_PILLBOX)
+        local was_block = (initial_tt[i] == C.T_BUILDING or initial_tt[i] == C.T_HALFBUILD or initial_tt[i] == C.T_PILLBOX)
+        if now_block and not was_block then newly_built = newly_built + 1 end
+      end
+    end
+    local built_enough = newly_built >= (C.PPT_BLOCKERS_ENOUGH or 1)
+    if built_enough and idx <= #list and not stalled then
+      print2(string.format("BUILD_WALLS_EARLY_DONE t=%d newly_built=%d >= %d (one blocker is enough) idx=%d/%d", now, newly_built, C.PPT_BLOCKERS_ENOUGH or 1, idx, #list))
+    end
+
+    if idx > #list or stalled or built_enough then
       -- Debug-only: tally built / pre-existing / unbuilt for the on-screen
       -- decision banner. The brain itself doesn't act on these counts.
       if BRAIN_DEBUG_MODE then
