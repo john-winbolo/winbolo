@@ -2556,6 +2556,13 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   timeLen = (int32_t)atol(buff);
   prefsGetString("GAME OPTIONS", "Auto Slowdown", autoSlowDefault, buff, FILENAME_MAX);
   *pUseAutoslow = YESNO_TO_TRUEFALSE(buff[0]);
+  /* A connected controller forces auto-slowdown on, regardless of the
+     saved pref — analog-stick steering with no slowdown is unmanageable.
+     This overrides at apply time only; the stored pref is left untouched,
+     so it takes over again once the controller is disconnected. */
+  if (inputGamepadIsConnected()) {
+    *pUseAutoslow = TRUE;
+  }
   prefsGetString("GAME OPTIONS", "Auto Show-Hide Gunsight", autoHideDefault, buff, FILENAME_MAX);
   *pUseAutohide = YESNO_TO_TRUEFALSE(buff[0]);
 

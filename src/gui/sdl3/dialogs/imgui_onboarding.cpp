@@ -40,6 +40,7 @@
 #include "dialog_footer.h"
 #include "imgui_winbolonet.h"   /* imguiWinbolonetDrawSection — Account step */
 #include "imgui_keysetup.h"     /* embedded key-rebind form — Keys step */
+#include "../imgui_steam_nav.h" /* Steam Input -> ImGui gamepad-nav bridge */
 
 extern "C" {
 #include "../sdl3draw.h"
@@ -124,6 +125,7 @@ extern "C" int imguiOnboardingShow(void) {
     imguiRegisterPlatformOpenUrl();
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
@@ -184,6 +186,8 @@ extern "C" int imguiOnboardingShow(void) {
         dialogResetTextInputArea(window);
         dialogOverrideFramebufferScale(renderer);
         ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
 
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);

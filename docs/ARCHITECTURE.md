@@ -1274,6 +1274,50 @@ its own state struct, and its own refresh. They share the
 (`src/ios/`, `src/android/`) and the wasm build don't have a system
 menu bar; they ship only the ImGui in-window bar.
 
+## Standalone ImGui dialogs — controller navigation
+
+Every blocking dialog under `src/gui/sdl3/dialogs/` (welcome, lobby,
+settings, keysetup, onboarding, …) creates its **own** ImGui context and
+runs its **own** SDL event loop. Because the context is per-dialog,
+controller navigation is not inherited from the main game pump — each
+dialog must wire it up itself. Two separate controller paths have to be
+enabled, and missing either one silently breaks the pad on that dialog
+with no compile error:
+
+- **Path B — native SDL gamepad** (non-Steam launches). The ImGui SDL3
+  backend turns raw gamepad events into nav, but only when
+  `ImGuiConfigFlags_NavEnableGamepad` is set on the context.
+- **Path A — Steam Input** (Steam / Steam Deck launches). Steam
+  intercepts the pad so the backend never sees it; the
+  `imguiSteamNav*` bridge (`src/gui/sdl3/imgui_steam_nav.h`) injects
+  keyboard-nav events instead, and only works if its per-frame helpers
+  are called.
+
+### Contract — every standalone dialog must
+
+1. Set **both** nav flags on its context, right after creating it:
+   ```c
+   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+   io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+   ```
+2. `#include "../imgui_steam_nav.h"`.
+3. Call the bridge **once per frame, immediately after
+   `ImGui::NewFrame()`**:
+   ```c
+   imguiSteamNavActivateMenuSet();
+   imguiSteamNavFeedCurrentContext();
+   ```
+   `imguiSteamNavFeedCurrentContext()` is a no-op when Steam Input has
+   no active controller, so it is safe on every platform.
+
+A dialog that re-creates its context mid-loop (e.g. `imgui_settings.cpp`
+after launching the key-setup dialog) must re-apply the flags on the new
+context, but the per-frame helpers already cover it since the loop calls
+them every frame.
+
+`src/gui/sdl3/dialogs/imgui_keysetup.cpp` is the canonical reference —
+copy its context setup and per-frame preamble when adding a dialog.
+
 ## WinBolo.net subsystem
 
 The WinBolo.net (WBN) integration is split across three sibling
