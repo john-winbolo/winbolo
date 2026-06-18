@@ -3492,19 +3492,18 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     GameSim *gs = serverSimGetGameSim(sim);
     INFO_PACKET pkt;
     struct sockaddr_in dest;
-    struct hostent *he;
+    struct in_addr trackerIp;
     int i;
     BYTE numPlayers = 0;
 
-    he = gethostbyname(trackerAddr);
-    if (he == NULL) {
+    if (bolo_resolve_ipv4(trackerAddr, &trackerIp) != 0) {
         fprintf(stderr, "[TRACKER] Failed to resolve %s\n", trackerAddr);
         return;
     }
 
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
-    memcpy(&dest.sin_addr, he->h_addr_list[0], he->h_length);
+    dest.sin_addr = trackerIp;
     dest.sin_port = htons(trackerPort);
 
     memset(&pkt, 0, sizeof(pkt));
@@ -3561,14 +3560,13 @@ void transportUdpServerSendNatKeepalive(ServerSim *sim,
                                         const char *trackerAddr,
                                         unsigned short trackerPort) {
     struct sockaddr_in dest;
-    struct hostent *he;
+    struct in_addr trackerIp;
     uint8_t buf[8];
 
     if (udpServer.sock == INVALID_SOCKET) return;
     if (trackerAddr == NULL || trackerAddr[0] == '\0') return;
 
-    he = gethostbyname(trackerAddr);
-    if (he == NULL) return;
+    if (bolo_resolve_ipv4(trackerAddr, &trackerIp) != 0) return;
 
     buf[0] = 'W';
     buf[1] = 'B';
@@ -3581,7 +3579,7 @@ void transportUdpServerSendNatKeepalive(ServerSim *sim,
 
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
-    memcpy(&dest.sin_addr, he->h_addr_list[0], he->h_length);
+    dest.sin_addr = trackerIp;
     dest.sin_port = htons(trackerPort);
 
     srvSendTo(buf, sizeof(buf), &dest);
@@ -3590,20 +3588,19 @@ void transportUdpServerSendNatKeepalive(ServerSim *sim,
 void transportUdpServerSendPunchProbe(const char *trackerAddr,
                                       unsigned short trackerPort) {
     struct sockaddr_in dest;
-    struct hostent *he;
+    struct in_addr trackerIp;
     uint8_t buf[PACKET_HEADER_SIZE];
 
     if (udpServer.sock == INVALID_SOCKET) return;
     if (trackerAddr == NULL || trackerAddr[0] == '\0') return;
 
-    he = gethostbyname(trackerAddr);
-    if (he == NULL) return;
+    if (bolo_resolve_ipv4(trackerAddr, &trackerIp) != 0) return;
 
     packHeader(buf, PACKET_PUNCH_PROBE_REQUEST, 0);
 
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
-    memcpy(&dest.sin_addr, he->h_addr_list[0], he->h_length);
+    dest.sin_addr = trackerIp;
     dest.sin_port = htons(trackerPort);
 
     srvSendTo(buf, sizeof(buf), &dest);

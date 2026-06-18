@@ -15,6 +15,12 @@
 bool     steam_init(void);
 void     steam_shutdown(void);
 void     steam_run_callbacks(void);
+
+/* True iff the Steam in-game overlay (Shift+Tab, Big Picture, or the
+ * Steam Deck menu) is currently open. Updated from GameOverlayActivated_t
+ * during steam_run_callbacks(). Always false in stub builds. */
+bool     steam_overlay_is_active(void);
+
 void     steam_set_rich_presence(const char *key, const char *value);
 void     steam_clear_rich_presence(void);
 bool     steam_get_auth_ticket(uint8_t *buf, uint32_t buf_size, uint32_t *out_len);

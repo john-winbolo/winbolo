@@ -509,7 +509,6 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sdl_bmp.c
     src/gui/sdl3/sound.c
     src/gui/sdl3/lang.c
-    src/gui/sdl3/currentgames.c
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
     src/gui/sdl3/minimap_render.c
@@ -1038,6 +1037,7 @@ add_library(winbolonet_core STATIC
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_prefs_sync.c
+    src/winbolonet/wbn_serverlist.c
 )
 target_include_directories(winbolonet_core PRIVATE
     ${cjson_SOURCE_DIR}
@@ -1091,7 +1091,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     src/gui/sdl3/tutorial_text.c
-    src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c src/gui/sdl3/sound.c
+    src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/third_party/stb/stb_image_write_impl.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -1822,7 +1822,7 @@ set(HEADLESS_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
-    src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
+    src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
     src/headless/cmd_stdin.c
@@ -1935,7 +1935,7 @@ set(GYM_SOURCES
     src/bolo/transport_udp_client.c
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
-    src/gui/sdl3/currentgames.c src/gui/sdl3/lang.c
+    src/gui/sdl3/lang.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -2543,6 +2543,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_news_parse.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
+    tests/unit/test_wbn_serverlist.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_bolo_rand.c
@@ -2557,6 +2558,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
     tests/unit/test_lobby_reset_cleanup.c
+    tests/unit/test_autolock_on_game_start.c
     tests/unit/test_lobby_transfer_host.c
     tests/unit/test_treegrow_no_sea.c
     tests/unit/test_starts_pick_incremental.c
@@ -2619,6 +2621,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wire_player_bounds.c
     tests/unit/test_control_overflow_disconnect.c
     tests/unit/test_input_gate.c
+    tests/unit/test_server_address_parse.c
     # Compiled standalone (libcurl-free) so the bearer-state, news-parser
     # and country-cache tests can link without dragging the rest of
     # winbolonet_core into the test binary. The test_stubs.c stubs cover
@@ -2628,6 +2631,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
     src/winbolonet/wbn_prefs_sync.c
+    src/winbolonet/wbn_serverlist.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
@@ -2684,6 +2688,7 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
 
 target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
+    src/gui/sdl3/dialogs
     src/server
     src
     src/winbolonet
@@ -2805,6 +2810,10 @@ set(_unit_test_names
     wbn_prefs_parse_updatedat
     wbn_prefs_decide
     wbn_prefs_build_put_body
+    wbn_serverlist_parse
+    wbn_serverlist_players
+    wbn_serverlist_motd
+    wbn_serverlist_malformed
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_inbox_push_peek_fifo
@@ -2941,6 +2950,14 @@ set(_unit_test_names
     players_oob_index_safe
     control_oob_player_dropped
     input_gate_taxonomy
+    addrparse_host_only
+    addrparse_host_port
+    addrparse_scheme
+    addrparse_trailing_path
+    addrparse_whitespace
+    addrparse_port_bounds
+    addrparse_bad_port
+    addrparse_empty
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

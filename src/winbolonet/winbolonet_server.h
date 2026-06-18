@@ -61,6 +61,7 @@ typedef struct {
   bool     ranked;                   /* Ranked match */
   bool     allowNewPlayers;          /* Lobby join gate */
   bool     autoLock;                 /* Auto-lock on game start */
+  bool     hasLobby;                 /* Server has a lobby (false for -nolobby/-maprotate) */
   bool     timeLimit;               /* Time limit enabled (false=unlimited) */
   uint16_t timeMinutes;              /* Time limit in minutes */
   uint16_t lobbyLocks;               /* LOBBY_LOCK_* bitmask */

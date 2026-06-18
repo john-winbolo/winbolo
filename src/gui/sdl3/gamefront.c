@@ -281,6 +281,13 @@ static SDL_TimerID hostedServerTimerID = 0;
  * has been destroyed. */
 static volatile bool spServerTimerShutdown = false;
 
+/* Set by gameFrontSetServerPaused while a single-player game is paused
+ * (Steam overlay open, or the app backgrounded). The hosted-server timer
+ * stays armed but skips serverInstanceTick, freezing the world without
+ * tearing the timer down. Only ever set for single-player — a listen-server
+ * host keeps simulating so remote players aren't frozen. */
+static volatile bool spServerPaused = false;
+
 static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32 interval) {
   (void)userdata; (void)id;
   if (spServerTimerShutdown) return 0;
@@ -291,12 +298,18 @@ static Uint32 SDLCALL hostedServerTimerCb(void *userdata, SDL_TimerID id, Uint32
    * non-NULL check covers both SP and listen-server now that both go
    * through this timer. */
   threadsWaitForMutex();
-  bool active = (!spServerTimerShutdown && spServerSim != NULL);
-  if (active) {
+  bool alive = (!spServerTimerShutdown && spServerSim != NULL);
+  /* Paused freezes the tick but keeps the timer armed (return interval),
+   * so a single-player resume picks straight back up. */
+  if (alive && !spServerPaused) {
     serverInstanceTick(spServerSim);
   }
   threadsReleaseMutex();
-  return active ? interval : 0;
+  return alive ? interval : 0;
+}
+
+void gameFrontSetServerPaused(bool paused) {
+  spServerPaused = paused ? true : false;
 }
 
 /* UDP multiplayer transport state — the Transport handle itself now
@@ -1276,8 +1289,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           saddr.sin_family = AF_INET;
           saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
           if (saddr.sin_addr.s_addr == INADDR_NONE) {
-            struct hostent *he = gethostbyname(gameFrontUdpAddress);
-            if (he) memcpy(&saddr.sin_addr, he->h_addr_list[0], he->h_length);
+            bolo_resolve_ipv4(gameFrontUdpAddress, &saddr.sin_addr);
           }
           clientSimSetServerAddress(humanSim, saddr.sin_addr);
           clientSimSetServerPort(humanSim, gameFrontTargetUdp);

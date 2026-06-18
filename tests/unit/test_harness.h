@@ -158,6 +158,10 @@ int run_wbn_prefs_parse_get(void);
 int run_wbn_prefs_parse_updatedat(void);
 int run_wbn_prefs_decide(void);
 int run_wbn_prefs_build_put_body(void);
+int run_wbn_serverlist_parse(void);
+int run_wbn_serverlist_players(void);
+int run_wbn_serverlist_motd(void);
+int run_wbn_serverlist_malformed(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -285,6 +289,15 @@ int run_host_departs_promotes_lowest_human(void);
 int run_nonhost_departs_keeps_host(void);
 int run_host_reassign_skips_bots(void);
 int run_lobby_reset_clears_host_slot(void);
+
+/* Auto-lock on game start (test_autolock_on_game_start.c). The lobby stays
+ * open to joiners, but the round start closes the join gate and the
+ * transport lock and reports the lock to WinBolo.net. */
+int run_autolock_lobby_stays_open(void);
+int run_autolock_locks_on_start_wire(void);
+int run_autolock_locks_on_start_inplace(void);
+int run_autolock_join_blocked_after_start(void);
+int run_no_autolock_stays_open_on_start(void);
 
 /* Tree-growth water regressions (test_treegrow_no_sea.c). A converged
  * grow target survives serverSimResetGameWorld and, on the next map,
@@ -513,6 +526,17 @@ int run_control_overflow_defers_disconnect(void);
  * input, a focus-stealing modal, a popup/menu on the stack, a defocused
  * window) and never for the transient alliance/vote notifications. */
 int run_input_gate_taxonomy(void);
+
+/* Pasted server-address splitting for the manual join dialog
+ * (test_server_address_parse.c). */
+int run_addrparse_host_only(void);
+int run_addrparse_host_port(void);
+int run_addrparse_scheme(void);
+int run_addrparse_trailing_path(void);
+int run_addrparse_whitespace(void);
+int run_addrparse_port_bounds(void);
+int run_addrparse_bad_port(void);
+int run_addrparse_empty(void);
 
 #ifdef WB_NETDEBUG
 /* Net-debug input repro rig (test_netdebug_rig.c). Only declared and

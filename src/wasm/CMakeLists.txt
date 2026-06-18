@@ -208,7 +208,6 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/glyphs.c
     ${SRC_ROOT}/gui/sdl3/build_cursor.c
     ${SRC_ROOT}/gui/sdl3/tutorial_text.c
-    ${SRC_ROOT}/gui/sdl3/currentgames.c
     ${SRC_ROOT}/gui/sdl3/lang.c
 )
 

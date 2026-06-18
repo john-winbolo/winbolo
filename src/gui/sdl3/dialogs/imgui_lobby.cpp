@@ -6181,13 +6181,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
      * complete-transition edge to drive the texture rebuild. */
     uint32_t lastMapChangeSeq = clientSimGetLobbyMapChangeSeq(cs);
 
-#if BOLO_MOBILE
-    /* Tab state for mobile tabbed layout */
-    int activeTab = 0;      /* 0=Players, 1=Map, 2=Chat(General), 3=Team */
+    /* Chat unread state — shared by the mobile tabbed layout and the
+     * desktop chat tab bar so both flag a red tab when the chat tab you
+     * are not viewing receives a new message. */
     bool chatUnread = false;
     int lastChatLen = 0;
     bool teamChatUnread = false;
     int lastTeamChatLen = 0;
+#if BOLO_MOBILE
+    /* Active tab index for the mobile tabbed layout */
+    int activeTab = 0;      /* 0=Players, 1=Map, 2=Chat(General), 3=Team */
 #endif
 
     /* Query safe area insets for notch avoidance */
@@ -7354,8 +7357,35 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             {
                 const ClientLobbySlot *myChatSlot = clientSimGetLobbySlot(cs, myPlayerNum);
                 BYTE myTeam = myChatSlot ? myChatSlot->teamNumber : 0;
+
+                /* Detect new chat messages for the unread indicator. A buffer
+                 * that grew while its tab is not the active one flags that tab
+                 * red; the flag is cleared inside the tab's own BeginTabItem
+                 * block (which only runs for the selected tab), so growth on
+                 * the tab you are already viewing clears the same frame and
+                 * never flags. Mirrors the mobile tabbed layout. */
+                int chatLen = (int)SDL_strlen(clientSimGetLobbyChatHistory(cs));
+                if (chatLen > lastChatLen) chatUnread = true;
+                lastChatLen = chatLen;
+                int teamChatLen = (int)SDL_strlen(clientSimGetLobbyTeamChatHistory(cs));
+                if (teamChatLen > lastTeamChatLen) teamChatUnread = true;
+                lastTeamChatLen = teamChatLen;
+
                 if (ImGui::BeginTabBar("##ChatTabs")) {
-                    if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_GENERAL))) {
+                    /* --- General chat tab (with unread indicator) --- */
+                    bool genTabColorPushed = false;
+                    if (chatUnread) {
+                        ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.5f, 0.0f, 0.0f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                        genTabColorPushed = true;
+                    }
+                    bool genTabOpen = ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_GENERAL));
+                    if (genTabColorPushed) {
+                        ImGui::PopStyleColor(2);
+                        genTabColorPushed = false;
+                    }
+                    if (genTabOpen) {
+                        chatUnread = false;
                         float inputRowH = ImGui::GetFrameHeightWithSpacing();
                         float chatHeight = ImGui::GetContentRegionAvail().y - inputRowH;
                         if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
@@ -7373,22 +7403,37 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s, 0xFF);
                         ImGui::EndTabItem();
                     }
-                    if (myTeam != 0 && ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_TEAM))) {
-                        float inputRowH = ImGui::GetFrameHeightWithSpacing();
-                        float chatHeight = ImGui::GetContentRegionAvail().y - inputRowH;
-                        if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
-                            chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
-                        ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
-                        ImGui::PushTextWrapPos(0.0f);
-                        ImGui::TextUnformatted(clientSimGetLobbyTeamChatHistory(cs));
-                        ImGui::PopTextWrapPos();
-                        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
-                            ImGui::SetScrollHereY(1.0f);
+                    /* --- Team chat tab (only when on a team; own unread state) --- */
+                    if (myTeam != 0) {
+                        bool teamTabColorPushed = false;
+                        if (teamChatUnread) {
+                            ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.5f, 0.0f, 0.0f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+                            teamTabColorPushed = true;
                         }
-                        ImGui::EndChild();
-                        lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s,
-                                                    (BYTE)(CHAT_DEST_TEAM_BASE + myTeam));
-                        ImGui::EndTabItem();
+                        bool teamTabOpen = ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_TEAM));
+                        if (teamTabColorPushed) {
+                            ImGui::PopStyleColor(2);
+                            teamTabColorPushed = false;
+                        }
+                        if (teamTabOpen) {
+                            teamChatUnread = false;
+                            float inputRowH = ImGui::GetFrameHeightWithSpacing();
+                            float chatHeight = ImGui::GetContentRegionAvail().y - inputRowH;
+                            if (chatHeight < ImGui::GetTextLineHeightWithSpacing() * 3.4f)
+                                chatHeight = ImGui::GetTextLineHeightWithSpacing() * 3.4f;
+                            ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHeight), ImGuiChildFlags_Borders);
+                            ImGui::PushTextWrapPos(0.0f);
+                            ImGui::TextUnformatted(clientSimGetLobbyTeamChatHistory(cs));
+                            ImGui::PopTextWrapPos();
+                            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
+                                ImGui::SetScrollHereY(1.0f);
+                            }
+                            ImGui::EndChild();
+                            lobbyRenderChatInputAndSend(cs, chatInput, myPlayerNum, hasTransport, s,
+                                                        (BYTE)(CHAT_DEST_TEAM_BASE + myTeam));
+                            ImGui::EndTabItem();
+                        }
                     }
                     ImGui::EndTabBar();
                 }
