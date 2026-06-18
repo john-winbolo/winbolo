@@ -3012,6 +3012,20 @@ if(WB_FUZZ)
                      ${WB_FUZZ_CORPUS_DIR}/wire_codec ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.wire_codec PROPERTIES TIMEOUT 120)
 
+    # Tier 1 — the channel-mux frame parser (channelRecvFrame), the single
+    # bounds-checked decode site the reliability rework collapsed every reliable
+    # queue / carrier / chunker onto. bolo_static only, like the wire codecs.
+    add_executable(fuzz_channel_frame tests/fuzz/fuzz_channel_frame.c)
+    bolo_apply_include_rules(fuzz_channel_frame unittests)
+    target_link_libraries(fuzz_channel_frame PRIVATE bolo_static SDL3::SDL3 ${MATH_LIB} pthread)
+    target_compile_options(fuzz_channel_frame PRIVATE -fcommon)
+    target_link_options(fuzz_channel_frame PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_channel_frame "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.channel_frame
+             COMMAND $<TARGET_FILE:fuzz_channel_frame> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/channel_frame ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.channel_frame PROPERTIES TIMEOUT 120)
+
     # Tier 2 — full server dispatcher via the WB_FUZZ-gated seam. Links
     # server_static (which owns transport_udp_server.c, now carrying the seam).
     # test_stubs.c + the steam stub resolve the winbolonet / natPortMap /
@@ -3160,6 +3174,9 @@ if(WB_FUZZ)
     add_custom_command(TARGET fuzz_wire_codec POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_wire_codec>")
+    add_custom_command(TARGET fuzz_channel_frame POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_channel_frame>")
     add_custom_command(TARGET fuzz_server_dispatch POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_server_dispatch>")
