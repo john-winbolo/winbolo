@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg width="36" height="36" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">
+  <!-- Gamepad grips -->
+  <circle cx="11" cy="22" r="6.5" fill="#6b7177"/>
+  <circle cx="25" cy="22" r="6.5" fill="#6b7177"/>
+  <!-- Gamepad body -->
+  <rect x="8" y="13" width="20" height="9" rx="4.5" fill="#9aa0a6"/>
+  <!-- D-pad -->
+  <rect x="11.6" y="15.4" width="1.8" height="5.2" rx="0.6" fill="#3c4043"/>
+  <rect x="9.9" y="17.1" width="5.2" height="1.8" rx="0.6" fill="#3c4043"/>
+  <!-- Face buttons -->
+  <circle cx="23.5" cy="16.6" r="1.3" fill="#3c4043"/>
+  <circle cx="25.6" cy="19.1" r="1.3" fill="#3c4043"/>
+  <!-- Disconnected badge -->
+  <circle cx="28" cy="9" r="6.6" fill="#e0322e" stroke="#ffffff" stroke-width="1.2"/>
+  <g stroke="#ffffff" stroke-width="1.9" stroke-linecap="round">
+    <line x1="25.6" y1="6.6" x2="30.4" y2="11.4"/>
+    <line x1="30.4" y1="6.6" x2="25.6" y2="11.4"/>
+  </g>
+</svg>

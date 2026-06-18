@@ -1196,6 +1196,11 @@ STR_CTRL_PROMPT_LINE2=Zum Controller-Modus wechseln?
 STR_CTRL_PROMPT_DESC=(Blendet die Menüleiste aus; Start öffnet ein controllerfreundliches Pause-Menü.\nSpäter in den Einstellungen änderbar.)
 STR_CTRL_PROMPT_NOTNOW=Nicht jetzt
 STR_CTRL_PROMPT_DONTASK=Nicht mehr fragen
+
+# Controller-Verbindung unterbrochen – Dialog
+STR_CTRL_DISC_TITLE=Controller getrennt
+STR_CTRL_DISC_MESSAGE=Ihr Gamepad wurde getrennt. Sie können es erneut anschließen oder zur Tastatursteuerung wechseln.
+STR_CTRL_DISC_BUTTON=Mit Tastatur und Maus fortfahren
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Über WinBolo
 STR_MENU_PREFERENCES=Einstellungen…

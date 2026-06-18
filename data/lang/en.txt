@@ -1360,6 +1360,11 @@ STR_CTRL_PROMPT_DESC=(Hides the menu bar; Start opens a controller-friendly paus
 STR_CTRL_PROMPT_NOTNOW=Not now
 STR_CTRL_PROMPT_DONTASK=Don't ask again
 
+# Controller-disconnected dialog
+STR_CTRL_DISC_TITLE=Controller Disconnected
+STR_CTRL_DISC_MESSAGE=Your gamepad has been disconnected. You can reconnect it or switch to keyboard controls.
+STR_CTRL_DISC_BUTTON=Continue with keyboard and mouse
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

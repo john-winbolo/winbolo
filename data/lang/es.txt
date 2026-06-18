@@ -1206,6 +1206,11 @@ STR_CTRL_PROMPT_LINE2=¿Cambiar al modo mando?
 STR_CTRL_PROMPT_DESC=(Oculta la barra de menú; Start abre un menú de pausa adaptado al mando.\nCámbialo más tarde en Configuración.)
 STR_CTRL_PROMPT_NOTNOW=Ahora no
 STR_CTRL_PROMPT_DONTASK=No volver a preguntar
+
+# Diálogo de desconexión del mando
+STR_CTRL_DISC_TITLE=Mando desconectado
+STR_CTRL_DISC_MESSAGE=Tu mando se ha desconectado. Puedes volver a conectarlo o cambiar a los controles de teclado.
+STR_CTRL_DISC_BUTTON=Continuar con teclado y ratón
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Acerca de WinBolo
 STR_MENU_PREFERENCES=Preferencias…

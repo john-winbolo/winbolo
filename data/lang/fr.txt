@@ -1196,6 +1196,11 @@ STR_CTRL_PROMPT_LINE2=Activer le mode manette ?
 STR_CTRL_PROMPT_DESC=(Masque la barre de menus ; Start ouvre un menu pause adapté à la manette.\nModifiable plus tard dans Paramètres.)
 STR_CTRL_PROMPT_NOTNOW=Pas maintenant
 STR_CTRL_PROMPT_DONTASK=Ne plus demander
+
+# Boîte de dialogue de déconnexion de la manette
+STR_CTRL_DISC_TITLE=Manette déconnectée
+STR_CTRL_DISC_MESSAGE=Votre manette a été déconnectée. Vous pouvez la reconnecter ou passer aux commandes clavier.
+STR_CTRL_DISC_BUTTON=Continuer avec le clavier et la souris
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=À propos de WinBolo
 STR_MENU_PREFERENCES=Préférences…
