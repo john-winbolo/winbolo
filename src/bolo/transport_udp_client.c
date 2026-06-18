@@ -1978,7 +1978,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     }
                 } else {
                     uint32_t elapsed = SDL_GetTicks() - c->clientSim->lobbyAloneStartTick;
-                    if (elapsed >= 3600000) {
+                    /* Human only. Bots never own a UDP transport observer
+                     * today, so this is unreachable for them — but guard at
+                     * the call site anyway so the bot-credit leak can't
+                     * silently return if that ever changes (see #152). */
+                    if (elapsed >= 3600000 && !c->clientSim->isBot) {
                         steam_set_achievement("ACH_LONELY_LOBBY");
                         steam_store_stats();
                     }
@@ -2721,7 +2725,11 @@ static void udpClientTransportObserver(void *ctx, const ControlEvent *evt) {
                     }
                 } else {
                     uint32_t elapsed = SDL_GetTicks() - c->clientSim->lobbyAloneStartTick;
-                    if (elapsed >= 3600000) {
+                    /* Human only. Bots never own a UDP transport observer
+                     * today, so this is unreachable for them — but guard at
+                     * the call site anyway so the bot-credit leak can't
+                     * silently return if that ever changes (see #152). */
+                    if (elapsed >= 3600000 && !c->clientSim->isBot) {
                         steam_set_achievement("ACH_LONELY_LOBBY");
                         steam_store_stats();
                     }
