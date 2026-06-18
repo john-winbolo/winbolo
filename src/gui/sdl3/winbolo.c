@@ -185,6 +185,13 @@ static bool finishedLoop = FALSE;
  * windowResumeForeground.  See windowSuspendBackground for details. */
 static bool s_suspended = FALSE;
 
+/* Set while the Steam in-game overlay is open during a single-player
+ * game.  Like s_suspended it freezes the local sim, but it is driven by
+ * the Steam overlay callback (not SDL background events) and only ever
+ * engages in single-player — multiplayer keeps running with the overlay
+ * up.  See windowSteamOverlayActivated. */
+static bool s_overlayPaused = FALSE;
+
 /* Tick counters */
 static DWORD oldTick = 0;
 static DWORD ttick = 0;
@@ -213,6 +220,8 @@ static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint3
 static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
 void frontEndTutorialNotePresentedFrame(void);
 static void windowRunGameTick(ClientSim *cs);
+static void windowUpdateServerPause(ClientSim *cs);
+static void windowSteamOverlayActivated(ClientSim *cs, bool active);
 int winboloCC(void);
 
 /* -------------------------------------------------------
@@ -500,6 +509,19 @@ int main(int argc, char *argv[]) {
       while (done == FALSE) {
         sdl3ImguiProcessEvents(cs);
         steam_run_callbacks();
+        /* Steam overlay open/close (updated by steam_run_callbacks above):
+           pause a single-player game — freezing both the client and the
+           server tick — and rebase the wallclock on close so the catch-up
+           loop doesn't fast-forward the overlay duration.  Multiplayer is a
+           no-op; a networked session must keep running with the overlay up. */
+        {
+          static bool s_lastOverlay = false;
+          bool nowOverlay = steam_overlay_is_active();
+          if (nowOverlay != s_lastOverlay) {
+            windowSteamOverlayActivated(cs, nowOverlay);
+            s_lastOverlay = nowOverlay;
+          }
+        }
         steam_input_run_frame();
 
         /* Keep in-game rich presence fresh — live player count, and the
@@ -671,9 +693,11 @@ static void windowRunGameTick(ClientSim *cs) {
   bool used = FALSE;
   bool brainRunning;
 
-  /* App is in the background (Deck home button / sleep) — skip all
-     tick work.  windowResumeForeground resets the wallclock baseline. */
-  if (s_suspended) return;
+  /* App is backgrounded (Deck home button / sleep) or the Steam overlay
+     is open in single-player — skip all tick work.  The matching resume
+     (windowResumeForeground / windowSteamOverlayActivated) resets the
+     wallclock baseline so we don't fast-forward the paused interval. */
+  if (s_suspended || s_overlayPaused) return;
 
   brainRunning = brainHandlerIsBrainRunning();
   isShoot = FALSE;
@@ -844,12 +868,31 @@ void windowSetQuitting(void) {
  * button / overlay) and SDL_EVENT_DID_ENTER_FOREGROUND.
  * s_suspended declared near other main-loop state above.
  * ------------------------------------------------------- */
-void windowSuspendBackground(void) {
+/* True for a local solo session — single-player or the tutorial.  Both run
+   the in-process server with no remote peers, so a pause can safely freeze
+   them.  Multiplayer (a joined client or a listen-server host) is never solo
+   and must keep running. */
+static bool windowIsSoloSession(ClientSim *cs) {
+  return doingTutorial || (cs != NULL && clientSimIsSinglePlayer(cs));
+}
+
+/* Recompute the hosted-server pause gate.  The server tick only freezes for
+   a solo session: a listen-server host must keep serving remote players, so
+   multiplayer never pauses the server even when the host backgrounds the app
+   or opens the overlay. */
+static void windowUpdateServerPause(ClientSim *cs) {
+  gameFrontSetServerPaused(windowIsSoloSession(cs) &&
+                           (s_suspended || s_overlayPaused));
+}
+
+void windowSuspendBackground(ClientSim *cs) {
   /* Pause local sim (windowRunGameTick early-outs on s_suspended) and
      mute audio.  Network state is left as-is; UDP will time out on its
-     own.  Idempotent — duplicate WILL_ENTER_BACKGROUND events from SDL
-     are safe. */
+     own.  In single-player we also freeze the server tick so the world
+     holds; a listen-server host keeps serving (see windowUpdateServerPause).
+     Idempotent — duplicate WILL_ENTER_BACKGROUND events from SDL are safe. */
   s_suspended = TRUE;
+  windowUpdateServerPause(cs);
   soundSetMuted(TRUE);
 }
 
@@ -878,7 +921,35 @@ void windowResumeForeground(ClientSim *cs) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
   }
+  windowUpdateServerPause(cs);
   soundSetMuted(FALSE);
+}
+
+/* Steam in-game overlay opened/closed.  Solo sessions only (single-player or
+   tutorial): freeze the client and server sim while the overlay is up and
+   rebase the catch-up wallclock on close so we don't simulate the overlay
+   duration in one burst.  Multiplayer is a no-op — a networked game keeps
+   running with the overlay open. */
+static void windowSteamOverlayActivated(ClientSim *cs, bool active) {
+  if (active) {
+    /* Only a solo session pauses; multiplayer keeps running. */
+    if (!windowIsSoloSession(cs)) return;
+    if (s_overlayPaused) return;          /* idempotent */
+    s_overlayPaused = TRUE;
+    windowUpdateServerPause(cs);
+    soundSetMuted(TRUE);
+  } else {
+    /* Always clear on close — even if the mode changed while the overlay
+       was up — so a stale pause can't freeze a later game. */
+    if (!s_overlayPaused) return;
+    s_overlayPaused = FALSE;
+    windowUpdateServerPause(cs);
+    /* Reset the catch-up baseline, mirroring the single-player branch of
+       windowResumeForeground. */
+    oldTick = SDL_GetTicks();
+    ttick = oldTick;
+    soundSetMuted(FALSE);
+  }
 }
 
 /* -------------------------------------------------------
