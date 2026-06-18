@@ -4922,6 +4922,11 @@ bool transportUdpServerTestPendingRemove(int slot) {
     return udpServer.pendingSimRemove[slot];
 }
 
+bool transportUdpServerTestDownloadComplete(int slot) {
+    if (slot < 0 || slot >= MAX_TANKS) return false;
+    return udpServer.mapDownload[slot].downloadComplete;
+}
+
 /* Test-only: stage one terrain change for a slot exactly as a real sim tick
  * does — mutate the live server map AND enqueue an EVENT_MAP_CHANGE into the
  * slot's map-event hold queue (mirroring simMapChangeCallback →

@@ -47,6 +47,15 @@ static bool pred_connected(LoopbackHarness *h, void *user) {
     return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
 }
 
+/* Connected AND in the lobby phase. The lobby phase is published over
+ * CHANNEL_CONTROL, which lands a round-trip after the client reports CONNECTED,
+ * so wait for both rather than asserting the phase immediately on connect. */
+static bool pred_in_lobby(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED &&
+           clientSimIsInLobby(h->cs);
+}
+
 /* Publish one CTRL_SERVER_TEXT at every connected client, holding the tick
  * mutex as serverInstanceTick would when it publishes. */
 static void publish_one(LoopbackHarness *h) {
@@ -72,14 +81,12 @@ int run_loopback_quiet_lobby_control_loss(void) {
                   "harness start failed");
 
     int connectedAt = loopbackHarnessPumpUntil(&h, LOBBY_CONNECT_MAX,
-                                               pred_connected, NULL);
+                                               pred_in_lobby, NULL);
     if (connectedAt < 0) {
         loopbackHarnessStop(&h);
-        UT_FAIL("client never reached CONNECTED within %d pumps",
+        UT_FAIL("client never reached the lobby phase within %d pumps",
                 LOBBY_CONNECT_MAX);
     }
-    UT_ASSERT_MSG(clientSimIsInLobby(h.cs),
-                  "client connected but not in lobby phase");
 
     slot = (int)clientSimGetMyPlayerNum(h.cs);
 

@@ -656,6 +656,12 @@ int spliceGameEventsBeforeTail(GameEvent *events, int tailStart, int tailCount,
 bool transportUdpServerChannelTestSend(int slot, uint8_t ch,
                                        const uint8_t *msg, uint16_t len);
 bool transportUdpServerTestPendingRemove(int slot);
+/* Read a slot's server-side join-download-complete flag. The client reports
+ * CONNECTED once it has the full map, but the server only flips this once the
+ * download's bytes are acked back on CHANNEL_BULK — a round-trip later. A test
+ * that drives the real game-event producer must wait on this, not just on the
+ * client's connect state, or the producer skips the slot as still-downloading. */
+bool transportUdpServerTestDownloadComplete(int slot);
 /* Stage one terrain change for a slot as a real tick does: mutate the live
  * server map (so its checksum tracks the change) and enqueue an
  * EVENT_MAP_CHANGE into the slot's map-event hold queue, so it flows through

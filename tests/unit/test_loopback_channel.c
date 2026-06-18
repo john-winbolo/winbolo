@@ -15,7 +15,7 @@
  *      CHANNEL_CONTROL (2) is excluded: control events now ride it, and the
  *      join sync-replay advances it.
  *
- *   2. Synthetic round-trip under loss + jitter + dup.  A message is injected
+ *   2. Synthetic round-trip under loss + dup.  A message is injected
  *      on a server channel via the test-only hook; under impairment it must
  *      still cross the path (the client transport drains it, advancing
  *      expectedSeq) and the client's cumulative ack must make it back (the
@@ -82,6 +82,26 @@
 static bool pred_connected(LoopbackHarness *h, void *user) {
     (void)user;
     return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
+}
+
+/* Server-side readiness: the client reports CONNECTED once it has the full map,
+ * but the server only flips downloadComplete a CHANNEL_BULK ack round-trip
+ * later. The real game-event producer skips a slot until then, so a test that
+ * drives it must wait on this after connect. */
+static bool pred_server_download_complete(LoopbackHarness *h, void *user) {
+    (void)user;
+    return transportUdpServerTestDownloadComplete(
+        (int)clientSimGetMyPlayerNum(h->cs));
+}
+
+/* Connected AND in the lobby phase. In lobby mode the phase is published over
+ * CHANNEL_CONTROL, which lands a round-trip after the client reports CONNECTED,
+ * so a test that needs the lobby must wait for both rather than asserting the
+ * phase immediately on connect. */
+static bool pred_in_lobby(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED &&
+           clientSimIsInLobby(h->cs);
 }
 
 /* Send one (zeroed) input so the client transmits a datagram carrying its
@@ -179,7 +199,7 @@ static int run_empty_flow(void) {
     return 0;
 }
 
-/* Case 2: a message survives loss + jitter + dup and is acked back. */
+/* Case 2: a message survives loss + dup and is acked back. */
 static int run_roundtrip_impaired(void) {
     LoopbackHarness h;
     int connectedAt;
@@ -191,8 +211,15 @@ static int run_roundtrip_impaired(void) {
     bool converged = false;
     int i;
 
+    /* Loss + dup only — no jitter/delay.  The loopback harness pumps with no
+     * wall-clock pacing, so local-tick time outruns wall-clock; net_impair
+     * delays delivery on a wall-clock basis while the join retry budget counts
+     * local ticks, so a jitter/delay spec times out the join before a delayed
+     * packet is ever delivered.  loss and dup deliver in the same tick, so they
+     * exercise retransmit and dedup without that decoupling (matching the
+     * loss-only specs every other loopback test uses). */
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "ChanRT", /*lobbyMode*/ false,
-                                       /*impairSpec*/ "loss=10,jitter=5,dup=20",
+                                       /*impairSpec*/ "loss=10,dup=20",
                                        /*seed*/ 0xC0FFEEu),
                   "harness start (round-trip) failed");
 
@@ -407,6 +434,18 @@ static int run_game_channel_overflow(void) {
     if (connectedAt < 0) {
         loopbackHarnessStop(&h);
         UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+    }
+
+    /* Let the server finish the join download (its downloadComplete lags the
+     * client's CONNECTED by a CHANNEL_BULK ack round-trip).  Until it does, the
+     * game-event producer skips this slot as still-downloading, so the injected
+     * event below would never reach channelSend and never defer.  This pump runs
+     * before the window fill, so it can't drain the filled window. */
+    if (loopbackHarnessPumpUntil(&h, CONNECT_MAX,
+                                 pred_server_download_complete, NULL) < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("server never completed the join download within %d pumps",
+                CONNECT_MAX);
     }
 
     slot = (int)clientSimGetMyPlayerNum(h.cs);
@@ -709,13 +748,14 @@ static int run_straggler_gate(void) {
                                        /*seed*/ 0x57A661u),
                   "harness start (straggler gate) failed");
 
-    connectedAt = loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_connected, NULL);
+    /* Wait for both CONNECTED and the lobby phase — the phase arrives over
+     * CHANNEL_CONTROL a round-trip after connect. */
+    connectedAt = loopbackHarnessPumpUntil(&h, CONNECT_MAX, pred_in_lobby, NULL);
     if (connectedAt < 0) {
         loopbackHarnessStop(&h);
-        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+        UT_FAIL("client never reached the lobby phase within %d pumps",
+                CONNECT_MAX);
     }
-    UT_ASSERT_MSG(clientSimIsInLobby(h.cs),
-                  "client connected but not in lobby phase");
     slot = (int)clientSimGetMyPlayerNum(h.cs);
 
     /* Stage a previous-game channel-0 event left in flight across game start.

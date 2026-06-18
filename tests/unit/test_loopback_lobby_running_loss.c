@@ -41,6 +41,15 @@ static bool pred_connected(LoopbackHarness *h, void *user) {
     return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
 }
 
+/* Connected AND in the lobby phase. The lobby phase is published over
+ * CHANNEL_CONTROL, which lands a round-trip after the client reports CONNECTED,
+ * so wait for both rather than asserting the phase immediately on connect. */
+static bool pred_in_lobby(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED &&
+           clientSimIsInLobby(h->cs);
+}
+
 /* Send one input so the client transmits — its channel-frame trailer carries
  * control acks — and (once running) drives the sim. Returns the next input tick. */
 static uint32_t feed_input(LoopbackHarness *h, uint32_t tick) {
@@ -62,16 +71,14 @@ int run_loopback_lobby_running_loss(void) {
     /* 1. Join the lobby. Lobby control acks ride the client's per-tick
      *    standalone PACKET_CHANNEL trailer — no input needed yet. */
     int connectedAt = loopbackHarnessPumpUntil(&h, LOBBY_CONNECT_MAX,
-                                               pred_connected, NULL);
-    fprintf(stderr, "  lobby join (loss): connected after %d pump(s) "
+                                               pred_in_lobby, NULL);
+    fprintf(stderr, "  lobby join (loss): in lobby after %d pump(s) "
                     "(cap %d)\n", connectedAt, LOBBY_CONNECT_MAX);
     if (connectedAt < 0) {
         loopbackHarnessStop(&h);
-        UT_FAIL("client never reached CONNECTED within %d pumps",
+        UT_FAIL("client never reached the lobby phase within %d pumps",
                 LOBBY_CONNECT_MAX);
     }
-    UT_ASSERT_MSG(clientSimIsInLobby(h.cs),
-                  "client connected but not in lobby phase");
 
     /* 2. Drive the all-ready → countdown → running transition. */
     UT_ASSERT_MSG(loopbackHarnessTriggerGameStart(&h),
