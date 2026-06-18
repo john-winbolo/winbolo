@@ -272,6 +272,7 @@ static const UnitTestEntry s_tests[] = {
     { "ping_smoother",                           run_ping_smoother                           },
     { "client_timing",                           run_client_timing                           },
     { "interp_render",                           run_interp_render                           },
+    { "interp_respawn_no_death_flash",           run_interp_respawn_no_death_flash           },
     { "snapshot_compaction",                     run_snapshot_compaction                     },
     { "error_smoothing",                         run_error_smoothing                         },
     { "loopback_join",                           run_loopback_join                           },

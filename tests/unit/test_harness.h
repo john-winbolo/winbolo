@@ -403,6 +403,12 @@ int run_client_timing(void);
  * asymmetric slew, frame-spike safe-degrade). */
 int run_interp_render(void);
 
+/* Respawn no-death-flash (test_interp_respawn_no_death_flash.c): a remote
+ * tank whose prev sample is the dead/death-position state and whose curr is
+ * the alive respawn (teleport) snaps to curr instead of tweening from the
+ * stale death spot; a normal alive->alive pair still interpolates. */
+int run_interp_respawn_no_death_flash(void);
+
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */
