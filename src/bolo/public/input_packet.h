@@ -74,13 +74,10 @@ typedef struct {
     uint8_t  pillCount;           /* Number of PillSnapshot entries following */
     uint8_t  reliableEventCount;  /* Number of reliable GameEvent entries following (game + map merged) */
     uint32_t reliableBaseSeq;     /* Sequence number of first reliable event in this snapshot */
-    /* mapEventCount + mapEventBaseSeq are on the wire only, not stored here —
-     * map events are merged into the same snapshotEvents array on the client. */
-    /* controlEventCount + controlEventBaseSeq are on the wire only, not
-     * stored here — control events are dispatched directly to
-     * clientSimApplyControlOrdered as the snapshot is decoded. */
-    uint8_t  controlEventCount;   /* Wire-only mirror — kept here for diagnostic completeness */
-    uint32_t controlEventBaseSeq; /* Wire-only mirror — kept here for diagnostic completeness */
+    /* Map events ride reliable channel 1 (CHANNEL_MAP) and control events ride
+     * reliable channel 2 (CHANNEL_CONTROL); neither carries a snapshot-header
+     * slot. Map events merge into the same snapshotEvents array on the client;
+     * control events dispatch directly to clientSimApplyControlOrdered. */
     uint16_t mapChecksum;         /* CRC-16 of map terrain (non-zero on full sync ticks) */
     /* Forced return-to-lobby countdown. > 0 means the server is going
      * to transition to gameOver in this many serverSimTick calls.

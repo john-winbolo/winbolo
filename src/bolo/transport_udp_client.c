@@ -1358,13 +1358,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         uint8_t tankCount, shellCount, tkExplosionCount;
         uint8_t baseCount, pillCount, reliableEventCount;
         uint32_t reliableBaseSeq;
-        uint8_t mapEventCount;
-        uint32_t mapEventBaseSeq;
-        uint8_t controlEventCount;
-        uint32_t controlEventBaseSeq;
         int newEventCount = (c->hasSnapshot) ? c->snapshotHdr.reliableEventCount : 0;
         int actuallyUnpacked = 0;
-        int actuallyUnpackedMap = 0;
         /* Index into snapshotEvents where this snapshot's channel-drained
          * game-event tail begins — the splice point for the map tail staged
          * behind it (game-then-map order). */
@@ -1393,10 +1388,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * + shellCount(1) + tkExplosionCount(1)
          * + baseCount(1) + pillCount(1)
          * + reliableEventCount(1) + reliableBaseSeq(4)
-         * + mapEventCount(1) + mapEventBaseSeq(4)
-         * + controlEventCount(1) + controlEventBaseSeq(4)
-         * + mapChecksum(2) + returnToLobbyTicks(2) = 32 bytes */
-        if (len < pos + 32) { c->netErrors++; break; }
+         * + mapChecksum(2) + returnToLobbyTicks(2) = 22 bytes */
+        if (len < pos + 22) { c->netErrors++; break; }
 
         c->snapshotHdr.serverTick = unpackU32(buf + pos);
         pos += 4;
@@ -1434,14 +1427,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         reliableEventCount = buf[pos++];
         reliableBaseSeq = unpackU32(buf + pos);
         pos += 4;
-        mapEventCount = buf[pos++];
-        mapEventBaseSeq = unpackU32(buf + pos);
-        pos += 4;
-        controlEventCount = buf[pos++];
-        controlEventBaseSeq = unpackU32(buf + pos);
-        pos += 4;
-        c->snapshotHdr.controlEventCount = controlEventCount;
-        c->snapshotHdr.controlEventBaseSeq = controlEventBaseSeq;
         c->snapshotHdr.mapChecksum = unpackU16(buf + pos);
         pos += 2;
         c->snapshotHdr.returnToLobbyTicks = unpackU16(buf + pos);
@@ -1570,32 +1555,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             uint32_t lastSeq = reliableBaseSeq + (uint32_t)actuallyUnpacked;
             if (lastSeq > c->reliableEventAck) {
                 c->reliableEventAck = lastSeq;
-            }
-        }
-
-        /* Unpack reliable map events with dedup (separate stream).
-         * Map events are merged into snapshotEvents after game events
-         * so callers don't need to change. */
-        for (i = 0; i < mapEventCount; i++) {
-            uint32_t evSeq = mapEventBaseSeq + (uint32_t)i;
-            GameEvent ev;
-            int n = unpackGameEvent(buf + pos, (size_t)(len - pos), &ev);
-            if (n == 0) break;  /* Truncated event — stop */
-            pos += n;
-            actuallyUnpackedMap++;
-            if (evSeq >= c->mapEventAck) {
-                if (newEventCount < MAX_SNAPSHOT_EVENTS) {
-                    c->snapshotEvents[newEventCount++] = ev;
-                } else {
-                    break;  /* Buffer full — stop so we don't ACK unconsumed events */
-                }
-            }
-        }
-        /* Only ACK map events we actually unpacked from the wire */
-        if (actuallyUnpackedMap > 0) {
-            uint32_t lastSeq = mapEventBaseSeq + (uint32_t)actuallyUnpackedMap;
-            if (lastSeq > c->mapEventAck) {
-                c->mapEventAck = lastSeq;
             }
         }
 

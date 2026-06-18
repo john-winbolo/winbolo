@@ -2283,10 +2283,6 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     int countsPos;
     int reliableEventCount = 0;
     uint32_t reliableBaseSeq = 0;
-    int mapEventCount = 0;
-    uint32_t mapEventBaseSeq = 0;
-    int controlEventCount = 0;
-    uint32_t controlEventBaseSeq = 0;
     SnapshotHeader hdr;
     TankSnapshot tankSnaps[MAX_TANKS];
     ShellSnapshot shellSnaps[MAX_SNAPSHOT_SHELLS];
@@ -2317,15 +2313,13 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
      * + shellCount(1) + tkExplosionCount(1)
      * + baseCount(1) + pillCount(1)
      * + reliableEventCount(1) + reliableBaseSeq(4)
-     * + mapEventCount(1) + mapEventBaseSeq(4)
-     * + controlEventCount(1) + controlEventBaseSeq(4)
-     * + mapChecksum(2) + returnToLobbyTicks(2) = 32 bytes */
+     * + mapChecksum(2) + returnToLobbyTicks(2) = 22 bytes */
     packU32(buf + pos, hdr.serverTick);
     pos += 4;
     packU32(buf + pos, hdr.lastProcessedInput);
     pos += 4;
     countsPos = pos;
-    pos += 24; /* 8 count bytes + 4 byte reliableBaseSeq + 4 byte mapEventBaseSeq + 4 byte controlEventBaseSeq + 2 byte mapChecksum + 2 byte returnToLobbyTicks */
+    pos += 14; /* 6 count bytes + 4 byte reliableBaseSeq + 2 byte mapChecksum + 2 byte returnToLobbyTicks */
 
     /* Pack tank snapshots — variable length: a stub is 1 byte; a full entry is
      * a presence-mask-driven run of at most TANK_SNAPSHOT_WIRE_SIZE bytes
@@ -2401,9 +2395,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
      * (gate on downloadComplete && !resyncInProgress) and flush once both gates
      * clear. Each successful channelSend advances ackedSeq to free the slot.
      * A full window defers the disconnect off this path, mirroring the
-     * game-channel overflow. The snapshot map tail now carries nothing
-     * (mapEventCount stays 0). */
-    mapEventBaseSeq = mapQ->ackedSeq;
+     * game-channel overflow. The snapshot no longer carries a map tail. */
     if (udpServer.mapDownload[clientIdx].downloadComplete &&
         !udpServer.mapDownload[clientIdx].resyncInProgress) {
         uint32_t seq;
@@ -2429,10 +2421,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     }
 
     /* Control events ride reliable channel 2 (CHANNEL_CONTROL), carried by the
-     * channel-frame trailer appended below — not this snapshot tail.  The
-     * controlEventCount / controlEventBaseSeq header fields stay in the fixed
-     * 32-byte layout but are packed as 0 (their wire slot is removed in the
-     * later sweep). */
+     * channel-frame trailer appended below — not this snapshot tail. */
 
     /* Fill in counts */
     buf[countsPos]     = hdr.tankCount;
@@ -2442,12 +2431,8 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     buf[countsPos + 4] = hdr.pillCount;
     buf[countsPos + 5] = (uint8_t)reliableEventCount;
     packU32(buf + countsPos + 6, reliableBaseSeq);
-    buf[countsPos + 10] = (uint8_t)mapEventCount;
-    packU32(buf + countsPos + 11, mapEventBaseSeq);
-    buf[countsPos + 15] = (uint8_t)controlEventCount;
-    packU32(buf + countsPos + 16, controlEventBaseSeq);
-    packU16(buf + countsPos + 20, hdr.mapChecksum);
-    packU16(buf + countsPos + 22, hdr.returnToLobbyTicks);
+    packU16(buf + countsPos + 10, hdr.mapChecksum);
+    packU16(buf + countsPos + 12, hdr.returnToLobbyTicks);
 
     /* Parallel channel layer rides as a trailer on the snapshot: tick the
      * mux on this client's clock+RTT, then append one channel frame after
