@@ -258,6 +258,12 @@ void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
                                const PillSnapshot *pillSnaps, int pillCount,
                                const GameEvent *events, int eventCount,
                                BYTE playerNum);
+/* Buffer reliable game events for brain consumption and apply their
+ * effect/sim side effects. Carries no snapshot-frame state, so both the
+ * snapshot apply path and the reliable-channel drain route game events
+ * through it. `events` may be NULL. */
+void clientSimApplyGameEvents(ClientSim *cs, const GameEvent *events,
+                              int eventCount, BYTE playerNum);
 void clientSimDisplayTick(ClientSim *cs, bool isBrain);
 
 /* Advance predicted shells by one tick (move forward, decrement length) */
@@ -812,8 +818,8 @@ const char *clientSimGetLobbyMapSearchReqPath(const ClientSim *cs);
 const char *clientSimGetLobbyMapSearchReqQuery(const ClientSim *cs);
 bool        clientSimGetLobbyMapSearchInFlight(const ClientSim *cs);
 
-/* Server-map preview byte stream — populated asynchronously by
- * PACKET_LOBBY_MAP_PREVIEW_BEGIN/_CHUNK/_ERR after the client sends a
+/* Server-map preview byte stream — populated asynchronously by the
+ * CHANNEL_BULK preview receiver (or _ERR) after the client sends a
  * MAP_PREVIEW_REQ (see clientSimNetSendLobbyMapPreviewRequest). The GUI
  * polls Ready/Error/Path each frame; on Ready it rasterises Bytes/Len
  * into the chooser preview, then calls clientSimClearLobbyMapPreview.

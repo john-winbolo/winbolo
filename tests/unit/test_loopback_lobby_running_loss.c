@@ -1,22 +1,21 @@
 /*
  * Loopback lobby→running transition under loss.
  *
- * Regression for the reliability bug class found under packet loss (lobby-ack
- * resend, control-seq adoption, drop-don't-reset): a real UDP client joins a real
- * in-process UDP server *in the lobby* under loss=5 / burst=2, the server is
- * driven through the all-ready → countdown → running transition, and the
- * client must (a) reach the running phase and (b) keep its reliable control
- * acks converging so the server never trips the unacked-control disconnect.
+ * Regression for the reliability bug class found under packet loss: a real UDP
+ * client joins a real in-process UDP server *in the lobby* under loss=5 /
+ * burst=2, the server is driven through the all-ready → countdown → running
+ * transition, and the client must (a) reach the running phase and (b) keep its
+ * reliable control delivery converging so the server never force-disconnects it.
  *
- * At game start transportUdpServerOnGameStart wipes the per-client control
- * queues and CTRL_GAME_PHASE_RUNNING is published into the fresh sequence
- * space; the client adopts that space and acks it back (piggybacked on the
- * input it sends each running tick). If adoption or ack resend regressed,
- * the server's controlEventQueues[slot].ackedSeq would lag nextSeq and the
- * client would be force-disconnected after CONTROL_UNACKED_TIMEOUT_TICKS
- * (500 server ticks). We therefore pump well past that window after reaching
- * running and assert the client is still connected and still running —
- * convergence proven behaviourally, with no exact-trace dependence.
+ * Control events ride reliable channel 2 (CHANNEL_CONTROL): the server queues
+ * each onto the channel and carries it on the snapshot trailer (running) or a
+ * standalone PACKET_CHANNEL (lobby); the client acks via the channel-frame
+ * trailer it builds every tick. CTRL_GAME_PHASE_RUNNING flows over that channel
+ * at game start. If reliable control delivery regressed under loss, the channel
+ * window would fill and the server would defer a disconnect. We therefore pump
+ * well past the disconnect window after reaching running and assert the client
+ * is still connected and still running — convergence proven behaviourally, with
+ * no exact-trace dependence.
  */
 
 #include <stdint.h>
@@ -42,8 +41,17 @@ static bool pred_connected(LoopbackHarness *h, void *user) {
     return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
 }
 
-/* Send one input so the client transmits — piggybacking its controlEventAck
- * — and (once running) drives the sim. Returns the next input tick. */
+/* Connected AND in the lobby phase. The lobby phase is published over
+ * CHANNEL_CONTROL, which lands a round-trip after the client reports CONNECTED,
+ * so wait for both rather than asserting the phase immediately on connect. */
+static bool pred_in_lobby(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED &&
+           clientSimIsInLobby(h->cs);
+}
+
+/* Send one input so the client transmits — its channel-frame trailer carries
+ * control acks — and (once running) drives the sim. Returns the next input tick. */
 static uint32_t feed_input(LoopbackHarness *h, uint32_t tick) {
     InputPacket pkt;
     memset(&pkt, 0, sizeof(pkt));
@@ -60,20 +68,17 @@ int run_loopback_lobby_running_loss(void) {
                                        /*seed*/ 0xC0FFEEu),
                   "harness start failed");
 
-    /* 1. Join the lobby. Lobby control acks ride the standalone CONTROL_ACK
-     *    path armed by the server's CONTROL_TICK retransmits — no input
-     *    needed yet. */
+    /* 1. Join the lobby. Lobby control acks ride the client's per-tick
+     *    standalone PACKET_CHANNEL trailer — no input needed yet. */
     int connectedAt = loopbackHarnessPumpUntil(&h, LOBBY_CONNECT_MAX,
-                                               pred_connected, NULL);
-    fprintf(stderr, "  lobby join (loss): connected after %d pump(s) "
+                                               pred_in_lobby, NULL);
+    fprintf(stderr, "  lobby join (loss): in lobby after %d pump(s) "
                     "(cap %d)\n", connectedAt, LOBBY_CONNECT_MAX);
     if (connectedAt < 0) {
         loopbackHarnessStop(&h);
-        UT_FAIL("client never reached CONNECTED within %d pumps",
+        UT_FAIL("client never reached the lobby phase within %d pumps",
                 LOBBY_CONNECT_MAX);
     }
-    UT_ASSERT_MSG(clientSimIsInLobby(h.cs),
-                  "client connected but not in lobby phase");
 
     /* 2. Drive the all-ready → countdown → running transition. */
     UT_ASSERT_MSG(loopbackHarnessTriggerGameStart(&h),

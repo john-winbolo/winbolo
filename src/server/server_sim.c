@@ -111,6 +111,10 @@ extern void serverMessageConsoleMessage(ServerSim *sim, char *msg);
 static int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut);
 static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut);
 
+/* Caches the active map's BMAPBOLO MD5; called from serverSimCreate
+ * before its definition further down the file. */
+static void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path);
+
 /* Forward declarations for lobby functions used before their definitions */
 void serverSimLobbyCheckAllReady(ServerSim *sim);
 void serverSimStartGame(ServerSim *sim);
@@ -561,6 +565,9 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
         serverSimDestroy(sim);
         return NULL;
     }
+
+    /* Hash the canonical BMAPBOLO file so WBN can match it on register. */
+    serverSimCacheMapMd5FromFile(sim, mapFileName);
 
     /* Store map name (basename without path or .map extension) for info packet responses */
     {
@@ -3119,7 +3126,6 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         #undef MAX_SOUND_TYPES
 
         hdr->reliableEventCount = (uint8_t)outCount;
-        hdr->reliableBaseSeq = 0; /* Local transport doesn't use sequence tracking */
     }
 }
 
@@ -3962,7 +3968,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * RUNNING phase, so CTRL_GAME_PHASE_RUNNING enters every queue at
      * seq=1 as the first event of the new game.  Skipping this pair
      * leaves stale seqs on any remote-client queue and the per-client
-     * controlEventAck reset on the client side then desyncs against
+     * control event ack reset on the client side then desyncs against
      * the server's still-advancing nextSeq.  The countdown→running
      * path in server_lifecycle.c does the same pair; this is its
      * in-place (worldPreLoaded) counterpart. */

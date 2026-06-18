@@ -29,5 +29,4 @@
 {"tick":0,"type":"CTRL_ALLIANCE_LEAVE","playerNum":0}
 {"tick":0,"type":"CTRL_ALLIANCE_LEAVE","playerNum":1}
 {"tick":0,"type":"CTRL_ALLIANCE_RESET","allies":[1,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0]}
-{"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"HeadlessBot2","country":"AU","clientType":2,"clientFlags":0,"allies":[]}
 {"tick":0,"type":"CTRL_GAME_PHASE","phase":"RUNNING","countdownSeconds":0}

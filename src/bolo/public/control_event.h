@@ -86,6 +86,15 @@ typedef enum {
      * fireTick against its predicted shells to cull the ghost and draw the
      * impact at the authoritative position. */
     CTRL_SHELL_DEATH,
+    /* CTRL_CHANNEL_RESET — at game start the server drops its previous-game
+     * unacked send tail on the game (channel 0) and map (channel 1) reliable
+     * channels and tells this client the new per-channel baselines. The client
+     * lifts its game/map receive baselines to match, so any previous-game
+     * straggler (seq below the baseline) dedup-drops instead of applying in the
+     * new game. Carries no sim semantics — it must never reach the sim
+     * dispatcher; the client consumes it at the channel-drain site. Per-client:
+     * the baselines are this recipient's own channel state, set at enqueue. */
+    CTRL_CHANNEL_RESET,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -332,6 +341,21 @@ typedef struct ControlEvent {
             uint8_t  owner;      /* shell owner's player slot — the sole recipient */
             uint8_t  outcome;    /* SHELL_OUTCOME_* */
         } shellDeath;
+
+        /* CTRL_CHANNEL_RESET — per-channel receive baselines the client must
+         * adopt when the server re-bases a reliable channel. channelMask names
+         * which channels this event re-bases (bit c set => channel index c);
+         * each named channel's post-reset sequence floor is carried in the
+         * matching baseline field below. The game-start reset re-bases the game
+         * (ch0) and map (ch1) channels together; a lobby map change re-bases the
+         * bulk (ch3) channel alone so an in-flight map download drops cleanly.
+         * The control channel (ch2) is the carrier and is never reset. */
+        struct {
+            uint8_t  channelMask;   /* bit c set => ch<c>Baseline is valid     */
+            uint32_t ch0Baseline;   /* CHANNEL_GAME  floor (bit 0)             */
+            uint32_t ch1Baseline;   /* CHANNEL_MAP   floor (bit 1)             */
+            uint32_t ch3Baseline;   /* CHANNEL_BULK  floor (bit 3)             */
+        } channelReset;
     } u;
 } ControlEvent;
 

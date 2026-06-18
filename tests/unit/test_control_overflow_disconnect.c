@@ -4,21 +4,22 @@
  *
  * serverSimPublishControl fans an event out to each subscriber's deliver
  * callback while sim->publishing is true. The server's deliver callback
- * (udpClientDeliverControl) disconnects a client whose reliable control queue
- * has overflowed — but serverDisconnectClient broadcasts "X has left." and the
- * paired serverSimRemovePlayer fans out PLAYER_LEFT, and both publish. Doing
- * that from inside the deliver callback re-enters serverSimPublishControl and
- * trips its `assert(!publishing)` reentrancy guard (and, under NDEBUG, corrupts
- * the in-flight fan-out). The fix defers the whole disconnect to
- * transportUdpServerDrainPendingRemovals, which runs outside any publish.
+ * (udpClientDeliverControl) disconnects a client whose reliable control channel
+ * (CHANNEL_CONTROL) window is full — but serverDisconnectClient broadcasts
+ * "X has left." and the paired serverSimRemovePlayer fans out PLAYER_LEFT, and
+ * both publish. Doing that from inside the deliver callback re-enters
+ * serverSimPublishControl and trips its `assert(!publishing)` reentrancy guard
+ * (and, under NDEBUG, corrupts the in-flight fan-out). The fix defers the whole
+ * disconnect to transportUdpServerDrainPendingRemovals, which runs outside any
+ * publish.
  *
  * The test drives the real UDP server through the loopback harness: a client
  * joins, then — without ever acking (we don't pump the client during the
- * flood) — the test publishes more than CONTROL_EVENT_QUEUE_SIZE (128) control
- * events at it. The publish that tips the queue past capacity overflows inside
- * its own fan-out: pre-fix that aborts the process on the reentrancy assert;
- * post-fix it defers, and the next server tick's drain disconnects the client
- * cleanly. Found by fuzz_server_dispatch once the JOIN gate was opened.
+ * flood) — the test publishes more than CHANNEL_CONTROL_WINDOW (64) control
+ * events at it. The channelSend that fills the window fails inside its own
+ * fan-out: pre-fix that aborts the process on the reentrancy assert; post-fix
+ * it defers, and the next server tick's drain disconnects the client cleanly.
+ * Found by fuzz_server_dispatch once the JOIN gate was opened.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -36,7 +37,7 @@
 #include "loopback_harness.h"
 
 #define JOIN_MAX        2000  /* join + map download on the clean path */
-#define OVERFLOW_EVENTS 200   /* > CONTROL_EVENT_QUEUE_SIZE (128), with margin */
+#define OVERFLOW_EVENTS 200   /* > CHANNEL_CONTROL_WINDOW (64), with margin */
 #define DRAIN_PUMPS     4     /* ticks for the deferred drain to remove the slot */
 
 static bool pred_connected(LoopbackHarness *h, void *user) {
@@ -62,11 +63,11 @@ int run_control_overflow_defers_disconnect(void) {
     numBefore = (int)serverSimGetNumPlayers(h.sim);
     UT_ASSERT_MSG(numBefore >= 1, "server has no connected player after join");
 
-    /* Flood the connected client's reliable control queue. We never pump the
-     * client during the flood, so its acks never arrive and the queue only
-     * grows; the publish that crosses CONTROL_EVENT_QUEUE_SIZE overflows inside
-     * its own fan-out — the reentrancy this test pins. Hold the tick mutex as
-     * serverInstanceTick would when it publishes. Pre-fix, one of these
+    /* Flood the connected client's reliable control channel. We never pump the
+     * client during the flood, so its acks never arrive and the send window only
+     * fills; the publish whose channelSend fills CHANNEL_CONTROL_WINDOW fails
+     * inside its own fan-out — the reentrancy this test pins. Hold the tick mutex
+     * as serverInstanceTick would when it publishes. Pre-fix, one of these
      * publishes aborts the process on assert(!publishing). */
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_SERVER_TEXT;

@@ -63,6 +63,7 @@ int run_prefs_api_sync_dirty(void);
 int run_prefs_api_device_identity(void);
 int run_prefs_api_adopt_server(void);
 int run_prefs_api_mark_synced(void);
+int run_join_running_phase_not_lobby(void);
 int run_lobby_settings_codec_and_apply(void);
 int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
@@ -170,6 +171,27 @@ int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_bolo_rand_golden_sequence(void);
 int run_net_impair(void);
+
+/* ChannelMux reliability primitive (test_channel_mux.c): the full
+ * off-socket loss/reorder/dup/window/boundary matrix over two ChannelMux
+ * instances and an in-test frame shuttle. No sockets, no threads. */
+int run_channel_mux(void);
+
+/* Bulk-transfer framing (test_bulk_transfer.c): the off-socket stream-header
+ * round-trip, byte-identical blob reassembly under loss + reorder, header
+ * robustness, pipelining and the send-side serializer guard. */
+int run_bulk_transfer(void);
+
+/* Send-side overflow guards (test_overflow_guards.c): channelStreamSend and
+ * bulkSenderBegin reject a wrap-prone length via the existing false path with
+ * no state change. */
+int run_overflow_guards(void);
+
+/* CTRL_CHANNEL_RESET — the game-start baseline reset (test_channel_reset.c):
+ * the body-codec round-trip and the per-client baseline values
+ * transportUdpServerOnGameStart sends across two fabricated slots. */
+int run_channel_reset_codec_roundtrip(void);
+int run_channel_reset_two_slot_baselines(void);
 
 /* Lobby runtime fixes (test_lobby_runtime_fixes.c). */
 int run_countdown_abort_publishes_phase(void);
@@ -320,18 +342,7 @@ int run_alliance_reset_decoder_rejects_short(void);
 int run_alliance_reset_reapply_publishes_one_event(void);
 int run_alliance_reset_apply_rebuilds_alliances(void);
 
-/* Reliable control-event queue regression tests (test_control_event_queue.c).
- * Each captures a specific bug that shipped during the
- * reliable-control-events rollout. */
-int run_queue_init_is_valid(void);
-int run_queue_enqueue_advances_nextSeq(void);
-int run_queue_ack_advance_within_range(void);
-int run_queue_stale_ack_above_nextSeq(void);
-int run_queue_wipe_resets_both_seqs(void);
-int run_queue_enqueue_into_empty_after_wipe(void);
-int run_queue_hasspace_at_capacity(void);
-int run_control_ack_resend_due(void);
-int run_control_seq_reset_detect(void);
+/* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
@@ -397,6 +408,12 @@ int run_client_timing(void);
  * asymmetric slew, frame-spike safe-degrade). */
 int run_interp_render(void);
 
+/* Respawn no-death-flash (test_interp_respawn_no_death_flash.c): a remote
+ * tank whose prev sample is the dead/death-position state and whose curr is
+ * the alive respawn (teleport) snaps to curr instead of tweening from the
+ * stale death spot; a normal alive->alive pair still interpolates. */
+int run_interp_respawn_no_death_flash(void);
+
 /* Field-presence snapshot compaction (test_snapshot_compaction.c): pure
  * pack -> unpack roundtrip over representative tank entries — field fidelity,
  * wire-size bounds, the unchanged 1-byte stub, and truncation safety. */
@@ -413,6 +430,29 @@ int run_error_smoothing(void);
 int run_loopback_join(void);
 int run_loopback_join_loss(void);
 int run_loopback_lobby_running_loss(void);
+/* Quiet-lobby reliable control delivery under loss with no input flowing:
+ * proves control acks ride the standalone PACKET_CHANNEL trailer. */
+int run_loopback_quiet_lobby_control_loss(void);
+/* Parallel channel layer over the loopback transport: empty-flow inertness
+ * plus a synthetic message round-trip under loss + jitter + dup. */
+int run_loopback_channel(void);
+/* Server lock/unlock notice over CHANNEL_GAME (test_lock_channel.c): the
+ * "locked to new players" message now rides the reliable game channel, not the
+ * snapshot reliable tail. */
+int run_lock_channel(void);
+/* Server-map preview over CHANNEL_BULK (test_loopback_preview.c): a real .map
+ * file streamed back under loss and reassembled byte-identical on the client. */
+int run_loopback_map_preview(void);
+/* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
+ * uploaded under loss completes and the server decodes the reassembled bytes. */
+int run_loopback_map_upload(void);
+/* Map join-download + live resync over CHANNEL_BULK (test_loopback_download.c):
+ * a lobby join download completes under loss; a mid-game joiner downloads while
+ * the server is Running (the bulk-carrier deadlock case); and a reported
+ * checksum mismatch drives a resync that installs and bumps the resync count. */
+int run_loopback_download_join(void);
+int run_loopback_download_midgame(void);
+int run_loopback_resync(void);
 
 /* Gate-#1 render-path integration (test_gate1_integration.c): the viewTick
  * ±1-snapshot invariant over the real loopback transport, and the
@@ -439,8 +479,9 @@ int run_join_rate_limit(void);
 int run_cookie_handshake(void);
 
 /* Map-send amplification gate (test_map_amp_gate.c): a crafted JOIN over a raw
- * loopback socket draws a JOIN_ACCEPT but no PACKET_MAP_DOWNLOAD until a
- * MAP_ACK 0xFFFF ready round-trip is sent, after which chunks flow. */
+ * loopback socket draws only a small JOIN_CHALLENGE (no accept, no CHANNEL_BULK
+ * carrier) until the address-proof cookie is echoed, after which the accept and
+ * the map stream flow — the cookie is the sole amplification gate. */
 int run_map_amp_gate(void);
 
 /* Map-desync resync queue logic (test_map_resync.c): the resync cut empties

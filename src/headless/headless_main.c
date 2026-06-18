@@ -1907,7 +1907,7 @@ static int runNetworkMode(void) {
     }
   }
 
-  /* Open events log before connect so PACKET_PLAYER_LIST / lobby /
+  /* Open events log before connect so roster / lobby /
    * map-download events that arrive during the join handshake are
    * captured. Observer is preserved across clientSimCreate's memset
    * (see the save/restore block in client_sim.c). */

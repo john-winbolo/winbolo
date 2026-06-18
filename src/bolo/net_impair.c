@@ -41,6 +41,7 @@ bool netImpairParseConfig(const char *spec, NetImpairConfig *out) {
     cfg.jitterMs     = 0;
     cfg.lossPercent  = 0;
     cfg.burstLossLen = 1;
+    cfg.dupPercent   = 0;
 
     len = strlen(spec);
     if (len == 0 || len >= sizeof(buf)) {
@@ -103,6 +104,11 @@ bool netImpairParseConfig(const char *spec, NetImpairConfig *out) {
                 val = 1;
             }
             cfg.burstLossLen = (uint32_t)val;
+        } else if (strcmp(key, "dup") == 0) {
+            if (val > 100) {
+                val = 100;
+            }
+            cfg.dupPercent = (uint32_t)val;
         } else {
             return false;  /* unknown key */
         }
@@ -120,6 +126,9 @@ void netImpairEnable(NetImpair *ni, const NetImpairConfig *cfg) {
     }
     if (ni->cfg.lossPercent > 100) {
         ni->cfg.lossPercent = 100;
+    }
+    if (ni->cfg.dupPercent > 100) {
+        ni->cfg.dupPercent = 100;
     }
     ni->enabled = true;
 }
@@ -181,6 +190,32 @@ bool netImpairOffer(NetImpair *ni, const uint8_t *data, int len,
     slot->deliverAt = nowMs + ni->cfg.baseDelayMs + jitter;
     slot->inUse     = true;
     ni->count++;
+
+    /* Duplicate injection: on a hit, queue a second copy of the same
+     * datagram with its own independently-rolled jitter, so the duplicate
+     * can deliver before or after the original (reordering the two). */
+    if (ni->cfg.dupPercent > 0 &&
+        bolo_rand_below(100) < ni->cfg.dupPercent &&
+        ni->count < NET_IMPAIR_QUEUE_SIZE) {
+        NetImpairPacket *dup = NULL;
+        for (i = 0; i < NET_IMPAIR_QUEUE_SIZE; i++) {
+            if (!ni->queue[i].inUse) {
+                dup = &ni->queue[i];
+                break;
+            }
+        }
+        if (dup != NULL) {
+            uint32_t dupJitter = (ni->cfg.jitterMs > 0)
+                                     ? bolo_rand_below(ni->cfg.jitterMs + 1)
+                                     : 0;
+            memcpy(dup->data, data, (size_t)len);
+            dup->len       = len;
+            dup->addr      = *addr;
+            dup->deliverAt = nowMs + ni->cfg.baseDelayMs + dupJitter;
+            dup->inUse     = true;
+            ni->count++;
+        }
+    }
     return true;
 }
 

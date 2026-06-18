@@ -111,6 +111,7 @@ static int due_time_test(void) {
     cfg.jitterMs = 0;
     cfg.lossPercent = 0;
     cfg.burstLossLen = 1;
+    cfg.dupPercent = 0;
 
     bolo_srand(7ULL);
     netImpairInit(&ni);
@@ -152,6 +153,7 @@ static int run_determinism_sequence(uint64_t seed, int *out, int outCap) {
     cfg.jitterMs = 40;
     cfg.lossPercent = 20;
     cfg.burstLossLen = 2;
+    cfg.dupPercent = 0;
 
     bolo_srand(seed);
     netImpairInit(&ni);
@@ -227,6 +229,7 @@ static int reorder_test(void) {
     cfg.jitterMs = 100;
     cfg.lossPercent = 0;
     cfg.burstLossLen = 1;
+    cfg.dupPercent = 0;
 
     bolo_srand(0x00ABCDEFULL);
     netImpairInit(&ni);
@@ -273,6 +276,7 @@ static int burst_test(void) {
     cfg.jitterMs = 0;
     cfg.lossPercent = 50;
     cfg.burstLossLen = (uint32_t)BURST;
+    cfg.dupPercent = 0;
 
     bolo_srand(0x0005EED1ULL);
     netImpairInit(&ni);
