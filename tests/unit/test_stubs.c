@@ -266,6 +266,11 @@ void netErrorOccured(void) {}
 bool wbnStubRunning = FALSE;
 int  wbnStubLobbyUpdateCalls = 0;
 
+/* winboloNetSendLock spy: the auto-lock-on-game-start tests watch these to
+ * prove the lock state is reported to WinBolo.net (and with which value). */
+int  wbnStubSendLockCalls = 0;
+bool wbnStubLastLockReported = FALSE;
+
 bool winbolonetIsRunning(void) { return wbnStubRunning; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
@@ -275,7 +280,10 @@ void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
   (void)playerNum; (void)numPlayers; (void)freeBases; (void)freePills;
 }
-void winboloNetSendLock(bool isLocked) { (void)isLocked; }
+void winboloNetSendLock(bool isLocked) {
+  wbnStubSendLockCalls++;
+  wbnStubLastLockReported = isLocked;
+}
 bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return FALSE; }
 bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName,
                                BYTE playerNum, char *errorMsg,
@@ -365,6 +373,15 @@ int wbn_prefs_get(const char *bearerToken, char **response_out) {
 int wbn_prefs_put(const char *bearerToken, const char *json_body,
                   char **response_out) {
   (void)bearerToken; (void)json_body;
+  if (response_out) *response_out = NULL;
+  return -1;
+}
+
+/* The public game-list transport lives in http.c; stubbed here to keep curl
+ * out of the link. wbnFetchServerList is never exercised by the unit tests —
+ * only the pure wbnServerListParse is. */
+int wbn_api_get_public(const char *path, char **response_out) {
+  (void)path;
   if (response_out) *response_out = NULL;
   return -1;
 }

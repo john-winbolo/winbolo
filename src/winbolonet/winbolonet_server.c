@@ -69,6 +69,7 @@ static void winbolonetAddLobbyInfoFields(cJSON *body) {
   cJSON_AddBoolToObject(body, "ranked", s_lobbyInfo.ranked);
   cJSON_AddBoolToObject(body, "allow_new_players", s_lobbyInfo.allowNewPlayers);
   cJSON_AddBoolToObject(body, "auto_lock", s_lobbyInfo.autoLock);
+  cJSON_AddBoolToObject(body, "has_lobby", s_lobbyInfo.hasLobby);
   cJSON_AddBoolToObject(body, "time_limit", s_lobbyInfo.timeLimit);
   cJSON_AddNumberToObject(body, "time_minutes", s_lobbyInfo.timeMinutes);
   cJSON_AddNumberToObject(body, "lobby_locks", s_lobbyInfo.lobbyLocks);

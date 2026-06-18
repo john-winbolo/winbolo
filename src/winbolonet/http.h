@@ -179,6 +179,24 @@ int wbn_api_get_cancellable(const char *path, char **response_out,
                             volatile int *cancel_flag);
 
 /*********************************************************
+*NAME:          wbn_api_get_public
+*PURPOSE:
+* Like wbn_api_get, but issues an unsigned GET: no
+* X-WBN-Signature / X-WBN-Timestamp headers are sent. For
+* public endpoints (e.g. the games list) that take no Ed25519
+* signature. Builds the full URL as <baseUrl>/api/v1/<path>
+* and otherwise behaves like wbn_api_get (30s timeout, follows
+* redirects, returns the HTTP status code or -1 on transport
+* error; *response_out is a heap-allocated string the caller
+* must free, and may be NULL on error).
+*
+*ARGUMENTS:
+* path         - API path after /api/v1/ (e.g. "games")
+* response_out - Receives heap-allocated response string (caller frees)
+*********************************************************/
+int wbn_api_get_public(const char *path, char **response_out);
+
+/*********************************************************
 *NAME:          wbn_prefs_get
 *PURPOSE:
 * GET /api/v1/prefs for the cloud preferences sync. Signs the
