@@ -2511,6 +2511,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_prefs_api.c
     src/common/prefs_doc.c
     src/common/prefs.c
+    tests/unit/test_join_running_phase.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
     tests/unit/test_lobby_claim_start_dispatch.c
@@ -2737,6 +2738,7 @@ set(_unit_test_names
     prefs_api_device_identity
     prefs_api_adopt_server
     prefs_api_mark_synced
+    join_running_phase_not_lobby
     lobby_settings_codec_and_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply

@@ -45,6 +45,7 @@ static const UnitTestEntry s_tests[] = {
     { "prefs_api_device_identity",       run_prefs_api_device_identity       },
     { "prefs_api_adopt_server",          run_prefs_api_adopt_server          },
     { "prefs_api_mark_synced",           run_prefs_api_mark_synced           },
+    { "join_running_phase_not_lobby",    run_join_running_phase_not_lobby    },
     { "lobby_settings_codec_and_apply",  run_lobby_settings_codec_and_apply  },
     { "lobby_team_meta_codec_and_apply", run_lobby_team_meta_codec_and_apply },
     { "lobby_bot_config_codec_and_apply",run_lobby_bot_config_codec_and_apply},
