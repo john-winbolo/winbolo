@@ -215,7 +215,7 @@ end
 -- Uses smart_cost (dijkstra fast-path with cost_to fallback).
 -- `kind` selects the dijkstra slate (KIND_NORMAL or KIND_PILL).
 -- Returns best, best_id, best_cost, candidates (array of all evaluated)
-local function nearest_where(collection, world, tmx, tmy, filter, in_boat, ammo, state, info, kind, danger_scale_override)
+local function nearest_where(collection, world, tmx, tmy, filter, in_boat, ammo, state, info, kind, danger_scale_override, extra_cost_fn)
   kind = kind or KIND_NORMAL
 
   local best_cost = math.huge
@@ -271,6 +271,9 @@ local function nearest_where(collection, world, tmx, tmy, filter, in_boat, ammo,
             c = c + penalty
           end
         end
+        -- Optional per-candidate extra cost (e.g. base pill-cover penalty), so it
+        -- affects WHICH candidate wins, not just the chosen one's final cost.
+        if extra_cost_fn then c = c + (extra_cost_fn(obj) or 0) end
         candidates[#candidates + 1] = {
           id = id, mx = obj.mx, my = obj.my, cost = c,
           own = obj.owner or "?", hp = obj.health or 0,
@@ -287,6 +290,32 @@ local function nearest_where(collection, world, tmx, tmy, filter, in_boat, ammo,
   -- earlier code path leaving danger_scale in a non-default state.
   cpf.set_config("danger_scale", 1.0)
   return best, best_id, best_cost, candidates
+end
+
+-- Count live hostile/neutral pills whose fire-range covers tile (spot_mx,spot_my)
+-- but does NOT already cover our current tile (tmx,tmy) — i.e. NEW exposure only
+-- (a pill already shooting us where we stand isn't extra cost) — AND that have a
+-- clear line of fire to the spot (a walled-off pill can't actually hit it).
+-- Iterates all live pills (<=16); the LOS check runs last (priciest) so it only
+-- fires once the cheap range gates pass. Shared by the engage-spot crossfire
+-- (new_pill_crossfire) and the per-base pill-cover penalty.
+local function count_new_exposure_pills(world, spot_mx, spot_my, tmx, tmy)
+  if not (spot_mx and spot_my) then return 0 end
+  local fr = C.PILL_FIRE_RANGE or 8
+  local n = 0
+  for _, pm in pairs(world.pills) do
+    -- Only pills that can actually fire on us: enemy-aligned (hostile/neutral —
+    -- ally pills never shoot us), ALIVE (health>0; a dead pillbox is rubble), and
+    -- DEPLOYED (not carried in a tank). Then the range + new-exposure + LOS gates.
+    if (pm.owner == "hostile" or pm.owner == "neutral") and (pm.health or 0) > 0
+       and not pm.in_tank
+       and U.mdist(spot_mx, spot_my, pm.mx, pm.my) <= fr
+       and U.mdist(tmx, tmy, pm.mx, pm.my) > fr
+       and PF.wall_hp_between(pm.mx, pm.my, spot_mx, spot_my) == 0 then
+      n = n + 1
+    end
+  end
+  return n
 end
 
 -- Helper: find the best friendly or neutral base for resupply.
@@ -628,7 +657,10 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
   -- Capturable: neutral OR hostile with health=0 (armour beaten below capture threshold)
   local base, bid, bcost, bcands = nearest_where(world.bases, world, tmx, tmy,
     function(b) return b.owner == "neutral" or (b.owner == "hostile" and b.health == 0) end,
-    boat, ammo, state, info, KIND_NORMAL, C.CAPTURE_THREAT_WEIGHT)
+    boat, ammo, state, info, KIND_NORMAL, C.CAPTURE_THREAT_WEIGHT,
+    -- +BASE_PILL_COVER_PEN per enemy pill whose fire covers this base but not our
+    -- current tile (new exposure only) — biases toward capturing safer bases.
+    function(b) return (C.BASE_PILL_COVER_PEN or 3) * count_new_exposure_pills(world, b.mx, b.my, tmx, tmy) end)
   if not base then return nil end
 
   local raw_cost = bcost
@@ -976,7 +1008,10 @@ local function eval_attack_base(state, world, info, tmx, tmy, boat, ammo)
   -- Only attack hostile bases that are still alive (health > 0).
   -- health=0 means capturable — eval_capture_base handles those.
   local base, bid, bcost, bcands = nearest_where(world.bases, world, tmx, tmy,
-    function(b) return b.owner == "hostile" and b.health > 0 end, boat, ammo, state, info, KIND_NORMAL)
+    function(b) return b.owner == "hostile" and b.health > 0 end, boat, ammo, state, info, KIND_NORMAL, nil,
+    -- +BASE_PILL_COVER_PEN per enemy pill whose fire covers this base but not our
+    -- current tile (new exposure only) — biases toward attacking less-covered bases.
+    function(b) return (C.BASE_PILL_COVER_PEN or 3) * count_new_exposure_pills(world, b.mx, b.my, tmx, tmy) end)
   if not base then return nil end
   local shells_on_arrival = cpf.dijkstra_shells_at(KIND_NORMAL, base.mx, base.my)
                          or cpf.astar_shells_at(base.mx, base.my)
@@ -1128,6 +1163,23 @@ local LOCK_SUBS = {
   ws_engage=true, ws_retreat=true, ws_rebuild=true,
   swerve=true, post_engage=true, loiter=true,
 }
+
+-- Engage-spot crossfire: count live hostile/neutral pills whose fire-range
+-- covers the chosen ENGAGE SPOT but does NOT already cover our current tile —
+-- only the NEW exposure we take on by repositioning there counts. We're already
+-- eating the pills that cover us now, and A* already prices travel-through-fire,
+-- so don't double-count. Escalating: +BASE for the 1st new pill, +STEP more for
+-- each additional one (default 40, 90, 150, 230, ...). Neutral and hostile pills
+-- both count (both fire at any tank in range). Iterates all live pills (<=16),
+-- not perc.pill_threats (which is anchored to our CURRENT tile, so it'd miss
+-- pills that only cover a distant engage spot).
+local function new_pill_crossfire(world, spot_mx, spot_my, tmx, tmy)
+  local n = count_new_exposure_pills(world, spot_mx, spot_my, tmx, tmy)
+  if n == 0 then return 0 end
+  local base = C.GOAL_CROSSFIRE_NEW_PILL_BASE or 40
+  local step = C.GOAL_CROSSFIRE_NEW_PILL_STEP or 10
+  return base * n + step * (n * (n - 1) / 2)
+end
 
 local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
   state.attack_tank_breakdown = nil
@@ -1309,16 +1361,11 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
           cost = cost - aim_bonus
         end
 
-        -- Crossfire penalty: hostile pills near the enemy tank. Accumulates
-        -- across all pills in range and scales by anger — heated pills
-        -- fire instantly and are far deadlier than calm ones.
-        for _, pt in ipairs(perc.pill_threats or {}) do
-          local pd = U.mdist(et.mx, et.my, pt.pill.mx, pt.pill.my)
-          if pd <= C.TANK_COMBAT_NEAR_PILL_RANGE then
-            local anger_scale = math.max(0.5, (pt.anger or 0) + 0.5)
-            crossfire = crossfire + C.TANK_COMBAT_NEAR_PILL_PENALTY * anger_scale
-          end
-        end
+        -- Crossfire penalty: NEW pill exposure at the chosen standoff
+        -- (so_mx,so_my) — pills whose fire-range covers it but DON'T already
+        -- cover our current tile (we're already eating those; A* prices the
+        -- travel). Escalating per new pill, see new_pill_crossfire.
+        crossfire = new_pill_crossfire(world, so_mx, so_my, tmx, tmy)
         cost = cost + crossfire
 
         -- Apply boat vulnerability multiplier (computed above both branches)
@@ -1346,17 +1393,17 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
       -- the range edge, runaway by a handful of tiles out — so only a genuinely
       -- CLOSE (actually-threatening) tank can still preempt the pill take. Fixes
       -- a 26-tile tank yanking a blitz commander off its charge.
-      local pillbusy_pen = 0
+      local far_preempt_pen = 0
       if state.goal and state.goal.kind == "attack_pill" then
         local _ex, _ey = (et.mx - tmx), (et.my - tmy)
         local _edist = math.sqrt(_ex * _ex + _ey * _ey)
-        local _shoot_r = C.ATTACK_TANK_PILLBUSY_RANGE or C.TANK_COMBAT_ENGAGE_RANGE or 7
+        local _shoot_r = C.ATTACK_FAR_PREEMPT_RANGE or C.TANK_COMBAT_ENGAGE_RANGE or 7
         if _edist > _shoot_r then
-          pillbusy_pen = math.min(
-            (C.ATTACK_TANK_PILLBUSY_BASE or 1.7) ^ (_edist - _shoot_r)
-              * (C.ATTACK_TANK_PILLBUSY_K or 8),
-            C.ATTACK_TANK_PILLBUSY_CAP or 1e6)
-          cost = cost + pillbusy_pen
+          far_preempt_pen = math.min(
+            (C.ATTACK_FAR_PREEMPT_BASE or 1.7) ^ (_edist - _shoot_r)
+              * (C.ATTACK_FAR_PREEMPT_K or 8),
+            C.ATTACK_FAR_PREEMPT_CAP or 1e6)
+          cost = cost + far_preempt_pen
         end
       end
 
@@ -1367,7 +1414,7 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
         aim_bonus = aim_bonus, aim_diff = aim_diff, crossfire = crossfire,
         wall_hp = wall_hp, wall_penalty = wall_penalty,
         low_shells_penalty = low_shells_penalty, boat_mult = boat_mult,
-        tank_tile_threat = tank_tile_threat, pillbusy_pen = pillbusy_pen,
+        tank_tile_threat = tank_tile_threat, far_preempt_pen = far_preempt_pen,
         tank_shells = info.shells,  -- stash for get_pool_breakdown detail
         cost = cost, shells_on_arrival = shells_on_arrival, los_engage = los_engage,
         standoff_mx = so_mx, standoff_my = so_my, standoff_score = so_score,
@@ -3929,6 +3976,19 @@ function M.step_eval_queue(state, world, info)
   local armour = info.armour or 40
   local now = state.tick or 0
 
+  -- Are we currently part of a TRUE 2+ tank blitz (commander + >=1 committed
+  -- soldier, or a soldier joining one)? If so the ally shares the fire and the
+  -- "risky armour" attack_pill penalty below is waived. Computed once per call.
+  local in_2plus_blitz = false
+  if state.goal and state.goal._blitz and state.goal.kind == "attack_pill" then
+    if state.squad_role == "s" then
+      in_2plus_blitz = true   -- our commander + us
+    else
+      local _bt = squad.blitz_ready_status(state, now, info.player_number or -1, info)
+      in_2plus_blitz = (_bt or 0) >= 1
+    end
+  end
+
   local partial = state.pool_partial
   if not partial then partial = {}; state.pool_partial = partial end
 
@@ -4639,7 +4699,15 @@ function M.step_eval_queue(state, world, info)
       -- a flat penalty to EVERY attack_pill so the bot prefers dealing with the
       -- tank over chipping pills while one is live.
       local atk_tank_pen = (pool_idx == 6 and state._attack_tank_present) and (C.ATTACK_PILL_TANK_PRESENT_PENALTY or 30) or 0
-      local c = spot_cost + travel * travel_wound + combat * capture_mult + base_extra + threat_cost + ammo_cost + atk_tank_pen
+      -- Risky-armour penalty (pool 6 only): below ATTACK_PILL_RISKY_ARMOUR we're
+      -- not "unsafe" (that's the 20 floor that ABORTS) but exposed, so a SOLO take
+      -- costs more — unless we're in a 2+ tank blitz, where the ally shares the
+      -- fire. (Joinable-blitz pills still get this here, but the heavy join
+      -- discount applied later multiplies it down, so joining stays attractive.)
+      local risky_armour_pen = (pool_idx == 6 and not in_2plus_blitz
+        and (info.armour or 40) < (C.ATTACK_PILL_RISKY_ARMOUR or 30))
+        and (C.ATTACK_PILL_RISKY_PENALTY or 100) or 0
+      local c = spot_cost + travel * travel_wound + combat * capture_mult + base_extra + threat_cost + ammo_cost + atk_tank_pen + risky_armour_pen
 
       -- danger_nearby multiplier (pool 6 only): if this pill was recently
       -- stamped (enemy LGM seen within danger radius during a prior take
@@ -5466,6 +5534,24 @@ local function apply_blitz_join_discount(state, info, world)
     return members[cmdr] or 0
   end
 
+  -- Lazy pn -> live tank tile map (from our perception), built once if needed.
+  -- Lets the in-shooting-range bonus measure to the blitzing COMMANDER's tank,
+  -- not just the target pill. nil for any commander we can't currently see.
+  local tank_pos = nil
+  local function cmdr_pos(pn)
+    if not tank_pos then
+      tank_pos = {}
+      if info.objects then
+        for _, ob in ipairs(info.objects) do
+          if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) == 0 then
+            tank_pos[ob.idnum] = { mx = ob.x >> 8, my = ob.y >> 8 }
+          end
+        end
+      end
+    end
+    return tank_pos[pn]
+  end
+
   for cmdr, call in pairs(calls) do
     local pid = call.pill
     -- Guards: not our own call; not in the no-spot reject window; squad not full;
@@ -5499,6 +5585,25 @@ local function apply_blitz_join_discount(state, info, world)
         local dist = travel_cost_to_pill(s_mx, s_my, info.inboat)
         if not dist or dist >= 9999 then dist = travel_cost_to_pill(pill.mx, pill.my, info.inboat) end
         local factor = (dist and dist < 9999) and blitz_join_factor(dist) or 1.0
+        -- In-shooting-range bonus: if our tank is within shooting distance
+        -- (euclidean) of EITHER the target pill OR the blitzing commander's tank,
+        -- we're right there to help, so stack an extra flat discount
+        -- (SQUAD_BLITZ_INRANGE_MULT, default 0.5 = another -50%) on top of the
+        -- distance curve. The not-full guard is already applied above.
+        do
+          local rng = C.SQUAD_BLITZ_INRANGE_TILES or 7
+          local tmx2, tmy2 = info.tankx >> 8, info.tanky >> 8
+          local function within(ox, oy)
+            local dx, dy = tmx2 - ox, tmy2 - oy
+            return math.sqrt(dx * dx + dy * dy) <= rng
+          end
+          local in_range = within(pill.mx, pill.my)
+          if not in_range then
+            local cp = cmdr_pos(cmdr)
+            if cp then in_range = within(cp.mx, cp.my) end
+          end
+          if in_range then factor = factor * (C.SQUAD_BLITZ_INRANGE_MULT or 0.5) end
+        end
         if factor < 1.0 then  -- within discount range
           for _, e in pairs(cache) do
             if e._p == 6 and e._id == pid and e.cost then
@@ -6110,18 +6215,6 @@ function M.refresh_kill_lgm(state, info, world)
         aim_bonus = math.min(C.TANK_COMBAT_AIM_BONUS, aim_cap)
       end
 
-      -- Crossfire penalty: hostile pills near the LGM. Accumulates
-      -- across all pills in range and scales by anger — a heated pill
-      -- (anger ~1.0) is much deadlier than a calm one.
-      local crossfire = 0
-      for _, pt in ipairs(perc.pill_threats or {}) do
-        local pd = U.mdist(lgm.mx, lgm.my, pt.pill.mx, pt.pill.my)
-        if pd <= C.TANK_COMBAT_NEAR_PILL_RANGE then
-          local anger_scale = math.max(0.5, (pt.anger or 0) + 0.5)
-          crossfire = crossfire + C.TANK_COMBAT_NEAR_PILL_PENALTY * anger_scale
-        end
-      end
-
       -- LOS fast-engage: LGM in range + clear LOS = cheap LOS branch.
       local los_range = R + C.TANK_COMBAT_LOS_EXTRA_RANGE
       local los_engage = (lgm.dist or 1e9) <= los_range
@@ -6195,6 +6288,10 @@ function M.refresh_kill_lgm(state, info, world)
           path_cost = best_shoot_cost
         end
 
+        -- Crossfire: NEW pill exposure at the shoot spot (shoot_mx,shoot_my) —
+        -- pills covering it but not our current tile. Escalating per new pill.
+        -- (The LOS branch shoots from where we stand, so it has none.)
+        local crossfire = new_pill_crossfire(world, shoot_mx, shoot_my, tmx, tmy)
         -- (A* + base + low_sh - aim + xfire) * boat (if <1) + threat
         local raw = path_cost + KILL_LGM_BASE_COST + low_shells_penalty
                   - aim_bonus + crossfire
@@ -6271,6 +6368,25 @@ function M.refresh_kill_lgm(state, info, world)
                   math.floor(our_ticks))
             end
           end
+        end
+      end
+
+      -- Pill-take guard (same exponential "far_preempt" penalty attack_tank uses):
+      -- while committed to an attack_pill take, an enemy LGM beyond our shooting
+      -- range must NOT pull us off it. Penalty climbs EXPONENTIALLY with euclidean
+      -- distance past shoot range — ~0 at the edge, runaway a few tiles out — so
+      -- only a genuinely close (actually-threatening) LGM can still preempt.
+      if state.goal and state.goal.kind == "attack_pill" then
+        local _ex, _ey = (lgm.mx - tmx), (lgm.my - tmy)
+        local _edist = math.sqrt(_ex * _ex + _ey * _ey)
+        local _shoot_r = C.ATTACK_FAR_PREEMPT_RANGE or C.TANK_COMBAT_ENGAGE_RANGE or 7
+        if _edist > _shoot_r then
+          local far_preempt_pen = math.min(
+            (C.ATTACK_FAR_PREEMPT_BASE or 1.7) ^ (_edist - _shoot_r)
+              * (C.ATTACK_FAR_PREEMPT_K or 8),
+            C.ATTACK_FAR_PREEMPT_CAP or 1e6)
+          cost = cost + far_preempt_pen
+          formula_str = formula_str .. string.format(" +far_preempt{%.0f}(edist=%.1f>%d)", far_preempt_pen, _edist, _shoot_r)
         end
       end
 
@@ -8295,20 +8411,20 @@ function M.get_pool_breakdown_json(state)
     end
     if b.los_engage then
       return string.format(
-        "LOS (los_base{%.0f} + dist{%.1f}*per_tile{%.0f} + low_sh{%.0f}) * boat{%.2f} + threat{%.0f} + pillbusy{%.0f} = %.0f" ..
-        "||dist=%.1f; shells_now=%d; aim_diff=%.1f; pillbusy=exp penalty when on an attack_pill + tank past shoot range",
+        "LOS (los_base{%.0f} + dist{%.1f}*per_tile{%.0f} + low_sh{%.0f}) * boat{%.2f} + threat{%.0f} + far_preempt{%.0f} = %.0f" ..
+        "||dist=%.1f; shells_now=%d; aim_diff=%.1f; far_preempt=exp penalty when on an attack_pill + tank past shoot range",
         C.TANK_COMBAT_LOS_BASE_COST, b.dist or 0, C.TANK_COMBAT_LOS_COST_PER_TILE,
         b.low_shells_penalty or 0, b.boat_mult or 1.0,
-        b.tank_tile_threat or 0, b.pillbusy_pen or 0, b.cost or 0,
+        b.tank_tile_threat or 0, b.far_preempt_pen or 0, b.cost or 0,
         b.dist or 0, b.tank_shells or 0, b.aim_diff or 0)
     end
     return string.format(
-      "standoff->(%s,%s) (A* to standoff{%.0f} + base{%.0f} + wall{%.0f} + low_sh{%.0f} - aim{%.0f} + xfire{%.0f}) * boat{%.2f} + threat{%.0f} + pillbusy{%.0f} = %.0f" ..
-      "||A* is to the FIRING STANDOFF (%s,%s), NOT the enemy tile (%d,%d) — that's why it's cheaper than a test-click on the enemy. pillbusy=exp penalty when on an attack_pill + tank past shoot range. dist=%d; shells_now=%d; shells_arrival=%s; aim_diff=%.1f; wall_hp=%s; deg=%s",
+      "standoff->(%s,%s) (A* to standoff{%.0f} + base{%.0f} + wall{%.0f} + low_sh{%.0f} - aim{%.0f} + xfire{%.0f}) * boat{%.2f} + threat{%.0f} + far_preempt{%.0f} = %.0f" ..
+      "||A* is to the FIRING STANDOFF (%s,%s), NOT the enemy tile (%d,%d) — that's why it's cheaper than a test-click on the enemy. far_preempt=exp penalty when on an attack_pill + tank past shoot range. dist=%d; shells_now=%d; shells_arrival=%s; aim_diff=%.1f; wall_hp=%s; deg=%s",
       tostring(b.standoff_mx), tostring(b.standoff_my),
       b.path_cost or 0, b.base or 0, b.wall_penalty or 0,
       b.low_shells_penalty or 0, b.aim_bonus or 0, b.crossfire or 0,
-      b.boat_mult or 1.0, b.tank_tile_threat or 0, b.pillbusy_pen or 0, b.cost or 0,
+      b.boat_mult or 1.0, b.tank_tile_threat or 0, b.far_preempt_pen or 0, b.cost or 0,
       tostring(b.standoff_mx), tostring(b.standoff_my), b.mx or 0, b.my or 0,
       b.dist or 0, b.tank_shells or 0, tostring(b.shells_on_arrival),
       b.aim_diff or 0, tostring(b.wall_hp), tostring(b.standoff_deg))
@@ -8930,7 +9046,7 @@ function M.draw_attack_tank_viz(state, info)
         label = label .. string.format(" w=%d", b.wall_penalty)
       end
       if b.crossfire and b.crossfire > 0 then
-        label = label .. " XF"
+        label = label .. string.format(" XF=%.0f", b.crossfire)
       end
       local tr, tg, tb = NR + 80, NG + 60, 255
       if b.winner then tr, tg, tb = 0, 255, 100 end

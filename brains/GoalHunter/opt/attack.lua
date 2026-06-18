@@ -357,7 +357,10 @@ M.commit_soak_finish = commit_soak_finish
 -- build_walls / charge to abort attack_pill early instead of dying
 -- mid-charge.  The reason text feeds clear_attack_goal so the left-top
 -- "last attack cleared" overlay shows WHY we bailed.
-local function armour_unsafe_for_pill_take(info, pill_hp)
+local function armour_unsafe_for_pill_take(info, pill_hp, blitz_2plus)
+  -- On a true blitz with >= 2 tanks the ally shares the incoming fire, so don't
+  -- abort the take on low armour — even armour 0 presses on, the partner helps.
+  if blitz_2plus then return nil end
   if not pill_hp or pill_hp < C.ATTACK_PILL_UNSAFE_HP_THRESHOLD then return nil end
   local arm = info and info.armour or 0
   if arm >= C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR then return nil end
@@ -419,6 +422,7 @@ function M.draw_pill_eval_spots(spots, pmx, pmy, viz_id, mode, chosen_deg, alpha
   mode = mode or "all"
   alpha_scale = alpha_scale or 1.0
   local safe_r = C.ATTACK_SAFE_RADIUS
+  local n_detail = 0   -- clickable D-detail entries recorded this call (for the print2 marker)
   local function a(v)
     local x = math.floor(v * alpha_scale + 0.5)
     if x > 255 then x = 255 elseif x < 0 then x = 0 end
@@ -474,9 +478,23 @@ function M.draw_pill_eval_spots(spots, pmx, pmy, viz_id, mode, chosen_deg, alpha
             local dij_label = string.format("dij=%.0f", s._dij or 0)
           end
         end
+        -- D-detail: each clear-LOS candidate becomes clickable in the inspector
+        -- with its full score breakdown, so you can see WHY one spot beat another
+        -- (lower total_score wins; ties broken in the bucket). The winner is the
+        -- chosen_deg spot. No-LOS spots are omitted (already shown as red boxes).
+        if viz.detail_rect then
+          local is_win = chosen_deg and s.deg == chosen_deg
+          local did = string.format("%s_%d_%d", viz_id, s.mx or 0, s.my or 0)
+          if is_win then viz.detail_text(did, "WINNER: lowest total_score among clear-LOS, non-rejected spots") end
+          n_detail = n_detail + 1
+        end
       end
     end
   end
+  -- Marker so you can grep which ticks/bots recorded clickable spot details
+  -- (the per-bot log + ===TICK=== context give the tick & bot). Only fires when
+  -- the layer is on and at least one candidate was recorded.
+  if n_detail > 0 then print2(string.format("DETAIL_REC viz=%s pill=(%d,%d) candidates=%d/%d", viz_id, pmx or -1, pmy or -1, n_detail, #spots)) end
 end
 
 function M.find_pill_at(world, mx, my)
@@ -2821,8 +2839,23 @@ function M.blitz_negotiate(state, world, info, now)
   end
 end
 
+-- Tanks committed to the CURRENT blitz (self + partners). A SOLDIER is always
+-- >= 2 (its commander + itself). A COMMANDER is 1 + its committed soldiers. A
+-- non-blitz / solo take is 1. Used to relax solo-only caution (detree, low
+-- armour) once an ally is actually committed to help on the take.
+local function blitz_tank_count(goal, state, info)
+  if not (goal and goal._blitz) then return 1 end
+  if state.squad_role == "s" then return 2 end
+  local total = squad.blitz_ready_status(state, state.tick or 0, info.player_number or -1, info)
+  return 1 + (total or 0)
+end
+
 function M.update_attack_substate(goal, state, world, info)
   if goal.kind ~= "attack_pill" then return end
+
+  -- True multi-tank blitz? (commander + >= 1 committed soldier, or we're a
+  -- soldier joining one.) Lets the take skip solo-only caution below.
+  local blitz_2plus = goal._blitz and blitz_tank_count(goal, state, info) >= 2 or false
 
   -- Blitz "in position / aimed" status is a CURRENT-TICK fact, true only while
   -- actually sitting in blitz_wait (in position, facing the pill). Default-clear
@@ -2845,6 +2878,12 @@ function M.update_attack_substate(goal, state, world, info)
   -- A tree-blocked shot drops out of the in-flight side without changing
   -- the HP side, so the indicator visibly goes down by one rather than
   -- pretending we somehow need more bullets to kill the pill.
+
+  -- Orange counter — shells currently IN THE AIR that will HIT this pill: an
+  -- on-target in-flight shot is one whose C-sim trajectory (cpf.simulate_shot,
+  -- run each tick by update_shot_accounting) reaches the pill tile with NO
+  -- forest/wall/other-pill blocking first. That's exactly goal._on_target_in_flight.
+  -- Own layer so it toggles independently of the cyan pill_shot_count.
 
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
@@ -3497,7 +3536,7 @@ function M.update_attack_substate(goal, state, world, info)
           print(string.format(TAG .. " ATTACK: plan_position -> gather_trees (%d/%d trees for %d walls)",
                 info.trees or 0, trees_needed, n_pots))
         else
-          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
           if unsafe then
             clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
             return
@@ -3567,7 +3606,7 @@ function M.update_attack_substate(goal, state, world, info)
     local stalled = (now - (goal._gather_last_progress or now)) > 250  -- ~5 s
     local timed_out = (now - (goal._gather_start or now)) > (C.PPT_GATHER_TIMEOUT or 1500)
     if trees_have >= trees_need then
-      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
       if unsafe then
         clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
         return
@@ -3585,7 +3624,7 @@ function M.update_attack_substate(goal, state, world, info)
       -- frees init.lua's aim override to set aim_mx/aim_my from the
       -- pill-edge geometry instead of the corner the scan picked,
       -- which would otherwise be unprotected without walls.
-      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+      local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
       if unsafe then
         clear_attack_goal(state, "abort@approach_entry — " .. unsafe)
         return
@@ -3696,13 +3735,15 @@ function M.update_attack_substate(goal, state, world, info)
     end
 
     -- Commit to firing on GO. If we BUILT a shield (goal._blitz_shielded — only a
-    -- no-joiner full-pill blitz does), fire from BEHIND it via the normal aim →
-    -- in_range PPT path; it must NOT charge into its own walls. Every other case
-    -- (joiner present / soft pill / no buildable walls / soldier) charges in.
+    -- no-joiner full-pill blitz does) AND we're still effectively solo, fire from
+    -- BEHIND it via the normal aim → in_range PPT path; it must NOT charge into its
+    -- own walls. Every other case charges in — INCLUDING a true 2+ tank blitz
+    -- (blitz_2plus): with an ally rushing we overwhelm together instead of the
+    -- commander hanging back threading its shield while the soldier charges alone.
     local function commit_fire()
       goal._blitz_committed    = true
       goal._blitz_start_armour = info.armour or 0  -- baseline for damage-gated swerve
-      if goal._blitz_shielded and goal._shield_scan then
+      if goal._blitz_shielded and goal._shield_scan and not blitz_2plus then
         goal.substate = "aim"
         goal.aim_tick = now
         goal._aim_locked = nil
@@ -3950,20 +3991,27 @@ function M.update_attack_substate(goal, state, world, info)
         clear_attack_goal(state, "approach stalled")
         return
       end
-      -- Was 64 (1/4 tile). At that tolerance the tank brakes early and
-      -- coasts to a stop short of the approach point — visible as a
-      -- noticeable gap at the green winner-marker. 16 wu (1/16 tile)
-      -- forces the tank to creep right up onto the spot.
-      local DIST_TOL  = 16
-      -- Matches the creep target speed in steering.lua (the tank holds
-      -- at 4 inside the 16-wu approach window). Insisting on 0 makes
-      -- the substate hang since the tank doesn't decelerate further.
+      -- Generous spot tolerance: 1/2 tile (128 wu). We don't need to land
+      -- exactly on the approach point — close + stopped + facing the pill is
+      -- enough to start the take. (Was 16 wu / 1/16 tile, which forced a slow
+      -- creep right onto the spot.)
+      local DIST_TOL  = 128
+      -- Speed gate stays tight so we actually stop before engaging. Matches the
+      -- creep target speed in steering.lua; insisting on 0 hangs the substate.
       local SPEED_TOL = 4
+      -- Facing gate: the tank must be pointed at the pill so the take can
+      -- aim/fire immediately instead of pivoting from a bad heading. ~10° — wide
+      -- enough that the hard-hold turn in steering doesn't oscillate past it.
+      local FACE_TOL  = 7   -- brad (256 = full circle), ~9.8 deg
+      local pill_dir  = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
+                                   pmx + 0.5, pmy + 0.5)
+      local face_corr = U.adiff(info.direction, pill_dir)
+      local facing_ok = math.abs(face_corr) <= FACE_TOL
 
       -- HUD overlay near the tank: current distance + threshold so we
       -- can see live what's blocking the transition.
 
-      if adist <= DIST_TOL and
+      if adist <= DIST_TOL and facing_ok and
          effectively_stopped(state, info, now, SPEED_TOL, 5, "approach") then
         -- Blitz routing at the setup point:
         --   * a JOINER already answered (>=1 squadmate), OR it's a non-PPT take —
@@ -4067,7 +4115,7 @@ function M.update_attack_substate(goal, state, world, info)
         end
         local decision_msg
         if needs_build then
-          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+          local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
           if unsafe then
             clear_attack_goal(state, "abort@build_walls_entry — " .. unsafe)
             return
@@ -4374,7 +4422,20 @@ function M.update_attack_substate(goal, state, world, info)
         if now_block and not was_block then newly_built = newly_built + 1 end
       end
     end
+    -- One blocker is "enough" cover ONLY when a blitz overwhelm is actually
+    -- happening — the soldiers share the pill's fire. Solo (or before anyone is
+    -- committed) we still need the full planned shield. Gate the early success
+    -- on a blitz being underway: either enough blitzers are READY to charge
+    -- (BLITZ_MIN_READY_TO_CHARGE — commander counts as 1, so +1 below), OR at
+    -- least PPT_BLOCKERS_ENOUGH_MIN_INWAIT soldier(s) are already parked in
+    -- blitz_wait while we (the commander) keep building.
+    local _bt, _bready, _bmb, _bun, _binwait =
+      squad.blitz_ready_status(state, now, info.player_number or -1, info)
+    local blitz_supported = goal._blitz and (
+         ((_bready or 0) + 1) >= (C.BLITZ_MIN_READY_TO_CHARGE or 2)
+      or (_binwait or 0) >= (C.PPT_BLOCKERS_ENOUGH_MIN_INWAIT or 1))
     local built_enough = newly_built >= (C.PPT_BLOCKERS_ENOUGH or 1)
+                         and blitz_supported
     if built_enough and idx <= #list and not stalled then
     end
 
@@ -4448,10 +4509,14 @@ function M.update_attack_substate(goal, state, world, info)
       end
       if reached then
         local total_needed = obstacle_shots + pill_hp_live
-        if info.shells < total_needed then
-          print(string.format(TAG .. " CHARGE: not enough shells (%d obstacles + %d hp = %d needed, have %d) — aborting",
-            obstacle_shots, pill_hp_live, total_needed, info.shells))
-          clear_attack_goal(state, "not enough shells for obstacles")
+        -- Credit in-flight on-target shells (left inventory, pill_hp not yet
+        -- reduced) so info.shells doesn't undercount and false-abort.
+        local in_flight = goal._on_target_in_flight or 0
+        local avail_shots = info.shells + in_flight
+        if avail_shots < total_needed then
+          print(string.format(TAG .. " CHARGE: not enough shells (%d obstacles + %d hp = %d needed, have %d + %d in-flight = %d) — aborting",
+            obstacle_shots, pill_hp_live, total_needed, info.shells, in_flight, avail_shots))
+          clear_attack_goal(state, "not enough shells to finish take")
           return
         end
         goal._bullets_needed = total_needed
@@ -4522,7 +4587,9 @@ function M.update_attack_substate(goal, state, world, info)
       -- chosen angle, so any trees on the pill-center line aren't on
       -- our actual firing path. Burning shells to clear them just
       -- wastes ammo and time before we can take the corner shot.
-      local trees = goal._is_ppt and 0
+      -- Also skip for a 2+ tank blitz: the overwhelm charge doesn't need a
+      -- pre-cleared lane (solo would bother; with an ally it's wasted time).
+      local trees = (goal._is_ppt or blitz_2plus) and 0
                     or forest_tiles_on_path(tmx, tmy, pmx, pmy)
       if trees > 0 then
         goal.substate = "detree"
@@ -4547,7 +4614,7 @@ function M.update_attack_substate(goal, state, world, info)
           goal._is_ppt = false
           print(TAG .. " ATTACK: PPT had no shield_scan at aim — demoting to non-PPT charge")
         end
-        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
         if unsafe then
           clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
           return
@@ -4582,7 +4649,7 @@ function M.update_attack_substate(goal, state, world, info)
         print(string.format(TAG .. " ATTACK: PPT detree done (shots=%d/%d), moving into range",
               fired, needed))
       else
-        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health)
+        local unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
         if unsafe then
           clear_attack_goal(state, "abort@charge_entry — " .. unsafe)
           return
@@ -4897,6 +4964,11 @@ function M.update_attack_substate(goal, state, world, info)
       goal._shoot_reach_checked = true
       local obstacle_shots, obstacle_reason, reached = shot_path_obstacle_count(info, goal, world)
       local total_needed = obstacle_shots + pill_hp
+      -- Credit shells already in flight toward the pill: they've left inventory
+      -- but haven't reduced pill_hp yet, so info.shells alone undercounts our
+      -- effective ammo and false-aborts a take that's actively landing shots.
+      local in_flight = goal._on_target_in_flight or 0
+      local avail_shots = info.shells + in_flight
       if obstacle_shots == math.huge then
         print(string.format(TAG .. " SHOOT_PILL: impassable obstacle — %s, aborting", obstacle_reason))
         clear_attack_goal(state, "shot path blocked: " .. obstacle_reason)
@@ -4905,10 +4977,10 @@ function M.update_attack_substate(goal, state, world, info)
         print(string.format(TAG .. " SHOOT_PILL: shot does not reach pill tile, aborting"))
         clear_attack_goal(state, "shot does not reach pill")
         return
-      elseif info.shells < total_needed then
-        print(string.format(TAG .. " SHOOT_PILL: not enough shells (%d obstacles + %d hp = %d needed, have %d) — aborting",
-          obstacle_shots, pill_hp, total_needed, info.shells))
-        clear_attack_goal(state, "not enough shells for obstacles")
+      elseif avail_shots < total_needed then
+        print(string.format(TAG .. " SHOOT_PILL: not enough shells (%d obstacles + %d hp = %d needed, have %d + %d in-flight = %d) — aborting",
+          obstacle_shots, pill_hp, total_needed, info.shells, in_flight, avail_shots))
+        clear_attack_goal(state, "not enough shells to finish take")
         return
       end
       goal._bullets_needed = total_needed
@@ -5278,9 +5350,16 @@ function M.update_attack_substate(goal, state, world, info)
   -- Shield-scan overlay: 8 candidate spots + winner blocker tiles.
   -- Drawn while planning so a human can see where the alternate
   -- standoffs landed and what's giving cover. Draws every tick the
-  -- goal still owns _shield_scan.
-  if goal._shield_scan then
-    shield.draw_overlay(goal._shield_scan, now)
+  -- goal still owns _shield_scan — but ONLY when that scan is for the
+  -- pill this goal is currently taking. A _shield_scan can leak across a
+  -- re-target (goal object reused for a new pill before the scan is
+  -- recomputed/cleared); without this guard the followed tank would show
+  -- a different pill's candidate cluster — a take it's no longer on.
+  -- (Followed-tank filtering is already handled by the host binding
+  -- overlay_* only in the followed bot, so this is purely the pill guard.)
+  local _ssc = goal._shield_scan
+  if _ssc and _ssc.pill and _ssc.pill.mx == goal.mx and _ssc.pill.my == goal.my then
+    shield.draw_overlay(_ssc, now)
 
     -- Pronounced TARGET marker on the chosen aim point. Drawn on top
     -- of the per-aim borders so the user can verify the corner the

@@ -1373,7 +1373,7 @@ static void vizToggleSaveCallback(int idx) {
  * X-key suppress flag into every active bot's Lua state. Also
  * pushes _BT_VIZ_IDS (the table viz.lua's vid() reads to learn
  * which integer to stamp on each overlay command). */
-static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive);
+static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive, int followBot);
 
 static int vizRegisterCallback(const char *id, const char *label,
                                 const char *short_desc, const char *long_desc,
@@ -2329,7 +2329,7 @@ static void renderOverlay(BrainTestApp *app, int screenW, int screenH) {
  * the bot's Lua globals: _BT_VIZ_<UPPER_ID> per-id booleans plus
  * _BT_VIZ_IDS = {id=idx, ...} lookup. Pushed every brain frame so
  * a freshly-spawned bot sees current state on its first think. */
-static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive) {
+static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive, int followBot) {
     char buf[16384];
     int  off = 0;
     int  n = vizRegistryCount();
@@ -2374,8 +2374,21 @@ static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive) {
         if (w > 0 && w < (int)(sizeof(buf) - off)) off += w;
     }
     if (off == 0) return;
+    /* Replay-collection mode (V-window radio): per-bot _BT_VIZ_COLLECT override.
+     *   0 = on layers, followed tank only  → follow:"on", others:"off"
+     *   1 = ALL layers, viewed tank only    → follow:"all", others:"off"
+     *   2 = ALL layers, ALL tanks           → every bot:"all"  */
+    int collectMode = vizWindowCollectMode();
     for (int i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsBot(sim, (BYTE)i)) serverSimBotExecLua(sim, (BYTE)i, buf);
+        if (!serverSimIsBot(sim, (BYTE)i)) continue;
+        serverSimBotExecLua(sim, (BYTE)i, buf);
+        const char *col;
+        if (collectMode == 2)        col = "all";
+        else if (i == followBot)     col = (collectMode == 1) ? "all" : "on";
+        else                         col = "off";
+        char cbuf[64];
+        SDL_snprintf(cbuf, sizeof(cbuf), "_G._BT_VIZ_COLLECT='%s';", col);
+        serverSimBotExecLua(sim, (BYTE)i, cbuf);
     }
 }
 
@@ -3410,7 +3423,7 @@ static void appTickBrain(BrainTestApp *app) {
 
     serverSimGetGameSim(app->sim)->isInMenu = isInMenu;
 
-    pushVizStateToBots(app->sim, app->vizSuppressActive || optProduction);
+    pushVizStateToBots(app->sim, app->vizSuppressActive || optProduction, (int)app->followBot);
 
     /* Clear the viz_detail registry ONCE before any bot's think runs.
      * The registry is global, so if each bot called overlay_detail_clear
@@ -4319,31 +4332,9 @@ static void appRender(BrainTestApp *app) {
         SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
     }
 
-    /* Big, unmissable MANUAL MODE banner. Manual control hijacks the
-     * keyboard — Space becomes Shoot, not pause/resume — so make it
-     * impossible to miss that you're in it. Pulses so it reads as a live
-     * state, not a static label. */
-    if (app->manualControl) {
-        const char *msg = "MANUAL MODE  -  press M to exit";
-        float scale = 3.0f;
-        float tw = (float)strlen(msg) * 8.0f * scale;
-        float th = 8.0f * scale;
-        float x = (screenW - tw) * 0.5f;
-        if (x < 8.0f) x = 8.0f;
-        float y = 14.0f;
-        float pulse = 0.55f + 0.45f * sinf((float)SDL_GetTicks() * 0.006f);
-        Uint8 a = (Uint8)(pulse * 255.0f);
-        SDL_FRect bg = { x - 12.0f, y - 8.0f, tw + 24.0f, th + 16.0f };
-        SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(app->renderer, 170, 0, 0, (Uint8)(a * 0.75f));
-        SDL_RenderFillRect(app->renderer, &bg);
-        SDL_SetRenderDrawColor(app->renderer, 255, 70, 70, 255);
-        SDL_RenderRect(app->renderer, &bg);
-        SDL_SetRenderScale(app->renderer, scale, scale);
-        SDL_SetRenderDrawColor(app->renderer, 255, 235, 235, a);
-        SDL_RenderDebugText(app->renderer, x / scale, y / scale, msg);
-        SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
-    }
+    /* (The big pulsing MANUAL MODE banner was removed — the brain's BOLO HUD
+     * panel shows a steady red "MANUAL" tag, which indicates the mode without
+     * the flashing.) */
 
     /* Shot-sim result on top of the map (under ImGui panels). */
     renderShotSimResult(app, screenW, screenH);
@@ -5116,6 +5107,27 @@ int main(int argc, char *argv[]) {
                         /* Suppress BrainTest hotkey conflict — the
                          * configured key has been consumed by the
                          * brain. */
+                        break;
+                    }
+                    /* Manual build-type selection: number keys 1-5 pick the
+                     * build the click-to-build uses (Trees/Road/Wall/Pill/Mine),
+                     * matching the Bolo build menu. Forwarded to the brain so the
+                     * HUD highlight + the on_click build stay in sync. */
+                    int bsel = 0;
+                    switch (ev.key.scancode) {
+                    case SDL_SCANCODE_1: bsel = 1; break;
+                    case SDL_SCANCODE_2: bsel = 2; break;
+                    case SDL_SCANCODE_3: bsel = 3; break;
+                    case SDL_SCANCODE_4: bsel = 4; break;
+                    case SDL_SCANCODE_5: bsel = 5; break;
+                    default: break;
+                    }
+                    if (bsel) {
+                        char buf[96];
+                        SDL_snprintf(buf, sizeof(buf),
+                            "if brain and brain.manual_set_build then "
+                            "brain.manual_set_build(%d) end", bsel);
+                        serverSimBotExecLua(app.sim, app.followBot, buf);
                         break;
                     }
                 }

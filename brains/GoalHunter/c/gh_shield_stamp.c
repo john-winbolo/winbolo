@@ -109,6 +109,13 @@ typedef struct {
 #define SCAN_N_AIMS       5
 #define SCAN_MAX_BLOCKERS 5
 
+/* Cover value in shots-to-break: a friendly pillbox (15 HP) is worth 3x a wall
+ * (5 HP) of protection, so the scorer weights a friendly-pill blocker far above
+ * a wall slot. A single pill on the return-fire path then covers as much as a
+ * three-wall shield, so fewer walls need building. */
+#define WALL_SHOTS  5.0   /* WALL_HP_FULL: shots to destroy a full wall */
+#define PILL_SHOTS 15.0   /* PILLS_MAX_HEALTH: shots to destroy a pillbox */
+
 typedef struct {
     int8_t dx[SCAN_MAX_BLOCKERS];
     int8_t dy[SCAN_MAX_BLOCKERS];
@@ -179,6 +186,12 @@ typedef struct NaShieldStampCtx {
     SlateEntry slate[SLATE_MAX_CANDS][SLATE_MAX_NUDGES][SLATE_MAX_AIMS];
     uint8_t    slate_ni_used[SLATE_MAX_CANDS][SLATE_MAX_AIMS];
     int        slate_ncands;
+
+    /* 17x17 pill-ownership map centred on the target pill, valid for the
+     * current scan only. 0=none, 1=hostile/neutral, 2=friendly. Set by
+     * l_scan_c (from its local pill_map) / cleared by l_run_neighbor_bonus,
+     * read by run_nb_for_cand to weight a friendly-pill blocker as PILL_SHOTS. */
+    uint8_t    pill_map[17 * 17];
 
     /* Per-scan candidate scoring buffer. memset at the top of every
      * l_scan_c so prior content is overwritten before any read. */
@@ -450,6 +463,10 @@ static int covers_subset(const NaShieldStampCtx *ctx, int j, int ni, int ai,
     return 1;
 }
 
+/* Forward decl: defined later, but used in run_nb_for_cand below to classify a
+ * blocker as a friendly pill via ctx->pill_map. */
+static int lgm_cache_idx(int dx, int dy);
+
 /* Internal neighbor bonus used by both l_run_neighbor_bonus and scan_c.
  * Writes RESULT_STRIDE values per candidate into out[] (caller provides). */
 static void run_nb_for_cand(const NaShieldStampCtx *ctx, const ScanCfg *cfg,
@@ -503,8 +520,22 @@ static void run_nb_for_cand(const NaShieldStampCtx *ctx, const ScanCfg *cfg,
                 }
             }
 
-            double aim_score = (score_per_slot + built_bonus) * sub_na
-                             +  score_per_slot                 * sub_np;
+            /* Weight cover by shots-to-break. Count how many of this subset's
+             * ACTUAL blockers are friendly pills (pill_map==2) — those are worth
+             * PILL_SHOTS each; every other blocker (actual wall or buildable
+             * slot) is a wall worth WALL_SHOTS. built_bonus stays as a small
+             * tiebreak that prefers existing cover over a slot we'd have to build. */
+            int sub_na_pill = 0;
+            for (int sk = 0; sk < sub_n; sk++) {
+                if (sub_act[sk]) {
+                    int pci = lgm_cache_idx(sub_dx[sk], sub_dy[sk]);
+                    if (pci >= 0 && ctx->pill_map[pci] == 2) sub_na_pill++;
+                }
+            }
+            double aim_score = PILL_SHOTS * sub_na_pill
+                             + WALL_SHOTS * (sub_na - sub_na_pill)
+                             + WALL_SHOTS * sub_np
+                             + built_bonus * sub_na;
 
             int left = 0;
             for (int j = i - 1; j >= 0; j--) {
@@ -574,6 +605,11 @@ static int l_run_neighbor_bonus(lua_State *L) {
 
     if (n_cands > SLATE_MAX_CANDS) n_cands = SLATE_MAX_CANDS;
     if (n_aims  > SLATE_MAX_AIMS)  n_aims  = SLATE_MAX_AIMS;
+
+    /* The Lua neighbor-bonus path feeds the slate without pill ownership, so
+     * clear any pill_map left over from a prior scan_c — blockers weight as
+     * walls here. (The Lua fallback's own base aim_score handles pill weight.) */
+    memset(ctx->pill_map, 0, sizeof(ctx->pill_map));
 
     lua_createtable(L, n_cands * RESULT_STRIDE, 0);
     int out = 1;
@@ -930,6 +966,8 @@ static int l_scan_c(lua_State *L) {
                 pill_map[ci] = (own == 1) ? 2 : 1;  /* 2=friendly, 1=hostile/neutral */
         }
     }
+    /* Publish to ctx so run_nb_for_cand can weight friendly-pill blockers. */
+    memcpy(ctx->pill_map, pill_map, sizeof(pill_map));
 
     /* Stack-local 17×17 LGM reachability cache for this scan only.
      * -1=unchecked, 0=unreachable, 1=reachable. */

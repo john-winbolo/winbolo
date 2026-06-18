@@ -270,6 +270,13 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
   local pill_to_standoff_d = math.sqrt(pdtx * pdtx + pdty * pdty)
   local actual_blockers, potential_blockers = {}, {}
   local unreachable_blockers = {}  -- buildable tiles the LGM can't reach (viz only)
+  -- Per-tile decision trail for the "D" inspector: every return-fire tile we
+  -- consider, with its FATE (ACTUAL/POTENTIAL/unreachable/skip) and the REASON.
+  -- Debug-only — nil (and never built) in opt builds.
+  local dbg = BRAIN_DEBUG_MODE and {} or nil
+  local function dbgadd(mx, my, fate, reason)
+    if dbg then dbg[#dbg + 1] = { mx = mx, my = my, fate = fate, reason = reason } end
+  end
   local _ret_src = return_flat or return_tiles_list
   if not outgoing_blocked_by_wall and _ret_src then
     local _ret_is_flat = (return_flat ~= nil)
@@ -283,18 +290,26 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
         tmx, tmy = t.mx, t.my
       end
       local idx = tmy * 256 + tmx
-      local skip = (tmx == pmx and tmy == pmy) or
-                   (tmx == origin_mx and tmy == origin_my)
-      -- replace all t.mx/t.my uses below with tmx/tmy
-      if not skip and not outgoing_set[idx] and U.in_map(tmx, tmy) then
+      if tmx == pmx and tmy == pmy then
+        dbgadd(tmx, tmy, "skip", "pill tile")
+      elseif tmx == origin_mx and tmy == origin_my then
+        dbgadd(tmx, tmy, "skip", "origin/standoff tile")
+      elseif outgoing_set[idx] then
+        dbgadd(tmx, tmy, "skip", "on OUR outgoing shot lane (wall would block our shot)")
+      elseif not U.in_map(tmx, tmy) then
+        dbgadd(tmx, tmy, "skip", "off map")
+      else
         local sdx = tmx + 0.5 - standoff_cx
         local sdy = tmy + 0.5 - standoff_cy
         local d_standoff = math.sqrt(sdx * sdx + sdy * sdy)
         local pdx = tmx + 0.5 - pill_cx
         local pdy = tmy + 0.5 - pill_cy
         local pdist = math.sqrt(pdx * pdx + pdy * pdy)
-        local in_front_of_standoff = pdist < pill_to_standoff_d
-        if d_standoff >= M.BLOCKER_MIN_DIST and in_front_of_standoff then
+        if d_standoff < M.BLOCKER_MIN_DIST then
+          dbgadd(tmx, tmy, "skip", string.format("too close to standoff (d=%.2f < %.2f)", d_standoff, M.BLOCKER_MIN_DIST))
+        elseif pdist >= pill_to_standoff_d then
+          dbgadd(tmx, tmy, "skip", string.format("behind standoff (pdist=%.2f >= pill->standoff %.2f)", pdist, pill_to_standoff_d))
+        else
           local kind = nil
           local plist = world.pill_at and world.pill_at[idx]
           if plist then
@@ -314,6 +329,7 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
           if kind then
             actual_blockers[#actual_blockers + 1] =
               { mx = tmx, my = tmy, kind = kind }
+            dbgadd(tmx, tmy, "ACTUAL", kind)
           else
             local tt = U.ttype(tmx, tmy)
             local buildable =
@@ -321,7 +337,9 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
               tt ~= C.T_SWAMP   and tt ~= C.T_PILLBOX and
               tt ~= C.T_REFBASE and tt ~= C.T_BOAT
             if no_builder then buildable = false end
-            if buildable then
+            if not buildable then
+              dbgadd(tmx, tmy, "skip", no_builder and "no builder (LGM dead/unavailable)" or string.format("not buildable (terrain tt=%d)", tt))
+            else
               local reachable = true
               if math.abs(tmx - origin_mx) + math.abs(tmy - origin_my) > 1 then
                 local ticks = cpf.lgm_travel_ticks_map(
@@ -331,10 +349,12 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
               if reachable then
                 potential_blockers[#potential_blockers + 1] =
                   { mx = tmx, my = tmy, kind = "empty" }
+                dbgadd(tmx, tmy, "POTENTIAL", "buildable + LGM-reachable")
               else
                 unreachable_blockers[#unreachable_blockers + 1] =
                   { mx = tmx, my = tmy, kind = "unreachable",
                     origin_mx = origin_mx, origin_my = origin_my }
+                dbgadd(tmx, tmy, "skip", "buildable but LGM-unreachable")
               end
             end
           end
@@ -342,7 +362,7 @@ local function score_aim(spot_wx, spot_wy, origin_mx, origin_my,
       end
     end
   end
-  return out_tiles_result, outgoing_blocked_by_wall, actual_blockers, potential_blockers, unreachable_blockers
+  return out_tiles_result, outgoing_blocked_by_wall, actual_blockers, potential_blockers, unreachable_blockers, dbg
 end
 
 -- Score one candidate position fully (all 5 aims + return fire).
@@ -406,7 +426,7 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
   for ai = 1, #AIM_OFFSETS do
     -- Use precomputed stamp tiles when available (aim_idx 1..N for outgoing).
     local _out_flat = _ak and _get_flat(_ak, 0, ai)
-    local out_tiles, blocked, actual_blockers, potential_blockers, unreachable_blockers = score_aim(
+    local out_tiles, blocked, actual_blockers, potential_blockers, unreachable_blockers, dbg_tiles = score_aim(
       spot_wx, spot_wy, lgm_omx, lgm_omy,
       pmx, pmy, pill_wx, pill_wy,
       AIM_OFFSETS[ai], nil, return_tiles, world, no_builder, nil, _out_flat, _ret_flat)
@@ -418,8 +438,25 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
     local potential_n = #potential_blockers
     local aim_score = 0
     if not blocked then
-      aim_score = M.SCORE_PER_SLOT * (actual_n + potential_n)
-                + M.BUILT_BONUS    * actual_n
+      -- Weight cover by shots-to-break (mirrors the C scorer): a friendly pill
+      -- blocker is worth PILLS_MAX_HEALTH (15) vs a wall's WALL_HP_FULL (5), so
+      -- one pill on the path covers as much as a three-wall shield.
+      local pill_n = 0
+      for _, b in ipairs(actual_blockers) do
+        local plist = world.pill_at and world.pill_at[b.my * 256 + b.mx]
+        if plist then
+          for _, e in ipairs(plist) do
+            if e.pill and e.pill.owner == "friendly" and (e.pill.health or 0) > 0 then
+              pill_n = pill_n + 1; break
+            end
+          end
+        end
+      end
+      local WALL_W, PILL_W = C.WALL_HP_FULL or 5, C.PILLS_MAX_HEALTH or 15
+      aim_score = PILL_W * pill_n
+                + WALL_W * (actual_n - pill_n)
+                + WALL_W * potential_n
+                + M.BUILT_BONUS * actual_n
     end
     cand.aims[ai] = {
       tiles               = out_tiles,
@@ -428,6 +465,7 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
       potential_blockers  = potential_blockers,
       unreachable_blockers = unreachable_blockers,
       score               = aim_score,
+      debug_tiles         = dbg_tiles,  -- per-return-tile fate+reason (D inspector)
     }
     if aim_score > best_score then
       best_score   = aim_score
@@ -1466,8 +1504,15 @@ function M.draw_overlay(scan, now_tick)
   -- to its entry — but even after fade, clicking the spot will land
   -- on the registered hit area.
   if viz.detail_circle and scan.candidates then
+    -- Key the detail id on the SCAN's pill tile (not just the candidate index):
+    -- when more than one pill's shield is scanned in the same tick, an
+    -- index-only id ("shield_cand_2") collides, and vizDetailAppendBody
+    -- concatenates the two scans' body lines into one entry (and overwrites the
+    -- geometry with whichever registered last) — which is why a candidate's
+    -- breakdown showed another pill's far-away blockers.
+    local _pkey = scan.pill and string.format("p%d_%d", scan.pill.mx, scan.pill.my) or "p?"
     for ci, c in ipairs(scan.candidates) do
-      local did = string.format("shield_cand_%d", ci)
+      local did = string.format("shield_cand_%s_%d", _pkey, ci)
       local kind_str = c.kind == "standoff" and "STANDOFF" or "candidate"
       local hdr = string.format("%s score=%d @ deg=%.1f off=%+.1f  %d = %d + %d + %d[%d]",
                                 kind_str,
@@ -1501,8 +1546,43 @@ function M.draw_overlay(scan, now_tick)
           end
           for _, b in ipairs(a.unreachable_blockers or {}) do
           end
+          if a.tiles and #a.tiles > 0 then
+            local outp = {}
+            for _, t in ipairs(a.tiles) do outp[#outp + 1] = string.format("(%d,%d)", t.mx, t.my) end
+          end
         end
       else
+      end
+
+      -- Per-shot tile decisions: for EVERY aim, list each return-fire tile we
+      -- considered with a one-char fate code, so you can see which tiles got
+      -- kept/eliminated and why, per shot. Codes: A=actual P=potential
+      -- U=lgm-unreachable | skip: l=our-lane c=too-close b=behind-standoff
+      -- t=terrain(unbuildable) o=origin x=pill-tile m=off-map. '*'=winning aim.
+      if c.aims then
+        local function fate_code(t)
+          if t.fate == "ACTUAL" then return "A" end
+          if t.fate == "POTENTIAL" then return "P" end
+          local r = t.reason or ""
+          if r:find("unreachable") then return "U"
+          elseif r:find("outgoing") then return "l"
+          elseif r:find("too close") then return "c"
+          elseif r:find("behind") then return "b"
+          elseif r:find("builda") or r:find("builder") then return "t"
+          elseif r:find("origin") then return "o"
+          elseif r:find("pill tile") then return "x"
+          elseif r:find("off map") then return "m"
+          else return "?" end
+        end
+        for ai2 = 1, #c.aims do
+          local a2 = c.aims[ai2]
+          local nm = M.AIM_NAMES[ai2] or tostring(ai2)
+          local win = (ai2 == c.best_aim_idx) and "*" or " "
+          local parts = {}
+          for _, t in ipairs(a2.debug_tiles or {}) do
+            parts[#parts + 1] = string.format("(%d,%d)%s", t.mx, t.my, fate_code(t))
+          end
+        end
       end
       local evals = c._chain_evals
       if evals and #evals > 0 then

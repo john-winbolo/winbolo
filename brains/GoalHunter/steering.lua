@@ -50,7 +50,14 @@ local nav_turn_speed = U.nav_turn_speed
 --   hostile bases (nearby pills will start shooting).
 -- Allows through: forests, enemy tanks, empty tiles.
 -- target_mx/my is the tile we're aiming at (excluded from the check).
-local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my)
+-- max_walls (default 0): how many walls the shot may cross and still count as
+-- "clear". 0 = the legacy strict behavior (any wall blocks). >0 lets the path
+-- cross that many walls (e.g. attack_base grinds 1 wall down) while STILL
+-- blocking on pillboxes (any owner), bases, and allied tanks — anywhere on the
+-- line, including beyond a within-budget wall.
+local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my, max_walls)
+  max_walls = max_walls or 0
+  local wall_count = 0
   -- Build tanks array from visible objects for tank-aware simulation
   local tank_positions = {}
   if info.objects then
@@ -128,14 +135,18 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
     if st.mx ~= origin_mx or st.my ~= origin_my then
       local stt = U.ttype(st.mx, st.my)
       if stt == C.T_BUILDING or stt == C.T_HALFBUILD then
-        blocked = true
-        block_reason = "wall"
-        block_mx, block_my = st.mx, st.my
-        if do_viz then
-          viz.text("shell_hit_dot", st.mx + 0.5, st.my + 0.5,
-                   tostring(ti), "center", 255, 0, 0, 200, 0.5)
+        wall_count = wall_count + 1
+        if wall_count > max_walls then
+          blocked = true
+          block_reason = string.format("wall#%d", wall_count)
+          block_mx, block_my = st.mx, st.my
+          if do_viz then
+            viz.text("shell_hit_dot", st.mx + 0.5, st.my + 0.5,
+                     tostring(ti), "center", 255, 0, 0, 200, 0.5)
+          end
+          break
         end
-        break
+        -- within wall budget: keep scanning past it for pills/bases/allies
       end
       local plist = world.pill_at and world.pill_at[st.my * 256 + st.mx]
       if plist then
@@ -270,12 +281,20 @@ local _pp_stationary = {
 }
 local _at_stationary = { engage=true, close=true, disengage=true }
 
-local function intentionally_stationary(goal)
+local function intentionally_stationary(goal, info)
   local s = goal.substate or ""
   if goal.kind == "attack_pill" and _ap_stationary[s] then return true end
   if goal.kind == "pill_place"  and _pp_stationary[s] then return true end
   if goal.kind == "attack_tank" and _at_stationary[s] then return true end
   if goal.kind == "rescue_lgm" or goal.kind == "none" then return true end
+  -- Refueling: once parked ON (or right beside) the refuel base we sit still
+  -- while the base tops us up — that's intentional, NOT stuck. (En route to the
+  -- base it's still subject to normal stuck recovery.) Without this, the
+  -- stuck-detector escalated to STUCK_ESCAPE and cleared the refuel goal.
+  if goal.kind == "refuel_at_base" and info and goal.mx then
+    local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+    if U.mdist(tmx, tmy, goal.mx, goal.my) <= 1 then return true end
+  end
   return false
 end
 
@@ -300,7 +319,7 @@ local function stuck_recovery(state, info, goal)
     end
   end
 
-  if state.wall_clearing or intentionally_stationary(goal) then
+  if state.wall_clearing or intentionally_stationary(goal, info) then
     state.stuck_progress = nil
     return
   end
@@ -1374,6 +1393,35 @@ local function attack_pill_steer(state, world, info, goal)
     if info.gunrange < C.GUNSIGHT_MAX then
       keys = keys | KEY_MORERANGE
     end
+    -- FAST_APPROACH: outside 1/2 tile (128 wu) of the standoff, accelerate HARD
+    -- and brake purely off cpf.predict_stop landing on the spot — same fast-path
+    -- the `approach` substate uses. Steering still aims at the standoff every
+    -- tick; we just strip nav_turn_speed's throttle and drive it off the
+    -- predictor. Inside 1/2 tile we fall through to the existing creep below for
+    -- the micro-corrections (AT_SPOT / BRAKE / CREEP / friction-stuck).
+    if C.FAST_APPROACH and sdist > 128 then
+      local move_dir = U.aim_at(info.tankx, info.tanky, swx, swy)
+      local corr = U.adiff(info.direction, move_dir)
+      -- Constantly correct heading toward the standoff every tick (tight
+      -- deadband, like the in_range wait turn). Keeps the tank pointed at the
+      -- spot so cpf.predict_stop — which projects along the tank facing — stays
+      -- accurate. This owns turning; the predictor owns throttle (below).
+      if     corr >  6 then keys = keys | KEY_TURNRIGHT
+      elseif corr < -6 then keys = keys | KEY_TURNLEFT
+      elseif corr >  1 then taps = taps | KEY_TURNRIGHT
+      elseif corr < -1 then taps = taps | KEY_TURNLEFT
+      end
+      local tmx_now, tmy_now = info.tankx >> 8, info.tanky >> 8
+      local tcap = (C.TERRAIN_SPEED and C.TERRAIN_SPEED[U.ttype(tmx_now, tmy_now)]) or 16
+      local ang_f = info.tank_angle or info.direction
+      local espeed = (info.speed or 0) / 4   -- info.speed is engine speed ×4
+      local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f, espeed, tcap)
+      local stop_dist = U.wdist(info.tankx, info.tanky, psx, psy)
+      local _brake_tol = C.APPROACH_PRECISE_TOL or 16
+      if stop_dist >= sdist - _brake_tol then keys = keys | KEY_SLOWER else keys = keys | KEY_FASTER end
+      if BRAIN_DEBUG_MODE and viz.is_on("fast_approach") then local _ff = (stop_dist >= sdist - _brake_tol); local _r, _g, _b = _ff and 60 or 255, _ff and 230 or 200, 60; viz.text("fast_approach", info.tankx / 256.0, info.tanky / 256.0 - 1.4, string.format("FAST_INRANGE  spd=%d  corr=%d  sdist=%d  stopd=%d", info.speed, corr, sdist, stop_dist), "center", _r, _g, _b, 245, 0.35); viz.line("fast_approach", info.tankx / 256.0, info.tanky / 256.0, psx / 256.0, psy / 256.0, _r, _g, _b, 160); viz.circle("fast_approach", swx / 256.0, swy / 256.0, 0.18, 80, 160, 255, 220) end
+      return keys, taps
+    end
     -- Wider window so we accelerate sooner (was 1 tile / 256 wu).
     if sdist <= 512 then
       -- Brake distance: charge uses speed*4 but in practice the tank
@@ -1438,6 +1486,16 @@ local function attack_pill_steer(state, world, info, goal)
         -- stopped but the brake-distance heuristic keeps re-arming.
         branch = "BRAKE"
         keys = keys | KEY_SLOWER
+        -- Keep correcting heading toward the standoff while braking so we hold
+        -- the line into the spot instead of coasting straight off it. Throttle
+        -- stays the brake above; this only adds turn keys (tight ±6/±1 deadband).
+        local move_dir = U.aim_at(info.tankx, info.tanky, swx, swy)
+        local corr = U.adiff(info.direction, move_dir)
+        if     corr >  6 then keys = keys | KEY_TURNRIGHT
+        elseif corr < -6 then keys = keys | KEY_TURNLEFT
+        elseif corr >  1 then taps = taps | KEY_TURNRIGHT
+        elseif corr < -1 then taps = taps | KEY_TURNLEFT
+        end
       else
         branch = "CREEP"
         local move_dir = U.aim_at(info.tankx, info.tanky, swx, swy)
@@ -1639,7 +1697,16 @@ local function attack_pill_steer(state, world, info, goal)
     elseif corr >  1 then taps = taps | KEY_TURNRIGHT
     elseif corr < -1 then taps = taps | KEY_TURNLEFT
     end
-    if math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE then
+    -- Hold fire once the shells ALREADY in the air will finish the pill:
+    -- on-target in-flight >= pill HP means the kill is locked, so more shots are
+    -- wasted (matters most in the tank_finish soak case, where the swerve exit is
+    -- suppressed). update_shot_accounting re-sims every tick, so if an in-flight
+    -- shell diverges/dies short the count drops and we resume firing — no risk of
+    -- stopping short.
+    local _sp_pill = goal.target_id and world.pills and world.pills[goal.target_id] or nil
+    local _sp_hp = _sp_pill and (_sp_pill.health or 0) or 0
+    local _sp_in_air = goal._on_target_in_flight or 0
+    if math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE and _sp_in_air < _sp_hp then
       keys = keys | KEY_SHOOT
       -- Pre-fire predictive swerve (same rationale as charge).
       predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
@@ -1671,13 +1738,20 @@ local function attack_pill_steer(state, world, info, goal)
       local awx = math.floor(afx * 256 + 0.5)
       local awy = math.floor(afy * 256 + 0.5)
       local adist = U.wdist(info.tankx, info.tanky, awx, awy)
-      if adist <= 256 then
-        -- Within 1 tile of the approach point. Creep toward it until
-        -- within DIST_TOL (1/16 tile = 16 wu, matches attack.lua's
-        -- approach-completion threshold). Lowering this from 64 makes
-        -- the tank push right up onto the spot instead of braking
-        -- early and coasting to a stop a quarter-tile short.
-        if adist > 16 then
+      -- FAST_APPROACH normally skips this speed-4 precise creep (stage 2) and
+      -- falls through to the throttle dispatcher, where the predict_stop brake
+      -- carries the tank in at full speed. A* still homes the steering precisely
+      -- on approach_fx (APPROACH_PRECISE_DIST exact-center creep). BUT once the
+      -- predict_stop brake has done its job — the tank has slowed (speed <= 4)
+      -- OR closed to within 1/2 tile (128 wu) of the approach point — we hand
+      -- back to the normal creep for the final precise landing onto the spot.
+      local fast_handoff = C.FAST_APPROACH and (info.speed <= 4 or adist <= 128)
+      if adist <= 256 and (not C.FAST_APPROACH or fast_handoff) then
+        -- Creep toward the approach point until within 1/2 tile (128 wu), the
+        -- generous spot tolerance attack.lua now accepts. Inside that, stop and
+        -- rotate to face the pill so the approach-completion facing gate can
+        -- fire — no need to creep right onto the exact point any more.
+        if adist > 128 then
           local move_dir = U.aim_at(info.tankx, info.tanky, awx, awy)
           local corr = U.adiff(info.direction, move_dir)
           -- Friction-stuck detection (mirrors in_range_position):
@@ -1701,8 +1775,21 @@ local function attack_pill_steer(state, world, info, goal)
             keys = keys | k
             taps = taps | t
           end
-        elseif info.speed > 0 then
-          keys = keys | KEY_SLOWER
+        else
+          -- Within 1/2 tile of the approach point: brake and rotate to face
+          -- the pill. The approach point lies on the pill->standoff line, so
+          -- "toward the pill" is the inward heading the engage will use next.
+          if info.speed > 0 then keys = keys | KEY_SLOWER end
+          local pdir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
+                                  goal.mx + 0.5, goal.my + 0.5)
+          local pcorr = U.adiff(info.direction, pdir)
+          -- Speed over precision: HOLD the fast-turn key (no taps) so the tank
+          -- pivots to the pill as fast as the engine ramp allows. attack.lua
+          -- completes the moment it sweeps within FACE_TOL (~10°), so the hard
+          -- hold can't oscillate — we stop caring once inside the window.
+          if     pcorr > 0 then keys = keys | KEY_TURNRIGHT
+          elseif pcorr < 0 then keys = keys | KEY_TURNLEFT
+          end
         end
         return keys, taps
       end
@@ -2735,20 +2822,35 @@ function M.steer(state, world, info, goal)
     -- no standoff was planned (e.g. goal was created before the planner existed).
     local nav_mx, nav_my = goal.mx, goal.my
     local nav_wx, nav_wy = goal.wx, goal.wy
-    -- attack_base: navigate to the closest non-water adjacent tile so we
-    -- end up beside the base with a clear shot rather than on top of it.
+    -- attack_base: park beside the base (not on top of it) for a clean shot.
+    -- Prefer the LOWEST-COST REACHABLE tile in the base's 8-neighbourhood, via
+    -- the per-tick dijkstra slate (O(1) smart_cost_dij_only) — that's the
+    -- cheapest point-blank spot a tank can actually get to. If NONE of the
+    -- neighbours is reachable (base walled in / behind water), fall back to the
+    -- closest non-water adjacent tile by Manhattan (old behaviour).
     if goal.kind == "attack_base" then
       local bmx, bmy = goal.mx, goal.my
-      local best_amx, best_amy = nil, nil
-      local best_d = math.huge
-      for _, delta in ipairs({{-1,0},{1,0},{0,-1},{0,1}}) do
-        local cx = U.mclamp(bmx + delta[1])
-        local cy = U.mclamp(bmy + delta[2])
-        if not U.is_water(U.ttype(cx, cy)) then
-          local d = math.abs(cx - tmx) + math.abs(cy - tmy)
-          if d < best_d then
-            best_d = d
-            best_amx, best_amy = cx, cy
+      local bf = info.inboat and 1 or 0
+      local best_amx, best_amy, best_c = nil, nil, math.huge
+      for dy = -1, 1 do
+        for dx = -1, 1 do
+          if dx ~= 0 or dy ~= 0 then
+            local cx, cy = U.mclamp(bmx + dx), U.mclamp(bmy + dy)
+            if not U.is_water(U.ttype(cx, cy)) then
+              local c = cpf.smart_cost_dij_only(cpf.KIND_NORMAL, cx, cy, bf)
+              if c and c < best_c then best_c = c; best_amx, best_amy = cx, cy end
+            end
+          end
+        end
+      end
+      if not best_amx then
+        -- Nothing reachable via the slate → closest non-water adjacent tile.
+        local best_d = math.huge
+        for _, delta in ipairs({{-1,0},{1,0},{0,-1},{0,1}}) do
+          local cx, cy = U.mclamp(bmx + delta[1]), U.mclamp(bmy + delta[2])
+          if not U.is_water(U.ttype(cx, cy)) then
+            local d = math.abs(cx - tmx) + math.abs(cy - tmy)
+            if d < best_d then best_d = d; best_amx, best_amy = cx, cy end
           end
         end
       end
@@ -3365,8 +3467,18 @@ function M.steer(state, world, info, goal)
       local _smy = goal.standoff_my or goal.my
       _approach_sdist_wu = U.wdist(info.tankx, info.tanky,
                                    U.m2w(_smx), U.m2w(_smy))
-      _approach_brake_active = _approach_sdist_wu
-                               < math.max(256, info.speed * 24)
+      -- FAST_APPROACH: the predict_stop fast-path must own the throttle for the
+      -- ENTIRE approach, not only inside the standoff brake zone. This gate is
+      -- keyed to the STANDOFF distance, but the generic `approach_brake` branch
+      -- below is keyed to the nearer APPROACH-POINT distance (eff_dist < sdist
+      -- always, since the approach point sits between tank and standoff). So in
+      -- the speed band where eff_dist < speed*24 but sdist isn't yet, the gate
+      -- stays off, the generic proportional brake fires, slows the tank, and
+      -- keeps the gate off — a crawl all the way in. Forcing it on under the
+      -- flag makes the (earlier) predictor branch win; stage-2 creep still takes
+      -- over once speed<=4 or within 1/2 tile (it returns before reaching here).
+      _approach_brake_active = C.FAST_APPROACH
+                               or _approach_sdist_wu < math.max(256, info.speed * 24)
     end
     -- Throttle-branch diagnostic.  Set by each branch below so the
     -- hud_throttle overlay can show which decision tier fired this
@@ -3526,7 +3638,11 @@ function M.steer(state, world, info, goal)
       -- gentle proportional brake so we don't overshoot while cornering.
       local afx = goal.approach_fx or (goal.approach_mx and (goal.approach_mx + 0.5))
       local afy = goal.approach_fy or (goal.approach_my and (goal.approach_my + 0.5))
-      if afx and abs_corr <= 12 then   -- ~17° heading error: lined up
+      -- FAST_APPROACH forces the predict_stop fast-path for the whole brake zone
+      -- (drops the abs_corr alignment gate / proportional crawl), so stage 1's
+      -- slow sdist*0.03 creep never runs. Without the flag, only the lined-up
+      -- final glide uses the predictor and cornering falls back to proportional.
+      if afx and (C.FAST_APPROACH or abs_corr <= 12) then   -- lined up (or forced)
         _throttle_branch = "ap_linedup_fast"
         local awx = math.floor(afx * 256 + 0.5)
         local awy = math.floor(afy * 256 + 0.5)
@@ -3536,7 +3652,11 @@ function M.steer(state, world, info, goal)
         local espeed = (info.speed or 0) / 4   -- info.speed is engine speed ×4
         local psx, psy = cpf.predict_stop(info.tankx, info.tanky, ang_f, espeed, tcap)
         local stop_dist = U.wdist(info.tankx, info.tanky, psx, psy)
-        if stop_dist >= adist then keys = keys | KEY_SLOWER else keys = keys | KEY_FASTER end
+        -- Brake the tick the predicted stop reaches the approach point, minus the
+        -- landing tolerance so we settle within APPROACH_PRECISE_TOL rather than
+        -- coasting a hair past it.
+        local _brake_tol = C.APPROACH_PRECISE_TOL or 16
+        if stop_dist >= adist - _brake_tol then keys = keys | KEY_SLOWER else keys = keys | KEY_FASTER end
         if BRAIN_DEBUG_MODE and viz.is_on("approach_stop_pred") then local _hit = (stop_dist >= adist - 16) and (stop_dist <= adist + 24); local _r, _g, _b = _hit and 60 or 255, _hit and 220 or 160, 60; viz.line("approach_stop_pred", info.tankx / 256, info.tanky / 256, psx / 256, psy / 256, _r, _g, _b, 160); viz.rect("approach_stop_pred", psx / 256 - 0.3, psy / 256 - 0.3, psx / 256 + 0.3, psy / 256 + 0.3, _r, _g, _b, 200, false); viz.rect("approach_stop_pred", awx / 256 - 0.15, awy / 256 - 0.15, awx / 256 + 0.15, awy / 256 + 0.15, 80, 160, 255, 220, true); viz.text("approach_stop_pred", psx / 256, psy / 256 - 0.5, string.format("stopd=%d adist=%d", stop_dist, adist), "center", _r, _g, _b, 230, 0.3) end
       else
         _throttle_branch = "ap_brake_zone"
@@ -3619,6 +3739,12 @@ function M.steer(state, world, info, goal)
         keys = keys | KEY_FASTER
       end
     end
+
+    -- Fast-approach branch tracer: which throttle branch is actually driving
+    -- the tank this tick during the approach substate. GREEN = predict_stop
+    -- fast-path owns throttle; RED = another branch pre-empted it (the real
+    -- reason a "stage 1" crawl reappears). Single line for the lua_strip rule.
+    if BRAIN_DEBUG_MODE and viz.is_on("fast_approach") and goal.kind == "attack_pill" and goal.substate == "approach" then local _ff = (_throttle_branch == "ap_linedup_fast"); local _r, _g, _b = _ff and 60 or 255, _ff and 230 or 80, 60; viz.text("fast_approach", info.tankx / 256.0, info.tanky / 256.0 - 1.4, string.format("FAST_APPROACH=%s  br=%s  spd=%d  corr=%d  sdist=%d  apbrake=%s", tostring(C.FAST_APPROACH), _throttle_branch, info.speed, abs_corr, _approach_sdist_wu, tostring(_approach_brake_active)), "center", _r, _g, _b, 245, 0.35) end
 
     -- Throttle decision HUD: shows which `elseif` branch the throttle
     -- chain landed in this tick, plus the key inputs each branch
@@ -3813,14 +3939,18 @@ function M.steer(state, world, info, goal)
     })
 
     -- (overlays drawn by init.lua — no duplicates here)
-  -- Attack base: navigate to an adjacent tile, then shoot with clear LOS.
-  -- Shells can be blocked by walls/trees between the tank and the base, so we
-  -- only fire when wall_hp_between == 0.  If blocked we keep driving to the
-  -- adjacent nav target (set above in the nav block) until the path is clear.
+  -- Attack base: drive CONTINUALLY right up beside the base (the nav block above
+  -- targets the cheapest reachable adjacent tile) — no holding at range. Whenever
+  -- a shot from where we are would actually HIT the base (clear LOS, <= MAX_WALLS
+  -- walls, no pillbox/other base/ally tank in the lane) and we're pointed at it,
+  -- fire. We DON'T brake to maintain range; closing in just makes the shot easier
+  -- and trivially clear. The goal ends on its own the moment the base flips to
+  -- dead/capturable (eval_attack_base stops matching → capture_base takes over).
   elseif goal.kind == "attack_base" and info.shells > C.SHELL_RESERVE then
     local wdist_base = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
-    local los_ok = PF.wall_hp_between(tmx, tmy, goal.mx, goal.my) == 0
-    if wdist_base <= C.ATTACK_PILL_RANGE * 256 and los_ok and not info.inboat then
+    local shot_ok = shot_path_clear(info, world, goal.wx, goal.wy, goal.mx, goal.my,
+                                    C.ATTACK_BASE_MAX_WALLS or 1)
+    if wdist_base <= C.ATTACK_PILL_RANGE * 256 and shot_ok and not info.inboat then
       local aim_dir = U.aim_at(info.tankx, info.tanky, goal.wx, goal.wy)
       local corr    = U.adiff(info.direction, aim_dir)
 
@@ -3828,7 +3958,8 @@ function M.steer(state, world, info, goal)
         keys = keys | KEY_MORERANGE
       end
 
-      -- Override turn keys: point at the base
+      -- Override turn keys: point at the base (we keep driving in — the nav block
+      -- supplies the forward drive; we just steer the gun onto the base to fire).
       keys = keys & ~(KEY_TURNLEFT | KEY_TURNRIGHT)
       taps = taps & ~(KEY_TURNLEFT | KEY_TURNRIGHT)
       if     corr >  10 then keys = keys | KEY_TURNRIGHT
@@ -3837,28 +3968,22 @@ function M.steer(state, world, info, goal)
       elseif corr <  -2 then taps = taps | KEY_TURNLEFT
       end
       local still_correcting = (taps & (KEY_TURNLEFT | KEY_TURNRIGHT)) ~= 0
-      if math.abs(corr) < 3 and not still_correcting
-         and shot_path_clear(info, world, goal.wx, goal.wy, goal.mx, goal.my) then
-        keys = keys | KEY_SHOOT
-      end
-
-      -- Slow down while shooting to maintain range
-      if info.speed > 8 then
-        keys = keys & ~KEY_FASTER
-        keys = keys | KEY_SLOWER
+      if math.abs(corr) < 3 and not still_correcting then
+        keys = keys | KEY_SHOOT  -- shot_ok already validated the shell reaches the base
       end
 
       log.reason("steer", {
         mode = "attack_base", aim_corr = corr,
         firing = math.abs(corr) < 3 and not still_correcting,
-        base_dist = wdist_base, los_ok = true,
+        base_dist = wdist_base, shot_ok = true,
       })
     else
-      -- Not in range or LOS blocked: navigation (set in nav block above) is
-      -- driving us to the closest adjacent tile.  Just log the wait state.
+      -- Out of range or no valid shot (pill/base/ally/2+ walls in the way):
+      -- the nav block above is driving us to the closest adjacent tile for a
+      -- clean point-blank shot. Just log the wait state.
       log.reason("steer", {
         mode = "attack_base_approach",
-        base_dist = wdist_base, los_ok = los_ok,
+        base_dist = wdist_base, shot_ok = shot_ok,
       })
     end
   elseif not attack_in_range then

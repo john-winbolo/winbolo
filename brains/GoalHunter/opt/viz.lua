@@ -87,8 +87,8 @@ M.IDS = {
                      long  = "Tank heading in brads (256 = full circle): integer info.direction + float info.tank_angle when present, plus turn-ramp counter (firstLeft/firstRight) value the engine reports." },
 
   -- HUD text (corners).
-  hud_manual_control = { short = "HUD: manual control",
-                         long  = "Top-left/right MANUAL CONTROL banner + key list" },
+  hud_manual         = { short = "HUD: manual (Bolo HUD)",
+                         long  = "Single manual-mode Bolo HUD: bars, build menu, gun light, pill/base grids, key list. Only renders in manual mode." },
   hud_resources      = { short = "HUD: resources",
                          long  = "Shells/Mines/Armour/Trees/Speed/Boat counters" },
   hud_tick_info      = { short = "HUD: tick info (think_ms / phase / goal)",
@@ -97,6 +97,8 @@ M.IDS = {
                          long  = "Replan countdown + phase + reason" },
   hud_goal           = { short = "HUD: current goal",
                          long  = "Active goal kind / target / substate" },
+  hud_next_goal      = { short = "HUD: next goal",
+                         long  = "Lookahead next goal (state.next_goal) or the runner-up candidate" },
   hud_goal_candidates = { short = "HUD: goal candidates",
                           long  = "Pool candidates + scores list" },
   hud_attack_status  = { short = "HUD: attack status",
@@ -176,6 +178,8 @@ M.IDS = {
                         long  = "Always-available stop-distance prediction: one orange square per simulated brake step from the tank to the engine-exact brake-now stop point, drawn EVERY tick regardless of substate (charge_stop_pred / approach_stop_pred only draw during those phases). Plus a STOP <dist> spd=<n> label at the stop point." },
   approach_stop_pred = { short = "Approach stop predict",
                         long  = "attack_pill approach 'lined-up fast-path': when heading error is small the tank cruises at full speed and brakes off cpf.predict_stop instead of the slow proportional creep. Only drawn while aligned. Line+box = predicted brake-now stop point; small blue box = the approach point we're landing on. GREEN when the predicted stop lands on it, ORANGE while still closing." },
+  fast_approach     = { short = "Fast approach branch",
+                        long  = "Names the throttle branch actually driving the tank during the attack_pill 'approach' substate, drawn above the tank EVERY tick the dispatcher runs (i.e. before the stage-2 creep handoff). GREEN = the predict_stop fast-path (ap_linedup_fast) owns throttle as intended; RED = some OTHER branch pre-empted it (lgm_pace_brake / cliff_brake / facing_away / ap_brake_zone) — that's why a slow crawl reappears. Shows FAST_APPROACH flag, branch, spd, corr, sdist." },
   detree_progress   = { short = "Detree progress",
                         long  = "DETREE N/M (left=K) overlay above tank" },
 
@@ -408,8 +412,10 @@ M.IDS = {
                               long  = "PPT shoot_pill exit-trigger bars: kill (pill_hp), swerve (hits taken), abort (ticks since last hp drop)" },
 
   -- Floating "<in-flight>/<pill HP>" label above the target pill.
-  pill_shot_count    = { short = "Pill shot count",
-                         long  = "Cyan '<in-flight shots>/<pill HP>' label floating above the target pill" },
+  pill_shot_count    = { short = "Pill HP",
+                         long  = "Cyan number above the target pill = its remaining HP. Pair with 'Tank shots that hit pill' (orange in-air count): orange >= cyan means the kill is locked." },
+  tank_shots_hit_pill = { short = "Tank shots that hit pill",
+                         long  = "Orange 'air N' above the target pill = OUR tank shells currently IN FLIGHT that will HIT this pill (C-sim trajectory reaches the pill tile, no forest/wall/other-pill blocking first) = goal._on_target_in_flight. When N >= pill HP we hold fire." },
 
   -- Magenta path the kill_hardline take is driving to the tile beside the pill.
   hardline_path       = { short = "Hardline path",
@@ -520,12 +526,22 @@ M._on = {}
 local _on = M._on  -- closure-local alias for the fast path
 
 function M.refresh()
+  -- Collection-mode override (set per-bot by BrainTest's V-window radio):
+  --   "off" → this bot emits NOTHING (so a non-viewed tank isn't collected)
+  --   "all" → this bot emits EVERY layer regardless of its toggle (so a replay
+  --           has all visualizers for it even ones that were off)
+  --   nil/other → normal per-layer toggle behavior.
+  local collect = _G._BT_VIZ_COLLECT
   local suppress_all = _G._BT_VIZ_SUPPRESS_ALL
   for id in pairs(M.IDS) do
-    local g = _G["_BT_VIZ_" .. id:upper()]
-    if suppress_all and id ~= "hud_resources" then
+    if collect == "off" then
+      _on[id] = false
+    elseif collect == "all" then
+      _on[id] = true
+    elseif suppress_all and id ~= "hud_resources" then
       _on[id] = false
     else
+      local g = _G["_BT_VIZ_" .. id:upper()]
       _on[id] = (g ~= false)
     end
   end
@@ -537,6 +553,9 @@ function M.is_on(viz_id)
   if cached ~= nil then return cached end
   -- Cold path: cache not populated yet (first tick / non-BrainTest run).
   assert_id(viz_id)
+  local collect = _G._BT_VIZ_COLLECT
+  if collect == "off" then return false end
+  if collect == "all" then return true end
   if _G._BT_VIZ_SUPPRESS_ALL and viz_id ~= "hud_resources" then
     return false
   end

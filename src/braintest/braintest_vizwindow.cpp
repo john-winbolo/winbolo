@@ -357,6 +357,15 @@ static void vizSetAll(bool on, void (*onToggle)(int)) {
     if (onToggle) onToggle(0);
 }
 
+/* Collection mode for replay recording (the V-window radio). Independent of the
+ * per-row toggles: it controls what each brain EMITS (and thus what gets
+ * recorded), so a replay can carry layers that were toggled off / other tanks.
+ *   0 = only ON layers, followed tank only
+ *   1 = ALL layers (even off) for the viewed/followed tank only
+ *   2 = ALL layers (even off) for ALL tanks  */
+static int sCollectMode = 0;
+int vizWindowCollectMode(void) { return sCollectMode; }
+
 void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
                      void (*onToggle)(int idx)) {
     if (!sImGuiInitialized || !renderer) return;
@@ -375,6 +384,16 @@ void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
 
     ImGui::TextColored(ImVec4(0.6f, 0.65f, 0.75f, 1.0f),
         "Click a row to toggle. Saved to BrainTestViz.ini.");
+
+    /* Collection mode for replay: what the brains EMIT/record, independent of
+     * the per-row toggles below. */
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.7f, 0.75f, 0.85f, 1.0f), "Collect for replay:");
+    ImGui::RadioButton("ON layers, followed tank only",        &sCollectMode, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("ALL layers, viewed tank (even if off)", &sCollectMode, 1);
+    ImGui::SameLine();
+    ImGui::RadioButton("ALL layers, ALL tanks (even if off)",   &sCollectMode, 2);
 
     /* ── Sets (left) + Category toggles (right) ──
      * Two side-by-side groups so the category checkboxes fill the wide

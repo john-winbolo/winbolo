@@ -549,13 +549,24 @@ end
 -- min_speed (optional): stop the sim once speed drops to/below this rather than
 -- running the slow creep tail down to 0. Defaults to PREDICT_STOP_MIN_SPEED.
 function M.predict_stop(tankx, tanky, angle, speed, terrain_cap, trace, min_speed)
-  return cpf_predict_stop(
-    math.floor(tankx + 0.5), math.floor(tanky + 0.5),
+  local sx, sy = math.floor(tankx + 0.5), math.floor(tanky + 0.5)
+  local psx, psy, tr = cpf_predict_stop(
+    sx, sy,
     angle,                              -- pass float through
     speed or 0,
     terrain_cap or 255,
     trace and true or false,
     min_speed or C.PREDICT_STOP_MIN_SPEED or 0)
+  -- Realism scale: the engine model under-predicts the coast, so stretch the
+  -- predicted stop point outward from the start along the predicted travel
+  -- vector. Applied centrally so every consumer (approach / in_range / charge /
+  -- viz) brakes against the same corrected distance.
+  local k = C.STOP_PREDICT_SCALE or 1.0
+  if k ~= 1.0 and psx then
+    psx = math.floor(sx + (psx - sx) * k + 0.5)
+    psy = math.floor(sy + (psy - sy) * k + 0.5)
+  end
+  return psx, psy, tr
 end
 
 --- Tank-aware shot simulation: same as simulate_shot but also checks

@@ -36,7 +36,7 @@ struct TermDoc { const char *term; const char *desc; };
 static const TermDoc kTermDocs[] = {
     {"A*",      "Path cost — Dijkstra/A* weighted grid distance to the target tile"},
     {"A* to standoff", "Path cost to the FIRING STANDOFF tile (R off the enemy), NOT the enemy's tile — so it's cheaper than a test-click on the enemy square."},
-    {"pillbusy", "Pill-take guard: while on an attack_pill goal, an exponentially-growing euclidean-distance penalty for a tank past shoot range, so a far tank can't preempt the take (only a close, threatening one can)."},
+    {"far_preempt", "Pill-take guard: while on an attack_pill goal, an exponentially-growing euclidean-distance penalty for a target (enemy tank or LGM) past shoot range, so a far one can't preempt the take (only a close, threatening one can)."},
     {"raw",     "Uncapped A* cost (shown when it was capped for distant/water targets)"},
     {"base",    "Fixed base constant added to every candidate of this goal type"},
     {"danger",  "Danger at destination × weight — hostile pills/tanks in firing range"},
@@ -54,7 +54,7 @@ static const TermDoc kTermDocs[] = {
     {"diff",    "Difficulty score — terrain around pill makes the attack harder"},
     {"spot",    "Best attack spot — path cost to the nearest good firing position"},
     {"anger",   "Anger wait cost — pill is riled up; penalty reflects waiting for it to calm"},
-    {"xfire",   "Crossfire penalty — other hostile pills nearby will also fire at you"},
+    {"xfire",   "Crossfire penalty from other pills that can fire on your engage spot. attack_tank/kill_lgm: escalating per NEW pill whose range covers the engage spot but NOT your current tile (40, 90, 150, ...) — pills already covering you don't count (A* already prices the travel). attack_pill: per-pill proximity at the standoff."},
     {"intcpt",  "Intercept risk — enemy tank may reach this pill before you do"},
     {"hp",      "Health multiplier — lower pill HP = lower cost (easier kill)"},
     {"wound",   "Wounded discount — heavily damaged pill is a very high-value target"},

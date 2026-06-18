@@ -178,7 +178,9 @@ M.ARMOUR_PER_PILL_HP = 2  -- estimated armour lost per pill HP when attacking
 -- with < UNSAFE_ARMOUR_FLOOR plating, so refusing the take is better
 -- than dying mid-charge.
 M.ATTACK_PILL_UNSAFE_HP_THRESHOLD  = 13
-M.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR  = 30
+M.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR  = 20
+M.ATTACK_PILL_RISKY_ARMOUR         = 30   -- not "unsafe" (that's the 20 floor) but RISKY: below this, a SOLO (non-2+-tank-blitz) attack_pill gets +ATTACK_PILL_RISKY_PENALTY so the bot leans toward safer goals unless an ally shares the fire
+M.ATTACK_PILL_RISKY_PENALTY        = 100  -- flat cost added per the above
 -- "danger_nearby" penalty: when we abort/swerve out of a pill take
 -- because an enemy LGM is within PILL_DANGER_NEARBY_RADIUS of the
 -- target, stamp the pill_id for PILL_DANGER_NEARBY_TICKS so its
@@ -390,6 +392,20 @@ M.APPROACH_PRECISE_TOL  = 16   -- wu: homing tolerance (matches attack.lua appro
 -- the stop at low speed (e.g. 4 → predicted 0 wu vs real ~24 wu) and causing a
 -- speed limit-cycle in charge. Left as a tunable but keep at 0 (full sim).
 M.PREDICT_STOP_MIN_SPEED = 0
+-- predict_stop realism scale: the engine model under-predicts the real coast by
+-- ~15% (tanks were stopping ~2 game-units short / overshooting the brake point),
+-- so the wrapper stretches the predicted stop point outward from the tank by this
+-- factor. Brakes fire slightly earlier and land on the spot. 1.0 = raw model.
+M.STOP_PREDICT_SCALE = 1.15
+-- Fast approach: when true the attack_pill `approach` substate skips BOTH the
+-- standoff-relative proportional brake-zone crawl (stage 1, sdist*0.03) AND the
+-- speed-4 precise creep (stage 2). Instead the tank cruises at full speed and
+-- brakes purely off cpf.predict_stop, hitting KEY_SLOWER the tick the predicted
+-- stop point lands on the approach point (within APPROACH_PRECISE_TOL = 16 wu).
+-- Faster, tighter landings; relies on the engine-exact stop predictor being
+-- accurate (it projects along the tank facing, valid since A* homes straight at
+-- approach_fx on the final leg). Flip false to restore the staged creep.
+M.FAST_APPROACH = true
 M.FLEE_PILL_DIST       = 10  -- tiles to flee away from pill when giving up
 M.POST_KILL_WAIT_TICKS = 15  -- ticks to hold at standoff after pill dies (in-flight shots clear in ~5)
 
@@ -454,7 +470,8 @@ M.WALL_SHIELD_RETREAT_ANGLE    = 90  -- degrees perpendicular to pill->wall line
 M.WALL_SHIELD_LGM_SAFE_TICKS  = 10  -- min ticks after LGM returns before shooting
 M.WALL_SHIELD_LGM_TRIP_WEIGHT = 0.5 -- weight for LGM round-trip ticks in wall candidate scoring
 M.WALL_SHIELD_LGM_MAX_TICKS   = 2000 -- max ticks to simulate LGM travel
-M.PPT_BLOCKERS_ENOUGH         = 1   -- protected-take build phase ends in SUCCESS as soon as this many blockers are NEWLY placed (wall or dropped pillbox). 1 = one blocker is enough cover for a pill take; the build doesn't grind through the rest of the planned shield. Raise to require more cover before firing.
+M.PPT_BLOCKERS_ENOUGH         = 1   -- protected-take build phase ends in SUCCESS as soon as this many blockers are NEWLY placed (wall or dropped pillbox) — but ONLY when a blitz is underway (see PPT_BLOCKERS_ENOUGH_MIN_INWAIT / BLITZ_MIN_READY_TO_CHARGE). Solo, the full planned shield is built. 1 = one blocker is enough cover once the squad is overwhelming the pill.
+M.PPT_BLOCKERS_ENOUGH_MIN_INWAIT = 1  -- the one-blocker early-success also applies while the commander is still building IF at least this many soldiers are already parked in blitz_wait (sharing the pill's fire). Pairs with BLITZ_MIN_READY_TO_CHARGE (the ready-to-charge quorum) as the other trigger.
 M.WALL_SHIELD_LGM_STUCK_TICKS = 150  -- same-tile timeout for LGM simulation (~3 seconds)
 
 -- Base shield: build a wall between the base and a hostile pill while refueling.
@@ -625,6 +642,7 @@ M.REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400  -- 8 s @ 50 Hz: after a friendly shot
 M.ATTACK_PILL_BASE_COST    = 30    -- flat cost added to every attack_pill (like ATTACK_BASE_EXTRA_COST for bases) so a pill take isn't free vs other goals
 M.ATTACK_BASE_EXTRA_COST   = 80    -- flat cost added to hostile base attacks
 M.ATTACK_BASE_THREAT_WEIGHT = 3    -- multiplier for threat at base location (penalise bases behind enemy pills/tanks)
+M.ATTACK_BASE_MAX_WALLS    = 1    -- walls the base shot may cross and still fire (we grind them down). Pillboxes (any owner), other bases, and allied tanks ALWAYS block — if the shot isn't valid we drive in for a point-blank shot instead.
 -- Commit-to-finish: once we put a shot INTO a hostile base, lock onto finishing
 -- it (init.lua goal-override). Stays committed until ATTACK_BASE_COMMIT_TICKS
 -- after the last shot (refreshed each shot), then releases. Only flee or a tank/
@@ -633,6 +651,9 @@ M.ATTACK_BASE_THREAT_WEIGHT = 3    -- multiplier for threat at base location (pe
 M.ATTACK_BASE_COMMIT_TICKS        = 500   -- ~10 s @ 50 Hz since the last shot landed
 M.ATTACK_BASE_PREEMPT_SHOOT_TILES = 8     -- tank/LGM must be within this (≈ shooting distance) to break the base commit
 M.GOAL_CROSSFIRE_PENALTY   = 100   -- goal cost per nearby hostile pill that can crossfire at standoff
+M.GOAL_CROSSFIRE_NEW_PILL_BASE = 40  -- attack_tank/kill_lgm: cost for the 1st pill whose fire-range covers the engage spot but NOT our current tile (NEW exposure only)
+M.GOAL_CROSSFIRE_NEW_PILL_STEP = 10  -- ...and +this for each additional new-exposure pill (so 40, 90, 150, 230, ...)
+M.BASE_PILL_COVER_PEN      = 3     -- capture_base/attack_base: flat cost per enemy pill whose fire-range covers the base tile (clear LOS) but does NOT already cover our current tile. Small per-base nudge toward safer bases; affects which base wins.
 M.EXPLORE_BASE_COST        = 500   -- base cost for exploration fallback
 
 -- Exploration
@@ -917,10 +938,10 @@ M.TANK_COMBAT_ENGAGE_RANGE      = 7     -- tiles: start shooting at this distanc
 -- candidates past shoot range get an exponentially-growing euclidean-distance
 -- penalty so a far tank can't preempt the pill take (only a CLOSE, threatening
 -- one can). penalty = min(BASE^(edist-RANGE) * K, CAP).
-M.ATTACK_TANK_PILLBUSY_RANGE = 7      -- tiles: euclidean shoot range; no penalty within this
-M.ATTACK_TANK_PILLBUSY_BASE  = 1.7    -- exponential base per tile beyond range (~+70%/tile)
-M.ATTACK_TANK_PILLBUSY_K     = 8      -- multiplier on the exponential term
-M.ATTACK_TANK_PILLBUSY_CAP   = 1e6    -- penalty ceiling (effectively un-preemptable when far)
+M.ATTACK_FAR_PREEMPT_RANGE = 7      -- tiles: euclidean shoot range; no penalty within this
+M.ATTACK_FAR_PREEMPT_BASE  = 1.7    -- exponential base per tile beyond range (~+70%/tile)
+M.ATTACK_FAR_PREEMPT_K     = 8      -- multiplier on the exponential term
+M.ATTACK_FAR_PREEMPT_CAP   = 1e6    -- penalty ceiling (effectively un-preemptable when far)
 M.TANK_COMBAT_STANDOFF_RANGE    = 7     -- tiles: nav target when closing (at max shell range)
 M.TANK_COMBAT_OPTIMAL_DIST      = 5     -- tiles: ideal engagement distance
 M.TANK_COMBAT_TOO_CLOSE         = 2     -- tiles: back off if closer than this
@@ -1221,6 +1242,8 @@ M.SQUAD_BLITZ_REPICK_GAP  = 1   -- min ticks between standoff repicks. Safe at 1
 M.SQUAD_BLITZ_JOIN_MIN_MULT    = 0.25  -- biggest blitz-join discount (factor at d=0); exponential rises to 1.0 (no discount) at FULL_TILES
 M.SQUAD_BLITZ_JOIN_FULL_TILES  = 20    -- path tiles at which the join discount fully vanishes; beyond this there's no pull to join (the score, not a range gate, decides)
 M.SQUAD_BLITZ_JOIN_REF_COST    = 120
+M.SQUAD_BLITZ_INRANGE_TILES    = 9    -- euclidean tiles: if an OPEN, not-full blitz pill (or the blitzing commander's tank) is within this shooting distance of our tank, stack an extra flat discount on its attack_pill (we could already help kill it). ~tank gun range + slack.
+M.SQUAD_BLITZ_INRANGE_MULT     = 0.5  -- the extra in-shooting-range multiplier (0.5 = another -50% on top of the distance-curve join discount)
 -- If blitz_negotiate can't find an appropriate standoff for a blitz pill, reject
 -- that pill (no re-discount / no re-pick) for this many ticks (~30s @ 50 tps).
 M.SQUAD_BLITZ_NOSPOT_REJECT_TICKS = 1500

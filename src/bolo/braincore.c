@@ -671,10 +671,9 @@ void brc_write_crash_log(lua_State *L,
   char session_dir[512];
   bool has_session = brc_read_session_dir(L, session_dir, sizeof(session_dir));
 
-  /* Debug-mode gate: production hosts (WinBolo / WinBoloDS) run brains
-   * with BRAIN_DEBUG_MODE=false, where we write NO crash files to disk.
-   * The stderr surface below still fires so crashes are never silent. */
-  bool debug_mode = brc_debug_mode(L);
+  /* Crash files are now written in BOTH debug and production hosts (WinBolo /
+   * WinBoloDS) so a brain crash always leaves a findable log next to the exe.
+   * The rate-limit (suppress_file) is the only thing that gates the write. */
 
   /* Rate-limit: if this brain crashed within the last
    * BRC_CRASH_RATE_LIMIT_SECS, skip the file write so a perpetually-
@@ -698,7 +697,11 @@ void brc_write_crash_log(lua_State *L,
                  prefix, ts_utc, pid, (void *)lptr);
   }
 
-  FILE *f = (suppress_file || !debug_mode) ? NULL : fopen(path, "wb");
+  /* Write the crash file even in PRODUCTION (BRAIN_DEBUG_MODE off) so a brain
+   * crash in a real WinBolo game leaves a findable log next to the exe (in the
+   * CWD when there's no debug session dir). Still honors the rate-limit so a
+   * chronically-crashing brain can't fill the disk. */
+  FILE *f = suppress_file ? NULL : fopen(path, "wb");
   if (f) {
     fprintf(f, "===== BRAIN CRASH =====\n");
     fprintf(f, "[BRAIN_CRASH] method=brain.%s\n", method);
@@ -727,11 +730,6 @@ void brc_write_crash_log(lua_State *L,
             "— file SUPPRESSED (rate-limit: same brain crashed within %ds)\n",
             method, ts_local, bot_idx, tick, (void *)lptr,
             BRC_CRASH_RATE_LIMIT_SECS);
-  } else if (!debug_mode) {
-    fprintf(stderr,
-            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) "
-            "— file logging disabled (BRAIN_DEBUG_MODE off)\n",
-            method, ts_local, bot_idx, tick, (void *)lptr);
   } else {
     fprintf(stderr,
             "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) — see %s\n",
@@ -744,7 +742,7 @@ void brc_write_crash_log(lua_State *L,
    * applicable) for tail-watchers; back-points at the full crash file.
    * Skipped on rate-limit so the index doesn't grow without bound, and
    * skipped entirely in production (BRAIN_DEBUG_MODE off). */
-  if (!suppress_file && debug_mode) {
+  if (!suppress_file) {
     char idx_path[1024];
     SDL_snprintf(idx_path, sizeof(idx_path), "%s/brain_error.log", prefix);
     FILE *idx = fopen(idx_path, "a");

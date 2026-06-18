@@ -63,6 +63,23 @@ local Brain = {}
 -- Manual control state (must be before Brain.think so it captures the upvalue)
 local manual_active = false
 local manual_keys = 0
+-- Manual BUILD state: which build the 1-5 keys/HUD buttons currently select
+-- (1=Trees/farm, 2=Road, 3=Wall/building, 4=Pillbox, 5=Mine — the BUILDMODE_*
+-- order), and a one-shot {x,y,action} latched by a map click that the manual
+-- think emits for a single tick (the engine kicks off one LGM build per emit).
+local manual_build_action = 1          -- BUILDMODE_FARM
+local manual_pending_build = nil
+-- Display labels for the HUD build menu, indexed by BUILDMODE (1..5).
+local MANUAL_BUILD_LABELS = { "TREE", "ROAD", "WALL", "PILL", "MINE" }
+-- Representative colors for each build type (indexed by BUILDMODE): forest green
+-- trees, gray asphalt road, brick-orange wall, amber pillbox, danger-red mine.
+local MANUAL_BUILD_COLORS = {
+  { 60, 190, 70 },    -- TREE  — forest green
+  { 120, 130, 150 },  -- ROAD  — asphalt gray
+  { 205, 110, 45 },   -- WALL  — brick orange
+  { 230, 195, 60 },   -- PILL  — amber pillbox
+  { 215, 60, 55 },    -- MINE  — danger red
+}
 
 local AUTOSTART = true
 local ENABLE_LOGGING = false
@@ -1157,7 +1174,12 @@ function Brain.think(info)
     else
       metrics.inc("danger_skips")
     end
-    return { holdkeys = manual_keys, tapkeys = 0, build = -1, wantallies = info.allies, messagedest = 0, sendmessage = "" }
+    -- Emit a one-shot build if a tile was clicked this/last tick (manual_pending_build
+    -- latched by Brain.on_click). The engine reads {x,y,action} once and kicks off the
+    -- LGM build; clear it so it doesn't repeat. build=-1 means "no build" otherwise.
+    local mbuild = manual_pending_build or -1
+    manual_pending_build = nil
+    return { holdkeys = manual_keys, tapkeys = 0, build = mbuild, wantallies = info.allies, messagedest = 0, sendmessage = "" }
   end
 
 
@@ -2543,15 +2565,19 @@ function Brain.think(info)
       local b = W.base_at(world, gmx, gmy)
       if not b then
         goal_valid = false
-      elseif b.owner == "neutral" then
-        -- Base armour depleted — it went neutral, now just drive over to capture
-        log.event("base_capturable", string.format("(%d,%d) owner=%s", gmx, gmy, b.owner))
+      elseif b.owner == "neutral" or (b.owner == "hostile" and (b.health or 0) == 0) then
+        -- Armour depleted to 0 → CAPTURABLE. A base stays HOSTILE-owned at 0
+        -- armour (it only becomes ours after we drive over it); a neutral base
+        -- is capturable at any armour. Either way: stop shooting, drive over to
+        -- capture. Same condition eval_capture_base uses, so the urgent discount
+        -- below keeps us locked onto this exact base.
+        log.event("base_capturable", string.format("(%d,%d) owner=%s hp=%d", gmx, gmy, b.owner, b.health or 0))
         state.goal.kind = "capture_base"
         state.goal.race_mode = true
         state.pf.status = "idle"
         state.urgent_capture_base = { mx = gmx, my = gmy, tick = now }
       elseif b.owner ~= "hostile" then
-        -- Base became friendly (someone else captured it)
+        -- Base became friendly/ally (someone else captured it)
         goal_valid = false
       elseif (info.shells or 0) <= 0 then
         -- Out of ammo: can't damage a live hostile base. Drop and replan
@@ -3283,6 +3309,18 @@ function Brain.think(info)
         if not tp or tp.owner == "friendly" or (tp.health or 0) <= 0 then
           blitz_locked = false
         end
+      end
+      -- A "blitz" with nobody committed is just a solo take. goal._blitz only
+      -- means the take was FLAGGED as a blitz at plan time (pill HP high) and
+      -- we're broadcasting the call — NOT that a squad formed. A commander with
+      -- zero committed soldiers has no squad to strand, so it must stay
+      -- interruptible (respond to a near tank, emergency build, etc.) like any
+      -- solo take. Only the commander is gated: a soldier's own ready count is
+      -- always 0 (blitz_ready_status counts ITS followers), and a committed
+      -- soldier should still hold its converge to the commander's pill.
+      if blitz_locked and state.squad_role == squad.ROLE_COMMANDER then
+        local joined = squad.blitz_ready_status(state, now, state.player_number, info)
+        if (joined or 0) == 0 then blitz_locked = false end
       end
       -- Committed base attack: once a shot is in (latch above), finish the job.
       -- Holds the goal against all routine goals regardless of cost; releases
@@ -4945,8 +4983,28 @@ function Brain.manual_key(name, down)
   end
 end
 
+-- Manual BUILD-type selector. The host (BrainTest) calls this when the user
+-- presses 1-5 (or clicks a HUD build button) in manual mode. n is 1-based
+-- BUILDMODE (1=Trees, 2=Road, 3=Wall, 4=Pillbox, 5=Mine); clamp to that range.
+function Brain.manual_set_build(n)
+  n = tonumber(n) or 1
+  if n < 1 then n = 1 elseif n > 5 then n = 5 end
+  manual_build_action = n
+end
+
 function Brain.on_click(mx, my, mods)
   mods = mods or {}
+
+  -- Manual mode: a plain (no-modifier) left click on a tile issues a build of
+  -- the currently selected type at that tile. Latched as a one-shot; the manual
+  -- think emits it next tick. Modifier-clicks fall through to the normal
+  -- inspect/force-attack handlers below.
+  if manual_active and not (mods.shift or mods.ctrl or mods.alt) then
+    manual_pending_build = { x = mx, y = my, action = manual_build_action }
+    local rp = state._real_print or print
+    rp(string.format(TAG .. " MANUAL BUILD: %s at (%d,%d)", MANUAL_BUILD_LABELS[manual_build_action] or "?", mx, my))
+    return
+  end
   local rp = state._real_print or print
   -- Debug to file since console may not be visible. Gated on
   -- BRAIN_DEBUG_MODE so the strip removes it from the production

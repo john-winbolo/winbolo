@@ -63,6 +63,23 @@ local Brain = {}
 -- Manual control state (must be before Brain.think so it captures the upvalue)
 local manual_active = false
 local manual_keys = 0
+-- Manual BUILD state: which build the 1-5 keys/HUD buttons currently select
+-- (1=Trees/farm, 2=Road, 3=Wall/building, 4=Pillbox, 5=Mine — the BUILDMODE_*
+-- order), and a one-shot {x,y,action} latched by a map click that the manual
+-- think emits for a single tick (the engine kicks off one LGM build per emit).
+local manual_build_action = 1          -- BUILDMODE_FARM
+local manual_pending_build = nil
+-- Display labels for the HUD build menu, indexed by BUILDMODE (1..5).
+local MANUAL_BUILD_LABELS = { "TREE", "ROAD", "WALL", "PILL", "MINE" }
+-- Representative colors for each build type (indexed by BUILDMODE): forest green
+-- trees, gray asphalt road, brick-orange wall, amber pillbox, danger-red mine.
+local MANUAL_BUILD_COLORS = {
+  { 60, 190, 70 },    -- TREE  — forest green
+  { 120, 130, 150 },  -- ROAD  — asphalt gray
+  { 205, 110, 45 },   -- WALL  — brick orange
+  { 230, 195, 60 },   -- PILL  — amber pillbox
+  { 215, 60, 55 },    -- MINE  — danger red
+}
 
 local AUTOSTART = true
 local ENABLE_LOGGING = false
@@ -1234,8 +1251,8 @@ function Brain.think(info)
       -- magenta sim circles render while the human is driving.
       shot_tracker.update(info, now)
       shot_tracker.draw_overlay(now)
-      viz.hud_text("hud_manual_control", 10, 68, ">>> MANUAL CONTROL <<<", "topleft", 255, 50, 50)
-      viz.hud_text("hud_manual_control", 10, 10, ">>> MANUAL CONTROL <<<", "topright", 255, 50, 50)
+      -- (The old flashing ">>> MANUAL CONTROL <<<" banner is gone — the BOLO HUD
+      -- panel below is itself the manual-mode indicator.)
       -- Show what C side is sending (manual_keys set by Brain.set_manual_keys)
       local mk = manual_keys or 0
       local parts = {}
@@ -1248,21 +1265,102 @@ function Brain.think(info)
       if (mk & KEY_MORERANGE) ~= 0 then parts[#parts+1] = "GUN+" end
       if (mk & KEY_LESSRANGE) ~= 0 then parts[#parts+1] = "GUN-" end
       local key_str = #parts > 0 and table.concat(parts, " ") or "(none)"
-      viz.hud_text("hud_manual_control", 10, 80, "Keys: " .. key_str, "topleft", 255, 255, 100)
-      viz.hud_text("hud_manual_control", 10, 92, string.format("spd=%d dir=%d arm=%d sh=%d",
+      viz.hud_text("hud_manual", 10, 80, "Keys: " .. key_str, "topleft", 255, 255, 100)
+      viz.hud_text("hud_manual", 10, 92, string.format("spd=%d dir=%d arm=%d sh=%d",
         info.speed, info.direction, info.armour, info.shells), "topleft", 200, 200, 200)
-      -- HUD: tank stats (offset up so the kill-attempt indicator can sit
-      -- under it without overlap on shorter window heights).
-      local y = 90
+      -- ── Bolo-style status panel (approximation, primitive shapes) ──
+      -- A right-side Bolo HUD has four vertical bars (shells/mines/armour/trees)
+      -- growing from the bottom, then a build menu of 5 selectable icons. We draw
+      -- a primitive version: a dark panel, 4 colored bars, and a 5-box build menu
+      -- where the box matching the 1-5 selection (manual_build_action) is lit.
+      -- Single viz layer for the whole manual Bolo HUD (one toggle); only drawn
+      -- here, inside the manual-mode branch, so it never renders in autonomous play.
+      local HID = "hud_manual"
+      local px0, py0, pw, ph = 8, 110, 168, 292
+      viz.hud_rect(HID, px0, py0, pw, ph, "topleft", 22, 22, 32, 215, true)
+      viz.hud_rect(HID, px0, py0, pw, ph, "topleft", 90, 90, 110, 255, false)
+      viz.hud_text(HID, px0 + 6, py0 + 5, "BOLO HUD", "topleft", 210, 210, 220)
+      viz.hud_text(HID, px0 + 110, py0 + 5, "MANUAL", "topleft", 255, 80, 80)
+      -- Gun-ready light (info.reload is a bool: true = still reloading).
+      local gun_ready = not info.reload
+      local gr, gg, gb = gun_ready and 90 or 235, gun_ready and 230 or 80, gun_ready and 90 or 80
+      viz.hud_rect(HID, px0 + 6, py0 + 18, 78, 11, "topleft", gr, gg, gb, 90, true)
+      viz.hud_rect(HID, px0 + 6, py0 + 18, 78, 11, "topleft", gr, gg, gb, 255, false)
+      viz.hud_text(HID, px0 + 9, py0 + 19, gun_ready and "GUN READY" or "RELOADING", "topleft", gr, gg, gb)
+      -- Four vertical resource bars, max 40, grow from a shared baseline.
+      local bars = {
+        { lbl = "SH", v = info.shells, r = 255, g = 230, b = 80 },
+        { lbl = "MI", v = info.mines,  r = 255, g = 150, b = 40 },
+        { lbl = "AR", v = info.armour, r = 90,  g = 230, b = 90 },
+        { lbl = "TR", v = info.trees,  r = 70,  g = 175, b = 70 },
+      }
+      local baseline, maxH, bw = py0 + 150, 108, 24
+      for i, b in ipairs(bars) do
+        local bx   = px0 + 12 + (i - 1) * (bw + 12)
+        local v    = math.max(0, math.min(40, b.v or 0))
+        local valH = math.floor((v / 40) * maxH + 0.5)
+        viz.hud_rect(HID, bx, baseline - maxH, bw, maxH, "topleft", 80, 80, 95, 255, false)
+        if valH > 0 then viz.hud_rect(HID, bx, baseline - valH, bw, valH, "topleft", b.r, b.g, b.b, 235, true) end
+        viz.hud_text(HID, bx + 4, baseline - maxH - 11, tostring(v), "topleft", 220, 220, 220)
+        viz.hud_text(HID, bx + 6, baseline + 3, b.lbl, "topleft", b.r, b.g, b.b)
+      end
+      -- Build menu: 5 boxes; the selected one (1-5) is lit blue with a white border.
+      local by = py0 + 168
+      for i = 1, 5 do
+        local bx  = px0 + 2 + (i - 1) * 32
+        local sel = (i == manual_build_action)
+        local c   = MANUAL_BUILD_COLORS[i]
+        -- Fill is the build's representative color: bright when selected, dimmed
+        -- when not. Border + label go white on the selected one, gray otherwise.
+        local mul = sel and 0.85 or 0.40
+        local fr, fg, fb = math.floor(c[1] * mul), math.floor(c[2] * mul), math.floor(c[3] * mul)
+        local orr, og, ob = sel and 255 or 90, sel and 255 or 90, sel and 255 or 100
+        viz.hud_rect(HID, bx, by, 30, 24, "topleft", fr, fg, fb, 235, true)
+        viz.hud_rect(HID, bx, by, 30, 24, "topleft", orr, og, ob, 255, false)
+        viz.hud_text(HID, bx + 12, by + 2, tostring(i), "topleft",
+          sel and 255 or 220, sel and 255 or 220, sel and 255 or 220)
+        viz.hud_text(HID, bx + 3, by + 13, MANUAL_BUILD_LABELS[i], "topleft",
+          sel and 255 or 205, sel and 255 or 205, sel and 255 or 210)
+      end
+      -- Status footer: builder/LGM state, speed, boat, controls hint.
       local bld_str, bld_r, bld_g, bld_b = hud_builder_status(info, state)
-      viz.hud_text("hud_resources", 10, y,      string.format("Shells %d/%d", info.shells, 40), "bottomleft", 255, 255, 100)
-      viz.hud_text("hud_resources", 10, y + 12, string.format("Builder%s", bld_str), "bottomleft", bld_r, bld_g, bld_b)
-      viz.hud_text("hud_resources", 10, y + 24, string.format("Mines  %d/%d", info.mines,  40), "bottomleft", 255, 180, 50)
-      viz.hud_text("hud_resources", 10, y + 36, string.format("Armour %d/%d", info.armour, 40), "bottomleft", 100, 255, 100)
-      viz.hud_text("hud_resources", 10, y + 48, string.format("Trees  %d/%d", info.trees,  40), "bottomleft", 80, 200, 80)
-      viz.hud_text("hud_resources", 10, y + 60, string.format("Speed  %d", info.speed), "bottomleft", 200, 200, 255)
-      viz.hud_text("hud_resources", 10, y + 72, string.format("Boat   %s", info.inboat and "YES" or "no"),
-        "bottomleft", info.inboat and 100 or 200, info.inboat and 200 or 200, 255)
+      local fy = by + 28
+      viz.hud_text(HID, px0 + 6, fy,      string.format("LGM%s", bld_str), "topleft", bld_r, bld_g, bld_b)
+      viz.hud_text(HID, px0 + 6, fy + 11, string.format("SPD %d  BOAT %s   1-5=type  click=build",
+        info.speed, info.inboat and "Y" or "n"), "topleft", 185, 185, 200)
+      -- ── Pillbox + base alliance grids (the iconic Bolo ownership rows) ──
+      -- One small square per pill/base, colored by alliance. green=yours,
+      -- blue=allied, yellow=neutral, red=hostile, dim=dead (pills only).
+      local function owner_col(o)
+        if     o == "friendly" then return 90, 230, 90
+        elseif o == "allied"   then return 90, 170, 255
+        elseif o == "neutral"  then return 230, 220, 90
+        else                        return 235, 80, 80 end
+      end
+      local function gather_sorted(tbl, want_health)
+        local out = {}
+        for id, e in pairs(tbl or {}) do
+          out[#out + 1] = { id = id, owner = e.owner, dead = want_health and (e.health or 0) <= 0 or false }
+        end
+        table.sort(out, function(a, b) return a.id < b.id end)
+        return out
+      end
+      local function draw_grid(items, gx, gy, per_row)
+        for i, it in ipairs(items) do
+          local cx = gx + ((i - 1) % per_row) * 11
+          local cy = gy + math.floor((i - 1) / per_row) * 11
+          local r, g, b = owner_col(it.owner)
+          if it.dead then r, g, b = 70, 70, 80 end
+          viz.hud_rect(HID, cx, cy, 9, 9, "topleft", r, g, b, 235, true)
+          viz.hud_rect(HID, cx, cy, 9, 9, "topleft", 20, 20, 28, 255, false)
+        end
+      end
+      local pillg = gather_sorted(world.pills, true)
+      local baseg = gather_sorted(world.bases, false)
+      viz.hud_text(HID, px0 + 6, fy + 24, string.format("PILLS %d", #pillg), "topleft", 200, 200, 210)
+      draw_grid(pillg, px0 + 6, fy + 34, 8)
+      viz.hud_text(HID, px0 + 6, fy + 58, string.format("BASES %d", #baseg), "topleft", 200, 200, 210)
+      draw_grid(baseg, px0 + 6, fy + 68, 8)
       -- Still draw crosshairs at the actual shell-landing distance.
       -- sightLen is in half-tiles (see constants.lua GUNSIGHT_MAX
       -- comment): shell travels sightLen/2 map tiles.  At max
@@ -1275,7 +1373,12 @@ function Brain.think(info)
       viz.line("tank_aim_marker", aim_wx - 0.3, aim_wy, aim_wx + 0.3, aim_wy, 255, 255, 0, 150)
       viz.line("tank_aim_marker", aim_wx, aim_wy - 0.3, aim_wx, aim_wy + 0.3, 255, 255, 0, 150)
     end -- BRAIN_DEBUG_MODE (manual mode)
-    return { holdkeys = manual_keys, tapkeys = 0, build = -1, wantallies = info.allies, messagedest = 0, sendmessage = "" }
+    -- Emit a one-shot build if a tile was clicked this/last tick (manual_pending_build
+    -- latched by Brain.on_click). The engine reads {x,y,action} once and kicks off the
+    -- LGM build; clear it so it doesn't repeat. build=-1 means "no build" otherwise.
+    local mbuild = manual_pending_build or -1
+    manual_pending_build = nil
+    return { holdkeys = manual_keys, tapkeys = 0, build = mbuild, wantallies = info.allies, messagedest = 0, sendmessage = "" }
   end
 
 
@@ -1640,6 +1743,27 @@ function Brain.think(info)
       else
         -- Skip ahead to keep gy aligned for the candidates block below.
         gy = 4 + 10 + ((g.substate and g.substate ~= "" and g.substate ~= "-") and 10 or 0) + 10
+      end
+      -- NEXT goal: the precomputed drive-through lookahead (state.next_goal)
+      -- when it's set, otherwise the cheapest NON-winning pool candidate — i.e.
+      -- "what I'd switch to next". Own layer so it can be toggled independently.
+      if viz.is_on("hud_next_goal") then
+        local nk, nmx, nmy, ncost
+        if state.next_goal and state.next_goal.kind and state.next_goal.kind ~= "none" then
+          nk, nmx, nmy = state.next_goal.kind, state.next_goal.mx, state.next_goal.my
+        else
+          local best = nil
+          for _, c in ipairs(state.last_goal_pool or {}) do
+            if not c.winner and c.cost and (not best or c.cost < best.cost) then best = c end
+          end
+          if best then nk, ncost = best.desc or "?", best.cost end
+        end
+        if nk then
+          local txt = nmx and string.format("NEXT: %s @(%d,%d)", nk, nmx, nmy)
+                          or string.format("NEXT: %s  cost=%.0f", nk, ncost or 0)
+          viz.hud_text("hud_next_goal", 10, gy, txt, "topright", 120, 200, 255)
+          gy = gy + 10
+        end
       end
       -- Candidate pool
       local pool = state.last_goal_pool or {}
@@ -3123,19 +3247,23 @@ function Brain.think(info)
       local b = W.base_at(world, gmx, gmy)
       if not b then
         goal_valid = false
-      elseif b.owner == "neutral" then
-        -- Base armour depleted — it went neutral, now just drive over to capture
+      elseif b.owner == "neutral" or (b.owner == "hostile" and (b.health or 0) == 0) then
+        -- Armour depleted to 0 → CAPTURABLE. A base stays HOSTILE-owned at 0
+        -- armour (it only becomes ours after we drive over it); a neutral base
+        -- is capturable at any armour. Either way: stop shooting, drive over to
+        -- capture. Same condition eval_capture_base uses, so the urgent discount
+        -- below keeps us locked onto this exact base.
         if BRAIN_DEBUG_MODE then
-          print(string.format(TAG .. " t=%d BASE CAPTURABLE: (%d,%d) owner=%s — switching to capture_base",
-                now, gmx, gmy, b.owner))
+          print(string.format(TAG .. " t=%d BASE CAPTURABLE: (%d,%d) owner=%s hp=%d — switching to capture_base",
+                now, gmx, gmy, b.owner, b.health or 0))
         end
-        log.event("base_capturable", string.format("(%d,%d) owner=%s", gmx, gmy, b.owner))
+        log.event("base_capturable", string.format("(%d,%d) owner=%s hp=%d", gmx, gmy, b.owner, b.health or 0))
         state.goal.kind = "capture_base"
         state.goal.race_mode = true
         state.pf.status = "idle"
         state.urgent_capture_base = { mx = gmx, my = gmy, tick = now }
       elseif b.owner ~= "hostile" then
-        -- Base became friendly (someone else captured it)
+        -- Base became friendly/ally (someone else captured it)
         goal_valid = false
       elseif (info.shells or 0) <= 0 then
         -- Out of ammo: can't damage a live hostile base. Drop and replan
@@ -3965,6 +4093,18 @@ function Brain.think(info)
         if not tp or tp.owner == "friendly" or (tp.health or 0) <= 0 then
           blitz_locked = false
         end
+      end
+      -- A "blitz" with nobody committed is just a solo take. goal._blitz only
+      -- means the take was FLAGGED as a blitz at plan time (pill HP high) and
+      -- we're broadcasting the call — NOT that a squad formed. A commander with
+      -- zero committed soldiers has no squad to strand, so it must stay
+      -- interruptible (respond to a near tank, emergency build, etc.) like any
+      -- solo take. Only the commander is gated: a soldier's own ready count is
+      -- always 0 (blitz_ready_status counts ITS followers), and a committed
+      -- soldier should still hold its converge to the commander's pill.
+      if blitz_locked and state.squad_role == squad.ROLE_COMMANDER then
+        local joined = squad.blitz_ready_status(state, now, state.player_number, info)
+        if (joined or 0) == 0 then blitz_locked = false end
       end
       -- Committed base attack: once a shot is in (latch above), finish the job.
       -- Holds the goal against all routine goals regardless of cost; releases
@@ -6614,8 +6754,28 @@ function Brain.manual_key(name, down)
   end
 end
 
+-- Manual BUILD-type selector. The host (BrainTest) calls this when the user
+-- presses 1-5 (or clicks a HUD build button) in manual mode. n is 1-based
+-- BUILDMODE (1=Trees, 2=Road, 3=Wall, 4=Pillbox, 5=Mine); clamp to that range.
+function Brain.manual_set_build(n)
+  n = tonumber(n) or 1
+  if n < 1 then n = 1 elseif n > 5 then n = 5 end
+  manual_build_action = n
+end
+
 function Brain.on_click(mx, my, mods)
   mods = mods or {}
+
+  -- Manual mode: a plain (no-modifier) left click on a tile issues a build of
+  -- the currently selected type at that tile. Latched as a one-shot; the manual
+  -- think emits it next tick. Modifier-clicks fall through to the normal
+  -- inspect/force-attack handlers below.
+  if manual_active and not (mods.shift or mods.ctrl or mods.alt) then
+    manual_pending_build = { x = mx, y = my, action = manual_build_action }
+    local rp = state._real_print or print
+    rp(string.format(TAG .. " MANUAL BUILD: %s at (%d,%d)", MANUAL_BUILD_LABELS[manual_build_action] or "?", mx, my))
+    return
+  end
   local rp = state._real_print or print
   -- Debug to file since console may not be visible. Gated on
   -- BRAIN_DEBUG_MODE so the strip removes it from the production
