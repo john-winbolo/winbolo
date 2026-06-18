@@ -366,8 +366,8 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
           basesEnqueueCaptureMessage(&csPtr->sim, csPtr,
                                      events[i].data[0], events[i].data[1]);
         }
-        /* Steam stat: base captures */
-        if (events[i].data[0] == playerNum) {
+        /* Steam stat: base captures (human only — bots run this same path) */
+        if (isHuman && events[i].data[0] == playerNum) {
           if (events[i].data[1] == NEUTRAL) {
             steam_increment_stat("STAT_BASES_CAPTURED_NEUTRAL", 1);
             steamStatsUpdated = true;
@@ -377,7 +377,8 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
           }
         }
         /* Steam achievement: first base capture (networked, non-allied) */
-        if (csPtr->networkGameType != netSingle &&
+        if (isHuman &&
+            csPtr->networkGameType != netSingle &&
             csPtr->hasAnyBaseCaptured == false &&
             events[i].data[0] == playerNum &&
             events[i].data[1] != NEUTRAL &&
@@ -410,8 +411,8 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
             }
           }
         }
-        /* Steam stat: pill captures */
-        if (events[i].data[0] == playerNum) {
+        /* Steam stat: pill captures (human only — bots run this same path) */
+        if (isHuman && events[i].data[0] == playerNum) {
           if (events[i].data[1] == NEUTRAL) {
             steam_increment_stat("STAT_PILLS_CAPTURED_NEUTRAL", 1);
             steamStatsUpdated = true;
@@ -421,7 +422,8 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
           }
         }
         /* Steam achievement: first pill capture (networked, non-allied) */
-        if (csPtr->networkGameType != netSingle &&
+        if (isHuman &&
+            csPtr->networkGameType != netSingle &&
             csPtr->hasAnyPillCaptured == false &&
             events[i].data[0] == playerNum &&
             events[i].data[1] != NEUTRAL &&
@@ -491,13 +493,13 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
           playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
           csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
         }
-        /* Steam stats: LGM losses and kills */
-        if (events[i].data[0] == playerNum) {
+        /* Steam stats: LGM losses and kills (human only — bots run this same path) */
+        if (isHuman && events[i].data[0] == playerNum) {
           steam_increment_stat("STAT_LGM_LOSSES", 1);
           steamStatsUpdated = true;
           csPtr->myLgmLossesThisGame++;
         }
-        if (events[i].data[1] == playerNum && events[i].data[0] != playerNum) {
+        if (isHuman && events[i].data[1] == playerNum && events[i].data[0] != playerNum) {
           /* No stats for killing your own LGM */
           steam_increment_stat("STAT_LGM_KILLS", 1);
           steamStatsUpdated = true;
@@ -529,10 +531,13 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         /* data: [killer, killed, deathCause, carriedPills] */
         if (events[i].data[0] == playerNum && events[i].data[0] != events[i].data[1]) {
           tankAddKill(&csPtr->sim, &MY_TANK(csPtr));
-          steam_increment_stat("STAT_TANK_KILLS", 1);
-          steamStatsUpdated = true;
+          /* Steam stat: human only — bots run this same path. */
+          if (isHuman) {
+            steam_increment_stat("STAT_TANK_KILLS", 1);
+            steamStatsUpdated = true;
+          }
         }
-        if (events[i].data[1] == playerNum) {
+        if (isHuman && events[i].data[1] == playerNum) {
           csPtr->myDeathsThisGame++;
           /* Steam achievements: drown */
           if (events[i].data[2] == LAST_DEATH_BY_DEEPSEA) {
@@ -1062,8 +1067,9 @@ void clientApplySnapshot(ClientSim *csPtr,
 
   bool steamStatsUpdated = false;
 
-  /* Player count tracking (ACH_PLAYERS_6/8/16) */
-  {
+  /* Player count tracking (ACH_PLAYERS_6/8/16) — human only; bots run this
+   * same snapshot path and must not unlock achievements for the local user. */
+  if (isHuman) {
     BYTE numPlayers = playersGetNumPlayers(&csPtr->sim.plyrs);
     if (numPlayers > csPtr->maxPlayersSeenThisGame) {
       csPtr->maxPlayersSeenThisGame = numPlayers;
