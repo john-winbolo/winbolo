@@ -284,10 +284,8 @@ static struct {
     /* Per-client map download state */
     ClientMapDownload mapDownload[MAX_TANKS];
 
-    /* Per-client reliable event queues (game events: sounds, kills, etc.) */
-    ClientEventQueue eventQueues[MAX_TANKS];
-
-    /* Per-client reliable map event queues (EVENT_MAP_CHANGE only) */
+    /* Per-client reliable map event queues (EVENT_MAP_CHANGE only).
+     * Game events ride CHANNEL_GAME directly; there is no game-event queue. */
     ClientEventQueue mapEventQueues[MAX_TANKS];
 
     /* Cumulative count of EVENT_MAP_CHANGE events dropped per slot because the
@@ -1880,10 +1878,7 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     udpServer.clients[slot].clientType  = clientType;
     udpServer.clients[slot].clientHints = clientHints;
 
-    /* Initialize reliable event queues for this client */
-    udpServer.eventQueues[slot].nextSeq = 1;
-    udpServer.eventQueues[slot].ackedSeq = 1;
-    memset(udpServer.eventQueues[slot].buffer, 0, sizeof(udpServer.eventQueues[slot].buffer));
+    /* Initialize the reliable map event queue for this client */
     udpServer.mapEventQueues[slot].nextSeq = 1;
     udpServer.mapEventQueues[slot].ackedSeq = 1;
     memset(udpServer.mapEventQueues[slot].buffer, 0, sizeof(udpServer.mapEventQueues[slot].buffer));
@@ -2201,10 +2196,9 @@ static void serverHandleInput(const uint8_t *buf, int len,
         /* Override playerNum to prevent spoofing */
         pkt.playerNum = (uint8_t)clientIdx;
 
-        /* Advance reliable event ACKs from this client */
-        if (pkt.eventAck > udpServer.eventQueues[clientIdx].ackedSeq) {
-            udpServer.eventQueues[clientIdx].ackedSeq = pkt.eventAck;
-        }
+        /* Advance the reliable map-event ACK from this client.  Game events
+         * ride CHANNEL_GAME with their own acks now, so pkt.eventAck — still
+         * stamped by the client — is ignored here. */
         if (pkt.mapEventAck > udpServer.mapEventQueues[clientIdx].ackedSeq) {
             udpServer.mapEventQueues[clientIdx].ackedSeq = pkt.mapEventAck;
         }
@@ -2286,7 +2280,6 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     BaseSnapshot baseSnaps[MAX_SNAPSHOT_BASES];
     PillSnapshot pillSnaps[MAX_SNAPSHOT_PILLS];
     GameEvent eventSnaps[MAX_SNAPSHOT_EVENTS];
-    ClientEventQueue *evQ = &udpServer.eventQueues[clientIdx];
     ClientEventQueue *mapQ = &udpServer.mapEventQueues[clientIdx];
     UdpServerClient *client = &udpServer.clients[clientIdx];
 
@@ -2367,21 +2360,10 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
         pos += packPillSnapshot(buf + pos, &pillSnaps[i]);
     }
 
-    /* Pack reliable game events from per-client queue (all unacked events).
-     * These are transport-specific — serverSimBuildSnapshot() produces
-     * per-tick events, but the reliable queue handles retransmission. */
-    reliableBaseSeq = evQ->ackedSeq;
-    {
-        uint32_t seq;
-        for (seq = evQ->ackedSeq; seq < evQ->nextSeq; seq++) {
-            uint32_t idx = seq % RELIABLE_EVENT_BUFFER_SIZE;
-            if (pos + GAME_EVENT_MAX_WIRE_SIZE > (int)sizeof(buf)) break;
-            if (evQ->buffer[idx].seq != seq) break; /* Buffer wrapped — stop */
-            pos += packGameEvent(buf + pos, &evQ->buffer[idx].event);
-            reliableEventCount++;
-            if (reliableEventCount >= 255) break; /* Cap to uint8_t max */
-        }
-    }
+    /* The snapshot reliable game-tail is gone — game events ride CHANNEL_GAME.
+     * reliableEventCount / reliableBaseSeq stay 0 (see their init) and the
+     * header still emits the two slots as 0 below, keeping the wire layout
+     * byte-identical until the separate wire-compaction commit drops them. */
 
     /* Drain held map-change events onto reliable channel 1 (CHANNEL_MAP),
      * tagged with this slot's map generation: payload = [gen u32][GameEvent].
@@ -2425,6 +2407,9 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     buf[countsPos + 2] = hdr.tkExplosionCount;
     buf[countsPos + 3] = hdr.baseCount;
     buf[countsPos + 4] = hdr.pillCount;
+    /* Reserved-as-0: the reliable game-tail moved to CHANNEL_GAME.  These two
+     * slots stay on the wire (header still 22 bytes) until the wire-compaction
+     * commit removes them server-pack ↔ client-unpack together. */
     buf[countsPos + 5] = (uint8_t)reliableEventCount;
     packU32(buf + countsPos + 6, reliableBaseSeq);
     packU16(buf + countsPos + 10, hdr.mapChecksum);
@@ -3081,10 +3066,8 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
     mpDiagLog("[srv] GAME_START BEGIN (rebasing game/map channel send baselines)");
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
-            mpDiagLog("[srv] GAME_START wipe slot=%d pre ev(ack=%u next=%u) mapEv(ack=%u next=%u)",
+            mpDiagLog("[srv] GAME_START wipe slot=%d pre mapEv(ack=%u next=%u)",
                       i,
-                      (unsigned)udpServer.eventQueues[i].ackedSeq,
-                      (unsigned)udpServer.eventQueues[i].nextSeq,
                       (unsigned)udpServer.mapEventQueues[i].ackedSeq,
                       (unsigned)udpServer.mapEventQueues[i].nextSeq);
         }
@@ -3102,11 +3085,11 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
             udpServer.mapDownload[i].xferKind = MAP_XFER_NONE;
             udpServer.mapDownload[i].xferBegun = false;
         }
-        /* Drop the previous game's unacked reliable events on the game and
-         * map queues, but keep the sequence counter monotonic — never reuse
-         * low seq numbers.  For both queues set ackedSeq = nextSeq (queue now
-         * empty) and memset the buffer (clears stale delivered bodies so they
-         * can't be resent), but do NOT reset nextSeq.
+        /* Drop the previous game's unacked reliable events on the map queue,
+         * but keep the sequence counter monotonic — never reuse low seq
+         * numbers.  Set ackedSeq = nextSeq (queue now empty) and memset the
+         * buffer (clears stale delivered bodies so they can't be resent), but
+         * do NOT reset nextSeq.
          *
          * This is the fix for the lobby→running seq-reuse desync: a stale
          * in-flight lobby event delayed past game start now carries seq
@@ -3116,9 +3099,6 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
          * lobby events looked newer than the new low-seq running events).
          * The reliable game/map channels get the same forward truncation via
          * the per-client CHANNEL_RESET below. */
-        udpServer.eventQueues[i].ackedSeq = udpServer.eventQueues[i].nextSeq;
-        memset(udpServer.eventQueues[i].buffer, 0,
-               sizeof(udpServer.eventQueues[i].buffer));
         udpServer.mapEventQueues[i].ackedSeq = udpServer.mapEventQueues[i].nextSeq;
         memset(udpServer.mapEventQueues[i].buffer, 0,
                sizeof(udpServer.mapEventQueues[i].buffer));
