@@ -131,14 +131,6 @@ typedef struct {
      * used to avoid resending an unchanged ACK. */
     uint32_t controlAckPendingTick;
     uint32_t lastSentControlAck;
-    /* Set once the client has snapped controlEventAck down into the new
-     * sequence space after the server's game-start queue wipe (seq-1
-     * RUNNING).  Cleared on the reverse game-over / lobby transition so
-     * the next game's wipe re-adopts.  Decouples RESET-DETECT from
-     * inLobby timing: under loss/reorder inLobby can flip false before
-     * the seq-1 RUNNING snapshot is processed, which used to skip the
-     * snap forever and wedge the control queue. */
-    bool runningSeqAdopted;
 
     /* Join handshake state */
     uint32_t joinAttempts;
@@ -1006,17 +998,6 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
             /* Drop any pre-flip snapshot still buffered in hasSnapshot. */
             c->hasSnapshot = false;
         }
-        /* Applying RUNNING through the reliable control sequence means the
-         * client is now caught up in the running sequence space, so mark it
-         * adopted.  This covers the direct-into-running joiner (controlEventAck
-         * was already at seq 1, so RESET-DETECT's baseSeq < ack test never
-         * tripped and never set the flag): without it, a retransmitted
-         * join-sync tail would re-trip RESET-DETECT and re-apply the whole
-         * sequence.  The out-of-band RUNNING delivery that flips inLobby early
-         * does not reach this path (it bypasses the reliable ack machinery),
-         * so the snapshot-tail snap is still reached when the genuine wipe
-         * needs it. */
-        c->runningSeqAdopted = true;
         /* Dispatch the event itself — flips netStat to running, clears
          * inLobby on the sim, etc. The no-lobby joiner still needs this
          * to flip netStat → netRunning even though wasInLobby is false.
@@ -1026,17 +1007,6 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
          * straggler is dedup-dropped at the channel before it reaches a drain. */
         clientSimApplyControl(c->clientSim, evt);
         return;
-    }
-    /* Clear the running-sequence adoption flag on the reverse transition so
-     * the next game-start wipe re-adopts the fresh seq space.  Round-end
-     * (running → game-over → lobby) does NOT wipe the server's control
-     * queue — only transportUdpServerOnGameStart does — so clearing here
-     * just re-arms RESET-DETECT for the next wipe.  No seq-1 RUNNING is
-     * published until that wipe, so this can't trigger a spurious re-snap
-     * within the current sequence space. */
-    if (evt->type == CTRL_GAME_PHASE_GAME_OVER ||
-        evt->type == CTRL_GAME_PHASE_LOBBY) {
-        c->runningSeqAdopted = false;
     }
     /* Default path — identical to the legacy direct-dispatch route. */
     clientSimApplyControl(c->clientSim, evt);
@@ -3067,7 +3037,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->controlEventAck = 1;   /* First valid control event seq is 1 */
     c->controlAckPendingTick = 0;
     c->lastSentControlAck = 0;
-    c->runningSeqAdopted = false;
     c->localTick = 0;
     c->lastPingSentTick = 0;
     c->pingMs = 0;

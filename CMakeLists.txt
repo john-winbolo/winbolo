@@ -2543,7 +2543,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_news_parse.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
-    tests/unit/test_control_event_queue.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_bolo_rand.c
@@ -2806,13 +2805,6 @@ set(_unit_test_names
     wbn_prefs_parse_updatedat
     wbn_prefs_decide
     wbn_prefs_build_put_body
-    queue_init_is_valid
-    queue_enqueue_advances_nextSeq
-    queue_ack_advance_within_range
-    queue_stale_ack_above_nextSeq
-    queue_wipe_resets_both_seqs
-    queue_enqueue_into_empty_after_wipe
-    queue_hasspace_at_capacity
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_inbox_push_peek_fifo

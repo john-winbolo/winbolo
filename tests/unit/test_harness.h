@@ -323,18 +323,7 @@ int run_alliance_reset_decoder_rejects_short(void);
 int run_alliance_reset_reapply_publishes_one_event(void);
 int run_alliance_reset_apply_rebuilds_alliances(void);
 
-/* Reliable control-event queue regression tests (test_control_event_queue.c).
- * Each captures a specific bug that shipped during the
- * reliable-control-events rollout. */
-int run_queue_init_is_valid(void);
-int run_queue_enqueue_advances_nextSeq(void);
-int run_queue_ack_advance_within_range(void);
-int run_queue_stale_ack_above_nextSeq(void);
-int run_queue_wipe_resets_both_seqs(void);
-int run_queue_enqueue_into_empty_after_wipe(void);
-int run_queue_hasspace_at_capacity(void);
-int run_control_ack_resend_due(void);
-int run_control_seq_reset_detect(void);
+/* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
