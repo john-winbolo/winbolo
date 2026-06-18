@@ -132,7 +132,7 @@ uint16_t pingEwmaUpdate(PingEwma *e, uint16_t sample);
  * decoders length-check each field and reject malformed packets. */
 #define LOBBY_SLOT_WIRE_SIZE (1 + 1 + PACKET_MAX_PLAYER_NAME + 1 + 1 + 1 + 2 + 2 + 1 + 1)
 
-#define INPUT_PACKET_WIRE_SIZE 25
+#define INPUT_PACKET_WIRE_SIZE 21
 /* Upper bound on one non-stub tank entry: the 11-byte core (incl. presence
  * mask) plus every field group present at once. NOT the typical on-wire size —
  * most entries are far smaller because absent (zero) groups are omitted. */

@@ -50,11 +50,10 @@ static int check_edge_predicate(void) {
     UT_ASSERT(udpInputEdgeChanged(&a, &b));
 
     /* Identical controls but different per-send stamps → NOT an edge.
-     * tick, the two reliable ACKs and ping are re-stamped on every
+     * tick, the reliable map ACK and ping are re-stamped on every
      * record; they must never read as a control change. */
     b = a;
     b.tick            = a.tick + 1;
-    b.eventAck        = 0xDEADBEEFu;
     b.mapEventAck     = 0x12345678u;
     b.pingMs          = 250;
     UT_ASSERT(!udpInputEdgeChanged(&a, &b));

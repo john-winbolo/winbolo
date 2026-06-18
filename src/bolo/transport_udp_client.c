@@ -119,8 +119,7 @@ typedef struct {
     uint32_t lastSnapshotSeq;  /* Sequence number of latest snapshot */
     uint32_t lastSnapshotTick; /* Local tick when last snapshot arrived (for timeout) */
 
-    /* Reliable event dedup */
-    uint32_t reliableEventAck;  /* Next expected reliable game event seq (init to 1) */
+    /* Reliable map-event dedup */
     uint32_t mapEventAck;       /* Next expected reliable map event seq (init to 1) */
 
     /* Join handshake state */
@@ -444,7 +443,6 @@ static void udpClientRecordInputInternal(TransportUdpClientCtx *c,
     /* Store in ring buffer — stamp with current reliable ACKs and ping */
     {
         InputPacket stamped = *input;
-        stamped.eventAck = c->reliableEventAck;
         stamped.mapEventAck = c->mapEventAck;
         /* Control events ride reliable channel 2; their ack travels on the
          * channel-frame trailer, not an InputPacket field. */
@@ -967,11 +965,11 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
             c->mapInstalled = true;
         }
         if (wasInLobby) {
-            /* The reliable-event acks are NOT reset at the lobby→running
+            /* The reliable map-event ack is NOT reset at the lobby→running
              * flip.  The server keeps its reliable-queue sequence counters
              * monotonic across game start — it drops the previous game's
              * unacked events (ackedSeq = nextSeq) but never reuses low seq
-             * numbers — so reliableEventAck / mapEventAck stay valid in the
+             * numbers — so mapEventAck stays valid in the
              * same sequence space.  A stale in-flight lobby packet now carries
              * seq numbers below the continuing ack and dedups harmlessly
              * instead of jumping the ack back into the dead lobby space. */
@@ -2874,7 +2872,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->snapshotsLostLast = 0;
     c->snapshotsLostTotal = 0;
     c->hasSnapshot = false;
-    c->reliableEventAck = 1;  /* First valid seq is 1 */
     c->mapEventAck = 1;       /* First valid map event seq is 1 */
     c->localTick = 0;
     c->lastPingSentTick = 0;

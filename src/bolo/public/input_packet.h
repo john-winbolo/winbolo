@@ -51,7 +51,6 @@ typedef struct {
     uint8_t  buildX;        /* LGM target X (if buildAction != 0) */
     uint8_t  buildY;        /* LGM target Y (if buildAction != 0) */
     uint8_t  flags;         /* Bit 0: autoslow, bits 2-3: gunsight adj */
-    uint32_t eventAck;      /* Reliable event ACK: next expected seq (0 = none) */
     uint32_t mapEventAck;   /* Map event ACK: next expected map event seq (0 = none) */
     /* Control acks ride the CHANNEL_CONTROL channel-frame trailer, not an
      * InputPacket field. */

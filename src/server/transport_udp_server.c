@@ -2197,8 +2197,8 @@ static void serverHandleInput(const uint8_t *buf, int len,
         pkt.playerNum = (uint8_t)clientIdx;
 
         /* Advance the reliable map-event ACK from this client.  Game events
-         * ride CHANNEL_GAME with their own acks now, so pkt.eventAck — still
-         * stamped by the client — is ignored here. */
+         * ride CHANNEL_GAME with their own acks; the InputPacket carries no
+         * game-event ack. */
         if (pkt.mapEventAck > udpServer.mapEventQueues[clientIdx].ackedSeq) {
             udpServer.mapEventQueues[clientIdx].ackedSeq = pkt.mapEventAck;
         }
