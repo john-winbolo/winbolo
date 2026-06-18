@@ -3961,7 +3961,7 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * RUNNING phase, so CTRL_GAME_PHASE_RUNNING enters every queue at
      * seq=1 as the first event of the new game.  Skipping this pair
      * leaves stale seqs on any remote-client queue and the per-client
-     * controlEventAck reset on the client side then desyncs against
+     * control event ack reset on the client side then desyncs against
      * the server's still-advancing nextSeq.  The countdown→running
      * path in server_lifecycle.c does the same pair; this is its
      * in-place (worldPreLoaded) counterpart. */

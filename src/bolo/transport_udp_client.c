@@ -122,12 +122,11 @@ typedef struct {
     /* Reliable event dedup */
     uint32_t reliableEventAck;  /* Next expected reliable game event seq (init to 1) */
     uint32_t mapEventAck;       /* Next expected reliable map event seq (init to 1) */
-    uint32_t controlEventAck;   /* Next expected reliable control event seq (init to 1) */
     /* Coalesce PACKET_CONTROL_ACK emission to ~50ms — only relevant
      * during non-running phases when PACKET_CONTROL_TICK is the
      * carrier.  controlAckPendingTick: localTick when the first
      * post-ACK tick arrived (0 = no ack pending).  lastSentControlAck:
-     * the controlEventAck value carried in the most recent ACK packet,
+     * the control ack value carried in the most recent ACK packet,
      * used to avoid resending an unchanged ACK. */
     uint32_t controlAckPendingTick;
     uint32_t lastSentControlAck;
@@ -456,7 +455,7 @@ static void udpClientRecordInputInternal(TransportUdpClientCtx *c,
         stamped.eventAck = c->reliableEventAck;
         stamped.mapEventAck = c->mapEventAck;
         /* Control events ride reliable channel 2; their ack travels on the
-         * channel-frame trailer, not stamped.controlEventAck (dormant). */
+         * channel-frame trailer, not an InputPacket field. */
         stamped.pingMs = c->pingMs;
         stamped.viewTick = clientSimGetViewTick(c->clientSim);
         c->inputRing[c->inputRingCount % CLIENT_INPUT_RING_SIZE] = stamped;
@@ -980,15 +979,15 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
              * flip.  The server keeps its reliable-queue sequence counters
              * monotonic across game start — it drops the previous game's
              * unacked events (ackedSeq = nextSeq) but never reuses low seq
-             * numbers — so reliableEventAck / mapEventAck / controlEventAck
-             * stay valid in the same sequence space.  A stale in-flight
-             * lobby packet now carries seq numbers below the continuing ack
-             * and dedups harmlessly instead of jumping the ack back into the
-             * dead lobby space.  (lastSentControlAck likewise stays
-             * monotonic — resetting it would desync the coalesced-ack
-             * resend logic from controlEventAck.) */
+             * numbers — so reliableEventAck / mapEventAck stay valid in the
+             * same sequence space.  A stale in-flight lobby packet now carries
+             * seq numbers below the continuing ack and dedups harmlessly
+             * instead of jumping the ack back into the dead lobby space.
+             * (lastSentControlAck likewise stays monotonic — resetting it
+             * would desync the coalesced-ack resend logic from the control
+             * ack.) */
             /* Drop any pending coalesced standalone CONTROL_ACK: during
-             * running the input piggyback carries controlEventAck, so the
+             * running the control ack rides the channel-frame trailer, so the
              * standalone-ack path hands off here.  Harmless either way — a
              * fresh ack still ships if the server keeps retransmitting. */
             c->controlAckPendingTick = 0;
@@ -2993,7 +2992,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->hasSnapshot = false;
     c->reliableEventAck = 1;  /* First valid seq is 1 */
     c->mapEventAck = 1;       /* First valid map event seq is 1 */
-    c->controlEventAck = 1;   /* First valid control event seq is 1 */
     c->controlAckPendingTick = 0;
     c->lastSentControlAck = 0;
     c->localTick = 0;

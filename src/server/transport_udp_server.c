@@ -2150,7 +2150,7 @@ static void serverHandleInput(const uint8_t *buf, int len,
                               const struct sockaddr_in *fromAddr,
                               ServerSim *sim) {
     int clientIdx;
-    /* INPUT framing: [header 8][connId 8][count 1][29-byte inputs…]. */
+    /* INPUT framing: [header 8][connId 8][count 1][25-byte inputs…]. */
     int pos = PACKET_HEADER_SIZE + 8;
     uint8_t inputCount;
     uint64_t connId = 0;
@@ -2212,8 +2212,8 @@ static void serverHandleInput(const uint8_t *buf, int len,
         if (pkt.mapEventAck > udpServer.mapEventQueues[clientIdx].ackedSeq) {
             udpServer.mapEventQueues[clientIdx].ackedSeq = pkt.mapEventAck;
         }
-        /* Control events now ride CHANNEL_CONTROL; their acks arrive on the
-         * channel frame trailer (ingested below), not in pkt.controlEventAck. */
+        /* Control events ride CHANNEL_CONTROL; their acks arrive on the
+         * channel frame trailer (ingested below), not in the input packet. */
 
         /* Only apply if this is a newer input than what we last processed */
         if (pkt.tick > serverSimGetLastProcessedInput(sim, clientIdx)) {

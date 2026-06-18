@@ -53,7 +53,8 @@ typedef struct {
     uint8_t  flags;         /* Bit 0: autoslow, bits 2-3: gunsight adj */
     uint32_t eventAck;      /* Reliable event ACK: next expected seq (0 = none) */
     uint32_t mapEventAck;   /* Map event ACK: next expected map event seq (0 = none) */
-    uint32_t controlEventAck; /* Control event ACK: next expected control event seq (0 = none) */
+    /* Control acks ride the CHANNEL_CONTROL channel-frame trailer, not an
+     * InputPacket field. */
     uint16_t pingMs;        /* Client's self-measured RTT in ms */
     uint32_t viewTick;      /* serverTick of the snapshot being displayed when this input was sampled; 0 = unknown (server falls back to the ping estimate). */
 } InputPacket;

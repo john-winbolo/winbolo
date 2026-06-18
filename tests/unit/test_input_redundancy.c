@@ -57,7 +57,6 @@ static int check_wire_roundtrip(void) {
     in.flags           = 0x77;
     in.eventAck        = 0x0A0B0C0Du;
     in.mapEventAck     = 0x1A1B1C1Du;
-    in.controlEventAck = 0x2A2B2C2Du;
     in.pingMs          = 0xBEEF;
     in.viewTick        = 0x12345678u;
 
@@ -77,7 +76,6 @@ static int check_wire_roundtrip(void) {
     UT_ASSERT(out.flags == in.flags);
     UT_ASSERT(out.eventAck == in.eventAck);
     UT_ASSERT(out.mapEventAck == in.mapEventAck);
-    UT_ASSERT(out.controlEventAck == in.controlEventAck);
     UT_ASSERT(out.pingMs == in.pingMs);
     UT_ASSERT(out.viewTick == in.viewTick);
 

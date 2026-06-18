@@ -171,7 +171,7 @@ const char *packetTypeName(uint8_t type) {
     }
 }
 
-/* Serialize one InputPacket into buf. Returns bytes written (29). */
+/* Serialize one InputPacket into buf. Returns bytes written (25). */
 int packInputPacket(uint8_t *buf, const InputPacket *pkt) {
     packU32(buf, pkt->tick);
     buf[4] = pkt->playerNum;
@@ -183,10 +183,9 @@ int packInputPacket(uint8_t *buf, const InputPacket *pkt) {
     buf[10] = pkt->flags;
     packU32(buf + 11, pkt->eventAck);
     packU32(buf + 15, pkt->mapEventAck);
-    packU32(buf + 19, pkt->controlEventAck);
-    packU16(buf + 23, pkt->pingMs);
-    packU32(buf + 25, pkt->viewTick);
-    return 29;
+    packU16(buf + 19, pkt->pingMs);
+    packU32(buf + 21, pkt->viewTick);
+    return 25;
 }
 
 void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
@@ -200,9 +199,8 @@ void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
     pkt->flags = buf[10];
     pkt->eventAck = unpackU32(buf + 11);
     pkt->mapEventAck = unpackU32(buf + 15);
-    pkt->controlEventAck = unpackU32(buf + 19);
-    pkt->pingMs = unpackU16(buf + 23);
-    pkt->viewTick = unpackU32(buf + 25);
+    pkt->pingMs = unpackU16(buf + 19);
+    pkt->viewTick = unpackU32(buf + 21);
 }
 
 /* Variable-length tank entry: a 1-byte stub when playerNum carries
