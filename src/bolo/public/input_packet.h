@@ -73,8 +73,11 @@ typedef struct {
     uint8_t  tkExplosionCount;   /* Number of TkExplosionSnapshot entries following */
     uint8_t  baseCount;           /* Number of BaseSnapshot entries following */
     uint8_t  pillCount;           /* Number of PillSnapshot entries following */
-    uint8_t  reliableEventCount;  /* Number of reliable GameEvent entries following (game + map merged) */
-    uint32_t reliableBaseSeq;     /* Sequence number of first reliable event in this snapshot */
+    uint8_t  reliableEventCount;  /* Count of reliable GameEvent entries in this
+                                   * snapshot: channel-merged into snapshotEvents
+                                   * on UDP, per-tick on the local transport.
+                                   * Not a wire field — UDP game events ride
+                                   * CHANNEL_GAME. */
     /* Map events ride reliable channel 1 (CHANNEL_MAP) and control events ride
      * reliable channel 2 (CHANNEL_CONTROL); neither carries a snapshot-header
      * slot. Map events merge into the same snapshotEvents array on the client;

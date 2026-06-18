@@ -3126,7 +3126,6 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         #undef MAX_SOUND_TYPES
 
         hdr->reliableEventCount = (uint8_t)outCount;
-        hdr->reliableBaseSeq = 0; /* Local transport doesn't use sequence tracking */
     }
 }
 

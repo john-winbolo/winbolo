@@ -2271,8 +2271,6 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     int pos;
     int i;
     int countsPos;
-    int reliableEventCount = 0;
-    uint32_t reliableBaseSeq = 0;
     SnapshotHeader hdr;
     TankSnapshot tankSnaps[MAX_TANKS];
     ShellSnapshot shellSnaps[MAX_SNAPSHOT_SHELLS];
@@ -2301,14 +2299,13 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
      * Format: serverTick(4) + lastProcessedInput(4) + tankCount(1)
      * + shellCount(1) + tkExplosionCount(1)
      * + baseCount(1) + pillCount(1)
-     * + reliableEventCount(1) + reliableBaseSeq(4)
-     * + mapChecksum(2) + returnToLobbyTicks(2) = 22 bytes */
+     * + mapChecksum(2) + returnToLobbyTicks(2) = 17 bytes */
     packU32(buf + pos, hdr.serverTick);
     pos += 4;
     packU32(buf + pos, hdr.lastProcessedInput);
     pos += 4;
     countsPos = pos;
-    pos += 14; /* 6 count bytes + 4 byte reliableBaseSeq + 2 byte mapChecksum + 2 byte returnToLobbyTicks */
+    pos += 9; /* 5 count bytes + 2 byte mapChecksum + 2 byte returnToLobbyTicks */
 
     /* Pack tank snapshots — variable length: a stub is 1 byte; a full entry is
      * a presence-mask-driven run of at most TANK_SNAPSHOT_WIRE_SIZE bytes
@@ -2360,10 +2357,7 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
         pos += packPillSnapshot(buf + pos, &pillSnaps[i]);
     }
 
-    /* The snapshot reliable game-tail is gone — game events ride CHANNEL_GAME.
-     * reliableEventCount / reliableBaseSeq stay 0 (see their init) and the
-     * header still emits the two slots as 0 below, keeping the wire layout
-     * byte-identical until the separate wire-compaction commit drops them. */
+    /* No snapshot reliable game-tail — game events ride CHANNEL_GAME. */
 
     /* Drain held map-change events onto reliable channel 1 (CHANNEL_MAP),
      * tagged with this slot's map generation: payload = [gen u32][GameEvent].
@@ -2407,13 +2401,8 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     buf[countsPos + 2] = hdr.tkExplosionCount;
     buf[countsPos + 3] = hdr.baseCount;
     buf[countsPos + 4] = hdr.pillCount;
-    /* Reserved-as-0: the reliable game-tail moved to CHANNEL_GAME.  These two
-     * slots stay on the wire (header still 22 bytes) until the wire-compaction
-     * commit removes them server-pack ↔ client-unpack together. */
-    buf[countsPos + 5] = (uint8_t)reliableEventCount;
-    packU32(buf + countsPos + 6, reliableBaseSeq);
-    packU16(buf + countsPos + 10, hdr.mapChecksum);
-    packU16(buf + countsPos + 12, hdr.returnToLobbyTicks);
+    packU16(buf + countsPos + 5, hdr.mapChecksum);
+    packU16(buf + countsPos + 7, hdr.returnToLobbyTicks);
 
     /* Parallel channel layer rides as a trailer on the snapshot: tick the
      * mux on this client's clock+RTT, then append one channel frame after
