@@ -1356,15 +1356,16 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMENT "Copying brain scripts to output Brains/ directory (excludes *.md)"
 )
 
-# Steam Input action manifest — Steam reads it from
-# <install dir>/controller_config/game_actions_<appid>.vdf at runtime.
-# Production also uploads to Steamworks; this local copy is the dev path.
+# Steam Input action manifest + per-controller binding files — Steam reads
+# them from <install dir>/controller_config/ at runtime. Copy the whole
+# directory so the per-controller .vdf files ship too (matches the dist
+# target). Production also uploads to Steamworks; this local copy is the
+# dev path.
 add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/controller_config"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/controller_config/game_actions_4672140.vdf"
-        "${WINBOLO_DATA_DIR}/controller_config/game_actions_4672140.vdf"
-    COMMENT "Copying Steam Input action manifest to controller_config/"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/controller_config"
+        "${WINBOLO_DATA_DIR}/controller_config"
+    COMMENT "Copying Steam Input controller_config/ to output directory"
 )
 
 # Tutorial glyph atlases (Xelu CC0 packs).  Loaded on demand by
