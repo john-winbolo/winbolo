@@ -203,6 +203,20 @@ extern "C" bool steam_is_big_picture(void) {
   return utils && utils->IsSteamInBigPictureMode();
 }
 
+extern "C" bool steam_show_floating_keyboard(int x, int y, int w, int h) {
+  if (!s_initialized) return false;
+  ISteamUtils *utils = SteamUtils();
+  if (!utils) return false;
+  return utils->ShowFloatingGamepadTextInput(
+      k_EFloatingGamepadTextInputModeModeSingleLine, x, y, w, h);
+}
+
+extern "C" void steam_dismiss_floating_keyboard(void) {
+  if (!s_initialized) return;
+  ISteamUtils *utils = SteamUtils();
+  if (utils) utils->DismissFloatingGamepadTextInput();
+}
+
 /* -------- Steam Input --------
  * Path A of the two-path input model.  All lookups go through lazy
  * caches keyed by the action / set name string literal pointers from
