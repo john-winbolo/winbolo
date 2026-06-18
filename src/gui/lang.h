@@ -1422,6 +1422,11 @@
 #define STR_CTRL_PROMPT_NOTNOW              1490
 #define STR_CTRL_PROMPT_DONTASK             1491
 
+/* Controller-disconnected dialog */
+#define STR_CTRL_DISC_TITLE                 1804
+#define STR_CTRL_DISC_MESSAGE               1805
+#define STR_CTRL_DISC_BUTTON                1806
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

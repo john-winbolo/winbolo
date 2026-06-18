@@ -1196,6 +1196,11 @@ STR_CTRL_PROMPT_LINE2=是否切換至手柄模式？
 STR_CTRL_PROMPT_DESC=(隱藏選單列；按 Start 鍵開啟適合手柄操作的暫停選單。\n稍後可在設定中變更。)
 STR_CTRL_PROMPT_NOTNOW=暫不切換
 STR_CTRL_PROMPT_DONTASK=不再詢問
+
+# 手柄斷線對話框
+STR_CTRL_DISC_TITLE=手柄已斷線
+STR_CTRL_DISC_MESSAGE=您的遊戲手柄已斷線。您可以重新連接，或切換至鍵盤控制。
+STR_CTRL_DISC_BUTTON=繼續使用鍵盤和滑鼠
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=關於 WinBolo
 STR_MENU_PREFERENCES=偏好設定…

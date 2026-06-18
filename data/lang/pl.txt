@@ -1192,6 +1192,11 @@ STR_CTRL_PROMPT_LINE2=Przełączyć do Trybu kontrolera?
 STR_CTRL_PROMPT_DESC=(Ukrywa pasek menu; Start otwiera przyjazne kontrolerowi menu pauzy.\nZmień w Ustawienia.)
 STR_CTRL_PROMPT_NOTNOW=Nie teraz
 STR_CTRL_PROMPT_DONTASK=Nie pytaj ponownie
+
+# Okno dialogowe rozłączenia kontrolera
+STR_CTRL_DISC_TITLE=Kontroler odłączony
+STR_CTRL_DISC_MESSAGE=Twój gamepad został odłączony. Możesz go ponownie podłączyć lub przełączyć się na sterowanie klawiaturą.
+STR_CTRL_DISC_BUTTON=Kontynuuj z klawiaturą i myszką
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=O WinBolo
 STR_MENU_PREFERENCES=Preferencje…

@@ -1196,6 +1196,11 @@ STR_CTRL_PROMPT_LINE2=コントローラーモードに切り替えますか？
 STR_CTRL_PROMPT_DESC=(メニューバーを非表示にします。Startボタンでコントローラー向けの一時停止メニューが開きます。\n後から設定で変更できます。)
 STR_CTRL_PROMPT_NOTNOW=後で
 STR_CTRL_PROMPT_DONTASK=次回から表示しない
+
+# コントローラー切断ダイアログ
+STR_CTRL_DISC_TITLE=コントローラーが切断されました
+STR_CTRL_DISC_MESSAGE=ゲームパッドが切断されました。再接続するか、キーボード操作に切り替えることができます。
+STR_CTRL_DISC_BUTTON=キーボードとマウスで続行
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=WinBolo について
 STR_MENU_PREFERENCES=環境設定…

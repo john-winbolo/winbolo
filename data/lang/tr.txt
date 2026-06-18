@@ -1196,6 +1196,11 @@ STR_CTRL_PROMPT_LINE2=Kontrolcü Moduna geçilsin mi?
 STR_CTRL_PROMPT_DESC=(Menü çubuğunu gizler; Start tuşu kontrolcüye uygun bir duraklama menüsü açar.\nDaha sonra Ayarlar'dan değiştirebilirsiniz.)
 STR_CTRL_PROMPT_NOTNOW=Şimdi değil
 STR_CTRL_PROMPT_DONTASK=Bir daha sorma
+
+# Kontrolcü bağlantısı kesildi iletişim kutusu
+STR_CTRL_DISC_TITLE=Kontrolcü Bağlantısı Kesildi
+STR_CTRL_DISC_MESSAGE=Oyun kumandanızın bağlantısı kesildi. Yeniden bağlayabilir veya klavye kontrollerine geçebilirsiniz.
+STR_CTRL_DISC_BUTTON=Klavye ve fareyle devam et
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=WinBolo Hakkında
 STR_MENU_PREFERENCES=Tercihler…

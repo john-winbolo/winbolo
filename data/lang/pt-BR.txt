@@ -1196,6 +1196,11 @@ STR_CTRL_PROMPT_LINE2=Mudar para o modo controle?
 STR_CTRL_PROMPT_DESC=(Oculta a barra de menus; Start abre um menu de pausa adaptado ao controle.\nAlterável depois em Configurações.)
 STR_CTRL_PROMPT_NOTNOW=Agora não
 STR_CTRL_PROMPT_DONTASK=Não perguntar novamente
+
+# Diálogo de desconexão do controle
+STR_CTRL_DISC_TITLE=Controle desconectado
+STR_CTRL_DISC_MESSAGE=Seu controle foi desconectado. Você pode reconectá-lo ou mudar para os controles de teclado.
+STR_CTRL_DISC_BUTTON=Continuar com teclado e mouse
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Sobre o WinBolo
 STR_MENU_PREFERENCES=Preferências…

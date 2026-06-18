@@ -1196,6 +1196,11 @@ STR_CTRL_PROMPT_LINE2=Перейти до Режиму геймпада?
 STR_CTRL_PROMPT_DESC=(Приховує рядок меню; Start відкриває меню паузи для геймпада.\nЗмінити в Налаштування.)
 STR_CTRL_PROMPT_NOTNOW=Не зараз
 STR_CTRL_PROMPT_DONTASK=Більше не запитувати
+
+# Діалог відключення геймпада
+STR_CTRL_DISC_TITLE=Геймпад відключено
+STR_CTRL_DISC_MESSAGE=Ваш геймпад відключено. Ви можете підключити його знову або перейти до керування клавіатурою.
+STR_CTRL_DISC_BUTTON=Продовжити з клавіатурою та мишею
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Про WinBolo
 STR_MENU_PREFERENCES=Параметри…
