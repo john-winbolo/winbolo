@@ -200,6 +200,9 @@ extern "C" void windowSaveMap(struct ClientSim *cs);
 extern "C" void windowSuspendBackground(struct ClientSim *cs);
 extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
+extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
+extern "C" bool steam_show_floating_keyboard(int x, int y, int w, int h);
+extern "C" void steam_dismiss_floating_keyboard(void);
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -4096,6 +4099,21 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
         /* Pause overlay + quick-chat overlay (no-ops when closed). */
         deckPauseRender(cs);
+        /* Freeze a solo game while the pause overlay is up — single-player /
+           tutorial only; multiplayer keeps running or the player is booted for
+           idling.  Edge-detect the overlay open/close so the shared solo-pause
+           path toggles exactly once each way, mirroring the disconnect dialog.
+           Checked after deckPauseRender so deckPauseIsOpen() reflects this
+           frame's state (the open trigger sets a pending flag the render
+           consumes). */
+        {
+            static bool s_lastDeckPause = false;
+            bool nowDeckPause = deckPauseIsOpen();
+            if (nowDeckPause != s_lastDeckPause) {
+                windowDeckPause(cs, nowDeckPause);
+                s_lastDeckPause = nowDeckPause;
+            }
+        }
         quickChatRender(cs);
         renderCtrlSendMsg(cs);
         /* Controller-detected prompt — also a no-op when closed.
@@ -4244,6 +4262,33 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         }
 
         ImGui::SetCurrentContext(mainCtx);
+    }
+
+    /* Steam virtual keyboard.  When a controller is driving the UI and a text
+       field takes focus, raise Steam's floating on-screen keyboard; Steam
+       injects the typed characters back through the normal text-input path, so
+       every focused ImGui field is covered with no per-field wiring.  Driven
+       off the main context only — all controller-reachable text entry lives
+       here (pop-outs receive no controller input by design; see
+       sdl3ImguiShowSendMsg).  Edge-detected so we show / dismiss exactly once
+       each way — Steam does not auto-dismiss.  A no-op without Steam
+       (steam_show_floating_keyboard returns false in stub / desktop builds).
+       The rect is the text field Steam should avoid covering; the viewport is
+       a reasonable first approximation (Steam anchors the panel at the
+       screen edge). */
+    {
+        static bool s_kbWanted = false;
+        bool wantKb = uiShouldUseControllerMode() && ImGui::GetIO().WantTextInput;
+        if (wantKb != s_kbWanted) {
+            if (wantKb) {
+                ImGuiViewport *vp = ImGui::GetMainViewport();
+                steam_show_floating_keyboard((int)vp->Pos.x, (int)vp->Pos.y,
+                                             (int)vp->Size.x, (int)vp->Size.y);
+            } else {
+                steam_dismiss_floating_keyboard();
+            }
+            s_kbWanted = wantKb;
+        }
     }
 
     /* Apply deferred zoom change after the frame is fully rendered.

@@ -198,6 +198,21 @@ static bool s_overlayPaused = FALSE;
  * windowControllerLostPause. */
 static bool s_controllerLostPaused = FALSE;
 
+/* Set while the controller pause overlay (Start button / Escape) is up during
+ * a solo game.  Same freeze as s_overlayPaused, driven by the pause-menu
+ * open/close edge.  Multiplayer keeps running (the menu still shows) so a
+ * networked player isn't booted for going idle.  See windowDeckPause. */
+static bool s_deckPaused = FALSE;
+
+/* Mute state captured when each pause path engaged, restored verbatim when it
+ * releases.  A pause must hand audio back to whatever it found — not force it
+ * unmuted — so it doesn't clobber a user mute or another still-active pause's
+ * mute.  One slot per path because the paths can nest. */
+static bool s_suspendPrevMuted        = FALSE;
+static bool s_overlayPrevMuted        = FALSE;
+static bool s_controllerLostPrevMuted = FALSE;
+static bool s_deckPrevMuted           = FALSE;
+
 /* Tick counters */
 static DWORD oldTick = 0;
 static DWORD ttick = 0;
@@ -700,11 +715,13 @@ static void windowRunGameTick(ClientSim *cs) {
   bool brainRunning;
 
   /* App is backgrounded (Deck home button / sleep), the Steam overlay is
-     open, or the controller-disconnected dialog is up in a solo game — skip
-     all tick work.  The matching resume (windowResumeForeground /
-     windowSteamOverlayActivated / windowControllerLostPause) resets the
-     wallclock baseline so we don't fast-forward the paused interval. */
-  if (s_suspended || s_overlayPaused || s_controllerLostPaused) return;
+     open, the controller-disconnected dialog is up, or the controller pause
+     menu is open in a solo game — skip all tick work.  The matching resume
+     (windowResumeForeground / windowSteamOverlayActivated /
+     windowControllerLostPause / windowDeckPause) resets the wallclock baseline
+     so we don't fast-forward the paused interval. */
+  if (s_suspended || s_overlayPaused || s_controllerLostPaused || s_deckPaused)
+    return;
 
   brainRunning = brainHandlerIsBrainRunning();
   isShoot = FALSE;
@@ -889,7 +906,8 @@ static bool windowIsSoloSession(ClientSim *cs) {
    or opens the overlay. */
 static void windowUpdateServerPause(ClientSim *cs) {
   gameFrontSetServerPaused(windowIsSoloSession(cs) &&
-                           (s_suspended || s_overlayPaused || s_controllerLostPaused));
+                           (s_suspended || s_overlayPaused ||
+                            s_controllerLostPaused || s_deckPaused));
 }
 
 void windowSuspendBackground(ClientSim *cs) {
@@ -898,8 +916,10 @@ void windowSuspendBackground(ClientSim *cs) {
      own.  In single-player we also freeze the server tick so the world
      holds; a listen-server host keeps serving (see windowUpdateServerPause).
      Idempotent — duplicate WILL_ENTER_BACKGROUND events from SDL are safe. */
+  if (s_suspended) return;
   s_suspended = TRUE;
   windowUpdateServerPause(cs);
+  s_suspendPrevMuted = soundIsMuted();
   soundSetMuted(TRUE);
 }
 
@@ -929,7 +949,7 @@ void windowResumeForeground(ClientSim *cs) {
     ttick = oldTick;
   }
   windowUpdateServerPause(cs);
-  soundSetMuted(FALSE);
+  soundSetMuted(s_suspendPrevMuted);
 }
 
 /* Steam in-game overlay opened/closed.  Solo sessions only (single-player or
@@ -944,6 +964,7 @@ static void windowSteamOverlayActivated(ClientSim *cs, bool active) {
     if (s_overlayPaused) return;          /* idempotent */
     s_overlayPaused = TRUE;
     windowUpdateServerPause(cs);
+    s_overlayPrevMuted = soundIsMuted();
     soundSetMuted(TRUE);
   } else {
     /* Always clear on close — even if the mode changed while the overlay
@@ -955,7 +976,7 @@ static void windowSteamOverlayActivated(ClientSim *cs, bool active) {
        windowResumeForeground. */
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(FALSE);
+    soundSetMuted(s_overlayPrevMuted);
   }
 }
 
@@ -970,6 +991,7 @@ void windowControllerLostPause(ClientSim *cs, bool active) {
     if (s_controllerLostPaused) return;          /* idempotent */
     s_controllerLostPaused = TRUE;
     windowUpdateServerPause(cs);
+    s_controllerLostPrevMuted = soundIsMuted();
     soundSetMuted(TRUE);
   } else {
     if (!s_controllerLostPaused) return;
@@ -977,7 +999,30 @@ void windowControllerLostPause(ClientSim *cs, bool active) {
     windowUpdateServerPause(cs);
     oldTick = SDL_GetTicks();
     ttick = oldTick;
-    soundSetMuted(FALSE);
+    soundSetMuted(s_controllerLostPrevMuted);
+  }
+}
+
+/* Controller pause menu opened/closed (Start button / Escape).  Solo sessions
+   only (single-player or tutorial): freeze the client and server sim while the
+   menu is up and rebase the catch-up wallclock on close, mirroring
+   windowControllerLostPause.  Multiplayer is a no-op — the menu still shows but
+   the networked game keeps running, so the player isn't booted for idling. */
+void windowDeckPause(ClientSim *cs, bool active) {
+  if (active) {
+    if (!windowIsSoloSession(cs)) return;
+    if (s_deckPaused) return;          /* idempotent */
+    s_deckPaused = TRUE;
+    windowUpdateServerPause(cs);
+    s_deckPrevMuted = soundIsMuted();
+    soundSetMuted(TRUE);
+  } else {
+    if (!s_deckPaused) return;
+    s_deckPaused = FALSE;
+    windowUpdateServerPause(cs);
+    oldTick = SDL_GetTicks();
+    ttick = oldTick;
+    soundSetMuted(s_deckPrevMuted);
   }
 }
 

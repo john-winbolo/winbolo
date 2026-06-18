@@ -47,6 +47,13 @@ bool steam_is_steam_deck(void) { return false; }
 
 bool steam_is_big_picture(void) { return false; }
 
+bool steam_show_floating_keyboard(int x, int y, int w, int h) {
+  (void)x; (void)y; (void)w; (void)h;
+  return false;
+}
+
+void steam_dismiss_floating_keyboard(void) {}
+
 /* -------- Steam Input stubs -------- */
 
 bool steam_input_init(void)             { return false; }
