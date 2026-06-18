@@ -4955,35 +4955,56 @@ bool transportUdpServerTestPeekChannelReset(int slot, uint32_t *ch0Baseline,
     return false;
 }
 
+/* Set or clear the server's "locked to new players" state and announce the
+ * change to every connected, download-complete client with a reliable
+ * EVENT_SERVER_MSG on CHANNEL_GAME — the same path the per-tick game-event
+ * producer uses (transportUdpServerDrainEvents).
+ *
+ * Precondition: the caller must hold threadsMutex.  The notice goes out via
+ * channelSend, which mutates per-client channelMux state that is otherwise only
+ * touched on the tick; the mutex is what serializes the two.  All callers
+ * comply — the servermain console wraps each call (lock/unlock/alarm), and the
+ * server_sim auto-lock/unlock callers run inside serverInstanceTick.  The
+ * assert no-ops in bare logic unit tests that never start the threading system
+ * (no tick thread to race, and no client is connected there to send to). */
 void transportUdpServerSetLock(ServerSim *sim, bool locked) {
     (void)sim;
+    SDL_assert(!threadsContextActive() || threadsCurrentlyHoldsMutex());
     if (udpServer.gameLocked == locked) return;
     udpServer.gameLocked = locked;
     serverSimConsoleMessage(locked
         ? "This game is now locked to new players (server lock)"
         : "This game is now unlocked to new players (server unlock)");
     winboloNetSendLock(locked);
-    /* Enqueue directly into per-client reliable queues.
-     * We can't use serverSimAddEvent() because the sim's event buffer
-     * gets cleared at the start of each tick — this runs from the
-     * console thread between ticks so the event would be lost. */
+    /* Announce on the reliable game channel.  serverSimAddEvent() won't do —
+     * the sim's per-tick event buffer is cleared at the start of each tick and
+     * this runs between ticks — so pack the event once and channelSend it onto
+     * CHANNEL_GAME per connected, download-complete client, exactly as the
+     * per-tick producer does. */
     {
         GameEvent ev;
+        uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
+        int evLen;
         int c;
         ev.type = EVENT_SERVER_MSG;
         memset(ev.data, 0, sizeof(ev.data));
         ev.data[0] = locked ? SERVER_MSG_GAME_LOCKED : SERVER_MSG_GAME_UNLOCKED;
+        evLen = packGameEvent(evBuf, &ev);
         for (c = 0; c < MAX_TANKS; c++) {
-            ClientEventQueue *q;
-            uint32_t idx;
             if (!udpServer.clients[c].connected) continue;
             if (!udpServer.mapDownload[c].downloadComplete) continue;
-            q = &udpServer.eventQueues[c];
-            if (!eventQueueHasSpace(q)) continue;
-            idx = q->nextSeq % RELIABLE_EVENT_BUFFER_SIZE;
-            q->buffer[idx].event = ev;
-            q->buffer[idx].seq = q->nextSeq;
-            q->nextSeq++;
+            if (!channelSend(&udpServer.channelMux[c], CHANNEL_GAME,
+                             evBuf, (uint16_t)evLen)) {
+                /* Window full — defer the disconnect off this path, mirroring
+                 * the per-tick game-channel overflow handling.  The flag guard
+                 * keeps a re-hit from spamming the log. */
+                if (!udpServer.pendingSimRemove[c]) {
+                    WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                 "game channel overflow for slot %d, deferring disconnect",
+                                 c);
+                    udpServer.pendingSimRemove[c] = true;
+                }
+            }
         }
     }
 }

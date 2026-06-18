@@ -431,6 +431,10 @@ int run_loopback_quiet_lobby_control_loss(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);
+/* Server lock/unlock notice over CHANNEL_GAME (test_lock_channel.c): the
+ * "locked to new players" message now rides the reliable game channel, not the
+ * snapshot reliable tail. */
+int run_lock_channel(void);
 /* Server-map preview over CHANNEL_BULK (test_loopback_preview.c): a real .map
  * file streamed back under loss and reassembled byte-identical on the client. */
 int run_loopback_map_preview(void);
