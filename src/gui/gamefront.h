@@ -820,6 +820,17 @@ void gameFrontReloadSkins(void);
 void gameFrontShutdownServer(void);
 
 /*********************************************************
+*NAME:          gameFrontSetServerPaused
+*PURPOSE:
+*  Freeze or resume the in-process server tick. When paused
+*  the hosted-server timer stays armed but skips its tick,
+*  so the single-player world holds and resumes cleanly.
+*  Only called for single-player; a listen-server host never
+*  pauses so remote players keep simulating.
+*********************************************************/
+void gameFrontSetServerPaused(bool paused);
+
+/*********************************************************
 *NAME:          gameFrontGetServerSim
 *PURPOSE:
 *  Returns a pointer to the ServerSim for single-player,

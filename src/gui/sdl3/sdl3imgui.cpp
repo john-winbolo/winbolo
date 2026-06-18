@@ -196,7 +196,7 @@ extern "C" void windowComputeAspectCorrectSize(int actualW, int actualH, int act
 extern "C" void windowNewGame(void);
 extern "C" void windowQuit(void);
 extern "C" void windowSaveMap(struct ClientSim *cs);
-extern "C" void windowSuspendBackground(void);
+extern "C" void windowSuspendBackground(struct ClientSim *cs);
 extern "C" void windowResumeForeground(struct ClientSim *cs);
 
 extern "C" bool showGunsight;
@@ -3331,7 +3331,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
            "you have been disconnected" flow.  In single-player it just
            resets the catchup-loop wallclock baseline. */
         if (ev.type == SDL_EVENT_WILL_ENTER_BACKGROUND) {
-            windowSuspendBackground();
+            windowSuspendBackground(cs);
             continue;
         }
         if (ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) {

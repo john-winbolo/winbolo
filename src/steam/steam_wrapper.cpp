@@ -22,10 +22,15 @@ extern "C" {
 
 /* GameRichPresenceJoinRequested_t callback ID */
 static const int k_iGameRichPresenceJoinRequested_id = k_iSteamFriendsCallbacks + 37;
+/* GameOverlayActivated_t callback ID */
+static const int k_iGameOverlayActivated_id = k_iSteamFriendsCallbacks + 31;
 
 static bool s_initialized = false;
 static SteamJoinCallback s_join_callback = nullptr;
 static HAuthTicket s_authTicket = k_HAuthTicketInvalid;
+/* Steam in-game overlay open/closed state, updated from the
+   GameOverlayActivated_t callback during steam_run_callbacks(). */
+static bool s_overlay_active = false;
 
 extern "C" bool steam_init(void) {
   if (s_initialized) return true;
@@ -48,6 +53,7 @@ extern "C" void steam_shutdown(void) {
   s_initialized = false;
   s_join_callback = nullptr;
   s_authTicket = k_HAuthTicketInvalid;
+  s_overlay_active = false;
 }
 
 extern "C" void steam_run_callbacks(void) {
@@ -62,9 +68,16 @@ extern "C" void steam_run_callbacks(void) {
         s_join_callback != nullptr) {
       auto *data = reinterpret_cast<GameRichPresenceJoinRequested_t *>(msg.m_pubParam);
       s_join_callback(data->m_rgchConnect);
+    } else if (msg.m_iCallback == k_iGameOverlayActivated_id) {
+      auto *data = reinterpret_cast<GameOverlayActivated_t *>(msg.m_pubParam);
+      s_overlay_active = (data->m_bActive != 0);
     }
     SteamAPI_ManualDispatch_FreeLastCallback(pipe);
   }
+}
+
+extern "C" bool steam_overlay_is_active(void) {
+  return s_initialized && s_overlay_active;
 }
 
 extern "C" void steam_set_rich_presence(const char *key, const char *value) {
