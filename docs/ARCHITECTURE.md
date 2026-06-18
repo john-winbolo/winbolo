@@ -772,13 +772,14 @@ Two categories of packet stay wire-only by design; the single-
 publish recipe does not apply to them:
 
 - **Per-tick world snapshots.** Tank positions, shells, and per-tick
-  deltas live in the snapshot module, not the codec. A snapshot also
-  carries a small reliable game-event tail for events produced off the
-  per-tick path (e.g. server lock messages enqueued between ticks) and
-  a trailing **channel frame** for the channel-mux reliability layer.
-  The map and control event tails snapshots once carried are gone —
-  those events ride `CHANNEL_MAP` / `CHANNEL_CONTROL`. See "The
-  channel-mux reliability layer" above.
+  deltas live in the snapshot module, not the codec. A snapshot now
+  carries only world state plus a trailing **channel frame** for the
+  channel-mux reliability layer — the reliable game / map / control
+  event tails it once carried are all gone. Those events ride
+  `CHANNEL_GAME` / `CHANNEL_MAP` / `CHANNEL_CONTROL`, including the
+  server lock/unlock notice (the last off-per-tick game event), which
+  moved off the snapshot tail onto `CHANNEL_GAME`. See "The channel-mux
+  reliability layer" above.
 - **Per-client handshake and reliability.** `JOIN_ACCEPT`,
   `JOIN_REJECT`, `NAME_CHANGE_REJECT`, and `PONG` are point-to-point
   transport mechanics. The compressed map is not one of these: join
