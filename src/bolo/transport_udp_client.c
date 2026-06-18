@@ -122,12 +122,6 @@ typedef struct {
     /* Reliable event dedup */
     uint32_t reliableEventAck;  /* Next expected reliable game event seq (init to 1) */
     uint32_t mapEventAck;       /* Next expected reliable map event seq (init to 1) */
-    /* Vestige of the retired standalone control-ack coalescer (control
-     * events now ride CHANNEL_CONTROL, acked by the channel-frame trailer).
-     * Both fields are still reset on connect/flip but no longer have a
-     * reader; left in place pending a follow-up removal. */
-    uint32_t controlAckPendingTick;
-    uint32_t lastSentControlAck;
 
     /* Join handshake state */
     uint32_t joinAttempts;
@@ -980,15 +974,7 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
              * numbers — so reliableEventAck / mapEventAck stay valid in the
              * same sequence space.  A stale in-flight lobby packet now carries
              * seq numbers below the continuing ack and dedups harmlessly
-             * instead of jumping the ack back into the dead lobby space.
-             * (lastSentControlAck likewise stays monotonic — resetting it
-             * would desync the coalesced-ack resend logic from the control
-             * ack.) */
-            /* Drop any pending coalesced standalone CONTROL_ACK: during
-             * running the control ack rides the channel-frame trailer, so the
-             * standalone-ack path hands off here.  Harmless either way — a
-             * fresh ack still ships if the server keeps retransmitting. */
-            c->controlAckPendingTick = 0;
+             * instead of jumping the ack back into the dead lobby space. */
             /* Reset input ring so stale inputs from the previous game are
              * not sent as redundant packets in the new game. */
             c->inputRingCount = 0;
@@ -2989,8 +2975,6 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->hasSnapshot = false;
     c->reliableEventAck = 1;  /* First valid seq is 1 */
     c->mapEventAck = 1;       /* First valid map event seq is 1 */
-    c->controlAckPendingTick = 0;
-    c->lastSentControlAck = 0;
     c->localTick = 0;
     c->lastPingSentTick = 0;
     c->pingMs = 0;
