@@ -63,6 +63,7 @@ extern "C" {
 #include "../../../common/mp_diag_log.h"
 #include "../flags.h"
 #include "../sdl3imgui.h"
+#include "../../ui_mode.h"
 #include "../minimap_render.h"
 #include "../../../bolo/public/client_mappreview.h"
 #include "../../../bolo/public/wire_limits.h"
@@ -5735,8 +5736,19 @@ static void renderGameSettingsPanel(ClientSim *cs,
 
     /* Drive the CollapsingHeader's open state explicitly so a "Hide
      * Settings" button at the bottom of the panel can fold it away
-     * once the host is happy with the configuration. */
-    static bool s_settingsOpen = true;
+     * once the host is happy with the configuration.
+     *
+     * Default collapsed on the Steam Deck: its small screen needs the
+     * vertical room for the player list and the Ready button, and the
+     * map / game-type summary is already on the lobby's top status bar.
+     * Desktop keeps it open. The chevron / "Hide Settings" button still
+     * toggles it either way. */
+    static bool s_settingsOpen     = true;
+    static bool s_settingsOpenInit = false;
+    if (!s_settingsOpenInit) {
+        s_settingsOpen     = !uiModeIsSteamDeck();
+        s_settingsOpenInit = true;
+    }
     ImGui::SetNextItemOpen(s_settingsOpen, ImGuiCond_Always);
     /* Capture screen-Y of the header before drawing so the
      * right-aligned openHost control can be overlaid on the same
