@@ -527,6 +527,18 @@ void sdl3DrawDisableLogicalPresentation(void) {
 
 void sdl3DrawRestoreLogicalPresentation(void) {
   if (!gRenderer) return;
+  if (uiModeIsSteamDeck()) {
+    /* Steam Deck is a desktop build but uses the logical-presentation path
+       (not the render-target blit), so the desktop no-op below would leave
+       presentation disabled after the front-end dialogs.  Re-apply the same
+       letterbox presentation sdl3DrawSetup computed; gZoomFactor already
+       holds the deck's bestZoom. */
+    SDL_SetRenderLogicalPresentation(gRenderer,
+                                     gZoomFactor * SDL3_SCREEN_W,
+                                     gZoomFactor * SDL3_SCREEN_H,
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    return;
+  }
 #ifdef __ANDROID__
   if (!uiModeIsTablet()) {
     SDL_SetRenderLogicalPresentation(gRenderer,
