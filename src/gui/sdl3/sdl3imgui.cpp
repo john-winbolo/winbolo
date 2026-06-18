@@ -3965,8 +3965,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        uiShouldUseControllerMode() — the latter already flipped to false the
        instant the pad dropped, so a keyboard-only player never sees it.  In a
        solo game (single-player / tutorial) freeze the sim via the shared pause
-       path; multiplayer keeps running.  Shown everywhere (in-game and lobby). */
-    if (inputGamepadConsumeActiveDisconnect() &&
+       path; multiplayer keeps running.  Shown in-game and in the in-game lobby.
+       Skipped on tablet (mobile has its own touch UX) — like the
+       controller-detected prompt — because the dialog is only rendered in the
+       non-tablet branch below; opening it here would freeze a solo game behind
+       a modal that never draws. */
+    if (inputGamepadConsumeActiveDisconnect() && !uiModeIsTablet() &&
         (uiControllerModeGet() != CONTROLLER_MODE_OFF || uiModeIsSteamDeck()) &&
         !controllerDisconnectIsOpen()) {
         controllerDisconnectOpen();
