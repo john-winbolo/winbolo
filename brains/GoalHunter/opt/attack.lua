@@ -35,6 +35,16 @@ local PRE_ENGAGE_SUBS = {
   blitz_wait=true,
 }
 
+-- Substates where a blitz COMMANDER is still converging on its standoff but is
+-- NOT yet parked in blitz_wait. The substate-independent early-GO uses this so a
+-- slow commander rushes in when enough SOLDIERS are already parked waiting on it.
+-- Excludes plan_position (standoff not finalized) and blitz_wait (its own handler).
+local BLITZ_EARLY_GO_ENROUTE_SUBS = {
+  gather_trees=true, approach=true, build_walls=true, detree=true,
+  aim=true, in_range_position=true, in_range_aim_pre=true,
+  in_range_aim=true, in_range_aim_finetune=true,
+}
+
 -- "Effectively stopped" gate for the substate transitions in approach
 -- and in_range_position. Returns true if EITHER the reported speed is
 -- at/below speed_tol OR the tank's wu position hasn't changed for the
@@ -3504,6 +3514,40 @@ function M.update_attack_substate(goal, state, world, info)
   end
 
   -- ══════════════════════════════════════════════════════════════════
+  -- Substate-independent early GO — a commander still EN ROUTE to its standoff.
+  -- The blitz_wait handler's early-GO only fires once the COMMANDER is parked,
+  -- so a slow commander (planning / gathering trees / walking in) makes ready
+  -- soldiers wait on it even when the squad already has the numbers. Here we
+  -- check the whole SET's parked blitzers from ANY en-route substate: the
+  -- commander isn't parked (contributes 0), so it takes SQUAD_BLITZ_GO_EARLY_READY
+  -- SOLDIERS already in blitz_wait to trigger. On trigger we abandon the
+  -- walls/PPT creep and rush in with them (overwhelm charge), broadcasting GO.
+  if state.squad_role == "c" and goal._blitz and not goal._blitz_committed
+     and BLITZ_EARLY_GO_ENROUTE_SUBS[goal.substate or ""] then
+    local _wp = goal.target_id and world.pills and world.pills[goal.target_id] or nil
+    if _wp and (_wp.health or 0) > 0 then
+      local _t, _r, _mb, _un, _inwait = squad.blitz_ready_status(state, now, info.player_number or -1, info)
+      -- Commander counts itself if it too is parked at a firing spot (any of the
+      -- past-approach PPT substates: aim / in_range_* — blitz_wait is handled by
+      -- its own branch, not this en-route path). Same BLITZ_READY_SUBS set the
+      -- soldier tally uses, so the quorum is symmetric across the squad.
+      local _self_parked = squad.BLITZ_READY_SUBS[goal.substate or ""] and 1 or 0
+      local set_inwait = _self_parked + (_inwait or 0)
+      if set_inwait >= (C.SQUAD_BLITZ_GO_EARLY_READY or 2) then
+        local _prev = goal.substate
+        goal._blitz_committed    = true
+        goal._blitz_start_armour = info.armour or 0
+        goal._is_ppt             = false        -- charge FAST like the soldiers, not PPT creep
+        goal._charge_braking     = nil
+        goal.substate            = "charge"
+        goal._blitz_go           = true         -- broadcast GO (bgo) in init.lua
+        state.squad_blitz_go     = true
+        return
+      end
+    end
+  end
+
+  -- ══════════════════════════════════════════════════════════════════
   -- gather_trees: hold position before approach, let LGM harvest nearby
   -- forest until we have enough trees for the planned shield walls.
   -- The builder's existing "gather" mode (set via builder.set_mode) does
@@ -3693,7 +3737,7 @@ function M.update_attack_substate(goal, state, world, info)
     end
 
     if state.squad_role == "c" then
-      local total, ready, min_bd, any_unseen = squad.blitz_ready_status(state, now, info.player_number or -1, info)
+      local total, ready, min_bd, any_unseen, inwait = squad.blitz_ready_status(state, now, info.player_number or -1, info)
       if total == 0 then
         -- Nobody (left) answering. If we SKIPPED walls for a joiner who is now
         -- gone (full-pill PPT, no shield built), degrade to a normal SOLO
@@ -3767,7 +3811,17 @@ function M.update_attack_substate(goal, state, world, info)
       local timed_out = (now - goal._blitz_ready_since) >= eff
       -- Heartbeat: why are we still waiting? (print is a no-op in the brain, so
       -- the GO decision was previously invisible in print2 logs.)
-      if ready >= total or timed_out then
+      -- Early GO on critical mass: once ENOUGH of the SET (commander + all
+      -- soldiers) are PARKED at their standoffs (sub=blitz_wait), fire GO now
+      -- instead of waiting for stragglers or the timeout. We're in blitz_wait
+      -- here, so the commander counts itself (+1); inwait is the soldiers parked
+      -- at their spots. Default 2 = commander + 1 parked soldier already goes; a
+      -- still-approaching extra joins on the broadcast GO. (Mirrors the
+      -- substate-independent pre-dispatch check that lets a commander still en
+      -- route GO when 2 soldiers are already waiting on it.)
+      local set_inwait = 1 + (inwait or 0)
+      local early_go = set_inwait >= (C.SQUAD_BLITZ_GO_EARLY_READY or 2)
+      if ready >= total or timed_out or early_go then
         state.squad_blitz_go = true        -- broadcast GO (bgo) in init.lua
         commit_fire()
       end

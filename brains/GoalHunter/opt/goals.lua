@@ -1318,6 +1318,26 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
       -- always wins, but with no real target we'll still go hunt the ghost.
       if et.ghost then cost = cost + (C.GHOST_TANK_COST_PENALTY or 40) end
 
+      -- Pill-take guard: while we're committed to an attack_pill, a tank beyond
+      -- our shooting range must NOT pull us off the take. Add a penalty that
+      -- climbs EXPONENTIALLY with euclidean distance past shoot range — ~0 at
+      -- the range edge, runaway by a handful of tiles out — so only a genuinely
+      -- CLOSE (actually-threatening) tank can still preempt the pill take. Fixes
+      -- a 26-tile tank yanking a blitz commander off its charge.
+      local pillbusy_pen = 0
+      if state.goal and state.goal.kind == "attack_pill" then
+        local _ex, _ey = (et.mx - tmx), (et.my - tmy)
+        local _edist = math.sqrt(_ex * _ex + _ey * _ey)
+        local _shoot_r = C.ATTACK_TANK_PILLBUSY_RANGE or C.TANK_COMBAT_ENGAGE_RANGE or 7
+        if _edist > _shoot_r then
+          pillbusy_pen = math.min(
+            (C.ATTACK_TANK_PILLBUSY_BASE or 1.7) ^ (_edist - _shoot_r)
+              * (C.ATTACK_TANK_PILLBUSY_K or 8),
+            C.ATTACK_TANK_PILLBUSY_CAP or 1e6)
+          cost = cost + pillbusy_pen
+        end
+      end
+
       breakdown[#breakdown + 1] = {
         id = et.id, mx = et.mx, my = et.my, dist = et.dist, speed = et.speed,
         ghost = et.ghost, ghost_age = et.ghost_age,
@@ -1325,7 +1345,7 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
         aim_bonus = aim_bonus, aim_diff = aim_diff, crossfire = crossfire,
         wall_hp = wall_hp, wall_penalty = wall_penalty,
         low_shells_penalty = low_shells_penalty, boat_mult = boat_mult,
-        tank_tile_threat = tank_tile_threat,
+        tank_tile_threat = tank_tile_threat, pillbusy_pen = pillbusy_pen,
         tank_shells = info.shells,  -- stash for get_pool_breakdown detail
         cost = cost, shells_on_arrival = shells_on_arrival, los_engage = los_engage,
         standoff_mx = so_mx, standoff_my = so_my, standoff_score = so_score,
@@ -1515,6 +1535,17 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     local closest_et, closest_dist = nil, math.huge
     for _, et in ipairs(state.perc.enemy_tanks) do
       if et.dist < closest_dist then closest_dist = et.dist; closest_et = et end
+    end
+    -- Distance protection: no need to panic-build if the nearest enemy tank is
+    -- out of SHOOTING range — it can't actually hit us, so dropping a guard pill
+    -- mid-carry is wasted. Euclidean (like the attack_tank pill-take guard);
+    -- et.dist is mdist, so recompute. Past the range, drop the trigger.
+    if closest_et then
+      local _ex, _ey = closest_et.mx - tmx, closest_et.my - tmy
+      local _ed = math.sqrt(_ex * _ex + _ey * _ey)
+      if _ed > (C.DEF_BUILD_THREAT_RANGE or 8) then
+        closest_et = nil
+      end
     end
     if closest_et then
       local aim = U.aim_at(info.tankx, info.tanky, U.m2w(closest_et.mx), U.m2w(closest_et.my))
@@ -2504,9 +2535,23 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
     state._reposition_lock_tick = nil       -- no longer on a reposition goal
   end
 
+  -- Finishing a swap: if our committed reposition pill is already DEAD (we shot
+  -- it down), the reposition is EARNED and we're in the pickup/place phase —
+  -- driven by the held capture_pill goal. STOP offering a fresh reposition here,
+  -- or the lock releases on death and best_pill jumps to the next live pill,
+  -- chaining the bot into a swap it never earned (and re-locking it next tick).
+  local finishing_swap = false
+  if state.goal and state.goal.kind == "capture_pill" and state.goal.reposition
+     and state.goal.target_id then
+    local tp = world.pills[state.goal.target_id]
+    finishing_swap = (tp and tp.owner == "friendly" and (tp.health or 0) <= 0) or false
+  end
+
   -- Reject reasons (the explicit one is "no friendly pills at all").
   local reject = nil
-  if not best_pill then
+  if finishing_swap then
+    reject = "finishing_swap"   -- killed our pill; let the pickup/place complete
+  elseif not best_pill then
     -- Distinguish "back line is at/under target" (the common, healthy case)
     -- from genuinely having no friendly pills, so the pool viz reads clearly.
     reject = (back_surplus <= 0) and "no_back_surplus" or "no_team_pills"
@@ -7732,22 +7777,23 @@ function M.get_pool_breakdown_json(state)
     end
     if b.los_engage then
       return string.format(
-        "LOS (los_base{%.0f} + dist{%.1f}*per_tile{%.0f} + low_sh{%.0f}) * boat{%.2f} + threat{%.0f} = %.0f" ..
-        "||dist=%.1f; shells_now=%d; aim_diff=%.1f",
+        "LOS (los_base{%.0f} + dist{%.1f}*per_tile{%.0f} + low_sh{%.0f}) * boat{%.2f} + threat{%.0f} + pillbusy{%.0f} = %.0f" ..
+        "||dist=%.1f; shells_now=%d; aim_diff=%.1f; pillbusy=exp penalty when on an attack_pill + tank past shoot range",
         C.TANK_COMBAT_LOS_BASE_COST, b.dist or 0, C.TANK_COMBAT_LOS_COST_PER_TILE,
         b.low_shells_penalty or 0, b.boat_mult or 1.0,
-        b.tank_tile_threat or 0, b.cost or 0,
+        b.tank_tile_threat or 0, b.pillbusy_pen or 0, b.cost or 0,
         b.dist or 0, b.tank_shells or 0, b.aim_diff or 0)
     end
     return string.format(
-      "standoff (A*{%.0f} + base{%.0f} + wall{%.0f} + low_sh{%.0f} - aim{%.0f} + xfire{%.0f}) * boat{%.2f} + threat{%.0f} = %.0f" ..
-      "||dist=%d; shells_now=%d; shells_arrival=%s; aim_diff=%.1f; wall_hp=%s; standoff=(%s,%s) deg=%s",
+      "standoff->(%s,%s) (A* to standoff{%.0f} + base{%.0f} + wall{%.0f} + low_sh{%.0f} - aim{%.0f} + xfire{%.0f}) * boat{%.2f} + threat{%.0f} + pillbusy{%.0f} = %.0f" ..
+      "||A* is to the FIRING STANDOFF (%s,%s), NOT the enemy tile (%d,%d) — that's why it's cheaper than a test-click on the enemy. pillbusy=exp penalty when on an attack_pill + tank past shoot range. dist=%d; shells_now=%d; shells_arrival=%s; aim_diff=%.1f; wall_hp=%s; deg=%s",
+      tostring(b.standoff_mx), tostring(b.standoff_my),
       b.path_cost or 0, b.base or 0, b.wall_penalty or 0,
       b.low_shells_penalty or 0, b.aim_bonus or 0, b.crossfire or 0,
-      b.boat_mult or 1.0, b.tank_tile_threat or 0, b.cost or 0,
+      b.boat_mult or 1.0, b.tank_tile_threat or 0, b.pillbusy_pen or 0, b.cost or 0,
+      tostring(b.standoff_mx), tostring(b.standoff_my), b.mx or 0, b.my or 0,
       b.dist or 0, b.tank_shells or 0, tostring(b.shells_on_arrival),
-      b.aim_diff or 0, tostring(b.wall_hp),
-      tostring(b.standoff_mx), tostring(b.standoff_my), tostring(b.standoff_deg))
+      b.aim_diff or 0, tostring(b.wall_hp), tostring(b.standoff_deg))
   end
 
   local function append_attack_tank_breakdown()

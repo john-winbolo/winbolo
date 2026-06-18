@@ -23,6 +23,19 @@ M.ROLE_COMMANDER = "c"
 M.ROLE_SOLDIER   = "s"
 M.ROLE_HARASSER  = "h"
 
+-- Substates where a blitzer has ARRIVED at its firing spot (past approach) and
+-- is settling its aim or already firing — i.e. "parked and go-able" for the
+-- early-GO quorum, exactly equivalent to blitz_wait. Covers both the overwhelm
+-- path (blitz_wait) and the full PPT firing sequence (aim → in_range_* →
+-- shoot_pill). A tank in any of these is at its spot and will fire on GO without
+-- needing to travel, so it counts toward the GO numbers like a blitz_wait tank.
+M.BLITZ_READY_SUBS = {
+  blitz_wait = true, aim = true,
+  in_range_position = true, in_range_aim_pre = true,
+  in_range_aim = true, in_range_aim_finetune = true,
+  shoot_pill = true,
+}
+
 -- A commander's blitz call is OPEN while it's still in a PRE-COMMIT substate —
 -- planning, gathering/building the shield, driving in, or rallying. Once it
 -- COMMITS to firing (aim / charge / in_range_* / engage / shoot_pill / swerve)
@@ -916,6 +929,7 @@ end
 -- broadcast) is excluded from the total so it can't stall the quorum.
 function M.blitz_ready_status(state, now, self_pn, info)
   local total, ready = 0, 0
+  local inwait = 0             -- soldiers PARKED at their standoff (sub=blitz_wait), aimed or not
   local min_pending_bd = nil   -- closest NOT-yet-ready committed soldier's walk dist (bd)
   local any_unseen = false     -- a pending soldier we can't see (relying on its broadcast bd)
   local dead = state.tank_dead_at
@@ -946,6 +960,11 @@ function M.blitz_ready_status(state, now, self_pn, info)
       if not is_dead and h.role == "s" and tonumber(h.cmdr or "") == self_pn
          and h.goal == "attack_pill" and tonumber(h.target or "") == our_pid then
         total = total + 1
+        -- Parked at its firing spot (past approach), independent of aim — the
+        -- overwhelm wait (blitz_wait) OR anywhere in the PPT firing sequence
+        -- (aim → in_range_* → shoot_pill). A soldier here is "go-able": it fires
+        -- on GO without travelling, so it counts toward the early-GO quorum.
+        if M.BLITZ_READY_SUBS[h.sub or ""] then inwait = inwait + 1 end
         if h.rdy == "1" then
           ready = ready + 1
         else
@@ -967,7 +986,7 @@ function M.blitz_ready_status(state, now, self_pn, info)
       end
     end
   end
-  return total, ready, min_pending_bd, any_unseen
+  return total, ready, min_pending_bd, any_unseen, inwait
 end
 
 -- Full blitz visualizer for the followed bot. Toggle "squad_blitz". Draws:

@@ -853,6 +853,7 @@ M.STRATEGIC_PLACE_COST_MULT          = 0.1
 -- the threat direction, 2-5 tiles out, with clear LGM path.
 M.DEFENSIVE_BUILD_MIN_DIST     = 2    -- tiles from tank (inner bound)
 M.DEFENSIVE_BUILD_MAX_DIST     = 5    -- tiles from tank (outer bound, tried first)
+M.DEF_BUILD_THREAT_RANGE       = 8    -- tiles (euclidean): nearest enemy tank must be within this to trigger a panic/defensive build. Past it the tank can't shoot us, so no need to panic-drop a guard pill mid-carry. ~tank gun range + 1 slack.
 M.DEFENSIVE_BUILD_ANGLE_OFFSET = 32   -- ±45° in WinBolo 256-unit circle
 -- Emergency def_build dispatches the LGM to run to the spot from wherever the
 -- tank is (no within-1-tile gate). Cap how far we'll send the LGM: spots are
@@ -911,6 +912,14 @@ M.TANK_COMBAT_MAX_RANGE         = 15    -- only consider tanks within this many 
 M.TANK_COMBAT_AIM_BONUS         = 40    -- cost reduction if already aimed near target
 M.TANK_COMBAT_AIM_THRESHOLD     = 20    -- bolo angle units (~28°) for aim bonus
 M.TANK_COMBAT_ENGAGE_RANGE      = 7     -- tiles: start shooting at this distance (~max shell range)
+-- Pill-take guard: while the bot is on an attack_pill goal, attack_tank
+-- candidates past shoot range get an exponentially-growing euclidean-distance
+-- penalty so a far tank can't preempt the pill take (only a CLOSE, threatening
+-- one can). penalty = min(BASE^(edist-RANGE) * K, CAP).
+M.ATTACK_TANK_PILLBUSY_RANGE = 7      -- tiles: euclidean shoot range; no penalty within this
+M.ATTACK_TANK_PILLBUSY_BASE  = 1.7    -- exponential base per tile beyond range (~+70%/tile)
+M.ATTACK_TANK_PILLBUSY_K     = 8      -- multiplier on the exponential term
+M.ATTACK_TANK_PILLBUSY_CAP   = 1e6    -- penalty ceiling (effectively un-preemptable when far)
 M.TANK_COMBAT_STANDOFF_RANGE    = 7     -- tiles: nav target when closing (at max shell range)
 M.TANK_COMBAT_OPTIMAL_DIST      = 5     -- tiles: ideal engagement distance
 M.TANK_COMBAT_TOO_CLOSE         = 2     -- tiles: back off if closer than this
@@ -1186,6 +1195,7 @@ M.SQUAD_BLITZ_AIM_TOL    = 8   -- brad; a blitz soldier must be facing the pill 
 M.SQUAD_MAX_SIZE         = 2   -- max SOLDIERS per squad; with the commander that's 3 tanks total per blitz. A full squad recruits no more
 M.SQUAD_BLITZ_COST       = 30  -- flat attack_pill cost a squad soldier assigns its commander's blitz pill: low enough to win normal goals, high enough that attack_tank/flee/refuel can still preempt
 M.SQUAD_BLITZ_BUCKET     = 5   -- a blitz standoff is picked at random from clear-LOS spots scoring within this of the best
+M.SQUAD_BLITZ_GO_EARLY_READY = 2   -- commander fires GO as soon as this many TOTAL blitzers are ready (in position + aimed), without waiting for the rest or the READY_TIMEOUT. Counts the commander as 1 (same convention as BLITZ_MIN_READY_TO_CHARGE), so 2 = commander + 1 ready soldier already goes; a still-approaching extra joins on the broadcast GO. Set to 3 to require commander + 2 soldiers.
 M.SQUAD_BLITZ_READY_TIMEOUT = 550  -- ticks (~11s @ 50Hz) the commander waits in blitz_wait for ALL soldiers to report rdy before firing GO anyway. Sized to cover a worst-case in-place aim: a 180-deg turn on swamp/crater/river/rubble (turn rate 0.25 brad/tick) is ~512 ticks (~10.4s), so the timeout must exceed that or the commander GOes before a slow-terrain soldier can finish turning to face the pill. (A genuinely stuck/dead soldier still can't stall past this.)
 M.SQUAD_BLITZ_WAIT_TIMEOUT  = 1500 -- ticks (~30s) hard backstop: a soldier holding in blitz_wait abandons the take if the commander's GO never arrives (commander silently stuck/disconnected). Faster aborts (commander died / retargeted) fire on their own signals.
 M.SQUAD_BLITZ_PROGRESS_CHECK = 250  -- ticks (~5s): commander re-checks soldier approach this often in blitz_wait; if the closest still-coming soldier got closer since last check, the ready-timeout is extended by another PROGRESS_CHECK (keep waiting on a tank that's still closing; stop extending once it stalls). Also the size of the grace a near-deadline "where are you?" query (SQUAD_BLITZ_QUERY_LEAD) buys an unseen-but-closing soldier.

@@ -35,6 +35,8 @@ namespace {
 struct TermDoc { const char *term; const char *desc; };
 static const TermDoc kTermDocs[] = {
     {"A*",      "Path cost — Dijkstra/A* weighted grid distance to the target tile"},
+    {"A* to standoff", "Path cost to the FIRING STANDOFF tile (R off the enemy), NOT the enemy's tile — so it's cheaper than a test-click on the enemy square."},
+    {"pillbusy", "Pill-take guard: while on an attack_pill goal, an exponentially-growing euclidean-distance penalty for a tank past shoot range, so a far tank can't preempt the take (only a close, threatening one can)."},
     {"raw",     "Uncapped A* cost (shown when it was capped for distant/water targets)"},
     {"base",    "Fixed base constant added to every candidate of this goal type"},
     {"danger",  "Danger at destination × weight — hostile pills/tanks in firing range"},
