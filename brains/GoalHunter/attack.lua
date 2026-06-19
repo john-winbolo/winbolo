@@ -2959,11 +2959,12 @@ end
 local function effective_anger_wait_max(pill, info)
   local w = C.ANGER_WAIT_MAX
   if pill and (pill.health or 99) <= (C.ANGER_WAIT_NEAR_KILL_HP or 1) then
-    w = w / (C.ANGER_WAIT_NEAR_KILL_DIV or 1)
+    w = w - (C.ANGER_WAIT_NEAR_KILL_SUB or 0)
   end
   if (info.armour or 0) >= (C.ANGER_WAIT_HIGH_ARMOUR_ARM or 9999) then
-    w = w / (C.ANGER_WAIT_HIGH_ARMOUR_DIV or 1)
+    w = w - (C.ANGER_WAIT_HIGH_ARMOUR_SUB or 0)
   end
+  if w < 0 then w = 0 end
   return w
 end
 

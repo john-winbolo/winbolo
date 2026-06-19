@@ -536,14 +536,15 @@ M.SWERVE_DEFENSIVE_TURN_TICKS  = 40
 -- remaining straight portion is wasted time.
 --   SWERVE_SHELL_NEAR_WU    — a hostile shell whose closest-point-of-approach to
 --                             our tank is within this many WU counts as incoming
---                             (tank hit box is 128 WU; this adds ~0.5-tile margin).
+--                             (tank hit box is 128 WU; 400 ≈ 1.5 tiles of margin
+--                             so we keep dodging shells passing reasonably near).
 --   SWERVE_EARLY_EXIT_CLEAR_TICKS — consecutive clear ticks (no incoming shell,
 --                             no damage taken) required before peeling off. Sized
 --                             to span a pill reload cycle so a clear window means
 --                             the pill genuinely isn't connecting.
 --   SWERVE_EARLY_EXIT_MIN_TICKS — never early-exit before this many ticks of
 --                             swerve have elapsed (let the evasive turn finish).
-M.SWERVE_SHELL_NEAR_WU         = 200
+M.SWERVE_SHELL_NEAR_WU         = 400
 M.SWERVE_EARLY_EXIT_CLEAR_TICKS = 20
 M.SWERVE_EARLY_EXIT_MIN_TICKS   = 30
 
@@ -761,12 +762,13 @@ M.INTERCEPT_MAX_RANGE      = 20    -- only consider enemy tanks within this rang
 -- -------------------------------------------------------------------------
 M.ANGER_ATTACK_THRESHOLD   = 0.5   -- anger level above which we prefer to wait
 M.ANGER_WAIT_MAX           = 500   -- max ticks we're willing to wait for cooldown (~10s)
--- The wait cap above shrinks when sitting out the cooldown is cheap or pointless.
--- Divisors stack (multiply) — a 1-HP pill at high armour waits ANGER_WAIT_MAX/6.
-M.ANGER_WAIT_NEAR_KILL_DIV    = 3   -- ÷ when the pill is one hit from death (<=NEAR_KILL_HP): a single shot kills it even fully angry, so the cooldown wait is wasted
-M.ANGER_WAIT_NEAR_KILL_HP     = 1   -- pill health at/below which "one hit left" applies
-M.ANGER_WAIT_HIGH_ARMOUR_DIV  = 2   -- ÷ when our armour is high (>=HIGH_ARMOUR_ARM): we can tank the angry pill on approach, so the wait matters less
-M.ANGER_WAIT_HIGH_ARMOUR_ARM  = 30  -- armour at/above which the high-armour divisor applies
+-- The wait cap above shrinks (in ticks) when sitting out the cooldown is cheap
+-- or pointless. Subtractions stack additively, floored at 0 — a 1-HP pill at
+-- high armour waits ANGER_WAIT_MAX - 150 - 100 = 250 ticks (~5s).
+M.ANGER_WAIT_NEAR_KILL_SUB    = 150  -- ticks (~3s) trimmed when the pill is one hit from death (<=NEAR_KILL_HP): a single shot kills it even fully angry, so the cooldown wait is wasted
+M.ANGER_WAIT_NEAR_KILL_HP     = 1    -- pill health at/below which "one hit left" applies
+M.ANGER_WAIT_HIGH_ARMOUR_SUB  = 100  -- ticks (~2s) trimmed when our armour is high (>=HIGH_ARMOUR_ARM): we can tank the angry pill on approach, so the wait matters less
+M.ANGER_WAIT_HIGH_ARMOUR_ARM  = 30   -- armour at/above which the high-armour trim applies
 M.ANGER_COST_PER_TICK      = 0.3   -- cost per tick of remaining anger cooldown
 
 -- -------------------------------------------------------------------------
