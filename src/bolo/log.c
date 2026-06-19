@@ -325,6 +325,234 @@ void logAddToMemory(BYTE *memPos, const void *dataIn, BYTE dataLen) {
 }
 
 /*********************************************************
+*NAME:          logSerializeEvent
+*AUTHOR:        John Morrison
+*PURPOSE:
+* Writes a single event's plaintext bytes (no XOR) into out: the event-code
+* byte followed by that event type's payload, in the exact order, lengths and
+* values logAddEvent's switch produces before the XOR. Variable-length events
+* append their pascal string as words[0]+1 plaintext bytes. Returns the number
+* of bytes written, or 0 for an unknown event type (nothing written). Does not
+* touch logKey, logMem, logNumEvents or call logCheckTankSame.
+*
+*ARGUMENTS:
+*  itemNum - Item number to serialize
+*  opt1    - Option argument 1
+*  opt2    - Option argument 2
+*  opt3    - Option argument 3
+*  opt4    - Option argument 4
+*  short1  - Short optional argument
+*  words   - Char* optional argument (pascal string)
+*  out     - Destination buffer (must hold up to 262 bytes)
+*********************************************************/
+static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, unsigned short short1, const char *words, BYTE *out) {
+  int off = 0; /* Bytes written so far */
+  unsigned short wordsLen; /* Safe length for words data */
+
+  switch (itemNum) {
+  case log_BaseSetOwner:
+    out[off++] = log_BaseSetOwner;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_BaseSetStock:
+    out[off++] = log_BaseSetStock;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    break;
+  case log_PlayerJoined:
+    out[off++] = log_PlayerJoined;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    out[off++] = (BYTE) short1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_PlayerQuit:
+    out[off++] = log_PlayerQuit;
+    out[off++] = opt1;
+    break;
+  case log_LostMan:
+    out[off++] = log_LostMan;
+    out[off++] = opt1;
+    break;
+  case log_MapChange:
+    out[off++] = log_MapChange;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_ChangeName:
+    out[off++] = log_ChangeName;
+    out[off++] = opt1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_AllyRequest:
+    out[off++] = log_AllyRequest;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  case log_AllyAccept:
+    out[off++] = log_AllyAccept;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  case log_AllyLeave:
+    out[off++] = log_AllyLeave;
+    out[off++] = opt1;
+    break;
+  case log_PillSetOwner:
+    out[off++] = log_PillSetOwner;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_PillSetPlace:
+    out[off++] = log_PillSetPlace;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_PillSetHealth:
+  case log_PillSetInTank:
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    break;
+  case log_SoundBuild:
+  case log_SoundFarm:
+  case log_SoundShoot:
+  case log_SoundHitWall:
+  case log_SoundHitTank:
+  case log_SoundHitTree:
+  case log_SoundMineLay:
+  case log_SoundMineExplode:
+  case log_SoundExplosion:
+  case log_SoundBigExplosion:
+  case log_SoundManDie:
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  case log_PlayerLocation:
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    out[off++] = (BYTE) short1;
+    break;
+  case log_Shell:
+  case log_LgmLocation:
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    break;
+  case log_KillPlayer:
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  case log_MessagePlayers:
+    out[off++] = log_MessagePlayers;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_MessageAll:
+    out[off++] = log_MessageAll;
+    out[off++] = opt1;
+    //FIXTHIS
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_MessageServer:
+    out[off++] = log_MessageServer;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_PlayerRejoin:
+    out[off++] = log_PlayerRejoin;
+    out[off++] = opt1;
+    break;
+  case log_PlayerLeaving:
+    out[off++] = log_PlayerLeaving;
+    out[off++] = opt1;
+    break;
+  case log_PlayerDied:
+    out[off++] = log_PlayerDied;
+    out[off++] = opt1;
+    break;
+  case log_LobbyEnter:
+  case log_LobbyExit:
+    out[off++] = itemNum;
+    break;
+  case log_PlayerReady:
+  case log_PlayerUnready:
+  case log_MapSkipVote:
+    /* event code + player number */
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    break;
+  case log_TeamSet:
+    /* event code + player number + team number */
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  case log_CountdownStart:
+  case log_CountdownCancel:
+  case log_BalanceApplied:
+    /* event code only, no payload */
+    out[off++] = itemNum;
+    break;
+  case log_MapSkipApplied:
+    /* event code + pascal string map name */
+    out[off++] = itemNum;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_GameVoteStart:
+    /* event code + kind + initiator player + team (0 = global) */
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_GameVoteCast:
+    /* event code + kind + player + voteYes (0/1) */
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_GameVoteEnd:
+    /* event code + kind + result (0=failed,1=passed) */
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  default:
+    return 0;
+  }
+  return off;
+}
+
+/*********************************************************
 *NAME:          logAddEvent
 *AUTHOR:        John Morrison
 *CREATION DATE: 5/5/01
@@ -342,8 +570,9 @@ void logAddToMemory(BYTE *memPos, const void *dataIn, BYTE dataLen) {
 *  words   - Char* optional argument
 *********************************************************/
 void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, unsigned short short1, char *words) {
-  bool changeKey = TRUE; /* Whether to change the encryption key or not */
-  unsigned short wordsLen; /* Safe length for words data */
+  BYTE event[262]; /* Plaintext event: 6-byte header + 256-byte pascal string */
+  int eventLen; /* Bytes the serializer produced */
+  int count;
 
   if (logOwnerThread != 0 && SDL_GetCurrentThreadID() != logOwnerThread) {
     return;
@@ -357,308 +586,26 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
     if (logMemSize + 262 >= LOG_MEMORY_BUFFER_SIZE) {
       return;
     }
-    switch (itemNum) {
-    case log_BaseSetOwner:
-      *(logMem+logMemSize) = log_BaseSetOwner ^ logKey;
+    /* log_PlayerLocation only emits when the tank state changed; logCheckTankSame
+       updates its cached state as a side effect. When unchanged, emit nothing:
+       no bytes, no event count change, no key rotation. */
+    if (itemNum == log_PlayerLocation &&
+        logCheckTankSame(opt1, opt2, opt3, opt4, (BYTE) short1) == TRUE) {
+      return;
+    }
+    eventLen = logSerializeEvent(itemNum, opt1, opt2, opt3, opt4, short1, words, event);
+    if (eventLen <= 0) {
+      /* Unknown event type: emit nothing, no count change, no key rotation. */
+      return;
+    }
+    /* Append the event to logMem by XOR-ing each plaintext byte with the
+       current logKey, which is constant for the whole event. */
+    for (count = 0; count < eventLen; count++) {
+      *(logMem+logMemSize) = event[count] ^ logKey;
       logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_BaseSetStock:
-      *(logMem+logMemSize) = log_BaseSetStock ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt4 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PlayerJoined:
-      *(logMem+logMemSize) = log_PlayerJoined ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt4 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = (BYTE) short1 ^ logKey;
-      logMemSize++;
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_PlayerQuit:
-      *(logMem+logMemSize) = log_PlayerQuit ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_LostMan:
-      *(logMem+logMemSize) = log_LostMan ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_MapChange:
-      *(logMem+logMemSize) =  log_MapChange ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_ChangeName:
-      *(logMem+logMemSize) =  log_ChangeName ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_AllyRequest:
-      *(logMem+logMemSize) =  log_AllyRequest ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    case log_AllyAccept:
-      *(logMem+logMemSize) =  log_AllyAccept ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    case log_AllyLeave:
-      *(logMem+logMemSize) =  log_AllyLeave ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PillSetOwner:
-      *(logMem+logMemSize) =  log_PillSetOwner ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PillSetPlace:
-      *(logMem+logMemSize) =  log_PillSetPlace ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PillSetHealth:
-    case log_PillSetInTank:
-      *(logMem+logMemSize) =  itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_SoundBuild:
-    case log_SoundFarm:
-    case log_SoundShoot:
-    case log_SoundHitWall:
-    case log_SoundHitTank:
-    case log_SoundHitTree:
-    case log_SoundMineLay:
-    case log_SoundMineExplode:
-    case log_SoundExplosion:
-    case log_SoundBigExplosion:
-    case log_SoundManDie:
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PlayerLocation:
-      if (logCheckTankSame(opt1, opt2, opt3, opt4, (BYTE) short1) == TRUE) {
-        changeKey = FALSE;
-        logNumEvents--;
-      } else {
-        *(logMem+logMemSize) = itemNum ^ logKey;
-        logMemSize++;
-        *(logMem+logMemSize) = opt1 ^ logKey;
-        logMemSize++;
-        *(logMem+logMemSize) = opt2 ^ logKey;
-        logMemSize++;
-        *(logMem+logMemSize) = opt3 ^ logKey;
-        logMemSize++;
-        *(logMem+logMemSize) = opt4 ^ logKey;
-        logMemSize++;
-        *(logMem+logMemSize) = (BYTE) short1 ^ logKey;
-        logMemSize++;
-      }
-      break;
-    case log_Shell:
-    case log_LgmLocation:
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt4 ^ logKey;
-      logMemSize++;
-      break;
-    case log_KillPlayer:
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    case log_MessagePlayers:
-      *(logMem+logMemSize) = log_MessagePlayers^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_MessageAll:
-      *(logMem+logMemSize) = log_MessageAll ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      //FIXTHIS
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_MessageServer:
-      *(logMem+logMemSize) = log_MessageServer ^ logKey;
-      logMemSize++;
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_PlayerRejoin:
-      *(logMem+logMemSize) = log_PlayerRejoin ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PlayerLeaving:
-      *(logMem+logMemSize) = log_PlayerLeaving ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PlayerDied:
-      *(logMem+logMemSize) = log_PlayerDied ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_LobbyEnter:
-    case log_LobbyExit:
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      break;
-    case log_PlayerReady:
-    case log_PlayerUnready:
-    case log_MapSkipVote:
-      /* event code + player number */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_TeamSet:
-      /* event code + player number + team number */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    case log_CountdownStart:
-    case log_CountdownCancel:
-    case log_BalanceApplied:
-      /* event code only, no payload */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      break;
-    case log_MapSkipApplied:
-      /* event code + pascal string map name */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_GameVoteStart:
-      /* event code + kind + initiator player + team (0 = global) */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_GameVoteCast:
-      /* event code + kind + player + voteYes (0/1) */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_GameVoteEnd:
-      /* event code + kind + result (0=failed,1=passed) */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    default:
-      changeKey = FALSE;
-      logNumEvents--;
-      break;
     }
     logNumEvents++;
-    if (changeKey == TRUE) {
-      logKey = itemNum;
-    }
+    logKey = itemNum;
   }
 }
 
