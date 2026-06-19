@@ -38,17 +38,21 @@ typedef enum {
     OSK_K_ENTER,
     OSK_K_SPACE,
     OSK_K_SHIFT,
-    OSK_K_MORE
+    OSK_K_MORE,
+    OSK_K_SCRIPT
 } OskKeyKind;
 
 /* For OSK_K_CHAR, base/shift are both the caption and the emitted text
    (lowercase / shifted), and cp is the base codepoint (ASCII = the single
-   char).  Special keys carry only a caption in base; cp is unused. */
+   char).  shiftCp is the explicit uppercase codepoint for non-ASCII keys; 0
+   means "derive from shift[0]" (the ASCII case).  Special keys carry only a
+   caption in base; cp / shiftCp are unused. */
 typedef struct {
     OskKeyKind  kind;
     const char *base;
     const char *shift;
     uint32_t    cp;
+    uint32_t    shiftCp;
 } OskKey;
 
 /* Max grid rows across all layouts.  The text-mode symbols page is the
@@ -64,78 +68,138 @@ typedef struct {
 
 /* QWERTY letters (base = lowercase, shift = uppercase). */
 static const OskKey kLettersR0[] = {
-    {OSK_K_CHAR,"q","Q",'q'},{OSK_K_CHAR,"w","W",'w'},{OSK_K_CHAR,"e","E",'e'},
-    {OSK_K_CHAR,"r","R",'r'},{OSK_K_CHAR,"t","T",'t'},{OSK_K_CHAR,"y","Y",'y'},
-    {OSK_K_CHAR,"u","U",'u'},{OSK_K_CHAR,"i","I",'i'},{OSK_K_CHAR,"o","O",'o'},
-    {OSK_K_CHAR,"p","P",'p'}
+    {OSK_K_CHAR,"q","Q",'q',0},{OSK_K_CHAR,"w","W",'w',0},{OSK_K_CHAR,"e","E",'e',0},
+    {OSK_K_CHAR,"r","R",'r',0},{OSK_K_CHAR,"t","T",'t',0},{OSK_K_CHAR,"y","Y",'y',0},
+    {OSK_K_CHAR,"u","U",'u',0},{OSK_K_CHAR,"i","I",'i',0},{OSK_K_CHAR,"o","O",'o',0},
+    {OSK_K_CHAR,"p","P",'p',0}
 };
 static const OskKey kLettersR1[] = {
-    {OSK_K_CHAR,"a","A",'a'},{OSK_K_CHAR,"s","S",'s'},{OSK_K_CHAR,"d","D",'d'},
-    {OSK_K_CHAR,"f","F",'f'},{OSK_K_CHAR,"g","G",'g'},{OSK_K_CHAR,"h","H",'h'},
-    {OSK_K_CHAR,"j","J",'j'},{OSK_K_CHAR,"k","K",'k'},{OSK_K_CHAR,"l","L",'l'}
+    {OSK_K_CHAR,"a","A",'a',0},{OSK_K_CHAR,"s","S",'s',0},{OSK_K_CHAR,"d","D",'d',0},
+    {OSK_K_CHAR,"f","F",'f',0},{OSK_K_CHAR,"g","G",'g',0},{OSK_K_CHAR,"h","H",'h',0},
+    {OSK_K_CHAR,"j","J",'j',0},{OSK_K_CHAR,"k","K",'k',0},{OSK_K_CHAR,"l","L",'l',0}
 };
 static const OskKey kLettersR2[] = {
-    {OSK_K_SHIFT,"Shift","Shift",0},
-    {OSK_K_CHAR,"z","Z",'z'},{OSK_K_CHAR,"x","X",'x'},{OSK_K_CHAR,"c","C",'c'},
-    {OSK_K_CHAR,"v","V",'v'},{OSK_K_CHAR,"b","B",'b'},{OSK_K_CHAR,"n","N",'n'},
-    {OSK_K_CHAR,"m","M",'m'},
-    {OSK_K_BACKSPACE,"Bksp","Bksp",0}
+    {OSK_K_SHIFT,"Shift","Shift",0,0},
+    {OSK_K_CHAR,"z","Z",'z',0},{OSK_K_CHAR,"x","X",'x',0},{OSK_K_CHAR,"c","C",'c',0},
+    {OSK_K_CHAR,"v","V",'v',0},{OSK_K_CHAR,"b","B",'b',0},{OSK_K_CHAR,"n","N",'n',0},
+    {OSK_K_CHAR,"m","M",'m',0},
+    {OSK_K_BACKSPACE,"Bksp","Bksp",0,0}
 };
-static const OskKey kLettersR3[] = {
-    {OSK_K_MORE,"?123","?123",0},
-    {OSK_K_SPACE,"Space","Space",' '},
-    {OSK_K_ENTER,"Enter","Enter",0}
+/* Russian ЙЦУКЕН letters (lower/upper codepoints).  For U+0430–044F the
+   uppercase is cp − 0x20; ё is the U+0451→U+0401 exception. */
+static const OskKey kCyrRuR0[] = {
+    {OSK_K_CHAR,"й","Й",0x0439,0x0419},{OSK_K_CHAR,"ц","Ц",0x0446,0x0426},
+    {OSK_K_CHAR,"у","У",0x0443,0x0423},{OSK_K_CHAR,"к","К",0x043A,0x041A},
+    {OSK_K_CHAR,"е","Е",0x0435,0x0415},{OSK_K_CHAR,"н","Н",0x043D,0x041D},
+    {OSK_K_CHAR,"г","Г",0x0433,0x0413},{OSK_K_CHAR,"ш","Ш",0x0448,0x0428},
+    {OSK_K_CHAR,"щ","Щ",0x0449,0x0429},{OSK_K_CHAR,"з","З",0x0437,0x0417},
+    {OSK_K_CHAR,"х","Х",0x0445,0x0425},{OSK_K_CHAR,"ъ","Ъ",0x044A,0x042A}
+};
+static const OskKey kCyrRuR1[] = {
+    {OSK_K_CHAR,"ф","Ф",0x0444,0x0424},{OSK_K_CHAR,"ы","Ы",0x044B,0x042B},
+    {OSK_K_CHAR,"в","В",0x0432,0x0412},{OSK_K_CHAR,"а","А",0x0430,0x0410},
+    {OSK_K_CHAR,"п","П",0x043F,0x041F},{OSK_K_CHAR,"р","Р",0x0440,0x0420},
+    {OSK_K_CHAR,"о","О",0x043E,0x041E},{OSK_K_CHAR,"л","Л",0x043B,0x041B},
+    {OSK_K_CHAR,"д","Д",0x0434,0x0414},{OSK_K_CHAR,"ж","Ж",0x0436,0x0416},
+    {OSK_K_CHAR,"э","Э",0x044D,0x042D},{OSK_K_CHAR,"ё","Ё",0x0451,0x0401}
+};
+static const OskKey kCyrRuR2[] = {
+    {OSK_K_SHIFT,"Shift","Shift",0,0},
+    {OSK_K_CHAR,"я","Я",0x044F,0x042F},{OSK_K_CHAR,"ч","Ч",0x0447,0x0427},
+    {OSK_K_CHAR,"с","С",0x0441,0x0421},{OSK_K_CHAR,"м","М",0x043C,0x041C},
+    {OSK_K_CHAR,"и","И",0x0438,0x0418},{OSK_K_CHAR,"т","Т",0x0442,0x0422},
+    {OSK_K_CHAR,"ь","Ь",0x044C,0x042C},{OSK_K_CHAR,"б","Б",0x0431,0x0411},
+    {OSK_K_CHAR,"ю","Ю",0x044E,0x042E},
+    {OSK_K_BACKSPACE,"Bksp","Bksp",0,0}
+};
+
+/* Ukrainian ЙЦУКЕН: ru with ы→і, э→є, ъ→ї, ё dropped, ґ added. */
+static const OskKey kCyrUkR0[] = {
+    {OSK_K_CHAR,"й","Й",0x0439,0x0419},{OSK_K_CHAR,"ц","Ц",0x0446,0x0426},
+    {OSK_K_CHAR,"у","У",0x0443,0x0423},{OSK_K_CHAR,"к","К",0x043A,0x041A},
+    {OSK_K_CHAR,"е","Е",0x0435,0x0415},{OSK_K_CHAR,"н","Н",0x043D,0x041D},
+    {OSK_K_CHAR,"г","Г",0x0433,0x0413},{OSK_K_CHAR,"ш","Ш",0x0448,0x0428},
+    {OSK_K_CHAR,"щ","Щ",0x0449,0x0429},{OSK_K_CHAR,"з","З",0x0437,0x0417},
+    {OSK_K_CHAR,"х","Х",0x0445,0x0425},{OSK_K_CHAR,"ї","Ї",0x0457,0x0407}
+};
+static const OskKey kCyrUkR1[] = {
+    {OSK_K_CHAR,"ф","Ф",0x0444,0x0424},{OSK_K_CHAR,"і","І",0x0456,0x0406},
+    {OSK_K_CHAR,"в","В",0x0432,0x0412},{OSK_K_CHAR,"а","А",0x0430,0x0410},
+    {OSK_K_CHAR,"п","П",0x043F,0x041F},{OSK_K_CHAR,"р","Р",0x0440,0x0420},
+    {OSK_K_CHAR,"о","О",0x043E,0x041E},{OSK_K_CHAR,"л","Л",0x043B,0x041B},
+    {OSK_K_CHAR,"д","Д",0x0434,0x0414},{OSK_K_CHAR,"ж","Ж",0x0436,0x0416},
+    {OSK_K_CHAR,"є","Є",0x0454,0x0404},{OSK_K_CHAR,"ґ","Ґ",0x0491,0x0490}
+};
+static const OskKey kCyrUkR2[] = {
+    {OSK_K_SHIFT,"Shift","Shift",0,0},
+    {OSK_K_CHAR,"я","Я",0x044F,0x042F},{OSK_K_CHAR,"ч","Ч",0x0447,0x0427},
+    {OSK_K_CHAR,"с","С",0x0441,0x0421},{OSK_K_CHAR,"м","М",0x043C,0x041C},
+    {OSK_K_CHAR,"и","И",0x0438,0x0418},{OSK_K_CHAR,"т","Т",0x0442,0x0422},
+    {OSK_K_CHAR,"ь","Ь",0x044C,0x042C},{OSK_K_CHAR,"б","Б",0x0431,0x0411},
+    {OSK_K_CHAR,"ю","Ю",0x044E,0x042E},
+    {OSK_K_BACKSPACE,"Bksp","Bksp",0,0}
 };
 
 /* Symbols / punctuation page, reached via the MORE key. */
 static const OskKey kSymbolsR0[] = {
-    {OSK_K_CHAR,"1","1",'1'},{OSK_K_CHAR,"2","2",'2'},{OSK_K_CHAR,"3","3",'3'},
-    {OSK_K_CHAR,"4","4",'4'},{OSK_K_CHAR,"5","5",'5'},{OSK_K_CHAR,"6","6",'6'},
-    {OSK_K_CHAR,"7","7",'7'},{OSK_K_CHAR,"8","8",'8'},{OSK_K_CHAR,"9","9",'9'},
-    {OSK_K_CHAR,"0","0",'0'}
+    {OSK_K_CHAR,"1","1",'1',0},{OSK_K_CHAR,"2","2",'2',0},{OSK_K_CHAR,"3","3",'3',0},
+    {OSK_K_CHAR,"4","4",'4',0},{OSK_K_CHAR,"5","5",'5',0},{OSK_K_CHAR,"6","6",'6',0},
+    {OSK_K_CHAR,"7","7",'7',0},{OSK_K_CHAR,"8","8",'8',0},{OSK_K_CHAR,"9","9",'9',0},
+    {OSK_K_CHAR,"0","0",'0',0}
 };
 static const OskKey kSymbolsR1[] = {
-    {OSK_K_CHAR,"@","@",'@'},{OSK_K_CHAR,"#","#",'#'},{OSK_K_CHAR,"$","$",'$'},
-    {OSK_K_CHAR,"_","_",'_'},{OSK_K_CHAR,"&","&",'&'},{OSK_K_CHAR,"-","-",'-'},
-    {OSK_K_CHAR,"+","+",'+'},{OSK_K_CHAR,"(","(",'('},{OSK_K_CHAR,")",")",')'},
-    {OSK_K_CHAR,"/","/",'/'}
+    {OSK_K_CHAR,"@","@",'@',0},{OSK_K_CHAR,"#","#",'#',0},{OSK_K_CHAR,"$","$",'$',0},
+    {OSK_K_CHAR,"_","_",'_',0},{OSK_K_CHAR,"&","&",'&',0},{OSK_K_CHAR,"-","-",'-',0},
+    {OSK_K_CHAR,"+","+",'+',0},{OSK_K_CHAR,"(","(",'(',0},{OSK_K_CHAR,")",")",')',0},
+    {OSK_K_CHAR,"/","/",'/',0}
 };
 static const OskKey kSymbolsR2[] = {
-    {OSK_K_CHAR,"*","*",'*'},{OSK_K_CHAR,"\"","\"",'"'},{OSK_K_CHAR,"'","'",'\''},
-    {OSK_K_CHAR,":",":",':'},{OSK_K_CHAR,";",";",';'},{OSK_K_CHAR,"!","!",'!'},
-    {OSK_K_CHAR,"?","?",'?'},
-    {OSK_K_BACKSPACE,"Bksp","Bksp",0}
+    {OSK_K_CHAR,"*","*",'*',0},{OSK_K_CHAR,"\"","\"",'"',0},{OSK_K_CHAR,"'","'",'\'',0},
+    {OSK_K_CHAR,":",":",':',0},{OSK_K_CHAR,";",";",';',0},{OSK_K_CHAR,"!","!",'!',0},
+    {OSK_K_CHAR,"?","?",'?',0},
+    {OSK_K_BACKSPACE,"Bksp","Bksp",0,0}
 };
 static const OskKey kSymbolsR3[] = {
-    {OSK_K_MORE,"ABC","ABC",0},
-    {OSK_K_SPACE,"Space","Space",' '},
-    {OSK_K_ENTER,"Enter","Enter",0}
+    {OSK_K_MORE,"ABC","ABC",0,0},
+    {OSK_K_SPACE,"Space","Space",' ',0},
+    {OSK_K_ENTER,"Enter","Enter",0,0}
 };
 
 /* Compact numeric pad (no shift / no symbols page). */
 static const OskKey kNumericR0[] = {
-    {OSK_K_CHAR,"1","1",'1'},{OSK_K_CHAR,"2","2",'2'},{OSK_K_CHAR,"3","3",'3'}
+    {OSK_K_CHAR,"1","1",'1',0},{OSK_K_CHAR,"2","2",'2',0},{OSK_K_CHAR,"3","3",'3',0}
 };
 static const OskKey kNumericR1[] = {
-    {OSK_K_CHAR,"4","4",'4'},{OSK_K_CHAR,"5","5",'5'},{OSK_K_CHAR,"6","6",'6'}
+    {OSK_K_CHAR,"4","4",'4',0},{OSK_K_CHAR,"5","5",'5',0},{OSK_K_CHAR,"6","6",'6',0}
 };
 static const OskKey kNumericR2[] = {
-    {OSK_K_CHAR,"7","7",'7'},{OSK_K_CHAR,"8","8",'8'},{OSK_K_CHAR,"9","9",'9'}
+    {OSK_K_CHAR,"7","7",'7',0},{OSK_K_CHAR,"8","8",'8',0},{OSK_K_CHAR,"9","9",'9',0}
 };
 static const OskKey kNumericR3[] = {
-    {OSK_K_CHAR,".",".",'.'},{OSK_K_CHAR,"0","0",'0'},{OSK_K_CHAR,"-","-",'-'}
+    {OSK_K_CHAR,".",".",'.',0},{OSK_K_CHAR,"0","0",'0',0},{OSK_K_CHAR,"-","-",'-',0}
 };
 static const OskKey kNumericR4[] = {
-    {OSK_K_BACKSPACE,"Bksp","Bksp",0},
-    {OSK_K_ENTER,"Enter","Enter",0}
+    {OSK_K_BACKSPACE,"Bksp","Bksp",0,0},
+    {OSK_K_ENTER,"Enter","Enter",0,0}
 };
 
 #define NELEMS(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
-static const OskLayout kLetters = {
-    {kLettersR0, kLettersR1, kLettersR2, kLettersR3, nullptr},
-    {NELEMS(kLettersR0), NELEMS(kLettersR1), NELEMS(kLettersR2), NELEMS(kLettersR3), 0},
-    4
+/* Three-row letter sources (no control row — buildLettersPage appends it). */
+static const OskLayout kLatinLetters = {
+    {kLettersR0, kLettersR1, kLettersR2, nullptr, nullptr},
+    {NELEMS(kLettersR0), NELEMS(kLettersR1), NELEMS(kLettersR2), 0, 0},
+    3
+};
+static const OskLayout kCyrillicRu = {
+    {kCyrRuR0, kCyrRuR1, kCyrRuR2, nullptr, nullptr},
+    {NELEMS(kCyrRuR0), NELEMS(kCyrRuR1), NELEMS(kCyrRuR2), 0, 0},
+    3
+};
+static const OskLayout kCyrillicUk = {
+    {kCyrUkR0, kCyrUkR1, kCyrUkR2, nullptr, nullptr},
+    {NELEMS(kCyrUkR0), NELEMS(kCyrUkR1), NELEMS(kCyrUkR2), 0, 0},
+    3
 };
 static const OskLayout kNumeric = {
     {kNumericR0, kNumericR1, kNumericR2, kNumericR3, kNumericR4},
@@ -297,6 +361,96 @@ static void buildSymbolsPage(void) {
     s_more.numRows = row;
 }
 
+/* --- Script (Latin / Cyrillic) ---------------------------------------- */
+
+enum { SCRIPT_LATIN = 0, SCRIPT_CYRILLIC };
+
+/* Languages whose letters page defaults to Cyrillic; the globe key then
+   cycles to Latin (and back) so names/addresses can still be typed in ASCII.
+   cyrLabel is the globe caption shown while the Latin page is up. */
+typedef struct {
+    const char      *lang;
+    const OskLayout *layout;
+    const char      *cyrLabel;
+} OskScript;
+
+static const OskScript kScripts[] = {
+    { "ru", &kCyrillicRu, "РУ" },
+    { "uk", &kCyrillicUk, "УК" },
+};
+
+static int              s_script      = SCRIPT_LATIN;
+static bool             s_scriptCycle = false;   /* globe key offered */
+static const OskLayout *s_cyrLayout   = NULL;     /* chosen ru/uk source */
+static const char      *s_cyrLabel    = NULL;
+
+/* ru/ru-* and uk/uk-* default to Cyrillic with the globe key enabled; every
+   other code (including empty / English) stays Latin with no globe. */
+static void resolveScript(const char *code) {
+    s_script      = SCRIPT_LATIN;
+    s_scriptCycle = false;
+    s_cyrLayout   = NULL;
+    s_cyrLabel    = NULL;
+    if (!code || !code[0]) return;
+
+    const OskScript *m = NULL;
+    for (int i = 0; i < NELEMS(kScripts) && !m; i++)
+        if (SDL_strcasecmp(code, kScripts[i].lang) == 0) m = &kScripts[i];
+    if (!m) {
+        int codeBase = langBaseLen(code);
+        for (int i = 0; i < NELEMS(kScripts) && !m; i++) {
+            int setBase = langBaseLen(kScripts[i].lang);
+            if (codeBase == setBase &&
+                SDL_strncasecmp(code, kScripts[i].lang, (size_t)codeBase) == 0)
+                m = &kScripts[i];
+        }
+    }
+    if (m) {
+        s_script      = SCRIPT_CYRILLIC;
+        s_scriptCycle = true;
+        s_cyrLayout   = m->layout;
+        s_cyrLabel    = m->cyrLabel;
+    }
+}
+
+/* --- Assembled letters page ------------------------------------------- */
+
+static OskLayout s_letters;
+static OskKey    s_lettersBottom[4];   /* ?123, [globe], Space, Enter */
+static char      s_globeCap[8];        /* "EN" / "РУ" / "УК" + NUL */
+
+static void setKey(OskKey *k, OskKeyKind kind, const char *cap, uint32_t cp) {
+    k->kind = kind; k->base = cap; k->shift = cap; k->cp = cp; k->shiftCp = 0;
+}
+
+/* Assemble s_letters: the active script's three letter rows plus a built
+   control row (?123, the globe key for ru/uk, Space, Enter).  Rebuilt on open
+   and on every globe toggle. */
+static void buildLettersPage(void) {
+    const OskLayout *src = (s_script == SCRIPT_CYRILLIC && s_cyrLayout)
+                               ? s_cyrLayout : &kLatinLetters;
+    for (int r = 0; r < 3; r++) {
+        s_letters.rows[r]   = src->rows[r];
+        s_letters.rowLen[r] = src->rowLen[r];
+    }
+
+    int n = 0;
+    setKey(&s_lettersBottom[n++], OSK_K_MORE, "?123", 0);
+    if (s_scriptCycle) {
+        /* Caption names the script the globe switches TO. */
+        const char *label = (s_script == SCRIPT_CYRILLIC)
+                                ? "EN" : (s_cyrLabel ? s_cyrLabel : "");
+        SDL_strlcpy(s_globeCap, label, sizeof(s_globeCap));
+        setKey(&s_lettersBottom[n++], OSK_K_SCRIPT, s_globeCap, 0);
+    }
+    setKey(&s_lettersBottom[n++], OSK_K_SPACE, "Space", ' ');
+    setKey(&s_lettersBottom[n++], OSK_K_ENTER, "Enter", 0);
+
+    s_letters.rows[3]   = s_lettersBottom;
+    s_letters.rowLen[3] = n;
+    s_letters.numRows   = 4;
+}
+
 /* --- State ------------------------------------------------------------ */
 
 static bool s_open    = false;
@@ -325,7 +479,7 @@ static bool latched(bool pressed, bool *armed) {
 
 static const OskLayout *currentLayout(void) {
     if (s_mode == OSK_MODE_NUMERIC) return &kNumeric;
-    return s_symbols ? &s_more : &kLetters;
+    return s_symbols ? &s_more : &s_letters;
 }
 
 /* Shift only applies to the letters page. */
@@ -345,9 +499,11 @@ static void activateKey(const OskKey *k) {
     ImGuiIO &io = ImGui::GetIO();
     switch (k->kind) {
         case OSK_K_CHAR: {
-            uint32_t cp = (s_shift && lettersActive())
-                              ? (uint32_t)(unsigned char)k->shift[0]
-                              : k->cp;
+            uint32_t cp;
+            if (s_shift && lettersActive())
+                cp = k->shiftCp ? k->shiftCp : (uint32_t)(unsigned char)k->shift[0];
+            else
+                cp = k->cp;
             io.AddInputCharacter(cp);
             break;
         }
@@ -369,6 +525,15 @@ static void activateKey(const OskKey *k) {
             s_symbols = !s_symbols;
             clampCursor(currentLayout());
             break;
+        case OSK_K_SCRIPT:
+            if (s_scriptCycle) {
+                s_script = (s_script == SCRIPT_LATIN) ? SCRIPT_CYRILLIC
+                                                      : SCRIPT_LATIN;
+                s_shift  = false;
+                buildLettersPage();
+                clampCursor(currentLayout());
+            }
+            break;
     }
 }
 
@@ -384,7 +549,11 @@ void keyboardOpen(int mode) {
     s_mode    = mode;
     s_shift   = false;
     s_symbols = false;
+    char code[16];
+    gameFrontGetLanguageCode(code, (int)sizeof(code));
+    resolveScript(code);  /* pick Latin vs Cyrillic + whether the globe shows */
     buildSymbolsPage();   /* refresh accent rows for the current UI language */
+    buildLettersPage();   /* assemble the letters page for the chosen script */
     s_row     = 0;
     s_col     = 0;
     s_armUp = s_armDown = s_armLeft = s_armRight = true;
