@@ -95,6 +95,16 @@ void channelMuxInit(ChannelMux *m) {
     bulk->recvPresent = m->bulkRecvPresent;
     bulk->recvLen = m->bulkRecvLen;
     bulk->recvData = &m->bulkRecvData[0][0];
+
+    ChannelState *gameEffect = &m->ch[CHANNEL_GAME_EFFECT];
+    gameEffect->window = CHANNEL_GAME_EFFECT_WINDOW;
+    gameEffect->segSize = CHANNEL_GAME_EFFECT_SEG;
+    gameEffect->bestEffort = true;
+    gameEffect->sendLen = m->gameEffectSendLen;
+    gameEffect->sendData = &m->gameEffectSendData[0][0];
+    gameEffect->recvPresent = m->gameEffectRecvPresent;
+    gameEffect->recvLen = m->gameEffectRecvLen;
+    gameEffect->recvData = &m->gameEffectRecvData[0][0];
 }
 
 void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs) {
@@ -116,6 +126,35 @@ bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len) {
     /* Window-bounded: never let more than `window` segments be unacked. */
     if ((c->nextSeq - c->ackedSeq) >= c->window) {
         return false; /* overflow signal — caller/transport disconnects */
+    }
+    uint32_t idx = c->nextSeq % c->window;
+    c->sendLen[idx] = len;
+    if (len > 0 && msg != NULL) {
+        memcpy(c->sendData + idx * c->segSize, msg, len);
+    }
+    c->nextSeq++;
+    return true;
+}
+
+bool channelSendBestEffort(ChannelMux *m, uint8_t ch, const uint8_t *msg,
+                           uint16_t len) {
+    if (m == NULL || ch >= CHANNEL_COUNT) {
+        return false; /* usage error: bad id */
+    }
+    ChannelState *c = &m->ch[ch];
+    if (!c->bestEffort) {
+        return false; /* usage error: not a best-effort channel */
+    }
+    if (len > c->segSize) {
+        return false; /* a message must fit one segment */
+    }
+    /* No ack ever drains this ring, so reclaim it here: when the window is
+     * full, drop the oldest pending segment rather than block or fail. */
+    if ((c->nextSeq - c->ackedSeq) >= c->window) {
+        c->ackedSeq++;
+        if (c->txNext < c->ackedSeq) {
+            c->txNext = c->ackedSeq;
+        }
     }
     uint32_t idx = c->nextSeq % c->window;
     c->sendLen[idx] = len;
@@ -190,6 +229,9 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
     int ch;
     for (ch = 0; ch < CHANNEL_COUNT; ch++) {
         ChannelState *c = &m->ch[ch];
+        if (c->bestEffort) {
+            continue; /* best-effort is never acked (ackDirty stays clear) */
+        }
         if (!c->ackDirty) {
             continue;
         }
@@ -213,6 +255,33 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
     uint32_t rto = channelRtoTicks(m);
     for (ch = 0; ch < CHANNEL_COUNT; ch++) {
         ChannelState *c = &m->ch[ch];
+        if (c->bestEffort) {
+            /* Drain-and-clear: frame each pending segment once, free its ring
+             * slot, advance the cursor. No ack listing, no RTO, no retransmit
+             * retention. */
+            uint32_t seq = c->txNext;
+            for (; seq < c->nextSeq; seq++) {
+                uint32_t idx = seq % c->window;
+                uint16_t slen = c->sendLen[idx];
+                if (segCount == 255 ||
+                    pos + CHANNEL_SEG_HEADER_SIZE + slen > budget) {
+                    break; /* tight budget — remaining drain next frame */
+                }
+                buf[pos] = (uint8_t)ch;
+                packU32(buf + pos + 1, seq);
+                packU16(buf + pos + 5, slen);
+                pos += CHANNEL_SEG_HEADER_SIZE;
+                if (slen > 0) {
+                    memcpy(buf + pos, c->sendData + idx * c->segSize, slen);
+                }
+                pos += slen;
+                segCount++;
+                c->sendLen[idx] = 0; /* drained; nothing retained for retransmit */
+            }
+            c->txNext = seq;
+            c->ackedSeq = seq; /* framed == done; recycle the ring without an ack */
+            continue;
+        }
         bool tailNonEmpty = (c->ackedSeq < c->nextSeq);
 
         /* A stalled tail (the transmit cursor has reached nextSeq but acks
@@ -267,6 +336,33 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
 static void channelApplySegment(ChannelMux *m, uint8_t ch, uint32_t seq,
                                 const uint8_t *payload, uint16_t slen) {
     ChannelState *c = &m->ch[ch];
+    if (c->bestEffort) {
+        /* No ack for best-effort. Deliver-on-arrival with no reorder hold. */
+        if (seq < c->expectedSeq) {
+            return; /* stale / already delivered */
+        }
+        if (seq >= c->expectedSeq + c->window) {
+            /* Jumped beyond the window — drop the oldest to make room rather
+             * than wait (best-effort never stalls on a gap). */
+            uint32_t newExpected = seq - c->window + 1;
+            uint32_t s;
+            for (s = c->expectedSeq;
+                 s < newExpected && s < c->expectedSeq + c->window; s++) {
+                c->recvPresent[s % c->window] = false;
+            }
+            c->expectedSeq = newExpected;
+        }
+        uint32_t idx = seq % c->window;
+        if (c->recvPresent[idx]) {
+            return; /* duplicate */
+        }
+        c->recvPresent[idx] = true;
+        c->recvLen[idx] = slen;
+        if (slen > 0) {
+            memcpy(c->recvData + idx * c->segSize, payload, slen);
+        }
+        return;
+    }
     /* Any segment (even a duplicate or out-of-window one) re-arms the ack,
      * so a dropped ack is recovered by the sender's next retransmit. */
     c->ackDirty = true;
@@ -355,6 +451,33 @@ bool channelReceive(ChannelMux *m, uint8_t ch, uint8_t *out, uint16_t *outLen) {
     c->recvPresent[idx] = false;
     c->expectedSeq++;
     return true;
+}
+
+bool channelReceiveBestEffort(ChannelMux *m, uint8_t ch, uint8_t *out,
+                              uint16_t *outLen) {
+    if (m == NULL || ch >= CHANNEL_COUNT || out == NULL || outLen == NULL) {
+        return false;
+    }
+    ChannelState *c = &m->ch[ch];
+    if (!c->bestEffort) {
+        return false; /* usage error: not a best-effort channel */
+    }
+    /* Return the lowest buffered seq at or above the cursor, advancing past
+     * any skipped (never-arrived) seqs below it — no waiting on a gap. */
+    uint32_t seq;
+    for (seq = c->expectedSeq; seq < c->expectedSeq + c->window; seq++) {
+        uint32_t idx = seq % c->window;
+        if (c->recvPresent[idx]) {
+            *outLen = c->recvLen[idx];
+            if (c->recvLen[idx] > 0) {
+                memcpy(out, c->recvData + idx * c->segSize, c->recvLen[idx]);
+            }
+            c->recvPresent[idx] = false;
+            c->expectedSeq = seq + 1;
+            return true;
+        }
+    }
+    return false; /* nothing buffered in the window */
 }
 
 uint32_t channelResetSend(ChannelMux *m, uint8_t ch) {
