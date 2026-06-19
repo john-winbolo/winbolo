@@ -1197,6 +1197,8 @@ STR_CTRL_PROMPT_DONTASK=Nie pytaj ponownie
 STR_CTRL_DISC_TITLE=Kontroler odłączony
 STR_CTRL_DISC_MESSAGE=Twój gamepad został odłączony. Możesz go ponownie podłączyć lub przełączyć się na sterowanie klawiaturą.
 STR_CTRL_DISC_BUTTON=Kontynuuj z klawiaturą i myszką
+STR_VOTE_RESPOND_IN_PLAYERS=Odpowiedz w menu Gracze
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Odpowiedz w menu Gracze
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=O WinBolo
 STR_MENU_PREFERENCES=Preferencje…

@@ -1201,6 +1201,8 @@ STR_CTRL_PROMPT_DONTASK=다시 묻지 않기
 STR_CTRL_DISC_TITLE=컨트롤러 연결이 끊겼습니다
 STR_CTRL_DISC_MESSAGE=게임패드 연결이 끊겼습니다. 다시 연결하거나 키보드 조작으로 전환할 수 있습니다.
 STR_CTRL_DISC_BUTTON=키보드와 마우스로 계속
+STR_VOTE_RESPOND_IN_PLAYERS=플레이어 메뉴에서 응답
+STR_ALLIANCE_RESPOND_IN_PLAYERS=플레이어 메뉴에서 응답
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=WinBolo 정보
 STR_MENU_PREFERENCES=환경설정…

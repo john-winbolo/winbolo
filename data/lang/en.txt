@@ -1364,6 +1364,8 @@ STR_CTRL_PROMPT_DONTASK=Don't ask again
 STR_CTRL_DISC_TITLE=Controller Disconnected
 STR_CTRL_DISC_MESSAGE=Your gamepad has been disconnected. You can reconnect it or switch to keyboard controls.
 STR_CTRL_DISC_BUTTON=Continue with keyboard and mouse
+STR_VOTE_RESPOND_IN_PLAYERS=Respond in the Players menu
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Respond in the Players menu
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})

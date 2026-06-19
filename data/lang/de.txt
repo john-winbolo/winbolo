@@ -1201,6 +1201,8 @@ STR_CTRL_PROMPT_DONTASK=Nicht mehr fragen
 STR_CTRL_DISC_TITLE=Controller getrennt
 STR_CTRL_DISC_MESSAGE=Ihr Gamepad wurde getrennt. Sie können es erneut anschließen oder zur Tastatursteuerung wechseln.
 STR_CTRL_DISC_BUTTON=Mit Tastatur und Maus fortfahren
+STR_VOTE_RESPOND_IN_PLAYERS=Im Spieler-Menü antworten
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Im Spieler-Menü antworten
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Über WinBolo
 STR_MENU_PREFERENCES=Einstellungen…
