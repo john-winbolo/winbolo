@@ -1689,6 +1689,11 @@ static const LangEntry langTable[] = {
     {1806, "Continue with keyboard and mouse"},
     {1807, "Respond in the Players menu"},
     {1808, "Respond in the Players menu"},
+    {1809, "Select   B Backspace   LB Shift   RB ?123   Start Done"},
+    {1810, "Bksp"},
+    {1811, "Shift"},
+    {1812, "Space"},
+    {1813, "Enter"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

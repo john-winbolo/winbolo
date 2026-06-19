@@ -1759,3 +1759,10 @@ STR_DLGBROWSER_SPECTATE=Sledovat
 STR_DLGBROWSER_AUTO_REFRESH=Automatická obnova
 STR_DLGBROWSER_ST_LOBBY=Lobby
 STR_DLGBROWSER_ST_INGAME=Ve hře
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Vybrat   B Zpět   LB Shift   RB ?123   Start Hotovo
+STR_OSK_BKSP=Zpět
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Mezer.
+STR_OSK_ENTER=Enter

@@ -1761,3 +1761,10 @@ STR_DLGBROWSER_SPECTATE=Спостерігати
 STR_DLGBROWSER_AUTO_REFRESH=Автооновлення
 STR_DLGBROWSER_ST_LOBBY=Лобі
 STR_DLGBROWSER_ST_INGAME=В грі
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Вибрати   B Стерти   LB Shift   RB ?123   Start Готово
+STR_OSK_BKSP=Стерти
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Пробіл
+STR_OSK_ENTER=Enter

@@ -1763,3 +1763,10 @@ STR_DLGBROWSER_SPECTATE=Osserva
 STR_DLGBROWSER_AUTO_REFRESH=Aggiornamento automatico
 STR_DLGBROWSER_ST_LOBBY=Sala d'attesa
 STR_DLGBROWSER_ST_INGAME=In partita
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Seleziona   B Backspace   LB Maiusc   RB ?123   Start Fine
+STR_OSK_BKSP=Canc
+STR_OSK_SHIFT=Maiusc
+STR_OSK_SPACE=Spazio
+STR_OSK_ENTER=Invio

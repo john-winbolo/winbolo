@@ -61,6 +61,7 @@ extern "C" {
 #include "../../lang.h"
 #include "../input_source.h"
 #include "imgui_gamebrowser.h"
+#include "imgui_keyboard.h"
 }
 
 static const int DIALOG_W = 1024;
@@ -1464,6 +1465,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         ImGui::End(); /* ##GameBrowserBg host */
 
         dialogDrawNavOutline();
+        keyboardUpdate();   /* controller text entry for this dialog's fields */
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

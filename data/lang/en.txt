@@ -1367,6 +1367,13 @@ STR_CTRL_DISC_BUTTON=Continue with keyboard and mouse
 STR_VOTE_RESPOND_IN_PLAYERS=Respond in the Players menu
 STR_ALLIANCE_RESPOND_IN_PLAYERS=Respond in the Players menu
 
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Select   B Backspace   LB Shift   RB ?123   Start Done
+STR_OSK_BKSP=Bksp
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Space
+STR_OSK_ENTER=Enter
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

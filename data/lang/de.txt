@@ -1761,3 +1761,10 @@ STR_DLGBROWSER_SPECTATE=Zuschauen
 STR_DLGBROWSER_AUTO_REFRESH=Automatisch aktualisieren
 STR_DLGBROWSER_ST_LOBBY=Lobby
 STR_DLGBROWSER_ST_INGAME=Im Spiel
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Auswählen   B Rückschritt   LB Shift   RB ?123   Start Fertig
+STR_OSK_BKSP=Rücksch.
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Leerz.
+STR_OSK_ENTER=Enter

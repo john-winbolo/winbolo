@@ -1419,6 +1419,11 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_NO", STR_NO },
     { "STR_NONE", STR_NONE },
     { "STR_OK", STR_OK },
+    { "STR_OSK_BKSP", STR_OSK_BKSP },
+    { "STR_OSK_ENTER", STR_OSK_ENTER },
+    { "STR_OSK_LEGEND", STR_OSK_LEGEND },
+    { "STR_OSK_SHIFT", STR_OSK_SHIFT },
+    { "STR_OSK_SPACE", STR_OSK_SPACE },
     { "STR_PLATFORM_ANDROID", STR_PLATFORM_ANDROID },
     { "STR_PLATFORM_IOS", STR_PLATFORM_IOS },
     { "STR_PLATFORM_LINUX", STR_PLATFORM_LINUX },
@@ -1522,4 +1527,4 @@ static const LangNameEntry kLangNameTable[] = {
     { "STR_YES", STR_YES },
 };
 
-#define K_LANG_NAME_TABLE_SIZE  1509
+#define K_LANG_NAME_TABLE_SIZE  1514
