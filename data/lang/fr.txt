@@ -1759,3 +1759,10 @@ STR_DLGBROWSER_SPECTATE=Spectateur
 STR_DLGBROWSER_AUTO_REFRESH=Actualisation automatique
 STR_DLGBROWSER_ST_LOBBY=Salon
 STR_DLGBROWSER_ST_INGAME=En partie
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Sélect.   B Ret.arr.   LB Maj.   RB ?123   Start Terminé
+STR_OSK_BKSP=Ret.arr.
+STR_OSK_SHIFT=Maj.
+STR_OSK_SPACE=Espace
+STR_OSK_ENTER=Entrée

@@ -1427,6 +1427,13 @@
 #define STR_CTRL_DISC_MESSAGE               1805
 #define STR_CTRL_DISC_BUTTON                1806
 
+/* On-screen keyboard (controller text entry) */
+#define STR_OSK_LEGEND                      1809
+#define STR_OSK_BKSP                        1810
+#define STR_OSK_SHIFT                       1811
+#define STR_OSK_SPACE                       1812
+#define STR_OSK_ENTER                       1813
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

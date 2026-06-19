@@ -29,6 +29,7 @@ extern "C" {
 #include "../input_gamepad.h"
 #include "../../gamefront.h"   /* gameFrontGetLanguageCode: accent set */
 #include "../../ui_mode.h"     /* uiShouldUseControllerMode: arbitration */
+#include "../../lang.h"        /* langGetText: localized key/legend captions */
 }
 
 /* Steam floating-keyboard hooks (declared rather than pulling in the steam
@@ -549,6 +550,19 @@ static void doBackspace(void) {
     s_pendingUp = ImGuiKey_Backspace;
 }
 
+/* Caption shown on a keycap.  Word keys (Bksp/Shift/Space/Enter) are
+   localized; character keys and the symbolic mode switches (?123/ABC, the
+   ru/uk/EN globe) keep their table caption, which is already script-neutral. */
+static const char *keycapLabel(const OskKey *k, const char *fallback) {
+    switch (k->kind) {
+        case OSK_K_BACKSPACE: return langGetText(STR_OSK_BKSP);
+        case OSK_K_SHIFT:     return langGetText(STR_OSK_SHIFT);
+        case OSK_K_SPACE:     return langGetText(STR_OSK_SPACE);
+        case OSK_K_ENTER:     return langGetText(STR_OSK_ENTER);
+        default:              return fallback;
+    }
+}
+
 /* --- API -------------------------------------------------------------- */
 
 void keyboardOpen(int mode) {
@@ -662,6 +676,7 @@ void keyboardRender(void) {
                 const char *cap =
                     (k->kind == OSK_K_CHAR && s_shift && lettersActive())
                         ? k->shift : k->base;
+                cap = keycapLabel(k, cap);
 
                 ImVec2 sz;
                 if (k->kind == OSK_K_CHAR)        sz = charSz;
@@ -699,7 +714,7 @@ void keyboardRender(void) {
             ImGui::Image((ImTextureID)aGlyph, ImVec2(h, h));
             ImGui::SameLine();
         }
-        ImGui::TextUnformatted("Select   B Backspace   LB Shift   RB ?123   Start Done");
+        ImGui::TextUnformatted(langGetText(STR_OSK_LEGEND));
     }
     ImGui::End();
 }
