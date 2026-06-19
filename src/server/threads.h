@@ -117,6 +117,20 @@ void threadsReleaseMutex(void);
 *********************************************************/
 bool threadsCurrentlyHoldsMutex(void);
 
+/*********************************************************
+*NAME:          threadsContextActive
+*PURPOSE:
+*  True once threadsCreate has brought up the mutex (any real
+*  server / loopback / fuzz context). False in bare logic unit
+*  tests that never start the threading system. Lets a
+*  mutex-ownership assertion no-op where there is no concurrent
+*  thread to serialize against.
+*
+*ARGUMENTS:
+*
+*********************************************************/
+bool threadsContextActive(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

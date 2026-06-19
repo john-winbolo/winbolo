@@ -54,8 +54,8 @@ typedef struct {
      * advances every ~20ms, so the same EVENT_* lands in two snapshots
      * back-to-back unless we gate.  Without this, harvest/explosion
      * sounds echo, newswire lines duplicate, and Steam stats double-
-     * count.  Matches the per-event reliable-seq dedup the UDP
-     * transport gets via reliableEventAck. */
+     * count.  Matches the per-event dedup the UDP transport gets
+     * from CHANNEL_GAME's in-order, exactly-once delivery. */
     uint32_t lastDeliveredTick;
     bool     hasLastDelivered;
 } TransportLocalCtx;

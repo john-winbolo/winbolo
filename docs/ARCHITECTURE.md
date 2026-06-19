@@ -467,6 +467,92 @@ fails. Use that as the cue: if linkage breaks on the headless or
 server stub, you've extended the frontend surface and need to add
 the stub.
 
+## The channel-mux reliability layer
+
+Reliable, ordered delivery over UDP is provided by one primitive — a **channel
+mux** (`src/bolo/internal/channel_mux.h`, `src/bolo/channel_mux.c`) — in place of
+the several hand-rolled reliable queues, a standalone control-event carrier, and
+three bespoke bulk chunkers that preceded it. The mux is built and tested
+**entirely off-socket**: it turns logical sends into byte frames and consumes byte
+frames back into messages; the transport only shuttles those frames. It owns no
+socket.
+
+**Four channels, two flavors.** Each channel is an independent reliable-ordered
+substream with its own sequence/ack space, so loss on one never stalls another
+(head-of-line blocking is per-channel):
+
+| id | channel | flavor | carries |
+| --- | --- | --- | --- |
+| 0 | `CHANNEL_GAME` | message | per-tick reliable game events (sounds, kills) |
+| 1 | `CHANNEL_MAP` | message | terrain-change events (`EVENT_MAP_CHANGE`) |
+| 2 | `CHANNEL_CONTROL` | message | lobby / chat / alliance / phase control events |
+| 3 | `CHANNEL_BULK` | stream | map preview / upload / download / resync blobs |
+
+A **message** channel delivers each `channelSend` as one whole logical message, in
+order, exactly once. A **stream** channel (`channelStreamSend`) appends to a byte
+stream the core splits into segments and the receiver concatenates in order — this
+is the bulk-transfer fragmentation layer, so no separate chunker exists.
+
+**Per-channel sizing.** Each channel sizes its send/receive rings to its own
+traffic rather than one uniform pair (`channel_mux.h`): the high-rate game channel
+is deep with tiny segments (window 512 × 16 B), map likewise (128 × 16 B), control
+is shallow with large segments (64 × 1024 B — one control event, e.g. the full
+brain list, maps to one segment and one datagram), and bulk is a
+bandwidth-delay-product
+window of stream segments (96 × 256 B). The whole mux is a plain value type — the
+rings are embedded, no heap allocation.
+
+**One reliability core** serves both flavors: cumulative ack ("received everything
+below `ackedSeq`"), full-tail-resend on a per-channel retransmit timeout (RTO
+derived from the ping RTT), window-bounded so a resend re-sends at most one window,
+and a receive-side reorder buffer so a jitter-reordered early segment is held and
+delivered in order rather than dropped. A caught-up channel sends nothing — no
+steady-state storm. Window overflow without acks is a stuck or malicious peer and
+disconnects the slot; it is never a silent drop.
+
+**How frames ride datagrams.** One shared channel-frame codec (an ack list then a
+segment list) is carried three ways, never as a phase fork: appended as a
+**trailer** after a per-tick snapshot (server → client) or after an `InputPacket`
+(client → server), or as a standalone `PACKET_CHANNEL` when no primary packet is
+due. The receiver recovers the frame as the bytes past the primary packet's parsed
+end. `channelRecvFrame` is the single bounds-checked parse site (the fuzz target).
+Because the carrier is per-datagram packing, not a logic branch, control events
+flow identically whether or not snapshots are running — the lobby-vs-running
+duality the old `PACKET_CONTROL_TICK`/`PACKET_CONTROL_ACK` carrier needed is gone.
+
+**Game-boundary and mid-transfer resets (`CTRL_CHANNEL_RESET`).** Channel sequence
+spaces are monotonic — they never restart at 1. At game start the server drops the
+previous game's undelivered game/map tails by advancing the *send* baseline on
+channels 0 and 1 (`channelResetSend`: `ackedSeq = nextSeq`, low seqs are never
+reused) and ships a per-client `CTRL_CHANNEL_RESET` on the persistent control
+channel carrying those baselines; the client adopts them (`channelResetExpected`)
+so a previous-game straggler dedups away. The same event re-bases `CHANNEL_BULK`
+when a lobby map change restarts an in-flight download. Map resync additionally
+carries a generation (`resyncGen`) so a terrain change tagged older than the
+installed map is dropped once a fresh blob lands.
+
+**Bulk transfers (`src/bolo/bulk_transfer.c`).** A sized blob (a map) rides
+`CHANNEL_BULK` behind a small app-level stream header (`kind`, `gen`, `totalSize`,
+`path`). `BulkSender` feeds the header+blob into the channel's staging buffer as
+the window drains, serialized so two transfers never interleave on one peer's
+stream; `BulkReceiver` reassembles header-then-body from the in-order fragments and
+hands the parsed header to a **recipient-agnostic sink** that decides where the
+blob lands and what to do on completion — so preview, upload, download, and resync
+(`BULK_KIND_*`) all ride the one machinery.
+
+**Off-socket testability.** Because the reliability burden lives behind a pure
+byte-buffer seam, the whole loss / reorder / dup matrix is a unit test with no
+sockets or threads: `tests/unit/test_channel_mux.c` drives two `ChannelMux`
+instances through a seeded loss/reorder/dup shuttle, and
+`tests/unit/test_bulk_transfer.c` does the same for stream reassembly. The live UDP
+transport is a thin adapter over this seam (it still binds a real socket; the
+loopback harness exercises that end-to-end in-process). New reliable wire code
+therefore lands on this layer — a new control event in `transport_control_codec.c`
+on `CHANNEL_CONTROL`, a new transfer in `bulk_transfer.c` on `CHANNEL_BULK` — not
+in a hand-rolled socket send. (The reliability logic was extracted into these small
+off-socket modules rather than shrinking `transport_udp_server.c`, which stayed
+large as per-client mux/bulk wiring moved in.)
+
 ## Adding a new server event
 
 A server event is anything authoritative the server decides happens
@@ -525,18 +611,25 @@ public/internal split provides.
 | Packet kind | Lives in |
 | --- | --- |
 | Backed by a `ControlEventType` variant (state changes — joins, leaves, alliances, chat, lobby, phases, balance, shutdown) | `src/bolo/transport_control_codec.c` (encoder + decoder) |
-| Fixed-layout binary message (per-tick snapshots; map-transfer chunk headers) | field list in `src/bolo/internal/wire_messages.h` + a `DEFINE_WIRE_CODEC[_MASKED]` line in `src/bolo/transport_udp_common.c` — see "Fixed-layout wire messages" below |
-| Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, NAME_CHANGE_REJECT, MAP_DOWNLOAD chunks, PONG, PLAYER_LIST resync) | `src/bolo/transport_udp_server.c` / `src/bolo/transport_udp_client.c` |
+| Fixed-layout binary message (per-tick snapshots) | field list in `src/bolo/internal/wire_messages.h` + a `DEFINE_WIRE_CODEC[_MASKED]` line in `src/bolo/transport_udp_common.c` — see "Fixed-layout wire messages" below |
+| Bulk byte transfer (map preview / download / resync) | streamed on `CHANNEL_BULK` behind a bulk-transfer stream header — `src/bolo/bulk_transfer.c` |
+| Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, NAME_CHANGE_REJECT, PONG) | `src/bolo/transport_udp_server.c` / `src/bolo/transport_udp_client.c` |
+
+These rows say where each payload is *defined*; **how** it is reliably
+carried is the channel-mux reliability layer (above): control events on
+`CHANNEL_CONTROL`, terrain-change events on `CHANNEL_MAP`, per-tick game
+events on `CHANNEL_GAME`, and bulk blobs on `CHANNEL_BULK`.
 
 ### Fixed-layout wire messages — the field-list codec
 
 Fixed binary structs on the wire — the per-tick snapshots (`TankSnapshot`,
-`ShellSnapshot`, `TkExplosionSnapshot`, `BaseSnapshot`, `PillSnapshot`) and the
-map-transfer chunk headers (`MapDownloadChunkHeader`, `MapUploadChunkHeader`,
-`MapPreviewChunkHeader`) — are **declared once as a field list and their codec is
-generated**, not hand-numbered. (Control-event and client-command payloads are a
-different layer: they keep their own codecs in `transport_control_codec.c` /
-`transport_command_codec.c`, described above.)
+`ShellSnapshot`, `TkExplosionSnapshot`, `BaseSnapshot`, `PillSnapshot`) — are
+**declared once as a field list and their codec is generated**, not
+hand-numbered. (Control-event and client-command payloads are a different layer:
+they keep their own codecs in `transport_control_codec.c` /
+`transport_command_codec.c`, described above. Bulk byte transfers — map preview,
+download, resync — are a third layer: they stream on `CHANNEL_BULK` behind the
+`bulk_transfer.c` stream header, not a fixed-layout field list.)
 
 The machinery lives in `src/bolo/internal/wire_codec.h`; the field lists in
 `src/bolo/internal/wire_messages.h`; the instantiations sit next to each other in
@@ -572,11 +665,11 @@ Two forms:
   `TankSnapshot` is the worked example.
 
 **What stays hand-written (the honest boundary):** variable-length records
-(length-prefixed strings, count-driven loops) and chunk reassembly. For a
-chunked or count-driven message you generate the *fixed leaf record / header*
-(e.g. `MapDownloadChunkHeader`) and leave the surrounding loop, length
-validation, and reassembly hand-rolled. Don't try to express a length-prefixed
-string or a repeat count in a field list.
+(length-prefixed strings, count-driven loops) and stream reassembly. For a
+count-driven message you generate the *fixed leaf record* and leave the
+surrounding loop and length validation hand-rolled; a sized byte blob (a map)
+rides `CHANNEL_BULK` and is reassembled by `bulk_transfer.c`, not a field list.
+Don't try to express a length-prefixed string or a repeat count in a field list.
 
 **Verification — the byte-identity net.** `tests/unit/test_wire_corpus.c` is a
 differential test: generated pack/unpack must round-trip and be **byte-identical
@@ -679,56 +772,58 @@ Two categories of packet stay wire-only by design; the single-
 publish recipe does not apply to them:
 
 - **Per-tick world snapshots.** Tank positions, shells, and per-tick
-  deltas live in the snapshot module, not the codec. Snapshots also
-  carry the per-client reliable control-event tail (see
-  `PACKET_CONTROL_TICK` below for the lobby-phase equivalent), but
-  that tail is fed by the bus — the snapshot module is the carrier,
-  not the publisher.
+  deltas live in the snapshot module, not the codec. A snapshot now
+  carries only world state plus a trailing **channel frame** for the
+  channel-mux reliability layer — the reliable game / map / control
+  event tails it once carried are all gone. Those events ride
+  `CHANNEL_GAME` / `CHANNEL_MAP` / `CHANNEL_CONTROL`, including the
+  server lock/unlock notice (the last off-per-tick game event), which
+  moved off the snapshot tail onto `CHANNEL_GAME`. See "The channel-mux
+  reliability layer" above.
 - **Per-client handshake and reliability.** `JOIN_ACCEPT`,
-  `JOIN_REJECT`, `NAME_CHANGE_REJECT`, `MAP_DOWNLOAD` chunks, and
-  `PONG` are point-to-point transport mechanics. The reliable bus
-  has two parallel carriers for events that DO ride a queue:
-  - **Down-leg.** `PACKET_CONTROL_TICK` (server → client) and
-    `PACKET_CONTROL_ACK` (client → server) drain the per-client
-    `ControlEvent` queue when snapshots aren't flowing
-    (lobby / countdown / gameover).
-  - **Up-leg.** `PACKET_COMMAND_TICK` (client → server) and
-    `PACKET_COMMAND_ACK` (server → client, unicast) drain the
-    per-connection `ClientCommand` queue. Each entry carries a
-    client-assigned `cmdSeq` for dedupe and reject correlation.
-    See "Adding a new client→server command" below for the full
-    carrier semantics.
-- **`PLAYER_LIST` resync** is a load-bearing wire-only exception
-  for a failure mode the reliable control queue does not reach:
-  `transportUdpServerOnGameStart` wipes every per-client
-  control-event queue at countdown end
-  (`nextSeq = 1; ackedSeq = 1; memset(buffer, 0)`) before
-  publishing `CTRL_GAME_PHASE_RUNNING`. A late-countdown joiner's
-  `CTRL_PLAYER_JOIN` may still be in-flight (un-ACKed) for one or
-  more existing clients at that instant; the memset destroys it
-  and the next event published is `CTRL_GAME_PHASE_RUNNING` at
-  seq=1, with no retransmit path back to the dropped JOIN. The
-  server flips `needsPlayerList = true` for every connected client
-  inside the same reset, and the per-tick send loop fires an
-  unsolicited `PACKET_PLAYER_LIST` after the reset completes,
-  restoring the missing roster entries. (The JOIN-time use of the
-  same flag — `serverHandleJoinRequest` setting it for the new
-  client — is redundant with `serverSimSyncSubscriber`'s replay of
-  `CTRL_PLAYER_JOIN` per in-use player, and is kept as a
-  belt-and-braces overlap.)
+  `JOIN_REJECT`, `NAME_CHANGE_REJECT`, and `PONG` are point-to-point
+  transport mechanics. The compressed map is not one of these: join
+  download and resync stream on `CHANNEL_BULK` via `bulk_transfer.c`
+  (see the reliability layer above), not a bespoke
+  `MAP_DOWNLOAD`/`MAP_ACK` pair. The one reliable carrier that still
+  has its own packet pair is the client→server command **up-leg**:
+  `PACKET_COMMAND_TICK` (client → server) and `PACKET_COMMAND_ACK`
+  (server → client, unicast) drain the per-connection `ClientCommand`
+  queue; each entry carries a client-assigned `cmdSeq` for dedupe and
+  reject correlation (see "Adding a new client→server command" below).
+  The server→client control **down-leg** that used to pair with it
+  (`PACKET_CONTROL_TICK`/`PACKET_CONTROL_ACK`) is retired — control
+  events ride `CHANNEL_CONTROL` on the channel mux instead.
+
+The player roster is **not** a wire-only exception: `CTRL_PLAYER_JOIN` /
+`CTRL_PLAYER_LEFT` ride `CHANNEL_CONTROL` like every other control event
+(carrying the full alliance bitmap, covering humans and bots, surviving
+the game-start boundary), and the join sync replay re-announces every
+in-use slot to a new subscriber. There is no separate roster packet.
 
 ### Compatibility rules
 
+**The wire is not frozen during development.** There are no deployed
+peers to keep compatible — the JOIN handshake gates on an exact
+version match, so every connected peer is running the same build by
+construction. In-place wire-layout changes are therefore fine now and
+are how the protocol evolves at this stage (the snapshot header and
+`InputPacket` were both shrunk in place when their dormant fields were
+retired). The two "never" rules below are the **post-freeze** policy —
+they become binding once the wire is locked for a public release, not
+before.
+
 - Adding a `ControlEventType` variant is additive. Subscribers that
   don't know about it fall through their `switch` default and ignore
-  it. Safe.
-- Adding a wire packet ID is additive. Old clients that don't
-  understand the new ID drop the packet on the floor. Safe.
-- **Never reorder, renumber, or repurpose existing wire packet IDs.**
-  That breaks every deployed client that hasn't been rebuilt against
-  the new code.
-- **Never change the on-wire layout of an existing packet** without
-  versioning. Add a new packet ID instead.
+  it. Safe at any time.
+- Adding a wire packet ID is additive. A peer that doesn't understand
+  the new ID drops the packet on the floor. Safe at any time.
+- **Once frozen: never reorder, renumber, or repurpose an existing
+  wire packet ID**, and **never change an existing packet's on-wire
+  layout** — add a new packet ID instead. (The retired ids `187`/`188`
+  — the old `PACKET_CONTROL_TICK`/`PACKET_CONTROL_ACK` carrier — are
+  freed but kept reserved by preference so old captures and logs stay
+  unambiguous; reuse them only deliberately.)
 
 ## Adding a new client→server command
 
@@ -1179,6 +1274,50 @@ its own state struct, and its own refresh. They share the
 (`src/ios/`, `src/android/`) and the wasm build don't have a system
 menu bar; they ship only the ImGui in-window bar.
 
+## Standalone ImGui dialogs — controller navigation
+
+Every blocking dialog under `src/gui/sdl3/dialogs/` (welcome, lobby,
+settings, keysetup, onboarding, …) creates its **own** ImGui context and
+runs its **own** SDL event loop. Because the context is per-dialog,
+controller navigation is not inherited from the main game pump — each
+dialog must wire it up itself. Two separate controller paths have to be
+enabled, and missing either one silently breaks the pad on that dialog
+with no compile error:
+
+- **Path B — native SDL gamepad** (non-Steam launches). The ImGui SDL3
+  backend turns raw gamepad events into nav, but only when
+  `ImGuiConfigFlags_NavEnableGamepad` is set on the context.
+- **Path A — Steam Input** (Steam / Steam Deck launches). Steam
+  intercepts the pad so the backend never sees it; the
+  `imguiSteamNav*` bridge (`src/gui/sdl3/imgui_steam_nav.h`) injects
+  keyboard-nav events instead, and only works if its per-frame helpers
+  are called.
+
+### Contract — every standalone dialog must
+
+1. Set **both** nav flags on its context, right after creating it:
+   ```c
+   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+   io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+   ```
+2. `#include "../imgui_steam_nav.h"`.
+3. Call the bridge **once per frame, immediately after
+   `ImGui::NewFrame()`**:
+   ```c
+   imguiSteamNavActivateMenuSet();
+   imguiSteamNavFeedCurrentContext();
+   ```
+   `imguiSteamNavFeedCurrentContext()` is a no-op when Steam Input has
+   no active controller, so it is safe on every platform.
+
+A dialog that re-creates its context mid-loop (e.g. `imgui_settings.cpp`
+after launching the key-setup dialog) must re-apply the flags on the new
+context, but the per-frame helpers already cover it since the loop calls
+them every frame.
+
+`src/gui/sdl3/dialogs/imgui_keysetup.cpp` is the canonical reference —
+copy its context setup and per-frame preamble when adding a dialog.
+
 ## WinBolo.net subsystem
 
 The WinBolo.net (WBN) integration is split across three sibling
@@ -1354,7 +1493,7 @@ snapshot tick. Both call sites are gated on
 `winbolonetIsRunning()` so non-WBN servers pay nothing.
 
 `PACKET_WBN_REKEY` sits alongside the existing wire-only
-exceptions (JOIN_ACCEPT, MAP_DOWNLOAD, PONG, PLAYER_LIST resync):
+exceptions (JOIN_ACCEPT, PONG):
 per-client reliability with no in-process audience. Routing through
 `ControlEvent` would put a WBN-specific concept on the sim's T1
 surface where nothing else in the sim references it.

@@ -1,28 +1,30 @@
 /*
  * Map-send amplification-gate test.
  *
- * The server must not blast the compressed map (up to 64KB across many
- * PACKET_MAP_DOWNLOAD chunks) to a freshly-joined address before that address
- * has proven it can receive a reply. Otherwise a ~170-byte spoofed
- * JOIN_REQUEST reflects a large payload at a forged source. The gate: chunks
- * are withheld until the client's PACKET_MAP_ACK 0xFFFF "ready" round-trip
- * arrives.
+ * The server must not blast the compressed map (tens of KB streamed on
+ * CHANNEL_BULK) to a freshly-joined address before that address has proven it
+ * can receive a reply. Otherwise a ~170-byte spoofed JOIN_REQUEST reflects a
+ * large payload at a forged source. The gate is the address-proof cookie: a
+ * slot is allocated — and the map stream begins — only after the joiner echoes
+ * a cookie the server can recompute for its source address, which a spoofer at
+ * a forged source never receives. The old MAP_ACK 0xFFFF "ready" round-trip that
+ * used to gate the chunk send is retired; the map now streams on CHANNEL_BULK
+ * right after JOIN_ACCEPT, so the cookie is the sole amplification gate.
  *
  * This stands up the loopback harness (a real server on an ephemeral port) and
  * drives a hand-built JOIN_REQUEST from a raw UDP socket the test owns, then
  * inspects the actual datagrams the server sends back:
- *   1. The crafted JOIN first completes the server's address-proof cookie
- *      handshake (a cookie-less JOIN draws a PACKET_JOIN_CHALLENGE; echoing the
- *      cookie draws the JOIN_ACCEPT). After the accept, the replies contain NO
- *      PACKET_MAP_DOWNLOAD — no map before the ready round-trip.
- *   2. After sending PACKET_MAP_ACK 0xFFFF from the same socket, the server
- *      now sends PACKET_MAP_DOWNLOAD chunks — the round-trip opened the gate.
+ *   1. A cookie-less JOIN draws a small PACKET_JOIN_CHALLENGE and NOTHING else —
+ *      no JOIN_ACCEPT and no PACKET_CHANNEL (the bulk carrier). With no slot the
+ *      map can never stream, so a spoofed source draws no amplified reply.
+ *   2. Echoing the cookie draws JOIN_ACCEPT and then PACKET_CHANNEL frames — the
+ *      server begins streaming the map on CHANNEL_BULK once the address is
+ *      proven. (The raw socket never acks the bulk channel, so the server keeps
+ *      re-sending the window; one frame is enough to prove the carrier opened.)
  *
  * The crafted JOIN mirrors the client's JOIN_REQUEST layout (see
- * test_join_version_gate.c) so it clears the length/name/version gates,
- * completes the cookie handshake, and reaches a full join with map-download
- * init. The cookie gate is independent of the map amplification gate this test
- * pins — mapReady is still false right after the cookie-completed accept.
+ * test_join_version_gate.c) so it clears the length/name/version gates and
+ * completes the cookie handshake to a full join with map-download init.
  */
 
 #include <stdint.h>
@@ -41,7 +43,7 @@
 
 /* Pumps per phase. The reply rides the next server tick after the crafted
  * packet is drained; a couple dozen pumps is ample, and we keep pumping past
- * the accept to give any (wrongly) eager chunk send a chance to show up. */
+ * the accept to give any (wrongly) eager carrier a chance to show up. */
 #define AG_PUMP_MAX 200
 
 /* Build a JOIN_REQUEST into buf with the server's own version triple and a
@@ -102,19 +104,19 @@ static SOCKET agOpenSocket(void) {
 }
 
 /* Pump the harness AG_PUMP_MAX times and record whether a JOIN_ACCEPT, a
- * PACKET_MAP_DOWNLOAD chunk, and/or a PACKET_JOIN_CHALLENGE was seen across all
- * replies on `sock`; on a challenge, *outCookie (if non-NULL) receives the
- * cookie bytes. `resendEvery` controls retransmits: 0 sends `pkt` exactly once
- * (used for JOINs, so each spends only a single per-source rate-limit token),
- * >0 resends every that-many pumps (used for the non-rate-limited MAP_ACK). */
+ * PACKET_CHANNEL (the bulk map carrier), and/or a PACKET_JOIN_CHALLENGE was seen
+ * across all replies on `sock`; on a challenge, *outCookie (if non-NULL)
+ * receives the cookie bytes. `resendEvery` controls retransmits: 0 sends `pkt`
+ * exactly once (used for JOINs, so each spends only a single per-source
+ * rate-limit token). */
 static void agCollect(LoopbackHarness *h, SOCKET sock,
                       const uint8_t *pkt, int pktLen,
                       const struct sockaddr_in *serverAddr, int resendEvery,
-                      bool *outAccept, bool *outMapDownload,
+                      bool *outAccept, bool *outChannel,
                       bool *outChallenge, uint8_t *outCookie) {
     int i;
     *outAccept = false;
-    *outMapDownload = false;
+    *outChannel = false;
     *outChallenge = false;
     for (i = 0; i < AG_PUMP_MAX; i++) {
         uint8_t in[2048];
@@ -129,7 +131,7 @@ static void agCollect(LoopbackHarness *h, SOCKET sock,
                                   NULL, NULL)) > 0) {
             uint8_t type = getPacketType(in, n);
             if (type == PACKET_JOIN_ACCEPT)            *outAccept = true;
-            else if (type == PACKET_MAP_DOWNLOAD)      *outMapDownload = true;
+            else if (type == PACKET_CHANNEL)           *outChannel = true;
             else if (type == PACKET_JOIN_CHALLENGE &&
                      n >= PACKET_HEADER_SIZE + JOIN_COOKIE_LEN) {
                 *outChallenge = true;
@@ -146,10 +148,9 @@ int run_map_amp_gate(void) {
     struct sockaddr_in serverAddr;
     uint8_t joinBuf[1024];
     uint8_t cookie[JOIN_COOKIE_LEN];
-    uint8_t ackBuf[PACKET_HEADER_SIZE + 2];
     int joinLen;
     SOCKET sock;
-    bool gotAccept, gotMapDownload, gotChallenge;
+    bool gotAccept, gotChannel, gotChallenge;
 
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "AmpHost", /*lobbyMode*/ false,
                                        /*impairSpec*/ NULL, /*seed*/ 1u),
@@ -166,12 +167,12 @@ int run_map_amp_gate(void) {
         UT_FAIL("could not open raw UDP socket for crafted JOIN");
     }
 
-    /* ---- Cookie handshake: cookie-less JOIN draws a challenge ---- */
+    /* ---- Phase 1: cookie-less JOIN draws a challenge and nothing else ---- */
     joinLen = agBuildJoin(joinBuf, "AmpGate", NULL);
     agCollect(&h, sock, joinBuf, joinLen, &serverAddr, /*resendEvery*/ 0,
-              &gotAccept, &gotMapDownload, &gotChallenge, cookie);
-    fprintf(stderr, "  amp gate (cookie-less): challenge=%d accept=%d\n",
-            (int)gotChallenge, (int)gotAccept);
+              &gotAccept, &gotChannel, &gotChallenge, cookie);
+    fprintf(stderr, "  amp gate (cookie-less): challenge=%d accept=%d channel=%d\n",
+            (int)gotChallenge, (int)gotAccept, (int)gotChannel);
     if (!gotChallenge) {
         closesocket(sock);
         loopbackHarnessStop(&h);
@@ -183,43 +184,31 @@ int run_map_amp_gate(void) {
         loopbackHarnessStop(&h);
         UT_FAIL("crafted cookie-less JOIN was accepted (no address proof)");
     }
+    if (gotChannel) {
+        closesocket(sock);
+        loopbackHarnessStop(&h);
+        UT_FAIL("server streamed a CHANNEL_BULK carrier before the address was "
+                "proven — amplification gate is open");
+    }
 
-    /* ---- Phase 1: cookie echoed -> accept, but NO map chunks yet ---- */
+    /* ---- Phase 2: cookie echoed -> accept, and the map carrier opens ---- */
     joinLen = agBuildJoin(joinBuf, "AmpGate", cookie);
     agCollect(&h, sock, joinBuf, joinLen, &serverAddr, /*resendEvery*/ 0,
-              &gotAccept, &gotMapDownload, &gotChallenge, NULL);
-    fprintf(stderr, "  amp gate (join only): accept=%d mapDownload=%d\n",
-            (int)gotAccept, (int)gotMapDownload);
+              &gotAccept, &gotChannel, &gotChallenge, NULL);
+    fprintf(stderr, "  amp gate (cookie echoed): accept=%d channel=%d\n",
+            (int)gotAccept, (int)gotChannel);
+
+    closesocket(sock);
 
     if (!gotAccept) {
-        closesocket(sock);
         loopbackHarnessStop(&h);
         UT_FAIL("cookie-echoed JOIN drew no JOIN_ACCEPT within %d pumps",
                 AG_PUMP_MAX);
     }
-    if (gotMapDownload) {
-        closesocket(sock);
+    if (!gotChannel) {
         loopbackHarnessStop(&h);
-        UT_FAIL("server sent PACKET_MAP_DOWNLOAD before the MAP_ACK 0xFFFF "
-                "ready round-trip — amplification gate is open");
-    }
-
-    /* ---- Phase 2: send MAP_ACK 0xFFFF -> chunks now flow ---- */
-    packHeader(ackBuf, PACKET_MAP_ACK, 0);
-    packU16(ackBuf + PACKET_HEADER_SIZE, 0xFFFF); /* 0xFFFF = "ready for map" */
-    agCollect(&h, sock, ackBuf, (int)sizeof(ackBuf), &serverAddr,
-              /*resendEvery*/ 8, &gotAccept, &gotMapDownload, &gotChallenge,
-              NULL);
-    fprintf(stderr, "  amp gate (after ready): mapDownload=%d\n",
-            (int)gotMapDownload);
-
-    closesocket(sock);
-
-    if (!gotMapDownload) {
-        loopbackHarnessStop(&h);
-        UT_FAIL("server sent no PACKET_MAP_DOWNLOAD after MAP_ACK 0xFFFF "
-                "within %d pumps — ready round-trip did not open the gate",
-                AG_PUMP_MAX);
+        UT_FAIL("server sent no PACKET_CHANNEL (bulk map carrier) after the "
+                "cookie-proven JOIN — the proven address opened no map stream");
     }
 
     loopbackHarnessStop(&h);

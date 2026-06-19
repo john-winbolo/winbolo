@@ -63,6 +63,7 @@ extern "C" {
 #include "../../../common/mp_diag_log.h"
 #include "../flags.h"
 #include "../sdl3imgui.h"
+#include "../../ui_mode.h"
 #include "../minimap_render.h"
 #include "../../../bolo/public/client_mappreview.h"
 #include "../../../bolo/public/wire_limits.h"
@@ -815,7 +816,7 @@ static bool lobbyServerMapsGeneratePreview(const char *entryPath,
 
 /* Main-thread pump for the Server Maps preview pane (MP only). Polls
  * the ClientSim's lobbyMapPreview* accumulator (filled async by the
- * MAP_PREVIEW_BEGIN/_CHUNK handlers) and, once a full map's bytes have
+ * CHANNEL_BULK preview receiver) and, once a full map's bytes have
  * arrived for the path we asked for, spills them to a worker-private
  * temp file and points the chooser at it via mapChooserSetSelectedFile.
  * No-op for SP / in-process host — there generatePreview already serves
@@ -5735,8 +5736,19 @@ static void renderGameSettingsPanel(ClientSim *cs,
 
     /* Drive the CollapsingHeader's open state explicitly so a "Hide
      * Settings" button at the bottom of the panel can fold it away
-     * once the host is happy with the configuration. */
-    static bool s_settingsOpen = true;
+     * once the host is happy with the configuration.
+     *
+     * Default collapsed on the Steam Deck: its small screen needs the
+     * vertical room for the player list and the Ready button, and the
+     * map / game-type summary is already on the lobby's top status bar.
+     * Desktop keeps it open. The chevron / "Hide Settings" button still
+     * toggles it either way. */
+    static bool s_settingsOpen     = true;
+    static bool s_settingsOpenInit = false;
+    if (!s_settingsOpenInit) {
+        s_settingsOpen     = !uiModeIsSteamDeck();
+        s_settingsOpenInit = true;
+    }
     ImGui::SetNextItemOpen(s_settingsOpen, ImGuiCond_Always);
     /* Capture screen-Y of the header before drawing so the
      * right-aligned openHost control can be overlaid on the same
@@ -6198,6 +6210,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
     int result = 0;
     bool running = true;
+
+    /* Controller mode: land the initial nav focus on the Ready button — the
+     * action a pad user most wants on entry — instead of leaving focus
+     * unset. Deferred until Ready is actually enabled (the map download may
+     * still be in flight), and consumed once so the player can navigate away
+     * freely afterwards. Armed only in controller mode; keyboard/mouse is
+     * unaffected. */
+#if !BOLO_MOBILE
+    bool focusReadyPending = uiShouldUseControllerMode();
+#endif
 
     /* Show the lobby in Steam immediately on entry; the throttled tick at
      * the top of the loop keeps the player count / connect address current
@@ -7684,6 +7706,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::PushStyleColor(ImGuiCol_Button,         ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.20f, 0.65f, 0.20f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive,   ImVec4(0.10f, 0.45f, 0.10f, 1.0f));
+                }
+                /* One-shot initial focus for controller players — only once
+                 * Ready is enabled, so we don't try to focus a disabled item. */
+                if (focusReadyPending && canReady) {
+                    ImGui::SetKeyboardFocusHere();
+                    focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(-1, 0))) {
                     if (hasTransport) {

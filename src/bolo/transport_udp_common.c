@@ -77,7 +77,6 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_JOIN_REQUEST, "JOIN_REQUEST") \
     X(PACKET_CHAT_MESSAGE, "CHAT_MESSAGE") \
     X(PACKET_PING, "PING") \
-    X(PACKET_MAP_ACK, "MAP_ACK") \
     X(PACKET_QUIT, "QUIT") \
     X(PACKET_STATE_SNAPSHOT, "STATE_SNAPSHOT") \
     X(PACKET_JOIN_ACCEPT, "JOIN_ACCEPT") \
@@ -91,9 +90,7 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_PILL_STATE, "PILL_STATE") \
     X(PACKET_PONG, "PONG") \
     X(PACKET_GAME_EVENT, "GAME_EVENT") \
-    X(PACKET_MAP_DOWNLOAD, "MAP_DOWNLOAD") \
     X(PACKET_MAP_RESYNC_REQUEST, "MAP_RESYNC_REQUEST") \
-    X(PACKET_PLAYER_LIST, "PLAYER_LIST") \
     X(PACKET_NAME_CHANGE, "NAME_CHANGE") \
     X(PACKET_ALLIANCE_REQUEST, "ALLIANCE_REQUEST") \
     X(PACKET_ALLIANCE_ACCEPT, "ALLIANCE_ACCEPT") \
@@ -128,14 +125,11 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_LOBBY_MAP_SEARCH_REQ, "LOBBY_MAP_SEARCH_REQ") \
     X(PACKET_LOBBY_MAP_SEARCH_RSP, "LOBBY_MAP_SEARCH_RSP") \
     X(PACKET_LOBBY_MAP_UPLOAD_BEGIN, "LOBBY_MAP_UPLOAD_BEGIN") \
-    X(PACKET_LOBBY_MAP_UPLOAD_CHUNK, "LOBBY_MAP_UPLOAD_CHUNK") \
     X(PACKET_LOBBY_MAP_UPLOAD_ACK, "LOBBY_MAP_UPLOAD_ACK") \
     X(PACKET_LOBBY_MAP_UPLOAD_DONE, "LOBBY_MAP_UPLOAD_DONE") \
     X(PACKET_LOBBY_MAP_USE_LOCAL, "LOBBY_MAP_USE_LOCAL") \
     X(PACKET_LOBBY_MAP_USE_LOCAL_NACK, "LOBBY_MAP_USE_LOCAL_NACK") \
     X(PACKET_LOBBY_MAP_PREVIEW_REQ, "LOBBY_MAP_PREVIEW_REQ") \
-    X(PACKET_LOBBY_MAP_PREVIEW_BEGIN, "LOBBY_MAP_PREVIEW_BEGIN") \
-    X(PACKET_LOBBY_MAP_PREVIEW_CHUNK, "LOBBY_MAP_PREVIEW_CHUNK") \
     X(PACKET_LOBBY_MAP_PREVIEW_ERR, "LOBBY_MAP_PREVIEW_ERR") \
     X(PACKET_LOBBY_PREVIEW_CANCEL, "LOBBY_PREVIEW_CANCEL") \
     X(PACKET_LOBBY_PREVIEW_COMMIT, "LOBBY_PREVIEW_COMMIT") \
@@ -160,8 +154,6 @@ uint8_t getPacketType(const uint8_t *buf, int len) {
     X(PACKET_PUNCH_REQUEST_ACK, "PUNCH_REQUEST_ACK") \
     X(PACKET_PUNCH_PROBE_REQUEST, "PUNCH_PROBE_REQUEST") \
     X(PACKET_PUNCH_PROBE_REPLY, "PUNCH_PROBE_REPLY") \
-    X(PACKET_CONTROL_TICK, "CONTROL_TICK") \
-    X(PACKET_CONTROL_ACK, "CONTROL_ACK") \
     X(PACKET_COMMAND_TICK, "COMMAND_TICK") \
     X(PACKET_COMMAND_ACK, "COMMAND_ACK") \
     X(PACKET_COMMAND_REJECTED, "COMMAND_REJECTED") \
@@ -176,7 +168,7 @@ const char *packetTypeName(uint8_t type) {
     }
 }
 
-/* Serialize one InputPacket into buf. Returns bytes written (29). */
+/* Serialize one InputPacket into buf. Returns bytes written (21). */
 int packInputPacket(uint8_t *buf, const InputPacket *pkt) {
     packU32(buf, pkt->tick);
     buf[4] = pkt->playerNum;
@@ -186,12 +178,10 @@ int packInputPacket(uint8_t *buf, const InputPacket *pkt) {
     buf[8] = pkt->buildX;
     buf[9] = pkt->buildY;
     buf[10] = pkt->flags;
-    packU32(buf + 11, pkt->eventAck);
-    packU32(buf + 15, pkt->mapEventAck);
-    packU32(buf + 19, pkt->controlEventAck);
-    packU16(buf + 23, pkt->pingMs);
-    packU32(buf + 25, pkt->viewTick);
-    return 29;
+    packU32(buf + 11, pkt->mapEventAck);
+    packU16(buf + 15, pkt->pingMs);
+    packU32(buf + 17, pkt->viewTick);
+    return 21;
 }
 
 void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
@@ -203,11 +193,9 @@ void unpackInputPacket(const uint8_t *buf, InputPacket *pkt) {
     pkt->buildX = buf[8];
     pkt->buildY = buf[9];
     pkt->flags = buf[10];
-    pkt->eventAck = unpackU32(buf + 11);
-    pkt->mapEventAck = unpackU32(buf + 15);
-    pkt->controlEventAck = unpackU32(buf + 19);
-    pkt->pingMs = unpackU16(buf + 23);
-    pkt->viewTick = unpackU32(buf + 25);
+    pkt->mapEventAck = unpackU32(buf + 11);
+    pkt->pingMs = unpackU16(buf + 15);
+    pkt->viewTick = unpackU32(buf + 17);
 }
 
 /* Variable-length tank entry: a 1-byte stub when playerNum carries
@@ -233,12 +221,6 @@ BOLO_STATIC_ASSERT(WIRE_SIZE_OF(BASE_SNAPSHOT_FIELDS)         == BASE_SNAPSHOT_W
 BOLO_STATIC_ASSERT(WIRE_SIZE_OF(PILL_SNAPSHOT_FIELDS)         == PILL_SNAPSHOT_WIRE_SIZE,         pill_wire_size_drift);
 BOLO_STATIC_ASSERT(WIRE_MASKED_SIZE_OF(TANK_SNAPSHOT_FIELDS)  == TANK_SNAPSHOT_WIRE_SIZE,         tank_wire_size_drift);
 
-/* Fixed map-transfer chunk headers. Each precedes a hand-written data payload
- * and chunk loop (reassembly and length validation stay hand-rolled). */
-DEFINE_WIRE_CODEC(MapDownloadChunkHeader, "map_download_chunk_hdr", MAP_DOWNLOAD_CHUNK_HEADER_FIELDS)
-DEFINE_WIRE_CODEC(MapUploadChunkHeader,   "map_upload_chunk_hdr",   MAP_UPLOAD_CHUNK_HEADER_FIELDS)
-DEFINE_WIRE_CODEC(MapPreviewChunkHeader,  "map_preview_chunk_hdr",  MAP_PREVIEW_CHUNK_HEADER_FIELDS)
-
 /* Serialize one GameEvent into buf. Returns bytes written (1 + dataSize). */
 int packGameEvent(uint8_t *buf, const GameEvent *ev) {
     int dataLen = gameEventDataSize(ev->type);
@@ -260,6 +242,38 @@ int unpackGameEvent(const uint8_t *buf, size_t avail, GameEvent *ev) {
     memset(ev->data, 0, sizeof(ev->data));
     memcpy(ev->data, buf + 1, dataLen);
     return 1 + dataLen;
+}
+
+/* Splice channel-delivered game events into `events` ahead of the map-tail
+ * events already staged at [tailStart, tailStart+tailCount).  The `chanCount`
+ * events in `chan` are placed at tailStart and the existing tail is shifted up
+ * behind them, preserving the game-then-map order the snapshot game tail used.
+ * Counts are clamped to `cap` (placing channel events first, truncating the
+ * tail if room runs out) so the splice can never index past `events[cap]`.
+ * Returns the new total event count. */
+int spliceGameEventsBeforeTail(GameEvent *events, int tailStart, int tailCount,
+                               const GameEvent *chan, int chanCount, int cap) {
+    int room;
+    if (chanCount <= 0) {
+        return tailStart + tailCount;
+    }
+    if (chanCount > cap - tailStart) {
+        chanCount = cap - tailStart;
+    }
+    if (chanCount < 0) {
+        chanCount = 0;
+    }
+    room = cap - (tailStart + chanCount);
+    if (tailCount > room) {
+        tailCount = room;
+    }
+    if (tailCount < 0) {
+        tailCount = 0;
+    }
+    memmove(&events[tailStart + chanCount], &events[tailStart],
+            (size_t)tailCount * sizeof(GameEvent));
+    memcpy(&events[tailStart], chan, (size_t)chanCount * sizeof(GameEvent));
+    return tailStart + chanCount + tailCount;
 }
 
 /* ================================================================

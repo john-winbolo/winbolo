@@ -122,11 +122,59 @@ extern "C" void steam_cancel_auth_ticket(void) {
   s_authTicket = k_HAuthTicketInvalid;
 }
 
+/* Stat -> threshold achievement map.  Each lifetime stat unlocks tiered
+   achievements at 1 / 10 / 100.  Steam never auto-unlocks from stat values,
+   so steam_increment_stat() checks these on every increment and fires the
+   matching achievement the moment the running total crosses a threshold.
+   Unlocks are persisted by the steam_store_stats() that callers already
+   issue after a batch of increments. */
+namespace {
+struct StatTier { const char *stat; int32 threshold; const char *ach; };
+const StatTier kStatTiers[] = {
+    {"STAT_BASES_CAPTURED_NEUTRAL",   1, "ACH_BASES_NEUTRAL_1"},
+    {"STAT_BASES_CAPTURED_NEUTRAL",  10, "ACH_BASES_NEUTRAL_10"},
+    {"STAT_BASES_CAPTURED_NEUTRAL", 100, "ACH_BASES_NEUTRAL_100"},
+    {"STAT_BASES_CAPTURED_ENEMY",     1, "ACH_BASES_ENEMY_1"},
+    {"STAT_BASES_CAPTURED_ENEMY",    10, "ACH_BASES_ENEMY_10"},
+    {"STAT_BASES_CAPTURED_ENEMY",   100, "ACH_BASES_ENEMY_100"},
+    {"STAT_PILLS_CAPTURED_NEUTRAL",   1, "ACH_PILLS_NEUTRAL_1"},
+    {"STAT_PILLS_CAPTURED_NEUTRAL",  10, "ACH_PILLS_NEUTRAL_10"},
+    {"STAT_PILLS_CAPTURED_NEUTRAL", 100, "ACH_PILLS_NEUTRAL_100"},
+    {"STAT_PILLS_CAPTURED_ENEMY",     1, "ACH_PILLS_ENEMY_1"},
+    {"STAT_PILLS_CAPTURED_ENEMY",    10, "ACH_PILLS_ENEMY_10"},
+    {"STAT_PILLS_CAPTURED_ENEMY",   100, "ACH_PILLS_ENEMY_100"},
+    {"STAT_TANK_KILLS",               1, "ACH_TANK_KILLS_1"},
+    {"STAT_TANK_KILLS",              10, "ACH_TANK_KILLS_10"},
+    {"STAT_TANK_KILLS",             100, "ACH_TANK_KILLS_100"},
+    {"STAT_TOURN_WINS",               1, "ACH_TOURN_WINS_1"},
+    {"STAT_TOURN_WINS",              10, "ACH_TOURN_WINS_10"},
+    {"STAT_TOURN_WINS",             100, "ACH_TOURN_WINS_100"},
+    {"STAT_TOURN_LOSSES",             1, "ACH_TOURN_LOSSES_1"},
+    {"STAT_TOURN_LOSSES",            10, "ACH_TOURN_LOSSES_10"},
+    {"STAT_TOURN_LOSSES",           100, "ACH_TOURN_LOSSES_100"},
+    {"STAT_LGM_LOSSES",               1, "ACH_LGM_LOSSES_1"},
+    {"STAT_LGM_LOSSES",              10, "ACH_LGM_LOSSES_10"},
+    {"STAT_LGM_LOSSES",             100, "ACH_LGM_LOSSES_100"},
+    {"STAT_LGM_KILLS",                1, "ACH_LGM_KILLS_1"},
+    {"STAT_LGM_KILLS",               10, "ACH_LGM_KILLS_10"},
+    {"STAT_LGM_KILLS",              100, "ACH_LGM_KILLS_100"},
+};
+}  // namespace
+
 extern "C" void steam_increment_stat(const char *name, int amount) {
   if (!s_initialized) return;
   int32 current = 0;
   SteamUserStats()->GetStat(name, &current);
-  SteamUserStats()->SetStat(name, current + amount);
+  int32 updated = current + amount;
+  SteamUserStats()->SetStat(name, updated);
+
+  /* Fire any tiered achievement whose threshold this increment just crossed. */
+  for (const StatTier &t : kStatTiers) {
+    if (current < t.threshold && updated >= t.threshold &&
+        std::strcmp(t.stat, name) == 0) {
+      SteamUserStats()->SetAchievement(t.ach);
+    }
+  }
 }
 
 extern "C" void steam_set_achievement(const char *id) {
@@ -153,6 +201,20 @@ extern "C" bool steam_is_big_picture(void) {
   if (!s_initialized) return false;
   ISteamUtils *utils = SteamUtils();
   return utils && utils->IsSteamInBigPictureMode();
+}
+
+extern "C" bool steam_show_floating_keyboard(int x, int y, int w, int h) {
+  if (!s_initialized) return false;
+  ISteamUtils *utils = SteamUtils();
+  if (!utils) return false;
+  return utils->ShowFloatingGamepadTextInput(
+      k_EFloatingGamepadTextInputModeModeSingleLine, x, y, w, h);
+}
+
+extern "C" void steam_dismiss_floating_keyboard(void) {
+  if (!s_initialized) return;
+  ISteamUtils *utils = SteamUtils();
+  if (utils) utils->DismissFloatingGamepadTextInput();
 }
 
 /* -------- Steam Input --------

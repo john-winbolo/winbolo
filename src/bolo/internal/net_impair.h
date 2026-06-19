@@ -36,8 +36,9 @@
 
 /*
  * Runtime, seedable network-impairment layer.  Wraps datagram send/recv
- * on either endpoint with configurable delay, jitter, loss and burst
- * loss so a developer can reproduce a lossy/laggy path on localhost.
+ * on either endpoint with configurable delay, jitter, loss, burst loss and
+ * duplication so a developer can reproduce a lossy/laggy/duplicating path on
+ * localhost.
  *
  * The module is pure: no sockets, no clock reads, no SDL.  The current
  * time is always passed in as a uint64_t nowMs.  All randomness comes
@@ -55,6 +56,7 @@ typedef struct {
     uint32_t jitterMs;
     uint32_t lossPercent;   /* 0-100 */
     uint32_t burstLossLen;  /* consecutive drops per loss event; min 1 */
+    uint32_t dupPercent;    /* 0-100; chance a queued packet is duplicated */
 } NetImpairConfig;
 
 #define NET_IMPAIR_QUEUE_SIZE 512
@@ -80,9 +82,9 @@ typedef struct {
 /* Zero the layer and leave it disabled. */
 void netImpairInit(NetImpair *ni);
 
-/* Parse "delay=75,jitter=30,loss=2,burst=2".  All keys optional; defaults
- * 0/0/0/1.  Unknown key or malformed value returns false (out unspecified).
- * loss clamps to 0-100; burst clamps to a minimum of 1. */
+/* Parse "delay=75,jitter=30,loss=2,burst=2,dup=5".  All keys optional;
+ * defaults 0/0/0/1/0.  Unknown key or malformed value returns false (out
+ * unspecified).  loss and dup clamp to 0-100; burst clamps to a minimum of 1. */
 bool netImpairParseConfig(const char *spec, NetImpairConfig *out);
 
 /* Enable with the given config (re-initialises queue state). */

@@ -245,6 +245,342 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
   }
 }
 /*********************************************************
+*NAME:          clientSimApplyGameEvents
+*PURPOSE:
+*  Buffers reliable game events for brain consumption and
+*  applies their effect/sim side effects (sounds, explosions,
+*  tank fireballs, kills, captures, map changes, mine reveals).
+*  Shared by the snapshot apply path and the client transport's
+*  reliable-channel drain, so it carries no snapshot-frame state.
+*ARGUMENTS:
+*  csPtr      - ClientSim to apply the events to
+*  events     - Decoded game events (may be NULL)
+*  eventCount - Number of events in `events`
+*  playerNum  - Local player's slot
+*********************************************************/
+void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
+                              int eventCount, BYTE playerNum) {
+  int i;
+  bool isHuman = !csPtr->isBot;
+  bool steamStatsUpdated = false;
+
+  /* Buffer events for brain consumption (accumulate across syncs;
+   * reset happens when the brain consumes them in brainDataMakeInfo) */
+  if (events != NULL) {
+    for (i = 0; i < eventCount; i++) {
+      switch (events[i].type) {
+      case EVENT_SOUND:
+      case EVENT_SOUND_SHOOT:
+      case EVENT_SOUND_TANK_HIT:
+      case EVENT_PILL_CAPTURED:
+      case EVENT_BASE_CAPTURED:
+      case EVENT_TANK_KILLED:
+      case EVENT_LGM_LOST:
+      case EVENT_PLAYER_LEAVE:
+      case EVENT_PILL_UPDATE:
+      case EVENT_BASE_UPDATE:
+      case EVENT_EXPLOSION:
+        if (csPtr->brainEventCount < MAX_BRAIN_EVENTS) {
+          csPtr->brainEvents[csPtr->brainEventCount++] = events[i];
+        }
+        break;
+      case EVENT_ASSISTANT_MSG:
+        if (events[i].data[0] == playerNum) {
+          csPtr->brainLastAssistMsg = events[i].data[1];
+        }
+        if (csPtr->brainEventCount < MAX_BRAIN_EVENTS) {
+          csPtr->brainEvents[csPtr->brainEventCount++] = events[i];
+        }
+        break;
+      default:
+        break;
+      }
+    }
+  }
+
+  /* Process game events (MAP_CHANGE, SOUND — all reliable) */
+  if (events != NULL) {
+    for (i = 0; i < eventCount; i++) {
+      switch (events[i].type) {
+      case EVENT_MAP_CHANGE:
+        /* data: [mx, my, newTerrain] */
+        if (csPtr->sim.mp != NULL) {
+          mapSetPos(&csPtr->sim, &csPtr->sim.mp, events[i].data[0], events[i].data[1],
+                    events[i].data[2], FALSE, TRUE);
+          clientSimRecalc(csPtr);
+        }
+        break;
+      case EVENT_SOUND:
+        /* data: [soundId, mx, my, sourcePlayer] — play with distance attenuation.
+         * Sounds are server-authoritative (isPredicting suppresses prediction-side
+         * sounds). Bubbles and tank-sink are gated to the local player only:
+         * they're tied to the player's own boat/drown event and would otherwise
+         * play whenever any remote tank within distance went into water. */
+        if (isHuman) {
+          sndEffects sid = (sndEffects)events[i].data[0];
+          bool selfOnly = (sid == bubbles || sid == tankSinkNear || sid == tankSinkFar);
+          if (!selfOnly || events[i].data[3] == csPtr->myPlayerNum) {
+            clientSoundDist(&csPtr->sim, sid, events[i].data[1], events[i].data[2]);
+          }
+        }
+        break;
+      case EVENT_SOUND_SHOOT:
+        /* data: [soundId, mx, my, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
+        if (isHuman && events[i].data[3] != csPtr->myPlayerNum) {
+          clientSoundDist(&csPtr->sim, shootNear, events[i].data[1], events[i].data[2]);
+        }
+        break;
+      case EVENT_SOUND_TANK_HIT:
+        /* data: [soundId, mx, my, hitPlayer] */
+        if (isHuman) {
+          if (events[i].data[3] == csPtr->myPlayerNum) {
+            frontEndPlaySound(csPtr, hitTankSelf);
+          } else {
+            clientSoundDist(&csPtr->sim, hitTankNear, events[i].data[1], events[i].data[2]);
+          }
+        }
+        break;
+      case EVENT_EXPLOSION:
+        /* data: [mx, my, px, py] — create explosion locally */
+        explosionsAddItem(&csPtr->sim.expl,
+                           events[i].data[0], events[i].data[1],
+                           events[i].data[2], events[i].data[3],
+                           EXPLOSION_START);
+        break;
+      case EVENT_TK_EXPLOSION: {
+        /* data: [xHi, xLo, yHi, yLo, angle, length, explodeType, creator]
+         * Spawn the fireball locally; tkExplosionUpdate animates it. */
+        WORLD tkX = (WORLD)(((uint16_t)events[i].data[0] << 8) | events[i].data[1]);
+        WORLD tkY = (WORLD)(((uint16_t)events[i].data[2] << 8) | events[i].data[3]);
+        TURNTYPE tkAngle = (TURNTYPE)events[i].data[4];
+        BYTE tkLength = events[i].data[5];
+        BYTE tkType = events[i].data[6];
+        BYTE tkCreator = events[i].data[7];
+        tkExplosionAddItemFromSnapshot(&csPtr->sim, tkX, tkY, tkAngle,
+                                       tkLength, tkType, tkCreator);
+        break;
+      }
+      case EVENT_BASE_CAPTURED:
+        /* data: [newOwner, previousOwner] */
+        if (isHuman) {
+          basesEnqueueCaptureMessage(&csPtr->sim, csPtr,
+                                     events[i].data[0], events[i].data[1]);
+        }
+        /* Steam stat: base captures (human only — bots run this same path) */
+        if (isHuman && events[i].data[0] == playerNum) {
+          if (events[i].data[1] == NEUTRAL) {
+            steam_increment_stat("STAT_BASES_CAPTURED_NEUTRAL", 1);
+            steamStatsUpdated = true;
+          } else if (playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
+            steam_increment_stat("STAT_BASES_CAPTURED_ENEMY", 1);
+            steamStatsUpdated = true;
+          }
+        }
+        /* Steam achievement: first base capture (networked, non-allied) */
+        if (isHuman &&
+            csPtr->networkGameType != netSingle &&
+            csPtr->hasAnyBaseCaptured == false &&
+            events[i].data[0] == playerNum &&
+            events[i].data[1] != NEUTRAL &&
+            playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
+          steam_set_achievement("ACH_FIRST_BASE");
+          steamStatsUpdated = true;
+        }
+        csPtr->hasAnyBaseCaptured = true;
+        break;
+      case EVENT_PILL_CAPTURED:
+        /* data: [newOwner, previousOwner] */
+        if (isHuman) {
+          BYTE newOwner = events[i].data[0];
+          BYTE prevOwner = events[i].data[1];
+          bool suppressAllied = (prevOwner != NEUTRAL &&
+              playersIsAllie(&csPtr->sim.plyrs, newOwner, prevOwner) == TRUE);
+          if (!suppressAllied) {
+            MessageArgs args;
+            memset(&args, 0, sizeof(args));
+            playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, newOwner, args.playerName);
+            args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, newOwner);
+            playersGetCountryCode(&csPtr->sim.plyrs, newOwner, args.playerCountry);
+            if (prevOwner != NEUTRAL) {
+              playersGetPlayerName(&csPtr->sim.plyrs, prevOwner, args.otherName, FALSE);
+              args.otherFlags = playersGetAccountFlags(&csPtr->sim.plyrs, prevOwner);
+              playersGetCountryCode(&csPtr->sim.plyrs, prevOwner, args.otherCountry);
+              csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
+            } else {
+              csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
+            }
+          }
+        }
+        /* Steam stat: pill captures (human only — bots run this same path) */
+        if (isHuman && events[i].data[0] == playerNum) {
+          if (events[i].data[1] == NEUTRAL) {
+            steam_increment_stat("STAT_PILLS_CAPTURED_NEUTRAL", 1);
+            steamStatsUpdated = true;
+          } else if (playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
+            steam_increment_stat("STAT_PILLS_CAPTURED_ENEMY", 1);
+            steamStatsUpdated = true;
+          }
+        }
+        /* Steam achievement: first pill capture (networked, non-allied) */
+        if (isHuman &&
+            csPtr->networkGameType != netSingle &&
+            csPtr->hasAnyPillCaptured == false &&
+            events[i].data[0] == playerNum &&
+            events[i].data[1] != NEUTRAL &&
+            playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
+          steam_set_achievement("ACH_FIRST_PILL");
+          steamStatsUpdated = true;
+        }
+        csPtr->hasAnyPillCaptured = true;
+        break;
+      case EVENT_PILL_UPDATE:
+        /* data: [pillIndex, x, y, owner, armour, speed, inTank] */
+        {
+          BYTE idx = events[i].data[0];
+          if (idx < MAX_PILLS && csPtr->sim.pb != NULL) {
+            (*csPtr->sim.pb).item[idx].x      = events[i].data[1];
+            (*csPtr->sim.pb).item[idx].y      = events[i].data[2];
+            (*csPtr->sim.pb).item[idx].owner  = events[i].data[3];
+            (*csPtr->sim.pb).item[idx].armour = events[i].data[4];
+            (*csPtr->sim.pb).item[idx].speed  = events[i].data[5];
+            (*csPtr->sim.pb).item[idx].inTank = events[i].data[6] ? TRUE : FALSE;
+          }
+        }
+        break;
+      case EVENT_BASE_UPDATE:
+        /* data: [baseIndex, owner, armour, shells, mines] */
+        {
+          BYTE idx = events[i].data[0];
+          if (idx < MAX_BASES && csPtr->sim.bs != NULL) {
+            (*csPtr->sim.bs).item[idx].owner  = events[i].data[1];
+            (*csPtr->sim.bs).item[idx].armour = events[i].data[2];
+            (*csPtr->sim.bs).item[idx].shells = events[i].data[3];
+            (*csPtr->sim.bs).item[idx].mines  = events[i].data[4];
+          }
+        }
+        break;
+      case EVENT_PLAYER_LEAVE:
+        /* Intentionally no player removal here. Removal rides the reliable
+         * CTRL_PLAYER_LEAVE control event (client_sim_control.c), which is
+         * delivered immediately and carries identity. This snapshot
+         * game-event is slot-only and accumulates in sim->events while no
+         * snapshots flow (e.g. the whole lobby); by the time it is flushed
+         * at game start the slot may have been reused by a new player, so
+         * acting on it would wrongly remove the new occupant (rendering it
+         * as "???") and emit a bogus "<name> has left". The event is still
+         * consumed for bot brain input (the other switch above). */
+        break;
+      case EVENT_SERVER_MSG:
+        /* data: [msgId] — server status message (human only) */
+        if (isHuman) {
+          switch (events[i].data[0]) {
+          case SERVER_MSG_GAME_LOCKED:
+            clientSimNetStatusMessage(csPtr, "This game is now locked to new players (server lock)");
+            break;
+          case SERVER_MSG_GAME_UNLOCKED:
+            clientSimNetStatusMessage(csPtr, "This game is now unlocked to new players (server unlock)");
+            break;
+          }
+        }
+        break;
+      case EVENT_LGM_LOST:
+        /* data: [victim, killer] — builder killed, broadcast newswire */
+        if (isHuman) {
+          MessageArgs args;
+          memset(&args, 0, sizeof(args));
+          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0], args.playerName, FALSE);
+          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
+          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
+          csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
+        }
+        /* Steam stats: LGM losses and kills (human only — bots run this same path) */
+        if (isHuman && events[i].data[0] == playerNum) {
+          steam_increment_stat("STAT_LGM_LOSSES", 1);
+          steamStatsUpdated = true;
+          csPtr->myLgmLossesThisGame++;
+        }
+        if (isHuman && events[i].data[1] == playerNum && events[i].data[0] != playerNum) {
+          /* No stats for killing your own LGM */
+          steam_increment_stat("STAT_LGM_KILLS", 1);
+          steamStatsUpdated = true;
+        }
+        break;
+      case EVENT_ASSISTANT_MSG:
+        /* data: [targetPlayer, msgId] — player-specific assistant message */
+        if (isHuman && events[i].data[0] == playerNum) {
+          langid assistLangId = 0;
+          switch (events[i].data[1]) {
+          case ASSIST_MSG_MAN_DEAD:          assistLangId = LGM_MAN_DEAD; break;
+          case ASSIST_MSG_NO_TREE:           assistLangId = LGM_NO_TREE; break;
+          case ASSIST_MSG_NO_BUILD:          assistLangId = LGM_NO_BUILD; break;
+          case ASSIST_MSG_NO_BUILD_BOAT:     assistLangId = LGM_NO_BUILD_UNDER_BOAT; break;
+          case ASSIST_MSG_INSUFFICIENT_TREES: assistLangId = LGM_INSUFFICIENT_TREES; break;
+          case ASSIST_MSG_BUILDTANK:         assistLangId = LGM_BUILDTANK; break;
+          case ASSIST_MSG_PILL_NO_REPAIR:    assistLangId = LGM_PILL_NO_NEED_REPAIR; break;
+          case ASSIST_MSG_NO_PILLS:          assistLangId = LGM_NO_PILLS; break;
+          case ASSIST_MSG_INSUFFICIENT_MINES: assistLangId = LGM_INSUFFICIENT_MINES; break;
+          case ASSIST_MSG_PILL_ON_MINE:      assistLangId = LGM_PILL_NO_BUILD_ON_MINE; break;
+          case ASSIST_MSG_TANK_SUNK:         assistLangId = MESSAGE_TANKSUNK; break;
+          }
+          if (assistLangId != 0) {
+            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, assistLangId, NULL);
+          }
+        }
+        break;
+      case EVENT_TANK_KILLED:
+        /* data: [killer, killed, deathCause, carriedPills] */
+        if (events[i].data[0] == playerNum && events[i].data[0] != events[i].data[1]) {
+          tankAddKill(&csPtr->sim, &MY_TANK(csPtr));
+          /* Steam stat: human only — bots run this same path. */
+          if (isHuman) {
+            steam_increment_stat("STAT_TANK_KILLS", 1);
+            steamStatsUpdated = true;
+          }
+        }
+        if (isHuman && events[i].data[1] == playerNum) {
+          csPtr->myDeathsThisGame++;
+          /* Steam achievements: drown */
+          if (events[i].data[2] == LAST_DEATH_BY_DEEPSEA) {
+            steam_set_achievement("ACH_DROWN");
+            if (events[i].data[3] > 0) {
+              steam_set_achievement("ACH_DROWN_WITH_PILLS");
+            }
+            steamStatsUpdated = true;
+          }
+          /* Rapid death tracking (ACH_RAPID_DEATH) */
+          {
+            uint32_t now = (uint32_t)SDL_GetTicks();
+            csPtr->deathTimestamps[csPtr->deathTimestampIdx] = now;
+            csPtr->deathTimestampIdx = (csPtr->deathTimestampIdx + 1) % 10;
+            /* Check if 10 deaths within 45 seconds */
+            uint32_t oldest = csPtr->deathTimestamps[csPtr->deathTimestampIdx];
+            if (oldest != 0) {
+              uint32_t newest = csPtr->deathTimestamps[(csPtr->deathTimestampIdx + 9) % 10];
+              if (newest - oldest < 45000) {
+                steam_set_achievement("ACH_RAPID_DEATH");
+                steamStatsUpdated = true;
+              }
+            }
+          }
+        }
+        break;
+      case EVENT_MINE_VISIBLE:
+        /* data: [mx, my, sourcePlayer] — reveal mine at position */
+        minesAddItem(&csPtr->sim.mns, events[i].data[0], events[i].data[1]);
+        clientSimRecalc(csPtr);
+        break;
+      default:
+        break;
+      }
+    }
+  }
+
+  if (steamStatsUpdated) {
+    steam_store_stats();
+  }
+}
+
+/*********************************************************
 *NAME:          clientApplySnapshot
 *PURPOSE:
 *  Applies a server snapshot received over UDP transport
@@ -724,315 +1060,16 @@ void clientApplySnapshot(ClientSim *csPtr,
   /* Store server tick for brain access */
   csPtr->lastServerTick = hdr->serverTick;
 
-  /* Buffer events for brain consumption (accumulate across syncs;
-   * reset happens when the brain consumes them in brainDataMakeInfo) */
-  if (events != NULL) {
-    for (i = 0; i < eventCount; i++) {
-      switch (events[i].type) {
-      case EVENT_SOUND:
-      case EVENT_SOUND_SHOOT:
-      case EVENT_SOUND_TANK_HIT:
-      case EVENT_PILL_CAPTURED:
-      case EVENT_BASE_CAPTURED:
-      case EVENT_TANK_KILLED:
-      case EVENT_LGM_LOST:
-      case EVENT_PLAYER_LEAVE:
-      case EVENT_PILL_UPDATE:
-      case EVENT_BASE_UPDATE:
-      case EVENT_EXPLOSION:
-        if (csPtr->brainEventCount < MAX_BRAIN_EVENTS) {
-          csPtr->brainEvents[csPtr->brainEventCount++] = events[i];
-        }
-        break;
-      case EVENT_ASSISTANT_MSG:
-        if (events[i].data[0] == playerNum) {
-          csPtr->brainLastAssistMsg = events[i].data[1];
-        }
-        if (csPtr->brainEventCount < MAX_BRAIN_EVENTS) {
-          csPtr->brainEvents[csPtr->brainEventCount++] = events[i];
-        }
-        break;
-      default:
-        break;
-      }
-    }
-  }
+  /* Buffer brain events and apply game-event side effects (sounds,
+   * explosions, kills, captures, map changes). The client transport applies
+   * channel-delivered game events through this same entry point. */
+  clientSimApplyGameEvents(csPtr, events, eventCount, playerNum);
 
-  /* Process game events (MAP_CHANGE, SOUND — all reliable) */
   bool steamStatsUpdated = false;
-  if (events != NULL) {
-    for (i = 0; i < eventCount; i++) {
-      switch (events[i].type) {
-      case EVENT_MAP_CHANGE:
-        /* data: [mx, my, newTerrain] */
-        if (csPtr->sim.mp != NULL) {
-          mapSetPos(&csPtr->sim, &csPtr->sim.mp, events[i].data[0], events[i].data[1],
-                    events[i].data[2], FALSE, TRUE);
-          clientSimRecalc(csPtr);
-        }
-        break;
-      case EVENT_SOUND:
-        /* data: [soundId, mx, my, sourcePlayer] — play with distance attenuation.
-         * Sounds are server-authoritative (isPredicting suppresses prediction-side
-         * sounds). Bubbles and tank-sink are gated to the local player only:
-         * they're tied to the player's own boat/drown event and would otherwise
-         * play whenever any remote tank within distance went into water. */
-        if (isHuman) {
-          sndEffects sid = (sndEffects)events[i].data[0];
-          bool selfOnly = (sid == bubbles || sid == tankSinkNear || sid == tankSinkFar);
-          if (!selfOnly || events[i].data[3] == csPtr->myPlayerNum) {
-            clientSoundDist(&csPtr->sim, sid, events[i].data[1], events[i].data[2]);
-          }
-        }
-        break;
-      case EVENT_SOUND_SHOOT:
-        /* data: [soundId, mx, my, firingPlayer] — skip own shots (client plays shootSelf via prediction) */
-        if (isHuman && events[i].data[3] != csPtr->myPlayerNum) {
-          clientSoundDist(&csPtr->sim, shootNear, events[i].data[1], events[i].data[2]);
-        }
-        break;
-      case EVENT_SOUND_TANK_HIT:
-        /* data: [soundId, mx, my, hitPlayer] */
-        if (isHuman) {
-          if (events[i].data[3] == csPtr->myPlayerNum) {
-            frontEndPlaySound(csPtr, hitTankSelf);
-          } else {
-            clientSoundDist(&csPtr->sim, hitTankNear, events[i].data[1], events[i].data[2]);
-          }
-        }
-        break;
-      case EVENT_EXPLOSION:
-        /* data: [mx, my, px, py] — create explosion locally */
-        explosionsAddItem(&csPtr->sim.expl,
-                           events[i].data[0], events[i].data[1],
-                           events[i].data[2], events[i].data[3],
-                           EXPLOSION_START);
-        break;
-      case EVENT_TK_EXPLOSION: {
-        /* data: [xHi, xLo, yHi, yLo, angle, length, explodeType, creator]
-         * Spawn the fireball locally; tkExplosionUpdate animates it. */
-        WORLD tkX = (WORLD)(((uint16_t)events[i].data[0] << 8) | events[i].data[1]);
-        WORLD tkY = (WORLD)(((uint16_t)events[i].data[2] << 8) | events[i].data[3]);
-        TURNTYPE tkAngle = (TURNTYPE)events[i].data[4];
-        BYTE tkLength = events[i].data[5];
-        BYTE tkType = events[i].data[6];
-        BYTE tkCreator = events[i].data[7];
-        tkExplosionAddItemFromSnapshot(&csPtr->sim, tkX, tkY, tkAngle,
-                                       tkLength, tkType, tkCreator);
-        break;
-      }
-      case EVENT_BASE_CAPTURED:
-        /* data: [newOwner, previousOwner] */
-        if (isHuman) {
-          basesEnqueueCaptureMessage(&csPtr->sim, csPtr,
-                                     events[i].data[0], events[i].data[1]);
-        }
-        /* Steam stat: base captures */
-        if (events[i].data[0] == playerNum) {
-          if (events[i].data[1] == NEUTRAL) {
-            steam_increment_stat("STAT_BASES_CAPTURED_NEUTRAL", 1);
-            steamStatsUpdated = true;
-          } else if (playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
-            steam_increment_stat("STAT_BASES_CAPTURED_ENEMY", 1);
-            steamStatsUpdated = true;
-          }
-        }
-        /* Steam achievement: first base capture (networked, non-allied) */
-        if (csPtr->networkGameType != netSingle &&
-            csPtr->hasAnyBaseCaptured == false &&
-            events[i].data[0] == playerNum &&
-            events[i].data[1] != NEUTRAL &&
-            playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
-          steam_set_achievement("ACH_FIRST_BASE");
-          steamStatsUpdated = true;
-        }
-        csPtr->hasAnyBaseCaptured = true;
-        break;
-      case EVENT_PILL_CAPTURED:
-        /* data: [newOwner, previousOwner] */
-        if (isHuman) {
-          BYTE newOwner = events[i].data[0];
-          BYTE prevOwner = events[i].data[1];
-          bool suppressAllied = (prevOwner != NEUTRAL &&
-              playersIsAllie(&csPtr->sim.plyrs, newOwner, prevOwner) == TRUE);
-          if (!suppressAllied) {
-            MessageArgs args;
-            memset(&args, 0, sizeof(args));
-            playersMakeMessageName(csPtr, &csPtr->sim.plyrs, csPtr->myPlayerNum, newOwner, args.playerName);
-            args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, newOwner);
-            playersGetCountryCode(&csPtr->sim.plyrs, newOwner, args.playerCountry);
-            if (prevOwner != NEUTRAL) {
-              playersGetPlayerName(&csPtr->sim.plyrs, prevOwner, args.otherName, FALSE);
-              args.otherFlags = playersGetAccountFlags(&csPtr->sim.plyrs, prevOwner);
-              playersGetCountryCode(&csPtr->sim.plyrs, prevOwner, args.otherCountry);
-              csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_STOLE_PILL, &args);
-            } else {
-              csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_CAPTURE_PILL, &args);
-            }
-          }
-        }
-        /* Steam stat: pill captures */
-        if (events[i].data[0] == playerNum) {
-          if (events[i].data[1] == NEUTRAL) {
-            steam_increment_stat("STAT_PILLS_CAPTURED_NEUTRAL", 1);
-            steamStatsUpdated = true;
-          } else if (playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
-            steam_increment_stat("STAT_PILLS_CAPTURED_ENEMY", 1);
-            steamStatsUpdated = true;
-          }
-        }
-        /* Steam achievement: first pill capture (networked, non-allied) */
-        if (csPtr->networkGameType != netSingle &&
-            csPtr->hasAnyPillCaptured == false &&
-            events[i].data[0] == playerNum &&
-            events[i].data[1] != NEUTRAL &&
-            playersIsAllie(&csPtr->sim.plyrs, playerNum, events[i].data[1]) == FALSE) {
-          steam_set_achievement("ACH_FIRST_PILL");
-          steamStatsUpdated = true;
-        }
-        csPtr->hasAnyPillCaptured = true;
-        break;
-      case EVENT_PILL_UPDATE:
-        /* data: [pillIndex, x, y, owner, armour, speed, inTank] */
-        {
-          BYTE idx = events[i].data[0];
-          if (idx < MAX_PILLS && csPtr->sim.pb != NULL) {
-            (*csPtr->sim.pb).item[idx].x      = events[i].data[1];
-            (*csPtr->sim.pb).item[idx].y      = events[i].data[2];
-            (*csPtr->sim.pb).item[idx].owner  = events[i].data[3];
-            (*csPtr->sim.pb).item[idx].armour = events[i].data[4];
-            (*csPtr->sim.pb).item[idx].speed  = events[i].data[5];
-            (*csPtr->sim.pb).item[idx].inTank = events[i].data[6] ? TRUE : FALSE;
-          }
-        }
-        break;
-      case EVENT_BASE_UPDATE:
-        /* data: [baseIndex, owner, armour, shells, mines] */
-        {
-          BYTE idx = events[i].data[0];
-          if (idx < MAX_BASES && csPtr->sim.bs != NULL) {
-            (*csPtr->sim.bs).item[idx].owner  = events[i].data[1];
-            (*csPtr->sim.bs).item[idx].armour = events[i].data[2];
-            (*csPtr->sim.bs).item[idx].shells = events[i].data[3];
-            (*csPtr->sim.bs).item[idx].mines  = events[i].data[4];
-          }
-        }
-        break;
-      case EVENT_PLAYER_LEAVE:
-        /* Intentionally no player removal here. Removal rides the reliable
-         * CTRL_PLAYER_LEAVE control event (client_sim_control.c), which is
-         * delivered immediately and carries identity. This snapshot
-         * game-event is slot-only and accumulates in sim->events while no
-         * snapshots flow (e.g. the whole lobby); by the time it is flushed
-         * at game start the slot may have been reused by a new player, so
-         * acting on it would wrongly remove the new occupant (rendering it
-         * as "???") and emit a bogus "<name> has left". The event is still
-         * consumed for bot brain input (the other switch above). */
-        break;
-      case EVENT_SERVER_MSG:
-        /* data: [msgId] — server status message (human only) */
-        if (isHuman) {
-          switch (events[i].data[0]) {
-          case SERVER_MSG_GAME_LOCKED:
-            clientSimNetStatusMessage(csPtr, "This game is now locked to new players (server lock)");
-            break;
-          case SERVER_MSG_GAME_UNLOCKED:
-            clientSimNetStatusMessage(csPtr, "This game is now unlocked to new players (server unlock)");
-            break;
-          }
-        }
-        break;
-      case EVENT_LGM_LOST:
-        /* data: [victim, killer] — builder killed, broadcast newswire */
-        if (isHuman) {
-          MessageArgs args;
-          memset(&args, 0, sizeof(args));
-          playersGetPlayerName(&csPtr->sim.plyrs, events[i].data[0], args.playerName, FALSE);
-          args.playerFlags = playersGetAccountFlags(&csPtr->sim.plyrs, events[i].data[0]);
-          playersGetCountryCode(&csPtr->sim.plyrs, events[i].data[0], args.playerCountry);
-          csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, newsWireMessage, MESSAGE_NEWSWIRE, MESSAGE_LGM_DEAD, &args);
-        }
-        /* Steam stats: LGM losses and kills */
-        if (events[i].data[0] == playerNum) {
-          steam_increment_stat("STAT_LGM_LOSSES", 1);
-          steamStatsUpdated = true;
-          csPtr->myLgmLossesThisGame++;
-        }
-        if (events[i].data[1] == playerNum && events[i].data[0] != playerNum) {
-          /* No stats for killing your own LGM */
-          steam_increment_stat("STAT_LGM_KILLS", 1);
-          steamStatsUpdated = true;
-        }
-        break;
-      case EVENT_ASSISTANT_MSG:
-        /* data: [targetPlayer, msgId] — player-specific assistant message */
-        if (isHuman && events[i].data[0] == playerNum) {
-          langid assistLangId = 0;
-          switch (events[i].data[1]) {
-          case ASSIST_MSG_MAN_DEAD:          assistLangId = LGM_MAN_DEAD; break;
-          case ASSIST_MSG_NO_TREE:           assistLangId = LGM_NO_TREE; break;
-          case ASSIST_MSG_NO_BUILD:          assistLangId = LGM_NO_BUILD; break;
-          case ASSIST_MSG_NO_BUILD_BOAT:     assistLangId = LGM_NO_BUILD_UNDER_BOAT; break;
-          case ASSIST_MSG_INSUFFICIENT_TREES: assistLangId = LGM_INSUFFICIENT_TREES; break;
-          case ASSIST_MSG_BUILDTANK:         assistLangId = LGM_BUILDTANK; break;
-          case ASSIST_MSG_PILL_NO_REPAIR:    assistLangId = LGM_PILL_NO_NEED_REPAIR; break;
-          case ASSIST_MSG_NO_PILLS:          assistLangId = LGM_NO_PILLS; break;
-          case ASSIST_MSG_INSUFFICIENT_MINES: assistLangId = LGM_INSUFFICIENT_MINES; break;
-          case ASSIST_MSG_PILL_ON_MINE:      assistLangId = LGM_PILL_NO_BUILD_ON_MINE; break;
-          case ASSIST_MSG_TANK_SUNK:         assistLangId = MESSAGE_TANKSUNK; break;
-          }
-          if (assistLangId != 0) {
-            csPtr->sim.callbacks.messageAdd(csPtr->sim.callbacks.ctx, assistantMessage, MESSAGE_ASSISTANT, assistLangId, NULL);
-          }
-        }
-        break;
-      case EVENT_TANK_KILLED:
-        /* data: [killer, killed, deathCause, carriedPills] */
-        if (events[i].data[0] == playerNum && events[i].data[0] != events[i].data[1]) {
-          tankAddKill(&csPtr->sim, &MY_TANK(csPtr));
-          steam_increment_stat("STAT_TANK_KILLS", 1);
-          steamStatsUpdated = true;
-        }
-        if (events[i].data[1] == playerNum) {
-          csPtr->myDeathsThisGame++;
-          /* Steam achievements: drown */
-          if (events[i].data[2] == LAST_DEATH_BY_DEEPSEA) {
-            steam_set_achievement("ACH_DROWN");
-            if (events[i].data[3] > 0) {
-              steam_set_achievement("ACH_DROWN_WITH_PILLS");
-            }
-            steamStatsUpdated = true;
-          }
-          /* Rapid death tracking (ACH_RAPID_DEATH) */
-          {
-            uint32_t now = (uint32_t)SDL_GetTicks();
-            csPtr->deathTimestamps[csPtr->deathTimestampIdx] = now;
-            csPtr->deathTimestampIdx = (csPtr->deathTimestampIdx + 1) % 10;
-            /* Check if 10 deaths within 45 seconds */
-            uint32_t oldest = csPtr->deathTimestamps[csPtr->deathTimestampIdx];
-            if (oldest != 0) {
-              uint32_t newest = csPtr->deathTimestamps[(csPtr->deathTimestampIdx + 9) % 10];
-              if (newest - oldest < 45000) {
-                steam_set_achievement("ACH_RAPID_DEATH");
-                steamStatsUpdated = true;
-              }
-            }
-          }
-        }
-        break;
-      case EVENT_MINE_VISIBLE:
-        /* data: [mx, my, sourcePlayer] — reveal mine at position */
-        minesAddItem(&csPtr->sim.mns, events[i].data[0], events[i].data[1]);
-        clientSimRecalc(csPtr);
-        break;
-      default:
-        break;
-      }
-    }
-  }
 
-  /* Player count tracking (ACH_PLAYERS_6/8/16) */
-  {
+  /* Player count tracking (ACH_PLAYERS_6/8/16) — human only; bots run this
+   * same snapshot path and must not unlock achievements for the local user. */
+  if (isHuman) {
     BYTE numPlayers = playersGetNumPlayers(&csPtr->sim.plyrs);
     if (numPlayers > csPtr->maxPlayersSeenThisGame) {
       csPtr->maxPlayersSeenThisGame = numPlayers;

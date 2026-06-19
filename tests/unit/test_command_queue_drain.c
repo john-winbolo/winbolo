@@ -23,8 +23,7 @@
  * never reaches the wire (mp-logging-95072.txt).
  *
  * Tests mirror the queue logic in pure form so the contract is
- * captured independently of the production struct layout — same
- * approach test_control_event_queue.c takes for the down-leg.
+ * captured independently of the production struct layout.
  */
 
 #include <stdbool.h>

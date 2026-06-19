@@ -271,15 +271,12 @@ void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
                                                  const char *relPath,
                                                  const char *query);
 /* Request the raw .map bytes of data/maps/<relPath> for an in-chooser
- * preview. Reply streams back via PACKET_LOBBY_MAP_PREVIEW_BEGIN/_CHUNK
- * (or _ERR) into the ClientSim's lobbyMapPreview* accumulator. */
+ * preview. Reply streams back over CHANNEL_BULK behind a bulk-transfer
+ * stream header (or _ERR) into the ClientSim's lobbyMapPreview* accumulator. */
 void transportUdpClientSendLobbyMapPreviewRequest(Transport *t,
                                                   const char *relPath);
 void transportUdpClientSendLobbyMapUploadBegin(Transport *t, uint32_t totalLen,
                                                const char *name);
-void transportUdpClientSendLobbyMapUploadChunk(Transport *t, uint32_t offset,
-                                               const uint8_t *data,
-                                               uint16_t dataLen);
 /* Pre-upload optimisation: try to skip the byte transfer if the server
  * already has an identical file at relPath (relative to data/maps/).
  * Server replies PACKET_LOBBY_MAP_UPLOAD_DONE on match, or
@@ -324,14 +321,10 @@ void udpClientHandleLobbyMapListRsp(struct ClientSim *cs,
                                     const uint8_t *buf, int len);
 void udpClientHandleLobbyMapSearchRsp(struct ClientSim *cs,
                                       const uint8_t *buf, int len);
-/* Client-side parsers for the streamed MAP_PREVIEW response. BEGIN
- * announces seq + total size and resets the accumulator; CHUNK appends
- * bytes at the carried offset; ERR flags the request failed. `buf`
- * includes the 8-byte packet header. */
-void udpClientHandleLobbyMapPreviewBegin(struct ClientSim *cs,
-                                         const uint8_t *buf, int len);
-void udpClientHandleLobbyMapPreviewChunk(struct ClientSim *cs,
-                                         const uint8_t *buf, int len);
+/* Client-side handler for a failed MAP_PREVIEW request. The map bytes
+ * themselves now arrive over CHANNEL_BULK and are reassembled by the
+ * transport's bulk receiver; ERR flags the request failed. `buf` includes
+ * the 8-byte packet header. */
 void udpClientHandleLobbyMapPreviewErr(struct ClientSim *cs,
                                        const uint8_t *buf, int len);
 
@@ -394,7 +387,6 @@ typedef struct UdpServerClient {
     uint16_t pingMs;             /* Last measured ping */
     uint32_t lastPongSentMs;     /* SDL_GetTicks() when last PONG was sent */
     char countryCode[3];         /* ISO 3166-1 alpha-2 from GeoIP lookup */
-    bool needsPlayerList;        /* Send existing player names after map download */
     uint16_t inputsThisTick;     /* Inputs applied this tick cycle (for rate limiting) */
     bool wantRejoin;             /* Client requested rejoin (restore pills/bases) */
     uint8_t pingWarnStrikes;     /* consecutive pings >= warn threshold */
@@ -557,14 +549,6 @@ bool transportUdpServerHasAnyClient(void);
  * PACKET_LOBBY_MAP_CHANGE notification through the subscriber path. */
 void transportUdpServerOnLobbyMapChange(struct ServerSim *sim);
 
-/* Drive the lobby/countdown/gameover retransmit scan.  For every
- * connected client with unacked control events, sends a fresh
- * PACKET_CONTROL_TICK carrying the unacked tail.  Snapshots cover
- * retransmit automatically during running; this exists for the phases
- * where snapshots don't flow.  Called from server_lifecycle.c at a
- * 4-tick (~80ms at 50 Hz) cadence. */
-void transportUdpServerRetransmitUnackedControl(void);
-
 /* Broadcast PACKET_WBN_REKEY to every connected WBN-participating client
  * carrying the current server_key.  Called after each round-end
  * winbolonetBeginSession succeeds so still-connected clients can mint a
@@ -650,5 +634,69 @@ void transportUdpServerSendPunchProbe(const char *trackerAddr,
  * PUNCH_BURST_INTERVAL ticks between sends. Called from the server
  * lifecycle tick. */
 void transportUdpServerDrainPunchQueue(void);
+
+/* Splice channel-delivered game events into `events` ahead of the map-tail
+ * events staged at [tailStart, tailStart+tailCount), preserving game-then-map
+ * order. Counts are clamped to `cap` so the splice never indexes past
+ * events[cap]. Returns the new total event count. */
+int spliceGameEventsBeforeTail(GameEvent *events, int tailStart, int tailCount,
+                               const GameEvent *chan, int chanCount, int cap);
+
+/* ── Test-only channel-mux scaffolding ───────────────────────────────────
+ * Honest access to the parallel reliable-ordered channel layer (channel_mux.c)
+ * for the loopback channel integration test.  Reliable game events now ride
+ * channel 0 (CHANNEL_GAME); the other channels still run empty.
+ *   *Send:    queue a whole message on a slot/channel's send side.
+ *   *Receive: pop the next in-order message off a channel's receive side.
+ *   *Stats:   read receive-side expectedSeq, send-side ackedSeq, and the
+ *             running count of channel frames consumed on that endpoint.
+ *   *PendingRemove: read a slot's deferred-disconnect flag (set when a
+ *             channel send overflows mid-tick, cleared by the removal drain). */
+bool transportUdpServerChannelTestSend(int slot, uint8_t ch,
+                                       const uint8_t *msg, uint16_t len);
+bool transportUdpServerTestPendingRemove(int slot);
+/* Read a slot's server-side join-download-complete flag. The client reports
+ * CONNECTED once it has the full map, but the server only flips this once the
+ * download's bytes are acked back on CHANNEL_BULK — a round-trip later. A test
+ * that drives the real game-event producer must wait on this, not just on the
+ * client's connect state, or the producer skips the slot as still-downloading. */
+bool transportUdpServerTestDownloadComplete(int slot);
+/* Stage one terrain change for a slot as a real tick does: mutate the live
+ * server map (so its checksum tracks the change) and enqueue an
+ * EVENT_MAP_CHANGE into the slot's map-event hold queue, so it flows through
+ * the real hold → tagged channelSend(CHANNEL_MAP) drain. Call between ticks. */
+bool transportUdpServerTestAddMapEvent(ServerSim *sim, int slot, uint8_t x,
+                                       uint8_t y, uint8_t terrain);
+/* Queue one whole game event on a slot's reliable game channel (CHANNEL_GAME),
+ * as the real producer does — lets a test stage a distinguishable ch0 event
+ * (e.g. one left unacked across game start). False on a bad slot/event or a
+ * full window. */
+bool transportUdpServerTestAddGameEvent(int slot, const GameEvent *ev);
+/* Fabricate a connected slot with a fresh channel mux so a server unit test can
+ * drive transportUdpServerOnGameStart over two distinct slots without sockets. */
+void transportUdpServerTestForceConnect(int slot, BYTE playerNum);
+/* Decode the CTRL_CHANNEL_RESET this slot has queued on CHANNEL_CONTROL into its
+ * two channel baselines. False if none is queued / it fails to decode. */
+bool transportUdpServerTestPeekChannelReset(int slot, uint32_t *ch0Baseline,
+                                            uint32_t *ch1Baseline);
+void transportUdpServerChannelTestStats(int slot, uint8_t ch,
+                                        uint32_t *expectedSeq,
+                                        uint32_t *ackedSeq,
+                                        uint32_t *framesRx);
+bool transportUdpClientChannelTestReceive(Transport *t, uint8_t ch,
+                                          uint8_t *out, uint16_t *outLen);
+void transportUdpClientChannelTestStats(Transport *t, uint8_t ch,
+                                        uint32_t *expectedSeq,
+                                        uint32_t *ackedSeq,
+                                        uint32_t *framesRx);
+/* Begin a real map resync now (fresh generation + request), bypassing the
+ * checksum-mismatch trigger; the server accept + blob install advance
+ * installedMapGen as the harness pumps. Returns false if one is already
+ * outstanding. */
+bool transportUdpClientTestBeginResync(Transport *t);
+/* Read installedMapGen (the generation gate floor) and mapResyncCount
+ * (cumulative successful installs). */
+void transportUdpClientTestMapState(Transport *t, uint32_t *installedMapGen,
+                                    uint32_t *mapResyncCount);
 
 #endif /* TRANSPORT_UDP_H */

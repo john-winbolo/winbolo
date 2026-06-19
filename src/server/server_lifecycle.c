@@ -555,20 +555,6 @@ void serverInstanceTick(ServerSim *sim) {
       }
     }
 
-    /* Retransmit unacked control events every 4 ticks (~80ms at 50 Hz)
-     * for loss recovery during lobby/countdown/gameover.  During running,
-     * the snapshot tail carries the per-client unacked tail every tick,
-     * so this scan only matters when snapshots aren't flowing.
-     *
-     * Gate on udpServer.tickCount (always-advancing) rather than sim->tick
-     * because sim->tick freezes during serverStateCountdown and
-     * serverStateGameOver (see serverSimTick in server_sim.c).  A frozen
-     * sim->tick whose residue mod 4 isn't 0 would silently disable
-     * retransmit for the entire countdown / game-over window. */
-    if (transportUdpServerGetTickCount() % 4 == 0) {
-      transportUdpServerRetransmitUnackedControl();
-    }
-
     /* Periodic lobby-slot republish so the ping column in the lobby
      * UI tracks live values instead of freezing between unrelated
      * slot changes (ready toggle, bot config, etc.). CTRL_LOBBY_SLOT

@@ -162,3 +162,7 @@ bool threadsCurrentlyHoldsMutex(void) {
   return mutexOwner == SDL_GetCurrentThreadID();
 }
 
+bool threadsContextActive(void) {
+  return threadStarted;
+}
+

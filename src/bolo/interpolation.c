@@ -186,6 +186,20 @@ bool interpGetPosition(const InterpContext *ctx, BYTE playerNum,
     return TRUE;
   }
 
+  /* Respawn snap: curr is alive (gated above) but prev is a death/dead
+   * sample, so prev's position is the death spot and is meaningless for the
+   * teleport back to the respawn point. Output curr directly instead of
+   * tweening from the stale death position (a one-frame flash at the death
+   * spot). Placed before the missedTicks block so a missed-tick respawn can't
+   * extrapolate a bogus death->respawn velocity either. */
+  if (!p->prev.alive) {
+    *outX = p->curr.worldX;
+    *outY = p->curr.worldY;
+    *outAngle = p->curr.angle;
+    *outOnBoat = p->curr.onBoat;
+    return TRUE;
+  }
+
   /* If missed 1-3 ticks, extrapolate from current position */
   if (p->missedTicks > 0) {
     /* Brief extrapolation: continue at last known velocity */

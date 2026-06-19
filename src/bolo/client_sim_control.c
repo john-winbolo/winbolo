@@ -286,8 +286,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyBaseCount   = evt->u.lobbySettings.lobbyBaseCount;
         cs->lobbyStartCount  = evt->u.lobbySettings.lobbyStartCount;
         cs->mapSkipAvailable = evt->u.lobbySettings.mapSkipAvailable;
-        cs->netStat          = evt->u.lobbySettings.netStat;
-        cs->inLobby          = evt->u.lobbySettings.inLobby;
+        /* netStat and inLobby are owned by the CTRL_GAME_PHASE_* events,
+         * which fire on every live transition and which the join sync
+         * replay always delivers before this settings snapshot. Adopting
+         * them here clobbered the phase: the server fills inLobby from
+         * lobbyEnabled ("this server has a lobby", true mid-game), so a
+         * mid-game joiner's replay applied PHASE_RUNNING (inLobby=false)
+         * and then this event flipped it back to true, dropping the
+         * client into the lobby screen. */
         cs->lobbyOpenHost            = evt->u.lobbySettings.lobbyOpenHost;
         {
             /* Announce a host handoff as a lobby system line. The host slot
@@ -628,7 +634,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             }
         }
 
-        if (allOwned && numBases > 0) {
+        /* Steam stats/achievements are for the local human only — bots run
+         * this same game-over path with their own ClientSim and must not
+         * credit wins/losses to the local user. */
+        if (allOwned && numBases > 0 && !cs->isBot) {
             localWon = (cs->myPlayerNum == first) ||
                        playersIsAllie(&cs->sim.plyrs, cs->myPlayerNum, first);
 

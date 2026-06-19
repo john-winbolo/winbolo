@@ -1356,15 +1356,16 @@ add_custom_command(TARGET WinBolo POST_BUILD
     COMMENT "Copying brain scripts to output Brains/ directory (excludes *.md)"
 )
 
-# Steam Input action manifest — Steam reads it from
-# <install dir>/controller_config/game_actions_<appid>.vdf at runtime.
-# Production also uploads to Steamworks; this local copy is the dev path.
+# Steam Input action manifest + per-controller binding files — Steam reads
+# them from <install dir>/controller_config/ at runtime. Copy the whole
+# directory so the per-controller .vdf files ship too (matches the dist
+# target). Production also uploads to Steamworks; this local copy is the
+# dev path.
 add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/controller_config"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/controller_config/game_actions_4672140.vdf"
-        "${WINBOLO_DATA_DIR}/controller_config/game_actions_4672140.vdf"
-    COMMENT "Copying Steam Input action manifest to controller_config/"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/controller_config"
+        "${WINBOLO_DATA_DIR}/controller_config"
+    COMMENT "Copying Steam Input controller_config/ to output directory"
 )
 
 # Tutorial glyph atlases (Xelu CC0 packs).  Loaded on demand by
@@ -2512,6 +2513,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_prefs_api.c
     src/common/prefs_doc.c
     src/common/prefs.c
+    tests/unit/test_join_running_phase.c
     tests/unit/test_lobby_control_variants.c
     tests/unit/test_command_codec_roundtrip.c
     tests/unit/test_lobby_claim_start_dispatch.c
@@ -2545,7 +2547,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
     tests/unit/test_wbn_serverlist.c
-    tests/unit/test_control_event_queue.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_bolo_rand.c
@@ -2575,6 +2576,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
     tests/unit/test_interp_render.c
+    tests/unit/test_interp_respawn_no_death_flash.c
     tests/unit/test_snapshot_compaction.c
     tests/unit/test_log_roundtrip.c
     tests/unit/test_log_dir_path.c
@@ -2585,6 +2587,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_join.c
     tests/unit/test_loopback_join_loss.c
     tests/unit/test_loopback_lobby_running_loss.c
+    tests/unit/test_loopback_quiet_lobby_control_loss.c
+    tests/unit/test_loopback_channel.c
+    tests/unit/test_lock_channel.c
+    tests/unit/test_loopback_preview.c
+    tests/unit/test_loopback_download.c
+    tests/unit/test_loopback_upload.c
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
@@ -2603,6 +2611,19 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/wire_corpus.c
     tests/unit/test_wire_corpus.c
     tests/unit/test_wire_corpus_capture.c
+    # ChannelMux reliability primitive: the off-socket loss/reorder/dup/
+    # window/boundary matrix (two muxes + an in-test frame shuttle).
+    tests/unit/test_channel_mux.c
+    # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
+    # byte-identical blob reassembly under loss, header robustness,
+    # pipelining and the send-side serializer guard.
+    tests/unit/test_bulk_transfer.c
+    # Send-side overflow guards on channelStreamSend / bulkSenderBegin: a
+    # wrap-prone length is rejected with no state change.
+    tests/unit/test_overflow_guards.c
+    # CTRL_CHANNEL_RESET: body-codec round-trip and the per-client game-start
+    # baselines transportUdpServerOnGameStart sends across two fabricated slots.
+    tests/unit/test_channel_reset.c
     tests/unit/test_packet_type_names.c
     tests/unit/test_client_type.c
     tests/unit/test_wire_player_bounds.c
@@ -2724,6 +2745,7 @@ set(_unit_test_names
     prefs_api_device_identity
     prefs_api_adopt_server
     prefs_api_mark_synced
+    join_running_phase_not_lobby
     lobby_settings_codec_and_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply
@@ -2801,13 +2823,6 @@ set(_unit_test_names
     wbn_serverlist_players
     wbn_serverlist_motd
     wbn_serverlist_malformed
-    queue_init_is_valid
-    queue_enqueue_advances_nextSeq
-    queue_ack_advance_within_range
-    queue_stale_ack_above_nextSeq
-    queue_wipe_resets_both_seqs
-    queue_enqueue_into_empty_after_wipe
-    queue_hasspace_at_capacity
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_inbox_push_peek_fifo
@@ -2904,12 +2919,21 @@ set(_unit_test_names
     ping_smoother
     client_timing
     interp_render
+    interp_respawn_no_death_flash
     snapshot_compaction
     edge_send_predicate
     error_smoothing
     loopback_join
     loopback_join_loss
     loopback_lobby_running_loss
+    loopback_quiet_lobby_control_loss
+    loopback_channel
+    lock_channel
+    loopback_map_preview
+    loopback_map_upload
+    loopback_download_join
+    loopback_download_midgame
+    loopback_resync
     gate1_viewtick_loopback
     gate1_host_noop
     interp_jitter_e2e
@@ -2926,6 +2950,11 @@ set(_unit_test_names
     viewtick_rewind
     viewtick_displayed_tick
     wire_corpus
+    channel_mux
+    bulk_transfer
+    overflow_guards
+    channel_reset_codec_roundtrip
+    channel_reset_two_slot_baselines
     packet_type_names
     mdns_discovery
     client_type_matches_platform

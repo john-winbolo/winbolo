@@ -29,6 +29,8 @@ add_library(bolo_static STATIC
     brain_worldsim.c
     braincore.c
     building.c
+    bulk_transfer.c
+    channel_mux.c
     client_mappreview.c
     client_net.c
     client_render.c

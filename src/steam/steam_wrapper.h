@@ -42,6 +42,23 @@ bool     steam_is_steam_deck(void);
  * Gamepad UI mode (the couch/controller-first context). */
 bool     steam_is_big_picture(void);
 
+/* -------- Steam virtual keyboard --------
+ * Floating on-screen keyboard for controller text entry.  Steam injects the
+ * typed characters into the focused window as ordinary keystrokes, so they
+ * arrive through the normal SDL text-input path and land in whatever ImGui
+ * field has focus — no per-field plumbing.  The x/y/w/h describe the text
+ * field's screen rect so Steam can position the panel without covering it.
+ *
+ * Returns true if the keyboard was shown.  Returns false (no-op) when Steam
+ * is not initialized or the current context can't display it (e.g. a desktop
+ * launch without Steam Input / Big Picture) — callers treat false as "Steam
+ * can't help here". */
+bool     steam_show_floating_keyboard(int x, int y, int w, int h);
+
+/* Dismiss the floating keyboard shown by steam_show_floating_keyboard.  Must
+ * be called when the text field loses focus — Steam does not auto-dismiss it. */
+void     steam_dismiss_floating_keyboard(void);
+
 /* Stats & achievements */
 void     steam_increment_stat(const char *name, int amount);
 void     steam_set_achievement(const char *id);

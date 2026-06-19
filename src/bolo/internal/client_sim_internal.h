@@ -364,8 +364,8 @@ struct ClientSim {
 
     /* Server-map preview byte stream — driven by the Server Maps tab
      * in MP. The chooser asks for a map's raw .map bytes via
-     * PACKET_LOBBY_MAP_PREVIEW_REQ; the server streams them back as
-     * PACKET_LOBBY_MAP_PREVIEW_BEGIN + _CHUNK (or _ERR on failure).
+     * PACKET_LOBBY_MAP_PREVIEW_REQ; the server streams them back over
+     * CHANNEL_BULK behind a bulk-transfer stream header (or _ERR on failure).
      * The bytes accumulate here and are rasterised on the GUI thread
      * once complete, the same way the WBN tab handles its async
      * download. lobbyMapPreviewReqPath is the path we asked for;
@@ -376,8 +376,7 @@ struct ClientSim {
     bool     lobbyMapPreviewInFlight;
     bool     lobbyMapPreviewReady;   /* full byte stream received */
     bool     lobbyMapPreviewError;   /* server replied _ERR */
-    uint8_t  lobbyMapPreviewSeq;     /* BEGIN's seq id — reject stale chunks */
-    uint32_t lobbyMapPreviewTotal;   /* expected total bytes from BEGIN */
+    uint32_t lobbyMapPreviewTotal;   /* expected total bytes from the stream header */
     uint32_t lobbyMapPreviewReceived;/* bytes accumulated so far */
     uint8_t  lobbyMapPreviewBytes[LOBBY_MAP_UPLOAD_MAX_BYTES];
 

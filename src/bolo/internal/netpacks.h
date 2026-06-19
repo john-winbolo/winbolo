@@ -233,17 +233,19 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_PILL_STATE      119   /* Pill health/ownership change */
 #define PACKET_PONG            120   /* Ping response */
 #define PACKET_GAME_EVENT      121   /* Explosion, mine hit, etc. */
-#define PACKET_MAP_DOWNLOAD    122   /* Compressed map data chunk (server -> client) */
-#define PACKET_MAP_ACK         105   /* Map chunk acknowledgment (client -> server) */
+/* 122 (MAP_DOWNLOAD) and 105 (MAP_ACK) retired: the compressed map now streams
+ * on CHANNEL_BULK behind a bulk-transfer stream header (join download +
+ * resync), so there is no per-chunk carrier or ack packet. */
 #define PACKET_MAP_RESYNC_REQUEST 158 /* client -> server: re-send the live map
                                        * after the client detects its terrain has
                                        * diverged (a dropped EVENT_MAP_CHANGE).
                                        * Body: [resyncGen u32] — a client-chosen
-                                       * nonzero id echoed back in each chunk so
-                                       * stale chunks from a superseded resync are
-                                       * rejected. */
+                                       * nonzero id carried in the resync stream
+                                       * header so a superseded resync is dropped
+                                       * by the client's gen gate. */
 #define PACKET_QUIT            106   /* Graceful disconnect (client -> server) */
-#define PACKET_PLAYER_LIST     107   /* All connected players (server -> new client) */
+/* 107 retired (PLAYER_LIST): the roster is maintained by reliable
+ * CTRL_PLAYER_JOIN/CTRL_PLAYER_LEFT events on CHANNEL_CONTROL. */
 #define PACKET_NAME_CHANGE     123   /* Player name change (bidirectional) */
 
 /* Alliance packets (new protocol) */
@@ -318,8 +320,11 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_SET_BOT_BRAIN  166  /* { slot 1, pathLen 1, path N } */
 #define PACKET_LOBBY_SET_MAP        167  /* { pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } */
-#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { totalLen 4, nameLen 1, name N } */
-#define PACKET_LOBBY_MAP_UPLOAD_CHUNK  170  /* { offset 4, dataLen 2, data N } */
+#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { totalLen 4, nameLen 1, name N }
+                                              * the map bytes then stream over
+                                              * CHANNEL_BULK behind a bulk-
+                                              * transfer stream header; 170 (the
+                                              * old CHUNK carrier) is retired. */
 #define PACKET_LOBBY_MAP_USE_LOCAL     196  /* client -> server: "I want to
                                               * install this map; if you
                                               * already have a file with
@@ -353,18 +358,8 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* server reply to MAP_SEARCH_REQ */
 
-/* Reliable control-event carrier (lobby / countdown / gameover) and its
- * dedicated ACK packet.  During running, control events ride in the
- * snapshot's control-event tail; outside running, snapshots don't flow,
- * so PACKET_CONTROL_TICK carries the unacked tail of each per-client
- * control queue and the client ACKs with PACKET_CONTROL_ACK.
- *   PACKET_CONTROL_TICK wire format:
- *     [header 8] [controlEventBaseSeq 4 BE] [count 1]
- *     [count × ( type 1 + bodyLen 2 BE + body N )]
- *   PACKET_CONTROL_ACK wire format:
- *     [header 8] [controlEventAck 4 BE]  — next expected control seq */
-#define PACKET_CONTROL_TICK     187  /* server -> client */
-#define PACKET_CONTROL_ACK      188  /* client -> server */
+/* 187/188 retired: control events ride CHANNEL_CONTROL, acked by the
+ * channel-frame trailer.  The former standalone carrier and its ACK are gone. */
 
 /* Server Maps preview-fetch protocol. The client never reads
  * server map files directly: in MP the file lives on a remote
@@ -376,21 +371,12 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
                                               { pathLen 1, path N }
                                               path is relative to
                                               data/maps/ (e.g.
-                                              "Uploads/Foo.map"). */
-#define PACKET_LOBBY_MAP_PREVIEW_BEGIN 190  /* server → client first
-                                              { pathLen 1, path N,
-                                                seq 1, totalLen 4 }
-                                              seq id allows the
-                                              receiver to skip
-                                              stale chunks from a
-                                              prior request for the
-                                              same path. */
-#define PACKET_LOBBY_MAP_PREVIEW_CHUNK 191  /* server → client
-                                              { seq 1, offset 4,
-                                                chunkLen 2, bytes M }
-                                              fragments the .map
-                                              bytes referenced by
-                                              the most recent BEGIN. */
+                                              "Uploads/Foo.map").
+                                              The map bytes stream back
+                                              over CHANNEL_BULK behind a
+                                              bulk-transfer stream header;
+                                              190/191 (the old BEGIN/CHUNK
+                                              carriers) are retired. */
 #define PACKET_LOBBY_MAP_PREVIEW_ERR   192  /* server → client
                                               { pathLen 1, path N,
                                                 err 1 } 1=not-found
@@ -455,6 +441,16 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
 #define JOIN_COOKIE_LEN                16   /* HMAC-MD5 digest carried in the
                                               JOIN_REQUEST tail and the
                                               JOIN_CHALLENGE body */
+
+#define PACKET_CHANNEL                 207  /* bidirectional: one channel frame
+                                              (the format defined in
+                                              channel_mux.c) directly after
+                                              PACKET_HEADER_SIZE; no other
+                                              fields. Sent standalone when no
+                                              snapshot / input rides this tick;
+                                              otherwise the same frame is
+                                              appended as a trailer on the
+                                              snapshot / input datagram. */
 
 #define PACKET_GAME_VOTE_STATE         195  /* server → all clients
                                               { kind 1, active 1,
@@ -608,10 +604,9 @@ static inline bool lobbyBotNameAcceptable(
 /* PACKET_MAX_PLAYER_NAME lives in public/wire_limits.h (included above
  * via the file-top include list) alongside PACKET_MAX_CHAT_MESSAGE. */
 
-/* Map download chunk size — fits comfortably in a UDP datagram */
-#define MAP_DOWNLOAD_CHUNK_SIZE 900
-
-/* Maximum compressed map size (256x256 LZW + bases + pills + starts) */
+/* Maximum compressed map size (256x256 LZW + bases + pills + starts). The map
+ * streams on CHANNEL_BULK (no per-chunk packet), but this still bounds the blob
+ * the sender stages and the receiver allocates. */
 #define MAP_DOWNLOAD_MAX_SIZE 65536
 
 /* Number of redundant inputs per packet (for packet loss) — each input

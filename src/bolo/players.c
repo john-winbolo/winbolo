@@ -383,10 +383,10 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
     (*plrs)->item[playerNum].location[2] = '\0';
   } else {
     /* Already registered (e.g. auto-registered from snapshot with a
-       placeholder name) — update name and location from authoritative
-       source such as PACKET_PLAYER_LIST. Also rebuild the alliance list:
-       PLAYER_LIST carries the authoritative alliance bitmap, and the
-       snapshot auto-register path leaves the list empty so server-driven
+       placeholder name) — update name and location from an authoritative
+       source such as a CTRL_PLAYER_JOIN event. Also rebuild the alliance
+       list: the join event carries the authoritative alliance bitmap, and
+       the snapshot auto-register path leaves the list empty so server-driven
        team alliances would otherwise never reach the client view. */
     strcpy((*plrs)->item[playerNum].playerName, playerName);
     (*plrs)->item[playerNum].location[0] = location[0];
