@@ -1694,6 +1694,7 @@ set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/imgui_keyboard.cpp
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
 
