@@ -2057,6 +2057,19 @@ function Brain.think(info)
     -- until re-discovered fresh (prevents the cross-map blitz join).
     squad.reset_blitz_state(state)
     attack.clear_attack_goal(state, "respawned")
+    -- Death drops EVERYTHING we carried. Clear the in_tank flag on any pill we
+    -- were holding so a missed drop EVENT_PILL_UPDATE (the brain doesn't tick
+    -- while dead) can't leave a phantom carried pill: it would keep us from
+    -- recognizing the dropped (dead) pill as a pickup, keep the portfolio
+    -- counting it as held, and keep advertising it to allies (bsi.carry). The
+    -- dropped pill is re-localized cleanly the next time we see it on the map.
+    for _, p in pairs(world.pills) do
+      if p.in_tank and p.owner_player == info.player_number then
+        p.in_tank      = false
+        p._synth_carry = nil
+        p.carrier      = nil
+      end
+    end
     log.event("respawn", string.format("%d,%d", cur_mx, cur_my))
     local jump_dist = U.mdist(cur_mx, cur_my,
                               state._prev_mx or cur_mx,
@@ -2721,6 +2734,29 @@ function Brain.think(info)
     elseif gk == "refuel_at_base" or gk == "flee_to_base" then
       local b = W.base_at(world, gmx, gmy)
       if not b or (b.owner ~= "friendly" and b.owner ~= "neutral") then goal_valid = false end
+      -- Committed refuel target went depleted (or otherwise rejected) since it
+      -- was picked: the planner re-flags it every cycle via cost_cache._reject
+      -- (that's what dims it "depleted" in the pool grid), but the COMMITTED
+      -- goal keeps driving there until the next timer replan — so the HUD shows
+      -- refuel_at_base@N while the grid shows N rejected. Abandon now; the
+      -- urgent replan picks the next-best base (the reject keeps finalize from
+      -- re-choosing this one). refuel only — a flee target under fire is still
+      -- better than standing in the open.
+      if goal_valid and gk == "refuel_at_base" then
+        local tid = state.goal.target_id
+        local ce  = tid and state.cost_cache and state.cost_cache["1:" .. tostring(tid)]
+        if ce and ce._reject then
+          goal_valid = false
+          -- Depleted specifically: block the tile for a cooldown so finalize
+          -- can't immediately re-pick this base once its depleted observation
+          -- ages out (REFUEL_OBS_STALE) — that's the drive-there / see-depleted
+          -- / leave flip-flop. Other reject reasons (ally_claimed steal band,
+          -- transient block) carry their own re-acquire logic, so don't pile on.
+          if ce._reject == "depleted" then
+            U.set_blocked(state, U.mkey(gmx, gmy), now + C.REFUEL_DEPLETED_COOLDOWN, "refuel_target_depleted")
+          end
+        end
+      end
     end
     if not goal_valid then
       log.event("goal_invalid", string.format("%s@%d,%d", gk, gmx, gmy))
@@ -2767,6 +2803,20 @@ function Brain.think(info)
       goals.update_pool_cache(state, world, info)
     end
     opt(string.format("  update_pool_cache done %.2f ms", (clock_us() - t_pc0) / 1000))
+
+    -- Opening-phase base freshness: ONE TICK BEFORE every timer replan, force a
+    -- strict-A* rescore of bases within OPENING_BASE_RESCORE_TILES so the
+    -- imminent decision ranks them on real costs. The incremental base eval is
+    -- dijkstra-only, so during the opening cold-start a nearby base sits at INF
+    -- until the surface reaches it — this makes it selectable now. Runs after
+    -- update_pool_cache so it overwrites this cycle's accumulated partial that
+    -- finalize_pools reads at the replan next tick.
+    if state.phase == "opening" then
+      local _nt = (state.tick or 0) + 1 + (state.replan_offset or 0)
+      if _nt % C.GOAL_REPLAN_INTERVAL == 0 then
+        goals.rescore_nearby_bases(state, world, info, C.OPENING_BASE_RESCORE_TILES or 10)
+      end
+    end
 
     -- Per-tick ally-claimed REJECT sync: maintains entry._reject on
     -- cost_cache against the live ally_state slate so the pool grid and

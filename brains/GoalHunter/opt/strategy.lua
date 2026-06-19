@@ -133,13 +133,36 @@ function M.update(state, world, info)
     opening_tolerance = total_bases * (1.0 - math.exp(-minutes * 0.18))
   end
 
+  -- Opening-exit count: after a grace period, don't let a neutral base we
+  -- genuinely CANNOT path to keep us stuck in the opening land-grab forever.
+  -- The brain holds the full true terrain from the start (botLoadMapFromServer)
+  -- and unknown/fog tiles are passable, so an INF dijkstra cost = truly
+  -- walled/water-locked, NOT merely unexplored. Gated by OPENING_UNREACHABLE_-
+  -- GRACE_TICKS so the cold-start window (surface not yet expanded, bases not
+  -- reached yet) and the earliest land-grab aren't disrupted. Only narrows the
+  -- OPENING test; perc.neutral_base_count is left intact for every other reader.
+  local opening_neutral_count = neutral_count
+  if neutral_count > 0
+     and state.tick > (C.OPENING_UNREACHABLE_GRACE_TICKS or 1500) then
+    local reachable = 0
+    local boat = (info and info.inboat) and 1 or 0
+    for _, b in pairs(world.bases) do
+      if b.owner == "neutral" then
+        local c = cpf.smart_cost_dij_only(cpf.KIND_NORMAL, b.mx, b.my, boat)
+        if c and c < 1e29 then reachable = reachable + 1 end
+      end
+    end
+    opening_neutral_count = reachable
+  end
+
   local new_phase, phase_reason
   if state.tick < C.OPENING_MIN_TICKS then
     new_phase = "opening"
     phase_reason = string.format("tick %d < %d", state.tick, C.OPENING_MIN_TICKS)
-  elseif neutral_count > opening_tolerance then
+  elseif opening_neutral_count > opening_tolerance then
     new_phase = "opening"
-    phase_reason = string.format("neutral_bases %d > %.0f tol", neutral_count, opening_tolerance)
+    phase_reason = string.format("neutral_bases %d (reachable %d) > %.0f tol",
+                                 neutral_count, opening_neutral_count, opening_tolerance)
   elseif neutral_pills > 0 or neutral_count > 0 then
     new_phase = "middle"
     phase_reason = string.format("neutrals remain: %d pills %d bases", neutral_pills, neutral_count)

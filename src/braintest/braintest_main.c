@@ -2375,15 +2375,17 @@ static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive, int follo
     }
     if (off == 0) return;
     /* Replay-collection mode (V-window radio): per-bot _BT_VIZ_COLLECT override.
-     *   0 = on layers, followed tank only  → follow:"on", others:"off"
-     *   1 = ALL layers, viewed tank only    → follow:"all", others:"off"
-     *   2 = ALL layers, ALL tanks           → every bot:"all"  */
+     *   0 = ON layers, followed tank only   → follow:"on",  others:"off"
+     *   1 = ALL layers, viewed tank only     → follow:"all", others:"off"
+     *   2 = ALL layers, ALL tanks            → every bot:"all"
+     *   3 = ON layers, ALL tanks             → every bot:"on"  */
     int collectMode = vizWindowCollectMode();
     for (int i = 0; i < MAX_TANKS; i++) {
         if (!serverSimIsBot(sim, (BYTE)i)) continue;
         serverSimBotExecLua(sim, (BYTE)i, buf);
         const char *col;
         if (collectMode == 2)        col = "all";
+        else if (collectMode == 3)   col = "on";
         else if (i == followBot)     col = (collectMode == 1) ? "all" : "on";
         else                         col = "off";
         char cbuf[64];

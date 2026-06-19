@@ -225,6 +225,7 @@ function M.update(world, info, tick)
           anger_tick    = 0,
           last_hit_tick = 0,
           last_seen     = tick,
+          in_tank       = false,  -- a visible map object is always DEPLOYED
           under_attack  = false,
           attack_tick   = 0,
           attack_damage = 0,
@@ -276,6 +277,16 @@ function M.update(world, info, tick)
         p.health    = new_health
         p.owner     = owner_str
         p.last_seen = tick
+        -- Clear any stale in_tank flag: a pill visible in the object scan is
+        -- DEPLOYED on the map (carried pills aren't map objects — see the
+        -- inTank==FALSE gate note above). in_tank is otherwise only set true
+        -- (self/ally carry) and only cleared by EVENT_PILL_UPDATE; if that
+        -- drop event is missed (e.g. it fires while we're dead and the brain
+        -- isn't ticking), the flag would linger true forever even as the
+        -- dropped pill reappears on the map — making the brain think it's
+        -- still carried and skip it for capture/pickup. Seeing it deployed is
+        -- authoritative.
+        p.in_tank   = false
       end
     end
   end

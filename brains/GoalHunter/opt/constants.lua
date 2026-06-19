@@ -221,6 +221,7 @@ M.REFUEL_ENEMY_TANK_RANGE        = 40   -- tiles: hostile tank counts toward com
 M.REFUEL_MAX_ENEMY_TANKS_COUNTED = 2    -- cap on tanks counted in combat target
 M.REFUEL_DEPLETION_PENALTY = 80   -- max penalty for a base that can't get us above LOW thresholds
 M.REFUEL_OBS_STALE = 500  -- ignore observed stock older than this many ticks (base regenerates)
+M.REFUEL_DEPLETED_COOLDOWN = 500  -- when a COMMITTED refuel goal is abandoned because its base went depleted, block that base tile for this many ticks (~10s at 50Hz) so finalize can't re-pick it the moment the depleted observation ages out (prevents the drive-there / observe-depleted / leave flip-flop). Re-arms on each abandon.
 -- When true, suppress goal-replan while traveling to or topping up at a
 -- refuel base. Prevents thrash where the goal scorer flips back to
 -- attack/capture mid-refuel. Disable to test how the bot behaves with
@@ -299,7 +300,12 @@ M.FLEE_DANGER_WEIGHT    = 80
 -- Minimum score improvement required to switch from the current refuel/flee
 -- base to a different one.  Prevents flip-flopping between two bases that
 -- score within noise distance of each other as the tank moves.
-M.REFUEL_SWITCH_THRESHOLD = 100
+-- Set to 30 to MATCH the generic GOAL_SWITCH_PENALTY: the refuel-specific
+-- -REFUEL_SWITCH_THRESHOLD cost was removed (it double-damped the same switch,
+-- see goals.lua), so this value now only labels the desc as `hyst{-N}`. Keeping
+-- it at the real switch penalty (30) makes that label reflect the hysteresis
+-- refuel actually pays via goal_selection, instead of overstating it at 100.
+M.REFUEL_SWITCH_THRESHOLD = 30
 -- When fleeing at critical armour, reject any base with pill danger above this.
 -- A calm pill at 2 tiles produces danger ~12; two pills ~24.  Sitting at such a
 -- base with near-zero armour means death before the refuel completes.
@@ -406,6 +412,11 @@ M.STOP_PREDICT_SCALE = 1.15
 -- accurate (it projects along the tank facing, valid since A* homes straight at
 -- approach_fx on the final leg). Flip false to restore the staged creep.
 M.FAST_APPROACH = true
+-- Distance (wu, euclidean) from the destination at which the FAST_APPROACH
+-- predict_stop fast-path hands off to the precise stage-2 creep. 256 wu = 1
+-- tile. Shared by every substate that uses the fast-path (approach,
+-- in_range_position) so they all switch to the creep at the same range.
+M.FAST_APPROACH_HANDOFF_WU = 256
 M.FLEE_PILL_DIST       = 10  -- tiles to flee away from pill when giving up
 M.POST_KILL_WAIT_TICKS = 15  -- ticks to hold at standoff after pill dies (in-flight shots clear in ~5)
 
@@ -472,6 +483,9 @@ M.WALL_SHIELD_LGM_TRIP_WEIGHT = 0.5 -- weight for LGM round-trip ticks in wall c
 M.WALL_SHIELD_LGM_MAX_TICKS   = 2000 -- max ticks to simulate LGM travel
 M.PPT_BLOCKERS_ENOUGH         = 1   -- protected-take build phase ends in SUCCESS as soon as this many blockers are NEWLY placed (wall or dropped pillbox) — but ONLY when a blitz is underway (see PPT_BLOCKERS_ENOUGH_MIN_INWAIT / BLITZ_MIN_READY_TO_CHARGE). Solo, the full planned shield is built. 1 = one blocker is enough cover once the squad is overwhelming the pill.
 M.PPT_BLOCKERS_ENOUGH_MIN_INWAIT = 1  -- the one-blocker early-success also applies while the commander is still building IF at least this many soldiers are already parked in blitz_wait (sharing the pill's fire). Pairs with BLITZ_MIN_READY_TO_CHARGE (the ready-to-charge quorum) as the other trigger.
+M.PPT_COVER_TARGET_SHOTS = 15  -- build phase ends once shield cover reaches this many shots-to-break (friendly pill = PILLS_MAX_HEALTH 15, wall = WALL_HP_FULL 5). 15 = one pill OR three walls. Independent of the blitz gate.
+M.PPT_PILL_WALL_EQUIV = 3.0    -- a dropped/standing friendly pillbox blocker is worth this many WALLS of shield cover (PILLS_MAX_HEALTH 15 / WALL_HP_FULL 5 = 3). The C combo scorer (gh_shield_stamp) weights a pill-filled slot accordingly, so one carried pill stands in for a 3-wall shield.
+M.PPT_PILL_BLOCKERS_MAX = 2    -- cap on how many carried pillboxes the shield planner assumes it can drop onto buildable slots (matches builder.lua's PILLBOX_BLOCKERS_MAX). num_pill_blockers passed to the scorer = min(carried_pills, this).
 M.WALL_SHIELD_LGM_STUCK_TICKS = 150  -- same-tile timeout for LGM simulation (~3 seconds)
 -- Last-wall early end: once the FINAL wall blocker is dispatched (LGM out
 -- building it) and the estimated LGM round-trip — go to the slot + LGM_BUILD_TIME
@@ -515,6 +529,23 @@ M.SWERVE_TURN_TICKS       = 35  -- ticks of turning at start of swerve
 -- Defensive swerve (pill still alive, took hits or crosshairs off): longer
 M.SWERVE_DEFENSIVE_TOTAL_TICKS = 95
 M.SWERVE_DEFENSIVE_TURN_TICKS  = 40
+
+-- Early swerve exit: peel off before the full duration if no hostile shell is
+-- actually heading at us and we aren't taking damage. The swerve's whole point
+-- is dodging the pill's predictive return fire; if nothing is coming near, the
+-- remaining straight portion is wasted time.
+--   SWERVE_SHELL_NEAR_WU    — a hostile shell whose closest-point-of-approach to
+--                             our tank is within this many WU counts as incoming
+--                             (tank hit box is 128 WU; this adds ~0.5-tile margin).
+--   SWERVE_EARLY_EXIT_CLEAR_TICKS — consecutive clear ticks (no incoming shell,
+--                             no damage taken) required before peeling off. Sized
+--                             to span a pill reload cycle so a clear window means
+--                             the pill genuinely isn't connecting.
+--   SWERVE_EARLY_EXIT_MIN_TICKS — never early-exit before this many ticks of
+--                             swerve have elapsed (let the evasive turn finish).
+M.SWERVE_SHELL_NEAR_WU         = 200
+M.SWERVE_EARLY_EXIT_CLEAR_TICKS = 20
+M.SWERVE_EARLY_EXIT_MIN_TICKS   = 30
 
 -- Pill placement attack tactic
 -- Place a friendly pill 1-5 tiles from a hostile pill.  The placed pill
@@ -730,6 +761,12 @@ M.INTERCEPT_MAX_RANGE      = 20    -- only consider enemy tanks within this rang
 -- -------------------------------------------------------------------------
 M.ANGER_ATTACK_THRESHOLD   = 0.5   -- anger level above which we prefer to wait
 M.ANGER_WAIT_MAX           = 500   -- max ticks we're willing to wait for cooldown (~10s)
+-- The wait cap above shrinks when sitting out the cooldown is cheap or pointless.
+-- Divisors stack (multiply) — a 1-HP pill at high armour waits ANGER_WAIT_MAX/6.
+M.ANGER_WAIT_NEAR_KILL_DIV    = 3   -- ÷ when the pill is one hit from death (<=NEAR_KILL_HP): a single shot kills it even fully angry, so the cooldown wait is wasted
+M.ANGER_WAIT_NEAR_KILL_HP     = 1   -- pill health at/below which "one hit left" applies
+M.ANGER_WAIT_HIGH_ARMOUR_DIV  = 2   -- ÷ when our armour is high (>=HIGH_ARMOUR_ARM): we can tank the angry pill on approach, so the wait matters less
+M.ANGER_WAIT_HIGH_ARMOUR_ARM  = 30  -- armour at/above which the high-armour divisor applies
 M.ANGER_COST_PER_TICK      = 0.3   -- cost per tick of remaining anger cooldown
 
 -- -------------------------------------------------------------------------
@@ -1071,6 +1108,8 @@ M.DEFEND_PILL_MAX_TRAVEL     = 150   -- don't defend pills too far away (would a
 
 -- Strategy / game phase detection
 M.OPENING_MIN_TICKS       = 500    -- ~10 seconds minimum opening phase
+M.OPENING_UNREACHABLE_GRACE_TICKS = 1500  -- ~30s: only AFTER this do we drop genuinely-unreachable (INF dijkstra cost) neutral bases from the opening-exit count. Before it, the cold-start dijkstra surface hasn't expanded and bases legitimately aren't reached yet, so every neutral still counts (don't disrupt the early land-grab).
+M.OPENING_BASE_RESCORE_TILES = 10  -- opening phase: one tick before every replan, force a strict-A* rescore of every base within this many tiles of the tank (the incremental base eval is dijkstra-only, so nearby bases sit at INF during the cold-start until the surface reaches them). Makes them selectable at the imminent replan.
 M.PHASE_HYSTERESIS_TICKS  = 100    -- ~2 seconds of consistent signal before switching
 M.ENDGAME_PILL_RATIO      = 0.70   -- >70% of pills = endgame
 M.ENDGAME_BASE_RATIO      = 0.80   -- >80% of bases = endgame

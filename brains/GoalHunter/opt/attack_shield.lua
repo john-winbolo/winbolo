@@ -367,7 +367,7 @@ end
 
 -- Score one candidate position fully (all 5 aims + return fire).
 -- Returns the populated candidate table.
-local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
+local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder, num_pill_blockers, pill_we)
   local pmx, pmy = pill.mx, pill.my
   local mx, my = cand.mx, cand.my
 
@@ -452,11 +452,20 @@ local function score_candidate(cand, pill, world, pill_wx, pill_wy, no_builder)
           end
         end
       end
+      -- Cover satisfices at PPT_COVER_TARGET_SHOTS — one friendly pill (15) is a
+      -- full shield, so extra blockers add nothing and built_bonus/fewer-builds
+      -- break the tie toward the minimal subset (mirrors the C scorer).
       local WALL_W, PILL_W = C.WALL_HP_FULL or 5, C.PILLS_MAX_HEALTH or 15
-      aim_score = PILL_W * pill_n
-                + WALL_W * (actual_n - pill_n)
-                + WALL_W * potential_n
-                + M.BUILT_BONUS * actual_n
+      -- Of the buildable (potential) slots, assume up to num_pill_blockers become
+      -- dropped pillboxes worth pill_we walls each; the rest are plain walls.
+      local _we = pill_we or 3.0
+      local _npb = num_pill_blockers or 0
+      local pot_pill = (potential_n < _npb) and potential_n or _npb
+      local cover = PILL_W * pill_n + WALL_W * (actual_n - pill_n)
+                    + WALL_W * (potential_n - pot_pill) + (WALL_W * _we) * pot_pill
+      local target = C.PPT_COVER_TARGET_SHOTS or 15
+      if cover > target then cover = target end
+      aim_score = cover + M.BUILT_BONUS * actual_n - (potential_n)
     end
     cand.aims[ai] = {
       tiles               = out_tiles,
@@ -514,8 +523,12 @@ end
 -- score. attack.lua passes this when info.man_status == LGM_DEAD.
 function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
                 standoff_cx, standoff_cy, radius, no_builder, tank_armour,
-                positions, step_deg)
+                positions, step_deg, num_pill_blockers)
   if not pill or not world then return { candidates = {}, best = nil } end
+  -- How many friendly pillboxes we can drop onto buildable slots (carried pills,
+  -- capped by the caller). The combo scorer counts each as PILL_WE walls of cover.
+  num_pill_blockers = num_pill_blockers or 0
+  local PILL_WE = C.PPT_PILL_WALL_EQUIV or 3.0
   -- Tier-gated ring density.  Defaults preserve the legacy 28×0.5° sweep.
   -- Lua fallback path uses these locals below; C scan_c receives them
   -- via the new args 20/21.
@@ -596,7 +609,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       standoff_mx or math.floor(sx), standoff_my or math.floor(sy),
       no_builder and true or false,
       n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus,
-      NUM, SDG)
+      NUM, SDG,
+      num_pill_blockers, PILL_WE)
 
     if r then
       local standoff_cand = { cx = sx, cy = sy,
@@ -631,7 +645,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
       }
       return { best = best, pill = pill, standoff = standoff_cand,
                pill_hp = pill_hp, fav_bonus_by_size = fav_bonus_by_size,
-               min_chain = min_chain, tier_label = tier_label }
+               min_chain = min_chain, tier_label = tier_label,
+               num_pill_blockers = num_pill_blockers, pill_wall_equiv = PILL_WE }
     end
   end
   -- ── End C scan path ───────────────────────────────────────────────────────
@@ -780,7 +795,7 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
 
   local _t_score_cands = clock_us()
   for ci, c in ipairs(candidates) do
-    score_candidate(c, pill, world, pill_wx, pill_wy, no_builder)
+    score_candidate(c, pill, world, pill_wx, pill_wy, no_builder, num_pill_blockers, PILL_WE)
     -- Populate slate with base (nudge=0) blocker data for neighbor bonus.
     if gh_shield then
       for ai = 1, #AIM_OFFSETS do
@@ -937,7 +952,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     local nb = gh_shield.run_neighbor_bonus(
       #candidates, #AIM_OFFSETS,
       M.SCORE_PER_SLOT, M.BUILT_BONUS, M.NEIGHBOR_BONUS,
-      n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus)
+      n_fav, fs1, fb1, fs2, fb2, min_chain, max_bonus,
+      num_pill_blockers, PILL_WE)
 
     local RS = 29  -- RESULT_STRIDE (9 scalars + 5*2 actual + 5*2 potential)
     for ci = 1, #candidates do
@@ -1287,6 +1303,8 @@ function M.scan(pill, world, standoff_mx, standoff_my, standoff_deg,
     fav_bonus_by_size = fav_bonus_by_size,
     min_chain         = min_chain,
     tier_label        = tier_label,
+    num_pill_blockers = num_pill_blockers,
+    pill_wall_equiv   = PILL_WE,
   }
 end
 
@@ -1540,6 +1558,16 @@ function M.draw_overlay(scan, now_tick)
           if (a.nudge_wu or 0) > 0 then
           end
           local n_unreach = #(a.unreachable_blockers or {})
+          -- Pillbox-blocker weighting (gh_shield_stamp combo scorer): a friendly
+          -- pill counts as PPT_PILL_WALL_EQUIV walls of cover, and up to the
+          -- carried-pill budget of the BUILDABLE slots are assumed to become
+          -- dropped pillboxes — so one carried pill stands in for a 3-wall shield.
+          do
+            local _npb = scan.num_pill_blockers or 0
+            local _we  = scan.pill_wall_equiv or (C.PPT_PILL_WALL_EQUIV or 3.0)
+            local _pot = #(a.potential_blockers or {})
+            local _potpill = (_pot < _npb) and _pot or _npb
+          end
           for _, b in ipairs(a.blockers or {}) do
           end
           for _, b in ipairs(a.potential_blockers or {}) do

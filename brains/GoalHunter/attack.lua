@@ -9,6 +9,7 @@ local PF     = require("pathfinder")
 local cpf    = require("cpathfinder")
 local log    = require("logger")
 local threat = require("threat")
+local danger = require("danger")
 local shot_tracker = require("shot_tracker")
 local shield = require("attack_shield")
 local viz    = require("viz")
@@ -198,6 +199,12 @@ local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
   end
   goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
   goal._engage_hits = nil
+  -- Early-exit tracking: armour baseline + consecutive-clear counter. If no
+  -- hostile shell is on a near-collision course and we aren't taking damage
+  -- for SWERVE_EARLY_EXIT_CLEAR_TICKS in a row, peel off before the full
+  -- duration (see the swerve substate handler).
+  goal._swerve_start_armour = info.armour or 0
+  goal._swerve_clear_ticks  = 0
 end
 
 -- Clear the active goal, idle the pathfinder, and wipe ALL transient
@@ -2943,6 +2950,23 @@ local function blitz_tank_count(goal, state, info)
   return 1 + (total or 0)
 end
 
+-- Effective loiter-wait cap. Starts at ANGER_WAIT_MAX and shrinks (divisors
+-- stack) when sitting out the pill's anger cooldown is cheap or pointless:
+--   * pill one hit from death — a single shot kills it even fully angry, so the
+--     whole wait is wasted (÷ANGER_WAIT_NEAR_KILL_DIV)
+--   * our armour is high — we can tank the angry pill on approach, so the wait
+--     matters far less (÷ANGER_WAIT_HIGH_ARMOUR_DIV)
+local function effective_anger_wait_max(pill, info)
+  local w = C.ANGER_WAIT_MAX
+  if pill and (pill.health or 99) <= (C.ANGER_WAIT_NEAR_KILL_HP or 1) then
+    w = w / (C.ANGER_WAIT_NEAR_KILL_DIV or 1)
+  end
+  if (info.armour or 0) >= (C.ANGER_WAIT_HIGH_ARMOUR_ARM or 9999) then
+    w = w / (C.ANGER_WAIT_HIGH_ARMOUR_DIV or 1)
+  end
+  return w
+end
+
 function M.update_attack_substate(goal, state, world, info)
   if goal.kind ~= "attack_pill" then return end
 
@@ -3656,13 +3680,19 @@ function M.update_attack_substate(goal, state, world, info)
           tostring(scan_radius), tostring(no_builder),
           tostring(info.armour), _sb_pos, _sb_step)
       end
+      -- Friendly pillboxes we can drop onto buildable shield slots = carried
+      -- pills, capped at the per-shield pillbox budget. The shield scorer counts
+      -- each as PPT_PILL_WALL_EQUIV walls of cover, so one carried pill can stand
+      -- in for a 3-wall shield and the planner won't over-build walls.
+      local _num_pill_blockers = math.min(info.carried_pills or 0,
+                                          C.PPT_PILL_BLOCKERS_MAX or 2)
       local _ok, sscan_or_err = xpcall(function()
         return shield.scan(pill, world,
                            goal.standoff_mx, goal.standoff_my,
                            goal._chosen_deg or 0,
                            goal.standoff_fx, goal.standoff_fy,
                            scan_radius, no_builder, info.armour,
-                           _sb_pos, _sb_step)
+                           _sb_pos, _sb_step, _num_pill_blockers)
       end, debug.traceback)
       local sscan
       if _ok then
@@ -4314,10 +4344,10 @@ function M.update_attack_substate(goal, state, world, info)
         local dr, dg, db = dist_ok  and 100 or 255, dist_ok  and 255 or 100, 100
         local sr, sg, sb = speed_ok and 100 or 255, speed_ok and 255 or 100, 100
         viz.text("approach_dist", twx + 1.0, twy - 1.0,
-          string.format("dist=%d/%d", adist, DIST_TOL),
+          string.format("dist=%.0f/%d", adist, DIST_TOL),
           "topleft", dr, dg, db, 255)
         viz.text("approach_dist", twx + 1.0, twy - 0.4,
-          string.format("spd=%d/%d", info.speed, SPEED_TOL),
+          string.format("spd=%.0f/%d", info.speed, SPEED_TOL),
           "topleft", sr, sg, sb, 255)
         local fr, fg, fb = facing_ok and 100 or 255, facing_ok and 255 or 100, 100
         viz.text("approach_dist", twx + 1.0, twy + 0.2,
@@ -4807,6 +4837,30 @@ function M.update_attack_substate(goal, state, world, info)
       print2(string.format("BUILD_WALLS_EARLY_DONE t=%d newly_built=%d >= %d (one blocker is enough; ready=%d+1 inwait=%d) idx=%d/%d", now, newly_built, C.PPT_BLOCKERS_ENOUGH or 1, _bready or 0, _binwait or 0, idx, #list))
     end
 
+    -- Cover-sufficient: a friendly pill blocker is worth 3 walls (PILLS_MAX_HEALTH
+    -- 15 vs WALL_HP_FULL 5 shots-to-break), matching the shield scorer. Sum the
+    -- current cover among the slots in shots and stop the build the moment it
+    -- reaches PPT_COVER_TARGET_SHOTS — so one dropped/pre-existing pill ends it
+    -- immediately, while a walls-only shield still builds out to three walls.
+    -- Independent of the blitz gate (real cover is real cover, solo or not).
+    local cover_shots = 0
+    for _, p in ipairs(list) do
+      local tt1 = U.ttype(p.mx, p.my)
+      if tt1 == C.T_PILLBOX then
+        local fp = M.find_pill_at(world, p.mx, p.my)
+        if fp and (fp.owner == "friendly" or fp.owner == "allied")
+           and (fp.health or 0) > 0 then
+          cover_shots = cover_shots + (C.PILLS_MAX_HEALTH or 15)
+        end
+      elseif tt1 == C.T_BUILDING or tt1 == C.T_HALFBUILD then
+        cover_shots = cover_shots + (C.WALL_HP_FULL or 5)
+      end
+    end
+    local cover_enough = cover_shots >= (C.PPT_COVER_TARGET_SHOTS or 15)
+    if cover_enough and idx <= #list and not stalled then
+      print2(string.format("BUILD_WALLS_COVER_DONE t=%d cover=%d >= %d shots (pill=15/wall=5) idx=%d/%d", now, cover_shots, C.PPT_COVER_TARGET_SHOTS or 15, idx, #list))
+    end
+
     -- Last-wall early end: we're on the FINAL blocker of a multi-wall shield
     -- (>=1 other blocker already up so the tank has cover), the LGM has been
     -- SENT OUT specifically for THIS last blocker, and the estimated round-trip
@@ -4846,7 +4900,7 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
 
-    if idx > #list or stalled or built_enough or goal._last_wall_early then
+    if idx > #list or stalled or built_enough or goal._last_wall_early or cover_enough then
       -- Debug-only: tally built / pre-existing / unbuilt for the on-screen
       -- decision banner. The brain itself doesn't act on these counts.
       if BRAIN_DEBUG_MODE then
@@ -5286,10 +5340,10 @@ function M.update_attack_substate(goal, state, world, info)
         local dr, dg, db = dist_ok  and 100 or 255, dist_ok  and 255 or 100, 100
         local sr, sg, sb = speed_ok and 100 or 255, speed_ok and 255 or 100, 100
         viz.text("approach_dist", twx + 1.0, twy - 1.0,
-          string.format("dist=%d/%d", sdist, DIST_TOL),
+          string.format("dist=%.0f/%d", sdist, DIST_TOL),
           "topleft", dr, dg, db, 255)
         viz.text("approach_dist", twx + 1.0, twy - 0.4,
-          string.format("spd=%d/%d", info.speed, SPEED_TOL),
+          string.format("spd=%.0f/%d", info.speed, SPEED_TOL),
           "topleft", sr, sg, sb, 255)
       end
 
@@ -5801,7 +5855,7 @@ function M.update_attack_substate(goal, state, world, info)
       print(string.format(TAG ..
         " ATTACK: pill cooled (anger=%.2f, hp=%d), re-planning from scratch",
         pill.anger, pill.health or 0))
-    elseif goal._loiter_start and (now - goal._loiter_start) > C.ANGER_WAIT_MAX then
+    elseif goal._loiter_start and (now - goal._loiter_start) > effective_anger_wait_max(pill, info) then
       -- Loitered too long. Same fix as post_engage refuel branch
       -- below: don't clear_attack_goal (causes capture_base to steal
       -- via cur_group=none penalty stack). Instead request urgent
@@ -5879,6 +5933,35 @@ function M.update_attack_substate(goal, state, world, info)
           print(TAG .. " ATTACK: swerve shortened — pill confirmed dead")
         end
       end
+    end
+    -- Early swerve exit: track whether any hostile shell is actually heading at
+    -- us and whether we're still taking damage. If neither for a sustained
+    -- window (and the evasive turn has finished), peel off early — the straight
+    -- portion of the swerve only earns its keep while return fire is incoming.
+    local threatened, shell_detail = danger.shells_incoming_near(info, info.tankx, info.tanky)
+    local cur_armour = info.armour or 0
+    local took_damage = cur_armour < (goal._swerve_start_armour or cur_armour)
+    if took_damage then
+      -- Re-baseline so each fresh hit re-arms the counter.
+      goal._swerve_start_armour = cur_armour
+      goal._swerve_clear_ticks  = 0
+    elseif threatened then
+      goal._swerve_clear_ticks = 0
+    else
+      goal._swerve_clear_ticks = (goal._swerve_clear_ticks or 0) + 1
+    end
+    goal._swerve_shell_detail = shell_detail  -- stashed for the viz draw below
+    -- Ticks of swerve already spent = original total minus what's left. We don't
+    -- store the original total, so reconstruct elapsed from _swerve_start.
+    local elapsed = now - (goal._swerve_start or now)
+    if (goal._swerve_turn_ticks_left or 0) <= 0
+       and elapsed >= (C.SWERVE_EARLY_EXIT_MIN_TICKS or 30)
+       and (goal._swerve_clear_ticks or 0) >= (C.SWERVE_EARLY_EXIT_CLEAR_TICKS or 20)
+       and (goal._swerve_ticks_left or 0) > 1 then
+      print(string.format(TAG ..
+        " ATTACK: swerve early-exit — %d clear ticks (no incoming shell, no damage), %d ticks would have remained",
+        goal._swerve_clear_ticks or 0, goal._swerve_ticks_left or 0))
+      goal._swerve_ticks_left = 0   -- fall through to the normal completion block
     end
     goal._swerve_ticks_left = (goal._swerve_ticks_left or 1) - 1
     if (goal._swerve_turn_ticks_left or 0) > 0 then
@@ -5990,6 +6073,30 @@ function M.update_attack_substate(goal, state, world, info)
       viz.hud_text("hud_swerve_debug", 10, 120, "_swerve_turn_ticks_left=" .. tostring(goal._swerve_turn_ticks_left), "topleft", 255, 255, 100, 255)
       viz.hud_text("hud_swerve_debug", 10, 140, "_swerve_pill_dead=" .. tostring(goal._swerve_pill_dead), "topleft", 255, 255, 100, 255)
     end
+    -- Incoming-shell CPA scan: a line from each hostile shell to its
+    -- closest-approach point against our tank. Red = threat (CPA within
+    -- SWERVE_SHELL_NEAR_WU, keeps the swerve alive), green = clear miss.
+    -- A ring at our tank shows the near radius; HUD shows the clear-tick
+    -- counter feeding the early-exit decision.
+    if BRAIN_DEBUG_MODE and viz.is_on("swerve_shell_scan") then
+      local tcx = info.tankx / 256.0
+      local tcy = info.tanky / 256.0
+      viz.circle("swerve_shell_scan", tcx, tcy, (C.SWERVE_SHELL_NEAR_WU or 200) / 256.0, 255, 255, 0, 90)
+      local detail = goal._swerve_shell_detail
+      if detail then
+        for _, s in ipairs(detail) do
+          local r, g, b = 80, 255, 80
+          if s.threat then r, g, b = 255, 60, 60 end
+          viz.line("swerve_shell_scan", s.sx / 256.0, s.sy / 256.0, s.cx / 256.0, s.cy / 256.0, r, g, b, 220)
+          viz.circle("swerve_shell_scan", s.cx / 256.0, s.cy / 256.0, 0.12, r, g, b, 220)
+        end
+      end
+      viz.hud_text("swerve_shell_scan", 10, 160,
+        string.format("swerve clear=%d/%d  %s",
+          goal._swerve_clear_ticks or 0, C.SWERVE_EARLY_EXIT_CLEAR_TICKS or 20,
+          (goal._swerve_clear_ticks or 0) >= (C.SWERVE_EARLY_EXIT_CLEAR_TICKS or 20) and "EXIT-ARMED" or "dodging"),
+        "topleft", 255, 200, 100, 255)
+    end
     -- During swerve: do NOT check pill health or allow any interrupts.
     -- Swerve MUST complete to minimize damage taken.
     -- Fall through to draw
@@ -6012,11 +6119,12 @@ function M.update_attack_substate(goal, state, world, info)
       end
     end
 
-    if ticks_to_calm < refuel_cost and ticks_to_calm < C.ANGER_WAIT_MAX then
+    local _anger_wait_max = effective_anger_wait_max(pill, info)
+    if ticks_to_calm < refuel_cost and ticks_to_calm < _anger_wait_max then
       goal.substate = "loiter"
       goal._loiter_start = now
-      print(string.format(TAG .. " ATTACK: loitering (wait=%d vs refuel=%d)",
-            math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999))
+      print(string.format(TAG .. " ATTACK: loitering (wait=%d vs refuel=%d, cap=%d hp=%d arm=%d)",
+            math.floor(ticks_to_calm), refuel_cost < math.huge and math.floor(refuel_cost) or 99999, math.floor(_anger_wait_max), pill and pill.health or -1, info.armour or -1))
     else
       -- Refuel beats loiter for this take. Don't clear_attack_goal here
       -- — that drops state.goal to none, and on the next replan EVERY

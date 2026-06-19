@@ -235,6 +235,8 @@ M.IDS = {
   -- Cover sample / swerve.
   swerve_dir_choice = { short = "Swerve dir choice",
                         long  = "Sample lines + L/R cover scores for swerve direction pick" },
+  swerve_shell_scan = { short = "Swerve shell scan",
+                        long  = "Incoming-shell CPA scan during swerve: lines from each hostile shell to its closest-approach point (red=threat, green=clear) + early-exit clear-tick counter" },
   bpc_cover_samples = { short = "BPC cover samples",
                         long  = "Blue tile outlines from line_walk during BPC (Basic Pill Capture) cover sweep" },
 
@@ -525,6 +527,19 @@ end
 M._on = {}
 local _on = M._on  -- closure-local alias for the fast path
 
+-- Layers EXEMPT from the "all" collect override. Forcing these on has side
+-- effects beyond drawing, so even when the V-window radio asks to collect ALL
+-- layers we leave these on their real toggle:
+--   label_hud_overlays    — prefixes every HUD string with its [viz_id]
+--   pill_best_spots_back/aggro — makes place_pill_strategic run its full
+--                           candidate scan EVERY tick (goals.lua viz_only gate)
+M.COLLECT_EXEMPT = {
+  label_hud_overlays    = true,
+  pill_best_spots_back  = true,
+  pill_best_spots_aggro = true,
+}
+local _collect_exempt = M.COLLECT_EXEMPT
+
 function M.refresh()
   -- Collection-mode override (set per-bot by BrainTest's V-window radio):
   --   "off" → this bot emits NOTHING (so a non-viewed tank isn't collected)
@@ -536,7 +551,7 @@ function M.refresh()
   for id in pairs(M.IDS) do
     if collect == "off" then
       _on[id] = false
-    elseif collect == "all" then
+    elseif collect == "all" and not _collect_exempt[id] then
       _on[id] = true
     elseif suppress_all and id ~= "hud_resources" then
       _on[id] = false
@@ -555,7 +570,7 @@ function M.is_on(viz_id)
   assert_id(viz_id)
   local collect = _G._BT_VIZ_COLLECT
   if collect == "off" then return false end
-  if collect == "all" then return true end
+  if collect == "all" and not _collect_exempt[viz_id] then return true end
   if _G._BT_VIZ_SUPPRESS_ALL and viz_id ~= "hud_resources" then
     return false
   end

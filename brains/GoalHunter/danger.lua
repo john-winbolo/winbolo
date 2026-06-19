@@ -213,6 +213,61 @@ function M.lgm_path_safe_enhanced(info, dest_mx, dest_my, threshold, tick, world
 end
 
 -- -------------------------------------------------------------------------
+-- Public: closest-point-of-approach scan of all visible hostile shells
+-- against a point (px, py in WU — typically our own tank).
+--
+-- For each hostile OBJECT_SHOT we compute the minimum distance its forward
+-- trajectory comes to (px, py) over its remaining flight (clamped to
+-- SHELL_MAX_STEPS, same pessimistic full-range assumption as predict_shells —
+-- we can't know how far through its life a shell already is). A shell whose
+-- closest approach is within `radius` WU counts as "incoming near".
+--
+-- Returns:
+--   threatened (bool)  — at least one hostile shell passes within radius
+--   detail     (table) — { {sx,sy, cx,cy, dist, threat}, ... } for the viz.
+--                        sx/sy = shell pos, cx/cy = closest-approach point.
+--
+-- Cheap: a handful of shells, O(1) math each. radius defaults to
+-- SWERVE_SHELL_NEAR_WU.
+-- -------------------------------------------------------------------------
+function M.shells_incoming_near(info, px, py, radius)
+  radius = radius or C.SWERVE_SHELL_NEAR_WU or 200
+  local r2 = radius * radius
+  local threatened = false
+  local detail = {}
+  if not info.objects then return false, detail end
+  for _, ob in ipairs(info.objects) do
+    if ob.type == OBJECT_SHOT and (ob.info & OBJECT_HOSTILE) ~= 0 then
+      -- Per-step velocity in WU (bsin_f/bcos_f return the unit vector;
+      -- × SHELL_SPEED gives WU advanced per simulation step ≈ per tick).
+      local vx =  U.bsin_f(ob.direction) * C.SHELL_SPEED
+      local vy = -U.bcos_f(ob.direction) * C.SHELL_SPEED
+      local r0x = ob.x - px
+      local r0y = ob.y - py
+      local vv  = vx * vx + vy * vy
+      -- t* = projection of -r0 onto v, clamped to the shell's remaining flight.
+      local t = 0
+      if vv > 0 then
+        t = -(r0x * vx + r0y * vy) / vv
+        if t < 0 then t = 0 elseif t > C.SHELL_MAX_STEPS then t = C.SHELL_MAX_STEPS end
+      end
+      local cx = ob.x + vx * t
+      local cy = ob.y + vy * t
+      local ddx = cx - px
+      local ddy = cy - py
+      local d2 = ddx * ddx + ddy * ddy
+      local is_threat = d2 <= r2
+      if is_threat then threatened = true end
+      detail[#detail + 1] = {
+        sx = ob.x, sy = ob.y, cx = cx, cy = cy,
+        dist = math.sqrt(d2), threat = is_threat,
+      }
+    end
+  end
+  return threatened, detail
+end
+
+-- -------------------------------------------------------------------------
 -- Public: call once per tick (after world.update, before build decisions)
 -- -------------------------------------------------------------------------
 function M.update(info, tick)

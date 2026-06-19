@@ -115,6 +115,12 @@ typedef struct {
  * three-wall shield, so fewer walls need building. */
 #define WALL_SHOTS  5.0   /* WALL_HP_FULL: shots to destroy a full wall */
 #define PILL_SHOTS 15.0   /* PILLS_MAX_HEALTH: shots to destroy a pillbox */
+/* Cover satisfices here: COVER_TARGET shots = a complete shield (one friendly
+ * pill, OR three walls). Beyond it, extra blockers add no cover score, so the
+ * MINIMAL subset that reaches it wins (BUILD_COST nudges toward fewer slots to
+ * build). A single friendly pill (PILL_SHOTS = COVER_TARGET) is a full shield. */
+#define COVER_TARGET 15.0
+#define BUILD_COST    1.0  /* per-slot-to-build penalty; << WALL_SHOTS so a wall that still raises cover is worth building, but ties break toward fewer builds */
 
 typedef struct {
     int8_t dx[SCAN_MAX_BLOCKERS];
@@ -160,6 +166,14 @@ typedef struct {
     double fav_bon[2];
     int    min_chain;
     double max_bonus;
+    /* How many friendly pillboxes we can DROP onto buildable (potential) slots,
+     * and how many walls' worth of cover each one provides. The scorer assumes
+     * up to num_pill_blockers of a subset's potential slots become dropped
+     * pillboxes (worth pill_wall_equiv walls each), the rest plain walls — so a
+     * one-pill plan scores like a pill_wall_equiv-wall shield. 0 / <=0 disables
+     * (falls back to the PILL_SHOTS/WALL_SHOTS default for pill_wall_equiv). */
+    int    num_pill_blockers;
+    double pill_wall_equiv;
 } ScanCfg;
 
 /* ── Per-brain state ──────────────────────────────────────────────── */
@@ -532,10 +546,28 @@ static void run_nb_for_cand(const NaShieldStampCtx *ctx, const ScanCfg *cfg,
                     if (pci >= 0 && ctx->pill_map[pci] == 2) sub_na_pill++;
                 }
             }
-            double aim_score = PILL_SHOTS * sub_na_pill
-                             + WALL_SHOTS * (sub_na - sub_na_pill)
-                             + WALL_SHOTS * sub_np
-                             + built_bonus * sub_na;
+            /* Wall-equivalents: a friendly pill is worth PILL_SHOTS/WALL_SHOTS
+             * (=3) walls. Cover satisfices at COVER_TARGET, so ONE friendly pill
+             * (3 welt = 15 shots) already counts as a full 3-wall shield and any
+             * extra blocker adds nothing. built_bonus prefers existing cover;
+             * BUILD_COST prefers fewer walls to build — so the smallest subset
+             * that reaches full cover wins. */
+            double pill_we = (cfg->pill_wall_equiv > 0.0)
+                             ? cfg->pill_wall_equiv : (PILL_SHOTS / WALL_SHOTS); /* 3 */
+            /* Of this subset's buildable (potential) slots, assume we DROP up to
+             * num_pill_blockers friendly pillboxes — each worth pill_we walls of
+             * cover — and build the remainder as walls. So a single dropped pill
+             * covers like a pill_we-wall shield, and fewer slots are needed. */
+            int sub_np_pill = (sub_np < cfg->num_pill_blockers)
+                              ? sub_np : cfg->num_pill_blockers;
+            if (sub_np_pill < 0) sub_np_pill = 0;
+            double welt = (double)(sub_na - sub_na_pill)   /* actual walls            */
+                        + (double)sub_na_pill * pill_we    /* actual friendly pills   */
+                        + (double)(sub_np - sub_np_pill)   /* potential walls         */
+                        + (double)sub_np_pill * pill_we;   /* potential dropped pills */
+            double cover = welt * WALL_SHOTS;
+            if (cover > COVER_TARGET) cover = COVER_TARGET;
+            double aim_score = cover + built_bonus * sub_na - BUILD_COST * sub_np;
 
             int left = 0;
             for (int j = i - 1; j >= 0; j--) {
@@ -551,10 +583,16 @@ static void run_nb_for_cand(const NaShieldStampCtx *ctx, const ScanCfg *cfg,
             int chain = sym * 2;
 
             double bias = 0.0;
-            int    sz   = sub_na + sub_np;
+            /* fav bonus keyed on wall-EQUIVALENTS, so a single-friendly-pill
+             * subset (welt=3) qualifies for the same favored size as a 3-wall
+             * shield instead of looking like a lone 1-blocker. */
+            int    sz   = (int)(welt + 0.5);
             for (int fi = 0; fi < cfg->n_fav && fi < 2; fi++)
                 if (sz == cfg->fav_size[fi]) bias += cfg->fav_bon[fi];
-            if (cfg->min_chain > 0 && chain < cfg->min_chain)
+            /* A subset that already reaches full cover is a complete shield — don't
+             * penalize it for a short geometric chain (a single pill has no chain
+             * but is still a whole shield). */
+            if (cfg->min_chain > 0 && chain < cfg->min_chain && cover < COVER_TARGET)
                 bias -= cfg->max_bonus * 100.0;
 
             double total = aim_score + chain * neighbor_bonus + bias;
@@ -602,6 +640,9 @@ static int l_run_neighbor_bonus(lua_State *L) {
     cfg.fav_bon[1]   = luaL_checknumber(L, 10);
     cfg.min_chain    = (int)luaL_checkinteger(L, 11);
     cfg.max_bonus    = luaL_checknumber(L, 12);
+    /* Optional: dropped-pillbox blocker budget + wall-equivalent (args 13/14). */
+    cfg.num_pill_blockers = (int)luaL_optinteger(L, 13, 0);
+    cfg.pill_wall_equiv   = luaL_optnumber(L, 14, 0.0);
 
     if (n_cands > SLATE_MAX_CANDS) n_cands = SLATE_MAX_CANDS;
     if (n_aims  > SLATE_MAX_AIMS)  n_aims  = SLATE_MAX_AIMS;
@@ -950,6 +991,15 @@ static int l_scan_c(lua_State *L) {
         /* +1 for the standoff slot at index 0; SCAN_MAX_CANDS = 32. */
         if (ring_n > SCAN_MAX_CANDS - 1) ring_n = SCAN_MAX_CANDS - 1;
         if (ring_step <= 0.0f) ring_step = 0.5f;
+    }
+
+    /* Dropped-pillbox blocker budget + wall-equivalent (args 22..23, optional).
+     * Lets the combo scorer assume up to num_pill_blockers of a subset's
+     * buildable slots become friendly pillboxes worth pill_wall_equiv walls
+     * each. Defaults (0 / 0) leave behaviour unchanged. */
+    if (lua_gettop(L) >= 23) {
+        cfg.num_pill_blockers = (int)luaL_checkinteger(L, 22);
+        cfg.pill_wall_equiv   = luaL_checknumber(L, 23);
     }
 
     /* Stack-local 17×17 local pill map centred on pill tile */

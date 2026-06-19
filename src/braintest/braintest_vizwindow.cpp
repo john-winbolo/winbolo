@@ -152,6 +152,7 @@ static const VizMeta kVizMeta[] = {
     {"attack_scan_spots", VCAT_PILLTAKE, false}, {"attack_scan_spots_all_pills", VCAT_PILLTAKE, false},
     {"attack_clear_reason", VCAT_PILLTAKE, true},{"attack_chosen_standoff_marker", VCAT_PILLTAKE, false},
     {"attack_pill_pickup_path", VCAT_PILLTAKE, false},
+    {"fast_approach", VCAT_PILLTAKE, false},
     /* Squad / blitz */
     {"blitz_comm_lines", VCAT_SQUAD, false}, {"blitz_joinable", VCAT_SQUAD, true},
     {"squad_roster", VCAT_SQUAD, true},      {"blitz_call", VCAT_SQUAD, false},
@@ -254,6 +255,14 @@ struct VizSet {
 static VizSet sVizSets[VIZ_SET_COUNT];
 static bool   sVizSetsLoaded = false;
 
+/* Collection mode for replay recording (the V-window radio). Defined here so the
+ * VizSets ini save/load below can persist it alongside the slots. Values:
+ *   0 = only ON layers, followed tank only
+ *   1 = ALL layers (even off) for the viewed/followed tank only
+ *   2 = ALL layers (even off) for ALL tanks
+ *   3 = only ON layers, for ALL tanks  */
+static int sCollectMode = 0;
+
 static const char *vizEntryKey(const VizRegistryEntry *e) {
     if (!e) return "";
     return e->id[0] ? e->id : e->label;
@@ -271,6 +280,7 @@ static void vizSetsSave(void) {
     vizSetsPath(path, sizeof(path));
     FILE *f = fopen(path, "w");
     if (!f) return;
+    fprintf(f, "[Collect]\nmode=%d\n", sCollectMode);
     for (int s = 0; s < VIZ_SET_COUNT; s++) {
         fprintf(f, "[Set%d]\n", s);
         fprintf(f, "label=%s\n", sVizSets[s].label);
@@ -282,6 +292,7 @@ static void vizSetsSave(void) {
 }
 
 static void vizSetsLoad(void) {
+    sCollectMode = 0;
     for (int s = 0; s < VIZ_SET_COUNT; s++) {
         sVizSets[s].keyCount = 0;
         sVizSets[s].saved    = false;
@@ -292,14 +303,25 @@ static void vizSetsLoad(void) {
     FILE *f = fopen(path, "r");
     if (!f) return;
     char line[256];
-    int  cur = -1;
+    int  cur = -1;       /* current [Set#] index, or -1 */
+    bool inCollect = false;
     while (fgets(line, sizeof(line), f)) {
         size_t L = strlen(line);
         while (L && (line[L - 1] == '\n' || line[L - 1] == '\r')) line[--L] = '\0';
         if (line[0] == '[') {
             int idx;
-            if (sscanf(line, "[Set%d]", &idx) == 1 && idx >= 0 && idx < VIZ_SET_COUNT) cur = idx;
-            else cur = -1;
+            if (sscanf(line, "[Set%d]", &idx) == 1 && idx >= 0 && idx < VIZ_SET_COUNT) {
+                cur = idx; inCollect = false;
+            } else if (!strcmp(line, "[Collect]")) {
+                cur = -1; inCollect = true;
+            } else {
+                cur = -1; inCollect = false;
+            }
+        } else if (inCollect) {
+            if (!strncmp(line, "mode=", 5)) {
+                int m = atoi(line + 5);
+                if (m >= 0 && m <= 3) sCollectMode = m;
+            }
         } else if (cur >= 0) {
             if (!strncmp(line, "label=", 6)) {
                 SDL_snprintf(sVizSets[cur].label, sizeof(sVizSets[cur].label), "%s", line + 6);
@@ -357,13 +379,10 @@ static void vizSetAll(bool on, void (*onToggle)(int)) {
     if (onToggle) onToggle(0);
 }
 
-/* Collection mode for replay recording (the V-window radio). Independent of the
- * per-row toggles: it controls what each brain EMITS (and thus what gets
- * recorded), so a replay can carry layers that were toggled off / other tanks.
- *   0 = only ON layers, followed tank only
- *   1 = ALL layers (even off) for the viewed/followed tank only
- *   2 = ALL layers (even off) for ALL tanks  */
-static int sCollectMode = 0;
+/* sCollectMode (the V-window "Collect for replay" radio) is defined above so the
+ * VizSets ini persists it. It's independent of the per-row toggles: it controls
+ * what each brain EMITS (and thus what gets recorded), so a replay can carry
+ * layers that were toggled off / other tanks. */
 int vizWindowCollectMode(void) { return sCollectMode; }
 
 void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
@@ -385,21 +404,28 @@ void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
     ImGui::TextColored(ImVec4(0.6f, 0.65f, 0.75f, 1.0f),
         "Click a row to toggle. Saved to BrainTestViz.ini.");
 
+    /* Load slots + collect-mode from BrainTestVizSets.ini before drawing the
+     * radio so it reflects the persisted value on the first frame. */
+    if (!sVizSetsLoaded) { vizSetsLoad(); sVizSetsLoaded = true; }
+
     /* Collection mode for replay: what the brains EMIT/record, independent of
-     * the per-row toggles below. */
+     * the per-row toggles below. Persisted to BrainTestVizSets.ini on change. */
     ImGui::Separator();
     ImGui::TextColored(ImVec4(0.7f, 0.75f, 0.85f, 1.0f), "Collect for replay:");
-    ImGui::RadioButton("ON layers, followed tank only",        &sCollectMode, 0);
+    bool collectChanged = false;
+    collectChanged |= ImGui::RadioButton("ON layers, followed tank only",        &sCollectMode, 0);
     ImGui::SameLine();
-    ImGui::RadioButton("ALL layers, viewed tank (even if off)", &sCollectMode, 1);
+    collectChanged |= ImGui::RadioButton("ALL layers, viewed tank (even if off)", &sCollectMode, 1);
     ImGui::SameLine();
-    ImGui::RadioButton("ALL layers, ALL tanks (even if off)",   &sCollectMode, 2);
+    collectChanged |= ImGui::RadioButton("ALL layers, ALL tanks (even if off)",   &sCollectMode, 2);
+    ImGui::SameLine();
+    collectChanged |= ImGui::RadioButton("ON layers, ALL tanks",                  &sCollectMode, 3);
+    if (collectChanged) vizSetsSave();
 
     /* ── Sets (left) + Category toggles (right) ──
      * Two side-by-side groups so the category checkboxes fill the wide
      * empty area to the right of the Save/Load slots instead of stacking
      * underneath them. */
-    if (!sVizSetsLoaded) { vizSetsLoad(); sVizSetsLoaded = true; }
     ImGui::Separator();
 
     /* Left group: 3 save/load slots + select/clear all. */

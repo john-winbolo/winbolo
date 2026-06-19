@@ -1283,13 +1283,13 @@ local function attack_pill_steer(state, world, info, goal)
     if info.gunrange < C.GUNSIGHT_MAX then
       keys = keys | KEY_MORERANGE
     end
-    -- FAST_APPROACH: outside 1/2 tile (128 wu) of the standoff, accelerate HARD
-    -- and brake purely off cpf.predict_stop landing on the spot — same fast-path
-    -- the `approach` substate uses. Steering still aims at the standoff every
-    -- tick; we just strip nav_turn_speed's throttle and drive it off the
-    -- predictor. Inside 1/2 tile we fall through to the existing creep below for
-    -- the micro-corrections (AT_SPOT / BRAKE / CREEP / friction-stuck).
-    if C.FAST_APPROACH and sdist > 128 then
+    -- FAST_APPROACH: outside 1 tile (FAST_APPROACH_HANDOFF_WU = 256 wu) of the
+    -- standoff, accelerate HARD and brake purely off cpf.predict_stop landing on
+    -- the spot — same fast-path the `approach` substate uses. Steering still aims
+    -- at the standoff every tick; we just strip nav_turn_speed's throttle and
+    -- drive it off the predictor. Inside 1 tile we fall through to the existing
+    -- creep below for the micro-corrections (AT_SPOT / BRAKE / CREEP / friction-stuck).
+    if C.FAST_APPROACH and sdist > (C.FAST_APPROACH_HANDOFF_WU or 256) then
       local move_dir = U.aim_at(info.tankx, info.tanky, swx, swy)
       local corr = U.adiff(info.direction, move_dir)
       -- Constantly correct heading toward the standoff every tick (tight
@@ -1609,9 +1609,10 @@ local function attack_pill_steer(state, world, info, goal)
       -- carries the tank in at full speed. A* still homes the steering precisely
       -- on approach_fx (APPROACH_PRECISE_DIST exact-center creep). BUT once the
       -- predict_stop brake has done its job — the tank has slowed (speed <= 4)
-      -- OR closed to within 1/2 tile (128 wu) of the approach point — we hand
-      -- back to the normal creep for the final precise landing onto the spot.
-      local fast_handoff = C.FAST_APPROACH and (info.speed <= 4 or adist <= 128)
+      -- OR closed to within 1 tile (FAST_APPROACH_HANDOFF_WU = 256 wu) of the
+      -- approach point — we hand back to the normal creep for the final precise
+      -- landing onto the spot.
+      local fast_handoff = C.FAST_APPROACH and (info.speed <= 4 or adist <= (C.FAST_APPROACH_HANDOFF_WU or 256))
       if adist <= 256 and (not C.FAST_APPROACH or fast_handoff) then
         -- Creep toward the approach point until within 1/2 tile (128 wu), the
         -- generous spot tolerance attack.lua now accepts. Inside that, stop and

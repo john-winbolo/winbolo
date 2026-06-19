@@ -3214,6 +3214,70 @@ end
 -- Iterates all incremental pools, applies filters, and builds a flat
 -- work queue of candidates to evaluate (2 per tick).
 -- =========================================================================
+-- =========================================================================
+-- rescore_nearby_bases — force a strict-A* cost for every live base within
+-- `radius` tiles, overwriting the partial pool entries the imminent replan
+-- reads. The incremental base eval (update_pool_cache) costs bases with
+-- smart_cost_dij_only — dijkstra-ONLY, no A* fallback — so during the opening
+-- cold-start a base the dijkstra surface hasn't reached yet sits at INF and
+-- can't be picked, even when it's right next to the tank. Called ONE TICK
+-- BEFORE each replan (opening phase only) so the decision ranks nearby bases on
+-- real A* costs instead of a not-yet-ready surface. Updates pool_partial[3]
+-- (capture_base) and [7] (attack_base): refreshes each nearby candidate's cost
+-- and re-derives the pool best.
+-- =========================================================================
+function M.rescore_nearby_bases(state, world, info, radius)
+  if not (world and world.bases and info and state.pool_partial) then return end
+  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  local boat   = info.inboat and 1 or 0
+  local shells = info.shells or 32
+  local trees  = info.trees or 0
+  local mines  = info.mines or 0
+  local armour = info.armour or 40
+  local now    = state.tick or 0
+  local rescored = 0
+  for _, pool_idx in ipairs({ 3, 7 }) do
+    local pr = state.pool_partial[pool_idx]
+    if pr and pr.candidates then
+      for _, cand in ipairs(pr.candidates) do
+        if not cand.reject and U.mdist(tmx, tmy, cand.mx, cand.my) <= radius then
+          -- Route to the cheapest adjacent tile for a live base, same as the
+          -- incremental eval does, then pay a strict A* (bypassing dij-only).
+          local obj = cand.obj or world.bases[cand.id]
+          local dx, dy = cand.mx, cand.my
+          if obj and (obj.health or 0) > 0 then
+            local _, ax, ay = cpf.cheapest_adjacent(KIND_NORMAL, tmx, tmy,
+              cand.mx, cand.my, boat, shells, trees, mines, armour)
+            if ax then dx, dy = ax, ay end
+          end
+          local c = cpf.cost_to_astar(tmx, tmy, dx, dy, boat,
+            shells, trees, mines, armour, 4000, false)
+          if c and c < 1e29 then
+            local old = cand.cost
+            cand.cost = c
+            rescored = rescored + 1
+            -- Bump the cost-cache timestamp too, so the pool-grid "age" shows
+            -- this as a fresh eval (not the stale last-dijkstra-sweep tick).
+            local ck = pool_idx .. ":" .. cand.id
+            local entry = state.cost_cache and state.cost_cache[ck]
+            if entry then entry.cost = c; entry.tick = now; entry._age = 0 end
+            if BRAIN_DEBUG_MODE then print2(string.format("  BASE_RESCORE_HIT pool=%d base#%s (%d,%d) %s -> %.0f", pool_idx, tostring(cand.id), cand.mx, cand.my, old and (old >= 1e29 and "INF" or string.format("%.0f", old)) or "?", c)) end
+          end
+        end
+      end
+      -- Re-derive the pool best from the refreshed candidate costs.
+      local bc, bi, bo = math.huge, nil, nil
+      for _, cand in ipairs(pr.candidates) do
+        if not cand.reject and cand.cost and cand.cost < bc then
+          bc, bi, bo = cand.cost, cand.id, (cand.obj or world.bases[cand.id])
+        end
+      end
+      if bi then pr.best_cost, pr.best_id, pr.best_obj = bc, bi, bo end
+    end
+  end
+  if BRAIN_DEBUG_MODE then print2(string.format("BASE_RESCORE t=%d rescored=%d bases within %d tiles (strict A* over dij-only INF)", now, rescored, radius)) end
+end
+
 function M.build_eval_queue(state, world, info)
   -- Fresh queue → not swept yet (warm_ready's sparse-map escape requires a full
   -- sweep of the CURRENT queue). Harmless once _warm_ready has latched.
@@ -3638,14 +3702,14 @@ local function get_formula_inner(e)
         C.REFUEL_NO_DANGER_DISCOUNT)
       or ""
     local _d_astar = string.format(
-      "Dijkstra/A* travel cost from tank to base tile (%d,%d) = %.0f",
-      e._mx or 0, e._my or 0, raw)
+      "danger-weighted Dijkstra-slate travel cost to base (%d,%d) = %.0f; path %s",
+      e._mx or 0, e._my or 0, raw, e._path or "(not traced)")
     local _d_base = string.format(
       "%.0f[REFUEL_BASE_COST] flat floor so refuel-at-own-base isn't ~0",
       C.REFUEL_BASE_COST)
     f = string.format(
       "A*{%.0f}@(%d,%d) + base{%.0f} + danger{%.0f} + stale{%.0f} + contest{%.0f} + deplete{%.0f}%s%s"..
-      "||a_star:%s|base:%s|danger:%s|stale:%s|contest:%s|deplete:%s%s%s",
+      "||A*:%s|base:%s|danger:%s|stale:%s|contest:%s|deplete:%s%s%s",
       raw, e._mx or 0, e._my or 0, C.REFUEL_BASE_COST, e._dang, e._stale, e._contest, e._dep, _shape_head, _safe_token,
       _d_astar, _d_base, _d_danger, _d_stale, _d_contest, _d_deplete, _shape_detail, _safe_detail)
   elseif p == 6 then
@@ -4253,6 +4317,24 @@ function M.step_eval_queue(state, world, info)
       -- its rising urgency makes it cheaper and the steal band hands the base
       -- back, so this self-resolves rather than starving.
 
+      -- Panel detail (debug only): walk the Dijkstra slate step-by-step from
+      -- the tank to the costed destination (cost_dx,cost_dy — the base's
+      -- cheapest adjacent tile) so the breakdown can show the actual route in
+      -- (x,y),(x2,y2)... form instead of just the scalar travel cost.
+      local _p1_path_str
+      if BRAIN_POOL_VIZ then
+        local px, py = tmx, tmy
+        local parts = { string.format("(%d,%d)", px, py) }
+        for _ = 1, 80 do
+          if px == cost_dx and py == cost_dy then break end
+          local nx, ny = cpf.dijkstra_next_step(KIND_NORMAL, px, py, cost_dx, cost_dy)
+          if not nx or (nx == px and ny == py) then break end
+          parts[#parts + 1] = string.format("(%d,%d)", nx, ny)
+          px, py = nx, ny
+        end
+        _p1_path_str = table.concat(parts, ", ")
+      end
+
       state.cost_cache[cache_key] = {
         cost = score, raw = raw_cost, tick = now, _p = 1,
         _id = id, _mx = obj.mx, _my = obj.my,
@@ -4261,6 +4343,7 @@ function M.step_eval_queue(state, world, info)
         _hyst=hysteresis_cost, _ratio=supply_ratio, _dep=depletion_cost,
         _lgm_mult = _lgm_mult,
         _safe_refuel = _safe_refuel or nil,
+        _path = _p1_path_str,
       }
 
       pr.candidates[#pr.candidates + 1] = {
@@ -5806,13 +5889,30 @@ function M.finalize_pools(state, world, info)
     end
 
     local cost = bscore * urgency
+    -- Pool-panel display: candidates carry the raw bscore (travel+danger),
+    -- but the winner that flows to the cross-pool "winners pool" is
+    -- bscore*urgency. Scale each candidate's displayed cost by the same
+    -- urgency so the pool-1 candidate list matches the winners-pool number.
+    -- urgency is a uniform multiplier → the internal refuel order is
+    -- unchanged. Rejected candidates (non-numeric cost) pass through as-is.
+    -- (The REFUEL_FINALIZE log above already printed the raw bscores.)
+    local disp_cands = pr1.candidates
+    if BRAIN_POOL_VIZ and urgency ~= 1.0 and pr1.candidates then
+      disp_cands = {}
+      for i, cand in ipairs(pr1.candidates) do
+        local nc = {}
+        for k, v in pairs(cand) do nc[k] = v end
+        if type(nc.cost) == "number" and nc.cost < 1e29 then nc.cost = nc.cost * urgency end
+        disp_cands[i] = nc
+      end
+    end
     pc[1] = {
       cost = cost,
       goal = { kind = "refuel_at_base", mx = base.mx, my = base.my,
                wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
       desc = BRAIN_POOL_VIZ and string.format("refuel#%d@(%d,%d) score=%.0f×%.2f=%.0f arm=%d sh=%d",
              bid, base.mx, base.my, bscore, urgency, cost, info.armour, info.shells) or "",
-      cands = pr1.candidates,
+      cands = disp_cands,
     }
   else
     pc[1] = nil
