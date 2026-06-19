@@ -2616,12 +2616,16 @@ static void renderSettingsPanel(ClientSim *cs) {
             }
         }
 
+        /* Tablet Mode toggle hidden for now — tablet mode auto-detects on
+           real tablets; the manual desktop switch is not wanted in the UI. */
+#if 0
         if (!uiModeIsTablet()) {
             bool tabletMode = false;
             if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_TABLETMODE), &tabletMode)) {
                 uiModeSet(UI_MODE_TABLET);
             }
         }
+#endif
 #endif
     }
 
