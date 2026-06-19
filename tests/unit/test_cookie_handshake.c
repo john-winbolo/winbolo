@@ -17,7 +17,7 @@
  *       cookie draws a PACKET_JOIN_CHALLENGE and no JOIN_ACCEPT; echoing the
  *       challenge's cookie bytes then draws a JOIN_ACCEPT.
  *   (b) Blind/wrong cookie can't complete: a JOIN with a garbage cookie draws
- *       a challenge but never a JOIN_ACCEPT within the pump budget.
+ *       a challenge but never a JOIN_ACCEPT within the reply deadline.
  *   (c) Cookie expires: a cookie acquired at window W is rejected once the
  *       server's window has advanced to W+2 (challenge, no accept), while a
  *       fresh challenge/echo at the shifted window still succeeds. The window
@@ -46,10 +46,38 @@
 #include "test_harness.h"
 #include "loopback_harness.h"
 
-/* Generous: a reply lands on the next server tick after the JOIN is drained.
- * Each ckDriveOnce sends exactly one datagram (one rate-limit token), so the
- * budget can be large without risking the per-source burst cap. */
-#define CK_PUMP_MAX 400
+/* Wall-clock budget for a JOIN reply (challenge or accept) to round-trip on the
+ * in-process loopback. Bounded by time, not by a fixed iteration count, so a
+ * host so starved that it preempts this test for seconds (e.g. the brain/ONNX
+ * suites running in parallel) still waits long enough for the datagram to be
+ * delivered and processed, rather than burning a fixed pump count in
+ * microseconds and giving up before the reply lands. */
+#define CK_REPLY_DEADLINE_MS 10000
+
+/* After a challenge is seen on a JOIN we expect NOT to be accepted, pump this
+ * many extra server ticks to confirm no JOIN_ACCEPT ever follows. */
+#define CK_NOACCEPT_PUMPS 400
+
+/* Bounded retries for a handshake whose cookie aged out across a real-time
+ * window boundary mid-flight (see ckCookieWindow). Each such retry only fires
+ * when the window actually advanced (≥ one CK_COOKIE_WINDOW_SEC of starvation
+ * mid-handshake), so it both spaces retries past the per-source join rate limit
+ * and stays rare enough that chained retries can't approach the test timeout.
+ * Under normal load attempt 0 succeeds and no retry runs. */
+#define CK_BOUNDARY_RETRIES 4
+
+/* The server keys its address-proof cookie to a time-window
+ * floor(seconds / COOKIE_WINDOW_SEC) read from SDL_GetTicks (see
+ * serverCookieCurrentWindow in transport_udp_server.c). This test runs
+ * in-process with that server, so the same clock yields the same window
+ * number: the cases below sample it to tell a genuine reject from a cookie that
+ * merely aged out of its window while the host was starved between minting and
+ * echoing it. Mirrors COOKIE_WINDOW_SEC — kept in sync by hand, as that
+ * constant is file-local to the server translation unit. */
+#define CK_COOKIE_WINDOW_SEC 16
+static uint64_t ckCookieWindow(void) {
+    return (SDL_GetTicks() / 1000ULL) / CK_COOKIE_WINDOW_SEC;
+}
 
 /* Build a JOIN_REQUEST with the server's own version triple, a valid name, and
  * a trailing JOIN_COOKIE_LEN cookie (the given bytes, or zeros if NULL).
@@ -126,8 +154,11 @@ static void ckSetWindowOffset(const char *val) {
 
 /* Send one JOIN from sock and pump. Records whether a JOIN_ACCEPT and/or a
  * JOIN_CHALLENGE was seen; on a challenge, copies its cookie bytes into
- * outCookie (if non-NULL). When wantNoAccept is true the loop runs the full
- * budget to prove no accept ever arrives; otherwise it returns as soon as it
+ * outCookie (if non-NULL). The pump is bounded by a wall-clock deadline (not a
+ * fixed iteration count) and yields on idle iterations, so a starved host still
+ * gives the loopback datagram time to be delivered and processed. When
+ * wantNoAccept is true the loop pumps CK_NOACCEPT_PUMPS extra server ticks after
+ * the challenge to prove no accept follows; otherwise it returns as soon as it
  * has a verdict. Exactly one datagram is sent (one rate-limit token). */
 static void ckDriveOnce(LoopbackHarness *h, SOCKET sock,
                         const uint8_t *join, int joinLen,
@@ -135,14 +166,17 @@ static void ckDriveOnce(LoopbackHarness *h, SOCKET sock,
                         bool wantNoAccept,
                         bool *gotAccept, bool *gotChallenge,
                         uint8_t *outCookie) {
-    int i;
+    Uint64 deadline;
+    int extra = 0;
     *gotAccept    = false;
     *gotChallenge = false;
     sendto(sock, (const char *)join, joinLen, 0,
            (const struct sockaddr *)server, sizeof(*server));
-    for (i = 0; i < CK_PUMP_MAX; i++) {
+    deadline = SDL_GetTicks() + CK_REPLY_DEADLINE_MS;
+    while (SDL_GetTicks() < deadline) {
         uint8_t in[1024];
         int n;
+        bool drained = false;
         loopbackHarnessPump(h);
         while ((n = ckTryRecv(sock, in, sizeof(in))) > 0) {
             uint8_t type = getPacketType(in, n);
@@ -155,9 +189,18 @@ static void ckDriveOnce(LoopbackHarness *h, SOCKET sock,
                     memcpy(outCookie, in + PACKET_HEADER_SIZE, JOIN_COOKIE_LEN);
                 }
             }
+            drained = true;
         }
         if (*gotAccept) return;                       /* accept is terminal */
-        if (!wantNoAccept && *gotChallenge) return;   /* verdict reached */
+        if (*gotChallenge) {
+            if (!wantNoAccept) return;                /* verdict reached */
+            if (++extra >= CK_NOACCEPT_PUMPS) return; /* no accept followed */
+        }
+        if (!drained) {
+            /* Yield so the kernel can deliver the loopback reply under load and
+             * so each idle iteration costs ~1 ms rather than spinning. */
+            SDL_Delay(1);
+        }
     }
 }
 
@@ -187,33 +230,53 @@ int run_cookie_handshake(void) {
         if (s == INVALID_SOCKET) {
             SDL_Log("  cookie handshake: skipping (a) — 127.0.0.2 not bindable");
         } else {
-            joinLen = ckBuildJoin(joinBuf, "CkA", NULL);  /* zero cookie */
-            ckDriveOnce(&h, s, joinBuf, joinLen, &serverAddr,
-                        /*wantNoAccept*/ false, &gotAccept, &gotChallenge,
-                        cookie);
-            fprintf(stderr, "  cookie (a) cookieless: challenge=%d accept=%d\n",
-                    (int)gotChallenge, (int)gotAccept);
-            if (gotAccept) {
-                closesocket(s);
-                loopbackHarnessStop(&h);
-                UT_FAIL("cookie-less JOIN was accepted (no address proof)");
+            int attempt;
+            bool accepted = false;
+            /* The same source socket is reused across retries so the re-minted
+             * cookie keys to the same (addr, port). A retry fires only when the
+             * cookie aged out of its window between mint and echo. */
+            for (attempt = 0; attempt < CK_BOUNDARY_RETRIES; attempt++) {
+                uint64_t w0 = ckCookieWindow();
+                joinLen = ckBuildJoin(joinBuf, "CkA", NULL);  /* zero cookie */
+                ckDriveOnce(&h, s, joinBuf, joinLen, &serverAddr,
+                            /*wantNoAccept*/ false, &gotAccept, &gotChallenge,
+                            cookie);
+                fprintf(stderr,
+                        "  cookie (a) cookieless: challenge=%d accept=%d\n",
+                        (int)gotChallenge, (int)gotAccept);
+                if (gotAccept) {
+                    closesocket(s);
+                    loopbackHarnessStop(&h);
+                    UT_FAIL("cookie-less JOIN was accepted (no address proof)");
+                }
+                if (!gotChallenge) {
+                    closesocket(s);
+                    loopbackHarnessStop(&h);
+                    UT_FAIL("cookie-less JOIN drew no challenge within %d ms",
+                            CK_REPLY_DEADLINE_MS);
+                }
+                joinLen = ckBuildJoin(joinBuf, "CkA", cookie);  /* echo cookie */
+                ckDriveOnce(&h, s, joinBuf, joinLen, &serverAddr,
+                            /*wantNoAccept*/ false, &gotAccept, &gotChallenge,
+                            NULL);
+                fprintf(stderr,
+                        "  cookie (a) echoed:     challenge=%d accept=%d\n",
+                        (int)gotChallenge, (int)gotAccept);
+                if (gotAccept) {
+                    accepted = true;
+                    break;
+                }
+                if (ckCookieWindow() - w0 >= 2) {
+                    continue; /* cookie aged out across a window boundary while
+                                 the host was starved — re-mint and retry */
+                }
+                break; /* genuine: a same-window valid cookie was not accepted */
             }
-            if (!gotChallenge) {
-                closesocket(s);
-                loopbackHarnessStop(&h);
-                UT_FAIL("cookie-less JOIN drew no challenge within %d pumps",
-                        CK_PUMP_MAX);
-            }
-            joinLen = ckBuildJoin(joinBuf, "CkA", cookie);  /* echo cookie */
-            ckDriveOnce(&h, s, joinBuf, joinLen, &serverAddr,
-                        /*wantNoAccept*/ false, &gotAccept, &gotChallenge, NULL);
-            fprintf(stderr, "  cookie (a) echoed:     challenge=%d accept=%d\n",
-                    (int)gotChallenge, (int)gotAccept);
             closesocket(s);
-            if (!gotAccept) {
+            if (!accepted) {
                 loopbackHarnessStop(&h);
-                UT_FAIL("valid-cookie JOIN drew no JOIN_ACCEPT within %d pumps",
-                        CK_PUMP_MAX);
+                UT_FAIL("valid-cookie JOIN drew no JOIN_ACCEPT after %d attempts",
+                        CK_BOUNDARY_RETRIES);
             }
         }
     }
@@ -239,8 +302,8 @@ int run_cookie_handshake(void) {
             }
             if (!gotChallenge) {
                 loopbackHarnessStop(&h);
-                UT_FAIL("garbage-cookie JOIN drew no challenge within %d pumps",
-                        CK_PUMP_MAX);
+                UT_FAIL("garbage-cookie JOIN drew no challenge within %d ms",
+                        CK_REPLY_DEADLINE_MS);
             }
         }
     }
@@ -251,58 +314,83 @@ int run_cookie_handshake(void) {
         if (s == INVALID_SOCKET) {
             SDL_Log("  cookie handshake: skipping (c) — 127.0.0.4 not bindable");
         } else {
-            uint8_t freshCookie[JOIN_COOKIE_LEN];
-            bool staleAccept, staleChallenge;
-            bool freshAccept, freshChallenge;
+            int attempt;
+            bool freshAccepted = false;
+            /* The stale-cookie reject is window-independent (a cookie from W can
+             * never fall in [W+2, W+1]), but the fresh positive control needs
+             * the natural window to hold still between issuing the W+2 cookie
+             * and echoing it. A retry fires only when it didn't. */
+            for (attempt = 0; attempt < CK_BOUNDARY_RETRIES; attempt++) {
+                uint8_t freshCookie[JOIN_COOKIE_LEN];
+                bool staleAccept, staleChallenge;
+                bool freshAccept, freshChallenge;
+                uint64_t nat0, nat1;
 
-            /* Acquire a cookie at the current window W (offset unset). Do not
-             * complete the handshake, so this source stays unconnected and the
-             * cookie gate keeps applying to it. */
-            ckSetWindowOffset(NULL);
-            joinLen = ckBuildJoin(joinBuf, "CkC", NULL);
-            ckDriveOnce(&h, s, joinBuf, joinLen, &serverAddr,
-                        /*wantNoAccept*/ false, &gotAccept, &gotChallenge,
-                        cookie);
-            if (!gotChallenge || gotAccept) {
-                closesocket(s);
-                loopbackHarnessStop(&h);
-                UT_FAIL("(c) setup: expected a challenge at W (challenge=%d "
-                        "accept=%d)", (int)gotChallenge, (int)gotAccept);
+                /* Acquire a cookie at the current window W (offset unset). Do
+                 * not complete the handshake, so this source stays unconnected
+                 * and the cookie gate keeps applying to it. */
+                ckSetWindowOffset(NULL);
+                joinLen = ckBuildJoin(joinBuf, "CkC", NULL);
+                ckDriveOnce(&h, s, joinBuf, joinLen, &serverAddr,
+                            /*wantNoAccept*/ false, &gotAccept, &gotChallenge,
+                            cookie);
+                if (!gotChallenge || gotAccept) {
+                    ckSetWindowOffset(NULL);
+                    closesocket(s);
+                    loopbackHarnessStop(&h);
+                    UT_FAIL("(c) setup: expected a challenge at W (challenge=%d "
+                            "accept=%d)", (int)gotChallenge, (int)gotAccept);
+                }
+
+                /* Advance the server's window to W+2: the cookie for W now falls
+                 * outside the accepted [W+2, W+1] pair. */
+                ckSetWindowOffset("2");
+                nat0 = ckCookieWindow();
+                joinLen = ckBuildJoin(joinBuf, "CkC", cookie);  /* stale */
+                ckDriveOnce(&h, s, joinBuf, joinLen, &serverAddr,
+                            /*wantNoAccept*/ true, &staleAccept, &staleChallenge,
+                            freshCookie);
+
+                /* Positive control at the shifted clock: echo the just-issued
+                 * (W+2) cookie and complete the handshake. */
+                joinLen = ckBuildJoin(joinBuf, "CkC", freshCookie);
+                ckDriveOnce(&h, s, joinBuf, joinLen, &serverAddr,
+                            /*wantNoAccept*/ false, &freshAccept, &freshChallenge,
+                            NULL);
+                nat1 = ckCookieWindow();
+
+                ckSetWindowOffset(NULL); /* restore before any assert returns */
+
+                fprintf(stderr,
+                        "  cookie (c) stale@W+2:  challenge=%d accept=%d ; "
+                        "fresh@W+2: accept=%d\n",
+                        (int)staleChallenge, (int)staleAccept, (int)freshAccept);
+
+                if (staleAccept) {
+                    closesocket(s);
+                    loopbackHarnessStop(&h);
+                    UT_FAIL("(c) stale cookie from window W was accepted at W+2");
+                }
+                if (!staleChallenge) {
+                    closesocket(s);
+                    loopbackHarnessStop(&h);
+                    UT_FAIL("(c) stale-cookie JOIN drew no challenge at W+2");
+                }
+                if (freshAccept) {
+                    freshAccepted = true;
+                    break;
+                }
+                if (nat1 - nat0 >= 2) {
+                    continue; /* the W+2 cookie aged out across a boundary while
+                                 the host was starved — retry the whole case */
+                }
+                break; /* genuine: the fresh in-window cookie was not accepted */
             }
-
-            /* Advance the server's window to W+2: the cookie for W now falls
-             * outside the accepted [W+2, W+1] pair. */
-            ckSetWindowOffset("2");
-            joinLen = ckBuildJoin(joinBuf, "CkC", cookie);  /* stale */
-            ckDriveOnce(&h, s, joinBuf, joinLen, &serverAddr,
-                        /*wantNoAccept*/ true, &staleAccept, &staleChallenge,
-                        freshCookie);
-
-            /* Positive control at the shifted clock: echo the just-issued
-             * (W+2) cookie and complete the handshake. */
-            joinLen = ckBuildJoin(joinBuf, "CkC", freshCookie);
-            ckDriveOnce(&h, s, joinBuf, joinLen, &serverAddr,
-                        /*wantNoAccept*/ false, &freshAccept, &freshChallenge,
-                        NULL);
-
-            ckSetWindowOffset(NULL);   /* restore before any assert can return */
             closesocket(s);
-
-            fprintf(stderr, "  cookie (c) stale@W+2:  challenge=%d accept=%d ; "
-                    "fresh@W+2: accept=%d\n",
-                    (int)staleChallenge, (int)staleAccept, (int)freshAccept);
-
-            if (staleAccept) {
+            if (!freshAccepted) {
                 loopbackHarnessStop(&h);
-                UT_FAIL("(c) stale cookie from window W was accepted at W+2");
-            }
-            if (!staleChallenge) {
-                loopbackHarnessStop(&h);
-                UT_FAIL("(c) stale-cookie JOIN drew no challenge at W+2");
-            }
-            if (!freshAccept) {
-                loopbackHarnessStop(&h);
-                UT_FAIL("(c) fresh cookie at W+2 drew no JOIN_ACCEPT");
+                UT_FAIL("(c) fresh cookie at W+2 drew no JOIN_ACCEPT after %d "
+                        "attempts", CK_BOUNDARY_RETRIES);
             }
         }
     }
