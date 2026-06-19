@@ -25,6 +25,7 @@
 #ifndef INPUT_PACKET_H
 #define INPUT_PACKET_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Button bitmask bits (InputPacket.buttons) */
@@ -227,6 +228,25 @@ typedef struct {
 #define EVENT_SOUND_SHOOT    16 /* data: [soundId, mx, my, firingPlayer] */
 #define EVENT_MINE_VISIBLE   17 /* data: [mx, my, sourcePlayer] — bit 7 of sourcePlayer = broadcast to all */
 #define EVENT_TK_EXPLOSION   18 /* data: [xHi, xLo, yHi, yLo, angle, length, explodeType, creator] — tank fireball spawn */
+
+/* True if this game event must arrive (rides the reliable game channel);
+ * false if it is ephemeral and rides the best-effort channel. Single source
+ * of truth shared by the server send path and the client ingest path. */
+static inline bool gameEventIsReliable(uint8_t type) {
+    switch (type) {
+    case EVENT_TANK_KILLED:   /* event-driven score; not in any snapshot */
+    case EVENT_MAP_CHANGE:    /* rides CHANNEL_MAP */
+    case EVENT_SERVER_MSG:    /* user-visible status notice */
+    case EVENT_PILL_UPDATE:   /* sole pill-state delta between full re-syncs */
+    case EVENT_BASE_UPDATE:   /* sole base-state delta between full re-syncs */
+    case EVENT_ASSISTANT_MSG: /* one-shot per-player text */
+    case EVENT_LGM_LOST:      /* one-shot newswire */
+    case EVENT_MINE_VISIBLE:  /* gameplay-critical reveal */
+        return true;
+    default:
+        return false;
+    }
+}
 
 /* Assistant message IDs for EVENT_ASSISTANT_MSG */
 #define ASSIST_MSG_MAN_DEAD          1
