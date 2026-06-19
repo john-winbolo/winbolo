@@ -121,6 +121,10 @@ static inline float dialogComputeScale(int screenW, int screenH) {
     if (uiModeIsTablet()) {
         (void)screenH;
         scale = 1.0f;          /* tablet mode scales via its own path */
+    } else if (!uiModeIsSteamDeck() && uiUiScaleGet() != UI_SCALE_AUTO) {
+        /* Desktop with a UI-scale override: pin to the preset factor
+           instead of the window-height-derived scale. */
+        scale = uiUiScalePresetFactor(uiUiScaleGet());
     } else {
         scale = (float)screenH / 1080.0f;   /* desktop: scale to window height */
         if (scale < 1.0f) scale = 1.0f;
@@ -143,6 +147,12 @@ static inline float dialogDesktopScale(SDL_Window *window) {
 #if BOLO_MOBILE
     return 1.0f;
 #else
+    if (uiUiScaleGet() != UI_SCALE_AUTO) {
+        float sc = uiUiScalePresetFactor(uiUiScaleGet());
+        if (sc < 1.0f) sc = 1.0f;
+        if (sc > 2.5f) sc = 2.5f;
+        return sc;
+    }
     float sc = SDL_GetWindowDisplayScale(window);
     if (sc < 1.05f) {
         SDL_DisplayID disp = SDL_GetDisplayForWindow(window);

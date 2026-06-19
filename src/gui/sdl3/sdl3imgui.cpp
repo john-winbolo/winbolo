@@ -346,6 +346,10 @@ static void ensurePlatformIconsLoaded(void) {
 
 /* Settings panel state */
 static bool s_showSettings       = false;
+/* Set when the in-game UI-scale combo changes; the main render loop
+   rebuilds the font atlas + style at a safe point (between Present and the
+   next NewFrame) rather than mid-frame. */
+static bool s_pendingUiScaleRebuild = false;
 static char s_settingsNameBuf[33] = "";  /* PLAYER_NAME_LEN = 33 */
 static bool s_wbnInitialised     = false;
 
@@ -2587,6 +2591,29 @@ static void renderSettingsPanel(ClientSim *cs) {
                 uiControllerPromptAskOnConnectSet(ask);
                 gameFrontSaveCurrentPrefs();
             }
+
+            /* UI scale override — desktop only.  Auto keeps the display-
+               derived scale; a preset pins the ImGui scale and rebuilds the
+               font atlas live (deferred to a safe point between frames). */
+            ImGui::Separator();
+            ImGui::TextUnformatted("UI Scale");
+            {
+                static const char *scaleLabels[] = { "Auto", "Small", "Medium", "Large" };
+                int usIdx = (int)uiUiScaleGet();
+                if (usIdx < 0 || usIdx > 3) usIdx = 0;
+                ImGui::SetNextItemWidth(140 * s_uiScale);
+                if (ImGui::BeginCombo("##uiscale", scaleLabels[usIdx])) {
+                    for (int i = 0; i < 4; i++) {
+                        bool sel = (usIdx == i);
+                        if (ImGui::Selectable(scaleLabels[i], sel) && i != usIdx) {
+                            uiUiScaleSet((UiScalePref)i);
+                            gameFrontSaveCurrentPrefs();
+                            s_pendingUiScaleRebuild = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
         }
 
         if (!uiModeIsTablet()) {
@@ -3219,6 +3246,76 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
  * Public API
  * ------------------------------------------------------- */
 
+/* (Re)apply the main ImGui context's font atlas, style, and window minimum
+   for the current UI scale.  Recomputes the scale (Auto → display-derived,
+   preset → fixed), rebuilds the font atlas, resets and re-scales the style,
+   and re-clamps the desktop window minimum.  Called once at setup and again
+   when the UI-scale pref changes — the latter only from the deferred safe
+   point between Present and NewFrame, so the atlas swap can't race draw data
+   still queued against the old texture. */
+static void applyMainContextUiScale(void) {
+    if (!s_window) return;
+    ImGuiIO &io = ImGui::GetIO();
+
+    /* One scale value drives both the font size and the style metrics.
+       Tablet uses FontGlobalScale below (so uiScale stays 1); Deck keeps
+       its 1.5x; desktop derives the scale from the display (or the UI-scale
+       override) so dialogs are readable on high-DPI / 4K screens. */
+    float uiScale;
+    if (uiModeIsTablet())          uiScale = 1.0f;
+    else if (uiModeIsSteamDeck())  uiScale = dialogDeckFontMul();  /* 1.5, unchanged */
+    else                           uiScale = dialogDesktopScale(s_window);
+    s_uiScale = uiScale;
+
+    /* Rebuild the font atlas at the new size.  Clear() first because
+       imguiLoadBoloFont only appends; the SDL3 backend's
+       ImGuiBackendFlags_RendererHasTextures contract swaps the GPU texture
+       on the next RenderDrawData, so no manual texture teardown is needed.
+       At setup the atlas is empty, so Clear() is a harmless no-op. */
+    io.Fonts->Clear();
+    imguiLoadBoloFont(18.0f * uiScale);
+
+    /* Reset the style to a clean base before re-scaling.  ScaleAllSizes
+       compounds, so re-running it on an already-scaled style would
+       double-count every metric; assigning a default ImGuiStyle clears any
+       prior scaling (and the fields imguiApplyBoloTheme doesn't set). */
+    ImGui::GetStyle() = ImGuiStyle();
+    ImGui::StyleColorsDark();
+    imguiApplyBoloTheme();
+
+    /* Tablet mode: scale up ImGui for touch targets.
+       Scale proportionally to the logical coordinate space height.
+       Reference: zoom 2 → 480px height → 1.0x pixel scale. */
+    if (uiModeIsTablet()) {
+        float ps = (float)sdl3DrawGetZoomFactor() / 2.0f;
+        if (ps < 1.0f) ps = 1.0f;
+        io.FontGlobalScale = 1.8f * ps;
+        io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
+        ImGuiStyle &style = ImGui::GetStyle();
+        style.FramePadding      = ImVec2(12 * ps, 8 * ps);
+        style.ItemSpacing       = ImVec2(12 * ps, 8 * ps);
+        style.TouchExtraPadding = ImVec2(8 * ps, 8 * ps);
+        style.ScrollbarSize     = 24.0f * ps;
+    } else if (uiScale > 1.0f) {
+        /* Match the bumped font size with proportionally bumped layout
+           metrics (FramePadding, ItemSpacing, ScrollbarSize, etc.) so
+           in-game dialogs (Settings / Players / Send Message / pause
+           overlay) don't clip text or overlap.  Covers Steam Deck (1.5x)
+           and high-DPI / overridden desktop.  No touch padding — both use
+           desktop hover/click feel. */
+        ImGui::GetStyle().ScaleAllSizes(uiScale);
+    }
+
+    /* On the resizable desktop window, keep the OS window from shrinking below
+       the scaled 1x content size so the bigger dialogs can't overflow.  The
+       Deck/tablet fullscreen paths don't resize, so skip them. */
+    if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
+        SDL_SetWindowMinimumSize(s_window,
+            (int)(SDL3_SCREEN_W * s_uiScale),
+            (int)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale));
+    }
+}
+
 bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     /* Already initialised — just update the window/renderer pointers */
     if (ImGui::GetCurrentContext()) {
@@ -3254,52 +3351,10 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename  = nullptr; /* no imgui.ini — avoid filesystem clutter */
 
-    ImGui::StyleColorsDark();
-    imguiApplyBoloTheme();
-
-    /* One scale value drives both the font size and the style metrics.
-       Tablet uses FontGlobalScale below (so uiScale stays 1); Deck keeps
-       its 1.5x; desktop derives the scale from the display so dialogs are
-       readable on high-DPI / 4K screens. */
-    float uiScale;
-    if (uiModeIsTablet())          uiScale = 1.0f;
-    else if (uiModeIsSteamDeck())  uiScale = dialogDeckFontMul();  /* 1.5, unchanged */
-    else                           uiScale = dialogDesktopScale(window);
-    s_uiScale = uiScale;
-
-    imguiLoadBoloFont(18.0f * uiScale);
-
-    /* Tablet mode: scale up ImGui for touch targets.
-       Scale proportionally to the logical coordinate space height.
-       Reference: zoom 2 → 480px height → 1.0x pixel scale. */
-    if (uiModeIsTablet()) {
-        float ps = (float)sdl3DrawGetZoomFactor() / 2.0f;
-        if (ps < 1.0f) ps = 1.0f;
-        io.FontGlobalScale = 1.8f * ps;
-        io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
-        ImGuiStyle &style = ImGui::GetStyle();
-        style.FramePadding      = ImVec2(12 * ps, 8 * ps);
-        style.ItemSpacing       = ImVec2(12 * ps, 8 * ps);
-        style.TouchExtraPadding = ImVec2(8 * ps, 8 * ps);
-        style.ScrollbarSize     = 24.0f * ps;
-    } else if (uiScale > 1.0f) {
-        /* Match the bumped font size with proportionally bumped layout
-           metrics (FramePadding, ItemSpacing, ScrollbarSize, etc.) so
-           in-game dialogs (Settings / Players / Send Message / pause
-           overlay) don't clip text or overlap.  Covers Steam Deck (1.5x)
-           and high-DPI desktop.  No touch padding — both use desktop
-           hover/click feel. */
-        ImGui::GetStyle().ScaleAllSizes(uiScale);
-    }
-
-    /* On the resizable desktop window, keep the OS window from shrinking below
-       the scaled 1x content size so the bigger dialogs can't overflow.  The
-       Deck/tablet fullscreen paths don't resize, so skip them. */
-    if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
-        SDL_SetWindowMinimumSize(window,
-            (int)(SDL3_SCREEN_W * s_uiScale),
-            (int)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale));
-    }
+    /* Font atlas, style, and desktop window minimum for the current UI
+       scale.  Factored out so the in-game UI-scale override can rebuild it
+       live without a restart. */
+    applyMainContextUiScale();
 
     if (!ImGui_ImplSDL3_InitForSDLRenderer(window, renderer)) return false;
     if (!ImGui_ImplSDLRenderer3_Init(renderer))               return false;
@@ -4021,6 +4076,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         mac_menubar_refresh(&mms);
     }
 #endif
+
+    /* Apply a pending UI-scale change here — after the previous frame's
+       SDL_RenderPresent and before this frame's NewFrame — so rebuilding the
+       font atlas can't race draw data still queued against the old texture. */
+    if (s_pendingUiScaleRebuild) {
+        s_pendingUiScaleRebuild = false;
+        applyMainContextUiScale();
+    }
 
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();
