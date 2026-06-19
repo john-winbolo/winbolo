@@ -40,6 +40,7 @@ extern "C" {
 #include "playername_validate.h"
 #include "../../lang.h"
 #include "imgui_setname.h"
+#include "imgui_keyboard.h"
 }
 
 static const int DIALOG_W = 380;
@@ -244,6 +245,7 @@ extern "C" void imguiSetNameShow(ClientSim *cs, bool inGame) {
         ImGui::End();
 
         dialogDrawNavOutline();
+        keyboardUpdate();   /* controller text entry for this dialog's fields */
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

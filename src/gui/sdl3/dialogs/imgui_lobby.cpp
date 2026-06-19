@@ -80,6 +80,7 @@ extern "C" {
 #include "../map_preview_popup.h"
 #include "../../lang.h"
 #include "imgui_lobby.h"
+#include "imgui_keyboard.h"
 #include "imgui_messagebox.h"
 #include "imgui_mapchooser.h"
 #include "../../../winbolonet/http.h"
@@ -7891,6 +7892,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
 
         dialogDrawNavOutline();
+        keyboardUpdate();   /* controller text entry for this dialog's fields */
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

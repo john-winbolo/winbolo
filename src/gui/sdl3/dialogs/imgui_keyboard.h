@@ -30,6 +30,8 @@ void keyboardOpen(int mode);   /* mode is one of OSK_MODE_* */
 void keyboardRender(void);     /* call inside the frame; no-op unless open */
 void keyboardClose(void);
 bool keyboardIsOpen(void);
+void keyboardUpdate(void);     /* drives the keyboard backend for one frame
+                                  (call inside the frame, before ImGui::Render()) */
 
 #ifdef __cplusplus
 }
