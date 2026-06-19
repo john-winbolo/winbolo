@@ -1211,6 +1211,8 @@ STR_CTRL_PROMPT_DONTASK=No volver a preguntar
 STR_CTRL_DISC_TITLE=Mando desconectado
 STR_CTRL_DISC_MESSAGE=Tu mando se ha desconectado. Puedes volver a conectarlo o cambiar a los controles de teclado.
 STR_CTRL_DISC_BUTTON=Continuar con teclado y ratón
+STR_VOTE_RESPOND_IN_PLAYERS=Responder en el menú Jugadores
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Responder en el menú Jugadores
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Acerca de WinBolo
 STR_MENU_PREFERENCES=Preferencias…

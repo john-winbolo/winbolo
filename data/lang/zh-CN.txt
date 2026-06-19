@@ -1201,6 +1201,8 @@ STR_CTRL_PROMPT_DONTASK=不再询问
 STR_CTRL_DISC_TITLE=手柄已断开
 STR_CTRL_DISC_MESSAGE=您的游戏手柄已断开连接。您可以重新连接，或切换到键盘控制。
 STR_CTRL_DISC_BUTTON=继续使用键盘和鼠标
+STR_VOTE_RESPOND_IN_PLAYERS=在玩家菜单中响应
+STR_ALLIANCE_RESPOND_IN_PLAYERS=在玩家菜单中响应
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=关于 WinBolo
 STR_MENU_PREFERENCES=偏好设置…

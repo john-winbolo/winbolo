@@ -1199,6 +1199,8 @@ STR_CTRL_PROMPT_DONTASK=Больше не спрашивать
 STR_CTRL_DISC_TITLE=Геймпад отключён
 STR_CTRL_DISC_MESSAGE=Ваш геймпад был отключён. Вы можете подключить его снова или перейти на управление с клавиатуры.
 STR_CTRL_DISC_BUTTON=Продолжить с клавиатурой и мышью
+STR_VOTE_RESPOND_IN_PLAYERS=Ответьте в меню «Игроки»
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Ответьте в меню «Игроки»
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=О WinBolo
 STR_MENU_PREFERENCES=Настройки…

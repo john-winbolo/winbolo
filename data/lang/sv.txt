@@ -1201,6 +1201,8 @@ STR_CTRL_PROMPT_DONTASK=Fråga inte igen
 STR_CTRL_DISC_TITLE=Handkontroll bortkopplad
 STR_CTRL_DISC_MESSAGE=Din gamepad har kopplats bort. Du kan ansluta den igen eller byta till tangentbordskontrollen.
 STR_CTRL_DISC_BUTTON=Fortsätt med tangentbord och mus
+STR_VOTE_RESPOND_IN_PLAYERS=Svara i menyn Spelare
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Svara i menyn Spelare
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Om WinBolo
 STR_MENU_PREFERENCES=Inställningar…

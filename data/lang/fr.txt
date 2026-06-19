@@ -1201,6 +1201,8 @@ STR_CTRL_PROMPT_DONTASK=Ne plus demander
 STR_CTRL_DISC_TITLE=Manette déconnectée
 STR_CTRL_DISC_MESSAGE=Votre manette a été déconnectée. Vous pouvez la reconnecter ou passer aux commandes clavier.
 STR_CTRL_DISC_BUTTON=Continuer avec le clavier et la souris
+STR_VOTE_RESPOND_IN_PLAYERS=Répondre dans le menu Joueurs
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Répondre dans le menu Joueurs
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=À propos de WinBolo
 STR_MENU_PREFERENCES=Préférences…

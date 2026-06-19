@@ -87,6 +87,7 @@ extern "C" {
 #include "input_gamepad.h"
 #include "input_source.h"
 #include "../ui_mode.h"
+#include "../../steam/steam_input_actions.h"
 }
 
 #include "sdl3imgui_tablet.h"
@@ -352,6 +353,15 @@ static char s_changeNameBuf[33]  = "";  /* PLAYER_NAME_LEN = 33 */
 static bool s_showAllianceOpen   = false;
 static char s_alliancePlayerName[33] = "";
 static BYTE s_alliancePlayerNum  = 0;
+static bool s_allianceVisible     = false;
+
+static bool alliancePendingGet(const char **nameOut, BYTE *numOut) {
+    if (!s_allianceVisible) return false;
+    if (nameOut) *nameOut = s_alliancePlayerName;
+    if (numOut)  *numOut  = s_alliancePlayerNum;
+    return true;
+}
+static void allianceClearPending(void) { s_allianceVisible = false; }
 
 static bool s_showPasswordOpen   = false;
 static char s_passwordBuf[36]    = "";  /* MAP_STR_SIZE = 36 */
@@ -1495,6 +1505,31 @@ static void renderPlayersPanel(ClientSim *cs) {
         }
     }
 
+    /* Inbound alliance request — accept/decline here so it's reachable
+       with a controller (the overlay is NoNavInputs). */
+    {
+        const char *reqName = NULL;
+        BYTE reqNum = 0;
+        if (alliancePendingGet(&reqName, &reqNum)) {
+            ImGui::Separator();
+            MessageArgs args = {};
+            strncpy(args.playerName, reqName, sizeof(args.playerName) - 1);
+            args.playerFlags = clientSimGetPlayerAccountFlags(cs, reqNum);
+            clientSimGetPlayerCountryCode(cs, reqNum, args.playerCountry);
+            ImGui::TextWrapped("%s", langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
+            if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT))) {
+                clientSimAllianceAccept(cs, reqNum);
+                allianceClearPending();
+            }
+            imguiHandOnHover();
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE))) {
+                allianceClearPending();
+            }
+            imguiHandOnHover();
+        }
+    }
+
     /* In-game vote actions — siblings of Request Alliance, only during
      * the running game phase. */
     if (clientSimGetNetStatus(cs) == netRunning) {
@@ -1533,6 +1568,37 @@ static void renderPlayersPanel(ClientSim *cs) {
             } else {
                 ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP));
             }
+        }
+
+        /* Answer rows for any in-flight vote — reachable with a
+           controller (the overlay is NoNavInputs). */
+        static const uint8_t voteAnswerKinds[] = {
+            GAME_VOTE_KIND_BACK_TO_LOBBY, GAME_VOTE_KIND_SURRENDER
+        };
+        for (size_t vk = 0; vk < sizeof(voteAnswerKinds)/sizeof(voteAnswerKinds[0]); vk++) {
+            uint8_t vkind = voteAnswerKinds[vk];
+            ClientGameVoteSnapshot vs = {};
+            if (!clientSimGetGameVote(cs, vkind, &vs)) continue;
+            if (vs.active != GAME_VOTE_ACTIVE_RUNNING) continue;
+            ImGui::Separator();
+            const char *vnm = (vkind == GAME_VOTE_KIND_BACK_TO_LOBBY)
+                              ? langGetText(STR_VOTE_BACK_TO_LOBBY)
+                              : langGetText(STR_VOTE_SURRENDER);
+            ImGui::Text("%s: %u / %u", vnm,
+                        (unsigned)vs.yesCount, (unsigned)vs.threshold);
+            BYTE vme = clientSimGetMyPlayerNum(cs);
+            bool vMyYes = (vme < 16) && ((vs.votes >> vme) & 1u);
+            char yLbl[40]; snprintf(yLbl, sizeof(yLbl), "%s##vy%u", langGetText(STR_YES), (unsigned)vkind);
+            char nLbl[40]; snprintf(nLbl, sizeof(nLbl), "%s##vn%u", langGetText(STR_NO),  (unsigned)vkind);
+            if (vMyYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
+            if (ImGui::Button(yLbl, ImVec2(80, 0)))
+                clientSimNetSendGameVoteToggle(cs, vkind, GAME_VOTE_TOGGLE_YES);
+            if (vMyYes) ImGui::PopStyleColor();
+            imguiHandOnHover();
+            ImGui::SameLine();
+            if (ImGui::Button(nLbl, ImVec2(80, 0)))
+                clientSimNetSendGameVoteToggle(cs, vkind, GAME_VOTE_TOGGLE_NO);
+            imguiHandOnHover();
         }
     }
 
@@ -1813,6 +1879,18 @@ static void autoPanelReset(AutoPanelLayout &lay) {
     lay.positioned = false;
 }
 
+/* Controller-mode hint: bound glyph for `action` followed by `text`,
+   pointing the player at the Players panel where the action lives. */
+static void renderControllerActionHint(const char *action, const char *text) {
+    SDL_Texture *glyph = action ? glyphForActionAuto(action) : NULL;
+    if (glyph) {
+        const float h = ImGui::GetFrameHeight();
+        ImGui::Image((ImTextureID)glyph, ImVec2(h, h));
+        ImGui::SameLine();
+    }
+    ImGui::TextWrapped("%s", text);
+}
+
 static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
                                     const ClientGameVoteSnapshot *snap) {
     int li = voteLayoutIndex(kind);
@@ -1974,20 +2052,23 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
      * Highlight the user's current choice so they can see their stance. */
     if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
         ImGui::Spacing();
-        BYTE me = clientSimGetMyPlayerNum(cs);
-        bool myYes = (me < 16) && ((snap->votes >> me) & 1u);
-        bool myAns = clientSimGameVoteMyVote(cs, kind) || myYes;
-        (void)myAns;
+        if (uiShouldUseControllerMode()) {
+            renderControllerActionHint(SI_ACTION_VIEW_PLAYERS,
+                                       langGetText(STR_VOTE_RESPOND_IN_PLAYERS));
+        } else {
+            BYTE me = clientSimGetMyPlayerNum(cs);
+            bool myYes = (me < 16) && ((snap->votes >> me) & 1u);
 
-        if (myYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
-        if (ImGui::Button(langGetText(STR_YES), ImVec2(80, 0))) {
-            clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_YES);
-        }
-        if (myYes) ImGui::PopStyleColor();
+            if (myYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
+            if (ImGui::Button(langGetText(STR_YES), ImVec2(80, 0))) {
+                clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_YES);
+            }
+            if (myYes) ImGui::PopStyleColor();
 
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_NO), ImVec2(80, 0))) {
-            clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_NO);
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_NO), ImVec2(80, 0))) {
+                clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_NO);
+            }
         }
     }
 
@@ -2014,8 +2095,6 @@ static void renderGameVoteWidgets(ClientSim *cs) {
 /* -------------------------------------------------------
  * Alliance Request modal
  * ------------------------------------------------------- */
-static bool s_allianceVisible = false;
-
 static void renderAllianceRequest(ClientSim *cs) {
     if (s_showAllianceOpen) {
         s_allianceVisible = true;
@@ -2050,16 +2129,21 @@ static void renderAllianceRequest(ClientSim *cs) {
             ImGui::TextWrapped("%s", langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
         }
         ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(80, 0))) {
-            clientSimAllianceAccept(cs, s_alliancePlayerNum);
-            s_allianceVisible = false;
+        if (uiShouldUseControllerMode()) {
+            renderControllerActionHint(SI_ACTION_VIEW_PLAYERS,
+                                       langGetText(STR_ALLIANCE_RESPOND_IN_PLAYERS));
+        } else {
+            if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(80, 0))) {
+                clientSimAllianceAccept(cs, s_alliancePlayerNum);
+                s_allianceVisible = false;
+            }
+            imguiHandOnHover();
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0))) {
+                s_allianceVisible = false;
+            }
+            imguiHandOnHover();
         }
-        imguiHandOnHover();
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0))) {
-            s_allianceVisible = false;
-        }
-        imguiHandOnHover();
     }
     ImGui::End();
     if (!s_allianceVisible) autoPanelReset(s_allianceLayout);
