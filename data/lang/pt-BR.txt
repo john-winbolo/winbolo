@@ -1757,3 +1757,10 @@ STR_DLGBROWSER_SPECTATE=Observar
 STR_DLGBROWSER_AUTO_REFRESH=Atualização automática
 STR_DLGBROWSER_ST_LOBBY=Sala de espera
 STR_DLGBROWSER_ST_INGAME=Em Jogo
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Selecionar   B Apagar   LB Shift   RB ?123   Start Concluir
+STR_OSK_BKSP=Apagar
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Espaço
+STR_OSK_ENTER=Enter

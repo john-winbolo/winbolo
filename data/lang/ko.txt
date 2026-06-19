@@ -1757,3 +1757,10 @@ STR_DLGBROWSER_SPECTATE=관전
 STR_DLGBROWSER_AUTO_REFRESH=자동 새로 고침
 STR_DLGBROWSER_ST_LOBBY=로비
 STR_DLGBROWSER_ST_INGAME=게임 중
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=선택   B 지우기   LB Shift   RB ?123   Start 완료
+STR_OSK_BKSP=지우기
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=공백
+STR_OSK_ENTER=Enter

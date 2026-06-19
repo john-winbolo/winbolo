@@ -1753,3 +1753,10 @@ STR_DLGBROWSER_SPECTATE=Obserwuj
 STR_DLGBROWSER_AUTO_REFRESH=Automatyczne odświeżanie
 STR_DLGBROWSER_ST_LOBBY=Lobby
 STR_DLGBROWSER_ST_INGAME=W grze
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Wybierz   B Cofnij   LB Shift   RB ?123   Start Gotowe
+STR_OSK_BKSP=Cofnij
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Spacja
+STR_OSK_ENTER=Enter

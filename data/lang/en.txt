@@ -1365,6 +1365,13 @@ STR_CTRL_DISC_TITLE=Controller Disconnected
 STR_CTRL_DISC_MESSAGE=Your gamepad has been disconnected. You can reconnect it or switch to keyboard controls.
 STR_CTRL_DISC_BUTTON=Continue with keyboard and mouse
 
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Select   B Backspace   LB Shift   RB ?123   Start Done
+STR_OSK_BKSP=Bksp
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Space
+STR_OSK_ENTER=Enter
+
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})
 STR_MAPVALIDATE_TOO_MANY_PILLS=Too many pillboxes: {number} (max {number2})

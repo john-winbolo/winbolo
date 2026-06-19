@@ -1759,3 +1759,10 @@ STR_DLGBROWSER_SPECTATE=Åskåda
 STR_DLGBROWSER_AUTO_REFRESH=Automatisk uppdatering
 STR_DLGBROWSER_ST_LOBBY=Lobby
 STR_DLGBROWSER_ST_INGAME=I spel
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Välj   B Radera   LB Shift   RB ?123   Start Klar
+STR_OSK_BKSP=Radera
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Mellanslag
+STR_OSK_ENTER=Retur

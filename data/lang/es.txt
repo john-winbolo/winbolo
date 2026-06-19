@@ -1759,3 +1759,10 @@ STR_DLGBROWSER_SPECTATE=Espectador
 STR_DLGBROWSER_AUTO_REFRESH=Actualización automática
 STR_DLGBROWSER_ST_LOBBY=Sala de espera
 STR_DLGBROWSER_ST_INGAME=En partida
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Selec.   B Retroceso   LB Mayús   RB ?123   Start Listo
+STR_OSK_BKSP=Retro.
+STR_OSK_SHIFT=Mayús
+STR_OSK_SPACE=Espacio
+STR_OSK_ENTER=Intro

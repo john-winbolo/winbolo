@@ -1759,3 +1759,10 @@ STR_DLGBROWSER_SPECTATE=İzle
 STR_DLGBROWSER_AUTO_REFRESH=Otomatik yenile
 STR_DLGBROWSER_ST_LOBBY=Lobi
 STR_DLGBROWSER_ST_INGAME=Oyunda
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Seç   B Geri Al   LB Shift   RB ?123   Start Bitti
+STR_OSK_BKSP=Geri Al
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Boşluk
+STR_OSK_ENTER=Enter

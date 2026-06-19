@@ -44,6 +44,7 @@ extern "C" {
 #include "../bg_game.h"
 #include "../../lang.h"
 #include "imgui_settings.h"
+#include "imgui_keyboard.h"
 #include "imgui_keysetup.h"
 #include "imgui_winbolonet.h"
 #include "imgui_news.h"
@@ -808,6 +809,7 @@ extern "C" void imguiSettingsShow(void) {
         ImGui::End(); /* ##SettingsBg */
 
         dialogDrawNavOutline();
+        keyboardUpdate();   /* controller text entry for this dialog's fields */
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

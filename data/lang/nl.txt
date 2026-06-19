@@ -1759,3 +1759,10 @@ STR_DLGBROWSER_SPECTATE=Toeschouwen
 STR_DLGBROWSER_AUTO_REFRESH=Automatisch vernieuwen
 STR_DLGBROWSER_ST_LOBBY=Lobby
 STR_DLGBROWSER_ST_INGAME=In Spel
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Selecteer   B Backspace   LB Shift   RB ?123   Start Klaar
+STR_OSK_BKSP=Wissen
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Spatie
+STR_OSK_ENTER=Enter
