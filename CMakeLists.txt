@@ -1721,6 +1721,7 @@ add_executable(LogViewer
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
     src/gui/ui_mode.c
+    src/steam/steam_wrapper_stub.c
 )
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
