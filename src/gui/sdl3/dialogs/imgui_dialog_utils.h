@@ -102,7 +102,9 @@ static inline void dialogDismissKeyboard(SDL_Window *window) { (void)window; }
 #endif
 
 /* Compute UI scale factor from window dimensions.
- * On desktop we control the dialog window size, so scale is always 1.0.
+ * On desktop the dialogs scale with the window height (reference 1080px,
+ * clamped to [1.0, 2.5]) so they stay readable on large / 4K windows;
+ * desktop tablet mode keeps 1.0 and scales via its own path.
  * On Android (and similar full-screen platforms) the dialog renders into
  * the device's full window, so we scale based on screen height.
  * Reference height is 540px (1x scale).
@@ -116,13 +118,51 @@ static inline float dialogComputeScale(int screenW, int screenH) {
     scale = (float)screenH / 540.0f;
     if (scale < 1.0f) scale = 1.0f;
 #else
-    (void)screenH;
-    scale = 1.0f;
+    if (uiModeIsTablet()) {
+        (void)screenH;
+        scale = 1.0f;          /* tablet mode scales via its own path */
+    } else if (!uiModeIsSteamDeck() && uiUiScaleGet() != UI_SCALE_AUTO) {
+        /* Desktop with a UI-scale override: pin to the preset factor
+           instead of the window-height-derived scale. */
+        scale = uiUiScalePresetFactor(uiUiScaleGet());
+    } else {
+        scale = (float)screenH / 1080.0f;   /* desktop: scale to window height */
+        if (scale < 1.0f) scale = 1.0f;
+        if (scale > 2.5f) scale = 2.5f;
+    }
 #endif
     if (uiModeIsSteamDeck()) {
         scale *= dialogDeckFontMul();
     }
     return scale;
+}
+
+/* Desktop UI scale derived from the display. Prefers the OS content
+ * scale; falls back to display-height / 1080 when none is reported.
+ * Returns 1.0 on Steam Deck / tablet / mobile (those have their own
+ * scaling paths and must not be double-scaled). Clamped to [1.0, 2.5]. */
+static inline float dialogDesktopScale(SDL_Window *window) {
+    if (!window) return 1.0f;
+    if (uiModeIsSteamDeck() || uiModeIsTablet()) return 1.0f;
+#if BOLO_MOBILE
+    return 1.0f;
+#else
+    if (uiUiScaleGet() != UI_SCALE_AUTO) {
+        float sc = uiUiScalePresetFactor(uiUiScaleGet());
+        if (sc < 1.0f) sc = 1.0f;
+        if (sc > 2.5f) sc = 2.5f;
+        return sc;
+    }
+    float sc = SDL_GetWindowDisplayScale(window);
+    if (sc < 1.05f) {
+        SDL_DisplayID disp = SDL_GetDisplayForWindow(window);
+        const SDL_DisplayMode *dm = SDL_GetDesktopDisplayMode(disp);
+        sc = (dm && dm->h > 0) ? (float)dm->h / 1080.0f : 1.0f;
+    }
+    if (sc < 1.0f) sc = 1.0f;
+    if (sc > 2.5f) sc = 2.5f;
+    return sc;
+#endif
 }
 
 /* Load font data via SDL_IOFromFile (works on Android assets and desktop).

@@ -2439,6 +2439,16 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("SETTINGS", "Controller Prompt Ask", "Yes", buff, FILENAME_MAX);
   uiControllerPromptAskOnConnectSet(YESNO_TO_TRUEFALSE(buff[0]));
 
+  /* UI scale override (0 Auto / 1 Small / 2 Medium / 3 Large).  Auto keeps
+     the display-derived scale; a preset pins the ImGui scale.  Desktop-only;
+     Deck/tablet/mobile ignore it. */
+  prefsGetString("SETTINGS", "UI Scale", "0", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < 0 || v > 3) v = 0;
+    uiUiScaleSet((UiScalePref)v);
+  }
+
   /* Gamepad — Path B rebindable action table.  Start from defaults so
      missing prefs keys leave each action at its historical mapping;
      present keys overlay on top.  inputGamepadInit may run after this
@@ -2775,6 +2785,10 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("SETTINGS", "Controller Mode", buff);
   prefsSetString("SETTINGS", "Controller Prompt Ask",
                             TRUEFALSE_TO_STR(uiControllerPromptAskOnConnectGet()));
+
+  /* UI scale override (0 Auto / 1 Small / 2 Medium / 3 Large). */
+  intToStr((int)uiUiScaleGet(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "UI Scale", buff);
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where

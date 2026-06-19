@@ -33,6 +33,7 @@
 
 extern "C" {
 #include "../sdl3draw.h"
+#include "../sdl3imgui.h"      /* sdl3ImguiGetUiScale */
 #include "global.h"
 #include "../bg_game.h"
 #include "../glyphs.h"
@@ -889,7 +890,11 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
     ImGuiIO &io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(920, 560), ImGuiCond_Always);
+    float sc = sdl3ImguiGetUiScale();
+    float pw = 920.0f * sc, ph = 560.0f * sc;
+    if (pw > io.DisplaySize.x * 0.95f) pw = io.DisplaySize.x * 0.95f;
+    if (ph > io.DisplaySize.y * 0.95f) ph = io.DisplaySize.y * 0.95f;
+    ImGui::SetNextWindowSize(ImVec2(pw, ph), ImGuiCond_Always);
 
     bool open = true;
     if (!ImGui::BeginPopupModal(title, &open,

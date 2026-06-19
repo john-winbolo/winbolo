@@ -34,6 +34,11 @@ static bool   s_initialized = false;
 static ControllerModePref s_controllerMode = CONTROLLER_MODE_OFF;
 static bool               s_controllerPromptAsk = true;
 
+/* UI-scale override.  Default Auto preserves the display-derived scale.
+   gamefront.c writes via uiUiScaleSet on prefs load and on settings-dialog
+   change. */
+static UiScalePref s_uiScalePref = UI_SCALE_AUTO;
+
 /* Shared device preset index for Ctrl+T cycling (-1 = desktop, no preset) */
 int g_currentDevicePreset = -1;
 
@@ -157,6 +162,24 @@ void uiControllerPromptAskOnConnectSet(bool ask) {
 
 bool uiControllerPromptAskOnConnectGet(void) {
   return s_controllerPromptAsk;
+}
+
+void uiUiScaleSet(UiScalePref s) {
+  s_uiScalePref = s;
+}
+
+UiScalePref uiUiScaleGet(void) {
+  return s_uiScalePref;
+}
+
+float uiUiScalePresetFactor(UiScalePref s) {
+  switch (s) {
+    case UI_SCALE_SMALL:  return 1.0f;
+    case UI_SCALE_MEDIUM: return 1.5f;
+    case UI_SCALE_LARGE:  return 2.0f;
+    case UI_SCALE_AUTO:
+    default:              return 0.0f;
+  }
 }
 
 bool uiShouldUseControllerMode(void) {

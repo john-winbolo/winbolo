@@ -37,6 +37,9 @@ extern "C" {
 *********************************************************/
 bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer);
 
+/* UI scale applied to the main ImGui context (font + style) in sdl3ImguiSetup. */
+float sdl3ImguiGetUiScale(void);
+
 /*********************************************************
 *NAME:          sdl3ImguiPumpAndRender
 *PURPOSE:
