@@ -94,6 +94,7 @@ extern "C" {
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/imgui_deck_pause.h"
+#include "dialogs/imgui_keyboard.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
 #include "dialogs/imgui_controller_disconnect.h"
@@ -203,6 +204,22 @@ extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
 extern "C" bool steam_show_floating_keyboard(int x, int y, int w, int h);
 extern "C" void steam_dismiss_floating_keyboard(void);
+extern "C" bool steam_input_has_active_controller(void);
+
+/* Pick the on-screen-keyboard layout from the active field's flags: decimal
+   or scientific fields get the numeric pad, password fields pick the password
+   mode (the field still does its own masking), everything else — or a field
+   whose state can't be read — gets single-line text. */
+static int computeMode(void) {
+    if (ImGuiInputTextState *st = ImGui::GetInputTextState(GImGui->ActiveId)) {
+        if (st->Flags & (ImGuiInputTextFlags_CharsDecimal |
+                         ImGuiInputTextFlags_CharsScientific))
+            return OSK_MODE_NUMERIC;
+        if (st->Flags & ImGuiInputTextFlags_Password)
+            return OSK_MODE_PASSWORD;
+    }
+    return OSK_MODE_TEXT;
+}
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -4226,6 +4243,34 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     }
 
 
+    /* Controller text entry.  When a controller drives the UI and a field
+       takes focus, bring up a keyboard; the backend is chosen by an explicit
+       predicate (never the show() return value) and recomputed every frame so
+       it survives Steam Input attach/detach and controller hot-unplug.  Steam
+       Input owning the pad → Steam's floating keyboard; otherwise (raw SDL
+       pad, non-Steam launch, stub build) → ours.  Drawn inside the frame so
+       our window renders and injects into the IO queue. */
+    {
+        enum { KB_NONE, KB_STEAM, KB_OURS };
+        static int s_activeKb = KB_NONE;
+        int desired = KB_NONE;
+        if (uiShouldUseControllerMode() && ImGui::GetIO().WantTextInput)
+            desired = steam_input_has_active_controller() ? KB_STEAM : KB_OURS;
+        if (desired != s_activeKb) {
+            if      (s_activeKb == KB_STEAM) steam_dismiss_floating_keyboard();
+            else if (s_activeKb == KB_OURS)  keyboardClose();
+            if (desired == KB_STEAM) {
+                ImGuiViewport *vp = ImGui::GetMainViewport();
+                steam_show_floating_keyboard((int)vp->Pos.x, (int)vp->Pos.y,
+                                             (int)vp->Size.x, (int)vp->Size.y);
+            } else if (desired == KB_OURS) {
+                keyboardOpen(computeMode());
+            }
+            s_activeKb = desired;
+        }
+    }
+    keyboardRender();
+
     dialogDrawNavOutline();
     ImGui::EndFrame();
     dialogDrawNavOutline();
@@ -4262,33 +4307,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         }
 
         ImGui::SetCurrentContext(mainCtx);
-    }
-
-    /* Steam virtual keyboard.  When a controller is driving the UI and a text
-       field takes focus, raise Steam's floating on-screen keyboard; Steam
-       injects the typed characters back through the normal text-input path, so
-       every focused ImGui field is covered with no per-field wiring.  Driven
-       off the main context only — all controller-reachable text entry lives
-       here (pop-outs receive no controller input by design; see
-       sdl3ImguiShowSendMsg).  Edge-detected so we show / dismiss exactly once
-       each way — Steam does not auto-dismiss.  A no-op without Steam
-       (steam_show_floating_keyboard returns false in stub / desktop builds).
-       The rect is the text field Steam should avoid covering; the viewport is
-       a reasonable first approximation (Steam anchors the panel at the
-       screen edge). */
-    {
-        static bool s_kbWanted = false;
-        bool wantKb = uiShouldUseControllerMode() && ImGui::GetIO().WantTextInput;
-        if (wantKb != s_kbWanted) {
-            if (wantKb) {
-                ImGuiViewport *vp = ImGui::GetMainViewport();
-                steam_show_floating_keyboard((int)vp->Pos.x, (int)vp->Pos.y,
-                                             (int)vp->Size.x, (int)vp->Size.y);
-            } else {
-                steam_dismiss_floating_keyboard();
-            }
-            s_kbWanted = wantKb;
-        }
     }
 
     /* Apply deferred zoom change after the frame is fully rendered.
