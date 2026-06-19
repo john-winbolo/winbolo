@@ -5934,21 +5934,47 @@ function M.refresh_kill_lgm(state, info, world)
       local cost, formula_str, shoot_mx, shoot_my
       local best_shoot_cost = math.huge
 
+      -- Far-preempt guard — ALWAYS computed so it appears as a row in the cost
+      -- breakdown table (the table parses name{value} terms out of the DISPLAY
+      -- half of the formula). While on an attack_pill take, an LGM beyond shoot
+      -- range gets an exponential euclidean-distance penalty; otherwise it's 0,
+      -- and the {value} carries the numeric reason WHY (not on a take, or in
+      -- range with the actual edist vs range). far_preempt_pen folds into cost.
+      local far_preempt_pen = 0
+      local far_val
+      do
+        local _shoot_r = C.ATTACK_FAR_PREEMPT_RANGE or C.TANK_COMBAT_ENGAGE_RANGE or 7
+        if not (state.goal and state.goal.kind == "attack_pill") then
+          far_val = "0 not-atk-pill"
+        else
+          local _ex, _ey = (lgm.mx - tmx), (lgm.my - tmy)
+          local _edist = math.sqrt(_ex * _ex + _ey * _ey)
+          if _edist > _shoot_r then
+            far_preempt_pen = math.min(
+              (C.ATTACK_FAR_PREEMPT_BASE or 1.7) ^ (_edist - _shoot_r) * (C.ATTACK_FAR_PREEMPT_K or 8),
+              C.ATTACK_FAR_PREEMPT_CAP or 1e6)
+            far_val = string.format("%.0f", far_preempt_pen)
+          else
+            far_val = string.format("0 e%.1f<=%d", _edist, _shoot_r)
+          end
+        end
+      end
+
       if los_engage then
         -- (LOS_BASE + dist*LOS_PER_TILE + low_sh) * boat + threat
         local raw = C.TANK_COMBAT_LOS_BASE_COST
                   + (lgm.dist or 0) * C.TANK_COMBAT_LOS_COST_PER_TILE
                   + low_shells_penalty
-        cost = raw * boat_mult + tank_tile_threat
+        cost = raw * boat_mult + tank_tile_threat + far_preempt_pen
         -- LOS engage shoots from where we stand.
         shoot_mx, shoot_my = tmx, tmy
         formula_str = string.format(
-          "kill_lgm@(%d,%d) LOS (los_base{%.0f} + dist{%.1f}*per_tile{%.0f} + low_sh{%.0f}) * boat{%.2f} + threat{%.0f} = %.0f"..
+          "kill_lgm@(%d,%d) LOS (los_base{%.0f} + dist{%.1f}*per_tile{%.0f} + low_sh{%.0f}) * boat{%.2f} + threat{%.0f} + far_preempt{%s} = %.0f"..
           "||dist=%.1f; aim_diff=%.1f; shells=%d; near_tank=%s",
           lgm.mx, lgm.my,
           C.TANK_COMBAT_LOS_BASE_COST, lgm.dist or 0,
           C.TANK_COMBAT_LOS_COST_PER_TILE,
-          low_shells_penalty, boat_mult, tank_tile_threat, cost,
+          low_shells_penalty, boat_mult, tank_tile_threat, far_val, cost,
           lgm.dist or 0, aim_diff, info.shells or 0,
           tostring(lgm.near_tank_idnum))
       else
@@ -6007,15 +6033,15 @@ function M.refresh_kill_lgm(state, info, world)
         local raw = path_cost + KILL_LGM_BASE_COST + low_shells_penalty
                   - aim_bonus + crossfire
         if boat_mult < 1.0 then raw = raw * boat_mult end
-        cost = raw + tank_tile_threat
+        cost = raw + tank_tile_threat + far_preempt_pen
         local cold = best_shoot_cost >= 1e29
         formula_str = string.format(
-          "kill_lgm@(%d,%d) standoff (A*{%.0f}%s + base{%.0f} + low_sh{%.0f} - aim{%.0f} + xfire{%.0f}) * boat{%.2f} + threat{%.0f} = %.0f"..
+          "kill_lgm@(%d,%d) standoff (A*{%.0f}%s + base{%.0f} + low_sh{%.0f} - aim{%.0f} + xfire{%.0f}) * boat{%.2f} + threat{%.0f} + far_preempt{%s} = %.0f"..
           "||shoot_from=(%d,%d); dist=%.1f; aim_diff=%.1f; shells=%d; near_tank=%s",
           lgm.mx, lgm.my,
           path_cost, cold and " (cold)" or "",
           KILL_LGM_BASE_COST, low_shells_penalty,
-          aim_bonus, crossfire, boat_mult, tank_tile_threat, cost,
+          aim_bonus, crossfire, boat_mult, tank_tile_threat, far_val, cost,
           shoot_mx, shoot_my, lgm.dist or 0, aim_diff, info.shells or 0,
           tostring(lgm.near_tank_idnum))
       end
@@ -6082,24 +6108,6 @@ function M.refresh_kill_lgm(state, info, world)
         end
       end
 
-      -- Pill-take guard (same exponential "far_preempt" penalty attack_tank uses):
-      -- while committed to an attack_pill take, an enemy LGM beyond our shooting
-      -- range must NOT pull us off it. Penalty climbs EXPONENTIALLY with euclidean
-      -- distance past shoot range — ~0 at the edge, runaway a few tiles out — so
-      -- only a genuinely close (actually-threatening) LGM can still preempt.
-      if state.goal and state.goal.kind == "attack_pill" then
-        local _ex, _ey = (lgm.mx - tmx), (lgm.my - tmy)
-        local _edist = math.sqrt(_ex * _ex + _ey * _ey)
-        local _shoot_r = C.ATTACK_FAR_PREEMPT_RANGE or C.TANK_COMBAT_ENGAGE_RANGE or 7
-        if _edist > _shoot_r then
-          local far_preempt_pen = math.min(
-            (C.ATTACK_FAR_PREEMPT_BASE or 1.7) ^ (_edist - _shoot_r)
-              * (C.ATTACK_FAR_PREEMPT_K or 8),
-            C.ATTACK_FAR_PREEMPT_CAP or 1e6)
-          cost = cost + far_preempt_pen
-          formula_str = formula_str .. string.format(" +far_preempt{%.0f}(edist=%.1f>%d)", far_preempt_pen, _edist, _shoot_r)
-        end
-      end
 
       cand_rows[#cand_rows + 1] = {
         id = lgm.idnum or 0, mx = lgm.mx, my = lgm.my,
