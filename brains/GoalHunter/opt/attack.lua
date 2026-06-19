@@ -3774,15 +3774,24 @@ function M.update_attack_substate(goal, state, world, info)
     local function commit_fire()
       goal._blitz_committed    = true
       goal._blitz_start_armour = info.armour or 0  -- baseline for damage-gated swerve
-      if goal._blitz_shielded and goal._shield_scan and not blitz_2plus then
+      if goal._blitz_shielded and goal._shield_scan then
         goal.substate = "aim"
         goal.aim_tick = now
         goal._aim_locked = nil
-        -- GO is DEFERRED to shoot_pill entry (see the shoot_pill handler). A
-        -- shielded PPT commander spends many ticks threading aim → in_range_aim_pre
-        -- → in_range_aim → shoot_pill before it can fire; broadcasting GO now would
-        -- send the soldier charging in long before we're actually shooting from
-        -- behind the shield to support it.
+        if blitz_2plus then
+          -- Ally is here and rushing. Broadcast GO RIGHT AWAY — we no longer make
+          -- the ally wait for us to be in position. But we STILL thread the full
+          -- PPT in_range procedure to the EXACT engage spot behind the shield:
+          -- firing from off-spot risks our own shots clipping the blockers. Only
+          -- the wait is dropped, not the precise positioning.
+          goal._blitz_go = true
+          state.squad_blitz_go = true
+        end
+        -- Solo shielded (no ally): GO stays DEFERRED to shoot_pill entry (see the
+        -- shoot_pill handler). A shielded PPT commander spends many ticks threading
+        -- aim → in_range_aim_pre → in_range_aim → shoot_pill before it can fire;
+        -- broadcasting GO now would send a lone late soldier charging in long
+        -- before we're actually shooting from behind the shield to support it.
       else
         -- Overwhelm charge: no shield to thread around, so charge FAST like the
         -- soldiers. Clear _is_ppt — otherwise steering's charge uses the slow PPT
@@ -4261,12 +4270,26 @@ function M.update_attack_substate(goal, state, world, info)
       local _total, _ready = squad.blitz_ready_status(state, now, info.player_number or -1)
       _ready = _ready or 0
       if (_ready + 1) >= (C.BLITZ_MIN_READY_TO_CHARGE or 2) then
+        -- Do we already have a blocker (built this take OR pre-existing) in our
+        -- chosen shield slots? If so KEEP the PPT shield route: on GO we thread to
+        -- the exact engage spot and fire from behind cover (firing off-spot would
+        -- clip our own blockers). With nothing up yet there's no shield to fire
+        -- behind, so fall back to the unshielded overwhelm charge.
+        local _have_blocker = false
+        if goal._wall_build_list then
+          for _, _p in ipairs(goal._wall_build_list) do
+            local _tt = U.ttype(_p.mx, _p.my)
+            if _tt == C.T_BUILDING or _tt == C.T_HALFBUILD or _tt == C.T_PILLBOX then
+              _have_blocker = true; break
+            end
+          end
+        end
         goal.wall_shield = false
         goal.wall_mx = nil
         goal.wall_my = nil
         goal.substate = "blitz_wait"
         goal._blitz_ready_since = nil
-        goal._blitz_shielded = nil   -- unshielded → GO charges, doesn't fire from cover
+        goal._blitz_shielded = _have_blocker or nil   -- blocker up → GO fires PPT from cover; none → charge
         state.squad_blitz_in_position = true
         return
       end
@@ -4545,7 +4568,10 @@ function M.update_attack_substate(goal, state, world, info)
       if goal._blitz then
         goal.substate = "blitz_wait"
         goal._blitz_ready_since = nil
-        goal._blitz_shielded = true  -- a shield IS up → GO fires the PPT route, not charge
+        -- Shielded only if a blocker is actually present (normal completion built
+        -- one — cover_shots > 0; a stalled/empty build may have none, in which
+        -- case GO should overwhelm-charge rather than thread to a coverless spot).
+        goal._blitz_shielded = ((cover_shots or 0) > 0) and true or nil
         state.squad_blitz_in_position = true
       else
         goal.substate = "aim"

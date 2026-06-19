@@ -682,6 +682,14 @@ M.ATTACK_PILL_BASE_COST    = 30    -- flat cost added to every attack_pill (like
 M.ATTACK_BASE_EXTRA_COST   = 80    -- flat cost added to hostile base attacks
 M.ATTACK_BASE_THREAT_WEIGHT = 3    -- multiplier for threat at base location (penalise bases behind enemy pills/tanks)
 M.ATTACK_BASE_MAX_WALLS    = 1    -- walls the base shot may cross and still fire (we grind them down). Pillboxes (any owner), other bases, and allied tanks ALWAYS block — if the shot isn't valid we drive in for a point-blank shot instead.
+-- Crossfire-aware base engage point: instead of always driving point-blank to the
+-- base (into any pill crossfire around it), trace the approach path and stop at the
+-- CLOSEST path tile from which we can still land a shot on the base (LOS + in shell
+-- reach) AND that no more than _MAX_CROSSFIRE enemy/neutral pills can fire on. If no
+-- such tile exists, rush right up to the base (old behaviour).
+M.ATTACK_BASE_ENGAGE_AVOID_CROSSFIRE = true  -- master toggle for the standoff-engage-point picker
+M.ATTACK_BASE_ENGAGE_MAX_CROSSFIRE   = 0     -- max # of pills allowed to cover the engage tile (threat.coverage_at). 0 = fully out of pill fire; bump to 1+ to accept light exposure for a closer/faster shot
+M.ATTACK_BASE_ENGAGE_REPLAN          = 40    -- ticks between engage-point recomputes (cached on the goal between)
 -- Commit-to-finish: once we put a shot INTO a hostile base, lock onto finishing
 -- it (init.lua goal-override). Stays committed until ATTACK_BASE_COMMIT_TICKS
 -- after the last shot (refreshed each shot), then releases. Only flee or a tank/

@@ -213,17 +213,20 @@ function M.lgm_path_safe_enhanced(info, dest_mx, dest_my, threshold, tick, world
 end
 
 -- -------------------------------------------------------------------------
--- Public: closest-point-of-approach scan of all visible hostile shells
--- against a point (px, py in WU — typically our own tank).
+-- Public: closest-point-of-approach scan of all visible DANGEROUS shells
+-- (hostile or neutral — both can damage us) against a point (px, py in WU —
+-- typically our own tank).
 --
--- For each hostile OBJECT_SHOT we compute the minimum distance its forward
+-- For each such OBJECT_SHOT we compute the minimum distance its forward
 -- trajectory comes to (px, py) over its remaining flight (clamped to
 -- SHELL_MAX_STEPS, same pessimistic full-range assumption as predict_shells —
 -- we can't know how far through its life a shell already is). A shell whose
--- closest approach is within `radius` WU counts as "incoming near".
+-- closest approach is within `radius` WU counts as "incoming near" — this also
+-- covers any shell currently sitting inside the radius (its t*=0 sample is its
+-- present position).
 --
 -- Returns:
---   threatened (bool)  — at least one hostile shell passes within radius
+--   threatened (bool)  — at least one dangerous shell passes within radius
 --   detail     (table) — { {sx,sy, cx,cy, dist, threat}, ... } for the viz.
 --                        sx/sy = shell pos, cx/cy = closest-approach point.
 --
@@ -237,7 +240,12 @@ function M.shells_incoming_near(info, px, py, radius)
   local detail = {}
   if not info.objects then return false, detail end
   for _, ob in ipairs(info.objects) do
-    if ob.type == OBJECT_SHOT and (ob.info & OBJECT_HOSTILE) ~= 0 then
+    -- Any shell that can actually damage us keeps the swerve alive: hostile AND
+    -- neutral both hurt our tank (a neutral pillbox fires on everyone). Only our
+    -- own / friendly shells are safe. Filtering to hostile-only let a NEUTRAL
+    -- pill's return fire sit inside the ring while the swerve ended anyway.
+    if ob.type == OBJECT_SHOT
+       and ((ob.info & OBJECT_HOSTILE) ~= 0 or (ob.info & OBJECT_NEUTRAL) ~= 0) then
       -- Per-step velocity in WU (bsin_f/bcos_f return the unit vector;
       -- × SHELL_SPEED gives WU advanced per simulation step ≈ per tick).
       local vx =  U.bsin_f(ob.direction) * C.SHELL_SPEED

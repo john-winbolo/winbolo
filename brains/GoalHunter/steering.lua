@@ -55,9 +55,18 @@ local nav_turn_speed = U.nav_turn_speed
 -- cross that many walls (e.g. attack_base grinds 1 wall down) while STILL
 -- blocking on pillboxes (any owner), bases, and allied tanks — anywhere on the
 -- line, including beyond a within-budget wall.
-local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my, max_walls)
+-- src_wx/src_wy: optional shot origin (defaults to the tank). Lets callers test
+--   whether a shot FROM SOME OTHER TILE would reach the target (e.g. scoring a
+--   prospective engage point), not just from where the tank currently sits.
+-- require_reach: when true, a shell that runs out of range before reaching the
+--   target tile counts as NOT clear (otherwise an out-of-range shot with no
+--   blocker in the lane reads as "clear" because nothing stopped it).
+local function shot_path_clear(info, world, target_wx, target_wy, target_mx, target_my, max_walls, src_wx, src_wy, require_reach)
   max_walls = max_walls or 0
+  local ox = src_wx or info.tankx
+  local oy = src_wy or info.tanky
   local wall_count = 0
+  local reached = false
   -- Build tanks array from visible objects for tank-aware simulation
   local tank_positions = {}
   if info.objects then
@@ -73,19 +82,19 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
   end
   local tiles
   if #tank_positions > 0 then
-    tiles = cpf.simulate_shot_with_tanks(info.tankx, info.tanky,
+    tiles = cpf.simulate_shot_with_tanks(ox, oy,
                                          target_wx, target_wy,
                                          cpf.SHOT_TANK, 0,
                                          tank_positions,
                                          info.player_number or 255)
   else
-    tiles = cpf.simulate_shot(info.tankx, info.tanky,
+    tiles = cpf.simulate_shot(ox, oy,
                               target_wx, target_wy,
                               cpf.SHOT_TANK, 0)
   end
   if not tiles then return true end
-  local origin_mx = info.tankx >> 8
-  local origin_my = info.tanky >> 8
+  local origin_mx = ox >> 8
+  local origin_my = oy >> 8
   local do_viz = BRAIN_DEBUG_MODE and viz.is_on("shell_hit_dot")
   local blocked = false
   local block_reason = nil
@@ -124,6 +133,7 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
       break
     end
     if st.mx == target_mx and st.my == target_my then
+      reached = true
       if do_viz then
         viz.rect("shell_hit_dot", st.mx + 0.1, st.my + 0.1,
                  st.mx + 0.9, st.my + 0.9, 0, 255, 0, 80)
@@ -183,7 +193,7 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
                block_reason, "center", 255, 80, 80, 255, 0.6)
     end
     viz.line("shell_hit_dot",
-             info.tankx / 256.0, info.tanky / 256.0,
+             ox / 256.0, oy / 256.0,
              target_wx / 256.0, target_wy / 256.0,
              blocked and 255 or 100, blocked and 50 or 255, 50,
              blocked and 180 or 80)
@@ -192,8 +202,8 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
       local did = "shot_path"
       local hdr = string.format("Shot path: from=(%d,%d) to=(%d,%d) result=%s",
         origin_mx, origin_my, target_mx, target_my, blocked and "BLOCKED" or "CLEAR")
-      local mid_wx = (info.tankx + target_wx) / 2 / 256.0
-      local mid_wy = (info.tanky + target_wy) / 2 / 256.0
+      local mid_wx = (ox + target_wx) / 2 / 256.0
+      local mid_wy = (oy + target_wy) / 2 / 256.0
       viz.detail_circle(did, mid_wx, mid_wy, 0.3, hdr)
       if tiles then
         for i, st in ipairs(tiles) do
@@ -216,10 +226,59 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
       end
     end
   end
+  if require_reach and not blocked and not reached then return false end
   return not blocked
 end
 -- Exported so init.lua shares this exact implementation (no second copy).
 M.shot_path_clear = shot_path_clear
+
+-- Crossfire-aware engage point for attack_base. Trace the approach path to the
+-- base-adjacent rush tile, then return the CLOSEST-to-base path tile that (a) can
+-- still land a shell on the base (clear LOS + in shell reach) and (b) at most
+-- ATTACK_BASE_ENGAGE_MAX_CROSSFIRE enemy/neutral pills can fire on. That's the
+-- nearest spot we can shell the base from while staying out of pill crossfire.
+-- Returns engage_mx, engage_my — or nil to rush right up to the base. Cached on
+-- the goal, refreshed every ATTACK_BASE_ENGAGE_REPLAN ticks (keyed on the rush
+-- tile so a changed approach target forces a recompute).
+local function pick_base_engage_point(goal, state, world, info, rush_mx, rush_my)
+  if not C.ATTACK_BASE_ENGAGE_AVOID_CROSSFIRE then return nil end
+  local now = state.tick or 0
+  if goal._engage_tick and (now - goal._engage_tick) < (C.ATTACK_BASE_ENGAGE_REPLAN or 40)
+     and goal._engage_rush_mx == rush_mx and goal._engage_rush_my == rush_my then
+    return goal._engage_mx, goal._engage_my   -- nil mx => rush (cached)
+  end
+  goal._engage_tick = now
+  goal._engage_rush_mx, goal._engage_rush_my = rush_mx, rush_my
+  goal._engage_mx, goal._engage_my = nil, nil
+
+  -- Approach path tank -> base-adjacent rush tile (source first, dest last).
+  local path = rush_mx and cpf.dijkstra_trace_path_by_kind(cpf.KIND_NORMAL, rush_mx, rush_my)
+  if not path or #path < 2 then return nil end
+
+  local bmx, bmy = goal.mx, goal.my
+  local bwx, bwy = goal.wx, goal.wy
+  local maxcf    = C.ATTACK_BASE_ENGAGE_MAX_CROSSFIRE or 0
+  local maxwalls = C.ATTACK_BASE_MAX_WALLS or 1
+  local gate     = C.ATTACK_PILL_RANGE or 9.5          -- pre-filter; require_reach is authoritative
+
+  local best_mx, best_my, best_d = nil, nil, math.huge
+  for i = 1, #path do
+    local px, py = path[i].x, path[i].y
+    local dx, dy = px - bmx, py - bmy
+    local d = math.sqrt(dx * dx + dy * dy)
+    -- in firing gate, off the base tile, crossfire within budget, and a real shot
+    if d >= 1.0 and d <= gate and threat.coverage_at(px, py) <= maxcf then
+      if shot_path_clear(info, world, bwx, bwy, bmx, bmy, maxwalls,
+                         U.m2w(px), U.m2w(py), true) and d < best_d then
+        best_d, best_mx, best_my = d, px, py
+      end
+    end
+  end
+  goal._engage_mx, goal._engage_my = best_mx, best_my
+  if BRAIN_DEBUG_MODE and best_mx then print2(string.format("BASE_ENGAGE t=%d base(%d,%d) -> engage(%d,%d) d=%.1f cf<=%d (closest crossfire-free shot)", now, bmx, bmy, best_mx, best_my, best_d, maxcf)) end
+  if BRAIN_DEBUG_MODE and not best_mx then print2(string.format("BASE_ENGAGE t=%d base(%d,%d) no crossfire-free shot tile on path — rushing", now, bmx, bmy)) end
+  return best_mx, best_my
+end
 
 -- Per-tick accumulators feeding the nav-dispatch/path breakdown in the
 -- BrainTest "Capacity tiers" panel. Reset at the top of M.steer; written
@@ -2856,7 +2915,11 @@ function M.steer(state, world, info, goal)
         end
       end
       if best_amx then
-        nav_mx, nav_my = best_amx, best_amy
+        -- Crossfire-aware standoff: stop short at the closest path tile we can
+        -- still shell the base from while staying out of enemy/neutral pill fire.
+        -- Falls back to best_amx (rush right up) when no such tile exists.
+        local emx, emy = pick_base_engage_point(goal, state, world, info, best_amx, best_amy)
+        nav_mx, nav_my = emx or best_amx, emy or best_amy
         nav_wx, nav_wy = U.m2w(nav_mx), U.m2w(nav_my)
       end
     end
@@ -3162,11 +3225,13 @@ function M.steer(state, world, info, goal)
   -- No goal or idle: brake to a stop.
   -- When attack_in_range, skip the navigation block and fall through to
   -- the engage aim/shoot block below.
-  -- Attack base: when we've arrived adjacent to the base (move_dir nil),
-  -- don't return early — fall through to the attack_base shooting block.
-  local attack_base_adjacent = (goal.kind == "attack_base" and move_dir == nil
-    and U.mdist(tmx, tmy, goal.mx, goal.my) <= 2)
-  if move_dir == nil and not attack_in_range and not attack_base_adjacent then
+  -- Attack base: when we've arrived at our shooting spot (move_dir nil) and
+  -- we're within shell range of the base, don't return early — fall through to
+  -- the attack_base shooting block. Covers BOTH a point-blank rush (adjacent)
+  -- and a crossfire-safe standoff engage point picked out at range.
+  local attack_base_engaging = (goal.kind == "attack_base" and move_dir == nil
+    and U.wdist(info.tankx, info.tanky, goal.wx, goal.wy) <= (C.ATTACK_PILL_RANGE or 9.5) * 256)
+  if move_dir == nil and not attack_in_range and not attack_base_engaging then
     if info.speed > 0 then
       keys = keys | KEY_SLOWER
     end
@@ -3940,12 +4005,13 @@ function M.steer(state, world, info, goal)
     })
 
     -- (overlays drawn by init.lua — no duplicates here)
-  -- Attack base: drive CONTINUALLY right up beside the base (the nav block above
-  -- targets the cheapest reachable adjacent tile) — no holding at range. Whenever
-  -- a shot from where we are would actually HIT the base (clear LOS, <= MAX_WALLS
-  -- walls, no pillbox/other base/ally tank in the lane) and we're pointed at it,
-  -- fire. We DON'T brake to maintain range; closing in just makes the shot easier
-  -- and trivially clear. The goal ends on its own the moment the base flips to
+  -- Attack base: the nav block above drives us to our shooting spot — a
+  -- crossfire-safe standoff engage point if one exists on the approach path,
+  -- otherwise right up beside the base (rush). Whenever a shot from where we are
+  -- would actually HIT the base (clear LOS, <= MAX_WALLS walls, no pillbox/other
+  -- base/ally tank in the lane) and we're pointed at it, fire — including
+  -- opportunistically while still closing in. Once stopped at the engage point we
+  -- hold and keep shelling. The goal ends on its own the moment the base flips to
   -- dead/capturable (eval_attack_base stops matching → capture_base takes over).
   elseif goal.kind == "attack_base" and info.shells > C.SHELL_RESERVE then
     local wdist_base = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
