@@ -2602,6 +2602,14 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo)
     -- Distinguish "back line is at/under target" (the common, healthy case)
     -- from genuinely having no friendly pills, so the pool viz reads clearly.
     reject = (back_surplus <= 0) and "no_back_surplus" or "no_team_pills"
+  elseif not repos_locked and state._reposition_cooldown_tick
+         and ((state.tick or 0) - state._reposition_cooldown_tick)
+             < (C.PILL_REPOSITION_COOLDOWN_TICKS or 0) then
+    -- Per-bot rate limit: we just finished (or bailed on) a reposition. Hold off
+    -- starting a fresh one for PILL_REPOSITION_COOLDOWN_TICKS so a single tank
+    -- doesn't churn reposition after reposition. (A committed/locked reposition
+    -- is exempt above — repos_locked — so an in-progress swap still completes.)
+    reject = "cooldown"
   elseif (info.shells or 0) < (C.PILL_REPOSITION_MIN_SHELLS or 15)
          and not (repos_locked and (info.shells or 0) > 0) then
     -- Repositioning means shooting our own pill down to 0 to pick it up, then

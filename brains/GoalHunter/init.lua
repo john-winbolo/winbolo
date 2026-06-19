@@ -3525,6 +3525,10 @@ function Brain.think(info)
     -- doesn't pile on; it then grows the longer it's been since the last move.
     do
       local repositioning = (state.goal.kind == "capture_pill" and state.goal.reposition) and true or false
+      -- Per-bot reposition cooldown: capture OUR OWN reposition state (before the
+      -- ally-broadcast OR below folds teammates in) and stamp the tick it ENDS, so
+      -- eval_reposition_pill can hold off starting another for a while.
+      local self_repos = repositioning
       -- Tiles allies are demolishing for a reposition (repos=1 + their goal
       -- tile mx/my). eval_repair_pill skips these so we don't heal a pill a
       -- teammate is busy shooting down.
@@ -3546,6 +3550,10 @@ function Brain.think(info)
       if repositioning or not state.last_team_reposition_tick then
         state.last_team_reposition_tick = now
       end
+      if state._self_was_repositioning and not self_repos then
+        state._reposition_cooldown_tick = now   -- our reposition just ended → start cooldown
+      end
+      state._self_was_repositioning = self_repos
     end
 
     -- Self reposition repair-block: while OUR goal is moving a pill (and for

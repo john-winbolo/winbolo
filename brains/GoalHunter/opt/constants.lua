@@ -1075,14 +1075,14 @@ M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is 
 -- portfolio (see pill_portfolio.lua / PILL_REPOSITION_PLAN.md): cost is driven
 -- primarily by category balance (35/45/20 back/front/aggressive).
 M.PILL_REPOSITION_ENABLED       = true
-M.PILL_REPOSITION_BASE_COST     = 350   -- flat floor so reposition isn't trivially cheap (raised: was coming up too often)
-M.PILL_REPOSITION_SURPLUS_W     = 150   -- PRIMARY: discount per pill over its category allotment
+M.PILL_REPOSITION_BASE_COST     = 500   -- flat floor so reposition isn't trivially cheap (raised 350->500: reposition was firing too often)
+M.PILL_REPOSITION_SURPLUS_W     = 100   -- PRIMARY: discount per pill over its category allotment (trimmed 150->100 to keep cost nearer the floor)
 M.PILL_REPOSITION_COVERAGE_PILL_W = 25  -- cost added for ONE friendly pill covered in fire range (good mutual support: keep)
 M.PILL_REPOSITION_EXCESS_PILL_W   = 35  -- discount per friendly pill BEYOND the first in fire range (over-covered: roll surplus forward)
 M.PILL_REPOSITION_COVERAGE_BASE_W = 20  -- cost added per friendly base covered in fire range
 M.PILL_REPOSITION_ADJACENCY_W   = 30    -- discount per friendly pill in the 8 neighbors (double-take risk)
 M.PILL_REPOSITION_OVEREXTEND_W  = 60    -- discount for an aggressive pill deeper than -50 influence
-M.PILL_REPOSITION_LEGACY_CAP    = 75    -- cap on the legacy "bad spot" discount (orphan/crossfire/terrain); secondary to surplus
+M.PILL_REPOSITION_LEGACY_CAP    = 40    -- cap on the legacy "bad spot" discount (orphan/crossfire/terrain); secondary to surplus (trimmed 75->40 to fire less)
 M.PILL_ROLE_REEVAL_TICKS        = 3000  -- re-evaluate a pill's back/front/aggro role every 60s (influence shifts over time)
 M.PILL_UTILITY_TARGET_FRAC      = 0.25  -- desired share of pills available as blockers/utility; below this, hold a spare pill in tank
 M.ALLY_BLOCKER_REJECT_TICKS     = 150   -- ticks a pill stays rejected from our pools after an ally declares it a blocker while we were targeting it (yield window so we don't immediately re-pick it)
@@ -1095,6 +1095,7 @@ M.PILL_REPOSITION_FEW_PILLS_PENALTY   = 400 -- cost added when the team has few 
 M.PILL_REPOSITION_ENEMY_TANK_PAD      = 5   -- tiles beyond PILL_FIRE_RANGE within which an enemy tank counts as "around" the pill
 M.PILL_REPOSITION_ENEMY_TANK_W        = 150 -- cost added per enemy tank within (PILL_FIRE_RANGE + pad) of the pill
 M.PILL_REPOSITION_UNPROTECTED_PENALTY = 100 -- extra cost when enemy tanks are near AND no friendly pill covers this one (no support)
+M.PILL_REPOSITION_COOLDOWN_TICKS      = 1500 -- ~30s @ 50Hz: after THIS bot finishes (or abandons) a reposition, it won't START another for this long. Per-bot rate limit so a single tank doesn't churn reposition after reposition. A committed/locked reposition is never blocked by this (it's allowed to finish). 0 disables.
 M.PILL_REPOSITION_LOCK_TICKS          = 750 -- ~15s @ 50Hz: hold a committed reposition until the pill is demolished or this elapses
 M.PILL_REPOSITION_LOCK_COST           = 30  -- locked-in reposition cost (beats routine goal churn; sub-30 survival goals still preempt)
 -- Legacy (unused; kept for reference / any external readers):
