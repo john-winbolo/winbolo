@@ -693,6 +693,120 @@ int writeData(BYTE *data, int len, BYTE key) {
   return zipWriteInFileInZip(logFile, data, len);
 }
 
+/* Upper bound on the plaintext snapshot body (everything after the
+ * LOG_EVENT_SNAPSHOT marker). startDelay and timeLeft are 4 bytes each; the
+ * pill, base and start blocks are a 1-byte length plus a BYTE-max payload; each
+ * of MAX_TANKS player blocks is the same shape. A map run is a 4-byte header
+ * plus its body, and the smallest run covers a single square, so the map is
+ * bounded by one worst-case 5-byte run per map square plus the deep-sea
+ * terminator. */
+#define LOG_SNAPSHOT_BODY_MAX                                                  \
+  (2 * (int)sizeof(int32_t) + 3 * (1 + 0xFF) + MAX_TANKS * (1 + 0xFF) +        \
+   MAP_ARRAY_SIZE * MAP_ARRAY_SIZE * 5 + 8)
+
+/*********************************************************
+*NAME:          logSerializeSnapshotBody
+*AUTHOR:        John Morrison
+*PURPOSE:
+* Writes the snapshot body (everything the recorder emits after the
+* LOG_EVENT_SNAPSHOT marker, starting at startDelay) as plaintext into out,
+* returning the number of bytes written, or -1 if cap is too small. The bytes,
+* their order and their lengths match exactly what logWriteSnapshot feeds
+* writeData before the XOR; logWriteSnapshot re-applies the XOR and the zip
+* write as a post-step.
+*
+*ARGUMENTS:
+* ssim - ServerSim (contains GameSim plus server-specific fields)
+* out  - Destination buffer for the plaintext body
+* cap  - Capacity of out in bytes
+*********************************************************/
+static int logSerializeSnapshotBody(ServerSim *ssim, BYTE *out, int cap) {
+  GameSim *gs = serverSimGetGameSim(ssim);
+  BYTE scratch[512];
+  BYTE dataLen;
+  int32_t length;
+  BYTE count;
+  int off = 0;
+
+#define LOG_SNAP_PUT(src, n)                                                   \
+  do {                                                                         \
+    if (off + (int)(n) > cap) return -1;                                       \
+    memcpy(out + off, (src), (size_t)(n));                                     \
+    off += (int)(n);                                                           \
+  } while (0)
+
+  /* Start delay and time left */
+  length = htonl(serverSimGetStartDelay(ssim));
+  LOG_SNAP_PUT(&length, sizeof(int32_t));
+  length = htonl(serverSimGetGameLength(ssim));
+  LOG_SNAP_PUT(&length, sizeof(int32_t));
+
+  if (logLobbyMode == TRUE) {
+    /* Lobby snapshot — empty world: count=0 pill/base/start blocks, a single
+     * all-deep-sea terminator run, and a "not in use" stub per player slot. */
+    BYTE block[2];
+    BYTE terminator[4];
+    BYTE stub[3];
+
+    block[0] = 1;
+    block[1] = 0;
+    LOG_SNAP_PUT(block, 2); /* pills */
+    LOG_SNAP_PUT(block, 2); /* bases */
+    LOG_SNAP_PUT(block, 2); /* starts */
+
+    terminator[0] = 4;
+    terminator[1] = 0xFF;
+    terminator[2] = 0xFF;
+    terminator[3] = 0xFF;
+    LOG_SNAP_PUT(terminator, 4);
+
+    for (count = 0; count < MAX_TANKS; count++) {
+      stub[0] = 2; /* dataLen */
+      stub[1] = count;
+      stub[2] = FALSE;
+      LOG_SNAP_PUT(stub, 3);
+    }
+  } else {
+    bmapRun run;
+    BYTE xPos;
+    BYTE yPos;
+    int len;
+
+    /* Pill locations */
+    dataLen = pillsGetPillNetData(&gs->pb, scratch);
+    LOG_SNAP_PUT(&dataLen, 1);
+    LOG_SNAP_PUT(scratch, dataLen);
+
+    /* Base locations */
+    dataLen = basesGetBaseNetData(&gs->bs, scratch);
+    LOG_SNAP_PUT(&dataLen, 1);
+    LOG_SNAP_PUT(scratch, dataLen);
+
+    /* Start locations */
+    dataLen = startsGetStartNetData(&gs->ss, scratch);
+    LOG_SNAP_PUT(&dataLen, 1);
+    LOG_SNAP_PUT(scratch, dataLen);
+
+    /* The map itself, as RLE runs */
+    xPos = 0;
+    yPos = 0;
+    while (yPos < 0xFF) {
+      len = mapPrepareRun(&gs->mp, &run, &xPos, &yPos);
+      LOG_SNAP_PUT(&run, len);
+    }
+
+    /* Each player */
+    for (count = 0; count < MAX_TANKS; count++) {
+      playersPrepareLogSnapshotForPlayer(gs, &gs->plyrs, count, scratch, &dataLen);
+      LOG_SNAP_PUT(&dataLen, 1);
+      LOG_SNAP_PUT(scratch, dataLen);
+    }
+  }
+
+#undef LOG_SNAP_PUT
+  return off;
+}
+
 /*********************************************************
 *NAME:          logWriteSnapshot
 *AUTHOR:        John Morrison
@@ -703,18 +817,9 @@ int writeData(BYTE *data, int len, BYTE key) {
 * check - Whether to check if running or not
 *********************************************************/
 bool logWriteSnapshot(ServerSim *ssim, bool check) {
-  GameSim *gs = serverSimGetGameSim(ssim);
   bool returnValue = TRUE; /* Value to return */
-  BYTE dataLen;
-  BYTE savedDataLen;       /* Non XOR'd datalength */
   BYTE data[512];
   int ret;
-  BYTE count = 0;
-  bmapRun run;             /* Used to write the runs */
-  BYTE xPos;                /* Current position on the map */
-  BYTE yPos;
-  int len;                 /* Length of the run to write */
-  int32_t length;
 
   if (logIsRunning == FALSE && check == TRUE) {
     return TRUE;
@@ -747,134 +852,25 @@ bool logWriteSnapshot(ServerSim *ssim, bool check) {
     returnValue = FALSE;
   }
 
-  /* Write start delay and time left */
+  /* Serialize the snapshot body as plaintext, then emit it with a single
+   * writeData so it is XOR'd with logOldKey and zip-written in one pass. The
+   * body uses the same key throughout, so concatenating the sections produces
+   * the same on-disk bytes the per-section writes did. */
   if (returnValue == TRUE) {
-    length = htonl(serverSimGetStartDelay(ssim));
-    ret = writeData((BYTE *) &length, sizeof(int32_t), logOldKey);
-    if (ret != Z_OK) {
+    BYTE *body = (BYTE *) malloc(LOG_SNAPSHOT_BODY_MAX);
+    if (body == NULL) {
       returnValue = FALSE;
-    }
-  }
-  if (returnValue == TRUE) {
-    length = htonl(serverSimGetGameLength(ssim));
-    ret = writeData((BYTE *) &length, sizeof(int32_t), logOldKey);
-    if (ret != Z_OK) {
-      returnValue = FALSE;
-    }
-  }
-
-  if (logLobbyMode == TRUE) {
-    /* Lobby snapshot — empty world. Each of pills/bases/starts is a
-     * 1-byte length-prefixed payload with count=0 (matching the
-     * net-data getters' 0-entry shape). The map is a single all-
-     * deep-sea terminator run (datalen=4, y=sx=ex=0xFF), which the
-     * viewer's run reader at bolo_map.c:371 treats as end-of-map.
-     * Each player slot is the 2-byte "not in use" stub the viewer
-     * already handles at screen.c:1356.
-     *
-     * writeData XORs its buffer in place, so we re-initialise the
-     * scratch bytes ahead of every call rather than reusing them
-     * across calls. */
-    BYTE lenByte;
-    BYTE payload;
-    BYTE terminator[4];
-    BYTE stub[2];
-    if (returnValue == TRUE) {
-      lenByte = 1;
-      payload = 0;
-      ret = writeData(&lenByte, 1, logOldKey);
-      if (ret == Z_OK) ret = writeData(&payload, 1, logOldKey);
-      if (ret != Z_OK) returnValue = FALSE;
-    }
-    if (returnValue == TRUE && logFile) {
-      lenByte = 1;
-      payload = 0;
-      ret = writeData(&lenByte, 1, logOldKey);
-      if (ret == Z_OK) ret = writeData(&payload, 1, logOldKey);
-      if (ret != Z_OK) returnValue = FALSE;
-    }
-    if (returnValue == TRUE && logFile) {
-      lenByte = 1;
-      payload = 0;
-      ret = writeData(&lenByte, 1, logOldKey);
-      if (ret == Z_OK) ret = writeData(&payload, 1, logOldKey);
-      if (ret != Z_OK) returnValue = FALSE;
-    }
-    if (returnValue == TRUE && logFile) {
-      terminator[0] = 4;
-      terminator[1] = 0xFF;
-      terminator[2] = 0xFF;
-      terminator[3] = 0xFF;
-      ret = writeData(terminator, 4, logOldKey);
-      if (ret != Z_OK) returnValue = FALSE;
-    }
-    while (count < MAX_TANKS && returnValue == TRUE) {
-      dataLen   = 2;
-      stub[0]   = count;
-      stub[1]   = FALSE;
-      ret = writeData(&dataLen, 1, logOldKey);
-      if (ret == Z_OK) ret = writeData(stub, 2, logOldKey);
-      if (ret != Z_OK) returnValue = FALSE;
-      count++;
-    }
-  } else {
-    /* Write pill locations */
-    if (returnValue == TRUE) {
-      dataLen = pillsGetPillNetData(&gs->pb, data);
-      savedDataLen = dataLen;
-      ret = writeData(&dataLen, 1, logOldKey);
-      ret = writeData(data, savedDataLen, logOldKey);
-      if (ret != Z_OK) {
+    } else {
+      int bodyLen = logSerializeSnapshotBody(ssim, body, LOG_SNAPSHOT_BODY_MAX);
+      if (bodyLen < 0) {
         returnValue = FALSE;
-      }
-    }
-    /* Write bases locations */
-    if (returnValue == TRUE && logFile) {
-      dataLen = basesGetBaseNetData(&gs->bs, data);
-      savedDataLen = dataLen;
-      ret = writeData(&dataLen, 1, logOldKey);
-      ret = writeData(data, savedDataLen, logOldKey);
-      if (ret != Z_OK) {
-        returnValue = FALSE;
-      }
-    }
-    /* Write starts locations */
-    if (returnValue == TRUE && logFile) {
-      dataLen = startsGetStartNetData(&gs->ss, data);
-      savedDataLen = dataLen;
-      ret = writeData(&dataLen, 1, logOldKey);
-      ret = writeData(data, savedDataLen, logOldKey);
-      if (ret != Z_OK) {
-        returnValue = FALSE;
-      }
-    }
-
-    /* Write the map itself */
-    if (returnValue == TRUE && logFile) {
-      xPos = 0;
-      yPos = 0;
-      while (yPos < 0xFF && returnValue == TRUE) {
-        /* Process runs */
-        len = mapPrepareRun(&gs->mp, &run, &xPos, &yPos);
-        /* Write the run out */
-        ret = writeData((BYTE *) &run, len, logOldKey);
+      } else {
+        ret = writeData(body, bodyLen, logOldKey);
         if (ret != Z_OK) {
           returnValue = FALSE;
         }
       }
-    }
-
-    /* Write each player */
-    while (count < MAX_TANKS && returnValue == TRUE) {
-      playersPrepareLogSnapshotForPlayer(gs, &gs->plyrs, count, data, &dataLen);
-      savedDataLen = dataLen;
-      ret = writeData((BYTE *) &dataLen, 1, logOldKey);
-      ret = writeData(data, savedDataLen, logOldKey);
-
-      if (ret != Z_OK) {
-        returnValue = FALSE;
-      }
-      count++;
+      free(body);
     }
   }
   logOldKey = logKey;
