@@ -6,13 +6,13 @@
 # pass/fail, so it deliberately lives outside ctest.
 #
 # Usage:
-#   tests/fuzz/run_discovery.sh <wire_codec|server_dispatch> [seconds] [build-dir]
+#   tests/fuzz/run_discovery.sh <wire_codec|channel_frame|server_dispatch|client_snapshot|join_accept> [seconds] [build-dir]
 #
 # Example:
 #   tests/fuzz/run_discovery.sh wire_codec 300 build-fuzz
 set -euo pipefail
 
-target="${1:?usage: run_discovery.sh <wire_codec|server_dispatch> [seconds] [build-dir]}"
+target="${1:?usage: run_discovery.sh <wire_codec|channel_frame|server_dispatch|client_snapshot|join_accept> [seconds] [build-dir]}"
 seconds="${2:-300}"
 builddir="${3:-build-fuzz}"
 
