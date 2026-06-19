@@ -6112,6 +6112,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     SDL_GetWindowSize(window, &screenW, &screenH);
     if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
     float s = dialogComputeScale(screenW, screenH);
+#if !BOLO_MOBILE
+    if (!uiModeIsSteamDeck()) s = 1.0f;   /* lobby + nested map chooser / start picker: desktop scaling deferred to the lobby rework */
+#endif
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);

@@ -102,7 +102,9 @@ static inline void dialogDismissKeyboard(SDL_Window *window) { (void)window; }
 #endif
 
 /* Compute UI scale factor from window dimensions.
- * On desktop we control the dialog window size, so scale is always 1.0.
+ * On desktop the dialogs scale with the window height (reference 1080px,
+ * clamped to [1.0, 2.5]) so they stay readable on large / 4K windows;
+ * desktop tablet mode keeps 1.0 and scales via its own path.
  * On Android (and similar full-screen platforms) the dialog renders into
  * the device's full window, so we scale based on screen height.
  * Reference height is 540px (1x scale).
@@ -116,8 +118,14 @@ static inline float dialogComputeScale(int screenW, int screenH) {
     scale = (float)screenH / 540.0f;
     if (scale < 1.0f) scale = 1.0f;
 #else
-    (void)screenH;
-    scale = 1.0f;
+    if (uiModeIsTablet()) {
+        (void)screenH;
+        scale = 1.0f;          /* tablet mode scales via its own path */
+    } else {
+        scale = (float)screenH / 1080.0f;   /* desktop: scale to window height */
+        if (scale < 1.0f) scale = 1.0f;
+        if (scale > 2.5f) scale = 2.5f;
+    }
 #endif
     if (uiModeIsSteamDeck()) {
         scale *= dialogDeckFontMul();
