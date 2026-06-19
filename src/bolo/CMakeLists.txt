@@ -79,6 +79,7 @@ add_library(bolo_static STATIC
     scroll_item_list.c
     shells.c
     sounddist.c
+    spectator_ring.c
     starts.c
     swamp.c
     tank.c

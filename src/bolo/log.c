@@ -40,6 +40,7 @@
 #include "netpacks.h"
 #include "zip.h"
 #include "server_sim.h"
+#include "log_internal.h"
 #include "../winbolonet/winbolonet_core.h"
 
 zipFile logFile;               /* File to log to */
@@ -115,6 +116,21 @@ static bool logitemMutatesWorld(logitem itemNum) {
 
 void logSetLobbyMode(bool enabled) {
   logLobbyMode = enabled ? TRUE : FALSE;
+}
+
+/* Spectator ring tap. When logSpectatorRing is non-NULL, logAddEvent appends
+ * each emitted event's plaintext to logSpectatorAcc and logWriteTick records
+ * one ring tick per call (a keyframe snapshot body, or the accumulated event
+ * bytes). All off by default — NULL ring means the tap costs nothing. */
+static SpectatorRing *logSpectatorRing = NULL;
+static ServerSim *logSpectatorSim = NULL;
+static BYTE logSpectatorAcc[LOG_MEMORY_BUFFER_SIZE]; /* this tick's plaintext events */
+static int logSpectatorAccLen = 0;
+
+void logSetSpectatorRing(SpectatorRing *ring, ServerSim *sim) {
+  logSpectatorRing = ring;
+  logSpectatorSim = sim;
+  logSpectatorAccLen = 0;
 }
 
 /*********************************************************
@@ -203,6 +219,29 @@ void logWriteTick() {
   }
 
   if (logIsRunning == TRUE) {
+    /* Spectator ring tap: record one ring tick for the registered sim, using
+       the tick's accumulated events or a fresh keyframe. Independent of the
+       .wbv logMem path below. */
+    if (logSpectatorRing != NULL && logSpectatorSim != NULL) {
+      uint32_t gameTick = serverSimGetTick(logSpectatorSim);
+      if (spectatorRingNeedsKeyframe(logSpectatorRing, gameTick) == true) {
+        BYTE *body = (BYTE *) malloc(LOG_SNAPSHOT_BODY_MAX);
+        if (body != NULL) {
+          int bodyLen = logSerializeSnapshotBody(logSpectatorSim, body,
+                                                 LOG_SNAPSHOT_BODY_MAX);
+          if (bodyLen >= 0) {
+            spectatorRingRecordTick(logSpectatorRing, gameTick, true, body,
+                                    bodyLen);
+          }
+          free(body);
+        }
+      } else {
+        spectatorRingRecordTick(logSpectatorRing, gameTick, false,
+                                logSpectatorAcc, logSpectatorAccLen);
+      }
+      logSpectatorAccLen = 0;
+    }
+
     if (logNumEvents > 0) {
       logWriteEmpty();
       logWriteEvents(savedKey);
@@ -604,6 +643,13 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
       *(logMem+logMemSize) = event[count] ^ logKey;
       logMemSize++;
     }
+    /* Feed the same plaintext to the spectator ring's per-tick accumulator,
+       so the tap inherits this function's emit decisions and lobby gating. */
+    if (logSpectatorRing != NULL &&
+        logSpectatorAccLen + eventLen <= (int)sizeof(logSpectatorAcc)) {
+      memcpy(logSpectatorAcc + logSpectatorAccLen, event, (size_t)eventLen);
+      logSpectatorAccLen += eventLen;
+    }
     logNumEvents++;
     logKey = itemNum;
   }
@@ -640,17 +686,6 @@ int writeData(BYTE *data, int len, BYTE key) {
   return zipWriteInFileInZip(logFile, data, len);
 }
 
-/* Upper bound on the plaintext snapshot body (everything after the
- * LOG_EVENT_SNAPSHOT marker). startDelay and timeLeft are 4 bytes each; the
- * pill, base and start blocks are a 1-byte length plus a BYTE-max payload; each
- * of MAX_TANKS player blocks is the same shape. A map run is a 4-byte header
- * plus its body, and the smallest run covers a single square, so the map is
- * bounded by one worst-case 5-byte run per map square plus the deep-sea
- * terminator. */
-#define LOG_SNAPSHOT_BODY_MAX                                                  \
-  (2 * (int)sizeof(int32_t) + 3 * (1 + 0xFF) + MAX_TANKS * (1 + 0xFF) +        \
-   MAP_ARRAY_SIZE * MAP_ARRAY_SIZE * 5 + 8)
-
 /*********************************************************
 *NAME:          logSerializeSnapshotBody
 *AUTHOR:        John Morrison
@@ -667,7 +702,7 @@ int writeData(BYTE *data, int len, BYTE key) {
 * out  - Destination buffer for the plaintext body
 * cap  - Capacity of out in bytes
 *********************************************************/
-static int logSerializeSnapshotBody(ServerSim *ssim, BYTE *out, int cap) {
+int logSerializeSnapshotBody(ServerSim *ssim, BYTE *out, int cap) {
   GameSim *gs = serverSimGetGameSim(ssim);
   BYTE scratch[512];
   BYTE dataLen;

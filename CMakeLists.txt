@@ -2617,6 +2617,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # ChannelMux reliability primitive: the off-socket loss/reorder/dup/
     # window/boundary matrix (two muxes + an in-test frame shuttle).
     tests/unit/test_channel_mux.c
+    # Spectator delayed-stream ring buffer: segmentation across a game-tick
+    # reset, keyframe-at-segment-start, mid-interval seek + forward replay,
+    # segment isolation, previous-generation read, cold start and the
+    # retention window boundary, all driven with synthetic byte payloads.
+    tests/unit/test_spectator_ring.c
     # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
@@ -2954,6 +2959,7 @@ set(_unit_test_names
     viewtick_displayed_tick
     wire_corpus
     channel_mux
+    spectator_ring
     bulk_transfer
     overflow_guards
     channel_reset_codec_roundtrip

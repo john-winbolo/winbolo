@@ -177,6 +177,12 @@ int run_net_impair(void);
  * instances and an in-test frame shuttle. No sockets, no threads. */
 int run_channel_mux(void);
 
+/* Spectator delayed-stream ring (test_spectator_ring.c): segmentation,
+ * keyframe-at-segment-start, mid-interval seek + replay, segment isolation,
+ * previous-generation read, cold start and the retention window boundary,
+ * proven with synthetic byte payloads. */
+int run_spectator_ring(void);
+
 /* Bulk-transfer framing (test_bulk_transfer.c): the off-socket stream-header
  * round-trip, byte-identical blob reassembly under loss + reorder, header
  * robustness, pipelining and the send-side serializer guard. */
