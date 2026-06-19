@@ -27,6 +27,7 @@
 
 extern "C" {
 #include "../input_gamepad.h"
+#include "../../gamefront.h"   /* gameFrontGetLanguageCode: accent set */
 }
 
 /* --- Layout data ------------------------------------------------------ */
@@ -50,7 +51,10 @@ typedef struct {
     uint32_t    cp;
 } OskKey;
 
-#define OSK_MAX_ROWS 5
+/* Max grid rows across all layouts.  The text-mode symbols page is the
+   tallest: three fixed symbol rows + up to three appended accent rows + the
+   control row. */
+#define OSK_MAX_ROWS 8
 
 typedef struct {
     const OskKey *rows[OSK_MAX_ROWS];
@@ -133,16 +137,165 @@ static const OskLayout kLetters = {
     {NELEMS(kLettersR0), NELEMS(kLettersR1), NELEMS(kLettersR2), NELEMS(kLettersR3), 0},
     4
 };
-static const OskLayout kSymbols = {
-    {kSymbolsR0, kSymbolsR1, kSymbolsR2, kSymbolsR3, nullptr},
-    {NELEMS(kSymbolsR0), NELEMS(kSymbolsR1), NELEMS(kSymbolsR2), NELEMS(kSymbolsR3), 0},
-    4
-};
 static const OskLayout kNumeric = {
     {kNumericR0, kNumericR1, kNumericR2, kNumericR3, kNumericR4},
     {NELEMS(kNumericR0), NELEMS(kNumericR1), NELEMS(kNumericR2), NELEMS(kNumericR3), NELEMS(kNumericR4)},
     5
 };
+
+/* --- Per-language accents --------------------------------------------- */
+
+/* Lowercase accent codepoints offered on the symbols page, keyed by UI
+   language code (the lowercased BCP-47 string from gameFrontGetLanguageCode).
+   English and any unlisted code get no accents. */
+typedef struct {
+    const char     *lang;
+    const uint32_t *cps;
+    int             count;
+} OskAccentSet;
+
+static const uint32_t kAccentEs[] = {
+    0x00E1,0x00E9,0x00ED,0x00F3,0x00FA,0x00FC,0x00F1,0x00BF,0x00A1 };          /* á é í ó ú ü ñ ¿ ¡ */
+static const uint32_t kAccentFr[] = {
+    0x00E0,0x00E2,0x00E6,0x00E7,0x00E9,0x00E8,0x00EA,0x00EB,0x00EE,0x00EF,
+    0x00F4,0x0153,0x00F9,0x00FB,0x00FC,0x00FF };                               /* à â æ ç é è ê ë î ï ô œ ù û ü ÿ */
+static const uint32_t kAccentIt[] = {
+    0x00E0,0x00E8,0x00E9,0x00EC,0x00ED,0x00EE,0x00F2,0x00F3,0x00F9 };          /* à è é ì í î ò ó ù */
+static const uint32_t kAccentDe[] = {
+    0x00E4,0x00F6,0x00FC,0x00DF };                                            /* ä ö ü ß */
+static const uint32_t kAccentNl[] = {
+    0x00E1,0x00E9,0x00ED,0x00F3,0x00FA,0x00E8,0x00EB,0x00EF,0x00F6,0x00FC };   /* á é í ó ú è ë ï ö ü */
+static const uint32_t kAccentPl[] = {
+    0x0105,0x0107,0x0119,0x0142,0x0144,0x00F3,0x015B,0x017A,0x017C };          /* ą ć ę ł ń ó ś ź ż */
+static const uint32_t kAccentPtBr[] = {
+    0x00E1,0x00E0,0x00E2,0x00E3,0x00E7,0x00E9,0x00EA,0x00ED,0x00F3,0x00F4,
+    0x00F5,0x00FA,0x00FC };                                                    /* á à â ã ç é ê í ó ô õ ú ü */
+static const uint32_t kAccentSv[] = {
+    0x00E5,0x00E4,0x00F6 };                                                    /* å ä ö */
+static const uint32_t kAccentTr[] = {
+    0x00E7,0x011F,0x0131,0x00F6,0x015F,0x00FC };                              /* ç ğ ı ö ş ü */
+static const uint32_t kAccentCs[] = {
+    0x00E1,0x010D,0x010F,0x00E9,0x011B,0x00ED,0x0148,0x00F3,0x0159,0x0161,
+    0x0165,0x00FA,0x016F,0x00FD,0x017E };                                      /* á č ď é ě í ň ó ř š ť ú ů ý ž */
+
+static const OskAccentSet kAccentSets[] = {
+    { "es",    kAccentEs,   NELEMS(kAccentEs)   },
+    { "fr",    kAccentFr,   NELEMS(kAccentFr)   },
+    { "it",    kAccentIt,   NELEMS(kAccentIt)   },
+    { "de",    kAccentDe,   NELEMS(kAccentDe)   },
+    { "nl",    kAccentNl,   NELEMS(kAccentNl)   },
+    { "pl",    kAccentPl,   NELEMS(kAccentPl)   },
+    { "pt-br", kAccentPtBr, NELEMS(kAccentPtBr) },
+    { "sv",    kAccentSv,   NELEMS(kAccentSv)   },
+    { "tr",    kAccentTr,   NELEMS(kAccentTr)   },
+    { "cs",    kAccentCs,   NELEMS(kAccentCs)   },
+};
+
+/* Length of the script-tag prefix before the first '-' (whole string if no
+   '-').  Used so a region-qualified code matches a bare-language entry and a
+   bare code matches a region-qualified entry. */
+static int langBaseLen(const char *s) {
+    const char *dash = SDL_strchr(s, '-');
+    return dash ? (int)(dash - s) : (int)SDL_strlen(s);
+}
+
+/* Resolve a language code to an accent set: exact (case-insensitive) match
+   first, then a base-tag match (prefix before '-' on both sides).  No match,
+   empty code, or English → empty set. */
+static void resolveAccents(const char *code, const uint32_t **outCps, int *outN) {
+    *outCps = NULL;
+    *outN   = 0;
+    if (!code || !code[0]) return;
+    for (int i = 0; i < NELEMS(kAccentSets); i++) {
+        if (SDL_strcasecmp(code, kAccentSets[i].lang) == 0) {
+            *outCps = kAccentSets[i].cps;
+            *outN   = kAccentSets[i].count;
+            return;
+        }
+    }
+    int codeBase = langBaseLen(code);
+    for (int i = 0; i < NELEMS(kAccentSets); i++) {
+        int setBase = langBaseLen(kAccentSets[i].lang);
+        if (codeBase == setBase &&
+            SDL_strncasecmp(code, kAccentSets[i].lang, (size_t)codeBase) == 0) {
+            *outCps = kAccentSets[i].cps;
+            *outN   = kAccentSets[i].count;
+            return;
+        }
+    }
+}
+
+/* --- Assembled symbols page ------------------------------------------- */
+
+#define OSK_MAX_ACCENTS    30   /* up to 3 rows of 10 */
+#define OSK_ACCENTS_PER_ROW 10
+
+/* The symbols page is rebuilt at open time so the accent rows can vary with
+   the UI language.  The accent keycaps and their UTF-8 captions live in
+   persistent storage that the layout's row pointers reference. */
+static OskKey   s_accentKeys[OSK_MAX_ACCENTS];
+static char     s_accentCaps[OSK_MAX_ACCENTS][5];   /* UTF-8 + NUL */
+static OskLayout s_more;
+
+static void utf8Encode(uint32_t cp, char out[5]) {
+    if (cp < 0x80) {
+        out[0] = (char)cp;
+        out[1] = 0;
+    } else if (cp < 0x800) {
+        out[0] = (char)(0xC0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3F));
+        out[2] = 0;
+    } else if (cp < 0x10000) {
+        out[0] = (char)(0xE0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F));
+        out[3] = 0;
+    } else {
+        out[0] = (char)(0xF0 | (cp >> 18));
+        out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        out[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[3] = (char)(0x80 | (cp & 0x3F));
+        out[4] = 0;
+    }
+}
+
+/* Assemble s_more: the fixed symbol rows, then the current language's accent
+   rows (≤10 keys each, ≤3 rows), then the control row.  An empty accent set
+   leaves just the original symbol page. */
+static void buildSymbolsPage(void) {
+    char code[16];
+    gameFrontGetLanguageCode(code, (int)sizeof(code));
+    const uint32_t *cps = NULL;
+    int n = 0;
+    resolveAccents(code, &cps, &n);
+    if (n > OSK_MAX_ACCENTS) n = OSK_MAX_ACCENTS;
+
+    int row = 0;
+    s_more.rows[row] = kSymbolsR0; s_more.rowLen[row] = NELEMS(kSymbolsR0); row++;
+    s_more.rows[row] = kSymbolsR1; s_more.rowLen[row] = NELEMS(kSymbolsR1); row++;
+    s_more.rows[row] = kSymbolsR2; s_more.rowLen[row] = NELEMS(kSymbolsR2); row++;
+
+    int idx = 0;
+    while (idx < n) {
+        int rowCount = n - idx;
+        if (rowCount > OSK_ACCENTS_PER_ROW) rowCount = OSK_ACCENTS_PER_ROW;
+        for (int c = 0; c < rowCount; c++) {
+            uint32_t cp = cps[idx + c];
+            utf8Encode(cp, s_accentCaps[idx + c]);
+            s_accentKeys[idx + c].kind  = OSK_K_CHAR;
+            s_accentKeys[idx + c].base  = s_accentCaps[idx + c];
+            s_accentKeys[idx + c].shift = s_accentCaps[idx + c];
+            s_accentKeys[idx + c].cp    = cp;
+        }
+        s_more.rows[row]   = &s_accentKeys[idx];
+        s_more.rowLen[row] = rowCount;
+        row++;
+        idx += rowCount;
+    }
+
+    s_more.rows[row] = kSymbolsR3; s_more.rowLen[row] = NELEMS(kSymbolsR3); row++;
+    s_more.numRows = row;
+}
 
 /* --- State ------------------------------------------------------------ */
 
@@ -172,7 +325,7 @@ static bool latched(bool pressed, bool *armed) {
 
 static const OskLayout *currentLayout(void) {
     if (s_mode == OSK_MODE_NUMERIC) return &kNumeric;
-    return s_symbols ? &kSymbols : &kLetters;
+    return s_symbols ? &s_more : &kLetters;
 }
 
 /* Shift only applies to the letters page. */
@@ -231,6 +384,7 @@ void keyboardOpen(int mode) {
     s_mode    = mode;
     s_shift   = false;
     s_symbols = false;
+    buildSymbolsPage();   /* refresh accent rows for the current UI language */
     s_row     = 0;
     s_col     = 0;
     s_armUp = s_armDown = s_armLeft = s_armRight = true;
