@@ -1687,6 +1687,8 @@ static const LangEntry langTable[] = {
     {1804, "Controller Disconnected"},
     {1805, "Your gamepad has been disconnected. You can reconnect it or switch to keyboard controls."},
     {1806, "Continue with keyboard and mouse"},
+    {1807, "Respond in the Players menu"},
+    {1808, "Respond in the Players menu"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

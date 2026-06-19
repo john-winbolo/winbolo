@@ -1426,6 +1426,8 @@
 #define STR_CTRL_DISC_TITLE                 1804
 #define STR_CTRL_DISC_MESSAGE               1805
 #define STR_CTRL_DISC_BUTTON                1806
+#define STR_VOTE_RESPOND_IN_PLAYERS         1807
+#define STR_ALLIANCE_RESPOND_IN_PLAYERS     1808
 
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
