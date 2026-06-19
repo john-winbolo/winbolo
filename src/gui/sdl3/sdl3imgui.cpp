@@ -3229,7 +3229,17 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
 
     ImGui::StyleColorsDark();
     imguiApplyBoloTheme();
-    imguiLoadBoloFont(18.0f * dialogDeckFontMul());
+
+    /* One scale value drives both the font size and the style metrics.
+       Tablet uses FontGlobalScale below (so uiScale stays 1); Deck keeps
+       its 1.5x; desktop derives the scale from the display so dialogs are
+       readable on high-DPI / 4K screens. */
+    float uiScale;
+    if (uiModeIsTablet())          uiScale = 1.0f;
+    else if (uiModeIsSteamDeck())  uiScale = dialogDeckFontMul();  /* 1.5, unchanged */
+    else                           uiScale = dialogDesktopScale(window);
+
+    imguiLoadBoloFont(18.0f * uiScale);
 
     /* Tablet mode: scale up ImGui for touch targets.
        Scale proportionally to the logical coordinate space height.
@@ -3244,16 +3254,14 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
         style.ItemSpacing       = ImVec2(12 * ps, 8 * ps);
         style.TouchExtraPadding = ImVec2(8 * ps, 8 * ps);
         style.ScrollbarSize     = 24.0f * ps;
-    } else if (uiModeIsSteamDeck()) {
+    } else if (uiScale > 1.0f) {
         /* Match the bumped font size with proportionally bumped layout
            metrics (FramePadding, ItemSpacing, ScrollbarSize, etc.) so
            in-game dialogs (Settings / Players / Send Message / pause
-           overlay) don't clip text or overlap.  No touch padding —
-           Deck uses desktop hover/click feel. */
-        const float deckMul = dialogDeckFontMul();
-        if (deckMul > 1.0f) {
-            ImGui::GetStyle().ScaleAllSizes(deckMul);
-        }
+           overlay) don't clip text or overlap.  Covers Steam Deck (1.5x)
+           and high-DPI desktop.  No touch padding — both use desktop
+           hover/click feel. */
+        ImGui::GetStyle().ScaleAllSizes(uiScale);
     }
 
     if (!ImGui_ImplSDL3_InitForSDLRenderer(window, renderer)) return false;
