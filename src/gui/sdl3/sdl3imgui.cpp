@@ -238,6 +238,11 @@ extern "C" bool showNetworkDebugMessages;
 static SDL_Window   *s_window   = nullptr;
 static SDL_Renderer *s_renderer = nullptr;
 
+/* UI scale applied to the main in-game ImGui context (font + style), set in
+   sdl3ImguiSetup.  Dialog seed/min sizes and the window minimum multiply by
+   this so they track the scaled font.  1.0 until setup runs. */
+static float s_uiScale = 1.0f;
+
 /* Brain settings window state */
 static bool              s_brainSettingsOpen    = false;
 static LuaBrainSetting  *s_brainSettings        = nullptr;
@@ -741,7 +746,9 @@ static void renderSysInfoContent(void) {
 static void renderSysInfoPanel(void) {
     if (!s_showSysInfo || s_popSysInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(440, 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(440 * s_uiScale, 600 * s_uiScale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
+                                        ImVec2(FLT_MAX, FLT_MAX));
     char title[128];
     snprintf(title, sizeof(title), "%s###sysinfo", langGetText(STR_DLGSYSINFO_TITLE));
     if (!ImGui::Begin(title, &s_showSysInfo)) {
@@ -966,7 +973,9 @@ static void renderNetInfoContent(ClientSim *cs) {
 static void renderNetInfoPanel(ClientSim *cs) {
     if (!s_showNetInfo || s_popNetInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(360, 420), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360 * s_uiScale, 420 * s_uiScale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
+                                        ImVec2(FLT_MAX, FLT_MAX));
     char title[128];
     snprintf(title, sizeof(title), "%s###netinfo", langGetText(STR_DLGNETINFO_TITLE));
     if (!ImGui::Begin(title, &s_showNetInfo)) {
@@ -1032,7 +1041,9 @@ static void renderGameInfoContent(ClientSim *cs) {
 static void renderGameInfoPanel(ClientSim *cs) {
     if (!s_showGameInfo || s_popGameInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(320, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(320 * s_uiScale, 200 * s_uiScale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
+                                        ImVec2(FLT_MAX, FLT_MAX));
     char title[128];
     snprintf(title, sizeof(title), "%s###gameinfo", langGetText(STR_DLGGAMEINFO_TITLE));
     if (!ImGui::Begin(title, &s_showGameInfo)) {
@@ -1236,7 +1247,7 @@ static void renderSendMsgPanel(ClientSim *cs) {
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 #endif
     } else {
-        ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(350 * s_uiScale, 0), ImGuiCond_FirstUseEver);
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showSendMsg;
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize;
@@ -1339,7 +1350,9 @@ static void renderPlayersPanel(ClientSim *cs) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     } else {
-        ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(340 * s_uiScale, 420 * s_uiScale), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
+                                            ImVec2(FLT_MAX, FLT_MAX));
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
     ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
@@ -1628,6 +1641,9 @@ static void renderJoinConfirmModal(void) {
     }
     static float s_fadeJoinConfirm = 0.0f;
     bool joinOpen = true;
+    ImGuiIO &io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal(title, &joinOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
@@ -1669,6 +1685,9 @@ static void renderChangeNameModal(ClientSim *cs) {
     }
     static float s_fadeChangeName = 0.0f;
     bool changeNameOpen = true;
+    ImGuiIO &io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal(title, &changeNameOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
@@ -2162,6 +2181,9 @@ static void renderPasswordModal(void) {
     }
     static float s_fadePassword = 0.0f;
     bool passOpen = true;
+    ImGuiIO &io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal(title, &passOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
@@ -2349,12 +2371,13 @@ static void renderSettingsPanel(ClientSim *cs) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     } else {
-        /* Scale the panel with the Deck font/layout multiplier — the
-           font and style sizes are bumped 1.5x there, so a fixed 460px
-           window clips the wider translated labels and combos. */
-        const float deckMul = dialogDeckFontMul();
-        ImGui::SetNextWindowSize(ImVec2(520 * deckMul, 580 * deckMul),
+        /* Scale the panel with the UI scale — the font and style sizes are
+           bumped on Deck (1.5x) and high-DPI desktop, so a fixed 520px window
+           clips the wider translated labels and combos. */
+        ImGui::SetNextWindowSize(ImVec2(520 * s_uiScale, 580 * s_uiScale),
                                  ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
+                                            ImVec2(FLT_MAX, FLT_MAX));
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showSettings;
     ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
@@ -3084,9 +3107,13 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
         s_inModalResize = true;
     }
     if (msg == WM_GETMINMAXINFO) {
-        /* Enforce 1x minimum window size */
+        /* Enforce the UI-scaled minimum window size.  Scale the client area by
+           s_uiScale (the non-client frame/border is fixed and not scaled), so
+           the 515:347 content ratio is preserved. */
         MINMAXINFO *mmi = (MINMAXINFO *)lParam;
-        RECT clientRect = {0, 0, SDL3_SCREEN_W, SDL3_SCREEN_H + MENU_BAR_HEIGHT};
+        RECT clientRect = {0, 0,
+                           (LONG)(SDL3_SCREEN_W * s_uiScale),
+                           (LONG)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale)};
         DWORD style = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
         DWORD exStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
         AdjustWindowRectEx(&clientRect, style, FALSE, exStyle);
@@ -3238,6 +3265,7 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     if (uiModeIsTablet())          uiScale = 1.0f;
     else if (uiModeIsSteamDeck())  uiScale = dialogDeckFontMul();  /* 1.5, unchanged */
     else                           uiScale = dialogDesktopScale(window);
+    s_uiScale = uiScale;
 
     imguiLoadBoloFont(18.0f * uiScale);
 
@@ -3262,6 +3290,15 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
            and high-DPI desktop.  No touch padding — both use desktop
            hover/click feel. */
         ImGui::GetStyle().ScaleAllSizes(uiScale);
+    }
+
+    /* On the resizable desktop window, keep the OS window from shrinking below
+       the scaled 1x content size so the bigger dialogs can't overflow.  The
+       Deck/tablet fullscreen paths don't resize, so skip them. */
+    if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
+        SDL_SetWindowMinimumSize(window,
+            (int)(SDL3_SCREEN_W * s_uiScale),
+            (int)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale));
     }
 
     if (!ImGui_ImplSDL3_InitForSDLRenderer(window, renderer)) return false;
@@ -4424,6 +4461,10 @@ bool sdl3ImguiIsSysInfoOpen(void) {
     if (!uiModeIsTablet()) return s_popSysInfo.open;
 #endif
     return s_showSysInfo;
+}
+
+float sdl3ImguiGetUiScale(void) {
+    return s_uiScale;
 }
 void sdl3ImguiShowNetInfo(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
