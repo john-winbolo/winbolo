@@ -162,6 +162,7 @@ int run_mdns_discovery(void) {
   UT_ASSERT(recvServer(browser, &s) == 0);
 
   UT_ASSERT_MSG(s.port == 27510, "port=%u", (unsigned)s.port);
+  UT_ASSERT(s.hasRichInfo == true);
   UT_ASSERT(s.inLobby == true);
   UT_ASSERT(s.locked == true);
   UT_ASSERT_MSG(strcmp(s.mapMd5, "0123456789abcdef0123456789abcdef") == 0, "md5='%s'", s.mapMd5);

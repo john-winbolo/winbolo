@@ -65,7 +65,7 @@ void discoveryAbortBroadcastSearch(void) {
 /* Translate an INFO_PACKET (wire format) into the public DiscoveryServer
  * POD. addr is the source address from recvfrom — used as a fallback
  * when the packet's gameid.serveraddress is unset. */
-static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const struct in_addr *addr, DiscoveryServer *out) {
+static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const struct in_addr *addr, DiscoveryServer *out, bool rich) {
   memset(out, 0, sizeof(*out));
   utilPtoCString((char *)info->mapname, out->mapName);
   out->password = (info->has_password != 0);
@@ -86,28 +86,36 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
   out->numPills = (BYTE)info->free_pills;
   out->game = (gameType)info->gametype;
   out->ai = (aiType)info->allow_AI;
-  out->numHumans = info->num_humans;
-  out->numBots   = info->num_bots;
-  out->maxPlayers = info->max_players;
-  out->allowNewPlayers = (info->flags & INFO_FLAG_ALLOW_NEW_PLAYERS) != 0;
-  out->locked          = (info->flags & INFO_FLAG_LOCKED) != 0;
-  out->ranked          = (info->flags & INFO_FLAG_RANKED) != 0;
-  out->randomMap       = (info->flags & INFO_FLAG_RANDOM_MAP) != 0;
-  out->allowSpectators = (info->flags & INFO_FLAG_ALLOW_SPECTATORS) != 0;
-  out->inLobby         = (info->flags & INFO_FLAG_IN_LOBBY) != 0;
-  out->spectatorCount  = info->spectator_count;
   out->timeLimit       = info->time_limit;
-  /* map_md5 is 32 fixed-width hex chars with no NUL on the wire; a leading
-   * '\0' means "no md5" (random/unknown map). Copy 32 and NUL-terminate. */
-  if (info->map_md5[0] != '\0') {
-    memcpy(out->mapMd5, info->map_md5, 32);
-    out->mapMd5[32] = '\0';
+
+  /* The flags/count/md5 fields live past the legacy 76-byte prefix; read them
+   * only when the full packet arrived, otherwise they hold garbage from a
+   * short read. (out is memset above, so they stay at their zero/empty
+   * defaults for legacy servers.) */
+  if (rich) {
+    out->numHumans = info->num_humans;
+    out->numBots   = info->num_bots;
+    out->maxPlayers = info->max_players;
+    out->allowNewPlayers = (info->flags & INFO_FLAG_ALLOW_NEW_PLAYERS) != 0;
+    out->locked          = (info->flags & INFO_FLAG_LOCKED) != 0;
+    out->ranked          = (info->flags & INFO_FLAG_RANKED) != 0;
+    out->randomMap       = (info->flags & INFO_FLAG_RANDOM_MAP) != 0;
+    out->allowSpectators = (info->flags & INFO_FLAG_ALLOW_SPECTATORS) != 0;
+    out->inLobby         = (info->flags & INFO_FLAG_IN_LOBBY) != 0;
+    out->spectatorCount  = info->spectator_count;
+    /* map_md5 is 32 fixed-width hex chars with no NUL on the wire; a leading
+     * '\0' means "no md5" (random/unknown map). Copy 32 and NUL-terminate. */
+    if (info->map_md5[0] != '\0') {
+      memcpy(out->mapMd5, info->map_md5, 32);
+      out->mapMd5[32] = '\0';
+    }
   }
+  out->hasRichInfo = rich;
 }
 
-static void gameFinderProcessBroadcast(INFO_PACKET *info, struct in_addr *pack, DiscoveryServerCallback callback, void *userData) {
+static void gameFinderProcessBroadcast(INFO_PACKET *info, struct in_addr *pack, DiscoveryServerCallback callback, void *userData, bool rich) {
   DiscoveryServer server;
-  discoveryFillServerFromInfoPacket(info, pack, &server);
+  discoveryFillServerFromInfoPacket(info, pack, &server, rich);
   callback(&server, userData);
 }
 
@@ -270,14 +278,16 @@ bool discoveryFindBroadcastGamesAsync(DiscoveryServerCallback callback, void *us
         WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Received %d bytes from %s:%u (expect %d for INFO_PACKET)",
                 len, inet_ntoa(last.sin_addr), ntohs(last.sin_port), (int)sizeof(INFO_PACKET));
       }
-      if (len == (int) sizeof(INFO_PACKET)) {
+      if (len == (int)INFO_PACKET_LEGACY_SIZE || len == (int) sizeof(INFO_PACKET)) {
         /* Magic + type only — the INFO_RESPONSE is the universal
          * version-negotiation primitive, so we deliver mixed-version
          * servers up to the UI; the caller pre-flights versions before
-         * attempting a join. */
+         * attempting a join. Legacy 76-byte servers parse the common
+         * prefix only (rich fields gated off). */
         if (strncmp(buff, BOLO_SIGNITURE, BOLO_SIGNITURE_SIZE) == 0 && buff[BOLOPACKET_REQUEST_TYPEPOS] == BOLOPACKET_INFORESPONSE) {
+          bool rich = (len == (int)sizeof(INFO_PACKET));
           WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Valid INFO_PACKET response, adding server");
-          gameFinderProcessBroadcast((INFO_PACKET *) buff, &(last.sin_addr), callback, userData);
+          gameFinderProcessBroadcast((INFO_PACKET *) buff, &(last.sin_addr), callback, userData, rich);
         } else {
           WB_LOG_DEBUG(WB_LOG_CAT_NET, "discovery: Packet signature/type mismatch");
         }
@@ -321,6 +331,22 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
   out->versionMajor = 0;
   out->versionMinor = 0;
   out->versionRevision = 0;
+  /* Default the rich fields here: callers pass an uninitialized result, and a
+   * legacy 76-byte server leaves them gated off below — without this they'd
+   * carry stack garbage. */
+  out->mapMd5[0] = '\0';
+  out->allowNewPlayers = false;
+  out->locked = false;
+  out->inLobby = false;
+  out->allowSpectators = false;
+  out->spectatorCount = 0;
+  out->ranked = false;
+  out->randomMap = false;
+  out->numHumans = 0;
+  out->numBots = 0;
+  out->maxPlayers = 0;
+  out->timeLimit = 0;
+  out->hasRichInfo = false;
 
   if (bolo_net_init() != 0) {
     return FALSE;
@@ -376,7 +402,7 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
   closesocket(sock);
   bolo_net_cleanup();
 
-  if (len < (int)sizeof(INFO_PACKET)) {
+  if (len < (int)INFO_PACKET_LEGACY_SIZE) {
 #ifdef _WIN32
     WB_LOG_DEBUG(WB_LOG_CAT_NET, "ping: %s:%u no response (len=%d, err=%d)", address, port, len, WSAGetLastError());
 #else
@@ -388,6 +414,9 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
   {
     uint32_t recvTime = (uint32_t)SDL_GetTicks();
     INFO_PACKET *info = (INFO_PACKET *)buff;
+    /* Legacy 76-byte servers don't carry the flags/count/md5 fields; read
+     * them only when the full 111-byte packet arrived. */
+    bool rich = (len >= (int)sizeof(INFO_PACKET));
     out->rttMs = (int)(recvTime - sendTime);
     out->freePills = info->free_pills;
     out->freeBases = info->free_bases;
@@ -395,25 +424,28 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
     out->versionMajor = info->h.versionMajor;
     out->versionMinor = info->h.versionMinor;
     out->versionRevision = info->h.versionRevision;
-    out->numHumans = info->num_humans;
-    out->numBots   = info->num_bots;
-    out->maxPlayers = info->max_players;
-    out->allowNewPlayers = (info->flags & INFO_FLAG_ALLOW_NEW_PLAYERS) != 0;
-    out->locked          = (info->flags & INFO_FLAG_LOCKED) != 0;
-    out->ranked          = (info->flags & INFO_FLAG_RANKED) != 0;
-    out->randomMap       = (info->flags & INFO_FLAG_RANDOM_MAP) != 0;
-    out->allowSpectators = (info->flags & INFO_FLAG_ALLOW_SPECTATORS) != 0;
-    out->inLobby         = (info->flags & INFO_FLAG_IN_LOBBY) != 0;
-    out->spectatorCount  = info->spectator_count;
     out->timeLimit       = info->time_limit;
     /* map_md5 is 32 fixed-width hex chars with no NUL on the wire; a leading
      * '\0' means "no md5" (random/unknown map). This path does not zero out,
      * so NUL-init before the conditional copy. */
     out->mapMd5[0] = '\0';
-    if (info->map_md5[0] != '\0') {
-      memcpy(out->mapMd5, info->map_md5, 32);
-      out->mapMd5[32] = '\0';
+    if (rich) {
+      out->numHumans = info->num_humans;
+      out->numBots   = info->num_bots;
+      out->maxPlayers = info->max_players;
+      out->allowNewPlayers = (info->flags & INFO_FLAG_ALLOW_NEW_PLAYERS) != 0;
+      out->locked          = (info->flags & INFO_FLAG_LOCKED) != 0;
+      out->ranked          = (info->flags & INFO_FLAG_RANKED) != 0;
+      out->randomMap       = (info->flags & INFO_FLAG_RANDOM_MAP) != 0;
+      out->allowSpectators = (info->flags & INFO_FLAG_ALLOW_SPECTATORS) != 0;
+      out->inLobby         = (info->flags & INFO_FLAG_IN_LOBBY) != 0;
+      out->spectatorCount  = info->spectator_count;
+      if (info->map_md5[0] != '\0') {
+        memcpy(out->mapMd5, info->map_md5, 32);
+        out->mapMd5[32] = '\0';
+      }
     }
+    out->hasRichInfo = rich;
     WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, v%u.%u.%u, players=%u",
                  address, port, out->rttMs,
                  (unsigned)out->versionMajor, (unsigned)out->versionMinor,

@@ -163,6 +163,9 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
   }
   memset(out, 0, sizeof(*out));
   out->port = r->port;
+  /* The mDNS responder is always our current producer, so the rich
+   * flags/counts/md5 keys are present in the TXT record. */
+  out->hasRichInfo = true;
 
   if (r->haveAddr) {
     a = r->addr;

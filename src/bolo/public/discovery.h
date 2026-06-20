@@ -57,6 +57,9 @@ typedef struct {
   BYTE numBots;
   BYTE maxPlayers;  /* server's join-slot cap; MAX_TANKS when unset */
   int32_t timeLimit;
+  bool hasRichInfo;  /* true when the 111-byte INFO (flags/counts/md5) was
+                      * received; false for legacy 76-byte servers — consumers
+                      * hide the rich fields when false. */
 } DiscoveryPingResult;
 
 /* A server discovered via LAN broadcast. Plain data — no wire-format
@@ -92,6 +95,9 @@ typedef struct {
   BYTE           numBots;
   BYTE           maxPlayers;      /* server's join-slot cap; MAX_TANKS when unset */
   int32_t        timeLimit;       /* raw game-length units from the wire; 0 if none */
+  bool           hasRichInfo;     /* true when the 111-byte INFO (flags/counts/md5)
+                                   * was received; false for legacy 76-byte servers
+                                   * — consumers hide the rich fields when false. */
 } DiscoveryServer;
 
 /* Callback delivered for each LAN server that responds to a broadcast

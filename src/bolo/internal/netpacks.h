@@ -93,6 +93,11 @@ typedef struct BOLO_PACK_ATTR {
                           /* when the map is random/unknown               */
 } INFO_PACKET;
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
+
+/* Historical INFO_PACKET wire size, before the flags/count/md5 fields were
+ * appended. Servers older than those additions send this; discovery accepts
+ * it and parses only the common prefix. */
+#define INFO_PACKET_LEGACY_SIZE 76
 #endif
 
 /* INFO_PACKET.flags bit values (the byte that was spare1). */
