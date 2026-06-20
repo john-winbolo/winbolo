@@ -237,12 +237,15 @@ static inline bool gameEventIsReliable(uint8_t type) {
     case EVENT_TANK_KILLED:   /* event-driven score; not in any snapshot */
     case EVENT_MAP_CHANGE:    /* rides CHANNEL_MAP */
     case EVENT_SERVER_MSG:    /* user-visible status notice */
-    case EVENT_PILL_UPDATE:   /* sole pill-state delta between full re-syncs */
-    case EVENT_BASE_UPDATE:   /* sole base-state delta between full re-syncs */
     case EVENT_ASSISTANT_MSG: /* one-shot per-player text */
     case EVENT_LGM_LOST:      /* one-shot newswire */
     case EVENT_MINE_VISIBLE:  /* gameplay-critical reveal */
         return true;
+    /* PILL_UPDATE / BASE_UPDATE are best-effort: they fire continuously as pill
+     * armour/reload and base stock change under combat (a per-shot/per-refuel
+     * firehose), so they cannot sit on the reliable window. Best-effort
+     * newest-wins suits a state delta; the periodic full snapshot re-sync is the
+     * backstop for a dropped ownership change. */
     default:
         return false;
     }
