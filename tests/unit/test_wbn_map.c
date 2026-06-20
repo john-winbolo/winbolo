@@ -51,9 +51,45 @@ static int parse_not_found(void) {
     return 0;
 }
 
+/* Real-world base64 encodings: MIME line wrapping (whitespace), unpadded
+ * input, and the URL-safe alphabet. */
+static int parse_tolerant_b64(void) {
+    const uint8_t bolo[4] = { 0x42, 0x4f, 0x4c, 0x4f };
+    WbnMapResult r;
+
+    /* Newline inside the base64 (MIME line wrapping). */
+    UT_ASSERT(wbnMapParseResponse(
+        "{\"found\":true,\"map_data\":\"Qk9M\\nTw==\"}", &r));
+    UT_ASSERT_MSG(r.mapDataLen == 4, "wrapped len=%zu", r.mapDataLen);
+    UT_ASSERT_MSG(r.mapData != NULL && memcmp(r.mapData, bolo, 4) == 0,
+                  "wrapped bytes mismatch");
+    wbnMapResultFree(&r);
+
+    /* Unpadded standard base64 ("Qk9MTw==" without the padding). */
+    UT_ASSERT(wbnMapParseResponse(
+        "{\"found\":true,\"map_data\":\"Qk9MTw\"}", &r));
+    UT_ASSERT_MSG(r.mapDataLen == 4, "unpadded len=%zu", r.mapDataLen);
+    UT_ASSERT_MSG(r.mapData != NULL && memcmp(r.mapData, bolo, 4) == 0,
+                  "unpadded bytes mismatch");
+    wbnMapResultFree(&r);
+
+    /* URL-safe alphabet ('_' == 63): "____" -> 0xFF 0xFF 0xFF. */
+    {
+        const uint8_t ff[3] = { 0xff, 0xff, 0xff };
+        UT_ASSERT(wbnMapParseResponse(
+            "{\"found\":true,\"map_data\":\"____\"}", &r));
+        UT_ASSERT_MSG(r.mapDataLen == 3, "urlsafe len=%zu", r.mapDataLen);
+        UT_ASSERT_MSG(r.mapData != NULL && memcmp(r.mapData, ff, 3) == 0,
+                      "urlsafe bytes mismatch");
+        wbnMapResultFree(&r);
+    }
+    return 0;
+}
+
 int run_wbn_map_parse(void) {
     int rc;
     rc = parse_found_and_decode(); if (rc) return rc;
     rc = parse_not_found();        if (rc) return rc;
+    rc = parse_tolerant_b64();     if (rc) return rc;
     return 0;
 }

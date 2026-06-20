@@ -21,21 +21,25 @@
 #include "cJSON.h"
 #include "http.h"
 
-/* Decode value of a standard base64 character, or -1 for any
- * character not in the alphabet (the '=' pad is handled separately). */
+/* Decode value of a base64 character, accepting both the standard
+ * (+, /) and URL-safe (-, _) alphabets, or -1 for any character not in
+ * either alphabet (the '=' pad is handled separately). */
 static int b64Value(char c) {
     if (c >= 'A' && c <= 'Z') return c - 'A';
     if (c >= 'a' && c <= 'z') return c - 'a' + 26;
     if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
+    if (c == '+' || c == '-') return 62;
+    if (c == '/' || c == '_') return 63;
     return -1;
 }
 
-/* Decode a standard-alphabet base64 string (A-Z a-z 0-9 + /) with '='
- * padding into a freshly allocated buffer. *outLen receives the true
- * decoded length. Returns false (freeing and NULL-ing *out) on any
- * character outside the alphabet/pad or a malformed length. */
+/* Decode a base64 string into a freshly allocated buffer, tolerant of
+ * real-world encodings: ASCII whitespace (MIME line wrapping) is skipped
+ * anywhere, both the standard and URL-safe alphabets are accepted, '='
+ * ends the data, and the input need not be padded to a multiple of four.
+ * *outLen receives the true decoded length. Returns false (freeing and
+ * NULL-ing *out) on any character outside the alphabet/whitespace/pad, or
+ * a trailing group of a single leftover character (invalid base64). */
 static bool b64Decode(const char *in, uint8_t **out, size_t *outLen) {
     *out = NULL;
     *outLen = 0;
@@ -44,53 +48,45 @@ static bool b64Decode(const char *in, uint8_t **out, size_t *outLen) {
     }
 
     size_t inLen = strlen(in);
-    /* A valid base64 payload is a whole number of 4-char groups. An empty
-     * string decodes to zero bytes. */
-    if ((inLen % 4) != 0) {
-        return false;
-    }
-
-    uint8_t *buf = malloc((inLen / 4 + 1) * 3);
+    /* Upper bound: 4 base64 chars yield 3 bytes; +3 covers any partial
+     * trailing group and keeps the allocation non-zero for empty input. */
+    uint8_t *buf = malloc(inLen * 3 / 4 + 3);
     if (buf == NULL) {
         return false;
     }
 
     size_t outIdx = 0;
-    for (size_t i = 0; i < inLen; i += 4) {
-        int v[4];
-        int pad = 0;
-        for (int j = 0; j < 4; j++) {
-            char c = in[i + j];
-            if (c == '=') {
-                /* Padding is only legal in the final group's last
-                 * two positions, and once seen only '=' may follow. */
-                if (i + 4 != inLen || j < 2) {
-                    free(buf);
-                    return false;
-                }
-                pad++;
-                v[j] = 0;
-            } else {
-                if (pad != 0) {
-                    free(buf);
-                    return false;
-                }
-                int dv = b64Value(c);
-                if (dv < 0) {
-                    free(buf);
-                    return false;
-                }
-                v[j] = dv;
-            }
+    uint32_t bits = 0;
+    int nbits = 0;
+    size_t dataChars = 0;
+    for (size_t i = 0; i < inLen; i++) {
+        char c = in[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            continue;
         }
+        if (c == '=') {
+            break;  /* end of data */
+        }
+        int dv = b64Value(c);
+        if (dv < 0) {
+            free(buf);
+            return false;
+        }
+        bits = (bits << 6) | (uint32_t)dv;
+        nbits += 6;
+        dataChars++;
+        if (nbits >= 8) {
+            nbits -= 8;
+            buf[outIdx++] = (uint8_t)((bits >> nbits) & 0xFF);
+            bits &= ((uint32_t)1 << nbits) - 1;
+        }
+    }
 
-        buf[outIdx++] = (uint8_t)((v[0] << 2) | (v[1] >> 4));
-        if (pad < 2) {
-            buf[outIdx++] = (uint8_t)((v[1] << 4) | (v[2] >> 2));
-        }
-        if (pad < 1) {
-            buf[outIdx++] = (uint8_t)((v[2] << 6) | v[3]);
-        }
+    /* A trailing group of exactly one base64 char carries only 6 bits —
+     * not enough to complete a byte and not a legal base64 tail. */
+    if ((dataChars % 4) == 1) {
+        free(buf);
+        return false;
     }
 
     *out = buf;
