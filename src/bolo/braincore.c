@@ -720,6 +720,32 @@ void brc_write_crash_log(lua_State *L,
     fclose(f);
   }
 
+  /* Combined append-only crash log: EVERY Lua crash gets its full traceback
+   * appended here, regardless of the per-crash-file rate-limit above, so a
+   * single file is a complete chronological record of all crashes across the
+   * run (what you want on a dedicated server — no BRAIN_DEBUG_MODE required).
+   * One growing file rather than 1500 separate files, and bounded in practice
+   * by bot_manager kicking a brain that crashes every tick. Same prefix as the
+   * per-crash files (session dir if set, else CWD). */
+  {
+    char all_path[1024];
+    SDL_snprintf(all_path, sizeof(all_path), "%s/brain_crashes.log", prefix);
+    FILE *af = fopen(all_path, "ab");
+    if (af) {
+      fprintf(af, "===== BRAIN CRASH =====\n");
+      fprintf(af, "[BRAIN_CRASH] method=brain.%s\n", method);
+      fprintf(af, "[BRAIN_CRASH] timestamp_utc=%s\n", ts_utc);
+      fprintf(af, "[BRAIN_CRASH] timestamp_local=%s\n", ts_local);
+      fprintf(af, "[BRAIN_CRASH] pid=%d bot_index=%d state.tick=%d lua_state=%p\n",
+              pid, bot_idx, tick, (void *)lptr);
+      fprintf(af, "[BRAIN_CRASH] ----- error + traceback below -----\n");
+      fprintf(af, "%s\n", err_or_traceback);
+      fprintf(af, "===== END BRAIN CRASH =====\n\n");
+      fflush(af);
+      fclose(af);
+    }
+  }
+
   /* Stderr surface so the failure is visible without grepping. Always
    * fires (even when the file was suppressed) so a chronically-crashing
    * brain stays loud in the console — just with a clear note that the

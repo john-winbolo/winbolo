@@ -249,6 +249,8 @@ M.IDS = {
                              long  = "Orange outline around pills marked for repositioning" },
   wounded_pill_marker    = { short = "Wounded pill marker",
                              long  = "Marker on the wounded-pill carryover target" },
+  kill_pickup            = { short = "Fresh-kill pickup",
+                             long  = "Ring + tank line on the pill we just killed and are committing HARD to grab (yellow=ours, magenta=yielded to a higher-armour blitz ally)" },
   pool6_self_dr          = { short = "self_dr per pool-6 pill",
                              long  = "Pool 6 (attack_pill) candidates labeled with their self-danger reduction value — the discount subtracted from the spot-path cost equal to that pill's own danger contribution × (1 - hp/15). Larger values = more committed to closing in despite the pill's own anger." },
 

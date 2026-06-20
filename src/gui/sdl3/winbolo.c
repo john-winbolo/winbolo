@@ -80,6 +80,7 @@
 #include "dialogs/imgui_messagebox.h"
 #include "tutorial_text.h"
 #include "../../common/sentry_integration.h"
+#include "../../common/crash_handler.h"
 
 /* humanSim is owned by gamefront.c; declared up here so the timer
  * callback and main game-tick path can pass it to clientSim* wrappers. */
@@ -295,6 +296,11 @@ int main(int argc, char *argv[]) {
   }
 
   sentryInit("WinBolo", argc, argv);
+
+  /* Print a symbolized C stack trace on a fatal native exception. Installed
+   * AFTER sentryInit so our filter chains to Sentry's — cloud report still
+   * fires, and we also get an immediate local trace on stderr + a crash file. */
+  crashHandlerInstall("WinBolo");
 
   dialogBackendInit();
 

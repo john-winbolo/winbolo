@@ -56,6 +56,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <signal.h>
 #include <time.h>
@@ -67,6 +68,7 @@
 #include "bolo_rand.h"
 #include "global.h"
 #include "../common/prefs.h"
+#include "../common/crash_handler.h"
 #include "everard_map.h"
 #include "tank.h"
 #include "players.h"
@@ -239,6 +241,10 @@ typedef struct {
      * still pulls the right bot's overlays. */
     OverlayCmd *botOverlayCmds[MAX_TANKS];
     int         botOverlayCmdCount[MAX_TANKS];
+    /* Diagnostic: set when the followed bot's overlays this frame were
+     * inherited from the previous frame (captured buffer was empty —
+     * see the INHERIT-ON-EMPTY note in recordingCapture). */
+    int         _vizInheritedFollow;
 
     /* A* / Dijkstra path snapshot for the green key-4 overlay. */
     int *pathX;
@@ -1643,7 +1649,13 @@ static void signalHandler(int sig) {
 static char optBrain[512] = "brains/GoalHunter";
 static char optMap[512]   = "";
 static int  optNumPlayers = 1;
+static bool optNumPlayersExplicit = false; /* true once -noplayers seen, for -teams reconciliation */
 static int  optNumTeams   = 0;   /* 0 = FFA (no alliances); otherwise round-robin team assignment */
+/* Explicit per-team sizes from `-teams a,b,c`. When optNumTeamSizes > 0 the
+ * bots are assigned to teams contiguously (first a bots -> team 1, next b ->
+ * team 2, ...) instead of round-robin, and the sum overrides -noplayers. */
+static int  optTeamSizes[MAX_TANKS] = { 0 };
+static int  optNumTeamSizes = 0;
 static int  optFollow     = 0;
 /* -victim_ids <comma-sep player ids>: mark each listed bot as a
  * test "victim". The brain reads _BT_VICTIM = true on that bot's
@@ -1684,6 +1696,8 @@ static void printUsage(const char *prog) {
         "  -noplayers N     Number of bot players (default: 1)\n"
         "  -threads N       Brain dispatch threads incl. producer (default: 2, max: cores)\n"
         "  -teams N         Split bots into N teams via round-robin (default: 0 = FFA)\n"
+        "  -teams a,b,c     Explicit team sizes (e.g. 4,5,6). Sum overrides -noplayers;\n"
+        "                   bots assigned contiguously (first a -> team 1, next b -> team 2).\n"
         "  -map PATH        Map file (default: built-in Everard Island)\n"
         "  -follow N        Follow bot N with camera (default: 0)\n"
         "  -ai TYPE         AI type: none, yes, advantage, full (default: full)\n"
@@ -1732,14 +1746,35 @@ static bool parseArgs(int argc, char **argv) {
             optNumPlayers = atoi(argv[++i]);
             if (optNumPlayers < 1) optNumPlayers = 1;
             if (optNumPlayers > 16) optNumPlayers = 16;
+            optNumPlayersExplicit = true;
         } else if ((strcmp(argv[i], "-threads") == 0 || strcmp(argv[i], "--threads") == 0) && i + 1 < argc) {
             optThreads = atoi(argv[++i]);
             if (optThreads < 1) optThreads = 1;
             if (optThreads > MAX_TANKS) optThreads = MAX_TANKS;
         } else if ((strcmp(argv[i], "-teams") == 0 || strcmp(argv[i], "--teams") == 0) && i + 1 < argc) {
-            optNumTeams = atoi(argv[++i]);
-            if (optNumTeams < 0) optNumTeams = 0;
-            if (optNumTeams > MAX_TANKS) optNumTeams = MAX_TANKS;
+            const char *tv = argv[++i];
+            if (strchr(tv, ',') != NULL) {
+                /* Explicit per-team sizes: "4,5,6" -> team1=4, team2=5, team3=6.
+                 * Sum overrides -noplayers (reconciled after the parse loop). */
+                optNumTeamSizes = 0;
+                const char *p = tv;
+                while (*p && optNumTeamSizes < MAX_TANKS) {
+                    int sz = atoi(p);
+                    if (sz < 1) {
+                        fprintf(stderr, "-teams: each team size must be >= 1 (got '%s')\n", tv);
+                        return FALSE;
+                    }
+                    optTeamSizes[optNumTeamSizes++] = sz;
+                    const char *comma = strchr(p, ',');
+                    if (!comma) break;
+                    p = comma + 1;
+                }
+                optNumTeams = optNumTeamSizes;
+            } else {
+                optNumTeams = atoi(tv);
+                if (optNumTeams < 0) optNumTeams = 0;
+                if (optNumTeams > MAX_TANKS) optNumTeams = MAX_TANKS;
+            }
         } else if ((strcmp(argv[i], "-map") == 0 || strcmp(argv[i], "--map") == 0) && i + 1 < argc) {
             strncpy(optMap, argv[++i], sizeof(optMap) - 1);
         } else if ((strcmp(argv[i], "-follow") == 0 || strcmp(argv[i], "--follow") == 0) && i + 1 < argc) {
@@ -1821,6 +1856,25 @@ static bool parseArgs(int argc, char **argv) {
             printUsage(argv[0]);
             return FALSE;
         }
+    }
+    /* Reconcile explicit -teams sizes with -noplayers (done after the loop so
+     * argument order doesn't matter). The size sum is authoritative: it sets
+     * the bot count, and we error rather than silently disagree if -noplayers
+     * was also given with a different total. */
+    if (optNumTeamSizes > 0) {
+        int sum = 0;
+        for (int t = 0; t < optNumTeamSizes; t++) sum += optTeamSizes[t];
+        if (sum > MAX_TANKS) {
+            fprintf(stderr, "-teams: sum of team sizes (%d) exceeds MAX_TANKS (%d)\n",
+                    sum, MAX_TANKS);
+            return FALSE;
+        }
+        if (optNumPlayersExplicit && optNumPlayers != sum) {
+            fprintf(stderr, "-teams sizes sum to %d but -noplayers is %d; "
+                    "they must match (or omit -noplayers)\n", sum, optNumPlayers);
+            return FALSE;
+        }
+        optNumPlayers = sum;
     }
     return TRUE;
 }
@@ -2394,6 +2448,41 @@ static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive, int follo
     }
 }
 
+/* ── viz-recording diagnostic log ──────────────────────────────────────
+ * Writes to <DEBUG_SESSION_DIR>/vizrec.log (same dir as print2_botN.log)
+ * so the empty-overlay-capture gaps can be inspected after a run without
+ * scraping stderr. Lazily opens on first use by reading DEBUG_SESSION_DIR
+ * from a bot's Lua state. One shared file, unbuffered so lines land even
+ * if the run is interrupted. Remove once the root cause is fixed. */
+static FILE *g_vizrecLog     = NULL;
+static bool  g_vizrecTried   = false;
+static void vizrecLog(BrainTestApp *app, const char *fmt, ...) {
+    if (!g_vizrecLog && !g_vizrecTried) {
+        if (app && app->simValid) {
+            char *dir = serverSimBotEvalLuaString(app->sim, (BYTE)app->followBot,
+                            "return tostring(DEBUG_SESSION_DIR)");
+            if (dir && dir[0] && SDL_strcmp(dir, "nil") != 0) {
+                /* Dir resolved — this is our one and only open attempt. */
+                g_vizrecTried = true;
+                char path[1024];
+                SDL_snprintf(path, sizeof(path), "%s/vizrec.log", dir);
+                g_vizrecLog = fopen(path, "w");
+                if (g_vizrecLog) {
+                    setvbuf(g_vizrecLog, NULL, _IONBF, 0);
+                    fprintf(g_vizrecLog, "=== viz-recording empty-capture log ===\n");
+                }
+            }
+            /* else: bot not running yet — leave g_vizrecTried false to retry. */
+            free(dir);
+        }
+    }
+    if (!g_vizrecLog) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(g_vizrecLog, fmt, ap);
+    va_end(ap);
+}
+
 /* Drop the oldest KEYFRAME_INTERVAL frames so the new head is still a
  * keyframe (preserves delta-chain validity for the remaining frames).
  * Adjusts every index that points into the frame array: playbackFrame,
@@ -2635,8 +2724,25 @@ static void recordingCapture(BrainTestApp *app) {
     /* ── Per-bot overlay command snapshots ── copy each active
      * bot's current OverlayCmdBuffer so Tab switching during
      * playback still shows that bot's overlays for the scrubbed
-     * tick (not whatever they emitted most recently live). */
+     * tick (not whatever they emitted most recently live).
+     *
+     * INHERIT-ON-EMPTY: a completed Brain.think always leaves count>0
+     * (it emits hud_version right after overlay_clear), and a think that
+     * doesn't run leaves the buffer persisted from last tick — so LIVE
+     * always shows the last-good overlays for every bot. A captured
+     * count==0 therefore means we sampled the buffer mid-emit (the brain
+     * cleared but hadn't refilled yet — a capture-vs-bot-worker-thread
+     * race) or a partial emit. Without handling it, that single frame
+     * records NOTHING and playback shows a blank tank for the whole
+     * stretch the race recurs — the "viz vanishes for a few seconds in
+     * rewind but is fine live" symptom. Mirror live behaviour: if this
+     * tick's buffer is empty, inherit the previous frame's snapshot for
+     * that bot so the overlays persist across the gap. */
+    RecordingFrame *prevF = (rb->count > 0) ? &rb->frames[rb->count - 1] : NULL;
+    int emptyBots = 0, emptyInherited = 0, activeBots = 0;
     for (BYTE oi = 0; oi < MAX_TANKS; oi++) {
+        if (!serverSimIsBot(app->sim, oi)) continue;
+        activeBots++;
         OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(app->sim, oi);
         if (ovl && ovl->count > 0) {
             f->botOverlayCmdCount[oi] = ovl->count;
@@ -2644,7 +2750,49 @@ static void recordingCapture(BrainTestApp *app) {
                 ovl->count * sizeof(OverlayCmd));
             memcpy(f->botOverlayCmds[oi], ovl->cmds,
                    ovl->count * sizeof(OverlayCmd));
+        } else {
+            emptyBots++;
+            if (prevF && prevF->botOverlayCmds[oi]
+                && prevF->botOverlayCmdCount[oi] > 0) {
+                /* Inherit the previous frame's overlays for this bot. */
+                int n = prevF->botOverlayCmdCount[oi];
+                f->botOverlayCmdCount[oi] = n;
+                f->botOverlayCmds[oi] = (OverlayCmd *)malloc(n * sizeof(OverlayCmd));
+                memcpy(f->botOverlayCmds[oi], prevF->botOverlayCmds[oi],
+                       n * sizeof(OverlayCmd));
+                emptyInherited++;
+                if (oi == (BYTE)app->followBot) f->_vizInheritedFollow = 1;
+            }
         }
+    }
+    /* Diagnostic → <DEBUG_SESSION_DIR>/vizrec.log. Two views:
+     *   1. Per-frame line whenever ANY bot's overlay buffer was empty this
+     *      tick (how widespread the empty-capture is — a thread race would
+     *      hit a random subset each frame).
+     *   2. Edge-triggered followed-bot gap start/end with length, since the
+     *      followed bot is what actually blanks on screen during rewind. */
+    if (emptyBots > 0) {
+        vizrecLog(app, "t=%u EMPTY bots=%d/%d inherited=%d follow=%d%s\n",
+                  (unsigned)f->tick, emptyBots, activeBots, emptyInherited,
+                  (int)app->followBot, f->_vizInheritedFollow ? " [FOLLOW EMPTY]" : "");
+    }
+    {
+        static int s_wasInherit = 0;
+        static unsigned s_gapStartTick = 0;
+        static int s_gapLen = 0;
+        int nowInherit = f->_vizInheritedFollow;
+        if (nowInherit && !s_wasInherit) {
+            s_gapStartTick = (unsigned)f->tick;
+            s_gapLen = 1;
+            vizrecLog(app, "t=%u FOLLOW(%d) gap START\n",
+                      s_gapStartTick, (int)app->followBot);
+        } else if (nowInherit) {
+            s_gapLen++;
+        } else if (s_wasInherit) {
+            vizrecLog(app, "t=%u FOLLOW gap END (lasted %d frames, from t=%u)\n",
+                      (unsigned)f->tick, s_gapLen, s_gapStartTick);
+        }
+        s_wasInherit = nowInherit;
     }
 
     /* ── A* / Dijkstra path (the key-4 green polyline) ── trace
@@ -2922,13 +3070,96 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
     g_hudRectN = 0;
     if (g_hudEdit) SDL_memset(g_hudLabeled, 0, sizeof(g_hudLabeled));
 
-    OverlayCmdBuffer *buf = serverSimGetBotOverlayCmds(app->sim, app->followBot);
-    if (!buf || buf->count == 0) return;
+    /* Source the overlay commands. In playback, read the SCRUBBED frame's
+     * recorded snapshot DIRECTLY — not the live bot buffer. The live buffer
+     * (serverSimGetBotOverlayCmds) is NULL whenever the live sim's bot is
+     * momentarily inactive/respawning, which blanked the followed bot's
+     * overlays in replay even though the bot was alive at the scrubbed tick
+     * and the frame holds its commands. (The playback block also pointer-swaps
+     * the live buffer to the recorded cmds, but that swap is skipped when the
+     * live buffer is NULL for the same reason — so reading the frame here is
+     * the real fix and makes the swap moot for the followed bot.) */
+    const OverlayCmd *cmds = NULL;
+    int count = 0;
+    if (app->playbackMode
+        && app->playbackFrame >= 0
+        && app->playbackFrame < app->recording.count) {
+        const RecordingFrame *pf_ = &app->recording.frames[app->playbackFrame];
+        cmds  = pf_->botOverlayCmds[app->followBot];
+        count = pf_->botOverlayCmdCount[app->followBot];
+    } else {
+        OverlayCmdBuffer *buf = serverSimGetBotOverlayCmds(app->sim, app->followBot);
+        if (buf) { cmds = buf->cmds; count = buf->count; }
+    }
+
+    /* DIAG (deduped per frame, capped) → vizrec.log: spell out which viz
+     * LAYERS the followed bot has at the viewed frame, split into render-ON
+     * vs present-but-toggled-OFF, and report the viewing MODE. Fires in
+     * playback AND when paused/stepped in live, so whatever state produces
+     * "no visualizers" gets captured. Distinguishes: a sparse/empty buffer
+     * (capture or live-NULL), vs many layers under OFF (a viewing-toggle). */
+    {
+        bool pb = app->playbackMode && app->playbackFrame >= 0
+                  && app->playbackFrame < app->recording.count;
+        bool live_null = (!pb) && (serverSimGetBotOverlayCmds(app->sim,
+                                       app->followBot) == NULL);
+        static int s_diagLines = 0;
+        if ((pb || app->paused) && s_diagLines < 500) {
+        static unsigned s_t = 0xFFFFFFFFu; static int s_b = -1, s_c = -1, s_pb = -1;
+        unsigned tk = pb ? app->recording.frames[app->playbackFrame].tick
+                         : serverSimGetTick(app->sim);
+        if (tk != s_t || app->followBot != s_b || count != s_c || (pb?1:0) != s_pb) {
+            s_t = tk; s_b = app->followBot; s_c = count; s_pb = pb ? 1 : 0;
+            s_diagLines++;
+            /* Collect DISTINCT layer ids present in the buffer (viz_idx is a
+             * byte, so a 256-slot seen map dedups cheaply). */
+            static unsigned char seen[256];
+            memset(seen, 0, sizeof(seen));
+            char on_list[900]; char off_list[900];
+            int on_n = 0, off_n = 0, on_layers = 0, off_layers = 0, none_cmds = 0;
+            on_list[0] = '\0'; off_list[0] = '\0';
+            for (int i = 0; i < count && cmds; i++) {
+                uint8_t vi = cmds[i].viz_idx;
+                if (vi == OVERLAY_VIZ_IDX_NONE) { none_cmds++; continue; }
+                if (seen[vi]) continue;
+                seen[vi] = 1;
+                const VizRegistryEntry *e = vizRegistryGet(vi);
+                const char *id = (e && e->id[0]) ? e->id : "?";
+                bool drawn = (!e) || e->is_on;
+                if (drawn) {
+                    on_layers++;
+                    int w = SDL_snprintf(on_list + on_n, sizeof(on_list) - on_n,
+                                         "%s%s", on_n ? "," : "", id);
+                    if (w > 0 && on_n + w < (int)sizeof(on_list)) on_n += w;
+                } else {
+                    off_layers++;
+                    int w = SDL_snprintf(off_list + off_n, sizeof(off_list) - off_n,
+                                         "%s%s", off_n ? "," : "", id);
+                    if (w > 0 && off_n + w < (int)sizeof(off_list)) off_n += w;
+                }
+            }
+            vizrecLog(app,
+                "RENDER %s%s focusing on bot %d, tick %u (hud %u), %d cmds, collect=%d%s\n"
+                "  rendering %d layers ON: %s\n"
+                "  present but toggled OFF (%d): %s\n"
+                "  unregistered cmds: %d\n",
+                pb ? "PLAYBACK" : "LIVE",
+                app->paused ? "(paused)" : "",
+                app->followBot, tk, tk / 2, count, vizWindowCollectMode(),
+                live_null ? "  [LIVE BUFFER NULL — bot inactive/not-running]" : "",
+                on_layers, on_n ? on_list : "(none)",
+                off_layers, off_n ? off_list : "(none)",
+                none_cmds);
+        }  /* dedup */
+        }  /* gate: playback || paused */
+    }      /* diag block */
+
+    if (!cmds || count == 0) return;
 
     SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
 
-    for (int i = 0; i < buf->count; i++) {
-        OverlayCmd *cmd = &buf->cmds[i];
+    for (int i = 0; i < count; i++) {
+        const OverlayCmd *cmd = &cmds[i];
 
         /* viz_idx filter — skip if the matching row is off, or if
          * the X-key suppress flag is set (hud_resources stays on
@@ -4686,12 +4917,22 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
+    /* Print a symbolized C stack trace on a fatal native exception. The crash
+     * file destination is pointed at the debug-session dir once it's known
+     * (below); until then a crash lands in the cwd. */
+    crashHandlerInstall("BrainTest");
+
     static const char *aiNames[]   = { "none", "yes", "advantage", "full" };
     static const char *gameNames[] = { "?", "open", "tournament", "strict" };
     fprintf(stderr, "BrainTest - Brain Debug Viewer\n");
     fprintf(stderr, "  Brain:   %s\n", optBrain);
     fprintf(stderr, "  Players: %d\n", optNumPlayers);
-    if (optNumTeams >= 2) {
+    if (optNumTeamSizes > 0) {
+        fprintf(stderr, "  Teams:   %d (sizes", optNumTeamSizes);
+        for (int t = 0; t < optNumTeamSizes; t++)
+            fprintf(stderr, "%s%d", t ? "," : " ", optTeamSizes[t]);
+        fprintf(stderr, ")\n");
+    } else if (optNumTeams >= 2) {
         fprintf(stderr, "  Teams:   %d\n", optNumTeams);
     } else {
         fprintf(stderr, "  Teams:   FFA\n");
@@ -4920,6 +5161,8 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "  Session dir: %s\n", g_sessionDir);
         }
     }
+    /* Land any later crash trace in the session dir (cwd if none). */
+    crashHandlerSetOutputDir(g_sessionDir[0] ? g_sessionDir : NULL);
     /* When --record-panels is on, per-panel JSON snapshots go in a
      * panels/ subfolder of the session dir. */
     if (g_panelRecordEnabled && g_sessionDir[0]) {
@@ -4974,7 +5217,23 @@ int main(int argc, char *argv[]) {
             if (ok) app.numBots++;
         }
         fprintf(stderr, "  Added %d bots\n", app.numBots);
-        if (optNumTeams >= 2) {
+        if (optNumTeamSizes > 0) {
+            /* Explicit per-team sizes: contiguous blocks. First optTeamSizes[0]
+             * bots -> team 1, next optTeamSizes[1] -> team 2, etc. */
+            int bot = 0;
+            for (int t = 0; t < optNumTeamSizes; t++) {
+                for (int k = 0; k < optTeamSizes[t] && bot < optNumPlayers; k++) {
+                    serverSimSetTeamBatch(app.sim, (BYTE)bot, (BYTE)(t + 1));
+                    bot++;
+                }
+            }
+            serverSimReapplyTeamAlliances(app.sim);
+            fprintf(stderr, "  Assigned %d bots to %d teams (sizes",
+                    optNumPlayers, optNumTeamSizes);
+            for (int t = 0; t < optNumTeamSizes; t++)
+                fprintf(stderr, "%s%d", t ? "," : " ", optTeamSizes[t]);
+            fprintf(stderr, ")\n");
+        } else if (optNumTeams >= 2) {
             for (int i = 0; i < optNumPlayers; i++) {
                 serverSimSetTeamBatch(app.sim, (BYTE)i,
                                       (BYTE)((i % optNumTeams) + 1));

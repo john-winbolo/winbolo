@@ -383,7 +383,16 @@ static void vizSetAll(bool on, void (*onToggle)(int)) {
  * VizSets ini persists it. It's independent of the per-row toggles: it controls
  * what each brain EMITS (and thus what gets recorded), so a replay can carry
  * layers that were toggled off / other tanks. */
-int vizWindowCollectMode(void) { return sCollectMode; }
+int vizWindowCollectMode(void) {
+    /* Load the persisted collect mode on first access, NOT just when the V
+     * window is first rendered. The recording path (pushVizStateToBots) reads
+     * this every tick; if the user starts a sim without ever opening the V
+     * window, the ini value (e.g. "ALL tanks") would otherwise never load and
+     * we'd silently record at the static default 0 (followed-tank-only),
+     * leaving every non-followed bot with no overlays in playback. */
+    if (!sVizSetsLoaded) { vizSetsLoad(); sVizSetsLoaded = true; }
+    return sCollectMode;
+}
 
 void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
                      void (*onToggle)(int idx)) {

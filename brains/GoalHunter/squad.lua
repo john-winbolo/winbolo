@@ -79,6 +79,7 @@ function M.reset_blitz_state(state)
   state._blitz_spot_since       = nil   -- first-come spot-claim timestamps (commander arbiter)
   -- squad membership / status (recomputed each tick, cleared for cleanliness)
   state.squad_role              = nil
+  state.squad_commander_pill    = nil   -- sticky commander latch dies with the take
   state.squad_cmdr              = nil
   state.squad_status            = nil
   state.squad_help_target       = nil
@@ -468,8 +469,17 @@ function M.update(state, info, now, world)
       -- a solo blitzer that wears a pill down to <12 HP on a second pass gets
       -- demoted to soldier mid-take, then the blitz_wait soldier branch finds no
       -- commander above it and aborts with "commander gone" (it WAS the leader).
+      -- ...OR we still hold the sticky commander latch on this pill (set at the
+      -- end of any tick we were elected its commander, cleared only on a real
+      -- end). This is what makes "first to initiate STAYS commander until a real
+      -- reason ends the take": HP dropping below the hard-take threshold or a
+      -- recruiting call closing during approach no longer demotes an established
+      -- leader. The deferral ladder below is still the ONLY thing that can hand
+      -- command to an earlier / tie-lower-pn rival — and that demotion clears the
+      -- latch (a genuine yield), so it doesn't fight this.
       local is_leading = (g and g.target_id and
-                          (state._my_blitz_call == g.target_id or g._blitz_committed))
+                          (state._my_blitz_call == g.target_id or g._blitz_committed
+                           or state.squad_commander_pill == g.target_id))
       role = (is_hard_take or is_leading) and M.ROLE_COMMANDER or M.ROLE_SOLDIER
       -- Don't elect a SECOND commander of a pill an ally is already blitzing:
       -- FIRST TO THE TAKE WINS. If a live blitz call on OUR target has been open
@@ -558,6 +568,24 @@ function M.update(state, info, now, world)
           end
         end
       end
+    end
+  end
+  -- Sticky commander latch reconcile (end of election). Remember the pill we
+  -- command so next tick's is_leading keeps an established leader as COMMANDER
+  -- through HP wobble / a closed recruiting call — i.e. first-to-initiate holds
+  -- the role until a REAL end. We set it whenever we ended this tick as the
+  -- commander of an attack_pill; we CLEAR it the instant role lands soldier —
+  -- which only happens for a real reason: we deferred to an earlier / tie-lower-
+  -- pn rival (the ladder above), we joined someone's squad (squad_cmdr), or we
+  -- left the pill (goal changed / pill captured / dead). On tank death the whole
+  -- latch is wiped by reset_blitz_state.
+  if C.DYNAMIC_COMMANDERS then
+    local gg = state.goal
+    if role == M.ROLE_COMMANDER and gg and gg.kind == "attack_pill"
+       and gg.target_id and gg.target_id >= 0 then
+      state.squad_commander_pill = gg.target_id
+    else
+      state.squad_commander_pill = nil
     end
   end
   state.squad_role = role

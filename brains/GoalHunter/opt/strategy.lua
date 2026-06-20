@@ -155,8 +155,14 @@ function M.update(state, world, info)
     opening_neutral_count = reachable
   end
 
+  -- All bases claimed (none neutral left) → the opening land-grab is definitively
+  -- over, end opening NOW even inside the OPENING_MIN_TICKS window (and bypass the
+  -- phase hysteresis below). Guard on total_bases>0 so a cold-start tick where
+  -- perception hasn't counted bases yet (all counts 0) can't false-trigger.
+  local all_bases_taken = (total_bases > 0 and neutral_count == 0)
+
   local new_phase, phase_reason
-  if state.tick < C.OPENING_MIN_TICKS then
+  if state.tick < C.OPENING_MIN_TICKS and not all_bases_taken then
     new_phase = "opening"
     phase_reason = string.format("tick %d < %d", state.tick, C.OPENING_MIN_TICKS)
   elseif opening_neutral_count > opening_tolerance then
@@ -196,7 +202,13 @@ function M.update(state, world, info)
 
   -- Hysteresis: require N consecutive ticks before switching
   if new_phase ~= state.phase then
-    if not state.phase_pending or state.phase_pending.phase ~= new_phase then
+    if state.phase == "opening" and all_bases_taken and new_phase ~= "opening" then
+      -- Immediate, no-hysteresis exit from opening once every base is claimed.
+      local old = state.phase
+      state.phase = new_phase
+      state.phase_pending = nil
+      log.event("phase_change", (old or "none") .. " -> " .. new_phase .. " (all bases taken)")
+    elseif not state.phase_pending or state.phase_pending.phase ~= new_phase then
       state.phase_pending = { phase = new_phase, count = 1 }
     else
       state.phase_pending.count = state.phase_pending.count + 1

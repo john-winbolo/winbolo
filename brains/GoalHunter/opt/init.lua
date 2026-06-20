@@ -271,10 +271,16 @@ function Brain.get_pool_breakdown_json()
   end
   local ok, result = pcall(goals.get_pool_breakdown_json, state)
   if ok then return result end
+  -- The pool builder threw. Don't return empty sections — that renders as a
+  -- BLANK / vanished P window with no clue why (drove debugging nuts when it
+  -- fired for one bot). Surface the error AS a visible row so the window stays
+  -- up and shows the cause, and log it to print2 so it's grep-able per bot.
+  local emsg = tostring(result):gsub('\\', '\\\\'):gsub('"', "'")
+                               :gsub('[\n\r\t]', ' ')
   io.stderr:write("BRAIN ERROR get_pool_breakdown_json: " .. tostring(result) .. "\n")
   return string.format(
-    '{"phase":"error","tick":%d,"replan_left":0,"sections":[]}',
-    state.tick or 0)
+    '{"phase":"error","tick":%d,"replan_left":0,"bot":%d,"sections":[{"id":"err","label":"POOL ERROR","rows":[{"id":0,"mx":0,"my":0,"cost":0,"formula":"%s","stale":-1,"active":false,"imminent":false,"reject":"error"}]}]}',
+    state.tick or 0, state.player_number or 0, emsg)
 end
 
 function Brain.get_strategic_place_heatmap()
@@ -1559,6 +1565,16 @@ function Brain.think(info)
               -- Visible tanks are already in nav_avoid_tiles from the objects
               -- sweep above; here only add the out-of-view broadcast standoff.
               if not (atmx and atmy) then nav_avoid_tiles[#nav_avoid_tiles + 1] = cmy * 256 + cmx end
+              -- Plus the 4 cardinal neighbours of the blitz ally's tile, so the
+              -- route tracer (and the nav_veer red tiles) gives a converging
+              -- blitzer a one-tile berth on every side, not just its exact tile.
+              local _BNDX, _BNDY = { 1, -1, 0, 0 }, { 0, 0, 1, -1 }
+              for _bi = 1, 4 do
+                local _bcx, _bcy = cmx + _BNDX[_bi], cmy + _BNDY[_bi]
+                if _bcx >= 0 and _bcx <= 255 and _bcy >= 0 and _bcy <= 255 then
+                  nav_avoid_tiles[#nav_avoid_tiles + 1] = _bcy * 256 + _bcx
+                end
+              end
             end
           elseif pmx and pmy and atmx and atmy then
             -- Solo take: 5x5 tank stamp gated on euclidean ≤ 3 to setup or
@@ -2661,12 +2677,18 @@ function Brain.think(info)
         elseif pill_dead and FIRING_SUBS[sub] then
           -- Keep the goal valid — attack.lua's firing handler enters swerve this
           -- tick (charge:4462 / shoot_pill:4977 / engage). Don't invalidate.
+          -- Our shots just dropped this pill to 0 → claim the fresh-kill pickup
+          -- so Override 3b grabs the body HARD (ignoring refuel/flee).
+          attack.mark_kill_pickup(state, state.goal.target_id, gmx, gmy, now)
         elseif pill_dead then
           goal_valid = false
-          -- Pill killed externally (not our capture): wipe the attack_pill
-          -- pool cache so the urgent replan can't immediately re-select a
-          -- stale pill from old cost_cache data.  The eval queue will
-          -- re-evaluate fresh candidates within the next replan cycle.
+          -- Our attack_pill target died (we/our blitz finished it). Claim the
+          -- fresh-kill pickup so Override 3b force-wins capture_pill on it
+          -- instead of letting refuel/flee pull us off the free body.
+          attack.mark_kill_pickup(state, state.goal.target_id, gmx, gmy, now)
+          -- Wipe the attack_pill pool cache so the urgent replan can't
+          -- immediately re-select a stale pill from old cost_cache data. The
+          -- eval queue re-evaluates fresh candidates within the next replan.
           if state.pool_cache then state.pool_cache[6] = nil end
         elseif (info.shells or 0) <= 0 then
           -- Out of ammo: we can't damage the pill, so don't sit on it.
@@ -4685,6 +4707,21 @@ function Brain.think(info)
         bsi.mx = tostring(state.goal.mx)
         bsi.my = tostring(state.goal.my)
       end
+    end
+
+    -- Fresh-kill pickup claim (kg=pill id, kc=our capture_pill score for it).
+    -- Advertised only while a claim is live (rare, ~5 s windows), so the churn
+    -- is bounded. Lets blitz members hand the pickup to the LOWEST-score one
+    -- (goals.lua Override 3b handoff reads these off ally_state), and every
+    -- other bot treat the pill as claimed (kg → _kill_claimed reject).
+    -- Unreachable/gone → large sentinel so we lose to any abler claimer.
+    if state.kill_pickup then
+      local kp = state.kill_pickup
+      local p  = world.pills[kp.id]
+      bsi.kg = tostring(kp.id)
+      local kc = goals.kill_pickup_score(state, world, info, p)
+      if not kc or kc >= 1e29 then kc = 1e9 end
+      bsi.kc = string.format("%.0f", kc)
     end
 
     -- Carried-pill advertisement (carry=id,id,...). Broadcast REGARDLESS of
