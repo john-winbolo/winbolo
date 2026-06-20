@@ -1313,95 +1313,112 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::SameLine();
             ImGui::BeginGroup();
             {
-                /* Game type + version on one line. */
-                ImGui::Text("%s: %s", langGetText(STR_DLGBROWSER_COL_TYPE),
-                            gameTypeStr(sel.game));
-                ImGui::SameLine();
-                ImGui::Text("%s: %s", langGetText(STR_DLGBROWSER_COL_VER), sel.version);
+                /* Label cells carry the theme accent; values stay normal text.
+                 * Columns separate label from value, so the label text drops the
+                 * trailing colon. */
+                const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_CheckMark);
+                auto label = [&](const char *t) { ImGui::TextColored(accent, "%s", t); };
 
-                /* Hidden mines + AI on one line. */
-                ImGui::Text("%s: %s", langGetText(STR_DLGGAMESETUP_HIDDENMINES_SHORT),
-                            langGetText(sel.mines ? STR_YES : STR_NO));
-                ImGui::SameLine();
-                {
-                    int aiStr = STR_NO;
-                    if      (sel.ai == aiYes)          aiStr = STR_YES;
-                    else if (sel.ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
-                    else if (sel.ai == aiFull)         aiStr = STR_DLGGAMEINFO_FULLADV;
-                    ImGui::Text("%s %s", langGetText(STR_DLGGAMEINFO_AILABEL),
-                                langGetText(aiStr));
-                }
+                if (ImGui::BeginTable("##gbdetail", 4, ImGuiTableFlags_SizingFixedFit)) {
+                    /* Type + Version */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_TYPE));
+                    ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(gameTypeStr(sel.game));
+                    ImGui::TableSetColumnIndex(2); label(langGetText(STR_DLGBROWSER_COL_VER));
+                    ImGui::TableSetColumnIndex(3); ImGui::TextUnformatted(sel.version);
 
-                /* Players: count, /max when known, AI-player split when rich. */
-                {
-                    char pbuf[96];
-                    int n = SDL_snprintf(pbuf, sizeof(pbuf), "%d", sel.numPlayers);
-                    if (sel.maxPlayers > 0 && n > 0 && (size_t)n < sizeof(pbuf)) {
-                        n += SDL_snprintf(pbuf + n, sizeof(pbuf) - (size_t)n,
-                                          "/%d", sel.maxPlayers);
+                    /* Hidden mines + AI */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMESETUP_HIDDENMINES_SHORT));
+                    ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(langGetText(sel.mines ? STR_YES : STR_NO));
+                    ImGui::TableSetColumnIndex(2); label(langGetText(STR_DLGGAMEINFO_AILABEL));
+                    {
+                        int aiStr = STR_NO;
+                        if      (sel.ai == aiYes)          aiStr = STR_YES;
+                        else if (sel.ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
+                        else if (sel.ai == aiFull)         aiStr = STR_DLGGAMEINFO_FULLADV;
+                        ImGui::TableSetColumnIndex(3); ImGui::TextUnformatted(langGetText(aiStr));
                     }
-                    if (sel.hasRichInfo && sel.numBots > 0 &&
-                        n > 0 && (size_t)n < sizeof(pbuf)) {
-                        SDL_snprintf(pbuf + n, sizeof(pbuf) - (size_t)n,
-                                     " (%d AI players)", sel.numBots);
+
+                    /* Players — count / cap, AI-player split when rich */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMEINFO_NUMPLAYERS));
+                    {
+                        char pbuf[96];
+                        int cap = sel.maxPlayers > 0 ? sel.maxPlayers : MAX_TANKS;
+                        int n = SDL_snprintf(pbuf, sizeof(pbuf), "%d/%d", (int)sel.numPlayers, cap);
+                        if (sel.hasRichInfo && sel.numBots > 0 &&
+                            n > 0 && (size_t)n < sizeof(pbuf)) {
+                            SDL_snprintf(pbuf + n, sizeof(pbuf) - (size_t)n,
+                                         " (%d AI players)", sel.numBots);
+                        }
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(pbuf);
                     }
-                    ImGui::Text("%s: %s", langGetText(STR_DLGGAMEINFO_NUMPLAYERS), pbuf);
+
+                    /* Bases + pillboxes — free/total when the total is known. */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_BASES));
+                    {
+                        char vbuf[32];
+                        if (sel.numBases > 0)
+                            SDL_snprintf(vbuf, sizeof(vbuf), "%u/%u", sel.freeBases, sel.numBases);
+                        else
+                            SDL_snprintf(vbuf, sizeof(vbuf), "%u", sel.freeBases);
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(vbuf);
+                    }
+                    ImGui::TableSetColumnIndex(2); label("Pillboxes");
+                    {
+                        char vbuf[32];
+                        if (sel.numPills > 0)
+                            SDL_snprintf(vbuf, sizeof(vbuf), "%u/%u", sel.freePills, sel.numPills);
+                        else
+                            SDL_snprintf(vbuf, sizeof(vbuf), "%u", sel.freePills);
+                        ImGui::TableSetColumnIndex(3); ImGui::TextUnformatted(vbuf);
+                    }
+
+                    /* Time limit + (rich) allow-new-players */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT));
+                    {
+                        char tbuf[32];
+                        const char *timeVal;
+                        if (sel.timeLimit) {
+                            SDL_snprintf(tbuf, sizeof(tbuf), "%d", sel.timeMinutes);
+                            timeVal = tbuf;
+                        } else {
+                            timeVal = langGetText(STR_DLGGAMEINFO_UNLIMITED);
+                        }
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(timeVal);
+                    }
+                    if (sel.hasRichInfo) {
+                        ImGui::TableSetColumnIndex(2); label(langGetText(STR_ALLOW_NEW_PLAYERS));
+                        ImGui::TableSetColumnIndex(3);
+                        ImGui::TextUnformatted(langGetText(sel.allowNewPlayers ? STR_YES : STR_NO));
+                    }
+
+                    ImGui::EndTable();
                 }
 
-                /* Bases + pillboxes on one line — free/total when the total is
-                 * known (Internet), else just the free count (LAN). */
-                if (sel.numBases > 0) {
-                    ImGui::Text("%s: %u / %u", langGetText(STR_DLGBROWSER_COL_BASES),
-                                sel.freeBases, sel.numBases);
-                } else {
-                    ImGui::Text("%s: %u", langGetText(STR_DLGBROWSER_COL_BASES),
-                                sel.freeBases);
-                }
-                ImGui::SameLine();
-                if (sel.numPills > 0) {
-                    ImGui::Text("Pillboxes: %u / %u", sel.freePills, sel.numPills);
-                } else {
-                    ImGui::Text("Pillboxes: %u", sel.freePills);
-                }
-
-                /* Time limit (present in legacy packets). */
-                if (sel.timeLimit) {
-                    ImGui::Text("%s: %d", langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT),
-                                sel.timeMinutes);
-                } else {
-                    ImGui::Text("%s: %s", langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT),
-                                langGetText(STR_DLGGAMEINFO_UNLIMITED));
-                }
-
-                /* Allow new players — rich-only (a legacy server can't report it). */
-                if (sel.hasRichInfo) {
-                    ImGui::Text("%s: %s", langGetText(STR_ALLOW_NEW_PLAYERS),
-                                langGetText(sel.allowNewPlayers ? STR_YES : STR_NO));
+                /* Active-only badges: password + rich flags, on one line. */
+                {
+                    std::string badges;
+                    auto addBadge = [&](const char *t) {
+                        if (!badges.empty()) badges += "  ·  ";
+                        badges += t;
+                    };
+                    if (sel.password) addBadge(langGetText(STR_DLGBROWSER_LOCK_PASSWORD));
+                    if (sel.hasRichInfo) {
+                        if (sel.ranked)    addBadge(langGetText(STR_DLGLOBBY_RANKED));
+                        if (sel.randomMap) addBadge(langGetText(STR_MAPCHOOSER_RANDOMMAP));
+                        if (sel.autoLock)  addBadge(langGetText(STR_DLGBROWSER_AUTOLOCK_HINT));
+                    }
+                    if (!badges.empty()) {
+                        ImGui::TextDisabled("%s", badges.c_str());
+                    }
                 }
             }
             ImGui::EndGroup();
             ImGui::Spacing();
-
-            /* ---- Full-width fields below the top row ---- */
-
-            /* Password — active-only, available from every source. */
-            if (sel.password) {
-                ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_LOCK_PASSWORD));
-            }
-
-            /* Rich-only fields — a legacy 76-byte server can't report these, so
-             * omit them entirely rather than show misleading defaults. */
-            if (sel.hasRichInfo) {
-                if (sel.ranked) {
-                    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_RANKED));
-                }
-                if (sel.randomMap) {
-                    ImGui::TextUnformatted(langGetText(STR_MAPCHOOSER_RANDOMMAP));
-                }
-                if (sel.autoLock) {
-                    ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_AUTOLOCK_HINT));
-                }
-            }
 
             /* Roster — WBN-only; LAN rows carry no player names. */
             ImGui::Separator();
