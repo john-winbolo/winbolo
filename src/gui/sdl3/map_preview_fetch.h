@@ -33,7 +33,7 @@ enum class MapPreviewFetchState { Pending, Ready, Unavailable };
  * already pending/cached (dedupe). Safe to call every frame. */
 void mapPreviewFetchRequest(const char *md5Hex);
 
-/* Current state for md5Hex. On Ready, *bytesOut/*lenOut point at the cached
+/* Current state for md5Hex. On Ready, *bytesOut / *lenOut point at the cached
  * raw .map bytes (stable for the session; do not free). On Pending/Unavailable
  * they are set to nullptr/0. Returns Unavailable for an unknown/empty md5. */
 MapPreviewFetchState mapPreviewFetchTryGet(const char *md5Hex,

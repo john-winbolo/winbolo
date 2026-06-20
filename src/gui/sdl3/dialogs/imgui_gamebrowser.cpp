@@ -62,7 +62,11 @@ extern "C" {
 #include "../input_source.h"
 #include "imgui_gamebrowser.h"
 #include "imgui_keyboard.h"
+#include "../map_preview_view.h"
+#include "../../../bolo/public/client_mappreview.h"
 }
+
+#include "../map_preview_fetch.h"
 
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
@@ -566,6 +570,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     bool autoPollEnabled = true;   /* Internet path: cleared on any fetch failure, re-armed on manual refresh */
     Uint64 lastFetchTime = 0;      /* SDL_GetTicks() when the last Internet fetch finished; 0 = none yet */
     constexpr Uint64 kInternetAutoRefreshMs = 20000;  /* ~20s; list freshness window is 5min, so faster is pointless */
+
+    /* Map preview for the detail pane. One view for the whole browser
+     * session; the loaded map is swapped when the selected md5 changes.
+     * NULL view => preview treated as unavailable (all uses guarded). */
+    MapPreviewView *previewView = mapPreviewViewCreate();
+    char loadedPreviewMd5[33] = "";
+    bool loadedPreviewOk = false;
 
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
@@ -1216,13 +1227,69 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::BeginChild("##MapPreview", ImVec2(boxSize, boxSize),
                               ImGuiChildFlags_Borders);
             {
-                const char *ph = (sel.mapMd5[0] != '\0') ? "Map preview"
-                                                         : "Preview unavailable";
-                ImVec2 ts = ImGui::CalcTextSize(ph);
-                ImVec2 av = ImGui::GetContentRegionAvail();
-                ImGui::SetCursorPos(ImVec2((av.x - ts.x) * 0.5f,
-                                           (av.y - ts.y) * 0.5f));
-                ImGui::TextDisabled("%s", ph);
+                auto centeredDimmed = [](const char *txt) {
+                    ImVec2 ts = ImGui::CalcTextSize(txt);
+                    ImVec2 av = ImGui::GetContentRegionAvail();
+                    ImGui::SetCursorPos(ImVec2((av.x - ts.x) * 0.5f,
+                                               (av.y - ts.y) * 0.5f));
+                    ImGui::TextDisabled("%s", txt);
+                };
+
+                if (sel.mapMd5[0] == '\0') {
+                    /* Random/unknown map — nothing to fetch. */
+                    centeredDimmed("Preview unavailable");
+                } else {
+                    mapPreviewFetchRequest(sel.mapMd5);
+                    const uint8_t *bytes = nullptr;
+                    size_t len = 0;
+                    MapPreviewFetchState st =
+                        mapPreviewFetchTryGet(sel.mapMd5, &bytes, &len);
+
+                    if (st == MapPreviewFetchState::Pending) {
+                        centeredDimmed("Loading…");
+                    } else if (st == MapPreviewFetchState::Unavailable) {
+                        centeredDimmed("Preview unavailable");
+                    } else {
+                        /* Ready: (re)load only when the selected md5 changed,
+                         * so the same map isn't reconverted every frame. */
+                        if (previewView != nullptr &&
+                            strcmp(loadedPreviewMd5, sel.mapMd5) != 0) {
+                            int compLen = 0;
+                            BYTE *comp = clientMapConvertFileToCompressed(
+                                bytes, (int)len, &compLen);
+                            loadedPreviewOk =
+                                (comp != nullptr) &&
+                                mapPreviewViewLoadCompressed(previewView, comp, compLen);
+                            if (comp) free(comp);
+                            /* Record the md5 even on conversion failure so a
+                             * bad map isn't reconverted every frame. */
+                            SDL_strlcpy(loadedPreviewMd5, sel.mapMd5,
+                                        sizeof(loadedPreviewMd5));
+                        }
+
+                        if (previewView != nullptr && loadedPreviewOk &&
+                            strcmp(loadedPreviewMd5, sel.mapMd5) == 0 &&
+                            mapPreviewViewIsReady(previewView)) {
+                            /* Reserve a line for the caption so the static
+                             * thumbnail fills the box without a scrollbar. */
+                            ImVec2 av = ImGui::GetContentRegionAvail();
+                            int boxW = (int)av.x;
+                            int boxH = (int)(av.y - ImGui::GetTextLineHeightWithSpacing());
+                            if (boxW < 1) boxW = 1;
+                            if (boxH < 1) boxH = 1;
+                            mapPreviewViewRenderOffscreen(previewView, renderer,
+                                                          boxW, boxH);
+                            SDL_Texture *tex = mapPreviewViewGetTexture(previewView);
+                            if (tex) {
+                                ImGui::Image((ImTextureID)tex,
+                                             ImVec2((float)boxW, (float)boxH));
+                            }
+                            ImGui::TextDisabled("Will download on join");
+                        } else {
+                            centeredDimmed("Preview unavailable");
+                        }
+                    }
+                }
             }
             ImGui::EndChild();
             ImGui::Spacing();
@@ -1616,6 +1683,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     if (mdnsThread.joinable()) {
         mdnsThread.join();
     }
+
+    mapPreviewViewDestroy(previewView);
 
     /* Destroy refresh icon texture */
     if (s_refreshIcon) { SDL_DestroyTexture(s_refreshIcon); s_refreshIcon = nullptr; }
