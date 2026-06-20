@@ -997,18 +997,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::Spacing();
         }
 
-        /* ---- Loading banner ---- */
-        if (loadingGames) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.5f, 1.0f));
-            float time = (float)SDL_GetTicks() / 1000.0f;
-            const char *dots[] = { "", ".", "..", "..." };
-            int dotIdx = ((int)(time * 2.0f)) % 4;
-            MessageArgs args = {};
-            SDL_strlcpy(args.string1, dots[dotIdx], sizeof(args.string1));
-            ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_LOADING, &args));
-            ImGui::PopStyleColor();
-        }
-
         /* ---- Server list + detail pane ---- */
         /* Reserve space for: filters row + separator + status + button row */
         float frameH = ImGui::GetFrameHeightWithSpacing();
@@ -1039,29 +1027,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 colOut = dotOrange;
             }
         };
-
-        /* Legend — one line above the panes. */
-        {
-            auto legendDot = [&](const ImVec4 &col, bool filled, const char *txt) {
-                ImVec2 p = ImGui::GetCursorScreenPos();
-                float lh = ImGui::GetTextLineHeight();
-                float r = lh * 0.30f;
-                ImVec2 c(p.x + r + 1.0f, p.y + lh * 0.5f);
-                ImDrawList *ld = ImGui::GetWindowDrawList();
-                if (filled) ld->AddCircleFilled(c, r, ImGui::GetColorU32(col));
-                else        ld->AddCircle(c, r, ImGui::GetColorU32(col), 0, 1.5f);
-                ImGui::Dummy(ImVec2(r * 2.0f + 4.0f, lh));
-                ImGui::SameLine(0.0f, 4.0f);
-                ImGui::TextDisabled("%s", txt);
-            };
-            legendDot(dotGreen,  true,  langGetText(STR_DLGBROWSER_ST_LOBBY));
-            ImGui::SameLine(0.0f, 16.0f * s);
-            legendDot(dotOrange, true,  langGetText(STR_DLGBROWSER_ST_INGAME));
-            ImGui::SameLine(0.0f, 16.0f * s);
-            legendDot(dotRed,    true,  "Locked/Full");
-            ImGui::SameLine(0.0f, 16.0f * s);
-            legendDot(dotGrey,   false, "No response");
-        }
 
         float listH = ImGui::GetContentRegionAvail().y - bottomH;
         if (listH < 120.0f) listH = 120.0f;
@@ -1215,6 +1180,29 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                 ImGui::GetColorU32(pcol), pingStr);
                 }
 
+                /* Players X/cap in the left gutter, under the flag */
+                {
+                    int cap = e.maxPlayers > 0 ? e.maxPlayers : MAX_TANKS;
+                    char pc[24];
+                    SDL_snprintf(pc, sizeof(pc), "%d/%d", (int)e.numPlayers, cap);
+                    dl->AddText(ImVec2(contentX, p0.y + pad + lineH),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), pc);
+                }
+
+                /* Game-type abbreviation, right-aligned under the ping */
+                {
+                    const char *gt;
+                    switch (e.game) {
+                    case gameOpen:           gt = "Open";   break;
+                    case gameTournament:     gt = "Tourn";  break;
+                    case gameStrictTournament:
+                    default:                 gt = "Strict"; break;
+                    }
+                    ImVec2 gsz = ImGui::CalcTextSize(gt);
+                    dl->AddText(ImVec2(textRight - gsz.x, p0.y + pad + lineH),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), gt);
+                }
+
                 ImGui::SetCursorScreenPos(pEnd);
                 ImGui::PopID();
             }   /* for each visible server */
@@ -1325,9 +1313,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::SameLine();
             ImGui::BeginGroup();
             {
-                /* Game type — the type word alone (AI/mines shown separately). */
+                /* Game type + version on one line. */
                 ImGui::Text("%s: %s", langGetText(STR_DLGBROWSER_COL_TYPE),
                             gameTypeStr(sel.game));
+                ImGui::SameLine();
+                ImGui::Text("%s: %s", langGetText(STR_DLGBROWSER_COL_VER), sel.version);
 
                 /* Hidden mines + AI on one line. */
                 ImGui::Text("%s: %s", langGetText(STR_DLGGAMESETUP_HIDDENMINES_SHORT),
@@ -1373,22 +1363,26 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 } else {
                     ImGui::Text("Pillboxes: %u", sel.freePills);
                 }
+
+                /* Time limit (present in legacy packets). */
+                if (sel.timeLimit) {
+                    ImGui::Text("%s: %d", langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT),
+                                sel.timeMinutes);
+                } else {
+                    ImGui::Text("%s: %s", langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT),
+                                langGetText(STR_DLGGAMEINFO_UNLIMITED));
+                }
+
+                /* Allow new players — rich-only (a legacy server can't report it). */
+                if (sel.hasRichInfo) {
+                    ImGui::Text("%s: %s", langGetText(STR_ALLOW_NEW_PLAYERS),
+                                langGetText(sel.allowNewPlayers ? STR_YES : STR_NO));
+                }
             }
             ImGui::EndGroup();
             ImGui::Spacing();
 
             /* ---- Full-width fields below the top row ---- */
-
-            /* Time limit (present in legacy packets). */
-            if (sel.timeLimit) {
-                ImGui::Text("%s: %d", langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT),
-                            sel.timeMinutes);
-            } else {
-                ImGui::Text("%s: %s", langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT),
-                            langGetText(STR_DLGGAMEINFO_UNLIMITED));
-            }
-
-            ImGui::Text("%s: %s", langGetText(STR_DLGBROWSER_COL_VER), sel.version);
 
             /* Password — active-only, available from every source. */
             if (sel.password) {
@@ -1398,8 +1392,6 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             /* Rich-only fields — a legacy 76-byte server can't report these, so
              * omit them entirely rather than show misleading defaults. */
             if (sel.hasRichInfo) {
-                ImGui::Text("%s: %s", langGetText(STR_ALLOW_NEW_PLAYERS),
-                            langGetText(sel.allowNewPlayers ? STR_YES : STR_NO));
                 if (sel.ranked) {
                     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_RANKED));
                 }
@@ -1414,14 +1406,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             /* Roster — WBN-only; LAN rows carry no player names. */
             ImGui::Separator();
             ImGui::TextDisabled("WinBolo.net players:");
-            if (sel.players.empty() && sel.numBots == 0) {
+            if (sel.players.empty()) {
                 ImGui::TextDisabled("—");
             } else {
                 for (const auto &nm : sel.players) {
                     ImGui::TextUnformatted(nm.c_str());
-                }
-                for (int b = 0; b < sel.numBots; b++) {
-                    ImGui::TextUnformatted("[bot]");
                 }
             }
         }
@@ -1497,6 +1486,28 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             } else {
                 ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_STATUS, &args));
             }
+
+            /* Status-dot legend, trailing the status text on the same line. */
+            auto legendDot = [&](const ImVec4 &col, bool filled, const char *txt) {
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                float lh = ImGui::GetTextLineHeight();
+                float r = lh * 0.30f;
+                ImVec2 c(p.x + r + 1.0f, p.y + lh * 0.5f);
+                ImDrawList *ld = ImGui::GetWindowDrawList();
+                if (filled) ld->AddCircleFilled(c, r, ImGui::GetColorU32(col));
+                else        ld->AddCircle(c, r, ImGui::GetColorU32(col), 0, 1.5f);
+                ImGui::Dummy(ImVec2(r * 2.0f + 4.0f, lh));
+                ImGui::SameLine(0.0f, 4.0f);
+                ImGui::TextDisabled("%s", txt);
+            };
+            ImGui::SameLine(0.0f, 16.0f * s);
+            legendDot(dotGreen,  true,  langGetText(STR_DLGBROWSER_ST_LOBBY));
+            ImGui::SameLine(0.0f, 16.0f * s);
+            legendDot(dotOrange, true,  langGetText(STR_DLGBROWSER_ST_INGAME));
+            ImGui::SameLine(0.0f, 16.0f * s);
+            legendDot(dotRed,    true,  "Locked/Full");
+            ImGui::SameLine(0.0f, 16.0f * s);
+            legendDot(dotGrey,   false, "No response");
         }
 
         ImGui::Spacing();
