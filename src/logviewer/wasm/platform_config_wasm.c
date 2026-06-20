@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * platform_config_wasm.c - Browser localStorage config for WASM build
  *
  * Replaces platform_config.c — uses browser localStorage via EM_ASM

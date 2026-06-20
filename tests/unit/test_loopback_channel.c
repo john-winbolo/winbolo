@@ -26,12 +26,13 @@
  *      than a raw receive peek (the drain owns the bytes and decode-skips a
  *      non-control payload harmlessly).
  *
- *   3. Real game events ride channel 0.  A running session fires under loss;
- *      each shot expires into an EVENT_EXPLOSION the server routes onto
- *      CHANNEL_GAME.  The client must deliver it over the channel (expectedSeq
- *      advances) and apply it through the shared game-event path (brain event
- *      buffer grows) — the migration-parity check that the channel carries the
- *      same observable game events the per-client event queue used to.
+ *   3. Real game events ride the best-effort channel.  A running session fires
+ *      under loss; each shot expires into an EVENT_EXPLOSION the server routes
+ *      onto CHANNEL_GAME_EFFECT (ephemeral events are best-effort).  The client
+ *      must deliver it over that channel (expectedSeq advances) and apply it
+ *      through the shared game-event path (brain event buffer grows) — the
+ *      migration-parity check that the channel carries the same observable game
+ *      events the per-client event queue used to.
  *
  *   6. Map-change recovery on channel 1.  A terrain change is staged under loss
  *      (server map mutated + map event held); it must recover over CHANNEL_MAP
@@ -330,7 +331,7 @@ static int run_game_event_channel(void) {
         inputTick = feed_fire(&h, inputTick);
         loopbackHarnessPump(&h);
 
-        transportUdpClientChannelTestStats(ct, CHANNEL_GAME, &cliExp, NULL, NULL);
+        transportUdpClientChannelTestStats(ct, CHANNEL_GAME_EFFECT, &cliExp, NULL, NULL);
         if (cliExp >= 1 && clientSimGetBrainEventCount(h.cs) > 0) {
             gotEvent = true;
             break;
@@ -343,13 +344,13 @@ static int run_game_event_channel(void) {
 
     if (!gotEvent) {
         uint32_t cliExp = 0, srvAck = 0;
-        transportUdpClientChannelTestStats(ct, CHANNEL_GAME, &cliExp, NULL, NULL);
-        transportUdpServerChannelTestStats(slot, CHANNEL_GAME, NULL, &srvAck, NULL);
+        int brainEvents = clientSimGetBrainEventCount(h.cs);
+        transportUdpClientChannelTestStats(ct, CHANNEL_GAME_EFFECT, &cliExp, NULL, NULL);
+        transportUdpServerChannelTestStats(slot, CHANNEL_GAME_EFFECT, NULL, &srvAck, NULL);
         loopbackHarnessStop(&h);
-        UT_FAIL("no game event delivered+applied via channel 0 within %d pumps "
+        UT_FAIL("no game event delivered+applied via best-effort channel within %d pumps "
                 "(client expectedSeq=%u server ackedSeq=%u brainEvents=%d)",
-                ROUNDTRIP_MAX, (unsigned)cliExp, (unsigned)srvAck,
-                clientSimGetBrainEventCount(h.cs));
+                ROUNDTRIP_MAX, (unsigned)cliExp, (unsigned)srvAck, brainEvents);
     }
 
     if (clientSimGetConnectState(h.cs) != CLIENT_CONNECT_CONNECTED) {

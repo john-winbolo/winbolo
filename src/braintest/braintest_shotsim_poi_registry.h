@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 /*********************************************************
  * Shot-Sim POI registry — brain-registered "active points
  * of interest" the user can click on inside the shot-sim

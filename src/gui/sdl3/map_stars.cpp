@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * Implementation of the starred-map persistence layer.
  *
  * Storage: SDL_GetPrefPath()/map_stars.txt, one entry per line, tab

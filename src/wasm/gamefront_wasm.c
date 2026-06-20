@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * gamefront_wasm.c - WASM game frontend (skips all dialogs)
  *
  * Replaces gui/sdl3/gamefront.c for the WASM build.

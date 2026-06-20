@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * client_net.c
  *
  * Implementation of the client_net.h wrappers — ClientSim owns the

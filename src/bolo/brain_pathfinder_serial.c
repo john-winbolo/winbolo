@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * brain_pathfinder_serial.c — Serialize / deserialize BrainPathfinder state
  *
  * Used for exact trace replay: captures grids, config, and Dijkstra slate

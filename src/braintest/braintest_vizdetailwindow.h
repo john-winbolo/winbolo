@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 /*********************************************************
  * BrainTest viz-detail inspector window — ImGui panel
  * inside the main map window. Lists every viz_detail the

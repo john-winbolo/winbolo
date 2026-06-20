@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1590,7 +1590,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * was ingested above (before the control drain), where any game-start
          * baseline lift already ran, so a previous-game straggler is gone and
          * only current-game events drain here.  The channel guarantees in-order
-         * exactly-once delivery, so no per-event ack or dedup is applied. */
+         * exactly-once delivery, so no per-event ack or dedup is applied.
+         * Ephemeral events arrive on the best-effort channel and merge into the
+         * same game-event set: order between the reliable and best-effort sets
+         * does not affect correctness, so they share chanGameEv[] and the
+         * splice below. */
         {
             GameEvent chanGameEv[MAX_SNAPSHOT_EVENTS];
             uint8_t chanBuf[CHANNEL_MAX_SEG];
@@ -1599,6 +1603,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             int mapTailCount;
             while (chanCount < MAX_SNAPSHOT_EVENTS &&
                    channelReceive(&c->channelMux, CHANNEL_GAME, chanBuf, &chanLen)) {
+                if (unpackGameEvent(chanBuf, chanLen, &chanGameEv[chanCount]) > 0) {
+                    chanCount++;
+                }
+            }
+            /* Drain the best-effort game-effect channel into the same array. */
+            while (chanCount < MAX_SNAPSHOT_EVENTS &&
+                   channelReceiveBestEffort(&c->channelMux, CHANNEL_GAME_EFFECT,
+                                            chanBuf, &chanLen)) {
                 if (unpackGameEvent(chanBuf, chanLen, &chanGameEv[chanCount]) > 0) {
                     chanCount++;
                 }
@@ -1701,6 +1713,16 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 }
                 while (channelReceive(&c->channelMux, CHANNEL_GAME,
                                       chanBuf, &chanLen)) {
+                    if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
+                        clientSimApplyGameEvents(c->clientSim, &gev, 1,
+                                                 c->playerNum);
+                    }
+                }
+                /* Best-effort game-effect channel (ephemeral events). Order
+                 * relative to the reliable game/map drains does not matter. */
+                while (channelReceiveBestEffort(&c->channelMux,
+                                                CHANNEL_GAME_EFFECT,
+                                                chanBuf, &chanLen)) {
                     if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
                         clientSimApplyGameEvents(c->clientSim, &gev, 1,
                                                  c->playerNum);

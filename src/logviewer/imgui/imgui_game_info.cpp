@@ -1,7 +1,7 @@
 /*
  * imgui_game_info.cpp - ImGui game information window for Log Viewer
  *
- * Copyright (c) 2024
+ * Copyright (c) 1998-2026 John Morrison.
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or

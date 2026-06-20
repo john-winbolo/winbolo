@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -4605,8 +4605,10 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             }
         }
 
-        /* Pass 2: enqueue non-sound game events into game queue,
-         * then deduplicated sounds into game queue */
+        /* Pass 2: route non-sound game events, then deduplicated sounds.
+         * Each event goes to the reliable game channel (CHANNEL_GAME) if
+         * gameEventIsReliable, otherwise to the best-effort channel
+         * (CHANNEL_GAME_EFFECT). Sounds are all best-effort. */
         for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
             uint8_t evType = serverSimGetEvents(sim)[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
@@ -4631,20 +4633,28 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                 }
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
                 int evLen = packGameEvent(evBuf, &serverSimGetEvents(sim)[i]);
-                if (!channelSend(&udpServer.channelMux[c], CHANNEL_GAME,
-                                 evBuf, (uint16_t)evLen)) {
-                    /* Channel window full — defer the disconnect off the
-                     * event loop, mirroring the control-queue overflow path:
-                     * set the deferred-removal flag (drained at a safe point
-                     * by transportUdpServerDrainPendingRemovals) and stop. The
-                     * flag guard keeps a re-hit from spamming the log. */
-                    if (!udpServer.pendingSimRemove[c]) {
-                        WB_LOG_ERROR(WB_LOG_CAT_NET,
-                                     "game channel overflow for slot %d, deferring disconnect",
-                                     c);
-                        udpServer.pendingSimRemove[c] = true;
+                if (gameEventIsReliable(evType)) {
+                    if (!channelSend(&udpServer.channelMux[c], CHANNEL_GAME,
+                                     evBuf, (uint16_t)evLen)) {
+                        /* Channel window full — defer the disconnect off the
+                         * event loop, mirroring the control-queue overflow path:
+                         * set the deferred-removal flag (drained at a safe point
+                         * by transportUdpServerDrainPendingRemovals) and stop. The
+                         * flag guard keeps a re-hit from spamming the log. */
+                        if (!udpServer.pendingSimRemove[c]) {
+                            WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                         "game channel overflow for slot %d, deferring disconnect",
+                                         c);
+                            udpServer.pendingSimRemove[c] = true;
+                        }
+                        break;
                     }
-                    break;
+                } else {
+                    /* Ephemeral event — best-effort: never blocks, never
+                     * disconnects on overflow (drops oldest). */
+                    channelSendBestEffort(&udpServer.channelMux[c],
+                                          CHANNEL_GAME_EFFECT, evBuf,
+                                          (uint16_t)evLen);
                 }
             }
         }
@@ -4652,16 +4662,11 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             if (bestSoundIdx[s] >= 0) {
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
                 int evLen = packGameEvent(evBuf, &serverSimGetEvents(sim)[bestSoundIdx[s]]);
-                if (!channelSend(&udpServer.channelMux[c], CHANNEL_GAME,
-                                 evBuf, (uint16_t)evLen)) {
-                    if (!udpServer.pendingSimRemove[c]) {
-                        WB_LOG_ERROR(WB_LOG_CAT_NET,
-                                     "game channel overflow for slot %d, deferring disconnect",
-                                     c);
-                        udpServer.pendingSimRemove[c] = true;
-                    }
-                    break;
-                }
+                /* Sounds are ephemeral — best-effort: never blocks, never
+                 * disconnects on overflow (drops oldest). */
+                channelSendBestEffort(&udpServer.channelMux[c],
+                                      CHANNEL_GAME_EFFECT, evBuf,
+                                      (uint16_t)evLen);
             }
         }
         #undef MAX_SOUND_TYPES
