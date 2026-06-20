@@ -1233,11 +1233,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::Spacing();
             ImGui::TextDisabled("Select a server");
         } else {
-            /* Preview occupies the left ~45% of the pane; the key fields sit
-             * to its right (added after EndChild below). */
-            float availDW = ImGui::GetContentRegionAvail().x;
-            float boxSize = availDW * 0.45f;
-            float maxBox  = listH * 0.5f;
+            /* Preview is a modest fixed thumbnail on the left; the key fields
+             * sit to its right (added after EndChild below). Capped so the
+             * field table beside it fits at the default window size. */
+            float boxSize = listH * 0.5f;
+            float maxBox  = 160.0f * s;
             if (boxSize > maxBox) boxSize = maxBox;
             if (boxSize < 80.0f)  boxSize = 80.0f;
             ImGui::BeginChild("##MapPreview", ImVec2(boxSize, boxSize),
