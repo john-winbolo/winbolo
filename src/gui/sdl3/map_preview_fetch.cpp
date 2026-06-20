@@ -48,33 +48,45 @@ struct Entry {
     std::vector<uint8_t> bytes;
 };
 
-std::mutex                              s_cacheMtx;
-std::unordered_map<std::string, Entry>  s_cache;
+/* All mutable pool state lives in one heap instance reached via pool().
+ * The detached workers outlive normal static destruction, so the cv/mutex/
+ * containers must never have their destructors run at process exit. */
+struct PreviewPool {
+    std::mutex                              cacheMtx;
+    std::unordered_map<std::string, Entry>  cache;
+    std::mutex                              queueMtx;
+    std::condition_variable                 queueCv;
+    std::deque<std::string>                 queue;
+};
+
+static PreviewPool &pool() {
+    static PreviewPool *p = new PreviewPool();  /* intentionally leaked:
+        detached workers outlive normal static destruction, so never run
+        these destructors — avoids a hang at process exit. */
+    return *p;
+}
 
 /* On-select preview fetches are far rarer than the server-list pings, so a
  * small pool is ample. */
 static constexpr int            kPreviewPoolSize = 2;
-std::mutex                      s_queueMtx;
-std::condition_variable         s_queueCv;
-std::deque<std::string>         s_queue;
 std::once_flag                  s_poolOnce;
 
 void previewWorkerFn() {
     for (;;) {
         std::string md5;
         {
-            std::unique_lock<std::mutex> lk(s_queueMtx);
-            s_queueCv.wait(lk, [] { return !s_queue.empty(); });
-            md5 = s_queue.front();
-            s_queue.pop_front();
+            std::unique_lock<std::mutex> lk(pool().queueMtx);
+            pool().queueCv.wait(lk, [] { return !pool().queue.empty(); });
+            md5 = pool().queue.front();
+            pool().queue.pop_front();
         }
 
         WbnMapResult r;
         bool ok = wbnMapFetchByMd5(md5.c_str(), &r);
 
         {
-            std::lock_guard<std::mutex> lk(s_cacheMtx);
-            Entry &e = s_cache[md5];
+            std::lock_guard<std::mutex> lk(pool().cacheMtx);
+            Entry &e = pool().cache[md5];
             if (ok) {
                 e.state = MapPreviewFetchState::Ready;
                 e.bytes.assign(r.mapData, r.mapData + r.mapDataLen);
@@ -95,11 +107,11 @@ void mapPreviewFetchRequest(const char *md5Hex) {
     }
 
     {
-        std::lock_guard<std::mutex> lk(s_cacheMtx);
-        if (s_cache.find(md5Hex) != s_cache.end()) {
+        std::lock_guard<std::mutex> lk(pool().cacheMtx);
+        if (pool().cache.find(md5Hex) != pool().cache.end()) {
             return;  /* already pending or cached — dedupe */
         }
-        s_cache.emplace(md5Hex, Entry{MapPreviewFetchState::Pending, {}});
+        pool().cache.emplace(md5Hex, Entry{MapPreviewFetchState::Pending, {}});
     }
 
     std::call_once(s_poolOnce, [] {
@@ -109,10 +121,10 @@ void mapPreviewFetchRequest(const char *md5Hex) {
     });
 
     {
-        std::lock_guard<std::mutex> lk(s_queueMtx);
-        s_queue.emplace_back(md5Hex);
+        std::lock_guard<std::mutex> lk(pool().queueMtx);
+        pool().queue.emplace_back(md5Hex);
     }
-    s_queueCv.notify_one();
+    pool().queueCv.notify_one();
 }
 
 MapPreviewFetchState mapPreviewFetchTryGet(const char *md5Hex,
@@ -129,9 +141,9 @@ MapPreviewFetchState mapPreviewFetchTryGet(const char *md5Hex,
         return MapPreviewFetchState::Unavailable;
     }
 
-    std::lock_guard<std::mutex> lk(s_cacheMtx);
-    auto it = s_cache.find(md5Hex);
-    if (it == s_cache.end()) {
+    std::lock_guard<std::mutex> lk(pool().cacheMtx);
+    auto it = pool().cache.find(md5Hex);
+    if (it == pool().cache.end()) {
         return MapPreviewFetchState::Unavailable;
     }
     if (it->second.state == MapPreviewFetchState::Ready) {
