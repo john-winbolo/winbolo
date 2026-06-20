@@ -126,6 +126,14 @@ typedef struct {
     bool     *recvPresent; /* [window]                                  */
     uint16_t *recvLen;     /* [window]                                  */
     uint8_t  *recvData;    /* [window * segSize], row stride = segSize  */
+
+    /* Fast-retransmit (NAK) state. */
+    uint32_t recvHighestSeq; /* exclusive upper bound on the highest seq
+                              * accepted on the receive side; reported as
+                              * highestSeen so the peer can spot a gap        */
+    bool     nakIssued;    /* a fast-retransmit fired for the current stall;
+                            * cleared when the cumulative ack advances, so each
+                            * distinct gap rewinds the tail at most once     */
 } ChannelState;
 
 typedef struct ChannelMux {

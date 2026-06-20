@@ -29,14 +29,18 @@
 /* Channel frame layout (one shared codec):
  *
  *   ackCount : u8
- *   repeat ackCount:  channelId u8, ackedSeq u32   (exclusive: peer has
- *                                                    received every seq <
- *                                                    ackedSeq on that channel)
+ *   repeat ackCount:  channelId u8, ackedSeq u32, highestSeen u32
+ *                       ackedSeq  (exclusive): peer has received every seq <
+ *                                  ackedSeq in order on that channel.
+ *                       highestSeen (exclusive): one past the highest seq the
+ *                                  peer has buffered. highestSeen > ackedSeq
+ *                                  means a gap exists past the in-order point,
+ *                                  which the sender fast-retransmits.
  *   segCount : u8
  *   repeat segCount:  channelId u8, seq u32, len u16, payload[len]
  *
  * Per-record sizes used by the parser bounds checks. */
-#define CHANNEL_ACK_RECORD_SIZE 5  /* channelId(1) + ackedSeq(4)           */
+#define CHANNEL_ACK_RECORD_SIZE 9  /* channelId(1) + ackedSeq(4) + highestSeen(4) */
 #define CHANNEL_SEG_HEADER_SIZE 7  /* channelId(1) + seq(4) + len(2)        */
 
 static uint32_t channelMin32(uint32_t a, uint32_t b) {
@@ -242,6 +246,9 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
         }
         buf[pos] = (uint8_t)ch;
         packU32(buf + pos + 1, c->expectedSeq);
+        uint32_t hs = (c->recvHighestSeq < c->expectedSeq) ? c->expectedSeq
+                                                           : c->recvHighestSeq;
+        packU32(buf + pos + 5, hs); /* never below the cumulative ack */
         pos += CHANNEL_ACK_RECORD_SIZE;
         ackCount++;
         c->ackDirty = false;
@@ -377,6 +384,9 @@ static void channelApplySegment(ChannelMux *m, uint8_t ch, uint32_t seq,
         return; /* already buffered — dedup */
     }
     c->recvPresent[idx] = true;
+    if (seq + 1 > c->recvHighestSeq) {
+        c->recvHighestSeq = seq + 1; /* in-window accept lifts the gap bound */
+    }
     c->recvLen[idx] = slen;
     if (slen > 0) {
         memcpy(c->recvData + idx * c->segSize, payload, slen);
@@ -397,6 +407,7 @@ int channelRecvFrame(ChannelMux *m, const uint8_t *buf, int len) {
         }
         uint8_t ch = buf[pos];
         uint32_t ackVal = unpackU32(buf + pos + 1);
+        uint32_t highestSeen = unpackU32(buf + pos + 5);
         pos += CHANNEL_ACK_RECORD_SIZE;
         if (ch < CHANNEL_COUNT) {
             ChannelState *c = &m->ch[ch];
@@ -407,6 +418,15 @@ int channelRecvFrame(ChannelMux *m, const uint8_t *buf, int len) {
                 if (c->txNext < c->ackedSeq) {
                     c->txNext = c->ackedSeq;
                 }
+                c->nakIssued = false; /* forward progress re-arms a future NAK */
+            }
+            /* A reported gap (the peer holds segments past the in-order point)
+             * rewinds the transmit cursor once, so the existing send loop
+             * resends the unacked tail a full RTO before the timeout would. */
+            if (!c->bestEffort && c->ackedSeq < c->nextSeq &&
+                highestSeen > c->ackedSeq && !c->nakIssued) {
+                c->txNext = c->ackedSeq;   /* resend the unacked tail next frame */
+                c->nakIssued = true;       /* one fast-retransmit per stall point */
             }
         }
     }
@@ -494,6 +514,7 @@ uint32_t channelResetSend(ChannelMux *m, uint8_t ch) {
     }
     c->ackedSeq = c->nextSeq;
     c->txNext = c->nextSeq;
+    c->nakIssued = false; /* no outstanding stall after a send reset */
     /* The stream channel also carries un-segmentized bytes in the shared
      * staging buffer; collapsing the window without dropping them would let a
      * stale tail segmentize into the post-reset sequence space and corrupt the
@@ -526,4 +547,7 @@ void channelResetExpected(ChannelMux *m, uint8_t ch, uint32_t newExpected) {
         c->recvPresent[seq % c->window] = false;
     }
     c->expectedSeq = newExpected;
+    if (c->recvHighestSeq < c->expectedSeq) {
+        c->recvHighestSeq = c->expectedSeq; /* no false gap across the reset */
+    }
 }
