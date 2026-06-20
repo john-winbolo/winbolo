@@ -147,6 +147,16 @@ struct PingResult {
     WORD freeBases;
     WORD numPlayers;
     char hostName[256];
+    char mapMd5[33];
+    bool allowNewPlayers;
+    bool inLobby;
+    bool allowSpectators;
+    BYTE spectatorCount;
+    bool ranked;
+    bool randomMap;
+    BYTE numHumans;
+    BYTE numBots;
+    int32_t timeLimit;
 };
 
 /* Resolve hostname to IP (if needed) and look up country via GeoIP database */
@@ -209,6 +219,16 @@ static PingResult pingServer(const PingWork &work) {
     res.freeBases = 0;
     res.numPlayers = 0;
     res.hostName[0] = '\0';
+    res.mapMd5[0] = '\0';
+    res.allowNewPlayers = false;
+    res.inLobby = false;
+    res.allowSpectators = false;
+    res.spectatorCount = 0;
+    res.ranked = false;
+    res.randomMap = false;
+    res.numHumans = 0;
+    res.numBots = 0;
+    res.timeLimit = 0;
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
      * answers, so even unresponsive servers get a hostname. */
@@ -220,6 +240,16 @@ static PingResult pingServer(const PingWork &work) {
         res.freePills = dpr.freePills;
         res.freeBases = dpr.freeBases;
         res.numPlayers = dpr.numPlayers;
+        res.numHumans       = dpr.numHumans;
+        res.numBots         = dpr.numBots;
+        res.ranked          = dpr.ranked;
+        res.inLobby         = dpr.inLobby;
+        res.allowNewPlayers = dpr.allowNewPlayers;
+        res.allowSpectators = dpr.allowSpectators;
+        res.spectatorCount  = dpr.spectatorCount;
+        res.randomMap       = dpr.randomMap;
+        res.timeLimit       = dpr.timeLimit;
+        SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
     return res;
 }
@@ -299,7 +329,6 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.pingMs = -1;
     e.freePills = 0;
     e.freeBases = 0;
-    e.lobbyStatus = 0;
 
     SDL_strlcpy(e.address, src->address, sizeof(e.address));
     e.port = src->port;
@@ -313,6 +342,20 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.game       = src->game;
     e.ai         = src->ai;
     e.password   = src->password;
+    e.numHumans       = src->numHumans;
+    e.numBots         = src->numBots;
+    e.ranked          = src->ranked;
+    e.inLobby         = src->inLobby;
+    e.allowNewPlayers = src->allowNewPlayers;
+    e.allowSpectators = src->allowSpectators;
+    e.spectatorCount  = src->spectatorCount;
+    e.randomMap       = src->randomMap;
+    SDL_strlcpy(e.mapMd5, src->mapMd5, sizeof(e.mapMd5));
+    /* INFO/TXT time limit is game-length in 50ths-of-a-second ticks; convert
+     * to minutes the same way the server does (ticks / (50 * 60)). */
+    e.timeLimit   = (src->timeLimit != 0);
+    e.timeMinutes = (int)(src->timeLimit / (50 * 60));
+    e.lobbyStatus = src->inLobby ? 1 : 0;
 
     resolveCountryCode(e);
     return e;
@@ -685,6 +728,18 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         if (pr.numPlayers > 0) {
                             servers[pr.index].numPlayers = (BYTE)pr.numPlayers;
                         }
+                        servers[pr.index].numHumans       = pr.numHumans;
+                        servers[pr.index].numBots         = pr.numBots;
+                        servers[pr.index].ranked          = pr.ranked;
+                        servers[pr.index].inLobby         = pr.inLobby;
+                        servers[pr.index].allowNewPlayers = pr.allowNewPlayers;
+                        servers[pr.index].allowSpectators = pr.allowSpectators;
+                        servers[pr.index].spectatorCount  = pr.spectatorCount;
+                        servers[pr.index].randomMap       = pr.randomMap;
+                        servers[pr.index].timeLimit       = (pr.timeLimit != 0);
+                        servers[pr.index].timeMinutes     = (int)(pr.timeLimit / (50 * 60));
+                        servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
+                        SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));
                     }
                 }
             }
