@@ -276,6 +276,26 @@ local function clear_attack_goal(state, reason, no_urgent)
   end
 end
 M.clear_attack_goal = clear_attack_goal
+
+-- Stamp a fresh-kill pickup claim: WE just dropped pill `id` to 0 armour.
+-- goals.lua Override 3b force-wins capture_pill on this id, overriding
+-- refuel/flee/survival entirely (no armour gate). Dedups by id (re-stamping
+-- the same kill just refreshes the kill_tick). Cleared on capture / in_tank /
+-- TTL expiry by the override, and on tank death by squad.reset_blitz_state.
+local function mark_kill_pickup(state, id, mx, my, now)
+  if not C.KILL_PICKUP_ENABLED then return end
+  if not id or id < 0 then return end
+  local kp = state.kill_pickup
+  if kp and kp.id == id then
+    kp.kill_tick = now; kp.mx = mx; kp.my = my
+    return
+  end
+  -- created_tick = first time we claimed THIS pill (absolute commitment cap,
+  -- since the grabber refreshes kill_tick while driving in). kill_tick is the
+  -- rolling TTL anchor.
+  state.kill_pickup = { id = id, mx = mx, my = my, kill_tick = now, created_tick = now }
+end
+M.mark_kill_pickup = mark_kill_pickup
 M.enter_swerve      = enter_swerve
 
 local _EMPTY = {}
@@ -2932,7 +2952,15 @@ function M.update_attack_substate(goal, state, world, info)
   local _blitz_precommit = goal.substate == "plan_position"
                            or goal.substate == "approach"
                            or goal.substate == "blitz_wait"
+  -- ...but NOT for the blitz COMMANDER. squad_blitz_target is recomputed from
+  -- scratch every tick in squad.update and is only re-set for a bot whose role
+  -- reads COMMANDER that tick; the DYNAMIC_COMMANDERS partition flickers, so a
+  -- bot LEADING its own blitz briefly loses squad_blitz_target on an off-tick
+  -- even though it's still on the same pill. goal._blitz_cmdr (latched below)
+  -- marks "we're the commander of this take" so the flicker can't make us abort
+  -- our own blitz with a bogus "commander gone" (saw bot8 do exactly this).
   if goal._blitz and not goal._blitz_committed and _blitz_precommit
+     and not goal._blitz_cmdr
      and (not state.squad_blitz_target
           or goal.target_id ~= state.squad_blitz_target) then
     state.squad_blitz_engage_mx, state.squad_blitz_engage_my = nil, nil
@@ -2946,6 +2974,13 @@ function M.update_attack_substate(goal, state, world, info)
   if state.squad_blitz_target and goal.target_id == state.squad_blitz_target
      and not goal._blitz_solo then
     goal._blitz = true
+    -- Latch commander-ness for this take. Reaching here with NO squad_cmdr can
+    -- only mean we're the COMMANDER: a soldier's squad_blitz_target is always
+    -- set alongside squad_cmdr (the accept/commit path), whereas a commander's
+    -- comes from the role==COMMANDER branch in squad.update with squad_cmdr nil.
+    -- Latch-only (never cleared here) so a later role flicker can't unset it
+    -- mid-take; it dies with the goal via clear_attack_goal.
+    if not state.squad_cmdr then goal._blitz_cmdr = true end
     -- The blitz goal is only adopted once the negotiation is ACCEPTED (squad
     -- layer), so reaching here means we're committed. The blitz CALL is an
     -- ongoing PARALLEL thing — goal._blitz drives bco recruiting + the bes
@@ -4026,7 +4061,7 @@ function M.update_attack_substate(goal, state, world, info)
       local APPROACH_STALL_GIVE_UP_TICKS = 500
       if (now - goal._approach_last_progress) > APPROACH_STALL_GIVE_UP_TICKS then
         print(string.format(TAG ..
-          " ATTACK: approach stalled (no progress in %d ticks, dist=%d) — abandoning attack_pill",
+          " ATTACK: approach stalled (no progress in %d ticks, dist=%.0f) — abandoning attack_pill",
           APPROACH_STALL_GIVE_UP_TICKS, adist))
         clear_attack_goal(state, "approach stalled")
         return
@@ -5264,6 +5299,7 @@ function M.update_attack_substate(goal, state, world, info)
       -- Pill killed (by us-via-leftover-shells or by an ally) while
       -- we waited. Release to capture_pill via the normal selector
       -- instead of locking into rush — see swerve completion above.
+      mark_kill_pickup(state, goal.target_id, goal.mx, goal.my, now)
       clear_attack_goal(state, "pill died during loiter")
       print(TAG .. " ATTACK: pill died during loiter — releasing to capture_pill")
     elseif pill.anger and pill.anger < C.ANGER_ATTACK_THRESHOLD then
@@ -5388,6 +5424,7 @@ function M.update_attack_substate(goal, state, world, info)
         -- selector lets a genuinely higher-priority goal (flee,
         -- urgent rescue) interrupt — the old "rush" substate
         -- locked us to this pill no matter what.
+        mark_kill_pickup(state, goal.target_id, goal.mx, goal.my, now)
         clear_attack_goal(state, "swerve done, pill dead")
         print(TAG .. " ATTACK: swerve done, pill dead — releasing to capture_pill")
       elseif (goal._on_target_in_flight or 0) >= pill.health then

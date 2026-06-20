@@ -108,6 +108,9 @@ function M.reset_blitz_state(state)
   -- known-call registry: clear + re-announce discovery from the new spawn
   state.blitz_calls             = {}
   state._blitz_query_send       = true
+  -- fresh-kill pickup claim dies with the tank (a respawn shouldn't chase a
+  -- pill it "killed" in a previous life).
+  state.kill_pickup             = nil
 end
 
 
@@ -649,14 +652,29 @@ function M.update(state, info, now, world)
                            dist = math.abs(pp.mx - tmx) + math.abs(pp.my - tmy) }
       end
     end
+    -- pill_attackers[pill] = total tanks already committed to attacking/
+    -- capturing each pill, role-AGNOSTIC: the commander, its soldiers, AND
+    -- independent attackers (e.g. a harasser solo-attacking the same pill, who
+    -- is NOT a squad member so members[] never counts it). A blitz is capped at
+    -- 2 TANKS total, so a pill with cap+1 attackers is FULL no matter how the
+    -- c/s/h roles broke down — this is what stops a 3rd tank piling on when a
+    -- commander + a harasser are already on it.
+    local pill_attackers = {}
     for pn, slot in ally_state.iter_active(now, max_age) do
       -- Don't count a soldier that died since its last broadcast — its slot
       -- lingers active, but it no longer occupies a squad slot, so counting it
       -- would falsely fill the cap and block live joiners.
       local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
-      if pn ~= self_pn and slot.info.role == "s" and slot.info.cmdr and not is_dead then
-        local c = tonumber(slot.info.cmdr)
-        if c then members[c] = (members[c] or 0) + 1 end
+      if pn ~= self_pn and not is_dead and slot.info then
+        if slot.info.role == "s" and slot.info.cmdr then
+          local c = tonumber(slot.info.cmdr)
+          if c then members[c] = (members[c] or 0) + 1 end
+        end
+        local g = slot.info.goal
+        if g == "attack_pill" or g == "capture_pill" then
+          local t = tonumber(slot.info.target or "")
+          if t then pill_attackers[t] = (pill_attackers[t] or 0) + 1 end
+        end
       end
     end
     local _reg_n = 0; for _ in pairs(state.blitz_calls or {}) do _reg_n = _reg_n + 1 end
@@ -713,15 +731,22 @@ function M.update(state, info, now, world)
     -- commander's explicit accept (bac). The offered standoff (bes/bd) is
     -- computed in parallel by attack.blitz_negotiate while we keep our current
     -- goal; rejects (brj) make it repick.
+    -- A squad is FULL when the commander already has `cap` soldiers OR the pill
+    -- already has cap+1 tanks on it (commander + soldiers + independents). The
+    -- second test is the role-agnostic "max 2 tanks per pill" cap.
+    local function squad_full(pn, target)
+      return (members[pn] or 0) >= cap
+             or (pill_attackers[target] or 0) >= (cap + 1)
+    end
     local best_pn, best_d, best_target, saw_full
     for pn, ci in pairs(cmd_info) do
-      if (members[pn] or 0) >= cap then saw_full = true
+      if squad_full(pn, ci.target) then saw_full = true
       elseif not best_d or ci.dist < best_d then best_d, best_pn, best_target = ci.dist, pn, ci.target end
     end
     -- A cost-switch above chose a specific cheaper call to help — prefer it over
     -- the nearest (only if it's joinable / not full).
     if state._blitz_switch_to and cmd_info[state._blitz_switch_to]
-       and (members[state._blitz_switch_to] or 0) < cap then
+       and not squad_full(state._blitz_switch_to, cmd_info[state._blitz_switch_to].target) then
       best_pn     = state._blitz_switch_to
       best_target = cmd_info[best_pn].target
     end
@@ -800,7 +825,7 @@ end
 -- Role → display color for the roster panel.
 local ROLE_COLOR = {
   [M.ROLE_COMMANDER] = { 255, 80,  80  },  -- red
-  [M.ROLE_SOLDIER]   = { 100, 150, 255 },  -- blue
+  [M.ROLE_SOLDIER]   = { 50,  100, 235 },  -- blue (deeper royal — was too pale)
   [M.ROLE_HARASSER]  = { 255, 220, 60  },  -- yellow
 }
 -- Sort order in the panel: commanders, soldiers, harassers, then by pn.
@@ -810,6 +835,7 @@ local ROLE_ORDER = { [M.ROLE_COMMANDER] = 0, [M.ROLE_SOLDIER] = 1, [M.ROLE_HARAS
 local STATUS_TEXT = {
   blitz = "blitz", join = "joining", free = "free", full = "squad full",
   lh = "no:low_hp", na = "no:no_ammo", bz = "no:busy",
+  blitz_negotiating = "negotiating",
 }
 
 -- Right-side roster HUD, grouped into squads. Always-on (raw overlay binding,
@@ -818,6 +844,14 @@ local STATUS_TEXT = {
 --   commander (red)   — overall status to the right
 --     soldier (blue)  — indented under its commander, status to the right
 --   harasser (yellow) — own group
+-- Goals whose target_id names a PILL (so the roster's target column is
+-- meaningful). attack_/capture_/defend_/repair_pill + pill_place all carry a
+-- pill id; base/tank goals carry a base/tank id and are left blank.
+local PILL_TARGET_GOAL = {
+  attack_pill = true, capture_pill = true, defend_pill = true,
+  repair_pill = true, pill_place = true,
+}
+
 function M.draw_roster(state, info, now)
   if not viz.is_on("squad_roster") then return end
   local self_pn = info.player_number or -1
@@ -831,14 +865,26 @@ function M.draw_roster(state, info, now)
   -- is mid blitz-negotiation (offering a standoff, not yet committed). It's not
   -- a real goal substate — the bot keeps doing its actual thing — but we show
   -- it so the negotiation is visible. "blitz_committed" once accepted.
+  -- Status column is a SQUAD/blitz readout: only the attack_pill substate is
+  -- meaningful here. For any other goal (attack_tank, capture_base, refuel, ...)
+  -- the substate vocabulary overlaps ("engage" etc.) and just reads as noise, so
+  -- leave it blank. Blitz negotiate/commit always show — they're squad state.
   local self_status
   if state.squad_blitz_accepted then        self_status = "blitz_committed"
   elseif state.squad_negotiate_cmdr then     self_status = "blitz_negotiating"
-  else self_status = (state.goal and state.goal.substate) or state.squad_status end
+  elseif state.goal and state.goal.kind == "attack_pill" then
+    self_status = state.goal.substate
+  else self_status = nil end
+  local self_target
+  if state.goal and state.goal.target_id and state.goal.target_id >= 0
+     and PILL_TARGET_GOAL[state.goal.kind] then
+    self_target = state.goal.target_id
+  end
   bots[self_pn] = {
     role   = state.squad_role or M.ROLE_SOLDIER,
     cmdr   = state.squad_cmdr,
     status = self_status,
+    target = self_target,
     me     = true,
   }
   for pn in ally_state.iter_active(now, max_age) do
@@ -850,11 +896,19 @@ function M.draw_roster(state, info, now)
       -- has committed. Otherwise show its real substate.
       if a_cmdr and ally_state.get_key(pn, "bd") then a_status = "blitz_negotiating"
       elseif a_cmdr then                               a_status = "blitz_committed"
-      else a_status = ally_state.get_key(pn, "sub") or ally_state.get_key(pn, "sqst") end
+      elseif ally_state.get_key(pn, "goal") == "attack_pill" then
+        a_status = ally_state.get_key(pn, "sub")
+      else a_status = nil end
+      local a_target
+      if PILL_TARGET_GOAL[ally_state.get_key(pn, "goal")] then
+        local t = tonumber(ally_state.get_key(pn, "target") or "")
+        if t and t >= 0 then a_target = t end
+      end
       bots[pn] = {
         role   = ally_state.get_key(pn, "role") or "?",
         cmdr   = a_cmdr,
         status = a_status,
+        target = a_target,
       }
     end
   end
@@ -865,17 +919,44 @@ function M.draw_roster(state, info, now)
   table.sort(order)
 
   -- Right-anchored: larger x = further LEFT. Numbers sit at NUM_X (commanders)
-  -- / NUM_X-IND (soldiers, indented right); status text right-aligned at STAT_X.
-  local NUM_X, IND, STAT_X = 170, 22, 16
+  -- / NUM_X-IND (soldiers, indented right); target pill at TGT_X; status text
+  -- right-aligned at STAT_X.
+  local NUM_X, IND, TGT_X, STAT_X = 240, 22, 175, 16
   local y = 350
   local row_h = 16
 
-  local function draw_row(pn, b, indent)
-    local col = ROLE_COLOR[b.role] or { 180, 180, 180 }
-    local num = string.upper(tostring(b.role or "?")) .. tostring(pn)
+  -- Effective-commander detection. With DYNAMIC_COMMANDERS the role partition
+  -- flips tick-to-tick and a bot that is actually LEADING a blitz can briefly
+  -- broadcast role="soldier" (its soldiers still point cmdr at it). Treat any
+  -- bot that someone follows as a commander for display, so the leader + its
+  -- squad render as a group instead of as loose soldiers. `leads[pn]` = some
+  -- other bot has cmdr==pn.
+  local leads = {}
+  for _, pn in ipairs(order) do
+    local c = bots[pn].cmdr
+    if c ~= nil and c ~= pn then leads[c] = true end
+  end
+  local function is_cmdr(pn, b)
+    return b.role == M.ROLE_COMMANDER or leads[pn]
+  end
+
+  local function draw_row(pn, b, indent, as_cmdr)
+    -- as_cmdr forces commander display; "!" flags the inferred mismatch (a
+    -- bot we render as commander because it's followed, but whose broadcast
+    -- role still reads soldier — surfaces the underlying role flip-flop).
+    local inferred  = as_cmdr and b.role ~= M.ROLE_COMMANDER
+    local disp_role = as_cmdr and M.ROLE_COMMANDER or b.role
+    local col = ROLE_COLOR[disp_role] or { 180, 180, 180 }
+    local num = string.upper(tostring(disp_role or "?")) .. tostring(pn)
+                .. (inferred and "!" or "")
                 .. (b.me and " *" or "")
     viz.hud_text("squad_roster", NUM_X - (indent and IND or 0), y, num, "topright",
                      col[1], col[2], col[3], 255)
+    -- Target pill column (blank for non-pill goals).
+    if b.target ~= nil then
+      viz.hud_text("squad_roster", TGT_X, y, tostring(b.target), "topright",
+                       200, 200, 140, 255)
+    end
     local st = b.status and (STATUS_TEXT[b.status] or b.status) or ""
     if st ~= "" then
       viz.hud_text("squad_roster", STAT_X, y, st, "topright", 190, 190, 190, 255)
@@ -884,25 +965,30 @@ function M.draw_roster(state, info, now)
   end
 
   viz.hud_text("squad_roster", NUM_X, y, "-- SQUADS --", "topright", 210, 210, 210, 255)
+  viz.hud_text("squad_roster", TGT_X, y, "tgt", "topright", 160, 160, 120, 255)
   y = y + 20
 
-  -- Commanders + the soldiers attached to each.
+  -- Commanders (real or effective) + the soldiers attached to each.
   for _, pn in ipairs(order) do
     local b = bots[pn]
-    if b.role == M.ROLE_COMMANDER then
-      draw_row(pn, b, false)
+    if b.role ~= M.ROLE_HARASSER and is_cmdr(pn, b) then
+      draw_row(pn, b, false, true)
       for _, spn in ipairs(order) do
         local sb = bots[spn]
-        if sb.role == M.ROLE_SOLDIER and sb.cmdr == pn then
+        if spn ~= pn and sb.cmdr == pn and not is_cmdr(spn, sb) then
           draw_row(spn, sb, true)
         end
       end
     end
   end
-  -- Unattached soldiers.
+  -- Unattached soldiers: soldier role, not an effective commander, and with no
+  -- commander (or a cmdr that isn't itself an effective commander — orphan).
   for _, pn in ipairs(order) do
     local b = bots[pn]
-    if b.role == M.ROLE_SOLDIER and not b.cmdr then draw_row(pn, b, true) end
+    local attached = b.cmdr and bots[b.cmdr] and is_cmdr(b.cmdr, bots[b.cmdr])
+    if b.role == M.ROLE_SOLDIER and not is_cmdr(pn, b) and not attached then
+      draw_row(pn, b, true)
+    end
   end
   -- Harassers (own group).
   for _, pn in ipairs(order) do
@@ -1405,7 +1491,7 @@ function M.draw_blitz_roster(state, info, now)
     local goal_str = gkind .. ((gtgt and gtgt >= 0) and ("#" .. gtgt) or "")
                        .. ((gsub and gsub ~= "") and ("/" .. gsub) or "")
     local row = string.format("%-4s %-24s %-12s %s",
-                  "S" .. tostring(m.pn), goal_str, bes or "-", rdy and "RDY" or "")
+                  (m.is_cap and "C" or "S") .. tostring(m.pn), goal_str, bes or "-", rdy and "RDY" or "")
     local tw = #row * 12   -- HUD text is 8px/char at 1.5x scale = 12px
     -- Commander → semi-transparent yellow background (visible over water; drawn first, text on top).
     if m.is_cap then

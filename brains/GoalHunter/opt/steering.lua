@@ -232,8 +232,10 @@ local function pick_base_engage_point(goal, state, world, info, rush_mx, rush_my
   local gate     = C.ATTACK_PILL_RANGE or 9.5          -- pre-filter; require_reach is authoritative
 
   local best_mx, best_my, best_d = nil, nil, math.huge
-  for i = 1, #path do
-    local px, py = path[i].x, path[i].y
+  -- Trace path is a FLAT array of x,y pairs (path[i], path[i+1]) — same shape
+  -- consumed by attack.lua / cpathfinder.lua, NOT a list of {x,y} tables.
+  for i = 1, #path - 1, 2 do
+    local px, py = path[i], path[i+1]
     local dx, dy = px - bmx, py - bmy
     local d = math.sqrt(dx * dx + dy * dy)
     -- in firing gate, off the base tile, crossfire within budget, and a real shot
@@ -728,8 +730,26 @@ local function path_lookahead(state, info, nx, ny)
 
   local chain_nwp = #chain // 2
   local best_x, best_y = nx, ny
+  -- Straight-only lookahead. The aim point may advance ONLY along the ray from
+  -- the tank through the first step (nx,ny) — i.e. project tank -> nx, then keep
+  -- going straight while the path stays on that ray. The moment the A* path
+  -- bends off it, stop. Without this the bresenham "stay on path" test below
+  -- happily skips the aim point around a diagonal corner (the path IS the
+  -- diagonal, so the line to a far diagonal tile is all on-path), pulling the
+  -- purple lookahead marker off-axis — see nav diag 2. dx0,dy0 is the unit step
+  -- to the first waypoint; `steps` tiles out along it must equal the chain tile.
+  local dx0, dy0 = nx - tmx, ny - tmy
+  local straight_only = (dx0 ~= 0 or dy0 ~= 0)
+                        and math.abs(dx0) <= 1 and math.abs(dy0) <= 1
   for i = start_idx + 1, chain_nwp do
     local cx, cy = chain[2*i-1], chain[2*i]
+    if straight_only then
+      local steps = i - start_idx + 1
+      if cx ~= tmx + dx0 * steps or cy ~= tmy + dy0 * steps then
+        sdbg("lookahead: STOP path bends off straight ray at cand=(%d,%d)", cx, cy)
+        break
+      end
+    end
     -- Must-visit: BOAT or water tile when on foot
     if U.in_map(cx, cy) then
       local tt = U.ttype(cx, cy)

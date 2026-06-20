@@ -974,6 +974,27 @@ M.CAPTURE_RACE_MODE_IMMINENT = true   -- also tag race_mode whenever imminent-ca
 M.IMMINENT_CAPTURE_PATH_COST  = 30   -- path cost below which capture is "imminent"
 M.IMMINENT_CAPTURE_FLOOR      = 5    -- cost floor applied to imminent captures
 M.IMMINENT_CAPTURE_MIN_ARMOUR = 8    -- suppress override if armour below this (let flee win)
+
+-- Fresh-kill pickup. The moment WE (or our blitz) drop a pill to 0 armour,
+-- commit HARD to grabbing the body — overriding refuel / flee / survival
+-- ENTIRELY (no armour gate, unlike imminent-capture above). A wasted kill
+-- hands the pill straight back to the enemy, so this is worth dying for: if
+-- the grabber dies mid-pickup an ally finishes it. When multiple blitz
+-- killers claim the same pill, the one with the LOWEST Dijkstra path cost to
+-- the pill grabs (tie → lower player number) and the rest stand down and
+-- resume normal goals. Goes through goal_selection's Override 3b. Shot-clear
+-- hold reuses POST_KILL_WAIT_TICKS.
+M.KILL_PICKUP_ENABLED = true
+M.KILL_PICKUP_TTL     = 250    -- rolling TTL: ticks the claim survives since the
+                               -- last kill/refresh (~5 s). The grabber refreshes
+                               -- it every replan while driving in, so it only
+                               -- lapses if the grabber stops making the claim.
+M.KILL_PICKUP_HANDOFF = true   -- defer the pickup to the blitz member with the
+                               -- LOWEST capture_pill score (tie → lower player #)
+-- Absolute commitment cap measured from the FIRST claim of a pill, so a grabber
+-- that can never reach it (walled in, repeatedly bumped) eventually gives up
+-- instead of refreshing forever. ~20 s.
+M.KILL_PICKUP_MAX_TICKS = 1000
 -- Strategic-center bias: the placement scan is tank-centric, but spots near the
 -- chosen strategic center (war zone / base-vs-threat / contested pill) score
 -- higher. Bonus = max(0, CAP - dist_to_center) * WEIGHT. Optional (0 if no center).
@@ -1259,9 +1280,16 @@ M.HARD_TAKE_MIN_HP     = 12     -- R0: pill HP at/above which a take is "hard" (
 M.CIRCLE_REINFORCE_ENABLED = true  -- R3-exec: uncommitted bots reinforce nearest losing circle
 M.CIRCLE_REINFORCE_TIMEOUT = 1500  -- R3: base ticks (~30s) to reach the safe tile; scaled by travel distance
 M.UTIL_ACTIVE_PICKUP   = true   -- R1b: actively pick up a back pill to hit the util reserve target (STUB — no-op)
-M.HARASSER_TAKE_BASES  = true   -- R4: harasser #1 goal — take unprotected enemy bases
-M.HARASSER_MINE        = true   -- R4: harasser mine back lines (STUB — no mine-laying in engine yet)
-M.HARASSER_REAR_PUSH   = true   -- R4: harasser charge up, boat to rear, push front w/ attack_tank
+-- Harasser model: a harasser is just a normal GoalHunter bot whose attack_pill
+-- cost is multiplied by this, biasing it AWAY from the (congested) pill economy
+-- and toward bases / tank fights / defense via ordinary goal selection. The old
+-- R4 base-stealer mission (HARASSER_TAKE_BASES / _REAR_PUSH / _MINE) was scrapped.
+M.HARASSER_PILL_COST_MULT = 2.0
+-- Harasser distance de-emphasis: every distance-tied cost term in a harasser's
+-- combat goals (attack_pill travel, attack_tank / kill_lgm path_cost + LOS
+-- per-tile + far-preempt) is multiplied by this, so harassers roam far to fight
+-- instead of being pinned near home. 1.0 = no discount; lower = ranges farther.
+M.HARASSER_TRAVEL_MULT = 0.5
 -- Recruitment (slice 2): a soldier answers a nearby commander's pill take when
 -- it's in a follow-the-call state and not too low on resources.
 M.SQUAD_MIN_HELP_ARMOUR  = 10  -- below this armour a soldier won't answer (hard decline)

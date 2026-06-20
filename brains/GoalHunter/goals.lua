@@ -834,6 +834,14 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
   }
 end
 
+-- Harasser distance de-emphasis. A harasser ("h") roams to fight, so every
+-- distance-tied cost term in its combat goals (attack_pill / attack_tank /
+-- kill_lgm) is toned down by HARASSER_TRAVEL_MULT. Returns the multiplier to
+-- apply to a path_cost / dist×per_tile / far-preempt term (1.0 for non-harassers).
+local function harass_dist_mult(state)
+  return (state.squad_role == "h") and (C.HARASSER_TRAVEL_MULT or 1.0) or 1.0
+end
+
 -- Compute attack_pill cost adjustments for a given pill/path-cost.
 -- Returns adjusted_cost, description_suffix.
 local function attack_pill_adjustments(pill, pcost, state, world)
@@ -963,7 +971,18 @@ local function attack_pill_adjustments(pill, pcost, state, world)
 
   -- Final cost = flat base + fixed path cost + scaled combat cost. The flat
   -- base keeps a pill take from being effectively free vs. other goals.
-  return (C.ATTACK_PILL_BASE_COST or 0) + pcost + combat_cost, antic_desc
+  local final
+  if state.squad_role == "h" then
+    -- Harasser: discount the path/travel term, 2× the engage portion (flat base
+    -- + combat). Mirrors the split in update_pool_cache's pool-6 assembly.
+    final = pcost * harass_dist_mult(state)
+          + ((C.ATTACK_PILL_BASE_COST or 0) + combat_cost) * (C.HARASSER_PILL_COST_MULT or 1.0)
+    if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *harass(travel x%.1f, engage x%.1f)",
+      C.HARASSER_TRAVEL_MULT or 1.0, C.HARASSER_PILL_COST_MULT or 1.0) end
+  else
+    final = (C.ATTACK_PILL_BASE_COST or 0) + pcost + combat_cost
+  end
+  return final, antic_desc
 end
 
 local function eval_attack_pill(state, world, info, tmx, tmy, boat, ammo)
@@ -1308,7 +1327,8 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
         -- Clear LOS in range: very cheap cost, scaled by distance so closer = better.
         path_cost = 0  -- no wall-clearing needed
         shells_on_arrival = info.shells  -- full shells available (no walls to shoot)
-        cost = (C.TANK_COMBAT_LOS_BASE_COST + et.dist * C.TANK_COMBAT_LOS_COST_PER_TILE
+        cost = (C.TANK_COMBAT_LOS_BASE_COST
+               + et.dist * C.TANK_COMBAT_LOS_COST_PER_TILE * harass_dist_mult(state)
                + low_shells_penalty) * boat_mult
         -- wall_penalty is always 0 for los_engage (wall_hp_between == 0 is gated above)
       else
@@ -1349,7 +1369,7 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
         -- Standoff score is used internally to pick the best position —
         -- it doesn't inflate the final cost. The A* path_cost to the
         -- winning standoff already reflects the real travel expense.
-        cost = path_cost + C.TANK_COMBAT_BASE_COST + wall_penalty + low_shells_penalty
+        cost = path_cost * harass_dist_mult(state) + C.TANK_COMBAT_BASE_COST + wall_penalty + low_shells_penalty
 
         -- Aim bonus: if we're already pointed roughly at this tank, cheaper to engage.
         -- Capped at 10 if out of shooting range, 25 if in range.
@@ -1403,6 +1423,7 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
             (C.ATTACK_FAR_PREEMPT_BASE or 1.7) ^ (_edist - _shoot_r)
               * (C.ATTACK_FAR_PREEMPT_K or 8),
             C.ATTACK_FAR_PREEMPT_CAP or 1e6)
+          far_preempt_pen = far_preempt_pen * harass_dist_mult(state)
           cost = cost + far_preempt_pen
         end
       end
@@ -3011,6 +3032,13 @@ local function filter_capture_pill(obj, state)
   -- in_tank: someone picked it up. Show as rejected so the user can see
   -- "yes the dead pill exists, but it's currently in flight."
   if obj.in_tank then return { reason = "in_tank" } end
+  -- kill_claimed: a blitz member has claimed this fresh kill and is going HARD
+  -- for it (Override 3b). Don't contest — recognize the claim and move on. The
+  -- claimer itself never reaches this filter (its Override 3b force-wins before
+  -- pool competition), so this only rejects non-grabbers.
+  if state and state._kill_claimed and state._kill_claimed[U.mkey(obj.mx, obj.my)] then
+    return { reason = "kill_claimed" }
+  end
   -- blocked: stuck/no-build cooldown on this tile.
   if state and state.blocked then
     local bk = U.mkey(obj.mx, obj.my)
@@ -3218,6 +3246,19 @@ local function compute_pool4_cost(state, world, info, obj, tmx, tmy)
   return c, dist_raw, dist_score, danger_val, intercept, _lgm_mult, dist_method, free_disc
 end
 
+-- Public: the capture_pill (pool 4) score for a SPECIFIC pill, used by the
+-- fresh-kill handoff so blitz members compare the same balanced metric
+-- (distance + danger + wound + intercept) the goal selector already trusts,
+-- instead of raw path distance. The lowest score grabs. Large sentinel if the
+-- pill is gone/unreachable.
+function M.kill_pickup_score(state, world, info, pill)
+  if not pill then return 1e30 end
+  local tmx = info.tankx >> 8
+  local tmy = info.tanky >> 8
+  local c = compute_pool4_cost(state, world, info, pill, tmx, tmy)
+  return c or 1e30
+end
+
 -- build_eval_queue — called at the start of each replan cycle.
 -- Iterates all incremental pools, applies filters, and builds a flat
 -- work queue of candidates to evaluate (2 per tick).
@@ -3294,6 +3335,26 @@ function M.build_eval_queue(state, world, info)
   local now = state.tick or 0
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
+
+  -- Fresh-kill claim recognition: any dead pill a blitz member is committing
+  -- to (broadcast `kg`) is OFF-LIMITS to our normal capture_pill pool — the
+  -- lowest-score claimer goes HARD on it (Override 3b) and everyone else must
+  -- not contest. Keyed by tile so filter_capture_pill can reject it. Our OWN
+  -- claim (if any) is handled by Override 3b, which sets the goal as a direct
+  -- result and bypasses the pool entirely — so excluding self here is right.
+  state._kill_claimed = state._kill_claimed or {}
+  for k in pairs(state._kill_claimed) do state._kill_claimed[k] = nil end
+  if C.KILL_PICKUP_ENABLED and ally_state.iter_active and info.player_number then
+    for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+      if apn ~= info.player_number and slot.info and slot.info.kg then
+        local pid = tonumber(slot.info.kg)
+        local pp = pid and world.pills[pid]
+        if pp and (pp.health or 0) == 0 and not pp.in_tank then
+          state._kill_claimed[U.mkey(pp.mx, pp.my)] = pid
+        end
+      end
+    end
+  end
 
   -- Check preconditions that would skip entire pools
   local needs_resupply = (info.armour <= C.ARMOUR_LOW or info.shells <= C.SHELLS_LOW)
@@ -4798,7 +4859,21 @@ function M.step_eval_queue(state, world, info)
       local risky_armour_pen = (pool_idx == 6 and not in_2plus_blitz
         and (info.armour or 40) < (C.ATTACK_PILL_RISKY_ARMOUR or 30))
         and (C.ATTACK_PILL_RISKY_PENALTY or 100) or 0
-      local c = spot_cost + travel * travel_wound + combat * capture_mult + base_extra + threat_cost + ammo_cost + atk_tank_pen + risky_armour_pen
+      -- Pool-6 harasser model: split the TRAVEL (distance) term from the
+      -- ENGAGE/combat term. A harasser DISCOUNTS travel (HARASSER_TRAVEL_MULT)
+      -- so it roams far to attack pills, and pays HARASSER_PILL_COST_MULT× on
+      -- the engage portion only — keeping the distance de-emphasis from being
+      -- cancelled by the engage multiplier. Non-harassers / non-pool-6 use the
+      -- plain sum.
+      local _travel_term = travel * travel_wound
+      local c
+      if pool_idx == 6 and state.squad_role == "h" then
+        local _engage_term = spot_cost + combat * capture_mult + base_extra + threat_cost + ammo_cost + atk_tank_pen + risky_armour_pen
+        c = _travel_term * (C.HARASSER_TRAVEL_MULT or 1.0)
+          + _engage_term * (C.HARASSER_PILL_COST_MULT or 1.0)
+      else
+        c = spot_cost + _travel_term + combat * capture_mult + base_extra + threat_cost + ammo_cost + atk_tank_pen + risky_armour_pen
+      end
 
       -- danger_nearby multiplier (pool 6 only): if this pill was recently
       -- stamped (enemy LGM seen within danger radius during a prior take
@@ -4814,7 +4889,6 @@ function M.step_eval_queue(state, world, info)
           c = c * _danger_nearby_mult
         end
       end
-
       -- capture_pill: replace flat-multiplier formula with distance^1.5 + danger.
       --   path^1.5 * DIST_SCALE  → cheap nearby, grows fast with distance
       --   threat * DANGER_WEIGHT → hot zones push cost up regardless of distance
@@ -5246,7 +5320,43 @@ local function sync_ally_claimed_rejects(state, info)
         end
       end
       if blitz_open then
-        if e._reject == "ally_claimed" then
+        -- Squad cap: a blitz is at most a commander + SQUAD_MAX_SIZE soldiers
+        -- (2 tanks total). If the squad on this pill is already full and we're
+        -- not part of it, REJECT (blitz_full) rather than offering it as a
+        -- joinable candidate — stops a 3rd tank piling onto a full take. The
+        -- count is role-agnostic (any ally broadcasting attack_pill/capture_pill
+        -- on this pill, alive), so it holds even when the c/s roles get confused.
+        local g = state.goal
+        local we_on_pill = g and (g.kind == "attack_pill" or g.kind == "capture_pill")
+                           and ((g.target_id and g.target_id == e._id)
+                                or (g.mx == e._mx and g.my == e._my))
+        local we_participate = we_on_pill or (state.squad_blitz_target == e._id)
+        if not we_participate then
+          local full_n = (C.SQUAD_MAX_SIZE or 1) + 1   -- commander + soldiers
+          local tdead = state.tank_dead_at
+          local n = 0
+          for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+            if apn ~= self_pn and slot.info then
+              local ag = slot.info.goal
+              if (ag == "attack_pill" or ag == "capture_pill")
+                 and tonumber(slot.info.target or "") == e._id
+                 and not (tdead and tdead[apn] and tdead[apn] > (slot.last_tick or 0)) then
+                n = n + 1
+                if n >= full_n then break end
+              end
+            end
+          end
+          if n >= full_n then
+            if e._reject ~= "blitz_full" then
+              e._reject = "blitz_full"
+              e._reject_remaining = 0
+              e.formula = nil
+            end
+            e._blitz_joinable = nil
+            goto continue_entry
+          end
+        end
+        if e._reject == "ally_claimed" or e._reject == "blitz_full" then
           e._reject = nil
           e._reject_remaining = 0
           e._ally_by = nil
@@ -6350,6 +6460,7 @@ function M.refresh_kill_lgm(state, info, world)
             far_preempt_pen = math.min(
               (C.ATTACK_FAR_PREEMPT_BASE or 1.7) ^ (_edist - _shoot_r) * (C.ATTACK_FAR_PREEMPT_K or 8),
               C.ATTACK_FAR_PREEMPT_CAP or 1e6)
+            far_preempt_pen = far_preempt_pen * harass_dist_mult(state)
             far_val = string.format("%.0f", far_preempt_pen)
           else
             far_val = string.format("0 e%.1f<=%d", _edist, _shoot_r)
@@ -6360,7 +6471,7 @@ function M.refresh_kill_lgm(state, info, world)
       if los_engage then
         -- (LOS_BASE + dist*LOS_PER_TILE + low_sh) * boat + threat
         local raw = C.TANK_COMBAT_LOS_BASE_COST
-                  + (lgm.dist or 0) * C.TANK_COMBAT_LOS_COST_PER_TILE
+                  + (lgm.dist or 0) * C.TANK_COMBAT_LOS_COST_PER_TILE * harass_dist_mult(state)
                   + low_shells_penalty
         cost = raw * boat_mult + tank_tile_threat + far_preempt_pen
         -- LOS engage shoots from where we stand.
@@ -6427,7 +6538,7 @@ function M.refresh_kill_lgm(state, info, world)
         -- (The LOS branch shoots from where we stand, so it has none.)
         local crossfire = new_pill_crossfire(world, shoot_mx, shoot_my, tmx, tmy)
         -- (A* + base + low_sh - aim + xfire) * boat (if <1) + threat
-        local raw = path_cost + KILL_LGM_BASE_COST + low_shells_penalty
+        local raw = path_cost * harass_dist_mult(state) + KILL_LGM_BASE_COST + low_shells_penalty
                   - aim_bonus + crossfire
         if boat_mult < 1.0 then raw = raw * boat_mult end
         cost = raw + tank_tile_threat + far_preempt_pen
@@ -6955,6 +7066,109 @@ local function goal_selection(state, world, info, quiet)
       desc = string.format("cp#%d@(%d,%d) [%s hp=%d own=%s]",
              co.id, p.mx, p.my, result.kind, p.health, p.owner)
     end
+  end
+
+  -- ════════════════════════════════════════════════════════════════════
+  -- Override 3b: Fresh-kill pickup (autonomous). WE (or our blitz) just
+  -- dropped this pill to 0 — grab the body HARD, overriding refuel / flee /
+  -- survival ENTIRELY (only an enemy/ally actually taking the pill stops us).
+  -- A wasted kill hands the pill back to the enemy, so this is worth dying
+  -- for. When several blitz members claim the same pill, the one with the
+  -- LOWEST capture_pill score grabs (tie → lower player number); the rest
+  -- stand down and the whole team treats the pill as claimed (the kg/_kill_-
+  -- claimed reject in build_eval_queue). Mirrors Override 3 (cp command).
+  -- ════════════════════════════════════════════════════════════════════
+  if not result and C.KILL_PICKUP_ENABLED and state.kill_pickup then
+    local kp  = state.kill_pickup
+    local now = state.tick or 0
+    local p   = world.pills[kp.id]
+    -- Rolling TTL (since last kill/refresh) OR the absolute commitment cap
+    -- (since first claim) — the cap stops a walled-in grabber refreshing forever.
+    local ttl_lapsed = (now - (kp.kill_tick or now)) > (C.KILL_PICKUP_TTL or 250)
+    local capped     = (now - (kp.created_tick or kp.kill_tick or now))
+                       > (C.KILL_PICKUP_MAX_TICKS or 1000)
+    -- Claim dies when: TTL lapsed, capped, pill gone, already scooped (in_tank),
+    -- or (re)captured by the team (friendly & alive again). in_tank is the
+    -- "enemy/ally took it" exit — the one interruption we honor.
+    if ttl_lapsed or capped or not p or p.in_tank
+       or (p.owner == "friendly" and (p.health or 0) > 0) then
+      state.kill_pickup = nil
+    elseif (p.health or 0) == 0 then
+      -- Handoff: defer to the blitz member with the LOWEST capture_pill score
+      -- (the same balanced metric the goal selector uses) that also claims
+      -- this kill; tie → lower player number. We broadcast our own score as kc.
+      local yield_to, yield_cost = nil, nil
+      if C.KILL_PICKUP_HANDOFF and ally_state.iter_active and info.player_number then
+        local my_cost = compute_pool4_cost(state, world, info, p, tmx, tmy)
+        if not my_cost or my_cost >= 1e29 then my_cost = 1e9 end
+        local my_pn  = info.player_number
+        for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
+          if apn ~= my_pn then
+            local si = slot.info
+            if si and si.kg and tonumber(si.kg) == kp.id then
+              local a_cost = tonumber(si.kc) or 1e9
+              -- An ally beats us if its score is lower, or equal + lower pn.
+              -- Track the BEST such ally so the viz names the real grabber.
+              if a_cost < my_cost or (a_cost == my_cost and apn < my_pn) then
+                if not yield_cost or a_cost < yield_cost
+                   or (a_cost == yield_cost and apn < (yield_to or 1e9)) then
+                  yield_to, yield_cost = apn, a_cost
+                end
+              end
+            end
+          end
+        end
+      end
+      kp._yield_to = yield_to  -- for viz
+      if yield_to then
+        -- A lower-score blitz member is grabbing. Stand down: don't force-win;
+        -- fall through to normal goal competition. We don't need to block the
+        -- pill ourselves — that grabber's kg broadcast lands in our own
+        -- state._kill_claimed (build_eval_queue), so filter_capture_pill
+        -- rejects it like every other non-grabber. KEEP our claim as a backup:
+        -- if the grabber dies/stalls (drops kg, or its score rises above ours)
+        -- we re-evaluate next replan and may take over. Self-clears on
+        -- capture / in_tank / TTL / cap above.
+        if BRAIN_DEBUG_MODE then print(string.format(TAG .. " KILLGRAB: pill#%d -> yielding to p%d (its score %.0f < ours)", kp.id, yield_to, yield_cost or -1)) end
+      else
+        -- We're the grabber. Refresh the rolling TTL so the claim survives the
+        -- whole drive-in (uninterruptible until the pill is taken/captured),
+        -- bounded only by the absolute cap above. Hold briefly first so our
+        -- in-flight shots clear, then force-win capture_pill.
+        kp.kill_tick = now
+        local waited = now - (kp.created_tick or now)
+        if waited < (C.POST_KILL_WAIT_TICKS or 15) then
+          result = { kind = "none", mx = tmx, my = tmy, wx = U.m2w(tmx), wy = U.m2w(tmy) }
+          desc = string.format("killgrab#%d@(%d,%d) [clearing shots %d/%d]",
+                 kp.id, p.mx, p.my, waited, C.POST_KILL_WAIT_TICKS)
+        else
+          result = { kind = "capture_pill", mx = p.mx, my = p.my,
+                     wx = U.m2w(p.mx), wy = U.m2w(p.my), target_id = kp.id,
+                     race_mode = true, kill_grab = true }
+          desc = string.format("killgrab#%d@(%d,%d) [HARD pickup]", kp.id, p.mx, p.my)
+        end
+      end
+    end
+    -- p.health>0 & not friendly: enemy repaired it before we grabbed. Leave the
+    -- claim; normal attack_pill re-engages and the TTL lapses if it stays alive.
+  end
+
+  -- Fresh-kill pickup overlay: yellow ring on the claimed pill + a line from
+  -- the tank, magenta when we've yielded to a lower-score ally.
+  if BRAIN_DEBUG_MODE and vizmod.is_on("kill_pickup") and state.kill_pickup then
+    local kp = state.kill_pickup
+    local p  = world.pills[kp.id]
+    local kx, ky = (p and p.mx or kp.mx) + 0.5, (p and p.my or kp.my) + 0.5
+    local yielded = kp._yield_to ~= nil
+    local r, g, b = 255, 230, 40
+    if yielded then r, g, b = 255, 60, 255 end
+    vizmod.circle("kill_pickup", kx, ky, 0.6, r, g, b, 255)
+    vizmod.circle("kill_pickup", kx, ky, 0.85, r, g, b, 140)
+    vizmod.line("kill_pickup", (info.tankx / 256.0), (info.tanky / 256.0), kx, ky, r, g, b, 200)
+    vizmod.text("kill_pickup", kx, ky - 1.0,
+      yielded and string.format("KILLGRAB#%d -> p%d", kp.id, kp._yield_to)
+              or  string.format("KILLGRAB#%d MINE", kp.id),
+      "center", r, g, b, 255)
   end
 
   -- ════════════════════════════════════════════════════════════════════
@@ -7936,10 +8150,14 @@ end
 -- the mission. All paths are off unless their flag is set.
 function M.special_mode_goal(state, world, info)
   local role = state.squad_role   -- "c" / "s" / "h" (set by squad.update)
-  local want_harass    = (role == "h")
-                         and (C.HARASSER_TAKE_BASES or C.HARASSER_REAR_PUSH)
-  local want_reinforce = C.CIRCLE_REINFORCE_ENABLED and (role ~= "h")
-  if not (want_harass or want_reinforce) then return nil end
+  -- Harassers are now plain GoalHunter bots, just biased OUT of the pill economy
+  -- by a doubled attack_pill cost (HARASSER_PILL_COST_MULT, applied at the pool-6
+  -- cost in update_pool_cache + attack_pill_adjustments). No special mission —
+  -- they fall through to normal goal selection, so the doubled pill cost naturally
+  -- pushes them toward bases / tanks / defense. Only R3 circle reinforcement
+  -- remains as a flag-gated override here.
+  local want_reinforce = C.CIRCLE_REINFORCE_ENABLED
+  if not want_reinforce then return nil end
   if not world or not info then return nil end
 
   -- Restricted set: yield to refuel (charge up first), attack_tank, kill_lgm.
@@ -7951,40 +8169,6 @@ function M.special_mode_goal(state, world, info)
   if info.carried_pills and info.carried_pills > 0 then return nil end
 
   local tmx, tmy = info.tankx >> 8, info.tanky >> 8
-
-  if want_harass then
-    -- #1: nearest UNPROTECTED hostile base (no covering hostile pill).
-    if C.HARASSER_TAKE_BASES then
-      local best, bid, bd
-      for id, b in pairs(world.bases) do
-        if b.owner == "hostile"
-           and count_pills_near(world, b.mx, b.my, C.PILL_FIRE_RANGE, "hostile") == 0 then
-          local d = U.mdist(tmx, tmy, b.mx, b.my)
-          if not bd or d < bd then bd, best, bid = d, b, id end
-        end
-      end
-      if best then
-        return { kind = "capture_base", mx = best.mx, my = best.my,
-                 wx = U.m2w(best.mx), wy = U.m2w(best.my), target_id = bid }
-      end
-    end
-    -- else REAR PUSH: drive at the deepest enemy-influence hostile base; the
-    -- attack_tank yield above keeps the bot fighting tanks along the way.
-    if C.HARASSER_REAR_PUSH then
-      local best, bid, bv
-      for id, b in pairs(world.bases) do
-        if b.owner == "hostile" then
-          local v = cpf.influence_at(b.mx, b.my)
-          if not bv or v < bv then bv, best, bid = v, b, id end
-        end
-      end
-      if best then
-        return { kind = "capture_base", mx = best.mx, my = best.my,
-                 wx = U.m2w(best.mx), wy = U.m2w(best.my), target_id = bid }
-      end
-    end
-    return nil
-  end
 
   -- Reinforce: skip anyone mid hard-take (a commander) or already attacking a
   -- pill — only genuinely uncommitted bots get pulled.
