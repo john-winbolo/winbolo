@@ -3888,7 +3888,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_LOBBY_MAP_USE_LOCAL: {
             /* [header 8] [totalLen 4] [nameLen 1] [name N]
-             *           [relPathLen 1] [relPath M] [md5 16]
+             *           [relPathLen 1] [relPath M] [md5 32]
              *
              * Pre-upload optimisation: if our local data/maps/<relPath>
              * matches the supplied MD5, install it directly and reply
@@ -3899,7 +3899,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 4 + 1 + 1 + 16) break;
+                len < PACKET_HEADER_SIZE + 4 + 1 + 1 + 32) break;
             int rpos = PACKET_HEADER_SIZE;
             uint32_t totalLen =
                 ((uint32_t)buf[rpos + 0] << 24) |
@@ -3909,20 +3909,21 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             rpos += 4;
             uint8_t nameLen = buf[rpos++];
             if (nameLen == 0 || nameLen > 127 ||
-                rpos + nameLen + 1 + 16 > (int)len) break;
+                rpos + nameLen + 1 + 32 > (int)len) break;
             char nameBuf[128];
             memset(nameBuf, 0, sizeof(nameBuf));
             memcpy(nameBuf, buf + rpos, nameLen);
             rpos += nameLen;
             uint8_t relLen = buf[rpos++];
             if (relLen == 0 || relLen > 255 ||
-                rpos + relLen + 16 > (int)len) break;
+                rpos + relLen + 32 > (int)len) break;
             char relBuf[256];
             memset(relBuf, 0, sizeof(relBuf));
             memcpy(relBuf, buf + rpos, relLen);
             rpos += relLen;
-            uint8_t wantMd5[16];
-            memcpy(wantMd5, buf + rpos, 16);
+            char wantMd5Hex[33];
+            memcpy(wantMd5Hex, buf + rpos, 32);
+            wantMd5Hex[32] = '\0';
 
             /* NACK helper for every miss path: server echoes the
              * announce name so the client correlates the reply to
@@ -3987,7 +3988,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
 
             uint8_t haveMd5[16];
             md5Compute(bytes, byteLen, haveMd5);
-            if (memcmp(haveMd5, wantMd5, 16) != 0) {
+            char haveMd5Hex[33];
+            md5ToHex(haveMd5, haveMd5Hex);
+            if (memcmp(haveMd5Hex, wantMd5Hex, 32) != 0) {
                 free(bytes);
                 SEND_USE_LOCAL_NACK();
                 break;

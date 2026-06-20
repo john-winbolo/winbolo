@@ -3435,9 +3435,9 @@ static void udpClientUploadSendUseLocal(TransportUdpClientCtx *c,
                                          uint32_t totalLen,
                                          const char *name,
                                          const char *relPath,
-                                         const uint8_t md5[16]) {
-    /* Wire: [hdr 8][totalLen 4][nameLen 1][name N][relPathLen 1][relPath M][md5 16] */
-    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255 + 1 + 255 + 16];
+                                         const char md5Hex[32]) {
+    /* Wire: [hdr 8][totalLen 4][nameLen 1][name N][relPathLen 1][relPath M][md5 32] */
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255 + 1 + 255 + 32];
     int nameLen, relLen, pos;
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
@@ -3458,8 +3458,8 @@ static void udpClientUploadSendUseLocal(TransportUdpClientCtx *c,
     if (nameLen > 0) { memcpy(buf + pos, name, nameLen); pos += nameLen; }
     buf[pos++] = (uint8_t)relLen;
     if (relLen > 0) { memcpy(buf + pos, relPath, relLen); pos += relLen; }
-    memcpy(buf + pos, md5, 16);
-    pos += 16;
+    memcpy(buf + pos, md5Hex, 32);
+    pos += 32;
     udpClientSendTo(c, buf, pos);
 
     if (c->clientSim) {
@@ -3481,9 +3481,9 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t,
                                              uint32_t totalLen,
                                              const char *name,
                                              const char *relPath,
-                                             const uint8_t md5[16]) {
+                                             const char md5Hex[32]) {
     udpClientUploadSendUseLocal((TransportUdpClientCtx *)t->ctx, totalLen,
-                                 name, relPath, md5);
+                                 name, relPath, md5Hex);
 }
 
 /* === Lobby map upload — state machine =============================
@@ -3519,7 +3519,7 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
                                   const uint8_t *buf, size_t len,
                                   const char *name,
                                   const char *relPath, /* nullable */
-                                  const uint8_t *md5   /* required iff relPath */) {
+                                  const char *md5Hex   /* 32 hex chars + NUL, required iff relPath */) {
     if (c == NULL || buf == NULL || name == NULL || name[0] == '\0') {
         return false;
     }
@@ -3550,9 +3550,9 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
         c->clientSim->lobbyMapUseLocalNeedsFallback = false;
     }
 
-    if (relPath != NULL && relPath[0] != '\0' && md5 != NULL) {
+    if (relPath != NULL && relPath[0] != '\0' && md5Hex != NULL) {
         udpClientUploadSendUseLocal(c, c->uploadTotal, c->uploadName,
-                                     relPath, md5);
+                                     relPath, md5Hex);
         c->uploadUseLocalPending = true;
         c->uploadBeginSent       = false;
     } else {
@@ -3690,6 +3690,7 @@ bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
     char relPath[256];
     bool haveRelPath;
     uint8_t md5[16];
+    char md5Hex[33];
     bool ok;
 
     if (t == NULL || localFilePath == NULL || localFilePath[0] == '\0') {
@@ -3743,11 +3744,12 @@ bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
     haveRelPath = (relPath[0] != '\0');
     if (haveRelPath) {
         md5Compute(fileData, fileLen, md5);
+        md5ToHex(md5, md5Hex);
     }
 
     ok = udpClientUploadStart(c, (const uint8_t *)fileData, fileLen, nameBuf,
                                haveRelPath ? relPath : NULL,
-                               haveRelPath ? md5     : NULL);
+                               haveRelPath ? md5Hex  : NULL);
     SDL_free(fileData);
     return ok;
 }
