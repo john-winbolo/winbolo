@@ -513,6 +513,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     static std::vector<ServerEntry> servers;
     static std::mutex serversMtx;
     int selectedItem = -1;
+    char selKeyAddr[FILENAME_MAX] = "";   /* address of the selected server; "" = none */
+    unsigned short selKeyPort = 0;        /* its port — together a stable identity across rebuilds */
     {
         std::lock_guard<std::mutex> lock(serversMtx);
         servers.clear();
@@ -1065,6 +1067,20 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         {
             std::lock_guard<std::mutex> lock(serversMtx);
 
+            /* Re-attach the selection to its server by identity, so a list
+             * rebuild (refresh / auto-poll / async LAN repopulation) keeps the
+             * same row highlighted. -1 when the server is no longer present. */
+            if (selKeyAddr[0] != '\0') {
+                selectedItem = -1;
+                for (int si = 0; si < (int)servers.size(); si++) {
+                    if (servers[si].port == selKeyPort &&
+                        strcmp(servers[si].address, selKeyAddr) == 0) {
+                        selectedItem = si;
+                        break;
+                    }
+                }
+            }
+
             /* Visible set: apply the three filters, then default-sort by ping
              * ascending (responded first; pending, then no-response, last).
              * The underlying servers vector keeps its arrival order so async
@@ -1103,6 +1119,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                       ImGuiSelectableFlags_AllowDoubleClick,
                                       ImVec2(rowW, rowH))) {
                     selectedItem = i;
+                    SDL_strlcpy(selKeyAddr, e.address, sizeof(selKeyAddr));
+                    selKeyPort = e.port;
                     if (ImGui::IsMouseDoubleClicked(0)) {
                         /* Double-click to join */
                         if (strlen(e.version) >= STRVER_LEN &&
