@@ -220,6 +220,8 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
       out->numHumans = (BYTE)atoi(val);
     } else if (strcmp(key, "bots") == 0) {
       out->numBots = (BYTE)atoi(val);
+    } else if (strcmp(key, "max") == 0) {
+      out->maxPlayers = (BYTE)atoi(val);
     }
   }
   return true;

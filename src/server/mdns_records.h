@@ -43,10 +43,10 @@
  *   lobby=<0|1> locked=<0|1>
  *   md5=<32 hex chars|empty> newp=<0|1> spec=<0|1> nspec=<n>
  *   ranked=<0|1> rnd=<0|1> tlim=<game length, 0 if none>
- *   humans=<n> bots=<n>
+ *   humans=<n> bots=<n> max=<n>
  * Count is fixed at MDNS_WINBOLO_TXT_COUNT; with PTR + SRV + A that is
  * MDNS_WINBOLO_RECORD_COUNT records total. */
-#define MDNS_WINBOLO_TXT_COUNT 20
+#define MDNS_WINBOLO_TXT_COUNT 21
 #define MDNS_WINBOLO_RECORD_COUNT (3 + MDNS_WINBOLO_TXT_COUNT)
 
 /* Plain-data snapshot of the server state advertised in one answer. The
@@ -77,6 +77,7 @@ typedef struct {
   int32_t        timeLimit;       /* game length; 0 if none */
   BYTE           numHumans;       /* humans among numPlayers */
   BYTE           numBots;         /* bots among numPlayers */
+  BYTE           maxPlayers;      /* join-slot cap; MAX_TANKS when unset */
 } MdnsServerInfo;
 
 /* Fill records[] with the PTR / SRV / A / TXT answer set for info and

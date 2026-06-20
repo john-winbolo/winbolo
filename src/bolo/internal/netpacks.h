@@ -88,10 +88,11 @@ typedef struct BOLO_PACK_ATTR {
   BYTE spectator_count;   /* spectators present (0 for now — future work) */
   BYTE num_humans;        /* human players among num_players              */
   BYTE num_bots;          /* AI bots among num_players                    */
+  BYTE max_players;       /* server's join-slot cap (MAX_TANKS when unset) */
   char map_md5[32];       /* 32 lowercase hex chars, no NUL; zero-filled  */
                           /* when the map is random/unknown               */
 } INFO_PACKET;
-BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 110, INFO_PACKET_must_be_110_bytes);
+BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
 #endif
 
 /* INFO_PACKET.flags bit values (the byte that was spare1). */

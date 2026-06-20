@@ -264,6 +264,7 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
   MDNS_TXT_ADD("tlim",    "%d", (int)info->timeLimit);
   MDNS_TXT_ADD("humans",  "%u", (unsigned)info->numHumans);
   MDNS_TXT_ADD("bots",    "%u", (unsigned)info->numBots);
+  MDNS_TXT_ADD("max",     "%u", (unsigned)info->maxPlayers);
 
 #undef MDNS_TXT_ADD
 
@@ -301,6 +302,7 @@ static void mdnsFillServerInfo(ServerSim *sim, MdnsServerInfo *out) {
   out->numPlayers = numPlayers;
   out->numHumans  = numHumans;
   out->numBots    = numBots;
+  out->maxPlayers = serverSimGetMaxPlayers(sim);
   out->numBases   = basesGetNumNeutral(&gs->bs);
   out->numPills   = pillsGetNumNeutral(&gs->pb);
   out->password   = (serverSimGetPassword(sim)[0] != '\0');

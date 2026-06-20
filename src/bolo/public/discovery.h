@@ -55,6 +55,7 @@ typedef struct {
   bool randomMap;
   BYTE numHumans;
   BYTE numBots;
+  BYTE maxPlayers;  /* server's join-slot cap; MAX_TANKS when unset */
   int32_t timeLimit;
 } DiscoveryPingResult;
 
@@ -89,6 +90,7 @@ typedef struct {
   bool           randomMap;
   BYTE           numHumans;
   BYTE           numBots;
+  BYTE           maxPlayers;      /* server's join-slot cap; MAX_TANKS when unset */
   int32_t        timeLimit;       /* raw game-length units from the wire; 0 if none */
 } DiscoveryServer;
 

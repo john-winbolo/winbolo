@@ -88,6 +88,7 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
   out->ai = (aiType)info->allow_AI;
   out->numHumans = info->num_humans;
   out->numBots   = info->num_bots;
+  out->maxPlayers = info->max_players;
   out->allowNewPlayers = (info->flags & INFO_FLAG_ALLOW_NEW_PLAYERS) != 0;
   out->locked          = (info->flags & INFO_FLAG_LOCKED) != 0;
   out->ranked          = (info->flags & INFO_FLAG_RANKED) != 0;
@@ -396,6 +397,7 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
     out->versionRevision = info->h.versionRevision;
     out->numHumans = info->num_humans;
     out->numBots   = info->num_bots;
+    out->maxPlayers = info->max_players;
     out->allowNewPlayers = (info->flags & INFO_FLAG_ALLOW_NEW_PLAYERS) != 0;
     out->locked          = (info->flags & INFO_FLAG_LOCKED) != 0;
     out->ranked          = (info->flags & INFO_FLAG_RANKED) != 0;

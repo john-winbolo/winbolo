@@ -3025,6 +3025,7 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
     pkt.num_players = numPlayers;
     pkt.num_humans  = numHumans;
     pkt.num_bots    = numBots;
+    pkt.max_players = serverSimGetMaxPlayers(sim);
 
     /* Neutral pills and bases */
     pkt.free_pills = pillsGetNumNeutral(&gs->pb);
@@ -3541,6 +3542,7 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     pkt.num_players = numPlayers;
     pkt.num_humans  = numHumans;
     pkt.num_bots    = numBots;
+    pkt.max_players = serverSimGetMaxPlayers(sim);
     pkt.free_pills = pillsGetNumNeutral(&gs->pb);
     pkt.free_bases = basesGetNumNeutral(&gs->bs);
     pkt.has_password = serverSimGetPassword(sim)[0] != '\0' ? 1 : 0;
