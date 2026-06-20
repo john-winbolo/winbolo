@@ -477,41 +477,61 @@ three bespoke bulk chunkers that preceded it. The mux is built and tested
 frames back into messages; the transport only shuttles those frames. It owns no
 socket.
 
-**Four channels, two flavors.** Each channel is an independent reliable-ordered
-substream with its own sequence/ack space, so loss on one never stalls another
-(head-of-line blocking is per-channel):
+**Five channels, three flavors.** Each channel is an independent substream with
+its own sequence space, so loss on one never stalls another (head-of-line
+blocking is per-channel):
 
 | id | channel | flavor | carries |
 | --- | --- | --- | --- |
-| 0 | `CHANNEL_GAME` | message | per-tick reliable game events (sounds, kills) |
+| 0 | `CHANNEL_GAME` | message | reliable must-arrive game events: kills, mine reveals, server / assistant / LGM-lost text |
 | 1 | `CHANNEL_MAP` | message | terrain-change events (`EVENT_MAP_CHANGE`) |
 | 2 | `CHANNEL_CONTROL` | message | lobby / chat / alliance / phase control events |
 | 3 | `CHANNEL_BULK` | stream | map preview / upload / download / resync blobs |
+| 4 | `CHANNEL_GAME_EFFECT` | best-effort | ephemeral game events: sounds, explosions, captures, and pill/base state deltas |
 
 A **message** channel delivers each `channelSend` as one whole logical message, in
 order, exactly once. A **stream** channel (`channelStreamSend`) appends to a byte
 stream the core splits into segments and the receiver concatenates in order — this
 is the bulk-transfer fragmentation layer, so no separate chunker exists.
 
+A **best-effort** channel (`channelSendBestEffort` / `channelReceiveBestEffort`) is
+fire-and-forget: a segment is delivered on arrival with no ack, no retransmit, and
+no in-order wait. It drops a stale or duplicate seq (anything at or below the
+highest already delivered) and, when its ring overflows, drops the *oldest* pending
+segment to make room rather than disconnecting the slot — a high-rate effect stream
+must never stall the connection. This is a separate send/receive core, not an
+`if (reliable)` branch on the reliable readers. The backstop for a dropped state
+delta (a pill/base update) is the next periodic full snapshot re-sync, which
+restores the authoritative state regardless of which deltas were lost.
+
 **Per-channel sizing.** Each channel sizes its send/receive rings to its own
-traffic rather than one uniform pair (`channel_mux.h`): the high-rate game channel
-is deep with tiny segments (window 512 × 16 B), map likewise (128 × 16 B), control
+traffic rather than one uniform pair (`channel_mux.h`): the game channel is deep
+with tiny segments (window 512 × 16 B), map likewise (128 × 16 B), control
 is shallow with large segments (64 × 1024 B — one control event, e.g. the full
 brain list, maps to one segment and one datagram), and bulk is a
 bandwidth-delay-product
-window of stream segments (96 × 256 B). The whole mux is a plain value type — the
-rings are embedded, no heap allocation.
+window of stream segments (96 × 256 B). The best-effort game-effect channel is
+64 × 16 B — sized to one tick's burst of effect events plus margin, not to
+retransmit depth, since nothing is ever held for resend. The whole mux is a plain
+value type — the rings are embedded, no heap allocation.
 
-**One reliability core** serves both flavors: cumulative ack ("received everything
-below `ackedSeq`"), full-tail-resend on a per-channel retransmit timeout (RTO
-derived from the ping RTT), window-bounded so a resend re-sends at most one window,
-and a receive-side reorder buffer so a jitter-reordered early segment is held and
-delivered in order rather than dropped. A caught-up channel sends nothing — no
-steady-state storm. Window overflow without acks is a stuck or malicious peer and
-disconnects the slot; it is never a silent drop.
+**One reliability core** serves both reliable flavors (message and stream):
+cumulative ack ("received everything below `ackedSeq`"), full-tail-resend on a
+per-channel retransmit timeout (RTO derived from the ping RTT), window-bounded so a
+resend re-sends at most one window, and a receive-side reorder buffer so a
+jitter-reordered early segment is held and delivered in order rather than dropped.
+Each ack record also carries `highestSeen`, an exclusive upper bound on what the
+receiver has buffered on that channel; when `highestSeen > ackedSeq` a segment past
+the in-order point is missing, so the sender rewinds and retransmits its unacked
+tail immediately (~1 RTT) — a NAK fast-retransmit — instead of waiting out the RTO,
+which stays as the backstop. A caught-up channel sends nothing — no steady-state
+storm. Window overflow without acks is a stuck or malicious peer and disconnects
+the slot; it is never a silent drop. This core drives only the reliable channels;
+the best-effort channel is never acked and has no retransmit or NAK.
 
-**How frames ride datagrams.** One shared channel-frame codec (an ack list then a
-segment list) is carried three ways, never as a phase fork: appended as a
+**How frames ride datagrams.** One shared channel-frame codec — an ack list (each
+record `channelId` + `ackedSeq` + `highestSeen`) then a segment list — is carried
+three ways, never as a phase fork: appended as a
 **trailer** after a per-tick snapshot (server → client) or after an `InputPacket`
 (client → server), or as a standalone `PACKET_CHANNEL` when no primary packet is
 due. The receiver recovers the frame as the bytes past the primary packet's parsed
