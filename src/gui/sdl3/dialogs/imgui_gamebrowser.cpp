@@ -1342,30 +1342,38 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_CheckMark);
                 auto label = [&](const char *t) { ImGui::TextColored(accent, "%s", t); };
 
-                if (ImGui::BeginTable("##gbdetail", 4, ImGuiTableFlags_SizingFixedFit)) {
-                    /* Type + Version */
+                if (ImGui::BeginTable("##gbdetail", 2, ImGuiTableFlags_SizingFixedFit)) {
+                    /* Type */
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_TYPE));
                     ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(gameTypeStr(sel.game));
-                    ImGui::TableSetColumnIndex(2); label(langGetText(STR_DLGBROWSER_COL_VER));
-                    ImGui::TableSetColumnIndex(3); ImGui::TextUnformatted(sel.version);
 
-                    /* Hidden mines + AI */
+                    /* Version */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_VER));
+                    ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(sel.version);
+
+                    /* Hidden mines */
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMESETUP_HIDDENMINES_SHORT));
                     ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(langGetText(sel.mines ? STR_YES : STR_NO));
-                    ImGui::TableSetColumnIndex(2); label(langGetText(STR_DLGGAMEINFO_AILABEL));
+
+                    /* AI */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMEINFO_AILABEL));
                     {
                         int aiStr = STR_NO;
                         if      (sel.ai == aiYes)          aiStr = STR_YES;
                         else if (sel.ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
                         else if (sel.ai == aiFull)         aiStr = STR_DLGGAMEINFO_FULLADV;
-                        ImGui::TableSetColumnIndex(3); ImGui::TextUnformatted(langGetText(aiStr));
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(langGetText(aiStr));
                     }
 
-                    /* Players — count / cap, AI-player split when rich */
+                    /* Players — count / cap, AI-player split when rich.
+                     * Plain "Players" label: STR_DLGGAMEINFO_NUMPLAYERS is a
+                     * {number} format template, not a usable label. */
                     ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMEINFO_NUMPLAYERS));
+                    ImGui::TableSetColumnIndex(0); label("Players");
                     {
                         char pbuf[96];
                         int cap = sel.maxPlayers > 0 ? sel.maxPlayers : MAX_TANKS;
@@ -1378,7 +1386,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(pbuf);
                     }
 
-                    /* Bases + pillboxes — free/total when the total is known. */
+                    /* Bases — free/total when the total is known. */
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_BASES));
                     {
@@ -1389,17 +1397,20 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             SDL_snprintf(vbuf, sizeof(vbuf), "%u", sel.freeBases);
                         ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(vbuf);
                     }
-                    ImGui::TableSetColumnIndex(2); label("Pillboxes");
+
+                    /* Pillboxes — free/total when the total is known. */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label("Pillboxes");
                     {
                         char vbuf[32];
                         if (sel.numPills > 0)
                             SDL_snprintf(vbuf, sizeof(vbuf), "%u/%u", sel.freePills, sel.numPills);
                         else
                             SDL_snprintf(vbuf, sizeof(vbuf), "%u", sel.freePills);
-                        ImGui::TableSetColumnIndex(3); ImGui::TextUnformatted(vbuf);
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(vbuf);
                     }
 
-                    /* Time limit + (rich) allow-new-players */
+                    /* Time limit */
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT));
                     {
@@ -1413,9 +1424,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         }
                         ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(timeVal);
                     }
+
+                    /* New players — rich info only. */
                     if (sel.hasRichInfo) {
-                        ImGui::TableSetColumnIndex(2); label(langGetText(STR_ALLOW_NEW_PLAYERS));
-                        ImGui::TableSetColumnIndex(3);
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); label(langGetText(STR_ALLOW_NEW_PLAYERS));
+                        ImGui::TableSetColumnIndex(1);
                         ImGui::TextUnformatted(langGetText(sel.allowNewPlayers ? STR_YES : STR_NO));
                     }
 
