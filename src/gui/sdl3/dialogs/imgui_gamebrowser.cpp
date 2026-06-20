@@ -126,6 +126,9 @@ struct ServerEntry {
     int  timeMinutes;
     bool randomMap;
     char mapMd5[33];
+    bool hasRichInfo;    /* false for a legacy 76-byte server that can't report
+                          * the flags/counts/md5 fields; gates the rich-only
+                          * lines in the detail pane. */
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
 
@@ -163,6 +166,7 @@ struct PingResult {
     BYTE numHumans;
     BYTE numBots;
     int32_t timeLimit;
+    bool hasRichInfo;
 };
 
 /* Resolve hostname to IP (if needed) and look up country via GeoIP database */
@@ -236,6 +240,7 @@ static PingResult pingServer(const PingWork &work) {
     res.numHumans = 0;
     res.numBots = 0;
     res.timeLimit = 0;
+    res.hasRichInfo = false;
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
      * answers, so even unresponsive servers get a hostname. */
@@ -257,6 +262,7 @@ static PingResult pingServer(const PingWork &work) {
         res.spectatorCount  = dpr.spectatorCount;
         res.randomMap       = dpr.randomMap;
         res.timeLimit       = dpr.timeLimit;
+        res.hasRichInfo     = dpr.hasRichInfo;
         SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
     return res;
@@ -359,6 +365,7 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.allowSpectators = src->allowSpectators;
     e.spectatorCount  = src->spectatorCount;
     e.randomMap       = src->randomMap;
+    e.hasRichInfo     = src->hasRichInfo;
     SDL_strlcpy(e.mapMd5, src->mapMd5, sizeof(e.mapMd5));
     /* INFO/TXT time limit is game-length in 50ths-of-a-second ticks; convert
      * to minutes the same way the server does (ticks / (50 * 60)). */
@@ -650,6 +657,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.timeLimit = w.timeLimit;
                         e.timeMinutes = w.timeMinutes;
                         e.randomMap = w.randomMap;
+                        e.hasRichInfo = true;   /* WinBolo.net JSON always carries the rich fields */
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -757,6 +765,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         servers[pr.index].randomMap       = pr.randomMap;
                         servers[pr.index].timeLimit       = (pr.timeLimit != 0);
                         servers[pr.index].timeMinutes     = (int)(pr.timeLimit / (50 * 60));
+                        servers[pr.index].hasRichInfo     = pr.hasRichInfo;
                         servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
                         SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));
                     }
@@ -1236,9 +1245,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::Spacing();
             ImGui::TextDisabled("Select a server");
         } else {
-            /* Placeholder preview box — the real map render lands later. */
+            /* Preview occupies the left ~45% of the pane; the key fields sit
+             * to its right (added after EndChild below). */
             float availDW = ImGui::GetContentRegionAvail().x;
-            float boxSize = availDW;
+            float boxSize = availDW * 0.45f;
             float maxBox  = listH * 0.5f;
             if (boxSize > maxBox) boxSize = maxBox;
             if (boxSize < 80.0f)  boxSize = 80.0f;
@@ -1310,64 +1320,66 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 }
             }
             ImGui::EndChild();
+
+            /* Key fields sit in a group to the right of the preview box. */
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            {
+                /* Game type — the type word alone (AI/mines shown separately). */
+                ImGui::Text("%s: %s", langGetText(STR_DLGBROWSER_COL_TYPE),
+                            gameTypeStr(sel.game));
+
+                /* Hidden mines + AI on one line. */
+                ImGui::Text("%s: %s", langGetText(STR_DLGGAMESETUP_HIDDENMINES_SHORT),
+                            langGetText(sel.mines ? STR_YES : STR_NO));
+                ImGui::SameLine();
+                {
+                    int aiStr = STR_NO;
+                    if      (sel.ai == aiYes)          aiStr = STR_YES;
+                    else if (sel.ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
+                    else if (sel.ai == aiFull)         aiStr = STR_DLGGAMEINFO_FULLADV;
+                    ImGui::Text("%s %s", langGetText(STR_DLGGAMEINFO_AILABEL),
+                                langGetText(aiStr));
+                }
+
+                /* Players: count, /max when known, AI-player split when rich. */
+                {
+                    char pbuf[96];
+                    int n = SDL_snprintf(pbuf, sizeof(pbuf), "%d", sel.numPlayers);
+                    if (sel.maxPlayers > 0 && n > 0 && (size_t)n < sizeof(pbuf)) {
+                        n += SDL_snprintf(pbuf + n, sizeof(pbuf) - (size_t)n,
+                                          "/%d", sel.maxPlayers);
+                    }
+                    if (sel.hasRichInfo && sel.numBots > 0 &&
+                        n > 0 && (size_t)n < sizeof(pbuf)) {
+                        SDL_snprintf(pbuf + n, sizeof(pbuf) - (size_t)n,
+                                     " (%d AI players)", sel.numBots);
+                    }
+                    ImGui::Text("%s: %s", langGetText(STR_DLGGAMEINFO_NUMPLAYERS), pbuf);
+                }
+
+                /* Bases + pillboxes on one line — free/total when the total is
+                 * known (Internet), else just the free count (LAN). */
+                if (sel.numBases > 0) {
+                    ImGui::Text("%s: %u / %u", langGetText(STR_DLGBROWSER_COL_BASES),
+                                sel.freeBases, sel.numBases);
+                } else {
+                    ImGui::Text("%s: %u", langGetText(STR_DLGBROWSER_COL_BASES),
+                                sel.freeBases);
+                }
+                ImGui::SameLine();
+                if (sel.numPills > 0) {
+                    ImGui::Text("Pillboxes: %u / %u", sel.freePills, sel.numPills);
+                } else {
+                    ImGui::Text("Pillboxes: %u", sel.freePills);
+                }
+            }
+            ImGui::EndGroup();
             ImGui::Spacing();
 
-            /* Type (with AI + mines markers, as the old Type column showed) */
-            {
-                char typeBuf[96];
-                int n = SDL_snprintf(typeBuf, sizeof(typeBuf), "%s", gameTypeStr(sel.game));
-                if (sel.ai != aiNone && n > 0 && (size_t)n < sizeof(typeBuf)) {
-                    n += SDL_snprintf(typeBuf + n, sizeof(typeBuf) - (size_t)n,
-                                      " %s", langGetText(STR_DLGBROWSER_TYPE_AI));
-                }
-                if (sel.mines && n > 0 && (size_t)n < sizeof(typeBuf)) {
-                    SDL_snprintf(typeBuf + n, sizeof(typeBuf) - (size_t)n,
-                                 " %s", langGetText(STR_DLGBROWSER_TYPE_MINES));
-                }
-                ImGui::Text("%s: %s", langGetText(STR_DLGBROWSER_COL_TYPE), typeBuf);
-            }
+            /* ---- Full-width fields below the top row ---- */
 
-            /* AI level — always shown ("No" when off) */
-            {
-                int aiStr = STR_NO;
-                if      (sel.ai == aiYes)          aiStr = STR_YES;
-                else if (sel.ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
-                else if (sel.ai == aiFull)         aiStr = STR_DLGGAMEINFO_FULLADV;
-                ImGui::Text("%s %s", langGetText(STR_DLGGAMEINFO_AILABEL),
-                            langGetText(aiStr));
-            }
-
-            ImGui::Text("%s: %s", langGetText(STR_DLGBROWSER_COL_VER), sel.version);
-
-            /* Players (+ max when known) */
-            if (sel.maxPlayers > 0) {
-                ImGui::Text("%s: %d (%dh / %db) / %d",
-                            langGetText(STR_DLGGAMEINFO_NUMPLAYERS),
-                            sel.numPlayers, sel.numHumans, sel.numBots, sel.maxPlayers);
-            } else {
-                ImGui::Text("%s: %d (%dh / %db)",
-                            langGetText(STR_DLGGAMEINFO_NUMPLAYERS),
-                            sel.numPlayers, sel.numHumans, sel.numBots);
-            }
-
-            /* Bases / pills — free/total when the total is known (Internet),
-             * else just the free count (LAN). */
-            if (sel.numBases > 0) {
-                ImGui::Text("%s: %u / %u", langGetText(STR_DLGBROWSER_COL_BASES),
-                            sel.freeBases, sel.numBases);
-            } else {
-                ImGui::Text("%s: %u", langGetText(STR_DLGBROWSER_COL_BASES),
-                            sel.freeBases);
-            }
-            if (sel.numPills > 0) {
-                ImGui::Text("%s: %u / %u", langGetText(STR_DLGBROWSER_COL_PILLS),
-                            sel.freePills, sel.numPills);
-            } else {
-                ImGui::Text("%s: %u", langGetText(STR_DLGBROWSER_COL_PILLS),
-                            sel.freePills);
-            }
-
-            /* Time limit */
+            /* Time limit (present in legacy packets). */
             if (sel.timeLimit) {
                 ImGui::Text("%s: %d", langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT),
                             sel.timeMinutes);
@@ -1376,39 +1388,32 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             langGetText(STR_DLGGAMEINFO_UNLIMITED));
             }
 
-            /* Spectators */
-            if (sel.allowSpectators) {
-                ImGui::Text("%s: %d", langGetText(STR_DLGBROWSER_SPECTATE),
-                            sel.spectatorCount);
-            } else {
-                ImGui::Text("%s: %s", langGetText(STR_DLGBROWSER_SPECTATE),
-                            langGetText(STR_NO));
-            }
+            ImGui::Text("%s: %s", langGetText(STR_DLGBROWSER_COL_VER), sel.version);
 
-            /* Allow new players */
-            ImGui::Text("%s: %s", langGetText(STR_ALLOW_NEW_PLAYERS),
-                        langGetText(sel.allowNewPlayers ? STR_YES : STR_NO));
-
-            /* Active-only flags (omitted when off, so no misleading zeros) */
-            if (sel.mines) {
-                ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_HIDDENMINES_SHORT));
-            }
-            if (sel.ranked) {
-                ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_RANKED));
-            }
-            if (sel.randomMap) {
-                ImGui::TextUnformatted(langGetText(STR_MAPCHOOSER_RANDOMMAP));
-            }
+            /* Password — active-only, available from every source. */
             if (sel.password) {
                 ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_LOCK_PASSWORD));
             }
-            if (sel.autoLock) {
-                ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_AUTOLOCK_HINT));
+
+            /* Rich-only fields — a legacy 76-byte server can't report these, so
+             * omit them entirely rather than show misleading defaults. */
+            if (sel.hasRichInfo) {
+                ImGui::Text("%s: %s", langGetText(STR_ALLOW_NEW_PLAYERS),
+                            langGetText(sel.allowNewPlayers ? STR_YES : STR_NO));
+                if (sel.ranked) {
+                    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_RANKED));
+                }
+                if (sel.randomMap) {
+                    ImGui::TextUnformatted(langGetText(STR_MAPCHOOSER_RANDOMMAP));
+                }
+                if (sel.autoLock) {
+                    ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_AUTOLOCK_HINT));
+                }
             }
 
             /* Roster — WBN-only; LAN rows carry no player names. */
             ImGui::Separator();
-            ImGui::TextDisabled("%s", langGetText(STR_MENU_PLAYERS));
+            ImGui::TextDisabled("WinBolo.net players:");
             if (sel.players.empty() && sel.numBots == 0) {
                 ImGui::TextDisabled("—");
             } else {
