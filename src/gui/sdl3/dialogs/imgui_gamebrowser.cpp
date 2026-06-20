@@ -63,6 +63,7 @@ extern "C" {
 #include "imgui_gamebrowser.h"
 #include "imgui_keyboard.h"
 #include "../map_preview_view.h"
+#include "../map_preview_popup.h"
 #include "../../../bolo/public/client_mappreview.h"
 }
 
@@ -600,6 +601,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     MapPreviewView *previewView = mapPreviewViewCreate();
     char loadedPreviewMd5[33] = "";
     bool loadedPreviewOk = false;
+    /* Compressed bytes of the currently-loaded preview map, retained so a
+     * click on the thumbnail can hand them to the zoomable popup without
+     * re-fetching. Refreshed whenever loadedPreviewMd5 changes. */
+    std::vector<uint8_t> loadedPreviewComp;
 
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
@@ -798,6 +803,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         /* Query actual window size each frame */
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
+
+        /* Render the zoom popup's tiles to its offscreen texture before the
+         * ImGui frame, matching the lobby/map-chooser wiring. */
+        mapPreviewPopupRenderOffscreen(renderer, winW, winH);
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -1290,6 +1299,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             loadedPreviewOk =
                                 (comp != nullptr) &&
                                 mapPreviewViewLoadCompressed(previewView, comp, compLen);
+                            /* Keep the compressed bytes for the click-to-zoom
+                             * popup, then free the raw malloc. */
+                            if (comp != nullptr && loadedPreviewOk && compLen > 0)
+                                loadedPreviewComp.assign(comp, comp + compLen);
+                            else
+                                loadedPreviewComp.clear();
                             if (comp) free(comp);
                             /* Record the md5 even on conversion failure so a
                              * bad map isn't reconverted every frame. */
@@ -1314,12 +1329,23 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             mapPreviewViewRenderOffscreen(previewView, renderer,
                                                           boxW, boxH);
                             SDL_Texture *tex = mapPreviewViewGetTexture(previewView);
-                            WB_LOG_DEBUG(WB_LOG_CAT_NET, "preview: render ready=%d tex=%p",
-                                         (int)mapPreviewViewIsReady(previewView), (void *)tex);
                             if (tex != nullptr) {
                                 ImGui::Image((ImTextureID)tex,
                                              ImVec2((float)boxW, (float)boxH));
-                                ImGui::TextDisabled("Will download on join");
+                                /* Click the thumbnail to open the zoomable
+                                 * read-only popup. The popup self-frames from
+                                 * the map data on its first offscreen frame,
+                                 * so full-map bounds are fine here. */
+                                if (ImGui::IsItemHovered())
+                                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                                if (ImGui::IsItemClicked() && loadedPreviewOk &&
+                                    !loadedPreviewComp.empty()) {
+                                    mapPreviewPopupOpenCompressed(
+                                        loadedPreviewComp.data(),
+                                        (int)loadedPreviewComp.size(),
+                                        0, 0, 255, 255);
+                                }
+                                ImGui::TextDisabled("Click to enlarge");
                             } else {
                                 /* Build not finished this frame — try again next frame. */
                                 centeredDimmed("Loading…");
@@ -1735,6 +1761,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         ImGui::End(); /* ##GameBrowser panel */
         ImGui::End(); /* ##GameBrowserBg host */
 
+        /* Read-only zoom popup (no start-picker): drawn after the panel so it
+         * sits on top, before ImGui::Render(). */
+        mapPreviewPopupRenderModal(renderer);
+
         dialogDrawNavOutline();
         keyboardUpdate();   /* controller text entry for this dialog's fields */
         ImGui::Render();
@@ -1772,6 +1802,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         mdnsThread.join();
     }
 
+    /* Close the shared zoom popup so it doesn't linger over the next
+     * dialog (mirrors the map-chooser's exit cleanup). */
+    mapPreviewPopupClose();
     mapPreviewViewDestroy(previewView);
 
     /* Destroy refresh icon texture */
