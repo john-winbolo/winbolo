@@ -2727,6 +2727,7 @@ endif()
 set_flat_output(WinBoloUnitTests "${CMAKE_BINARY_DIR}")
 
 set(_unit_test_names
+    md5_to_hex
     transport_local_passive_threads
     sp_subscriber_delivery
     active_local_input_to_shot

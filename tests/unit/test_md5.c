@@ -29,15 +29,6 @@
 #include "common/md5.h"
 #include "test_harness.h"
 
-static void hex_of(const uint8_t digest[16], char out[33]) {
-    static const char *kHex = "0123456789abcdef";
-    for (int i = 0; i < 16; i++) {
-        out[i * 2 + 0] = kHex[(digest[i] >> 4) & 0xF];
-        out[i * 2 + 1] = kHex[ digest[i]       & 0xF];
-    }
-    out[32] = '\0';
-}
-
 /* Seven RFC 1321 test vectors. Inputs deliberately span the padding
  * boundaries (empty, 1 byte, multi-byte non-aligned, the 80-byte
  * vector that crosses the 64-byte block boundary). */
@@ -67,7 +58,7 @@ int run_md5_rfc1321_vectors(void) {
         uint8_t digest[16];
         char gotHex[33];
         md5Compute(cases[i].input, strlen(cases[i].input), digest);
-        hex_of(digest, gotHex);
+        md5ToHex(digest, gotHex);
         UT_ASSERT_MSG(strcmp(gotHex, cases[i].expectedHex) == 0,
                       "input='%s': expected %s, got %s",
                       cases[i].input, cases[i].expectedHex, gotHex);
@@ -156,5 +147,38 @@ int run_md5_block_boundaries(void) {
         UT_ASSERT_MSG(memcmp(got, expected, 16) == 0,
                       "byte-by-byte digest differs at len=%zu", len);
     }
+    return 0;
+}
+
+/* md5ToHex must emit 32 lowercase hex chars + NUL.  The synthetic
+ * digest below starts with a zero byte (proves leading zeros aren't
+ * dropped) and includes 0xff (proves the high nibble lowercases to
+ * "ff"); the rest is filled deterministically.  A real RFC vector is
+ * also hexed end-to-end so the encoding matches a known digest. */
+int run_md5_to_hex(void) {
+    uint8_t digest[16];
+    char out[33];
+
+    digest[0] = 0x00;
+    digest[1] = 0x0f;
+    digest[2] = 0xa0;
+    digest[3] = 0xff;
+    for (int i = 4; i < 16; i++) {
+        digest[i] = (uint8_t)(i * 16 + i); /* 0x44, 0x55, ... 0xff */
+    }
+    md5ToHex(digest, out);
+    UT_ASSERT_MSG(strcmp(out, "000fa0ff445566778899aabbccddeeff") == 0,
+                  "synthetic digest hexed to '%s'", out);
+    UT_ASSERT_MSG(out[32] == '\0', "output not NUL-terminated");
+    for (int i = 0; i < 32; i++) {
+        char ch = out[i];
+        UT_ASSERT_MSG((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'),
+                      "non-lowercase-hex char '%c' at index %d", ch, i);
+    }
+
+    md5Compute("abc", 3, digest);
+    md5ToHex(digest, out);
+    UT_ASSERT_MSG(strcmp(out, "900150983cd24fb0d6963f7d28e17f72") == 0,
+                  "md5(\"abc\") hexed to '%s'", out);
     return 0;
 }

@@ -97,6 +97,7 @@ struct ServerSim {
                                       * as dirty and flushed on the new key. */
     uint8_t  mapMd5[16];           /* MD5 of the active map's BMAPBOLO bytes */
     bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
+    char     mapMd5Hex[33];        /* mapMd5 as 32 lowercase hex chars + NUL; "" when invalid */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
     BYTE     maxPlayers;           /* cap on join slots; 0 falls back to MAX_TANKS */
     BYTE     maxBots;              /* cap on AI bots in the lobby; 0 = no cap */

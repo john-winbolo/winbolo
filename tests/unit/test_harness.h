@@ -120,6 +120,7 @@ int run_server_text_codec_via_chat_wire(void);
 int run_md5_rfc1321_vectors(void);
 int run_md5_streaming_matches_oneshot(void);
 int run_md5_block_boundaries(void);
+int run_md5_to_hex(void);
 int run_ranked_flag_persists_with_one_player(void);
 int run_ranked_shape_gate(void);
 int run_lobby_lock_bit_lookup(void);
