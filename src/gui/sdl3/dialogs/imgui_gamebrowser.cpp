@@ -1283,9 +1283,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                         sizeof(loadedPreviewMd5));
                         }
 
+                        /* Drive the deferred build every frame a map is loaded:
+                         * the widget only becomes ready as a result of a
+                         * RenderOffscreen call, so gating the call on IsReady
+                         * would never let it start. Display once the texture
+                         * exists. */
                         if (previewView != nullptr && loadedPreviewOk &&
-                            strcmp(loadedPreviewMd5, sel.mapMd5) == 0 &&
-                            mapPreviewViewIsReady(previewView)) {
+                            strcmp(loadedPreviewMd5, sel.mapMd5) == 0) {
                             /* Reserve a line for the caption so the static
                              * thumbnail fills the box without a scrollbar. */
                             ImVec2 av = ImGui::GetContentRegionAvail();
@@ -1296,11 +1300,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                             mapPreviewViewRenderOffscreen(previewView, renderer,
                                                           boxW, boxH);
                             SDL_Texture *tex = mapPreviewViewGetTexture(previewView);
-                            if (tex) {
+                            WB_LOG_DEBUG(WB_LOG_CAT_NET, "preview: render ready=%d tex=%p",
+                                         (int)mapPreviewViewIsReady(previewView), (void *)tex);
+                            if (tex != nullptr) {
                                 ImGui::Image((ImTextureID)tex,
                                              ImVec2((float)boxW, (float)boxH));
+                                ImGui::TextDisabled("Will download on join");
+                            } else {
+                                /* Build not finished this frame — try again next frame. */
+                                centeredDimmed("Loading…");
                             }
-                            ImGui::TextDisabled("Will download on join");
                         } else {
                             centeredDimmed("Preview unavailable");
                         }
