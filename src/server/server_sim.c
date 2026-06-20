@@ -5949,6 +5949,10 @@ const char *serverSimGetMapName(const ServerSim *sim) {
     return sim->mapName;
 }
 
+const char *serverSimGetMapMd5Hex(const ServerSim *sim) {
+    return (sim != NULL) ? sim->mapMd5Hex : "";
+}
+
 const char *serverSimGetBotBrainPath(const ServerSim *sim) {
     return sim->botBrainPath;
 }

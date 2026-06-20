@@ -78,17 +78,29 @@ typedef struct BOLO_PACK_ATTR {
   BYTE gametype;
   BYTE allow_mines;
   BYTE allow_AI;
-  BYTE spare1;
+  BYTE flags;             /* INFO_FLAG_* bits (was spare1)                */
   int32_t start_delay;
   int32_t time_limit;
   WORD num_players;
   WORD free_pills;
   WORD free_bases;
   BYTE has_password;
-  BYTE spare2;
+  BYTE spectator_count;   /* spectators present (0 for now — future work) */
+  BYTE num_humans;        /* human players among num_players              */
+  BYTE num_bots;          /* AI bots among num_players                    */
+  char map_md5[32];       /* 32 lowercase hex chars, no NUL; zero-filled  */
+                          /* when the map is random/unknown               */
 } INFO_PACKET;
-BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
+BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 110, INFO_PACKET_must_be_110_bytes);
 #endif
+
+/* INFO_PACKET.flags bit values (the byte that was spare1). */
+#define INFO_FLAG_ALLOW_NEW_PLAYERS 0x01u
+#define INFO_FLAG_LOCKED            0x02u
+#define INFO_FLAG_RANKED            0x04u
+#define INFO_FLAG_RANDOM_MAP        0x08u
+#define INFO_FLAG_ALLOW_SPECTATORS  0x10u
+#define INFO_FLAG_IN_LOBBY          0x20u
 
 /* Packet types */
 /* Info Packet */
