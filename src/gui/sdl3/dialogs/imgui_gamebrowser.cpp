@@ -278,12 +278,26 @@ static PingResult pingServer(const PingWork &work) {
  * (whose indices no longer match). The pool threads live for the process
  * (like the bot pool) and idle on a condition variable when empty. */
 static constexpr int            kPingPoolSize = 8;
-static std::mutex               s_pingResultsMtx;
-static std::vector<PingResult>  s_pingResults;
 struct PingJob { PingWork work; uint64_t gen; };
-static std::mutex               s_pingQueueMtx;
-static std::condition_variable  s_pingQueueCv;
-static std::deque<PingJob>      s_pingQueue;
+
+/* All mutable ping-pool state lives in one heap instance reached via
+ * pingPool(). The detached workers outlive normal static destruction, so the
+ * cv/mutex/containers must never have their destructors run at process exit. */
+struct PingPool {
+    std::mutex                  resultsMtx;
+    std::vector<PingResult>     results;
+    std::mutex                  queueMtx;
+    std::condition_variable     queueCv;
+    std::deque<PingJob>         queue;
+};
+
+static PingPool &pingPool() {
+    static PingPool *p = new PingPool();  /* intentionally leaked: detached
+        ping workers outlive normal static destruction, so never run these
+        destructors — avoids a hang at process exit. */
+    return *p;
+}
+
 static std::atomic<uint64_t>    s_pingGeneration{0};
 static std::once_flag           s_pingPoolOnce;
 
@@ -291,17 +305,17 @@ static void pingWorkerFn() {
     for (;;) {
         PingJob job;
         {
-            std::unique_lock<std::mutex> lk(s_pingQueueMtx);
-            s_pingQueueCv.wait(lk, [] { return !s_pingQueue.empty(); });
-            job = s_pingQueue.front();
-            s_pingQueue.pop_front();
+            std::unique_lock<std::mutex> lk(pingPool().queueMtx);
+            pingPool().queueCv.wait(lk, [] { return !pingPool().queue.empty(); });
+            job = pingPool().queue.front();
+            pingPool().queue.pop_front();
         }
         /* Skip work already superseded by a newer search. */
         if (job.gen != s_pingGeneration.load()) continue;
         PingResult pr = pingServer(job.work);
-        std::lock_guard<std::mutex> lk(s_pingResultsMtx);
+        std::lock_guard<std::mutex> lk(pingPool().resultsMtx);
         if (job.gen == s_pingGeneration.load()) {
-            s_pingResults.push_back(pr);
+            pingPool().results.push_back(pr);
         }
     }
 }
@@ -313,10 +327,10 @@ static void enqueuePing(const PingWork &w) {
         }
     });
     {
-        std::lock_guard<std::mutex> lk(s_pingQueueMtx);
-        s_pingQueue.push_back(PingJob{w, s_pingGeneration.load()});
+        std::lock_guard<std::mutex> lk(pingPool().queueMtx);
+        pingPool().queue.push_back(PingJob{w, s_pingGeneration.load()});
     }
-    s_pingQueueCv.notify_one();
+    pingPool().queueCv.notify_one();
 }
 
 /* Abandon pending/in-flight pings and clear stale results. Called on each
@@ -325,11 +339,11 @@ static void enqueuePing(const PingWork &w) {
 static void resetPings() {
     s_pingGeneration.fetch_add(1);
     {
-        std::lock_guard<std::mutex> lk(s_pingQueueMtx);
-        s_pingQueue.clear();
+        std::lock_guard<std::mutex> lk(pingPool().queueMtx);
+        pingPool().queue.clear();
     }
-    std::lock_guard<std::mutex> lk(s_pingResultsMtx);
-    s_pingResults.clear();
+    std::lock_guard<std::mutex> lk(pingPool().resultsMtx);
+    pingPool().results.clear();
 }
 
 /* ---- Callback data for async LAN broadcast search ---- */
@@ -732,8 +746,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         /* Process incoming ping results */
         {
-            std::lock_guard<std::mutex> lock(s_pingResultsMtx);
-            for (auto &pr : s_pingResults) {
+            std::lock_guard<std::mutex> lock(pingPool().resultsMtx);
+            for (auto &pr : pingPool().results) {
                 std::lock_guard<std::mutex> slock(serversMtx);
                 if (pr.index >= 0 && pr.index < (int)servers.size()) {
                     servers[pr.index].pingMs = pr.pingMs;
@@ -771,7 +785,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     }
                 }
             }
-            s_pingResults.clear();
+            pingPool().results.clear();
         }
 
         /* Tick the background game at fixed rate (unless paused) */
