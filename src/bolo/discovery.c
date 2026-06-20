@@ -86,6 +86,22 @@ static void discoveryFillServerFromInfoPacket(const INFO_PACKET *info, const str
   out->numPills = (BYTE)info->free_pills;
   out->game = (gameType)info->gametype;
   out->ai = (aiType)info->allow_AI;
+  out->numHumans = info->num_humans;
+  out->numBots   = info->num_bots;
+  out->allowNewPlayers = (info->flags & INFO_FLAG_ALLOW_NEW_PLAYERS) != 0;
+  out->locked          = (info->flags & INFO_FLAG_LOCKED) != 0;
+  out->ranked          = (info->flags & INFO_FLAG_RANKED) != 0;
+  out->randomMap       = (info->flags & INFO_FLAG_RANDOM_MAP) != 0;
+  out->allowSpectators = (info->flags & INFO_FLAG_ALLOW_SPECTATORS) != 0;
+  out->inLobby         = (info->flags & INFO_FLAG_IN_LOBBY) != 0;
+  out->spectatorCount  = info->spectator_count;
+  out->timeLimit       = info->time_limit;
+  /* map_md5 is 32 fixed-width hex chars with no NUL on the wire; a leading
+   * '\0' means "no md5" (random/unknown map). Copy 32 and NUL-terminate. */
+  if (info->map_md5[0] != '\0') {
+    memcpy(out->mapMd5, info->map_md5, 32);
+    out->mapMd5[32] = '\0';
+  }
 }
 
 static void gameFinderProcessBroadcast(INFO_PACKET *info, struct in_addr *pack, DiscoveryServerCallback callback, void *userData) {
@@ -378,6 +394,24 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
     out->versionMajor = info->h.versionMajor;
     out->versionMinor = info->h.versionMinor;
     out->versionRevision = info->h.versionRevision;
+    out->numHumans = info->num_humans;
+    out->numBots   = info->num_bots;
+    out->allowNewPlayers = (info->flags & INFO_FLAG_ALLOW_NEW_PLAYERS) != 0;
+    out->locked          = (info->flags & INFO_FLAG_LOCKED) != 0;
+    out->ranked          = (info->flags & INFO_FLAG_RANKED) != 0;
+    out->randomMap       = (info->flags & INFO_FLAG_RANDOM_MAP) != 0;
+    out->allowSpectators = (info->flags & INFO_FLAG_ALLOW_SPECTATORS) != 0;
+    out->inLobby         = (info->flags & INFO_FLAG_IN_LOBBY) != 0;
+    out->spectatorCount  = info->spectator_count;
+    out->timeLimit       = info->time_limit;
+    /* map_md5 is 32 fixed-width hex chars with no NUL on the wire; a leading
+     * '\0' means "no md5" (random/unknown map). This path does not zero out,
+     * so NUL-init before the conditional copy. */
+    out->mapMd5[0] = '\0';
+    if (info->map_md5[0] != '\0') {
+      memcpy(out->mapMd5, info->map_md5, 32);
+      out->mapMd5[32] = '\0';
+    }
     WB_LOG_TRACE(WB_LOG_CAT_NET, "ping: %s:%u responded in %dms, v%u.%u.%u, players=%u",
                  address, port, out->rttMs,
                  (unsigned)out->versionMajor, (unsigned)out->versionMinor,

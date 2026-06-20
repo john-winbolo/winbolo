@@ -34,7 +34,9 @@
  * fields carry the server-reported counts. The version triple is the
  * server's build (from the INFO_RESPONSE header) — populated regardless
  * of whether it matches the client, so callers can pre-flight a join
- * against a mixed-version server. */
+ * against a mixed-version server. The remaining fields mirror the rich
+ * game-info the INFO_PACKET now carries: map md5, lobby/lock/join state,
+ * ranked/random-map flags, the human/bot split, and the time limit. */
 typedef struct {
   int  rttMs;
   WORD freePills;
@@ -43,6 +45,17 @@ typedef struct {
   BYTE versionMajor;
   BYTE versionMinor;
   BYTE versionRevision;
+  char mapMd5[33];
+  bool allowNewPlayers;
+  bool locked;
+  bool inLobby;
+  bool allowSpectators;
+  BYTE spectatorCount;
+  bool ranked;
+  bool randomMap;
+  BYTE numHumans;
+  BYTE numBots;
+  int32_t timeLimit;
 } DiscoveryPingResult;
 
 /* A server discovered via LAN broadcast. Plain data — no wire-format
@@ -63,13 +76,20 @@ typedef struct {
   aiType         ai;
   bool           password;
   bool           inLobby;  /* server is in its lobby (pre-game) phase.
-                            * Populated only by the mDNS producer; the
-                            * broadcast/tracker INFO_PACKET paths can't
-                            * report it and leave it false. */
+                            * Populated by both the broadcast/ping INFO
+                            * flags byte and the mDNS producer. */
   bool           locked;   /* server is locked / not accepting joins.
-                            * Populated only by the mDNS producer; the
-                            * broadcast/tracker INFO_PACKET paths can't
-                            * report it and leave it false. */
+                            * Populated by both the broadcast/ping INFO
+                            * flags byte and the mDNS producer. */
+  char           mapMd5[33];      /* 32 hex chars + NUL; "" when random/unknown */
+  bool           allowNewPlayers;
+  bool           allowSpectators;
+  BYTE           spectatorCount;
+  bool           ranked;
+  bool           randomMap;
+  BYTE           numHumans;
+  BYTE           numBots;
+  int32_t        timeLimit;       /* raw game-length units from the wire; 0 if none */
 } DiscoveryServer;
 
 /* Callback delivered for each LAN server that responds to a broadcast

@@ -202,6 +202,24 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
       out->inLobby = (atoi(val) != 0);
     } else if (strcmp(key, "locked") == 0) {
       out->locked = (atoi(val) != 0);
+    } else if (strcmp(key, "md5") == 0) {
+      SDL_strlcpy(out->mapMd5, val, sizeof(out->mapMd5));
+    } else if (strcmp(key, "newp") == 0) {
+      out->allowNewPlayers = (atoi(val) != 0);
+    } else if (strcmp(key, "spec") == 0) {
+      out->allowSpectators = (atoi(val) != 0);
+    } else if (strcmp(key, "nspec") == 0) {
+      out->spectatorCount = (BYTE)atoi(val);
+    } else if (strcmp(key, "ranked") == 0) {
+      out->ranked = (atoi(val) != 0);
+    } else if (strcmp(key, "rnd") == 0) {
+      out->randomMap = (atoi(val) != 0);
+    } else if (strcmp(key, "tlim") == 0) {
+      out->timeLimit = (int32_t)atoi(val);
+    } else if (strcmp(key, "humans") == 0) {
+      out->numHumans = (BYTE)atoi(val);
+    } else if (strcmp(key, "bots") == 0) {
+      out->numBots = (BYTE)atoi(val);
     }
   }
   return true;
