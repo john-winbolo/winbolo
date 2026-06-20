@@ -1601,6 +1601,294 @@ done:
     return 0;
 }
 
+/* ---- best-effort flavor: deliver-on-arrival, no head-of-line wait ---- */
+
+/* An out-of-order best-effort delivery never waits on a gap, and the sender
+ * retains nothing once a segment has been framed once. */
+static int t_best_effort_no_hol(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t msg[8];
+    uint8_t out[CHANNEL_MAX_SEG];
+    int rc = 1;
+    if (!a || !b) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+    channelTick(a, 0, LINK_RTT_MS);
+    channelTick(b, 0, LINK_RTT_MS);
+
+    /* Index 0 delivers cleanly. */
+    putIdx(msg, 0);
+    if (!channelSendBestEffort(a, CHANNEL_GAME_EFFECT, msg, 8)) {
+        goto done;
+    }
+    {
+        int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        channelRecvFrame(b, frame, la);
+    }
+    uint16_t olen;
+    if (!channelReceiveBestEffort(b, CHANNEL_GAME_EFFECT, out, &olen) ||
+        getIdx(out) != 0) {
+        goto done;
+    }
+    if (channelReceiveBestEffort(b, CHANNEL_GAME_EFFECT, out, &olen)) {
+        goto done; /* nothing more buffered */
+    }
+
+    /* Indices 1 and 2 are framed but their frame is dropped (simulated loss). */
+    putIdx(msg, 1);
+    if (!channelSendBestEffort(a, CHANNEL_GAME_EFFECT, msg, 8)) {
+        goto done;
+    }
+    putIdx(msg, 2);
+    if (!channelSendBestEffort(a, CHANNEL_GAME_EFFECT, msg, 8)) {
+        goto done;
+    }
+    channelBuildFrame(a, frame, FRAME_BUDGET); /* built, never delivered */
+
+    /* Index 3 is framed and delivered: the gap at 1,2 is skipped, not waited. */
+    putIdx(msg, 3);
+    if (!channelSendBestEffort(a, CHANNEL_GAME_EFFECT, msg, 8)) {
+        goto done;
+    }
+    {
+        int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        channelRecvFrame(b, frame, la);
+    }
+    if (!channelReceiveBestEffort(b, CHANNEL_GAME_EFFECT, out, &olen) ||
+        getIdx(out) != 3) {
+        goto done; /* delivered past the gap, did not stall */
+    }
+    if (channelReceiveBestEffort(b, CHANNEL_GAME_EFFECT, out, &olen)) {
+        goto done;
+    }
+    if (b->ch[CHANNEL_GAME_EFFECT].expectedSeq != 4) {
+        goto done; /* cursor advanced past the skipped 1,2 */
+    }
+
+    /* The sender retained nothing: every framed seq is acked-to-self, the
+     * window is empty, and the transmit cursor sits at nextSeq. */
+    if (a->ch[CHANNEL_GAME_EFFECT].ackedSeq !=
+            a->ch[CHANNEL_GAME_EFFECT].nextSeq ||
+        a->ch[CHANNEL_GAME_EFFECT].nextSeq != 4 ||
+        a->ch[CHANNEL_GAME_EFFECT].txNext !=
+            a->ch[CHANNEL_GAME_EFFECT].nextSeq) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    if (rc) {
+        UT_FAIL("best-effort waited on a gap or retained a framed segment");
+    }
+    return 0;
+}
+
+/* Overflow on the best-effort ring never fails the send: the oldest pending
+ * segment is dropped to make room, so exactly one window of the newest
+ * segments survives to be delivered. */
+static int t_best_effort_overflow_drops_oldest(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    uint8_t msg[8];
+    uint8_t out[CHANNEL_MAX_SEG];
+    int rc = 1;
+    if (!a || !b) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+    const uint32_t window = a->ch[CHANNEL_GAME_EFFECT].window;
+    const uint32_t EXTRA = 10;
+
+    /* Overflow the ring by EXTRA: every send must succeed (overflow drops the
+     * oldest, never returns false). No frame is built during the loop, so the
+     * ring genuinely overflows rather than draining. */
+    uint32_t i;
+    for (i = 0; i < window + EXTRA; i++) {
+        putIdx(msg, i);
+        if (!channelSendBestEffort(a, CHANNEL_GAME_EFFECT, msg, 8)) {
+            goto done; /* overflow must never fail the send */
+        }
+    }
+    if (a->ch[CHANNEL_GAME_EFFECT].nextSeq != window + EXTRA) {
+        goto done;
+    }
+    if (a->ch[CHANNEL_GAME_EFFECT].nextSeq -
+            a->ch[CHANNEL_GAME_EFFECT].ackedSeq != window) {
+        goto done; /* in-flight pinned at exactly one window */
+    }
+
+    /* Drain a's surviving ring to b. One frame may not hold all surviving
+     * segments under FRAME_BUDGET, so keep building until the transmit cursor
+     * catches up to nextSeq. */
+    while (a->ch[CHANNEL_GAME_EFFECT].txNext !=
+           a->ch[CHANNEL_GAME_EFFECT].nextSeq) {
+        int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        if (la == 2) {
+            break; /* empty frame — nothing left to drain */
+        }
+        channelRecvFrame(b, frame, la);
+    }
+
+    /* The surviving window delivers: exactly `window` messages, the oldest
+     * EXTRA dropped, indices strictly ascending from EXTRA to window+EXTRA-1. */
+    uint16_t olen;
+    uint32_t count = 0;
+    uint32_t prev = 0;
+    uint32_t first = 0;
+    uint32_t last = 0;
+    while (channelReceiveBestEffort(b, CHANNEL_GAME_EFFECT, out, &olen)) {
+        uint32_t idx = getIdx(out);
+        if (count == 0) {
+            first = idx;
+        } else if (idx <= prev) {
+            goto done; /* not strictly ascending */
+        }
+        prev = idx;
+        last = idx;
+        count++;
+    }
+    if (count != window || first != EXTRA || last != window + EXTRA - 1) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    if (rc) {
+        UT_FAIL("best-effort overflow did not drop the oldest / failed a send");
+    }
+    return 0;
+}
+
+/* A duplicated best-effort frame delivers each seq once; a replayed (stale)
+ * frame delivers nothing. */
+static int t_best_effort_stale_and_dup(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t frame[MAXFRAME];
+    int frameLen;
+    uint8_t msg[8];
+    uint8_t out[CHANNEL_MAX_SEG];
+    int rc = 1;
+    if (!a || !b) {
+        goto done;
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+    channelTick(a, 0, LINK_RTT_MS);
+    channelTick(b, 0, LINK_RTT_MS);
+
+    uint32_t i;
+    for (i = 0; i < 3; i++) {
+        putIdx(msg, i);
+        if (!channelSendBestEffort(a, CHANNEL_GAME_EFFECT, msg, 8)) {
+            goto done;
+        }
+    }
+    frameLen = channelBuildFrame(a, frame, FRAME_BUDGET); /* carries 0,1,2 */
+
+    /* Deliver the same frame twice before draining: the duplicate dedups. */
+    channelRecvFrame(b, frame, frameLen);
+    channelRecvFrame(b, frame, frameLen);
+
+    uint16_t olen;
+    uint32_t count = 0;
+    while (channelReceiveBestEffort(b, CHANNEL_GAME_EFFECT, out, &olen)) {
+        if (getIdx(out) != count) {
+            goto done; /* wrong index / out of order */
+        }
+        count++;
+    }
+    if (count != 3 || b->ch[CHANNEL_GAME_EFFECT].expectedSeq != 3) {
+        goto done;
+    }
+
+    /* Replaying the frame now is stale (every seq is below the cursor): it
+     * delivers nothing and does not move the cursor. */
+    channelRecvFrame(b, frame, frameLen);
+    if (channelReceiveBestEffort(b, CHANNEL_GAME_EFFECT, out, &olen)) {
+        goto done;
+    }
+    if (b->ch[CHANNEL_GAME_EFFECT].expectedSeq != 3) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    free(b);
+    if (rc) {
+        UT_FAIL("best-effort dup/stale handling violated exactly-once-or-drop");
+    }
+    return 0;
+}
+
+/* Best-effort usage errors are rejected and advance no channel: a non
+ * best-effort channel id, a bad id, and an oversized message all return false,
+ * and the receive guard rejects a non best-effort / bad id too. */
+static int t_best_effort_usage(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    uint8_t msg[8] = {0};
+    uint8_t big[CHANNEL_GAME_EFFECT_SEG + 1];
+    uint8_t out[CHANNEL_MAX_SEG];
+    int rc = 1;
+    if (!a) {
+        goto done;
+    }
+    channelMuxInit(a);
+    memset(big, 0, sizeof(big));
+
+    /* A best-effort send on a non best-effort channel is a usage error. */
+    if (channelSendBestEffort(a, CHANNEL_GAME, msg, 8)) {
+        goto done;
+    }
+    if (channelSendBestEffort(a, CHANNEL_CONTROL, msg, 8)) {
+        goto done;
+    }
+    if (channelSendBestEffort(a, CHANNEL_BULK, msg, 8)) {
+        goto done;
+    }
+    /* Out-of-range channel id is rejected. */
+    if (channelSendBestEffort(a, CHANNEL_COUNT, msg, 8)) {
+        goto done;
+    }
+    /* A message one byte past the best-effort segment is rejected. */
+    if (channelSendBestEffort(a, CHANNEL_GAME_EFFECT, big,
+                              CHANNEL_GAME_EFFECT_SEG + 1)) {
+        goto done;
+    }
+
+    /* The receive guard rejects a non best-effort and a bad id. */
+    uint16_t olen;
+    if (channelReceiveBestEffort(a, CHANNEL_GAME, out, &olen)) {
+        goto done;
+    }
+    if (channelReceiveBestEffort(a, CHANNEL_COUNT, out, &olen)) {
+        goto done;
+    }
+
+    /* None of the rejected calls advanced any channel. */
+    int ch;
+    for (ch = 0; ch < CHANNEL_COUNT; ch++) {
+        if (a->ch[ch].nextSeq != 0) {
+            goto done;
+        }
+    }
+    rc = 0;
+done:
+    free(a);
+    if (rc) {
+        UT_FAIL("best-effort usage errors not rejected cleanly");
+    }
+    return 0;
+}
+
 int run_channel_mux(void) {
     /* The control channel must carry its sequence space straight across a
      * lobby->running phase change with no reset; that is the load-bearing
@@ -1666,6 +1954,18 @@ int run_channel_mux(void) {
         return 1;
     }
     if (t_reset_no_rewind()) {
+        return 1;
+    }
+    if (t_best_effort_no_hol()) {
+        return 1;
+    }
+    if (t_best_effort_overflow_drops_oldest()) {
+        return 1;
+    }
+    if (t_best_effort_stale_and_dup()) {
+        return 1;
+    }
+    if (t_best_effort_usage()) {
         return 1;
     }
     if (t_soak()) {
