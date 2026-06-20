@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * touch_input.c - Virtual thumbstick and action buttons for mobile
  *
  * Shared between Android and iOS. Provides a virtual thumbstick on

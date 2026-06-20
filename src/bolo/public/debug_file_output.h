@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 
 #ifndef _DEBUG_FILE_OUTPUT_H
 #define _DEBUG_FILE_OUTPUT_H

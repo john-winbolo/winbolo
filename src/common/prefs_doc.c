@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * Preferences document backed by cJSON. See prefs_doc.h for the API
  * contract and document shape. The module is standalone; the
  * Get/WritePrivateProfileString Profile API is not backed by it.

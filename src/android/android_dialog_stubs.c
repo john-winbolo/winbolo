@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * android_dialog_stubs.c - Stub implementations for dialog/host functions
  * not applicable on Android.
  *

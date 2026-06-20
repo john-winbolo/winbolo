@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 #ifndef BOLO_INTERNAL_SERVER_SIM_LIFECYCLE_H
 #define BOLO_INTERNAL_SERVER_SIM_LIFECYCLE_H
 

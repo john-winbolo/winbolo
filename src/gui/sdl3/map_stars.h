@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * Starred (favourited) map-chooser entries.
  *
  * Persisted across sessions as a flat text file in SDL_GetPrefPath/

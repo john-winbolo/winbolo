@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * mp_diag_log.h — temporary diagnostic logger for the MP host/joiner
  * regression in the reliable-control-events seam.
  *

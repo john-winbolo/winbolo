@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * imgui_ios.cpp — iOS ImGui settings overlay for WinBolo.
  * Minimal touch-friendly overlay: gear icon toggles a
  * settings panel with zoom, sound, and FPS display.

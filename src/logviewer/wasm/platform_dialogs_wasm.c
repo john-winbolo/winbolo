@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * platform_dialogs_wasm.c - Browser file dialogs for WASM build
  *
  * Replaces platform_dialogs.c — uses HTML5 file input for opening files
