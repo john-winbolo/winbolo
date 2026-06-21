@@ -154,8 +154,9 @@ int run_base_stock_visibility(void) {
     PillSnapshot po[MAX_SNAPSHOT_PILLS];
     GameEvent ev[MAX_SNAPSHOT_EVENTS];
 
-    /* Recipient 0: base a is closest → real stock; base b zeroed; owners kept.
-     * Reset lastFullSyncTick so this build forces a full base sync. */
+    /* Recipient 0: base a is closest → real stock; base b ammo culled but
+     * neutral armour kept; owners kept. Reset lastFullSyncTick so this build
+     * forces a full base sync. */
     sim->lastFullSyncTick = 0;
     serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
                            te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES,
@@ -165,14 +166,15 @@ int run_base_stock_visibility(void) {
     UT_ASSERT_MSG(bo[a].armour == 20 && bo[a].shells == 30 && bo[a].mines == 40,
                   "recipient 0: closest base a stock wrong (%u/%u/%u)",
                   bo[a].armour, bo[a].shells, bo[a].mines);
-    UT_ASSERT_MSG(bo[b].armour == 0 && bo[b].shells == 0 && bo[b].mines == 0,
-                  "recipient 0: non-closest base b stock leaked (%u/%u/%u)",
+    UT_ASSERT_MSG(bo[b].armour == 21 && bo[b].shells == 0 && bo[b].mines == 0,
+                  "recipient 0: non-closest neutral base b — armour kept, ammo culled (%u/%u/%u)",
                   bo[b].armour, bo[b].shells, bo[b].mines);
     UT_ASSERT_MSG(bo[a].owner == NEUTRAL && bo[b].owner == NEUTRAL,
                   "recipient 0: owners must be kept for all bases (a=%u b=%u)",
                   bo[a].owner, bo[b].owner);
 
-    /* Recipient 1: base b is closest → real stock; base a zeroed; owners kept. */
+    /* Recipient 1: base b is closest → real stock; base a ammo culled but
+     * neutral armour kept; owners kept. */
     sim->lastFullSyncTick = 0;
     serverSimBuildSnapshot(sim, 1, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
                            te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES,
@@ -182,13 +184,72 @@ int run_base_stock_visibility(void) {
     UT_ASSERT_MSG(bo[b].armour == 21 && bo[b].shells == 31 && bo[b].mines == 41,
                   "recipient 1: closest base b stock wrong (%u/%u/%u)",
                   bo[b].armour, bo[b].shells, bo[b].mines);
-    UT_ASSERT_MSG(bo[a].armour == 0 && bo[a].shells == 0 && bo[a].mines == 0,
-                  "recipient 1: non-closest base a stock leaked (%u/%u/%u)",
+    UT_ASSERT_MSG(bo[a].armour == 20 && bo[a].shells == 0 && bo[a].mines == 0,
+                  "recipient 1: non-closest neutral base a — armour kept, ammo culled (%u/%u/%u)",
                   bo[a].armour, bo[a].shells, bo[a].mines);
     UT_ASSERT_MSG(bo[a].owner == NEUTRAL && bo[b].owner == NEUTRAL,
                   "recipient 1: owners must be kept for all bases (a=%u b=%u)",
                   bo[a].owner, bo[b].owner);
 
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 3. Enemy/own armour fog-of-war in the full-sync: an enemy base reads
+ *    BASE_FULL_ARMOUR while alive (exact value hidden) and its true armour
+ *    once dead; a friendly (own) base always reads true armour. */
+int run_base_armour_fog_of_war(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    serverSimAddPlayer(sim, 1, "P1", false);
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    UT_ASSERT_MSG(basesGetNumBases(&gs->bs) >= 2,
+                  "Everard map has < 2 bases (%u)", basesGetNumBases(&gs->bs));
+    UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid for positioning");
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 1) != TRUE,
+                  "players 0 and 1 allied by default — breaks the enemy case");
+
+    const BYTE a = 0, b = 1;
+    WORLD aCx = bv_base_world((*gs->bs).item[a].x);
+    WORLD aCy = bv_base_world((*gs->bs).item[a].y);
+    (*gs->bs).item[a].owner = NEUTRAL;
+    tankSetWorld(gs, &gs->tanks[0], aCx, aCy, 0, false);
+
+    SnapshotHeader hdr;
+    TankSnapshot tk[MAX_TANKS];
+    ShellSnapshot sh[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot te[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot bo[MAX_SNAPSHOT_BASES];
+    PillSnapshot po[MAX_SNAPSHOT_PILLS];
+    GameEvent ev[MAX_SNAPSHOT_EVENTS];
+
+    #define BV_BUILD0() do { sim->lastFullSyncTick = 0; \
+        serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS, \
+            te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES, \
+            po, MAX_SNAPSHOT_PILLS, ev, MAX_SNAPSHOT_EVENTS, false); } while (0)
+
+    (*gs->bs).item[b].owner  = 1;   /* enemy, alive */
+    (*gs->bs).item[b].armour = 50;
+    BV_BUILD0();
+    UT_ASSERT_MSG(bo[b].armour == BASE_FULL_ARMOUR,
+                  "enemy alive base should read BASE_FULL_ARMOUR (%u), got %u",
+                  (unsigned)BASE_FULL_ARMOUR, bo[b].armour);
+
+    (*gs->bs).item[b].owner  = 1;   /* enemy, dead/capturable */
+    (*gs->bs).item[b].armour = 5;
+    BV_BUILD0();
+    UT_ASSERT_MSG(bo[b].armour == 5,
+                  "enemy dead base should read its true value (5), got %u", bo[b].armour);
+
+    (*gs->bs).item[b].owner  = 0;   /* own base */
+    (*gs->bs).item[b].armour = 50;
+    BV_BUILD0();
+    UT_ASSERT_MSG(bo[b].armour == 50,
+                  "own base should read its true value (50), got %u", bo[b].armour);
+
+    #undef BV_BUILD0
     serverSimDestroy(sim);
     return 0;
 }

@@ -2922,6 +2922,7 @@ set(_unit_test_names
     input_redundancy
     bases_closest_for_player
     base_stock_visibility
+    base_armour_fog_of_war
     fx_viewport_cull
     stall_advances_processed_tick
     stall_mine_late_lays_once
