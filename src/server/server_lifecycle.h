@@ -47,6 +47,8 @@ typedef struct {
   BYTE           maxPlayers;
   BYTE           maxBots;          /* cap on AI bots addable in the lobby;
                                       0 = no cap */
+  BYTE           maxSpectators;    /* cap on spectator connections; 0 = spectating disabled */
+  uint16_t       specDelaySeconds; /* spectator view delay in seconds; 0 = live (no floor) */
 
   bool           acceptRemoteClients; /* false = skip UDP bind, WBN, tracker
                                          and NAT portmap setup; serverInstanceTick

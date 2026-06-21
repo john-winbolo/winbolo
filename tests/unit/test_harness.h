@@ -193,6 +193,11 @@ int run_channel_mux(void);
  * proven with synthetic byte payloads. */
 int run_spectator_ring(void);
 
+/* Spectator config plumbing (test_spectator_config.c): -maxspectators /
+ * -specdelay flow through ServerInstanceConfig into the sim and back via the
+ * getters, with seconds->ticks conversion and the no-fallback zero semantics. */
+int run_spectator_config(void);
+
 /* Bulk-transfer framing (test_bulk_transfer.c): the off-socket stream-header
  * round-trip, byte-identical blob reassembly under loss + reorder, header
  * robustness, pipelining and the send-side serializer guard. */

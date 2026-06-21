@@ -468,6 +468,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->ranked              = FALSE;
     sim->serverLocks         = 0;
     sim->maxPlayers          = MAX_TANKS;
+    sim->maxSpectators       = 0;
+    sim->specDelayTicks      = 0;
     sim->worldPreLoaded      = TRUE;
 
     /* Mirror gameType + hiddenMines + time fields so the lobby change
@@ -2597,6 +2599,8 @@ void serverSimEnterLobby(ServerSim *sim) {
 void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
   sim->sim.viewPlayer = cfg->viewPlayer;
   sim->maxBots        = cfg->maxBots;
+  sim->maxSpectators  = cfg->maxSpectators;
+  sim->specDelayTicks = (uint32_t)cfg->specDelaySeconds * 50u;   /* 50 ticks/s */
 
   serverSimSetEmptyResetEnabled(sim, cfg->emptyResetEnabled);
   serverSimSetHasPassword(sim, cfg->hasPassword);
@@ -7598,6 +7602,16 @@ BYTE serverSimGetMaxPlayers(const ServerSim *sim) {
 BYTE serverSimGetMaxBots(const ServerSim *sim) {
     if (sim == NULL) return 0;
     return sim->maxBots;
+}
+
+BYTE serverSimGetMaxSpectators(const ServerSim *sim) {
+    if (sim == NULL) return 0;
+    return sim->maxSpectators;   /* 0 = disabled; no MAX_TANKS fallback */
+}
+
+uint32_t serverSimGetSpecDelayTicks(const ServerSim *sim) {
+    if (sim == NULL) return 0;
+    return sim->specDelayTicks;
 }
 
 BYTE serverSimGetLobbyBotCount(const ServerSim *sim) {

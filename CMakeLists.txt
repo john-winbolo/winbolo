@@ -2631,6 +2631,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # segment isolation, previous-generation read, cold start and the
     # retention window boundary, all driven with synthetic byte payloads.
     tests/unit/test_spectator_ring.c
+    # Spectator config plumbing: -maxspectators / -specdelay flow through
+    # ServerInstanceConfig into the sim and back via the getters.
+    tests/unit/test_spectator_config.c
     # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
@@ -2986,6 +2989,7 @@ set(_unit_test_names
     wire_corpus
     channel_mux
     spectator_ring
+    spectator_config
     bulk_transfer
     overflow_guards
     channel_reset_codec_roundtrip
