@@ -31,6 +31,10 @@ void md5Final(uint8_t digest[16], Md5Ctx *ctx);
 /* One-shot helper. digest must point to 16 bytes. */
 void md5Compute(const void *data, size_t len, uint8_t digest[16]);
 
+/* Lowercase hex-encode a 16-byte digest into out (33 bytes: 32 hex
+ * chars + NUL). This is the single hex-encode for MD5 digests. */
+void md5ToHex(const uint8_t digest[16], char out[33]);
+
 #ifdef __cplusplus
 }
 #endif

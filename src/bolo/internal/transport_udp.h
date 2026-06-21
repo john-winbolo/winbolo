@@ -285,7 +285,7 @@ void transportUdpClientSendLobbyMapUploadBegin(Transport *t, uint32_t totalLen,
 void transportUdpClientSendLobbyMapUseLocal(Transport *t, uint32_t totalLen,
                                              const char *name,
                                              const char *relPath,
-                                             const uint8_t md5[16]);
+                                             const char md5Hex[32]);
 
 /* Lobby map upload entry points — the chunked PACKET_LOBBY_MAP_UPLOAD_*
  * state machine that used to live in imgui_lobby's per-frame pump. The

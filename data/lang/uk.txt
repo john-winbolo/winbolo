@@ -1761,6 +1761,15 @@ STR_DLGBROWSER_SPECTATE=Спостерігати
 STR_DLGBROWSER_AUTO_REFRESH=Автооновлення
 STR_DLGBROWSER_ST_LOBBY=Лобі
 STR_DLGBROWSER_ST_INGAME=В грі
+STR_DLGBROWSER_SELECT_SERVER=Оберіть сервер
+STR_DLGBROWSER_PREVIEW_UNAVAIL=Перегляд недоступний
+STR_DLGBROWSER_PREVIEW_ENLARGE=Натисніть для збільшення
+STR_DLGBROWSER_AI_PLAYERS=({number} гравців ШІ)
+STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net гравці:
+STR_DLGBROWSER_ST_LOCKED=Заблок./Заповнений
+STR_DLGBROWSER_ST_NORESP=Немає відповіді
+STR_DLGBROWSER_RND_ABBR=вип
+STR_DLGBROWSER_TYPE_TOURN_ABBR=Турнір
 
 # On-screen keyboard (controller text entry)
 STR_OSK_LEGEND=Вибрати   B Стерти   LB Shift   RB ?123   Start Готово
