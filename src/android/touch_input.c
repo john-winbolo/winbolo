@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * touch_input.c - Virtual thumbstick and action buttons for Android
  *
  * Provides a virtual thumbstick on the left side of the screen for

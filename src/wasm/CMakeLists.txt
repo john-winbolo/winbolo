@@ -188,6 +188,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_deck_pause.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keyboard.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_quickchat.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_about.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/dialog_footer.cpp

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * Wire field lists for the flat fixed-layout leaf snapshots.
  *
  * Each *_FIELDS(F) macro names a message's fields once, in wire order, with its
@@ -22,7 +27,7 @@
     F(U8, owner) F(U8, armour) F(U8, shells) F(U8, mines)
 
 #define PILL_SNAPSHOT_FIELDS(F) \
-    F(U8, x) F(U8, y) F(U8, owner) F(U8, armour) F(U8, speed) F(U8, inTank)
+    F(U8, x) F(U8, y) F(U8, owner) F(U8, armourInTank)
 
 /* Presence-bitmask message. Field order is WIRE order (follows the packer), not
  * the struct declaration order: the 11-byte core first, then the omit-zero

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -2964,13 +2964,13 @@ void transportUdpServerDestroy(void) {
 }
 
 /* Handle an old-protocol info request (server browser compatibility).
- * Builds a 76-byte INFO_PACKET response from the current sim state. */
+ * Builds an INFO_PACKET response from the current sim state. */
 static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
                                     ServerSim *sim) {
     GameSim *gs = serverSimGetGameSim(sim);
     INFO_PACKET pkt;
     int i;
-    BYTE numPlayers = 0;
+    BYTE numPlayers = 0, numHumans = 0, numBots = 0;
     char consoleMsg[256];
 
     memset(&pkt, 0, sizeof(pkt));
@@ -3001,22 +3001,45 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
     pkt.gametype = (BYTE)gs->game;
     pkt.allow_mines = gs->hiddenMines ? HIDDEN_MINES : ALL_MINES_VISIBLE;
     pkt.allow_AI = 0;  /* AI type not tracked in new sim — report as none */
-    pkt.spare1 = 0;
+    {
+        BYTE flags = 0;
+        if (serverSimIsAcceptingJoins(sim))              flags |= INFO_FLAG_ALLOW_NEW_PLAYERS;
+        if (transportUdpServerGetLock() || !serverSimIsAcceptingJoins(sim)) flags |= INFO_FLAG_LOCKED;
+        if (serverSimGetRanked(sim))                     flags |= INFO_FLAG_RANKED;
+        if (serverSimIsRandomMapEnabled(sim))            flags |= INFO_FLAG_RANDOM_MAP;
+        if (serverSimGetState(sim) == serverStateLobby)  flags |= INFO_FLAG_IN_LOBBY;
+        /* allow_spectators / spectator_count: spectators are future work */
+        pkt.flags = flags;
+    }
     pkt.start_delay = serverSimGetStartDelay(sim);
     pkt.time_limit = serverSimGetGameLength(sim);
 
-    /* Count connected players */
+    /* Count connected players, classifying humans vs bots */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsPlayerConnected(sim, i)) numPlayers++;
+        if (serverSimIsPlayerConnected(sim, i)) {
+            numPlayers++;
+            if (serverSimIsBot(sim, (BYTE)i)) numBots++;
+            else                              numHumans++;
+        }
     }
     pkt.num_players = numPlayers;
+    pkt.num_humans  = numHumans;
+    pkt.num_bots    = numBots;
+    pkt.max_players = serverSimGetMaxPlayers(sim);
 
     /* Neutral pills and bases */
     pkt.free_pills = pillsGetNumNeutral(&gs->pb);
     pkt.free_bases = basesGetNumNeutral(&gs->bs);
 
     pkt.has_password = serverSimGetPassword(sim)[0] != '\0' ? 1 : 0;
-    pkt.spare2 = 0;
+    pkt.spectator_count = 0;
+
+    {
+        const char *md5Hex = serverSimGetMapMd5Hex(sim);
+        if (md5Hex[0] != '\0' && !serverSimIsRandomMapEnabled(sim)) {
+            memcpy(pkt.map_md5, md5Hex, 32);
+        }
+    }
 
     /* wire-only: tracker / external reply (no in-process audience) */
     srvSendTo((uint8_t *)&pkt, sizeof(pkt), fromAddr);
@@ -3462,7 +3485,7 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     struct sockaddr_in dest;
     struct in_addr trackerIp;
     int i;
-    BYTE numPlayers = 0;
+    BYTE numPlayers = 0, numHumans = 0, numBots = 0;
 
     if (bolo_resolve_ipv4(trackerAddr, &trackerIp) != 0) {
         fprintf(stderr, "[TRACKER] Failed to resolve %s\n", trackerAddr);
@@ -3496,18 +3519,41 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     pkt.gametype = (BYTE)gs->game;
     pkt.allow_mines = gs->hiddenMines ? HIDDEN_MINES : ALL_MINES_VISIBLE;
     pkt.allow_AI = 0;
-    pkt.spare1 = 0;
+    {
+        BYTE flags = 0;
+        if (serverSimIsAcceptingJoins(sim))              flags |= INFO_FLAG_ALLOW_NEW_PLAYERS;
+        if (transportUdpServerGetLock() || !serverSimIsAcceptingJoins(sim)) flags |= INFO_FLAG_LOCKED;
+        if (serverSimGetRanked(sim))                     flags |= INFO_FLAG_RANKED;
+        if (serverSimIsRandomMapEnabled(sim))            flags |= INFO_FLAG_RANDOM_MAP;
+        if (serverSimGetState(sim) == serverStateLobby)  flags |= INFO_FLAG_IN_LOBBY;
+        /* allow_spectators / spectator_count: spectators are future work */
+        pkt.flags = flags;
+    }
     pkt.start_delay = serverSimGetStartDelay(sim);
     pkt.time_limit = serverSimGetGameLength(sim);
 
     for (i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsPlayerConnected(sim, i)) numPlayers++;
+        if (serverSimIsPlayerConnected(sim, i)) {
+            numPlayers++;
+            if (serverSimIsBot(sim, (BYTE)i)) numBots++;
+            else                              numHumans++;
+        }
     }
     pkt.num_players = numPlayers;
+    pkt.num_humans  = numHumans;
+    pkt.num_bots    = numBots;
+    pkt.max_players = serverSimGetMaxPlayers(sim);
     pkt.free_pills = pillsGetNumNeutral(&gs->pb);
     pkt.free_bases = basesGetNumNeutral(&gs->bs);
     pkt.has_password = serverSimGetPassword(sim)[0] != '\0' ? 1 : 0;
-    pkt.spare2 = 0;
+    pkt.spectator_count = 0;
+
+    {
+        const char *md5Hex = serverSimGetMapMd5Hex(sim);
+        if (md5Hex[0] != '\0' && !serverSimIsRandomMapEnabled(sim)) {
+            memcpy(pkt.map_md5, md5Hex, 32);
+        }
+    }
 
     srvSendTo((const uint8_t *)&pkt, sizeof(pkt), &dest);
 }
@@ -3787,9 +3833,60 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         dl->xferBegun = false;
                         dl->xferStartSeq = 0;
                         dl->xferEndSeq = 0;
-                        fprintf(stderr,
-                                "[UDP SERVER] Client %d map resync gen=%u (%d bytes)\n",
-                                clientIdx, reqGen, mapLen);
+
+                        /* Self-check: the blob the client will install must
+                         * round-trip back to this server's live terrain. If it
+                         * doesn't, the client can never match the live checksum
+                         * and loops resync requests until it self-kicks — so
+                         * decode the blob into scratch structures and compare
+                         * tile-for-tile against the live map. Resyncs are
+                         * infrequent; the cost is acceptable for the diagnosis. */
+                        {
+                            map *live = &serverSimGetGameSim(sim)->mp;
+                            uint16_t liveSum = mapCalcChecksum(live);
+                            map rtMap; pillboxes rtPb; bases rtBs; starts rtSs;
+                            mapCreate(&rtMap);
+                            pillsCreate(&rtPb);
+                            basesCreate(&rtBs);
+                            startsCreate(&rtSs);
+                            if (mapLoadCompressedMap(&rtMap, &rtPb, &rtBs, &rtSs,
+                                                     udpServer.compressedMap, mapLen)) {
+                                uint16_t rtSum = mapCalcChecksum(&rtMap);
+                                if (rtSum != liveSum) {
+                                    int diffs = 0, shown = 0, xx, yy;
+                                    for (yy = 0; yy < MAP_ARRAY_SIZE; yy++) {
+                                        for (xx = 0; xx < MAP_ARRAY_SIZE; xx++) {
+                                            BYTE lv = mapGetPos(live, (BYTE)xx, (BYTE)yy);
+                                            BYTE rv = mapGetPos(&rtMap, (BYTE)xx, (BYTE)yy);
+                                            if (lv != rv) {
+                                                diffs++;
+                                                if (shown < 8) {
+                                                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                                                        "map resync blob diff @(%d,%d) live=%u roundtrip=%u",
+                                                        xx, yy, (unsigned)lv, (unsigned)rv);
+                                                    shown++;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                                        "map resync blob does NOT round-trip: %d differing tile(s) "
+                                        "(live sum=%u blob sum=%u) - client cannot converge",
+                                        diffs, (unsigned)liveSum, (unsigned)rtSum);
+                                }
+                            } else {
+                                WB_LOG_WARN(WB_LOG_CAT_NET,
+                                    "map resync blob failed self-check decode (gen=%u, %d bytes)",
+                                    (unsigned)reqGen, mapLen);
+                            }
+                            mapDestroy(&rtMap);
+                            pillsDestroy(&rtPb);
+                            basesDestroy(&rtBs);
+                            startsDestroy(&rtSs);
+                            fprintf(stderr,
+                                    "[UDP SERVER] Client %d map resync gen=%u (%d bytes) livesum=%u\n",
+                                    clientIdx, reqGen, mapLen, (unsigned)liveSum);
+                        }
                     } else {
                         fprintf(stderr,
                                 "[UDP SERVER] Client %d map resync: compress failed (%d)\n",
@@ -3888,7 +3985,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_LOBBY_MAP_USE_LOCAL: {
             /* [header 8] [totalLen 4] [nameLen 1] [name N]
-             *           [relPathLen 1] [relPath M] [md5 16]
+             *           [relPathLen 1] [relPath M] [md5 32]
              *
              * Pre-upload optimisation: if our local data/maps/<relPath>
              * matches the supplied MD5, install it directly and reply
@@ -3899,7 +3996,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 4 + 1 + 1 + 16) break;
+                len < PACKET_HEADER_SIZE + 4 + 1 + 1 + 32) break;
             int rpos = PACKET_HEADER_SIZE;
             uint32_t totalLen =
                 ((uint32_t)buf[rpos + 0] << 24) |
@@ -3909,20 +4006,21 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             rpos += 4;
             uint8_t nameLen = buf[rpos++];
             if (nameLen == 0 || nameLen > 127 ||
-                rpos + nameLen + 1 + 16 > (int)len) break;
+                rpos + nameLen + 1 + 32 > (int)len) break;
             char nameBuf[128];
             memset(nameBuf, 0, sizeof(nameBuf));
             memcpy(nameBuf, buf + rpos, nameLen);
             rpos += nameLen;
             uint8_t relLen = buf[rpos++];
             if (relLen == 0 || relLen > 255 ||
-                rpos + relLen + 16 > (int)len) break;
+                rpos + relLen + 32 > (int)len) break;
             char relBuf[256];
             memset(relBuf, 0, sizeof(relBuf));
             memcpy(relBuf, buf + rpos, relLen);
             rpos += relLen;
-            uint8_t wantMd5[16];
-            memcpy(wantMd5, buf + rpos, 16);
+            char wantMd5Hex[33];
+            memcpy(wantMd5Hex, buf + rpos, 32);
+            wantMd5Hex[32] = '\0';
 
             /* NACK helper for every miss path: server echoes the
              * announce name so the client correlates the reply to
@@ -3987,7 +4085,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
 
             uint8_t haveMd5[16];
             md5Compute(bytes, byteLen, haveMd5);
-            if (memcmp(haveMd5, wantMd5, 16) != 0) {
+            char haveMd5Hex[33];
+            md5ToHex(haveMd5, haveMd5Hex);
+            if (memcmp(haveMd5Hex, wantMd5Hex, 32) != 0) {
                 free(bytes);
                 SEND_USE_LOCAL_NACK();
                 break;
@@ -4564,6 +4664,32 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             clientMY = (BYTE)(cwy >> 8);
         }
 
+        /* Client's closest neutral/allied base — best-effort base stock events
+         * are culled to this base only (computed once per client). */
+        BYTE closestBase = BASE_NOT_FOUND;
+        if (hasPos) {
+            closestBase = basesGetClosestForPlayer(serverSimGetGameSim(sim), (BYTE)c, cwx, cwy);
+        }
+
+        /* On arrival (closest base changed) push that base's current stock
+         * immediately so ammo appears at once instead of lagging to the next
+         * full-sync. Consuming the change here means the later snapshot build
+         * for this same UDP slot sees no change. */
+        {
+            GameEvent arrivalEv;
+            if (serverSimTakeClosestBaseStock(sim, (BYTE)c, closestBase, &arrivalEv)) {
+                uint8_t abuf[GAME_EVENT_MAX_WIRE_SIZE];
+                int alen = packGameEvent(abuf, &arrivalEv);
+                channelSendBestEffort(&udpServer.channelMux[c], CHANNEL_GAME_EFFECT,
+                                      abuf, (uint16_t)alen);
+            }
+        }
+
+        /* Best-effort fx (sounds/explosions) are culled to the recipient's
+         * tank + owned/allied pillbox viewports, matching the snapshot cull. */
+        ViewportRect fxViewports[MAX_VIEWPORTS];
+        int fxViewportCount = serverSimBuildViewports(sim, (BYTE)c, fxViewports, MAX_VIEWPORTS);
+
         /* Pass 1: find best (closest) sound event per type for this client */
         #define MAX_SOUND_TYPES 32
         int bestSoundIdx[MAX_SOUND_TYPES];
@@ -4591,8 +4717,8 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                 /* Always send tank hit to the hit player (plays hitTankSelf at full volume) */
                 if (evType == EVENT_SOUND_TANK_HIT && serverSimGetEvents(sim)[i].data[3] == (uint8_t)c) {
                     /* Skip distance cull */
-                } else if (dx >= SDIST_NONE || dy >= SDIST_NONE) {
-                    /* Cull beyond audible range */
+                } else if (!inAnyViewport(fxViewports, fxViewportCount, mx, my)) {
+                    /* Cull beyond the recipient's viewports */
                     continue;
                 }
 
@@ -4605,8 +4731,10 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             }
         }
 
-        /* Pass 2: enqueue non-sound game events into game queue,
-         * then deduplicated sounds into game queue */
+        /* Pass 2: route non-sound game events, then deduplicated sounds.
+         * Each event goes to the reliable game channel (CHANNEL_GAME) if
+         * gameEventIsReliable, otherwise to the best-effort channel
+         * (CHANNEL_GAME_EFFECT). Sounds are all best-effort. */
         for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
             uint8_t evType = serverSimGetEvents(sim)[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
@@ -4625,26 +4753,41 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                 }
                 /* Distance-cull explosion events */
                 if (evType == EVENT_EXPLOSION && hasPos) {
-                    int dx = (clientMX > serverSimGetEvents(sim)[i].data[0]) ? (clientMX - serverSimGetEvents(sim)[i].data[0]) : (serverSimGetEvents(sim)[i].data[0] - clientMX);
-                    int dy = (clientMY > serverSimGetEvents(sim)[i].data[1]) ? (clientMY - serverSimGetEvents(sim)[i].data[1]) : (serverSimGetEvents(sim)[i].data[1] - clientMY);
-                    if (dx >= SDIST_NONE || dy >= SDIST_NONE) continue;
+                    if (!inAnyViewport(fxViewports, fxViewportCount,
+                                       serverSimGetEvents(sim)[i].data[0],
+                                       serverSimGetEvents(sim)[i].data[1])) continue;
+                }
+                /* Cull base stock to the client's closest neutral/allied base */
+                if (evType == EVENT_BASE_STOCK) {
+                    if (closestBase == BASE_NOT_FOUND ||
+                        (BYTE)(closestBase - 1) != serverSimGetEvents(sim)[i].data[0]) {
+                        continue;
+                    }
                 }
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
                 int evLen = packGameEvent(evBuf, &serverSimGetEvents(sim)[i]);
-                if (!channelSend(&udpServer.channelMux[c], CHANNEL_GAME,
-                                 evBuf, (uint16_t)evLen)) {
-                    /* Channel window full — defer the disconnect off the
-                     * event loop, mirroring the control-queue overflow path:
-                     * set the deferred-removal flag (drained at a safe point
-                     * by transportUdpServerDrainPendingRemovals) and stop. The
-                     * flag guard keeps a re-hit from spamming the log. */
-                    if (!udpServer.pendingSimRemove[c]) {
-                        WB_LOG_ERROR(WB_LOG_CAT_NET,
-                                     "game channel overflow for slot %d, deferring disconnect",
-                                     c);
-                        udpServer.pendingSimRemove[c] = true;
+                if (gameEventIsReliable(evType)) {
+                    if (!channelSend(&udpServer.channelMux[c], CHANNEL_GAME,
+                                     evBuf, (uint16_t)evLen)) {
+                        /* Channel window full — defer the disconnect off the
+                         * event loop, mirroring the control-queue overflow path:
+                         * set the deferred-removal flag (drained at a safe point
+                         * by transportUdpServerDrainPendingRemovals) and stop. The
+                         * flag guard keeps a re-hit from spamming the log. */
+                        if (!udpServer.pendingSimRemove[c]) {
+                            WB_LOG_ERROR(WB_LOG_CAT_NET,
+                                         "game channel overflow for slot %d, deferring disconnect",
+                                         c);
+                            udpServer.pendingSimRemove[c] = true;
+                        }
+                        break;
                     }
-                    break;
+                } else {
+                    /* Ephemeral event — best-effort: never blocks, never
+                     * disconnects on overflow (drops oldest). */
+                    channelSendBestEffort(&udpServer.channelMux[c],
+                                          CHANNEL_GAME_EFFECT, evBuf,
+                                          (uint16_t)evLen);
                 }
             }
         }
@@ -4652,16 +4795,11 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             if (bestSoundIdx[s] >= 0) {
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
                 int evLen = packGameEvent(evBuf, &serverSimGetEvents(sim)[bestSoundIdx[s]]);
-                if (!channelSend(&udpServer.channelMux[c], CHANNEL_GAME,
-                                 evBuf, (uint16_t)evLen)) {
-                    if (!udpServer.pendingSimRemove[c]) {
-                        WB_LOG_ERROR(WB_LOG_CAT_NET,
-                                     "game channel overflow for slot %d, deferring disconnect",
-                                     c);
-                        udpServer.pendingSimRemove[c] = true;
-                    }
-                    break;
-                }
+                /* Sounds are ephemeral — best-effort: never blocks, never
+                 * disconnects on overflow (drops oldest). */
+                channelSendBestEffort(&udpServer.channelMux[c],
+                                      CHANNEL_GAME_EFFECT, evBuf,
+                                      (uint16_t)evLen);
             }
         }
         #undef MAX_SOUND_TYPES

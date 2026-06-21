@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * client_net.h
  *
  * Public API that lets ClientSim own the network transport. External
@@ -230,7 +235,7 @@ void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
                                       uint32_t totalLen,
                                       const char *name,
                                       const char *relPath,
-                                      const uint8_t md5[16]);
+                                      const char md5Hex[32]);
 void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                    uint8_t color, uint8_t namingPool,
                                    const char *name);

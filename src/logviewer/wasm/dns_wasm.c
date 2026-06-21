@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * dns_wasm.c - No-op DNS for WASM build
  *
  * Replaces dns.c — DNS lookups are not available in the browser sandbox.

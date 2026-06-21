@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -255,6 +255,16 @@ size_t mdnsAdvertiseBuildRecords(const MdnsServerInfo *info,
   MDNS_TXT_ADD("ai",      "%d", (int)info->ai);
   MDNS_TXT_ADD("lobby",   "%d", info->lobby ? 1 : 0);
   MDNS_TXT_ADD("locked",  "%d", info->locked ? 1 : 0);
+  MDNS_TXT_ADD("md5",     "%s", info->mapMd5Hex);
+  MDNS_TXT_ADD("newp",    "%d", info->allowNewPlayers ? 1 : 0);
+  MDNS_TXT_ADD("spec",    "%d", info->allowSpectators ? 1 : 0);
+  MDNS_TXT_ADD("nspec",   "%u", (unsigned)info->spectatorCount);
+  MDNS_TXT_ADD("ranked",  "%d", info->ranked ? 1 : 0);
+  MDNS_TXT_ADD("rnd",     "%d", info->randomMap ? 1 : 0);
+  MDNS_TXT_ADD("tlim",    "%d", (int)info->timeLimit);
+  MDNS_TXT_ADD("humans",  "%u", (unsigned)info->numHumans);
+  MDNS_TXT_ADD("bots",    "%u", (unsigned)info->numBots);
+  MDNS_TXT_ADD("max",     "%u", (unsigned)info->maxPlayers);
 
 #undef MDNS_TXT_ADD
 
@@ -270,7 +280,7 @@ static void mdnsFillServerInfo(ServerSim *sim, MdnsServerInfo *out) {
   GameSim *gs = serverSimGetGameSim(sim);
   const char *map = serverSimGetMapName(sim);
   int i;
-  BYTE numPlayers = 0;
+  BYTE numPlayers = 0, numHumans = 0, numBots = 0;
 
   memset(out, 0, sizeof(*out));
   out->port = s_mdns.gamePort;
@@ -285,9 +295,14 @@ static void mdnsFillServerInfo(ServerSim *sim, MdnsServerInfo *out) {
   for (i = 0; i < MAX_TANKS; i++) {
     if (serverSimIsPlayerConnected(sim, (BYTE)i)) {
       numPlayers++;
+      if (serverSimIsBot(sim, (BYTE)i)) numBots++;
+      else                              numHumans++;
     }
   }
   out->numPlayers = numPlayers;
+  out->numHumans  = numHumans;
+  out->numBots    = numBots;
+  out->maxPlayers = serverSimGetMaxPlayers(sim);
   out->numBases   = basesGetNumNeutral(&gs->bs);
   out->numPills   = pillsGetNumNeutral(&gs->pb);
   out->password   = (serverSimGetPassword(sim)[0] != '\0');
@@ -296,6 +311,19 @@ static void mdnsFillServerInfo(ServerSim *sim, MdnsServerInfo *out) {
   out->ai         = aiNone; /* AI type not tracked in the new sim */
   out->lobby      = (serverSimGetState(sim) == serverStateLobby);
   out->locked     = transportUdpServerGetLock() || !serverSimIsAcceptingJoins(sim);
+
+  {
+    const char *md5Hex = serverSimGetMapMd5Hex(sim);
+    if (md5Hex[0] != '\0' && !serverSimIsRandomMapEnabled(sim)) {
+      strncpy(out->mapMd5Hex, md5Hex, sizeof(out->mapMd5Hex) - 1);
+    }
+  }
+  out->allowNewPlayers = serverSimIsAcceptingJoins(sim);
+  out->allowSpectators = false;  /* future work */
+  out->spectatorCount  = 0;      /* future work */
+  out->ranked          = serverSimGetRanked(sim);
+  out->randomMap       = serverSimIsRandomMapEnabled(sim);
+  out->timeLimit       = serverSimGetGameLength(sim);
 }
 
 /*---------------------------------------------------------
@@ -312,7 +340,7 @@ static int mdnsQueryCallback(int sock, const struct sockaddr *from, size_t addrl
   size_t ofs = name_offset;
   mdns_string_t name;
   mdns_record_t records[MDNS_WINBOLO_RECORD_COUNT];
-  char txtScratch[256];
+  char txtScratch[512];
   uint32_t sendbuf[512]; /* 2 KiB, 32-bit aligned for the mdns send path */
   size_t count;
   bool unicast;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -61,7 +61,13 @@ extern "C" {
 #include "../../lang.h"
 #include "../input_source.h"
 #include "imgui_gamebrowser.h"
+#include "imgui_keyboard.h"
+#include "../map_preview_view.h"
+#include "../map_preview_popup.h"
+#include "../../../bolo/public/client_mappreview.h"
 }
+
+#include "../map_preview_fetch.h"
 
 static const int DIALOG_W = 1024;
 static const int DIALOG_H = 768;
@@ -87,6 +93,7 @@ struct ServerEntry {
     char mapName[MAP_STR_SIZE];
     char version[FILENAME_MAX];
     BYTE numPlayers;
+    int  maxPlayers;     /* server's join-slot cap; 0 when unknown (Internet) */
     BYTE numBases;
     BYTE numPills;
     bool mines;
@@ -120,6 +127,9 @@ struct ServerEntry {
     int  timeMinutes;
     bool randomMap;
     char mapMd5[33];
+    bool hasRichInfo;    /* false for a legacy 76-byte server that can't report
+                          * the flags/counts/md5 fields; gates the rich-only
+                          * lines in the detail pane. */
     std::vector<std::string> players;   /* logged-in usernames, blanks already filtered */
 };
 
@@ -127,6 +137,16 @@ static const char *gameTypeStr(gameType g) {
     switch (g) {
     case gameOpen:           return langGetText(STR_DLGGAMEINFO_OPEN);
     case gameTournament:     return langGetText(STR_DLGGAMEINFO_TOURN);
+    case gameStrictTournament:
+    default:                 return langGetText(STR_DLGGAMESETUP_STRICT_SHORT);
+    }
+}
+
+/* Compact form for the space-constrained list row. */
+static const char *gameTypeAbbr(gameType g) {
+    switch (g) {
+    case gameOpen:           return langGetText(STR_DLGGAMEINFO_OPEN);
+    case gameTournament:     return langGetText(STR_DLGBROWSER_TYPE_TOURN_ABBR);
     case gameStrictTournament:
     default:                 return langGetText(STR_DLGGAMESETUP_STRICT_SHORT);
     }
@@ -145,7 +165,19 @@ struct PingResult {
     WORD freePills;
     WORD freeBases;
     WORD numPlayers;
+    int  maxPlayers;
     char hostName[256];
+    char mapMd5[33];
+    bool allowNewPlayers;
+    bool inLobby;
+    bool allowSpectators;
+    BYTE spectatorCount;
+    bool ranked;
+    bool randomMap;
+    BYTE numHumans;
+    BYTE numBots;
+    int32_t timeLimit;
+    bool hasRichInfo;
 };
 
 /* Resolve hostname to IP (if needed) and look up country via GeoIP database */
@@ -207,7 +239,19 @@ static PingResult pingServer(const PingWork &work) {
     res.freePills = 0;
     res.freeBases = 0;
     res.numPlayers = 0;
+    res.maxPlayers = 0;
     res.hostName[0] = '\0';
+    res.mapMd5[0] = '\0';
+    res.allowNewPlayers = false;
+    res.inLobby = false;
+    res.allowSpectators = false;
+    res.spectatorCount = 0;
+    res.ranked = false;
+    res.randomMap = false;
+    res.numHumans = 0;
+    res.numBots = 0;
+    res.timeLimit = 0;
+    res.hasRichInfo = false;
 
     /* Reverse-DNS the address regardless of whether the UDP info-ping
      * answers, so even unresponsive servers get a hostname. */
@@ -219,6 +263,18 @@ static PingResult pingServer(const PingWork &work) {
         res.freePills = dpr.freePills;
         res.freeBases = dpr.freeBases;
         res.numPlayers = dpr.numPlayers;
+        res.maxPlayers = dpr.maxPlayers;
+        res.numHumans       = dpr.numHumans;
+        res.numBots         = dpr.numBots;
+        res.ranked          = dpr.ranked;
+        res.inLobby         = dpr.inLobby;
+        res.allowNewPlayers = dpr.allowNewPlayers;
+        res.allowSpectators = dpr.allowSpectators;
+        res.spectatorCount  = dpr.spectatorCount;
+        res.randomMap       = dpr.randomMap;
+        res.timeLimit       = dpr.timeLimit;
+        res.hasRichInfo     = dpr.hasRichInfo;
+        SDL_strlcpy(res.mapMd5, dpr.mapMd5, sizeof(res.mapMd5));
     }
     return res;
 }
@@ -233,12 +289,26 @@ static PingResult pingServer(const PingWork &work) {
  * (whose indices no longer match). The pool threads live for the process
  * (like the bot pool) and idle on a condition variable when empty. */
 static constexpr int            kPingPoolSize = 8;
-static std::mutex               s_pingResultsMtx;
-static std::vector<PingResult>  s_pingResults;
 struct PingJob { PingWork work; uint64_t gen; };
-static std::mutex               s_pingQueueMtx;
-static std::condition_variable  s_pingQueueCv;
-static std::deque<PingJob>      s_pingQueue;
+
+/* All mutable ping-pool state lives in one heap instance reached via
+ * pingPool(). The detached workers outlive normal static destruction, so the
+ * cv/mutex/containers must never have their destructors run at process exit. */
+struct PingPool {
+    std::mutex                  resultsMtx;
+    std::vector<PingResult>     results;
+    std::mutex                  queueMtx;
+    std::condition_variable     queueCv;
+    std::deque<PingJob>         queue;
+};
+
+static PingPool &pingPool() {
+    static PingPool *p = new PingPool();  /* intentionally leaked: detached
+        ping workers outlive normal static destruction, so never run these
+        destructors — avoids a hang at process exit. */
+    return *p;
+}
+
 static std::atomic<uint64_t>    s_pingGeneration{0};
 static std::once_flag           s_pingPoolOnce;
 
@@ -246,17 +316,17 @@ static void pingWorkerFn() {
     for (;;) {
         PingJob job;
         {
-            std::unique_lock<std::mutex> lk(s_pingQueueMtx);
-            s_pingQueueCv.wait(lk, [] { return !s_pingQueue.empty(); });
-            job = s_pingQueue.front();
-            s_pingQueue.pop_front();
+            std::unique_lock<std::mutex> lk(pingPool().queueMtx);
+            pingPool().queueCv.wait(lk, [] { return !pingPool().queue.empty(); });
+            job = pingPool().queue.front();
+            pingPool().queue.pop_front();
         }
         /* Skip work already superseded by a newer search. */
         if (job.gen != s_pingGeneration.load()) continue;
         PingResult pr = pingServer(job.work);
-        std::lock_guard<std::mutex> lk(s_pingResultsMtx);
+        std::lock_guard<std::mutex> lk(pingPool().resultsMtx);
         if (job.gen == s_pingGeneration.load()) {
-            s_pingResults.push_back(pr);
+            pingPool().results.push_back(pr);
         }
     }
 }
@@ -268,10 +338,10 @@ static void enqueuePing(const PingWork &w) {
         }
     });
     {
-        std::lock_guard<std::mutex> lk(s_pingQueueMtx);
-        s_pingQueue.push_back(PingJob{w, s_pingGeneration.load()});
+        std::lock_guard<std::mutex> lk(pingPool().queueMtx);
+        pingPool().queue.push_back(PingJob{w, s_pingGeneration.load()});
     }
-    s_pingQueueCv.notify_one();
+    pingPool().queueCv.notify_one();
 }
 
 /* Abandon pending/in-flight pings and clear stale results. Called on each
@@ -280,11 +350,11 @@ static void enqueuePing(const PingWork &w) {
 static void resetPings() {
     s_pingGeneration.fetch_add(1);
     {
-        std::lock_guard<std::mutex> lk(s_pingQueueMtx);
-        s_pingQueue.clear();
+        std::lock_guard<std::mutex> lk(pingPool().queueMtx);
+        pingPool().queue.clear();
     }
-    std::lock_guard<std::mutex> lk(s_pingResultsMtx);
-    s_pingResults.clear();
+    std::lock_guard<std::mutex> lk(pingPool().resultsMtx);
+    pingPool().results.clear();
 }
 
 /* ---- Callback data for async LAN broadcast search ---- */
@@ -298,7 +368,6 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     e.pingMs = -1;
     e.freePills = 0;
     e.freeBases = 0;
-    e.lobbyStatus = 0;
 
     SDL_strlcpy(e.address, src->address, sizeof(e.address));
     e.port = src->port;
@@ -306,12 +375,28 @@ static ServerEntry serverEntryFromDiscovery(const DiscoveryServer *src) {
     SDL_snprintf(e.version, sizeof(e.version), "%d.%d%d",
                  src->versionMajor, src->versionMinor, src->versionRevision);
     e.numPlayers = src->numPlayers;
+    e.maxPlayers = src->maxPlayers;
     e.numBases   = src->numBases;
     e.numPills   = src->numPills;
     e.mines      = src->mines;
     e.game       = src->game;
     e.ai         = src->ai;
     e.password   = src->password;
+    e.numHumans       = src->numHumans;
+    e.numBots         = src->numBots;
+    e.ranked          = src->ranked;
+    e.inLobby         = src->inLobby;
+    e.allowNewPlayers = src->allowNewPlayers;
+    e.allowSpectators = src->allowSpectators;
+    e.spectatorCount  = src->spectatorCount;
+    e.randomMap       = src->randomMap;
+    e.hasRichInfo     = src->hasRichInfo;
+    SDL_strlcpy(e.mapMd5, src->mapMd5, sizeof(e.mapMd5));
+    /* INFO/TXT time limit is game-length in 50ths-of-a-second ticks; convert
+     * to minutes the same way the server does (ticks / (50 * 60)). */
+    e.timeLimit   = (src->timeLimit != 0);
+    e.timeMinutes = (int)(src->timeLimit / (50 * 60));
+    e.lobbyStatus = src->inLobby ? 1 : 0;
 
     resolveCountryCode(e);
     return e;
@@ -460,6 +545,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     static std::vector<ServerEntry> servers;
     static std::mutex serversMtx;
     int selectedItem = -1;
+    char selKeyAddr[FILENAME_MAX] = "";   /* address of the selected server; "" = none */
+    unsigned short selKeyPort = 0;        /* its port — together a stable identity across rebuilds */
     {
         std::lock_guard<std::mutex> lock(serversMtx);
         servers.clear();
@@ -517,6 +604,17 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     bool autoPollEnabled = true;   /* Internet path: cleared on any fetch failure, re-armed on manual refresh */
     Uint64 lastFetchTime = 0;      /* SDL_GetTicks() when the last Internet fetch finished; 0 = none yet */
     constexpr Uint64 kInternetAutoRefreshMs = 20000;  /* ~20s; list freshness window is 5min, so faster is pointless */
+
+    /* Map preview for the detail pane. One view for the whole browser
+     * session; the loaded map is swapped when the selected md5 changes.
+     * NULL view => preview treated as unavailable (all uses guarded). */
+    MapPreviewView *previewView = mapPreviewViewCreate();
+    char loadedPreviewMd5[33] = "";
+    bool loadedPreviewOk = false;
+    /* Compressed bytes of the currently-loaded preview map, retained so a
+     * click on the thumbnail can hand them to the zoomable popup without
+     * re-fetching. Refreshed whenever loadedPreviewMd5 changes. */
+    std::vector<uint8_t> loadedPreviewComp;
 
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
@@ -588,6 +686,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         e.timeLimit = w.timeLimit;
                         e.timeMinutes = w.timeMinutes;
                         e.randomMap = w.randomMap;
+                        e.hasRichInfo = true;   /* WinBolo.net JSON always carries the rich fields */
 
                         e.players.clear();
                         for (int p = 0; p < w.numPlayerNames; p++) {
@@ -662,8 +761,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
         /* Process incoming ping results */
         {
-            std::lock_guard<std::mutex> lock(s_pingResultsMtx);
-            for (auto &pr : s_pingResults) {
+            std::lock_guard<std::mutex> lock(pingPool().resultsMtx);
+            for (auto &pr : pingPool().results) {
                 std::lock_guard<std::mutex> slock(serversMtx);
                 if (pr.index >= 0 && pr.index < (int)servers.size()) {
                     servers[pr.index].pingMs = pr.pingMs;
@@ -684,10 +783,24 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         if (pr.numPlayers > 0) {
                             servers[pr.index].numPlayers = (BYTE)pr.numPlayers;
                         }
+                        servers[pr.index].maxPlayers      = pr.maxPlayers;
+                        servers[pr.index].numHumans       = pr.numHumans;
+                        servers[pr.index].numBots         = pr.numBots;
+                        servers[pr.index].ranked          = pr.ranked;
+                        servers[pr.index].inLobby         = pr.inLobby;
+                        servers[pr.index].allowNewPlayers = pr.allowNewPlayers;
+                        servers[pr.index].allowSpectators = pr.allowSpectators;
+                        servers[pr.index].spectatorCount  = pr.spectatorCount;
+                        servers[pr.index].randomMap       = pr.randomMap;
+                        servers[pr.index].timeLimit       = (pr.timeLimit != 0);
+                        servers[pr.index].timeMinutes     = (int)(pr.timeLimit / (50 * 60));
+                        servers[pr.index].hasRichInfo     = pr.hasRichInfo;
+                        servers[pr.index].lobbyStatus     = pr.inLobby ? 1 : 0;
+                        SDL_strlcpy(servers[pr.index].mapMd5, pr.mapMd5, sizeof(servers[pr.index].mapMd5));
                     }
                 }
             }
-            s_pingResults.clear();
+            pingPool().results.clear();
         }
 
         /* Tick the background game at fixed rate (unless paused) */
@@ -700,6 +813,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         /* Query actual window size each frame */
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
+
+        /* Render the zoom popup's tiles to its offscreen texture before the
+         * ImGui frame, matching the lobby/map-chooser wiring. */
+        mapPreviewPopupRenderOffscreen(renderer, winW, winH);
 
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
@@ -913,19 +1030,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::Spacing();
         }
 
-        /* ---- Loading banner ---- */
-        if (loadingGames) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.5f, 1.0f));
-            float time = (float)SDL_GetTicks() / 1000.0f;
-            const char *dots[] = { "", ".", "..", "..." };
-            int dotIdx = ((int)(time * 2.0f)) % 4;
-            MessageArgs args = {};
-            SDL_strlcpy(args.string1, dots[dotIdx], sizeof(args.string1));
-            ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_LOADING, &args));
-            ImGui::PopStyleColor();
-        }
-
-        /* ---- Server table ---- */
+        /* ---- Server list + detail pane ---- */
         /* Reserve space for: filters row + separator + status + button row */
         float frameH = ImGui::GetFrameHeightWithSpacing();
         float spacingY = ImGui::GetStyle().ItemSpacing.y;
@@ -937,288 +1042,468 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                        + spacingY     /* Spacing */
                        + frameH       /* button row */
                        + spacingY;    /* bottom padding */
-        float tableH = ImGui::GetContentRegionAvail().y - bottomH;
-        if (tableH < 100.0f) tableH = 100.0f;
 
-        ImGuiTableFlags tableFlags =
-            ImGuiTableFlags_Borders |
-            ImGuiTableFlags_RowBg |
-            ImGuiTableFlags_Sortable |
-            ImGuiTableFlags_ScrollY |
-            ImGuiTableFlags_Resizable |
-            ImGuiTableFlags_Reorderable |
-            ImGuiTableFlags_Hideable;
+        /* Status-dot colours, shared by the legend and the list rows. */
+        const ImVec4 dotGreen (0.40f, 0.80f, 0.40f, 1.0f);  /* in lobby */
+        const ImVec4 dotOrange(1.00f, 0.60f, 0.20f, 1.0f);  /* in game, accepting */
+        const ImVec4 dotRed   (1.00f, 0.40f, 0.40f, 1.0f);  /* locked or full */
+        const ImVec4 dotGrey  (0.60f, 0.60f, 0.60f, 1.0f);  /* no response */
+        auto dotColorFor = [&](const ServerEntry &se, ImVec4 &colOut, bool &filledOut) {
+            if (se.pingMs == -2) { colOut = dotGrey; filledOut = false; return; }
+            filledOut = true;
+            if (!se.allowNewPlayers ||
+                (se.maxPlayers > 0 && (int)se.numPlayers >= se.maxPlayers)) {
+                colOut = dotRed;
+            } else if (se.inLobby) {
+                colOut = dotGreen;
+            } else {
+                colOut = dotOrange;
+            }
+        };
 
-        if (ImGui::BeginTable("##ServerTable", 10, tableFlags, ImVec2(0, tableH))) {
-            /* Column setup */
-            ImGui::TableSetupScrollFreeze(0, 1); /* freeze header row */
-            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 24.0f);  /* lock */
-            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 62.0f);  /* St */
-            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_SERVER),  ImGuiTableColumnFlags_WidthStretch, 0.0f);  /* Server / Map */
-            ImGui::TableSetupColumn("",          ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort, 24.0f);  /* flag */
-            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_PLAYERS), ImGuiTableColumnFlags_WidthFixed, 90.0f);
-            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_BASES),   ImGuiTableColumnFlags_WidthFixed, 55.0f);
-            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_PILLS),   ImGuiTableColumnFlags_WidthFixed, 55.0f);
-            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_TYPE),    ImGuiTableColumnFlags_WidthFixed, 80.0f);
-            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_VER),     ImGuiTableColumnFlags_WidthFixed, 45.0f);
-            ImGui::TableSetupColumn(langGetText(STR_DLGBROWSER_COL_PING),    ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort, 50.0f);  /* RTT */
-            ImGui::TableHeadersRow();
+        float listH = ImGui::GetContentRegionAvail().y - bottomH;
+        if (listH < 120.0f) listH = 120.0f;
 
-            /* Sort */
-            if (ImGuiTableSortSpecs *sortSpecs = ImGui::TableGetSortSpecs()) {
-                if (sortSpecs->SpecsDirty && sortSpecs->SpecsCount > 0) {
-                    int col = sortSpecs->Specs[0].ColumnIndex;
-                    bool asc = (sortSpecs->Specs[0].SortDirection == ImGuiSortDirection_Ascending);
-                    std::lock_guard<std::mutex> lock(serversMtx);
-                    std::sort(servers.begin(), servers.end(), [col, asc](const ServerEntry &a, const ServerEntry &b) {
-                        int cmp = 0;
-                        switch (col) {
-                        case 2: cmp = strcmp(a.hostName[0] ? a.hostName : a.address,
-                                             b.hostName[0] ? b.hostName : b.address); break;
-                        case 4: cmp = (int)a.numPlayers - (int)b.numPlayers; break;
-                        case 5: cmp = (int)a.freeBases - (int)b.freeBases; break;
-                        case 6: cmp = (int)a.freePills - (int)b.freePills; break;
-                        case 7: cmp = (int)a.game - (int)b.game; break;
-                        case 8: cmp = strcmp(a.version, b.version); break;
-                        case 9: {
-                            int pa = (a.pingMs >= 0) ? a.pingMs : 99999;
-                            int pb = (b.pingMs >= 0) ? b.pingMs : 99999;
-                            cmp = pa - pb;
-                            break;
-                        }
-                        default: break;
-                        }
-                        return asc ? (cmp < 0) : (cmp > 0);
-                    });
-                    sortSpecs->SpecsDirty = false;
+        float availW = ImGui::GetContentRegionAvail().x;
+        float leftW = availW * 0.42f;
+        if (leftW < 240.0f * s) leftW = 240.0f * s;
+
+        /* ---- Left: compact server list ---- */
+        ImGui::BeginChild("##ServerListPane", ImVec2(leftW, listH),
+                          ImGuiChildFlags_Borders);
+        {
+            std::lock_guard<std::mutex> lock(serversMtx);
+
+            /* Re-attach the selection to its server by identity, so a list
+             * rebuild (refresh / auto-poll / async LAN repopulation) keeps the
+             * same row highlighted. -1 when the server is no longer present. */
+            if (selKeyAddr[0] != '\0') {
+                selectedItem = -1;
+                for (int si = 0; si < (int)servers.size(); si++) {
+                    if (servers[si].port == selKeyPort &&
+                        strcmp(servers[si].address, selKeyAddr) == 0) {
+                        selectedItem = si;
+                        break;
+                    }
                 }
             }
 
-            /* Rows */
-            {
-                std::lock_guard<std::mutex> lock(serversMtx);
-                for (int i = 0; i < (int)servers.size(); i++) {
-                    const ServerEntry &e = servers[i];
+            /* Visible set: apply the three filters, then default-sort by ping
+             * ascending (responded first; pending, then no-response, last).
+             * The underlying servers vector keeps its arrival order so async
+             * ping results still land on the right index. */
+            std::vector<int> visible;
+            visible.reserve(servers.size());
+            for (int i = 0; i < (int)servers.size(); i++) {
+                const ServerEntry &fe = servers[i];
+                if (filterGameType >= 0 && (int)fe.game != filterGameType) continue;
+                if (filterLocked && fe.password) continue;
+                if (filterLobby >= 0 && fe.lobbyStatus != filterLobby) continue;
+                visible.push_back(i);
+            }
+            auto pingKey = [&](int idx) {
+                int p = servers[idx].pingMs;
+                return p >= 0 ? p : (p == -1 ? 1000000 : 2000000);
+            };
+            std::stable_sort(visible.begin(), visible.end(),
+                             [&](int a, int b) { return pingKey(a) < pingKey(b); });
 
-                    /* Apply filters */
-                    if (filterGameType >= 0 && (int)e.game != filterGameType) continue;
-                    if (filterLocked && e.password) continue;
-                    if (filterLobby >= 0 && e.lobbyStatus != filterLobby) continue;
+            for (int vi : visible) {
+                int i = vi;
+                const ServerEntry &e = servers[i];
 
-                    ImGui::TableNextRow();
+                ImGui::PushID(i);
 
-                    /* Lock — most-restrictive marker first (icon when loaded, tinted by state) */
-                    ImGui::TableNextColumn();
-                    {
-                        bool showLock = false;
-                        ImVec4 lockTint;
-                        const char *lockTip = nullptr;
-                        const char *lockLetter = nullptr;
-                        if (!e.allowNewPlayers) {
-                            showLock = true;
-                            lockTint = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
-                            lockTip = langGetText(STR_DLGBROWSER_LOCK_NONEWPLAYERS);
-                            lockLetter = "N";
-                        } else if (e.password) {
-                            showLock = true;
-                            lockTint = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
-                            lockTip = langGetText(STR_DLGBROWSER_LOCK_PASSWORD);
-                            lockLetter = "P";
-                        }
-                        if (showLock) {
-                            if (s_lockIcon) {
-                                float h = ImGui::GetTextLineHeight();
-                                /* ImGui 1.91.9+ removed tint_col from Image(); ImageWithBg
-                                 * carries it (transparent bg, tint as the last arg). */
-                                ImGui::ImageWithBg((ImTextureID)s_lockIcon, ImVec2(h, h),
-                                                   ImVec2(0, 0), ImVec2(1, 1),
-                                                   ImVec4(0, 0, 0, 0), lockTint);
-                            } else {
-                                ImGui::TextColored(lockTint, "%s", lockLetter);
+                float pad   = 6.0f * s;
+                float lineH = ImGui::GetTextLineHeight();
+                float rowH  = lineH * 2.0f + pad * 2.0f;
+                float rowW  = ImGui::GetContentRegionAvail().x;
+
+                ImVec2 p0 = ImGui::GetCursorScreenPos();
+                bool isSelected = (selectedItem == i);
+                ImGui::SetNextItemAllowOverlap();
+                if (ImGui::Selectable("##srv", isSelected,
+                                      ImGuiSelectableFlags_AllowDoubleClick,
+                                      ImVec2(rowW, rowH))) {
+                    selectedItem = i;
+                    SDL_strlcpy(selKeyAddr, e.address, sizeof(selKeyAddr));
+                    selKeyPort = e.port;
+                    if (ImGui::IsMouseDoubleClicked(0)) {
+                        /* Double-click to join */
+                        if (strlen(e.version) >= STRVER_LEN &&
+                            strncmp(e.version, STRVER, STRVER_LEN) == 0) {
+                            char playerName[PLAYER_NAME_LEN];
+                            gameFrontGetPlayerName(playerName);
+                            if (strlen(playerName) > 0) {
+                                gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
+                                gameFrontSetAIType(e.ai);
+                                gameFrontSetDlgState(openUdpJoin);
+                                result = (int)openUdpJoin;
+                                running = false;
                             }
-                            ImGui::SetItemTooltip("%s", lockTip);
                         }
                     }
+                }
+                imguiHandOnHover();
+                ImVec2 pEnd = ImGui::GetCursorScreenPos();
 
-                    /* St — green "Lobby" / yellow "In Game" */
-                    ImGui::TableNextColumn();
-                    if (e.inLobby) {
-                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "%s", langGetText(STR_DLGBROWSER_ST_LOBBY));
-                    } else {
-                        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "%s", langGetText(STR_DLGBROWSER_ST_INGAME));
-                    }
+                ImDrawList *dl = ImGui::GetWindowDrawList();
+                float contentX  = p0.x + pad;
+                float dotW      = 16.0f * s;
+                float flagW     = 26.0f * s;
+                float textX     = contentX + dotW + flagW;
+                float textRight = p0.x + rowW - pad;
 
-                    /* Server / Map — host line (selectable) + map line in one cell */
-                    ImGui::TableNextColumn();
-                    {
-                        char label[256];
-                        SDL_snprintf(label, sizeof(label), "%s:%u",
-                                     e.hostName[0] != '\0' ? e.hostName : e.address, e.port);
-                        bool isSelected = (selectedItem == i);
-                        if (ImGui::Selectable(label, isSelected,
-                                              ImGuiSelectableFlags_SpanAllColumns |
-                                              ImGuiSelectableFlags_AllowDoubleClick)) {
-                            selectedItem = i;
-                            if (ImGui::IsMouseDoubleClicked(0)) {
-                                /* Double-click to join */
-                                if (strlen(e.version) >= STRVER_LEN &&
-                                    strncmp(e.version, STRVER, STRVER_LEN) == 0) {
-                                    char playerName[PLAYER_NAME_LEN];
-                                    gameFrontGetPlayerName(playerName);
-                                    if (strlen(playerName) > 0) {
-                                        gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
-                                        gameFrontSetAIType(e.ai);
-                                        gameFrontSetDlgState(openUdpJoin);
-                                        result = (int)openUdpJoin;
-                                        running = false;
-                                    }
-                                }
-                            }
-                        }
-                        imguiHandOnHover();
-                        /* Row detail popup — the SpanAllColumns selectable owns the
-                         * whole row's hover, so attach the tooltip here. Carries
-                         * only detail that isn't already a column: AI level, hidden
-                         * mines, time limit, lobby flags and the player roster. */
-                        if (ImGui::IsItemHovered()) {
-                            char buf[512];
-                            ImGui::BeginTooltip();
+                /* Status dot */
+                {
+                    ImVec4 dcol; bool dfilled;
+                    dotColorFor(e, dcol, dfilled);
+                    float r = 5.0f * s;
+                    ImVec2 c(contentX + r, p0.y + pad + lineH * 0.5f);
+                    if (dfilled) dl->AddCircleFilled(c, r, ImGui::GetColorU32(dcol));
+                    else         dl->AddCircle(c, r, ImGui::GetColorU32(dcol), 0, 1.5f);
+                }
 
-                            /* Header: server identity */
-                            ImGui::TextUnformatted(label);
-                            ImGui::Separator();
+                /* Country flag (overlay item) or a 2-letter fallback */
+                bool flagDrawn = false;
+                if (e.countryCode[0] != '\0' && e.countryCode[0] != 'X') {
+                    ImGui::SetCursorScreenPos(ImVec2(contentX + dotW, p0.y + pad));
+                    flagDrawn = drawCountryFlagWithTip(e.countryCode);
+                }
+                if (!flagDrawn && e.countryCode[0] != '\0') {
+                    char cc[3] = { e.countryCode[0], e.countryCode[1], '\0' };
+                    dl->AddText(ImVec2(contentX + dotW, p0.y + pad),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), cc);
+                }
 
-                            /* AI level — always shown ("No" when off) since the
-                             * Type column drops AI entirely when it's absent. */
-                            {
-                                int aiStr = STR_NO;
-                                if      (e.ai == aiYes)          aiStr = STR_YES;
-                                else if (e.ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
-                                else if (e.ai == aiFull)         aiStr = STR_DLGGAMEINFO_FULLADV;
-                                SDL_snprintf(buf, sizeof(buf), "%s %s",
-                                             langGetText(STR_DLGGAMEINFO_AILABEL),
-                                             langGetText(aiStr));
-                                ImGui::TextUnformatted(buf);
-                            }
+                /* Name line — host name if known, else address:port */
+                char name[288];
+                if (e.hostName[0] != '\0') {
+                    SDL_snprintf(name, sizeof(name), "%s", e.hostName);
+                } else {
+                    SDL_snprintf(name, sizeof(name), "%s:%u", e.address, e.port);
+                }
+                dl->AddText(ImVec2(textX, p0.y + pad),
+                            ImGui::GetColorU32(ImGuiCol_Text), name);
 
-                            /* Hidden mines */
-                            if (e.mines) {
-                                ImGui::TextUnformatted(langGetText(STR_DLGGAMESETUP_HIDDENMINES_SHORT));
-                            }
+                /* Map line with ranked (*) / random (rnd) markers */
+                char mapLine[MAP_STR_SIZE + 32];
+                char rndMark[24] = "";
+                if (e.randomMap)
+                    SDL_snprintf(rndMark, sizeof(rndMark), " (%s)",
+                                 langGetText(STR_DLGBROWSER_RND_ABBR));
+                SDL_snprintf(mapLine, sizeof(mapLine), "%s%s%s", e.mapName,
+                             e.ranked ? " *" : "", rndMark);
+                dl->AddText(ImVec2(textX, p0.y + pad + lineH),
+                            ImGui::GetColorU32(ImGuiCol_TextDisabled), mapLine);
 
-                            /* Time limit */
-                            if (e.timeLimit) {
-                                SDL_snprintf(buf, sizeof(buf), "%s: %d",
-                                             langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT),
-                                             e.timeMinutes);
-                            } else {
-                                SDL_snprintf(buf, sizeof(buf), "%s: %s",
-                                             langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT),
-                                             langGetText(STR_DLGGAMEINFO_UNLIMITED));
-                            }
-                            ImGui::TextUnformatted(buf);
-
-                            /* Flags */
-                            if (e.ranked) {
-                                ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_RANKED));
-                            }
-                            if (e.randomMap) {
-                                ImGui::TextUnformatted(langGetText(STR_MAPCHOOSER_RANDOMMAP));
-                            }
-                            if (e.autoLock) {
-                                ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_AUTOLOCK_HINT));
-                            }
-                            if (e.password) {
-                                ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_LOCK_PASSWORD));
-                            }
-                            if (!e.allowNewPlayers) {
-                                ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_LOCK_NONEWPLAYERS));
-                            }
-
-                            /* Player roster — names aren't shown in the row */
-                            if (!e.players.empty() || e.numBots > 0) {
-                                ImGui::Separator();
-                                for (const auto &name : e.players) {
-                                    ImGui::TextUnformatted(name.c_str());
-                                }
-                                for (int b = 0; b < e.numBots; b++) {
-                                    ImGui::TextUnformatted("[bot]");
-                                }
-                            }
-
-                            ImGui::EndTooltip();
-                        }
-                        /* Second line: map name with ranked (*) / random (rnd)
-                         * markers. Placeholder marker text, not localized. */
-                        char mapLine[MAP_STR_SIZE + 32];
-                        SDL_snprintf(mapLine, sizeof(mapLine), "  %s%s%s", e.mapName,
-                                     e.ranked ? " *" : "",
-                                     e.randomMap ? " (rnd)" : "");
-                        ImGui::TextDisabled("%s", mapLine);
-                    }
-
-                    /* Flag */
-                    ImGui::TableNextColumn();
-                    if (e.countryCode[0] != '\0' &&
-                        e.countryCode[0] != 'X') {
-                        if (!drawCountryFlagWithTip(e.countryCode)) {
-                            ImGui::TextDisabled("%c%c", e.countryCode[0], e.countryCode[1]);
-                        }
-                    } else if (e.countryCode[0] != '\0') {
-                        ImGui::TextDisabled("%c%c", e.countryCode[0], e.countryCode[1]);
-                    }
-
-                    /* Players — n (Nh Nb); roster lives in the row detail tooltip */
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%d (%dh %db)", e.numPlayers,
-                                e.numHumans, e.numBots);
-
-                    /* Bases (free/total, from JSON) */
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%u/%u", e.freeBases, e.numBases);
-
-                    /* Pills (free/total, from JSON) */
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%u/%u", e.freePills, e.numPills);
-
-                    /* Type — folds in AI and mines markers */
-                    ImGui::TableNextColumn();
-                    {
-                        char typeBuf[96];
-                        int n = SDL_snprintf(typeBuf, sizeof(typeBuf), "%s", gameTypeStr(e.game));
-                        if (e.ai != aiNone && n > 0 && (size_t)n < sizeof(typeBuf)) {
-                            n += SDL_snprintf(typeBuf + n, sizeof(typeBuf) - (size_t)n,
-                                              " %s", langGetText(STR_DLGBROWSER_TYPE_AI));
-                        }
-                        if (e.mines && n > 0 && (size_t)n < sizeof(typeBuf)) {
-                            SDL_snprintf(typeBuf + n, sizeof(typeBuf) - (size_t)n,
-                                         " %s", langGetText(STR_DLGBROWSER_TYPE_MINES));
-                        }
-                        ImGui::TextUnformatted(typeBuf);
-                    }
-
-                    /* Ver */
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%s", e.version);
-
-                    /* RTT */
-                    ImGui::TableNextColumn();
+                /* Ping, right-aligned on the first line */
+                {
+                    char pingStr[24];
+                    ImVec4 pcol;
                     if (e.pingMs >= 0) {
-                        ImVec4 col;
-                        if (e.pingMs < 50) col = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
-                        else if (e.pingMs < 150) col = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
-                        else col = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
-                        ImGui::TextColored(col, "%dms", e.pingMs);
-                    } else if (e.pingMs == -1) {
-                        ImGui::TextDisabled("...");
+                        SDL_snprintf(pingStr, sizeof(pingStr), "%dms", e.pingMs);
+                        if (e.pingMs < 50)       pcol = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
+                        else if (e.pingMs < 150) pcol = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
+                        else                     pcol = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
                     } else {
-                        ImGui::TextDisabled("--");
+                        SDL_snprintf(pingStr, sizeof(pingStr), "%s",
+                                     e.pingMs == -1 ? "..." : "--");
+                        pcol = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
+                    }
+                    ImVec2 psz = ImGui::CalcTextSize(pingStr);
+                    dl->AddText(ImVec2(textRight - psz.x, p0.y + pad),
+                                ImGui::GetColorU32(pcol), pingStr);
+                }
+
+                /* Players X/cap in the left gutter, under the flag */
+                {
+                    int cap = e.maxPlayers > 0 ? e.maxPlayers : MAX_TANKS;
+                    char pc[24];
+                    SDL_snprintf(pc, sizeof(pc), "%d/%d", (int)e.numPlayers, cap);
+                    dl->AddText(ImVec2(contentX, p0.y + pad + lineH),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), pc);
+                }
+
+                /* Game-type abbreviation, right-aligned under the ping */
+                {
+                    const char *gt = gameTypeAbbr(e.game);
+                    ImVec2 gsz = ImGui::CalcTextSize(gt);
+                    dl->AddText(ImVec2(textRight - gsz.x, p0.y + pad + lineH),
+                                ImGui::GetColorU32(ImGuiCol_TextDisabled), gt);
+                }
+
+                ImGui::SetCursorScreenPos(pEnd);
+                ImGui::PopID();
+            }   /* for each visible server */
+            /* The per-row flag image advances the layout cursor, which each row
+             * rewinds to pEnd; anchor the final rewind with a zero-size item so
+             * ImGui doesn't read it as a boundary-extending SetCursorPos. */
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
+        }       /* serversMtx scope */
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        /* Snapshot the selected entry under the lock so the detail pane can
+         * render without holding serversMtx across the ImGui calls. */
+        bool haveSel = false;
+        ServerEntry sel;
+        {
+            std::lock_guard<std::mutex> lock(serversMtx);
+            if (selectedItem >= 0 && selectedItem < (int)servers.size()) {
+                sel = servers[selectedItem];
+                haveSel = true;
+            }
+        }
+
+        /* ---- Right: selection detail pane ---- */
+        ImGui::BeginChild("##DetailPane", ImVec2(0, listH), ImGuiChildFlags_Borders);
+        if (!haveSel) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_SELECT_SERVER));
+        } else {
+            /* Preview is a modest fixed thumbnail on the left; the key fields
+             * sit to its right (added after EndChild below). Capped so the
+             * field table beside it fits at the default window size. */
+            float boxSize = listH * 0.5f;
+            float maxBox  = 160.0f * s;
+            if (boxSize > maxBox) boxSize = maxBox;
+            if (boxSize < 80.0f)  boxSize = 80.0f;
+            ImGui::BeginChild("##MapPreview", ImVec2(boxSize, boxSize),
+                              ImGuiChildFlags_Borders);
+            {
+                auto centeredDimmed = [](const char *txt) {
+                    ImVec2 ts = ImGui::CalcTextSize(txt);
+                    ImVec2 av = ImGui::GetContentRegionAvail();
+                    ImGui::SetCursorPos(ImVec2((av.x - ts.x) * 0.5f,
+                                               (av.y - ts.y) * 0.5f));
+                    ImGui::TextDisabled("%s", txt);
+                };
+
+                if (sel.mapMd5[0] == '\0') {
+                    /* Random/unknown map — nothing to fetch. */
+                    centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
+                } else {
+                    mapPreviewFetchRequest(sel.mapMd5);
+                    const uint8_t *bytes = nullptr;
+                    size_t len = 0;
+                    MapPreviewFetchState st =
+                        mapPreviewFetchTryGet(sel.mapMd5, &bytes, &len);
+
+                    if (st == MapPreviewFetchState::Pending) {
+                        centeredDimmed(langGetText(STR_DLGNEWS_LOADING));
+                    } else if (st == MapPreviewFetchState::Unavailable) {
+                        centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
+                    } else {
+                        /* Ready: (re)load only when the selected md5 changed,
+                         * so the same map isn't reconverted every frame. */
+                        if (previewView != nullptr &&
+                            strcmp(loadedPreviewMd5, sel.mapMd5) != 0) {
+                            int compLen = 0;
+                            BYTE *comp = clientMapConvertFileToCompressed(
+                                bytes, (int)len, &compLen);
+                            loadedPreviewOk =
+                                (comp != nullptr) &&
+                                mapPreviewViewLoadCompressed(previewView, comp, compLen);
+                            /* Keep the compressed bytes for the click-to-zoom
+                             * popup, then free the raw malloc. */
+                            if (comp != nullptr && loadedPreviewOk && compLen > 0)
+                                loadedPreviewComp.assign(comp, comp + compLen);
+                            else
+                                loadedPreviewComp.clear();
+                            if (comp) free(comp);
+                            /* Record the md5 even on conversion failure so a
+                             * bad map isn't reconverted every frame. */
+                            SDL_strlcpy(loadedPreviewMd5, sel.mapMd5,
+                                        sizeof(loadedPreviewMd5));
+                        }
+
+                        /* Drive the deferred build every frame a map is loaded:
+                         * the widget only becomes ready as a result of a
+                         * RenderOffscreen call, so gating the call on IsReady
+                         * would never let it start. Display once the texture
+                         * exists. */
+                        if (previewView != nullptr && loadedPreviewOk &&
+                            strcmp(loadedPreviewMd5, sel.mapMd5) == 0) {
+                            /* Reserve a line for the caption so the static
+                             * thumbnail fills the box without a scrollbar. */
+                            ImVec2 av = ImGui::GetContentRegionAvail();
+                            int boxW = (int)av.x;
+                            int boxH = (int)(av.y - ImGui::GetTextLineHeightWithSpacing());
+                            if (boxW < 1) boxW = 1;
+                            if (boxH < 1) boxH = 1;
+                            mapPreviewViewRenderOffscreen(previewView, renderer,
+                                                          boxW, boxH);
+                            SDL_Texture *tex = mapPreviewViewGetTexture(previewView);
+                            if (tex != nullptr) {
+                                ImGui::Image((ImTextureID)tex,
+                                             ImVec2((float)boxW, (float)boxH));
+                                /* Click the thumbnail to open the zoomable
+                                 * read-only popup. The popup self-frames from
+                                 * the map data on its first offscreen frame,
+                                 * so full-map bounds are fine here. */
+                                if (ImGui::IsItemHovered())
+                                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                                if (ImGui::IsItemClicked() && loadedPreviewOk &&
+                                    !loadedPreviewComp.empty()) {
+                                    mapPreviewPopupOpenCompressed(
+                                        loadedPreviewComp.data(),
+                                        (int)loadedPreviewComp.size(),
+                                        0, 0, 255, 255);
+                                }
+                                ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_PREVIEW_ENLARGE));
+                            } else {
+                                /* Build not finished this frame — try again next frame. */
+                                centeredDimmed(langGetText(STR_DLGNEWS_LOADING));
+                            }
+                        } else {
+                            centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
+                        }
                     }
                 }
             }
+            ImGui::EndChild();
 
-            ImGui::EndTable();
+            /* Key fields sit in a group to the right of the preview box. */
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            {
+                /* Label cells carry the theme accent; values stay normal text.
+                 * Columns separate label from value, so the label text drops the
+                 * trailing colon. */
+                const ImVec4 accent = ImGui::GetStyleColorVec4(ImGuiCol_CheckMark);
+                auto label = [&](const char *t) { ImGui::TextColored(accent, "%s", t); };
+
+                if (ImGui::BeginTable("##gbdetail", 2, ImGuiTableFlags_SizingFixedFit)) {
+                    /* Type */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_TYPE));
+                    ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(gameTypeStr(sel.game));
+
+                    /* Version */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_VER));
+                    ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(sel.version);
+
+                    /* Hidden mines */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMESETUP_HIDDENMINES_SHORT));
+                    ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(langGetText(sel.mines ? STR_YES : STR_NO));
+
+                    /* AI */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMEINFO_AILABEL));
+                    {
+                        int aiStr = STR_NO;
+                        if      (sel.ai == aiYes)          aiStr = STR_YES;
+                        else if (sel.ai == aiYesAdvantage) aiStr = STR_DLGGAMEINFO_AIADV;
+                        else if (sel.ai == aiFull)         aiStr = STR_DLGGAMEINFO_FULLADV;
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(langGetText(aiStr));
+                    }
+
+                    /* Players — count / cap, AI-player split when rich.
+                     * Plain "Players" label: STR_DLGGAMEINFO_NUMPLAYERS is a
+                     * {number} format template, not a usable label. */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGPLAYERS_TITLE));
+                    {
+                        char pbuf[96];
+                        int cap = sel.maxPlayers > 0 ? sel.maxPlayers : MAX_TANKS;
+                        int n = SDL_snprintf(pbuf, sizeof(pbuf), "%d/%d", (int)sel.numPlayers, cap);
+                        if (sel.hasRichInfo && sel.numBots > 0 &&
+                            n > 0 && (size_t)n < sizeof(pbuf)) {
+                            MessageArgs aiArgs = {};
+                            aiArgs.number = sel.numBots;
+                            SDL_snprintf(pbuf + n, sizeof(pbuf) - (size_t)n, " %s",
+                                         langGetTextFmt(STR_DLGBROWSER_AI_PLAYERS, &aiArgs));
+                        }
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(pbuf);
+                    }
+
+                    /* Bases — free/total when the total is known. */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGBROWSER_COL_BASES));
+                    {
+                        char vbuf[32];
+                        if (sel.numBases > 0)
+                            SDL_snprintf(vbuf, sizeof(vbuf), "%u/%u", sel.freeBases, sel.numBases);
+                        else
+                            SDL_snprintf(vbuf, sizeof(vbuf), "%u", sel.freeBases);
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(vbuf);
+                    }
+
+                    /* Pillboxes — free/total when the total is known. */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_TABLET_PILLBOXES));
+                    {
+                        char vbuf[32];
+                        if (sel.numPills > 0)
+                            SDL_snprintf(vbuf, sizeof(vbuf), "%u/%u", sel.freePills, sel.numPills);
+                        else
+                            SDL_snprintf(vbuf, sizeof(vbuf), "%u", sel.freePills);
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(vbuf);
+                    }
+
+                    /* Time limit */
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGGAMESETUP_TIMELIMIT_SHORT));
+                    {
+                        char tbuf[32];
+                        const char *timeVal;
+                        if (sel.timeLimit) {
+                            SDL_snprintf(tbuf, sizeof(tbuf), "%d", sel.timeMinutes);
+                            timeVal = tbuf;
+                        } else {
+                            timeVal = langGetText(STR_DLGGAMEINFO_UNLIMITED);
+                        }
+                        ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(timeVal);
+                    }
+
+                    /* New players — rich info only. */
+                    if (sel.hasRichInfo) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0); label(langGetText(STR_ALLOW_NEW_PLAYERS));
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::TextUnformatted(langGetText(sel.allowNewPlayers ? STR_YES : STR_NO));
+                    }
+
+                    ImGui::EndTable();
+                }
+
+                /* Active-only badges: password + rich flags, on one line. */
+                {
+                    std::string badges;
+                    auto addBadge = [&](const char *t) {
+                        if (!badges.empty()) badges += "  ·  ";
+                        badges += t;
+                    };
+                    if (sel.password) addBadge(langGetText(STR_DLGBROWSER_LOCK_PASSWORD));
+                    if (sel.hasRichInfo) {
+                        if (sel.ranked)    addBadge(langGetText(STR_DLGLOBBY_RANKED));
+                        if (sel.randomMap) addBadge(langGetText(STR_MAPCHOOSER_RANDOMMAP));
+                        if (sel.autoLock)  addBadge(langGetText(STR_DLGBROWSER_AUTOLOCK_HINT));
+                    }
+                    if (!badges.empty()) {
+                        ImGui::TextDisabled("%s", badges.c_str());
+                    }
+                }
+            }
+            ImGui::EndGroup();
+            ImGui::Spacing();
+
+            /* Roster — WBN-only; LAN rows carry no player names. */
+            ImGui::Separator();
+            ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_WBN_PLAYERS));
+            if (sel.players.empty()) {
+                ImGui::TextDisabled("—");
+            } else {
+                for (const auto &nm : sel.players) {
+                    ImGui::TextUnformatted(nm.c_str());
+                }
+            }
         }
+        ImGui::EndChild();
 
         ImGui::Spacing();
 
@@ -1290,6 +1575,28 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             } else {
                 ImGui::TextUnformatted(langGetTextFmt(STR_DLGBROWSER_STATUS, &args));
             }
+
+            /* Status-dot legend, trailing the status text on the same line. */
+            auto legendDot = [&](const ImVec4 &col, bool filled, const char *txt) {
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                float lh = ImGui::GetTextLineHeight();
+                float r = lh * 0.30f;
+                ImVec2 c(p.x + r + 1.0f, p.y + lh * 0.5f);
+                ImDrawList *ld = ImGui::GetWindowDrawList();
+                if (filled) ld->AddCircleFilled(c, r, ImGui::GetColorU32(col));
+                else        ld->AddCircle(c, r, ImGui::GetColorU32(col), 0, 1.5f);
+                ImGui::Dummy(ImVec2(r * 2.0f + 4.0f, lh));
+                ImGui::SameLine(0.0f, 4.0f);
+                ImGui::TextDisabled("%s", txt);
+            };
+            ImGui::SameLine(0.0f, 16.0f * s);
+            legendDot(dotGreen,  true,  langGetText(STR_DLGBROWSER_ST_LOBBY));
+            ImGui::SameLine(0.0f, 16.0f * s);
+            legendDot(dotOrange, true,  langGetText(STR_DLGBROWSER_ST_INGAME));
+            ImGui::SameLine(0.0f, 16.0f * s);
+            legendDot(dotRed,    true,  langGetText(STR_DLGBROWSER_ST_LOCKED));
+            ImGui::SameLine(0.0f, 16.0f * s);
+            legendDot(dotGrey,   false, langGetText(STR_DLGBROWSER_ST_NORESP));
         }
 
         ImGui::Spacing();
@@ -1463,7 +1770,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         ImGui::End(); /* ##GameBrowser panel */
         ImGui::End(); /* ##GameBrowserBg host */
 
+        /* Read-only zoom popup (no start-picker): drawn after the panel so it
+         * sits on top, before ImGui::Render(). */
+        mapPreviewPopupRenderModal(renderer);
+
         dialogDrawNavOutline();
+        keyboardUpdate();   /* controller text entry for this dialog's fields */
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);
@@ -1498,6 +1810,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
     if (mdnsThread.joinable()) {
         mdnsThread.join();
     }
+
+    /* Close the shared zoom popup so it doesn't linger over the next
+     * dialog (mirrors the map-chooser's exit cleanup). */
+    mapPreviewPopupClose();
+    mapPreviewViewDestroy(previewView);
 
     /* Destroy refresh icon texture */
     if (s_refreshIcon) { SDL_DestroyTexture(s_refreshIcon); s_refreshIcon = nullptr; }

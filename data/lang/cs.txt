@@ -1211,6 +1211,8 @@ STR_CTRL_PROMPT_DONTASK=Příště se neptát
 STR_CTRL_DISC_TITLE=Ovladač odpojen
 STR_CTRL_DISC_MESSAGE=Váš gamepad byl odpojen. Můžete ho znovu připojit nebo přepnout na ovládání klávesnicí.
 STR_CTRL_DISC_BUTTON=Pokračovat s klávesnicí a myší
+STR_VOTE_RESPOND_IN_PLAYERS=Odpovězte v nabídce Hráči
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Odpovězte v nabídce Hráči
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=O aplikaci WinBolo
 STR_MENU_PREFERENCES=Předvolby…
@@ -1757,3 +1759,26 @@ STR_DLGBROWSER_SPECTATE=Sledovat
 STR_DLGBROWSER_AUTO_REFRESH=Automatická obnova
 STR_DLGBROWSER_ST_LOBBY=Lobby
 STR_DLGBROWSER_ST_INGAME=Ve hře
+STR_DLGBROWSER_SELECT_SERVER=Vyberte server
+STR_DLGBROWSER_PREVIEW_UNAVAIL=Náhled nedostupný
+STR_DLGBROWSER_PREVIEW_ENLARGE=Kliknutím zvětšíte
+STR_DLGBROWSER_AI_PLAYERS=({number} hráčů AI)
+STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net hráči:
+STR_DLGBROWSER_ST_LOCKED=Zamčeno/Plné
+STR_DLGBROWSER_ST_NORESP=Bez odezvy
+STR_DLGBROWSER_RND_ABBR=náh
+STR_DLGBROWSER_TYPE_TOURN_ABBR=Turna
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Vybrat   B Zpět   LB Shift   RB ?123   Start Hotovo
+STR_OSK_BKSP=Zpět
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Mezer.
+STR_OSK_ENTER=Enter
+
+# In-game settings — UI scale override
+STR_DLGSETTINGS_UISCALE=Měřítko UI
+STR_DLGSETTINGS_UISCALE_AUTO=Automaticky
+STR_DLGSETTINGS_UISCALE_SMALL=Malé
+STR_DLGSETTINGS_UISCALE_MEDIUM=Střední
+STR_DLGSETTINGS_UISCALE_LARGE=Velké

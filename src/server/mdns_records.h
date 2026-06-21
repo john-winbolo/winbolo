@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,9 +41,12 @@
  *   map=<name> ver=<maj.min.rev> players=<n> bases=<n> pills=<n>
  *   pass=<0|1> mines=<0|1> game=<gameType int> ai=<aiType int>
  *   lobby=<0|1> locked=<0|1>
+ *   md5=<32 hex chars|empty> newp=<0|1> spec=<0|1> nspec=<n>
+ *   ranked=<0|1> rnd=<0|1> tlim=<game length, 0 if none>
+ *   humans=<n> bots=<n> max=<n>
  * Count is fixed at MDNS_WINBOLO_TXT_COUNT; with PTR + SRV + A that is
  * MDNS_WINBOLO_RECORD_COUNT records total. */
-#define MDNS_WINBOLO_TXT_COUNT 11
+#define MDNS_WINBOLO_TXT_COUNT 21
 #define MDNS_WINBOLO_RECORD_COUNT (3 + MDNS_WINBOLO_TXT_COUNT)
 
 /* Plain-data snapshot of the server state advertised in one answer. The
@@ -65,6 +68,16 @@ typedef struct {
   aiType         ai;
   bool           lobby;    /* server in its lobby (pre-game) phase */
   bool           locked;   /* server locked / not accepting joins   */
+  char           mapMd5Hex[33]; /* 32 hex chars + NUL; "" when random/unknown */
+  bool           allowNewPlayers;
+  bool           allowSpectators; /* future work — false for now */
+  BYTE           spectatorCount;  /* future work — 0 for now */
+  bool           ranked;
+  bool           randomMap;
+  int32_t        timeLimit;       /* game length; 0 if none */
+  BYTE           numHumans;       /* humans among numPlayers */
+  BYTE           numBots;         /* bots among numPlayers */
+  BYTE           maxPlayers;      /* join-slot cap; MAX_TANKS when unset */
 } MdnsServerInfo;
 
 /* Fill records[] with the PTR / SRV / A / TXT answer set for info and

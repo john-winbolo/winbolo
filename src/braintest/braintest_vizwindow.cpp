@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 /*********************************************************
  * braintest_vizwindow.cpp — ImGui table backed by the
  * runtime viz registry. See header for design.

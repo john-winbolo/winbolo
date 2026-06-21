@@ -385,3 +385,12 @@ int wbn_api_get_public(const char *path, char **response_out) {
   if (response_out) *response_out = NULL;
   return -1;
 }
+
+/* POST transport lives in http.c; stubbed to keep curl out of the link.
+ * wbnMapFetchByMd5 is never exercised by the unit tests — only the pure
+ * wbnMapParseResponse is. */
+int wbn_api_post(const char *endpoint, const char *json_body, char **response_out) {
+  (void)endpoint; (void)json_body;
+  if (response_out) *response_out = NULL;
+  return -1;
+}

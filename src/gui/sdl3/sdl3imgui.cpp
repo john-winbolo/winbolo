@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
@@ -87,6 +87,7 @@ extern "C" {
 #include "input_gamepad.h"
 #include "input_source.h"
 #include "../ui_mode.h"
+#include "../../steam/steam_input_actions.h"
 }
 
 #include "sdl3imgui_tablet.h"
@@ -94,6 +95,7 @@ extern "C" {
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/imgui_deck_pause.h"
+#include "dialogs/imgui_keyboard.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
 #include "dialogs/imgui_controller_disconnect.h"
@@ -108,7 +110,7 @@ extern "C" {
 
 extern "C" void windowSetQuitting(void);
 
-/* Network type enum values come from bolo_packets.h via client_sim.h */
+/* Network type enum values come from client_enums.h via client_sim.h */
 
 /* -------------------------------------------------------
  * External C linkage: data-source functions for info windows.
@@ -201,8 +203,6 @@ extern "C" void windowSuspendBackground(struct ClientSim *cs);
 extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
-extern "C" bool steam_show_floating_keyboard(int x, int y, int w, int h);
-extern "C" void steam_dismiss_floating_keyboard(void);
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -237,6 +237,11 @@ extern "C" bool showNetworkDebugMessages;
  * ------------------------------------------------------- */
 static SDL_Window   *s_window   = nullptr;
 static SDL_Renderer *s_renderer = nullptr;
+
+/* UI scale applied to the main in-game ImGui context (font + style), set in
+   sdl3ImguiSetup.  Dialog seed/min sizes and the window minimum multiply by
+   this so they track the scaled font.  1.0 until setup runs. */
+static float s_uiScale = 1.0f;
 
 /* Brain settings window state */
 static bool              s_brainSettingsOpen    = false;
@@ -341,6 +346,10 @@ static void ensurePlatformIconsLoaded(void) {
 
 /* Settings panel state */
 static bool s_showSettings       = false;
+/* Set when the in-game UI-scale combo changes; the main render loop
+   rebuilds the font atlas + style at a safe point (between Present and the
+   next NewFrame) rather than mid-frame. */
+static bool s_pendingUiScaleRebuild = false;
 static char s_settingsNameBuf[33] = "";  /* PLAYER_NAME_LEN = 33 */
 static bool s_wbnInitialised     = false;
 
@@ -353,6 +362,15 @@ static char s_changeNameBuf[33]  = "";  /* PLAYER_NAME_LEN = 33 */
 static bool s_showAllianceOpen   = false;
 static char s_alliancePlayerName[33] = "";
 static BYTE s_alliancePlayerNum  = 0;
+static bool s_allianceVisible     = false;
+
+static bool alliancePendingGet(const char **nameOut, BYTE *numOut) {
+    if (!s_allianceVisible) return false;
+    if (nameOut) *nameOut = s_alliancePlayerName;
+    if (numOut)  *numOut  = s_alliancePlayerNum;
+    return true;
+}
+static void allianceClearPending(void) { s_allianceVisible = false; }
 
 static bool s_showPasswordOpen   = false;
 static char s_passwordBuf[36]    = "";  /* MAP_STR_SIZE = 36 */
@@ -732,7 +750,9 @@ static void renderSysInfoContent(void) {
 static void renderSysInfoPanel(void) {
     if (!s_showSysInfo || s_popSysInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(440, 600), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(440 * s_uiScale, 600 * s_uiScale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
+                                        ImVec2(FLT_MAX, FLT_MAX));
     char title[128];
     snprintf(title, sizeof(title), "%s###sysinfo", langGetText(STR_DLGSYSINFO_TITLE));
     if (!ImGui::Begin(title, &s_showSysInfo)) {
@@ -957,7 +977,9 @@ static void renderNetInfoContent(ClientSim *cs) {
 static void renderNetInfoPanel(ClientSim *cs) {
     if (!s_showNetInfo || s_popNetInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(360, 420), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360 * s_uiScale, 420 * s_uiScale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
+                                        ImVec2(FLT_MAX, FLT_MAX));
     char title[128];
     snprintf(title, sizeof(title), "%s###netinfo", langGetText(STR_DLGNETINFO_TITLE));
     if (!ImGui::Begin(title, &s_showNetInfo)) {
@@ -1023,7 +1045,9 @@ static void renderGameInfoContent(ClientSim *cs) {
 static void renderGameInfoPanel(ClientSim *cs) {
     if (!s_showGameInfo || s_popGameInfo.open) return;
 
-    ImGui::SetNextWindowSize(ImVec2(320, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(320 * s_uiScale, 200 * s_uiScale), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
+                                        ImVec2(FLT_MAX, FLT_MAX));
     char title[128];
     snprintf(title, sizeof(title), "%s###gameinfo", langGetText(STR_DLGGAMEINFO_TITLE));
     if (!ImGui::Begin(title, &s_showGameInfo)) {
@@ -1227,7 +1251,7 @@ static void renderSendMsgPanel(ClientSim *cs) {
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 #endif
     } else {
-        ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(350 * s_uiScale, 0), ImGuiCond_FirstUseEver);
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showSendMsg;
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize;
@@ -1330,7 +1354,9 @@ static void renderPlayersPanel(ClientSim *cs) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     } else {
-        ImGui::SetNextWindowSize(ImVec2(340, 420), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(340 * s_uiScale, 420 * s_uiScale), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
+                                            ImVec2(FLT_MAX, FLT_MAX));
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
     ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
@@ -1496,6 +1522,31 @@ static void renderPlayersPanel(ClientSim *cs) {
         }
     }
 
+    /* Inbound alliance request — accept/decline here so it's reachable
+       with a controller (the overlay is NoNavInputs). */
+    {
+        const char *reqName = NULL;
+        BYTE reqNum = 0;
+        if (alliancePendingGet(&reqName, &reqNum)) {
+            ImGui::Separator();
+            MessageArgs args = {};
+            strncpy(args.playerName, reqName, sizeof(args.playerName) - 1);
+            args.playerFlags = clientSimGetPlayerAccountFlags(cs, reqNum);
+            clientSimGetPlayerCountryCode(cs, reqNum, args.playerCountry);
+            ImGui::TextWrapped("%s", langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
+            if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT))) {
+                clientSimAllianceAccept(cs, reqNum);
+                allianceClearPending();
+            }
+            imguiHandOnHover();
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE))) {
+                allianceClearPending();
+            }
+            imguiHandOnHover();
+        }
+    }
+
     /* In-game vote actions — siblings of Request Alliance, only during
      * the running game phase. */
     if (clientSimGetNetStatus(cs) == netRunning) {
@@ -1535,6 +1586,37 @@ static void renderPlayersPanel(ClientSim *cs) {
                 ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP));
             }
         }
+
+        /* Answer rows for any in-flight vote — reachable with a
+           controller (the overlay is NoNavInputs). */
+        static const uint8_t voteAnswerKinds[] = {
+            GAME_VOTE_KIND_BACK_TO_LOBBY, GAME_VOTE_KIND_SURRENDER
+        };
+        for (size_t vk = 0; vk < sizeof(voteAnswerKinds)/sizeof(voteAnswerKinds[0]); vk++) {
+            uint8_t vkind = voteAnswerKinds[vk];
+            ClientGameVoteSnapshot vs = {};
+            if (!clientSimGetGameVote(cs, vkind, &vs)) continue;
+            if (vs.active != GAME_VOTE_ACTIVE_RUNNING) continue;
+            ImGui::Separator();
+            const char *vnm = (vkind == GAME_VOTE_KIND_BACK_TO_LOBBY)
+                              ? langGetText(STR_VOTE_BACK_TO_LOBBY)
+                              : langGetText(STR_VOTE_SURRENDER);
+            ImGui::Text("%s: %u / %u", vnm,
+                        (unsigned)vs.yesCount, (unsigned)vs.threshold);
+            BYTE vme = clientSimGetMyPlayerNum(cs);
+            bool vMyYes = (vme < 16) && ((vs.votes >> vme) & 1u);
+            char yLbl[40]; snprintf(yLbl, sizeof(yLbl), "%s##vy%u", langGetText(STR_YES), (unsigned)vkind);
+            char nLbl[40]; snprintf(nLbl, sizeof(nLbl), "%s##vn%u", langGetText(STR_NO),  (unsigned)vkind);
+            if (vMyYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
+            if (ImGui::Button(yLbl, ImVec2(80, 0)))
+                clientSimNetSendGameVoteToggle(cs, vkind, GAME_VOTE_TOGGLE_YES);
+            if (vMyYes) ImGui::PopStyleColor();
+            imguiHandOnHover();
+            ImGui::SameLine();
+            if (ImGui::Button(nLbl, ImVec2(80, 0)))
+                clientSimNetSendGameVoteToggle(cs, vkind, GAME_VOTE_TOGGLE_NO);
+            imguiHandOnHover();
+        }
     }
 
     /* Allow new players toggle */
@@ -1563,6 +1645,9 @@ static void renderJoinConfirmModal(void) {
     }
     static float s_fadeJoinConfirm = 0.0f;
     bool joinOpen = true;
+    ImGuiIO &io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal(title, &joinOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
@@ -1604,6 +1689,9 @@ static void renderChangeNameModal(ClientSim *cs) {
     }
     static float s_fadeChangeName = 0.0f;
     bool changeNameOpen = true;
+    ImGuiIO &io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal(title, &changeNameOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
@@ -1814,6 +1902,18 @@ static void autoPanelReset(AutoPanelLayout &lay) {
     lay.positioned = false;
 }
 
+/* Controller-mode hint: bound glyph for `action` followed by `text`,
+   pointing the player at the Players panel where the action lives. */
+static void renderControllerActionHint(const char *action, const char *text) {
+    SDL_Texture *glyph = action ? glyphForActionAuto(action) : NULL;
+    if (glyph) {
+        const float h = ImGui::GetFrameHeight();
+        ImGui::Image((ImTextureID)glyph, ImVec2(h, h));
+        ImGui::SameLine();
+    }
+    ImGui::TextWrapped("%s", text);
+}
+
 static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
                                     const ClientGameVoteSnapshot *snap) {
     int li = voteLayoutIndex(kind);
@@ -1975,20 +2075,23 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
      * Highlight the user's current choice so they can see their stance. */
     if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
         ImGui::Spacing();
-        BYTE me = clientSimGetMyPlayerNum(cs);
-        bool myYes = (me < 16) && ((snap->votes >> me) & 1u);
-        bool myAns = clientSimGameVoteMyVote(cs, kind) || myYes;
-        (void)myAns;
+        if (uiShouldUseControllerMode()) {
+            renderControllerActionHint(SI_ACTION_VIEW_PLAYERS,
+                                       langGetText(STR_VOTE_RESPOND_IN_PLAYERS));
+        } else {
+            BYTE me = clientSimGetMyPlayerNum(cs);
+            bool myYes = (me < 16) && ((snap->votes >> me) & 1u);
 
-        if (myYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
-        if (ImGui::Button(langGetText(STR_YES), ImVec2(80, 0))) {
-            clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_YES);
-        }
-        if (myYes) ImGui::PopStyleColor();
+            if (myYes) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.6f, 0.0f, 1.0f));
+            if (ImGui::Button(langGetText(STR_YES), ImVec2(80, 0))) {
+                clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_YES);
+            }
+            if (myYes) ImGui::PopStyleColor();
 
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_NO), ImVec2(80, 0))) {
-            clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_NO);
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_NO), ImVec2(80, 0))) {
+                clientSimNetSendGameVoteToggle(cs, kind, GAME_VOTE_TOGGLE_NO);
+            }
         }
     }
 
@@ -2015,8 +2118,6 @@ static void renderGameVoteWidgets(ClientSim *cs) {
 /* -------------------------------------------------------
  * Alliance Request modal
  * ------------------------------------------------------- */
-static bool s_allianceVisible = false;
-
 static void renderAllianceRequest(ClientSim *cs) {
     if (s_showAllianceOpen) {
         s_allianceVisible = true;
@@ -2051,16 +2152,21 @@ static void renderAllianceRequest(ClientSim *cs) {
             ImGui::TextWrapped("%s", langGetTextFmt(STR_DLGALLIANCE_BLURB, &args));
         }
         ImGui::Spacing();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(80, 0))) {
-            clientSimAllianceAccept(cs, s_alliancePlayerNum);
-            s_allianceVisible = false;
+        if (uiShouldUseControllerMode()) {
+            renderControllerActionHint(SI_ACTION_VIEW_PLAYERS,
+                                       langGetText(STR_ALLIANCE_RESPOND_IN_PLAYERS));
+        } else {
+            if (ImGui::Button(langGetText(STR_DLGALLIANCE_ACCEPT), ImVec2(80, 0))) {
+                clientSimAllianceAccept(cs, s_alliancePlayerNum);
+                s_allianceVisible = false;
+            }
+            imguiHandOnHover();
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0))) {
+                s_allianceVisible = false;
+            }
+            imguiHandOnHover();
         }
-        imguiHandOnHover();
-        ImGui::SameLine();
-        if (ImGui::Button(langGetText(STR_DLGALLIANCE_DECLINE), ImVec2(80, 0))) {
-            s_allianceVisible = false;
-        }
-        imguiHandOnHover();
     }
     ImGui::End();
     if (!s_allianceVisible) autoPanelReset(s_allianceLayout);
@@ -2079,6 +2185,9 @@ static void renderPasswordModal(void) {
     }
     static float s_fadePassword = 0.0f;
     bool passOpen = true;
+    ImGuiIO &io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal(title, &passOpen,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
@@ -2266,12 +2375,13 @@ static void renderSettingsPanel(ClientSim *cs) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     } else {
-        /* Scale the panel with the Deck font/layout multiplier — the
-           font and style sizes are bumped 1.5x there, so a fixed 460px
-           window clips the wider translated labels and combos. */
-        const float deckMul = dialogDeckFontMul();
-        ImGui::SetNextWindowSize(ImVec2(520 * deckMul, 580 * deckMul),
+        /* Scale the panel with the UI scale — the font and style sizes are
+           bumped on Deck (1.5x) and high-DPI desktop, so a fixed 520px window
+           clips the wider translated labels and combos. */
+        ImGui::SetNextWindowSize(ImVec2(520 * s_uiScale, 580 * s_uiScale),
                                  ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
+                                            ImVec2(FLT_MAX, FLT_MAX));
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showSettings;
     ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
@@ -2481,14 +2591,46 @@ static void renderSettingsPanel(ClientSim *cs) {
                 uiControllerPromptAskOnConnectSet(ask);
                 gameFrontSaveCurrentPrefs();
             }
+
+            /* UI scale override — desktop only.  Auto keeps the display-
+               derived scale; a preset pins the ImGui scale and rebuilds the
+               font atlas live (deferred to a safe point between frames). */
+            ImGui::Separator();
+            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_UISCALE));
+            {
+                const char *scaleLabels[] = {
+                    langGetText(STR_DLGSETTINGS_UISCALE_AUTO),
+                    langGetText(STR_DLGSETTINGS_UISCALE_SMALL),
+                    langGetText(STR_DLGSETTINGS_UISCALE_MEDIUM),
+                    langGetText(STR_DLGSETTINGS_UISCALE_LARGE),
+                };
+                int usIdx = (int)uiUiScaleGet();
+                if (usIdx < 0 || usIdx > 3) usIdx = 0;
+                ImGui::SetNextItemWidth(140 * s_uiScale);
+                if (ImGui::BeginCombo("##uiscale", scaleLabels[usIdx])) {
+                    for (int i = 0; i < 4; i++) {
+                        bool sel = (usIdx == i);
+                        if (ImGui::Selectable(scaleLabels[i], sel) && i != usIdx) {
+                            uiUiScaleSet((UiScalePref)i);
+                            gameFrontSaveCurrentPrefs();
+                            s_pendingUiScaleRebuild = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
         }
 
+        /* Tablet Mode toggle hidden for now — tablet mode auto-detects on
+           real tablets; the manual desktop switch is not wanted in the UI. */
+#if 0
         if (!uiModeIsTablet()) {
             bool tabletMode = false;
             if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_TABLETMODE), &tabletMode)) {
                 uiModeSet(UI_MODE_TABLET);
             }
         }
+#endif
 #endif
     }
 
@@ -3001,9 +3143,13 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
         s_inModalResize = true;
     }
     if (msg == WM_GETMINMAXINFO) {
-        /* Enforce 1x minimum window size */
+        /* Enforce the UI-scaled minimum window size.  Scale the client area by
+           s_uiScale (the non-client frame/border is fixed and not scaled), so
+           the 515:347 content ratio is preserved. */
         MINMAXINFO *mmi = (MINMAXINFO *)lParam;
-        RECT clientRect = {0, 0, SDL3_SCREEN_W, SDL3_SCREEN_H + MENU_BAR_HEIGHT};
+        RECT clientRect = {0, 0,
+                           (LONG)(SDL3_SCREEN_W * s_uiScale),
+                           (LONG)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale)};
         DWORD style = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
         DWORD exStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
         AdjustWindowRectEx(&clientRect, style, FALSE, exStyle);
@@ -3109,6 +3255,76 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
  * Public API
  * ------------------------------------------------------- */
 
+/* (Re)apply the main ImGui context's font atlas, style, and window minimum
+   for the current UI scale.  Recomputes the scale (Auto → display-derived,
+   preset → fixed), rebuilds the font atlas, resets and re-scales the style,
+   and re-clamps the desktop window minimum.  Called once at setup and again
+   when the UI-scale pref changes — the latter only from the deferred safe
+   point between Present and NewFrame, so the atlas swap can't race draw data
+   still queued against the old texture. */
+static void applyMainContextUiScale(void) {
+    if (!s_window) return;
+    ImGuiIO &io = ImGui::GetIO();
+
+    /* One scale value drives both the font size and the style metrics.
+       Tablet uses FontGlobalScale below (so uiScale stays 1); Deck keeps
+       its 1.5x; desktop derives the scale from the display (or the UI-scale
+       override) so dialogs are readable on high-DPI / 4K screens. */
+    float uiScale;
+    if (uiModeIsTablet())          uiScale = 1.0f;
+    else if (uiModeIsSteamDeck())  uiScale = dialogDeckFontMul();  /* 1.5, unchanged */
+    else                           uiScale = dialogDesktopScale(s_window);
+    s_uiScale = uiScale;
+
+    /* Rebuild the font atlas at the new size.  Clear() first because
+       imguiLoadBoloFont only appends; the SDL3 backend's
+       ImGuiBackendFlags_RendererHasTextures contract swaps the GPU texture
+       on the next RenderDrawData, so no manual texture teardown is needed.
+       At setup the atlas is empty, so Clear() is a harmless no-op. */
+    io.Fonts->Clear();
+    imguiLoadBoloFont(18.0f * uiScale);
+
+    /* Reset the style to a clean base before re-scaling.  ScaleAllSizes
+       compounds, so re-running it on an already-scaled style would
+       double-count every metric; assigning a default ImGuiStyle clears any
+       prior scaling (and the fields imguiApplyBoloTheme doesn't set). */
+    ImGui::GetStyle() = ImGuiStyle();
+    ImGui::StyleColorsDark();
+    imguiApplyBoloTheme();
+
+    /* Tablet mode: scale up ImGui for touch targets.
+       Scale proportionally to the logical coordinate space height.
+       Reference: zoom 2 → 480px height → 1.0x pixel scale. */
+    if (uiModeIsTablet()) {
+        float ps = (float)sdl3DrawGetZoomFactor() / 2.0f;
+        if (ps < 1.0f) ps = 1.0f;
+        io.FontGlobalScale = 1.8f * ps;
+        io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
+        ImGuiStyle &style = ImGui::GetStyle();
+        style.FramePadding      = ImVec2(12 * ps, 8 * ps);
+        style.ItemSpacing       = ImVec2(12 * ps, 8 * ps);
+        style.TouchExtraPadding = ImVec2(8 * ps, 8 * ps);
+        style.ScrollbarSize     = 24.0f * ps;
+    } else if (uiScale > 1.0f) {
+        /* Match the bumped font size with proportionally bumped layout
+           metrics (FramePadding, ItemSpacing, ScrollbarSize, etc.) so
+           in-game dialogs (Settings / Players / Send Message / pause
+           overlay) don't clip text or overlap.  Covers Steam Deck (1.5x)
+           and high-DPI / overridden desktop.  No touch padding — both use
+           desktop hover/click feel. */
+        ImGui::GetStyle().ScaleAllSizes(uiScale);
+    }
+
+    /* On the resizable desktop window, keep the OS window from shrinking below
+       the scaled 1x content size so the bigger dialogs can't overflow.  The
+       Deck/tablet fullscreen paths don't resize, so skip them. */
+    if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
+        SDL_SetWindowMinimumSize(s_window,
+            (int)(SDL3_SCREEN_W * s_uiScale),
+            (int)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale));
+    }
+}
+
 bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     /* Already initialised — just update the window/renderer pointers */
     if (ImGui::GetCurrentContext()) {
@@ -3144,34 +3360,10 @@ bool sdl3ImguiSetup(SDL_Window *window, SDL_Renderer *renderer) {
     io.ConfigNavCursorVisibleAlways = true;
     io.IniFilename  = nullptr; /* no imgui.ini — avoid filesystem clutter */
 
-    ImGui::StyleColorsDark();
-    imguiApplyBoloTheme();
-    imguiLoadBoloFont(18.0f * dialogDeckFontMul());
-
-    /* Tablet mode: scale up ImGui for touch targets.
-       Scale proportionally to the logical coordinate space height.
-       Reference: zoom 2 → 480px height → 1.0x pixel scale. */
-    if (uiModeIsTablet()) {
-        float ps = (float)sdl3DrawGetZoomFactor() / 2.0f;
-        if (ps < 1.0f) ps = 1.0f;
-        io.FontGlobalScale = 1.8f * ps;
-        io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
-        ImGuiStyle &style = ImGui::GetStyle();
-        style.FramePadding      = ImVec2(12 * ps, 8 * ps);
-        style.ItemSpacing       = ImVec2(12 * ps, 8 * ps);
-        style.TouchExtraPadding = ImVec2(8 * ps, 8 * ps);
-        style.ScrollbarSize     = 24.0f * ps;
-    } else if (uiModeIsSteamDeck()) {
-        /* Match the bumped font size with proportionally bumped layout
-           metrics (FramePadding, ItemSpacing, ScrollbarSize, etc.) so
-           in-game dialogs (Settings / Players / Send Message / pause
-           overlay) don't clip text or overlap.  No touch padding —
-           Deck uses desktop hover/click feel. */
-        const float deckMul = dialogDeckFontMul();
-        if (deckMul > 1.0f) {
-            ImGui::GetStyle().ScaleAllSizes(deckMul);
-        }
-    }
+    /* Font atlas, style, and desktop window minimum for the current UI
+       scale.  Factored out so the in-game UI-scale override can rebuild it
+       live without a restart. */
+    applyMainContextUiScale();
 
     if (!ImGui_ImplSDL3_InitForSDLRenderer(window, renderer)) return false;
     if (!ImGui_ImplSDLRenderer3_Init(renderer))               return false;
@@ -3894,6 +4086,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     }
 #endif
 
+    /* Apply a pending UI-scale change here — after the previous frame's
+       SDL_RenderPresent and before this frame's NewFrame — so rebuilding the
+       font atlas can't race draw data still queued against the old texture. */
+    if (s_pendingUiScaleRebuild) {
+        s_pendingUiScaleRebuild = false;
+        applyMainContextUiScale();
+    }
+
     /* Build the ImGui frame */
     ImGui_ImplSDLRenderer3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
@@ -4226,6 +4426,10 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     }
 
 
+    /* Controller text entry: bring up Steam's floating keyboard or ours (or
+       neither) for this frame and draw / inject ours if it is up. */
+    keyboardUpdate();
+
     dialogDrawNavOutline();
     ImGui::EndFrame();
     dialogDrawNavOutline();
@@ -4262,33 +4466,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         }
 
         ImGui::SetCurrentContext(mainCtx);
-    }
-
-    /* Steam virtual keyboard.  When a controller is driving the UI and a text
-       field takes focus, raise Steam's floating on-screen keyboard; Steam
-       injects the typed characters back through the normal text-input path, so
-       every focused ImGui field is covered with no per-field wiring.  Driven
-       off the main context only — all controller-reachable text entry lives
-       here (pop-outs receive no controller input by design; see
-       sdl3ImguiShowSendMsg).  Edge-detected so we show / dismiss exactly once
-       each way — Steam does not auto-dismiss.  A no-op without Steam
-       (steam_show_floating_keyboard returns false in stub / desktop builds).
-       The rect is the text field Steam should avoid covering; the viewport is
-       a reasonable first approximation (Steam anchors the panel at the
-       screen edge). */
-    {
-        static bool s_kbWanted = false;
-        bool wantKb = uiShouldUseControllerMode() && ImGui::GetIO().WantTextInput;
-        if (wantKb != s_kbWanted) {
-            if (wantKb) {
-                ImGuiViewport *vp = ImGui::GetMainViewport();
-                steam_show_floating_keyboard((int)vp->Pos.x, (int)vp->Pos.y,
-                                             (int)vp->Size.x, (int)vp->Size.y);
-            } else {
-                steam_dismiss_floating_keyboard();
-            }
-            s_kbWanted = wantKb;
-        }
     }
 
     /* Apply deferred zoom change after the frame is fully rendered.
@@ -4356,6 +4533,10 @@ bool sdl3ImguiIsSysInfoOpen(void) {
     if (!uiModeIsTablet()) return s_popSysInfo.open;
 #endif
     return s_showSysInfo;
+}
+
+float sdl3ImguiGetUiScale(void) {
+    return s_uiScale;
 }
 void sdl3ImguiShowNetInfo(bool open) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)

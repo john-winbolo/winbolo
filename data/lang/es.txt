@@ -1211,6 +1211,8 @@ STR_CTRL_PROMPT_DONTASK=No volver a preguntar
 STR_CTRL_DISC_TITLE=Mando desconectado
 STR_CTRL_DISC_MESSAGE=Tu mando se ha desconectado. Puedes volver a conectarlo o cambiar a los controles de teclado.
 STR_CTRL_DISC_BUTTON=Continuar con teclado y ratón
+STR_VOTE_RESPOND_IN_PLAYERS=Responder en el menú Jugadores
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Responder en el menú Jugadores
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Acerca de WinBolo
 STR_MENU_PREFERENCES=Preferencias…
@@ -1759,3 +1761,26 @@ STR_DLGBROWSER_SPECTATE=Espectador
 STR_DLGBROWSER_AUTO_REFRESH=Actualización automática
 STR_DLGBROWSER_ST_LOBBY=Sala de espera
 STR_DLGBROWSER_ST_INGAME=En partida
+STR_DLGBROWSER_SELECT_SERVER=Seleccionar servidor
+STR_DLGBROWSER_PREVIEW_UNAVAIL=Vista previa no disp.
+STR_DLGBROWSER_PREVIEW_ENLARGE=Clic para ampliar
+STR_DLGBROWSER_AI_PLAYERS=({number} jugadores IA)
+STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net jugadores:
+STR_DLGBROWSER_ST_LOCKED=Bloqueado/Lleno
+STR_DLGBROWSER_ST_NORESP=Sin respuesta
+STR_DLGBROWSER_RND_ABBR=ale
+STR_DLGBROWSER_TYPE_TOURN_ABBR=Tourn
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Selec.   B Retroceso   LB Mayús   RB ?123   Start Listo
+STR_OSK_BKSP=Retro.
+STR_OSK_SHIFT=Mayús
+STR_OSK_SPACE=Espacio
+STR_OSK_ENTER=Intro
+
+# In-game settings — UI scale override
+STR_DLGSETTINGS_UISCALE=Escala de interfaz
+STR_DLGSETTINGS_UISCALE_AUTO=Automático
+STR_DLGSETTINGS_UISCALE_SMALL=Pequeño
+STR_DLGSETTINGS_UISCALE_MEDIUM=Mediano
+STR_DLGSETTINGS_UISCALE_LARGE=Grande

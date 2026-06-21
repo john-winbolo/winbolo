@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -112,6 +112,7 @@ static void gymBufferServerEvents(WinBoloGym *g) {
         case EVENT_PLAYER_LEAVE:
         case EVENT_PILL_UPDATE:
         case EVENT_BASE_UPDATE:
+        case EVENT_BASE_STOCK:
         case EVENT_ASSISTANT_MSG:
             g->cachedEvents[g->cachedEventCount++] = events[i];
             break;

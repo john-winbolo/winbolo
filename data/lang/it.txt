@@ -1201,6 +1201,8 @@ STR_CTRL_PROMPT_DONTASK=Non chiedere più
 STR_CTRL_DISC_TITLE=Controller disconnesso
 STR_CTRL_DISC_MESSAGE=Il tuo gamepad è stato disconnesso. Puoi ricollegarlo o passare ai controlli da tastiera.
 STR_CTRL_DISC_BUTTON=Continua con tastiera e mouse
+STR_VOTE_RESPOND_IN_PLAYERS=Rispondi nel menu Giocatori
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Rispondi nel menu Giocatori
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Informazioni su WinBolo
 STR_MENU_PREFERENCES=Preferenze…
@@ -1761,3 +1763,26 @@ STR_DLGBROWSER_SPECTATE=Osserva
 STR_DLGBROWSER_AUTO_REFRESH=Aggiornamento automatico
 STR_DLGBROWSER_ST_LOBBY=Sala d'attesa
 STR_DLGBROWSER_ST_INGAME=In partita
+STR_DLGBROWSER_SELECT_SERVER=Seleziona un server
+STR_DLGBROWSER_PREVIEW_UNAVAIL=Anteprima non disp.
+STR_DLGBROWSER_PREVIEW_ENLARGE=Clic per ingrandire
+STR_DLGBROWSER_AI_PLAYERS=({number} giocatori IA)
+STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net giocatori:
+STR_DLGBROWSER_ST_LOCKED=Bloccato/Pieno
+STR_DLGBROWSER_ST_NORESP=Nessuna risposta
+STR_DLGBROWSER_RND_ABBR=cas
+STR_DLGBROWSER_TYPE_TOURN_ABBR=Tourn
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Seleziona   B Backspace   LB Maiusc   RB ?123   Start Fine
+STR_OSK_BKSP=Canc
+STR_OSK_SHIFT=Maiusc
+STR_OSK_SPACE=Spazio
+STR_OSK_ENTER=Invio
+
+# In-game settings — UI scale override
+STR_DLGSETTINGS_UISCALE=Scala UI
+STR_DLGSETTINGS_UISCALE_AUTO=Automatica
+STR_DLGSETTINGS_UISCALE_SMALL=Piccola
+STR_DLGSETTINGS_UISCALE_MEDIUM=Media
+STR_DLGSETTINGS_UISCALE_LARGE=Grande

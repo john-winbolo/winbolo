@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -53,6 +53,7 @@ extern "C" {
 #include "../../../winbolonet/wbn_comments.h"
 #include "cJSON.h"
 #include "imgui_wbn_browser.h"
+#include "imgui_keyboard.h"
 #include "imgui_winbolonet.h"
 }
 
@@ -1269,6 +1270,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         ImGui::End(); /* ##WbnBrowserBg */
 
         dialogDrawNavOutline();
+        keyboardUpdate();   /* controller text entry for this dialog's fields */
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);

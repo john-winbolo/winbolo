@@ -153,6 +153,15 @@ bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
 void loopbackHarnessPump(LoopbackHarness *h) {
     if (h == NULL) return;
     if (h->clientUp) clientSimNetTick(h->cs);
+    /* The server's datagrams are ingested by its background recv thread into an
+     * SPSC queue that serverInstanceTick drains. In a tight pump loop that
+     * thread can lag a pump, so the just-sent client datagram isn't drained
+     * until a later tick — and that scheduling slack shifts ack/retransmit
+     * timing relative to the seeded impairment, which made connect/lobby
+     * convergence under loss nondeterministic. Yield ~1ms so the recv thread
+     * delivers this pump's datagram before the server tick consumes the queue,
+     * making the loopback tests deterministic. */
+    SDL_Delay(1);
     if (h->serverUp) serverInstanceTick(h->sim);
 }
 

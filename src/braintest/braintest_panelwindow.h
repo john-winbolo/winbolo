@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 /*********************************************************
  * BrainTest P window — tabbed panels populated by the
  * brain via braintest_panel_register. Each tab polls its

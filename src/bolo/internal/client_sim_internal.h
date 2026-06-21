@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 /*********************************************************
  * client_sim_internal.h
  *
@@ -539,10 +544,18 @@ void clientErrSmoothDecay(float *errX, float *errY, float *errAngle, float dtMs)
 void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle);
 
 /* Decompress `buf`/`len` into the ClientSim's map/pills/bases/starts,
- * stash the map name, and prime the viewport + mine-visibility state.
+ * stash the map name, and prime the mine-visibility/render state.
  * Does NOT call clientSimCreate; the ClientSim must already be alive
  * and initialised. The caller is responsible for clientSimSetupSelf
- * and for the snapshot apply that follows. */
-bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name);
+ * and for the snapshot apply that follows.
+ *
+ * initViewport selects whether to (re)initialise the viewport: true on a
+ * first map load (allocates the view buffers and parks the camera at the
+ * map origin); false on a mid-game resync (keeps the already-allocated
+ * view buffers and the player's current camera offsets while still
+ * recalculating and redrawing the swapped-in terrain). Returns false if
+ * the blob fails to decode, leaving the prior map in place. */
+bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name,
+                          bool initViewport);
 
 #endif /* CLIENT_SIM_INTERNAL_H */

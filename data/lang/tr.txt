@@ -1201,6 +1201,8 @@ STR_CTRL_PROMPT_DONTASK=Bir daha sorma
 STR_CTRL_DISC_TITLE=Kontrolcü Bağlantısı Kesildi
 STR_CTRL_DISC_MESSAGE=Oyun kumandanızın bağlantısı kesildi. Yeniden bağlayabilir veya klavye kontrollerine geçebilirsiniz.
 STR_CTRL_DISC_BUTTON=Klavye ve fareyle devam et
+STR_VOTE_RESPOND_IN_PLAYERS=Oyuncular menüsünden yanıtlayın
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Oyuncular menüsünden yanıtlayın
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=WinBolo Hakkında
 STR_MENU_PREFERENCES=Tercihler…
@@ -1759,3 +1761,26 @@ STR_DLGBROWSER_SPECTATE=İzle
 STR_DLGBROWSER_AUTO_REFRESH=Otomatik yenile
 STR_DLGBROWSER_ST_LOBBY=Lobi
 STR_DLGBROWSER_ST_INGAME=Oyunda
+STR_DLGBROWSER_SELECT_SERVER=Sunucu seçin
+STR_DLGBROWSER_PREVIEW_UNAVAIL=Önizleme yok
+STR_DLGBROWSER_PREVIEW_ENLARGE=Büyütmek için tıklayın
+STR_DLGBROWSER_AI_PLAYERS=({number} yapay zeka oyuncusu)
+STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net oyuncuları:
+STR_DLGBROWSER_ST_LOCKED=Kilitli/Dolu
+STR_DLGBROWSER_ST_NORESP=Yanıt yok
+STR_DLGBROWSER_RND_ABBR=rast
+STR_DLGBROWSER_TYPE_TOURN_ABBR=Turnuv
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Seç   B Geri Al   LB Shift   RB ?123   Start Bitti
+STR_OSK_BKSP=Geri Al
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Boşluk
+STR_OSK_ENTER=Enter
+
+# In-game settings — UI scale override
+STR_DLGSETTINGS_UISCALE=Arayüz Ölçeği
+STR_DLGSETTINGS_UISCALE_AUTO=Otomatik
+STR_DLGSETTINGS_UISCALE_SMALL=Küçük
+STR_DLGSETTINGS_UISCALE_MEDIUM=Orta
+STR_DLGSETTINGS_UISCALE_LARGE=Büyük

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * threads_wasm.c - No-op thread manager for WASM build
  *
  * Replaces server/threads.c. In WASM there are no server threads;

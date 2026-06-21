@@ -545,6 +545,15 @@ STR_DLGBROWSER_SPECTATE=Spectate
 STR_DLGBROWSER_AUTO_REFRESH=Auto-refresh
 STR_DLGBROWSER_ST_LOBBY=Lobby
 STR_DLGBROWSER_ST_INGAME=In Game
+STR_DLGBROWSER_SELECT_SERVER=Select a server
+STR_DLGBROWSER_PREVIEW_UNAVAIL=Preview unavailable
+STR_DLGBROWSER_PREVIEW_ENLARGE=Click to enlarge
+STR_DLGBROWSER_AI_PLAYERS=({number} AI players)
+STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net players:
+STR_DLGBROWSER_ST_LOCKED=Locked/Full
+STR_DLGBROWSER_ST_NORESP=No response
+STR_DLGBROWSER_RND_ABBR=rnd
+STR_DLGBROWSER_TYPE_TOURN_ABBR=Tourn
 STR_DLGBROWSER_STATUS_PINGING=Status: {string1}  |  {number} servers  |  Pinging {number2}...
 STR_DLGBROWSER_STATUS=Status: {string1}  |  {number} servers
 STR_DLGBROWSER_NEWGAME=New Game
@@ -1364,6 +1373,22 @@ STR_CTRL_PROMPT_DONTASK=Don't ask again
 STR_CTRL_DISC_TITLE=Controller Disconnected
 STR_CTRL_DISC_MESSAGE=Your gamepad has been disconnected. You can reconnect it or switch to keyboard controls.
 STR_CTRL_DISC_BUTTON=Continue with keyboard and mouse
+STR_VOTE_RESPOND_IN_PLAYERS=Respond in the Players menu
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Respond in the Players menu
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Select   B Backspace   LB Shift   RB ?123   Start Done
+STR_OSK_BKSP=Bksp
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Space
+STR_OSK_ENTER=Enter
+
+# In-game settings — UI scale override
+STR_DLGSETTINGS_UISCALE=UI Scale
+STR_DLGSETTINGS_UISCALE_AUTO=Auto
+STR_DLGSETTINGS_UISCALE_SMALL=Small
+STR_DLGSETTINGS_UISCALE_MEDIUM=Medium
+STR_DLGSETTINGS_UISCALE_LARGE=Large
 
 # Map editor validation
 STR_MAPVALIDATE_TOO_MANY_BASES=Too many bases: {number} (max {number2})

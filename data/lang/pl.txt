@@ -1197,6 +1197,8 @@ STR_CTRL_PROMPT_DONTASK=Nie pytaj ponownie
 STR_CTRL_DISC_TITLE=Kontroler odłączony
 STR_CTRL_DISC_MESSAGE=Twój gamepad został odłączony. Możesz go ponownie podłączyć lub przełączyć się na sterowanie klawiaturą.
 STR_CTRL_DISC_BUTTON=Kontynuuj z klawiaturą i myszką
+STR_VOTE_RESPOND_IN_PLAYERS=Odpowiedz w menu Gracze
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Odpowiedz w menu Gracze
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=O WinBolo
 STR_MENU_PREFERENCES=Preferencje…
@@ -1753,3 +1755,26 @@ STR_DLGBROWSER_SPECTATE=Obserwuj
 STR_DLGBROWSER_AUTO_REFRESH=Automatyczne odświeżanie
 STR_DLGBROWSER_ST_LOBBY=Lobby
 STR_DLGBROWSER_ST_INGAME=W grze
+STR_DLGBROWSER_SELECT_SERVER=Wybierz serwer
+STR_DLGBROWSER_PREVIEW_UNAVAIL=Podgląd niedostępny
+STR_DLGBROWSER_PREVIEW_ENLARGE=Kliknij, aby powiększyć
+STR_DLGBROWSER_AI_PLAYERS=({number} graczy AI)
+STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net gracze:
+STR_DLGBROWSER_ST_LOCKED=Zablokowany/Pełny
+STR_DLGBROWSER_ST_NORESP=Brak odpowiedzi
+STR_DLGBROWSER_RND_ABBR=los
+STR_DLGBROWSER_TYPE_TOURN_ABBR=Turni
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Wybierz   B Cofnij   LB Shift   RB ?123   Start Gotowe
+STR_OSK_BKSP=Cofnij
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Spacja
+STR_OSK_ENTER=Enter
+
+# In-game settings — UI scale override
+STR_DLGSETTINGS_UISCALE=Skala interfejsu
+STR_DLGSETTINGS_UISCALE_AUTO=Automatyczna
+STR_DLGSETTINGS_UISCALE_SMALL=Mała
+STR_DLGSETTINGS_UISCALE_MEDIUM=Średnia
+STR_DLGSETTINGS_UISCALE_LARGE=Duża

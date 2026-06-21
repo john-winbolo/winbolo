@@ -538,6 +538,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
     src/gui/sdl3/dialogs/imgui_deck_pause.cpp
+    src/gui/sdl3/dialogs/imgui_keyboard.cpp
     src/gui/sdl3/dialogs/imgui_quickchat.cpp
     src/gui/sdl3/dialogs/imgui_controller_prompt.cpp
     src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp
@@ -547,6 +548,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
+    src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wb_theme.cpp
 )
@@ -1039,6 +1041,7 @@ add_library(winbolonet_core STATIC
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_prefs_sync.c
     src/winbolonet/wbn_serverlist.c
+    src/winbolonet/wbn_map.c
 )
 target_include_directories(winbolonet_core PRIVATE
     ${cjson_SOURCE_DIR}
@@ -1084,9 +1087,10 @@ set(CLIENT_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
+    src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
@@ -1693,6 +1697,7 @@ set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_wbn_browser.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/imgui_keyboard.cpp
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
 
@@ -1719,6 +1724,7 @@ add_executable(LogViewer
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
     src/gui/ui_mode.c
+    src/steam/steam_wrapper_stub.c
 )
 target_compile_definitions(LogViewer PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -2528,6 +2534,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
+    tests/unit/test_net_opt_wire.c
     src/common/md5.c
     src/common/mp_diag_log.c
     tests/unit/test_ranked_lobby.c
@@ -2547,6 +2554,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
     tests/unit/test_wbn_serverlist.c
+    tests/unit/test_wbn_map.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_bolo_rand.c
@@ -2570,6 +2578,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
+    tests/unit/test_base_stock_visibility.c
+    tests/unit/test_fx_viewport_cull.c
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -2600,6 +2610,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_cookie_handshake.c
     tests/unit/test_map_amp_gate.c
     tests/unit/test_map_resync.c
+    tests/unit/test_map_compress_roundtrip.c
+    tests/unit/test_resync_finalize.c
     tests/unit/test_conn_migration.c
     tests/unit/test_viewtick_rewind.c
     # mDNS discovery: unicast-loopback round-trip through the real advertiser
@@ -2640,6 +2652,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_news_parser.cpp
     src/winbolonet/wbn_prefs_sync.c
     src/winbolonet/wbn_serverlist.c
+    src/winbolonet/wbn_map.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
@@ -2724,6 +2737,9 @@ endif()
 set_flat_output(WinBoloUnitTests "${CMAKE_BINARY_DIR}")
 
 set(_unit_test_names
+    md5_to_hex
+    pill_armour_intank_roundtrip
+    base_event_classification
     transport_local_passive_threads
     sp_subscriber_delivery
     active_local_input_to_shot
@@ -2823,6 +2839,7 @@ set(_unit_test_names
     wbn_serverlist_players
     wbn_serverlist_motd
     wbn_serverlist_malformed
+    wbn_map_parse
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_inbox_push_peek_fifo
@@ -2905,6 +2922,11 @@ set(_unit_test_names
     starts_batch_team_anchor_jitter_varies
     starts_open_ideal_friendly_pill_eligible
     input_redundancy
+    bases_closest_for_player
+    base_stock_visibility
+    base_armour_fog_of_war
+    two_clients_full_sync_independent
+    fx_viewport_cull
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid
@@ -2945,6 +2967,13 @@ set(_unit_test_names
     map_resync_duplicate_request_no_recut
     map_resync_send_gate_holds
     map_resync_stale_gen_rejected
+    map_compress_roundtrip_stock
+    map_compress_roundtrip_mutated
+    map_checksum_ignores_mines
+    resync_finalize_corrupt_keeps_gen
+    resync_finalize_valid_advances_gen
+    install_compressed_map_rejects_garbage
+    resync_debounce_threshold
     conn_migration_rehome
     conn_migration_e2e
     viewtick_rewind
@@ -3011,6 +3040,35 @@ if(WB_FUZZ)
              COMMAND $<TARGET_FILE:fuzz_wire_codec> -runs=0
                      ${WB_FUZZ_CORPUS_DIR}/wire_codec ${WB_FUZZ_CRASH_DIR})
     set_tests_properties(fuzz.wire_codec PROPERTIES TIMEOUT 120)
+
+    # Tier 1 — the channel-mux frame parser (channelRecvFrame), the single
+    # bounds-checked decode site the reliability rework collapsed every reliable
+    # queue / carrier / chunker onto. bolo_static only, like the wire codecs.
+    add_executable(fuzz_channel_frame tests/fuzz/fuzz_channel_frame.c)
+    bolo_apply_include_rules(fuzz_channel_frame unittests)
+    target_link_libraries(fuzz_channel_frame PRIVATE bolo_static SDL3::SDL3 ${MATH_LIB} pthread)
+    target_compile_options(fuzz_channel_frame PRIVATE -fcommon)
+    target_link_options(fuzz_channel_frame PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_channel_frame "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.channel_frame
+             COMMAND $<TARGET_FILE:fuzz_channel_frame> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/channel_frame ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.channel_frame PROPERTIES TIMEOUT 120)
+
+    # Tier 1 — the bulk-transfer receive state machine (bulkParseStreamHeader +
+    # bulkReceiverFeed), reassembling map download / resync / upload / preview
+    # blobs off CHANNEL_BULK from wire-supplied, untrusted headers and bodies.
+    # bolo_static only, like the wire codecs.
+    add_executable(fuzz_bulk_transfer tests/fuzz/fuzz_bulk_transfer.c)
+    bolo_apply_include_rules(fuzz_bulk_transfer unittests)
+    target_link_libraries(fuzz_bulk_transfer PRIVATE bolo_static SDL3::SDL3 ${MATH_LIB} pthread)
+    target_compile_options(fuzz_bulk_transfer PRIVATE -fcommon)
+    target_link_options(fuzz_bulk_transfer PRIVATE -fsanitize=fuzzer)
+    set_flat_output(fuzz_bulk_transfer "${CMAKE_BINARY_DIR}")
+    add_test(NAME fuzz.bulk_transfer
+             COMMAND $<TARGET_FILE:fuzz_bulk_transfer> -runs=0
+                     ${WB_FUZZ_CORPUS_DIR}/bulk_transfer ${WB_FUZZ_CRASH_DIR})
+    set_tests_properties(fuzz.bulk_transfer PROPERTIES TIMEOUT 120)
 
     # Tier 2 — full server dispatcher via the WB_FUZZ-gated seam. Links
     # server_static (which owns transport_udp_server.c, now carrying the seam).
@@ -3160,6 +3218,12 @@ if(WB_FUZZ)
     add_custom_command(TARGET fuzz_wire_codec POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_wire_codec>")
+    add_custom_command(TARGET fuzz_channel_frame POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_channel_frame>")
+    add_custom_command(TARGET fuzz_bulk_transfer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_bulk_transfer>")
     add_custom_command(TARGET fuzz_server_dispatch POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:fuzz_server_dispatch>")

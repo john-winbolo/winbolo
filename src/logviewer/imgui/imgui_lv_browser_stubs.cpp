@@ -1,7 +1,7 @@
 /*
  * imgui_lv_browser_stubs.cpp - LogViewer stubs for the shared WBN browser dialog
  *
- * Copyright (c) 2024
+ * Copyright (c) 1998-2026 John Morrison.
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * The main-game WBN browser dialog (src/gui/sdl3/dialogs/imgui_wbn_browser.cpp)
@@ -70,6 +70,22 @@ void imguiWinbolonetStartValidation(void)   {}
 void imguiWinbolonetDrawSection(bool inGame) {
     (void)inGame;
     ImGui::TextWrapped("%s", langGetText(STR_LV_INFO_SIGNIN_TO_COMMENT));
+}
+
+/* ---- on-screen keyboard support stubs ---------------------------- */
+/* imgui_keyboard.cpp (the controller text-entry overlay) is shared into
+ * LogViewer so the WBN browser's fields are editable, but the main-game
+ * glyph atlas and gamepad-arbitration layer aren't linked here. Both
+ * call sites NULL-check: a NULL gamepad handle skips the controller
+ * cursor (mouse entry still works) and a NULL glyph falls back to the
+ * text legend. */
+SDL_Texture *glyphForActionAuto(const char *action_name) {
+    (void)action_name;
+    return nullptr;
+}
+
+SDL_Gamepad *inputGamepadGetActiveHandle(void) {
+    return nullptr;
 }
 
 } /* extern "C" */

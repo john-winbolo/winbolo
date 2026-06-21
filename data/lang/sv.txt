@@ -1201,6 +1201,8 @@ STR_CTRL_PROMPT_DONTASK=Fråga inte igen
 STR_CTRL_DISC_TITLE=Handkontroll bortkopplad
 STR_CTRL_DISC_MESSAGE=Din gamepad har kopplats bort. Du kan ansluta den igen eller byta till tangentbordskontrollen.
 STR_CTRL_DISC_BUTTON=Fortsätt med tangentbord och mus
+STR_VOTE_RESPOND_IN_PLAYERS=Svara i menyn Spelare
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Svara i menyn Spelare
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=Om WinBolo
 STR_MENU_PREFERENCES=Inställningar…
@@ -1759,3 +1761,26 @@ STR_DLGBROWSER_SPECTATE=Åskåda
 STR_DLGBROWSER_AUTO_REFRESH=Automatisk uppdatering
 STR_DLGBROWSER_ST_LOBBY=Lobby
 STR_DLGBROWSER_ST_INGAME=I spel
+STR_DLGBROWSER_SELECT_SERVER=Välj en server
+STR_DLGBROWSER_PREVIEW_UNAVAIL=Förhandsgranskning ej tillgänglig
+STR_DLGBROWSER_PREVIEW_ENLARGE=Klicka för att förstora
+STR_DLGBROWSER_AI_PLAYERS=({number} AI-spelare)
+STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net spelare:
+STR_DLGBROWSER_ST_LOCKED=Låst/Full
+STR_DLGBROWSER_ST_NORESP=Inget svar
+STR_DLGBROWSER_RND_ABBR=slp
+STR_DLGBROWSER_TYPE_TOURN_ABBR=Turn
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Välj   B Radera   LB Shift   RB ?123   Start Klar
+STR_OSK_BKSP=Radera
+STR_OSK_SHIFT=Shift
+STR_OSK_SPACE=Mellanslag
+STR_OSK_ENTER=Retur
+
+# In-game settings — UI scale override
+STR_DLGSETTINGS_UISCALE=UI-skala
+STR_DLGSETTINGS_UISCALE_AUTO=Automatisk
+STR_DLGSETTINGS_UISCALE_SMALL=Liten
+STR_DLGSETTINGS_UISCALE_MEDIUM=Medel
+STR_DLGSETTINGS_UISCALE_LARGE=Stor

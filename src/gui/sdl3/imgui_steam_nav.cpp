@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
@@ -17,6 +17,7 @@ extern "C" {
 #include "../../steam/steam_input_actions.h"
 #include "imgui_steam_nav.h"
 #include "input_gamepad.h"   /* native pad: left-stick -> menu nav */
+#include "dialogs/imgui_keyboard.h"  /* keyboardIsOpen: our OSK owns the pad */
 /* While the Set Keys dialog is capturing a controller binding, the held
    button must reach the capture intercept as a raw button — not be injected
    as Space/Escape nav (which would also activate the focused dialog button,
@@ -104,6 +105,14 @@ extern "C" void imguiSteamNavFeedCurrentContext(void) {
     /* Don't inject any nav while a controller binding is being captured — the
        raw button press belongs to the capture, not to menu activation. */
     if (imguiKeySetupIsCapturingInGamePad())
+        return;
+
+    /* While our on-screen keyboard is up it owns the raw pad and reads the
+       buttons directly (B = backspace, stick/D-pad = keycap cursor).  Skip
+       the nav-key injection so EAST->Escape doesn't deactivate the focused
+       field and tear the keyboard down, and arrows don't drift the caret.
+       steam_input_run_frame() above still pumps so detection stays live. */
+    if (keyboardIsOpen())
         return;
 
     if (steam_input_has_active_controller()) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -159,6 +159,7 @@ void brainCoreRegisterConstants(lua_State *L) {
   lua_pushinteger(L, EVENT_SOUND);           lua_setglobal(L, "EVENT_SOUND");
   lua_pushinteger(L, EVENT_PILL_UPDATE);     lua_setglobal(L, "EVENT_PILL_UPDATE");
   lua_pushinteger(L, EVENT_BASE_UPDATE);     lua_setglobal(L, "EVENT_BASE_UPDATE");
+  lua_pushinteger(L, EVENT_BASE_STOCK);      lua_setglobal(L, "EVENT_BASE_STOCK");
   lua_pushinteger(L, EVENT_PLAYER_LEAVE);    lua_setglobal(L, "EVENT_PLAYER_LEAVE");
   lua_pushinteger(L, EVENT_ASSISTANT_MSG);   lua_setglobal(L, "EVENT_ASSISTANT_MSG");
   lua_pushinteger(L, EVENT_LGM_LOST);        lua_setglobal(L, "EVENT_LGM_LOST");

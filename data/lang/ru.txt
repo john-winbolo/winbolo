@@ -1199,6 +1199,8 @@ STR_CTRL_PROMPT_DONTASK=Больше не спрашивать
 STR_CTRL_DISC_TITLE=Геймпад отключён
 STR_CTRL_DISC_MESSAGE=Ваш геймпад был отключён. Вы можете подключить его снова или перейти на управление с клавиатуры.
 STR_CTRL_DISC_BUTTON=Продолжить с клавиатурой и мышью
+STR_VOTE_RESPOND_IN_PLAYERS=Ответьте в меню «Игроки»
+STR_ALLIANCE_RESPOND_IN_PLAYERS=Ответьте в меню «Игроки»
 # macOS App menu and Window menu items
 STR_MENU_ABOUT_APP=О WinBolo
 STR_MENU_PREFERENCES=Настройки…
@@ -1757,3 +1759,26 @@ STR_DLGBROWSER_SPECTATE=Наблюдать
 STR_DLGBROWSER_AUTO_REFRESH=Автообновление
 STR_DLGBROWSER_ST_LOBBY=Лобби
 STR_DLGBROWSER_ST_INGAME=В игре
+STR_DLGBROWSER_SELECT_SERVER=Выберите сервер
+STR_DLGBROWSER_PREVIEW_UNAVAIL=Нет превью
+STR_DLGBROWSER_PREVIEW_ENLARGE=Нажмите для увеличения
+STR_DLGBROWSER_AI_PLAYERS=({number} ИИ-игроков)
+STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net игроки:
+STR_DLGBROWSER_ST_LOCKED=Заблок./Заполнен
+STR_DLGBROWSER_ST_NORESP=Нет ответа
+STR_DLGBROWSER_RND_ABBR=слч
+STR_DLGBROWSER_TYPE_TOURN_ABBR=Турнир
+
+# On-screen keyboard (controller text entry)
+STR_OSK_LEGEND=Выбрать   B Удалить   LB Шифт   RB ?123   Start Готово
+STR_OSK_BKSP=Удалить
+STR_OSK_SHIFT=Шифт
+STR_OSK_SPACE=Пробел
+STR_OSK_ENTER=Ввод
+
+# In-game settings — UI scale override
+STR_DLGSETTINGS_UISCALE=Масштаб интерфейса
+STR_DLGSETTINGS_UISCALE_AUTO=Авто
+STR_DLGSETTINGS_UISCALE_SMALL=Маленький
+STR_DLGSETTINGS_UISCALE_MEDIUM=Средний
+STR_DLGSETTINGS_UISCALE_LARGE=Большой

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * steam_wrapper.h — thin C wrapper around the Steamworks SDK.
  *
  * Always include this header; the build system selects either the real

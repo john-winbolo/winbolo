@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
@@ -35,6 +35,17 @@ typedef enum {
   CONTROLLER_MODE_ON   = 1,
   CONTROLLER_MODE_AUTO = 2
 } ControllerModePref;
+
+/* UI-scale override.  Auto keeps the display-derived scale; the presets
+   pin the in-game / dialog ImGui scale to a fixed factor.  Desktop-only —
+   Steam Deck, tablet, and mobile keep their own scaling paths and ignore
+   this. */
+typedef enum {
+  UI_SCALE_AUTO   = 0,
+  UI_SCALE_SMALL  = 1,
+  UI_SCALE_MEDIUM = 2,
+  UI_SCALE_LARGE  = 3
+} UiScalePref;
 
 /*********************************************************
 *NAME:          uiModeDetect
@@ -115,6 +126,27 @@ bool uiShouldUseControllerMode(void);
 *********************************************************/
 void               uiControllerModeSet(ControllerModePref m);
 ControllerModePref uiControllerModeGet(void);
+
+/*********************************************************
+*NAME:          uiUiScaleSet / Get
+*PURPOSE:
+*  In-process getter/setter for the UI-scale override.
+*  As with the controller-mode pref, the on-disk value is
+*  owned by gamefront.c; these mirror it so the scale
+*  helpers and settings UI can read it without dragging in
+*  gamefront.h.  Set from prefs load and the settings UI.
+*********************************************************/
+void        uiUiScaleSet(UiScalePref s);
+UiScalePref uiUiScaleGet(void);
+
+/*********************************************************
+*NAME:          uiUiScalePresetFactor
+*PURPOSE:
+*  Fixed scale factor for a preset: Small 1.0, Medium 1.5,
+*  Large 2.0.  Returns 0 for UI_SCALE_AUTO so callers can
+*  tell "no override" apart from a real factor.
+*********************************************************/
+float uiUiScalePresetFactor(UiScalePref s);
 
 /*********************************************************
 *NAME:          uiControllerPromptAskOnConnectSet/Get

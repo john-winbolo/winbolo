@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -181,6 +181,17 @@ typedef struct {
     int16_t  newVal;
 } GridDelta;
 
+/* braintest's rewind frame capture needs the server-internal pill firing
+ * speed, which the wire PillSnapshot no longer carries — keep a local frame
+ * struct so capture/restore can round-trip speed. */
+typedef struct {
+    uint8_t x, y;
+    uint8_t owner;
+    uint8_t armour;
+    uint8_t speed;
+    uint8_t inTank;
+} BtPillFrame;
+
 typedef struct {
     uint32_t tick;
     bool     isKeyframe;
@@ -215,7 +226,7 @@ typedef struct {
     uint8_t           shellCount;
     BaseSnapshot      snapBases[MAX_SNAPSHOT_BASES];
     uint8_t           baseCount;
-    PillSnapshot      snapPills[MAX_SNAPSHOT_PILLS];
+    BtPillFrame       snapPills[MAX_SNAPSHOT_PILLS];
     uint8_t           pillCount;
 
     /* Camera + brain perf for the HUD. */

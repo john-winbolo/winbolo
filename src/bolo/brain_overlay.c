@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 #include "brain_overlay.h"
 #include <stdlib.h>
 #include <string.h>

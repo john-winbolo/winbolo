@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -80,6 +80,7 @@ extern "C" {
 #include "../map_preview_popup.h"
 #include "../../lang.h"
 #include "imgui_lobby.h"
+#include "imgui_keyboard.h"
 #include "imgui_messagebox.h"
 #include "imgui_mapchooser.h"
 #include "../../../winbolonet/http.h"
@@ -6111,6 +6112,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     SDL_GetWindowSize(window, &screenW, &screenH);
     if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
     float s = dialogComputeScale(screenW, screenH);
+#if !BOLO_MOBILE
+    if (!uiModeIsSteamDeck()) s = 1.0f;   /* lobby + nested map chooser / start picker: desktop scaling deferred to the lobby rework */
+#endif
 
 #if !BOLO_MOBILE
     dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
@@ -7891,6 +7895,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
 
         dialogDrawNavOutline();
+        keyboardUpdate();   /* controller text entry for this dialog's fields */
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);
