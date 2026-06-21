@@ -698,5 +698,14 @@ bool transportUdpClientTestBeginResync(Transport *t);
  * (cumulative successful installs). */
 void transportUdpClientTestMapState(Transport *t, uint32_t *installedMapGen,
                                     uint32_t *mapResyncCount);
+/* Drive the real resync finalize on a caller-supplied blob (arming the resync
+ * precondition with a fresh generation). A corrupt blob must leave
+ * installedMapGen/mapResyncCount unchanged; a valid one advances them. Returns
+ * false on bad args or allocation failure. */
+bool transportUdpClientTestFinalizeResync(Transport *t, const BYTE *buf, int len);
+/* Read the resync debounce state: whether a resync is in flight and the
+ * consecutive-mismatch streak that gates a new request. */
+void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
+                                       uint32_t *mismatchStreak);
 
 #endif /* TRANSPORT_UDP_H */

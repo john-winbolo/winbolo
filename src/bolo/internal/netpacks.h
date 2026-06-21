@@ -60,17 +60,20 @@ BOLO_STATIC_ASSERT(sizeof(BOLOHEADER) == 8, BOLOHEADER_must_be_8_bytes);
 /* Game ID — uniquely identifies a game session */
 #ifndef _GAMEID_DEFINED
 #define _GAMEID_DEFINED
+#pragma pack(push, 1)
 typedef struct BOLO_PACK_ATTR {
   struct in_addr serveraddress;
   unsigned short serverport;
   uint16_t _padding;
   uint32_t start_time;
 } GAMEID;
+#pragma pack(pop)
 #endif
 
 /* Info packet response — 76-byte wire format for game browser */
 #ifndef _INFO_PACKET_DEFINED
 #define _INFO_PACKET_DEFINED
+#pragma pack(push, 1)
 typedef struct BOLO_PACK_ATTR {
   BOLOHEADER h;
   char mapname[MAP_STR_SIZE];
@@ -92,6 +95,7 @@ typedef struct BOLO_PACK_ATTR {
   char map_md5[32];       /* 32 lowercase hex chars, no NUL; zero-filled  */
                           /* when the map is random/unknown               */
 } INFO_PACKET;
+#pragma pack(pop)
 BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
 
 /* Historical INFO_PACKET wire size, before the flags/count/md5 fields were

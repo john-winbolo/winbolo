@@ -2607,6 +2607,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_cookie_handshake.c
     tests/unit/test_map_amp_gate.c
     tests/unit/test_map_resync.c
+    tests/unit/test_map_compress_roundtrip.c
+    tests/unit/test_resync_finalize.c
     tests/unit/test_conn_migration.c
     tests/unit/test_viewtick_rewind.c
     # mDNS discovery: unicast-loopback round-trip through the real advertiser
@@ -2955,6 +2957,13 @@ set(_unit_test_names
     map_resync_duplicate_request_no_recut
     map_resync_send_gate_holds
     map_resync_stale_gen_rejected
+    map_compress_roundtrip_stock
+    map_compress_roundtrip_mutated
+    map_checksum_ignores_mines
+    resync_finalize_corrupt_keeps_gen
+    resync_finalize_valid_advances_gen
+    install_compressed_map_rejects_garbage
+    resync_debounce_threshold
     conn_migration_rehome
     conn_migration_e2e
     viewtick_rewind

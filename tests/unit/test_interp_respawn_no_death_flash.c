@@ -179,6 +179,45 @@ int run_interp_respawn_no_death_flash(void) {
     UT_ASSERT_MSG(y == 5000, "respawn y mid-segment, not death y %u", (unsigned)y);
   }
 
+  /* ---- render clock: multi-tick death, prev->curr both dead (depth 2) ----
+   * A death that spans two snapshots leaves prev AND curr dead, with pending
+   * the alive respawn.  Four updates alive -> dead -> dead -> respawn shift the
+   * pipeline to prev=dead1, curr=dead2, pending=respawn.  With extraDelay 20 the
+   * target drops a full snapshot into the prev->curr segment: renderNow 1070
+   * maps to target 1030, between prevArrival 1020 and currArrival 1040
+   * (fromCurr -10, fromPrev +10).  The prev-dead-only guard would treat this as
+   * an ordinary respawn snap and output curr -- but curr is the second death
+   * sample, so that is the death spot.  Snapping to pending (the respawn) is the
+   * only correct output. */
+  {
+    InterpContext ctx;
+    InterpSnapshot a1 = mkSnapAt(1000, 1000, 0, FALSE, TRUE);
+    InterpSnapshot dead1 = mkSnapAt(1200, 1000, 64, FALSE, FALSE); /* death spot */
+    InterpSnapshot dead2 = mkSnapAt(1200, 1000, 64, FALSE, FALSE); /* still dead */
+    InterpSnapshot respawn = mkSnapAt(5000, 5000, 32, TRUE, TRUE); /* teleport */
+    const InterpPlayer *p;
+    WORLD x, y;
+    TURNTYPE ang;
+    bool boat;
+
+    interpCreate(&ctx, 0);
+    interpUpdate(&ctx, PN, &a1, 100, 1000);
+    interpUpdate(&ctx, PN, &dead1, 102, 1020);
+    interpUpdate(&ctx, PN, &dead2, 104, 1040);
+    interpUpdate(&ctx, PN, &respawn, 106, 1060);
+
+    p = &ctx.players[PN];
+    UT_ASSERT_MSG(p->prev.alive == FALSE, "prev should be the first dead sample");
+    UT_ASSERT_MSG(p->curr.alive == FALSE, "curr should be the second dead sample");
+    UT_ASSERT_MSG(p->pending.alive == TRUE, "pending should be the respawn sample");
+
+    UT_ASSERT(interpGetRenderPosition(&ctx, PN, 1070, 20.0f, &x, &y, &ang, &boat));
+    UT_ASSERT_MSG(x == 5000, "respawn x, not death x %u", (unsigned)x);
+    UT_ASSERT_MSG(y == 5000, "respawn y, not death y %u", (unsigned)y);
+    UT_ASSERT_MSG(ang == 32, "angle follows respawn %u", (unsigned)ang);
+    UT_ASSERT_MSG(boat == TRUE, "onBoat follows respawn");
+  }
+
   /* ---- render clock positive control: a live curr->pending pair still
    * interpolates, proving the guards didn't blanket-disable the tween ----
    * prev=a1@1000, curr=a2@2000-pos, pending=a3.  renderNow 1050 / extraDelay 0

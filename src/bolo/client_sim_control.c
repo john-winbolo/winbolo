@@ -399,7 +399,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             int  len = serverSimGetCompressedMap(cs->boundServerSim, buf);
             if (len > 0) {
                 installCompressedMap(cs, buf, len,
-                                     serverSimGetMapName(cs->boundServerSim));
+                                     serverSimGetMapName(cs->boundServerSim),
+                                     /*initViewport=*/true);
                 cs->mapDownloadComplete = true;
             }
         }
