@@ -548,6 +548,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
+    src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/wb_theme.cpp
 )
@@ -1040,6 +1041,7 @@ add_library(winbolonet_core STATIC
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_prefs_sync.c
     src/winbolonet/wbn_serverlist.c
+    src/winbolonet/wbn_map.c
 )
 target_include_directories(winbolonet_core PRIVATE
     ${cjson_SOURCE_DIR}
@@ -1088,6 +1090,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/map_preview_view.cpp
+    src/gui/sdl3/map_preview_fetch.cpp
     src/gui/sdl3/map_stars.cpp
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
@@ -2550,6 +2553,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
     tests/unit/test_wbn_serverlist.c
+    tests/unit/test_wbn_map.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_bolo_rand.c
@@ -2645,6 +2649,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_news_parser.cpp
     src/winbolonet/wbn_prefs_sync.c
     src/winbolonet/wbn_serverlist.c
+    src/winbolonet/wbn_map.c
     # transport_udp_client.c stays per-target because of HAVE_STEAM
     # gating (it's excluded from bolo_static for that reason). Linked
     # here without HAVE_STEAM so client_net.c's transportUdpClient*
@@ -2729,6 +2734,7 @@ endif()
 set_flat_output(WinBoloUnitTests "${CMAKE_BINARY_DIR}")
 
 set(_unit_test_names
+    md5_to_hex
     transport_local_passive_threads
     sp_subscriber_delivery
     active_local_input_to_shot
@@ -2828,6 +2834,7 @@ set(_unit_test_names
     wbn_serverlist_players
     wbn_serverlist_motd
     wbn_serverlist_malformed
+    wbn_map_parse
     brain_crash_log_writes_file
     brain_crash_log_falls_back_to_luaptr
     brain_inbox_push_peek_fifo

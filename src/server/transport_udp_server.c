@@ -2964,13 +2964,13 @@ void transportUdpServerDestroy(void) {
 }
 
 /* Handle an old-protocol info request (server browser compatibility).
- * Builds a 76-byte INFO_PACKET response from the current sim state. */
+ * Builds an INFO_PACKET response from the current sim state. */
 static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
                                     ServerSim *sim) {
     GameSim *gs = serverSimGetGameSim(sim);
     INFO_PACKET pkt;
     int i;
-    BYTE numPlayers = 0;
+    BYTE numPlayers = 0, numHumans = 0, numBots = 0;
     char consoleMsg[256];
 
     memset(&pkt, 0, sizeof(pkt));
@@ -3001,22 +3001,45 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
     pkt.gametype = (BYTE)gs->game;
     pkt.allow_mines = gs->hiddenMines ? HIDDEN_MINES : ALL_MINES_VISIBLE;
     pkt.allow_AI = 0;  /* AI type not tracked in new sim — report as none */
-    pkt.spare1 = 0;
+    {
+        BYTE flags = 0;
+        if (serverSimIsAcceptingJoins(sim))              flags |= INFO_FLAG_ALLOW_NEW_PLAYERS;
+        if (transportUdpServerGetLock() || !serverSimIsAcceptingJoins(sim)) flags |= INFO_FLAG_LOCKED;
+        if (serverSimGetRanked(sim))                     flags |= INFO_FLAG_RANKED;
+        if (serverSimIsRandomMapEnabled(sim))            flags |= INFO_FLAG_RANDOM_MAP;
+        if (serverSimGetState(sim) == serverStateLobby)  flags |= INFO_FLAG_IN_LOBBY;
+        /* allow_spectators / spectator_count: spectators are future work */
+        pkt.flags = flags;
+    }
     pkt.start_delay = serverSimGetStartDelay(sim);
     pkt.time_limit = serverSimGetGameLength(sim);
 
-    /* Count connected players */
+    /* Count connected players, classifying humans vs bots */
     for (i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsPlayerConnected(sim, i)) numPlayers++;
+        if (serverSimIsPlayerConnected(sim, i)) {
+            numPlayers++;
+            if (serverSimIsBot(sim, (BYTE)i)) numBots++;
+            else                              numHumans++;
+        }
     }
     pkt.num_players = numPlayers;
+    pkt.num_humans  = numHumans;
+    pkt.num_bots    = numBots;
+    pkt.max_players = serverSimGetMaxPlayers(sim);
 
     /* Neutral pills and bases */
     pkt.free_pills = pillsGetNumNeutral(&gs->pb);
     pkt.free_bases = basesGetNumNeutral(&gs->bs);
 
     pkt.has_password = serverSimGetPassword(sim)[0] != '\0' ? 1 : 0;
-    pkt.spare2 = 0;
+    pkt.spectator_count = 0;
+
+    {
+        const char *md5Hex = serverSimGetMapMd5Hex(sim);
+        if (md5Hex[0] != '\0' && !serverSimIsRandomMapEnabled(sim)) {
+            memcpy(pkt.map_md5, md5Hex, 32);
+        }
+    }
 
     /* wire-only: tracker / external reply (no in-process audience) */
     srvSendTo((uint8_t *)&pkt, sizeof(pkt), fromAddr);
@@ -3462,7 +3485,7 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     struct sockaddr_in dest;
     struct in_addr trackerIp;
     int i;
-    BYTE numPlayers = 0;
+    BYTE numPlayers = 0, numHumans = 0, numBots = 0;
 
     if (bolo_resolve_ipv4(trackerAddr, &trackerIp) != 0) {
         fprintf(stderr, "[TRACKER] Failed to resolve %s\n", trackerAddr);
@@ -3496,18 +3519,41 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
     pkt.gametype = (BYTE)gs->game;
     pkt.allow_mines = gs->hiddenMines ? HIDDEN_MINES : ALL_MINES_VISIBLE;
     pkt.allow_AI = 0;
-    pkt.spare1 = 0;
+    {
+        BYTE flags = 0;
+        if (serverSimIsAcceptingJoins(sim))              flags |= INFO_FLAG_ALLOW_NEW_PLAYERS;
+        if (transportUdpServerGetLock() || !serverSimIsAcceptingJoins(sim)) flags |= INFO_FLAG_LOCKED;
+        if (serverSimGetRanked(sim))                     flags |= INFO_FLAG_RANKED;
+        if (serverSimIsRandomMapEnabled(sim))            flags |= INFO_FLAG_RANDOM_MAP;
+        if (serverSimGetState(sim) == serverStateLobby)  flags |= INFO_FLAG_IN_LOBBY;
+        /* allow_spectators / spectator_count: spectators are future work */
+        pkt.flags = flags;
+    }
     pkt.start_delay = serverSimGetStartDelay(sim);
     pkt.time_limit = serverSimGetGameLength(sim);
 
     for (i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsPlayerConnected(sim, i)) numPlayers++;
+        if (serverSimIsPlayerConnected(sim, i)) {
+            numPlayers++;
+            if (serverSimIsBot(sim, (BYTE)i)) numBots++;
+            else                              numHumans++;
+        }
     }
     pkt.num_players = numPlayers;
+    pkt.num_humans  = numHumans;
+    pkt.num_bots    = numBots;
+    pkt.max_players = serverSimGetMaxPlayers(sim);
     pkt.free_pills = pillsGetNumNeutral(&gs->pb);
     pkt.free_bases = basesGetNumNeutral(&gs->bs);
     pkt.has_password = serverSimGetPassword(sim)[0] != '\0' ? 1 : 0;
-    pkt.spare2 = 0;
+    pkt.spectator_count = 0;
+
+    {
+        const char *md5Hex = serverSimGetMapMd5Hex(sim);
+        if (md5Hex[0] != '\0' && !serverSimIsRandomMapEnabled(sim)) {
+            memcpy(pkt.map_md5, md5Hex, 32);
+        }
+    }
 
     srvSendTo((const uint8_t *)&pkt, sizeof(pkt), &dest);
 }
@@ -3939,7 +3985,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_LOBBY_MAP_USE_LOCAL: {
             /* [header 8] [totalLen 4] [nameLen 1] [name N]
-             *           [relPathLen 1] [relPath M] [md5 16]
+             *           [relPathLen 1] [relPath M] [md5 32]
              *
              * Pre-upload optimisation: if our local data/maps/<relPath>
              * matches the supplied MD5, install it directly and reply
@@ -3950,7 +3996,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             int clientIdx = serverFindClient(fromAddr);
             if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
                 serverSimGetState(sim) != serverStateLobby ||
-                len < PACKET_HEADER_SIZE + 4 + 1 + 1 + 16) break;
+                len < PACKET_HEADER_SIZE + 4 + 1 + 1 + 32) break;
             int rpos = PACKET_HEADER_SIZE;
             uint32_t totalLen =
                 ((uint32_t)buf[rpos + 0] << 24) |
@@ -3960,20 +4006,21 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             rpos += 4;
             uint8_t nameLen = buf[rpos++];
             if (nameLen == 0 || nameLen > 127 ||
-                rpos + nameLen + 1 + 16 > (int)len) break;
+                rpos + nameLen + 1 + 32 > (int)len) break;
             char nameBuf[128];
             memset(nameBuf, 0, sizeof(nameBuf));
             memcpy(nameBuf, buf + rpos, nameLen);
             rpos += nameLen;
             uint8_t relLen = buf[rpos++];
             if (relLen == 0 || relLen > 255 ||
-                rpos + relLen + 16 > (int)len) break;
+                rpos + relLen + 32 > (int)len) break;
             char relBuf[256];
             memset(relBuf, 0, sizeof(relBuf));
             memcpy(relBuf, buf + rpos, relLen);
             rpos += relLen;
-            uint8_t wantMd5[16];
-            memcpy(wantMd5, buf + rpos, 16);
+            char wantMd5Hex[33];
+            memcpy(wantMd5Hex, buf + rpos, 32);
+            wantMd5Hex[32] = '\0';
 
             /* NACK helper for every miss path: server echoes the
              * announce name so the client correlates the reply to
@@ -4038,7 +4085,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
 
             uint8_t haveMd5[16];
             md5Compute(bytes, byteLen, haveMd5);
-            if (memcmp(haveMd5, wantMd5, 16) != 0) {
+            char haveMd5Hex[33];
+            md5ToHex(haveMd5, haveMd5Hex);
+            if (memcmp(haveMd5Hex, wantMd5Hex, 32) != 0) {
                 free(bytes);
                 SEND_USE_LOCAL_NACK();
                 break;

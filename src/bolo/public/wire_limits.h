@@ -9,7 +9,7 @@
  * Public wire-protocol values that legitimately surface in GUI code:
  * payload-size caps (so input widgets can show the right limit) and
  * the version string used in compatibility checks. The wire format
- * itself stays internal in netpacks.h / bolo_packets.h.
+ * itself stays internal in netpacks.h.
  *
  * No #includes, no behaviour.
  */

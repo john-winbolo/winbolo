@@ -634,10 +634,10 @@ void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
                                       uint32_t totalLen,
                                       const char *name,
                                       const char *relPath,
-                                      const uint8_t md5[16]) {
+                                      const char md5Hex[32]) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
   transportUdpClientSendLobbyMapUseLocal(&cs->transport, totalLen, name,
-                                          relPath, md5);
+                                          relPath, md5Hex);
 }
 
 void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
