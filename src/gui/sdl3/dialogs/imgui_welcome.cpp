@@ -44,6 +44,7 @@ extern "C" {
 }
 
 #include "imgui_about.h"   /* aboutPopupOpen / aboutPopupRender */
+#include "imgui_keyboard.h" /* keyboardUpdate */
 
 /* Match openingStates enum from gamefront.h */
 enum {
@@ -587,6 +588,7 @@ extern "C" int imguiWelcomeShow(void) {
         aboutPopupRender();
 
         dialogDrawNavOutline();
+        keyboardUpdate();   /* controller text entry for the WinBolo.net login popup */
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 30, 255);
         SDL_RenderClear(renderer);
