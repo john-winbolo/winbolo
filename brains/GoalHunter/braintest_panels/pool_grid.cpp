@@ -92,7 +92,7 @@ static const TermDoc kTermDocs[] = {
     {"pickup",  "A-star cost of spot to pill, minus this pill's danger contribution."},
     { "wsim",    "Forward-sim damage cost — additive armour/ammo cost from simulating travel through danger fields; set in the wsim block." },
     { "hist",    "Oscillation history penalty — increases when the bot repeatedly picks/abandons the same goal to break loops." },
-    { "ally_claimed", "Cross-pool penalty added when an ally bot is broadcasting the same goal (matched by kind + target_id, or kind + tile). attack_tank exempt; refuel_at_base gets 100; everything else +10000." },
+    { "ally_claimed", "Ally-contention penalty when an ally bot is broadcasting the same goal (matched by kind + target_id, or kind + tile). refuel_at_base (pool 1): SOFT +ALLY_CLAIMED_REFUEL_PENALTY(100) per ally already targeting the SAME base — additive, NO reject, so a closer/more-urgent bot can still take a crowded base (then brakes beside it via wait_for_ally). place_strategic (pool 8): hard +10000. Pools 2-7 use the ally_claimed REJECT + steal band instead of this term. attack_tank/kill_lgm exempt." },
     { "tankpen",   "Combat-zone penalty on a NON-emergency strategic pill placement: flat +30 when an enemy tank is within 10 tiles (euclidean) of the chosen spot, +60 within 7. Discourages dropping a pill next to enemy tanks. The def_build emergency drop is exempt." },
     { "blitz_discount", "Multiplier (<=1) on any open blitz-call pill we could join, pulling it into our winners. Distance-scaled to the standoff: ~0.25x at 7 tiles, 1.0x (none) by 20. REF base used for reject/sentinel entries." },
     { NULL, NULL }
