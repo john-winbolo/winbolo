@@ -21,6 +21,13 @@
 #include "cJSON.h"
 #include "http.h"
 
+/* Hard cap on a decoded map blob. A real .map never exceeds the wire
+ * download limit (MAP_DOWNLOAD_MAX_SIZE, 64 KiB, defined in the T2
+ * header netpacks.h that winbolonet_core may not include), so reject
+ * anything larger: a hostile or corrupt /api/v1/map body must not be
+ * able to drive an unbounded allocation. */
+#define WBN_MAP_MAX_DECODED 65536u
+
 /* Decode value of a base64 character, accepting both the standard
  * (+, /) and URL-safe (-, _) alphabets, or -1 for any character not in
  * either alphabet (the '=' pad is handled separately). */
@@ -48,9 +55,20 @@ static bool b64Decode(const char *in, uint8_t **out, size_t *outLen) {
     }
 
     size_t inLen = strlen(in);
+    /* Reject an absurdly large body before allocating. A real map's
+     * base64 — even with MIME line-wrap whitespace — stays well under
+     * twice the decoded cap, so this can only fire on a hostile or
+     * corrupt response, and it bounds both the allocation and the
+     * decode loop. */
+    if (inLen > (size_t)WBN_MAP_MAX_DECODED * 2) {
+        return false;
+    }
     /* Upper bound: 4 base64 chars yield 3 bytes; +3 covers any partial
-     * trailing group and keeps the allocation non-zero for empty input. */
-    uint8_t *buf = malloc(inLen * 3 / 4 + 3);
+     * trailing group and keeps the allocation non-zero for empty input.
+     * Computed as (inLen/4)*3 — never inLen*3 — so the multiply cannot
+     * overflow size_t on a 32-bit build; (inLen/4)*3 + 3 still bounds
+     * the at-most floor(inLen*3/4) decoded bytes. */
+    uint8_t *buf = malloc(inLen / 4 * 3 + 3);
     if (buf == NULL) {
         return false;
     }
@@ -130,7 +148,8 @@ bool wbnMapParseResponse(const char *json, WbnMapResult *out) {
     if (out->found) {
         const cJSON *data = cJSON_GetObjectItemCaseSensitive(root, "map_data");
         if (!cJSON_IsString(data) || data->valuestring == NULL ||
-            !b64Decode(data->valuestring, &out->mapData, &out->mapDataLen)) {
+            !b64Decode(data->valuestring, &out->mapData, &out->mapDataLen) ||
+            out->mapDataLen > WBN_MAP_MAX_DECODED) {
             free(out->mapData);
             memset(out, 0, sizeof(*out));
             cJSON_Delete(root);

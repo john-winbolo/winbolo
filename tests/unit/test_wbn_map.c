@@ -86,10 +86,57 @@ static int parse_tolerant_b64(void) {
     return 0;
 }
 
+/* Build a JSON body whose map_data is `b64Chars` copies of 'A' (each a
+ * zero sextet, so the blob decodes to (b64Chars/4)*3 zero bytes).
+ * Caller frees. NULL on OOM. */
+static char *make_oversized_body(size_t b64Chars) {
+    const char *pre  = "{\"found\":true,\"map_data\":\"";
+    const char *post = "\"}";
+    size_t preLen  = strlen(pre);
+    size_t postLen = strlen(post);
+    char *body = malloc(preLen + b64Chars + postLen + 1);
+    if (body == NULL) {
+        return NULL;
+    }
+    memcpy(body, pre, preLen);
+    memset(body + preLen, 'A', b64Chars);
+    memcpy(body + preLen + b64Chars, post, postLen + 1);
+    return body;
+}
+
+/* The decoder caps a decoded map at WBN_MAP_MAX_DECODED (64 KiB): a
+ * blob just over the cap is rejected, one just under decodes fine.
+ * Exercises the overflow-safe allocation + size-cap hardening. */
+static int parse_map_size_cap(void) {
+    WbnMapResult r;
+
+    /* 87388 base64 chars -> 65541 decoded bytes, just over the 65536 cap. */
+    char *over = make_oversized_body(87388);
+    UT_ASSERT_MSG(over != NULL, "alloc oversized body");
+    UT_ASSERT_MSG(!wbnMapParseResponse(over, &r),
+                  "oversized map must be rejected");
+    UT_ASSERT_MSG(r.mapData == NULL, "rejected result must NULL mapData");
+    UT_ASSERT_MSG(r.mapDataLen == 0, "rejected len=%zu", r.mapDataLen);
+    free(over);
+
+    /* 87380 base64 chars -> 65535 decoded bytes, just under the cap. */
+    char *under = make_oversized_body(87380);
+    UT_ASSERT_MSG(under != NULL, "alloc under-cap body");
+    UT_ASSERT_MSG(wbnMapParseResponse(under, &r),
+                  "under-cap map must parse");
+    UT_ASSERT_MSG(r.mapDataLen == 65535, "under-cap len=%zu", r.mapDataLen);
+    UT_ASSERT_MSG(r.mapData != NULL, "under-cap mapData should be allocated");
+    wbnMapResultFree(&r);
+    free(under);
+
+    return 0;
+}
+
 int run_wbn_map_parse(void) {
     int rc;
     rc = parse_found_and_decode(); if (rc) return rc;
     rc = parse_not_found();        if (rc) return rc;
     rc = parse_tolerant_b64();     if (rc) return rc;
+    rc = parse_map_size_cap();     if (rc) return rc;
     return 0;
 }
