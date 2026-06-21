@@ -108,6 +108,8 @@ static const UnitTestEntry s_tests[] = {
     { "md5_streaming_matches_oneshot",           run_md5_streaming_matches_oneshot           },
     { "md5_block_boundaries",                    run_md5_block_boundaries                    },
     { "md5_to_hex",                              run_md5_to_hex                              },
+    { "pill_armour_intank_roundtrip",            run_pill_armour_intank_roundtrip            },
+    { "base_event_classification",               run_base_event_classification               },
     { "ranked_flag_persists_with_one_player",    run_ranked_flag_persists_with_one_player    },
     { "ranked_shape_gate",                       run_ranked_shape_gate                       },
     { "lobby_lock_bit_lookup",                   run_lobby_lock_bit_lookup                   },

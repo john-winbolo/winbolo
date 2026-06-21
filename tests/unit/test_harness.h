@@ -121,6 +121,14 @@ int run_md5_rfc1321_vectors(void);
 int run_md5_streaming_matches_oneshot(void);
 int run_md5_block_boundaries(void);
 int run_md5_to_hex(void);
+
+/* Network-optimization wire changes (test_net_opt_wire.c): the pill
+ * armour/inTank byte-packing helpers round-trip across the full range, and
+ * the split base / packed pill game events have the expected wire sizes and
+ * reliability classes. */
+int run_pill_armour_intank_roundtrip(void);
+int run_base_event_classification(void);
+
 int run_ranked_flag_persists_with_one_player(void);
 int run_ranked_shape_gate(void);
 int run_lobby_lock_bit_lookup(void);
