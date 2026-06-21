@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -285,7 +285,7 @@ void transportUdpClientSendLobbyMapUploadBegin(Transport *t, uint32_t totalLen,
 void transportUdpClientSendLobbyMapUseLocal(Transport *t, uint32_t totalLen,
                                              const char *name,
                                              const char *relPath,
-                                             const uint8_t md5[16]);
+                                             const char md5Hex[32]);
 
 /* Lobby map upload entry points — the chunked PACKET_LOBBY_MAP_UPLOAD_*
  * state machine that used to live in imgui_lobby's per-frame pump. The
@@ -698,5 +698,14 @@ bool transportUdpClientTestBeginResync(Transport *t);
  * (cumulative successful installs). */
 void transportUdpClientTestMapState(Transport *t, uint32_t *installedMapGen,
                                     uint32_t *mapResyncCount);
+/* Drive the real resync finalize on a caller-supplied blob (arming the resync
+ * precondition with a fresh generation). A corrupt blob must leave
+ * installedMapGen/mapResyncCount unchanged; a valid one advances them. Returns
+ * false on bad args or allocation failure. */
+bool transportUdpClientTestFinalizeResync(Transport *t, const BYTE *buf, int len);
+/* Read the resync debounce state: whether a resync is in flight and the
+ * consecutive-mismatch streak that gates a new request. */
+void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
+                                       uint32_t *mismatchStreak);
 
 #endif /* TRANSPORT_UDP_H */

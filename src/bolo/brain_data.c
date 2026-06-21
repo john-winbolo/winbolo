@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -257,6 +257,7 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
         }
         break;
       case EVENT_BASE_UPDATE:
+      case EVENT_BASE_STOCK:
         if (aiMode == aiYesAdvantage || aiMode == aiFull) {
           buf[filtered++] = *e;
         } else {

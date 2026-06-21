@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * sound_wasm.c — WebAudio-backed sound implementation for the WASM build.
  *
  * Replaces gui/sdl3/sound.c on the WASM target.  Instead of running an

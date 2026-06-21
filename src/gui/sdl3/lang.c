@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1684,6 +1684,15 @@ static const LangEntry langTable[] = {
     {1801, "Auto-refresh"},
     {1802, "Lobby"},
     {1803, "In Game"},
+    {1814, "Select a server"},
+    {1815, "Preview unavailable"},
+    {1816, "Click to enlarge"},
+    {1817, "({number} AI players)"},
+    {1818, "WinBolo.net players:"},
+    {1819, "Locked/Full"},
+    {1820, "No response"},
+    {1821, "rnd"},
+    {1822, "Tourn"},
     {1804, "Controller Disconnected"},
     {1805, "Your gamepad has been disconnected. You can reconnect it or switch to keyboard controls."},
     {1806, "Continue with keyboard and mouse"},
@@ -1694,6 +1703,11 @@ static const LangEntry langTable[] = {
     {1811, "Shift"},
     {1812, "Space"},
     {1813, "Enter"},
+    {1823, "UI Scale"},
+    {1824, "Auto"},
+    {1825, "Small"},
+    {1826, "Medium"},
+    {1827, "Large"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * mp_diag_log.c — see header.  Temporary diagnostic logger; written to
  * be removable in one grep when the regression is fixed.
  */

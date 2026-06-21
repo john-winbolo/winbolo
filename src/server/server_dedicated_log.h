@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 #ifndef SERVER_DEDICATED_LOG_H
 #define SERVER_DEDICATED_LOG_H
 

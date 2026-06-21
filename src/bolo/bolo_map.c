@@ -1,7 +1,7 @@
 /*
  * $Id$
  *
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1596,6 +1596,16 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
 
   returnValue = TRUE;
 
+  /* Reject input too short to hold the fixed header before any struct read:
+   * basesSetBaseCompressData/pillsSetPillCompressData/startsSetStartCompressData
+   * each memcpy their full SIZEOF_* below regardless of inputLen, so a truncated
+   * or malformed blob would over-read past the buffer. Every legitimate caller
+   * passes a full compressed map; only short/garbage input is rejected here. */
+  if (input == NULL ||
+      inputLen < (int)(SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS)) {
+    return FALSE;
+  }
+
   /* Bases */
   ptr = input;
   basesSetBaseCompressData(bs, ptr, SIZEOF_BASES);
@@ -1761,7 +1771,33 @@ void mapCenter(map *value, pillboxes *pb, bases *bs, starts *ss) {
 }
 
 uint16_t mapCalcChecksum(map *value) {
-  return (uint16_t)CRCCalc((BYTE *)(*value)->mapItem, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+  const BYTE *src = (const BYTE *)(*value)->mapItem;
+  size_t n = (size_t)MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
+  BYTE *masked;
+  uint16_t crc;
+  size_t i;
+
+  /* Mine state is stored in mapItem as terrain values in [MINE_START,
+   * MINE_END] but is synced separately (the mns overlay + EVENT_MINE_VISIBLE),
+   * so under hidden mines the client and server legitimately hold different
+   * mine bits. CRCing the raw mapItem therefore mismatches by a fixed amount
+   * forever, which drives an endless resync loop. Strip each mined tile back
+   * to its base terrain (value - MINE_SUBTRACT) before CRCing so the checksum
+   * covers only terrain both ends agree on. The buffer is per-call heap: this
+   * runs on both the sim and recv threads, so a static buffer would race and a
+   * 64 KB stack array is too large. */
+  masked = (BYTE *)malloc(n);
+  if (masked == NULL) {
+    /* Degraded but safe: the raw (mine-inclusive) CRC rather than a crash. */
+    return (uint16_t)CRCCalc((BYTE *)(*value)->mapItem, (int)n);
+  }
+  for (i = 0; i < n; i++) {
+    BYTE t = src[i];
+    masked[i] = (t >= MINE_START && t <= MINE_END) ? (BYTE)(t - MINE_SUBTRACT) : t;
+  }
+  crc = (uint16_t)CRCCalc(masked, (int)n);
+  free(masked);
+  return crc;
 }
 
 bool boloMapValidate(const char *path, char *outMapName, size_t outMapNameSize) {

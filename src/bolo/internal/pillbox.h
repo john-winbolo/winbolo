@@ -1,7 +1,7 @@
 /*
  * $Id$
  *
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,6 +30,8 @@
 
 
 /* Includes */
+#include <assert.h>
+
 #include "global.h"
 #include "alliance_enums.h"
 #include "types.h"
@@ -46,6 +48,15 @@ struct ClientSim;
 #define PILLBOX_MAX_FIRERATE 6 /* 6 */
 
 #define PILLS_MAX_ARMOUR 15
+
+/* Pill armour (0..PILLS_MAX_ARMOUR) and the inTank flag share one wire byte:
+ * armour in the low nibble, inTank in bit 4. */
+static inline uint8_t pillPackArmourInTank(uint8_t armour, bool inTank) {
+    assert(armour <= PILLS_MAX_ARMOUR);
+    return (uint8_t)((armour & 0x0F) | (inTank ? 0x10 : 0x00));
+}
+static inline uint8_t pillArmourFromByte(uint8_t b) { return (uint8_t)(b & 0x0F); }
+static inline bool    pillInTankFromByte(uint8_t b) { return (b & 0x10) != 0; }
 
 /* A pillbox range is 8 map squares or 2048 world units */
 #define PILLBOX_RANGE 2048

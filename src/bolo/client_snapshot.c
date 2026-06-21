@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -279,6 +279,7 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
       case EVENT_PLAYER_LEAVE:
       case EVENT_PILL_UPDATE:
       case EVENT_BASE_UPDATE:
+      case EVENT_BASE_STOCK:
       case EVENT_EXPLOSION:
         if (csPtr->brainEventCount < MAX_BRAIN_EVENTS) {
           csPtr->brainEvents[csPtr->brainEventCount++] = events[i];
@@ -434,28 +435,35 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         csPtr->hasAnyPillCaptured = true;
         break;
       case EVENT_PILL_UPDATE:
-        /* data: [pillIndex, x, y, owner, armour, speed, inTank] */
+        /* data: [pillIndex, x, y, owner, armourInTank] */
         {
           BYTE idx = events[i].data[0];
           if (idx < MAX_PILLS && csPtr->sim.pb != NULL) {
             (*csPtr->sim.pb).item[idx].x      = events[i].data[1];
             (*csPtr->sim.pb).item[idx].y      = events[i].data[2];
             (*csPtr->sim.pb).item[idx].owner  = events[i].data[3];
-            (*csPtr->sim.pb).item[idx].armour = events[i].data[4];
-            (*csPtr->sim.pb).item[idx].speed  = events[i].data[5];
-            (*csPtr->sim.pb).item[idx].inTank = events[i].data[6] ? TRUE : FALSE;
+            (*csPtr->sim.pb).item[idx].armour = pillArmourFromByte(events[i].data[4]);
+            (*csPtr->sim.pb).item[idx].inTank = pillInTankFromByte(events[i].data[4]) ? TRUE : FALSE;
           }
         }
         break;
       case EVENT_BASE_UPDATE:
-        /* data: [baseIndex, owner, armour, shells, mines] */
+        /* data: [baseIndex, owner] */
         {
           BYTE idx = events[i].data[0];
           if (idx < MAX_BASES && csPtr->sim.bs != NULL) {
-            (*csPtr->sim.bs).item[idx].owner  = events[i].data[1];
-            (*csPtr->sim.bs).item[idx].armour = events[i].data[2];
-            (*csPtr->sim.bs).item[idx].shells = events[i].data[3];
-            (*csPtr->sim.bs).item[idx].mines  = events[i].data[4];
+            (*csPtr->sim.bs).item[idx].owner = events[i].data[1];
+          }
+        }
+        break;
+      case EVENT_BASE_STOCK:
+        /* data: [baseIndex, armour, shells, mines] */
+        {
+          BYTE idx = events[i].data[0];
+          if (idx < MAX_BASES && csPtr->sim.bs != NULL) {
+            (*csPtr->sim.bs).item[idx].armour = events[i].data[1];
+            (*csPtr->sim.bs).item[idx].shells = events[i].data[2];
+            (*csPtr->sim.bs).item[idx].mines  = events[i].data[3];
           }
         }
         break;
@@ -1048,12 +1056,11 @@ void clientApplySnapshot(ClientSim *csPtr,
   /* Apply pill snapshots */
   if (pillSnaps != NULL && csPtr->sim.pb != NULL) {
     for (i = 0; i < pillCount && i < MAX_PILLS; i++) {
-      (*csPtr->sim.pb).item[i].x = pillSnaps[i].x;
-      (*csPtr->sim.pb).item[i].y = pillSnaps[i].y;
-      (*csPtr->sim.pb).item[i].owner = pillSnaps[i].owner;
-      (*csPtr->sim.pb).item[i].armour = pillSnaps[i].armour;
-      (*csPtr->sim.pb).item[i].speed = pillSnaps[i].speed;
-      (*csPtr->sim.pb).item[i].inTank = pillSnaps[i].inTank ? TRUE : FALSE;
+      (*csPtr->sim.pb).item[i].x      = pillSnaps[i].x;
+      (*csPtr->sim.pb).item[i].y      = pillSnaps[i].y;
+      (*csPtr->sim.pb).item[i].owner  = pillSnaps[i].owner;
+      (*csPtr->sim.pb).item[i].armour = pillArmourFromByte(pillSnaps[i].armourInTank);
+      (*csPtr->sim.pb).item[i].inTank = pillInTankFromByte(pillSnaps[i].armourInTank) ? TRUE : FALSE;
     }
   }
 

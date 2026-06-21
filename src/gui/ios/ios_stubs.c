@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * ios_stubs.c — Stub implementations for modules not included
  * in the iOS target. Covers: winbolonet, geolookup, and cursor.
  *

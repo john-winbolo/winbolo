@@ -1,7 +1,7 @@
 /*
  * $Id$
  *
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -60,17 +60,20 @@ BOLO_STATIC_ASSERT(sizeof(BOLOHEADER) == 8, BOLOHEADER_must_be_8_bytes);
 /* Game ID — uniquely identifies a game session */
 #ifndef _GAMEID_DEFINED
 #define _GAMEID_DEFINED
+#pragma pack(push, 1)
 typedef struct BOLO_PACK_ATTR {
   struct in_addr serveraddress;
   unsigned short serverport;
   uint16_t _padding;
   uint32_t start_time;
 } GAMEID;
+#pragma pack(pop)
 #endif
 
 /* Info packet response — 76-byte wire format for game browser */
 #ifndef _INFO_PACKET_DEFINED
 #define _INFO_PACKET_DEFINED
+#pragma pack(push, 1)
 typedef struct BOLO_PACK_ATTR {
   BOLOHEADER h;
   char mapname[MAP_STR_SIZE];
@@ -78,17 +81,36 @@ typedef struct BOLO_PACK_ATTR {
   BYTE gametype;
   BYTE allow_mines;
   BYTE allow_AI;
-  BYTE spare1;
+  BYTE flags;             /* INFO_FLAG_* bits (was spare1)                */
   int32_t start_delay;
   int32_t time_limit;
   WORD num_players;
   WORD free_pills;
   WORD free_bases;
   BYTE has_password;
-  BYTE spare2;
+  BYTE spectator_count;   /* spectators present (0 for now — future work) */
+  BYTE num_humans;        /* human players among num_players              */
+  BYTE num_bots;          /* AI bots among num_players                    */
+  BYTE max_players;       /* server's join-slot cap (MAX_TANKS when unset) */
+  char map_md5[32];       /* 32 lowercase hex chars, no NUL; zero-filled  */
+                          /* when the map is random/unknown               */
 } INFO_PACKET;
-BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 76, INFO_PACKET_must_be_76_bytes);
+#pragma pack(pop)
+BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
+
+/* Historical INFO_PACKET wire size, before the flags/count/md5 fields were
+ * appended. Servers older than those additions send this; discovery accepts
+ * it and parses only the common prefix. */
+#define INFO_PACKET_LEGACY_SIZE 76
 #endif
+
+/* INFO_PACKET.flags bit values (the byte that was spare1). */
+#define INFO_FLAG_ALLOW_NEW_PLAYERS 0x01u
+#define INFO_FLAG_LOCKED            0x02u
+#define INFO_FLAG_RANKED            0x04u
+#define INFO_FLAG_RANDOM_MAP        0x08u
+#define INFO_FLAG_ALLOW_SPECTATORS  0x10u
+#define INFO_FLAG_IN_LOBBY          0x20u
 
 /* Packet types */
 /* Info Packet */

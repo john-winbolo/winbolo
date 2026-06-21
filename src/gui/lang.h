@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -580,6 +580,15 @@
 #define STR_DLGBROWSER_AUTO_REFRESH         1801
 #define STR_DLGBROWSER_ST_LOBBY             1802
 #define STR_DLGBROWSER_ST_INGAME            1803
+#define STR_DLGBROWSER_SELECT_SERVER        1814
+#define STR_DLGBROWSER_PREVIEW_UNAVAIL      1815
+#define STR_DLGBROWSER_PREVIEW_ENLARGE      1816
+#define STR_DLGBROWSER_AI_PLAYERS           1817
+#define STR_DLGBROWSER_WBN_PLAYERS          1818
+#define STR_DLGBROWSER_ST_LOCKED            1819
+#define STR_DLGBROWSER_ST_NORESP            1820
+#define STR_DLGBROWSER_RND_ABBR             1821
+#define STR_DLGBROWSER_TYPE_TOURN_ABBR      1822
 #define STR_DLGBROWSER_STATUS_PINGING       698
 #define STR_DLGBROWSER_STATUS               699
 #define STR_DLGBROWSER_NEWGAME              700
@@ -1435,6 +1444,13 @@
 #define STR_OSK_SHIFT                       1811
 #define STR_OSK_SPACE                       1812
 #define STR_OSK_ENTER                       1813
+
+/* In-game settings — UI scale override */
+#define STR_DLGSETTINGS_UISCALE             1823
+#define STR_DLGSETTINGS_UISCALE_AUTO        1824
+#define STR_DLGSETTINGS_UISCALE_SMALL       1825
+#define STR_DLGSETTINGS_UISCALE_MEDIUM      1826
+#define STR_DLGSETTINGS_UISCALE_LARGE       1827
 
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820

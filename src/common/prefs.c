@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * Process-global preferences API. See prefs.h for the contract. This is
  * a thin layer over the PrefsDoc module: it owns one document and a copy
  * of its on-disk path, and flushes on every set to preserve the

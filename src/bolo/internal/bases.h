@@ -1,7 +1,7 @@
 /*
  * $Id$
  *
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -397,6 +397,10 @@ void basesRefueling(struct GameSim *sim, tank *tnk, BYTE baseNum);
 *  yValue - Y Map Location of the tank
 *********************************************************/
 BYTE basesGetClosest(struct GameSim *sim, WORLD tankX, WORLD tankY);
+
+/* Explicit-player variant of basesGetClosest (evaluates for the given player
+ * rather than sim->viewPlayer). */
+BYTE basesGetClosestForPlayer(struct GameSim *sim, BYTE player, WORLD tankX, WORLD tankY);
 
 /*********************************************************
 *NAME:          basesGetStats

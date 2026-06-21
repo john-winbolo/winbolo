@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * winbolonet_wasm.c - No-op WinBolo.net stubs for WASM build
  *
  * Replaces all of winbolonet/*.c (winbolonet.c, http.c,

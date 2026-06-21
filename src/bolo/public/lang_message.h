@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * lang_message.h — shared MessageArgs / langid definitions used by
  * both src/bolo/ (message-rendering call sites) and src/gui/lang.h
  * (the actual implementation). Kept here so non-GUI consumers can

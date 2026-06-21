@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * steam_wrapper_stub.c — no-op stubs when the Steamworks SDK is absent.
  */
 #include <stddef.h>

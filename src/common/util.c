@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 // Require Windows 10 1607+ APIs (GetDpiForWindow, AdjustWindowRectExForDpi)
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0A00
