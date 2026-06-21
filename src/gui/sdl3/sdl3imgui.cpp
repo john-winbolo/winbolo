@@ -2648,6 +2648,66 @@ static void renderSettingsPanel(ClientSim *cs) {
         }
     }
 
+    /* ---- Info ---- */
+    ImGui::Separator();
+    if (ImGui::Selectable(langGetText(STR_DLGGAMEINFO_TITLE), s_showGameInfo)) s_showGameInfo = !s_showGameInfo;
+    if (ImGui::Selectable(langGetText(STR_DLGSYSINFO_TITLE),  s_showSysInfo))  { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; }
+    if (ImGui::Selectable(langGetText(STR_DLGNETINFO_TITLE),  s_showNetInfo))  { if (!s_showNetInfo) pingGraphReset();  s_showNetInfo = !s_showNetInfo; }
+
+    /* ---- Brains ---- */
+    if (clientSimGetAiType(cs) != aiNone) {
+        if (ImGui::CollapsingHeader(langGetText(STR_MENU_BRAINS))) {
+            bool running = luaBrainIsRunning() != 0;
+            int  runIdx  = luaBrainGetRunningIndex();
+
+            /* Manual (stop brain) entry — selected when no brain is active */
+            if (ImGui::Selectable(langGetText(STR_MENU_MANUAL), !running)) {
+                if (running) {
+                    luaBrainStop();
+                    mlBrainStopSingleton();
+                }
+            }
+
+            /* One entry per discovered brain */
+            int numBrains = luaBrainGetNum();
+            if (numBrains > 0) {
+                ImGui::Separator();
+                for (int bi = 0; bi < numBrains; bi++) {
+                    const char *name = luaBrainGetName(bi);
+                    bool isActive    = running && (bi == runIdx);
+                    if (ImGui::Selectable(name ? name : "?", isActive)) {
+                        if (!isActive) {
+                            const char *path = luaBrainGetPath(bi);
+                            if (path) {
+                                if (luaBrainGetType(bi) == BRAIN_TYPE_ONNX) {
+                                    mlBrainStartSingleton(path, name ? name : "", cs);
+                                } else {
+                                    luaBrainStart(path, name ? name : "", cs);
+                                }
+                                /* Refresh settings descriptor for the new brain */
+                                luaBrainFreeSettings(s_brainSettings);
+                                s_brainSettings      = nullptr;
+                                s_brainSettingsCount = 0;
+                                s_brainSettingsOpen  = false;
+                            }
+                        }
+                    }
+                }
+            }
+
+            /* Settings entry — only when a Lua brain is running (ONNX has no settings) */
+            if (running && !mlBrainSingletonIsRunning()) {
+                ImGui::Separator();
+                if (ImGui::Button(langGetText(STR_MENU_SETTINGS))) {
+                    /* Re-fetch on every open so values are current */
+                    luaBrainFreeSettings(s_brainSettings);
+                    s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
+                    s_brainSettingsOpen  = true;
+                }
+            }
+        }
+    }
+
     /* ---- About ---- */
     ImGui::Separator();
     if (ImGui::Button(langGetText(STR_MENU_ABOUT))) {
