@@ -5218,7 +5218,7 @@ function M.update_attack_substate(goal, state, world, info)
       local _kill_locked = goal._kill_attempt and (goal._on_target_in_flight or 0) >= (pill.health or 0)
       local _hits_swerve = (goal._charge_hits_total or 0) >= (C.ATTACK_CURVE_AFTER_HITS or 3)
       if (_hits_swerve or _kill_locked) and not _tank_finish then
-        if BRAIN_DEBUG_MODE and BRAIN_LOG_SWERVE then print2(string.format("SWERVE_ENTER t=%d site=charge_defensive tid=%s goal=(%d,%d) hits_total=%s kill_locked=%s", now, tostring(goal.target_id), pmx, pmy, tostring(goal._charge_hits_total), tostring(_kill_locked))) end
+        if BRAIN_DEBUG_MODE then print2(string.format("SWERVE_ENTER t=%d site=charge_defensive tid=%s goal=(%d,%d) hits_total=%s kill_locked=%s armour=%d pill_hp=%s", now, tostring(goal.target_id), pmx, pmy, tostring(goal._charge_hits_total), tostring(_kill_locked), info.armour or -1, tostring(pill and pill.health))) end
         enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
         return
       end

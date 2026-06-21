@@ -53,7 +53,8 @@ function M.draw(viz, world, state, info)
       if p.owner == "friendly" or p.owner == "allied" then
         counts.utility = counts.utility + 1
         intank_n = intank_n + 1
-        rows[#rows + 1] = { id = id, label = "[tank] util", key = "utility" }
+        local carrier = p.carrier or p.owner_player
+        rows[#rows + 1] = { id = id, label = string.format("[tank #%s] util", tostring(carrier or "?")), key = "utility" }
       end
     elseif p.owner == "friendly" and (p.health or 0) > 0 then
       local cat = PP.role_of(p, state and state.tick)   -- cached 60s role

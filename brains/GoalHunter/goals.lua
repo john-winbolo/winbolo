@@ -4067,14 +4067,32 @@ local function get_formula(e)
      or e._reject == "ally_pill_take_priority" then
     return f
   end
-  -- Cost-baked ally penalty (pool 1 soft +100, pool 8 hard +10000).  Only
-  -- emit the term when the penalty actually exists on this entry.
+  -- Cost-baked ally penalty (pool 1 soft +100/ally, pool 8 hard +10000).  Only
+  -- emit the term when the penalty actually exists on this entry — EXCEPT
+  -- refuel (pool 1), which ALWAYS shows ally_claimed (0 when no allies) so the
+  -- Term Breakdown column stays stable.
   local pen = e.ally_claimed_pen or 0
   local term_disp, term_map
   if pen > 0 then
     term_disp = string.format(" + ally_claimed{%d}", pen)
-    term_map  = string.format("|ally_claimed:yielding to ally (p%s)",
-                              tostring(e.ally_claimed_by or "-"))
+    if e._p == 1 then
+      -- Refuel (pool 1): soft, per-ally — NOT a yield. Show the count math.
+      term_map = string.format(
+        "|ally_claimed:%d ally%s targeting this base x %.0f[ALLY_CLAIMED_REFUEL_PENALTY] = %.0f (soft, still selectable; p%s first)",
+        e._ally_n or 0, ((e._ally_n or 0) == 1) and "" or "s",
+        C.ALLY_CLAIMED_REFUEL_PENALTY or 100, pen,
+        tostring(e.ally_claimed_by or "-"))
+    else
+      term_map = string.format("|ally_claimed:yielding to ally (p%s)",
+                               tostring(e.ally_claimed_by or "-"))
+    end
+  elseif e._p == 1 and not e._reject then
+    -- Refuel with NO allies contesting: still emit the term at 0 so it's
+    -- always present in the breakdown (becomes +N00 once allies pile on).
+    term_disp = " + ally_claimed{0}"
+    term_map  = string.format(
+      "|ally_claimed:0 allies targeting this base -> 0 (soft +%.0f[ALLY_CLAIMED_REFUEL_PENALTY] per ally when contested)",
+      C.ALLY_CLAIMED_REFUEL_PENALTY or 100)
   elseif e._ally_score then
     -- Hard-REJECT pool, ally is bidding, but we kept the candidate
     -- (either we're cheaper or we're within the steal band).  Display
@@ -4426,14 +4444,39 @@ function M.step_eval_queue(state, world, info)
         score = score * C.REFUEL_NO_DANGER_DISCOUNT
       end
 
-      -- Ally-claimed handling for refuel now goes through the SAME hard
-      -- REJECT path as the other pools (sync_ally_claimed_rejects, gated by
-      -- _REJECT_POOLS[1]).  We expose _id/_mx/_my below so the sync can match
-      -- an ally on the same base; it then sets _reject="ally_claimed" (subject
-      -- to the ratio steal band) instead of the old soft +100.  A rejected
-      -- base falls through to the next base candidate; if a bot gets desperate
-      -- its rising urgency makes it cheaper and the steal band hands the base
-      -- back, so this self-resolves rather than starving.
+      -- Ally-claimed SOFT penalty: +ALLY_CLAIMED_REFUEL_PENALTY for EACH ally
+      -- currently broadcasting refuel_at_base on THIS base. Refuel is NOT in
+      -- _REJECT_POOLS — instead of a hard first-come-first-served reject, a base
+      -- others are already heading to just gets pricier per ally. A closer / more
+      -- urgent bot can still pick it (and then brakes beside it via the
+      -- wait_for_ally substate in init.lua if an ally tank is parked on the
+      -- tile); everyone else drifts to emptier bases. Skip allies whose tank is
+      -- dead (a stale broadcast shouldn't price a base we can actually use).
+      local ally_claimed_n  = 0
+      local ally_claimed_by = nil
+      for ally_pn, slot in ally_state.iter_active(now, 1750) do
+        if ally_pn ~= info.player_number
+           and not (state.tank_dead_at and state.tank_dead_at[ally_pn]
+                    and state.tank_dead_at[ally_pn] > (slot.last_tick or 0)) then
+          local h = slot.info
+          if h and h.goal == "refuel_at_base" then
+            local aid = tonumber(h.target)
+            local matched
+            if aid and id then
+              matched = (aid == id)
+            else
+              local amx, amy = tonumber(h.mx), tonumber(h.my)
+              if amx and amy then matched = (amx == obj.mx and amy == obj.my) end
+            end
+            if matched then
+              ally_claimed_n  = ally_claimed_n + 1
+              ally_claimed_by = ally_claimed_by or ally_pn
+            end
+          end
+        end
+      end
+      local ally_claimed_cost = ally_claimed_n * (C.ALLY_CLAIMED_REFUEL_PENALTY or 100)
+      score = score + ally_claimed_cost
 
       -- Panel detail (debug only): walk the Dijkstra slate step-by-step from
       -- the tank to the costed destination (cost_dx,cost_dy — the base's
@@ -4462,6 +4505,9 @@ function M.step_eval_queue(state, world, info)
         _lgm_mult = _lgm_mult,
         _safe_refuel = _safe_refuel or nil,
         _path = _p1_path_str,
+        _ally_n = (ally_claimed_n > 0) and ally_claimed_n or nil,
+        ally_claimed_pen = (ally_claimed_cost > 0) and ally_claimed_cost or nil,
+        ally_claimed_by  = ally_claimed_by,
       }
 
       pr.candidates[#pr.candidates + 1] = {
@@ -5140,8 +5186,12 @@ end
 -- cadence — an ally yielding mid-cycle un-REJECTs us on the very next
 -- tick instead of waiting for the slow attack_pill re-eval window.
 -- =========================================================================
+-- NOTE: pool 1 (refuel_at_base) is deliberately ABSENT — refuel uses a SOFT
+-- per-ally +ALLY_CLAIMED_REFUEL_PENALTY cost bump baked at eval time (see the
+-- pool-1 branch in step_eval_queue), not a hard ally_claimed reject. Two bots
+-- may legitimately converge on one base; the wait_for_ally substate parks the
+-- later arrival beside it.
 local _REJECT_POOLS = {
-  [1] = "refuel_at_base",
   [2] = "defend_pill",
   [3] = "capture_base",
   [4] = "capture_pill",
@@ -5510,50 +5560,7 @@ local function sync_ally_claimed_rejects(state, info)
         -- co-attacker just wastes our cycles since the ally finishes
         -- the kill first.  Only exception is we_hold: a true race
         -- where we ALSO committed to the same target.
-        if pool_idx == 1 then
-          -- Bases (refuel): strictly FIRST-COME-FIRST-SERVED — NO cost
-          -- stealing. If an ally is broadcasting this base, yield to them;
-          -- the only time we keep is when we ALSO already hold it (a
-          -- simultaneous commit), broken deterministically by player_number
-          -- so we never dual-yield. The rejected bot falls through to its
-          -- next-nearest base, which spreads crowds across bases.
-          we_keep = we_hold and (self_pn < match_pn)
-          -- Far-claimer override: a far-away ally shouldn't be able to
-          -- reserve a base we're sitting right next to. We read the
-          -- claiming ally's tank straight out of local perception
-          -- (info.objects) — if we're close enough to the base to want
-          -- it, the claimer is within our sensor range too, so we can
-          -- measure its real euclidean distance. If that's
-          -- > REFUEL_CLAIM_FAR_TILES and we're closer, ignore the claim.
-          -- If the claimer isn't visible at all it's beyond sensor range
-          -- (definitionally far), so the override still applies whenever
-          -- we're the closer one.
-          if not we_keep and info and info.tankx and e._mx and e._my then
-            local far_tiles = C.REFUEL_CLAIM_FAR_TILES or 10
-            local bmx, bmy   = e._mx, e._my
-            local our_dx     = (info.tankx >> 8) - bmx
-            local our_dy     = (info.tanky >> 8) - bmy
-            local our_d      = math.sqrt(our_dx * our_dx + our_dy * our_dy)
-            local ally_d     = math.huge
-            local ally_seen  = false
-            if info.objects then
-              for _, ob in ipairs(info.objects) do
-                if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) == 0
-                   and ob.idnum == match_pn then
-                  local adx = (ob.x >> 8) - bmx
-                  local ady = (ob.y >> 8) - bmy
-                  ally_d    = math.sqrt(adx * adx + ady * ady)
-                  ally_seen = true
-                  break
-                end
-              end
-            end
-            if ally_d > far_tiles and our_d < ally_d then
-              we_keep = true
-              print2(string.format("REFUEL_CLAIM_OVERRIDE base#%s @(%d,%d): claimer p%s %s ally_d=%.1f > %d, our_d=%.1f — IGNORING claim, taking base", tostring(e._id), bmx, bmy, tostring(match_pn), ally_seen and "visible" or "NOT-visible(beyond-sensor=far)", ally_d, far_tiles, our_d))
-            end
-          end
-        elseif force_engaging_reject and not we_hold then
+        if force_engaging_reject and not we_hold then
           we_keep = false
         elseif pool_idx == 6 and not we_hold and e._id and state.squad_joinable_pills
                and state.squad_joinable_pills[e._id] then
@@ -8618,6 +8625,7 @@ function M.get_pool_breakdown_json(state)
   local now = state.tick or 0
   local cache = state.cost_cache or {}
   local pc = state.pool_cache or {}
+  if BRAIN_DEBUG_MODE then local _nc=0 for _ in pairs(cache) do _nc=_nc+1 end local _np=0 for _ in pairs(pc) do _np=_np+1 end print2(string.format("POOL_BREAKDOWN_ENTRY t=%d bot=%s cost_cache=%d pool_cache=%d pool_viz=%s", now, tostring(state.player_number), _nc, _np, tostring(BRAIN_POOL_VIZ))) end
   local phase_weights = C.PHASE_WEIGHTS[state.phase]
 
   -- Refuel live cost-shape (pool 1) for the term breakdown. goal_selection
@@ -9288,6 +9296,7 @@ function M.get_pool_breakdown_json(state)
     end
   end
 
+  if BRAIN_DEBUG_MODE then local _nr=0 for _,s in ipairs(sections) do _nr=_nr+(s.rows and #s.rows or 0) end print2(string.format("POOL_BREAKDOWN_EXIT t=%d bot=%s sections=%d rows=%d", now, tostring(state.player_number), #sections, _nr)) end
   return json.encode({
     -- Bump schema_version when the shape changes in a way that
     -- breaks existing renderers / recorded snapshots. Renderers

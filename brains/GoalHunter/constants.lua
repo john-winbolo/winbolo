@@ -584,10 +584,14 @@ M.GOAL_TARGET_SWITCH_PENALTY = 15  -- cost added when same group but different t
 -- goals) we add this penalty so we prefer a different objective.
 -- attack_tank is exempt — tank threats are time-critical and locally
 -- observed; a stale ally broadcast shouldn't pull us off a fight.
--- refuel_at_base uses a much smaller penalty (just steer us to a
--- different base when possible) since refuel is fungible.
+-- refuel_at_base uses a much smaller SOFT penalty (just steer us to a
+-- different base when possible) since refuel is fungible: it is NOT in
+-- _REJECT_POOLS, and instead pays ALLY_CLAIMED_REFUEL_PENALTY PER ally
+-- already targeting the same base (added at eval in the pool-1 branch).
+-- A closer / more-urgent bot can still pick a crowded base and then brake
+-- beside it (wait_for_ally) rather than being hard-rejected off it.
 M.ALLY_CLAIMED_PENALTY        = 10000
-M.ALLY_CLAIMED_REFUEL_PENALTY = 100
+M.ALLY_CLAIMED_REFUEL_PENALTY = 100  -- per ally, soft (see pool-1 eval branch)
 -- "Steal margin" used by the ally-claimed REJECT path on hard-pools
 -- (2,3,4,5,6,7). We only REJECT our candidate when the ally's
 -- broadcast cost is at least this many units below ours; within the
@@ -600,10 +604,11 @@ M.ALLY_CLAIMED_STEAL_THRESHOLD = 100   -- (legacy additive band; superseded by t
 -- behaves the same for cheap pill captures (~20-40) and expensive base
 -- captures (~1000s). 0.10 = "must be >=10% cheaper to steal".
 M.ALLY_CLAIMED_STEAL_FRAC      = 0.10
--- Refuel ally-claim override: a far-away ally can't reserve a base we're
--- sitting next to. If the claiming ally is > this many tiles (euclidean)
--- from the base and we're closer, ignore their first-come claim and take
--- it. Claimer-not-visible (beyond our sensor range) counts as far.
+-- DEPRECATED / unused: the refuel ally-claim FCFS reject (and its
+-- far-claimer override) was replaced by the SOFT per-ally cost penalty
+-- (ALLY_CLAIMED_REFUEL_PENALTY). Refuel is no longer in _REJECT_POOLS, so
+-- there is no first-come claim to override. Kept only to avoid a nil
+-- lookup if any stale reference survives; safe to remove later.
 M.REFUEL_CLAIM_FAR_TILES       = 10
 M.GOAL_COMMITMENT_PER_TICK = 0.5   -- extra switch penalty per tick spent on current goal
 M.GOAL_COMMITMENT_CAP      = 75    -- max commitment penalty (reached after 150 ticks / 3s)
@@ -1299,12 +1304,12 @@ M.UTIL_ACTIVE_PICKUP   = true   -- R1b: actively pick up a back pill to hit the 
 -- cost is multiplied by this, biasing it AWAY from the (congested) pill economy
 -- and toward bases / tank fights / defense via ordinary goal selection. The old
 -- R4 base-stealer mission (HARASSER_TAKE_BASES / _REAR_PUSH / _MINE) was scrapped.
-M.HARASSER_PILL_COST_MULT = 2.0
+M.HARASSER_PILL_COST_MULT = 5.0
 -- Harasser distance de-emphasis: every distance-tied cost term in a harasser's
 -- combat goals (attack_pill travel, attack_tank / kill_lgm path_cost + LOS
 -- per-tile + far-preempt) is multiplied by this, so harassers roam far to fight
 -- instead of being pinned near home. 1.0 = no discount; lower = ranges farther.
-M.HARASSER_TRAVEL_MULT = 0.5
+M.HARASSER_TRAVEL_MULT = 0.2
 -- Recruitment (slice 2): a soldier answers a nearby commander's pill take when
 -- it's in a follow-the-call state and not too low on resources.
 M.SQUAD_MIN_HELP_ARMOUR  = 10  -- below this armour a soldier won't answer (hard decline)

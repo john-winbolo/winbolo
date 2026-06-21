@@ -995,7 +995,11 @@ local function attack_pill_steer(state, world, info, goal)
     -- so it should close FAST via the non-PPT reach-based path below (full speed,
     -- brake at shot range) even though the pill's HP set goal._is_ppt at plan
     -- time. Shielded PPT takes and solo PPT still creep.
-    local _charge_ppt = goal._is_ppt and not (goal._blitz and not goal._blitz_shielded)
+    -- Charge is the FAST rush by definition — it never creeps. Even a shielded /
+    -- solo PPT take closes at full speed here; precise shielded-standoff landing
+    -- is the in_range_position path's job, not charge. (Was: creep at
+    -- PPT_CHARGE_MAX_SPEED for PPT takes — that produced the spd=4 crawl.)
+    local _charge_ppt = false
 
     -- First non-PPT charge tick: pull the engage spot in from the planned 7.4-tile
     -- ring to ATTACK_PILL_STANDOFF_CHARGE (7.0) along the same bearing, so a spot
@@ -1177,6 +1181,12 @@ local function attack_pill_steer(state, world, info, goal)
       local sp = cpf.simulate_shot_angle(psx, psy, ang_f, cpf.SHOT_TANK, info.gunrange or 14)
       if sp then for _, t in ipairs(sp) do if t.mx == goal.mx and t.my == goal.my then stop_hits = true; break end end end
     end
+    -- Decelerate when braking from HERE would stop at (or inside) the engage
+    -- point's distance from the pill — a pure DISTANCE gate, not a shot-sim:
+    -- trust the aim ("hopefully you aimed right; if not, go with it"). stop_hits
+    -- is kept only for the green/red stop-prediction overlay.
+    local pred_stop_to_pill = U.wdist(psx, psy, pill_wx, pill_wy)
+    local stop_at_engage    = pred_stop_to_pill <= standoff_to_pill
     local at_floor = tank_to_pill <= (C.CHARGE_MIN_STANDOFF or 5.0) * 256
 
     -- Visualize the predicted brake-now stop: line tank->stop + marker, green
@@ -1188,8 +1198,9 @@ local function attack_pill_steer(state, world, info, goal)
     -- marker carries the full step list. Shows exactly how the engine model ramps
     -- speed down and advances the 16-dir residual each tick.
 
-    if stop_hits or at_floor then
-      -- Braking now lands the shot (or we hit the no-closer floor): stop, engage.
+    if stop_at_engage or at_floor then
+      -- Braking now lands us at/inside the engage distance (or we hit the
+      -- no-closer floor): stop, engage.
       if info.speed <= 1 then
         goal.substate = "engage"
         goal.engage_tick = state.tick
