@@ -2483,19 +2483,20 @@ static void renderSettingsPanel(ClientSim *cs) {
             const char *zoomLabels[] = {
                 langGetText(STR_MENU_NORMAL),
                 langGetText(STR_MENU_DOUBLE),
+                langGetText(STR_MENU_TRIPLE),
                 langGetText(STR_MENU_QUAD),
                 langGetText(STR_MENU_CUSTOM_RESIZABLE),
             };
-            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
+            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_TRIPLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
             int curZoomIdx = 0;
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < 5; i++) {
                 if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
             }
             ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_WINDOWSIZE));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(100);
             if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
-                for (int i = 0; i < 4; i++) {
+                for (int i = 0; i < 5; i++) {
                     bool selected = (curZoomIdx == i);
                     if (ImGui::Selectable(zoomLabels[i], selected)) {
                         s_pendingZoom = zoomValues[i];
@@ -2645,6 +2646,12 @@ static void renderSettingsPanel(ClientSim *cs) {
                 windowMenuAllowNewPlayers_toggle(cs);
             }
         }
+    }
+
+    /* ---- About ---- */
+    ImGui::Separator();
+    if (ImGui::Button(langGetText(STR_MENU_ABOUT))) {
+        sdl3ImguiShowAbout();
     }
 
     ImGui::End();
