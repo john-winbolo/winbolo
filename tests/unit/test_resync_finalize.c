@@ -20,6 +20,7 @@
 
 #include "global.h"
 #include "client_sim.h"
+#include "client_net.h"           /* clientSimGetConnectState */
 #include "client_connect_state.h"
 #include "client_sim_internal.h"   /* ClientSim::transport, installCompressedMap */
 #include "transport_udp.h"         /* test-only resync hooks */
@@ -35,14 +36,20 @@ static bool pred_connected(LoopbackHarness *h, void *user) {
 }
 
 /* Connect a loopback client to an already-running server. Returns the client
- * Transport handle (into h->cs) or fails the test. */
+ * Transport handle (into h->cs) on success, or NULL on failure — callers
+ * UT_ASSERT the result. (The UT_* macros return an int, so they can't be used
+ * in this pointer-returning helper; the caller does the assert instead.) */
 static Transport *connect_client(LoopbackHarness *h, const char *name) {
-    UT_ASSERT_MSG(loopbackHarnessStart(h, name, /*lobbyMode*/ false,
-                                       /*impairSpec*/ NULL, /*seed*/ 0x5151u),
-                  "harness start failed");
+    if (!loopbackHarnessStart(h, name, /*lobbyMode*/ false,
+                              /*impairSpec*/ NULL, /*seed*/ 0x5151u)) {
+        fprintf(stderr, "connect_client: harness start failed\n");
+        return NULL;
+    }
     if (loopbackHarnessPumpUntil(h, CONNECT_MAX, pred_connected, NULL) < 0) {
         loopbackHarnessStop(h);
-        UT_FAIL("client never reached CONNECTED within %d pumps", CONNECT_MAX);
+        fprintf(stderr, "connect_client: client never reached CONNECTED within %d pumps\n",
+                CONNECT_MAX);
+        return NULL;
     }
     return &h->cs->transport;
 }
@@ -58,6 +65,7 @@ int run_resync_finalize_corrupt_keeps_gen(void) {
     uint32_t gen0 = 0, count0 = 0, gen1 = 0, count1 = 0;
 
     ct = connect_client(&h, "ResyncBad");
+    UT_ASSERT_MSG(ct != NULL, "client failed to connect");
 
     transportUdpClientTestMapState(ct, &gen0, &count0);
 
@@ -98,6 +106,7 @@ int run_resync_finalize_valid_advances_gen(void) {
     uint32_t gen0 = 0, count0 = 0, gen1 = 0, count1 = 0;
 
     ct = connect_client(&h, "ResyncOk");
+    UT_ASSERT_MSG(ct != NULL, "client failed to connect");
 
     transportUdpClientTestMapState(ct, &gen0, &count0);
 
@@ -126,7 +135,8 @@ int run_install_compressed_map_rejects_garbage(void) {
     LoopbackHarness h;
     static const BYTE garbage[24] = { 0xAB, 0xCD, 0xEF, 0x01, 0x02, 0x03 };
 
-    (void)connect_client(&h, "InstallBad");
+    UT_ASSERT_MSG(connect_client(&h, "InstallBad") != NULL,
+                  "client failed to connect");
 
     UT_ASSERT_MSG(!installCompressedMap(h.cs, garbage, (int)sizeof(garbage),
                                         NULL, /*initViewport=*/false),
@@ -151,6 +161,7 @@ int run_resync_debounce_threshold(void) {
     int i;
 
     ct = connect_client(&h, "Debounce");
+    UT_ASSERT_MSG(ct != NULL, "client failed to connect");
 
     /* DEBOUNCE-1 consecutive mismatches: streak climbs, no resync yet. */
     for (i = 1; i < EXPECT_DEBOUNCE; i++) {
