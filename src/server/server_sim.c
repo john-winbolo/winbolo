@@ -2172,7 +2172,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     }
 
     /* Force immediate full sync so clients see ownership changes right away */
-    sim->lastFullSyncTick = 0;
+    memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
 
     /* Clear lobby state */
     sim->lobbyPlayers[playerNum].teamNumber = 0;
@@ -2857,6 +2857,20 @@ bool serverSimTakeClosestBaseStock(ServerSim *sim, BYTE recipient, BYTE closest,
     return true;
 }
 
+bool serverSimTakeArrivalBaseStock(ServerSim *sim, BYTE clientIdx, GameEvent *out) {
+    WORLD wx = 0, wy = 0;
+    BYTE closest = BASE_NOT_FOUND;
+    /* Bots read base stock via the periodic full sync, not the arrival push —
+     * matches the snapshot build's recipient-is-bot gate. */
+    if (serverSimIsBot(sim, clientIdx)) {
+        return false;
+    }
+    if (serverSimGetTankState(sim, clientIdx, &wx, &wy)) {
+        closest = basesGetClosestForPlayer(&sim->sim, clientIdx, wx, wy);
+    }
+    return serverSimTakeClosestBaseStock(sim, clientIdx, closest, out);
+}
+
 static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
     int count = 0;
     BYTE np;
@@ -3049,7 +3063,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     bool recipientIsBot = serverSimIsBot(sim, clientIdx);
 
     /* Periodic full base/pill/map sync to correct any client drift */
-    if (sim->lastFullSyncTick == 0 || sim->tick - sim->lastFullSyncTick >= FULL_SYNC_INTERVAL) {
+    if (sim->lastFullSyncTick[clientIdx] == 0 ||
+        sim->tick - sim->lastFullSyncTick[clientIdx] >= FULL_SYNC_INTERVAL) {
         hdr->baseCount = (uint8_t)serverSimGetBases(sim, basesOut, maxBases);
         if (!recipientIsBot) {
             /* Per-recipient base visibility (owner is always real):
@@ -3079,7 +3094,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         }
         hdr->pillCount = (uint8_t)serverSimGetPills(sim, pillsOut, maxPills);
         hdr->mapChecksum = mapCalcChecksum(&sim->sim.mp);
-        sim->lastFullSyncTick = sim->tick;
+        sim->lastFullSyncTick[clientIdx] = sim->tick;
     } else {
         hdr->baseCount = 0;
         hdr->pillCount = 0;
@@ -3196,15 +3211,13 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         }
         #undef MAX_SOUND_TYPES
 
-        /* When this recipient's closest base just changed, push that base's
-         * current stock immediately so ammo appears on arrival rather than
-         * waiting for the next full-sync. Bots get real stock elsewhere. */
-        if (!recipientIsBot && outCount < maxEvents) {
-            GameEvent arrivalEv;
-            if (serverSimTakeClosestBaseStock(sim, clientIdx, closestBase, &arrivalEv)) {
-                eventsOut[outCount++] = arrivalEv;
-            }
-        }
+        /* The arrival base-stock push is no longer emitted here: it writes
+         * per-client sim state (lastClosestBase) that the first caller each
+         * tick consumed, starving the others, and the UDP path discards this
+         * build's events anyway. Each delivery path now owns the push — the
+         * UDP path in transportUdpServerDrainEvents, the local transport via
+         * serverSimTakeArrivalBaseStock — so lastClosestBase has one consumer
+         * per client and the push is never stolen. */
 
         hdr->reliableEventCount = (uint8_t)outCount;
     }
@@ -3880,7 +3893,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
     }
 
     /* 9. Reset full sync tracking */
-    sim->lastFullSyncTick = 0;
+    memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
 
     /* 10. Reset change detection */
     sim->prevPillCount = 0;

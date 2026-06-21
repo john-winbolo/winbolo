@@ -277,8 +277,10 @@ struct ServerSim {
      * so ammo appears on arrival instead of waiting for the next full-sync. */
     uint8_t      lastClosestBase[MAX_TANKS];
 
-    /* Full state sync tracking */
-    uint32_t     lastFullSyncTick;
+    /* Full state sync tracking, per recipient. Each client's own per-client
+     * snapshot build manages its own full-sync cadence; a scalar here let the
+     * first client built each interval consume it and starve the rest. */
+    uint32_t     lastFullSyncTick[MAX_TANKS];
 
     /* Bot configuration — cached from CLI args for lobby bot creation */
     char         botBrainPath[260];       /* Brain path for lobby bot creation */
@@ -393,6 +395,15 @@ bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
  * EVENT_BASE_STOCK and return true; always updates the recorded value.
  * Returns false (no event) when unchanged or BASE_NOT_FOUND. */
 bool serverSimTakeClosestBaseStock(ServerSim *sim, BYTE recipient, BYTE closest, GameEvent *out);
+
+/* Compute `recipient`'s closest neutral/allied base and, when it has just
+ * changed, take its arrival base-stock push via serverSimTakeClosestBaseStock.
+ * Returns true and fills `out` when a push should be delivered. The local
+ * (in-process) transport calls this after building a snapshot: unlike the UDP
+ * path it has no event channel to drain, and the snapshot build no longer
+ * emits the push (it shared sim state across clients). Bots are excluded, as
+ * in the build — they read base stock via the periodic full sync. */
+bool serverSimTakeArrivalBaseStock(ServerSim *sim, BYTE clientIdx, GameEvent *out);
 
 /* Server-side handler for PACKET_GAME_VOTE_TOGGLE. T2 because the only
  * legitimate callers are the two transport-layer dispatch sites — the

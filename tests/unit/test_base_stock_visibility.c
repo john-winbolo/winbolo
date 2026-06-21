@@ -157,7 +157,7 @@ int run_base_stock_visibility(void) {
     /* Recipient 0: base a is closest → real stock; base b ammo culled but
      * neutral armour kept; owners kept. Reset lastFullSyncTick so this build
      * forces a full base sync. */
-    sim->lastFullSyncTick = 0;
+    memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
     serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
                            te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES,
                            po, MAX_SNAPSHOT_PILLS, ev, MAX_SNAPSHOT_EVENTS, false);
@@ -175,7 +175,7 @@ int run_base_stock_visibility(void) {
 
     /* Recipient 1: base b is closest → real stock; base a ammo culled but
      * neutral armour kept; owners kept. */
-    sim->lastFullSyncTick = 0;
+    memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
     serverSimBuildSnapshot(sim, 1, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
                            te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES,
                            po, MAX_SNAPSHOT_PILLS, ev, MAX_SNAPSHOT_EVENTS, false);
@@ -225,7 +225,7 @@ int run_base_armour_fog_of_war(void) {
     PillSnapshot po[MAX_SNAPSHOT_PILLS];
     GameEvent ev[MAX_SNAPSHOT_EVENTS];
 
-    #define BV_BUILD0() do { sim->lastFullSyncTick = 0; \
+    #define BV_BUILD0() do { memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick)); \
         serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS, \
             te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES, \
             po, MAX_SNAPSHOT_PILLS, ev, MAX_SNAPSHOT_EVENTS, false); } while (0)
@@ -250,6 +250,56 @@ int run_base_armour_fog_of_war(void) {
                   "own base should read its true value (50), got %u", bo[b].armour);
 
     #undef BV_BUILD0
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 4. Per-client full-sync clock: two recipients each receive their own full
+ *    base sync on the same tick. The full-sync cadence is tracked per client
+ *    in lastFullSyncTick[MAX_TANKS]; before that it was a single shared scalar
+ *    that the first client built each tick set, so a second client built on
+ *    the same tick saw the clock already advanced and got baseCount == 0 — its
+ *    off-screen base/pill/map state then only refreshed when it happened to be
+ *    the first build of an interval. */
+int run_two_clients_full_sync_independent(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    serverSimAddPlayer(sim, 1, "P1", false);
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    UT_ASSERT_MSG(basesGetNumBases(&gs->bs) >= 2,
+                  "Everard map has < 2 bases (%u) — test needs two",
+                  basesGetNumBases(&gs->bs));
+
+    SnapshotHeader hdr;
+    TankSnapshot tk[MAX_TANKS];
+    ShellSnapshot sh[MAX_SNAPSHOT_SHELLS];
+    TkExplosionSnapshot te[MAX_SNAPSHOT_TK_EXPLOSIONS];
+    BaseSnapshot bo[MAX_SNAPSHOT_BASES];
+    PillSnapshot po[MAX_SNAPSHOT_PILLS];
+    GameEvent ev[MAX_SNAPSHOT_EVENTS];
+
+    /* Reset the clock once, then build for both clients on the same tick. The
+     * tick must be nonzero: at tick 0 the clock's zero-value special case fires
+     * a full sync for everyone and masks the shared-scalar bug. */
+    memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
+    sim->tick = 100;
+
+    serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
+                           te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES,
+                           po, MAX_SNAPSHOT_PILLS, ev, MAX_SNAPSHOT_EVENTS, false);
+    UT_ASSERT_MSG(hdr.baseCount >= 2,
+                  "client 0 should get a full-sync base block, got %u", hdr.baseCount);
+
+    serverSimBuildSnapshot(sim, 1, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
+                           te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES,
+                           po, MAX_SNAPSHOT_PILLS, ev, MAX_SNAPSHOT_EVENTS, false);
+    UT_ASSERT_MSG(hdr.baseCount >= 2,
+                  "client 1 must get its own full-sync base block on the same tick "
+                  "(pre-fix this was 0 from the shared full-sync clock), got %u",
+                  hdr.baseCount);
+
     serverSimDestroy(sim);
     return 0;
 }

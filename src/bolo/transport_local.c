@@ -32,6 +32,7 @@
 #include "global.h"
 #include "transport.h"
 #include "server_sim.h"
+#include "server_sim_internal.h"  /* serverSimTakeArrivalBaseStock — local arrival push */
 #include "client_sim.h"  /* clientSimSyncFromSnapshot — per-tick snapshot apply */
 /* The passive variant is driven from a different thread than the one that
  * ticks ServerSim, so it self-serialises on the server's threadsMutex. */
@@ -100,6 +101,19 @@ static bool localGetSnapshot(void *ctx, BYTE clientIdx,
                            pills, maxPills,
                            events, maxEvents,
                            false);
+    /* The snapshot build no longer emits the arrival base-stock push (it
+     * raced across clients through shared sim state). The local transport has
+     * no event channel to drain, so take the push here and append it to the
+     * events this snapshot delivers. The per-tick dedup below zeroes it on a
+     * repeat call just like the build's events, and serverSimTakeArrivalBaseStock
+     * returns false once the closest-base token is consumed, so a second call
+     * the same tick adds nothing. */
+    if ((int)hdr->reliableEventCount < maxEvents) {
+        GameEvent arrivalEv;
+        if (serverSimTakeArrivalBaseStock(lctx->sim, clientIdx, &arrivalEv)) {
+            events[hdr->reliableEventCount++] = arrivalEv;
+        }
+    }
     if (lctx->hasLastDelivered && hdr->serverTick == lctx->lastDeliveredTick) {
         hdr->reliableEventCount = 0;
     }
