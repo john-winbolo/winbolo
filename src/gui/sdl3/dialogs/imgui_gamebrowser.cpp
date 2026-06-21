@@ -142,6 +142,16 @@ static const char *gameTypeStr(gameType g) {
     }
 }
 
+/* Compact form for the space-constrained list row. */
+static const char *gameTypeAbbr(gameType g) {
+    switch (g) {
+    case gameOpen:           return langGetText(STR_DLGGAMEINFO_OPEN);
+    case gameTournament:     return langGetText(STR_DLGBROWSER_TYPE_TOURN_ABBR);
+    case gameStrictTournament:
+    default:                 return langGetText(STR_DLGGAMESETUP_STRICT_SHORT);
+    }
+}
+
 /* ---- Async ping worker ---- */
 struct PingWork {
     char address[FILENAME_MAX];
@@ -1178,9 +1188,12 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                 /* Map line with ranked (*) / random (rnd) markers */
                 char mapLine[MAP_STR_SIZE + 32];
+                char rndMark[24] = "";
+                if (e.randomMap)
+                    SDL_snprintf(rndMark, sizeof(rndMark), " (%s)",
+                                 langGetText(STR_DLGBROWSER_RND_ABBR));
                 SDL_snprintf(mapLine, sizeof(mapLine), "%s%s%s", e.mapName,
-                             e.ranked ? " *" : "",
-                             e.randomMap ? " (rnd)" : "");
+                             e.ranked ? " *" : "", rndMark);
                 dl->AddText(ImVec2(textX, p0.y + pad + lineH),
                             ImGui::GetColorU32(ImGuiCol_TextDisabled), mapLine);
 
@@ -1214,13 +1227,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                 /* Game-type abbreviation, right-aligned under the ping */
                 {
-                    const char *gt;
-                    switch (e.game) {
-                    case gameOpen:           gt = "Open";   break;
-                    case gameTournament:     gt = "Tourn";  break;
-                    case gameStrictTournament:
-                    default:                 gt = "Strict"; break;
-                    }
+                    const char *gt = gameTypeAbbr(e.game);
                     ImVec2 gsz = ImGui::CalcTextSize(gt);
                     dl->AddText(ImVec2(textRight - gsz.x, p0.y + pad + lineH),
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), gt);
@@ -1254,7 +1261,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         ImGui::BeginChild("##DetailPane", ImVec2(0, listH), ImGuiChildFlags_Borders);
         if (!haveSel) {
             ImGui::Spacing();
-            ImGui::TextDisabled("Select a server");
+            ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_SELECT_SERVER));
         } else {
             /* Preview is a modest fixed thumbnail on the left; the key fields
              * sit to its right (added after EndChild below). Capped so the
@@ -1276,7 +1283,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                 if (sel.mapMd5[0] == '\0') {
                     /* Random/unknown map — nothing to fetch. */
-                    centeredDimmed("Preview unavailable");
+                    centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
                 } else {
                     mapPreviewFetchRequest(sel.mapMd5);
                     const uint8_t *bytes = nullptr;
@@ -1285,9 +1292,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                         mapPreviewFetchTryGet(sel.mapMd5, &bytes, &len);
 
                     if (st == MapPreviewFetchState::Pending) {
-                        centeredDimmed("Loading…");
+                        centeredDimmed(langGetText(STR_DLGNEWS_LOADING));
                     } else if (st == MapPreviewFetchState::Unavailable) {
-                        centeredDimmed("Preview unavailable");
+                        centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
                     } else {
                         /* Ready: (re)load only when the selected md5 changed,
                          * so the same map isn't reconverted every frame. */
@@ -1345,13 +1352,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                         (int)loadedPreviewComp.size(),
                                         0, 0, 255, 255);
                                 }
-                                ImGui::TextDisabled("Click to enlarge");
+                                ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_PREVIEW_ENLARGE));
                             } else {
                                 /* Build not finished this frame — try again next frame. */
-                                centeredDimmed("Loading…");
+                                centeredDimmed(langGetText(STR_DLGNEWS_LOADING));
                             }
                         } else {
-                            centeredDimmed("Preview unavailable");
+                            centeredDimmed(langGetText(STR_DLGBROWSER_PREVIEW_UNAVAIL));
                         }
                     }
                 }
@@ -1399,15 +1406,17 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                      * Plain "Players" label: STR_DLGGAMEINFO_NUMPLAYERS is a
                      * {number} format template, not a usable label. */
                     ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0); label("Players");
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_DLGPLAYERS_TITLE));
                     {
                         char pbuf[96];
                         int cap = sel.maxPlayers > 0 ? sel.maxPlayers : MAX_TANKS;
                         int n = SDL_snprintf(pbuf, sizeof(pbuf), "%d/%d", (int)sel.numPlayers, cap);
                         if (sel.hasRichInfo && sel.numBots > 0 &&
                             n > 0 && (size_t)n < sizeof(pbuf)) {
-                            SDL_snprintf(pbuf + n, sizeof(pbuf) - (size_t)n,
-                                         " (%d AI players)", sel.numBots);
+                            MessageArgs aiArgs = {};
+                            aiArgs.number = sel.numBots;
+                            SDL_snprintf(pbuf + n, sizeof(pbuf) - (size_t)n, " %s",
+                                         langGetTextFmt(STR_DLGBROWSER_AI_PLAYERS, &aiArgs));
                         }
                         ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(pbuf);
                     }
@@ -1426,7 +1435,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
                     /* Pillboxes — free/total when the total is known. */
                     ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0); label("Pillboxes");
+                    ImGui::TableSetColumnIndex(0); label(langGetText(STR_TABLET_PILLBOXES));
                     {
                         char vbuf[32];
                         if (sel.numPills > 0)
@@ -1485,7 +1494,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
             /* Roster — WBN-only; LAN rows carry no player names. */
             ImGui::Separator();
-            ImGui::TextDisabled("WinBolo.net players:");
+            ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_WBN_PLAYERS));
             if (sel.players.empty()) {
                 ImGui::TextDisabled("—");
             } else {
@@ -1585,9 +1594,9 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             ImGui::SameLine(0.0f, 16.0f * s);
             legendDot(dotOrange, true,  langGetText(STR_DLGBROWSER_ST_INGAME));
             ImGui::SameLine(0.0f, 16.0f * s);
-            legendDot(dotRed,    true,  "Locked/Full");
+            legendDot(dotRed,    true,  langGetText(STR_DLGBROWSER_ST_LOCKED));
             ImGui::SameLine(0.0f, 16.0f * s);
-            legendDot(dotGrey,   false, "No response");
+            legendDot(dotGrey,   false, langGetText(STR_DLGBROWSER_ST_NORESP));
         }
 
         ImGui::Spacing();

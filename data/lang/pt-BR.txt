@@ -1759,6 +1759,15 @@ STR_DLGBROWSER_SPECTATE=Observar
 STR_DLGBROWSER_AUTO_REFRESH=Atualização automática
 STR_DLGBROWSER_ST_LOBBY=Sala de espera
 STR_DLGBROWSER_ST_INGAME=Em Jogo
+STR_DLGBROWSER_SELECT_SERVER=Selecione um servidor
+STR_DLGBROWSER_PREVIEW_UNAVAIL=Prévia indisponível
+STR_DLGBROWSER_PREVIEW_ENLARGE=Clique para ampliar
+STR_DLGBROWSER_AI_PLAYERS=({number} jogadores de IA)
+STR_DLGBROWSER_WBN_PLAYERS=WinBolo.net jogadores:
+STR_DLGBROWSER_ST_LOCKED=Bloqueado/Cheio
+STR_DLGBROWSER_ST_NORESP=Sem resposta
+STR_DLGBROWSER_RND_ABBR=aleat
+STR_DLGBROWSER_TYPE_TOURN_ABBR=Torneio
 
 # On-screen keyboard (controller text entry)
 STR_OSK_LEGEND=Selecionar   B Apagar   LB Shift   RB ?123   Start Concluir
