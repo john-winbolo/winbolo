@@ -2534,6 +2534,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
+    tests/unit/test_net_opt_wire.c
     src/common/md5.c
     src/common/mp_diag_log.c
     tests/unit/test_ranked_lobby.c
@@ -2577,6 +2578,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
+    tests/unit/test_base_stock_visibility.c
+    tests/unit/test_fx_viewport_cull.c
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -2735,6 +2738,8 @@ set_flat_output(WinBoloUnitTests "${CMAKE_BINARY_DIR}")
 
 set(_unit_test_names
     md5_to_hex
+    pill_armour_intank_roundtrip
+    base_event_classification
     transport_local_passive_threads
     sp_subscriber_delivery
     active_local_input_to_shot
@@ -2917,6 +2922,11 @@ set(_unit_test_names
     starts_batch_team_anchor_jitter_varies
     starts_open_ideal_friendly_pill_eligible
     input_redundancy
+    bases_closest_for_player
+    base_stock_visibility
+    base_armour_fog_of_war
+    two_clients_full_sync_independent
+    fx_viewport_cull
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid

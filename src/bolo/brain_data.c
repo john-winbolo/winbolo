@@ -257,6 +257,7 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
         }
         break;
       case EVENT_BASE_UPDATE:
+      case EVENT_BASE_STOCK:
         if (aiMode == aiYesAdvantage || aiMode == aiFull) {
           buf[filtered++] = *e;
         } else {

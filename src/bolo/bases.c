@@ -877,6 +877,26 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
 *  yValue - Y Map Location of the tank
 *********************************************************/
 BYTE basesGetClosest(GameSim *sim, WORLD tankX, WORLD tankY) {
+  return basesGetClosestForPlayer(sim, sim->viewPlayer, tankX, tankY);
+}
+
+/*********************************************************
+*NAME:          basesGetClosestForPlayer
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/1/99
+*LAST MODIFIED: 11/1/99
+*PURPOSE:
+* Explicit-player variant of basesGetClosest: evaluates the
+* closest neutral/allied-in-range base for the given player
+* rather than sim->viewPlayer.
+*
+*ARGUMENTS:
+*  sim    - Pointer to the game sim
+*  player - Player number to evaluate alliances against
+*  tankX  - X Map Location of the tank
+*  tankY  - Y Map Location of the tank
+*********************************************************/
+BYTE basesGetClosestForPlayer(GameSim *sim, BYTE player, WORLD tankX, WORLD tankY) {
   bases *value = &sim->bs;
   BYTE returnValue; /* Value to return */
   WORLD x;
@@ -891,7 +911,7 @@ BYTE basesGetClosest(GameSim *sim, WORLD tankX, WORLD tankY) {
   oldDistance = BASE_STATUS_RANGE; /* The range of the gunsight is the distance for a base to be shown */
   returnValue = BASE_NOT_FOUND-1;
   count = 0;
-  self = sim->viewPlayer;
+  self = player;
 
   while (count < (*value)->numBases) {
     /* Check for neutral or allied */

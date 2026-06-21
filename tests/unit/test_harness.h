@@ -121,6 +121,14 @@ int run_md5_rfc1321_vectors(void);
 int run_md5_streaming_matches_oneshot(void);
 int run_md5_block_boundaries(void);
 int run_md5_to_hex(void);
+
+/* Network-optimization wire changes (test_net_opt_wire.c): the pill
+ * armour/inTank byte-packing helpers round-trip across the full range, and
+ * the split base / packed pill game events have the expected wire sizes and
+ * reliability classes. */
+int run_pill_armour_intank_roundtrip(void);
+int run_base_event_classification(void);
+
 int run_ranked_flag_persists_with_one_player(void);
 int run_ranked_shape_gate(void);
 int run_lobby_lock_bit_lookup(void);
@@ -373,6 +381,21 @@ int run_edge_send_predicate(void);
  * processed tick (lastProcessedInput advances), late inputs for it drop
  * as stale, and one-shot actions are harvested/laid exactly once under the
  * lastActionAppliedTick invariant. Always built (no WB_NETDEBUG gate). */
+/* Base-visibility integration (test_base_stock_visibility.c): per-player
+ * closest-base selection (enemy exclusion, in-range, post-flip inclusion) and
+ * the per-recipient full-sync stock cull in serverSimBuildSnapshot (real stock
+ * only for the recipient's own closest base; other bases zeroed, owner kept). */
+int run_bases_closest_for_player(void);
+int run_base_stock_visibility(void);
+int run_base_armour_fog_of_war(void);
+int run_two_clients_full_sync_independent(void);
+
+/* FX viewport cull (test_fx_viewport_cull.c): serverSimBuildViewports +
+ * inAnyViewport cover the recipient's tank screen and each owned/allied
+ * pillbox screen, so an fx near an owned pillbox but off the tank screen is
+ * still visible (the snapshot and best-effort fx cull share this set). */
+int run_fx_viewport_cull(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);

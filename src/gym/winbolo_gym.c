@@ -112,6 +112,7 @@ static void gymBufferServerEvents(WinBoloGym *g) {
         case EVENT_PLAYER_LEAVE:
         case EVENT_PILL_UPDATE:
         case EVENT_BASE_UPDATE:
+        case EVENT_BASE_STOCK:
         case EVENT_ASSISTANT_MSG:
             g->cachedEvents[g->cachedEventCount++] = events[i];
             break;

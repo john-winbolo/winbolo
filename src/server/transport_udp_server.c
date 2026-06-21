@@ -4664,6 +4664,32 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             clientMY = (BYTE)(cwy >> 8);
         }
 
+        /* Client's closest neutral/allied base — best-effort base stock events
+         * are culled to this base only (computed once per client). */
+        BYTE closestBase = BASE_NOT_FOUND;
+        if (hasPos) {
+            closestBase = basesGetClosestForPlayer(serverSimGetGameSim(sim), (BYTE)c, cwx, cwy);
+        }
+
+        /* On arrival (closest base changed) push that base's current stock
+         * immediately so ammo appears at once instead of lagging to the next
+         * full-sync. Consuming the change here means the later snapshot build
+         * for this same UDP slot sees no change. */
+        {
+            GameEvent arrivalEv;
+            if (serverSimTakeClosestBaseStock(sim, (BYTE)c, closestBase, &arrivalEv)) {
+                uint8_t abuf[GAME_EVENT_MAX_WIRE_SIZE];
+                int alen = packGameEvent(abuf, &arrivalEv);
+                channelSendBestEffort(&udpServer.channelMux[c], CHANNEL_GAME_EFFECT,
+                                      abuf, (uint16_t)alen);
+            }
+        }
+
+        /* Best-effort fx (sounds/explosions) are culled to the recipient's
+         * tank + owned/allied pillbox viewports, matching the snapshot cull. */
+        ViewportRect fxViewports[MAX_VIEWPORTS];
+        int fxViewportCount = serverSimBuildViewports(sim, (BYTE)c, fxViewports, MAX_VIEWPORTS);
+
         /* Pass 1: find best (closest) sound event per type for this client */
         #define MAX_SOUND_TYPES 32
         int bestSoundIdx[MAX_SOUND_TYPES];
@@ -4691,8 +4717,8 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                 /* Always send tank hit to the hit player (plays hitTankSelf at full volume) */
                 if (evType == EVENT_SOUND_TANK_HIT && serverSimGetEvents(sim)[i].data[3] == (uint8_t)c) {
                     /* Skip distance cull */
-                } else if (dx >= SDIST_NONE || dy >= SDIST_NONE) {
-                    /* Cull beyond audible range */
+                } else if (!inAnyViewport(fxViewports, fxViewportCount, mx, my)) {
+                    /* Cull beyond the recipient's viewports */
                     continue;
                 }
 
@@ -4727,9 +4753,16 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                 }
                 /* Distance-cull explosion events */
                 if (evType == EVENT_EXPLOSION && hasPos) {
-                    int dx = (clientMX > serverSimGetEvents(sim)[i].data[0]) ? (clientMX - serverSimGetEvents(sim)[i].data[0]) : (serverSimGetEvents(sim)[i].data[0] - clientMX);
-                    int dy = (clientMY > serverSimGetEvents(sim)[i].data[1]) ? (clientMY - serverSimGetEvents(sim)[i].data[1]) : (serverSimGetEvents(sim)[i].data[1] - clientMY);
-                    if (dx >= SDIST_NONE || dy >= SDIST_NONE) continue;
+                    if (!inAnyViewport(fxViewports, fxViewportCount,
+                                       serverSimGetEvents(sim)[i].data[0],
+                                       serverSimGetEvents(sim)[i].data[1])) continue;
+                }
+                /* Cull base stock to the client's closest neutral/allied base */
+                if (evType == EVENT_BASE_STOCK) {
+                    if (closestBase == BASE_NOT_FOUND ||
+                        (BYTE)(closestBase - 1) != serverSimGetEvents(sim)[i].data[0]) {
+                        continue;
+                    }
                 }
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
                 int evLen = packGameEvent(evBuf, &serverSimGetEvents(sim)[i]);
