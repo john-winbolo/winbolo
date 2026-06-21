@@ -2596,9 +2596,14 @@ static void renderSettingsPanel(ClientSim *cs) {
                derived scale; a preset pins the ImGui scale and rebuilds the
                font atlas live (deferred to a safe point between frames). */
             ImGui::Separator();
-            ImGui::TextUnformatted("UI Scale");
+            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_UISCALE));
             {
-                static const char *scaleLabels[] = { "Auto", "Small", "Medium", "Large" };
+                const char *scaleLabels[] = {
+                    langGetText(STR_DLGSETTINGS_UISCALE_AUTO),
+                    langGetText(STR_DLGSETTINGS_UISCALE_SMALL),
+                    langGetText(STR_DLGSETTINGS_UISCALE_MEDIUM),
+                    langGetText(STR_DLGSETTINGS_UISCALE_LARGE),
+                };
                 int usIdx = (int)uiUiScaleGet();
                 if (usIdx < 0 || usIdx > 3) usIdx = 0;
                 ImGui::SetNextItemWidth(140 * s_uiScale);

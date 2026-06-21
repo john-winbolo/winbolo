@@ -1445,6 +1445,13 @@
 #define STR_OSK_SPACE                       1812
 #define STR_OSK_ENTER                       1813
 
+/* In-game settings — UI scale override */
+#define STR_DLGSETTINGS_UISCALE             1823
+#define STR_DLGSETTINGS_UISCALE_AUTO        1824
+#define STR_DLGSETTINGS_UISCALE_SMALL       1825
+#define STR_DLGSETTINGS_UISCALE_MEDIUM      1826
+#define STR_DLGSETTINGS_UISCALE_LARGE       1827
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821
