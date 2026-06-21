@@ -1733,7 +1733,7 @@ static void printUsage(const char *prog) {
         "  0                All overlays off\n"
         "  +/-/scroll       Zoom in/out\n"
         "  F                Toggle free camera / follow mode\n"
-        "  Left click       Show A* cost + path to tile (magenta)\n"
+        "  Left click       Show A* cost + path to tile (magenta); on a tank's tile, follow it\n"
         "  Right click      Clear click overlay\n",
         prog);
 }
@@ -5943,6 +5943,21 @@ int main(int argc, char *argv[]) {
                         app.overlayDirty = true;
                         syncDebugPathfinder(&app);
                         computeClickPath(&app, cmx, cmy);
+
+                        /* Click-to-follow: if the clicked tile holds a tank,
+                         * follow it and drop free-camera so the view tracks. */
+                        for (int pn = 0; pn < MAX_TANKS; pn++) {
+                            WORLD twx = 0, twy = 0;
+                            if (!serverSimGetTankState(app.sim, (BYTE)pn, &twx, &twy)) continue;
+                            if ((twx >> TANK_SHIFT_MAPSIZE) == cmx
+                                && (twy >> TANK_SHIFT_MAPSIZE) == cmy) {
+                                app.followBot    = (BYTE)pn;
+                                app.freeCamera   = false;
+                                app.overlayDirty = true;
+                                fprintf(stderr, "Click-follow: now following bot %d\n", pn);
+                                break;
+                            }
+                        }
 
                         /* Viz-detail hit-test: if the click landed on
                          * a registered primitive, scroll/expand the
