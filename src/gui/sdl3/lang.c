@@ -1703,6 +1703,11 @@ static const LangEntry langTable[] = {
     {1811, "Shift"},
     {1812, "Space"},
     {1813, "Enter"},
+    {1823, "UI Scale"},
+    {1824, "Auto"},
+    {1825, "Small"},
+    {1826, "Medium"},
+    {1827, "Large"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
