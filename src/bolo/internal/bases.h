@@ -398,6 +398,10 @@ void basesRefueling(struct GameSim *sim, tank *tnk, BYTE baseNum);
 *********************************************************/
 BYTE basesGetClosest(struct GameSim *sim, WORLD tankX, WORLD tankY);
 
+/* Explicit-player variant of basesGetClosest (evaluates for the given player
+ * rather than sim->viewPlayer). */
+BYTE basesGetClosestForPlayer(struct GameSim *sim, BYTE player, WORLD tankX, WORLD tankY);
+
 /*********************************************************
 *NAME:          basesGetStats
 *AUTHOR:        John Morrison
