@@ -509,6 +509,7 @@ int run_map_checksum_ignores_mines(void);
 int run_resync_finalize_corrupt_keeps_gen(void);
 int run_resync_finalize_valid_advances_gen(void);
 int run_install_compressed_map_rejects_garbage(void);
+int run_resync_debounce_threshold(void);
 
 /* Connection-id NAT-rebind migration (test_conn_migration.c): the pure
  * connId match-and-rehome decision, plus an end-to-end loopback join that

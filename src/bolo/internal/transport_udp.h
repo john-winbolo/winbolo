@@ -703,5 +703,9 @@ void transportUdpClientTestMapState(Transport *t, uint32_t *installedMapGen,
  * installedMapGen/mapResyncCount unchanged; a valid one advances them. Returns
  * false on bad args or allocation failure. */
 bool transportUdpClientTestFinalizeResync(Transport *t, const BYTE *buf, int len);
+/* Read the resync debounce state: whether a resync is in flight and the
+ * consecutive-mismatch streak that gates a new request. */
+void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
+                                       uint32_t *mismatchStreak);
 
 #endif /* TRANSPORT_UDP_H */

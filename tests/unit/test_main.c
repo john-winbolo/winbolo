@@ -306,6 +306,7 @@ static const UnitTestEntry s_tests[] = {
     { "resync_finalize_corrupt_keeps_gen",       run_resync_finalize_corrupt_keeps_gen       },
     { "resync_finalize_valid_advances_gen",      run_resync_finalize_valid_advances_gen      },
     { "install_compressed_map_rejects_garbage",  run_install_compressed_map_rejects_garbage  },
+    { "resync_debounce_threshold",               run_resync_debounce_threshold               },
     { "conn_migration_rehome",                   run_conn_migration_rehome                   },
     { "conn_migration_e2e",                      run_conn_migration_e2e                      },
     { "viewtick_rewind",                         run_viewtick_rewind                         },

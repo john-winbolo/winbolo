@@ -2963,6 +2963,7 @@ set(_unit_test_names
     resync_finalize_corrupt_keeps_gen
     resync_finalize_valid_advances_gen
     install_compressed_map_rejects_garbage
+    resync_debounce_threshold
     conn_migration_rehome
     conn_migration_e2e
     viewtick_rewind

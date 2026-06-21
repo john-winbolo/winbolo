@@ -176,6 +176,10 @@ typedef struct {
     bool     firstResyncChunkSeen;     /* Stop request retransmit once chunks arrive */
     uint32_t lastResyncRequestTick;    /* localTick of last request send (retransmit) */
     uint32_t resyncAttempts;           /* Resyncs that did not resolve the mismatch */
+    uint32_t mapMismatchStreak;        /* Consecutive full-sync checksum mismatches not
+                                        * yet acted on; debounces a transient mismatch
+                                        * (in-flight CHANNEL_MAP events) into a resync
+                                        * only once it persists */
     uint32_t resyncSuppressUntilTick;  /* Gate new requests until here (grace window) */
     uint32_t lastResyncProgressTick;   /* localTick of last forward progress (request
                                         * sent at start, or a chunk received); drives
@@ -1005,6 +1009,12 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
 #define MAP_RESYNC_REQUEST_RESEND_TICKS 75   /* ~0.75s between request resends */
 #define MAP_RESYNC_GRACE_TICKS         1000  /* ~10s = 2 full-sync intervals */
 #define MAP_RESYNC_MAX_ATTEMPTS        10    /* give up + disconnect after this */
+/* Require this many consecutive full-sync checksum mismatches before requesting
+ * a resync. Full-syncs are FULL_SYNC_INTERVAL ticks apart (~5s), while a
+ * transient divergence from in-flight reliable CHANNEL_MAP events self-resolves
+ * within ~1 RTT — far inside a single full-sync — so a short debounce drops the
+ * spurious resync yet still recovers a divergence that genuinely persists. */
+#define MAP_RESYNC_MISMATCH_DEBOUNCE   3
 #define MAP_RESYNC_STALL_TICKS         500   /* ~5s of no chunk progress -> abandon
                                               * the in-flight resync (server stopped
                                               * sending / state lost) so the next
@@ -1030,6 +1040,7 @@ static void udpClientResetResync(TransportUdpClientCtx *c) {
     c->firstResyncChunkSeen = false;
     c->activeResyncGen = 0;
     c->resyncAttempts = 0;
+    c->mapMismatchStreak = 0;
     c->resyncSuppressUntilTick = 0;
 }
 
@@ -3215,6 +3226,18 @@ void transportUdpClientTestMapState(Transport *t, uint32_t *installedMapGen,
     if (mapResyncCount)  *mapResyncCount  = c->mapResyncCount;
 }
 
+/* Test-only: read the resync debounce state — whether a resync is currently in
+ * flight (resyncActive) and the consecutive-mismatch streak that gates a new
+ * request (mapMismatchStreak). */
+void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
+                                       uint32_t *mismatchStreak) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (resyncActive)   *resyncActive   = c->resyncActive;
+    if (mismatchStreak) *mismatchStreak = c->mapMismatchStreak;
+}
+
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
                                    int *bpsRecv, int *bpsSent, int *numErrors,
                                    int *snapshotsRecv, int *snapshotsLost,
@@ -3288,8 +3311,10 @@ void transportUdpClientReportMapChecksum(Transport *t, bool matched) {
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     if (matched) {
-        /* Converged (or never diverged): clear the backoff once no resync is
-         * in flight, so a later genuine divergence starts fresh. */
+        /* Converged (or never diverged): the streak is broken, and clear the
+         * backoff once no resync is in flight so a later genuine divergence
+         * starts fresh. */
+        c->mapMismatchStreak = 0;
         if (!c->resyncActive) {
             c->resyncAttempts = 0;
             c->resyncSuppressUntilTick = 0;
@@ -3298,9 +3323,16 @@ void transportUdpClientReportMapChecksum(Transport *t, bool matched) {
     }
 
     /* Mismatch. One outstanding request at a time, and stay quiet during the
-     * post-install grace window — otherwise every full-sync would re-request. */
+     * post-install grace window — otherwise every full-sync would re-request.
+     * Mismatches in those states don't count toward the streak. */
     if (c->resyncActive) return;
     if (c->localTick < c->resyncSuppressUntilTick) return;
+
+    /* Debounce: a single transient mismatch is usually in-flight reliable map
+     * events that haven't arrived yet and will self-deliver before the next
+     * full-sync. Only act once the divergence persists for several full-syncs. */
+    c->mapMismatchStreak++;
+    if (c->mapMismatchStreak < MAP_RESYNC_MISMATCH_DEBOUNCE) return;
 
     if (c->resyncAttempts >= MAP_RESYNC_MAX_ATTEMPTS) {
         /* Repeated full resyncs didn't fix it — almost certainly a checksum
@@ -3315,7 +3347,8 @@ void transportUdpClientReportMapChecksum(Transport *t, bool matched) {
         return;
     }
 
-    /* Start a new resync. */
+    /* Start a new resync. Reset the streak so the next divergence re-counts. */
+    c->mapMismatchStreak = 0;
     c->activeResyncGen = udpClientNextResyncGen(c);
     c->resyncActive = true;
     c->firstResyncChunkSeen = false;

@@ -135,3 +135,59 @@ int run_install_compressed_map_rejects_garbage(void) {
     loopbackHarnessStop(&h);
     return 0;
 }
+
+/* Must match MAP_RESYNC_MISMATCH_DEBOUNCE in transport_udp_client.c — the number
+ * of consecutive full-sync checksum mismatches required before a resync. */
+#define EXPECT_DEBOUNCE 3
+
+/* A transient checksum mismatch must not start a resync: only after
+ * MAP_RESYNC_MISMATCH_DEBOUNCE consecutive mismatches does one fire, and an
+ * intervening match resets the streak so the count restarts. */
+int run_resync_debounce_threshold(void) {
+    LoopbackHarness h;
+    Transport *ct;
+    bool active = true;
+    uint32_t streak = 999;
+    int i;
+
+    ct = connect_client(&h, "Debounce");
+
+    /* DEBOUNCE-1 consecutive mismatches: streak climbs, no resync yet. */
+    for (i = 1; i < EXPECT_DEBOUNCE; i++) {
+        transportUdpClientReportMapChecksum(ct, /*matched=*/false);
+        transportUdpClientTestResyncState(ct, &active, &streak);
+        UT_ASSERT_MSG(!active,
+                      "resync started early at mismatch %d (< %d)", i, EXPECT_DEBOUNCE);
+        UT_ASSERT_MSG(streak == (uint32_t)i,
+                      "streak=%u expected %d", (unsigned)streak, i);
+    }
+
+    /* A match breaks the streak. */
+    transportUdpClientReportMapChecksum(ct, /*matched=*/true);
+    transportUdpClientTestResyncState(ct, &active, &streak);
+    UT_ASSERT_MSG(!active, "match should not start a resync");
+    UT_ASSERT_MSG(streak == 0, "match must reset streak, got %u", (unsigned)streak);
+
+    /* Re-count from zero: DEBOUNCE-1 again still must not resync (proving the
+     * earlier mismatches did not carry over). */
+    for (i = 1; i < EXPECT_DEBOUNCE; i++) {
+        transportUdpClientReportMapChecksum(ct, /*matched=*/false);
+        transportUdpClientTestResyncState(ct, &active, &streak);
+        UT_ASSERT_MSG(!active,
+                      "resync started early after reset at mismatch %d", i);
+        UT_ASSERT_MSG(streak == (uint32_t)i,
+                      "post-reset streak=%u expected %d", (unsigned)streak, i);
+    }
+
+    /* The DEBOUNCE-th consecutive mismatch starts the resync; the streak resets
+     * for the next divergence. */
+    transportUdpClientReportMapChecksum(ct, /*matched=*/false);
+    transportUdpClientTestResyncState(ct, &active, &streak);
+    UT_ASSERT_MSG(active,
+                  "resync did not start at %d consecutive mismatches", EXPECT_DEBOUNCE);
+    UT_ASSERT_MSG(streak == 0,
+                  "streak must reset on resync request, got %u", (unsigned)streak);
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
