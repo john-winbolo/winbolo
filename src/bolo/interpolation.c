@@ -369,6 +369,20 @@ bool interpGetRenderPosition(const InterpContext *ctx, BYTE playerNum,
   if (p->hasPrev) {
     int32_t fromPrev = (int32_t)((uint32_t)target - p->prevArrivalMs);
     uint32_t interval;
+    /* Respawn boundary: curr is the stale death sample at this segment's
+     * forward end (prev alive, or prev also dead across a multi-tick death),
+     * with pending the alive respawn.  Tweening prev->curr would slide the
+     * tank into the death spot, so snap to pending — the newest live sample,
+     * guaranteed alive by the !pending.alive bow-out above.  Checked before the
+     * prev-dead case so a prev-dead/curr-dead pair never outputs curr's death
+     * position. */
+    if (!p->curr.alive) {
+      *outX = p->pending.worldX;
+      *outY = p->pending.worldY;
+      *outAngle = p->pending.angle;
+      *outOnBoat = p->pending.onBoat;
+      return TRUE;
+    }
     /* Respawn snap one snapshot deeper: prev is the stale death sample, curr
      * is the alive endpoint of this segment.  Output curr directly (including
      * over the clamp-to-prev case below) so the death spot is never shown. */
