@@ -4613,6 +4613,13 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             clientMY = (BYTE)(cwy >> 8);
         }
 
+        /* Client's closest neutral/allied base — best-effort base stock events
+         * are culled to this base only (computed once per client). */
+        BYTE closestBase = BASE_NOT_FOUND;
+        if (hasPos) {
+            closestBase = basesGetClosestForPlayer(serverSimGetGameSim(sim), (BYTE)c, cwx, cwy);
+        }
+
         /* Pass 1: find best (closest) sound event per type for this client */
         #define MAX_SOUND_TYPES 32
         int bestSoundIdx[MAX_SOUND_TYPES];
@@ -4679,6 +4686,13 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                     int dx = (clientMX > serverSimGetEvents(sim)[i].data[0]) ? (clientMX - serverSimGetEvents(sim)[i].data[0]) : (serverSimGetEvents(sim)[i].data[0] - clientMX);
                     int dy = (clientMY > serverSimGetEvents(sim)[i].data[1]) ? (clientMY - serverSimGetEvents(sim)[i].data[1]) : (serverSimGetEvents(sim)[i].data[1] - clientMY);
                     if (dx >= SDIST_NONE || dy >= SDIST_NONE) continue;
+                }
+                /* Cull base stock to the client's closest neutral/allied base */
+                if (evType == EVENT_BASE_STOCK) {
+                    if (closestBase == BASE_NOT_FOUND ||
+                        (BYTE)(closestBase - 1) != serverSimGetEvents(sim)[i].data[0]) {
+                        continue;
+                    }
                 }
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
                 int evLen = packGameEvent(evBuf, &serverSimGetEvents(sim)[i]);

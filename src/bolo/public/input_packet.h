@@ -218,7 +218,7 @@ typedef struct {
 #define EVENT_SOUND         8  /* data: [soundId, mx, my, sourcePlayer] */
 #define EVENT_SERVER_MSG    9  /* data: [msgId] — server status message */
 #define EVENT_PILL_UPDATE  10  /* data: [pillIndex, x, y, owner, armourInTank] */
-#define EVENT_BASE_UPDATE  11  /* data: [baseIndex, owner, armour, shells, mines] */
+#define EVENT_BASE_UPDATE  11  /* data: [baseIndex, owner] — owner change (reliable) */
 #define EVENT_PLAYER_LEAVE 12  /* data: [playerNum] */
 #define EVENT_ASSISTANT_MSG 13 /* data: [targetPlayer, msgId] — player-specific assistant message */
 #define EVENT_LGM_LOST     14 /* data: [victim, killer] — builder killed, broadcast newswire */
@@ -226,6 +226,7 @@ typedef struct {
 #define EVENT_SOUND_SHOOT    16 /* data: [soundId, mx, my, firingPlayer] */
 #define EVENT_MINE_VISIBLE   17 /* data: [mx, my, sourcePlayer] — bit 7 of sourcePlayer = broadcast to all */
 #define EVENT_TK_EXPLOSION   18 /* data: [xHi, xLo, yHi, yLo, angle, length, explodeType, creator] — tank fireball spawn */
+#define EVENT_BASE_STOCK   19  /* data: [baseIndex, armour, shells, mines] — best-effort, culled to recipient's closest base */
 
 /* True if this game event must arrive (rides the reliable game channel);
  * false if it is ephemeral and rides the best-effort channel. Single source
@@ -238,12 +239,14 @@ static inline bool gameEventIsReliable(uint8_t type) {
     case EVENT_ASSISTANT_MSG: /* one-shot per-player text */
     case EVENT_LGM_LOST:      /* one-shot newswire */
     case EVENT_MINE_VISIBLE:  /* gameplay-critical reveal */
+    case EVENT_BASE_UPDATE:   /* base owner (colour) change must arrive */
         return true;
-    /* PILL_UPDATE / BASE_UPDATE are best-effort: they fire continuously as pill
-     * armour/reload and base stock change under combat (a per-shot/per-refuel
-     * firehose), so they cannot sit on the reliable window. Best-effort
-     * newest-wins suits a state delta; the periodic full snapshot re-sync is the
-     * backstop for a dropped ownership change. */
+    /* EVENT_PILL_UPDATE and EVENT_BASE_STOCK are best-effort: they fire
+     * continuously as pill armour/reload and base stock change under combat (a
+     * per-shot/per-refuel firehose), so they cannot sit on the reliable window.
+     * Best-effort newest-wins suits a state delta; the periodic full snapshot
+     * re-sync is the backstop for a dropped update. Base owner changes
+     * (EVENT_BASE_UPDATE) are split out above onto the reliable channel. */
     default:
         return false;
     }
@@ -273,7 +276,8 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_SOUND:          return 4;
     case EVENT_SERVER_MSG:     return 1;
     case EVENT_PILL_UPDATE:    return 5;
-    case EVENT_BASE_UPDATE:    return 5;
+    case EVENT_BASE_UPDATE:    return 2;
+    case EVENT_BASE_STOCK:     return 4;
     case EVENT_PLAYER_LEAVE:   return 1;
     case EVENT_ASSISTANT_MSG:  return 2;
     case EVENT_LGM_LOST:       return 2;
