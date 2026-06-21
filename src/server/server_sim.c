@@ -3035,18 +3035,26 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     if (sim->lastFullSyncTick == 0 || sim->tick - sim->lastFullSyncTick >= FULL_SYNC_INTERVAL) {
         hdr->baseCount = (uint8_t)serverSimGetBases(sim, basesOut, maxBases);
         if (!recipientIsBot) {
-            /* Humans only: stock is visibility-limited to the recipient's closest
-             * neutral/allied base; zero all other bases' stock so enemy stock never
-             * leaks (owner stays for every base). Bots are exempt — their brains read
-             * non-closest base armour for the fog-of-war capturable bit. */
+            /* Per-recipient base visibility (owner is always real):
+             *  - armour is public base condition: real for neutral/own/allied bases;
+             *    an enemy base reports BASE_FULL_ARMOUR while alive (exact value hidden)
+             *    but its true armour once dead/capturable, so the capturable flip shows.
+             *    Mirrors the brain fog-of-war in basesGetBrainBaseInRect.
+             *  - shells/mines are the private ammo reserve: real only for the
+             *    recipient's closest neutral/allied base, zeroed everywhere else. */
             WORLD bwx = 0, bwy = 0;
             BYTE closest = BASE_NOT_FOUND;
             if (serverSimGetTankState(sim, clientIdx, &bwx, &bwy)) {
                 closest = basesGetClosestForPlayer(&sim->sim, clientIdx, bwx, bwy);
             }
             for (i = 0; i < hdr->baseCount; i++) {
+                BYTE owner = basesOut[i].owner;
+                bool friendly = (owner == NEUTRAL) || (owner == clientIdx) ||
+                                playersIsAllie(&sim->sim.plyrs, owner, clientIdx);
+                if (!friendly && basesOut[i].armour > MIN_ARMOUR_CAPTURE) {
+                    basesOut[i].armour = BASE_FULL_ARMOUR;
+                }
                 if (closest == BASE_NOT_FOUND || (BYTE)(closest - 1) != (BYTE)i) {
-                    basesOut[i].armour = 0;
                     basesOut[i].shells = 0;
                     basesOut[i].mines  = 0;
                 }
