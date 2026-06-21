@@ -2392,17 +2392,20 @@ static void renderSettingsPanel(ClientSim *cs) {
         return;
     }
 
-    /* File actions — tablet/mobile only (desktop has menu bar) */
-    if (uiModeIsTablet()) {
+    /* File actions — Save Map reachable on tablet and under a controller
+       (desktop has the menu bar); Leave Game stays tablet-only. */
+    if (uiModeIsTablet() || uiShouldUseControllerMode()) {
         if (ImGui::Button(langGetText(STR_MENU_SAVE_MAP), ImVec2(-1, 0))) {
             windowSaveMap(cs);
             s_showSettings = false;
         }
         imguiHandOnHover();
-        if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
-            windowNewGame();
+        if (uiModeIsTablet()) {
+            if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
+                windowNewGame();
+            }
+            imguiHandOnHover();
         }
-        imguiHandOnHover();
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
