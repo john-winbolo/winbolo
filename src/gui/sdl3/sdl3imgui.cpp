@@ -2439,6 +2439,70 @@ static void renderSettingsPanel(ClientSim *cs) {
             imguiHandOnHover();
         }
 
+        /* ---- Language picker ---- */
+        /* Scan the installed languages once and cache for the process
+         * lifetime — they don't change at runtime, so the entries are
+         * intentionally never freed. */
+        static LangFileEntry *s_langEntries = nullptr;
+        static int            s_langCount   = 0;
+        static bool           s_langScanned = false;
+        if (!s_langScanned) {
+            s_langEntries = langPickerScan(&s_langCount);
+            s_langScanned = true;
+        }
+
+        int curLangIdx = 0;
+        {
+            char curCode[32];
+            curCode[0] = '\0';
+            gameFrontGetLanguageCode(curCode, (int)sizeof(curCode));
+            if (curCode[0] != '\0') {
+                for (int i = 0; i < s_langCount; i++) {
+                    if (strcmp(curCode, s_langEntries[i].code) == 0) {
+                        curLangIdx = i;
+                        break;
+                    }
+                }
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_LANGUAGE_LBL));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(220);
+        const char *curLangLabel =
+            (curLangIdx >= 0 && curLangIdx < s_langCount &&
+             s_langEntries[curLangIdx].meta.name[0] != '\0')
+                ? s_langEntries[curLangIdx].meta.name
+                : langGetText(STR_DLGLANG_NAME);
+        if (ImGui::BeginCombo("##settingslanguage", curLangLabel)) {
+            for (int i = 0; i < s_langCount; i++) {
+                const char *itemLabel =
+                    (s_langEntries[i].meta.name[0] != '\0')
+                        ? s_langEntries[i].meta.name
+                        : s_langEntries[i].code;
+                bool selected = (curLangIdx == i);
+                if (ImGui::Selectable(itemLabel, selected)) {
+                    if (i == 0) {
+                        /* English baseline — drop any loaded override and
+                         * persist "en" so a relaunch keeps this choice. */
+                        langUnloadFile();
+                        gameFrontSetLanguageCode("en");
+                    } else {
+                        if (langLoadFile(s_langEntries[i].path)) {
+                            gameFrontSetLanguageCode(s_langEntries[i].code);
+                        }
+                    }
+                    curLangIdx = i;
+                    /* Rebuild the main-context atlas at the safe point
+                     * between frames; applyMainContextUiScale re-merges the
+                     * new language's CJK primary so glyphs render live. */
+                    s_pendingUiScaleRebuild = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+
         if (!uiModeIsTablet()) {
             ImGui::Spacing();
             imguiWinbolonetDrawSection(true);
