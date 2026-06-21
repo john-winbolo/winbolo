@@ -42,6 +42,23 @@ local print2 = require("print2")
 
 local M = {}
 
+-- Parse one "/info kw" record token into a record table, or nil if malformed.
+-- base: b<id>:<mx>:<my>:<cls>:<tick>   pill: p<id>:<mx>:<my>:<cls>:<intank>:<tick>
+local function parse_kw_rec(tok)
+  local kind = tok:sub(1, 1)
+  local f = {}
+  for n in tok:sub(2):gmatch("[^:]+") do f[#f + 1] = n end
+  if kind == "b" and #f >= 5 then
+    return { kind = "b", id = tonumber(f[1]), mx = tonumber(f[2]),
+             my = tonumber(f[3]), cls = f[4], tick = tonumber(f[5]) }
+  elseif kind == "p" and #f >= 6 then
+    return { kind = "p", id = tonumber(f[1]), mx = tonumber(f[2]),
+             my = tonumber(f[3]), cls = f[4], intank = tonumber(f[5]),
+             tick = tonumber(f[6]) }
+  end
+  return nil
+end
+
 -- -------------------------------------------------------------------------
 -- M.process_message(sender, text, tick)
 -- Parse one incoming message.  Only /info state is recognized;
@@ -91,6 +108,31 @@ function M.process_message(sender, text, tick, state)
   if text == "/info bcq" then
     if state then state._blitz_rebroadcast = true end  -- re-announce our open call (if any)
     print2(string.format("BLITZ_RX bcq from p%s t=%d", tostring(sender), tick))
+    return
+  end
+
+  -- Known-world digest: ally-relayed base/pill allegiance + location records.
+  -- Stashed on state._kw_inbox; init.lua folds them into world.* via
+  -- W.sync_ally_world (newest-tick wins). See world.lua "Known-world sharing".
+  local kw_payload = text:match("^/info kw (.*)$")
+  if kw_payload then
+    if state then
+      state._kw_inbox = state._kw_inbox or {}
+      local inbox = state._kw_inbox
+      local n = 0
+      for tok in kw_payload:gmatch("[^,]+") do
+        local rec = parse_kw_rec(tok)
+        if rec then rec.from = sender; inbox[#inbox + 1] = rec; n = n + 1 end
+      end
+      print2(string.format("KW_RX t=%d from=p%s n=%d recs=%s", tick, tostring(sender), n, kw_payload))
+    end
+    return
+  end
+
+  -- Resync query (sent on (re)spawn): re-broadcast our known world once.
+  if text == "/info kwq" then
+    if state then state._kw_resync_req = true end
+    print2(string.format("KW_RX kwq from p%s t=%d", tostring(sender), tick))
     return
   end
 

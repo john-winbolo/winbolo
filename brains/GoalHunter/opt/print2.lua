@@ -57,7 +57,7 @@ local pending           = {}      -- array of per-tick block strings
 local last_handoff      = 0       -- os.time() of last handoff (0 = never)
 local log_path          = nil     -- resolved per-bot path, set on first handoff
 local writer_started    = false   -- have we ensured the na_opt_log thread is up?
-local FLUSH_INTERVAL_S  = 5
+local FLUSH_INTERVAL_S  = 1   -- (was 5) tighter so --max-ticks exit drops only ~1s of tail
 local wallclock         = os.time
 
 function M.set_tick(t)

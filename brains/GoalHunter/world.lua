@@ -524,4 +524,199 @@ function M.print_report(world)
   end
 end
 
+-- =========================================================================
+-- Known-world sharing (comms verb /info kw)
+--
+-- Allies relay FIRST-HAND base/pill allegiance + location changes to each
+-- other, so out-of-view objects stay current team-wide. Essential in
+-- no-advantage games where every bot is view-rect limited (and a useful
+-- fallback otherwise). Newest observed-tick wins on the receiver; only
+-- first-hand changes are broadcast (received data is NEVER relayed) so there
+-- are no echo loops. Wire class chars: f=friendly h=hostile n=neutral.
+--
+-- Shared: deployed bases, deployed pills, and ENEMY-carried pills. Friendly/
+-- allied carried pills are observer-relative ("friendly" to the carrier,
+-- "allied" to everyone else), so they keep riding the separate
+-- sync_ally_carried path instead.
+-- =========================================================================
+
+local KW_CLS_CHAR   = { friendly = "f", hostile = "h", neutral = "n" }
+local KW_CHAR_OWNER = { f = "friendly", h = "hostile", n = "neutral" }
+
+-- Shareable class signature for an object, or nil to skip. Pills append an
+-- in_tank flag; only enemy-carried pills (hostile + in_tank) are shared.
+local function kw_sig(obj, is_pill)
+  local c = KW_CLS_CHAR[obj.owner]
+  if not c then return nil end                       -- "allied"/unknown: skip
+  if is_pill then
+    if obj.in_tank then
+      if obj.owner ~= "hostile" then return nil end  -- only enemy-carried
+      return c .. "1"
+    end
+    return c .. "0"
+  end
+  return c
+end
+
+-- Diff this tick's first-hand sightings against the last-broadcast snapshot;
+-- queue changed objects into world._kw_dirty for the comms layer to drain.
+-- First-hand = last_seen==now AND not adopted-from-ally this tick (_kw_ally).
+function M.collect_kw_changes(world, now)
+  world._kw_shared = world._kw_shared or {}
+  world._kw_dirty  = world._kw_dirty  or {}
+  local shared, dirty = world._kw_shared, world._kw_dirty
+  for id, b in pairs(world.bases) do
+    if b.last_seen == now and b._kw_ally ~= now then
+      local sig, key = kw_sig(b, false), "b" .. id
+      if sig and shared[key] ~= sig then
+        local old = shared[key]
+        shared[key] = sig
+        dirty[key]  = { kind = "b", id = id, mx = b.mx, my = b.my, cls = sig, tick = now }
+        print2(string.format("KW_CHANGE t=%d b%d %s->%s @(%d,%d) queued (first-hand)", now, id, tostring(old), sig, b.mx, b.my))
+      end
+    end
+  end
+  for id, p in pairs(world.pills) do
+    if p.last_seen == now and p._kw_ally ~= now then
+      -- ci = shared class+intank ("h0"/"n0"/"h1"…) or nil to skip. Dead pills
+      -- (health<=0) share as neutral so allies holding a stale hostile/friendly
+      -- view stop stamping them.
+      local ci = ((p.health or 0) <= 0) and "n0" or kw_sig(p, true)
+      if ci then
+        -- Change-detect signature: DEPLOYED pills (intank 0) are POSITION-
+        -- sensitive, so a relocation (picked up + redeployed elsewhere) re-
+        -- broadcasts its new tile — otherwise allies stamp influence at the
+        -- old spot forever. In-tank pills (intank 1) stay position-INsensitive:
+        -- they don't stamp influence and we won't spam every tile they cross.
+        local sig = (ci:sub(2, 2) == "0") and (ci .. "@" .. p.mx .. "," .. p.my) or ci
+        local key = "p" .. id
+        if shared[key] ~= sig then
+          local old = shared[key]
+          shared[key] = sig
+          dirty[key]  = { kind = "p", id = id, mx = p.mx, my = p.my,
+                          cls = ci:sub(1, 1), intank = ci:sub(2, 2), tick = now }
+          print2(string.format("KW_CHANGE t=%d p%d %s->%s @(%d,%d) queued (first-hand)", now, id, tostring(old), sig, p.mx, p.my))
+        end
+      end
+    end
+  end
+end
+
+-- Re-queue EVERYTHING we currently know first-hand for (re)broadcast — the
+-- response to an ally's /info kwq resync query. Drains over idle ticks. Uses
+-- each object's own last_seen tick so newest-wins stays correct on receivers.
+function M.kw_queue_all(world)
+  world._kw_shared = world._kw_shared or {}
+  world._kw_dirty  = world._kw_dirty  or {}
+  for id, b in pairs(world.bases) do
+    local sig = kw_sig(b, false)
+    if sig and b.last_seen then
+      world._kw_shared["b" .. id] = sig
+      world._kw_dirty["b" .. id]  = { kind = "b", id = id, mx = b.mx, my = b.my, cls = sig, tick = b.last_seen }
+    end
+  end
+  for id, p in pairs(world.pills) do
+    -- Dead pills share as neutral too (see collect_kw_changes), so a resync
+    -- corrects a respawned ally's stale hostile view of a since-killed pill.
+    local ci = ((p.health or 0) <= 0) and "n0" or kw_sig(p, true)
+    if ci and p.last_seen then
+      -- Mirror collect_kw_changes' position-aware detect sig for deployed pills.
+      local sig = (ci:sub(2, 2) == "0") and (ci .. "@" .. p.mx .. "," .. p.my) or ci
+      world._kw_shared["p" .. id] = sig
+      world._kw_dirty["p" .. id]  = { kind = "p", id = id, mx = p.mx, my = p.my,
+                                      cls = ci:sub(1, 1), intank = ci:sub(2, 2), tick = p.last_seen }
+    end
+  end
+end
+
+-- base: b<id>:<mx>:<my>:<cls>:<tick>   pill: p<id>:<mx>:<my>:<cls>:<intank>:<tick>
+local function kw_rec_token(r)
+  if r.kind == "b" then
+    return string.format("b%d:%d:%d:%s:%d", r.id, r.mx, r.my, r.cls, r.tick)
+  end
+  return string.format("p%d:%d:%d:%s:%s:%d", r.id, r.mx, r.my, r.cls, r.intank, r.tick)
+end
+
+-- Drain world._kw_dirty into ONE "/info kw ..." message under the wire cap
+-- (PACKET_MAX_CHAT_MESSAGE = 128). Removes the entries it packs. Returns the
+-- message string, or nil when there's nothing to send.
+function M.build_kw_message(world)
+  local dirty = world._kw_dirty
+  if not dirty then return nil end
+  local PREFIX, BUDGET = "/info kw ", 120
+  local toks, len, drained = {}, #PREFIX, {}
+  for key, r in pairs(dirty) do
+    local tok = kw_rec_token(r)
+    local add = #tok + (#toks > 0 and 1 or 0)   -- +1 for the joining comma
+    if len + add > BUDGET then break end
+    toks[#toks + 1]    = tok
+    drained[#drained + 1] = key
+    len = len + add
+  end
+  if #toks == 0 then return nil end
+  for _, key in ipairs(drained) do dirty[key] = nil end
+  return PREFIX .. table.concat(toks, ",")
+end
+
+-- Merge ally-shared known-world records into world.bases/world.pills.
+-- Newest observed-tick wins; never overrides a first-hand update made THIS
+-- tick (its last_seen==now already beats any tick<=now). Adopted objects are
+-- marked _kw_ally=now so collect_kw_changes won't relay them. Never-seen
+-- objects get a minimal entry (health defaulted — influence needs only
+-- owner+location; targeting evaluators re-confirm health on first real sight).
+function M.sync_ally_world(world, recs, now)
+  for _, r in ipairs(recs) do
+    local owner = r.cls and KW_CHAR_OWNER[r.cls]
+    local from  = r.from or "?"
+    if owner and r.id and r.tick and r.mx and r.my then
+      if r.kind == "b" then
+        local b = world.bases[r.id]
+        if b == nil then
+          b = { mx = r.mx, my = r.my, health = (owner == "neutral") and 0 or 1,
+                owner = owner, last_seen = r.tick, last_health = 0,
+                _kw_ally = now, _ally_only = true }
+          world.bases[r.id] = b
+          world.base_at[mkey(r.mx, r.my)] = { id = r.id, base = b }
+          print2(string.format("KW_MERGE t=%d b%d NEW %s@%d from p%s", now, r.id, r.cls, r.tick, tostring(from)))
+        elseif r.tick > (b.last_seen or -1) then
+          local oc = KW_CLS_CHAR[b.owner] or "?"
+          if b.mx ~= r.mx or b.my ~= r.my then
+            world.base_at[mkey(b.mx, b.my)] = nil
+            b.mx, b.my = r.mx, r.my
+            world.base_at[mkey(r.mx, r.my)] = { id = r.id, base = b }
+          end
+          print2(string.format("KW_MERGE t=%d b%d ADOPT %s@%d->%s@%d from p%s", now, r.id, oc, b.last_seen or -1, r.cls, r.tick, tostring(from)))
+          b.owner, b.last_seen, b._kw_ally = owner, r.tick, now
+        else
+          print2(string.format("KW_MERGE t=%d b%d SKIP in@%d <= local@%d(%s) from p%s", now, r.id, r.tick, b.last_seen or -1, KW_CLS_CHAR[b.owner] or "?", tostring(from)))
+        end
+      elseif r.kind == "p" then
+        local intank = (r.intank == 1 or r.intank == "1")
+        local p = world.pills[r.id]
+        if p == nil then
+          p = { mx = r.mx, my = r.my, health = C.PILLS_MAX_HEALTH or 15,
+                owner = owner, anger = 0, anger_tick = 0, last_hit_tick = 0,
+                last_seen = r.tick, in_tank = intank,
+                under_attack = false, attack_tick = 0, attack_damage = 0,
+                _kw_ally = now, _ally_only = true }
+          world.pills[r.id] = p
+          pill_index_add(world, r.id, p)
+          print2(string.format("KW_MERGE t=%d p%d NEW %s%s@%d from p%s", now, r.id, r.cls, intank and "T" or "", r.tick, tostring(from)))
+        elseif r.tick > (p.last_seen or -1) then
+          local oc = KW_CLS_CHAR[p.owner] or "?"
+          if p.mx ~= r.mx or p.my ~= r.my then
+            pill_index_remove(world, r.id, p.mx, p.my)
+            p.mx, p.my = r.mx, r.my
+            pill_index_add(world, r.id, p)
+          end
+          print2(string.format("KW_MERGE t=%d p%d ADOPT %s@%d->%s%s@%d from p%s", now, r.id, oc, p.last_seen or -1, r.cls, intank and "T" or "", r.tick, tostring(from)))
+          p.owner, p.in_tank, p.last_seen, p._kw_ally = owner, intank, r.tick, now
+        else
+          print2(string.format("KW_MERGE t=%d p%d SKIP in@%d <= local@%d(%s) from p%s", now, r.id, r.tick, p.last_seen or -1, KW_CLS_CHAR[p.owner] or "?", tostring(from)))
+        end
+      end
+    end
+  end
+end
+
 return M

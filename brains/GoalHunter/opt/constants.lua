@@ -211,6 +211,10 @@ M.NAV_AVOID_PENALTY         = 1000000
 -- every tick the ally is still on attack_pill, so it decays naturally
 -- once they switch to capture_pill themselves.
 M.ALLY_PILL_TAKE_PRIORITY_TICKS = 100
+-- Known-world (/info kw) resync: min ticks between honoring ally /info kwq
+-- queries, so a cluster of (re)spawns can't make us re-dump our whole known
+-- world every tick. The dump itself drains a few objects per idle message slot.
+M.KW_RESYNC_COOLDOWN = 150
 M.REFUEL_MIN_STOCK = 5    -- skip bases with less than this in observed stock (not worth the trip)
 -- Dynamic refuel targets (state.shell_target / state.armour_target).
 -- Must stay above SHELLS_LOW (20) or offense pools (eval_attack_pill /

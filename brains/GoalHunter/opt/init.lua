@@ -1660,19 +1660,54 @@ function Brain.think(info)
   -- Populate influence grid (friendly = positive, hostile = negative).
   -- Rebuilt every tick — it's cheap and consumers expect fresh values.
   cpf.clear_influence()
-  for _, b in pairs(world.bases) do
+  local _inf_bf, _inf_bh, _inf_pf, _inf_ph, _inf_sig = 0, 0, 0, 0, 0
+  for id, b in pairs(world.bases) do
     if b.owner == "friendly" then
       cpf.stamp_influence(b.mx, b.my, C.BASE_INFLUENCE_RADIUS, C.BASE_INFLUENCE_STRENGTH)
+      _inf_bf = _inf_bf + 1; _inf_sig = _inf_sig + (id * 131 + 1 + b.mx * 7 + b.my * 13)
     elseif b.owner == "hostile" then
       cpf.stamp_influence(b.mx, b.my, C.BASE_INFLUENCE_RADIUS, -C.BASE_INFLUENCE_STRENGTH)
+      _inf_bh = _inf_bh + 1; _inf_sig = _inf_sig + (id * 131 + 2 + b.mx * 7 + b.my * 13)
     end
   end
-  for _, pm in pairs(world.pills) do
-    if pm.health > 0 then
+  for id, pm in pairs(world.pills) do
+    -- not in_tank: a pillbox riding in a tank holds no ground, so it stamps no
+    -- influence. (Also avoids divergence from a moving carried pill whose stale
+    -- position differs per ally.)
+    if pm.health > 0 and not pm.in_tank then
       if pm.owner == "friendly" then
         cpf.stamp_influence(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS, C.PILL_INFLUENCE_STRENGTH)
+        _inf_pf = _inf_pf + 1; _inf_sig = _inf_sig + (id * 9173 + 1 + pm.mx * 7 + pm.my * 13)
       elseif pm.owner == "hostile" then
         cpf.stamp_influence(pm.mx, pm.my, C.PILL_INFLUENCE_RADIUS, -C.PILL_INFLUENCE_STRENGTH)
+        _inf_ph = _inf_ph + 1; _inf_sig = _inf_sig + (id * 9173 + 2 + pm.mx * 7 + pm.my * 13)
+      end
+    end
+  end
+  -- INF_CHANGE: fire only on ticks where the stamped set (and thus the grid)
+  -- actually changes. sig is position-sensitive, so two allies with identical
+  -- grids share a sig — diff the fire-tick across allies to see convergence lag.
+  if state._inf_last_sig ~= _inf_sig then
+    state._inf_last_sig = _inf_sig
+  end
+  -- KWDIAG (temporary): per-object allegiance + last_seen so allied bots can be
+  -- diffed to find residual divergence and its cause (lag vs missed broadcast).
+  -- Token: <id><cls><lastseen>; pills add 'T' when in_tank, 'A' if ally-sourced.
+  if (now % 8) == 0 then
+    local _kc = { friendly="f", hostile="h", neutral="n", allied="a" }
+    local _bids, _pids = {}, {}
+    for id in pairs(world.bases) do _bids[#_bids+1] = id end
+    for id in pairs(world.pills) do _pids[#_pids+1] = id end
+    table.sort(_bids); table.sort(_pids)
+    local _bp, _pp = {}, {}
+    for _, id in ipairs(_bids) do
+      local b = world.bases[id]
+      _bp[#_bp+1] = string.format("%d%s(%d,%d)%s", id, _kc[b.owner] or "?", b.mx, b.my, b._ally_only and "A" or "")
+    end
+    for _, id in ipairs(_pids) do
+      local p = world.pills[id]
+      if (p.health or 0) > 0 then
+        _pp[#_pp+1] = string.format("%d%s%s(%d,%d)%s", id, _kc[p.owner] or "?", p.in_tank and "T" or "", p.mx, p.my, p._ally_only and "A" or "")
       end
     end
   end
@@ -2016,6 +2051,28 @@ function Brain.think(info)
     W.sync_ally_carried(world, ac, now)
   end
 
+  -- Known-world (comms /info kw): fold ally-relayed base/pill allegiance +
+  -- location into world.* (newest observed-tick wins), answer any pending
+  -- resync query, then snapshot OUR first-hand allegiance changes this tick
+  -- for the next outbound digest. Mirrors the sync_ally_carried placement.
+  if state._kw_inbox and #state._kw_inbox > 0 then
+    W.sync_ally_world(world, state._kw_inbox, now)
+    state._kw_inbox = nil
+  end
+  -- First think (and after each respawn): ask allies to dump their known world.
+  if not state._kw_inited then
+    state._kw_inited = true
+    state._kw_send_query = true
+  end
+  if state._kw_resync_req then
+    state._kw_resync_req = nil
+    if (state._kw_resync_cd or 0) <= now then
+      W.kw_queue_all(world)                 -- drains over idle ticks via build_kw_message
+      state._kw_resync_cd = now + (C.KW_RESYNC_COOLDOWN or 150)
+    end
+  end
+  W.collect_kw_changes(world, now)
+
   -- Paused: accept commands but do nothing else
   if state.paused then
     log.log_tick(state, info, state.goal, 0, 0, nil)
@@ -2066,6 +2123,7 @@ function Brain.think(info)
   end
   if _just_respawned then
     state.stuck_for = 0
+    state._kw_send_query = true   -- re-acquire team's known world after respawn
     state._tank_track = nil   -- drop pre-death ghosts (fallback if info.dead was missed)
     -- Full blitz/squad wipe + registry re-discover. Fallback for when the
     -- info.dead death-tick reset was missed (GC pause / long think / Lua error):
@@ -4765,6 +4823,14 @@ function Brain.think(info)
       state.pending_lgm_back = nil
     end
 
+    -- Known-world resync query (one-shot, on first think / after respawn):
+    -- ask allies to re-broadcast their known base/pill allegiance.
+    if state._kw_send_query and not send_msg then
+      send_msg = "/info kwq"
+      msg_dest = 0
+      state._kw_send_query = nil
+    end
+
     -- Blitz-call registry one-shots (commander open/close, discovery query/
     -- re-announce). One per tick, only when the slot is free. We have an open
     -- call iff we're a commander leading an attack_pill take (a help-wanted
@@ -4906,6 +4972,22 @@ function Brain.think(info)
       for k, v in pairs(bse)      do last_ext[k] = v end
       state.last_broadcast_extra_tick = now
       if bse.cost ~= nil then state.last_broadcast_cost_tick = now end
+    end
+
+    -- Known-world digest (idle slot, low priority): relay our first-hand
+    -- base/pill allegiance CHANGES to allies. Usually empty (allegiance flips
+    -- are rare), so no steady-state traffic; on a resync it drains a few
+    -- objects per free tick. Receiver folds via W.sync_ally_world.
+    if not send_msg and world._kw_dirty and next(world._kw_dirty) ~= nil then
+      local kwmsg = W.build_kw_message(world)
+      if kwmsg then
+        send_msg = kwmsg; msg_dest = 0
+        local rem = 0; for _ in pairs(world._kw_dirty) do rem = rem + 1 end
+      end
+    elseif send_msg and world._kw_dirty and next(world._kw_dirty) ~= nil then
+      -- A queued change can't go out: the single message slot was already
+      -- claimed by a higher-priority message this tick. This is the lag source.
+      local pend = 0; for _ in pairs(world._kw_dirty) do pend = pend + 1 end
     end
 
     -- Human goal-change line — fired only when the message slot is
