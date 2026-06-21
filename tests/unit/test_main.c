@@ -263,6 +263,8 @@ static const UnitTestEntry s_tests[] = {
                                                  run_starts_open_ideal_friendly_pill_eligible },
     { "input_redundancy",                        run_input_redundancy                        },
     { "edge_send_predicate",                     run_edge_send_predicate                     },
+    { "bases_closest_for_player",                run_bases_closest_for_player                },
+    { "base_stock_visibility",                   run_base_stock_visibility                   },
     { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
     { "stall_mine_late_lays_once",               run_stall_mine_late_lays_once               },
     { "stall_mine_duplicate_not_relaid",         run_stall_mine_duplicate_not_relaid         },

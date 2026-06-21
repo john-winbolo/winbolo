@@ -381,6 +381,13 @@ int run_edge_send_predicate(void);
  * processed tick (lastProcessedInput advances), late inputs for it drop
  * as stale, and one-shot actions are harvested/laid exactly once under the
  * lastActionAppliedTick invariant. Always built (no WB_NETDEBUG gate). */
+/* Base-visibility integration (test_base_stock_visibility.c): per-player
+ * closest-base selection (enemy exclusion, in-range, post-flip inclusion) and
+ * the per-recipient full-sync stock cull in serverSimBuildSnapshot (real stock
+ * only for the recipient's own closest base; other bases zeroed, owner kept). */
+int run_bases_closest_for_player(void);
+int run_base_stock_visibility(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);

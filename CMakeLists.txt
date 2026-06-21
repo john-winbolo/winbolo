@@ -2578,6 +2578,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
+    tests/unit/test_base_stock_visibility.c
     tests/unit/test_input_catchup.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
@@ -2918,6 +2919,8 @@ set(_unit_test_names
     starts_batch_team_anchor_jitter_varies
     starts_open_ideal_friendly_pill_eligible
     input_redundancy
+    bases_closest_for_player
+    base_stock_visibility
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid
