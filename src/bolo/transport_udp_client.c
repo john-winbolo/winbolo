@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -176,6 +176,10 @@ typedef struct {
     bool     firstResyncChunkSeen;     /* Stop request retransmit once chunks arrive */
     uint32_t lastResyncRequestTick;    /* localTick of last request send (retransmit) */
     uint32_t resyncAttempts;           /* Resyncs that did not resolve the mismatch */
+    uint32_t mapMismatchStreak;        /* Consecutive full-sync checksum mismatches not
+                                        * yet acted on; debounces a transient mismatch
+                                        * (in-flight CHANNEL_MAP events) into a resync
+                                        * only once it persists */
     uint32_t resyncSuppressUntilTick;  /* Gate new requests until here (grace window) */
     uint32_t lastResyncProgressTick;   /* localTick of last forward progress (request
                                         * sent at start, or a chunk received); drives
@@ -968,7 +972,8 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
             c->mapDownloadBuf != NULL &&
             c->mapDownloadReceived == c->mapDownloadTotal) {
             installCompressedMap(c->clientSim, c->mapDownloadBuf,
-                                 (int)c->mapDownloadTotal, NULL);
+                                 (int)c->mapDownloadTotal, NULL,
+                                 /*initViewport=*/true);
             c->mapInstalled = true;
         }
         if (wasInLobby) {
@@ -1004,6 +1009,12 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
 #define MAP_RESYNC_REQUEST_RESEND_TICKS 75   /* ~0.75s between request resends */
 #define MAP_RESYNC_GRACE_TICKS         1000  /* ~10s = 2 full-sync intervals */
 #define MAP_RESYNC_MAX_ATTEMPTS        10    /* give up + disconnect after this */
+/* Require this many consecutive full-sync checksum mismatches before requesting
+ * a resync. Full-syncs are FULL_SYNC_INTERVAL ticks apart (~5s), while a
+ * transient divergence from in-flight reliable CHANNEL_MAP events self-resolves
+ * within ~1 RTT — far inside a single full-sync — so a short debounce drops the
+ * spurious resync yet still recovers a divergence that genuinely persists. */
+#define MAP_RESYNC_MISMATCH_DEBOUNCE   3
 #define MAP_RESYNC_STALL_TICKS         500   /* ~5s of no chunk progress -> abandon
                                               * the in-flight resync (server stopped
                                               * sending / state lost) so the next
@@ -1029,6 +1040,7 @@ static void udpClientResetResync(TransportUdpClientCtx *c) {
     c->firstResyncChunkSeen = false;
     c->activeResyncGen = 0;
     c->resyncAttempts = 0;
+    c->mapMismatchStreak = 0;
     c->resyncSuppressUntilTick = 0;
 }
 
@@ -1107,6 +1119,45 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
     }
 }
 
+/* Finalise a reassembled map resync. mapResyncBuf/mapResyncTotal hold the blob
+ * for generation activeResyncGen. A resync only ever follows a successful first
+ * map install, so the viewport's view buffers already exist and the install
+ * runs with initViewport=false to keep the player's camera over the swap.
+ *
+ * On a successful install: advance installedMapGen to this resync's gen (older
+ * map-channel events then drop on the drain — the blob already carries every
+ * change up to the cut), open the grace window, and count it. On a FAILED
+ * install: keep the prior map and re-arm WITHOUT advancing the generation, the
+ * grace window, or the count, so the next full-sync checksum mismatch
+ * re-requests (MAP_RESYNC_MAX_ATTEMPTS still bounds the loop). Either way the
+ * resync buffer and the outstanding-request flags are cleared. */
+static void udpClientFinalizeResync(TransportUdpClientCtx *c) {
+    ClientSim *cs = c ? c->clientSim : NULL;
+    if (cs == NULL) return;
+
+    if (!installCompressedMap(cs, c->mapResyncBuf, (int)c->mapResyncTotal, NULL,
+                              /*initViewport=*/false)) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "map resync install FAILED gen=%u (%u bytes) - keeping prior map, will retry",
+            (unsigned)c->activeResyncGen, (unsigned)c->mapResyncTotal);
+        c->resyncActive = false;
+        c->firstResyncChunkSeen = false;
+        c->activeResyncGen = 0;
+        udpClientFreeResyncBuf(c);
+        return;
+    }
+
+    c->mapResyncCount++;
+    c->resyncActive = false;
+    c->firstResyncChunkSeen = false;
+    c->installedMapGen = c->activeResyncGen;
+    c->activeResyncGen = 0;
+    c->resyncSuppressUntilTick = c->localTick + MAP_RESYNC_GRACE_TICKS;
+    udpClientFreeResyncBuf(c);
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+        "map resync install complete (count=%u)", (unsigned)c->mapResyncCount);
+}
+
 /* Bulk-receiver onComplete (CHANNEL_BULK): the whole blob for `buf` (the buffer
  * onBegin returned) has landed. Finalise by kind — the same finishes the old
  * per-chunk paths drove. */
@@ -1132,7 +1183,8 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         c->mapDownloadReceived = h->totalSize;
         c->joinState = UDP_CLIENT_CONNECTED;
         installCompressedMap(cs, c->mapDownloadBuf,
-                             (int)c->mapDownloadTotal, NULL);
+                             (int)c->mapDownloadTotal, NULL,
+                             /*initViewport=*/true);
         c->mapInstalled = true;
         {
             ControlEvent evt = { .type = CTRL_MAP_DOWNLOAD_COMPLETE };
@@ -1147,23 +1199,10 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         /* Atomic terrain swap — joinState never changed, so snapshots and
          * entities kept flowing. NULL name keeps the current map name. The
          * server-held map events (seq >= cut) flow on the next snapshots and
-         * apply on top of the freshly installed blob. */
-        installCompressedMap(cs, c->mapResyncBuf, (int)c->mapResyncTotal, NULL);
-        c->mapResyncCount++;
-        c->resyncActive = false;
-        c->firstResyncChunkSeen = false;
-        /* Advance the installed map generation to this resync's gen before
-         * clearing the transient activeResyncGen. Map-channel events tagged
-         * older than this drop on the drain — the blob just installed already
-         * carries every change up to the resync cut. */
-        c->installedMapGen = c->activeResyncGen;
-        c->activeResyncGen = 0;
-        /* Suppress new requests for a grace window: the next full-sync checksum
-         * confirms convergence and clears the backoff counter. */
-        c->resyncSuppressUntilTick = c->localTick + MAP_RESYNC_GRACE_TICKS;
-        udpClientFreeResyncBuf(c);
-        WB_LOG_INFO(WB_LOG_CAT_NET,
-            "map resync install complete (count=%u)", (unsigned)c->mapResyncCount);
+         * apply on top of the freshly installed blob. initViewport=false (inside
+         * the finalize): a mid-game resync keeps the player's camera. A failed
+         * install keeps the prior map and does not advance the generation. */
+        udpClientFinalizeResync(c);
         break;
 
     default:
@@ -1590,7 +1629,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * was ingested above (before the control drain), where any game-start
          * baseline lift already ran, so a previous-game straggler is gone and
          * only current-game events drain here.  The channel guarantees in-order
-         * exactly-once delivery, so no per-event ack or dedup is applied. */
+         * exactly-once delivery, so no per-event ack or dedup is applied.
+         * Ephemeral events arrive on the best-effort channel and merge into the
+         * same game-event set: order between the reliable and best-effort sets
+         * does not affect correctness, so they share chanGameEv[] and the
+         * splice below. */
         {
             GameEvent chanGameEv[MAX_SNAPSHOT_EVENTS];
             uint8_t chanBuf[CHANNEL_MAX_SEG];
@@ -1599,6 +1642,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             int mapTailCount;
             while (chanCount < MAX_SNAPSHOT_EVENTS &&
                    channelReceive(&c->channelMux, CHANNEL_GAME, chanBuf, &chanLen)) {
+                if (unpackGameEvent(chanBuf, chanLen, &chanGameEv[chanCount]) > 0) {
+                    chanCount++;
+                }
+            }
+            /* Drain the best-effort game-effect channel into the same array. */
+            while (chanCount < MAX_SNAPSHOT_EVENTS &&
+                   channelReceiveBestEffort(&c->channelMux, CHANNEL_GAME_EFFECT,
+                                            chanBuf, &chanLen)) {
                 if (unpackGameEvent(chanBuf, chanLen, &chanGameEv[chanCount]) > 0) {
                     chanCount++;
                 }
@@ -1701,6 +1752,16 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 }
                 while (channelReceive(&c->channelMux, CHANNEL_GAME,
                                       chanBuf, &chanLen)) {
+                    if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
+                        clientSimApplyGameEvents(c->clientSim, &gev, 1,
+                                                 c->playerNum);
+                    }
+                }
+                /* Best-effort game-effect channel (ephemeral events). Order
+                 * relative to the reliable game/map drains does not matter. */
+                while (channelReceiveBestEffort(&c->channelMux,
+                                                CHANNEL_GAME_EFFECT,
+                                                chanBuf, &chanLen)) {
                     if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
                         clientSimApplyGameEvents(c->clientSim, &gev, 1,
                                                  c->playerNum);
@@ -3130,6 +3191,29 @@ bool transportUdpClientTestBeginResync(Transport *t) {
     return true;
 }
 
+/* Test-only: run the map-resync finalize on a caller-supplied blob, as if a
+ * resync of a fresh generation had just reassembled `buf`. Arms the resync
+ * precondition (resyncActive, a fresh activeResyncGen, buf copied into the
+ * owned resync buffer) and drives the real udpClientFinalizeResync, so a test
+ * can prove a corrupt blob leaves installedMapGen/mapResyncCount untouched (and
+ * re-arms resyncActive) while a valid blob advances them. Returns false if the
+ * precondition can't be set (bad args or out of memory). */
+bool transportUdpClientTestFinalizeResync(Transport *t, const BYTE *buf, int len) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL || buf == NULL || len <= 0) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    udpClientFreeResyncBuf(c);
+    c->mapResyncBuf = (BYTE *)malloc((size_t)len);
+    if (c->mapResyncBuf == NULL) return false;
+    memcpy(c->mapResyncBuf, buf, (size_t)len);
+    c->mapResyncTotal = (uint32_t)len;
+    c->resyncActive = true;
+    c->firstResyncChunkSeen = true;
+    c->activeResyncGen = udpClientNextResyncGen(c);
+    udpClientFinalizeResync(c);
+    return true;
+}
+
 /* Test-only: read the client's map-generation state — installedMapGen (the
  * generation the gate compares against) and mapResyncCount (cumulative
  * successful installs, so a test can assert whether a resync actually ran). */
@@ -3140,6 +3224,18 @@ void transportUdpClientTestMapState(Transport *t, uint32_t *installedMapGen,
     c = (TransportUdpClientCtx *)t->ctx;
     if (installedMapGen) *installedMapGen = c->installedMapGen;
     if (mapResyncCount)  *mapResyncCount  = c->mapResyncCount;
+}
+
+/* Test-only: read the resync debounce state — whether a resync is currently in
+ * flight (resyncActive) and the consecutive-mismatch streak that gates a new
+ * request (mapMismatchStreak). */
+void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
+                                       uint32_t *mismatchStreak) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (resyncActive)   *resyncActive   = c->resyncActive;
+    if (mismatchStreak) *mismatchStreak = c->mapMismatchStreak;
 }
 
 void transportUdpClientGetNetStats(Transport *t, int *ppsRecv, int *ppsSent,
@@ -3215,8 +3311,10 @@ void transportUdpClientReportMapChecksum(Transport *t, bool matched) {
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
 
     if (matched) {
-        /* Converged (or never diverged): clear the backoff once no resync is
-         * in flight, so a later genuine divergence starts fresh. */
+        /* Converged (or never diverged): the streak is broken, and clear the
+         * backoff once no resync is in flight so a later genuine divergence
+         * starts fresh. */
+        c->mapMismatchStreak = 0;
         if (!c->resyncActive) {
             c->resyncAttempts = 0;
             c->resyncSuppressUntilTick = 0;
@@ -3225,9 +3323,16 @@ void transportUdpClientReportMapChecksum(Transport *t, bool matched) {
     }
 
     /* Mismatch. One outstanding request at a time, and stay quiet during the
-     * post-install grace window — otherwise every full-sync would re-request. */
+     * post-install grace window — otherwise every full-sync would re-request.
+     * Mismatches in those states don't count toward the streak. */
     if (c->resyncActive) return;
     if (c->localTick < c->resyncSuppressUntilTick) return;
+
+    /* Debounce: a single transient mismatch is usually in-flight reliable map
+     * events that haven't arrived yet and will self-deliver before the next
+     * full-sync. Only act once the divergence persists for several full-syncs. */
+    c->mapMismatchStreak++;
+    if (c->mapMismatchStreak < MAP_RESYNC_MISMATCH_DEBOUNCE) return;
 
     if (c->resyncAttempts >= MAP_RESYNC_MAX_ATTEMPTS) {
         /* Repeated full resyncs didn't fix it — almost certainly a checksum
@@ -3242,7 +3347,8 @@ void transportUdpClientReportMapChecksum(Transport *t, bool matched) {
         return;
     }
 
-    /* Start a new resync. */
+    /* Start a new resync. Reset the streak so the next divergence re-counts. */
+    c->mapMismatchStreak = 0;
     c->activeResyncGen = udpClientNextResyncGen(c);
     c->resyncActive = true;
     c->firstResyncChunkSeen = false;
@@ -3435,9 +3541,9 @@ static void udpClientUploadSendUseLocal(TransportUdpClientCtx *c,
                                          uint32_t totalLen,
                                          const char *name,
                                          const char *relPath,
-                                         const uint8_t md5[16]) {
-    /* Wire: [hdr 8][totalLen 4][nameLen 1][name N][relPathLen 1][relPath M][md5 16] */
-    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255 + 1 + 255 + 16];
+                                         const char md5Hex[32]) {
+    /* Wire: [hdr 8][totalLen 4][nameLen 1][name N][relPathLen 1][relPath M][md5 32] */
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255 + 1 + 255 + 32];
     int nameLen, relLen, pos;
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
@@ -3458,8 +3564,8 @@ static void udpClientUploadSendUseLocal(TransportUdpClientCtx *c,
     if (nameLen > 0) { memcpy(buf + pos, name, nameLen); pos += nameLen; }
     buf[pos++] = (uint8_t)relLen;
     if (relLen > 0) { memcpy(buf + pos, relPath, relLen); pos += relLen; }
-    memcpy(buf + pos, md5, 16);
-    pos += 16;
+    memcpy(buf + pos, md5Hex, 32);
+    pos += 32;
     udpClientSendTo(c, buf, pos);
 
     if (c->clientSim) {
@@ -3481,9 +3587,9 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t,
                                              uint32_t totalLen,
                                              const char *name,
                                              const char *relPath,
-                                             const uint8_t md5[16]) {
+                                             const char md5Hex[32]) {
     udpClientUploadSendUseLocal((TransportUdpClientCtx *)t->ctx, totalLen,
-                                 name, relPath, md5);
+                                 name, relPath, md5Hex);
 }
 
 /* === Lobby map upload — state machine =============================
@@ -3519,7 +3625,7 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
                                   const uint8_t *buf, size_t len,
                                   const char *name,
                                   const char *relPath, /* nullable */
-                                  const uint8_t *md5   /* required iff relPath */) {
+                                  const char *md5Hex   /* 32 hex chars + NUL, required iff relPath */) {
     if (c == NULL || buf == NULL || name == NULL || name[0] == '\0') {
         return false;
     }
@@ -3550,9 +3656,9 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
         c->clientSim->lobbyMapUseLocalNeedsFallback = false;
     }
 
-    if (relPath != NULL && relPath[0] != '\0' && md5 != NULL) {
+    if (relPath != NULL && relPath[0] != '\0' && md5Hex != NULL) {
         udpClientUploadSendUseLocal(c, c->uploadTotal, c->uploadName,
-                                     relPath, md5);
+                                     relPath, md5Hex);
         c->uploadUseLocalPending = true;
         c->uploadBeginSent       = false;
     } else {
@@ -3690,6 +3796,7 @@ bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
     char relPath[256];
     bool haveRelPath;
     uint8_t md5[16];
+    char md5Hex[33];
     bool ok;
 
     if (t == NULL || localFilePath == NULL || localFilePath[0] == '\0') {
@@ -3743,11 +3850,12 @@ bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
     haveRelPath = (relPath[0] != '\0');
     if (haveRelPath) {
         md5Compute(fileData, fileLen, md5);
+        md5ToHex(md5, md5Hex);
     }
 
     ok = udpClientUploadStart(c, (const uint8_t *)fileData, fileLen, nameBuf,
                                haveRelPath ? relPath : NULL,
-                               haveRelPath ? md5     : NULL);
+                               haveRelPath ? md5Hex  : NULL);
     SDL_free(fileData);
     return ok;
 }

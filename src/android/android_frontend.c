@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * android_frontend.c - Frontend callbacks and window functions for Android
  *
  * Provides the frontend callbacks that the bolo engine calls, plus all

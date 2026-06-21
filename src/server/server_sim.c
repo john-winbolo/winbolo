@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -431,6 +431,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
     sim->mapMd5Valid = FALSE;
+    sim->mapMd5Hex[0] = '\0';
     memset(sim->mapMd5, 0, sizeof(sim->mapMd5));
     sim->sim.hiddenMines = hiddenMines;
     sim->sim.isServer = TRUE;
@@ -3328,6 +3329,7 @@ static void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path) {
     bool isBmap = FALSE;
     if (sim == NULL) return;
     sim->mapMd5Valid = FALSE;
+    sim->mapMd5Hex[0] = '\0';
     if (path == NULL || path[0] == '\0') return;
     f = fopen(path, "rb");
     if (f == NULL) return;
@@ -3345,6 +3347,7 @@ static void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path) {
     if (isBmap) {
         md5Final(sim->mapMd5, &ctx);
         sim->mapMd5Valid = TRUE;
+        md5ToHex(sim->mapMd5, sim->mapMd5Hex);
     }
 }
 
@@ -3359,14 +3362,8 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     snprintf(info.map, sizeof(info.map), "%s", sim->mapName);
     /* map_md5 is the hash of the canonical BMAPBOLO bytes; meaningful
      * only for known (non-random) maps WBN can match in its library. */
-    if (sim->mapMd5Valid && !sim->randomMapEnabled) {
-        static const char hexd[] = "0123456789abcdef";
-        int i;
-        for (i = 0; i < 16; i++) {
-            info.mapMd5[i * 2]     = hexd[(sim->mapMd5[i] >> 4) & 0xF];
-            info.mapMd5[i * 2 + 1] = hexd[sim->mapMd5[i] & 0xF];
-        }
-        info.mapMd5[32] = '\0';
+    if (sim->mapMd5Hex[0] != '\0' && !sim->randomMapEnabled) {
+        snprintf(info.mapMd5, sizeof(info.mapMd5), "%s", sim->mapMd5Hex);
     } else {
         info.mapMd5[0] = '\0';
     }
@@ -5952,6 +5949,10 @@ const char *serverSimGetMapName(const ServerSim *sim) {
     return sim->mapName;
 }
 
+const char *serverSimGetMapMd5Hex(const ServerSim *sim) {
+    return (sim != NULL) ? sim->mapMd5Hex : "";
+}
+
 const char *serverSimGetBotBrainPath(const ServerSim *sim) {
     return sim->botBrainPath;
 }
@@ -6475,12 +6476,14 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         if (loadedOk) {
             md5Compute(bytes, (size_t)len, sim->mapMd5);
             sim->mapMd5Valid = TRUE;
+            md5ToHex(sim->mapMd5, sim->mapMd5Hex);
         }
     } else {
         loadedOk = (mapLoadCompressedMap(&sim->sim.mp, &sim->sim.pb,
                                          &sim->sim.bs, &sim->sim.ss,
                                          (BYTE *)bytes, len) == TRUE);
         sim->mapMd5Valid = FALSE;
+        sim->mapMd5Hex[0] = '\0';
     }
     if (!loadedOk) {
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
@@ -6620,6 +6623,7 @@ bool serverSimRevertPreview(ServerSim *sim) {
     /* Reverted to the previous map from its compressed bytes — we no
      * longer have its .map file to hash, so clear the cached md5. */
     sim->mapMd5Valid = FALSE;
+    sim->mapMd5Hex[0] = '\0';
 
     memcpy(sim->mapName, sim->previousMapName, sizeof(sim->mapName));
     len = serverSimGetCompressedMap(sim, tempBuf);

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * main_android.c - Android entry point for WinBolo game client
  *
  * Replaces gui/sdl3/winbolo.c for the Android build.

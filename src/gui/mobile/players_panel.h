@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * players_panel.h - Floating players panel for mobile (Android/iOS)
  *
  * Shows the list of players with alliance checkboxes, replacing the

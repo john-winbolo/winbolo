@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1368,6 +1368,8 @@ uint16_t       serverSimGetMapEventCount(const ServerSim *sim);
 
 /* String (char[]) accessors */
 const char *serverSimGetMapName(const ServerSim *sim);
+/* 32-char hex of the active map's bytes; "" when random/unknown. */
+const char *serverSimGetMapMd5Hex(const ServerSim *sim);
 const char *serverSimGetBotBrainPath(const ServerSim *sim);
 const char *serverSimGetServerMessageLogFile(const ServerSim *sim);
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
@@ -110,7 +110,7 @@ extern "C" {
 
 extern "C" void windowSetQuitting(void);
 
-/* Network type enum values come from bolo_packets.h via client_sim.h */
+/* Network type enum values come from client_enums.h via client_sim.h */
 
 /* -------------------------------------------------------
  * External C linkage: data-source functions for info windows.

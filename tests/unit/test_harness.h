@@ -120,6 +120,7 @@ int run_server_text_codec_via_chat_wire(void);
 int run_md5_rfc1321_vectors(void);
 int run_md5_streaming_matches_oneshot(void);
 int run_md5_block_boundaries(void);
+int run_md5_to_hex(void);
 int run_ranked_flag_persists_with_one_player(void);
 int run_ranked_shape_gate(void);
 int run_lobby_lock_bit_lookup(void);
@@ -163,6 +164,7 @@ int run_wbn_serverlist_parse(void);
 int run_wbn_serverlist_players(void);
 int run_wbn_serverlist_motd(void);
 int run_wbn_serverlist_malformed(void);
+int run_wbn_map_parse(void);
 int run_brain_crash_log_writes_file(void);
 int run_brain_crash_log_falls_back_to_luaptr(void);
 int run_brain_inbox_push_peek_fifo(void);
@@ -493,6 +495,21 @@ int run_map_resync_cut_and_deliver_once(void);
 int run_map_resync_duplicate_request_no_recut(void);
 int run_map_resync_send_gate_holds(void);
 int run_map_resync_stale_gen_rejected(void);
+
+/* Map compressed-codec round-trip (test_map_compress_roundtrip.c): a real map
+ * (and a mutated one carrying mine-range terrain near pills/bases) must survive
+ * mapSaveCompressedMap -> mapLoadCompressedMap tile-for-tile. */
+int run_map_compress_roundtrip_stock(void);
+int run_map_compress_roundtrip_mutated(void);
+int run_map_checksum_ignores_mines(void);
+
+/* Client resync finalize (test_resync_finalize.c): a corrupt/truncated blob
+ * must not advance installedMapGen/mapResyncCount (and re-arms the resync); a
+ * valid blob advances them; installCompressedMap reports failure on garbage. */
+int run_resync_finalize_corrupt_keeps_gen(void);
+int run_resync_finalize_valid_advances_gen(void);
+int run_install_compressed_map_rejects_garbage(void);
+int run_resync_debounce_threshold(void);
 
 /* Connection-id NAT-rebind migration (test_conn_migration.c): the pure
  * connId match-and-rehome decision, plus an end-to-end loopback join that

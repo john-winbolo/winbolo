@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1806,7 +1806,8 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->errAngle = 0.0f;
 }
 
-bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name) {
+bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name,
+                          bool initViewport) {
   GameSim *gs;
   if (cs == NULL || buf == NULL || len <= 0) return false;
 
@@ -1816,10 +1817,17 @@ bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *n
     return false;
   }
 
-  /* Initialise rendering state — clientSimCreate deliberately skips
-   * viewport init (see comment above on clientSimCreate); the map
-   * install path owns it. */
-  viewportInit(clientSimViewportMut(cs));
+  /* First map load (initViewport): clientSimCreate deliberately skips
+   * viewport init (see comment above on clientSimCreate); the map install
+   * path owns it, allocating vp->view/vp->mineView and parking the camera
+   * at the map origin. A mid-game resync passes initViewport=false: those
+   * buffers already exist from the first install and the player's camera
+   * must survive the terrain swap, so the viewport is left untouched. The
+   * clientSimUpdateView(cs, redraw) below recalculates and redraws the new
+   * terrain either way, so the swapped-in map still renders in place. */
+  if (initViewport) {
+    viewportInit(clientSimViewportMut(cs));
+  }
 
   {
     char *mapNameMut = clientSimGetMapNameMutable(cs);

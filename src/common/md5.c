@@ -179,3 +179,12 @@ void md5Compute(const void *data, size_t len, uint8_t digest[16]) {
     md5Update(&ctx, data, len);
     md5Final(digest, &ctx);
 }
+
+void md5ToHex(const uint8_t digest[16], char out[33]) {
+    static const char kHex[] = "0123456789abcdef";
+    for (int i = 0; i < 16; i++) {
+        out[i * 2 + 0] = kHex[(digest[i] >> 4) & 0xF];
+        out[i * 2 + 1] = kHex[ digest[i]       & 0xF];
+    }
+    out[32] = '\0';
+}

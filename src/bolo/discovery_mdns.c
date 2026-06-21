@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -163,6 +163,9 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
   }
   memset(out, 0, sizeof(*out));
   out->port = r->port;
+  /* The mDNS responder is always our current producer, so the rich
+   * flags/counts/md5 keys are present in the TXT record. */
+  out->hasRichInfo = true;
 
   if (r->haveAddr) {
     a = r->addr;
@@ -202,6 +205,26 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
       out->inLobby = (atoi(val) != 0);
     } else if (strcmp(key, "locked") == 0) {
       out->locked = (atoi(val) != 0);
+    } else if (strcmp(key, "md5") == 0) {
+      SDL_strlcpy(out->mapMd5, val, sizeof(out->mapMd5));
+    } else if (strcmp(key, "newp") == 0) {
+      out->allowNewPlayers = (atoi(val) != 0);
+    } else if (strcmp(key, "spec") == 0) {
+      out->allowSpectators = (atoi(val) != 0);
+    } else if (strcmp(key, "nspec") == 0) {
+      out->spectatorCount = (BYTE)atoi(val);
+    } else if (strcmp(key, "ranked") == 0) {
+      out->ranked = (atoi(val) != 0);
+    } else if (strcmp(key, "rnd") == 0) {
+      out->randomMap = (atoi(val) != 0);
+    } else if (strcmp(key, "tlim") == 0) {
+      out->timeLimit = (int32_t)atoi(val);
+    } else if (strcmp(key, "humans") == 0) {
+      out->numHumans = (BYTE)atoi(val);
+    } else if (strcmp(key, "bots") == 0) {
+      out->numBots = (BYTE)atoi(val);
+    } else if (strcmp(key, "max") == 0) {
+      out->maxPlayers = (BYTE)atoi(val);
     }
   }
   return true;

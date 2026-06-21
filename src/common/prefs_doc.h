@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * Owned, in-memory preferences document backed by a cJSON tree and
  * serialized as JSON. One top-level object whose integer "_version"
  * member carries the schema version and whose other members are

@@ -145,6 +145,16 @@ int run_mdns_discovery(void) {
   info.ai = (aiType)0;
   info.lobby = true;
   info.locked = true;
+  strncpy(info.mapMd5Hex, "0123456789abcdef0123456789abcdef", sizeof(info.mapMd5Hex) - 1);
+  info.allowNewPlayers = true;
+  info.allowSpectators = false;
+  info.spectatorCount  = 0;
+  info.ranked          = true;
+  info.randomMap       = false;
+  info.timeLimit       = 3000;
+  info.numHumans       = 3;
+  info.numBots         = 1;
+  info.maxPlayers      = 12;
 
   UT_ASSERT(sendServerAnswer(responder, &browserAddr, &info) == 0);
 
@@ -152,8 +162,16 @@ int run_mdns_discovery(void) {
   UT_ASSERT(recvServer(browser, &s) == 0);
 
   UT_ASSERT_MSG(s.port == 27510, "port=%u", (unsigned)s.port);
+  UT_ASSERT(s.hasRichInfo == true);
   UT_ASSERT(s.inLobby == true);
   UT_ASSERT(s.locked == true);
+  UT_ASSERT_MSG(strcmp(s.mapMd5, "0123456789abcdef0123456789abcdef") == 0, "md5='%s'", s.mapMd5);
+  UT_ASSERT(s.allowNewPlayers == true);
+  UT_ASSERT(s.ranked == true);
+  UT_ASSERT(s.randomMap == false);
+  UT_ASSERT_MSG(s.timeLimit == 3000, "tlim=%d", (int)s.timeLimit);
+  UT_ASSERT(s.numHumans == 3 && s.numBots == 1);
+  UT_ASSERT_MSG(s.maxPlayers == 12, "max=%u", (unsigned)s.maxPlayers);
   UT_ASSERT_MSG(strcmp(s.mapName, "Everard Island") == 0, "map='%s'", s.mapName);
   UT_ASSERT(s.versionMajor == 1 && s.versionMinor == 2 && s.versionRevision == 3);
   UT_ASSERT(s.numPlayers == 4 && s.numBases == 5 && s.numPills == 6);

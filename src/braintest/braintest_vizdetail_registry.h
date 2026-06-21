@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 /*********************************************************
  * BrainTest viz-detail registry — per-tick map of clickable
  * primitives the brain has annotated with rich text. The

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * client_net.c
  *
  * Implementation of the client_net.h wrappers — ClientSim owns the
@@ -158,7 +163,7 @@ static bool clientSimConnectLocalBody(ClientSim *cs, struct ServerSim *sim,
 
   /* 5. Install the map onto the ClientSim. */
   if (!installCompressedMap(cs, compressedMap, compLen,
-                            serverSimGetMapName(sim))) {
+                            serverSimGetMapName(sim), /*initViewport=*/true)) {
     const char *rendered = langGetText(NETERR_MAPSERIALIZE);
     clientSimSetConnectErrorReason(cs, rendered ? rendered : "Map serialise failed");
     serverSimRemovePlayer(sim, slot);
@@ -629,10 +634,10 @@ void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
                                       uint32_t totalLen,
                                       const char *name,
                                       const char *relPath,
-                                      const uint8_t md5[16]) {
+                                      const char md5Hex[32]) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
   transportUdpClientSendLobbyMapUseLocal(&cs->transport, totalLen, name,
-                                          relPath, md5);
+                                          relPath, md5Hex);
 }
 
 void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,

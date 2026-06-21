@@ -39,6 +39,10 @@
 #define CONNECT_MAX  8000   /* join + bulk download convergence under loss */
 #define RESYNC_MAX   8000   /* request + bulk resync convergence under loss */
 
+/* Must match MAP_RESYNC_MISMATCH_DEBOUNCE in transport_udp_client.c — the
+ * consecutive full-sync checksum mismatches required before a resync request. */
+#define MAP_RESYNC_MISMATCH_DEBOUNCE 3
+
 static bool pred_connected(LoopbackHarness *h, void *user) {
     (void)user;
     return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
@@ -109,8 +113,13 @@ int run_loopback_resync(void) {
     }
 
     /* Report a terrain checksum mismatch — the client sends MAP_RESYNC_REQUEST
-     * and the server streams the live map back as a RESYNC bulk transfer. */
-    clientSimNetReportMapChecksum(h.cs, false);
+     * and the server streams the live map back as a RESYNC bulk transfer. The
+     * trigger is debounced (MAP_RESYNC_MISMATCH_DEBOUNCE consecutive mismatches
+     * in transport_udp_client.c), so report it enough times to cross the
+     * threshold; one persistent divergence reports a mismatch every full-sync. */
+    for (int i = 0; i < MAP_RESYNC_MISMATCH_DEBOUNCE; i++) {
+        clientSimNetReportMapChecksum(h.cs, false);
+    }
 
     resyncedAt = loopbackHarnessPumpUntil(&h, RESYNC_MAX, pred_resynced, NULL);
     fprintf(stderr, "  loopback resync (running, loss=10): connected@%d resynced@%d count=%d\n",
