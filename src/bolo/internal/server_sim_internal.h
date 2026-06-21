@@ -272,6 +272,11 @@ struct ServerSim {
     uint8_t      prevPillCount;
     uint8_t      prevBaseCount;
 
+    /* Per-recipient last closest base (1-based, or BASE_NOT_FOUND). When a
+     * recipient's closest base changes, its current stock is pushed immediately
+     * so ammo appears on arrival instead of waiting for the next full-sync. */
+    uint8_t      lastClosestBase[MAX_TANKS];
+
     /* Full state sync tracking */
     uint32_t     lastFullSyncTick;
 
@@ -367,6 +372,27 @@ struct ServerSim {
 
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,
                    ServerSim_sim_must_be_first_member);
+
+/* Per-recipient visibility region: the client's tank screen plus each of its
+ * owned/allied (not-in-tank) pillbox screens. Shared by the snapshot cull and
+ * the best-effort game-event cull. */
+#define MAX_VIEWPORTS (1 + MAX_SNAPSHOT_PILLS)
+
+typedef struct {
+    int minMX, maxMX, minMY, maxMY;
+} ViewportRect;
+
+/* Fill `out` (capacity maxOut) with clientIdx's tank + owned/allied pillbox
+ * viewports; falls back to one full-map [0..255] rect when the player has no
+ * tank and no placed pills. Returns the count (always >= 1). */
+int  serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut);
+bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
+
+/* If `closest` (1-based, or BASE_NOT_FOUND) differs from the recipient's last
+ * recorded closest base, fill `out` with that base's current stock as an
+ * EVENT_BASE_STOCK and return true; always updates the recorded value.
+ * Returns false (no event) when unchanged or BASE_NOT_FOUND. */
+bool serverSimTakeClosestBaseStock(ServerSim *sim, BYTE recipient, BYTE closest, GameEvent *out);
 
 /* Server-side handler for PACKET_GAME_VOTE_TOGGLE. T2 because the only
  * legitimate callers are the two transport-layer dispatch sites — the

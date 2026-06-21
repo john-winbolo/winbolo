@@ -388,6 +388,12 @@ int run_edge_send_predicate(void);
 int run_bases_closest_for_player(void);
 int run_base_stock_visibility(void);
 
+/* FX viewport cull (test_fx_viewport_cull.c): serverSimBuildViewports +
+ * inAnyViewport cover the recipient's tank screen and each owned/allied
+ * pillbox screen, so an fx near an owned pillbox but off the tank screen is
+ * still visible (the snapshot and best-effort fx cull share this set). */
+int run_fx_viewport_cull(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);

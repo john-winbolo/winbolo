@@ -87,13 +87,8 @@
 /* Viewport culling — margin in map squares beyond the visible 15×15 screen */
 #define SNAPSHOT_SCREEN_SIZE 15
 #define SNAPSHOT_VIEWPORT_MARGIN 20
-#define MAX_VIEWPORTS (1 + MAX_SNAPSHOT_PILLS)  /* tank + owned pills */
 
-typedef struct {
-    int minMX, maxMX, minMY, maxMY;
-} ViewportRect;
-
-static bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my) {
+bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my) {
     int i;
     for (i = 0; i < count; i++) {
         if (mx >= vps[i].minMX && mx <= vps[i].maxMX &&
@@ -397,6 +392,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     /* Sentinel "use the CLI-configured default brain" for every slot.
      * 0 is a valid brain-catalogue index, so memset doesn't suffice. */
     memset(sim->botBrainIdx, 0xFF, sizeof(sim->botBrainIdx));
+
+    /* No closest base recorded yet for any recipient (BASE_NOT_FOUND is 254,
+     * fits one byte). 0 is a valid 1-based base, so memset(0) won't do. */
+    memset(sim->lastClosestBase, BASE_NOT_FOUND, sizeof(sim->lastClosestBase));
 
     /* Populate the available-brains list so the lobby can advertise
      * them via PACKET_LOBBY_BRAIN_LIST. Cheap one-shot scan of the
@@ -2841,6 +2840,23 @@ static int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut) {
     return count;
 }
 
+bool serverSimTakeClosestBaseStock(ServerSim *sim, BYTE recipient, BYTE closest, GameEvent *out) {
+    bool changed = (closest != sim->lastClosestBase[recipient]);
+    sim->lastClosestBase[recipient] = closest;
+    if (!changed || closest == BASE_NOT_FOUND) {
+        return false;
+    }
+    BYTE shells = 0, mines = 0, armour = 0;
+    basesGetStats(&sim->sim.bs, closest, &shells, &mines, &armour);
+    out->type = EVENT_BASE_STOCK;
+    memset(out->data, 0, sizeof(out->data));
+    out->data[0] = (uint8_t)(closest - 1);
+    out->data[1] = armour;
+    out->data[2] = shells;
+    out->data[3] = mines;
+    return true;
+}
+
 static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
     int count = 0;
     BYTE np;
@@ -2869,6 +2885,39 @@ int serverSimGetCompressedMap(ServerSim *sim, BYTE *output) {
     return mapSaveCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, output);
 }
 
+int serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut) {
+    int n = 0;
+    int halfView = (SNAPSHOT_SCREEN_SIZE / 2) + SNAPSHOT_VIEWPORT_MARGIN;
+    WORLD clientWX = 0, clientWY = 0;
+    if (n < maxOut && serverSimGetTankState(sim, clientIdx, &clientWX, &clientWY)) {
+        int centerMX = clientWX >> 8;
+        int centerMY = clientWY >> 8;
+        out[n].minMX = centerMX - halfView; out[n].maxMX = centerMX + halfView;
+        out[n].minMY = centerMY - halfView; out[n].maxMY = centerMY + halfView;
+        n++;
+    }
+    if (sim->sim.pb != NULL) {
+        BYTE np = pillsGetNumPills(&sim->sim.pb);
+        BYTE p;
+        for (p = 0; p < np && n < maxOut; p++) {
+            BYTE owner = (*sim->sim.pb).item[p].owner;
+            if (!playersIsAllie(&sim->sim.plyrs, owner, clientIdx)) continue;
+            if ((*sim->sim.pb).item[p].inTank) continue;
+            out[n].minMX = (*sim->sim.pb).item[p].x - halfView;
+            out[n].maxMX = (*sim->sim.pb).item[p].x + halfView;
+            out[n].minMY = (*sim->sim.pb).item[p].y - halfView;
+            out[n].maxMY = (*sim->sim.pb).item[p].y + halfView;
+            n++;
+        }
+    }
+    if (n == 0) {
+        out[0].minMX = 0; out[0].maxMX = 255;
+        out[0].minMY = 0; out[0].maxMY = 255;
+        n = 1;
+    }
+    return n;
+}
+
 void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                             SnapshotHeader *hdr,
                             TankSnapshot *tanksOut, int maxTanks,
@@ -2894,47 +2943,15 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                           ? 0xFFFFu : sim->returnToLobbyTicks)
             : 0;
 
-    /* Primary viewport: client's tank position. Skipped under noCull so
-     * the fallback full-map viewport below covers everything. */
-    if (!noCull) {
-        WORLD clientWX = 0, clientWY = 0;
-        if (serverSimGetTankState(sim, clientIdx, &clientWX, &clientWY)) {
-            int centerMX = clientWX >> 8;
-            int centerMY = clientWY >> 8;
-            int halfView = (SNAPSHOT_SCREEN_SIZE / 2) + SNAPSHOT_VIEWPORT_MARGIN;
-            viewports[numViewports].minMX = centerMX - halfView;
-            viewports[numViewports].maxMX = centerMX + halfView;
-            viewports[numViewports].minMY = centerMY - halfView;
-            viewports[numViewports].maxMY = centerMY + halfView;
-            numViewports++;
-        }
-    }
-
-    /* Additional viewports: pillboxes owned by this client or its allies
-     * (not in tank). Allied pills are visible to the player, so their
-     * surroundings must be sent too. */
-    if (!noCull && sim->sim.pb != NULL) {
-        int halfView = (SNAPSHOT_SCREEN_SIZE / 2) + SNAPSHOT_VIEWPORT_MARGIN;
-        BYTE np = pillsGetNumPills(&sim->sim.pb);
-        BYTE p;
-        for (p = 0; p < np && numViewports < MAX_VIEWPORTS; p++) {
-            BYTE owner = (*sim->sim.pb).item[p].owner;
-            if (!playersIsAllie(&sim->sim.plyrs, owner, clientIdx)) continue;
-            if ((*sim->sim.pb).item[p].inTank) continue;
-            viewports[numViewports].minMX = (*sim->sim.pb).item[p].x - halfView;
-            viewports[numViewports].maxMX = (*sim->sim.pb).item[p].x + halfView;
-            viewports[numViewports].minMY = (*sim->sim.pb).item[p].y - halfView;
-            viewports[numViewports].maxMY = (*sim->sim.pb).item[p].y + halfView;
-            numViewports++;
-        }
-    }
-
-    /* No viewports (dead/respawning with no placed pills, or noCull) —
-     * send everything. */
-    if (numViewports == 0) {
-        viewports[0].minMX = 0;  viewports[0].maxMX = 255;
-        viewports[0].minMY = 0;  viewports[0].maxMY = 255;
+    /* Build the recipient's viewport set: under cull, the tank screen plus
+     * owned/allied pillbox screens (with a full-map fallback); under noCull,
+     * a single full-map viewport so everything is sent. */
+    if (noCull) {
+        viewports[0].minMX = 0; viewports[0].maxMX = 255;
+        viewports[0].minMY = 0; viewports[0].maxMY = 255;
         numViewports = 1;
+    } else {
+        numViewports = serverSimBuildViewports(sim, clientIdx, viewports, MAX_VIEWPORTS);
     }
 
     /* Build tank snapshots for all connected players */
@@ -3178,6 +3195,16 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             }
         }
         #undef MAX_SOUND_TYPES
+
+        /* When this recipient's closest base just changed, push that base's
+         * current stock immediately so ammo appears on arrival rather than
+         * waiting for the next full-sync. Bots get real stock elsewhere. */
+        if (!recipientIsBot && outCount < maxEvents) {
+            GameEvent arrivalEv;
+            if (serverSimTakeClosestBaseStock(sim, clientIdx, closestBase, &arrivalEv)) {
+                eventsOut[outCount++] = arrivalEv;
+            }
+        }
 
         hdr->reliableEventCount = (uint8_t)outCount;
     }
@@ -3858,6 +3885,7 @@ void serverSimResetGameWorld(ServerSim *sim) {
     /* 10. Reset change detection */
     sim->prevPillCount = 0;
     sim->prevBaseCount = 0;
+    memset(sim->lastClosestBase, BASE_NOT_FOUND, sizeof(sim->lastClosestBase));
 
     /* 11. Reset player connection state and per-slot round/world state.
      * Connection identity (name, country, clientType, clientFlags, bot/WBN
