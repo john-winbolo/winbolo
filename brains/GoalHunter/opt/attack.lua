@@ -199,6 +199,10 @@ local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
   end
   goal._swerve_dir = goal._best_swerve_dir or ((now % 2 == 0) and 1 or -1)
   goal._engage_hits = nil
+  -- Re-baseline the charge defensive-swerve counters so a charge RESUMED after
+  -- this swerve starts fresh (no instant re-swerve from the old accumulated hits).
+  goal._charge_hits_total = nil
+  goal._charge_armour      = nil
   -- Early-exit tracking: armour baseline + consecutive-clear counter. If no
   -- hostile shell is on a near-collision course and we aren't taking damage
   -- for SWERVE_EARLY_EXIT_CLEAR_TICKS in a row, peel off before the full
@@ -4646,6 +4650,12 @@ function M.update_attack_substate(goal, state, world, info)
       goal._charge_start_hp = pill_hp_now
     end
 
+    -- Cumulative return-fire hits taken during the charge (armour drop),
+    -- mirroring shoot_pill/engage. Feeds the flag-gated defensive swerve below.
+    if not goal._charge_armour then goal._charge_armour = info.armour end
+    goal._charge_hits_total = (goal._charge_hits_total or 0) + (goal._charge_armour - info.armour)
+    goal._charge_armour     = info.armour
+
     -- Shot-path obstacle check: every tick, simulate the shell path
     -- and count obstacles. Updates _bullets_needed so the swerve
     -- trigger accounts for walls/trees that need clearing before the
@@ -4700,6 +4710,23 @@ function M.update_attack_substate(goal, state, world, info)
       print(string.format(TAG .. " ATTACK: immediate swerve from charge (fired=%d in_flight=%d hp=%d kill_attempt=%s start_hp=%s)",
             bullets_fired, on_target_in_flight, pill_hp,
             tostring(goal._kill_attempt), tostring(goal._charge_start_hp)))
+    end
+    -- Flag-gated DEFENSIVE swerve during charge (CHARGE_SWERVE_ENABLED). Same
+    -- conditions engage/shoot_pill use: ATTACK_CURVE_AFTER_HITS hits taken, OR
+    -- the kill is locked (on-target in-flight shells already cover the pill's
+    -- remaining HP). The pill-dead case is handled by the block above. Honors the
+    -- one-time soak decision: don't peel off the last HP of a calm pill we chose
+    -- to buck in and finish. The straight no-dodge rush lives in kill_hardline.
+    if C.CHARGE_SWERVE_ENABLED and pill and (pill.health or 0) > 0 then
+      local _soak_ok = commit_soak_finish(goal, state, info)
+      local _tank_finish = _soak_ok and (pill.health or 0) <= (C.TANK_FINISH_MAX_HP or 3)
+                           and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
+      local _kill_locked = goal._kill_attempt and (goal._on_target_in_flight or 0) >= (pill.health or 0)
+      local _hits_swerve = (goal._charge_hits_total or 0) >= (C.ATTACK_CURVE_AFTER_HITS or 3)
+      if (_hits_swerve or _kill_locked) and not _tank_finish then
+        enter_swerve(goal, world, state, info, pmx, pmy, "defensive")
+        return
+      end
     end
     -- Steering handles movement and transition to engage
     -- Fall through to draw

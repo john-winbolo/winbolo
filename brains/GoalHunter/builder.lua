@@ -146,10 +146,19 @@ function M.set_mode(state, world, info, goal)
     end
   end
 
-  -- Defensive build during attack_tank: if carrying a pill and LGM is in
-  -- the tank, send LGM to place a pill at ±45° from the enemy direction
-  -- (2-5 tiles out).  Tank continues fighting; LGM runs out simultaneously.
-  if kind == "attack_tank"
+  -- Defensive build during a fight: if carrying a pill and LGM is in the tank,
+  -- send the LGM to place a pill at ±45° from the enemy direction (2-5 tiles
+  -- out). The tank keeps doing its thing; the LGM runs out simultaneously.
+  -- Fires during attack_tank (we're engaging) AND during an attack_pill take —
+  -- there the tank stays on its charge/engage (engage-lock keeps the goal), and
+  -- the LGM still drops a guard pill against a tank that's shelling us mid-take
+  -- (the old behavior only ran the place as a GOAL, which the engage-lock
+  -- rejected, so the panic build never actually happened). For attack_pill we
+  -- only fire when the LGM isn't already committed to a wall shield this tick
+  -- (b.mode still "suppressed") so the wall-shield take is unaffected.
+  local _defbuild_ok = (kind == "attack_tank")
+                       or (kind == "attack_pill" and b.mode == "suppressed")
+  if _defbuild_ok
      and (info.carried_pills or 0) >= 1
      and info.man_status == C.LGM_INTANK
      and not info.inboat then
@@ -160,6 +169,13 @@ function M.set_mode(state, world, info, goal)
       local closest_et, closest_dist = nil, math.huge
       for _, et in ipairs(perc.enemy_tanks) do
         if et.dist < closest_dist then closest_dist = et.dist; closest_et = et end
+      end
+      -- attack_pill take: only panic-build if the tank is actually in shooting
+      -- range (it can hit us). A far tank doesn't warrant pulling the LGM out
+      -- mid-take. attack_tank always builds — we're already committed to it.
+      if closest_et and kind == "attack_pill" then
+        local _ex, _ey = closest_et.mx - tmx, closest_et.my - tmy
+        if math.sqrt(_ex * _ex + _ey * _ey) > (C.DEF_BUILD_THREAT_RANGE or 8) then closest_et = nil end
       end
       if closest_et then
         local aim = U.aim_at(info.tankx, info.tanky, U.m2w(closest_et.mx), U.m2w(closest_et.my))

@@ -4624,6 +4624,7 @@ function Brain.think(info)
     -- has chosen which commander we're negotiating with). Does not change our goal.
     attack.blitz_negotiate(state, world, info, now)
     if state.squad_role then bsi.role = state.squad_role end
+    if state.is_harasser then bsi.har = "1" end   -- harasser flag (decoupled from role)
     if state.squad_cmdr then bsi.cmdr = tostring(state.squad_cmdr) end
     if state.squad_status and state.squad_status ~= "-" then bsi.sqst = state.squad_status end
     -- Blitz engage standoff claim (`be`): a soldier broadcasts its claimed
@@ -4661,7 +4662,13 @@ function Brain.think(info)
       end
       -- blitz: reported walk distance to our chosen standoff (bd) so the
       -- commander can arbitrate conflicts; commander's reject list (brj).
-      if state.squad_blitz_bd then bsi.bd = tostring(state.squad_blitz_bd) end
+      -- Only advertise bd while STILL negotiating. Once committed
+      -- (squad_blitz_accepted), bd is the negotiation-offer signal: allies read
+      -- cmdr+bd as "still negotiating" (roster + the commander's arbiter), so a
+      -- committed soldier that keeps sending bd is seen as never having joined.
+      -- Dropping bd (cmdr stays set) flips us to "committed" — and the slate
+      -- change forces an immediate re-send instead of waiting on the heartbeat.
+      if state.squad_blitz_bd and not state.squad_blitz_accepted then bsi.bd = tostring(state.squad_blitz_bd) end
       if state.squad_role == "c" and state.squad_blitz_reject then
         bsi.brj = state.squad_blitz_reject
       end
@@ -4715,7 +4722,12 @@ function Brain.think(info)
     -- (goals.lua Override 3b handoff reads these off ally_state), and every
     -- other bot treat the pill as claimed (kg → _kill_claimed reject).
     -- Unreachable/gone → large sentinel so we lose to any abler claimer.
-    if state.kill_pickup then
+    -- Only advertise a claim we're ACTUALLY pursuing (_grabbing set by Override
+    -- 3b). A yielded/backup claim stays local so we can re-grab if the chosen
+    -- grabber fails, but broadcasting it would make others defer to a bot that
+    -- isn't going for the pill (it wandered off to refuel) — leaving the pill
+    -- unclaimed. Gate the broadcast, not the claim.
+    if state.kill_pickup and state.kill_pickup._grabbing then
       local kp = state.kill_pickup
       local p  = world.pills[kp.id]
       bsi.kg = tostring(kp.id)

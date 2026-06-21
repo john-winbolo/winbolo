@@ -129,9 +129,10 @@ local function protocol_pns(state, info, now)
   return pns, self_pn
 end
 
--- Deterministic role for `self_pn` given the sorted protocol set.
--- Harassers = highest floor(frac*N) player numbers; commanders =
--- ceil(rest / baseline) lowest of the remainder; everyone else soldier.
+-- Deterministic squad role for `self_pn` given the sorted protocol set.
+-- Commanders = ceil(N / baseline) lowest player numbers; everyone else soldier.
+-- (Harasser is NO LONGER a role — it's an independent flag, M.is_harasser, so a
+-- harasser is a full squad member that can command/join blitzes like anyone.)
 function M.role_for(pns, self_pn)
   local n = #pns
   if n == 0 then return M.ROLE_SOLDIER end
@@ -139,17 +140,25 @@ function M.role_for(pns, self_pn)
   for i = 1, n do if pns[i] == self_pn then self_idx = i break end end
   if not self_idx then return M.ROLE_SOLDIER end
 
-  local frac    = C.HARASSER_FRAC or 0.20
-  local n_har   = math.floor(frac * n)
-  if n_har > 0 and self_idx > (n - n_har) then
-    return M.ROLE_HARASSER
-  end
-
-  local rest     = n - n_har
   local baseline = C.BASELINE_SQUAD_SIZE or 3
-  local n_cmd    = math.max(1, math.ceil(rest / baseline))
+  local n_cmd    = math.max(1, math.ceil(n / baseline))
   if self_idx <= n_cmd then return M.ROLE_COMMANDER end
   return M.ROLE_SOLDIER
+end
+
+-- Harasser designation, INDEPENDENT of squad role: the highest floor(frac*N)
+-- player numbers in the protocol set. A harasser is a normal squad member (it
+-- commands/joins blitzes like anyone); the flag only drives its goal-cost biases
+-- (pill cost ×HARASSER_PILL_COST_MULT, distance ×HARASSER_TRAVEL_MULT — see
+-- goals.lua). Deterministic + stable so every bot agrees on the set.
+function M.is_harasser(pns, self_pn)
+  local n = #pns
+  local n_har = math.floor((C.HARASSER_FRAC or 0.20) * n)
+  if n_har <= 0 then return false end
+  local self_idx
+  for i = 1, n do if pns[i] == self_pn then self_idx = i break end end
+  if not self_idx then return false end
+  return self_idx > (n - n_har)
 end
 
 -- Per-tick update: recompute self's role and stash it on state. The broadcast
@@ -443,12 +452,15 @@ function M.update(state, info, now, world)
   end
 
   local role = M.role_for(pns, self_pn)
-  -- R0 (dynamic commanders, flag-gated): harasser stays the fixed deterministic
-  -- slice; for everyone else, commander status is EMERGENT — you are a commander
-  -- only while leading a HARD pill take (your attack_pill target has HP >=
-  -- HARD_TAKE_MIN_HP); otherwise you are a soldier. Reverts automatically when
+  -- Harasser is an independent flag now (not a role), so it does NOT gate squad
+  -- membership — a harasser commands/joins blitzes like any other bot. It only
+  -- biases goal costs (see goals.lua is_harasser checks).
+  state.is_harasser = M.is_harasser(pns, self_pn)
+  -- R0 (dynamic commanders, flag-gated): commander status is EMERGENT — you are a
+  -- commander only while leading a HARD pill take (your attack_pill target has HP
+  -- >= HARD_TAKE_MIN_HP); otherwise you are a soldier. Reverts automatically when
   -- the take ends. Off by default → original deterministic roles.
-  if C.DYNAMIC_COMMANDERS and role ~= M.ROLE_HARASSER then
+  if C.DYNAMIC_COMMANDERS then
     -- A bot already following another commander (squad_cmdr held from last tick,
     -- before the reset below) stays a SOLDIER even though it adopted the same
     -- attack_pill as the blitz target — otherwise every squad member would turn
@@ -909,11 +921,12 @@ function M.draw_roster(state, info, now)
     self_target = state.goal.target_id
   end
   bots[self_pn] = {
-    role   = state.squad_role or M.ROLE_SOLDIER,
-    cmdr   = state.squad_cmdr,
-    status = self_status,
-    target = self_target,
-    me     = true,
+    role     = state.squad_role or M.ROLE_SOLDIER,
+    cmdr     = state.squad_cmdr,
+    status   = self_status,
+    target   = self_target,
+    harasser = state.is_harasser or false,
+    me       = true,
   }
   for pn in ally_state.iter_active(now, max_age) do
     if pn ~= self_pn then
@@ -933,10 +946,11 @@ function M.draw_roster(state, info, now)
         if t and t >= 0 then a_target = t end
       end
       bots[pn] = {
-        role   = ally_state.get_key(pn, "role") or "?",
-        cmdr   = a_cmdr,
-        status = a_status,
-        target = a_target,
+        role     = ally_state.get_key(pn, "role") or "?",
+        cmdr     = a_cmdr,
+        status   = a_status,
+        target   = a_target,
+        harasser = ally_state.get_key(pn, "har") == "1",
       }
     end
   end
@@ -968,16 +982,57 @@ function M.draw_roster(state, info, now)
     return b.role == M.ROLE_COMMANDER or leads[pn]
   end
 
+  -- Team-global ordering. The whole roster is one deterministic sort by a key
+  -- every bot computes identically from the SAME data (broadcasts + the bot's
+  -- own state), so in theory every teammate renders the roster in the same
+  -- order. Key = (squad_id, in-squad rank, pn):
+  --   * squad_id groups a commander with its soldiers — the commander's pn for
+  --     itself and for any soldier whose cmdr is that (effective) commander;
+  --     own pn for an unattached soldier / orphan / harasser (a singleton group).
+  --   * rank puts the commander (0) above its soldiers (1) within the group.
+  --   * pn breaks remaining ties.
+  -- (Residual divergence is only from data skew — a bot sees its OWN state live
+  -- but allies via slightly-laggy broadcasts — not from the ordering itself.)
+  local function squad_id(pn, b)
+    if is_cmdr(pn, b) then return pn end
+    local c = b.cmdr
+    if c and bots[c] and is_cmdr(c, bots[c]) then return c end
+    return pn
+  end
+  local function as_cmdr_of(pn, b)
+    return b.role ~= M.ROLE_HARASSER and is_cmdr(pn, b)
+  end
+  table.sort(order, function(a, b)
+    local ba, bb = bots[a], bots[b]
+    local sa, sb = squad_id(a, ba), squad_id(b, bb)
+    if sa ~= sb then return sa < sb end
+    local ra = as_cmdr_of(a, ba) and 0 or 1
+    local rb = as_cmdr_of(b, bb) and 0 or 1
+    if ra ~= rb then return ra < rb end
+    return a < b
+  end)
+
   local function draw_row(pn, b, indent, as_cmdr)
     -- as_cmdr forces commander display; "!" flags the inferred mismatch (a
     -- bot we render as commander because it's followed, but whose broadcast
     -- role still reads soldier — surfaces the underlying role flip-flop).
     local inferred  = as_cmdr and b.role ~= M.ROLE_COMMANDER
     local disp_role = as_cmdr and M.ROLE_COMMANDER or b.role
-    local col = ROLE_COLOR[disp_role] or { 180, 180, 180 }
+    -- Harassers carry large goal-cost biases (pill ×2, travel ×0.5), so make them
+    -- pop: tint the whole row the harasser color. The C/S letter + "h" suffix
+    -- still convey the actual squad role and harasser status.
+    local col = (b.harasser and ROLE_COLOR[M.ROLE_HARASSER])
+                or ROLE_COLOR[disp_role] or { 180, 180, 180 }
     local num = string.upper(tostring(disp_role or "?")) .. tostring(pn)
+                .. (b.harasser and "h" or "")   -- harasser flag (e.g. "S5h"), decoupled from role
                 .. (inferred and "!" or "")
-                .. (b.me and " *" or "")
+    -- Self (the followed bot): a box around the whole row instead of a "*" tag.
+    -- topright hud_rect: x = right-edge offset, w extends leftward (see blitz_roster).
+    if b.me then
+      local _box_l = (NUM_X - (indent and IND or 0)) + 52   -- ~role left edge + pad
+      viz.hud_rect("squad_roster", STAT_X - 2, y - 1, _box_l - (STAT_X - 2), row_h,
+                       "topright", 235, 235, 255, 255, false)
+    end
     viz.hud_text("squad_roster", NUM_X - (indent and IND or 0), y, num, "topright",
                      col[1], col[2], col[3], 255)
     -- Target pill column (blank for non-pill goals).
@@ -996,32 +1051,19 @@ function M.draw_roster(state, info, now)
   viz.hud_text("squad_roster", TGT_X, y, "tgt", "topright", 160, 160, 120, 255)
   y = y + 20
 
-  -- Commanders (real or effective) + the soldiers attached to each.
+  -- One pass over the team-global sorted order. Each squad's commander prints
+  -- first (no indent), its soldiers indented under it; unattached soldiers and
+  -- harassers print as their own singleton groups in pn order interleaved by
+  -- squad_id. Same order for every teammate (given synced data).
   for _, pn in ipairs(order) do
     local b = bots[pn]
-    if b.role ~= M.ROLE_HARASSER and is_cmdr(pn, b) then
-      draw_row(pn, b, false, true)
-      for _, spn in ipairs(order) do
-        local sb = bots[spn]
-        if spn ~= pn and sb.cmdr == pn and not is_cmdr(spn, sb) then
-          draw_row(spn, sb, true)
-        end
-      end
-    end
-  end
-  -- Unattached soldiers: soldier role, not an effective commander, and with no
-  -- commander (or a cmdr that isn't itself an effective commander — orphan).
-  for _, pn in ipairs(order) do
-    local b = bots[pn]
-    local attached = b.cmdr and bots[b.cmdr] and is_cmdr(b.cmdr, bots[b.cmdr])
-    if b.role == M.ROLE_SOLDIER and not is_cmdr(pn, b) and not attached then
-      draw_row(pn, b, true)
-    end
-  end
-  -- Harassers (own group).
-  for _, pn in ipairs(order) do
-    local b = bots[pn]
-    if b.role == M.ROLE_HARASSER then draw_row(pn, b, false) end
+    local as_cmdr = as_cmdr_of(pn, b)
+    -- Indent ONLY a soldier that is actually attached to a commander (its squad_id
+    -- resolves to someone else). A commander, an unattached/squadless soldier, and
+    -- a harasser all sit flush-left at the same indentation — so indentation means
+    -- exactly "this bot is under the commander above it."
+    local indent = (not as_cmdr) and (squad_id(pn, b) ~= pn)
+    draw_row(pn, b, indent, as_cmdr)
   end
 end
 

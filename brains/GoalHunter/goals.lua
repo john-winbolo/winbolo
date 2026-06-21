@@ -839,7 +839,7 @@ end
 -- kill_lgm) is toned down by HARASSER_TRAVEL_MULT. Returns the multiplier to
 -- apply to a path_cost / dist×per_tile / far-preempt term (1.0 for non-harassers).
 local function harass_dist_mult(state)
-  return (state.squad_role == "h") and (C.HARASSER_TRAVEL_MULT or 1.0) or 1.0
+  return state.is_harasser and (C.HARASSER_TRAVEL_MULT or 1.0) or 1.0
 end
 
 -- Compute attack_pill cost adjustments for a given pill/path-cost.
@@ -972,7 +972,7 @@ local function attack_pill_adjustments(pill, pcost, state, world)
   -- Final cost = flat base + fixed path cost + scaled combat cost. The flat
   -- base keeps a pill take from being effectively free vs. other goals.
   local final
-  if state.squad_role == "h" then
+  if state.is_harasser then
     -- Harasser: discount the path/travel term, 2× the engage portion (flat base
     -- + combat). Mirrors the split in update_pool_cache's pool-6 assembly.
     final = pcost * harass_dist_mult(state)
@@ -1407,14 +1407,16 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
       -- always wins, but with no real target we'll still go hunt the ghost.
       if et.ghost then cost = cost + (C.GHOST_TANK_COST_PENALTY or 40) end
 
-      -- Pill-take guard: while we're committed to an attack_pill, a tank beyond
-      -- our shooting range must NOT pull us off the take. Add a penalty that
-      -- climbs EXPONENTIALLY with euclidean distance past shoot range — ~0 at
-      -- the range edge, runaway by a handful of tiles out — so only a genuinely
-      -- CLOSE (actually-threatening) tank can still preempt the pill take. Fixes
-      -- a 26-tile tank yanking a blitz commander off its charge.
+      -- Distance guard (GLOBAL): a tank beyond our shooting range gets a penalty
+      -- that climbs EXPONENTIALLY with euclidean distance past shoot range — ~0
+      -- at the range edge, runaway by a handful of tiles out — so only a
+      -- genuinely CLOSE (actually-threatening) tank is worth engaging. Applies on
+      -- EVERY goal now, not just during an attack_pill take (was gated on
+      -- attack_pill; made global by design): the bot won't chase a far tank
+      -- across the map whatever it's doing. Still fixes a 26-tile tank yanking a
+      -- blitz commander off its charge.
       local far_preempt_pen = 0
-      if state.goal and state.goal.kind == "attack_pill" then
+      do
         local _ex, _ey = (et.mx - tmx), (et.my - tmy)
         local _edist = math.sqrt(_ex * _ex + _ey * _ey)
         local _shoot_r = C.ATTACK_FAR_PREEMPT_RANGE or C.TANK_COMBAT_ENGAGE_RANGE or 7
@@ -1851,8 +1853,14 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- its utility reserve. Only deploy a pill once we hold MORE util pills than
   -- the reserve target (a genuine surplus). (Emergency def_build returned
   -- earlier, so it's exempt — a dying-base drop still happens.)
-  local util_reserve = math.max(1, math.floor(pf_total * (C.PILL_UTILITY_TARGET_FRAC or 0.15) + 0.5))
-  if (pf_counts.utility or 0) <= util_reserve then
+  -- Util reserve = the portfolio's utility target, computed EXACTLY as the
+  -- pill-table viz does (PP.targets over back+front+aggro+utility) so the gate
+  -- and the displayed target always agree. (Was floor(pf_total*0.15) which
+  -- EXCLUDED utility from the total and could disagree with the viz.)
+  local pf_all       = pf_total + (pf_counts.utility or 0)
+  local util_reserve = PP.targets(pf_all).utility
+  local util_surplus = (pf_counts.utility or 0) - util_reserve
+  if util_surplus <= 0 then
     state._place_need_cat = "util_reserve"   -- viz hint
     print2(string.format("PLACE_HOLD_UTIL t=%d util=%d <= reserve=%d — hold carried pill as utility reserve",
       state.tick or 0, pf_counts.utility or 0, util_reserve))
@@ -2057,11 +2065,11 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- blocker for a take). Once we have enough utility pills, don't hoard — place
   -- the spare normally.
   local last_pill_mult = 1.0
-  if (info.carried_pills or 0) == 1 then
-    local util_target = math.max(1, math.floor(pf_total * (C.PILL_UTILITY_TARGET_FRAC or 0.15) + 0.5))
-    if (pf_counts.utility or 0) < util_target then
-      last_pill_mult = 1.5
-    end
+  if (info.carried_pills or 0) == 1 and (pf_counts.utility or 0) < util_reserve then
+    -- (Reuses the same util_reserve as the gate above so all three util numbers
+    -- agree. In practice the gate already guarantees utility > util_reserve here,
+    -- so this hoard branch is a belt-and-braces guard.)
+    last_pill_mult = 1.5
   end
   local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT * last_pill_mult)
   -- Out-of-ratio discount: cheaper (more urgent) to place when a pill type is
@@ -2071,6 +2079,15 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     imbalance_mult = 1.0 - math.min(C.STRATEGIC_PLACE_IMBALANCE_MAX_DISCOUNT,
                                     pf_max_deficit * C.STRATEGIC_PLACE_IMBALANCE_DISCOUNT)
     cost = math.max(1, cost * imbalance_mult)
+  end
+  -- Util-surplus discount: the more pills we hold OVER the utility reserve, the
+  -- cheaper it is to deploy one — actively push the surplus out of tanks instead
+  -- of just unlocking placement at normal cost. Each surplus pill knocks off
+  -- STRATEGIC_PLACE_UTIL_SURPLUS_DISCOUNT, capped at _MAX_DISCOUNT.
+  if util_surplus > 0 then
+    local surplus_mult = 1.0 - math.min(C.STRATEGIC_PLACE_UTIL_SURPLUS_MAX_DISCOUNT or 0.6,
+                                        util_surplus * (C.STRATEGIC_PLACE_UTIL_SURPLUS_DISCOUNT or 0.25))
+    cost = math.max(1, cost * surplus_mult)
   end
   -- Combat-zone penalty: enemy tank near the chosen spot (flat add, shown as the
   -- tankpen term). Emergency def_build is exempt — it returns earlier.
@@ -3032,6 +3049,10 @@ local function filter_capture_pill(obj, state)
   -- in_tank: someone picked it up. Show as rejected so the user can see
   -- "yes the dead pill exists, but it's currently in flight."
   if obj.in_tank then return { reason = "in_tank" } end
+  -- Carried-but-in_tank-unset guard: a pill the team is carrying (carrier /
+  -- _synth_carry stamped by world.sync_ally_carried from a carry= advert) is in
+  -- flight even if the in_tank flag itself didn't get set. Never a ground take.
+  if obj.carrier or obj._synth_carry then return { reason = "in_tank" } end
   -- kill_claimed: a blitz member has claimed this fresh kill and is going HARD
   -- for it (Override 3b). Don't contest — recognize the claim and move on. The
   -- claimer itself never reaches this filter (its Override 3b force-wins before
@@ -3345,8 +3366,16 @@ function M.build_eval_queue(state, world, info)
   state._kill_claimed = state._kill_claimed or {}
   for k in pairs(state._kill_claimed) do state._kill_claimed[k] = nil end
   if C.KILL_PICKUP_ENABLED and ally_state.iter_active and info.player_number then
+    local tdead = state.tank_dead_at
     for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
-      if apn ~= info.player_number and slot.info and slot.info.kg then
+      -- Skip a DEAD claimer: its kg broadcast lingers in the slate for up to
+      -- SQUAD_ALLY_MAX_AGE, but a dead bot can't grab anything until it
+      -- respawns. Honoring it would leave the pill kill_claimed (rejected by
+      -- everyone) even though the killer got shot — a wasted kill nobody picks
+      -- up. Once the slot is dead-flagged, the pill drops back to a normal
+      -- capture_pill candidate for whoever's still alive.
+      local is_dead = tdead and tdead[apn] and tdead[apn] > (slot.last_tick or 0)
+      if apn ~= info.player_number and not is_dead and slot.info and slot.info.kg then
         local pid = tonumber(slot.info.kg)
         local pp = pid and world.pills[pid]
         if pp and (pp.health or 0) == 0 and not pp.in_tank then
@@ -3468,6 +3497,7 @@ function M.build_eval_queue(state, world, info)
   if not state.cost_cache then state.cost_cache = {} end
   for id, obj in pairs(world.pills) do
     local reject = filter_capture_pill(obj, state)
+    if BRAIN_DEBUG_MODE and (obj.health or 0) == 0 then print2(string.format("CAPTURE_CAND t=%d id=%s @(%s,%s) hp=%s owner=%s in_tank=%s carrier=%s synth=%s last_seen=%s reject=%s", now, tostring(id), tostring(obj.mx), tostring(obj.my), tostring(obj.health), tostring(obj.owner), tostring(obj.in_tank), tostring(obj.carrier), tostring(obj._synth_carry), tostring(obj.last_seen), reject and reject.reason or "nil")) end
     if not reject or reject.reason ~= "alive" then
       queue[#queue + 1] = { pool = 4, id = id, obj = obj, reject = reject }
       local ck = "4:" .. id
@@ -3491,6 +3521,25 @@ function M.build_eval_queue(state, world, info)
             _dist_method = _dm4, _free = _free4,  -- _free = scaled discount multiplier
           }
         end
+      end
+    end
+  end
+
+  -- Evict STALE capture-pill cache entries. The per-pill loop above only
+  -- refreshes ids still present in world.pills AND not "alive". Two paths leave
+  -- a stale low-cost dead-pill entry that finalize_pools could still select:
+  --   (1) the pill came back ALIVE (recaptured / redeployed) — the "alive"
+  --       branch skips it without clearing the old entry; and
+  --   (2) the pill left world.pills entirely (picked up, carrier out of view,
+  --       no carry= advert) — the loop never visits that id at all.
+  -- Sweep cost_cache and drop any pool-4 entry whose LIVE pill is gone, alive,
+  -- or known carried. Setting an existing field to nil mid-pairs() is safe.
+  for ck, ce in pairs(state.cost_cache) do
+    if ce._p == 4 then
+      local lp = world.pills[ce._id]
+      if (not lp) or (lp.health or 0) > 0 or lp.in_tank or lp.carrier or lp._synth_carry then
+        if BRAIN_DEBUG_MODE then print2(string.format("CAPTURE_EVICT t=%d id=%s reason=%s cached=(%s,%s) cost=%.0f", now, tostring(ce._id), (not lp) and "gone" or (((lp.health or 0) > 0) and "alive" or "carried"), tostring(ce._mx), tostring(ce._my), ce.cost or -1)) end
+        state.cost_cache[ck] = nil
       end
     end
   end
@@ -4867,7 +4916,7 @@ function M.step_eval_queue(state, world, info)
       -- plain sum.
       local _travel_term = travel * travel_wound
       local c
-      if pool_idx == 6 and state.squad_role == "h" then
+      if pool_idx == 6 and state.is_harasser then
         local _engage_term = spot_cost + combat * capture_mult + base_extra + threat_cost + ammo_cost + atk_tank_pen + risky_armour_pen
         c = _travel_term * (C.HARASSER_TRAVEL_MULT or 1.0)
           + _engage_term * (C.HARASSER_PILL_COST_MULT or 1.0)
@@ -6441,30 +6490,27 @@ function M.refresh_kill_lgm(state, info, world)
       local cost, formula_str, shoot_mx, shoot_my
       local best_shoot_cost = math.huge
 
-      -- Far-preempt guard — ALWAYS computed so it appears as a row in the cost
-      -- breakdown table (the table parses name{value} terms out of the DISPLAY
-      -- half of the formula). While on an attack_pill take, an LGM beyond shoot
-      -- range gets an exponential euclidean-distance penalty; otherwise it's 0,
-      -- and the {value} carries the numeric reason WHY (not on a take, or in
-      -- range with the actual edist vs range). far_preempt_pen folds into cost.
+      -- Far-preempt guard (GLOBAL) — ALWAYS computed so it appears as a row in
+      -- the cost breakdown table (the table parses name{value} terms out of the
+      -- DISPLAY half of the formula). An LGM beyond shoot range gets an
+      -- exponential euclidean-distance penalty on EVERY goal now (was gated on an
+      -- attack_pill take; made global by design) so the bot won't chase a far LGM
+      -- across the map; otherwise it's 0 and {value} carries the edist-vs-range
+      -- reason. far_preempt_pen folds into cost.
       local far_preempt_pen = 0
       local far_val
       do
         local _shoot_r = C.ATTACK_FAR_PREEMPT_RANGE or C.TANK_COMBAT_ENGAGE_RANGE or 7
-        if not (state.goal and state.goal.kind == "attack_pill") then
-          far_val = "0 not-atk-pill"
+        local _ex, _ey = (lgm.mx - tmx), (lgm.my - tmy)
+        local _edist = math.sqrt(_ex * _ex + _ey * _ey)
+        if _edist > _shoot_r then
+          far_preempt_pen = math.min(
+            (C.ATTACK_FAR_PREEMPT_BASE or 1.7) ^ (_edist - _shoot_r) * (C.ATTACK_FAR_PREEMPT_K or 8),
+            C.ATTACK_FAR_PREEMPT_CAP or 1e6)
+          far_preempt_pen = far_preempt_pen * harass_dist_mult(state)
+          far_val = string.format("%.0f", far_preempt_pen)
         else
-          local _ex, _ey = (lgm.mx - tmx), (lgm.my - tmy)
-          local _edist = math.sqrt(_ex * _ex + _ey * _ey)
-          if _edist > _shoot_r then
-            far_preempt_pen = math.min(
-              (C.ATTACK_FAR_PREEMPT_BASE or 1.7) ^ (_edist - _shoot_r) * (C.ATTACK_FAR_PREEMPT_K or 8),
-              C.ATTACK_FAR_PREEMPT_CAP or 1e6)
-            far_preempt_pen = far_preempt_pen * harass_dist_mult(state)
-            far_val = string.format("%.0f", far_preempt_pen)
-          else
-            far_val = string.format("0 e%.1f<=%d", _edist, _shoot_r)
-          end
+          far_val = string.format("0 e%.1f<=%d", _edist, _shoot_r)
         end
       end
 
@@ -7094,22 +7140,32 @@ local function goal_selection(state, world, info, quiet)
        or (p.owner == "friendly" and (p.health or 0) > 0) then
       state.kill_pickup = nil
     elseif (p.health or 0) == 0 then
+      -- Our own capture_pill score for the body — drives BOTH the handoff
+      -- comparison and the unreachable WAY OUT below. compute_pool4_cost returns
+      -- the INF sentinel (>=1e29) when there's no path within the A* budget
+      -- (walled in, or simply too far).
+      local my_cost   = compute_pool4_cost(state, world, info, p, tmx, tmy)
+      local reachable = my_cost and my_cost < 1e29
+      local mc        = reachable and my_cost or 1e9
       -- Handoff: defer to the blitz member with the LOWEST capture_pill score
       -- (the same balanced metric the goal selector uses) that also claims
       -- this kill; tie → lower player number. We broadcast our own score as kc.
       local yield_to, yield_cost = nil, nil
       if C.KILL_PICKUP_HANDOFF and ally_state.iter_active and info.player_number then
-        local my_cost = compute_pool4_cost(state, world, info, p, tmx, tmy)
-        if not my_cost or my_cost >= 1e29 then my_cost = 1e9 end
         local my_pn  = info.player_number
+        local tdead  = state.tank_dead_at
         for apn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
-          if apn ~= my_pn then
+          -- Don't yield to a DEAD claimer (its kg/kc broadcast lingers but it
+          -- can't grab) — else a live bot stands down for a corpse and the pill
+          -- goes unclaimed.
+          local is_dead = tdead and tdead[apn] and tdead[apn] > (slot.last_tick or 0)
+          if apn ~= my_pn and not is_dead then
             local si = slot.info
             if si and si.kg and tonumber(si.kg) == kp.id then
               local a_cost = tonumber(si.kc) or 1e9
               -- An ally beats us if its score is lower, or equal + lower pn.
               -- Track the BEST such ally so the viz names the real grabber.
-              if a_cost < my_cost or (a_cost == my_cost and apn < my_pn) then
+              if a_cost < mc or (a_cost == mc and apn < my_pn) then
                 if not yield_cost or a_cost < yield_cost
                    or (a_cost == yield_cost and apn < (yield_to or 1e9)) then
                   yield_to, yield_cost = apn, a_cost
@@ -7120,22 +7176,33 @@ local function goal_selection(state, world, info, quiet)
         end
       end
       kp._yield_to = yield_to  -- for viz
-      if yield_to then
-        -- A lower-score blitz member is grabbing. Stand down: don't force-win;
-        -- fall through to normal goal competition. We don't need to block the
-        -- pill ourselves — that grabber's kg broadcast lands in our own
-        -- state._kill_claimed (build_eval_queue), so filter_capture_pill
-        -- rejects it like every other non-grabber. KEEP our claim as a backup:
-        -- if the grabber dies/stalls (drops kg, or its score rises above ours)
-        -- we re-evaluate next replan and may take over. Self-clears on
-        -- capture / in_tank / TTL / cap above.
-        if BRAIN_DEBUG_MODE then print(string.format(TAG .. " KILLGRAB: pill#%d -> yielding to p%d (its score %.0f < ours)", kp.id, yield_to, yield_cost or -1)) end
+      if not reachable then
+        -- WAY OUT (unreachable): no path to the body within the A* budget —
+        -- walled in or simply too far. Drop the claim so the pill reopens to
+        -- ANYONE via the normal capture_pill pool, instead of us holding it
+        -- hostage until the absolute timeout (the `capped` check at the top of
+        -- this block) fires. Closer/abler bots take it.
+        if BRAIN_DEBUG_MODE then print(string.format(TAG .. " KILLGRAB: pill#%d unreachable (cost INF) — dropping claim", kp.id)) end
+        state.kill_pickup = nil
+      elseif yield_to then
+        -- A lower-score blitz member is grabbing. Stand DOWN AND OUT: drop our
+        -- claim entirely. We do NOT keep a backup or watch for the grabber to
+        -- fail — by then we've usually moved on (refueling, etc.), and holding
+        -- extra priority for a pill we're nowhere near makes no sense. If the
+        -- grabber fails, the dead pill is simply OPEN to anyone via the normal
+        -- capture_pill pool. Clearing also stops us advertising kg, so nobody
+        -- defers to a bot that isn't grabbing (saw bot1 yield to bot8 while bot8
+        -- was off on refuel_at_base, leaving #2 unclaimed).
+        state.kill_pickup = nil
+        if BRAIN_DEBUG_MODE then print(string.format(TAG .. " KILLGRAB: pill#%d -> yielding to p%d (its score %.0f < ours), dropping claim", kp.id, yield_to, yield_cost or -1)) end
       else
         -- We're the grabber. Refresh the rolling TTL so the claim survives the
         -- whole drive-in (uninterruptible until the pill is taken/captured),
         -- bounded only by the absolute cap above. Hold briefly first so our
-        -- in-flight shots clear, then force-win capture_pill.
+        -- in-flight shots clear, then force-win capture_pill. _grabbing=true →
+        -- we advertise kg so others defer to us (we ARE going for it).
         kp.kill_tick = now
+        kp._grabbing = true
         local waited = now - (kp.created_tick or now)
         if waited < (C.POST_KILL_WAIT_TICKS or 15) then
           result = { kind = "none", mx = tmx, my = tmy, wx = U.m2w(tmx), wy = U.m2w(tmy) }

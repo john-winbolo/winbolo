@@ -510,6 +510,12 @@ M.BASE_SHIELD_BUILD_COST = 2    -- trees consumed to build the wall
 -- Unified attack pill: curve-away evasion after taking hits
 M.ATTACK_CURVE_AFTER_HITS = 3   -- hits taken before curving away
 M.ATTACK_CURVE_TICKS      = 100  -- ticks of swerve dodge (2 seconds)
+-- Run the same defensive swerve (ATTACK_CURVE_AFTER_HITS hits taken OR kill
+-- locked) during the `charge` substate, not just engage/shoot_pill — so a
+-- charging tank dodges return fire instead of driving straight in. The
+-- deliberate no-dodge straight rush is the dedicated kill_hardline substate.
+-- Flagged so it can be reverted to the old always-straight charge.
+M.CHARGE_SWERVE_ENABLED   = true
 M.ATTACK_RUSH_ARRIVE      = 1   -- mdist to pill to count as "arrived" during rush
 
 -- Kill-rush fast path: a 1-HP, barely-provoked pill is a free kill. Skip the
@@ -921,6 +927,11 @@ M.STRATEGIC_PLACE_GUARDIAN_BONUS = 150
 -- deficit. Per-deficit-unit fraction, capped.
 M.STRATEGIC_PLACE_IMBALANCE_DISCOUNT     = 0.25
 M.STRATEGIC_PLACE_IMBALANCE_MAX_DISCOUNT = 0.60
+-- Util-surplus urgency: once we hold MORE carried/util pills than the utility
+-- reserve, deploying gets cheaper per surplus pill (capped) so the team actively
+-- empties tanks of the excess instead of hoarding it.
+M.STRATEGIC_PLACE_UTIL_SURPLUS_DISCOUNT     = 0.25
+M.STRATEGIC_PLACE_UTIL_SURPLUS_MAX_DISCOUNT = 0.60
 -- Flat cost multiplier for place_pill_strategic. <1 = preferred. Combined
 -- with the carry discount this makes "I'm holding a pill" a near-overriding
 -- priority compared to attack/capture goals.
@@ -991,10 +1002,14 @@ M.KILL_PICKUP_TTL     = 250    -- rolling TTL: ticks the claim survives since th
                                -- lapses if the grabber stops making the claim.
 M.KILL_PICKUP_HANDOFF = true   -- defer the pickup to the blitz member with the
                                -- LOWEST capture_pill score (tie → lower player #)
--- Absolute commitment cap measured from the FIRST claim of a pill, so a grabber
--- that can never reach it (walled in, repeatedly bumped) eventually gives up
--- instead of refreshing forever. ~20 s.
-M.KILL_PICKUP_MAX_TICKS = 1000
+-- Grab TIMEOUT: absolute cap measured from the FIRST claim of a pill. The
+-- grabber refreshes the rolling TTL every tick while pursuing, so this is the
+-- real "give up" deadline — a grabber that hasn't completed the pickup by now
+-- drops the claim and the pill reopens to anyone. The unreachable WAY OUT
+-- (Override 3b drops on an INF capture cost) usually fires first for walled-in
+-- bodies; this backstops the reachable-but-slow case. ~10 s. A body you just
+-- killed is normally a few tiles away, so a real grab finishes well inside it.
+M.KILL_PICKUP_MAX_TICKS = 500
 -- Strategic-center bias: the placement scan is tank-centric, but spots near the
 -- chosen strategic center (war zone / base-vs-threat / contested pill) score
 -- higher. Bonus = max(0, CAP - dist_to_center) * WEIGHT. Optional (0 if no center).
