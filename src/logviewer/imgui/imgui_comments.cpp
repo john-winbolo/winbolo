@@ -1,7 +1,7 @@
 /*
  * imgui_comments.cpp - ImGui WinBolo.net comments window for Log Viewer
  *
- * Copyright (c) 2024
+ * Copyright (c) 1998-2026 John Morrison.
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Optional, hidden by default panel that lists comments on the loaded log

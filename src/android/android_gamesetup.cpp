@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * android_gamesetup.cpp — Touch-friendly ImGui game setup dialog for Android.
  *
  * Based on src/gui/sdl3/dialogs/imgui_gamesetup.cpp but adapted for

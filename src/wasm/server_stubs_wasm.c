@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * server_stubs_wasm.c — wasm-only stubs for server-frontend symbols
  *
  * server_sim.c and the shared lobby dialog are linked into the wasm

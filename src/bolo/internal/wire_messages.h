@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * Wire field lists for the flat fixed-layout leaf snapshots.
  *
  * Each *_FIELDS(F) macro names a message's fields once, in wire order, with its

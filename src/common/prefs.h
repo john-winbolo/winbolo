@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * Process-global preferences over the PrefsDoc module: one in-memory
  * document loaded from WinBolo.json, exposed through string get/set
  * that mirror the classic Get/WritePrivateProfileString signatures

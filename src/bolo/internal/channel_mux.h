@@ -46,13 +46,15 @@
 #include <stdint.h>
 
 /* Fixed channel identities and the channel count. Channels 0-2 carry
- * discrete messages; channel 3 carries a byte stream. */
+ * discrete messages; channel 3 carries a byte stream; channel 4 carries
+ * best-effort (fire-and-forget) messages. */
 enum {
-    CHANNEL_GAME    = 0,
-    CHANNEL_MAP     = 1,
-    CHANNEL_CONTROL = 2,
-    CHANNEL_BULK    = 3,
-    CHANNEL_COUNT   = 4
+    CHANNEL_GAME        = 0,
+    CHANNEL_MAP         = 1,
+    CHANNEL_CONTROL     = 2,
+    CHANNEL_BULK        = 3,
+    CHANNEL_GAME_EFFECT = 4,
+    CHANNEL_COUNT       = 5
 };
 
 /* Per-channel window depth and segment size. Each channel sizes its rings
@@ -82,6 +84,10 @@ enum {
 #define CHANNEL_BULK_WINDOW     96  /* provisional: bandwidth-delay product set
                                      * when bulk transfer moves here           */
 #define CHANNEL_BULK_SEG       256  /* stream segments                         */
+#define CHANNEL_GAME_EFFECT_WINDOW 64  /* best-effort ephemeral game events;
+                                        * sized to one tick's burst + margin,
+                                        * not retransmit depth                */
+#define CHANNEL_GAME_EFFECT_SEG    16  /* one GameEvent, like CHANNEL_GAME    */
 
 /* Largest segSize over all channels, so a caller can size one scratch
  * receive buffer that fits a segment from any channel. */
@@ -101,6 +107,8 @@ enum {
 typedef struct {
     uint32_t window;       /* this channel's ring depth                */
     uint32_t segSize;      /* this channel's max segment payload        */
+    bool     bestEffort;   /* signals the frame builder/applier to skip
+                            * acks, RTO, and reorder-hold for this channel */
 
     /* Send side. */
     uint32_t nextSeq;      /* next sequence number to assign           */
@@ -118,6 +126,14 @@ typedef struct {
     bool     *recvPresent; /* [window]                                  */
     uint16_t *recvLen;     /* [window]                                  */
     uint8_t  *recvData;    /* [window * segSize], row stride = segSize  */
+
+    /* Fast-retransmit (NAK) state. */
+    uint32_t recvHighestSeq; /* exclusive upper bound on the highest seq
+                              * accepted on the receive side; reported as
+                              * highestSeen so the peer can spot a gap        */
+    bool     nakIssued;    /* a fast-retransmit fired for the current stall;
+                            * cleared when the cumulative ack advances, so each
+                            * distinct gap rewinds the tail at most once     */
 } ChannelState;
 
 typedef struct ChannelMux {
@@ -152,6 +168,12 @@ typedef struct ChannelMux {
     uint16_t bulkRecvLen[CHANNEL_BULK_WINDOW];
     uint8_t  bulkRecvData[CHANNEL_BULK_WINDOW][CHANNEL_BULK_SEG];
 
+    uint16_t gameEffectSendLen[CHANNEL_GAME_EFFECT_WINDOW];
+    uint8_t  gameEffectSendData[CHANNEL_GAME_EFFECT_WINDOW][CHANNEL_GAME_EFFECT_SEG];
+    bool     gameEffectRecvPresent[CHANNEL_GAME_EFFECT_WINDOW];
+    uint16_t gameEffectRecvLen[CHANNEL_GAME_EFFECT_WINDOW];
+    uint8_t  gameEffectRecvData[CHANNEL_GAME_EFFECT_WINDOW][CHANNEL_GAME_EFFECT_SEG];
+
     /* Stream channel (CHANNEL_BULK) pending-byte ring. */
     uint8_t  streamBuf[CHANNEL_STREAM_BUF];
     uint32_t streamHead;   /* ring read index                  */
@@ -167,6 +189,13 @@ void channelMuxInit(ChannelMux *m);
  * false on a usage error (stream channel, oversized message, bad id) or
  * when the window is full without room for another in-flight segment. */
 bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len);
+
+/* Queue one whole message on the best-effort channel. Never blocks and never
+ * signals overflow by failing: if the ring is full, the oldest pending segment
+ * is dropped to make room. Returns false only on a usage error (not a
+ * best-effort channel, bad id, oversized message). */
+bool channelSendBestEffort(ChannelMux *m, uint8_t ch, const uint8_t *msg,
+                           uint16_t len);
 
 /* Append bytes to the stream-flavor channel (3). Returns false on a usage
  * error (a message channel, bad id) or when the pending-byte buffer cannot
@@ -189,6 +218,12 @@ int channelRecvFrame(ChannelMux *m, const uint8_t *buf, int len);
  * message; for the stream channel each pop is the next stream fragment, to
  * be concatenated by the caller. Returns false when nothing is ready. */
 bool channelReceive(ChannelMux *m, uint8_t ch, uint8_t *out, uint16_t *outLen);
+
+/* Pop the next available best-effort payload: the lowest buffered seq at or
+ * above the delivery cursor, advancing the cursor past any skipped seqs
+ * (dropped, never waited on). Returns false when nothing is buffered. */
+bool channelReceiveBestEffort(ChannelMux *m, uint8_t ch, uint8_t *out,
+                              uint16_t *outLen);
 
 /* Truncate the send side of a channel forward at a game boundary: drop the
  * unacked send tail (ackedSeq = txNext = nextSeq) and clear those ring

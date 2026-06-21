@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * steam_input_actions.h — string constants for Steam Input actions.
  *
  * These names MUST exactly match the actions and action-sets declared

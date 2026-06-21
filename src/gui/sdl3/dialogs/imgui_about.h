@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * About modal — version / copyright / links / docs popups.
  *
  * Renders in whatever ImGui context is current when the entry points are

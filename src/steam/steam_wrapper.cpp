@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * steam_wrapper.cpp — real Steamworks implementation.
  * Compiled only when HAVE_STEAM is defined (SDK detected by CMake).
  *

@@ -1,4 +1,9 @@
 /*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
  * winbolonet_stub.c - Stub implementations of WinBolo.net functions
  *
  * In the gym binary we don't include the winbolonet source files (which

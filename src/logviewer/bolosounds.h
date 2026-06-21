@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
 #define IDW_TANK_SINKING_NEAR               MAKEINTRESOURCE(112)
 #define IDW_TANK_SINKING_FAR                MAKEINTRESOURCE(127)
 #define IDW_SHOT_TREE_NEAR                  MAKEINTRESOURCE(128)

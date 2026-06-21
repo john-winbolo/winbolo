@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998-2008 John Morrison.
+ * Copyright (c) 1998-2026 John Morrison.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -341,8 +341,19 @@ bool interpGetRenderPosition(const InterpContext *ctx, BYTE playerNum,
   {
     int32_t fromCurr = (int32_t)((uint32_t)target - p->currArrivalMs);
     if (fromCurr >= 0) {
-      uint32_t interval = p->pendingArrivalMs - p->currArrivalMs;
+      uint32_t interval;
       float t;
+      /* Respawn snap: curr is the stale death sample, pending is the alive
+       * respawn sample.  Never tween out of the death spot — output pending
+       * directly (a one-frame flash at the death position otherwise). */
+      if (!p->curr.alive) {
+        *outX = p->pending.worldX;
+        *outY = p->pending.worldY;
+        *outAngle = p->pending.angle;
+        *outOnBoat = p->pending.onBoat;
+        return TRUE;
+      }
+      interval = p->pendingArrivalMs - p->currArrivalMs;
       if (interval == 0 || interval > INTERP_MAX_INTERVAL_MS) {
         return FALSE;
       }
@@ -357,7 +368,18 @@ bool interpGetRenderPosition(const InterpContext *ctx, BYTE playerNum,
    * a full snapshot, i.e. depth 2). */
   if (p->hasPrev) {
     int32_t fromPrev = (int32_t)((uint32_t)target - p->prevArrivalMs);
-    uint32_t interval = p->currArrivalMs - p->prevArrivalMs;
+    uint32_t interval;
+    /* Respawn snap one snapshot deeper: prev is the stale death sample, curr
+     * is the alive endpoint of this segment.  Output curr directly (including
+     * over the clamp-to-prev case below) so the death spot is never shown. */
+    if (!p->prev.alive) {
+      *outX = p->curr.worldX;
+      *outY = p->curr.worldY;
+      *outAngle = p->curr.angle;
+      *outOnBoat = p->curr.onBoat;
+      return TRUE;
+    }
+    interval = p->currArrivalMs - p->prevArrivalMs;
     if (interval == 0 || interval > INTERP_MAX_INTERVAL_MS) {
       return FALSE;
     }
