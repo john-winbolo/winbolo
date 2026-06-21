@@ -279,6 +279,7 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
       case EVENT_PLAYER_LEAVE:
       case EVENT_PILL_UPDATE:
       case EVENT_BASE_UPDATE:
+      case EVENT_BASE_STOCK:
       case EVENT_EXPLOSION:
         if (csPtr->brainEventCount < MAX_BRAIN_EVENTS) {
           csPtr->brainEvents[csPtr->brainEventCount++] = events[i];
@@ -447,14 +448,22 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         }
         break;
       case EVENT_BASE_UPDATE:
-        /* data: [baseIndex, owner, armour, shells, mines] */
+        /* data: [baseIndex, owner] */
         {
           BYTE idx = events[i].data[0];
           if (idx < MAX_BASES && csPtr->sim.bs != NULL) {
-            (*csPtr->sim.bs).item[idx].owner  = events[i].data[1];
-            (*csPtr->sim.bs).item[idx].armour = events[i].data[2];
-            (*csPtr->sim.bs).item[idx].shells = events[i].data[3];
-            (*csPtr->sim.bs).item[idx].mines  = events[i].data[4];
+            (*csPtr->sim.bs).item[idx].owner = events[i].data[1];
+          }
+        }
+        break;
+      case EVENT_BASE_STOCK:
+        /* data: [baseIndex, armour, shells, mines] */
+        {
+          BYTE idx = events[i].data[0];
+          if (idx < MAX_BASES && csPtr->sim.bs != NULL) {
+            (*csPtr->sim.bs).item[idx].armour = events[i].data[1];
+            (*csPtr->sim.bs).item[idx].shells = events[i].data[2];
+            (*csPtr->sim.bs).item[idx].mines  = events[i].data[3];
           }
         }
         break;
