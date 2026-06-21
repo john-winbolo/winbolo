@@ -1596,6 +1596,16 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
 
   returnValue = TRUE;
 
+  /* Reject input too short to hold the fixed header before any struct read:
+   * basesSetBaseCompressData/pillsSetPillCompressData/startsSetStartCompressData
+   * each memcpy their full SIZEOF_* below regardless of inputLen, so a truncated
+   * or malformed blob would over-read past the buffer. Every legitimate caller
+   * passes a full compressed map; only short/garbage input is rejected here. */
+  if (input == NULL ||
+      inputLen < (int)(SIZEOF_BASES + SIZEOF_PILLS + SIZEOF_STARTS)) {
+    return FALSE;
+  }
+
   /* Bases */
   ptr = input;
   basesSetBaseCompressData(bs, ptr, SIZEOF_BASES);

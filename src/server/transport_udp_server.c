@@ -3787,9 +3787,60 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                         dl->xferBegun = false;
                         dl->xferStartSeq = 0;
                         dl->xferEndSeq = 0;
-                        fprintf(stderr,
-                                "[UDP SERVER] Client %d map resync gen=%u (%d bytes)\n",
-                                clientIdx, reqGen, mapLen);
+
+                        /* Self-check: the blob the client will install must
+                         * round-trip back to this server's live terrain. If it
+                         * doesn't, the client can never match the live checksum
+                         * and loops resync requests until it self-kicks — so
+                         * decode the blob into scratch structures and compare
+                         * tile-for-tile against the live map. Resyncs are
+                         * infrequent; the cost is acceptable for the diagnosis. */
+                        {
+                            map *live = &serverSimGetGameSim(sim)->mp;
+                            uint16_t liveSum = mapCalcChecksum(live);
+                            map rtMap; pillboxes rtPb; bases rtBs; starts rtSs;
+                            mapCreate(&rtMap);
+                            pillsCreate(&rtPb);
+                            basesCreate(&rtBs);
+                            startsCreate(&rtSs);
+                            if (mapLoadCompressedMap(&rtMap, &rtPb, &rtBs, &rtSs,
+                                                     udpServer.compressedMap, mapLen)) {
+                                uint16_t rtSum = mapCalcChecksum(&rtMap);
+                                if (rtSum != liveSum) {
+                                    int diffs = 0, shown = 0, xx, yy;
+                                    for (yy = 0; yy < MAP_ARRAY_SIZE; yy++) {
+                                        for (xx = 0; xx < MAP_ARRAY_SIZE; xx++) {
+                                            BYTE lv = mapGetPos(live, (BYTE)xx, (BYTE)yy);
+                                            BYTE rv = mapGetPos(&rtMap, (BYTE)xx, (BYTE)yy);
+                                            if (lv != rv) {
+                                                diffs++;
+                                                if (shown < 8) {
+                                                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                                                        "map resync blob diff @(%d,%d) live=%u roundtrip=%u",
+                                                        xx, yy, (unsigned)lv, (unsigned)rv);
+                                                    shown++;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    WB_LOG_WARN(WB_LOG_CAT_NET,
+                                        "map resync blob does NOT round-trip: %d differing tile(s) "
+                                        "(live sum=%u blob sum=%u) - client cannot converge",
+                                        diffs, (unsigned)liveSum, (unsigned)rtSum);
+                                }
+                            } else {
+                                WB_LOG_WARN(WB_LOG_CAT_NET,
+                                    "map resync blob failed self-check decode (gen=%u, %d bytes)",
+                                    (unsigned)reqGen, mapLen);
+                            }
+                            mapDestroy(&rtMap);
+                            pillsDestroy(&rtPb);
+                            basesDestroy(&rtBs);
+                            startsDestroy(&rtSs);
+                            fprintf(stderr,
+                                    "[UDP SERVER] Client %d map resync gen=%u (%d bytes) livesum=%u\n",
+                                    clientIdx, reqGen, mapLen, (unsigned)liveSum);
+                        }
                     } else {
                         fprintf(stderr,
                                 "[UDP SERVER] Client %d map resync: compress failed (%d)\n",

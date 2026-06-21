@@ -968,7 +968,8 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
             c->mapDownloadBuf != NULL &&
             c->mapDownloadReceived == c->mapDownloadTotal) {
             installCompressedMap(c->clientSim, c->mapDownloadBuf,
-                                 (int)c->mapDownloadTotal, NULL);
+                                 (int)c->mapDownloadTotal, NULL,
+                                 /*initViewport=*/true);
             c->mapInstalled = true;
         }
         if (wasInLobby) {
@@ -1107,6 +1108,45 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
     }
 }
 
+/* Finalise a reassembled map resync. mapResyncBuf/mapResyncTotal hold the blob
+ * for generation activeResyncGen. A resync only ever follows a successful first
+ * map install, so the viewport's view buffers already exist and the install
+ * runs with initViewport=false to keep the player's camera over the swap.
+ *
+ * On a successful install: advance installedMapGen to this resync's gen (older
+ * map-channel events then drop on the drain — the blob already carries every
+ * change up to the cut), open the grace window, and count it. On a FAILED
+ * install: keep the prior map and re-arm WITHOUT advancing the generation, the
+ * grace window, or the count, so the next full-sync checksum mismatch
+ * re-requests (MAP_RESYNC_MAX_ATTEMPTS still bounds the loop). Either way the
+ * resync buffer and the outstanding-request flags are cleared. */
+static void udpClientFinalizeResync(TransportUdpClientCtx *c) {
+    ClientSim *cs = c ? c->clientSim : NULL;
+    if (cs == NULL) return;
+
+    if (!installCompressedMap(cs, c->mapResyncBuf, (int)c->mapResyncTotal, NULL,
+                              /*initViewport=*/false)) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+            "map resync install FAILED gen=%u (%u bytes) - keeping prior map, will retry",
+            (unsigned)c->activeResyncGen, (unsigned)c->mapResyncTotal);
+        c->resyncActive = false;
+        c->firstResyncChunkSeen = false;
+        c->activeResyncGen = 0;
+        udpClientFreeResyncBuf(c);
+        return;
+    }
+
+    c->mapResyncCount++;
+    c->resyncActive = false;
+    c->firstResyncChunkSeen = false;
+    c->installedMapGen = c->activeResyncGen;
+    c->activeResyncGen = 0;
+    c->resyncSuppressUntilTick = c->localTick + MAP_RESYNC_GRACE_TICKS;
+    udpClientFreeResyncBuf(c);
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+        "map resync install complete (count=%u)", (unsigned)c->mapResyncCount);
+}
+
 /* Bulk-receiver onComplete (CHANNEL_BULK): the whole blob for `buf` (the buffer
  * onBegin returned) has landed. Finalise by kind — the same finishes the old
  * per-chunk paths drove. */
@@ -1132,7 +1172,8 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         c->mapDownloadReceived = h->totalSize;
         c->joinState = UDP_CLIENT_CONNECTED;
         installCompressedMap(cs, c->mapDownloadBuf,
-                             (int)c->mapDownloadTotal, NULL);
+                             (int)c->mapDownloadTotal, NULL,
+                             /*initViewport=*/true);
         c->mapInstalled = true;
         {
             ControlEvent evt = { .type = CTRL_MAP_DOWNLOAD_COMPLETE };
@@ -1147,23 +1188,10 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         /* Atomic terrain swap — joinState never changed, so snapshots and
          * entities kept flowing. NULL name keeps the current map name. The
          * server-held map events (seq >= cut) flow on the next snapshots and
-         * apply on top of the freshly installed blob. */
-        installCompressedMap(cs, c->mapResyncBuf, (int)c->mapResyncTotal, NULL);
-        c->mapResyncCount++;
-        c->resyncActive = false;
-        c->firstResyncChunkSeen = false;
-        /* Advance the installed map generation to this resync's gen before
-         * clearing the transient activeResyncGen. Map-channel events tagged
-         * older than this drop on the drain — the blob just installed already
-         * carries every change up to the resync cut. */
-        c->installedMapGen = c->activeResyncGen;
-        c->activeResyncGen = 0;
-        /* Suppress new requests for a grace window: the next full-sync checksum
-         * confirms convergence and clears the backoff counter. */
-        c->resyncSuppressUntilTick = c->localTick + MAP_RESYNC_GRACE_TICKS;
-        udpClientFreeResyncBuf(c);
-        WB_LOG_INFO(WB_LOG_CAT_NET,
-            "map resync install complete (count=%u)", (unsigned)c->mapResyncCount);
+         * apply on top of the freshly installed blob. initViewport=false (inside
+         * the finalize): a mid-game resync keeps the player's camera. A failed
+         * install keeps the prior map and does not advance the generation. */
+        udpClientFinalizeResync(c);
         break;
 
     default:
@@ -3149,6 +3177,29 @@ bool transportUdpClientTestBeginResync(Transport *t) {
     c->lastResyncProgressTick = c->localTick;
     c->resyncAttempts++;
     udpClientSendMapResyncRequest(c, c->activeResyncGen);
+    return true;
+}
+
+/* Test-only: run the map-resync finalize on a caller-supplied blob, as if a
+ * resync of a fresh generation had just reassembled `buf`. Arms the resync
+ * precondition (resyncActive, a fresh activeResyncGen, buf copied into the
+ * owned resync buffer) and drives the real udpClientFinalizeResync, so a test
+ * can prove a corrupt blob leaves installedMapGen/mapResyncCount untouched (and
+ * re-arms resyncActive) while a valid blob advances them. Returns false if the
+ * precondition can't be set (bad args or out of memory). */
+bool transportUdpClientTestFinalizeResync(Transport *t, const BYTE *buf, int len) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL || buf == NULL || len <= 0) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    udpClientFreeResyncBuf(c);
+    c->mapResyncBuf = (BYTE *)malloc((size_t)len);
+    if (c->mapResyncBuf == NULL) return false;
+    memcpy(c->mapResyncBuf, buf, (size_t)len);
+    c->mapResyncTotal = (uint32_t)len;
+    c->resyncActive = true;
+    c->firstResyncChunkSeen = true;
+    c->activeResyncGen = udpClientNextResyncGen(c);
+    udpClientFinalizeResync(c);
     return true;
 }
 

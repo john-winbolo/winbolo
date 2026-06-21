@@ -163,7 +163,7 @@ static bool clientSimConnectLocalBody(ClientSim *cs, struct ServerSim *sim,
 
   /* 5. Install the map onto the ClientSim. */
   if (!installCompressedMap(cs, compressedMap, compLen,
-                            serverSimGetMapName(sim))) {
+                            serverSimGetMapName(sim), /*initViewport=*/true)) {
     const char *rendered = langGetText(NETERR_MAPSERIALIZE);
     clientSimSetConnectErrorReason(cs, rendered ? rendered : "Map serialise failed");
     serverSimRemovePlayer(sim, slot);

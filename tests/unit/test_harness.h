@@ -494,6 +494,19 @@ int run_map_resync_duplicate_request_no_recut(void);
 int run_map_resync_send_gate_holds(void);
 int run_map_resync_stale_gen_rejected(void);
 
+/* Map compressed-codec round-trip (test_map_compress_roundtrip.c): a real map
+ * (and a mutated one carrying mine-range terrain near pills/bases) must survive
+ * mapSaveCompressedMap -> mapLoadCompressedMap tile-for-tile. */
+int run_map_compress_roundtrip_stock(void);
+int run_map_compress_roundtrip_mutated(void);
+
+/* Client resync finalize (test_resync_finalize.c): a corrupt/truncated blob
+ * must not advance installedMapGen/mapResyncCount (and re-arms the resync); a
+ * valid blob advances them; installCompressedMap reports failure on garbage. */
+int run_resync_finalize_corrupt_keeps_gen(void);
+int run_resync_finalize_valid_advances_gen(void);
+int run_install_compressed_map_rejects_garbage(void);
+
 /* Connection-id NAT-rebind migration (test_conn_migration.c): the pure
  * connId match-and-rehome decision, plus an end-to-end loopback join that
  * confirms the server stores a connId and inputs ride the new framing. */
