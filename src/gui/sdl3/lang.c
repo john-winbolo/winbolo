@@ -1708,6 +1708,7 @@ static const LangEntry langTable[] = {
     {1825, "Small"},
     {1826, "Medium"},
     {1827, "Large"},
+    {1828, "Alliances are disabled in ranked games."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

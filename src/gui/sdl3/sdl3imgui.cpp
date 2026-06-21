@@ -1517,7 +1517,14 @@ static void renderPlayersPanel(ClientSim *cs) {
             imguiHandOnHover();
             if (disabled) ImGui::EndDisabled();
             if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+                ImGui::SetTooltip("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
+            }
+            /* Controller users can't hover for the tooltip — show the reason
+               as a greyed caption under the disabled button. */
+            if (rankedGame && uiShouldUseControllerMode()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
+                ImGui::PopStyleColor();
             }
         }
     }
@@ -1585,6 +1592,16 @@ static void renderPlayersPanel(ClientSim *cs) {
             } else {
                 ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP));
             }
+        }
+        /* Controller users can't hover for the tooltip — show the reason
+           as a greyed caption under the disabled button. */
+        if (surrDisabled && uiShouldUseControllerMode()) {
+            const char *reason = meUnassigned
+                ? langGetText(STR_VOTE_SURRENDER_PICK_TEAM_TIP)
+                : langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", reason);
+            ImGui::PopStyleColor();
         }
 
         /* Answer rows for any in-flight vote — reachable with a
@@ -2935,7 +2952,7 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     KMOD_PRIMARY_LABEL "R", false, !rankedGame))
                 clientSimRequestAllianceSelected(cs);
             if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+                ImGui::SetTooltip("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
             }
             if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                             clientSimLeaveAllianceSelf(cs);
         }
