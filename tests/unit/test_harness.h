@@ -501,6 +501,7 @@ int run_map_resync_stale_gen_rejected(void);
  * mapSaveCompressedMap -> mapLoadCompressedMap tile-for-tile. */
 int run_map_compress_roundtrip_stock(void);
 int run_map_compress_roundtrip_mutated(void);
+int run_map_checksum_ignores_mines(void);
 
 /* Client resync finalize (test_resync_finalize.c): a corrupt/truncated blob
  * must not advance installedMapGen/mapResyncCount (and re-arms the resync); a

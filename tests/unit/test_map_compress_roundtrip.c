@@ -195,3 +195,82 @@ int run_map_compress_roundtrip_mutated(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* Find an interior land tile (not deep sea, not a pill/base) at or after the
+ * scan cursor (*sx, *sy). Returns true and writes the tile + advances the
+ * cursor past it; false if none remain. */
+static bool next_land_tile(GameSim *gs, int *sx, int *sy, BYTE *outx, BYTE *outy) {
+    int x, y;
+    for (y = *sy; y < MAP_MINE_EDGE_BOTTOM; y++) {
+        for (x = (y == *sy ? *sx : MAP_MINE_EDGE_LEFT + 1);
+             x < MAP_MINE_EDGE_RIGHT; x++) {
+            BYTE bx = (BYTE)x, by = (BYTE)y;
+            if (mapGetPos(&gs->mp, bx, by) == DEEP_SEA) continue;
+            if (pillsExistPos(&gs->pb, bx, by)) continue;
+            if (basesExistPos(&gs->bs, bx, by)) continue;
+            *outx = bx;
+            *outy = by;
+            *sx = x + 1;
+            *sy = y;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The terrain checksum must ignore mine state: a mined tile (value in
+ * [MINE_START, MINE_END]) checksums identically to its base terrain
+ * (value - MINE_SUBTRACT), so a hidden-mines game can't mismatch forever. A
+ * real (non-mine) terrain change must still move the checksum. */
+int run_map_checksum_ignores_mines(void) {
+    static BYTE emap[6000] = E_MAP;
+    /* Each mined value paired with the base terrain it must reduce to. */
+    static const BYTE mined[] = { MINE_GRASS, MINE_SWAMP, MINE_ROAD };
+    static const BYTE base[]  = { GRASS,      SWAMP,      ROAD };
+    ServerSim *sim;
+    GameSim *gs;
+    int sx = MAP_MINE_EDGE_LEFT + 1, sy = MAP_MINE_EDGE_TOP + 1;
+    BYTE tx[3], ty[3];
+    uint16_t sumMined, sumBase, sumA, sumB;
+    int i;
+
+    sim = serverSimCreateCompressed(emap, EMAP_LEN, "Everard Island",
+                                    gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+
+    for (i = 0; i < 3; i++) {
+        UT_ASSERT_MSG(next_land_tile(gs, &sx, &sy, &tx[i], &ty[i]),
+                      "ran out of interior land tiles (i=%d)", i);
+    }
+
+    /* Mine the tiles, checksum; then strip each to its base terrain, checksum.
+     * Masking must make the two identical. */
+    for (i = 0; i < 3; i++) {
+        mapSetPos(gs, &gs->mp, tx[i], ty[i], mined[i], false, false);
+    }
+    sumMined = mapCalcChecksum(&gs->mp);
+
+    for (i = 0; i < 3; i++) {
+        mapSetPos(gs, &gs->mp, tx[i], ty[i], base[i], false, false);
+    }
+    sumBase = mapCalcChecksum(&gs->mp);
+
+    UT_ASSERT_MSG(sumMined == sumBase,
+                  "mined tiles changed the checksum: mined=%u base=%u",
+                  (unsigned)sumMined, (unsigned)sumBase);
+
+    /* Control: a normal terrain change (GRASS -> ROAD, neither in the mine
+     * range) must still move the checksum, proving the mask isn't over-broad. */
+    mapSetPos(gs, &gs->mp, tx[0], ty[0], GRASS, false, false);
+    sumA = mapCalcChecksum(&gs->mp);
+    mapSetPos(gs, &gs->mp, tx[0], ty[0], ROAD, false, false);
+    sumB = mapCalcChecksum(&gs->mp);
+    UT_ASSERT_MSG(sumA != sumB,
+                  "a non-mine terrain change did not move the checksum (%u)",
+                  (unsigned)sumA);
+
+    serverSimDestroy(sim);
+    return 0;
+}
