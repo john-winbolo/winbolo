@@ -1631,9 +1631,7 @@ static void simRunHalfStep(ServerSim *sim) {
                 ev.data[1] = currentPills[p].x;
                 ev.data[2] = currentPills[p].y;
                 ev.data[3] = currentPills[p].owner;
-                ev.data[4] = currentPills[p].armour;
-                ev.data[5] = currentPills[p].speed;
-                ev.data[6] = currentPills[p].inTank;
+                ev.data[4] = currentPills[p].armourInTank;
                 serverSimAddEvent(sim, &ev);
             }
         }
@@ -2842,9 +2840,8 @@ static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
         out[count].x = (*sim->sim.pb).item[p].x;
         out[count].y = (*sim->sim.pb).item[p].y;
         out[count].owner = (*sim->sim.pb).item[p].owner;
-        out[count].armour = (*sim->sim.pb).item[p].armour;
-        out[count].speed = (*sim->sim.pb).item[p].speed;
-        out[count].inTank = (*sim->sim.pb).item[p].inTank ? 1 : 0;
+        out[count].armourInTank = pillPackArmourInTank((*sim->sim.pb).item[p].armour,
+                                                       (*sim->sim.pb).item[p].inTank);
         count++;
     }
     return count;

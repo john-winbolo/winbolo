@@ -189,12 +189,10 @@ typedef struct {
 typedef struct {
     uint8_t x, y;
     uint8_t owner;
-    uint8_t armour;
-    uint8_t speed;
-    uint8_t inTank;
+    uint8_t armourInTank;
 } PillSnapshot;
 
-#define PILL_SNAPSHOT_WIRE_SIZE 6
+#define PILL_SNAPSHOT_WIRE_SIZE 4
 
 /* Game event (map change, sound, etc.)
  * data[] is 8 bytes — enough for all current event types.
@@ -219,7 +217,7 @@ typedef struct {
 #define EVENT_MAP_CHANGE    7  /* data: [mx, my, newTerrain] */
 #define EVENT_SOUND         8  /* data: [soundId, mx, my, sourcePlayer] */
 #define EVENT_SERVER_MSG    9  /* data: [msgId] — server status message */
-#define EVENT_PILL_UPDATE  10  /* data: [pillIndex, x, y, owner, armour, speed, inTank] */
+#define EVENT_PILL_UPDATE  10  /* data: [pillIndex, x, y, owner, armourInTank] */
 #define EVENT_BASE_UPDATE  11  /* data: [baseIndex, owner, armour, shells, mines] */
 #define EVENT_PLAYER_LEAVE 12  /* data: [playerNum] */
 #define EVENT_ASSISTANT_MSG 13 /* data: [targetPlayer, msgId] — player-specific assistant message */
@@ -274,7 +272,7 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_MAP_CHANGE:     return 3;
     case EVENT_SOUND:          return 4;
     case EVENT_SERVER_MSG:     return 1;
-    case EVENT_PILL_UPDATE:    return 7;
+    case EVENT_PILL_UPDATE:    return 5;
     case EVENT_BASE_UPDATE:    return 5;
     case EVENT_PLAYER_LEAVE:   return 1;
     case EVENT_ASSISTANT_MSG:  return 2;
