@@ -1645,15 +1645,26 @@ static void simRunHalfStep(ServerSim *sim) {
         int nb = serverSimGetBases(sim, currentBases, MAX_SNAPSHOT_BASES);
         int b;
         for (b = 0; b < nb; b++) {
-            if (memcmp(&currentBases[b], &sim->prevBases[b], sizeof(BaseSnapshot)) != 0) {
+            /* Owner change: reliable, broadcast — everyone sees base colour. */
+            if (currentBases[b].owner != sim->prevBases[b].owner) {
                 GameEvent ev;
                 ev.type = EVENT_BASE_UPDATE;
                 memset(ev.data, 0, sizeof(ev.data));
                 ev.data[0] = (uint8_t)b;
                 ev.data[1] = currentBases[b].owner;
-                ev.data[2] = currentBases[b].armour;
-                ev.data[3] = currentBases[b].shells;
-                ev.data[4] = currentBases[b].mines;
+                serverSimAddEvent(sim, &ev);
+            }
+            /* Stock change: best-effort, culled per recipient to their closest base. */
+            if (currentBases[b].armour != sim->prevBases[b].armour ||
+                currentBases[b].shells != sim->prevBases[b].shells ||
+                currentBases[b].mines  != sim->prevBases[b].mines) {
+                GameEvent ev;
+                ev.type = EVENT_BASE_STOCK;
+                memset(ev.data, 0, sizeof(ev.data));
+                ev.data[0] = (uint8_t)b;
+                ev.data[1] = currentBases[b].armour;
+                ev.data[2] = currentBases[b].shells;
+                ev.data[3] = currentBases[b].mines;
                 serverSimAddEvent(sim, &ev);
             }
         }
@@ -3016,9 +3027,31 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
     /* Tank explosion snapshots (globally important — no viewport filtering) */
     hdr->tkExplosionCount = (uint8_t)serverSimGetTkExplosions(sim, tkExplOut, maxTkExpl);
 
+    /* Recipient-is-bot flag — bots are exempt from the base-stock visibility
+     * cull (their brains read non-closest base armour for fog-of-war). */
+    bool recipientIsBot = serverSimIsBot(sim, clientIdx);
+
     /* Periodic full base/pill/map sync to correct any client drift */
     if (sim->lastFullSyncTick == 0 || sim->tick - sim->lastFullSyncTick >= FULL_SYNC_INTERVAL) {
         hdr->baseCount = (uint8_t)serverSimGetBases(sim, basesOut, maxBases);
+        if (!recipientIsBot) {
+            /* Humans only: stock is visibility-limited to the recipient's closest
+             * neutral/allied base; zero all other bases' stock so enemy stock never
+             * leaks (owner stays for every base). Bots are exempt — their brains read
+             * non-closest base armour for the fog-of-war capturable bit. */
+            WORLD bwx = 0, bwy = 0;
+            BYTE closest = BASE_NOT_FOUND;
+            if (serverSimGetTankState(sim, clientIdx, &bwx, &bwy)) {
+                closest = basesGetClosestForPlayer(&sim->sim, clientIdx, bwx, bwy);
+            }
+            for (i = 0; i < hdr->baseCount; i++) {
+                if (closest == BASE_NOT_FOUND || (BYTE)(closest - 1) != (BYTE)i) {
+                    basesOut[i].armour = 0;
+                    basesOut[i].shells = 0;
+                    basesOut[i].mines  = 0;
+                }
+            }
+        }
         hdr->pillCount = (uint8_t)serverSimGetPills(sim, pillsOut, maxPills);
         hdr->mapChecksum = mapCalcChecksum(&sim->sim.mp);
         sim->lastFullSyncTick = sim->tick;
@@ -3038,6 +3071,13 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         if (hasClientPos) {
             clientMX = (BYTE)(cwx >> 8);
             clientMY = (BYTE)(cwy >> 8);
+        }
+
+        /* Recipient's closest neutral/allied base — best-effort base stock
+         * events are culled to this base only (computed once per recipient). */
+        BYTE closestBase = BASE_NOT_FOUND;
+        if (hasClientPos) {
+            closestBase = basesGetClosestForPlayer(&sim->sim, clientIdx, cwx, cwy);
         }
 
         /* First pass: collect best (closest) sound event per sound type.
@@ -3110,6 +3150,14 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 /* Viewport-cull explosion events */
                 if (evType == EVENT_EXPLOSION) {
                     if (!inAnyViewport(viewports, numViewports, sim->events[i].data[0], sim->events[i].data[1])) {
+                        continue;
+                    }
+                }
+                /* Cull base stock to the recipient's closest neutral/allied base
+                 * (humans only — bots receive every base-stock event). */
+                if (evType == EVENT_BASE_STOCK && !recipientIsBot) {
+                    if (closestBase == BASE_NOT_FOUND ||
+                        (BYTE)(closestBase - 1) != sim->events[i].data[0]) {
                         continue;
                     }
                 }
