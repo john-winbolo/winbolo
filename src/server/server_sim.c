@@ -7702,6 +7702,11 @@ uint32_t serverSimGetSpecDelayTicks(const ServerSim *sim) {
     return sim->specDelayTicks;
 }
 
+void serverSimSetSpecDelayTicks(ServerSim *sim, uint32_t ticks) {
+    if (sim == NULL) return;
+    sim->specDelayTicks = ticks;
+}
+
 BYTE serverSimGetLobbyBotCount(const ServerSim *sim) {
     if (sim == NULL) return 0;
     BYTE count = 0;

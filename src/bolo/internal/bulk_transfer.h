@@ -50,13 +50,16 @@
  * recovery — distinguished from DOWNLOAD so the receiver routes it to the
  * parallel resync buffer and applies the generation gate). A spectator seed
  * (server->client) carries the delayed keyframe blob that seeds a spectator's
- * view before the forward event feed begins. */
+ * view before the forward event feed begins; a spectator record (server->client)
+ * carries one delayed ring record (event or keyframe) of the forward feed that
+ * follows the seed. */
 enum {
-    BULK_KIND_UPLOAD    = 1,
-    BULK_KIND_DOWNLOAD  = 2,
-    BULK_KIND_PREVIEW   = 3,
-    BULK_KIND_RESYNC    = 4,
-    BULK_KIND_SPEC_SEED = 5
+    BULK_KIND_UPLOAD      = 1,
+    BULK_KIND_DOWNLOAD    = 2,
+    BULK_KIND_PREVIEW     = 3,
+    BULK_KIND_RESYNC      = 4,
+    BULK_KIND_SPEC_SEED   = 5,
+    BULK_KIND_SPEC_RECORD = 6
 };
 
 /* App-level stream header that precedes a blob on CHANNEL_BULK. Big-endian on

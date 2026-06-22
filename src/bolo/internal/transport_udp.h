@@ -725,5 +725,16 @@ void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
  * outLen / outKind may be NULL. The pointer is freed when the seed completes. */
 const uint8_t *transportUdpServerGetSpectatorSeed(int s, uint32_t *outLen,
                                                   uint8_t *outKind);
+/* Read a connected spectator's forward-feed cursor: *outSeq = lastEmittedSeq
+ * (the highest ring recordSeq emitted as a forward record) and *outKind = the
+ * in-flight BulkSender kind (BULK_KIND_SPEC_RECORD once the feed has armed a
+ * record). Returns false when the slot is invalid or disconnected; outSeq /
+ * outKind may be NULL. */
+bool transportUdpServerGetSpectatorFeedSeq(int s, uint32_t *outSeq,
+                                           uint8_t *outKind);
+/* Test-only: mark a connected spectator's whole CHANNEL_BULK send window acked,
+ * simulating a peer that keeps up so the seed completes and the forward feed's
+ * window keeps draining without a real spectator channel endpoint. */
+void transportUdpServerTestSpectatorAckBulk(int s);
 
 #endif /* TRANSPORT_UDP_H */

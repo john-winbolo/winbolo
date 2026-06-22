@@ -1351,6 +1351,10 @@ BYTE          serverSimGetMaxSpectators(const ServerSim *sim);
 void          serverSimSetMaxSpectators(ServerSim *sim, BYTE n);
 /* Spectator view delay in ticks (50 ticks/s); 0 = live. */
 uint32_t      serverSimGetSpecDelayTicks(const ServerSim *sim);
+/* Set the spectator view delay in ticks at runtime (0 = live). The live ring's
+ * retention is sized from this at creation, so set it before
+ * serverInstanceCreateSpectatorRing if a non-default delay must be retained. */
+void          serverSimSetSpecDelayTicks(ServerSim *sim, uint32_t ticks);
 /* Number of connected slots flagged as lobby bots — the value the
  * -maxbots cap is compared against. */
 BYTE          serverSimGetLobbyBotCount(const ServerSim *sim);

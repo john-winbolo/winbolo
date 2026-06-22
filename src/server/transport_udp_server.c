@@ -303,7 +303,15 @@ typedef struct {
     bool     seedComplete;
     uint32_t xferStartSeq;
     uint32_t xferEndSeq;
-    /* SpectatorRingCursor cursor; — forward feed in 2d-d */
+    /* Forward feed (2d-e). seedSeq is the recordSeq of the seeded keyframe,
+     * captured at seek; once the seed is acked, lastEmittedSeq starts there and
+     * walks forward, emitting each record in (lastEmittedSeq, head - delay] as a
+     * BULK_KIND_SPEC_RECORD blob — so the view lags exactly specDelayTicks and
+     * never reaches the live head. No persistent record buffer: bulkSenderBegin
+     * copies each record, so it is built in a transient local and freed at once;
+     * the bulkSenderBusy guard is the single-blob-in-flight control. */
+    uint32_t seedSeq;
+    uint32_t lastEmittedSeq;
 } SpectatorConn;
 
 /* Server-side global state */
@@ -1276,6 +1284,8 @@ static void serverAcceptSpectator(ServerSim *sim,
     udpServer.spectators[s].seedComplete = false;
     udpServer.spectators[s].xferStartSeq = 0;
     udpServer.spectators[s].xferEndSeq   = 0;
+    udpServer.spectators[s].seedSeq        = 0;
+    udpServer.spectators[s].lastEmittedSeq = 0;
 
     serverSendSpectatorAccept(s, sim, fromAddr);
 }
@@ -1304,6 +1314,8 @@ static void serverDisconnectSpectator(int s, bool graceful) {
     udpServer.spectators[s].seedComplete = false;
     udpServer.spectators[s].xferStartSeq = 0;
     udpServer.spectators[s].xferEndSeq = 0;
+    udpServer.spectators[s].seedSeq = 0;
+    udpServer.spectators[s].lastEmittedSeq = 0;
     udpServer.spectators[s].playerName[0] = '\0';
     udpServer.spectators[s].outSequence = 0;
     udpServer.spectators[s].inboundCmdSeq = 0;
@@ -1434,11 +1446,13 @@ static void serverServiceMapTransfer(int slot) {
 }
 
 /* Per-tick spectator service: seed each connected spectator with the delayed
- * keyframe at head - specDelayTicks, then drain it over CHANNEL_BULK exactly as
- * the client map-download carrier drains a join download. Cold-start tolerant —
- * the seek is retried every tick until the ring has enough history; the
- * countdown signal to the client is 2d-e, not here. No forward event feed yet
- * (2d-d).
+ * keyframe at head - specDelayTicks, drain it over CHANNEL_BULK exactly as the
+ * client map-download carrier drains a join download, then stream the ring
+ * forward — emit each record in (lastEmittedSeq, head - delay] as a
+ * BULK_KIND_SPEC_RECORD blob so the view lags exactly specDelayTicks behind the
+ * live head and never reaches the current tick. Cold-start tolerant — the seek
+ * is retried every tick until the ring has enough history; the countdown signal
+ * to the client is 2d-f, not here.
  *
  * Runs on the tick thread, the same thread as logWriteTick's
  * spectatorRingRecordTick, so the seek is race-free. A cursor/keyframe pointer
@@ -1472,6 +1486,7 @@ static void serverServiceSpectators(ServerSim *sim) {
                             sp->seedBlob = copy;
                             sp->seedLen  = (uint32_t)kfLen;
                             sp->seedGen  = cur.segment;
+                            sp->seedSeq  = spectatorRingCursorSeedSeq(&cur);
                         }
                     }
                 }
@@ -1508,8 +1523,85 @@ static void serverServiceSpectators(ServerSim *sim) {
             /* allocation failure: retry next tick */
         }
 
-        /* Pump staged bytes into the mux and emit standalone PACKET_CHANNEL
-         * frames — mirror the client map-download carrier exactly. */
+        /* Complete: peer has acked the whole seed. Free the copy and start the
+         * forward feed from the seeded keyframe's recordSeq. Once-guarded
+         * (!seedComplete) so the lastEmittedSeq init fires only on the
+         * transition — the ack gate stays true on every later tick. */
+        if (sp->seedBegun && !sp->seedComplete &&
+            bulk->ackedSeq >= sp->xferEndSeq) {
+            sp->seedComplete = true;
+            if (sp->seedBlob != NULL) {
+                free(sp->seedBlob);
+                sp->seedBlob = NULL;
+            }
+            sp->lastEmittedSeq = sp->seedSeq;
+        }
+
+        /* Forward feed: after the seed, emit each ring record in
+         * (lastEmittedSeq, head - delay] as a BULK_KIND_SPEC_RECORD blob,
+         * walking recordSeq forward (no per-tick re-seek). The view lags exactly
+         * specDelayTicks behind the live head and never reaches it (DD-7).
+         * bulkSenderBegin copies each record, so it is assembled in a transient
+         * local and freed at once; the bulkSenderBusy guard keeps one blob in
+         * flight and is the per-tick staging backpressure. */
+        if (sp->seedComplete) {
+            SpectatorRing *r = serverInstanceGetSpectatorRing();
+            if (r != NULL) {
+                uint32_t head  = spectatorRingHeadSeq(r);
+                uint32_t delay = serverSimGetSpecDelayTicks(sim);
+                uint32_t target = (head > delay) ? head - delay : 0;
+
+                while (sp->lastEmittedSeq < target &&
+                       !bulkSenderBusy(&sp->bulkSend)) {
+                    uint32_t seq = sp->lastEmittedSeq + 1;
+                    bool isKf;
+                    const uint8_t *pl;
+                    int plen;
+                    uint32_t gt, seg, blen;
+                    uint8_t *blob;
+                    BulkStreamHeader sh;
+
+                    SDL_assert(delay == 0 || head - seq >= delay);   /* DD-7 */
+
+                    if (!spectatorRingRecordAt(r, seq, &isKf, &pl, &plen,
+                                               &gt, &seg)) {
+                        /* The next record aged out (pathological slow
+                         * spectator) — drop the feed and re-seed a fresh
+                         * keyframe (the seek block re-arms once the channel
+                         * drains). */
+                        sp->seedComplete = false;
+                        sp->seedBegun = false;
+                        break;
+                    }
+
+                    blen = 9u + (uint32_t)plen;
+                    blob = (uint8_t *)malloc(blen);
+                    if (blob == NULL) break;   /* retry next tick */
+                    blob[0] = isKf ? 1u : 0u;
+                    packU32(blob + 1, gt);
+                    packU32(blob + 5, seg);
+                    if (plen > 0 && pl != NULL) {
+                        memcpy(blob + 9, pl, (size_t)plen);
+                    }
+
+                    memset(&sh, 0, sizeof(sh));
+                    sh.kind = BULK_KIND_SPEC_RECORD;
+                    sh.gen = seq;
+                    sh.totalSize = blen;
+                    if (!bulkSenderBegin(&sp->bulkSend, &sh, blob, blen)) {
+                        free(blob);
+                        break;
+                    }
+                    free(blob);   /* bulkSenderBegin copied it into its own buf */
+                    sp->lastEmittedSeq = seq;
+                    bulkSenderPump(&sp->bulkSend, &sp->channelMux);
+                }
+            }
+        }
+
+        /* Carrier: pump staged bytes into the mux and emit standalone
+         * PACKET_CHANNEL frames — carries both the seed and the forward records.
+         * Mirrors the client map-download carrier exactly. */
         bulkSenderPump(&sp->bulkSend, &sp->channelMux);
         channelTick(&sp->channelMux, udpServer.tickCount, sp->pingMs);
         {
@@ -1522,16 +1614,6 @@ static void serverServiceSpectators(ServerSim *sim) {
                 if (frameLen <= 2) break;   /* nothing (more) to carry this tick */
                 packHeader(cbuf, PACKET_CHANNEL, sp->outSequence++);
                 srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &sp->addr);
-            }
-        }
-
-        /* Complete: peer has acked the whole seed. Free the copy; the forward
-         * feed begins in 2d-d. */
-        if (sp->seedBegun && bulk->ackedSeq >= sp->xferEndSeq) {
-            sp->seedComplete = true;
-            if (sp->seedBlob != NULL) {
-                free(sp->seedBlob);
-                sp->seedBlob = NULL;
             }
         }
     }
@@ -5314,6 +5396,28 @@ const uint8_t *transportUdpServerGetSpectatorSeed(int s, uint32_t *outLen,
     if (outLen)  *outLen  = sp->seedLen;
     if (outKind) *outKind = sp->bulkSend.kind;
     return sp->seedBlob;
+}
+
+bool transportUdpServerGetSpectatorFeedSeq(int s, uint32_t *outSeq,
+                                           uint8_t *outKind) {
+    SpectatorConn *sp;
+    if (s < 0 || s >= MAX_SPECTATORS) return false;
+    sp = &udpServer.spectators[s];
+    if (!sp->connected) return false;
+    if (outSeq)  *outSeq  = sp->lastEmittedSeq;
+    if (outKind) *outKind = sp->bulkSend.kind;
+    return true;
+}
+
+void transportUdpServerTestSpectatorAckBulk(int s) {
+    ChannelState *bulk;
+    if (s < 0 || s >= MAX_SPECTATORS) return;
+    if (!udpServer.spectators[s].connected) return;
+    /* Simulate a peer that keeps up: mark the whole CHANNEL_BULK send window
+     * acked, which completes the seed and frees the window so the forward feed
+     * keeps draining — without a real spectator channel endpoint (3b). */
+    bulk = &udpServer.spectators[s].channelMux.ch[CHANNEL_BULK];
+    bulk->ackedSeq = bulk->nextSeq;
 }
 
 bool transportUdpServerTestDownloadComplete(int slot) {

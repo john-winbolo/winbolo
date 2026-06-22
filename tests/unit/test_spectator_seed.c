@@ -1,26 +1,37 @@
 /*
- * Spectator seed transfer test (Phase 2d-c).
+ * Spectator seed + forward-feed tests (Phases 2d-c, 2d-e).
  *
- * Proves the server-side arm of a delayed-keyframe seed: a connected spectator
- * on a server whose spectator ring is recording gets the keyframe at
- * head - specDelayTicks copied into spectator-owned storage and armed as a
- * BULK_KIND_SPEC_SEED transfer on CHANNEL_BULK. The white-box gate compares the
- * armed seed blob byte-for-byte against an independent seek of the same ring at
- * the same delay (serverInstanceGetSpectatorRing + spectatorRingSeekDelayed +
- * spectatorRingCursorKeyframe), and checks the in-flight bulk kind.
+ * t_seed_arm (2d-c): proves the server-side arm of a delayed-keyframe seed — a
+ * connected spectator on a server whose spectator ring is recording gets the
+ * keyframe at head - specDelayTicks copied into spectator-owned storage and
+ * armed as a BULK_KIND_SPEC_SEED transfer on CHANNEL_BULK. The white-box gate
+ * compares the armed seed blob byte-for-byte against an independent seek of the
+ * same ring at the same delay, and checks the in-flight bulk kind. The ring is
+ * frozen with logStop() before seating so the serve-path seek and the test's
+ * cross-check seek read an identical static ring.
+ *
+ * t_feed_lag (2d-e): proves the anti-cheat lag of the forward feed — after the
+ * seed completes, the feed streams ring records as BULK_KIND_SPEC_RECORD blobs,
+ * tracking head - specDelayTicks. The ring keeps recording (no logStop freeze)
+ * so the live head advances while the feed runs. A white-box per-pump ack hook
+ * (transportUdpServerTestSpectatorAckBulk) simulates a peer that keeps up — it
+ * completes the seed and keeps the bulk window draining without a real spectator
+ * channel endpoint (the byte-level wire reconstruction is 3b). The gate, read
+ * via transportUdpServerGetSpectatorFeedSeq: at delay > 0 the feed cursor equals
+ * head - delay and stays strictly below head (never the live tick); at delay = 0
+ * it equals head; the in-flight blob kind is BULK_KIND_SPEC_RECORD. The delay is
+ * set (serverSimSetSpecDelayTicks) before serverInstanceCreateSpectatorRing so
+ * the ring's retention is sized to cover it.
  *
  * The loopback harness stands up the real UDP server (and its background recv
  * thread); recording is added on top of it the way a real MP host gets it —
  * logStart() (so logWriteTick records ring ticks) plus
  * serverInstanceCreateSpectatorRing() once the spectator cap is non-zero. The
- * ring is frozen with logStop() before the spectator is seated so the serve
- * path's seek and the test's cross-check seek read an identical, static ring
- * (no record can slip between the arm and the comparison). The spectator JOIN
- * itself rides the same hand-built raw-socket cookie handshake as
+ * spectator JOIN rides the same hand-built raw-socket cookie handshake as
  * test_spectator_join.c.
  *
- * Skipped (logged, test passes) when the distinct loopback source IP a
- * spectator needs for its own join rate-limit bucket isn't bindable
+ * Each case is skipped (logged, test passes) when the distinct loopback source
+ * IP a spectator needs for its own join rate-limit bucket isn't bindable
  * (Linux-only 127/8 aliases).
  */
 
@@ -39,7 +50,7 @@
 #include "server_sim.h"        /* serverSimSetMaxSpectators, serverSimGetSpecDelayTicks */
 #include "server_lifecycle.h"  /* serverInstanceCreateSpectatorRing, GetSpectatorRing */
 #include "spectator_ring.h"    /* spectatorRingSeekDelayed, spectatorRingCursorKeyframe */
-#include "bulk_transfer.h"     /* BULK_KIND_SPEC_SEED */
+#include "bulk_transfer.h"     /* BULK_KIND_SPEC_SEED, BULK_KIND_SPEC_RECORD */
 #include "log.h"               /* logCreate, logStart, logStop, logDestroy */
 #include "test_harness.h"
 #include "loopback_harness.h"
@@ -188,7 +199,7 @@ static bool ssSeedArmed(LoopbackHarness *h, void *user) {
     return false;
 }
 
-int run_spectator_seed(void) {
+static int t_seed_arm(void) {
     LoopbackHarness h;
     struct sockaddr_in serverAddr;
     SOCKET spec;
@@ -285,5 +296,132 @@ int run_spectator_seed(void) {
     logDestroy();           /* tap already idle (logStop); shutdown unregisters it */
     loopbackHarnessStop(&h);
     remove(fname);
+    return 0;
+}
+
+/* Forward-feed anti-cheat lag (2d-e). At delay > 0 the feed cursor settles at
+ * head - delay and never reaches the live head; at delay = 0 it equals head.
+ * ip selects the spectator's loopback rate-limit bucket; delay is in recordSeq. */
+static int t_feed_lag(const char *ip, uint32_t delay) {
+    LoopbackHarness h;
+    struct sockaddr_in serverAddr;
+    SOCKET spec;
+    char fname[64];
+    SpectatorRing *ring;
+    int i, specSlot, reached;
+    uint32_t led = 0, head = 0, tgt = 0;
+    uint8_t kind = 0;
+
+    spec = ssOpenSocketOnIp(ip);
+    if (spec == INVALID_SOCKET) {
+        SDL_Log("  spectator feed: skipping (delay=%u) — %s not bindable",
+                (unsigned)delay, ip);
+        return 0;
+    }
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "Player", /*lobbyMode*/ false,
+                                       /*impairSpec*/ NULL, /*seed*/ 1u),
+                  "harness start failed");
+
+    memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family      = AF_INET;
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    serverAddr.sin_port        = htons(h.port);
+
+    /* Enable spectating and set the delay BEFORE creating the ring, so the
+     * ring's retention is sized from this delay (2d-b sizes it at create). */
+    serverSimSetMaxSpectators(h.sim, 4);
+    serverSimSetSpecDelayTicks(h.sim, delay);
+    snprintf(fname, sizeof(fname), "test_spectator_feed_%u.wbv", (unsigned)delay);
+    remove(fname);
+    logCreate();
+    UT_ASSERT_MSG(logStart(fname, h.sim, 0, MAX_TANKS, FALSE) == TRUE,
+                  "logStart failed");
+    serverInstanceCreateSpectatorRing(h.sim);
+    ring = serverInstanceGetSpectatorRing();
+    UT_ASSERT_MSG(ring != NULL, "ring not created for maxSpectators > 0");
+
+    /* Build ring history so head - delay is seekable; the ring keeps recording
+     * (no freeze) for the rest of the test so the head advances under the feed. */
+    loopbackHarnessPumpUntil(&h, 80 + (int)delay, NULL, NULL);
+    UT_ASSERT_MSG(spectatorRingHeadSeq(ring) > delay,
+                  "ring head did not pass the delay");
+
+    /* Seat the spectator. */
+    if (!ssHandshakeAccepts(&h, spec, &serverAddr, "SpecFeed")) {
+        closesocket(spec);
+        logStop();
+        logDestroy();
+        loopbackHarnessStop(&h);
+        remove(fname);
+        UT_FAIL("spectator JOIN drew no accept (delay=%u)", (unsigned)delay);
+    }
+    specSlot = -1;
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        if (transportUdpServerGetSpectatorFeedSeq(i, NULL, NULL)) {
+            specSlot = i;
+            break;
+        }
+    }
+    UT_ASSERT_MSG(specSlot >= 0, "no connected spectator slot found");
+
+    /* Pump while acking all bulk each tick (a keeping-up peer): the seed
+     * completes, then the feed catches up. Stop once the feed cursor reaches
+     * head - delay (and has advanced past the seed at recordSeq 0). */
+    reached = 0;
+    for (i = 0; i < 600; i++) {
+        loopbackHarnessPump(&h);
+        transportUdpServerTestSpectatorAckBulk(specSlot);
+        if (!transportUdpServerGetSpectatorFeedSeq(specSlot, &led, &kind)) {
+            continue;
+        }
+        head = spectatorRingHeadSeq(ring);
+        tgt = (head > delay) ? head - delay : 0;
+        if (led == tgt && led > 0) {
+            reached = i + 1;
+            break;
+        }
+    }
+    UT_ASSERT_MSG(reached > 0,
+                  "feed never caught up to head-delay (delay=%u, led=%u, head=%u)",
+                  (unsigned)delay, (unsigned)led, (unsigned)head);
+
+    /* Re-read the invariant on the now-static cursor (no pump since the match). */
+    UT_ASSERT(transportUdpServerGetSpectatorFeedSeq(specSlot, &led, &kind));
+    head = spectatorRingHeadSeq(ring);
+    if (delay > 0) {
+        UT_ASSERT_MSG(led == head - delay,
+                      "feed lag != delay: led=%u head=%u delay=%u",
+                      (unsigned)led, (unsigned)head, (unsigned)delay);
+        UT_ASSERT_MSG(led < head,
+                      "feed reached the live head (anti-cheat broken): led=%u head=%u",
+                      (unsigned)led, (unsigned)head);
+    } else {
+        UT_ASSERT_MSG(led == head,
+                      "delay=0 feed not at head: led=%u head=%u",
+                      (unsigned)led, (unsigned)head);
+    }
+    UT_ASSERT_MSG(kind == BULK_KIND_SPEC_RECORD,
+                  "forward feed in-flight kind != BULK_KIND_SPEC_RECORD (%u)",
+                  (unsigned)kind);
+
+    closesocket(spec);
+    logStop();
+    logDestroy();
+    loopbackHarnessStop(&h);
+    remove(fname);
+    return 0;
+}
+
+int run_spectator_seed(void) {
+    if (t_seed_arm()) {
+        return 1;
+    }
+    if (t_feed_lag("127.0.0.21", /*delay*/ 20)) {
+        return 1;
+    }
+    if (t_feed_lag("127.0.0.22", /*delay*/ 0)) {
+        return 1;
+    }
     return 0;
 }
