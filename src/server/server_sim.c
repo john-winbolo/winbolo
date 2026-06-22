@@ -3695,6 +3695,24 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->state = serverStateLobby;
     serverSimMapSkipVotesReset(sim);
 
+    /* Auto-lock only closes the server while a round is running, so coming
+     * back to the lobby must lift it. When a round that had human players ends
+     * with none of them left, wipe the slate the way the last-human-leaves-in-
+     * lobby path does — drop the bots, restore the operator's startup
+     * settings, and unlock — so the next joiner gets a fresh, open lobby with
+     * no orphaned bots. A round that only ever had bots (e.g. an idle
+     * dedicated server cycling maps) keeps them and just releases the
+     * auto-lock, restoring the pre-round join policy (savedAllowNewPlayers,
+     * captured by serverSimApplyAutoLockOnGameStart). */
+    if (sim->roundHadHuman && serverSimGetNumHumans(sim) == 0) {
+        serverSimResetLobbyToDefaults(sim);
+    } else {
+        sim->allowNewPlayers = sim->savedAllowNewPlayers;
+        if (sim->savedAllowNewPlayers) {
+            transportUdpServerSetLock(sim, FALSE);
+        }
+    }
+
     /* Regenerate random map between rounds */
     if (sim->randomMapEnabled) {
         serverSimRandomMapRegenerate(sim);
