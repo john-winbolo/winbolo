@@ -51,6 +51,7 @@ extern "C" {
 #include "../bg_game.h"
 #include "../flags.h"
 #include "../sdl3imgui.h"
+#include "../../ui_mode.h"
 #include "../../gamefront.h"
 #include "../../../winbolonet/wbn_serverlist.h"
 #include "discovery.h"
@@ -1337,6 +1338,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                                           boxW, boxH);
                             SDL_Texture *tex = mapPreviewViewGetTexture(previewView);
                             if (tex != nullptr) {
+                                ImVec2 imgMin = ImGui::GetCursorScreenPos();
                                 ImGui::Image((ImTextureID)tex,
                                              ImVec2((float)boxW, (float)boxH));
                                 /* Click the thumbnail to open the zoomable
@@ -1351,6 +1353,29 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                         loadedPreviewComp.data(),
                                         (int)loadedPreviewComp.size(),
                                         0, 0, 255, 255);
+                                }
+                                /* Controller-reachable enlarge: the bare Image
+                                 * isn't focusable, so a pad has no way to open
+                                 * the popup. Lay a focusable overlay over the
+                                 * thumbnail that activates on Space/A with the
+                                 * same open call the mouse path uses, then
+                                 * restore the cursor so the caption below still
+                                 * lays out where it did. Mouse mode is left on
+                                 * the Image + click path above. */
+                                if (uiShouldUseControllerMode() && loadedPreviewOk &&
+                                    !loadedPreviewComp.empty()) {
+                                    ImVec2 afterImg = ImGui::GetCursorScreenPos();
+                                    ImGui::SetCursorScreenPos(imgMin);
+                                    ImGui::SetNextItemAllowOverlap();
+                                    if (ImGui::InvisibleButton(
+                                            "##enlargePreview",
+                                            ImVec2((float)boxW, (float)boxH))) {
+                                        mapPreviewPopupOpenCompressed(
+                                            loadedPreviewComp.data(),
+                                            (int)loadedPreviewComp.size(),
+                                            0, 0, 255, 255);
+                                    }
+                                    ImGui::SetCursorScreenPos(afterImg);
                                 }
                                 ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_PREVIEW_ENLARGE));
                             } else {

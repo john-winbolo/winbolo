@@ -565,6 +565,32 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
                 MapPreviewInputOpts opts = { !panSuppress, true, true, true };
                 mapPreviewViewHandleInput(g_popupView, imgHovered, &opts);
                 renderStartPickerOverlay(imgMin, contentSize, imgHovered);
+
+                /* Controller, spatial view (no start-picker list): the pad
+                 * pans via the D-pad (arrowPan, fed as arrow keys) but has no
+                 * wheel to zoom, so overlay two focusable zoom buttons. "+"/"-"
+                 * are punctuation, not localizable captions. Hidden in mouse
+                 * mode (wheel zoom) and in the controller list view above. */
+                if (uiShouldUseControllerMode() && !g_startPickerCs) {
+                    /* Placing the buttons moves the cursor to the image
+                     * top-left; save it first and restore it last so the
+                     * footer below still lays out at the bottom (where the
+                     * pan InvisibleButton left the cursor), matching mouse
+                     * mode exactly. */
+                    ImVec2 afterSpatial = ImGui::GetCursorScreenPos();
+                    float btn = ImGui::GetFrameHeight();
+                    float pad = 8.0f;
+                    ImGui::SetCursorScreenPos(ImVec2(imgMin.x + pad, imgMin.y + pad));
+                    ImGui::SetNextItemAllowOverlap();
+                    if (ImGui::Button("+##zoomIn", ImVec2(btn, btn)))
+                        mapPreviewViewZoomIn(g_popupView);
+                    ImGui::SetCursorScreenPos(
+                        ImVec2(imgMin.x + pad, imgMin.y + pad + btn + 4.0f));
+                    ImGui::SetNextItemAllowOverlap();
+                    if (ImGui::Button("-##zoomOut", ImVec2(btn, btn)))
+                        mapPreviewViewZoomOut(g_popupView);
+                    ImGui::SetCursorScreenPos(afterSpatial);
+                }
             }
             /* Zoom indicator overlay — aligned to the bottom-right of
              * the IMAGE rect, sitting just above the button row so it
