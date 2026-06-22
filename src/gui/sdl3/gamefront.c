@@ -1361,6 +1361,22 @@ bool gameFrontSetDlgState(openingStates newState) {
      * Create the server sim, then load the map on the client side
      * using the same compressed data the UDP path uses. */
     {
+        /* Single-player opens the lobby at sensible defaults the host can
+         * still change inline before Start: Open game, Full Advantage AI,
+         * and one enemy bot. Held in SP-local values so the host-game path
+         * (gameFrontSetupServer) keeps its own settings. */
+        gameType spGameType = gameOpen;
+        aiType   spAiPolicy = aiFull;
+        /* Seed one enemy bot when the launch carried no bot setup: human
+         * on team 1, the bot on team 2 so they oppose each other. A setup
+         * the user already configured (count > 0) is left untouched. */
+        if (gameFrontBotSetupData.count == 0) {
+          memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
+          gameFrontBotSetupData.count              = 1;
+          gameFrontBotSetupData.playerTeamNumber   = 1;
+          gameFrontBotSetupData.bots[0].teamNumber = 2;
+          /* brainPath left empty -> the bot loop falls back to spBrainPath. */
+        }
         if (strncmp(fileName, "randommap:", 10) == 0) {
           /* Random map — parse seed from "randommap:<seed>" */
           MapGenConfig cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
@@ -1370,12 +1386,12 @@ bool gameFrontSetDlgState(openingStates newState) {
           }
           cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
           cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
-          spServerSim = serverSimCreateRandomMap(&cfg, gametype, hiddenMines, startDelay, timeLen);
+          spServerSim = serverSimCreateRandomMap(&cfg, spGameType, hiddenMines, startDelay, timeLen);
         } else if (strcmp(fileName, "") != 0) {
-          spServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
+          spServerSim = serverSimCreate(fileName, spGameType, hiddenMines, startDelay, timeLen);
         } else {
           BYTE emap[6000] = E_MAP;
-          spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", gametype, hiddenMines, startDelay, timeLen);
+          spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", spGameType, hiddenMines, startDelay, timeLen);
         }
         if (spServerSim != NULL) {
           /* Embedded server: silence its console messages (Thread Manager
@@ -1420,7 +1436,7 @@ bool gameFrontSetDlgState(openingStates newState) {
             cfg.hasPassword       = (password[0] != '\0');
           }
           cfg.botBrainPath = (spBrainPath[0] != '\0') ? spBrainPath : NULL;
-          cfg.botAiType    = (BYTE)((compTanks == aiNone) ? aiFull : compTanks);
+          cfg.botAiType    = (BYTE)spAiPolicy;
 
           /* Build the ClientSim first — clientSimConnectLocalPassive
            * runs the full join+install body against an alive ClientSim. */
@@ -1514,7 +1530,7 @@ bool gameFrontSetDlgState(openingStates newState) {
              * sim via cfg above; here we only need brainPath as a
              * per-bot default for the serverSimCreateBot loop. */
             bool haveBrain = (spBrainPath[0] != '\0');
-            if (compTanks != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
+            if (spAiPolicy != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
               for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
                 BYTE slot = (BYTE)(bi + 1);
                 char botName[32];
@@ -1522,7 +1538,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                 /* Use per-bot brain path if set, otherwise fall back to default */
                 const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
                 if (botBrain[0] == '\0') botBrain = spBrainPath;
-                serverSimCreateBot(spServerSim, slot, botBrain, botName, compTanks, gametype, hiddenMines);
+                serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy, spGameType, hiddenMines);
                 /* Apply team number */
                 uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
                 if (team > 0) {
