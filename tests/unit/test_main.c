@@ -160,6 +160,7 @@ static const UnitTestEntry s_tests[] = {
     { "channel_mux",                             run_channel_mux                             },
     { "spectator_ring",                          run_spectator_ring                          },
     { "spectator_config",                        run_spectator_config                        },
+    { "spectator_join",                          run_spectator_join                          },
     { "bulk_transfer",                           run_bulk_transfer                           },
     { "overflow_guards",                         run_overflow_guards                         },
     { "channel_reset_codec_roundtrip",           run_channel_reset_codec_roundtrip           },

@@ -1347,6 +1347,8 @@ BYTE          serverSimGetMaxPlayers(const ServerSim *sim);
 BYTE          serverSimGetMaxBots(const ServerSim *sim);
 /* Cap on spectator connections; 0 = spectating disabled (no MAX_TANKS fallback). */
 BYTE          serverSimGetMaxSpectators(const ServerSim *sim);
+/* Set the spectator cap at runtime (0 disables spectating). */
+void          serverSimSetMaxSpectators(ServerSim *sim, BYTE n);
 /* Spectator view delay in ticks (50 ticks/s); 0 = live. */
 uint32_t      serverSimGetSpecDelayTicks(const ServerSim *sim);
 /* Number of connected slots flagged as lobby bots — the value the

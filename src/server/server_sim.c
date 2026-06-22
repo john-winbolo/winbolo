@@ -7609,6 +7609,11 @@ BYTE serverSimGetMaxSpectators(const ServerSim *sim) {
     return sim->maxSpectators;   /* 0 = disabled; no MAX_TANKS fallback */
 }
 
+void serverSimSetMaxSpectators(ServerSim *sim, BYTE n) {
+    if (sim == NULL) return;
+    sim->maxSpectators = n;
+}
+
 uint32_t serverSimGetSpecDelayTicks(const ServerSim *sim) {
     if (sim == NULL) return 0;
     return sim->specDelayTicks;

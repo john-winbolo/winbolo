@@ -198,6 +198,11 @@ int run_spectator_ring(void);
  * getters, with seconds->ticks conversion and the no-fallback zero semantics. */
 int run_spectator_config(void);
 
+/* Spectator JOIN handshake (test_spectator_join.c): a JOIN_FLAG_SPECTATOR
+ * join registers a tankless viewer (slot 0xFF, no tank slot), honours the
+ * maxSpectators cap / disabled case, and resolves over the cookie handshake. */
+int run_spectator_join(void);
+
 /* Bulk-transfer framing (test_bulk_transfer.c): the off-socket stream-header
  * round-trip, byte-identical blob reassembly under loss + reorder, header
  * robustness, pipelining and the send-side serializer guard. */

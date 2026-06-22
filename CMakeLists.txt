@@ -2634,6 +2634,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Spectator config plumbing: -maxspectators / -specdelay flow through
     # ServerInstanceConfig into the sim and back via the getters.
     tests/unit/test_spectator_config.c
+    # Spectator JOIN handshake: a JOIN_FLAG_SPECTATOR join registers a tankless
+    # viewer (slot 0xFF, no tank slot) under the maxSpectators cap.
+    tests/unit/test_spectator_join.c
     # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
@@ -2990,6 +2993,7 @@ set(_unit_test_names
     channel_mux
     spectator_ring
     spectator_config
+    spectator_join
     bulk_transfer
     overflow_guards
     channel_reset_codec_roundtrip

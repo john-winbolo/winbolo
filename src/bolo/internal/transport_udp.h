@@ -63,6 +63,14 @@ typedef struct {
  * admit provisionally instead of rejecting; it never grants priority. */
 #define JOIN_FLAG_WANT_REJOIN       0x01
 #define JOIN_FLAG_WILL_AUTHENTICATE 0x02
+/* bit 2: client requests a tankless spectator connection rather than a tank
+ * slot.  Branches the join handler to the spectator-accept path. */
+#define JOIN_FLAG_SPECTATOR         0x04
+
+/* Cap on concurrent tankless spectator connections held transport-side in
+ * spectators[], independent of the MAX_TANKS player slots.  The operator's
+ * -maxspectators cap is enforced as min(maxSpectators, MAX_SPECTATORS). */
+#define MAX_SPECTATORS 32
 
 /* ── Deferred WBN PLAYER_JOIN bookkeeping (pure core) ────────────────
  * A slot owes WBN a PLAYER_JOIN event once we learn its identity for
@@ -468,6 +476,9 @@ void transportUdpServerDrainEvents(struct ServerSim *sim);
 
 /* Returns the number of currently connected clients. */
 int transportUdpServerGetClientCount(void);
+
+/* Returns the number of currently connected tankless spectators. */
+int transportUdpServerGetSpectatorCount(void);
 
 /* Returns ping for a given player (0 if not connected). */
 uint16_t transportUdpServerGetClientPing(BYTE playerNum);

@@ -270,11 +270,33 @@ typedef struct {
     uint64_t lastMs;   /* SDL_GetTicks() at last touch */
 } JoinRateEntry;
 
+/* Tankless spectator connection — a viewer that holds no tank slot, is fed
+ * only from the delayed ring (2d), and is never on the control-event bus.
+ * Peer to UdpServerClient but carries only the resources a viewer uses: its
+ * own ChannelMux (forward events + acks) and BulkSender (seed keyframe). No
+ * map-event queue / upload receiver / subscriber handle. */
+typedef struct {
+    struct sockaddr_in addr;
+    bool     connected;
+    uint64_t connId;
+    char     playerName[PACKET_MAX_PLAYER_NAME];
+    uint32_t lastReceivedTick;
+    uint32_t outSequence;
+    uint32_t inboundCmdSeq;
+    uint16_t pingMs;
+    uint8_t  clientType;
+    uint8_t  clientHints;
+    ChannelMux channelMux;
+    BulkSender bulkSend;
+    /* SpectatorRingCursor cursor; — filled in 2d */
+} SpectatorConn;
+
 /* Server-side global state */
 static struct {
     SOCKET sock;
     bool running;
     UdpServerClient clients[MAX_TANKS];
+    SpectatorConn   spectators[MAX_SPECTATORS];
     uint32_t tickCount;
 
     /* Compressed map buffer for sending to joining clients */
@@ -1140,6 +1162,102 @@ static void serverSendJoinAccept(int slot, ServerSim *sim,
     srvSendTo(acceptBuf, pos, addr);
 }
 
+/* Find a connected spectator by source address. Returns the spectators[]
+ * index or -1. Mirrors serverFindClient over the parallel array. */
+static int serverFindSpectator(const struct sockaddr_in *addr) {
+    int i;
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        if (udpServer.spectators[i].connected &&
+            udpServer.spectators[i].addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
+            udpServer.spectators[i].addr.sin_port == addr->sin_port) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Spectator-flavoured JOIN_ACCEPT: same PACKET_JOIN_ACCEPT layout as
+ * serverSendJoinAccept, but reads spectators[s] and marks the connection a
+ * viewer — slot byte = 0xFF (no tank slot) and compressedMapSize = 0 (the
+ * map arrives in the ring seed, not the live download path). */
+static void serverSendSpectatorAccept(int s, ServerSim *sim,
+                                      const struct sockaddr_in *addr) {
+    uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8];
+    int pos;
+
+    packHeader(acceptBuf, PACKET_JOIN_ACCEPT,
+               udpServer.spectators[s].outSequence++);
+    pos = PACKET_HEADER_SIZE;
+    acceptBuf[pos++] = 0xFF;                       /* viewer: no tank slot */
+    packU32(acceptBuf + pos, serverSimGetTick(sim));
+    pos += 4;
+    packU32(acceptBuf + pos, 0);                   /* no live map download */
+    pos += 4;
+    packConnId(acceptBuf + pos, udpServer.spectators[s].connId);
+    pos += 8;
+
+    srvSendTo(acceptBuf, pos, addr);
+}
+
+/* Accept a "join as viewer" connection: register it in spectators[] with no
+ * tank slot, no sim player, and no control-bus subscription, then send the
+ * spectator accept. Caller has already passed every shared JOIN pre-check
+ * (cookie, version, name, password). */
+static void serverAcceptSpectator(ServerSim *sim,
+                                  const struct sockaddr_in *fromAddr,
+                                  const char *name,
+                                  uint8_t clientType, uint8_t clientHints) {
+    int effectiveCap;
+    int s;
+
+    /* Re-JOIN from a known spectator address: resend the accept, no new slot. */
+    s = serverFindSpectator(fromAddr);
+    if (s >= 0) {
+        serverSendSpectatorAccept(s, sim, fromAddr);
+        return;
+    }
+
+    /* Cap: operator setting clamped to the array size. 0 disables spectating. */
+    effectiveCap = (int)serverSimGetMaxSpectators(sim);
+    if (effectiveCap > MAX_SPECTATORS) effectiveCap = MAX_SPECTATORS;
+    if (effectiveCap <= 0) {
+        serverSendJoinReject(fromAddr, STR_REJECT_SERVER_FULL, 0, NULL);
+        return;
+    }
+
+    /* First free slot within the effective cap. */
+    s = -1;
+    {
+        int i;
+        for (i = 0; i < effectiveCap; i++) {
+            if (!udpServer.spectators[i].connected) {
+                s = i;
+                break;
+            }
+        }
+    }
+    if (s < 0) {
+        serverSendJoinReject(fromAddr, STR_REJECT_SERVER_FULL, 0, NULL);
+        return;
+    }
+
+    udpServer.spectators[s].connected        = true;
+    udpServer.spectators[s].addr             = *fromAddr;
+    udpServer.spectators[s].connId           = serverNextConnId();
+    snprintf(udpServer.spectators[s].playerName,
+             PACKET_MAX_PLAYER_NAME, "%s", name);
+    udpServer.spectators[s].lastReceivedTick = udpServer.tickCount;
+    udpServer.spectators[s].outSequence      = 1;
+    udpServer.spectators[s].inboundCmdSeq     = 0;
+    udpServer.spectators[s].pingMs           = 0;
+    udpServer.spectators[s].clientType       = clientType;
+    udpServer.spectators[s].clientHints      = clientHints;
+    channelMuxInit(&udpServer.spectators[s].channelMux);
+    bulkSenderInit(&udpServer.spectators[s].bulkSend);
+
+    serverSendSpectatorAccept(s, sim, fromAddr);
+}
+
 /* Send PACKET_WBN_REKEY to a single connected client carrying the current
  * server_key.  Called right after JOIN_ACCEPT so the joiner learns the
  * WBN session key without a credential ever riding the JOIN wire field,
@@ -1554,9 +1672,11 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     /* Read flags byte if present (backwards compatible — older clients default to 0) */
     bool wantRejoin = false;
     bool incomingWillAuth = false;
+    bool isSpectator = false;
     if (len > pos) {
         wantRejoin       = (buf[pos] & JOIN_FLAG_WANT_REJOIN) != 0;
         incomingWillAuth = (buf[pos] & JOIN_FLAG_WILL_AUTHENTICATE) != 0;
+        isSpectator      = (buf[pos] & JOIN_FLAG_SPECTATOR) != 0;
         pos++;
     }
 
@@ -1630,6 +1750,15 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
             serverSendJoinReject(fromAddr, STR_REJECT_INCORRECT_PASSWORD, 0, NULL);
             return;
         }
+    }
+
+    /* Join as viewer: no tank slot, no sim player, no control-bus
+     * subscription.  All shared pre-checks above (cookie, version, name,
+     * password) have run; the player game-lock below does not gate
+     * spectating — a locked or running game stays watchable. */
+    if (isSpectator) {
+        serverAcceptSpectator(sim, fromAddr, name, clientType, clientHints);
+        return;
     }
 
     /* Check game lock: server admin command OR host toggled
@@ -3707,12 +3836,31 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_PING:
             serverHandlePing(buf, len, fromAddr);
+            /* Spectators aren't in clients[]; refresh their liveness too. */
+            {
+                int sIdx = serverFindSpectator(fromAddr);
+                if (sIdx >= 0) {
+                    udpServer.spectators[sIdx].lastReceivedTick = udpServer.tickCount;
+                }
+            }
             break;
         case PACKET_CHANNEL: {
             /* Standalone channel frame (client → server, sent when no input
              * rides this tick).  Body is one frame directly after the header. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0) break;
+            if (clientIdx < 0) {
+                /* Spectator acks ride the same standalone-frame path; consume
+                 * them into the spectator's own mux.  No bulk-receive drain —
+                 * a spectator never uploads. */
+                int sIdx = serverFindSpectator(fromAddr);
+                if (sIdx >= 0) {
+                    udpServer.spectators[sIdx].lastReceivedTick = udpServer.tickCount;
+                    channelRecvFrame(&udpServer.spectators[sIdx].channelMux,
+                                     buf + PACKET_HEADER_SIZE,
+                                     len - PACKET_HEADER_SIZE);
+                }
+                break;
+            }
             udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
             if (channelRecvFrame(&udpServer.channelMux[clientIdx],
                                  buf + PACKET_HEADER_SIZE,
@@ -4931,6 +5079,15 @@ int transportUdpServerGetClientCount(void) {
     int i;
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) count++;
+    }
+    return count;
+}
+
+int transportUdpServerGetSpectatorCount(void) {
+    int count = 0;
+    int i;
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        if (udpServer.spectators[i].connected) count++;
     }
     return count;
 }
