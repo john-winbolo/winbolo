@@ -164,6 +164,7 @@ extern "C" int imguiOnboardingShow(void) {
                 continue;
             }
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);   /* B backs out to welcome */
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
             if (ev.type == SDL_EVENT_QUIT ||

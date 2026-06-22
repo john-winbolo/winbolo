@@ -157,7 +157,7 @@ static void keyRow(const char *label, KeySetupField field) {
             *ptr = 0;   /* SDL_SCANCODE_UNKNOWN — unbound */
         }
         imguiHandOnHover();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear");
+        imguiHelpTooltip("Clear");
     }
     ImGui::PopID();
 }
@@ -247,7 +247,7 @@ static void padSlotChange(GamepadAction act, GamepadSlot slot) {
             else                         s_pad.b[act].sec = none;
         }
         imguiHandOnHover();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear");
+        imguiHelpTooltip("Clear");
     }
     ImGui::PopID();
 }
@@ -276,8 +276,7 @@ static void renderBuildBehaviorOptions() {
     ImGui::Spacing();
     auto cb = [](const char *label, bool *v, const char *tip) {
         ImGui::Checkbox(label, v);
-        if (tip && *tip && ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", tip);
+        if (tip && *tip) imguiHelpTooltip(tip);
     };
     cb("Hold to build, release to exit (momentary)", &g_buildHoldMomentary,
        "Hold the build-toggle button (>200ms) to temporarily enter build mode; "

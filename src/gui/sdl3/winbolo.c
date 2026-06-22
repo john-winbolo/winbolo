@@ -64,6 +64,7 @@
 #include "../clientmutex.h"
 #include "../draw.h"
 #include "../gamefront.h"
+#include "../ui_mode.h"
 #include "input.h"
 #include "build_cursor.h"
 #include "../lang.h"
@@ -1605,14 +1606,60 @@ static void SDLCALL saveMapCallback(void *userdata,
 }
 
 void windowSaveMap(ClientSim *cs) {
-  char defaultName[FILENAME_MAX];
+  if (uiShouldUseControllerMode()) {
+    /* Controller path: the native save dialog is mouse-only, so auto-name
+       the map into a writable per-user directory and confirm with a box. */
+    char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (!prefDir) {
+      imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
+                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+      return;
+    }
+
+    /* Filename base from the map name, minus any ".map" suffix; fall back
+       to "map" when the name is empty. */
+    const char *mapName = clientSimGetMapName(cs);
+    char base[FILENAME_MAX];
+    if (mapName && mapName[0]) {
+      snprintf(base, sizeof(base), "%s", mapName);
+      size_t blen = strlen(base);
+      if (blen > 4 && strcmp(base + blen - 4, ".map") == 0) {
+        base[blen - 4] = '\0';
+      }
+    } else {
+      snprintf(base, sizeof(base), "map");
+    }
+
+    char ts[32];
+    time_t now = time(NULL);
+    strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", localtime(&now));
+
+    char mapsDir[FILENAME_MAX];
+    snprintf(mapsDir, sizeof(mapsDir), "%smaps", prefDir);
+    SDL_CreateDirectory(mapsDir);
+
+    char fullPath[FILENAME_MAX];
+    snprintf(fullPath, sizeof(fullPath), "%s/%s_%s.map", mapsDir, base, ts);
+
+    SDL_free(prefDir);
+
+    if (clientSaveMap(cs, fullPath) == FALSE) {
+      imguiMessageBoxEx(DIALOG_BOX_TITLE, langGetText(STR_WBERR_SAVEMAP),
+                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+    } else {
+      imguiMessageBoxEx(langGetText(STR_MENU_SAVE_MAP), fullPath,
+                        IMGUI_MSG_INFO, IMGUI_MSG_OK);
+    }
+    return;
+  }
+
+  /* Desktop/mouse path: native save-file dialog. */
   SaveMapState state;
   SDL_DialogFileFilter filters[] = {
     { "Map Files", "map" },
   };
 
   memset(&state, 0, sizeof(state));
-  strcpy(defaultName, clientSimGetMapName(cs));
 
   SDL_ShowSaveFileDialog(saveMapCallback, &state, sdl3DrawGetWindow(),
                          filters, 1, NULL);

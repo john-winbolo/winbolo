@@ -31,6 +31,7 @@
 #include "server_sim.h"            /* serverSimRemovePlayer, GetState, ServerState */
 #include "server_sim_internal.h"   /* serverSimGetGameSim, roundHadHuman */
 #include "server_sim_lifecycle.h"  /* serverSimStartGame / SetLobbyEnabled */
+#include "transport_udp.h"         /* transportUdpServerSetLock / GetLock */
 #include "test_harness.h"
 
 /* Lobby-enabled ServerSim from the embedded Everard map. Caller owns it. */
@@ -114,6 +115,64 @@ int run_last_human_leave_returns_to_lobby(void) {
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateGameOver,
                   "last human leaving must end the round (got state=%d)",
                   (int)serverSimGetState(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ---- 2b. Last human leaving a locked game returns an empty, unlocked,
+ *         bot-free lobby. ---- */
+int run_empty_return_to_lobby_removes_bots_and_unlocks(void) {
+    ServerSim *sim = make_lobby_sim();
+    UT_ASSERT(sim != NULL);
+
+    /* gameLocked is a process-global in transport_udp_server.c that persists
+     * across tests in the shared binary; normalise it before we start. */
+    transportUdpServerSetLock(sim, FALSE);
+
+    serverSimAddPlayer(sim, 0, "Host", false);
+    serverSimSetAutoLockOnGameStart(sim, true);
+
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "game should be running after start");
+    /* Auto-lock closed the server on game start. */
+    UT_ASSERT(serverSimIsAcceptingJoins(sim) == false);
+    UT_ASSERT(transportUdpServerGetLock() == true);
+
+    /* One tick with the human present arms roundHadHuman, so the round counts
+     * as one that had a human (distinguishing it from an idle bot-only round
+     * whose bots must survive the round boundary). */
+    serverSimTick(sim);
+
+    /* Inject a bot into the running game. A real bot needs a brain file, so
+     * mark the slot active directly, as run_host_reassign_skips_bots does. */
+    sim->playerConnected[2] = TRUE;
+    sim->botMgr.bots[2].active = true;
+    sim->lobbyPlayers[2].isBot = true;
+    UT_ASSERT(serverSimIsBot(sim, 2) == true);
+
+    /* The last human leaves mid-game. removePlayer's empty-lobby reset is
+     * gated on lobby state, so during a running game it does not fire — the
+     * return-to-lobby path owns the cleanup. */
+    serverSimRemovePlayer(sim, 0);
+    UT_ASSERT_MSG(serverSimGetNumHumans(sim) == 0,
+                  "no humans should remain after the last one leaves");
+
+    /* Returning to the lobby (the game-over countdown elapsing) must wipe the
+     * bots and unlock, never leaving an orphaned, locked bot-only lobby. */
+    serverSimReturnToLobby(sim);
+
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateLobby,
+                  "must be back in the lobby");
+    UT_ASSERT_MSG(serverSimIsBot(sim, 2) == false,
+                  "every bot must be removed once the last human leaves");
+    UT_ASSERT_MSG(serverSimGetNumBots(sim) == 0,
+                  "no bots should remain in the emptied lobby");
+    UT_ASSERT_MSG(serverSimIsAcceptingJoins(sim) == true,
+                  "the emptied lobby must be open to new players");
+    UT_ASSERT_MSG(transportUdpServerGetLock() == false,
+                  "the emptied lobby must not be left transport-locked");
 
     serverSimDestroy(sim);
     return 0;

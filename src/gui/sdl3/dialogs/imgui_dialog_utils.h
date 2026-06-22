@@ -392,6 +392,15 @@ static inline void imguiHandOnHover(void) {
     }
 }
 
+/* Show a one-line tooltip on mouse hover OR gamepad/keyboard focus, so
+   controller users (who can't hover) still get it. Call right after the
+   item whose tooltip this is. */
+static inline void imguiHelpTooltip(const char *text) {
+    if (!text) return;
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) || ImGui::IsItemFocused())
+        ImGui::SetTooltip("%s", text);
+}
+
 /* Register Platform_OpenInShellFn on the current ImGui context so that
  * ImGui::TextLinkOpenURL() actually launches the system browser on click.
  * Call once per ImGui::CreateContext(), with that context current. */

@@ -1678,9 +1678,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 running = false;
             }
             imguiHandOnHover();
-            if (useTracker && ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
-            }
+            if (useTracker) imguiHelpTooltip(langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
 
             /* Player Name */
             ImGui::SameLine(0.0f, 20.0f);
