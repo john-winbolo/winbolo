@@ -4367,14 +4367,16 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             ImGui::IsKeyPressed(ImGuiKey_Escape, false);
         bool cancelClosedPanel = false;
         if (cancelEdge && !anyPopup && !ImGui::GetIO().WantTextInput) {
-            if      (s_showSettings)       { s_showSettings = false;     cancelClosedPanel = true; }
+            /* The info windows open on top of Settings, so B must close them
+               before Settings — check them first in the ladder. */
+            if      (s_showSysInfo)        { s_showSysInfo = false;      cancelClosedPanel = true; }
+            else if (s_showNetInfo)        { s_showNetInfo = false;      cancelClosedPanel = true; }
+            else if (s_showGameInfo)       { s_showGameInfo = false;     cancelClosedPanel = true; }
+            else if (s_showSettings)       { s_showSettings = false;     cancelClosedPanel = true; }
             else if (s_showSendMsg)        { s_showSendMsg = false;      cancelClosedPanel = true; }
             else if (s_showPlayersPanel)   { s_showPlayersPanel = false; cancelClosedPanel = true; }
             else if (s_brainSettingsOpen)  { s_brainSettingsOpen = false;cancelClosedPanel = true; }
             else if (s_allianceVisible)    { s_allianceVisible = false;  cancelClosedPanel = true; }
-            else if (s_showSysInfo)        { s_showSysInfo = false;      cancelClosedPanel = true; }
-            else if (s_showNetInfo)        { s_showNetInfo = false;      cancelClosedPanel = true; }
-            else if (s_showGameInfo)       { s_showGameInfo = false;     cancelClosedPanel = true; }
         }
 
         /* Escape opens the pause overlay when a controller is connected and
