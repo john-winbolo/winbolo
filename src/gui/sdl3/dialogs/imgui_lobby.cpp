@@ -41,6 +41,7 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
 #include "imgui_nav_outline.h"
+#include "imgui_controller_prompt.h"
 #include "imgui_server_address.h"
 #include "dialog_footer.h"
 #include "nanosvg.h"
@@ -6566,6 +6567,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         ImGui::NewFrame();
         imguiSteamNavActivateMenuSet();
         imguiSteamNavFeedCurrentContext();
+        controllerDialogsRenderMenu();
 
         /* Full-screen host window with safe area padding */
         ImGui::SetNextWindowPos(ImVec2(0, 0));

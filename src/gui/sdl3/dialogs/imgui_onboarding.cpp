@@ -50,6 +50,7 @@ extern "C" {
 #include "../../gamefront.h"   /* gameFrontSetOnboardingComplete, name + token */
 #include "playername_validate.h" /* playerNameValidate — Name step gate */
 #include "imgui_onboarding.h"
+#include "imgui_controller_prompt.h"
 #include "imgui_keyboard.h"
 }
 
@@ -190,6 +191,7 @@ extern "C" int imguiOnboardingShow(void) {
         ImGui::NewFrame();
         imguiSteamNavActivateMenuSet();
         imguiSteamNavFeedCurrentContext();
+        controllerDialogsRenderMenu();
 
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);

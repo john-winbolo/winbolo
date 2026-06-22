@@ -4275,34 +4275,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_clearNavFocus = false;
     }
 
-    /* Phase 8.1 — controller-detected prompt.  Rising edge from no
-       gamepad → gamepad connected, when controller mode is currently off
-       and the player hasn't dismissed the prompt with "Don't ask again".
-       Skip on tablet (mobile has its own touch UX) and on Deck (already
-       always controller-mode).  Allowed in lobby — a controller plugged
-       in at the menu is exactly when the prompt is most useful.
-
-       First-frame sync: seed from the current connection state without
-       firing.  Without this, a controller plugged in before the main
-       context started rendering would always look like a "rising edge"
-       on the first frame and pop the prompt even if the player just
-       launched with the pad already attached. */
-    {
-        static bool s_initialized   = false;
-        static bool s_lastConnected = false;
-        bool nowConnected = inputGamepadIsConnected();
-        if (!s_initialized) {
-            s_lastConnected = nowConnected;
-            s_initialized   = true;
-        } else if (nowConnected && !s_lastConnected &&
-                   !uiModeIsTablet() && !uiModeIsSteamDeck() &&
-                   !uiShouldUseControllerMode() &&
-                   uiControllerPromptAskOnConnectGet() &&
-                   !controllerPromptIsOpen()) {
-            controllerPromptOpen();
-        }
-        s_lastConnected = nowConnected;
-    }
+    /* Controller-detected prompt: poll the gamepad-connected rising edge
+       (shared with the menu loops). */
+    controllerPromptPollConnectEdge();
 
     /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
        Pause action, default Start). Opens whenever a controller is connected

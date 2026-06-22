@@ -27,6 +27,7 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
 #include "imgui_nav_outline.h"
+#include "imgui_controller_prompt.h"
 #include "imgui_keycap.h"
 #include "../imgui_steam_nav.h"
 #include "dialog_footer.h"
@@ -748,6 +749,7 @@ extern "C" int imguiKeySetupShow(void) {
         ImGui::NewFrame();
         imguiSteamNavActivateMenuSet();
         imguiSteamNavFeedCurrentContext();
+        controllerDialogsRenderMenu();
 
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);

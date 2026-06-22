@@ -27,6 +27,16 @@ void controllerPromptOpen(void);                 /* request open */
 void controllerPromptRender(void);               /* call from render path */
 bool controllerPromptIsOpen(void);
 
+/* Poll the gamepad-connected rising edge and open the prompt when a pad first
+   connects on a non-Deck, non-tablet desktop with controller mode off and the
+   prompt not opted out.  Single-sourced edge state, shared by the in-game render
+   path and the menu loops. */
+void controllerPromptPollConnectEdge(void);
+
+/* Detect + render both controller dialogs (connect prompt, disconnect dialog)
+   for a menu/standalone context.  No solo-game pause (no game is running). */
+void controllerDialogsRenderMenu(void);
+
 #ifdef __cplusplus
 }
 #endif

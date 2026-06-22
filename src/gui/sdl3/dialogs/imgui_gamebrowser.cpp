@@ -41,6 +41,7 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
 #include "imgui_nav_outline.h"
+#include "imgui_controller_prompt.h"
 #include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
@@ -826,6 +827,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         ImGui::NewFrame();
         imguiSteamNavActivateMenuSet();
         imguiSteamNavFeedCurrentContext();
+        controllerDialogsRenderMenu();
 
         /* Transparent full-screen host window */
         ImGui::SetNextWindowPos(ImVec2(0, 0));
