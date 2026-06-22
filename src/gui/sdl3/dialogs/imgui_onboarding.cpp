@@ -240,10 +240,12 @@ extern "C" int imguiOnboardingShow(void) {
          * (which can't live in an auto-resizing window), so it gets a fixed,
          * viewport-capped height instead. Centered via a (0.5, 0.5) pivot so
          * the auto-computed size stays centered. */
-        float panelW = 460.0f * s;
+        bool keysStep = (currentStep == ONBOARD_STEP_KEYS);
+        /* The Keys step is wider for its binding table + Steam-Input text; the
+           simple Account/Name forms stay narrow. */
+        float panelW = (keysStep ? 760.0f : 460.0f) * s;
         if (panelW > (float)winW * 0.95f) panelW = (float)winW * 0.95f;
         float maxPanelH = (float)winH * 0.95f;
-        bool keysStep = (currentStep == ONBOARD_STEP_KEYS);
 
         ImGui::SetNextWindowPos(ImVec2((float)winW * 0.5f, (float)winH * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
