@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <time.h>
 
 #include <SDL3/SDL.h>
@@ -1185,6 +1186,7 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
     memcpy(pbuf + 1, msg, mlen);
     pbuf[mlen + 1] = '\0';
 
+    int delivered = 0;
     for (BYTE i = 0; i < MAX_TANKS; i++) {
         if (i == fromPlayer) continue;
         if (!(allies & ((PlayerBitMap)1u << i))) continue;
@@ -1197,7 +1199,14 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
         MessageState *ms = clientSimGetMessages(bc->cs);
         if (ms == NULL) continue;
         messageInboxPush(ms, fromPlayer, pbuf);
+        delivered++;
     }
+    /* Audit hook: shows whether the internal fan-out actually reached anyone.
+     * delivered=0 with a populated allies map = teammates aren't hosted bots or
+     * their inbox is missing; allies=self-only (e.g. 0x20 from p5) = the bots
+     * were never allied (no -allybots / no lobby teams) -> comms can't work. */
+    botMsgDebugLog("BOTMSG fan-out from p%u: allies=0x%X delivered=%d: %.48s",
+                   (unsigned)fromPlayer, (unsigned)allies, delivered, msg);
 }
 
 void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
@@ -1379,10 +1388,29 @@ int botManagerGetActiveBotCount(const ServerSim *sim) {
     return active;
 }
 
+/* Gate + sink for the bot-comms debug log. Enabled by SetDefaultDebugMode
+ * (-braindebug). Appends one line per call to botmsg_debug.log in the CWD;
+ * a no-op when off, so production pays nothing. Opened per-call (low volume:
+ * a few /info messages per second across all bots) to avoid a held handle. */
+static bool g_botMsgDebugLog = false;
+
+void botMsgDebugLog(const char *fmt, ...) {
+    if (!g_botMsgDebugLog) return;
+    FILE *f = fopen("botmsg_debug.log", "a");
+    if (f == NULL) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+
 void botManagerSetDefaultDebugMode(ServerSim *sim, bool enabled) {
     if (sim == NULL) return;
     sim->botMgr.defaultDebugMode = enabled;
     sim->botMgr.brainDebugMode   = enabled;
+    g_botMsgDebugLog             = enabled;
 }
 
 bool botManagerToggleAllBrainDebugMode(ServerSim *sim) {

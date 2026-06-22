@@ -387,6 +387,12 @@ void botManagerDeliverInternalMessage(struct ServerSim *sim,
                                       BYTE fromPlayer,
                                       const char *msg);
 
+/* Bot-comms debug logger. Appends to "botmsg_debug.log" in the CWD, but ONLY
+ * when bot debug mode is on (set via -braindebug / SetDefaultDebugMode) — a
+ * no-op otherwise. Used to audit the internal message bus on a dedicated server
+ * where SDL_Log output isn't visible. */
+void botMsgDebugLog(const char *fmt, ...);
+
 /*********************************************************
  *NAME:          botManagerRemoveBot
  *PURPOSE:

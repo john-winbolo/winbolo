@@ -627,6 +627,20 @@ local function path_lookahead(state, info, nx, ny)
     return nx, ny
   end
 
+  -- Cautious-approach guard: if we're inside (or about to step into) the 3x3 ring
+  -- around an ally that's mid-pill-take (state._ally_take_tiles, built in init.lua),
+  -- suppress the skip-ahead exactly like boat mode — aim only at the immediate next
+  -- step so we crawl the avoiding route tile-by-tile instead of building momentum
+  -- and drifting onto the ally's tile (the bowl-through). The route waypoint already
+  -- routes around the ally via the nav_avoid penalty; this makes us actually follow it.
+  do
+    local take_tiles = state._ally_take_tiles
+    if take_tiles and (take_tiles[tmy * 256 + tmx] or take_tiles[ny * 256 + nx]) then
+      sdbg("lookahead: near ally pill-take, crawl per-tile, hold to nx=(%d,%d)", nx, ny)
+      return nx, ny
+    end
+  end
+
   -- Cliff guard: if there's a deep-water tile within 1 tile (8-neighbor)
   -- of the tank, suppress the lookahead entirely and return the immediate
   -- A* next step. The lookahead's straight-line "skip ahead" can aim

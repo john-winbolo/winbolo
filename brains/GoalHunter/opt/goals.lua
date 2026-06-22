@@ -781,6 +781,10 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
     function(p)
       return p.owner == "friendly" and p.health > 0
              and p.health < C.PILLS_MAX_HEALTH
+             -- Don't repair a pill the team declared a take blocker (init.lua
+             -- unions team pblk tiles → _in_use). Includes partial-health
+             -- freshly-built blockers, which would otherwise read as "damaged".
+             and not p._in_use
              and not (dmx and p.mx == dmx and p.my == dmy)
              and not (ally_demolish and ally_demolish[p.my * C.MAP_W + p.mx])
              and not (repos_block and repos_block[p.my * C.MAP_W + p.mx])
@@ -806,6 +810,17 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
     end
   end
   if contested then adj_cost = adj_cost * (C.REPAIR_CONTESTED_MULT or 3.0) end
+  -- Pool-viz: surface friendly damaged pills we DIDN'T repair because they're a
+  -- team-declared take blocker (filtered out above via not p._in_use). Shown as
+  -- a rejected [blocker] candidate so the panel makes the protection visible.
+  if BRAIN_POOL_VIZ and pcands then
+    for bpid, bp in pairs(world.pills) do
+      if bp._in_use and bp.owner == "friendly" and bp.health > 0
+         and bp.health < C.PILLS_MAX_HEALTH then
+        pcands[#pcands + 1] = { id = bpid, mx = bp.mx, my = bp.my, cost = -1, reject = "blocker" }
+      end
+    end
+  end
   return {
     cost = adj_cost,
     goal = { kind = "repair_pill", mx = pill.mx, my = pill.my,
@@ -3709,6 +3724,13 @@ local function get_formula_inner(e)
         "|safe:danger_val=0 → multiply final cost by %.2f[REFUEL_NO_DANGER_DISCOUNT]",
         C.REFUEL_NO_DANGER_DISCOUNT)
       or ""
+    local _mine_token = (e._mine_cost and e._mine_cost > 0)
+      and string.format(" + mine{%.0f}", e._mine_cost) or ""
+    local _mine_detail = (e._mine_cost and e._mine_cost > 0)
+      and string.format(
+        "|mine:hoard surcharge %.0f (mines past %d[REFUEL_MINE_FREE]) — applied ONLY at the base you're parked on, to push a mine-stuffed tank to dump",
+        e._mine_cost, C.REFUEL_MINE_FREE)
+      or ""
     local _d_astar = string.format(
       "danger-weighted Dijkstra-slate travel cost to base (%d,%d) = %.0f; path %s",
       e._mx or 0, e._my or 0, raw, e._path or "(not traced)")
@@ -3716,10 +3738,10 @@ local function get_formula_inner(e)
       "%.0f[REFUEL_BASE_COST] flat floor so refuel-at-own-base isn't ~0",
       C.REFUEL_BASE_COST)
     f = string.format(
-      "A*{%.0f}@(%d,%d) + base{%.0f} + danger{%.0f} + stale{%.0f} + contest{%.0f} + deplete{%.0f}%s%s"..
-      "||A*:%s|base:%s|danger:%s|stale:%s|contest:%s|deplete:%s%s%s",
-      raw, e._mx or 0, e._my or 0, C.REFUEL_BASE_COST, e._dang, e._stale, e._contest, e._dep, _shape_head, _safe_token,
-      _d_astar, _d_base, _d_danger, _d_stale, _d_contest, _d_deplete, _shape_detail, _safe_detail)
+      "A*{%.0f}@(%d,%d) + base{%.0f} + danger{%.0f} + stale{%.0f} + contest{%.0f} + deplete{%.0f}%s%s%s"..
+      "||A*:%s|base:%s|danger:%s|stale:%s|contest:%s|deplete:%s%s%s%s",
+      raw, e._mx or 0, e._my or 0, C.REFUEL_BASE_COST, e._dang, e._stale, e._contest, e._dep, _shape_head, _safe_token, _mine_token,
+      _d_astar, _d_base, _d_danger, _d_stale, _d_contest, _d_deplete, _shape_detail, _safe_detail, _mine_detail)
   elseif p == 6 then
     local _d_hp = string.format(
       "ATTACK_PILL_HP_MULT[%d] = %.2f (hand-tuned table: 5/10/18/28%% for hp 1-4, then linear 40%%→100%% over hp 5-15)",
@@ -7031,7 +7053,9 @@ local function goal_selection(state, world, info, quiet)
           e._fill_mult      = _ref_mult
           e._fill           = _ref_fill
           e._scarcity       = _ref_scarcity
-          e._mine_cost      = _ref_mine_cost
+          -- Mine-hoard surcharge only applies to the base we're parked on (see
+          -- the cost path below) — show 0 on every other base so the panel matches.
+          e._mine_cost      = (e._mx == tmx and e._my == tmy) and _ref_mine_cost or 0
           e._arm            = info.armour
           e._sh             = info.shells
           e._arm_def        = _ref_arm_def
@@ -7089,7 +7113,13 @@ local function goal_selection(state, world, info, quiet)
           local mult  = _ref_mult
           local base_cost = (entry.cost or 0) - bonus
           -- Scarcity-scaled top-off (mult) + exponential mine-hoard surcharge.
-          local final_cost = base_cost * mult + _ref_mine_cost
+          -- The mine-hoard surcharge ONLY applies to the base we're parked on
+          -- (at_this_base): its purpose is to make a mine-stuffed tank LEAVE
+          -- instead of lingering to top off mines — NOT to price the tank out
+          -- of TRAVELLING to a base to resupply armour/shells (that would make
+          -- a mine-heavy tank refuse to refuel; the surcharge is exponential and
+          -- uncapped, so on remote candidates it dwarfs the real cost).
+          local final_cost = base_cost * mult + (at_this_base and _ref_mine_cost or 0)
           -- LGM-wait floor: clamp cost down when waiting for LGM.
           -- Floor scales with threat at the base: safe spots clamp lower so
           -- sitting still is cheaper when there's no reason to move. Linear

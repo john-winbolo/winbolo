@@ -1400,6 +1400,15 @@ function Brain.think(info)
     in_range_aim_finetune = true, ws_engage = true, ws_rebuild = true,
     kill_hardline = true,
   }
+  -- Substates where the ally is LOCKED ON and firing (or about to / just did),
+  -- so shells are crossing the lane to its target pill. Friendly fire kills any
+  -- tank in that lane regardless of blitz vs solo, so we stamp the bullet path
+  -- as avoid cost in these subs for BOTH take styles. Excludes pure travel/setup
+  -- (approach/gather_trees/detree/build_walls/blitz_wait/ws_pre*) where no shells fly.
+  local FIRING_SUBS = {
+    charge = true, engage = true, shoot_pill = true,
+    kill_hardline = true, ws_engage = true,
+  }
   local ALLY_AVOID_RADIUS = 2  -- 5x5 block around the ally tank itself
   local ALLY_AVOID_COST   = C.ALLY_AVOID_COST or 800
   local ALLY_BLITZ_TILE_COST = C.ALLY_BLITZ_TILE_COST or 12000  -- single exact tile of a blitz participant
@@ -1449,6 +1458,26 @@ function Brain.think(info)
       stamped[mk] = true
     end
 
+    -- Stamp the 3-wide bullet path from a firing ally at (ox,oy) to its target
+    -- pill at (tx,ty) as avoid cost, so we never route a tank across live shells.
+    -- Bullets don't discriminate blitz vs solo — both takes call this while in a
+    -- FIRING_SUBS substate. Drawn on ally_avoid_overlay via stamp() automatically.
+    local function stamp_firing_lane(ox, oy, tx, ty)
+      if not (ox and oy and tx and ty) then return end
+      if U.mdist(ox, oy, tx, ty) > 12 then return end
+      local ldx = ty - oy
+      local ldy = -(tx - ox)
+      local llen = math.max(1, math.sqrt(ldx * ldx + ldy * ldy))
+      local pnx, pny = ldx / llen, ldy / llen
+      U.line_walk(ox + 0.5, oy + 0.5, tx + 0.5, ty + 0.5,
+        function(lx, ly)
+          for w = -1, 1 do
+            stamp(U.mclamp(math.floor(lx + pnx * w + 0.5)),
+                  U.mclamp(math.floor(ly + pny * w + 0.5)))
+          end
+        end)
+    end
+
     -- Right-of-way: stamp the projected next tiles of any ally we're JUNIOR to
     -- (their player id < ours) as high cost, so our pathfinder routes around
     -- their near-future path — we give way, they don't. Project 0..LOOKAHEAD
@@ -1481,6 +1510,12 @@ function Brain.think(info)
     -- them instantly (see steering.cpf_path_to). Always on — you can collide with
     -- an ally in ordinary nav, not just during a blitz.
     local nav_avoid_tiles = {}
+    -- Cautious-approach set (packed tile -> true): the 3x3 ring around any ally
+    -- currently ON a pill take. When OUR tank enters this zone, steering crawls
+    -- tile-by-tile (boat-style lookahead suppression) so it follows the avoiding
+    -- route exactly instead of drifting/cutting onto the ally's tile. Strictly
+    -- scoped to allies doing a take — unrelated to the generic nav_avoid set.
+    local ally_take_tiles = {}
     local _ally_tank_pos = nil
     if info.objects then
       for _, ob in ipairs(info.objects) do
@@ -1541,6 +1576,31 @@ function Brain.think(info)
         -- euclidean distance to each of the two activation points.
 
         if ai.goal == "attack_pill" and ALLY_COMBAT_SUBS[ai.sub] then
+          -- Record this take's 3x3 ring for the cautious-approach (slow, per-tile)
+          -- steering. Center = the ally's live tile, or its broadcast standoff
+          -- when parked out of sight (same source as the blitz tile stamp below).
+          local _tkx, _tky
+          if atmx and atmy then _tkx, _tky = atmx, atmy
+          elseif ALLY_AT_SPOT_SUBS[ai.sub] and ssx and ssy then _tkx, _tky = ssx, ssy end
+          if _tkx then
+            for _ry = -1, 1 do
+              for _rx = -1, 1 do
+                local _x, _y = _tkx + _rx, _tky + _ry
+                if _x >= 0 and _x <= 255 and _y >= 0 and _y <= 255 then
+                  ally_take_tiles[_y * 256 + _x] = true
+                end
+              end
+            end
+          end
+          -- Bullet-path avoid (BOTH blitz and solo): while this ally is firing,
+          -- stamp the shell lane from its position to the target pill so we never
+          -- route across live fire. Shooter = live tile if visible, else broadcast
+          -- standoff. Friendly fire kills regardless of take style.
+          if FIRING_SUBS[ai.sub] then
+            local _lox = (atmx and atmy) and atmx or ssx
+            local _loy = (atmx and atmy) and atmy or ssy
+            stamp_firing_lane(_lox, _loy, pmx, pmy)
+          end
           local is_blitz = ai.sqst == "blitz" or ai.sqst == "join"
           if is_blitz then
             -- A blitz converges SEVERAL tanks on ONE pill. Overlapping 5x5 +
@@ -1578,9 +1638,8 @@ function Brain.think(info)
             end
           elseif pmx and pmy and atmx and atmy then
             -- Solo take: 5x5 tank stamp gated on euclidean ≤ 3 to setup or
-            -- standoff (stops the breadcrumb trail while driving in), plus a
-            -- 2-tile-wide firing lane from the ally tank to the pill. Both need
-            -- the live tank position.
+            -- standoff (stops the breadcrumb trail while driving in). The firing
+            -- lane is now stamped above (shared with blitz, FIRING_SUBS-gated).
             if in_range then
               for dy = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
                 for dx = -ALLY_AVOID_RADIUS, ALLY_AVOID_RADIUS do
@@ -1588,25 +1647,17 @@ function Brain.think(info)
                 end
               end
             end
-            if U.mdist(atmx, atmy, pmx, pmy) <= 12 then
-              local ldx = pmy - atmy
-              local ldy = -(pmx - atmx)
-              local llen = math.max(1, math.sqrt(ldx * ldx + ldy * ldy))
-              local pnx, pny = ldx / llen, ldy / llen
-              U.line_walk(atmx + 0.5, atmy + 0.5, pmx + 0.5, pmy + 0.5,
-                function(lx, ly)
-                  for w = -1, 1 do
-                    stamp(U.mclamp(math.floor(lx + pnx * w + 0.5)),
-                          U.mclamp(math.floor(ly + pny * w + 0.5)))
-                  end
-                end)
-            end
           end
         end
       end
     end
     -- Publish the obstacle set for steering.cpf_path_to (nil when no blitz).
     state._nav_avoid_tiles = (#nav_avoid_tiles > 0) and nav_avoid_tiles or nil
+    -- Publish the cautious-approach ring (nil when no ally is on a take).
+    state._ally_take_tiles = next(ally_take_tiles) and ally_take_tiles or nil
+    -- cautious_nav_around_ally_take viz: the 3x3 cautious-approach ring(s) around allies on a
+    -- pill take (yellow). When OUR tank sits on/steps onto one, the steer
+    -- chokepoint paints that tile bright + logs TAKE_CRAWL (this layer, below).
     -- nav_veer viz: obstacle tiles (red) + the resulting veered route to our goal
     -- (cyan), traced live via the obstacle-aware next-step so the dodge is visible.
   end
@@ -2006,6 +2057,8 @@ function Brain.think(info)
     local _allies = info.allies or 0
     for _, m in ipairs(info.messages) do
       if m.text and m.text ~= "" then
+        -- RECEIVING HERE: one line per inbound message (pairs with MSG_TX on the
+        -- sender). ally=false means it'll be ignored as enemy traffic below.
         -- chat_log ring is debug-only (read only by the chat_log_overlay
         -- HUD); skip the ring writes entirely in production.
         -- Coordination is ALLY-ONLY. Enemy bots run the same brain and
@@ -2983,31 +3036,34 @@ function Brain.think(info)
       state._base_commit_prev_shells = info.shells or 0
     end
 
-    -- Pill blocker / utility tracking: a pre-existing friendly pill on the
-    -- firing line of an active pill take is a "blocker" → role utility until
-    -- the take ends. Each bot computes its own blockers + broadcasts them
-    -- (bsi.pblk); here we union the whole team's blocker ids each tick and flag
-    -- those pills _in_use so PP.role_of reports "utility". Rebuilt live, so a
-    -- pill reverts to back/front/aggro as soon as the take stops broadcasting.
-    local _ally_blk = nil   -- pids ALLIES declared as blockers this tick (for the yield check below)
+    -- Pill blocker / utility tracking: a friendly pill on a TILE serving an
+    -- active pill take (a pre-existing firing-line pill, or a slot the take is
+    -- building a blocker on) is a "blocker" → role utility until the take ends.
+    -- Each bot computes its own blocker TILES + broadcasts them (bsi.pblk, packed
+    -- my*256+mx); here we union the whole team's blocker tiles each tick and flag
+    -- any friendly pill sitting on one _in_use so PP.role_of reports "utility".
+    -- Tile-keyed (not pill-id) so a freshly-built blocker is protected the moment
+    -- it appears on its tile, including its partial-health build-up. Rebuilt live,
+    -- so a pill reverts to back/front/aggro as soon as the take stops broadcasting.
+    local _ally_blk = nil   -- blocker TILES allies declared this tick (packed, for the yield check below)
     do
-      local util = {}
-      local mine = attack.current_blocker_pids and attack.current_blocker_pids(state, world) or nil
-      state._blocker_pids = mine
-      if mine then for _, pid in ipairs(mine) do util[pid] = true end end
+      local util = {}   -- packed-tile set; any friendly pill on one of these is _in_use
+      local mine = attack.current_blocker_tiles and attack.current_blocker_tiles(state, world) or nil
+      state._blocker_tiles = mine
+      if mine then for _, ti in ipairs(mine) do util[ti] = true end end
       if ally_state.iter_active then
         for pn, slot in ally_state.iter_active(now, 1750) do
           if pn ~= info.player_number and slot.info and slot.info.pblk then
             for s in string.gmatch(slot.info.pblk, "%d+") do
-              local id = tonumber(s)
-              util[id] = true
-              _ally_blk = _ally_blk or {}; _ally_blk[id] = true
+              local ti = tonumber(s)
+              util[ti] = true
+              _ally_blk = _ally_blk or {}; _ally_blk[ti] = true
             end
           end
         end
       end
-      for pid, p in pairs(world.pills) do
-        p._in_use = util[pid] and true or nil
+      for _, p in pairs(world.pills) do
+        p._in_use = util[p.my * 256 + p.mx] and true or nil
       end
     end
 
@@ -3017,9 +3073,11 @@ function Brain.think(info)
     -- it, and clear the goal for a fresh choice. Even a committed/locked
     -- reposition bails. Only capture_pill targets a friendly pill this way; other
     -- goals (defend/repair) leave the pill where it is and are left alone.
+    local _bid = state.goal and state.goal.target_id
+    local _tp  = _bid and world.pills[_bid]
+    local _gt  = _tp and (_tp.my * 256 + _tp.mx)
     if _ally_blk and state.goal and state.goal.kind == "capture_pill"
-       and state.goal.target_id and _ally_blk[state.goal.target_id] then
-      local _bid = state.goal.target_id
+       and _gt and _ally_blk[_gt] then
       if state.cost_cache then
         for _, e in pairs(state.cost_cache) do
           if e._id == _bid then
@@ -3036,9 +3094,10 @@ function Brain.think(info)
 
     -- blocker_pills viz: every _in_use (blocker/utility, reposition-protected)
     -- pill as a filled orange tile, labelled with where the flag came from
-    -- ("me" = our own current_blocker_pids, "pN" = ally N's pblk broadcast).
-    -- If a pill you expect protected isn't orange, nobody is declaring it: check
-    -- the BLOCKER_VIZ print2 (mine={...}) and the ally's pblk.
+    -- ("me" = our own current_blocker_tiles, "pN" = ally N's pblk broadcast).
+    -- Source is keyed by tile (packed my*256+mx), matching the broadcast.
+    -- If a pill you expect protected isn't orange, nobody is declaring its tile:
+    -- check the BLOCKER_VIZ print2 (mine={...}) and the ally's pblk.
 
     -- Purge stale per-pill plan_position cache entries (pills that
     -- have been destroyed / picked up / captured friendly since last
@@ -3801,6 +3860,23 @@ function Brain.think(info)
     opt(string.format("lookahead done %.2f ms", (t_steer0 - t_goal1) / 1000))
   end
   local keys, taps = steer.steer(state, world, info, state.goal)
+  -- Cautious-approach speed: when our tank is on (or stepping onto) an ally's
+  -- pill-take ring, creep — clear any FASTER and force SLOWER over whatever
+  -- steering chose. Pairs with path_lookahead's per-tile crawl so momentum can't
+  -- carry us onto the ally's tile. Scoped strictly to the take ring.
+  state._take_crawl_active = nil
+  if state._ally_take_tiles then
+    local s = state._ally_take_tiles
+    local cmx, cmy = info.tankx >> 8, info.tanky >> 8
+    local pf = state.pf
+    local nmx, nmy = pf and pf.next_mx, pf and pf.next_my
+    local on_cur  = s[cmy * 256 + cmx]
+    local on_next = nmx and nmy and s[nmy * 256 + nmx]
+    if on_cur or on_next then
+      keys = (keys & ~KEY_FASTER) | KEY_SLOWER
+      state._take_crawl_active = on_cur and "on" or "next"   -- for the viz overlay
+    end
+  end
   local t_steer1 = clock_us()
   metrics.set("us_steer", t_steer1 - t_steer0)
   opt(string.format("steer done %.2f ms", (t_steer1 - t_steer0) / 1000))
@@ -4754,10 +4830,11 @@ function Brain.think(info)
       if state.goal.kind == "capture_pill" and state.goal.reposition then
         bsi.repos = "1"
       end
-      -- Pill ids we're using as blockers in this take (so the team marks them
-      -- utility). Computed in the team-tracking block above this tick.
-      if state._blocker_pids and #state._blocker_pids > 0 then
-        bsi.pblk = table.concat(state._blocker_pids, ",")
+      -- Blocker TILES (packed my*256+mx) for this take — pre-existing firing-line
+      -- pills + slots we're building blockers on — so the team marks any friendly
+      -- pill on them utility. Computed in the team-tracking block above this tick.
+      if state._blocker_tiles and #state._blocker_tiles > 0 then
+        bsi.pblk = table.concat(state._blocker_tiles, ",")
       end
       -- Goal tile mx/my: only broadcast when something actually reads it.
       -- The de-conflict matcher (goals.lua) keys off `target` whenever an

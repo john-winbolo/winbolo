@@ -316,6 +316,34 @@ function M.blitz_arbitrate(state, info, now, self_pn)
     end
   end
   if reject[self_pn] then state._blitz_call_rejected = true end
+
+  -- COUNT CAP: a commander accepts at most SQUAD_MAX_SIZE soldiers (commander +
+  -- cap = the per-pill tank cap). Standoff de-confliction above can still leave
+  -- MORE than cap conflict-free soldiers, each on a distinct valid spot — and
+  -- without this the commander accepted them all (observed bac=0,5 -> 3 tanks on
+  -- one pill on a laggy DS, because the soldier-side squad_full gate read stale
+  -- broadcasts). The commander has every offer locally each tick, so capping
+  -- here is deterministic and lag-proof. Keep already-committed soldiers
+  -- (blitz_wait/rdy) so we never shed one mid-take, then earliest claimant, then
+  -- lowest pn; reject the surplus so they peel off to another target.
+  do
+    local cap = C.SQUAD_MAX_SIZE or 1
+    local cands = {}
+    for _, p in ipairs(parts) do
+      if p.pn ~= self_pn and p.fx and not reject[p.pn] then cands[#cands + 1] = p end
+    end
+    if #cands > cap then
+      table.sort(cands, function(a, b)
+        local ac, bc = a.committed and 1 or 0, b.committed and 1 or 0
+        if ac ~= bc then return ac > bc end                  -- committed first
+        local as, bs = a.since or now, b.since or now
+        if as ~= bs then return as < bs end                  -- earliest claim
+        return a.pn < b.pn                                   -- stable
+      end)
+      for i = cap + 1, #cands do reject[cands[i].pn] = true end  -- surplus -> reject
+    end
+  end
+
   local roster, rlist, alist = {}, {}, {}
   for _, p in ipairs(parts) do
     if p.pn ~= self_pn then

@@ -303,37 +303,43 @@ M.mark_kill_pickup = mark_kill_pickup
 M.enter_swerve      = enter_swerve
 
 local _EMPTY = {}
--- Friendly pills currently serving as BLOCKERS in this bot's active pill take:
--- pre-existing friendly pills on the firing line between our committed standoff
--- and the target pill (same geometry as the standoff-scorer's barrier bonus).
--- Returns a list of pill ids (the shared empty table when not in a take).
--- Friendly pills serving as blockers for our current take, broadcast (pblk) so
--- allies don't reposition/capture them mid-take. A friendly pill is a blocker IFF
--- it is one of the friendly-pill blockers in the chosen aim of this take's shield
--- scan — i.e. one plan_position's blocker (C) search returned AND the selected
--- aim actually uses (a pre-existing pill counts even though we didn't build it).
--- Read the authoritative chosen-blocker list off the goal; no geometric guessing,
--- so the set is stable (changes only when the chosen aim does — no per-tick churn).
-function M.current_blocker_pids(state, world)
+-- TILES serving as BLOCKERS in this bot's active pill take, broadcast (pblk) so
+-- allies don't reposition / capture / repair a friendly pill sitting on one.
+-- Two sources, both read straight off the chosen aim of this take's shield scan
+-- (no geometric guessing → the set is stable, changing only when the chosen aim
+-- does — no per-tick churn):
+--   * actual_blockers of kind "friendly_pill" — a pre-existing friendly pill on
+--     the firing line between our standoff and the target (we didn't build it,
+--     but the aim uses it as cover).
+--   * potential_blockers — empty, buildable, LGM-reachable slots this take
+--     intends to BUILD a blocker pill on.
+-- We broadcast the TILE (packed my*256+mx), not a pill id, on purpose: a built
+-- blocker has no id until it materialises, so a tile lets us declare it at
+-- intent time. Each client then flags whatever friendly pill is (or gets built)
+-- on a declared tile as _in_use — which also covers the vulnerable partial-
+-- health build-up window (a half-built blocker is "damaged" → repair-pool bait).
+-- Walls aren't pills, so wall actual_blockers are skipped (nothing to flag).
+-- Returns a list of packed tile indices (the shared empty table when not in a take).
+function M.current_blocker_tiles(state, world)
   local g = state and state.goal
   if not g or g.kind ~= "attack_pill" then return _EMPTY end
-  if not (world and world.pills) then return _EMPTY end
   local w = g._shield_scan and g._shield_scan.best
   local aim = w and w.best_aim_idx and w.aims and w.aims[w.best_aim_idx] or nil
-  local blk = aim and aim.blockers
-  if not blk or #blk == 0 then return _EMPTY end
+  if not aim then return _EMPTY end
   local out
-  for _, b in ipairs(blk) do
-    if b.kind == "friendly_pill" then
-      for pid, fp in pairs(world.pills) do
-        if fp.owner == "friendly" and (fp.health or 0) > 0
-           and fp.mx == b.mx and fp.my == b.my then
-          out = out or {}
-          out[#out + 1] = pid
-          break
-        end
-      end
+  local function add(b)
+    if b.mx and b.my then
+      out = out or {}
+      out[#out + 1] = b.my * 256 + b.mx
     end
+  end
+  if aim.blockers then
+    for _, b in ipairs(aim.blockers) do
+      if b.kind == "friendly_pill" then add(b) end
+    end
+  end
+  if aim.potential_blockers then
+    for _, b in ipairs(aim.potential_blockers) do add(b) end
   end
   return out or _EMPTY
 end
@@ -5158,7 +5164,11 @@ function M.update_attack_substate(goal, state, world, info)
         -- reduced) so info.shells doesn't undercount and false-abort.
         local in_flight = goal._on_target_in_flight or 0
         local avail_shots = info.shells + in_flight
-        if avail_shots < total_needed then
+        -- In a 2+ blitz, don't abort for insufficient ammo: the ally(ies) share the
+        -- finishing shells, so the team's combined fire can drop the pill even when
+        -- OUR magazine alone can't. Only a solo (or lone-"blitz"-of-one) take needs
+        -- enough shells on its own — there, bail and let refuel replan take over.
+        if avail_shots < total_needed and not blitz_2plus then
           print(string.format(TAG .. " CHARGE: not enough shells (%d obstacles + %d hp = %d needed, have %d + %d in-flight = %d) — aborting",
             obstacle_shots, pill_hp_live, total_needed, info.shells, in_flight, avail_shots))
           print2(string.format("CHARGE_ABORT_SHELLS obstacles=%d hp=%d needed=%d have=%d inflight=%d avail=%d pill=(%d,%d)",
@@ -5676,7 +5686,9 @@ function M.update_attack_substate(goal, state, world, info)
         print2(string.format("SHOOT_PILL_ABORT_NOREACH pill=(%d,%d)", pmx, pmy))
         clear_attack_goal(state, "shot does not reach pill")
         return
-      elseif avail_shots < total_needed then
+      elseif avail_shots < total_needed and not blitz_2plus then
+        -- 2+ blitz exemption (same as charge): the ally(ies) supply finishing
+        -- shells, so our own magazine running short isn't a reason to bail.
         print(string.format(TAG .. " SHOOT_PILL: not enough shells (%d obstacles + %d hp = %d needed, have %d + %d in-flight = %d) — aborting",
           obstacle_shots, pill_hp, total_needed, info.shells, in_flight, avail_shots))
         print2(string.format("SHOOT_PILL_ABORT_SHELLS obstacles=%d hp=%d needed=%d have=%d inflight=%d avail=%d pill=(%d,%d)",

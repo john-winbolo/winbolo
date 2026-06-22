@@ -25,6 +25,7 @@
  *********************************************************/
 
 #include <stdio.h>
+#include <string.h>   /* memcpy for the real messageInbox* ring below */
 #include "global.h"
 #include "scroll.h"
 #include "frontend.h"
@@ -124,19 +125,52 @@ BYTE messageGetNewMessage(MessageState *ms, char *dest, uint32_t **playerBitmap)
   (void)ms; if (dest) dest[0] = '\0'; if (playerBitmap) *playerBitmap = NULL; return 0;
 }
 /* messageInbox* — brain-side per-tick chat inbox helpers reached from
- * brain_data.c's BrainInfo.messages population. Bots in the server
- * build don't render a chat HUD; brain_data.c sees zero messages and
- * the BrainInfo array stays empty. Stubbing here is what prevents the
- * archive's messages.c.o from being pulled in (which would conflict
- * with the messageCreate/Destroy/etc. stubs above). */
+ * brain_data.c's BrainInfo.messages population. These are REAL here (not
+ * stubs): the inbox is bot-to-bot COORDINATION data, not a chat HUD — the
+ * server hosts the bots, so they must actually receive each other's /info
+ * messages. The old stubs (no-ops + Count==0) silently killed all bot comms
+ * on WinBoloDS: botManagerDeliverInternalMessage "delivered" into a no-op push,
+ * and every receiver saw Count==0. The bodies below are pure MessageState ring
+ * operations (no GUI/archive deps), so they don't pull in messages.c.o and
+ * don't conflict with the messageCreate/Destroy/etc. display stubs above. Keep
+ * them byte-for-byte in sync with the canonical ring in src/bolo/messages.c. */
 void messageInboxPush(MessageState *ms, BYTE from, const char *pascalText) {
-  (void)ms; (void)from; (void)pascalText;
+  size_t plen, copyLen;
+  if (ms == NULL || pascalText == NULL) return;
+  if (ms->inboxCount >= BRAIN_INBOX_CAP) {
+    ms->inboxHead = (ms->inboxHead + 1) % BRAIN_INBOX_CAP;
+    ms->inboxCount--;
+  }
+  plen = (size_t)((unsigned char)pascalText[0]);
+  if (plen + 2 > BRAIN_INBOX_MSG_LEN) plen = BRAIN_INBOX_MSG_LEN - 2;
+  copyLen = plen + 1;
+  memcpy(ms->inboxText[ms->inboxTail], pascalText, copyLen);
+  ms->inboxText[ms->inboxTail][copyLen] = '\0';
+  ms->inboxText[ms->inboxTail][0]       = (char)plen;
+  ms->inboxFrom[ms->inboxTail]          = from;
+  ms->inboxTail = (ms->inboxTail + 1) % BRAIN_INBOX_CAP;
+  ms->inboxCount++;
 }
-int  messageInboxCount(const MessageState *ms) { (void)ms; return 0; }
+int  messageInboxCount(const MessageState *ms) {
+  return (ms != NULL) ? ms->inboxCount : 0;
+}
 BYTE messageInboxPeek(const MessageState *ms, int i, char *dest) {
-  (void)ms; (void)i; if (dest) dest[0] = '\0'; return 0;
+  int slot; size_t plen;
+  if (dest == NULL) return 0;
+  if (ms == NULL || i < 0 || i >= ms->inboxCount) { dest[0] = '\0'; return 0; }
+  slot = (ms->inboxHead + i) % BRAIN_INBOX_CAP;
+  plen = (size_t)((unsigned char)ms->inboxText[slot][0]);
+  if (plen + 2 > BRAIN_INBOX_MSG_LEN) plen = BRAIN_INBOX_MSG_LEN - 2;
+  memcpy(dest, ms->inboxText[slot], plen + 1);
+  dest[plen + 1] = '\0';
+  return ms->inboxFrom[slot];
 }
-void messageInboxClear(MessageState *ms) { (void)ms; }
+void messageInboxClear(MessageState *ms) {
+  if (ms == NULL) return;
+  ms->inboxHead = 0;
+  ms->inboxTail = 0;
+  ms->inboxCount = 0;
+}
 /* scrollCreate/scrollSetScrollType/scrollCenterObject/scrollManual are no
  * longer stubbed here. client_sim.c now references scrollGetMechanism /
  * scrollSetMechanism, which pulls scroll.c.o out of bolo_static, so the

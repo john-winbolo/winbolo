@@ -678,6 +678,9 @@ void printArgs() {
   fprintf(stderr, "                them, or a different one to fight against them.\n");
   fprintf(stderr, "-threads <N>  - Total concurrent bot-think runners including the main\n");
   fprintf(stderr, "                thread. 1 disables the worker pool. Default: logical cores.\n");
+  fprintf(stderr, "-braindebug   - Enable BRAIN_DEBUG_MODE for bots: per-bot print2_bot<N>.log\n");
+  fprintf(stderr, "                (grep MSG_TX / SYNC_P6 to audit bot comms). Use a base -brain\n");
+  fprintf(stderr, "                path (not opt/) so print2 calls aren't stripped.\n");
 
   fprintf(stderr, "\nNetworking:\n");
   fprintf(stderr, "-port <Port>  - Port to run the server on\n");
@@ -1619,6 +1622,16 @@ int main(int argc, char **argv) {
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
       char botName[64];
+      /* -braindebug: turn BRAIN_DEBUG_MODE on for every bot (set BEFORE they're
+       * created so each brain constructs with debug on → un-stripped brain +
+       * print2 logging). Lets you audit bot comms on a dedicated server: each
+       * bot writes print2_bot<N>.log (grep MSG_TX for outbound /info traffic,
+       * SYNC_P6 / process_message for what it received). */
+      if (argExist(argc, argv, "braindebug") == TRUE) {
+        serverSimSetBotDefaultDebugMode(serverSim, true);
+        fprintf(stderr, "Bot brain debug mode ON (print2 logging; pair with a "
+                        "base -brain path, not opt/, so print2 isn't stripped)\n");
+      }
       int allyTeam = 0;  /* 0 = no allying; 1-16 = team to place bots on */
       if (argExist(argc, argv, "allybots") == TRUE) {
         int aArg = findArg(argc, argv, "allybots");

@@ -798,13 +798,33 @@ function M.decide(state, world, info, now)
 
   -- Priority 3: gather — need trees before we can execute the plan
   if b.mode == "gather" and info.trees < b.need_trees then
-    -- Quick reject: any threat at tank tile means lgm_path_safe(LOW) will fail
-    if state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then return nil end
-    local fx, fy, fd = nearest_onpath_forest(state, info, C.FARM_GATHER_RADIUS)
-    if fx and fd <= C.LGM_DEPLOY_DIST
-       and lgm_can_reach(info, fx, fy)
-       and danger.lgm_path_safe_enhanced(info, fx, fy, C.LGM_DANGER_LOW, now, world) then
+    -- Walk the gates in order, recording WHY a dispatch is blocked so a bot stuck
+    -- in gather_trees with forest nearby tells us which gate rejected (diagnostic
+    -- print2, stripped from opt). reason=nil means all gates pass → dispatch farm.
+    local reason, fx, fy, fd
+    if state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then
+      -- Quick reject: any threat at the tank tile means lgm_path_safe(LOW) fails —
+      -- we won't walk the unarmoured LGM out into fire to farm.
+      reason = string.format("threat_at_tank=%.1f > LGM_DANGER_LOW=%d", state.perc.threat_at_tank, C.LGM_DANGER_LOW)
+    else
+      fx, fy, fd = nearest_onpath_forest(state, info, C.FARM_GATHER_RADIUS)
+      if not fx then
+        reason = string.format("no forest within FARM_GATHER_RADIUS=%d", C.FARM_GATHER_RADIUS)
+      elseif fd > C.LGM_DEPLOY_DIST then
+        reason = string.format("forest@(%d,%d) d=%d > LGM_DEPLOY_DIST=%d", fx, fy, fd, C.LGM_DEPLOY_DIST)
+      elseif not lgm_can_reach(info, fx, fy) then
+        reason = string.format("forest@(%d,%d) LGM cannot reach", fx, fy)
+      elseif not danger.lgm_path_safe_enhanced(info, fx, fy, C.LGM_DANGER_LOW, now, world) then
+        reason = string.format("forest@(%d,%d) LGM path unsafe (danger > %d)", fx, fy, C.LGM_DANGER_LOW)
+      end
+    end
+    if not reason then
+      b._gather_diag = nil
       return { x = fx, y = fy, action = BUILDMODE_FARM }
+    end
+    -- Reason-change throttled so a steady block logs once, not every tick.
+    if b._gather_diag ~= reason then
+      b._gather_diag = reason
     end
     -- Forest not reachable or unsafe; don't fall through to road building
     -- (don't burn trees on roads while we still need them for the mission)

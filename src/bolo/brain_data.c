@@ -401,6 +401,11 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
     value->num_messages = 0;
     value->message = NULL;
     if (n > 0) {
+      /* Receive-side audit: this bot pulled n messages from its inbox this tick.
+       * Pairs with the BOTMSG fan-out log on the sender to confirm end-to-end
+       * delivery (sender delivered=K should show up as receives across allies). */
+      botMsgDebugLog("BOTMSG p%d inbox: %d msg(s) this tick",
+                     (int)clientSimGetMyPlayerNum(csPtr), n);
       value->messages = (MessageInfo *)malloc((size_t)n * sizeof(MessageInfo));
       for (int i = 0; i < n; i++) {
         char  pbuf[BRAIN_INBOX_MSG_LEN];
@@ -554,9 +559,18 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
     if (*(value->messagedest) == 0) {
       struct ServerSim *bound = clientSimGetBoundServerSim(csPtr);
       if (bound == NULL) {
+        /* No bound ServerSim → this is a local/human-menu brain, NOT a hosted
+         * bot. The internal message can't fan out to teammates; it only lands on
+         * the AI message channel. On a dedicated server this WARN means bot comms
+         * are silently broken (every bot's info.messages stays empty). */
+        botMsgDebugLog("BOTMSG p%d dest=0 but NO bound ServerSim -> NOT delivered "
+                       "to teammates (AI-channel only): %.48s",
+                       (int)clientSimGetMyPlayerNum(csPtr), msg);
         clientMessageAdd(clientSimGetMessages(csPtr), AIMessage,
                          langGetText(MESSAGE_AI), msg);
       } else {
+        botMsgDebugLog("BOTMSG p%d send dest=0 (internal): %.48s",
+                       (int)clientSimGetMyPlayerNum(csPtr), msg);
         botManagerDeliverInternalMessage(bound,
                                          clientSimGetMyPlayerNum(csPtr), msg);
       }
