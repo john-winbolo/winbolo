@@ -46,8 +46,10 @@
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "../imgui_steam_nav.h"
+#include "../glyphs.h"   /* glyphForActionAuto — controller footer legend */
 
 extern "C" {
+#include "../../../steam/steam_input_actions.h"  /* SI_ACTION_MENU_* names */
 #include "../sdl3draw.h"
 #include "../../gamefront.h"
 #include "global.h"
@@ -6284,9 +6286,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
      * still be in flight), and consumed once so the player can navigate away
      * freely afterwards. Armed only in controller mode; keyboard/mouse is
      * unaffected. */
-#if !BOLO_MOBILE
     bool focusReadyPending = uiShouldUseControllerMode();
-#endif
 
     /* Show the lobby in Steam immediately on entry; the throttled tick at
      * the top of the loop keeps the player count / connect address current
@@ -6746,6 +6746,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         if (useTabbedLobby) {
             float availW = ImGui::GetContentRegionAvail().x - padR;
             float btnAreaH = ImGui::GetTextLineHeightWithSpacing() * 2 + 16.0f * s;
+            /* Reserve a thin extra row under the buttons for the controller
+             * glyph legend so it doesn't overlap them or clip the tab content
+             * above. Mouse mode draws no legend, so don't reserve it there. */
+            if (uiShouldUseControllerMode())
+                btnAreaH += ImGui::GetFrameHeightWithSpacing();
 
             /* Detect new chat messages for unread indicator */
             int chatLen = (int)SDL_strlen(clientSimGetLobbyChatHistory(cs));
@@ -7236,6 +7241,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.20f, 0.65f, 0.20f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive,   ImVec4(0.10f, 0.45f, 0.10f, 1.0f));
                 }
+                /* One-shot initial focus for controller players — only once
+                 * Ready is enabled, so we don't try to focus a disabled item. */
+                if (focusReadyPending && canReady) {
+                    ImGui::SetKeyboardFocusHere();
+                    focusReadyPending = false;
+                }
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
                     if (hasTransport) {
                         lobbySendReadyToggle(cs, !myReady);
@@ -7265,6 +7276,32 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
                     ImGui::OpenPopup(leavePopupId);
                 }
+            }
+
+            /* Persistent controller glyph legend — A = Ready/confirm,
+             * B = Leave, LT/RT = switch tab. Each glyph is the currently
+             * bound origin via glyphForActionAuto; mouse mode draws nothing.
+             * Sits in the extra row reserved in btnAreaH above. */
+            if (uiShouldUseControllerMode()) {
+                const float gh = ImGui::GetFrameHeight();
+                auto legendItem = [&](const char *action, const char *label) {
+                    SDL_Texture *g = glyphForActionAuto(action);
+                    if (g) ImGui::Image((ImTextureID)g, ImVec2(gh, gh));
+                    if (label) {
+                        if (g) ImGui::SameLine(0.0f, 4.0f);
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::TextUnformatted(label);
+                    }
+                };
+                legendItem(SI_ACTION_MENU_ACCEPT, langGetText(STR_DLGLOBBY_READY));
+                ImGui::SameLine(0.0f, 18.0f);
+                legendItem(SI_ACTION_MENU_CANCEL, langGetText(STR_DLGLOBBY_LEAVE));
+                ImGui::SameLine(0.0f, 18.0f);
+                /* No existing string fits "switch tab" — show the LT/RT
+                 * glyphs side by side without a text label. */
+                legendItem(SI_ACTION_MENU_TAB_LEFT, NULL);
+                ImGui::SameLine(0.0f, 2.0f);
+                legendItem(SI_ACTION_MENU_TAB_RIGHT, NULL);
             }
         }
         else {
