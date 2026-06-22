@@ -718,5 +718,12 @@ bool transportUdpClientTestFinalizeResync(Transport *t, const BYTE *buf, int len
  * consecutive-mismatch streak that gates a new request. */
 void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
                                        uint32_t *mismatchStreak);
+/* Read a connected spectator's armed seed blob (the spectator-owned copy of the
+ * delayed ring keyframe). Returns the blob pointer with *outLen set to its
+ * length and *outKind to the in-flight BulkSender kind (BULK_KIND_SPEC_SEED once
+ * armed); NULL when the slot is invalid, disconnected, or not yet seeded.
+ * outLen / outKind may be NULL. The pointer is freed when the seed completes. */
+const uint8_t *transportUdpServerGetSpectatorSeed(int s, uint32_t *outLen,
+                                                  uint8_t *outKind);
 
 #endif /* TRANSPORT_UDP_H */

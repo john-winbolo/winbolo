@@ -2637,6 +2637,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Spectator JOIN handshake: a JOIN_FLAG_SPECTATOR join registers a tankless
     # viewer (slot 0xFF, no tank slot) under the maxSpectators cap.
     tests/unit/test_spectator_join.c
+    # Spectator seed transfer: a connected spectator on a recording-ring server
+    # gets the delayed keyframe at head - delay armed as a BULK_KIND_SPEC_SEED
+    # transfer whose blob is byte-equal to the ring keyframe at that delay.
+    tests/unit/test_spectator_seed.c
     # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
@@ -2994,6 +2998,7 @@ set(_unit_test_names
     spectator_ring
     spectator_config
     spectator_join
+    spectator_seed
     bulk_transfer
     overflow_guards
     channel_reset_codec_roundtrip

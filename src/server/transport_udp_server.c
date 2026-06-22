@@ -48,6 +48,7 @@
 #include "transport_command_codec.h"
 #include "channel_mux.h"
 #include "bulk_transfer.h"
+#include "spectator_ring.h"
 #include "wbn_key_codec.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
@@ -288,7 +289,21 @@ typedef struct {
     uint8_t  clientHints;
     ChannelMux channelMux;
     BulkSender bulkSend;
-    /* SpectatorRingCursor cursor; — filled in 2d */
+    /* Delayed-keyframe seed transfer (2d-c). seedBlob is a spectator-owned copy
+     * of the ring keyframe at head - specDelayTicks (the ring's own pointer
+     * invalidates on the next RecordTick, so the bytes are copied at seek time
+     * and the bulk transfer drains the copy over multiple ticks). seedBlob ==
+     * NULL && !seedComplete means "not yet seeded" — the seek is retried each
+     * tick until the ring has enough history. xferStartSeq/xferEndSeq mirror
+     * ClientMapDownload's bulk-ack bookkeeping. */
+    uint8_t *seedBlob;
+    uint32_t seedLen;
+    uint32_t seedGen;        /* ring segment of the seeded keyframe (header gen) */
+    bool     seedBegun;
+    bool     seedComplete;
+    uint32_t xferStartSeq;
+    uint32_t xferEndSeq;
+    /* SpectatorRingCursor cursor; — forward feed in 2d-d */
 } SpectatorConn;
 
 /* Server-side global state */
@@ -1254,6 +1269,13 @@ static void serverAcceptSpectator(ServerSim *sim,
     udpServer.spectators[s].clientHints      = clientHints;
     channelMuxInit(&udpServer.spectators[s].channelMux);
     bulkSenderInit(&udpServer.spectators[s].bulkSend);
+    udpServer.spectators[s].seedBlob     = NULL;
+    udpServer.spectators[s].seedLen      = 0;
+    udpServer.spectators[s].seedGen      = 0;
+    udpServer.spectators[s].seedBegun    = false;
+    udpServer.spectators[s].seedComplete = false;
+    udpServer.spectators[s].xferStartSeq = 0;
+    udpServer.spectators[s].xferEndSeq   = 0;
 
     serverSendSpectatorAccept(s, sim, fromAddr);
 }
@@ -1272,6 +1294,16 @@ static void serverDisconnectSpectator(int s, bool graceful) {
     udpServer.spectators[s].connected = false;
     channelMuxInit(&udpServer.spectators[s].channelMux);   /* reset in place */
     bulkSenderInit(&udpServer.spectators[s].bulkSend);
+    if (udpServer.spectators[s].seedBlob != NULL) {
+        free(udpServer.spectators[s].seedBlob);
+        udpServer.spectators[s].seedBlob = NULL;
+    }
+    udpServer.spectators[s].seedLen = 0;
+    udpServer.spectators[s].seedGen = 0;
+    udpServer.spectators[s].seedBegun = false;
+    udpServer.spectators[s].seedComplete = false;
+    udpServer.spectators[s].xferStartSeq = 0;
+    udpServer.spectators[s].xferEndSeq = 0;
     udpServer.spectators[s].playerName[0] = '\0';
     udpServer.spectators[s].outSequence = 0;
     udpServer.spectators[s].inboundCmdSeq = 0;
@@ -1399,6 +1431,110 @@ static void serverCompleteMapTransferIfAcked(int slot) {
 static void serverServiceMapTransfer(int slot) {
     serverBeginMapTransferIfReady(slot);
     serverCompleteMapTransferIfAcked(slot);
+}
+
+/* Per-tick spectator service: seed each connected spectator with the delayed
+ * keyframe at head - specDelayTicks, then drain it over CHANNEL_BULK exactly as
+ * the client map-download carrier drains a join download. Cold-start tolerant —
+ * the seek is retried every tick until the ring has enough history; the
+ * countdown signal to the client is 2d-e, not here. No forward event feed yet
+ * (2d-d).
+ *
+ * Runs on the tick thread, the same thread as logWriteTick's
+ * spectatorRingRecordTick, so the seek is race-free. A cursor/keyframe pointer
+ * invalidates on the next RecordTick, so the keyframe bytes are copied into
+ * spectator-owned storage at seek time (mirroring serverInitMapDownload's copy
+ * of the compressed map); the bulk transfer then drains that copy across ticks. */
+static void serverServiceSpectators(ServerSim *sim) {
+    int i;
+
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        SpectatorConn *sp = &udpServer.spectators[i];
+        ChannelState *bulk;
+
+        if (!sp->connected) continue;
+
+        /* Seek + copy the delayed keyframe into spectator-owned storage. */
+        if (sp->seedBlob == NULL && !sp->seedComplete) {
+            SpectatorRing *r = serverInstanceGetSpectatorRing();
+            if (r != NULL) {
+                SpectatorRingCursor cur;
+                if (spectatorRingSeekDelayed(
+                        r, serverSimGetSpecDelayTicks(sim), &cur)
+                    == SPECTATOR_RING_OK) {
+                    int kfLen = 0;
+                    const uint8_t *kf =
+                        spectatorRingCursorKeyframe(&cur, &kfLen, NULL);
+                    if (kf != NULL && kfLen > 0) {
+                        uint8_t *copy = (uint8_t *)malloc((size_t)kfLen);
+                        if (copy != NULL) {
+                            memcpy(copy, kf, (size_t)kfLen);
+                            sp->seedBlob = copy;
+                            sp->seedLen  = (uint32_t)kfLen;
+                            sp->seedGen  = cur.segment;
+                        }
+                    }
+                }
+                /* COLD_START / AGED_OUT: nothing this tick — retry next. */
+            }
+        }
+
+        /* Arm a seed transfer once the bulk channel is fully idle — same gates
+         * serverBeginMapTransferIfReady applies (sender idle, staging empty,
+         * send window drained). */
+        bulk = &sp->channelMux.ch[CHANNEL_BULK];
+        if (sp->seedBlob != NULL && !sp->seedBegun &&
+            !bulkSenderBusy(&sp->bulkSend) &&
+            sp->channelMux.streamCount == 0 &&
+            bulk->ackedSeq == bulk->nextSeq) {
+            BulkStreamHeader sh;
+            uint32_t headerLen, totalBytes, segs;
+
+            memset(&sh, 0, sizeof(sh));
+            sh.kind = BULK_KIND_SPEC_SEED;
+            sh.gen = sp->seedGen;
+            sh.totalSize = sp->seedLen;
+            sh.pathLen = 0;
+            sh.path[0] = '\0';
+
+            sp->xferStartSeq = bulk->nextSeq;
+            if (bulkSenderBegin(&sp->bulkSend, &sh, sp->seedBlob, sp->seedLen)) {
+                headerLen = (uint32_t)BULK_STREAM_HEADER_FIXED + sh.pathLen;
+                totalBytes = headerLen + sp->seedLen;
+                segs = (totalBytes + CHANNEL_BULK_SEG - 1) / CHANNEL_BULK_SEG;
+                sp->xferEndSeq = sp->xferStartSeq + segs;
+                sp->seedBegun = true;
+            }
+            /* allocation failure: retry next tick */
+        }
+
+        /* Pump staged bytes into the mux and emit standalone PACKET_CHANNEL
+         * frames — mirror the client map-download carrier exactly. */
+        bulkSenderPump(&sp->bulkSend, &sp->channelMux);
+        channelTick(&sp->channelMux, udpServer.tickCount, sp->pingMs);
+        {
+            int frames;
+            for (frames = 0; frames < MAP_DOWNLOAD_FRAMES_PER_TICK; frames++) {
+                uint8_t cbuf[UDP_MAX_PAYLOAD];
+                int frameLen = channelBuildFrame(
+                    &sp->channelMux, cbuf + PACKET_HEADER_SIZE,
+                    UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                if (frameLen <= 2) break;   /* nothing (more) to carry this tick */
+                packHeader(cbuf, PACKET_CHANNEL, sp->outSequence++);
+                srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &sp->addr);
+            }
+        }
+
+        /* Complete: peer has acked the whole seed. Free the copy; the forward
+         * feed begins in 2d-d. */
+        if (sp->seedBegun && bulk->ackedSeq >= sp->xferEndSeq) {
+            sp->seedComplete = true;
+            if (sp->seedBlob != NULL) {
+                free(sp->seedBlob);
+                sp->seedBlob = NULL;
+            }
+        }
+    }
 }
 
 /* Initialize map download tracking for a client and arm a join download on the
@@ -5018,6 +5154,10 @@ void transportUdpServerSend(ServerSim *sim) {
         serverSendSnapshot(sim, i);
     }
 
+    /* Seed connected spectators from the delayed ring and drain the seed over
+     * CHANNEL_BULK (mirrors the per-client map-download carrier above). */
+    serverServiceSpectators(sim);
+
     transportUdpServerCheckTimeouts(sim);
 }
 
@@ -5091,9 +5231,16 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
         }
     }
 
-    /* Age out idle spectators. No per-tick channel servicing here — a
-     * spectator has no forward feed until the ring serve path (2d); this
-     * only frees a slot whose viewer has gone silent. */
+    /* Seed connected spectators outside running too (lobby / countdown /
+     * gameover — transportUdpServerSend isn't called there, so it can't drive
+     * this). When running, transportUdpServerSend already serviced spectators
+     * before calling here, so this is gated off to avoid a double service. */
+    if (serverSimGetState(sim) != serverStateRunning) {
+        serverServiceSpectators(sim);
+    }
+
+    /* Age out idle spectators. This only frees a slot whose viewer has gone
+     * silent; the seed/feed servicing happens in serverServiceSpectators. */
     for (i = 0; i < MAX_SPECTATORS; i++) {
         if (!udpServer.spectators[i].connected) continue;
         if (udpServer.tickCount - udpServer.spectators[i].lastReceivedTick
@@ -5156,6 +5303,17 @@ void transportUdpServerChannelTestStats(int slot, uint8_t ch,
 bool transportUdpServerTestPendingRemove(int slot) {
     if (slot < 0 || slot >= MAX_TANKS) return false;
     return udpServer.pendingSimRemove[slot];
+}
+
+const uint8_t *transportUdpServerGetSpectatorSeed(int s, uint32_t *outLen,
+                                                  uint8_t *outKind) {
+    SpectatorConn *sp;
+    if (s < 0 || s >= MAX_SPECTATORS) return NULL;
+    sp = &udpServer.spectators[s];
+    if (!sp->connected) return NULL;
+    if (outLen)  *outLen  = sp->seedLen;
+    if (outKind) *outKind = sp->bulkSend.kind;
+    return sp->seedBlob;
 }
 
 bool transportUdpServerTestDownloadComplete(int slot) {

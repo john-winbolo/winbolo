@@ -203,6 +203,12 @@ int run_spectator_config(void);
  * maxSpectators cap / disabled case, and resolves over the cookie handshake. */
 int run_spectator_join(void);
 
+/* Spectator seed transfer (test_spectator_seed.c): a connected spectator on a
+ * server whose ring is recording gets the delayed keyframe at head - delay
+ * armed as a BULK_KIND_SPEC_SEED transfer; the armed seed blob is byte-equal to
+ * the ring's keyframe at that delay. */
+int run_spectator_seed(void);
+
 /* Bulk-transfer framing (test_bulk_transfer.c): the off-socket stream-header
  * round-trip, byte-identical blob reassembly under loss + reorder, header
  * robustness, pipelining and the send-side serializer guard. */
