@@ -1261,7 +1261,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         }
 
         /* ---- Right: selection detail pane ---- */
-        ImGui::BeginChild("##DetailPane", ImVec2(0, listH), ImGuiChildFlags_Borders);
+        /* Flattened into the parent nav plane so a controller reaches the
+         * detail fields and the enlarge-preview button in one step. */
+        ImGui::BeginChild("##DetailPane", ImVec2(0, listH),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
         if (!haveSel) {
             ImGui::Spacing();
             ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_SELECT_SERVER));
@@ -1274,7 +1277,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (boxSize > maxBox) boxSize = maxBox;
             if (boxSize < 80.0f)  boxSize = 80.0f;
             ImGui::BeginChild("##MapPreview", ImVec2(boxSize, boxSize),
-                              ImGuiChildFlags_Borders);
+                              ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
             {
                 auto centeredDimmed = [](const char *txt) {
                     ImVec2 ts = ImGui::CalcTextSize(txt);

@@ -1027,7 +1027,10 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
 
             ImGui::Separator();
 
-            if (ImGui::BeginChild("##DetailPanel", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+            /* Flattened into the parent nav plane so a controller reaches the
+             * detail content in one step. */
+            if (ImGui::BeginChild("##DetailPanel", ImVec2(0, 0),
+                                  ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened)) {
                 /* Header info */
                 ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.3f, 1.0f), "%s", e.map);
                 ImGui::SameLine();
