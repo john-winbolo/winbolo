@@ -73,6 +73,8 @@
 #include "control_event.h"
 #include "client_sim.h"
 #include "client_sim_control.h"
+#include "transport_control_codec.h"  /* body encoders for the ring keyframe's control snapshot */
+#include "log_internal.h"             /* serverSimSerializeControlSnapshot prototype */
 #include <assert.h>
 #include "interpolation.h"
 #include "position_history.h"
@@ -5716,6 +5718,69 @@ static void serverSimSyncSubscriber(
         }
     }
     mpDiagLog("[bus] SYNC-REPLAY end");
+}
+
+/* Buffer-writing sink for serverSimSerializeControlSnapshot: each delivered
+ * sync event is body-encoded and appended as a [u16 type][u16 bodyLen][body]
+ * record. */
+typedef struct {
+    BYTE *out;
+    int   cap;
+    int   len;
+    bool  overflow;
+} ControlSnapshotSink;
+
+static void serverSimControlSnapshotDeliver(void *ctx,
+                                            const struct ControlEvent *evt) {
+    ControlSnapshotSink *s = (ControlSnapshotSink *)ctx;
+    ControlEncodeBodyFn fn;
+    uint8_t body[MAX_CONTROL_PACKET];
+    size_t bodyLen = 0;
+    EncodeResult r;
+    int recLen;
+
+    if (s->overflow) {
+        return;  /* already failed; drain the rest of the replay silently */
+    }
+    fn = transportControlCodecBodyEncoder(evt->type);
+    if (fn == NULL) {
+        return;  /* no body codec for this kind — nothing to record */
+    }
+    /* Body encoders ignore the recipient (per-recipient filtering lives in the
+     * delivery path), so NULL is safe here. */
+    r = fn(evt, NULL, body, sizeof(body), &bodyLen);
+    if (r == ENCODE_SKIP) {
+        return;  /* event has no form here (e.g. an invalid slot) — skip */
+    }
+    if (r != ENCODE_OK) {
+        s->overflow = true;  /* ENCODE_OVERFLOW: body did not fit MAX_CONTROL_PACKET */
+        return;
+    }
+    recLen = 4 + (int)bodyLen;
+    if (s->len > s->cap - recLen) {
+        s->overflow = true;
+        return;
+    }
+    s->out[s->len++] = (BYTE)(((uint16_t)evt->type >> 8) & 0xFF);
+    s->out[s->len++] = (BYTE)((uint16_t)evt->type & 0xFF);
+    s->out[s->len++] = (BYTE)(((uint16_t)bodyLen >> 8) & 0xFF);
+    s->out[s->len++] = (BYTE)((uint16_t)bodyLen & 0xFF);
+    memcpy(s->out + s->len, body, bodyLen);
+    s->len += (int)bodyLen;
+}
+
+int serverSimSerializeControlSnapshot(ServerSim *sim, BYTE *out, int cap) {
+    ControlSnapshotSink sink;
+
+    if (sim == NULL || out == NULL || cap < 0) {
+        return -1;
+    }
+    sink.out      = out;
+    sink.cap      = cap;
+    sink.len      = 0;
+    sink.overflow = false;
+    serverSimSyncSubscriber(sim, serverSimControlSnapshotDeliver, &sink);
+    return sink.overflow ? -1 : sink.len;
 }
 
 SubscriberHandle serverSimRegisterSubscriber(

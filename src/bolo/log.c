@@ -225,15 +225,40 @@ void logWriteTick() {
     if (logSpectatorRing != NULL && logSpectatorSim != NULL) {
       uint32_t gameTick = serverSimGetTick(logSpectatorSim);
       if (spectatorRingNeedsKeyframe(logSpectatorRing, gameTick) == true) {
-        BYTE *body = (BYTE *) malloc(LOG_SNAPSHOT_BODY_MAX);
-        if (body != NULL) {
-          int bodyLen = logSerializeSnapshotBody(logSpectatorSim, body,
+        /* Ring keyframe = [u32 bodyLen][world snapshot body][u32 ctrlLen]
+           [control snapshot] (big-endian lengths). The world body is the same
+           plaintext logSerializeSnapshotBody writes to the .wbv; the control
+           snapshot is the serverSimSyncSubscriber-equivalent roster / score /
+           team / phase / lobby / vote / balance state a delayed joiner needs.
+           Both serializers write straight into their final slots to avoid a
+           second copy. Ring-only — the .wbv path below is untouched. */
+        BYTE *combined = (BYTE *) malloc(LOG_SNAPSHOT_BODY_MAX +
+                                         LOG_CONTROL_SNAPSHOT_MAX + 8);
+        if (combined != NULL) {
+          int bodyLen = logSerializeSnapshotBody(logSpectatorSim, combined + 4,
                                                  LOG_SNAPSHOT_BODY_MAX);
+          int ctrlLen = -1;
           if (bodyLen >= 0) {
-            spectatorRingRecordTick(logSpectatorRing, gameTick, true, body,
-                                    bodyLen);
+            ctrlLen = serverSimSerializeControlSnapshot(
+                logSpectatorSim, combined + 8 + bodyLen,
+                LOG_CONTROL_SNAPSHOT_MAX);
           }
-          free(body);
+          /* Skip the keyframe entirely on either failure rather than record a
+             truncated one (mirrors the original bodyLen >= 0 guard). */
+          if (bodyLen >= 0 && ctrlLen >= 0) {
+            int cpos = 4 + bodyLen;
+            combined[0] = (BYTE) (((uint32_t) bodyLen >> 24) & 0xFF);
+            combined[1] = (BYTE) (((uint32_t) bodyLen >> 16) & 0xFF);
+            combined[2] = (BYTE) (((uint32_t) bodyLen >> 8) & 0xFF);
+            combined[3] = (BYTE) ((uint32_t) bodyLen & 0xFF);
+            combined[cpos + 0] = (BYTE) (((uint32_t) ctrlLen >> 24) & 0xFF);
+            combined[cpos + 1] = (BYTE) (((uint32_t) ctrlLen >> 16) & 0xFF);
+            combined[cpos + 2] = (BYTE) (((uint32_t) ctrlLen >> 8) & 0xFF);
+            combined[cpos + 3] = (BYTE) ((uint32_t) ctrlLen & 0xFF);
+            spectatorRingRecordTick(logSpectatorRing, gameTick, true, combined,
+                                    cpos + 4 + ctrlLen);
+          }
+          free(combined);
         }
       } else {
         spectatorRingRecordTick(logSpectatorRing, gameTick, false,

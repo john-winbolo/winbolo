@@ -433,8 +433,36 @@ static void sr_drive_motion(ServerSim *sim, uint32_t *it, int ticks,
     }
 }
 
-/* The settled keyframe the tap records equals an independent snapshot-body
-   oracle, before and after the world is evolved by real motion. */
+/* Split a sim-tap keyframe blob [u32 bodyLen][body][u32 ctrlLen][ctrl]
+   (big-endian lengths) into its two sections, pointing into kf. Returns false
+   on a malformed blob (the section extents must exactly fill klen). */
+static bool sr_split_keyframe(const uint8_t *kf, int klen,
+                              const uint8_t **body, int *bodyLen,
+                              const uint8_t **ctrl, int *ctrlLen) {
+    uint32_t bl, cl;
+    if (kf == NULL || klen < 8) {
+        return false;
+    }
+    bl = ((uint32_t)kf[0] << 24) | ((uint32_t)kf[1] << 16) |
+         ((uint32_t)kf[2] << 8) | (uint32_t)kf[3];
+    if (bl > (uint32_t)klen - 8) {
+        return false;
+    }
+    cl = ((uint32_t)kf[4 + bl] << 24) | ((uint32_t)kf[5 + bl] << 16) |
+         ((uint32_t)kf[6 + bl] << 8) | (uint32_t)kf[7 + bl];
+    if (cl != (uint32_t)klen - 8 - bl) {
+        return false;
+    }
+    *body    = kf + 4;
+    *bodyLen = (int)bl;
+    *ctrl    = kf + 8 + bl;
+    *ctrlLen = (int)cl;
+    return true;
+}
+
+/* The settled keyframe the tap records carries a world-snapshot-body section
+   byte-equal to an independent snapshot-body oracle, before and after the world
+   is evolved by real motion. */
 static int t_sim_keyframe_oracle(void) {
     char fname[64];
     ServerSim *sim;
@@ -442,7 +470,8 @@ static int t_sim_keyframe_oracle(void) {
     uint32_t it = 1;
     uint8_t *o0 = NULL, *o1 = NULL;
     int o0len, o1len, klen;
-    const uint8_t *kf;
+    const uint8_t *kf, *kbody, *kctrl;
+    int kbodyLen, kctrlLen;
     SpectatorRingCursor cur;
 
     sr_tmp(fname, sizeof(fname), "kf");
@@ -462,8 +491,10 @@ static int t_sim_keyframe_oracle(void) {
 
     UT_ASSERT(spectatorRingSeekDelayed(ring, 0, &cur) == SPECTATOR_RING_OK);
     kf = spectatorRingCursorKeyframe(&cur, &klen, NULL);
-    UT_ASSERT_MSG(klen == o0len && memcmp(kf, o0, (size_t)klen) == 0,
-                  "settled keyframe != oracle (len %d vs %d)", klen, o0len);
+    UT_ASSERT(sr_split_keyframe(kf, klen, &kbody, &kbodyLen, &kctrl, &kctrlLen));
+    UT_ASSERT_MSG(kbodyLen == o0len && memcmp(kbody, o0, (size_t)kbodyLen) == 0,
+                  "settled keyframe body != oracle (len %d vs %d)", kbodyLen,
+                  o0len);
 
     /* Evolve the world with real motion, then resettle. */
     sr_drive_motion(sim, &it, 16, INPUT_BTN_ACCEL | INPUT_BTN_LEFT);
@@ -474,8 +505,9 @@ static int t_sim_keyframe_oracle(void) {
 
     UT_ASSERT(spectatorRingSeekDelayed(ring, 0, &cur) == SPECTATOR_RING_OK);
     kf = spectatorRingCursorKeyframe(&cur, &klen, NULL);
-    UT_ASSERT_MSG(klen == o1len && memcmp(kf, o1, (size_t)klen) == 0,
-                  "evolved keyframe != oracle");
+    UT_ASSERT(sr_split_keyframe(kf, klen, &kbody, &kbodyLen, &kctrl, &kctrlLen));
+    UT_ASSERT_MSG(kbodyLen == o1len && memcmp(kbody, o1, (size_t)kbodyLen) == 0,
+                  "evolved keyframe body != oracle");
 
     free(o0);
     free(o1);
@@ -494,7 +526,8 @@ static int t_sim_reset_segmentation(void) {
     uint8_t *oA = NULL, *oB = NULL;
     int oAlen, oBlen, klen;
     uint32_t oldHead, newHead;
-    const uint8_t *kf;
+    const uint8_t *kf, *kbody, *kctrl;
+    int kbodyLen, kctrlLen;
     SpectatorRingCursor cur;
 
     sr_tmp(fname, sizeof(fname), "reset");
@@ -517,8 +550,9 @@ static int t_sim_reset_segmentation(void) {
 
     UT_ASSERT(spectatorRingSeekDelayed(ring, 0, &cur) == SPECTATOR_RING_OK);
     kf = spectatorRingCursorKeyframe(&cur, &klen, NULL);
-    UT_ASSERT_MSG(klen == oAlen && memcmp(kf, oA, (size_t)klen) == 0,
-                  "segment A keyframe != oracle");
+    UT_ASSERT(sr_split_keyframe(kf, klen, &kbody, &kbodyLen, &kctrl, &kctrlLen));
+    UT_ASSERT_MSG(kbodyLen == oAlen && memcmp(kbody, oA, (size_t)kbodyLen) == 0,
+                  "segment A keyframe body != oracle");
 
     /* Real world reset — restarts the game tick at 0. */
     serverSimResetGameWorld(sim);
@@ -530,8 +564,9 @@ static int t_sim_reset_segmentation(void) {
 
     UT_ASSERT(spectatorRingSeekDelayed(ring, 0, &cur) == SPECTATOR_RING_OK);
     kf = spectatorRingCursorKeyframe(&cur, &klen, NULL);
-    UT_ASSERT_MSG(klen == oBlen && memcmp(kf, oB, (size_t)klen) == 0,
-                  "segment B keyframe != oracle");
+    UT_ASSERT(sr_split_keyframe(kf, klen, &kbody, &kbodyLen, &kctrl, &kctrlLen));
+    UT_ASSERT_MSG(kbodyLen == oBlen && memcmp(kbody, oB, (size_t)kbodyLen) == 0,
+                  "segment B keyframe body != oracle");
     UT_ASSERT_MSG(!(oBlen == oAlen && memcmp(oA, oB, (size_t)oAlen) == 0),
                   "reset world identical to segment A world");
 
@@ -541,8 +576,9 @@ static int t_sim_reset_segmentation(void) {
     UT_ASSERT(spectatorRingSeekDelayed(ring, newHead - oldHead, &cur) ==
               SPECTATOR_RING_OK);
     kf = spectatorRingCursorKeyframe(&cur, &klen, NULL);
-    UT_ASSERT_MSG(klen == oAlen && memcmp(kf, oA, (size_t)klen) == 0,
-                  "previous-generation seed != segment A oracle");
+    UT_ASSERT(sr_split_keyframe(kf, klen, &kbody, &kbodyLen, &kctrl, &kctrlLen));
+    UT_ASSERT_MSG(kbodyLen == oAlen && memcmp(kbody, oA, (size_t)kbodyLen) == 0,
+                  "previous-generation seed body != segment A oracle");
 
     free(oA);
     free(oB);
@@ -594,7 +630,8 @@ static int t_sim_retention_boundary(void) {
     uint8_t *o = NULL;
     int olen, klen, i;
     uint32_t head, oldest;
-    const uint8_t *kf;
+    const uint8_t *kf, *kbody, *kctrl;
+    int kbodyLen, kctrlLen;
     SpectatorRingCursor cur;
 
     sr_tmp(fname, sizeof(fname), "ret");
@@ -621,8 +658,9 @@ static int t_sim_retention_boundary(void) {
     UT_ASSERT(spectatorRingSeekDelayed(ring, head - oldest, &cur) ==
               SPECTATOR_RING_OK);
     kf = spectatorRingCursorKeyframe(&cur, &klen, NULL);
-    UT_ASSERT_MSG(klen == olen && memcmp(kf, o, (size_t)klen) == 0,
-                  "oldest survivor keyframe != settled oracle");
+    UT_ASSERT(sr_split_keyframe(kf, klen, &kbody, &kbodyLen, &kctrl, &kctrlLen));
+    UT_ASSERT_MSG(kbodyLen == olen && memcmp(kbody, o, (size_t)kbodyLen) == 0,
+                  "oldest survivor keyframe body != settled oracle");
 
     UT_ASSERT(spectatorRingSeekDelayed(ring, head - oldest + 1, &cur) ==
               SPECTATOR_RING_AGED_OUT);
@@ -644,7 +682,8 @@ static int t_sim_forward_events(void) {
     uint8_t *o = NULL;
     int olen, klen;
     uint32_t seedSeq, oldest;
-    const uint8_t *kf;
+    const uint8_t *kf, *kbody, *kctrl;
+    int kbodyLen, kctrlLen;
     SpectatorRingCursor cur;
     int eplen;
     uint32_t egt;
@@ -678,8 +717,9 @@ static int t_sim_forward_events(void) {
     UT_ASSERT_MSG(oldest + (uint32_t)cur.seedIdx == seedSeq,
                   "seed drifted off the pre-motion keyframe");
     kf = spectatorRingCursorKeyframe(&cur, &klen, NULL);
-    UT_ASSERT_MSG(klen == olen && memcmp(kf, o, (size_t)klen) == 0,
-                  "seed keyframe != oracle after motion");
+    UT_ASSERT(sr_split_keyframe(kf, klen, &kbody, &kbodyLen, &kctrl, &kctrlLen));
+    UT_ASSERT_MSG(kbodyLen == olen && memcmp(kbody, o, (size_t)kbodyLen) == 0,
+                  "seed keyframe body != oracle after motion");
 
     while (spectatorRingCursorNextEvents(&cur, NULL, &eplen, &egt)) {
         if (!first) {
@@ -700,6 +740,60 @@ static int t_sim_forward_events(void) {
     UT_ASSERT(spectatorRingSegmentCount(ring) == 1);
 
     free(o);
+    sr_teardown(sim, ring, fname);
+    return 0;
+}
+
+/* At a settled keyframe sample, the keyframe's control section is byte-equal to
+   an independent serverSimSerializeControlSnapshot oracle taken at the same
+   settled tick (and the body section still matches its body oracle). The
+   control snapshot is byte-stable at a settled sample for the same reason the
+   body is: idle ticks leave roster/score/team/phase state unchanged across the
+   keys half-step that follows the tap. */
+static int t_sim_control_snapshot(void) {
+    char fname[64];
+    ServerSim *sim;
+    SpectatorRing *ring = NULL;
+    uint32_t it = 1;
+    uint8_t *obody = NULL, *octrl = NULL;
+    int obodylen, octrllen, klen;
+    const uint8_t *kf, *kbody, *kctrl;
+    int kbodyLen, kctrlLen;
+    SpectatorRingCursor cur;
+
+    sr_tmp(fname, sizeof(fname), "ctrl");
+    remove(fname);
+    sim = sr_bringup(fname);
+    UT_ASSERT_MSG(sim != NULL, "bringup failed");
+    ring = spectatorRingCreate(SR_CADENCE, 100000);
+    UT_ASSERT(ring != NULL);
+    logSetSpectatorRing(ring, sim);
+    obody = (uint8_t *)malloc(LOG_SNAPSHOT_BODY_MAX);
+    octrl = (uint8_t *)malloc(LOG_CONTROL_SNAPSHOT_MAX);
+    UT_ASSERT(obody != NULL && octrl != NULL);
+
+    /* Settle so the head keyframe is byte-stable. */
+    obodylen = sr_quiesce_kf(sim, ring, &it, obody);
+    UT_ASSERT_MSG(obodylen > 0, "state never settled");
+
+    /* Independent control-snapshot oracle at the same settled tick. */
+    octrllen = serverSimSerializeControlSnapshot(sim, octrl,
+                                                 LOG_CONTROL_SNAPSHOT_MAX);
+    UT_ASSERT_MSG(octrllen >= 0, "control snapshot serialize failed");
+    UT_ASSERT_MSG(octrllen > 0, "control snapshot unexpectedly empty");
+
+    UT_ASSERT(spectatorRingSeekDelayed(ring, 0, &cur) == SPECTATOR_RING_OK);
+    kf = spectatorRingCursorKeyframe(&cur, &klen, NULL);
+    UT_ASSERT(sr_split_keyframe(kf, klen, &kbody, &kbodyLen, &kctrl, &kctrlLen));
+    UT_ASSERT_MSG(kbodyLen == obodylen &&
+                  memcmp(kbody, obody, (size_t)kbodyLen) == 0,
+                  "keyframe body section != body oracle");
+    UT_ASSERT_MSG(kctrlLen == octrllen &&
+                  memcmp(kctrl, octrl, (size_t)kctrlLen) == 0,
+                  "keyframe control section != control oracle");
+
+    free(obody);
+    free(octrl);
     sr_teardown(sim, ring, fname);
     return 0;
 }
@@ -739,6 +833,9 @@ int run_spectator_ring(void) {
         return 1;
     }
     if (t_sim_forward_events()) {
+        return 1;
+    }
+    if (t_sim_control_snapshot()) {
         return 1;
     }
     return 0;
