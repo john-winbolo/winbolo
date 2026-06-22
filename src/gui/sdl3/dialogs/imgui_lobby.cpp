@@ -6585,6 +6585,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
+        bool wantLeaveConfirm = false;
+
         BYTE myPlayerNum = gameFrontGetPlayerNum();
 
         /* --- Header: Server info line --- */
@@ -6645,20 +6647,23 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * a back arrow (left-pointing triangle) drawn into a normal-height
              * button so it matches Add Team / Ready visually without depending
              * on geometric-shape glyphs being present in the active font. */
-            float leaveBtnH = ImGui::GetFrameHeight();
-            float leaveBtnW = leaveBtnH * 1.4f;
-            ImVec2 leaveBtnPos = ImGui::GetCursorScreenPos();
-            bool leaveClicked = ImGui::Button("##leave", ImVec2(leaveBtnW, leaveBtnH));
-            {
-                ImDrawList *dl = ImGui::GetWindowDrawList();
-                float cx = leaveBtnPos.x + leaveBtnW * 0.5f;
-                float cy = leaveBtnPos.y + leaveBtnH * 0.5f;
-                float r  = leaveBtnH * 0.28f;
-                ImVec2 p1(cx - r,         cy);
-                ImVec2 p2(cx + r * 0.7f,  cy - r);
-                ImVec2 p3(cx + r * 0.7f,  cy + r);
-                ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
-                dl->AddTriangleFilled(p1, p2, p3, col);
+            bool leaveClicked = false;
+            if (!uiShouldUseControllerMode()) {
+                float leaveBtnH = ImGui::GetFrameHeight();
+                float leaveBtnW = leaveBtnH * 1.4f;
+                ImVec2 leaveBtnPos = ImGui::GetCursorScreenPos();
+                leaveClicked = ImGui::Button("##leave", ImVec2(leaveBtnW, leaveBtnH));
+                {
+                    ImDrawList *dl = ImGui::GetWindowDrawList();
+                    float cx = leaveBtnPos.x + leaveBtnW * 0.5f;
+                    float cy = leaveBtnPos.y + leaveBtnH * 0.5f;
+                    float r  = leaveBtnH * 0.28f;
+                    ImVec2 p1(cx - r,         cy);
+                    ImVec2 p2(cx + r * 0.7f,  cy - r);
+                    ImVec2 p3(cx + r * 0.7f,  cy + r);
+                    ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+                    dl->AddTriangleFilled(p1, p2, p3, col);
+                }
             }
             if (leaveClicked ||
                 (((ImGui::IsKeyPressed(ImGuiKey_Escape) && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen() && !s_chooseMapOpen && !mapPreviewPopupIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
@@ -6667,11 +6672,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                   || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
 #endif
                  ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
-                char leavePopupId[64];
-                SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
-                ImGui::OpenPopup(leavePopupId);
+                wantLeaveConfirm = true;
             }
-            ImGui::SameLine(0, 16);
+            if (!uiShouldUseControllerMode()) {
+                ImGui::SameLine(0, 16);
+            }
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(langGetText(STR_DLGNETINFO_SERVER));
             ImGui::SameLine();
@@ -7292,9 +7297,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                       || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
 #endif
                      ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
-                    char leavePopupId[64];
-                    SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
-                    ImGui::OpenPopup(leavePopupId);
+                    wantLeaveConfirm = true;
                 }
 
                 /* LT/RT switch tabs — the two trigger glyphs at the right of
@@ -7972,6 +7975,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             }
             ImGui::EndPopup();
         }
+
+        /* Open the leave confirm one frame after the trigger fires, so the
+         * modal first renders on a frame where the B/Escape press has already
+         * been released. Otherwise DialogFooter's own Escape-cancel inside the
+         * modal consumes the same press and dismisses it on appear. */
+        if (wantLeaveConfirm)
+            ImGui::OpenPopup(leavePopupModalId);
 
         /* --- Countdown overlay --- */
         if (clientSimGetNetStatus(cs) == netLobbyCountdown && clientSimGetCountdownSeconds(cs) > 0) {
