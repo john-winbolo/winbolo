@@ -682,10 +682,10 @@ void printArgs() {
   fprintf(stderr, "\nNetworking:\n");
   fprintf(stderr, "-port <Port>  - Port to run the server on\n");
   fprintf(stderr, "-addr         - Specify a different address to use if avaliable\n");
-  fprintf(stderr, "-tracker      - Internet tracker to notify. Options:\n");
-  fprintf(stderr, "                -tracker alone uses default (%s:%d)\n", DEFAULT_TRACKER_ADDR, DEFAULT_TRACKER_PORT);
+  fprintf(stderr, "-tracker      - Internet tracker to notify. On by default (%s:%d).\n", DEFAULT_TRACKER_ADDR, DEFAULT_TRACKER_PORT);
   fprintf(stderr, "                -tracker <host> uses <host> with default port %d\n", DEFAULT_TRACKER_PORT);
   fprintf(stderr, "                -tracker <host:port> uses the specified host and port\n");
+  fprintf(stderr, "-notracker    - do not notify any Internet tracker\n");
   fprintf(stderr, "-upnp         - request automatic UPnP/NAT-PMP port mapping\n");
   fprintf(stderr, "-no-natpunch  - disable hole-punch keepalive (on by default with tracker)\n");
   fprintf(stderr, "-wbnhost      - WinBolo.net host to connect to (overrides preferences file).\n");
@@ -900,18 +900,22 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
 
   /* Option Arguments */
 
-  /* Tracker */
-  *trackerUse = FALSE;
-  if (argExist(numArgs, argv, "tracker") == TRUE) {
+  /* Tracker — enabled by default using the public tracker.  Pass
+     -notracker to opt out, or -tracker [host[:port]] to point at a
+     different tracker. */
+  if (argExist(numArgs, argv, "notracker") == TRUE) {
+    *trackerUse = FALSE;
+  } else {
     *trackerUse = TRUE;
-    argNum = findArg(numArgs, argv, "tracker");
-    if (argNum == ARG_NOT_FOUND || argv[argNum][0] == '-') {
-      /* -tracker with no argument: use default tracker */
-      strncpy(trackerAddr, DEFAULT_TRACKER_ADDR, FILENAME_MAX - 1);
-      trackerAddr[FILENAME_MAX - 1] = '\0';
-      *trackerPort = DEFAULT_TRACKER_PORT;
-    } else {
-      processTrackerArg((char *) argv[argNum], trackerAddr, trackerPort);
+    /* Default tracker unless -tracker supplies an explicit host. */
+    strncpy(trackerAddr, DEFAULT_TRACKER_ADDR, FILENAME_MAX - 1);
+    trackerAddr[FILENAME_MAX - 1] = '\0';
+    *trackerPort = DEFAULT_TRACKER_PORT;
+    if (argExist(numArgs, argv, "tracker") == TRUE) {
+      argNum = findArg(numArgs, argv, "tracker");
+      if (argNum != ARG_NOT_FOUND && argv[argNum][0] != '-') {
+        processTrackerArg((char *) argv[argNum], trackerAddr, trackerPort);
+      }
     }
   }
 
