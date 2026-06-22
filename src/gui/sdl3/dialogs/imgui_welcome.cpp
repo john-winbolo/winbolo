@@ -28,6 +28,7 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
 #include "imgui_nav_outline.h"
+#include "imgui_controller_prompt.h"
 #include "../imgui_steam_nav.h"
 #if !BOLO_MOBILE
 #include "imgui_news.h"
@@ -253,6 +254,7 @@ extern "C" int imguiWelcomeShow(void) {
         ImGui::NewFrame();
         imguiSteamNavActivateMenuSet();
         imguiSteamNavFeedCurrentContext();
+        controllerDialogsRenderMenu();
 
         /* Transparent full-screen host window */
         ImGui::SetNextWindowPos(ImVec2(0, 0));

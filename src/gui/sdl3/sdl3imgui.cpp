@@ -4275,34 +4275,9 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_clearNavFocus = false;
     }
 
-    /* Phase 8.1 — controller-detected prompt.  Rising edge from no
-       gamepad → gamepad connected, when controller mode is currently off
-       and the player hasn't dismissed the prompt with "Don't ask again".
-       Skip on tablet (mobile has its own touch UX) and on Deck (already
-       always controller-mode).  Allowed in lobby — a controller plugged
-       in at the menu is exactly when the prompt is most useful.
-
-       First-frame sync: seed from the current connection state without
-       firing.  Without this, a controller plugged in before the main
-       context started rendering would always look like a "rising edge"
-       on the first frame and pop the prompt even if the player just
-       launched with the pad already attached. */
-    {
-        static bool s_initialized   = false;
-        static bool s_lastConnected = false;
-        bool nowConnected = inputGamepadIsConnected();
-        if (!s_initialized) {
-            s_lastConnected = nowConnected;
-            s_initialized   = true;
-        } else if (nowConnected && !s_lastConnected &&
-                   !uiModeIsTablet() && !uiModeIsSteamDeck() &&
-                   !uiShouldUseControllerMode() &&
-                   uiControllerPromptAskOnConnectGet() &&
-                   !controllerPromptIsOpen()) {
-            controllerPromptOpen();
-        }
-        s_lastConnected = nowConnected;
-    }
+    /* Controller-detected prompt: poll the gamepad-connected rising edge
+       (shared with the menu loops). */
+    controllerPromptPollConnectEdge();
 
     /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
        Pause action, default Start). Opens whenever a controller is connected
@@ -4367,14 +4342,16 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             ImGui::IsKeyPressed(ImGuiKey_Escape, false);
         bool cancelClosedPanel = false;
         if (cancelEdge && !anyPopup && !ImGui::GetIO().WantTextInput) {
-            if      (s_showSettings)       { s_showSettings = false;     cancelClosedPanel = true; }
+            /* The info windows open on top of Settings, so B must close them
+               before Settings — check them first in the ladder. */
+            if      (s_showSysInfo)        { s_showSysInfo = false;      cancelClosedPanel = true; }
+            else if (s_showNetInfo)        { s_showNetInfo = false;      cancelClosedPanel = true; }
+            else if (s_showGameInfo)       { s_showGameInfo = false;     cancelClosedPanel = true; }
+            else if (s_showSettings)       { s_showSettings = false;     cancelClosedPanel = true; }
             else if (s_showSendMsg)        { s_showSendMsg = false;      cancelClosedPanel = true; }
             else if (s_showPlayersPanel)   { s_showPlayersPanel = false; cancelClosedPanel = true; }
             else if (s_brainSettingsOpen)  { s_brainSettingsOpen = false;cancelClosedPanel = true; }
             else if (s_allianceVisible)    { s_allianceVisible = false;  cancelClosedPanel = true; }
-            else if (s_showSysInfo)        { s_showSysInfo = false;      cancelClosedPanel = true; }
-            else if (s_showNetInfo)        { s_showNetInfo = false;      cancelClosedPanel = true; }
-            else if (s_showGameInfo)       { s_showGameInfo = false;     cancelClosedPanel = true; }
         }
 
         /* Escape opens the pause overlay when a controller is connected and
