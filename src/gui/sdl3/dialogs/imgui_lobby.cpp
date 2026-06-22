@@ -2517,7 +2517,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     float btnBarH = ImGui::GetFrameHeight() + 14.0f * s;
     ImGui::BeginChild("##MapChooserBody",
                       ImVec2(0.0f, -btnBarH),
-                      ImGuiChildFlags_None,
+                      ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar);
 
     /* Tab switch detection. Clearing the new tab's preview on entry
