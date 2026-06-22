@@ -3586,6 +3586,12 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
 /* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
 static int s_expandedBotSlot = -1;
 
+/* Tab the trigger/shoulder tab-cycle wants selected next frame in the
+ * tabbed lobby layout, or -1 for "no forced selection". Set from the
+ * LT/RT (or native L1/R1) shift, applied via ImGuiTabItemFlags_SetSelected,
+ * then cleared after the tab bar. */
+static int s_lobbyForceTab = -1;
+
 /* Kick-confirm dialog state. Populated when an authorised player picks
  * "Kick" from a row's right-click context menu; the modal at the bottom
  * of renderTeamGroupedPlayers reads it on the next frame. */
@@ -6204,10 +6210,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     int lastChatLen = 0;
     bool teamChatUnread = false;
     int lastTeamChatLen = 0;
-#if BOLO_MOBILE
-    /* Active tab index for the mobile tabbed layout */
-    int activeTab = 0;      /* 0=Players, 1=Map, 2=Chat(General), 3=Team */
-#endif
+    /* Active tab index for the tabbed layout (mobile, or desktop controller
+     * mode). 0=Players, 1=Map, 2=Chat(General), 3=Team */
+    int activeTab = 0;
 
     /* Query safe area insets for notch avoidance */
     DialogSafeInsets safeInsets = dialogGetSafeInsets(window);
@@ -6667,9 +6672,15 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * status block above. */
 
         /* --- Main content --- */
+        /* Controller mode reuses the tabbed layout (Players | Map | Chat)
+         * instead of the two-column desktop layout; mouse/desktop keeps the
+         * two-column view. Mobile has no two-column path. */
 #if BOLO_MOBILE
-        /* Tabbed layout for mobile: Players | Map | Chat */
-        {
+        const bool useTabbedLobby = true;
+#else
+        const bool useTabbedLobby = uiShouldUseControllerMode();
+#endif
+        if (useTabbedLobby) {
             float availW = ImGui::GetContentRegionAvail().x - padR;
             float btnAreaH = ImGui::GetTextLineHeightWithSpacing() * 2 + 16.0f * s;
 
@@ -6685,9 +6696,30 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             }
             lastTeamChatLen = teamChatLen;
 
+            /* Trigger-driven tab cycling. The Team-chat tab only exists while
+             * the local player is on a team, so the visible count (and the
+             * wraparound modulus) is 3 or 4. A native pad feeds L1/R1 even with
+             * ImGui gamepad nav off; under Steam Input the pad is hidden from
+             * SDL, so the menu_tab_left/right actions (mapped to LT/RT) arrive
+             * via imguiSteamNavConsumeMenuTabShift instead. */
+            {
+                const ClientLobbySlot *myTabSlot =
+                    clientSimGetLobbySlot(cs, myPlayerNum);
+                bool onTeam = myTabSlot && myTabSlot->teamNumber != 0;
+                int visibleTabCount = onTeam ? 4 : 3;
+                int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
+                          - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
+                if (shift == 0)
+                    shift = imguiSteamNavConsumeMenuTabShift();
+                if (shift != 0)
+                    s_lobbyForceTab =
+                        (activeTab + shift + visibleTabCount) % visibleTabCount;
+            }
+
             if (ImGui::BeginTabBar("##LobbyTabs")) {
                 /* --- Players tab --- */
-                if (ImGui::BeginTabItem(langGetText(STR_MENU_PLAYERS))) {
+                if (ImGui::BeginTabItem(langGetText(STR_MENU_PLAYERS), nullptr,
+                        s_lobbyForceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 0;
                     /* Allow New Players row above the player list (mobile). */
                     renderAllowNewPlayersRow(cs, myPlayerNum, s);
@@ -6841,7 +6873,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
 
                 /* --- Map tab --- */
-                if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_MAP_TAB))) {
+                if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_MAP_TAB), nullptr,
+                        s_lobbyForceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 1;
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
 
@@ -7002,7 +7035,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
                         chatTabColorPushed = true;
                     }
-                    if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT))) {
+                    if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT), nullptr,
+                            s_lobbyForceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
                         activeTab = 2;
                         chatUnread = false;
                         if (chatTabColorPushed) {
@@ -7046,7 +7080,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
                             teamTabColorPushed = true;
                         }
-                        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_TEAM))) {
+                        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_TEAM), nullptr,
+                                s_lobbyForceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
                             activeTab = 3;
                             teamChatUnread = false;
                             if (teamTabColorPushed) {
@@ -7080,6 +7115,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                 ImGui::EndTabBar();
             }
+            /* One-shot: the forced selection has been applied (or the bar
+             * wasn't drawn this frame), so don't keep re-forcing it. */
+            s_lobbyForceTab = -1;
 
             /* --- Bottom buttons (always visible) --- */
             ImGui::Spacing();
@@ -7137,9 +7175,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
             }
         }
-#else
-        /* --- Desktop: Players (left) + Map Preview (right) --- */
-        {
+        else {
+            /* --- Desktop: Players (left) + Map Preview (right) --- */
             float availW = ImGui::GetContentRegionAvail().x - padR;
             /* Total vertical content area before any rendering — used to
              * fill the lobby so the chat block's bottom sits flush with
@@ -7750,7 +7787,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             }
             ImGui::EndGroup(); /* /right column */
         } /* /desktop layout scope (playerPanelW/mapPanelW) */
-#endif
 
         /* --- Map preview popup --- */
         {
