@@ -252,9 +252,9 @@ extern "C" int imguiOnboardingShow(void) {
                                       ImGuiWindowFlags_NoMove |
                                       ImGuiWindowFlags_NoCollapse;
         if (keysStep) {
-            float panelH = 560.0f * s;
-            if (panelH > maxPanelH) panelH = maxPanelH;
-            ImGui::SetNextWindowSize(ImVec2(panelW, panelH));
+            /* Fill the available height so the scrolling binding list shows as
+               many rows as fit. */
+            ImGui::SetNextWindowSize(ImVec2(panelW, maxPanelH));
         } else {
             ImGui::SetNextWindowSizeConstraints(ImVec2(panelW, 0.0f),
                                                 ImVec2(panelW, maxPanelH));
