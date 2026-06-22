@@ -76,8 +76,17 @@ void controllerPromptRender(void) {
         ImGui::TextDisabled("%s", langGetText(STR_CTRL_PROMPT_DESC));
         ImGui::Spacing();
 
-        const ImVec2 btnSize(140.0f, 0.0f);
         ImGuiStyle &style = ImGui::GetStyle();
+        /* Size every button to the widest label (+ horizontal frame padding)
+           so no language clips, clamped so short labels stay balanced. */
+        float maxLabel = ImGui::CalcTextSize(langGetText(STR_YES)).x;
+        float w = ImGui::CalcTextSize(langGetText(STR_CTRL_PROMPT_NOTNOW)).x;
+        if (w > maxLabel) maxLabel = w;
+        w = ImGui::CalcTextSize(langGetText(STR_CTRL_PROMPT_DONTASK)).x;
+        if (w > maxLabel) maxLabel = w;
+        float btnWidth = maxLabel + style.FramePadding.x * 2.0f;
+        if (btnWidth < 140.0f) btnWidth = 140.0f;
+        const ImVec2 btnSize(btnWidth, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
                             ImVec2(style.FramePadding.x, 8.0f));
 
