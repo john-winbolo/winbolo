@@ -393,6 +393,10 @@ static MapChooserState  s_chooseMapWbnState      = {};
 static bool             s_chooseMapStateInited   = false;
 static char             s_chooseMapPrevName[128] = "";
 static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=random 3=wbn */
+/* Source tab the trigger/shoulder tab-cycle wants selected next frame in the
+ * map chooser, or -1 for "no forced selection". Applied via
+ * ImGuiTabItemFlags_SetSelected, then cleared once after the tab bar. */
+static int              s_chooseMapForceTab      = -1;
 /* When true, the chooser window is force-sized to almost the full
  * lobby window — leaving a few chat lines visible at the bottom.
  * Toggled by the corner icon button, or by pressing Esc while the
@@ -2526,8 +2530,35 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * still see both: their server lives on a different machine, so
      * its data/maps/ tree is distinct from the client's. */
     bool inProcessServer = (gameFrontGetServerSim() != NULL);
+    /* ImGui tab headers aren't reachable by arrow nav, so in controller mode
+     * the triggers (LT/RT via the Steam menu-tab actions, or a native pad's
+     * L1/R1) cycle the source tabs. Step only over the tabs visible this
+     * frame so a hidden Server tab is skipped. The lobby's own tab-cycle is
+     * suppressed while this chooser is open, so the trigger press is ours. */
+    if (uiShouldUseControllerMode()) {
+        int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
+                  - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
+        if (shift == 0)
+            shift = imguiSteamNavConsumeMenuTabShift();
+        if (shift != 0) {
+            int vis[4];
+            int nVis = 0;
+            if (!inProcessServer) vis[nVis++] = 0;                  /* Server */
+            if (inProcessServer ||
+                clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF)
+                vis[nVis++] = 1;                                    /* Local/Upload */
+            vis[nVis++] = 2;                                        /* Generate */
+            vis[nVis++] = 3;                                        /* WBN */
+            int cur = 0;
+            for (int i = 0; i < nVis; i++) {
+                if (vis[i] == s_chooseMapActiveTab) { cur = i; break; }
+            }
+            s_chooseMapForceTab = vis[(cur + shift + nVis) % nVis];
+        }
+    }
     if (ImGui::BeginTabBar("##MapChooserTabs", ImGuiTabBarFlags_None)) {
-        if (!inProcessServer && ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_SERVERMAPS))) {
+        if (!inProcessServer && ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_SERVERMAPS), nullptr,
+                s_chooseMapForceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_chooseMapActiveTab = 0;
             if (s_lastActiveTab != 0 && activeTabBefore != 0) {
                 lobbyMapTabClearSelection(&s_chooseMapState);
@@ -2539,7 +2570,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGui::EndTabItem();
         }
         if ((inProcessServer || clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF) &&
-            ImGui::BeginTabItem(langGetText(inProcessServer ? STR_DLGLOBBY_TAB_LOCALMAPS : STR_DLGLOBBY_TAB_UPLOAD))) {
+            ImGui::BeginTabItem(langGetText(inProcessServer ? STR_DLGLOBBY_TAB_LOCALMAPS : STR_DLGLOBBY_TAB_UPLOAD), nullptr,
+                s_chooseMapForceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_chooseMapActiveTab = 1;
             if (s_lastActiveTab != 1 && activeTabBefore != 1) {
                 lobbyMapTabClearSelection(&s_chooseMapUploadState);
@@ -2547,7 +2579,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             lobbyRenderMapTab(&s_chooseMapUploadState, renderer, s);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_GENERATE))) {
+        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_GENERATE), nullptr,
+                s_chooseMapForceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_chooseMapActiveTab = 2;
             float availW = ImGui::GetContentRegionAvail().x;
             float availH = ImGui::GetContentRegionAvail().y;
@@ -2590,7 +2623,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             }
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS))) {
+        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS), nullptr,
+                s_chooseMapForceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_chooseMapActiveTab = 3;
             if (s_lastActiveTab != 3 && activeTabBefore != 3) {
                 lobbyMapTabClearSelection(&s_chooseMapWbnState);
@@ -2601,6 +2635,9 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
         ImGui::EndTabBar();
     }
+    /* One-shot: the forced selection has been applied (or the bar wasn't
+     * drawn this frame), so don't keep re-forcing it. */
+    s_chooseMapForceTab = -1;
     s_lastActiveTab = s_chooseMapActiveTab;
     ImGui::EndChild(); /* ##MapChooserBody */
     /* The child window becomes the "last item" after EndChild — its
@@ -6701,8 +6738,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * wraparound modulus) is 3 or 4. A native pad feeds L1/R1 even with
              * ImGui gamepad nav off; under Steam Input the pad is hidden from
              * SDL, so the menu_tab_left/right actions (mapped to LT/RT) arrive
-             * via imguiSteamNavConsumeMenuTabShift instead. */
-            {
+             * via imguiSteamNavConsumeMenuTabShift instead. Suppressed while the
+             * Choose Map window is open so the trigger press cycles its source
+             * tabs (rendered later this frame) instead of the lobby tabs. */
+            if (!s_chooseMapOpen) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
                 bool onTeam = myTabSlot && myTabSlot->teamNumber != 0;
