@@ -800,6 +800,168 @@ static int t_sim_control_snapshot(void) {
     return 0;
 }
 
+/* By-recordSeq lookup (spectatorRingRecordAt) and the cursor seed seq
+   (spectatorRingCursorSeedSeq). A synthetic multi-segment stream gives exact
+   control of seq/segment/keyframe placement and an evicting ring for the
+   low-end out-of-range edge; a real-sim keyframe then proves a looked-up
+   keyframe payload parses as the 2d-a [u32 bodyLen]... layout. */
+static int t_record_at_and_seed_seq(void) {
+    SpectatorRing *r;
+    SpectatorRing *r2;
+    SpectatorRing *empty;
+    SpectatorRingCursor cur;
+    SpectatorRingCursor zero;
+    bool isKf;
+    const uint8_t *pay;
+    int payLen;
+    uint32_t gt, seg, s;
+    uint32_t head, oldest;
+    uint32_t prevGt = 0, prevSeg = 0;
+    bool firstSeq = true;
+    int keyframes = 0, events = 0;
+
+    /* Empty ring / NULL ring: every lookup is false. */
+    empty = spectatorRingCreate(1000, 100000);
+    UT_ASSERT(empty != NULL);
+    UT_ASSERT(spectatorRingRecordAt(empty, 0, &isKf, &pay, &payLen, &gt, &seg)
+              == false);
+    UT_ASSERT(spectatorRingRecordAt(NULL, 0, NULL, NULL, NULL, NULL, NULL)
+              == false);
+    spectatorRingDestroy(empty);
+
+    /* A zeroed cursor (ring NULL) reports seed seq 0 — the empty convention. */
+    memset(&zero, 0, sizeof(zero));
+    UT_ASSERT(spectatorRingCursorSeedSeq(&zero) == 0);
+
+    /* Scripted stream: segment A (seq0..4) with a mid-stream keyframe at seq3,
+       then a reset opens segment B (seq5..7). */
+    r = spectatorRingCreate(1000, 100000);
+    UT_ASSERT(r != NULL);
+    UT_ASSERT(rec_kf(r, 0, 8));  /* seq0  A keyframe         */
+    UT_ASSERT(rec_ev(r, 1, 5));  /* seq1  A event            */
+    UT_ASSERT(rec_ev(r, 2, 5));  /* seq2  A event            */
+    UT_ASSERT(rec_kf(r, 3, 8));  /* seq3  A mid-stream keyfr */
+    UT_ASSERT(rec_ev(r, 4, 5));  /* seq4  A event            */
+    UT_ASSERT(rec_kf(r, 0, 8));  /* seq5  B keyframe (reset) */
+    UT_ASSERT(rec_ev(r, 1, 5));  /* seq6  B event            */
+    UT_ASSERT(rec_ev(r, 2, 5));  /* seq7  B event            */
+    head = spectatorRingHeadSeq(r);
+    oldest = spectatorRingOldestSeq(r);
+    UT_ASSERT(head == 7 && oldest == 0);
+
+    /* Spot-checks: keyframe vs event flag, gameTick, segment, payload bytes. */
+    UT_ASSERT(spectatorRingRecordAt(r, 0, &isKf, &pay, &payLen, &gt, &seg));
+    UT_ASSERT(isKf && gt == 0 && seg == 0 && payLen == 8 &&
+              payload_matches(pay, payLen, 0));
+    UT_ASSERT(spectatorRingRecordAt(r, 1, &isKf, &pay, &payLen, &gt, &seg));
+    UT_ASSERT(!isKf && gt == 1 && seg == 0 && payLen == 5 &&
+              payload_matches(pay, payLen, 1));
+    UT_ASSERT(spectatorRingRecordAt(r, 3, &isKf, NULL, NULL, &gt, &seg));
+    UT_ASSERT(isKf && gt == 3 && seg == 0);
+    UT_ASSERT(spectatorRingRecordAt(r, 5, &isKf, &pay, &payLen, &gt, &seg));
+    UT_ASSERT(isKf && gt == 0 && seg == 1 && payload_matches(pay, payLen, 0));
+
+    /* Sweep: every retained seq resolves; gameTick is monotonic within a
+       segment; at least one keyframe and one event are seen. */
+    for (s = oldest; s <= head; s++) {
+        UT_ASSERT(spectatorRingRecordAt(r, s, &isKf, &pay, &payLen, &gt, &seg));
+        if (!firstSeq && seg == prevSeg) {
+            UT_ASSERT_MSG(gt > prevGt, "gameTick not monotonic within a segment");
+        }
+        if (isKf) {
+            keyframes++;
+        } else {
+            events++;
+        }
+        prevGt = gt;
+        prevSeg = seg;
+        firstSeq = false;
+    }
+    UT_ASSERT(keyframes >= 1 && events >= 1);
+
+    /* High-end out of range; oldest==0 here so the low end is covered by r2. */
+    UT_ASSERT(spectatorRingRecordAt(r, head + 1, NULL, NULL, NULL, NULL, NULL)
+              == false);
+
+    /* Cursor seed seq: a delay landing in segment B seeds at seq5 (B's
+       keyframe); a delay landing in segment A seeds at seq3 (newest A keyframe
+       at-or-before the target). Each seed seq is a keyframe and is <= the
+       target (head - delay). */
+    UT_ASSERT(spectatorRingSeekDelayed(r, 1, &cur) == SPECTATOR_RING_OK);
+    UT_ASSERT(spectatorRingCursorSeedSeq(&cur) == 5);
+    UT_ASSERT(spectatorRingRecordAt(r, spectatorRingCursorSeedSeq(&cur), &isKf,
+                                    NULL, NULL, NULL, NULL) && isKf);
+    UT_ASSERT(spectatorRingCursorSeedSeq(&cur) <= head - 1);
+
+    UT_ASSERT(spectatorRingSeekDelayed(r, 4, &cur) == SPECTATOR_RING_OK);
+    UT_ASSERT(spectatorRingCursorSeedSeq(&cur) == 3);  /* target seq3, A keyfr */
+    UT_ASSERT(spectatorRingRecordAt(r, spectatorRingCursorSeedSeq(&cur), &isKf,
+                                    NULL, NULL, NULL, NULL) && isKf);
+    UT_ASSERT(spectatorRingCursorSeedSeq(&cur) <= head - 4);
+    spectatorRingDestroy(r);
+
+    /* Evicting ring (cadence 3, retention 5): early frames age out so oldest>0,
+       exercising the genuine low-end out-of-range edge. */
+    r2 = spectatorRingCreate(3, 5);
+    UT_ASSERT(r2 != NULL);
+    for (gt = 0; gt <= 12; gt++) {
+        bool kf = spectatorRingNeedsKeyframe(r2, gt);
+        UT_ASSERT(spectatorRingRecordTick(r2, gt, kf, NULL, 0) == true);
+    }
+    head = spectatorRingHeadSeq(r2);
+    oldest = spectatorRingOldestSeq(r2);
+    UT_ASSERT(oldest > 0);
+    UT_ASSERT(spectatorRingRecordAt(r2, oldest - 1, NULL, NULL, NULL, NULL, NULL)
+              == false);
+    UT_ASSERT(spectatorRingRecordAt(r2, oldest, &isKf, NULL, NULL, NULL, NULL));
+    UT_ASSERT(spectatorRingRecordAt(r2, head, NULL, NULL, NULL, NULL, NULL));
+    UT_ASSERT(spectatorRingRecordAt(r2, head + 1, NULL, NULL, NULL, NULL, NULL)
+              == false);
+    spectatorRingDestroy(r2);
+
+    /* Real-sim keyframe: a looked-up keyframe payload parses as the 2d-a
+       [u32 bodyLen][body][u32 ctrlLen][ctrl] layout. */
+    {
+        char fname[64];
+        ServerSim *sim;
+        SpectatorRing *ring = NULL;
+        uint32_t it = 1;
+        uint8_t *o = NULL;
+        int olen;
+        uint32_t seedSeq;
+        const uint8_t *kbody, *kctrl;
+        int kbodyLen, kctrlLen;
+
+        sr_tmp(fname, sizeof(fname), "recat");
+        remove(fname);
+        sim = sr_bringup(fname);
+        UT_ASSERT_MSG(sim != NULL, "bringup failed");
+        ring = spectatorRingCreate(SR_CADENCE, 100000);
+        UT_ASSERT(ring != NULL);
+        logSetSpectatorRing(ring, sim);
+        o = (uint8_t *)malloc(LOG_SNAPSHOT_BODY_MAX);
+        UT_ASSERT(o != NULL);
+
+        olen = sr_quiesce_kf(sim, ring, &it, o);
+        UT_ASSERT_MSG(olen > 0, "state never settled");
+        seedSeq = spectatorRingHeadSeq(ring);
+
+        UT_ASSERT(spectatorRingRecordAt(ring, seedSeq, &isKf, &pay, &payLen,
+                                        NULL, NULL));
+        UT_ASSERT_MSG(isKf, "settled head record is not a keyframe");
+        UT_ASSERT_MSG(pay != NULL && payLen > 0, "keyframe payload empty");
+        UT_ASSERT(sr_split_keyframe(pay, payLen, &kbody, &kbodyLen,
+                                    &kctrl, &kctrlLen));
+        UT_ASSERT_MSG(kbodyLen == olen && memcmp(kbody, o, (size_t)kbodyLen) == 0,
+                      "looked-up keyframe body != settled oracle");
+
+        free(o);
+        sr_teardown(sim, ring, fname);
+    }
+
+    return 0;
+}
+
 /* The live lifecycle helpers (serverInstanceCreate/Destroy/GetSpectatorRing)
    stand up a ring for a spectating-enabled server, feed it through the log tap
    as the sim ticks, segment it on a world reset, gate it off when spectating is
@@ -921,6 +1083,9 @@ int run_spectator_ring(void) {
         return 1;
     }
     if (t_sim_control_snapshot()) {
+        return 1;
+    }
+    if (t_record_at_and_seed_seq()) {
         return 1;
     }
     if (t_sim_live_ring_lifecycle()) {

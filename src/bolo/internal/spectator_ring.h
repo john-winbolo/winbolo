@@ -125,6 +125,21 @@ bool spectatorRingCursorNextEvents(SpectatorRingCursor *cur,
                                    const uint8_t **payload, int *outLen,
                                    uint32_t *outGameTick);
 
+/* Look up the record at an absolute recordSeq. Returns false (and leaves the
+ * out-params untouched) when the ring is empty or recordSeq is outside the
+ * retained range [oldestSeq, headSeq]. On true, fills the requested out-params;
+ * *outPayload is NULL for a zero-length event. Any out-param may be NULL.
+ * O(1): recordSeq maps directly to a storage index. */
+bool spectatorRingRecordAt(const SpectatorRing *r, uint32_t recordSeq,
+                           bool *outIsKeyframe, const uint8_t **outPayload,
+                           int *outLen, uint32_t *outGameTick,
+                           uint32_t *outSegment);
+
+/* The recordSeq of the cursor's seed keyframe (the point a forward feed
+ * resumes from after the seed). Valid on the same terms as the cursor:
+ * only until the next spectatorRingRecordTick. */
+uint32_t spectatorRingCursorSeedSeq(const SpectatorRingCursor *cur);
+
 /* Newest recorded recordSeq (0 when the ring is empty). */
 uint32_t spectatorRingHeadSeq(const SpectatorRing *r);
 

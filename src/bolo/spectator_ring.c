@@ -300,6 +300,55 @@ bool spectatorRingCursorNextEvents(SpectatorRingCursor *cur,
     return true;
 }
 
+bool spectatorRingRecordAt(const SpectatorRing *r, uint32_t recordSeq,
+                           bool *outIsKeyframe, const uint8_t **outPayload,
+                           int *outLen, uint32_t *outGameTick,
+                           uint32_t *outSegment) {
+    uint32_t oldest;
+    uint32_t idx;
+    const SpectatorRecord *rec;
+
+    if (r == NULL || r->count == 0) {
+        return false;
+    }
+    oldest = r->recs[0].recordSeq;
+    if (recordSeq < oldest) {
+        return false;
+    }
+    idx = recordSeq - oldest;
+    if (idx >= (uint32_t)r->count) {
+        return false;
+    }
+
+    rec = &r->recs[idx];
+    if (outIsKeyframe != NULL) {
+        *outIsKeyframe = rec->isKeyframe;
+    }
+    if (outPayload != NULL) {
+        *outPayload = rec->payload;
+    }
+    if (outLen != NULL) {
+        *outLen = rec->len;
+    }
+    if (outGameTick != NULL) {
+        *outGameTick = rec->gameTick;
+    }
+    if (outSegment != NULL) {
+        *outSegment = rec->segment;
+    }
+    return true;
+}
+
+uint32_t spectatorRingCursorSeedSeq(const SpectatorRingCursor *cur) {
+    if (cur == NULL || cur->ring == NULL) {
+        return 0;
+    }
+    if (cur->seedIdx < 0 || cur->seedIdx >= cur->ring->count) {
+        return 0;
+    }
+    return cur->ring->recs[cur->seedIdx].recordSeq;
+}
+
 uint32_t spectatorRingHeadSeq(const SpectatorRing *r) {
     if (r->count == 0) {
         return 0;
