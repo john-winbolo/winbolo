@@ -42,8 +42,10 @@ extern "C" {
 #include "../lang.h"
 #include "client_sim.h"   /* clientSimGetLobbySlot, ClientLobbySlot */
 #include "client_net.h"   /* clientSimNetSendLobbyClaimStart */
+#include "../ui_mode.h"   /* uiShouldUseControllerMode */
 }
 #include "lobby_start_markers.h"   /* shared start-ownership marker helpers */
+#include "lobby_start_list.h"      /* controller-mode non-spatial start list */
 
 /* Singleton popup state. */
 static bool             g_popupOpen        = false;
@@ -176,6 +178,28 @@ static int startPickerHoverStart(ImVec2 imgMin, ImVec2 contentSize) {
         if (best < 0 || d2 < bestD2) { best = i; bestD2 = d2; }
     }
     return best;
+}
+
+/* Draw a highlight ring at a single 1-based start, mapped into the displayed
+ * image rect — used in controller mode to show which start the focusable list
+ * has focus on. Same world->screen path as startPickerHoverStart. No-op when
+ * the start isn't mapped (e.g. minimap zoom) or falls off the image rect. */
+static void highlightStartOnMap(ImVec2 imgMin, ImVec2 contentSize, int start1) {
+    if (!g_popupView || start1 < 1) return;
+    int texW = 0, texH = 0;
+    mapPreviewViewGetTextureSize(g_popupView, &texW, &texH);
+    if (texW <= 0 || texH <= 0) return;
+    BYTE mx, my;
+    if (!mapPreviewViewGetStart(g_popupView, (BYTE)start1, &mx, &my)) return;
+    float tx, ty;
+    if (!mapPreviewViewWorldToScreen(g_popupView, mx, my, &tx, &ty)) return;
+    float sx = imgMin.x + (tx / (float)texW) * contentSize.x;
+    float sy = imgMin.y + (ty / (float)texH) * contentSize.y;
+    if (sx < imgMin.x || sx > imgMin.x + contentSize.x ||
+        sy < imgMin.y || sy > imgMin.y + contentSize.y) return;
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    dl->AddCircle(ImVec2(sx, sy), 16.0f, IM_COL32(255, 255, 255, 235), 0, 3.0f);
+    dl->AddCircle(ImVec2(sx, sy), 16.0f, IM_COL32(0, 0, 0, 160), 0, 1.0f);
 }
 
 /* True when the start picker wants the left-drag (a drag is active, or the
@@ -471,23 +495,58 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
         ImVec2 contentSize(full.x, full.y - btnRowH);
         if (contentSize.y < 64.0f) contentSize.y = 64.0f;
 
-        /* Render the offscreen at the actual content rect size now
+        /* Controller mode swaps the spatial zoom/pan/click picker for a
+         * focusable start list down the left, with the map kept on the
+         * right as a highlight-only view of the focused start. The pad
+         * drives the list (Space/A claims); no wheel/drag/zoom. */
+        bool controllerPicker = uiShouldUseControllerMode() && g_startPickerCs;
+        float listW = 0.0f;
+        ImVec2 mapSize = contentSize;
+        if (controllerPicker) {
+            listW = contentSize.x * 0.34f;
+            if (listW < 200.0f) listW = 200.0f;
+            if (listW > contentSize.x - 120.0f) listW = contentSize.x - 120.0f;
+            if (listW < 0.0f) listW = 0.0f;
+            mapSize.x = contentSize.x - listW - ImGui::GetStyle().ItemSpacing.x;
+            if (mapSize.x < 64.0f) mapSize.x = 64.0f;
+        }
+
+        /* Render the offscreen at the actual map rect size now
          * that we know it (excludes title bar / window padding /
-         * button-row reservation). Done inside the modal — mid-frame
-         * SDL_SetRenderTarget is safe here, same pattern the chooser
-         * uses. */
-        if (contentSize.x > 0 && contentSize.y > 0 && g_popupView) {
+         * button-row reservation, and the list column in controller
+         * mode). Done inside the modal — mid-frame SDL_SetRenderTarget
+         * is safe here, same pattern the chooser uses. */
+        if (mapSize.x > 0 && mapSize.y > 0 && g_popupView) {
             /* Colour each start by ownership before the boats/dots render. */
             uint8_t owners[MAX_STARTS];
             int nOwn = startPickerComputeOwners(owners, MAX_STARTS);
             mapPreviewViewSetStartOwners(g_popupView, nOwn ? owners : NULL, nOwn);
             mapPreviewViewRenderOffscreen(g_popupView, renderer,
-                                           (int)contentSize.x,
-                                           (int)contentSize.y);
+                                           (int)mapSize.x,
+                                           (int)mapSize.y);
         }
         if (mapPreviewViewIsReady(g_popupView)) {
             SDL_Texture *tex = mapPreviewViewGetTexture(g_popupView);
-            if (tex) {
+            if (tex && controllerPicker) {
+                /* Focusable start list on the left; the pad navigates it and
+                 * activates a free start to claim. The map on the right is
+                 * highlight-only — no wheel/drag/zoom input is fed. */
+                int startCount = mapPreviewViewGetStartCount(g_popupView);
+                /* NavFlattened so the list's rows live in the popup window's
+                 * focus scope — the pad navigates straight into them and
+                 * B/Escape still closes the popup in one press (no extra
+                 * nav-cancel step backing out of a child first). */
+                ImGui::BeginChild("##StartListCol", ImVec2(listW, contentSize.y),
+                                  ImGuiChildFlags_NavFlattened);
+                int focusedStart = lobbyStartListRender(g_startPickerCs,
+                                                        g_startPickerMySlot,
+                                                        startCount);
+                ImGui::EndChild();
+                ImGui::SameLine();
+                ImVec2 imgMin = ImGui::GetCursorScreenPos();
+                ImGui::Image((ImTextureID)tex, mapSize);
+                highlightStartOnMap(imgMin, mapSize, focusedStart);
+            } else if (tex) {
                 ImVec2 imgMin = ImGui::GetCursorScreenPos();
                 ImGui::Image((ImTextureID)tex, contentSize);
                 /* Overlay an InvisibleButton on the image rect so a
@@ -509,24 +568,26 @@ void mapPreviewPopupRenderModal(SDL_Renderer *renderer) {
             }
             /* Zoom indicator overlay — aligned to the bottom-right of
              * the IMAGE rect, sitting just above the button row so it
-             * doesn't overlap. */
-            char zoomText[16];
-            SDL_snprintf(zoomText, sizeof(zoomText), "%.2fx",
-                         mapPreviewViewGetZoom(g_popupView));
-            ImVec2 textSize = ImGui::CalcTextSize(zoomText);
-            ImVec2 windowPos = ImGui::GetWindowPos();
-            ImVec2 windowSize = ImGui::GetWindowSize();
-            float pad = 8.0f;
-            ImVec2 textPos(
-                windowPos.x + windowSize.x - textSize.x - pad
-                    - ImGui::GetStyle().WindowPadding.x,
-                windowPos.y + windowSize.y - textSize.y - pad
-                    - ImGui::GetStyle().WindowPadding.y - btnRowH);
-            ImDrawList *dl = ImGui::GetWindowDrawList();
-            ImVec2 bgMin(textPos.x - 4, textPos.y - 2);
-            ImVec2 bgMax(textPos.x + textSize.x + 4, textPos.y + textSize.y + 2);
-            dl->AddRectFilled(bgMin, bgMax, IM_COL32(0, 0, 0, 160), 4.0f);
-            dl->AddText(textPos, IM_COL32(255, 255, 255, 220), zoomText);
+             * doesn't overlap. Hidden in controller mode (no zoom). */
+            if (!controllerPicker) {
+                char zoomText[16];
+                SDL_snprintf(zoomText, sizeof(zoomText), "%.2fx",
+                             mapPreviewViewGetZoom(g_popupView));
+                ImVec2 textSize = ImGui::CalcTextSize(zoomText);
+                ImVec2 windowPos = ImGui::GetWindowPos();
+                ImVec2 windowSize = ImGui::GetWindowSize();
+                float pad = 8.0f;
+                ImVec2 textPos(
+                    windowPos.x + windowSize.x - textSize.x - pad
+                        - ImGui::GetStyle().WindowPadding.x,
+                    windowPos.y + windowSize.y - textSize.y - pad
+                        - ImGui::GetStyle().WindowPadding.y - btnRowH);
+                ImDrawList *dl = ImGui::GetWindowDrawList();
+                ImVec2 bgMin(textPos.x - 4, textPos.y - 2);
+                ImVec2 bgMax(textPos.x + textSize.x + 4, textPos.y + textSize.y + 2);
+                dl->AddRectFilled(bgMin, bgMax, IM_COL32(0, 0, 0, 160), 4.0f);
+                dl->AddText(textPos, IM_COL32(255, 255, 255, 220), zoomText);
+            }
         } else {
             macOSPinchZoomConsume(); /* drain so it doesn't jump when data arrives */
             ImGui::Text("Map preview loading...");

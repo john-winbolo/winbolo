@@ -7582,11 +7582,30 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                         bx0, by0, bx1, by1);
                 drawLobbyPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
                                              bx0, by0, bx1, by1);
+                /* Controller-reachable entry to the start picker: a focusable
+                 * activation over the preview that opens the popup (which in
+                 * controller mode shows the non-spatial start list). The pad
+                 * has no click, so the mouse onClick path below can't reach
+                 * it; Space/A on this item does. Mouse mode keeps the plain
+                 * Image + click-to-open and skips this focusable overlap. */
+                if (uiShouldUseControllerMode() && popupCompressedData) {
+                    ImGui::SetCursorScreenPos(miniMin);
+                    ImGui::SetNextItemAllowOverlap();
+                    if (ImGui::InvisibleButton("##openStartPicker",
+                                               ImVec2(innerSize, innerSize))) {
+                        mapPreviewPopupOpenCompressed(popupCompressedData,
+                                                      popupCompressedLen,
+                                                      mapBounds.minX, mapBounds.minY,
+                                                      mapBounds.maxX, mapBounds.maxY);
+                    }
+                }
                 /* Reserve the full box so the gap also sits below the map. */
                 ImGui::SetCursorPosY(boxTopY + previewSize);
                 /* A click that didn't land on a start opens the zoomed popup
-                 * (clicking a free start moves you there instead). */
-                if (popupCompressedData && !miniConsumed) {
+                 * (clicking a free start moves you there instead). Mouse only —
+                 * controller opens it via the focusable overlap above. */
+                if (popupCompressedData && !miniConsumed &&
+                    !uiShouldUseControllerMode()) {
                     mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
                                            mapBounds.minX, mapBounds.minY,
                                            mapBounds.maxX, mapBounds.maxY);
