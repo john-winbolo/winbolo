@@ -1258,6 +1258,25 @@ static void serverAcceptSpectator(ServerSim *sim,
     serverSendSpectatorAccept(s, sim, fromAddr);
 }
 
+/* Release a spectator slot. A spectator holds no tank, no sim player, and no
+ * control-bus subscription, so teardown is just freeing the slot and resetting
+ * its in-place channel/bulk state — none of serverDisconnectClient's
+ * WBN/chat/subscriber/serverSimRemovePlayer work applies. graceful=false is a
+ * timeout; graceful=true is reserved for the explicit leave path (2c) and does
+ * the same teardown for now. */
+static void serverDisconnectSpectator(int s, bool graceful) {
+    if (s < 0 || s >= MAX_SPECTATORS || !udpServer.spectators[s].connected) {
+        return;
+    }
+    mpDiagLog("[srv] SPECTATOR DISCONNECT idx=%d graceful=%d", s, (int)graceful);
+    udpServer.spectators[s].connected = false;
+    channelMuxInit(&udpServer.spectators[s].channelMux);   /* reset in place */
+    bulkSenderInit(&udpServer.spectators[s].bulkSend);
+    udpServer.spectators[s].playerName[0] = '\0';
+    udpServer.spectators[s].outSequence = 0;
+    udpServer.spectators[s].inboundCmdSeq = 0;
+}
+
 /* Send PACKET_WBN_REKEY to a single connected client carrying the current
  * server_key.  Called right after JOIN_ACCEPT so the joiner learns the
  * WBN session key without a credential ever riding the JOIN wire field,
@@ -5069,6 +5088,21 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
                 (serverSimGetState(sim) == serverStateLobby || serverSimGetState(sim) == serverStateCountdown)) {
                 serverSimPublishLobbySlot(sim, (BYTE)i);
             }
+        }
+    }
+
+    /* Age out idle spectators. No per-tick channel servicing here — a
+     * spectator has no forward feed until the ring serve path (2d); this
+     * only frees a slot whose viewer has gone silent. */
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        if (!udpServer.spectators[i].connected) continue;
+        if (udpServer.tickCount - udpServer.spectators[i].lastReceivedTick
+            > CLIENT_TIMEOUT_TICKS) {
+            mpDiagLog("[srv] SPECTATOR TIMEOUT idx=%d diff=%u CLIENT_TIMEOUT_TICKS=%d",
+                      i,
+                      (unsigned)(udpServer.tickCount - udpServer.spectators[i].lastReceivedTick),
+                      (int)CLIENT_TIMEOUT_TICKS);
+            serverDisconnectSpectator(i, false);
         }
     }
 }

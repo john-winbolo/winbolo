@@ -34,6 +34,7 @@
 #include "transport_udp.h"     /* WBN_JOIN_KEY_WIRE_LEN, JOIN_FLAG_SPECTATOR, transportUdpServerGetSpectatorCount */
 #include "transport_udp_internal.h" /* packHeader, getPacketType */
 #include "server_sim.h"        /* serverSimSetMaxSpectators, serverSimGetNumPlayers */
+#include "server_sim_lifecycle.h" /* serverSimSetAllowNewPlayers (locked-game case) */
 #include "test_harness.h"
 #include "loopback_harness.h"
 
@@ -106,12 +107,13 @@ static void sjDriveOnce(LoopbackHarness *h, SOCKET sock,
                         const uint8_t *join, int joinLen,
                         const struct sockaddr_in *server,
                         bool wantNoAccept,
-                        bool *gotAccept, bool *gotChallenge,
+                        bool *gotAccept, bool *gotChallenge, bool *gotReject,
                         uint8_t *acceptSlot, uint8_t *outCookie) {
     Uint64 deadline;
     int extra = 0;
     *gotAccept    = false;
     *gotChallenge = false;
+    *gotReject    = false;
     sendto(sock, (const char *)join, joinLen, 0,
            (const struct sockaddr *)server, sizeof(*server));
     deadline = SDL_GetTicks() + SJ_REPLY_DEADLINE_MS;
@@ -125,6 +127,8 @@ static void sjDriveOnce(LoopbackHarness *h, SOCKET sock,
             if (type == PACKET_JOIN_ACCEPT && n > PACKET_HEADER_SIZE) {
                 *gotAccept = true;
                 if (acceptSlot != NULL) *acceptSlot = in[PACKET_HEADER_SIZE];
+            } else if (type == PACKET_JOIN_REJECT) {
+                *gotReject = true;
             } else if (type == PACKET_JOIN_CHALLENGE &&
                        n >= PACKET_HEADER_SIZE + JOIN_COOKIE_LEN) {
                 *gotChallenge = true;
@@ -135,6 +139,7 @@ static void sjDriveOnce(LoopbackHarness *h, SOCKET sock,
             drained = true;
         }
         if (*gotAccept) return;
+        if (*gotReject) return;   /* refusal is terminal — no deadline burn */
         if (*gotChallenge) {
             if (!wantNoAccept) return;
             if (++extra >= SJ_NOACCEPT_PUMPS) return;
@@ -153,23 +158,25 @@ static bool sjHandshakeAccepts(LoopbackHarness *h, SOCKET s,
                                uint8_t *acceptSlot) {
     uint8_t joinBuf[1024];
     uint8_t cookie[JOIN_COOKIE_LEN];
-    bool gotAccept, gotChallenge;
+    bool gotAccept, gotChallenge, gotReject;
     int attempt;
 
     for (attempt = 0; attempt < SJ_BOUNDARY_RETRIES; attempt++) {
         uint64_t w0 = sjCookieWindow();
         int joinLen = sjBuildJoin(joinBuf, name, JOIN_FLAG_SPECTATOR, NULL);
         sjDriveOnce(h, s, joinBuf, joinLen, server, /*wantNoAccept*/ false,
-                    &gotAccept, &gotChallenge, NULL, cookie);
+                    &gotAccept, &gotChallenge, &gotReject, NULL, cookie);
         if (gotAccept) return true;          /* accepted with no cookie?? */
+        if (gotReject) return false;         /* refused outright */
         if (!gotChallenge) return false;     /* no challenge — treat as refused */
 
         joinLen = sjBuildJoin(joinBuf, name, JOIN_FLAG_SPECTATOR, cookie);
         sjDriveOnce(h, s, joinBuf, joinLen, server,
                     /*wantNoAccept*/ !expectAccept,
-                    &gotAccept, &gotChallenge, acceptSlot, NULL);
+                    &gotAccept, &gotChallenge, &gotReject, acceptSlot, NULL);
         if (gotAccept) return true;
-        if (sjCookieWindow() - w0 >= 2) continue; /* cookie aged out — retry */
+        if (gotReject) return false;               /* refused — terminal, fast */
+        if (sjCookieWindow() - w0 >= 2) continue;  /* cookie aged out — retry */
         return false;                              /* genuinely refused */
     }
     return false;
@@ -181,6 +188,13 @@ static bool sjHandshakeAccepts(LoopbackHarness *h, SOCKET s,
 static bool sjHarnessPlayerSeated(LoopbackHarness *h, void *user) {
     (void)user;
     return serverSimGetNumPlayers(h->sim) >= 1;
+}
+
+/* True once every spectator slot has aged out of the timeout sweep. */
+static bool sjNoSpectators(LoopbackHarness *h, void *user) {
+    (void)h;
+    (void)user;
+    return transportUdpServerGetSpectatorCount() == 0;
 }
 
 int run_spectator_join(void) {
@@ -274,6 +288,47 @@ int run_spectator_join(void) {
                 SDL_Log("  spectator join: skipping (c) — (b) seated no spectator");
             }
         }
+    }
+
+    /* ---- (d) locked game stays watchable (W-4): with new-player joins
+     *           closed, a flagged spectator JOIN is still admitted ---- */
+    {
+        SOCKET s = sjOpenSocketOnIp("127.0.0.5");
+        if (s == INVALID_SOCKET) {
+            SDL_Log("  spectator join: skipping (d) — 127.0.0.5 not bindable");
+        } else {
+            uint8_t slotByte = 0;
+            bool accepted;
+            int before = transportUdpServerGetSpectatorCount();
+            /* Raise the cap above the current population so this admit isn't
+             * gated by the cap left at 1 by case (c) — we want to prove the
+             * game-lock, not the cap, is what doesn't apply. */
+            serverSimSetMaxSpectators(h.sim, 4);
+            serverSimSetAllowNewPlayers(h.sim, false);   /* close player joins */
+            accepted = sjHandshakeAccepts(&h, s, &serverAddr, "SpecD",
+                                          /*expectAccept*/ true, &slotByte);
+            closesocket(s);
+            if (!accepted) {
+                loopbackHarnessStop(&h);
+                UT_FAIL("spectator JOIN refused on a locked game (W-4 violated)");
+            }
+            UT_ASSERT_MSG(slotByte == 0xFF,
+                          "locked-game spectator accept must carry the 0xFF sentinel");
+            UT_ASSERT_MSG(transportUdpServerGetSpectatorCount() == before + 1,
+                          "locked-game spectator must still be seated");
+        }
+    }
+
+    /* ---- (e) timeout frees the slot: stop sending spectator traffic and
+     *           pump past CLIENT_TIMEOUT_TICKS until every spectator ages
+     *           out; the harness player (which keeps pinging) is undisturbed.
+     *           Run last so the population ends at zero. ---- */
+    {
+        int reached = loopbackHarnessPumpUntil(&h, 1500, sjNoSpectators, NULL);
+        UT_ASSERT_MSG(reached > 0 && transportUdpServerGetSpectatorCount() == 0,
+                      "idle spectators must time out and free their slots");
+        UT_ASSERT_MSG(serverSimGetNumPlayers(h.sim) == baselinePlayers,
+                      "spectator timeout must not disturb the player roster");
     }
 
     loopbackHarnessStop(&h);
