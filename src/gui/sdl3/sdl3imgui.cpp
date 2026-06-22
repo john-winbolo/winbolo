@@ -1517,7 +1517,14 @@ static void renderPlayersPanel(ClientSim *cs) {
             imguiHandOnHover();
             if (disabled) ImGui::EndDisabled();
             if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+                ImGui::SetTooltip("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
+            }
+            /* Controller users can't hover for the tooltip — show the reason
+               as a greyed caption under the disabled button. */
+            if (rankedGame && uiShouldUseControllerMode()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
+                ImGui::PopStyleColor();
             }
         }
     }
@@ -1585,6 +1592,16 @@ static void renderPlayersPanel(ClientSim *cs) {
             } else {
                 ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP));
             }
+        }
+        /* Controller users can't hover for the tooltip — show the reason
+           as a greyed caption under the disabled button. */
+        if (surrDisabled && uiShouldUseControllerMode()) {
+            const char *reason = meUnassigned
+                ? langGetText(STR_VOTE_SURRENDER_PICK_TEAM_TIP)
+                : langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", reason);
+            ImGui::PopStyleColor();
         }
 
         /* Answer rows for any in-flight vote — reachable with a
@@ -2392,17 +2409,20 @@ static void renderSettingsPanel(ClientSim *cs) {
         return;
     }
 
-    /* File actions — tablet/mobile only (desktop has menu bar) */
-    if (uiModeIsTablet()) {
+    /* File actions — Save Map reachable on tablet and under a controller
+       (desktop has the menu bar); Leave Game stays tablet-only. */
+    if (uiModeIsTablet() || uiShouldUseControllerMode()) {
         if (ImGui::Button(langGetText(STR_MENU_SAVE_MAP), ImVec2(-1, 0))) {
             windowSaveMap(cs);
             s_showSettings = false;
         }
         imguiHandOnHover();
-        if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
-            windowNewGame();
+        if (uiModeIsTablet()) {
+            if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
+                windowNewGame();
+            }
+            imguiHandOnHover();
         }
-        imguiHandOnHover();
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -2434,6 +2454,70 @@ static void renderSettingsPanel(ClientSim *cs) {
                 }
             }
             imguiHandOnHover();
+        }
+
+        /* ---- Language picker ---- */
+        /* Scan the installed languages once and cache for the process
+         * lifetime — they don't change at runtime, so the entries are
+         * intentionally never freed. */
+        static LangFileEntry *s_langEntries = nullptr;
+        static int            s_langCount   = 0;
+        static bool           s_langScanned = false;
+        if (!s_langScanned) {
+            s_langEntries = langPickerScan(&s_langCount);
+            s_langScanned = true;
+        }
+
+        int curLangIdx = 0;
+        {
+            char curCode[32];
+            curCode[0] = '\0';
+            gameFrontGetLanguageCode(curCode, (int)sizeof(curCode));
+            if (curCode[0] != '\0') {
+                for (int i = 0; i < s_langCount; i++) {
+                    if (strcmp(curCode, s_langEntries[i].code) == 0) {
+                        curLangIdx = i;
+                        break;
+                    }
+                }
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_LANGUAGE_LBL));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(220);
+        const char *curLangLabel =
+            (curLangIdx >= 0 && curLangIdx < s_langCount &&
+             s_langEntries[curLangIdx].meta.name[0] != '\0')
+                ? s_langEntries[curLangIdx].meta.name
+                : langGetText(STR_DLGLANG_NAME);
+        if (ImGui::BeginCombo("##settingslanguage", curLangLabel)) {
+            for (int i = 0; i < s_langCount; i++) {
+                const char *itemLabel =
+                    (s_langEntries[i].meta.name[0] != '\0')
+                        ? s_langEntries[i].meta.name
+                        : s_langEntries[i].code;
+                bool selected = (curLangIdx == i);
+                if (ImGui::Selectable(itemLabel, selected)) {
+                    if (i == 0) {
+                        /* English baseline — drop any loaded override and
+                         * persist "en" so a relaunch keeps this choice. */
+                        langUnloadFile();
+                        gameFrontSetLanguageCode("en");
+                    } else {
+                        if (langLoadFile(s_langEntries[i].path)) {
+                            gameFrontSetLanguageCode(s_langEntries[i].code);
+                        }
+                    }
+                    curLangIdx = i;
+                    /* Rebuild the main-context atlas at the safe point
+                     * between frames; applyMainContextUiScale re-merges the
+                     * new language's CJK primary so glyphs render live. */
+                    s_pendingUiScaleRebuild = true;
+                }
+            }
+            ImGui::EndCombo();
         }
 
         if (!uiModeIsTablet()) {
@@ -2483,19 +2567,20 @@ static void renderSettingsPanel(ClientSim *cs) {
             const char *zoomLabels[] = {
                 langGetText(STR_MENU_NORMAL),
                 langGetText(STR_MENU_DOUBLE),
+                langGetText(STR_MENU_TRIPLE),
                 langGetText(STR_MENU_QUAD),
                 langGetText(STR_MENU_CUSTOM_RESIZABLE),
             };
-            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
+            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_TRIPLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
             int curZoomIdx = 0;
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < 5; i++) {
                 if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
             }
             ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_WINDOWSIZE));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(100);
             if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
-                for (int i = 0; i < 4; i++) {
+                for (int i = 0; i < 5; i++) {
                     bool selected = (curZoomIdx == i);
                     if (ImGui::Selectable(zoomLabels[i], selected)) {
                         s_pendingZoom = zoomValues[i];
@@ -2546,9 +2631,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_RELSTEER), &relSteering)) {
                 inputTouchSetAbsoluteSteering(!relSteering);
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", langGetText(STR_DLGSETTINGS_RELSTEER_TIP));
-            }
+            imguiHelpTooltip(langGetText(STR_DLGSETTINGS_RELSTEER_TIP));
         }
 
         if (inputGamepadIsConnected()) {
@@ -2645,6 +2728,72 @@ static void renderSettingsPanel(ClientSim *cs) {
                 windowMenuAllowNewPlayers_toggle(cs);
             }
         }
+    }
+
+    /* ---- Info ---- */
+    ImGui::Separator();
+    if (ImGui::Selectable(langGetText(STR_DLGGAMEINFO_TITLE), s_showGameInfo)) s_showGameInfo = !s_showGameInfo;
+    if (ImGui::Selectable(langGetText(STR_DLGSYSINFO_TITLE),  s_showSysInfo))  { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; }
+    if (ImGui::Selectable(langGetText(STR_DLGNETINFO_TITLE),  s_showNetInfo))  { if (!s_showNetInfo) pingGraphReset();  s_showNetInfo = !s_showNetInfo; }
+
+    /* ---- Brains ---- */
+    if (clientSimGetAiType(cs) != aiNone) {
+        if (ImGui::CollapsingHeader(langGetText(STR_MENU_BRAINS))) {
+            bool running = luaBrainIsRunning() != 0;
+            int  runIdx  = luaBrainGetRunningIndex();
+
+            /* Manual (stop brain) entry — selected when no brain is active */
+            if (ImGui::Selectable(langGetText(STR_MENU_MANUAL), !running)) {
+                if (running) {
+                    luaBrainStop();
+                    mlBrainStopSingleton();
+                }
+            }
+
+            /* One entry per discovered brain */
+            int numBrains = luaBrainGetNum();
+            if (numBrains > 0) {
+                ImGui::Separator();
+                for (int bi = 0; bi < numBrains; bi++) {
+                    const char *name = luaBrainGetName(bi);
+                    bool isActive    = running && (bi == runIdx);
+                    if (ImGui::Selectable(name ? name : "?", isActive)) {
+                        if (!isActive) {
+                            const char *path = luaBrainGetPath(bi);
+                            if (path) {
+                                if (luaBrainGetType(bi) == BRAIN_TYPE_ONNX) {
+                                    mlBrainStartSingleton(path, name ? name : "", cs);
+                                } else {
+                                    luaBrainStart(path, name ? name : "", cs);
+                                }
+                                /* Refresh settings descriptor for the new brain */
+                                luaBrainFreeSettings(s_brainSettings);
+                                s_brainSettings      = nullptr;
+                                s_brainSettingsCount = 0;
+                                s_brainSettingsOpen  = false;
+                            }
+                        }
+                    }
+                }
+            }
+
+            /* Settings entry — only when a Lua brain is running (ONNX has no settings) */
+            if (running && !mlBrainSingletonIsRunning()) {
+                ImGui::Separator();
+                if (ImGui::Button(langGetText(STR_MENU_SETTINGS))) {
+                    /* Re-fetch on every open so values are current */
+                    luaBrainFreeSettings(s_brainSettings);
+                    s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
+                    s_brainSettingsOpen  = true;
+                }
+            }
+        }
+    }
+
+    /* ---- About ---- */
+    ImGui::Separator();
+    if (ImGui::Button(langGetText(STR_MENU_ABOUT))) {
+        sdl3ImguiShowAbout();
     }
 
     ImGui::End();
@@ -2801,7 +2950,7 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     KMOD_PRIMARY_LABEL "R", false, !rankedGame))
                 clientSimRequestAllianceSelected(cs);
             if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+                ImGui::SetTooltip("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
             }
             if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                             clientSimLeaveAllianceSelf(cs);
         }
@@ -4850,7 +4999,7 @@ bool drawCountryFlagWithTip(const char *countryCode) {
     SDL_Texture *flagTex = flagsGetTexture(countryCode);
     if (!flagTex) return false;
     ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
-    if (ImGui::IsItemHovered()) {
+    if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
         const CountryNameEntry *e = (const CountryNameEntry *)bsearch(
             up, kCountryNames, K_COUNTRY_NAMES_SIZE,
             sizeof(kCountryNames[0]), countryNameCmp);
@@ -4868,7 +5017,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
         /* Bot slot: brain icon stands in for the platform badge and the
          * WBN/Steam badges are skipped — a bot can never be either. */
         ImGui::Image((ImTextureID)s_iconBrain, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_AI));
+        imguiHelpTooltip(langGetText(STR_PLAYER_TIP_AI));
         ImGui::SameLine();
     } else {
         SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
@@ -4880,7 +5029,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                                ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
                                ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0, 0, 0, 0), tint);
-            if (ImGui::IsItemHovered()) {
+            if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
                 const char *plat = platformName(clientType);
                 if (flags & PLAYER_FLAG_SUPPORTER) {
                     MessageArgs args = {};
@@ -4898,16 +5047,14 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
              * otherwise — same scheme as the platform icon above. */
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
             imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
+            imguiHelpTooltip(langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
             ImGui::SameLine();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
             ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
-                                                    ? STR_PLAYER_TIP_STEAM_LINKED
-                                                    : STR_PLAYER_TIP_STEAM_BUILD));
+            imguiHelpTooltip(langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
+                                         ? STR_PLAYER_TIP_STEAM_LINKED
+                                         : STR_PLAYER_TIP_STEAM_BUILD));
             ImGui::SameLine();
         }
     }

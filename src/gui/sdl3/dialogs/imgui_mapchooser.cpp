@@ -753,7 +753,7 @@ static void renderViewModeToggle(MapChooserState *state,
             clicked = ImGui::Button(fallback);
         }
         if (active) ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+        imguiHelpTooltip(tooltip);
         if (clicked) state->viewMode = mode;
     };
 
@@ -1096,6 +1096,63 @@ void mapChooserLocalFsEnumerate(MapChooserState *state,
             }
         }
         SDL_free(list);
+    }
+
+    /* Root view also surfaces .map files saved to the writable per-user
+     * directory (where controller Save Map writes), so they're loadable
+     * here. Subfolder navigation stays within data/maps. */
+    if (!inSubfolder) {
+        char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+        if (prefDir) {
+            char mapsDir[FILENAME_MAX];
+            SDL_snprintf(mapsDir, sizeof(mapsDir), "%smaps", prefDir);
+            int pcount = 0;
+            char **plist = SDL_GlobDirectory(mapsDir, NULL, 0, &pcount);
+            if (plist) {
+                for (int i = 0; i < pcount && state->numMaps < MAP_CHOOSER_MAX_MAPS; i++) {
+                    const char *name = plist[i];
+                    if (name[0] == '.') continue;
+                    size_t nlen = SDL_strlen(name);
+                    if (nlen <= 4 ||
+                        SDL_strcasecmp(name + nlen - 4, ".map") != 0) continue;
+                    if (SDL_strcasecmp(name, "Everard Island.map") == 0) continue;
+
+                    char full[FILENAME_MAX];
+                    SDL_snprintf(full, sizeof(full), "%s/%s", mapsDir, name);
+                    SDL_PathInfo pi;
+                    if (!SDL_GetPathInfo(full, &pi)) continue;
+                    if (pi.type == SDL_PATHTYPE_DIRECTORY) continue;
+
+                    /* Display name = basename minus ".map". */
+                    char disp[FILENAME_MAX];
+                    SDL_strlcpy(disp, name, sizeof(disp));
+                    size_t dlen = SDL_strlen(disp);
+                    if (dlen > 4 &&
+                        SDL_strcasecmp(disp + dlen - 4, ".map") == 0) {
+                        disp[dlen - 4] = '\0';
+                    }
+
+                    /* A data/maps map of the same basename wins the tie:
+                     * skip a pref-dir map whose name is already listed. */
+                    bool dup = false;
+                    for (int j = 0; j < state->numMaps; j++) {
+                        if (!state->maps[j].isFolder &&
+                            SDL_strcasecmp(state->maps[j].name, disp) == 0) {
+                            dup = true; break;
+                        }
+                    }
+                    if (dup) continue;
+
+                    MapChooserEntry *e = &state->maps[state->numMaps++];
+                    memset(e, 0, sizeof(*e));
+                    SDL_strlcpy(e->path, full, sizeof(e->path));
+                    SDL_strlcpy(e->name, disp, sizeof(e->name));
+                    e->modTime = (int64_t)pi.modify_time;
+                }
+                SDL_free(plist);
+            }
+            SDL_free(prefDir);
+        }
     }
 
     /* Folders first, then files, alphabetical within each group;
@@ -1615,7 +1672,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * uses the last-drawn item's rect as a proxy since each
              * segment is its own item. */
             if (state->pathTooltipPrefix[0] != '\0' &&
-                ImGui::IsItemHovered()) {
+                (ImGui::IsItemHovered() || ImGui::IsItemFocused())) {
                 char tipBuf[FILENAME_MAX * 2];
                 if (state->currentDir[0] != '\0') {
                     SDL_snprintf(tipBuf, sizeof(tipBuf), "%s/%s",
@@ -1678,7 +1735,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 textChanged = true;
             }
             if (emptyFilter) ImGui::EndDisabled();
-            if (ImGui::IsItemHovered() && !emptyFilter) {
+            if ((ImGui::IsItemHovered() || ImGui::IsItemFocused()) && !emptyFilter) {
                 ImGui::SetTooltip("Clear search");
             }
             bool prevRecursive = state->searchRecursive;
@@ -1691,9 +1748,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * compact; hover gives a tooltip explaining the trade. */
             ImGui::SameLine();
             ImGui::Checkbox("Created at", &state->showModifiedColumn);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Show file modification times in a second column.");
-            }
+            imguiHelpTooltip("Show file modification times in a second column.");
         }
         /* Stale-state safety net: in non-recursive mode the legacy
          * enumerate populates state->maps with basenames only — no
@@ -2098,9 +2153,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                         ? ImGui::ImageButton(btnId,
                             (ImTextureID)s_iconStarFull, ImVec2(sz, sz))
                         : ImGui::SmallButton("*");
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Click to unstar");
-                    }
+                    imguiHelpTooltip("Click to unstar");
                     ImGui::PopStyleColor(3);
                     ImGui::PopStyleVar();
                     if (toggled) {
@@ -2368,22 +2421,18 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                             ImVec4(1, 1, 1, 0.15f));
                         toggled = ImGui::ImageButton(btnId,
                             (ImTextureID)tex, ImVec2(sz, sz));
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("%s", isStarred
-                                ? "Click to unstar"
-                                : "Click to star to always appear at the top");
-                        }
+                        imguiHelpTooltip(isStarred
+                            ? "Click to unstar"
+                            : "Click to star to always appear at the top");
                         ImGui::PopStyleColor(3);
                         ImGui::PopStyleVar();
                     } else {
                         /* Textual fallback if the SVG didn't load. */
                         toggled = ImGui::SmallButton(
                             isStarred ? "*" : "+");
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("%s", isStarred
-                                ? "Click to unstar"
-                                : "Click to star to always appear at the top");
-                        }
+                        imguiHelpTooltip(isStarred
+                            ? "Click to unstar"
+                            : "Click to star to always appear at the top");
                     }
                     if (toggled) {
                         mapStarsToggle(scope, ent.path, ent.name,
@@ -2678,11 +2727,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 if (clicked) {
                     *state->maximizePtr = !maxed;
                 }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip(maxed
-                        ? "Restore default size (Esc)"
-                        : "Maximize");
-                }
+                imguiHelpTooltip(maxed
+                    ? "Restore default size (Esc)"
+                    : "Maximize");
                 ImGui::PopStyleColor(3);
                 ImGui::SetCursorScreenPos(saved);
                 /* Submit a zero-size dummy so ImGui re-anchors the

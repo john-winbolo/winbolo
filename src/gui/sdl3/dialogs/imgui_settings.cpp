@@ -717,10 +717,9 @@ extern "C" void imguiSettingsShow(void) {
                 if (ImGui::Checkbox(langGetText(STR_MENU_LETTERBOX_GRAY), &lb)) {
                     letterboxBarsGray = !letterboxBarsGray;
                 }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", "Fill the fullscreen border bars with gray "
-                                            "instead of black (when your monitor's aspect "
-                                            "ratio differs from the game).");
+                imguiHelpTooltip("Fill the fullscreen border bars with gray "
+                                 "instead of black (when your monitor's aspect "
+                                 "ratio differs from the game).");
             }
             ImGui::Spacing();
             if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
