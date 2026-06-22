@@ -5763,6 +5763,10 @@ static void renderLockBadge(void) {
  * Time Limit). Locked settings render disabled with a lock badge.
  * Edits dispatch as PACKET_LOBBY_SET_SETTING via the new wire
  * commands. Host-only or anyone if openHost. */
+/* Forward decl — the form body is defined just after the panel, but the
+ * panel (and the controller Settings tab) call it. */
+static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
+
 static void renderGameSettingsPanel(ClientSim *cs,
                                     int myPlayerNum, float s) {
     bool effectiveHost = isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
@@ -5833,6 +5837,22 @@ static void renderGameSettingsPanel(ClientSim *cs,
      * that the settings happen to be interactable for them. The actual
      * editable checkbox is rendered for host/admin only in the "Other"
      * column below. */
+
+    renderGameSettingsBody(cs, myPlayerNum, s);
+}
+
+/* The game-settings form proper (game type / AI policy / mines / time
+ * limit / password). Split out of renderGameSettingsPanel so the
+ * controller Settings tab can render it flat, without the desktop
+ * collapsing-header chrome. Host-gated by every caller. */
+static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
+    /* Same effective-host test the panel computes, recomputed here so the
+     * per-control disabled state is identical whether the body renders in
+     * the desktop collapsing header or the controller Settings tab. */
+    bool effectiveHost = isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
+                         (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                          (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
+                           & PLAYER_FLAG_ADMIN));
 
     /* Settings body uses a smaller font than the rest of the lobby so
      * the 3-column form doesn't dominate the visual hierarchy. */
@@ -6248,7 +6268,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     bool teamChatUnread = false;
     int lastTeamChatLen = 0;
     /* Active tab index for the tabbed layout (mobile, or desktop controller
-     * mode). 0=Players, 1=Map, 2=Chat(General), 3=Team */
+     * mode). 0=Players, 1=Map, 2=Settings(host-only), 3=Chat(General),
+     * 4=Team */
     int activeTab = 0;
 
     /* Query safe area insets for notch avoidance */
@@ -6698,7 +6719,19 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             || (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                 (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                  & PLAYER_FLAG_ADMIN));
-        if (gsEffectiveHost) {
+        /* Tabbed (controller) vs two-column (mouse) layout. Computed here so
+         * the shared settings panel below renders only on the mouse path —
+         * the tabbed layout shows settings in its own Settings tab instead. */
+#if BOLO_MOBILE
+        const bool useTabbedLobby = true;
+#else
+        const bool useTabbedLobby = uiShouldUseControllerMode();
+#endif
+
+        /* Settings above the layout is the two-column (mouse) path only; the
+         * tabbed layout renders the same form in a dedicated tab, so skip it
+         * here to avoid double-rendering it for the host. */
+        if (gsEffectiveHost && !useTabbedLobby) {
             renderGameSettingsPanel(cs, myPlayerNum, s);
             ImGui::Separator();
             ImGui::Spacing();
@@ -6708,51 +6741,58 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * renderConnectivityBadge — see the call site in the read-only
          * status block above. */
 
-        /* --- Main content --- */
-        /* Controller mode reuses the tabbed layout (Players | Map | Chat)
-         * instead of the two-column desktop layout; mouse/desktop keeps the
-         * two-column view. Mobile has no two-column path. */
-#if BOLO_MOBILE
-        const bool useTabbedLobby = true;
-#else
-        const bool useTabbedLobby = uiShouldUseControllerMode();
-#endif
+        /* --- Main content (tabbed in controller mode, two-column for mouse;
+         * useTabbedLobby computed above the shared settings panel) --- */
         if (useTabbedLobby) {
             float availW = ImGui::GetContentRegionAvail().x - padR;
             float btnAreaH = ImGui::GetTextLineHeightWithSpacing() * 2 + 16.0f * s;
 
             /* Detect new chat messages for unread indicator */
             int chatLen = (int)SDL_strlen(clientSimGetLobbyChatHistory(cs));
-            if (chatLen > lastChatLen && activeTab != 2) {
+            if (chatLen > lastChatLen && activeTab != 3) {
                 chatUnread = true;
             }
             lastChatLen = chatLen;
             int teamChatLen = (int)SDL_strlen(clientSimGetLobbyTeamChatHistory(cs));
-            if (teamChatLen > lastTeamChatLen && activeTab != 3) {
+            if (teamChatLen > lastTeamChatLen && activeTab != 4) {
                 teamChatUnread = true;
             }
             lastTeamChatLen = teamChatLen;
 
-            /* Trigger-driven tab cycling. The Team-chat tab only exists while
-             * the local player is on a team, so the visible count (and the
-             * wraparound modulus) is 3 or 4. A native pad feeds L1/R1 even with
-             * ImGui gamepad nav off; under Steam Input the pad is hidden from
-             * SDL, so the menu_tab_left/right actions (mapped to LT/RT) arrive
-             * via imguiSteamNavConsumeMenuTabShift instead. Suppressed while the
+            /* Trigger-driven tab cycling. Settings (host-only) and Team-chat
+             * (on-team-only) are conditional, so step over an explicit list of
+             * the tabs actually drawn this frame — a plain modulo could land on
+             * a missing index. A native pad feeds L1/R1 even with ImGui gamepad
+             * nav off; under Steam Input the pad is hidden from SDL, so the
+             * menu_tab_left/right actions (mapped to LT/RT) arrive via
+             * imguiSteamNavConsumeMenuTabShift instead. Suppressed while the
              * Choose Map window is open so the trigger press cycles its source
              * tabs (rendered later this frame) instead of the lobby tabs. */
             if (!s_chooseMapOpen) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
                 bool onTeam = myTabSlot && myTabSlot->teamNumber != 0;
-                int visibleTabCount = onTeam ? 4 : 3;
                 int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
                           - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
                 if (shift == 0)
                     shift = imguiSteamNavConsumeMenuTabShift();
-                if (shift != 0)
-                    s_lobbyForceTab =
-                        (activeTab + shift + visibleTabCount) % visibleTabCount;
+                if (shift != 0) {
+                    /* Visible tab indices in render order. The Settings
+                     * predicate must match the Settings tab's BeginTabItem
+                     * gate (gsEffectiveHost) exactly. */
+                    int vis[5];
+                    int nVis = 0;
+                    vis[nVis++] = 0;                       /* Players */
+                    vis[nVis++] = 1;                       /* Map */
+                    if (gsEffectiveHost) vis[nVis++] = 2;  /* Settings */
+                    vis[nVis++] = 3;                       /* Chat */
+                    if (onTeam) vis[nVis++] = 4;           /* Team */
+                    int cur = 0;
+                    for (int i = 0; i < nVis; i++) {
+                        if (vis[i] == activeTab) { cur = i; break; }
+                    }
+                    s_lobbyForceTab = vis[(cur + shift + nVis) % nVis];
+                }
             }
 
             if (ImGui::BeginTabBar("##LobbyTabs")) {
@@ -7066,6 +7106,19 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::EndTabItem();
                 }
 
+                /* --- Settings tab (host-only) --- */
+                /* The flat game-settings form, no collapsing header — that
+                 * chrome belongs to the desktop two-column path. Gated on the
+                 * same gsEffectiveHost as the vis[] Settings predicate above. */
+                if (gsEffectiveHost &&
+                    ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_SETTINGS_HEADER), nullptr,
+                        s_lobbyForceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                    activeTab = 2;
+                    ImGui::Spacing();
+                    renderGameSettingsBody(cs, myPlayerNum, s);
+                    ImGui::EndTabItem();
+                }
+
                 /* --- Chat tab (with unread indicator) --- */
                 {
                     bool chatTabColorPushed = false;
@@ -7075,8 +7128,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         chatTabColorPushed = true;
                     }
                     if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT), nullptr,
-                            s_lobbyForceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
-                        activeTab = 2;
+                            s_lobbyForceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                        activeTab = 3;
                         chatUnread = false;
                         if (chatTabColorPushed) {
                             ImGui::PopStyleColor(2);
@@ -7120,8 +7173,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             teamTabColorPushed = true;
                         }
                         if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_TEAM), nullptr,
-                                s_lobbyForceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
-                            activeTab = 3;
+                                s_lobbyForceTab == 4 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                            activeTab = 4;
                             teamChatUnread = false;
                             if (teamTabColorPushed) {
                                 ImGui::PopStyleColor(2);
