@@ -618,6 +618,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * re-fetching. Refreshed whenever loadedPreviewMd5 changes. */
     std::vector<uint8_t> loadedPreviewComp;
 
+    /* One-shot: seed controller focus onto the server list the first frame it
+     * has rows. Cleared once the seed fires; the row loop doesn't run while the
+     * (async-populated) list is empty, so the seed naturally defers until then. */
+    bool seedListFocus = true;
+
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
@@ -1111,6 +1116,18 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             std::stable_sort(visible.begin(), visible.end(),
                              [&](int a, int b) { return pingKey(a) < pingKey(b); });
 
+            /* Row to seed controller focus onto: the selected server if it is
+             * visible, otherwise the first visible row. */
+            int seedTarget = -1;
+            if (!visible.empty()) {
+                seedTarget = visible.front();
+                if (selectedItem >= 0) {
+                    for (int vi : visible) {
+                        if (vi == selectedItem) { seedTarget = selectedItem; break; }
+                    }
+                }
+            }
+
             for (int vi : visible) {
                 int i = vi;
                 const ServerEntry &e = servers[i];
@@ -1125,6 +1142,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 ImVec2 p0 = ImGui::GetCursorScreenPos();
                 bool isSelected = (selectedItem == i);
                 ImGui::SetNextItemAllowOverlap();
+                if (seedListFocus && i == seedTarget && uiShouldUseControllerMode()) {
+                    ImGui::SetKeyboardFocusHere();
+                    seedListFocus = false;
+                }
                 if (ImGui::Selectable("##srv", isSelected,
                                       ImGuiSelectableFlags_AllowDoubleClick,
                                       ImVec2(rowW, rowH))) {
