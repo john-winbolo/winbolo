@@ -619,6 +619,10 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * click on the thumbnail can hand them to the zoomable popup without
      * re-fetching. Refreshed whenever loadedPreviewMd5 changes. */
     std::vector<uint8_t> loadedPreviewComp;
+    /* True only on frames where the current selection's preview texture is
+     * loaded and current, so the footer Enlarge button isn't offered (or
+     * activated) for a stale or missing preview. */
+    bool previewEnlargeReady = false;
 
     /* One-shot: seed controller focus onto the server list the first frame it
      * has rows. Cleared once the seed fires; the row loop doesn't run while the
@@ -1151,11 +1155,17 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (ImGui::Selectable("##srv", isSelected,
                                       ImGuiSelectableFlags_AllowDoubleClick,
                                       ImVec2(rowW, rowH))) {
+                    /* Join on a mouse double-click, or — in controller mode,
+                     * where the row activates via keyboard Space and never a
+                     * mouse double-click — on a second A press on the row that
+                     * was already selected entering this frame (isSelected is
+                     * captured before the assignment below). */
+                    bool joinActivate = ImGui::IsMouseDoubleClicked(0) ||
+                                        (uiShouldUseControllerMode() && isSelected);
                     selectedItem = i;
                     SDL_strlcpy(selKeyAddr, e.address, sizeof(selKeyAddr));
                     selKeyPort = e.port;
-                    if (ImGui::IsMouseDoubleClicked(0)) {
-                        /* Double-click to join */
+                    if (joinActivate) {
                         if (strlen(e.version) >= STRVER_LEN &&
                             strncmp(e.version, STRVER, STRVER_LEN) == 0) {
                             char playerName[PLAYER_NAME_LEN];
@@ -1282,6 +1292,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 haveSel = true;
             }
         }
+        previewEnlargeReady = false;
 
         /* ---- Right: selection detail pane ---- */
         /* Flattened into the parent nav plane so a controller reaches the
@@ -1366,7 +1377,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                                           boxW, boxH);
                             SDL_Texture *tex = mapPreviewViewGetTexture(previewView);
                             if (tex != nullptr) {
-                                ImVec2 imgMin = ImGui::GetCursorScreenPos();
+                                previewEnlargeReady = !loadedPreviewComp.empty();
                                 ImGui::Image((ImTextureID)tex,
                                              ImVec2((float)boxW, (float)boxH));
                                 /* Click the thumbnail to open the zoomable
@@ -1382,30 +1393,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                         (int)loadedPreviewComp.size(),
                                         0, 0, 255, 255);
                                 }
-                                /* Controller-reachable enlarge: the bare Image
-                                 * isn't focusable, so a pad has no way to open
-                                 * the popup. Lay a focusable overlay over the
-                                 * thumbnail that activates on Space/A with the
-                                 * same open call the mouse path uses, then
-                                 * restore the cursor so the caption below still
-                                 * lays out where it did. Mouse mode is left on
-                                 * the Image + click path above. */
-                                if (uiShouldUseControllerMode() && loadedPreviewOk &&
-                                    !loadedPreviewComp.empty()) {
-                                    ImVec2 afterImg = ImGui::GetCursorScreenPos();
-                                    ImGui::SetCursorScreenPos(imgMin);
-                                    ImGui::SetNextItemAllowOverlap();
-                                    if (ImGui::InvisibleButton(
-                                            "##enlargePreview",
-                                            ImVec2((float)boxW, (float)boxH))) {
-                                        mapPreviewPopupOpenCompressed(
-                                            loadedPreviewComp.data(),
-                                            (int)loadedPreviewComp.size(),
-                                            0, 0, 255, 255);
-                                    }
-                                    ImGui::SetCursorScreenPos(afterImg);
-                                }
-                                ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_PREVIEW_ENLARGE));
+                                if (!uiShouldUseControllerMode())
+                                    ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_PREVIEW_ENLARGE));
                             } else {
                                 /* Build not finished this frame — try again next frame. */
                                 centeredDimmed(langGetText(STR_DLGNEWS_LOADING));
@@ -1706,11 +1695,22 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
-            /* Spectate — placeholder, disabled until spectator fields land */
-            ImGui::SameLine();
-            ImGui::BeginDisabled();
-            ImGui::Button(langGetText(STR_DLGBROWSER_SPECTATE), ImVec2(btnW, btnH));
-            ImGui::EndDisabled();
+            /* Controller-only: a pad can't reliably reach the preview-overlay
+             * enlarge button across the detail pane, so expose enlarge as a
+             * first-class footer action. Disabled until the selected server has
+             * a loaded preview. */
+            if (uiShouldUseControllerMode()) {
+                ImGui::SameLine();
+                if (!previewEnlargeReady) ImGui::BeginDisabled();
+                if (ImGui::Button(langGetText(STR_DLGBROWSER_ENLARGE_BTN), ImVec2(btnW, btnH))
+                    && !loadedPreviewComp.empty()) {
+                    mapPreviewPopupOpenCompressed(loadedPreviewComp.data(),
+                                                  (int)loadedPreviewComp.size(),
+                                                  0, 0, 255, 255);
+                }
+                imguiHandOnHover();
+                if (!previewEnlargeReady) ImGui::EndDisabled();
+            }
 
             /* Rejoin */
             ImGui::SameLine();
