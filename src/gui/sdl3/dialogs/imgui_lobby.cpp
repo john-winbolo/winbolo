@@ -4125,7 +4125,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
         SDL_snprintf(teamFrame, sizeof(teamFrame), "##team%d", teamId);
         ImGui::BeginChild(teamFrame,
                           ImVec2(0, 0),
-                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders |
+                              ImGuiChildFlags_NavFlattened);
 
         /* Color header strip — fills the header row's full width with
          * the team color at low alpha, drawn under the header widgets
@@ -6746,11 +6747,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         if (useTabbedLobby) {
             float availW = ImGui::GetContentRegionAvail().x - padR;
             float btnAreaH = ImGui::GetTextLineHeightWithSpacing() * 2 + 16.0f * s;
-            /* Reserve a thin extra row under the buttons for the controller
-             * glyph legend so it doesn't overlap them or clip the tab content
-             * above. Mouse mode draws no legend, so don't reserve it there. */
-            if (uiShouldUseControllerMode())
-                btnAreaH += ImGui::GetFrameHeightWithSpacing();
 
             /* Detect new chat messages for unread indicator */
             int chatLen = (int)SDL_strlen(clientSimGetLobbyChatHistory(cs));
@@ -6808,7 +6804,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     /* Allow New Players row above the player list (mobile). */
                     renderAllowNewPlayersRow(cs, myPlayerNum, s);
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
-                    ImGui::BeginChild("##PlayerPanel", ImVec2(availW, tabH), ImGuiChildFlags_None);
+                    ImGui::BeginChild("##PlayerPanel", ImVec2(availW, tabH), ImGuiChildFlags_NavFlattened);
 
                     /* Layout A: team-grouped player rendering. The
                      * legacy 5-column table below the #if 0 is left
@@ -7145,7 +7141,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         float chatHistH = tabH - inputH;
                         if (chatHistH < 20.0f) chatHistH = 20.0f;
 
-                        ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders);
+                        ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
                         /* Wrap long lines at the child's right edge so a
                          * full-length (128-char) message flows onto extra
                          * lines instead of running off the panel. */
@@ -7190,7 +7186,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             float chatHistH = tabH - inputH;
                             if (chatHistH < 20.0f) chatHistH = 20.0f;
 
-                            ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders);
+                            ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
                             ImGui::PushTextWrapPos(0.0f);
                             ImGui::TextUnformatted(clientSimGetLobbyTeamChatHistory(cs));
                             ImGui::PopTextWrapPos();
@@ -7234,6 +7230,23 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
                 bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady;
 
+                /* Controller mode draws each action's bound glyph inline, just
+                 * left of the button it triggers (A = Ready, B = Leave); the
+                 * LT/RT tab-switch glyphs sit at the row's right. Decoration
+                 * only — the button keeps its text label if a glyph is absent.
+                 * The glyph height matches the button frame height, so the row
+                 * height is unchanged (no extra reserved space). */
+                const bool  padLegend = uiShouldUseControllerMode();
+                const float glyphH    = ImGui::GetFrameHeight();
+                auto glyphInline = [&](const char *action) {
+                    if (!padLegend) return;
+                    SDL_Texture *g = glyphForActionAuto(action);
+                    if (g) {
+                        ImGui::Image((ImTextureID)g, ImVec2(glyphH, glyphH));
+                        ImGui::SameLine(0.0f, 4.0f);
+                    }
+                };
+
                 if (!canReady) ImGui::BeginDisabled();
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
                 if (myReady) {
@@ -7241,6 +7254,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.20f, 0.65f, 0.20f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive,   ImVec4(0.10f, 0.45f, 0.10f, 1.0f));
                 }
+                /* A glyph sits left of Ready. Drawn before the focus seed so
+                 * SetKeyboardFocusHere() still targets the Button (next item),
+                 * not the glyph image. */
+                glyphInline(SI_ACTION_MENU_ACCEPT);
                 /* One-shot initial focus for controller players — only once
                  * Ready is enabled, so we don't try to focus a disabled item. */
                 if (focusReadyPending && canReady) {
@@ -7265,6 +7282,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                  * response (no approval step). */
 
                 ImGui::SameLine(0, 20);
+                glyphInline(SI_ACTION_MENU_CANCEL);   /* B glyph left of Leave */
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
                     (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !dialogNavWasInsideSubRegionAtFrameStart()) ||
                       (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
@@ -7276,32 +7294,19 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
                     ImGui::OpenPopup(leavePopupId);
                 }
-            }
 
-            /* Persistent controller glyph legend — A = Ready/confirm,
-             * B = Leave, LT/RT = switch tab. Each glyph is the currently
-             * bound origin via glyphForActionAuto; mouse mode draws nothing.
-             * Sits in the extra row reserved in btnAreaH above. */
-            if (uiShouldUseControllerMode()) {
-                const float gh = ImGui::GetFrameHeight();
-                auto legendItem = [&](const char *action, const char *label) {
-                    SDL_Texture *g = glyphForActionAuto(action);
-                    if (g) ImGui::Image((ImTextureID)g, ImVec2(gh, gh));
-                    if (label) {
-                        if (g) ImGui::SameLine(0.0f, 4.0f);
-                        ImGui::AlignTextToFramePadding();
-                        ImGui::TextUnformatted(label);
+                /* LT/RT switch tabs — the two trigger glyphs at the right of
+                 * the same button row, no text label (no string fits). */
+                if (padLegend) {
+                    SDL_Texture *gl = glyphForActionAuto(SI_ACTION_MENU_TAB_LEFT);
+                    SDL_Texture *gr = glyphForActionAuto(SI_ACTION_MENU_TAB_RIGHT);
+                    if (gl || gr) {
+                        ImGui::SameLine(0.0f, 18.0f);
+                        if (gl) ImGui::Image((ImTextureID)gl, ImVec2(glyphH, glyphH));
+                        if (gl && gr) ImGui::SameLine(0.0f, 2.0f);
+                        if (gr) ImGui::Image((ImTextureID)gr, ImVec2(glyphH, glyphH));
                     }
-                };
-                legendItem(SI_ACTION_MENU_ACCEPT, langGetText(STR_DLGLOBBY_READY));
-                ImGui::SameLine(0.0f, 18.0f);
-                legendItem(SI_ACTION_MENU_CANCEL, langGetText(STR_DLGLOBBY_LEAVE));
-                ImGui::SameLine(0.0f, 18.0f);
-                /* No existing string fits "switch tab" — show the LT/RT
-                 * glyphs side by side without a text label. */
-                legendItem(SI_ACTION_MENU_TAB_LEFT, NULL);
-                ImGui::SameLine(0.0f, 2.0f);
-                legendItem(SI_ACTION_MENU_TAB_RIGHT, NULL);
+                }
             }
         }
         else {
