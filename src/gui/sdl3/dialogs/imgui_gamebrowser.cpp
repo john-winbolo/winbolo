@@ -46,8 +46,10 @@
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "../imgui_steam_nav.h"
+#include "../glyphs.h"   /* glyphForActionAuto — controller A/B glyphs */
 
 extern "C" {
+#include "../../../steam/steam_input_actions.h"  /* SI_ACTION_MENU_* names */
 #include "../sdl3draw.h"
 #include "../bg_game.h"
 #include "../flags.h"
@@ -1664,7 +1666,22 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         {
             bool hasSelection = (selectedItem >= 0 && selectedItem < (int)servers.size());
 
-            /* Join */
+            /* Controller mode draws the bound A/B glyphs inline, left of the
+             * primary buttons (A = Join, B = Cancel). Glyph height matches the
+             * button frame height so the row height is unchanged. */
+            const bool  padLegend = uiShouldUseControllerMode();
+            const float glyphH    = ImGui::GetFrameHeight();
+            auto glyphInline = [&](const char *action) {
+                if (!padLegend) return;
+                SDL_Texture *g = glyphForActionAuto(action);
+                if (g) {
+                    ImGui::Image((ImTextureID)g, ImVec2(glyphH, glyphH));
+                    ImGui::SameLine(0.0f, 4.0f);
+                }
+            };
+
+            /* Join — A glyph before the disabled-state guard so it isn't dimmed. */
+            glyphInline(SI_ACTION_MENU_ACCEPT);
             if (!hasSelection) ImGui::BeginDisabled();
 
             if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
@@ -1749,8 +1766,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
             imguiHandOnHover();
 
-            /* Cancel - right-aligned, muted-grey styling per dialog spec. */
-            ImGui::SameLine(panelW - btnW - 16.0f * s);
+            /* Cancel - right-aligned, muted-grey styling per dialog spec.
+             * In controller mode a B glyph sits just left of it; shift the
+             * right-align origin left by the glyph width so Cancel keeps its
+             * exact position and the glyph fits beside it. */
+            float cancelX = panelW - btnW - 16.0f * s;
+            if (padLegend) cancelX -= glyphH + 4.0f;
+            ImGui::SameLine(cancelX);
+            glyphInline(SI_ACTION_MENU_CANCEL);
             WBUI::PushCancelStyle();
             bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH));
             WBUI::PopCancelStyle();
