@@ -31,6 +31,8 @@
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
+#include "spectator_ring.h"
+#include "log_internal.h"   /* logSetSpectatorRing */
 
 /* Round-end log hooks installed by WinBoloDS via
  * serverLifecycleSetRoundLogHooks. NULL on every other binary that
@@ -130,6 +132,55 @@ void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs) {
   if (outEwmaMs)  *outEwmaMs  = s_simMsEwma;
 }
 
+/* The live delayed-stream ring for this instance, NULL when spectating is
+ * disabled (maxSpectators == 0) or no MP server is up. Single instance per
+ * process, matching the instance* file-statics above. */
+static SpectatorRing *s_spectatorRing = NULL;
+
+/* Keyframe cadence, in GAME TICKS. The ring's spectatorRingNeedsKeyframe
+ * compares the sim's gameTick, which advances by 2 per recorded tick (two
+ * half-steps per serverSimTick), so a 5-second cadence is 250 records = 500
+ * gameTicks. Distinct from retention, which is counted in recordSeq. */
+#define SPECTATOR_KEYFRAME_CADENCE_GAMETICKS 500
+/* The cadence expressed in records (recordSeq), for the retention derivation:
+ * 5 s at 50 records/s = 250 records (half the gameTick figure). */
+#define SPECTATOR_KEYFRAME_CADENCE_RECORDS   250
+/* Slack kept beyond the delay so the gameover tail stays watchable. */
+#define SPECTATOR_RETENTION_MARGIN_RECORDS   100
+
+/* Create the live ring for this instance and register it with the log tap, so
+ * every serverSimTick records one ring tick while the log is running. No-op
+ * (leaves the ring NULL) when spectating is disabled. Sized in DD-4 units:
+ * cadence in gameTicks, retention in recordSeq = specDelayTicks + two cadence
+ * intervals + margin, so the newest keyframe at-or-before head - delay always
+ * survives. */
+void serverInstanceCreateSpectatorRing(ServerSim *sim) {
+  uint32_t retentionRecords;
+
+  if (serverSimGetMaxSpectators(sim) == 0) {
+    s_spectatorRing = NULL;   /* spectating disabled — record nothing */
+    return;
+  }
+  retentionRecords = serverSimGetSpecDelayTicks(sim) +
+                     2u * SPECTATOR_KEYFRAME_CADENCE_RECORDS +
+                     SPECTATOR_RETENTION_MARGIN_RECORDS;
+  s_spectatorRing = spectatorRingCreate(SPECTATOR_KEYFRAME_CADENCE_GAMETICKS,
+                                        retentionRecords);
+  logSetSpectatorRing(s_spectatorRing, sim);
+}
+
+/* Unregister the tap before freeing, so the timer thread can never touch a
+ * freed ring, then destroy it. NULL-safe and idempotent. */
+void serverInstanceDestroySpectatorRing(void) {
+  logSetSpectatorRing(NULL, NULL);
+  spectatorRingDestroy(s_spectatorRing);
+  s_spectatorRing = NULL;
+}
+
+SpectatorRing *serverInstanceGetSpectatorRing(void) {
+  return s_spectatorRing;
+}
+
 bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   const char *bindAddr = (cfg->bindAddr != NULL) ? cfg->bindAddr : "";
   const char *password = (cfg->password != NULL) ? cfg->password : "";
@@ -161,6 +212,13 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   }
 
   serverSimApplyInstanceConfig(sim, cfg);
+
+  /* Stand up the live delayed-stream ring once the spectator cap / delay are
+   * populated. Only for a real MP host — the welcome-screen sim runs startup
+   * with acceptRemoteClients == FALSE and must record nothing. */
+  if (cfg->acceptRemoteClients) {
+    serverInstanceCreateSpectatorRing(sim);
+  }
 
   instanceUseWbn = cfg->acceptRemoteClients && cfg->useWbn;
   if (instanceUseWbn) {
@@ -753,6 +811,9 @@ void serverInstanceTick(ServerSim *sim) {
 }
 
 void serverInstanceShutdown(ServerSim *sim) {
+  /* Unregister + free the live ring first, so nothing taps it during the rest
+   * of teardown. NULL-safe — a no-op for a sim that never had a ring. */
+  serverInstanceDestroySpectatorRing();
   if (instanceAcceptRemoteClients) {
     mpDiagLogEnable(0);
   }

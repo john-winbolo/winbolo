@@ -22,6 +22,8 @@
 #include "log.h"
 #include "log_internal.h"
 #include "spectator_ring.h"
+#include "server_lifecycle.h"       /* serverInstance*SpectatorRing, ServerInstanceConfig */
+#include "server_sim_lifecycle.h"   /* serverSimApplyInstanceConfig */
 #include "test_harness.h"
 
 /* Fill buf with a tick-derived pattern so a later read can prove identity. */
@@ -798,6 +800,89 @@ static int t_sim_control_snapshot(void) {
     return 0;
 }
 
+/* The live lifecycle helpers (serverInstanceCreate/Destroy/GetSpectatorRing)
+   stand up a ring for a spectating-enabled server, feed it through the log tap
+   as the sim ticks, segment it on a world reset, gate it off when spectating is
+   disabled, and free it on teardown. Drives the helpers directly rather than
+   the heavy serverInstanceStartup (which would need the full UDP/WBN stack). */
+static int t_sim_live_ring_lifecycle(void) {
+    char fname[64];
+    ServerSim *sim;
+    SpectatorRing *ring;
+    ServerInstanceConfig cfg;
+    uint32_t it = 1;
+    uint32_t h1, h2, g0 = 0;
+    int i;
+    SpectatorRingCursor cur;
+
+    sr_tmp(fname, sizeof(fname), "live");
+    remove(fname);
+    sim = sr_bringup(fname);
+    UT_ASSERT_MSG(sim != NULL, "bringup failed");
+
+    /* Enable spectating (cap > 0, a known delay) and stand up the ring. */
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.maxSpectators    = 4;
+    cfg.specDelaySeconds = 2;   /* 100 ticks */
+    serverSimApplyInstanceConfig(sim, &cfg);
+    serverInstanceCreateSpectatorRing(sim);
+    ring = serverInstanceGetSpectatorRing();
+    UT_ASSERT_MSG(ring != NULL, "ring not created for maxSpectators > 0");
+
+    /* The live tap records one ring tick per serverSimTick: head advances. */
+    for (i = 0; i < 4; i++) {
+        sr_tick_idle(sim, &it);
+    }
+    h1 = spectatorRingHeadSeq(ring);
+    for (i = 0; i < 4; i++) {
+        sr_tick_idle(sim, &it);
+    }
+    h2 = spectatorRingHeadSeq(ring);
+    UT_ASSERT_MSG(h2 > h1, "headSeq did not advance under live ticking");
+    UT_ASSERT(spectatorRingSegmentCount(ring) == 1);
+
+    /* Cadence is in gameTicks (500), not records: relative to the segment's
+       first recorded gameTick a full cadence is a keyframe and a half is not.
+       Both queries sit far past the last recorded gameTick, so the new-segment
+       branch (gameTick <= last) can't mask the cadence arithmetic. */
+    UT_ASSERT(spectatorRingSeekDelayed(
+                  ring,
+                  spectatorRingHeadSeq(ring) - spectatorRingOldestSeq(ring),
+                  &cur) == SPECTATOR_RING_OK);
+    (void)spectatorRingCursorKeyframe(&cur, NULL, &g0);
+    UT_ASSERT_MSG(spectatorRingNeedsKeyframe(ring, g0 + 500) == true,
+                  "no keyframe at the 500-gameTick cadence");
+    UT_ASSERT_MSG(spectatorRingNeedsKeyframe(ring, g0 + 250) == false,
+                  "cadence treated as records, not gameTicks");
+
+    /* A world reset opens a new segment once the post-reset tick records. */
+    serverSimResetGameWorld(sim);
+    for (i = 0; i < 2; i++) {
+        sr_tick_idle(sim, &it);
+    }
+    UT_ASSERT_MSG(spectatorRingSegmentCount(ring) == 2,
+                  "reset did not open a new ring segment");
+
+    /* Destroy unregisters the tap and frees the ring: the getter goes NULL. */
+    serverInstanceDestroySpectatorRing();
+    UT_ASSERT_MSG(serverInstanceGetSpectatorRing() == NULL,
+                  "ring not cleared after destroy");
+
+    /* Gating: maxSpectators == 0 creates no ring. */
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.maxSpectators = 0;
+    serverSimApplyInstanceConfig(sim, &cfg);
+    serverInstanceCreateSpectatorRing(sim);
+    UT_ASSERT_MSG(serverInstanceGetSpectatorRing() == NULL,
+                  "ring created despite maxSpectators == 0");
+
+    /* The lifecycle owns its ring, so pass NULL to the generic teardown to
+       avoid a double free; destroy again first for isolation (idempotent). */
+    serverInstanceDestroySpectatorRing();
+    sr_teardown(sim, NULL, fname);
+    return 0;
+}
+
 int run_spectator_ring(void) {
     if (t_segmentation()) {
         return 1;
@@ -836,6 +921,9 @@ int run_spectator_ring(void) {
         return 1;
     }
     if (t_sim_control_snapshot()) {
+        return 1;
+    }
+    if (t_sim_live_ring_lifecycle()) {
         return 1;
     }
     return 0;
