@@ -312,6 +312,16 @@ typedef struct {
      * the bulkSenderBusy guard is the single-blob-in-flight control. */
     uint32_t seedSeq;
     uint32_t lastEmittedSeq;
+    /* Cold-start countdown (2d-f). While the delayed ring holds less than
+     * specDelayTicks of history the seek returns COLD_START: no seed is copied;
+     * instead a throttled SPEC_CTRL_COUNTDOWN status rides the spectator's own
+     * CHANNEL_CONTROL carrying countdownRemaining (= delay - history, clamped
+     * >= 0). inCountdown clears the tick the seek first returns OK and the seed
+     * arms. countdownSentTick throttles the resend — CHANNEL_CONTROL is a
+     * 64-deep window, so one send per SPEC_COUNTDOWN_RESEND_TICKS, not per tick. */
+    bool     inCountdown;
+    uint32_t countdownRemaining;
+    uint32_t countdownSentTick;
 } SpectatorConn;
 
 /* Server-side global state */
@@ -1286,6 +1296,9 @@ static void serverAcceptSpectator(ServerSim *sim,
     udpServer.spectators[s].xferEndSeq   = 0;
     udpServer.spectators[s].seedSeq        = 0;
     udpServer.spectators[s].lastEmittedSeq = 0;
+    udpServer.spectators[s].inCountdown        = false;
+    udpServer.spectators[s].countdownRemaining = 0;
+    udpServer.spectators[s].countdownSentTick  = 0;
 
     serverSendSpectatorAccept(s, sim, fromAddr);
 }
@@ -1316,6 +1329,9 @@ static void serverDisconnectSpectator(int s, bool graceful) {
     udpServer.spectators[s].xferEndSeq = 0;
     udpServer.spectators[s].seedSeq = 0;
     udpServer.spectators[s].lastEmittedSeq = 0;
+    udpServer.spectators[s].inCountdown = false;
+    udpServer.spectators[s].countdownRemaining = 0;
+    udpServer.spectators[s].countdownSentTick = 0;
     udpServer.spectators[s].playerName[0] = '\0';
     udpServer.spectators[s].outSequence = 0;
     udpServer.spectators[s].inboundCmdSeq = 0;
@@ -1459,6 +1475,12 @@ static void serverServiceMapTransfer(int slot) {
  * invalidates on the next RecordTick, so the keyframe bytes are copied into
  * spectator-owned storage at seek time (mirroring serverInitMapDownload's copy
  * of the compressed map); the bulk transfer then drains that copy across ticks. */
+
+/* CHANNEL_CONTROL is a 64-deep reliable window; a cold-start countdown that ran
+ * for up to specDelayTicks at one send per tick would overflow it. Resend the
+ * countdown status no more than once every this many ticks (~2/s at 50 tick/s). */
+#define SPEC_COUNTDOWN_RESEND_TICKS 25u
+
 static void serverServiceSpectators(ServerSim *sim) {
     int i;
 
@@ -1468,17 +1490,25 @@ static void serverServiceSpectators(ServerSim *sim) {
 
         if (!sp->connected) continue;
 
-        /* Seek + copy the delayed keyframe into spectator-owned storage. */
+        /* Seek the delayed keyframe. OK -> copy it into spectator-owned storage
+         * and clear any countdown. COLD_START (the ring does not yet hold a full
+         * specDelayTicks of history) -> send a throttled countdown status on the
+         * spectator's own CHANNEL_CONTROL and keep retrying; no seed is copied
+         * and the feed below cannot run (!seedComplete), so no live state leaks
+         * during the wait. The seek flips to OK exactly when head - delay >=
+         * oldest, at which point the existing seed path takes over unchanged. */
         if (sp->seedBlob == NULL && !sp->seedComplete) {
             SpectatorRing *r = serverInstanceGetSpectatorRing();
             if (r != NULL) {
                 SpectatorRingCursor cur;
-                if (spectatorRingSeekDelayed(
-                        r, serverSimGetSpecDelayTicks(sim), &cur)
-                    == SPECTATOR_RING_OK) {
+                uint32_t delay = serverSimGetSpecDelayTicks(sim);
+                SpectatorRingSeekStatus st =
+                    spectatorRingSeekDelayed(r, delay, &cur);
+                if (st == SPECTATOR_RING_OK) {
                     int kfLen = 0;
                     const uint8_t *kf =
                         spectatorRingCursorKeyframe(&cur, &kfLen, NULL);
+                    sp->inCountdown = false;
                     if (kf != NULL && kfLen > 0) {
                         uint8_t *copy = (uint8_t *)malloc((size_t)kfLen);
                         if (copy != NULL) {
@@ -1489,8 +1519,33 @@ static void serverServiceSpectators(ServerSim *sim) {
                             sp->seedSeq  = spectatorRingCursorSeedSeq(&cur);
                         }
                     }
+                } else if (st == SPECTATOR_RING_COLD_START) {
+                    uint32_t history =
+                        spectatorRingHeadSeq(r) - spectatorRingOldestSeq(r);
+                    uint32_t remaining =
+                        (delay > history) ? delay - history : 0;
+                    bool firstEntry = !sp->inCountdown;
+                    sp->inCountdown        = true;
+                    sp->countdownRemaining = remaining;
+                    /* Throttle: send on first entry, then at most once every
+                     * SPEC_COUNTDOWN_RESEND_TICKS so the control window can't
+                     * overflow across a long wait. */
+                    if (firstEntry ||
+                        udpServer.tickCount - sp->countdownSentTick
+                            >= SPEC_COUNTDOWN_RESEND_TICKS) {
+                        uint8_t buf[SPEC_CTRL_COUNTDOWN_LEN];
+                        buf[0] = SPEC_CTRL_COUNTDOWN;
+                        buf[1] = (uint8_t)(remaining >> 24);
+                        buf[2] = (uint8_t)(remaining >> 16);
+                        buf[3] = (uint8_t)(remaining >> 8);
+                        buf[4] = (uint8_t)remaining;
+                        channelSend(&sp->channelMux, CHANNEL_CONTROL,
+                                    buf, SPEC_CTRL_COUNTDOWN_LEN);
+                        sp->countdownSentTick = udpServer.tickCount;
+                    }
                 }
-                /* COLD_START / AGED_OUT: nothing this tick — retry next. */
+                /* AGED_OUT at join should not occur — retention covers the
+                 * delay; leave it as a no-op and retry next tick. */
             }
         }
 
@@ -5407,6 +5462,15 @@ bool transportUdpServerGetSpectatorFeedSeq(int s, uint32_t *outSeq,
     if (outSeq)  *outSeq  = sp->lastEmittedSeq;
     if (outKind) *outKind = sp->bulkSend.kind;
     return true;
+}
+
+bool transportUdpServerGetSpectatorCountdown(int s, uint32_t *outRemaining) {
+    SpectatorConn *sp;
+    if (s < 0 || s >= MAX_SPECTATORS) return false;
+    sp = &udpServer.spectators[s];
+    if (!sp->connected) return false;
+    if (outRemaining) *outRemaining = sp->countdownRemaining;
+    return sp->inCountdown;
 }
 
 void transportUdpServerTestSpectatorAckBulk(int s) {

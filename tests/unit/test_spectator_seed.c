@@ -1,5 +1,5 @@
 /*
- * Spectator seed + forward-feed tests (Phases 2d-c, 2d-e).
+ * Spectator seed + forward-feed + cold-start tests (Phases 2d-c, 2d-e, 2d-f).
  *
  * t_seed_arm (2d-c): proves the server-side arm of a delayed-keyframe seed — a
  * connected spectator on a server whose spectator ring is recording gets the
@@ -22,6 +22,15 @@
  * it equals head; the in-flight blob kind is BULK_KIND_SPEC_RECORD. The delay is
  * set (serverSimSetSpecDelayTicks) before serverInstanceCreateSpectatorRing so
  * the ring's retention is sized to cover it.
+ *
+ * t_cold_start (2d-f): proves the cold-start countdown — a spectator seated
+ * before the delayed ring holds a full specDelayTicks of history gets a
+ * CHANNEL_CONTROL countdown (remaining = delay - history) and no seed, the
+ * remaining strictly decreases as ticks accrue, no seed ever arms during the
+ * wait (no live-state leak), and once head - delay becomes seekable the
+ * spectator leaves countdown and the normal seed arms — read via
+ * transportUdpServerGetSpectatorCountdown / GetSpectatorSeed. A large delay with
+ * only a few ticks pumped before seating makes the seek genuinely cold-start.
  *
  * The loopback harness stands up the real UDP server (and its background recv
  * thread); recording is added on top of it the way a real MP host gets it —
@@ -413,6 +422,133 @@ static int t_feed_lag(const char *ip, uint32_t delay) {
     return 0;
 }
 
+/* Cold-start countdown (2d-f). A spectator that joins before the delayed ring
+ * holds a full specDelayTicks of history is put in a CHANNEL_CONTROL countdown
+ * (remaining = delay - history) with no seed armed, until head - delay becomes
+ * seekable — at which point it leaves countdown and the normal seed arms. The
+ * delay is large and only a few ticks are pumped before seating, so the seek
+ * genuinely cold-starts rather than finding enough history already recorded.
+ * ip selects the spectator's loopback rate-limit bucket. */
+static int t_cold_start(const char *ip, uint32_t delay) {
+    LoopbackHarness h;
+    struct sockaddr_in serverAddr;
+    SOCKET spec;
+    char fname[64];
+    SpectatorRing *ring;
+    int i, specSlot, armed;
+    uint32_t rem0 = 0, rem = 0, remPrev;
+    bool sawDecrease = false, leftCountdown = false;
+
+    spec = ssOpenSocketOnIp(ip);
+    if (spec == INVALID_SOCKET) {
+        SDL_Log("  spectator cold-start: skipping — %s not bindable", ip);
+        return 0;
+    }
+
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "Player", /*lobbyMode*/ false,
+                                       /*impairSpec*/ NULL, /*seed*/ 1u),
+                  "harness start failed");
+
+    memset(&serverAddr, 0, sizeof(serverAddr));
+    serverAddr.sin_family      = AF_INET;
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    serverAddr.sin_port        = htons(h.port);
+
+    /* Set the delay BEFORE creating the ring so retention is sized to cover it
+     * (2d-b). A large delay keeps the ring short of a full delay of history
+     * through the seat, so the spectator's first seek cold-starts. */
+    serverSimSetMaxSpectators(h.sim, 4);
+    serverSimSetSpecDelayTicks(h.sim, delay);
+    snprintf(fname, sizeof(fname), "test_spectator_cold_%u.wbv", (unsigned)delay);
+    remove(fname);
+    logCreate();
+    UT_ASSERT_MSG(logStart(fname, h.sim, 0, MAX_TANKS, FALSE) == TRUE,
+                  "logStart failed");
+    serverInstanceCreateSpectatorRing(h.sim);
+    ring = serverInstanceGetSpectatorRing();
+    UT_ASSERT_MSG(ring != NULL, "ring not created for maxSpectators > 0");
+
+    /* Only a few ticks of history — far short of the delay — before seating. */
+    loopbackHarnessPumpUntil(&h, 10, NULL, NULL);
+    UT_ASSERT_MSG(spectatorRingHeadSeq(ring) < delay,
+                  "ring already holds a full delay before seating");
+
+    if (!ssHandshakeAccepts(&h, spec, &serverAddr, "SpecCold")) {
+        closesocket(spec);
+        logStop();
+        logDestroy();
+        loopbackHarnessStop(&h);
+        remove(fname);
+        UT_FAIL("spectator JOIN drew no accept (delay=%u)", (unsigned)delay);
+    }
+
+    /* The seek runs each tick once connected: find the slot in countdown. */
+    specSlot = -1;
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        if (transportUdpServerGetSpectatorCountdown(i, &rem0)) {
+            specSlot = i;
+            break;
+        }
+    }
+    UT_ASSERT_MSG(specSlot >= 0,
+                  "spectator not in cold-start countdown (delay=%u head=%u)",
+                  (unsigned)delay, (unsigned)spectatorRingHeadSeq(ring));
+    UT_ASSERT_MSG(rem0 > 0 && rem0 <= delay,
+                  "countdown remaining out of range: rem0=%u delay=%u",
+                  (unsigned)rem0, (unsigned)delay);
+    UT_ASSERT_MSG(transportUdpServerGetSpectatorSeed(specSlot, NULL, NULL) == NULL,
+                  "seed armed during countdown (live-state leak)");
+
+    /* Pump: remaining must strictly decrease and no seed may arm while waiting,
+     * until the seek flips to OK and the spectator leaves countdown. */
+    remPrev = rem0;
+    for (i = 0; i < 800; i++) {
+        loopbackHarnessPump(&h);
+        if (transportUdpServerGetSpectatorCountdown(specSlot, &rem)) {
+            UT_ASSERT_MSG(
+                transportUdpServerGetSpectatorSeed(specSlot, NULL, NULL) == NULL,
+                "seed armed mid-countdown (live-state leak): rem=%u",
+                (unsigned)rem);
+            if (rem < remPrev) sawDecrease = true;
+            remPrev = rem;
+        } else {
+            leftCountdown = true;
+            break;
+        }
+    }
+    UT_ASSERT_MSG(sawDecrease,
+                  "countdown remaining never decreased (rem0=%u last=%u)",
+                  (unsigned)rem0, (unsigned)remPrev);
+    UT_ASSERT_MSG(leftCountdown,
+                  "spectator never left countdown (last rem=%u delay=%u)",
+                  (unsigned)remPrev, (unsigned)delay);
+
+    /* Transition: a seed now arms. seedBlob is copied the tick the seek returns
+     * OK; allow one carrier pump to settle if the read just missed it. */
+    armed = ssSeedArmed(&h, NULL) ? 1 : 0;
+    if (!armed) {
+        armed = loopbackHarnessPumpUntil(&h, 5, ssSeedArmed, NULL);
+    }
+    UT_ASSERT_MSG(armed > 0, "no seed armed after leaving countdown");
+    {
+        uint32_t seedLen = 0;
+        const uint8_t *seed =
+            transportUdpServerGetSpectatorSeed(specSlot, &seedLen, NULL);
+        UT_ASSERT_MSG(seed != NULL && seedLen > 0,
+                      "seed empty after leaving countdown (seedLen=%u)",
+                      (unsigned)seedLen);
+    }
+    UT_ASSERT_MSG(!transportUdpServerGetSpectatorCountdown(specSlot, NULL),
+                  "still in countdown after the seed armed");
+
+    closesocket(spec);
+    logStop();
+    logDestroy();
+    loopbackHarnessStop(&h);
+    remove(fname);
+    return 0;
+}
+
 int run_spectator_seed(void) {
     if (t_seed_arm()) {
         return 1;
@@ -421,6 +557,9 @@ int run_spectator_seed(void) {
         return 1;
     }
     if (t_feed_lag("127.0.0.22", /*delay*/ 0)) {
+        return 1;
+    }
+    if (t_cold_start("127.0.0.23", /*delay*/ 400)) {
         return 1;
     }
     return 0;

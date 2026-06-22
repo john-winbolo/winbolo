@@ -72,6 +72,16 @@ typedef struct {
  * -maxspectators cap is enforced as min(maxSpectators, MAX_SPECTATORS). */
 #define MAX_SPECTATORS 32
 
+/* Spectator status wire shape — a small reliable message carried on the
+ * spectator's own CHANNEL_CONTROL.  While the delayed ring holds less than
+ * specDelayTicks of history (cold start at ring creation / segment youth), the
+ * server re-sends a countdown instead of seeding live state: a status-type byte
+ * followed by the big-endian ticks remaining until head - specDelayTicks
+ * becomes seekable.  The client mirrors this shape to decode the wait.
+ *   [u8 SPEC_CTRL_COUNTDOWN][u32 remainingTicks]   (5 bytes, big-endian) */
+#define SPEC_CTRL_COUNTDOWN      1   /* status-type byte */
+#define SPEC_CTRL_COUNTDOWN_LEN  5   /* type byte + u32 remainingTicks */
+
 /* ── Deferred WBN PLAYER_JOIN bookkeeping (pure core) ────────────────
  * A slot owes WBN a PLAYER_JOIN event once we learn its identity for
  * the current session: keyed when a reauth fills the slot's WBN key,
@@ -732,6 +742,12 @@ const uint8_t *transportUdpServerGetSpectatorSeed(int s, uint32_t *outLen,
  * outKind may be NULL. */
 bool transportUdpServerGetSpectatorFeedSeq(int s, uint32_t *outSeq,
                                            uint8_t *outKind);
+/* Read a connected spectator's cold-start countdown state: returns true while
+ * the spectator is waiting for the delayed ring to accumulate specDelayTicks of
+ * history (no seed armed yet), with *outRemaining set to the ticks still owed;
+ * false once it has transitioned to the normal seed, or when the slot is
+ * invalid / disconnected. outRemaining may be NULL. */
+bool transportUdpServerGetSpectatorCountdown(int s, uint32_t *outRemaining);
 /* Test-only: mark a connected spectator's whole CHANNEL_BULK send window acked,
  * simulating a peer that keeps up so the seed completes and the forward feed's
  * window keeps draining without a real spectator channel endpoint. */
