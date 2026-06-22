@@ -6659,7 +6659,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 dl->AddTriangleFilled(p1, p2, p3, col);
             }
             if (leaveClicked ||
-                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !dialogNavWasInsideSubRegionAtFrameStart()) ||
+                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen() && !s_chooseMapOpen && !mapPreviewPopupIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                   (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                   || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -7284,7 +7284,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 ImGui::SameLine(0, 20);
                 glyphInline(SI_ACTION_MENU_CANCEL);   /* B glyph left of Leave */
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !dialogNavWasInsideSubRegionAtFrameStart()) ||
+                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen() && !s_chooseMapOpen && !mapPreviewPopupIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                       (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                       || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
