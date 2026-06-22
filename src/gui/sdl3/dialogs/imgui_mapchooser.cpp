@@ -753,7 +753,7 @@ static void renderViewModeToggle(MapChooserState *state,
             clicked = ImGui::Button(fallback);
         }
         if (active) ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+        imguiHelpTooltip(tooltip);
         if (clicked) state->viewMode = mode;
     };
 
@@ -1672,7 +1672,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * uses the last-drawn item's rect as a proxy since each
              * segment is its own item. */
             if (state->pathTooltipPrefix[0] != '\0' &&
-                ImGui::IsItemHovered()) {
+                (ImGui::IsItemHovered() || ImGui::IsItemFocused())) {
                 char tipBuf[FILENAME_MAX * 2];
                 if (state->currentDir[0] != '\0') {
                     SDL_snprintf(tipBuf, sizeof(tipBuf), "%s/%s",
@@ -1735,7 +1735,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 textChanged = true;
             }
             if (emptyFilter) ImGui::EndDisabled();
-            if (ImGui::IsItemHovered() && !emptyFilter) {
+            if ((ImGui::IsItemHovered() || ImGui::IsItemFocused()) && !emptyFilter) {
                 ImGui::SetTooltip("Clear search");
             }
             bool prevRecursive = state->searchRecursive;
@@ -1748,9 +1748,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
              * compact; hover gives a tooltip explaining the trade. */
             ImGui::SameLine();
             ImGui::Checkbox("Created at", &state->showModifiedColumn);
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Show file modification times in a second column.");
-            }
+            imguiHelpTooltip("Show file modification times in a second column.");
         }
         /* Stale-state safety net: in non-recursive mode the legacy
          * enumerate populates state->maps with basenames only — no
@@ -2155,9 +2153,7 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                         ? ImGui::ImageButton(btnId,
                             (ImTextureID)s_iconStarFull, ImVec2(sz, sz))
                         : ImGui::SmallButton("*");
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Click to unstar");
-                    }
+                    imguiHelpTooltip("Click to unstar");
                     ImGui::PopStyleColor(3);
                     ImGui::PopStyleVar();
                     if (toggled) {
@@ -2425,22 +2421,18 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                             ImVec4(1, 1, 1, 0.15f));
                         toggled = ImGui::ImageButton(btnId,
                             (ImTextureID)tex, ImVec2(sz, sz));
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("%s", isStarred
-                                ? "Click to unstar"
-                                : "Click to star to always appear at the top");
-                        }
+                        imguiHelpTooltip(isStarred
+                            ? "Click to unstar"
+                            : "Click to star to always appear at the top");
                         ImGui::PopStyleColor(3);
                         ImGui::PopStyleVar();
                     } else {
                         /* Textual fallback if the SVG didn't load. */
                         toggled = ImGui::SmallButton(
                             isStarred ? "*" : "+");
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("%s", isStarred
-                                ? "Click to unstar"
-                                : "Click to star to always appear at the top");
-                        }
+                        imguiHelpTooltip(isStarred
+                            ? "Click to unstar"
+                            : "Click to star to always appear at the top");
                     }
                     if (toggled) {
                         mapStarsToggle(scope, ent.path, ent.name,
@@ -2735,11 +2727,9 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
                 if (clicked) {
                     *state->maximizePtr = !maxed;
                 }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip(maxed
-                        ? "Restore default size (Esc)"
-                        : "Maximize");
-                }
+                imguiHelpTooltip(maxed
+                    ? "Restore default size (Esc)"
+                    : "Maximize");
                 ImGui::PopStyleColor(3);
                 ImGui::SetCursorScreenPos(saved);
                 /* Submit a zero-size dummy so ImGui re-anchors the

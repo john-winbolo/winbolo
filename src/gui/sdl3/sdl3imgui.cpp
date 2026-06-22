@@ -2631,9 +2631,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_RELSTEER), &relSteering)) {
                 inputTouchSetAbsoluteSteering(!relSteering);
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", langGetText(STR_DLGSETTINGS_RELSTEER_TIP));
-            }
+            imguiHelpTooltip(langGetText(STR_DLGSETTINGS_RELSTEER_TIP));
         }
 
         if (inputGamepadIsConnected()) {
@@ -5001,7 +4999,7 @@ bool drawCountryFlagWithTip(const char *countryCode) {
     SDL_Texture *flagTex = flagsGetTexture(countryCode);
     if (!flagTex) return false;
     ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
-    if (ImGui::IsItemHovered()) {
+    if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
         const CountryNameEntry *e = (const CountryNameEntry *)bsearch(
             up, kCountryNames, K_COUNTRY_NAMES_SIZE,
             sizeof(kCountryNames[0]), countryNameCmp);
@@ -5019,7 +5017,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
         /* Bot slot: brain icon stands in for the platform badge and the
          * WBN/Steam badges are skipped — a bot can never be either. */
         ImGui::Image((ImTextureID)s_iconBrain, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_AI));
+        imguiHelpTooltip(langGetText(STR_PLAYER_TIP_AI));
         ImGui::SameLine();
     } else {
         SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
@@ -5031,7 +5029,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                                ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
                                ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0, 0, 0, 0), tint);
-            if (ImGui::IsItemHovered()) {
+            if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
                 const char *plat = platformName(clientType);
                 if (flags & PLAYER_FLAG_SUPPORTER) {
                     MessageArgs args = {};
@@ -5049,16 +5047,14 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
              * otherwise — same scheme as the platform icon above. */
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
             imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
+            imguiHelpTooltip(langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
             ImGui::SameLine();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
             ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
-                                                    ? STR_PLAYER_TIP_STEAM_LINKED
-                                                    : STR_PLAYER_TIP_STEAM_BUILD));
+            imguiHelpTooltip(langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
+                                         ? STR_PLAYER_TIP_STEAM_LINKED
+                                         : STR_PLAYER_TIP_STEAM_BUILD));
             ImGui::SameLine();
         }
     }
