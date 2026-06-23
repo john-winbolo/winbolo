@@ -292,8 +292,9 @@ static int walkLog(const uint8_t *buf, size_t len, size_t startPos,
 /* -------- Test-side zip extraction (uses minizip's unz API) -------- */
 
 /* Reads the inner "log.dat" out of `wbvPath` into `*outBuf` / `*outLen`
- * (caller frees). Returns false on any error. */
-static bool extractLogDat(const char *wbvPath, uint8_t **outBuf, size_t *outLen) {
+ * (caller frees). Returns false on any error. Shared with test_stream_load.c
+ * (prototype in test_harness.h). */
+bool extractLogDat(const char *wbvPath, uint8_t **outBuf, size_t *outLen) {
     unzFile uf = unzOpen(wbvPath);
     if (uf == NULL) return false;
     if (unzGoToFirstFile(uf) != UNZ_OK) { unzClose(uf); return false; }

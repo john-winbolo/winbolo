@@ -10,6 +10,8 @@
 #ifndef WINBOLO_UNITTEST_HARNESS_H
 #define WINBOLO_UNITTEST_HARNESS_H
 
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -398,6 +400,15 @@ int run_wbv_v2_capture(void);
  * machinery serves back, covering chunked append, read-back, seek and
  * end-of-stream. */
 int run_blocks_stream(void);
+
+/* Stream-load decode path (test_stream_load.c): loads the spectator_v2 fixture's
+ * plaintext log.dat through lv_screenLoadFromStream and asserts it decodes the
+ * same content the zip reader does. */
+int run_stream_load(void);
+
+/* Extracts the inner "log.dat" from a .wbv zip into a heap buffer (caller
+ * frees). Defined in test_log_roundtrip.c; shared with test_stream_load.c. */
+bool extractLogDat(const char *wbvPath, uint8_t **outBuf, size_t *outLen);
 
 /* -log path composition (test_log_dir_path.c). Pins -log <dir> auto-naming
  * the replay inside the directory, vs -log <file> / bare -log. */

@@ -349,6 +349,11 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize);
 *********************************************************/
 bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen);
 
+/* Loads the decoder from a plaintext (v2) byte stream: the caller supplies the
+ * header + opening snapshot bytes, then appends more via lv_blocksAppendBytes
+ * and steps lv_screenLogTick. Returns TRUE on success. */
+bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len);
+
 /*********************************************************
 *NAME:          lv_screenNumBases
 *AUTHOR:        John Morrison

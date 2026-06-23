@@ -1843,13 +1843,17 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
 
 
 /*********************************************************
-*NAME:          lv_logLoadFromMemory
+*NAME:          lv_logLoadCommon
 *PURPOSE:
-*  Loads log data from an in-memory zip buffer.
-*  Same as lv_logLoad but uses lv_blocksCreateFromMemory.
-*  Takes ownership of zipData.
+*  Decodes the log header and opening snapshot from the
+*  already-set-up blocks source. Resets the per-log g_lv
+*  fields, reads the WBOLOMOV header, seeds the block key,
+*  processes the opening snapshot, and records the result in
+*  g_lv->logLoaded. The caller must have set up the blocks
+*  source first (lv_blocksCreateFromMemory for a .wbv zip, or
+*  lv_blocksBeginStream + lv_blocksAppendBytes for a stream).
 *********************************************************/
-static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
+static bool lv_logLoadCommon(void) {
   char id[LENGTH_ID+1];
   BYTE dataLen;
   BYTE logVersion;
@@ -1866,7 +1870,6 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
   memset(g_lv->tankInv,      0, sizeof(g_lv->tankInv));
   memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
-  returnValue = lv_blocksCreateFromMemory(zipData, zipLen);
   if (returnValue == TRUE) {
     len = logReadBytes((BYTE *)id, LENGTH_ID);
     if (len != LENGTH_ID || strncmp(id,"WBOLOMOV", LENGTH_ID) != 0) {
@@ -1931,6 +1934,21 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
   return returnValue;
 }
 
+/*********************************************************
+*NAME:          lv_logLoadFromMemory
+*PURPOSE:
+*  Loads log data from an in-memory zip buffer.
+*  Same as lv_logLoad but uses lv_blocksCreateFromMemory.
+*  Takes ownership of zipData.
+*********************************************************/
+static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
+  if (lv_blocksCreateFromMemory(zipData, zipLen) != TRUE) {
+    g_lv->logLoaded = FALSE;
+    return FALSE;
+  }
+  return lv_logLoadCommon();
+}
+
 bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
   bool returnValue;
 
@@ -1948,6 +1966,36 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
     g_lv->state = lv_lr_start;
   }
   return returnValue;
+}
+
+/*********************************************************
+*NAME:          lv_screenLoadFromStream
+*PURPOSE:
+*  Loads the decoder from a plaintext (v2) byte stream. The
+*  caller supplies the initial header + opening snapshot bytes
+*  here, then appends further records via lv_blocksAppendBytes
+*  and steps lv_screenLogTick. Unlike the .wbv zip path there is
+*  no fixed total size, so the decompress / total-time /
+*  game-info steps are intentionally skipped.
+*********************************************************/
+bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len) {
+  bool ok;
+
+  lv_blocksDestroy();
+  lv_screenDestroy();
+  lv_screenSetup();
+  lv_blocksBeginStream();
+  if (lv_blocksAppendBytes(bytes, len) != TRUE) {
+    g_lv->logLoaded = FALSE;
+    return FALSE;
+  }
+  ok = lv_logLoadCommon();
+  if (ok == TRUE) {
+    g_lv->isPlaying = TRUE;
+    lv_screenUpdateView(redraw);
+    g_lv->state = lv_lr_start;
+  }
+  return ok;
 }
 
 bool lv_screenIsPlaying() {

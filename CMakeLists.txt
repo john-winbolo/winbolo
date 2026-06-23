@@ -2700,6 +2700,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbv_v2_capture.c
     # Blocks-level append-fed stream source: drives blocks.c's no-zip path.
     tests/unit/test_blocks_stream.c
+    # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
+    # lv_screenLoadFromStream and asserts it decodes the same content the zip
+    # reader does (reuses extractLogDat from test_log_roundtrip.c).
+    tests/unit/test_stream_load.c
     # Link-only no-op stubs for the host/render/window/message entry points
     # the decode subset below references but whose real bodies live in the
     # GUI TUs (logviewer.c, draw.c, messages.c) we do not link.
@@ -2960,6 +2964,7 @@ set(_unit_test_names
     wbv_reader_v1
     wbv_reader_v2
     blocks_stream
+    stream_load
     log_path_empty_uses_autobase
     log_path_explicit_file_verbatim
     log_path_explicit_file_keeps_single_wbv
