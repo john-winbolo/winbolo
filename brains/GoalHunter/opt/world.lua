@@ -305,12 +305,31 @@ function M.update(world, info, tick)
       -- Seen first-hand → engine truth wins over anything an ally relayed: drop
       -- the ally-sourced flags so it's no longer ally-only and our observation is
       -- re-shared (collect_kw_changes only broadcasts when _kw_ally ~= now).
-      p._ally_only = nil
-      p._kw_ally   = nil
+      p._ally_only   = nil
+      p._kw_ally     = nil
+      p._synth_carry = nil   -- seen deployed first-hand → no longer a relayed carry
       -- One reindex covers new / move / redeploy-after-capture: a visible pillbox
       -- is always deployed here, so it lands at its current tile and any stale
       -- (e.g. just-uncarried) entry elsewhere is pulled.
       pill_reindex(world, obj.idnum, p)
+    end
+  end
+
+  -- Fold the engine's per-tick nearby-base STOCK into the RIGHT base record.
+  -- info.base is the single closest neutral/allied base within BASE_STATUS_RANGE,
+  -- and it tells us its id + live armour/shells/mines. Store it as the observed
+  -- stock (obs_*) so the refuel eval scores it on fresh first-hand data instead of
+  -- stale memory. (The object scan carries base HEALTH but not refuel stock.)
+  if info.base and info.base.idnum then
+    local b = world.bases[info.base.idnum]
+    if b then
+      b.obs_armour = info.base.armour
+      b.obs_shells = info.base.shells
+      b.obs_mines  = info.base.mines
+      b.obs_tick   = tick
+      b.last_seen  = tick
+      b._ally_only = nil   -- first-hand engine data → engine truth wins over KW
+      b._kw_ally   = nil
     end
   end
   local t1 = clock_us()
@@ -418,7 +437,7 @@ function M.process_events(world, info, state)
         end
         -- First-hand engine event → drop ally-sourced flags (engine truth wins).
         local _ep = world.pills[idx]
-        if _ep then _ep._ally_only = nil; _ep._kw_ally = nil end
+        if _ep then _ep._ally_only = nil; _ep._kw_ally = nil; _ep._synth_carry = nil end
         -- Reindex to match the event's deployed/carried state (a capture sets
         -- in_tank → pulls it off the tile; a redeploy adds it back).
         pill_reindex(world, idx, _ep)
@@ -439,6 +458,8 @@ function M.process_events(world, info, state)
           owner_str = "hostile"
         end
 
+        -- Exactly what the engine sent us about this base's stock this tick.
+
         local b = world.bases[idx]
         if b == nil then
           -- EVENT_BASE_UPDATE doesn't carry position; seed at (0,0) and let
@@ -454,6 +475,7 @@ function M.process_events(world, info, state)
             last_health = new_health,
             obs_shells  = d[4],
             obs_armour  = new_health,
+            obs_mines   = d[5],
             obs_tick    = tick,
           }
           world.bases[idx] = b
@@ -468,9 +490,28 @@ function M.process_events(world, info, state)
           b.last_seen   = tick
           b.obs_shells  = d[4]
           b.obs_armour  = new_health
+          b.obs_mines   = d[5]
           b.obs_tick    = tick
           b._ally_only  = nil   -- first-hand engine event → engine truth wins
           b._kw_ally    = nil
+        end
+      end
+
+    elseif ev.type == EVENT_BASE_STOCK and d then
+      -- Dedicated best-effort base-stock event (engine: [baseIndex, armour,
+      -- shells, mines], culled to our CLOSEST base). Fold it into that base's
+      -- observed stock (same data info.base carries; this is the event form).
+      local idx = d[1]
+      if idx then
+        local b = world.bases[idx]
+        if b then
+          b.obs_armour = d[2]
+          b.obs_shells = d[3]
+          b.obs_mines  = d[4]
+          b.obs_tick   = tick
+          b.last_seen  = tick
+          b._ally_only = nil
+          b._kw_ally   = nil
         end
       end
 
@@ -600,7 +641,7 @@ function M.collect_kw_changes(world, now)
   world._kw_dirty  = world._kw_dirty  or {}
   local shared, dirty = world._kw_shared, world._kw_dirty
   for id, b in pairs(world.bases) do
-    if b.last_seen == now and b._kw_ally ~= now then
+    if b.last_seen == now and b._kw_ally ~= now and not b._ally_only then
       local sig, key = kw_sig(b, false), "b" .. id
       if sig and shared[key] ~= sig then
         local old = shared[key]
@@ -610,7 +651,12 @@ function M.collect_kw_changes(world, now)
     end
   end
   for id, p in pairs(world.pills) do
-    if p.last_seen == now and p._kw_ally ~= now then
+    -- Only share FIRST-HAND sightings: never relay a pill we know only second-
+    -- hand — a synth carry (_synth_carry, fabricated from an ally's carry= advert)
+    -- or a KW-adopted entry (_ally_only). Relaying a synth carry as a fresh "n0"
+    -- neutral is exactly what made an ally un-carry its own held pill.
+    if p.last_seen == now and p._kw_ally ~= now
+       and not p._synth_carry and not p._ally_only then
       -- ci = shared class+intank ("h0"/"n0"/"h1"…) or nil to skip. Dead pills
       -- (health<=0) share as neutral so allies holding a stale hostile/friendly
       -- view stop stamping them.
@@ -643,7 +689,7 @@ function M.kw_queue_all(world)
   world._kw_dirty  = world._kw_dirty  or {}
   for id, b in pairs(world.bases) do
     local sig = kw_sig(b, false)
-    if sig and b.last_seen then
+    if sig and b.last_seen and not b._ally_only then   -- resync only our FIRST-HAND knowledge
       world._kw_shared["b" .. id] = sig
       world._kw_dirty["b" .. id]  = { kind = "b", id = id, mx = b.mx, my = b.my, cls = sig, hp = b.health or 0, tick = b.last_seen }
     end
@@ -652,7 +698,7 @@ function M.kw_queue_all(world)
     -- Dead pills share as neutral too (see collect_kw_changes), so a resync
     -- corrects a respawned ally's stale hostile view of a since-killed pill.
     local ci = ((p.health or 0) <= 0) and "n0" or kw_sig(p, true)
-    if ci and p.last_seen then
+    if ci and p.last_seen and not p._synth_carry and not p._ally_only then   -- first-hand only
       -- Mirror collect_kw_changes' position-aware detect sig for deployed pills.
       local sig = (ci:sub(2, 2) == "0") and (ci .. "@" .. p.mx .. "," .. p.my) or ci
       world._kw_shared["p" .. id] = sig
@@ -699,7 +745,7 @@ end
 -- marked _kw_ally=now so collect_kw_changes won't relay them. Never-seen
 -- objects get a minimal entry (health defaulted — influence needs only
 -- owner+location; targeting evaluators re-confirm health on first real sight).
-function M.sync_ally_world(world, recs, now)
+function M.sync_ally_world(world, recs, now, my_pn)
   for _, r in ipairs(recs) do
     local owner = r.cls and KW_CHAR_OWNER[r.cls]
     local from  = r.from or "?"
@@ -726,7 +772,15 @@ function M.sync_ally_world(world, recs, now)
       elseif r.kind == "p" then
         local intank = (r.intank == 1 or r.intank == "1")
         local p = world.pills[r.id]
-        if p == nil then
+        if p and p.in_tank and my_pn and p.owner_player == my_pn then
+          -- We are PERSONALLY carrying this pill (first-hand, engine-confirmed via
+          -- info.carried_pills). An ally's relayed KW can't know our own tank's
+          -- contents better than we do, and a carried pill is invisible to our
+          -- object scan so nothing first-hand re-asserts it each tick. Without this
+          -- guard a newer KW tick ("neutral/deployed") silently UN-carried our own
+          -- pill, so our carry= broadcast dropped it and the whole team lost track
+          -- of a pill we were still holding. Never let KW override own-carried.
+        elseif p == nil then
           -- Use the ally's shared health (KW now carries it). Fallback to a
           -- class guess only if an older record somehow lacks it.
           local kw_hp = r.hp or ((owner == "neutral") and 0 or (C.PILLS_MAX_HEALTH or 15))

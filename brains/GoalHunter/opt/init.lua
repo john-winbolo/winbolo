@@ -2109,7 +2109,7 @@ function Brain.think(info)
   -- resync query, then snapshot OUR first-hand allegiance changes this tick
   -- for the next outbound digest. Mirrors the sync_ally_carried placement.
   if state._kw_inbox and #state._kw_inbox > 0 then
-    W.sync_ally_world(world, state._kw_inbox, now)
+    W.sync_ally_world(world, state._kw_inbox, now, info.player_number)
     state._kw_inbox = nil
   end
   -- First think (and after each respawn): ask allies to dump their known world.
@@ -3430,7 +3430,12 @@ function Brain.think(info)
 
       -- Depleted-base detection runs regardless of lock-in: if we arrive
       -- at a base that has nothing to give us, block it and replan.
-      if refuel_needed and info.base then
+      -- MUST be standing on the GOAL base: info.base is the engine's single
+      -- in-range base (the one we're next to), which is NOT necessarily our refuel
+      -- goal. Without this gate, parking next to a DIFFERENT (e.g. just-stolen,
+      -- empty) base read that base's stock and wrongly blocked our actual target.
+      if refuel_needed and info.base
+         and (info.tankx >> 8) == state.goal.mx and (info.tanky >> 8) == state.goal.my then
         local LOW = 4
         local getting_something = false
         if need_armour and (info.base.armour or 0) >= LOW then getting_something = true end

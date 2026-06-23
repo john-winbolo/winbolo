@@ -178,7 +178,11 @@ end
 -- accept/commit/leave churn. The discount alone now decides whether a blitz
 -- pill is worth switching to; availability just confirms we made that switch.
 function M.availability(state, info, help_target_id)
-  if (info.armour or 0) < (C.SQUAD_MIN_HELP_ARMOUR or 10) then return false, "lh" end
+  -- Joining a blitz has NO armour floor (a 2+ tank take shares the incoming
+  -- fire) — EXCEPT while carrying a pillbox: cautious mode, so a joiner needs
+  -- commander-level armour before diving in and risking the pill it's holding.
+  if (info.carried_pills or 0) >= 1
+     and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then return false, "lh" end
   if (info.shells or 0) < (C.SQUAD_MIN_HELP_SHELLS or 3)  then return false, "na" end
   local g    = state.goal
   if g and g.kind == "attack_pill" and help_target_id and g.target_id == help_target_id then
@@ -236,12 +240,20 @@ function M.blitz_arbitrate(state, info, now, self_pn)
   -- Standoff positions travel as FLOAT tile coords (4dp) so spot de-confliction
   -- keeps sub-tile precision instead of snapping to integer tiles. Our own
   -- engage tile -> its float CENTER; allies' come parsed from their bes float.
+  -- Whether WE have our own engage spot in this arbitration. The commander must
+  -- NOT accept soldiers until it does: with no own spot (e.g. still in
+  -- plan_position choosing its standoff) there's nothing to de-conflict joiners
+  -- against, so they'd commit on spots that clash with our eventual standoff —
+  -- and a committed soldier can't repick, leaving two tanks stacked. Defer accepts.
+  local have_self_spot = false
   if state.squad_blitz_engage_mx then
+    have_self_spot = true
     parts[#parts + 1] = { pn = self_pn,
                           fx = state.squad_blitz_engage_mx + 0.5,
                           fy = state.squad_blitz_engage_my + 0.5,
                           bd = state.squad_blitz_bd or 0, me = true }
   elseif state.goal and (state.goal.standoff_fx or state.goal.standoff_mx) then
+    have_self_spot = true
     -- Commander: it doesn't negotiate an engage spot (soldiers do) — it plans
     -- its OWN standoff (goal.standoff). Include it so soldiers de-conflict
     -- against the COMMANDER's spot too, not just against each other; otherwise a
@@ -371,7 +383,7 @@ function M.blitz_arbitrate(state, info, now, self_pn)
       -- earlier one) — what makes a 1-tick repick gap safe (no list burn).
       -- Entries are ';'-separated, e.g. "3:[114.5000,141.5000];5:[130.5000,132.5000]".
       if rj then rlist[#rlist + 1] = p.fx and string.format("%d:[%.4f,%.4f]", p.pn, p.fx, p.fy) or tostring(p.pn)
-      elseif p.fx then alist[#alist + 1] = p.pn end   -- answered + conflict-free = ACCEPTED
+      elseif p.fx and have_self_spot then alist[#alist + 1] = p.pn end   -- answered + conflict-free + WE have our own spot = ACCEPTED
     end
   end
   state.squad_blitz_roster = roster
@@ -540,6 +552,13 @@ function M.update(state, info, now, world)
                           (state._my_blitz_call == g.target_id or g._blitz_committed
                            or state.squad_commander_pill == g.target_id))
       role = (is_hard_take or is_leading) and M.ROLE_COMMANDER or M.ROLE_SOLDIER
+      -- Armour gate on FRESH command: a weak tank (< SQUAD_COMMANDER_MIN_ARMOUR)
+      -- may JOIN a blitz but not OPEN/lead one. Established leaders (is_leading)
+      -- keep command even if their armour later drops — don't abandon mid-take.
+      if role == M.ROLE_COMMANDER and not is_leading
+         and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then
+        role = M.ROLE_SOLDIER
+      end
       -- Don't elect a SECOND commander of a pill an ally is already blitzing:
       -- FIRST TO THE TAKE WINS. If a live blitz call on OUR target has been open
       -- LONGER than ours (the ally committed first), defer to it and become a

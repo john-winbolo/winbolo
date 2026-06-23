@@ -1052,13 +1052,21 @@ function Brain.think(info)
           _ed[#_ed + 1] = string.format("ev%s[%s]", tostring(ev.type), _ds)
         end
       end
+      -- info.base = the SINGLE base the engine reports within base-status range
+      -- (~7 tiles) — i.e. the one we're next to, NOT necessarily our refuel goal.
+      -- Its stock (arm/sh/mn) is the only per-tick base-resource data the engine
+      -- gives; a base out of range has none. Logged so refuel-stock decisions are
+      -- auditable.
+      local _bs = info.base
+        and string.format("base=arm%s/sh%s/mn%s", tostring(info.base.armour), tostring(info.base.shells), tostring(info.base.mines))
+        or "base=none"
       print2(string.format(
-        "ENGINE_DUMP t=%d self=(%d,%d) dir=%s spd=%s arm=%s sh=%s mn=%s tr=%s carry=%s man=%s boat=%s gun=%s pn=%s | OBJ=%s | EVT=%s",
+        "ENGINE_DUMP t=%d self=(%d,%d) dir=%s spd=%s arm=%s sh=%s mn=%s tr=%s carry=%s man=%s boat=%s gun=%s pn=%s %s | OBJ=%s | EVT=%s",
         now, (info.tankx or 0) >> 8, (info.tanky or 0) >> 8,
         tostring(info.direction), tostring(info.speed), tostring(info.armour),
         tostring(info.shells), tostring(info.mines), tostring(info.trees),
         tostring(info.carried_pills), tostring(info.man_status), tostring(info.inboat),
-        tostring(info.gunrange), tostring(info.player_number),
+        tostring(info.gunrange), tostring(info.player_number), _bs,
         table.concat(_od, " "), table.concat(_ed, " ")))
     end
     -- A* logging is gated on _G._ENABLE_ASTAR_LOG (default off) — the
@@ -2771,7 +2779,7 @@ function Brain.think(info)
   -- resync query, then snapshot OUR first-hand allegiance changes this tick
   -- for the next outbound digest. Mirrors the sync_ally_carried placement.
   if state._kw_inbox and #state._kw_inbox > 0 then
-    W.sync_ally_world(world, state._kw_inbox, now)
+    W.sync_ally_world(world, state._kw_inbox, now, info.player_number)
     state._kw_inbox = nil
   end
   -- First think (and after each respawn): ask allies to dump their known world.
@@ -4237,7 +4245,12 @@ function Brain.think(info)
 
       -- Depleted-base detection runs regardless of lock-in: if we arrive
       -- at a base that has nothing to give us, block it and replan.
-      if refuel_needed and info.base then
+      -- MUST be standing on the GOAL base: info.base is the engine's single
+      -- in-range base (the one we're next to), which is NOT necessarily our refuel
+      -- goal. Without this gate, parking next to a DIFFERENT (e.g. just-stolen,
+      -- empty) base read that base's stock and wrongly blocked our actual target.
+      if refuel_needed and info.base
+         and (info.tankx >> 8) == state.goal.mx and (info.tanky >> 8) == state.goal.my then
         local LOW = 4
         local getting_something = false
         if need_armour and (info.base.armour or 0) >= LOW then getting_something = true end

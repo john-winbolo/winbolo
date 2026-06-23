@@ -1361,8 +1361,13 @@ M.HARASSER_PILL_COST_MULT = 5.0
 M.HARASSER_TRAVEL_MULT = 0.2
 -- Recruitment (slice 2): a soldier answers a nearby commander's pill take when
 -- it's in a follow-the-call state and not too low on resources.
-M.SQUAD_MIN_HELP_ARMOUR  = 10  -- below this armour a soldier won't answer (hard decline)
 M.SQUAD_MIN_HELP_SHELLS  = 3   -- below this shells a soldier won't answer (hard decline)
+-- Armour needed to OPEN/LEAD a blitz (be its commander). Joining has no armour
+-- floor — a partner shares the fire — EXCEPT while carrying a pillbox (cautious
+-- mode): then a joiner needs commander-level armour too, so it doesn't risk the
+-- pill it's holding by diving in weak. Established leaders aren't demoted if
+-- their armour later drops (avoids abandoning a take mid-flight).
+M.SQUAD_COMMANDER_MIN_ARMOUR = 30
 M.SQUAD_REFUEL_OK_ARMOUR = 25  -- a refueling soldier may answer only if already at/above this
 M.SQUAD_REFUEL_OK_SHELLS = 10  -- ...and this (i.e. it was topping off, not desperate)
 M.SQUAD_HELP_RANGE       = 30  -- tiles; only answer a commander whose pill is within this
