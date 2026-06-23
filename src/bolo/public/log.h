@@ -44,9 +44,11 @@
 /* The difference between big log and items */
 #define LOG_SIZE_LONG_DIFF 256
 
-/* Log header and version information */
+/* Log header and version information. Version 2 drops the XOR
+ * obfuscation (plaintext stream) and frames each event record as
+ * [type][u16 big-endian payload length][payload]. */
 #define LOG_HEADER "WBOLOMOV"
-#define LOG_VERSION 1
+#define LOG_VERSION 2
 
 /* Memory buffer for writing events */
 #define LOG_MEMORY_BUFFER_SIZE (64 *1024)

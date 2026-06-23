@@ -173,14 +173,14 @@ void logWriteEmpty() {
   if (logIsRunning == TRUE) {
     if (logLastEvent > 0) {
       if (logLastEvent < LOG_SIZE_LONG_DIFF) {
-        data[0] = LOG_NOEVENTS ^ logOldKey;
-        data[1] = (BYTE) logLastEvent ^ logOldKey;
+        data[0] = LOG_NOEVENTS;
+        data[1] = (BYTE) logLastEvent;
         zipWriteInFileInZip(logFile, data, 2);
       } else {
         us = htons(logLastEvent);
-        data[0] = LOG_NOEVENTS_LONG ^ logOldKey;
-        data[1] = (BYTE) (us >> 8) ^ logOldKey;
-        data[2] = (BYTE) (us & 0xFF) ^ logOldKey;
+        data[0] = LOG_NOEVENTS_LONG;
+        data[1] = (BYTE) (us >> 8);
+        data[2] = (BYTE) (us & 0xFF);
         zipWriteInFileInZip(logFile, data, 3);
       }
     }
@@ -299,14 +299,14 @@ void logWriteEvents(BYTE key) {
 
   if (logNumEvents > 0) {
     if (logNumEvents < LOG_SIZE_LONG_DIFF) {
-      data[0] = LOG_EVENT ^ key;
-      data[1] = (BYTE) logNumEvents ^ key;
+      data[0] = LOG_EVENT;
+      data[1] = (BYTE) logNumEvents;
       zipWriteInFileInZip(logFile, data, 2);
     } else {
       us = htons(logNumEvents);
-      data[0] = LOG_EVENT_LONG ^ key;
-      data[1] = (BYTE) (us >> 8) ^ key;
-      data[2] = (BYTE) (us & 0xFF) ^ key;
+      data[0] = LOG_EVENT_LONG;
+      data[1] = (BYTE) (us >> 8);
+      data[2] = (BYTE) (us & 0xFF);
       zipWriteInFileInZip(logFile, data, 3);
     }
     zipWriteInFileInZip(logFile, logMem, logMemSize);
@@ -328,12 +328,11 @@ void logWriteEvents(BYTE key) {
 *********************************************************/
 void logStop() {
   BYTE data[2];
-  BYTE savedKey = logOldKey; /* Save the key as the old key will be overridden in WriteEmpty */
 
   if (logIsRunning == TRUE) {
     logWriteEmpty();
-    data[0] = LOG_QUIT ^ savedKey;
-    data[1] = LOG_QUIT ^ savedKey;
+    data[0] = LOG_QUIT;
+    data[1] = LOG_QUIT;
     zipWriteInFileInZip(logFile, data, 2);
     zipCloseFileInZip(logFile);
     zipClose(logFile, "WinBolo Log File");
@@ -392,12 +391,14 @@ void logAddToMemory(BYTE *memPos, const void *dataIn, BYTE dataLen) {
 *NAME:          logSerializeEvent
 *AUTHOR:        John Morrison
 *PURPOSE:
-* Writes a single event's plaintext bytes (no XOR) into out: the event-code
-* byte followed by that event type's payload, in the exact order, lengths and
-* values logAddEvent's switch produces before the XOR. Variable-length events
-* append their pascal string as words[0]+1 plaintext bytes. Returns the number
-* of bytes written, or 0 for an unknown event type (nothing written). Does not
-* touch logKey, logMem, logNumEvents or call logCheckTankSame.
+* Writes a single event's plaintext bytes (no XOR) into out, framed as
+* [type][u16 big-endian payload length][payload]: the event-code byte, then
+* the payload byte count as a big-endian u16, then that event type's payload
+* in the exact order, lengths and values logAddEvent's switch produces.
+* Variable-length events append their pascal string as words[0]+1 plaintext
+* bytes. Returns the number of bytes written (3 + payload length), or 0 for an
+* unknown event type (nothing written, no framing). Does not touch logKey,
+* logMem, logNumEvents or call logCheckTankSame.
 *
 *ARGUMENTS:
 *  itemNum - Item number to serialize
@@ -407,7 +408,7 @@ void logAddToMemory(BYTE *memPos, const void *dataIn, BYTE dataLen) {
 *  opt4    - Option argument 4
 *  short1  - Short optional argument
 *  words   - Char* optional argument (pascal string)
-*  out     - Destination buffer (must hold up to 262 bytes)
+*  out     - Destination buffer (must hold up to 264 bytes)
 *********************************************************/
 static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, unsigned short short1, const char *words, BYTE *out) {
   int off = 0; /* Bytes written so far */
@@ -613,7 +614,16 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
   default:
     return 0;
   }
-  return off;
+  /* Frame the [type][payload] the switch produced as [type][u16 BE len]
+     [payload] by shifting the payload right two bytes and inserting the
+     big-endian payload length after the type byte. */
+  {
+    int payloadLen = off - 1; /* bytes after the type byte */
+    memmove(out + 3, out + 1, (size_t)payloadLen);
+    out[1] = (BYTE)((payloadLen >> 8) & 0xFF);
+    out[2] = (BYTE)(payloadLen & 0xFF);
+    return off + 2;
+  }
 }
 
 /*********************************************************
@@ -634,7 +644,7 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
 *  words   - Char* optional argument
 *********************************************************/
 void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, unsigned short short1, char *words) {
-  BYTE event[262]; /* Plaintext event: 6-byte header + 256-byte pascal string */
+  BYTE event[264]; /* Plaintext event: type + u16 len + 6-byte header + 256-byte pascal string */
   int eventLen; /* Bytes the serializer produced */
   int count;
 
@@ -646,8 +656,8 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
   }
   if (logIsRunning == TRUE && logMem != NULL) {
     /* Bounds check: ensure we have room in the log buffer.
-       Max single event is 6 bytes header + 256 bytes words data */
-    if (logMemSize + 262 >= LOG_MEMORY_BUFFER_SIZE) {
+       Max single event is type + u16 len + 6 bytes header + 256 bytes words data */
+    if (logMemSize + 264 >= LOG_MEMORY_BUFFER_SIZE) {
       return;
     }
     /* log_PlayerLocation only emits when the tank state changed; logCheckTankSame
@@ -662,10 +672,9 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
       /* Unknown event type: emit nothing, no count change, no key rotation. */
       return;
     }
-    /* Append the event to logMem by XOR-ing each plaintext byte with the
-       current logKey, which is constant for the whole event. */
+    /* Append the event's plaintext bytes to logMem. */
     for (count = 0; count < eventLen; count++) {
-      *(logMem+logMemSize) = event[count] ^ logKey;
+      *(logMem+logMemSize) = event[count];
       logMemSize++;
     }
     /* Feed the same plaintext to the spectator ring's per-tick accumulator,
@@ -702,12 +711,9 @@ void logDestroy() {
 }
 
 int writeData(BYTE *data, int len, BYTE key) {
-  int count = 0;
-  while (count < len) {
-    data[count] = data[count] ^ key;
-    count++;
-  }
-
+  /* Plaintext stream (v2): no XOR. key is retained in the signature so the
+     existing call sites need no churn; it is intentionally unused. */
+  (void) key;
   return zipWriteInFileInZip(logFile, data, len);
 }
 
