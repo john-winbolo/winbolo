@@ -865,9 +865,15 @@ function M.decide(state, world, info, now)
   -- Only fills to TREE_OPPORTUNISTIC_MAX so we don't over-farm.
   -- Radius is kept small (FARM_OPPORTUNISTIC_RADIUS) to limit pacing slowdown:
   -- the LGM must be able to farm and catch up before the tank moves far.
+  -- Enemy-nearby brake: within FARM_ENEMY_AVOID_DIST tiles of a hostile tank,
+  -- only opportunistically farm when we're critically low on trees (< MIN) —
+  -- otherwise keep the LGM in the tank rather than expose it / stall near a threat.
+  local _enemy_near = state.perc and state.perc.nearest_hostile_tank
+                      and (state.perc.nearest_hostile_tank.dist or 1e9) <= (C.FARM_ENEMY_AVOID_DIST or 10)
   if (b.mode == "gather" or b.mode == "opportunistic")
      and info.trees < C.TREE_OPPORTUNISTIC_MAX
-     and not info.inboat then
+     and not info.inboat
+     and not (_enemy_near and (info.trees or 0) >= (C.FARM_ENEMY_MIN_TREES or 4)) then
     -- Quick reject: any threat at tank tile means lgm_path_safe(LOW) will fail
     if state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then
       return road_ahead(state, info, now, world)

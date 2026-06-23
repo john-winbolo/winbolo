@@ -746,6 +746,11 @@ M.FARM_REFUEL_RADIUS       = 4   -- wider farm radius when stationary at refuel 
 M.TREE_OPPORTUNISTIC_MAX   = 20
 M.LGM_DEPLOY_DIST          = 3
 M.LGM_DEPLOY_DIST_REFUEL   = 5   -- max deploy distance when stationary at base
+-- Near an enemy tank, don't pull the LGM out to opportunistically farm unless
+-- we're critically low on trees — farming exposes the LGM and stalls us while a
+-- threat closes. Only farm within AVOID_DIST tiles of an enemy if trees < MIN.
+M.FARM_ENEMY_AVOID_DIST    = 10  -- tiles (mdist) to nearest hostile tank
+M.FARM_ENEMY_MIN_TREES     = 4   -- below this, farm anyway (need trees to build)
 M.PILL_REPAIR_COST         = 1
 M.LGM_ETA_DEPART_BUFFER    = 10  -- ticks: leave base this many ticks before LGM returns
 M.LGM_NEARBY_TILES         = 3   -- tiles: consider LGM "nearby" within this range
@@ -757,6 +762,11 @@ M.LGM_NEARBY_NOPACE_TICKS  = 30  -- ticks: if LGM arrives within this, don't slo
 -- prefers to sit and pick him up before chasing a new objective.
 M.WAIT_FOR_LGM_ENABLED     = false  -- master toggle; off = candidate never injected
 M.WAIT_FOR_LGM_COST        = 50     -- (only meaningful while ENABLED is true)
+-- Carrying a pillbox: even with the master toggle off, wait for the LGM to get
+-- back so we can build the pill quickly. Injected at a deliberately HIGH priority
+-- (low cost) and NOT suppressed during combat/flee/refuel — when holding a pill,
+-- getting the LGM home to build takes precedence (per design intent).
+M.WAIT_FOR_LGM_COST_CARRYING = 20
 M.ENEMY_LGM_RETURN_TICKS   = 3000     -- estimated ticks for enemy LGM to respawn (~60 sec)
 M.RESPAWN_CACHE_WIPE_DIST  = 12       -- tiles; if respawn point is farther than this from death point, wipe all distance-dependent caches
 M.ENEMY_LGM_DEAD_ATTACK_DISCOUNT = 0.5  -- multiply attack pill cost when enemy LGM is dead

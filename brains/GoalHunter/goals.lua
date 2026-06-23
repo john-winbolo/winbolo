@@ -2959,7 +2959,11 @@ local ATTACK_PILL_HP_MULT = {
 -- something (build_walls, ws_*, pill_place, repair_pill, capture_pill,
 -- rescue_lgm) so we don't preempt a real LGM-using mission.
 local function eval_wait_for_lgm(state, info)
-  if not C.WAIT_FOR_LGM_ENABLED then return nil end
+  -- Carrying a pillbox forces this candidate ON (even with the master toggle off)
+  -- and at a higher priority below — a tank holding a pill should wait for its LGM
+  -- to return so it can build quickly, not wander off.
+  local carrying = info and (info.carried_pills or 0) >= 1 or false
+  if not (C.WAIT_FOR_LGM_ENABLED or carrying) then return nil end
   if not info or info.man_status ~= C.LGM_MOVING then return nil end
   if state.lgm_stranded then return nil end
   local g = state.goal
@@ -2977,7 +2981,7 @@ local function eval_wait_for_lgm(state, info)
   end
   local tmx = info.tankx >> 8
   local tmy = info.tanky >> 8
-  local cost = C.WAIT_FOR_LGM_COST or 50
+  local cost = carrying and (C.WAIT_FOR_LGM_COST_CARRYING or 20) or (C.WAIT_FOR_LGM_COST or 50)
   return {
     cost = cost,
     goal = { kind = "wait_for_lgm", mx = tmx, my = tmy,
