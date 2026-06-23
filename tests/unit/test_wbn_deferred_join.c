@@ -122,23 +122,18 @@ int run_wbn_join_rearm_per_session(void) {
     return 0;
 }
 
-/* The rotation rekey gate must select connected, WBN-verified slots and
- * nothing else — and must key off the verified flag, not the per-slot
- * WBN key (which winbolonetEndSession has already wiped by the time the
- * broadcast runs). */
+/* The rotation rekey gate must select connected slots that were WBN
+ * players last round and nothing else.  It keys off the durable
+ * per-connection wbnWasVerified bit, NOT the sim-side
+ * PLAYER_FLAG_WBN_VERIFIED (which serverSimReturnToLobby clears just
+ * before the broadcast) nor the per-slot WBN key (which
+ * winbolonetEndSession has already wiped by the time the broadcast runs). */
 int run_wbn_join_rekey_target_gate(void) {
-    UT_ASSERT_MSG(wbnRekeyTargetSelected(true, PLAYER_FLAG_WBN_VERIFIED) == true,
-                  "connected + verified must be rekeyed");
-    UT_ASSERT_MSG(wbnRekeyTargetSelected(true, 0) == false,
-                  "connected but unverified must not be rekeyed");
-    UT_ASSERT_MSG(wbnRekeyTargetSelected(false, PLAYER_FLAG_WBN_VERIFIED) == false,
+    UT_ASSERT_MSG(wbnRekeyTargetSelected(true, true) == true,
+                  "connected + was-verified must be rekeyed");
+    UT_ASSERT_MSG(wbnRekeyTargetSelected(true, false) == false,
+                  "connected but never-verified must not be rekeyed");
+    UT_ASSERT_MSG(wbnRekeyTargetSelected(false, true) == false,
                   "a disconnected slot must not be rekeyed");
-
-    /* Other flags riding alongside VERIFIED don't change the decision;
-     * a non-VERIFIED flag alone doesn't qualify. */
-    UT_ASSERT(wbnRekeyTargetSelected(true,
-                  (uint8_t)(PLAYER_FLAG_WBN_VERIFIED | PLAYER_FLAG_SUPPORTER)) == true);
-    UT_ASSERT_MSG(wbnRekeyTargetSelected(true, PLAYER_FLAG_STEAM_BUILD) == false,
-                  "a non-verified hint flag must not qualify for rekey");
     return 0;
 }
