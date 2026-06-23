@@ -1339,6 +1339,19 @@ static void renderCtrlSendMsg(ClientSim *cs) {
     }
 }
 
+/* Whether the local player may answer a given vote. Surrender votes are
+   answerable only by members of the surrendering team (teamId); everyone
+   else can watch the tally but has no Yes/No to cast. Other vote kinds are
+   open to all connected players. Mirrors the server's eligibility rule in
+   gameVoteEligibleMask(). */
+static bool localCanAnswerGameVote(ClientSim *cs,
+                                   const ClientGameVoteSnapshot *snap) {
+    if (snap->kind != GAME_VOTE_KIND_SURRENDER) return true;
+    const ClientLobbySlot *ls =
+        clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+    return ls && ls->teamNumber != 0 && ls->teamNumber == snap->teamId;
+}
+
 /* -------------------------------------------------------
  * Players panel (standalone window for tablet mode)
  * ------------------------------------------------------- */
@@ -1620,6 +1633,7 @@ static void renderPlayersPanel(ClientSim *cs) {
                               : langGetText(STR_VOTE_SURRENDER);
             ImGui::Text("%s: %u / %u", vnm,
                         (unsigned)vs.yesCount, (unsigned)vs.threshold);
+            if (!localCanAnswerGameVote(cs, &vs)) continue;
             BYTE vme = clientSimGetMyPlayerNum(cs);
             bool vMyYes = (vme < 16) && ((vs.votes >> vme) & 1u);
             char yLbl[40]; snprintf(yLbl, sizeof(yLbl), "%s##vy%u", langGetText(STR_YES), (unsigned)vkind);
@@ -2090,7 +2104,8 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
 
     /* Yes / No buttons — only meaningful while the vote is running.
      * Highlight the user's current choice so they can see their stance. */
-    if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
+    if (snap->active == GAME_VOTE_ACTIVE_RUNNING &&
+        localCanAnswerGameVote(cs, snap)) {
         ImGui::Spacing();
         if (uiShouldUseControllerMode()) {
             renderControllerActionHint(SI_ACTION_VIEW_PLAYERS,
