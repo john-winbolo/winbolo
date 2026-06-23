@@ -382,14 +382,16 @@ int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
 int run_log_roundtrip_lobby_mode_drops_world_events(void);
 
-/* v1 .wbv reader gate (test_wbv_reader.c): loads the committed fixture
+/* .wbv reader gate (test_wbv_reader.c): loads the committed fixtures
  * through the production log-viewer reader (lv_screenLoadMapFromMemory)
  * and asserts the decode succeeds with the expected header/snapshot
- * content. The on-demand capture (test_wbv_v1_capture.c) drives the
- * dedicated-server writer to (re)generate that fixture; it is dispatch-
- * only, never run under CTest. */
+ * content. v1 locks XOR'd back-compat; v2 covers the current plaintext,
+ * length-framed format. The on-demand v2 capture (test_wbv_v2_capture.c)
+ * drives the dedicated-server writer to (re)generate spectator_v2.wbv; it
+ * is dispatch-only, never run under CTest. */
 int run_wbv_reader_v1(void);
-int run_wbv_v1_capture(void);
+int run_wbv_reader_v2(void);
+int run_wbv_v2_capture(void);
 
 /* -log path composition (test_log_dir_path.c). Pins -log <dir> auto-naming
  * the replay inside the directory, vs -log <file> / bare -log. */

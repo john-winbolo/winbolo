@@ -2691,11 +2691,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tick-time call paths.
     src/lzw/dcodlzw.c
     src/lzw/ecodlzw.c
-    # v1 .wbv reader gate: load the committed fixture through the production
-    # log-viewer reader (test_wbv_reader.c), and the on-demand writer-drive
-    # that (re)generates that fixture (test_wbv_v1_capture.c).
+    # .wbv reader gate: load the committed v1/v2 fixtures through the
+    # production log-viewer reader (test_wbv_reader.c), and the on-demand
+    # writer-drive that (re)generates the v2 fixture (test_wbv_v2_capture.c).
     tests/unit/test_wbv_reader.c
-    tests/unit/test_wbv_v1_capture.c
+    tests/unit/test_wbv_v2_capture.c
     # Link-only no-op stubs for the host/render/window/message entry points
     # the decode subset below references but whose real bodies live in the
     # GUI TUs (logviewer.c, draw.c, messages.c) we do not link.
@@ -2954,6 +2954,7 @@ set(_unit_test_names
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
     wbv_reader_v1
+    wbv_reader_v2
     log_path_empty_uses_autobase
     log_path_explicit_file_verbatim
     log_path_explicit_file_keeps_single_wbv
@@ -3064,9 +3065,9 @@ set(_unit_test_names
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
 # `WinBoloUnitTests --test wire_corpus_capture`, not under CTest.
-# wbv_v1_capture is omitted for the same reason: it (re)writes the committed
-# spectator_v1.wbv fixture and is invoked on demand via
-# `WinBoloUnitTests --test wbv_v1_capture`; CTest only runs wbv_reader_v1.
+# wbv_v2_capture is omitted for the same reason: it (re)writes the committed
+# spectator_v2.wbv fixture and is invoked on demand via
+# `WinBoloUnitTests --test wbv_v2_capture`; CTest only runs wbv_reader_v1/v2.
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})

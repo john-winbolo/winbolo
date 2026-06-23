@@ -600,7 +600,19 @@ void lv_screenProcessLog(unsigned short numEvents) {
   char name2[256];
 
   while (count < numEvents) {
+    bool isV2 = (g_lv->loadedLogVersion == LOG_VERSION_V2);
+    unsigned short evLen = 0; /* v2 only: framed payload length after code */
+
     logReadBytes(&code, 1);
+
+    if (isV2) {
+      /* v2 frames every event as [type][u16 BE payload-length][payload].
+         Read the length unconditionally; known-type cases below consume
+         exactly that many payload bytes, unknown types skip it. */
+      BYTE lenBytes[2];
+      logReadBytes(lenBytes, 2);
+      evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+    }
 
     switch (code) {
     case log_PlayerJoined:
@@ -619,8 +631,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
           snprintf(mem, sizeof(mem), "%d.%d.%d.%d", opt2, opt3, opt4, opt5);
           lv_dnsLookup(mem, str, sizeof(str));
           snprintf(mem, sizeof(mem), "%s", str);
-        } else if (g_lv->loadedLogVersion == LOG_VERSION_V1) {
-          /* Version 1: opt2-opt3 are 2-char country code,
+        } else if (g_lv->loadedLogVersion == LOG_VERSION_V1 ||
+                   g_lv->loadedLogVersion == LOG_VERSION_V2) {
+          /* Version 1/2: opt2-opt3 are 2-char country code,
            * opt4 is accountFlags (bit 0=WBN, bit 1=Steam, bit 5=bot),
            * opt5 reserved (zero in current writers). */
           snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
@@ -1125,12 +1138,24 @@ void lv_screenProcessLog(unsigned short numEvents) {
                     opt2 ? STR_LV_VOTE_PASSED : STR_LV_VOTE_FAILED, NULL);
       break;
     default:
-      lv_windowStop(TRUE);
-      count = numEvents;
+      if (isV2) {
+        /* Unknown future event type: skip its framed payload and keep
+           going. evLen is a full u16 so it can exceed the v1 per-type
+           maximum; advance the read cursor directly. */
+        lv_logSetPosition(lv_logGetCurrentPosition() + evLen);
+      } else {
+        lv_windowStop(TRUE);
+        count = numEvents;
+      }
       break;
 
     }
-    lv_blocksSetKey(code);
+    /* v2 is plaintext: blockKey stays 0 for the whole stream, so the
+       per-event key roll is suppressed. v1 rolls the key to the event
+       code (matches the writer's logKey rotation). */
+    if (!isV2) {
+      lv_blocksSetKey(code);
+    }
     count++;
   }
 }
@@ -1567,10 +1592,21 @@ static int walkSkipEventBody(BYTE code) {
 static bool walkSkipEvents(unsigned short numEvents) {
   unsigned short i;
   BYTE code;
+  bool isV2 = (g_lv->loadedLogVersion == LOG_VERSION_V2);
   for (i = 0; i < numEvents; i++) {
     if (logReadBytes(&code, 1) != 1) return FALSE;
-    if (walkSkipEventBody(code) < 0) return FALSE;
-    lv_blocksSetKey(code);
+    if (isV2) {
+      /* v2: [type][u16 BE payload-length][payload]. Skip via the framed
+         length; blockKey stays 0 so no key roll. */
+      BYTE lenBytes[2];
+      unsigned short evLen;
+      if (logReadBytes(lenBytes, 2) != 2) return FALSE;
+      evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+      lv_logSetPosition(lv_logGetCurrentPosition() + evLen);
+    } else {
+      if (walkSkipEventBody(code) < 0) return FALSE;
+      lv_blocksSetKey(code);
+    }
   }
   return TRUE;
 }
@@ -1713,7 +1749,8 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
     len = logReadBytes(&logVersion, 1);
     if (len <= 0) {
       returnValue = FALSE;
-    } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1) {
+    } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1 ||
+               logVersion == LOG_VERSION_V2) {
       g_lv->loadedLogVersion = logVersion;
     } else {
       returnValue = FALSE;
@@ -1752,7 +1789,11 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
     }
   }
 
-  lv_blocksSetKey((BYTE) (g_lv->gmeCreateTime & 0xFF));
+  /* v2 is plaintext: blockKey stays 0 (identity de-XOR). v0/v1 seed the
+     rolling key from the low byte of the game create time. */
+  lv_blocksSetKey(g_lv->loadedLogVersion == LOG_VERSION_V2
+                      ? 0
+                      : (BYTE) (g_lv->gmeCreateTime & 0xFF));
   len = logReadBytes(&dataLen, 1);
   if (len != 1 || dataLen != LOG_SNAPSHOT) {
     returnValue = FALSE;
@@ -1836,7 +1877,8 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
     len = logReadBytes(&logVersion, 1);
     if (len <= 0) {
       returnValue = FALSE;
-    } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1) {
+    } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1 ||
+               logVersion == LOG_VERSION_V2) {
       g_lv->loadedLogVersion = logVersion;
     } else {
       returnValue = FALSE;
@@ -1873,7 +1915,11 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
     }
   }
 
-  lv_blocksSetKey((BYTE) (g_lv->gmeCreateTime & 0xFF));
+  /* v2 is plaintext: blockKey stays 0 (identity de-XOR). v0/v1 seed the
+     rolling key from the low byte of the game create time. */
+  lv_blocksSetKey(g_lv->loadedLogVersion == LOG_VERSION_V2
+                      ? 0
+                      : (BYTE) (g_lv->gmeCreateTime & 0xFF));
   len = logReadBytes(&dataLen, 1);
   if (len != 1 || dataLen != LOG_SNAPSHOT) {
     returnValue = FALSE;

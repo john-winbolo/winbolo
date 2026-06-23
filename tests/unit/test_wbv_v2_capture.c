@@ -1,23 +1,24 @@
 /*
- * On-demand generator for the committed v1 .wbv reader fixture. Not part
+ * On-demand generator for the committed v2 .wbv reader fixture. Not part
  * of the fast suite: it drives the dedicated-server replay writer the
  * same way the server does (logStart -> logAddEvent -> logWriteTick ->
  * logStop) to emit a small but representative current-format log, and
- * writes it to <WB_WBV_FIXTURE_DIR>/spectator_v1.wbv for test_wbv_reader
+ * writes it to <WB_WBV_FIXTURE_DIR>/spectator_v2.wbv for test_wbv_reader
  * to load back through the production log-viewer reader.
  *
  * Regenerate with, from the repo root:
  *
  *   WB_WBV_FIXTURE_DIR=tests/fixtures/wbv \
- *       ./WinBoloUnitTests --test wbv_v1_capture
+ *       ./WinBoloUnitTests --test wbv_v2_capture
  *
- * then commit the resulting tests/fixtures/wbv/spectator_v1.wbv.
+ * then commit the resulting tests/fixtures/wbv/spectator_v2.wbv.
  *
  * Every test-controlled byte (the event opcodes and their fixed payloads
  * below) is a constant. The log header also carries the server creation
- * time and WBN key, which are runtime-derived in any genuine .wbv; those
- * seed the reader's XOR key but are read straight back out of the header,
- * so the fixture loads regardless of their value.
+ * time and WBN key, which are runtime-derived in any genuine .wbv; the v2
+ * stream is plaintext so they no longer seed an XOR key, and they are read
+ * straight back out of the header, so the fixture loads regardless of
+ * their value.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -33,7 +34,7 @@
 #define WB_WBV_FIXTURE_DIR "tests/fixtures/wbv"
 #endif
 
-int run_wbv_v1_capture(void) {
+int run_wbv_v2_capture(void) {
   const char *dir = getenv("WB_WBV_FIXTURE_DIR");
   char path[512];
   char namePstr[64];
@@ -44,7 +45,7 @@ int run_wbv_v1_capture(void) {
   long sz;
 
   if (dir == NULL || dir[0] == '\0') dir = WB_WBV_FIXTURE_DIR;
-  snprintf(path, sizeof(path), "%s/spectator_v1.wbv", dir);
+  snprintf(path, sizeof(path), "%s/spectator_v2.wbv", dir);
   remove(path);
 
   sim = ut_make_running_sim("Tester");
@@ -59,7 +60,7 @@ int run_wbv_v1_capture(void) {
   logWriteTick();
 
   /* Variable-length event: a player join carries a pascal-string name.
-   * v1 layout: opt2/opt3 are the 2-char country code, opt4 is
+   * v1/v2 layout: opt2/opt3 are the 2-char country code, opt4 is
    * accountFlags, opt5 (short1) is reserved. */
   namePstr[0] = (char)nameLen;
   memcpy(namePstr + 1, joinerName, nameLen);
@@ -83,6 +84,6 @@ int run_wbv_v1_capture(void) {
   fclose(f);
   UT_ASSERT_MSG(sz > 0, "fixture is empty: %s", path);
 
-  fprintf(stderr, "wbv_v1_capture: wrote %ld bytes -> %s\n", sz, path);
+  fprintf(stderr, "wbv_v2_capture: wrote %ld bytes -> %s\n", sz, path);
   return 0;
 }
