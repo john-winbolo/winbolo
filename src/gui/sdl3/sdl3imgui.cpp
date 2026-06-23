@@ -2988,6 +2988,14 @@ static void renderMenuBar(ClientSim *cs) {
      * checkmark can all fit on one row without overlap. */
     ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 0.0f),
                                         ImVec2(FLT_MAX, FLT_MAX));
+    /* A full 16-slot roster plus the alliance/vote footer can make this
+     * dropdown taller than the window; cap it to the work area so ImGui
+     * adds a scrollbar instead of clipping the bottom rows off-screen. */
+    {
+        const ImGuiViewport *vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0),
+                                            ImVec2(FLT_MAX, vp->WorkSize.y));
+    }
     if (ImGui::BeginMenu(langGetText(STR_MENU_PLAYERS))) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
