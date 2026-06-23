@@ -237,8 +237,8 @@ void wbnJoinClear(WbnJoinState *s) {
     s->pending = false;
 }
 
-bool wbnRekeyTargetSelected(bool connected, uint8_t clientFlags) {
-    return connected && (clientFlags & PLAYER_FLAG_WBN_VERIFIED) != 0;
+bool wbnRekeyTargetSelected(bool connected, bool wbnWasVerified) {
+    return connected && wbnWasVerified;
 }
 
 JoinCollisionVerdict joinCollisionDecide(bool incomingWillAuth,
@@ -1365,22 +1365,25 @@ static void transportUdpServerSendWbnRekey(UdpServerClient *c) {
  * (post-returnToLobby).  Each client mints a fresh player_key against
  * the new key and re-auths, re-registering for the new session.
  *
- * The gate is the sim-side PLAYER_FLAG_WBN_VERIFIED, NOT the per-slot
- * WBN key: this runs right after winbolonetEndSession, which has already
- * wiped every key, so a key-based gate (winboloNetIsPlayerParticipant)
- * would match nobody and silently strand every player un-keyed for the
- * new round.  The verified flag survives serverSimResetGameWorld, so it
- * is the durable cross-round signal.  Re-arm the deferred-join state for
- * each rekeyed slot so the incoming reauth fires a fresh keyed
- * PLAYER_JOIN for the new game (or the grace sweep an anonymous one if
- * the reauth never lands). */
+ * The gate is the durable per-connection wbnWasVerified bit, NOT the
+ * sim-side PLAYER_FLAG_WBN_VERIFIED nor the per-slot WBN key.  The key is
+ * out: winbolonetEndSession just wiped every key, so a key-based gate
+ * (winboloNetIsPlayerParticipant) would match nobody.  The flag is out
+ * too: serverSimReturnToLobby clears PLAYER_FLAG_WBN_VERIFIED on every
+ * slot earlier in this same tick (it means "verified for the current
+ * session", and the session was just torn down), so a flag-based gate
+ * would likewise match nobody and silently strand every player un-keyed
+ * for the new round.  wbnWasVerified lives in the transport client struct,
+ * untouched by the sim reset, so it survives as the cross-round signal.
+ * Re-arm the deferred-join state for each rekeyed slot so the incoming
+ * reauth fires a fresh keyed PLAYER_JOIN for the new game (or the grace
+ * sweep an anonymous one if the reauth never lands). */
 void transportUdpServerBroadcastWbnRekey(ServerSim *sim) {
     int i;
     if (!winbolonetIsRunning()) return;
     for (i = 0; i < MAX_TANKS; i++) {
-        uint8_t flags =
-            playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)i);
-        if (!wbnRekeyTargetSelected(udpServer.clients[i].connected, flags))
+        bool wasVerified = udpServer.clients[i].wbnWasVerified;
+        if (!wbnRekeyTargetSelected(udpServer.clients[i].connected, wasVerified))
             continue;
         transportUdpServerSendWbnRekey(&udpServer.clients[i]);
         wbnJoinArm(&udpServer.clients[i].wbnJoin,
@@ -2320,6 +2323,10 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
         if (incomingIsWBN)                  flags |= PLAYER_FLAG_WBN_VERIFIED;
         if (incomingIsWBN && wbnHasSteam)   flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
         if (incomingIsWBN && wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
+        /* Durable cross-round signal for the rekey-rotation gate: set it
+         * definitively here (true for a WBN joiner, false otherwise) so a
+         * non-WBN client reusing a slot can't inherit a stale true. */
+        udpServer.clients[slot].wbnWasVerified = incomingIsWBN;
         addPlayerInternal(sim, (BYTE)slot,
                           udpServer.clients[slot].playerName,
                           udpServer.clients[slot].wantRejoin);
@@ -2956,6 +2963,8 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     /* Drop any owed PLAYER_JOIN — the player left before it resolved, so
      * no orphan anonymous join (and no leave it would need to pair with). */
     wbnJoinClear(&udpServer.clients[idx].wbnJoin);
+    /* Slot is free; a fresh occupant re-establishes WBN status at its join. */
+    udpServer.clients[idx].wbnWasVerified = false;
 
     /* Reset control-sync state so a re-using slot starts fresh. */
     udpServer.controlSyncInProgress[idx] = false;
@@ -3753,6 +3762,8 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
         if (hasSteam) flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
         if (wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
         playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, slot, flags);
+        /* Keep the durable rekey-gate bit in step with the session flag. */
+        udpServer.clients[slot].wbnWasVerified = true;
         playersSetClientType (&serverSimGetGameSim(sim)->plyrs, slot,
                               udpServer.clients[slot].clientType);
         WB_LOG_INFO(WB_LOG_CAT_NET,
