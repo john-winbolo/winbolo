@@ -1367,9 +1367,17 @@ static void renderPlayersPanel(ClientSim *cs) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     } else {
-        ImGui::SetNextWindowSize(ImVec2(340 * s_uiScale, 420 * s_uiScale), ImGuiCond_FirstUseEver);
+        /* Cap the panel to the viewport work area so a large font (or a
+         * small game window) can't push it taller than the screen and clip
+         * the bottom off-screen; ImGui then shows a scrollbar for overflow.
+         * The default size is also clamped so it never opens oversized. */
+        const ImGuiViewport *vp = ImGui::GetMainViewport();
+        float maxW = vp->WorkSize.x, maxH = vp->WorkSize.y;
+        ImGui::SetNextWindowSize(ImVec2(SDL_min(340 * s_uiScale, maxW),
+                                        SDL_min(420 * s_uiScale, maxH)),
+                                 ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
-                                            ImVec2(FLT_MAX, FLT_MAX));
+                                            ImVec2(maxW, maxH));
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
     ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
