@@ -41,13 +41,16 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
 #include "imgui_nav_outline.h"
+#include "imgui_controller_prompt.h"
 #include "imgui_server_address.h"
 #include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "../imgui_steam_nav.h"
+#include "../glyphs.h"   /* glyphForActionAuto — controller footer legend */
 
 extern "C" {
+#include "../../../steam/steam_input_actions.h"  /* SI_ACTION_MENU_* names */
 #include "../sdl3draw.h"
 #include "../../gamefront.h"
 #include "global.h"
@@ -393,6 +396,10 @@ static MapChooserState  s_chooseMapWbnState      = {};
 static bool             s_chooseMapStateInited   = false;
 static char             s_chooseMapPrevName[128] = "";
 static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=random 3=wbn */
+/* Source tab the trigger/shoulder tab-cycle wants selected next frame in the
+ * map chooser, or -1 for "no forced selection". Applied via
+ * ImGuiTabItemFlags_SetSelected, then cleared once after the tab bar. */
+static int              s_chooseMapForceTab      = -1;
 /* When true, the chooser window is force-sized to almost the full
  * lobby window — leaving a few chat lines visible at the bottom.
  * Toggled by the corner icon button, or by pressing Esc while the
@@ -2511,7 +2518,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
     float btnBarH = ImGui::GetFrameHeight() + 14.0f * s;
     ImGui::BeginChild("##MapChooserBody",
                       ImVec2(0.0f, -btnBarH),
-                      ImGuiChildFlags_None,
+                      ImGuiChildFlags_NavFlattened,
                       ImGuiWindowFlags_NoScrollbar);
 
     /* Tab switch detection. Clearing the new tab's preview on entry
@@ -2526,8 +2533,35 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * still see both: their server lives on a different machine, so
      * its data/maps/ tree is distinct from the client's. */
     bool inProcessServer = (gameFrontGetServerSim() != NULL);
+    /* ImGui tab headers aren't reachable by arrow nav, so in controller mode
+     * the triggers (LT/RT via the Steam menu-tab actions, or a native pad's
+     * L1/R1) cycle the source tabs. Step only over the tabs visible this
+     * frame so a hidden Server tab is skipped. The lobby's own tab-cycle is
+     * suppressed while this chooser is open, so the trigger press is ours. */
+    if (uiShouldUseControllerMode()) {
+        int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
+                  - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
+        if (shift == 0)
+            shift = imguiSteamNavConsumeMenuTabShift();
+        if (shift != 0) {
+            int vis[4];
+            int nVis = 0;
+            if (!inProcessServer) vis[nVis++] = 0;                  /* Server */
+            if (inProcessServer ||
+                clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF)
+                vis[nVis++] = 1;                                    /* Local/Upload */
+            vis[nVis++] = 2;                                        /* Generate */
+            vis[nVis++] = 3;                                        /* WBN */
+            int cur = 0;
+            for (int i = 0; i < nVis; i++) {
+                if (vis[i] == s_chooseMapActiveTab) { cur = i; break; }
+            }
+            s_chooseMapForceTab = vis[(cur + shift + nVis) % nVis];
+        }
+    }
     if (ImGui::BeginTabBar("##MapChooserTabs", ImGuiTabBarFlags_None)) {
-        if (!inProcessServer && ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_SERVERMAPS))) {
+        if (!inProcessServer && ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_SERVERMAPS), nullptr,
+                s_chooseMapForceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_chooseMapActiveTab = 0;
             if (s_lastActiveTab != 0 && activeTabBefore != 0) {
                 lobbyMapTabClearSelection(&s_chooseMapState);
@@ -2539,7 +2573,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             ImGui::EndTabItem();
         }
         if ((inProcessServer || clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF) &&
-            ImGui::BeginTabItem(langGetText(inProcessServer ? STR_DLGLOBBY_TAB_LOCALMAPS : STR_DLGLOBBY_TAB_UPLOAD))) {
+            ImGui::BeginTabItem(langGetText(inProcessServer ? STR_DLGLOBBY_TAB_LOCALMAPS : STR_DLGLOBBY_TAB_UPLOAD), nullptr,
+                s_chooseMapForceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_chooseMapActiveTab = 1;
             if (s_lastActiveTab != 1 && activeTabBefore != 1) {
                 lobbyMapTabClearSelection(&s_chooseMapUploadState);
@@ -2547,7 +2582,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             lobbyRenderMapTab(&s_chooseMapUploadState, renderer, s);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_GENERATE))) {
+        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_GENERATE), nullptr,
+                s_chooseMapForceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_chooseMapActiveTab = 2;
             float availW = ImGui::GetContentRegionAvail().x;
             float availH = ImGui::GetContentRegionAvail().y;
@@ -2590,7 +2626,8 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             }
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS))) {
+        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS), nullptr,
+                s_chooseMapForceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_chooseMapActiveTab = 3;
             if (s_lastActiveTab != 3 && activeTabBefore != 3) {
                 lobbyMapTabClearSelection(&s_chooseMapWbnState);
@@ -2601,6 +2638,9 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
         }
         ImGui::EndTabBar();
     }
+    /* One-shot: the forced selection has been applied (or the bar wasn't
+     * drawn this frame), so don't keep re-forcing it. */
+    s_chooseMapForceTab = -1;
     s_lastActiveTab = s_chooseMapActiveTab;
     ImGui::EndChild(); /* ##MapChooserBody */
     /* The child window becomes the "last item" after EndChild — its
@@ -3586,6 +3626,12 @@ static void loadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
 /* Currently-expanded bot slot for the AiConfig sub-row, or -1. */
 static int s_expandedBotSlot = -1;
 
+/* Tab the trigger/shoulder tab-cycle wants selected next frame in the
+ * tabbed lobby layout, or -1 for "no forced selection". Set from the
+ * LT/RT (or native L1/R1) shift, applied via ImGuiTabItemFlags_SetSelected,
+ * then cleared after the tab bar. */
+static int s_lobbyForceTab = -1;
+
 /* Kick-confirm dialog state. Populated when an authorised player picks
  * "Kick" from a row's right-click context menu; the modal at the bottom
  * of renderTeamGroupedPlayers reads it on the next frame. */
@@ -4080,7 +4126,8 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
         SDL_snprintf(teamFrame, sizeof(teamFrame), "##team%d", teamId);
         ImGui::BeginChild(teamFrame,
                           ImVec2(0, 0),
-                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders |
+                              ImGuiChildFlags_NavFlattened);
 
         /* Color header strip — fills the header row's full width with
          * the team color at low alpha, drawn under the header widgets
@@ -4749,7 +4796,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * client has lobby-edit authority (host / openHost /
                  * admin). Hidden entirely for non-permitted clients
                  * so they don't see a non-functional control. */
-                if (isBot && effectiveHost) {
+                if (isBot && effectiveHost && !uiShouldUseControllerMode()) {
                     if (s_iconSettings) {
                         float iconSize = ImGui::GetFontSize();
                         cyAbs(iconSize);
@@ -5720,6 +5767,10 @@ static void renderLockBadge(void) {
  * Time Limit). Locked settings render disabled with a lock badge.
  * Edits dispatch as PACKET_LOBBY_SET_SETTING via the new wire
  * commands. Host-only or anyone if openHost. */
+/* Forward decl — the form body is defined just after the panel, but the
+ * panel (and the controller Settings tab) call it. */
+static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
+
 static void renderGameSettingsPanel(ClientSim *cs,
                                     int myPlayerNum, float s) {
     bool effectiveHost = isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
@@ -5790,6 +5841,22 @@ static void renderGameSettingsPanel(ClientSim *cs,
      * that the settings happen to be interactable for them. The actual
      * editable checkbox is rendered for host/admin only in the "Other"
      * column below. */
+
+    renderGameSettingsBody(cs, myPlayerNum, s);
+}
+
+/* The game-settings form proper (game type / AI policy / mines / time
+ * limit / password). Split out of renderGameSettingsPanel so the
+ * controller Settings tab can render it flat, without the desktop
+ * collapsing-header chrome. Host-gated by every caller. */
+static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
+    /* Same effective-host test the panel computes, recomputed here so the
+     * per-control disabled state is identical whether the body renders in
+     * the desktop collapsing header or the controller Settings tab. */
+    bool effectiveHost = isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
+                         (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+                          (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
+                           & PLAYER_FLAG_ADMIN));
 
     /* Settings body uses a smaller font than the rest of the lobby so
      * the 3-column form doesn't dominate the visual hierarchy. */
@@ -6204,10 +6271,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     int lastChatLen = 0;
     bool teamChatUnread = false;
     int lastTeamChatLen = 0;
-#if BOLO_MOBILE
-    /* Active tab index for the mobile tabbed layout */
-    int activeTab = 0;      /* 0=Players, 1=Map, 2=Chat(General), 3=Team */
-#endif
+    /* Active tab index for the tabbed layout (mobile, or desktop controller
+     * mode). 0=Players, 1=Map, 2=Settings(host-only), 3=Chat(General),
+     * 4=Team */
+    int activeTab = 0;
 
     /* Query safe area insets for notch avoidance */
     DialogSafeInsets safeInsets = dialogGetSafeInsets(window);
@@ -6221,9 +6288,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
      * still be in flight), and consumed once so the player can navigate away
      * freely afterwards. Armed only in controller mode; keyboard/mouse is
      * unaffected. */
-#if !BOLO_MOBILE
     bool focusReadyPending = uiShouldUseControllerMode();
-#endif
 
     /* Show the lobby in Steam immediately on entry; the throttled tick at
      * the top of the loop keeps the player count / connect address current
@@ -6502,6 +6567,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         ImGui::NewFrame();
         imguiSteamNavActivateMenuSet();
         imguiSteamNavFeedCurrentContext();
+        controllerDialogsRenderMenu();
 
         /* Full-screen host window with safe area padding */
         ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -6518,6 +6584,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                      ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+        bool wantLeaveConfirm = false;
 
         BYTE myPlayerNum = gameFrontGetPlayerNum();
 
@@ -6579,33 +6647,36 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * a back arrow (left-pointing triangle) drawn into a normal-height
              * button so it matches Add Team / Ready visually without depending
              * on geometric-shape glyphs being present in the active font. */
-            float leaveBtnH = ImGui::GetFrameHeight();
-            float leaveBtnW = leaveBtnH * 1.4f;
-            ImVec2 leaveBtnPos = ImGui::GetCursorScreenPos();
-            bool leaveClicked = ImGui::Button("##leave", ImVec2(leaveBtnW, leaveBtnH));
-            {
-                ImDrawList *dl = ImGui::GetWindowDrawList();
-                float cx = leaveBtnPos.x + leaveBtnW * 0.5f;
-                float cy = leaveBtnPos.y + leaveBtnH * 0.5f;
-                float r  = leaveBtnH * 0.28f;
-                ImVec2 p1(cx - r,         cy);
-                ImVec2 p2(cx + r * 0.7f,  cy - r);
-                ImVec2 p3(cx + r * 0.7f,  cy + r);
-                ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
-                dl->AddTriangleFilled(p1, p2, p3, col);
+            bool leaveClicked = false;
+            if (!uiShouldUseControllerMode()) {
+                float leaveBtnH = ImGui::GetFrameHeight();
+                float leaveBtnW = leaveBtnH * 1.4f;
+                ImVec2 leaveBtnPos = ImGui::GetCursorScreenPos();
+                leaveClicked = ImGui::Button("##leave", ImVec2(leaveBtnW, leaveBtnH));
+                {
+                    ImDrawList *dl = ImGui::GetWindowDrawList();
+                    float cx = leaveBtnPos.x + leaveBtnW * 0.5f;
+                    float cy = leaveBtnPos.y + leaveBtnH * 0.5f;
+                    float r  = leaveBtnH * 0.28f;
+                    ImVec2 p1(cx - r,         cy);
+                    ImVec2 p2(cx + r * 0.7f,  cy - r);
+                    ImVec2 p3(cx + r * 0.7f,  cy + r);
+                    ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
+                    dl->AddTriangleFilled(p1, p2, p3, col);
+                }
             }
             if (leaveClicked ||
-                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !dialogNavWasInsideSubRegionAtFrameStart()) ||
+                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen() && !s_chooseMapOpen && !mapPreviewPopupIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                   (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                   || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
 #endif
                  ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
-                char leavePopupId[64];
-                SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
-                ImGui::OpenPopup(leavePopupId);
+                wantLeaveConfirm = true;
             }
-            ImGui::SameLine(0, 16);
+            if (!uiShouldUseControllerMode()) {
+                ImGui::SameLine(0, 16);
+            }
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted(langGetText(STR_DLGNETINFO_SERVER));
             ImGui::SameLine();
@@ -6656,7 +6727,19 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             || (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                 (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                  & PLAYER_FLAG_ADMIN));
-        if (gsEffectiveHost) {
+        /* Tabbed (controller) vs two-column (mouse) layout. Computed here so
+         * the shared settings panel below renders only on the mouse path —
+         * the tabbed layout shows settings in its own Settings tab instead. */
+#if BOLO_MOBILE
+        const bool useTabbedLobby = true;
+#else
+        const bool useTabbedLobby = uiShouldUseControllerMode();
+#endif
+
+        /* Settings above the layout is the two-column (mouse) path only; the
+         * tabbed layout renders the same form in a dedicated tab, so skip it
+         * here to avoid double-rendering it for the host. */
+        if (gsEffectiveHost && !useTabbedLobby) {
             renderGameSettingsPanel(cs, myPlayerNum, s);
             ImGui::Separator();
             ImGui::Spacing();
@@ -6666,33 +6749,69 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * renderConnectivityBadge — see the call site in the read-only
          * status block above. */
 
-        /* --- Main content --- */
-#if BOLO_MOBILE
-        /* Tabbed layout for mobile: Players | Map | Chat */
-        {
+        /* --- Main content (tabbed in controller mode, two-column for mouse;
+         * useTabbedLobby computed above the shared settings panel) --- */
+        if (useTabbedLobby) {
             float availW = ImGui::GetContentRegionAvail().x - padR;
             float btnAreaH = ImGui::GetTextLineHeightWithSpacing() * 2 + 16.0f * s;
 
             /* Detect new chat messages for unread indicator */
             int chatLen = (int)SDL_strlen(clientSimGetLobbyChatHistory(cs));
-            if (chatLen > lastChatLen && activeTab != 2) {
+            if (chatLen > lastChatLen && activeTab != 3) {
                 chatUnread = true;
             }
             lastChatLen = chatLen;
             int teamChatLen = (int)SDL_strlen(clientSimGetLobbyTeamChatHistory(cs));
-            if (teamChatLen > lastTeamChatLen && activeTab != 3) {
+            if (teamChatLen > lastTeamChatLen && activeTab != 4) {
                 teamChatUnread = true;
             }
             lastTeamChatLen = teamChatLen;
 
+            /* Trigger-driven tab cycling. Settings (host-only) and Team-chat
+             * (on-team-only) are conditional, so step over an explicit list of
+             * the tabs actually drawn this frame — a plain modulo could land on
+             * a missing index. A native pad feeds L1/R1 even with ImGui gamepad
+             * nav off; under Steam Input the pad is hidden from SDL, so the
+             * menu_tab_left/right actions (mapped to LT/RT) arrive via
+             * imguiSteamNavConsumeMenuTabShift instead. Suppressed while the
+             * Choose Map window is open so the trigger press cycles its source
+             * tabs (rendered later this frame) instead of the lobby tabs. */
+            if (!s_chooseMapOpen) {
+                const ClientLobbySlot *myTabSlot =
+                    clientSimGetLobbySlot(cs, myPlayerNum);
+                bool onTeam = myTabSlot && myTabSlot->teamNumber != 0;
+                int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
+                          - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
+                if (shift == 0)
+                    shift = imguiSteamNavConsumeMenuTabShift();
+                if (shift != 0) {
+                    /* Visible tab indices in render order. The Settings
+                     * predicate must match the Settings tab's BeginTabItem
+                     * gate (gsEffectiveHost) exactly. */
+                    int vis[5];
+                    int nVis = 0;
+                    vis[nVis++] = 0;                       /* Players */
+                    vis[nVis++] = 1;                       /* Map */
+                    if (gsEffectiveHost) vis[nVis++] = 2;  /* Settings */
+                    vis[nVis++] = 3;                       /* Chat */
+                    if (onTeam) vis[nVis++] = 4;           /* Team */
+                    int cur = 0;
+                    for (int i = 0; i < nVis; i++) {
+                        if (vis[i] == activeTab) { cur = i; break; }
+                    }
+                    s_lobbyForceTab = vis[(cur + shift + nVis) % nVis];
+                }
+            }
+
             if (ImGui::BeginTabBar("##LobbyTabs")) {
                 /* --- Players tab --- */
-                if (ImGui::BeginTabItem(langGetText(STR_MENU_PLAYERS))) {
+                if (ImGui::BeginTabItem(langGetText(STR_MENU_PLAYERS), nullptr,
+                        s_lobbyForceTab == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 0;
                     /* Allow New Players row above the player list (mobile). */
                     renderAllowNewPlayersRow(cs, myPlayerNum, s);
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
-                    ImGui::BeginChild("##PlayerPanel", ImVec2(availW, tabH), ImGuiChildFlags_None);
+                    ImGui::BeginChild("##PlayerPanel", ImVec2(availW, tabH), ImGuiChildFlags_NavFlattened);
 
                     /* Layout A: team-grouped player rendering. The
                      * legacy 5-column table below the #if 0 is left
@@ -6841,7 +6960,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
 
                 /* --- Map tab --- */
-                if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_MAP_TAB))) {
+                if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_MAP_TAB), nullptr,
+                        s_lobbyForceTab == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
                     activeTab = 1;
                     float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
 
@@ -6930,11 +7050,28 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                                 bx0, by0, bx1, by1);
                         drawLobbyPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
                                                      bx0, by0, bx1, by1);
+                        /* Controller-reachable entry to the start picker: a
+                         * focusable activation over the preview that opens the
+                         * popup (which in controller mode shows the start list).
+                         * The pad has no click, so the mouse onClick path below
+                         * can't reach it; Space/A on this item does. */
+                        if (uiShouldUseControllerMode() && popupCompressedData) {
+                            ImGui::SetCursorScreenPos(miniMin);
+                            ImGui::SetNextItemAllowOverlap();
+                            if (ImGui::InvisibleButton("##openStartPicker",
+                                                       ImVec2(innerSize, innerSize))) {
+                                mapPreviewPopupOpenCompressed(popupCompressedData,
+                                                              popupCompressedLen,
+                                                              mapBounds.minX, mapBounds.minY,
+                                                              mapBounds.maxX, mapBounds.maxY);
+                            }
+                        }
                         /* Reserve the full box so the gap also sits below. */
                         ImGui::SetCursorPosY(boxTopY + previewSize);
                         /* A click that didn't land on a start opens the zoomed
                          * popup (clicking a free start moves you there). */
-                        if (popupCompressedData && !miniConsumed) {
+                        if (popupCompressedData && !miniConsumed &&
+                            !uiShouldUseControllerMode()) {
                             mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
                                                    mapBounds.minX, mapBounds.minY,
                                                    mapBounds.maxX, mapBounds.maxY);
@@ -6994,6 +7131,19 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::EndTabItem();
                 }
 
+                /* --- Settings tab (host-only) --- */
+                /* The flat game-settings form, no collapsing header — that
+                 * chrome belongs to the desktop two-column path. Gated on the
+                 * same gsEffectiveHost as the vis[] Settings predicate above. */
+                if (gsEffectiveHost &&
+                    ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_SETTINGS_HEADER), nullptr,
+                        s_lobbyForceTab == 2 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                    activeTab = 2;
+                    ImGui::Spacing();
+                    renderGameSettingsBody(cs, myPlayerNum, s);
+                    ImGui::EndTabItem();
+                }
+
                 /* --- Chat tab (with unread indicator) --- */
                 {
                     bool chatTabColorPushed = false;
@@ -7002,8 +7152,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
                         chatTabColorPushed = true;
                     }
-                    if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT))) {
-                        activeTab = 2;
+                    if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT), nullptr,
+                            s_lobbyForceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                        activeTab = 3;
                         chatUnread = false;
                         if (chatTabColorPushed) {
                             ImGui::PopStyleColor(2);
@@ -7014,7 +7165,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                         float chatHistH = tabH - inputH;
                         if (chatHistH < 20.0f) chatHistH = 20.0f;
 
-                        ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders);
+                        ImGui::BeginChild("##ChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
                         /* Wrap long lines at the child's right edge so a
                          * full-length (128-char) message flows onto extra
                          * lines instead of running off the panel. */
@@ -7046,8 +7197,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
                             teamTabColorPushed = true;
                         }
-                        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_TEAM))) {
-                            activeTab = 3;
+                        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_TEAM), nullptr,
+                                s_lobbyForceTab == 4 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                            activeTab = 4;
                             teamChatUnread = false;
                             if (teamTabColorPushed) {
                                 ImGui::PopStyleColor(2);
@@ -7058,7 +7210,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             float chatHistH = tabH - inputH;
                             if (chatHistH < 20.0f) chatHistH = 20.0f;
 
-                            ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders);
+                            ImGui::BeginChild("##TeamChatHistory", ImVec2(0, chatHistH), ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
                             ImGui::PushTextWrapPos(0.0f);
                             ImGui::TextUnformatted(clientSimGetLobbyTeamChatHistory(cs));
                             ImGui::PopTextWrapPos();
@@ -7080,6 +7232,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                 ImGui::EndTabBar();
             }
+            /* One-shot: the forced selection has been applied (or the bar
+             * wasn't drawn this frame), so don't keep re-forcing it. */
+            s_lobbyForceTab = -1;
 
             /* --- Bottom buttons (always visible) --- */
             ImGui::Spacing();
@@ -7099,12 +7254,39 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 bool rankedBlocksReady = rankedActive && !readyRe.sizesEligible;
                 bool canReady = clientSimIsMapDownloadComplete(cs) && !rankedBlocksReady;
 
+                /* Controller mode draws each action's bound glyph inline, just
+                 * left of the button it triggers (A = Ready, B = Leave); the
+                 * LT/RT tab-switch glyphs sit at the row's right. Decoration
+                 * only — the button keeps its text label if a glyph is absent.
+                 * The glyph height matches the button frame height, so the row
+                 * height is unchanged (no extra reserved space). */
+                const bool  padLegend = uiShouldUseControllerMode();
+                const float glyphH    = ImGui::GetFrameHeight();
+                auto glyphInline = [&](const char *action) {
+                    if (!padLegend) return;
+                    SDL_Texture *g = glyphForActionAuto(action);
+                    if (g) {
+                        ImGui::Image((ImTextureID)g, ImVec2(glyphH, glyphH));
+                        ImGui::SameLine(0.0f, 4.0f);
+                    }
+                };
+
                 if (!canReady) ImGui::BeginDisabled();
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
                 if (myReady) {
                     ImGui::PushStyleColor(ImGuiCol_Button,         ImVec4(0.15f, 0.55f, 0.15f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,  ImVec4(0.20f, 0.65f, 0.20f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive,   ImVec4(0.10f, 0.45f, 0.10f, 1.0f));
+                }
+                /* A glyph sits left of Ready. Drawn before the focus seed so
+                 * SetKeyboardFocusHere() still targets the Button (next item),
+                 * not the glyph image. */
+                glyphInline(SI_ACTION_MENU_ACCEPT);
+                /* One-shot initial focus for controller players — only once
+                 * Ready is enabled, so we don't try to focus a disabled item. */
+                if (focusReadyPending && canReady) {
+                    ImGui::SetKeyboardFocusHere();
+                    focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
                     if (hasTransport) {
@@ -7124,22 +7306,33 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                  * response (no approval step). */
 
                 ImGui::SameLine(0, 20);
+                glyphInline(SI_ACTION_MENU_CANCEL);   /* B glyph left of Leave */
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !dialogNavWasInsideSubRegionAtFrameStart()) ||
+                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen() && !s_chooseMapOpen && !mapPreviewPopupIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                       (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                       || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
 #endif
                      ) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup))) {
-                    char leavePopupId[64];
-                    SDL_snprintf(leavePopupId, sizeof(leavePopupId), "%s##lobby", langGetText(STR_DLGLOBBY_LEAVE_TITLE));
-                    ImGui::OpenPopup(leavePopupId);
+                    wantLeaveConfirm = true;
+                }
+
+                /* LT/RT switch tabs — the two trigger glyphs at the right of
+                 * the same button row, no text label (no string fits). */
+                if (padLegend) {
+                    SDL_Texture *gl = glyphForActionAuto(SI_ACTION_MENU_TAB_LEFT);
+                    SDL_Texture *gr = glyphForActionAuto(SI_ACTION_MENU_TAB_RIGHT);
+                    if (gl || gr) {
+                        ImGui::SameLine(0.0f, 18.0f);
+                        if (gl) ImGui::Image((ImTextureID)gl, ImVec2(glyphH, glyphH));
+                        if (gl && gr) ImGui::SameLine(0.0f, 2.0f);
+                        if (gr) ImGui::Image((ImTextureID)gr, ImVec2(glyphH, glyphH));
+                    }
                 }
             }
         }
-#else
-        /* --- Desktop: Players (left) + Map Preview (right) --- */
-        {
+        else {
+            /* --- Desktop: Players (left) + Map Preview (right) --- */
             float availW = ImGui::GetContentRegionAvail().x - padR;
             /* Total vertical content area before any rendering — used to
              * fill the lobby so the chat block's bottom sits flush with
@@ -7585,8 +7778,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 /* Reserve the full box so the gap also sits below the map. */
                 ImGui::SetCursorPosY(boxTopY + previewSize);
                 /* A click that didn't land on a start opens the zoomed popup
-                 * (clicking a free start moves you there instead). */
-                if (popupCompressedData && !miniConsumed) {
+                 * (clicking a free start moves you there instead). Mouse only;
+                 * this two-column layout is never used in controller mode. */
+                if (popupCompressedData && !miniConsumed &&
+                    !uiShouldUseControllerMode()) {
                     mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
                                            mapBounds.minX, mapBounds.minY,
                                            mapBounds.maxX, mapBounds.maxY);
@@ -7731,7 +7926,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             }
             ImGui::EndGroup(); /* /right column */
         } /* /desktop layout scope (playerPanelW/mapPanelW) */
-#endif
 
         /* --- Map preview popup --- */
         {
@@ -7781,6 +7975,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             }
             ImGui::EndPopup();
         }
+
+        /* Open the leave confirm one frame after the trigger fires, so the
+         * modal first renders on a frame where the B/Escape press has already
+         * been released. Otherwise DialogFooter's own Escape-cancel inside the
+         * modal consumes the same press and dismisses it on appear. */
+        if (wantLeaveConfirm)
+            ImGui::OpenPopup(leavePopupModalId);
 
         /* --- Countdown overlay --- */
         if (clientSimGetNetStatus(cs) == netLobbyCountdown && clientSimGetCountdownSeconds(cs) > 0) {

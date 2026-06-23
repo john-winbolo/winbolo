@@ -88,4 +88,11 @@ SDL_Gamepad *inputGamepadGetActiveHandle(void) {
     return nullptr;
 }
 
+/* ---- controller dialog stub -------------------------------------- */
+/* The shared WBN browser loop calls controllerDialogsRenderMenu() to raise
+ * the controller connect/disconnect dialogs on the menu screens. LogViewer
+ * doesn't link the controller-mode dialogs (imgui_controller_prompt.cpp), so
+ * this is a no-op here — the browser is mouse/keyboard only. */
+void controllerDialogsRenderMenu(void) {}
+
 } /* extern "C" */

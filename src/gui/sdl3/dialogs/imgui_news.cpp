@@ -31,6 +31,7 @@ extern "C" {
 #include "../../../winbolonet/winbolonet_core.h"
 #include "../../../common/prefs.h"
 #include "../../lang.h"
+#include "../../ui_mode.h"
 }
 
 #include <algorithm>
@@ -49,6 +50,7 @@ static bool                  s_kicked       = false;
 static bool                  s_modalOpen    = false;
 static bool                  s_consentOpen  = false;
 static bool                  s_modalOpenCalled   = false; /* edge tracker for ImGui::OpenPopup */
+static bool                  s_seedScrollFocus   = false; /* one-shot: focus the scroll child on open (controller mode) */
 static bool                  s_consentOpenCalled = false;
 static bool                  s_dontAutoShow = false;
 static int                   s_maxIdAtOpen  = 0;
@@ -322,7 +324,12 @@ static void renderItem(const WbnNewsItem &item) {
      * would use. */
     MessageArgs args = {};
     args.number = item.comments;
-    if (ImGui::TextLink(langGetTextFmt(STR_DLGNEWS_COMMENTS_FMT, &args))) {
+    if (uiShouldUseControllerMode()) {
+        /* Controller mode: render the comments count as a plain, non-navigable
+         * label so the d-pad scrolls the article body instead of snapping
+         * between per-article comments links. */
+        ImGui::TextDisabled("%s", langGetTextFmt(STR_DLGNEWS_COMMENTS_FMT, &args));
+    } else if (ImGui::TextLink(langGetTextFmt(STR_DLGNEWS_COMMENTS_FMT, &args))) {
         newsOpenUrlSchemeFiltered(item.url);
     }
 
@@ -346,7 +353,8 @@ static void renderNewsModal(void) {
                  langGetText(STR_DLGNEWS_TITLE));
     if (!s_modalOpenCalled) {
         ImGui::OpenPopup(title);
-        s_modalOpenCalled = true;
+        s_modalOpenCalled  = true;
+        s_seedScrollFocus  = true;
     }
     ImVec2 vp = ImGui::GetMainViewport()->Size;
     ImGui::SetNextWindowSize(ImVec2(vp.x * 0.8f, vp.y * 0.8f),
@@ -367,6 +375,15 @@ static void renderNewsModal(void) {
     }
 
     const float footerH = ImGui::GetFrameHeightWithSpacing() + 4.0f;
+
+    /* On the frame the modal opens in controller mode, focus the scroll child
+     * so the d-pad scrolls the article body immediately — without it the user
+     * must first navigate into the bordered child. The article body has no
+     * navigable items, so ImGui falls back to directional-key scrolling. */
+    if (s_seedScrollFocus && uiShouldUseControllerMode()) {
+        ImGui::SetNextWindowFocus();
+    }
+    s_seedScrollFocus = false;
 
     if (ImGui::BeginChild("scroll", ImVec2(0.0f, -footerH), true,
                           ImGuiWindowFlags_None)) {
