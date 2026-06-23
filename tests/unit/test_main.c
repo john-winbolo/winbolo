@@ -238,6 +238,8 @@ static const UnitTestEntry s_tests[] = {
                                                  run_log_roundtrip_lobby_snapshot_is_empty_world },
     { "log_roundtrip_lobby_mode_drops_world_events",
                                                  run_log_roundtrip_lobby_mode_drops_world_events },
+    { "wbv_reader_v1",                           run_wbv_reader_v1                           },
+    { "wbv_v1_capture",                          run_wbv_v1_capture                          },
     { "log_path_empty_uses_autobase",            run_log_path_empty_uses_autobase            },
     { "log_path_explicit_file_verbatim",         run_log_path_explicit_file_verbatim         },
     { "log_path_explicit_file_keeps_single_wbv", run_log_path_explicit_file_keeps_single_wbv },

@@ -2691,6 +2691,40 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tick-time call paths.
     src/lzw/dcodlzw.c
     src/lzw/ecodlzw.c
+    # v1 .wbv reader gate: load the committed fixture through the production
+    # log-viewer reader (test_wbv_reader.c), and the on-demand writer-drive
+    # that (re)generates that fixture (test_wbv_v1_capture.c).
+    tests/unit/test_wbv_reader.c
+    tests/unit/test_wbv_v1_capture.c
+    # Link-only no-op stubs for the host/render/window/message entry points
+    # the decode subset below references but whose real bodies live in the
+    # GUI TUs (logviewer.c, draw.c, messages.c) we do not link.
+    tests/unit/test_logviewer_stubs.c
+    # Log-viewer decode subset reachable from lv_screenLoadMapFromMemory:
+    # screen.c + blocks.c plus the snapshot / players / world-object / map /
+    # render-data-structure TUs they call. The GUI/render TUs (logviewer.c,
+    # draw.c, sound.c, messages.c, game_view.c, bolo_shim.c, imgui/*) are
+    # NOT linked — their referenced entry points are stubbed above.
+    src/logviewer/screen.c
+    src/logviewer/blocks.c
+    src/logviewer/snapshot.c
+    src/logviewer/players.c
+    src/logviewer/pillbox.c
+    src/logviewer/bases.c
+    src/logviewer/starts.c
+    src/logviewer/shells.c
+    src/logviewer/bolo_map.c
+    src/logviewer/screencalc.c
+    src/logviewer/screentank.c
+    src/logviewer/screenlgm.c
+    src/logviewer/screenbullet.c
+    src/logviewer/sounddist.c
+    src/logviewer/allience.c
+    src/logviewer/labels.c
+    src/logviewer/util.c
+    src/logviewer/global.c
+    src/logviewer/clientmutex.c
+    src/logviewer/dns.c
 )
 
 if(WB_NETDEBUG)
@@ -2720,6 +2754,9 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # differential test at the committed fixture directory.
     WB_WIRE_CORPUS_CAPTURE=1
     WB_WIRE_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wire"
+    # Committed v1 .wbv fixture directory: the reader gate loads from here and
+    # the on-demand capture (re)writes spectator_v1.wbv into it.
+    WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -2728,6 +2765,10 @@ target_include_directories(WinBoloUnitTests PRIVATE
     src/server
     src
     src/winbolonet
+    # Headers for the log-viewer decode subset (backend.h, logviewer.h,
+    # blocks.h, snapshot.h, lv_*.h) used by test_wbv_reader.c and the
+    # linked src/logviewer/*.c decode TUs.
+    src/logviewer
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
@@ -2912,6 +2953,7 @@ set(_unit_test_names
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
+    wbv_reader_v1
     log_path_empty_uses_autobase
     log_path_explicit_file_verbatim
     log_path_explicit_file_keeps_single_wbv
@@ -3022,6 +3064,9 @@ set(_unit_test_names
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
 # `WinBoloUnitTests --test wire_corpus_capture`, not under CTest.
+# wbv_v1_capture is omitted for the same reason: it (re)writes the committed
+# spectator_v1.wbv fixture and is invoked on demand via
+# `WinBoloUnitTests --test wbv_v1_capture`; CTest only runs wbv_reader_v1.
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})
