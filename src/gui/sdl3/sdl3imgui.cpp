@@ -4000,12 +4000,20 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
                    Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
             } else {
-                /* Enforce aspect ratio: adjust height to match width */
+                /* Enforce aspect ratio: adjust height to match width — but not
+                   while maximized or fullscreen, where the window must keep the
+                   size the OS gave it and the draw side letterboxes the game
+                   inside.  Forcing a taller-than-screen height there pushes the
+                   title bar off-screen and strands the window with no way to
+                   move or restore it. */
+                SDL_WindowFlags wflags = SDL_GetWindowFlags(s_window);
+                bool osManaged =
+                    (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
                 int w = ev.window.data1;
                 int h = ev.window.data2;
                 int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
                 int correctH = correctContentH + MENU_BAR_HEIGHT;
-                if (h != correctH) {
+                if (!osManaged && h != correctH) {
                     s_suppressAutoCustom = true;  /* Prevent recursion */
                     SDL_SetWindowSize(s_window, w, correctH);
                 }
