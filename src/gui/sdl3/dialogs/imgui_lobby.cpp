@@ -4796,7 +4796,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                  * client has lobby-edit authority (host / openHost /
                  * admin). Hidden entirely for non-permitted clients
                  * so they don't see a non-functional control. */
-                if (isBot && effectiveHost) {
+                if (isBot && effectiveHost && !uiShouldUseControllerMode()) {
                     if (s_iconSettings) {
                         float iconSize = ImGui::GetFontSize();
                         cyAbs(iconSize);
@@ -7050,11 +7050,28 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                                 bx0, by0, bx1, by1);
                         drawLobbyPreviewStartOverlay(cs, myPlayerNum, miniMin, innerSize,
                                                      bx0, by0, bx1, by1);
+                        /* Controller-reachable entry to the start picker: a
+                         * focusable activation over the preview that opens the
+                         * popup (which in controller mode shows the start list).
+                         * The pad has no click, so the mouse onClick path below
+                         * can't reach it; Space/A on this item does. */
+                        if (uiShouldUseControllerMode() && popupCompressedData) {
+                            ImGui::SetCursorScreenPos(miniMin);
+                            ImGui::SetNextItemAllowOverlap();
+                            if (ImGui::InvisibleButton("##openStartPicker",
+                                                       ImVec2(innerSize, innerSize))) {
+                                mapPreviewPopupOpenCompressed(popupCompressedData,
+                                                              popupCompressedLen,
+                                                              mapBounds.minX, mapBounds.minY,
+                                                              mapBounds.maxX, mapBounds.maxY);
+                            }
+                        }
                         /* Reserve the full box so the gap also sits below. */
                         ImGui::SetCursorPosY(boxTopY + previewSize);
                         /* A click that didn't land on a start opens the zoomed
                          * popup (clicking a free start moves you there). */
-                        if (popupCompressedData && !miniConsumed) {
+                        if (popupCompressedData && !miniConsumed &&
+                            !uiShouldUseControllerMode()) {
                             mapPreviewPopupOnClick(popupCompressedData, popupCompressedLen,
                                                    mapBounds.minX, mapBounds.minY,
                                                    mapBounds.maxX, mapBounds.maxY);
