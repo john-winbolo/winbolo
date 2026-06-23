@@ -383,6 +383,13 @@ M.PPT_CHARGE_MAX_SPEED = 4     -- speed cap during PPT charge (creep, not rush)
 -- 7 (~44% of max): steady per-tile progress, not the spd=4 dead-creep that PPT
 -- uses. Decelerate only when ABOVE this; below it, keep steering's drive.
 M.TAKE_CRAWL_MAX_SPEED = 28
+-- Hard-brake override for the crawl: if we're within APPROACH_HARDBRAKE_DIST wu
+-- of our OWN attack_pill stop point (approach point / in-range standoff) and
+-- still moving faster than APPROACH_HARDBRAKE_SPEED, force a full brake even on
+-- an ally take ring, so the crawl-cruise can't coast us through our own setup.
+-- 128 wu = 1/2 tile; speed 8 = engine 2 (2x the speed<=4 in-position gate).
+M.APPROACH_HARDBRAKE_DIST  = 128
+M.APPROACH_HARDBRAKE_SPEED = 8
 M.PPT_CHARGE_BRAKE_DIST = 32   -- start braking inside this many wu of standoff
 -- Legacy (non-PPT) charge brakes on REACH, not standoff distance: it rolls in
 -- until braking from the predicted stop (cpf.predict_stop) would still land a

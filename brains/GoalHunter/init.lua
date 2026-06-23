@@ -4796,13 +4796,39 @@ function Brain.think(info)
     local on_next = nmx and nmy and s[nmy * 256 + nmx]
     if on_cur or on_next then
       local cap = C.TAKE_CRAWL_MAX_SPEED or 28
-      if (info.speed or 0) > cap then
+      -- Hard-brake exception: if we're within ~1/2 tile of our OWN stop point
+      -- (attack_pill approach point / in-range standoff) and still moving fast,
+      -- brake HARD even on the ally take ring. Otherwise the crawl-cruise cap
+      -- (which only brakes ABOVE the cap) lets us coast straight through our own
+      -- setup point — a blitz commander sailed past its setup at spd 28 because
+      -- the setup tile sat inside an ally's take ring. The crawl still governs
+      -- pure transit; this only fires when WE are arriving at our destination.
+      local stop_close_fast = false
+      local g = state.goal
+      if g and g.kind == "attack_pill" then
+        local sx, sy
+        if g.substate == "approach" then
+          sx = g.approach_fx or (g.approach_mx and (g.approach_mx + 0.5))
+          sy = g.approach_fy or (g.approach_my and (g.approach_my + 0.5))
+        elseif g.substate == "in_range_position" then
+          sx = g.standoff_fx or (g.standoff_mx and (g.standoff_mx + 0.5))
+          sy = g.standoff_fy or (g.standoff_my and (g.standoff_my + 0.5))
+        end
+        if sx and sy then
+          local sd = U.wdist(info.tankx, info.tanky, math.floor(sx * 256 + 0.5), math.floor(sy * 256 + 0.5))
+          stop_close_fast = sd <= (C.APPROACH_HARDBRAKE_DIST or 128)
+                            and (info.speed or 0) > (C.APPROACH_HARDBRAKE_SPEED or 8)
+        end
+      end
+      if stop_close_fast then
+        keys = (keys & ~KEY_FASTER) | KEY_SLOWER   -- own stop point near + fast: hard brake through the crawl
+      elseif (info.speed or 0) > cap then
         keys = (keys & ~KEY_FASTER) | KEY_SLOWER   -- above cruise: brake toward cap
       else
         keys = keys & ~KEY_SLOWER                  -- at/below cruise: keep steering's drive, don't stall
       end
       state._take_crawl_active = on_cur and "on" or "next"   -- for the viz overlay
-      print2(string.format("TAKE_CRAWL t=%d tile=(%d,%d) trigger=%s spd=%d cap=%d %s — boat-cruise per-tile near ally take", state.tick or 0, cmx, cmy, on_cur and "on-ring" or "stepping-onto", info.speed or 0, cap, (info.speed or 0) > cap and "BRAKE" or "drive"))
+      print2(string.format("TAKE_CRAWL t=%d tile=(%d,%d) trigger=%s spd=%d cap=%d %s — boat-cruise per-tile near ally take", state.tick or 0, cmx, cmy, on_cur and "on-ring" or "stepping-onto", info.speed or 0, cap, stop_close_fast and "HARDBRAKE" or ((info.speed or 0) > cap and "BRAKE" or "drive")))
       if BRAIN_DEBUG_MODE and viz.is_on("cautious_nav_around_ally_take") then viz.rect("cautious_nav_around_ally_take", cmx, cmy, cmx + 1, cmy + 1, 255, 90, 0, 200, true) end
       if BRAIN_DEBUG_MODE and viz.is_on("cautious_nav_around_ally_take") then viz.text("cautious_nav_around_ally_take", cmx + 0.5, cmy - 0.5, "CRAWL:" .. state._take_crawl_active, "center", 255, 220, 120, 230, 0.4) end
     end
