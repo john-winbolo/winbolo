@@ -3710,7 +3710,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
 
         /* Cmd+key shortcuts (non-macOS — macOS routes these through NSMenu in mac_menubar.mm) */
 #ifndef __APPLE__
-        if (ev.type == SDL_EVENT_KEY_DOWN &&
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
             (ev.key.mod & KMOD_PRIMARY) != 0) {
             switch (ev.key.scancode) {
