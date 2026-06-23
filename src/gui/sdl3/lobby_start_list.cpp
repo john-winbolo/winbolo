@@ -50,9 +50,13 @@ int lobbyStartListRender(ClientSim *cs, int myPlayerNum, int startCount) {
          * Names are runtime data, drawn directly. The leading "#N" is the
          * start number (runtime), not a fixed caption — no English to
          * localise here. */
-        const char *who = free
-            ? langGetText(STR_DLGLOBBY_START_OPEN)
-            : clientSimGetLobbySlot(cs, (BYTE)holder)->playerName;
+        const char *who;
+        if (free) {
+            who = langGetText(STR_DLGLOBBY_START_OPEN);
+        } else {
+            const ClientLobbySlot *slot = clientSimGetLobbySlot(cs, (BYTE)holder);
+            who = slot ? slot->playerName : langGetText(STR_DLGLOBBY_START_OPEN);
+        }
         char label[96];
         SDL_snprintf(label, sizeof(label), "#%d  %s##start%d", i, who, i);
 
