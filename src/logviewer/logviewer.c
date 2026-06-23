@@ -523,32 +523,10 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
     int  sizeX, sizeY;
 
     /* Allocate central logviewer state */
-    g_lv = (LogViewerState *)calloc(1, sizeof(LogViewerState));
+    g_lv = lv_decoderCreate(fromMainMenu);
     if (g_lv == NULL) {
         return;
     }
-    g_lv->fromMainMenu = fromMainMenu;
-    g_lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */
-    g_lv->screenSizeY = MAIN_SCREEN_SIZE_Y + 15; /* default 30 */
-    g_lv->isLoaded = FALSE;
-    g_lv->isSoundsPlaying = TRUE;
-    g_lv->soundVolume = 50;
-
-    /* Game-view skin state — calloc above already zeroed these, but be
-     * explicit so the defaults are visible alongside the other init. */
-    g_lv->gameView = FALSE;
-    g_lv->cameraSlot = 0;
-    g_lv->savedUseTeamColours = FALSE;
-    memset(g_lv->kills, 0, sizeof(g_lv->kills));
-    memset(g_lv->deaths, 0, sizeof(g_lv->deaths));
-    memset(g_lv->gameViewHud, 0, sizeof(g_lv->gameViewHud));
-    memset(g_lv->tankInv, 0, sizeof(g_lv->tankInv));
-    memset(g_lv->prevBaseShells, 0, sizeof(g_lv->prevBaseShells));
-    memset(g_lv->prevBaseMines, 0, sizeof(g_lv->prevBaseMines));
-    memset(g_lv->prevBaseArmour, 0, sizeof(g_lv->prevBaseArmour));
-    memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
-
-    lv_screenSetState(g_lv);
 
     /* Platform abstraction init */
     lv_platform_config_init("WinBolo");

@@ -1954,6 +1954,53 @@ bool lv_screenIsPlaying() {
   return g_lv->isPlaying;
 }
 
+/* Allocate a decoder state, set its field defaults, and register it as the
+ * active state. Host-callable: lets a caller drive lv_screenLoadMapFromMemory
+ * / lv_screenLogTick / lv_screenCloseLog without the standalone GUI/platform
+ * scaffolding. Returns NULL on allocation failure. */
+LogViewerState *lv_decoderCreate(bool fromMainMenu) {
+  LogViewerState *lv = (LogViewerState *)calloc(1, sizeof(LogViewerState));
+  if (lv == NULL) {
+    return NULL;
+  }
+  lv->fromMainMenu = fromMainMenu;
+  lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */
+  lv->screenSizeY = MAIN_SCREEN_SIZE_Y + 15; /* default 30 */
+  lv->isLoaded = FALSE;
+  lv->isSoundsPlaying = TRUE;
+  lv->soundVolume = 50;
+
+  /* Game-view skin state — calloc above already zeroed these, but be
+   * explicit so the defaults are visible alongside the other init. */
+  lv->gameView = FALSE;
+  lv->cameraSlot = 0;
+  lv->savedUseTeamColours = FALSE;
+  memset(lv->kills, 0, sizeof(lv->kills));
+  memset(lv->deaths, 0, sizeof(lv->deaths));
+  memset(lv->gameViewHud, 0, sizeof(lv->gameViewHud));
+  memset(lv->tankInv, 0, sizeof(lv->tankInv));
+  memset(lv->prevBaseShells, 0, sizeof(lv->prevBaseShells));
+  memset(lv->prevBaseMines, 0, sizeof(lv->prevBaseMines));
+  memset(lv->prevBaseArmour, 0, sizeof(lv->prevBaseArmour));
+  memset(lv->prevBaseStockValid, 0, sizeof(lv->prevBaseStockValid));
+
+  lv_screenSetState(lv);
+  return lv;
+}
+
+/* Close any loaded log (frees the zip buffer + screen structures), free the
+ * decoder state, and clear the active state. NULL-safe. lv_screenCloseLog is
+ * safe on a never-loaded state (lv_blocksDestroy and lv_screenDestroy both
+ * no-op on the zeroed pointers), so it is called unconditionally. */
+void lv_decoderDestroy(LogViewerState *lv) {
+  if (lv == NULL) {
+    return;
+  }
+  lv_screenCloseLog();
+  free(lv);
+  lv_screenSetState(NULL);
+}
+
 bool lv_screenCloseLog() {
   g_lv->isPlaying = FALSE;
   g_lv->logLoaded = FALSE;

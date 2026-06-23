@@ -67,9 +67,8 @@ int run_wbv_reader_v1(void) {
   /* The reader operates on the file-scope LogViewerState injected via
    * lv_screenSetState — mirror logViewerRun's allocation and screen-size
    * defaults so lv_screenSetup sizes its view buffers. */
-  lv = (LogViewerState *)calloc(1, sizeof(LogViewerState));
-  UT_ASSERT_MSG(lv != NULL, "calloc LogViewerState failed");
-  lv_screenSetState(lv);
+  lv = lv_decoderCreate(false);
+  UT_ASSERT_MSG(lv != NULL, "lv_decoderCreate returned NULL");
   lv_screenSetSizeX(30);
   lv_screenSetSizeY(30);
 
@@ -109,9 +108,7 @@ int run_wbv_reader_v1(void) {
                 "expected >= 2 players after join, got %d",
                 (int)lv_screenGetNumPlayers());
 
-  lv_screenCloseLog();   /* frees the zip buffer + screen structures */
-  free(lv);
-  lv_screenSetState(NULL);
+  lv_decoderDestroy(lv);   /* closes the log (frees zip + screen structures) */
   return 0;
 }
 
@@ -163,9 +160,8 @@ int run_wbv_reader_v2(void) {
   /* The reader operates on the file-scope LogViewerState injected via
    * lv_screenSetState — mirror logViewerRun's allocation and screen-size
    * defaults so lv_screenSetup sizes its view buffers. */
-  lv = (LogViewerState *)calloc(1, sizeof(LogViewerState));
-  UT_ASSERT_MSG(lv != NULL, "calloc LogViewerState failed");
-  lv_screenSetState(lv);
+  lv = lv_decoderCreate(false);
+  UT_ASSERT_MSG(lv != NULL, "lv_decoderCreate returned NULL");
   lv_screenSetSizeX(30);
   lv_screenSetSizeY(30);
 
@@ -199,8 +195,6 @@ int run_wbv_reader_v2(void) {
                 "expected >= 2 players after join, got %d",
                 (int)lv_screenGetNumPlayers());
 
-  lv_screenCloseLog();   /* frees the zip buffer + screen structures */
-  free(lv);
-  lv_screenSetState(NULL);
+  lv_decoderDestroy(lv);   /* closes the log (frees zip + screen structures) */
   return 0;
 }

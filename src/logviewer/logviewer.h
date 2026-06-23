@@ -184,6 +184,12 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
 
+/* Host-callable decoder lifecycle: create allocates the state, sets its
+ * field defaults, and registers it as the active state; destroy closes any
+ * loaded log, frees the state, and clears the active state. */
+LogViewerState *lv_decoderCreate(bool fromMainMenu);
+void lv_decoderDestroy(LogViewerState *lv);
+
 /* State accessors used by screen.c and other modules */
 void lv_screenSetState(LogViewerState *lv);
 LogViewerState *lv_screenGetState(void);
