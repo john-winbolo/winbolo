@@ -2588,6 +2588,23 @@ function Brain.think(info)
       state.carrying_pill_since = nil
     end
 
+    -- Portfolio-surplus test for carried-pill DROP overrides (antitank /
+    -- emergency below). The strategic placement search already skips roles
+    -- at/over target (goals.lua surplus-skip); the drops bypassed it and could
+    -- dump a 3rd "back" pill while back was already 2/0. Reuse the SAME
+    -- PP.counts/PP.targets math (and the pill-table viz) so a drop avoids
+    -- overfilling a role. Counts/targets computed once per tick, lazily.
+    local _pf_dc, _pf_dt
+    local function drop_role_surplus(mx, my)
+      if not _pf_dc then
+        _pf_dc = PP.counts(world, now)
+        _pf_dt = PP.targets(_pf_dc.back + _pf_dc.front + _pf_dc.aggro + 1)
+      end
+      local cat = PP.classify(mx, my, false)
+      local t = _pf_dt[cat]
+      return (t ~= nil and (_pf_dc[cat] or 0) >= t), cat
+    end
+
     -- Anti-tank opportunistic pill drop: if carrying a pill and an enemy
     -- tank is close, place the pill between us and the threat.
     if C.ANTITANK_DROP_ENABLED
@@ -2604,7 +2621,9 @@ function Brain.think(info)
         local mid_mx = U.mclamp(math.floor((cur_mx + et.mx) / 2 + 0.5))
         local mid_my = U.mclamp(math.floor((cur_my + et.my) / 2 + 0.5))
         if mid_mx ~= cur_mx or mid_my ~= cur_my then  -- don't place on self
-          if U.is_placeable(mid_mx, mid_my, world) then
+          -- Opportunistic, not life-critical: skip if the spot's role is already
+          -- in surplus so we don't overfill (e.g. a 3rd back pill at 2/0).
+          if U.is_placeable(mid_mx, mid_my, world) and not drop_role_surplus(mid_mx, mid_my) then
             state.goal = {
               kind = "place_pill_strategic", mx = mid_mx, my = mid_my,
               wx = U.m2w(mid_mx), wy = U.m2w(mid_my),
@@ -2649,6 +2668,10 @@ function Brain.think(info)
         local tank_dir = info.direction
         local best_drop_mx, best_drop_my = nil, nil
         local best_drop_danger = math.huge
+        -- Fallback: lowest-danger tile whose role is already in SURPLUS. Used
+        -- only if no non-surplus tile is reachable — saving the pill from death
+        -- beats losing it entirely, even if it overfills a role.
+        local surp_mx, surp_my, surp_danger = nil, nil, math.huge
         for d = 0, C.EMERGENCY_DROP_SEARCH_DIRS - 1 do
           local angle = d * (2 * math.pi / C.EMERGENCY_DROP_SEARCH_DIRS)
           local dx = math.floor(math.sin(angle) + 0.5)
@@ -2661,13 +2684,19 @@ function Brain.think(info)
             -- Only consider tiles that aren't directly ahead (> 60 degrees off)
             if angle_from_front > 60 then
               local d_danger = danger.danger_at(px, py, now, world)
-              if d_danger < best_drop_danger then
+              -- Don't overfill a role: a surplus-role tile is a fallback only.
+              if drop_role_surplus(px, py) then
+                if d_danger < surp_danger then surp_danger = d_danger; surp_mx = px; surp_my = py end
+              elseif d_danger < best_drop_danger then
                 best_drop_danger = d_danger
                 best_drop_mx = px
                 best_drop_my = py
               end
             end
           end
+        end
+        if not best_drop_mx and surp_mx then
+          best_drop_mx, best_drop_my = surp_mx, surp_my   -- all safe tiles are surplus-role → still save the pill
         end
         if best_drop_mx then
           state.goal = {
@@ -3050,6 +3079,12 @@ function Brain.think(info)
       local util = {}   -- packed-tile set; any friendly pill on one of these is _in_use
       local mine = attack.current_blocker_tiles and attack.current_blocker_tiles(state, world) or nil
       state._blocker_tiles = mine
+      -- Shield WALL tiles we're building THIS tick (commander, build_walls only):
+      -- broadcast separately (bwl) so blitz soldiers route their shot AROUND our
+      -- fresh walls. Distinct from _blocker_tiles (pblk = friendly-pill repair
+      -- protection) — these are the walls being laid, gated to build_walls.
+      state._shield_wall_tiles = attack.current_shield_wall_tiles
+        and attack.current_shield_wall_tiles(state, world) or nil
       if mine then for _, ti in ipairs(mine) do util[ti] = true end end
       if ally_state.iter_active then
         for pn, slot in ally_state.iter_active(now, 1750) do
@@ -3861,8 +3896,11 @@ function Brain.think(info)
   end
   local keys, taps = steer.steer(state, world, info, state.goal)
   -- Cautious-approach speed: when our tank is on (or stepping onto) an ally's
-  -- pill-take ring, creep — clear any FASTER and force SLOWER over whatever
-  -- steering chose. Pairs with path_lookahead's per-tile crawl so momentum can't
+  -- pill-take ring, hold a steady boat-in-a-river cruise — CAP the speed rather
+  -- than bleed it to zero. Only decelerate when above the cap; otherwise leave
+  -- steering's accelerate intact so the tank keeps making progress per-tile.
+  -- (info.speed is engine-speed ×4, so 0..64; KEY_SLOWER decelerates, it does
+  -- NOT reverse.) Pairs with path_lookahead's per-tile crawl so momentum can't
   -- carry us onto the ally's tile. Scoped strictly to the take ring.
   state._take_crawl_active = nil
   if state._ally_take_tiles then
@@ -3873,7 +3911,12 @@ function Brain.think(info)
     local on_cur  = s[cmy * 256 + cmx]
     local on_next = nmx and nmy and s[nmy * 256 + nmx]
     if on_cur or on_next then
-      keys = (keys & ~KEY_FASTER) | KEY_SLOWER
+      local cap = C.TAKE_CRAWL_MAX_SPEED or 28
+      if (info.speed or 0) > cap then
+        keys = (keys & ~KEY_FASTER) | KEY_SLOWER   -- above cruise: brake toward cap
+      else
+        keys = keys & ~KEY_SLOWER                  -- at/below cruise: keep steering's drive, don't stall
+      end
       state._take_crawl_active = on_cur and "on" or "next"   -- for the viz overlay
     end
   end
@@ -4803,12 +4846,11 @@ function Brain.think(info)
       -- Dropping bd (cmdr stays set) flips us to "committed" — and the slate
       -- change forces an immediate re-send instead of waiting on the heartbeat.
       if state.squad_blitz_bd and not state.squad_blitz_accepted then bsi.bd = tostring(state.squad_blitz_bd) end
-      if state.squad_role == "c" and state.squad_blitz_reject then
-        bsi.brj = state.squad_blitz_reject
-      end
-      if state.squad_role == "c" and state.squad_blitz_accept then
-        bsi.bac = state.squad_blitz_accept
-      end
+      -- NOTE: brj / bac are NO LONGER bundled here — they used to push the state
+      -- message past the 128-byte chat cap (so it was dropped and the soldier never
+      -- saw its reject/accept). They now ship on their own short /info brj|bac verbs
+      -- (re-sent every tick while pending for reliable, fast delivery) — see the
+      -- handshake block in the /info send section below.
       -- blitz "where are you?" query: a commander ~1s from giving up in blitz_wait
       -- asks an out-of-sight pending soldier for a fresh position (bwq = pill id),
       -- latched for the query window. The soldier force-refreshes its bd in reply.
@@ -4830,12 +4872,10 @@ function Brain.think(info)
       if state.goal.kind == "capture_pill" and state.goal.reposition then
         bsi.repos = "1"
       end
-      -- Blocker TILES (packed my*256+mx) for this take — pre-existing firing-line
-      -- pills + slots we're building blockers on — so the team marks any friendly
-      -- pill on them utility. Computed in the team-tracking block above this tick.
-      if state._blocker_tiles and #state._blocker_tiles > 0 then
-        bsi.pblk = table.concat(state._blocker_tiles, ",")
-      end
+      -- Blocker TILES: ships on its OWN /info pblk verb (NOT the state slate) —
+      -- it's a variable-length tile list that was the main thing pushing /info
+      -- state past the 128-byte cap. Built into _pblk_payload here; sent in the
+      -- /info send section below (on change), parsed via set_handshake on receive.
       -- Goal tile mx/my: only broadcast when something actually reads it.
       -- The de-conflict matcher (goals.lua) keys off `target` whenever an
       -- object id is present and only falls back to mx/my for tile-targeted
@@ -4889,32 +4929,59 @@ function Brain.think(info)
       if ids then table.sort(ids); bsi.carry = table.concat(ids, ",") end
     end
 
-    -- One-shot "LGM back" notice: fired the single tick our LGM returns
-    -- from dead.  Takes the message slot first so it is never dropped;
-    -- the periodic state slate re-sends via differs/heartbeat if it has
-    -- to wait a tick.  Internal channel (messagedest=0), same routing as
-    -- /info state.  No LGM status is carried on the slate anymore.
-    if state.pending_lgm_back and not send_msg then
-      send_msg = "/info lgmback"
-      msg_dest = 0
+    -- ── Outbound message batching ──────────────────────────────────────────
+    -- The brain API exposes ONE outbound buffer per think (BrainInfo.
+    -- sendmessage), but the internal bot channel (messagedest=0) just fans the
+    -- string into every ally's inbox, which is fully drained each tick. So we
+    -- PACK several queued /info messages into that one buffer, joined by
+    -- comms.MSG_SEP, staying under the 128-byte chat cap (PACKET_MAX_CHAT_MESSAGE;
+    -- bot_manager.c truncates there). Receivers split on MSG_SEP and process each
+    -- segment (comms.process_message). A producer commits its bookkeeping ONLY
+    -- when try_send accepts the message; if it doesn't fit, the producer leaves
+    -- its "needs send" flag set and re-queues next tick. This kills the verb
+    -- starvation where a re-sent handshake (bac) hogged the slot so the GO (bgo,
+    -- carried on /info state) never went out and the soldier sat in blitz_wait.
+    local _batch, _batch_used = {}, 0
+    local _BATCH_MAX = C.MSG_BATCH_MAX or 124
+    local function try_send(msg, dest)
+      dest = dest or 0
+      if dest ~= 0 then
+        -- Real player-to-player chat (human allies) can't share the internal
+        -- batch (different routing); only one such message per tick and it
+        -- loses to any batched internal traffic.
+        if #_batch > 0 or send_msg then return false end
+        send_msg = msg; msg_dest = dest
+        return true
+      end
+      local sep = (#_batch > 0) and #comms.MSG_SEP or 0
+      -- The FIRST message is always accepted, even if it alone exceeds the cap
+      -- (matches pre-batch behavior — the wire truncates and the *_OVERFLOW
+      -- tripwire flags it). Later messages only join if they fit under the cap.
+      if #_batch > 0 and _batch_used + sep + #msg > _BATCH_MAX then return false end
+      _batch[#_batch + 1] = msg
+      _batch_used = _batch_used + sep + #msg
+      return true
+    end
+
+    -- One-shot "LGM back" notice: fired the single tick our LGM returns from
+    -- dead. Internal channel (messagedest=0), same routing as /info state.
+    if state.pending_lgm_back and try_send("/info lgmback", 0) then
       state.pending_lgm_back = nil
     end
 
     -- Known-world resync query (one-shot, on first think / after respawn):
     -- ask allies to re-broadcast their known base/pill allegiance.
-    if state._kw_send_query and not send_msg then
-      send_msg = "/info kwq"
-      msg_dest = 0
+    if state._kw_send_query and try_send("/info kwq", 0) then
       state._kw_send_query = nil
     end
 
     -- Blitz-call registry one-shots (commander open/close, discovery query/
-    -- re-announce). One per tick, only when the slot is free. We have an open
-    -- call iff we're a commander leading an attack_pill take (a help-wanted
-    -- blitz); the target pill is goal.target_id. bco/bcc are emitted on the
-    -- open/close transition; bcq is our discovery request on (re)spawn/join;
-    -- a received bcq sets _blitz_rebroadcast so we re-announce our open call.
-    if not send_msg then
+    -- re-announce). We have an open call iff we're a commander leading an
+    -- attack_pill take (a help-wanted blitz); the target pill is goal.target_id.
+    -- bco/bcc are emitted on the open/close transition; bcq is our discovery
+    -- request on (re)spawn/join; a received bcq sets _blitz_rebroadcast so we
+    -- re-announce our open call. Each rides try_send (batched).
+    do
       local cur_call = nil
       -- Open-once / close-on-commit protocol: a call OPENS when we're leading a
       -- blitz (goal._blitz) on an attack_pill in a pre-commit substate, and then
@@ -4925,7 +4992,14 @@ function Brain.think(info)
       -- or the goal ends. The _my_blitz_call latch is what keeps it open through
       -- a _blitz flicker.
       local _g = state.goal
+      -- Must actually BE the commander to hold an open call. Without this, a bot
+      -- that yielded command (election demoted it to soldier) kept _my_blitz_call
+      -- latched, never sent bcc, and lingered as a ghost commander in allies'
+      -- registries — so a soldier would defer to / negotiate with a bot that no
+      -- longer commands the pill. Dropping to soldier now drives cur_call -> nil
+      -- -> bcc (clean hand-off: the call closes and soldiers re-pick the real one).
       if _g and _g.kind == "attack_pill" and not state.squad_cmdr
+         and state.squad_role == squad.ROLE_COMMANDER
          and _g.target_id and _g.target_id >= 0
          and squad.BLITZ_CALL_OPEN_SUB[_g.substate or ""] then
         if _g._blitz or state._my_blitz_call == _g.target_id then
@@ -4933,20 +5007,84 @@ function Brain.think(info)
         end
       end
       if cur_call ~= state._my_blitz_call and cur_call then
-        send_msg = "/info bco " .. cur_call; msg_dest = 0
-        state._my_blitz_call = cur_call
-        state._my_blitz_call_tick = now   -- when WE opened this call (first-to-take rule)
-        state._blitz_rebroadcast = nil
+        if try_send("/info bco " .. cur_call, 0) then
+          state._my_blitz_call = cur_call
+          state._my_blitz_call_tick = now   -- when WE opened this call (first-to-take rule)
+          state._blitz_rebroadcast = nil
+        end
       elseif cur_call ~= state._my_blitz_call and state._my_blitz_call then
-        send_msg = "/info bcc"; msg_dest = 0
-        state._my_blitz_call = cur_call   -- now nil
-        state._my_blitz_call_tick = nil
+        if try_send("/info bcc", 0) then
+          state._my_blitz_call = cur_call   -- now nil
+          state._my_blitz_call_tick = nil
+        end
       elseif state._blitz_rebroadcast and cur_call then
-        send_msg = "/info bco " .. cur_call; msg_dest = 0
-        state._blitz_rebroadcast = nil
+        if try_send("/info bco " .. cur_call, 0) then
+          state._blitz_rebroadcast = nil
+        end
       elseif state._blitz_query_send then
-        send_msg = "/info bcq"; msg_dest = 0
-        state._blitz_query_send = nil
+        if try_send("/info bcq", 0) then
+          state._blitz_query_send = nil
+        end
+      end
+    end
+
+    -- Commander->soldier handshake (brj reject / bac accept) on their OWN short
+    -- verbs — NOT bundled into /info state (which exceeded the 128-byte cap and got
+    -- dropped, so the verdict never reached the soldier and negotiation stalled for
+    -- seconds). RE-SENT every tick while pending so it lands within a couple ticks
+    -- despite single-send loss — that's what gets negotiation down to a fraction of
+    -- a second. Alternate when both are set. Higher priority than the bulky state
+    -- (which is event-driven anyway); a call open/close (above) still wins.
+    if state.squad_role == "c" then
+      local _brj = state.squad_blitz_reject
+      local _bac = state.squad_blitz_accept
+      local hs
+      if _brj and _bac then
+        hs = state._hs_toggle and ("/info brj " .. _brj) or ("/info bac " .. _bac)
+      elseif _brj then hs = "/info brj " .. _brj
+      elseif _bac then hs = "/info bac " .. _bac end
+      if hs and try_send(hs, 0) then
+        if _brj and _bac then state._hs_toggle = not state._hs_toggle end  -- alternate only on actual send
+        -- Tripwire: brj is a per-rejected-soldier list (bounded by offer count, not
+        -- SQUAD_MAX_SIZE). Tiny in practice, but flag if a swarm of offers ever
+        -- pushes it past the cap so we chunk/rotate it then.
+      end
+    end
+
+    -- Blocker tiles on their OWN verb (split off the state slate — it's a
+    -- variable-length tile list that was the main thing pushing /info state over
+    -- the 128 cap). Sent on change (it changes rarely) + a slow heartbeat so a
+    -- late-arriving ally still learns the team's protected blocker pills. Empty
+    -- payload clears it on receivers (set_handshake nil).
+    do
+      local _pblk = (state._blocker_tiles and #state._blocker_tiles > 0)
+        and table.concat(state._blocker_tiles, ",") or nil
+      if _pblk ~= state._last_pblk_sent
+         or (_pblk and (now - (state._last_pblk_tick or -100000)) >= 300) then
+        local msg = _pblk and ("/info pblk " .. _pblk)
+                    or (state._last_pblk_sent and "/info pblk")   -- now empty → clear
+        if msg and try_send(msg, 0) then
+          state._last_pblk_sent = _pblk
+          state._last_pblk_tick = now
+        end
+      end
+    end
+
+    -- Shield WALL tiles on their OWN verb (bwl), broadcast ONLY while a commander
+    -- is in build_walls (current_shield_wall_tiles gates it). Blitz soldiers read
+    -- it to route their engage spot + aim point AROUND our fresh shield walls.
+    -- Change-detect + slow heartbeat, same shape as pblk; empty payload clears.
+    do
+      local _bwl = (state._shield_wall_tiles and #state._shield_wall_tiles > 0)
+        and table.concat(state._shield_wall_tiles, ",") or nil
+      if _bwl ~= state._last_bwl_sent
+         or (_bwl and (now - (state._last_bwl_tick or -100000)) >= 300) then
+        local msg = _bwl and ("/info bwl " .. _bwl)
+                    or (state._last_bwl_sent and "/info bwl")   -- now empty → clear
+        if msg and try_send(msg, 0) then
+          state._last_bwl_sent = _bwl
+          state._last_bwl_tick = now
+        end
       end
     end
 
@@ -4962,18 +5100,21 @@ function Brain.think(info)
       for k, v in pairs(last) do if bsi[k] ~= v then differs = true break end end
     end
     local heartbeat_due = (now - state.last_broadcast_state_tick) >= 1500
-    if (differs or heartbeat_due) and not send_msg then
-      send_msg = comms.format_state(bsi)
-      -- Internal channel: messagedest=0 routes through the brain
-      -- inbox of every allied bot in this sim and is shown locally
-      -- on MSG_AI when run from the Brains menu — see
-      -- brain_data.c's brainDataExtractInfo. No human's newswire
-      -- ever sees /info state, so we can fire it on every goal
-      -- change and the 30 s heartbeat without polluting chat.
-      msg_dest = 0
-      for k in pairs(last) do last[k] = nil end
-      for k, v in pairs(bsi) do last[k] = v end
-      state.last_broadcast_state_tick = now
+    if differs or heartbeat_due then
+      local msg = comms.format_state(bsi)
+      -- Overflow tripwire: /info state must stay under the 128-byte chat cap or
+      -- it's silently truncated/dropped on the wire (that's the bug that ate brj).
+      -- Variable fields (pblk) are split onto their own verbs; this catches any
+      -- future field that re-bloats the slate so we split it too.
+     -- Internal channel: messagedest=0 routes through the brain inbox of every
+     -- allied bot in this sim and is shown locally on MSG_AI when run from the
+     -- Brains menu — see brain_data.c's brainDataExtractInfo. No human's newswire
+     -- ever sees /info state, so we fire it on every goal change + heartbeat.
+     if try_send(msg, 0) then
+        for k in pairs(last) do last[k] = nil end
+        for k, v in pairs(bsi) do last[k] = v end
+        state.last_broadcast_state_tick = now
+      end
     end
 
     -- ── Build the /info extra payload (bse) and ship it on idle ticks ──
@@ -5039,32 +5180,42 @@ function Brain.think(info)
     state.last_broadcast_cost_tick  = state.last_broadcast_cost_tick  or 0
     local extra_heartbeat_due = (now - state.last_broadcast_extra_tick) >= 1500
     local cost_due = bse.cost ~= nil and (now - state.last_broadcast_cost_tick) >= 50  -- 50 ticks = 1 s
-    if not send_msg
-       and (next(bse) ~= nil or next(last_ext) ~= nil)
+    if (next(bse) ~= nil or next(last_ext) ~= nil)
        and (extras_differ or cost_due or extra_heartbeat_due) then
-      send_msg = comms.format_extra(bse)
       -- Internal channel, same routing as /info state above.
-      msg_dest = 0
-      for k in pairs(last_ext) do last_ext[k] = nil end
-      for k, v in pairs(bse)      do last_ext[k] = v end
-      state.last_broadcast_extra_tick = now
-      if bse.cost ~= nil then state.last_broadcast_cost_tick = now end
+      if try_send(comms.format_extra(bse), 0) then
+        for k in pairs(last_ext) do last_ext[k] = nil end
+        for k, v in pairs(bse)      do last_ext[k] = v end
+        state.last_broadcast_extra_tick = now
+        if bse.cost ~= nil then state.last_broadcast_cost_tick = now end
+      end
     end
 
     -- Known-world digest (idle slot, low priority): relay our first-hand
     -- base/pill allegiance CHANGES to allies. Usually empty (allegiance flips
     -- are rare), so no steady-state traffic; on a resync it drains a few
     -- objects per free tick. Receiver folds via W.sync_ally_world.
-    if not send_msg and world._kw_dirty and next(world._kw_dirty) ~= nil then
-      local kwmsg = W.build_kw_message(world)
-      if kwmsg then
-        send_msg = kwmsg; msg_dest = 0
-        local rem = 0; for _ in pairs(world._kw_dirty) do rem = rem + 1 end
+    -- build_kw_message DRAINS the entries it packs, so only build it when the
+    -- batch is empty (it'll definitely fit as the first message) — otherwise a
+    -- failed try_send would silently lose the drained changes.
+    if world._kw_dirty and next(world._kw_dirty) ~= nil then
+      if #_batch == 0 then
+        local kwmsg = W.build_kw_message(world)
+        if kwmsg and try_send(kwmsg, 0) then
+          local rem = 0; for _ in pairs(world._kw_dirty) do rem = rem + 1 end
+        end
+      else
+        local pend = 0; for _ in pairs(world._kw_dirty) do pend = pend + 1 end
       end
-    elseif send_msg and world._kw_dirty and next(world._kw_dirty) ~= nil then
-      -- A queued change can't go out: the single message slot was already
-      -- claimed by a higher-priority message this tick. This is the lag source.
-      local pend = 0; for _ in pairs(world._kw_dirty) do pend = pend + 1 end
+    end
+
+    -- Finalize the internal-channel batch into the single outbound buffer.
+    -- Anything that didn't fit left its producer's "needs send" flag set and
+    -- re-queues next tick. Done before the human-chat block (different routing,
+    -- shares the one buffer) so batched internal traffic takes precedence.
+    if #_batch > 0 and not send_msg then
+      send_msg = table.concat(_batch, comms.MSG_SEP)
+      msg_dest = 0
     end
 
     -- Human goal-change line — fired only when the message slot is

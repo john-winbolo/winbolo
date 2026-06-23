@@ -54,28 +54,36 @@ end
 local function mkey(mx, my) return my * 256 + mx end
 
 -- Incremental pill_at maintenance. Multiple pills can share a tile (pickup /
--- replace transients), so pill_at[k] is a list.
-local function pill_index_add(world, id, p)
-  local k = mkey(p.mx, p.my)
-  local list = world.pill_at[k]
-  if not list then
-    list = {}
-    world.pill_at[k] = list
+-- replace transients), so pill_at[k] is a list. Invariant: a pill is indexed at
+-- EXACTLY its current (mx,my) iff DEPLOYED (not in_tank) — a carried pill holds
+-- no tile. We track each pill's current index key in world._pill_ikey[id] and
+-- remove BY ID from where it ACTUALLY sits, so an entry is never stranded when a
+-- pill is captured (→in_tank), moves, is replaced by a fresh table, or deleted.
+-- (A stranded entry is exactly what let a captured pill phantom-block shots and
+-- linger as a fake capturable.) Call pill_reindex after any state change.
+local function pill_unindex(world, id)
+  local ik = world._pill_ikey and world._pill_ikey[id]
+  if ik == nil then return end
+  local list = world.pill_at[ik]
+  if list then
+    for i = #list, 1, -1 do if list[i].id == id then table.remove(list, i) end end
+    if #list == 0 then world.pill_at[ik] = nil end
   end
-  list[#list + 1] = { id = id, pill = p }
+  world._pill_ikey[id] = nil
 end
 
-local function pill_index_remove(world, id, old_mx, old_my)
-  local k = mkey(old_mx, old_my)
+-- Re-index pill `id` to match its current state: pull any prior entry (wherever
+-- it sat), then re-add at its current tile UNLESS carried (in_tank → no tile).
+-- Idempotent — safe to call on every update.
+local function pill_reindex(world, id, p)
+  pill_unindex(world, id)
+  if not p or p.in_tank then return end
+  local k = mkey(p.mx, p.my)
   local list = world.pill_at[k]
-  if not list then return end
-  for i = 1, #list do
-    if list[i].id == id then
-      table.remove(list, i)
-      break
-    end
-  end
-  if #list == 0 then world.pill_at[k] = nil end
+  if not list then list = {}; world.pill_at[k] = list end
+  list[#list + 1] = { id = id, pill = p }
+  world._pill_ikey = world._pill_ikey or {}
+  world._pill_ikey[id] = k
 end
 
 -- Safety net only — nothing calls this in the hot path now that update and
@@ -83,12 +91,17 @@ end
 -- debugging / replay re-seeding if a snapshot ever arrives without indexes.
 local function rebuild_index(world)
   local pill_at = {}
+  local ikey = {}
   for id, p in pairs(world.pills) do
-    local k = mkey(p.mx, p.my)
-    pill_at[k] = pill_at[k] or {}
-    pill_at[k][#pill_at[k] + 1] = { id = id, pill = p }
+    if not p.in_tank then   -- carried pills hold no tile
+      local k = mkey(p.mx, p.my)
+      pill_at[k] = pill_at[k] or {}
+      pill_at[k][#pill_at[k] + 1] = { id = id, pill = p }
+      ikey[id] = k
+    end
   end
   world.pill_at = pill_at
+  world._pill_ikey = ikey
 
   local base_at = {}
   for id, b in pairs(world.bases) do
@@ -120,7 +133,6 @@ function M.sync_ally_carried(world, ally_carry, now)
               last_hit_tick = 0, under_attack = false, attack_tick = 0,
               attack_damage = 0 }
         world.pills[id] = p
-        pill_index_add(world, id, p)
       end
       p.owner        = "allied"
       p.owner_player = pn
@@ -128,6 +140,7 @@ function M.sync_ally_carried(world, ally_carry, now)
       p.carrier      = pn
       p.last_seen    = now
       p._synth_carry = pn
+      pill_reindex(world, id, p)   -- now carried → pull it off the tile index
     end
     cur = cur or {}; cur[id] = true
   end
@@ -141,7 +154,7 @@ function M.sync_ally_carried(world, ally_carry, now)
       if not (cur and cur[id]) then
         local p = world.pills[id]
         if p and p._synth_carry and p.in_tank and (p.last_seen or 0) < now then
-          pill_index_remove(world, id, p.mx, p.my)
+          pill_unindex(world, id)
           world.pills[id] = nil
         end
       end
@@ -187,6 +200,10 @@ function M.update(world, info, tick)
         b.health    = new_health
         b.owner     = new_owner
         b.last_seen = tick
+        -- Seen first-hand → engine truth wins: drop the ally-sourced flags so it
+        -- stops reading as ally-only and our fresh observation gets re-shared.
+        b._ally_only = nil
+        b._kw_ally   = nil
       end
     elseif obj.type == OBJECT_PILLBOX then
       local new_mx     = obj.x >> 8
@@ -231,7 +248,6 @@ function M.update(world, info, tick)
           attack_damage = 0,
         }
         world.pills[obj.idnum] = p
-        pill_index_add(world, obj.idnum, p)
       else
         -- Read old state BEFORE writing new — damage detection, anger bump,
         -- and the index move all need the previous tick's values.
@@ -269,10 +285,8 @@ function M.update(world, info, tick)
         end
 
         if old_mx ~= new_mx or old_my ~= new_my then
-          pill_index_remove(world, obj.idnum, old_mx, old_my)
           p.mx = new_mx
           p.my = new_my
-          pill_index_add(world, obj.idnum, p)
         end
         p.health    = new_health
         p.owner     = owner_str
@@ -288,6 +302,15 @@ function M.update(world, info, tick)
         -- authoritative.
         p.in_tank   = false
       end
+      -- Seen first-hand → engine truth wins over anything an ally relayed: drop
+      -- the ally-sourced flags so it's no longer ally-only and our observation is
+      -- re-shared (collect_kw_changes only broadcasts when _kw_ally ~= now).
+      p._ally_only = nil
+      p._kw_ally   = nil
+      -- One reindex covers new / move / redeploy-after-capture: a visible pillbox
+      -- is always deployed here, so it lands at its current tile and any stale
+      -- (e.g. just-uncarried) entry elsewhere is pulled.
+      pill_reindex(world, obj.idnum, p)
     end
   end
   local t1 = clock_us()
@@ -319,12 +342,18 @@ function M.process_events(world, info, state)
       -- Informational; EVENT_BASE_UPDATE follows with full state.
 
     elseif ev.type == EVENT_PILL_UPDATE and d then
-      -- data: [pillIndex, x, y, owner, armour, speed, inTank]
+      -- data: [pillIndex, x, y, owner, armourInTank] — only FIVE fields (see
+      -- input_packet.h). The 5th is a PACKED byte (pillbox.h): armour = low
+      -- nibble (b & 0x0F), inTank = bit 0x10. This previously read d[5] as raw
+      -- health and d[7] (which doesn't exist) as inTank, so a CARRIED pill came
+      -- back as health=16+ / in_tank=false and was misclassified as a deployed
+      -- "back" pill instead of a utility reserve. Decode the byte correctly.
       local idx = d[1]
       if idx then
-        local new_health = d[5] or 0
-        local owner_val = d[4] or 0xFF
-        local in_tank = (d[7] or 0) ~= 0
+        local packed     = d[5] or 0
+        local new_health = packed & 0x0F
+        local owner_val  = d[4] or 0xFF
+        local in_tank    = (packed & 0x10) ~= 0
         -- Alliance-aware: the event carries the real owner player number AND
         -- the in_tank flag, so an ally's deployed pill becomes shared "friendly"
         -- while an ally's carried pill becomes "allied". owner_player is cached
@@ -349,7 +378,6 @@ function M.process_events(world, info, state)
             attack_damage = 0,
           }
           world.pills[idx] = p
-          pill_index_add(world, idx, p)
         else
           -- Read old state BEFORE writing new — index move and damage
           -- detection both need the previous tick's values.
@@ -379,10 +407,8 @@ function M.process_events(world, info, state)
           end
 
           if old_mx ~= new_mx or old_my ~= new_my then
-            pill_index_remove(world, idx, old_mx, old_my)
             p.mx = new_mx
             p.my = new_my
-            pill_index_add(world, idx, p)
           end
           p.health       = new_health
           p.owner        = owner_str
@@ -390,6 +416,12 @@ function M.process_events(world, info, state)
           p.last_seen    = tick
           p.in_tank      = in_tank
         end
+        -- First-hand engine event → drop ally-sourced flags (engine truth wins).
+        local _ep = world.pills[idx]
+        if _ep then _ep._ally_only = nil; _ep._kw_ally = nil end
+        -- Reindex to match the event's deployed/carried state (a capture sets
+        -- in_tank → pulls it off the tile; a redeploy adds it back).
+        pill_reindex(world, idx, _ep)
       end
 
     elseif ev.type == EVENT_BASE_UPDATE and d then
@@ -437,6 +469,8 @@ function M.process_events(world, info, state)
           b.obs_shells  = d[4]
           b.obs_armour  = new_health
           b.obs_tick    = tick
+          b._ally_only  = nil   -- first-hand engine event → engine truth wins
+          b._kw_ally    = nil
         end
       end
 
@@ -469,6 +503,7 @@ end
 function M.reset(world)
   world.pill_at = {}
   world.base_at = {}
+  world._pill_ikey = {}
 end
 
 -- Lookup: return the pill entry at (mx, my) with health > 0, or nil.
@@ -570,7 +605,7 @@ function M.collect_kw_changes(world, now)
       if sig and shared[key] ~= sig then
         local old = shared[key]
         shared[key] = sig
-        dirty[key]  = { kind = "b", id = id, mx = b.mx, my = b.my, cls = sig, tick = now }
+        dirty[key]  = { kind = "b", id = id, mx = b.mx, my = b.my, cls = sig, hp = b.health or 0, tick = now }
       end
     end
   end
@@ -592,7 +627,8 @@ function M.collect_kw_changes(world, now)
           local old = shared[key]
           shared[key] = sig
           dirty[key]  = { kind = "p", id = id, mx = p.mx, my = p.my,
-                          cls = ci:sub(1, 1), intank = ci:sub(2, 2), tick = now }
+                          cls = ci:sub(1, 1), intank = ci:sub(2, 2),
+                          hp = math.max(0, p.health or 0), tick = now }
         end
       end
     end
@@ -609,7 +645,7 @@ function M.kw_queue_all(world)
     local sig = kw_sig(b, false)
     if sig and b.last_seen then
       world._kw_shared["b" .. id] = sig
-      world._kw_dirty["b" .. id]  = { kind = "b", id = id, mx = b.mx, my = b.my, cls = sig, tick = b.last_seen }
+      world._kw_dirty["b" .. id]  = { kind = "b", id = id, mx = b.mx, my = b.my, cls = sig, hp = b.health or 0, tick = b.last_seen }
     end
   end
   for id, p in pairs(world.pills) do
@@ -621,17 +657,19 @@ function M.kw_queue_all(world)
       local sig = (ci:sub(2, 2) == "0") and (ci .. "@" .. p.mx .. "," .. p.my) or ci
       world._kw_shared["p" .. id] = sig
       world._kw_dirty["p" .. id]  = { kind = "p", id = id, mx = p.mx, my = p.my,
-                                      cls = ci:sub(1, 1), intank = ci:sub(2, 2), tick = p.last_seen }
+                                      cls = ci:sub(1, 1), intank = ci:sub(2, 2),
+                                      hp = math.max(0, p.health or 0), tick = p.last_seen }
     end
   end
 end
 
--- base: b<id>:<mx>:<my>:<cls>:<tick>   pill: p<id>:<mx>:<my>:<cls>:<intank>:<tick>
+-- base: b<id>:<mx>:<my>:<cls>:<hp>:<tick>
+-- pill: p<id>:<mx>:<my>:<cls>:<intank>:<hp>:<tick>
 local function kw_rec_token(r)
   if r.kind == "b" then
-    return string.format("b%d:%d:%d:%s:%d", r.id, r.mx, r.my, r.cls, r.tick)
+    return string.format("b%d:%d:%d:%s:%d:%d", r.id, r.mx, r.my, r.cls, r.hp or 0, r.tick)
   end
-  return string.format("p%d:%d:%d:%s:%s:%d", r.id, r.mx, r.my, r.cls, r.intank, r.tick)
+  return string.format("p%d:%d:%d:%s:%s:%d:%d", r.id, r.mx, r.my, r.cls, r.intank, r.hp or 0, r.tick)
 end
 
 -- Drain world._kw_dirty into ONE "/info kw ..." message under the wire cap
@@ -669,7 +707,7 @@ function M.sync_ally_world(world, recs, now)
       if r.kind == "b" then
         local b = world.bases[r.id]
         if b == nil then
-          b = { mx = r.mx, my = r.my, health = (owner == "neutral") and 0 or 1,
+          b = { mx = r.mx, my = r.my, health = r.hp or ((owner == "neutral") and 0 or 1),
                 owner = owner, last_seen = r.tick, last_health = 0,
                 _kw_ally = now, _ally_only = true }
           world.bases[r.id] = b
@@ -682,29 +720,37 @@ function M.sync_ally_world(world, recs, now)
             world.base_at[mkey(r.mx, r.my)] = { id = r.id, base = b }
           end
           b.owner, b.last_seen, b._kw_ally = owner, r.tick, now
+          if r.hp ~= nil then b.health = r.hp end
         else
         end
       elseif r.kind == "p" then
         local intank = (r.intank == 1 or r.intank == "1")
         local p = world.pills[r.id]
         if p == nil then
-          p = { mx = r.mx, my = r.my, health = C.PILLS_MAX_HEALTH or 15,
+          -- Use the ally's shared health (KW now carries it). Fallback to a
+          -- class guess only if an older record somehow lacks it.
+          local kw_hp = r.hp or ((owner == "neutral") and 0 or (C.PILLS_MAX_HEALTH or 15))
+          p = { mx = r.mx, my = r.my, health = kw_hp,
                 owner = owner, anger = 0, anger_tick = 0, last_hit_tick = 0,
                 last_seen = r.tick, in_tank = intank,
                 under_attack = false, attack_tick = 0, attack_damage = 0,
                 _kw_ally = now, _ally_only = true }
           world.pills[r.id] = p
-          pill_index_add(world, r.id, p)
         elseif r.tick > (p.last_seen or -1) then
           local oc = KW_CLS_CHAR[p.owner] or "?"
           if p.mx ~= r.mx or p.my ~= r.my then
-            pill_index_remove(world, r.id, p.mx, p.my)
             p.mx, p.my = r.mx, r.my
-            pill_index_add(world, r.id, p)
           end
           p.owner, p.in_tank, p.last_seen, p._kw_ally = owner, intank, r.tick, now
+          -- Adopt the ally's shared health too (it's the freshest first-hand
+          -- value team-wide for this out-of-view pill); fall back to keeping ours
+          -- only if the record somehow lacks hp.
+          if r.hp ~= nil then p.health = r.hp end
         else
         end
+        -- Keep pill_at consistent with the merged state (deployed → tile, carried
+        -- → none, moved → new tile, replaced table → no stale entry left behind).
+        pill_reindex(world, r.id, p)
       end
     end
   end

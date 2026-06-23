@@ -142,6 +142,28 @@ function M.merge_info(player_num, now, new_hash)
   slot.active    = true
 end
 
+-- Set ONE commander->soldier handshake key (brj / bac) that arrives on its own
+-- short /info verb instead of being bundled into the big /info state slate (which
+-- blows past the 128-byte chat cap and gets dropped on the wire — the reject/accept
+-- then never reaches the soldier). Tracked on slot.extra so a later /info state's
+-- set_info won't wipe it. value == nil/"" clears the key (commander stopped
+-- rejecting/accepting). Bumps last_tick only — handshake carries no goal/sub.
+function M.set_handshake(player_num, now, key, value)
+  local slot = M.slots[player_num]
+  if slot == nil then return end
+  local extra = slot.extra
+  if extra == nil then extra = {}; slot.extra = extra end
+  if value == nil or value == "" then
+    slot.info[key] = nil
+    extra[key]     = nil
+  else
+    slot.info[key] = value
+    extra[key]     = true
+  end
+  slot.last_tick = now
+  slot.active    = true
+end
+
 function M.clear(player_num)
   local slot = M.slots[player_num]
   if slot == nil then return end

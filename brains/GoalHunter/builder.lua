@@ -275,6 +275,24 @@ local function nearest_forest_near(cx, cy, radius)
   return best_x, best_y, best_d
 end
 
+-- All forest tiles within `radius` of (cx,cy), NEAREST first (up to max_n). Lets
+-- the gather retry a different direction when the closest tree's LGM path is too
+-- hot instead of giving up after one try.
+local function nearby_forests(cx, cy, radius, max_n)
+  local out = {}
+  for dy = -radius, radius do
+    for dx = -radius, radius do
+      local fx, fy = cx + dx, cy + dy
+      if U.in_map(fx, fy) and U.ttype(fx, fy) == C.T_FOREST then
+        out[#out + 1] = { mx = fx, my = fy, d = U.mdist(cx, cy, fx, fy) }
+      end
+    end
+  end
+  table.sort(out, function(a, b) return a.d < b.d end)
+  if max_n then for i = #out, max_n + 1, -1 do out[i] = nil end end
+  return out
+end
+
 -- path_checkpoints: collect N evenly-spaced positions along the A* path ahead
 -- of the tank by tracing the parent chain.  Cheaper than full path traces
 -- because we stop after n entries.  Returns a list of {mx, my} pairs ordered
@@ -873,37 +891,48 @@ function M.decide(state, world, info, now)
 
   -- Priority 3: gather — need trees before we can execute the plan
   if b.mode == "gather" and info.trees < b.need_trees then
-    -- Walk the gates in order, recording WHY a dispatch is blocked so a bot stuck
-    -- in gather_trees with forest nearby tells us which gate rejected (diagnostic
-    -- print2, stripped from opt). reason=nil means all gates pass → dispatch farm.
-    local reason, fx, fy, fd
-    if state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then
-      -- Quick reject: any threat at the tank tile means lgm_path_safe(LOW) fails —
-      -- we won't walk the unarmoured LGM out into fire to farm.
-      reason = string.format("threat_at_tank=%.1f > LGM_DANGER_LOW=%d", state.perc.threat_at_tank, C.LGM_DANGER_LOW)
+    -- Mild pill danger on the harvest path is fine (<= LGM_GATHER_MAX_DANGER); we
+    -- only refuse heavy fire. If the CLOSEST tree's path is too hot / unreachable,
+    -- retry the next-nearest (a different direction) up to LGM_GATHER_RETRIES
+    -- before giving up. reason stays nil when a dispatch succeeds. Diagnostic
+    -- print2 (reason-change throttled) explains a stuck gather; stripped from opt.
+    local cx, cy = info.tankx >> 8, info.tanky >> 8
+    local maxd   = C.LGM_GATHER_MAX_DANGER or 20
+    -- gather_trees holds the tank still, so the LGM can walk the larger STATIONARY
+    -- deploy distance (LGM_DEPLOY_DIST_REFUEL, ~5) rather than the 3-tile moving
+    -- cap — otherwise a take whose only wood is 4-5 tiles off never gets a shield
+    -- (the bot just sat with the trees just out of reach). Search box matches so
+    -- those farther trees are even found.
+    local deploy = C.LGM_DEPLOY_DIST_REFUEL or 5
+    local radius = math.max(C.FARM_GATHER_RADIUS or 3, deploy)
+    local reason
+    if state.perc and state.perc.threat_at_tank > maxd then
+      -- Tank tile itself too hot — the LGM starts here, so no path can be safe.
+      reason = string.format("threat_at_tank=%.1f > LGM_GATHER_MAX_DANGER=%d", state.perc.threat_at_tank, maxd)
     else
-      fx, fy, fd = nearest_onpath_forest(state, info, C.FARM_GATHER_RADIUS)
-      if not fx then
-        reason = string.format("no forest within FARM_GATHER_RADIUS=%d", C.FARM_GATHER_RADIUS)
-      elseif fd > C.LGM_DEPLOY_DIST then
-        reason = string.format("forest@(%d,%d) d=%d > LGM_DEPLOY_DIST=%d", fx, fy, fd, C.LGM_DEPLOY_DIST)
-      elseif not lgm_can_reach(info, fx, fy) then
-        reason = string.format("forest@(%d,%d) LGM cannot reach", fx, fy)
-      elseif not danger.lgm_path_safe_enhanced(info, fx, fy, C.LGM_DANGER_LOW, now, world) then
-        reason = string.format("forest@(%d,%d) LGM path unsafe (danger > %d)", fx, fy, C.LGM_DANGER_LOW)
+      local cands = nearby_forests(cx, cy, radius, C.LGM_GATHER_RETRIES or 5)
+      if #cands == 0 then
+        reason = string.format("no forest within radius=%d", radius)
+      else
+        for _, fc in ipairs(cands) do
+          if fc.d <= deploy
+             and lgm_can_reach(info, fc.mx, fc.my)
+             and danger.lgm_path_safe_enhanced(info, fc.mx, fc.my, maxd, now, world) then
+            b._gather_diag = nil
+            return { x = fc.mx, y = fc.my, action = BUILDMODE_FARM }
+          end
+        end
+        reason = string.format("no safe forest in %d tries (nearest@(%d,%d) d=%d; need deploy<=%d, danger<=%d)",
+          #cands, cands[1].mx, cands[1].my, cands[1].d, deploy, maxd)
       end
-    end
-    if not reason then
-      b._gather_diag = nil
-      return { x = fx, y = fy, action = BUILDMODE_FARM }
     end
     -- Reason-change throttled so a steady block logs once, not every tick.
     if b._gather_diag ~= reason then
       b._gather_diag = reason
       print2(string.format("GATHER_BLOCKED t=%d trees=%d/%d %s", now, info.trees or 0, b.need_trees or 0, reason))
     end
-    -- Forest not reachable or unsafe; don't fall through to road building
-    -- (don't burn trees on roads while we still need them for the mission)
+    -- No safe/reachable forest; don't fall through to road building (don't burn
+    -- trees on roads while we still need them for the mission).
     return nil
   end
 

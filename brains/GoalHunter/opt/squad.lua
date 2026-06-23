@@ -198,20 +198,34 @@ end
 -- pillbox stops the shell first (e.g. a blocker the commander built, or an enemy
 -- base between the soldier and the pill), or the trajectory ends short. Uses the
 -- C shot-tile simulation (spot float -> world units; pill is tile-centered).
+-- Aim points within the pill tile (world units): center + 4 corners (inset 1 gu),
+-- same set attack.blitz_clear_aim uses so commander and soldier agree.
+local _ARB_AIM_X = { 128, 1, 254, 1, 254 }
+local _ARB_AIM_Y = { 128, 1, 1, 254, 254 }
 local function blitz_spot_shot_blocked(world, sfx, sfy, pmx, pmy)
-  local tiles = cpf.simulate_shot(math.floor(sfx * 256 + 0.5), math.floor(sfy * 256 + 0.5),
-                                  (pmx << 8) | 128, (pmy << 8) | 128, cpf.SHOT_TANK, 0)
-  if not tiles then return false end
-  for _, t in ipairs(tiles) do
-    if t.mx == pmx and t.my == pmy then return false end  -- reached the pill: clear
-    local tt = U.ttype(t.mx, t.my)
-    if tt == C.T_BUILDING or tt == C.T_HALFBUILD then return true end  -- wall blocks first
-    local be = world and world.base_at and world.base_at[t.my * 256 + t.mx]
-    if be and be.base then return true end  -- a base of ANY owner blocks the shell
-    local plist = world and world.pill_at and world.pill_at[t.my * 256 + t.mx]
-    if plist then for _, e in ipairs(plist) do if e.pill and (e.pill.health or 0) > 0 then return true end end end
+  local ox = math.floor(sfx * 256 + 0.5)
+  local oy = math.floor(sfy * 256 + 0.5)
+  -- Clear if ANY aim point (pill center or a corner) has an unobstructed shell
+  -- path — so the arbiter doesn't reject a spot the soldier validated via a corner
+  -- aim that dodges our shield walls. Blocked only if EVERY aim point is obstructed.
+  for i = 1, 5 do
+    local tiles = cpf.simulate_shot(ox, oy, (pmx << 8) | _ARB_AIM_X[i], (pmy << 8) | _ARB_AIM_Y[i], cpf.SHOT_TANK, 0)
+    if tiles then
+      local blocked, reached = false, false
+      for _, t in ipairs(tiles) do
+        if t.mx == pmx and t.my == pmy then reached = true; break end
+        local tt = U.ttype(t.mx, t.my)
+        if tt == C.T_BUILDING or tt == C.T_HALFBUILD then blocked = true; break end
+        local be = world and world.base_at and world.base_at[t.my * 256 + t.mx]
+        if be and be.base then blocked = true; break end
+        local plist = world and world.pill_at and world.pill_at[t.my * 256 + t.mx]
+        if plist then for _, e in ipairs(plist) do local pp = e.id and world.pills[e.id]; if pp and not pp.in_tank and (pp.health or 0) > 0 and pp.mx == t.mx and pp.my == t.my then blocked = true; break end end end
+        if blocked then break end
+      end
+      if reached and not blocked then return false end   -- this aim is clear
+    end
   end
-  return true  -- trajectory ended without reaching the pill → no clean shot
+  return true   -- every aim point blocked → no clean shot
 end
 
 function M.blitz_arbitrate(state, info, now, self_pn)
@@ -381,9 +395,10 @@ local function read_cmdr_brj(state, self_pn)
       if tonumber(pn) == self_pn then
         -- Spot-tagged reject: fresh only if it matches our current offer (small
         -- epsilon — the spot round-trips as a 4dp float string).
-        if (not cur_fx)
-           or (math.abs(tonumber(fx) - cur_fx) < 0.01 and math.abs(tonumber(fy) - cur_fy) < 0.01) then
+        local match = cur_fx and (math.abs(tonumber(fx) - cur_fx) < 0.01 and math.abs(tonumber(fy) - cur_fy) < 0.01)
+        if (not cur_fx) or match then
           state._blitz_call_rejected = true
+        elseif BRAIN_DEBUG_MODE then
         end
         return
       end
@@ -850,7 +865,12 @@ function M.update(state, info, now, world)
           state.squad_cmdr           = best_pn   -- broadcast which call we're answering
           state.squad_negotiate_cmdr = best_pn
           state.squad_negotiate_pill = best_target
-          state.squad_status         = "join"
+          -- "nego" (not "join"): we've OFFERED a standoff but the commander hasn't
+          -- accepted us yet (awaiting bac). Distinct from a committed soldier's
+          -- "join" so the commander doesn't count us as a real 2-tank blitz member
+          -- and the roster can show us as a pending (yellow) tank. We still appear
+          -- in the commander's de-confliction (it filters on role/cmdr, not sqst).
+          state.squad_status         = "nego"
           read_cmdr_brj(state, self_pn)  -- rejected → attack.blitz_negotiate repicks
         end
       else
@@ -917,13 +937,13 @@ function M.draw_roster(state, info, now)
   -- special PARALLEL pseudo-substate "blitz_negotiating" surfaced while the bot
   -- is mid blitz-negotiation (offering a standoff, not yet committed). It's not
   -- a real goal substate — the bot keeps doing its actual thing — but we show
-  -- it so the negotiation is visible. "blitz_committed" once accepted.
+  -- it so the negotiation is visible. "committed" once accepted.
   -- Status column is a SQUAD/blitz readout: only the attack_pill substate is
   -- meaningful here. For any other goal (attack_tank, capture_base, refuel, ...)
   -- the substate vocabulary overlaps ("engage" etc.) and just reads as noise, so
   -- leave it blank. Blitz negotiate/commit always show — they're squad state.
   local self_status
-  if state.squad_blitz_accepted then        self_status = "blitz_committed"
+  if state.squad_blitz_accepted then        self_status = "committed"
   elseif state.squad_negotiate_cmdr then     self_status = "blitz_negotiating"
   elseif state.goal and state.goal.kind == "attack_pill" then
     self_status = state.goal.substate
@@ -945,11 +965,14 @@ function M.draw_roster(state, info, now)
     if pn ~= self_pn then
       local a_cmdr = tonumber(ally_state.get_key(pn, "cmdr") or "")
       local a_status
-      -- An ally answering a commander (cmdr set) with a live offer (bd = walk
-      -- distance it reported) is negotiating; cmdr set without an offer = it
-      -- has committed. Otherwise show its real substate.
-      if a_cmdr and ally_state.get_key(pn, "bd") then a_status = "blitz_negotiating"
-      elseif a_cmdr then                               a_status = "blitz_committed"
+      -- An ally's committed-vs-negotiating state is its OWN self-report: sqst
+      -- "nego" = offered, awaiting our bac; sqst "join" = it read our bac and
+      -- committed. (Don't infer from bd-presence — bd lingers stale in the slate
+      -- from the negotiation phase, so a committed soldier kept reading as
+      -- "negotiating" forever.) No extra confirmation handshake needed.
+      local a_sqst = ally_state.get_key(pn, "sqst")
+      if a_cmdr and a_sqst == "nego" then a_status = "blitz_negotiating"
+      elseif a_cmdr then                  a_status = "committed"
       elseif ally_state.get_key(pn, "goal") == "attack_pill" then
         a_status = ally_state.get_key(pn, "sub")
       else a_status = nil end
@@ -1137,6 +1160,7 @@ function M.blitz_ready_status(state, now, self_pn, info)
       local h = slot.info
       local is_dead = dead and dead[pn] and dead[pn] > (slot.last_tick or 0)
       if not is_dead and h.role == "s" and tonumber(h.cmdr or "") == self_pn
+         and h.sqst ~= "nego"   -- still negotiating (offered, not yet accepted) → not a member yet
          and h.goal == "attack_pill" and tonumber(h.target or "") == our_pid then
         total = total + 1
         -- Parked at its firing spot (past approach), independent of aim — the
@@ -1533,6 +1557,13 @@ function M.draw_blitz_roster(state, info, now)
     -- Current bot (us) → white border around the row (distinct from the yellow commander fill).
     if m.is_self then
     end
+    -- Negotiating (offered a standoff, not yet accepted → sqst "nego") renders
+    -- YELLOW: a pending tank, NOT counted as a committed 2-tank blitz member yet.
+    -- Committed/other rows stay green.
+    local sqst
+    if m.is_self then sqst = state.squad_status else sqst = ally_state.get_key(m.pn, "sqst") end
+    local tr, tg, tb = 140, 230, 140
+    if sqst == "nego" then tr, tg, tb = 245, 215, 50 end
     y = y + dy
   end
 end

@@ -675,20 +675,6 @@ local function path_lookahead(state, info, nx, ny)
     return nx, ny
   end
 
-  -- Cautious-approach guard: if we're inside (or about to step into) the 3x3 ring
-  -- around an ally that's mid-pill-take (state._ally_take_tiles, built in init.lua),
-  -- suppress the skip-ahead exactly like boat mode — aim only at the immediate next
-  -- step so we crawl the avoiding route tile-by-tile instead of building momentum
-  -- and drifting onto the ally's tile (the bowl-through). The route waypoint already
-  -- routes around the ally via the nav_avoid penalty; this makes us actually follow it.
-  do
-    local take_tiles = state._ally_take_tiles
-    if take_tiles and (take_tiles[tmy * 256 + tmx] or take_tiles[ny * 256 + nx]) then
-      sdbg("lookahead: near ally pill-take, crawl per-tile, hold to nx=(%d,%d)", nx, ny)
-      return nx, ny
-    end
-  end
-
   -- Cliff guard: if there's a deep-water tile within 1 tile (8-neighbor)
   -- of the tank, suppress the lookahead entirely and return the immediate
   -- A* next step. The lookahead's straight-line "skip ahead" can aim
@@ -766,6 +752,22 @@ local function path_lookahead(state, info, nx, ny)
     sdbg("lookahead: CORRIDOR next-step unsafe at clip=(%d,%d), re-center (%d,%d)",
          clip_x, clip_y, tmx, tmy)
     return tmx, tmy
+  end
+
+  -- Cautious-approach guard: inside (or about to step into) the 3x3 ring around an
+  -- ally mid-pill-take (state._ally_take_tiles), suppress the skip-ahead — aim only
+  -- at the immediate next step so we crawl the avoiding route tile-by-tile instead
+  -- of building momentum and drifting onto the ally's tile (the bowl-through).
+  -- MUST run AFTER the cliff / stuck-collapse / corridor-clip checks above: those
+  -- re-center the tank to break a stuck/corner-blocked diagonal, and an earlier
+  -- return here bypassed them — leaving a crawling bot wedged on a diagonal it
+  -- couldn't cut (saw it stuck 10+ ticks on a blocked NE step beside an ally take).
+  do
+    local take_tiles = state._ally_take_tiles
+    if take_tiles and (take_tiles[tmy * 256 + tmx] or take_tiles[ny * 256 + nx]) then
+      sdbg("lookahead: near ally pill-take, crawl per-tile, hold to nx=(%d,%d)", nx, ny)
+      return nx, ny
+    end
   end
 
   -- Build set of all tiles on the A* path
@@ -4070,29 +4072,70 @@ function M.steer(state, world, info, goal)
         keys = keys | KEY_MORERANGE
       end
 
-      -- Override turn keys: point at the base (we keep driving in — the nav block
-      -- supplies the forward drive; we just steer the gun onto the base to fire).
-      keys = keys & ~(KEY_TURNLEFT | KEY_TURNRIGHT)
-      taps = taps & ~(KEY_TURNLEFT | KEY_TURNRIGHT)
-      if     corr >  10 then keys = keys | KEY_TURNRIGHT
-      elseif corr < -10 then keys = keys | KEY_TURNLEFT
-      elseif corr >   2 then taps = taps | KEY_TURNRIGHT
-      elseif corr <  -2 then taps = taps | KEY_TURNLEFT
+      -- Heading control depends on whether we've ARRIVED at the engage point:
+      --   * arrived (attack_base_engaging — nav block idle this tick): hijack the
+      --     heading to point the body straight at the base and hold. Continuous
+      --     aimed shelling from the standoff.
+      --   * still closing in (nav block driving): DON'T steal the heading. A tank
+      --     aims by its BODY heading, so locking onto the base here fights the nav
+      --     heading to the engage point — the throttle can't satisfy "drive toward
+      --     the engage point" and "aim at the base" at once, so it brakes and the
+      --     tank fires forever from range without advancing. Instead let nav drive
+      --     us in; we still fire opportunistically below whenever the body heading
+      --     sweeps across the base. Advance + shoot, simultaneously.
+      if attack_base_engaging then
+        keys = keys & ~(KEY_TURNLEFT | KEY_TURNRIGHT)
+        taps = taps & ~(KEY_TURNLEFT | KEY_TURNRIGHT)
+        if     corr >  10 then keys = keys | KEY_TURNRIGHT
+        elseif corr < -10 then keys = keys | KEY_TURNLEFT
+        elseif corr >   2 then taps = taps | KEY_TURNRIGHT
+        elseif corr <  -2 then taps = taps | KEY_TURNLEFT
+        end
       end
-      local still_correcting = (taps & (KEY_TURNLEFT | KEY_TURNRIGHT)) ~= 0
-      if math.abs(corr) < 3 and not still_correcting then
-        keys = keys | KEY_SHOOT  -- shot_ok already validated the shell reaches the base
+      -- FIRE decision is NOT the heading-correction angle — keep turning freely
+      -- toward dead-center (taps above) for tighter follow-up shots. Instead,
+      -- simulate the shell at our CURRENT heading: if its trajectory crosses the
+      -- base tile, that's good enough — shoot. The sim is bit-exact with the
+      -- engine and terminates at the first wall/pillbox/base, so "reaches the base
+      -- tile" already means no pillbox or OTHER base is in the way. We additionally
+      -- reject an ALLIED tank sitting in the lane (friendly fire). This kills the
+      -- old corr<3 deadband that left the tank lined-up-enough but never firing.
+      local firing = false
+      do
+        local p = cpf.simulate_shot_angle(info.tankx, info.tanky, info.direction,
+                                          cpf.SHOT_TANK, info.gunrange or 14)
+        if p then
+          local ally_tiles
+          if info.objects then
+            for _, ob in ipairs(info.objects) do
+              if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) == 0
+                 and ob.idnum ~= info.player_number then
+                ally_tiles = ally_tiles or {}
+                ally_tiles[(ob.y >> 8) * 256 + (ob.x >> 8)] = true
+              end
+            end
+          end
+          for _, t in ipairs(p) do
+            if ally_tiles and ally_tiles[t.my * 256 + t.mx] then break end  -- friendly in the lane → hold
+            if t.mx == goal.mx and t.my == goal.my then firing = true; break end
+          end
+        end
       end
+      if firing then
+        keys = keys | KEY_SHOOT
+      end
+      if BRAIN_DEBUG_MODE and not firing then print2(string.format("BASE_NOFIRE t=%d reason=heading_misses corr=%.1f wdist=%.0f (shell at current heading doesn't cross base tile)", state.tick or 0, corr, wdist_base)) end
 
       log.reason("steer", {
         mode = "attack_base", aim_corr = corr,
-        firing = math.abs(corr) < 3 and not still_correcting,
+        firing = firing,
         base_dist = wdist_base, shot_ok = true,
       })
     else
       -- Out of range or no valid shot (pill/base/ally/2+ walls in the way):
       -- the nav block above is driving us to the closest adjacent tile for a
       -- clean point-blank shot. Just log the wait state.
+      if BRAIN_DEBUG_MODE then print2(string.format("BASE_NOFIRE t=%d reason=%s wdist=%.0f range=%d shot_ok=%s inboat=%s", state.tick or 0, (wdist_base > C.ATTACK_PILL_RANGE * 256) and "out_of_range" or (not shot_ok and "shot_blocked" or "inboat"), wdist_base, C.ATTACK_PILL_RANGE * 256, tostring(shot_ok), tostring(info.inboat))) end
       log.reason("steer", {
         mode = "attack_base_approach",
         base_dist = wdist_base, shot_ok = shot_ok,

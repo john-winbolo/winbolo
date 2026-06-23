@@ -433,6 +433,14 @@ local function nearest_resupply_base(world, tmx, tmy, in_boat, ammo, state, info
           end
         end
 
+        -- Anti-base-hop (mirrors the cost_cache path): while standing ON a refuel
+        -- base, every OTHER base costs more so we finish here instead of bouncing
+        -- between bases (the GOAL_TARGET_SWITCH_PENALTY at the goal layer is too
+        -- small to overcome a cheaper rival base). A depleted current base is
+        -- rejected above, so the move-on case still works.
+        if info.base and not (b.mx == tmx and b.my == tmy) then
+          score = score + (C.REFUEL_BASE_HOP_PENALTY or 500)
+        end
         -- Self-base hysteresis REMOVED: goal_selection already applies a
         -- GOAL_TARGET_SWITCH_PENALTY + commitment to any refuel base that isn't
         -- our current refuel goal (goals.lua ~6761), so giving the base under our
@@ -1589,17 +1597,22 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   if gk == "attack_pill" then
     carry_value_penalty = carry_value_penalty + C.STRATEGIC_PLACE_CARRY_ATTACK_PENALTY
   end
-  -- Urgency overrides: cancel carry penalty when placement is critical
+  -- Urgency overrides: cancel carry penalty when placement is critical. Also
+  -- flags place_urgent so the spot-quality floor below is bypassed — when a base
+  -- is naked under fire or we're about to die, ANY placeable spot beats holding.
+  local place_urgent = false
   local fbx, fby, fb_dist = nearest_friendly_base_pos(world, tmx, tmy)
   if fbx then
     local base_pills = count_pills_near(world, fbx, fby, C.STRATEGIC_PLACE_DEFENSE_RADIUS, "friendly")
     local enemy_near = state.perc and state.perc.enemy_tanks and #state.perc.enemy_tanks > 0
     if base_pills == 0 and enemy_near then
       carry_value_penalty = 0  -- base naked + enemy visible: place NOW
+      place_urgent = true
     end
   end
   if info.armour <= C.ARMOUR_CRITICAL then
     carry_value_penalty = 0  -- drop before we die
+    place_urgent = true
   end
 
   -- Carry-time urgency discount (pill gets cheaper to place the longer held).
@@ -2020,6 +2033,24 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     -- No placeable, non-surplus spot anywhere in range. The right move is to
     -- KEEP CARRYING (return nil) until we're somewhere a needed pill belongs —
     -- there is intentionally no fallback that would dump a surplus pill nearby.
+    return nil
+  end
+
+  -- Spot-quality floor: being EAGER to deploy (cheap cost from the carry/util-
+  -- surplus discounts) must NOT lower the bar for WHERE the pill goes. The cost
+  -- discounts only decide whether placement wins the goal competition; this floor
+  -- guards the SPOT. A well-placed pill scores 250-400 (role-fill 120 + guardian
+  -- 150 + positioning); a deficit-role spot at a poor position can sit near ~120
+  -- or below. Below the floor we KEEP CARRYING until a genuinely good spot exists.
+  -- Bypassed only when placement is urgent (naked base under fire / about to die).
+  -- Effective floor relaxes as the team hoards util pills over the reserve — a
+  -- big pile in tanks is itself a problem, so accept a less-perfect spot rather
+  -- than carry forever. Never drops below FLOOR_MIN (exposed/purposeless spots
+  -- stay held regardless of hoard size).
+  local eff_min = math.max(C.STRATEGIC_PLACE_MIN_SCORE_FLOOR or 0,
+                           (C.STRATEGIC_PLACE_MIN_SCORE or 0)
+                           - math.max(0, util_surplus) * (C.STRATEGIC_PLACE_MIN_SCORE_SURPLUS_DROP or 0))
+  if not place_urgent and best_score < eff_min and not viz_only then
     return nil
   end
 
@@ -3362,7 +3393,10 @@ function M.build_eval_queue(state, world, info)
   -- danger) ride along with cost = INF and a _reject tag so the pool
   -- grid can show them dimmed with the reason — same pattern as
   -- pool 4 (capture_pill). Hostile bases are HARD-rejected (not queued).
-  if needs_refuel then
+  -- Also queue while a refuel_at_base goal is ACTIVE even if needs_refuel went
+  -- false: we keep topping off to full, so the winners panel must still show the
+  -- base we're refuelling at instead of going blank mid-top-off.
+  if needs_refuel or (state.goal and state.goal.kind == "refuel_at_base") then
     for id, obj in pairs(world.bases) do
       local reject = filter_refuel(obj, state, info)
       if not reject or reject.reason ~= "hostile" then
@@ -3731,6 +3765,13 @@ local function get_formula_inner(e)
         "|mine:hoard surcharge %.0f (mines past %d[REFUEL_MINE_FREE]) — applied ONLY at the base you're parked on, to push a mine-stuffed tank to dump",
         e._mine_cost, C.REFUEL_MINE_FREE)
       or ""
+    local _hop_token = (e._hop and e._hop > 0)
+      and string.format(" + hop{%.0f}", e._hop) or ""
+    local _hop_detail = (e._hop and e._hop > 0)
+      and string.format(
+        "|hop:%.0f[REFUEL_BASE_HOP_PENALTY] — we're parked on ANOTHER base; switching to this one is wasteful churn, so it's penalised. Finish where you are (a depleted current base drops out, freeing the move).",
+        e._hop)
+      or ""
     local _d_astar = string.format(
       "danger-weighted Dijkstra-slate travel cost to base (%d,%d) = %.0f; path %s",
       e._mx or 0, e._my or 0, raw, e._path or "(not traced)")
@@ -3738,10 +3779,10 @@ local function get_formula_inner(e)
       "%.0f[REFUEL_BASE_COST] flat floor so refuel-at-own-base isn't ~0",
       C.REFUEL_BASE_COST)
     f = string.format(
-      "A*{%.0f}@(%d,%d) + base{%.0f} + danger{%.0f} + stale{%.0f} + contest{%.0f} + deplete{%.0f}%s%s%s"..
-      "||A*:%s|base:%s|danger:%s|stale:%s|contest:%s|deplete:%s%s%s%s",
-      raw, e._mx or 0, e._my or 0, C.REFUEL_BASE_COST, e._dang, e._stale, e._contest, e._dep, _shape_head, _safe_token, _mine_token,
-      _d_astar, _d_base, _d_danger, _d_stale, _d_contest, _d_deplete, _shape_detail, _safe_detail, _mine_detail)
+      "A*{%.0f}@(%d,%d) + base{%.0f} + danger{%.0f} + stale{%.0f} + contest{%.0f} + deplete{%.0f}%s%s%s%s"..
+      "||A*:%s|base:%s|danger:%s|stale:%s|contest:%s|deplete:%s%s%s%s%s",
+      raw, e._mx or 0, e._my or 0, C.REFUEL_BASE_COST, e._dang, e._stale, e._contest, e._dep, _shape_head, _safe_token, _mine_token, _hop_token,
+      _d_astar, _d_base, _d_danger, _d_stale, _d_contest, _d_deplete, _shape_detail, _safe_detail, _mine_detail, _hop_detail)
   elseif p == 6 then
     local _d_hp = string.format(
       "ATTACK_PILL_HP_MULT[%d] = %.2f (hand-tuned table: 5/10/18/28%% for hp 1-4, then linear 40%%→100%% over hp 5-15)",
@@ -3913,6 +3954,17 @@ local function get_formula_inner(e)
         raw, C.CAPTURE_PILL_DIST_SCALE, e._ds, _dm_str,
         e._dv, C.CAPTURE_PILL_DANGER_SCALE, _lgm_mult_str, _cpill_danger_score, _lgm_mult_det, intcpt_det, _free_det)
     end
+  elseif p == 3 then
+    -- capture_base: the A* number IS the danger-weighted dijkstra travel cost —
+    -- danger is baked into the per-tile path cost, NOT a separate additive term,
+    -- so a CLOSE base behind enemy fire can out-cost a FAR safe one (by design:
+    -- biases toward safer captures). Plus staleness for a neutral base unseen a
+    -- while. Note: BASE_PILL_COVER_PEN is applied only on the finalize path
+    -- (eval_capture_base), NOT this rolling cost, so it's not part of this total.
+    local _cb_dv = threat.at(e._mx or 0, e._my or 0)
+    f = string.format(
+      "A*{%.0f}@(%d,%d) + stale{%.0f}||A*:danger-weighted dijkstra travel to base; danger at base tile=%.1f is BAKED INTO the path cost (not a separate term) — that's why a near dangerous base can cost more than a far safe one|stale:%s",
+      raw, e._mx or 0, e._my or 0, e._stale or 0, _cb_dv, fmt_stale_detail(e._age, e._stale))
   else
     f = string.format("A*{%.0f}@(%d,%d) + stale{%.0f}||stale:%s",
       raw, e._mx or 0, e._my or 0, e._stale, fmt_stale_detail(e._age, e._stale))
@@ -4351,6 +4403,21 @@ function M.step_eval_queue(state, world, info)
       local ally_claimed_cost = ally_claimed_n * (C.ALLY_CLAIMED_REFUEL_PENALTY or 100)
       score = score + ally_claimed_cost
 
+      -- Anti-base-hop: while we're standing ON a refuel base, switching to a
+      -- DIFFERENT base is wasteful churn — an ally claiming our base (the
+      -- ally_claimed cost above) shouldn't bounce us off mid-refuel, or both of us
+      -- thrash and neither finishes. Penalize every base except the one under us so
+      -- we just finish here. (ally_claimed still RISES on our base — that's the
+      -- "don't be greedy, take what you need" nudge — it just makes refuel lose to
+      -- a COMBAT goal and leave, not hop to another base.) A depleted current base
+      -- is rejected upstream and drops out of the queue, which still frees us to
+      -- move — the only case we SHOULD switch bases.
+      local _hop_cost = 0
+      if info.base and not (obj.mx == tmx and obj.my == tmy) then
+        _hop_cost = (C.REFUEL_BASE_HOP_PENALTY or 500)
+        score = score + _hop_cost
+      end
+
       -- Panel detail (debug only): walk the Dijkstra slate step-by-step from
       -- the tank to the costed destination (cost_dx,cost_dy — the base's
       -- cheapest adjacent tile) so the breakdown can show the actual route in
@@ -4381,6 +4448,7 @@ function M.step_eval_queue(state, world, info)
         _ally_n = (ally_claimed_n > 0) and ally_claimed_n or nil,
         ally_claimed_pen = (ally_claimed_cost > 0) and ally_claimed_cost or nil,
         ally_claimed_by  = ally_claimed_by,
+        _hop = (_hop_cost > 0) and _hop_cost or nil,
       }
 
       pr.candidates[#pr.candidates + 1] = {
@@ -5476,8 +5544,14 @@ local function rederive_pool_partial_best(state)
       for _, cand in ipairs(pr.candidates) do
         local ck = pool_idx .. ":" .. cand.id
         local ce = cache[ck]
-        if ce and not ce._reject and (cand.cost or math.huge) < best_cost then
-          best_cost = cand.cost
+        -- Compare on the cost_cache cost, not cand.cost: the finalize passes above
+        -- (blitz target / join discount / ally-claimed) adjust ce.cost in place but
+        -- never touch cand.cost (the original eval score). Using cand.cost made a
+        -- blitz-discounted pill lose its own pool to a pricier one — the pool grid
+        -- showed the discounted winner while the competition used the stale score.
+        local eff = (ce and ce.cost) or cand.cost or math.huge
+        if ce and not ce._reject and eff < best_cost then
+          best_cost = eff
           best_id   = cand.id
           best_obj  = cand.obj
         end
@@ -7257,6 +7331,7 @@ local function goal_selection(state, world, info, quiet)
     -- Track per-goal commitment bonuses. Bonuses stack on TOP of the capped
     -- base commitment so they aren't swallowed by GOAL_COMMITMENT_CAP.
     local cur_is_attack_tank = (state.goal.kind == "attack_tank")
+    local cur_is_attack_base = (state.goal.kind == "attack_base")
     for _, c in ipairs(pool) do
       -- Engage-break: an attack_tank goal that detected a mid-take
       -- threat (tank in range, further from pill than us) is exempt
@@ -7289,6 +7364,13 @@ local function goal_selection(state, world, info, quiet)
       end
       if cur_is_attack_pill and c.goal.kind ~= "attack_tank" then
         effective_commit = effective_commit + C.ATTACK_PILL_COMMITMENT_BONUS
+      end
+      -- Attack-base follow-through: once committed to grinding a base, stay on it
+      -- hard. The ONLY non-urgent reason to break off is literally running dry
+      -- (0 shells) — with any ammo left, finish the job. Critical-armour flee
+      -- still preempts via init.lua's urgent goal-override (separate from this).
+      if cur_is_attack_base and (info.shells or 0) > 0 then
+        effective_commit = effective_commit + C.ATTACK_BASE_COMMITMENT_BONUS
       end
       if cg ~= cur_group then
         c.cost = c.cost + C.GOAL_SWITCH_PENALTY + effective_commit

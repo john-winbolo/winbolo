@@ -42,19 +42,30 @@ local print2 = require("print2")
 
 local M = {}
 
+-- Batch separator. Several /info messages are packed into the single outbound
+-- buffer per tick (init.lua's send section) joined by this byte, then split back
+-- apart here. \x1e (ASCII record separator) is non-null (survives the strlen on
+-- the internal delivery path, bot_manager.c) and never appears in any /info
+-- payload (all alphanumeric + , : . [ ] = and spaces). Keep these in sync.
+M.MSG_SEP = "\x1e"
+
 -- Parse one "/info kw" record token into a record table, or nil if malformed.
--- base: b<id>:<mx>:<my>:<cls>:<tick>   pill: p<id>:<mx>:<my>:<cls>:<intank>:<tick>
+-- base: b<id>:<mx>:<my>:<cls>:<hp>:<tick>
+-- pill: p<id>:<mx>:<my>:<cls>:<intank>:<hp>:<tick>
+-- hp is the object's real health at broadcast time (KW used to carry none, so the
+-- receiver had to GUESS — which invented full-health phantoms for dead pills).
 local function parse_kw_rec(tok)
   local kind = tok:sub(1, 1)
   local f = {}
   for n in tok:sub(2):gmatch("[^:]+") do f[#f + 1] = n end
-  if kind == "b" and #f >= 5 then
+  if kind == "b" and #f >= 6 then
     return { kind = "b", id = tonumber(f[1]), mx = tonumber(f[2]),
-             my = tonumber(f[3]), cls = f[4], tick = tonumber(f[5]) }
-  elseif kind == "p" and #f >= 6 then
+             my = tonumber(f[3]), cls = f[4], hp = tonumber(f[5]),
+             tick = tonumber(f[6]) }
+  elseif kind == "p" and #f >= 7 then
     return { kind = "p", id = tonumber(f[1]), mx = tonumber(f[2]),
              my = tonumber(f[3]), cls = f[4], intank = tonumber(f[5]),
-             tick = tonumber(f[6]) }
+             hp = tonumber(f[6]), tick = tonumber(f[7]) }
   end
   return nil
 end
@@ -67,6 +78,21 @@ end
 -- -------------------------------------------------------------------------
 function M.process_message(sender, text, tick, state)
   if not text then return end
+
+  -- Batched send: the sender packed several /info messages into one buffer
+  -- (separated by MSG_SEP). Split and process each segment as its own message.
+  -- A lone (unbatched) message has no separator and falls straight through.
+  if text:find(M.MSG_SEP, 1, true) then
+    local pos = 1
+    while true do
+      local s = text:find(M.MSG_SEP, pos, true)
+      local seg = s and text:sub(pos, s - 1) or text:sub(pos)
+      if seg ~= "" then M.process_message(sender, seg, tick, state) end
+      if not s then break end
+      pos = s + #M.MSG_SEP
+    end
+    return
+  end
 
   -- One-shot "LGM back": the sender's killed LGM has respawned.  Clear
   -- our dead-cooldown bookkeeping for them immediately (the engine fires
@@ -128,6 +154,34 @@ function M.process_message(sender, text, tick, state)
   -- Resync query (sent on (re)spawn): re-broadcast our known world once.
   if text == "/info kwq" then
     if state then state._kw_resync_req = true end
+    return
+  end
+
+  -- Commander->soldier blitz handshake on their OWN short verbs (NOT bundled into
+  -- /info state, which exceeds the 128-byte chat cap once brj/bes/pblk pile on and
+  -- gets dropped — the reject/accept then never lands). Merged into the sender's
+  -- slot via set_handshake (protected from /info state's set_info wipe). Payload
+  -- absent = clear. brj = "pn:[fx,fy];..." rejects; bac = "pn,pn" accepts.
+  if text:match("^/info brj") then
+    if state then ally_state.set_handshake(sender, tick, "brj", text:match("^/info brj (.+)$")) end
+    return
+  end
+  if text:match("^/info bac") then
+    if state then ally_state.set_handshake(sender, tick, "bac", text:match("^/info bac (.+)$")) end
+    return
+  end
+  -- Blocker tiles on their own verb (variable-length tile list, split off the
+  -- state slate to keep /info state under the 128-byte cap). Merged via
+  -- set_handshake; empty payload clears.
+  if text:match("^/info pblk") then
+    if state then ally_state.set_handshake(sender, tick, "pblk", text:match("^/info pblk (.+)$")) end
+    return
+  end
+  -- Shield WALL tiles a commander is building (build_walls only). Blitz soldiers
+  -- route their engage spot + aim point around these. Merged via set_handshake;
+  -- empty payload clears (commander left build_walls).
+  if text:match("^/info bwl") then
+    if state then ally_state.set_handshake(sender, tick, "bwl", text:match("^/info bwl (.+)$")) end
     return
   end
 
