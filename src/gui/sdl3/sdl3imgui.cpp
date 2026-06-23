@@ -3323,13 +3323,13 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
         s_inModalResize = true;
     }
     if (msg == WM_GETMINMAXINFO) {
-        /* Enforce the UI-scaled minimum window size.  Scale the client area by
-           s_uiScale (the non-client frame/border is fixed and not scaled), so
-           the 515:347 content ratio is preserved. */
+        /* Enforce the 1x minimum client size.  The minimum is fixed at 1x (the
+           UI scale instead demotes to fit the window), so the window can always
+           reach the size where fonts drop to 1.0x. */
         MINMAXINFO *mmi = (MINMAXINFO *)lParam;
         RECT clientRect = {0, 0,
-                           (LONG)(SDL3_SCREEN_W * s_uiScale),
-                           (LONG)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale)};
+                           (LONG)SDL3_SCREEN_W,
+                           (LONG)(SDL3_SCREEN_H + MENU_BAR_HEIGHT)};
         DWORD style = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
         DWORD exStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
         AdjustWindowRectEx(&clientRect, style, FALSE, exStyle);
@@ -3435,25 +3435,63 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
  * Public API
  * ------------------------------------------------------- */
 
+/* Largest UI scale whose 1x dialog content still fits the current window,
+   quantised to a 0.25 ladder.  Dialogs lay out in logical points against
+   SDL_GetWindowSize (DPI is handled by the renderer, not here), so the fit is
+   measured in those same units: window width over the 515pt content width, and
+   the menu-bar-less window height over the 325pt content height.  Because the
+   window is aspect-locked and the menu bar is a fixed 22pt (0 on macOS), the
+   two ratios agree at every zoom step.  Floor (not round) to the ladder so the
+   result never exceeds the true fit and re-overflows; a drag-resize therefore
+   crosses only a handful of atlas rebuilds.  This is what lets a Large pref
+   auto-demote in a small window and snap back when it grows. */
+static float desktopWindowFitScale(SDL_Window *window) {
+    int w = 0, h = 0;
+    SDL_GetWindowSize(window, &w, &h);
+    if (w <= 0 || h <= 0) return 1.0f;
+    float fitW = (float)w / (float)SDL3_SCREEN_W;
+    float availH = (float)h - (float)MENU_BAR_HEIGHT;
+    float fitH = (availH > 0.0f) ? availH / (float)SDL3_SCREEN_H : fitW;
+    float fit = SDL_min(fitW, fitH);
+    fit = (float)((int)(fit * 4.0f)) / 4.0f;   /* floor to 0.25 steps */
+    if (fit < 1.0f) fit = 1.0f;
+    if (fit > 2.0f) fit = 2.0f;   /* cap at the Large preset; never exceed it */
+    return fit;
+}
+
 /* (Re)apply the main ImGui context's font atlas, style, and window minimum
-   for the current UI scale.  Recomputes the scale (Auto → display-derived,
-   preset → fixed), rebuilds the font atlas, resets and re-scales the style,
-   and re-clamps the desktop window minimum.  Called once at setup and again
-   when the UI-scale pref changes — the latter only from the deferred safe
-   point between Present and NewFrame, so the atlas swap can't race draw data
-   still queued against the old texture. */
+   for the current UI scale.  Recomputes the scale (desktop: preference capped
+   by what the window can hold; Auto tracks the window directly), rebuilds the
+   font atlas, resets and re-scales the style.  Called at setup, when the
+   UI-scale pref changes, and on window resize — the latter two only from the
+   deferred safe point between Present and NewFrame, so the atlas swap can't
+   race draw data still queued against the old texture.  Resize fires it every
+   frame of a drag, so it early-outs when the quantised scale hasn't moved. */
 static void applyMainContextUiScale(void) {
     if (!s_window) return;
     ImGuiIO &io = ImGui::GetIO();
 
     /* One scale value drives both the font size and the style metrics.
        Tablet uses FontGlobalScale below (so uiScale stays 1); Deck keeps
-       its 1.5x; desktop derives the scale from the display (or the UI-scale
-       override) so dialogs are readable on high-DPI / 4K screens. */
+       its 1.5x; desktop caps the preferred scale (Small/Med/Large, or for
+       Auto the window-fit itself) by what the window can actually hold, so a
+       big font in a small window demotes to fit and restores when it grows. */
     float uiScale;
     if (uiModeIsTablet())          uiScale = 1.0f;
     else if (uiModeIsSteamDeck())  uiScale = dialogDeckFontMul();  /* 1.5, unchanged */
-    else                           uiScale = dialogDesktopScale(s_window);
+    else {
+        float fit  = desktopWindowFitScale(s_window);
+        float pref = (uiUiScaleGet() == UI_SCALE_AUTO)
+                       ? fit                                  /* Auto: track the window */
+                       : uiUiScalePresetFactor(uiUiScaleGet()); /* 1.0 / 1.5 / 2.0 */
+        uiScale = SDL_min(pref, fit);
+        if (uiScale < 1.0f) uiScale = 1.0f;
+    }
+
+    /* Resize events land here every frame of a drag; skip the costly atlas
+       rebuild when the quantised scale hasn't actually changed.  The atlas is
+       empty at first setup, so that pass always proceeds. */
+    if (io.Fonts->Fonts.Size > 0 && uiScale == s_uiScale) return;
     s_uiScale = uiScale;
 
     /* Rebuild the font atlas at the new size.  Clear() first because
@@ -3496,12 +3534,13 @@ static void applyMainContextUiScale(void) {
     }
 
     /* On the resizable desktop window, keep the OS window from shrinking below
-       the scaled 1x content size so the bigger dialogs can't overflow.  The
+       the 1x content size.  The minimum is fixed at 1x (not scaled by the UI
+       scale) so the window can always reach the size where fonts demote to
+       1.0x; scaling the minimum by s_uiScale would make the two circular.  The
        Deck/tablet fullscreen paths don't resize, so skip them. */
     if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
         SDL_SetWindowMinimumSize(s_window,
-            (int)(SDL3_SCREEN_W * s_uiScale),
-            (int)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale));
+            SDL3_SCREEN_W, SDL3_SCREEN_H + MENU_BAR_HEIGHT);
     }
 }
 
@@ -3952,6 +3991,11 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* Window resized — enforce content aspect ratio (515:325) accounting for menu bar */
         if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
             ev.window.windowID == SDL_GetWindowID(s_window)) {
+            /* The window-fit cap on the UI scale may have changed.  Defer the
+               actual recompute/atlas rebuild to the safe point before NewFrame;
+               applyMainContextUiScale early-outs if the quantised scale held. */
+            if (!uiModeIsTablet() && !uiModeIsSteamDeck())
+                s_pendingUiScaleRebuild = true;
             if (s_suppressAutoCustom) {
                 /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
                    Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
