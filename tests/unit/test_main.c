@@ -241,6 +241,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbv_reader_v1",                           run_wbv_reader_v1                           },
     { "wbv_reader_v2",                           run_wbv_reader_v2                           },
     { "wbv_v2_capture",                          run_wbv_v2_capture                          },
+    { "blocks_stream",                           run_blocks_stream                           },
     { "log_path_empty_uses_autobase",            run_log_path_empty_uses_autobase            },
     { "log_path_explicit_file_verbatim",         run_log_path_explicit_file_verbatim         },
     { "log_path_explicit_file_keeps_single_wbv", run_log_path_explicit_file_keeps_single_wbv },

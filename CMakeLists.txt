@@ -2698,6 +2698,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # writer-drive that (re)generates the v2 fixture (test_wbv_v2_capture.c).
     tests/unit/test_wbv_reader.c
     tests/unit/test_wbv_v2_capture.c
+    # Blocks-level append-fed stream source: drives blocks.c's no-zip path.
+    tests/unit/test_blocks_stream.c
     # Link-only no-op stubs for the host/render/window/message entry points
     # the decode subset below references but whose real bodies live in the
     # GUI TUs (logviewer.c, draw.c, messages.c) we do not link.
@@ -2957,6 +2959,7 @@ set(_unit_test_names
     log_roundtrip_lobby_mode_drops_world_events
     wbv_reader_v1
     wbv_reader_v2
+    blocks_stream
     log_path_empty_uses_autobase
     log_path_explicit_file_verbatim
     log_path_explicit_file_keeps_single_wbv

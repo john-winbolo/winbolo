@@ -393,6 +393,12 @@ int run_wbv_reader_v1(void);
 int run_wbv_reader_v2(void);
 int run_wbv_v2_capture(void);
 
+/* Append-fed blocks stream source (test_blocks_stream.c): the no-zip path
+ * where lv_blocksAppendBytes feeds plaintext bytes that the existing read/seek
+ * machinery serves back, covering chunked append, read-back, seek and
+ * end-of-stream. */
+int run_blocks_stream(void);
+
 /* -log path composition (test_log_dir_path.c). Pins -log <dir> auto-naming
  * the replay inside the directory, vs -log <file> / bare -log. */
 int run_log_path_empty_uses_autobase(void);
