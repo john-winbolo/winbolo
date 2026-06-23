@@ -593,6 +593,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     /* Error popup */
     const char *errorMsg = nullptr;
+    bool wantNeedNamePopup = false;
 
     /* Set Name popup */
     char nameEditBuf[PLAYER_NAME_LEN] = {};
@@ -1166,17 +1167,17 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                     SDL_strlcpy(selKeyAddr, e.address, sizeof(selKeyAddr));
                     selKeyPort = e.port;
                     if (joinActivate) {
-                        if (strlen(e.version) >= STRVER_LEN &&
-                            strncmp(e.version, STRVER, STRVER_LEN) == 0) {
-                            char playerName[PLAYER_NAME_LEN];
-                            gameFrontGetPlayerName(playerName);
-                            if (strlen(playerName) > 0) {
-                                gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
-                                gameFrontSetAIType(e.ai);
-                                gameFrontSetDlgState(openUdpJoin);
-                                result = (int)openUdpJoin;
-                                running = false;
-                            }
+                        char playerName[PLAYER_NAME_LEN];
+                        gameFrontGetPlayerName(playerName);
+                        if (strlen(playerName) == 0) {
+                            errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
+                            wantNeedNamePopup = true;
+                        } else {
+                            gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
+                            gameFrontSetAIType(e.ai);
+                            gameFrontSetDlgState(openUdpJoin);
+                            result = (int)openUdpJoin;
+                            running = false;
                         }
                     }
                 }
@@ -1646,6 +1647,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         /* Modal popup IDs (built once per frame, used by both Open and Begin) */
         char errPopupId[64];
         SDL_snprintf(errPopupId, sizeof(errPopupId), "%s##gb", langGetText(STR_ERR_TITLE));
+        if (wantNeedNamePopup)
+            ImGui::OpenPopup(errPopupId);
         char setNamePopupId[64];
         SDL_snprintf(setNamePopupId, sizeof(setNamePopupId), "%s##gb", langGetText(STR_DLGSETPLAYERNAME_TITLE));
 
