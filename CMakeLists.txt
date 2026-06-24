@@ -2776,6 +2776,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
     tests/unit/test_stream_load.c
+    # Feeds the same fixture through lv_screenStreamPump a record at a time
+    # (with a caught-up pump) and matches a one-shot load to end-of-log.
+    tests/unit/test_stream_pump.c
     # Spectator-frame snapshot: steps the v2 fixture to end-of-log, fills a
     # SpecFramePOD via specFrameFill and asserts the seeded tanks + camera slot.
     tests/unit/test_spec_frame_fill.c
@@ -3041,6 +3044,7 @@ set(_unit_test_names
     wbv_reader_v2
     blocks_stream
     stream_load
+    stream_pump
     spec_frame_fill
     log_path_empty_uses_autobase
     log_path_explicit_file_verbatim

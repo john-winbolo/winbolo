@@ -355,6 +355,14 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen);
  * and steps lv_screenLogTick. Returns TRUE on success. */
 bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len);
 
+/* Feeds a live, append-only byte stream into the decoder: appends the
+ * caller-supplied newly-arrived bytes, then advances playback over the whole
+ * records that are now fully buffered and parks when caught up. Appends must be
+ * record-aligned (whole records, as the ring/translator emit) so a tick never
+ * reads past the buffer. Never finishes on "caught up" (a live stream carries
+ * no LOG_QUIT). Returns the decoder's isPlaying state. */
+bool lv_screenStreamPump(const uint8_t *bytes, size_t len);
+
 /*********************************************************
 *NAME:          lv_screenNumBases
 *AUTHOR:        John Morrison

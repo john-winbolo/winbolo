@@ -412,6 +412,13 @@ int run_blocks_stream(void);
  * same content the zip reader does. */
 int run_stream_load(void);
 
+/* Stream-pump path (test_stream_pump.c): feeds the spectator_v2 fixture's
+ * plaintext log.dat through lv_screenStreamPump one record at a time, with a
+ * caught-up pump (no new bytes) mid-stream, and asserts the chunked feed
+ * reaches the same end-of-log state as a one-shot load and that a caught-up
+ * pump neither advances the cursor nor finishes playback. */
+int run_stream_pump(void);
+
 /* Spectator-frame snapshot (test_spec_frame_fill.c): steps the spectator_v2
  * fixture to end-of-log, fills a SpecFramePOD via specFrameFill and asserts the
  * two seeded tanks (present, names, slot) and a defined followed slot. */

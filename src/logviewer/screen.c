@@ -2002,6 +2002,48 @@ bool lv_screenIsPlaying() {
   return g_lv->isPlaying;
 }
 
+/*********************************************************
+*NAME:          lv_screenStreamPump
+*PURPOSE:
+*  Feeds a live, append-only byte stream into the decoder.
+*  Appends the caller-supplied newly-arrived bytes, then
+*  advances playback over the whole records that are now
+*  fully buffered, and parks cleanly when it catches up.
+*
+*  Appends are record-aligned (the ring and the record
+*  translator emit complete records), so logPosition <
+*  logSize means at least one complete record is present and
+*  one reading tick lands exactly on the next record
+*  boundary. When the cursor reaches logSize the decoder is
+*  left untouched (state intact, still playing) rather than
+*  ticked — a reading tick at the boundary would read a short
+*  count and misalign the cursor, and a live stream carries no
+*  LOG_QUIT, so "caught up" must never be treated as
+*  end-of-log. The isPlaying guard stops the loop if playback
+*  ever does finish so a non-advancing tick cannot spin.
+*
+*  Single-threaded and source-agnostic: the caller supplies
+*  the bytes. Returns the decoder's isPlaying state.
+*PARAMS:        bytes - newly-arrived stream bytes (may be NULL)
+*               len   - number of bytes (may be 0 when caught up)
+*RETURNS:       TRUE while playback is live, FALSE once finished.
+*********************************************************/
+bool lv_screenStreamPump(const uint8_t *bytes, size_t len) {
+  if (g_lv == NULL) {
+    return FALSE;
+  }
+  if (bytes != NULL && len > 0) {
+    if (lv_blocksAppendBytes(bytes, len) != TRUE) {
+      return g_lv->isPlaying;
+    }
+  }
+  while (g_lv->isPlaying == TRUE &&
+         lv_logGetCurrentPosition() < lv_logGetTotalSize()) {
+    lv_screenLogTick();
+  }
+  return g_lv->isPlaying;
+}
+
 /* Allocate a decoder state, set its field defaults, and register it as the
  * active state. Host-callable: lets a caller drive lv_screenLoadMapFromMemory
  * / lv_screenLogTick / lv_screenCloseLog without the standalone GUI/platform
