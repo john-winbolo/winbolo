@@ -67,6 +67,12 @@ typedef struct {
  * slot.  Branches the join handler to the spectator-accept path. */
 #define JOIN_FLAG_SPECTATOR         0x04
 
+/* JOIN_ACCEPT slot byte the server sends to a tankless spectator in place of a
+ * real 0..MAX_TANKS-1 slot — the viewer holds no tank.  A spectator client keys
+ * its accept handling off this sentinel; a player-join client sees it as an
+ * out-of-range slot (>= MAX_TANKS) and rejects the accept. */
+#define SPECTATOR_ACCEPT_NO_SLOT    0xFFu
+
 /* Cap on concurrent tankless spectator connections held transport-side in
  * spectators[], independent of the MAX_TANKS player slots.  The operator's
  * -maxspectators cap is enforced as min(maxSpectators, MAX_SPECTATORS). */
@@ -214,7 +220,10 @@ typedef struct {
  * playerName: name to use in join request.
  * password: game password (empty string if none).
  * trackerAddr: "" or NULL = no punch fallback (LAN/manual-connect).
- * trackerPort: ignored if trackerAddr empty. */
+ * trackerPort: ignored if trackerAddr empty.
+ * spectator: true requests a tankless spectator connection (JOIN carries
+ *   JOIN_FLAG_SPECTATOR; the accept lands in UDP_CLIENT_SPECTATING with no
+ *   tank slot or map download) instead of a normal player join. */
 Transport transportUdpClientCreate(struct ClientSim *clientSim,
                                    const char *serverAddr,
                                    unsigned short serverPort,
@@ -225,7 +234,8 @@ Transport transportUdpClientCreate(struct ClientSim *clientSim,
                                    const char *wbnServerKey,
                                    bool wantRejoin,
                                    const char *trackerAddr,
-                                   unsigned short trackerPort);
+                                   unsigned short trackerPort,
+                                   bool spectator);
 
 /* Destroys a client-side UDP transport. */
 void transportUdpClientDestroy(Transport *t);

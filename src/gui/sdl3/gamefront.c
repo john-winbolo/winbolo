@@ -1250,7 +1250,8 @@ bool gameFrontSetDlgState(openingStates newState) {
                         "",
                         wantRejoin,
                         !s_isLanOnly ? gameFrontTrackerAddr : "",
-                        gameFrontTrackerPort);
+                        gameFrontTrackerPort,
+                        /*spectator*/ false);
     if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
       imguiMessageBoxEx(DIALOG_BOX_TITLE,

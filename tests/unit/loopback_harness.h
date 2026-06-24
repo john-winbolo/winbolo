@@ -83,6 +83,15 @@ bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
                           bool lobbyMode, const char *impairSpec,
                           uint64_t seed);
 
+/* Bring up server + a tankless SPECTATOR client (clientSimConnectUdp with the
+ * spectator flag set), on a clean path with no peer players. The server is
+ * started running with viewer slots opened so its spectator-accept path admits
+ * the connect; the client reaches CLIENT_CONNECT_SPECTATING with no tank slot
+ * or map download. seed seeds bolo_srand for reproducibility. Returns false
+ * (and leaves the harness safe to Stop) on failure. */
+bool loopbackHarnessStartSpectator(LoopbackHarness *h, const char *playerName,
+                                   uint64_t seed);
+
 /* Advance both endpoints by exactly one tick: client tick (sends queued
  * input/commands, receives + impairs inbound, applies control/snapshots),
  * then server tick (drains recv queue, ticks the sim, sends snapshots /

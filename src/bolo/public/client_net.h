@@ -33,6 +33,9 @@ struct ServerSim;
  * back to when GeoIP doesn't resolve the joiner's IP (loopback joins,
  * private LAN, missing MMDB). Pass NULL or "" to leave the slot empty
  * — the server treats both the same. */
+/* spectator: true connects as a tankless spectator (JOIN_FLAG_SPECTATOR; the
+ * accept lands in CLIENT_CONNECT_SPECTATING with no tank slot or map download)
+ * instead of a normal player join. */
 bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          unsigned short serverPort, const char *playerName,
                          const char *fallbackCountry,
@@ -40,7 +43,8 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          const char *wbnApiToken,
                          const char *wbnServerKey,
                          bool wantRejoin, const char *trackerAddr,
-                         unsigned short trackerPort);
+                         unsigned short trackerPort,
+                         bool spectator);
 /* Run the full local-join handshake against an in-process ServerSim:
  * pick a slot via serverSimLocalJoin, install the server's compressed
  * map, set up the local tank, register the auto-subscriber, apply the

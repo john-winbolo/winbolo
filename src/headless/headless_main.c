@@ -1968,7 +1968,8 @@ static int runNetworkMode(void) {
   clientSimConnectUdp(humanSim, optServer, optPort, optName,
                       winbolonetGetCountryCode(),
                       optPassword, "", "",
-                      false, optTrackerAddr, optTrackerPort);
+                      false, optTrackerAddr, optTrackerPort,
+                      /*spectator*/ false);
   if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
     const char *reason = clientSimGetConnectErrorReason(humanSim);
     fprintf(stderr, "Error: failed to connect: %s\n", reason ? reason : "unknown");

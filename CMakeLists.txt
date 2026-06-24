@@ -2711,6 +2711,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Spectator JOIN handshake: a JOIN_FLAG_SPECTATOR join registers a tankless
     # viewer (slot 0xFF, no tank slot) under the maxSpectators cap.
     tests/unit/test_spectator_join.c
+    # Spectator connect — client side: the real client transport connecting with
+    # the spectator flag lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting
+    # seed), consuming no tank slot and starting no map download.
+    tests/unit/test_spectator_connect.c
     # Spectator seed transfer: a connected spectator on a recording-ring server
     # gets the delayed keyframe at head - delay armed as a BULK_KIND_SPEC_SEED
     # transfer whose blob is byte-equal to the ring keyframe at that delay.
@@ -3133,6 +3137,7 @@ set(_unit_test_names
     spectator_replay
     spectator_config
     spectator_join
+    spectator_connect
     spectator_seed
     bulk_transfer
     overflow_guards

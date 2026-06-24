@@ -63,14 +63,16 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                          const char *wbnApiToken,
                          const char *wbnServerKey,
                          bool wantRejoin, const char *trackerAddr,
-                         unsigned short trackerPort) {
+                         unsigned short trackerPort,
+                         bool spectator) {
   if (cs == NULL) return false;
   clientSimTeardownTransport(cs);
   cs->transport = transportUdpClientCreate(cs, serverAddr, serverPort,
                                            playerName, fallbackCountry,
                                            password,
                                            wbnApiToken, wbnServerKey,
-                                           wantRejoin, trackerAddr, trackerPort);
+                                           wantRejoin, trackerAddr, trackerPort,
+                                           spectator);
   cs->hasTransport = true;
   cs->isUdpTransport = true;
   clientSimSetLocalTransport(cs, false);

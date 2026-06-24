@@ -211,6 +211,12 @@ int run_spectator_config(void);
  * maxSpectators cap / disabled case, and resolves over the cookie handshake. */
 int run_spectator_join(void);
 
+/* Spectator connect — client side (test_spectator_connect.c): the real client
+ * transport connecting with the spectator flag runs the join handshake and
+ * lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting seed) with no tank
+ * slot consumed and no map download started. */
+int run_spectator_connect(void);
+
 /* Spectator seed transfer (test_spectator_seed.c): a connected spectator on a
  * server whose ring is recording gets the delayed keyframe at head - delay
  * armed as a BULK_KIND_SPEC_SEED transfer; the armed seed blob is byte-equal to

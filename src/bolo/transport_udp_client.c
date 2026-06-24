@@ -226,6 +226,13 @@ typedef struct {
     uint32_t snapshotsLostTotal;      /* Cumulative inferred-lost snapshots since join */
 
     bool wantRejoin;               /* Request rejoin (restore pills/bases) on connect */
+    /* Tankless spectator connect. Set at create from clientSimConnectUdp's
+     * spectator arg. When true the JOIN carries JOIN_FLAG_SPECTATOR and the
+     * accept handler takes the spectator branch (slot==SPECTATOR_ACCEPT_NO_SLOT
+     * → UDP_CLIENT_SPECTATING, no tank slot, no map download). It also gates
+     * that branch: a player-join client (false) treats the 0xFF slot as an
+     * invalid slot and rejects, so the branch can never fire by accident. */
+    bool spectator;
 
     /* Phase 3 — UDP hole-punching fallback. Empty trackerAddr disables
      * punch entirely (LAN/manual-connect joiners). */
@@ -1242,6 +1249,37 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             int pos = PACKET_HEADER_SIZE;
             uint32_t mapSize;
             BYTE assignedSlot = buf[pos++];
+
+            /* Tankless spectator accept. The server answers a
+             * JOIN_FLAG_SPECTATOR join with the SPECTATOR_ACCEPT_NO_SLOT
+             * sentinel and a zero mapSize: no tank slot is claimed and no map
+             * is downloaded (the map arrives later inside the spectator seed).
+             * Intercept here — before the slot>=MAX_TANKS reject the 0xFF
+             * sentinel would otherwise trip — and skip the tank-slot funnel
+             * (clientSimOnAssignedSlot), the map-download buffer, and the live
+             * snapshot-apply pipeline; land in UDP_CLIENT_SPECTATING to await
+             * the seed (consumed in a later slice). Gated on c->spectator so a
+             * player-join client never takes this path: for it, a 0xFF slot
+             * falls through to the out-of-range reject below. */
+            if (c->spectator && assignedSlot == SPECTATOR_ACCEPT_NO_SLOT) {
+                /* serverTick seeds the timing estimator's clock offset (no
+                 * round-trip sample — same rationale as the player path). */
+                clientTimingSeedFromJoin(&c->timing, unpackU32(buf + pos), 0);
+                pos += 4;
+                /* mapSize is the zero sentinel for a spectator — step past it;
+                 * no download buffer is allocated. */
+                pos += 4;
+                /* Optional connId trailer, read exactly as the player path so
+                 * the server can re-home this spectator after a NAT rebind. */
+                if (len >= PACKET_HEADER_SIZE + 9 + 8) {
+                    c->connId = unpackConnId(buf + pos);
+                    pos += 8;
+                }
+                c->joinState = UDP_CLIENT_SPECTATING;
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "spectator JOIN_ACCEPT: tankless connect, awaiting seed");
+                break;
+            }
 
             /* A valid server only ever assigns slots 0..MAX_TANKS-1. An
              * out-of-range slot from a hostile or buggy server would make
@@ -2545,6 +2583,9 @@ static bool udpClientTick(void *ctx) {
                 uint8_t joinFlags = 0;
                 if (c->wantRejoin)             joinFlags |= JOIN_FLAG_WANT_REJOIN;
                 if (c->wbnApiToken[0] != '\0') joinFlags |= JOIN_FLAG_WILL_AUTHENTICATE;
+                /* Tankless spectator join: the server branches to the
+                 * spectator-accept path (0xFF slot, no map). */
+                if (c->spectator)              joinFlags |= JOIN_FLAG_SPECTATOR;
                 jbuf[joffset++] = joinFlags;
                 jbuf[joffset++] = bolo_detect_client_type();
                 {
@@ -2818,7 +2859,8 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                                    const char *wbnServerKey,
                                    bool wantRejoin,
                                    const char *trackerAddr,
-                                   unsigned short trackerPort) {
+                                   unsigned short trackerPort,
+                                   bool spectator) {
     Transport t;
     TransportUdpClientCtx *c;
 
@@ -2913,6 +2955,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     }
 
     c->wantRejoin = wantRejoin;
+    c->spectator = spectator;
 
     /* Cache fallback country for the JOIN_REQUEST encoder. Two chars
      * + NUL; NULL/"" lands as \0\0 on the wire, which the server
