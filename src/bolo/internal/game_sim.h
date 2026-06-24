@@ -184,6 +184,12 @@ struct GameSim {
        it from 0 (sea) to 1 (far bank) once the player passes the boat step.
        Zero-initialised by memset at sim creation. */
     BYTE        tutorialStartIdx;
+    /* Deepest (lowest) map row the tank has reached this tutorial run. The
+       server only halts the tank at a stop row the player hasn't passed yet
+       (newbmy < tutorialMinRow), so a respawn driving back through already-seen
+       rows isn't stopped again. Initialised to 0xFF (no progress) in
+       serverSimInit — memset alone would leave it 0 and disable every stop. */
+    BYTE        tutorialMinRow;
     /* Set by tankDeath's server respawn branch when a tutorial respawn lands at
        start 1 (the far bank). The GUI takes-and-clears it to show the one-shot
        respawn message. Zero-initialised by memset at sim creation. */
