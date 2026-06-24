@@ -1364,13 +1364,15 @@ bool gameFrontSetDlgState(openingStates newState) {
         /* Single-player opens the lobby at sensible defaults the host can
          * still change inline before Start: Open game, Full Advantage AI,
          * and one enemy bot. Held in SP-local values so the host-game path
-         * (gameFrontSetupServer) keeps its own settings. */
-        gameType spGameType = gameOpen;
-        aiType   spAiPolicy = aiFull;
+         * (gameFrontSetupServer) keeps its own settings. The tutorial forces
+         * a solo strict-tournament game with no AI, ignoring any SP-lobby
+         * settings left over from earlier in the session. */
+        gameType spGameType = isTutorial ? gameStrictTournament : gameOpen;
+        aiType   spAiPolicy = isTutorial ? aiNone : aiFull;
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
          * the user already configured (count > 0) is left untouched. */
-        if (gameFrontBotSetupData.count == 0) {
+        if (!isTutorial && gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
