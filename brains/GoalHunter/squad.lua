@@ -50,6 +50,16 @@ M.BLITZ_CALL_OPEN_SUB = {
   blitz_wait = true,
 }
 
+-- Take-progress rank for commander de-confliction: a higher rank means further
+-- into the take. When two bots open a rival blitz on the same pill, the one
+-- FURTHER along is the established captain (first to build wins) — the other
+-- joins as a soldier, regardless of player number. Unlisted/nil substate = 0.
+local _BLITZ_RANK = {
+  plan_position = 1, approach = 2, gather_trees = 3,
+  detree = 4, build_walls = 5, blitz_wait = 6,
+}
+local function blitz_rank(sub) return _BLITZ_RANK[sub or ""] or 0 end
+
 -- Wipe ALL blitz/squad coordination state. Call on tank death so a respawn
 -- comes back with a clean slate — no stale negotiation, offer, reject,
 -- roster, watchdog, broadcast latch, or call registry leaking across the
@@ -580,15 +590,46 @@ function M.update(state, info, now, world)
          and not g._blitz_committed then
         local now2 = state.tick or 0
         local tol  = C.SQUAD_CMD_RACE_TOL or 3
+        -- "electing" = still in the open ELECTION stage (plan_position). Once we
+        -- advance into our take (approach/gather_trees/build_walls/...) we're the
+        -- established captain: a same-tick-tie or lower-pn LATECOMER must JOIN us,
+        -- not bump us to a soldier. (A rival that is genuinely FURTHER along still
+        -- wins, just below — first to build, regardless of pn.)
+        local electing = (g.substate == nil or g.substate == "plan_position")
+
+        -- Progress beats the pn/age tiebreak: defer to an ally commanding our pill
+        -- who is FURTHER into the take than us (e.g. it reached gather_trees /
+        -- build_walls while we're still at plan_position). First-to-build is the
+        -- captain; we join as a soldier. This is the half that makes the OTHER bot
+        -- yield to an established builder, so we don't end up with two commanders.
+        do
+          local my_rank = blitz_rank(g.substate)
+          local dead = state.tank_dead_at
+          for ally_pn, slot in ally_state.iter_active(now2, C.SQUAD_ALLY_MAX_AGE or 1750) do
+            if ally_pn ~= self_pn and slot.info
+               and slot.info.role == M.ROLE_COMMANDER
+               and slot.info.goal == "attack_pill"
+               and tonumber(slot.info.target or "") == g.target_id
+               and blitz_rank(slot.info.sub) > my_rank
+               and not (dead and dead[ally_pn] and dead[ally_pn] > (slot.last_tick or 0)) then
+              role = M.ROLE_SOLDIER
+              if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_DEFER t=%d pill=%s -> ally p%s further along (sub=%s); join, don't rival-command", now2, tostring(g.target_id), tostring(ally_pn), tostring(slot.info.sub))) end
+              break
+            end
+          end
+        end
+
         local my_open = (state._my_blitz_call == g.target_id and state._my_blitz_call_tick) or now2
         local my_age  = now2 - my_open
         for cmdr, call in pairs(state.blitz_calls) do
-          if cmdr ~= self_pn and call.pill == g.target_id then
+          if role == M.ROLE_COMMANDER and cmdr ~= self_pn and call.pill == g.target_id then
             local ally_age = now2 - (call.tick or now2)
             -- defer if the ally has been on it clearly longer, OR it's a ~tie and
-            -- they hold the lower player id.
+            -- they hold the lower player id. The lower-pn TIEBREAK only applies
+            -- while we're still electing — an established builder doesn't yield to
+            -- a same-tick-tie latecomer.
             if (ally_age - my_age) > tol
-               or (math.abs(ally_age - my_age) <= tol and cmdr < self_pn) then
+               or (electing and math.abs(ally_age - my_age) <= tol and cmdr < self_pn) then
               role = M.ROLE_SOLDIER
               if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_DEFER t=%d pill=%s -> join C%s (ally_age=%d my_age=%d) instead of commanding", now2, tostring(g.target_id), tostring(cmdr), ally_age, my_age)) end
               break
@@ -630,7 +671,7 @@ function M.update(state, info, now, world)
         -- both bots agree on exactly one commander; the committed latch above
         -- (g._blitz_committed) already shields an established leader from being
         -- demoted to a fresh elector, so this only fires pre-commit.
-        if role == M.ROLE_COMMANDER then
+        if role == M.ROLE_COMMANDER and electing then
           local dead = state.tank_dead_at
           for ally_pn, slot in ally_state.iter_active(now2, C.SQUAD_ALLY_MAX_AGE or 1750) do
             if ally_pn ~= self_pn and ally_pn < self_pn and slot.info
@@ -794,8 +835,20 @@ function M.update(state, info, now, world)
     if acc then
       local cslot = ally_state.get(acc)
       local cdead = dead and dead[acc] and cslot and dead[acc] > (cslot.last_tick or 0)
-      if cslot and cslot.active and not cdead
-         and (cslot.info.goal == "attack_pill" or cslot.info.goal == "capture_pill") then
+      -- "Still leading?" from LIVE signals, NOT the event-driven /info state goal.
+      -- A commander stably running a blitz only re-broadcasts /info state on a
+      -- goal CHANGE + a 30s heartbeat, so the `goal` field in our slot goes stale
+      -- (saw a soldier read an ~800-tick-old goal=refuel and FALSELY uncommit
+      -- mid-approach, dropping to none). Trust instead: an OPEN bco call from it,
+      -- or it still naming US in its bac accept list — both arrive every tick. A
+      -- fresh attack/capture goal is kept only as a last-resort positive.
+      local call       = state.blitz_calls and state.blitz_calls[acc]
+      local accepts_us = false
+      local bac        = cslot and cslot.info and cslot.info.bac
+      if bac then for s in tostring(bac):gmatch("%d+") do if tonumber(s) == self_pn then accepts_us = true break end end end
+      local goal_ok = cslot and cslot.info
+                      and (cslot.info.goal == "attack_pill" or cslot.info.goal == "capture_pill")
+      if cslot and cslot.active and not cdead and (call or accepts_us or goal_ok) then
         -- Commander still leading. But if OUR OWN goal got pulled off the blitz
         -- (a reactive attack_tank, a flee, a refuel, kill_lgm, etc.) we must
         -- LEAVE the squad so the commander stops counting us — clearing
@@ -820,8 +873,17 @@ function M.update(state, info, now, world)
         else
           state.squad_cmdr   = acc
           state.squad_status = "join"
-          if cslot.info.goal == "attack_pill" then
+          -- Adopt the commander's blitz pill. Prefer its broadcast target, but
+          -- that rides the event-driven /info state and goes STALE while the
+          -- commander sends only bac/pblk handshakes — so fall back to its LIVE
+          -- bco call pill (blitz_calls[acc], refreshed every tick). NEVER clobber
+          -- a known target to nil: a nil here made attack.lua abort the committed
+          -- take as "commander gone" and drop the negotiated standoff.
+          local _call = state.blitz_calls and state.blitz_calls[acc]
+          if cslot.info.goal == "attack_pill" and cslot.info.target then
             state.squad_blitz_target = tonumber(cslot.info.target)
+          elseif _call and _call.pill then
+            state.squad_blitz_target = _call.pill
           end
           if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_COMMITTED t=%d to C%s pill=%s", now, tostring(acc), tostring(state.squad_blitz_target))) end
           return role

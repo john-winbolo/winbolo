@@ -993,8 +993,8 @@ M.STRATEGIC_PLACE_UTIL_SURPLUS_MAX_DISCOUNT = 0.85
 M.STRATEGIC_PLACE_COST_MULT          = 0.085
 -- Defensive pill build: when an enemy tank is visible, place at ±45° from
 -- the threat direction, 2-5 tiles out, with clear LGM path.
-M.DEFENSIVE_BUILD_MIN_DIST     = 2    -- tiles from tank (inner bound)
-M.DEFENSIVE_BUILD_MAX_DIST     = 5    -- tiles from tank (outer bound, tried first)
+M.DEFENSIVE_BUILD_MIN_DIST     = 1    -- tiles from tank (inner bound, tried FIRST — nearest spiral out)
+M.DEFENSIVE_BUILD_MAX_DIST     = 5    -- tiles from tank (outer bound)
 M.DEF_BUILD_THREAT_RANGE       = 8    -- tiles (euclidean): nearest enemy tank must be within this to trigger a panic/defensive build. Past it the tank can't shoot us, so no need to panic-drop a guard pill mid-carry. ~tank gun range + 1 slack.
 M.DEFENSIVE_BUILD_ANGLE_OFFSET = 32   -- ±45° in WinBolo 256-unit circle
 -- Emergency def_build dispatches the LGM to run to the spot from wherever the
@@ -1192,6 +1192,39 @@ M.PILL_REPOSITION_LOCK_COST           = 30  -- locked-in reposition cost (beats 
 -- Legacy (unused; kept for reference / any external readers):
 M.PILL_REPOSITION_ORPHAN_DIST   = 15
 M.PILL_REPOSITION_THRESHOLD     = 50
+
+-- ── Reposition VOTING (team consensus) ──────────────────────────────────────
+-- Reposition no longer fires off the raw pool-10 cost alone. A bot that wants to
+-- move a back pill opens a team VOTE; it only carries the move out if the vote
+-- passes (silence = abstain = yes; any NO blocks). Allies vote NO when moving the
+-- pill would be unsafe or they have a better candidate (see reposition_vote.lua).
+M.REPOSITION_VOTE_ENABLED               = true
+M.REPOSITION_VOTE_WINDOW_TICKS          = 10   -- ticks the initiator waits for NO votes before resolving
+M.REPOSITION_VOTE_INITIATE_COOLDOWN     = 3000 -- ~60s @ 50Hz: after opening a vote, this bot won't open another for this long (pass OR fail)
+M.REPOSITION_VOTE_RECENT_MEMORY_TICKS   = 6000 -- ~120s @ 50Hz: a bot votes NO if it remembers ANY reposition within this window
+M.REPOSITION_VOTE_ENEMY_NEAR_TILES      = 15   -- vote NO if an enemy tank is within this many tiles of the pill AND nothing else covers it
+M.REPOSITION_VOTE_TANK_COVER_TILES      = 10   -- vote NO if the pill IS covered by >=1 other pill but an enemy tank is within this many tiles
+M.REPOSITION_VOTE_APPROVAL_TTL          = 300  -- ticks an unconsumed PASS stays valid before it expires (bot must commit within ~6s)
+M.REPOSITION_VOTE_RESULT_LATCH_TICKS    = 120  -- keep the vote-result panel on screen this long after resolve so it's readable
+-- Exponential "redundant pill" discount: the MORE friendly pills already cover a
+-- pill, the exponentially cheaper it is to move (a redundant back pill is the
+-- best thing to relocate). disc = min(CAP, W * (BASE^covering_pills - 1)),
+-- subtracted from the reposition position-cost. BASE>1 → grows fast.
+M.REPOSITION_COVERAGE_EXP_BASE  = 1.7
+M.REPOSITION_COVERAGE_EXP_W     = 60
+M.REPOSITION_COVERAGE_EXP_CAP   = 400
+M.REPOSITION_VOTE_SCORE_TOPN    = 5    -- how many of a tank's top reposition candidates the score visualizers keep/show
+-- Reposition position-scan scheduling: the heavy O(pills^2) coverage scan is
+-- decoupled from the (busy) replan tick. Once the cache is this stale we look
+-- for a QUIET tick (this tick's OWN elapsed-so-far at/below the rolling average,
+-- measured at the scheduler point) to rescan; if none shows up within +MAX_DEFER
+-- ticks we force it so it can't starve.
+M.REPOSITION_SCORE_INTERVAL  = 50   -- ticks of staleness before a rescan is due (~1s, matches replan cadence)
+M.REPOSITION_SCORE_MAX_DEFER = 40   -- extra ticks we'll wait for a quiet tick before forcing the rescan
+-- Hard floor: with this many or fewer BUILT (deployed) team pills, NO reposition
+-- happens at all — we can't afford to take one offline. (Stricter, absolute gate
+-- vs the softer PILL_REPOSITION_FEW_PILLS_* cost penalty.)
+M.REPOSITION_MIN_TEAM_PILLS  = 4
 
 -- Defensive trail dropping
 -- Trail drop DISABLED: it dispatched the LGM to drop a carried pill behind a

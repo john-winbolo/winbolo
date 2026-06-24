@@ -52,6 +52,7 @@ local viz      = require("viz")
 local ally_state = require("ally_state")
 ally_state.init()
 local squad = require("squad")
+local reposition_vote = require("reposition_vote")
 local pill_table = require("pill_table")
 local PP = require("pill_portfolio")
 local lgm_registry = require("lgm_registry")
@@ -4778,6 +4779,7 @@ function Brain.think(info)
     metrics.set("us_lookahead", t_steer0 - t_goal1)
     opt(string.format("lookahead done %.2f ms", (t_steer0 - t_goal1) / 1000))
   end
+  state._cautious_lookahead_held = nil   -- reset each tick; the cautious near-ally guard sets it
   local keys, taps = steer.steer(state, world, info, state.goal)
   -- Cautious-approach speed: when our tank is on (or stepping onto) an ally's
   -- pill-take ring, hold a steady boat-in-a-river cruise — CAP the speed rather
@@ -4820,15 +4822,23 @@ function Brain.think(info)
                             and (info.speed or 0) > (C.APPROACH_HARDBRAKE_SPEED or 8)
         end
       end
+      -- Default is to LEAVE steering's keys alone. We only ever override ONE
+      -- specific brake: the cautious near-ally CREEP (state._cautious_lookahead_held,
+      -- tagged in steering when it holds the lookahead to crawl through an ally
+      -- take). Every other KEY_SLOWER — cliff/drowning, destination-stop, combat —
+      -- is steering's deliberate brake and survives untouched. This replaces the
+      -- old "strip everything below the cap, then re-exempt cliff & setpoint" that
+      -- kept sailing tanks through their stop point and into deep water.
       if stop_close_fast then
-        keys = (keys & ~KEY_FASTER) | KEY_SLOWER   -- own stop point near + fast: hard brake through the crawl
+        keys = (keys & ~KEY_FASTER) | KEY_SLOWER   -- arriving fast at our OWN stop point: hard brake
       elseif (info.speed or 0) > cap then
-        keys = (keys & ~KEY_FASTER) | KEY_SLOWER   -- above cruise: brake toward cap
-      else
-        keys = keys & ~KEY_SLOWER                  -- at/below cruise: keep steering's drive, don't stall
+        keys = (keys & ~KEY_FASTER) | KEY_SLOWER   -- above cruise: brake toward the cap
+      elseif state._cautious_lookahead_held then
+        keys = keys & ~KEY_SLOWER                  -- ONLY the cautious creep: strip it to hold a steady cruise
       end
       state._take_crawl_active = on_cur and "on" or "next"   -- for the viz overlay
-      print2(string.format("TAKE_CRAWL t=%d tile=(%d,%d) trigger=%s spd=%d cap=%d %s — boat-cruise per-tile near ally take", state.tick or 0, cmx, cmy, on_cur and "on-ring" or "stepping-onto", info.speed or 0, cap, stop_close_fast and "HARDBRAKE" or ((info.speed or 0) > cap and "BRAKE" or "drive")))
+      local _crawl_act = stop_close_fast and "HARDBRAKE" or ((info.speed or 0) > cap and "BRAKE" or (state._cautious_lookahead_held and "cruise" or "hold-brake"))
+      print2(string.format("TAKE_CRAWL t=%d tile=(%d,%d) trigger=%s spd=%d cap=%d %s — boat-cruise per-tile near ally take", state.tick or 0, cmx, cmy, on_cur and "on-ring" or "stepping-onto", info.speed or 0, cap, _crawl_act))
       if BRAIN_DEBUG_MODE and viz.is_on("cautious_nav_around_ally_take") then viz.rect("cautious_nav_around_ally_take", cmx, cmy, cmx + 1, cmy + 1, 255, 90, 0, 200, true) end
       if BRAIN_DEBUG_MODE and viz.is_on("cautious_nav_around_ally_take") then viz.text("cautious_nav_around_ally_take", cmx + 0.5, cmy - 0.5, "CRAWL:" .. state._take_crawl_active, "center", 255, 220, 120, 230, 0.4) end
     end
@@ -6196,6 +6206,7 @@ function Brain.think(info)
     -- gap and we don't trust their state.
     ally_state.draw(viz, state.tick, info.player_number, 1750)
     ally_state.draw_chat_log(viz, state.tick, info.player_number)
+    reposition_vote.draw(state, world, info, state.tick)
     squad.draw_roster(state, info, state.tick)
     squad.draw_labels(state, info, state.tick)
     squad.draw_blitz(state, info, state.tick)
@@ -6769,6 +6780,35 @@ function Brain.think(info)
     -- its "needs send" flag set and re-queues next tick. This kills the verb
     -- starvation where a re-sent handshake (bac) hogged the slot so the GO (bgo,
     -- carried on /info state) never went out and the soldier sat in blitz_wait.
+    -- Reposition position-scan scheduler: keep the heavy O(pills^2) coverage
+    -- scan OFF the replan tick. Once the cache is stale (>= INTERVAL) run the
+    -- rescan on the first QUIET tick; force it after +MAX_DEFER so it can't
+    -- starve. "Quiet" = measured RIGHT HERE — this tick's own elapsed-so-far
+    -- (clock_us() - t_tick_start, which already includes perception / world /
+    -- goal-selection / steering) is at/below the rolling average. We measure the
+    -- CURRENT tick, not the previous one: a replan tick reliably follows a quiet
+    -- tick, so last tick's cost says nothing about this one. The average folds in
+    -- the PRE-rescan elapsed so a rescan's own cost never inflates the baseline.
+    do
+      local _elapsed = clock_us() - t_tick_start
+      local _avg     = state._repo_sched_avg or _elapsed
+      local _age     = now - ((state._repo_score and state._repo_score.tick) or -1000000)
+      if _age >= (C.REPOSITION_SCORE_INTERVAL or 50) then
+        local _quiet = _elapsed <= _avg
+        local _force = _age >= (C.REPOSITION_SCORE_INTERVAL or 50) + (C.REPOSITION_SCORE_MAX_DEFER or 40)
+        if (_quiet and not state.replan_this_tick) or _force then
+          goals.rescan_reposition(state, world, info)
+        end
+      end
+      state._repo_sched_avg = state._repo_sched_avg
+                              and (state._repo_sched_avg * 0.96 + _elapsed * 0.04) or _elapsed
+    end
+
+    -- Reposition vote: drive the consensus state machine. Runs after goal
+    -- selection (so state._repo_candidate is fresh) and queues its verbs on
+    -- state._repo_outbox, drained into the batch below.
+    reposition_vote.update(state, world, info, now)
+
     local _batch, _batch_used = {}, 0
     local _BATCH_MAX = C.MSG_BATCH_MAX or 124
     local function try_send(msg, dest)
@@ -6795,6 +6835,21 @@ function Brain.think(info)
     -- dead. Internal channel (messagedest=0), same routing as /info state.
     if state.pending_lgm_back and try_send("/info lgmback", 0) then
       state.pending_lgm_back = nil
+    end
+
+    -- Reposition-vote verbs (rvo/rvy/rvn/rvr) queued by reposition_vote.update.
+    -- Keep any that didn't fit the batch this tick so they retry next tick — a
+    -- dropped NO ballot would otherwise let a bad reposition pass unanimously.
+    if state._repo_outbox then
+      local kept
+      for _, m in ipairs(state._repo_outbox) do
+        if try_send(m, 0) then
+          print2(string.format("REPO_TX t=%d %s", now, m))
+        else
+          kept = kept or {}; kept[#kept + 1] = m
+        end
+      end
+      state._repo_outbox = kept
     end
 
     -- Known-world resync query (one-shot, on first think / after respawn):

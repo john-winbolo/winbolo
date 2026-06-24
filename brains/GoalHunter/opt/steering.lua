@@ -718,6 +718,11 @@ local function path_lookahead(state, info, nx, ny)
     local take_tiles = state._ally_take_tiles
     if take_tiles and (take_tiles[tmy * 256 + tmx] or take_tiles[ny * 256 + nx]) then
       sdbg("lookahead: near ally pill-take, crawl per-tile, hold to nx=(%d,%d)", nx, ny)
+      -- Tag this as the cautious near-ally CREEP: holding the lookahead to the
+      -- next tile is what makes the throttle brake here. init's TAKE_CRAWL strips
+      -- ONLY this brake (to keep a steady cruise through the ally's take) and
+      -- leaves every other KEY_SLOWER — cliff, destination-stop, combat — intact.
+      state._cautious_lookahead_held = true
       return nx, ny
     end
   end
@@ -2342,6 +2347,10 @@ function M.steer(state, world, info, goal)
         opt(string.format("  steer/cliff_safety done %.2f ms",
                           (clock_us() - _t_phase) / 1000))
       end
+      -- This is a real (drowning) brake, NOT the cautious near-ally creep. If the
+      -- cautious guard tagged the creep earlier this tick, clear it so init's
+      -- TAKE_CRAWL leaves THIS KEY_SLOWER intact instead of sailing into the water.
+      state._cautious_lookahead_held = nil
       return KEY_SLOWER, 0
     end
   end

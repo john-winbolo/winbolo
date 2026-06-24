@@ -2261,18 +2261,21 @@ function M.evaluate_pill_difficulty(pill, world, detailed, scan_step, phase, sta
       end
       score_d = terrain_penalty
       total_score = score_a + score_b + score_d + score_e
-      -- Soldier self-planning: prefer a spot whose shot to the pill CENTER is
-      -- clear and crosses fewer trees. Each tree eats a shot before LOS opens,
-      -- and the commander rejects center-blocked spots (blocked by a built
-      -- wall), so favoring center-clear here converges the negotiation faster.
+      -- Soldier self-planning: prefer a spot whose shot to the pill CENTER
+      -- crosses fewer trees (each tree eats a shot before LOS opens).
+      -- A built WALL on the center path is NO LONGER penalized: the blitz
+      -- blocker / clear-aim system lets the soldier aim at a pill CORNER that
+      -- dodges the commander's shield walls, and the commander now accepts a
+      -- center-blocked-but-corner-clear spot (blitz_spot_shot_blocked checks all
+      -- 5 aim points). Penalizing wall-blocked center shots here wrongly rejected
+      -- spots the commander would take. A base still stops the shell with no
+      -- corner workaround, so a base on the path still blocks.
       do
         local center_trees, center_blocked = 0, false
         U.line_walk(cx, cy, pmx + 0.5, pmy + 0.5, function(wx, wy)
           if wx == pmx and wy == pmy then return end
-          local tt = _ttype(wx, wy)
-          if tt == C.T_FOREST then center_trees = center_trees + 1
-          elseif tt == C.T_BUILDING or tt == C.T_HALFBUILD then center_blocked = true end
-          -- A base of ANY owner on the center path stops the shell like a wall.
+          if _ttype(wx, wy) == C.T_FOREST then center_trees = center_trees + 1 end
+          -- A base of ANY owner on the center path stops the shell.
           local be = world.base_at and world.base_at[wy * 256 + wx]
           if be and be.base then center_blocked = true end
         end)
@@ -2773,12 +2776,11 @@ end
 -- spot could be resolved (caller falls back to a normal plan_position take).
 local function blitz_commit_negotiated(goal, state, world, info, pmx, pmy)
   local smx, smy = state.squad_blitz_engage_mx, state.squad_blitz_engage_my
-  local _src = "engage"
-  if not smx then
-    local pill = goal.target_id and world and world.pills and world.pills[goal.target_id] or nil
-    if pill then smx, smy = M.pick_standoff(world, info, pill, state) end
-    _src = "fallback_pick_standoff"
-  end
+  -- No negotiated engage spot (the ellipse scan produced none) → DO NOT commit a
+  -- geometric pick_standoff fallback. That fallback ignores neutral/hostile pills
+  -- and lands on garbage spots (saw a soldier rejoin onto a tile wedged between
+  -- two neutral pills). Bail instead so the caller runs a normal plan_position
+  -- take, which scans for a real, screened spot.
   if not smx then return false end
   local cx, cy = smx + 0.5, smy + 0.5
   goal.standoff_fx, goal.standoff_fy = cx, cy
@@ -3117,10 +3119,17 @@ function M.update_attack_substate(goal, state, world, info)
   -- even though it's still on the same pill. goal._blitz_cmdr (latched below)
   -- marks "we're the commander of this take" so the flicker can't make us abort
   -- our own blitz with a bogus "commander gone" (saw bot8 do exactly this).
+  -- "Blitz ended" = the commander really left (we're no longer committed to
+  -- anyone — squad_blitz_accepted cleared) OR the squad genuinely retargeted to a
+  -- DIFFERENT non-nil pill. A nil squad_blitz_target while STILL committed is a
+  -- transient bookkeeping gap (the commander's /info state target went stale while
+  -- it only sent bac/pblk), NOT the commander leaving — don't drop our negotiated
+  -- standoff over it (saw bot0 lose its approach spot exactly this way).
+  local _cmdr_gone  = not state.squad_blitz_accepted
+  local _retargeted = state.squad_blitz_target and goal.target_id ~= state.squad_blitz_target
   if goal._blitz and not goal._blitz_committed and _blitz_precommit
      and not goal._blitz_cmdr
-     and (not state.squad_blitz_target
-          or goal.target_id ~= state.squad_blitz_target) then
+     and (_cmdr_gone or _retargeted) then
     state.squad_blitz_engage_mx, state.squad_blitz_engage_my = nil, nil
     state.squad_blitz_in_position = nil
     clear_attack_goal(state, "blitz ended: commander gone / squad retargeted")
@@ -3151,6 +3160,23 @@ function M.update_attack_substate(goal, state, world, info)
     --     SKIPS the walls if squadmates joined (a double-take overwhelms with no
     --     walls), else builds them for a solo protected take.
     if state.squad_cmdr then
+      -- Just DEFERRED from commander to soldier (role flipped c->s, e.g. yielding
+      -- to a lower-pn ally also opening on this pill)? Our substate may still be a
+      -- commander-only BUILD substate (gather_trees / build_walls / detree / ws_*)
+      -- and _blitz_started is latched from the commander phase. A soldier never
+      -- builds the shield, and the commit gate below only fires from
+      -- plan_position/approach — so without this we FREEZE in gather_trees forever
+      -- while "committed" to the new commander (saw exactly this). Reset to
+      -- plan_position + drop the commander latches so we re-plan and commit as a
+      -- soldier.
+      local _sub = goal.substate or ""
+      if _sub == "gather_trees" or _sub == "build_walls" or _sub == "detree"
+         or _sub:sub(1, 3) == "ws_" then
+        goal.substate         = "plan_position"
+        goal._blitz_started   = nil
+        goal._blitz_cmdr      = nil
+        goal._wall_build_list = nil
+      end
       -- SOLDIER: commit the NEGOTIATED, de-conflicted engage spot as our
       -- standoff. Allow this from plan_position OR approach: with discount-driven
       -- joining the soldier is already on the blitz pill's attack_pill while it

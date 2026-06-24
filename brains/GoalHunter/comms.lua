@@ -194,6 +194,54 @@ function M.process_message(sender, text, tick, state)
     return
   end
 
+  -- ── Reposition VOTE protocol (one-shot events, stashed on state) ──────────
+  -- rvo: a bot OPENS a vote to move pill <pid> at (<mx>,<my>) with desirability
+  --      <score> (lower = more worth moving). Everyone records it as the active
+  --      vote and (if not us) queues a vote response.
+  -- rvy/rvn: an ally's YES / NO vote on <pid>. Only NO actually blocks; YES is
+  --      sent too so the vote visualizer can show explicit support.
+  -- rvr: the initiator's RESULT for <pid> (<pass> 1/0). On pass, everyone stamps
+  --      "a reposition just happened" for the 120s recent-memory NO rule.
+  do
+    local pid, mx, my, score = text:match("^/info rvo (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)$")
+    if pid then
+      if state then
+        state._repo_rx_open = { pid = tonumber(pid), mx = tonumber(mx), my = tonumber(my),
+                                score = tonumber(score), from = sender, tick = tick }
+      end
+      print2(string.format("REPO_RX rvo from p%s pill=%s @(%s,%s) score=%s t=%d", tostring(sender), pid, mx, my, score, tick))
+      return
+    end
+  end
+  local rvy_pid = text:match("^/info rvy (%-?%d+)$")
+  if rvy_pid then
+    if state then
+      state._repo_rx_votes = state._repo_rx_votes or {}
+      state._repo_rx_votes[sender] = { pid = tonumber(rvy_pid), no = false, tick = tick }
+    end
+    print2(string.format("REPO_RX rvy from p%s pill=%s t=%d", tostring(sender), rvy_pid, tick))
+    return
+  end
+  local rvn_pid = text:match("^/info rvn (%-?%d+)$")
+  if rvn_pid then
+    if state then
+      state._repo_rx_votes = state._repo_rx_votes or {}
+      state._repo_rx_votes[sender] = { pid = tonumber(rvn_pid), no = true, tick = tick }
+    end
+    print2(string.format("REPO_RX rvn from p%s pill=%s t=%d", tostring(sender), rvn_pid, tick))
+    return
+  end
+  do
+    local pid, pass = text:match("^/info rvr (%-?%d+) (%d)$")
+    if pid then
+      if state then
+        state._repo_rx_result = { pid = tonumber(pid), pass = (pass == "1"), from = sender, tick = tick }
+      end
+      print2(string.format("REPO_RX rvr from p%s pill=%s pass=%s t=%d", tostring(sender), pid, pass, tick))
+      return
+    end
+  end
+
   local state_payload = text:match("^/info state(.*)$")
   if state_payload then
     local hash = {}
