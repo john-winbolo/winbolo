@@ -1399,6 +1399,16 @@ bool gameFrontSetDlgState(openingStates newState) {
           /* Embedded server: silence its console messages (Thread Manager
            * Startup, Game started!, …) — the client has no server console. */
           serverSimSetQuiet(spServerSim, true);
+          /* Tutorial: mark the freshly-created sim authoritative-tutorial and
+             reset the respawn start to 0 (sea) BEFORE the host player is added
+             in gameFrontStartServerSim below.  startsGetStart only takes the
+             deterministic tutorial start when sim->isTutorial is already set;
+             the old serverSimSetTutorial at openTutorial ran after the spawn,
+             so the host was placed by the open-game algorithm instead. */
+          if (isTutorial) {
+            serverSimSetTutorial(spServerSim, true);
+            serverSimSetTutorialStartIdx(spServerSim, 0);
+          }
           bgGameSetHiddenByForeground(bgGameGetShared(), true);
           /* Single-player runs through the same serverInstanceStartup +
            * timer-thread ticking path as the host, so SP and listen-server
