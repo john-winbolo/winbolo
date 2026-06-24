@@ -1103,10 +1103,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 }
             }
 
-            /* Visible set: apply the three filters, then default-sort by ping
-             * ascending (responded first; pending, then no-response, last).
-             * The underlying servers vector keeps its arrival order so async
-             * ping results still land on the right index. */
+            /* Visible set: apply the three filters, then sort alphabetically
+             * (case-insensitive) by the displayed name — the reverse-DNS host
+             * name once resolved, else the tracker address — with port as the
+             * tiebreak. A name key keeps the order steady across the ~20s
+             * auto-refresh and as async pings land; only a server's one-time
+             * DNS resolution can shift its row. The underlying servers vector
+             * keeps its arrival order so async ping results still land on the
+             * right index. */
             std::vector<int> visible;
             visible.reserve(servers.size());
             for (int i = 0; i < (int)servers.size(); i++) {
@@ -1116,12 +1120,16 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (filterLobby >= 0 && fe.lobbyStatus != filterLobby) continue;
                 visible.push_back(i);
             }
-            auto pingKey = [&](int idx) {
-                int p = servers[idx].pingMs;
-                return p >= 0 ? p : (p == -1 ? 1000000 : 2000000);
+            auto nameKey = [&](int idx) -> const char * {
+                const ServerEntry &e = servers[idx];
+                return e.hostName[0] != '\0' ? e.hostName : e.address;
             };
             std::stable_sort(visible.begin(), visible.end(),
-                             [&](int a, int b) { return pingKey(a) < pingKey(b); });
+                             [&](int a, int b) {
+                                 int c = SDL_strcasecmp(nameKey(a), nameKey(b));
+                                 if (c != 0) return c < 0;
+                                 return servers[a].port < servers[b].port;
+                             });
 
             /* Row to seed controller focus onto: the selected server if it is
              * visible, otherwise the first visible row. */
