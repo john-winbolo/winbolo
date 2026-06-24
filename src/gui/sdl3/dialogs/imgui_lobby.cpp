@@ -2747,8 +2747,22 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
      * CancelKeyPressed self-gates on window focus so the keypress
      * won't fire here when the preview-close confirmation popup below
      * is open over the chooser. */
-    bool wantClose = !open;
-    if (!wantClose && WBUI::CancelKeyPressed()) {
+    /* Esc (and controller B, which arrives as an injected Escape) closes
+     * the chooser whenever it or a child is focused. The shared
+     * CancelKeyPressed() defers the close while nav is inside a sub-region
+     * so B/Esc first pops out of the map list to the tabs — but that only
+     * makes sense when an item is actually focused (navId != 0). On reopen
+     * ImGui parks focus on the body child window with navId 0 and nothing
+     * to pop out to, which trapped Esc forever. So defer to the pop-out
+     * only when a list item is genuinely focused (preserving controller
+     * list nav); otherwise close. */
+    ImGuiContext *gc = ImGui::GetCurrentContext();
+    bool navOnItemInList = gc && gc->NavId != 0 &&
+                           dialogNavWasInsideSubRegionAtFrameStart();
+    bool escClose = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+                    ImGui::IsKeyPressed(ImGuiKey_Escape) && !navOnItemInList;
+    bool wantClose = !open || escClose;
+    if (!wantClose && WBUI::CancelKeyPressed()) {  /* Ctrl+W / Cmd+. */
         wantClose = true;
     }
     if (wantClose) {
@@ -6666,7 +6680,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
             }
             if (leaveClicked ||
-                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen() && !s_chooseMapOpen && !mapPreviewPopupIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !s_chooseMapOpen && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                   (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                   || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -7308,7 +7322,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 ImGui::SameLine(0, 20);
                 glyphInline(SI_ACTION_MENU_CANCEL);   /* B glyph left of Leave */
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen() && !s_chooseMapOpen && !mapPreviewPopupIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !s_chooseMapOpen && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                       (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                       || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
