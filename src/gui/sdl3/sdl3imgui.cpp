@@ -3463,8 +3463,10 @@ static float desktopWindowFitScale(SDL_Window *window) {
 
 /* (Re)apply the main ImGui context's font atlas, style, and window minimum
    for the current UI scale.  Recomputes the scale (desktop: preference capped
-   by what the window can hold; Auto tracks the window directly), rebuilds the
-   font atlas, resets and re-scales the style.  Called at setup, when the
+   by what the window can hold; Auto follows the same window-height scale the
+   front-end dialogs use, so the in-game UI matches the menu/lobby rather than
+   ballooning to the game-canvas fit), rebuilds the font atlas, resets and
+   re-scales the style.  Called at setup, when the
    UI-scale pref changes, and on window resize — the latter two only from the
    deferred safe point between Present and NewFrame, so the atlas swap can't
    race draw data still queued against the old texture.  Resize fires it every
@@ -3476,15 +3478,23 @@ static void applyMainContextUiScale(void) {
     /* One scale value drives both the font size and the style metrics.
        Tablet uses FontGlobalScale below (so uiScale stays 1); Deck keeps
        its 1.5x; desktop caps the preferred scale (Small/Med/Large, or for
-       Auto the window-fit itself) by what the window can actually hold, so a
-       big font in a small window demotes to fit and restores when it grows. */
+       Auto the front-end dialog scale) by what the window can actually hold,
+       so a big font in a small window demotes to fit and restores when it
+       grows.  Auto mirrors dialogComputeScale (window height vs 1080) instead
+       of the game-canvas fit (window width vs the 515x325 viewport): the
+       in-game window is sized as a 2x multiple of that viewport, so the fit
+       would resolve to 2.0 and double the menu-bar font relative to the
+       identically-windowed menu/lobby.  Sharing the dialog scale keeps them in
+       step. */
     float uiScale;
     if (uiModeIsTablet())          uiScale = 1.0f;
     else if (uiModeIsSteamDeck())  uiScale = dialogDeckFontMul();  /* 1.5, unchanged */
     else {
+        int winW = 0, winH = 0;
+        SDL_GetWindowSize(s_window, &winW, &winH);
         float fit  = desktopWindowFitScale(s_window);
         float pref = (uiUiScaleGet() == UI_SCALE_AUTO)
-                       ? fit                                  /* Auto: track the window */
+                       ? dialogComputeScale(winW, winH)       /* Auto: match the dialogs */
                        : uiUiScalePresetFactor(uiUiScaleGet()); /* 1.0 / 1.5 / 2.0 */
         uiScale = SDL_min(pref, fit);
         if (uiScale < 1.0f) uiScale = 1.0f;
