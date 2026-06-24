@@ -1157,11 +1157,10 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_logviewer_menu.cpp
     src/logviewer/platform/platform_config.c
     src/logviewer/platform/platform_dialogs.c
-    # Phase D of plans/ctrailer.md — embedded build links empty stubs;
-    # the real game-view impls in game_view.c are standalone-only because
-    # they include bolo headers that would conflict with the host
-    # client's screen-struct layouts.
-    src/logviewer/game_view_stubs.c
+    # The client links the real game-view renderer (game_view.c) plus an
+    # lv-accessor-bound copy of mapview.c through the winbolo_render_island
+    # object library (defined after the WinBolo target), so the empty
+    # game_view_stubs.c is no longer linked here.
 )
 list(APPEND CLIENT_SOURCES ${LOGVIEWER_LIB_SOURCES})
 
@@ -1326,6 +1325,68 @@ else()
     target_sources(WinBolo PRIVATE src/steam/steam_wrapper_stub.c)
     message(STATUS "Steamworks SDK not found — Steam integration disabled (stubs)")
 endif()
+
+# ---------------------------------------------------------------------------
+# Render island — link the real log-viewer game-view renderer into the client.
+#
+# game_view.c draws the log viewer's reconstructed world, whose
+# screen/screenMines/screenTanks buffers use a pointer layout that differs
+# from the client's inline-array bolo layout. mapViewDraw* read those buffers
+# ONLY through the screen* accessors, so a second copy of mapview.c whose
+# accessors are rebound (at build time) to the lv_* bodies renders lv-layout
+# data correctly. The remap is target-scoped, so the client's own bolo-bound
+# mapview.o and the standalone LogViewer build are untouched.
+#
+#   * mapViewDraw{Tiles,Shells,Tanks,LGMs} and the file-scope
+#     mapViewCalcSquare/mapViewRenderCentered are renamed lvg_* so the island
+#     copies don't clash with the client's live-game mapview.o; game_view.c's
+#     calls are renamed to match.
+#   * The eight screen* accessors mapView* references rebind to the existing
+#     lv_* bodies (already linked via LOGVIEWER_LIB_SOURCES — no new symbols).
+#     screenTanksGetItem has a different parameter list on the two sides, so it
+#     maps to lvg_screenTanksGetItem (render_island_screentank_adapter.c)
+#     rather than a plain macro.
+#
+# game-view stays gated off by ownsWindow (draw.c), so this renderer is
+# linked-but-dormant.
+# ---------------------------------------------------------------------------
+add_library(winbolo_render_island OBJECT
+    src/gui/sdl3/mapview.c
+    src/logviewer/game_view.c
+    src/logviewer/render_island_screentank_adapter.c
+)
+# PIC so the objects link into the client regardless of its PIE setting
+# (no effect on MSVC).
+set_target_properties(winbolo_render_island PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Compile these sources against the same headers and definitions the client
+# uses for them (mirrors WinBolo's include dirs + compile defs at generate
+# time, including the bolo public-header access granted by gui rules).
+target_include_directories(winbolo_render_island PRIVATE
+    $<TARGET_PROPERTY:WinBolo,INCLUDE_DIRECTORIES>)
+target_compile_definitions(winbolo_render_island PRIVATE
+    $<TARGET_PROPERTY:WinBolo,COMPILE_DEFINITIONS>)
+bolo_apply_include_rules(winbolo_render_island gui)
+# SDL3 / SDL3_ttf headers reached by game_view.c.
+target_link_libraries(winbolo_render_island PRIVATE
+    SDL3::SDL3 SDL3_ttf::SDL3_ttf)
+# Build-time symbol remap that makes this the lv-bound island (see comment).
+target_compile_definitions(winbolo_render_island PRIVATE
+    mapViewDrawTiles=lvg_mapViewDrawTiles
+    mapViewDrawShells=lvg_mapViewDrawShells
+    mapViewDrawTanks=lvg_mapViewDrawTanks
+    mapViewDrawLGMs=lvg_mapViewDrawLGMs
+    mapViewCalcSquare=lvg_mapViewCalcSquare
+    mapViewRenderCentered=lvg_mapViewRenderCentered
+    screenGetPos=lv_screenGetPos
+    screenIsMine=lv_screenIsMine
+    screenBulletsGetNumEntries=lv_screenBulletsGetNumEntries
+    screenBulletsGetItem=lv_screenBulletsGetItem
+    screenTanksGetNumEntries=lv_screenTanksGetNumEntries
+    screenLgmGetNumEntries=lv_screenLgmGetNumEntries
+    screenLgmGetItem=lv_screenLgmGetItem
+    screenTanksGetItem=lvg_screenTanksGetItem
+)
+target_link_libraries(WinBolo PRIVATE winbolo_render_island)
 
 # Copy data assets and brain scripts to the correct location.
 # On macOS bundles, SDL_GetBasePath() returns Contents/Resources/, so assets go there.
@@ -1672,6 +1733,10 @@ list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/game_view\\.c$")
 # real game_view.c via LOGVIEWER_IMGUI_SOURCES — drop the stubs from the
 # glob so the standalone link doesn't see duplicate symbols.
 list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/game_view_stubs\\.c$")
+# render_island_screentank_adapter.c is a client-only shim: it bridges the
+# game-view render island's screenTanksGetItem to lv_screenTanksGetItem.
+# The standalone uses bolo_shim.c for that, so drop the adapter from the glob.
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/render_island_screentank_adapter\\.c$")
 
 set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_context.cpp
