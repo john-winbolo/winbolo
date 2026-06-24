@@ -195,6 +195,12 @@ int run_channel_mux(void);
  * proven with synthetic byte payloads. */
 int run_spectator_ring(void);
 
+/* Spectator replay translator (test_spectator_replay.c): specReplayWriteHeader
+ * lays out the v2 header field-for-field, specReplayTranslateEvents /
+ * specReplayTranslateKeyframe frame ring records into the LOG_* byte stream,
+ * and a real translated keyframe decodes through lv_screenLoadFromStream. */
+int run_spectator_replay(void);
+
 /* Spectator config plumbing (test_spectator_config.c): -maxspectators /
  * -specdelay flow through ServerInstanceConfig into the sim and back via the
  * getters, with seconds->ticks conversion and the no-fallback zero semantics. */

@@ -2633,6 +2633,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # segment isolation, previous-generation read, cold start and the
     # retention window boundary, all driven with synthetic byte payloads.
     tests/unit/test_spectator_ring.c
+    # Spectator replay translator: ring keyframe / event-tick records ->
+    # the LOG_*-marked plaintext byte stream + synthesized v2 header, proven
+    # byte-for-byte and by decoding a real translated keyframe through
+    # lv_screenLoadFromStream.
+    tests/unit/test_spectator_replay.c
     # Spectator config plumbing: -maxspectators / -specdelay flow through
     # ServerInstanceConfig into the sim and back via the getters.
     tests/unit/test_spectator_config.c
@@ -3049,6 +3054,7 @@ set(_unit_test_names
     wire_corpus
     channel_mux
     spectator_ring
+    spectator_replay
     spectator_config
     spectator_join
     spectator_seed
