@@ -1580,6 +1580,8 @@ BYTE serverSimGetViewPlayer(const ServerSim *sim);
 /* Tutorial-mode flag mirrored on the embedded GameSim. */
 bool serverSimIsTutorial(const ServerSim *sim);
 void serverSimSetTutorial(ServerSim *sim, bool v);
+void serverSimSetTutorialStartIdx(ServerSim *sim, BYTE idx);
+bool serverSimTakeTutorialRespawn1(ServerSim *sim);
 
 /* Pause flag on the embedded GameSim. Unlocked: caller must hold
  * threadsMutex. */

@@ -242,6 +242,7 @@ static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint3
 static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
 void frontEndTutorialNotePresentedFrame(void);
 static void windowRunGameTick(ClientSim *cs);
+static void tutorialRespawnPoll(void);
 static void windowUpdateServerPause(ClientSim *cs);
 static void windowSteamOverlayActivated(ClientSim *cs, bool active);
 int winboloCC(void);
@@ -591,6 +592,7 @@ int main(int argc, char *argv[]) {
           if (ren) SDL_RenderPresent(ren);
         }
         frontEndTutorialNotePresentedFrame();
+        tutorialRespawnPoll();
 
         /* Cap to configured frame rate */
         {
@@ -2075,6 +2077,7 @@ void frontEndShowGunsight(ClientSim *cs, bool isShown) {
 #define TUTORIAL_INTRO_MIN_FRAMES 3
 static int tutorialStepIdx = 0;
 static int tutorialFramesPresented = 0;
+static bool respawn1Shown = false;
 
 /* humanSim lives in gamefront.c; we need it so the tutorial can clear
  * sim->isTutorial on both sims when the final dialog closes, letting
@@ -2084,6 +2087,32 @@ extern ClientSim *humanSim;
 void frontEndTutorialReset(void) {
   tutorialStepIdx = 0;
   tutorialFramesPresented = 0;
+  respawn1Shown = false;
+}
+
+/* Polled once per frame on the main thread (client mutex free on entry).
+   Shows the start-1 respawn message once per tutorial run. The flag is set
+   by the server thread in tankDeath; we take-and-clear it under the mutex,
+   pause the server, then show the modal with the mutex released (a blocking
+   modal must not hold the client mutex — it would starve the server thread). */
+static void tutorialRespawnPoll(void) {
+  if (isTutorial != TRUE || respawn1Shown) return;
+  ServerSim *srv = gameFrontGetServerSim();
+  if (!srv) return;
+  clientMutexWaitFor();
+  bool fire = serverSimTakeTutorialRespawn1(srv);
+  if (fire) serverSimSetPaused(srv, TRUE);
+  clientMutexRelease();
+  if (!fire) return;
+  respawn1Shown = true;
+  {
+    TutorialSeg segs[TUTORIAL_SEG_MAX];
+    int n = tutorialResolveSegments(STR_TUTORIAL_RESPAWN1, segs, TUTORIAL_SEG_MAX);
+    imguiMessageBoxRich(DIALOG_BOX_TITLE, segs, n, IMGUI_MSG_INFO, IMGUI_MSG_OK);
+  }
+  clientMutexWaitFor();
+  serverSimSetPaused(srv, FALSE);
+  clientMutexRelease();
 }
 
 /* Called from the main loop immediately after SDL_RenderPresent so we
@@ -2158,6 +2187,21 @@ bool frontEndTutorial(BYTE pos) {
   oldTick = SDL_GetTicks();
   ttick = oldTick;
   tutorialStepIdx++;
+  /* Once the player passes the boat-building step (the tutorialSteps row
+     with pos == 66), respawn at start 1 (the far bank) instead of start 0
+     (out at sea). Found by scanning for the row, not a fixed index, so it
+     survives step-table edits. */
+  {
+    int boatStep = -1;
+    int s;
+    for (s = 0; s < tutorialStepCount; s++) {
+      if (tutorialSteps[s].pos == 66) { boatStep = s; break; }
+    }
+    ServerSim *srv = gameFrontGetServerSim();
+    if (srv && boatStep >= 0) {
+      serverSimSetTutorialStartIdx(srv, (tutorialStepIdx > boatStep) ? 1 : 0);
+    }
+  }
   return TRUE;
 }
 

@@ -179,6 +179,15 @@ struct GameSim {
      * consumption so siblings already created in the batch loop are
      * visible during the per-square nudge. */
     BYTE        pendingStartIdx[MAX_TANKS];
+    /* Tutorial respawn start index. While sim->isTutorial, startsGetStart
+       returns this fixed start (not the open-game algorithm). The GUI raises
+       it from 0 (sea) to 1 (far bank) once the player passes the boat step.
+       Zero-initialised by memset at sim creation. */
+    BYTE        tutorialStartIdx;
+    /* Set by tankDeath's server respawn branch when a tutorial respawn lands at
+       start 1 (the far bank). The GUI takes-and-clears it to show the one-shot
+       respawn message. Zero-initialised by memset at sim creation. */
+    bool        tutorialRespawn1Pending;
 };
 
 /*********************************************************

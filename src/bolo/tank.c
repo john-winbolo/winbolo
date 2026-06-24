@@ -1355,6 +1355,9 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->bumpY = 0;
     (*value)->residualSpeed = 0;
     (*value)->waterCount = 0;
+    if (sim->isTutorial && sim->tutorialStartIdx == 1) {
+      sim->tutorialRespawn1Pending = TRUE;
+    }
   }
 }
 
