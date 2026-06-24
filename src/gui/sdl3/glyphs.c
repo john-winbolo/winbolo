@@ -480,3 +480,14 @@ SDL_Texture *glyphForGamepadAxis(SDL_GamepadAxis axis) {
     default:                       return load_pathb("xbox",   xbox);
   }
 }
+
+SDL_Texture *glyphForControllerAction(const char *siAction, GamepadAction sdlAction) {
+  SDL_Texture *t = siAction ? glyphForAction(siAction) : NULL;   /* Path A: Steam */
+  if (t) return t;
+  if (sdlAction < GP_ACT_COUNT) {
+    const GamepadBinding *b = inputGamepadBindingsGet(sdlAction, GP_SLOT_PRIMARY);
+    if (b && b->kind == GP_BIND_BUTTON)  return glyphForGamepadButton((SDL_GamepadButton)b->code);
+    if (b && b->kind == GP_BIND_TRIGGER) return glyphForGamepadAxis((SDL_GamepadAxis)b->code);
+  }
+  return NULL;
+}
