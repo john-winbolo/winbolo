@@ -197,7 +197,10 @@ function M.process_message(sender, text, tick, state)
     local pid, mx, my, score = text:match("^/info rvo (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)$")
     if pid then
       if state then
-        state._repo_rx_open = { pid = tonumber(pid), mx = tonumber(mx), my = tonumber(my),
+        -- Queue proposals (don't last-write-wins): two allies can open a vote
+        -- in the same tick; reposition_vote drains the whole queue.
+        state._repo_rx_open = state._repo_rx_open or {}
+        state._repo_rx_open[#state._repo_rx_open + 1] = { pid = tonumber(pid), mx = tonumber(mx), my = tonumber(my),
                                 score = tonumber(score), from = sender, tick = tick }
       end
       return

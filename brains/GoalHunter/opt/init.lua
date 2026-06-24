@@ -3958,7 +3958,6 @@ function Brain.think(info)
         keys = keys & ~KEY_SLOWER                  -- ONLY the cautious creep: strip it to hold a steady cruise
       end
       state._take_crawl_active = on_cur and "on" or "next"   -- for the viz overlay
-      local _crawl_act = stop_close_fast and "HARDBRAKE" or ((info.speed or 0) > cap and "BRAKE" or (state._cautious_lookahead_held and "cruise" or "hold-brake"))
     end
   end
   local t_steer1 = clock_us()

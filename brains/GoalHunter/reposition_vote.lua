@@ -146,18 +146,23 @@ function M.update(state, world, info, now)
     state._repo_rx_result = nil
   end
 
-  -- 2. Inbound PROPOSAL: record the active vote, cast our ballot once.
-  local op = state._repo_rx_open
-  if op then
-    state._repo_active = { pid = op.pid, from = op.from, tick = op.tick }
-    if op.from ~= self_pn then
-      local is_no, reason = evaluate_vote(state, world, info, now, op)
-      tx(is_no and ("/info rvn " .. op.pid) or ("/info rvy " .. op.pid))
-      -- Remember our own ballot + WHY (we never receive our own vote back, so the
-      -- votes visualizer reads our reason from here).
-      state._repo_my_ballot = { pid = op.pid, no = is_no, reason = reason, tick = now }
-      print2(string.format("REPO_VOTE t=%d cast %s on pill#%d (from p%s) reason=%s",
-             now, is_no and "NO" or "YES", op.pid, tostring(op.from), reason))
+  -- 2. Inbound PROPOSALS: record the active vote, cast our ballot once each.
+  --    The queue may hold several proposals opened in the same tick — handle
+  --    every one so no ally's vote is silently dropped.
+  local opq = state._repo_rx_open
+  if opq then
+    for i = 1, #opq do
+      local op = opq[i]
+      state._repo_active = { pid = op.pid, from = op.from, tick = op.tick }
+      if op.from ~= self_pn then
+        local is_no, reason = evaluate_vote(state, world, info, now, op)
+        tx(is_no and ("/info rvn " .. op.pid) or ("/info rvy " .. op.pid))
+        -- Remember our own ballot + WHY (we never receive our own vote back, so the
+        -- votes visualizer reads our reason from here).
+        state._repo_my_ballot = { pid = op.pid, no = is_no, reason = reason, tick = now }
+        print2(string.format("REPO_VOTE t=%d cast %s on pill#%d (from p%s) reason=%s",
+               now, is_no and "NO" or "YES", op.pid, tostring(op.from), reason))
+      end
     end
     state._repo_rx_open = nil
   end

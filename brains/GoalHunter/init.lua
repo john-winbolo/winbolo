@@ -4837,8 +4837,7 @@ function Brain.think(info)
         keys = keys & ~KEY_SLOWER                  -- ONLY the cautious creep: strip it to hold a steady cruise
       end
       state._take_crawl_active = on_cur and "on" or "next"   -- for the viz overlay
-      local _crawl_act = stop_close_fast and "HARDBRAKE" or ((info.speed or 0) > cap and "BRAKE" or (state._cautious_lookahead_held and "cruise" or "hold-brake"))
-      print2(string.format("TAKE_CRAWL t=%d tile=(%d,%d) trigger=%s spd=%d cap=%d %s — boat-cruise per-tile near ally take", state.tick or 0, cmx, cmy, on_cur and "on-ring" or "stepping-onto", info.speed or 0, cap, _crawl_act))
+      if BRAIN_DEBUG_MODE then local _crawl_act = stop_close_fast and "HARDBRAKE" or ((info.speed or 0) > cap and "BRAKE" or (state._cautious_lookahead_held and "cruise" or "hold-brake")); print2(string.format("TAKE_CRAWL t=%d tile=(%d,%d) trigger=%s spd=%d cap=%d %s — boat-cruise per-tile near ally take", state.tick or 0, cmx, cmy, on_cur and "on-ring" or "stepping-onto", info.speed or 0, cap, _crawl_act)) end
       if BRAIN_DEBUG_MODE and viz.is_on("cautious_nav_around_ally_take") then viz.rect("cautious_nav_around_ally_take", cmx, cmy, cmx + 1, cmy + 1, 255, 90, 0, 200, true) end
       if BRAIN_DEBUG_MODE and viz.is_on("cautious_nav_around_ally_take") then viz.text("cautious_nav_around_ally_take", cmx + 0.5, cmy - 0.5, "CRAWL:" .. state._take_crawl_active, "center", 255, 220, 120, 230, 0.4) end
     end

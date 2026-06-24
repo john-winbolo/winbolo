@@ -29,6 +29,7 @@ M.MAX_CIRCLES     = 8       -- safety cap
 -- pill/base/tank counts are a separate advisory WARNING, not a dispatch trigger.
 M.SHORT_TICKS     = 3000    -- 1 min @ 50 Hz
 M.LONG_TICKS      = 15000   -- 5 min @ 50 Hz
+M.LOSE_DELTA      = 0.03    -- min influence-share drop (both windows) to count as losing
 M.HIST_MAX        = 80      -- ratio samples per record (covers >5 min at 5 s cadence)
 M.PRUNE_TICKS     = 15000   -- prune a destroyed record once destroyed > 5 min ago
 
@@ -296,8 +297,6 @@ function M.update(state, world, now)
 
   M.circles = fresh
 end
-
-M.LOSE_DELTA = 0.03   -- min influence-share drop (both windows) to count as losing
 
 -- Per-tick win/loss + reinforcement need (cheap: small pill/base/tank lists).
 -- Primary signal is the influence TREND — current ratio vs both the prior
