@@ -389,6 +389,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         sim->sim.pendingStartIdx[count] = MAX_STARTS;
     }
 
+    /* "No tutorial progress yet" — memset would leave 0, which (being below
+     * every stop row) would disable all tutorial stops. */
+    sim->sim.tutorialMinRow = 0xFF;
+
     /* Sentinel "use the CLI-configured default brain" for every slot.
      * 0 is a valid brain-catalogue index, so memset doesn't suffice. */
     memset(sim->botBrainIdx, 0xFF, sizeof(sim->botBrainIdx));
@@ -3695,6 +3699,24 @@ void serverSimReturnToLobby(ServerSim *sim) {
     sim->state = serverStateLobby;
     serverSimMapSkipVotesReset(sim);
 
+    /* Auto-lock only closes the server while a round is running, so coming
+     * back to the lobby must lift it. When a round that had human players ends
+     * with none of them left, wipe the slate the way the last-human-leaves-in-
+     * lobby path does — drop the bots, restore the operator's startup
+     * settings, and unlock — so the next joiner gets a fresh, open lobby with
+     * no orphaned bots. A round that only ever had bots (e.g. an idle
+     * dedicated server cycling maps) keeps them and just releases the
+     * auto-lock, restoring the pre-round join policy (savedAllowNewPlayers,
+     * captured by serverSimApplyAutoLockOnGameStart). */
+    if (sim->roundHadHuman && serverSimGetNumHumans(sim) == 0) {
+        serverSimResetLobbyToDefaults(sim);
+    } else {
+        sim->allowNewPlayers = sim->savedAllowNewPlayers;
+        if (sim->savedAllowNewPlayers) {
+            transportUdpServerSetLock(sim, FALSE);
+        }
+    }
+
     /* Regenerate random map between rounds */
     if (sim->randomMapEnabled) {
         serverSimRandomMapRegenerate(sim);
@@ -6114,6 +6136,16 @@ bool serverSimIsTutorial(const ServerSim *sim) {
 
 void serverSimSetTutorial(ServerSim *sim, bool v) {
     sim->sim.isTutorial = v;
+}
+
+void serverSimSetTutorialStartIdx(ServerSim *sim, BYTE idx) {
+    sim->sim.tutorialStartIdx = idx;
+}
+
+bool serverSimTakeTutorialRespawn1(ServerSim *sim) {
+    bool v = sim->sim.tutorialRespawn1Pending;
+    sim->sim.tutorialRespawn1Pending = FALSE;
+    return v;
 }
 
 void serverSimSetPaused(ServerSim *sim, bool paused) {

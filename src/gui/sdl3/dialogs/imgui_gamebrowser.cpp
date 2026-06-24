@@ -41,16 +41,20 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
 #include "imgui_nav_outline.h"
+#include "imgui_controller_prompt.h"
 #include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "../imgui_steam_nav.h"
+#include "../glyphs.h"   /* glyphForActionAuto — controller A/B glyphs */
 
 extern "C" {
+#include "../../../steam/steam_input_actions.h"  /* SI_ACTION_MENU_* names */
 #include "../sdl3draw.h"
 #include "../bg_game.h"
 #include "../flags.h"
 #include "../sdl3imgui.h"
+#include "../../ui_mode.h"
 #include "../../gamefront.h"
 #include "../../../winbolonet/wbn_serverlist.h"
 #include "discovery.h"
@@ -589,6 +593,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
 
     /* Error popup */
     const char *errorMsg = nullptr;
+    bool wantNeedNamePopup = false;
 
     /* Set Name popup */
     char nameEditBuf[PLAYER_NAME_LEN] = {};
@@ -615,6 +620,15 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
      * click on the thumbnail can hand them to the zoomable popup without
      * re-fetching. Refreshed whenever loadedPreviewMd5 changes. */
     std::vector<uint8_t> loadedPreviewComp;
+    /* True only on frames where the current selection's preview texture is
+     * loaded and current, so the footer Enlarge button isn't offered (or
+     * activated) for a stale or missing preview. */
+    bool previewEnlargeReady = false;
+
+    /* One-shot: seed controller focus onto the server list the first frame it
+     * has rows. Cleared once the seed fires; the row loop doesn't run while the
+     * (async-populated) list is empty, so the seed naturally defers until then. */
+    bool seedListFocus = true;
 
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
@@ -825,6 +839,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         ImGui::NewFrame();
         imguiSteamNavActivateMenuSet();
         imguiSteamNavFeedCurrentContext();
+        controllerDialogsRenderMenu();
 
         /* Transparent full-screen host window */
         ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -1088,10 +1103,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 }
             }
 
-            /* Visible set: apply the three filters, then default-sort by ping
-             * ascending (responded first; pending, then no-response, last).
-             * The underlying servers vector keeps its arrival order so async
-             * ping results still land on the right index. */
+            /* Visible set: apply the three filters, then sort alphabetically
+             * (case-insensitive) by the displayed name — the reverse-DNS host
+             * name once resolved, else the tracker address — with port as the
+             * tiebreak. A name key keeps the order steady across the ~20s
+             * auto-refresh and as async pings land; only a server's one-time
+             * DNS resolution can shift its row. The underlying servers vector
+             * keeps its arrival order so async ping results still land on the
+             * right index. */
             std::vector<int> visible;
             visible.reserve(servers.size());
             for (int i = 0; i < (int)servers.size(); i++) {
@@ -1101,12 +1120,28 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 if (filterLobby >= 0 && fe.lobbyStatus != filterLobby) continue;
                 visible.push_back(i);
             }
-            auto pingKey = [&](int idx) {
-                int p = servers[idx].pingMs;
-                return p >= 0 ? p : (p == -1 ? 1000000 : 2000000);
+            auto nameKey = [&](int idx) -> const char * {
+                const ServerEntry &e = servers[idx];
+                return e.hostName[0] != '\0' ? e.hostName : e.address;
             };
             std::stable_sort(visible.begin(), visible.end(),
-                             [&](int a, int b) { return pingKey(a) < pingKey(b); });
+                             [&](int a, int b) {
+                                 int c = SDL_strcasecmp(nameKey(a), nameKey(b));
+                                 if (c != 0) return c < 0;
+                                 return servers[a].port < servers[b].port;
+                             });
+
+            /* Row to seed controller focus onto: the selected server if it is
+             * visible, otherwise the first visible row. */
+            int seedTarget = -1;
+            if (!visible.empty()) {
+                seedTarget = visible.front();
+                if (selectedItem >= 0) {
+                    for (int vi : visible) {
+                        if (vi == selectedItem) { seedTarget = selectedItem; break; }
+                    }
+                }
+            }
 
             for (int vi : visible) {
                 int i = vi;
@@ -1122,25 +1157,35 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 ImVec2 p0 = ImGui::GetCursorScreenPos();
                 bool isSelected = (selectedItem == i);
                 ImGui::SetNextItemAllowOverlap();
+                if (seedListFocus && i == seedTarget && uiShouldUseControllerMode()) {
+                    ImGui::SetKeyboardFocusHere();
+                    seedListFocus = false;
+                }
                 if (ImGui::Selectable("##srv", isSelected,
                                       ImGuiSelectableFlags_AllowDoubleClick,
                                       ImVec2(rowW, rowH))) {
+                    /* Join on a mouse double-click, or — in controller mode,
+                     * where the row activates via keyboard Space and never a
+                     * mouse double-click — on a second A press on the row that
+                     * was already selected entering this frame (isSelected is
+                     * captured before the assignment below). */
+                    bool joinActivate = ImGui::IsMouseDoubleClicked(0) ||
+                                        (uiShouldUseControllerMode() && isSelected);
                     selectedItem = i;
                     SDL_strlcpy(selKeyAddr, e.address, sizeof(selKeyAddr));
                     selKeyPort = e.port;
-                    if (ImGui::IsMouseDoubleClicked(0)) {
-                        /* Double-click to join */
-                        if (strlen(e.version) >= STRVER_LEN &&
-                            strncmp(e.version, STRVER, STRVER_LEN) == 0) {
-                            char playerName[PLAYER_NAME_LEN];
-                            gameFrontGetPlayerName(playerName);
-                            if (strlen(playerName) > 0) {
-                                gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
-                                gameFrontSetAIType(e.ai);
-                                gameFrontSetDlgState(openUdpJoin);
-                                result = (int)openUdpJoin;
-                                running = false;
-                            }
+                    if (joinActivate) {
+                        char playerName[PLAYER_NAME_LEN];
+                        gameFrontGetPlayerName(playerName);
+                        if (strlen(playerName) == 0) {
+                            errorMsg = langGetText(STR_DLGBROWSER_ERR_NEEDNAME);
+                            wantNeedNamePopup = true;
+                        } else {
+                            gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
+                            gameFrontSetAIType(e.ai);
+                            gameFrontSetDlgState(openUdpJoin);
+                            result = (int)openUdpJoin;
+                            running = false;
                         }
                     }
                 }
@@ -1256,9 +1301,13 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 haveSel = true;
             }
         }
+        previewEnlargeReady = false;
 
         /* ---- Right: selection detail pane ---- */
-        ImGui::BeginChild("##DetailPane", ImVec2(0, listH), ImGuiChildFlags_Borders);
+        /* Flattened into the parent nav plane so a controller reaches the
+         * detail fields and the enlarge-preview button in one step. */
+        ImGui::BeginChild("##DetailPane", ImVec2(0, listH),
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
         if (!haveSel) {
             ImGui::Spacing();
             ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_SELECT_SERVER));
@@ -1271,7 +1320,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             if (boxSize > maxBox) boxSize = maxBox;
             if (boxSize < 80.0f)  boxSize = 80.0f;
             ImGui::BeginChild("##MapPreview", ImVec2(boxSize, boxSize),
-                              ImGuiChildFlags_Borders);
+                              ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
             {
                 auto centeredDimmed = [](const char *txt) {
                     ImVec2 ts = ImGui::CalcTextSize(txt);
@@ -1337,6 +1386,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                                           boxW, boxH);
                             SDL_Texture *tex = mapPreviewViewGetTexture(previewView);
                             if (tex != nullptr) {
+                                previewEnlargeReady = !loadedPreviewComp.empty();
                                 ImGui::Image((ImTextureID)tex,
                                              ImVec2((float)boxW, (float)boxH));
                                 /* Click the thumbnail to open the zoomable
@@ -1352,7 +1402,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                         (int)loadedPreviewComp.size(),
                                         0, 0, 255, 255);
                                 }
-                                ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_PREVIEW_ENLARGE));
+                                if (!uiShouldUseControllerMode())
+                                    ImGui::TextDisabled("%s", langGetText(STR_DLGBROWSER_PREVIEW_ENLARGE));
                             } else {
                                 /* Build not finished this frame — try again next frame. */
                                 centeredDimmed(langGetText(STR_DLGNEWS_LOADING));
@@ -1604,6 +1655,8 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         /* Modal popup IDs (built once per frame, used by both Open and Begin) */
         char errPopupId[64];
         SDL_snprintf(errPopupId, sizeof(errPopupId), "%s##gb", langGetText(STR_ERR_TITLE));
+        if (wantNeedNamePopup)
+            ImGui::OpenPopup(errPopupId);
         char setNamePopupId[64];
         SDL_snprintf(setNamePopupId, sizeof(setNamePopupId), "%s##gb", langGetText(STR_DLGSETPLAYERNAME_TITLE));
 
@@ -1613,7 +1666,22 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
         {
             bool hasSelection = (selectedItem >= 0 && selectedItem < (int)servers.size());
 
-            /* Join */
+            /* Controller mode draws the bound A/B glyphs inline, left of the
+             * primary buttons (A = Join, B = Cancel). Glyph height matches the
+             * button frame height so the row height is unchanged. */
+            const bool  padLegend = uiShouldUseControllerMode();
+            const float glyphH    = ImGui::GetFrameHeight();
+            auto glyphInline = [&](const char *action) {
+                if (!padLegend) return;
+                SDL_Texture *g = glyphForActionAuto(action);
+                if (g) {
+                    ImGui::Image((ImTextureID)g, ImVec2(glyphH, glyphH));
+                    ImGui::SameLine(0.0f, 4.0f);
+                }
+            };
+
+            /* Join — A glyph before the disabled-state guard so it isn't dimmed. */
+            glyphInline(SI_ACTION_MENU_ACCEPT);
             if (!hasSelection) ImGui::BeginDisabled();
 
             if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, btnH))) {
@@ -1638,11 +1706,22 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
-            /* Spectate — placeholder, disabled until spectator fields land */
-            ImGui::SameLine();
-            ImGui::BeginDisabled();
-            ImGui::Button(langGetText(STR_DLGBROWSER_SPECTATE), ImVec2(btnW, btnH));
-            ImGui::EndDisabled();
+            /* Controller-only: a pad can't reliably reach the preview-overlay
+             * enlarge button across the detail pane, so expose enlarge as a
+             * first-class footer action. Disabled until the selected server has
+             * a loaded preview. */
+            if (uiShouldUseControllerMode()) {
+                ImGui::SameLine();
+                if (!previewEnlargeReady) ImGui::BeginDisabled();
+                if (ImGui::Button(langGetText(STR_DLGBROWSER_ENLARGE_BTN), ImVec2(btnW, btnH))
+                    && !loadedPreviewComp.empty()) {
+                    mapPreviewPopupOpenCompressed(loadedPreviewComp.data(),
+                                                  (int)loadedPreviewComp.size(),
+                                                  0, 0, 255, 255);
+                }
+                imguiHandOnHover();
+                if (!previewEnlargeReady) ImGui::EndDisabled();
+            }
 
             /* Rejoin */
             ImGui::SameLine();
@@ -1678,9 +1757,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 running = false;
             }
             imguiHandOnHover();
-            if (useTracker && ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
-            }
+            if (useTracker) imguiHelpTooltip(langGetText(STR_DLGBROWSER_NEWGAME_PORTFWD_TIP));
 
             /* Player Name */
             ImGui::SameLine(0.0f, 20.0f);
@@ -1700,8 +1777,14 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             }
             imguiHandOnHover();
 
-            /* Cancel - right-aligned, muted-grey styling per dialog spec. */
-            ImGui::SameLine(panelW - btnW - 16.0f * s);
+            /* Cancel - right-aligned, muted-grey styling per dialog spec.
+             * In controller mode a B glyph sits just left of it; shift the
+             * right-align origin left by the glyph width so Cancel keeps its
+             * exact position and the glyph fits beside it. */
+            float cancelX = panelW - btnW - 16.0f * s;
+            if (padLegend) cancelX -= glyphH + 4.0f;
+            ImGui::SameLine(cancelX);
+            glyphInline(SI_ACTION_MENU_CANCEL);
             WBUI::PushCancelStyle();
             bool cancelClicked = ImGui::Button(langGetText(STR_CANCEL), ImVec2(btnW, btnH));
             WBUI::PopCancelStyle();

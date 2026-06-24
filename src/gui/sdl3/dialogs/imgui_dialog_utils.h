@@ -137,34 +137,6 @@ static inline float dialogComputeScale(int screenW, int screenH) {
     return scale;
 }
 
-/* Desktop UI scale derived from the display. Prefers the OS content
- * scale; falls back to display-height / 1080 when none is reported.
- * Returns 1.0 on Steam Deck / tablet / mobile (those have their own
- * scaling paths and must not be double-scaled). Clamped to [1.0, 2.5]. */
-static inline float dialogDesktopScale(SDL_Window *window) {
-    if (!window) return 1.0f;
-    if (uiModeIsSteamDeck() || uiModeIsTablet()) return 1.0f;
-#if BOLO_MOBILE
-    return 1.0f;
-#else
-    if (uiUiScaleGet() != UI_SCALE_AUTO) {
-        float sc = uiUiScalePresetFactor(uiUiScaleGet());
-        if (sc < 1.0f) sc = 1.0f;
-        if (sc > 2.5f) sc = 2.5f;
-        return sc;
-    }
-    float sc = SDL_GetWindowDisplayScale(window);
-    if (sc < 1.05f) {
-        SDL_DisplayID disp = SDL_GetDisplayForWindow(window);
-        const SDL_DisplayMode *dm = SDL_GetDesktopDisplayMode(disp);
-        sc = (dm && dm->h > 0) ? (float)dm->h / 1080.0f : 1.0f;
-    }
-    if (sc < 1.0f) sc = 1.0f;
-    if (sc > 2.5f) sc = 2.5f;
-    return sc;
-#endif
-}
-
 /* Load font data via SDL_IOFromFile (works on Android assets and desktop).
  * Returns buffer allocated with IM_ALLOC (ImGui takes ownership). */
 static inline unsigned char *dialogLoadFontData(const char *path, int *outSize) {
@@ -390,6 +362,15 @@ static inline void imguiHandOnHover(void) {
     if (ImGui::IsItemHovered()) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     }
+}
+
+/* Show a one-line tooltip on mouse hover OR gamepad/keyboard focus, so
+   controller users (who can't hover) still get it. Call right after the
+   item whose tooltip this is. */
+static inline void imguiHelpTooltip(const char *text) {
+    if (!text) return;
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip) || ImGui::IsItemFocused())
+        ImGui::SetTooltip("%s", text);
 }
 
 /* Register Platform_OpenInShellFn on the current ImGui context so that

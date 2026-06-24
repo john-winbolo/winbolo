@@ -39,6 +39,7 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
 #include "imgui_nav_outline.h"
+#include "imgui_controller_prompt.h"
 #include "dialog_footer.h"
 #include "nanosvg.h"
 #include "nanosvgrast.h"
@@ -824,6 +825,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         ImGui::NewFrame();
         imguiSteamNavActivateMenuSet();
         imguiSteamNavFeedCurrentContext();
+        controllerDialogsRenderMenu();
 
         /* Transparent full-screen host window */
         ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -1025,7 +1027,10 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
 
             ImGui::Separator();
 
-            if (ImGui::BeginChild("##DetailPanel", ImVec2(0, 0), ImGuiChildFlags_Borders)) {
+            /* Flattened into the parent nav plane so a controller reaches the
+             * detail content in one step. */
+            if (ImGui::BeginChild("##DetailPanel", ImVec2(0, 0),
+                                  ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened)) {
                 /* Header info */
                 ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.3f, 1.0f), "%s", e.map);
                 ImGui::SameLine();

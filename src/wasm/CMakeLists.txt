@@ -193,6 +193,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_about.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/dialog_footer.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
+    ${SRC_ROOT}/gui/sdl3/lobby_start_list.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_view.cpp
     ${SRC_ROOT}/gui/sdl3/wb_theme.cpp
     ${SRC_ROOT}/gui/sdl3/bg_game.c

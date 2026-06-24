@@ -45,6 +45,7 @@
 
 extern "C" {
 #include "../sdl3draw.h"
+#include "../sdl3imgui.h"
 #include "../../lang.h"
 #include "imgui_messagebox.h"
 }
@@ -169,11 +170,20 @@ static int flattenSegments(const TutorialSeg *segments, int segCount,
             if (!p) continue;
             while (*p && n < max) {
                 if (*p == '\n') {
-                    out[n].kind = RICH_HARD_BREAK;
-                    out[n].w = 0;
-                    out[n].h = ImGui::GetTextLineHeight();
-                    n++;
-                    p++;
+                    /* Collapse newlines: a lone '\n' acts as a space so the
+                       source's fixed-width line breaks reflow to the box; two
+                       or more in a row are paragraph breaks and become hard
+                       breaks (preserving the blank line between paragraphs). */
+                    int runlen = 0;
+                    while (*p == '\n') { runlen++; p++; }
+                    if (runlen >= 2) {
+                        for (int b = 0; b < runlen && n < max; ++b) {
+                            out[n].kind = RICH_HARD_BREAK;
+                            out[n].w = 0;
+                            out[n].h = ImGui::GetTextLineHeight();
+                            n++;
+                        }
+                    }
                     continue;
                 }
                 if (*p == ' ' || *p == '\t') { p++; continue; }
@@ -357,6 +367,36 @@ static int renderRichMessageBoxContent(const TutorialSeg *segments, int segCount
     }
 
     return result;
+}
+
+/* In-loop counterpart to imguiMessageBoxRich: fills the caller's already-
+ * begun popup with the segment body + OK button on the main context.  Used
+ * by the tutorial overlay, which renders every frame rather than spinning a
+ * private blocking event loop, so the game's input gate and solo-pause path
+ * apply while a message is up. */
+extern "C" bool imguiRichSegmentsBody(const TutorialSeg *segments,
+                                      int segmentCount, bool *focusBtn) {
+    /* Cache the info icon — the overlay redraws every frame, so reloading
+       the SVG per frame would be wasteful. */
+    static SDL_Texture *s_infoIcon = nullptr;
+    static bool s_infoIconTried = false;
+    if (!s_infoIconTried) {
+        SDL_Renderer *renderer = sdl3DrawGetRenderer();
+        const char *iconPath = iconPathForType(IMGUI_MSG_INFO);
+        if (renderer && iconPath)
+            s_infoIcon = imguiLoadSvgIcon(renderer, iconPath, ICON_SIZE);
+        s_infoIconTried = true;
+    }
+    bool localFocus = focusBtn ? *focusBtn : false;
+    /* Scale only feeds the icon size here — glyphs/text size off the main
+       context's already-scaled GetTextLineHeight().  Match the icon to the UI
+       scale so it isn't a tiny 48px stamp next to scaled-up text. */
+    float scale = sdl3ImguiGetUiScale();
+    if (scale <= 0.0f) scale = 1.0f;
+    int r = renderRichMessageBoxContent(segments, segmentCount, IMGUI_MSG_OK,
+                                        s_infoIcon, scale, &localFocus);
+    if (focusBtn) *focusBtn = localFocus;
+    return r >= 0;
 }
 
 /* Guard against re-entrant calls (e.g. lobby + game loop both detecting

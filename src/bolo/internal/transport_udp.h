@@ -106,11 +106,13 @@ bool wbnJoinOnTick(WbnJoinState *s, uint32_t nowTick);
 void wbnJoinClear(WbnJoinState *s);
 
 /* Should this slot receive a PACKET_WBN_REKEY on session rotation?
- * Gated on the slot being connected and WBN-verified last round.
- * PLAYER_FLAG_WBN_VERIFIED survives serverSimResetGameWorld, unlike the
- * per-slot WBN key that winbolonetEndSession wipes — so this is the
- * durable cross-round signal. */
-bool wbnRekeyTargetSelected(bool connected, uint8_t clientFlags);
+ * Gated on the slot being connected and having been a WBN player last
+ * round (the durable per-connection wbnWasVerified bit).  It deliberately
+ * does NOT read the sim-side PLAYER_FLAG_WBN_VERIFIED: serverSimReturnToLobby
+ * clears that flag on every slot immediately before the rekey broadcast
+ * runs, so a flag-based gate would match nobody and strand every player
+ * un-keyed for the new round. */
+bool wbnRekeyTargetSelected(bool connected, bool wbnWasVerified);
 
 /* JOIN name-collision verdict.  Pure value core so the policy is
  * unit-testable without sockets or the WBN layer.  The will-auth flag is
@@ -414,6 +416,14 @@ typedef struct UdpServerClient {
                                   * slot/session — armed at join and at each
                                   * session rotation, resolved by reauth or
                                   * the per-tick grace sweep. */
+    bool wbnWasVerified;         /* Durable per-connection "this client is a
+                                  * WBN player" bit, set at join/reauth and
+                                  * held across rounds.  The rekey-rotation
+                                  * gate reads THIS, not the sim-side
+                                  * PLAYER_FLAG_WBN_VERIFIED, because
+                                  * serverSimReturnToLobby clears that flag
+                                  * just before the rekey broadcast runs.
+                                  * Cleared on disconnect/slot-reset. */
     SubscriberHandle controlSub; /* per-client subscription on the server's
                                   * control-event bus; the deliver callback
                                   * encodes via the codec table and unicasts

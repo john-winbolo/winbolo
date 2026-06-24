@@ -27,6 +27,7 @@
 #include "imgui_impl_sdlrenderer3.h"
 #include "imgui_dialog_utils.h"
 #include "imgui_nav_outline.h"
+#include "imgui_controller_prompt.h"
 #include "imgui_keycap.h"
 #include "../imgui_steam_nav.h"
 #include "dialog_footer.h"
@@ -157,7 +158,7 @@ static void keyRow(const char *label, KeySetupField field) {
             *ptr = 0;   /* SDL_SCANCODE_UNKNOWN — unbound */
         }
         imguiHandOnHover();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear");
+        imguiHelpTooltip("Clear");
     }
     ImGui::PopID();
 }
@@ -247,7 +248,7 @@ static void padSlotChange(GamepadAction act, GamepadSlot slot) {
             else                         s_pad.b[act].sec = none;
         }
         imguiHandOnHover();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear");
+        imguiHelpTooltip("Clear");
     }
     ImGui::PopID();
 }
@@ -276,8 +277,7 @@ static void renderBuildBehaviorOptions() {
     ImGui::Spacing();
     auto cb = [](const char *label, bool *v, const char *tip) {
         ImGui::Checkbox(label, v);
-        if (tip && *tip && ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", tip);
+        if (tip && *tip) imguiHelpTooltip(tip);
     };
     cb("Hold to build, release to exit (momentary)", &g_buildHoldMomentary,
        "Hold the build-toggle button (>200ms) to temporarily enter build mode; "
@@ -749,6 +749,7 @@ extern "C" int imguiKeySetupShow(void) {
         ImGui::NewFrame();
         imguiSteamNavActivateMenuSet();
         imguiSteamNavFeedCurrentContext();
+        controllerDialogsRenderMenu();
 
         int winW, winH;
         SDL_GetWindowSize(window, &winW, &winH);
@@ -861,9 +862,15 @@ extern "C" int imguiKeySetupShow(void) {
  * through helper functions because we don't own the loop.
  * ------------------------------------------------------- */
 static bool  s_inGameShowRequested = false;
+static bool  s_inGameOpen          = false;
 static float s_inGameFadeAlpha     = 0.0f;
 
 extern "C" void imguiKeySetupOpenInGame(void) {
+    /* Ignore re-triggers while the popup is already showing — calling
+     * ImGui::OpenPopup() again on a non-consecutive frame makes ImGui
+     * close and reopen the modal, which flickers and eats the click that
+     * was meant for OK/Cancel/X. */
+    if (s_inGameOpen) return;
     s_inGameShowRequested = true;
 }
 
@@ -875,6 +882,7 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
     if (s_inGameShowRequested) {
         ImGui::OpenPopup(title);
         s_inGameShowRequested = false;
+        s_inGameOpen = true;
         s_requestControllerTabDefault = true;
         windowGetKeys(&s_keys);
         inputGamepadBindingsGetAll(&s_pad);
@@ -896,10 +904,14 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
     if (ph > io.DisplaySize.y * 0.95f) ph = io.DisplaySize.y * 0.95f;
     ImGui::SetNextWindowSize(ImVec2(pw, ph), ImGuiCond_Always);
 
-    bool open = true;
-    if (!ImGui::BeginPopupModal(title, &open,
+    /* s_inGameOpen doubles as the close-box (X) flag and the "already
+     * showing" guard read by imguiKeySetupOpenInGame; reset it whenever the
+     * modal is no longer open (X, Escape, or click-through) so a later
+     * Ctrl+K can reopen it. */
+    if (!ImGui::BeginPopupModal(title, &s_inGameOpen,
                                 ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove)) {
+        s_inGameOpen = false;
         return;
     }
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
@@ -908,6 +920,7 @@ extern "C" void imguiKeySetupRenderInGamePopup(struct ClientSim *cs) {
     int rc = renderFormBody(cs);
     if (rc != 0) {
         ImGui::CloseCurrentPopup();
+        s_inGameOpen = false;
     }
 
     ImGui::PopStyleVar();

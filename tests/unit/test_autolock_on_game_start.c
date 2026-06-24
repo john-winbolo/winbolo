@@ -191,3 +191,39 @@ int run_no_autolock_stays_open_on_start(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* ---- 6. Returning to the lobby lifts the in-game auto-lock. ---- */
+int run_autolock_released_on_return_to_lobby(void) {
+    ServerSim *sim = make_lobby_sim();
+    UT_ASSERT(sim != NULL);
+    serverSimAddPlayer(sim, 0, "Host", false);
+    serverSimSetAutoLockOnGameStart(sim, true);
+    reset_lock_baseline(sim);
+
+    serverSimStartGame(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+
+    /* Auto-lock engaged at game start: both join predicates say "no". */
+    UT_ASSERT(serverSimIsAcceptingJoins(sim) == false);
+    UT_ASSERT(transportUdpServerGetLock() == true);
+
+    /* The round ends with the host still present (e.g. game length reached).
+     * Auto-lock only closes the server while a round runs, so returning to
+     * the lobby must reopen it to the pre-round join policy. */
+    serverSimReturnToLobby(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
+
+    UT_ASSERT_MSG(serverSimIsAcceptingJoins(sim) == true,
+                  "return-to-lobby must lift the auto-lock join gate");
+    UT_ASSERT_MSG(transportUdpServerGetLock() == false,
+                  "return-to-lobby must release the auto-lock transport lock");
+
+    /* And a fresh join into the reopened lobby succeeds. */
+    BYTE slot = 0xFF;
+    UT_ASSERT_MSG(serverSimLocalJoin(sim, "Walkup", "", CLIENT_TYPE_UNKNOWN,
+                                     0, &slot) == LOCAL_JOIN_OK,
+                  "a join into the reopened lobby must be accepted");
+
+    serverSimDestroy(sim);
+    return 0;
+}

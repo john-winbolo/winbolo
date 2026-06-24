@@ -22,6 +22,8 @@
 #include "imgui_controller_prompt.h"
 
 extern "C" {
+#include "imgui_controller_disconnect.h"
+#include "../input_gamepad.h"
 #include "../../ui_mode.h"
 #include "../../gamefront.h"
 #include "../../lang.h"
@@ -76,8 +78,17 @@ void controllerPromptRender(void) {
         ImGui::TextDisabled("%s", langGetText(STR_CTRL_PROMPT_DESC));
         ImGui::Spacing();
 
-        const ImVec2 btnSize(140.0f, 0.0f);
         ImGuiStyle &style = ImGui::GetStyle();
+        /* Size every button to the widest label (+ horizontal frame padding)
+           so no language clips, clamped so short labels stay balanced. */
+        float maxLabel = ImGui::CalcTextSize(langGetText(STR_YES)).x;
+        float w = ImGui::CalcTextSize(langGetText(STR_CTRL_PROMPT_NOTNOW)).x;
+        if (w > maxLabel) maxLabel = w;
+        w = ImGui::CalcTextSize(langGetText(STR_CTRL_PROMPT_DONTASK)).x;
+        if (w > maxLabel) maxLabel = w;
+        float btnWidth = maxLabel + style.FramePadding.x * 2.0f;
+        if (btnWidth < 140.0f) btnWidth = 140.0f;
+        const ImVec2 btnSize(btnWidth, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
                             ImVec2(style.FramePadding.x, 8.0f));
 
@@ -109,4 +120,43 @@ void controllerPromptRender(void) {
     } else {
         s_open = false;
     }
+}
+
+void controllerPromptPollConnectEdge(void) {
+    /* Rising edge from no gamepad → gamepad connected, when controller mode is
+       currently off and the player hasn't dismissed the prompt with "Don't ask
+       again".  Skip on tablet (mobile has its own touch UX) and on Deck (already
+       always controller-mode).
+
+       First-frame sync: seed from the current connection state without firing.
+       Without this, a controller plugged in before the first render frame would
+       always look like a "rising edge" on the first frame and pop the prompt
+       even if the player just launched with the pad already attached. */
+    static bool s_initialized   = false;
+    static bool s_lastConnected = false;
+    bool nowConnected = inputGamepadIsConnected();
+    if (!s_initialized) {
+        s_lastConnected = nowConnected;
+        s_initialized   = true;
+    } else if (nowConnected && !s_lastConnected &&
+               !uiModeIsTablet() && !uiModeIsSteamDeck() &&
+               !uiShouldUseControllerMode() &&
+               uiControllerPromptAskOnConnectGet() &&
+               !controllerPromptIsOpen()) {
+        controllerPromptOpen();
+    }
+    s_lastConnected = nowConnected;
+}
+
+void controllerDialogsRenderMenu(void) {
+    controllerPromptPollConnectEdge();
+    /* Active-controller-disconnect on the menus: same gating as in-game minus
+       the solo-game pause — no game is running here. */
+    if (inputGamepadConsumeActiveDisconnect() && !uiModeIsTablet() &&
+        (uiControllerModeGet() != CONTROLLER_MODE_OFF || uiModeIsSteamDeck()) &&
+        !controllerDisconnectIsOpen()) {
+        controllerDisconnectOpen();
+    }
+    controllerPromptRender();
+    (void)controllerDisconnectRender();   /* return ignored: no solo game to unpause */
 }

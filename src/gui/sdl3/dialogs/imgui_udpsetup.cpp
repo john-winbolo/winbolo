@@ -31,6 +31,7 @@
 #include "imgui_dialog_utils.h"
 #include "server_address_parse.h"
 #include "imgui_nav_outline.h"
+#include "imgui_controller_prompt.h"
 #include "../imgui_steam_nav.h"
 #include "dialog_footer.h"
 
@@ -230,6 +231,7 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::NewFrame();
         imguiSteamNavActivateMenuSet();
         imguiSteamNavFeedCurrentContext();
+        controllerDialogsRenderMenu();
 
         /* Transparent full-screen host window */
         ImGui::SetNextWindowPos(ImVec2(0, 0));

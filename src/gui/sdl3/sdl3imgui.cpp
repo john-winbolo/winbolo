@@ -95,6 +95,7 @@ extern "C" {
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/imgui_deck_pause.h"
+#include "dialogs/imgui_tutorial_overlay.h"
 #include "dialogs/imgui_keyboard.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
@@ -203,6 +204,7 @@ extern "C" void windowSuspendBackground(struct ClientSim *cs);
 extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
+extern "C" void windowTutorialPause(struct ClientSim *cs, bool active);
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -1339,6 +1341,19 @@ static void renderCtrlSendMsg(ClientSim *cs) {
     }
 }
 
+/* Whether the local player may answer a given vote. Surrender votes are
+   answerable only by members of the surrendering team (teamId); everyone
+   else can watch the tally but has no Yes/No to cast. Other vote kinds are
+   open to all connected players. Mirrors the server's eligibility rule in
+   gameVoteEligibleMask(). */
+static bool localCanAnswerGameVote(ClientSim *cs,
+                                   const ClientGameVoteSnapshot *snap) {
+    if (snap->kind != GAME_VOTE_KIND_SURRENDER) return true;
+    const ClientLobbySlot *ls =
+        clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+    return ls && ls->teamNumber != 0 && ls->teamNumber == snap->teamId;
+}
+
 /* -------------------------------------------------------
  * Players panel (standalone window for tablet mode)
  * ------------------------------------------------------- */
@@ -1354,9 +1369,17 @@ static void renderPlayersPanel(ClientSim *cs) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     } else {
-        ImGui::SetNextWindowSize(ImVec2(340 * s_uiScale, 420 * s_uiScale), ImGuiCond_FirstUseEver);
+        /* Cap the panel to the viewport work area so a large font (or a
+         * small game window) can't push it taller than the screen and clip
+         * the bottom off-screen; ImGui then shows a scrollbar for overflow.
+         * The default size is also clamped so it never opens oversized. */
+        const ImGuiViewport *vp = ImGui::GetMainViewport();
+        float maxW = vp->WorkSize.x, maxH = vp->WorkSize.y;
+        ImGui::SetNextWindowSize(ImVec2(SDL_min(340 * s_uiScale, maxW),
+                                        SDL_min(420 * s_uiScale, maxH)),
+                                 ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
-                                            ImVec2(FLT_MAX, FLT_MAX));
+                                            ImVec2(maxW, maxH));
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
     ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
@@ -1517,7 +1540,14 @@ static void renderPlayersPanel(ClientSim *cs) {
             imguiHandOnHover();
             if (disabled) ImGui::EndDisabled();
             if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+                ImGui::SetTooltip("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
+            }
+            /* Controller users can't hover for the tooltip — show the reason
+               as a greyed caption under the disabled button. */
+            if (rankedGame && uiShouldUseControllerMode()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::TextWrapped("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
+                ImGui::PopStyleColor();
             }
         }
     }
@@ -1586,6 +1616,16 @@ static void renderPlayersPanel(ClientSim *cs) {
                 ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP));
             }
         }
+        /* Controller users can't hover for the tooltip — show the reason
+           as a greyed caption under the disabled button. */
+        if (surrDisabled && uiShouldUseControllerMode()) {
+            const char *reason = meUnassigned
+                ? langGetText(STR_VOTE_SURRENDER_PICK_TEAM_TIP)
+                : langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", reason);
+            ImGui::PopStyleColor();
+        }
 
         /* Answer rows for any in-flight vote — reachable with a
            controller (the overlay is NoNavInputs). */
@@ -1603,6 +1643,7 @@ static void renderPlayersPanel(ClientSim *cs) {
                               : langGetText(STR_VOTE_SURRENDER);
             ImGui::Text("%s: %u / %u", vnm,
                         (unsigned)vs.yesCount, (unsigned)vs.threshold);
+            if (!localCanAnswerGameVote(cs, &vs)) continue;
             BYTE vme = clientSimGetMyPlayerNum(cs);
             bool vMyYes = (vme < 16) && ((vs.votes >> vme) & 1u);
             char yLbl[40]; snprintf(yLbl, sizeof(yLbl), "%s##vy%u", langGetText(STR_YES), (unsigned)vkind);
@@ -2073,7 +2114,8 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
 
     /* Yes / No buttons — only meaningful while the vote is running.
      * Highlight the user's current choice so they can see their stance. */
-    if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
+    if (snap->active == GAME_VOTE_ACTIVE_RUNNING &&
+        localCanAnswerGameVote(cs, snap)) {
         ImGui::Spacing();
         if (uiShouldUseControllerMode()) {
             renderControllerActionHint(SI_ACTION_VIEW_PLAYERS,
@@ -2392,17 +2434,20 @@ static void renderSettingsPanel(ClientSim *cs) {
         return;
     }
 
-    /* File actions — tablet/mobile only (desktop has menu bar) */
-    if (uiModeIsTablet()) {
+    /* File actions — Save Map reachable on tablet and under a controller
+       (desktop has the menu bar); Leave Game stays tablet-only. */
+    if (uiModeIsTablet() || uiShouldUseControllerMode()) {
         if (ImGui::Button(langGetText(STR_MENU_SAVE_MAP), ImVec2(-1, 0))) {
             windowSaveMap(cs);
             s_showSettings = false;
         }
         imguiHandOnHover();
-        if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
-            windowNewGame();
+        if (uiModeIsTablet()) {
+            if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
+                windowNewGame();
+            }
+            imguiHandOnHover();
         }
-        imguiHandOnHover();
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
@@ -2434,6 +2479,70 @@ static void renderSettingsPanel(ClientSim *cs) {
                 }
             }
             imguiHandOnHover();
+        }
+
+        /* ---- Language picker ---- */
+        /* Scan the installed languages once and cache for the process
+         * lifetime — they don't change at runtime, so the entries are
+         * intentionally never freed. */
+        static LangFileEntry *s_langEntries = nullptr;
+        static int            s_langCount   = 0;
+        static bool           s_langScanned = false;
+        if (!s_langScanned) {
+            s_langEntries = langPickerScan(&s_langCount);
+            s_langScanned = true;
+        }
+
+        int curLangIdx = 0;
+        {
+            char curCode[32];
+            curCode[0] = '\0';
+            gameFrontGetLanguageCode(curCode, (int)sizeof(curCode));
+            if (curCode[0] != '\0') {
+                for (int i = 0; i < s_langCount; i++) {
+                    if (strcmp(curCode, s_langEntries[i].code) == 0) {
+                        curLangIdx = i;
+                        break;
+                    }
+                }
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_LANGUAGE_LBL));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(220);
+        const char *curLangLabel =
+            (curLangIdx >= 0 && curLangIdx < s_langCount &&
+             s_langEntries[curLangIdx].meta.name[0] != '\0')
+                ? s_langEntries[curLangIdx].meta.name
+                : langGetText(STR_DLGLANG_NAME);
+        if (ImGui::BeginCombo("##settingslanguage", curLangLabel)) {
+            for (int i = 0; i < s_langCount; i++) {
+                const char *itemLabel =
+                    (s_langEntries[i].meta.name[0] != '\0')
+                        ? s_langEntries[i].meta.name
+                        : s_langEntries[i].code;
+                bool selected = (curLangIdx == i);
+                if (ImGui::Selectable(itemLabel, selected)) {
+                    if (i == 0) {
+                        /* English baseline — drop any loaded override and
+                         * persist "en" so a relaunch keeps this choice. */
+                        langUnloadFile();
+                        gameFrontSetLanguageCode("en");
+                    } else {
+                        if (langLoadFile(s_langEntries[i].path)) {
+                            gameFrontSetLanguageCode(s_langEntries[i].code);
+                        }
+                    }
+                    curLangIdx = i;
+                    /* Rebuild the main-context atlas at the safe point
+                     * between frames; applyMainContextUiScale re-merges the
+                     * new language's CJK primary so glyphs render live. */
+                    s_pendingUiScaleRebuild = true;
+                }
+            }
+            ImGui::EndCombo();
         }
 
         if (!uiModeIsTablet()) {
@@ -2483,19 +2592,20 @@ static void renderSettingsPanel(ClientSim *cs) {
             const char *zoomLabels[] = {
                 langGetText(STR_MENU_NORMAL),
                 langGetText(STR_MENU_DOUBLE),
+                langGetText(STR_MENU_TRIPLE),
                 langGetText(STR_MENU_QUAD),
                 langGetText(STR_MENU_CUSTOM_RESIZABLE),
             };
-            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
+            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_TRIPLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
             int curZoomIdx = 0;
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < 5; i++) {
                 if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
             }
             ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_WINDOWSIZE));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(100);
             if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
-                for (int i = 0; i < 4; i++) {
+                for (int i = 0; i < 5; i++) {
                     bool selected = (curZoomIdx == i);
                     if (ImGui::Selectable(zoomLabels[i], selected)) {
                         s_pendingZoom = zoomValues[i];
@@ -2546,9 +2656,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_RELSTEER), &relSteering)) {
                 inputTouchSetAbsoluteSteering(!relSteering);
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", langGetText(STR_DLGSETTINGS_RELSTEER_TIP));
-            }
+            imguiHelpTooltip(langGetText(STR_DLGSETTINGS_RELSTEER_TIP));
         }
 
         if (inputGamepadIsConnected()) {
@@ -2645,6 +2753,72 @@ static void renderSettingsPanel(ClientSim *cs) {
                 windowMenuAllowNewPlayers_toggle(cs);
             }
         }
+    }
+
+    /* ---- Info ---- */
+    ImGui::Separator();
+    if (ImGui::Selectable(langGetText(STR_DLGGAMEINFO_TITLE), s_showGameInfo)) s_showGameInfo = !s_showGameInfo;
+    if (ImGui::Selectable(langGetText(STR_DLGSYSINFO_TITLE),  s_showSysInfo))  { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; }
+    if (ImGui::Selectable(langGetText(STR_DLGNETINFO_TITLE),  s_showNetInfo))  { if (!s_showNetInfo) pingGraphReset();  s_showNetInfo = !s_showNetInfo; }
+
+    /* ---- Brains ---- */
+    if (clientSimGetAiType(cs) != aiNone) {
+        if (ImGui::CollapsingHeader(langGetText(STR_MENU_BRAINS))) {
+            bool running = luaBrainIsRunning() != 0;
+            int  runIdx  = luaBrainGetRunningIndex();
+
+            /* Manual (stop brain) entry — selected when no brain is active */
+            if (ImGui::Selectable(langGetText(STR_MENU_MANUAL), !running)) {
+                if (running) {
+                    luaBrainStop();
+                    mlBrainStopSingleton();
+                }
+            }
+
+            /* One entry per discovered brain */
+            int numBrains = luaBrainGetNum();
+            if (numBrains > 0) {
+                ImGui::Separator();
+                for (int bi = 0; bi < numBrains; bi++) {
+                    const char *name = luaBrainGetName(bi);
+                    bool isActive    = running && (bi == runIdx);
+                    if (ImGui::Selectable(name ? name : "?", isActive)) {
+                        if (!isActive) {
+                            const char *path = luaBrainGetPath(bi);
+                            if (path) {
+                                if (luaBrainGetType(bi) == BRAIN_TYPE_ONNX) {
+                                    mlBrainStartSingleton(path, name ? name : "", cs);
+                                } else {
+                                    luaBrainStart(path, name ? name : "", cs);
+                                }
+                                /* Refresh settings descriptor for the new brain */
+                                luaBrainFreeSettings(s_brainSettings);
+                                s_brainSettings      = nullptr;
+                                s_brainSettingsCount = 0;
+                                s_brainSettingsOpen  = false;
+                            }
+                        }
+                    }
+                }
+            }
+
+            /* Settings entry — only when a Lua brain is running (ONNX has no settings) */
+            if (running && !mlBrainSingletonIsRunning()) {
+                ImGui::Separator();
+                if (ImGui::Button(langGetText(STR_MENU_SETTINGS))) {
+                    /* Re-fetch on every open so values are current */
+                    luaBrainFreeSettings(s_brainSettings);
+                    s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
+                    s_brainSettingsOpen  = true;
+                }
+            }
+        }
+    }
+
+    /* ---- About ---- */
+    ImGui::Separator();
+    if (ImGui::Button(langGetText(STR_MENU_ABOUT))) {
+        sdl3ImguiShowAbout();
     }
 
     ImGui::End();
@@ -2801,7 +2975,7 @@ static void renderMenuBar(ClientSim *cs) {
             if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     KMOD_PRIMARY_LABEL "R", false, !rankedGame))
                 clientSimRequestAllianceSelected(cs);
             if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Alliances are disabled in ranked games.");
+                ImGui::SetTooltip("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
             }
             if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                             clientSimLeaveAllianceSelf(cs);
         }
@@ -2816,6 +2990,14 @@ static void renderMenuBar(ClientSim *cs) {
      * checkmark can all fit on one row without overlap. */
     ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 0.0f),
                                         ImVec2(FLT_MAX, FLT_MAX));
+    /* A full 16-slot roster plus the alliance/vote footer can make this
+     * dropdown taller than the window; cap it to the work area so ImGui
+     * adds a scrollbar instead of clipping the bottom rows off-screen. */
+    {
+        const ImGuiViewport *vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0),
+                                            ImVec2(FLT_MAX, vp->WorkSize.y));
+    }
     if (ImGui::BeginMenu(langGetText(STR_MENU_PLAYERS))) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
@@ -3143,13 +3325,13 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
         s_inModalResize = true;
     }
     if (msg == WM_GETMINMAXINFO) {
-        /* Enforce the UI-scaled minimum window size.  Scale the client area by
-           s_uiScale (the non-client frame/border is fixed and not scaled), so
-           the 515:347 content ratio is preserved. */
+        /* Enforce the 1x minimum client size.  The minimum is fixed at 1x (the
+           UI scale instead demotes to fit the window), so the window can always
+           reach the size where fonts drop to 1.0x. */
         MINMAXINFO *mmi = (MINMAXINFO *)lParam;
         RECT clientRect = {0, 0,
-                           (LONG)(SDL3_SCREEN_W * s_uiScale),
-                           (LONG)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale)};
+                           (LONG)SDL3_SCREEN_W,
+                           (LONG)(SDL3_SCREEN_H + MENU_BAR_HEIGHT)};
         DWORD style = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
         DWORD exStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
         AdjustWindowRectEx(&clientRect, style, FALSE, exStyle);
@@ -3255,25 +3437,73 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
  * Public API
  * ------------------------------------------------------- */
 
+/* Largest UI scale whose 1x dialog content still fits the current window,
+   quantised to a 0.25 ladder.  Dialogs lay out in logical points against
+   SDL_GetWindowSize (DPI is handled by the renderer, not here), so the fit is
+   measured in those same units: window width over the 515pt content width, and
+   the menu-bar-less window height over the 325pt content height.  Because the
+   window is aspect-locked and the menu bar is a fixed 22pt (0 on macOS), the
+   two ratios agree at every zoom step.  Floor (not round) to the ladder so the
+   result never exceeds the true fit and re-overflows; a drag-resize therefore
+   crosses only a handful of atlas rebuilds.  This is what lets a Large pref
+   auto-demote in a small window and snap back when it grows. */
+static float desktopWindowFitScale(SDL_Window *window) {
+    int w = 0, h = 0;
+    SDL_GetWindowSize(window, &w, &h);
+    if (w <= 0 || h <= 0) return 1.0f;
+    float fitW = (float)w / (float)SDL3_SCREEN_W;
+    float availH = (float)h - (float)MENU_BAR_HEIGHT;
+    float fitH = (availH > 0.0f) ? availH / (float)SDL3_SCREEN_H : fitW;
+    float fit = SDL_min(fitW, fitH);
+    fit = (float)((int)(fit * 4.0f)) / 4.0f;   /* floor to 0.25 steps */
+    if (fit < 1.0f) fit = 1.0f;
+    if (fit > 2.0f) fit = 2.0f;   /* cap at the Large preset; never exceed it */
+    return fit;
+}
+
 /* (Re)apply the main ImGui context's font atlas, style, and window minimum
-   for the current UI scale.  Recomputes the scale (Auto → display-derived,
-   preset → fixed), rebuilds the font atlas, resets and re-scales the style,
-   and re-clamps the desktop window minimum.  Called once at setup and again
-   when the UI-scale pref changes — the latter only from the deferred safe
-   point between Present and NewFrame, so the atlas swap can't race draw data
-   still queued against the old texture. */
+   for the current UI scale.  Recomputes the scale (desktop: preference capped
+   by what the window can hold; Auto follows the same window-height scale the
+   front-end dialogs use, so the in-game UI matches the menu/lobby rather than
+   ballooning to the game-canvas fit), rebuilds the font atlas, resets and
+   re-scales the style.  Called at setup, when the
+   UI-scale pref changes, and on window resize — the latter two only from the
+   deferred safe point between Present and NewFrame, so the atlas swap can't
+   race draw data still queued against the old texture.  Resize fires it every
+   frame of a drag, so it early-outs when the quantised scale hasn't moved. */
 static void applyMainContextUiScale(void) {
     if (!s_window) return;
     ImGuiIO &io = ImGui::GetIO();
 
     /* One scale value drives both the font size and the style metrics.
        Tablet uses FontGlobalScale below (so uiScale stays 1); Deck keeps
-       its 1.5x; desktop derives the scale from the display (or the UI-scale
-       override) so dialogs are readable on high-DPI / 4K screens. */
+       its 1.5x; desktop caps the preferred scale (Small/Med/Large, or for
+       Auto the front-end dialog scale) by what the window can actually hold,
+       so a big font in a small window demotes to fit and restores when it
+       grows.  Auto mirrors dialogComputeScale (window height vs 1080) instead
+       of the game-canvas fit (window width vs the 515x325 viewport): the
+       in-game window is sized as a 2x multiple of that viewport, so the fit
+       would resolve to 2.0 and double the menu-bar font relative to the
+       identically-windowed menu/lobby.  Sharing the dialog scale keeps them in
+       step. */
     float uiScale;
     if (uiModeIsTablet())          uiScale = 1.0f;
     else if (uiModeIsSteamDeck())  uiScale = dialogDeckFontMul();  /* 1.5, unchanged */
-    else                           uiScale = dialogDesktopScale(s_window);
+    else {
+        int winW = 0, winH = 0;
+        SDL_GetWindowSize(s_window, &winW, &winH);
+        float fit  = desktopWindowFitScale(s_window);
+        float pref = (uiUiScaleGet() == UI_SCALE_AUTO)
+                       ? dialogComputeScale(winW, winH)       /* Auto: match the dialogs */
+                       : uiUiScalePresetFactor(uiUiScaleGet()); /* 1.0 / 1.5 / 2.0 */
+        uiScale = SDL_min(pref, fit);
+        if (uiScale < 1.0f) uiScale = 1.0f;
+    }
+
+    /* Resize events land here every frame of a drag; skip the costly atlas
+       rebuild when the quantised scale hasn't actually changed.  The atlas is
+       empty at first setup, so that pass always proceeds. */
+    if (io.Fonts->Fonts.Size > 0 && uiScale == s_uiScale) return;
     s_uiScale = uiScale;
 
     /* Rebuild the font atlas at the new size.  Clear() first because
@@ -3316,12 +3546,13 @@ static void applyMainContextUiScale(void) {
     }
 
     /* On the resizable desktop window, keep the OS window from shrinking below
-       the scaled 1x content size so the bigger dialogs can't overflow.  The
+       the 1x content size.  The minimum is fixed at 1x (not scaled by the UI
+       scale) so the window can always reach the size where fonts demote to
+       1.0x; scaling the minimum by s_uiScale would make the two circular.  The
        Deck/tablet fullscreen paths don't resize, so skip them. */
     if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
         SDL_SetWindowMinimumSize(s_window,
-            (int)(SDL3_SCREEN_W * s_uiScale),
-            (int)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale));
+            SDL3_SCREEN_W, SDL3_SCREEN_H + MENU_BAR_HEIGHT);
     }
 }
 
@@ -3538,7 +3769,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
 
         /* Cmd+key shortcuts (non-macOS — macOS routes these through NSMenu in mac_menubar.mm) */
 #ifndef __APPLE__
-        if (ev.type == SDL_EVENT_KEY_DOWN &&
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
             (ev.key.mod & KMOD_PRIMARY) != 0) {
             switch (ev.key.scancode) {
@@ -3699,17 +3930,25 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             inputGamepadProcessEvent(&ev);
         }
 
-        /* While the Key Setup modal is open, swallow all mouse + keyboard events
-         * so they never reach the game. */
+        /* Swallow events ImGui is using so they never reach the game, but
+         * gate each device on its own capture flag: keyboard events only when
+         * ImGui wants the keyboard, mouse events only when it wants the mouse.
+         * Cross-gating these (dropping keyboard whenever the mouse was over a
+         * panel) ate event-driven game keys — notably the Tank View key that
+         * exits pill view — whenever the cursor merely hovered the menu bar or
+         * a vote/alliance overlay. */
         ImGuiIO &io = ImGui::GetIO();
-        if (io.WantCaptureKeyboard || io.WantCaptureMouse) {
-            bool isGameInput = (ev.type == SDL_EVENT_MOUSE_MOTION       ||
-                                ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN  ||
-                                ev.type == SDL_EVENT_MOUSE_BUTTON_UP    ||
-                                ev.type == SDL_EVENT_MOUSE_WHEEL        ||
-                                ev.type == SDL_EVENT_KEY_DOWN           ||
-                                ev.type == SDL_EVENT_KEY_UP);
-            if (isGameInput) continue;
+        {
+            bool isMouseEvent = (ev.type == SDL_EVENT_MOUSE_MOTION       ||
+                                 ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN  ||
+                                 ev.type == SDL_EVENT_MOUSE_BUTTON_UP    ||
+                                 ev.type == SDL_EVENT_MOUSE_WHEEL);
+            bool isKeyEvent   = (ev.type == SDL_EVENT_KEY_DOWN           ||
+                                 ev.type == SDL_EVENT_KEY_UP);
+            if ((isMouseEvent && io.WantCaptureMouse) ||
+                (isKeyEvent && io.WantCaptureKeyboard)) {
+                continue;
+            }
         }
 
         /* Mouse wheel adjusts gunsight range while in-game. Reaches here
@@ -3772,16 +4011,29 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* Window resized — enforce content aspect ratio (515:325) accounting for menu bar */
         if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
             ev.window.windowID == SDL_GetWindowID(s_window)) {
+            /* The window-fit cap on the UI scale may have changed.  Defer the
+               actual recompute/atlas rebuild to the safe point before NewFrame;
+               applyMainContextUiScale early-outs if the quantised scale held. */
+            if (!uiModeIsTablet() && !uiModeIsSteamDeck())
+                s_pendingUiScaleRebuild = true;
             if (s_suppressAutoCustom) {
                 /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
                    Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
             } else {
-                /* Enforce aspect ratio: adjust height to match width */
+                /* Enforce aspect ratio: adjust height to match width — but not
+                   while maximized or fullscreen, where the window must keep the
+                   size the OS gave it and the draw side letterboxes the game
+                   inside.  Forcing a taller-than-screen height there pushes the
+                   title bar off-screen and strands the window with no way to
+                   move or restore it. */
+                SDL_WindowFlags wflags = SDL_GetWindowFlags(s_window);
+                bool osManaged =
+                    (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
                 int w = ev.window.data1;
                 int h = ev.window.data2;
                 int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
                 int correctH = correctContentH + MENU_BAR_HEIGHT;
-                if (h != correctH) {
+                if (!osManaged && h != correctH) {
                     s_suppressAutoCustom = true;  /* Prevent recursion */
                     SDL_SetWindowSize(s_window, w, correctH);
                 }
@@ -3885,6 +4137,7 @@ static bool any_popup_modal_open(void) {
     if (g && g->OpenPopupStack.Size > 0)
         return true;
     return deckPauseIsOpen() ||
+           tutorialOverlayIsOpen() ||
            quickChatIsOpen() ||
            s_showSendMsg ||
            s_showPlayersPanel ||
@@ -4126,34 +4379,21 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_clearNavFocus = false;
     }
 
-    /* Phase 8.1 — controller-detected prompt.  Rising edge from no
-       gamepad → gamepad connected, when controller mode is currently off
-       and the player hasn't dismissed the prompt with "Don't ask again".
-       Skip on tablet (mobile has its own touch UX) and on Deck (already
-       always controller-mode).  Allowed in lobby — a controller plugged
-       in at the menu is exactly when the prompt is most useful.
-
-       First-frame sync: seed from the current connection state without
-       firing.  Without this, a controller plugged in before the main
-       context started rendering would always look like a "rising edge"
-       on the first frame and pop the prompt even if the player just
-       launched with the pad already attached. */
-    {
-        static bool s_initialized   = false;
-        static bool s_lastConnected = false;
-        bool nowConnected = inputGamepadIsConnected();
-        if (!s_initialized) {
-            s_lastConnected = nowConnected;
-            s_initialized   = true;
-        } else if (nowConnected && !s_lastConnected &&
-                   !uiModeIsTablet() && !uiModeIsSteamDeck() &&
-                   !uiShouldUseControllerMode() &&
-                   uiControllerPromptAskOnConnectGet() &&
-                   !controllerPromptIsOpen()) {
-            controllerPromptOpen();
-        }
-        s_lastConnected = nowConnected;
+    /* Keep the keyboard with the game during active play. With
+       NavEnableKeyboard on, clicking the menu bar (or just closing a menu)
+       leaves an ImGui window nav-focused, which latches io.WantCaptureKeyboard
+       true indefinitely — the swallow in sdl3ImguiProcessEvents then eats
+       event-driven game keys like Tank View, trapping the player in pill view.
+       So while a game is running and no panel, popup, menu, or text field is
+       genuinely using ImGui, drop any lingering nav focus each frame. */
+    if (cs && !clientSimIsInLobby(cs) && !sdl3ImguiIsDialogOpen() &&
+        !ImGui::GetIO().WantTextInput) {
+        ImGui::SetWindowFocus(nullptr);
     }
+
+    /* Controller-detected prompt: poll the gamepad-connected rising edge
+       (shared with the menu loops). */
+    controllerPromptPollConnectEdge();
 
     /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
        Pause action, default Start). Opens whenever a controller is connected
@@ -4218,14 +4458,16 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             ImGui::IsKeyPressed(ImGuiKey_Escape, false);
         bool cancelClosedPanel = false;
         if (cancelEdge && !anyPopup && !ImGui::GetIO().WantTextInput) {
-            if      (s_showSettings)       { s_showSettings = false;     cancelClosedPanel = true; }
+            /* The info windows open on top of Settings, so B must close them
+               before Settings — check them first in the ladder. */
+            if      (s_showSysInfo)        { s_showSysInfo = false;      cancelClosedPanel = true; }
+            else if (s_showNetInfo)        { s_showNetInfo = false;      cancelClosedPanel = true; }
+            else if (s_showGameInfo)       { s_showGameInfo = false;     cancelClosedPanel = true; }
+            else if (s_showSettings)       { s_showSettings = false;     cancelClosedPanel = true; }
             else if (s_showSendMsg)        { s_showSendMsg = false;      cancelClosedPanel = true; }
             else if (s_showPlayersPanel)   { s_showPlayersPanel = false; cancelClosedPanel = true; }
             else if (s_brainSettingsOpen)  { s_brainSettingsOpen = false;cancelClosedPanel = true; }
             else if (s_allianceVisible)    { s_allianceVisible = false;  cancelClosedPanel = true; }
-            else if (s_showSysInfo)        { s_showSysInfo = false;      cancelClosedPanel = true; }
-            else if (s_showNetInfo)        { s_showNetInfo = false;      cancelClosedPanel = true; }
-            else if (s_showGameInfo)       { s_showGameInfo = false;     cancelClosedPanel = true; }
         }
 
         /* Escape opens the pause overlay when a controller is connected and
@@ -4312,6 +4554,19 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             if (nowDeckPause != s_lastDeckPause) {
                 windowDeckPause(cs, nowDeckPause);
                 s_lastDeckPause = nowDeckPause;
+            }
+        }
+        /* Tutorial message overlay — same in-loop pattern as the pause
+           menu, so the input gate suspends play and the solo-pause path
+           freezes the sim while a message is up.  Edge-detect open/close
+           to toggle the freeze exactly once each way. */
+        tutorialOverlayRender(cs);
+        {
+            static bool s_lastTutorialPause = false;
+            bool nowTutorialPause = tutorialOverlayIsOpen();
+            if (nowTutorialPause != s_lastTutorialPause) {
+                windowTutorialPause(cs, nowTutorialPause);
+                s_lastTutorialPause = nowTutorialPause;
             }
         }
         quickChatRender(cs);
@@ -4850,7 +5105,7 @@ bool drawCountryFlagWithTip(const char *countryCode) {
     SDL_Texture *flagTex = flagsGetTexture(countryCode);
     if (!flagTex) return false;
     ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
-    if (ImGui::IsItemHovered()) {
+    if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
         const CountryNameEntry *e = (const CountryNameEntry *)bsearch(
             up, kCountryNames, K_COUNTRY_NAMES_SIZE,
             sizeof(kCountryNames[0]), countryNameCmp);
@@ -4868,7 +5123,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
         /* Bot slot: brain icon stands in for the platform badge and the
          * WBN/Steam badges are skipped — a bot can never be either. */
         ImGui::Image((ImTextureID)s_iconBrain, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_AI));
+        imguiHelpTooltip(langGetText(STR_PLAYER_TIP_AI));
         ImGui::SameLine();
     } else {
         SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
@@ -4880,7 +5135,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                                ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
                                ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0, 0, 0, 0), tint);
-            if (ImGui::IsItemHovered()) {
+            if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
                 const char *plat = platformName(clientType);
                 if (flags & PLAYER_FLAG_SUPPORTER) {
                     MessageArgs args = {};
@@ -4898,16 +5153,14 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
              * otherwise — same scheme as the platform icon above. */
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
             imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
+            imguiHelpTooltip(langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
             ImGui::SameLine();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
             ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
-                                                    ? STR_PLAYER_TIP_STEAM_LINKED
-                                                    : STR_PLAYER_TIP_STEAM_BUILD));
+            imguiHelpTooltip(langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
+                                         ? STR_PLAYER_TIP_STEAM_LINKED
+                                         : STR_PLAYER_TIP_STEAM_BUILD));
             ImGui::SameLine();
         }
     }

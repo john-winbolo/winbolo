@@ -300,6 +300,7 @@ int run_claim_resolve_free_ignores_holder_flag(void);
 int run_remove_player_clears_slot(void);
 int run_return_to_lobby_clears_phantom_slot(void);
 int run_last_human_leave_returns_to_lobby(void);
+int run_empty_return_to_lobby_removes_bots_and_unlocks(void);
 int run_humanless_round_does_not_autoend(void);
 int run_host_departs_promotes_lowest_human(void);
 int run_nonhost_departs_keeps_host(void);
@@ -314,6 +315,7 @@ int run_autolock_locks_on_start_wire(void);
 int run_autolock_locks_on_start_inplace(void);
 int run_autolock_join_blocked_after_start(void);
 int run_no_autolock_stays_open_on_start(void);
+int run_autolock_released_on_return_to_lobby(void);
 
 /* Tree-growth water regressions (test_treegrow_no_sea.c). A converged
  * grow target survives serverSimResetGameWorld and, on the next map,

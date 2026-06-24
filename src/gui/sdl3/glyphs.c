@@ -363,7 +363,10 @@ static const GamepadActionRow kGpActions[] = {
   { "glyph_tank_back",    "XboxSeriesX_Left_Stick.png", "PS5_Left_Stick.png", "Switch_Left_Stick.png" },
   { "glyph_tank_left",    "XboxSeriesX_Left_Stick.png", "PS5_Left_Stick.png", "Switch_Left_Stick.png" },
   { "glyph_tank_right",   "XboxSeriesX_Left_Stick.png", "PS5_Left_Stick.png", "Switch_Left_Stick.png" },
-  /* Triggers */
+  /* Triggers.  Retained as Path-B fallback art only — the tutorial now
+     routes {FIRE}/{MINE} through glyphForControllerAction so the shown
+     glyph follows the live fire/mine binding rather than these fixed
+     trigger images. */
   { "glyph_fire", "XboxSeriesX_RT.png", "PS5_R2.png", "Switch_RT.png" },
   { "glyph_mine", "XboxSeriesX_LT.png", "PS5_L2.png", "Switch_LT.png" },
   /* Map scroll — right stick */
@@ -479,4 +482,15 @@ SDL_Texture *glyphForGamepadAxis(SDL_GamepadAxis axis) {
     case GAMEPAD_GLYPH_SET_SWITCH: return load_pathb("switch", sw);
     default:                       return load_pathb("xbox",   xbox);
   }
+}
+
+SDL_Texture *glyphForControllerAction(const char *siAction, GamepadAction sdlAction) {
+  SDL_Texture *t = siAction ? glyphForAction(siAction) : NULL;   /* Path A: Steam */
+  if (t) return t;
+  if (sdlAction < GP_ACT_COUNT) {
+    const GamepadBinding *b = inputGamepadBindingsGet(sdlAction, GP_SLOT_PRIMARY);
+    if (b && b->kind == GP_BIND_BUTTON)  return glyphForGamepadButton((SDL_GamepadButton)b->code);
+    if (b && b->kind == GP_BIND_TRIGGER) return glyphForGamepadAxis((SDL_GamepadAxis)b->code);
+  }
+  return NULL;
 }
