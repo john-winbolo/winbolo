@@ -236,7 +236,7 @@ M.IDS = {
   swerve_dir_choice = { short = "Swerve dir choice",
                         long  = "Sample lines + L/R cover scores for swerve direction pick" },
   swerve_shell_scan = { short = "Swerve shell scan",
-                        long  = "Incoming-shell CPA scan during swerve: lines from each hostile shell to its closest-approach point (red=threat, green=clear) + early-exit clear-tick counter" },
+                        long  = "Incoming-shell scan during swerve, computed in the tank's MOVING frame (relative velocity). Per shell: a line to its closest-approach point — RED = it'll hit (marker lands on the tank, within the orange hit ring), GREEN = misses. Yellow ring = scan radius. Cyan ghost = predicted tank position (our velocity projected forward — the path the dodge math uses). HUD shows armed/unloaded + arm-timeout." },
   bpc_cover_samples = { short = "BPC cover samples",
                         long  = "Blue tile outlines from line_walk during BPC (Basic Pill Capture) cover sweep" },
 

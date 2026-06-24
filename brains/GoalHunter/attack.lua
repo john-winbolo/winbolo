@@ -203,12 +203,10 @@ local function enter_swerve(goal, world, state, info, pmx, pmy, mode)
   -- this swerve starts fresh (no instant re-swerve from the old accumulated hits).
   goal._charge_hits_total = nil
   goal._charge_armour      = nil
-  -- Early-exit tracking: armour baseline + consecutive-clear counter. If no
-  -- hostile shell is on a near-collision course and we aren't taking damage
-  -- for SWERVE_EARLY_EXIT_CLEAR_TICKS in a row, peel off before the full
-  -- duration (see the swerve substate handler).
-  goal._swerve_start_armour = info.armour or 0
-  goal._swerve_clear_ticks  = 0
+  -- Threat-driven lifecycle: the swerve starts UNLOADED and arms the first tick a
+  -- shell is inside the swerve circle (or predicted to land inside it). The
+  -- armed/unloaded/timeout logic lives in the swerve substate handler.
+  goal._swerve_armed = nil
 end
 
 -- Clear the active goal, idle the pathfinder, and wipe ALL transient
@@ -3301,23 +3299,34 @@ function M.update_attack_substate(goal, state, world, info)
     --     walls), else builds them for a solo protected take.
     if state.squad_cmdr then
       -- Just DEFERRED from commander to soldier (role flipped c->s, e.g. yielding
-      -- to a lower-pn ally also opening on this pill)? Our substate may still be a
-      -- commander-only BUILD substate (gather_trees / build_walls / detree / ws_*)
-      -- and _blitz_started is latched from the commander phase. A soldier never
-      -- builds the shield, and the commit gate below only fires from
-      -- plan_position/approach — so without this we FREEZE in gather_trees forever
-      -- while "committed" to the new commander (saw exactly this). Reset to
-      -- plan_position + drop the commander latches so we re-plan and commit as a
-      -- soldier.
-      local _sub = goal.substate or ""
-      if _sub == "gather_trees" or _sub == "build_walls" or _sub == "detree"
-         or _sub:sub(1, 3) == "ws_" then
-        print2(string.format("BLITZ_SOLDIER_RESET t=%d pill=#%s cmdr-sub=%s -> plan_position (deferred c->s)",
-          now, tostring(goal.target_id), _sub))
+      -- to a lower-pn ally also opening on this pill)? goal._blitz_cmdr is latched
+      -- ONLY while we led this take as commander (set when squad_cmdr was nil), so
+      -- its presence now — with squad_cmdr set — means the goal still carries the
+      -- commander's OWN plan: a self-picked standoff + setup point, a latched
+      -- _blitz_started, and possibly a commander-only BUILD substate (gather_trees
+      -- / build_walls / detree / ws_*). Left alone we'd FREEZE in a build substate
+      -- OR drive to the OLD self-picked setup point — the soldier commit below is
+      -- gated on `not _blitz_started`, so it never overrides, and we only re-commit
+      -- much later when we happen to re-enter a build substate (saw a deferred bot
+      -- run its whole commander plan ~450 ticks before correcting). Shed ALL
+      -- commander planning AND the stale standoff/nav target so the soldier
+      -- re-commits to the NEGOTIATED engage spot from plan_position. Clearing
+      -- _blitz_cmdr makes this fire exactly once (the commit below latches
+      -- _blitz_started fresh; squad_blitz_engage_mx — the negotiated spot — is left
+      -- untouched). NOTE: do NOT clear state.squad_blitz_engage_mx here — that's the
+      -- negotiated soldier standoff blitz_commit_negotiated reads next.
+      if goal._blitz_cmdr then
+        print2(string.format("BLITZ_SOLDIER_RESET t=%d pill=#%s cmdr-sub=%s -> plan_position (deferred c->s, drop stale standoff/setup)",
+          now, tostring(goal.target_id), tostring(goal.substate)))
         goal.substate         = "plan_position"
         goal._blitz_started   = nil
         goal._blitz_cmdr      = nil
         goal._wall_build_list = nil
+        goal.standoff_fx, goal.standoff_fy = nil, nil
+        goal.standoff_mx, goal.standoff_my = nil, nil
+        goal.approach_fx, goal.approach_fy = nil, nil
+        goal.approach_mx, goal.approach_my = nil, nil
+        goal._approach_start  = nil
       end
       -- SOLDIER: commit the NEGOTIATED, de-conflicted engage spot as our
       -- standoff. Allow this from plan_position OR approach: with discount-driven
@@ -4478,6 +4487,24 @@ function M.update_attack_substate(goal, state, world, info)
   end
 
   if goal.substate == "approach" then
+    -- Armour minimums are re-enforced EVERY tick on approach, not just at join /
+    -- build-walls entry: if we take fire on the way in and drop below the floor,
+    -- ABORT the take instead of diving in weak.
+    --   * Carrying a pillbox is cautious mode — same floor as commanding
+    --     (SQUAD_COMMANDER_MIN_ARMOUR); don't risk the pill we're holding.
+    --   * The pill-HP-relative unsafe floor (armour_unsafe_for_pill_take) still
+    --     exempts a 2+ tank blitz, where the partner shares the incoming fire.
+    if (info.carried_pills or 0) >= 1
+       and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then
+      clear_attack_goal(state, string.format("approach abort: carrying pill, armour %d < %d",
+        info.armour or 0, C.SQUAD_COMMANDER_MIN_ARMOUR or 30))
+      return
+    end
+    local _appr_unsafe = armour_unsafe_for_pill_take(info, pill and pill.health, blitz_2plus)
+    if _appr_unsafe then
+      clear_attack_goal(state, "approach abort: " .. _appr_unsafe)
+      return
+    end
     local _t_app0 = BRAIN_PROFILE and clock_us() or 0
     if not goal.standoff_mx then
       goal.substate = "plan_position"
@@ -6237,39 +6264,38 @@ function M.update_attack_substate(goal, state, world, info)
         end
       end
     end
-    -- Early swerve exit: track whether any hostile shell is actually heading at
-    -- us and whether we're still taking damage. If neither for a sustained
-    -- window (and the evasive turn has finished), peel off early — the straight
-    -- portion of the swerve only earns its keep while return fire is incoming.
-    local threatened, shell_detail = danger.shells_incoming_near(info, info.tankx, info.tanky)
-    local cur_armour = info.armour or 0
-    local took_damage = cur_armour < (goal._swerve_start_armour or cur_armour)
-    if took_damage then
-      -- Re-baseline so each fresh hit re-arms the counter.
-      goal._swerve_start_armour = cur_armour
-      goal._swerve_clear_ticks  = 0
-    elseif threatened then
-      goal._swerve_clear_ticks = 0
-    else
-      goal._swerve_clear_ticks = (goal._swerve_clear_ticks or 0) + 1
-    end
+    -- Threat-driven swerve lifecycle (armed / unloaded). `active` = at least one
+    -- hostile/neutral shell WILL HIT us — its closest approach computed in our
+    -- MOVING frame (relative velocity) lands within SWERVE_HIT_RADIUS_WU, i.e. a
+    -- red marker sits ON the tank. So `active` already accounts for our dodge:
+    -- once we maneuver out of every shell's path, nothing hits and active drops.
+    --   * UNLOADED at start. If nothing is going to hit us within SWERVE_ARM_TIMEOUT
+    --     (~1s), no fire is connecting -> finish (peel off, nothing to dodge).
+    --   * ARMS the first tick `active` is true (a shot will hit on our current line).
+    --   * Once ARMED: keep swerving while `active`; finish the instant it isn't —
+    --     no red marker on the tank means we've dodged them all.
+    local active, shell_detail = danger.shells_incoming_near(info, info.tankx, info.tanky)
     goal._swerve_shell_detail = shell_detail  -- stashed for the viz draw below
-    -- Ticks of swerve already spent = original total minus what's left. We don't
-    -- store the original total, so reconstruct elapsed from _swerve_start.
     local elapsed = now - (goal._swerve_start or now)
-    if (goal._swerve_turn_ticks_left or 0) <= 0
-       and elapsed >= (C.SWERVE_EARLY_EXIT_MIN_TICKS or 30)
-       and (goal._swerve_clear_ticks or 0) >= (C.SWERVE_EARLY_EXIT_CLEAR_TICKS or 20)
-       and (goal._swerve_ticks_left or 0) > 1 then
-      print(string.format(TAG ..
-        " ATTACK: swerve early-exit — %d clear ticks (no incoming shell, no damage), %d ticks would have remained",
-        goal._swerve_clear_ticks or 0, goal._swerve_ticks_left or 0))
-      goal._swerve_ticks_left = 0   -- fall through to the normal completion block
+    local finish = false
+    if not goal._swerve_armed then
+      if active then
+        goal._swerve_armed = true
+        if BRAIN_DEBUG_MODE then print2(string.format("SWERVE_ARMED t=%d after %dt", now, elapsed)) end
+      elseif elapsed >= (C.SWERVE_ARM_TIMEOUT_TICKS or 50) then
+        finish = true
+        if BRAIN_DEBUG_MODE then print2(string.format("SWERVE_TIMEOUT t=%d — never armed in %dt", now, elapsed)) end
+      end
+    elseif not active then
+      finish = true
+      if BRAIN_DEBUG_MODE then print2(string.format("SWERVE_DISARM t=%d — threat cleared", now)) end
     end
-    goal._swerve_ticks_left = (goal._swerve_ticks_left or 1) - 1
+    -- The evasive TURN portion still counts down (it steers the dodge) but no
+    -- longer gates completion — threat presence does.
     if (goal._swerve_turn_ticks_left or 0) > 0 then
       goal._swerve_turn_ticks_left = goal._swerve_turn_ticks_left - 1
     end
+    goal._swerve_ticks_left = finish and 0 or 1
     if goal._swerve_ticks_left <= 0 then
       -- Swerve done — check if pill died.
       -- Detailed diagnostic logged BEFORE the dead-check so we can see
@@ -6377,15 +6403,28 @@ function M.update_attack_substate(goal, state, world, info)
       viz.hud_text("hud_swerve_debug", 10, 120, "_swerve_turn_ticks_left=" .. tostring(goal._swerve_turn_ticks_left), "topleft", 255, 255, 100, 255)
       viz.hud_text("hud_swerve_debug", 10, 140, "_swerve_pill_dead=" .. tostring(goal._swerve_pill_dead), "topleft", 255, 255, 100, 255)
     end
-    -- Incoming-shell CPA scan: a line from each hostile shell to its
-    -- closest-approach point against our tank. Red = threat (CPA within
-    -- SWERVE_SHELL_NEAR_WU, keeps the swerve alive), green = clear miss.
-    -- A ring at our tank shows the near radius; HUD shows the clear-tick
-    -- counter feeding the early-exit decision.
+    -- Incoming-shell scan (relative frame): for each hostile/neutral shell, a line
+    -- to its closest-approach point computed against our MOVING tank. RED = it'll
+    -- HIT (relative CPA within SWERVE_HIT_RADIUS_WU → marker sits on the tank),
+    -- GREEN = it misses. Yellow ring = scan radius; orange ring = the hit zone.
+    -- The cyan ghost is where we PREDICT the tank to be (our velocity projected
+    -- forward) — the path the dodge math projects against.
     if BRAIN_DEBUG_MODE and viz.is_on("swerve_shell_scan") then
       local tcx = info.tankx / 256.0
       local tcy = info.tanky / 256.0
-      viz.circle("swerve_shell_scan", tcx, tcy, (C.SWERVE_SHELL_NEAR_WU or 200) / 256.0, 255, 255, 0, 90)
+      viz.circle("swerve_shell_scan", tcx, tcy, (C.SWERVE_SHELL_NEAR_WU or 400) / 256.0, 255, 255, 0, 90)
+      viz.circle("swerve_shell_scan", tcx, tcy, (C.SWERVE_HIT_RADIUS_WU or 160) / 256.0, 255, 140, 0, 150)
+      -- Predicted tank position: project our CURRENT velocity over the CPA horizon
+      -- (tank advances info.speed/8 WU per sim step — the SAME term the relative
+      -- CPA subtracts). If this ghost's heading/length looks wrong, the tank
+      -- velocity feeding the dodge is wrong.
+      local _tstep = (info.speed or 0) / 8
+      local _hz    = C.SHELL_MAX_STEPS or 64
+      local _ptx = (info.tankx + U.bsin_f(info.direction or 0) * _tstep * _hz) / 256.0
+      local _pty = (info.tanky - U.bcos_f(info.direction or 0) * _tstep * _hz) / 256.0
+      viz.line("swerve_shell_scan", tcx, tcy, _ptx, _pty, 120, 200, 255, 160)
+      viz.circle("swerve_shell_scan", _ptx, _pty, 0.5, 120, 200, 255, 200)
+      viz.text("swerve_shell_scan", _ptx, _pty - 0.7, "predicted tank", "center", 120, 200, 255, 220, 0.35)
       local detail = goal._swerve_shell_detail
       if detail then
         for _, s in ipairs(detail) do
@@ -6396,9 +6435,9 @@ function M.update_attack_substate(goal, state, world, info)
         end
       end
       viz.hud_text("swerve_shell_scan", 10, 160,
-        string.format("swerve clear=%d/%d  %s",
-          goal._swerve_clear_ticks or 0, C.SWERVE_EARLY_EXIT_CLEAR_TICKS or 20,
-          (goal._swerve_clear_ticks or 0) >= (C.SWERVE_EARLY_EXIT_CLEAR_TICKS or 20) and "EXIT-ARMED" or "dodging"),
+        string.format("swerve %s  active=%s%s",
+          goal._swerve_armed and "ARMED" or "unloaded", tostring(active),
+          (not goal._swerve_armed) and string.format("  (arm-timeout %d/%d)", now - (goal._swerve_start or now), C.SWERVE_ARM_TIMEOUT_TICKS or 50) or ""),
         "topleft", 255, 200, 100, 255)
     end
     -- During swerve: do NOT check pill health or allow any interrupts.

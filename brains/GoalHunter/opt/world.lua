@@ -308,6 +308,7 @@ function M.update(world, info, tick)
       p._ally_only   = nil
       p._kw_ally     = nil
       p._synth_carry = nil   -- seen deployed first-hand → no longer a relayed carry
+      p.carrier      = nil   -- ...nor in any ally's tank — seeing it on the ground is proof it dropped (e.g. its carrier died). Without this a dead-carrier pill stays "in_tank" in filter_capture_pill and never becomes a ground take.
       -- One reindex covers new / move / redeploy-after-capture: a visible pillbox
       -- is always deployed here, so it lands at its current tile and any stale
       -- (e.g. just-uncarried) entry elsewhere is pulled.

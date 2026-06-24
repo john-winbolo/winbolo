@@ -295,11 +295,13 @@ M.REFUEL_DANGER_WEIGHT  = 20
 -- in cost formulas get pumped to bias hard toward safer routes /
 -- targets.
 M.CAUTIOUS_MODE_MULT = 5
--- Discount applied to refuel_at_base cost when the base's tile
--- danger value is 0 (truly safe refuel spot).  Encourages choosing
--- the safest available base when several refuels would otherwise
--- tie on cost.
-M.REFUEL_NO_DANGER_DISCOUNT = 0.75
+-- PENALTY applied to refuel_at_base cost when the base's tile danger value is
+-- > 0 (an EXPOSED refuel spot). Multiplies the final cost so refueling out in
+-- the open is less attractive; a truly safe base (danger 0) keeps its raw cost
+-- (no discount). Was a 0.75 safe-DISCOUNT, which made refuel too attractive
+-- overall — flipped to a 1/0.75 unsafe-penalty (same safe:unsafe ratio, higher
+-- absolute cost). ~1.33.
+M.REFUEL_DANGER_PENALTY = 1 / 0.75
 M.FLEE_DANGER_WEIGHT    = 80
 -- Minimum score improvement required to switch from the current refuel/flee
 -- base to a different one.  Prevents flip-flopping between two bases that
@@ -556,19 +558,22 @@ M.SWERVE_DEFENSIVE_TURN_TICKS  = 40
 -- actually heading at us and we aren't taking damage. The swerve's whole point
 -- is dodging the pill's predictive return fire; if nothing is coming near, the
 -- remaining straight portion is wasted time.
---   SWERVE_SHELL_NEAR_WU    — a hostile shell whose closest-point-of-approach to
---                             our tank is within this many WU counts as incoming
---                             (tank hit box is 128 WU; 400 ≈ 1.5 tiles of margin
---                             so we keep dodging shells passing reasonably near).
---   SWERVE_EARLY_EXIT_CLEAR_TICKS — consecutive clear ticks (no incoming shell,
---                             no damage taken) required before peeling off. Sized
---                             to span a pill reload cycle so a clear window means
---                             the pill genuinely isn't connecting.
---   SWERVE_EARLY_EXIT_MIN_TICKS — never early-exit before this many ticks of
---                             swerve have elapsed (let the evasive turn finish).
+--   SWERVE_SHELL_NEAR_WU    — scan/awareness ring (viz): shells whose RELATIVE
+--                             closest-approach to us is within this is shown.
+--   SWERVE_HIT_RADIUS_WU    — the actual "will it HIT me" test: a shell whose
+--                             relative closest-approach lands within this many WU
+--                             of us connects, given how we're currently moving.
+--                             The swerve stays ARMED while any shell will hit and
+--                             ends the instant none do (we've dodged). Tank hit box
+--                             is ~128 WU; 160 keeps a small safety margin.
+--   SWERVE_ARM_TIMEOUT_TICKS — the swerve starts UNLOADED; if no shell is inside
+--                             the circle (or predicted to land inside it) within
+--                             this many ticks, nothing's incoming so the swerve
+--                             finishes. Once ARMED it runs until the threat clears.
+--                             ~1s @ 50Hz. (Replaces the old clear-tick early-exit.)
 M.SWERVE_SHELL_NEAR_WU         = 400
-M.SWERVE_EARLY_EXIT_CLEAR_TICKS = 20
-M.SWERVE_EARLY_EXIT_MIN_TICKS   = 30
+M.SWERVE_HIT_RADIUS_WU         = 160
+M.SWERVE_ARM_TIMEOUT_TICKS     = 50
 
 -- Pill placement attack tactic
 -- Place a friendly pill 1-5 tiles from a hostile pill.  The placed pill

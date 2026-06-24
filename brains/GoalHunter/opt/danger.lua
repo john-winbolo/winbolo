@@ -233,46 +233,62 @@ end
 -- Cheap: a handful of shells, O(1) math each. radius defaults to
 -- SWERVE_SHELL_NEAR_WU.
 -- -------------------------------------------------------------------------
+-- Returns (will_hit_any, detail). For each hostile/neutral shell we compute its
+-- closest approach to the tank IN THE TANK'S MOVING FRAME (relative velocity =
+-- shell_vel − tank_vel), so a shell we're successfully dodging reads as a MISS.
+--   * threat (red) = that relative closest approach lands within SWERVE_HIT_RADIUS_WU
+--     of us → it WILL hit given how we're moving. The marker (cx,cy) is the
+--     closest-approach point drawn around our CURRENT position, so it sits ON the
+--     tank exactly when the shot connects. "no red marker on the tank" = dodged.
+--   * radius is just the scan/awareness ring (viz cull); the hit test is tighter.
+-- All velocities are WU per SIM STEP (t in sim steps, matching SHELL_SPEED).
 function M.shells_incoming_near(info, px, py, radius)
-  radius = radius or C.SWERVE_SHELL_NEAR_WU or 200
+  radius = radius or C.SWERVE_SHELL_NEAR_WU or 400
   local r2 = radius * radius
-  local threatened = false
+  local hit_r2 = (C.SWERVE_HIT_RADIUS_WU or 160); hit_r2 = hit_r2 * hit_r2
+  local will_hit = false
   local detail = {}
   if not info.objects then return false, detail end
+  -- Our OWN velocity from instantaneous heading + speed (a direct engine field —
+  -- NO laggy position-delta sampling): the tank advances `engine_speed` WU/tick
+  -- (utilCalcDistance), engine_speed = info.speed/4, /2 again for per-sim-step →
+  -- info.speed/8. Same angle convention as the shell (bsin_f, -bcos_f: 0=N,64=E).
+  local tstep = (info.speed or 0) / 8
+  local tvx =  U.bsin_f(info.direction or 0) * tstep
+  local tvy = -U.bcos_f(info.direction or 0) * tstep
   for _, ob in ipairs(info.objects) do
-    -- Any shell that can actually damage us keeps the swerve alive: hostile AND
-    -- neutral both hurt our tank (a neutral pillbox fires on everyone). Only our
-    -- own / friendly shells are safe. Filtering to hostile-only let a NEUTRAL
-    -- pill's return fire sit inside the ring while the swerve ended anyway.
+    -- Any shell that can damage us counts: hostile AND neutral both hurt our tank
+    -- (a neutral pillbox fires on everyone). Our own / friendly shells are safe.
     if ob.type == OBJECT_SHOT
        and ((ob.info & OBJECT_HOSTILE) ~= 0 or (ob.info & OBJECT_NEUTRAL) ~= 0) then
-      -- Per-step velocity in WU (bsin_f/bcos_f return the unit vector;
-      -- × SHELL_SPEED gives WU advanced per simulation step ≈ per tick).
-      local vx =  U.bsin_f(ob.direction) * C.SHELL_SPEED
-      local vy = -U.bcos_f(ob.direction) * C.SHELL_SPEED
+      -- RELATIVE velocity (shell − tank), WU per sim step.
+      local vx =  U.bsin_f(ob.direction) * C.SHELL_SPEED - tvx
+      local vy = -U.bcos_f(ob.direction) * C.SHELL_SPEED - tvy
       local r0x = ob.x - px
       local r0y = ob.y - py
       local vv  = vx * vx + vy * vy
-      -- t* = projection of -r0 onto v, clamped to the shell's remaining flight.
+      -- t* = projection of -r0 onto the RELATIVE velocity, clamped to remaining flight.
       local t = 0
       if vv > 0 then
         t = -(r0x * vx + r0y * vy) / vv
         if t < 0 then t = 0 elseif t > C.SHELL_MAX_STEPS then t = C.SHELL_MAX_STEPS end
       end
-      local cx = ob.x + vx * t
-      local cy = ob.y + vy * t
-      local ddx = cx - px
-      local ddy = cy - py
-      local d2 = ddx * ddx + ddy * ddy
-      local is_threat = d2 <= r2
-      if is_threat then threatened = true end
-      detail[#detail + 1] = {
-        sx = ob.x, sy = ob.y, cx = cx, cy = cy,
-        dist = math.sqrt(d2), threat = is_threat,
-      }
+      -- Closest-approach OFFSET from us in our moving frame; |offset| = miss dist.
+      -- Marker = our pos + offset → lands ON the tank when the shell will hit.
+      local offx = r0x + vx * t
+      local offy = r0y + vy * t
+      local d2 = offx * offx + offy * offy
+      if d2 <= r2 then   -- within the scan ring → show it + test for a hit
+        local is_hit = d2 <= hit_r2
+        if is_hit then will_hit = true end
+        detail[#detail + 1] = {
+          sx = ob.x, sy = ob.y, cx = px + offx, cy = py + offy,
+          dist = math.sqrt(d2), threat = is_hit,
+        }
+      end
     end
   end
-  return threatened, detail
+  return will_hit, detail
 end
 
 -- -------------------------------------------------------------------------

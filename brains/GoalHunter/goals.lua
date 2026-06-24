@@ -3964,12 +3964,13 @@ local function get_formula_inner(e)
         _d_urgency, _d_def, _d_fill, _d_lgm)
     end
 
-    local _safe_token = e._safe_refuel
-      and string.format(" × safe{%.2f}", C.REFUEL_NO_DANGER_DISCOUNT) or ""
-    local _safe_detail = e._safe_refuel
+    local _danger_pen = C.REFUEL_DANGER_PENALTY or (1 / 0.75)
+    local _safe_token = (not e._safe_refuel)
+      and string.format(" × danger{%.2f}", _danger_pen) or ""
+    local _safe_detail = (not e._safe_refuel)
       and string.format(
-        "|safe:danger_val=0 → multiply final cost by %.2f[REFUEL_NO_DANGER_DISCOUNT]",
-        C.REFUEL_NO_DANGER_DISCOUNT)
+        "|danger:danger_val>0 (exposed base) → multiply final cost by %.2f[REFUEL_DANGER_PENALTY]",
+        _danger_pen)
       or ""
     local _mine_token = (e._mine_cost and e._mine_cost > 0)
       and string.format(" + mine{%.0f}", e._mine_cost) or ""
@@ -4613,12 +4614,14 @@ function M.step_eval_queue(state, world, info)
       -- negative and dominate cheap cross-pool goals (dead pills etc).
       local score = raw_cost + C.REFUEL_BASE_COST + danger_cost + stale_cost + contested_cost + hysteresis_cost + depletion_cost
       score = math.max(score, C.REFUEL_BASE_COST)
-      -- Safe-refuel discount: when this base sits in zero-danger territory
-      -- (no pill / no tank threat), trim the cost so it wins ties against
-      -- bases with even mild exposure.  Compounds with everything above.
+      -- Danger PENALTY (was a safe discount): an EXPOSED base (danger_val > 0)
+      -- multiplies its cost so refueling out in the open is less attractive — a
+      -- safe base keeps its raw cost. Same safe:unsafe ratio as the old 0.75
+      -- discount but a higher absolute cost, so refuel doesn't out-compete real
+      -- goals as easily. Compounds with everything above.
       local _safe_refuel = (danger_val == 0)
-      if _safe_refuel then
-        score = score * C.REFUEL_NO_DANGER_DISCOUNT
+      if not _safe_refuel then
+        score = score * (C.REFUEL_DANGER_PENALTY or (1 / 0.75))
       end
 
       -- Ally-claimed SOFT penalty: +ALLY_CLAIMED_REFUEL_PENALTY for EACH ally
