@@ -676,10 +676,12 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         /* Process SDL events */
         while (SDL_PollEvent(&sdlEvent)) {
             /* Game-view-mode toggle. Must run BEFORE ImGui sees the event so
-             * ImGui doesn't swallow the backtick keypress. Default zoom 3×
-             * per plans/ctrailer.md §Decisions §4 — Phase E adds a selector. */
+             * ImGui doesn't swallow the backtick keypress. Default zoom 3×.
+             * Allowed in both the standalone viewer and the embedded
+             * "Watch a Log" flow — game-view borrows whichever window is
+             * active and restores it on toggle-off. */
             if (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
-                sdlEvent.key.key == SDLK_GRAVE && g_lv->isLoaded && g_lv->ownsWindow) {
+                sdlEvent.key.key == SDLK_GRAVE && g_lv->isLoaded) {
                 if (!g_lv->gameView) {
                     g_lv->savedUseTeamColours = g_lv->useTeamColours;
                     g_lv->useTeamColours = FALSE;
