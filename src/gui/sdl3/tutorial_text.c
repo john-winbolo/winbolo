@@ -20,6 +20,8 @@
 #include "../ui_mode.h"
 #include "../../common/wb_log.h"
 #include "glyphs.h"
+#include "input_gamepad.h"
+#include "../../steam/steam_input_actions.h"
 
 /* Global key-binding struct; defined in winbolo.c (and the
  * platform main_*.c files). */
@@ -47,58 +49,69 @@ static int kt_scroll_right(void) { return keys.kiScrollRight; }
 static int kt_dismiss(void)      { return SDL_SCANCODE_RETURN; }
 
 typedef struct {
-  const char  *token;
-  KeyAccessor  get;
-  const char  *gpAction;   /* glyph_* pseudo-action for gamepad */
+  const char   *token;
+  KeyAccessor   get;        /* keyboard scancode accessor (NULL for controller-only tokens) */
+  const char   *gpAction;   /* Path B glyph_* pseudo-action (NULL if none) */
+  const char   *siAction;   /* Steam Input action name (NULL -> skip Path A) */
+  GamepadAction sdlAction;  /* live SDL binding action (GP_ACT_COUNT -> none) */
 } TokenEntry;
 
 static const TokenEntry kTokens[] = {
-  { "{ACCEL}",        kt_accel,        "glyph_tank_forward"  },
-  { "{BRAKE}",        kt_brake,        "glyph_tank_back"     },
-  { "{LEFT}",         kt_left,         "glyph_tank_left"     },
-  { "{RIGHT}",        kt_right,        "glyph_tank_right"    },
-  { "{FIRE}",         kt_fire,         "glyph_fire"          },
-  { "{MINE}",         kt_mine,         "glyph_mine"          },
-  { "{SCROLL_UP}",    kt_scroll_up,    "glyph_scroll_up"     },
-  { "{SCROLL_DOWN}",  kt_scroll_down,  "glyph_scroll_down"   },
-  { "{SCROLL_LEFT}",  kt_scroll_left,  "glyph_scroll_left"   },
-  { "{SCROLL_RIGHT}", kt_scroll_right, "glyph_scroll_right"  },
-  { "{DISMISS}",      kt_dismiss,      "glyph_dismiss"       },
+  { "{ACCEL}",        kt_accel,        "glyph_tank_forward",  NULL,                          GP_ACT_COUNT },
+  { "{BRAKE}",        kt_brake,        "glyph_tank_back",     NULL,                          GP_ACT_COUNT },
+  { "{LEFT}",         kt_left,         "glyph_tank_left",     NULL,                          GP_ACT_COUNT },
+  { "{RIGHT}",        kt_right,        "glyph_tank_right",    NULL,                          GP_ACT_COUNT },
+  { "{FIRE}",         kt_fire,         "glyph_fire",          SI_ACTION_FIRE,                GP_ACT_FIRE },
+  { "{MINE}",         kt_mine,         "glyph_mine",          SI_ACTION_MINE,                GP_ACT_MINE },
+  { "{SCROLL_UP}",    kt_scroll_up,    "glyph_scroll_up",     NULL,                          GP_ACT_COUNT },
+  { "{SCROLL_DOWN}",  kt_scroll_down,  "glyph_scroll_down",   NULL,                          GP_ACT_COUNT },
+  { "{SCROLL_LEFT}",  kt_scroll_left,  "glyph_scroll_left",   NULL,                          GP_ACT_COUNT },
+  { "{SCROLL_RIGHT}", kt_scroll_right, "glyph_scroll_right",  NULL,                          GP_ACT_COUNT },
+  { "{DISMISS}",      kt_dismiss,      "glyph_dismiss",       SI_ACTION_MENU_ACCEPT,         GP_ACT_COUNT },
+  { "{BUILD_MODE}",   NULL,            NULL,                  SI_ACTION_BUILD_CURSOR_TOGGLE, GP_ACT_BUILD_CURSOR_TOGGLE },
+  { "{BUILD_PLACE}",  NULL,            NULL,                  SI_ACTION_BUILD_CONFIRM,       GP_ACT_BUILD_CONFIRM },
+  { "{BUILD_TOOL}",   NULL,            NULL,                  SI_ACTION_BUILD_NEXT,          GP_ACT_BUILD_NEXT },
 };
 static const int kTokenCount = (int)(sizeof(kTokens) / sizeof(kTokens[0]));
 
-/* Desktop -> touch sibling lookup. Strings whose desktop wording
- * references hardware controls (keys, mouse, keypad) get a touch
- * sibling; the rest fall through unchanged. */
+/* Desktop -> input-variant lookup. Strings whose desktop wording
+ * references hardware controls (keys, mouse, keypad) get touch and/or
+ * controller siblings; the rest fall through unchanged. A 0 in a slot
+ * means "no variant — reuse the desktop string". */
 typedef struct {
   uint16_t desktop;
-  uint16_t touch;
-} TouchSibling;
+  uint16_t touch;       /* 0 = no touch variant, reuse desktop */
+  uint16_t controller;  /* 0 = no controller variant, reuse desktop */
+} StringVariants;
 
-static const TouchSibling kTouchSiblings[] = {
-  { STR_TUTORIAL01,       STR_TUTORIAL01_TOUCH       },
-  { STR_TUTORIAL02,       STR_TUTORIAL02_TOUCH       },
-  { STR_TUTORIAL03,       STR_TUTORIAL03_TOUCH       },
-  { STR_TUTORIAL04,       STR_TUTORIAL04_TOUCH       },
-  { STR_TUTORIAL05,       STR_TUTORIAL05_TOUCH       },
-  { STR_TUTORIAL06,       STR_TUTORIAL06_TOUCH       },
-  { STR_TUTORIAL10,       STR_TUTORIAL10_TOUCH       },
-  { STR_TUTORIAL14,       STR_TUTORIAL14_TOUCH       },
-  { STR_TUTORIAL16,       STR_TUTORIAL16_TOUCH       },
-  { STR_TUTORIAL18,       STR_TUTORIAL18_TOUCH       },
-  { STR_TUTORIAL19,       STR_TUTORIAL19_TOUCH       },
-  { STR_TUTORIAL21,       STR_TUTORIAL21_TOUCH       },
-  { STR_TUTORIAL_START01, STR_TUTORIAL_START01_TOUCH },
-  { STR_TUTORIAL_START04, STR_TUTORIAL_START04_TOUCH },
+static const StringVariants kStringVariants[] = {
+  { STR_TUTORIAL01,       STR_TUTORIAL01_TOUCH,       STR_TUTORIAL01_CTRL       },
+  { STR_TUTORIAL02,       STR_TUTORIAL02_TOUCH,       STR_TUTORIAL02_CTRL       },
+  { STR_TUTORIAL03,       STR_TUTORIAL03_TOUCH,       STR_TUTORIAL03_CTRL       },
+  { STR_TUTORIAL04,       STR_TUTORIAL04_TOUCH,       STR_TUTORIAL04_CTRL       },
+  { STR_TUTORIAL05,       STR_TUTORIAL05_TOUCH,       STR_TUTORIAL05_CTRL       },
+  { STR_TUTORIAL06,       STR_TUTORIAL06_TOUCH,       STR_TUTORIAL06_CTRL       },
+  { STR_TUTORIAL10,       STR_TUTORIAL10_TOUCH,       STR_TUTORIAL10_CTRL       },
+  { STR_TUTORIAL14,       STR_TUTORIAL14_TOUCH,       STR_TUTORIAL14_CTRL       },
+  { STR_TUTORIAL16,       STR_TUTORIAL16_TOUCH,       STR_TUTORIAL16_CTRL       },
+  { STR_TUTORIAL18,       STR_TUTORIAL18_TOUCH,       STR_TUTORIAL18_CTRL       },
+  { STR_TUTORIAL19,       STR_TUTORIAL19_TOUCH,       STR_TUTORIAL19_CTRL       },
+  { STR_TUTORIAL21,       STR_TUTORIAL21_TOUCH,       STR_TUTORIAL21_CTRL       },
+  { STR_TUTORIAL_START01, STR_TUTORIAL_START01_TOUCH, 0                         },
+  { STR_TUTORIAL_START04, STR_TUTORIAL_START04_TOUCH, STR_TUTORIAL_START04_CTRL },
 };
-static const int kTouchSiblingCount =
-    (int)(sizeof(kTouchSiblings) / sizeof(kTouchSiblings[0]));
+static const int kStringVariantCount =
+    (int)(sizeof(kStringVariants) / sizeof(kStringVariants[0]));
 
 static uint16_t pickStringId(uint16_t mid) {
   int i;
-  if (!uiModeIsTablet()) return mid;
-  for (i = 0; i < kTouchSiblingCount; i++) {
-    if (kTouchSiblings[i].desktop == mid) return kTouchSiblings[i].touch;
+  for (i = 0; i < kStringVariantCount; i++) {
+    if (kStringVariants[i].desktop != mid) continue;
+    if (uiShouldUseControllerMode())
+      return kStringVariants[i].controller ? kStringVariants[i].controller : mid;
+    if (uiModeIsTablet())
+      return kStringVariants[i].touch ? kStringVariants[i].touch : mid;
+    return mid;
   }
   return mid;
 }
@@ -147,7 +160,13 @@ static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
                              int *bufPos, const TokenEntry *t) {
   if (idx >= max) return idx;
   if (uiShouldUseControllerMode()) {
-    SDL_Texture *g = glyphForGamepadAction(t->gpAction);
+    SDL_Texture *g = NULL;
+    if (t->siAction || t->sdlAction < GP_ACT_COUNT) {
+      g = glyphForControllerAction(t->siAction, t->sdlAction);   /* discrete: backend-correct */
+    }
+    if (!g && t->gpAction) {
+      g = glyphForGamepadAction(t->gpAction);   /* analog stick art, or legacy fallback on a discrete miss */
+    }
     if (g) {
       out[idx].kind        = TUTORIAL_SEG_GLYPH_PNG;
       out[idx].text        = NULL;
@@ -155,11 +174,11 @@ static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
       out[idx].keycapLabel = NULL;
       return idx + 1;
     }
-    /* Should not happen — table is exhaustive.  Log once and fall
-       through to a token-text keycap so the dialog still renders. */
+    /* Nothing resolved (e.g. a build token with no Steam + no glyph art).
+       Render a token-text keycap so the dialog still shows something. */
     static bool warned = false;
     if (!warned) {
-      WB_LOG_WARN(WB_LOG_CAT_GUI, "tutorial: no gamepad glyph for '%s'", t->gpAction);
+      WB_LOG_WARN(WB_LOG_CAT_GUI, "tutorial: no controller glyph for '%s'", t->token);
       warned = true;
     }
     const char *label = bufAppend(bufPos, t->token);
@@ -171,7 +190,7 @@ static int emitGlyphForToken(TutorialSeg *out, int idx, int max,
     return idx + 1;
   }
   /* Keyboard path */
-  int sc = t->get();
+  int sc = t->get ? t->get() : 0;
   SDL_Texture *g = (sc > 0) ? glyphForKeyboardScancode((SDL_Scancode)sc) : NULL;
   if (g) {
     out[idx].kind        = TUTORIAL_SEG_GLYPH_PNG;

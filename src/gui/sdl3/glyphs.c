@@ -363,7 +363,10 @@ static const GamepadActionRow kGpActions[] = {
   { "glyph_tank_back",    "XboxSeriesX_Left_Stick.png", "PS5_Left_Stick.png", "Switch_Left_Stick.png" },
   { "glyph_tank_left",    "XboxSeriesX_Left_Stick.png", "PS5_Left_Stick.png", "Switch_Left_Stick.png" },
   { "glyph_tank_right",   "XboxSeriesX_Left_Stick.png", "PS5_Left_Stick.png", "Switch_Left_Stick.png" },
-  /* Triggers */
+  /* Triggers.  Retained as Path-B fallback art only — the tutorial now
+     routes {FIRE}/{MINE} through glyphForControllerAction so the shown
+     glyph follows the live fire/mine binding rather than these fixed
+     trigger images. */
   { "glyph_fire", "XboxSeriesX_RT.png", "PS5_R2.png", "Switch_RT.png" },
   { "glyph_mine", "XboxSeriesX_LT.png", "PS5_L2.png", "Switch_LT.png" },
   /* Map scroll — right stick */
