@@ -1256,6 +1256,22 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
     return;
   }
 
+  /* Tutorial: deterministic start gated on player progress. Unlike
+     pendingStartIdx this is not consumed — every tutorial respawn uses it. */
+  if (sim->isTutorial) {
+    BYTE idx = sim->tutorialStartIdx;
+    BYTE rx;
+    BYTE ry;
+    BYTE bt;
+    if (idx >= (*value)->numStarts) idx = 0;   /* clamp to a valid start */
+    startsScatterFind(sim, (*value)->item[idx].x, (*value)->item[idx].y, &rx, &ry);
+    bt = startsConvertDir((*value)->item[idx].dir);
+    *x = rx;
+    *y = ry;
+    *dir = (TURNTYPE)(bt * START_TIMES_16);
+    return;
+  }
+
   if (playerNum < MAX_TANKS && sim->pendingStartIdx[playerNum] < (*value)->numStarts) {
     BYTE idx = sim->pendingStartIdx[playerNum];
     BYTE rx;

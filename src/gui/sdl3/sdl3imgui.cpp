@@ -95,6 +95,7 @@ extern "C" {
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/imgui_deck_pause.h"
+#include "dialogs/imgui_tutorial_overlay.h"
 #include "dialogs/imgui_keyboard.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
@@ -203,6 +204,7 @@ extern "C" void windowSuspendBackground(struct ClientSim *cs);
 extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
+extern "C" void windowTutorialPause(struct ClientSim *cs, bool active);
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -4125,6 +4127,7 @@ static bool any_popup_modal_open(void) {
     if (g && g->OpenPopupStack.Size > 0)
         return true;
     return deckPauseIsOpen() ||
+           tutorialOverlayIsOpen() ||
            quickChatIsOpen() ||
            s_showSendMsg ||
            s_showPlayersPanel ||
@@ -4541,6 +4544,19 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             if (nowDeckPause != s_lastDeckPause) {
                 windowDeckPause(cs, nowDeckPause);
                 s_lastDeckPause = nowDeckPause;
+            }
+        }
+        /* Tutorial message overlay — same in-loop pattern as the pause
+           menu, so the input gate suspends play and the solo-pause path
+           freezes the sim while a message is up.  Edge-detect open/close
+           to toggle the freeze exactly once each way. */
+        tutorialOverlayRender(cs);
+        {
+            static bool s_lastTutorialPause = false;
+            bool nowTutorialPause = tutorialOverlayIsOpen();
+            if (nowTutorialPause != s_lastTutorialPause) {
+                windowTutorialPause(cs, nowTutorialPause);
+                s_lastTutorialPause = nowTutorialPause;
             }
         }
         quickChatRender(cs);

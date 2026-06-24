@@ -64,6 +64,15 @@ int imguiMessageBoxRich(const char *title,
 /* Convenience: blocking OK-only info message box (legacy API). */
 void imguiMessageBox(const char *message, const char *title);
 
+/* Render the rich (segment) body plus a centred OK button into the
+ * CURRENT ImGui window/popup, using the current (main) context — the
+ * in-loop counterpart to imguiMessageBoxRich's blocking owner-draw.
+ * The caller has already begun the popup; this only fills its content.
+ * Returns true on the frame the OK button is activated.  `*focusBtn`
+ * true requests keyboard focus on OK this frame, then is cleared. */
+bool imguiRichSegmentsBody(const TutorialSeg *segments, int segmentCount,
+                           bool *focusBtn);
+
 #ifdef __cplusplus
 }
 #endif

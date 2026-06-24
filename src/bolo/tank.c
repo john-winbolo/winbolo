@@ -1355,6 +1355,9 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->bumpY = 0;
     (*value)->residualSpeed = 0;
     (*value)->waterCount = 0;
+    if (sim->isTutorial && sim->tutorialStartIdx == 1) {
+      sim->tutorialRespawn1Pending = TRUE;
+    }
   }
 }
 
@@ -1552,10 +1555,21 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
             (*value)->speed = 0;
           }
         }
-      } else if (newbmy < bmy && tutorialIsStopPos(newbmy)) {
-        /* Server-authoritative stop: only on row entry, so the player
-         * isn't pinned on the trigger row once the dialog closes. */
-        (*value)->speed = 0;
+      } else {
+        /* Server-authoritative stop: halt only at a stop row the player
+         * hasn't passed yet (newbmy < tutorialMinRow), and only on row entry
+         * so the tank isn't pinned once the dialog closes. After a death the
+         * tank respawns higher and drives back down through already-seen rows;
+         * those must not stop it again — only rows deeper than any reached so
+         * far (i.e. messages not yet shown) do. */
+        if (newbmy < bmy && newbmy < sim->tutorialMinRow &&
+            tutorialIsStopPos(newbmy)) {
+          (*value)->speed = 0;
+        }
+        /* Record the deepest row reached so passed stops stay passed. */
+        if (newbmy < sim->tutorialMinRow) {
+          sim->tutorialMinRow = newbmy;
+        }
       }
     }
     if (isServer) {
