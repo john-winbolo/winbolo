@@ -575,6 +575,11 @@ function M.refresh()
 end
 
 function M.is_on(viz_id)
+  -- Master gate: visualizers exist only in debug mode. In production — or a
+  -- base brain run without -braindebug — every viz query no-ops here, so the
+  -- brain also skips any viz-only precompute it guards with is_on. (Phrased
+  -- "if not" so lua_strip's "if BRAIN_DEBUG_MODE" block matcher leaves it.)
+  if not BRAIN_DEBUG_MODE then return false end
   -- Fast path: if refresh() has populated the cache, answer in O(1).
   local cached = _on[viz_id]
   if cached ~= nil then return cached end
@@ -663,6 +668,7 @@ end
 -- during playback when V checkboxes change. Brain code that wants to
 -- skip expensive precompute should still call M.is_on(viz_id) first.
 function M.text(viz_id, ...)
+  if not BRAIN_DEBUG_MODE then return end
   assert_id(viz_id)
   if not overlay_text then return end
   local idx = vid(viz_id)
@@ -676,6 +682,7 @@ function M.text(viz_id, ...)
 end
 
 function M.rect(viz_id, ...)
+  if not BRAIN_DEBUG_MODE then return end
   assert_id(viz_id)
   if not overlay_rect then return end
   local idx = vid(viz_id)
@@ -689,6 +696,7 @@ function M.rect(viz_id, ...)
 end
 
 function M.line(viz_id, ...)
+  if not BRAIN_DEBUG_MODE then return end
   assert_id(viz_id)
   if not overlay_line then return end
   local idx = vid(viz_id)
@@ -702,6 +710,7 @@ function M.line(viz_id, ...)
 end
 
 function M.circle(viz_id, ...)
+  if not BRAIN_DEBUG_MODE then return end
   assert_id(viz_id)
   if not overlay_circle then return end
   local idx = vid(viz_id)

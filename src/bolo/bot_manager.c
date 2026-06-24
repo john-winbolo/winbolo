@@ -63,6 +63,7 @@
 #include "../common/wb_log.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"
+#include "brain_record.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
 /* View size for brain map updates — 15x15 centered on tank */
@@ -1113,6 +1114,12 @@ void botManagerTick(ServerSim *sim, aiType ai) {
                        + (double)(sendEnd - brainEnd)) * 1000.0 / freq;
     sim->botMgr.lastSerialMs = serialMs;
     botManagerRecordSerialMs(sim, serialMs);
+
+    /* Brain-decision recorder (winbolods -braindebug). Inert unless enabled.
+     * Runs here, after the worker pool joined and input was dispatched, so
+     * every bot's overlay buffer + Lua state is settled and single-thread
+     * safe to read/eval. */
+    brainRecordTick(sim);
 
     (void)ai;
 }
