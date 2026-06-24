@@ -109,13 +109,13 @@ static int build_sort_order(void) {
 enum {
     VCAT_HUD = 0, VCAT_CHARGE, VCAT_PILLTAKE, VCAT_SQUAD, VCAT_NAV,
     VCAT_LGM, VCAT_TANKCBT, VCAT_THREAT, VCAT_CIRCLES, VCAT_PLACEMENT,
-    VCAT_ALLY, VCAT_SHELLS, VCAT_MISC, VCAT_COUNT
+    VCAT_ALLY, VCAT_SHELLS, VCAT_REPOSITION, VCAT_MISC, VCAT_COUNT
 };
 
 static const char *kVizCatLabel[VCAT_COUNT] = {
     "Core HUD", "Charge", "Pill take", "Squad/Blitz", "Nav",
     "LGM", "Tank combat", "Threat", "Circles", "Placement",
-    "Ally/Comms", "Shells/Hitbox", "Misc",
+    "Ally/Comms", "Shells/Hitbox", "Reposition", "Misc",
 };
 
 struct VizMeta { const char *id; unsigned char cat; bool hud; };
@@ -195,10 +195,14 @@ static const VizMeta kVizMeta[] = {
     {"circle_warning", VCAT_CIRCLES, false}, {"front_band", VCAT_CIRCLES, false},
     /* Pill placement / portfolio */
     {"repair_pill_viz", VCAT_PLACEMENT, false}, {"bait_pill_marker", VCAT_PLACEMENT, false},
-    {"pill_reposition_marker", VCAT_PLACEMENT, false}, {"pill_portfolio", VCAT_PLACEMENT, true},
+    {"pill_portfolio", VCAT_PLACEMENT, true},
     {"pill_best_spots_back", VCAT_PLACEMENT, false}, {"pill_best_spots_aggro", VCAT_PLACEMENT, false},
     {"panic_build", VCAT_PLACEMENT, false},  {"blocker_pills", VCAT_PLACEMENT, false},
-    {"pill_roles", VCAT_PLACEMENT, false},   {"repos_claims", VCAT_PLACEMENT, false},
+    {"pill_roles", VCAT_PLACEMENT, false},
+    /* Reposition (move-pill voting + scoring) */
+    {"pill_reposition_marker", VCAT_REPOSITION, false}, {"repos_claims", VCAT_REPOSITION, false},
+    {"reposition_scores", VCAT_REPOSITION, false}, {"reposition_vote", VCAT_REPOSITION, true},
+    {"reposition_scores_hud", VCAT_REPOSITION, true}, {"reposition_votes", VCAT_REPOSITION, true},
     /* Ally / comms state */
     {"ally_state_overlay", VCAT_ALLY, true}, {"chat_log_overlay", VCAT_ALLY, true},
     {"hud_refuel_ally_check", VCAT_ALLY, true}, {"ally_claimed_marker", VCAT_ALLY, false},
