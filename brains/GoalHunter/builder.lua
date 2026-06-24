@@ -35,6 +35,54 @@ local viz    = require("viz")
 
 local M = {}
 
+-- Panic guard-pill spot search. Shared by builder's in-combat guard drop AND
+-- goals.lua's def_build (eval_place_pill_strategic) so the two can't drift —
+-- they were duplicated and one stayed farthest-first while the other was fixed.
+-- NEAREST-first ±45° from the threat: 1 tile out, then 2, ... both offsets per
+-- ring (+45 then -45). Grass/road (tier 1, instant build) is preferred over
+-- swamp/rubble/crater (tier 2, LGM paves first); each spot must be placeable,
+-- wall-free, and LGM-reachable. Take the closest grass/road and stop; fall back
+-- to the closest tier-2 only if no grass/road is reachable in range.
+-- Returns best_mx, best_my, best_tier (nil if none) + cands (every spot
+-- considered: { mx, my, dist, aoff, rej, tier }) for the panic_build viz.
+function M.panic_build_spot(world, info, tmx, tmy, threat_mx, threat_my)
+  local aim = U.aim_at(info.tankx, info.tanky, U.m2w(threat_mx), U.m2w(threat_my))
+  local best_cx, best_cy, best_tier = nil, nil, 99
+  local t2_cx, t2_cy
+  local cands = {}
+  for dist = C.DEFENSIVE_BUILD_MIN_DIST, C.DEFENSIVE_BUILD_MAX_DIST do
+    for _, aoff in ipairs({ C.DEFENSIVE_BUILD_ANGLE_OFFSET, -C.DEFENSIVE_BUILD_ANGLE_OFFSET }) do
+      local angle = (aim + aoff) % 256
+      local rad   = angle * (math.pi * 2 / 256)
+      local dx, dy = math.sin(rad), -math.cos(rad)
+      local cx = U.mclamp(math.floor(tmx + dx * dist + 0.5))
+      local cy = U.mclamp(math.floor(tmy + dy * dist + 0.5))
+      local rej, tier = nil, nil
+      if not U.is_placeable(cx, cy, world) then
+        rej = "not_placeable"
+      else
+        local tt = U.ttype(cx, cy)
+        if tt == C.T_GRASS or tt == C.T_ROAD then tier = 1
+        elseif tt == C.T_SWAMP or tt == C.T_RUBBLE or tt == C.T_CRATER then tier = 2
+        else rej = "needs_clearing" end
+        if tier and PF.wall_hp_between(tmx, tmy, cx, cy) ~= 0 then rej = "wall_between"; tier = nil end
+        -- Real LGM reachability (walk sim, bless the dest so a tier-2 spot we'll
+        -- pave isn't itself rejected). Catches water-locked spits a straight-line
+        -- corridor check missed.
+        if tier and cpf_lgm_travel_ticks_map(tmx, tmy, cx, cy, cx, cy, 2000, 150) == -1 then
+          rej = "unreachable"; tier = nil
+        end
+      end
+      cands[#cands + 1] = { mx = cx, my = cy, dist = dist, aoff = aoff, rej = rej, tier = tier }
+      if tier == 1 and not best_cx then best_cx, best_cy, best_tier = cx, cy, 1 end
+      if tier == 2 and not t2_cx then t2_cx, t2_cy = cx, cy end
+    end
+    if best_cx then break end   -- nearest grass/road found → stop spiralling out
+  end
+  if not best_cx and t2_cx then best_cx, best_cy, best_tier = t2_cx, t2_cy, 2 end
+  return best_cx, best_cy, best_tier, cands
+end
+
 -- Hoisted: was reallocated inside the wall-build threat-blocker
 -- inner loop (per pill_threat × per direction = up to ~30 allocs/tick
 -- when in build mode). Module-scope constant.
@@ -178,54 +226,19 @@ function M.set_mode(state, world, info, goal)
         if math.sqrt(_ex * _ex + _ey * _ey) > (C.DEF_BUILD_THREAT_RANGE or 8) then closest_et = nil end
       end
       if closest_et then
-        local aim = U.aim_at(info.tankx, info.tanky, U.m2w(closest_et.mx), U.m2w(closest_et.my))
-        local found_mx, found_my, found_dist, found_aoff = nil, nil, nil, nil
-        -- Rank candidates by terrain: tier 1 = grass/road (instant build),
-        -- tier 2 = swamp/rubble/crater (LGM paves first). Forest (harvest) and
-        -- water are skipped entirely. A clear land corridor to the spot is
-        -- required either way. Iteration is farthest-first / +45 then -45, so
-        -- the FIRST spot of a tier is the geometrically preferred one; a better
-        -- (lower) tier always wins over a worse tier regardless of distance.
-        local best_tier = 99
-        for dist = C.DEFENSIVE_BUILD_MAX_DIST, C.DEFENSIVE_BUILD_MIN_DIST, -1 do
-          if best_tier == 1 then break end
-          for _, aoff in ipairs({ C.DEFENSIVE_BUILD_ANGLE_OFFSET, -C.DEFENSIVE_BUILD_ANGLE_OFFSET }) do
-            local angle = (aim + aoff) % 256
-            local rad   = angle * (math.pi * 2 / 256)
-            local dx    = math.sin(rad)
-            local dy    = -math.cos(rad)
-            local cx    = U.mclamp(math.floor(tmx + dx * dist + 0.5))
-            local cy    = U.mclamp(math.floor(tmy + dy * dist + 0.5))
-            if not U.is_placeable(cx, cy, world) then goto next_bdef_angle end
-            local _bt = U.ttype(cx, cy)
-            local tier
-            if _bt == C.T_GRASS or _bt == C.T_ROAD then tier = 1
-            elseif _bt == C.T_SWAMP or _bt == C.T_RUBBLE or _bt == C.T_CRATER then tier = 2
-            else goto next_bdef_angle end   -- forest / other → skip
-            if tier >= best_tier then goto next_bdef_angle end  -- not better than what we have
-            if PF.wall_hp_between(tmx, tmy, cx, cy) ~= 0 then goto next_bdef_angle end
-            do
-              local water_blocked = false
-              for step = 1, dist - 1 do
-                local ix = U.mclamp(math.floor(tmx + dx * step + 0.5))
-                local iy = U.mclamp(math.floor(tmy + dy * step + 0.5))
-                if U.is_water(U.ttype(ix, iy)) then water_blocked = true; break end
-              end
-              if water_blocked then goto next_bdef_angle end
-            end
-            found_mx, found_my, found_dist, found_aoff = cx, cy, dist, aoff
-            best_tier = tier
-            if best_tier == 1 then break end   -- can't beat instant-build
-            ::next_bdef_angle::
-          end
-        end
+        -- Shared NEAREST-first ±45° guard-spot search (same code goals.lua's
+        -- def_build uses — no more farthest-first drift). Returns the spot + all
+        -- considered tiles for the panic_build overlay.
+        local found_mx, found_my, found_tier, cands =
+          M.panic_build_spot(world, info, tmx, tmy, closest_et.mx, closest_et.my)
+        if BRAIN_DEBUG_MODE then state._panic_build_viz = { tick = state.tick or 0, spots = cands, best_cx = found_mx, best_cy = found_my, threat_mx = closest_et.mx, threat_my = closest_et.my, tank_mx = tmx, tank_my = tmy } end
         if found_mx then
           b.mode       = "place_pill"
           b.pill_target = { mx = found_mx, my = found_my }
           b.defensive_debug = {
             found    = true,
             mx       = found_mx, my    = found_my,
-            aim      = aim,      dist  = found_dist, aoff = found_aoff,
+            tier     = found_tier,
             enemy_mx = closest_et.mx,  enemy_my = closest_et.my,
           }
         else

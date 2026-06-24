@@ -919,7 +919,20 @@ function M.update(state, info, now, world)
           state._blitz_negotiate_since = now
         end
         local timeout = C.SQUAD_BLITZ_NEGOTIATE_TIMEOUT_TICKS or 250
-        if accepted then
+        if accepted and not state.squad_blitz_engage_mx then
+          -- Accepted by the commander, but our negotiated engage spot is GONE
+          -- (e.g. a goal=none blip cleared the offer). Do NOT fast-commit
+          -- spotless — that lets attack.lua fall to a bad, un-de-conflicted
+          -- own-scan spot. Stay in negotiation so attack.blitz_negotiate
+          -- re-offers a FRESH spot, re-validated by the commander against
+          -- whoever may have taken our old one (3-blitzer safe). We commit only
+          -- once we actually hold an offer again.
+          state.squad_cmdr           = best_pn
+          state.squad_negotiate_cmdr = best_pn
+          state.squad_negotiate_pill = best_target
+          state.squad_status         = "nego"
+          read_cmdr_brj(state, self_pn)
+        elseif accepted then
           state.squad_cmdr           = best_pn   -- broadcast which call we're answering
           state.squad_negotiate_cmdr = best_pn
           state.squad_negotiate_pill = best_target

@@ -1471,7 +1471,10 @@ M.SQUAD_BLITZ_COMMIT_GRACE_TICKS      = 5     -- after committing to a blitz, wa
 -- drawn in blitz_comm_lines so transient rejects are actually visible (~0.4s).
 M.BLITZ_COMM_LATCH_TICKS       = 18
 -- Urgent replan when a tank WE CAN SEE dies. Any visible enemy death triggers;
--- an ally death only triggers if within this many tiles (a far ally dying
--- doesn't change our local situation, so skip it to avoid churn).
+-- an ally death only triggers if within ALLY_RANGE tiles (manhattan) AND there's
+-- a DROPPED pill to grab — a dead (not-in-tank) pillbox within PILL_RANGE tiles
+-- (euclidean). The whole point of the ally-death interrupt is noticing pills the
+-- dead teammate dropped; with nothing to grab it only churned a live goal to none.
 M.TANK_DEATH_REPLAN_ALLY_RANGE = 20
+M.TANK_DEATH_REPLAN_PILL_RANGE = 12
 return M

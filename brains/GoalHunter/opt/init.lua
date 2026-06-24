@@ -3162,6 +3162,22 @@ function Brain.think(info)
     end
     local tank_appeared = tank_now_in_range and not (state.prev_tank_in_range or false)
     state.prev_tank_in_range = tank_now_in_range
+    -- Panic-range crossing: while CARRYING a pill, an enemy tank ENTERING the
+    -- def_build panic range (DEF_BUILD_THREAT_RANGE, euclidean) forces a replan so
+    -- eval_place_pill_strategic's def_build branch can convert an in-flight
+    -- strategic placement into a panic guard build. tank_appeared above keys off
+    -- the WIDE perception set (fires when a tank is first SEEN, often far, and
+    -- never re-fires as it closes), so it misses this tighter crossing.
+    local panic_tank_in_range = false
+    if (info.carried_pills or 0) >= 1 and state.perc and state.perc.enemy_tanks then
+      local pr2 = (C.DEF_BUILD_THREAT_RANGE or 8) ^ 2
+      for _, et in ipairs(state.perc.enemy_tanks) do
+        local dx, dy = (et.mx or 0) - cur_mx, (et.my or 0) - cur_my
+        if dx * dx + dy * dy <= pr2 then panic_tank_in_range = true; break end
+      end
+    end
+    local panic_tank_appeared = panic_tank_in_range and not (state._prev_panic_tank_in_range or false)
+    state._prev_panic_tank_in_range = panic_tank_in_range
     -- Urgent replan the first tick ANY enemy tank becomes newly visible — a
     -- tank id in perception that wasn't there last tick — regardless of the
     -- current goal. Tracks the full visible-id SET (not just a "any tank?"
@@ -3197,14 +3213,31 @@ function Brain.think(info)
       local dead = state.tank_dead_at
       if snap and dead then
         local ar = C.TANK_DEATH_REPLAN_ALLY_RANGE or 20
+        -- An ally death only forces the (goal-clearing) replan when there's a
+        -- DROPPED pill to grab: a dead, not-in-tank pillbox within PILL_RANGE
+        -- (euclidean). Without that the interrupt just churned a live goal to
+        -- none. Computed once (independent of which ally died). Enemy deaths are
+        -- unaffected. A pill that drops a tick later still trips dead_pill_appeared.
+        local pill_r  = C.TANK_DEATH_REPLAN_PILL_RANGE or 12
+        local pill_r2 = pill_r * pill_r
+        local dead_pill_near = false
+        if world.pills then
+          for _, p in pairs(world.pills) do
+            if (p.health or 0) <= 0 and not p.in_tank then
+              local dx, dy = p.mx - cur_mx, p.my - cur_my
+              if dx * dx + dy * dy <= pill_r2 then dead_pill_near = true; break end
+            end
+          end
+        end
         for pn, dtick in pairs(dead) do
           if dtick == now then            -- died this tick
             local s = snap[pn]            -- and was visible to us last tick
             if s then
               if s.hostile then
                 tank_died_seen = true     -- any visible enemy death
-              elseif (math.abs(s.mx - cur_mx) + math.abs(s.my - cur_my)) <= ar then
-                tank_died_seen = true     -- nearby ally death
+              elseif dead_pill_near
+                 and (math.abs(s.mx - cur_mx) + math.abs(s.my - cur_my)) <= ar then
+                tank_died_seen = true     -- nearby ally death AND a dropped pill to grab
               end
             end
           end
@@ -3299,6 +3332,7 @@ function Brain.think(info)
                        or new_base_appeared or lgm_appeared
                        or shot_by_tank or atk_pill_interruptible
                        or blitz_call_new or tank_died_seen
+                       or panic_tank_appeared
     if urgent_replan then
       -- Record which factor(s) tripped the urgent replan so the HUD
       -- below can flash a banner that's visible for a few seconds.
@@ -3311,6 +3345,7 @@ function Brain.think(info)
       elseif dead_pill_appeared then reason = "DEAD PILL"
       elseif new_base_appeared  then reason = "BASE DISCOVERED"
       elseif tank_died_seen     then reason = "TANK DIED"
+      elseif panic_tank_appeared then reason = "TANK IN PANIC RANGE (carrying pill)"
       elseif blitz_call_new     then reason = "BLITZ CALL"
       elseif attack_tank_done   then reason = "ATTACK_TANK DONE"
       elseif warm_exit          then reason = "WARMUP DONE"

@@ -21,6 +21,7 @@ local json   = require("json")
 local ally_state = require("ally_state")
 local circles    = require("circles")
 local squad  = require("squad")
+local builder = require("builder")   -- shared panic guard-spot search (M.panic_build_spot)
 local PP     = require("pill_portfolio")
 local _SELF_PN = -1   -- updated each tick by step_eval_queue / get_pool_breakdown_json
 
@@ -1515,7 +1516,8 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
   -- flat cross-penalty (prefer dealing with the tank) and the panic_build viz
   -- shows. Stash the threat tile for the viz.
   state._attack_tank_present = true
-  state._attack_tank_threat  = { mx = best_tank.mx, my = best_tank.my, dist = best_tank.dist }
+  state._attack_tank_threat  = { mx = best_tank.mx, my = best_tank.my, dist = best_tank.dist,
+                                 have_pill = (info.carried_pills or 0) >= 1 }
   if BRAIN_DEBUG_MODE then print2(string.format("eval_attack_tank: WINNER @(%d,%d) cost=%.1f dist=%d",
     best_tank.mx, best_tank.my, best_cost, best_tank.dist)) end
 
@@ -1674,53 +1676,13 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
       end
     end
     if closest_et then
-      local aim = U.aim_at(info.tankx, info.tanky, U.m2w(closest_et.mx), U.m2w(closest_et.my))
-      local best_cx, best_cy, best_tier = nil, nil, 99
-      -- Nearest tier-2 (swamp/rubble/crater) seen — used ONLY if no grass/road is
-      -- reachable in range. A panic pill on tier-2 makes the LGM pave the tile
-      -- first (slow), so road/grass is strongly preferred even a tile or two out.
-      local t2_cx, t2_cy
-      local dcands = {}   -- every spot evaluated, for the pool panel (debug only)
-      -- Rank by terrain: tier 1 = grass/road (instant build), tier 2 = swamp/
-      -- rubble/crater (LGM paves first). Forest (harvest) / water are rejected.
-      -- Search NEAREST-FIRST: 1 tile out, then 2, ..., both 45° offsets per ring
-      -- (+45 then -45). Take the closest grass/road and stop; fall back to the
-      -- closest tier-2 only if no grass/road is reachable anywhere in range.
-      for dist = C.DEFENSIVE_BUILD_MIN_DIST, C.DEFENSIVE_BUILD_MAX_DIST do
-        for _, aoff in ipairs({ C.DEFENSIVE_BUILD_ANGLE_OFFSET, -C.DEFENSIVE_BUILD_ANGLE_OFFSET }) do
-          local angle = (aim + aoff) % 256
-          local rad   = angle * (math.pi * 2 / 256)
-          local dx    = math.sin(rad)
-          local dy    = -math.cos(rad)
-          local cx    = U.mclamp(math.floor(tmx + dx * dist + 0.5))
-          local cy    = U.mclamp(math.floor(tmy + dy * dist + 0.5))
-          local rej, tier = nil, nil
-          if not U.is_placeable(cx, cy, world) then
-            rej = "not_placeable"
-          else
-            local tt = U.ttype(cx, cy)
-            if tt == C.T_GRASS or tt == C.T_ROAD then tier = 1
-            elseif tt == C.T_SWAMP or tt == C.T_RUBBLE or tt == C.T_CRATER then tier = 2
-            else rej = "needs_clearing" end   -- forest / other
-            if tier and PF.wall_hp_between(tmx, tmy, cx, cy) ~= 0 then rej = "wall_between"; tier = nil end
-            -- Real reachability: the LGM has to WALK from the tank to the spot
-            -- to drop the pill, so require the tick-by-tick walk sim to find a
-            -- route. This catches water, walls, and water-locked spits that the
-            -- old coarse straight-line sample missed (it picked spots only
-            -- reachable across water, so the pill never got placed). The tank
-            -- no longer has to reach the spot itself — the LGM runs out — so
-            -- this is the LGM's path, from the tank's current tile.
-            if tier and cpf.lgm_travel_ticks_map(tmx, tmy, cx, cy, 0, 0, 2000, 150) == -1 then
-              rej = "unreachable"; tier = nil
-            end
-          end
-          if BRAIN_DEBUG_MODE then dcands[#dcands + 1] = { mx = cx, my = cy, dist = dist, aoff = aoff, rej = rej, tier = tier } end
-          if tier == 1 and not best_cx then best_cx, best_cy, best_tier = cx, cy, 1 end
-          if tier == 2 and not t2_cx then t2_cx, t2_cy = cx, cy end
-        end
-        if best_cx then break end   -- nearest grass/road found → stop spiralling out
-      end
-      if not best_cx and t2_cx then best_cx, best_cy, best_tier = t2_cx, t2_cy, 2 end
+      -- Shared panic guard-spot search (the SAME code builder.lua's in-combat
+      -- guard drop uses, so they can't drift): nearest-first ±45° from the threat,
+      -- grass/road preferred over swamp/rubble/crater, placeable + wall-free +
+      -- LGM-reachable, nearest tier-2 fallback. Returns the spot + all considered
+      -- tiles (dcands) for the panic_build overlay.
+      local best_cx, best_cy, best_tier, dcands =
+        builder.panic_build_spot(world, info, tmx, tmy, closest_et.mx, closest_et.my)
       if BRAIN_DEBUG_MODE then state._panic_build_viz = { tick = state.tick or 0, spots = dcands, best_cx = best_cx, best_cy = best_cy, threat_mx = closest_et.mx, threat_my = closest_et.my, tank_mx = tmx, tank_my = tmy } end
       if best_cx then
         local path_cost = smart_cost(KIND_NORMAL, tmx, tmy, best_cx, best_cy, 0,
@@ -2261,7 +2223,14 @@ function M.draw_pill_spots(viz, state)
     elseif state._attack_tank_present and state._attack_tank_threat and viz.text then
       local t = state._attack_tank_threat
       viz.rect("panic_build", t.mx, t.my, t.mx + 1, t.my + 1, 255, 0, 0, 130, true)
-      viz.text("panic_build", t.mx + 0.5, t.my - 1.0, "PANIC (no pill)", "center", 255, 120, 120, 255)
+      -- This marker means "an enemy tank is present but def_build produced no
+      -- plan this tick" — which is NOT necessarily "no pill". Only say no-pill
+      -- when we actually have none; otherwise it's threat-out-of-panic-range (the
+      -- def_build distance gate) or the panic eval just wasn't the active one.
+      local _plabel = t.have_pill
+        and string.format("THREAT d=%d (no panic build)", t.dist or -1)
+        or "PANIC (no pill)"
+      viz.text("panic_build", t.mx + 0.5, t.my - 1.0, _plabel, "center", 255, 120, 120, 255)
     end
   end
 end
