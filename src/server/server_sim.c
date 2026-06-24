@@ -391,6 +391,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
         sim->sim.pendingStartIdx[count] = MAX_STARTS;
     }
 
+    /* "No tutorial progress yet" — memset would leave 0, which (being below
+     * every stop row) would disable all tutorial stops. */
+    sim->sim.tutorialMinRow = 0xFF;
+
     /* Sentinel "use the CLI-configured default brain" for every slot.
      * 0 is a valid brain-catalogue index, so memset doesn't suffice. */
     memset(sim->botBrainIdx, 0xFF, sizeof(sim->botBrainIdx));
@@ -6201,6 +6205,16 @@ bool serverSimIsTutorial(const ServerSim *sim) {
 
 void serverSimSetTutorial(ServerSim *sim, bool v) {
     sim->sim.isTutorial = v;
+}
+
+void serverSimSetTutorialStartIdx(ServerSim *sim, BYTE idx) {
+    sim->sim.tutorialStartIdx = idx;
+}
+
+bool serverSimTakeTutorialRespawn1(ServerSim *sim) {
+    bool v = sim->sim.tutorialRespawn1Pending;
+    sim->sim.tutorialRespawn1Pending = FALSE;
+    return v;
 }
 
 void serverSimSetPaused(ServerSim *sim, bool paused) {

@@ -95,6 +95,7 @@ extern "C" {
 #include "nanosvgrast.h"
 #include "dialogs/imgui_dialog_utils.h"
 #include "dialogs/imgui_deck_pause.h"
+#include "dialogs/imgui_tutorial_overlay.h"
 #include "dialogs/imgui_keyboard.h"
 #include "dialogs/imgui_quickchat.h"
 #include "dialogs/imgui_controller_prompt.h"
@@ -203,6 +204,7 @@ extern "C" void windowSuspendBackground(struct ClientSim *cs);
 extern "C" void windowResumeForeground(struct ClientSim *cs);
 extern "C" void windowControllerLostPause(struct ClientSim *cs, bool active);
 extern "C" void windowDeckPause(struct ClientSim *cs, bool active);
+extern "C" void windowTutorialPause(struct ClientSim *cs, bool active);
 
 extern "C" bool showGunsight;
 extern "C" bool autoScrollingEnabled;
@@ -1339,6 +1341,19 @@ static void renderCtrlSendMsg(ClientSim *cs) {
     }
 }
 
+/* Whether the local player may answer a given vote. Surrender votes are
+   answerable only by members of the surrendering team (teamId); everyone
+   else can watch the tally but has no Yes/No to cast. Other vote kinds are
+   open to all connected players. Mirrors the server's eligibility rule in
+   gameVoteEligibleMask(). */
+static bool localCanAnswerGameVote(ClientSim *cs,
+                                   const ClientGameVoteSnapshot *snap) {
+    if (snap->kind != GAME_VOTE_KIND_SURRENDER) return true;
+    const ClientLobbySlot *ls =
+        clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+    return ls && ls->teamNumber != 0 && ls->teamNumber == snap->teamId;
+}
+
 /* -------------------------------------------------------
  * Players panel (standalone window for tablet mode)
  * ------------------------------------------------------- */
@@ -1354,9 +1369,17 @@ static void renderPlayersPanel(ClientSim *cs) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
                                 ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     } else {
-        ImGui::SetNextWindowSize(ImVec2(340 * s_uiScale, 420 * s_uiScale), ImGuiCond_FirstUseEver);
+        /* Cap the panel to the viewport work area so a large font (or a
+         * small game window) can't push it taller than the screen and clip
+         * the bottom off-screen; ImGui then shows a scrollbar for overflow.
+         * The default size is also clamped so it never opens oversized. */
+        const ImGuiViewport *vp = ImGui::GetMainViewport();
+        float maxW = vp->WorkSize.x, maxH = vp->WorkSize.y;
+        ImGui::SetNextWindowSize(ImVec2(SDL_min(340 * s_uiScale, maxW),
+                                        SDL_min(420 * s_uiScale, maxH)),
+                                 ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
-                                            ImVec2(FLT_MAX, FLT_MAX));
+                                            ImVec2(maxW, maxH));
     }
     bool *pOpen = uiModeIsTablet() ? nullptr : &s_showPlayersPanel;
     ImGuiWindowFlags flags = uiModeIsTablet() ? (ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse) : 0;
@@ -1620,6 +1643,7 @@ static void renderPlayersPanel(ClientSim *cs) {
                               : langGetText(STR_VOTE_SURRENDER);
             ImGui::Text("%s: %u / %u", vnm,
                         (unsigned)vs.yesCount, (unsigned)vs.threshold);
+            if (!localCanAnswerGameVote(cs, &vs)) continue;
             BYTE vme = clientSimGetMyPlayerNum(cs);
             bool vMyYes = (vme < 16) && ((vs.votes >> vme) & 1u);
             char yLbl[40]; snprintf(yLbl, sizeof(yLbl), "%s##vy%u", langGetText(STR_YES), (unsigned)vkind);
@@ -2090,7 +2114,8 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
 
     /* Yes / No buttons — only meaningful while the vote is running.
      * Highlight the user's current choice so they can see their stance. */
-    if (snap->active == GAME_VOTE_ACTIVE_RUNNING) {
+    if (snap->active == GAME_VOTE_ACTIVE_RUNNING &&
+        localCanAnswerGameVote(cs, snap)) {
         ImGui::Spacing();
         if (uiShouldUseControllerMode()) {
             renderControllerActionHint(SI_ACTION_VIEW_PLAYERS,
@@ -2965,6 +2990,14 @@ static void renderMenuBar(ClientSim *cs) {
      * checkmark can all fit on one row without overlap. */
     ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 0.0f),
                                         ImVec2(FLT_MAX, FLT_MAX));
+    /* A full 16-slot roster plus the alliance/vote footer can make this
+     * dropdown taller than the window; cap it to the work area so ImGui
+     * adds a scrollbar instead of clipping the bottom rows off-screen. */
+    {
+        const ImGuiViewport *vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0),
+                                            ImVec2(FLT_MAX, vp->WorkSize.y));
+    }
     if (ImGui::BeginMenu(langGetText(STR_MENU_PLAYERS))) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
@@ -3292,13 +3325,13 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
         s_inModalResize = true;
     }
     if (msg == WM_GETMINMAXINFO) {
-        /* Enforce the UI-scaled minimum window size.  Scale the client area by
-           s_uiScale (the non-client frame/border is fixed and not scaled), so
-           the 515:347 content ratio is preserved. */
+        /* Enforce the 1x minimum client size.  The minimum is fixed at 1x (the
+           UI scale instead demotes to fit the window), so the window can always
+           reach the size where fonts drop to 1.0x. */
         MINMAXINFO *mmi = (MINMAXINFO *)lParam;
         RECT clientRect = {0, 0,
-                           (LONG)(SDL3_SCREEN_W * s_uiScale),
-                           (LONG)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale)};
+                           (LONG)SDL3_SCREEN_W,
+                           (LONG)(SDL3_SCREEN_H + MENU_BAR_HEIGHT)};
         DWORD style = (DWORD)GetWindowLongPtr(hwnd, GWL_STYLE);
         DWORD exStyle = (DWORD)GetWindowLongPtr(hwnd, GWL_EXSTYLE);
         AdjustWindowRectEx(&clientRect, style, FALSE, exStyle);
@@ -3404,25 +3437,63 @@ static LRESULT CALLBACK aspectSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, L
  * Public API
  * ------------------------------------------------------- */
 
+/* Largest UI scale whose 1x dialog content still fits the current window,
+   quantised to a 0.25 ladder.  Dialogs lay out in logical points against
+   SDL_GetWindowSize (DPI is handled by the renderer, not here), so the fit is
+   measured in those same units: window width over the 515pt content width, and
+   the menu-bar-less window height over the 325pt content height.  Because the
+   window is aspect-locked and the menu bar is a fixed 22pt (0 on macOS), the
+   two ratios agree at every zoom step.  Floor (not round) to the ladder so the
+   result never exceeds the true fit and re-overflows; a drag-resize therefore
+   crosses only a handful of atlas rebuilds.  This is what lets a Large pref
+   auto-demote in a small window and snap back when it grows. */
+static float desktopWindowFitScale(SDL_Window *window) {
+    int w = 0, h = 0;
+    SDL_GetWindowSize(window, &w, &h);
+    if (w <= 0 || h <= 0) return 1.0f;
+    float fitW = (float)w / (float)SDL3_SCREEN_W;
+    float availH = (float)h - (float)MENU_BAR_HEIGHT;
+    float fitH = (availH > 0.0f) ? availH / (float)SDL3_SCREEN_H : fitW;
+    float fit = SDL_min(fitW, fitH);
+    fit = (float)((int)(fit * 4.0f)) / 4.0f;   /* floor to 0.25 steps */
+    if (fit < 1.0f) fit = 1.0f;
+    if (fit > 2.0f) fit = 2.0f;   /* cap at the Large preset; never exceed it */
+    return fit;
+}
+
 /* (Re)apply the main ImGui context's font atlas, style, and window minimum
-   for the current UI scale.  Recomputes the scale (Auto → display-derived,
-   preset → fixed), rebuilds the font atlas, resets and re-scales the style,
-   and re-clamps the desktop window minimum.  Called once at setup and again
-   when the UI-scale pref changes — the latter only from the deferred safe
-   point between Present and NewFrame, so the atlas swap can't race draw data
-   still queued against the old texture. */
+   for the current UI scale.  Recomputes the scale (desktop: preference capped
+   by what the window can hold; Auto tracks the window directly), rebuilds the
+   font atlas, resets and re-scales the style.  Called at setup, when the
+   UI-scale pref changes, and on window resize — the latter two only from the
+   deferred safe point between Present and NewFrame, so the atlas swap can't
+   race draw data still queued against the old texture.  Resize fires it every
+   frame of a drag, so it early-outs when the quantised scale hasn't moved. */
 static void applyMainContextUiScale(void) {
     if (!s_window) return;
     ImGuiIO &io = ImGui::GetIO();
 
     /* One scale value drives both the font size and the style metrics.
        Tablet uses FontGlobalScale below (so uiScale stays 1); Deck keeps
-       its 1.5x; desktop derives the scale from the display (or the UI-scale
-       override) so dialogs are readable on high-DPI / 4K screens. */
+       its 1.5x; desktop caps the preferred scale (Small/Med/Large, or for
+       Auto the window-fit itself) by what the window can actually hold, so a
+       big font in a small window demotes to fit and restores when it grows. */
     float uiScale;
     if (uiModeIsTablet())          uiScale = 1.0f;
     else if (uiModeIsSteamDeck())  uiScale = dialogDeckFontMul();  /* 1.5, unchanged */
-    else                           uiScale = dialogDesktopScale(s_window);
+    else {
+        float fit  = desktopWindowFitScale(s_window);
+        float pref = (uiUiScaleGet() == UI_SCALE_AUTO)
+                       ? fit                                  /* Auto: track the window */
+                       : uiUiScalePresetFactor(uiUiScaleGet()); /* 1.0 / 1.5 / 2.0 */
+        uiScale = SDL_min(pref, fit);
+        if (uiScale < 1.0f) uiScale = 1.0f;
+    }
+
+    /* Resize events land here every frame of a drag; skip the costly atlas
+       rebuild when the quantised scale hasn't actually changed.  The atlas is
+       empty at first setup, so that pass always proceeds. */
+    if (io.Fonts->Fonts.Size > 0 && uiScale == s_uiScale) return;
     s_uiScale = uiScale;
 
     /* Rebuild the font atlas at the new size.  Clear() first because
@@ -3465,12 +3536,13 @@ static void applyMainContextUiScale(void) {
     }
 
     /* On the resizable desktop window, keep the OS window from shrinking below
-       the scaled 1x content size so the bigger dialogs can't overflow.  The
+       the 1x content size.  The minimum is fixed at 1x (not scaled by the UI
+       scale) so the window can always reach the size where fonts demote to
+       1.0x; scaling the minimum by s_uiScale would make the two circular.  The
        Deck/tablet fullscreen paths don't resize, so skip them. */
     if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
         SDL_SetWindowMinimumSize(s_window,
-            (int)(SDL3_SCREEN_W * s_uiScale),
-            (int)((SDL3_SCREEN_H + MENU_BAR_HEIGHT) * s_uiScale));
+            SDL3_SCREEN_W, SDL3_SCREEN_H + MENU_BAR_HEIGHT);
     }
 }
 
@@ -3687,7 +3759,7 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
 
         /* Cmd+key shortcuts (non-macOS — macOS routes these through NSMenu in mac_menubar.mm) */
 #ifndef __APPLE__
-        if (ev.type == SDL_EVENT_KEY_DOWN &&
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
             (ev.key.mod & KMOD_PRIMARY) != 0) {
             switch (ev.key.scancode) {
@@ -3848,17 +3920,25 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             inputGamepadProcessEvent(&ev);
         }
 
-        /* While the Key Setup modal is open, swallow all mouse + keyboard events
-         * so they never reach the game. */
+        /* Swallow events ImGui is using so they never reach the game, but
+         * gate each device on its own capture flag: keyboard events only when
+         * ImGui wants the keyboard, mouse events only when it wants the mouse.
+         * Cross-gating these (dropping keyboard whenever the mouse was over a
+         * panel) ate event-driven game keys — notably the Tank View key that
+         * exits pill view — whenever the cursor merely hovered the menu bar or
+         * a vote/alliance overlay. */
         ImGuiIO &io = ImGui::GetIO();
-        if (io.WantCaptureKeyboard || io.WantCaptureMouse) {
-            bool isGameInput = (ev.type == SDL_EVENT_MOUSE_MOTION       ||
-                                ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN  ||
-                                ev.type == SDL_EVENT_MOUSE_BUTTON_UP    ||
-                                ev.type == SDL_EVENT_MOUSE_WHEEL        ||
-                                ev.type == SDL_EVENT_KEY_DOWN           ||
-                                ev.type == SDL_EVENT_KEY_UP);
-            if (isGameInput) continue;
+        {
+            bool isMouseEvent = (ev.type == SDL_EVENT_MOUSE_MOTION       ||
+                                 ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN  ||
+                                 ev.type == SDL_EVENT_MOUSE_BUTTON_UP    ||
+                                 ev.type == SDL_EVENT_MOUSE_WHEEL);
+            bool isKeyEvent   = (ev.type == SDL_EVENT_KEY_DOWN           ||
+                                 ev.type == SDL_EVENT_KEY_UP);
+            if ((isMouseEvent && io.WantCaptureMouse) ||
+                (isKeyEvent && io.WantCaptureKeyboard)) {
+                continue;
+            }
         }
 
         /* Mouse wheel adjusts gunsight range while in-game. Reaches here
@@ -3921,16 +4001,29 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* Window resized — enforce content aspect ratio (515:325) accounting for menu bar */
         if (ev.type == SDL_EVENT_WINDOW_RESIZED &&
             ev.window.windowID == SDL_GetWindowID(s_window)) {
+            /* The window-fit cap on the UI scale may have changed.  Defer the
+               actual recompute/atlas rebuild to the safe point before NewFrame;
+               applyMainContextUiScale early-outs if the quantised scale held. */
+            if (!uiModeIsTablet() && !uiModeIsSteamDeck())
+                s_pendingUiScaleRebuild = true;
             if (s_suppressAutoCustom) {
                 /* Programmatic resize from windowZoomChange — don't auto-switch or adjust.
                    Don't clear the flag here - it gets cleared at end of frame after zoom is applied. */
             } else {
-                /* Enforce aspect ratio: adjust height to match width */
+                /* Enforce aspect ratio: adjust height to match width — but not
+                   while maximized or fullscreen, where the window must keep the
+                   size the OS gave it and the draw side letterboxes the game
+                   inside.  Forcing a taller-than-screen height there pushes the
+                   title bar off-screen and strands the window with no way to
+                   move or restore it. */
+                SDL_WindowFlags wflags = SDL_GetWindowFlags(s_window);
+                bool osManaged =
+                    (wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN)) != 0;
                 int w = ev.window.data1;
                 int h = ev.window.data2;
                 int correctContentH = w * SDL3_SCREEN_H / SDL3_SCREEN_W;
                 int correctH = correctContentH + MENU_BAR_HEIGHT;
-                if (h != correctH) {
+                if (!osManaged && h != correctH) {
                     s_suppressAutoCustom = true;  /* Prevent recursion */
                     SDL_SetWindowSize(s_window, w, correctH);
                 }
@@ -4034,6 +4127,7 @@ static bool any_popup_modal_open(void) {
     if (g && g->OpenPopupStack.Size > 0)
         return true;
     return deckPauseIsOpen() ||
+           tutorialOverlayIsOpen() ||
            quickChatIsOpen() ||
            s_showSendMsg ||
            s_showPlayersPanel ||
@@ -4275,6 +4369,18 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         s_clearNavFocus = false;
     }
 
+    /* Keep the keyboard with the game during active play. With
+       NavEnableKeyboard on, clicking the menu bar (or just closing a menu)
+       leaves an ImGui window nav-focused, which latches io.WantCaptureKeyboard
+       true indefinitely — the swallow in sdl3ImguiProcessEvents then eats
+       event-driven game keys like Tank View, trapping the player in pill view.
+       So while a game is running and no panel, popup, menu, or text field is
+       genuinely using ImGui, drop any lingering nav focus each frame. */
+    if (cs && !clientSimIsInLobby(cs) && !sdl3ImguiIsDialogOpen() &&
+        !ImGui::GetIO().WantTextInput) {
+        ImGui::SetWindowFocus(nullptr);
+    }
+
     /* Controller-detected prompt: poll the gamepad-connected rising edge
        (shared with the menu loops). */
     controllerPromptPollConnectEdge();
@@ -4438,6 +4544,19 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
             if (nowDeckPause != s_lastDeckPause) {
                 windowDeckPause(cs, nowDeckPause);
                 s_lastDeckPause = nowDeckPause;
+            }
+        }
+        /* Tutorial message overlay — same in-loop pattern as the pause
+           menu, so the input gate suspends play and the solo-pause path
+           freezes the sim while a message is up.  Edge-detect open/close
+           to toggle the freeze exactly once each way. */
+        tutorialOverlayRender(cs);
+        {
+            static bool s_lastTutorialPause = false;
+            bool nowTutorialPause = tutorialOverlayIsOpen();
+            if (nowTutorialPause != s_lastTutorialPause) {
+                windowTutorialPause(cs, nowTutorialPause);
+                s_lastTutorialPause = nowTutorialPause;
             }
         }
         quickChatRender(cs);

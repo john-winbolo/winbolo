@@ -79,6 +79,7 @@
 
 #include "dialog_backend.h"
 #include "dialogs/imgui_messagebox.h"
+#include "dialogs/imgui_tutorial_overlay.h"
 #include "tutorial_text.h"
 #include "../../common/sentry_integration.h"
 
@@ -205,6 +206,12 @@ static bool s_controllerLostPaused = FALSE;
  * networked player isn't booted for going idle.  See windowDeckPause. */
 static bool s_deckPaused = FALSE;
 
+/* Set while a tutorial message overlay is up.  Same solo freeze as the pause
+ * menu, driven by the overlay's open/close edge — so play is suspended and a
+ * held turn or dismissing fire press can't leak into the game.  See
+ * windowTutorialPause. */
+static bool s_tutorialPaused = FALSE;
+
 /* Mute state captured when each pause path engaged, restored verbatim when it
  * releases.  A pause must hand audio back to whatever it found — not force it
  * unmuted — so it doesn't clobber a user mute or another still-active pause's
@@ -213,6 +220,7 @@ static bool s_suspendPrevMuted        = FALSE;
 static bool s_overlayPrevMuted        = FALSE;
 static bool s_controllerLostPrevMuted = FALSE;
 static bool s_deckPrevMuted           = FALSE;
+static bool s_tutorialPrevMuted       = FALSE;
 
 /* Tick counters */
 static DWORD oldTick = 0;
@@ -242,6 +250,7 @@ static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint3
 static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, Uint32 interval);
 void frontEndTutorialNotePresentedFrame(void);
 static void windowRunGameTick(ClientSim *cs);
+static void tutorialRespawnPoll(void);
 static void windowUpdateServerPause(ClientSim *cs);
 static void windowSteamOverlayActivated(ClientSim *cs, bool active);
 int winboloCC(void);
@@ -591,6 +600,7 @@ int main(int argc, char *argv[]) {
           if (ren) SDL_RenderPresent(ren);
         }
         frontEndTutorialNotePresentedFrame();
+        tutorialRespawnPoll();
 
         /* Cap to configured frame rate */
         {
@@ -654,6 +664,11 @@ int main(int argc, char *argv[]) {
   clientMutexDestroy();
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();
+  /* Stop and join the SDL audio mixer thread before the teardown below frees
+   * the bots/Lua brains. The mixer feeds the converter continuously (silence
+   * too), so leaving it live races bgGameDestroy's frees and can crash the
+   * audio thread mid-conversion. */
+  soundCleanup();
   /* Tear down the process-lifetime welcome-screen bg before the renderer
    * and the bot pool: bgGameDestroy calls SDL_DestroyTexture on
    * bg->tilesTex (renderer must still be alive — SDL3 docs say destroying
@@ -721,7 +736,8 @@ static void windowRunGameTick(ClientSim *cs) {
      (windowResumeForeground / windowSteamOverlayActivated /
      windowControllerLostPause / windowDeckPause) resets the wallclock baseline
      so we don't fast-forward the paused interval. */
-  if (s_suspended || s_overlayPaused || s_controllerLostPaused || s_deckPaused)
+  if (s_suspended || s_overlayPaused || s_controllerLostPaused ||
+      s_deckPaused || s_tutorialPaused)
     return;
 
   brainRunning = brainHandlerIsBrainRunning();
@@ -751,7 +767,16 @@ static void windowRunGameTick(ClientSim *cs) {
   /* Update the game objects if required */
   if ((ttick - oldTick) > GAME_TICK_LENGTH) {
     while ((ttick - oldTick) > GAME_TICK_LENGTH) {
-      if (doingTutorial == FALSE) {
+      /* A tutorial message overlay just opened (frontEndTutorial enqueued it
+         from clientSimGameTick this iteration): stop catching up.  The render
+         path opens the overlay and engages the solo freeze, after which
+         windowRunGameTick early-outs at the top until the message closes —
+         which rebases oldTick so the paused interval isn't fast-forwarded.
+         Without this break the loop spins forever: the old blocking dialog
+         cleared doingTutorial before returning, but the in-loop overlay leaves
+         it set across frames, and oldTick only advances in the branch below. */
+      if (doingTutorial == TRUE) break;
+      {
         BYTE myPlayerNum = gameFrontGetPlayerNum();
         if (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown) {
           /* Lobby/countdown: just tick the transport to receive packets */
@@ -908,7 +933,8 @@ static bool windowIsSoloSession(ClientSim *cs) {
 static void windowUpdateServerPause(ClientSim *cs) {
   gameFrontSetServerPaused(windowIsSoloSession(cs) &&
                            (s_suspended || s_overlayPaused ||
-                            s_controllerLostPaused || s_deckPaused));
+                            s_controllerLostPaused || s_deckPaused ||
+                            s_tutorialPaused));
 }
 
 void windowSuspendBackground(ClientSim *cs) {
@@ -1024,6 +1050,31 @@ void windowDeckPause(ClientSim *cs, bool active) {
     oldTick = SDL_GetTicks();
     ttick = oldTick;
     soundSetMuted(s_deckPrevMuted);
+  }
+}
+
+/* Tutorial message overlay opened/closed.  Solo only (the tutorial is always
+   single-player): freeze the client and server sim while a message is up and
+   rebase the catch-up wallclock on close, mirroring windowDeckPause.  Driven
+   by the overlay's open/close edge in the render path.  Rebasing on close is
+   what keeps a held turn or dismissing fire press from carrying into the game:
+   the next game tick is one tick out, by which point a tapped button has lifted
+   and the input gate has already swallowed everything while the message was up. */
+void windowTutorialPause(ClientSim *cs, bool active) {
+  if (active) {
+    if (!windowIsSoloSession(cs)) return;
+    if (s_tutorialPaused) return;          /* idempotent */
+    s_tutorialPaused = TRUE;
+    windowUpdateServerPause(cs);
+    s_tutorialPrevMuted = soundIsMuted();
+    soundSetMuted(TRUE);
+  } else {
+    if (!s_tutorialPaused) return;
+    s_tutorialPaused = FALSE;
+    windowUpdateServerPause(cs);
+    oldTick = SDL_GetTicks();
+    ttick = oldTick;
+    soundSetMuted(s_tutorialPrevMuted);
   }
 }
 
@@ -2075,6 +2126,7 @@ void frontEndShowGunsight(ClientSim *cs, bool isShown) {
 #define TUTORIAL_INTRO_MIN_FRAMES 3
 static int tutorialStepIdx = 0;
 static int tutorialFramesPresented = 0;
+static bool respawn1Shown = false;
 
 /* humanSim lives in gamefront.c; we need it so the tutorial can clear
  * sim->isTutorial on both sims when the final dialog closes, letting
@@ -2084,6 +2136,29 @@ extern ClientSim *humanSim;
 void frontEndTutorialReset(void) {
   tutorialStepIdx = 0;
   tutorialFramesPresented = 0;
+  respawn1Shown = false;
+}
+
+/* Polled once per frame on the main thread (client mutex free on entry).
+   Shows the start-1 respawn message once per tutorial run. The flag is set
+   by the server thread in tankDeath; we take-and-clear it under the mutex,
+   then hand the message to the in-loop overlay, which freezes the sim
+   (windowTutorialPause) while it is up — no direct serverSimSetPaused. */
+static void tutorialRespawnPoll(void) {
+  if (isTutorial != TRUE || respawn1Shown) return;
+  if (tutorialOverlayIsOpen()) return;   /* don't stack on a step message */
+  ServerSim *srv = gameFrontGetServerSim();
+  if (!srv) return;
+  clientMutexWaitFor();
+  bool fire = serverSimTakeTutorialRespawn1(srv);
+  clientMutexRelease();
+  if (!fire) return;
+  respawn1Shown = true;
+  {
+    uint16_t ids[1];
+    ids[0] = STR_TUTORIAL_RESPAWN1;
+    tutorialOverlayShow(ids, 1, NULL);
+  }
 }
 
 /* Called from the main loop immediately after SDL_RenderPresent so we
@@ -2094,70 +2169,95 @@ void frontEndTutorialNotePresentedFrame(void) {
   }
 }
 
+/* Runs from the render path (tutorialOverlayRender) when the player dismisses
+   the last message of the current tutorial step.  Advances the step sequencer
+   and, on the final step, leaves tutorial mode.  The overlay's open/close edge
+   has already lifted the solo freeze (windowTutorialPause) by the time this
+   runs, and the client mutex is free, so sim mutations take it here. */
+static void tutorialStepComplete(void) {
+  bool finalStep = (tutorialStepIdx == tutorialStepCount - 1);
+
+  /* Final step: exit tutorial mode so the player can keep driving.  We clear
+   * the global client flag plus both sims' isTutorial so frontEndTutorial()
+   * no-ops on future ticks and the server stops auto-halting the tank at old
+   * trigger rows.  The game timer keeps running — the old implementation
+   * removed it, locking the player out of movement.  Also persist completion
+   * so the welcome menu stops offering it (re-enable from Settings). */
+  if (finalStep) {
+    isTutorial = FALSE;
+    clientMutexWaitFor();
+    if (humanSim) clientSimSetTutorial(humanSim, false);
+    {
+      ServerSim *srv = gameFrontGetServerSim();
+      if (srv) serverSimSetTutorial(srv, false);
+    }
+    clientMutexRelease();
+    gameFrontSetShowTutorialButton(false);
+  }
+
+  doingTutorial = FALSE;
+  tutorialStepIdx++;
+
+  /* Once the player passes the boat-building step (the tutorialSteps row
+     with pos == 66), respawn at start 1 (the far bank) instead of start 0
+     (out at sea). Found by scanning for the row, not a fixed index, so it
+     survives step-table edits. */
+  {
+    int boatStep = -1;
+    int s;
+    for (s = 0; s < tutorialStepCount; s++) {
+      if (tutorialSteps[s].pos == 66) { boatStep = s; break; }
+    }
+    clientMutexWaitFor();
+    {
+      ServerSim *srv = gameFrontGetServerSim();
+      if (srv && boatStep >= 0) {
+        serverSimSetTutorialStartIdx(srv, (tutorialStepIdx > boatStep) ? 1 : 0);
+      }
+    }
+    clientMutexRelease();
+  }
+}
+
 bool frontEndTutorial(BYTE pos) {
   int i;
+  int count;
 
   if (isTutorial != TRUE) {
     tutorialStepIdx = 0;    /* Reset for the next tutorial run. */
     return FALSE;
   }
   if (tutorialStepIdx >= tutorialStepCount) return FALSE;
+
+  /* A message is already up (or pending this frame): hold the tank but don't
+     re-trigger.  The overlay engages the solo freeze a frame after it opens,
+     after which the game tick stops running entirely; this guards that gap. */
+  if (tutorialOverlayIsOpen()) return TRUE;
+
   {
     BYTE stepPos = tutorialSteps[tutorialStepIdx].pos;
     if (stepPos != TUTORIAL_POS_ANY && stepPos != pos) return FALSE;
   }
 
-  /* Intro step only: defer until the game has rendered a frame, so
-   * the backbuffer the modal captures shows the map, not grey. */
+  /* Intro step only: defer until the game has rendered a frame, so the
+   * overlay opens over the map rather than a grey backbuffer. */
   if (tutorialSteps[tutorialStepIdx].pos == TUTORIAL_POS_ANY &&
       tutorialFramesPresented < TUTORIAL_INTRO_MIN_FRAMES) {
     return FALSE;
   }
 
   doingTutorial = TRUE;
-  /* Freeze the server sim's tankUpdate before we release the mutex so
-   * the tank doesn't drift forward while the modal is up. */
-  {
-    ServerSim *srv = gameFrontGetServerSim();
-    if (srv) serverSimSetPaused(srv, TRUE);
-  }
-  clientMutexRelease();
+  count = 0;
   for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
-    uint16_t mid = tutorialSteps[tutorialStepIdx].msgs[i];
-    if (mid == 0) break;
-    {
-      TutorialSeg segs[TUTORIAL_SEG_MAX];
-      int n = tutorialResolveSegments(mid, segs, TUTORIAL_SEG_MAX);
-      imguiMessageBoxRich(DIALOG_BOX_TITLE, segs, n,
-                          IMGUI_MSG_INFO, IMGUI_MSG_OK);
-    }
+    if (tutorialSteps[tutorialStepIdx].msgs[i] == 0) break;
+    count++;
   }
-  /* Final step: exit tutorial mode so the player can keep driving.
-   * We clear the global client flag plus both sims' isTutorial so that
-   * frontEndTutorial() no-ops on future ticks and the server stops
-   * auto-halting the tank at old trigger rows. The game timer keeps
-   * running — the old implementation removed it, locking the player
-   * out of movement, which is not the behaviour we want.
-   * Also persist that the tutorial is complete so the welcome menu
-   * stops offering it (the player can re-enable from Settings). */
-  if (tutorialStepIdx == tutorialStepCount - 1) {
-    isTutorial = FALSE;
-    if (humanSim) clientSimSetTutorial(humanSim, false);
-    {
-      ServerSim *srv = gameFrontGetServerSim();
-      if (srv) serverSimSetTutorial(srv, false);
-    }
-    gameFrontSetShowTutorialButton(false);
-  }
-  clientMutexWaitFor();
-  {
-    ServerSim *srv = gameFrontGetServerSim();
-    if (srv) serverSimSetPaused(srv, FALSE);
-  }
-  doingTutorial = FALSE;
-  oldTick = SDL_GetTicks();
-  ttick = oldTick;
-  tutorialStepIdx++;
+  /* Hand the step's messages to the in-loop overlay.  Presentation, the solo
+     freeze, and the step-complete bookkeeping (tutorialStepComplete) all run
+     from the render path — this only enqueues, so it is safe to call under the
+     client mutex held by the game tick without blocking the server thread. */
+  tutorialOverlayShow(tutorialSteps[tutorialStepIdx].msgs, count,
+                      tutorialStepComplete);
   return TRUE;
 }
 

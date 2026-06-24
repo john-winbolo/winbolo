@@ -1364,13 +1364,15 @@ bool gameFrontSetDlgState(openingStates newState) {
         /* Single-player opens the lobby at sensible defaults the host can
          * still change inline before Start: Open game, Full Advantage AI,
          * and one enemy bot. Held in SP-local values so the host-game path
-         * (gameFrontSetupServer) keeps its own settings. */
-        gameType spGameType = gameOpen;
-        aiType   spAiPolicy = aiFull;
+         * (gameFrontSetupServer) keeps its own settings. The tutorial forces
+         * a solo strict-tournament game with no AI, ignoring any SP-lobby
+         * settings left over from earlier in the session. */
+        gameType spGameType = isTutorial ? gameStrictTournament : gameOpen;
+        aiType   spAiPolicy = isTutorial ? aiNone : aiFull;
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
          * the user already configured (count > 0) is left untouched. */
-        if (gameFrontBotSetupData.count == 0) {
+        if (!isTutorial && gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
@@ -1397,6 +1399,16 @@ bool gameFrontSetDlgState(openingStates newState) {
           /* Embedded server: silence its console messages (Thread Manager
            * Startup, Game started!, …) — the client has no server console. */
           serverSimSetQuiet(spServerSim, true);
+          /* Tutorial: mark the freshly-created sim authoritative-tutorial and
+             reset the respawn start to 0 (sea) BEFORE the host player is added
+             in gameFrontStartServerSim below.  startsGetStart only takes the
+             deterministic tutorial start when sim->isTutorial is already set;
+             the old serverSimSetTutorial at openTutorial ran after the spawn,
+             so the host was placed by the open-game algorithm instead. */
+          if (isTutorial) {
+            serverSimSetTutorial(spServerSim, true);
+            serverSimSetTutorialStartIdx(spServerSim, 0);
+          }
           bgGameSetHiddenByForeground(bgGameGetShared(), true);
           /* Single-player runs through the same serverInstanceStartup +
            * timer-thread ticking path as the host, so SP and listen-server

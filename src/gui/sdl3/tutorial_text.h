@@ -10,14 +10,22 @@
  *  Resolves a STR_TUTORIAL* id into a sequence of
  *  renderable segments (TEXT runs, PNG glyphs, or
  *  procedural keycaps).  Two transformations:
- *    1. If uiModeIsTablet() is true and the id has a
- *       registered _TOUCH sibling, use the sibling.
- *    2. Expand {ACCEL}/{BRAKE}/{LEFT}/{RIGHT}/{FIRE}/
- *       {MINE}/{SCROLL_*} tokens into one glyph segment
- *       each.  The chosen glyph follows the most recently
- *       used input source: keyboard scancode PNG (with
- *       procedural keycap fallback) or the active gamepad
- *       set's button glyph.
+ *    1. Three-way variant selection on the string id. When
+ *       uiShouldUseControllerMode() is true and the id has a
+ *       registered _CTRL sibling, use it (controller takes
+ *       precedence — a touchscreen with a pad attached gets
+ *       pad wording); else when uiModeIsTablet() is true and
+ *       a _TOUCH sibling exists, use that; otherwise the
+ *       desktop string.
+ *    2. Expand {ACCEL}/{BRAKE}/{LEFT}/{RIGHT}/{FIRE}/{MINE}/
+ *       {SCROLL_*}/{DISMISS}/{BUILD_*} tokens into one glyph
+ *       segment each.  In controller mode, discrete buttons
+ *       resolve through the binding-aware resolver (Steam
+ *       Input origin first, then the live SDL binding) so the
+ *       glyph follows the current remap; analog/stick tokens
+ *       use the Path-B glyph_* art.  In keyboard mode each
+ *       token becomes its scancode PNG (procedural keycap
+ *       fallback).
  *********************************************************/
 
 #ifndef TUTORIAL_TEXT_H
