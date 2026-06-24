@@ -656,6 +656,11 @@ int main(int argc, char *argv[]) {
   clientMutexDestroy();
   /* Explicit cleanup before SDL_Quit so leak checks see freed memory */
   sdl3ImguiCleanup();
+  /* Stop and join the SDL audio mixer thread before the teardown below frees
+   * the bots/Lua brains. The mixer feeds the converter continuously (silence
+   * too), so leaving it live races bgGameDestroy's frees and can crash the
+   * audio thread mid-conversion. */
+  soundCleanup();
   /* Tear down the process-lifetime welcome-screen bg before the renderer
    * and the bot pool: bgGameDestroy calls SDL_DestroyTexture on
    * bg->tilesTex (renderer must still be alive — SDL3 docs say destroying
