@@ -1124,6 +1124,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/draw.c
     src/logviewer/sound.c
     src/logviewer/players.c
+    src/logviewer/spec_frame_fill.c
     src/logviewer/blocks.c
     src/logviewer/shells.c
     src/logviewer/snapshot.c
@@ -2709,6 +2710,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
     tests/unit/test_stream_load.c
+    # Spectator-frame snapshot: steps the v2 fixture to end-of-log, fills a
+    # SpecFramePOD via specFrameFill and asserts the seeded tanks + camera slot.
+    tests/unit/test_spec_frame_fill.c
     # Link-only no-op stubs for the host/render/window/message entry points
     # the decode subset below references but whose real bodies live in the
     # GUI TUs (logviewer.c, draw.c, messages.c) we do not link.
@@ -2722,6 +2726,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/blocks.c
     src/logviewer/snapshot.c
     src/logviewer/players.c
+    src/logviewer/spec_frame_fill.c
     src/logviewer/pillbox.c
     src/logviewer/bases.c
     src/logviewer/starts.c
@@ -2970,6 +2975,7 @@ set(_unit_test_names
     wbv_reader_v2
     blocks_stream
     stream_load
+    spec_frame_fill
     log_path_empty_uses_autobase
     log_path_explicit_file_verbatim
     log_path_explicit_file_keeps_single_wbv

@@ -412,6 +412,11 @@ int run_blocks_stream(void);
  * same content the zip reader does. */
 int run_stream_load(void);
 
+/* Spectator-frame snapshot (test_spec_frame_fill.c): steps the spectator_v2
+ * fixture to end-of-log, fills a SpecFramePOD via specFrameFill and asserts the
+ * two seeded tanks (present, names, slot) and a defined followed slot. */
+int run_spec_frame_fill(void);
+
 /* Extracts the inner "log.dat" from a .wbv zip into a heap buffer (caller
  * frees). Defined in test_log_roundtrip.c; shared with test_stream_load.c. */
 bool extractLogDat(const char *wbvPath, uint8_t **outBuf, size_t *outLen);
