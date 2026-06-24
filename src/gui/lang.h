@@ -231,6 +231,27 @@
 #define STR_TUTORIAL_START01_TOUCH          480
 #define STR_TUTORIAL_START04_TOUCH          481
 
+/* Controller-mode siblings of the tutorial strings whose desktop
+ * wording references keyboard keys or the mouse. The sequencer picks
+ * these when the active input is a gamepad, mirroring the _TOUCH
+ * mechanism above. STR_TUTORIAL_RESPAWN1 is the message shown when
+ * the player respawns at the second tutorial start (near the shore)
+ * instead of out at sea. */
+#define STR_TUTORIAL01_CTRL                 1830
+#define STR_TUTORIAL02_CTRL                 1831
+#define STR_TUTORIAL03_CTRL                 1832
+#define STR_TUTORIAL04_CTRL                 1833
+#define STR_TUTORIAL05_CTRL                 1834
+#define STR_TUTORIAL06_CTRL                 1835
+#define STR_TUTORIAL10_CTRL                 1836
+#define STR_TUTORIAL14_CTRL                 1837
+#define STR_TUTORIAL16_CTRL                 1838
+#define STR_TUTORIAL18_CTRL                 1839
+#define STR_TUTORIAL19_CTRL                 1840
+#define STR_TUTORIAL21_CTRL                 1841
+#define STR_TUTORIAL_START04_CTRL           1842
+#define STR_TUTORIAL_RESPAWN1               1843
+
 /* LGM (little green man) messages */
 #define LGM_MAN_DEAD                        414
 #define LGM_NO_BUILD                        415
