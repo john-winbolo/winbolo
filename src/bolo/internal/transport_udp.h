@@ -88,6 +88,13 @@ typedef struct {
 #define SPEC_CTRL_COUNTDOWN      1   /* status-type byte */
 #define SPEC_CTRL_COUNTDOWN_LEN  5   /* type byte + u32 remainingTicks */
 
+/* Per-record transport header the server prepends to each forward-feed blob
+ * (BULK_KIND_SPEC_RECORD) ahead of the raw ring payload, big-endian:
+ *   [u8 isKeyframe][u32 gameTick][u32 segment]
+ * The spectator client strips this to recover the payload. (The seed blob,
+ * BULK_KIND_SPEC_SEED, carries no such header — it is the raw keyframe.) */
+#define SPEC_RECORD_HEADER_LEN   9
+
 /* ── Deferred WBN PLAYER_JOIN bookkeeping (pure core) ────────────────
  * A slot owes WBN a PLAYER_JOIN event once we learn its identity for
  * the current session: keyed when a reauth fills the slot's WBN key,

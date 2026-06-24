@@ -438,6 +438,9 @@ static void clientSimDestroyContents(ClientSim *cs) {
     cs->brainBuildInfo = NULL;
   }
 
+  /* Free any captured-but-undrained spectator seed/records. */
+  clientSimSpectatorFeedClear(cs);
+
   cs->sim.mp = NULL;
   cs->sim.bs = NULL;
   cs->sim.pb = NULL;
@@ -2017,6 +2020,101 @@ void clientSimClearLobbyMapPreview(ClientSim *cs) {
   cs->lobbyMapPreviewError      = false;
   cs->lobbyMapPreviewTotal      = 0;
   cs->lobbyMapPreviewReceived   = 0;
+}
+
+/* ---- Spectator feed: capture (transport-facing) + drain (session-facing) ---- */
+
+void clientSimSpectatorPushSeed(ClientSim *cs, uint8_t *blob, uint32_t len) {
+  if (!cs) { free(blob); return; }
+  if (cs->spectatorFeed.seedBlob != NULL) {
+    free(cs->spectatorFeed.seedBlob);   /* one seed per session — replace */
+  }
+  cs->spectatorFeed.seedBlob  = blob;   /* ownership transferred in */
+  cs->spectatorFeed.seedLen   = len;
+  cs->spectatorFeed.seedReady = true;
+}
+
+bool clientSimSpectatorPushRecord(ClientSim *cs, bool isKeyframe,
+                                  uint32_t gameTick, uint32_t segment,
+                                  const uint8_t *payload, uint32_t payloadLen) {
+  ClientSpecRecordNode *node;
+  if (!cs) return false;
+  node = (ClientSpecRecordNode *)calloc(1, sizeof(*node));
+  if (node == NULL) return false;
+  if (payloadLen > 0) {
+    node->payload = (uint8_t *)malloc(payloadLen);
+    if (node->payload == NULL) { free(node); return false; }
+    memcpy(node->payload, payload, payloadLen);
+  }
+  node->isKeyframe = isKeyframe;
+  node->gameTick   = gameTick;
+  node->segment    = segment;
+  node->payloadLen = payloadLen;
+  node->next       = NULL;
+  if (cs->spectatorFeed.recordTail != NULL) {
+    cs->spectatorFeed.recordTail->next = node;
+  } else {
+    cs->spectatorFeed.recordHead = node;
+  }
+  cs->spectatorFeed.recordTail = node;
+  cs->spectatorFeed.recordCount++;
+  return true;
+}
+
+void clientSimSpectatorFeedClear(ClientSim *cs) {
+  ClientSpecRecordNode *n;
+  if (!cs) return;
+  if (cs->spectatorFeed.seedBlob != NULL) {
+    free(cs->spectatorFeed.seedBlob);
+  }
+  n = cs->spectatorFeed.recordHead;
+  while (n != NULL) {
+    ClientSpecRecordNode *next = n->next;
+    free(n->payload);
+    free(n);
+    n = next;
+  }
+  memset(&cs->spectatorFeed, 0, sizeof(cs->spectatorFeed));
+}
+
+bool clientSimSpectatorSeedReady(const ClientSim *cs) {
+  return cs && cs->spectatorFeed.seedReady;
+}
+
+bool clientSimSpectatorTakeSeed(ClientSim *cs, uint8_t **outBlob,
+                                uint32_t *outLen) {
+  if (!cs || !cs->spectatorFeed.seedReady || cs->spectatorFeed.seedBlob == NULL) {
+    return false;
+  }
+  if (outBlob != NULL) *outBlob = cs->spectatorFeed.seedBlob;
+  if (outLen  != NULL) *outLen  = cs->spectatorFeed.seedLen;
+  cs->spectatorFeed.seedBlob  = NULL;   /* ownership transferred out */
+  cs->spectatorFeed.seedLen   = 0;
+  cs->spectatorFeed.seedReady = false;
+  return true;
+}
+
+uint32_t clientSimSpectatorRecordCount(const ClientSim *cs) {
+  return cs ? cs->spectatorFeed.recordCount : 0;
+}
+
+bool clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out) {
+  ClientSpecRecordNode *node;
+  if (!cs || out == NULL) return false;
+  node = cs->spectatorFeed.recordHead;
+  if (node == NULL) return false;
+  cs->spectatorFeed.recordHead = node->next;
+  if (cs->spectatorFeed.recordHead == NULL) {
+    cs->spectatorFeed.recordTail = NULL;
+  }
+  cs->spectatorFeed.recordCount--;
+  out->isKeyframe = node->isKeyframe;
+  out->gameTick   = node->gameTick;
+  out->segment    = node->segment;
+  out->payload    = node->payload;     /* ownership transferred to caller */
+  out->payloadLen = node->payloadLen;
+  free(node);                          /* node only — payload is the caller's now */
+  return true;
 }
 
 uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->lobbyMapUploadStatus; }

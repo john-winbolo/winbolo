@@ -217,6 +217,12 @@ int run_spectator_join(void);
  * slot consumed and no map download started. */
 int run_spectator_connect(void);
 
+/* Spectator feed capture — client side (test_spectator_capture.c): a real
+ * spectator client over loopback captures the CHANNEL_BULK seed and the ordered
+ * forward records into the ClientSim feed (record header stripped, order kept),
+ * also exercising the PACKET_CHANNEL ack-emitter gate fix end-to-end. */
+int run_spectator_capture(void);
+
 /* Spectator seed transfer (test_spectator_seed.c): a connected spectator on a
  * server whose ring is recording gets the delayed keyframe at head - delay
  * armed as a BULK_KIND_SPEC_SEED transfer; the armed seed blob is byte-equal to

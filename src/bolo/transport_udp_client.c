@@ -300,6 +300,14 @@ typedef struct {
      * preview today). Fed from the stream fragments channelReceive pops; on a
      * completed transfer it dispatches by kind into the client preview state. */
     BulkReceiver bulkRecv;
+
+    /* In-flight spectator bulk blob (SPEC_SEED / SPEC_RECORD) being reassembled
+     * on CHANNEL_BULK. onBegin mallocs it and returns it as the receiver's dst;
+     * onComplete moves it into the ClientSim spectator feed and clears this.
+     * Held on the ctx so a teardown mid-transfer frees it (no leak). At most one
+     * in flight — bulk transfers are serialized on the stream. */
+    uint8_t *specRecvBuf;
+    uint32_t specRecvTotal;
 } TransportUdpClientCtx;
 
 #define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
@@ -1121,6 +1129,25 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         c->lastResyncProgressTick = c->localTick;
         return c->mapResyncBuf;
 
+    case BULK_KIND_SPEC_SEED:
+    case BULK_KIND_SPEC_RECORD:
+        /* Spectator feed: the seed (raw delayed keyframe) and the forward
+         * records both arrive here while connected as a spectator. Allocate a
+         * fresh buffer sized to the wire totalSize; onComplete moves it into the
+         * ClientSim feed. A SPEC_RECORD carries the server's 9-byte header, so
+         * its body must be at least that long. totalSize is attacker-controlled
+         * (see the sink contract) — bound it by the same cap the map blobs use. */
+        if (c->joinState != UDP_CLIENT_SPECTATING) return NULL;
+        if (h->totalSize == 0 || h->totalSize > MAP_DOWNLOAD_MAX_SIZE) return NULL;
+        if (h->kind == BULK_KIND_SPEC_RECORD && h->totalSize < SPEC_RECORD_HEADER_LEN) {
+            return NULL;
+        }
+        if (c->specRecvBuf != NULL) free(c->specRecvBuf);  /* drop any stale partial */
+        c->specRecvBuf = (uint8_t *)malloc(h->totalSize);
+        if (c->specRecvBuf == NULL) return NULL;
+        c->specRecvTotal = h->totalSize;
+        return c->specRecvBuf;
+
     default:
         return NULL;
     }
@@ -1210,6 +1237,33 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
          * the finalize): a mid-game resync keeps the player's camera. A failed
          * install keeps the prior map and does not advance the generation. */
         udpClientFinalizeResync(c);
+        break;
+
+    case BULK_KIND_SPEC_SEED:
+        /* The whole seed blob (raw delayed keyframe) has landed. Move it into
+         * the ClientSim feed, transferring ownership; the session translates and
+         * loads it later. */
+        clientSimSpectatorPushSeed(cs, c->specRecvBuf, h->totalSize);
+        c->specRecvBuf = NULL;
+        c->specRecvTotal = 0;
+        break;
+
+    case BULK_KIND_SPEC_RECORD:
+        /* One forward record. Strip the 9-byte transport header and queue the
+         * parsed fields + the raw ring payload (which may be empty for an idle
+         * tick). onBegin guaranteed totalSize >= SPEC_RECORD_HEADER_LEN. */
+        if (c->specRecvBuf != NULL && h->totalSize >= SPEC_RECORD_HEADER_LEN) {
+            bool     isKf      = c->specRecvBuf[0] != 0;
+            uint32_t gameTick  = unpackU32(c->specRecvBuf + 1);
+            uint32_t segment   = unpackU32(c->specRecvBuf + 5);
+            uint32_t payloadLen = h->totalSize - SPEC_RECORD_HEADER_LEN;
+            clientSimSpectatorPushRecord(cs, isKf, gameTick, segment,
+                                         c->specRecvBuf + SPEC_RECORD_HEADER_LEN,
+                                         payloadLen);
+        }
+        free(c->specRecvBuf);
+        c->specRecvBuf = NULL;
+        c->specRecvTotal = 0;
         break;
 
     default:
@@ -2462,9 +2516,14 @@ static bool udpClientTick(void *ctx) {
      * Also fire during DOWNLOADING_MAP: the join map now streams on CHANNEL_BULK
      * and this standalone frame is the only carrier of the client's CHANNEL_BULK
      * acks during the download. Without it the server's send window stalls one
-     * window in and a larger map wedges the join. */
+     * window in and a larger map wedges the join.
+     *
+     * Likewise during SPECTATING: the spectator seed and forward records stream
+     * on CHANNEL_BULK, and this standalone frame carries the spectator's acks.
+     * Without it the server's seed transfer never completes. */
     if (c->joinState == UDP_CLIENT_CONNECTED ||
-        c->joinState == UDP_CLIENT_DOWNLOADING_MAP) {
+        c->joinState == UDP_CLIENT_DOWNLOADING_MAP ||
+        c->joinState == UDP_CLIENT_SPECTATING) {
         channelTick(&c->channelMux, c->localTick, c->pingMs);
         {
             uint8_t cbuf[UDP_MAX_PAYLOAD];
@@ -3071,6 +3130,9 @@ void transportUdpClientDestroy(Transport *t) {
     udpClientFreeResyncBuf(c);
     if (c->uploadBuf != NULL) {
         free(c->uploadBuf);
+    }
+    if (c->specRecvBuf != NULL) {
+        free(c->specRecvBuf);   /* in-flight spectator blob, if teardown mid-transfer */
     }
     bulkSenderReset(&c->uploadSend);
     free(c);

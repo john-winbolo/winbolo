@@ -834,6 +834,35 @@ const uint8_t *clientSimGetLobbyMapPreviewBytes(const ClientSim *cs);
 uint32_t       clientSimGetLobbyMapPreviewLen(const ClientSim *cs);
 void           clientSimClearLobbyMapPreview(ClientSim *cs);
 
+/* Spectator feed drain — the session uses these to pull the captured seed and
+ * the ordered forward records the bulk sink reassembled while connected as a
+ * tankless spectator. The raw bytes are translated/fed to the decoder in a
+ * later slice; this slice only captures and exposes them.
+ *
+ * One forward record handed back by clientSimSpectatorPopRecord: the server's
+ * 9-byte transport header is already stripped. payload is owned by the caller
+ * (free it) and is NULL when payloadLen is 0. */
+typedef struct {
+    bool      isKeyframe;
+    uint32_t  gameTick;
+    uint32_t  segment;
+    uint8_t  *payload;     /* caller-owned; NULL when payloadLen == 0 */
+    uint32_t  payloadLen;
+} ClientSpectatorRecord;
+
+/* True once the seed blob has been fully received. */
+bool     clientSimSpectatorSeedReady(const ClientSim *cs);
+/* Hand the seed blob to the caller, transferring ownership (*outBlob must be
+ * freed). Returns false (outputs untouched) if no seed is ready; the feed no
+ * longer holds the seed after a successful take. */
+bool     clientSimSpectatorTakeSeed(ClientSim *cs, uint8_t **outBlob,
+                                    uint32_t *outLen);
+/* Number of forward records currently queued. */
+uint32_t clientSimSpectatorRecordCount(const ClientSim *cs);
+/* Pop the oldest queued forward record into *out (ownership of out->payload
+ * passes to the caller). Returns false (out untouched) when the queue is empty. */
+bool     clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out);
+
 /* Map upload progress reflection. status: 0=idle, 1=announce sent,
  * 2=ack received (chunks in flight), 3=done, 4=rejected. */
 uint8_t     clientSimGetLobbyMapUploadStatus(const ClientSim *cs);
