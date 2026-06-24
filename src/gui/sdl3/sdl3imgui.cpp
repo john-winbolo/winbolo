@@ -3918,17 +3918,25 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             inputGamepadProcessEvent(&ev);
         }
 
-        /* While the Key Setup modal is open, swallow all mouse + keyboard events
-         * so they never reach the game. */
+        /* Swallow events ImGui is using so they never reach the game, but
+         * gate each device on its own capture flag: keyboard events only when
+         * ImGui wants the keyboard, mouse events only when it wants the mouse.
+         * Cross-gating these (dropping keyboard whenever the mouse was over a
+         * panel) ate event-driven game keys — notably the Tank View key that
+         * exits pill view — whenever the cursor merely hovered the menu bar or
+         * a vote/alliance overlay. */
         ImGuiIO &io = ImGui::GetIO();
-        if (io.WantCaptureKeyboard || io.WantCaptureMouse) {
-            bool isGameInput = (ev.type == SDL_EVENT_MOUSE_MOTION       ||
-                                ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN  ||
-                                ev.type == SDL_EVENT_MOUSE_BUTTON_UP    ||
-                                ev.type == SDL_EVENT_MOUSE_WHEEL        ||
-                                ev.type == SDL_EVENT_KEY_DOWN           ||
-                                ev.type == SDL_EVENT_KEY_UP);
-            if (isGameInput) continue;
+        {
+            bool isMouseEvent = (ev.type == SDL_EVENT_MOUSE_MOTION       ||
+                                 ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN  ||
+                                 ev.type == SDL_EVENT_MOUSE_BUTTON_UP    ||
+                                 ev.type == SDL_EVENT_MOUSE_WHEEL);
+            bool isKeyEvent   = (ev.type == SDL_EVENT_KEY_DOWN           ||
+                                 ev.type == SDL_EVENT_KEY_UP);
+            if ((isMouseEvent && io.WantCaptureMouse) ||
+                (isKeyEvent && io.WantCaptureKeyboard)) {
+                continue;
+            }
         }
 
         /* Mouse wheel adjusts gunsight range while in-game. Reaches here
@@ -4356,6 +4364,18 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     if (s_clearNavFocus) {
         ImGui::SetWindowFocus(nullptr);
         s_clearNavFocus = false;
+    }
+
+    /* Keep the keyboard with the game during active play. With
+       NavEnableKeyboard on, clicking the menu bar (or just closing a menu)
+       leaves an ImGui window nav-focused, which latches io.WantCaptureKeyboard
+       true indefinitely — the swallow in sdl3ImguiProcessEvents then eats
+       event-driven game keys like Tank View, trapping the player in pill view.
+       So while a game is running and no panel, popup, menu, or text field is
+       genuinely using ImGui, drop any lingering nav focus each frame. */
+    if (cs && !clientSimIsInLobby(cs) && !sdl3ImguiIsDialogOpen() &&
+        !ImGui::GetIO().WantTextInput) {
+        ImGui::SetWindowFocus(nullptr);
     }
 
     /* Controller-detected prompt: poll the gamepad-connected rising edge
