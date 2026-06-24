@@ -264,6 +264,17 @@ function Brain.get_capacity_state_json()
     table.concat(sec_parts, ","))
 end
 
+-- idx -> viz_id legend for the brain recorder (winbolods). Lets the BrainTest
+-- loader remap recorded overlay viz_idx values to category names.
+function Brain.viz_legend_json()
+  return viz.legend_json()
+end
+
+-- CSV of overlay viz indices the recorder should drop (cosmetic/huge ones).
+function Brain.viz_record_skip_csv()
+  return viz.record_skip_idx_csv()
+end
+
 function Brain.get_pool_breakdown_json()
   if not BRAIN_POOL_VIZ then
     return string.format(

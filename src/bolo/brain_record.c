@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <zlib.h>
 
 #include "brain_record.h"
 #include "server_sim.h"
@@ -17,12 +18,18 @@
 #define BRAINREC_MAP_TILES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
 
 /* ---- module state ---------------------------------------------------- */
+/* The .btr is written as a streaming gzip: each frame is compressed on the fly
+ * by gzwrite (no raw buffering, no compress-at-end). g_sinceFlush throttles
+ * gzflush so a hard kill loses at most ~1-2s while keeping a good ratio. */
 static bool     g_enabled  = false;
-static FILE    *g_fp       = NULL;
-static bool     g_failed   = false;   /* gave up opening (no dir / fopen err) */
+static gzFile   g_gz       = NULL;
+static uint32_t g_sinceFlush = 0;
+static bool     g_failed   = false;   /* gave up opening (no dir / gzopen err) */
 static uint32_t g_lastTick = 0xFFFFFFFFu;
 static int      g_openAttempts = 0;
 static char     g_sessionDir[512] = {0};  /* resolved DEBUG_SESSION_DIR */
+static bool     g_skipViz[256] = {0};     /* overlay viz_idx values to drop */
+static bool     g_haveSkip = false;
 
 /* Map-terrain delta tracking. g_prevMap holds the last frame's terrain so a
  * non-keyframe frame writes only changed tiles. */
@@ -30,12 +37,30 @@ static BYTE     g_prevMap[BRAINREC_MAP_TILES];
 static bool     g_hasPrevMap = false;
 static uint32_t g_frameCount = 0;
 
-/* Small write helpers — native byte order (same build both ends). */
-static void wr_u8 (uint8_t v)  { fwrite(&v, 1, 1, g_fp); }
-static void wr_u16(uint16_t v) { fwrite(&v, sizeof v, 1, g_fp); }
-static void wr_u32(uint32_t v) { fwrite(&v, sizeof v, 1, g_fp); }
-static void wr_f32(float v)    { fwrite(&v, sizeof v, 1, g_fp); }
-static void wr_buf(const void *p, size_t n) { if (n) fwrite(p, 1, n, g_fp); }
+/* Small write helpers — native byte order (same build both ends), streamed
+ * through gzip. */
+static void wr_u8 (uint8_t v)  { gzwrite(g_gz, &v, 1); }
+static void wr_u16(uint16_t v) { gzwrite(g_gz, &v, (unsigned)sizeof v); }
+static void wr_u32(uint32_t v) { gzwrite(g_gz, &v, (unsigned)sizeof v); }
+static void wr_f32(float v)    { gzwrite(g_gz, &v, (unsigned)sizeof v); }
+static void wr_buf(const void *p, size_t n) { if (n) gzwrite(g_gz, p, (unsigned)n); }
+
+/* Write one overlay command in packed form: fixed numeric fields + a
+ * length-prefixed text string (0 bytes when the command has no label, which is
+ * ~99% of them). Replaces the raw 160-byte struct memcpy — same data, no dead
+ * text padding. */
+static void wr_overlay_packed(const OverlayCmd *c) {
+    wr_u8((uint8_t)c->type);
+    wr_f32(c->x1); wr_f32(c->y1); wr_f32(c->x2); wr_f32(c->y2);
+    wr_f32(c->radius);
+    wr_u8(c->r); wr_u8(c->g); wr_u8(c->b); wr_u8(c->a);
+    wr_u8(c->anchor);
+    wr_u8(c->viz_idx);
+    uint8_t tl = 0;
+    while (tl < OVERLAY_TEXT_MAX && c->text[tl] != '\0') tl++;
+    wr_u8(tl);
+    if (tl) wr_buf(c->text, tl);
+}
 
 void brainRecordSetEnabled(bool enabled) { g_enabled = enabled; }
 bool brainRecordIsEnabled(void)          { return g_enabled; }
@@ -64,9 +89,9 @@ static int firstBotSlot(ServerSim *sim) {
 /* Lazily open <sessionDir>/brainrec.btr. The session dir normally comes
  * straight from brainRecordSetSessionDir() (winbolods creates it under
  * -braindebug). As a fallback, if it wasn't set we read DEBUG_SESSION_DIR off
- * the first bot's Lua state. Returns true once g_fp is ready. */
+ * the first bot's Lua state. Returns true once g_gz is ready. */
 static bool ensureOpen(ServerSim *sim) {
-    if (g_fp)     return true;
+    if (g_gz)     return true;
     if (g_failed) return false;
 
     /* Resolve the dir. Prefer an explicitly-set one (no bot dependency). */
@@ -94,8 +119,11 @@ static bool ensureOpen(ServerSim *sim) {
     char path[600];
     snprintf(path, sizeof(path), "%s/%s", g_sessionDir, BRAINREC_FILENAME);
 
-    g_fp = fopen(path, "wb");
-    if (!g_fp) {
+    /* Streaming gzip. "wb1" = fastest deflate level — the data (zero-padded
+     * structs, repetitive JSON) is highly compressible, so level 1 keeps most
+     * of the ratio while minimising per-tick CPU on the sim thread. */
+    g_gz = gzopen(path, "wb1");
+    if (!g_gz) {
         g_failed = true;
         fprintf(stderr, "brain_record: could not open '%s' for writing\n", path);
         return false;
@@ -107,9 +135,44 @@ static bool ensureOpen(ServerSim *sim) {
     hdr.version = BRAINREC_VERSION;
     const char *mn = serverSimGetMapName(sim);
     if (mn) { strncpy(hdr.mapName, mn, sizeof(hdr.mapName) - 1); }
-    fwrite(&hdr, sizeof hdr, 1, g_fp);
+    gzwrite(g_gz, &hdr, (unsigned)sizeof hdr);
 
-    fprintf(stderr, "brain_record: recording brain decisions to '%s'\n", path);
+    /* One-time legend: overlay viz_idx -> category name, so the loader can
+     * label/filter recorded overlays. Evaluated off any bot (all share it). */
+    char *legend = NULL;
+    int lslot = firstBotSlot(sim);
+    if (lslot >= 0) {
+        legend = serverSimBotEvalLuaString(sim, (BYTE)lslot,
+                                           "return brain.viz_legend_json()");
+    }
+    uint32_t llen = legend ? (uint32_t)strlen(legend) : 0u;
+    gzwrite(g_gz, &llen, (unsigned)sizeof llen);
+    if (llen) gzwrite(g_gz, legend, llen);
+    if (legend) free(legend);
+
+    /* Recorder skip set: viz_idx values the brain flags as too-heavy/cosmetic
+     * (label_overlays, attack_scan_spots_all_pills). These overlay commands
+     * are dropped from disk (still drawn live in BrainTest). CSV of indices. */
+    char *skipcsv = NULL;
+    if (lslot >= 0) {
+        skipcsv = serverSimBotEvalLuaString(sim, (BYTE)lslot,
+                                            "return brain.viz_record_skip_csv()");
+    }
+    int nskip = 0;
+    if (skipcsv) {
+        const char *p = skipcsv;
+        while (*p) {
+            int v = atoi(p);
+            if (v >= 0 && v < 256 && !g_skipViz[v]) { g_skipViz[v] = true; g_haveSkip = true; nskip++; }
+            while (*p && *p != ',') p++;
+            if (*p == ',') p++;
+        }
+        free(skipcsv);
+    }
+
+    fprintf(stderr, "brain_record: recording brain decisions to '%s' "
+                    "(viz legend %u bytes, %d skipped viz)\n",
+            path, (unsigned)llen, nskip);
     return true;
 }
 
@@ -239,11 +302,22 @@ void brainRecordTick(ServerSim *sim) {
 
         writeGoalInfo(sim, slot);
 
-        /* Overlay (visualizer) commands the brain emitted this tick. */
+        /* Overlay (visualizer) commands the brain emitted this tick, written
+         * packed (variable-length), minus the skip-listed categories
+         * (label_overlays etc.) which are dropped from disk entirely. */
         OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(sim, slot);
         uint32_t ocount = (ovl && ovl->count > 0) ? (uint32_t)ovl->count : 0;
-        wr_u32(ocount);
-        if (ocount) wr_buf(ovl->cmds, (size_t)ocount * sizeof(OverlayCmd));
+        uint32_t kept = ocount;
+        if (g_haveSkip && ocount) {
+            kept = 0;
+            for (uint32_t k = 0; k < ocount; k++)
+                if (!g_skipViz[ovl->cmds[k].viz_idx]) kept++;
+        }
+        wr_u32(kept);
+        for (uint32_t k = 0; k < ocount; k++) {
+            if (g_haveSkip && g_skipViz[ovl->cmds[k].viz_idx]) continue;
+            wr_overlay_packed(&ovl->cmds[k]);
+        }
 
         /* Pool-breakdown JSON (what the BrainTest Pool Info panel renders). */
         char *pj = serverSimBotEvalLuaString(sim, slot,
@@ -254,19 +328,25 @@ void brainRecordTick(ServerSim *sim) {
         if (pj) free(pj);
     }
 
-    /* Flush each frame so a hard-killed server (Ctrl-C) still leaves a
-     * loadable file up to the last completed tick. Debug-only cost. */
-    fflush(g_fp);
+    /* Throttled gzip flush: a Z_SYNC_FLUSH every ~64 frames keeps the on-disk
+     * gzip valid (a hard kill loses at most ~1-2s) without the ratio hit of
+     * flushing every frame. A clean shutdown gzcloses for the final bytes. */
+    if (++g_sinceFlush >= 64) {
+        gzflush(g_gz, Z_SYNC_FLUSH);
+        g_sinceFlush = 0;
+    }
 }
 
 void brainRecordShutdown(void) {
-    if (g_fp) {
-        fflush(g_fp);
-        fclose(g_fp);
-        g_fp = NULL;
+    if (g_gz) {
+        gzclose(g_gz);
+        g_gz = NULL;
     }
+    g_sinceFlush = 0;
     g_enabled    = false;
     g_lastTick   = 0xFFFFFFFFu;
     g_hasPrevMap = false;
     g_frameCount = 0;
+    g_haveSkip   = false;
+    memset(g_skipViz, 0, sizeof g_skipViz);
 }

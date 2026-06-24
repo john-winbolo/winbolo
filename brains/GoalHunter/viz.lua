@@ -598,25 +598,86 @@ function M.is_on(viz_id)
   return true
 end
 
+-- Self-assign stable viz indices (sorted by id) and publish _BT_VIZ_IDS.
+-- Used by headless hosts (winbolods recorder) so vid() stamps a real
+-- viz_idx on every emitted overlay — otherwise everything records as
+-- 255/NONE and can't be labelled, filtered in playback, or diffed/excluded
+-- by category. M.legend_json() exports the idx->id map for the loader.
+local function self_assign_ids()
+  if _G._BT_VIZ_IDS then return end
+  local ids = {}
+  for id in pairs(M.IDS) do ids[#ids + 1] = id end
+  table.sort(ids)
+  local map = {}
+  for i = 1, #ids do map[ids[i]] = i - 1 end
+  _G._BT_VIZ_IDS = map
+end
+
 -- Register every entry in M.IDS with the host's V dialog. Called from
--- Brain.open(). The braintest_viz_register binding only exists when
--- the brain runs under BrainTest; under WinBolo client it's nil and
--- this function is a no-op (the brain still draws overlays, they're
--- just never displayed).
+-- Brain.open(). NOTE: braintest_viz_register is ALWAYS bound (it lives in
+-- shared braincore.c); it returns the assigned index, or -1 when no host
+-- registry is wired (WinBolo client / headless winbolods). So we detect the
+-- headless case by the return value, not by the binding's presence, and
+-- self-assign indices then.
 function M.register_all()
-  if not braintest_viz_register then return end
+  if not braintest_viz_register then
+    self_assign_ids()   -- binding truly absent
+    return
+  end
+  local host_assigned = false
   for id, entry in pairs(M.IDS) do
     -- The 5th arg (default_on) is omitted so the C binding defaults
     -- to ON. Brains that want a viz off-by-default can pass the
     -- entry through with a `default_on = false` field; we honor it.
     local def_on = entry.default_on
     if def_on == nil then def_on = true end
-    braintest_viz_register(id,
+    local idx = braintest_viz_register(id,
                            entry.short or id,
                            entry.short or "",
                            entry.long or "",
                            def_on)
+    if type(idx) == "number" and idx >= 0 then host_assigned = true end
   end
+  -- Binding present but no host registry (returned -1 for everything):
+  -- headless winbolods → self-assign so overlays carry a real viz_idx.
+  if not host_assigned then self_assign_ids() end
+end
+
+-- idx -> viz_id legend (JSON object {"0":"id0",...}) for the brain recorder.
+-- Written once into the .btr so the BrainTest loader can map each recorded
+-- viz_idx back to a category name (then to its own registry index) for
+-- playback filtering. Index VALUES needn't match BrainTest's — the names do.
+function M.legend_json()
+  local t = _G._BT_VIZ_IDS or {}
+  local parts = {}
+  for id, idx in pairs(t) do
+    parts[#parts + 1] = string.format('"%d":"%s"', idx, id)
+  end
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
+-- Categories the brain RECORDER skips (winbolods .btr only). They still draw
+-- live in BrainTest; this just keeps them off disk because they dominate file
+-- size and are cosmetic/derivable:
+--   label_overlays               — per-shape caption helper, ~48% of bytes
+--   attack_scan_spots_all_pills  — all-pills spot scan, ~38% of bytes
+-- Add more ids here to drop them from recordings.
+M.RECORD_SKIP = {
+  label_overlays = true,
+  attack_scan_spots_all_pills = true,
+}
+
+-- CSV of viz indices for the RECORD_SKIP categories (resolved via the live
+-- _BT_VIZ_IDS map). The recorder marks these viz_idx values and drops matching
+-- overlay commands when serializing each frame.
+function M.record_skip_idx_csv()
+  local t = _G._BT_VIZ_IDS or {}
+  local parts = {}
+  for id in pairs(M.RECORD_SKIP) do
+    local idx = t[id]
+    if idx then parts[#parts + 1] = tostring(idx) end
+  end
+  return table.concat(parts, ",")
 end
 
 -- viz_idx lookup: BrainTest pushes a _BT_VIZ_IDS = { id = idx, ... }

@@ -34,9 +34,28 @@ extern "C" {
  * version whenever the frame layout below changes; the loader checks it. */
 #define BRAINREC_MAGIC        "WBNREC1"
 #define BRAINREC_MAGIC_LEN    8
-#define BRAINREC_VERSION      2u     /* v2: diff-based map terrain track */
+#define BRAINREC_VERSION      4u     /* v4: packed (variable-length) overlay cmds */
 #define BRAINREC_FRAME_MAGIC  0xB07EC0DEu
 #define BRAINREC_FILENAME     "brainrec.btr"
+
+/* Packed overlay command (replaces the raw 160-byte OverlayCmd on disk). Each
+ * frame's per-bot overlay block is: uint32 count, then `count` of these:
+ *   uint8  type
+ *   float  x1, y1, x2, y2
+ *   float  radius
+ *   uint8  r, g, b, a
+ *   uint8  anchor
+ *   uint8  viz_idx
+ *   uint8  textLen           (0 for the ~99% of cmds with no label)
+ *   char   text[textLen]
+ * = 28 + textLen bytes (vs a fixed 160). Lossless — the loader rebuilds a full
+ * OverlayCmd, zeroing the text buffer and copying textLen chars. */
+
+/* After BrainRecHeader, before the first frame, a one-time legend block:
+ *   uint32 legendLen; char legendJson[legendLen]
+ * legendJson is {"<idx>":"<viz_id>", ...} mapping each recorded overlay
+ * viz_idx to its category name, so the loader can remap to BrainTest's own
+ * registry by name. legendLen may be 0 (no legend available). */
 
 /* Full-map keyframe cadence; intermediate frames store only changed tiles.
  * Terrain bytes carry mines (values in [MINE_START,MINE_END]) and boats too,

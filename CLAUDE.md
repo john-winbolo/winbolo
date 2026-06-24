@@ -58,6 +58,20 @@ After any base-file edit that touches stripped constructs (print2, viz, overlay_
 - Add `/p:DebugInformationFormat=None /p:GenerateDebugInformation=false` to skip debug symbols (faster).
 - "build" / "rebuild" = incremental. Only do clean rebuild if user says "clean rebuild".
 
+### Version number cache (clear after merging an upstream version bump)
+`WINBOLO_VERSION` in `cmake/bolo_version.cmake` is a `CACHE STRING`, so once it's
+stored in `build/CMakeCache.txt` it is STICKY — merging a new upstream tag that
+bumps the default (e.g. 1.89 → 1.90) does NOT update the cache, and the build
+keeps reporting the OLD version. After any merge that changes
+`cmake/bolo_version.cmake`, clear the cached value so the new default takes:
+```powershell
+& "<cmake>" -U WINBOLO_VERSION -S D:\Development\winbolo -B D:\Development\winbolo\build
+```
+(`<cmake>` is the VS-bundled `...\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe`.)
+Verify with `Select-String build\CMakeCache.txt -Pattern WINBOLO_VERSION`, then
+rebuild. The git hash/date refresh on every configure; only the version STRING
+is sticky.
+
 ## Logging
 - print2 messages go to `debug_sessions/<TS>/print2_bot<N>.log`
 - astar.log (one per session, shared across bots) for C-side A* per-step traces
