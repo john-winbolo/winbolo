@@ -48,6 +48,11 @@ int lv_imgui_context_get_resize_delta(float* dx, float* dy);
  * point during the SDL event poll. */
 int lv_imgui_want_capture_mouse(void);
 
+/* Draw a borderless, non-interactive text label centred on the window. Call
+ * between newframe and render. Used by the spectator host's pre-seed overlay
+ * ("spectating begins in N" / "connecting" / "connection lost"). */
+void lv_imgui_center_message(const char* text);
+
 #ifdef __cplusplus
 }
 #endif

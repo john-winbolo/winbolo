@@ -862,6 +862,10 @@ uint32_t clientSimSpectatorRecordCount(const ClientSim *cs);
 /* Pop the oldest queued forward record into *out (ownership of out->payload
  * passes to the caller). Returns false (out untouched) when the queue is empty. */
 bool     clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out);
+/* Latest cold-start countdown the server sent while the delayed ring fills.
+ * Returns true and writes *outRemaining (remaining game ticks, ~50/sec) once a
+ * countdown has been received; false (untouched) before the first one. */
+bool     clientSimSpectatorCountdown(const ClientSim *cs, uint32_t *outRemaining);
 
 /* Map upload progress reflection. status: 0=idle, 1=announce sent,
  * 2=ack received (chunks in flight), 3=done, 4=rejected. */

@@ -101,6 +101,11 @@ typedef struct {
     ClientSpecRecordNode *recordHead;   /* FIFO: oldest at head */
     ClientSpecRecordNode *recordTail;
     uint32_t              recordCount;
+    /* Cold-start countdown the server sends raw on CHANNEL_CONTROL while the
+     * delayed ring fills, before the seed is ready. countdownReceived gates the
+     * value's validity; remaining is in game ticks (~50/sec). */
+    uint32_t              countdownRemaining;
+    bool                  countdownReceived;
 } ClientSpectatorFeed;
 
 struct ClientSim {
@@ -606,6 +611,11 @@ void clientSimSpectatorPushSeed(ClientSim *cs, uint8_t *blob, uint32_t len);
 bool clientSimSpectatorPushRecord(ClientSim *cs, bool isKeyframe,
                                   uint32_t gameTick, uint32_t segment,
                                   const uint8_t *payload, uint32_t payloadLen);
+
+/* Record the latest cold-start countdown (remaining game ticks) the server
+ * sent on CHANNEL_CONTROL. Marks the countdown received so the session can
+ * show its pre-seed overlay. */
+void clientSimSpectatorSetCountdown(ClientSim *cs, uint32_t remainingTicks);
 
 /* Free the seed and every queued record, returning the feed to empty. */
 void clientSimSpectatorFeedClear(ClientSim *cs);

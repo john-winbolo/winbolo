@@ -69,6 +69,12 @@ bool     specDrainTakeSeed(void *handle, uint8_t **outBlob, uint32_t *outLen);
 /* Number of forward records currently queued. */
 uint32_t specDrainRecordCount(void *handle);
 
+/* Latest cold-start countdown the server sent while the delayed ring fills.
+ * Returns true and writes *outRemaining (remaining game ticks, ~50/sec) once a
+ * countdown has arrived; false (untouched) before the first one. Lets the host
+ * show a "spectating begins in N" overlay during the pre-seed wait. */
+bool     specDrainCountdown(void *handle, uint32_t *outRemaining);
+
 /* Pop the oldest queued forward record into *out (ownership of out->payload
  * passes to the caller — free it). Returns false (out untouched) when the
  * queue is empty. */

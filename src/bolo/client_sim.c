@@ -2099,6 +2099,18 @@ uint32_t clientSimSpectatorRecordCount(const ClientSim *cs) {
   return cs ? cs->spectatorFeed.recordCount : 0;
 }
 
+void clientSimSpectatorSetCountdown(ClientSim *cs, uint32_t remainingTicks) {
+  if (cs == NULL) return;
+  cs->spectatorFeed.countdownRemaining = remainingTicks;
+  cs->spectatorFeed.countdownReceived  = true;
+}
+
+bool clientSimSpectatorCountdown(const ClientSim *cs, uint32_t *outRemaining) {
+  if (cs == NULL || !cs->spectatorFeed.countdownReceived) return false;
+  if (outRemaining != NULL) *outRemaining = cs->spectatorFeed.countdownRemaining;
+  return true;
+}
+
 bool clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out) {
   ClientSpecRecordNode *node;
   if (!cs || out == NULL) return false;
@@ -2125,6 +2137,10 @@ bool clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out) {
  */
 void specDrainPump(void *handle) {
   clientSimNetTick((ClientSim *)handle);
+}
+
+bool specDrainCountdown(void *handle, uint32_t *outRemaining) {
+  return clientSimSpectatorCountdown((const ClientSim *)handle, outRemaining);
 }
 
 bool specDrainSeedReady(void *handle) {

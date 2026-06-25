@@ -1205,11 +1205,28 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
         return;
     }
 
+    /* Stalled-feed watchdog. A spectator sends no input, so the transport's
+     * normal liveness timeout never fires — the host times the wait itself.
+     * lastProgressMs is bumped on any seam progress (a fresh countdown value, a
+     * drained record); kSpecStallMs of dead air surfaces a recoverable
+     * "connection lost" the user can exit from. */
+    const uint32_t kSpecStallMs = 8000;   /* ~8s with no feed progress */
+    uint32_t lastProgressMs = SDL_GetTicks();
+    uint32_t lastCountdown  = 0;
+    bool     haveCountdown  = false;
+    bool     connectionLost = false;
+
     /* Await the captured seed: pump the transport and service events until the
-     * seed is ready or the user quits. A blank frame stands in while connecting
-     * — the cold-start countdown overlay is a later slice. */
+     * seed is ready or the user quits. Show a "spectating begins in N" overlay
+     * once the cold-start countdown arrives, a "connecting" placeholder before
+     * it, or "connection lost" if the feed stalls. When the feed stalls the seed
+     * never arrives, so this loop keeps showing the message until the user
+     * quits. */
     while (!g_lv->quit && !specDrainSeedReady(cs)) {
         SDL_Event sdlEvent;
+        uint32_t remaining = 0;
+        char overlay[64];
+
         specDrainPump(cs);
         while (SDL_PollEvent(&sdlEvent)) {
             lv_imgui_context_handle_event(&sdlEvent);
@@ -1218,17 +1235,45 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
                 break;
             }
         }
+
+        /* A changed countdown value (or its first arrival) is feed progress. */
+        if (specDrainCountdown(cs, &remaining) &&
+            (!haveCountdown || remaining != lastCountdown)) {
+            haveCountdown  = true;
+            lastCountdown  = remaining;
+            lastProgressMs = SDL_GetTicks();
+        }
+        if (!connectionLost && (SDL_GetTicks() - lastProgressMs) > kSpecStallMs) {
+            connectionLost = true;
+        }
+
         SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
         SDL_RenderClear(g_lv->renderer);
         lv_imgui_context_newframe();
+        if (connectionLost) {
+            lv_imgui_center_message("Connection lost");
+        } else if (haveCountdown) {
+            /* ~50 ticks/sec; round up so the last second shows "1", not "0". */
+            uint32_t secs = (lastCountdown + 49) / 50;
+            if (secs == 0) {
+                lv_imgui_center_message("Spectating begins now");
+            } else {
+                snprintf(overlay, sizeof(overlay),
+                         "Spectating begins in %u", (unsigned)secs);
+                lv_imgui_center_message(overlay);
+            }
+        } else {
+            lv_imgui_center_message("Connecting...");
+        }
         lv_imgui_context_render();
         SDL_RenderPresent(g_lv->renderer);
     }
 
-    /* Seed the decoder, then force the game view on. The forcing must follow the
-     * seed: the game-view camera needs an in-use tank slot, which the seeded
-     * snapshot supplies (mirrors the grave-key activation in
-     * lvHostHandleGameViewKey). */
+    /* Seed the decoder, then force the game view on. The force is guarded on a
+     * successful load: the game-view camera needs an in-use tank slot, which
+     * only a seeded snapshot supplies, so init_camera on an unloaded decoder
+     * must not run. A failed/absent seed leaves gameView FALSE and the steady
+     * loop below is skipped — spectatorRun falls through to a clean teardown. */
     if (!g_lv->quit) {
         uint8_t *seed = NULL;
         uint32_t seedLen = 0;
@@ -1242,22 +1287,30 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
             free(seed);
         }
 
-        g_lv->savedUseTeamColours = g_lv->useTeamColours;
-        g_lv->useTeamColours = FALSE;
-        lv_drawGameViewSetup(/* zoom */ 3);
-        lv_imgui_game_view_init_camera(g_lv);
-        g_lv->gameView = TRUE;
-        lv_drawDirtyScreen();
-        g_lv->wantScreenUpdate = TRUE;
+        if (g_lv->isLoaded) {
+            g_lv->savedUseTeamColours = g_lv->useTeamColours;
+            g_lv->useTeamColours = FALSE;
+            lv_drawGameViewSetup(/* zoom */ 3);
+            lv_imgui_game_view_init_camera(g_lv);
+            g_lv->gameView = TRUE;
+            lv_drawDirtyScreen();
+            g_lv->wantScreenUpdate = TRUE;
+            /* A delivered seed means the feed is alive: clear any await-phase
+             * stall and restart the watchdog for the record stream. */
+            connectionLost = false;
+            lastProgressMs = SDL_GetTicks();
+        }
     }
 
     /* Steady loop: pump the transport, drain every record queued this frame into
      * the decoder, pump once more, then render the delayed game view. The server
      * sends ~one record per delayed tick, so draining all queued records each
-     * frame needs no host-side throttle. */
-    while (!g_lv->quit) {
+     * frame needs no host-side throttle. Runs only once the game view was forced
+     * (a seed loaded); a stalled feed overlays "connection lost" until exit. */
+    while (!g_lv->quit && g_lv->gameView) {
         SDL_Event sdlEvent;
         SpecDrainRecord rec;
+        bool drainedAny = false;
 
         specDrainPump(cs);
         while (SDL_PollEvent(&sdlEvent)) {
@@ -1284,14 +1337,23 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
             }
         }
 
-        /* Drain all records queued this frame, advancing the decoder. */
+        /* Drain all records queued this frame, advancing the decoder. A drained
+         * record is feed progress for the stall watchdog. */
         while (specDrainPopRecord(cs, &rec)) {
             lv_specRecordPump(rec.isKeyframe, rec.payload, rec.payloadLen);
             if (rec.payload != NULL) {
                 free(rec.payload);
             }
+            drainedAny = true;
         }
         specDrainPump(cs);
+
+        if (drainedAny) {
+            lastProgressMs = SDL_GetTicks();
+        }
+        if (!connectionLost && (SDL_GetTicks() - lastProgressMs) > kSpecStallMs) {
+            connectionLost = true;
+        }
 
         g_lv->wantScreenUpdate = TRUE;
 
@@ -1317,6 +1379,11 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
         lv_imgui_render_game_menu_bar(g_lv);
         lv_imgui_render_game_view(g_lv);
         lv_g_reset_window_positions = false;
+        /* Stalled mid-playback: the frozen last frame stays up with a
+         * "connection lost" overlay until the user exits. */
+        if (connectionLost) {
+            lv_imgui_center_message("Connection lost");
+        }
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
         SDL_RenderPresent(g_lv->renderer);

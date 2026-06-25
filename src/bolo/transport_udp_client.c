@@ -928,6 +928,27 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
     }
 }
 
+/* Intercept the spectator cold-start countdown on CHANNEL_CONTROL. The server
+ * sends it raw ([u8 SPEC_CTRL_COUNTDOWN][u32 remainingTicks BE], 5 bytes) while
+ * a tankless spectator waits for its delayed seed — NOT wrapped in the
+ * type(1)+bodyLen(2)+body ControlEvent envelope the normal decode assumes. It
+ * must be consumed here, before the envelope bodyLen parse, or unpackU16 would
+ * mis-read the high half of remainingTicks as a body length. Returns TRUE when
+ * the frame was a countdown (the caller skips the envelope decode and consumes
+ * the frame). Gated on UDP_CLIENT_SPECTATING so a non-spectator's control decode
+ * is untouched. */
+static bool udpClientInterceptSpecCountdown(TransportUdpClientCtx *c,
+                                            const uint8_t *frame, uint16_t len) {
+    if (c->joinState != UDP_CLIENT_SPECTATING) return FALSE;
+    if (len != SPEC_CTRL_COUNTDOWN_LEN || frame[0] != SPEC_CTRL_COUNTDOWN) {
+        return FALSE;
+    }
+    if (c->clientSim != NULL) {
+        clientSimSpectatorSetCountdown(c->clientSim, unpackU32(frame + 1));
+    }
+    return TRUE;
+}
+
 /* Snapshot-time ordered dispatch for control events arriving on the
  * snapshot tail. Almost all variants forward to clientSimApplyControl;
  * the lobby→running flip carries side-effects that previously lived
@@ -1671,6 +1692,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 uint16_t bodyLen;
                 ControlEvent evt;
                 ControlDecodeBodyFn dec;
+                /* Raw spectator countdown (un-enveloped) — consume before the
+                 * bodyLen parse so its BE u32 isn't mis-read as a length. */
+                if (udpClientInterceptSpecCountdown(c, ctlBuf, ctlLen)) continue;
                 if (ctlLen < 3) continue;
                 type = ctlBuf[0];
                 bodyLen = unpackU16(ctlBuf + 1);
@@ -1823,6 +1847,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     uint16_t bodyLen;
                     ControlEvent evt;
                     ControlDecodeBodyFn dec;
+                    /* Raw spectator countdown (un-enveloped) — consume before the
+                     * bodyLen parse so its BE u32 isn't mis-read as a length. */
+                    if (udpClientInterceptSpecCountdown(c, chanBuf, chanLen)) continue;
                     if (chanLen < 3) continue;
                     type = chanBuf[0];
                     bodyLen = unpackU16(chanBuf + 1);

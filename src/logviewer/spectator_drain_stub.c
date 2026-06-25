@@ -57,6 +57,12 @@ uint32_t specDrainRecordCount(void *handle) {
   return 0;
 }
 
+bool specDrainCountdown(void *handle, uint32_t *outRemaining) {
+  (void)handle;
+  (void)outRemaining;
+  return false;
+}
+
 bool specDrainPopRecord(void *handle, SpecDrainRecord *out) {
   (void)handle;
   (void)out;

@@ -154,3 +154,18 @@ int lv_imgui_want_capture_mouse(void) {
     ImGui::SetCurrentContext(g_context);
     return ImGui::GetIO().WantCaptureMouse ? 1 : 0;
 }
+
+void lv_imgui_center_message(const char* text) {
+    if (!g_context || text == nullptr) return;
+    ImGui::SetCurrentContext(g_context);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImVec2 centre(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f);
+    ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::Begin("##spec_overlay", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::TextUnformatted(text);
+    ImGui::End();
+}
