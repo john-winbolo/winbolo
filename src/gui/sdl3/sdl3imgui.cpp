@@ -2417,7 +2417,7 @@ static void renderSettingsPanel(ClientSim *cs) {
         /* Scale the panel with the UI scale — the font and style sizes are
            bumped on Deck (1.5x) and high-DPI desktop, so a fixed 520px window
            clips the wider translated labels and combos. */
-        ImGui::SetNextWindowSize(ImVec2(520 * s_uiScale, 580 * s_uiScale),
+        ImGui::SetNextWindowSize(ImVec2(680 * s_uiScale, 580 * s_uiScale),
                                  ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(280 * s_uiScale, 200 * s_uiScale),
                                             ImVec2(FLT_MAX, FLT_MAX));
@@ -2436,8 +2436,33 @@ static void renderSettingsPanel(ClientSim *cs) {
     ctx.inGame = true;
     ctx.pendingZoom = 255;
 
+    /* Controller tab cycling: shoulder buttons (or the Steam menu-tab actions
+       where the pad is hidden from SDL) step through the tabs, wrapping at the
+       ends.  All five in-game tabs are always present. */
+    enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_LAST, STAB_COUNT };
+    static int s_igActiveTab = STAB_GENERAL;
+    static int s_igForceTab  = -1;
+    bool present[STAB_COUNT];
+    present[STAB_GENERAL]  = true;
+    present[STAB_DISPLAY]  = true;
+    present[STAB_CONTROLS] = true;
+    present[STAB_GAMEHUD]  = true;
+    present[STAB_LAST]     = true;
+    {
+        int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
+                  - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
+        if (shift == 0) shift = imguiSteamNavConsumeMenuTabShift();
+        if (shift != 0) {
+            int i = s_igActiveTab;
+            do { i = (i + shift + STAB_COUNT) % STAB_COUNT; } while (!present[i] && i != s_igActiveTab);
+            s_igForceTab = i;
+        }
+    }
+
     if (ImGui::BeginTabBar("##settingsTabs")) {
-        if (ImGui::BeginTabItem("General")) {
+        if (ImGui::BeginTabItem("General", nullptr,
+                s_igForceTab == STAB_GENERAL ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_igActiveTab = STAB_GENERAL;
             imguiSettingsRenderGeneralTab(&ctx);
             /* Scan the installed languages once and cache for the process
                lifetime — they don't change at runtime, so the entries are
@@ -2452,11 +2477,15 @@ static void renderSettingsPanel(ClientSim *cs) {
             imguiSettingsRenderLanguagePicker(s_langEntries, s_langCount, &ctx);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Display & Sound")) {
+        if (ImGui::BeginTabItem("Display & Sound", nullptr,
+                s_igForceTab == STAB_DISPLAY ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_igActiveTab = STAB_DISPLAY;
             imguiSettingsRenderDisplaySoundTab(&ctx);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Controls")) {
+        if (ImGui::BeginTabItem("Controls", nullptr,
+                s_igForceTab == STAB_CONTROLS ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_igActiveTab = STAB_CONTROLS;
             imguiSettingsRenderControlsTab(&ctx);
             if (uiModeIsTablet() || inputGamepadIsConnected()) {
                 bool relSteering = !inputTouchGetAbsoluteSteering();
@@ -2479,11 +2508,15 @@ static void renderSettingsPanel(ClientSim *cs) {
             }
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Game/HUD")) {
+        if (ImGui::BeginTabItem("Game/HUD", nullptr,
+                s_igForceTab == STAB_GAMEHUD ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_igActiveTab = STAB_GAMEHUD;
             imguiSettingsRenderGameHudTab(&ctx);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Session")) {
+        if (ImGui::BeginTabItem("Session", nullptr,
+                s_igForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
+            s_igActiveTab = STAB_LAST;
             /* File actions — Save Map reachable on tablet and under a controller
                (desktop has the menu bar); Leave Game stays tablet-only. */
             if (uiModeIsTablet() || uiShouldUseControllerMode()) {
@@ -2582,6 +2615,7 @@ static void renderSettingsPanel(ClientSim *cs) {
         }
         ImGui::EndTabBar();
     }
+    s_igForceTab = -1;
 
     /* Apply the Display & Sound tab's deferred outputs into the file statics
        the existing end-of-frame consumers already act on. */

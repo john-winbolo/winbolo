@@ -797,7 +797,7 @@ extern "C" void imguiSettingsShow(void) {
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
         /* Centered overlay panel */
-        float panelW = 500.0f * s, panelH = 580.0f * s;
+        float panelW = 680.0f * s, panelH = 580.0f * s;
         if (panelW > (float)winW * 0.95f) panelW = (float)winW * 0.95f;
         if (panelH > (float)winH * 0.95f) panelH = (float)winH * 0.95f;
 
@@ -839,8 +839,38 @@ extern "C" void imguiSettingsShow(void) {
         ctx.inGame = false;
         ctx.pendingZoom = 255;
 
+        /* Controller tab cycling: shoulder buttons (or the Steam menu-tab
+           actions where the pad is hidden from SDL) step through the visible
+           tabs, skipping any that aren't present and wrapping at the ends. */
+        enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_LAST, STAB_COUNT };
+        static int s_pgActiveTab = STAB_GENERAL;
+        static int s_pgForceTab  = -1;
+        bool present[STAB_COUNT];
+        present[STAB_GENERAL] = true;
+        present[STAB_DISPLAY] = true;
+        present[STAB_GAMEHUD] = true;
+#if !BOLO_MOBILE
+        present[STAB_CONTROLS] = !uiModeIsTablet();
+        present[STAB_LAST]     = true;
+#else
+        present[STAB_CONTROLS] = false;
+        present[STAB_LAST]     = false;
+#endif
+        {
+            int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
+                      - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
+            if (shift == 0) shift = imguiSteamNavConsumeMenuTabShift();
+            if (shift != 0) {
+                int i = s_pgActiveTab;
+                do { i = (i + shift + STAB_COUNT) % STAB_COUNT; } while (!present[i] && i != s_pgActiveTab);
+                s_pgForceTab = i;
+            }
+        }
+
         if (ImGui::BeginTabBar("##settingsTabs")) {
-            if (ImGui::BeginTabItem("General")) {
+            if (ImGui::BeginTabItem("General", nullptr,
+                    s_pgForceTab == STAB_GENERAL ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_GENERAL;
                 imguiSettingsRenderGeneralTab(&ctx);
                 imguiSettingsRenderLanguagePicker(langEntries, langCount, &ctx);
 
@@ -874,24 +904,32 @@ extern "C" void imguiSettingsShow(void) {
 #endif
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Display & Sound")) {
+            if (ImGui::BeginTabItem("Display & Sound", nullptr,
+                    s_pgForceTab == STAB_DISPLAY ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_DISPLAY;
                 imguiSettingsRenderDisplaySoundTab(&ctx);
                 ImGui::EndTabItem();
             }
 #if !BOLO_MOBILE
             if (!uiModeIsTablet()) {
-                if (ImGui::BeginTabItem("Controls")) {
+                if (ImGui::BeginTabItem("Controls", nullptr,
+                        s_pgForceTab == STAB_CONTROLS ? ImGuiTabItemFlags_SetSelected : 0)) {
+                    s_pgActiveTab = STAB_CONTROLS;
                     imguiSettingsRenderControlsTab(&ctx);
                     ImGui::EndTabItem();
                 }
             }
 #endif
-            if (ImGui::BeginTabItem("Game/HUD")) {
+            if (ImGui::BeginTabItem("Game/HUD", nullptr,
+                    s_pgForceTab == STAB_GAMEHUD ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_GAMEHUD;
                 imguiSettingsRenderGameHudTab(&ctx);
                 ImGui::EndTabItem();
             }
 #if !BOLO_MOBILE
-            if (ImGui::BeginTabItem("Network")) {
+            if (ImGui::BeginTabItem("Network", nullptr,
+                    s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_LAST;
                 ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_NET_HELP));
                 ImGui::Spacing();
                 {
@@ -921,6 +959,7 @@ extern "C" void imguiSettingsShow(void) {
 #endif
             ImGui::EndTabBar();
         }
+        s_pgForceTab = -1;
 
         /* Translate the language picker's CJK-rebuild request into the
            pre-game atlas-rebuild flag consumed after Present.  Additive:
