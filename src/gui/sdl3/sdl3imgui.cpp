@@ -351,7 +351,6 @@ static bool s_showSettings       = false;
    rebuilds the font atlas + style at a safe point (between Present and the
    next NewFrame) rather than mid-frame. */
 static bool s_pendingUiScaleRebuild = false;
-static char s_settingsNameBuf[33] = "";  /* PLAYER_NAME_LEN = 33 */
 static bool s_wbnInitialised     = false;
 
 /* Modal dialog state */
@@ -2439,6 +2438,10 @@ static void renderSettingsPanel(ClientSim *cs) {
     ctx.pendingZoom = 255;
 
     if (ImGui::BeginTabBar("##settingsTabs")) {
+        if (ImGui::BeginTabItem("General")) {
+            imguiSettingsRenderGeneralTab(&ctx);
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Display & Sound")) {
             imguiSettingsRenderDisplaySoundTab(&ctx);
             ImGui::EndTabItem();
@@ -2471,32 +2474,6 @@ static void renderSettingsPanel(ClientSim *cs) {
 
     /* ---- Player ---- */
     if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_PLAYER), ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(200);
-        if (ImGui::InputText("##playerName", s_settingsNameBuf,
-                             sizeof(s_settingsNameBuf),
-                             ImGuiInputTextFlags_EnterReturnsTrue)) {
-            s_settingsNameBuf[32] = '\0';
-            utilStripName(s_settingsNameBuf);
-            if (s_settingsNameBuf[0] != '\0' && s_settingsNameBuf[0] != '*') {
-                clientSimSetPlayerName(cs, s_settingsNameBuf);
-            }
-        }
-        ImGui::SameLine();
-        {
-            char applyBuf[64];
-            snprintf(applyBuf, sizeof(applyBuf), "%s##name", langGetText(STR_DLGSETTINGS_APPLY));
-            if (ImGui::Button(applyBuf)) {
-                s_settingsNameBuf[32] = '\0';
-                utilStripName(s_settingsNameBuf);
-                if (s_settingsNameBuf[0] != '\0' && s_settingsNameBuf[0] != '*') {
-                    clientSimSetPlayerName(cs, s_settingsNameBuf);
-                }
-            }
-            imguiHandOnHover();
-        }
-
         /* ---- Language picker ---- */
         /* Scan the installed languages once and cache for the process
          * lifetime — they don't change at runtime, so the entries are
@@ -2559,11 +2536,6 @@ static void renderSettingsPanel(ClientSim *cs) {
                 }
             }
             ImGui::EndCombo();
-        }
-
-        if (!uiModeIsTablet()) {
-            ImGui::Spacing();
-            imguiWinbolonetDrawSection(true);
         }
 
 #ifndef __ANDROID__
@@ -4763,8 +4735,7 @@ void sdl3ImguiShowSettings(void) {
     s_showSettings = !s_showSettings;
     if (s_showSettings) {
         s_closeMenuPopups = true;
-        s_settingsNameBuf[0] = '\0';
-        gameFrontGetPlayerName(s_settingsNameBuf);
+        imguiSettingsSeedPlayerName();
 #if BOLO_MOBILE
         s_showSendMsg = false;
         s_showPlayersPanel = false;

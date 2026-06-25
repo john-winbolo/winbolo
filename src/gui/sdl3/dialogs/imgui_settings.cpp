@@ -110,6 +110,7 @@ extern "C" {
   void windowLabelOwnTank_toggle(struct ClientSim *cs);
   void windowSetMessageLabelLen(struct ClientSim *cs, labelLen newLen);
   void windowSetTankLabelLen(struct ClientSim *cs, labelLen newLen);
+  bool clientSimSetPlayerName(struct ClientSim *cs, char *value);
 
 #if defined(__IPHONEOS__)
   bool iosCrashReportingGetEnabled(void);
@@ -121,6 +122,10 @@ extern "C" {
  * texture stays valid between settings opens. */
 static SDL_Texture *s_langInfoIcon = nullptr;
 static bool s_langInfoIconAttempted = false;
+
+/* Shared player-name edit buffer for the General tab, used by both settings
+ * shells. Seeded from the persisted name via imguiSettingsSeedPlayerName(). */
+static char s_playerNameBuf[PLAYER_NAME_LEN];
 
 /* Chain a Noto Sans CJK font into the atlas covering exactly the CJK
  * codepoints that appear in the picker's language-name labels. Without
@@ -176,6 +181,114 @@ static void chainPickerNameGlyphs(LangFileEntry *entries, int count,
     cfg.OversampleV  = 1;
     cfg.GlyphRanges  = pickerRanges.Data;
     ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, sz, fontSize, &cfg);
+}
+
+/* Seed the shared player-name edit buffer from the persisted name. */
+extern "C" void imguiSettingsSeedPlayerName(void) {
+    s_playerNameBuf[0] = '\0';
+    gameFrontGetPlayerName(s_playerNameBuf);
+}
+
+/* -------------------------------------------------------
+ * General tab — player identity shared by the pre-game dialog
+ * and the in-game overlay: the validated player-name control
+ * (locked while signed in to WinBolo.net) and the WinBolo.net
+ * account section.  ctx->cs is NULL pre-game; on a successful
+ * name change the live sim is updated only when it is non-NULL.
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderGeneralTab(SettingsRenderCtx *ctx) {
+    static int lastNameError = 0;
+    bool wbnActive = gameFrontGetWinbolonetUse();
+    if (wbnActive) {
+        /* Refresh the buffer from gameFront in case WBN login just set it */
+        gameFrontGetPlayerName(s_playerNameBuf);
+    }
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(200);
+    if (wbnActive) ImGui::BeginDisabled();
+    if (ImGui::InputText("##playerName", s_playerNameBuf, PLAYER_NAME_LEN,
+                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+        s_playerNameBuf[PLAYER_NAME_LAST] = '\0';
+        char validated[PLAYER_NAME_LEN];
+        PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+        if (playerNameValidate(s_playerNameBuf, validated, PLAYER_NAME_LEN, &nameErr)) {
+            SDL_strlcpy(s_playerNameBuf, validated, PLAYER_NAME_LEN);
+            gameFrontSetPlayerName(s_playerNameBuf);
+            if (ctx->cs) clientSimSetPlayerName(ctx->cs, s_playerNameBuf);
+            lastNameError = 0;
+        } else {
+            switch (nameErr) {
+                case PLAYER_NAME_ERR_EMPTY:
+                    lastNameError = STR_DLGSETNAME_BLANK_ERR;
+                    break;
+                case PLAYER_NAME_ERR_RESERVED_PREFIX:
+                    lastNameError = STR_DLGSETNAME_STAR_ERR;
+                    break;
+                case PLAYER_NAME_ERR_RESERVED_SUFFIX:
+                    lastNameError = STR_NAME_INVALID_RESERVED_SUFFIX;
+                    break;
+                case PLAYER_NAME_ERR_MIXED_SCRIPTS:
+                    lastNameError = STR_NAME_INVALID_MIXED_SCRIPTS;
+                    break;
+                case PLAYER_NAME_ERR_INVALID_UTF8:
+                case PLAYER_NAME_ERR_DISALLOWED_CHAR:
+                case PLAYER_NAME_ERR_TOO_LONG:
+                default:
+                    lastNameError = STR_NAME_INVALID_CHARS;
+                    break;
+            }
+        }
+    }
+    ImGui::SameLine();
+    {
+        char applyBuf[64];
+        snprintf(applyBuf, sizeof(applyBuf), "%s##name", langGetText(STR_DLGSETTINGS_APPLY));
+        if (ImGui::Button(applyBuf)) {
+            s_playerNameBuf[PLAYER_NAME_LAST] = '\0';
+            char validated[PLAYER_NAME_LEN];
+            PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+            if (playerNameValidate(s_playerNameBuf, validated, PLAYER_NAME_LEN, &nameErr)) {
+                SDL_strlcpy(s_playerNameBuf, validated, PLAYER_NAME_LEN);
+                gameFrontSetPlayerName(s_playerNameBuf);
+                if (ctx->cs) clientSimSetPlayerName(ctx->cs, s_playerNameBuf);
+                lastNameError = 0;
+            } else {
+                switch (nameErr) {
+                    case PLAYER_NAME_ERR_EMPTY:
+                        lastNameError = STR_DLGSETNAME_BLANK_ERR;
+                        break;
+                    case PLAYER_NAME_ERR_RESERVED_PREFIX:
+                        lastNameError = STR_DLGSETNAME_STAR_ERR;
+                        break;
+                    case PLAYER_NAME_ERR_RESERVED_SUFFIX:
+                        lastNameError = STR_NAME_INVALID_RESERVED_SUFFIX;
+                        break;
+                    case PLAYER_NAME_ERR_MIXED_SCRIPTS:
+                        lastNameError = STR_NAME_INVALID_MIXED_SCRIPTS;
+                        break;
+                    case PLAYER_NAME_ERR_INVALID_UTF8:
+                    case PLAYER_NAME_ERR_DISALLOWED_CHAR:
+                    case PLAYER_NAME_ERR_TOO_LONG:
+                    default:
+                        lastNameError = STR_NAME_INVALID_CHARS;
+                        break;
+                }
+            }
+        }
+        imguiHandOnHover();
+    }
+    if (wbnActive) ImGui::EndDisabled();
+    if (wbnActive) {
+        ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_WBN_LOCKED));
+    }
+    if (lastNameError != 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                           "%s", langGetText(lastNameError));
+    }
+
+    ImGui::Spacing();
+    imguiWinbolonetDrawSection(ctx->inGame);
 }
 
 /* -------------------------------------------------------
@@ -442,10 +555,8 @@ extern "C" void imguiSettingsShow(void) {
         chainPickerNameGlyphs(langEntries, langCount, pickerFontSize);
     }
 
-    /* Load current player name */
-    char playerName[PLAYER_NAME_LEN];
-    playerName[0] = '\0';
-    gameFrontGetPlayerName(playerName);
+    /* Load current player name into the shared edit buffer */
+    imguiSettingsSeedPlayerName();
 
     /* Background game */
     BgGame *bg = bgGameGetShared();
@@ -597,6 +708,10 @@ extern "C" void imguiSettingsShow(void) {
         ctx.pendingZoom = 255;
 
         if (ImGui::BeginTabBar("##settingsTabs")) {
+            if (ImGui::BeginTabItem("General")) {
+                imguiSettingsRenderGeneralTab(&ctx);
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("Display & Sound")) {
                 imguiSettingsRenderDisplaySoundTab(&ctx);
                 ImGui::EndTabItem();
@@ -606,100 +721,6 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
-        }
-
-        /* ---- Player ---- */
-        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_PLAYER), ImGuiTreeNodeFlags_DefaultOpen)) {
-            static int lastNameError = 0;
-            bool wbnActive = gameFrontGetWinbolonetUse();
-            if (wbnActive) {
-                /* Refresh local buffer from gameFront in case WBN login just set it */
-                gameFrontGetPlayerName(playerName);
-            }
-            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(200);
-            if (wbnActive) ImGui::BeginDisabled();
-            if (ImGui::InputText("##playerName", playerName, PLAYER_NAME_LEN,
-                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
-                playerName[PLAYER_NAME_LAST] = '\0';
-                char validated[PLAYER_NAME_LEN];
-                PlayerNameValidationError nameErr = PLAYER_NAME_OK;
-                if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, &nameErr)) {
-                    SDL_strlcpy(playerName, validated, PLAYER_NAME_LEN);
-                    gameFrontSetPlayerName(playerName);
-                    lastNameError = 0;
-                } else {
-                    switch (nameErr) {
-                        case PLAYER_NAME_ERR_EMPTY:
-                            lastNameError = STR_DLGSETNAME_BLANK_ERR;
-                            break;
-                        case PLAYER_NAME_ERR_RESERVED_PREFIX:
-                            lastNameError = STR_DLGSETNAME_STAR_ERR;
-                            break;
-                        case PLAYER_NAME_ERR_RESERVED_SUFFIX:
-                            lastNameError = STR_NAME_INVALID_RESERVED_SUFFIX;
-                            break;
-                        case PLAYER_NAME_ERR_MIXED_SCRIPTS:
-                            lastNameError = STR_NAME_INVALID_MIXED_SCRIPTS;
-                            break;
-                        case PLAYER_NAME_ERR_INVALID_UTF8:
-                        case PLAYER_NAME_ERR_DISALLOWED_CHAR:
-                        case PLAYER_NAME_ERR_TOO_LONG:
-                        default:
-                            lastNameError = STR_NAME_INVALID_CHARS;
-                            break;
-                    }
-                }
-            }
-            ImGui::SameLine();
-            {
-                char applyBuf[64];
-                snprintf(applyBuf, sizeof(applyBuf), "%s##name", langGetText(STR_DLGSETTINGS_APPLY));
-                if (ImGui::Button(applyBuf)) {
-                    playerName[PLAYER_NAME_LAST] = '\0';
-                    char validated[PLAYER_NAME_LEN];
-                    PlayerNameValidationError nameErr = PLAYER_NAME_OK;
-                    if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, &nameErr)) {
-                        SDL_strlcpy(playerName, validated, PLAYER_NAME_LEN);
-                        gameFrontSetPlayerName(playerName);
-                        lastNameError = 0;
-                    } else {
-                        switch (nameErr) {
-                            case PLAYER_NAME_ERR_EMPTY:
-                                lastNameError = STR_DLGSETNAME_BLANK_ERR;
-                                break;
-                            case PLAYER_NAME_ERR_RESERVED_PREFIX:
-                                lastNameError = STR_DLGSETNAME_STAR_ERR;
-                                break;
-                            case PLAYER_NAME_ERR_RESERVED_SUFFIX:
-                                lastNameError = STR_NAME_INVALID_RESERVED_SUFFIX;
-                                break;
-                            case PLAYER_NAME_ERR_MIXED_SCRIPTS:
-                                lastNameError = STR_NAME_INVALID_MIXED_SCRIPTS;
-                                break;
-                            case PLAYER_NAME_ERR_INVALID_UTF8:
-                            case PLAYER_NAME_ERR_DISALLOWED_CHAR:
-                            case PLAYER_NAME_ERR_TOO_LONG:
-                            default:
-                                lastNameError = STR_NAME_INVALID_CHARS;
-                                break;
-                        }
-                    }
-                }
-                imguiHandOnHover();
-            }
-            if (wbnActive) ImGui::EndDisabled();
-            if (wbnActive) {
-                ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_WBN_LOCKED));
-            }
-            if (lastNameError != 0) {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
-                                   "%s", langGetText(lastNameError));
-            }
-
-            ImGui::Spacing();
-            imguiWinbolonetDrawSection(false);
         }
 
         /* ---- Display ---- */
@@ -992,6 +1013,9 @@ extern "C" void imguiSettingsShow(void) {
                                          (int)sizeof(resumeLangCode));
                 atlasCjkPath = cjkNotoFontPath(resumeLangCode);
             }
+            /* The shared name buffer is file-scope; re-seed it for the
+               rebuilt context alongside the language/atlas resync. */
+            imguiSettingsSeedPlayerName();
 
             dialogSetWindowSize(window, 1024, 768);
             dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));

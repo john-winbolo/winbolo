@@ -51,6 +51,15 @@ void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx);
  * NULL pre-game; the toggles tolerate it. */
 void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx);
 
+/* Render the shared General tab (validated player name + WinBolo.net account).
+ * On a successful name change it always persists via gameFrontSetPlayerName,
+ * and updates the live sim too when ctx->cs is non-NULL. */
+void imguiSettingsRenderGeneralTab(SettingsRenderCtx *ctx);
+
+/* Seed the shared player-name edit buffer from the persisted name. Call when
+ * opening a settings shell and after the pre-game modal rebuilds its context. */
+void imguiSettingsSeedPlayerName(void);
+
 #ifdef __cplusplus
 }
 #endif
