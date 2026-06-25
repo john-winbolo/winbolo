@@ -1126,6 +1126,11 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/sound.c
     src/logviewer/players.c
     src/logviewer/spec_frame_fill.c
+    # Logviewer-world spectator seed orchestration (lv_specSeedLoad /
+    # lv_specRecordPump): translates captured ring keyframe/forward records
+    # into the decoder. Includes spectator_replay.h, now a dep-free public
+    # seam, so it builds into the client like any other decode TU.
+    src/logviewer/spec_seed_load.c
     src/logviewer/blocks.c
     src/logviewer/shells.c
     src/logviewer/snapshot.c
@@ -1738,11 +1743,6 @@ list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/game_view_stubs\\.c$")
 # game-view render island's screenTanksGetItem to lv_screenTanksGetItem.
 # The standalone uses bolo_shim.c for that, so drop the adapter from the glob.
 list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/render_island_screentank_adapter\\.c$")
-# spec_seed_load.c includes spectator_replay.h (src/bolo/internal), which the
-# runtime-only standalone profile can't see. It is compiled only into the
-# unit-test target (which has internal/ access) via the explicit source list;
-# the spectator session host wires it into the standalone build separately.
-list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/spec_seed_load\\.c$")
 
 set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_context.cpp
@@ -1792,6 +1792,11 @@ add_executable(LogViewer
     ${LOGVIEWER_PLATFORM_SOURCES}
     ${LOGVIEWER_WBN_SOURCES}
     ${LOGVIEWER_WBN_BROWSER_SOURCES}
+    # Spectator replay translator: spec_seed_load.c calls specReplay* but the
+    # standalone links no bolo sim, so compile the translator in directly. It
+    # pulls only public bolo headers (spectator_replay.h / log.h / platform_net.h)
+    # and no backend.h-conflicting type, so it builds under the runtime_only rules.
+    src/bolo/spectator_replay.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/sdl_bmp.c
@@ -2823,8 +2828,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/spec_frame_fill.c
     # Logviewer-world spectator seed orchestration: raw ring keyframe seed ->
     # synthesized v2 header + translated snapshot -> lv_screenLoadFromStream.
-    # Includes spectator_replay.h (dep-free) — needs the unittests profile's
-    # internal/ access, so it lives here, not in the runtime-only LOGVIEWER libs.
+    # Listed explicitly because this target uses its own decode-subset list
+    # (not LOGVIEWER_LIB_SOURCES); spectator_replay.h is now a dep-free public
+    # seam, so the runtime LOGVIEWER libs also link it on their own.
     src/logviewer/spec_seed_load.c
     src/logviewer/pillbox.c
     src/logviewer/bases.c

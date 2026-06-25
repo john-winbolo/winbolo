@@ -28,8 +28,10 @@
  *  transport or the log viewer. It operates on already-extracted
  *  record payloads, writing into caller-provided buffers.
  *
- *  T2 (sim internals): includable within src/bolo/,
- *  src/server/, and tests/unit/ only.
+ *  Dependency-free public seam: its only include is platform_types.h
+ *  (also public), so it is includable from any tier — the sim, the
+ *  server, and the log viewer / client spectator host (which feeds the
+ *  captured records into the decoder), as well as tests/unit.
  *********************************************************/
 
 #ifndef SPECTATOR_REPLAY_H

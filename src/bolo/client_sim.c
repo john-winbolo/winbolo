@@ -29,6 +29,7 @@
 #include <SDL3/SDL.h>
 #include "client_sim.h"
 #include "client_sim_internal.h"
+#include "spectator_drain.h"   /* dep-free seam: logviewer host drains capture */
 #include "client_net.h"   /* clientSimNetSendChat — default chatSendFunc body */
 #include "client_snapshot.h"
 #include "client_state.h"
@@ -2114,6 +2115,35 @@ bool clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out) {
   out->payload    = node->payload;     /* ownership transferred to caller */
   out->payloadLen = node->payloadLen;
   free(node);                          /* node only — payload is the caller's now */
+  return true;
+}
+
+/* spectator_drain.h seam: the logviewer-world host pulls the captured seed and
+ * forward records through these void *-handle wrappers because it cannot
+ * include client_sim.h (screenObj redefinition vs backend.h). Each forwards to
+ * the matching clientSimSpectator* accessor; ownership transfers are unchanged.
+ */
+bool specDrainSeedReady(void *handle) {
+  return clientSimSpectatorSeedReady((const ClientSim *)handle);
+}
+
+bool specDrainTakeSeed(void *handle, uint8_t **outBlob, uint32_t *outLen) {
+  return clientSimSpectatorTakeSeed((ClientSim *)handle, outBlob, outLen);
+}
+
+uint32_t specDrainRecordCount(void *handle) {
+  return clientSimSpectatorRecordCount((const ClientSim *)handle);
+}
+
+bool specDrainPopRecord(void *handle, SpecDrainRecord *out) {
+  ClientSpectatorRecord rec;
+  if (out == NULL) return false;
+  if (!clientSimSpectatorPopRecord((ClientSim *)handle, &rec)) return false;
+  out->isKeyframe = rec.isKeyframe;
+  out->gameTick   = rec.gameTick;
+  out->segment    = rec.segment;
+  out->payload    = rec.payload;       /* ownership passes straight through */
+  out->payloadLen = rec.payloadLen;
   return true;
 }
 
