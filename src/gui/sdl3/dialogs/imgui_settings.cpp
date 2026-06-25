@@ -179,13 +179,12 @@ static void chainPickerNameGlyphs(LangFileEntry *entries, int count,
 }
 
 /* -------------------------------------------------------
- * Display & Sound tab — the display controls shared by the
- * pre-game dialog and the in-game overlay.  Frame rate and
- * letterbox apply in both; window size and UI scale only apply
- * in-game (ctx->inGame), and their results are returned via
+ * Display & Sound tab — the display and sound controls shared by
+ * the pre-game dialog and the in-game overlay.  Frame rate,
+ * letterbox, and Sound apply in both; window size and UI scale only
+ * apply in-game (ctx->inGame), and their results are returned via
  * ctx->pendingZoom / ctx->wantAtlasRebuild for the in-game shell
- * to apply after the frame.  (The Sound block currently lives in
- * imguiSettingsRenderCommonSections.)
+ * to apply after the frame.  The Sound section renders last.
  * ------------------------------------------------------- */
 extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
     /* ---- Frame rate ---- */
@@ -278,10 +277,33 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
                          "ratio differs from the game).");
     }
 #endif
+
+    /* ---- Sound ---- */
+    if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_SOUND), ImGuiTreeNodeFlags_DefaultOpen)) {
+        {
+            bool se = (bool)soundEffects;
+            if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &se)) windowSoundEffects_toggle();
+        }
+        if (!uiModeIsTablet()) {
+            bool bgs = (bool)backgroundSound;
+            if (ImGui::Checkbox(langGetText(STR_MENU_BACKGROUND_SOUND), &bgs)) windowBackgroundSoundChange_toggle();
+        }
+#if !BOLO_MOBILE
+        if (!uiModeIsTablet()) {
+            bool sk = (bool)useSoundKeepalive;
+            if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_KEEPALIVE), &sk)) windowSoundKeepalive();
+        }
+#endif
+        {
+            int vol = soundVolume;
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) windowSetSoundVolume(vol);
+        }
+    }
 }
 
 /* -------------------------------------------------------
- * Shared settings categories — the Labels / Sound / Messages
+ * Shared settings categories — the Labels / Messages
  * sections that the pre-game dialog (imguiSettingsShow) and the
  * in-game overlay (sdl3imgui.cpp renderSettingsPanel) used to each
  * render their own near-identical copy of.  Rendered by both now so
@@ -332,29 +354,6 @@ extern "C" void imguiSettingsRenderCommonSections(SettingsRenderCtx *ctx) {
         {
             bool bl = (bool)showBaseLabels;
             if (ImGui::Checkbox(langGetText(STR_MENU_BASE_LABELS), &bl)) windowShowBaseLabels_toggle(cs);
-        }
-    }
-
-    /* ---- Sound ---- */
-    if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_SOUND), ImGuiTreeNodeFlags_DefaultOpen)) {
-        {
-            bool se = (bool)soundEffects;
-            if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &se)) windowSoundEffects_toggle();
-        }
-        if (!uiModeIsTablet()) {
-            bool bgs = (bool)backgroundSound;
-            if (ImGui::Checkbox(langGetText(STR_MENU_BACKGROUND_SOUND), &bgs)) windowBackgroundSoundChange_toggle();
-        }
-#if !BOLO_MOBILE
-        if (!uiModeIsTablet()) {
-            bool sk = (bool)useSoundKeepalive;
-            if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_KEEPALIVE), &sk)) windowSoundKeepalive();
-        }
-#endif
-        {
-            int vol = soundVolume;
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) windowSetSoundVolume(vol);
         }
     }
 
