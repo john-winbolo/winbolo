@@ -27,10 +27,21 @@ extern "C" {
 /* Show the pre-game settings dialog as a blocking modal loop. */
 void imguiSettingsShow(void);
 
+typedef struct SettingsRenderCtx {
+    struct ClientSim *cs;       /* NULL pre-game; live sim in-game */
+    bool inGame;                /* true = in-game overlay shell */
+    /* outputs the section sets, handled by the shell after the frame: */
+    bool wantKeySetup;          /* Set Keys pressed */
+    bool wantAtlasRebuild;      /* a section needs a font-atlas rebuild
+                                   (CJK language pick OR UI-scale change) */
+    bool wantClose;             /* a section requested close (e.g. Tutorial) */
+    bool prefsDirty;            /* a section mutated a persisted setting */
+} SettingsRenderCtx;
+
 /* Render the shared Labels / Sound / Messages settings categories.  Called by
  * both the pre-game dialog and the in-game settings overlay so the two can't
- * drift.  cs may be NULL (pre-game, no live sim). */
-void imguiSettingsRenderCommonSections(struct ClientSim *cs);
+ * drift.  Reads ctx->cs (NULL pre-game, no live sim). */
+void imguiSettingsRenderCommonSections(SettingsRenderCtx *ctx);
 
 #ifdef __cplusplus
 }

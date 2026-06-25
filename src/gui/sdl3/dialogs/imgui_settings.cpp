@@ -94,6 +94,7 @@ extern "C" {
   void windowAutomaticScrolling_toggle(struct ClientSim *cs);
   void windowSmoothScrolling_toggle(void);
   void windowShowGunsight_toggle(struct ClientSim *cs);
+  void windowLetterboxBarsGray_toggle(void);
   void windowShowPillLabels_toggle(struct ClientSim *cs);
   void windowShowBaseLabels_toggle(struct ClientSim *cs);
   void windowSoundEffects_toggle(void);
@@ -189,7 +190,8 @@ static void chainPickerNameGlyphs(LangFileEntry *entries, int count,
  * Tutorial, Crash, Game, window size, controller mode) stay with each
  * caller: they depend on per-screen state or only apply in one context.
  * ------------------------------------------------------- */
-extern "C" void imguiSettingsRenderCommonSections(struct ClientSim *cs) {
+extern "C" void imguiSettingsRenderCommonSections(SettingsRenderCtx *ctx) {
+    struct ClientSim *cs = ctx->cs;
     /* ---- Labels ---- */
     if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_LABELS), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_MSGNAMES));
@@ -715,7 +717,7 @@ extern "C" void imguiSettingsShow(void) {
             {
                 bool lb = (bool)letterboxBarsGray;
                 if (ImGui::Checkbox(langGetText(STR_MENU_LETTERBOX_GRAY), &lb)) {
-                    letterboxBarsGray = !letterboxBarsGray;
+                    windowLetterboxBarsGray_toggle();
                 }
                 imguiHelpTooltip("Fill the fullscreen border bars with gray "
                                  "instead of black (when your monitor's aspect "
@@ -730,7 +732,10 @@ extern "C" void imguiSettingsShow(void) {
         }
 
         /* ---- Labels / Sound / Messages (shared with the in-game panel) ---- */
-        imguiSettingsRenderCommonSections(nullptr);
+        SettingsRenderCtx ctx = {};
+        ctx.cs = nullptr;
+        ctx.inGame = false;
+        imguiSettingsRenderCommonSections(&ctx);
 
         /* ---- Tutorial ---- */
         if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_TUTORIAL), ImGuiTreeNodeFlags_DefaultOpen)) {

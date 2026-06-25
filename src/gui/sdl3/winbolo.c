@@ -1440,7 +1440,12 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 
 void windowShowGunsight_toggle(ClientSim *cs) {
   showGunsight = !showGunsight;
-  clientSimSetGunsight(cs, showGunsight);
+  if (cs) clientSimSetGunsight(cs, showGunsight);
+  gameFrontSaveCurrentPrefs();
+}
+
+void windowLetterboxBarsGray_toggle(void) {
+  letterboxBarsGray = !letterboxBarsGray;
   gameFrontSaveCurrentPrefs();
 }
 

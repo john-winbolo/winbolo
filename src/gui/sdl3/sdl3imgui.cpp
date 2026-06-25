@@ -173,6 +173,7 @@ extern "C" bool inputTouchGetAbsoluteSteering(void);
 
 /* Direct menu command handlers in winbolo.c */
 extern "C" void windowShowGunsight_toggle(struct ClientSim *cs);
+extern "C" void windowLetterboxBarsGray_toggle(void);
 extern "C" void windowAutomaticScrolling_toggle(struct ClientSim *cs);
 extern "C" void windowSmoothScrolling_toggle(void);
 extern "C" void windowShowPillLabels_toggle(struct ClientSim *cs);
@@ -2637,7 +2638,7 @@ static void renderSettingsPanel(ClientSim *cs) {
         {
             bool lb = (bool)letterboxBarsGray;
             if (ImGui::Checkbox(langGetText(STR_MENU_LETTERBOX_GRAY), &lb)) {
-                letterboxBarsGray = !letterboxBarsGray;
+                windowLetterboxBarsGray_toggle();
             }
         }
 
@@ -2707,7 +2708,10 @@ static void renderSettingsPanel(ClientSim *cs) {
     }
 
     /* ---- Labels / Sound / Messages (shared with the pre-game dialog) ---- */
-    imguiSettingsRenderCommonSections(cs);
+    SettingsRenderCtx ctx = {};
+    ctx.cs = cs;
+    ctx.inGame = true;
+    imguiSettingsRenderCommonSections(&ctx);
 
     /* ---- Game ---- */
     if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_GAME))) {
