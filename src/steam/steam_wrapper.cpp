@@ -29,6 +29,13 @@ extern "C" {
 static const int k_iGameRichPresenceJoinRequested_id = k_iSteamFriendsCallbacks + 37;
 /* GameOverlayActivated_t callback ID */
 static const int k_iGameOverlayActivated_id = k_iSteamFriendsCallbacks + 31;
+/* Steam Input device callback IDs (k_iSteamControllerCallbacks = 2800).
+   Connected/Disconnected track real physical controllers (opt-in via
+   EnableDeviceCallbacks); ConfigurationLoaded fires when a device's config
+   is ready and tells us to (re)activate the action set against it. */
+static const int k_iSteamInputDeviceConnected_id     = k_iSteamControllerCallbacks + 1;
+static const int k_iSteamInputDeviceDisconnected_id  = k_iSteamControllerCallbacks + 2;
+static const int k_iSteamInputConfigurationLoaded_id = k_iSteamControllerCallbacks + 3;
 
 static bool s_initialized = false;
 static SteamJoinCallback s_join_callback = nullptr;
@@ -36,6 +43,27 @@ static HAuthTicket s_authTicket = k_HAuthTicketInvalid;
 /* Steam in-game overlay open/closed state, updated from the
    GameOverlayActivated_t callback during steam_run_callbacks(). */
 static bool s_overlay_active = false;
+
+/* Real physical-controller tracking via the device hot-plug callbacks
+   (EnableDeviceCallbacks), maintained in steam_run_callbacks().  These fire
+   only for actual hardware — the always-present keyboard/mouse virtual
+   controller that pins GetConnectedControllers at >=1 does NOT fire them —
+   so this is the trustworthy "is a real controller connected" signal.  The
+   count is balanced one-for-one by SteamInputDeviceConnected/Disconnected. */
+static int  s_real_controller_count   = 0;
+static bool s_real_disconnect_pending = false;
+/* Handle of the real controller from the most recent DeviceConnected
+   callback.  Used to point s_active_controller at the *physical* pad rather
+   than handles[0], which can be the keyboard/mouse virtual controller when
+   it registered first (no pad at launch) — that left the real pad's input
+   unread in the menus. */
+static InputHandle_t s_real_controller_handle = 0;
+/* Set when a real device connects / its config loads.  The active handle is
+   shared between the keyboard/mouse virtual controller and the physical pad,
+   so it doesn't change when the pad takes over — the normal "handle changed"
+   re-activation never fires, leaving the action set bound to the phantom and
+   the pad's input dead in the menus.  Force a re-activation to re-bind it. */
+static bool s_force_actionset_reactivate = false;
 
 extern "C" bool steam_init(void) {
   if (s_initialized) return true;
@@ -76,6 +104,33 @@ extern "C" void steam_run_callbacks(void) {
     } else if (msg.m_iCallback == k_iGameOverlayActivated_id) {
       auto *data = reinterpret_cast<GameOverlayActivated_t *>(msg.m_pubParam);
       s_overlay_active = (data->m_bActive != 0);
+    } else if (msg.m_iCallback == k_iSteamInputDeviceConnected_id) {
+      auto *d = reinterpret_cast<SteamInputDeviceConnected_t *>(msg.m_pubParam);
+      s_real_controller_count++;
+      s_real_controller_handle = d->m_ulConnectedDeviceHandle;
+      s_force_actionset_reactivate = true;
+      ESteamInputType t = SteamAPI_ISteamInput_GetInputTypeForHandle(
+          SteamAPI_SteamInput(), d->m_ulConnectedDeviceHandle);
+      WB_LOG_INFO(WB_LOG_CAT_GUI,
+                  "steam_input: real controller connected handle=%llu type=%d (count=%d)",
+                  (unsigned long long)d->m_ulConnectedDeviceHandle, (int)t,
+                  s_real_controller_count);
+    } else if (msg.m_iCallback == k_iSteamInputDeviceDisconnected_id) {
+      auto *d = reinterpret_cast<SteamInputDeviceDisconnected_t *>(msg.m_pubParam);
+      if (s_real_controller_count > 0) s_real_controller_count--;
+      if (d->m_ulDisconnectedDeviceHandle == s_real_controller_handle)
+        s_real_controller_handle = 0;
+      s_real_disconnect_pending = true;
+      WB_LOG_INFO(WB_LOG_CAT_GUI,
+                  "steam_input: real controller disconnected handle=%llu (count=%d)",
+                  (unsigned long long)d->m_ulDisconnectedDeviceHandle,
+                  s_real_controller_count);
+    } else if (msg.m_iCallback == k_iSteamInputConfigurationLoaded_id) {
+      /* A real device's config just loaded.  The action handles resolve and
+         the action set must be (re)activated against it — see
+         steam_input_run_frame.  (Fires when a pad takes over the virtual
+         controller's handle, where the handle alone doesn't change.) */
+      s_force_actionset_reactivate = true;
     }
     SteamAPI_ManualDispatch_FreeLastCallback(pipe);
   }
@@ -230,6 +285,11 @@ extern "C" void steam_dismiss_floating_keyboard(void) {
 static bool                     s_input_initialized   = false;
 static InputHandle_t            s_active_controller   = 0; /* 0 = none */
 static InputActionSetHandle_t   s_active_set_handle   = 0;
+/* Name of the desired action set (static literal from steam_input_actions.h).
+   Kept so run_frame can re-resolve s_active_set_handle once the config loads —
+   GetActionSetHandle returns 0 until a controller is present, and the nav
+   layer only requests a set on change, so it would otherwise never retry. */
+static const char *             s_active_set_name     = nullptr;
 
 namespace {
 struct DigitalCache   { const char *name; InputDigitalActionHandle_t handle; };
@@ -259,6 +319,11 @@ static InputDigitalActionHandle_t cache_digital(ISteamInput *input,
   }
   InputDigitalActionHandle_t h =
       SteamAPI_ISteamInput_GetDigitalActionHandle(input, name);
+  /* Don't cache an unresolved (0) handle.  Steam returns 0 until the
+     in-game-actions config is loaded — which only happens once a real
+     controller is present — so caching the 0 would leave the action dead
+     forever even after the config loads.  Retry on the next call. */
+  if (h == 0) return 0;
   s_digital_cache[s_digital_count].name   = name;
   s_digital_cache[s_digital_count].handle = h;
   ++s_digital_count;
@@ -280,6 +345,7 @@ static InputAnalogActionHandle_t cache_analog(ISteamInput *input,
   }
   InputAnalogActionHandle_t h =
       SteamAPI_ISteamInput_GetAnalogActionHandle(input, name);
+  if (h == 0) return 0;   /* don't cache an unresolved handle — see cache_digital */
   s_analog_cache[s_analog_count].name   = name;
   s_analog_cache[s_analog_count].handle = h;
   ++s_analog_count;
@@ -301,6 +367,7 @@ static InputActionSetHandle_t cache_actionset(ISteamInput *input,
   }
   InputActionSetHandle_t h =
       SteamAPI_ISteamInput_GetActionSetHandle(input, name);
+  if (h == 0) return 0;   /* don't cache an unresolved handle — see cache_digital */
   s_actionset_cache[s_actionset_count].name   = name;
   s_actionset_cache[s_actionset_count].handle = h;
   ++s_actionset_count;
@@ -317,6 +384,10 @@ extern "C" bool steam_input_init(void) {
     return false;
   }
   s_input_initialized = true;
+  /* Opt in to SteamInputDeviceConnected_t / Disconnected_t — the only signal
+     for *real* physical controller presence (GetConnectedControllers is pinned
+     at >=1 by the always-present keyboard/mouse virtual controller). */
+  SteamAPI_ISteamInput_EnableDeviceCallbacks(input);
   WB_LOG_INFO(WB_LOG_CAT_GUI, "steam_input_init: ISteamInput active");
   return true;
 }
@@ -328,9 +399,14 @@ extern "C" void steam_input_shutdown(void) {
   s_input_initialized   = false;
   s_active_controller   = 0;
   s_active_set_handle   = 0;
+  s_active_set_name     = nullptr;
   s_digital_count       = 0;
   s_analog_count        = 0;
   s_actionset_count     = 0;
+  s_real_controller_count   = 0;
+  s_real_disconnect_pending = false;
+  s_real_controller_handle  = 0;
+  s_force_actionset_reactivate = false;
 }
 
 extern "C" void steam_input_run_frame(void) {
@@ -361,11 +437,24 @@ extern "C" void steam_input_run_frame(void) {
     WB_LOG_INFO(WB_LOG_CAT_GUI, "steam_input: controller disconnected");
   }
 
+  /* Re-resolve the action-set handle if it wasn't available when first
+     requested (GetActionSetHandle returns 0 until the config loads, which
+     needs a controller present).  Force a re-activation once it resolves. */
+  if (s_active_set_handle == 0 && s_active_set_name) {
+    s_active_set_handle = cache_actionset(input, s_active_set_name);
+    if (s_active_set_handle != 0) s_force_actionset_reactivate = true;
+  }
+
+  /* Re-activate the action set when the active controller changes OR when a
+     real device just connected / loaded its config — the latter is required
+     because the pad shares the virtual controller's handle, so the handle
+     alone doesn't change when the pad takes over. */
   if (s_active_set_handle != 0 &&
       s_active_controller != 0 &&
-      s_active_controller != prev) {
+      (s_active_controller != prev || s_force_actionset_reactivate)) {
     SteamAPI_ISteamInput_ActivateActionSet(input, s_active_controller,
                                            s_active_set_handle);
+    s_force_actionset_reactivate = false;
   }
 }
 
@@ -373,6 +462,7 @@ extern "C" void steam_input_activate_action_set(const char *set_name) {
   if (!s_input_initialized) return;
   ISteamInput *input = SteamAPI_SteamInput();
   if (!input) return;
+  s_active_set_name = set_name;   /* remembered for re-resolution in run_frame */
   InputActionSetHandle_t h = cache_actionset(input, set_name);
   s_active_set_handle = h;
   if (s_active_controller != 0 && h != 0) {
@@ -425,6 +515,19 @@ extern "C" const char *steam_input_get_glyph_path(const char *action_name) {
 
 extern "C" bool steam_input_has_active_controller(void) {
   return s_input_initialized && s_active_controller != 0;
+}
+
+/* Real physical controller present, per the device hot-plug callbacks —
+   immune to the keyboard/mouse virtual controller (the phantom). */
+extern "C" bool steam_input_real_controller_connected(void) {
+  return s_real_controller_count > 0;
+}
+
+/* Consume the "a real controller just disconnected" edge (one-shot). */
+extern "C" bool steam_input_consume_real_disconnect(void) {
+  bool v = s_real_disconnect_pending;
+  s_real_disconnect_pending = false;
+  return v;
 }
 
 extern "C" void steam_input_trigger_vibration(uint16_t left_speed,

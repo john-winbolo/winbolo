@@ -115,6 +115,17 @@ const char *steam_input_get_glyph_path(const char *action_name);
  * selector in the input layer.  Returns false in stub builds. */
 bool steam_input_has_active_controller(void);
 
+/* True iff a real physical controller is connected, tracked via the
+ * device hot-plug callbacks (EnableDeviceCallbacks).  Unlike
+ * steam_input_has_active_controller(), this is NOT fooled by the
+ * always-present keyboard/mouse virtual controller.  Returns false in
+ * stub builds. */
+bool steam_input_real_controller_connected(void);
+
+/* Consume the one-shot "a real controller just disconnected" edge.
+ * Returns true once per physical disconnect.  False in stub builds. */
+bool steam_input_consume_real_disconnect(void);
+
 /* Route haptic rumble through Steam Input's vibration API.  When
  * Steam Input is intercepting the controller, SDL_RumbleGamepad
  * is silent — this lets us still feel the rumble on Path A.

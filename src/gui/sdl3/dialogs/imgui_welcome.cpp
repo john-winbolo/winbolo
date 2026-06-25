@@ -40,6 +40,7 @@ extern "C" {
 #include "imgui_welcome.h"
 #include "../../gamefront.h"
 #include "../../ui_mode.h"
+#include "../input_gamepad.h"
 #include "../../lang.h"
 #include "imgui_winbolonet.h"
 }
@@ -322,10 +323,13 @@ extern "C" int imguiWelcomeShow(void) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, ghostTextAlpha));
 
             const bool showTutorial = gameFrontGetShowTutorialButton();
-            /* Map Editor and Log Viewer are mouse-driven; controller-only
-               players (Steam Deck, or desktop in controller mode) have no
-               usable workflow. Hide both when controller mode is active. */
-            const bool showDesktopTools = !uiShouldUseControllerMode();
+            /* Map Editor and Log Viewer are mouse-driven; a controller player
+               can't use them.  Hide them whenever a real controller is
+               connected (or on Steam Deck) — even while the player is using
+               the mouse.  Unlike the rest of the controller-mode UI, these
+               follow controller *presence*, not the last-used device. */
+            const bool showDesktopTools =
+                !inputGamepadRealControllerConnected() && !uiModeIsSteamDeck();
             /* rawLabel, when non-null, signals a non-exit action: the click
              * handler dispatches by rawLabel string rather than setting
              * result/running. Display text still goes through

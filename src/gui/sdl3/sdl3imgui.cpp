@@ -2672,37 +2672,11 @@ static void renderSettingsPanel(ClientSim *cs) {
         }
 
 #ifndef __ANDROID__
-        /* Controller Mode (Phase 8.1) — desktop-only.  On Steam Deck the
-           UI is always in controller mode regardless of pref, so don't
-           offer the radio there. */
+        /* UI-scale override — desktop-only.  On Steam Deck/tablet the scale
+           is device-driven, so don't offer the control there.  Auto keeps the
+           display-derived scale; a preset pins the ImGui scale and rebuilds
+           the font atlas live (deferred to a safe point between frames). */
         if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
-            ImGui::Separator();
-            ImGui::TextUnformatted(langGetText(STR_CTRL_MODE_HEADER));
-            ControllerModePref cm = uiControllerModeGet();
-            int cur = (int)cm;
-            bool changed = false;
-            char rOff[64], rOn[64], rAuto[64];
-            snprintf(rOff,  sizeof(rOff),  "%s##cmode", langGetText(STR_CTRL_MODE_OFF));
-            snprintf(rOn,   sizeof(rOn),   "%s##cmode", langGetText(STR_CTRL_MODE_ON));
-            snprintf(rAuto, sizeof(rAuto), "%s##cmode", langGetText(STR_CTRL_MODE_AUTO));
-            if (ImGui::RadioButton(rOff,  cur == CONTROLLER_MODE_OFF))  { cur = CONTROLLER_MODE_OFF;  changed = true; }
-            ImGui::SameLine();
-            if (ImGui::RadioButton(rOn,   cur == CONTROLLER_MODE_ON))   { cur = CONTROLLER_MODE_ON;   changed = true; }
-            ImGui::SameLine();
-            if (ImGui::RadioButton(rAuto, cur == CONTROLLER_MODE_AUTO)) { cur = CONTROLLER_MODE_AUTO; changed = true; }
-            if (changed) {
-                uiControllerModeSet((ControllerModePref)cur);
-                gameFrontSaveCurrentPrefs();
-            }
-            bool ask = uiControllerPromptAskOnConnectGet();
-            if (ImGui::Checkbox(langGetText(STR_CTRL_MODE_ASK), &ask)) {
-                uiControllerPromptAskOnConnectSet(ask);
-                gameFrontSaveCurrentPrefs();
-            }
-
-            /* UI scale override — desktop only.  Auto keeps the display-
-               derived scale; a preset pins the ImGui scale and rebuilds the
-               font atlas live (deferred to a safe point between frames). */
             ImGui::Separator();
             ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_UISCALE));
             {
@@ -4391,9 +4365,11 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         ImGui::SetWindowFocus(nullptr);
     }
 
-    /* Controller-detected prompt: poll the gamepad-connected rising edge
-       (shared with the menu loops). */
-    controllerPromptPollConnectEdge();
+    /* Fold this frame's controller activity into the last-used device so the
+       menu bar (below) and controller-mode UI track it.  Keyboard/mouse use
+       arrives as SDL events (inputSourceUpdate in the event pump); Steam
+       Input controller input does not, so poll it here. */
+    inputSourceTick();
 
     /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
        Pause action, default Start). Opens whenever a controller is connected
@@ -4403,24 +4379,25 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         deckPauseOpen();
     }
     /* Active-controller-disconnect: show the "Controller Disconnected" dialog
-       so the player can reconnect or switch to keyboard/mouse (battery dies,
-       dongle drops).  Gated on the controller-mode *pref*, not
-       uiShouldUseControllerMode() — the latter already flipped to false the
-       instant the pad dropped, so a keyboard-only player never sees it.  In a
-       solo game (single-player / tutorial) freeze the sim via the shared pause
-       path; multiplayer keeps running.  Shown in-game and in the in-game lobby.
-       Skipped on tablet (mobile has its own touch UX) — like the
-       controller-detected prompt — because the dialog is only rendered in the
-       non-tablet branch below; opening it here would freeze a solo game behind
-       a modal that never draws. */
+       so the player knows their pad dropped (battery dies, dongle drops) and
+       can reconnect or carry on with keyboard/mouse.  The edge comes from the
+       Steam Input device hot-plug callback (or SDL removal) — it only fires
+       for a real controller, so no pref gate is needed.  In a solo game
+       (single-player / tutorial) freeze the sim via the shared pause path;
+       multiplayer keeps running.  Shown in-game and in the in-game lobby.
+       Skipped on tablet (mobile has its own touch UX) because the dialog is
+       only rendered in the non-tablet branch below; opening it here would
+       freeze a solo game behind a modal that never draws. */
     if (inputGamepadConsumeActiveDisconnect() && !uiModeIsTablet() &&
-        (uiControllerModeGet() != CONTROLLER_MODE_OFF || uiModeIsSteamDeck()) &&
         !controllerDisconnectIsOpen()) {
         controllerDisconnectOpen();
         windowControllerLostPause(cs, true);
     }
-    /* Auto-dismiss when a controller is (re)connected. */
-    if (controllerDisconnectIsOpen() && inputGamepadIsConnected()) {
+    /* Auto-dismiss when a REAL controller is (re)connected.  Must use real
+       presence, not inputGamepadIsConnected() — the latter is pinned true by
+       the Steam Input virtual controller, which would dismiss the dialog the
+       instant it opened. */
+    if (controllerDisconnectIsOpen() && inputGamepadRealControllerConnected()) {
         controllerDisconnectClose();
         windowControllerLostPause(cs, false);
     }
@@ -4488,14 +4465,15 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         sdl3ImguiTabletOverlay(cs);
     } else {
 #ifndef __APPLE__
-        /* Hide the menu bar in controller mode — controller-only players
-           can't reach the menu strip; the pause overlay replaces it.
-           Also keep it hidden while the controller-disconnected dialog is up:
-           the menus must not reappear until the player picks "keyboard and
-           mouse" (which turns controller mode off), not the moment the pad
-           dropped.  macOS routes the menu through native NSMenu so the
-           in-window bar is never drawn there. */
-        if (!uiShouldUseControllerMode() && !controllerDisconnectIsOpen()) {
+        /* Show the menu bar only when the player's last-used device is the
+           keyboard/mouse.  A connected-but-idle controller doesn't hide it,
+           and reaching for the mouse/keyboard brings it back; using the
+           controller hides it again (the pause overlay is the pad's way in).
+           Kept hidden while the controller-disconnected dialog is up so the
+           strip doesn't flash behind the modal.  macOS routes the menu
+           through native NSMenu so the in-window bar is never drawn there. */
+        if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD &&
+            !controllerDisconnectIsOpen()) {
             renderMenuBar(cs);
         }
 #endif
@@ -4571,10 +4549,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         }
         quickChatRender(cs);
         renderCtrlSendMsg(cs);
-        /* Controller-detected prompt — also a no-op when closed.
-           Rendered through the main context so it inherits
-           NavEnableGamepad for A/B selection. */
-        controllerPromptRender();
 
         /* Controller-disconnected dialog.  Returns true the frame the
            "keyboard and mouse" button is pressed — it has already switched
