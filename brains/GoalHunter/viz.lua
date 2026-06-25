@@ -91,8 +91,8 @@ M.IDS = {
                          long  = "Single manual-mode Bolo HUD: bars, build menu, gun light, pill/base grids, key list. Only renders in manual mode." },
   hud_resources      = { short = "HUD: resources",
                          long  = "Shells/Mines/Armour/Trees/Speed/Boat counters" },
-  hud_tick_info      = { short = "HUD: tick info (think_ms / phase / goal)",
-                         long  = "Top-left line under the big TICK box. Brain-side timing via os.clock; color codes the think_ms cell green<5/yellow<10/orange<20/red>=20." },
+  hud_tick_info      = { short = "HUD: tick info (think_ms / phase / goal / capacity tier)",
+                         long  = "Top-left lines under the big TICK box. Brain-side timing via os.clock; color codes the think_ms cell green<5/yellow<10/orange<20/red>=20. Also shows the execution capacity tier (\"capacity: tier N/10\"), color-shifted toward red as the tier drops (red<=3, orange<=5, yellow<=7) so you can filter/search for 'tier' to find it." },
   hud_replan         = { short = "HUD: replan + phase",
                          long  = "Replan countdown + phase + reason" },
   hud_goal           = { short = "HUD: current goal",
@@ -569,7 +569,16 @@ function M.refresh()
       _on[id] = false
     else
       local g = _G["_BT_VIZ_" .. id:upper()]
-      _on[id] = (g ~= false)
+      if g ~= nil then
+        _on[id] = g
+      else
+        -- No host toggle pushed (winbolods / release client): honor the
+        -- declared default. default_on=false viz (e.g. label_hud_overlays)
+        -- stay OFF instead of defaulting on — matches is_on()'s cold path and
+        -- the documented intent above.
+        local entry = M.IDS[id]
+        _on[id] = not (entry and entry.default_on == false)
+      end
     end
   end
 end

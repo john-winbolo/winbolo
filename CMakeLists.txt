@@ -2062,6 +2062,7 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
     src/braintest/braintest_viz_registry.c
     src/braintest/braintest_vizwindow.cpp
+    src/braintest/braintest_loadbrowser.cpp
     src/braintest/braintest_panel_registry.c
     src/braintest/braintest_panel_types.c
     src/braintest/braintest_panelwindow.cpp

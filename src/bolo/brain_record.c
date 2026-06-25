@@ -280,8 +280,38 @@ void brainRecordTick(ServerSim *sim) {
 
     wr_u8(hdr.tankCount);   wr_buf(tanks,  (size_t)hdr.tankCount  * sizeof(TankSnapshot));
     wr_u8(hdr.shellCount);  wr_buf(shells, (size_t)hdr.shellCount * sizeof(ShellSnapshot));
-    wr_u8(hdr.baseCount);   wr_buf(bases,  (size_t)hdr.baseCount  * sizeof(BaseSnapshot));
-    wr_u8(hdr.pillCount);   wr_buf(pills,  (size_t)hdr.pillCount  * sizeof(PillSnapshot));
+
+    /* Bases + pills: serverSimBuildSnapshot DELTA-encodes these (full only on a
+     * sync tick, then only what changed), so the snapshot's base/pill arrays are
+     * empty after tick 0. Read the FULL state straight from the sim every frame
+     * instead — same as BrainTest's own recorder. (tanks/shells above are sent
+     * in full each tick, so the snapshot is fine for them.) */
+    {
+        GameSim *gs = serverSimGetGameSim(sim);
+        int nb = (gs && gs->bs) ? gs->bs->numBases : 0;
+        if (nb > MAX_SNAPSHOT_BASES) nb = MAX_SNAPSHOT_BASES;
+        wr_u8((uint8_t)nb);
+        for (int i = 0; i < nb; i++) {
+            BaseSnapshot bs2;
+            bs2.owner  = gs->bs->item[i].owner;
+            bs2.armour = gs->bs->item[i].armour;
+            bs2.shells = gs->bs->item[i].shells;
+            bs2.mines  = gs->bs->item[i].mines;
+            wr_buf(&bs2, sizeof bs2);
+        }
+        int np = (gs && gs->pb) ? gs->pb->numPills : 0;
+        if (np > MAX_SNAPSHOT_PILLS) np = MAX_SNAPSHOT_PILLS;
+        wr_u8((uint8_t)np);
+        for (int i = 0; i < np; i++) {
+            PillSnapshot ps2;
+            ps2.x     = gs->pb->item[i].x;
+            ps2.y     = gs->pb->item[i].y;
+            ps2.owner = gs->pb->item[i].owner;
+            ps2.armourInTank = (uint8_t)((gs->pb->item[i].armour & 0x0F)
+                                         | (gs->pb->item[i].inTank ? 0x10 : 0));
+            wr_buf(&ps2, sizeof ps2);
+        }
+    }
 
     /* ── Map terrain (keyframe / delta) — also carries mines + boats ── */
     writeMap(sim);

@@ -90,6 +90,10 @@
 #include "../gui/sdl3/luabrainshandler.h"
 #include "braincore.h"
 #include "brain_overlay.h"
+#include "brain_record.h"
+#include "braintest_loadbrowser.h"
+#include <zlib.h>
+#include <time.h>
 #include "braintest_viz_registry.h"
 #include "braintest_vizwindow.h"
 #include "braintest_panel_registry.h"
@@ -146,6 +150,12 @@ time_t serverMainGetTicks(void) { return (time_t)SDL_GetTicks(); }
  * (effectively unlimited — full session retained). Lower default
  * keeps memory bounded on multi-hour runs. */
 static int g_recordingMaxFrames = 3000;
+
+/* Set when a winbolods recording was loaded (-loadsession). Disables the
+ * sliding-window eviction (so the whole recording, including the start, is
+ * kept) and stops playback from snapping to the live sim at the end — there is
+ * no live game to resume, just a frozen replay shell. */
+static bool g_loadedSession = false;
 
 /* Playback / live-replay speed presets, ms-per-tick. Lower = faster. */
 static const int SPEED_PRESETS[] = {
@@ -698,6 +708,317 @@ static void recordingReconstructMap(RecordingBuffer *rb, int targetFrame) {
                 df->brainMapDeltas[d].newVal;
     }
     rb->playbackMapFrame = targetFrame;
+}
+
+/* ================================================================== */
+/* Session loading: read a winbolods brainrec.btr (gzipped) into the   */
+/* recording buffer so the existing playback/scrub machinery replays   */
+/* it. See src/bolo/brain_record.{c,h} for the on-disk format (v4).    */
+/* ================================================================== */
+
+static uint8_t  bt_gz_u8 (gzFile g){ uint8_t v=0;  gzread(g,&v,1); return v; }
+static uint16_t bt_gz_u16(gzFile g){ uint16_t v=0; gzread(g,&v,2); return v; }
+static uint32_t bt_gz_u32(gzFile g){ uint32_t v=0; gzread(g,&v,4); return v; }
+static float    bt_gz_f32(gzFile g){ float v=0;    gzread(g,&v,4); return v; }
+
+/* Peek a session header (+ first frame) to learn the map name and how many
+ * bot slots it used — needed BEFORE the sim/bots are created at startup.
+ * Returns true on a valid, version-matching brainrec.btr. */
+static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut) {
+    gzFile g = gzopen(path, "rb");
+    if (!g) return false;
+    BrainRecHeader hdr;
+    if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
+        || memcmp(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) != 0
+        || hdr.version != BRAINREC_VERSION) { gzclose(g); return false; }
+    if (mapNameOut) { memcpy(mapNameOut, hdr.mapName, 64); mapNameOut[63] = '\0'; }
+    uint32_t llen = bt_gz_u32(g);
+    if (llen) gzseek(g, llen, SEEK_CUR);
+    int maxSlot = -1;
+    uint32_t fm = bt_gz_u32(g);
+    if (fm == BRAINREC_FRAME_MAGIC) {
+        bt_gz_u32(g); /* tick */
+        uint8_t tc = bt_gz_u8(g); gzseek(g, (z_off_t)tc * (int)sizeof(TankSnapshot),  SEEK_CUR);
+        uint8_t sc = bt_gz_u8(g); gzseek(g, (z_off_t)sc * (int)sizeof(ShellSnapshot), SEEK_CUR);
+        uint8_t bc = bt_gz_u8(g); gzseek(g, (z_off_t)bc * (int)sizeof(BaseSnapshot),  SEEK_CUR);
+        uint8_t pc = bt_gz_u8(g); gzseek(g, (z_off_t)pc * (int)sizeof(PillSnapshot),  SEEK_CUR);
+        uint8_t kf = bt_gz_u8(g);
+        if (kf) gzseek(g, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE, SEEK_CUR);
+        else { uint32_t nd = bt_gz_u32(g); gzseek(g, (z_off_t)nd * 5, SEEK_CUR); }
+        uint8_t nbot = bt_gz_u8(g);
+        for (int b = 0; b < nbot; b++) {
+            uint8_t slot = bt_gz_u8(g);
+            if (slot > maxSlot) maxSlot = slot;
+            gzseek(g, 4, SEEK_CUR);                 /* thinkMs */
+            gzseek(g, 32 + 12 + 32, SEEK_CUR);      /* goalinfo head */
+            uint16_t nc = bt_gz_u16(g); gzseek(g, (z_off_t)nc * (int)sizeof(BrainRecCandidate), SEEK_CUR);
+            uint32_t oc = bt_gz_u32(g);
+            for (uint32_t k = 0; k < oc; k++) {     /* packed overlay: 28 + textLen */
+                gzseek(g, 27, SEEK_CUR);
+                uint8_t tl = bt_gz_u8(g);
+                if (tl) gzseek(g, tl, SEEK_CUR);
+            }
+            uint32_t pl = bt_gz_u32(g); if (pl) gzseek(g, pl, SEEK_CUR);
+        }
+    }
+    gzclose(g);
+    if (numBotsOut) *numBotsOut = (maxSlot >= 0) ? maxSlot + 1 : 1;
+    return true;
+}
+
+/* Read the whole brainrec.btr into app->recording and enter playback. The sim
+ * must already exist with the recorded map + bot slots (so pill/base counts and
+ * per-bot overlay buffers/panels line up — set up at startup from btPeekSession).
+ * Returns the number of frames loaded, or -1 on failure. */
+static int btLoadSession(BrainTestApp *app, const char *path) {
+    gzFile g = gzopen(path, "rb");
+    if (!g) return -1;
+    BrainRecHeader hdr;
+    if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
+        || memcmp(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) != 0
+        || hdr.version != BRAINREC_VERSION) { gzclose(g); return -1; }
+
+    /* Legend: recorded viz_idx -> category name. Remap to BrainTest's own
+     * registry index by name (the bots registered the same categories). */
+    uint8_t vizRemap[256];
+    memset(vizRemap, OVERLAY_VIZ_IDX_NONE, sizeof vizRemap);
+    uint32_t llen = bt_gz_u32(g);
+    if (llen) {
+        char *lj = (char *)malloc(llen + 1);
+        gzread(g, lj, llen); lj[llen] = '\0';
+        /* Parse {"<idx>":"<name>",...} with a minimal scanner. */
+        const char *p = lj;
+        while ((p = strchr(p, '"')) != NULL) {
+            int idx = atoi(p + 1);
+            const char *q = strchr(p + 1, '"'); if (!q) break;     /* end of idx */
+            const char *n1 = strchr(q + 1, '"'); if (!n1) break;   /* open name */
+            const char *n2 = strchr(n1 + 1, '"'); if (!n2) break;  /* close name */
+            char name[VIZ_REG_ID_MAX]; int nl = (int)(n2 - n1 - 1);
+            if (nl < 0) nl = 0; if (nl >= (int)sizeof name) nl = (int)sizeof name - 1;
+            memcpy(name, n1 + 1, nl); name[nl] = '\0';
+            int reg = vizRegistryFind(name);
+            if (idx >= 0 && idx < 256) vizRemap[idx] = (reg >= 0 && reg < 255) ? (uint8_t)reg : OVERLAY_VIZ_IDX_NONE;
+            p = n2 + 1;
+        }
+        free(lj);
+    }
+
+    /* Which panel slot holds each bot's pool breakdown (by bot_owner). */
+    int poolPanelForBot[MAX_TANKS];
+    for (int i = 0; i < MAX_TANKS; i++) poolPanelForBot[i] = -1;
+    for (int pi = 0; pi < panelRegistryCount(); pi++) {
+        const PanelRegistryEntry *e = panelRegistryGet(pi);
+        if (e && e->lua_expr[0] && strstr(e->lua_expr, "get_pool_breakdown_json")
+            && e->bot_owner >= 0 && e->bot_owner < MAX_TANKS) {
+            poolPanelForBot[e->bot_owner] = pi;
+        }
+    }
+
+    RecordingBuffer *rb = &app->recording;
+    int loaded = 0;
+    for (;;) {
+        uint32_t fm = bt_gz_u32(g);
+        if (gzeof(g) || fm != BRAINREC_FRAME_MAGIC) break;
+
+        if (rb->count >= rb->capacity) {
+            int nc = rb->capacity ? rb->capacity * 2 : 1024;
+            if (nc > MAX_RECORDING_FRAMES) nc = MAX_RECORDING_FRAMES;
+            if (rb->count >= nc) break;
+            rb->frames = (RecordingFrame *)realloc(rb->frames, nc * sizeof(RecordingFrame));
+            rb->capacity = nc;
+        }
+        RecordingFrame *f = &rb->frames[rb->count];
+        memset(f, 0, sizeof *f);
+        f->tick = bt_gz_u32(g);
+
+        /* World snapshot. */
+        f->tankCount  = bt_gz_u8(g); if (f->tankCount)  gzread(g, f->tanks,      f->tankCount  * (unsigned)sizeof(TankSnapshot));
+        f->shellCount = bt_gz_u8(g); if (f->shellCount) gzread(g, f->snapShells, f->shellCount * (unsigned)sizeof(ShellSnapshot));
+        f->baseCount  = bt_gz_u8(g); if (f->baseCount)  gzread(g, f->snapBases,  f->baseCount  * (unsigned)sizeof(BaseSnapshot));
+        uint8_t pc = bt_gz_u8(g); f->pillCount = pc;
+        for (int i = 0; i < pc; i++) {
+            PillSnapshot ps; gzread(g, &ps, (unsigned)sizeof ps);
+            f->snapPills[i].x      = ps.x;
+            f->snapPills[i].y      = ps.y;
+            f->snapPills[i].owner  = ps.owner;
+            f->snapPills[i].armour = (uint8_t)(ps.armourInTank & 0x0F);
+            f->snapPills[i].inTank = (uint8_t)((ps.armourInTank >> 4) & 0x01);
+            f->snapPills[i].speed  = 0;
+        }
+
+        /* Terrain: keyframe or delta. */
+        uint8_t kf = bt_gz_u8(g);
+        if (kf) {
+            f->isKeyframe = true;
+            f->fullMap = (BYTE *)malloc(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+            gzread(g, f->fullMap, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+        } else {
+            uint32_t nd = bt_gz_u32(g);
+            f->mapDeltaCount = (int)nd;
+            if (nd) {
+                f->mapDeltas = (ByteDelta *)malloc(nd * sizeof(ByteDelta));
+                for (uint32_t d = 0; d < nd; d++) {
+                    f->mapDeltas[d].offset = bt_gz_u32(g);
+                    f->mapDeltas[d].oldVal = 0;
+                    f->mapDeltas[d].newVal = bt_gz_u8(g);
+                }
+            }
+        }
+
+        /* Per-bot: think-ms, goal info, overlays, pool JSON. */
+        uint8_t nbot = bt_gz_u8(g);
+        for (int b = 0; b < nbot; b++) {
+            uint8_t slot = bt_gz_u8(g);
+            f->thinkMs = bt_gz_f32(g);   /* HUD shows followed bot; close enough */
+            char kind[32], substate[32];
+            gzread(g, kind, 32);
+            int gmx = (int)bt_gz_u32(g), gmy = (int)bt_gz_u32(g), gtgt = (int)bt_gz_u32(g);
+            gzread(g, substate, 32);
+            uint16_t nc = bt_gz_u16(g);
+            bool useGoal = (slot == 0);   /* scrubber markers track bot 0 */
+            if (useGoal) {
+                memcpy(f->goalInfo.kind, kind, 32); f->goalInfo.kind[31] = '\0';
+                memcpy(f->goalInfo.substate, substate, 32); f->goalInfo.substate[31] = '\0';
+                f->goalInfo.mx = gmx; f->goalInfo.my = gmy; f->goalInfo.target_id = gtgt;
+                f->goalInfo.num_candidates = (nc > BRAIN_GOAL_MAX_CANDIDATES) ? BRAIN_GOAL_MAX_CANDIDATES : nc;
+                f->goalInfoValid = true;
+            }
+            for (uint16_t c = 0; c < nc; c++) {
+                BrainRecCandidate cand; gzread(g, &cand, (unsigned)sizeof cand);
+                if (useGoal && c < BRAIN_GOAL_MAX_CANDIDATES) {
+                    memcpy(f->goalInfo.candidates[c].desc, cand.desc, sizeof cand.desc);
+                    f->goalInfo.candidates[c].desc[sizeof cand.desc - 1] = '\0';
+                    f->goalInfo.candidates[c].cost         = cand.cost;
+                    f->goalInfo.candidates[c].winner       = cand.winner != 0;
+                    f->goalInfo.candidates[c].phase_weight = cand.phase_weight;
+                }
+            }
+
+            uint32_t oc = bt_gz_u32(g);
+            bool keepBot = (slot < MAX_TANKS);
+            if (keepBot && oc) {
+                f->botOverlayCmds[slot] = (OverlayCmd *)malloc(oc * sizeof(OverlayCmd));
+                f->botOverlayCmdCount[slot] = (int)oc;
+            }
+            for (uint32_t k = 0; k < oc; k++) {
+                OverlayCmd cmd; memset(&cmd, 0, sizeof cmd);
+                cmd.type = (OverlayCmdType)bt_gz_u8(g);
+                cmd.x1 = bt_gz_f32(g); cmd.y1 = bt_gz_f32(g);
+                cmd.x2 = bt_gz_f32(g); cmd.y2 = bt_gz_f32(g);
+                cmd.radius = bt_gz_f32(g);
+                cmd.r = bt_gz_u8(g); cmd.g = bt_gz_u8(g); cmd.b = bt_gz_u8(g); cmd.a = bt_gz_u8(g);
+                cmd.anchor = bt_gz_u8(g);
+                uint8_t rvi = bt_gz_u8(g);
+                cmd.viz_idx = vizRemap[rvi];
+                uint8_t tl = bt_gz_u8(g);
+                if (tl) {
+                    int rl = tl < OVERLAY_TEXT_MAX ? tl : OVERLAY_TEXT_MAX - 1;
+                    gzread(g, cmd.text, tl);
+                    cmd.text[rl] = '\0';
+                }
+                if (keepBot) f->botOverlayCmds[slot][k] = cmd;
+            }
+
+            uint32_t pl = bt_gz_u32(g);
+            char *pj = NULL;
+            if (pl) { pj = (char *)malloc(pl + 1); gzread(g, pj, pl); pj[pl] = '\0'; }
+            if (keepBot && pj && poolPanelForBot[slot] >= 0) {
+                f->recordedPanels[poolPanelForBot[slot]] = pj;
+            } else if (pj) {
+                free(pj);
+            }
+        }
+
+        rb->count++;
+        loaded++;
+    }
+    gzclose(g);
+
+    if (loaded > 0) {
+        g_loadedSession = true;
+        g_recordingMaxFrames = MAX_RECORDING_FRAMES;  /* never evict the start */
+        app->playbackMode  = true;
+        app->playbackFrame = rb->count - 1;
+        app->paused        = true;
+        rb->hasPrev = true;
+    }
+    return loaded;
+}
+
+/* ---- Load-session browser (the 'O' window) ----------------------------- */
+static LoadSessionEntry g_sessionList[LOADBROWSER_MAX_SESSIONS];
+static int  g_sessionCount    = 0;
+static bool g_showLoadBrowser = false;
+
+/* Parse a "YYYYMMDD_HHMMSS" session dir name to a Unix epoch (local), or -1. */
+static int btParseDirTime(const char *name) {
+    int Y, M, D, h, m, s;
+    if (sscanf(name, "%4d%2d%2d_%2d%2d%2d", &Y, &M, &D, &h, &m, &s) != 6) return -1;
+    struct tm tmv; memset(&tmv, 0, sizeof tmv);
+    tmv.tm_year = Y - 1900; tmv.tm_mon = M - 1; tmv.tm_mday = D;
+    tmv.tm_hour = h; tmv.tm_min = m; tmv.tm_sec = s; tmv.tm_isdst = -1;
+    time_t t = mktime(&tmv);
+    return (t == (time_t)-1) ? -1 : (int)t;
+}
+
+/* Scan debug_sessions/ for recordings. Loadable = has a version-matching
+ * brainrec.btr. Length is wall-clock: btr mtime minus the dir-name timestamp. */
+static void scanSessions(void) {
+    g_sessionCount = 0;
+    int n = 0;
+    char **entries = SDL_GlobDirectory("debug_sessions", "*", 0, &n);
+    if (!entries) return;
+    for (int i = 0; i < n && g_sessionCount < LOADBROWSER_MAX_SESSIONS; i++) {
+        char dir[300];
+        SDL_snprintf(dir, sizeof dir, "debug_sessions/%s", entries[i]);
+        SDL_PathInfo pi;
+        if (!SDL_GetPathInfo(dir, &pi) || pi.type != SDL_PATHTYPE_DIRECTORY) continue;
+
+        LoadSessionEntry *e = &g_sessionList[g_sessionCount];
+        memset(e, 0, sizeof *e);
+        SDL_strlcpy(e->dir,  dir,         sizeof e->dir);
+        SDL_strlcpy(e->name, entries[i],  sizeof e->name);
+        e->durationSec = -1;
+
+        char btr[340];
+        SDL_snprintf(btr, sizeof btr, "%s/%s", dir, BRAINREC_FILENAME);
+        SDL_PathInfo bi;
+        bool haveBtr = SDL_GetPathInfo(btr, &bi) && bi.type == SDL_PATHTYPE_FILE;
+        if (!haveBtr) {
+            SDL_strlcpy(e->note, "no brainrec.btr", sizeof e->note);
+        } else {
+            e->sizeMB = (double)bi.size / 1.0e6;
+            if (btPeekSession(btr, e->map, &e->bots)) {
+                e->loadable = true;
+                int start = btParseDirTime(entries[i]);
+                if (start >= 0) {
+                    long long endsec = (long long)(bi.modify_time / 1000000000LL);
+                    int dur = (int)(endsec - start);
+                    if (dur >= 0 && dur < 24 * 3600) e->durationSec = dur;
+                }
+            } else {
+                SDL_strlcpy(e->note, "incompatible / corrupt", sizeof e->note);
+            }
+        }
+        /* Only list loadable recordings; skip dirs without a usable brainrec.btr. */
+        if (e->loadable) g_sessionCount++;
+    }
+    SDL_free(entries);
+}
+
+/* Spawn a fresh BrainTest replaying `dir` and quit this one. */
+static void relaunchWithSession(const char *dir) {
+    const char *base = SDL_GetBasePath();
+    char exe[600];
+    SDL_snprintf(exe, sizeof exe, "%sBrainTest.exe", base ? base : "");
+    const char *args[4] = { exe, "-loadsession", dir, NULL };
+    SDL_Process *proc = SDL_CreateProcess(args, false);
+    if (proc) {
+        fprintf(stderr, "Relaunching BrainTest -loadsession %s\n", dir);
+        appQuit = TRUE;   /* child is independent; let this instance exit */
+    } else {
+        fprintf(stderr, "Relaunch failed (%s)\n", SDL_GetError());
+    }
 }
 
 /* Drop frames at-and-after `keepCount`. Used when the user scrubs
@@ -1659,6 +1980,7 @@ static void signalHandler(int sig) {
 
 static char optBrain[512] = "brains/GoalHunter";
 static char optMap[512]   = "";
+static char optLoadSession[1024] = "";  /* -loadsession <dir>: replay a brainrec.btr */
 static int  optNumPlayers = 1;
 static bool optNumPlayersExplicit = false; /* true once -noplayers seen, for -teams reconciliation */
 static int  optNumTeams   = 0;   /* 0 = FFA (no alliances); otherwise round-robin team assignment */
@@ -1788,6 +2110,8 @@ static bool parseArgs(int argc, char **argv) {
             }
         } else if ((strcmp(argv[i], "-map") == 0 || strcmp(argv[i], "--map") == 0) && i + 1 < argc) {
             strncpy(optMap, argv[++i], sizeof(optMap) - 1);
+        } else if ((strcmp(argv[i], "-loadsession") == 0 || strcmp(argv[i], "--loadsession") == 0) && i + 1 < argc) {
+            strncpy(optLoadSession, argv[++i], sizeof(optLoadSession) - 1);
         } else if ((strcmp(argv[i], "-follow") == 0 || strcmp(argv[i], "--follow") == 0) && i + 1 < argc) {
             optFollow = atoi(argv[++i]);
         } else if ((strcmp(argv[i], "-ai") == 0 || strcmp(argv[i], "--ai") == 0) && i + 1 < argc) {
@@ -4771,6 +5095,10 @@ static void appRender(BrainTestApp *app) {
                        (int)app->followBot);
     mainImGuiRenderShortcuts(&app->showShortcuts);
     vizDetailWindowRender((int)app->followBot);
+    {
+        int sel = loadBrowserRender(&g_showLoadBrowser, g_sessionList, g_sessionCount);
+        if (sel >= 0 && sel < g_sessionCount) relaunchWithSession(g_sessionList[sel].dir);
+    }
     mainImGuiEndFrame(app->renderer);
     /* Drop the viz_detail playback override now that the dialog +
      * highlight pass have consumed it. Idempotent — safe to call
@@ -5067,6 +5395,28 @@ int main(int argc, char *argv[]) {
     if (app.overlayTex)
         SDL_SetTextureScaleMode(app.overlayTex, SDL_SCALEMODE_NEAREST);
 
+    /* -loadsession: peek the recording's header so the sim is created with the
+     * recorded MAP and bot count (so pill/base counts + per-bot overlay buffers
+     * line up with what we'll patch in during playback). The map name maps to
+     * data/maps/<name>.map unless the user passed an explicit -map. */
+    char loadSessionBtr[1200] = "";
+    if (optLoadSession[0]) {
+        SDL_snprintf(loadSessionBtr, sizeof(loadSessionBtr), "%s/%s",
+                     optLoadSession, BRAINREC_FILENAME);
+        char mapName[64] = ""; int recBots = 1;
+        if (btPeekSession(loadSessionBtr, mapName, &recBots)) {
+            if (!optMap[0] && mapName[0])
+                SDL_snprintf(optMap, sizeof(optMap), "data/maps/%s.map", mapName);
+            if (recBots > 0) optNumPlayers = recBots;
+            fprintf(stderr, "Load session: map '%s', %d bot(s) from %s\n",
+                    mapName, recBots, loadSessionBtr);
+        } else {
+            fprintf(stderr, "Load session: '%s' is not a loadable brainrec.btr "
+                            "(missing / wrong version)\n", loadSessionBtr);
+            loadSessionBtr[0] = '\0';
+        }
+    }
+
     /* Load map */
     SDL_PumpEvents();
     bool mapLoaded = false;
@@ -5307,6 +5657,19 @@ int main(int argc, char *argv[]) {
 
     fprintf(stderr, "  Map bounds: (%d,%d)-(%d,%d)\n",
             app.mapMinX, app.mapMinY, app.mapMaxX, app.mapMaxY);
+
+    /* -loadsession: now that the sim, bots (panels + viz registered), and the
+     * recording buffer all exist, read the brainrec.btr into the recording and
+     * jump into paused playback at the last frame. */
+    if (loadSessionBtr[0]) {
+        int n = btLoadSession(&app, loadSessionBtr);
+        if (n > 0) {
+            if (optFollow < 0) app.followBot = 0;
+            fprintf(stderr, "Load session: %d frames loaded — playback ready.\n", n);
+        } else {
+            fprintf(stderr, "Load session: failed to load frames from %s\n", loadSessionBtr);
+        }
+    }
 
     /* Main loop */
     Uint64 lastTickTime = SDL_GetTicks();
@@ -5612,6 +5975,12 @@ int main(int argc, char *argv[]) {
                 }
                 case SDLK_F1:
                     app.showShortcuts = !app.showShortcuts;
+                    break;
+                case SDLK_O:
+                    /* Load-session browser: pick a winbolods recording to replay
+                     * (relaunches BrainTest). Rescan on open. */
+                    g_showLoadBrowser = !g_showLoadBrowser;
+                    if (g_showLoadBrowser) scanSessions();
                     break;
                 case SDLK_L:
                     /* HUD layout edit: L toggles lock/unlock (locking saves);
@@ -6131,6 +6500,11 @@ int main(int argc, char *argv[]) {
                 if (app.playbackMode) {
                     if (app.playbackFrame + 1 < app.recording.count) {
                         app.playbackFrame++;
+                    } else if (g_loadedSession) {
+                        /* End of a loaded recording — hold here, paused. There's
+                         * no live game to resume (the sim is a replay shell), and
+                         * resuming would live-capture + evict the recorded start. */
+                        app.paused = true;
                     } else {
                         /* Hit the end of recorded history → snap
                          * back to live and resume the live sim. */
