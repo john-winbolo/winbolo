@@ -3707,6 +3707,9 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         /* Window focus — mute sound when backgroundSound is off.
            Don't mute if focus moved to one of our own windows (main or pop-out). */
         if (ev.type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+            /* Retract any open menu-bar dropdown so it isn't left hanging open
+               when the user tabs away to another window. */
+            s_closeMenuPopups = true;
             if (soundEffects && !backgroundSound) {
                 SDL_Window *focused = SDL_GetKeyboardFocus();
                 bool focusedIsOurs = (focused == s_window);
