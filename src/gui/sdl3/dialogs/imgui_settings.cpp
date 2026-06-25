@@ -304,11 +304,12 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
 
 /* -------------------------------------------------------
  * Game/HUD tab — gameplay/HUD controls shared by the pre-game
- * dialog and the in-game overlay: scrolling behaviour and the
- * gunsight.  ctx->cs is NULL pre-game (the toggles tolerate it).
- * (Labels and Messages will join this tab in a later step.)
+ * dialog and the in-game overlay: scrolling behaviour, the
+ * gunsight, label controls, and message toggles.  ctx->cs is
+ * NULL pre-game (the toggles tolerate it).
  * ------------------------------------------------------- */
 extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
+    struct ClientSim *cs = ctx->cs;
     /* ---- Auto scrolling ---- */
     {
         bool as = (bool)autoScrollingEnabled;
@@ -334,23 +335,7 @@ extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
             windowShowGunsight_toggle(ctx->cs);
         }
     }
-}
 
-/* -------------------------------------------------------
- * Shared settings categories — the Labels / Messages
- * sections that the pre-game dialog (imguiSettingsShow) and the
- * in-game overlay (sdl3imgui.cpp renderSettingsPanel) used to each
- * render their own near-identical copy of.  Rendered by both now so
- * they can't drift.  Uses the cs-aware window*_toggle helpers (cs may
- * be NULL — the pre-game dialog has no live sim — which they accept),
- * so toggles update the live game when there is one.
- *
- * Context-specific sections (Player, Display, Language, Network,
- * Tutorial, Crash, Game, window size, controller mode) stay with each
- * caller: they depend on per-screen state or only apply in one context.
- * ------------------------------------------------------- */
-extern "C" void imguiSettingsRenderCommonSections(SettingsRenderCtx *ctx) {
-    struct ClientSim *cs = ctx->cs;
     /* ---- Labels ---- */
     if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_LABELS), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_MSGNAMES));
@@ -835,9 +820,6 @@ extern "C" void imguiSettingsShow(void) {
             imguiHandOnHover();
 #endif
         }
-
-        /* ---- Labels / Sound / Messages (shared with the in-game panel) ---- */
-        imguiSettingsRenderCommonSections(&ctx);
 
         /* ---- Tutorial ---- */
         if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_TUTORIAL), ImGuiTreeNodeFlags_DefaultOpen)) {

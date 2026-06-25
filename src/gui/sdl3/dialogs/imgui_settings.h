@@ -41,11 +41,6 @@ typedef struct SettingsRenderCtx {
     bool prefsDirty;            /* a section mutated a persisted setting */
 } SettingsRenderCtx;
 
-/* Render the shared Labels / Sound / Messages settings categories.  Called by
- * both the pre-game dialog and the in-game settings overlay so the two can't
- * drift.  Reads ctx->cs (NULL pre-game, no live sim). */
-void imguiSettingsRenderCommonSections(SettingsRenderCtx *ctx);
-
 /* Render the shared Display & Sound tab (frame rate, window size, UI scale,
  * letterbox).  Window size and UI scale only apply in-game; their results are
  * returned via ctx->pendingZoom / ctx->wantAtlasRebuild for the shell to act

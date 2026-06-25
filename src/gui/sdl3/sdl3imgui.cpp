@@ -2613,9 +2613,6 @@ static void renderSettingsPanel(ClientSim *cs) {
 #endif
     }
 
-    /* ---- Labels / Sound / Messages (shared with the pre-game dialog) ---- */
-    imguiSettingsRenderCommonSections(&ctx);
-
     /* ---- Game ---- */
     if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_GAME))) {
         {
