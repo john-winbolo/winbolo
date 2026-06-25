@@ -38,6 +38,17 @@ bool inputGamepadIsConnected(void);
 /* true = Steam Input (Path A) is driving the controller; false = native
  * SDL gamepad (Path B). Useful for diagnostics / glyph selection. */
 bool inputGamepadIsSteamInput(void);
+/* true iff a REAL physical controller is present — native SDL pad, or a
+ * Steam Input device per the hot-plug callbacks.  Unlike
+ * inputGamepadIsConnected(), this is not fooled by Steam Input's
+ * always-present keyboard/mouse virtual controller.  Use for UI mode
+ * decisions (controller-mode vs keyboard); gameplay input still uses the
+ * Path A/B read functions. */
+bool inputGamepadRealControllerConnected(void);
+/* true if the active controller has any live input this frame (button held
+ * or stick past the deadzone), across both Path A and Path B. Polled by
+ * input_source so controller use registers even on a Steam launch. */
+bool inputGamepadActivityDetected(void);
 
 /* --- Path B rebindable action set ---
  * Twelve gameplay actions the player can rebind from the Configure

@@ -25,6 +25,7 @@
 #include "../positions.h"         /* MAIN_OFFSET_X/Y */
 #include "sdl3draw.h"             /* sdl3DrawGetZoomFactor, sdl3DrawGetWindow */
 #include "../winbolo.h"           /* isInMenu */
+#include "input_source.h"         /* inputSourceNoteCursorWarp */
 #include "cursor.h"
 
 /* Is the cursor inside the main view area */
@@ -247,6 +248,7 @@ void cursorSetPos(RECT rcWindow, BYTE xValue, BYTE yValue) {
   float x = (float)((xValue - 1) * zf * TILE_SIZE_X + zf * MAIN_OFFSET_X + MIDDLE_PIXEL);
   float y = (float)((yValue - 1) * zf * TILE_SIZE_Y + zf * MAIN_OFFSET_Y + MIDDLE_PIXEL);
   SDL_WarpMouseInWindow(sdl3DrawGetWindow(), x, y);
+  inputSourceNoteCursorWarp();
 }
 
 /*********************************************************
@@ -273,6 +275,7 @@ void cursorApplyScrollDelta(int dpx, int dpy) {
   mx -= (float)dpx;
   my -= (float)dpy;
   SDL_WarpMouseInWindow(sdl3DrawGetWindow(), mx, my);
+  inputSourceNoteCursorWarp();
 }
 
 /*********************************************************
@@ -309,4 +312,5 @@ void moveMousePointer(updateType value) {
   else if (my < limT)  my = (float)(limT);
 
   SDL_WarpMouseInWindow(sdl3DrawGetWindow(), mx, my);
+  inputSourceNoteCursorWarp();
 }

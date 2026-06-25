@@ -87,6 +87,10 @@ const char *steam_input_get_glyph_path(const char *action_name) {
 
 bool steam_input_has_active_controller(void) { return false; }
 
+bool steam_input_real_controller_connected(void) { return false; }
+
+bool steam_input_consume_real_disconnect(void) { return false; }
+
 void steam_input_trigger_vibration(uint16_t left_speed, uint16_t right_speed) {
   (void)left_speed;
   (void)right_speed;
