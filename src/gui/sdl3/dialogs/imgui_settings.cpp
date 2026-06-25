@@ -829,7 +829,7 @@ extern "C" void imguiSettingsShow(void) {
          * always visible no matter how tall the settings list grows. */
         float settingsFooterH = ImGui::GetFrameHeightWithSpacing() +
                                 ImGui::GetStyle().ItemSpacing.y * 3.0f + 4.0f;
-        ImGui::BeginChild("##settingsScroll", ImVec2(0.0f, -settingsFooterH), false);
+        ImGui::BeginChild("##settingsScroll", ImVec2(0.0f, -settingsFooterH), ImGuiChildFlags_NavFlattened);
 
         SettingsRenderCtx ctx = {};
         ctx.cs = nullptr;
@@ -868,6 +868,7 @@ extern "C" void imguiSettingsShow(void) {
             if (ImGui::BeginTabItem("General", nullptr,
                     s_pgForceTab == STAB_GENERAL ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_GENERAL;
+                ImGui::BeginChild("##generalPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
                 imguiSettingsRenderGeneralTab(&ctx);
                 imguiSettingsRenderLanguagePicker(langEntries, langCount, &ctx);
 
@@ -897,12 +898,15 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::Spacing();
                 ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_CRASH_NEXTLAUNCH));
 #endif
+                ImGui::EndChild();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Display & Sound", nullptr,
                     s_pgForceTab == STAB_DISPLAY ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_DISPLAY;
+                ImGui::BeginChild("##displayPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
                 imguiSettingsRenderDisplaySoundTab(&ctx);
+                ImGui::EndChild();
                 ImGui::EndTabItem();
             }
 #if !BOLO_MOBILE
@@ -910,7 +914,9 @@ extern "C" void imguiSettingsShow(void) {
                 if (ImGui::BeginTabItem("Controls", nullptr,
                         s_pgForceTab == STAB_CONTROLS ? ImGuiTabItemFlags_SetSelected : 0)) {
                     s_pgActiveTab = STAB_CONTROLS;
+                    ImGui::BeginChild("##controlsPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
                     imguiSettingsRenderControlsTab(&ctx);
+                    ImGui::EndChild();
                     ImGui::EndTabItem();
                 }
             }
@@ -918,13 +924,16 @@ extern "C" void imguiSettingsShow(void) {
             if (ImGui::BeginTabItem("Game/HUD", nullptr,
                     s_pgForceTab == STAB_GAMEHUD ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_GAMEHUD;
+                ImGui::BeginChild("##gamehudPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
                 imguiSettingsRenderGameHudTab(&ctx);
+                ImGui::EndChild();
                 ImGui::EndTabItem();
             }
 #if !BOLO_MOBILE
             if (ImGui::BeginTabItem("Network", nullptr,
                     s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_LAST;
+                ImGui::BeginChild("##networkPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
                 ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_NET_HELP));
                 ImGui::Spacing();
                 {
@@ -949,6 +958,7 @@ extern "C" void imguiSettingsShow(void) {
                         newsPrefSetAutoShow(b ? "show" : "dontShow");
                     }
                 }
+                ImGui::EndChild();
                 ImGui::EndTabItem();
             }
 #endif

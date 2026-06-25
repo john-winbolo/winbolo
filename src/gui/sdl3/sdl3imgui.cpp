@@ -2463,6 +2463,7 @@ static void renderSettingsPanel(ClientSim *cs) {
         if (ImGui::BeginTabItem("General", nullptr,
                 s_igForceTab == STAB_GENERAL ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_GENERAL;
+            ImGui::BeginChild("##generalPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
             imguiSettingsRenderGeneralTab(&ctx);
             /* Scan the installed languages once and cache for the process
                lifetime — they don't change at runtime, so the entries are
@@ -2475,17 +2476,21 @@ static void renderSettingsPanel(ClientSim *cs) {
                 s_langScanned = true;
             }
             imguiSettingsRenderLanguagePicker(s_langEntries, s_langCount, &ctx);
+            ImGui::EndChild();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Display & Sound", nullptr,
                 s_igForceTab == STAB_DISPLAY ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_DISPLAY;
+            ImGui::BeginChild("##displayPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
             imguiSettingsRenderDisplaySoundTab(&ctx);
+            ImGui::EndChild();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Controls", nullptr,
                 s_igForceTab == STAB_CONTROLS ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_CONTROLS;
+            ImGui::BeginChild("##controlsPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
             imguiSettingsRenderControlsTab(&ctx);
             if (uiModeIsTablet() || inputGamepadIsConnected()) {
                 bool relSteering = !inputTouchGetAbsoluteSteering();
@@ -2506,17 +2511,21 @@ static void renderSettingsPanel(ClientSim *cs) {
                     g_gamepadScrollSensitivity = s;
                 }
             }
+            ImGui::EndChild();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Game/HUD", nullptr,
                 s_igForceTab == STAB_GAMEHUD ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_GAMEHUD;
+            ImGui::BeginChild("##gamehudPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
             imguiSettingsRenderGameHudTab(&ctx);
+            ImGui::EndChild();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Session", nullptr,
                 s_igForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_LAST;
+            ImGui::BeginChild("##sessionPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
             /* File actions — Save Map reachable on tablet and under a controller
                (desktop has the menu bar); Leave Game stays tablet-only. */
             if (uiModeIsTablet() || uiShouldUseControllerMode()) {
@@ -2609,6 +2618,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             if (ImGui::Button(langGetText(STR_MENU_ABOUT))) {
                 sdl3ImguiShowAbout();
             }
+            ImGui::EndChild();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
