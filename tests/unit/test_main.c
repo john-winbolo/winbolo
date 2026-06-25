@@ -249,6 +249,7 @@ static const UnitTestEntry s_tests[] = {
     { "stream_pump",                             run_stream_pump                             },
     { "spec_frame_fill",                         run_spec_frame_fill                         },
     { "spec_seed_load",                          run_spec_seed_load                          },
+    { "spec_record_pump",                        run_spec_record_pump                        },
     { "log_path_empty_uses_autobase",            run_log_path_empty_uses_autobase            },
     { "log_path_explicit_file_verbatim",         run_log_path_explicit_file_verbatim         },
     { "log_path_explicit_file_keeps_single_wbv", run_log_path_explicit_file_keeps_single_wbv },

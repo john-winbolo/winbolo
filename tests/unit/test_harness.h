@@ -442,6 +442,14 @@ int run_spec_frame_fill(void);
  * the decoder rebuilds the world and the control slice is stashed. */
 int run_spec_seed_load(void);
 
+/* Spectator forward-record pump (test_spec_record_pump.c): seeds the decoder
+ * from the spectator_v2 fixture's snapshot, then derives ring-shaped forward
+ * records from the fixture's event stream and pumps them through
+ * lv_specRecordPump, asserting the decoder advances to the same end state, an
+ * empty tick advances cleanly, and a mid-stream keyframe re-syncs the decoder
+ * and refreshes the stashed control slice. */
+int run_spec_record_pump(void);
+
 /* Extracts the inner "log.dat" from a .wbv zip into a heap buffer (caller
  * frees). Defined in test_log_roundtrip.c; shared with test_stream_load.c. */
 bool extractLogDat(const char *wbvPath, uint8_t **outBuf, size_t *outLen);

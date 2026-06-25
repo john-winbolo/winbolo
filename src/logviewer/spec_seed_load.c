@@ -29,6 +29,11 @@
  * The keyframe's control-snapshot slice is not part of the LOG stream the
  * decoder reads. It is copied into a module-owned buffer here so a later HUD
  * consumer can read it (lv_specSeedControl); it is not discarded.
+ *
+ * Once seeded, each subsequent forward record (lv_specRecordPump) is translated
+ * the same way — keyframe vs event-tick — and fed to lv_screenStreamPump so the
+ * decoder's delayed view advances. A mid-stream keyframe re-syncs the decoder
+ * (a fresh LOG_SNAPSHOT) and refreshes the stashed control slice.
  */
 
 #include <limits.h>
@@ -151,4 +156,57 @@ bool lv_specSeedLoad(const LvSpecSeedInfo *info, const uint8_t *seed,
   free(keyframe);
   free(stream);
   return loaded;
+}
+
+bool lv_specRecordPump(bool isKeyframe, const uint8_t *payload, size_t len) {
+  BYTE *out;
+  int outCap;
+  int outLen;
+  bool playing;
+
+  /* len is cast to int for the translators below; keep it in range and leave
+   * room for the marker bytes they prepend (LOG_EVENT_LONG's 3-byte marker is
+   * the largest). An empty event tick is legitimate (payload NULL, len 0). */
+  if (len >= (size_t) INT_MAX - 3) {
+    return FALSE;
+  }
+  if (payload == NULL && len != 0) {
+    return FALSE;
+  }
+
+  /* Output bound: a keyframe emits [LOG_EVENT_SNAPSHOT][body] with body the
+   * record's world slice (<= len), an event tick emits up to a 3-byte marker
+   * plus the payload verbatim. len + 3 covers both. */
+  outCap = (int) len + 3;
+  out = (BYTE *) malloc((size_t) outCap);
+  if (out == NULL) {
+    return FALSE;
+  }
+
+  if (isKeyframe) {
+    const BYTE *ctrl = NULL;
+    int ctrlLen = 0;
+    outLen = specReplayTranslateKeyframe(payload, (int) len, out, outCap,
+                                         &ctrl, &ctrlLen);
+    if (outLen < 0) {
+      free(out);
+      return FALSE;
+    }
+    /* A mid-stream keyframe carries fresh control state (the decoder re-syncs on
+     * the snapshot); refresh the stash so a later HUD reads current roster/score
+     * /phase rather than the join-time slice. */
+    specSeedStashControl(ctrl, ctrlLen);
+  } else {
+    outLen = specReplayTranslateEvents(payload, (int) len, out, outCap);
+    if (outLen < 0) {
+      free(out);
+      return FALSE;
+    }
+  }
+
+  /* Append the translated, record-aligned bytes; the pump advances over the
+   * whole record and parks caught up. Returns the decoder's isPlaying state. */
+  playing = lv_screenStreamPump(out, (size_t) outLen);
+  free(out);
+  return playing;
 }

@@ -2801,6 +2801,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # translate keyframe -> load), asserting the decode + the stashed control
     # slice.
     tests/unit/test_spec_seed_load.c
+    # Spectator forward-record pump: seeds the decoder from the v2 fixture's
+    # snapshot, derives ring-shaped forward records from its event stream and
+    # pumps them through lv_specRecordPump, asserting the decoder advances (same
+    # end state), an empty tick is clean, and a keyframe re-syncs + refreshes the
+    # control slice.
+    tests/unit/test_spec_record_pump.c
     # Link-only no-op stubs for the host/render/window/message entry points
     # the decode subset below references but whose real bodies live in the
     # GUI TUs (logviewer.c, draw.c, messages.c) we do not link.
@@ -3071,6 +3077,7 @@ set(_unit_test_names
     stream_pump
     spec_frame_fill
     spec_seed_load
+    spec_record_pump
     log_path_empty_uses_autobase
     log_path_explicit_file_verbatim
     log_path_explicit_file_keeps_single_wbv

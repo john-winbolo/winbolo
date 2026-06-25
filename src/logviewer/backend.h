@@ -399,6 +399,18 @@ const uint8_t *lv_specSeedControl(size_t *outLen);
 /* Releases the stashed control-snapshot slice (idempotent). */
 void lv_specSeedControlClear(void);
 
+/* Translates one forward spectator-ring record and pumps it into the decoder so
+ * the delayed view advances. isKeyframe selects the translation: a keyframe
+ * payload ([u32 bodyLen BE][world body][u32 ctrlLen BE][control snapshot]) ->
+ * [LOG_EVENT_SNAPSHOT][body] (the decoder re-syncs) and its control slice
+ * refreshes the stash (lv_specSeedControl); an event-tick payload (concatenated
+ * [type][u16 BE len][body] events, or empty) -> LOG_EVENT/LOG_EVENT_LONG/
+ * LOG_NOEVENTS bytes. The translated bytes are appended via lv_screenStreamPump.
+ * The decoder must already be seeded (lv_specSeedLoad). Returns the decoder's
+ * isPlaying state, or FALSE on a malformed record. Defined in
+ * src/logviewer/spec_seed_load.c. */
+bool lv_specRecordPump(bool isKeyframe, const uint8_t *payload, size_t len);
+
 /*********************************************************
 *NAME:          lv_screenNumBases
 *AUTHOR:        John Morrison
