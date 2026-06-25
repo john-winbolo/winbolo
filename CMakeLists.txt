@@ -2803,6 +2803,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # writer-drive that (re)generates the v2 fixture (test_wbv_v2_capture.c).
     tests/unit/test_wbv_reader.c
     tests/unit/test_wbv_v2_capture.c
+    # On-demand generator for the committed real ring-seed fixture
+    # (spectator_seed.bin): captures a ServerSim ring keyframe with no trailing
+    # data for test_spec_seed_load_real (test_spectator_seed_capture.c).
+    tests/unit/test_spectator_seed_capture.c
     # Blocks-level append-fed stream source: drives blocks.c's no-zip path.
     tests/unit/test_blocks_stream.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
@@ -2820,6 +2824,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # translate keyframe -> load), asserting the decode + the stashed control
     # slice.
     tests/unit/test_spec_seed_load.c
+    # Real spectator seed load: loads the committed spectator_seed.bin (a real
+    # ring seed, no trailing data) through lv_specSeedLoad and asserts TRUE —
+    # reproduces the lv_processSnapshot over-read (test_spec_seed_load_real.c).
+    tests/unit/test_spec_seed_load_real.c
     # Spectator forward-record pump: seeds the decoder from the v2 fixture's
     # snapshot, derives ring-shaped forward records from its event stream and
     # pumps them through lv_specRecordPump, asserting the decoder advances (same
@@ -3097,6 +3105,7 @@ set(_unit_test_names
     stream_pump
     spec_frame_fill
     spec_seed_load
+    spec_seed_load_real
     spec_record_pump
     log_path_empty_uses_autobase
     log_path_explicit_file_verbatim

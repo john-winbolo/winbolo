@@ -418,6 +418,11 @@ int run_wbv_reader_v1(void);
 int run_wbv_reader_v2(void);
 int run_wbv_v2_capture(void);
 
+/* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
+ * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and
+ * writes it to <WB_WBV_FIXTURE_DIR>/spectator_seed.bin when the env var is set. */
+int run_spectator_seed_capture(void);
+
 /* Append-fed blocks stream source (test_blocks_stream.c): the no-zip path
  * where lv_blocksAppendBytes feeds plaintext bytes that the existing read/seek
  * machinery serves back, covering chunked append, read-back, seek and
@@ -446,6 +451,11 @@ int run_spec_frame_fill(void);
  * lv_specSeedLoad (synthesize header -> translate keyframe -> load) and asserts
  * the decoder rebuilds the world and the control slice is stashed. */
 int run_spec_seed_load(void);
+
+/* Real spectator seed load (test_spec_seed_load_real.c): loads the committed
+ * spectator_seed.bin (a real ring seed, no trailing data) through lv_specSeedLoad
+ * and asserts TRUE. Currently FAILS — reproduces the lv_processSnapshot over-read. */
+int run_spec_seed_load_real(void);
 
 /* Spectator forward-record pump (test_spec_record_pump.c): seeds the decoder
  * from the spectator_v2 fixture's snapshot, then derives ring-shaped forward

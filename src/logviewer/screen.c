@@ -1760,11 +1760,16 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
   /* Read map name */
   if (returnValue == TRUE) {
     logReadBytes(&dataLen, 1);
-    len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
-    g_lv->mapName[dataLen] = '\0';
-    if (len != dataLen) {
-      returnValue = FALSE;
+    /* An empty map name is valid (display-only field; the map data lives in the
+       snapshot body). Only read+check when there are name bytes — a zero-length
+       read returns -1, which would otherwise fail the load. */
+    if (dataLen > 0) {
+      len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
+      if (len != dataLen) {
+        returnValue = FALSE;
+      }
     }
+    g_lv->mapName[dataLen] = '\0';
   }
 
   /* Read game type, mines, ai, password, max players */
@@ -1890,11 +1895,16 @@ static bool lv_logLoadCommon(void) {
 
   if (returnValue == TRUE) {
     logReadBytes(&dataLen, 1);
-    len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
-    g_lv->mapName[dataLen] = '\0';
-    if (len != dataLen) {
-      returnValue = FALSE;
+    /* An empty map name is valid (display-only field; the map data lives in the
+       snapshot body). Only read+check when there are name bytes — a zero-length
+       read returns -1, which would otherwise fail the load. */
+    if (dataLen > 0) {
+      len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
+      if (len != dataLen) {
+        returnValue = FALSE;
+      }
     }
+    g_lv->mapName[dataLen] = '\0';
   }
 
   if (returnValue == TRUE) {
