@@ -131,6 +131,26 @@ void logSetSpectatorRing(SpectatorRing *ring, ServerSim *sim) {
   logSpectatorRing = ring;
   logSpectatorSim = sim;
   logSpectatorAccLen = 0;
+  /* Prime the per-tank change-gating baseline so the ring's first
+     log_PlayerLocation events emit against a clean slate — the same reset
+     logStart does for the .wbv path. Only when no .wbv is recording: an active
+     .wbv already owns and maintains logCheckTanks, and the ring shares that
+     same gating, so wiping it mid-stream would corrupt the .wbv's location
+     deltas. The owner-thread pin is left to logWriteTick's first-call capture
+     (the tick thread), exactly as the .wbv path relies on. */
+  if (ring != NULL && logIsRunning == FALSE) {
+    int count;
+    for (count = 0; count < MAX_TANKS; count++) {
+      logCheckTanks.item[count].mx = 0;
+      logCheckTanks.item[count].my = 0;
+      logCheckTanks.item[count].pxy = 0;
+      logCheckTanks.item[count].opt = 0;
+    }
+  }
+}
+
+bool logHasSpectatorRing(void) {
+  return logSpectatorRing != NULL;
 }
 
 /*********************************************************
@@ -218,10 +238,12 @@ void logWriteTick() {
     logOwnerThread = SDL_GetCurrentThreadID();
   }
 
-  if (logIsRunning == TRUE) {
-    /* Spectator ring tap: record one ring tick for the registered sim, using
-       the tick's accumulated events or a fresh keyframe. Independent of the
-       .wbv logMem path below. */
+  /* Spectator ring tap: record one ring tick for the registered sim, using the
+     tick's accumulated events or a fresh keyframe. Fires whenever a ring is
+     registered, independent of .wbv recording — a normal (non-recording) server
+     still feeds connecting spectators. The .wbv logMem path below stays gated on
+     logIsRunning. */
+  {
     if (logSpectatorRing != NULL && logSpectatorSim != NULL) {
       uint32_t gameTick = serverSimGetTick(logSpectatorSim);
       if (spectatorRingNeedsKeyframe(logSpectatorRing, gameTick) == true) {
@@ -266,7 +288,9 @@ void logWriteTick() {
       }
       logSpectatorAccLen = 0;
     }
+  }
 
+  if (logIsRunning == TRUE) {
     if (logNumEvents > 0) {
       logWriteEmpty();
       logWriteEvents(savedKey);
@@ -647,6 +671,7 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
   BYTE event[264]; /* Plaintext event: type + u16 len + 6-byte header + 256-byte pascal string */
   int eventLen; /* Bytes the serializer produced */
   int count;
+  bool wbvActive; /* Is a .wbv log buffer the destination this call */
 
   if (logOwnerThread != 0 && SDL_GetCurrentThreadID() != logOwnerThread) {
     return;
@@ -654,38 +679,50 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
   if (logLobbyMode == TRUE && logitemMutatesWorld(itemNum) == TRUE) {
     return;
   }
-  if (logIsRunning == TRUE && logMem != NULL) {
-    /* Bounds check: ensure we have room in the log buffer.
-       Max single event is type + u16 len + 6 bytes header + 256 bytes words data */
-    if (logMemSize + 264 >= LOG_MEMORY_BUFFER_SIZE) {
-      return;
-    }
-    /* log_PlayerLocation only emits when the tank state changed; logCheckTankSame
-       updates its cached state as a side effect. When unchanged, emit nothing:
-       no bytes, no event count change, no key rotation. */
-    if (itemNum == log_PlayerLocation &&
-        logCheckTankSame(opt1, opt2, opt3, opt4, (BYTE) short1) == TRUE) {
-      return;
-    }
-    eventLen = logSerializeEvent(itemNum, opt1, opt2, opt3, opt4, short1, words, event);
-    if (eventLen <= 0) {
-      /* Unknown event type: emit nothing, no count change, no key rotation. */
-      return;
-    }
+  /* Record the event once into the .wbv buffer and/or the spectator ring. The
+     change-gating (logCheckTankSame) and serialize run a single time and feed
+     both, so a registered ring needs no .wbv log and a location event is never
+     double-counted. The .wbv byte stream is unchanged: every step that touches
+     logMem / logNumEvents / logKey stays guarded on wbvActive in the original
+     order, so an inactive ring leaves the .wbv path identical. */
+  wbvActive = (logIsRunning == TRUE && logMem != NULL);
+  if (wbvActive == FALSE && logSpectatorRing == NULL) {
+    return;
+  }
+  /* Bounds check applies only to the .wbv buffer (the ring has its own bound
+     below). Preserves the original drop-the-event-with-no-side-effect semantics
+     when the .wbv buffer is full. Max single event is type + u16 len + 6 bytes
+     header + 256 bytes words data. */
+  if (wbvActive == TRUE && logMemSize + 264 >= LOG_MEMORY_BUFFER_SIZE) {
+    return;
+  }
+  /* log_PlayerLocation only emits when the tank state changed; logCheckTankSame
+     updates its cached state as a side effect. When unchanged, emit nothing:
+     no bytes, no event count change, no key rotation. */
+  if (itemNum == log_PlayerLocation &&
+      logCheckTankSame(opt1, opt2, opt3, opt4, (BYTE) short1) == TRUE) {
+    return;
+  }
+  eventLen = logSerializeEvent(itemNum, opt1, opt2, opt3, opt4, short1, words, event);
+  if (eventLen <= 0) {
+    /* Unknown event type: emit nothing, no count change, no key rotation. */
+    return;
+  }
+  if (wbvActive == TRUE) {
     /* Append the event's plaintext bytes to logMem. */
     for (count = 0; count < eventLen; count++) {
       *(logMem+logMemSize) = event[count];
       logMemSize++;
     }
-    /* Feed the same plaintext to the spectator ring's per-tick accumulator,
-       so the tap inherits this function's emit decisions and lobby gating. */
-    if (logSpectatorRing != NULL &&
-        logSpectatorAccLen + eventLen <= (int)sizeof(logSpectatorAcc)) {
-      memcpy(logSpectatorAcc + logSpectatorAccLen, event, (size_t)eventLen);
-      logSpectatorAccLen += eventLen;
-    }
     logNumEvents++;
     logKey = itemNum;
+  }
+  /* Feed the same plaintext to the spectator ring's per-tick accumulator, so the
+     tap inherits this function's emit decisions and lobby gating. */
+  if (logSpectatorRing != NULL &&
+      logSpectatorAccLen + eventLen <= (int)sizeof(logSpectatorAcc)) {
+    memcpy(logSpectatorAcc + logSpectatorAccLen, event, (size_t)eventLen);
+    logSpectatorAccLen += eventLen;
   }
 }
 

@@ -159,6 +159,7 @@ static const UnitTestEntry s_tests[] = {
     { "net_impair",                              run_net_impair                              },
     { "channel_mux",                             run_channel_mux                             },
     { "spectator_ring",                          run_spectator_ring                          },
+    { "spectator_ring_nolog",                    run_spectator_ring_nolog                    },
     { "spectator_replay",                        run_spectator_replay                        },
     { "spectator_config",                        run_spectator_config                        },
     { "spectator_join",                          run_spectator_join                          },

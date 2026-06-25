@@ -880,7 +880,11 @@ void serverSimDestroy(ServerSim *sim) {
 static void serverSimLogTick(ServerSim *sim) {
     BYTE count;
 
-    if (logIsRecording() == FALSE) return;
+    /* Run whenever a .wbv log is recording OR a spectator ring is registered:
+       both consume the per-tick location/shell events and the logWriteTick tap.
+       A normal (non-recording) server still has a ring, so gating on .wbv alone
+       would leave the ring empty and a connecting spectator with no seed. */
+    if (logIsRecording() == FALSE && logHasSpectatorRing() == FALSE) return;
 
     /* Tank + LGM positions */
     for (count = 0; count < MAX_TANKS; count++) {

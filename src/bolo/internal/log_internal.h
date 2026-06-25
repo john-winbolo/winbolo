@@ -62,6 +62,11 @@
  * disables the tap and clears the per-tick event accumulator. */
 void logSetSpectatorRing(SpectatorRing *ring, ServerSim *sim);
 
+/* True while a spectator ring is registered (logSetSpectatorRing with a
+ * non-NULL ring). Lets the server's per-tick log driver run the ring tap even
+ * when no .wbv log is recording. */
+bool logHasSpectatorRing(void);
+
 /* Write the snapshot body (everything after the LOG_EVENT_SNAPSHOT marker)
  * as plaintext into out, returning the byte count or -1 if cap is too small.
  * Exposed so callers can build a keyframe identical to the .wbv snapshot. */

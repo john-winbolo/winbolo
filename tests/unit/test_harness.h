@@ -195,6 +195,11 @@ int run_channel_mux(void);
  * proven with synthetic byte payloads. */
 int run_spectator_ring(void);
 
+/* Spectator ring records without a .wbv log (test_spectator_ring_nolog.c):
+ * a registered ring driven by serverSimTick (logWriteTick) populates and a
+ * delay-0 seek returns a seed, with no logStart and no .wbv file. */
+int run_spectator_ring_nolog(void);
+
 /* Spectator replay translator (test_spectator_replay.c): specReplayWriteHeader
  * lays out the v2 header field-for-field, specReplayTranslateEvents /
  * specReplayTranslateKeyframe frame ring records into the LOG_* byte stream,

@@ -2719,6 +2719,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # segment isolation, previous-generation read, cold start and the
     # retention window boundary, all driven with synthetic byte payloads.
     tests/unit/test_spectator_ring.c
+    # Spectator ring records without a .wbv log: a registered ring driven by the
+    # normal serverSimTick (logWriteTick) populates and a delay-0 seek returns a
+    # seed, with no logStart and no .wbv file — the real (non-recording) server
+    # path that the logStart-based ring tests hid.
+    tests/unit/test_spectator_ring_nolog.c
     # Spectator replay translator: ring keyframe / event-tick records ->
     # the LOG_*-marked plaintext byte stream + synthesized v2 header, proven
     # byte-for-byte and by decoding a real translated keyframe through
@@ -3177,6 +3182,7 @@ set(_unit_test_names
     wire_corpus
     channel_mux
     spectator_ring
+    spectator_ring_nolog
     spectator_replay
     spectator_config
     spectator_join
