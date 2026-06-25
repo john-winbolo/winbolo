@@ -865,7 +865,7 @@ extern "C" void imguiSettingsShow(void) {
         }
 
         if (ImGui::BeginTabBar("##settingsTabs")) {
-            if (ImGui::BeginTabItem("General", nullptr,
+            if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_GENERAL), nullptr,
                     s_pgForceTab == STAB_GENERAL ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_GENERAL;
                 ImGui::BeginChild("##generalPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
@@ -901,7 +901,7 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Display & Sound", nullptr,
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_DISPLAYSOUND), nullptr,
                     s_pgForceTab == STAB_DISPLAY ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_DISPLAY;
                 ImGui::BeginChild("##displayPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
@@ -911,7 +911,7 @@ extern "C" void imguiSettingsShow(void) {
             }
 #if !BOLO_MOBILE
             if (!uiModeIsTablet()) {
-                if (ImGui::BeginTabItem("Controls", nullptr,
+                if (ImGui::BeginTabItem(langGetText(STR_LV_WIN_CONTROLS), nullptr,
                         s_pgForceTab == STAB_CONTROLS ? ImGuiTabItemFlags_SetSelected : 0)) {
                     s_pgActiveTab = STAB_CONTROLS;
                     ImGui::BeginChild("##controlsPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
@@ -921,7 +921,7 @@ extern "C" void imguiSettingsShow(void) {
                 }
             }
 #endif
-            if (ImGui::BeginTabItem("Game/HUD", nullptr,
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_GAMEHUD), nullptr,
                     s_pgForceTab == STAB_GAMEHUD ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_GAMEHUD;
                 ImGui::BeginChild("##gamehudPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
@@ -930,7 +930,7 @@ extern "C" void imguiSettingsShow(void) {
                 ImGui::EndTabItem();
             }
 #if !BOLO_MOBILE
-            if (ImGui::BeginTabItem("Network", nullptr,
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_NETWORK), nullptr,
                     s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
                 s_pgActiveTab = STAB_LAST;
                 ImGui::BeginChild("##networkPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);

@@ -1475,6 +1475,12 @@
 #define STR_DLGSETTINGS_UISCALE_LARGE       1827
 #define STR_ALLIANCE_RANKED_DISABLED        1828
 
+/* Settings dialog — tab labels (shared by the pre-game modal and the
+ * in-game overlay). General/Controls/Network reuse existing strings. */
+#define STR_DLGSETTINGS_TAB_DISPLAYSOUND    1844
+#define STR_DLGSETTINGS_TAB_GAMEHUD         1845
+#define STR_DLGSETTINGS_TAB_SESSION         1846
+
 /* Map editor validation */
 #define STR_MAPVALIDATE_TOO_MANY_BASES      820
 #define STR_MAPVALIDATE_TOO_MANY_PILLS      821

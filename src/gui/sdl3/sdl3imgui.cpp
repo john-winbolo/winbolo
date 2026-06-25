@@ -2460,7 +2460,7 @@ static void renderSettingsPanel(ClientSim *cs) {
     }
 
     if (ImGui::BeginTabBar("##settingsTabs")) {
-        if (ImGui::BeginTabItem("General", nullptr,
+        if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_GENERAL), nullptr,
                 s_igForceTab == STAB_GENERAL ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_GENERAL;
             ImGui::BeginChild("##generalPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
@@ -2479,7 +2479,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Display & Sound", nullptr,
+        if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_DISPLAYSOUND), nullptr,
                 s_igForceTab == STAB_DISPLAY ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_DISPLAY;
             ImGui::BeginChild("##displayPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
@@ -2487,7 +2487,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Controls", nullptr,
+        if (ImGui::BeginTabItem(langGetText(STR_LV_WIN_CONTROLS), nullptr,
                 s_igForceTab == STAB_CONTROLS ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_CONTROLS;
             ImGui::BeginChild("##controlsPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
@@ -2514,7 +2514,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Game/HUD", nullptr,
+        if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_GAMEHUD), nullptr,
                 s_igForceTab == STAB_GAMEHUD ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_GAMEHUD;
             ImGui::BeginChild("##gamehudPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
@@ -2522,7 +2522,7 @@ static void renderSettingsPanel(ClientSim *cs) {
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Session", nullptr,
+        if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_SESSION), nullptr,
                 s_igForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_igActiveTab = STAB_LAST;
             ImGui::BeginChild("##sessionPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
