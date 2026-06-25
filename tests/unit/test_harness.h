@@ -436,6 +436,12 @@ int run_stream_pump(void);
  * two seeded tanks (present, names, slot) and a defined followed slot. */
 int run_spec_frame_fill(void);
 
+/* Spectator seed load (test_spec_seed_load.c): fabricates a ring-shaped seed
+ * blob from the spectator_v2 fixture's snapshot body, runs it through
+ * lv_specSeedLoad (synthesize header -> translate keyframe -> load) and asserts
+ * the decoder rebuilds the world and the control slice is stashed. */
+int run_spec_seed_load(void);
+
 /* Extracts the inner "log.dat" from a .wbv zip into a heap buffer (caller
  * frees). Defined in test_log_roundtrip.c; shared with test_stream_load.c. */
 bool extractLogDat(const char *wbvPath, uint8_t **outBuf, size_t *outLen);

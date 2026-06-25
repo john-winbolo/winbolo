@@ -1738,6 +1738,11 @@ list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/game_view_stubs\\.c$")
 # game-view render island's screenTanksGetItem to lv_screenTanksGetItem.
 # The standalone uses bolo_shim.c for that, so drop the adapter from the glob.
 list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/render_island_screentank_adapter\\.c$")
+# spec_seed_load.c includes spectator_replay.h (src/bolo/internal), which the
+# runtime-only standalone profile can't see. It is compiled only into the
+# unit-test target (which has internal/ access) via the explicit source list;
+# the spectator session host wires it into the standalone build separately.
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/spec_seed_load\\.c$")
 
 set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_context.cpp
@@ -2791,6 +2796,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Spectator-frame snapshot: steps the v2 fixture to end-of-log, fills a
     # SpecFramePOD via specFrameFill and asserts the seeded tanks + camera slot.
     tests/unit/test_spec_frame_fill.c
+    # Spectator seed load: fabricates a ring-shaped seed from the v2 fixture's
+    # snapshot body and runs it through lv_specSeedLoad (synthesize header ->
+    # translate keyframe -> load), asserting the decode + the stashed control
+    # slice.
+    tests/unit/test_spec_seed_load.c
     # Link-only no-op stubs for the host/render/window/message entry points
     # the decode subset below references but whose real bodies live in the
     # GUI TUs (logviewer.c, draw.c, messages.c) we do not link.
@@ -2805,6 +2815,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/snapshot.c
     src/logviewer/players.c
     src/logviewer/spec_frame_fill.c
+    # Logviewer-world spectator seed orchestration: raw ring keyframe seed ->
+    # synthesized v2 header + translated snapshot -> lv_screenLoadFromStream.
+    # Includes spectator_replay.h (dep-free) — needs the unittests profile's
+    # internal/ access, so it lives here, not in the runtime-only LOGVIEWER libs.
+    src/logviewer/spec_seed_load.c
     src/logviewer/pillbox.c
     src/logviewer/bases.c
     src/logviewer/starts.c
@@ -3055,6 +3070,7 @@ set(_unit_test_names
     stream_load
     stream_pump
     spec_frame_fill
+    spec_seed_load
     log_path_empty_uses_autobase
     log_path_explicit_file_verbatim
     log_path_explicit_file_keeps_single_wbv

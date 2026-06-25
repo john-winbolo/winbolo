@@ -363,6 +363,42 @@ bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len);
  * no LOG_QUIT). Returns the decoder's isPlaying state. */
 bool lv_screenStreamPump(const uint8_t *bytes, size_t len);
 
+/* Game-info the synthesized spectator-seed header needs. Kept POD and free of
+ * bolo/sim headers so this seam stays includable in logviewer-world TUs; the
+ * live values arrive with the spectate-start handshake. mapName may be NULL
+ * (treated as empty). */
+typedef struct {
+  const char *mapName;
+  BYTE gameType;
+  BYTE allowHiddenMines;
+  BYTE ai;
+  BYTE usePassword;
+  BYTE maxPlayers;
+  BYTE versionMajor;
+  BYTE versionMinor;
+  BYTE versionRevision;
+} LvSpecSeedInfo;
+
+/* Loads a raw spectator-ring keyframe seed blob
+ * ([u32 bodyLen BE][world body][u32 ctrlLen BE][control snapshot]) into the
+ * decoder: synthesizes the v2 header from info, translates the keyframe and
+ * feeds header + opening snapshot to lv_screenLoadFromStream. The keyframe's
+ * control-snapshot slice is copied into a module-owned buffer for a later HUD
+ * consumer (lv_specSeedControl), not written to the decoded stream. The decoder
+ * must already be created (lv_decoderCreate) and sized (lv_screenSetSizeX/Y).
+ * Returns TRUE on success. Defined in src/logviewer/spec_seed_load.c. */
+bool lv_specSeedLoad(const LvSpecSeedInfo *info, const uint8_t *seed,
+                     size_t seedLen);
+
+/* Returns the control-snapshot slice stashed by the most recent successful
+ * lv_specSeedLoad, or NULL if none was stashed. *outLen (may be NULL) receives
+ * its length. The buffer is module-owned and valid until the next
+ * lv_specSeedLoad or lv_specSeedControlClear. */
+const uint8_t *lv_specSeedControl(size_t *outLen);
+
+/* Releases the stashed control-snapshot slice (idempotent). */
+void lv_specSeedControlClear(void);
+
 /*********************************************************
 *NAME:          lv_screenNumBases
 *AUTHOR:        John Morrison
