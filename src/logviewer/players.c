@@ -575,7 +575,12 @@ void lv_playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE
   BYTE count;                    /* Looping variable */
 
   for (count=0;count<MAX_TANKS;count++) {
-    if (plrs.item[count].inUse == TRUE) {
+    /* Only draw a man who is out of his tank, and never from the (0,0)
+       idle/aboard sentinel: a boarded man emits no log_LgmLocation (forward
+       stream) and carries (0,0) lgm coords in a snapshot, so he is left
+       not-out and must not be added to the screen list. */
+    if (plrs.item[count].inUse == TRUE && plrs.item[count].lgmIsOut == TRUE &&
+        (plrs.item[count].lgmMapX != 0 || plrs.item[count].lgmMapY != 0)) {
       if (plrs.item[count].lgmMapX >= leftPos && plrs.item[count].lgmMapX <= rightPos && plrs.item[count].lgmMapY >= top && plrs.item[count].lgmMapY <= bottom) {
         wx = plrs.item[count].lgmMapX << TANK_SHIFT_MAPSIZE;
         wx += plrs.item[count].lgmPixelX << TANK_SHIFT_RIGHT2;

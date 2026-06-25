@@ -1439,7 +1439,14 @@ bool lv_processSnapshot() {
                * The flags will be re-set by any subsequent log_PlayerJoined
                * event for this slot. */
               lv_playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE, 0);
-              lv_playersUpdateLgm(count, lgmmx, lgmmy, lgmpx, lgmpy,lgmframe);
+              /* A snapshot carries (0,0) lgm coords for a man who is aboard/idle
+                 (the server's idle sentinel). Only mark him out for a real
+                 out-of-tank position; lv_playersSetPlayer above already left
+                 lgmIsOut FALSE for the aboard case, matching the forward
+                 stream where a boarded man emits no log_LgmLocation. */
+              if (lgmmx != 0 || lgmmy != 0) {
+                lv_playersUpdateLgm(count, lgmmx, lgmmy, lgmpx, lgmpy,lgmframe);
+              }
             }
           }
         }
