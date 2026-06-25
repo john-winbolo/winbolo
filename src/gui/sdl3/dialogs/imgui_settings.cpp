@@ -824,6 +824,35 @@ extern "C" void imguiSettingsShow(void) {
             if (ImGui::BeginTabItem("General")) {
                 imguiSettingsRenderGeneralTab(&ctx);
                 imguiSettingsRenderLanguagePicker(langEntries, langCount, &ctx);
+
+                /* ---- Tutorial ---- */
+                if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_TUTORIAL), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(140, 0))) {
+                        gameFrontRequestPlayTutorial();
+                        running = false;  /* Close settings; openSettings handler routes to openTutorial. */
+                    }
+                    imguiHandOnHover();
+                    ImGui::SameLine();
+                    {
+                        bool showOnMain = gameFrontGetShowTutorialButton();
+                        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_ON_MAIN), &showOnMain)) {
+                            gameFrontSetShowTutorialButton(showOnMain);
+                        }
+                    }
+                }
+
+#if defined(__IPHONEOS__)
+                /* ---- Crash Reporting ---- */
+                if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_CRASH_REPORTING), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    bool cr = iosCrashReportingGetEnabled();
+                    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_ENABLE_CRASH), &cr)) {
+                        iosCrashReportingSetEnabled(cr);
+                    }
+                    ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_CRASH_HELP));
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_CRASH_NEXTLAUNCH));
+                }
+#endif
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Display & Sound")) {
@@ -851,22 +880,6 @@ extern "C" void imguiSettingsShow(void) {
             }
             imguiHandOnHover();
 #endif
-        }
-
-        /* ---- Tutorial ---- */
-        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_TUTORIAL), ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(140, 0))) {
-                gameFrontRequestPlayTutorial();
-                running = false;  /* Close settings; openSettings handler routes to openTutorial. */
-            }
-            imguiHandOnHover();
-            ImGui::SameLine();
-            {
-                bool showOnMain = gameFrontGetShowTutorialButton();
-                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_ON_MAIN), &showOnMain)) {
-                    gameFrontSetShowTutorialButton(showOnMain);
-                }
-            }
         }
 
 #if !BOLO_MOBILE
@@ -897,19 +910,6 @@ extern "C" void imguiSettingsShow(void) {
                     newsPrefSetAutoShow(b ? "show" : "dontShow");
                 }
             }
-        }
-#endif
-
-#if defined(__IPHONEOS__)
-        /* ---- Crash Reporting ---- */
-        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_CRASH_REPORTING), ImGuiTreeNodeFlags_DefaultOpen)) {
-            bool cr = iosCrashReportingGetEnabled();
-            if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_ENABLE_CRASH), &cr)) {
-                iosCrashReportingSetEnabled(cr);
-            }
-            ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_CRASH_HELP));
-            ImGui::Spacing();
-            ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_CRASH_NEXTLAUNCH));
         }
 #endif
 
