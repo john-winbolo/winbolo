@@ -39,8 +39,6 @@ typedef struct SettingsRenderCtx {
     bool wantKeySetup;          /* Set Keys pressed */
     bool wantAtlasRebuild;      /* a section needs a font-atlas rebuild
                                    (CJK language pick OR UI-scale change) */
-    bool wantClose;             /* a section requested close (e.g. Tutorial) */
-    bool prefsDirty;            /* a section mutated a persisted setting */
 } SettingsRenderCtx;
 
 /* Render the shared Display & Sound tab (frame rate, window size, UI scale,

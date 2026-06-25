@@ -173,7 +173,6 @@ extern "C" bool inputTouchGetAbsoluteSteering(void);
 
 /* Direct menu command handlers in winbolo.c */
 extern "C" void windowShowGunsight_toggle(struct ClientSim *cs);
-extern "C" void windowLetterboxBarsGray_toggle(void);
 extern "C" void windowAutomaticScrolling_toggle(struct ClientSim *cs);
 extern "C" void windowSmoothScrolling_toggle(void);
 extern "C" void windowShowPillLabels_toggle(struct ClientSim *cs);
