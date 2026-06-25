@@ -30,6 +30,9 @@ void imguiSettingsShow(void);
 typedef struct SettingsRenderCtx {
     struct ClientSim *cs;       /* NULL pre-game; live sim in-game */
     bool inGame;                /* true = in-game overlay shell */
+    unsigned char pendingZoom;  /* in-game window-size pick: a ZOOM_FACTOR_*, or
+                                   255 = no change (0 is ZOOM_FACTOR_CUSTOM, a
+                                   valid value, so it can't be the sentinel) */
     /* outputs the section sets, handled by the shell after the frame: */
     bool wantKeySetup;          /* Set Keys pressed */
     bool wantAtlasRebuild;      /* a section needs a font-atlas rebuild
@@ -42,6 +45,12 @@ typedef struct SettingsRenderCtx {
  * both the pre-game dialog and the in-game settings overlay so the two can't
  * drift.  Reads ctx->cs (NULL pre-game, no live sim). */
 void imguiSettingsRenderCommonSections(SettingsRenderCtx *ctx);
+
+/* Render the shared Display & Sound tab (frame rate, window size, UI scale,
+ * letterbox).  Window size and UI scale only apply in-game; their results are
+ * returned via ctx->pendingZoom / ctx->wantAtlasRebuild for the shell to act
+ * on after the frame. */
+void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx);
 
 #ifdef __cplusplus
 }

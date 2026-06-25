@@ -2433,6 +2433,19 @@ static void renderSettingsPanel(ClientSim *cs) {
         return;
     }
 
+    SettingsRenderCtx ctx = {};
+    ctx.cs = cs;
+    ctx.inGame = true;
+    ctx.pendingZoom = 255;
+
+    if (ImGui::BeginTabBar("##settingsTabs")) {
+        if (ImGui::BeginTabItem("Display & Sound")) {
+            imguiSettingsRenderDisplaySoundTab(&ctx);
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+
     /* File actions — Save Map reachable on tablet and under a controller
        (desktop has the menu bar); Leave Game stays tablet-only. */
     if (uiModeIsTablet() || uiShouldUseControllerMode()) {
@@ -2562,57 +2575,8 @@ static void renderSettingsPanel(ClientSim *cs) {
 
     /* ---- Display ---- */
     if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_DISPLAY), ImGuiTreeNodeFlags_DefaultOpen)) {
-        /* Frame Rate — not shown in tablet mode */
-        if (!uiModeIsTablet()) {
-            const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
-            int frValues[] = { FRAME_RATE_60, FRAME_RATE_50, FRAME_RATE_30,
-                               FRAME_RATE_20, FRAME_RATE_15, FRAME_RATE_12, FRAME_RATE_10 };
-            int curFrIdx = 2; /* default to 30 */
-            for (int i = 0; i < 7; i++) {
-                if (frameRate == frValues[i]) { curFrIdx = i; break; }
-            }
-            ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_FRAMERATE));
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(80);
-            if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
-                for (int i = 0; i < 7; i++) {
-                    bool selected = (curFrIdx == i);
-                    if (ImGui::Selectable(frLabels[i], selected)) {
-                        windowSetFrameRate(frValues[i], true);
-                    }
-                }
-                ImGui::EndCombo();
-            }
-        }
-
 #ifndef __ANDROID__
         if (!uiModeIsTablet()) {
-            /* Window Size — desktop only */
-            const char *zoomLabels[] = {
-                langGetText(STR_MENU_NORMAL),
-                langGetText(STR_MENU_DOUBLE),
-                langGetText(STR_MENU_TRIPLE),
-                langGetText(STR_MENU_QUAD),
-                langGetText(STR_MENU_CUSTOM_RESIZABLE),
-            };
-            BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_TRIPLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
-            int curZoomIdx = 0;
-            for (int i = 0; i < 5; i++) {
-                if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
-            }
-            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_WINDOWSIZE));
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(100);
-            if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
-                for (int i = 0; i < 5; i++) {
-                    bool selected = (curZoomIdx == i);
-                    if (ImGui::Selectable(zoomLabels[i], selected)) {
-                        s_pendingZoom = zoomValues[i];
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
             /* Smooth Scrolling — desktop only */
             {
                 bool ss = (bool)smoothScrollingEnabled;
@@ -2633,12 +2597,6 @@ static void renderSettingsPanel(ClientSim *cs) {
             bool gs = (bool)showGunsight;
             if (ImGui::Checkbox(langGetText(STR_MENU_SHOW_GUNSIGHT), &gs)) {
                 windowShowGunsight_toggle(cs);
-            }
-        }
-        {
-            bool lb = (bool)letterboxBarsGray;
-            if (ImGui::Checkbox(langGetText(STR_MENU_LETTERBOX_GRAY), &lb)) {
-                windowLetterboxBarsGray_toggle();
             }
         }
 
@@ -2663,37 +2621,6 @@ static void renderSettingsPanel(ClientSim *cs) {
         }
 
 #ifndef __ANDROID__
-        /* UI-scale override — desktop-only.  On Steam Deck/tablet the scale
-           is device-driven, so don't offer the control there.  Auto keeps the
-           display-derived scale; a preset pins the ImGui scale and rebuilds
-           the font atlas live (deferred to a safe point between frames). */
-        if (!uiModeIsTablet() && !uiModeIsSteamDeck()) {
-            ImGui::Separator();
-            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_UISCALE));
-            {
-                const char *scaleLabels[] = {
-                    langGetText(STR_DLGSETTINGS_UISCALE_AUTO),
-                    langGetText(STR_DLGSETTINGS_UISCALE_SMALL),
-                    langGetText(STR_DLGSETTINGS_UISCALE_MEDIUM),
-                    langGetText(STR_DLGSETTINGS_UISCALE_LARGE),
-                };
-                int usIdx = (int)uiUiScaleGet();
-                if (usIdx < 0 || usIdx > 3) usIdx = 0;
-                ImGui::SetNextItemWidth(140 * s_uiScale);
-                if (ImGui::BeginCombo("##uiscale", scaleLabels[usIdx])) {
-                    for (int i = 0; i < 4; i++) {
-                        bool sel = (usIdx == i);
-                        if (ImGui::Selectable(scaleLabels[i], sel) && i != usIdx) {
-                            uiUiScaleSet((UiScalePref)i);
-                            gameFrontSaveCurrentPrefs();
-                            s_pendingUiScaleRebuild = true;
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-            }
-        }
-
         /* Tablet Mode toggle hidden for now — tablet mode auto-detects on
            real tablets; the manual desktop switch is not wanted in the UI. */
 #if 0
@@ -2708,9 +2635,6 @@ static void renderSettingsPanel(ClientSim *cs) {
     }
 
     /* ---- Labels / Sound / Messages (shared with the pre-game dialog) ---- */
-    SettingsRenderCtx ctx = {};
-    ctx.cs = cs;
-    ctx.inGame = true;
     imguiSettingsRenderCommonSections(&ctx);
 
     /* ---- Game ---- */
@@ -2788,6 +2712,11 @@ static void renderSettingsPanel(ClientSim *cs) {
     if (ImGui::Button(langGetText(STR_MENU_ABOUT))) {
         sdl3ImguiShowAbout();
     }
+
+    /* Apply the Display & Sound tab's deferred outputs into the file statics
+       the existing end-of-frame consumers already act on. */
+    if (ctx.pendingZoom != 255)  s_pendingZoom = ctx.pendingZoom;
+    if (ctx.wantAtlasRebuild)    s_pendingUiScaleRebuild = true;
 
     ImGui::End();
 }

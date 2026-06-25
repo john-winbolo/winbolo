@@ -38,6 +38,7 @@
 
 extern "C" {
 #include "../sdl3draw.h"
+#include "../../ui_mode.h"
 #include "../../gamefront.h"
 #include "global.h"
 #include "client_enums.h"  /* labelLen */
@@ -175,6 +176,108 @@ static void chainPickerNameGlyphs(LangFileEntry *entries, int count,
     cfg.OversampleV  = 1;
     cfg.GlyphRanges  = pickerRanges.Data;
     ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, sz, fontSize, &cfg);
+}
+
+/* -------------------------------------------------------
+ * Display & Sound tab — the display controls shared by the
+ * pre-game dialog and the in-game overlay.  Frame rate and
+ * letterbox apply in both; window size and UI scale only apply
+ * in-game (ctx->inGame), and their results are returned via
+ * ctx->pendingZoom / ctx->wantAtlasRebuild for the in-game shell
+ * to apply after the frame.  (The Sound block currently lives in
+ * imguiSettingsRenderCommonSections.)
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
+    /* ---- Frame rate ---- */
+    if (!uiModeIsTablet()) {
+        const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
+        int frValues[] = { FRAME_RATE_60, FRAME_RATE_50, FRAME_RATE_30,
+                           FRAME_RATE_20, FRAME_RATE_15, FRAME_RATE_12, FRAME_RATE_10 };
+        int curFrIdx = 2;
+        for (int i = 0; i < 7; i++) {
+            if (frameRate == frValues[i]) { curFrIdx = i; break; }
+        }
+        ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_FRAMERATE));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
+            for (int i = 0; i < 7; i++) {
+                bool selected = (curFrIdx == i);
+                if (ImGui::Selectable(frLabels[i], selected)) {
+                    windowSetFrameRate(frValues[i], ctx->inGame);
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+#ifndef __ANDROID__
+    /* ---- Window size — desktop, in-game only ---- */
+    if (ctx->inGame && !uiModeIsTablet()) {
+        const char *zoomLabels[] = {
+            langGetText(STR_MENU_NORMAL),
+            langGetText(STR_MENU_DOUBLE),
+            langGetText(STR_MENU_TRIPLE),
+            langGetText(STR_MENU_QUAD),
+            langGetText(STR_MENU_CUSTOM_RESIZABLE),
+        };
+        BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_TRIPLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
+        int curZoomIdx = 0;
+        for (int i = 0; i < 5; i++) {
+            if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
+        }
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_WINDOWSIZE));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
+            for (int i = 0; i < 5; i++) {
+                bool selected = (curZoomIdx == i);
+                if (ImGui::Selectable(zoomLabels[i], selected)) {
+                    ctx->pendingZoom = (unsigned char)zoomValues[i];
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    /* ---- UI scale — desktop, in-game only, not Steam Deck ---- */
+    if (ctx->inGame && !uiModeIsTablet() && !uiModeIsSteamDeck()) {
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_UISCALE));
+        const char *scaleLabels[] = {
+            langGetText(STR_DLGSETTINGS_UISCALE_AUTO),
+            langGetText(STR_DLGSETTINGS_UISCALE_SMALL),
+            langGetText(STR_DLGSETTINGS_UISCALE_MEDIUM),
+            langGetText(STR_DLGSETTINGS_UISCALE_LARGE),
+        };
+        int usIdx = (int)uiUiScaleGet();
+        if (usIdx < 0 || usIdx > 3) usIdx = 0;
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+        if (ImGui::BeginCombo("##uiscale", scaleLabels[usIdx])) {
+            for (int i = 0; i < 4; i++) {
+                bool sel = (usIdx == i);
+                if (ImGui::Selectable(scaleLabels[i], sel) && i != usIdx) {
+                    uiUiScaleSet((UiScalePref)i);
+                    gameFrontSaveCurrentPrefs();
+                    ctx->wantAtlasRebuild = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+#endif
+
+#if !BOLO_MOBILE
+    /* ---- Letterbox bars ---- */
+    {
+        bool lb = (bool)letterboxBarsGray;
+        if (ImGui::Checkbox(langGetText(STR_MENU_LETTERBOX_GRAY), &lb)) {
+            windowLetterboxBarsGray_toggle();
+        }
+        imguiHelpTooltip("Fill the fullscreen border bars with gray "
+                         "instead of black (when your monitor's aspect "
+                         "ratio differs from the game).");
+    }
+#endif
 }
 
 /* -------------------------------------------------------
@@ -470,6 +573,19 @@ extern "C" void imguiSettingsShow(void) {
                                 ImGui::GetStyle().ItemSpacing.y * 3.0f + 4.0f;
         ImGui::BeginChild("##settingsScroll", ImVec2(0.0f, -settingsFooterH), false);
 
+        SettingsRenderCtx ctx = {};
+        ctx.cs = nullptr;
+        ctx.inGame = false;
+        ctx.pendingZoom = 255;
+
+        if (ImGui::BeginTabBar("##settingsTabs")) {
+            if (ImGui::BeginTabItem("Display & Sound")) {
+                imguiSettingsRenderDisplaySoundTab(&ctx);
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+
         /* ---- Player ---- */
         if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_PLAYER), ImGuiTreeNodeFlags_DefaultOpen)) {
             static int lastNameError = 0;
@@ -566,26 +682,6 @@ extern "C" void imguiSettingsShow(void) {
 
         /* ---- Display ---- */
         if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_DISPLAY), ImGuiTreeNodeFlags_DefaultOpen)) {
-            const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
-            int frValues[] = { FRAME_RATE_60, FRAME_RATE_50, FRAME_RATE_30,
-                               FRAME_RATE_20, FRAME_RATE_15, FRAME_RATE_12, FRAME_RATE_10 };
-            int curFrIdx = 2;
-            for (int i = 0; i < 7; i++) {
-                if (frameRate == frValues[i]) { curFrIdx = i; break; }
-            }
-            ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_FRAMERATE));
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(80);
-            if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
-                for (int i = 0; i < 7; i++) {
-                    bool selected = (curFrIdx == i);
-                    if (ImGui::Selectable(frLabels[i], selected)) {
-                        windowSetFrameRate(frValues[i], false);
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
             /* ---- Language picker ---- */
             ImGui::Spacing();
             ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_LANGUAGE_LBL));
@@ -714,15 +810,6 @@ extern "C" void imguiSettingsShow(void) {
                     showGunsight = !showGunsight;
                 }
             }
-            {
-                bool lb = (bool)letterboxBarsGray;
-                if (ImGui::Checkbox(langGetText(STR_MENU_LETTERBOX_GRAY), &lb)) {
-                    windowLetterboxBarsGray_toggle();
-                }
-                imguiHelpTooltip("Fill the fullscreen border bars with gray "
-                                 "instead of black (when your monitor's aspect "
-                                 "ratio differs from the game).");
-            }
             ImGui::Spacing();
             if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
                 showKeySetup = true;
@@ -732,9 +819,6 @@ extern "C" void imguiSettingsShow(void) {
         }
 
         /* ---- Labels / Sound / Messages (shared with the in-game panel) ---- */
-        SettingsRenderCtx ctx = {};
-        ctx.cs = nullptr;
-        ctx.inGame = false;
         imguiSettingsRenderCommonSections(&ctx);
 
         /* ---- Tutorial ---- */
