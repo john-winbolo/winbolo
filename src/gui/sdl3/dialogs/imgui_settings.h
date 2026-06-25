@@ -20,6 +20,8 @@
 #ifndef IMGUI_SETTINGS_H
 #define IMGUI_SETTINGS_H
 
+#include "../../lang.h"  /* LangFileEntry for the shared language picker */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,6 +61,12 @@ void imguiSettingsRenderGeneralTab(SettingsRenderCtx *ctx);
 /* Seed the shared player-name edit buffer from the persisted name. Call when
  * opening a settings shell and after the pre-game modal rebuilds its context. */
 void imguiSettingsSeedPlayerName(void);
+
+/* Render the shared language picker (combo + info popup) into the current tab.
+ * Each shell passes its own scanned entries and owns their lifecycle.  Sets
+ * ctx->wantAtlasRebuild only when the pick changes the CJK font region. */
+void imguiSettingsRenderLanguagePicker(LangFileEntry *entries, int count,
+                                       SettingsRenderCtx *ctx);
 
 #ifdef __cplusplus
 }

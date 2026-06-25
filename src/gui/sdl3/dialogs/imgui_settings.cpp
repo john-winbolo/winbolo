@@ -292,6 +292,159 @@ extern "C" void imguiSettingsRenderGeneralTab(SettingsRenderCtx *ctx) {
 }
 
 /* -------------------------------------------------------
+ * Language picker — combo + info popup shared by both settings
+ * shells.  Each shell passes its own scanned entries and owns their
+ * lifecycle.  curLangIdx is recomputed each frame from the persisted
+ * language code, so the picker holds no selection state.  On a pick
+ * that changes the CJK font region it sets ctx->wantAtlasRebuild;
+ * each shell consumes that into its own atlas-rebuild path.
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderLanguagePicker(LangFileEntry *entries,
+                                                  int count,
+                                                  SettingsRenderCtx *ctx) {
+    /* Current selection: match the persisted code against the entries;
+       fall back to entry 0 (English baseline). */
+    int curLangIdx = 0;
+    {
+        char curCode[32];
+        curCode[0] = '\0';
+        gameFrontGetLanguageCode(curCode, (int)sizeof(curCode));
+        if (curCode[0] != '\0') {
+            for (int i = 0; i < count; i++) {
+                if (strcmp(curCode, entries[i].code) == 0) {
+                    curLangIdx = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_LANGUAGE_LBL));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(220);
+    const char *curLangLabel =
+        (curLangIdx >= 0 && curLangIdx < count &&
+         entries[curLangIdx].meta.name[0] != '\0')
+            ? entries[curLangIdx].meta.name
+            : langGetText(STR_DLGLANG_NAME);
+    if (ImGui::BeginCombo("##language", curLangLabel)) {
+        for (int i = 0; i < count; i++) {
+            const char *itemLabel =
+                (entries[i].meta.name[0] != '\0')
+                    ? entries[i].meta.name
+                    : entries[i].code;
+            bool selected = (curLangIdx == i);
+            if (ImGui::Selectable(itemLabel, selected)) {
+                /* CJK region in effect before the switch, for the
+                   rebuild decision below. */
+                char oldCode[32] = {0};
+                gameFrontGetLanguageCode(oldCode, (int)sizeof(oldCode));
+                const char *oldCjkPath = cjkNotoFontPath(oldCode);
+
+                if (i == 0) {
+                    /* English baseline — drop any loaded override.
+                     * Persist as "en" rather than "" so that on
+                     * relaunch gameFrontStart treats this as a
+                     * deliberate choice and skips langAutoDetect
+                     * (otherwise a German-locale machine would flip
+                     * back to German on every restart). */
+                    langUnloadFile();
+                    gameFrontSetLanguageCode("en");
+                } else {
+                    if (langLoadFile(entries[i].path)) {
+                        gameFrontSetLanguageCode(entries[i].code);
+                    }
+                }
+
+                /* Only a CJK-region change needs a font-atlas rebuild;
+                 * Latin↔Latin and same-region CJK switches just pick up
+                 * the new strings next frame.  cjkNotoFontPath returns
+                 * stable per-region static pointers, so compare identity. */
+                char newCode[32] = {0};
+                gameFrontGetLanguageCode(newCode, (int)sizeof(newCode));
+                if (cjkNotoFontPath(newCode) != oldCjkPath) {
+                    ctx->wantAtlasRebuild = true;
+                }
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    /* Info icon next to the combo opens a popup carrying the author /
+     * notes.  Lazy-load the icon once using the process-lifetime
+     * renderer; size it font-relatively to suit the current metrics. */
+    if (!s_langInfoIcon && !s_langInfoIconAttempted) {
+        s_langInfoIconAttempted = true;
+        SDL_Renderer *renderer = sdl3DrawGetRenderer();
+        int iconPx = (int)ImGui::GetFontSize();
+        if (iconPx < 16) iconPx = 16;
+        s_langInfoIcon = imguiLoadSvgIcon(renderer, "data/ui/dialog-info.svg", iconPx);
+        if (!s_langInfoIcon) {
+            char basePathBuf[FILENAME_MAX];
+            const char *base = SDL_GetBasePath();
+            if (base) {
+                SDL_snprintf(basePathBuf, sizeof(basePathBuf),
+                             "%sdata/ui/dialog-info.svg", base);
+                s_langInfoIcon = imguiLoadSvgIcon(renderer, basePathBuf, iconPx);
+            }
+        }
+    }
+
+    /* langGetLoadedMeta() may be non-NULL for a loaded file; prefer
+     * that for non-English entries so live re-translation of the meta
+     * works.  Entry 0's meta is the English baseline. */
+    ImGui::SameLine();
+    float iconH = ImGui::GetFrameHeight();
+    ImVec2 iconSz(iconH, iconH);
+    bool openInfo = false;
+    if (s_langInfoIcon) {
+        if (ImGui::ImageButton("##langInfoBtn",
+                               (ImTextureID)s_langInfoIcon,
+                               iconSz)) {
+            openInfo = true;
+        }
+        imguiHandOnHover();
+    } else {
+        if (ImGui::SmallButton("?##langInfoBtn")) {
+            openInfo = true;
+        }
+        imguiHandOnHover();
+    }
+    if (openInfo) {
+        ImGui::OpenPopup("##LangInfoPopup");
+    }
+    if (ImGui::BeginPopup("##LangInfoPopup")) {
+        const LangFileMeta *displayMeta = nullptr;
+        if (curLangIdx == 0 || curLangIdx >= count) {
+            displayMeta = (count > 0) ? &entries[0].meta : nullptr;
+        } else {
+            const LangFileMeta *loaded = langGetLoadedMeta();
+            displayMeta = loaded ? loaded : &entries[curLangIdx].meta;
+        }
+        float wrapW = ImGui::GetFontSize() * 20.0f;
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapW);
+        if (displayMeta) {
+            ImGui::TextWrapped("%s%s",
+                               langGetText(STR_DLGLANG_AUTHOR_CAPTION),
+                               displayMeta->author);
+            if (displayMeta->notes[0] != '\0') {
+                ImGui::TextWrapped("%s%s",
+                                   langGetText(STR_DLGLANG_NOTES_CAPTION),
+                                   displayMeta->notes);
+            }
+        }
+        ImGui::Separator();
+        ImGui::TextDisabled("%s",
+                            langGetText(STR_DLGLANG_DEFAULTNOTE));
+        ImGui::TextDisabled("%s",
+                            langGetText(STR_DLGLANG_MIDGAME_NOTE));
+        ImGui::PopTextWrapPos();
+        ImGui::EndPopup();
+    }
+}
+
+/* -------------------------------------------------------
  * Display & Sound tab — the display and sound controls shared by
  * the pre-game dialog and the in-game overlay.  Frame rate,
  * letterbox, and Sound apply in both; window size and UI scale only
@@ -567,55 +720,15 @@ extern "C" void imguiSettingsShow(void) {
     imguiWinbolonetReset();
     imguiWinbolonetStartValidation();
 
-    /* Lazily rasterise the info icon at a size that suits the dropdown row. */
-    if (!s_langInfoIcon && !s_langInfoIconAttempted) {
-        s_langInfoIconAttempted = true;
-        int iconPx = (int)(20.0f * s);
-        if (iconPx < 16) iconPx = 16;
-        s_langInfoIcon = imguiLoadSvgIcon(renderer, "data/ui/dialog-info.svg", iconPx);
-        if (!s_langInfoIcon) {
-            char basePathBuf[FILENAME_MAX];
-            const char *base = SDL_GetBasePath();
-            if (base) {
-                SDL_snprintf(basePathBuf, sizeof(basePathBuf),
-                             "%sdata/ui/dialog-info.svg", base);
-                s_langInfoIcon = imguiLoadSvgIcon(renderer, basePathBuf, iconPx);
-            }
-        }
-    }
-
-    int curLangIdx = 0;
-    {
-        char curCode[32];
-        curCode[0] = '\0';
-        gameFrontGetLanguageCode(curCode, (int)sizeof(curCode));
-        if (curCode[0] == '\0') {
-            curLangIdx = 0;  /* English baseline */
-        } else {
-            for (int i = 0; i < langCount; i++) {
-                if (strcmp(curCode, langEntries[i].code) == 0) {
-                    curLangIdx = i;
-                    break;
-                }
-            }
-        }
-    }
-
     bool running = true;
 #if !BOLO_MOBILE
     bool showKeySetup = false;
 #endif
 
-    /* Track the CJK font requirement currently baked into the ImGui
-     * font atlas. The atlas was built for the language that was active
-     * when dialogApplyScaling() ran above, so seed it from the same
-     * gameFront state. When the user picks a language whose CJK
-     * requirement differs, we rebuild the atlas in-place at end-of-
-     * frame so non-Latin glyphs render in the same dialog session
-     * (no app restart needed). */
-    char        atlasLangCode[32] = {0};
-    gameFrontGetLanguageCode(atlasLangCode, (int)sizeof(atlasLangCode));
-    const char *atlasCjkPath = cjkNotoFontPath(atlasLangCode);
+    /* When the language picker reports a CJK-region change it sets
+     * ctx.wantAtlasRebuild, which we translate into this flag and act on
+     * after Present — rebuilding the atlas in-place so non-Latin glyphs
+     * render in the same dialog session (no app restart needed). */
     bool        pendingFontRebuild = false;
 
     while (running) {
@@ -710,6 +823,7 @@ extern "C" void imguiSettingsShow(void) {
         if (ImGui::BeginTabBar("##settingsTabs")) {
             if (ImGui::BeginTabItem("General")) {
                 imguiSettingsRenderGeneralTab(&ctx);
+                imguiSettingsRenderLanguagePicker(langEntries, langCount, &ctx);
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("Display & Sound")) {
@@ -723,116 +837,13 @@ extern "C" void imguiSettingsShow(void) {
             ImGui::EndTabBar();
         }
 
+        /* Translate the language picker's CJK-rebuild request into the
+           pre-game atlas-rebuild flag consumed after Present.  Additive:
+           never clobber an already-pending rebuild. */
+        if (ctx.wantAtlasRebuild) pendingFontRebuild = true;
+
         /* ---- Display ---- */
         if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_DISPLAY), ImGuiTreeNodeFlags_DefaultOpen)) {
-            /* ---- Language picker ---- */
-            ImGui::Spacing();
-            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_LANGUAGE_LBL));
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(220);
-            const char *curLangLabel =
-                (curLangIdx >= 0 && curLangIdx < langCount &&
-                 langEntries[curLangIdx].meta.name[0] != '\0')
-                    ? langEntries[curLangIdx].meta.name
-                    : langGetText(STR_DLGLANG_NAME);
-            if (ImGui::BeginCombo("##language", curLangLabel)) {
-                for (int i = 0; i < langCount; i++) {
-                    const char *itemLabel =
-                        (langEntries[i].meta.name[0] != '\0')
-                            ? langEntries[i].meta.name
-                            : langEntries[i].code;
-                    bool selected = (curLangIdx == i);
-                    if (ImGui::Selectable(itemLabel, selected)) {
-                        if (i == 0) {
-                            /* English baseline — drop any loaded override.
-                             * Persist as "en" rather than "" so that on
-                             * relaunch gameFrontStart treats this as a
-                             * deliberate choice and skips langAutoDetect
-                             * (otherwise a German-locale machine would flip
-                             * back to German on every restart). */
-                            langUnloadFile();
-                            gameFrontSetLanguageCode("en");
-                        } else {
-                            if (langLoadFile(langEntries[i].path)) {
-                                gameFrontSetLanguageCode(langEntries[i].code);
-                            }
-                        }
-                        curLangIdx = i;
-
-                        /* If the selected language requires a different
-                         * CJK font region than the one currently baked
-                         * into the atlas, schedule a rebuild at end-of
-                         * frame. Latin↔Latin and same-region CJK
-                         * switches don't need a rebuild — langLoadFile
-                         * already updated the override table and the
-                         * next frame picks up new strings. */
-                        char        newLangCode[32] = {0};
-                        gameFrontGetLanguageCode(newLangCode,
-                                                  (int)sizeof(newLangCode));
-                        const char *newCjkPath = cjkNotoFontPath(newLangCode);
-                        if (newCjkPath != atlasCjkPath) {
-                            pendingFontRebuild = true;
-                        }
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            /* Info icon next to the combo opens a popup carrying the
-             * author / notes / footnotes that used to be inlined below.
-             * langGetLoadedMeta() may be non-NULL for a loaded file; prefer
-             * that for non-English entries so live re-translation of the
-             * meta works. Entry 0's meta is populated from
-             * STR_DLGLANG_NAME/AUTHOR/NOTES for the English baseline. */
-            ImGui::SameLine();
-            float iconH = ImGui::GetFrameHeight();
-            ImVec2 iconSz(iconH, iconH);
-            bool openInfo = false;
-            if (s_langInfoIcon) {
-                if (ImGui::ImageButton("##langInfoBtn",
-                                       (ImTextureID)s_langInfoIcon,
-                                       iconSz)) {
-                    openInfo = true;
-                }
-                imguiHandOnHover();
-            } else {
-                if (ImGui::SmallButton("?##langInfoBtn")) {
-                    openInfo = true;
-                }
-                imguiHandOnHover();
-            }
-            if (openInfo) {
-                ImGui::OpenPopup("##LangInfoPopup");
-            }
-            if (ImGui::BeginPopup("##LangInfoPopup")) {
-                const LangFileMeta *displayMeta = nullptr;
-                if (curLangIdx == 0 || curLangIdx >= langCount) {
-                    displayMeta = (langCount > 0) ? &langEntries[0].meta : nullptr;
-                } else {
-                    const LangFileMeta *loaded = langGetLoadedMeta();
-                    displayMeta = loaded ? loaded : &langEntries[curLangIdx].meta;
-                }
-                float wrapW = 360.0f * s;
-                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapW);
-                if (displayMeta) {
-                    ImGui::TextWrapped("%s%s",
-                                       langGetText(STR_DLGLANG_AUTHOR_CAPTION),
-                                       displayMeta->author);
-                    if (displayMeta->notes[0] != '\0') {
-                        ImGui::TextWrapped("%s%s",
-                                           langGetText(STR_DLGLANG_NOTES_CAPTION),
-                                           displayMeta->notes);
-                    }
-                }
-                ImGui::Separator();
-                ImGui::TextDisabled("%s",
-                                    langGetText(STR_DLGLANG_DEFAULTNOTE));
-                ImGui::TextDisabled("%s",
-                                    langGetText(STR_DLGLANG_MIDGAME_NOTE));
-                ImGui::PopTextWrapPos();
-                ImGui::EndPopup();
-            }
-
 #if !BOLO_MOBILE
             ImGui::Spacing();
             if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
@@ -958,13 +969,6 @@ extern "C" void imguiSettingsShow(void) {
             ImGui::GetIO().Fonts->Clear();
             imguiLoadBoloFont(fontSize);
             chainPickerNameGlyphs(langEntries, langCount, fontSize);
-
-            /* Refresh the recorded atlas state so subsequent picks
-             * compare against what's actually in the atlas now. */
-            char rebuiltLangCode[32] = {0};
-            gameFrontGetLanguageCode(rebuiltLangCode,
-                                     (int)sizeof(rebuiltLangCode));
-            atlasCjkPath = cjkNotoFontPath(rebuiltLangCode);
             pendingFontRebuild = false;
         }
 
@@ -1005,13 +1009,6 @@ extern "C" void imguiSettingsShow(void) {
                    main font size. */
                 float pickerFontSize = (s <= 1.05f) ? 18.0f : 20.0f * s;
                 chainPickerNameGlyphs(langEntries, langCount, pickerFontSize);
-            }
-            /* Atlas was rebuilt with the now-active language; resync. */
-            {
-                char resumeLangCode[32] = {0};
-                gameFrontGetLanguageCode(resumeLangCode,
-                                         (int)sizeof(resumeLangCode));
-                atlasCjkPath = cjkNotoFontPath(resumeLangCode);
             }
             /* The shared name buffer is file-scope; re-seed it for the
                rebuilt context alongside the language/atlas resync. */
