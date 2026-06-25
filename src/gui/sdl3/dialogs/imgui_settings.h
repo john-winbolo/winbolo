@@ -68,6 +68,11 @@ void imguiSettingsSeedPlayerName(void);
 void imguiSettingsRenderLanguagePicker(LangFileEntry *entries, int count,
                                        SettingsRenderCtx *ctx);
 
+/* Render the shared Controls tab content (the Set Keys button).  Sets
+ * ctx->wantKeySetup when pressed; each shell launches key setup after the
+ * frame in its own way.  In-game-only controls stay inline in that shell. */
+void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx);
+
 #ifdef __cplusplus
 }
 #endif

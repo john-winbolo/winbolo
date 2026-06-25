@@ -2457,161 +2457,138 @@ static void renderSettingsPanel(ClientSim *cs) {
             imguiSettingsRenderDisplaySoundTab(&ctx);
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Controls")) {
+            imguiSettingsRenderControlsTab(&ctx);
+            if (uiModeIsTablet() || inputGamepadIsConnected()) {
+                bool relSteering = !inputTouchGetAbsoluteSteering();
+                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_RELSTEER), &relSteering)) {
+                    inputTouchSetAbsoluteSteering(!relSteering);
+                }
+                imguiHelpTooltip(langGetText(STR_DLGSETTINGS_RELSTEER_TIP));
+            }
+
+            if (inputGamepadIsConnected()) {
+                ImGui::Separator();
+                ImGui::Text("Gamepad: connected");
+
+                float s = g_gamepadScrollSensitivity;
+                if (ImGui::SliderFloat("Scroll sensitivity", &s, 0.25f, 4.0f, "%.2fx")) {
+                    if (s < 0.25f) s = 0.25f;
+                    if (s > 4.0f)  s = 4.0f;
+                    g_gamepadScrollSensitivity = s;
+                }
+            }
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Game/HUD")) {
             imguiSettingsRenderGameHudTab(&ctx);
             ImGui::EndTabItem();
         }
-        ImGui::EndTabBar();
-    }
-
-    /* File actions — Save Map reachable on tablet and under a controller
-       (desktop has the menu bar); Leave Game stays tablet-only. */
-    if (uiModeIsTablet() || uiShouldUseControllerMode()) {
-        if (ImGui::Button(langGetText(STR_MENU_SAVE_MAP), ImVec2(-1, 0))) {
-            windowSaveMap(cs);
-            s_showSettings = false;
-        }
-        imguiHandOnHover();
-        if (uiModeIsTablet()) {
-            if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
-                windowNewGame();
+        if (ImGui::BeginTabItem("Session")) {
+            /* File actions — Save Map reachable on tablet and under a controller
+               (desktop has the menu bar); Leave Game stays tablet-only. */
+            if (uiModeIsTablet() || uiShouldUseControllerMode()) {
+                if (ImGui::Button(langGetText(STR_MENU_SAVE_MAP), ImVec2(-1, 0))) {
+                    windowSaveMap(cs);
+                    s_showSettings = false;
+                }
+                imguiHandOnHover();
+                if (uiModeIsTablet()) {
+                    if (ImGui::Button(langGetText(STR_MENU_LEAVE_GAME), ImVec2(-1, 0))) {
+                        windowNewGame();
+                    }
+                    imguiHandOnHover();
+                }
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
             }
-            imguiHandOnHover();
-        }
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-    }
 
-    /* ---- Player ---- */
-    if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_PLAYER), ImGuiTreeNodeFlags_DefaultOpen)) {
-#ifndef __ANDROID__
-        if (!uiModeIsTablet()) {
-            ImGui::Spacing();
-            if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS))) {
-                sdl3ImguiShowKeySetup();
-            }
-            imguiHandOnHover();
-        }
-#endif
-    }
-
-    /* ---- Display ---- */
-    if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_DISPLAY), ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (uiModeIsTablet() || inputGamepadIsConnected()) {
-            bool relSteering = !inputTouchGetAbsoluteSteering();
-            if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_RELSTEER), &relSteering)) {
-                inputTouchSetAbsoluteSteering(!relSteering);
-            }
-            imguiHelpTooltip(langGetText(STR_DLGSETTINGS_RELSTEER_TIP));
-        }
-
-        if (inputGamepadIsConnected()) {
-            ImGui::Separator();
-            ImGui::Text("Gamepad: connected");
-
-            float s = g_gamepadScrollSensitivity;
-            if (ImGui::SliderFloat("Scroll sensitivity", &s, 0.25f, 4.0f, "%.2fx")) {
-                if (s < 0.25f) s = 0.25f;
-                if (s > 4.0f)  s = 4.0f;
-                g_gamepadScrollSensitivity = s;
-            }
-        }
-
-#ifndef __ANDROID__
-        /* Tablet Mode toggle hidden for now — tablet mode auto-detects on
-           real tablets; the manual desktop switch is not wanted in the UI. */
-#if 0
-        if (!uiModeIsTablet()) {
-            bool tabletMode = false;
-            if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_TABLETMODE), &tabletMode)) {
-                uiModeSet(UI_MODE_TABLET);
-            }
-        }
-#endif
-#endif
-    }
-
-    /* ---- Game ---- */
-    if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_GAME))) {
-        {
-            bool anp = (bool)allowNewPlayers;
-            if (ImGui::Checkbox(langGetText(STR_ALLOW_NEW_PLAYERS), &anp)) {
-                windowMenuAllowNewPlayers_toggle(cs);
-            }
-        }
-    }
-
-    /* ---- Info ---- */
-    ImGui::Separator();
-    if (ImGui::Selectable(langGetText(STR_DLGGAMEINFO_TITLE), s_showGameInfo)) s_showGameInfo = !s_showGameInfo;
-    if (ImGui::Selectable(langGetText(STR_DLGSYSINFO_TITLE),  s_showSysInfo))  { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; }
-    if (ImGui::Selectable(langGetText(STR_DLGNETINFO_TITLE),  s_showNetInfo))  { if (!s_showNetInfo) pingGraphReset();  s_showNetInfo = !s_showNetInfo; }
-
-    /* ---- Brains ---- */
-    if (clientSimGetAiType(cs) != aiNone) {
-        if (ImGui::CollapsingHeader(langGetText(STR_MENU_BRAINS))) {
-            bool running = luaBrainIsRunning() != 0;
-            int  runIdx  = luaBrainGetRunningIndex();
-
-            /* Manual (stop brain) entry — selected when no brain is active */
-            if (ImGui::Selectable(langGetText(STR_MENU_MANUAL), !running)) {
-                if (running) {
-                    luaBrainStop();
-                    mlBrainStopSingleton();
+            /* ---- Game ---- */
+            if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_GAME))) {
+                {
+                    bool anp = (bool)allowNewPlayers;
+                    if (ImGui::Checkbox(langGetText(STR_ALLOW_NEW_PLAYERS), &anp)) {
+                        windowMenuAllowNewPlayers_toggle(cs);
+                    }
                 }
             }
 
-            /* One entry per discovered brain */
-            int numBrains = luaBrainGetNum();
-            if (numBrains > 0) {
-                ImGui::Separator();
-                for (int bi = 0; bi < numBrains; bi++) {
-                    const char *name = luaBrainGetName(bi);
-                    bool isActive    = running && (bi == runIdx);
-                    if (ImGui::Selectable(name ? name : "?", isActive)) {
-                        if (!isActive) {
-                            const char *path = luaBrainGetPath(bi);
-                            if (path) {
-                                if (luaBrainGetType(bi) == BRAIN_TYPE_ONNX) {
-                                    mlBrainStartSingleton(path, name ? name : "", cs);
-                                } else {
-                                    luaBrainStart(path, name ? name : "", cs);
+            /* ---- Info ---- */
+            ImGui::Separator();
+            if (ImGui::Selectable(langGetText(STR_DLGGAMEINFO_TITLE), s_showGameInfo)) s_showGameInfo = !s_showGameInfo;
+            if (ImGui::Selectable(langGetText(STR_DLGSYSINFO_TITLE),  s_showSysInfo))  { if (!s_showSysInfo) sysInfoGraphReset(); s_showSysInfo = !s_showSysInfo; }
+            if (ImGui::Selectable(langGetText(STR_DLGNETINFO_TITLE),  s_showNetInfo))  { if (!s_showNetInfo) pingGraphReset();  s_showNetInfo = !s_showNetInfo; }
+
+            /* ---- Brains ---- */
+            if (clientSimGetAiType(cs) != aiNone) {
+                if (ImGui::CollapsingHeader(langGetText(STR_MENU_BRAINS))) {
+                    bool running = luaBrainIsRunning() != 0;
+                    int  runIdx  = luaBrainGetRunningIndex();
+
+                    /* Manual (stop brain) entry — selected when no brain is active */
+                    if (ImGui::Selectable(langGetText(STR_MENU_MANUAL), !running)) {
+                        if (running) {
+                            luaBrainStop();
+                            mlBrainStopSingleton();
+                        }
+                    }
+
+                    /* One entry per discovered brain */
+                    int numBrains = luaBrainGetNum();
+                    if (numBrains > 0) {
+                        ImGui::Separator();
+                        for (int bi = 0; bi < numBrains; bi++) {
+                            const char *name = luaBrainGetName(bi);
+                            bool isActive    = running && (bi == runIdx);
+                            if (ImGui::Selectable(name ? name : "?", isActive)) {
+                                if (!isActive) {
+                                    const char *path = luaBrainGetPath(bi);
+                                    if (path) {
+                                        if (luaBrainGetType(bi) == BRAIN_TYPE_ONNX) {
+                                            mlBrainStartSingleton(path, name ? name : "", cs);
+                                        } else {
+                                            luaBrainStart(path, name ? name : "", cs);
+                                        }
+                                        /* Refresh settings descriptor for the new brain */
+                                        luaBrainFreeSettings(s_brainSettings);
+                                        s_brainSettings      = nullptr;
+                                        s_brainSettingsCount = 0;
+                                        s_brainSettingsOpen  = false;
+                                    }
                                 }
-                                /* Refresh settings descriptor for the new brain */
-                                luaBrainFreeSettings(s_brainSettings);
-                                s_brainSettings      = nullptr;
-                                s_brainSettingsCount = 0;
-                                s_brainSettingsOpen  = false;
                             }
+                        }
+                    }
+
+                    /* Settings entry — only when a Lua brain is running (ONNX has no settings) */
+                    if (running && !mlBrainSingletonIsRunning()) {
+                        ImGui::Separator();
+                        if (ImGui::Button(langGetText(STR_MENU_SETTINGS))) {
+                            /* Re-fetch on every open so values are current */
+                            luaBrainFreeSettings(s_brainSettings);
+                            s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
+                            s_brainSettingsOpen  = true;
                         }
                     }
                 }
             }
 
-            /* Settings entry — only when a Lua brain is running (ONNX has no settings) */
-            if (running && !mlBrainSingletonIsRunning()) {
-                ImGui::Separator();
-                if (ImGui::Button(langGetText(STR_MENU_SETTINGS))) {
-                    /* Re-fetch on every open so values are current */
-                    luaBrainFreeSettings(s_brainSettings);
-                    s_brainSettings      = luaBrainGetSettings(&s_brainSettingsCount);
-                    s_brainSettingsOpen  = true;
-                }
+            /* ---- About ---- */
+            ImGui::Separator();
+            if (ImGui::Button(langGetText(STR_MENU_ABOUT))) {
+                sdl3ImguiShowAbout();
             }
+            ImGui::EndTabItem();
         }
-    }
-
-    /* ---- About ---- */
-    ImGui::Separator();
-    if (ImGui::Button(langGetText(STR_MENU_ABOUT))) {
-        sdl3ImguiShowAbout();
+        ImGui::EndTabBar();
     }
 
     /* Apply the Display & Sound tab's deferred outputs into the file statics
        the existing end-of-frame consumers already act on. */
     if (ctx.pendingZoom != 255)  s_pendingZoom = ctx.pendingZoom;
     if (ctx.wantAtlasRebuild)    s_pendingUiScaleRebuild = true;
+    if (ctx.wantKeySetup)        sdl3ImguiShowKeySetup();
 
     ImGui::End();
 }

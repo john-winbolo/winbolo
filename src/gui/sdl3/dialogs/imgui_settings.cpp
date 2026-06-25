@@ -445,6 +445,25 @@ extern "C" void imguiSettingsRenderLanguagePicker(LangFileEntry *entries,
 }
 
 /* -------------------------------------------------------
+ * Controls tab — the Set Keys button, shared by both shells.
+ * The shared renderer only sets ctx->wantKeySetup; each shell
+ * launches key setup after the frame (the pre-game modal tears
+ * down and rebuilds its context; the in-game overlay opens the
+ * key-setup overlay).  In-game-only controls (relative steering,
+ * gamepad scroll) are drawn inline by that shell.
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx) {
+#if !BOLO_MOBILE
+    if (!uiModeIsTablet()) {
+        if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
+            ctx->wantKeySetup = true;
+        }
+        imguiHandOnHover();
+    }
+#endif
+}
+
+/* -------------------------------------------------------
  * Display & Sound tab — the display and sound controls shared by
  * the pre-game dialog and the in-game overlay.  Frame rate,
  * letterbox, and Sound apply in both; window size and UI scale only
@@ -859,10 +878,47 @@ extern "C" void imguiSettingsShow(void) {
                 imguiSettingsRenderDisplaySoundTab(&ctx);
                 ImGui::EndTabItem();
             }
+#if !BOLO_MOBILE
+            if (!uiModeIsTablet()) {
+                if (ImGui::BeginTabItem("Controls")) {
+                    imguiSettingsRenderControlsTab(&ctx);
+                    ImGui::EndTabItem();
+                }
+            }
+#endif
             if (ImGui::BeginTabItem("Game/HUD")) {
                 imguiSettingsRenderGameHudTab(&ctx);
                 ImGui::EndTabItem();
             }
+#if !BOLO_MOBILE
+            if (ImGui::BeginTabItem("Network")) {
+                ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_NET_HELP));
+                ImGui::Spacing();
+                {
+                    bool b = gameFrontUseUpnp;
+                    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_USE_UPNP), &b)) {
+                        gameFrontUseUpnp = b;
+                    }
+                }
+                {
+                    bool b = gameFrontUseNatTraversal;
+                    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_USE_NATTRAV), &b)) {
+                        gameFrontUseNatTraversal = b;
+                    }
+                }
+                {
+                    const char *cur = newsPrefGetAutoShow();
+                    /* "unset" and "show" both default the checkbox to
+                     * checked; only an explicit "dontShow" unchecks it.
+                     * Toggling never writes "unset". */
+                    bool b = (strcmp(cur, "dontShow") != 0);
+                    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOSHOW), &b)) {
+                        newsPrefSetAutoShow(b ? "show" : "dontShow");
+                    }
+                }
+                ImGui::EndTabItem();
+            }
+#endif
             ImGui::EndTabBar();
         }
 
@@ -870,48 +926,9 @@ extern "C" void imguiSettingsShow(void) {
            pre-game atlas-rebuild flag consumed after Present.  Additive:
            never clobber an already-pending rebuild. */
         if (ctx.wantAtlasRebuild) pendingFontRebuild = true;
-
-        /* ---- Display ---- */
-        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_DISPLAY), ImGuiTreeNodeFlags_DefaultOpen)) {
-#if !BOLO_MOBILE
-            ImGui::Spacing();
-            if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
-                showKeySetup = true;
-            }
-            imguiHandOnHover();
-#endif
-        }
-
-#if !BOLO_MOBILE
-        /* ---- Network ---- */
-
-        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_NETWORK), ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_NET_HELP));
-            ImGui::Spacing();
-            {
-                bool b = gameFrontUseUpnp;
-                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_USE_UPNP), &b)) {
-                    gameFrontUseUpnp = b;
-                }
-            }
-            {
-                bool b = gameFrontUseNatTraversal;
-                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_USE_NATTRAV), &b)) {
-                    gameFrontUseNatTraversal = b;
-                }
-            }
-            {
-                const char *cur = newsPrefGetAutoShow();
-                /* "unset" and "show" both default the checkbox to
-                 * checked; only an explicit "dontShow" unchecks it.
-                 * Toggling never writes "unset". */
-                bool b = (strcmp(cur, "dontShow") != 0);
-                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOSHOW), &b)) {
-                    newsPrefSetAutoShow(b ? "show" : "dontShow");
-                }
-            }
-        }
-#endif
+        /* The shared Controls tab requests key setup via the flag; honour it
+           through the existing showKeySetup teardown below. */
+        if (ctx.wantKeySetup) showKeySetup = true;
 
         ImGui::EndChild(); /* ##settingsScroll */
 
