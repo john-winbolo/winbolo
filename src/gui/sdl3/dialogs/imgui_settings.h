@@ -52,6 +52,10 @@ void imguiSettingsRenderCommonSections(SettingsRenderCtx *ctx);
  * on after the frame. */
 void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx);
 
+/* Render the shared Game/HUD tab (scrolling behaviour, gunsight).  ctx->cs is
+ * NULL pre-game; the toggles tolerate it. */
+void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx);
+
 #ifdef __cplusplus
 }
 #endif

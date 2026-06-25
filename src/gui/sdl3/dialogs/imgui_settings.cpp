@@ -303,6 +303,40 @@ extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
 }
 
 /* -------------------------------------------------------
+ * Game/HUD tab — gameplay/HUD controls shared by the pre-game
+ * dialog and the in-game overlay: scrolling behaviour and the
+ * gunsight.  ctx->cs is NULL pre-game (the toggles tolerate it).
+ * (Labels and Messages will join this tab in a later step.)
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
+    /* ---- Auto scrolling ---- */
+    {
+        bool as = (bool)autoScrollingEnabled;
+        if (ImGui::Checkbox(langGetText(STR_MENU_AUTO_SCROLLING), &as)) {
+            windowAutomaticScrolling_toggle(ctx->cs);
+        }
+    }
+
+#if !BOLO_MOBILE
+    /* ---- Smooth scrolling ---- */
+    {
+        bool ss = (bool)smoothScrollingEnabled;
+        if (ImGui::Checkbox(langGetText(STR_MENU_SMOOTH_SCROLLING), &ss)) {
+            windowSmoothScrolling_toggle();
+        }
+    }
+#endif
+
+    /* ---- Show gunsight ---- */
+    {
+        bool gs = (bool)showGunsight;
+        if (ImGui::Checkbox(langGetText(STR_MENU_SHOW_GUNSIGHT), &gs)) {
+            windowShowGunsight_toggle(ctx->cs);
+        }
+    }
+}
+
+/* -------------------------------------------------------
  * Shared settings categories — the Labels / Messages
  * sections that the pre-game dialog (imguiSettingsShow) and the
  * in-game overlay (sdl3imgui.cpp renderSettingsPanel) used to each
@@ -582,6 +616,10 @@ extern "C" void imguiSettingsShow(void) {
                 imguiSettingsRenderDisplaySoundTab(&ctx);
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Game/HUD")) {
+                imguiSettingsRenderGameHudTab(&ctx);
+                ImGui::EndTabItem();
+            }
             ImGui::EndTabBar();
         }
 
@@ -790,25 +828,6 @@ extern "C" void imguiSettingsShow(void) {
             }
 
 #if !BOLO_MOBILE
-            {
-                bool as = (bool)autoScrollingEnabled;
-                if (ImGui::Checkbox(langGetText(STR_MENU_AUTO_SCROLLING), &as)) {
-                    windowAutomaticScrolling_toggle(NULL);
-                }
-            }
-            {
-                bool ss = (bool)smoothScrollingEnabled;
-                if (ImGui::Checkbox(langGetText(STR_MENU_SMOOTH_SCROLLING), &ss)) {
-                    windowSmoothScrolling_toggle();
-                }
-            }
-            {
-                bool gs = (bool)showGunsight;
-                if (ImGui::Checkbox(langGetText(STR_MENU_SHOW_GUNSIGHT), &gs)) {
-                    /* Pre-game: just toggle the global directly */
-                    showGunsight = !showGunsight;
-                }
-            }
             ImGui::Spacing();
             if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
                 showKeySetup = true;

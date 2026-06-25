@@ -2443,6 +2443,10 @@ static void renderSettingsPanel(ClientSim *cs) {
             imguiSettingsRenderDisplaySoundTab(&ctx);
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Game/HUD")) {
+            imguiSettingsRenderGameHudTab(&ctx);
+            ImGui::EndTabItem();
+        }
         ImGui::EndTabBar();
     }
 
@@ -2575,31 +2579,6 @@ static void renderSettingsPanel(ClientSim *cs) {
 
     /* ---- Display ---- */
     if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_DISPLAY), ImGuiTreeNodeFlags_DefaultOpen)) {
-#ifndef __ANDROID__
-        if (!uiModeIsTablet()) {
-            /* Smooth Scrolling — desktop only */
-            {
-                bool ss = (bool)smoothScrollingEnabled;
-                if (ImGui::Checkbox(langGetText(STR_MENU_SMOOTH_SCROLLING), &ss)) {
-                    windowSmoothScrolling_toggle();
-                }
-            }
-        }
-#endif
-
-        {
-            bool as = (bool)autoScrollingEnabled;
-            if (ImGui::Checkbox(langGetText(STR_MENU_AUTO_SCROLLING), &as)) {
-                windowAutomaticScrolling_toggle(cs);
-            }
-        }
-        {
-            bool gs = (bool)showGunsight;
-            if (ImGui::Checkbox(langGetText(STR_MENU_SHOW_GUNSIGHT), &gs)) {
-                windowShowGunsight_toggle(cs);
-            }
-        }
-
         if (uiModeIsTablet() || inputGamepadIsConnected()) {
             bool relSteering = !inputTouchGetAbsoluteSteering();
             if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_RELSTEER), &relSteering)) {
