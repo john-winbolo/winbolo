@@ -59,7 +59,6 @@ extern bool showBaseLabels;
 extern bool labelSelf;
 extern labelLen labelMsg;
 extern labelLen labelTank;
-extern bool hideMainView;
 extern bool isInMenu;
 extern keyItems keys;
 
@@ -206,7 +205,6 @@ void windowMenuAssistant_toggle(ClientSim *cs)   { showAssistantMessages = !show
 void windowMenuAI_toggle(ClientSim *cs)          { showAIMessages = !showAIMessages; if (cs) clientSimShowMessages(cs, MSG_AI, showAIMessages); }
 void windowMenuNetwork_toggle(ClientSim *cs)     { showNetworkStatusMessages = !showNetworkStatusMessages; if (cs) clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages); }
 void windowMenuNetworkDebug_toggle(ClientSim *cs){ showNetworkDebugMessages = !showNetworkDebugMessages; if (cs) clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages); }
-void windowHideMainView_toggle(void)    { hideMainView = !hideMainView; }
 void windowLabelOwnTank_toggle(ClientSim *cs)    { labelSelf = !labelSelf; if (cs) clientSimSetLabelOwnTank(cs, labelSelf); }
 void windowSetMessageLabelLen(ClientSim *cs, labelLen n){ labelMsg = n; if (cs) clientSimSetLabelMessage(cs, labelMsg); }
 void windowSetTankLabelLen(ClientSim *cs, labelLen n)   { labelTank = n; if (cs) clientSimSetLabelTankLabel(cs, labelTank); }
@@ -259,7 +257,7 @@ void frontEndSetActiveClientSim(struct ClientSim *cs) {
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
                             int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
-  if (hideMainView == FALSE && drawBusy == FALSE) {
+  if (drawBusy == FALSE) {
     BYTE cursorX, cursorY;
     bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
     sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
@@ -336,13 +334,13 @@ void frontEndManClear(ClientSim *cs) {
 }
 
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
-  if (hideMainView == FALSE && drawBusy == FALSE) {
+  if (drawBusy == FALSE) {
     sdl3DrawDownloadScreen(cs, NULL, justBlack);
   }
 }
 
 void frontEndDrawReturningToLobby(ClientSim *cs) {
-  if (hideMainView == FALSE && drawBusy == FALSE) {
+  if (drawBusy == FALSE) {
     sdl3DrawReturningToLobby(cs);
   }
 }

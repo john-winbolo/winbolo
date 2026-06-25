@@ -29,7 +29,6 @@ extern "C" void windowShowGunsight_toggle(struct ClientSim *cs);
 extern "C" void windowLabelOwnTank_toggle(struct ClientSim *cs);
 extern "C" void windowShowPillLabels_toggle(struct ClientSim *cs);
 extern "C" void windowShowBaseLabels_toggle(struct ClientSim *cs);
-extern "C" void windowHideMainView_toggle(void);
 
 extern "C" void sdl3ImguiSetFrameRate(int rate);
 extern "C" void sdl3ImguiSetZoom(int zoom);
@@ -91,7 +90,6 @@ static NSMenuItem *s_autoScrollingItem       = nil;
 static NSMenuItem *s_showGunsightItem        = nil;
 static NSMenuItem *s_pillLabelsItem          = nil;
 static NSMenuItem *s_baseLabelsItem          = nil;
-static NSMenuItem *s_hideMainViewItem        = nil;
 static NSMenuItem *s_noOwnLabelItem          = nil;
 static NSMenuItem *s_allowNewPlayersItem     = nil;
 static NSMenuItem *s_soundEffectsItem        = nil;
@@ -224,7 +222,6 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onLabelOwnTank:(id)sender;
 - (void)onPillboxLabels:(id)sender;
 - (void)onBaseLabels:(id)sender;
-- (void)onHideMainView:(id)sender;
 - (void)onSetFrameRate:(id)sender;
 - (void)onSetZoom:(id)sender;
 - (void)onSetMessageLabel:(id)sender;
@@ -317,10 +314,6 @@ static NSImage *macMenubarTintedUiIcon(NSString *basename, NSColor *tint) {
 - (void)onBaseLabels:(id)sender {
     (void)sender;
     if (g_clientSim) windowShowBaseLabels_toggle((struct ClientSim *)g_clientSim);
-}
-- (void)onHideMainView:(id)sender {
-    (void)sender;
-    windowHideMainView_toggle();
 }
 - (void)onSetFrameRate:(id)sender {
     NSMenuItem *item = (NSMenuItem *)sender;
@@ -1004,20 +997,6 @@ void mac_menubar_install(struct SDL_Window *win, void *clientSim) {
     [editMenu addItem:baseLabelsItem];
     s_baseLabelsItem = baseLabelsItem;
 
-    [editMenu addItem:[NSMenuItem separatorItem]];
-
-    /* Hide Main View — no keyEquivalent on macOS; Cmd+H is owned by
-     * App > Hide WinBolo per the earlier collision-resolution decision.
-     * The SDL_SCANCODE_H handler in sdl3imgui.cpp still serves
-     * Windows/Linux/Web. */
-    NSMenuItem *hideMainViewItem = [[NSMenuItem alloc]
-        initWithTitle:LANG_STR(STR_MENU_HIDE_MAIN)
-        action:@selector(onHideMainView:)
-        keyEquivalent:@""];
-    [hideMainViewItem setTarget:g_bridge];
-    [editMenu addItem:hideMainViewItem];
-    s_hideMainViewItem = hideMainViewItem;
-
     /* WinBolo menu — game-state toggles and player commands. Mirrors the
      * ImGui WinBolo menu in renderMenuBar(). The in-window Settings entry
      * is intentionally dropped here — App > Preferences (⌘,) opens the
@@ -1392,7 +1371,6 @@ void mac_menubar_refresh(const struct MacMenuState *s) {
     if (s_showGunsightItem)          [s_showGunsightItem          setState:(s->showGunsight          ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_pillLabelsItem)            [s_pillLabelsItem            setState:(s->showPillLabels        ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_baseLabelsItem)            [s_baseLabelsItem            setState:(s->showBaseLabels        ? NSControlStateValueOn : NSControlStateValueOff)];
-    if (s_hideMainViewItem)          [s_hideMainViewItem          setState:(s->hideMainView          ? NSControlStateValueOn : NSControlStateValueOff)];
 
     if (s_allowNewPlayersItem)       [s_allowNewPlayersItem       setState:(s->allowNewPlayers       ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_soundEffectsItem)          [s_soundEffectsItem          setState:(s->soundEffects          ? NSControlStateValueOn : NSControlStateValueOff)];
