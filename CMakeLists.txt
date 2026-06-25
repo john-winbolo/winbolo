@@ -1743,6 +1743,10 @@ list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/game_view_stubs\\.c$")
 # game-view render island's screenTanksGetItem to lv_screenTanksGetItem.
 # The standalone uses bolo_shim.c for that, so drop the adapter from the glob.
 list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/render_island_screentank_adapter\\.c$")
+# spectator_drain_stub.c is added explicitly to the LogViewer target below;
+# drop it from the glob so it is listed once. It stubs the spectator_drain.h
+# seam for the standalone (which carries spectatorRun but links no bolo sim).
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/spectator_drain_stub\\.c$")
 
 set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_context.cpp
@@ -1797,6 +1801,11 @@ add_executable(LogViewer
     # pulls only public bolo headers (spectator_replay.h / log.h / platform_net.h)
     # and no backend.h-conflicting type, so it builds under the runtime_only rules.
     src/bolo/spectator_replay.c
+    # No-op stubs for the spectator_drain.h seam: logviewer.c carries
+    # spectatorRun, but the standalone links no bolo sim (the real wrappers
+    # live in client_sim.c / bolo_static for the WinBolo client) and never
+    # spectates, so these resolve the seam symbols here.
+    src/logviewer/spectator_drain_stub.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/sdl_bmp.c

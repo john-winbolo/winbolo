@@ -53,6 +53,11 @@ typedef struct {
 
 /* handle is a ClientSim * passed as an opaque void *. */
 
+/* Pump the spectator transport one step (forwards to clientSimNetTick): the
+ * logviewer-world host calls this each frame to service the connection and
+ * refill the seed/record queues without including client_sim.h. */
+void     specDrainPump(void *handle);
+
 /* True once the captured seed blob has been fully received. */
 bool     specDrainSeedReady(void *handle);
 

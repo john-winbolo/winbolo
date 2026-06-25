@@ -2123,6 +2123,10 @@ bool clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out) {
  * include client_sim.h (screenObj redefinition vs backend.h). Each forwards to
  * the matching clientSimSpectator* accessor; ownership transfers are unchanged.
  */
+void specDrainPump(void *handle) {
+  clientSimNetTick((ClientSim *)handle);
+}
+
 bool specDrainSeedReady(void *handle) {
   return clientSimSpectatorSeedReady((const ClientSim *)handle);
 }
