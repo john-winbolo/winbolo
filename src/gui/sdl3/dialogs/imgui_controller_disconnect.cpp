@@ -6,12 +6,12 @@
 /*********************************************************
  * Name:          imgui_controller_disconnect.cpp
  * Purpose:       "Controller Disconnected" dialog.  Shown
- *                when the active gamepad drops while the
- *                game is in controller mode.  The only ways
- *                out are reconnecting a controller (caller
- *                requests close) or pressing "Continue with
- *                keyboard and mouse", which turns controller
- *                mode off so the menu bar returns.
+ *                when the active gamepad drops, to let the
+ *                player know.  The ways out are reconnecting
+ *                a controller (caller requests close) or
+ *                pressing "Continue with keyboard and mouse"
+ *                to dismiss it; the menu bar returns on its
+ *                own once the pad is gone.
  *********************************************************/
 
 #include <cfloat>                 /* FLT_MIN (full-width button) */
@@ -22,8 +22,6 @@
 
 extern "C" {
 #include "../sdl3draw.h"          /* sdl3DrawGetRenderer */
-#include "../../ui_mode.h"
-#include "../../gamefront.h"
 #include "../../lang.h"
 }
 
@@ -112,11 +110,9 @@ bool controllerDisconnectRender(void) {
             s_focusBtn = false;
         }
         if (ImGui::Button(langGetText(STR_CTRL_DISC_BUTTON), ImVec2(-FLT_MIN, 0.0f))) {
-            /* Switch to keyboard/mouse: turning controller mode off makes the
-               menu bar return.  Persist the choice so a later reconnect does
-               not silently drop back into controller mode. */
-            uiControllerModeSet(CONTROLLER_MODE_OFF);
-            gameFrontSaveCurrentPrefs();
+            /* Carry on with keyboard/mouse.  Nothing to persist: with the pad
+               gone, controller mode is already off (it follows real-device
+               presence) and the menu bar has returned. */
             keyboardChosen = true;
             ImGui::CloseCurrentPopup();
             s_open = false;

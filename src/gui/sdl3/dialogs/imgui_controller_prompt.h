@@ -5,13 +5,10 @@
 
 /*********************************************************
  * Name:          imgui_controller_prompt.h
- * Purpose:       Controller-detected prompt (Phase 8.1).
- *                One-shot modal asking the player whether
- *                to switch to Controller Mode when a
- *                gamepad first connects on a non-Deck
- *                desktop.  Yes flips the pref to ON; No
- *                dismisses for the session; Don't ask
- *                again clears the prompt-on-connect flag.
+ * Purpose:       Per-loop hook that raises the shared
+ *                controller dialogs (the "Controller
+ *                Disconnected" alert) over the running
+ *                menu/dialog loop.
  *********************************************************/
 
 #ifndef IMGUI_CONTROLLER_PROMPT_H
@@ -23,18 +20,8 @@
 extern "C" {
 #endif
 
-void controllerPromptOpen(void);                 /* request open */
-void controllerPromptRender(void);               /* call from render path */
-bool controllerPromptIsOpen(void);
-
-/* Poll the gamepad-connected rising edge and open the prompt when a pad first
-   connects on a non-Deck, non-tablet desktop with controller mode off and the
-   prompt not opted out.  Single-sourced edge state, shared by the in-game render
-   path and the menu loops. */
-void controllerPromptPollConnectEdge(void);
-
-/* Detect + render both controller dialogs (connect prompt, disconnect dialog)
-   for a menu/standalone context.  No solo-game pause (no game is running). */
+/* Detect + render the controller dialogs for a menu/standalone context.
+   No solo-game pause (no game is running). */
 void controllerDialogsRenderMenu(void);
 
 #ifdef __cplusplus

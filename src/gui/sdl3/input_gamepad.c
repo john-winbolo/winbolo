@@ -496,6 +496,62 @@ bool inputGamepadIsSteamInput(void) {
   return steam_input_has_active_controller();
 }
 
+bool inputGamepadRealControllerConnected(void) {
+  /* Trustworthy "is a real controller actually here" for UI decisions:
+     a native SDL pad (Path B), or a real Steam Input device per the
+     hot-plug callbacks (Path A).  Deliberately NOT path_a_active(),
+     which is true whenever Steam Input is running because of the
+     always-present keyboard/mouse virtual controller. */
+  if (s_activeGamepad) return true;
+  return steam_input_real_controller_connected();
+}
+
+bool inputGamepadActivityDetected(void) {
+  /* Path A (Steam Input): input is polled, not evented.  Sweep the InGame
+     action set for any live button or past-deadzone stick.  The virtual
+     controller is idle, so this only trips for real controller use. */
+  if (path_a_active()) {
+    static const char *const kDigital[] = {
+      SI_ACTION_FIRE, SI_ACTION_MINE, SI_ACTION_BUILD_CONFIRM,
+      SI_ACTION_VIEW_CYCLE, SI_ACTION_GUNSIGHT_DEC, SI_ACTION_GUNSIGHT_INC,
+      SI_ACTION_BUILD_PREV, SI_ACTION_BUILD_NEXT, SI_ACTION_BUILD_CURSOR_TOGGLE,
+      SI_ACTION_QUICK_CHAT, SI_ACTION_PAUSE, SI_ACTION_VIEW_PLAYERS,
+      SI_ACTION_BUILD_CANCEL, SI_ACTION_LOCK_HEADING, SI_ACTION_TANK_VIEW,
+    };
+    for (size_t i = 0; i < sizeof(kDigital) / sizeof(kDigital[0]); i++) {
+      if (steam_input_is_action_pressed(kDigital[i])) return true;
+    }
+    float x = 0.0f, y = 0.0f;
+    steam_input_get_analog_action(SI_ANALOG_TANK_MOVE, &x, &y);
+    if (x * x + y * y >= MOVE_DEADZONE * MOVE_DEADZONE) return true;
+    x = 0.0f; y = 0.0f;
+    steam_input_get_analog_action(SI_ANALOG_MAP_SCROLL, &x, &y);
+    if (x * x + y * y >= MOVE_DEADZONE * MOVE_DEADZONE) return true;
+    return false;
+  }
+
+  /* Path B (native SDL): button/axis events already flip the source via
+     inputSourceUpdate; polling held state here covers the gap between
+     events (a stick held steady fires no new events). */
+  if (s_activeGamepad) {
+    const Sint16 axisTrig = (Sint16)(32767 * MOVE_DEADZONE);
+    for (int b = 0; b < SDL_GAMEPAD_BUTTON_COUNT; b++) {
+      if (SDL_GetGamepadButton(s_activeGamepad, (SDL_GamepadButton)b)) return true;
+    }
+    static const SDL_GamepadAxis kAxes[] = {
+      SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY,
+      SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY,
+      SDL_GAMEPAD_AXIS_LEFT_TRIGGER, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,
+    };
+    for (size_t i = 0; i < sizeof(kAxes) / sizeof(kAxes[0]); i++) {
+      Sint16 v = SDL_GetGamepadAxis(s_activeGamepad, kAxes[i]);
+      if (v >= axisTrig || v <= -axisTrig) return true;
+    }
+    return false;
+  }
+  return false;
+}
+
 /* Path B only: Steam Input doesn't expose an SDL_Gamepad handle.
    Returns NULL on Path A (callers that need raw SDL handles should
    gate on inputGamepadIsConnected and degrade gracefully). */
@@ -843,13 +899,14 @@ bool inputGamepadIsViewPlayersEdge(void) {
 }
 
 bool inputGamepadConsumeActiveDisconnect(void) {
-  /* Path A latch is checked first so the disconnect surfaces even
-     after path_a_active() has flipped to false this frame. */
-  if (s_path_a_just_disconnected) {
-    s_path_a_just_disconnected = false;
-    return true;
-  }
+  /* Path A: real physical disconnect from the Steam Input device callback.
+     The old count-based latch (s_path_a_just_disconnected) is unreliable —
+     the keyboard/mouse virtual controller refills GetConnectedControllers
+     within ~17ms of a real unplug, so the count rarely reaches 0.  The
+     hot-plug callback fires regardless. */
+  if (steam_input_consume_real_disconnect()) return true;
 
+  /* Path B: native SDL gamepad removed. */
   bool v = s_activeDisconnectedEdge;
   s_activeDisconnectedEdge = false;
   return v;

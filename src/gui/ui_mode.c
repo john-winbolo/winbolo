@@ -23,16 +23,10 @@
 
 #include "ui_mode.h"
 #include "sdl3/input_gamepad.h"
+#include "sdl3/input_source.h"
 
 static UIMode s_currentMode = UI_MODE_DESKTOP;
 static bool   s_initialized = false;
-
-/* Phase 8.1 — controller-mode pref state.  Mirrored here so callers
-   can ask uiShouldUseControllerMode() without a gamefront.h include.
-   gamefront.c writes via uiControllerModeSet on prefs load and
-   on settings-dialog change. */
-static ControllerModePref s_controllerMode = CONTROLLER_MODE_OFF;
-static bool               s_controllerPromptAsk = true;
 
 /* UI-scale override.  Default Auto preserves the display-derived scale.
    gamefront.c writes via uiUiScaleSet on prefs load and on settings-dialog
@@ -148,22 +142,6 @@ bool uiModeIsSteamDeck(void) {
   return uiModeGet() == UI_MODE_STEAM_DECK;
 }
 
-void uiControllerModeSet(ControllerModePref m) {
-  s_controllerMode = m;
-}
-
-ControllerModePref uiControllerModeGet(void) {
-  return s_controllerMode;
-}
-
-void uiControllerPromptAskOnConnectSet(bool ask) {
-  s_controllerPromptAsk = ask;
-}
-
-bool uiControllerPromptAskOnConnectGet(void) {
-  return s_controllerPromptAsk;
-}
-
 void uiUiScaleSet(UiScalePref s) {
   s_uiScalePref = s;
 }
@@ -183,16 +161,15 @@ float uiUiScalePresetFactor(UiScalePref s) {
 }
 
 bool uiShouldUseControllerMode(void) {
-  /* Steam Deck: always controller-mode regardless of pref or connection
-     state — the built-in pad is part of the device. */
+  /* Steam Deck: always controller-mode — the built-in pad is part of the
+     device.  Everywhere else, controller mode follows the active input
+     device (inputSourceCurrent): with a real controller present it starts
+     in controller mode and stays there until the player uses the
+     keyboard/mouse (revealing the desktop-only menu items and switching
+     dialogs to keyboard style), then flips back when the controller is
+     used again.  With no real controller it's always keyboard.  Keyed off
+     real-device presence + last-used activity, NOT the Steam Input
+     connection count, which is pinned at >=1 by the virtual controller. */
   if (uiModeIsSteamDeck()) return true;
-  /* Desktop: Off is unconditional; On and Auto require a currently-
-     connected gamepad.  Tracking the live state means hot-unplug
-     reverts to keyboard UX (menu bar comes back) without bookkeeping
-     a snapshot, and the previous "Auto snapshots before SDL_INIT_GAMEPAD"
-     race goes away because there's nothing to snapshot.  Difference
-     between On and Auto now lives entirely in the connect-edge prompt
-     trigger: Off asks, On/Auto enter controller mode silently. */
-  if (s_controllerMode == CONTROLLER_MODE_OFF) return false;
-  return inputGamepadIsConnected();
+  return inputSourceCurrent() == INPUT_SOURCE_GAMEPAD;
 }

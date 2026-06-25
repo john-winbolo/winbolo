@@ -2453,20 +2453,6 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("SETTINGS", "Build Auto Close On Execute", "No", buff, FILENAME_MAX);
   g_buildAutoCloseOnExecute = YESNO_TO_TRUEFALSE(buff[0]);
 
-  /* Phase 8.1 — Controller Mode pref (Off / On / Auto).  Default Auto on
-     desktop so a player who plugs in a pad is offered the prompt; the
-     prompt itself can be silenced via "Ask when controller connected".
-     Steam Deck ignores this pref (uiShouldUseControllerMode is unconditional
-     on Deck). */
-  prefsGetString("SETTINGS", "Controller Mode", "2", buff, FILENAME_MAX);
-  {
-    int v = atoi(buff);
-    if (v < 0 || v > 2) v = 2;
-    uiControllerModeSet((ControllerModePref)v);
-  }
-  prefsGetString("SETTINGS", "Controller Prompt Ask", "Yes", buff, FILENAME_MAX);
-  uiControllerPromptAskOnConnectSet(YESNO_TO_TRUEFALSE(buff[0]));
-
   /* UI scale override (0 Auto / 1 Small / 2 Medium / 3 Large).  Auto keeps
      the display-derived scale; a preset pins the ImGui scale.  Desktop-only;
      Deck/tablet/mobile ignore it. */
@@ -2807,12 +2793,6 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("SETTINGS", "Build Double Tap Road", TRUEFALSE_TO_STR(g_buildDoubleTapRoad));
   prefsSetString("SETTINGS", "Build Hold Momentary",  TRUEFALSE_TO_STR(g_buildHoldMomentary));
   prefsSetString("SETTINGS", "Build Auto Close On Execute", TRUEFALSE_TO_STR(g_buildAutoCloseOnExecute));
-
-  /* Phase 8.1 — Controller Mode pref + prompt-on-connect flag. */
-  intToStr((int)uiControllerModeGet(), buff, sizeof(buff));
-  prefsSetString("SETTINGS", "Controller Mode", buff);
-  prefsSetString("SETTINGS", "Controller Prompt Ask",
-                            TRUEFALSE_TO_STR(uiControllerPromptAskOnConnectGet()));
 
   /* UI scale override (0 Auto / 1 Small / 2 Medium / 3 Large). */
   intToStr((int)uiUiScaleGet(), buff, sizeof(buff));

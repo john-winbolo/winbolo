@@ -27,15 +27,6 @@ typedef enum {
   UI_MODE_STEAM_DECK = 2
 } UIMode;
 
-/* Controller-mode preference (Phase 8.1).  Off and On are explicit;
-   Auto opts in at startup if a gamepad is connected, otherwise off,
-   and never flips mid-session — the auto-open prompt covers hot-plug. */
-typedef enum {
-  CONTROLLER_MODE_OFF  = 0,
-  CONTROLLER_MODE_ON   = 1,
-  CONTROLLER_MODE_AUTO = 2
-} ControllerModePref;
-
 /* UI-scale override.  Auto keeps the display-derived scale; the presets
    pin the in-game / dialog ImGui scale to a fixed factor.  Desktop-only —
    Steam Deck, tablet, and mobile keep their own scaling paths and ignore
@@ -116,18 +107,6 @@ bool uiModeIsSteamDeckHardware(void);
 bool uiShouldUseControllerMode(void);
 
 /*********************************************************
-*NAME:          uiControllerModeSet / Get
-*PURPOSE:
-*  In-process getter/setter for the controllerMode pref.
-*  The on-disk value is owned by gamefront.c; these mirror
-*  it so the pref is visible to callers (sdl3imgui /
-*  imgui_settings) without dragging gamefront.h into every
-*  TU.  Set from prefs load and from the settings UI.
-*********************************************************/
-void               uiControllerModeSet(ControllerModePref m);
-ControllerModePref uiControllerModeGet(void);
-
-/*********************************************************
 *NAME:          uiUiScaleSet / Get
 *PURPOSE:
 *  In-process getter/setter for the UI-scale override.
@@ -147,16 +126,6 @@ UiScalePref uiUiScaleGet(void);
 *  tell "no override" apart from a real factor.
 *********************************************************/
 float uiUiScalePresetFactor(UiScalePref s);
-
-/*********************************************************
-*NAME:          uiControllerPromptAskOnConnectSet/Get
-*PURPOSE:
-*  Mirrors the "ask when controller connected" pref.
-*  When the prompt's "Don't ask again" is chosen the value
-*  flips to false; the settings dialog can re-enable it.
-*********************************************************/
-void uiControllerPromptAskOnConnectSet(bool ask);
-bool uiControllerPromptAskOnConnectGet(void);
 
 #ifdef __cplusplus
 }
