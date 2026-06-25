@@ -1439,6 +1439,15 @@ bool lv_processSnapshot() {
                * The flags will be re-set by any subsequent log_PlayerJoined
                * event for this slot. */
               lv_playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE, 0);
+              /* mx != 0 means the tank is on the map (alive) — the same sentinel
+                 the forward log_PlayerLocation path uses. Mark the slot alive so
+                 a mid-game seed clears the death-static overlay for living tanks;
+                 a dead/off-map tank (mx == 0) stays not-alive. inv_setSpawn for
+                 the slot is handled by the in-use sweep after this loop. */
+              if (mx != 0) {
+                g_lv->gameViewHud[count].alive = true;
+                g_lv->gameViewHud[count].respawnTimeMs = g_lv->timeRunning;
+              }
               /* A snapshot carries (0,0) lgm coords for a man who is aboard/idle
                  (the server's idle sentinel). Only mark him out for a real
                  out-of-tank position; lv_playersSetPlayer above already left

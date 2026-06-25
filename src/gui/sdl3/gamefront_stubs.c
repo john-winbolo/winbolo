@@ -25,6 +25,7 @@
 
 #include <stdbool.h>
 #include "../gamefront.h"
+#include "input_source.h"
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
   if (!out || outSize <= 0) return;
@@ -53,3 +54,9 @@ int gameFrontDialogY = -1;
 bool inputGamepadIsConnected(void) { return false; }
 void imguiSteamNavActivateMenuSet(void) {}
 void imguiSteamNavFeedCurrentContext(void) {}
+
+/* uiShouldUseControllerMode keys off the last-used input device. The full
+ * source tracker lives in input_source.c, which these targets don't link
+ * (no SDL3 input stack); report keyboard so non-Steam-Deck builds stay in
+ * keyboard mode (Steam Deck still forces controller mode via uiModeIsSteamDeck). */
+InputSource inputSourceCurrent(void) { return INPUT_SOURCE_KEYBOARD; }
