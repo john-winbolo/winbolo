@@ -1230,7 +1230,11 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
         specDrainPump(cs);
         while (SDL_PollEvent(&sdlEvent)) {
             lv_imgui_context_handle_event(&sdlEvent);
-            if (sdlEvent.type == SDL_EVENT_QUIT) {
+            /* Esc is the back affordance: leave the spectator view (including
+             * a stalled "connection lost" overlay) and return to the caller. */
+            if (sdlEvent.type == SDL_EVENT_QUIT ||
+                (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
+                 sdlEvent.key.key == SDLK_ESCAPE)) {
                 g_lv->quit = TRUE;
                 break;
             }
@@ -1331,7 +1335,11 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
                 lv_drawDirtyScreen();
                 g_lv->wantScreenUpdate = TRUE;
             }
-            if (sdlEvent.type == SDL_EVENT_QUIT) {
+            /* Esc exits the live feed back to the caller — the game-view key
+             * handler above leaves it unconsumed, so it falls through here. */
+            if (sdlEvent.type == SDL_EVENT_QUIT ||
+                (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
+                 sdlEvent.key.key == SDLK_ESCAPE)) {
                 g_lv->quit = TRUE;
                 break;
             }

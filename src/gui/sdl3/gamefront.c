@@ -1018,6 +1018,50 @@ static bool gameFrontDialogs(void) {
       dlgState = openWelcome;
       break;
     }
+    case openSpectate: {
+      /* Spectate the server the browser selected: connect a tankless
+       * spectator and hand it to the modal spectator host, which borrows
+       * the main window until the user exits (window-close or Esc).
+       *
+       * The connection rides a fresh, self-contained ClientSim — NOT the
+       * shared humanSim. A spectator needs none of the player-session
+       * wiring (chat/alliance callbacks, active-clientsim, steam presence)
+       * and the whole connect/run/disconnect cycle lives inside this case,
+       * so leaving humanSim untouched (NULL) guarantees a later Join starts
+       * from a clean slate exactly as if no spectate had happened.
+       *
+       * The address/port/name were stashed by gameFrontSetUdpOptions when
+       * the Spectate button fired (same path Join uses). The tracker is
+       * gated like a join (Internet uses it for NAT traversal, LAN doesn't);
+       * no WBN token — a spectator registers no identity. */
+      ClientSim *spectatorSim = clientSimAlloc();
+      clientSimCreate(spectatorSim);
+      clientSimConnectUdp(spectatorSim, gameFrontUdpAddress, gameFrontTargetUdp,
+                          gameFrontName, winbolonetGetCountryCode(), password,
+                          "", "", FALSE,
+                          !s_isLanOnly ? gameFrontTrackerAddr : "",
+                          gameFrontTrackerPort,
+                          /*spectator*/ TRUE);
+      if (clientSimGetConnectState(spectatorSim) == CLIENT_CONNECT_ERROR) {
+        const char *reason = clientSimGetConnectErrorReason(spectatorSim);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                          (reason && reason[0]) ? reason
+                                                : langGetText(NETERR_SERVERCONNECT),
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+      } else {
+        /* Blocking: drives the spectator transport, decodes the delayed
+         * feed, and owns the window until the user exits. The handshake to
+         * CLIENT_CONNECT_SPECTATING and the seed wait happen inside it via
+         * the spectator_drain pump — no pre-run tick loop needed here. */
+        spectatorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), spectatorSim);
+      }
+      /* Caller owns the ClientSim lifetime (spectatorRun never disconnects):
+       * tear it down so the socket/transport is released before returning. */
+      clientSimDisconnect(spectatorSim);
+      clientSimDestroy(spectatorSim);
+      dlgState = openWelcome;
+      break;
+    }
 #endif
     case openFinished:
       done = TRUE;

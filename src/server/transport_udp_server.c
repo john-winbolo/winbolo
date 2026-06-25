@@ -3438,7 +3438,10 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
         if (serverSimGetRanked(sim))                     flags |= INFO_FLAG_RANKED;
         if (serverSimIsRandomMapEnabled(sim))            flags |= INFO_FLAG_RANDOM_MAP;
         if (serverSimGetState(sim) == serverStateLobby)  flags |= INFO_FLAG_IN_LOBBY;
-        /* allow_spectators / spectator_count: spectators are future work */
+        /* Advertise spectator support so finders can enable a Spectate action;
+         * the cap accessor returns 0 when spectating is disabled. The live
+         * spectator_count has no accessor yet, so it stays 0 below. */
+        if (serverSimGetMaxSpectators(sim) > 0)          flags |= INFO_FLAG_ALLOW_SPECTATORS;
         pkt.flags = flags;
     }
     pkt.start_delay = serverSimGetStartDelay(sim);
@@ -3958,7 +3961,10 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
         if (serverSimGetRanked(sim))                     flags |= INFO_FLAG_RANKED;
         if (serverSimIsRandomMapEnabled(sim))            flags |= INFO_FLAG_RANDOM_MAP;
         if (serverSimGetState(sim) == serverStateLobby)  flags |= INFO_FLAG_IN_LOBBY;
-        /* allow_spectators / spectator_count: spectators are future work */
+        /* Advertise spectator support so finders can enable a Spectate action;
+         * the cap accessor returns 0 when spectating is disabled. The live
+         * spectator_count has no accessor yet, so it stays 0 below. */
+        if (serverSimGetMaxSpectators(sim) > 0)          flags |= INFO_FLAG_ALLOW_SPECTATORS;
         pkt.flags = flags;
     }
     pkt.start_delay = serverSimGetStartDelay(sim);
