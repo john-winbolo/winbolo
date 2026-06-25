@@ -77,7 +77,6 @@ bool labelSelf = TRUE;
 labelLen labelMsg = lblShort;
 labelLen labelTank = lblShort;
 
-bool hideMainView = FALSE;
 bool isInMenu = FALSE;
 
 keyItems keys;

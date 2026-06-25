@@ -75,7 +75,6 @@ extern "C" {
   extern bool letterboxBarsGray;
   extern bool showPillLabels;
   extern bool showBaseLabels;
-  extern bool hideMainView;
   extern int  frameRate;
   extern labelLen labelMsg;
   extern labelLen labelTank;
@@ -106,7 +105,6 @@ extern "C" {
   void windowMenuAI_toggle(struct ClientSim *cs);
   void windowMenuNetwork_toggle(struct ClientSim *cs);
   void windowMenuNetworkDebug_toggle(struct ClientSim *cs);
-  void windowHideMainView_toggle(void);
   void windowLabelOwnTank_toggle(struct ClientSim *cs);
   void windowSetMessageLabelLen(struct ClientSim *cs, labelLen newLen);
   void windowSetTankLabelLen(struct ClientSim *cs, labelLen newLen);

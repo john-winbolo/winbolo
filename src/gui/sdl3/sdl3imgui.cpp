@@ -187,7 +187,6 @@ extern "C" void windowMenuAssistant_toggle(struct ClientSim *cs);
 extern "C" void windowMenuAI_toggle(struct ClientSim *cs);
 extern "C" void windowMenuNetwork_toggle(struct ClientSim *cs);
 extern "C" void windowMenuNetworkDebug_toggle(struct ClientSim *cs);
-extern "C" void windowHideMainView_toggle(void);
 extern "C" void windowLabelOwnTank_toggle(struct ClientSim *cs);
 extern "C" void imguiWinbolonetDrawSection(bool inGame);
 extern "C" void imguiWinbolonetReset(void);
@@ -212,7 +211,6 @@ extern "C" bool smoothScrollingEnabled;
 extern "C" bool letterboxBarsGray;
 extern "C" bool showPillLabels;
 extern "C" bool showBaseLabels;
-extern "C" bool hideMainView;
 extern "C" int  frameRate;
 extern "C" labelLen labelMsg;
 extern "C" labelLen labelTank;
@@ -2614,14 +2612,6 @@ static void renderSettingsPanel(ClientSim *cs) {
                 ImGui::EndCombo();
             }
 
-            /* Hide Main View — desktop only */
-            {
-                bool hmv = (bool)hideMainView;
-                if (ImGui::Checkbox(langGetText(STR_MENU_HIDE_MAIN), &hmv)) {
-                    windowHideMainView_toggle();
-                }
-            }
-
             /* Smooth Scrolling — desktop only */
             {
                 bool ss = (bool)smoothScrollingEnabled;
@@ -2912,8 +2902,6 @@ static void renderMenuBar(ClientSim *cs) {
 
         if (ImGui::MenuItem(langGetText(STR_MENU_PILLBOX_LABELS), KMOD_PRIMARY_LABEL "P", (bool)showPillLabels)) windowShowPillLabels_toggle(cs);
         if (ImGui::MenuItem(langGetText(STR_MENU_BASE_LABELS),    KMOD_PRIMARY_LABEL "B", (bool)showBaseLabels)) windowShowBaseLabels_toggle(cs);
-        ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_MENU_HIDE_MAIN),      KMOD_PRIMARY_LABEL "H", (bool)hideMainView))   windowHideMainView_toggle();
 
         ImGui::EndMenu();
     }
@@ -3796,9 +3784,6 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             case SDL_SCANCODE_B:
                 windowShowBaseLabels_toggle(cs);
                 continue;
-            case SDL_SCANCODE_H:
-                windowHideMainView_toggle();
-                continue;
             case SDL_SCANCODE_R:
                 clientSimRequestAllianceSelected(cs);
                 continue;
@@ -4143,7 +4128,6 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->showGunsight    = showGunsight;
     s->showPillLabels  = showPillLabels;
     s->showBaseLabels  = showBaseLabels;
-    s->hideMainView    = hideMainView;
     s->noOwnLabel      = !labelSelf;
     s->labelMsg        = (int)labelMsg;
     s->labelTank       = (int)labelTank;
