@@ -3544,6 +3544,12 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             /* Retract any open menu-bar dropdown so it isn't left hanging open
                when the user tabs away to another window. */
             s_closeMenuPopups = true;
+            /* Drop held-key / latched edge state. The game polls
+               SDL_GetKeyboardState; a movement key released while we were
+               unfocused (e.g. while typing in the Send Message pop-out, which
+               steals focus without SDL clearing the keyboard) would otherwise
+               read as still held and spin the tank when focus returns. */
+            inputResetHeldKeys();
             if (soundEffects && !backgroundSound) {
                 SDL_Window *focused = SDL_GetKeyboardFocus();
                 bool focusedIsOurs = (focused == s_window);
@@ -3561,6 +3567,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             if (soundEffects) {
                 soundSetMuted(false);
             }
+            /* Clear held-key state again as input resumes, so a key still down
+               from before focus was lost doesn't immediately drive the tank —
+               the player must re-press it. */
+            inputResetHeldKeys();
             continue;
         }
 
