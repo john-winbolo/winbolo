@@ -461,9 +461,26 @@ void clientSimApplyGameEvents(ClientSim *csPtr, const GameEvent *events,
         {
           BYTE idx = events[i].data[0];
           if (idx < MAX_BASES && csPtr->sim.bs != NULL) {
-            (*csPtr->sim.bs).item[idx].armour = events[i].data[1];
+            BYTE oldArmour = (*csPtr->sim.bs).item[idx].armour;
+            BYTE newArmour = events[i].data[1];
+            (*csPtr->sim.bs).item[idx].armour = newArmour;
             (*csPtr->sim.bs).item[idx].shells = events[i].data[2];
             (*csPtr->sim.bs).item[idx].mines  = events[i].data[3];
+            /* If an adjacent base just became drivable (armour fell to the
+             * capturable threshold), arm the enlarged-clamp window so the
+             * high-RTT catch-up onto the now-passable tile glides rather than
+             * snapping. Restricted to a base within one tile of the local tank
+             * so it stays a special case, not a global clamp raise. */
+            if (oldArmour > MIN_ARMOUR_CAPTURE && newArmour <= MIN_ARMOUR_CAPTURE &&
+                MY_TANK(csPtr) != NULL) {
+              int tankMX = tankGetMX(&MY_TANK(csPtr));
+              int tankMY = tankGetMY(&MY_TANK(csPtr));
+              int baseX = (*csPtr->sim.bs).item[idx].x;
+              int baseY = (*csPtr->sim.bs).item[idx].y;
+              if (abs(tankMX - baseX) <= 1 && abs(tankMY - baseY) <= 1) {
+                csPtr->basePassableSmoothSnapshots = CLIENT_BASE_UNBLOCK_SMOOTH_SNAPSHOTS;
+              }
+            }
           }
         }
         break;
@@ -837,13 +854,20 @@ void clientApplySnapshot(ClientSim *csPtr,
             {
               WORLD postX, postY;
               TURNTYPE postAngle;
+              /* Use the enlarged clamp while the base-unblock window is open so
+               * a >256u catch-up onto a just-drivable base tile glides instead
+               * of snapping; the normal clamp applies everywhere else. */
+              float posClamp = (csPtr->basePassableSmoothSnapshots > 0)
+                                   ? CLIENT_ERR_POS_CLAMP_BASE_UNBLOCK
+                                   : CLIENT_ERR_POS_CLAMP;
               tankGetWorld(&MY_TANK(csPtr), &postX, &postY);
               postAngle = tankGetAngle(&MY_TANK(csPtr));
               clientErrSmoothAccumulate(&csPtr->errX, &csPtr->errY,
                                         &csPtr->errAngle,
                                         (float)predX - (float)postX,
                                         (float)predY - (float)postY,
-                                        predAngle - postAngle);
+                                        predAngle - postAngle,
+                                        posClamp);
             }
           }
         }
@@ -924,6 +948,12 @@ void clientApplySnapshot(ClientSim *csPtr,
             }
           }
         }
+      }
+      /* Count down the base-unblock enlarged-clamp window once per local-tank
+       * snapshot, regardless of whether this snapshot reconciled, so it lasts
+       * a bounded number of snapshots. */
+      if (csPtr->basePassableSmoothSnapshots > 0) {
+        csPtr->basePassableSmoothSnapshots--;
       }
       continue;
     }

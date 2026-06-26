@@ -67,7 +67,6 @@ struct MacMenuState {
     bool showGunsight;
     bool showPillLabels;
     bool showBaseLabels;
-    bool hideMainView;
     bool noOwnLabel;       /* !labelSelf — drawn checked when own-tank label is hidden */
     int  labelMsg;         /* lblShort / lblLong; matched against item tag */
     int  labelTank;        /* lblNone / lblShort / lblLong; matched against item tag */

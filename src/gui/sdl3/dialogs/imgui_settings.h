@@ -20,6 +20,8 @@
 #ifndef IMGUI_SETTINGS_H
 #define IMGUI_SETTINGS_H
 
+#include "../../lang.h"  /* LangFileEntry for the shared language picker */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -27,10 +29,47 @@ extern "C" {
 /* Show the pre-game settings dialog as a blocking modal loop. */
 void imguiSettingsShow(void);
 
-/* Render the shared Labels / Sound / Messages settings categories.  Called by
- * both the pre-game dialog and the in-game settings overlay so the two can't
- * drift.  cs may be NULL (pre-game, no live sim). */
-void imguiSettingsRenderCommonSections(struct ClientSim *cs);
+typedef struct SettingsRenderCtx {
+    struct ClientSim *cs;       /* NULL pre-game; live sim in-game */
+    bool inGame;                /* true = in-game overlay shell */
+    unsigned char pendingZoom;  /* in-game window-size pick: a ZOOM_FACTOR_*, or
+                                   255 = no change (0 is ZOOM_FACTOR_CUSTOM, a
+                                   valid value, so it can't be the sentinel) */
+    /* outputs the section sets, handled by the shell after the frame: */
+    bool wantKeySetup;          /* Set Keys pressed */
+    bool wantAtlasRebuild;      /* a section needs a font-atlas rebuild
+                                   (CJK language pick OR UI-scale change) */
+} SettingsRenderCtx;
+
+/* Render the shared Display & Sound tab (frame rate, window size, UI scale,
+ * letterbox).  Window size and UI scale only apply in-game; their results are
+ * returned via ctx->pendingZoom / ctx->wantAtlasRebuild for the shell to act
+ * on after the frame. */
+void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx);
+
+/* Render the shared Game/HUD tab (scrolling behaviour, gunsight).  ctx->cs is
+ * NULL pre-game; the toggles tolerate it. */
+void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx);
+
+/* Render the shared General tab (validated player name + WinBolo.net account).
+ * On a successful name change it always persists via gameFrontSetPlayerName,
+ * and updates the live sim too when ctx->cs is non-NULL. */
+void imguiSettingsRenderGeneralTab(SettingsRenderCtx *ctx);
+
+/* Seed the shared player-name edit buffer from the persisted name. Call when
+ * opening a settings shell and after the pre-game modal rebuilds its context. */
+void imguiSettingsSeedPlayerName(void);
+
+/* Render the shared language picker (combo + info popup) into the current tab.
+ * Each shell passes its own scanned entries and owns their lifecycle.  Sets
+ * ctx->wantAtlasRebuild only when the pick changes the CJK font region. */
+void imguiSettingsRenderLanguagePicker(LangFileEntry *entries, int count,
+                                       SettingsRenderCtx *ctx);
+
+/* Render the shared Controls tab content (the Set Keys button).  Sets
+ * ctx->wantKeySetup when pressed; each shell launches key setup after the
+ * frame in its own way.  In-game-only controls stay inline in that shell. */
+void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx);
 
 #ifdef __cplusplus
 }

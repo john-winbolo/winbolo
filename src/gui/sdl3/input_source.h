@@ -41,7 +41,27 @@ void inputSourceInit(void);
  * relevant. Safe to call for every event in the main pump. */
 void inputSourceUpdate(const SDL_Event *ev);
 
-/* Returns the most recently used input source. */
+/* Fold this frame's gamepad activity into the last-used source.
+ * Steam Input (Path A) controller input is polled, not delivered as
+ * SDL events, so call once per frame for it to register. */
+void inputSourceTick(void);
+
+/* Mark the last-used device explicitly. Used by the front-end menu loops,
+ * which detect controller / mouse use without going through the SDL event
+ * pump that inputSourceUpdate reads. */
+void inputSourceNoteGamepad(void);
+void inputSourceNoteKeyboard(void);
+
+/* The game warps the OS cursor (scroll-tracking, build cursor) which emits a
+ * mouse-motion event indistinguishable from real movement. Call this right
+ * after a SDL_WarpMouseInWindow so the resulting echo motion isn't mistaken
+ * for the player reaching for the mouse (which would wrongly flip to keyboard
+ * mode and pop the menu bar). */
+void inputSourceNoteCursorWarp(void);
+
+/* Returns the active input source: keyboard when no real controller is
+ * present; otherwise the most recently used device (controller at launch
+ * before any input). */
 InputSource inputSourceCurrent(void);
 
 #ifdef __cplusplus

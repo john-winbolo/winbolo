@@ -17,6 +17,7 @@ extern "C" {
 #include "../../steam/steam_input_actions.h"
 #include "imgui_steam_nav.h"
 #include "input_gamepad.h"   /* native pad: left-stick -> menu nav */
+#include "input_source.h"    /* track active device for controller-mode UI */
 #include "dialogs/imgui_keyboard.h"  /* keyboardIsOpen: our OSK owns the pad */
 /* While the Set Keys dialog is capturing a controller binding, the held
    button must reach the capture intercept as a raw button — not be injected
@@ -99,8 +100,34 @@ extern "C" void imguiSteamNavFeedCurrentContext(void) {
        event loops that don't — so without this the active controller is
        never detected in those contexts and menu nav silently dies.
        RunFrame is level-based, so the extra in-game call is harmless. */
+    steam_run_callbacks();   /* dispatch device hot-plug callbacks on the menus too */
     steam_input_run_frame();
     ImGuiIO &io = ImGui::GetIO();
+
+    /* Track the active input device for controller-mode UI in the front end.
+       (The in-game loop does this via inputSourceUpdate / inputSourceTick;
+       the menu loops don't run that SDL event pump, so do it here.)
+       Controller use = a Steam Input menu action this frame or a native pad
+       past its deadzone; keyboard/mouse use = mouse move / click / wheel.
+       Keyboard is noted after gamepad so reaching for the mouse wins a tie
+       and reveals the desktop-only menu items. */
+    {
+        bool padUse =
+            steam_input_is_action_pressed(SI_ACTION_MENU_ACCEPT)   ||
+            steam_input_is_action_pressed(SI_ACTION_MENU_CANCEL)   ||
+            steam_input_is_action_pressed(SI_ACTION_MENU_NAV_UP)   ||
+            steam_input_is_action_pressed(SI_ACTION_MENU_NAV_DOWN) ||
+            steam_input_is_action_pressed(SI_ACTION_MENU_NAV_LEFT) ||
+            steam_input_is_action_pressed(SI_ACTION_MENU_NAV_RIGHT);
+        if (!padUse) padUse = inputGamepadActivityDetected();
+        if (padUse) inputSourceNoteGamepad();
+
+        bool kbmUse = io.MouseWheel != 0.0f ||
+                      io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f;
+        for (int b = 0; b < 5 && !kbmUse; b++)
+            if (io.MouseDown[b]) kbmUse = true;
+        if (kbmUse) inputSourceNoteKeyboard();
+    }
 
     /* Don't inject any nav while a controller binding is being captured — the
        raw button press belongs to the capture, not to menu activation. */

@@ -94,7 +94,6 @@ labelLen labelMsg = lblShort;
 labelLen labelTank = lblShort;
 
 bool isInMenu = FALSE;
-bool hideMainView = FALSE;
 
 keyItems keys;
 
@@ -692,7 +691,6 @@ void windowAutomaticScrolling_toggle(ClientSim *cs) {
 
 void windowShowPillLabels_toggle(void) { showPillLabels = !showPillLabels; }
 void windowShowBaseLabels_toggle(void) { showBaseLabels = !showBaseLabels; }
-void windowHideMainView_toggle(void) { hideMainView = !hideMainView; }
 void windowLabelOwnTank_toggle(ClientSim *cs) {
     labelSelf = !labelSelf;
     if (cs) clientSimSetLabelOwnTank(cs, labelSelf);
@@ -762,7 +760,7 @@ void windowAllowPlayerNameChange(bool allow) { (void)allow; }
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
                             int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
-    if (hideMainView == FALSE && drawBusy == FALSE) {
+    if (drawBusy == FALSE) {
         BYTE cursorX, cursorY;
         bool showCursor = clientSimGetCursorPos(cs, &cursorX, &cursorY);
         sdl3DrawSetNetFailed(clientSimGetNetStatus(cs) == netFailed);
@@ -839,13 +837,13 @@ void frontEndManClear(ClientSim *cs) {
 }
 
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
-    if (hideMainView == FALSE && drawBusy == FALSE) {
+    if (drawBusy == FALSE) {
         sdl3DrawDownloadScreen(cs, NULL, justBlack);
     }
 }
 
 void frontEndDrawReturningToLobby(ClientSim *cs) {
-    if (hideMainView == FALSE && drawBusy == FALSE) {
+    if (drawBusy == FALSE) {
         sdl3DrawReturningToLobby(cs);
     }
 }

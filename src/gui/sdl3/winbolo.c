@@ -171,9 +171,6 @@ keyItems keys;
 /* Fix for breaking draw code with scrolling messages */
 static bool drawBusy = FALSE;
 
-/* Hide the main view or not */
-bool hideMainView = FALSE;
-
 /* Are we in a menu or not */
 bool isInMenu = FALSE;
 
@@ -905,9 +902,7 @@ static Uint32 SDLCALL windowFrameRateTimer(void *userdata, SDL_TimerID timerID, 
 
   /* Signal the main thread to redraw — all SDL rendering must
      happen on the main thread (SDL_Renderer is not thread-safe). */
-  if (hideMainView == FALSE) {
-    SDL_SetAtomicInt(&needsRedraw, 1);
-  }
+  SDL_SetAtomicInt(&needsRedraw, 1);
   return (Uint32)frameRateTime;
 }
 
@@ -1459,7 +1454,12 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 
 void windowShowGunsight_toggle(ClientSim *cs) {
   showGunsight = !showGunsight;
-  clientSimSetGunsight(cs, showGunsight);
+  if (cs) clientSimSetGunsight(cs, showGunsight);
+  gameFrontSaveCurrentPrefs();
+}
+
+void windowLetterboxBarsGray_toggle(void) {
+  letterboxBarsGray = !letterboxBarsGray;
   gameFrontSaveCurrentPrefs();
 }
 
@@ -1567,10 +1567,6 @@ void windowMenuNetwork_toggle(ClientSim *cs) {
 void windowMenuNetworkDebug_toggle(ClientSim *cs) {
   showNetworkDebugMessages = !showNetworkDebugMessages;
   if (cs) clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
-}
-
-void windowHideMainView_toggle(void) {
-  hideMainView = !hideMainView;
 }
 
 void windowLabelOwnTank_toggle(ClientSim *cs) {
@@ -1776,7 +1772,7 @@ void windowStartTutorial(void) {
 void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
                             screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
                             int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
-  if (hideMainView == FALSE && drawBusy == FALSE) {
+  if (drawBusy == FALSE) {
     BYTE cursorX = 0, cursorY = 0;
     bool showCursor;
 
@@ -1966,7 +1962,7 @@ void frontEndManClear(ClientSim *cs) {
 }
 
 void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
-  if (hideMainView == FALSE && drawBusy == FALSE) {
+  if (drawBusy == FALSE) {
     DWORD tick = SDL_GetTicks();
     sdl3DrawDownloadScreen(cs, NULL, justBlack);
     dwSysFrame += (SDL_GetTicks() - tick);
@@ -1974,7 +1970,7 @@ void frontEndDrawDownload(ClientSim *cs, bool justBlack) {
 }
 
 void frontEndDrawReturningToLobby(ClientSim *cs) {
-  if (hideMainView == FALSE && drawBusy == FALSE) {
+  if (drawBusy == FALSE) {
     DWORD tick = SDL_GetTicks();
     sdl3DrawReturningToLobby(cs);
     dwSysFrame += (SDL_GetTicks() - tick);
