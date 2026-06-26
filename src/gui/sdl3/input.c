@@ -391,6 +391,37 @@ void inputCleanup(void) {
 void inputActivate(void) {
 }
 
+/*********************************************************
+*NAME:          inputResetHeldKeys
+*PURPOSE:
+*  Drops all held-key and latched edge state. Called on a
+*  window focus transition so a key released while the
+*  game window was unfocused (no KEY_UP delivered) can't
+*  stay "held" in the polled keyboard state and drive the
+*  tank when focus returns.
+*********************************************************/
+void inputResetHeldKeys(void) {
+  /* SDL only clears its global key array when focus leaves the app entirely
+     (focus -> NULL); a move to one of our own pop-out windows leaves it
+     untouched. Force it up here so a stale held key reads as released until
+     it is physically pressed again. */
+  SDL_ResetKeyboard();
+
+  /* Latched edge / auto-repeat state owned by this module — SDL_ResetKeyboard
+     doesn't touch these. */
+  mineKeyEventDown = FALSE;
+  mineKeyPhysicalDown = FALSE;
+  mineKeyEventsActive = FALSE;
+  pillViewKeyWasDown = FALSE;
+  s_controllerPillView = false;
+  scrollKeyCount = 0;
+  pillViewCycleMs = 0;
+  pillViewStepMs = 0;
+  smoothScrollAccumX = 0;
+  smoothScrollAccumY = 0;
+  lastGunsightAdj = 0;
+}
+
 /* End build-cursor mode.  When `execute` and the "exit executes the build"
    option are both set, dispatch the build at the cursor tile first (keeping
    the current build selection); then exit.  Cancel passes execute=false. */
