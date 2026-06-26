@@ -703,6 +703,7 @@ M.WALL_SHIELD_COMMITMENT        = 200  -- extra switch penalty when wall-shield 
 M.ATTACK_TANK_COMMITMENT_BONUS  = 50   -- extra commitment when currently fighting a tank (see it through)
 M.ATTACK_PILL_COMMITMENT_BONUS  = 80   -- extra commitment when mid-attack on a pill; also revokes hysteresis exemption for attack_tank/capture_pill so they can't interrupt for free
 M.ATTACK_BASE_COMMITMENT_BONUS  = 250  -- extra commitment when mid-attack on a base — applied while we still have >=1 shell. Once you start a base, follow through; the ONLY non-urgent reason to break off is literally running out of shells (0). Critical-armour flee still preempts via the urgent goal-override path.
+M.CAPTURE_BASE_COMMITMENT_BONUS = 250  -- extra commitment when mid-CAPTURE of a base (driving onto a neutral/ground-down base). Comparable to ATTACK_BASE: if you did the work to grind a base down, follow through and actually take it — don't let a normal-cost goal (another base/pill, non-critical refuel) steal it. No shell gate (capturing needs no ammo). Critical-armour flee still preempts via the urgent goal-override path.
 M.BLITZ_STANDOFF_SCORE_BUCKET   = 50   -- soldier blitz-standoff pick: ellipse spots are bucketed into score bands this wide; all spots in the best spot's band are the "best pool", and the soldier offers the one CLOSEST to its tank (least travel for ~equal shield quality) instead of the globally-top-scored far spot.
 M.EARLY_CAPTURE_BASE_HYST_EXEMPT = true -- opening phase: capture_base skips ALL hysteresis (switch + commit + history), same as capture_pill
 M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
@@ -1209,7 +1210,8 @@ M.REPOSITION_VOTE_INITIATE_COOLDOWN     = 3000 -- ~60s @ 50Hz: after opening a v
 M.REPOSITION_VOTE_RECENT_MEMORY_TICKS   = 6000 -- ~120s @ 50Hz: a bot votes NO if it remembers ANY reposition within this window
 M.REPOSITION_VOTE_ENEMY_NEAR_TILES      = 15   -- vote NO if an enemy tank is within this many tiles of the pill AND nothing else covers it
 M.REPOSITION_VOTE_TANK_COVER_TILES      = 10   -- vote NO if the pill IS covered by >=1 other pill but an enemy tank is within this many tiles
-M.REPOSITION_VOTE_APPROVAL_TTL          = 300  -- ticks an unconsumed PASS stays valid before it expires (bot must commit within ~6s)
+M.REPOSITION_VOTE_APPROVAL_TTL          = 1500 -- ~30s @ 50Hz: an approved PASS stays valid this long; the initiator's reposition runs at REPOSITION_APPROVED_COST for the whole window (long enough to travel + pick up + re-drop)
+M.REPOSITION_APPROVED_COST              = 80   -- fixed reposition cost for the initiator on the pill its team vote APPROVED; beats routine goals (capture/base/place) so the move actually wins the pool, while sub-80 survival/refuel goals can still preempt
 M.REPOSITION_VOTE_RESULT_LATCH_TICKS    = 120  -- keep the vote-result panel on screen this long after resolve so it's readable
 -- Exponential "redundant pill" discount: the MORE friendly pills already cover a
 -- pill, the exponentially cheaper it is to move (a redundant back pill is the

@@ -24,6 +24,7 @@
 #include "transport_udp.h"
 #include "mdns_advertise.h"
 #include "bot_manager.h"
+#include "brain_record.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../common/mp_diag_log.h"
 #include "../winbolonet/winbolonet_server.h"
@@ -318,6 +319,51 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
   }
 }
 
+/* True once a brain-debug recording session has been opened for the current
+ * game; cleared on the running->gameOver edge so the next game opens a fresh
+ * debug_sessions/<TS>/. Only meaningful when brainRecordIsEnabled() (armed via
+ * -braindebug). */
+static bool s_braindbgSessionOpen = false;
+
+/* Begin a fresh per-game brain-debug session: create a new debug_sessions/<TS>/,
+ * point the recorder at it, and (re)publish DEBUG_SESSION_DIR to every bot so
+ * print2 / optimize / logger output lands in this game's dir. Called on the
+ * first running tick of each game so lobby time is excluded and each game is a
+ * self-contained, tick-0-anchored recording in its own dir. */
+static void serverLifecycleStartBrainDebugSession(ServerSim *sim) {
+  brainRecordEndGame();   /* close any prior file + reset to a clean slate */
+
+  time_t t = time(NULL);
+  struct tm tmv;
+#ifdef _WIN32
+  localtime_s(&tmv, &t);
+#else
+  localtime_r(&t, &tmv);
+#endif
+  char ts[32];
+  strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
+  char dir[FILENAME_MAX];
+  snprintf(dir, sizeof(dir), "debug_sessions/%s", ts);
+  if (!SDL_CreateDirectory(dir)) {
+    fprintf(stderr, "brain_record: couldn't create %s (%s); recording off this game\n",
+            dir, SDL_GetError());
+    return;
+  }
+  brainRecordSetSessionDir(dir);
+
+  /* Publish the new dir to each bot and reset its print2 target so the
+   * finished game's log is flushed and the new game's lines land in `dir`. */
+  char setSession[FILENAME_MAX + 32];
+  snprintf(setSession, sizeof(setSession), "_G.DEBUG_SESSION_DIR=\"%s\"", dir);
+  for (int i = 0; i < MAX_TANKS; i++) {
+    if (!serverSimIsBot(sim, (BYTE)i)) continue;
+    serverSimBotExecLua(sim, (BYTE)i, setSession);
+    serverSimBotExecLua(sim, (BYTE)i,
+        "local ok,p=pcall(require,'print2'); if ok and p.reset_log then p.reset_log() end");
+  }
+  fprintf(stderr, "brain_record: new game -> %s\n", dir);
+}
+
 void serverInstanceTick(ServerSim *sim) {
   /* Measure the entire tick wall-clock — outside the mutex acquire so
    * the EWMA captures contention wait time too. Single bottom-of-function
@@ -346,6 +392,14 @@ void serverInstanceTick(ServerSim *sim) {
   transportUdpServerDrainPendingRemovals(sim);
 
   if (sim->state == serverStateRunning) {
+    /* First running tick of this game → open a fresh recording session
+     * (deferred from startup so lobby/countdown time is excluded and the
+     * timeline anchors at this game's tick 0). Runs before serverSimBotTick so
+     * DEBUG_SESSION_DIR is set before any bot thinks / brainRecordTick fires. */
+    if (brainRecordIsEnabled() && !s_braindbgSessionOpen) {
+      serverLifecycleStartBrainDebugSession(sim);
+      s_braindbgSessionOpen = true;
+    }
     /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
     if (serverSimGetNumBots(sim) > 0) {
       serverSimBotTick(sim, sim->botAiType);
@@ -361,6 +415,13 @@ void serverInstanceTick(ServerSim *sim) {
     Uint64 simEnd = SDL_GetPerformanceCounter();
     /* If game ended during this tick, publish game-over events */
     if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
+      /* Game ended → finalize this game's recording so the .btr is complete on
+       * disk; clearing the flag makes the next game open a fresh dir (the
+       * map-rotate restart below re-enters running on a later tick). */
+      if (s_braindbgSessionOpen) {
+        brainRecordEndGame();
+        s_braindbgSessionOpen = false;
+      }
       /* Decide the win/exit message and WBN crediting. The policy lives in
        * the sim core (serverSimResolveGameOver) so the dedicated server and
        * the in-process SP/host both resolve a game over identically. */

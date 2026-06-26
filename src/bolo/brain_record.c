@@ -367,6 +367,25 @@ void brainRecordTick(ServerSim *sim) {
     }
 }
 
+void brainRecordEndGame(void) {
+    /* Close the finished game's file so it's complete on disk, and reset the
+     * per-game state so the NEXT game (after a fresh brainRecordSetSessionDir)
+     * opens a clean file anchored at its own first tick. Keeps g_enabled
+     * (armed) and g_sessionDir (the host overwrites the dir per game). */
+    if (g_gz) {
+        gzclose(g_gz);
+        g_gz = NULL;
+    }
+    g_sinceFlush   = 0;
+    g_lastTick     = 0xFFFFFFFFu;
+    g_failed       = false;
+    g_openAttempts = 0;
+    g_hasPrevMap   = false;
+    g_frameCount   = 0;
+    g_haveSkip     = false;
+    memset(g_skipViz, 0, sizeof g_skipViz);
+}
+
 void brainRecordShutdown(void) {
     if (g_gz) {
         gzclose(g_gz);

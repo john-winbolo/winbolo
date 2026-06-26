@@ -1627,42 +1627,40 @@ int main(int argc, char **argv) {
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
       char botName[64];
-      char sessionDir[FILENAME_MAX] = "";
       /* -braindebug: turn BRAIN_DEBUG_MODE on for every bot (set BEFORE they're
        * created so each brain constructs with debug on → un-stripped brain +
        * print2 logging). Lets you audit bot comms on a dedicated server: each
        * bot writes print2_bot<N>.log (grep MSG_TX for outbound /info traffic,
        * SYNC_P6 / process_message for what it received).
        *
-       * Also creates a timestamped debug_sessions/<TS>/ dir (matching
-       * BrainTest's layout) and points the brain recorder at it, so
-       * brainrec.btr lands there for BrainTest replay. BrainTest detects a
-       * loadable winbolods session by the presence of brainrec.btr. */
+       * Recording is ARMED here, but the debug_sessions/<TS>/ dir, file open,
+       * and per-bot DEBUG_SESSION_DIR publish are deferred to each game's first
+       * running tick (server_lifecycle.c) — so lobby time never enters the
+       * timeline and every game gets its own fresh, tick-0-anchored dir.
+       * BrainTest detects a loadable winbolods session by brainrec.btr. */
       if (argExist(argc, argv, "braindebug") == TRUE) {
         serverSimSetBotDefaultDebugMode(serverSim, true);
-        time_t t = time(NULL);
-        struct tm tmv;
-#ifdef _WIN32
-        localtime_s(&tmv, &t);
-#else
-        localtime_r(&t, &tmv);
-#endif
-        char ts[32];
-        strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", &tmv);
-        snprintf(sessionDir, sizeof(sessionDir), "debug_sessions/%s", ts);
-        if (SDL_CreateDirectory(sessionDir)) {
-          brainRecordSetSessionDir(sessionDir);
-          brainRecordSetEnabled(true);
-        } else {
-          fprintf(stderr, "Warning: couldn't create %s (%s); brain recording off\n",
-                  sessionDir, SDL_GetError());
-          sessionDir[0] = '\0';
+        /* print2 is stripped from the opt/ brain SOURCE, so running an opt/
+         * -brain path under -braindebug yields brainrec.btr but zero
+         * print2_botN.log — the exact footgun the usage text warns about.
+         * Auto-redirect an "opt/" (or "opt\") path segment to the base path
+         * so the per-bot debug logs always appear in -braindebug. */
+        {
+          char *optSeg = strstr(brainPath, "opt/");
+          if (!optSeg) optSeg = strstr(brainPath, "opt\\");
+          if (optSeg && (optSeg == brainPath ||
+                         optSeg[-1] == '/' || optSeg[-1] == '\\')) {
+            /* Splice out the 4-char "opt/" (or "opt\") segment in place. */
+            memmove(optSeg, optSeg + 4, strlen(optSeg + 4) + 1);
+            fprintf(stderr, "-braindebug: redirected opt/ brain to base path "
+                            "'%s' (print2 is stripped from opt/)\n", brainPath);
+          }
         }
-        fprintf(stderr, "Bot brain debug mode ON (print2 + brainrec.btr%s%s; "
-                        "use a base -brain path, not opt/, so print2 isn't "
-                        "stripped)\n",
-                sessionDir[0] ? " -> " : " (dir create failed)",
-                sessionDir[0] ? sessionDir : "");
+        brainRecordSetEnabled(true);   /* arm; dir + file open at game start */
+        fprintf(stderr, "Bot brain debug mode ON (print2 + brainrec.btr; a fresh "
+                        "debug_sessions/<TS>/ is created at each game's first "
+                        "tick. Use a base -brain path, not opt/, so print2 isn't "
+                        "stripped)\n");
       }
       int allyTeam = 0;  /* 0 = no allying; 1-16 = team to place bots on */
       if (argExist(argc, argv, "allybots") == TRUE) {
@@ -1695,19 +1693,6 @@ int main(int argc, char **argv) {
                 numBots, brainPath, allyTeam);
       } else {
         fprintf(stderr, "Added %d bot(s) with brain '%s'\n", numBots, brainPath);
-      }
-      /* Publish the session dir to each bot's Lua state (forward slashes work
-       * for Lua io.open on Windows) so the brain's print2 / optimize.log /
-       * logger output co-locates with brainrec.btr in debug_sessions/<TS>/. */
-      if (sessionDir[0] != '\0') {
-        char setSession[FILENAME_MAX + 32];
-        snprintf(setSession, sizeof(setSession),
-                 "_G.DEBUG_SESSION_DIR=\"%s\"", sessionDir);
-        for (i = 0; i < numBots; i++) {
-          if (serverSimIsBot(serverSim, (BYTE)i)) {
-            serverSimBotExecLua(serverSim, (BYTE)i, setSession);
-          }
-        }
       }
     } else if (numBots > 0) {
       fprintf(stderr, "Warning: -bots specified but no -brain path given\n");

@@ -187,6 +187,20 @@ local function handoff()
   consecutive_failures = 0
 end
 
+-- Reset the per-bot log target so the NEXT handoff re-resolves the path from
+-- the (possibly just-updated) DEBUG_SESSION_DIR. The host calls this on a new
+-- game start (via serverSimBotExecLua) so each game's print2 lands in that
+-- game's fresh debug_sessions/<TS>/ dir instead of appending to the previous
+-- game's file. Flushes any pending tail to the OLD path first so the finished
+-- game's log is complete, then drops the cached path/handle.
+function M.reset_log()
+  if #pending > 0 then pcall(handoff) end          -- flush tail to old path
+  if file then pcall(function() file:close() end) end
+  file           = nil
+  log_path       = nil
+  writer_started = false
+end
+
 -- Per-tick: serialize this tick's buffer into one block string, append
 -- it to `pending`, and hand the batch to the writer only every
 -- FLUSH_INTERVAL_S seconds. Near-zero cost on the ticks in between.

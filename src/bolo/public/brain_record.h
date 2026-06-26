@@ -106,6 +106,14 @@ const char *brainRecordGetSessionDir(void);
  * is available; de-dupes repeated calls for the same tick. */
 void brainRecordTick(ServerSim *sim);
 
+/* End the current game's recording: flush + close the .btr and reset the
+ * recorder's per-game state (tick anchor, map keyframe, legend skip-set)
+ * WITHOUT disarming (g_enabled stays on). Call on the running->gameOver edge.
+ * After a fresh brainRecordSetSessionDir(), the next brainRecordTick opens a
+ * new file — so each game is a self-contained, tick-0-anchored recording in
+ * its own debug_sessions/<TS>/ dir. */
+void brainRecordEndGame(void);
+
 /* Flush + close the output file. Call at server shutdown. */
 void brainRecordShutdown(void);
 

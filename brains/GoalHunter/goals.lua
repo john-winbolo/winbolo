@@ -1818,7 +1818,13 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- the deficit role (35% back / 45% front / 20% aggressive, >=1 back).
   local pf_counts  = PP.counts(world, state.tick)
   local pf_total   = pf_counts.back + pf_counts.front + pf_counts.aggro
-  local pf_targets = PP.targets(pf_total + 1)
+  -- Project the back/front/aggro targets over the pills we actually have to
+  -- place (built + THIS tank's carried hoard), not just +1. A category is
+  -- buildable while its built count is under its projected target (N < T), so a
+  -- hoard can fill back/front/aggro up to the 35/45/20 ratio instead of being
+  -- carried forever when every category was "full" at the old +1 projection.
+  local pf_place_n = math.max(1, info.carried_pills or 1)
+  local pf_targets = PP.targets(pf_total + pf_place_n)
   -- Biggest category deficit → placement is cheaper (more urgent) when our
   -- pill types are out of ratio, and 0 when balanced.
   local pf_max_deficit = 0
@@ -2052,6 +2058,10 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     -- No placeable, non-surplus spot anywhere in range. The right move is to
     -- KEEP CARRYING (return nil) until we're somewhere a needed pill belongs —
     -- there is intentionally no fallback that would dump a surplus pill nearby.
+    print2(string.format("PLACE_NO_SPOT t=%d center=(%d,%d) R=%d util_surplus=%d need=%s counts(b/f/a)=%d/%d/%d targets=%d/%d/%d — every placeable tile unplaceable or surplus-skipped; keep carrying",
+      state.tick or 0, search_mx or -1, search_my or -1, R, util_surplus or 0, tostring(pf_need_cat),
+      pf_counts.back or 0, pf_counts.front or 0, pf_counts.aggro or 0,
+      pf_targets.back or 0, pf_targets.front or 0, pf_targets.aggro or 0))
     return nil
   end
 
@@ -2300,7 +2310,13 @@ function M.get_strategic_place_heatmap(state, world, info)
   -- terms. (Kept in sync by hand — if you change the eval scan, change this.)
   local pf_counts  = PP.counts(world, state.tick)
   local pf_total   = pf_counts.back + pf_counts.front + pf_counts.aggro
-  local pf_targets = PP.targets(pf_total + 1)
+  -- Project the back/front/aggro targets over the pills we actually have to
+  -- place (built + THIS tank's carried hoard), not just +1. A category is
+  -- buildable while its built count is under its projected target (N < T), so a
+  -- hoard can fill back/front/aggro up to the 35/45/20 ratio instead of being
+  -- carried forever when every category was "full" at the old +1 projection.
+  local pf_place_n = math.max(1, info.carried_pills or 1)
+  local pf_targets = PP.targets(pf_total + pf_place_n)
   local unguarded_bases = {}
   for _, b in pairs(world.bases) do
     if b.owner == "friendly"
@@ -2598,7 +2614,8 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
       built_count = built_count + 1
     end
   end
-  local built_block = built_count <= (C.REPOSITION_MIN_TEAM_PILLS or 4)
+  -- Team-pill floor removed: reposition regardless of how many pills are built.
+  local built_block = false
 
   local best_pill, best_pid, best_pcost
   local bCat, bCov, bAdj, bSurp, bOver, bLeg, bTank = nil, 0, 0, 0, 0, 0, 0
@@ -2822,9 +2839,6 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
   local reject = nil
   if finishing_swap then
     reject = "finishing_swap"   -- killed our pill; let the pickup/place complete
-  elseif sc.built_count and sc.built_count <= (C.REPOSITION_MIN_TEAM_PILLS or 4) then
-    -- Hard team-pill floor: too few BUILT pills to take one offline at all.
-    reject = "too_few_built"
   elseif not best_pill then
     -- Distinguish "back line is at/under target" (the common, healthy case)
     -- from genuinely having no friendly pills, so the pool viz reads clearly.
@@ -2878,6 +2892,28 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
              "REJECT{%s} | balance back %d/%d front %d/%d aggro %d/%d",
              reject, counts.back, targets.back, counts.front, targets.front,
              counts.aggro, targets.aggro) or "",
+    }
+  end
+
+  -- APPROVED MOVE: a passed team vote granted THIS bot (the initiator) this
+  -- exact pill. Drop the cost to a fixed, routine-goal-beating 80 for the whole
+  -- approval window so the move actually wins the pool and gets executed —
+  -- before this, an approved reposition only exposed its raw ~900 path cost and
+  -- never beat the bot's everyday goals, so no approved move was ever consumed.
+  -- Only sub-80 survival/refuel goals preempt. reposition_vote.lua keeps the
+  -- approval live for ~30s (REPOSITION_VOTE_APPROVAL_TTL). Once locked the cost
+  -- chain below holds it at the cheaper PILL_REPOSITION_LOCK_COST.
+  if not repos_locked and state._repo_approved_pid == best_pid then
+    return {
+      cost = C.REPOSITION_APPROVED_COST or 80,
+      goal = { kind = "capture_pill", mx = best_pill.mx, my = best_pill.my,
+               wx = U.m2w(best_pill.mx), wy = U.m2w(best_pill.my),
+               target_id = best_pid, reposition = true },
+      desc = BRAIN_POOL_VIZ and string.format(
+             "APPROVED{%d} reposition pill#%d@(%d,%d) — won team vote, ~%ds window left",
+             C.REPOSITION_APPROVED_COST or 80, best_pid, best_pill.mx, best_pill.my,
+             math.floor(((C.REPOSITION_VOTE_APPROVAL_TTL or 1500)
+                         - ((state.tick or 0) - (state._repo_approved_tick or 0))) / 50)) or "",
     }
   end
 
@@ -3618,6 +3654,13 @@ function M.build_eval_queue(state, world, info)
   if not state.cost_cache then state.cost_cache = {} end
   for id, obj in pairs(world.pills) do
     local reject = filter_capture_pill(obj, state)
+    -- Deep-sea "bait" pills: a dead pill sitting on deep water can't be taken on
+    -- foot (the tank/LGM would drown). Reject for capture_pill unless we're
+    -- afloat. (perc.deepsea_pill_ids flags them; the bait_pill_marker viz.)
+    if not reject and perc and perc.deepsea_pill_ids and perc.deepsea_pill_ids[id]
+       and not (info and info.inboat) then
+      reject = { reason = "deepsea_no_boat" }
+    end
     if BRAIN_DEBUG_MODE and (obj.health or 0) == 0 then print2(string.format("CAPTURE_CAND t=%d id=%s @(%s,%s) hp=%s owner=%s in_tank=%s carrier=%s synth=%s last_seen=%s reject=%s", now, tostring(id), tostring(obj.mx), tostring(obj.my), tostring(obj.health), tostring(obj.owner), tostring(obj.in_tank), tostring(obj.carrier), tostring(obj._synth_carry), tostring(obj.last_seen), reject and reject.reason or "nil")) end
     if not reject or reject.reason ~= "alive" then
       queue[#queue + 1] = { pool = 4, id = id, obj = obj, reject = reject }
@@ -7730,6 +7773,7 @@ local function goal_selection(state, world, info, quiet)
     -- base commitment so they aren't swallowed by GOAL_COMMITMENT_CAP.
     local cur_is_attack_tank = (state.goal.kind == "attack_tank")
     local cur_is_attack_base = (state.goal.kind == "attack_base")
+    local cur_is_capture_base = (state.goal.kind == "capture_base")
     for _, c in ipairs(pool) do
       -- Engage-break: an attack_tank goal that detected a mid-take
       -- threat (tank in range, further from pill than us) is exempt
@@ -7769,6 +7813,13 @@ local function goal_selection(state, world, info, quiet)
       -- still preempts via init.lua's urgent goal-override (separate from this).
       if cur_is_attack_base and (info.shells or 0) > 0 then
         effective_commit = effective_commit + C.ATTACK_BASE_COMMITMENT_BONUS
+      end
+      -- Capture follow-through: once you've started capturing a base (driving
+      -- onto a neutral / just-ground-down base), hold it as hard as the grind.
+      -- No shell gate — capturing needs no ammo. Critical-armour flee still
+      -- preempts via init.lua's urgent goal-override (separate from this).
+      if cur_is_capture_base then
+        effective_commit = effective_commit + C.CAPTURE_BASE_COMMITMENT_BONUS
       end
       if cg ~= cur_group then
         c.cost = c.cost + C.GOAL_SWITCH_PENALTY + effective_commit
