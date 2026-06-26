@@ -73,6 +73,19 @@ bool vizWindowWantsTextInput(void) {
     return want;
 }
 
+/* Drop keyboard focus from the filter/label inputs. Call when the V window is
+ * hidden — the context isn't stepped while hidden, so an active InputText would
+ * otherwise stay "focused" (capturing text input / re-focusing on reopen). */
+void vizWindowClearFocus(void) {
+    if (!sImGuiInitialized || !sCtx) return;
+    ImGuiContext *prev = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(sCtx);
+    ImGui::ClearActiveID();
+    ImGui::GetIO().WantTextInput = false;
+    ImGui::GetIO().WantCaptureKeyboard = false;
+    if (prev) ImGui::SetCurrentContext(prev);
+}
+
 /* Build a sort-order vector each frame (registry insertion
  * order isn't necessarily readable — we sort by id/label). */
 static int sort_order_buf[VIZ_REG_MAX];

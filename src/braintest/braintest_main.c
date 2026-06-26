@@ -894,29 +894,30 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
                 }
             }
 
+            /* Keep overlays PACKED in RAM (~28 B/cmd) rather than inflating to a
+             * 160-byte OverlayCmd each — that 5.7x expansion across every frame
+             * is what ballooned memory. botOverlayCmds[slot] holds the raw packed
+             * bytes (viz_idx remapped in place); the playback patch decodes just
+             * the current frame on demand. */
             uint32_t oc = bt_gz_u32(g);
             bool keepBot = (slot < MAX_TANKS);
-            if (keepBot && oc) {
-                f->botOverlayCmds[slot] = (OverlayCmd *)malloc(oc * sizeof(OverlayCmd));
-                f->botOverlayCmdCount[slot] = (int)oc;
-            }
+            uint8_t *pk = NULL; size_t pcap = 0, plen = 0;
             for (uint32_t k = 0; k < oc; k++) {
-                OverlayCmd cmd; memset(&cmd, 0, sizeof cmd);
-                cmd.type = (OverlayCmdType)bt_gz_u8(g);
-                cmd.x1 = bt_gz_f32(g); cmd.y1 = bt_gz_f32(g);
-                cmd.x2 = bt_gz_f32(g); cmd.y2 = bt_gz_f32(g);
-                cmd.radius = bt_gz_f32(g);
-                cmd.r = bt_gz_u8(g); cmd.g = bt_gz_u8(g); cmd.b = bt_gz_u8(g); cmd.a = bt_gz_u8(g);
-                cmd.anchor = bt_gz_u8(g);
-                uint8_t rvi = bt_gz_u8(g);
-                cmd.viz_idx = vizRemap[rvi];
-                uint8_t tl = bt_gz_u8(g);
-                if (tl) {
-                    int rl = tl < OVERLAY_TEXT_MAX ? tl : OVERLAY_TEXT_MAX - 1;
-                    gzread(g, cmd.text, tl);
-                    cmd.text[rl] = '\0';
+                if (plen + 28 + OVERLAY_TEXT_MAX > pcap) {
+                    pcap = pcap ? pcap * 2 : (size_t)oc * 30u + 512u;
+                    pk = (uint8_t *)realloc(pk, pcap);
                 }
-                if (keepBot) f->botOverlayCmds[slot][k] = cmd;
+                gzread(g, pk + plen, 28);                    /* 27 fixed + textLen */
+                pk[plen + 26] = vizRemap[pk[plen + 26]];     /* remap viz_idx */
+                uint8_t tl = pk[plen + 27];
+                if (tl) gzread(g, pk + plen + 28, tl);
+                plen += 28u + tl;
+            }
+            if (keepBot && pk) {
+                f->botOverlayCmds[slot]     = (OverlayCmd *)pk;  /* packed; decoded at render */
+                f->botOverlayCmdCount[slot] = (int)oc;
+            } else if (pk) {
+                free(pk);
             }
 
             uint32_t pl = bt_gz_u32(g);
@@ -943,6 +944,45 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
         rb->hasPrev = true;
     }
     return loaded;
+}
+
+/* Loaded-session overlays are stored packed in botOverlayCmds[]; the current
+ * playback frame is decoded on demand into these reused, lazily-grown per-bot
+ * scratch buffers (so only one frame's worth is inflated at a time). */
+static OverlayCmd *g_ovlScratch[MAX_TANKS];
+static int         g_ovlScratchCap[MAX_TANKS];
+
+/* Decode one bot's packed overlay block (count records) for the current frame
+ * into its scratch buffer. Returns the OverlayCmd count; g_ovlScratch[oi] holds
+ * the decoded array. */
+static int decodeLoadedOverlays(BYTE oi, const uint8_t *p, int count) {
+    if (count <= 0 || !p || oi >= MAX_TANKS) return 0;
+    if (g_ovlScratchCap[oi] < count) {
+        OverlayCmd *nb = (OverlayCmd *)realloc(g_ovlScratch[oi], (size_t)count * sizeof(OverlayCmd));
+        if (!nb) return 0;
+        g_ovlScratch[oi] = nb;
+        g_ovlScratchCap[oi] = count;
+    }
+    OverlayCmd *out = g_ovlScratch[oi];
+    const uint8_t *q = p;
+    for (int k = 0; k < count; k++) {
+        OverlayCmd *c = &out[k];
+        memset(c, 0, sizeof *c);
+        c->type = (OverlayCmdType)q[0];
+        memcpy(&c->x1, q + 1, 4); memcpy(&c->y1, q + 5, 4);
+        memcpy(&c->x2, q + 9, 4); memcpy(&c->y2, q + 13, 4);
+        memcpy(&c->radius, q + 17, 4);
+        c->r = q[21]; c->g = q[22]; c->b = q[23]; c->a = q[24];
+        c->anchor = q[25]; c->viz_idx = q[26];
+        uint8_t tl = q[27];
+        if (tl) {
+            int rl = tl < OVERLAY_TEXT_MAX ? tl : OVERLAY_TEXT_MAX - 1;
+            memcpy(c->text, q + 28, (size_t)tl);
+            c->text[rl] = '\0';
+        }
+        q += 28 + tl;
+    }
+    return count;
 }
 
 /* ---- Load-session browser (the 'O' window) ----------------------------- */
@@ -4745,8 +4785,16 @@ static void appRender(BrainTestApp *app) {
                 savedOvlBufs[oi]  = ovl;
                 savedOvlCmds[oi]  = ovl->cmds;
                 savedOvlCount[oi] = ovl->count;
-                ovl->cmds  = pf_->botOverlayCmds[oi];
-                ovl->count = pf_->botOverlayCmdCount[oi];
+                if (g_loadedSession) {
+                    /* botOverlayCmds[] holds PACKED bytes — decode this frame. */
+                    int n = decodeLoadedOverlays(oi, (const uint8_t *)pf_->botOverlayCmds[oi],
+                                                 pf_->botOverlayCmdCount[oi]);
+                    ovl->cmds  = g_ovlScratch[oi];
+                    ovl->count = n;
+                } else {
+                    ovl->cmds  = pf_->botOverlayCmds[oi];
+                    ovl->count = pf_->botOverlayCmdCount[oi];
+                }
             }
 
             /* ── viz_detail registry ── point reads at the recorded
@@ -5701,6 +5749,7 @@ int main(int argc, char *argv[]) {
                 if (evWin == app.window) {
                     appQuit = TRUE;
                 } else if (evWin == app.vizWindow) {
+                    vizWindowClearFocus();   /* drop filter focus on close */
                     SDL_HideWindow(app.vizWindow);
                 } else if (evWin == app.panelWindow) {
                     SDL_HideWindow(app.panelWindow);
@@ -5929,6 +5978,7 @@ int main(int argc, char *argv[]) {
                         SDL_ShowWindow(app.vizWindow);
                         SDL_RaiseWindow(app.vizWindow);
                     } else {
+                        vizWindowClearFocus();   /* drop filter focus on close */
                         SDL_HideWindow(app.vizWindow);
                     }
                     break;
