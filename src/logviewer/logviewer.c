@@ -876,6 +876,193 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
 }
 
 /* --------------------------------------------------------------------------
+ * lvHostRenderFrame -- Shared per-frame scene + ImGui render dispatch.
+ *
+ * Renders the current mode: the block-grid overview when !gameView, the
+ * followed game view when gameView (with the cameraSlot setSelf wrap so tank
+ * sprite colours track the camera), then runs the ImGui pass for that mode and
+ * presents. Pure extraction of logViewerRun's frame body, shared with
+ * spectatorRun.
+ *
+ * overlay, when non-NULL, is drawn centred just before the ImGui render (the
+ * live spectator's "connection lost" message); the standalone viewer passes
+ * NULL.
+ *
+ * Live-spectator additions are gated on lv_screenSpecIsLiveMode(), which only
+ * spectatorRun ever sets: the DVR scrubber is kept reachable in the game view,
+ * and the block-grid pass renders a safe scrubber + event-feed subset instead
+ * of the viewer's menu bar and full panel set -- the menu bar's File/Action
+ * items (and Ctrl shortcuts) would tear down the live session, and the game-
+ * info / comments panels need a finished log's header / WBN key. The viewer is
+ * never in live mode, so its behaviour is unchanged. */
+static void lvHostRenderFrame(const char *overlay) {
+    /* Clear the frame */
+    SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
+    SDL_RenderClear(g_lv->renderer);
+
+    if (g_lv->isLoaded == FALSE) {
+        lv_drawSplashForImGui();
+    } else {
+        /* In game-view mode, recentre the camera on the spectated tank
+         * BEFORE lv_screenUpdate runs so the tile renderer reads the
+         * fresh offsets this frame. */
+        if (g_lv->gameView) {
+            lv_imgui_game_view_update_camera(g_lv);
+        }
+        /* Game view renders directly to the framebuffer (no
+         * textureTarget caching) so the lv_drawBlitGameTexture
+         * fallback would just blit a stale logviewer frame on top of
+         * a freshly-rendered game-view frame. Force the full update
+         * path while game view is active. */
+        if (g_lv->wantScreenUpdate == TRUE || g_lv->gameView) {
+            BYTE savedSelf = 0;
+            bool didSetSelf = FALSE;
+            if (g_lv->gameView) {
+                /* Set self to the spectated tank BEFORE lv_screenUpdate
+                 * builds screenTanks. Tank sprite frame indices
+                 * (TANK_SELF_* / GOOD_* / EVIL_*) are baked from
+                 * lv_playersGetSelf at update time — without this, map
+                 * sprite colours would lock to whatever self was when the
+                 * log started and wouldn't follow Tab. */
+                savedSelf = lv_playersGetSelf();
+                lv_playersSetSelf(g_lv->cameraSlot);
+                didSetSelf = TRUE;
+            }
+            lv_clientMutexWaitFor();
+            lv_drawDirtyScreen();
+            lv_screenUpdate(redraw);
+            lv_clientMutexRelease();
+            g_lv->wantScreenUpdate = FALSE;
+            if (didSetSelf) {
+                lv_playersSetSelf(savedSelf);
+            }
+        } else {
+            lv_drawBlitGameTexture();
+        }
+    }
+
+    /* Render ImGui UI */
+    lv_imgui_context_newframe();
+#ifdef __APPLE__
+    /* Marshal in-window menu state into the native NSMenu once per
+     * frame. Cheap walk over cached NSMenuItem pointers; checkmarks
+     * and enable states mirror the ImGui menu's predicates. */
+    {
+        struct LvMenuState lvms;
+        memset(&lvms, 0, sizeof(lvms));
+        lvms.isLoaded         = g_lv->isLoaded ? true : false;
+        lvms.playIsPlaying    = g_lv->playIsPlaying ? true : false;
+        lvms.modeInformation  = lv_imgui_get_mode_information() ? true : false;
+        lvms.useTeamColours   = g_lv->useTeamColours ? true : false;
+        lvms.gameViewActive   = g_lv->gameView ? true : false;
+        lvms.tankCentred      = lv_imgui_get_tank_centred() ? true : false;
+        lvms.soundEffects     = g_lv->isSoundsPlaying ? true : false;
+        lvms.soundVolume      = g_lv->soundVolume;
+        lvms.dnsLookups       = lv_imgui_get_dns_lookups() ? true : false;
+        lvms.showControls     = lv_g_show_controls_window;
+        lvms.showEvents       = lv_g_show_events_window;
+        lvms.showGameInfo     = lv_g_show_game_info_window;
+        lvms.showItemInfo     = lv_g_show_item_info_window;
+        lvms.showComments     = lv_g_show_comments_window;
+        lvms.zoomStepIndex    = lv_drawGetZoomStepIndex();
+        lvms.zoomStepCount    = lv_drawGetZoomStepCount();
+        lvms.fromMainMenu     = g_lv->fromMainMenu ? true : false;
+        lv_mac_menubar_refresh(&lvms);
+    }
+#endif
+    if (g_lv->gameView) {
+        lv_imgui_render_game_menu_bar(g_lv);
+        lv_imgui_render_game_view(g_lv);
+        /* Live spectator keeps the DVR scrubber reachable in game view; the
+         * standalone viewer's game view shows no scrubber (never live mode). */
+        if (lv_screenSpecIsLiveMode()) {
+            lv_g_show_controls_window = true;
+            lv_imgui_controls_window();
+        }
+        lv_g_reset_window_positions = false;
+        if (overlay != NULL) {
+            lv_imgui_center_message(overlay);
+        }
+        lv_imgui_dialogs_render();
+        lv_imgui_context_render();
+    } else if (lv_screenSpecIsLiveMode()) {
+        /* Live spectator block-grid overview: DVR scrubber + live event feed.
+         * The viewer's menu bar and game-info / comments panels are gated off
+         * here (see the function banner). */
+        lv_g_show_controls_window = true;
+        lv_imgui_controls_window();
+        lv_g_show_events_window = true;
+        lv_imgui_events_window();
+        lv_g_reset_window_positions = false;
+        if (overlay != NULL) {
+            lv_imgui_center_message(overlay);
+        }
+        lv_imgui_dialogs_render();
+        lv_imgui_context_render();
+
+        lv_imgui_game_viewport_process_input();
+    } else {
+        bool compact = (uiModeIsTablet() || uiModeIsSteamDeck());
+        if (compact) {
+            /* Start opens the popup menu — replaces the desktop top
+             * menu bar in tablet/Deck compact mode. */
+            lvMenuPollOpenInput();
+            /* Each panel _window() early-outs on its lv_g_show_* flag
+             * (desktop-side visibility prefs).  In compact mode there
+             * is no menu to toggle those, so save/force/restore around
+             * the calls — never persisting any change. */
+            bool save_ctrl  = lv_g_show_controls_window;
+            bool save_evt   = lv_g_show_events_window;
+            bool save_gi    = lv_g_show_game_info_window;
+            bool save_ii    = lv_g_show_item_info_window;
+            bool save_cmt   = lv_g_show_comments_window;
+            lv_g_show_controls_window  = true;
+            lv_g_show_events_window    = (lvCompactGetActivePanel() == LV_PANEL_EVENTS);
+            lv_g_show_game_info_window = (lvCompactGetActivePanel() == LV_PANEL_GAME_INFO);
+            lv_g_show_item_info_window = (lvCompactGetActivePanel() == LV_PANEL_ITEM_INFO);
+            lv_g_show_comments_window  = (lvCompactGetActivePanel() == LV_PANEL_COMMENTS);
+
+            /* Toolbar (controls window) is always visible in compact;
+             * it IS the toolbar (playback + speed + seek). */
+            lv_imgui_controls_window();
+            /* Single content panel, switched via the popup menu. */
+            switch (lvCompactGetActivePanel()) {
+                case LV_PANEL_GAME_INFO: lv_imgui_game_info_window(); break;
+                case LV_PANEL_ITEM_INFO: lv_imgui_item_info_window(); break;
+                case LV_PANEL_COMMENTS:  lv_imgui_comments_window();  break;
+                case LV_PANEL_EVENTS:
+                default:                 lv_imgui_events_window();    break;
+            }
+
+            lv_g_show_controls_window  = save_ctrl;
+            lv_g_show_events_window    = save_evt;
+            lv_g_show_game_info_window = save_gi;
+            lv_g_show_item_info_window = save_ii;
+            lv_g_show_comments_window  = save_cmt;
+        } else {
+            lv_imgui_main_menu_bar();
+            lv_imgui_cache_menu_bar_height();
+            lv_imgui_controls_window();
+            lv_imgui_game_info_window();
+            lv_imgui_events_window();
+            lv_imgui_item_info_window();
+            lv_imgui_comments_window();
+        }
+        lv_g_reset_window_positions = false;
+        /* Popup stacks over panels, under blocking modal dialogs. */
+        if (compact) {
+            lvMenuRender(g_lv);
+        }
+        lv_imgui_dialogs_render();
+        lv_imgui_context_render();
+
+        lv_imgui_game_viewport_process_input();
+    }
+
+    SDL_RenderPresent(g_lv->renderer);
+}
+
+/* --------------------------------------------------------------------------
  * logViewerRun -- Core viewer loop.
  *
  * Takes ownership of the event loop until the user exits.
@@ -1026,150 +1213,8 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
             }
         }
 
-        /* Clear the frame */
-        SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
-        SDL_RenderClear(g_lv->renderer);
-
-        if (g_lv->isLoaded == FALSE) {
-            lv_drawSplashForImGui();
-        } else {
-            /* In game-view mode, recentre the camera on the spectated tank
-             * BEFORE lv_screenUpdate runs so the tile renderer reads the
-             * fresh offsets this frame. */
-            if (g_lv->gameView) {
-                lv_imgui_game_view_update_camera(g_lv);
-            }
-            /* Game view renders directly to the framebuffer (no
-             * textureTarget caching) so the lv_drawBlitGameTexture
-             * fallback would just blit a stale logviewer frame on top of
-             * a freshly-rendered game-view frame. Force the full update
-             * path while game view is active. */
-            if (g_lv->wantScreenUpdate == TRUE || g_lv->gameView) {
-                BYTE savedSelf = 0;
-                bool didSetSelf = FALSE;
-                if (g_lv->gameView) {
-                    /* Set self to the spectated tank BEFORE
-                     * lv_screenUpdate builds screenTanks. Tank sprite
-                     * frame indices (TANK_SELF_* / GOOD_* / EVIL_*)
-                     * are baked from lv_playersGetSelf at update
-                     * time — without this, map sprite colours would
-                     * lock to whatever self was when the log started
-                     * and wouldn't follow Tab. The game-view frame
-                     * path used to do this around the panel renders,
-                     * but those run after lv_screenUpdate has already
-                     * baked the frames; wrapping the update is what
-                     * makes the colours track the camera. */
-                    savedSelf = lv_playersGetSelf();
-                    lv_playersSetSelf(g_lv->cameraSlot);
-                    didSetSelf = TRUE;
-                }
-                lv_clientMutexWaitFor();
-                lv_drawDirtyScreen();
-                lv_screenUpdate(redraw);
-                lv_clientMutexRelease();
-                g_lv->wantScreenUpdate = FALSE;
-                if (didSetSelf) {
-                    lv_playersSetSelf(savedSelf);
-                }
-            } else {
-                lv_drawBlitGameTexture();
-            }
-        }
-
-        /* Render ImGui UI */
-        lv_imgui_context_newframe();
-#ifdef __APPLE__
-        /* Marshal in-window menu state into the native NSMenu once per
-         * frame. Cheap walk over cached NSMenuItem pointers; checkmarks
-         * and enable states mirror the ImGui menu's predicates. */
-        {
-            struct LvMenuState lvms;
-            memset(&lvms, 0, sizeof(lvms));
-            lvms.isLoaded         = g_lv->isLoaded ? true : false;
-            lvms.playIsPlaying    = g_lv->playIsPlaying ? true : false;
-            lvms.modeInformation  = lv_imgui_get_mode_information() ? true : false;
-            lvms.useTeamColours   = g_lv->useTeamColours ? true : false;
-            lvms.gameViewActive   = g_lv->gameView ? true : false;
-            lvms.tankCentred      = lv_imgui_get_tank_centred() ? true : false;
-            lvms.soundEffects     = g_lv->isSoundsPlaying ? true : false;
-            lvms.soundVolume      = g_lv->soundVolume;
-            lvms.dnsLookups       = lv_imgui_get_dns_lookups() ? true : false;
-            lvms.showControls     = lv_g_show_controls_window;
-            lvms.showEvents       = lv_g_show_events_window;
-            lvms.showGameInfo     = lv_g_show_game_info_window;
-            lvms.showItemInfo     = lv_g_show_item_info_window;
-            lvms.showComments     = lv_g_show_comments_window;
-            lvms.zoomStepIndex    = lv_drawGetZoomStepIndex();
-            lvms.zoomStepCount    = lv_drawGetZoomStepCount();
-            lvms.fromMainMenu     = g_lv->fromMainMenu ? true : false;
-            lv_mac_menubar_refresh(&lvms);
-        }
-#endif
-        if (g_lv->gameView) {
-            lv_imgui_render_game_menu_bar(g_lv);
-            lv_imgui_render_game_view(g_lv);
-            lv_g_reset_window_positions = false;
-            lv_imgui_dialogs_render();
-            lv_imgui_context_render();
-        } else {
-            bool compact = (uiModeIsTablet() || uiModeIsSteamDeck());
-            if (compact) {
-                /* Start opens the popup menu — replaces the desktop top
-                 * menu bar in tablet/Deck compact mode. */
-                lvMenuPollOpenInput();
-                /* Each panel _window() early-outs on its lv_g_show_* flag
-                 * (desktop-side visibility prefs).  In compact mode there
-                 * is no menu to toggle those, so save/force/restore around
-                 * the calls — never persisting any change. */
-                bool save_ctrl  = lv_g_show_controls_window;
-                bool save_evt   = lv_g_show_events_window;
-                bool save_gi    = lv_g_show_game_info_window;
-                bool save_ii    = lv_g_show_item_info_window;
-                bool save_cmt   = lv_g_show_comments_window;
-                lv_g_show_controls_window  = true;
-                lv_g_show_events_window    = (lvCompactGetActivePanel() == LV_PANEL_EVENTS);
-                lv_g_show_game_info_window = (lvCompactGetActivePanel() == LV_PANEL_GAME_INFO);
-                lv_g_show_item_info_window = (lvCompactGetActivePanel() == LV_PANEL_ITEM_INFO);
-                lv_g_show_comments_window  = (lvCompactGetActivePanel() == LV_PANEL_COMMENTS);
-
-                /* Toolbar (controls window) is always visible in compact;
-                 * it IS the toolbar (playback + speed + seek). */
-                lv_imgui_controls_window();
-                /* Single content panel, switched via the popup menu. */
-                switch (lvCompactGetActivePanel()) {
-                    case LV_PANEL_GAME_INFO: lv_imgui_game_info_window(); break;
-                    case LV_PANEL_ITEM_INFO: lv_imgui_item_info_window(); break;
-                    case LV_PANEL_COMMENTS:  lv_imgui_comments_window();  break;
-                    case LV_PANEL_EVENTS:
-                    default:                 lv_imgui_events_window();    break;
-                }
-
-                lv_g_show_controls_window  = save_ctrl;
-                lv_g_show_events_window    = save_evt;
-                lv_g_show_game_info_window = save_gi;
-                lv_g_show_item_info_window = save_ii;
-                lv_g_show_comments_window  = save_cmt;
-            } else {
-                lv_imgui_main_menu_bar();
-                lv_imgui_cache_menu_bar_height();
-                lv_imgui_controls_window();
-                lv_imgui_game_info_window();
-                lv_imgui_events_window();
-                lv_imgui_item_info_window();
-                lv_imgui_comments_window();
-            }
-            lv_g_reset_window_positions = false;
-            /* Popup stacks over panels, under blocking modal dialogs. */
-            if (compact) {
-                lvMenuRender(g_lv);
-            }
-            lv_imgui_dialogs_render();
-            lv_imgui_context_render();
-
-            lv_imgui_game_viewport_process_input();
-        }
-
-        SDL_RenderPresent(g_lv->renderer);
+        /* Render the current mode (block-grid / game view) and present. */
+        lvHostRenderFrame(NULL);
     }
 
     /* -----------------------------------------------------------------------
@@ -1291,11 +1336,11 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
         SDL_RenderPresent(g_lv->renderer);
     }
 
-    /* Seed the decoder, then force the game view on. The force is guarded on a
-     * successful load: the game-view camera needs an in-use tank slot, which
-     * only a seeded snapshot supplies, so init_camera on an unloaded decoder
-     * must not run. A failed/absent seed leaves gameView FALSE and the steady
-     * loop below is skipped — spectatorRun falls through to a clean teardown. */
+    /* Seed the decoder and open in the block-grid overview. The seed load is
+     * guarded: a failed/absent seed leaves isLoaded FALSE and the steady loop
+     * below is skipped — spectatorRun falls through to a clean teardown.
+     * gameView stays FALSE; the grave key drives the on-demand game-view
+     * setup/teardown once the spectator is running. */
     if (!g_lv->quit) {
         uint8_t *seed = NULL;
         uint32_t seedLen = 0;
@@ -1310,11 +1355,6 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
         }
 
         if (g_lv->isLoaded) {
-            g_lv->savedUseTeamColours = g_lv->useTeamColours;
-            g_lv->useTeamColours = FALSE;
-            lv_drawGameViewSetup(/* zoom */ 3);
-            lv_imgui_game_view_init_camera(g_lv);
-            g_lv->gameView = TRUE;
             lv_drawDirtyScreen();
             g_lv->wantScreenUpdate = TRUE;
             /* A delivered seed means the feed is alive: clear any await-phase
@@ -1328,21 +1368,23 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
     }
 
     /* Steady loop: pump the transport, drain every record queued this frame into
-     * the decoder, pump once more, then render the delayed game view. The server
-     * sends ~one record per delayed tick, so draining all queued records each
-     * frame needs no host-side throttle. Runs only once the game view was forced
-     * (a seed loaded); a stalled feed overlays "connection lost" until exit. */
-    while (!g_lv->quit && g_lv->gameView) {
+     * the decoder, pump once more, then render the current mode. The grave key
+     * toggles between the block-grid overview and the followed game view; the
+     * loop runs off !quit so a mode toggle never exits it. The server sends ~one
+     * record per delayed tick, so draining all queued records each frame needs
+     * no host-side throttle. Entered only once a seed loaded; a stalled feed
+     * overlays "connection lost" until exit. */
+    while (!g_lv->quit && g_lv->isLoaded) {
         SDL_Event sdlEvent;
         SpecDrainRecord rec;
         bool drainedAny = false;
 
         specDrainPump(cs);
         while (SDL_PollEvent(&sdlEvent)) {
-            /* Reuse the viewer's game-view input (Tab cycle / zoom / pan). The
-             * grave on/off toggle stays suppressed (always game-view), but ,-.
-             * seek is enabled — it parks the live feed like the scrubber does. */
-            if (lvHostHandleGameViewKey(sdlEvent, /* allowToggle */ FALSE,
+            /* Reuse the viewer's game-view input. The grave key toggles
+             * between the block-grid overview and the game view (allowToggle),
+             * and ,-. seek parks the live feed like the scrubber (allowSeek). */
+            if (lvHostHandleGameViewKey(sdlEvent, /* allowToggle */ TRUE,
                                         /* allowSeek */ TRUE)) {
                 continue;
             }
@@ -1361,6 +1403,22 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
                 sdlEvent.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
                 lv_drawDirtyScreen();
                 g_lv->wantScreenUpdate = TRUE;
+            }
+            /* Mouse-wheel zoom for the block-grid overview, anchored on the
+             * cursor — the spectator's menu-bar zoom path is gated off, so the
+             * wheel is the overview's only zoom. Skipped while ImGui owns the
+             * mouse (cursor over the scrubber) and in game view (fixed size;
+             * 1-4 keys zoom there). Mirrors logViewerRun's wheel handling. */
+            if (sdlEvent.type == SDL_EVENT_MOUSE_WHEEL) {
+                if (!lv_imgui_want_capture_mouse() && !g_lv->gameView) {
+                    int mx = (int)sdlEvent.wheel.mouse_x;
+                    int my = (int)sdlEvent.wheel.mouse_y;
+                    if (sdlEvent.wheel.y > 0.0f) {
+                        lv_drawZoomIn(mx, my);
+                    } else if (sdlEvent.wheel.y < 0.0f) {
+                        lv_drawZoomOut(mx, my);
+                    }
+                }
             }
             /* Esc exits the live feed back to the caller — the game-view key
              * handler above leaves it unconsumed, so it falls through here. */
@@ -1400,51 +1458,22 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
 
         g_lv->wantScreenUpdate = TRUE;
 
-        /* Render the forced game view directly. The multi-mode viewer render
-         * path (panels / compact mode / scrubber) is deliberately not reused —
-         * the spectator is always in game view. Mirrors logViewerRun's game-view
-         * render branch: set self to the camera slot around lv_screenUpdate so
-         * the tank sprite colours track the followed tank. */
-        SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
-        SDL_RenderClear(g_lv->renderer);
-        lv_imgui_game_view_update_camera(g_lv);
-        {
-            BYTE savedSelf = lv_playersGetSelf();
-            lv_playersSetSelf(g_lv->cameraSlot);
-            lv_clientMutexWaitFor();
-            lv_drawDirtyScreen();
-            lv_screenUpdate(redraw);
-            lv_clientMutexRelease();
-            g_lv->wantScreenUpdate = FALSE;
-            lv_playersSetSelf(savedSelf);
-        }
-        lv_imgui_context_newframe();
-        lv_imgui_render_game_menu_bar(g_lv);
-        lv_imgui_render_game_view(g_lv);
-        /* DVR scrubber panel (rewind / play-pause / seek slider), forced visible
-         * each frame; its jump-to-live button is shown only in spectator live
-         * mode. Slider/rewind seeks park the feed via lv_screenSpecFrameUpdate. */
-        lv_g_show_controls_window = true;
-        lv_imgui_controls_window();
-        lv_g_reset_window_positions = false;
-        /* Stalled mid-playback: the frozen last frame stays up with a
-         * "connection lost" overlay until the user exits. */
-        if (connectionLost) {
-            lv_imgui_center_message("Connection lost");
-        }
-        lv_imgui_dialogs_render();
-        lv_imgui_context_render();
-        SDL_RenderPresent(g_lv->renderer);
+        /* Render the current mode via the shared dispatch. In game view it
+         * keeps the DVR scrubber; in the block-grid overview it renders the
+         * scrubber + live event feed (the live-mode gate suppresses the
+         * viewer's menu bar and game-info / comments panels). A stalled feed
+         * overlays "connection lost" on the frozen last frame until exit. */
+        lvHostRenderFrame(connectionLost ? "Connection lost" : NULL);
     }
 
     /* Leave live-DVR mode so the stream pump / transport revert to standalone
      * behaviour for any later log session in this process. */
     lv_screenSpecSetLiveMode(FALSE);
 
-    /* Teardown: restore the game-view window size/tile counts (set only if the
-     * seed loaded and the view was forced), run the shared shutdown, and drop
-     * the seed control stash. The ClientSim/transport belongs to the caller — do
-     * not disconnect it here. */
+    /* Teardown: if the spectator exited while in the game view, restore its
+     * window size/tile counts and team-colour state (the grave toggle set them
+     * on entry), run the shared shutdown, and drop the seed control stash. The
+     * ClientSim/transport belongs to the caller — do not disconnect it here. */
     if (g_lv->gameView) {
         lv_drawGameViewTeardown();
         g_lv->useTeamColours = g_lv->savedUseTeamColours;
