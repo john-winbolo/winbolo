@@ -390,6 +390,11 @@ typedef struct {
 int  serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut);
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
 
+/* Fill `out` with base `baseIdx0`'s (0-based) current shells/mines/armour as an
+ * EVENT_BASE_STOCK (data[0]=baseIdx0, data[1]=armour, data[2]=shells,
+ * data[3]=mines). */
+void serverSimBuildBaseStockEvent(ServerSim *sim, BYTE baseIdx0, GameEvent *out);
+
 /* If `closest` (1-based, or BASE_NOT_FOUND) differs from the recipient's last
  * recorded closest base, fill `out` with that base's current stock as an
  * EVENT_BASE_STOCK and return true; always updates the recorded value.
@@ -404,6 +409,12 @@ bool serverSimTakeClosestBaseStock(ServerSim *sim, BYTE recipient, BYTE closest,
  * emits the push (it shared sim state across clients). Bots are excluded, as
  * in the build — they read base stock via the periodic full sync. */
 bool serverSimTakeArrivalBaseStock(ServerSim *sim, BYTE clientIdx, GameEvent *out);
+
+/* World-unit ceiling for selecting `client`'s closest base when gating which
+ * base's stock to send. Wider than the client's display range (BASE_STATUS_RANGE)
+ * by an RTT-sized margin so the stock is cached before the client's display
+ * switches to that base. See the definition for the margin formula. */
+WORLD serverSimClosestBaseSendRange(const ServerSim *sim, BYTE client);
 
 /* Server-side handler for PACKET_GAME_VOTE_TOGGLE. T2 because the only
  * legitimate callers are the two transport-layer dispatch sites — the

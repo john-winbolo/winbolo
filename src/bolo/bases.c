@@ -877,7 +877,7 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
 *  yValue - Y Map Location of the tank
 *********************************************************/
 BYTE basesGetClosest(GameSim *sim, WORLD tankX, WORLD tankY) {
-  return basesGetClosestForPlayer(sim, sim->viewPlayer, tankX, tankY);
+  return basesGetClosestForPlayer(sim, sim->viewPlayer, tankX, tankY, BASE_STATUS_RANGE);
 }
 
 /*********************************************************
@@ -895,8 +895,12 @@ BYTE basesGetClosest(GameSim *sim, WORLD tankX, WORLD tankY) {
 *  player - Player number to evaluate alliances against
 *  tankX  - X Map Location of the tank
 *  tankY  - Y Map Location of the tank
+*  range  - Selection ceiling in world units: a base is only returned if it
+*           is strictly nearer than this. Callers displaying the closest base
+*           pass BASE_STATUS_RANGE; server stock-send gating passes a wider
+*           ceiling so stock is revealed before the client switches to it.
 *********************************************************/
-BYTE basesGetClosestForPlayer(GameSim *sim, BYTE player, WORLD tankX, WORLD tankY) {
+BYTE basesGetClosestForPlayer(GameSim *sim, BYTE player, WORLD tankX, WORLD tankY, WORLD range) {
   bases *value = &sim->bs;
   BYTE returnValue; /* Value to return */
   WORLD x;
@@ -908,7 +912,7 @@ BYTE basesGetClosestForPlayer(GameSim *sim, BYTE player, WORLD tankX, WORLD tank
   BYTE count; /* Looping Variable */
   BYTE self;  /* Yourselfs player number */
 
-  oldDistance = BASE_STATUS_RANGE; /* The range of the gunsight is the distance for a base to be shown */
+  oldDistance = range; /* Caller-chosen selection ceiling (BASE_STATUS_RANGE for display) */
   returnValue = BASE_NOT_FOUND-1;
   count = 0;
   self = player;

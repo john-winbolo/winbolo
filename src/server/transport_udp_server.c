@@ -4675,11 +4675,13 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             clientMY = (BYTE)(cwy >> 8);
         }
 
-        /* Client's closest neutral/allied base — best-effort base stock events
-         * are culled to this base only (computed once per client). */
+        /* Client's closest neutral/allied base drives the arrival push; the
+         * per-base stock cull below keeps stock for every neutral/allied base
+         * within this same send range, not just the closest. */
+        WORLD stockRange = serverSimClosestBaseSendRange(sim, (BYTE)c);
         BYTE closestBase = BASE_NOT_FOUND;
         if (hasPos) {
-            closestBase = basesGetClosestForPlayer(serverSimGetGameSim(sim), (BYTE)c, cwx, cwy);
+            closestBase = basesGetClosestForPlayer(serverSimGetGameSim(sim), (BYTE)c, cwx, cwy, stockRange);
         }
 
         /* On arrival (closest base changed) push that base's current stock
@@ -4749,6 +4751,12 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
             uint8_t evType = serverSimGetEvents(sim)[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
+                /* Per-recipient working copy so a non-closest dead base's stock
+                 * event can be reshaped (armour-only) without mutating the
+                 * shared event; forceReliable promotes that copy to the
+                 * reliable channel. */
+                GameEvent evToSend = serverSimGetEvents(sim)[i];
+                bool forceReliable = false;
                 /* Filter EVENT_MINE_VISIBLE: tank mines (bit 7 set) go to all,
                  * LGM mines go only to the placer and their allies */
                 if (evType == EVENT_MINE_VISIBLE) {
@@ -4768,16 +4776,31 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                                        serverSimGetEvents(sim)[i].data[0],
                                        serverSimGetEvents(sim)[i].data[1])) continue;
                 }
-                /* Cull base stock to the client's closest neutral/allied base */
+                /* Base stock is culled to neutral/allied bases. Exception: a
+                 * dead enemy base (armour <= MIN_ARMOUR_CAPTURE) is delivered to
+                 * non-friendly recipients too — armour only, with shells/mines
+                 * zeroed so its reserve stays hidden — on the reliable channel,
+                 * so the shooter unblocks the now-drivable tile promptly and the
+                 * one-shot transition can't be dropped. */
                 if (evType == EVENT_BASE_STOCK) {
-                    if (closestBase == BASE_NOT_FOUND ||
-                        (BYTE)(closestBase - 1) != serverSimGetEvents(sim)[i].data[0]) {
-                        continue;
+                    BYTE bIdx = serverSimGetEvents(sim)[i].data[0];
+                    GameSim *gs = serverSimGetGameSim(sim);
+                    BYTE bOwner = (*gs->bs).item[bIdx].owner;
+                    bool bFriendly = (bOwner == NEUTRAL) || (bOwner == (BYTE)c) ||
+                                     playersIsAllie(&gs->plyrs, bOwner, (BYTE)c);
+                    if (!bFriendly) {
+                        if (serverSimGetEvents(sim)[i].data[1] <= MIN_ARMOUR_CAPTURE) {
+                            evToSend.data[2] = 0;
+                            evToSend.data[3] = 0;
+                            forceReliable = true;
+                        } else {
+                            continue;
+                        }
                     }
                 }
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
-                int evLen = packGameEvent(evBuf, &serverSimGetEvents(sim)[i]);
-                if (gameEventIsReliable(evType)) {
+                int evLen = packGameEvent(evBuf, &evToSend);
+                if (forceReliable || gameEventIsReliable(evType)) {
                     if (!channelSend(&udpServer.channelMux[c], CHANNEL_GAME,
                                      evBuf, (uint16_t)evLen)) {
                         /* Channel window full — defer the disconnect off the
