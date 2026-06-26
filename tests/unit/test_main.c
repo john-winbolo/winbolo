@@ -266,7 +266,6 @@ static const UnitTestEntry s_tests[] = {
     { "input_redundancy",                        run_input_redundancy                        },
     { "edge_send_predicate",                     run_edge_send_predicate                     },
     { "bases_closest_for_player",                run_bases_closest_for_player                },
-    { "bases_base_in_stock_range",               run_bases_base_in_stock_range               },
     { "base_stock_visibility",                   run_base_stock_visibility                   },
     { "base_armour_fog_of_war",                  run_base_armour_fog_of_war                  },
     { "two_clients_full_sync_independent",       run_two_clients_full_sync_independent       },

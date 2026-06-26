@@ -2926,7 +2926,6 @@ set(_unit_test_names
     starts_open_ideal_friendly_pill_eligible
     input_redundancy
     bases_closest_for_player
-    bases_base_in_stock_range
     base_stock_visibility
     base_armour_fog_of_war
     two_clients_full_sync_independent

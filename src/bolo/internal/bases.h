@@ -406,14 +406,6 @@ BYTE basesGetClosest(struct GameSim *sim, WORLD tankX, WORLD tankY);
  * display logic switches to it. */
 BYTE basesGetClosestForPlayer(struct GameSim *sim, BYTE player, WORLD tankX, WORLD tankY, WORLD range);
 
-/* Per-base counterpart of basesGetClosestForPlayer's filter + distance test:
- * returns true iff baseIdx is a real base owned NEUTRAL or allied to `player`
- * and its centre lies strictly within `range` world units of (tankX, tankY).
- * The server stock cull gates each base's shells/mines on this so every
- * neutral/allied base within send range keeps real ammo, not just the closest. */
-bool basesBaseInStockRange(struct GameSim *sim, BYTE player, WORLD tankX, WORLD tankY,
-                           BYTE baseIdx, WORLD range);
-
 /*********************************************************
 *NAME:          basesGetStats
 *AUTHOR:        John Morrison

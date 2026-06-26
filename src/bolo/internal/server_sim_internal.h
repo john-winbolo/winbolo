@@ -390,6 +390,11 @@ typedef struct {
 int  serverSimBuildViewports(ServerSim *sim, BYTE clientIdx, ViewportRect *out, int maxOut);
 bool inAnyViewport(const ViewportRect *vps, int count, int mx, int my);
 
+/* Fill `out` with base `baseIdx0`'s (0-based) current shells/mines/armour as an
+ * EVENT_BASE_STOCK (data[0]=baseIdx0, data[1]=armour, data[2]=shells,
+ * data[3]=mines). */
+void serverSimBuildBaseStockEvent(ServerSim *sim, BYTE baseIdx0, GameEvent *out);
+
 /* If `closest` (1-based, or BASE_NOT_FOUND) differs from the recipient's last
  * recorded closest base, fill `out` with that base's current stock as an
  * EVENT_BASE_STOCK and return true; always updates the recorded value.

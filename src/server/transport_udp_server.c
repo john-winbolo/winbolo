@@ -4776,18 +4776,19 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                                        serverSimGetEvents(sim)[i].data[0],
                                        serverSimGetEvents(sim)[i].data[1])) continue;
                 }
-                /* Base stock is normally culled to the client's closest
-                 * neutral/allied base. Exception: a dead base (armour <=
-                 * MIN_ARMOUR_CAPTURE) is delivered to non-closest recipients
-                 * too — armour only, with shells/mines zeroed so its reserve
-                 * stays hidden — on the reliable channel, so the shooter
-                 * unblocks the now-drivable tile promptly and the one-shot
-                 * transition can't be dropped. */
+                /* Base stock is culled to neutral/allied bases. Exception: a
+                 * dead enemy base (armour <= MIN_ARMOUR_CAPTURE) is delivered to
+                 * non-friendly recipients too — armour only, with shells/mines
+                 * zeroed so its reserve stays hidden — on the reliable channel,
+                 * so the shooter unblocks the now-drivable tile promptly and the
+                 * one-shot transition can't be dropped. */
                 if (evType == EVENT_BASE_STOCK) {
-                    bool inRange = hasPos &&
-                        basesBaseInStockRange(serverSimGetGameSim(sim), (BYTE)c, cwx, cwy,
-                                              serverSimGetEvents(sim)[i].data[0], stockRange);
-                    if (!inRange) {
+                    BYTE bIdx = serverSimGetEvents(sim)[i].data[0];
+                    GameSim *gs = serverSimGetGameSim(sim);
+                    BYTE bOwner = (*gs->bs).item[bIdx].owner;
+                    bool bFriendly = (bOwner == NEUTRAL) || (bOwner == (BYTE)c) ||
+                                     playersIsAllie(&gs->plyrs, bOwner, (BYTE)c);
+                    if (!bFriendly) {
                         if (serverSimGetEvents(sim)[i].data[1] <= MIN_ARMOUR_CAPTURE) {
                             evToSend.data[2] = 0;
                             evToSend.data[3] = 0;

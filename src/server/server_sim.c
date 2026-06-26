@@ -2861,20 +2861,25 @@ WORLD serverSimClosestBaseSendRange(const ServerSim *sim, BYTE client) {
     return (WORLD)(BASE_STATUS_RANGE + margin);
 }
 
+void serverSimBuildBaseStockEvent(ServerSim *sim, BYTE baseIdx0, GameEvent *out) {
+    BYTE shells = 0, mines = 0, armour = 0;
+    /* basesGetStats takes a 1-based base number; the wire index (data[0]) is 0-based. */
+    basesGetStats(&sim->sim.bs, (BYTE)(baseIdx0 + 1), &shells, &mines, &armour);
+    out->type = EVENT_BASE_STOCK;
+    memset(out->data, 0, sizeof(out->data));
+    out->data[0] = baseIdx0;
+    out->data[1] = armour;
+    out->data[2] = shells;
+    out->data[3] = mines;
+}
+
 bool serverSimTakeClosestBaseStock(ServerSim *sim, BYTE recipient, BYTE closest, GameEvent *out) {
     bool changed = (closest != sim->lastClosestBase[recipient]);
     sim->lastClosestBase[recipient] = closest;
     if (!changed || closest == BASE_NOT_FOUND) {
         return false;
     }
-    BYTE shells = 0, mines = 0, armour = 0;
-    basesGetStats(&sim->sim.bs, closest, &shells, &mines, &armour);
-    out->type = EVENT_BASE_STOCK;
-    memset(out->data, 0, sizeof(out->data));
-    out->data[0] = (uint8_t)(closest - 1);
-    out->data[1] = armour;
-    out->data[2] = shells;
-    out->data[3] = mines;
+    serverSimBuildBaseStockEvent(sim, (BYTE)(closest - 1), out);
     return true;
 }
 
@@ -3095,12 +3100,9 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
              *    but its true armour once dead/capturable, so the capturable flip shows.
              *    Mirrors the brain fog-of-war in basesGetBrainBaseInRect.
              *  - shells/mines are the private ammo reserve: real for every
-             *    neutral/allied base within stock-send range of the recipient's
-             *    tank (so each base the client may switch its display to is
-             *    pre-loaded), zeroed everywhere else. */
-            WORLD bwx = 0, bwy = 0;
-            bool hasTankPos = serverSimGetTankState(sim, clientIdx, &bwx, &bwy);
-            WORLD r = serverSimClosestBaseSendRange(sim, clientIdx);
+             *    neutral/allied base, zeroed for enemy bases. Always sending a
+             *    friendly base's stock means the client has it cached before its
+             *    display ever switches to that base, so no stale 0/0 flash. */
             for (i = 0; i < hdr->baseCount; i++) {
                 BYTE owner = basesOut[i].owner;
                 bool friendly = (owner == NEUTRAL) || (owner == clientIdx) ||
@@ -3108,8 +3110,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 if (!friendly && basesOut[i].armour > MIN_ARMOUR_CAPTURE) {
                     basesOut[i].armour = BASE_FULL_ARMOUR;
                 }
-                if (!hasTankPos ||
-                    !basesBaseInStockRange(&sim->sim, clientIdx, bwx, bwy, (BYTE)i, r)) {
+                if (!friendly) {
                     basesOut[i].shells = 0;
                     basesOut[i].mines  = 0;
                 }
@@ -3135,10 +3136,6 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             clientMX = (BYTE)(cwx >> 8);
             clientMY = (BYTE)(cwy >> 8);
         }
-
-        /* Stock-send range ceiling — best-effort base stock events are culled
-         * to neutral/allied bases within this range of the recipient's tank. */
-        WORLD stockRange = serverSimClosestBaseSendRange(sim, clientIdx);
 
         /* First pass: collect best (closest) sound event per sound type.
          * Track by soundId index — sndEffects has ~24 values. */
@@ -3213,12 +3210,14 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                         continue;
                     }
                 }
-                /* Cull base stock to neutral/allied bases within stock-send range
-                 * of the recipient (humans only — bots receive every event). */
+                /* Cull base stock to neutral/allied bases (humans only — bots
+                 * receive every event). Enemy-base ammo stays hidden. */
                 if (evType == EVENT_BASE_STOCK && !recipientIsBot) {
-                    if (!hasClientPos ||
-                        !basesBaseInStockRange(&sim->sim, clientIdx, cwx, cwy,
-                                               sim->events[i].data[0], stockRange)) {
+                    BYTE bIdx = sim->events[i].data[0];
+                    BYTE bOwner = (*sim->sim.bs).item[bIdx].owner;
+                    bool bFriendly = (bOwner == NEUTRAL) || (bOwner == clientIdx) ||
+                                     playersIsAllie(&sim->sim.plyrs, bOwner, clientIdx);
+                    if (!bFriendly) {
                         continue;
                     }
                 }
