@@ -890,11 +890,11 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
  *
  * Live-spectator additions are gated on lv_screenSpecIsLiveMode(), which only
  * spectatorRun ever sets: the DVR scrubber is kept reachable in the game view,
- * and the block-grid pass renders a safe scrubber + event-feed subset instead
- * of the viewer's menu bar and full panel set -- the menu bar's File/Action
- * items (and Ctrl shortcuts) would tear down the live session, and the game-
- * info / comments panels need a finished log's header / WBN key. The viewer is
- * never in live mode, so its behaviour is unchanged. */
+ * and the block-grid pass renders a safe scrubber + event-feed + game-info
+ * subset instead of the viewer's menu bar and full panel set -- the menu bar's
+ * File/Action items (and Ctrl shortcuts) would tear down the live session, and
+ * the comments panel needs a finished log's WBN key. The viewer is never in
+ * live mode, so its behaviour is unchanged. */
 static void lvHostRenderFrame(const char *overlay) {
     /* Clear the frame */
     SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
@@ -986,13 +986,16 @@ static void lvHostRenderFrame(const char *overlay) {
         lv_imgui_dialogs_render();
         lv_imgui_context_render();
     } else if (lv_screenSpecIsLiveMode()) {
-        /* Live spectator block-grid overview: DVR scrubber + live event feed.
-         * The viewer's menu bar and game-info / comments panels are gated off
-         * here (see the function banner). */
+        /* Live spectator block-grid overview: DVR scrubber + live event feed +
+         * game info (map name / type / settings, decoded from the seed). The
+         * viewer's menu bar and comments panel stay gated off (see the function
+         * banner). */
         lv_g_show_controls_window = true;
         lv_imgui_controls_window();
         lv_g_show_events_window = true;
         lv_imgui_events_window();
+        lv_g_show_game_info_window = true;
+        lv_imgui_game_info_window();
         lv_g_reset_window_positions = false;
         if (overlay != NULL) {
             lv_imgui_center_message(overlay);
@@ -1345,9 +1348,23 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
         uint8_t *seed = NULL;
         uint32_t seedLen = 0;
         if (specDrainTakeSeed(cs, &seed, &seedLen)) {
-            /* NULL info: the live game-info handshake is a later slice; the
-             * loader accepts NULL and zeroes the synthesized header. */
-            if (lv_specSeedLoad(NULL, seed, seedLen)) {
+            /* The spectator never receives the lobby-settings packet on the
+             * wire, but the seed's control snapshot carries that same event;
+             * decode it for the synthesized header's map name / game settings.
+             * sgi outlives the load call below, which copies mapName into the
+             * header. Fields the event doesn't carry stay zero (panel defaults). */
+            SpecSeedInfo sgi;
+            LvSpecSeedInfo info;
+            const LvSpecSeedInfo *infoPtr = NULL;
+            if (specSeedDecodeInfo(seed, seedLen, &sgi) && sgi.haveInfo) {
+                memset(&info, 0, sizeof(info));
+                info.mapName          = sgi.mapName;
+                info.gameType         = sgi.gameType;
+                info.allowHiddenMines = sgi.allowHiddenMines;
+                info.ai               = sgi.ai;
+                infoPtr = &info;
+            }
+            if (lv_specSeedLoad(infoPtr, seed, seedLen)) {
                 g_lv->isLoaded = TRUE;
                 lv_imgui_events_clear();
             }

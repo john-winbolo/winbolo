@@ -68,3 +68,12 @@ bool specDrainPopRecord(void *handle, SpecDrainRecord *out) {
   (void)out;
   return false;
 }
+
+bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) {
+  (void)seed;
+  (void)seedLen;
+  if (out != NULL) {
+    out->haveInfo = false;
+  }
+  return false;
+}

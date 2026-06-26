@@ -22,6 +22,7 @@
  *  simulation separation.
  *********************************************************/
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -30,6 +31,8 @@
 #include "client_sim.h"
 #include "client_sim_internal.h"
 #include "spectator_drain.h"   /* dep-free seam: logviewer host drains capture */
+#include "spectator_replay.h"          /* extract a seed's control-snapshot slice */
+#include "transport_control_codec.h"   /* decode the snapshot's lobby-settings event */
 #include "client_net.h"   /* clientSimNetSendChat — default chatSendFunc body */
 #include "client_snapshot.h"
 #include "client_state.h"
@@ -2165,6 +2168,66 @@ bool specDrainPopRecord(void *handle, SpecDrainRecord *out) {
   out->payload    = rec.payload;       /* ownership passes straight through */
   out->payloadLen = rec.payloadLen;
   return true;
+}
+
+bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) {
+  BYTE *scratch;
+  const BYTE *ctrl = NULL;
+  int ctrlLen = 0;
+  int keyframeLen;
+  ControlDecodeBodyFn dec;
+  int pos;
+  bool found = false;
+
+  if (out == NULL) return false;
+  memset(out, 0, sizeof(*out));
+  if (seed == NULL || seedLen == 0 || seedLen >= (size_t)INT_MAX) return false;
+
+  /* Reuse the blessed keyframe translator to slice out the control snapshot
+   * (it sets ctrl/ctrlLen to the snapshot within the seed). The translated
+   * body is discarded — only the control slice is wanted here. */
+  scratch = (BYTE *)malloc(seedLen + 1);
+  if (scratch == NULL) return false;
+  keyframeLen = specReplayTranslateKeyframe(seed, (int)seedLen, scratch,
+                                            (int)(seedLen + 1), &ctrl, &ctrlLen);
+  if (keyframeLen < 0 || ctrl == NULL || ctrlLen <= 0) {
+    free(scratch);
+    return false;
+  }
+
+  /* Walk the snapshot's [u16 BE type][u16 BE bodyLen][body] records for the
+   * lobby-settings event (the same event a normal joiner receives, embedded in
+   * the sync-replay slice serverSimSerializeControlSnapshot wrote). */
+  dec = transportControlCodecBodyDecoder(CTRL_LOBBY_SETTINGS);
+  pos = 0;
+  while (pos + 4 <= ctrlLen) {
+    uint16_t type    = (uint16_t)(((uint16_t)ctrl[pos] << 8) | ctrl[pos + 1]);
+    uint16_t bodyLen = (uint16_t)(((uint16_t)ctrl[pos + 2] << 8) | ctrl[pos + 3]);
+    pos += 4;
+    if ((size_t)pos + bodyLen > (size_t)ctrlLen) break;
+    if (type == CTRL_LOBBY_SETTINGS) {
+      ControlEvent evt;
+      memset(&evt, 0, sizeof(evt));
+      if (dec != NULL && dec(ctrl + pos, bodyLen, &evt)) {
+        /* Bound the copy by the source field (<= MAP_STR_SIZE) as well as the
+         * destination, so an unterminated wire name can't over-read. */
+        size_t nameCap = sizeof(evt.u.lobbySettings.mapName);
+        if (nameCap > sizeof(out->mapName)) nameCap = sizeof(out->mapName);
+        strncpy(out->mapName, evt.u.lobbySettings.mapName, nameCap - 1);
+        out->mapName[nameCap - 1] = '\0';
+        out->gameType         = (uint8_t)evt.u.lobbySettings.lobbyGameType;
+        out->allowHiddenMines = evt.u.lobbySettings.lobbyHiddenMines ? 1 : 0;
+        out->ai               = evt.u.lobbySettings.lobbyAiType;
+        out->haveInfo         = true;
+        found = true;
+      }
+      break;   /* one lobby-settings event per snapshot */
+    }
+    pos += bodyLen;
+  }
+
+  free(scratch);
+  return found;
 }
 
 uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->lobbyMapUploadStatus; }

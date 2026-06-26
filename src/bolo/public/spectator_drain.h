@@ -80,4 +80,27 @@ bool     specDrainCountdown(void *handle, uint32_t *outRemaining);
  * queue is empty. */
 bool     specDrainPopRecord(void *handle, SpecDrainRecord *out);
 
+/* Game-info decoded from a spectator seed's control snapshot. A spectator
+ * never receives the lobby-settings control packet on the wire, but the seed's
+ * sync-replay control slice carries the same lobby-settings event, so the host
+ * can recover the map name / game settings from the seed itself. mapName is
+ * NUL-terminated; haveInfo is false when the seed has no lobby-settings event.
+ * Only the fields the lobby-settings event carries are filled — version /
+ * maxPlayers / password aren't in it and stay zero. */
+typedef struct {
+  bool    haveInfo;
+  char    mapName[64];       /* server map name is <= MAP_STR_SIZE (36) */
+  uint8_t gameType;
+  uint8_t allowHiddenMines;
+  uint8_t ai;
+} SpecSeedInfo;
+
+/* Decode the lobby/game-info from a raw spectator seed blob
+ * ([u32 bodyLen BE][world body][u32 ctrlLen BE][control snapshot]) into *out.
+ * Walks the control snapshot's [u16 type][u16 len][body] records for the
+ * lobby-settings event and decodes it. Returns true (and sets out->haveInfo)
+ * when that event is found; false (out zeroed) otherwise. Pure byte decode —
+ * no ClientSim handle needed. */
+bool     specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out);
+
 #endif /* SPECTATOR_DRAIN_H */

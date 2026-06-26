@@ -2017,6 +2017,12 @@ bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len) {
   }
   ok = lv_logLoadCommon();
   if (ok == TRUE) {
+    /* Publish the header's game information (map name / type / settings) to the
+     * front end, as the file and in-memory loaders do — lv_logLoadCommon parses
+     * it into g_lv but doesn't push it. This is the spectator seed-load path
+     * (lv_specSeedLoad); standalone .wbv loads run through lv_screenLoadMap /
+     * lv_screenLoadMapFromMemory and are unaffected. */
+    lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, 1, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
