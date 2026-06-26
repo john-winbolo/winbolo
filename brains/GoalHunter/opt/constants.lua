@@ -717,7 +717,7 @@ M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pil
 -- friendly-fire reject, reposition block) or the influence-exemption. true →
 -- current (post-1.90) behavior. Read live, so flipping this one constant is the
 -- whole switch. Released builds set this false until the improvements are tested.
-M.REPAIR_FIX_ENABLED       = true
+M.REPAIR_FIX_ENABLED       = false  -- RC: repair fix OFF (1.90-beta1 repair) until tested
 M.REPAIR_BASE_COST         = 30    -- flat floor so a close/damaged repair doesn't trivially out-rank other goals
 M.REPAIR_DAMAGE_BONUS      = 3     -- cost reduction per missing HP on friendly pill
 M.REPAIR_CONTESTED_MULT    = 3.0   -- repair cost ×N when an enemy tank is closer to the pill than us (contested → likely futile)
