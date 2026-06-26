@@ -2054,6 +2054,17 @@ bool lv_screenIsPlaying() {
 *               len   - number of bytes (may be 0 when caught up)
 *RETURNS:       TRUE while playback is live, FALSE once finished.
 *********************************************************/
+/* --- Spectator live-DVR state (see backend.h / lv_screenSpec* below) --- */
+static bool     s_specLiveMode    = false; /* spectatorRun active: append-only pump, host-driven advance */
+static bool     s_specFollowLive  = true;  /* TRUE: slam to head; FALSE: parked, paced real-time playback */
+static bool     s_specSeekPark    = false; /* a user seek/rewind happened -> park on the next frame update */
+static bool     s_specHaveAnchor  = false;
+static uint32_t s_specHeadTick    = 0;     /* latest drained forward-record game tick */
+static uint32_t s_specAnchorTick  = 0;     /* head tick captured at the last follow-live re-anchor */
+static uint32_t s_specAnchorMs    = 0;     /* timeRunning captured at the last follow-live re-anchor */
+static uint32_t s_specPaceLastMs  = 0;     /* wall-clock anchor for the parked 20ms pacing accumulator */
+static int32_t  s_specPaceAccumMs = 0;
+
 bool lv_screenStreamPump(const uint8_t *bytes, size_t len) {
   if (g_lv == NULL) {
     return FALSE;
@@ -2063,7 +2074,9 @@ bool lv_screenStreamPump(const uint8_t *bytes, size_t len) {
       return g_lv->isPlaying;
     }
   }
-  while (g_lv->isPlaying == TRUE &&
+  /* Live spectator mode appends only — the host advances the decoder itself via
+     lv_screenSpecFrameUpdate so a parked view doesn't slam to the head. */
+  while (g_lv->isPlaying == TRUE && !s_specLiveMode &&
          lv_logGetCurrentPosition() < lv_logGetTotalSize()) {
     lv_screenLogTick();
   }
@@ -2568,6 +2581,8 @@ void lv_screenRewind() {
     lv_windowRemoveEventsAfter(g_lv->timeRunning);
     g_lv->isPlaying = TRUE;
     g_lv->state = lv_lr_start;
+    /* Rewinding parks the live-DVR view in the past (consumed next frame). */
+    s_specSeekPark = true;
     if (wantedPos == 0) {
       lv_startOfLog();
     }
@@ -2617,6 +2632,9 @@ void lv_screenSeekToPosition(float ratio) {
     lv_messageDestroy();
     lv_messageCreate();
 
+    /* A user scrub parks the live-DVR view in the past (consumed next frame). */
+    s_specSeekPark = true;
+
     /* Fast-forward from snapshot to target time */
     g_lv->fastForwarding = TRUE;
     while (g_lv->timeRunning < targetTime && g_lv->isPlaying == TRUE) {
@@ -2632,6 +2650,127 @@ void lv_screenSeekToPosition(float ratio) {
      * the most recent message(s) at the seek point — and the queue is
      * empty so the next live message starts scrolling in normally. */
     lv_messageDrainQueue();
+  }
+}
+
+/* --- Spectator live-DVR (declared in backend.h) ----------------------------
+ * Head-time tracking (decision B, incremental, O(1) per record): following live
+ * re-anchors the tracked head time to the decoder's true timeRunning after the
+ * slam-to-head; while parked it extrapolates from the latest drained record's
+ * game tick (20ms/tick) off that anchor. Any parked-time drift is wiped on the
+ * next re-anchor (jump-to-live or reaching the head), so it only needs to be
+ * monotonic and close. totalTimeMs is repointed at it so the existing
+ * scrubber/seek math tracks the growing live head with no other change. */
+
+static void lv_specHeadTimeFromDelta(void) {
+  if (s_specHaveAnchor) {
+    uint32_t d = (s_specHeadTick >= s_specAnchorTick)
+                     ? (s_specHeadTick - s_specAnchorTick) : 0;
+    g_lv->totalTimeMs = s_specAnchorMs + d * 20;
+  }
+}
+
+static void lv_specReanchorAtHead(void) {
+  s_specAnchorTick  = s_specHeadTick;
+  s_specAnchorMs    = g_lv->timeRunning;
+  s_specHaveAnchor  = true;
+  g_lv->totalTimeMs = g_lv->timeRunning;
+}
+
+static void lv_specAdvanceToHead(void) {
+  while (g_lv->isPlaying == TRUE &&
+         lv_logGetCurrentPosition() < lv_logGetTotalSize()) {
+    lv_screenLogTick();
+  }
+}
+
+void lv_screenSpecSetLiveMode(bool on) {
+  s_specLiveMode    = on;
+  s_specFollowLive  = true;
+  s_specSeekPark    = false;
+  s_specHeadTick    = 0;
+  s_specAnchorTick  = 0;
+  s_specAnchorMs    = 0;
+  s_specHaveAnchor  = false;
+  s_specPaceAccumMs = 0;
+  s_specPaceLastMs  = 0;
+  if (on) {
+    /* The seed left the decoder at the head; play by default. The first
+       follow-live frame re-anchors head time once a record tick is known. */
+    g_lv->playIsPlaying = TRUE;
+  }
+}
+
+bool lv_screenSpecIsLiveMode(void) {
+  return s_specLiveMode;
+}
+
+void lv_screenSpecNoteHeadTick(uint32_t gameTick) {
+  /* Monotonic within a segment; a world reset (new generation, tick resets to 0)
+     is the deferred cross-segment case and is intentionally not handled here. */
+  if (gameTick >= s_specHeadTick) {
+    s_specHeadTick = gameTick;
+  }
+}
+
+void lv_screenSpecJumpToLive(void) {
+  if (!s_specLiveMode) {
+    return;
+  }
+  lv_specAdvanceToHead();
+  lv_specReanchorAtHead();
+  s_specFollowLive = true;
+  s_specSeekPark   = false;
+}
+
+void lv_screenSpecFrameUpdate(uint32_t nowMs) {
+  bool playing;
+  if (!s_specLiveMode) {
+    return;
+  }
+
+  /* A scrubber drag or rewind parks the view in the past. */
+  if (s_specSeekPark) {
+    s_specSeekPark    = false;
+    s_specFollowLive  = false;
+    s_specPaceLastMs  = nowMs;
+    s_specPaceAccumMs = 0;
+  }
+
+  playing = (g_lv->playIsPlaying == TRUE);
+
+  if (s_specFollowLive) {
+    if (playing) {
+      lv_specAdvanceToHead();   /* slam to the live head */
+      lv_specReanchorAtHead();  /* head time == true decoder time here */
+    } else {
+      lv_specHeadTimeFromDelta(); /* frozen; the head keeps growing */
+    }
+    s_specPaceLastMs = nowMs;
+  } else {
+    /* Parked: keep the slider's max tracking the growing head either way. */
+    lv_specHeadTimeFromDelta();
+    if (playing) {
+      if (nowMs > s_specPaceLastMs) {
+        s_specPaceAccumMs += (int32_t)(nowMs - s_specPaceLastMs);
+      }
+      s_specPaceLastMs = nowMs;
+      if (s_specPaceAccumMs > 200) {
+        s_specPaceAccumMs = 200; /* cap catch-up after a stall/hitch */
+      }
+      while (s_specPaceAccumMs >= 20 && g_lv->isPlaying == TRUE &&
+             lv_logGetCurrentPosition() < lv_logGetTotalSize()) {
+        lv_screenLogTick();
+        s_specPaceAccumMs -= 20;
+      }
+      /* Paced playback reached the head -> resume following it. */
+      if (lv_logGetCurrentPosition() >= lv_logGetTotalSize()) {
+        lv_specReanchorAtHead();
+        s_specFollowLive = true;
+      }
+    } else {
+      s_specPaceLastMs = nowMs;
+    }
   }
 }
 

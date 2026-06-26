@@ -578,6 +578,18 @@ void lv_screenGetMapName(char *dest);
 void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime);
 void lv_screenSeekToPosition(float ratio);
 
+/* Spectator live-DVR (driven by spectatorRun). While live mode is on,
+ * lv_screenStreamPump only appends the arriving bytes and never auto-advances to
+ * the head; the host drives the advance via lv_screenSpecFrameUpdate so a parked
+ * spectator can watch the past unfold at real time while the head keeps growing.
+ * totalTimeMs is repointed at the tracked live head so the existing scrubber/seek
+ * math works unchanged; standalone .wbv playback (live mode off) is untouched. */
+void lv_screenSpecSetLiveMode(bool on);            /* enter/leave; resets DVR state, follows the head */
+bool lv_screenSpecIsLiveMode(void);
+void lv_screenSpecNoteHeadTick(uint32_t gameTick); /* latest drained forward-record game tick */
+void lv_screenSpecFrameUpdate(uint32_t nowMs);     /* once per frame: advance per follow/parked + pause; track head time */
+void lv_screenSpecJumpToLive(void);                /* advance to the head and resume following */
+
 /* Returns the slot the camera is currently following (cameraSlot), 0 when no
  * log is loaded. */
 BYTE lv_screenGetCameraSlot(void);

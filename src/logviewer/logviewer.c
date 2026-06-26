@@ -256,6 +256,14 @@ Uint32 SDLCALL lv_windowTimer(void *userdata, SDL_TimerID timerID, Uint32 interv
  * Playback control
  * -------------------------------------------------------------------------- */
 void lv_windowPlay(void) {
+    /* Spectator live-DVR runs in the foreground spectatorRun loop, which drives
+       the decoder itself — never start the background replay timer here (it would
+       double-drive lv_screenLogTick and race the live append). playIsPlaying is
+       the orthogonal play/freeze flag the loop reads. */
+    if (lv_screenSpecIsLiveMode()) {
+        g_lv->playIsPlaying = TRUE;
+        return;
+    }
     if (g_lv->playIsPlaying == FALSE) {
         g_lv->timerGameID  = SDL_AddTimer(20,  lv_windowTimer,      NULL);
         g_lv->timerFrameID = SDL_AddTimer(50,  lv_windowFrameTimer, NULL);
@@ -264,6 +272,10 @@ void lv_windowPlay(void) {
 }
 
 void lv_windowPause(void) {
+    if (lv_screenSpecIsLiveMode()) {
+        g_lv->playIsPlaying = FALSE;
+        return;
+    }
     lv_clientMutexWaitFor();
     if (g_lv->playIsPlaying == TRUE) {
         SDL_RemoveTimer(g_lv->timerGameID);
@@ -276,6 +288,12 @@ void lv_windowPause(void) {
 }
 
 void lv_windowStop(int corruptLog) {
+    /* Spectator: the panel's Stop button freezes the feed rather than closing the
+       live log out from under the foreground host loop. */
+    if (lv_screenSpecIsLiveMode()) {
+        g_lv->playIsPlaying = FALSE;
+        return;
+    }
     if (corruptLog == TRUE) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE,
                                  "Error: Corrupt Log File", NULL);
@@ -1303,6 +1321,9 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
              * stall and restart the watchdog for the record stream. */
             connectionLost = false;
             lastProgressMs = SDL_GetTicks();
+            /* Enter live-DVR mode: the stream pump now appends only and this loop
+             * drives the advance, so the scrubber can rewind the growing buffer. */
+            lv_screenSpecSetLiveMode(TRUE);
         }
     }
 
@@ -1318,11 +1339,17 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
 
         specDrainPump(cs);
         while (SDL_PollEvent(&sdlEvent)) {
-            /* Reuse the viewer's game-view input (Tab cycle / zoom / pan), with
-             * the grave on/off toggle and the ,-. seek/scrubber suppressed —
-             * the spectator is always game-view and the feed is live. */
+            /* Reuse the viewer's game-view input (Tab cycle / zoom / pan). The
+             * grave on/off toggle stays suppressed (always game-view), but ,-.
+             * seek is enabled — it parks the live feed like the scrubber does. */
             if (lvHostHandleGameViewKey(sdlEvent, /* allowToggle */ FALSE,
-                                        /* allowSeek */ FALSE)) {
+                                        /* allowSeek */ TRUE)) {
+                continue;
+            }
+            /* End / L jumps back to the live head and resumes following it. */
+            if (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
+                (sdlEvent.key.key == SDLK_END || sdlEvent.key.key == SDLK_L)) {
+                lv_screenSpecJumpToLive();
                 continue;
             }
             lv_imgui_context_handle_event(&sdlEvent);
@@ -1345,10 +1372,13 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
             }
         }
 
-        /* Drain all records queued this frame, advancing the decoder. A drained
-         * record is feed progress for the stall watchdog. */
+        /* Drain all records queued this frame. In live-DVR mode lv_specRecordPump
+         * only appends (the stream pump no longer auto-advances); the frame update
+         * below drives the decoder forward per follow-live / parked mode. Track the
+         * latest record tick so the parked head-time can extrapolate. */
         while (specDrainPopRecord(cs, &rec)) {
             lv_specRecordPump(rec.isKeyframe, rec.payload, rec.payloadLen);
+            lv_screenSpecNoteHeadTick(rec.gameTick);
             if (rec.payload != NULL) {
                 free(rec.payload);
             }
@@ -1362,6 +1392,11 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
         if (!connectionLost && (SDL_GetTicks() - lastProgressMs) > kSpecStallMs) {
             connectionLost = true;
         }
+
+        /* Advance the decoder: follow-live slams to the head, parked plays forward
+         * at real time from the scrub point; pause (playIsPlaying) freezes either.
+         * Keeps g_lv->totalTimeMs pointed at the growing live head for the scrubber. */
+        lv_screenSpecFrameUpdate(SDL_GetTicks());
 
         g_lv->wantScreenUpdate = TRUE;
 
@@ -1386,6 +1421,11 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
         lv_imgui_context_newframe();
         lv_imgui_render_game_menu_bar(g_lv);
         lv_imgui_render_game_view(g_lv);
+        /* DVR scrubber panel (rewind / play-pause / seek slider), forced visible
+         * each frame; its jump-to-live button is shown only in spectator live
+         * mode. Slider/rewind seeks park the feed via lv_screenSpecFrameUpdate. */
+        lv_g_show_controls_window = true;
+        lv_imgui_controls_window();
         lv_g_reset_window_positions = false;
         /* Stalled mid-playback: the frozen last frame stays up with a
          * "connection lost" overlay until the user exits. */
@@ -1396,6 +1436,10 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
         lv_imgui_context_render();
         SDL_RenderPresent(g_lv->renderer);
     }
+
+    /* Leave live-DVR mode so the stream pump / transport revert to standalone
+     * behaviour for any later log session in this process. */
+    lv_screenSpecSetLiveMode(FALSE);
 
     /* Teardown: restore the game-view window size/tile counts (set only if the
      * seed loaded and the view was forced), run the shared shutdown, and drop
