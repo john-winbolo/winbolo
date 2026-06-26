@@ -28,9 +28,11 @@ int run_error_smoothing(void) {
   {
     float ex = 0.0f, ey = 0.0f, ea = 0.0f;
     bool zeroed;
-    zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 10.0f, -4.0f, 2.0f);
+    zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 10.0f, -4.0f, 2.0f,
+                                       CLIENT_ERR_POS_CLAMP);
     UT_ASSERT_MSG(!zeroed, "first small accumulate should not clamp");
-    zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 5.0f, -1.0f, 1.0f);
+    zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 5.0f, -1.0f, 1.0f,
+                                       CLIENT_ERR_POS_CLAMP);
     UT_ASSERT_MSG(!zeroed, "second small accumulate should not clamp");
     UT_ASSERT_MSG(APPROX(ex, 15.0f, 0.001f), "errX compose: %f != 15", ex);
     UT_ASSERT_MSG(APPROX(ey, -5.0f, 0.001f), "errY compose: %f != -5", ey);
@@ -40,7 +42,8 @@ int run_error_smoothing(void) {
   /* Zero-input no-op: an all-zero delta leaves the offset untouched. */
   {
     float ex = 7.0f, ey = -2.0f, ea = 1.5f;
-    bool zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 0.0f, 0.0f, 0.0f);
+    bool zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 0.0f, 0.0f, 0.0f,
+                                            CLIENT_ERR_POS_CLAMP);
     UT_ASSERT_MSG(!zeroed, "zero delta should not clamp");
     UT_ASSERT_MSG(APPROX(ex, 7.0f, 0.001f) && APPROX(ey, -2.0f, 0.001f) &&
                       APPROX(ea, 1.5f, 0.001f),
@@ -72,7 +75,7 @@ int run_error_smoothing(void) {
     float ex = 0.0f, ey = 0.0f, ea = 0.0f;
     bool zeroed =
         clientErrSmoothAccumulate(&ex, &ey, &ea, CLIENT_ERR_POS_CLAMP + 1.0f,
-                                  0.0f, 0.0f);
+                                  0.0f, 0.0f, CLIENT_ERR_POS_CLAMP);
     UT_ASSERT_MSG(zeroed, "position over-clamp should report zeroed");
     UT_ASSERT_MSG(ex == 0.0f && ey == 0.0f && ea == 0.0f,
                   "position over-clamp left residue: (%f,%f,%f)", ex, ey, ea);
@@ -81,7 +84,8 @@ int run_error_smoothing(void) {
     /* A standing offset plus a delta that pushes the angle past its clamp
      * zeroes ALL components, not just the angle. */
     float ex = 30.0f, ey = -20.0f, ea = 10.0f;
-    bool zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 0.0f, 0.0f, 10.0f);
+    bool zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 0.0f, 0.0f, 10.0f,
+                                            CLIENT_ERR_POS_CLAMP);
     UT_ASSERT_MSG(zeroed, "angle over-clamp should report zeroed");
     UT_ASSERT_MSG(ex == 0.0f && ey == 0.0f && ea == 0.0f,
                   "angle over-clamp left residue: (%f,%f,%f)", ex, ey, ea);
@@ -92,9 +96,29 @@ int run_error_smoothing(void) {
    * -2, which is inside the clamp and accumulates as -2. */
   {
     float ex = 0.0f, ey = 0.0f, ea = 0.0f;
-    bool zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 0.0f, 0.0f, 254.0f);
+    bool zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 0.0f, 0.0f, 254.0f,
+                                            CLIENT_ERR_POS_CLAMP);
     UT_ASSERT_MSG(!zeroed, "wrapped small angle delta should not clamp");
     UT_ASSERT_MSG(APPROX(ea, -2.0f, 0.001f), "angle wrap: %f != -2", ea);
+  }
+
+  /* posClamp parameter governs the position threshold: a 300u single-axis
+   * delta snaps (zeroes) under the normal clamp but slides under the enlarged
+   * base-unblock clamp, accumulating intact. */
+  {
+    float ex = 0.0f, ey = 0.0f, ea = 0.0f;
+    bool zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 300.0f, 0.0f, 0.0f,
+                                            CLIENT_ERR_POS_CLAMP);
+    UT_ASSERT_MSG(zeroed, "300u delta should snap under normal clamp");
+    UT_ASSERT_MSG(ex == 0.0f && ey == 0.0f && ea == 0.0f,
+                  "300u normal-clamp snap left residue: (%f,%f,%f)", ex, ey, ea);
+
+    ex = 0.0f; ey = 0.0f; ea = 0.0f;
+    zeroed = clientErrSmoothAccumulate(&ex, &ey, &ea, 300.0f, 0.0f, 0.0f,
+                                       CLIENT_ERR_POS_CLAMP_BASE_UNBLOCK);
+    UT_ASSERT_MSG(!zeroed, "300u delta should slide under base-unblock clamp");
+    UT_ASSERT_MSG(APPROX(ex, 300.0f, 0.001f),
+                  "base-unblock clamp errX: %f != 300", ex);
   }
 
   /* Sim-level: clientSimResetWorld zeroes the offset fields. */
