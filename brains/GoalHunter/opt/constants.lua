@@ -713,6 +713,34 @@ M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pil
 M.REPAIR_BASE_COST         = 30    -- flat floor so a close/damaged repair doesn't trivially out-rank other goals
 M.REPAIR_DAMAGE_BONUS      = 3     -- cost reduction per missing HP on friendly pill
 M.REPAIR_CONTESTED_MULT    = 3.0   -- repair cost ×N when an enemy tank is closer to the pill than us (contested → likely futile)
+-- ── Dead-pill repair (rebuild a friendly 0-HP pill IN PLACE) ───────────────
+-- The LGM walks out with wood and the engine rebuilds it (lgm.c: a 0-armour
+-- pill is the 4×LGM_COST_PILLREPAIR tier). Distinct from alive-damaged repair:
+-- capture-in-tank is preferred when SAFE (flexible placement), but in danger
+-- rebuilding-in-place risks the expendable LGM instead of the tank, so the cost
+-- ignores pill-fire entirely and is driven only by terrain (LGM walk time +
+-- reachability) and enemy-TANK snipe risk — which melts under a tank-count lead.
+M.REPAIR_DEAD_BASE_COST          = 40    -- flat floor; keeps capture (≈5 when safe) preferred in calm
+M.REPAIR_DEAD_MIN_TREES          = 4     -- 0-HP rebuild needs LGM_COST_PILLREPAIR×4 wood; don't commit with less (engine would only partial-repair)
+-- distance curve on TILE distance (mdist): flat in the sweet zone, gentle to
+-- the knee, exponential beyond (cross-map repairs self-reject).
+M.REPAIR_DEAD_SWEET_TILES        = 8     -- ~shooting distance: flat & attractive within
+M.REPAIR_DEAD_KNEE_TILES         = 14    -- gentle rise sweet..knee; exponential past
+M.REPAIR_DEAD_NEAR_W             = 4.8   -- cost per tile inside the sweet zone
+M.REPAIR_DEAD_MID_W              = 15.6  -- cost per tile, sweet..knee
+M.REPAIR_DEAD_EXP_BASE           = 2.0   -- exp growth base past the knee
+M.REPAIR_DEAD_EXP_STEP_TILES     = 2.0   -- tiles per doubling past the knee
+M.REPAIR_DEAD_EXP_SCALE          = 30    -- multiplier on (EXP_BASE^… − 1)
+-- mild terrain surcharge: LGM walk-ticks beyond an all-grass walk × this weight.
+M.REPAIR_DEAD_TERRAIN_W          = 0.1
+M.REPAIR_DEAD_GRASS_TICKS_PER_TILE = 16  -- MAP_MANSPEED_TGRASS; ticks the LGM needs per clear tile
+-- snipe: enemy tanks in range of the pill that can pick off the stationary builder.
+M.REPAIR_DEAD_SNIPE_RANGE        = 8     -- tiles
+M.REPAIR_DEAD_SNIPE_PEN_PER_TANK = 60
+M.REPAIR_DEAD_ADV_RELIEF_PER_TANK = 0.25 -- each net friendly tank cuts snipe risk this much
+M.REPAIR_DEAD_ADV_FLOOR          = 0.1   -- min snipe multiplier (never fully free)
+M.REPAIR_DEAD_LGM_MAX_TICKS      = 2000  -- LGM-travel sim budget (matches other callers)
+M.REPAIR_DEAD_LGM_STUCK_TICKS    = 150
 M.REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400  -- 8 s @ 50 Hz: after a friendly shot (own or ally) lands on a friendly pill, refuse to repair it — the team is shooting it down to reposition (perception sets pill._friendly_shot_tick)
 M.ATTACK_PILL_BASE_COST    = 30    -- flat cost added to every attack_pill (like ATTACK_BASE_EXTRA_COST for bases) so a pill take isn't free vs other goals
 M.ATTACK_BASE_EXTRA_COST   = 80    -- flat cost added to hostile base attacks

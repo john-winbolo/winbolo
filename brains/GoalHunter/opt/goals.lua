@@ -764,6 +764,72 @@ local function eval_capture_pill(state, world, info, tmx, tmy, boat, ammo)
   }
 end
 
+-- compute_repair_dead_cost — cost to rebuild a friendly 0-HP pill IN PLACE.
+-- The LGM walks out with wood and the engine repairs it. Capture-in-tank is
+-- preferred when safe (flexible placement); this wins when capturing would walk
+-- the TANK into pill fire — rebuilding risks the expendable LGM instead. So
+-- pill-fire danger is deliberately ignored; only terrain (LGM walk time +
+-- reachability) and enemy-TANK snipe risk (scaled down by our tank-count
+-- advantage) drive the cost. Returns math.huge if the LGM can't reach the pill.
+local function compute_repair_dead_cost(state, world, info, pill, tmx, tmy)
+  -- LGM-travel sim: terrain-aware walk ticks, or -1 if unreachable. Bless the
+  -- pill tile so the LGM may step onto its own target. The sim has NO danger
+  -- gate — this is the "force it into a hot tile" path.
+  local walk_ticks = cpf.lgm_travel_ticks_map(
+    tmx, tmy, pill.mx, pill.my, pill.mx, pill.my,
+    C.REPAIR_DEAD_LGM_MAX_TICKS or 2000, C.REPAIR_DEAD_LGM_STUCK_TICKS or 150)
+  if not walk_ticks or walk_ticks < 0 then
+    return math.huge  -- builder can't arrive
+  end
+
+  -- Distance curve on TILE distance: flat in the sweet zone, gentle to the
+  -- knee, exponential beyond (cross-map repairs self-reject).
+  local tiles  = U.mdist(tmx, tmy, pill.mx, pill.my)
+  local sweet  = C.REPAIR_DEAD_SWEET_TILES or 8
+  local knee   = C.REPAIR_DEAD_KNEE_TILES or 14
+  local near_w = C.REPAIR_DEAD_NEAR_W or 4.8
+  local mid_w  = C.REPAIR_DEAD_MID_W or 15.6
+  local dist_term
+  if tiles <= sweet then
+    dist_term = tiles * near_w
+  elseif tiles <= knee then
+    dist_term = sweet * near_w + (tiles - sweet) * mid_w
+  else
+    local knee_val = sweet * near_w + (knee - sweet) * mid_w
+    local g     = C.REPAIR_DEAD_EXP_BASE or 2.0
+    local step  = C.REPAIR_DEAD_EXP_STEP_TILES or 2.0
+    local scale = C.REPAIR_DEAD_EXP_SCALE or 30
+    dist_term = knee_val + scale * (g ^ ((tiles - knee) / step) - 1)
+  end
+
+  -- Mild terrain surcharge: LGM walk-ticks beyond an all-grass walk of the same
+  -- tile distance (swamp/forest/detours read as extra ticks → extra cost).
+  local grass_ticks = tiles * (C.REPAIR_DEAD_GRASS_TICKS_PER_TILE or 16)
+  local terrain_pen = math.max(0, walk_ticks - grass_ticks) * (C.REPAIR_DEAD_TERRAIN_W or 0.1)
+
+  -- Snipe: enemy tanks within range of the pill that can pick off the builder,
+  -- scaled down by our tank-count advantage ("we've got the numbers, who cares").
+  local snipe, snipe_n, snipe_adv = 0, 0, 1
+  local enemy_tanks = state.perc and state.perc.enemy_tanks
+  if enemy_tanks then
+    local range = C.REPAIR_DEAD_SNIPE_RANGE or 8
+    for _, et in ipairs(enemy_tanks) do
+      if U.mdist(et.mx, et.my, pill.mx, pill.my) <= range then snipe_n = snipe_n + 1 end
+    end
+    if snipe_n > 0 then
+      local adv    = math.max(0, (state.perc and state.perc.team_advantage) or 0)
+      local relief = C.REPAIR_DEAD_ADV_RELIEF_PER_TANK or 0.25
+      local floor  = C.REPAIR_DEAD_ADV_FLOOR or 0.1
+      snipe_adv = 1 - adv * relief
+      if snipe_adv < floor then snipe_adv = floor elseif snipe_adv > 1 then snipe_adv = 1 end
+      snipe = snipe_n * (C.REPAIR_DEAD_SNIPE_PEN_PER_TANK or 60) * snipe_adv
+    end
+  end
+
+  local total = (C.REPAIR_DEAD_BASE_COST or 40) + dist_term + terrain_pen + snipe
+  return total
+end
+
 local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
   local has_damaged = not state.perc or (state.perc.friendly_pills_damaged > 0)
   if not (has_damaged and info.man_status == C.LGM_INTANK and info.trees > 0) then return nil end
@@ -789,8 +855,8 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
   end
   local pill, pid, pcost, pcands = nearest_where(world.pills, world, tmx, tmy,
     function(p)
-      return p.owner == "friendly" and p.health > 0
-             and p.health < C.PILLS_MAX_HEALTH
+      return p.owner == "friendly"
+             and p.health < C.PILLS_MAX_HEALTH   -- includes 0-HP (rebuild in place)
              -- Don't repair a pill the team declared a take blocker (init.lua
              -- unions team pblk tiles → _in_use). Includes partial-health
              -- freshly-built blockers, which would otherwise read as "damaged".
@@ -806,20 +872,27 @@ local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
     end, boat, ammo, state, info, KIND_NORMAL)
   if not pill then return nil end
   local damage = C.PILLS_MAX_HEALTH - pill.health
-  local adj_cost = (C.REPAIR_BASE_COST or 30) + math.max(0, pcost - damage * C.REPAIR_DAMAGE_BONUS)
-  -- Contested repair: if an enemy tank is CLOSER to the pill than we are, the
-  -- repair is likely futile (they'll re-damage/kill it while we work the LGM
-  -- under fire). Don't skip it outright — triple the cost so it loses to better
-  -- goals but can still win if nothing else is worth doing.
-  local contested = false
-  local enemy_tanks = state.perc and state.perc.enemy_tanks
-  if enemy_tanks then
-    local our_d = U.mdist(tmx, tmy, pill.mx, pill.my)
-    for _, e in ipairs(enemy_tanks) do
-      if U.mdist(e.mx, e.my, pill.mx, pill.my) < our_d then contested = true; break end
+  local adj_cost
+  if pill.health == 0 then
+    -- Dead pill → rebuild-in-place model (own terrain + tank-snipe cost; the
+    -- contested ×3 below is skipped — snipe already prices in nearby enemy tanks).
+    adj_cost = compute_repair_dead_cost(state, world, info, pill, tmx, tmy)
+  else
+    adj_cost = (C.REPAIR_BASE_COST or 30) + math.max(0, pcost - damage * C.REPAIR_DAMAGE_BONUS)
+    -- Contested repair: if an enemy tank is CLOSER to the pill than we are, the
+    -- repair is likely futile (they'll re-damage/kill it while we work the LGM
+    -- under fire). Don't skip it outright — triple the cost so it loses to better
+    -- goals but can still win if nothing else is worth doing.
+    local contested = false
+    local enemy_tanks = state.perc and state.perc.enemy_tanks
+    if enemy_tanks then
+      local our_d = U.mdist(tmx, tmy, pill.mx, pill.my)
+      for _, e in ipairs(enemy_tanks) do
+        if U.mdist(e.mx, e.my, pill.mx, pill.my) < our_d then contested = true; break end
+      end
     end
+    if contested then adj_cost = adj_cost * (C.REPAIR_CONTESTED_MULT or 3.0) end
   end
-  if contested then adj_cost = adj_cost * (C.REPAIR_CONTESTED_MULT or 3.0) end
   -- Pool-viz: surface friendly damaged pills we DIDN'T repair because they're a
   -- team-declared take blocker (filtered out above via not p._in_use). Shown as
   -- a rejected [blocker] candidate so the panel makes the protection visible.
@@ -3135,9 +3208,16 @@ local function filter_capture_pill(obj, state)
 end
 
 local function filter_repair_pill(obj, state, info)
-  if not (obj.owner == "friendly" and obj.health > 0
+  -- health < MAX includes 0-HP (dead) friendly pills: those rebuild IN PLACE
+  -- (the LGM walks out with wood). 0-HP is the 4× wood tier, so we additionally
+  -- require enough trees for a meaningful rebuild — else the engine only
+  -- partial-repairs and we've wasted the trip. Alive-damaged keeps trees>0.
+  if not (obj.owner == "friendly"
           and obj.health < C.PILLS_MAX_HEALTH) then return false end
   if not (info.man_status == C.LGM_INTANK and info.trees > 0) then return false end
+  if obj.health == 0 then
+    if (info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4) then return false end
+  end
   if state and state.blocked then
     local bk = U.mkey(obj.mx, obj.my)
     if state.blocked[bk] and (state.tick or 0) < state.blocked[bk] then return false end
@@ -4388,8 +4468,15 @@ function M.step_eval_queue(state, world, info)
           end
         end
       else
+        -- Dead pill (health 0). Pool 5 (repair) rebuilds it IN PLACE — use the
+        -- rebuild cost model (LGM walk sim; pill-fire ignored; math.huge if the
+        -- builder can't reach). Other pools route to the pill tile as before.
         local _ts = clock_us()
-        raw_cost = cpf.smart_cost_dij_only(KIND_NORMAL, cost_dx, cost_dy, boat_flag)
+        if pool_idx == 5 then
+          raw_cost = compute_repair_dead_cost(state, world, info, obj, tmx, tmy)
+        else
+          raw_cost = cpf.smart_cost_dij_only(KIND_NORMAL, cost_dx, cost_dy, boat_flag)
+        end
         _t_smart = clock_us() - _ts
       end
     end
@@ -6123,13 +6210,23 @@ function M.finalize_pools(state, world, info)
     local pid = pr5.best_id
     local pcost = pr5.best_cost
     local damage = C.PILLS_MAX_HEALTH - pill.health
-    local adj_cost = math.max(0, pcost - damage * C.REPAIR_DAMAGE_BONUS)
+    -- Dead (0-HP) pills: pcost is ALREADY the full rebuild-in-place cost from
+    -- compute_repair_dead_cost — no damage discount (that's the alive model).
+    local adj_cost
+    if pill.health == 0 then
+      adj_cost = pcost
+    else
+      adj_cost = math.max(0, pcost - damage * C.REPAIR_DAMAGE_BONUS)
+    end
     pc[5] = {
       cost = adj_cost,
       goal = { kind = "repair_pill", mx = pill.mx, my = pill.my,
                wx = U.m2w(pill.mx), wy = U.m2w(pill.my), target_id = pid },
-      desc = BRAIN_POOL_VIZ and string.format("repair_pill#%d@(%d,%d) cost=%.0f (path=%.0f -dam=%d×%d)",
-             pid, pill.mx, pill.my, adj_cost, pcost, damage, C.REPAIR_DAMAGE_BONUS) or "",
+      desc = BRAIN_POOL_VIZ and (pill.health == 0
+        and string.format("repair_pill#%d@(%d,%d) cost=%.0f REBUILD(dead)",
+              pid, pill.mx, pill.my, adj_cost)
+        or string.format("repair_pill#%d@(%d,%d) cost=%.0f (path=%.0f -dam=%d×%d)",
+              pid, pill.mx, pill.my, adj_cost, pcost, damage, C.REPAIR_DAMAGE_BONUS)) or "",
       cands = pr5.candidates,
     }
   else
@@ -7373,6 +7470,10 @@ local function goal_selection(state, world, info, quiet)
     if state.phase ~= "opening" then
       local INF_EXEMPT = {
         refuel_at_base=true,
+        -- repair_pill has its own danger model (dead-pill: tank-snipe, advantage-
+        -- scaled; pill-fire ignored) and should NOT be ×2'd for sitting in enemy
+        -- influence — a forward dead pill is exactly what we want to rebuild.
+        repair_pill=true,
       }
       for _, c in ipairs(pool) do
         if c.goal and c.goal.mx and c.goal.my
