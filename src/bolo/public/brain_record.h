@@ -34,7 +34,7 @@ extern "C" {
  * version whenever the frame layout below changes; the loader checks it. */
 #define BRAINREC_MAGIC        "WBNREC1"
 #define BRAINREC_MAGIC_LEN    8
-#define BRAINREC_VERSION      4u     /* v4: packed (variable-length) overlay cmds */
+#define BRAINREC_VERSION      5u     /* v5: + per-frame per-player alliance bitmaps */
 #define BRAINREC_FRAME_MAGIC  0xB07EC0DEu
 #define BRAINREC_FILENAME     "brainrec.btr"
 

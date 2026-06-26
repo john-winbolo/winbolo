@@ -238,6 +238,10 @@ typedef struct {
     uint8_t           baseCount;
     BtPillFrame       snapPills[MAX_SNAPSHOT_PILLS];
     uint8_t           pillCount;
+    /* Per-player alliance bitmaps (brainrec v5). Applied to gs->plyrs->item[i]
+     * .allie before render so pills/bases color by the followed bot's real
+     * alliances — owner alone reads allies as enemy (red). */
+    uint32_t          allie[MAX_TANKS];
 
     /* Camera + brain perf for the HUD. */
     WORLD viewCenterX, viewCenterY;
@@ -928,6 +932,12 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
             } else if (pj) {
                 free(pj);
             }
+        }
+
+        /* Per-player alliance bitmaps (v5), written by the recorder right after
+         * the per-bot block. */
+        for (int i = 0; i < MAX_TANKS; i++) {
+            f->allie[i] = bt_gz_u32(g);
         }
 
         rb->count++;
@@ -4604,6 +4614,7 @@ static void appRender(BrainTestApp *app) {
         BrainPathfinder *pbPf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
         struct basesObj  savedBases;
         struct pillsObj  savedPills;
+        uint32_t         savedAllie[MAX_TANKS];
         /* Temp objects for tanks/lgm/shells. The sim holds POINTERS to
          * these in tanks[] / lgmen[] / shs, so the storage must outlive
          * the render call — keeping them at function scope. Saved
@@ -4688,6 +4699,16 @@ static void appRender(BrainTestApp *app) {
                 gs->pb->item[i].armour = pf_->snapPills[i].armour;
                 gs->pb->item[i].speed  = pf_->snapPills[i].speed;
                 gs->pb->item[i].inTank = pf_->snapPills[i].inTank ? TRUE : FALSE;
+            }
+            /* Per-player alliances (brainrec v5): without these, the renderer's
+             * playersIsAllie(owner, viewPlayer) reads allies as enemies and
+             * draws their pills/bases red. Apply the recorded bitmaps (restored
+             * after render below) so colors match the followed bot's alliances. */
+            if (gs->plyrs) {
+                for (int i = 0; i < MAX_TANKS; i++) {
+                    savedAllie[i] = (uint32_t)gs->plyrs->item[i].allie;
+                    gs->plyrs->item[i].allie = (allience)pf_->allie[i];
+                }
             }
 
             /* ── Tanks ── reconstruct from TankSnapshot wire entries
@@ -4897,6 +4918,11 @@ static void appRender(BrainTestApp *app) {
             }
             *gs->bs = savedBases;
             *gs->pb = savedPills;
+            if (gs->plyrs) {
+                for (int i = 0; i < MAX_TANKS; i++) {
+                    gs->plyrs->item[i].allie = (allience)savedAllie[i];
+                }
+            }
             for (int i = 0; i < MAX_TANKS; i++) {
                 gs->tanks[i] = savedTanks[i];
                 gs->lgmen[i] = savedLgmen[i];

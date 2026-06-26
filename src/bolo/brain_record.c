@@ -14,6 +14,7 @@
 #include "brain_overlay.h"
 #include "types.h"       /* MAP_ARRAY_SIZE, map */
 #include "game_sim.h"    /* GameSim internals: ->mp->mapItem */
+#include "players.h"     /* players / struct playersObj: per-player alliance bitmap */
 
 #define BRAINREC_MAP_TILES (MAP_ARRAY_SIZE * MAP_ARRAY_SIZE)
 
@@ -356,6 +357,18 @@ void brainRecordTick(ServerSim *sim) {
         wr_u32(plen);
         if (plen) wr_buf(pj, plen);
         if (pj) free(pj);
+    }
+
+    /* ── Per-player alliance bitmaps (v5) ── MAX_TANKS uint32s, written every
+     * frame so playback can color pills/bases by the followed bot's REAL
+     * alliances. Without these the replay only knows owner, so an ally's pill
+     * fails playersIsAllie(owner, viewPlayer) and renders as enemy (red). */
+    {
+        GameSim *gsa = serverSimGetGameSim(sim);
+        for (int i = 0; i < MAX_TANKS; i++) {
+            uint32_t allie = (gsa && gsa->plyrs) ? (uint32_t)gsa->plyrs->item[i].allie : 0u;
+            wr_u32(allie);
+        }
     }
 
     /* Throttled gzip flush: a Z_SYNC_FLUSH every ~64 frames keeps the on-disk
