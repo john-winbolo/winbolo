@@ -70,12 +70,12 @@ int run_bases_closest_for_player(void) {
     (*gs->bs).item[b].owner = NEUTRAL;
     tankSetWorld(gs, &gs->tanks[0], aCx, aCy, 0, false);
     tankSetWorld(gs, &gs->tanks[1], bCx, bCy, 0, false);
-    UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 0, aCx, aCy) == (BYTE)(a + 1),
+    UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 0, aCx, aCy, BASE_STATUS_RANGE) == (BYTE)(a + 1),
                   "player 0 at base a should see base a (%u), got %u",
-                  (BYTE)(a + 1), basesGetClosestForPlayer(gs, 0, aCx, aCy));
-    UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 1, bCx, bCy) == (BYTE)(b + 1),
+                  (BYTE)(a + 1), basesGetClosestForPlayer(gs, 0, aCx, aCy, BASE_STATUS_RANGE));
+    UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 1, bCx, bCy, BASE_STATUS_RANGE) == (BYTE)(b + 1),
                   "player 1 at base b should see base b (%u), got %u",
-                  (BYTE)(b + 1), basesGetClosestForPlayer(gs, 1, bCx, bCy));
+                  (BYTE)(b + 1), basesGetClosestForPlayer(gs, 1, bCx, bCy, BASE_STATUS_RANGE));
 
     /* Enemy exclusion: every base owned by player 1 → invisible to player 0. */
     {
@@ -84,15 +84,15 @@ int run_bases_closest_for_player(void) {
             (*gs->bs).item[i].owner = 1;
         }
     }
-    UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 0, aCx, aCy) == BASE_NOT_FOUND,
+    UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 0, aCx, aCy, BASE_STATUS_RANGE) == BASE_NOT_FOUND,
                   "all-enemy bases must be invisible to player 0, got %u",
-                  basesGetClosestForPlayer(gs, 0, aCx, aCy));
+                  basesGetClosestForPlayer(gs, 0, aCx, aCy, BASE_STATUS_RANGE));
 
     /* Inclusion after flip: base a turns neutral (others stay enemy). */
     (*gs->bs).item[a].owner = NEUTRAL;
-    UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 0, aCx, aCy) == (BYTE)(a + 1),
+    UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 0, aCx, aCy, BASE_STATUS_RANGE) == (BYTE)(a + 1),
                   "flipping base a neutral should re-include it, got %u",
-                  basesGetClosestForPlayer(gs, 0, aCx, aCy));
+                  basesGetClosestForPlayer(gs, 0, aCx, aCy, BASE_STATUS_RANGE));
 
     /* Out of range: only base a is neutral; a point ≥8 squares from base a
      * (16 squares here, well past BASE_STATUS_RANGE's 7) sees nothing. The
@@ -102,9 +102,31 @@ int run_bases_closest_for_player(void) {
         int farMapX = (aMapX >= 16) ? (aMapX - 16) : (aMapX + 16);
         WORLD farX = bv_base_world((BYTE)farMapX);
         WORLD farY = aCy;
-        UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 0, farX, farY) == BASE_NOT_FOUND,
+        UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 0, farX, farY, BASE_STATUS_RANGE) == BASE_NOT_FOUND,
                       "base a should be out of range from the shifted point, got %u",
-                      basesGetClosestForPlayer(gs, 0, farX, farY));
+                      basesGetClosestForPlayer(gs, 0, farX, farY, BASE_STATUS_RANGE));
+    }
+
+    /* Asymmetric send margin: a neutral base sitting just past
+     * BASE_STATUS_RANGE (here 1920 world units ≈ 7.5 map squares from base a)
+     * is rejected by the bare display range but selected by the widened server
+     * send ceiling (BASE_STATUS_RANGE + 256 = 2048). This pins that the margin
+     * reveals a base's stock at a radius the client's own display range would
+     * not yet switch to. Base a is the only neutral base here (every other base
+     * is still enemy-owned), so it is the sole candidate. Offset along X only
+     * (gapY = 0) so the Euclidean distance equals the offset exactly; the sign
+     * is chosen to keep the probe point inside the WORLD range. */
+    {
+        const WORLD marginProbe = 1920; /* 1792 <= d < 2048 */
+        WORLD nearX = (aCx >= marginProbe) ? (WORLD)(aCx - marginProbe)
+                                           : (WORLD)(aCx + marginProbe);
+        UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 0, nearX, aCy, BASE_STATUS_RANGE) == BASE_NOT_FOUND,
+                      "base a just past BASE_STATUS_RANGE must be rejected by the bare range, got %u",
+                      basesGetClosestForPlayer(gs, 0, nearX, aCy, BASE_STATUS_RANGE));
+        UT_ASSERT_MSG(basesGetClosestForPlayer(gs, 0, nearX, aCy, (WORLD)(BASE_STATUS_RANGE + 256)) == (BYTE)(a + 1),
+                      "base a within BASE_STATUS_RANGE+256 must be selected by the widened range (%u), got %u",
+                      (BYTE)(a + 1),
+                      basesGetClosestForPlayer(gs, 0, nearX, aCy, (WORLD)(BASE_STATUS_RANGE + 256)));
     }
 
     serverSimDestroy(sim);

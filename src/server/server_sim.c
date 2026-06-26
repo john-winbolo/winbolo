@@ -2844,6 +2844,23 @@ static int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut) {
     return count;
 }
 
+WORLD serverSimClosestBaseSendRange(const ServerSim *sim, BYTE client) {
+    /* Widen the closest-base selection ceiling past the client's display range
+     * (BASE_STATUS_RANGE) by roughly how far the tank travels in one round-trip
+     * at max road speed (800 world units/sec): margin = ping_ms/1000 * 800,
+     * plus 32 units fixed headroom. Clamp the margin to one map square (256) so
+     * a spiking RTT can't widen the reveal past a single tile (ping effectively
+     * capped at ~280ms); the total ceiling never exceeds BASE_STATUS_RANGE + 256.
+     * Pre-loading the stock from this wider radius caches it before the client's
+     * own display switches to the base, avoiding the stale "full health, 0 ammo"
+     * flash. */
+    unsigned margin = ((unsigned)sim->playerPing[client] * 800u) / 1000u + 32u;
+    if (margin > 256u) {
+        margin = 256u;
+    }
+    return (WORLD)(BASE_STATUS_RANGE + margin);
+}
+
 bool serverSimTakeClosestBaseStock(ServerSim *sim, BYTE recipient, BYTE closest, GameEvent *out) {
     bool changed = (closest != sim->lastClosestBase[recipient]);
     sim->lastClosestBase[recipient] = closest;
@@ -2870,7 +2887,8 @@ bool serverSimTakeArrivalBaseStock(ServerSim *sim, BYTE clientIdx, GameEvent *ou
         return false;
     }
     if (serverSimGetTankState(sim, clientIdx, &wx, &wy)) {
-        closest = basesGetClosestForPlayer(&sim->sim, clientIdx, wx, wy);
+        WORLD r = serverSimClosestBaseSendRange(sim, clientIdx);
+        closest = basesGetClosestForPlayer(&sim->sim, clientIdx, wx, wy, r);
     }
     return serverSimTakeClosestBaseStock(sim, clientIdx, closest, out);
 }
@@ -3081,7 +3099,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             WORLD bwx = 0, bwy = 0;
             BYTE closest = BASE_NOT_FOUND;
             if (serverSimGetTankState(sim, clientIdx, &bwx, &bwy)) {
-                closest = basesGetClosestForPlayer(&sim->sim, clientIdx, bwx, bwy);
+                WORLD r = serverSimClosestBaseSendRange(sim, clientIdx);
+                closest = basesGetClosestForPlayer(&sim->sim, clientIdx, bwx, bwy, r);
             }
             for (i = 0; i < hdr->baseCount; i++) {
                 BYTE owner = basesOut[i].owner;
@@ -3121,7 +3140,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
          * events are culled to this base only (computed once per recipient). */
         BYTE closestBase = BASE_NOT_FOUND;
         if (hasClientPos) {
-            closestBase = basesGetClosestForPlayer(&sim->sim, clientIdx, cwx, cwy);
+            WORLD r = serverSimClosestBaseSendRange(sim, clientIdx);
+            closestBase = basesGetClosestForPlayer(&sim->sim, clientIdx, cwx, cwy, r);
         }
 
         /* First pass: collect best (closest) sound event per sound type.

@@ -4679,7 +4679,8 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
          * are culled to this base only (computed once per client). */
         BYTE closestBase = BASE_NOT_FOUND;
         if (hasPos) {
-            closestBase = basesGetClosestForPlayer(serverSimGetGameSim(sim), (BYTE)c, cwx, cwy);
+            WORLD r = serverSimClosestBaseSendRange(sim, (BYTE)c);
+            closestBase = basesGetClosestForPlayer(serverSimGetGameSim(sim), (BYTE)c, cwx, cwy, r);
         }
 
         /* On arrival (closest base changed) push that base's current stock

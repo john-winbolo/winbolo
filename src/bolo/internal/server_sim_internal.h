@@ -405,6 +405,12 @@ bool serverSimTakeClosestBaseStock(ServerSim *sim, BYTE recipient, BYTE closest,
  * in the build — they read base stock via the periodic full sync. */
 bool serverSimTakeArrivalBaseStock(ServerSim *sim, BYTE clientIdx, GameEvent *out);
 
+/* World-unit ceiling for selecting `client`'s closest base when gating which
+ * base's stock to send. Wider than the client's display range (BASE_STATUS_RANGE)
+ * by an RTT-sized margin so the stock is cached before the client's display
+ * switches to that base. See the definition for the margin formula. */
+WORLD serverSimClosestBaseSendRange(const ServerSim *sim, BYTE client);
+
 /* Server-side handler for PACKET_GAME_VOTE_TOGGLE. T2 because the only
  * legitimate callers are the two transport-layer dispatch sites — the
  * UDP wire handler (src/server/transport_udp_server.c) and the
