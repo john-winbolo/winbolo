@@ -98,6 +98,17 @@ bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu);
 void inputActivate(void);
 
 /*********************************************************
+*NAME:          inputResetHeldKeys
+*PURPOSE:
+*  Drops all held-key and latched edge state. Called on a
+*  window focus transition so a key released while the
+*  game window was unfocused (no KEY_UP delivered) can't
+*  stay "held" in the polled keyboard state and drive the
+*  tank when focus returns.
+*********************************************************/
+void inputResetHeldKeys(void);
+
+/*********************************************************
 *NAME:          inputButtonInput
 *PURPOSE:
 *  Called from the SDL event loop on SDL_EVENT_KEY_DOWN /
