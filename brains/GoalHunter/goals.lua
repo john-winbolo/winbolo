@@ -850,6 +850,37 @@ local function compute_repair_dead_cost(state, world, info, pill, tmx, tmy)
 end
 
 local function eval_repair_pill(state, world, info, tmx, tmy, boat, ammo)
+  if not C.REPAIR_FIX_ENABLED then
+    -- 1.90-beta1 repair behavior: alive-damaged friendly pills only; plain
+    -- `max(0, path - dmg*BONUS)` cost; no dead-pill rebuild, no base-cost floor,
+    -- no contested ×3, no friendly-fire / reposition / take-blocker guards.
+    local has_damaged = not state.perc or (state.perc.friendly_pills_damaged > 0)
+    if not (has_damaged and info.man_status == C.LGM_INTANK and info.trees > 0) then return nil end
+    local dmx, dmy
+    if state._demolish_tick
+       and (state.tick - state._demolish_tick) < (C.REPOSITION_DEMOLISH_GRACE_TICKS or 1500) then
+      dmx, dmy = state._demolish_mx, state._demolish_my
+    end
+    local ally_demolish = state._ally_demolish_tiles
+    local pill, pid, pcost, pcands = nearest_where(world.pills, world, tmx, tmy,
+      function(p)
+        return p.owner == "friendly" and p.health > 0
+               and p.health < C.PILLS_MAX_HEALTH
+               and not (dmx and p.mx == dmx and p.my == dmy)
+               and not (ally_demolish and ally_demolish[p.my * C.MAP_W + p.mx])
+      end, boat, ammo, state, info, KIND_NORMAL)
+    if not pill then return nil end
+    local damage = C.PILLS_MAX_HEALTH - pill.health
+    local adj_cost = math.max(0, pcost - damage * C.REPAIR_DAMAGE_BONUS)
+    return {
+      cost = adj_cost,
+      goal = { kind = "repair_pill", mx = pill.mx, my = pill.my,
+               wx = U.m2w(pill.mx), wy = U.m2w(pill.my), target_id = pid },
+      desc = BRAIN_POOL_VIZ and string.format("repair_pill#%d@(%d,%d) cost=%.0f (path=%.0f -dam=%d×%d)",
+             pid, pill.mx, pill.my, adj_cost, pcost, damage, C.REPAIR_DAMAGE_BONUS) or "",
+      cands = pcands,
+    }
+  end
   local has_damaged = not state.perc or (state.perc.friendly_pills_damaged > 0)
   if not (has_damaged and info.man_status == C.LGM_INTANK and info.trees > 0) then return nil end
   -- Don't repair a pill we're actively demolishing for a reposition (set by
@@ -3313,10 +3344,13 @@ local function filter_repair_pill(obj, state, info)
   -- (the LGM walks out with wood). 0-HP is the 4× wood tier, so we additionally
   -- require enough trees for a meaningful rebuild — else the engine only
   -- partial-repairs and we've wasted the trip. Alive-damaged keeps trees>0.
+  -- REPAIR_FIX off → 1.90-beta1: alive-damaged only (health > 0). On → also
+  -- accept 0-HP friendly pills for rebuild-in-place (with the dead-pill wood gate).
   if not (obj.owner == "friendly"
-          and obj.health < C.PILLS_MAX_HEALTH) then return false end
+          and obj.health < C.PILLS_MAX_HEALTH
+          and (C.REPAIR_FIX_ENABLED or obj.health > 0)) then return false end
   if not (info.man_status == C.LGM_INTANK and info.trees > 0) then return false end
-  if obj.health == 0 then
+  if C.REPAIR_FIX_ENABLED and obj.health == 0 then
     print2(string.format("REPAIR_DEAD_FILTER t=%d pill@(%d,%d) dead trees=%d/%d %s", state and state.tick or 0, obj.mx, obj.my, info.trees or 0, C.REPAIR_DEAD_MIN_TREES or 4, ((info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4)) and "REJECT(low_trees)" or "enqueue"))
     if (info.trees or 0) < (C.REPAIR_DEAD_MIN_TREES or 4) then return false end
   end
@@ -4629,7 +4663,7 @@ function M.step_eval_queue(state, world, info)
         -- rebuild cost model (LGM walk sim; pill-fire ignored; math.huge if the
         -- builder can't reach). Other pools route to the pill tile as before.
         local _ts = clock_us()
-        if pool_idx == 5 then
+        if pool_idx == 5 and C.REPAIR_FIX_ENABLED then
           raw_cost = compute_repair_dead_cost(state, world, info, obj, tmx, tmy)
         else
           raw_cost = cpf.smart_cost_dij_only(KIND_NORMAL, cost_dx, cost_dy, boat_flag)
@@ -6475,7 +6509,7 @@ function M.finalize_pools(state, world, info)
     -- Dead (0-HP) pills: pcost is ALREADY the full rebuild-in-place cost from
     -- compute_repair_dead_cost — no damage discount (that's the alive model).
     local adj_cost
-    if pill.health == 0 then
+    if pill.health == 0 and C.REPAIR_FIX_ENABLED then
       adj_cost = pcost
     else
       adj_cost = math.max(0, pcost - damage * C.REPAIR_DAMAGE_BONUS)
@@ -7800,11 +7834,12 @@ local function goal_selection(state, world, info, quiet)
     if state.phase ~= "opening" then
       local INF_EXEMPT = {
         refuel_at_base=true,
-        -- repair_pill has its own danger model (dead-pill: tank-snipe, advantage-
-        -- scaled; pill-fire ignored) and should NOT be ×2'd for sitting in enemy
-        -- influence — a forward dead pill is exactly what we want to rebuild.
-        repair_pill=true,
       }
+      -- repair_pill has its own danger model (dead-pill: tank-snipe, advantage-
+      -- scaled; pill-fire ignored) and should NOT be ×2'd for sitting in enemy
+      -- influence — but only under the repair fix. Off → 1.90-beta1: subject to
+      -- the influence ×0.5/×2 like any other goal.
+      if C.REPAIR_FIX_ENABLED then INF_EXEMPT.repair_pill = true end
       for _, c in ipairs(pool) do
         if c.goal and c.goal.mx and c.goal.my
            and not INF_EXEMPT[c.goal.kind] then

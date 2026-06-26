@@ -710,6 +710,14 @@ M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
                                    -- (with squared urgency: floor cost at
                                    -- bscore × 0.37; e.g. bscore=60 → ~22)
 M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pill = +75)
+-- ── Repair fix master toggle ──────────────────────────────────────────────
+-- false → repair_pill reverts to the 1.90-beta1 behavior: alive-damaged pills
+-- only (no dead-pill rebuild-in-place), plain `max(0, path - dmg*BONUS)` cost,
+-- and none of the post-1.90 guards (contested ×3, REPAIR_BASE_COST floor,
+-- friendly-fire reject, reposition block) or the influence-exemption. true →
+-- current (post-1.90) behavior. Read live, so flipping this one constant is the
+-- whole switch. Released builds set this false until the improvements are tested.
+M.REPAIR_FIX_ENABLED       = true
 M.REPAIR_BASE_COST         = 30    -- flat floor so a close/damaged repair doesn't trivially out-rank other goals
 M.REPAIR_DAMAGE_BONUS      = 3     -- cost reduction per missing HP on friendly pill
 M.REPAIR_CONTESTED_MULT    = 3.0   -- repair cost ×N when an enemy tank is closer to the pill than us (contested → likely futile)
