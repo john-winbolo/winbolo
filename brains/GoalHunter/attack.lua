@@ -5352,6 +5352,11 @@ function M.update_attack_substate(goal, state, world, info)
       -- shorter swerves since the kill is fast and we don't need a long
       -- evasion window.
       goal._charge_start_hp = pill_hp_now
+      -- Charge stall give-up tracker (mirrors approach): reset on charge entry.
+      -- Closest squared distance to the pill + lowest pill HP seen so far.
+      goal._charge_last_progress = now
+      goal._charge_best_d2 = nil
+      goal._charge_best_hp = pill_hp_now
     end
 
     -- Cumulative return-fire hits taken during the charge (armour drop),
@@ -5362,6 +5367,29 @@ function M.update_attack_substate(goal, state, world, info)
     -- "N hits" swerve on the very first hit.
     if info.armour < goal._charge_armour then goal._charge_hits_total = (goal._charge_hits_total or 0) + 1 end
     goal._charge_armour     = info.armour
+
+    -- Charge stall give-up: abort if we close NO distance to the pill AND drop
+    -- NO pill HP for ~5s. The condition-based aborts below only fire on a
+    -- blocked shot path / out-of-shells; a charge that's movement-wedged (e.g. a
+    -- wall blocks the standoff) hits none of them and would otherwise sit there
+    -- grinding shells / to death. This backstops that. Mirrors approach's stall.
+    do
+      local CHARGE_STALL_GIVE_UP_TICKS = 250   -- ~5s @ 50Hz
+      if not goal._charge_last_progress then goal._charge_last_progress = now end
+      local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+      local ddx, ddy = tmx - pmx, tmy - pmy
+      local d2 = ddx * ddx + ddy * ddy
+      local php = pill and pill.health or 0
+      local progressed = false
+      if not goal._charge_best_d2 or d2 < goal._charge_best_d2 then goal._charge_best_d2 = d2; progressed = true end
+      if not goal._charge_best_hp or php < goal._charge_best_hp then goal._charge_best_hp = php; progressed = true end
+      if progressed then goal._charge_last_progress = now end
+      if (now - goal._charge_last_progress) > CHARGE_STALL_GIVE_UP_TICKS then
+        print2(string.format("CHARGE_ABORT_STALL no progress for %dt d=%.0f hp=%d pill=(%d,%d)", CHARGE_STALL_GIVE_UP_TICKS, math.sqrt(d2), php, pmx, pmy))
+        clear_attack_goal(state, "charge stalled - no progress")
+        return
+      end
+    end
 
     -- Shot-path obstacle check: every tick, simulate the shell path
     -- and count obstacles. Updates _bullets_needed so the swerve

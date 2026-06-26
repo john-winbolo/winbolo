@@ -203,11 +203,23 @@ function M.update(state, world, info, now)
     end
   end
 
-  -- Clear a consumed / expired approval.
+  -- Clear the approval only when its window runs out. It deliberately survives
+  -- the first commit (and brief preemption by refuel/survival) so the
+  -- initiator's reposition keeps its fixed cost-80 priority for the WHOLE ~30s
+  -- window — long enough to travel to, pick up, move and re-drop the pill.
+  -- goals.lua's APPROVED branch reads state._repo_approved_pid every tick.
   if state._repo_approved_pid then
-    local committed = state.goal and state.goal.kind == "capture_pill"
-                      and state.goal.reposition and state.goal.target_id == state._repo_approved_pid
-    if committed or (now - (state._repo_approved_tick or now)) > (C.REPOSITION_VOTE_APPROVAL_TTL or 300) then
+    local ap = world.pills and world.pills[state._repo_approved_pid]
+    local consumed = (not ap) or (ap.health or 0) <= 0 or ap.in_tank
+    if consumed then
+      -- The pill was actually taken (shot to 0 / picked up / re-dropped) — the
+      -- move is underway and held by the reposition lock from here. Drop the
+      -- approval so we don't re-target this same pill again inside the window
+      -- (e.g. reposition it a second time right after it was just re-built).
+      state._repo_approved_pid = nil
+    elseif (now - (state._repo_approved_tick or now)) > (C.REPOSITION_VOTE_APPROVAL_TTL or 1500) then
+      local committed = state.goal and state.goal.kind == "capture_pill"
+                        and state.goal.reposition and state.goal.target_id == state._repo_approved_pid
       if not committed then
       end
       state._repo_approved_pid = nil

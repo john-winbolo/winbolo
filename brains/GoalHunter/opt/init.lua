@@ -3567,14 +3567,22 @@ function Brain.think(info)
       -- machine. Swerve itself is never interrupted, not even by flee.
       local swerving = state.goal.kind == "attack_pill"
                        and state.goal.substate == "swerve"
-      -- charge is the final rush — aborting mid-charge is dangerous.
-      -- swerve is handled above (fully uninterruptible).
-      -- All other attack_pill substates (approach, aim, detree, engage,
-      -- post_engage, loiter) are now interruptible so high-priority goals
-      -- (dead pill, tank attack, flee) can preempt without waiting.
+      -- "Killing the pill right now" states — actively rushing / aiming /
+      -- firing at the pill. Like charge, these must NOT be interrupted by a
+      -- merely-cheaper goal; only the critical preempts below (flee /
+      -- attack_tank / kill_lgm / dead-pill grab) break them. swerve is handled
+      -- above (fully uninterruptible). The pre-fire positioning/setup states
+      -- (plan_position, approach, detree, gather_trees, build_walls, blitz_wait,
+      -- dispatch, disengage, post_engage, loiter, ws_* setup, ...) stay
+      -- interruptible so high-priority goals can still preempt before the shot.
+      local ksub = state.goal.substate
       local engage_locked = state.goal.kind == "attack_pill"
-                            and (state.goal.substate == "charge"
-                                 or state.goal.substate == "engage")
+        and (ksub == "charge"        or ksub == "engage"
+          or ksub == "shoot_pill"    or ksub == "aim"
+          or ksub == "in_range_aim"  or ksub == "in_range_aim_pre"
+          or ksub == "in_range_aim_finetune" or ksub == "in_range_position"
+          or ksub == "kill_hardline" or ksub == "curve_away"
+          or ksub == "ws_engage")
       -- A committed blitz must not be abandoned for routine goals (the bug
       -- where a discounted capture_pill/reposition stole a commander out of
       -- blitz_wait, stranding the squad). Holds through the pre-GO + aim phases
@@ -3620,7 +3628,17 @@ function Brain.think(info)
           base_commit_locked = false
         end
       end
-      if swerving then
+      -- A replan only SWITCHES when the winner differs from the current goal.
+      -- If the pool re-picks the SAME goal (same kind + tile + target), keep the
+      -- current goal object untouched — a same-winner replan (urgent or timer)
+      -- must be a no-op, never a churn that resets the substate/progress and
+      -- interrupts e.g. an in-flight blitz/take.
+      local same_winner = new_goal and new_goal.kind == state.goal.kind
+        and new_goal.mx == state.goal.mx and new_goal.my == state.goal.my
+        and (new_goal.target_id or -1) == (state.goal.target_id or -1)
+      if same_winner then
+        new_goal = state.goal  -- re-affirmed current goal: no switch
+      elseif swerving then
         new_goal = state.goal  -- swerve is never interrupted, not even by flee
       elseif engage_locked and new_goal.kind ~= "flee_to_base"
                              and new_goal.kind ~= "attack_tank"
