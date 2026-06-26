@@ -4749,6 +4749,12 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
         for (i = 0; i < (int)serverSimGetEventCount(sim); i++) {
             uint8_t evType = serverSimGetEvents(sim)[i].type;
             if (evType != EVENT_SOUND && evType != EVENT_SOUND_TANK_HIT && evType != EVENT_SOUND_SHOOT) {
+                /* Per-recipient working copy so a non-closest dead base's stock
+                 * event can be reshaped (armour-only) without mutating the
+                 * shared event; forceReliable promotes that copy to the
+                 * reliable channel. */
+                GameEvent evToSend = serverSimGetEvents(sim)[i];
+                bool forceReliable = false;
                 /* Filter EVENT_MINE_VISIBLE: tank mines (bit 7 set) go to all,
                  * LGM mines go only to the placer and their allies */
                 if (evType == EVENT_MINE_VISIBLE) {
@@ -4768,16 +4774,29 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                                        serverSimGetEvents(sim)[i].data[0],
                                        serverSimGetEvents(sim)[i].data[1])) continue;
                 }
-                /* Cull base stock to the client's closest neutral/allied base */
+                /* Base stock is normally culled to the client's closest
+                 * neutral/allied base. Exception: a dead base (armour <=
+                 * MIN_ARMOUR_CAPTURE) is delivered to non-closest recipients
+                 * too — armour only, with shells/mines zeroed so its reserve
+                 * stays hidden — on the reliable channel, so the shooter
+                 * unblocks the now-drivable tile promptly and the one-shot
+                 * transition can't be dropped. */
                 if (evType == EVENT_BASE_STOCK) {
-                    if (closestBase == BASE_NOT_FOUND ||
-                        (BYTE)(closestBase - 1) != serverSimGetEvents(sim)[i].data[0]) {
-                        continue;
+                    bool isClosest = closestBase != BASE_NOT_FOUND &&
+                        (BYTE)(closestBase - 1) == serverSimGetEvents(sim)[i].data[0];
+                    if (!isClosest) {
+                        if (serverSimGetEvents(sim)[i].data[1] <= MIN_ARMOUR_CAPTURE) {
+                            evToSend.data[2] = 0;
+                            evToSend.data[3] = 0;
+                            forceReliable = true;
+                        } else {
+                            continue;
+                        }
                     }
                 }
                 uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
-                int evLen = packGameEvent(evBuf, &serverSimGetEvents(sim)[i]);
-                if (gameEventIsReliable(evType)) {
+                int evLen = packGameEvent(evBuf, &evToSend);
+                if (forceReliable || gameEventIsReliable(evType)) {
                     if (!channelSend(&udpServer.channelMux[c], CHANNEL_GAME,
                                      evBuf, (uint16_t)evLen)) {
                         /* Channel window full — defer the disconnect off the
