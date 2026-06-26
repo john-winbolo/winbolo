@@ -3094,14 +3094,13 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
              *    an enemy base reports BASE_FULL_ARMOUR while alive (exact value hidden)
              *    but its true armour once dead/capturable, so the capturable flip shows.
              *    Mirrors the brain fog-of-war in basesGetBrainBaseInRect.
-             *  - shells/mines are the private ammo reserve: real only for the
-             *    recipient's closest neutral/allied base, zeroed everywhere else. */
+             *  - shells/mines are the private ammo reserve: real for every
+             *    neutral/allied base within stock-send range of the recipient's
+             *    tank (so each base the client may switch its display to is
+             *    pre-loaded), zeroed everywhere else. */
             WORLD bwx = 0, bwy = 0;
-            BYTE closest = BASE_NOT_FOUND;
-            if (serverSimGetTankState(sim, clientIdx, &bwx, &bwy)) {
-                WORLD r = serverSimClosestBaseSendRange(sim, clientIdx);
-                closest = basesGetClosestForPlayer(&sim->sim, clientIdx, bwx, bwy, r);
-            }
+            bool hasTankPos = serverSimGetTankState(sim, clientIdx, &bwx, &bwy);
+            WORLD r = serverSimClosestBaseSendRange(sim, clientIdx);
             for (i = 0; i < hdr->baseCount; i++) {
                 BYTE owner = basesOut[i].owner;
                 bool friendly = (owner == NEUTRAL) || (owner == clientIdx) ||
@@ -3109,7 +3108,8 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 if (!friendly && basesOut[i].armour > MIN_ARMOUR_CAPTURE) {
                     basesOut[i].armour = BASE_FULL_ARMOUR;
                 }
-                if (closest == BASE_NOT_FOUND || (BYTE)(closest - 1) != (BYTE)i) {
+                if (!hasTankPos ||
+                    !basesBaseInStockRange(&sim->sim, clientIdx, bwx, bwy, (BYTE)i, r)) {
                     basesOut[i].shells = 0;
                     basesOut[i].mines  = 0;
                 }
@@ -3136,13 +3136,9 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             clientMY = (BYTE)(cwy >> 8);
         }
 
-        /* Recipient's closest neutral/allied base — best-effort base stock
-         * events are culled to this base only (computed once per recipient). */
-        BYTE closestBase = BASE_NOT_FOUND;
-        if (hasClientPos) {
-            WORLD r = serverSimClosestBaseSendRange(sim, clientIdx);
-            closestBase = basesGetClosestForPlayer(&sim->sim, clientIdx, cwx, cwy, r);
-        }
+        /* Stock-send range ceiling — best-effort base stock events are culled
+         * to neutral/allied bases within this range of the recipient's tank. */
+        WORLD stockRange = serverSimClosestBaseSendRange(sim, clientIdx);
 
         /* First pass: collect best (closest) sound event per sound type.
          * Track by soundId index — sndEffects has ~24 values. */
@@ -3217,11 +3213,12 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                         continue;
                     }
                 }
-                /* Cull base stock to the recipient's closest neutral/allied base
-                 * (humans only — bots receive every base-stock event). */
+                /* Cull base stock to neutral/allied bases within stock-send range
+                 * of the recipient (humans only — bots receive every event). */
                 if (evType == EVENT_BASE_STOCK && !recipientIsBot) {
-                    if (closestBase == BASE_NOT_FOUND ||
-                        (BYTE)(closestBase - 1) != sim->events[i].data[0]) {
+                    if (!hasClientPos ||
+                        !basesBaseInStockRange(&sim->sim, clientIdx, cwx, cwy,
+                                               sim->events[i].data[0], stockRange)) {
                         continue;
                     }
                 }

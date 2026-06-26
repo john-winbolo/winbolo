@@ -9,10 +9,13 @@
  *      base the moment it flips neutral, and drops a base that is out of
  *      BASE_STATUS_RANGE.
  *
- *   2. serverSimBuildSnapshot's full-sync base block sends each human
- *      recipient real stock only for *its own* closest base and zeroes every
- *      other base's stock — owner is kept for all — so enemy / non-closest
- *      stock never leaks across the wire.
+ *   2. basesBaseInStockRange's neutral/allied + distance filter (the per-base
+ *      predicate the stock cull gates on).
+ *
+ *   3. serverSimBuildSnapshot's full-sync base block sends each human recipient
+ *      real stock for every neutral/allied base within send range of its tank
+ *      and zeroes ammo for out-of-range and enemy bases — owner is kept for all
+ *      — so enemy / out-of-range stock never leaks across the wire.
  *
  * The bot-exemption arm of the same cull is covered by the baseline.ds_*
  * tests and is not re-tested here.
@@ -133,9 +136,53 @@ int run_bases_closest_for_player(void) {
     return 0;
 }
 
-/* 2. Full-sync per-recipient stock cull: each recipient sees real stock only
- *    for its own closest base, zeroed stock for every other base, and owner
- *    preserved for all. */
+/* 2. basesBaseInStockRange predicate: a neutral base within range is true; the
+ *    same base evaluated from a far point is false; an enemy base in range is
+ *    false (only neutral/allied bases reveal stock). */
+int run_bases_base_in_stock_range(void) {
+    ServerSim *sim = ut_make_running_sim("P0");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    serverSimAddPlayer(sim, 1, "P1", false);
+
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT_MSG(gs != NULL, "serverSimGetGameSim returned NULL");
+    UT_ASSERT_MSG(basesGetNumBases(&gs->bs) >= 1,
+                  "Everard map has no bases (%u)", basesGetNumBases(&gs->bs));
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 1) != TRUE,
+                  "players 0 and 1 allied by default — breaks the enemy case");
+
+    const BYTE a = 0;
+    WORLD aCx = bv_base_world((*gs->bs).item[a].x);
+    WORLD aCy = bv_base_world((*gs->bs).item[a].y);
+
+    /* Neutral base, tank on its centre → in range. */
+    (*gs->bs).item[a].owner = NEUTRAL;
+    UT_ASSERT_MSG(basesBaseInStockRange(gs, 0, aCx, aCy, a, BASE_STATUS_RANGE) == true,
+                  "neutral base a at d=0 should be in stock range");
+
+    /* Same neutral base, evaluated from a point 16 squares away → out of range.
+     * Shift along X only (gapY = 0) and pick the sign that stays in [0,255]. */
+    {
+        int aMapX = (*gs->bs).item[a].x;
+        int farMapX = (aMapX >= 16) ? (aMapX - 16) : (aMapX + 16);
+        WORLD farX = bv_base_world((BYTE)farMapX);
+        UT_ASSERT_MSG(basesBaseInStockRange(gs, 0, farX, aCy, a, BASE_STATUS_RANGE) == false,
+                      "neutral base a 16 squares away should be out of stock range");
+    }
+
+    /* Enemy base in range → false (stock is only revealed for neutral/allied). */
+    (*gs->bs).item[a].owner = 1;
+    UT_ASSERT_MSG(basesBaseInStockRange(gs, 0, aCx, aCy, a, BASE_STATUS_RANGE) == false,
+                  "enemy base a in range must not be in stock range");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* 3. Full-sync per-recipient stock cull, in-range rule: a neutral/allied base
+ *    within send range of the recipient keeps real stock; an out-of-range
+ *    neutral base and an in-range enemy base have ammo zeroed; owner is kept
+ *    for all. */
 int run_base_stock_visibility(void) {
     ServerSim *sim = ut_make_running_sim("P0");
     UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
@@ -146,16 +193,26 @@ int run_base_stock_visibility(void) {
     UT_ASSERT_MSG(basesGetNumBases(&gs->bs) >= 2,
                   "Everard map has < 2 bases (%u) — test needs two",
                   basesGetNumBases(&gs->bs));
-    UT_ASSERT_MSG(gs->tanks[0] != NULL && gs->tanks[1] != NULL,
-                  "slot-0/slot-1 tanks not both valid for positioning");
+    UT_ASSERT_MSG(gs->tanks[0] != NULL, "slot-0 tank not valid for positioning");
+    UT_ASSERT_MSG(playersIsAllie(&gs->plyrs, 0, 1) != TRUE,
+                  "players 0 and 1 allied by default — breaks the enemy case");
 
     const BYTE a = 0, b = 1;
 
-    /* Both neutral, distinct nonzero stock so a leak is unmistakable. */
+    /* Base a stays put (recipient sits on it → in range); base b is relocated
+     * 16 squares from base a so it is clearly out of range. Distinct nonzero
+     * stock so a leak is unmistakable. Shift along X only, sign kept in
+     * [0,255]. */
+    int aMapX = (*gs->bs).item[a].x;
+    int aMapY = (*gs->bs).item[a].y;
+    int farMapX = (aMapX >= 16) ? (aMapX - 16) : (aMapX + 16);
+
     (*gs->bs).item[a].owner  = NEUTRAL;
     (*gs->bs).item[a].armour = 20;
     (*gs->bs).item[a].shells = 30;
     (*gs->bs).item[a].mines  = 40;
+    (*gs->bs).item[b].x      = (BYTE)farMapX;
+    (*gs->bs).item[b].y      = (BYTE)aMapY;
     (*gs->bs).item[b].owner  = NEUTRAL;
     (*gs->bs).item[b].armour = 21;
     (*gs->bs).item[b].shells = 31;
@@ -163,10 +220,7 @@ int run_base_stock_visibility(void) {
 
     WORLD aCx = bv_base_world((*gs->bs).item[a].x);
     WORLD aCy = bv_base_world((*gs->bs).item[a].y);
-    WORLD bCx = bv_base_world((*gs->bs).item[b].x);
-    WORLD bCy = bv_base_world((*gs->bs).item[b].y);
-    tankSetWorld(gs, &gs->tanks[0], aCx, aCy, 0, false);  /* recipient 0 → base a */
-    tankSetWorld(gs, &gs->tanks[1], bCx, bCy, 0, false);  /* recipient 1 → base b */
+    tankSetWorld(gs, &gs->tanks[0], aCx, aCy, 0, false);  /* recipient 0 → on base a */
 
     SnapshotHeader hdr;
     TankSnapshot tk[MAX_TANKS];
@@ -176,9 +230,8 @@ int run_base_stock_visibility(void) {
     PillSnapshot po[MAX_SNAPSHOT_PILLS];
     GameEvent ev[MAX_SNAPSHOT_EVENTS];
 
-    /* Recipient 0: base a is closest → real stock; base b ammo culled but
-     * neutral armour kept; owners kept. Reset lastFullSyncTick so this build
-     * forces a full base sync. */
+    /* In-range neutral base a → real stock; out-of-range neutral base b → ammo
+     * zeroed, armour + owner kept. Reset lastFullSyncTick to force a full sync. */
     memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
     serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
                            te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES,
@@ -186,38 +239,52 @@ int run_base_stock_visibility(void) {
     UT_ASSERT_MSG(hdr.baseCount >= 2, "expected a full-sync base block, got %u",
                   hdr.baseCount);
     UT_ASSERT_MSG(bo[a].armour == 20 && bo[a].shells == 30 && bo[a].mines == 40,
-                  "recipient 0: closest base a stock wrong (%u/%u/%u)",
+                  "recipient 0: in-range neutral base a must keep real stock (%u/%u/%u)",
                   bo[a].armour, bo[a].shells, bo[a].mines);
     UT_ASSERT_MSG(bo[b].armour == 21 && bo[b].shells == 0 && bo[b].mines == 0,
-                  "recipient 0: non-closest neutral base b — armour kept, ammo culled (%u/%u/%u)",
+                  "recipient 0: out-of-range neutral base b — armour kept, ammo culled (%u/%u/%u)",
                   bo[b].armour, bo[b].shells, bo[b].mines);
     UT_ASSERT_MSG(bo[a].owner == NEUTRAL && bo[b].owner == NEUTRAL,
                   "recipient 0: owners must be kept for all bases (a=%u b=%u)",
                   bo[a].owner, bo[b].owner);
 
-    /* Recipient 1: base b is closest → real stock; base a ammo culled but
-     * neutral armour kept; owners kept. */
+    /* Now move base b in range (1 square from base a) but make it enemy: even
+     * in range its ammo stays zeroed (only neutral/allied reveal stock), its
+     * live armour is masked, and its owner is kept. Base a unchanged → still
+     * real stock. */
+    {
+        int nearMapX = (aMapX >= 1) ? (aMapX - 1) : (aMapX + 1);
+        (*gs->bs).item[b].x      = (BYTE)nearMapX;
+        (*gs->bs).item[b].y      = (BYTE)aMapY;
+        (*gs->bs).item[b].owner  = 1;   /* enemy, alive */
+        (*gs->bs).item[b].armour = 21;
+        (*gs->bs).item[b].shells = 31;
+        (*gs->bs).item[b].mines  = 41;
+    }
     memset(sim->lastFullSyncTick, 0, sizeof(sim->lastFullSyncTick));
-    serverSimBuildSnapshot(sim, 1, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
+    serverSimBuildSnapshot(sim, 0, &hdr, tk, MAX_TANKS, sh, MAX_SNAPSHOT_SHELLS,
                            te, MAX_SNAPSHOT_TK_EXPLOSIONS, bo, MAX_SNAPSHOT_BASES,
                            po, MAX_SNAPSHOT_PILLS, ev, MAX_SNAPSHOT_EVENTS, false);
     UT_ASSERT_MSG(hdr.baseCount >= 2, "expected a full-sync base block, got %u",
                   hdr.baseCount);
-    UT_ASSERT_MSG(bo[b].armour == 21 && bo[b].shells == 31 && bo[b].mines == 41,
-                  "recipient 1: closest base b stock wrong (%u/%u/%u)",
-                  bo[b].armour, bo[b].shells, bo[b].mines);
-    UT_ASSERT_MSG(bo[a].armour == 20 && bo[a].shells == 0 && bo[a].mines == 0,
-                  "recipient 1: non-closest neutral base a — armour kept, ammo culled (%u/%u/%u)",
+    UT_ASSERT_MSG(bo[a].armour == 20 && bo[a].shells == 30 && bo[a].mines == 40,
+                  "recipient 0: in-range neutral base a stock wrong on 2nd build (%u/%u/%u)",
                   bo[a].armour, bo[a].shells, bo[a].mines);
-    UT_ASSERT_MSG(bo[a].owner == NEUTRAL && bo[b].owner == NEUTRAL,
-                  "recipient 1: owners must be kept for all bases (a=%u b=%u)",
+    UT_ASSERT_MSG(bo[b].shells == 0 && bo[b].mines == 0,
+                  "recipient 0: in-range enemy base b ammo must be zeroed (%u/%u)",
+                  bo[b].shells, bo[b].mines);
+    UT_ASSERT_MSG(bo[b].armour == BASE_FULL_ARMOUR,
+                  "recipient 0: in-range live enemy base b armour must be masked (%u)",
+                  bo[b].armour);
+    UT_ASSERT_MSG(bo[a].owner == NEUTRAL && bo[b].owner == 1,
+                  "recipient 0: owners must be kept (a=%u b=%u)",
                   bo[a].owner, bo[b].owner);
 
     serverSimDestroy(sim);
     return 0;
 }
 
-/* 3. Enemy/own armour fog-of-war in the full-sync: an enemy base reads
+/* 4. Enemy/own armour fog-of-war in the full-sync: an enemy base reads
  *    BASE_FULL_ARMOUR while alive (exact value hidden) and its true armour
  *    once dead; a friendly (own) base always reads true armour. */
 int run_base_armour_fog_of_war(void) {
@@ -276,7 +343,7 @@ int run_base_armour_fog_of_war(void) {
     return 0;
 }
 
-/* 4. Per-client full-sync clock: two recipients each receive their own full
+/* 5. Per-client full-sync clock: two recipients each receive their own full
  *    base sync on the same tick. The full-sync cadence is tracked per client
  *    in lastFullSyncTick[MAX_TANKS]; before that it was a single shared scalar
  *    that the first client built each tick set, so a second client built on

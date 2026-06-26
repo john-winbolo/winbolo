@@ -949,6 +949,63 @@ BYTE basesGetClosestForPlayer(GameSim *sim, BYTE player, WORLD tankX, WORLD tank
 }
 
 /*********************************************************
+*NAME:          basesBaseInStockRange
+*AUTHOR:        John Morrison
+*CREATION DATE: 11/1/99
+*LAST MODIFIED: 11/1/99
+*PURPOSE:
+* Single-base predicate mirroring basesGetClosestForPlayer's neutral/allied
+* filter and Euclidean distance test. Returns true iff baseIdx is a valid base
+* whose owner is neutral or allied to player and whose centre is strictly
+* nearer than range to (tankX, tankY). Used by the server stock cull to keep
+* real shells/mines for every in-range neutral/allied base, not just the closest.
+*
+*ARGUMENTS:
+*  sim     - Pointer to the game sim
+*  player  - Player number to evaluate alliances against
+*  tankX   - X Map Location of the tank
+*  tankY   - Y Map Location of the tank
+*  baseIdx - Index of the base to test
+*  range   - Range ceiling in world units (base must be strictly nearer)
+*********************************************************/
+bool basesBaseInStockRange(GameSim *sim, BYTE player, WORLD tankX, WORLD tankY,
+                           BYTE baseIdx, WORLD range) {
+  bases *value = &sim->bs;
+  WORLD x;
+  WORLD y;
+  WORLD gapX;
+  WORLD gapY;
+  double distance;
+  BYTE owner;
+
+  if (baseIdx >= (*value)->numBases) {
+    return false;
+  }
+  owner = (*value)->item[baseIdx].owner;
+  if (owner != NEUTRAL && playersIsAllie(&sim->plyrs, player, owner) != TRUE) {
+    return false;
+  }
+  x = (*value)->item[baseIdx].x;
+  y = (*value)->item[baseIdx].y;
+  x <<= 8;
+  x += MAP_SQUARE_MIDDLE;
+  y <<= 8;
+  y += MAP_SQUARE_MIDDLE;
+  if (tankX - x < 0) {
+    gapX = x - tankX;
+  } else {
+    gapX = tankX - x;
+  }
+  if (tankY - y < 0) {
+    gapY = y - tankY;
+  } else {
+    gapY = tankY - y;
+  }
+  distance = sqrt((double) ((gapX * gapX) + (gapY * gapY)));
+  return (distance >= 0 && distance < range);
+}
+
+/*********************************************************
 *NAME:          basesGetStats
 *AUTHOR:        John Morrison
 *CREATION DATE: 12/1/99

@@ -388,6 +388,7 @@ int run_edge_send_predicate(void);
  * the per-recipient full-sync stock cull in serverSimBuildSnapshot (real stock
  * only for the recipient's own closest base; other bases zeroed, owner kept). */
 int run_bases_closest_for_player(void);
+int run_bases_base_in_stock_range(void);
 int run_base_stock_visibility(void);
 int run_base_armour_fog_of_war(void);
 int run_two_clients_full_sync_independent(void);

@@ -4675,12 +4675,13 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
             clientMY = (BYTE)(cwy >> 8);
         }
 
-        /* Client's closest neutral/allied base — best-effort base stock events
-         * are culled to this base only (computed once per client). */
+        /* Client's closest neutral/allied base drives the arrival push; the
+         * per-base stock cull below keeps stock for every neutral/allied base
+         * within this same send range, not just the closest. */
+        WORLD stockRange = serverSimClosestBaseSendRange(sim, (BYTE)c);
         BYTE closestBase = BASE_NOT_FOUND;
         if (hasPos) {
-            WORLD r = serverSimClosestBaseSendRange(sim, (BYTE)c);
-            closestBase = basesGetClosestForPlayer(serverSimGetGameSim(sim), (BYTE)c, cwx, cwy, r);
+            closestBase = basesGetClosestForPlayer(serverSimGetGameSim(sim), (BYTE)c, cwx, cwy, stockRange);
         }
 
         /* On arrival (closest base changed) push that base's current stock
@@ -4783,9 +4784,10 @@ void transportUdpServerDrainEvents(ServerSim *sim) {
                  * unblocks the now-drivable tile promptly and the one-shot
                  * transition can't be dropped. */
                 if (evType == EVENT_BASE_STOCK) {
-                    bool isClosest = closestBase != BASE_NOT_FOUND &&
-                        (BYTE)(closestBase - 1) == serverSimGetEvents(sim)[i].data[0];
-                    if (!isClosest) {
+                    bool inRange = hasPos &&
+                        basesBaseInStockRange(serverSimGetGameSim(sim), (BYTE)c, cwx, cwy,
+                                              serverSimGetEvents(sim)[i].data[0], stockRange);
+                    if (!inRange) {
                         if (serverSimGetEvents(sim)[i].data[1] <= MIN_ARMOUR_CAPTURE) {
                             evToSend.data[2] = 0;
                             evToSend.data[3] = 0;
