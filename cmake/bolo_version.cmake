@@ -11,7 +11,7 @@
 #                           — per-byte network protocol version digits derived
 #                             from WINBOLO_VERSION (e.g. "1.19" -> 1, 1, 9)
 
-set(WINBOLO_VERSION "1.90" CACHE STRING "WinBolo version number")
+set(WINBOLO_VERSION "1.91" CACHE STRING "WinBolo version number")
 
 # Anchor on this module's directory (always cmake/ under the repo root)
 # so the wasm sub-project — whose CMAKE_SOURCE_DIR is src/wasm/ — still
