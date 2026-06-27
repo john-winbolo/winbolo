@@ -135,6 +135,22 @@ WinBolo uses the following third-party libraries and code.
 - Original author: David Bourgin (1994-1995)
 - Modified for WinBolo; distributed under GPL v2+
 
+## Audio
+
+### Universal UI/Menu Soundpack
+- Location: data/sounds/lobby_chat.wav, data/sounds/lobby_ready.wav, data/sounds/lobby_unready.wav, data/sounds/lobby_player_join.wav, data/sounds/lobby_player_leave.wav, data/sounds/lobby_countdown.wav
+- License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+- https://cyrex-studios.itch.io/universal-ui-soundpack
+- Author: Nathan Gibson
+- Lobby UI and event sound effects (chat, ready/unready, player join/leave, countdown tick).
+
+### Race start beeps
+- Location: data/sounds/lobby_game_start.wav
+- License: Pixabay Content License
+- https://pixabay.com/sound-effects/film-special-effects-race-start-beeps-125125/
+- Source: Pixabay
+- Lobby game-start sound.
+
 ## Data Files
 
 ### DB-IP IP-to-Country Lite
