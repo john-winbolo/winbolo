@@ -774,6 +774,48 @@ static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut
  * must already exist with the recorded map + bot slots (so pill/base counts and
  * per-bot overlay buffers/panels line up — set up at startup from btPeekSession).
  * Returns the number of frames loaded, or -1 on failure. */
+/* Draw a load-progress bar with raw SDL (the main loop / ImGui isn't running
+ * yet — btLoadSession blocks before it). Pumps events so the window stays
+ * responsive and the close button (X) can cancel. Returns false if the user
+ * asked to quit. pct < 0 => indeterminate (size unknown). */
+static bool btDrawLoadProgress(BrainTestApp *app, double pct, int frames) {
+    if (!app->renderer || !app->window) return true;
+    SDL_Event ev;
+    while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_EVENT_QUIT) return false;
+    }
+    int w = 0, h = 0;
+    SDL_GetRenderOutputSize(app->renderer, &w, &h);
+    if (w <= 0 || h <= 0) { w = 1280; h = 720; }
+    SDL_SetRenderDrawColor(app->renderer, 18, 18, 24, 255);
+    SDL_RenderClear(app->renderer);
+    float bw = (float)w * 0.6f, bh = 26.0f;
+    float bx = ((float)w - bw) * 0.5f, by = ((float)h - bh) * 0.5f;
+    SDL_SetRenderDrawColor(app->renderer, 40, 40, 52, 255);
+    SDL_FRect track = { bx, by, bw, bh };
+    SDL_RenderFillRect(app->renderer, &track);
+    if (pct >= 0.0) {
+        double p = pct > 100.0 ? 100.0 : pct;
+        SDL_SetRenderDrawColor(app->renderer, 72, 162, 232, 255);
+        SDL_FRect fill = { bx, by, (float)(bw * p / 100.0), bh };
+        SDL_RenderFillRect(app->renderer, &fill);
+    }
+    SDL_SetRenderDrawColor(app->renderer, 95, 95, 120, 255);
+    SDL_FRect outline = { bx - 2.0f, by - 2.0f, bw + 4.0f, bh + 4.0f };
+    SDL_RenderRect(app->renderer, &outline);
+    SDL_RenderPresent(app->renderer);
+    char title[128];
+    if (pct >= 0.0)
+        SDL_snprintf(title, sizeof title,
+                     "BrainTest - Loading recording... %d%%  (%d frames)",
+                     (int)(pct + 0.5), frames);
+    else
+        SDL_snprintf(title, sizeof title,
+                     "BrainTest - Loading recording...  (%d frames)", frames);
+    SDL_SetWindowTitle(app->window, title);
+    return true;
+}
+
 static int btLoadSession(BrainTestApp *app, const char *path) {
     gzFile g = gzopen(path, "rb");
     if (!g) return -1;
@@ -820,9 +862,27 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
 
     RecordingBuffer *rb = &app->recording;
     int loaded = 0;
+    /* Progress = compressed bytes consumed (gzoffset) vs the .btr file size.
+     * Roughly linear, good enough for a 15-minute load bar. */
+    Sint64 gzTotal = 0;
+    { SDL_PathInfo pi; if (SDL_GetPathInfo(path, &pi)) gzTotal = (Sint64)pi.size; }
+    Uint64 lastDrawMs = 0;
     for (;;) {
         uint32_t fm = bt_gz_u32(g);
         if (gzeof(g) || fm != BRAINREC_FRAME_MAGIC) break;
+
+        Uint64 nowMs = SDL_GetTicks();
+        if (nowMs - lastDrawMs >= 50) {   /* ~20 fps; keeps load overhead tiny */
+            lastDrawMs = nowMs;
+            double pct = gzTotal > 0
+                ? (double)gzoffset(g) * 100.0 / (double)gzTotal : -1.0;
+            if (!btDrawLoadProgress(app, pct, rb->count)) {
+                /* Window closed during load — cancel cleanly. */
+                gzclose(g);
+                fprintf(stderr, "Load session: canceled by user at %d frames.\n", rb->count);
+                exit(0);
+            }
+        }
 
         if (rb->count >= rb->capacity) {
             int nc = rb->capacity ? rb->capacity * 2 : 1024;
@@ -2065,6 +2125,7 @@ static int  optProfileLog = 0;
  * profile flags — behavior trace is about decisions, not perf. */
 static int  optLogJson    = 0;
 static int  optAutoStart = 0;
+static int  g_playbackAutoplay = 0;  /* --playback-autoplay: drive a -loadsession replay from frame 0 and quit at the end (headless verification) */
 static int  optMaxTicks = 0;   /* 0 = run forever */
 /* Brain-dispatch thread count (workers + producer). 0 = use the default
  * (2). Set via -threads; clamped to [1, cores] at init. */
@@ -2210,6 +2271,8 @@ static bool parseArgs(int argc, char **argv) {
             optLogJson = 1;
         } else if (strcmp(argv[i], "--auto-start") == 0) {
             optAutoStart = 1;
+        } else if (strcmp(argv[i], "--playback-autoplay") == 0) {
+            g_playbackAutoplay = 1;
         } else if (strcmp(argv[i], "--max-ticks") == 0 && i + 1 < argc) {
             optMaxTicks = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--run-script") == 0 && i + 1 < argc) {
@@ -3470,8 +3533,21 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
         && app->playbackFrame >= 0
         && app->playbackFrame < app->recording.count) {
         const RecordingFrame *pf_ = &app->recording.frames[app->playbackFrame];
-        cmds  = pf_->botOverlayCmds[app->followBot];
-        count = pf_->botOverlayCmdCount[app->followBot];
+        if (g_loadedSession) {
+            /* Loaded-session frames hold PACKED overlay bytes (28..156 B/record),
+             * NOT OverlayCmd structs. Indexing them as cmds[i] strides ~160 B per
+             * record and walks off the packed buffer -> EXCEPTION_ACCESS_VIOLATION
+             * once enough records are present (busy frame). Decode this frame
+             * first, exactly like the playback patch-in path (g_loadedSession
+             * branch near serverSimGetBotOverlayCmds swap). */
+            count = decodeLoadedOverlays((BYTE)app->followBot,
+                        (const uint8_t *)pf_->botOverlayCmds[app->followBot],
+                        pf_->botOverlayCmdCount[app->followBot]);
+            cmds  = g_ovlScratch[app->followBot];
+        } else {
+            cmds  = pf_->botOverlayCmds[app->followBot];
+            count = pf_->botOverlayCmdCount[app->followBot];
+        }
     } else {
         OverlayCmdBuffer *buf = serverSimGetBotOverlayCmds(app->sim, app->followBot);
         if (buf) { cmds = buf->cmds; count = buf->count; }
@@ -5636,6 +5712,19 @@ int main(int argc, char *argv[]) {
             if (bl > 0 && (brainName[bl-1] == '/' || brainName[bl-1] == '\\'))
                 brainName[bl-1] = '\0';
         }
+        /* Strip a trailing version suffix ("GoalHunter_1.5" -> "GoalHunter")
+         * so panel-type namespacing ("<brain>:<type>") matches the renderers'
+         * fixed "GoalHunter:" prefix across the versioned brain dirs from the
+         * 1.0/1.5 split. Only strips when the chars after the last '_' are
+         * version-like (start with a digit), so a brain whose real name
+         * contains an underscore is left alone. Also keeps the namespaced type
+         * within PANEL_REG_TYPE_MAX, which was truncating "GoalHunter_1.5:
+         * pool_grid" to "...pool_gri". */
+        {
+            char *us = NULL;
+            for (char *p = brainName; *p; p++) if (*p == '_') us = p;
+            if (us && us[1] >= '0' && us[1] <= '9') *us = '\0';
+        }
         for (int i = 0; i < optNumPlayers; i++) {
             char name[32];
             SDL_snprintf(name, sizeof(name), "Bot %d", i);
@@ -5740,6 +5829,11 @@ int main(int argc, char *argv[]) {
         if (n > 0) {
             if (optFollow < 0) app.followBot = 0;
             fprintf(stderr, "Load session: %d frames loaded — playback ready.\n", n);
+            if (g_playbackAutoplay) {
+                app.playbackFrame = 0;   /* start at the beginning … */
+                app.paused        = false;/* … and play straight through (headless verify) */
+                fprintf(stderr, "Load session: --playback-autoplay — playing from frame 0.\n");
+            }
         } else {
             fprintf(stderr, "Load session: failed to load frames from %s\n", loadSessionBtr);
         }
@@ -6580,6 +6674,7 @@ int main(int argc, char *argv[]) {
                         /* End of a loaded recording — hold here, paused. There's
                          * no live game to resume (the sim is a replay shell), and
                          * resuming would live-capture + evict the recorded start. */
+                        if (g_playbackAutoplay) appQuit = TRUE;  /* headless play-through finished */
                         app.paused = true;
                     } else {
                         /* Hit the end of recorded history → snap

@@ -265,8 +265,36 @@ void botWindowRenderAll(int followBot,
                      ImGuiWindowFlags_NoCollapse);
 
         PanelRenderFn fn = panelTypeFind(e->type);
-        if (!fn) fn = panelTypeFind("text");
-        if (fn) fn(i, s->cachedText);
+        if (fn) {
+            fn(i, s->cachedText);
+        } else {
+            /* No renderer for this type — print + log the mismatch (once per
+             * type) and show it in-window instead of silently dumping raw JSON
+             * via a "text" fallback. (Shortcut windows have their own dispatch
+             * separate from the main panels window.) */
+            static char sLastWarnedBW[64] = "";
+            if (SDL_strcmp(sLastWarnedBW, e->type) != 0) {
+                SDL_strlcpy(sLastWarnedBW, e->type, sizeof sLastWarnedBW);
+                char reg[512]; reg[0] = '\0';
+                int nt = panelTypeCount();
+                for (int ti = 0; ti < nt; ti++) {
+                    const char *nm = panelTypeNameAt(ti);
+                    if (!nm) continue;
+                    size_t l = SDL_strlen(reg);
+                    SDL_snprintf(reg + l, sizeof(reg) - l, "%s%s", l ? ", " : "", nm);
+                }
+                fprintf(stderr,
+                    "PANEL ERROR (window): no renderer registered for type '%s' "
+                    "(panel '%s'). Registered: [%s]\n",
+                    e->type, e->name, reg);
+            }
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f),
+                "No renderer for panel type \"%s\".", e->type);
+            ImGui::TextWrapped(
+                "Its panelTypeRegister() didn't run or used a different name "
+                "(check the 1.0/1.5 split). See stderr for the registered "
+                "type list. Raw JSON suppressed.");
+        }
 
         ImGui::End();
         ImGui::Render();

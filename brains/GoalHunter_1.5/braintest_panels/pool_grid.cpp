@@ -1052,6 +1052,11 @@ void renderPoolGrid(int registry_idx, const char *body) {
 struct AutoRegister {
     AutoRegister() {
         panelTypeRegister("GoalHunter:pool_grid", &renderPoolGrid);
+        /* The brain registers the panel ENTRY as type "pool_grid" (init.lua), so
+         * also register the un-namespaced alias — matches tier_control.cpp's dual
+         * registration. Without it, panelTypeFind("pool_grid") misses and the
+         * panel falls back to the raw-text dump (shows JSON, not the grid). */
+        panelTypeRegister("pool_grid", &renderPoolGrid);
     }
 };
 static AutoRegister _auto;
