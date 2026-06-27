@@ -1806,3 +1806,19 @@ STR_ALLIANCE_RANKED_DISABLED=Allianties zijn uitgeschakeld in Ranked-spellen.
 STR_DLGSETTINGS_TAB_DISPLAYSOUND=Weergave & Geluid
 STR_DLGSETTINGS_TAB_GAMEHUD=Spel/HUD
 STR_DLGSETTINGS_TAB_SESSION=Sessie
+
+# Live spectator feed
+STR_DLGLOBBY_SPECTATORS_FMT=Toeschouwers ({number}):
+STR_LV_SPEC_LEAVE_CONFIRM=Stoppen met kijken?
+STR_LV_SPEC_PHASE_LOBBY=Lobby
+STR_LV_SPEC_PHASE_LIVE=Live
+STR_LV_SPEC_PHASE_GAMEOVER=Spel voorbij
+STR_LV_SPEC_WINDOW_TITLE_FMT=WinBolo - Toeschouwen {string1}:{number} Kaart: {string2}{string3}
+STR_LV_SPEC_JOINED={player} is als toeschouwer toegetreden
+STR_LV_SPEC_LEFT={player} is gestopt met kijken
+STR_LV_SPEC_CHAT=[toeschouwer] {number}: {string1}
+STR_LV_SPEC_BEGINS_IN_FMT=Toeschouwen begint over {number}
+STR_LV_SPEC_CONNECTING=Verbinden...
+STR_LV_SPEC_CONNECTION_LOST=Verbinding verbroken
+STR_LV_SPEC_BEGINS_NOW=Toeschouwen begint nu
+STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Toeschouwen {string1}:{number}{string3}

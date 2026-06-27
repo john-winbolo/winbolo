@@ -1806,3 +1806,19 @@ STR_ALLIANCE_RANKED_DISABLED=ランクマッチでは同盟は無効です。
 STR_DLGSETTINGS_TAB_DISPLAYSOUND=表示 & サウンド
 STR_DLGSETTINGS_TAB_GAMEHUD=ゲーム/HUD
 STR_DLGSETTINGS_TAB_SESSION=セッション
+
+# Live spectator feed
+STR_DLGLOBBY_SPECTATORS_FMT=観戦者 ({number}):
+STR_LV_SPEC_LEAVE_CONFIRM=観戦をやめますか？
+STR_LV_SPEC_PHASE_LOBBY=ロビー
+STR_LV_SPEC_PHASE_LIVE=ライブ
+STR_LV_SPEC_PHASE_GAMEOVER=ゲームオーバー
+STR_LV_SPEC_WINDOW_TITLE_FMT=WinBolo - 観戦中 {string1}:{number} マップ: {string2}{string3}
+STR_LV_SPEC_JOINED={player} が観戦者として参加しました
+STR_LV_SPEC_LEFT={player} が観戦を終了しました
+STR_LV_SPEC_CHAT=[観戦者] {number}: {string1}
+STR_LV_SPEC_BEGINS_IN_FMT=観戦は{number}秒後に開始
+STR_LV_SPEC_CONNECTING=接続中...
+STR_LV_SPEC_CONNECTION_LOST=接続が切断されました
+STR_LV_SPEC_BEGINS_NOW=観戦開始
+STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - 観戦中 {string1}:{number}{string3}

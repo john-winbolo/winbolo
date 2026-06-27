@@ -63,6 +63,37 @@ typedef struct {
  * admit provisionally instead of rejecting; it never grants priority. */
 #define JOIN_FLAG_WANT_REJOIN       0x01
 #define JOIN_FLAG_WILL_AUTHENTICATE 0x02
+/* bit 2: client requests a tankless spectator connection rather than a tank
+ * slot.  Branches the join handler to the spectator-accept path. */
+#define JOIN_FLAG_SPECTATOR         0x04
+
+/* JOIN_ACCEPT slot byte the server sends to a tankless spectator in place of a
+ * real 0..MAX_TANKS-1 slot — the viewer holds no tank.  A spectator client keys
+ * its accept handling off this sentinel; a player-join client sees it as an
+ * out-of-range slot (>= MAX_TANKS) and rejects the accept. */
+#define SPECTATOR_ACCEPT_NO_SLOT    0xFFu
+
+/* Cap on concurrent tankless spectator connections held transport-side in
+ * spectators[], independent of the MAX_TANKS player slots.  The operator's
+ * -maxspectators cap is enforced as min(maxSpectators, MAX_SPECTATORS). */
+#define MAX_SPECTATORS 32
+
+/* Spectator status wire shape — a small reliable message carried on the
+ * spectator's own CHANNEL_CONTROL.  While the delayed ring holds less than
+ * specDelayTicks of history (cold start at ring creation / segment youth), the
+ * server re-sends a countdown instead of seeding live state: a status-type byte
+ * followed by the big-endian ticks remaining until head - specDelayTicks
+ * becomes seekable.  The client mirrors this shape to decode the wait.
+ *   [u8 SPEC_CTRL_COUNTDOWN][u32 remainingTicks]   (5 bytes, big-endian) */
+#define SPEC_CTRL_COUNTDOWN      1   /* status-type byte */
+#define SPEC_CTRL_COUNTDOWN_LEN  5   /* type byte + u32 remainingTicks */
+
+/* Per-record transport header the server prepends to each forward-feed blob
+ * (BULK_KIND_SPEC_RECORD) ahead of the raw ring payload, big-endian:
+ *   [u8 isKeyframe][u32 gameTick][u32 segment]
+ * The spectator client strips this to recover the payload. (The seed blob,
+ * BULK_KIND_SPEC_SEED, carries no such header — it is the raw keyframe.) */
+#define SPEC_RECORD_HEADER_LEN   9
 
 /* ── Deferred WBN PLAYER_JOIN bookkeeping (pure core) ────────────────
  * A slot owes WBN a PLAYER_JOIN event once we learn its identity for
@@ -196,7 +227,10 @@ typedef struct {
  * playerName: name to use in join request.
  * password: game password (empty string if none).
  * trackerAddr: "" or NULL = no punch fallback (LAN/manual-connect).
- * trackerPort: ignored if trackerAddr empty. */
+ * trackerPort: ignored if trackerAddr empty.
+ * spectator: true requests a tankless spectator connection (JOIN carries
+ *   JOIN_FLAG_SPECTATOR; the accept lands in UDP_CLIENT_SPECTATING with no
+ *   tank slot or map download) instead of a normal player join. */
 Transport transportUdpClientCreate(struct ClientSim *clientSim,
                                    const char *serverAddr,
                                    unsigned short serverPort,
@@ -207,7 +241,8 @@ Transport transportUdpClientCreate(struct ClientSim *clientSim,
                                    const char *wbnServerKey,
                                    bool wantRejoin,
                                    const char *trackerAddr,
-                                   unsigned short trackerPort);
+                                   unsigned short trackerPort,
+                                   bool spectator);
 
 /* Destroys a client-side UDP transport. */
 void transportUdpClientDestroy(Transport *t);
@@ -479,6 +514,9 @@ void transportUdpServerDrainEvents(struct ServerSim *sim);
 /* Returns the number of currently connected clients. */
 int transportUdpServerGetClientCount(void);
 
+/* Returns the number of currently connected tankless spectators. */
+int transportUdpServerGetSpectatorCount(void);
+
 /* Returns ping for a given player (0 if not connected). */
 uint16_t transportUdpServerGetClientPing(BYTE playerNum);
 
@@ -717,5 +755,29 @@ bool transportUdpClientTestFinalizeResync(Transport *t, const BYTE *buf, int len
  * consecutive-mismatch streak that gates a new request. */
 void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
                                        uint32_t *mismatchStreak);
+/* Read a connected spectator's armed seed blob (the spectator-owned copy of the
+ * delayed ring keyframe). Returns the blob pointer with *outLen set to its
+ * length and *outKind to the in-flight BulkSender kind (BULK_KIND_SPEC_SEED once
+ * armed); NULL when the slot is invalid, disconnected, or not yet seeded.
+ * outLen / outKind may be NULL. The pointer is freed when the seed completes. */
+const uint8_t *transportUdpServerGetSpectatorSeed(int s, uint32_t *outLen,
+                                                  uint8_t *outKind);
+/* Read a connected spectator's forward-feed cursor: *outSeq = lastEmittedSeq
+ * (the highest ring recordSeq emitted as a forward record) and *outKind = the
+ * in-flight BulkSender kind (BULK_KIND_SPEC_RECORD once the feed has armed a
+ * record). Returns false when the slot is invalid or disconnected; outSeq /
+ * outKind may be NULL. */
+bool transportUdpServerGetSpectatorFeedSeq(int s, uint32_t *outSeq,
+                                           uint8_t *outKind);
+/* Read a connected spectator's cold-start countdown state: returns true while
+ * the spectator is waiting for the delayed ring to accumulate specDelayTicks of
+ * history (no seed armed yet), with *outRemaining set to the ticks still owed;
+ * false once it has transitioned to the normal seed, or when the slot is
+ * invalid / disconnected. outRemaining may be NULL. */
+bool transportUdpServerGetSpectatorCountdown(int s, uint32_t *outRemaining);
+/* Test-only: mark a connected spectator's whole CHANNEL_BULK send window acked,
+ * simulating a peer that keeps up so the seed completes and the forward feed's
+ * window keeps draining without a real spectator channel endpoint. */
+void transportUdpServerTestSpectatorAckBulk(int s);
 
 #endif /* TRANSPORT_UDP_H */

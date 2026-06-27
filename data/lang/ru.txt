@@ -1804,3 +1804,19 @@ STR_ALLIANCE_RANKED_DISABLED=В Ranked-играх альянсы недосту�
 STR_DLGSETTINGS_TAB_DISPLAYSOUND=Отображение & Звук
 STR_DLGSETTINGS_TAB_GAMEHUD=Игра/HUD
 STR_DLGSETTINGS_TAB_SESSION=Сессия
+
+# Live spectator feed
+STR_DLGLOBBY_SPECTATORS_FMT=Зрители ({number}):
+STR_LV_SPEC_LEAVE_CONFIRM=Прекратить наблюдение?
+STR_LV_SPEC_PHASE_LOBBY=Лобби
+STR_LV_SPEC_PHASE_LIVE=В эфире
+STR_LV_SPEC_PHASE_GAMEOVER=Конец игры
+STR_LV_SPEC_WINDOW_TITLE_FMT=WinBolo - Наблюдение {string1}:{number} Карта: {string2}{string3}
+STR_LV_SPEC_JOINED={player} присоединился как зритель
+STR_LV_SPEC_LEFT={player} покинул наблюдение
+STR_LV_SPEC_CHAT=[зритель] {number}: {string1}
+STR_LV_SPEC_BEGINS_IN_FMT=Наблюдение начнётся через {number}
+STR_LV_SPEC_CONNECTING=Подключение...
+STR_LV_SPEC_CONNECTION_LOST=Соединение потеряно
+STR_LV_SPEC_BEGINS_NOW=Наблюдение начинается
+STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Наблюдение {string1}:{number}{string3}

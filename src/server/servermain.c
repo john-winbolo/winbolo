@@ -658,6 +658,9 @@ void printArgs() {
   fprintf(stderr, "                e.g. -lock gametype,ranked,map\n");
   fprintf(stderr, "-maxplayers <N> - Specifies the maximum number of players that can be on this\n");
   fprintf(stderr, "                server.\n");
+  fprintf(stderr, "-maxspectators <N> - Maximum number of spectator connections (default 16,\n");
+  fprintf(stderr, "                0 disables spectating).\n");
+  fprintf(stderr, "-specdelay <S> - Spectator view delay in seconds (default 90, 0 = live).\n");
 
   fprintf(stderr, "\nMap uploads (client-pushed maps in the lobby):\n");
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
@@ -1046,6 +1049,8 @@ int main(int argc, char **argv) {
   char debugFileName[2048];
   int maxPlayers;
   int maxBots;
+  int maxSpectators = 16;
+  int specDelay = 90;
   char key[WINBOLONET_KEY_LEN]; /* WBN Key */
 
   strcpy(debugFileName,"server_test.txt");
@@ -1103,6 +1108,29 @@ int main(int argc, char **argv) {
     maxBots = atoi((char *) argv[findArg(argc, argv, "maxbots")]);
     if (maxBots < 0 || maxBots > MAX_TANKS) {
       maxBots = 0;
+    }
+  }
+
+  if (argExist(argc, argv, "maxspectators") == TRUE) {
+    maxSpectators = atoi((char *) argv[findArg(argc, argv, "maxspectators")]);
+    /* 0 is valid (= spectating disabled). Negative resets to the default.
+     * Spectators aren't tank-bounded, so there is no MAX_TANKS ceiling;
+     * clamp at 255 since the field is a BYTE. */
+    if (maxSpectators < 0) {
+      maxSpectators = 16;
+    } else if (maxSpectators > 255) {
+      maxSpectators = 255;
+    }
+  }
+
+  if (argExist(argc, argv, "specdelay") == TRUE) {
+    specDelay = atoi((char *) argv[findArg(argc, argv, "specdelay")]);
+    /* 0 is valid (= live, no floor). Negative resets to the default.
+     * Clamp at 65535 since specDelaySeconds is a uint16_t. */
+    if (specDelay < 0) {
+      specDelay = 90;
+    } else if (specDelay > 65535) {
+      specDelay = 65535;
     }
   }
 
@@ -1549,6 +1577,8 @@ int main(int argc, char **argv) {
     instCfg.password            = pass;
     instCfg.maxPlayers          = (BYTE)maxPlayers;
     instCfg.maxBots             = (BYTE)maxBots;
+    instCfg.maxSpectators       = (BYTE)maxSpectators;
+    instCfg.specDelaySeconds    = (uint16_t)specDelay;
     instCfg.acceptRemoteClients = TRUE;
     instCfg.useWbn              = (argExist(argc, argv, "nowinbolonet") == FALSE);
     instCfg.compTanks           = (BYTE)ai;

@@ -152,4 +152,27 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut
 *********************************************************/
 bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg);
 
+/*********************************************************
+*NAME:          winbolonetClientJoinSpectatorSession
+*PURPOSE:
+* Mints a server-scoped spectator_key via POST
+* /api/v1/client/join_spectator. A logged-in viewer
+* authenticates with their apiToken as a bearer and sends
+* only {server_key}; an anonymous viewer sends no auth and
+* {server_key, player_name}. The spectator_key is what the
+* viewer ships in the JOIN packet's key field; the server
+* checks it with /client/verify_spectator. Returns TRUE on
+* success (spectatorKeyOut populated), FALSE on failure
+* (errorMsg populated).
+*
+*ARGUMENTS:
+* apiToken        - WBN API token, or NULL/"" when anonymous
+* serverKey       - server_key of the server being watched
+* playerName      - Display name (used by the anonymous path)
+* spectatorKeyOut - Buffer for the issued spectator_key
+*                   (must be >= WINBOLONET_KEY_LEN bytes)
+* errorMsg        - Buffer for error message on failure
+*********************************************************/
+bool winbolonetClientJoinSpectatorSession(const char *apiToken, const char *serverKey, const char *playerName, char *spectatorKeyOut, char *errorMsg);
+
 #endif /* __WINBOLO_NET_CLIENT_H */

@@ -80,6 +80,8 @@ add_library(bolo_static STATIC
     scroll_item_list.c
     shells.c
     sounddist.c
+    spectator_ring.c
+    spectator_replay.c
     starts.c
     swamp.c
     tank.c

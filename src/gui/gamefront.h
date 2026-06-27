@@ -115,7 +115,8 @@ typedef enum {
   openFinished,
   openSettings,
   openMapEditor,
-  openLogViewer
+  openLogViewer,
+  openSpectate   /* Spectate the selected browser server via the modal host */
 } openingStates;
 
 /*********************************************************

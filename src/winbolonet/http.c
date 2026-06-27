@@ -441,6 +441,42 @@ int wbn_api_call_server(const char *endpoint, cJSON *body, cJSON **response) {
 }
 
 /*********************************************************
+*NAME:          wbn_api_call_bearer
+*PURPOSE:
+* High-level JSON API call that attaches a caller-supplied
+* Authorization: Bearer header when bearerToken is non-empty,
+* and sends no Authorization line otherwise. Reuses the same
+* signed POST path as wbn_api_call.
+*********************************************************/
+int wbn_api_call_bearer(const char *endpoint, cJSON *body, const char *bearerToken, cJSON **response) {
+  if (response) *response = NULL;
+
+  char *json_str = cJSON_PrintUnformatted(body);
+  if (!json_str) return -1;
+
+  char auth_header[128];
+  const char *extra_header = NULL;
+  if (bearerToken != NULL && bearerToken[0] != '\0') {
+    snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", bearerToken);
+    extra_header = auth_header;
+  }
+
+  char *resp_str = NULL;
+  int status = wbn_api_post_impl(endpoint, json_str, extra_header, &resp_str);
+  free(json_str);
+
+  if (resp_str && response) {
+    *response = cJSON_Parse(resp_str);
+    if (!*response) {
+      fprintf(stderr, "WinBolo.net: failed to parse JSON response from %s\n", endpoint);
+    }
+  }
+  free(resp_str);
+
+  return status;
+}
+
+/*********************************************************
 *NAME:          httpSendLogFile
 *PURPOSE:
 * Uploads a log file to WinBolo.net via HTTP(S) multipart

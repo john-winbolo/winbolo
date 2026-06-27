@@ -1706,6 +1706,31 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             imguiHandOnHover();
             if (!hasSelection) ImGui::EndDisabled();
 
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+            /* Spectate — beside Join. Enabled only when the selected server
+             * advertises spectator support. Unlike Join it needs no player
+             * name: a spectator is tankless and read-only, so the name guard
+             * is deliberately skipped. The spectator host (logviewer-side) is
+             * desktop-only, so this is gated to match the openSpectate case. */
+            ImGui::SameLine();
+            const bool canSpectate =
+                hasSelection && servers[selectedItem].allowSpectators;
+            if (!canSpectate) ImGui::BeginDisabled();
+            if (ImGui::Button(langGetText(STR_DLGBROWSER_SPECTATE), ImVec2(btnW, btnH))) {
+                const ServerEntry &e = servers[selectedItem];
+                char playerName[PLAYER_NAME_LEN];
+                gameFrontGetPlayerName(playerName);
+                /* Stash the target the same way Join does; the openSpectate
+                 * case reads it back to drive clientSimConnectUdp. */
+                gameFrontSetUdpOptions(playerName, (char *)e.address, e.port, 0);
+                gameFrontSetDlgState(openSpectate);
+                result = (int)openSpectate;
+                running = false;
+            }
+            imguiHandOnHover();
+            if (!canSpectate) ImGui::EndDisabled();
+#endif
+
             /* Controller-only: a pad can't reliably reach the preview-overlay
              * enlarge button across the detail pane, so expose enlarge as a
              * first-class footer action. Disabled until the selected server has

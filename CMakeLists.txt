@@ -1098,6 +1098,11 @@ set(CLIENT_SOURCES
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    # Real bodies for the spectator_input.h seam: the embedded LogViewer's
+    # spectatorRun reads the controller through it for overview pan/zoom. Reads
+    # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
+    # spectator_input_stub.c instead.
+    src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
@@ -1125,6 +1130,11 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/draw.c
     src/logviewer/sound.c
     src/logviewer/players.c
+    # Logviewer-world spectator seed orchestration (lv_specSeedLoad /
+    # lv_specRecordPump): translates captured ring keyframe/forward records
+    # into the decoder. Includes spectator_replay.h, now a dep-free public
+    # seam, so it builds into the client like any other decode TU.
+    src/logviewer/spec_seed_load.c
     src/logviewer/blocks.c
     src/logviewer/shells.c
     src/logviewer/snapshot.c
@@ -1157,11 +1167,10 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_logviewer_menu.cpp
     src/logviewer/platform/platform_config.c
     src/logviewer/platform/platform_dialogs.c
-    # Phase D of plans/ctrailer.md — embedded build links empty stubs;
-    # the real game-view impls in game_view.c are standalone-only because
-    # they include bolo headers that would conflict with the host
-    # client's screen-struct layouts.
-    src/logviewer/game_view_stubs.c
+    # The client links the real game-view renderer (game_view.c) plus an
+    # lv-accessor-bound copy of mapview.c through the winbolo_render_island
+    # object library (defined after the WinBolo target), so the empty
+    # game_view_stubs.c is no longer linked here.
 )
 list(APPEND CLIENT_SOURCES ${LOGVIEWER_LIB_SOURCES})
 
@@ -1326,6 +1335,68 @@ else()
     target_sources(WinBolo PRIVATE src/steam/steam_wrapper_stub.c)
     message(STATUS "Steamworks SDK not found — Steam integration disabled (stubs)")
 endif()
+
+# ---------------------------------------------------------------------------
+# Render island — link the real log-viewer game-view renderer into the client.
+#
+# game_view.c draws the log viewer's reconstructed world, whose
+# screen/screenMines/screenTanks buffers use a pointer layout that differs
+# from the client's inline-array bolo layout. mapViewDraw* read those buffers
+# ONLY through the screen* accessors, so a second copy of mapview.c whose
+# accessors are rebound (at build time) to the lv_* bodies renders lv-layout
+# data correctly. The remap is target-scoped, so the client's own bolo-bound
+# mapview.o and the standalone LogViewer build are untouched.
+#
+#   * mapViewDraw{Tiles,Shells,Tanks,LGMs} and the file-scope
+#     mapViewCalcSquare/mapViewRenderCentered are renamed lvg_* so the island
+#     copies don't clash with the client's live-game mapview.o; game_view.c's
+#     calls are renamed to match.
+#   * The eight screen* accessors mapView* references rebind to the existing
+#     lv_* bodies (already linked via LOGVIEWER_LIB_SOURCES — no new symbols).
+#     screenTanksGetItem has a different parameter list on the two sides, so it
+#     maps to lvg_screenTanksGetItem (render_island_screentank_adapter.c)
+#     rather than a plain macro.
+#
+# game-view stays gated off by ownsWindow (draw.c), so this renderer is
+# linked-but-dormant.
+# ---------------------------------------------------------------------------
+add_library(winbolo_render_island OBJECT
+    src/gui/sdl3/mapview.c
+    src/logviewer/game_view.c
+    src/logviewer/render_island_screentank_adapter.c
+)
+# PIC so the objects link into the client regardless of its PIE setting
+# (no effect on MSVC).
+set_target_properties(winbolo_render_island PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Compile these sources against the same headers and definitions the client
+# uses for them (mirrors WinBolo's include dirs + compile defs at generate
+# time, including the bolo public-header access granted by gui rules).
+target_include_directories(winbolo_render_island PRIVATE
+    $<TARGET_PROPERTY:WinBolo,INCLUDE_DIRECTORIES>)
+target_compile_definitions(winbolo_render_island PRIVATE
+    $<TARGET_PROPERTY:WinBolo,COMPILE_DEFINITIONS>)
+bolo_apply_include_rules(winbolo_render_island gui)
+# SDL3 / SDL3_ttf headers reached by game_view.c.
+target_link_libraries(winbolo_render_island PRIVATE
+    SDL3::SDL3 SDL3_ttf::SDL3_ttf)
+# Build-time symbol remap that makes this the lv-bound island (see comment).
+target_compile_definitions(winbolo_render_island PRIVATE
+    mapViewDrawTiles=lvg_mapViewDrawTiles
+    mapViewDrawShells=lvg_mapViewDrawShells
+    mapViewDrawTanks=lvg_mapViewDrawTanks
+    mapViewDrawLGMs=lvg_mapViewDrawLGMs
+    mapViewCalcSquare=lvg_mapViewCalcSquare
+    mapViewRenderCentered=lvg_mapViewRenderCentered
+    screenGetPos=lv_screenGetPos
+    screenIsMine=lv_screenIsMine
+    screenBulletsGetNumEntries=lv_screenBulletsGetNumEntries
+    screenBulletsGetItem=lv_screenBulletsGetItem
+    screenTanksGetNumEntries=lv_screenTanksGetNumEntries
+    screenLgmGetNumEntries=lv_screenLgmGetNumEntries
+    screenLgmGetItem=lv_screenLgmGetItem
+    screenTanksGetItem=lvg_screenTanksGetItem
+)
+target_link_libraries(WinBolo PRIVATE winbolo_render_island)
 
 # Copy data assets and brain scripts to the correct location.
 # On macOS bundles, SDL_GetBasePath() returns Contents/Resources/, so assets go there.
@@ -1680,6 +1751,19 @@ list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/game_view\\.c$")
 # real game_view.c via LOGVIEWER_IMGUI_SOURCES — drop the stubs from the
 # glob so the standalone link doesn't see duplicate symbols.
 list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/game_view_stubs\\.c$")
+# render_island_screentank_adapter.c is a client-only shim: it bridges the
+# game-view render island's screenTanksGetItem to lv_screenTanksGetItem.
+# The standalone uses bolo_shim.c for that, so drop the adapter from the glob.
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/render_island_screentank_adapter\\.c$")
+# spectator_drain_stub.c is added explicitly to the LogViewer target below;
+# drop it from the glob so it is listed once. It stubs the spectator_drain.h
+# seam for the standalone (which carries spectatorRun but links no bolo sim).
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/spectator_drain_stub\\.c$")
+# spectator_input_stub.c is added explicitly to the LogViewer target below;
+# drop it from the glob so it is listed once. It stubs the spectator_input.h
+# seam for the standalone (which carries spectatorRun but links no gui-tier
+# gamepad module); the WinBolo client links the real src/gui/sdl3/spectator_input.c.
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/spectator_input_stub\\.c$")
 
 set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_context.cpp
@@ -1729,6 +1813,21 @@ add_executable(LogViewer
     ${LOGVIEWER_PLATFORM_SOURCES}
     ${LOGVIEWER_WBN_SOURCES}
     ${LOGVIEWER_WBN_BROWSER_SOURCES}
+    # Spectator replay translator: spec_seed_load.c calls specReplay* but the
+    # standalone links no bolo sim, so compile the translator in directly. It
+    # pulls only public bolo headers (spectator_replay.h / log.h / platform_net.h)
+    # and no backend.h-conflicting type, so it builds under the runtime_only rules.
+    src/bolo/spectator_replay.c
+    # No-op stubs for the spectator_drain.h seam: logviewer.c carries
+    # spectatorRun, but the standalone links no bolo sim (the real wrappers
+    # live in client_sim.c / bolo_static for the WinBolo client) and never
+    # spectates, so these resolve the seam symbols here.
+    src/logviewer/spectator_drain_stub.c
+    # No-op stubs for the spectator_input.h seam: the standalone links no
+    # gui-tier gamepad module (the real bodies live in
+    # src/gui/sdl3/spectator_input.c for the WinBolo client) and never
+    # spectates, so these resolve the seam symbols here.
+    src/logviewer/spectator_input_stub.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/sdl_bmp.c
@@ -2649,6 +2748,55 @@ set(WINBOLO_UNITTESTS_SOURCES
     # ChannelMux reliability primitive: the off-socket loss/reorder/dup/
     # window/boundary matrix (two muxes + an in-test frame shuttle).
     tests/unit/test_channel_mux.c
+    # Spectator delayed-stream ring buffer: segmentation across a game-tick
+    # reset, keyframe-at-segment-start, mid-interval seek + forward replay,
+    # segment isolation, previous-generation read, cold start and the
+    # retention window boundary, all driven with synthetic byte payloads.
+    tests/unit/test_spectator_ring.c
+    # Spectator ring records without a .wbv log: a registered ring driven by the
+    # normal serverSimTick (logWriteTick) populates and a delay-0 seek returns a
+    # seed, with no logStart and no .wbv file — the real (non-recording) server
+    # path that the logStart-based ring tests hid.
+    tests/unit/test_spectator_ring_nolog.c
+    # Spectator replay translator: ring keyframe / event-tick records ->
+    # the LOG_*-marked plaintext byte stream + synthesized v2 header, proven
+    # byte-for-byte and by decoding a real translated keyframe through
+    # lv_screenLoadFromStream.
+    tests/unit/test_spectator_replay.c
+    # Spectator config plumbing: -maxspectators / -specdelay flow through
+    # ServerInstanceConfig into the sim and back via the getters.
+    tests/unit/test_spectator_config.c
+    # Spectator JOIN handshake: a JOIN_FLAG_SPECTATOR join registers a tankless
+    # viewer (slot 0xFF, no tank slot) under the maxSpectators cap.
+    tests/unit/test_spectator_join.c
+    # Spectator roster publish: the server broadcasts CTRL_SPECTATOR_SLOT to
+    # player clients on spectator join/leave and catch-up-sends the roster to a
+    # newly-joined player; verified through the real client apply path.
+    tests/unit/test_spectator_roster_publish.c
+    # CTRL_SPECTATOR_SLOT body-codec round-trip: encode/decode the per-spectator
+    # roster event through the body tables, including the out-of-range rejection.
+    tests/unit/test_spectator_slot_codec.c
+    # Spectator connect — client side: the real client transport connecting with
+    # the spectator flag lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting
+    # seed), consuming no tank slot and starting no map download.
+    tests/unit/test_spectator_connect.c
+    # Spectator command rejection: a tankless viewer's lobby/gameplay commands
+    # have no server-state effect (client transport never emits them; the
+    # dispatcher guard rejects an out-of-range sender slot).
+    tests/unit/test_spectator_command_reject.c
+    # Spectator feed capture — client side: a real spectator client over loopback
+    # captures the CHANNEL_BULK seed + ordered forward records into the ClientSim
+    # feed (record header stripped, order preserved), exercising the ack-emitter
+    # gate fix end-to-end.
+    tests/unit/test_spectator_capture.c
+    # Spectator replay-log events: serialize round-trip of the Joined/Left/Chat
+    # kinds over the v2 framed .wbv stream, plus loopback emission of Joined on
+    # a spectator join and Left on its timeout.
+    tests/unit/test_spectator_log.c
+    # Spectator seed transfer: a connected spectator on a recording-ring server
+    # gets the delayed keyframe at head - delay armed as a BULK_KIND_SPEC_SEED
+    # transfer whose blob is byte-equal to the ring keyframe at that delay.
+    tests/unit/test_spectator_seed.c
     # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
@@ -2699,6 +2847,83 @@ set(WINBOLO_UNITTESTS_SOURCES
     # tick-time call paths.
     src/lzw/dcodlzw.c
     src/lzw/ecodlzw.c
+    # .wbv reader gate: load the committed v1/v2 fixtures through the
+    # production log-viewer reader (test_wbv_reader.c), and the on-demand
+    # writer-drive that (re)generates the v2 fixture (test_wbv_v2_capture.c).
+    tests/unit/test_wbv_reader.c
+    tests/unit/test_wbv_v2_capture.c
+    # On-demand generator for the committed real ring-seed fixture
+    # (spectator_seed.bin): captures a ServerSim ring keyframe with no trailing
+    # data for test_spec_seed_load_real (test_spectator_seed_capture.c).
+    tests/unit/test_spectator_seed_capture.c
+    # Blocks-level append-fed stream source: drives blocks.c's no-zip path.
+    tests/unit/test_blocks_stream.c
+    # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
+    # lv_screenLoadFromStream and asserts it decodes the same content the zip
+    # reader does (reuses extractLogDat from test_log_roundtrip.c).
+    tests/unit/test_stream_load.c
+    # Feeds the same fixture through lv_screenStreamPump a record at a time
+    # (with a caught-up pump) and matches a one-shot load to end-of-log.
+    tests/unit/test_stream_pump.c
+    # Spectator seed load: fabricates a ring-shaped seed from the v2 fixture's
+    # snapshot body and runs it through lv_specSeedLoad (synthesize header ->
+    # translate keyframe -> load), asserting the decode + the stashed control
+    # slice.
+    tests/unit/test_spec_seed_load.c
+    # Real spectator seed load: loads the committed spectator_seed.bin (a real
+    # ring seed, no trailing data) through lv_specSeedLoad and asserts TRUE —
+    # reproduces the lv_processSnapshot over-read (test_spec_seed_load_real.c).
+    tests/unit/test_spec_seed_load_real.c
+    # Spectator forward-record pump: seeds the decoder from the v2 fixture's
+    # snapshot, derives ring-shaped forward records from its event stream and
+    # pumps them through lv_specRecordPump, asserting the decoder advances (same
+    # end state), an empty tick is clean, and a keyframe re-syncs + refreshes the
+    # control slice.
+    tests/unit/test_spec_record_pump.c
+    # Headless spectator seed integration: a running ServerSim with a registered
+    # spectator ring (no logStart) delivers a seed over the loopback transport;
+    # the client captures it and the production decode path loads it
+    # (test_spectator_seed_integration.c).
+    tests/unit/test_spectator_seed_integration.c
+    # specSeedDecodeInfo decode: captures a real ring seed and asserts the
+    # control-snapshot lobby-settings event decodes to the sim's map / settings,
+    # plus the no-event negative path (test_spec_seed_decode_info.c).
+    tests/unit/test_spec_seed_decode_info.c
+    # Link-only no-op stubs for the host/render/window/message entry points
+    # the decode subset below references but whose real bodies live in the
+    # GUI TUs (logviewer.c, draw.c, messages.c) we do not link.
+    tests/unit/test_logviewer_stubs.c
+    # Log-viewer decode subset reachable from lv_screenLoadMapFromMemory:
+    # screen.c + blocks.c plus the snapshot / players / world-object / map /
+    # render-data-structure TUs they call. The GUI/render TUs (logviewer.c,
+    # draw.c, sound.c, messages.c, game_view.c, bolo_shim.c, imgui/*) are
+    # NOT linked — their referenced entry points are stubbed above.
+    src/logviewer/screen.c
+    src/logviewer/blocks.c
+    src/logviewer/snapshot.c
+    src/logviewer/players.c
+    # Logviewer-world spectator seed orchestration: raw ring keyframe seed ->
+    # synthesized v2 header + translated snapshot -> lv_screenLoadFromStream.
+    # Listed explicitly because this target uses its own decode-subset list
+    # (not LOGVIEWER_LIB_SOURCES); spectator_replay.h is now a dep-free public
+    # seam, so the runtime LOGVIEWER libs also link it on their own.
+    src/logviewer/spec_seed_load.c
+    src/logviewer/pillbox.c
+    src/logviewer/bases.c
+    src/logviewer/starts.c
+    src/logviewer/shells.c
+    src/logviewer/bolo_map.c
+    src/logviewer/screencalc.c
+    src/logviewer/screentank.c
+    src/logviewer/screenlgm.c
+    src/logviewer/screenbullet.c
+    src/logviewer/sounddist.c
+    src/logviewer/allience.c
+    src/logviewer/labels.c
+    src/logviewer/util.c
+    src/logviewer/global.c
+    src/logviewer/clientmutex.c
+    src/logviewer/dns.c
 )
 
 if(WB_NETDEBUG)
@@ -2728,6 +2953,9 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # differential test at the committed fixture directory.
     WB_WIRE_CORPUS_CAPTURE=1
     WB_WIRE_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wire"
+    # Committed v1 .wbv fixture directory: the reader gate loads from here and
+    # the on-demand capture (re)writes spectator_v1.wbv into it.
+    WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -2736,6 +2964,10 @@ target_include_directories(WinBoloUnitTests PRIVATE
     src/server
     src
     src/winbolonet
+    # Headers for the log-viewer decode subset (backend.h, logviewer.h,
+    # blocks.h, snapshot.h, lv_*.h) used by test_wbv_reader.c and the
+    # linked src/logviewer/*.c decode TUs.
+    src/logviewer
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
@@ -2921,6 +3153,15 @@ set(_unit_test_names
     log_roundtrip_snapshot_keeps_chain_synced
     log_roundtrip_lobby_snapshot_is_empty_world
     log_roundtrip_lobby_mode_drops_world_events
+    wbv_reader_v1
+    wbv_reader_v2
+    blocks_stream
+    stream_load
+    stream_pump
+    spec_seed_load
+    spec_seed_load_real
+    spec_record_pump
+    spec_seed_decode_info
     log_path_empty_uses_autobase
     log_path_explicit_file_verbatim
     log_path_explicit_file_keeps_single_wbv
@@ -3004,6 +3245,19 @@ set(_unit_test_names
     viewtick_displayed_tick
     wire_corpus
     channel_mux
+    spectator_ring
+    spectator_ring_nolog
+    spectator_replay
+    spectator_config
+    spectator_join
+    spectator_roster_publish
+    spectator_slot_codec
+    spectator_connect
+    spectator_command_reject
+    spectator_seed_integration
+    spectator_capture
+    spectator_log
+    spectator_seed
     bulk_transfer
     overflow_guards
     channel_reset_codec_roundtrip
@@ -3027,6 +3281,9 @@ set(_unit_test_names
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
 # `WinBoloUnitTests --test wire_corpus_capture`, not under CTest.
+# wbv_v2_capture is omitted for the same reason: it (re)writes the committed
+# spectator_v2.wbv fixture and is invoked on demand via
+# `WinBoloUnitTests --test wbv_v2_capture`; CTest only runs wbv_reader_v1/v2.
 foreach(_name IN LISTS _unit_test_names)
     add_test(NAME unit.${_name}
              COMMAND $<TARGET_FILE:WinBoloUnitTests> --test ${_name})

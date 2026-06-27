@@ -9,10 +9,12 @@
  */
 
 #include "imgui_context.h"
+#include "spectator_drain.h"   /* SPEC_PHASE_* discriminants for the badge */
 #include "imgui.h"
 #include "../../gui/imgui_theme.h"
 #include "../../gui/imgui_fonts.h"
 #include "../../gui/ui_mode.h"
+#include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_nav_outline.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
@@ -153,4 +155,66 @@ int lv_imgui_want_capture_mouse(void) {
     if (!g_context) return 0;
     ImGui::SetCurrentContext(g_context);
     return ImGui::GetIO().WantCaptureMouse ? 1 : 0;
+}
+
+void lv_imgui_set_gamepad_nav(int enabled) {
+    if (!g_context) return;
+    ImGui::SetCurrentContext(g_context);
+    ImGuiIO& io = ImGui::GetIO();
+    if (enabled) {
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    } else {
+        io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+    }
+}
+
+int lv_imgui_any_popup_open(void) {
+    if (!g_context) return 0;
+    ImGui::SetCurrentContext(g_context);
+    return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId |
+                                       ImGuiPopupFlags_AnyPopupLevel) ? 1 : 0;
+}
+
+void lv_imgui_center_message(const char* text) {
+    if (!g_context || text == nullptr) return;
+    ImGui::SetCurrentContext(g_context);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImVec2 centre(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f);
+    ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::Begin("##spec_overlay", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::TextUnformatted(text);
+    ImGui::End();
+}
+
+void lv_imgui_spectator_badge(int phase) {
+    if (!g_context) return;
+    const char* label;
+    ImU32 col;
+    switch (phase) {
+        case SPEC_PHASE_LOBBY:
+        case SPEC_PHASE_COUNTDOWN: label = langGetText(STR_LV_SPEC_PHASE_LOBBY);    col = IM_COL32( 70, 130, 200, 255); break;
+        case SPEC_PHASE_RUNNING:   label = langGetText(STR_LV_SPEC_PHASE_LIVE);     col = IM_COL32( 60, 175,  75, 255); break;
+        case SPEC_PHASE_GAMEOVER:  label = langGetText(STR_LV_SPEC_PHASE_GAMEOVER); col = IM_COL32(190,  75,  75, 255); break;
+        default: return;   /* SPEC_PHASE_UNKNOWN: no badge */
+    }
+    ImGui::SetCurrentContext(g_context);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    /* Top-right corner, nudged below any menu bar so the game-view menu doesn't
+     * cover it. Pivot on the badge's top-right edge. */
+    ImVec2 pos(vp->Pos.x + vp->Size.x - 8.0f, vp->Pos.y + 30.0f);
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::Begin("##spec_badge", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::PushStyleColor(ImGuiCol_Text, col);
+    ImGui::TextUnformatted(label);
+    ImGui::PopStyleColor();
+    ImGui::End();
 }

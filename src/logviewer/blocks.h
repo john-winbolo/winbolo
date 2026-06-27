@@ -29,6 +29,14 @@ bool lv_blocksCreate(char *fileName, int size);
  * (freed in lv_blocksDestroy). */
 bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen);
 
+/* No-zip append-fed stream source: BeginStream resets the reader, AppendBytes
+ * feeds plaintext bytes, SetStreamEOF marks completion. Reads go through the
+ * existing lv_blocksReadBytes/logReadBytes path (decompressUpTo no-ops without
+ * a zip). AppendBytes returns FALSE on a NULL buffer or allocation failure. */
+void lv_blocksBeginStream(void);
+bool lv_blocksAppendBytes(const uint8_t *data, size_t len);
+void lv_blocksSetStreamEOF(void);
+
 void lv_blocksDestroy();
 int lv_blocksReadBytes(BYTE *buff, int len);
 bool lv_blocksIsEOF();

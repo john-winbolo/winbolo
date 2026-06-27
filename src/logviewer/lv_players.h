@@ -157,6 +157,22 @@ void lv_playersSetSelf(BYTE pn);
 bool lv_playersSetPlayerName(BYTE playerNum, char *playerName);
 
 /*********************************************************
+*NAME:          lv_playersSetPlayerNameQuiet
+*AUTHOR:        John Morrison
+*CREATION DATE: 27/06/26
+*LAST MODIFIED: 27/06/26
+*PURPOSE:
+* Marks a slot in use and sets its name without emitting a
+* MESSAGE_CHANGENAME newswire line. Touches only inUse +
+* playerName. Used by spectator per-keyframe roster apply.
+*
+*ARGUMENTS:
+*  playerNum  - The player number to set
+*  name       - The player name to set
+*********************************************************/
+void lv_playersSetPlayerNameQuiet(BYTE playerNum, const char *name);
+
+/*********************************************************
 *NAME:          lv_playersSetPlayer
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99

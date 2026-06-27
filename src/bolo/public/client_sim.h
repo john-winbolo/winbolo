@@ -80,6 +80,16 @@ typedef struct {
     uint8_t startIdx;      /* reserved map start, 1-based; 0xFF = none */
 } ClientLobbySlot;
 
+/* Client-side mirror of a server spectator roster slot. Spectators
+ * have no team/ready/bot/ping/start, so this is a trimmed slot. */
+typedef struct {
+    bool    connected;
+    char    playerName[PACKET_MAX_PLAYER_NAME];
+    char    countryCode[3];   /* ISO 3166-1 alpha-2 + NUL; "" if unknown */
+    uint8_t clientType;       /* ClientType enum */
+    uint8_t clientFlags;      /* PLAYER_FLAG_* bits */
+} ClientSpectatorSlot;
+
 /* Callback typedefs for new transport message sending.
  *
  * NetChatSendFunc receives the owning ClientSim so the callback body
@@ -546,6 +556,9 @@ const char *clientSimGetMyLastPlayerName(const ClientSim *cs);
  * returns NULL for pointer types, false/0 for scalars). */
 const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n);
 
+/* Spectator roster slot mirror; out-of-range idx returns NULL. */
+const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx);
+
 /* Count of currently-connected lobby slots (humans + bots).
  * Matches what the lobby UI's player table renders. */
 BYTE clientSimGetLobbyNumConnected(const ClientSim *cs);
@@ -833,6 +846,39 @@ const char    *clientSimGetLobbyMapPreviewPath(const ClientSim *cs);
 const uint8_t *clientSimGetLobbyMapPreviewBytes(const ClientSim *cs);
 uint32_t       clientSimGetLobbyMapPreviewLen(const ClientSim *cs);
 void           clientSimClearLobbyMapPreview(ClientSim *cs);
+
+/* Spectator feed drain — the session uses these to pull the captured seed and
+ * the ordered forward records the bulk sink reassembled while connected as a
+ * tankless spectator. The raw bytes are translated/fed to the decoder in a
+ * later slice; this slice only captures and exposes them.
+ *
+ * One forward record handed back by clientSimSpectatorPopRecord: the server's
+ * 9-byte transport header is already stripped. payload is owned by the caller
+ * (free it) and is NULL when payloadLen is 0. */
+typedef struct {
+    bool      isKeyframe;
+    uint32_t  gameTick;
+    uint32_t  segment;
+    uint8_t  *payload;     /* caller-owned; NULL when payloadLen == 0 */
+    uint32_t  payloadLen;
+} ClientSpectatorRecord;
+
+/* True once the seed blob has been fully received. */
+bool     clientSimSpectatorSeedReady(const ClientSim *cs);
+/* Hand the seed blob to the caller, transferring ownership (*outBlob must be
+ * freed). Returns false (outputs untouched) if no seed is ready; the feed no
+ * longer holds the seed after a successful take. */
+bool     clientSimSpectatorTakeSeed(ClientSim *cs, uint8_t **outBlob,
+                                    uint32_t *outLen);
+/* Number of forward records currently queued. */
+uint32_t clientSimSpectatorRecordCount(const ClientSim *cs);
+/* Pop the oldest queued forward record into *out (ownership of out->payload
+ * passes to the caller). Returns false (out untouched) when the queue is empty. */
+bool     clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out);
+/* Latest cold-start countdown the server sent while the delayed ring fills.
+ * Returns true and writes *outRemaining (remaining game ticks, ~50/sec) once a
+ * countdown has been received; false (untouched) before the first one. */
+bool     clientSimSpectatorCountdown(const ClientSim *cs, uint32_t *outRemaining);
 
 /* Map upload progress reflection. status: 0=idle, 1=announce sent,
  * 2=ack received (chunks in flight), 3=done, 4=rejected. */

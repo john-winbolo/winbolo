@@ -51,6 +51,7 @@
 #define LOG_HEADER "WBOLOMOV"
 #define LOG_VERSION_V0 0  /* Original: IP address octets in player join events */
 #define LOG_VERSION_V1 1  /* Country codes replace IP addresses; opt4 carries accountFlags (bit 0=WBN, bit 1=Steam, bit 5=bot) */
+#define LOG_VERSION_V2 2  /* Plaintext (no XOR); each event framed [type][u16 BE payload-length][payload]. Join payload semantics unchanged from V1 */
 #define LOG_VERSION LOG_VERSION_V1
 
 /* The events we record in our log file */
@@ -103,7 +104,10 @@ log_MapSkipApplied,
 log_BalanceApplied,
 log_GameVoteStart,   // opt1=kind, opt2=initiator, opt3=team (0 = global)
 log_GameVoteCast,    // opt1=kind, opt2=player,    opt3=voteYes
-log_GameVoteEnd      // opt1=kind, opt2=result (0=failed,1=passed)
+log_GameVoteEnd,     // opt1=kind, opt2=result (0=failed,1=passed)
+log_SpectatorJoined, // opt1=spectator slot, opt2/opt3=country[0]/[1], opt4=wbnFlags, reserved byte, then name pstr
+log_SpectatorLeft,   // opt1=spectator slot, then name pstr (names the leaver across slot reuse)
+log_SpectatorChat    // format-reserved: opt1=sender spectator slot + message pstr (no emitter yet)
 } logitem;
 
 /* Vote-kind values inside the log_GameVote* events. Mirrored from

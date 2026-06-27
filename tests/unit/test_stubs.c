@@ -293,12 +293,30 @@ bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName,
   if (isSupporter) *isSupporter = FALSE;
   return FALSE;
 }
+bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerName,
+                                  char *errorMsg, bool *isLoggedIn) {
+  (void)spectatorKey; (void)playerName;
+  if (errorMsg)    errorMsg[0]  = '\0';
+  if (isLoggedIn) *isLoggedIn   = FALSE;
+  return FALSE;
+}
+void winboloNetSpectatorLeaveGame(const char *spectatorKey) {
+  (void)spectatorKey;
+}
 
 bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey,
                                  char *playerKeyOut, char *errorMsg) {
   (void)apiToken; (void)serverKey;
   if (playerKeyOut) playerKeyOut[0] = '\0';
   if (errorMsg)     errorMsg[0]     = '\0';
+  return FALSE;
+}
+bool winbolonetClientJoinSpectatorSession(const char *apiToken, const char *serverKey,
+                                          const char *playerName, char *spectatorKeyOut,
+                                          char *errorMsg) {
+  (void)apiToken; (void)serverKey; (void)playerName;
+  if (spectatorKeyOut) spectatorKeyOut[0] = '\0';
+  if (errorMsg)        errorMsg[0]        = '\0';
   return FALSE;
 }
 

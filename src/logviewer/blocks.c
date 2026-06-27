@@ -57,6 +57,7 @@ static bool growBuffer(size_t needed) {
 
 /* Decompress from the zip stream until logSize >= target or EOF. */
 static void decompressUpTo(size_t target) {
+  if (logFile == NULL) return;  /* no-op in append-fed stream mode */
   while (logSize < target && !logEOF) {
     if (!growBuffer(logSize + LOG_DECOMPRESS_CHUNK)) break;
     int got = unzReadCurrentFile(logFile, logData + logSize, LOG_DECOMPRESS_CHUNK);
@@ -209,6 +210,49 @@ bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen) {
   return TRUE;
 }
 
+/* ---- No-zip append-fed stream source ----
+ *
+ * Drives the same logData/logSize/logPosition/logEOF reader state as the zip
+ * path, but with plaintext bytes pushed in via lv_blocksAppendBytes rather
+ * than pulled from a zip. lv_blocksReadBytes / lv_logSetPosition work
+ * unchanged: decompressUpTo is a no-op without a zip (logFile == NULL) and the
+ * read de-XOR uses blockKey, which is 0 for the v2 stream. */
+
+/* Reset the reader for a no-zip append-fed stream session. Defensive: the
+ * caller need not have called lv_blocksDestroy first, so any owned heap
+ * buffers are freed here. A live zip handle is assumed already closed, as with
+ * the other create entry points. */
+void lv_blocksBeginStream(void) {
+  free(logData);
+  logData     = NULL;
+  free(ownedZipData);
+  ownedZipData = NULL;
+  logSize     = 0;
+  logCapacity = 0;
+  logPosition = 0;
+  logEOF      = FALSE;
+  blockKey    = 0;
+  logFile     = NULL;
+}
+
+/* Append plaintext bytes to the stream buffer. No XOR on write; reads de-XOR
+ * with blockKey (0 for the v2 stream). Returns FALSE only on a NULL buffer or
+ * an allocation failure; a zero-length append is a no-op success. */
+bool lv_blocksAppendBytes(const uint8_t *data, size_t len) {
+  if (len == 0) return TRUE;
+  if (data == NULL) return FALSE;
+  if (!growBuffer(logSize + len)) return FALSE;
+  memcpy(logData + logSize, data, len);
+  logSize += len;
+  return TRUE;
+}
+
+/* Mark the appended stream complete so lv_blocksIsEOF reports EOF once the
+ * read cursor catches up to logSize. */
+void lv_blocksSetStreamEOF(void) {
+  logEOF = TRUE;
+}
+
 void lv_blocksDestroy() {
   if (logFile != NULL) {
     unzCloseCurrentFile(logFile);
@@ -233,7 +277,7 @@ bool lv_blocksIsEOF() {
 }
 
 int lv_blocksReadBytes(BYTE *buff, int len) {
-  if (logFile == NULL || len <= 0) return -1;
+  if (len <= 0) return -1;
 
   decompressUpTo(logPosition + (size_t)len);
 

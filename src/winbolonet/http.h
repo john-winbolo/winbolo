@@ -132,6 +132,25 @@ int wbn_api_call(const char *endpoint, struct cJSON *body, struct cJSON **respon
 int wbn_api_call_server(const char *endpoint, struct cJSON *body, struct cJSON **response);
 
 /*********************************************************
+*NAME:          wbn_api_call_bearer
+*PURPOSE:
+* High-level JSON API call that attaches Authorization:
+* Bearer <bearerToken> when bearerToken is non-empty, and
+* sends no Authorization line when it is NULL/empty. Same
+* signing as wbn_api_call. Used for the client-scoped
+* spectator join, which authenticates a logged-in user with
+* their own token and falls back to an anonymous (unauthed)
+* request otherwise.
+*
+*ARGUMENTS:
+* endpoint    - API path after /api/v1/
+* body        - cJSON object for the request body
+* bearerToken - User token, or NULL/"" for an anonymous call
+* response    - Receives parsed cJSON response (caller frees)
+*********************************************************/
+int wbn_api_call_bearer(const char *endpoint, struct cJSON *body, const char *bearerToken, struct cJSON **response);
+
+/*********************************************************
 *NAME:          httpSendLogFile
 *PURPOSE:
 * Uploads a log file to WinBolo.net via HTTP(S) multipart

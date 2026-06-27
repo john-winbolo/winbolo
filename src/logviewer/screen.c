@@ -600,7 +600,19 @@ void lv_screenProcessLog(unsigned short numEvents) {
   char name2[256];
 
   while (count < numEvents) {
+    bool isV2 = (g_lv->loadedLogVersion == LOG_VERSION_V2);
+    unsigned short evLen = 0; /* v2 only: framed payload length after code */
+
     logReadBytes(&code, 1);
+
+    if (isV2) {
+      /* v2 frames every event as [type][u16 BE payload-length][payload].
+         Read the length unconditionally; known-type cases below consume
+         exactly that many payload bytes, unknown types skip it. */
+      BYTE lenBytes[2];
+      logReadBytes(lenBytes, 2);
+      evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+    }
 
     switch (code) {
     case log_PlayerJoined:
@@ -619,8 +631,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
           snprintf(mem, sizeof(mem), "%d.%d.%d.%d", opt2, opt3, opt4, opt5);
           lv_dnsLookup(mem, str, sizeof(str));
           snprintf(mem, sizeof(mem), "%s", str);
-        } else if (g_lv->loadedLogVersion == LOG_VERSION_V1) {
-          /* Version 1: opt2-opt3 are 2-char country code,
+        } else if (g_lv->loadedLogVersion == LOG_VERSION_V1 ||
+                   g_lv->loadedLogVersion == LOG_VERSION_V2) {
+          /* Version 1/2: opt2-opt3 are 2-char country code,
            * opt4 is accountFlags (bit 0=WBN, bit 1=Steam, bit 5=bot),
            * opt5 reserved (zero in current writers). */
           snprintf(mem, sizeof(mem), "[%c%c]", opt2, opt3);
@@ -1124,13 +1137,72 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_messageAdd(networkStatus, MESSAGE_NETSERVER,
                     opt2 ? STR_LV_VOTE_PASSED : STR_LV_VOTE_FAILED, NULL);
       break;
+    case log_SpectatorJoined:
+      logReadBytes(&opt1, 1);  /* spectator slot */
+      logReadBytes(&opt2, 1);  /* country[0] */
+      logReadBytes(&opt3, 1);  /* country[1] */
+      logReadBytes(&opt4, 1);  /* wbnFlags (not displayed) */
+      logReadBytes(&opt5, 1);  /* reserved */
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
+      lv_utilPtoCString(mem, name);
+      {
+        /* Prefix the 2-char country into {player} only when present and not
+           the "XX" unknown sentinel; the [%c%c] tag is a raw country code and
+           is not localized. */
+        MessageArgs args = {0};
+        if (opt2 != 0 && opt3 != 0 && !(opt2 == 'X' && opt3 == 'X')) {
+          snprintf(args.playerName, sizeof(args.playerName), "[%c%c] %s", opt2, opt3, name);
+        } else {
+          snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+        }
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_JOINED, &args);
+      }
+      break;
+    case log_SpectatorLeft:
+      logReadBytes(&opt1, 1);  /* spectator slot */
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
+      lv_utilPtoCString(mem, name);
+      {
+        MessageArgs args = {0};
+        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_LEFT, &args);
+      }
+      break;
+    case log_SpectatorChat:
+      /* No emitter yet (format-reserved for Phase 6); decode so the cursor
+         stays aligned and the line is ready when chat ships. */
+      logReadBytes(&opt1, 1);  /* sender spectator slot */
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      lv_utilPtoCString(mem, str);  /* copies the message out of mem */
+      {
+        MessageArgs args = {0};
+        args.number = opt1;
+        snprintf(args.string1, sizeof(args.string1), "%s", str);
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_CHAT, &args);
+      }
+      break;
     default:
-      lv_windowStop(TRUE);
-      count = numEvents;
+      if (isV2) {
+        /* Unknown future event type: skip its framed payload and keep
+           going. evLen is a full u16 so it can exceed the v1 per-type
+           maximum; advance the read cursor directly. */
+        lv_logSetPosition(lv_logGetCurrentPosition() + evLen);
+      } else {
+        lv_windowStop(TRUE);
+        count = numEvents;
+      }
       break;
 
     }
-    lv_blocksSetKey(code);
+    /* v2 is plaintext: blockKey stays 0 for the whole stream, so the
+       per-event key roll is suppressed. v1 rolls the key to the event
+       code (matches the writer's logKey rotation). */
+    if (!isV2) {
+      lv_blocksSetKey(code);
+    }
     count++;
   }
 }
@@ -1414,7 +1486,23 @@ bool lv_processSnapshot() {
                * The flags will be re-set by any subsequent log_PlayerJoined
                * event for this slot. */
               lv_playersSetPlayer(count, name, location, mx ,my, px, py, frame, onBoat, numAllies, allies, FALSE, TRUE, 0);
-              lv_playersUpdateLgm(count, lgmmx, lgmmy, lgmpx, lgmpy,lgmframe);
+              /* mx != 0 means the tank is on the map (alive) — the same sentinel
+                 the forward log_PlayerLocation path uses. Mark the slot alive so
+                 a mid-game seed clears the death-static overlay for living tanks;
+                 a dead/off-map tank (mx == 0) stays not-alive. inv_setSpawn for
+                 the slot is handled by the in-use sweep after this loop. */
+              if (mx != 0) {
+                g_lv->gameViewHud[count].alive = true;
+                g_lv->gameViewHud[count].respawnTimeMs = g_lv->timeRunning;
+              }
+              /* A snapshot carries (0,0) lgm coords for a man who is aboard/idle
+                 (the server's idle sentinel). Only mark him out for a real
+                 out-of-tank position; lv_playersSetPlayer above already left
+                 lgmIsOut FALSE for the aboard case, matching the forward
+                 stream where a boarded man emits no log_LgmLocation. */
+              if (lgmmx != 0 || lgmmy != 0) {
+                lv_playersUpdateLgm(count, lgmmx, lgmmy, lgmpx, lgmpy,lgmframe);
+              }
             }
           }
         }
@@ -1567,10 +1655,21 @@ static int walkSkipEventBody(BYTE code) {
 static bool walkSkipEvents(unsigned short numEvents) {
   unsigned short i;
   BYTE code;
+  bool isV2 = (g_lv->loadedLogVersion == LOG_VERSION_V2);
   for (i = 0; i < numEvents; i++) {
     if (logReadBytes(&code, 1) != 1) return FALSE;
-    if (walkSkipEventBody(code) < 0) return FALSE;
-    lv_blocksSetKey(code);
+    if (isV2) {
+      /* v2: [type][u16 BE payload-length][payload]. Skip via the framed
+         length; blockKey stays 0 so no key roll. */
+      BYTE lenBytes[2];
+      unsigned short evLen;
+      if (logReadBytes(lenBytes, 2) != 2) return FALSE;
+      evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+      lv_logSetPosition(lv_logGetCurrentPosition() + evLen);
+    } else {
+      if (walkSkipEventBody(code) < 0) return FALSE;
+      lv_blocksSetKey(code);
+    }
   }
   return TRUE;
 }
@@ -1713,7 +1812,8 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
     len = logReadBytes(&logVersion, 1);
     if (len <= 0) {
       returnValue = FALSE;
-    } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1) {
+    } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1 ||
+               logVersion == LOG_VERSION_V2) {
       g_lv->loadedLogVersion = logVersion;
     } else {
       returnValue = FALSE;
@@ -1723,11 +1823,16 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
   /* Read map name */
   if (returnValue == TRUE) {
     logReadBytes(&dataLen, 1);
-    len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
-    g_lv->mapName[dataLen] = '\0';
-    if (len != dataLen) {
-      returnValue = FALSE;
+    /* An empty map name is valid (display-only field; the map data lives in the
+       snapshot body). Only read+check when there are name bytes — a zero-length
+       read returns -1, which would otherwise fail the load. */
+    if (dataLen > 0) {
+      len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
+      if (len != dataLen) {
+        returnValue = FALSE;
+      }
     }
+    g_lv->mapName[dataLen] = '\0';
   }
 
   /* Read game type, mines, ai, password, max players */
@@ -1752,7 +1857,11 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
     }
   }
 
-  lv_blocksSetKey((BYTE) (g_lv->gmeCreateTime & 0xFF));
+  /* v2 is plaintext: blockKey stays 0 (identity de-XOR). v0/v1 seed the
+     rolling key from the low byte of the game create time. */
+  lv_blocksSetKey(g_lv->loadedLogVersion == LOG_VERSION_V2
+                      ? 0
+                      : (BYTE) (g_lv->gmeCreateTime & 0xFF));
   len = logReadBytes(&dataLen, 1);
   if (len != 1 || dataLen != LOG_SNAPSHOT) {
     returnValue = FALSE;
@@ -1802,13 +1911,17 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
 
 
 /*********************************************************
-*NAME:          lv_logLoadFromMemory
+*NAME:          lv_logLoadCommon
 *PURPOSE:
-*  Loads log data from an in-memory zip buffer.
-*  Same as lv_logLoad but uses lv_blocksCreateFromMemory.
-*  Takes ownership of zipData.
+*  Decodes the log header and opening snapshot from the
+*  already-set-up blocks source. Resets the per-log g_lv
+*  fields, reads the WBOLOMOV header, seeds the block key,
+*  processes the opening snapshot, and records the result in
+*  g_lv->logLoaded. The caller must have set up the blocks
+*  source first (lv_blocksCreateFromMemory for a .wbv zip, or
+*  lv_blocksBeginStream + lv_blocksAppendBytes for a stream).
 *********************************************************/
-static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
+static bool lv_logLoadCommon(void) {
   char id[LENGTH_ID+1];
   BYTE dataLen;
   BYTE logVersion;
@@ -1825,7 +1938,6 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
   memset(g_lv->tankInv,      0, sizeof(g_lv->tankInv));
   memset(g_lv->prevBaseStockValid, 0, sizeof(g_lv->prevBaseStockValid));
 
-  returnValue = lv_blocksCreateFromMemory(zipData, zipLen);
   if (returnValue == TRUE) {
     len = logReadBytes((BYTE *)id, LENGTH_ID);
     if (len != LENGTH_ID || strncmp(id,"WBOLOMOV", LENGTH_ID) != 0) {
@@ -1836,7 +1948,8 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
     len = logReadBytes(&logVersion, 1);
     if (len <= 0) {
       returnValue = FALSE;
-    } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1) {
+    } else if (logVersion == LOG_VERSION_V0 || logVersion == LOG_VERSION_V1 ||
+               logVersion == LOG_VERSION_V2) {
       g_lv->loadedLogVersion = logVersion;
     } else {
       returnValue = FALSE;
@@ -1845,11 +1958,16 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
 
   if (returnValue == TRUE) {
     logReadBytes(&dataLen, 1);
-    len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
-    g_lv->mapName[dataLen] = '\0';
-    if (len != dataLen) {
-      returnValue = FALSE;
+    /* An empty map name is valid (display-only field; the map data lives in the
+       snapshot body). Only read+check when there are name bytes — a zero-length
+       read returns -1, which would otherwise fail the load. */
+    if (dataLen > 0) {
+      len = logReadBytes((BYTE *)g_lv->mapName, dataLen);
+      if (len != dataLen) {
+        returnValue = FALSE;
+      }
     }
+    g_lv->mapName[dataLen] = '\0';
   }
 
   if (returnValue == TRUE) {
@@ -1873,7 +1991,11 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
     }
   }
 
-  lv_blocksSetKey((BYTE) (g_lv->gmeCreateTime & 0xFF));
+  /* v2 is plaintext: blockKey stays 0 (identity de-XOR). v0/v1 seed the
+     rolling key from the low byte of the game create time. */
+  lv_blocksSetKey(g_lv->loadedLogVersion == LOG_VERSION_V2
+                      ? 0
+                      : (BYTE) (g_lv->gmeCreateTime & 0xFF));
   len = logReadBytes(&dataLen, 1);
   if (len != 1 || dataLen != LOG_SNAPSHOT) {
     returnValue = FALSE;
@@ -1883,6 +2005,21 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
 
   g_lv->logLoaded = returnValue;
   return returnValue;
+}
+
+/*********************************************************
+*NAME:          lv_logLoadFromMemory
+*PURPOSE:
+*  Loads log data from an in-memory zip buffer.
+*  Same as lv_logLoad but uses lv_blocksCreateFromMemory.
+*  Takes ownership of zipData.
+*********************************************************/
+static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
+  if (lv_blocksCreateFromMemory(zipData, zipLen) != TRUE) {
+    g_lv->logLoaded = FALSE;
+    return FALSE;
+  }
+  return lv_logLoadCommon();
 }
 
 bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
@@ -1904,8 +2041,153 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
   return returnValue;
 }
 
+/*********************************************************
+*NAME:          lv_screenLoadFromStream
+*PURPOSE:
+*  Loads the decoder from a plaintext (v2) byte stream. The
+*  caller supplies the initial header + opening snapshot bytes
+*  here, then appends further records via lv_blocksAppendBytes
+*  and steps lv_screenLogTick. Unlike the .wbv zip path there is
+*  no fixed total size, so the decompress / total-time /
+*  game-info steps are intentionally skipped.
+*********************************************************/
+bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len) {
+  bool ok;
+
+  lv_blocksDestroy();
+  lv_screenDestroy();
+  lv_screenSetup();
+  lv_blocksBeginStream();
+  if (lv_blocksAppendBytes(bytes, len) != TRUE) {
+    g_lv->logLoaded = FALSE;
+    return FALSE;
+  }
+  ok = lv_logLoadCommon();
+  if (ok == TRUE) {
+    /* Publish the header's game information (map name / type / settings) to the
+     * front end, as the file and in-memory loaders do — lv_logLoadCommon parses
+     * it into g_lv but doesn't push it. This is the spectator seed-load path
+     * (lv_specSeedLoad); standalone .wbv loads run through lv_screenLoadMap /
+     * lv_screenLoadMapFromMemory and are unaffected. */
+    /* The spectator seed's synthesized header carries no real version, so
+     * lv_logLoadCommon parsed zeros into g_lv->version*. The spectator runs a
+     * protocol compatible with the server, so the client's own build version is
+     * the right thing to show — overwrite with it before publishing. */
+    g_lv->versionMajor    = BOLO_VERSION_MAJOR;
+    g_lv->versionMinor    = BOLO_VERSION_MINOR;
+    g_lv->versionRevision = BOLO_VERSION_REVISION;
+    lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
+    g_lv->isPlaying = TRUE;
+    lv_screenUpdateView(redraw);
+    g_lv->state = lv_lr_start;
+  }
+  return ok;
+}
+
 bool lv_screenIsPlaying() {
   return g_lv->isPlaying;
+}
+
+/*********************************************************
+*NAME:          lv_screenStreamPump
+*PURPOSE:
+*  Feeds a live, append-only byte stream into the decoder.
+*  Appends the caller-supplied newly-arrived bytes, then
+*  advances playback over the whole records that are now
+*  fully buffered, and parks cleanly when it catches up.
+*
+*  Appends are record-aligned (the ring and the record
+*  translator emit complete records), so logPosition <
+*  logSize means at least one complete record is present and
+*  one reading tick lands exactly on the next record
+*  boundary. When the cursor reaches logSize the decoder is
+*  left untouched (state intact, still playing) rather than
+*  ticked — a reading tick at the boundary would read a short
+*  count and misalign the cursor, and a live stream carries no
+*  LOG_QUIT, so "caught up" must never be treated as
+*  end-of-log. The isPlaying guard stops the loop if playback
+*  ever does finish so a non-advancing tick cannot spin.
+*
+*  Single-threaded and source-agnostic: the caller supplies
+*  the bytes. Returns the decoder's isPlaying state.
+*PARAMS:        bytes - newly-arrived stream bytes (may be NULL)
+*               len   - number of bytes (may be 0 when caught up)
+*RETURNS:       TRUE while playback is live, FALSE once finished.
+*********************************************************/
+/* --- Spectator live-DVR state (see backend.h / lv_screenSpec* below) --- */
+static bool     s_specLiveMode    = false; /* spectatorRun active: append-only pump, host-driven advance */
+static bool     s_specFollowLive  = true;  /* TRUE: slam to head; FALSE: parked, paced real-time playback */
+static bool     s_specSeekPark    = false; /* a user seek/rewind happened -> park on the next frame update */
+static bool     s_specHaveAnchor  = false;
+static uint32_t s_specHeadTick    = 0;     /* latest drained forward-record game tick */
+static uint32_t s_specAnchorTick  = 0;     /* head tick captured at the last follow-live re-anchor */
+static uint32_t s_specAnchorMs    = 0;     /* timeRunning captured at the last follow-live re-anchor */
+static uint32_t s_specPaceLastMs  = 0;     /* wall-clock anchor for the parked 20ms pacing accumulator */
+static int32_t  s_specPaceAccumMs = 0;
+
+bool lv_screenStreamPump(const uint8_t *bytes, size_t len) {
+  if (g_lv == NULL) {
+    return FALSE;
+  }
+  if (bytes != NULL && len > 0) {
+    if (lv_blocksAppendBytes(bytes, len) != TRUE) {
+      return g_lv->isPlaying;
+    }
+  }
+  /* Live spectator mode appends only — the host advances the decoder itself via
+     lv_screenSpecFrameUpdate so a parked view doesn't slam to the head. */
+  while (g_lv->isPlaying == TRUE && !s_specLiveMode &&
+         lv_logGetCurrentPosition() < lv_logGetTotalSize()) {
+    lv_screenLogTick();
+  }
+  return g_lv->isPlaying;
+}
+
+/* Allocate a decoder state, set its field defaults, and register it as the
+ * active state. Host-callable: lets a caller drive lv_screenLoadMapFromMemory
+ * / lv_screenLogTick / lv_screenCloseLog without the standalone GUI/platform
+ * scaffolding. Returns NULL on allocation failure. */
+LogViewerState *lv_decoderCreate(bool fromMainMenu) {
+  LogViewerState *lv = (LogViewerState *)calloc(1, sizeof(LogViewerState));
+  if (lv == NULL) {
+    return NULL;
+  }
+  lv->fromMainMenu = fromMainMenu;
+  lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */
+  lv->screenSizeY = MAIN_SCREEN_SIZE_Y + 15; /* default 30 */
+  lv->isLoaded = FALSE;
+  lv->isSoundsPlaying = TRUE;
+  lv->soundVolume = 50;
+
+  /* Game-view skin state — calloc above already zeroed these, but be
+   * explicit so the defaults are visible alongside the other init. */
+  lv->gameView = FALSE;
+  lv->cameraSlot = 0;
+  lv->savedUseTeamColours = FALSE;
+  memset(lv->kills, 0, sizeof(lv->kills));
+  memset(lv->deaths, 0, sizeof(lv->deaths));
+  memset(lv->gameViewHud, 0, sizeof(lv->gameViewHud));
+  memset(lv->tankInv, 0, sizeof(lv->tankInv));
+  memset(lv->prevBaseShells, 0, sizeof(lv->prevBaseShells));
+  memset(lv->prevBaseMines, 0, sizeof(lv->prevBaseMines));
+  memset(lv->prevBaseArmour, 0, sizeof(lv->prevBaseArmour));
+  memset(lv->prevBaseStockValid, 0, sizeof(lv->prevBaseStockValid));
+
+  lv_screenSetState(lv);
+  return lv;
+}
+
+/* Close any loaded log (frees the zip buffer + screen structures), free the
+ * decoder state, and clear the active state. NULL-safe. lv_screenCloseLog is
+ * safe on a never-loaded state (lv_blocksDestroy and lv_screenDestroy both
+ * no-op on the zeroed pointers), so it is called unconditionally. */
+void lv_decoderDestroy(LogViewerState *lv) {
+  if (lv == NULL) {
+    return;
+  }
+  lv_screenCloseLog();
+  free(lv);
+  lv_screenSetState(NULL);
 }
 
 bool lv_screenCloseLog() {
@@ -2359,6 +2641,8 @@ void lv_screenRewind() {
     lv_windowRemoveEventsAfter(g_lv->timeRunning);
     g_lv->isPlaying = TRUE;
     g_lv->state = lv_lr_start;
+    /* Rewinding parks the live-DVR view in the past (consumed next frame). */
+    s_specSeekPark = true;
     if (wantedPos == 0) {
       lv_startOfLog();
     }
@@ -2408,6 +2692,9 @@ void lv_screenSeekToPosition(float ratio) {
     lv_messageDestroy();
     lv_messageCreate();
 
+    /* A user scrub parks the live-DVR view in the past (consumed next frame). */
+    s_specSeekPark = true;
+
     /* Fast-forward from snapshot to target time */
     g_lv->fastForwarding = TRUE;
     while (g_lv->timeRunning < targetTime && g_lv->isPlaying == TRUE) {
@@ -2423,6 +2710,154 @@ void lv_screenSeekToPosition(float ratio) {
      * the most recent message(s) at the seek point — and the queue is
      * empty so the next live message starts scrolling in normally. */
     lv_messageDrainQueue();
+  }
+}
+
+/* --- Spectator live-DVR (declared in backend.h) ----------------------------
+ * Head-time tracking (decision B, incremental, O(1) per record): following live
+ * re-anchors the tracked head time to the decoder's true timeRunning after the
+ * slam-to-head; while parked it extrapolates from the latest drained record's
+ * game tick (20ms/tick) off that anchor. Any parked-time drift is wiped on the
+ * next re-anchor (jump-to-live or reaching the head), so it only needs to be
+ * monotonic and close. totalTimeMs is repointed at it so the existing
+ * scrubber/seek math tracks the growing live head with no other change. */
+
+static void lv_specHeadTimeFromDelta(void) {
+  if (s_specHaveAnchor) {
+    uint32_t d = (s_specHeadTick >= s_specAnchorTick)
+                     ? (s_specHeadTick - s_specAnchorTick) : 0;
+    g_lv->totalTimeMs = s_specAnchorMs + d * 20;
+  }
+}
+
+static void lv_specReanchorAtHead(void) {
+  s_specAnchorTick  = s_specHeadTick;
+  s_specAnchorMs    = g_lv->timeRunning;
+  s_specHaveAnchor  = true;
+  g_lv->totalTimeMs = g_lv->timeRunning;
+}
+
+static void lv_specAdvanceToHead(void) {
+  while (g_lv->isPlaying == TRUE &&
+         lv_logGetCurrentPosition() < lv_logGetTotalSize()) {
+    lv_screenLogTick();
+  }
+}
+
+void lv_screenSpecSetLiveMode(bool on) {
+  s_specLiveMode    = on;
+  s_specFollowLive  = true;
+  s_specSeekPark    = false;
+  s_specHeadTick    = 0;
+  s_specAnchorTick  = 0;
+  s_specAnchorMs    = 0;
+  s_specHaveAnchor  = false;
+  s_specPaceAccumMs = 0;
+  s_specPaceLastMs  = 0;
+  if (on) {
+    /* The seed left the decoder at the head; play by default. The first
+       follow-live frame re-anchors head time once a record tick is known. */
+    g_lv->playIsPlaying = TRUE;
+  }
+}
+
+bool lv_screenSpecIsLiveMode(void) {
+  return s_specLiveMode;
+}
+
+void lv_screenSpecNoteHeadTick(uint32_t gameTick) {
+  /* Monotonic within a segment. A world reset (new lobby/map) regresses the tick
+     below the head; the host detects that and calls lv_screenSpecResetSegment,
+     which zeroes the head so the new segment's first tick is captured here. */
+  if (gameTick >= s_specHeadTick) {
+    s_specHeadTick = gameTick;
+  }
+}
+
+uint32_t lv_screenSpecHeadTick(void) {
+  return s_specHeadTick;
+}
+
+/* Reset the DVR at a segment boundary (a world reset: new lobby/map). The live
+   buffer and decoder are rebuilt by the re-seed the host runs straight after
+   this; here we drop the previous segment's seek index so scroll-back cannot
+   cross into the old map, and restart the head/anchor/follow state so head-time
+   tracking resumes from the new segment's first tick and the view follows the
+   new head. Live-mode only — standalone .wbv playback never calls this. */
+void lv_screenSpecResetSegment(void) {
+  if (!s_specLiveMode) {
+    return;
+  }
+  lv_snapshotDestroy(&g_lv->snap);
+  g_lv->snap        = lv_snapshotCreate();
+  s_specFollowLive  = true;
+  s_specSeekPark    = false;
+  s_specHeadTick    = 0;
+  s_specAnchorTick  = 0;
+  s_specAnchorMs    = 0;
+  s_specHaveAnchor  = false;
+  s_specPaceAccumMs = 0;
+  s_specPaceLastMs  = 0;
+}
+
+void lv_screenSpecJumpToLive(void) {
+  if (!s_specLiveMode) {
+    return;
+  }
+  lv_specAdvanceToHead();
+  lv_specReanchorAtHead();
+  s_specFollowLive = true;
+  s_specSeekPark   = false;
+}
+
+void lv_screenSpecFrameUpdate(uint32_t nowMs) {
+  bool playing;
+  if (!s_specLiveMode) {
+    return;
+  }
+
+  /* A scrubber drag or rewind parks the view in the past. */
+  if (s_specSeekPark) {
+    s_specSeekPark    = false;
+    s_specFollowLive  = false;
+    s_specPaceLastMs  = nowMs;
+    s_specPaceAccumMs = 0;
+  }
+
+  playing = (g_lv->playIsPlaying == TRUE);
+
+  if (s_specFollowLive) {
+    if (playing) {
+      lv_specAdvanceToHead();   /* slam to the live head */
+      lv_specReanchorAtHead();  /* head time == true decoder time here */
+    } else {
+      lv_specHeadTimeFromDelta(); /* frozen; the head keeps growing */
+    }
+    s_specPaceLastMs = nowMs;
+  } else {
+    /* Parked: keep the slider's max tracking the growing head either way. */
+    lv_specHeadTimeFromDelta();
+    if (playing) {
+      if (nowMs > s_specPaceLastMs) {
+        s_specPaceAccumMs += (int32_t)(nowMs - s_specPaceLastMs);
+      }
+      s_specPaceLastMs = nowMs;
+      if (s_specPaceAccumMs > 200) {
+        s_specPaceAccumMs = 200; /* cap catch-up after a stall/hitch */
+      }
+      while (s_specPaceAccumMs >= 20 && g_lv->isPlaying == TRUE &&
+             lv_logGetCurrentPosition() < lv_logGetTotalSize()) {
+        lv_screenLogTick();
+        s_specPaceAccumMs -= 20;
+      }
+      /* Paced playback reached the head -> resume following it. */
+      if (lv_logGetCurrentPosition() >= lv_logGetTotalSize()) {
+        lv_specReanchorAtHead();
+        s_specFollowLive = true;
+      }
+    } else {
+      s_specPaceLastMs = nowMs;
+    }
   }
 }
 

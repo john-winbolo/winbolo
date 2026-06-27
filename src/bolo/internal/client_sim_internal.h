@@ -34,6 +34,7 @@
 #include "brain_list.h"
 #include "upload_policy.h"
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
+#include "transport_udp.h" /* MAX_SPECTATORS */
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -73,6 +74,40 @@ struct ViewPort {
     int         cursorPosY;
     bool        needRecalc;
 };
+
+/* One captured spectator forward record: the server's 9-byte transport header
+ * ([u8 isKf][u32 gameTick BE][u32 segment BE]) parsed off, followed by the raw
+ * ring payload it framed. Queued in arrival (ring-seq) order on the spectator
+ * feed below; the spectator session pops them in order to translate + pump.
+ * payload is owned (malloc), freed when the node is popped or the feed cleared;
+ * payload is NULL when payloadLen is 0 (an idle tick carries no events). */
+typedef struct ClientSpecRecordNode {
+    bool      isKeyframe;
+    uint32_t  gameTick;
+    uint32_t  segment;
+    uint8_t  *payload;
+    uint32_t  payloadLen;
+    struct ClientSpecRecordNode *next;
+} ClientSpecRecordNode;
+
+/* Per-connection spectator feed buffer. The bulk sink captures the one seed
+ * blob (the delayed ring keyframe, raw — translated in a later slice) and the
+ * ordered forward records that follow it, both off CHANNEL_BULK; the spectator
+ * session drains them via the clientSimSpectator* accessors. Empty (all NULL/0)
+ * until a spectator connect populates it; freed on teardown. */
+typedef struct {
+    uint8_t              *seedBlob;     /* owned; NULL until the seed lands */
+    uint32_t              seedLen;
+    bool                  seedReady;
+    ClientSpecRecordNode *recordHead;   /* FIFO: oldest at head */
+    ClientSpecRecordNode *recordTail;
+    uint32_t              recordCount;
+    /* Cold-start countdown the server sends raw on CHANNEL_CONTROL while the
+     * delayed ring fills, before the seed is ready. countdownReceived gates the
+     * value's validity; remaining is in game ticks (~50/sec). */
+    uint32_t              countdownRemaining;
+    bool                  countdownReceived;
+} ClientSpectatorFeed;
 
 struct ClientSim {
     GameSim     sim;    /* MUST be first member */
@@ -229,6 +264,7 @@ struct ClientSim {
 
     /* Lobby state (client-side mirror of server lobby) */
     ClientLobbySlot  lobbySlots[16];    /* MAX_TANKS */
+    ClientSpectatorSlot spectatorSlots[MAX_SPECTATORS]; /* spectator roster mirror */
     int              countdownSeconds;  /* 0 = not counting down */
     bool             mapDownloadComplete; /* Gate for ready button */
     bool             inLobby;           /* TRUE if server is lobby-enabled */
@@ -477,6 +513,11 @@ struct ClientSim {
     bool      hasTransport;
     bool      isUdpTransport;
 
+    /* Spectator feed — populated by the UDP transport's bulk sink while
+     * connected as a tankless spectator; drained by the spectator session.
+     * Zeroed at create, freed on teardown (clientSimSpectatorFeedClear). */
+    ClientSpectatorFeed spectatorFeed;
+
     /* In-process server bound by clientSimConnectLocal{,Passive}. NULL
      * for UDP and disconnected clients. Read by the local-transport
      * branch of CTRL_LOBBY_MAP_CHANGE to fetch the freshly-compressed
@@ -578,5 +619,28 @@ void clientSimGetRenderedTankPos(ClientSim *cs, WORLD *x, WORLD *y, float *angle
  * the blob fails to decode, leaving the prior map in place. */
 bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name,
                           bool initViewport);
+
+/* Spectator feed capture — called by the UDP transport's bulk sink (T2; the
+ * transport already reaches ClientSim internals). The session-facing drain
+ * accessors are the public clientSimSpectator* functions in client_sim.h. */
+
+/* Store the spectator seed blob, taking ownership of `blob` (freed by the feed
+ * on drain/teardown). Replaces and frees any prior seed. Marks the seed ready. */
+void clientSimSpectatorPushSeed(ClientSim *cs, uint8_t *blob, uint32_t len);
+
+/* Append one forward record to the feed's FIFO, copying `payloadLen` bytes from
+ * `payload` (payload may be NULL when payloadLen is 0). Returns false (and adds
+ * nothing) on allocation failure. */
+bool clientSimSpectatorPushRecord(ClientSim *cs, bool isKeyframe,
+                                  uint32_t gameTick, uint32_t segment,
+                                  const uint8_t *payload, uint32_t payloadLen);
+
+/* Record the latest cold-start countdown (remaining game ticks) the server
+ * sent on CHANNEL_CONTROL. Marks the countdown received so the session can
+ * show its pre-seed overlay. */
+void clientSimSpectatorSetCountdown(ClientSim *cs, uint32_t remainingTicks);
+
+/* Free the seed and every queued record, returning the feed to empty. */
+void clientSimSpectatorFeedClear(ClientSim *cs);
 
 #endif /* CLIENT_SIM_INTERNAL_H */

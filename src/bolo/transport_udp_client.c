@@ -226,6 +226,13 @@ typedef struct {
     uint32_t snapshotsLostTotal;      /* Cumulative inferred-lost snapshots since join */
 
     bool wantRejoin;               /* Request rejoin (restore pills/bases) on connect */
+    /* Tankless spectator connect. Set at create from clientSimConnectUdp's
+     * spectator arg. When true the JOIN carries JOIN_FLAG_SPECTATOR and the
+     * accept handler takes the spectator branch (slot==SPECTATOR_ACCEPT_NO_SLOT
+     * → UDP_CLIENT_SPECTATING, no tank slot, no map download). It also gates
+     * that branch: a player-join client (false) treats the 0xFF slot as an
+     * invalid slot and rejects, so the branch can never fire by accident. */
+    bool spectator;
 
     /* Phase 3 — UDP hole-punching fallback. Empty trackerAddr disables
      * punch entirely (LAN/manual-connect joiners). */
@@ -293,6 +300,14 @@ typedef struct {
      * preview today). Fed from the stream fragments channelReceive pops; on a
      * completed transfer it dispatches by kind into the client preview state. */
     BulkReceiver bulkRecv;
+
+    /* In-flight spectator bulk blob (SPEC_SEED / SPEC_RECORD) being reassembled
+     * on CHANNEL_BULK. onBegin mallocs it and returns it as the receiver's dst;
+     * onComplete moves it into the ClientSim spectator feed and clears this.
+     * Held on the ctx so a teardown mid-transfer frees it (no leak). At most one
+     * in flight — bulk transfers are serialized on the stream. */
+    uint8_t *specRecvBuf;
+    uint32_t specRecvTotal;
 } TransportUdpClientCtx;
 
 #define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
@@ -913,6 +928,27 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
     }
 }
 
+/* Intercept the spectator cold-start countdown on CHANNEL_CONTROL. The server
+ * sends it raw ([u8 SPEC_CTRL_COUNTDOWN][u32 remainingTicks BE], 5 bytes) while
+ * a tankless spectator waits for its delayed seed — NOT wrapped in the
+ * type(1)+bodyLen(2)+body ControlEvent envelope the normal decode assumes. It
+ * must be consumed here, before the envelope bodyLen parse, or unpackU16 would
+ * mis-read the high half of remainingTicks as a body length. Returns TRUE when
+ * the frame was a countdown (the caller skips the envelope decode and consumes
+ * the frame). Gated on UDP_CLIENT_SPECTATING so a non-spectator's control decode
+ * is untouched. */
+static bool udpClientInterceptSpecCountdown(TransportUdpClientCtx *c,
+                                            const uint8_t *frame, uint16_t len) {
+    if (c->joinState != UDP_CLIENT_SPECTATING) return FALSE;
+    if (len != SPEC_CTRL_COUNTDOWN_LEN || frame[0] != SPEC_CTRL_COUNTDOWN) {
+        return FALSE;
+    }
+    if (c->clientSim != NULL) {
+        clientSimSpectatorSetCountdown(c->clientSim, unpackU32(frame + 1));
+    }
+    return TRUE;
+}
+
 /* Snapshot-time ordered dispatch for control events arriving on the
  * snapshot tail. Almost all variants forward to clientSimApplyControl;
  * the lobby→running flip carries side-effects that previously lived
@@ -1114,6 +1150,25 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         c->lastResyncProgressTick = c->localTick;
         return c->mapResyncBuf;
 
+    case BULK_KIND_SPEC_SEED:
+    case BULK_KIND_SPEC_RECORD:
+        /* Spectator feed: the seed (raw delayed keyframe) and the forward
+         * records both arrive here while connected as a spectator. Allocate a
+         * fresh buffer sized to the wire totalSize; onComplete moves it into the
+         * ClientSim feed. A SPEC_RECORD carries the server's 9-byte header, so
+         * its body must be at least that long. totalSize is attacker-controlled
+         * (see the sink contract) — bound it by the same cap the map blobs use. */
+        if (c->joinState != UDP_CLIENT_SPECTATING) return NULL;
+        if (h->totalSize == 0 || h->totalSize > MAP_DOWNLOAD_MAX_SIZE) return NULL;
+        if (h->kind == BULK_KIND_SPEC_RECORD && h->totalSize < SPEC_RECORD_HEADER_LEN) {
+            return NULL;
+        }
+        if (c->specRecvBuf != NULL) free(c->specRecvBuf);  /* drop any stale partial */
+        c->specRecvBuf = (uint8_t *)malloc(h->totalSize);
+        if (c->specRecvBuf == NULL) return NULL;
+        c->specRecvTotal = h->totalSize;
+        return c->specRecvBuf;
+
     default:
         return NULL;
     }
@@ -1205,6 +1260,33 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         udpClientFinalizeResync(c);
         break;
 
+    case BULK_KIND_SPEC_SEED:
+        /* The whole seed blob (raw delayed keyframe) has landed. Move it into
+         * the ClientSim feed, transferring ownership; the session translates and
+         * loads it later. */
+        clientSimSpectatorPushSeed(cs, c->specRecvBuf, h->totalSize);
+        c->specRecvBuf = NULL;
+        c->specRecvTotal = 0;
+        break;
+
+    case BULK_KIND_SPEC_RECORD:
+        /* One forward record. Strip the 9-byte transport header and queue the
+         * parsed fields + the raw ring payload (which may be empty for an idle
+         * tick). onBegin guaranteed totalSize >= SPEC_RECORD_HEADER_LEN. */
+        if (c->specRecvBuf != NULL && h->totalSize >= SPEC_RECORD_HEADER_LEN) {
+            bool     isKf      = c->specRecvBuf[0] != 0;
+            uint32_t gameTick  = unpackU32(c->specRecvBuf + 1);
+            uint32_t segment   = unpackU32(c->specRecvBuf + 5);
+            uint32_t payloadLen = h->totalSize - SPEC_RECORD_HEADER_LEN;
+            clientSimSpectatorPushRecord(cs, isKf, gameTick, segment,
+                                         c->specRecvBuf + SPEC_RECORD_HEADER_LEN,
+                                         payloadLen);
+        }
+        free(c->specRecvBuf);
+        c->specRecvBuf = NULL;
+        c->specRecvTotal = 0;
+        break;
+
     default:
         break;
     }
@@ -1242,6 +1324,37 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             int pos = PACKET_HEADER_SIZE;
             uint32_t mapSize;
             BYTE assignedSlot = buf[pos++];
+
+            /* Tankless spectator accept. The server answers a
+             * JOIN_FLAG_SPECTATOR join with the SPECTATOR_ACCEPT_NO_SLOT
+             * sentinel and a zero mapSize: no tank slot is claimed and no map
+             * is downloaded (the map arrives later inside the spectator seed).
+             * Intercept here — before the slot>=MAX_TANKS reject the 0xFF
+             * sentinel would otherwise trip — and skip the tank-slot funnel
+             * (clientSimOnAssignedSlot), the map-download buffer, and the live
+             * snapshot-apply pipeline; land in UDP_CLIENT_SPECTATING to await
+             * the seed (consumed in a later slice). Gated on c->spectator so a
+             * player-join client never takes this path: for it, a 0xFF slot
+             * falls through to the out-of-range reject below. */
+            if (c->spectator && assignedSlot == SPECTATOR_ACCEPT_NO_SLOT) {
+                /* serverTick seeds the timing estimator's clock offset (no
+                 * round-trip sample — same rationale as the player path). */
+                clientTimingSeedFromJoin(&c->timing, unpackU32(buf + pos), 0);
+                pos += 4;
+                /* mapSize is the zero sentinel for a spectator — step past it;
+                 * no download buffer is allocated. */
+                pos += 4;
+                /* Optional connId trailer, read exactly as the player path so
+                 * the server can re-home this spectator after a NAT rebind. */
+                if (len >= PACKET_HEADER_SIZE + 9 + 8) {
+                    c->connId = unpackConnId(buf + pos);
+                    pos += 8;
+                }
+                c->joinState = UDP_CLIENT_SPECTATING;
+                WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "spectator JOIN_ACCEPT: tankless connect, awaiting seed");
+                break;
+            }
 
             /* A valid server only ever assigns slots 0..MAX_TANKS-1. An
              * out-of-range slot from a hostile or buggy server would make
@@ -1579,6 +1692,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 uint16_t bodyLen;
                 ControlEvent evt;
                 ControlDecodeBodyFn dec;
+                /* Raw spectator countdown (un-enveloped) — consume before the
+                 * bodyLen parse so its BE u32 isn't mis-read as a length. */
+                if (udpClientInterceptSpecCountdown(c, ctlBuf, ctlLen)) continue;
                 if (ctlLen < 3) continue;
                 type = ctlBuf[0];
                 bodyLen = unpackU16(ctlBuf + 1);
@@ -1731,6 +1847,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     uint16_t bodyLen;
                     ControlEvent evt;
                     ControlDecodeBodyFn dec;
+                    /* Raw spectator countdown (un-enveloped) — consume before the
+                     * bodyLen parse so its BE u32 isn't mis-read as a length. */
+                    if (udpClientInterceptSpecCountdown(c, chanBuf, chanLen)) continue;
                     if (chanLen < 3) continue;
                     type = chanBuf[0];
                     bodyLen = unpackU16(chanBuf + 1);
@@ -2439,9 +2558,14 @@ static bool udpClientTick(void *ctx) {
      * Also fire during DOWNLOADING_MAP: the join map now streams on CHANNEL_BULK
      * and this standalone frame is the only carrier of the client's CHANNEL_BULK
      * acks during the download. Without it the server's send window stalls one
-     * window in and a larger map wedges the join. */
+     * window in and a larger map wedges the join.
+     *
+     * Likewise during SPECTATING: the spectator seed and forward records stream
+     * on CHANNEL_BULK, and this standalone frame carries the spectator's acks.
+     * Without it the server's seed transfer never completes. */
     if (c->joinState == UDP_CLIENT_CONNECTED ||
-        c->joinState == UDP_CLIENT_DOWNLOADING_MAP) {
+        c->joinState == UDP_CLIENT_DOWNLOADING_MAP ||
+        c->joinState == UDP_CLIENT_SPECTATING) {
         channelTick(&c->channelMux, c->localTick, c->pingMs);
         {
             uint8_t cbuf[UDP_MAX_PAYLOAD];
@@ -2529,7 +2653,29 @@ static bool udpClientTick(void *ctx) {
                 int joffset = PACKET_HEADER_SIZE;
                 char playerKey[WBN_JOIN_KEY_WIRE_LEN];
                 memset(playerKey, 0, sizeof(playerKey));
-                if (c->wbnApiToken[0] != '\0' && c->wbnServerKey[0] != '\0') {
+                if (c->spectator) {
+                    /* Spectator: mint a spectator_key instead of a player_key
+                     * (a player_key won't pass verify_spectator). Logged-in
+                     * viewers authenticate with their token; anonymous ones
+                     * supply only a name. The server_key comes from the WBN
+                     * rekey, so a LAN/offline server never sends one and this
+                     * is skipped — the viewer then joins anonymously. */
+                    if (c->wbnServerKey[0] != '\0' &&
+                        (c->wbnApiToken[0] != '\0' || c->playerName[0] != '\0')) {
+                        char errMsg[256];
+                        errMsg[0] = '\0';
+                        if (!winbolonetClientJoinSpectatorSession(c->wbnApiToken,
+                                                                  c->wbnServerKey,
+                                                                  c->playerName,
+                                                                  playerKey, errMsg)) {
+                            WB_LOG_WARN(WB_LOG_CAT_NET,
+                                    "[WBN] spectator join exchange failed: %s",
+                                    errMsg[0] ? errMsg : "(no detail)");
+                            /* Degraded: ship empty key, admitted anonymously. */
+                            playerKey[0] = '\0';
+                        }
+                    }
+                } else if (c->wbnApiToken[0] != '\0' && c->wbnServerKey[0] != '\0') {
                     char errMsg[256];
                     errMsg[0] = '\0';
                     if (!winbolonetClientJoinSession(c->wbnApiToken,
@@ -2560,6 +2706,9 @@ static bool udpClientTick(void *ctx) {
                 uint8_t joinFlags = 0;
                 if (c->wantRejoin)             joinFlags |= JOIN_FLAG_WANT_REJOIN;
                 if (c->wbnApiToken[0] != '\0') joinFlags |= JOIN_FLAG_WILL_AUTHENTICATE;
+                /* Tankless spectator join: the server branches to the
+                 * spectator-accept path (0xFF slot, no map). */
+                if (c->spectator)              joinFlags |= JOIN_FLAG_SPECTATOR;
                 jbuf[joffset++] = joinFlags;
                 jbuf[joffset++] = bolo_detect_client_type();
                 {
@@ -2836,7 +2985,8 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
                                    const char *wbnServerKey,
                                    bool wantRejoin,
                                    const char *trackerAddr,
-                                   unsigned short trackerPort) {
+                                   unsigned short trackerPort,
+                                   bool spectator) {
     Transport t;
     TransportUdpClientCtx *c;
 
@@ -2931,6 +3081,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     }
 
     c->wantRejoin = wantRejoin;
+    c->spectator = spectator;
 
     /* Cache fallback country for the JOIN_REQUEST encoder. Two chars
      * + NUL; NULL/"" lands as \0\0 on the wire, which the server
@@ -3051,6 +3202,9 @@ void transportUdpClientDestroy(Transport *t) {
     udpClientFreeResyncBuf(c);
     if (c->uploadBuf != NULL) {
         free(c->uploadBuf);
+    }
+    if (c->specRecvBuf != NULL) {
+        free(c->specRecvBuf);   /* in-flight spectator blob, if teardown mid-transfer */
     }
     bulkSenderReset(&c->uploadSend);
     free(c);

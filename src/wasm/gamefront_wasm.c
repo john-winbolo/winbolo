@@ -334,7 +334,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
                         gameFrontWbnUse ? gameFrontWbnToken : "",
                         "",
                         wantRejoin,
-                        "", 0);
+                        "", 0, /*spectator*/ false);
     if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
       printf("[WASM] UDP connect failed: %s\n", reason ? reason : "unknown");

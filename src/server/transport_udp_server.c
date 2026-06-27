@@ -48,6 +48,7 @@
 #include "transport_command_codec.h"
 #include "channel_mux.h"
 #include "bulk_transfer.h"
+#include "spectator_ring.h"
 #include "wbn_key_codec.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../winbolonet/winbolonet_server.h"
@@ -270,11 +271,73 @@ typedef struct {
     uint64_t lastMs;   /* SDL_GetTicks() at last touch */
 } JoinRateEntry;
 
+/* Tankless spectator connection — a viewer that holds no tank slot, is fed
+ * only from the delayed ring (2d), and is never on the control-event bus.
+ * Peer to UdpServerClient but carries only the resources a viewer uses: its
+ * own ChannelMux (forward events + acks) and BulkSender (seed keyframe). No
+ * map-event queue / upload receiver / subscriber handle. */
+typedef struct {
+    struct sockaddr_in addr;
+    bool     connected;
+    uint64_t connId;
+    char     playerName[PACKET_MAX_PLAYER_NAME];
+    uint32_t lastReceivedTick;
+    uint32_t outSequence;
+    uint32_t inboundCmdSeq;
+    uint16_t pingMs;
+    uint8_t  clientType;
+    uint8_t  clientHints;
+    /* ISO 3166-1 alpha-2 + NUL; GeoIP-or-wire-fallback, "" if unknown. */
+    char     countryCode[3];
+    /* WBN spectator session. spectatorKey is the verify_spectator key kept for
+     * the leave teardown ('' when anonymous / unverified, so no leave is sent).
+     * wbnFlags carries PLAYER_FLAG_WBN_VERIFIED for a logged-in verified viewer;
+     * Steam-linked / Supporter are not surfaced for spectators. */
+    char     spectatorKey[WINBOLONET_KEY_LEN];
+    uint8_t  wbnFlags;
+    ChannelMux channelMux;
+    BulkSender bulkSend;
+    /* Delayed-keyframe seed transfer (2d-c). seedBlob is a spectator-owned copy
+     * of the ring keyframe at head - specDelayTicks (the ring's own pointer
+     * invalidates on the next RecordTick, so the bytes are copied at seek time
+     * and the bulk transfer drains the copy over multiple ticks). seedBlob ==
+     * NULL && !seedComplete means "not yet seeded" — the seek is retried each
+     * tick until the ring has enough history. xferStartSeq/xferEndSeq mirror
+     * ClientMapDownload's bulk-ack bookkeeping. */
+    uint8_t *seedBlob;
+    uint32_t seedLen;
+    uint32_t seedGen;        /* ring segment of the seeded keyframe (header gen) */
+    bool     seedBegun;
+    bool     seedComplete;
+    uint32_t xferStartSeq;
+    uint32_t xferEndSeq;
+    /* Forward feed (2d-e). seedSeq is the recordSeq of the seeded keyframe,
+     * captured at seek; once the seed is acked, lastEmittedSeq starts there and
+     * walks forward, emitting each record in (lastEmittedSeq, head - delay] as a
+     * BULK_KIND_SPEC_RECORD blob — so the view lags exactly specDelayTicks and
+     * never reaches the live head. No persistent record buffer: bulkSenderBegin
+     * copies each record, so it is built in a transient local and freed at once;
+     * the bulkSenderBusy guard is the single-blob-in-flight control. */
+    uint32_t seedSeq;
+    uint32_t lastEmittedSeq;
+    /* Cold-start countdown (2d-f). While the delayed ring holds less than
+     * specDelayTicks of history the seek returns COLD_START: no seed is copied;
+     * instead a throttled SPEC_CTRL_COUNTDOWN status rides the spectator's own
+     * CHANNEL_CONTROL carrying countdownRemaining (= delay - history, clamped
+     * >= 0). inCountdown clears the tick the seek first returns OK and the seed
+     * arms. countdownSentTick throttles the resend — CHANNEL_CONTROL is a
+     * 64-deep window, so one send per SPEC_COUNTDOWN_RESEND_TICKS, not per tick. */
+    bool     inCountdown;
+    uint32_t countdownRemaining;
+    uint32_t countdownSentTick;
+} SpectatorConn;
+
 /* Server-side global state */
 static struct {
     SOCKET sock;
     bool running;
     UdpServerClient clients[MAX_TANKS];
+    SpectatorConn   spectators[MAX_SPECTATORS];
     uint32_t tickCount;
 
     /* Compressed map buffer for sending to joining clients */
@@ -1140,6 +1203,254 @@ static void serverSendJoinAccept(int slot, ServerSim *sim,
     srvSendTo(acceptBuf, pos, addr);
 }
 
+/* Find a connected spectator by source address. Returns the spectators[]
+ * index or -1. Mirrors serverFindClient over the parallel array. */
+static int serverFindSpectator(const struct sockaddr_in *addr) {
+    int i;
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        if (udpServer.spectators[i].connected &&
+            udpServer.spectators[i].addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
+            udpServer.spectators[i].addr.sin_port == addr->sin_port) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Spectator-flavoured JOIN_ACCEPT: same PACKET_JOIN_ACCEPT layout as
+ * serverSendJoinAccept, but reads spectators[s] and marks the connection a
+ * viewer — slot byte = 0xFF (no tank slot) and compressedMapSize = 0 (the
+ * map arrives in the ring seed, not the live download path). */
+static void serverSendSpectatorAccept(int s, ServerSim *sim,
+                                      const struct sockaddr_in *addr) {
+    uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8];
+    int pos;
+
+    packHeader(acceptBuf, PACKET_JOIN_ACCEPT,
+               udpServer.spectators[s].outSequence++);
+    pos = PACKET_HEADER_SIZE;
+    acceptBuf[pos++] = 0xFF;                       /* viewer: no tank slot */
+    packU32(acceptBuf + pos, serverSimGetTick(sim));
+    pos += 4;
+    packU32(acceptBuf + pos, 0);                   /* no live map download */
+    pos += 4;
+    packConnId(acceptBuf + pos, udpServer.spectators[s].connId);
+    pos += 8;
+
+    srvSendTo(acceptBuf, pos, addr);
+}
+
+/* Fill a CTRL_SPECTATOR_SLOT event from spectator slot s. A disconnected slot
+ * emits a connected==false roster row carrying only specIdx; the decoder leaves
+ * the rest zeroed. clientFlags merges the client-supplied hint bits with the
+ * server-determined WBN trust bit (mirrors the player badge derivation). */
+static void serverFillSpectatorSlotEvent(int s, ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SPECTATOR_SLOT;
+    evt->u.spectatorSlot.specIdx = (uint8_t)s;
+    ClientSpectatorSlot *slot = &evt->u.spectatorSlot.slot;
+    slot->connected = udpServer.spectators[s].connected;
+    if (slot->connected) {
+        snprintf(slot->playerName, sizeof(slot->playerName), "%s",
+                 udpServer.spectators[s].playerName);
+        slot->countryCode[0] = udpServer.spectators[s].countryCode[0];
+        slot->countryCode[1] = udpServer.spectators[s].countryCode[1];
+        slot->countryCode[2] = '\0';
+        slot->clientType  = udpServer.spectators[s].clientType;
+        slot->clientFlags = (uint8_t)((udpServer.spectators[s].clientHints
+                                       & PLAYER_CLIENT_HINT_MASK)
+                                      | udpServer.spectators[s].wbnFlags);
+    }
+}
+
+/* Broadcast spectator slot s's current roster row to every connected player
+ * client. Player clients only — spectators are never on this roster and never
+ * receive it. Safe to call from the JOIN/disconnect paths (not the subscriber
+ * bus); the deliver callback skips disconnected slots on its own. */
+static void serverBroadcastSpectatorSlot(int s) {
+    ControlEvent evt;
+    int idx;
+    serverFillSpectatorSlotEvent(s, &evt);
+    for (idx = 0; idx < MAX_TANKS; idx++) {
+        if (udpServer.clients[idx].connected) {
+            udpClientDeliverControl(&udpServer.clients[idx], &evt);
+        }
+    }
+}
+
+/* Store a resolved 2-char ISO country into spectator slot s, empty-safe:
+ * a NULL or empty country stores "". */
+static void serverSetSpectatorCountry(int s, const char *country) {
+    if (country != NULL && country[0] != '\0') {
+        udpServer.spectators[s].countryCode[0] = country[0];
+        udpServer.spectators[s].countryCode[1] = country[1];
+    } else {
+        udpServer.spectators[s].countryCode[0] = '\0';
+        udpServer.spectators[s].countryCode[1] = '\0';
+    }
+    udpServer.spectators[s].countryCode[2] = '\0';
+}
+
+/* Accept a "join as viewer" connection: register it in spectators[] with no
+ * tank slot, no sim player, and no control-bus subscription, then send the
+ * spectator accept. Caller has already passed every shared JOIN pre-check
+ * (cookie, version, name, password). country is the resolved GeoIP-or-fallback
+ * ISO code stored for the roster broadcast ("" when unknown). */
+static void serverAcceptSpectator(ServerSim *sim,
+                                  const struct sockaddr_in *fromAddr,
+                                  const char *name,
+                                  uint8_t clientType, uint8_t clientHints,
+                                  const char *spectatorKey, uint8_t wbnFlags,
+                                  const char *country) {
+    int effectiveCap;
+    int s;
+
+    /* Re-JOIN from a known spectator address: resend the accept, no new slot.
+     * Refresh the stored country and re-broadcast the roster row so a player
+     * client that joined after this spectator (or missed the first broadcast)
+     * still learns it — harmless when nothing changed. */
+    s = serverFindSpectator(fromAddr);
+    if (s >= 0) {
+        serverSetSpectatorCountry(s, country);
+        serverSendSpectatorAccept(s, sim, fromAddr);
+        serverBroadcastSpectatorSlot(s);
+        return;
+    }
+
+    /* Cap: operator setting clamped to the array size. 0 disables spectating. */
+    effectiveCap = (int)serverSimGetMaxSpectators(sim);
+    if (effectiveCap > MAX_SPECTATORS) effectiveCap = MAX_SPECTATORS;
+    if (effectiveCap <= 0) {
+        serverSendJoinReject(fromAddr, STR_REJECT_SERVER_FULL, 0, NULL);
+        return;
+    }
+
+    /* First free slot within the effective cap. */
+    s = -1;
+    {
+        int i;
+        for (i = 0; i < effectiveCap; i++) {
+            if (!udpServer.spectators[i].connected) {
+                s = i;
+                break;
+            }
+        }
+    }
+    if (s < 0) {
+        serverSendJoinReject(fromAddr, STR_REJECT_SERVER_FULL, 0, NULL);
+        return;
+    }
+
+    udpServer.spectators[s].connected        = true;
+    udpServer.spectators[s].addr             = *fromAddr;
+    udpServer.spectators[s].connId           = serverNextConnId();
+    snprintf(udpServer.spectators[s].playerName,
+             PACKET_MAX_PLAYER_NAME, "%s", name);
+    udpServer.spectators[s].lastReceivedTick = udpServer.tickCount;
+    udpServer.spectators[s].outSequence      = 1;
+    udpServer.spectators[s].inboundCmdSeq     = 0;
+    udpServer.spectators[s].pingMs           = 0;
+    udpServer.spectators[s].clientType       = clientType;
+    udpServer.spectators[s].clientHints      = clientHints;
+    serverSetSpectatorCountry(s, country);
+    if (spectatorKey != NULL) {
+        strncpy(udpServer.spectators[s].spectatorKey, spectatorKey,
+                WINBOLONET_KEY_LEN - 1);
+        udpServer.spectators[s].spectatorKey[WINBOLONET_KEY_LEN - 1] = '\0';
+    } else {
+        udpServer.spectators[s].spectatorKey[0] = '\0';
+    }
+    udpServer.spectators[s].wbnFlags         = wbnFlags;
+    channelMuxInit(&udpServer.spectators[s].channelMux);
+    bulkSenderInit(&udpServer.spectators[s].bulkSend);
+    udpServer.spectators[s].seedBlob     = NULL;
+    udpServer.spectators[s].seedLen      = 0;
+    udpServer.spectators[s].seedGen      = 0;
+    udpServer.spectators[s].seedBegun    = false;
+    udpServer.spectators[s].seedComplete = false;
+    udpServer.spectators[s].xferStartSeq = 0;
+    udpServer.spectators[s].xferEndSeq   = 0;
+    udpServer.spectators[s].seedSeq        = 0;
+    udpServer.spectators[s].lastEmittedSeq = 0;
+    udpServer.spectators[s].inCountdown        = false;
+    udpServer.spectators[s].countdownRemaining = 0;
+    udpServer.spectators[s].countdownSentTick  = 0;
+
+    serverSendSpectatorAccept(s, sim, fromAddr);
+    /* Tell every connected player client a new viewer is on the roster. */
+    serverBroadcastSpectatorSlot(s);
+
+    /* Record the viewer's arrival in the .wbv replay log (and any spectator
+     * ring tap). logAddEvent self-gates: a no-op unless a log is recording. */
+    {
+        char pstr[256];
+        int nameLen = (int)strlen(udpServer.spectators[s].playerName);
+        if (nameLen > 255) nameLen = 255;
+        pstr[0] = (char)nameLen;
+        memcpy(pstr + 1, udpServer.spectators[s].playerName, (size_t)nameLen);
+        logAddEvent(log_SpectatorJoined, (BYTE)s,
+                    (BYTE)udpServer.spectators[s].countryCode[0],
+                    (BYTE)udpServer.spectators[s].countryCode[1],
+                    udpServer.spectators[s].wbnFlags, 0, pstr);
+    }
+}
+
+/* Release a spectator slot. A spectator holds no tank, no sim player, and no
+ * control-bus subscription, so teardown is just freeing the slot and resetting
+ * its in-place channel/bulk state — none of serverDisconnectClient's
+ * WBN/chat/subscriber/serverSimRemovePlayer work applies. graceful=false is a
+ * timeout; graceful=true is reserved for the explicit leave path (2c) and does
+ * the same teardown for now. */
+static void serverDisconnectSpectator(int s, bool graceful) {
+    if (s < 0 || s >= MAX_SPECTATORS || !udpServer.spectators[s].connected) {
+        return;
+    }
+    mpDiagLog("[srv] SPECTATOR DISCONNECT idx=%d graceful=%d", s, (int)graceful);
+    /* Record the viewer's departure in the .wbv replay log (and any spectator
+     * ring tap) while the slot's name is still valid — teardown below clears
+     * it. logAddEvent self-gates: a no-op unless a log is recording. */
+    {
+        char pstr[256];
+        int nameLen = (int)strlen(udpServer.spectators[s].playerName);
+        if (nameLen > 255) nameLen = 255;
+        pstr[0] = (char)nameLen;
+        memcpy(pstr + 1, udpServer.spectators[s].playerName, (size_t)nameLen);
+        logAddEvent(log_SpectatorLeft, (BYTE)s, 0, 0, 0, 0, pstr);
+    }
+    /* Release the WBN spectator session if this viewer was verified. Empty key
+     * (anonymous / non-WBN) makes this a no-op. */
+    if (udpServer.spectators[s].spectatorKey[0] != '\0') {
+        winboloNetSpectatorLeaveGame(udpServer.spectators[s].spectatorKey);
+        udpServer.spectators[s].spectatorKey[0] = '\0';
+    }
+    udpServer.spectators[s].wbnFlags = 0;
+    udpServer.spectators[s].connected = false;
+    channelMuxInit(&udpServer.spectators[s].channelMux);   /* reset in place */
+    bulkSenderInit(&udpServer.spectators[s].bulkSend);
+    if (udpServer.spectators[s].seedBlob != NULL) {
+        free(udpServer.spectators[s].seedBlob);
+        udpServer.spectators[s].seedBlob = NULL;
+    }
+    udpServer.spectators[s].seedLen = 0;
+    udpServer.spectators[s].seedGen = 0;
+    udpServer.spectators[s].seedBegun = false;
+    udpServer.spectators[s].seedComplete = false;
+    udpServer.spectators[s].xferStartSeq = 0;
+    udpServer.spectators[s].xferEndSeq = 0;
+    udpServer.spectators[s].seedSeq = 0;
+    udpServer.spectators[s].lastEmittedSeq = 0;
+    udpServer.spectators[s].inCountdown = false;
+    udpServer.spectators[s].countdownRemaining = 0;
+    udpServer.spectators[s].countdownSentTick = 0;
+    udpServer.spectators[s].playerName[0] = '\0';
+    udpServer.spectators[s].outSequence = 0;
+    udpServer.spectators[s].inboundCmdSeq = 0;
+    /* The slot is now cleared (connected == false), so the fill helper emits a
+     * disconnect roster row. Tell every connected player client the viewer is
+     * gone. */
+    serverBroadcastSpectatorSlot(s);
+}
+
 /* Send PACKET_WBN_REKEY to a single connected client carrying the current
  * server_key.  Called right after JOIN_ACCEPT so the joiner learns the
  * WBN session key without a credential ever riding the JOIN wire field,
@@ -1265,6 +1576,219 @@ static void serverCompleteMapTransferIfAcked(int slot) {
 static void serverServiceMapTransfer(int slot) {
     serverBeginMapTransferIfReady(slot);
     serverCompleteMapTransferIfAcked(slot);
+}
+
+/* Per-tick spectator service: seed each connected spectator with the delayed
+ * keyframe at head - specDelayTicks, drain it over CHANNEL_BULK exactly as the
+ * client map-download carrier drains a join download, then stream the ring
+ * forward — emit each record in (lastEmittedSeq, head - delay] as a
+ * BULK_KIND_SPEC_RECORD blob so the view lags exactly specDelayTicks behind the
+ * live head and never reaches the current tick. Cold-start tolerant — the seek
+ * is retried every tick until the ring has enough history; the countdown signal
+ * to the client is 2d-f, not here.
+ *
+ * Runs on the tick thread, the same thread as logWriteTick's
+ * spectatorRingRecordTick, so the seek is race-free. A cursor/keyframe pointer
+ * invalidates on the next RecordTick, so the keyframe bytes are copied into
+ * spectator-owned storage at seek time (mirroring serverInitMapDownload's copy
+ * of the compressed map); the bulk transfer then drains that copy across ticks. */
+
+/* CHANNEL_CONTROL is a 64-deep reliable window; a cold-start countdown that ran
+ * for up to specDelayTicks at one send per tick would overflow it. Resend the
+ * countdown status no more than once every this many ticks (~2/s at 50 tick/s). */
+#define SPEC_COUNTDOWN_RESEND_TICKS 25u
+
+static void serverServiceSpectators(ServerSim *sim) {
+    int i;
+
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        SpectatorConn *sp = &udpServer.spectators[i];
+        ChannelState *bulk;
+
+        if (!sp->connected) continue;
+
+        /* Seek the delayed keyframe. OK -> copy it into spectator-owned storage
+         * and clear any countdown. COLD_START (the ring does not yet hold a full
+         * specDelayTicks of history) -> send a throttled countdown status on the
+         * spectator's own CHANNEL_CONTROL and keep retrying; no seed is copied
+         * and the feed below cannot run (!seedComplete), so no live state leaks
+         * during the wait. The seek flips to OK exactly when head - delay >=
+         * oldest, at which point the existing seed path takes over unchanged. */
+        if (sp->seedBlob == NULL && !sp->seedComplete) {
+            SpectatorRing *r = serverInstanceGetSpectatorRing();
+            if (r != NULL) {
+                SpectatorRingCursor cur;
+                uint32_t delay = serverSimGetSpecDelayTicks(sim);
+                SpectatorRingSeekStatus st =
+                    spectatorRingSeekDelayed(r, delay, &cur);
+                if (st == SPECTATOR_RING_OK) {
+                    int kfLen = 0;
+                    const uint8_t *kf =
+                        spectatorRingCursorKeyframe(&cur, &kfLen, NULL);
+                    sp->inCountdown = false;
+                    if (kf != NULL && kfLen > 0) {
+                        uint8_t *copy = (uint8_t *)malloc((size_t)kfLen);
+                        if (copy != NULL) {
+                            memcpy(copy, kf, (size_t)kfLen);
+                            sp->seedBlob = copy;
+                            sp->seedLen  = (uint32_t)kfLen;
+                            sp->seedGen  = cur.segment;
+                            sp->seedSeq  = spectatorRingCursorSeedSeq(&cur);
+                        }
+                    }
+                } else if (st == SPECTATOR_RING_COLD_START) {
+                    uint32_t history =
+                        spectatorRingHeadSeq(r) - spectatorRingOldestSeq(r);
+                    uint32_t remaining =
+                        (delay > history) ? delay - history : 0;
+                    bool firstEntry = !sp->inCountdown;
+                    sp->inCountdown        = true;
+                    sp->countdownRemaining = remaining;
+                    /* Throttle: send on first entry, then at most once every
+                     * SPEC_COUNTDOWN_RESEND_TICKS so the control window can't
+                     * overflow across a long wait. */
+                    if (firstEntry ||
+                        udpServer.tickCount - sp->countdownSentTick
+                            >= SPEC_COUNTDOWN_RESEND_TICKS) {
+                        uint8_t buf[SPEC_CTRL_COUNTDOWN_LEN];
+                        buf[0] = SPEC_CTRL_COUNTDOWN;
+                        buf[1] = (uint8_t)(remaining >> 24);
+                        buf[2] = (uint8_t)(remaining >> 16);
+                        buf[3] = (uint8_t)(remaining >> 8);
+                        buf[4] = (uint8_t)remaining;
+                        channelSend(&sp->channelMux, CHANNEL_CONTROL,
+                                    buf, SPEC_CTRL_COUNTDOWN_LEN);
+                        sp->countdownSentTick = udpServer.tickCount;
+                    }
+                }
+                /* AGED_OUT at join should not occur — retention covers the
+                 * delay; leave it as a no-op and retry next tick. */
+            }
+        }
+
+        /* Arm a seed transfer once the bulk channel is fully idle — same gates
+         * serverBeginMapTransferIfReady applies (sender idle, staging empty,
+         * send window drained). */
+        bulk = &sp->channelMux.ch[CHANNEL_BULK];
+        if (sp->seedBlob != NULL && !sp->seedBegun &&
+            !bulkSenderBusy(&sp->bulkSend) &&
+            sp->channelMux.streamCount == 0 &&
+            bulk->ackedSeq == bulk->nextSeq) {
+            BulkStreamHeader sh;
+            uint32_t headerLen, totalBytes, segs;
+
+            memset(&sh, 0, sizeof(sh));
+            sh.kind = BULK_KIND_SPEC_SEED;
+            sh.gen = sp->seedGen;
+            sh.totalSize = sp->seedLen;
+            sh.pathLen = 0;
+            sh.path[0] = '\0';
+
+            sp->xferStartSeq = bulk->nextSeq;
+            if (bulkSenderBegin(&sp->bulkSend, &sh, sp->seedBlob, sp->seedLen)) {
+                headerLen = (uint32_t)BULK_STREAM_HEADER_FIXED + sh.pathLen;
+                totalBytes = headerLen + sp->seedLen;
+                segs = (totalBytes + CHANNEL_BULK_SEG - 1) / CHANNEL_BULK_SEG;
+                sp->xferEndSeq = sp->xferStartSeq + segs;
+                sp->seedBegun = true;
+            }
+            /* allocation failure: retry next tick */
+        }
+
+        /* Complete: peer has acked the whole seed. Free the copy and start the
+         * forward feed from the seeded keyframe's recordSeq. Once-guarded
+         * (!seedComplete) so the lastEmittedSeq init fires only on the
+         * transition — the ack gate stays true on every later tick. */
+        if (sp->seedBegun && !sp->seedComplete &&
+            bulk->ackedSeq >= sp->xferEndSeq) {
+            sp->seedComplete = true;
+            if (sp->seedBlob != NULL) {
+                free(sp->seedBlob);
+                sp->seedBlob = NULL;
+            }
+            sp->lastEmittedSeq = sp->seedSeq;
+        }
+
+        /* Forward feed: after the seed, emit each ring record in
+         * (lastEmittedSeq, head - delay] as a BULK_KIND_SPEC_RECORD blob,
+         * walking recordSeq forward (no per-tick re-seek). The view lags exactly
+         * specDelayTicks behind the live head and never reaches it (DD-7).
+         * bulkSenderBegin copies each record, so it is assembled in a transient
+         * local and freed at once; the bulkSenderBusy guard keeps one blob in
+         * flight and is the per-tick staging backpressure. */
+        if (sp->seedComplete) {
+            SpectatorRing *r = serverInstanceGetSpectatorRing();
+            if (r != NULL) {
+                uint32_t head  = spectatorRingHeadSeq(r);
+                uint32_t delay = serverSimGetSpecDelayTicks(sim);
+                uint32_t target = (head > delay) ? head - delay : 0;
+
+                while (sp->lastEmittedSeq < target &&
+                       !bulkSenderBusy(&sp->bulkSend)) {
+                    uint32_t seq = sp->lastEmittedSeq + 1;
+                    bool isKf;
+                    const uint8_t *pl;
+                    int plen;
+                    uint32_t gt, seg, blen;
+                    uint8_t *blob;
+                    BulkStreamHeader sh;
+
+                    SDL_assert(delay == 0 || head - seq >= delay);   /* DD-7 */
+
+                    if (!spectatorRingRecordAt(r, seq, &isKf, &pl, &plen,
+                                               &gt, &seg)) {
+                        /* The next record aged out (pathological slow
+                         * spectator) — drop the feed and re-seed a fresh
+                         * keyframe (the seek block re-arms once the channel
+                         * drains). */
+                        sp->seedComplete = false;
+                        sp->seedBegun = false;
+                        break;
+                    }
+
+                    blen = 9u + (uint32_t)plen;
+                    blob = (uint8_t *)malloc(blen);
+                    if (blob == NULL) break;   /* retry next tick */
+                    blob[0] = isKf ? 1u : 0u;
+                    packU32(blob + 1, gt);
+                    packU32(blob + 5, seg);
+                    if (plen > 0 && pl != NULL) {
+                        memcpy(blob + 9, pl, (size_t)plen);
+                    }
+
+                    memset(&sh, 0, sizeof(sh));
+                    sh.kind = BULK_KIND_SPEC_RECORD;
+                    sh.gen = seq;
+                    sh.totalSize = blen;
+                    if (!bulkSenderBegin(&sp->bulkSend, &sh, blob, blen)) {
+                        free(blob);
+                        break;
+                    }
+                    free(blob);   /* bulkSenderBegin copied it into its own buf */
+                    sp->lastEmittedSeq = seq;
+                    bulkSenderPump(&sp->bulkSend, &sp->channelMux);
+                }
+            }
+        }
+
+        /* Carrier: pump staged bytes into the mux and emit standalone
+         * PACKET_CHANNEL frames — carries both the seed and the forward records.
+         * Mirrors the client map-download carrier exactly. */
+        bulkSenderPump(&sp->bulkSend, &sp->channelMux);
+        channelTick(&sp->channelMux, udpServer.tickCount, sp->pingMs);
+        {
+            int frames;
+            for (frames = 0; frames < MAP_DOWNLOAD_FRAMES_PER_TICK; frames++) {
+                uint8_t cbuf[UDP_MAX_PAYLOAD];
+                int frameLen = channelBuildFrame(
+                    &sp->channelMux, cbuf + PACKET_HEADER_SIZE,
+                    UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+                if (frameLen <= 2) break;   /* nothing (more) to carry this tick */
+                packHeader(cbuf, PACKET_CHANNEL, sp->outSequence++);
+                srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &sp->addr);
+            }
+        }
+    }
 }
 
 /* Initialize map download tracking for a client and arm a join download on the
@@ -1557,9 +2081,11 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     /* Read flags byte if present (backwards compatible — older clients default to 0) */
     bool wantRejoin = false;
     bool incomingWillAuth = false;
+    bool isSpectator = false;
     if (len > pos) {
         wantRejoin       = (buf[pos] & JOIN_FLAG_WANT_REJOIN) != 0;
         incomingWillAuth = (buf[pos] & JOIN_FLAG_WILL_AUTHENTICATE) != 0;
+        isSpectator      = (buf[pos] & JOIN_FLAG_SPECTATOR) != 0;
         pos++;
     }
 
@@ -1633,6 +2159,53 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
             serverSendJoinReject(fromAddr, STR_REJECT_INCORRECT_PASSWORD, 0, NULL);
             return;
         }
+    }
+
+    /* Join as viewer: no tank slot, no sim player, no control-bus
+     * subscription.  All shared pre-checks above (cookie, version, name,
+     * password) have run; the player game-lock below does not gate
+     * spectating — a locked or running game stays watchable. */
+    if (isSpectator) {
+        /* Attribute-only WBN check: verify the spectator_key when one was sent
+         * and WBN is running. A failure (or WBN down / empty key) never blocks
+         * spectating — the viewer is admitted anonymously with no badge. */
+        char spectatorKey[WINBOLONET_KEY_LEN];
+        uint8_t wbnFlags = 0;
+        spectatorKey[0] = '\0';
+        if (winbolonetIsRunning() && wbnJoinKey[0] != '\0') {
+            char errorMsg[512];
+            bool loggedIn = false;
+            errorMsg[0] = '\0';
+            if (winboloNetVerifySpectatorKey(wbnJoinKey, name, errorMsg, &loggedIn)) {
+                strncpy(spectatorKey, wbnJoinKey, WINBOLONET_KEY_LEN - 1);
+                spectatorKey[WINBOLONET_KEY_LEN - 1] = '\0';
+                if (loggedIn) wbnFlags |= PLAYER_FLAG_WBN_VERIFIED;
+                fprintf(stderr,
+                        "[UDP SERVER] Spectator '%s' verified with WinBolo.net "
+                        "(logged_in=%d)\n", name, (int)loggedIn);
+            } else {
+                fprintf(stderr,
+                        "[UDP SERVER] Spectator '%s' WBN verify failed: %s. "
+                        "Joining anonymously.\n",
+                        name, errorMsg[0] ? errorMsg : "(no detail)");
+            }
+        }
+        /* Resolve the viewer's country the same way the player path does
+         * (:incomingCountry): GeoIP first, then the client-supplied
+         * fallbackCountry, empty when neither resolves. */
+        char specCountry[3];
+        {
+            char ipStr[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &fromAddr->sin_addr, ipStr, sizeof(ipStr));
+            if (!geoLookupCountry(ipStr, specCountry)) {
+                specCountry[0] = wireFallbackCountry[0];
+                specCountry[1] = wireFallbackCountry[1];
+            }
+            specCountry[2] = '\0';
+        }
+        serverAcceptSpectator(sim, fromAddr, name, clientType, clientHints,
+                              spectatorKey, wbnFlags, specCountry);
+        return;
     }
 
     /* Check game lock: server admin command OR host toggled
@@ -1941,6 +2514,18 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     fprintf(stderr, "[UDP SERVER] Player '%s' assigned slot %d, mapSize=%u\n",
             name, slot, udpServer.compressedMapSize);
     serverSendJoinAccept(slot, sim, fromAddr);
+    /* Catch-up: this client is connected (clients[slot].connected set above),
+     * so feed it the current spectator roster — one CTRL_SPECTATOR_SLOT per
+     * connected viewer — so its lobby roster matches late-joining the session. */
+    {
+        int sp;
+        for (sp = 0; sp < MAX_SPECTATORS; sp++) {
+            if (!udpServer.spectators[sp].connected) continue;
+            ControlEvent evt;
+            serverFillSpectatorSlotEvent(sp, &evt);
+            udpClientDeliverControl(&udpServer.clients[slot], &evt);
+        }
+    }
     /* Hand the joiner the current WBN server_key so it can mint a
      * player_key and re-auth via the lobby-snapshot path.  Gated inside
      * the send function — no-op on non-WBN servers. */
@@ -3017,7 +3602,10 @@ static void serverHandleInfoRequest(const struct sockaddr_in *fromAddr,
         if (serverSimGetRanked(sim))                     flags |= INFO_FLAG_RANKED;
         if (serverSimIsRandomMapEnabled(sim))            flags |= INFO_FLAG_RANDOM_MAP;
         if (serverSimGetState(sim) == serverStateLobby)  flags |= INFO_FLAG_IN_LOBBY;
-        /* allow_spectators / spectator_count: spectators are future work */
+        /* Advertise spectator support so finders can enable a Spectate action;
+         * the cap accessor returns 0 when spectating is disabled. The live
+         * spectator_count has no accessor yet, so it stays 0 below. */
+        if (serverSimGetMaxSpectators(sim) > 0)          flags |= INFO_FLAG_ALLOW_SPECTATORS;
         pkt.flags = flags;
     }
     pkt.start_delay = serverSimGetStartDelay(sim);
@@ -3537,7 +4125,10 @@ void transportUdpServerSendTrackerUpdate(ServerSim *sim,
         if (serverSimGetRanked(sim))                     flags |= INFO_FLAG_RANKED;
         if (serverSimIsRandomMapEnabled(sim))            flags |= INFO_FLAG_RANDOM_MAP;
         if (serverSimGetState(sim) == serverStateLobby)  flags |= INFO_FLAG_IN_LOBBY;
-        /* allow_spectators / spectator_count: spectators are future work */
+        /* Advertise spectator support so finders can enable a Spectate action;
+         * the cap accessor returns 0 when spectating is disabled. The live
+         * spectator_count has no accessor yet, so it stays 0 below. */
+        if (serverSimGetMaxSpectators(sim) > 0)          flags |= INFO_FLAG_ALLOW_SPECTATORS;
         pkt.flags = flags;
     }
     pkt.start_delay = serverSimGetStartDelay(sim);
@@ -3718,12 +4309,31 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_PING:
             serverHandlePing(buf, len, fromAddr);
+            /* Spectators aren't in clients[]; refresh their liveness too. */
+            {
+                int sIdx = serverFindSpectator(fromAddr);
+                if (sIdx >= 0) {
+                    udpServer.spectators[sIdx].lastReceivedTick = udpServer.tickCount;
+                }
+            }
             break;
         case PACKET_CHANNEL: {
             /* Standalone channel frame (client → server, sent when no input
              * rides this tick).  Body is one frame directly after the header. */
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0) break;
+            if (clientIdx < 0) {
+                /* Spectator acks ride the same standalone-frame path; consume
+                 * them into the spectator's own mux.  No bulk-receive drain —
+                 * a spectator never uploads. */
+                int sIdx = serverFindSpectator(fromAddr);
+                if (sIdx >= 0) {
+                    udpServer.spectators[sIdx].lastReceivedTick = udpServer.tickCount;
+                    channelRecvFrame(&udpServer.spectators[sIdx].channelMux,
+                                     buf + PACKET_HEADER_SIZE,
+                                     len - PACKET_HEADER_SIZE);
+                }
+                break;
+            }
             udpServer.clients[clientIdx].lastReceivedTick = udpServer.tickCount;
             if (channelRecvFrame(&udpServer.channelMux[clientIdx],
                                  buf + PACKET_HEADER_SIZE,
@@ -4885,6 +5495,10 @@ void transportUdpServerSend(ServerSim *sim) {
         serverSendSnapshot(sim, i);
     }
 
+    /* Seed connected spectators from the delayed ring and drain the seed over
+     * CHANNEL_BULK (mirrors the per-client map-download carrier above). */
+    serverServiceSpectators(sim);
+
     transportUdpServerCheckTimeouts(sim);
 }
 
@@ -4957,6 +5571,28 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
             }
         }
     }
+
+    /* Seed connected spectators outside running too (lobby / countdown /
+     * gameover — transportUdpServerSend isn't called there, so it can't drive
+     * this). When running, transportUdpServerSend already serviced spectators
+     * before calling here, so this is gated off to avoid a double service. */
+    if (serverSimGetState(sim) != serverStateRunning) {
+        serverServiceSpectators(sim);
+    }
+
+    /* Age out idle spectators. This only frees a slot whose viewer has gone
+     * silent; the seed/feed servicing happens in serverServiceSpectators. */
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        if (!udpServer.spectators[i].connected) continue;
+        if (udpServer.tickCount - udpServer.spectators[i].lastReceivedTick
+            > CLIENT_TIMEOUT_TICKS) {
+            mpDiagLog("[srv] SPECTATOR TIMEOUT idx=%d diff=%u CLIENT_TIMEOUT_TICKS=%d",
+                      i,
+                      (unsigned)(udpServer.tickCount - udpServer.spectators[i].lastReceivedTick),
+                      (int)CLIENT_TIMEOUT_TICKS);
+            serverDisconnectSpectator(i, false);
+        }
+    }
 }
 
 
@@ -4965,6 +5601,15 @@ int transportUdpServerGetClientCount(void) {
     int i;
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) count++;
+    }
+    return count;
+}
+
+int transportUdpServerGetSpectatorCount(void) {
+    int count = 0;
+    int i;
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        if (udpServer.spectators[i].connected) count++;
     }
     return count;
 }
@@ -4999,6 +5644,48 @@ void transportUdpServerChannelTestStats(int slot, uint8_t ch,
 bool transportUdpServerTestPendingRemove(int slot) {
     if (slot < 0 || slot >= MAX_TANKS) return false;
     return udpServer.pendingSimRemove[slot];
+}
+
+const uint8_t *transportUdpServerGetSpectatorSeed(int s, uint32_t *outLen,
+                                                  uint8_t *outKind) {
+    SpectatorConn *sp;
+    if (s < 0 || s >= MAX_SPECTATORS) return NULL;
+    sp = &udpServer.spectators[s];
+    if (!sp->connected) return NULL;
+    if (outLen)  *outLen  = sp->seedLen;
+    if (outKind) *outKind = sp->bulkSend.kind;
+    return sp->seedBlob;
+}
+
+bool transportUdpServerGetSpectatorFeedSeq(int s, uint32_t *outSeq,
+                                           uint8_t *outKind) {
+    SpectatorConn *sp;
+    if (s < 0 || s >= MAX_SPECTATORS) return false;
+    sp = &udpServer.spectators[s];
+    if (!sp->connected) return false;
+    if (outSeq)  *outSeq  = sp->lastEmittedSeq;
+    if (outKind) *outKind = sp->bulkSend.kind;
+    return true;
+}
+
+bool transportUdpServerGetSpectatorCountdown(int s, uint32_t *outRemaining) {
+    SpectatorConn *sp;
+    if (s < 0 || s >= MAX_SPECTATORS) return false;
+    sp = &udpServer.spectators[s];
+    if (!sp->connected) return false;
+    if (outRemaining) *outRemaining = sp->countdownRemaining;
+    return sp->inCountdown;
+}
+
+void transportUdpServerTestSpectatorAckBulk(int s) {
+    ChannelState *bulk;
+    if (s < 0 || s >= MAX_SPECTATORS) return;
+    if (!udpServer.spectators[s].connected) return;
+    /* Simulate a peer that keeps up: mark the whole CHANNEL_BULK send window
+     * acked, which completes the seed and frees the window so the forward feed
+     * keeps draining — without a real spectator channel endpoint (3b). */
+    bulk = &udpServer.spectators[s].channelMux.ch[CHANNEL_BULK];
+    bulk->ackedSeq = bulk->nextSeq;
 }
 
 bool transportUdpServerTestDownloadComplete(int slot) {

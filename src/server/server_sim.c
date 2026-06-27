@@ -73,6 +73,8 @@
 #include "control_event.h"
 #include "client_sim.h"
 #include "client_sim_control.h"
+#include "transport_control_codec.h"  /* body encoders for the ring keyframe's control snapshot */
+#include "log_internal.h"             /* serverSimSerializeControlSnapshot prototype */
 #include <assert.h>
 #include "interpolation.h"
 #include "position_history.h"
@@ -472,6 +474,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->ranked              = FALSE;
     sim->serverLocks         = 0;
     sim->maxPlayers          = MAX_TANKS;
+    sim->maxSpectators       = 0;
+    sim->specDelayTicks      = 0;
     sim->worldPreLoaded      = TRUE;
 
     /* Mirror gameType + hiddenMines + time fields so the lobby change
@@ -876,7 +880,11 @@ void serverSimDestroy(ServerSim *sim) {
 static void serverSimLogTick(ServerSim *sim) {
     BYTE count;
 
-    if (logIsRecording() == FALSE) return;
+    /* Run whenever a .wbv log is recording OR a spectator ring is registered:
+       both consume the per-tick location/shell events and the logWriteTick tap.
+       A normal (non-recording) server still has a ring, so gating on .wbv alone
+       would leave the ring empty and a connecting spectator with no seed. */
+    if (logIsRecording() == FALSE && logHasSpectatorRing() == FALSE) return;
 
     /* Tank + LGM positions */
     for (count = 0; count < MAX_TANKS; count++) {
@@ -2601,6 +2609,8 @@ void serverSimEnterLobby(ServerSim *sim) {
 void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cfg) {
   sim->sim.viewPlayer = cfg->viewPlayer;
   sim->maxBots        = cfg->maxBots;
+  sim->maxSpectators  = cfg->maxSpectators;
+  sim->specDelayTicks = (uint32_t)cfg->specDelaySeconds * 50u;   /* 50 ticks/s */
 
   serverSimSetEmptyResetEnabled(sim, cfg->emptyResetEnabled);
   serverSimSetHasPassword(sim, cfg->hasPassword);
@@ -5762,6 +5772,69 @@ static void serverSimSyncSubscriber(
     mpDiagLog("[bus] SYNC-REPLAY end");
 }
 
+/* Buffer-writing sink for serverSimSerializeControlSnapshot: each delivered
+ * sync event is body-encoded and appended as a [u16 type][u16 bodyLen][body]
+ * record. */
+typedef struct {
+    BYTE *out;
+    int   cap;
+    int   len;
+    bool  overflow;
+} ControlSnapshotSink;
+
+static void serverSimControlSnapshotDeliver(void *ctx,
+                                            const struct ControlEvent *evt) {
+    ControlSnapshotSink *s = (ControlSnapshotSink *)ctx;
+    ControlEncodeBodyFn fn;
+    uint8_t body[MAX_CONTROL_PACKET];
+    size_t bodyLen = 0;
+    EncodeResult r;
+    int recLen;
+
+    if (s->overflow) {
+        return;  /* already failed; drain the rest of the replay silently */
+    }
+    fn = transportControlCodecBodyEncoder(evt->type);
+    if (fn == NULL) {
+        return;  /* no body codec for this kind — nothing to record */
+    }
+    /* Body encoders ignore the recipient (per-recipient filtering lives in the
+     * delivery path), so NULL is safe here. */
+    r = fn(evt, NULL, body, sizeof(body), &bodyLen);
+    if (r == ENCODE_SKIP) {
+        return;  /* event has no form here (e.g. an invalid slot) — skip */
+    }
+    if (r != ENCODE_OK) {
+        s->overflow = true;  /* ENCODE_OVERFLOW: body did not fit MAX_CONTROL_PACKET */
+        return;
+    }
+    recLen = 4 + (int)bodyLen;
+    if (s->len > s->cap - recLen) {
+        s->overflow = true;
+        return;
+    }
+    s->out[s->len++] = (BYTE)(((uint16_t)evt->type >> 8) & 0xFF);
+    s->out[s->len++] = (BYTE)((uint16_t)evt->type & 0xFF);
+    s->out[s->len++] = (BYTE)(((uint16_t)bodyLen >> 8) & 0xFF);
+    s->out[s->len++] = (BYTE)((uint16_t)bodyLen & 0xFF);
+    memcpy(s->out + s->len, body, bodyLen);
+    s->len += (int)bodyLen;
+}
+
+int serverSimSerializeControlSnapshot(ServerSim *sim, BYTE *out, int cap) {
+    ControlSnapshotSink sink;
+
+    if (sim == NULL || out == NULL || cap < 0) {
+        return -1;
+    }
+    sink.out      = out;
+    sink.cap      = cap;
+    sink.len      = 0;
+    sink.overflow = false;
+    serverSimSyncSubscriber(sim, serverSimControlSnapshotDeliver, &sink);
+    return sink.overflow ? -1 : sink.len;
+}
+
 SubscriberHandle serverSimRegisterSubscriber(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
@@ -7656,6 +7729,26 @@ BYTE serverSimGetMaxPlayers(const ServerSim *sim) {
 BYTE serverSimGetMaxBots(const ServerSim *sim) {
     if (sim == NULL) return 0;
     return sim->maxBots;
+}
+
+BYTE serverSimGetMaxSpectators(const ServerSim *sim) {
+    if (sim == NULL) return 0;
+    return sim->maxSpectators;   /* 0 = disabled; no MAX_TANKS fallback */
+}
+
+void serverSimSetMaxSpectators(ServerSim *sim, BYTE n) {
+    if (sim == NULL) return;
+    sim->maxSpectators = n;
+}
+
+uint32_t serverSimGetSpecDelayTicks(const ServerSim *sim) {
+    if (sim == NULL) return 0;
+    return sim->specDelayTicks;
+}
+
+void serverSimSetSpecDelayTicks(ServerSim *sim, uint32_t ticks) {
+    if (sim == NULL) return;
+    sim->specDelayTicks = ticks;
 }
 
 BYTE serverSimGetLobbyBotCount(const ServerSim *sim) {

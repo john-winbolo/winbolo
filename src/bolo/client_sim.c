@@ -22,6 +22,7 @@
  *  simulation separation.
  *********************************************************/
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -29,6 +30,9 @@
 #include <SDL3/SDL.h>
 #include "client_sim.h"
 #include "client_sim_internal.h"
+#include "spectator_drain.h"   /* dep-free seam: logviewer host drains capture */
+#include "spectator_replay.h"          /* extract a seed's control-snapshot slice */
+#include "transport_control_codec.h"   /* decode the snapshot's lobby-settings event */
 #include "client_net.h"   /* clientSimNetSendChat — default chatSendFunc body */
 #include "client_snapshot.h"
 #include "client_state.h"
@@ -437,6 +441,9 @@ static void clientSimDestroyContents(ClientSim *cs) {
     free(cs->brainBuildInfo);
     cs->brainBuildInfo = NULL;
   }
+
+  /* Free any captured-but-undrained spectator seed/records. */
+  clientSimSpectatorFeedClear(cs);
 
   cs->sim.mp = NULL;
   cs->sim.bs = NULL;
@@ -1526,6 +1533,11 @@ const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n) {
   return &cs->lobbySlots[n];
 }
 
+const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx) {
+  if (idx >= MAX_SPECTATORS) return NULL;
+  return &cs->spectatorSlots[idx];
+}
+
 BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
   if (cs == NULL) return 0;
   BYTE count = 0;
@@ -2019,6 +2031,241 @@ void clientSimClearLobbyMapPreview(ClientSim *cs) {
   cs->lobbyMapPreviewError      = false;
   cs->lobbyMapPreviewTotal      = 0;
   cs->lobbyMapPreviewReceived   = 0;
+}
+
+/* ---- Spectator feed: capture (transport-facing) + drain (session-facing) ---- */
+
+void clientSimSpectatorPushSeed(ClientSim *cs, uint8_t *blob, uint32_t len) {
+  if (!cs) { free(blob); return; }
+  if (cs->spectatorFeed.seedBlob != NULL) {
+    free(cs->spectatorFeed.seedBlob);   /* one seed per session — replace */
+  }
+  cs->spectatorFeed.seedBlob  = blob;   /* ownership transferred in */
+  cs->spectatorFeed.seedLen   = len;
+  cs->spectatorFeed.seedReady = true;
+}
+
+bool clientSimSpectatorPushRecord(ClientSim *cs, bool isKeyframe,
+                                  uint32_t gameTick, uint32_t segment,
+                                  const uint8_t *payload, uint32_t payloadLen) {
+  ClientSpecRecordNode *node;
+  if (!cs) return false;
+  node = (ClientSpecRecordNode *)calloc(1, sizeof(*node));
+  if (node == NULL) return false;
+  if (payloadLen > 0) {
+    node->payload = (uint8_t *)malloc(payloadLen);
+    if (node->payload == NULL) { free(node); return false; }
+    memcpy(node->payload, payload, payloadLen);
+  }
+  node->isKeyframe = isKeyframe;
+  node->gameTick   = gameTick;
+  node->segment    = segment;
+  node->payloadLen = payloadLen;
+  node->next       = NULL;
+  if (cs->spectatorFeed.recordTail != NULL) {
+    cs->spectatorFeed.recordTail->next = node;
+  } else {
+    cs->spectatorFeed.recordHead = node;
+  }
+  cs->spectatorFeed.recordTail = node;
+  cs->spectatorFeed.recordCount++;
+  return true;
+}
+
+void clientSimSpectatorFeedClear(ClientSim *cs) {
+  ClientSpecRecordNode *n;
+  if (!cs) return;
+  if (cs->spectatorFeed.seedBlob != NULL) {
+    free(cs->spectatorFeed.seedBlob);
+  }
+  n = cs->spectatorFeed.recordHead;
+  while (n != NULL) {
+    ClientSpecRecordNode *next = n->next;
+    free(n->payload);
+    free(n);
+    n = next;
+  }
+  memset(&cs->spectatorFeed, 0, sizeof(cs->spectatorFeed));
+}
+
+bool clientSimSpectatorSeedReady(const ClientSim *cs) {
+  return cs && cs->spectatorFeed.seedReady;
+}
+
+bool clientSimSpectatorTakeSeed(ClientSim *cs, uint8_t **outBlob,
+                                uint32_t *outLen) {
+  if (!cs || !cs->spectatorFeed.seedReady || cs->spectatorFeed.seedBlob == NULL) {
+    return false;
+  }
+  if (outBlob != NULL) *outBlob = cs->spectatorFeed.seedBlob;
+  if (outLen  != NULL) *outLen  = cs->spectatorFeed.seedLen;
+  cs->spectatorFeed.seedBlob  = NULL;   /* ownership transferred out */
+  cs->spectatorFeed.seedLen   = 0;
+  cs->spectatorFeed.seedReady = false;
+  return true;
+}
+
+uint32_t clientSimSpectatorRecordCount(const ClientSim *cs) {
+  return cs ? cs->spectatorFeed.recordCount : 0;
+}
+
+void clientSimSpectatorSetCountdown(ClientSim *cs, uint32_t remainingTicks) {
+  if (cs == NULL) return;
+  cs->spectatorFeed.countdownRemaining = remainingTicks;
+  cs->spectatorFeed.countdownReceived  = true;
+}
+
+bool clientSimSpectatorCountdown(const ClientSim *cs, uint32_t *outRemaining) {
+  if (cs == NULL || !cs->spectatorFeed.countdownReceived) return false;
+  if (outRemaining != NULL) *outRemaining = cs->spectatorFeed.countdownRemaining;
+  return true;
+}
+
+bool clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out) {
+  ClientSpecRecordNode *node;
+  if (!cs || out == NULL) return false;
+  node = cs->spectatorFeed.recordHead;
+  if (node == NULL) return false;
+  cs->spectatorFeed.recordHead = node->next;
+  if (cs->spectatorFeed.recordHead == NULL) {
+    cs->spectatorFeed.recordTail = NULL;
+  }
+  cs->spectatorFeed.recordCount--;
+  out->isKeyframe = node->isKeyframe;
+  out->gameTick   = node->gameTick;
+  out->segment    = node->segment;
+  out->payload    = node->payload;     /* ownership transferred to caller */
+  out->payloadLen = node->payloadLen;
+  free(node);                          /* node only — payload is the caller's now */
+  return true;
+}
+
+/* spectator_drain.h seam: the logviewer-world host pulls the captured seed and
+ * forward records through these void *-handle wrappers because it cannot
+ * include client_sim.h (screenObj redefinition vs backend.h). Each forwards to
+ * the matching clientSimSpectator* accessor; ownership transfers are unchanged.
+ */
+void specDrainPump(void *handle) {
+  clientSimNetTick((ClientSim *)handle);
+}
+
+bool specDrainCountdown(void *handle, uint32_t *outRemaining) {
+  return clientSimSpectatorCountdown((const ClientSim *)handle, outRemaining);
+}
+
+bool specDrainSeedReady(void *handle) {
+  return clientSimSpectatorSeedReady((const ClientSim *)handle);
+}
+
+bool specDrainTakeSeed(void *handle, uint8_t **outBlob, uint32_t *outLen) {
+  return clientSimSpectatorTakeSeed((ClientSim *)handle, outBlob, outLen);
+}
+
+uint32_t specDrainRecordCount(void *handle) {
+  return clientSimSpectatorRecordCount((const ClientSim *)handle);
+}
+
+bool specDrainPopRecord(void *handle, SpecDrainRecord *out) {
+  ClientSpectatorRecord rec;
+  if (out == NULL) return false;
+  if (!clientSimSpectatorPopRecord((ClientSim *)handle, &rec)) return false;
+  out->isKeyframe = rec.isKeyframe;
+  out->gameTick   = rec.gameTick;
+  out->segment    = rec.segment;
+  out->payload    = rec.payload;       /* ownership passes straight through */
+  out->payloadLen = rec.payloadLen;
+  return true;
+}
+
+bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) {
+  BYTE *scratch;
+  const BYTE *ctrl = NULL;
+  int ctrlLen = 0;
+  int keyframeLen;
+  ControlDecodeBodyFn decSettings;
+  ControlDecodeBodyFn decSlot;
+  bool haveSettings = false;
+  int pos;
+  bool found = false;
+
+  if (out == NULL) return false;
+  memset(out, 0, sizeof(*out));
+  if (seed == NULL || seedLen == 0 || seedLen >= (size_t)INT_MAX) return false;
+
+  /* Reuse the blessed keyframe translator to slice out the control snapshot
+   * (it sets ctrl/ctrlLen to the snapshot within the seed). The translated
+   * body is discarded — only the control slice is wanted here. */
+  scratch = (BYTE *)malloc(seedLen + 1);
+  if (scratch == NULL) return false;
+  keyframeLen = specReplayTranslateKeyframe(seed, (int)seedLen, scratch,
+                                            (int)(seedLen + 1), &ctrl, &ctrlLen);
+  if (keyframeLen < 0 || ctrl == NULL || ctrlLen <= 0) {
+    free(scratch);
+    return false;
+  }
+
+  /* Walk the snapshot's [u16 BE type][u16 BE bodyLen][body] records (the same
+   * events a normal joiner receives, embedded in the sync-replay slice
+   * serverSimSerializeControlSnapshot wrote). Three events are wanted: the
+   * lobby-settings event (map/settings the synthesized header needs), the
+   * lobby-slot events (one per connected player — the roster a spectator host
+   * uses to name lobby-chat senders who hold no tank), and the game-phase
+   * discriminant (lobby/countdown/running/game-over). All records are walked
+   * so the slot events, which follow the settings event, are not missed. */
+  decSettings = transportControlCodecBodyDecoder(CTRL_LOBBY_SETTINGS);
+  decSlot     = transportControlCodecBodyDecoder(CTRL_LOBBY_SLOT);
+  pos = 0;
+  while (pos + 4 <= ctrlLen) {
+    uint16_t type    = (uint16_t)(((uint16_t)ctrl[pos] << 8) | ctrl[pos + 1]);
+    uint16_t bodyLen = (uint16_t)(((uint16_t)ctrl[pos + 2] << 8) | ctrl[pos + 3]);
+    pos += 4;
+    if ((size_t)pos + bodyLen > (size_t)ctrlLen) break;
+    if (type == CTRL_LOBBY_SETTINGS && !haveSettings) {
+      ControlEvent evt;
+      memset(&evt, 0, sizeof(evt));
+      if (decSettings != NULL && decSettings(ctrl + pos, bodyLen, &evt)) {
+        /* Bound the copy by the source field (<= MAP_STR_SIZE) as well as the
+         * destination, so an unterminated wire name can't over-read. */
+        size_t nameCap = sizeof(evt.u.lobbySettings.mapName);
+        if (nameCap > sizeof(out->mapName)) nameCap = sizeof(out->mapName);
+        strncpy(out->mapName, evt.u.lobbySettings.mapName, nameCap - 1);
+        out->mapName[nameCap - 1] = '\0';
+        out->gameType         = (uint8_t)evt.u.lobbySettings.lobbyGameType;
+        out->allowHiddenMines = evt.u.lobbySettings.lobbyHiddenMines ? 1 : 0;
+        out->ai               = evt.u.lobbySettings.lobbyAiType;
+        out->haveInfo         = true;
+        found = true;
+      }
+      haveSettings = true;   /* one lobby-settings event per snapshot */
+    } else if (type == CTRL_GAME_PHASE_LOBBY) {
+      out->specPhase = SPEC_PHASE_LOBBY;
+    } else if (type == CTRL_GAME_PHASE_COUNTDOWN) {
+      out->specPhase = SPEC_PHASE_COUNTDOWN;
+    } else if (type == CTRL_GAME_PHASE_RUNNING) {
+      out->specPhase = SPEC_PHASE_RUNNING;
+    } else if (type == CTRL_GAME_PHASE_GAME_OVER) {
+      out->specPhase = SPEC_PHASE_GAMEOVER;
+    } else if (type == CTRL_LOBBY_SLOT) {
+      ControlEvent evt;
+      memset(&evt, 0, sizeof(evt));
+      if (decSlot != NULL && decSlot(ctrl + pos, bodyLen, &evt)) {
+        BYTE pn = evt.u.lobbySlot.playerNum;
+        if (evt.u.lobbySlot.slot.connected && pn < MAX_TANKS) {
+          out->lobbyPresent[pn] = true;
+          /* Source playerName is PACKET_MAX_PLAYER_NAME (64); lobbyName[pn] is
+           * the same width. Copy bounded by the destination and NUL-terminate
+           * so an unterminated wire name can't over-read. */
+          strncpy(out->lobbyName[pn], evt.u.lobbySlot.slot.playerName,
+                  sizeof(out->lobbyName[pn]) - 1);
+          out->lobbyName[pn][sizeof(out->lobbyName[pn]) - 1] = '\0';
+        }
+      }
+    }
+    pos += bodyLen;
+  }
+
+  free(scratch);
+  return found;
 }
 
 uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->lobbyMapUploadStatus; }

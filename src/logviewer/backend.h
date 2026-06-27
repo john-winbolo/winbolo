@@ -349,6 +349,67 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize);
 *********************************************************/
 bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen);
 
+/* Loads the decoder from a plaintext (v2) byte stream: the caller supplies the
+ * header + opening snapshot bytes, then appends more via lv_blocksAppendBytes
+ * and steps lv_screenLogTick. Returns TRUE on success. */
+bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len);
+
+/* Feeds a live, append-only byte stream into the decoder: appends the
+ * caller-supplied newly-arrived bytes, then advances playback over the whole
+ * records that are now fully buffered and parks when caught up. Appends must be
+ * record-aligned (whole records, as the ring/translator emit) so a tick never
+ * reads past the buffer. Never finishes on "caught up" (a live stream carries
+ * no LOG_QUIT). Returns the decoder's isPlaying state. */
+bool lv_screenStreamPump(const uint8_t *bytes, size_t len);
+
+/* Game-info the synthesized spectator-seed header needs. Kept POD and free of
+ * bolo/sim headers so this seam stays includable in logviewer-world TUs; the
+ * live values arrive with the spectate-start handshake. mapName may be NULL
+ * (treated as empty). */
+typedef struct {
+  const char *mapName;
+  BYTE gameType;
+  BYTE allowHiddenMines;
+  BYTE ai;
+  BYTE usePassword;
+  BYTE maxPlayers;
+  BYTE versionMajor;
+  BYTE versionMinor;
+  BYTE versionRevision;
+} LvSpecSeedInfo;
+
+/* Loads a raw spectator-ring keyframe seed blob
+ * ([u32 bodyLen BE][world body][u32 ctrlLen BE][control snapshot]) into the
+ * decoder: synthesizes the v2 header from info, translates the keyframe and
+ * feeds header + opening snapshot to lv_screenLoadFromStream. The keyframe's
+ * control-snapshot slice is copied into a module-owned buffer for a later HUD
+ * consumer (lv_specSeedControl), not written to the decoded stream. The decoder
+ * must already be created (lv_decoderCreate) and sized (lv_screenSetSizeX/Y).
+ * Returns TRUE on success. Defined in src/logviewer/spec_seed_load.c. */
+bool lv_specSeedLoad(const LvSpecSeedInfo *info, const uint8_t *seed,
+                     size_t seedLen);
+
+/* Returns the control-snapshot slice stashed by the most recent successful
+ * lv_specSeedLoad, or NULL if none was stashed. *outLen (may be NULL) receives
+ * its length. The buffer is module-owned and valid until the next
+ * lv_specSeedLoad or lv_specSeedControlClear. */
+const uint8_t *lv_specSeedControl(size_t *outLen);
+
+/* Releases the stashed control-snapshot slice (idempotent). */
+void lv_specSeedControlClear(void);
+
+/* Translates one forward spectator-ring record and pumps it into the decoder so
+ * the delayed view advances. isKeyframe selects the translation: a keyframe
+ * payload ([u32 bodyLen BE][world body][u32 ctrlLen BE][control snapshot]) ->
+ * [LOG_EVENT_SNAPSHOT][body] (the decoder re-syncs) and its control slice
+ * refreshes the stash (lv_specSeedControl); an event-tick payload (concatenated
+ * [type][u16 BE len][body] events, or empty) -> LOG_EVENT/LOG_EVENT_LONG/
+ * LOG_NOEVENTS bytes. The translated bytes are appended via lv_screenStreamPump.
+ * The decoder must already be seeded (lv_specSeedLoad). Returns the decoder's
+ * isPlaying state, or FALSE on a malformed record. Defined in
+ * src/logviewer/spec_seed_load.c. */
+bool lv_specRecordPump(bool isKeyframe, const uint8_t *payload, size_t len);
+
 /*********************************************************
 *NAME:          lv_screenNumBases
 *AUTHOR:        John Morrison
@@ -515,5 +576,23 @@ void lv_screenGetMapName(char *dest);
 
 void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime);
 void lv_screenSeekToPosition(float ratio);
+
+/* Spectator live-DVR (driven by spectatorRun). While live mode is on,
+ * lv_screenStreamPump only appends the arriving bytes and never auto-advances to
+ * the head; the host drives the advance via lv_screenSpecFrameUpdate so a parked
+ * spectator can watch the past unfold at real time while the head keeps growing.
+ * totalTimeMs is repointed at the tracked live head so the existing scrubber/seek
+ * math works unchanged; standalone .wbv playback (live mode off) is untouched. */
+void lv_screenSpecSetLiveMode(bool on);            /* enter/leave; resets DVR state, follows the head */
+bool lv_screenSpecIsLiveMode(void);
+void lv_screenSpecNoteHeadTick(uint32_t gameTick); /* latest drained forward-record game tick */
+uint32_t lv_screenSpecHeadTick(void);              /* current tracked head tick (0 before the first record) */
+void lv_screenSpecFrameUpdate(uint32_t nowMs);     /* once per frame: advance per follow/parked + pause; track head time */
+void lv_screenSpecJumpToLive(void);                /* advance to the head and resume following */
+void lv_screenSpecResetSegment(void);              /* world reset (new lobby/map): drop the seek index + restart head tracking */
+
+/* Returns the slot the camera is currently following (cameraSlot), 0 when no
+ * log is loaded. */
+BYTE lv_screenGetCameraSlot(void);
 
 #endif /* _BACKEND_H */

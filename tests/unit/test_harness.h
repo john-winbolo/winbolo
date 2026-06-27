@@ -10,6 +10,8 @@
 #ifndef WINBOLO_UNITTEST_HARNESS_H
 #define WINBOLO_UNITTEST_HARNESS_H
 
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -188,6 +190,74 @@ int run_net_impair(void);
  * instances and an in-test frame shuttle. No sockets, no threads. */
 int run_channel_mux(void);
 
+/* Spectator delayed-stream ring (test_spectator_ring.c): segmentation,
+ * keyframe-at-segment-start, mid-interval seek + replay, segment isolation,
+ * previous-generation read, cold start and the retention window boundary,
+ * proven with synthetic byte payloads. */
+int run_spectator_ring(void);
+
+/* Spectator ring records without a .wbv log (test_spectator_ring_nolog.c):
+ * a registered ring driven by serverSimTick (logWriteTick) populates and a
+ * delay-0 seek returns a seed, with no logStart and no .wbv file. */
+int run_spectator_ring_nolog(void);
+
+/* Spectator replay translator (test_spectator_replay.c): specReplayWriteHeader
+ * lays out the v2 header field-for-field, specReplayTranslateEvents /
+ * specReplayTranslateKeyframe frame ring records into the LOG_* byte stream,
+ * and a real translated keyframe decodes through lv_screenLoadFromStream. */
+int run_spectator_replay(void);
+
+/* Spectator config plumbing (test_spectator_config.c): -maxspectators /
+ * -specdelay flow through ServerInstanceConfig into the sim and back via the
+ * getters, with seconds->ticks conversion and the no-fallback zero semantics. */
+int run_spectator_config(void);
+
+/* Spectator JOIN handshake (test_spectator_join.c): a JOIN_FLAG_SPECTATOR
+ * join registers a tankless viewer (slot 0xFF, no tank slot), honours the
+ * maxSpectators cap / disabled case, and resolves over the cookie handshake. */
+int run_spectator_join(void);
+
+/* Spectator roster publish (test_spectator_roster_publish.c): the server
+ * transport broadcasts CTRL_SPECTATOR_SLOT to player clients on spectator
+ * join/leave and sends the full roster to a newly-joined player (catch-up),
+ * verified through the real client apply path via clientSimGetSpectatorSlot. */
+int run_spectator_roster_publish(void);
+
+/* CTRL_SPECTATOR_SLOT body-codec round-trip (test_spectator_slot_codec.c):
+ * the per-spectator roster event encodes/decodes through the body tables,
+ * with the disconnected minimum and the out-of-range specIdx rejection. */
+int run_spectator_slot_codec(void);
+
+/* Spectator connect — client side (test_spectator_connect.c): the real client
+ * transport connecting with the spectator flag runs the join handshake and
+ * lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting seed) with no tank
+ * slot consumed and no map download started. */
+int run_spectator_connect(void);
+
+/* Spectator command rejection (test_spectator_command_reject.c): a tankless
+ * viewer attempts lobby/gameplay commands the production way and the server
+ * shows no effect (no slot, still a spectator); plus the dispatcher guard
+ * rejects an out-of-range sender slot with CMD_REJECT_INVALID. */
+int run_spectator_command_reject(void);
+
+/* Spectator feed capture — client side (test_spectator_capture.c): a real
+ * spectator client over loopback captures the CHANNEL_BULK seed and the ordered
+ * forward records into the ClientSim feed (record header stripped, order kept),
+ * also exercising the PACKET_CHANNEL ack-emitter gate fix end-to-end. */
+int run_spectator_capture(void);
+
+/* Spectator replay-log events (test_spectator_log.c): serialize round-trip of
+ * log_SpectatorJoined / log_SpectatorLeft / log_SpectatorChat over the v2
+ * framed .wbv stream, plus loopback emission proving a spectator join/timeout
+ * writes the Joined/Left kinds into a recording log. */
+int run_spectator_log(void);
+
+/* Spectator seed transfer (test_spectator_seed.c): a connected spectator on a
+ * server whose ring is recording gets the delayed keyframe at head - delay
+ * armed as a BULK_KIND_SPEC_SEED transfer; the armed seed blob is byte-equal to
+ * the ring's keyframe at that delay. */
+int run_spectator_seed(void);
+
 /* Bulk-transfer framing (test_bulk_transfer.c): the off-socket stream-header
  * round-trip, byte-identical blob reassembly under loss + reorder, header
  * robustness, pipelining and the send-side serializer guard. */
@@ -360,6 +430,77 @@ int run_log_roundtrip_basic(void);
 int run_log_roundtrip_snapshot_keeps_chain_synced(void);
 int run_log_roundtrip_lobby_snapshot_is_empty_world(void);
 int run_log_roundtrip_lobby_mode_drops_world_events(void);
+
+/* .wbv reader gate (test_wbv_reader.c): loads the committed fixtures
+ * through the production log-viewer reader (lv_screenLoadMapFromMemory)
+ * and asserts the decode succeeds with the expected header/snapshot
+ * content. v1 locks XOR'd back-compat; v2 covers the current plaintext,
+ * length-framed format. The on-demand v2 capture (test_wbv_v2_capture.c)
+ * drives the dedicated-server writer to (re)generate spectator_v2.wbv; it
+ * is dispatch-only, never run under CTest. */
+int run_wbv_reader_v1(void);
+int run_wbv_reader_v2(void);
+int run_wbv_v2_capture(void);
+
+/* Spectator ring-seed fixture generator (test_spectator_seed_capture.c):
+ * dispatch-only. Captures a real ServerSim ring keyframe (no trailing data) and
+ * writes it to <WB_WBV_FIXTURE_DIR>/spectator_seed.bin when the env var is set. */
+int run_spectator_seed_capture(void);
+
+/* Append-fed blocks stream source (test_blocks_stream.c): the no-zip path
+ * where lv_blocksAppendBytes feeds plaintext bytes that the existing read/seek
+ * machinery serves back, covering chunked append, read-back, seek and
+ * end-of-stream. */
+int run_blocks_stream(void);
+
+/* Stream-load decode path (test_stream_load.c): loads the spectator_v2 fixture's
+ * plaintext log.dat through lv_screenLoadFromStream and asserts it decodes the
+ * same content the zip reader does. */
+int run_stream_load(void);
+
+/* Stream-pump path (test_stream_pump.c): feeds the spectator_v2 fixture's
+ * plaintext log.dat through lv_screenStreamPump one record at a time, with a
+ * caught-up pump (no new bytes) mid-stream, and asserts the chunked feed
+ * reaches the same end-of-log state as a one-shot load and that a caught-up
+ * pump neither advances the cursor nor finishes playback. */
+int run_stream_pump(void);
+
+/* Spectator seed load (test_spec_seed_load.c): fabricates a ring-shaped seed
+ * blob from the spectator_v2 fixture's snapshot body, runs it through
+ * lv_specSeedLoad (synthesize header -> translate keyframe -> load) and asserts
+ * the decoder rebuilds the world and the control slice is stashed. */
+int run_spec_seed_load(void);
+
+/* Real spectator seed load (test_spec_seed_load_real.c): loads the committed
+ * spectator_seed.bin (a real ring seed, no trailing data) through lv_specSeedLoad
+ * and asserts TRUE. Currently FAILS — reproduces the lv_processSnapshot over-read. */
+int run_spec_seed_load_real(void);
+
+/* Spectator forward-record pump (test_spec_record_pump.c): seeds the decoder
+ * from the spectator_v2 fixture's snapshot, then derives ring-shaped forward
+ * records from the fixture's event stream and pumps them through
+ * lv_specRecordPump, asserting the decoder advances to the same end state, an
+ * empty tick advances cleanly, and a mid-stream keyframe re-syncs the decoder
+ * and refreshes the stashed control slice. */
+int run_spec_record_pump(void);
+
+/* Headless spectator seed integration (test_spectator_seed_integration.c):
+ * stands up a running ServerSim with a registered spectator ring (no logStart,
+ * no .wbv) over the loopback transport, ticks until the connected spectator
+ * client captures a seed, and loads it through the production decode path
+ * (specDrainTakeSeed -> specSeedDecodeInfo -> lv_specSeedLoad), asserting TRUE. */
+int run_spectator_seed_integration(void);
+
+/* specSeedDecodeInfo decode (test_spec_seed_decode_info.c): captures a real ring
+ * keyframe seed from a running sim (map "Everard Island", no logStart) and
+ * asserts specSeedDecodeInfo recovers the map name / game type / hidden-mines /
+ * ai from the control snapshot's lobby-settings event, plus the negative path
+ * (empty control snapshot -> returns false, output zeroed). */
+int run_spec_seed_decode_info(void);
+
+/* Extracts the inner "log.dat" from a .wbv zip into a heap buffer (caller
+ * frees). Defined in test_log_roundtrip.c; shared with test_stream_load.c. */
+bool extractLogDat(const char *wbvPath, uint8_t **outBuf, size_t *outLen);
 
 /* -log path composition (test_log_dir_path.c). Pins -log <dir> auto-naming
  * the replay inside the directory, vs -log <file> / bare -log. */

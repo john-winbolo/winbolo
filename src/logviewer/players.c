@@ -152,6 +152,30 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
 }
 
 /*********************************************************
+*NAME:          lv_playersSetPlayerNameQuiet
+*AUTHOR:        John Morrison
+*CREATION DATE: 27/06/26
+*LAST MODIFIED: 27/06/26
+*PURPOSE:
+* Marks a slot in use and sets its name WITHOUT emitting a
+* MESSAGE_CHANGENAME newswire line. Used by the spectator
+* roster injection, which re-applies the lobby roster on
+* every keyframe and so must not spam the event feed.
+* Touches only inUse + playerName; never any tank position
+* or score, so a slot holding a real positioned tank keeps
+* its forward state (only the name is re-set to itself).
+*
+*ARGUMENTS:
+*  playerNum  - The player number to set
+*  name       - The player name to set
+*********************************************************/
+void lv_playersSetPlayerNameQuiet(BYTE playerNum, const char *name) {
+  plrs.item[playerNum].inUse = TRUE;
+  strncpy(plrs.item[playerNum].playerName, name, PLAYER_NAME_LEN - 1);
+  plrs.item[playerNum].playerName[PLAYER_NAME_LEN - 1] = '\0';
+}
+
+/*********************************************************
 *NAME:          lv_playersSetPlayer
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
@@ -502,6 +526,18 @@ void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, 
   
   for (count=0;count<MAX_TANKS;count++) {
     if (plrs.item[count].inUse == TRUE) {
+      /* Never draw a tank that sits at the (0,0) map/pixel origin: that is the
+         deep-sea corner where no real on-map tank can be (a positioned tank
+         always carries non-zero coords from log_PlayerLocation / the snapshot).
+         An in-use slot left at all-zero coords is a tankless/unpositioned entry
+         — e.g. a lobby-only player injected for chat-name resolution, or a
+         momentary post-join/pre-location slot — and must not render (the
+         coordinate conversion below would otherwise place it at the (255,255)
+         corner). Mirrors the (0,0) sentinel the LGM path already uses. */
+      if (plrs.item[count].mapX == 0 && plrs.item[count].mapY == 0 &&
+          plrs.item[count].pixelX == 0 && plrs.item[count].pixelY == 0) {
+        continue;
+      }
       playerName[0] = '\0';
       /* Extract fixed map co-ordinates */
 
@@ -575,7 +611,12 @@ void lv_playersMakeScreenLgm(screenLgm *value, BYTE leftPos, BYTE rightPos, BYTE
   BYTE count;                    /* Looping variable */
 
   for (count=0;count<MAX_TANKS;count++) {
-    if (plrs.item[count].inUse == TRUE) {
+    /* Only draw a man who is out of his tank, and never from the (0,0)
+       idle/aboard sentinel: a boarded man emits no log_LgmLocation (forward
+       stream) and carries (0,0) lgm coords in a snapshot, so he is left
+       not-out and must not be added to the screen list. */
+    if (plrs.item[count].inUse == TRUE && plrs.item[count].lgmIsOut == TRUE &&
+        (plrs.item[count].lgmMapX != 0 || plrs.item[count].lgmMapY != 0)) {
       if (plrs.item[count].lgmMapX >= leftPos && plrs.item[count].lgmMapX <= rightPos && plrs.item[count].lgmMapY >= top && plrs.item[count].lgmMapY <= bottom) {
         wx = plrs.item[count].lgmMapX << TANK_SHIFT_MAPSIZE;
         wx += plrs.item[count].lgmPixelX << TANK_SHIFT_RIGHT2;

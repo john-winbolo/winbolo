@@ -438,6 +438,9 @@ STR_DLGLOBBY_START_OPEN=(open)
 STR_DLGLOBBY_TEAM_JOINED_FMT={player} joined {string1}.
 STR_DLGLOBBY_TEAM_LEFT_FMT={player} left {string1}.
 
+# Lobby roster header above the spectator list ({number} = live count)
+STR_DLGLOBBY_SPECTATORS_FMT=Spectators ({number}):
+
 # Map-preview start-picker tooltips and the assign-to-someone menu
 STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nClick to choose; right-click to assign to someone else
 STR_STARTPICK_TIP_FREE=Start #{number}\nClick to choose this start
@@ -1444,6 +1447,19 @@ STR_LV_VOTE_CAST_YES={player} voted yes.
 STR_LV_VOTE_CAST_NO={player} voted no.
 STR_LV_VOTE_PASSED=Vote passed.
 STR_LV_VOTE_FAILED=Vote failed.
+STR_LV_SPEC_LEAVE_CONFIRM=Leave spectating?
+STR_LV_SPEC_PHASE_LOBBY=Lobby
+STR_LV_SPEC_PHASE_LIVE=Live
+STR_LV_SPEC_PHASE_GAMEOVER=Game Over
+STR_LV_SPEC_WINDOW_TITLE_FMT=WinBolo - Spectating {string1}:{number} Map: {string2}{string3}
+STR_LV_SPEC_JOINED={player} joined as spectator
+STR_LV_SPEC_LEFT={player} left spectating
+STR_LV_SPEC_CHAT=[spectator] {number}: {string1}
+STR_LV_SPEC_BEGINS_IN_FMT=Spectating begins in {number}
+STR_LV_SPEC_CONNECTING=Connecting...
+STR_LV_SPEC_CONNECTION_LOST=Connection lost
+STR_LV_SPEC_BEGINS_NOW=Spectating begins now
+STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Spectating {string1}:{number}{string3}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume

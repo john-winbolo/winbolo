@@ -53,6 +53,20 @@ void lv_imgui_show_team_colours_dialog(void);
  */
 void lv_imgui_show_about_dialog(void);
 
+/**
+ * Arm the live-spectator "Leave spectating?" confirm modal.
+ * Idempotent; rendered by lv_imgui_dialogs_render() in both spectator
+ * modes. Plain entry point so a controller B-button can arm it too.
+ */
+void lv_imgui_spectator_leave_request(void);
+
+/**
+ * Returns true once after the user confirms the leave modal (Yes), then
+ * clears. Returns false while the modal is open, on cancel (No / Esc /
+ * dismiss), or when no modal is armed.
+ */
+bool lv_imgui_spectator_leave_confirmed(void);
+
 #ifdef __cplusplus
 }
 #endif

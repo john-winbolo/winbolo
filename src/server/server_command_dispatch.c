@@ -680,6 +680,15 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
 CmdResult serverSimApplyCommand(ServerSim *sim, int senderSlot,
                                 const ClientCommand *cmd) {
     assert(threadsCurrentlyHoldsMutex());
+    /* Defense-in-depth: every inbound call site resolves the sender through
+     * serverFindClient over the player table, which never yields a spectator
+     * (spectators are tracked in a separate table and hold no tank slot). A
+     * connected player slot is always in [0, MAX_TANKS); reject anything else
+     * before dispatch so a non-player sender can never index sim state. Real
+     * players always pass, so this cannot alter their behaviour. */
+    if (senderSlot < 0 || senderSlot >= MAX_TANKS) {
+        return CMD_REJECT_INVALID;
+    }
     CmdResult r = applyCommandInner(sim, senderSlot, cmd);
     if (r != CMD_OK) {
         ControlEvent evt;

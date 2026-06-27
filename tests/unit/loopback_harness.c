@@ -73,14 +73,14 @@ static unsigned short loopbackPickEphemeralPort(void) {
     return port;
 }
 
-bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
-                          bool lobbyMode, const char *impairSpec,
-                          uint64_t seed) {
+/* Shared server bring-up: threads, an ephemeral localhost port, an
+ * Everard-Island ServerSim (running unless lobbyMode), and the UDP server
+ * instance accepting remote clients. Sets h->threadsUp / h->port / h->sim /
+ * h->serverUp. The caller has already zeroed *h. Returns false on any failure
+ * (the harness stays safe to Stop). */
+static bool loopbackBringUpServer(LoopbackHarness *h, bool lobbyMode) {
     BYTE emap[6000] = E_MAP;
     ServerInstanceConfig cfg;
-
-    if (h == NULL) return false;
-    memset(h, 0, sizeof(*h));
 
     bolo_net_init();
 
@@ -125,7 +125,15 @@ bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
         return false;
     }
     h->serverUp = true;
+    return true;
+}
 
+/* Connect a fresh ClientSim over UDP to the harness server. spectator selects a
+ * tankless spectator connect (no tank slot, no map download) over a normal
+ * player join. impairSpec is applied to the client endpoint before connect.
+ * Sets h->cs / h->clientUp. */
+static bool loopbackConnectClient(LoopbackHarness *h, const char *playerName,
+                                  const char *impairSpec, bool spectator) {
     /* Set before connect — transportUdpClientCreate reads WB_NETIMPAIR
      * once at construction. */
     loopbackSetImpairEnv(impairSpec);
@@ -139,13 +147,59 @@ bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
                              /*fallbackCountry*/ "", /*password*/ "",
                              /*wbnApiToken*/ NULL, /*wbnServerKey*/ NULL,
                              /*wantRejoin*/ false, /*trackerAddr*/ "",
-                             /*trackerPort*/ 0)) {
+                             /*trackerPort*/ 0, spectator)) {
         return false;
     }
     h->clientUp = true;
+    return true;
+}
+
+bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
+                          bool lobbyMode, const char *impairSpec,
+                          uint64_t seed) {
+    if (h == NULL) return false;
+    memset(h, 0, sizeof(*h));
+
+    if (!loopbackBringUpServer(h, lobbyMode)) {
+        return false;
+    }
+    if (!loopbackConnectClient(h, playerName, impairSpec, /*spectator*/ false)) {
+        return false;
+    }
 
     /* Seed last so the pump phase's impairment + sim draws are reproducible
      * regardless of any randomness consumed during setup above. */
+    bolo_srand(seed);
+    return true;
+}
+
+bool loopbackHarnessStartSpectator(LoopbackHarness *h, const char *playerName,
+                                   uint64_t seed) {
+    if (h == NULL) return false;
+    memset(h, 0, sizeof(*h));
+
+    /* A running game with no players is still watchable — the spectator's seed
+     * comes off the server's spectator ring, not a peer. */
+    if (!loopbackBringUpServer(h, /*lobbyMode*/ false)) {
+        return false;
+    }
+    /* Spectating is operator-gated and off by default; open viewer slots so the
+     * server's spectator-accept path admits the connect. */
+    serverSimSetMaxSpectators(h->sim, 4);
+
+    /* serverInstanceStartup creates the spectator ring only when maxSpectators
+     * was already > 0; here the slots are opened just above (after startup), so
+     * create the ring now — it is the production registration call and the seed
+     * a connecting spectator receives comes off this ring. Without it the running
+     * world records nothing and the spectator hangs awaiting a seed.
+     * serverInstanceShutdown (via loopbackHarnessStop) frees it. */
+    serverInstanceCreateSpectatorRing(h->sim);
+
+    if (!loopbackConnectClient(h, playerName, /*impairSpec*/ NULL,
+                               /*spectator*/ true)) {
+        return false;
+    }
+
     bolo_srand(seed);
     return true;
 }

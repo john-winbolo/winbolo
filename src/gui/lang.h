@@ -480,6 +480,8 @@
 /* Team-chat system lines when a player joins/leaves the local team */
 #define STR_DLGLOBBY_TEAM_JOINED_FMT        1510
 #define STR_DLGLOBBY_TEAM_LEFT_FMT          1511
+/* Lobby roster header above the spectator list ({number} = live count) */
+#define STR_DLGLOBBY_SPECTATORS_FMT         1848
 /* Map-preview start-picker tooltips and the assign-to-someone menu */
 #define STR_STARTPICK_TIP_FREE_HOST         1512
 #define STR_STARTPICK_TIP_FREE              1513
@@ -1518,6 +1520,22 @@
 #define STR_LV_VOTE_CAST_NO                 1399
 #define STR_LV_VOTE_PASSED                  1400
 #define STR_LV_VOTE_FAILED                  1401
+
+/* Live-spectator feed: leave-confirm modal, phase badges, window title,
+ * events-timeline lines, and the pre-roll countdown overlay. */
+#define STR_LV_SPEC_LEAVE_CONFIRM           1849
+#define STR_LV_SPEC_PHASE_LOBBY             1850
+#define STR_LV_SPEC_PHASE_LIVE              1851
+#define STR_LV_SPEC_PHASE_GAMEOVER          1852
+#define STR_LV_SPEC_WINDOW_TITLE_FMT        1853
+#define STR_LV_SPEC_JOINED                  1854
+#define STR_LV_SPEC_LEFT                    1855
+#define STR_LV_SPEC_CHAT                    1856
+#define STR_LV_SPEC_BEGINS_IN_FMT           1857
+#define STR_LV_SPEC_CONNECTING              1858
+#define STR_LV_SPEC_CONNECTION_LOST         1859
+#define STR_LV_SPEC_BEGINS_NOW              1860
+#define STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT  1861
 
 /* Volume — slider label and Mac preset submenu items */
 #define STR_MENU_VOLUME                     1402

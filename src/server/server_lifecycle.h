@@ -47,6 +47,8 @@ typedef struct {
   BYTE           maxPlayers;
   BYTE           maxBots;          /* cap on AI bots addable in the lobby;
                                       0 = no cap */
+  BYTE           maxSpectators;    /* cap on spectator connections; 0 = spectating disabled */
+  uint16_t       specDelaySeconds; /* spectator view delay in seconds; 0 = live (no floor) */
 
   bool           acceptRemoteClients; /* false = skip UDP bind, WBN, tracker
                                          and NAT portmap setup; serverInstanceTick
@@ -138,6 +140,24 @@ void serverInstanceTick(ServerSim *sim);
  * to all connected clients), winbolonetDestroy(TRUE) if WBN was active,
  * botManagerDestroy(sim). Does NOT destroy or free sim — caller owns. */
 void serverInstanceShutdown(ServerSim *sim);
+
+/* Live delayed-stream spectator ring for this instance. The full type lives in
+ * internal/spectator_ring.h (T2 sim-internal); only a pointer is exposed here
+ * so this header's wider consumers need not pull that header in. */
+struct SpectatorRing;
+
+/* Create the live ring and register it with the log tap (serverInstanceStartup
+ * calls this for a real MP host once the spectator cap / delay are set). No-op
+ * leaving the ring NULL when spectating is disabled (maxSpectators == 0). */
+void serverInstanceCreateSpectatorRing(ServerSim *sim);
+
+/* Unregister the tap then free the ring (serverInstanceShutdown calls this).
+ * NULL-safe and idempotent. */
+void serverInstanceDestroySpectatorRing(void);
+
+/* The live ring handle, or NULL when spectating is disabled / no server is up.
+ * For the serve path (2d-c+) and tests. */
+struct SpectatorRing *serverInstanceGetSpectatorRing(void);
 
 /* Round-end log-upload hooks for WinBoloDS. Only the dedicated-server
  * binary ships server_dedicated_log.c (it touches servermain.c-owned

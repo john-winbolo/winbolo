@@ -36,6 +36,8 @@ extern "C" {
     void lv_updateSpeed(unsigned char speed, int updateSlider);
     void lv_screenGetLogProgress(size_t *currentPos, size_t *totalSize, uint32_t *currentTime, uint32_t *totalTime);
     void lv_screenSeekToPosition(float ratio);
+    bool lv_screenSpecIsLiveMode(void);
+    void lv_screenSpecJumpToLive(void);
     void lv_clientMutexWaitFor(void);
     void lv_clientMutexRelease(void);
     void lv_drawDirtyScreen(void);
@@ -163,6 +165,16 @@ void lv_imgui_controls_window(void) {
         imguiHandOnHover();
 
         if (controlsDisabled) ImGui::EndDisabled();
+
+        /* Spectator live-DVR: jump back to the live head and resume following it.
+         * Shown only on the live spectator feed, not for standalone .wbv playback. */
+        if (lv_screenSpecIsLiveMode()) {
+            ImGui::SameLine();
+            if (ImGui::Button("Live", ImVec2(50, 0))) {
+                lv_screenSpecJumpToLive();
+            }
+            imguiHandOnHover();
+        }
 
         /* Speed slider - same line as buttons */
         ImGui::SameLine(0, 15);

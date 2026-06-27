@@ -44,9 +44,11 @@
 /* The difference between big log and items */
 #define LOG_SIZE_LONG_DIFF 256
 
-/* Log header and version information */
+/* Log header and version information. Version 2 drops the XOR
+ * obfuscation (plaintext stream) and frames each event record as
+ * [type][u16 big-endian payload length][payload]. */
 #define LOG_HEADER "WBOLOMOV"
-#define LOG_VERSION 1
+#define LOG_VERSION 2
 
 /* Memory buffer for writing events */
 #define LOG_MEMORY_BUFFER_SIZE (64 *1024)
@@ -101,7 +103,10 @@ log_MapSkipApplied,
 log_BalanceApplied,
 log_GameVoteStart,   // opt1=kind, opt2=initiator, opt3=team (0 = global)
 log_GameVoteCast,    // opt1=kind, opt2=player,    opt3=voteYes
-log_GameVoteEnd      // opt1=kind, opt2=result (0=failed,1=passed)
+log_GameVoteEnd,     // opt1=kind, opt2=result (0=failed,1=passed)
+log_SpectatorJoined, // opt1=spectator slot, opt2/opt3=country[0]/[1], opt4=wbnFlags, reserved byte, then name pstr
+log_SpectatorLeft,   // opt1=spectator slot, then name pstr (names the leaver across slot reuse)
+log_SpectatorChat    // format-reserved: opt1=sender spectator slot + message pstr (no emitter yet)
 } logitem;
 
 typedef struct {

@@ -599,11 +599,12 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     (void)isPillView; (void)edgeX; (void)edgeY; (void)useCursor;
     (void)cursorLeft; (void)cursorTop;
 
-    /* Phase D: standalone game-view path. Routes the same per-frame
-     * pointers lv_screenUpdate built into the live-game renderers.
-     * Embedded mode never enters here — gameView toggle is gated on
-     * ownsWindow in logviewer.c. */
-    if (lv->gameView && lv->ownsWindow) {
+    /* Game-view path: routes the same per-frame pointers lv_screenUpdate
+     * built into the direct-render game-look frame. Serves both the
+     * standalone viewer and the embedded "Watch a Log" flow — game-view
+     * drives the active window (borrowed when embedded) for its duration;
+     * lv_drawGameViewSetup/Teardown save and restore its size. */
+    if (lv->gameView) {
         lv_drawGameViewFrame(value, mineView, tks, sBullets, lgms);
         return;
     }

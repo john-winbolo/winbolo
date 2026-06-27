@@ -40,6 +40,7 @@
 #include "netpacks.h"
 #include "zip.h"
 #include "server_sim.h"
+#include "log_internal.h"
 #include "../winbolonet/winbolonet_core.h"
 
 zipFile logFile;               /* File to log to */
@@ -117,6 +118,41 @@ void logSetLobbyMode(bool enabled) {
   logLobbyMode = enabled ? TRUE : FALSE;
 }
 
+/* Spectator ring tap. When logSpectatorRing is non-NULL, logAddEvent appends
+ * each emitted event's plaintext to logSpectatorAcc and logWriteTick records
+ * one ring tick per call (a keyframe snapshot body, or the accumulated event
+ * bytes). All off by default — NULL ring means the tap costs nothing. */
+static SpectatorRing *logSpectatorRing = NULL;
+static ServerSim *logSpectatorSim = NULL;
+static BYTE logSpectatorAcc[LOG_MEMORY_BUFFER_SIZE]; /* this tick's plaintext events */
+static int logSpectatorAccLen = 0;
+
+void logSetSpectatorRing(SpectatorRing *ring, ServerSim *sim) {
+  logSpectatorRing = ring;
+  logSpectatorSim = sim;
+  logSpectatorAccLen = 0;
+  /* Prime the per-tank change-gating baseline so the ring's first
+     log_PlayerLocation events emit against a clean slate — the same reset
+     logStart does for the .wbv path. Only when no .wbv is recording: an active
+     .wbv already owns and maintains logCheckTanks, and the ring shares that
+     same gating, so wiping it mid-stream would corrupt the .wbv's location
+     deltas. The owner-thread pin is left to logWriteTick's first-call capture
+     (the tick thread), exactly as the .wbv path relies on. */
+  if (ring != NULL && logIsRunning == FALSE) {
+    int count;
+    for (count = 0; count < MAX_TANKS; count++) {
+      logCheckTanks.item[count].mx = 0;
+      logCheckTanks.item[count].my = 0;
+      logCheckTanks.item[count].pxy = 0;
+      logCheckTanks.item[count].opt = 0;
+    }
+  }
+}
+
+bool logHasSpectatorRing(void) {
+  return logSpectatorRing != NULL;
+}
+
 /*********************************************************
 *NAME:          logCreate
 *AUTHOR:        John Morrison
@@ -157,14 +193,14 @@ void logWriteEmpty() {
   if (logIsRunning == TRUE) {
     if (logLastEvent > 0) {
       if (logLastEvent < LOG_SIZE_LONG_DIFF) {
-        data[0] = LOG_NOEVENTS ^ logOldKey;
-        data[1] = (BYTE) logLastEvent ^ logOldKey;
+        data[0] = LOG_NOEVENTS;
+        data[1] = (BYTE) logLastEvent;
         zipWriteInFileInZip(logFile, data, 2);
       } else {
         us = htons(logLastEvent);
-        data[0] = LOG_NOEVENTS_LONG ^ logOldKey;
-        data[1] = (BYTE) (us >> 8) ^ logOldKey;
-        data[2] = (BYTE) (us & 0xFF) ^ logOldKey;
+        data[0] = LOG_NOEVENTS_LONG;
+        data[1] = (BYTE) (us >> 8);
+        data[2] = (BYTE) (us & 0xFF);
         zipWriteInFileInZip(logFile, data, 3);
       }
     }
@@ -202,6 +238,58 @@ void logWriteTick() {
     logOwnerThread = SDL_GetCurrentThreadID();
   }
 
+  /* Spectator ring tap: record one ring tick for the registered sim, using the
+     tick's accumulated events or a fresh keyframe. Fires whenever a ring is
+     registered, independent of .wbv recording — a normal (non-recording) server
+     still feeds connecting spectators. The .wbv logMem path below stays gated on
+     logIsRunning. */
+  {
+    if (logSpectatorRing != NULL && logSpectatorSim != NULL) {
+      uint32_t gameTick = serverSimGetTick(logSpectatorSim);
+      if (spectatorRingNeedsKeyframe(logSpectatorRing, gameTick) == true) {
+        /* Ring keyframe = [u32 bodyLen][world snapshot body][u32 ctrlLen]
+           [control snapshot] (big-endian lengths). The world body is the same
+           plaintext logSerializeSnapshotBody writes to the .wbv; the control
+           snapshot is the serverSimSyncSubscriber-equivalent roster / score /
+           team / phase / lobby / vote / balance state a delayed joiner needs.
+           Both serializers write straight into their final slots to avoid a
+           second copy. Ring-only — the .wbv path below is untouched. */
+        BYTE *combined = (BYTE *) malloc(LOG_SNAPSHOT_BODY_MAX +
+                                         LOG_CONTROL_SNAPSHOT_MAX + 8);
+        if (combined != NULL) {
+          int bodyLen = logSerializeSnapshotBody(logSpectatorSim, combined + 4,
+                                                 LOG_SNAPSHOT_BODY_MAX);
+          int ctrlLen = -1;
+          if (bodyLen >= 0) {
+            ctrlLen = serverSimSerializeControlSnapshot(
+                logSpectatorSim, combined + 8 + bodyLen,
+                LOG_CONTROL_SNAPSHOT_MAX);
+          }
+          /* Skip the keyframe entirely on either failure rather than record a
+             truncated one (mirrors the original bodyLen >= 0 guard). */
+          if (bodyLen >= 0 && ctrlLen >= 0) {
+            int cpos = 4 + bodyLen;
+            combined[0] = (BYTE) (((uint32_t) bodyLen >> 24) & 0xFF);
+            combined[1] = (BYTE) (((uint32_t) bodyLen >> 16) & 0xFF);
+            combined[2] = (BYTE) (((uint32_t) bodyLen >> 8) & 0xFF);
+            combined[3] = (BYTE) ((uint32_t) bodyLen & 0xFF);
+            combined[cpos + 0] = (BYTE) (((uint32_t) ctrlLen >> 24) & 0xFF);
+            combined[cpos + 1] = (BYTE) (((uint32_t) ctrlLen >> 16) & 0xFF);
+            combined[cpos + 2] = (BYTE) (((uint32_t) ctrlLen >> 8) & 0xFF);
+            combined[cpos + 3] = (BYTE) ((uint32_t) ctrlLen & 0xFF);
+            spectatorRingRecordTick(logSpectatorRing, gameTick, true, combined,
+                                    cpos + 4 + ctrlLen);
+          }
+          free(combined);
+        }
+      } else {
+        spectatorRingRecordTick(logSpectatorRing, gameTick, false,
+                                logSpectatorAcc, logSpectatorAccLen);
+      }
+      logSpectatorAccLen = 0;
+    }
+  }
+
   if (logIsRunning == TRUE) {
     if (logNumEvents > 0) {
       logWriteEmpty();
@@ -235,14 +323,14 @@ void logWriteEvents(BYTE key) {
 
   if (logNumEvents > 0) {
     if (logNumEvents < LOG_SIZE_LONG_DIFF) {
-      data[0] = LOG_EVENT ^ key;
-      data[1] = (BYTE) logNumEvents ^ key;
+      data[0] = LOG_EVENT;
+      data[1] = (BYTE) logNumEvents;
       zipWriteInFileInZip(logFile, data, 2);
     } else {
       us = htons(logNumEvents);
-      data[0] = LOG_EVENT_LONG ^ key;
-      data[1] = (BYTE) (us >> 8) ^ key;
-      data[2] = (BYTE) (us & 0xFF) ^ key;
+      data[0] = LOG_EVENT_LONG;
+      data[1] = (BYTE) (us >> 8);
+      data[2] = (BYTE) (us & 0xFF);
       zipWriteInFileInZip(logFile, data, 3);
     }
     zipWriteInFileInZip(logFile, logMem, logMemSize);
@@ -264,12 +352,11 @@ void logWriteEvents(BYTE key) {
 *********************************************************/
 void logStop() {
   BYTE data[2];
-  BYTE savedKey = logOldKey; /* Save the key as the old key will be overridden in WriteEmpty */
 
   if (logIsRunning == TRUE) {
     logWriteEmpty();
-    data[0] = LOG_QUIT ^ savedKey;
-    data[1] = LOG_QUIT ^ savedKey;
+    data[0] = LOG_QUIT;
+    data[1] = LOG_QUIT;
     zipWriteInFileInZip(logFile, data, 2);
     zipCloseFileInZip(logFile);
     zipClose(logFile, "WinBolo Log File");
@@ -325,6 +412,276 @@ void logAddToMemory(BYTE *memPos, const void *dataIn, BYTE dataLen) {
 }
 
 /*********************************************************
+*NAME:          logSerializeEvent
+*AUTHOR:        John Morrison
+*PURPOSE:
+* Writes a single event's plaintext bytes (no XOR) into out, framed as
+* [type][u16 big-endian payload length][payload]: the event-code byte, then
+* the payload byte count as a big-endian u16, then that event type's payload
+* in the exact order, lengths and values logAddEvent's switch produces.
+* Variable-length events append their pascal string as words[0]+1 plaintext
+* bytes. Returns the number of bytes written (3 + payload length), or 0 for an
+* unknown event type (nothing written, no framing). Does not touch logKey,
+* logMem, logNumEvents or call logCheckTankSame.
+*
+*ARGUMENTS:
+*  itemNum - Item number to serialize
+*  opt1    - Option argument 1
+*  opt2    - Option argument 2
+*  opt3    - Option argument 3
+*  opt4    - Option argument 4
+*  short1  - Short optional argument
+*  words   - Char* optional argument (pascal string)
+*  out     - Destination buffer (must hold up to 264 bytes)
+*********************************************************/
+static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, unsigned short short1, const char *words, BYTE *out) {
+  int off = 0; /* Bytes written so far */
+  unsigned short wordsLen; /* Safe length for words data */
+
+  switch (itemNum) {
+  case log_BaseSetOwner:
+    out[off++] = log_BaseSetOwner;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_BaseSetStock:
+    out[off++] = log_BaseSetStock;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    break;
+  case log_PlayerJoined:
+    out[off++] = log_PlayerJoined;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    out[off++] = (BYTE) short1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_PlayerQuit:
+    out[off++] = log_PlayerQuit;
+    out[off++] = opt1;
+    break;
+  case log_LostMan:
+    out[off++] = log_LostMan;
+    out[off++] = opt1;
+    break;
+  case log_MapChange:
+    out[off++] = log_MapChange;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_ChangeName:
+    out[off++] = log_ChangeName;
+    out[off++] = opt1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_AllyRequest:
+    out[off++] = log_AllyRequest;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  case log_AllyAccept:
+    out[off++] = log_AllyAccept;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  case log_AllyLeave:
+    out[off++] = log_AllyLeave;
+    out[off++] = opt1;
+    break;
+  case log_PillSetOwner:
+    out[off++] = log_PillSetOwner;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_PillSetPlace:
+    out[off++] = log_PillSetPlace;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_PillSetHealth:
+  case log_PillSetInTank:
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    break;
+  case log_SoundBuild:
+  case log_SoundFarm:
+  case log_SoundShoot:
+  case log_SoundHitWall:
+  case log_SoundHitTank:
+  case log_SoundHitTree:
+  case log_SoundMineLay:
+  case log_SoundMineExplode:
+  case log_SoundExplosion:
+  case log_SoundBigExplosion:
+  case log_SoundManDie:
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  case log_PlayerLocation:
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    out[off++] = (BYTE) short1;
+    break;
+  case log_Shell:
+  case log_LgmLocation:
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    break;
+  case log_KillPlayer:
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  case log_MessagePlayers:
+    out[off++] = log_MessagePlayers;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_MessageAll:
+    out[off++] = log_MessageAll;
+    out[off++] = opt1;
+    //FIXTHIS
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_MessageServer:
+    out[off++] = log_MessageServer;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_PlayerRejoin:
+    out[off++] = log_PlayerRejoin;
+    out[off++] = opt1;
+    break;
+  case log_PlayerLeaving:
+    out[off++] = log_PlayerLeaving;
+    out[off++] = opt1;
+    break;
+  case log_PlayerDied:
+    out[off++] = log_PlayerDied;
+    out[off++] = opt1;
+    break;
+  case log_LobbyEnter:
+  case log_LobbyExit:
+    out[off++] = itemNum;
+    break;
+  case log_PlayerReady:
+  case log_PlayerUnready:
+  case log_MapSkipVote:
+    /* event code + player number */
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    break;
+  case log_TeamSet:
+    /* event code + player number + team number */
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  case log_CountdownStart:
+  case log_CountdownCancel:
+  case log_BalanceApplied:
+    /* event code only, no payload */
+    out[off++] = itemNum;
+    break;
+  case log_MapSkipApplied:
+    /* event code + pascal string map name */
+    out[off++] = itemNum;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_GameVoteStart:
+    /* event code + kind + initiator player + team (0 = global) */
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_GameVoteCast:
+    /* event code + kind + player + voteYes (0/1) */
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    break;
+  case log_GameVoteEnd:
+    /* event code + kind + result (0=failed,1=passed) */
+    out[off++] = itemNum;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    break;
+  case log_SpectatorJoined:
+    /* spectator slot + country[0] + country[1] + wbnFlags + reserved
+       + pascal-string viewer name. Mirrors log_PlayerJoined's shape. */
+    out[off++] = log_SpectatorJoined;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    out[off++] = (BYTE) short1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_SpectatorLeft:
+    /* spectator slot + pascal-string viewer name so the leaver is named
+       unambiguously even after the slot is reused. */
+    out[off++] = log_SpectatorLeft;
+    out[off++] = opt1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_SpectatorChat:
+    /* Format-reserved (no emitter yet): sender spectator slot + pascal-string
+       message. Mirrors log_MessageAll so the on-disk shape is locked now. */
+    out[off++] = log_SpectatorChat;
+    out[off++] = opt1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  default:
+    return 0;
+  }
+  /* Frame the [type][payload] the switch produced as [type][u16 BE len]
+     [payload] by shifting the payload right two bytes and inserting the
+     big-endian payload length after the type byte. */
+  {
+    int payloadLen = off - 1; /* bytes after the type byte */
+    memmove(out + 3, out + 1, (size_t)payloadLen);
+    out[1] = (BYTE)((payloadLen >> 8) & 0xFF);
+    out[2] = (BYTE)(payloadLen & 0xFF);
+    return off + 2;
+  }
+}
+
+/*********************************************************
 *NAME:          logAddEvent
 *AUTHOR:        John Morrison
 *CREATION DATE: 5/5/01
@@ -342,8 +699,10 @@ void logAddToMemory(BYTE *memPos, const void *dataIn, BYTE dataLen) {
 *  words   - Char* optional argument
 *********************************************************/
 void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, unsigned short short1, char *words) {
-  bool changeKey = TRUE; /* Whether to change the encryption key or not */
-  unsigned short wordsLen; /* Safe length for words data */
+  BYTE event[264]; /* Plaintext event: type + u16 len + 6-byte header + 256-byte pascal string */
+  int eventLen; /* Bytes the serializer produced */
+  int count;
+  bool wbvActive; /* Is a .wbv log buffer the destination this call */
 
   if (logOwnerThread != 0 && SDL_GetCurrentThreadID() != logOwnerThread) {
     return;
@@ -351,314 +710,50 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
   if (logLobbyMode == TRUE && logitemMutatesWorld(itemNum) == TRUE) {
     return;
   }
-  if (logIsRunning == TRUE && logMem != NULL) {
-    /* Bounds check: ensure we have room in the log buffer.
-       Max single event is 6 bytes header + 256 bytes words data */
-    if (logMemSize + 262 >= LOG_MEMORY_BUFFER_SIZE) {
-      return;
-    }
-    switch (itemNum) {
-    case log_BaseSetOwner:
-      *(logMem+logMemSize) = log_BaseSetOwner ^ logKey;
+  /* Record the event once into the .wbv buffer and/or the spectator ring. The
+     change-gating (logCheckTankSame) and serialize run a single time and feed
+     both, so a registered ring needs no .wbv log and a location event is never
+     double-counted. The .wbv byte stream is unchanged: every step that touches
+     logMem / logNumEvents / logKey stays guarded on wbvActive in the original
+     order, so an inactive ring leaves the .wbv path identical. */
+  wbvActive = (logIsRunning == TRUE && logMem != NULL);
+  if (wbvActive == FALSE && logSpectatorRing == NULL) {
+    return;
+  }
+  /* Bounds check applies only to the .wbv buffer (the ring has its own bound
+     below). Preserves the original drop-the-event-with-no-side-effect semantics
+     when the .wbv buffer is full. Max single event is type + u16 len + 6 bytes
+     header + 256 bytes words data. */
+  if (wbvActive == TRUE && logMemSize + 264 >= LOG_MEMORY_BUFFER_SIZE) {
+    return;
+  }
+  /* log_PlayerLocation only emits when the tank state changed; logCheckTankSame
+     updates its cached state as a side effect. When unchanged, emit nothing:
+     no bytes, no event count change, no key rotation. */
+  if (itemNum == log_PlayerLocation &&
+      logCheckTankSame(opt1, opt2, opt3, opt4, (BYTE) short1) == TRUE) {
+    return;
+  }
+  eventLen = logSerializeEvent(itemNum, opt1, opt2, opt3, opt4, short1, words, event);
+  if (eventLen <= 0) {
+    /* Unknown event type: emit nothing, no count change, no key rotation. */
+    return;
+  }
+  if (wbvActive == TRUE) {
+    /* Append the event's plaintext bytes to logMem. */
+    for (count = 0; count < eventLen; count++) {
+      *(logMem+logMemSize) = event[count];
       logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_BaseSetStock:
-      *(logMem+logMemSize) = log_BaseSetStock ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt4 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PlayerJoined:
-      *(logMem+logMemSize) = log_PlayerJoined ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt4 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = (BYTE) short1 ^ logKey;
-      logMemSize++;
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_PlayerQuit:
-      *(logMem+logMemSize) = log_PlayerQuit ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_LostMan:
-      *(logMem+logMemSize) = log_LostMan ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_MapChange:
-      *(logMem+logMemSize) =  log_MapChange ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_ChangeName:
-      *(logMem+logMemSize) =  log_ChangeName ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_AllyRequest:
-      *(logMem+logMemSize) =  log_AllyRequest ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    case log_AllyAccept:
-      *(logMem+logMemSize) =  log_AllyAccept ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    case log_AllyLeave:
-      *(logMem+logMemSize) =  log_AllyLeave ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PillSetOwner:
-      *(logMem+logMemSize) =  log_PillSetOwner ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PillSetPlace:
-      *(logMem+logMemSize) =  log_PillSetPlace ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PillSetHealth:
-    case log_PillSetInTank:
-      *(logMem+logMemSize) =  itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_SoundBuild:
-    case log_SoundFarm:
-    case log_SoundShoot:
-    case log_SoundHitWall:
-    case log_SoundHitTank:
-    case log_SoundHitTree:
-    case log_SoundMineLay:
-    case log_SoundMineExplode:
-    case log_SoundExplosion:
-    case log_SoundBigExplosion:
-    case log_SoundManDie:
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PlayerLocation:
-      if (logCheckTankSame(opt1, opt2, opt3, opt4, (BYTE) short1) == TRUE) {
-        changeKey = FALSE;
-        logNumEvents--;
-      } else {
-        *(logMem+logMemSize) = itemNum ^ logKey;
-        logMemSize++;
-        *(logMem+logMemSize) = opt1 ^ logKey;
-        logMemSize++;
-        *(logMem+logMemSize) = opt2 ^ logKey;
-        logMemSize++;
-        *(logMem+logMemSize) = opt3 ^ logKey;
-        logMemSize++;
-        *(logMem+logMemSize) = opt4 ^ logKey;
-        logMemSize++;
-        *(logMem+logMemSize) = (BYTE) short1 ^ logKey;
-        logMemSize++;
-      }
-      break;
-    case log_Shell:
-    case log_LgmLocation:
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt4 ^ logKey;
-      logMemSize++;
-      break;
-    case log_KillPlayer:
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    case log_MessagePlayers:
-      *(logMem+logMemSize) = log_MessagePlayers^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_MessageAll:
-      *(logMem+logMemSize) = log_MessageAll ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      //FIXTHIS
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_MessageServer:
-      *(logMem+logMemSize) = log_MessageServer ^ logKey;
-      logMemSize++;
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_PlayerRejoin:
-      *(logMem+logMemSize) = log_PlayerRejoin ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PlayerLeaving:
-      *(logMem+logMemSize) = log_PlayerLeaving ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_PlayerDied:
-      *(logMem+logMemSize) = log_PlayerDied ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_LobbyEnter:
-    case log_LobbyExit:
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      break;
-    case log_PlayerReady:
-    case log_PlayerUnready:
-    case log_MapSkipVote:
-      /* event code + player number */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      break;
-    case log_TeamSet:
-      /* event code + player number + team number */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    case log_CountdownStart:
-    case log_CountdownCancel:
-    case log_BalanceApplied:
-      /* event code only, no payload */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      break;
-    case log_MapSkipApplied:
-      /* event code + pascal string map name */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      wordsLen = (unsigned short)((BYTE)words[0]) + 1;
-      logAddToMemory((logMem+logMemSize), words, (BYTE) wordsLen);
-      logMemSize += wordsLen;
-      break;
-    case log_GameVoteStart:
-      /* event code + kind + initiator player + team (0 = global) */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_GameVoteCast:
-      /* event code + kind + player + voteYes (0/1) */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt3 ^ logKey;
-      logMemSize++;
-      break;
-    case log_GameVoteEnd:
-      /* event code + kind + result (0=failed,1=passed) */
-      *(logMem+logMemSize) = itemNum ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt1 ^ logKey;
-      logMemSize++;
-      *(logMem+logMemSize) = opt2 ^ logKey;
-      logMemSize++;
-      break;
-    default:
-      changeKey = FALSE;
-      logNumEvents--;
-      break;
     }
     logNumEvents++;
-    if (changeKey == TRUE) {
-      logKey = itemNum;
-    }
+    logKey = itemNum;
+  }
+  /* Feed the same plaintext to the spectator ring's per-tick accumulator, so the
+     tap inherits this function's emit decisions and lobby gating. */
+  if (logSpectatorRing != NULL &&
+      logSpectatorAccLen + eventLen <= (int)sizeof(logSpectatorAcc)) {
+    memcpy(logSpectatorAcc + logSpectatorAccLen, event, (size_t)eventLen);
+    logSpectatorAccLen += eventLen;
   }
 }
 
@@ -684,13 +779,113 @@ void logDestroy() {
 }
 
 int writeData(BYTE *data, int len, BYTE key) {
-  int count = 0;
-  while (count < len) {
-    data[count] = data[count] ^ key;
-    count++;
+  /* Plaintext stream (v2): no XOR. key is retained in the signature so the
+     existing call sites need no churn; it is intentionally unused. */
+  (void) key;
+  return zipWriteInFileInZip(logFile, data, len);
+}
+
+/*********************************************************
+*NAME:          logSerializeSnapshotBody
+*AUTHOR:        John Morrison
+*PURPOSE:
+* Writes the snapshot body (everything the recorder emits after the
+* LOG_EVENT_SNAPSHOT marker, starting at startDelay) as plaintext into out,
+* returning the number of bytes written, or -1 if cap is too small. The bytes,
+* their order and their lengths match exactly what logWriteSnapshot feeds
+* writeData before the XOR; logWriteSnapshot re-applies the XOR and the zip
+* write as a post-step.
+*
+*ARGUMENTS:
+* ssim - ServerSim (contains GameSim plus server-specific fields)
+* out  - Destination buffer for the plaintext body
+* cap  - Capacity of out in bytes
+*********************************************************/
+int logSerializeSnapshotBody(ServerSim *ssim, BYTE *out, int cap) {
+  GameSim *gs = serverSimGetGameSim(ssim);
+  BYTE scratch[512];
+  BYTE dataLen;
+  int32_t length;
+  BYTE count;
+  int off = 0;
+
+#define LOG_SNAP_PUT(src, n)                                                   \
+  do {                                                                         \
+    if (off + (int)(n) > cap) return -1;                                       \
+    memcpy(out + off, (src), (size_t)(n));                                     \
+    off += (int)(n);                                                           \
+  } while (0)
+
+  /* Start delay and time left */
+  length = htonl(serverSimGetStartDelay(ssim));
+  LOG_SNAP_PUT(&length, sizeof(int32_t));
+  length = htonl(serverSimGetGameLength(ssim));
+  LOG_SNAP_PUT(&length, sizeof(int32_t));
+
+  if (logLobbyMode == TRUE) {
+    /* Lobby snapshot — empty world: count=0 pill/base/start blocks, a single
+     * all-deep-sea terminator run, and a "not in use" stub per player slot. */
+    BYTE block[2];
+    BYTE terminator[4];
+    BYTE stub[3];
+
+    block[0] = 1;
+    block[1] = 0;
+    LOG_SNAP_PUT(block, 2); /* pills */
+    LOG_SNAP_PUT(block, 2); /* bases */
+    LOG_SNAP_PUT(block, 2); /* starts */
+
+    terminator[0] = 4;
+    terminator[1] = 0xFF;
+    terminator[2] = 0xFF;
+    terminator[3] = 0xFF;
+    LOG_SNAP_PUT(terminator, 4);
+
+    for (count = 0; count < MAX_TANKS; count++) {
+      stub[0] = 2; /* dataLen */
+      stub[1] = count;
+      stub[2] = FALSE;
+      LOG_SNAP_PUT(stub, 3);
+    }
+  } else {
+    bmapRun run;
+    BYTE xPos;
+    BYTE yPos;
+    int len;
+
+    /* Pill locations */
+    dataLen = pillsGetPillNetData(&gs->pb, scratch);
+    LOG_SNAP_PUT(&dataLen, 1);
+    LOG_SNAP_PUT(scratch, dataLen);
+
+    /* Base locations */
+    dataLen = basesGetBaseNetData(&gs->bs, scratch);
+    LOG_SNAP_PUT(&dataLen, 1);
+    LOG_SNAP_PUT(scratch, dataLen);
+
+    /* Start locations */
+    dataLen = startsGetStartNetData(&gs->ss, scratch);
+    LOG_SNAP_PUT(&dataLen, 1);
+    LOG_SNAP_PUT(scratch, dataLen);
+
+    /* The map itself, as RLE runs */
+    xPos = 0;
+    yPos = 0;
+    while (yPos < 0xFF) {
+      len = mapPrepareRun(&gs->mp, &run, &xPos, &yPos);
+      LOG_SNAP_PUT(&run, len);
+    }
+
+    /* Each player */
+    for (count = 0; count < MAX_TANKS; count++) {
+      playersPrepareLogSnapshotForPlayer(gs, &gs->plyrs, count, scratch, &dataLen);
+      LOG_SNAP_PUT(&dataLen, 1);
+      LOG_SNAP_PUT(scratch, dataLen);
+    }
   }
 
-  return zipWriteInFileInZip(logFile, data, len);
+#undef LOG_SNAP_PUT
+  return off;
 }
 
 /*********************************************************
@@ -703,18 +898,9 @@ int writeData(BYTE *data, int len, BYTE key) {
 * check - Whether to check if running or not
 *********************************************************/
 bool logWriteSnapshot(ServerSim *ssim, bool check) {
-  GameSim *gs = serverSimGetGameSim(ssim);
   bool returnValue = TRUE; /* Value to return */
-  BYTE dataLen;
-  BYTE savedDataLen;       /* Non XOR'd datalength */
   BYTE data[512];
   int ret;
-  BYTE count = 0;
-  bmapRun run;             /* Used to write the runs */
-  BYTE xPos;                /* Current position on the map */
-  BYTE yPos;
-  int len;                 /* Length of the run to write */
-  int32_t length;
 
   if (logIsRunning == FALSE && check == TRUE) {
     return TRUE;
@@ -747,134 +933,25 @@ bool logWriteSnapshot(ServerSim *ssim, bool check) {
     returnValue = FALSE;
   }
 
-  /* Write start delay and time left */
+  /* Serialize the snapshot body as plaintext, then emit it with a single
+   * writeData so it is XOR'd with logOldKey and zip-written in one pass. The
+   * body uses the same key throughout, so concatenating the sections produces
+   * the same on-disk bytes the per-section writes did. */
   if (returnValue == TRUE) {
-    length = htonl(serverSimGetStartDelay(ssim));
-    ret = writeData((BYTE *) &length, sizeof(int32_t), logOldKey);
-    if (ret != Z_OK) {
+    BYTE *body = (BYTE *) malloc(LOG_SNAPSHOT_BODY_MAX);
+    if (body == NULL) {
       returnValue = FALSE;
-    }
-  }
-  if (returnValue == TRUE) {
-    length = htonl(serverSimGetGameLength(ssim));
-    ret = writeData((BYTE *) &length, sizeof(int32_t), logOldKey);
-    if (ret != Z_OK) {
-      returnValue = FALSE;
-    }
-  }
-
-  if (logLobbyMode == TRUE) {
-    /* Lobby snapshot — empty world. Each of pills/bases/starts is a
-     * 1-byte length-prefixed payload with count=0 (matching the
-     * net-data getters' 0-entry shape). The map is a single all-
-     * deep-sea terminator run (datalen=4, y=sx=ex=0xFF), which the
-     * viewer's run reader at bolo_map.c:371 treats as end-of-map.
-     * Each player slot is the 2-byte "not in use" stub the viewer
-     * already handles at screen.c:1356.
-     *
-     * writeData XORs its buffer in place, so we re-initialise the
-     * scratch bytes ahead of every call rather than reusing them
-     * across calls. */
-    BYTE lenByte;
-    BYTE payload;
-    BYTE terminator[4];
-    BYTE stub[2];
-    if (returnValue == TRUE) {
-      lenByte = 1;
-      payload = 0;
-      ret = writeData(&lenByte, 1, logOldKey);
-      if (ret == Z_OK) ret = writeData(&payload, 1, logOldKey);
-      if (ret != Z_OK) returnValue = FALSE;
-    }
-    if (returnValue == TRUE && logFile) {
-      lenByte = 1;
-      payload = 0;
-      ret = writeData(&lenByte, 1, logOldKey);
-      if (ret == Z_OK) ret = writeData(&payload, 1, logOldKey);
-      if (ret != Z_OK) returnValue = FALSE;
-    }
-    if (returnValue == TRUE && logFile) {
-      lenByte = 1;
-      payload = 0;
-      ret = writeData(&lenByte, 1, logOldKey);
-      if (ret == Z_OK) ret = writeData(&payload, 1, logOldKey);
-      if (ret != Z_OK) returnValue = FALSE;
-    }
-    if (returnValue == TRUE && logFile) {
-      terminator[0] = 4;
-      terminator[1] = 0xFF;
-      terminator[2] = 0xFF;
-      terminator[3] = 0xFF;
-      ret = writeData(terminator, 4, logOldKey);
-      if (ret != Z_OK) returnValue = FALSE;
-    }
-    while (count < MAX_TANKS && returnValue == TRUE) {
-      dataLen   = 2;
-      stub[0]   = count;
-      stub[1]   = FALSE;
-      ret = writeData(&dataLen, 1, logOldKey);
-      if (ret == Z_OK) ret = writeData(stub, 2, logOldKey);
-      if (ret != Z_OK) returnValue = FALSE;
-      count++;
-    }
-  } else {
-    /* Write pill locations */
-    if (returnValue == TRUE) {
-      dataLen = pillsGetPillNetData(&gs->pb, data);
-      savedDataLen = dataLen;
-      ret = writeData(&dataLen, 1, logOldKey);
-      ret = writeData(data, savedDataLen, logOldKey);
-      if (ret != Z_OK) {
+    } else {
+      int bodyLen = logSerializeSnapshotBody(ssim, body, LOG_SNAPSHOT_BODY_MAX);
+      if (bodyLen < 0) {
         returnValue = FALSE;
-      }
-    }
-    /* Write bases locations */
-    if (returnValue == TRUE && logFile) {
-      dataLen = basesGetBaseNetData(&gs->bs, data);
-      savedDataLen = dataLen;
-      ret = writeData(&dataLen, 1, logOldKey);
-      ret = writeData(data, savedDataLen, logOldKey);
-      if (ret != Z_OK) {
-        returnValue = FALSE;
-      }
-    }
-    /* Write starts locations */
-    if (returnValue == TRUE && logFile) {
-      dataLen = startsGetStartNetData(&gs->ss, data);
-      savedDataLen = dataLen;
-      ret = writeData(&dataLen, 1, logOldKey);
-      ret = writeData(data, savedDataLen, logOldKey);
-      if (ret != Z_OK) {
-        returnValue = FALSE;
-      }
-    }
-
-    /* Write the map itself */
-    if (returnValue == TRUE && logFile) {
-      xPos = 0;
-      yPos = 0;
-      while (yPos < 0xFF && returnValue == TRUE) {
-        /* Process runs */
-        len = mapPrepareRun(&gs->mp, &run, &xPos, &yPos);
-        /* Write the run out */
-        ret = writeData((BYTE *) &run, len, logOldKey);
+      } else {
+        ret = writeData(body, bodyLen, logOldKey);
         if (ret != Z_OK) {
           returnValue = FALSE;
         }
       }
-    }
-
-    /* Write each player */
-    while (count < MAX_TANKS && returnValue == TRUE) {
-      playersPrepareLogSnapshotForPlayer(gs, &gs->plyrs, count, data, &dataLen);
-      savedDataLen = dataLen;
-      ret = writeData((BYTE *) &dataLen, 1, logOldKey);
-      ret = writeData(data, savedDataLen, logOldKey);
-
-      if (ret != Z_OK) {
-        returnValue = FALSE;
-      }
-      count++;
+      free(body);
     }
   }
   logOldKey = logKey;

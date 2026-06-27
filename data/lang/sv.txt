@@ -1806,3 +1806,19 @@ STR_ALLIANCE_RANKED_DISABLED=Allianser är inaktiverade i Ranked-spel.
 STR_DLGSETTINGS_TAB_DISPLAYSOUND=Skärm & Ljud
 STR_DLGSETTINGS_TAB_GAMEHUD=Spel/HUD
 STR_DLGSETTINGS_TAB_SESSION=Session
+
+# Live spectator feed
+STR_DLGLOBBY_SPECTATORS_FMT=Åskådare ({number}):
+STR_LV_SPEC_LEAVE_CONFIRM=Lämna åskådarläge?
+STR_LV_SPEC_PHASE_LOBBY=Lobby
+STR_LV_SPEC_PHASE_LIVE=Live
+STR_LV_SPEC_PHASE_GAMEOVER=Spelet slut
+STR_LV_SPEC_WINDOW_TITLE_FMT=WinBolo - Tittar på {string1}:{number} Karta: {string2}{string3}
+STR_LV_SPEC_JOINED={player} gick med som åskådare
+STR_LV_SPEC_LEFT={player} lämnade åskådarläget
+STR_LV_SPEC_CHAT=[åskådare] {number}: {string1}
+STR_LV_SPEC_BEGINS_IN_FMT=Åskådarläge börjar om {number}
+STR_LV_SPEC_CONNECTING=Ansluter...
+STR_LV_SPEC_CONNECTION_LOST=Anslutning förlorad
+STR_LV_SPEC_BEGINS_NOW=Åskådarläge börjar nu
+STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Tittar på {string1}:{number}{string3}

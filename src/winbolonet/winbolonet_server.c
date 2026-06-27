@@ -562,6 +562,73 @@ bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BY
 }
 
 /*********************************************************
+*NAME:          winboloNetVerifySpectatorKey
+*PURPOSE:
+* Validates a spectator_key via POST
+* /api/v1/client/verify_spectator. Unlike the player verify
+* it stores nothing in the slot-keyed winboloNetPlayerKey[]
+* array — spectators are not slot-indexed and the caller
+* keeps the key on the spectator connection itself.
+*********************************************************/
+bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerName, char *errorMsg, bool *isLoggedIn) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok = FALSE;
+
+  if (isLoggedIn) *isLoggedIn = FALSE;
+
+  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
+    strcpy(errorMsg, "WinBolo.net not running");
+    return FALSE;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "player_key", spectatorKey);
+  cJSON_AddStringToObject(body, "player_name", playerName);
+
+  status = wbn_api_call("client/verify_spectator", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      /* "ok" gates acceptance; treat its absence as success so a
+       * lean backend response still verifies, mirroring the player
+       * verify which accepts a 200 with no error. */
+      cJSON *okObj = cJSON_GetObjectItem(resp, "ok");
+      bool accepted = (okObj == NULL) || cJSON_IsTrue(okObj);
+      if (accepted) {
+        ok = TRUE;
+        if (isLoggedIn) {
+          cJSON *liObj = cJSON_GetObjectItem(resp, "is_logged_in");
+          if (liObj && cJSON_IsBool(liObj)) {
+            *isLoggedIn = cJSON_IsTrue(liObj) ? TRUE : FALSE;
+          }
+        }
+      } else {
+        strcpy(errorMsg, "WinBolo.net spectator verification rejected");
+      }
+    }
+  } else if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      strcpy(errorMsg, "WinBolo.net spectator verification failed");
+    }
+  } else {
+    strcpy(errorMsg, "No response from WinBolo.net");
+  }
+
+  cJSON_Delete(resp);
+  return ok;
+}
+
+/*********************************************************
 *NAME:          winboloNetClientLeaveGame
 *PURPOSE:
 * Called when a player leaves the game. Sends a leave
@@ -599,6 +666,37 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
   }
 
   winboloNetPlayerKey[playerNum][0] = '\0';
+}
+
+/*********************************************************
+*NAME:          winboloNetSpectatorLeaveGame
+*PURPOSE:
+* Releases a spectator's WBN session via POST
+* /api/v1/client/leave, keyed only by its spectator_key.
+* Spectators hold no slot-keyed events to flush, so this is
+* a bare leave with no player-count payload.
+*********************************************************/
+void winboloNetSpectatorLeaveGame(const char *spectatorKey) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+
+  if (spectatorKey == NULL || spectatorKey[0] == '\0' || winboloNetRunning != TRUE) {
+    return;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "player_key", spectatorKey);
+
+  wbn_api_call_server("client/leave", body, &resp);
+  cJSON_Delete(body);
+  if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      fprintf(stderr, "WinBolo.net spectator leave error: %s\n", errObj->valuestring);
+    }
+    cJSON_Delete(resp);
+  }
 }
 
 /*********************************************************
