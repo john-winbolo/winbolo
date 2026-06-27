@@ -194,6 +194,12 @@ extern "C" int imguiUdpSetupShow(void) {
     int result = 0;
     bool running = true;
 
+    /* Steam-initiated join: auto-fire the Join button after a brief dwell so
+     * the player sees the pre-filled server address before the connect starts.
+     * One-shot — consumed here, ignored on a normal manual open. */
+    bool autoJoin = gameFrontConsumeUdpAutoJoinRequest();
+    Uint64 autoJoinStart = autoJoin ? SDL_GetTicks() : 0;
+
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         SDL_Event ev;
@@ -448,6 +454,22 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
         gameFrontPumpDirty(); /* sync cloud prefs from menus (login join + debounced upload) */
+
+        /* Auto-join: once the pre-filled dialog has been on screen briefly,
+         * do exactly what the Join button does — validate + save, then advance
+         * to openUdpJoin (which runs clientSimConnectUdp). If validation fails
+         * (e.g. no player name is set yet), drop the auto-join and leave the
+         * dialog up so the player can correct it and Join manually. */
+        if (autoJoin && SDL_GetTicks() - autoJoinStart >= 600) {
+            autoJoin = false;
+            if (saveOptions(playerName, address, targetPortBuf, myPortBuf,
+                            rememberName, true)) {
+                gameFrontSetDlgState(openUdpJoin);
+                result = 1;
+                running = false;
+            }
+        }
+
         dialogFrameCapEnd(frameCapStart);
     }
 
