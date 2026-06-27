@@ -219,7 +219,11 @@ bool utilIsTankHit(WORLD xTank, WORLD yTank, TURNTYPE tankAngle, WORLD x, WORLD 
   {
     int dx = (int)xTank - (int)x;
     int dy = (int)yTank - (int)y;
-    return (dx * dx + dy * dy) < TANK_HIT_RADIUS_SQUARED;
+    /* Bounding-box pre-test bounds dx/dy before squaring; see tankIsTankHit.
+     * Never rejects a real hit, prevents int overflow for far-apart pairs
+     * (pillbox aim prediction steps a shell from far away toward the tank). */
+    return (abs(dx) < TANK_HIT_RADIUS && abs(dy) < TANK_HIT_RADIUS &&
+            (dx * dx + dy * dy) < TANK_HIT_RADIUS_SQUARED);
   }
 #endif
 }

@@ -1205,7 +1205,13 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 #else
 	int hitDX = (int)(*value)->x - (int)x;
 	int hitDY = (int)(*value)->y - (int)y;
-	bool inHitZone = (hitDX * hitDX + hitDY * hitDY) < TANK_HIT_RADIUS_SQUARED;
+	/* Bounding-box pre-test before squaring: every point inside the radius
+	 * circle is also inside this box, so it never rejects a real hit — it
+	 * just bounds hitDX/hitDY to < TANK_HIT_RADIUS so hitDX*hitDX can't
+	 * overflow int for far-apart shell/tank pairs (the per-shell loop tests
+	 * every tank regardless of distance). */
+	bool inHitZone = (abs(hitDX) < TANK_HIT_RADIUS && abs(hitDY) < TANK_HIT_RADIUS &&
+	                  (hitDX * hitDX + hitDY * hitDY) < TANK_HIT_RADIUS_SQUARED);
 #endif
 	if (inHitZone && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;
@@ -1597,6 +1603,8 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
    * The legacy grid-snap nudge + collision slowdown (Step 5) are bypassed in
    * this mode. */
   {
+    WORLD oldX = (*value)->x & TANK_GRID_MASK;
+    WORLD oldY = (*value)->y & TANK_GRID_MASK;
     int preX = (int)(*value)->x, preY = (int)(*value)->y;
     BumpInfo bumptype = tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
     int pushX = (int)(*value)->x - preX, pushY = (int)(*value)->y - preY;
@@ -1619,8 +1627,17 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         bumptype |= tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
       }
     }
-    (void)bumptype;
-    (void)movedThisTick;
+    /* Expose a wall-stuck signal to brains via tank_obstructed (read by
+     * Lua/ML observations). Same definition as the legacy path: a solid-wall
+     * collision that left the tank in the grid cell it started this nudge in
+     * — i.e. the wall blocked it rather than letting it slide. Sliding along
+     * a wall moves to a new grid cell and is NOT obstructed. Circle mode does
+     * not apply the legacy collision slowdown; this only sets the flag. */
+    if (movedThisTick) {
+      (*value)->obstructed = (bumptype & BumpInfo_SolidWall) &&
+          (((*value)->x & TANK_GRID_MASK) == oldX) &&
+          (((*value)->y & TANK_GRID_MASK) == oldY);
+    }
   }
 #else
   WORLD oldX = (*value)->x & TANK_GRID_MASK;
@@ -3373,7 +3390,10 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 #else
 	int hitDX = (int)tankX - (int)shellX;
 	int hitDY = (int)tankY - (int)shellY;
-	bool inHitZone = (hitDX * hitDX + hitDY * hitDY) < TANK_HIT_RADIUS_SQUARED;
+	/* Bounding-box pre-test bounds hitDX/hitDY before squaring; see the note
+	 * in tankIsTankHit. Never rejects a real hit, prevents int overflow. */
+	bool inHitZone = (abs(hitDX) < TANK_HIT_RADIUS && abs(hitDY) < TANK_HIT_RADIUS &&
+	                  (hitDX * hitDX + hitDY * hitDY) < TANK_HIT_RADIUS_SQUARED);
 #endif
 	if (inHitZone && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;

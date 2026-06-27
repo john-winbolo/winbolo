@@ -785,7 +785,10 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
       }
 #else
       int dx = (int)newX - (int)tkX, dy = (int)newY - (int)tkY;
-      if (dx * dx + dy * dy < TANK_HIT_RADIUS_SQUARED) {
+      /* Bounding-box pre-test bounds dx/dy before squaring; see tankIsTankHit
+       * in tank.c. Never rejects a real hit, prevents int overflow. */
+      if (abs(dx) < TANK_HIT_RADIUS && abs(dy) < TANK_HIT_RADIUS &&
+          dx * dx + dy * dy < TANK_HIT_RADIUS_SQUARED) {
         return true;
       }
 #endif
