@@ -24,10 +24,12 @@
  *
  *  Pan reuses inputGamepadGetScrollDirection — the existing
  *  Steam-Input-aware stick reader (Path A map-scroll action, or
- *  Path B right stick), already radially deadzoned. Zoom reads the
- *  triggers via SDL on the active SDL_Gamepad handle (Path B only;
- *  inputGamepadGetActiveHandle returns NULL under Steam Input, so
- *  trigger-zoom degrades to no-op there while pan still works).
+ *  Path B right stick), already radially deadzoned. Zoom has two
+ *  paths to match: under Steam Input (Path A) it reuses the InGame
+ *  gunsight_inc/gunsight_dec digital actions (idle while spectating),
+ *  since the SDL trigger axes are inert there and there is no SDL
+ *  handle; under native SDL (Path B) it reads the triggers on the
+ *  active SDL_Gamepad handle.
  *
  *  The gamepad is owned by the game (gamefront.c calls
  *  inputGamepadInit). These functions never open/init/close it.
@@ -37,7 +39,9 @@
 #include <stdint.h>
 
 #include "spectator_input.h"
-#include "input_gamepad.h"   /* inputGamepadGetActiveHandle / GetScrollDirection */
+#include "input_gamepad.h"   /* inputGamepadGetActiveHandle / GetScrollDirection / IsSteamInput */
+#include "../../steam/steam_wrapper.h"        /* steam_input_is_action_pressed */
+#include "../../steam/steam_input_actions.h"  /* SI_ACTION_GUNSIGHT_INC / _DEC */
 
 /* Trigger pull (normalised 0..1) past which a trigger counts as held. Matches
  * input_gamepad.c's TRIGGER_THRESHOLD, redeclared here as that one is private. */
@@ -69,23 +73,36 @@ bool specInputPollPan(float *dx, float *dy) {
 bool specInputPollZoom(int *dir) {
   if (dir) *dir = 0;
 
-  SDL_Gamepad *gp = inputGamepadGetActiveHandle();
-  if (gp == NULL) {
-    return false;
-  }
-
-  float lt = (float)SDL_GetGamepadAxis(gp, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) /
-             SPEC_TRIGGER_AXIS_MAX;
-  float rt = (float)SDL_GetGamepadAxis(gp, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) /
-             SPEC_TRIGGER_AXIS_MAX;
-
-  /* Right trigger zooms in, left zooms out; the deeper pull wins if both are
-   * held so the result is never ambiguous. */
   int want = 0;
-  if (rt > SPEC_TRIGGER_THRESHOLD && rt >= lt) {
-    want = 1;
-  } else if (lt > SPEC_TRIGGER_THRESHOLD) {
-    want = -1;
+
+  if (inputGamepadIsSteamInput()) {
+    /* Path A: SDL trigger axes are inert under Steam Input and there is no SDL
+     * handle, so reuse the InGame gunsight range actions (idle while
+     * spectating). inc zooms in, dec zooms out; inc wins if both report. */
+    if (steam_input_is_action_pressed(SI_ACTION_GUNSIGHT_INC)) {
+      want = 1;
+    } else if (steam_input_is_action_pressed(SI_ACTION_GUNSIGHT_DEC)) {
+      want = -1;
+    }
+  } else {
+    /* Path B: native SDL gamepad — read the analog triggers directly. */
+    SDL_Gamepad *gp = inputGamepadGetActiveHandle();
+    if (gp == NULL) {
+      return false;
+    }
+
+    float lt = (float)SDL_GetGamepadAxis(gp, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) /
+               SPEC_TRIGGER_AXIS_MAX;
+    float rt = (float)SDL_GetGamepadAxis(gp, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) /
+               SPEC_TRIGGER_AXIS_MAX;
+
+    /* Right trigger zooms in, left zooms out; the deeper pull wins if both are
+     * held so the result is never ambiguous. */
+    if (rt > SPEC_TRIGGER_THRESHOLD && rt >= lt) {
+      want = 1;
+    } else if (lt > SPEC_TRIGGER_THRESHOLD) {
+      want = -1;
+    }
   }
 
   static uint32_t lastStepMs = 0;
