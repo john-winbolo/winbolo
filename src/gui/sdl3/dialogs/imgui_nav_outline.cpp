@@ -108,6 +108,15 @@ extern "C" bool dialogNavIsInsideSubRegion(void) {
        regions (BeginTable with ScrollX/Y), both of which create a
        child window whose RootWindow points up to the user's outer
        Begin().  When nav is inside one of these, B should pop out
-       via ImGui's NavCancel rather than close the dialog. */
-    return g->NavWindow->RootWindow != g->NavWindow;
+       via ImGui's NavCancel rather than close the dialog.
+
+       Nav-flattened children (ImGuiChildFlags_NavFlattened) are
+       excluded: nav crosses their boundary as if they weren't there,
+       and ImGui's NavCancel won't pop out of one (its exit-child path
+       needs the focus root to have a parent, which a flattened child's
+       top-level root does not).  So treating them as a sub-region would
+       leave B dead inside the child.  RootWindowForNav walks up through
+       any flattened ancestors, so it equals RootWindow for a flattened
+       child (not a sub-region) while a real scroll/child region differs. */
+    return g->NavWindow->RootWindowForNav != g->NavWindow->RootWindow;
 }

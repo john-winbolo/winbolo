@@ -38,6 +38,7 @@
 
 extern "C" {
 #include "../sdl3draw.h"
+#include "../../ui_mode.h"
 #include "../../gamefront.h"
 #include "global.h"
 #include "client_enums.h"  /* labelLen */
@@ -75,7 +76,6 @@ extern "C" {
   extern bool letterboxBarsGray;
   extern bool showPillLabels;
   extern bool showBaseLabels;
-  extern bool hideMainView;
   extern int  frameRate;
   extern labelLen labelMsg;
   extern labelLen labelTank;
@@ -95,6 +95,7 @@ extern "C" {
   void windowAutomaticScrolling_toggle(struct ClientSim *cs);
   void windowSmoothScrolling_toggle(void);
   void windowShowGunsight_toggle(struct ClientSim *cs);
+  void windowLetterboxBarsGray_toggle(void);
   void windowShowPillLabels_toggle(struct ClientSim *cs);
   void windowShowBaseLabels_toggle(struct ClientSim *cs);
   void windowSoundEffects_toggle(void);
@@ -106,10 +107,10 @@ extern "C" {
   void windowMenuAI_toggle(struct ClientSim *cs);
   void windowMenuNetwork_toggle(struct ClientSim *cs);
   void windowMenuNetworkDebug_toggle(struct ClientSim *cs);
-  void windowHideMainView_toggle(void);
   void windowLabelOwnTank_toggle(struct ClientSim *cs);
   void windowSetMessageLabelLen(struct ClientSim *cs, labelLen newLen);
   void windowSetTankLabelLen(struct ClientSim *cs, labelLen newLen);
+  bool clientSimSetPlayerName(struct ClientSim *cs, char *value);
 
 #if defined(__IPHONEOS__)
   bool iosCrashReportingGetEnabled(void);
@@ -121,6 +122,10 @@ extern "C" {
  * texture stays valid between settings opens. */
 static SDL_Texture *s_langInfoIcon = nullptr;
 static bool s_langInfoIconAttempted = false;
+
+/* Shared player-name edit buffer for the General tab, used by both settings
+ * shells. Seeded from the persisted name via imguiSettingsSeedPlayerName(). */
+static char s_playerNameBuf[PLAYER_NAME_LEN];
 
 /* Chain a Noto Sans CJK font into the atlas covering exactly the CJK
  * codepoints that appear in the picker's language-name labels. Without
@@ -178,91 +183,489 @@ static void chainPickerNameGlyphs(LangFileEntry *entries, int count,
     ImGui::GetIO().Fonts->AddFontFromMemoryTTF(data, sz, fontSize, &cfg);
 }
 
+/* Seed the shared player-name edit buffer from the persisted name. */
+extern "C" void imguiSettingsSeedPlayerName(void) {
+    s_playerNameBuf[0] = '\0';
+    gameFrontGetPlayerName(s_playerNameBuf);
+}
+
 /* -------------------------------------------------------
- * Shared settings categories — the Labels / Sound / Messages
- * sections that the pre-game dialog (imguiSettingsShow) and the
- * in-game overlay (sdl3imgui.cpp renderSettingsPanel) used to each
- * render their own near-identical copy of.  Rendered by both now so
- * they can't drift.  Uses the cs-aware window*_toggle helpers (cs may
- * be NULL — the pre-game dialog has no live sim — which they accept),
- * so toggles update the live game when there is one.
- *
- * Context-specific sections (Player, Display, Language, Network,
- * Tutorial, Crash, Game, window size, controller mode) stay with each
- * caller: they depend on per-screen state or only apply in one context.
+ * General tab — player identity shared by the pre-game dialog
+ * and the in-game overlay: the validated player-name control
+ * (locked while signed in to WinBolo.net) and the WinBolo.net
+ * account section.  ctx->cs is NULL pre-game; on a successful
+ * name change the live sim is updated only when it is non-NULL.
  * ------------------------------------------------------- */
-extern "C" void imguiSettingsRenderCommonSections(struct ClientSim *cs) {
-    /* ---- Labels ---- */
-    if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_LABELS), ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_MSGNAMES));
-        ImGui::SameLine();
-        {
-            bool isShort = (labelMsg == lblShort);
-            char shortBuf[64], longBuf[64];
-            snprintf(shortBuf, sizeof(shortBuf), "%s##msg", langGetText(STR_SHORT));
-            snprintf(longBuf,  sizeof(longBuf),  "%s##msg", langGetText(STR_LONG));
-            if (ImGui::RadioButton(shortBuf, isShort))  windowSetMessageLabelLen(cs, lblShort);
-            ImGui::SameLine();
-            if (ImGui::RadioButton(longBuf,  !isShort)) windowSetMessageLabelLen(cs, lblLong);
+extern "C" void imguiSettingsRenderGeneralTab(SettingsRenderCtx *ctx) {
+    static int lastNameError = 0;
+    bool wbnActive = gameFrontGetWinbolonetUse();
+    if (wbnActive) {
+        /* Refresh the buffer from gameFront in case WBN login just set it */
+        gameFrontGetPlayerName(s_playerNameBuf);
+    }
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(200);
+    if (wbnActive) ImGui::BeginDisabled();
+    if (ImGui::InputText("##playerName", s_playerNameBuf, PLAYER_NAME_LEN,
+                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+        s_playerNameBuf[PLAYER_NAME_LAST] = '\0';
+        char validated[PLAYER_NAME_LEN];
+        PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+        if (playerNameValidate(s_playerNameBuf, validated, PLAYER_NAME_LEN, &nameErr)) {
+            SDL_strlcpy(s_playerNameBuf, validated, PLAYER_NAME_LEN);
+            gameFrontSetPlayerName(s_playerNameBuf);
+            if (ctx->cs) clientSimSetPlayerName(ctx->cs, s_playerNameBuf);
+            lastNameError = 0;
+        } else {
+            switch (nameErr) {
+                case PLAYER_NAME_ERR_EMPTY:
+                    lastNameError = STR_DLGSETNAME_BLANK_ERR;
+                    break;
+                case PLAYER_NAME_ERR_RESERVED_PREFIX:
+                    lastNameError = STR_DLGSETNAME_STAR_ERR;
+                    break;
+                case PLAYER_NAME_ERR_RESERVED_SUFFIX:
+                    lastNameError = STR_NAME_INVALID_RESERVED_SUFFIX;
+                    break;
+                case PLAYER_NAME_ERR_MIXED_SCRIPTS:
+                    lastNameError = STR_NAME_INVALID_MIXED_SCRIPTS;
+                    break;
+                case PLAYER_NAME_ERR_INVALID_UTF8:
+                case PLAYER_NAME_ERR_DISALLOWED_CHAR:
+                case PLAYER_NAME_ERR_TOO_LONG:
+                default:
+                    lastNameError = STR_NAME_INVALID_CHARS;
+                    break;
+            }
         }
-        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_TANKLABELS));
-        ImGui::SameLine();
-        {
-            char noneBuf[64], shortBuf[64], longBuf[64];
-            snprintf(noneBuf,  sizeof(noneBuf),  "%s##tank", langGetText(STR_NONE));
-            snprintf(shortBuf, sizeof(shortBuf), "%s##tank", langGetText(STR_SHORT));
-            snprintf(longBuf,  sizeof(longBuf),  "%s##tank", langGetText(STR_LONG));
-            if (ImGui::RadioButton(noneBuf,  labelTank == lblNone))  windowSetTankLabelLen(cs, lblNone);
-            ImGui::SameLine();
-            if (ImGui::RadioButton(shortBuf, labelTank == lblShort)) windowSetTankLabelLen(cs, lblShort);
-            ImGui::SameLine();
-            if (ImGui::RadioButton(longBuf,  labelTank == lblLong))  windowSetTankLabelLen(cs, lblLong);
+    }
+    ImGui::SameLine();
+    {
+        char applyBuf[64];
+        snprintf(applyBuf, sizeof(applyBuf), "%s##name", langGetText(STR_DLGSETTINGS_APPLY));
+        if (ImGui::Button(applyBuf)) {
+            s_playerNameBuf[PLAYER_NAME_LAST] = '\0';
+            char validated[PLAYER_NAME_LEN];
+            PlayerNameValidationError nameErr = PLAYER_NAME_OK;
+            if (playerNameValidate(s_playerNameBuf, validated, PLAYER_NAME_LEN, &nameErr)) {
+                SDL_strlcpy(s_playerNameBuf, validated, PLAYER_NAME_LEN);
+                gameFrontSetPlayerName(s_playerNameBuf);
+                if (ctx->cs) clientSimSetPlayerName(ctx->cs, s_playerNameBuf);
+                lastNameError = 0;
+            } else {
+                switch (nameErr) {
+                    case PLAYER_NAME_ERR_EMPTY:
+                        lastNameError = STR_DLGSETNAME_BLANK_ERR;
+                        break;
+                    case PLAYER_NAME_ERR_RESERVED_PREFIX:
+                        lastNameError = STR_DLGSETNAME_STAR_ERR;
+                        break;
+                    case PLAYER_NAME_ERR_RESERVED_SUFFIX:
+                        lastNameError = STR_NAME_INVALID_RESERVED_SUFFIX;
+                        break;
+                    case PLAYER_NAME_ERR_MIXED_SCRIPTS:
+                        lastNameError = STR_NAME_INVALID_MIXED_SCRIPTS;
+                        break;
+                    case PLAYER_NAME_ERR_INVALID_UTF8:
+                    case PLAYER_NAME_ERR_DISALLOWED_CHAR:
+                    case PLAYER_NAME_ERR_TOO_LONG:
+                    default:
+                        lastNameError = STR_NAME_INVALID_CHARS;
+                        break;
+                }
+            }
         }
-        {
-            bool noSelf = !(bool)labelSelf;
-            if (ImGui::Checkbox(langGetText(STR_MENU_NO_OWN_LABEL), &noSelf)) windowLabelOwnTank_toggle(cs);
-        }
-        {
-            bool pl = (bool)showPillLabels;
-            if (ImGui::Checkbox(langGetText(STR_MENU_PILLBOX_LABELS), &pl)) windowShowPillLabels_toggle(cs);
-        }
-        {
-            bool bl = (bool)showBaseLabels;
-            if (ImGui::Checkbox(langGetText(STR_MENU_BASE_LABELS), &bl)) windowShowBaseLabels_toggle(cs);
+        imguiHandOnHover();
+    }
+    if (wbnActive) ImGui::EndDisabled();
+    if (wbnActive) {
+        ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_WBN_LOCKED));
+    }
+    if (lastNameError != 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                           "%s", langGetText(lastNameError));
+    }
+
+    ImGui::Spacing();
+    imguiWinbolonetDrawSection(ctx->inGame);
+}
+
+/* -------------------------------------------------------
+ * Language picker — combo + info popup shared by both settings
+ * shells.  Each shell passes its own scanned entries and owns their
+ * lifecycle.  curLangIdx is recomputed each frame from the persisted
+ * language code, so the picker holds no selection state.  On a pick
+ * that changes the CJK font region it sets ctx->wantAtlasRebuild;
+ * each shell consumes that into its own atlas-rebuild path.
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderLanguagePicker(LangFileEntry *entries,
+                                                  int count,
+                                                  SettingsRenderCtx *ctx) {
+    /* Current selection: match the persisted code against the entries;
+       fall back to entry 0 (English baseline). */
+    int curLangIdx = 0;
+    {
+        char curCode[32];
+        curCode[0] = '\0';
+        gameFrontGetLanguageCode(curCode, (int)sizeof(curCode));
+        if (curCode[0] != '\0') {
+            for (int i = 0; i < count; i++) {
+                if (strcmp(curCode, entries[i].code) == 0) {
+                    curLangIdx = i;
+                    break;
+                }
+            }
         }
     }
 
-    /* ---- Sound ---- */
-    if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_SOUND), ImGuiTreeNodeFlags_DefaultOpen)) {
-        {
-            bool se = (bool)soundEffects;
-            if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &se)) windowSoundEffects_toggle();
+    ImGui::Spacing();
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_LANGUAGE_LBL));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(220);
+    const char *curLangLabel =
+        (curLangIdx >= 0 && curLangIdx < count &&
+         entries[curLangIdx].meta.name[0] != '\0')
+            ? entries[curLangIdx].meta.name
+            : langGetText(STR_DLGLANG_NAME);
+    if (ImGui::BeginCombo("##language", curLangLabel)) {
+        for (int i = 0; i < count; i++) {
+            const char *itemLabel =
+                (entries[i].meta.name[0] != '\0')
+                    ? entries[i].meta.name
+                    : entries[i].code;
+            bool selected = (curLangIdx == i);
+            if (ImGui::Selectable(itemLabel, selected)) {
+                /* CJK region in effect before the switch, for the
+                   rebuild decision below. */
+                char oldCode[32] = {0};
+                gameFrontGetLanguageCode(oldCode, (int)sizeof(oldCode));
+                const char *oldCjkPath = cjkNotoFontPath(oldCode);
+
+                if (i == 0) {
+                    /* English baseline — drop any loaded override.
+                     * Persist as "en" rather than "" so that on
+                     * relaunch gameFrontStart treats this as a
+                     * deliberate choice and skips langAutoDetect
+                     * (otherwise a German-locale machine would flip
+                     * back to German on every restart). */
+                    langUnloadFile();
+                    gameFrontSetLanguageCode("en");
+                } else {
+                    if (langLoadFile(entries[i].path)) {
+                        gameFrontSetLanguageCode(entries[i].code);
+                    }
+                }
+
+                /* Only a CJK-region change needs a font-atlas rebuild;
+                 * Latin↔Latin and same-region CJK switches just pick up
+                 * the new strings next frame.  cjkNotoFontPath returns
+                 * stable per-region static pointers, so compare identity. */
+                char newCode[32] = {0};
+                gameFrontGetLanguageCode(newCode, (int)sizeof(newCode));
+                if (cjkNotoFontPath(newCode) != oldCjkPath) {
+                    ctx->wantAtlasRebuild = true;
+                }
+            }
         }
-        if (!uiModeIsTablet()) {
-            bool bgs = (bool)backgroundSound;
-            if (ImGui::Checkbox(langGetText(STR_MENU_BACKGROUND_SOUND), &bgs)) windowBackgroundSoundChange_toggle();
+        ImGui::EndCombo();
+    }
+
+    /* Info icon next to the combo opens a popup carrying the author /
+     * notes.  Lazy-load the icon once using the process-lifetime
+     * renderer; size it font-relatively to suit the current metrics. */
+    if (!s_langInfoIcon && !s_langInfoIconAttempted) {
+        s_langInfoIconAttempted = true;
+        SDL_Renderer *renderer = sdl3DrawGetRenderer();
+        int iconPx = (int)ImGui::GetFontSize();
+        if (iconPx < 16) iconPx = 16;
+        s_langInfoIcon = imguiLoadSvgIcon(renderer, "data/ui/dialog-info.svg", iconPx);
+        if (!s_langInfoIcon) {
+            char basePathBuf[FILENAME_MAX];
+            const char *base = SDL_GetBasePath();
+            if (base) {
+                SDL_snprintf(basePathBuf, sizeof(basePathBuf),
+                             "%sdata/ui/dialog-info.svg", base);
+                s_langInfoIcon = imguiLoadSvgIcon(renderer, basePathBuf, iconPx);
+            }
         }
+    }
+
+    /* langGetLoadedMeta() may be non-NULL for a loaded file; prefer
+     * that for non-English entries so live re-translation of the meta
+     * works.  Entry 0's meta is the English baseline. */
+    ImGui::SameLine();
+    float iconH = ImGui::GetFrameHeight();
+    ImVec2 iconSz(iconH, iconH);
+    bool openInfo = false;
+    if (s_langInfoIcon) {
+        if (ImGui::ImageButton("##langInfoBtn",
+                               (ImTextureID)s_langInfoIcon,
+                               iconSz)) {
+            openInfo = true;
+        }
+        imguiHandOnHover();
+    } else {
+        if (ImGui::SmallButton("?##langInfoBtn")) {
+            openInfo = true;
+        }
+        imguiHandOnHover();
+    }
+    if (openInfo) {
+        ImGui::OpenPopup("##LangInfoPopup");
+    }
+    if (ImGui::BeginPopup("##LangInfoPopup")) {
+        const LangFileMeta *displayMeta = nullptr;
+        if (curLangIdx == 0 || curLangIdx >= count) {
+            displayMeta = (count > 0) ? &entries[0].meta : nullptr;
+        } else {
+            const LangFileMeta *loaded = langGetLoadedMeta();
+            displayMeta = loaded ? loaded : &entries[curLangIdx].meta;
+        }
+        float wrapW = ImGui::GetFontSize() * 20.0f;
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapW);
+        if (displayMeta) {
+            ImGui::TextWrapped("%s%s",
+                               langGetText(STR_DLGLANG_AUTHOR_CAPTION),
+                               displayMeta->author);
+            if (displayMeta->notes[0] != '\0') {
+                ImGui::TextWrapped("%s%s",
+                                   langGetText(STR_DLGLANG_NOTES_CAPTION),
+                                   displayMeta->notes);
+            }
+        }
+        ImGui::Separator();
+        ImGui::TextDisabled("%s",
+                            langGetText(STR_DLGLANG_DEFAULTNOTE));
+        ImGui::TextDisabled("%s",
+                            langGetText(STR_DLGLANG_MIDGAME_NOTE));
+        ImGui::PopTextWrapPos();
+        ImGui::EndPopup();
+    }
+}
+
+/* -------------------------------------------------------
+ * Controls tab — the Set Keys button, shared by both shells.
+ * The shared renderer only sets ctx->wantKeySetup; each shell
+ * launches key setup after the frame (the pre-game modal tears
+ * down and rebuilds its context; the in-game overlay opens the
+ * key-setup overlay).  In-game-only controls (relative steering,
+ * gamepad scroll) are drawn inline by that shell.
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderControlsTab(SettingsRenderCtx *ctx) {
 #if !BOLO_MOBILE
-        if (!uiModeIsTablet()) {
-            bool sk = (bool)useSoundKeepalive;
-            if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_KEEPALIVE), &sk)) windowSoundKeepalive();
+    if (!uiModeIsTablet()) {
+        if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
+            ctx->wantKeySetup = true;
         }
+        imguiHandOnHover();
+    }
 #endif
-        {
-            int vol = soundVolume;
-            ImGui::SetNextItemWidth(200.0f);
-            if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) windowSetSoundVolume(vol);
+}
+
+/* -------------------------------------------------------
+ * Display & Sound tab — the display and sound controls shared by
+ * the pre-game dialog and the in-game overlay.  Frame rate,
+ * letterbox, and Sound apply in both; window size and UI scale only
+ * apply in-game (ctx->inGame), and their results are returned via
+ * ctx->pendingZoom / ctx->wantAtlasRebuild for the in-game shell
+ * to apply after the frame.  The Sound section renders last.
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderDisplaySoundTab(SettingsRenderCtx *ctx) {
+    /* ---- Frame rate ---- */
+    if (!uiModeIsTablet()) {
+        const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
+        int frValues[] = { FRAME_RATE_60, FRAME_RATE_50, FRAME_RATE_30,
+                           FRAME_RATE_20, FRAME_RATE_15, FRAME_RATE_12, FRAME_RATE_10 };
+        int curFrIdx = 2;
+        for (int i = 0; i < 7; i++) {
+            if (frameRate == frValues[i]) { curFrIdx = i; break; }
         }
+        ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_FRAMERATE));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80);
+        if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
+            for (int i = 0; i < 7; i++) {
+                bool selected = (curFrIdx == i);
+                if (ImGui::Selectable(frLabels[i], selected)) {
+                    windowSetFrameRate(frValues[i], ctx->inGame);
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+#ifndef __ANDROID__
+    /* ---- Window size — desktop, in-game only ---- */
+    if (ctx->inGame && !uiModeIsTablet()) {
+        const char *zoomLabels[] = {
+            langGetText(STR_MENU_NORMAL),
+            langGetText(STR_MENU_DOUBLE),
+            langGetText(STR_MENU_TRIPLE),
+            langGetText(STR_MENU_QUAD),
+            langGetText(STR_MENU_CUSTOM_RESIZABLE),
+        };
+        BYTE zoomValues[] = { ZOOM_FACTOR_NORMAL, ZOOM_FACTOR_DOUBLE, ZOOM_FACTOR_TRIPLE, ZOOM_FACTOR_QUAD, ZOOM_FACTOR_CUSTOM };
+        int curZoomIdx = 0;
+        for (int i = 0; i < 5; i++) {
+            if (zoomFactor == zoomValues[i]) { curZoomIdx = i; break; }
+        }
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_WINDOWSIZE));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(100);
+        if (ImGui::BeginCombo("##windowsize", zoomLabels[curZoomIdx])) {
+            for (int i = 0; i < 5; i++) {
+                bool selected = (curZoomIdx == i);
+                if (ImGui::Selectable(zoomLabels[i], selected)) {
+                    ctx->pendingZoom = (unsigned char)zoomValues[i];
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    /* ---- UI scale — desktop, in-game only, not Steam Deck ---- */
+    if (ctx->inGame && !uiModeIsTablet() && !uiModeIsSteamDeck()) {
+        ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_UISCALE));
+        const char *scaleLabels[] = {
+            langGetText(STR_DLGSETTINGS_UISCALE_AUTO),
+            langGetText(STR_DLGSETTINGS_UISCALE_SMALL),
+            langGetText(STR_DLGSETTINGS_UISCALE_MEDIUM),
+            langGetText(STR_DLGSETTINGS_UISCALE_LARGE),
+        };
+        int usIdx = (int)uiUiScaleGet();
+        if (usIdx < 0 || usIdx > 3) usIdx = 0;
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.0f);
+        if (ImGui::BeginCombo("##uiscale", scaleLabels[usIdx])) {
+            for (int i = 0; i < 4; i++) {
+                bool sel = (usIdx == i);
+                if (ImGui::Selectable(scaleLabels[i], sel) && i != usIdx) {
+                    uiUiScaleSet((UiScalePref)i);
+                    gameFrontSaveCurrentPrefs();
+                    ctx->wantAtlasRebuild = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+#endif
+
+#if !BOLO_MOBILE
+    /* ---- Letterbox bars ---- */
+    {
+        bool lb = (bool)letterboxBarsGray;
+        if (ImGui::Checkbox(langGetText(STR_MENU_LETTERBOX_GRAY), &lb)) {
+            windowLetterboxBarsGray_toggle();
+        }
+        imguiHelpTooltip("Fill the fullscreen border bars with gray "
+                         "instead of black (when your monitor's aspect "
+                         "ratio differs from the game).");
+    }
+#endif
+
+    /* ---- Sound ---- */
+    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_SOUND));
+    {
+        bool se = (bool)soundEffects;
+        if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_EFFECTS), &se)) windowSoundEffects_toggle();
+    }
+    if (!uiModeIsTablet()) {
+        bool bgs = (bool)backgroundSound;
+        if (ImGui::Checkbox(langGetText(STR_MENU_BACKGROUND_SOUND), &bgs)) windowBackgroundSoundChange_toggle();
+    }
+#if !BOLO_MOBILE
+    if (!uiModeIsTablet()) {
+        bool sk = (bool)useSoundKeepalive;
+        if (ImGui::Checkbox(langGetText(STR_MENU_SOUND_KEEPALIVE), &sk)) windowSoundKeepalive();
+    }
+#endif
+    {
+        int vol = soundVolume;
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::SliderInt(langGetText(STR_MENU_VOLUME), &vol, 0, 100, "%d%%")) windowSetSoundVolume(vol);
+    }
+}
+
+/* -------------------------------------------------------
+ * Game/HUD tab — gameplay/HUD controls shared by the pre-game
+ * dialog and the in-game overlay: scrolling behaviour, the
+ * gunsight, label controls, and message toggles.  ctx->cs is
+ * NULL pre-game (the toggles tolerate it).
+ * ------------------------------------------------------- */
+extern "C" void imguiSettingsRenderGameHudTab(SettingsRenderCtx *ctx) {
+    struct ClientSim *cs = ctx->cs;
+    /* ---- Auto scrolling ---- */
+    {
+        bool as = (bool)autoScrollingEnabled;
+        if (ImGui::Checkbox(langGetText(STR_MENU_AUTO_SCROLLING), &as)) {
+            windowAutomaticScrolling_toggle(ctx->cs);
+        }
+    }
+
+#if !BOLO_MOBILE
+    /* ---- Smooth scrolling ---- */
+    {
+        bool ss = (bool)smoothScrollingEnabled;
+        if (ImGui::Checkbox(langGetText(STR_MENU_SMOOTH_SCROLLING), &ss)) {
+            windowSmoothScrolling_toggle();
+        }
+    }
+#endif
+
+    /* ---- Show gunsight ---- */
+    {
+        bool gs = (bool)showGunsight;
+        if (ImGui::Checkbox(langGetText(STR_MENU_SHOW_GUNSIGHT), &gs)) {
+            windowShowGunsight_toggle(ctx->cs);
+        }
+    }
+
+    /* ---- Labels ---- */
+    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_LABELS));
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_MSGNAMES));
+    ImGui::SameLine();
+    {
+        bool isShort = (labelMsg == lblShort);
+        char shortBuf[64], longBuf[64];
+        snprintf(shortBuf, sizeof(shortBuf), "%s##msg", langGetText(STR_SHORT));
+        snprintf(longBuf,  sizeof(longBuf),  "%s##msg", langGetText(STR_LONG));
+        if (ImGui::RadioButton(shortBuf, isShort))  windowSetMessageLabelLen(cs, lblShort);
+        ImGui::SameLine();
+        if (ImGui::RadioButton(longBuf,  !isShort)) windowSetMessageLabelLen(cs, lblLong);
+    }
+    ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_TANKLABELS));
+    ImGui::SameLine();
+    {
+        char noneBuf[64], shortBuf[64], longBuf[64];
+        snprintf(noneBuf,  sizeof(noneBuf),  "%s##tank", langGetText(STR_NONE));
+        snprintf(shortBuf, sizeof(shortBuf), "%s##tank", langGetText(STR_SHORT));
+        snprintf(longBuf,  sizeof(longBuf),  "%s##tank", langGetText(STR_LONG));
+        if (ImGui::RadioButton(noneBuf,  labelTank == lblNone))  windowSetTankLabelLen(cs, lblNone);
+        ImGui::SameLine();
+        if (ImGui::RadioButton(shortBuf, labelTank == lblShort)) windowSetTankLabelLen(cs, lblShort);
+        ImGui::SameLine();
+        if (ImGui::RadioButton(longBuf,  labelTank == lblLong))  windowSetTankLabelLen(cs, lblLong);
+    }
+    {
+        bool noSelf = !(bool)labelSelf;
+        if (ImGui::Checkbox(langGetText(STR_MENU_NO_OWN_LABEL), &noSelf)) windowLabelOwnTank_toggle(cs);
+    }
+    {
+        bool pl = (bool)showPillLabels;
+        if (ImGui::Checkbox(langGetText(STR_MENU_PILLBOX_LABELS), &pl)) windowShowPillLabels_toggle(cs);
+    }
+    {
+        bool bl = (bool)showBaseLabels;
+        if (ImGui::Checkbox(langGetText(STR_MENU_BASE_LABELS), &bl)) windowShowBaseLabels_toggle(cs);
     }
 
     /* ---- Messages ---- */
-    if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_MESSAGES), ImGuiTreeNodeFlags_DefaultOpen)) {
-        { bool nw = (bool)showNewswireMessages;      if (ImGui::Checkbox(langGetText(STR_MENU_NEWSWIRE_MSGS),  &nw)) windowMenuNewswire_toggle(cs); }
-        { bool am = (bool)showAssistantMessages;     if (ImGui::Checkbox(langGetText(STR_MENU_ASSISTANT_MSGS), &am)) windowMenuAssistant_toggle(cs); }
-        { bool ai = (bool)showAIMessages;            if (ImGui::Checkbox(langGetText(STR_MENU_AI_MSGS),        &ai)) windowMenuAI_toggle(cs); }
-        { bool ns = (bool)showNetworkStatusMessages; if (ImGui::Checkbox(langGetText(STR_MENU_NETSTATUS_MSGS), &ns)) windowMenuNetwork_toggle(cs); }
-        { bool nd = (bool)showNetworkDebugMessages;  if (ImGui::Checkbox(langGetText(STR_MENU_NETDEBUG_MSGS),  &nd)) windowMenuNetworkDebug_toggle(cs); }
-    }
+    ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_MESSAGES));
+    { bool nw = (bool)showNewswireMessages;      if (ImGui::Checkbox(langGetText(STR_MENU_NEWSWIRE_MSGS),  &nw)) windowMenuNewswire_toggle(cs); }
+    { bool am = (bool)showAssistantMessages;     if (ImGui::Checkbox(langGetText(STR_MENU_ASSISTANT_MSGS), &am)) windowMenuAssistant_toggle(cs); }
+    { bool ai = (bool)showAIMessages;            if (ImGui::Checkbox(langGetText(STR_MENU_AI_MSGS),        &ai)) windowMenuAI_toggle(cs); }
+    { bool ns = (bool)showNetworkStatusMessages; if (ImGui::Checkbox(langGetText(STR_MENU_NETSTATUS_MSGS), &ns)) windowMenuNetwork_toggle(cs); }
+    { bool nd = (bool)showNetworkDebugMessages;  if (ImGui::Checkbox(langGetText(STR_MENU_NETDEBUG_MSGS),  &nd)) windowMenuNetworkDebug_toggle(cs); }
 }
 
 extern "C" void imguiSettingsShow(void) {
@@ -321,10 +724,8 @@ extern "C" void imguiSettingsShow(void) {
         chainPickerNameGlyphs(langEntries, langCount, pickerFontSize);
     }
 
-    /* Load current player name */
-    char playerName[PLAYER_NAME_LEN];
-    playerName[0] = '\0';
-    gameFrontGetPlayerName(playerName);
+    /* Load current player name into the shared edit buffer */
+    imguiSettingsSeedPlayerName();
 
     /* Background game */
     BgGame *bg = bgGameGetShared();
@@ -335,55 +736,15 @@ extern "C" void imguiSettingsShow(void) {
     imguiWinbolonetReset();
     imguiWinbolonetStartValidation();
 
-    /* Lazily rasterise the info icon at a size that suits the dropdown row. */
-    if (!s_langInfoIcon && !s_langInfoIconAttempted) {
-        s_langInfoIconAttempted = true;
-        int iconPx = (int)(20.0f * s);
-        if (iconPx < 16) iconPx = 16;
-        s_langInfoIcon = imguiLoadSvgIcon(renderer, "data/ui/dialog-info.svg", iconPx);
-        if (!s_langInfoIcon) {
-            char basePathBuf[FILENAME_MAX];
-            const char *base = SDL_GetBasePath();
-            if (base) {
-                SDL_snprintf(basePathBuf, sizeof(basePathBuf),
-                             "%sdata/ui/dialog-info.svg", base);
-                s_langInfoIcon = imguiLoadSvgIcon(renderer, basePathBuf, iconPx);
-            }
-        }
-    }
-
-    int curLangIdx = 0;
-    {
-        char curCode[32];
-        curCode[0] = '\0';
-        gameFrontGetLanguageCode(curCode, (int)sizeof(curCode));
-        if (curCode[0] == '\0') {
-            curLangIdx = 0;  /* English baseline */
-        } else {
-            for (int i = 0; i < langCount; i++) {
-                if (strcmp(curCode, langEntries[i].code) == 0) {
-                    curLangIdx = i;
-                    break;
-                }
-            }
-        }
-    }
-
     bool running = true;
 #if !BOLO_MOBILE
     bool showKeySetup = false;
 #endif
 
-    /* Track the CJK font requirement currently baked into the ImGui
-     * font atlas. The atlas was built for the language that was active
-     * when dialogApplyScaling() ran above, so seed it from the same
-     * gameFront state. When the user picks a language whose CJK
-     * requirement differs, we rebuild the atlas in-place at end-of-
-     * frame so non-Latin glyphs render in the same dialog session
-     * (no app restart needed). */
-    char        atlasLangCode[32] = {0};
-    gameFrontGetLanguageCode(atlasLangCode, (int)sizeof(atlasLangCode));
-    const char *atlasCjkPath = cjkNotoFontPath(atlasLangCode);
+    /* When the language picker reports a CJK-region change it sets
+     * ctx.wantAtlasRebuild, which we translate into this flag and act on
+     * after Present — rebuilding the atlas in-place so non-Latin glyphs
+     * render in the same dialog session (no app restart needed). */
     bool        pendingFontRebuild = false;
 
     while (running) {
@@ -433,7 +794,7 @@ extern "C" void imguiSettingsShow(void) {
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
 
         /* Centered overlay panel */
-        float panelW = 500.0f * s, panelH = 580.0f * s;
+        float panelW = 680.0f * s, panelH = 580.0f * s;
         if (panelW > (float)winW * 0.95f) panelW = (float)winW * 0.95f;
         if (panelH > (float)winH * 0.95f) panelH = (float)winH * 0.95f;
 
@@ -468,331 +829,150 @@ extern "C" void imguiSettingsShow(void) {
          * always visible no matter how tall the settings list grows. */
         float settingsFooterH = ImGui::GetFrameHeightWithSpacing() +
                                 ImGui::GetStyle().ItemSpacing.y * 3.0f + 4.0f;
-        ImGui::BeginChild("##settingsScroll", ImVec2(0.0f, -settingsFooterH), false);
+        ImGui::BeginChild("##settingsScroll", ImVec2(0.0f, -settingsFooterH), ImGuiChildFlags_NavFlattened);
 
-        /* ---- Player ---- */
-        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_PLAYER), ImGuiTreeNodeFlags_DefaultOpen)) {
-            static int lastNameError = 0;
-            bool wbnActive = gameFrontGetWinbolonetUse();
-            if (wbnActive) {
-                /* Refresh local buffer from gameFront in case WBN login just set it */
-                gameFrontGetPlayerName(playerName);
-            }
-            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_PLAYERNAME));
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(200);
-            if (wbnActive) ImGui::BeginDisabled();
-            if (ImGui::InputText("##playerName", playerName, PLAYER_NAME_LEN,
-                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
-                playerName[PLAYER_NAME_LAST] = '\0';
-                char validated[PLAYER_NAME_LEN];
-                PlayerNameValidationError nameErr = PLAYER_NAME_OK;
-                if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, &nameErr)) {
-                    SDL_strlcpy(playerName, validated, PLAYER_NAME_LEN);
-                    gameFrontSetPlayerName(playerName);
-                    lastNameError = 0;
-                } else {
-                    switch (nameErr) {
-                        case PLAYER_NAME_ERR_EMPTY:
-                            lastNameError = STR_DLGSETNAME_BLANK_ERR;
-                            break;
-                        case PLAYER_NAME_ERR_RESERVED_PREFIX:
-                            lastNameError = STR_DLGSETNAME_STAR_ERR;
-                            break;
-                        case PLAYER_NAME_ERR_RESERVED_SUFFIX:
-                            lastNameError = STR_NAME_INVALID_RESERVED_SUFFIX;
-                            break;
-                        case PLAYER_NAME_ERR_MIXED_SCRIPTS:
-                            lastNameError = STR_NAME_INVALID_MIXED_SCRIPTS;
-                            break;
-                        case PLAYER_NAME_ERR_INVALID_UTF8:
-                        case PLAYER_NAME_ERR_DISALLOWED_CHAR:
-                        case PLAYER_NAME_ERR_TOO_LONG:
-                        default:
-                            lastNameError = STR_NAME_INVALID_CHARS;
-                            break;
-                    }
-                }
-            }
-            ImGui::SameLine();
-            {
-                char applyBuf[64];
-                snprintf(applyBuf, sizeof(applyBuf), "%s##name", langGetText(STR_DLGSETTINGS_APPLY));
-                if (ImGui::Button(applyBuf)) {
-                    playerName[PLAYER_NAME_LAST] = '\0';
-                    char validated[PLAYER_NAME_LEN];
-                    PlayerNameValidationError nameErr = PLAYER_NAME_OK;
-                    if (playerNameValidate(playerName, validated, PLAYER_NAME_LEN, &nameErr)) {
-                        SDL_strlcpy(playerName, validated, PLAYER_NAME_LEN);
-                        gameFrontSetPlayerName(playerName);
-                        lastNameError = 0;
-                    } else {
-                        switch (nameErr) {
-                            case PLAYER_NAME_ERR_EMPTY:
-                                lastNameError = STR_DLGSETNAME_BLANK_ERR;
-                                break;
-                            case PLAYER_NAME_ERR_RESERVED_PREFIX:
-                                lastNameError = STR_DLGSETNAME_STAR_ERR;
-                                break;
-                            case PLAYER_NAME_ERR_RESERVED_SUFFIX:
-                                lastNameError = STR_NAME_INVALID_RESERVED_SUFFIX;
-                                break;
-                            case PLAYER_NAME_ERR_MIXED_SCRIPTS:
-                                lastNameError = STR_NAME_INVALID_MIXED_SCRIPTS;
-                                break;
-                            case PLAYER_NAME_ERR_INVALID_UTF8:
-                            case PLAYER_NAME_ERR_DISALLOWED_CHAR:
-                            case PLAYER_NAME_ERR_TOO_LONG:
-                            default:
-                                lastNameError = STR_NAME_INVALID_CHARS;
-                                break;
-                        }
-                    }
-                }
-                imguiHandOnHover();
-            }
-            if (wbnActive) ImGui::EndDisabled();
-            if (wbnActive) {
-                ImGui::TextUnformatted(langGetText(STR_DLGSETNAME_WBN_LOCKED));
-            }
-            if (lastNameError != 0) {
-                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
-                                   "%s", langGetText(lastNameError));
-            }
+        SettingsRenderCtx ctx = {};
+        ctx.cs = nullptr;
+        ctx.inGame = false;
+        ctx.pendingZoom = 255;
 
-            ImGui::Spacing();
-            imguiWinbolonetDrawSection(false);
-        }
-
-        /* ---- Display ---- */
-        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_DISPLAY), ImGuiTreeNodeFlags_DefaultOpen)) {
-            const char *frLabels[] = { "60", "50", "30", "20", "15", "12", "10" };
-            int frValues[] = { FRAME_RATE_60, FRAME_RATE_50, FRAME_RATE_30,
-                               FRAME_RATE_20, FRAME_RATE_15, FRAME_RATE_12, FRAME_RATE_10 };
-            int curFrIdx = 2;
-            for (int i = 0; i < 7; i++) {
-                if (frameRate == frValues[i]) { curFrIdx = i; break; }
-            }
-            ImGui::TextUnformatted(langGetText(STR_DLGSYSINFO_FRAMERATE));
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(80);
-            if (ImGui::BeginCombo("##framerate", frLabels[curFrIdx])) {
-                for (int i = 0; i < 7; i++) {
-                    bool selected = (curFrIdx == i);
-                    if (ImGui::Selectable(frLabels[i], selected)) {
-                        windowSetFrameRate(frValues[i], false);
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            /* ---- Language picker ---- */
-            ImGui::Spacing();
-            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_LANGUAGE_LBL));
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(220);
-            const char *curLangLabel =
-                (curLangIdx >= 0 && curLangIdx < langCount &&
-                 langEntries[curLangIdx].meta.name[0] != '\0')
-                    ? langEntries[curLangIdx].meta.name
-                    : langGetText(STR_DLGLANG_NAME);
-            if (ImGui::BeginCombo("##language", curLangLabel)) {
-                for (int i = 0; i < langCount; i++) {
-                    const char *itemLabel =
-                        (langEntries[i].meta.name[0] != '\0')
-                            ? langEntries[i].meta.name
-                            : langEntries[i].code;
-                    bool selected = (curLangIdx == i);
-                    if (ImGui::Selectable(itemLabel, selected)) {
-                        if (i == 0) {
-                            /* English baseline — drop any loaded override.
-                             * Persist as "en" rather than "" so that on
-                             * relaunch gameFrontStart treats this as a
-                             * deliberate choice and skips langAutoDetect
-                             * (otherwise a German-locale machine would flip
-                             * back to German on every restart). */
-                            langUnloadFile();
-                            gameFrontSetLanguageCode("en");
-                        } else {
-                            if (langLoadFile(langEntries[i].path)) {
-                                gameFrontSetLanguageCode(langEntries[i].code);
-                            }
-                        }
-                        curLangIdx = i;
-
-                        /* If the selected language requires a different
-                         * CJK font region than the one currently baked
-                         * into the atlas, schedule a rebuild at end-of
-                         * frame. Latin↔Latin and same-region CJK
-                         * switches don't need a rebuild — langLoadFile
-                         * already updated the override table and the
-                         * next frame picks up new strings. */
-                        char        newLangCode[32] = {0};
-                        gameFrontGetLanguageCode(newLangCode,
-                                                  (int)sizeof(newLangCode));
-                        const char *newCjkPath = cjkNotoFontPath(newLangCode);
-                        if (newCjkPath != atlasCjkPath) {
-                            pendingFontRebuild = true;
-                        }
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            /* Info icon next to the combo opens a popup carrying the
-             * author / notes / footnotes that used to be inlined below.
-             * langGetLoadedMeta() may be non-NULL for a loaded file; prefer
-             * that for non-English entries so live re-translation of the
-             * meta works. Entry 0's meta is populated from
-             * STR_DLGLANG_NAME/AUTHOR/NOTES for the English baseline. */
-            ImGui::SameLine();
-            float iconH = ImGui::GetFrameHeight();
-            ImVec2 iconSz(iconH, iconH);
-            bool openInfo = false;
-            if (s_langInfoIcon) {
-                if (ImGui::ImageButton("##langInfoBtn",
-                                       (ImTextureID)s_langInfoIcon,
-                                       iconSz)) {
-                    openInfo = true;
-                }
-                imguiHandOnHover();
-            } else {
-                if (ImGui::SmallButton("?##langInfoBtn")) {
-                    openInfo = true;
-                }
-                imguiHandOnHover();
-            }
-            if (openInfo) {
-                ImGui::OpenPopup("##LangInfoPopup");
-            }
-            if (ImGui::BeginPopup("##LangInfoPopup")) {
-                const LangFileMeta *displayMeta = nullptr;
-                if (curLangIdx == 0 || curLangIdx >= langCount) {
-                    displayMeta = (langCount > 0) ? &langEntries[0].meta : nullptr;
-                } else {
-                    const LangFileMeta *loaded = langGetLoadedMeta();
-                    displayMeta = loaded ? loaded : &langEntries[curLangIdx].meta;
-                }
-                float wrapW = 360.0f * s;
-                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapW);
-                if (displayMeta) {
-                    ImGui::TextWrapped("%s%s",
-                                       langGetText(STR_DLGLANG_AUTHOR_CAPTION),
-                                       displayMeta->author);
-                    if (displayMeta->notes[0] != '\0') {
-                        ImGui::TextWrapped("%s%s",
-                                           langGetText(STR_DLGLANG_NOTES_CAPTION),
-                                           displayMeta->notes);
-                    }
-                }
-                ImGui::Separator();
-                ImGui::TextDisabled("%s",
-                                    langGetText(STR_DLGLANG_DEFAULTNOTE));
-                ImGui::TextDisabled("%s",
-                                    langGetText(STR_DLGLANG_MIDGAME_NOTE));
-                ImGui::PopTextWrapPos();
-                ImGui::EndPopup();
-            }
-
+        /* Controller tab cycling: shoulder buttons (or the Steam menu-tab
+           actions where the pad is hidden from SDL) step through the visible
+           tabs, skipping any that aren't present and wrapping at the ends. */
+        enum { STAB_GENERAL, STAB_DISPLAY, STAB_CONTROLS, STAB_GAMEHUD, STAB_LAST, STAB_COUNT };
+        static int s_pgActiveTab = STAB_GENERAL;
+        static int s_pgForceTab  = -1;
+        bool present[STAB_COUNT];
+        present[STAB_GENERAL] = true;
+        present[STAB_DISPLAY] = true;
+        present[STAB_GAMEHUD] = true;
 #if !BOLO_MOBILE
-            {
-                bool as = (bool)autoScrollingEnabled;
-                if (ImGui::Checkbox(langGetText(STR_MENU_AUTO_SCROLLING), &as)) {
-                    windowAutomaticScrolling_toggle(NULL);
-                }
-            }
-            {
-                bool ss = (bool)smoothScrollingEnabled;
-                if (ImGui::Checkbox(langGetText(STR_MENU_SMOOTH_SCROLLING), &ss)) {
-                    windowSmoothScrolling_toggle();
-                }
-            }
-            {
-                bool gs = (bool)showGunsight;
-                if (ImGui::Checkbox(langGetText(STR_MENU_SHOW_GUNSIGHT), &gs)) {
-                    /* Pre-game: just toggle the global directly */
-                    showGunsight = !showGunsight;
-                }
-            }
-            {
-                bool lb = (bool)letterboxBarsGray;
-                if (ImGui::Checkbox(langGetText(STR_MENU_LETTERBOX_GRAY), &lb)) {
-                    letterboxBarsGray = !letterboxBarsGray;
-                }
-                imguiHelpTooltip("Fill the fullscreen border bars with gray "
-                                 "instead of black (when your monitor's aspect "
-                                 "ratio differs from the game).");
-            }
-            ImGui::Spacing();
-            if (ImGui::Button(langGetText(STR_DLGSETTINGS_SETKEYS), ImVec2(120, 0))) {
-                showKeySetup = true;
-            }
-            imguiHandOnHover();
+        present[STAB_CONTROLS] = !uiModeIsTablet();
+        present[STAB_LAST]     = true;
+#else
+        present[STAB_CONTROLS] = false;
+        present[STAB_LAST]     = false;
 #endif
-        }
-
-        /* ---- Labels / Sound / Messages (shared with the in-game panel) ---- */
-        imguiSettingsRenderCommonSections(nullptr);
-
-        /* ---- Tutorial ---- */
-        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_TUTORIAL), ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(140, 0))) {
-                gameFrontRequestPlayTutorial();
-                running = false;  /* Close settings; openSettings handler routes to openTutorial. */
-            }
-            imguiHandOnHover();
-            ImGui::SameLine();
-            {
-                bool showOnMain = gameFrontGetShowTutorialButton();
-                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_ON_MAIN), &showOnMain)) {
-                    gameFrontSetShowTutorialButton(showOnMain);
-                }
+        {
+            int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
+                      - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
+            if (shift == 0) shift = imguiSteamNavConsumeMenuTabShift();
+            if (shift != 0) {
+                int i = s_pgActiveTab;
+                do { i = (i + shift + STAB_COUNT) % STAB_COUNT; } while (!present[i] && i != s_pgActiveTab);
+                s_pgForceTab = i;
             }
         }
 
-#if !BOLO_MOBILE
-        /* ---- Network ---- */
+        if (ImGui::BeginTabBar("##settingsTabs")) {
+            if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_CHAT_GENERAL), nullptr,
+                    s_pgForceTab == STAB_GENERAL ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_GENERAL;
+                ImGui::BeginChild("##generalPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+                imguiSettingsRenderGeneralTab(&ctx);
+                imguiSettingsRenderLanguagePicker(langEntries, langCount, &ctx);
 
-        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_NETWORK), ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_NET_HELP));
-            ImGui::Spacing();
-            {
-                bool b = gameFrontUseUpnp;
-                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_USE_UPNP), &b)) {
-                    gameFrontUseUpnp = b;
+                /* ---- Tutorial ---- */
+                ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_TUTORIAL));
+                if (ImGui::Button(langGetText(STR_DLGSETTINGS_PLAY_TUTORIAL), ImVec2(140, 0))) {
+                    gameFrontRequestPlayTutorial();
+                    running = false;  /* Close settings; openSettings handler routes to openTutorial. */
                 }
-            }
-            {
-                bool b = gameFrontUseNatTraversal;
-                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_USE_NATTRAV), &b)) {
-                    gameFrontUseNatTraversal = b;
+                imguiHandOnHover();
+                ImGui::SameLine();
+                {
+                    bool showOnMain = gameFrontGetShowTutorialButton();
+                    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SHOW_ON_MAIN), &showOnMain)) {
+                        gameFrontSetShowTutorialButton(showOnMain);
+                    }
                 }
-            }
-            {
-                const char *cur = newsPrefGetAutoShow();
-                /* "unset" and "show" both default the checkbox to
-                 * checked; only an explicit "dontShow" unchecks it.
-                 * Toggling never writes "unset". */
-                bool b = (strcmp(cur, "dontShow") != 0);
-                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOSHOW), &b)) {
-                    newsPrefSetAutoShow(b ? "show" : "dontShow");
-                }
-            }
-        }
-#endif
 
 #if defined(__IPHONEOS__)
-        /* ---- Crash Reporting ---- */
-        if (ImGui::CollapsingHeader(langGetText(STR_DLGSETTINGS_CRASH_REPORTING), ImGuiTreeNodeFlags_DefaultOpen)) {
-            bool cr = iosCrashReportingGetEnabled();
-            if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_ENABLE_CRASH), &cr)) {
-                iosCrashReportingSetEnabled(cr);
-            }
-            ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_CRASH_HELP));
-            ImGui::Spacing();
-            ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_CRASH_NEXTLAUNCH));
-        }
+                /* ---- Crash Reporting ---- */
+                ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_CRASH_REPORTING));
+                bool cr = iosCrashReportingGetEnabled();
+                if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_ENABLE_CRASH), &cr)) {
+                    iosCrashReportingSetEnabled(cr);
+                }
+                ImGui::TextWrapped("%s", langGetText(STR_DLGSETTINGS_CRASH_HELP));
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", langGetText(STR_DLGSETTINGS_CRASH_NEXTLAUNCH));
 #endif
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_DISPLAYSOUND), nullptr,
+                    s_pgForceTab == STAB_DISPLAY ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_DISPLAY;
+                ImGui::BeginChild("##displayPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+                imguiSettingsRenderDisplaySoundTab(&ctx);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+#if !BOLO_MOBILE
+            if (!uiModeIsTablet()) {
+                if (ImGui::BeginTabItem(langGetText(STR_LV_WIN_CONTROLS), nullptr,
+                        s_pgForceTab == STAB_CONTROLS ? ImGuiTabItemFlags_SetSelected : 0)) {
+                    s_pgActiveTab = STAB_CONTROLS;
+                    ImGui::BeginChild("##controlsPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+                    imguiSettingsRenderControlsTab(&ctx);
+                    ImGui::EndChild();
+                    ImGui::EndTabItem();
+                }
+            }
+#endif
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_TAB_GAMEHUD), nullptr,
+                    s_pgForceTab == STAB_GAMEHUD ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_GAMEHUD;
+                ImGui::BeginChild("##gamehudPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+                imguiSettingsRenderGameHudTab(&ctx);
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+#if !BOLO_MOBILE
+            if (ImGui::BeginTabItem(langGetText(STR_DLGSETTINGS_NETWORK), nullptr,
+                    s_pgForceTab == STAB_LAST ? ImGuiTabItemFlags_SetSelected : 0)) {
+                s_pgActiveTab = STAB_LAST;
+                ImGui::BeginChild("##networkPanel", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+                ImGui::TextUnformatted(langGetText(STR_DLGSETTINGS_NET_HELP));
+                ImGui::Spacing();
+                {
+                    bool b = gameFrontUseUpnp;
+                    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_USE_UPNP), &b)) {
+                        gameFrontUseUpnp = b;
+                    }
+                }
+                {
+                    bool b = gameFrontUseNatTraversal;
+                    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_USE_NATTRAV), &b)) {
+                        gameFrontUseNatTraversal = b;
+                    }
+                }
+                {
+                    const char *cur = newsPrefGetAutoShow();
+                    /* "unset" and "show" both default the checkbox to
+                     * checked; only an explicit "dontShow" unchecks it.
+                     * Toggling never writes "unset". */
+                    bool b = (strcmp(cur, "dontShow") != 0);
+                    if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_NEWS_AUTOSHOW), &b)) {
+                        newsPrefSetAutoShow(b ? "show" : "dontShow");
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+#endif
+            ImGui::EndTabBar();
+        }
+        s_pgForceTab = -1;
+
+        /* Translate the language picker's CJK-rebuild request into the
+           pre-game atlas-rebuild flag consumed after Present.  Additive:
+           never clobber an already-pending rebuild. */
+        if (ctx.wantAtlasRebuild) pendingFontRebuild = true;
+        /* The shared Controls tab requests key setup via the flag; honour it
+           through the existing showKeySetup teardown below. */
+        if (ctx.wantKeySetup) showKeySetup = true;
 
         ImGui::EndChild(); /* ##settingsScroll */
 
@@ -850,13 +1030,6 @@ extern "C" void imguiSettingsShow(void) {
             ImGui::GetIO().Fonts->Clear();
             imguiLoadBoloFont(fontSize);
             chainPickerNameGlyphs(langEntries, langCount, fontSize);
-
-            /* Refresh the recorded atlas state so subsequent picks
-             * compare against what's actually in the atlas now. */
-            char rebuiltLangCode[32] = {0};
-            gameFrontGetLanguageCode(rebuiltLangCode,
-                                     (int)sizeof(rebuiltLangCode));
-            atlasCjkPath = cjkNotoFontPath(rebuiltLangCode);
             pendingFontRebuild = false;
         }
 
@@ -898,13 +1071,9 @@ extern "C" void imguiSettingsShow(void) {
                 float pickerFontSize = (s <= 1.05f) ? 18.0f : 20.0f * s;
                 chainPickerNameGlyphs(langEntries, langCount, pickerFontSize);
             }
-            /* Atlas was rebuilt with the now-active language; resync. */
-            {
-                char resumeLangCode[32] = {0};
-                gameFrontGetLanguageCode(resumeLangCode,
-                                         (int)sizeof(resumeLangCode));
-                atlasCjkPath = cjkNotoFontPath(resumeLangCode);
-            }
+            /* The shared name buffer is file-scope; re-seed it for the
+               rebuilt context alongside the language/atlas resync. */
+            imguiSettingsSeedPlayerName();
 
             dialogSetWindowSize(window, 1024, 768);
             dialogSetWindowTitle(window, langGetText(STR_DLGSETTINGS_WINTITLE));

@@ -399,8 +399,12 @@ void basesRefueling(struct GameSim *sim, tank *tnk, BYTE baseNum);
 BYTE basesGetClosest(struct GameSim *sim, WORLD tankX, WORLD tankY);
 
 /* Explicit-player variant of basesGetClosest (evaluates for the given player
- * rather than sim->viewPlayer). */
-BYTE basesGetClosestForPlayer(struct GameSim *sim, BYTE player, WORLD tankX, WORLD tankY);
+ * rather than sim->viewPlayer). `range` is the selection ceiling in world
+ * units: only a base strictly nearer than `range` is returned. The client
+ * display path passes BASE_STATUS_RANGE; the server stock-send gating passes a
+ * slightly wider ceiling so a base's stock is revealed before the client's
+ * display logic switches to it. */
+BYTE basesGetClosestForPlayer(struct GameSim *sim, BYTE player, WORLD tankX, WORLD tankY, WORLD range);
 
 /*********************************************************
 *NAME:          basesGetStats

@@ -631,13 +631,14 @@ static float clientErrWrapBradians(float a) {
 }
 
 bool clientErrSmoothAccumulate(float *errX, float *errY, float *errAngle,
-                               float dX, float dY, float dAngle) {
+                               float dX, float dY, float dAngle,
+                               float posClamp) {
   float nx = *errX + dX;
   float ny = *errY + dY;
   float na = clientErrWrapBradians(*errAngle + dAngle);
 
-  if (fabsf(nx) > CLIENT_ERR_POS_CLAMP ||
-      fabsf(ny) > CLIENT_ERR_POS_CLAMP ||
+  if (fabsf(nx) > posClamp ||
+      fabsf(ny) > posClamp ||
       fabsf(na) > CLIENT_ERR_ANGLE_CLAMP) {
     *errX = 0.0f;
     *errY = 0.0f;
@@ -1811,6 +1812,7 @@ void clientSimResetWorld(ClientSim *cs) {
   cs->errX = 0.0f;
   cs->errY = 0.0f;
   cs->errAngle = 0.0f;
+  cs->basePassableSmoothSnapshots = 0;
 }
 
 bool installCompressedMap(ClientSim *cs, const BYTE *buf, int len, const char *name,

@@ -2854,20 +2854,42 @@ static int serverSimGetBases(ServerSim *sim, BaseSnapshot *out, int maxOut) {
     return count;
 }
 
+WORLD serverSimClosestBaseSendRange(const ServerSim *sim, BYTE client) {
+    /* Widen the closest-base selection ceiling past the client's display range
+     * (BASE_STATUS_RANGE) by roughly how far the tank travels in one round-trip
+     * at max road speed (800 world units/sec): margin = ping_ms/1000 * 800,
+     * plus 32 units fixed headroom. Clamp the margin to one map square (256) so
+     * a spiking RTT can't widen the reveal past a single tile (ping effectively
+     * capped at ~280ms); the total ceiling never exceeds BASE_STATUS_RANGE + 256.
+     * Pre-loading the stock from this wider radius caches it before the client's
+     * own display switches to the base, avoiding the stale "full health, 0 ammo"
+     * flash. */
+    unsigned margin = ((unsigned)sim->playerPing[client] * 800u) / 1000u + 32u;
+    if (margin > 256u) {
+        margin = 256u;
+    }
+    return (WORLD)(BASE_STATUS_RANGE + margin);
+}
+
+void serverSimBuildBaseStockEvent(ServerSim *sim, BYTE baseIdx0, GameEvent *out) {
+    BYTE shells = 0, mines = 0, armour = 0;
+    /* basesGetStats takes a 1-based base number; the wire index (data[0]) is 0-based. */
+    basesGetStats(&sim->sim.bs, (BYTE)(baseIdx0 + 1), &shells, &mines, &armour);
+    out->type = EVENT_BASE_STOCK;
+    memset(out->data, 0, sizeof(out->data));
+    out->data[0] = baseIdx0;
+    out->data[1] = armour;
+    out->data[2] = shells;
+    out->data[3] = mines;
+}
+
 bool serverSimTakeClosestBaseStock(ServerSim *sim, BYTE recipient, BYTE closest, GameEvent *out) {
     bool changed = (closest != sim->lastClosestBase[recipient]);
     sim->lastClosestBase[recipient] = closest;
     if (!changed || closest == BASE_NOT_FOUND) {
         return false;
     }
-    BYTE shells = 0, mines = 0, armour = 0;
-    basesGetStats(&sim->sim.bs, closest, &shells, &mines, &armour);
-    out->type = EVENT_BASE_STOCK;
-    memset(out->data, 0, sizeof(out->data));
-    out->data[0] = (uint8_t)(closest - 1);
-    out->data[1] = armour;
-    out->data[2] = shells;
-    out->data[3] = mines;
+    serverSimBuildBaseStockEvent(sim, (BYTE)(closest - 1), out);
     return true;
 }
 
@@ -2880,7 +2902,8 @@ bool serverSimTakeArrivalBaseStock(ServerSim *sim, BYTE clientIdx, GameEvent *ou
         return false;
     }
     if (serverSimGetTankState(sim, clientIdx, &wx, &wy)) {
-        closest = basesGetClosestForPlayer(&sim->sim, clientIdx, wx, wy);
+        WORLD r = serverSimClosestBaseSendRange(sim, clientIdx);
+        closest = basesGetClosestForPlayer(&sim->sim, clientIdx, wx, wy, r);
     }
     return serverSimTakeClosestBaseStock(sim, clientIdx, closest, out);
 }
@@ -3086,13 +3109,10 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
              *    an enemy base reports BASE_FULL_ARMOUR while alive (exact value hidden)
              *    but its true armour once dead/capturable, so the capturable flip shows.
              *    Mirrors the brain fog-of-war in basesGetBrainBaseInRect.
-             *  - shells/mines are the private ammo reserve: real only for the
-             *    recipient's closest neutral/allied base, zeroed everywhere else. */
-            WORLD bwx = 0, bwy = 0;
-            BYTE closest = BASE_NOT_FOUND;
-            if (serverSimGetTankState(sim, clientIdx, &bwx, &bwy)) {
-                closest = basesGetClosestForPlayer(&sim->sim, clientIdx, bwx, bwy);
-            }
+             *  - shells/mines are the private ammo reserve: real for every
+             *    neutral/allied base, zeroed for enemy bases. Always sending a
+             *    friendly base's stock means the client has it cached before its
+             *    display ever switches to that base, so no stale 0/0 flash. */
             for (i = 0; i < hdr->baseCount; i++) {
                 BYTE owner = basesOut[i].owner;
                 bool friendly = (owner == NEUTRAL) || (owner == clientIdx) ||
@@ -3100,7 +3120,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                 if (!friendly && basesOut[i].armour > MIN_ARMOUR_CAPTURE) {
                     basesOut[i].armour = BASE_FULL_ARMOUR;
                 }
-                if (closest == BASE_NOT_FOUND || (BYTE)(closest - 1) != (BYTE)i) {
+                if (!friendly) {
                     basesOut[i].shells = 0;
                     basesOut[i].mines  = 0;
                 }
@@ -3125,13 +3145,6 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
         if (hasClientPos) {
             clientMX = (BYTE)(cwx >> 8);
             clientMY = (BYTE)(cwy >> 8);
-        }
-
-        /* Recipient's closest neutral/allied base — best-effort base stock
-         * events are culled to this base only (computed once per recipient). */
-        BYTE closestBase = BASE_NOT_FOUND;
-        if (hasClientPos) {
-            closestBase = basesGetClosestForPlayer(&sim->sim, clientIdx, cwx, cwy);
         }
 
         /* First pass: collect best (closest) sound event per sound type.
@@ -3207,11 +3220,14 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
                         continue;
                     }
                 }
-                /* Cull base stock to the recipient's closest neutral/allied base
-                 * (humans only — bots receive every base-stock event). */
+                /* Cull base stock to neutral/allied bases (humans only — bots
+                 * receive every event). Enemy-base ammo stays hidden. */
                 if (evType == EVENT_BASE_STOCK && !recipientIsBot) {
-                    if (closestBase == BASE_NOT_FOUND ||
-                        (BYTE)(closestBase - 1) != sim->events[i].data[0]) {
+                    BYTE bIdx = sim->events[i].data[0];
+                    BYTE bOwner = (*sim->sim.bs).item[bIdx].owner;
+                    bool bFriendly = (bOwner == NEUTRAL) || (bOwner == clientIdx) ||
+                                     playersIsAllie(&sim->sim.plyrs, bOwner, clientIdx);
+                    if (!bFriendly) {
                         continue;
                     }
                 }

@@ -251,6 +251,12 @@ extern "C" void steam_set_join_callback(SteamJoinCallback cb) {
   s_join_callback = cb;
 }
 
+extern "C" bool steam_owns_dlc(uint32_t dlc_app_id) {
+  if (!s_initialized) return false;
+  ISteamApps *apps = SteamApps();
+  return apps && apps->BIsSubscribedApp((AppId_t)dlc_app_id);
+}
+
 extern "C" bool steam_is_steam_deck(void) {
   if (!s_initialized) return false;
   ISteamUtils *utils = SteamUtils();

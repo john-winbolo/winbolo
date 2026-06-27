@@ -154,6 +154,13 @@ struct ClientSim {
     float errX, errY;       /* world units */
     float errAngle;         /* TURNTYPE units (bradians) */
 
+    /* Countdown of remaining local-tank snapshots over which reconcile
+     * corrections use the enlarged base-unblock position clamp. Set when a
+     * base next to the tank just became drivable (armour fell to capturable),
+     * so the high-RTT catch-up onto the now-passable tile glides instead of
+     * snapping; decremented once per local-tank snapshot back to 0. */
+    int basePassableSmoothSnapshots;
+
     /* Pending human-player build request */
     BYTE        pendingBuildAction;
     BYTE        pendingBuildX;
@@ -566,12 +573,22 @@ void                    clientSimSetConnectErrorReason(ClientSim *cs, const char
 #define CLIENT_ERR_ANGLE_CLAMP   16.0f  /* bradians */
 #define CLIENT_ERR_DECAY_TAU_MS  40.0f  /* err *= exp(-dt/tau); gone in ~120ms */
 
-/* err += delta; if |result| (per-axis position, separately the angle,
- * with the angle wrapped into [-128,128)) exceeds its clamp, zero ALL
- * components — a genuine teleport should snap, not slide. Returns true
- * if the offset was zeroed. */
+/* Enlarged position clamp (4 map squares) used only while a base next to the
+ * tank has just become drivable, so the catch-up correction glides instead of
+ * snapping. At 800 u/s max road speed this covers RTT up to ~1.28s; genuine
+ * teleports past 4 tiles still snap. */
+#define CLIENT_ERR_POS_CLAMP_BASE_UNBLOCK 1024.0f
+/* Number of subsequent local-tank snapshots over which base-unblock
+ * corrections use the enlarged clamp. */
+#define CLIENT_BASE_UNBLOCK_SMOOTH_SNAPSHOTS 3
+
+/* err += delta; if |result| (per-axis position against posClamp, separately
+ * the angle against CLIENT_ERR_ANGLE_CLAMP, with the angle wrapped into
+ * [-128,128)) exceeds its clamp, zero ALL components — a genuine teleport
+ * should snap, not slide. Returns true if the offset was zeroed. */
 bool clientErrSmoothAccumulate(float *errX, float *errY, float *errAngle,
-                               float dX, float dY, float dAngle);
+                               float dX, float dY, float dAngle,
+                               float posClamp);
 
 /* Exponential decay toward zero: err *= expf(-dtMs / CLIENT_ERR_DECAY_TAU_MS). */
 void clientErrSmoothDecay(float *errX, float *errY, float *errAngle, float dtMs);

@@ -48,15 +48,14 @@ int gameFrontDialogX = -1;
 int gameFrontDialogY = -1;
 
 /* Gamepad / Steam Input stubs — LogViewer and MapEditor don't link the
- * full SDL3 input stack (input_gamepad.c, imgui_steam_nav.cpp). ui_mode.c
- * and the shared WBN browser reach for these symbols; on stub-only
- * targets they behave as "no gamepad / menu set active". */
+ * full SDL3 input stack (input_gamepad.c, input_source.c, imgui_steam_nav.cpp).
+ * ui_mode.c and the shared WBN browser reach for these symbols; on stub-only
+ * targets they behave as "no gamepad / keyboard source / menu set active". */
 bool inputGamepadIsConnected(void) { return false; }
 void imguiSteamNavActivateMenuSet(void) {}
 void imguiSteamNavFeedCurrentContext(void) {}
 
-/* uiShouldUseControllerMode keys off the last-used input device. The full
- * source tracker lives in input_source.c, which these targets don't link
- * (no SDL3 input stack); report keyboard so non-Steam-Deck builds stay in
- * keyboard mode (Steam Deck still forces controller mode via uiModeIsSteamDeck). */
+/* uiShouldUseControllerMode() consults inputSourceCurrent(). LogViewer /
+ * MapEditor have no controller input, so report keyboard — keeps the desktop
+ * menu bar and keyboard-style dialogs. */
 InputSource inputSourceCurrent(void) { return INPUT_SOURCE_KEYBOARD; }
