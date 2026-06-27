@@ -271,6 +271,36 @@ static void steamJoinRequested(const char *connect_str) {
   char buf[FILENAME_MAX];
   snprintf(buf, sizeof(buf), "winbolo://%s", connect_str + strlen(prefix));
   gameFrontHandleUrlOpen(buf);
+
+  /* Let the join dialog connect on its own once it opens, rather than
+   * waiting for a manual Join click — this is a Steam-initiated join. */
+  gameFrontRequestUdpAutoJoin();
+
+  /* gameFrontHandleUrlOpen only stashes the target (address globals +
+   * fileName + dlgState). Nothing acts on that stash on its own: the
+   * welcome dialog runs its own modal loop and overwrites dlgState with its
+   * own result on exit, and the in-game loop never reads it at all. So we
+   * have to actively break whichever loop is currently running and steer it
+   * to the UDP join dialog.
+   *
+   * This callback fires from steam_run_callbacks(), which is pumped both by
+   * the welcome dialog's event loop and by the in-game loop. */
+  if (gameFrontIsAtWelcome()) {
+    /* Sitting in welcomeShow()'s modal loop: post a transition it consumes
+     * at the top of each frame (same path as the macOS Dock menu), breaking
+     * it out to the openInternetManual join dialog with the address
+     * pre-filled. */
+    gameFrontRequestTransition(openInternetManual);
+  } else {
+    /* A game/lobby loop is running: tear it down and return to the front
+     * end (winboloQuit stays FALSE), where gameFrontStart picks up the
+     * stashed winbolo:// target and opens the join dialog. Both flags are
+     * reset at the top of each game loop, so setting them when neither the
+     * welcome nor a game loop is active (e.g. a different front-end dialog)
+     * is harmless. */
+    finishedLoop = TRUE;
+    winboloQuit = FALSE;
+  }
 }
 
 /* -------------------------------------------------------
@@ -278,6 +308,8 @@ static void steamJoinRequested(const char *connect_str) {
  * ------------------------------------------------------- */
 int main(int argc, char *argv[]) {
   const char *cmdLine = "";
+  char connectArg[FILENAME_MAX];
+  bool joinedViaSteam = FALSE;
   ClientSim *cs = NULL;
 
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
@@ -295,7 +327,21 @@ int main(int argc, char *argv[]) {
    * Process exit reclaims it; no matching cleanup needed. */
   bolo_net_init();
 
+  /* Steam launches a "join game" / "connect to server" as a fresh process
+   * with the rich-presence connect string on the command line:
+   *     winbolo +connect host:port
+   * which the OS tokenises into argv {"+connect", "host:port"}. The old loop
+   * kept only the first non-empty token ("+connect") and dropped the address,
+   * so a cold-launch join silently fell through to the main menu. Detect the
+   * pair here and convert it to a winbolo:// URL — the form gameFrontStart
+   * already routes to the UDP join dialog. */
   for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "+connect") == 0 && i + 1 < argc) {
+      snprintf(connectArg, sizeof(connectArg), "winbolo://%s", argv[i + 1]);
+      cmdLine = connectArg;
+      joinedViaSteam = TRUE;
+      break;
+    }
     if (cmdLine[0] == '\0') {
       cmdLine = argv[i];
     }
@@ -330,6 +376,15 @@ int main(int argc, char *argv[]) {
 
   steam_init();
   steam_set_join_callback(steamJoinRequested);
+  /* Mirror the in-game join callback: a cold-launch join via Steam also
+   * unlocks the "joined via Steam" achievement. Deferred to here because
+   * argv is parsed before the Steam API is up. */
+  if (joinedViaSteam) {
+    steam_set_achievement("ACH_STEAM_JOIN");
+    steam_store_stats();
+    /* Auto-connect once the pre-filled join dialog opens (see callback). */
+    gameFrontRequestUdpAutoJoin();
+  }
   /* Steam Input (Path A): start in Menu set — game launches into the
      main menu / lobby UI.  In-game switch handled per-frame in
      sdl3ImguiPumpAndRender.  No-op when running without the SDK. */
@@ -366,6 +421,13 @@ int main(int argc, char *argv[]) {
     SDL_Quit();
     return 1;
   }
+  /* The launch argument (winbolo:// join URL, map, or replay) is one-shot:
+   * it drives only this first start. The restart calls below (lobby leave,
+   * game end) must fall through to the normal welcome screen, so clear it —
+   * otherwise a cold-launch join would re-route back into the join dialog
+   * every time the player returns to the menu and try to reconnect to the
+   * server they just left. */
+  cmdLine = "";
 
   /* The server threads mutex outlives every per-session start/end cycle:
    * SDL's timer thread may still be running hostedServerTimerCb (which waits

@@ -534,6 +534,18 @@ void gameFrontRequestPlayTutorial(void);
 bool gameFrontConsumePlayTutorialRequest(void);
 
 /*********************************************************
+*NAME:          gameFrontRequestUdpAutoJoin
+*PURPOSE:
+* Set when a Steam "join game" request arrives. The next
+* gameFrontConsumeUdpAutoJoinRequest() call (made by the UDP
+* setup dialog as it opens) returns TRUE and clears the flag,
+* so the dialog auto-fires its Join button after a brief
+* visible dwell instead of waiting for a manual click.
+*********************************************************/
+void gameFrontRequestUdpAutoJoin(void);
+bool gameFrontConsumeUdpAutoJoinRequest(void);
+
+/*********************************************************
 *NAME:          gameFrontRequestTransition
 *PURPOSE:
 * Posts a state transition the welcome dialog will pick up on
