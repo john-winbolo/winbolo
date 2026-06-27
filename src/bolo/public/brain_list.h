@@ -48,4 +48,20 @@ typedef struct {
     int            count;
 } BrainList;
 
+/* Buffer sizes for the optional human-readable metadata loaded by
+ * brainListLoadMeta. These are display-only (read locally, never sent over
+ * the wire), so they don't affect the BrainList struct or any packet. */
+#define BRAIN_LIST_TAG_LEN   192   /* short one-line tagline (~20 words)     */
+#define BRAIN_LIST_DESC_LEN  640   /* longer hover description (multi-line)  */
+
+/* Load optional metadata for a brain by its catalogue name. Reads
+ * "<brains-parent>/<name>/about.txt" from the first parent that has it
+ * (working-dir brains/ and Brains/, then SDL_GetBasePath()). The file's first
+ * non-empty line is the short tagline; the remainder is the long description.
+ * Either out buffer may be NULL; both are NUL-terminated (and cleared) on
+ * return. Returns true iff an about.txt was found. */
+bool brainListLoadMeta(const char *name,
+                       char *tagline, size_t taglineSz,
+                       char *desc, size_t descSz);
+
 #endif /* BRAIN_LIST_H */

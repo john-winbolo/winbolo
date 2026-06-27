@@ -111,11 +111,36 @@ static bool brainListHasInit(const char *dir) {
  * brainListScan is a one-shot startup call (per-ServerSim init,
  * never concurrent), so that's fine. */
 static const BrainListEntry *g_brainListSortBase = NULL;
+
+/* Split "Name_<ver>" into base ("Name") + numeric version (1.5). No trailing
+ * _<digit> suffix → version 0 and the whole name as base. Lets the catalogue
+ * list NEWER versions of the same brain first (GoalHunter_1.5 before _1.0). */
+static double brainListSplitVersion(const char *name, char *base, size_t baseSz) {
+    const char *us = strrchr(name, '_');
+    if (us && us[1] >= '0' && us[1] <= '9') {
+        size_t blen = (size_t)(us - name);
+        if (blen >= baseSz) blen = baseSz - 1;
+        memcpy(base, name, blen);
+        base[blen] = '\0';
+        return atof(us + 1);
+    }
+    SDL_strlcpy(base, name, baseSz);
+    return 0.0;
+}
+
 static int brainListIndexCmp(const void *a, const void *b) {
     int ia = *(const int *)a;
     int ib = *(const int *)b;
-    return SDL_strcasecmp(g_brainListSortBase[ia].name,
-                          g_brainListSortBase[ib].name);
+    const char *na = g_brainListSortBase[ia].name;
+    const char *nb = g_brainListSortBase[ib].name;
+    char ba[BRAIN_LIST_NAME_LEN], bb[BRAIN_LIST_NAME_LEN];
+    double va = brainListSplitVersion(na, ba, sizeof ba);
+    double vb = brainListSplitVersion(nb, bb, sizeof bb);
+    int c = SDL_strcasecmp(ba, bb);
+    if (c != 0) return c;             /* different brain family → alphabetical */
+    if (va > vb) return -1;           /* same family → newest version first   */
+    if (va < vb) return 1;
+    return SDL_strcasecmp(na, nb);    /* stable tiebreak */
 }
 
 /* Add one entry for the directory at `brainDir` with display name `name`.
@@ -183,6 +208,85 @@ static void brainListScanParent(BrainList *out,
     }
     closedir(d);
 #endif
+}
+
+/* Parse an already-loaded about.txt blob into tagline (first non-empty line)
+ * + description (the remainder, leading blank lines trimmed). */
+static void brainListSplitMeta(const char *blob,
+                               char *tagline, size_t taglineSz,
+                               char *desc, size_t descSz) {
+    const char *p = blob;
+    /* Skip leading whitespace/blank lines to find the tagline. */
+    while (*p == '\n' || *p == '\r' || *p == ' ' || *p == '\t') p++;
+    const char *tagEnd = p;
+    while (*tagEnd && *tagEnd != '\n' && *tagEnd != '\r') tagEnd++;
+    if (tagline && taglineSz > 0) {
+        size_t n = (size_t)(tagEnd - p);
+        if (n >= taglineSz) n = taglineSz - 1;
+        memcpy(tagline, p, n);
+        tagline[n] = '\0';
+    }
+    /* Description = everything after the tagline line, blank lines trimmed. */
+    const char *d = tagEnd;
+    while (*d == '\n' || *d == '\r' || *d == ' ' || *d == '\t') d++;
+    if (desc && descSz > 0) {
+        size_t n = strlen(d);
+        if (n >= descSz) n = descSz - 1;
+        memcpy(desc, d, n);
+        desc[n] = '\0';
+        /* Trim trailing whitespace. */
+        while (n > 0 && (desc[n - 1] == '\n' || desc[n - 1] == '\r' ||
+                         desc[n - 1] == ' '  || desc[n - 1] == '\t')) {
+            desc[--n] = '\0';
+        }
+    }
+}
+
+/* Try to read "<parent>/<name>/about.txt" into buf; returns bytes read (0 if
+ * absent/empty). buf is always NUL-terminated. */
+static size_t brainListReadAbout(const char *parent, const char *name,
+                                 char *buf, size_t bufSz) {
+    char path[1024];
+    SDL_snprintf(path, sizeof(path), "%s%c%s%cabout.txt", parent,
+#if defined(_WIN32)
+                 '\\', name, '\\'
+#else
+                 '/', name, '/'
+#endif
+                 );
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    size_t n = fread(buf, 1, bufSz - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    return n;
+}
+
+bool brainListLoadMeta(const char *name,
+                       char *tagline, size_t taglineSz,
+                       char *desc, size_t descSz) {
+    if (tagline && taglineSz) tagline[0] = '\0';
+    if (desc && descSz) desc[0] = '\0';
+    if (!name || !name[0]) return false;
+
+    char blob[2048];
+    size_t got = brainListReadAbout("brains", name, blob, sizeof(blob));
+    if (!got) got = brainListReadAbout("Brains", name, blob, sizeof(blob));
+    if (!got) {
+        const char *base = SDL_GetBasePath();
+        if (base) {
+            char p[1024];
+            SDL_snprintf(p, sizeof(p), "%sbrains", base);
+            got = brainListReadAbout(p, name, blob, sizeof(blob));
+            if (!got) {
+                SDL_snprintf(p, sizeof(p), "%sBrains", base);
+                got = brainListReadAbout(p, name, blob, sizeof(blob));
+            }
+        }
+    }
+    if (!got) return false;
+    brainListSplitMeta(blob, tagline, taglineSz, desc, descSz);
+    return true;
 }
 
 void brainListScan(BrainList *out, char (*paths)[BRAIN_LIST_PATH_LEN]) {

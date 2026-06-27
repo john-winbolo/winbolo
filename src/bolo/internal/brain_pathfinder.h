@@ -92,6 +92,18 @@ struct BrainPathfinder {
   int16_t  overlay_grid[65536];       /* modder-extensible custom cost layer */
   int16_t  influence_grid[65536];     /* territorial influence: +friendly, -hostile */
   int16_t  danger_offset_grid[65536]; /* per-search danger adjustment (negative = subtract) */
+  /* Coastal boat band: 1 where a water/boat tile lies within
+   * BRAINPF_COASTAL_BAND euclidean tiles of land. Lets the land-only SHORT
+   * Dijkstra slate take near-shore boat shortcuts without expanding the open
+   * ocean. Computed once per map in brainPathfinderSetMap. */
+  uint8_t  coastal_boat_mask[65536];
+  const BYTE *coastal_mask_map;       /* map ptr the mask was computed for (recompute on change) */
+  /* LGM-impassable tiles (1 = blocked). Stamped by the brain each tick with
+   * enemy bases the LGM can't walk onto — the engine's mapGetManSpeed returns
+   * speed 0 there (basesCantDrive: non-ally, non-neutral, armour > capture),
+   * but the brain LGM sim only sees terrain type (refbase = walkable), so it
+   * would otherwise march the LGM straight into an enemy base. */
+  uint8_t  lgm_block[65536];
 
   /* Per-terrain-type tables (indexed 0..15) */
   float terrain_cost_table[16];      /* land mode costs */
@@ -313,10 +325,19 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
 
 /* Trace the Dijkstra parent chain from (dx,dy) back to the source.
  * Returns the first step on the optimal path.
- * Returns 1 on success (out_next_x/y populated), 0 if unreachable. */
+ * Returns 1 on success (out_next_x/y populated), 0 if unreachable.
+ *
+ * obstacles/n_obstacles/penalty: an OPTIONAL live obstacle set evaluated at
+ * trace time (no slate recompute). Each entry is a packed tile key (y*256+x).
+ * When the optimal next tile is an obstacle, the step veers to the cheapest
+ * non-obstacle neighbour by effective cost (g_cost + penalty), so moving
+ * allies are dodged instantly without baking anything into the slate. Pass
+ * obstacles=NULL / n_obstacles=0 for the plain optimal-path behaviour. */
 int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                                      int sx, int sy,
                                      int dx, int dy,
+                                     const int *obstacles, int n_obstacles,
+                                     float penalty,
                                      int *out_next_x, int *out_next_y);
 
 /* Find the slate index that the brain should reuse next when starting a
@@ -432,6 +453,11 @@ int brainPathfinderLgmTravelTicksMap(BrainPathfinder *pf,
                                       BYTE smx, BYTE smy, BYTE dmx, BYTE dmy,
                                       BYTE blessX, BYTE blessY,
                                       int maxTicks, int stuckTicks);
+
+/* LGM-impassable overlay: clear all, then mark (mx,my) tiles the LGM can't
+ * cross (enemy bases). Brain stamps these each tick before LGM reach checks. */
+void brainPathfinderClearLgmBlock(BrainPathfinder *pf);
+void brainPathfinderSetLgmBlock(BrainPathfinder *pf, BYTE mx, BYTE my);
 
 /* Tank travel-time estimation (straight-line, tick-by-tick simulation) */
 int brainPathfinderEstimateTankTravelTicks(BrainPathfinder *pf,

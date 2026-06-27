@@ -562,7 +562,7 @@ set(IOS_MOBILE_SOURCES
 )
 
 # Lua brain scripts to bundle
-file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter/*.lua")
+file(GLOB IOS_BRAIN_SCRIPTS "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5/*.lua")
 
 
 add_executable(WinBoloIOS MACOSX_BUNDLE
@@ -606,7 +606,7 @@ set_source_files_properties(${IOS_DATA_MAPS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/maps"
 )
 set_source_files_properties(${IOS_BRAIN_SCRIPTS} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter"
+    MACOSX_PACKAGE_LOCATION "Brains/GoalHunter_1.5"
 )
 set_source_files_properties(${IOS_DATA_SOUNDS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "data/sounds"
@@ -1245,7 +1245,7 @@ if(WIN32)
         src/res/winbolo.rc
     )
     set_target_properties(WinBolo PROPERTIES WIN32_EXECUTABLE TRUE)
-    target_link_libraries(WinBolo PRIVATE ws2_32 winmm user32 comctl32)
+    target_link_libraries(WinBolo PRIVATE ws2_32 winmm user32 comctl32 dbghelp)
     target_compile_options(WinBolo PRIVATE -fcommon)
     if(MSVC)
         target_link_options(WinBolo PRIVATE "/SUBSYSTEM:WINDOWS,10.0" "/MANIFEST:NO")
@@ -1355,12 +1355,17 @@ add_custom_command(TARGET WinBolo POST_BUILD
 )
 
 add_custom_command(TARGET WinBolo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.5"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
-        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5
+        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.5
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
-    COMMENT "Copying brain scripts to output Brains/ directory (excludes *.md)"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.0"
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0
+        -DDEST_DIR=${WINBOLO_DATA_DIR}/Brains/GoalHunter_1.0
+        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
+    COMMENT "Copying brain scripts (GoalHunter_1.5 + _1.0) to output Brains/ directory (excludes *.md)"
 )
 
 # Steam Input action manifest + per-controller binding files — Steam reads
@@ -1650,8 +1655,11 @@ endif()
 add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloDS>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
-        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5"
+        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.5"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
+        "$<TARGET_FILE_DIR:WinBoloDS>/Brains/GoalHunter_1.0"
     COMMENT "Copying brain scripts to WinBoloDS output Brains/ directory"
 )
 
@@ -1920,8 +1928,11 @@ add_custom_command(TARGET WinBoloHeadless POST_BUILD
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
-        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5"
+        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.5"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
+        "$<TARGET_FILE_DIR:WinBoloHeadless>/Brains/GoalHunter_1.0"
     COMMENT "Copying brain scripts to WinBoloHeadless output directory"
 )
 add_custom_command(TARGET WinBoloHeadless POST_BUILD
@@ -2062,6 +2073,7 @@ set(BRAINTEST_SOURCES
     src/braintest/braintest_main.c src/braintest/braintest_frontend.c
     src/braintest/braintest_viz_registry.c
     src/braintest/braintest_vizwindow.cpp
+    src/braintest/braintest_loadbrowser.cpp
     src/braintest/braintest_panel_registry.c
     src/braintest/braintest_panel_types.c
     src/braintest/braintest_panelwindow.cpp
@@ -2122,7 +2134,7 @@ bolo_apply_include_rules(BrainTest braintest)
 target_link_libraries(BrainTest PRIVATE imgui_backends)
 
 if(WIN32)
-    target_link_libraries(BrainTest PRIVATE ws2_32 winmm user32)
+    target_link_libraries(BrainTest PRIVATE ws2_32 winmm user32 dbghelp)
     target_compile_options(BrainTest PRIVATE -fcommon)
 else()
     target_link_libraries(BrainTest PRIVATE ${MATH_LIB} pthread)
@@ -2143,8 +2155,11 @@ add_custom_command(TARGET BrainTest POST_BUILD
 add_custom_command(TARGET BrainTest POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:BrainTest>/Brains"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/brains/GoalHunter"
-        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter"
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5"
+        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.5"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0"
+        "$<TARGET_FILE_DIR:BrainTest>/Brains/GoalHunter_1.0"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data" "$<TARGET_FILE_DIR:BrainTest>/data"
     COMMENT "Copying BrainTest data files to output directory"
@@ -2386,10 +2401,15 @@ add_custom_target(dist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/AUTHORS.md" "${DIST_DIR}/data/AUTHORS.md"
 
     # Brain scripts (excludes *.md plan/roadmap notes via copy_brains.cmake)
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.5"
     COMMAND ${CMAKE_COMMAND}
-        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter
-        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.5
+        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.5
+        -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${DIST_DIR}/Brains/GoalHunter_1.0"
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${CMAKE_SOURCE_DIR}/brains/GoalHunter_1.0
+        -DDEST_DIR=${DIST_DIR}/Brains/GoalHunter_1.0
         -P ${CMAKE_SOURCE_DIR}/cmake/copy_brains.cmake
 
     # Strip debug info from the staged Linux binaries (no-op on Win/macOS)

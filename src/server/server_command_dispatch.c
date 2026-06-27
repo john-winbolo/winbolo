@@ -401,12 +401,20 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             serverSimGetState(sim) != serverStateLobby ||
             serverSimGetBotAiType(sim) == aiNone ||
             serverSimGetBotBrainPath(sim)[0] == '\0') {
+            fprintf(stderr, "ADD_BOT reject BAD_STATE: lobbyEnabled=%d state=%d aiType=%d brain='%s'\n",
+                    (int)serverSimIsLobbyEnabled(sim), (int)serverSimGetState(sim),
+                    (int)serverSimGetBotAiType(sim), serverSimGetBotBrainPath(sim));
             return CMD_REJECT_BAD_STATE;
         }
-        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        if (!lobbyClientMayEdit(sim, senderSlot)) {
+            fprintf(stderr, "ADD_BOT reject NOT_HOST: senderSlot=%d\n", (int)senderSlot);
+            return CMD_REJECT_NOT_HOST;
+        }
         /* Enforce the operator-configured -maxbots cap (0 = no cap). */
         BYTE maxBots = serverSimGetMaxBots(sim);
         if (maxBots > 0 && serverSimGetLobbyBotCount(sim) >= maxBots) {
+            fprintf(stderr, "ADD_BOT reject BOT_LIMIT: count=%d max=%d\n",
+                    (int)serverSimGetLobbyBotCount(sim), (int)maxBots);
             return CMD_REJECT_BOT_LIMIT;
         }
         const CmdLobbyAddBot *p = &cmd->u.lobbyAddBot;
@@ -420,6 +428,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                                         sizeof(validatedName), -1,
                                         transportUdpServerGetPlayerName,
                                         NULL, NULL)) {
+                fprintf(stderr, "ADD_BOT reject INVALID: bot name not acceptable ('%s')\n", rawName);
                 return CMD_REJECT_INVALID;
             }
         }
@@ -428,7 +437,10 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         for (slot = 0; slot < MAX_TANKS; slot++) {
             if (!serverSimIsPlayerConnected(sim, slot)) { found = true; break; }
         }
-        if (!found) return CMD_REJECT_INVALID;
+        if (!found) {
+            fprintf(stderr, "ADD_BOT reject INVALID: no free slot (all %d slots in use)\n", MAX_TANKS);
+            return CMD_REJECT_INVALID;
+        }
         char botName[64];
         if (haveName) {
             SDL_strlcpy(botName, validatedName, sizeof(botName));
@@ -439,6 +451,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                               serverSimGetBotAiType(sim),
                               gameTypeGet(&serverSimGetGameSim(sim)->game),
                               serverSimGetGameSim(sim)->hiddenMines)) {
+            fprintf(stderr, "ADD_BOT reject INVALID: botManagerAddBot failed (slot=%d name='%s' brain='%s')\n",
+                    (int)slot, botName, serverSimGetBotBrainPath(sim));
             return CMD_REJECT_INVALID;
         }
         transportUdpServerSetBotName(slot, botName);
