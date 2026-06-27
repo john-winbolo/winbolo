@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include "backend.h"
 #include "spectator_drain.h"   /* dep-free seam: drive/drain the spectator feed */
+#include "spectator_input.h"   /* dep-free seam: read the controller for pan/zoom */
 #include "lv_global.h"
 #include "clientmutex.h"
 #include "draw.h"
@@ -1438,6 +1439,15 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
         SpecDrainRecord rec;
         bool drainedAny = false;
 
+        /* Controller input is gated on the leave-confirm modal. While it is
+         * open ImGui owns the gamepad (A confirms / B cancels the prompt), so
+         * map pan/zoom and our own B-to-leave stand down. Drive the gamepad-nav
+         * flag the same way — off in the pannable overview so the stick/d-pad
+         * pan instead of moving ImGui focus, on for the modal and the game view
+         * — and set it before lvHostRenderFrame's newframe reads it. */
+        bool specPopupOpen = lv_imgui_any_popup_open() != 0;
+        lv_imgui_set_gamepad_nav((specPopupOpen || g_lv->gameView) ? 1 : 0);
+
         specDrainPump(cs);
         while (SDL_PollEvent(&sdlEvent)) {
             /* Reuse the viewer's game-view input. The grave key toggles
@@ -1497,6 +1507,51 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
             if (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
                 sdlEvent.key.key == SDLK_ESCAPE) {
                 lv_imgui_spectator_leave_request();
+            }
+            /* Controller B (East) mirrors Esc: arm the "Leave spectating?"
+             * confirm. Suppressed while the modal is open so ImGui's own
+             * East = cancel resolves it rather than this re-arming it. */
+            if (!specPopupOpen &&
+                sdlEvent.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+                sdlEvent.gbutton.button == SDL_GAMEPAD_BUTTON_EAST) {
+                lv_imgui_spectator_leave_request();
+            }
+        }
+
+        /* Controller pan/zoom for the block-grid overview (game view is
+         * fixed-size and ignored; the modal owns input while open). Pan mirrors
+         * the mouse-drag conversion — screen-pixel deltas map to 1/zoom zoom-1
+         * native pixels — but adds the stick delta to the absolute pan (stick
+         * right/down moves the view right/down), the inverse of grab-drag,
+         * which subtracts. Zoom is centered on the window, reusing the same
+         * lv_drawZoomIn/Out the mouse wheel drives. */
+        if (!g_lv->gameView && !specPopupOpen) {
+            float panX = 0.0f, panY = 0.0f;
+            int   zoomDir = 0;
+            if (specInputPollPan(&panX, &panY)) {
+                float zoom = lv_drawGetZoomLevel();
+                if (zoom <= 0.0f) zoom = 1.0f;
+                /* Per-frame pan reach in screen pixels at full deflection. */
+                const float kPanSpeedPx = 12.0f;
+                unsigned char ox = 0, oy = 0;
+                int sx = 0, sy = 0;
+                lv_screenGetOffsets(&ox, &oy);
+                lv_screenGetSubOffset(&sx, &sy);
+                int curX = (int)ox * TILE_SIZE_X + sx;
+                int curY = (int)oy * TILE_SIZE_Y + sy;
+                int newX = curX + (int)(panX * kPanSpeedPx / zoom);
+                int newY = curY + (int)(panY * kPanSpeedPx / zoom);
+                lv_drawDirtyScreen();
+                lv_screenPanToTotalPixels(newX, newY);
+            }
+            if (specInputPollZoom(&zoomDir)) {
+                int w = 0, h = 0;
+                SDL_GetWindowSize(g_lv->window, &w, &h);
+                if (zoomDir > 0) {
+                    lv_drawZoomIn(w / 2, h / 2);
+                } else {
+                    lv_drawZoomOut(w / 2, h / 2);
+                }
             }
         }
 
@@ -1578,6 +1633,10 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
     /* Leave live-DVR mode so the stream pump / transport revert to standalone
      * behaviour for any later log session in this process. */
     lv_screenSpecSetLiveMode(FALSE);
+
+    /* Restore the default gamepad UI nav the overview disabled while panning,
+     * so any later log session in this process keeps controller focus nav. */
+    lv_imgui_set_gamepad_nav(1);
 
     /* Teardown: if the spectator exited while in the game view, restore its
      * window size/tile counts and team-colour state (the grave toggle set them

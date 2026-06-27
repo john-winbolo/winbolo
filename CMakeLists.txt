@@ -1098,6 +1098,11 @@ set(CLIENT_SOURCES
     src/gui/sdl3/news_image_cache.cpp
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    # Real bodies for the spectator_input.h seam: the embedded LogViewer's
+    # spectatorRun reads the controller through it for overview pan/zoom. Reads
+    # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
+    # spectator_input_stub.c instead.
+    src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
     src/gui/sdl3/lang.c src/gui/sdl3/sound.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
@@ -1754,6 +1759,11 @@ list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/render_island_screentan
 # drop it from the glob so it is listed once. It stubs the spectator_drain.h
 # seam for the standalone (which carries spectatorRun but links no bolo sim).
 list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/spectator_drain_stub\\.c$")
+# spectator_input_stub.c is added explicitly to the LogViewer target below;
+# drop it from the glob so it is listed once. It stubs the spectator_input.h
+# seam for the standalone (which carries spectatorRun but links no gui-tier
+# gamepad module); the WinBolo client links the real src/gui/sdl3/spectator_input.c.
+list(FILTER LOGVIEWER_SOURCES EXCLUDE REGEX ".*logviewer/spectator_input_stub\\.c$")
 
 set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_context.cpp
@@ -1813,6 +1823,11 @@ add_executable(LogViewer
     # live in client_sim.c / bolo_static for the WinBolo client) and never
     # spectates, so these resolve the seam symbols here.
     src/logviewer/spectator_drain_stub.c
+    # No-op stubs for the spectator_input.h seam: the standalone links no
+    # gui-tier gamepad module (the real bodies live in
+    # src/gui/sdl3/spectator_input.c for the WinBolo client) and never
+    # spectates, so these resolve the seam symbols here.
+    src/logviewer/spectator_input_stub.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/sdl_bmp.c

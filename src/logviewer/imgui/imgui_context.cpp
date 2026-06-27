@@ -155,6 +155,24 @@ int lv_imgui_want_capture_mouse(void) {
     return ImGui::GetIO().WantCaptureMouse ? 1 : 0;
 }
 
+void lv_imgui_set_gamepad_nav(int enabled) {
+    if (!g_context) return;
+    ImGui::SetCurrentContext(g_context);
+    ImGuiIO& io = ImGui::GetIO();
+    if (enabled) {
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    } else {
+        io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
+    }
+}
+
+int lv_imgui_any_popup_open(void) {
+    if (!g_context) return 0;
+    ImGui::SetCurrentContext(g_context);
+    return ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId |
+                                       ImGuiPopupFlags_AnyPopupLevel) ? 1 : 0;
+}
+
 void lv_imgui_center_message(const char* text) {
     if (!g_context || text == nullptr) return;
     ImGui::SetCurrentContext(g_context);
