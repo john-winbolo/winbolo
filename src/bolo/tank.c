@@ -60,6 +60,10 @@ typedef struct ClientSim ClientSim;
 static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
                             tankButton tb, bool inBrain);
 
+#ifdef BOLO_LEGACY_SQUARE_COLLISION
+/* The direction-dependent bounding boxes are only consulted by the legacy
+ * grid-snap nudge; the default circle resolver uses a fixed TANK_HIT_RADIUS. */
+
 /* Land tank bounding box insets (from tank_self_XX.png sprites)
  * Values are transparent pixel margins from each sprite edge.
  * Converted to distance-from-center in tankNudgeBuildings: (8 - margin) << 4
@@ -105,6 +109,7 @@ static const TankBoundingBox tank_bbox_boat[16] = {
     /* 14 (NW ) */ { .top = 2, .left = 2, .bottom = 0, .right = 0 },
     /* 15 (NNW) */ { .top = 1, .left = 2, .bottom = 0, .right = 1 },
 };
+#endif /* BOLO_LEGACY_SQUARE_COLLISION */
 
 /*********************************************************
  * tankBuildingCollision - Check if a WORLD coordinate
@@ -191,6 +196,71 @@ static void tankNudgeOtherTanks(GameSim *sim, tank *value) {
  * bounding box. Returns accumulated BumpInfo flags.
  *********************************************************/
 static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
+  BumpInfo bumptype = BumpInfo_None;
+  bool isFirstBump = TRUE;
+
+#ifndef BOLO_LEGACY_SQUARE_COLLISION
+  /* Circle-vs-AABB resolver (default). The tank is a circle of radius
+   * TANK_HIT_RADIUS; each solid map tile is a 256-WU axis-aligned box. Each
+   * pass, push the circle out of every overlapping solid tile along its
+   * minimum-translation vector (toward the closest point on the box).
+   * Perpendicular push with the tangential component untouched = smooth
+   * sliding along walls and around corners. */
+  const int R    = TANK_HIT_RADIUS;
+  const int TILE = 1 << TANK_SHIFT_MAPSIZE;
+  int cx = (int)(*value)->x, cy = (int)(*value)->y;
+  int pass;
+  for (pass = 0; pass < maxNudges; pass++) {
+    int cmx = cx >> TANK_SHIFT_MAPSIZE;
+    int cmy = cy >> TANK_SHIFT_MAPSIZE;
+    int moved = 0, gx, gy;
+    for (gy = cmy - 1; gy <= cmy + 1; gy++) {
+      for (gx = cmx - 1; gx <= cmx + 1; gx++) {
+        BumpInfo bt = BumpInfo_None;
+        int minX, maxX, minY, maxY, qx, qy, dx, dy, d2;
+        if (gx < 0 || gy < 0 || gx > 255 || gy > 255) continue;
+        if (!tankBuildingCollision(sim, value,
+              (WORLD)((gx << TANK_SHIFT_MAPSIZE) + TILE / 2),
+              (WORLD)((gy << TANK_SHIFT_MAPSIZE) + TILE / 2), &bt, isFirstBump))
+          continue;                              /* tile not solid */
+        minX = gx << TANK_SHIFT_MAPSIZE; maxX = minX + TILE;
+        minY = gy << TANK_SHIFT_MAPSIZE; maxY = minY + TILE;
+        qx = cx < minX ? minX : (cx > maxX ? maxX : cx);  /* closest point */
+        qy = cy < minY ? minY : (cy > maxY ? maxY : cy);
+        dx = cx - qx; dy = cy - qy;
+        d2 = dx * dx + dy * dy;
+        if (d2 >= R * R) continue;               /* solid but circle clears it */
+        bumptype |= bt;                          /* genuine collision */
+        if (d2 > 0) {
+          float dist = sqrtf((float)d2);
+          float scale = ((float)R - dist) / dist;
+          cx += (int)(dx * scale);
+          cy += (int)(dy * scale);
+        } else {
+          /* center inside the box: eject along the shallowest edge */
+          int pL = cx - minX, pR = maxX - cx, pT = cy - minY, pB = maxY - cy;
+          int m = pL, ax = 0;
+          if (pR < m) { m = pR; ax = 1; }
+          if (pT < m) { m = pT; ax = 2; }
+          if (pB < m) { m = pB; ax = 3; }
+          if      (ax == 0) cx -= (m + R);
+          else if (ax == 1) cx += (m + R);
+          else if (ax == 2) cy -= (m + R);
+          else              cy += (m + R);
+        }
+        moved = 1;
+      }
+    }
+    isFirstBump = FALSE;
+    if (!moved) break;
+  }
+  if (cx < 0) cx = 0; else if (cx > WORLD_MAX) cx = WORLD_MAX;
+  if (cy < 0) cy = 0; else if (cy > WORLD_MAX) cy = WORLD_MAX;
+  (*value)->x = (WORLD)cx;
+  (*value)->y = (WORLD)cy;
+  return bumptype;
+#else
+  /* Legacy direction-dependent bounding-box grid-snap nudge. */
   const TankBoundingBox *table = (*value)->onBoat ? tank_bbox_boat : tank_bbox_land;
   BYTE dirIndex = utilGetDir((*value)->angle);
   const TankBoundingBox *fc = &table[dirIndex];
@@ -201,8 +271,6 @@ static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
   WORLD bottomInset = (8 - fc->bottom) << 4;
   WORLD leftInset   = (8 - fc->left)   << 4;
   WORLD rightInset  = (8 - fc->right)  << 4;
-  BumpInfo bumptype = BumpInfo_None;
-  bool isFirstBump = TRUE;
   int i;
 
   WORLD tankX = (*value)->x;
@@ -269,6 +337,7 @@ static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
   (*value)->y = tankY;
 
   return bumptype;
+#endif /* BOLO_LEGACY_SQUARE_COLLISION */
 }
 
 /*********************************************************
@@ -1128,14 +1197,17 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 
 	returnValue = TH_MISSED;
 
-	/*
-	* TODO: here is where we would call a collision-detection function.  For now, we check to see
-	* if the shell is within 128 WORLD coordinates of a tank's WORLD coordinates.  Since a tank's
-	* WORLD coordinates are from the center, we assume that the tank is basically a circle.
-	*
-	*
-	*/
-	if (abs((*value)->x - x) < 128 && abs((*value)->y - y) < 128  && (*value)->armour <= TANK_FULL_ARMOUR) {
+	/* Shell hit-zone test — circle by default (see TANK_HIT_RADIUS in
+	 * internal/tank.h). The tank's WORLD coordinates are its centre, so a
+	 * hit is a shell centre within TANK_HIT_RADIUS of it. */
+#ifdef BOLO_LEGACY_SQUARE_COLLISION
+	bool inHitZone = (abs((*value)->x - x) < 128 && abs((*value)->y - y) < 128);
+#else
+	int hitDX = (int)(*value)->x - (int)x;
+	int hitDY = (int)(*value)->y - (int)y;
+	bool inHitZone = (hitDX * hitDX + hitDY * hitDY) < TANK_HIT_RADIUS_SQUARED;
+#endif
+	if (inHitZone && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;
 		(*value)->armour -= DAMAGE;
 		if ((*value)->onBoat == TRUE) {
@@ -1179,7 +1251,7 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
 			}
 		}
-	} else if (abs((*value)->x - x) < 128 && abs((*value)->y - y) < 128  && (*value)->armour > TANK_FULL_ARMOUR) {
+	} else if (inHitZone && (*value)->armour > TANK_FULL_ARMOUR) {
 		/* Do crazy shit here */
 	}
 	return returnValue;
@@ -1518,6 +1590,39 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   }
 
   /* Step 4 — Building nudge */
+#ifndef BOLO_LEGACY_SQUARE_COLLISION
+  /* Circle mode (default): after resolving the penetration, REDIRECT the
+   * movement the wall blocked along the wall tangent, so the tank keeps
+   * (near) full speed sliding past walls and corners — slippery wall physics.
+   * The legacy grid-snap nudge + collision slowdown (Step 5) are bypassed in
+   * this mode. */
+  {
+    int preX = (int)(*value)->x, preY = (int)(*value)->y;
+    BumpInfo bumptype = tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
+    int pushX = (int)(*value)->x - preX, pushY = (int)(*value)->y - preY;
+    if ((pushX || pushY) && (xAmount || yAmount)) {
+      const float SLIP = 1.0f;          /* 0 = plain slide, 1 = frictionless */
+      float nlen = sqrtf((float)(pushX * pushX + pushY * pushY));
+      float nx = pushX / nlen, ny = pushY / nlen;            /* outward normal  */
+      float mdotn = (float)xAmount * nx + (float)yAmount * ny;
+      float tx = (float)xAmount - mdotn * nx;                /* tangential part */
+      float ty = (float)yAmount - mdotn * ny;
+      float tmag = sqrtf(tx * tx + ty * ty);
+      float mmag = sqrtf((float)(xAmount * xAmount + yAmount * yAmount));
+      float add  = (mmag - tmag) * SLIP;     /* glide needed for full wall speed */
+      if (tmag > 0.001f && add > 0.0f) {
+        int gx = (int)(tx / tmag * add), gy = (int)(ty / tmag * add);
+        int nxp = (int)(*value)->x + gx, nyp = (int)(*value)->y + gy;
+        if (nxp < 0) nxp = 0; else if (nxp > WORLD_MAX) nxp = WORLD_MAX;
+        if (nyp < 0) nyp = 0; else if (nyp > WORLD_MAX) nyp = WORLD_MAX;
+        (*value)->x = (WORLD)nxp; (*value)->y = (WORLD)nyp;
+        bumptype |= tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
+      }
+    }
+    (void)bumptype;
+    (void)movedThisTick;
+  }
+#else
   WORLD oldX = (*value)->x & TANK_GRID_MASK;
   WORLD oldY = (*value)->y & TANK_GRID_MASK;
   BumpInfo bumptype = tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
@@ -1535,6 +1640,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     }
     (*value)->obstructed = tankObstructed;
   }
+#endif
 
   /* Step 6 — Terrain constraints */
   {
@@ -3261,7 +3367,15 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 
 	returnValue = TH_MISSED;
 
-	if (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128  && (*value)->armour <= TANK_FULL_ARMOUR) {
+	/* Shell hit-zone test — circle by default (see TANK_HIT_RADIUS). */
+#ifdef BOLO_LEGACY_SQUARE_COLLISION
+	bool inHitZone = (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128);
+#else
+	int hitDX = (int)tankX - (int)shellX;
+	int hitDY = (int)tankY - (int)shellY;
+	bool inHitZone = (hitDX * hitDX + hitDY * hitDY) < TANK_HIT_RADIUS_SQUARED;
+#endif
+	if (inHitZone && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;
 		(*value)->armour -= DAMAGE;
 		if ((*value)->onBoat == TRUE) {
@@ -3299,7 +3413,7 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
 			}
 		}
-	} else if (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128  && (*value)->armour > TANK_FULL_ARMOUR) {
+	} else if (inHitZone && (*value)->armour > TANK_FULL_ARMOUR) {
 		/* Do crazy shit here */
 	}
 	return returnValue;
