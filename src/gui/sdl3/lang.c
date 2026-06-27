@@ -1727,6 +1727,7 @@ static const LangEntry langTable[] = {
     {1844, "Display & Sound"},
     {1845, "Game/HUD"},
     {1846, "Session"},
+    {1847, "Currently: {string1}"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

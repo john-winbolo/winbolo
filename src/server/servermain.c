@@ -53,6 +53,8 @@
 #include "net_impair.h"   /* WB_ENABLE_NETIMPAIR master switch */
 #include "bot_manager.h"
 #include "bot_worker_pool.h"
+#include "brain_record.h"
+#include "../gui/sdl3/luabrainshandler.h"  /* luaBrainsSetProfile — shared with BrainTest */
 #include "server_dedicated_log.h"
 #include "server_lifecycle.h"
 #include "../common/sentry_integration.h"
@@ -681,6 +683,13 @@ void printArgs() {
   fprintf(stderr, "                them, or a different one to fight against them.\n");
   fprintf(stderr, "-threads <N>  - Total concurrent bot-think runners including the main\n");
   fprintf(stderr, "                thread. 1 disables the worker pool. Default: logical cores.\n");
+  fprintf(stderr, "-braindebug   - Enable BRAIN_DEBUG_MODE for bots: per-bot print2_bot<N>.log\n");
+  fprintf(stderr, "                (grep MSG_TX / SYNC_P6 to audit bot comms). Use a base -brain\n");
+  fprintf(stderr, "                path (not opt/) so print2 calls aren't stripped.\n");
+  fprintf(stderr, "-profile-log  - Profile the PRODUCTION (opt/) brain: BRAIN_PROFILE on, writes\n");
+  fprintf(stderr, "                optimize.log + performance.ticks.log into debug_sessions/<TS>_<N>/\n");
+  fprintf(stderr, "                alongside brainrec.btr (loadable in BrainTest). Implies recording;\n");
+  fprintf(stderr, "                forces the opt/ brain with debug OFF for representative timings.\n");
 
   fprintf(stderr, "\nNetworking:\n");
   fprintf(stderr, "-port <Port>  - Port to run the server on\n");
@@ -1488,9 +1497,9 @@ int main(int argc, char **argv) {
      * so that lobby "Add Bot" requests have a brain to use. */
     if (brainPath[0] == '\0' && ai != aiNone) {
       static const char *candidates[] = {
-        "Brains/GoalHunter/init.lua",
-        "brains/GoalHunter/init.lua",
-        "data/Brains/GoalHunter/init.lua",
+        "Brains/GoalHunter_1.5/init.lua",
+        "brains/GoalHunter_1.5/init.lua",
+        "data/Brains/GoalHunter_1.5/init.lua",
       };
       int c;
       for (c = 0; c < 3; c++) {
@@ -1653,6 +1662,87 @@ int main(int argc, char **argv) {
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
       char botName[64];
+      /* -braindebug: turn BRAIN_DEBUG_MODE on for every bot (set BEFORE they're
+       * created so each brain constructs with debug on → un-stripped brain +
+       * print2 logging). Lets you audit bot comms on a dedicated server: each
+       * bot writes print2_bot<N>.log (grep MSG_TX for outbound /info traffic,
+       * SYNC_P6 / process_message for what it received).
+       *
+       * Recording is ARMED here, but the debug_sessions/<TS>/ dir, file open,
+       * and per-bot DEBUG_SESSION_DIR publish are deferred to each game's first
+       * running tick (server_lifecycle.c) — so lobby time never enters the
+       * timeline and every game gets its own fresh, tick-0-anchored dir.
+       * BrainTest detects a loadable winbolods session by brainrec.btr. */
+      /* Headless server: only -profile-log (file output) is meaningful. There's
+       * no -profile flag here — the in-memory Y-panel it drives is a BrainTest
+       * windowed feature, not something a dedicated server has any use for. */
+      bool profileLog = (argExist(argc, argv, "profile-log") == TRUE)
+                     || (argExist(argc, argv, "-profile-log") == TRUE);
+      if (profileLog) {
+        /* Profile the PRODUCTION brain. luaBrainsSetProfile is the SAME shared
+         * setter BrainTest uses (luabrainshandler.c, reached via bot_manager),
+         * so every brain we create sets BRAIN_PROFILE / BRAIN_PROFILE_LOG and
+         * writes optimize.log + performance.ticks.log into DEBUG_SESSION_DIR.
+         * Arm recording so server_lifecycle creates that session dir + a
+         * brainrec.btr, giving BrainTest a loadable session with the profile
+         * files beside it. Debug stays OFF and we force the opt/ brain so the
+         * timings reflect what actually ships (the base brain carries print2/
+         * viz overhead). */
+        luaBrainsSetProfile(1, 1);
+        brainRecordSetEnabled(true);
+        {
+          char optPath[MAX_PATH];
+          strncpy(optPath, brainPath, MAX_PATH - 1);
+          optPath[MAX_PATH - 1] = '\0';
+          if (!strstr(optPath, "opt/") && !strstr(optPath, "opt\\")) {
+            char *sep = strrchr(optPath, '/');
+            char *bs  = strrchr(optPath, '\\');
+            if (bs && (!sep || bs > sep)) sep = bs;
+            if (sep && strlen(optPath) + 5 <= (size_t)MAX_PATH) {
+              size_t taillen = strlen(sep + 1);
+              memmove(sep + 5, sep + 1, taillen + 1);  /* +1 keeps the NUL */
+              memcpy(sep + 1, "opt/", 4);
+            }
+          }
+          FILE *tf = fopen(optPath, "r");
+          if (tf) {
+            fclose(tf);
+            strncpy(brainPath, optPath, MAX_PATH - 1);
+            brainPath[MAX_PATH - 1] = '\0';
+            fprintf(stderr, "-profile-log: profiling opt/ brain '%s'\n", brainPath);
+          } else {
+            fprintf(stderr, "-profile-log: opt brain '%s' not found — profiling "
+                            "base brain '%s' (timings include debug/print2 "
+                            "overhead)\n", optPath, brainPath);
+          }
+        }
+        fprintf(stderr, "Profiling ON: BRAIN_PROFILE + optimize.log/"
+                        "performance.ticks.log in debug_sessions/<TS>_<N>/; "
+                        "brainrec.btr recorded for BrainTest.\n");
+      } else if (argExist(argc, argv, "braindebug") == TRUE) {
+        serverSimSetBotDefaultDebugMode(serverSim, true);
+        /* print2 is stripped from the opt/ brain SOURCE, so running an opt/
+         * -brain path under -braindebug yields brainrec.btr but zero
+         * print2_botN.log — the exact footgun the usage text warns about.
+         * Auto-redirect an "opt/" (or "opt\") path segment to the base path
+         * so the per-bot debug logs always appear in -braindebug. */
+        {
+          char *optSeg = strstr(brainPath, "opt/");
+          if (!optSeg) optSeg = strstr(brainPath, "opt\\");
+          if (optSeg && (optSeg == brainPath ||
+                         optSeg[-1] == '/' || optSeg[-1] == '\\')) {
+            /* Splice out the 4-char "opt/" (or "opt\") segment in place. */
+            memmove(optSeg, optSeg + 4, strlen(optSeg + 4) + 1);
+            fprintf(stderr, "-braindebug: redirected opt/ brain to base path "
+                            "'%s' (print2 is stripped from opt/)\n", brainPath);
+          }
+        }
+        brainRecordSetEnabled(true);   /* arm; dir + file open at game start */
+        fprintf(stderr, "Bot brain debug mode ON (print2 + brainrec.btr; a fresh "
+                        "debug_sessions/<TS>_<N>/ per game, rolled into 15-min "
+                        "blocks (_1,_2,...). Use a base -brain path, not opt/, so "
+                        "print2 isn't stripped)\n");
+      }
       int allyTeam = 0;  /* 0 = no allying; 1-16 = team to place bots on */
       if (argExist(argc, argv, "allybots") == TRUE) {
         int aArg = findArg(argc, argv, "allybots");
@@ -1745,6 +1835,7 @@ int main(int argc, char **argv) {
    * lua_States it dispatches into are closed (defence in depth). */
   serverQuiesceGameTimer();
   botWorkerPoolDestroy();
+  brainRecordShutdown();   /* flush + close brainrec.btr (no-op if not recording) */
   threadsDestroy();
 
   if (isLogging == TRUE && winbolonetIsRunning() == TRUE && argExist(argc, argv, "dontsendlog") == FALSE) {

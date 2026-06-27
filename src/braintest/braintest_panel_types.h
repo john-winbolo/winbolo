@@ -50,6 +50,11 @@ typedef void (*PanelRenderFn)(int registry_idx, const char *body);
 void          panelTypeRegister(const char *type_name, PanelRenderFn fn);
 PanelRenderFn panelTypeFind(const char *type_name);
 
+/* Enumerate the registered types — for diagnostics when a panel's type has no
+ * renderer (so the error can list what IS registered). */
+int           panelTypeCount(void);
+const char   *panelTypeNameAt(int idx);
+
 #ifdef __cplusplus
 }
 #endif

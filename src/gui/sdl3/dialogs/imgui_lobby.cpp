@@ -147,6 +147,91 @@ static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
  * the lobby brain catalogue. Process-scoped. */
 static uint8_t s_lastChosenBrainIdx = 0xFF;
 
+/* Catalogue index of the default add-bot brain — prefer "GoalHunter_1.5", else
+ * the first entry (the catalogue is sorted newest-version-first). -1 if empty. */
+static int lobbyDefaultBrainIdx(const BrainList *bl) {
+    if (!bl || bl->count <= 0) return -1;
+    /* The player's explicit persisted choice (wrench dropdown) is gospel. */
+    char chosen[64];
+    gameFrontGetChosenBotBrain(chosen, sizeof(chosen));
+    if (chosen[0] != '\0') {
+        for (int i = 0; i < bl->count; i++) {
+            if (SDL_strcasecmp(bl->entries[i].name, chosen) == 0) return i;
+        }
+    }
+    for (int i = 0; i < bl->count; i++) {
+        if (SDL_strcasecmp(bl->entries[i].name, "GoalHunter_1.5") == 0) return i;
+    }
+    return 0;  /* sorted newest-first → entry 0 is the newest GoalHunter */
+}
+
+/* Client-side cache of per-brain about.txt metadata, keyed by catalogue name.
+ * brainListLoadMeta hits disk, so the combo would otherwise re-read every frame
+ * while open. Entries are loaded lazily and never invalidated (the brains/ tree
+ * doesn't change at runtime). */
+struct LobbyBrainMeta {
+    char name[BRAIN_LIST_NAME_LEN];
+    char tagline[BRAIN_LIST_TAG_LEN];
+    char desc[BRAIN_LIST_DESC_LEN];
+};
+static LobbyBrainMeta s_brainMeta[BRAIN_LIST_MAX];
+static int            s_brainMetaCount = 0;
+
+static const LobbyBrainMeta *lobbyBrainMetaFor(const char *name) {
+    if (!name || !name[0]) return NULL;
+    for (int i = 0; i < s_brainMetaCount; i++) {
+        if (SDL_strcasecmp(s_brainMeta[i].name, name) == 0) return &s_brainMeta[i];
+    }
+    if (s_brainMetaCount >= BRAIN_LIST_MAX) return NULL;
+    LobbyBrainMeta *m = &s_brainMeta[s_brainMetaCount++];
+    SDL_strlcpy(m->name, name, sizeof(m->name));
+    brainListLoadMeta(name, m->tagline, sizeof(m->tagline),
+                      m->desc, sizeof(m->desc));
+    return m;
+}
+
+/* Render a one-line tagline, colouring a leading "Easy." / "Hard." token
+ * (green / red) so the difficulty reads at a glance. wrapPosX > 0 wraps the
+ * remainder at that window-local x. */
+static void lobbyDrawTagline(const char *tag, float wrapPosX) {
+    if (!tag || !tag[0]) return;
+    const char *rest = tag;
+    if (strncmp(tag, "Easy.", 5) == 0) {
+        ImGui::TextColored(ImVec4(0.40f, 0.82f, 0.45f, 1.0f), "Easy.");
+        ImGui::SameLine(0.0f, 4.0f);
+        rest = tag + 5;
+        while (*rest == ' ') rest++;
+    } else if (strncmp(tag, "Hard.", 5) == 0) {
+        ImGui::TextColored(ImVec4(0.95f, 0.52f, 0.38f, 1.0f), "Hard.");
+        ImGui::SameLine(0.0f, 4.0f);
+        rest = tag + 5;
+        while (*rest == ' ') rest++;
+    }
+    if (wrapPosX > 0.0f) ImGui::PushTextWrapPos(wrapPosX);
+    ImGui::TextUnformatted(rest);
+    if (wrapPosX > 0.0f) ImGui::PopTextWrapPos();
+}
+
+/* Gear hover tooltip: "Configure" plus a "Currently:" line naming the bot's
+ * selected brain (its versioned code name) and that version's short tagline,
+ * with the Easy./Hard. difficulty token coloured. */
+static void lobbyGearTooltip(ClientSim *cs, int slot, float s) {
+    ImGui::BeginTooltip();
+    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_TOOLTIP_CONFIG));
+    const BrainList *bl = clientSimGetLobbyBrainList(cs);
+    uint8_t cur = clientSimGetLobbyBotBrain(cs, (BYTE)slot);
+    if (bl && cur != 0xFF && cur < bl->count) {
+        const BrainListEntry *e = &bl->entries[cur];
+        const LobbyBrainMeta *m = lobbyBrainMetaFor(e->name);
+        ImGui::Separator();
+        MessageArgs cargs = {};
+        SDL_snprintf(cargs.string1, sizeof(cargs.string1), "%s", e->name);
+        ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_BOTCFG_CURRENTLY, &cargs));
+        if (m && m->tagline[0]) lobbyDrawTagline(m->tagline, 320.0f * s);
+    }
+    ImGui::EndTooltip();
+}
+
 /* Add Bot. namingPool < 0 means "use the slot's team pool" (multiplayer
  * server already picks based on team membership). namingPool >= 0
  * forces a specific pool — used by per-team header "+ Bot" buttons
@@ -161,6 +246,12 @@ static void lobbySendAddBot(ClientSim *cs,
     /* Validate the sticky brain pick against the current catalogue:
      * an out-of-range sticky (e.g. catalogue shrunk between picks)
      * falls back to the server-default sentinel. */
+    /* First add: default to GoalHunter_1.5 (newest), not the server CLI default;
+     * then stay sticky (the per-bot Bot Code dropdown updates s_lastChosenBrainIdx). */
+    if (s_lastChosenBrainIdx == 0xFF && cs) {
+        int def = lobbyDefaultBrainIdx(clientSimGetLobbyBrainList(cs));
+        if (def >= 0) s_lastChosenBrainIdx = (uint8_t)def;
+    }
     uint8_t stickyBrainIdx = s_lastChosenBrainIdx;
     if (stickyBrainIdx != 0xFF && cs) {
         const BrainList *bl = clientSimGetLobbyBrainList(cs);
@@ -4891,9 +4982,15 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 /* Gear visibility: always shown for bots when this
                  * client has lobby-edit authority (host / openHost /
                  * admin). Hidden entirely for non-permitted clients
-                 * so they don't see a non-functional control. */
-                if (isBot && effectiveHost && !uiShouldUseControllerMode()) {
-                    if (s_iconSettings) {
+                 * so they don't see a non-functional control.
+                 * Controller mode renders the visible ">"/"v" toggle
+                 * (the SmallButton path below) instead of the invisible
+                 * icon button, so it's reachable by gamepad nav and shows
+                 * a focus ring — A expands the AiConfig sub-row, whose
+                 * widgets (name, Bot Code combo, difficulty) are then
+                 * navigable like any other dialog control. */
+                if (isBot && effectiveHost) {
+                    if (s_iconSettings && !uiShouldUseControllerMode()) {
                         float iconSize = ImGui::GetFontSize();
                         cyAbs(iconSize);
                         /* settings.svg renders 5px above / 2px below
@@ -4926,7 +5023,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                             s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
                         }
                         if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_CONFIG));
+                            lobbyGearTooltip(cs, i, s);
                         }
                     } else {
                         cyAbs(ImGui::GetFrameHeight());
@@ -4935,6 +5032,9 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                                      s_expandedBotSlot == i ? "v" : ">", i);
                         if (ImGui::SmallButton(fallId)) {
                             s_expandedBotSlot = (s_expandedBotSlot == i) ? -1 : i;
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            lobbyGearTooltip(cs, i, s);
                         }
                     }
                 } else if (!isBot) {
@@ -5508,6 +5608,15 @@ static void renderBotAiConfig(ClientSim *cs,
                 if (ImGui::Selectable(label, sel)) {
                     pendingBrainPick = b;
                 }
+                /* Hover shows the short one-line tagline only. The longer
+                 * about.txt description is intentionally not surfaced in the
+                 * dropdown — it stays in the file for reference. */
+                const LobbyBrainMeta *m = lobbyBrainMetaFor(e->name);
+                if (m && m->tagline[0] && ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    lobbyDrawTagline(m->tagline, 320.0f * s);
+                    ImGui::EndTooltip();
+                }
                 if (sel) ImGui::SetItemDefaultFocus();
             }
             ImGui::EndCombo();
@@ -5534,10 +5643,13 @@ static void renderBotAiConfig(ClientSim *cs,
         if (slot < MAX_TANKS) s_botNameOverridden[slot] = true;
     }
     if (pendingBrainPick >= 0 && pendingBrainPick < bl->count) {
-        /* Stash as the sticky default so subsequent Add Bot clicks
-         * inherit this choice instead of falling back to the server's
-         * default brain. */
+        /* Stash as the sticky default so subsequent Add Bot clicks inherit
+         * this choice. A manual pick from the wrench dropdown is also the
+         * player's explicit difficulty preference — persist it so it becomes
+         * the default on every future launch (gospel; overrides the SP skill
+         * guess). Empty until the player first chooses here. */
         s_lastChosenBrainIdx = (uint8_t)pendingBrainPick;
+        gameFrontSetChosenBotBrain(bl->entries[pendingBrainPick].name);
         lobbySendSetBotBrain(cs, (uint8_t)slot,
                              (uint8_t)pendingBrainPick);
     }

@@ -535,6 +535,18 @@ void gameFrontRequestPlayTutorial(void);
 bool gameFrontConsumePlayTutorialRequest(void);
 
 /*********************************************************
+*NAME:          gameFrontRequestUdpAutoJoin
+*PURPOSE:
+* Set when a Steam "join game" request arrives. The next
+* gameFrontConsumeUdpAutoJoinRequest() call (made by the UDP
+* setup dialog as it opens) returns TRUE and clears the flag,
+* so the dialog auto-fires its Join button after a brief
+* visible dwell instead of waiting for a manual click.
+*********************************************************/
+void gameFrontRequestUdpAutoJoin(void);
+bool gameFrontConsumeUdpAutoJoinRequest(void);
+
+/*********************************************************
 *NAME:          gameFrontRequestTransition
 *PURPOSE:
 * Posts a state transition the welcome dialog will pick up on
@@ -629,6 +641,12 @@ bool gameFrontPreferencesExist(void);
  * "Onboarding Complete" preference (Yes/No). */
 bool gameFrontOnboardingComplete(void);
 void gameFrontSetOnboardingComplete(void);
+
+/* Player's explicitly-chosen bot brain (lobby wrench dropdown). Persisted as
+ * the difficulty preference; overrides the single-player skill guess. Empty
+ * string until the player first chooses one. */
+void gameFrontSetChosenBotBrain(const char *name);
+void gameFrontGetChosenBotBrain(char *out, size_t outLen);
 
 /*********************************************************
 *NAME:          gameFrontSetWinbolonetToken

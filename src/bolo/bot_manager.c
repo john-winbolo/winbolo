@@ -25,6 +25,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdarg.h>
+#include <time.h>
 
 #include <SDL3/SDL.h>
 
@@ -61,6 +63,7 @@
 #include "../common/wb_log.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"
+#include "brain_record.h"
 #include "../gui/sdl3/luabrainshandler.h"
 
 /* View size for brain map updates — 15x15 centered on tank */
@@ -207,6 +210,71 @@ static void brainBudgetHook(lua_State *L, lua_Debug *ar) {
     }
 }
 
+/* Best-effort copy of _G.DEBUG_SESSION_DIR off the brain's lua_State so
+ * killbot.log lands in the same per-session dir as the other logs.
+ * Returns true if set & non-empty. */
+static bool botReadSessionDir(lua_State *L, char *out, size_t outsz) {
+    if (L == NULL || out == NULL || outsz == 0) return false;
+    int top = lua_gettop(L);
+    bool ok = false;
+    out[0] = '\0';
+    lua_getglobal(L, "DEBUG_SESSION_DIR");
+    if (lua_isstring(L, -1)) {
+        const char *s = lua_tostring(L, -1);
+        if (s && s[0]) {
+            strncpy(out, s, outsz - 1);
+            out[outsz - 1] = '\0';
+            ok = true;
+        }
+    }
+    lua_settop(L, top);
+    return ok;
+}
+
+/* Append one line to killbot.log recording a budget-kill: which bot,
+ * how long its think actually ran, the budget/target it was given, the
+ * running overrun count, and the tick. Opened in append mode and closed
+ * each call so the file is complete even if the run is interrupted. */
+static void botLogKill(ServerSim *sim, int botIndex) {
+    /* Off by default; armed only under -braindebug (same gate as botmsg_debug.log
+     * / brainRecord). Production pays nothing and writes no killbot.log. */
+    if (!sim->botMgr.defaultDebugMode) return;
+
+    BotContext *bot = &sim->botMgr.bots[botIndex];
+
+    char session_dir[512];
+    bool has_session = botReadSessionDir(bot->brain.L, session_dir,
+                                         sizeof(session_dir));
+    char path[1024];
+    SDL_snprintf(path, sizeof(path), "%s/killbot.log",
+                 has_session ? session_dir : ".");
+
+    FILE *f = fopen(path, "a");
+    if (f == NULL) return;
+
+    time_t now = time(NULL);
+    struct tm tm_local;
+#ifdef _WIN32
+    localtime_s(&tm_local, &now);
+#else
+    localtime_r(&now, &tm_local);
+#endif
+    char ts[32];
+    strftime(ts, sizeof(ts), "%Y-%m-%d %H:%M:%S", &tm_local);
+
+    fprintf(f,
+            "[%s] tick=%u bot=%d KILLED: took=%.2fms budget=%.2fms "
+            "over=%.2fms (%.0f%% of budget) overruns=%u\n",
+            ts, (unsigned)serverSimGetTick(sim), botIndex,
+            bot->lastThinkMs, sim->botMgr.lastTargetMs,
+            bot->lastThinkMs - sim->botMgr.lastTargetMs,
+            sim->botMgr.lastTargetMs > 0.0
+                ? (bot->lastThinkMs / sim->botMgr.lastTargetMs) * 100.0
+                : 0.0,
+            (unsigned)bot->overrunCount);
+    fclose(f);
+}
+
 bool botManagerShouldAbort(struct lua_State *L) {
     BotContext *bot = botFromLua((lua_State *)L);
     if (bot == NULL) return false;
@@ -329,6 +397,24 @@ double botManagerComputePerBotTargetMs(const ServerSim *sim, int activeBots) {
         perBot = brainBudget;
     }
     return perBot;
+}
+
+void botManagerFlushBrainLogs(ServerSim *sim) {
+    if (sim == NULL) return;
+    for (BYTE i = 0; i < MAX_TANKS; i++) {
+        BotContext *bot = &sim->botMgr.bots[i];
+        if (!bot->active || bot->brain.L == NULL) continue;
+        lua_State *L = bot->brain.L;
+        int top = lua_gettop(L);
+        lua_getglobal(L, "__brain_flush_logs");
+        if (lua_isfunction(L, -1)) {
+            /* Best-effort: a flush failure must never disturb the sim. */
+            (void)lua_pcall(L, 0, 0, 0);
+        } else {
+            lua_pop(L, 1);
+        }
+        lua_settop(L, top);
+    }
 }
 
 void botManagerRecordSerialMs(ServerSim *sim, double ms) {
@@ -655,9 +741,9 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
  * phase — serverSimTick already ran and inputs aren't applied until
  * Stage 3) and the shared game map read-only; writes only this bot's
  * own job buffers and ClientSim, so it parallelises safely across the
- * pool. Returns false when the tank is dead and waiting to respawn —
- * the caller then skips the think (j->hasInput stays false, so the
- * producer sends no input for this bot, exactly as before). */
+ * pool. Always returns true now (even for a dead tank): the dead tank still
+ * gets a think (with info.dead set) so the brain can reset for respawn, and
+ * runBotThinkJobImpl drops its output so no input is sent. */
 static bool botSyncSnapshotForJob(BotJobCtx *j) {
     BotContext *bot = j->bot;
     ServerSim *sim  = j->sim;
@@ -686,11 +772,11 @@ static bool botSyncSnapshotForJob(BotJobCtx *j) {
     }
     botUpdateBrainMap(bot, sim);
 
-    /* Skip brain while tank is dead (waiting to respawn). */
-    if (MY_TANK(bot->cs) != NULL &&
-        tankGetDeathWait(&MY_TANK(bot->cs)) > 0) {
-        return false;
-    }
+    /* NOTE: dead tanks (waiting to respawn) used to skip the think entirely.
+     * We now still run the think so the brain can reset its own state for a
+     * clean respawn. brainDataMakeInfo sets info.dead, the brain early-returns
+     * without acting, and runBotThinkJobImpl drops the output (no input sent
+     * for a dead tank). So this no longer early-returns on death. */
 
     /* Reset key state before brain runs */
     *clientSimGetBrainHoldKeys(bot->cs) = 0;
@@ -755,6 +841,13 @@ static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
     /* Successful tick — clear the crash streak so a flaky brain that
      * recovers between crashes never trips the kick threshold. */
     bot->consecutiveCrashes = 0;
+
+    /* Dead-tick: the think ran only so the brain could reset its own state.
+     * A dead tank can't act, so drop the output entirely — build no input
+     * packet (j->hasInput stays false → producer sends nothing this frame). */
+    if (bot->brain.bInfo.dead) {
+        return;
+    }
 
     if (MY_TANK(bot->cs) != NULL) {
         MY_TANK(bot->cs)->newTank = FALSE;
@@ -961,6 +1054,7 @@ void botManagerTick(ServerSim *sim, aiType ai) {
              * counter — these always go together. */
             sim->botMgr.bots[i].wasKilled = true;
             sim->botMgr.bots[i].overrunCount++;
+            botLogKill(sim, i);
             if ((serverSimGetTick(sim) - sim->botMgr.bots[i].lastOverrunWarnTick) > 50) {
                 WB_LOG_WARN(WB_LOG_CAT_LUA,
                             "bot %d think aborted (budget %.1fms exceeded; overruns=%u)",
@@ -1019,6 +1113,12 @@ void botManagerTick(ServerSim *sim, aiType ai) {
                        + (double)(sendEnd - brainEnd)) * 1000.0 / freq;
     sim->botMgr.lastSerialMs = serialMs;
     botManagerRecordSerialMs(sim, serialMs);
+
+    /* Brain-decision recorder (winbolods -braindebug). Inert unless enabled.
+     * Runs here, after the worker pool joined and input was dispatched, so
+     * every bot's overlay buffer + Lua state is settled and single-thread
+     * safe to read/eval. */
+    brainRecordTick(sim);
 
     (void)ai;
 }
@@ -1092,6 +1192,7 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
     memcpy(pbuf + 1, msg, mlen);
     pbuf[mlen + 1] = '\0';
 
+    int delivered = 0;
     for (BYTE i = 0; i < MAX_TANKS; i++) {
         if (i == fromPlayer) continue;
         if (!(allies & ((PlayerBitMap)1u << i))) continue;
@@ -1104,7 +1205,14 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
         MessageState *ms = clientSimGetMessages(bc->cs);
         if (ms == NULL) continue;
         messageInboxPush(ms, fromPlayer, pbuf);
+        delivered++;
     }
+    /* Audit hook: shows whether the internal fan-out actually reached anyone.
+     * delivered=0 with a populated allies map = teammates aren't hosted bots or
+     * their inbox is missing; allies=self-only (e.g. 0x20 from p5) = the bots
+     * were never allied (no -allybots / no lobby teams) -> comms can't work. */
+    botMsgDebugLog("BOTMSG fan-out from p%u: allies=0x%X delivered=%d: %.48s",
+                   (unsigned)fromPlayer, (unsigned)allies, delivered, msg);
 }
 
 void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
@@ -1286,10 +1394,29 @@ int botManagerGetActiveBotCount(const ServerSim *sim) {
     return active;
 }
 
+/* Gate + sink for the bot-comms debug log. Enabled by SetDefaultDebugMode
+ * (-braindebug). Appends one line per call to botmsg_debug.log in the CWD;
+ * a no-op when off, so production pays nothing. Opened per-call (low volume:
+ * a few /info messages per second across all bots) to avoid a held handle. */
+static bool g_botMsgDebugLog = false;
+
+void botMsgDebugLog(const char *fmt, ...) {
+    if (!g_botMsgDebugLog) return;
+    FILE *f = fopen("botmsg_debug.log", "a");
+    if (f == NULL) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+
 void botManagerSetDefaultDebugMode(ServerSim *sim, bool enabled) {
     if (sim == NULL) return;
     sim->botMgr.defaultDebugMode = enabled;
     sim->botMgr.brainDebugMode   = enabled;
+    g_botMsgDebugLog             = enabled;
 }
 
 bool botManagerToggleAllBrainDebugMode(ServerSim *sim) {

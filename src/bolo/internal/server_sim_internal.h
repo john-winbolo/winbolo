@@ -307,7 +307,7 @@ struct ServerSim {
         uint16_t votesMask;        /* bit i = slot i voted yes */
         uint16_t answeredMask;     /* bit i = slot i has answered (yes or no) */
         uint64_t startMs;          /* SDL_GetTicks-style epoch (server frame time) */
-        uint64_t deadlineMs;       /* startMs + 60_000 */
+        uint64_t deadlineMs;       /* startMs + GAME_VOTE_DEADLINE_SECONDS*1000 */
         uint64_t lastHeartbeatMs;  /* drives 1Hz broadcast */
         uint64_t concludedAtMs;    /* >0 once active != RUNNING; for auto-dismiss */
         /* Pre-pass grace: once the vote first becomes unanimous we

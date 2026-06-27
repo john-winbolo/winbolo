@@ -2081,7 +2081,7 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
                                "Passing in %us...",
                                (unsigned)snap->secondsRemaining);
         } else if (snap->eligibleCount > 1) {
-            /* Only show the 60-s deadline when there's more than one
+            /* Only show the countdown deadline when there's more than one
              * voter — for a solo vote it's meaningless since the
              * single voter decides instantly on yes. */
             ImGui::TextDisabled("%us left", (unsigned)snap->secondsRemaining);
@@ -4202,9 +4202,18 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        true indefinitely — the swallow in sdl3ImguiProcessEvents then eats
        event-driven game keys like Tank View, trapping the player in pill view.
        So while a game is running and no panel, popup, menu, or text field is
-       genuinely using ImGui, drop any lingering nav focus each frame. */
+       genuinely using ImGui, drop any lingering nav focus each frame.
+
+       Hold off only while an ImGui item is actively held (ActiveId != 0):
+       dropping focus there clears the active item mid-press, so an in-game
+       overlay button (vote Yes/No, alliance Accept/Decline) gets pressed but
+       never fires — the release lands with no active id to complete the
+       click. An active item also means the player is driving the UI, not the
+       tank, so the keyboard isn't being stolen from the game in that instant;
+       the drop resumes the moment the press completes and ActiveId clears. */
     if (cs && !clientSimIsInLobby(cs) && !sdl3ImguiIsDialogOpen() &&
-        !ImGui::GetIO().WantTextInput) {
+        !ImGui::GetIO().WantTextInput &&
+        GImGui->ActiveId == 0) {
         ImGui::SetWindowFocus(nullptr);
     }
 

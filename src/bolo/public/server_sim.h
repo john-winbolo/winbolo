@@ -1419,6 +1419,11 @@ void        serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot,
 const char *serverSimGetBrainPathForIdx(const ServerSim *sim,
                                         uint8_t brainIdx);
 
+/* The server's brain catalogue (auto-scanned from brains/). Indices line
+ * up with serverSimSetBotBrainIdxFor / the published lobby brain list.
+ * Returns NULL for a NULL sim; the pointer is owned by the sim. */
+const BrainList *serverSimGetBrainList(const ServerSim *sim);
+
 /* ── Server-side map directory enumeration ──────────────────────────
  *
  * Lists entries (subdirectories and .map files) at a path relative to

@@ -1301,6 +1301,9 @@ STR_DLGLOBBY_BOTCFG_DEFENSIVE=Defensive
 STR_DLGLOBBY_BOTCFG_SNIPER=Sniper
 STR_DLGLOBBY_BOTCFG_DONE=Done
 
+# Gear-hover tooltip: "Currently: <brain code name>" ({string1} = name).
+STR_DLGLOBBY_BOTCFG_CURRENTLY=Currently: {string1}
+
 # Balance from WBN
 STR_DLGLOBBY_BAL_BTN=Balance from WBN
 STR_DLGLOBBY_BAL_POPUP_TITLE=Balance teams from WBN
