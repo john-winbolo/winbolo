@@ -6,3 +6,4 @@
 {"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":1,"active":0,"triggerSrc":0,"teamId":0,"threshold":1,"yesCount":0,"noCount":0,"eligibleCount":1,"secondsRemaining":0,"votes":0}
 {"tick":0,"type":"CTRL_GAME_VOTE_STATE","kind":2,"active":0,"triggerSrc":0,"teamId":0,"threshold":0,"yesCount":0,"noCount":0,"eligibleCount":0,"secondsRemaining":0,"votes":0}
 {"tick":0,"type":"CTRL_PLAYER_JOIN","playerNum":0,"name":"HeadlessBot","country":"XX","clientType":0,"clientFlags":0,"allies":[0]}
+{"tick":0,"type":"CTRL_LOBBY_SYNC_COMPLETE"}
