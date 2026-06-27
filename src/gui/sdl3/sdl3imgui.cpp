@@ -2081,7 +2081,7 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
                                "Passing in %us...",
                                (unsigned)snap->secondsRemaining);
         } else if (snap->eligibleCount > 1) {
-            /* Only show the 60-s deadline when there's more than one
+            /* Only show the countdown deadline when there's more than one
              * voter — for a solo vote it's meaningless since the
              * single voter decides instantly on yes. */
             ImGui::TextDisabled("%us left", (unsigned)snap->secondsRemaining);

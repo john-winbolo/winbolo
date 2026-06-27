@@ -508,7 +508,7 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
 #endif
 
 /* Vote timeout in seconds */
-#define GAME_VOTE_DEADLINE_SECONDS  60
+#define GAME_VOTE_DEADLINE_SECONDS  30
 
 /* Grace period after a vote becomes unanimous before the effect
  * fires. Voters can change their mind during this window. */
