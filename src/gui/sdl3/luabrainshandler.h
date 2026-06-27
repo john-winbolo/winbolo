@@ -364,7 +364,7 @@ void luaBrainsSetRunScript(const char *path);
 /*********************************************************
 *NAME:          luaBrainsSetProfile
 *PURPOSE:
-*  Two-flag profiling toggle:
+*  Three-flag profiling toggle:
 *    profile     — drives BRAIN_PROFILE Lua global. When true,
 *                  the brain emits opt() phase markers and
 *                  populates opt.last_sections so the BrainTest
@@ -372,13 +372,20 @@ void luaBrainsSetRunScript(const char *path);
 *    profile_log — drives BRAIN_PROFILE_LOG. When true, optimize.lua
 *                  flushes per-tick blocks to optimize.log and
 *                  performance.ticks.log. Implies profile.
+*    pool_viz    — drives BRAIN_POOL_VIZ (OR'd with debug mode).
+*                  When true, the brain builds pool-breakdown
+*                  strings so a recording's "P" replay window has
+*                  data. Decoupled from profile_log so a headless
+*                  profiling run (winbolods -profile-log) can ask
+*                  for timings ONLY, without the pool-string GC
+*                  cost skewing the numbers it's measuring.
 *
 *  Threading: set once at startup, before any brain instance
 *  is created. Captured into the per-brain Lua globals at
 *  luaBrainInstanceCreate() time; later modification has no
 *  effect on already-created brains.
 *********************************************************/
-void luaBrainsSetProfile(int profile, int profile_log);
+void luaBrainsSetProfile(int profile, int profile_log, int pool_viz);
 
 /*********************************************************
 *NAME:          luaBrainsSetLogJson

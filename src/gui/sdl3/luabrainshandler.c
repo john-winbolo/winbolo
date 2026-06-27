@@ -105,10 +105,17 @@ static char s_run_script_path[1024] = "";
  * as BRAIN_PROFILE / BRAIN_PROFILE_LOG Lua globals at brain init. */
 static int s_profile     = 0;
 static int s_profile_log = 0;
+/* Pool-viz capture (BRAIN_POOL_VIZ). Decoupled from profile_log so a
+ * headless profiling run can ask for timings ONLY: BrainTest's profile-log
+ * sets this to feed its "P" replay window, but winbolods -profile-log leaves
+ * it off to avoid the pool-string GC cost (and the extra .btr bytes) skewing
+ * the numbers it's there to measure. */
+static int s_pool_viz    = 0;
 
-void luaBrainsSetProfile(int profile, int profile_log) {
+void luaBrainsSetProfile(int profile, int profile_log, int pool_viz) {
     s_profile     = profile     ? 1 : 0;
     s_profile_log = profile_log ? 1 : 0;
+    s_pool_viz    = pool_viz    ? 1 : 0;
 }
 
 /* Set by --log-json (or always-on in dev mode). Captured as
@@ -690,13 +697,14 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_setglobal(L, "_JSONL_LOGGER_ENABLED");
 
   /* Pool visualizer strings (desc, loc_reason, etc.) — on in debug mode,
-   * off in --opt production mode to eliminate GC pressure. Also force on when
-   * profile-logging: a profiling recording (winbolods -profile-log) wants the
-   * pool breakdown captured into the .btr so BrainTest's "P" window has real
-   * data on replay. The pool-viz code is runtime-gated (not stripped from opt),
-   * so enabling the global is enough; it adds some GC cost, accepted for a
-   * deliberate profiling run. */
-  lua_pushboolean(L, debug_mode || s_profile_log);
+   * off in --opt production mode to eliminate GC pressure. Also driven by the
+   * explicit s_pool_viz flag (luaBrainsSetProfile's third arg): BrainTest's
+   * profile-log sets it so the pool breakdown is captured into the .btr and
+   * its "P" replay window has real data. A headless winbolods -profile-log
+   * leaves it off — it wants timings only, not the pool-string GC cost. The
+   * pool-viz code is runtime-gated (not stripped from opt), so enabling the
+   * global is enough. */
+  lua_pushboolean(L, debug_mode || s_pool_viz);
   lua_setglobal(L, "BRAIN_POOL_VIZ");
 
   /* Per-category debug log gates. All require BRAIN_DEBUG_MODE to be on
