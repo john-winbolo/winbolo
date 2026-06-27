@@ -93,6 +93,8 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
+void spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
+                  void *cs, const char *serverHost, uint16_t serverPort);
 
 #include "dialogs/imgui_wbn_browser.h"
 #include "dialogs/imgui_onboarding.h"

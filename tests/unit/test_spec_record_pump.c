@@ -36,6 +36,7 @@
 
 #include "lv_global.h"
 #include "backend.h"
+#include "blocks.h"
 #include "logviewer.h"
 #include "lv_log.h"
 #include "test_harness.h"
