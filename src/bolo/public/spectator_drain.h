@@ -94,6 +94,13 @@ typedef struct {
   uint8_t allowHiddenMines;
   uint8_t ai;
 
+  /* Game phase recovered from the snapshot's CTRL_GAME_PHASE_* discriminant
+   * event (lobby / countdown / running / game-over). One of the SPEC_PHASE_*
+   * values below; stays SPEC_PHASE_UNKNOWN when the snapshot carried no phase
+   * event. Plain uint8_t so it crosses to the logviewer, which cannot see
+   * control_event.h. */
+  uint8_t specPhase;
+
   /* Per-slot lobby roster recovered from the snapshot's CTRL_LOBBY_SLOT events
    * (the snapshot carries one per connected player, whether or not that player
    * holds a tank). lobbyPresent[i] is true when slot i is a connected lobby
@@ -105,6 +112,14 @@ typedef struct {
   bool    lobbyPresent[16];
   char    lobbyName[16][64];
 } SpecSeedInfo;
+
+/* SpecSeedInfo.specPhase values. Plain constants (not the bolo-side
+ * CTRL_GAME_PHASE_* enum) so the logviewer can map them without control_event.h. */
+#define SPEC_PHASE_UNKNOWN   0
+#define SPEC_PHASE_LOBBY     1
+#define SPEC_PHASE_COUNTDOWN 2
+#define SPEC_PHASE_RUNNING   3
+#define SPEC_PHASE_GAMEOVER  4
 
 /* Decode the lobby/game-info from a raw spectator seed blob
  * ([u32 bodyLen BE][world body][u32 ctrlLen BE][control snapshot]) into *out.

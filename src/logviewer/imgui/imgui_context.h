@@ -53,6 +53,12 @@ int lv_imgui_want_capture_mouse(void);
  * ("spectating begins in N" / "connecting" / "connection lost"). */
 void lv_imgui_center_message(const char* text);
 
+/* Draw a small, borderless, non-interactive phase badge ("Lobby" / "Live" /
+ * "Game Over") in the top-right corner. Call between newframe and render in both
+ * spectator modes (overview + game view). phase is a SPEC_PHASE_* value from
+ * spectator_drain.h; SPEC_PHASE_UNKNOWN draws nothing. */
+void lv_imgui_spectator_badge(int phase);
+
 /* Enable (non-zero) or disable (0) ImGui's gamepad UI-focus navigation. The
  * spectator overview disables it so the stick/d-pad drive map pan rather than
  * ImGui focus, and re-enables it while a modal popup is open (so the controller

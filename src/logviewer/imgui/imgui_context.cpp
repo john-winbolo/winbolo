@@ -9,6 +9,7 @@
  */
 
 #include "imgui_context.h"
+#include "spectator_drain.h"   /* SPEC_PHASE_* discriminants for the badge */
 #include "imgui.h"
 #include "../../gui/imgui_theme.h"
 #include "../../gui/imgui_fonts.h"
@@ -185,5 +186,34 @@ void lv_imgui_center_message(const char* text) {
                  ImGuiWindowFlags_AlwaysAutoResize |
                  ImGuiWindowFlags_NoFocusOnAppearing);
     ImGui::TextUnformatted(text);
+    ImGui::End();
+}
+
+void lv_imgui_spectator_badge(int phase) {
+    if (!g_context) return;
+    const char* label;
+    ImU32 col;
+    switch (phase) {
+        case SPEC_PHASE_LOBBY:
+        case SPEC_PHASE_COUNTDOWN: label = "Lobby";     col = IM_COL32( 70, 130, 200, 255); break;
+        case SPEC_PHASE_RUNNING:   label = "Live";      col = IM_COL32( 60, 175,  75, 255); break;
+        case SPEC_PHASE_GAMEOVER:  label = "Game Over"; col = IM_COL32(190,  75,  75, 255); break;
+        default: return;   /* SPEC_PHASE_UNKNOWN: no badge */
+    }
+    ImGui::SetCurrentContext(g_context);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    /* Top-right corner, nudged below any menu bar so the game-view menu doesn't
+     * cover it. Pivot on the badge's top-right edge. */
+    ImVec2 pos(vp->Pos.x + vp->Size.x - 8.0f, vp->Pos.y + 30.0f);
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::Begin("##spec_badge", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                 ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::PushStyleColor(ImGuiCol_Text, col);
+    ImGui::TextUnformatted(label);
+    ImGui::PopStyleColor();
     ImGui::End();
 }

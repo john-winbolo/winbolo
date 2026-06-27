@@ -118,6 +118,10 @@ typedef struct LogViewerState {
   BYTE         versionMajor;
   BYTE         versionMinor;
   BYTE         versionRevision;
+  /* Live-spectator game phase (SPEC_PHASE_* from spectator_drain.h), decoded
+   * from each seed's snapshot. Drives the window-title tag and the on-screen
+   * phase badge; SPEC_PHASE_UNKNOWN for the standalone replay viewer. */
+  BYTE         gamePhase;
   BYTE         loadedLogVersion;
   BYTE         selectedItem;
   BYTE         selectedItemType;

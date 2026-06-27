@@ -2206,10 +2206,11 @@ bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) 
 
   /* Walk the snapshot's [u16 BE type][u16 BE bodyLen][body] records (the same
    * events a normal joiner receives, embedded in the sync-replay slice
-   * serverSimSerializeControlSnapshot wrote). Two events are wanted: the
-   * lobby-settings event (map/settings the synthesized header needs) and the
+   * serverSimSerializeControlSnapshot wrote). Three events are wanted: the
+   * lobby-settings event (map/settings the synthesized header needs), the
    * lobby-slot events (one per connected player — the roster a spectator host
-   * uses to name lobby-chat senders who hold no tank). All records are walked
+   * uses to name lobby-chat senders who hold no tank), and the game-phase
+   * discriminant (lobby/countdown/running/game-over). All records are walked
    * so the slot events, which follow the settings event, are not missed. */
   decSettings = transportControlCodecBodyDecoder(CTRL_LOBBY_SETTINGS);
   decSlot     = transportControlCodecBodyDecoder(CTRL_LOBBY_SLOT);
@@ -2236,6 +2237,14 @@ bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) 
         found = true;
       }
       haveSettings = true;   /* one lobby-settings event per snapshot */
+    } else if (type == CTRL_GAME_PHASE_LOBBY) {
+      out->specPhase = SPEC_PHASE_LOBBY;
+    } else if (type == CTRL_GAME_PHASE_COUNTDOWN) {
+      out->specPhase = SPEC_PHASE_COUNTDOWN;
+    } else if (type == CTRL_GAME_PHASE_RUNNING) {
+      out->specPhase = SPEC_PHASE_RUNNING;
+    } else if (type == CTRL_GAME_PHASE_GAME_OVER) {
+      out->specPhase = SPEC_PHASE_GAMEOVER;
     } else if (type == CTRL_LOBBY_SLOT) {
       ControlEvent evt;
       memset(&evt, 0, sizeof(evt));

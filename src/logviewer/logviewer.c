@@ -1059,6 +1059,7 @@ static void lvHostRenderFrame(const char *overlay) {
         if (lv_screenSpecIsLiveMode()) {
             lv_g_show_controls_window = true;
             lv_imgui_controls_window();
+            lv_imgui_spectator_badge(g_lv->gamePhase);
         }
         lv_g_reset_window_positions = false;
         if (overlay != NULL) {
@@ -1077,6 +1078,7 @@ static void lvHostRenderFrame(const char *overlay) {
         lv_imgui_events_window();
         lv_g_show_game_info_window = true;
         lv_imgui_game_info_window();
+        lv_imgui_spectator_badge(g_lv->gamePhase);
         lv_g_reset_window_positions = false;
         if (overlay != NULL) {
             lv_imgui_center_message(overlay);
@@ -1287,6 +1289,34 @@ void logViewerRunFromMemory(SDL_Window *window, SDL_Renderer *renderer,
     logViewerRun(window, renderer, NULL, fromMainMenu);
 }
 
+/* Set the borrowed window's title for the live session: host:port, the map name
+ * decoded from the current seed, and a phase tag ([Lobby] / [Live] / [Game Over],
+ * omitted for an unknown phase). Re-applied on every (re)seed so the map name and
+ * phase refresh when the round or phase changes. The caller restores the app
+ * title on return. */
+static void lvSpecApplyTitle(const char *serverHost, uint16_t serverPort) {
+    char specTitle[176];
+    const char *phaseTag;
+    switch (g_lv->gamePhase) {
+        case SPEC_PHASE_LOBBY:
+        case SPEC_PHASE_COUNTDOWN: phaseTag = " [Lobby]";     break;
+        case SPEC_PHASE_RUNNING:   phaseTag = " [Live]";      break;
+        case SPEC_PHASE_GAMEOVER:  phaseTag = " [Game Over]"; break;
+        default:                   phaseTag = "";             break;
+    }
+    if (g_lv->mapName[0] != '\0') {
+        snprintf(specTitle, sizeof(specTitle),
+                 "WinBolo - Spectating %s:%u Map: %s%s",
+                 serverHost ? serverHost : "", (unsigned)serverPort,
+                 g_lv->mapName, phaseTag);
+    } else {
+        snprintf(specTitle, sizeof(specTitle),
+                 "WinBolo - Spectating %s:%u%s",
+                 serverHost ? serverHost : "", (unsigned)serverPort, phaseTag);
+    }
+    SDL_SetWindowTitle(g_lv->window, specTitle);
+}
+
 /* --------------------------------------------------------------------------
  * spectatorRun -- Modal host for the live delayed spectator feed.
  *
@@ -1402,6 +1432,9 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
                 info.ai               = sgi.ai;
                 infoPtr = &info;
             }
+            /* Phase is populated by the decode walk regardless of haveInfo
+               (specSeedDecodeInfo zeroes sgi first), so read it unconditionally. */
+            g_lv->gamePhase = sgi.specPhase;
             if (lv_specSeedLoad(infoPtr, seed, seedLen)) {
                 g_lv->isLoaded = TRUE;
                 lv_imgui_events_clear();
@@ -1423,22 +1456,7 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
         }
 
         if (g_lv->isLoaded) {
-            /* Title the borrowed window for the live session: host:port plus
-             * the map name decoded from the seed. Omit the "Map:" suffix when
-             * the seed carried no map name. The caller restores the app title
-             * on return. */
-            char specTitle[160];
-            if (g_lv->mapName[0] != '\0') {
-                snprintf(specTitle, sizeof(specTitle),
-                         "WinBolo - Spectating %s:%u Map: %s",
-                         serverHost ? serverHost : "", (unsigned)serverPort,
-                         g_lv->mapName);
-            } else {
-                snprintf(specTitle, sizeof(specTitle),
-                         "WinBolo - Spectating %s:%u",
-                         serverHost ? serverHost : "", (unsigned)serverPort);
-            }
-            SDL_SetWindowTitle(g_lv->window, specTitle);
+            lvSpecApplyTitle(serverHost, serverPort);
 
             lv_drawDirtyScreen();
             g_lv->wantScreenUpdate = TRUE;
@@ -1617,6 +1635,8 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
                     info.ai               = sgi.ai;
                     infoPtr = &info;
                 }
+                /* New segment's phase (populated regardless of haveInfo). */
+                g_lv->gamePhase = sgi.specPhase;
                 if (!lv_specSeedLoad(infoPtr, rec.payload, rec.payloadLen)) {
                     /* A failed re-seed left no decoder; exit to a clean teardown
                        rather than render against a torn-down buffer. */
@@ -1639,6 +1659,8 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
                             }
                         }
                     }
+                    /* Refresh title + map + phase tag for the new segment. */
+                    lvSpecApplyTitle(serverHost, serverPort);
                 }
             } else {
                 lv_specRecordPump(rec.isKeyframe, rec.payload, rec.payloadLen);

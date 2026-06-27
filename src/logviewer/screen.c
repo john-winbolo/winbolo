@@ -2022,7 +2022,14 @@ bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len) {
      * it into g_lv but doesn't push it. This is the spectator seed-load path
      * (lv_specSeedLoad); standalone .wbv loads run through lv_screenLoadMap /
      * lv_screenLoadMapFromMemory and are unaffected. */
-    lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, 1, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
+    /* The spectator seed's synthesized header carries no real version, so
+     * lv_logLoadCommon parsed zeros into g_lv->version*. The spectator runs a
+     * protocol compatible with the server, so the client's own build version is
+     * the right thing to show — overwrite with it before publishing. */
+    g_lv->versionMajor    = BOLO_VERSION_MAJOR;
+    g_lv->versionMinor    = BOLO_VERSION_MINOR;
+    g_lv->versionRevision = BOLO_VERSION_REVISION;
+    lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
