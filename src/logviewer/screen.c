@@ -2712,11 +2712,38 @@ bool lv_screenSpecIsLiveMode(void) {
 }
 
 void lv_screenSpecNoteHeadTick(uint32_t gameTick) {
-  /* Monotonic within a segment; a world reset (new generation, tick resets to 0)
-     is the deferred cross-segment case and is intentionally not handled here. */
+  /* Monotonic within a segment. A world reset (new lobby/map) regresses the tick
+     below the head; the host detects that and calls lv_screenSpecResetSegment,
+     which zeroes the head so the new segment's first tick is captured here. */
   if (gameTick >= s_specHeadTick) {
     s_specHeadTick = gameTick;
   }
+}
+
+uint32_t lv_screenSpecHeadTick(void) {
+  return s_specHeadTick;
+}
+
+/* Reset the DVR at a segment boundary (a world reset: new lobby/map). The live
+   buffer and decoder are rebuilt by the re-seed the host runs straight after
+   this; here we drop the previous segment's seek index so scroll-back cannot
+   cross into the old map, and restart the head/anchor/follow state so head-time
+   tracking resumes from the new segment's first tick and the view follows the
+   new head. Live-mode only — standalone .wbv playback never calls this. */
+void lv_screenSpecResetSegment(void) {
+  if (!s_specLiveMode) {
+    return;
+  }
+  lv_snapshotDestroy(&g_lv->snap);
+  g_lv->snap        = lv_snapshotCreate();
+  s_specFollowLive  = true;
+  s_specSeekPark    = false;
+  s_specHeadTick    = 0;
+  s_specAnchorTick  = 0;
+  s_specAnchorMs    = 0;
+  s_specHaveAnchor  = false;
+  s_specPaceAccumMs = 0;
+  s_specPaceLastMs  = 0;
 }
 
 void lv_screenSpecJumpToLive(void) {

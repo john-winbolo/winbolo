@@ -360,6 +360,14 @@ void lv_windowOpenFile(char *cmdLine) {
     char memoryBuff[32];
     int  dlgResult;
 
+    /* A live spectator must not tear down the delayed feed by opening another
+       log. On macOS the native menu still dispatches File > Open even though the
+       in-window menu is suppressed in live mode, so guard at the action itself.
+       Standalone playback and the command-line open are never in live mode. */
+    if (lv_screenSpecIsLiveMode()) {
+        return;
+    }
+
     lv_windowStop(FALSE);
     fileName[0] = '\0';
 
@@ -393,6 +401,13 @@ void lv_windowSaveMap(void) {
     int  dlgResult;
     int  count = 0;
     int  len;
+
+    /* The live spectator never saves the delayed feed to a .wbv. The native
+       macOS menu can still fire File > Save Map, so no-op in live mode (it would
+       otherwise freeze the feed via the pause below). Standalone is unaffected. */
+    if (lv_screenSpecIsLiveMode()) {
+        return;
+    }
 
     lv_windowPause();
     fileName[0] = '\0';
@@ -1452,7 +1467,40 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
          * below drives the decoder forward per follow-live / parked mode. Track the
          * latest record tick so the parked head-time can extrapolate. */
         while (specDrainPopRecord(cs, &rec)) {
-            lv_specRecordPump(rec.isKeyframe, rec.payload, rec.payloadLen);
+            /* A world reset (new lobby/map) regresses the game tick below the
+               tracked head and arrives as a forced keyframe. Reset the DVR to the
+               new segment — drop the old map's scroll-back range and restart
+               head-time tracking — then re-seed from this keyframe so the decoder
+               re-syncs on a fresh buffer, exactly as on the initial seed. The
+               re-seed rebuilds the live buffer + decoder; lv_screenSpecResetSegment
+               clears the seek index and DVR state the re-seed leaves alone. */
+            if (rec.isKeyframe && lv_screenSpecIsLiveMode() &&
+                lv_screenSpecHeadTick() > 0 &&
+                rec.gameTick < lv_screenSpecHeadTick()) {
+                SpecSeedInfo sgi;
+                LvSpecSeedInfo info;
+                const LvSpecSeedInfo *infoPtr = NULL;
+                lv_screenSpecResetSegment();
+                /* The new segment's keyframe carries its own lobby-settings
+                   control slice, so recover the new map name / settings from it
+                   the same way the initial seed does. */
+                if (specSeedDecodeInfo(rec.payload, rec.payloadLen, &sgi) &&
+                    sgi.haveInfo) {
+                    memset(&info, 0, sizeof(info));
+                    info.mapName          = sgi.mapName;
+                    info.gameType         = sgi.gameType;
+                    info.allowHiddenMines = sgi.allowHiddenMines;
+                    info.ai               = sgi.ai;
+                    infoPtr = &info;
+                }
+                if (!lv_specSeedLoad(infoPtr, rec.payload, rec.payloadLen)) {
+                    /* A failed re-seed left no decoder; exit to a clean teardown
+                       rather than render against a torn-down buffer. */
+                    g_lv->isLoaded = FALSE;
+                }
+            } else {
+                lv_specRecordPump(rec.isKeyframe, rec.payload, rec.payloadLen);
+            }
             lv_screenSpecNoteHeadTick(rec.gameTick);
             if (rec.payload != NULL) {
                 free(rec.payload);

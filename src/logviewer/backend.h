@@ -587,8 +587,10 @@ void lv_screenSeekToPosition(float ratio);
 void lv_screenSpecSetLiveMode(bool on);            /* enter/leave; resets DVR state, follows the head */
 bool lv_screenSpecIsLiveMode(void);
 void lv_screenSpecNoteHeadTick(uint32_t gameTick); /* latest drained forward-record game tick */
+uint32_t lv_screenSpecHeadTick(void);              /* current tracked head tick (0 before the first record) */
 void lv_screenSpecFrameUpdate(uint32_t nowMs);     /* once per frame: advance per follow/parked + pause; track head time */
 void lv_screenSpecJumpToLive(void);                /* advance to the head and resume following */
+void lv_screenSpecResetSegment(void);              /* world reset (new lobby/map): drop the seek index + restart head tracking */
 
 /* Returns the slot the camera is currently following (cameraSlot), 0 when no
  * log is loaded. */
