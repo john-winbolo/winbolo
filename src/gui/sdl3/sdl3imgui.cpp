@@ -4982,7 +4982,11 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
             ImGui::SameLine();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam) {
-            ImGui::Image((ImTextureID)s_iconSteam, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+            ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
+            ImGui::ImageWithBg((ImTextureID)s_iconSteam,
+                               ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
+                               ImVec2(0, 0), ImVec2(1, 1),
+                               ImVec4(0, 0, 0, 0), tint);
             imguiHelpTooltip(langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
                                          ? STR_PLAYER_TIP_STEAM_LINKED
                                          : STR_PLAYER_TIP_STEAM_BUILD));
