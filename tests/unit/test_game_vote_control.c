@@ -71,7 +71,7 @@ int run_game_vote_state_codec_back_to_lobby(void) {
 }
 
 /* Surrender vote, just-passed state, targeted at a specific team.
- * Exercises the teamId byte and the maximum 60-second countdown. */
+ * Exercises the teamId byte and the maximum 30-second countdown. */
 int run_game_vote_state_codec_surrender_passed(void) {
     ControlEvent in, out;
     memset(&in, 0, sizeof(in));
@@ -84,7 +84,7 @@ int run_game_vote_state_codec_surrender_passed(void) {
     in.u.gameVoteState.yesCount         = 2;
     in.u.gameVoteState.noCount          = 0;
     in.u.gameVoteState.eligibleCount    = 2;
-    in.u.gameVoteState.secondsRemaining = 60;
+    in.u.gameVoteState.secondsRemaining = 30;
     in.u.gameVoteState.votes            = 0xFFFF;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_GAME_VOTE_STATE, &in, &out) == 0,
@@ -97,7 +97,7 @@ int run_game_vote_state_codec_surrender_passed(void) {
     UT_ASSERT(out.u.gameVoteState.yesCount         == 2);
     UT_ASSERT(out.u.gameVoteState.noCount          == 0);
     UT_ASSERT(out.u.gameVoteState.eligibleCount    == 2);
-    UT_ASSERT(out.u.gameVoteState.secondsRemaining == 60);
+    UT_ASSERT(out.u.gameVoteState.secondsRemaining == 30);
     UT_ASSERT(out.u.gameVoteState.votes            == 0xFFFF);
     return 0;
 }

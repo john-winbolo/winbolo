@@ -1860,7 +1860,13 @@ void frontEndDrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView,
         int dpx = curScrollPxX - sLastScrollPxX;
         int dpy = curScrollPxY - sLastScrollPxY;
         int maxAuto = 4 * tileWpx;
-        if (abs(dpx) <= maxAuto && abs(dpy) <= maxAuto) {
+        /* Skip the world-tracking warp while the pointer is over an ImGui
+         * overlay (vote widget, alliance request, info panels). The warp
+         * runs every frame the view scrolls — including per-tick sub-pixel
+         * autoscroll — so left unchecked it drags the OS cursor out from
+         * under a click on those windows, and button presses never register. */
+        if (!sdl3ImguiWantCaptureMouse() &&
+            abs(dpx) <= maxAuto && abs(dpy) <= maxAuto) {
           cursorApplyScrollDelta(dpx, dpy);
         }
       }
