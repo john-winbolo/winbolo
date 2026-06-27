@@ -468,6 +468,24 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
     pf.next_my = -1
   end
 
+  -- Boat-mode near deep water: when the tank sits on a tile bordering deep sea
+  -- (any of the 8 neighbours), keep the nav destination within ONE tile of the
+  -- tank. Stops steering from aiming a long diagonal that clips a deep-water
+  -- corner (instant drown) — forces careful tile-by-tile movement along the
+  -- shoreline. Without this, a tank that lost its boat in the shallows steers
+  -- at a far escape waypoint, refuses the deep-sea-clipping diagonal, and sits
+  -- wedged in the water.
+  if pf.next_mx and pf.next_mx >= 0
+     and (U.ttype(tmx + 1, tmy    ) == C.T_DEEPSEA or U.ttype(tmx - 1, tmy    ) == C.T_DEEPSEA
+       or U.ttype(tmx,     tmy + 1) == C.T_DEEPSEA or U.ttype(tmx,     tmy - 1) == C.T_DEEPSEA
+       or U.ttype(tmx + 1, tmy + 1) == C.T_DEEPSEA or U.ttype(tmx - 1, tmy + 1) == C.T_DEEPSEA
+       or U.ttype(tmx + 1, tmy - 1) == C.T_DEEPSEA or U.ttype(tmx - 1, tmy - 1) == C.T_DEEPSEA) then
+    if     pf.next_mx > tmx + 1 then pf.next_mx = tmx + 1
+    elseif pf.next_mx < tmx - 1 then pf.next_mx = tmx - 1 end
+    if     pf.next_my > tmy + 1 then pf.next_my = tmy + 1
+    elseif pf.next_my < tmy - 1 then pf.next_my = tmy - 1 end
+  end
+
   if (pf.status == "done" or pf.status == "running") and pf.next_mx >= 0 then
     return pf.next_mx, pf.next_my
   end
