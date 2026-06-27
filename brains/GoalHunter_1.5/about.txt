@@ -1,0 +1,2 @@
+Hard. Aggressively captures pillboxes and bases and teams up with allied bots to overwhelm targets together.
+This bot hunts down enemy pillboxes and bases, coordinating with its allied bots to strike key targets together while keeping its own pillboxes alive and refuelling when it runs low. It plays assertively, organising group assaults, committing to its attacks, and even rebuilding fallen pillboxes under fire when its team has the upper hand. Best for players who want a challenging, relentless opponent.

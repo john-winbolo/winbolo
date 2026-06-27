@@ -46,3 +46,10 @@ PanelRenderFn panelTypeFind(const char *type_name) {
     }
     return NULL;
 }
+
+int panelTypeCount(void) { return g_count; }
+
+const char *panelTypeNameAt(int idx) {
+    if (idx < 0 || idx >= g_count) return NULL;
+    return g_types[idx].name;
+}

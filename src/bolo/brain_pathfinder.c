@@ -487,6 +487,72 @@ void brainPathfinderDestroy(BrainPathfinder *pf) {
   free(pf);
 }
 
+/* Coastal boat band radius (euclidean tiles). A water/boat tile within this
+ * distance of land is marked so the land-only SHORT slate may still take
+ * near-shore boat shortcuts. Open ocean (farther than this from any land)
+ * stays excluded so SHORT's node budget isn't spent crossing the sea. */
+#define BRAINPF_COASTAL_BAND 5
+
+/* Rebuild coastal_boat_mask from the current map. For every water (river/
+ * deep-sea) or boat-pickup tile, mark it if ANY land tile lies within
+ * BRAINPF_COASTAL_BAND euclidean tiles. One-time per map (deep sea is
+ * immutable and coastlines are stable, so it never needs mid-game refresh). */
+static void brainPathfinderBuildCoastalMask(BrainPathfinder *pf, const BYTE *map) {
+  const int R = BRAINPF_COASTAL_BAND;
+  const int R2 = R * R;
+  memset(pf->coastal_boat_mask, 0, sizeof(pf->coastal_boat_mask));
+  if (!map) return;
+
+  /* "land" = anything that isn't open/deep water (boat tiles count as shore).
+   * First pass: bounding box of all land. On the common island map this is a
+   * small region inside a big ocean, so everything outside (box + R) is more
+   * than R from any land — guaranteed not coastal — and we skip it entirely.
+   * (A water tile INSIDE the box can still be far from land, e.g. a big inland
+   * lake, so the per-tile check below is still required inside the box.) */
+  int min_x = MAP_SIZE, min_y = MAP_SIZE, max_x = -1, max_y = -1;
+  for (int y = 0; y < MAP_SIZE; y++) {
+    for (int x = 0; x < MAP_SIZE; x++) {
+      int t = map[y * MAP_SIZE + x] & 0x0F;
+      if (t != TT_RIVER && t != TT_DEEPSEA) {
+        if (x < min_x) min_x = x;
+        if (x > max_x) max_x = x;
+        if (y < min_y) min_y = y;
+        if (y > max_y) max_y = y;
+      }
+    }
+  }
+  if (max_x < 0) return;   /* no land at all → nothing is coastal */
+
+  /* Clamp the land box expanded by R to the map; only water within it can be
+   * coastal. */
+  int lo_x = min_x - R; if (lo_x < 0) lo_x = 0;
+  int hi_x = max_x + R; if (hi_x >= MAP_SIZE) hi_x = MAP_SIZE - 1;
+  int lo_y = min_y - R; if (lo_y < 0) lo_y = 0;
+  int hi_y = max_y + R; if (hi_y >= MAP_SIZE) hi_y = MAP_SIZE - 1;
+
+  for (int y = lo_y; y <= hi_y; y++) {
+    for (int x = lo_x; x <= hi_x; x++) {
+      int idx = y * MAP_SIZE + x;
+      int type = map[idx] & 0x0F;
+      /* Only water / boat-pickup tiles are candidates for the band. */
+      if (type != TT_RIVER && type != TT_DEEPSEA && type != TT_BOAT) continue;
+      int found = 0;
+      for (int dy = -R; dy <= R && !found; dy++) {
+        int yy = y + dy;
+        if (yy < 0 || yy >= MAP_SIZE) continue;
+        for (int dx = -R; dx <= R; dx++) {
+          if (dx * dx + dy * dy > R2) continue;   /* euclidean disc */
+          int xx = x + dx;
+          if (xx < 0 || xx >= MAP_SIZE) continue;
+          int t2 = map[yy * MAP_SIZE + xx] & 0x0F;
+          if (t2 != TT_RIVER && t2 != TT_DEEPSEA) { found = 1; break; }
+        }
+      }
+      if (found) pf->coastal_boat_mask[idx] = 1;
+    }
+  }
+}
+
 void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map) {
   if (pf) {
     /* If the map pointer changed, the precomputed edge cache is stale.
@@ -496,6 +562,11 @@ void brainPathfinderSetMap(BrainPathfinder *pf, const BYTE *map) {
       pf->edge_cost_valid = 0;
       pf->edge_cost_map = NULL;
       pf->cache_dirty = 1;
+    }
+    /* Recompute the coastal boat band when the map pointer changes. */
+    if (pf->coastal_mask_map != map) {
+      brainPathfinderBuildCoastalMask(pf, map);
+      pf->coastal_mask_map = map;
     }
     pf->map = map;
   }
@@ -1915,7 +1986,11 @@ int brainPathfinderDijkstraStep(BrainPathfinder *pf, int slate, uint32_t tick, i
       int nm = ny * MAP_SIZE + nx;
       int n_type = map[nm] & 0x0F;
       int next_boat = next_boat_state(cur_boat, n_type);
-      if (!s->allow_boat && (next_boat || n_type == TT_DEEPSEA)) continue;
+      /* Land-only slate (SHORT) normally skips any boat transition / deep sea.
+       * Exception: near-shore tiles in the coastal band are allowed, so SHORT
+       * can take short boat hops along the coast without expanding open ocean. */
+      if (!s->allow_boat && (next_boat || n_type == TT_DEEPSEA)
+          && !pf->coastal_boat_mask[nm]) continue;
       int new_shells = cur_shells;
 
       float tc;
@@ -2300,9 +2375,20 @@ float brainPathfinderDijkstraLookupSubtractByKind(BrainPathfinder *pf, int kind,
  * find the tank's current position (sx,sy) in the chain, and return
  * the next step from there toward the destination.
  * Returns 1 on success, 0 if unreachable or tank not on path. */
+/* Live-obstacle membership: small linear scan over packed (y*256+x) keys.
+ * n is tiny (a handful of ally tank tiles), so a scan beats any structure. */
+static int obs_contains(const int *obs, int n, int x, int y) {
+  if (!obs || n <= 0) return 0;
+  int key = y * 256 + x;
+  for (int i = 0; i < n; i++) if (obs[i] == key) return 1;
+  return 0;
+}
+
 int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
                                      int sx, int sy,
                                      int dx, int dy,
+                                     const int *obstacles, int n_obstacles,
+                                     float penalty,
                                      int *out_next_x, int *out_next_y) {
   if (!pf) return 0;
   if (dx < 0 || dx > 255 || dy < 0 || dy > 255) return 0;
@@ -2353,8 +2439,27 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
     for (int i = chain_len - 1; i >= 0; i--) {
       if (node_x(chain[i]) == sx && node_y(chain[i]) == sy) {
         if (i <= 0) return 0; /* Already at destination */
-        if (out_next_x) *out_next_x = node_x(chain[i - 1]);
-        if (out_next_y) *out_next_y = node_y(chain[i - 1]);
+        int nnx = node_x(chain[i - 1]);
+        int nny = node_y(chain[i - 1]);
+        /* Live-obstacle veer: the optimal next tile is occupied (e.g. an ally
+         * tank). Pick the cheapest non-obstacle neighbour of (sx,sy) by
+         * effective cost (g_cost + penalty), still descending the field, so we
+         * dodge around it this tick and rejoin the gradient. */
+        if (obs_contains(obstacles, n_obstacles, nnx, nny)) {
+          float best_eff = COST_INF;
+          for (int d = 0; d < 8; d++) {
+            int ax = sx + DX8[d], ay = sy + DY8[d];
+            if (ax < 0 || ax > 255 || ay < 0 || ay > 255) continue;
+            float gl = s->g_cost[node_idx(ax, ay, 0)];
+            float gb = s->g_cost[node_idx(ax, ay, 1)];
+            float g  = (gb < gl) ? gb : gl;
+            if (g >= COST_INF) continue;
+            float eff = g + (obs_contains(obstacles, n_obstacles, ax, ay) ? penalty : 0.0f);
+            if (eff < best_eff) { best_eff = eff; nnx = ax; nny = ay; }
+          }
+        }
+        if (out_next_x) *out_next_x = nnx;
+        if (out_next_y) *out_next_y = nny;
         return 1;
       }
     }
@@ -2377,8 +2482,11 @@ int brainPathfinderDijkstraNextStep(BrainPathfinder *pf, int kind,
       float ng_land = s->g_cost[node_idx(nx, ny, 0)];
       float ng_boat = s->g_cost[node_idx(nx, ny, 1)];
       float ng = (ng_boat < ng_land) ? ng_boat : ng_land;
-      if (ng < best_g) {
-        best_g = ng;
+      /* Live-obstacle veer (same as the on-path case): treat occupied tiles as
+       * far more expensive so the drifted tank routes around them too. */
+      float ng_eff = ng + (obs_contains(obstacles, n_obstacles, nx, ny) ? penalty : 0.0f);
+      if (ng_eff < best_g) {
+        best_g = ng_eff;
         best_nx = nx;
         best_ny = ny;
       }
@@ -3051,8 +3159,23 @@ static const BYTE lgm_man_speed[16] = {
 };
 
 static BYTE lgmGetBrainManSpeed(BrainPathfinder *pf, BYTE mx, BYTE my) {
+  /* Enemy bases the brain stamped as impassable: the terrain type is "refbase"
+   * (walkable) but the engine's mapGetManSpeed returns 0 there for a non-ally,
+   * non-neutral base above capture armour. Mirror that so the LGM sim doesn't
+   * march straight into an enemy base. */
+  if (pf->lgm_block[my * MAP_SIZE + mx]) return 0;
   uint8_t type = pf->map[my * MAP_SIZE + mx] & 0x0F;
   return lgm_man_speed[type];
+}
+
+void brainPathfinderClearLgmBlock(BrainPathfinder *pf) {
+  if (!pf) return;
+  memset(pf->lgm_block, 0, sizeof(pf->lgm_block));
+}
+
+void brainPathfinderSetLgmBlock(BrainPathfinder *pf, BYTE mx, BYTE my) {
+  if (!pf) return;
+  pf->lgm_block[my * MAP_SIZE + mx] = 1;
 }
 
 int brainPathfinderLgmTravelTicks(BrainPathfinder *pf,

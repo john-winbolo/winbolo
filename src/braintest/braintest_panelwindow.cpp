@@ -200,13 +200,39 @@ void panelWindowRender(SDL_Renderer *renderer, int winW, int winH,
                     ImVec2(0, 0), false,
                     ImGuiWindowFlags_HorizontalScrollbar);
                 const char *body = sCache[absIdx].text;
-                /* Look up the registered renderer for this type.
-                 * Unknown / NULL → fall through to "text" so a
-                 * typo or unregistered type still shows the body
-                 * instead of going blank. */
+                /* Route the body to this panel's registered renderer. If the
+                 * type has NO renderer, DON'T silently dump raw JSON via a
+                 * "text" fallback — print + log the mismatch (once per type)
+                 * and show it in-panel, so a missing/mis-registered renderer
+                 * is obvious instead of looking like brain garbage. */
                 PanelRenderFn fn = panelTypeFind(e->type);
-                if (!fn) fn = panelTypeFind("text");
-                if (fn) fn(absIdx, body);
+                if (fn) {
+                    fn(absIdx, body);
+                } else {
+                    static char sLastWarned[64] = "";
+                    if (SDL_strcmp(sLastWarned, e->type) != 0) {
+                        SDL_strlcpy(sLastWarned, e->type, sizeof sLastWarned);
+                        char reg[512]; reg[0] = '\0';
+                        int nt = panelTypeCount();
+                        for (int ti = 0; ti < nt; ti++) {
+                            const char *nm = panelTypeNameAt(ti);
+                            if (!nm) continue;
+                            size_t l = SDL_strlen(reg);
+                            SDL_snprintf(reg + l, sizeof(reg) - l,
+                                         "%s%s", l ? ", " : "", nm);
+                        }
+                        fprintf(stderr,
+                            "PANEL ERROR: no renderer registered for type '%s' "
+                            "(panel '%s'). Registered: [%s]\n",
+                            e->type, e->name, reg);
+                    }
+                    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.4f, 1.0f),
+                        "No renderer for panel type \"%s\".", e->type);
+                    ImGui::TextWrapped(
+                        "Its panelTypeRegister() didn't run or used a different "
+                        "name (check the 1.0/1.5 split). See stderr for the "
+                        "registered type list. Raw JSON suppressed.");
+                }
                 ImGui::EndChild();
                 ImGui::EndTabItem();
             }

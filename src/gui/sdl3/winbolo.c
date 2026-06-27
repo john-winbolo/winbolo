@@ -82,6 +82,7 @@
 #include "dialogs/imgui_tutorial_overlay.h"
 #include "tutorial_text.h"
 #include "../../common/sentry_integration.h"
+#include "../../common/crash_handler.h"
 
 /* humanSim is owned by gamefront.c; declared up here so the timer
  * callback and main game-tick path can pass it to clientSim* wrappers. */
@@ -349,6 +350,11 @@ int main(int argc, char *argv[]) {
 
   sentryInit("WinBolo", argc, argv);
 
+  /* Print a symbolized C stack trace on a fatal native exception. Installed
+   * AFTER sentryInit so our filter chains to Sentry's — cloud report still
+   * fires, and we also get an immediate local trace on stderr + a crash file. */
+  crashHandlerInstall("WinBolo");
+
   dialogBackendInit();
 
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -613,6 +619,14 @@ int main(int argc, char *argv[]) {
           }
         }
         steam_input_run_frame();
+
+        /* Keep in-game rich presence fresh — live player count, and the
+         * host's external connect address once the tracker resolves it.
+         * Throttled internally; gated to the running game so lobby/countdown
+         * frames don't stomp the lobby presence. */
+        if (cs && clientSimGetNetStatus(cs) == netRunning) {
+          gameFrontTickSteamPresenceGame(cs);
+        }
 
         /* Keep in-game rich presence fresh — live player count, and the
          * host's external connect address once the tracker resolves it.

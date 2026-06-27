@@ -21,8 +21,12 @@ typedef enum {
                                        that need to land on a sub-game-
                                        pixel position (e.g. shell hit
                                        dot at WU precision). */
+    OVERLAY_CMD_CIRCLE_FILL,         /* filled disc (triangle fan) instead
+                                       of an outline ring. */
     OVERLAY_CMD_TEXT,
     OVERLAY_CMD_HUD_TEXT,
+    OVERLAY_CMD_HUD_RECT,        /* HUD-space rect outline (x1/y1=offset, x2/y2=w/h) */
+    OVERLAY_CMD_HUD_RECT_FILL,   /* HUD-space filled rect (solid background) */
     OVERLAY_CMD_CLEAR
 } OverlayCmdType;
 
@@ -89,6 +93,12 @@ void overlayCmdText(OverlayCmdBuffer *buf, float x, float y, const char *text,
  * anchor determines which corner of the screen to pin to. */
 void overlayCmdHudText(OverlayCmdBuffer *buf, float x, float y, const char *text,
                        uint8_t anchor, uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+
+/* HUD rect: x/y are pixel offsets from the chosen corner (same anchor scheme
+ * as HUD text), w/h the size in pixels. filled != 0 draws a solid fill,
+ * otherwise a 1px outline. */
+void overlayCmdHudRect(OverlayCmdBuffer *buf, float x, float y, float w, float h,
+                       uint8_t anchor, uint8_t r, uint8_t g, uint8_t b, uint8_t a, int filled);
 
 /* Tag the most-recently-pushed command with a viz_idx (a stable
  * uint8 index into BrainTest's VIZ_TOGGLES array). The Lua-side

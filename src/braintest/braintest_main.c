@@ -56,6 +56,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <signal.h>
 #include <time.h>
@@ -67,6 +68,7 @@
 #include "bolo_rand.h"
 #include "global.h"
 #include "../common/prefs.h"
+#include "../common/crash_handler.h"
 #include "everard_map.h"
 #include "tank.h"
 #include "players.h"
@@ -88,6 +90,10 @@
 #include "../gui/sdl3/luabrainshandler.h"
 #include "braincore.h"
 #include "brain_overlay.h"
+#include "brain_record.h"
+#include "braintest_loadbrowser.h"
+#include <zlib.h>
+#include <time.h>
 #include "braintest_viz_registry.h"
 #include "braintest_vizwindow.h"
 #include "braintest_panel_registry.h"
@@ -144,6 +150,12 @@ time_t serverMainGetTicks(void) { return (time_t)SDL_GetTicks(); }
  * (effectively unlimited — full session retained). Lower default
  * keeps memory bounded on multi-hour runs. */
 static int g_recordingMaxFrames = 3000;
+
+/* Set when a winbolods recording was loaded (-loadsession). Disables the
+ * sliding-window eviction (so the whole recording, including the start, is
+ * kept) and stops playback from snapping to the live sim at the end — there is
+ * no live game to resume, just a frozen replay shell. */
+static bool g_loadedSession = false;
 
 /* Playback / live-replay speed presets, ms-per-tick. Lower = faster. */
 static const int SPEED_PRESETS[] = {
@@ -226,6 +238,10 @@ typedef struct {
     uint8_t           baseCount;
     BtPillFrame       snapPills[MAX_SNAPSHOT_PILLS];
     uint8_t           pillCount;
+    /* Per-player alliance bitmaps (brainrec v5). Applied to gs->plyrs->item[i]
+     * .allie before render so pills/bases color by the followed bot's real
+     * alliances — owner alone reads allies as enemy (red). */
+    uint32_t          allie[MAX_TANKS];
 
     /* Camera + brain perf for the HUD. */
     WORLD viewCenterX, viewCenterY;
@@ -250,6 +266,10 @@ typedef struct {
      * still pulls the right bot's overlays. */
     OverlayCmd *botOverlayCmds[MAX_TANKS];
     int         botOverlayCmdCount[MAX_TANKS];
+    /* Diagnostic: set when the followed bot's overlays this frame were
+     * inherited from the previous frame (captured buffer was empty —
+     * see the INHERIT-ON-EMPTY note in recordingCapture). */
+    int         _vizInheritedFollow;
 
     /* A* / Dijkstra path snapshot for the green key-4 overlay. */
     int *pathX;
@@ -360,6 +380,7 @@ typedef struct {
     int          regIdxCostTo;
     int          regIdxShellHitbox;
     int          regIdxStratPlace;
+    int          regIdxTankIds;
     char        *stratPlaceText;    /* cached Lua heatmap string; freed when overlay turns off */
     /* Dijkstra heatmap (7 key) — which slate the UI displays. The
      * brain runs up to DIJKSTRA_NUM_SLATES (4) parallel searches
@@ -390,6 +411,7 @@ typedef struct {
     /* Overlay texture (256x256 RGBA, updated once per game tick) */
     SDL_Texture *overlayTex;
     uint32_t     overlayTick;   /* sim tick when overlay was last updated */
+    int          overlayFollowBot; /* followBot the cached texture was built for (-1 = none) */
     bool         overlayDirty;  /* force update on toggle change */
 
     /* Cached path (tracePath only works when A* status==1) */
@@ -692,6 +714,525 @@ static void recordingReconstructMap(RecordingBuffer *rb, int targetFrame) {
     rb->playbackMapFrame = targetFrame;
 }
 
+/* ================================================================== */
+/* Session loading: read a winbolods brainrec.btr (gzipped) into the   */
+/* recording buffer so the existing playback/scrub machinery replays   */
+/* it. See src/bolo/brain_record.{c,h} for the on-disk format (v4).    */
+/* ================================================================== */
+
+static uint8_t  bt_gz_u8 (gzFile g){ uint8_t v=0;  gzread(g,&v,1); return v; }
+static uint16_t bt_gz_u16(gzFile g){ uint16_t v=0; gzread(g,&v,2); return v; }
+static uint32_t bt_gz_u32(gzFile g){ uint32_t v=0; gzread(g,&v,4); return v; }
+static float    bt_gz_f32(gzFile g){ float v=0;    gzread(g,&v,4); return v; }
+
+/* Peek a session header (+ first frame) to learn the map name and how many
+ * bot slots it used — needed BEFORE the sim/bots are created at startup.
+ * Returns true on a valid, version-matching brainrec.btr. */
+static bool btPeekSession(const char *path, char mapNameOut[64], int *numBotsOut) {
+    gzFile g = gzopen(path, "rb");
+    if (!g) return false;
+    BrainRecHeader hdr;
+    if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
+        || memcmp(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) != 0
+        || hdr.version != BRAINREC_VERSION) { gzclose(g); return false; }
+    if (mapNameOut) { memcpy(mapNameOut, hdr.mapName, 64); mapNameOut[63] = '\0'; }
+    uint32_t llen = bt_gz_u32(g);
+    if (llen) gzseek(g, llen, SEEK_CUR);
+    int maxSlot = -1;
+    uint32_t fm = bt_gz_u32(g);
+    if (fm == BRAINREC_FRAME_MAGIC) {
+        bt_gz_u32(g); /* tick */
+        uint8_t tc = bt_gz_u8(g); gzseek(g, (z_off_t)tc * (int)sizeof(TankSnapshot),  SEEK_CUR);
+        uint8_t sc = bt_gz_u8(g); gzseek(g, (z_off_t)sc * (int)sizeof(ShellSnapshot), SEEK_CUR);
+        uint8_t bc = bt_gz_u8(g); gzseek(g, (z_off_t)bc * (int)sizeof(BaseSnapshot),  SEEK_CUR);
+        uint8_t pc = bt_gz_u8(g); gzseek(g, (z_off_t)pc * (int)sizeof(PillSnapshot),  SEEK_CUR);
+        uint8_t kf = bt_gz_u8(g);
+        if (kf) gzseek(g, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE, SEEK_CUR);
+        else { uint32_t nd = bt_gz_u32(g); gzseek(g, (z_off_t)nd * 5, SEEK_CUR); }
+        uint8_t nbot = bt_gz_u8(g);
+        for (int b = 0; b < nbot; b++) {
+            uint8_t slot = bt_gz_u8(g);
+            if (slot > maxSlot) maxSlot = slot;
+            gzseek(g, 4, SEEK_CUR);                 /* thinkMs */
+            gzseek(g, 32 + 12 + 32, SEEK_CUR);      /* goalinfo head */
+            uint16_t nc = bt_gz_u16(g); gzseek(g, (z_off_t)nc * (int)sizeof(BrainRecCandidate), SEEK_CUR);
+            uint32_t oc = bt_gz_u32(g);
+            for (uint32_t k = 0; k < oc; k++) {     /* packed overlay: 28 + textLen */
+                gzseek(g, 27, SEEK_CUR);
+                uint8_t tl = bt_gz_u8(g);
+                if (tl) gzseek(g, tl, SEEK_CUR);
+            }
+            uint32_t pl = bt_gz_u32(g); if (pl) gzseek(g, pl, SEEK_CUR);
+        }
+    }
+    gzclose(g);
+    if (numBotsOut) *numBotsOut = (maxSlot >= 0) ? maxSlot + 1 : 1;
+    return true;
+}
+
+/* Read the whole brainrec.btr into app->recording and enter playback. The sim
+ * must already exist with the recorded map + bot slots (so pill/base counts and
+ * per-bot overlay buffers/panels line up — set up at startup from btPeekSession).
+ * Returns the number of frames loaded, or -1 on failure. */
+/* Draw a load-progress bar with raw SDL (the main loop / ImGui isn't running
+ * yet — btLoadSession blocks before it). Pumps events so the window stays
+ * responsive and the close button (X) can cancel. Returns false if the user
+ * asked to quit. pct < 0 => indeterminate (size unknown). */
+static bool btDrawLoadProgress(BrainTestApp *app, double pct, int frames) {
+    if (!app->renderer || !app->window) return true;
+    SDL_Event ev;
+    while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_EVENT_QUIT) return false;
+    }
+    int w = 0, h = 0;
+    SDL_GetRenderOutputSize(app->renderer, &w, &h);
+    if (w <= 0 || h <= 0) { w = 1280; h = 720; }
+    SDL_SetRenderDrawColor(app->renderer, 18, 18, 24, 255);
+    SDL_RenderClear(app->renderer);
+    float bw = (float)w * 0.6f, bh = 26.0f;
+    float bx = ((float)w - bw) * 0.5f, by = ((float)h - bh) * 0.5f;
+    SDL_SetRenderDrawColor(app->renderer, 40, 40, 52, 255);
+    SDL_FRect track = { bx, by, bw, bh };
+    SDL_RenderFillRect(app->renderer, &track);
+    if (pct >= 0.0) {
+        double p = pct > 100.0 ? 100.0 : pct;
+        SDL_SetRenderDrawColor(app->renderer, 72, 162, 232, 255);
+        SDL_FRect fill = { bx, by, (float)(bw * p / 100.0), bh };
+        SDL_RenderFillRect(app->renderer, &fill);
+    }
+    SDL_SetRenderDrawColor(app->renderer, 95, 95, 120, 255);
+    SDL_FRect outline = { bx - 2.0f, by - 2.0f, bw + 4.0f, bh + 4.0f };
+    SDL_RenderRect(app->renderer, &outline);
+    SDL_RenderPresent(app->renderer);
+    char title[128];
+    if (pct >= 0.0)
+        SDL_snprintf(title, sizeof title,
+                     "BrainTest - Loading recording... %d%%  (%d frames)",
+                     (int)(pct + 0.5), frames);
+    else
+        SDL_snprintf(title, sizeof title,
+                     "BrainTest - Loading recording...  (%d frames)", frames);
+    SDL_SetWindowTitle(app->window, title);
+    return true;
+}
+
+/* Load winbolods profiling: performance.ticks.log holds, per tick+bot, the
+ * exact get_capacity_state_json() the live "Y" (Capacity tiers) panel renders.
+ * Inject each line's `data` object into the matching frame's recordedPanels slot
+ * for that bot's tier panel, so playback shows the recorded tiers. Heavy debug
+ * to stderr so a failed load is obvious. */
+static void btLoadProfileTicks(BrainTestApp *app, const char *btrPath) {
+    char dir[1024];
+    SDL_strlcpy(dir, btrPath, sizeof dir);
+    char *sl = strrchr(dir, '/');
+    char *bs = strrchr(dir, '\\');
+    if (bs && (!sl || bs > sl)) sl = bs;
+    if (sl) *sl = '\0'; else SDL_strlcpy(dir, ".", sizeof dir);
+    char perfPath[1200];
+    SDL_snprintf(perfPath, sizeof perfPath, "%s/performance.ticks.log", dir);
+
+    int tierPanelForBot[MAX_TANKS];
+    for (int i = 0; i < MAX_TANKS; i++) tierPanelForBot[i] = -1;
+    for (int pi = 0; pi < panelRegistryCount(); pi++) {
+        const PanelRegistryEntry *e = panelRegistryGet(pi);
+        if (e && e->lua_expr[0] && strstr(e->lua_expr, "get_capacity_state_json")
+            && e->bot_owner >= 0 && e->bot_owner < MAX_TANKS) {
+            tierPanelForBot[e->bot_owner] = pi;
+        }
+    }
+
+    FILE *fp = fopen(perfPath, "rb");
+    if (!fp) {
+        fprintf(stderr, "Load session: no tier profiling (performance.ticks.log absent)\n");
+        return;
+    }
+    fseek(fp, 0, SEEK_END);
+    long sz = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (sz <= 0) { fclose(fp); return; }
+    char *buf = (char *)malloc((size_t)sz + 1);
+    if (!buf) { fclose(fp); fprintf(stderr, "Load session: tier profiling skipped (OOM, %ld bytes)\n", sz); return; }
+    size_t rd = fread(buf, 1, (size_t)sz, fp);
+    fclose(fp);
+    buf[rd] = '\0';
+
+    RecordingBuffer *rb = &app->recording;
+    if (rb->count <= 0) { free(buf); return; }
+
+    uint32_t maxTick = rb->frames[rb->count - 1].tick;
+    int *frameForTick = (int *)malloc((size_t)(maxTick + 1) * sizeof(int));
+    for (uint32_t t = 0; t <= maxTick; t++) frameForTick[t] = -1;
+    for (int fi = 0; fi < rb->count; fi++) {
+        uint32_t t = rb->frames[fi].tick;
+        if (t <= maxTick) frameForTick[t] = fi;
+    }
+
+    long lines = 0, assigned = 0;
+    int minT = 0x7fffffff, maxT = -1;
+    char *p = buf;
+    while (*p) {
+        char *eol = strchr(p, '\n');
+        size_t linelen = eol ? (size_t)(eol - p) : strlen(p);
+        int tick = -1, bot = -1;
+        if (linelen > 12 && sscanf(p, "{\"tick\":%d,\"bot\":%d", &tick, &bot) == 2) {
+            lines++;
+            if (tick < minT) minT = tick;
+            if (tick > maxT) maxT = tick;
+            char *d = strstr(p, "\"data\":");
+            if (d && (size_t)(d - p) < linelen) {
+                d += 7;                            /* past "data": */
+                char *e2 = p + linelen - 1;        /* last char of the line */
+                while (e2 > d && (*e2 == '\r' || *e2 == ' ' || *e2 == '\t')) e2--;
+                if (*e2 == '}') {                  /* outer object close brace */
+                    size_t dlen = (size_t)(e2 - d);  /* data = [d, e2) */
+                    if (tick >= 0 && (uint32_t)tick <= maxTick && frameForTick[tick] >= 0
+                        && bot >= 0 && bot < MAX_TANKS && tierPanelForBot[bot] >= 0) {
+                        RecordingFrame *f = &rb->frames[frameForTick[tick]];
+                        int slotIdx = tierPanelForBot[bot];
+                        if (!f->recordedPanels[slotIdx]) {
+                            char *copy = (char *)malloc(dlen + 1);
+                            if (copy) {
+                                memcpy(copy, d, dlen); copy[dlen] = '\0';
+                                f->recordedPanels[slotIdx] = copy;
+                                assigned++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (!eol) break;
+        p = eol + 1;
+    }
+    free(frameForTick);
+    free(buf);
+    fprintf(stderr, "Load session: tier profiling — %ld/%ld entries mapped (ticks %d..%d)\n",
+            assigned, lines, lines ? minT : 0, lines ? maxT : 0);
+}
+
+static int btLoadSession(BrainTestApp *app, const char *path) {
+    gzFile g = gzopen(path, "rb");
+    if (!g) return -1;
+    BrainRecHeader hdr;
+    if (gzread(g, &hdr, (unsigned)sizeof hdr) != (int)sizeof hdr
+        || memcmp(hdr.magic, BRAINREC_MAGIC, BRAINREC_MAGIC_LEN) != 0
+        || hdr.version != BRAINREC_VERSION) { gzclose(g); return -1; }
+
+    /* Legend: recorded viz_idx -> category name. Remap to BrainTest's own
+     * registry index by name (the bots registered the same categories). */
+    uint8_t vizRemap[256];
+    memset(vizRemap, OVERLAY_VIZ_IDX_NONE, sizeof vizRemap);
+    uint32_t llen = bt_gz_u32(g);
+    if (llen) {
+        char *lj = (char *)malloc(llen + 1);
+        gzread(g, lj, llen); lj[llen] = '\0';
+        /* Parse {"<idx>":"<name>",...} with a minimal scanner. */
+        const char *p = lj;
+        while ((p = strchr(p, '"')) != NULL) {
+            int idx = atoi(p + 1);
+            const char *q = strchr(p + 1, '"'); if (!q) break;     /* end of idx */
+            const char *n1 = strchr(q + 1, '"'); if (!n1) break;   /* open name */
+            const char *n2 = strchr(n1 + 1, '"'); if (!n2) break;  /* close name */
+            char name[VIZ_REG_ID_MAX]; int nl = (int)(n2 - n1 - 1);
+            if (nl < 0) nl = 0; if (nl >= (int)sizeof name) nl = (int)sizeof name - 1;
+            memcpy(name, n1 + 1, nl); name[nl] = '\0';
+            int reg = vizRegistryFind(name);
+            if (idx >= 0 && idx < 256) vizRemap[idx] = (reg >= 0 && reg < 255) ? (uint8_t)reg : OVERLAY_VIZ_IDX_NONE;
+            p = n2 + 1;
+        }
+        free(lj);
+    }
+
+    /* Which panel slot holds each bot's pool breakdown (by bot_owner). */
+    int poolPanelForBot[MAX_TANKS];
+    for (int i = 0; i < MAX_TANKS; i++) poolPanelForBot[i] = -1;
+    for (int pi = 0; pi < panelRegistryCount(); pi++) {
+        const PanelRegistryEntry *e = panelRegistryGet(pi);
+        if (e && e->lua_expr[0] && strstr(e->lua_expr, "get_pool_breakdown_json")
+            && e->bot_owner >= 0 && e->bot_owner < MAX_TANKS) {
+            poolPanelForBot[e->bot_owner] = pi;
+        }
+    }
+    long poolPjCount = 0;   /* pool JSON blobs present in the .btr */
+
+    RecordingBuffer *rb = &app->recording;
+    int loaded = 0;
+    /* Progress = compressed bytes consumed (gzoffset) vs the .btr file size.
+     * Roughly linear, good enough for a 15-minute load bar. */
+    Sint64 gzTotal = 0;
+    { SDL_PathInfo pi; if (SDL_GetPathInfo(path, &pi)) gzTotal = (Sint64)pi.size; }
+    Uint64 lastDrawMs = 0;
+    for (;;) {
+        uint32_t fm = bt_gz_u32(g);
+        if (gzeof(g) || fm != BRAINREC_FRAME_MAGIC) break;
+
+        Uint64 nowMs = SDL_GetTicks();
+        if (nowMs - lastDrawMs >= 50) {   /* ~20 fps; keeps load overhead tiny */
+            lastDrawMs = nowMs;
+            double pct = gzTotal > 0
+                ? (double)gzoffset(g) * 100.0 / (double)gzTotal : -1.0;
+            if (!btDrawLoadProgress(app, pct, rb->count)) {
+                /* Window closed during load — cancel cleanly. */
+                gzclose(g);
+                fprintf(stderr, "Load session: canceled by user at %d frames.\n", rb->count);
+                exit(0);
+            }
+        }
+
+        if (rb->count >= rb->capacity) {
+            int nc = rb->capacity ? rb->capacity * 2 : 1024;
+            if (nc > MAX_RECORDING_FRAMES) nc = MAX_RECORDING_FRAMES;
+            if (rb->count >= nc) break;
+            rb->frames = (RecordingFrame *)realloc(rb->frames, nc * sizeof(RecordingFrame));
+            rb->capacity = nc;
+        }
+        RecordingFrame *f = &rb->frames[rb->count];
+        memset(f, 0, sizeof *f);
+        f->tick = bt_gz_u32(g);
+
+        /* World snapshot. */
+        f->tankCount  = bt_gz_u8(g); if (f->tankCount)  gzread(g, f->tanks,      f->tankCount  * (unsigned)sizeof(TankSnapshot));
+        f->shellCount = bt_gz_u8(g); if (f->shellCount) gzread(g, f->snapShells, f->shellCount * (unsigned)sizeof(ShellSnapshot));
+        f->baseCount  = bt_gz_u8(g); if (f->baseCount)  gzread(g, f->snapBases,  f->baseCount  * (unsigned)sizeof(BaseSnapshot));
+        uint8_t pc = bt_gz_u8(g); f->pillCount = pc;
+        for (int i = 0; i < pc; i++) {
+            PillSnapshot ps; gzread(g, &ps, (unsigned)sizeof ps);
+            f->snapPills[i].x      = ps.x;
+            f->snapPills[i].y      = ps.y;
+            f->snapPills[i].owner  = ps.owner;
+            f->snapPills[i].armour = (uint8_t)(ps.armourInTank & 0x0F);
+            f->snapPills[i].inTank = (uint8_t)((ps.armourInTank >> 4) & 0x01);
+            f->snapPills[i].speed  = 0;
+        }
+
+        /* Terrain: keyframe or delta. */
+        uint8_t kf = bt_gz_u8(g);
+        if (kf) {
+            f->isKeyframe = true;
+            f->fullMap = (BYTE *)malloc(MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+            gzread(g, f->fullMap, MAP_ARRAY_SIZE * MAP_ARRAY_SIZE);
+        } else {
+            uint32_t nd = bt_gz_u32(g);
+            f->mapDeltaCount = (int)nd;
+            if (nd) {
+                f->mapDeltas = (ByteDelta *)malloc(nd * sizeof(ByteDelta));
+                for (uint32_t d = 0; d < nd; d++) {
+                    f->mapDeltas[d].offset = bt_gz_u32(g);
+                    f->mapDeltas[d].oldVal = 0;
+                    f->mapDeltas[d].newVal = bt_gz_u8(g);
+                }
+            }
+        }
+
+        /* Per-bot: think-ms, goal info, overlays, pool JSON. */
+        uint8_t nbot = bt_gz_u8(g);
+        for (int b = 0; b < nbot; b++) {
+            uint8_t slot = bt_gz_u8(g);
+            f->thinkMs = bt_gz_f32(g);   /* HUD shows followed bot; close enough */
+            char kind[32], substate[32];
+            gzread(g, kind, 32);
+            int gmx = (int)bt_gz_u32(g), gmy = (int)bt_gz_u32(g), gtgt = (int)bt_gz_u32(g);
+            gzread(g, substate, 32);
+            uint16_t nc = bt_gz_u16(g);
+            bool useGoal = (slot == 0);   /* scrubber markers track bot 0 */
+            if (useGoal) {
+                memcpy(f->goalInfo.kind, kind, 32); f->goalInfo.kind[31] = '\0';
+                memcpy(f->goalInfo.substate, substate, 32); f->goalInfo.substate[31] = '\0';
+                f->goalInfo.mx = gmx; f->goalInfo.my = gmy; f->goalInfo.target_id = gtgt;
+                f->goalInfo.num_candidates = (nc > BRAIN_GOAL_MAX_CANDIDATES) ? BRAIN_GOAL_MAX_CANDIDATES : nc;
+                f->goalInfoValid = true;
+            }
+            for (uint16_t c = 0; c < nc; c++) {
+                BrainRecCandidate cand; gzread(g, &cand, (unsigned)sizeof cand);
+                if (useGoal && c < BRAIN_GOAL_MAX_CANDIDATES) {
+                    memcpy(f->goalInfo.candidates[c].desc, cand.desc, sizeof cand.desc);
+                    f->goalInfo.candidates[c].desc[sizeof cand.desc - 1] = '\0';
+                    f->goalInfo.candidates[c].cost         = cand.cost;
+                    f->goalInfo.candidates[c].winner       = cand.winner != 0;
+                    f->goalInfo.candidates[c].phase_weight = cand.phase_weight;
+                }
+            }
+
+            /* Keep overlays PACKED in RAM (~28 B/cmd) rather than inflating to a
+             * 160-byte OverlayCmd each — that 5.7x expansion across every frame
+             * is what ballooned memory. botOverlayCmds[slot] holds the raw packed
+             * bytes (viz_idx remapped in place); the playback patch decodes just
+             * the current frame on demand. */
+            uint32_t oc = bt_gz_u32(g);
+            bool keepBot = (slot < MAX_TANKS);
+            uint8_t *pk = NULL; size_t pcap = 0, plen = 0;
+            for (uint32_t k = 0; k < oc; k++) {
+                if (plen + 28 + OVERLAY_TEXT_MAX > pcap) {
+                    pcap = pcap ? pcap * 2 : (size_t)oc * 30u + 512u;
+                    pk = (uint8_t *)realloc(pk, pcap);
+                }
+                gzread(g, pk + plen, 28);                    /* 27 fixed + textLen */
+                pk[plen + 26] = vizRemap[pk[plen + 26]];     /* remap viz_idx */
+                uint8_t tl = pk[plen + 27];
+                if (tl) gzread(g, pk + plen + 28, tl);
+                plen += 28u + tl;
+            }
+            if (keepBot && pk) {
+                f->botOverlayCmds[slot]     = (OverlayCmd *)pk;  /* packed; decoded at render */
+                f->botOverlayCmdCount[slot] = (int)oc;
+            } else if (pk) {
+                free(pk);
+            }
+
+            uint32_t pl = bt_gz_u32(g);
+            char *pj = NULL;
+            if (pl) { pj = (char *)malloc(pl + 1); gzread(g, pj, pl); pj[pl] = '\0';
+                      poolPjCount++; }
+            if (keepBot && pj && poolPanelForBot[slot] >= 0) {
+                f->recordedPanels[poolPanelForBot[slot]] = pj;
+            } else if (pj) {
+                free(pj);
+            }
+        }
+
+        /* Per-player alliance bitmaps (v5), written by the recorder right after
+         * the per-bot block. */
+        for (int i = 0; i < MAX_TANKS; i++) {
+            f->allie[i] = bt_gz_u32(g);
+        }
+
+        rb->count++;
+        loaded++;
+    }
+    gzclose(g);
+
+    if (poolPjCount > 0)
+        fprintf(stderr, "Load session: pool data — %ld blobs from .btr\n", poolPjCount);
+    /* Tier ("Y") data isn't in the .btr — load it from the session's
+     * performance.ticks.log and inject into the tier panel slots. */
+    btLoadProfileTicks(app, path);
+
+    if (loaded > 0) {
+        g_loadedSession = true;
+        g_recordingMaxFrames = MAX_RECORDING_FRAMES;  /* never evict the start */
+        app->playbackMode  = true;
+        app->playbackFrame = rb->count - 1;
+        app->paused        = true;
+        rb->hasPrev = true;
+    }
+    return loaded;
+}
+
+/* Loaded-session overlays are stored packed in botOverlayCmds[]; the current
+ * playback frame is decoded on demand into these reused, lazily-grown per-bot
+ * scratch buffers (so only one frame's worth is inflated at a time). */
+static OverlayCmd *g_ovlScratch[MAX_TANKS];
+static int         g_ovlScratchCap[MAX_TANKS];
+
+/* Decode one bot's packed overlay block (count records) for the current frame
+ * into its scratch buffer. Returns the OverlayCmd count; g_ovlScratch[oi] holds
+ * the decoded array. */
+static int decodeLoadedOverlays(BYTE oi, const uint8_t *p, int count) {
+    if (count <= 0 || !p || oi >= MAX_TANKS) return 0;
+    if (g_ovlScratchCap[oi] < count) {
+        OverlayCmd *nb = (OverlayCmd *)realloc(g_ovlScratch[oi], (size_t)count * sizeof(OverlayCmd));
+        if (!nb) return 0;
+        g_ovlScratch[oi] = nb;
+        g_ovlScratchCap[oi] = count;
+    }
+    OverlayCmd *out = g_ovlScratch[oi];
+    const uint8_t *q = p;
+    for (int k = 0; k < count; k++) {
+        OverlayCmd *c = &out[k];
+        memset(c, 0, sizeof *c);
+        c->type = (OverlayCmdType)q[0];
+        memcpy(&c->x1, q + 1, 4); memcpy(&c->y1, q + 5, 4);
+        memcpy(&c->x2, q + 9, 4); memcpy(&c->y2, q + 13, 4);
+        memcpy(&c->radius, q + 17, 4);
+        c->r = q[21]; c->g = q[22]; c->b = q[23]; c->a = q[24];
+        c->anchor = q[25]; c->viz_idx = q[26];
+        uint8_t tl = q[27];
+        if (tl) {
+            int rl = tl < OVERLAY_TEXT_MAX ? tl : OVERLAY_TEXT_MAX - 1;
+            memcpy(c->text, q + 28, (size_t)tl);
+            c->text[rl] = '\0';
+        }
+        q += 28 + tl;
+    }
+    return count;
+}
+
+/* ---- Load-session browser (the 'O' window) ----------------------------- */
+static LoadSessionEntry g_sessionList[LOADBROWSER_MAX_SESSIONS];
+static int  g_sessionCount    = 0;
+static bool g_showLoadBrowser = false;
+
+/* Parse a "YYYYMMDD_HHMMSS" session dir name to a Unix epoch (local), or -1. */
+static int btParseDirTime(const char *name) {
+    int Y, M, D, h, m, s;
+    if (sscanf(name, "%4d%2d%2d_%2d%2d%2d", &Y, &M, &D, &h, &m, &s) != 6) return -1;
+    struct tm tmv; memset(&tmv, 0, sizeof tmv);
+    tmv.tm_year = Y - 1900; tmv.tm_mon = M - 1; tmv.tm_mday = D;
+    tmv.tm_hour = h; tmv.tm_min = m; tmv.tm_sec = s; tmv.tm_isdst = -1;
+    time_t t = mktime(&tmv);
+    return (t == (time_t)-1) ? -1 : (int)t;
+}
+
+/* Scan debug_sessions/ for recordings. Loadable = has a version-matching
+ * brainrec.btr. Length is wall-clock: btr mtime minus the dir-name timestamp. */
+static void scanSessions(void) {
+    g_sessionCount = 0;
+    int n = 0;
+    char **entries = SDL_GlobDirectory("debug_sessions", "*", 0, &n);
+    if (!entries) return;
+    for (int i = 0; i < n && g_sessionCount < LOADBROWSER_MAX_SESSIONS; i++) {
+        char dir[300];
+        SDL_snprintf(dir, sizeof dir, "debug_sessions/%s", entries[i]);
+        SDL_PathInfo pi;
+        if (!SDL_GetPathInfo(dir, &pi) || pi.type != SDL_PATHTYPE_DIRECTORY) continue;
+
+        LoadSessionEntry *e = &g_sessionList[g_sessionCount];
+        memset(e, 0, sizeof *e);
+        SDL_strlcpy(e->dir,  dir,         sizeof e->dir);
+        SDL_strlcpy(e->name, entries[i],  sizeof e->name);
+        e->durationSec = -1;
+
+        char btr[340];
+        SDL_snprintf(btr, sizeof btr, "%s/%s", dir, BRAINREC_FILENAME);
+        SDL_PathInfo bi;
+        bool haveBtr = SDL_GetPathInfo(btr, &bi) && bi.type == SDL_PATHTYPE_FILE;
+        if (!haveBtr) {
+            SDL_strlcpy(e->note, "no brainrec.btr", sizeof e->note);
+        } else {
+            e->sizeMB = (double)bi.size / 1.0e6;
+            if (btPeekSession(btr, e->map, &e->bots)) {
+                e->loadable = true;
+                int start = btParseDirTime(entries[i]);
+                if (start >= 0) {
+                    long long endsec = (long long)(bi.modify_time / 1000000000LL);
+                    int dur = (int)(endsec - start);
+                    if (dur >= 0 && dur < 24 * 3600) e->durationSec = dur;
+                }
+            } else {
+                SDL_strlcpy(e->note, "incompatible / corrupt", sizeof e->note);
+            }
+        }
+        /* Only list loadable recordings; skip dirs without a usable brainrec.btr. */
+        if (e->loadable) g_sessionCount++;
+    }
+    SDL_free(entries);
+}
+
+/* Spawn a fresh BrainTest replaying `dir` and quit this one. */
+static void relaunchWithSession(const char *dir) {
+    const char *base = SDL_GetBasePath();
+    char exe[600];
+    SDL_snprintf(exe, sizeof exe, "%sBrainTest.exe", base ? base : "");
+    const char *args[4] = { exe, "-loadsession", dir, NULL };
+    SDL_Process *proc = SDL_CreateProcess(args, false);
+    if (proc) {
+        fprintf(stderr, "Relaunching BrainTest -loadsession %s\n", dir);
+        appQuit = TRUE;   /* child is independent; let this instance exit */
+    } else {
+        fprintf(stderr, "Relaunch failed (%s)\n", SDL_GetError());
+    }
+}
+
 /* Drop frames at-and-after `keepCount`. Used when the user scrubs
  * back and resumes — the future is now stale.
  *
@@ -896,6 +1437,56 @@ static void renderFogOverlay(BrainTestApp *app, int screenW, int screenH) {
             }
         }
     }
+}
+
+/* Tank player-number labels (toggled with 0). Draws "#N" just above
+ * every tank's sprite. God-view: in playback it reads the recorded
+ * frame's tank list (already captured god-view); live it enumerates
+ * every player slot from the server sim. The followed bot is cyan,
+ * everyone else white. Unlike the Lua attempt this never depends on a
+ * single brain's view-limited info.objects. */
+static void renderTankIds(BrainTestApp *app, int screenW, int screenH) {
+    if (!vizFlag(app->regIdxTankIds)) return;
+
+    float textScale = 1.0f;
+    SDL_SetRenderScale(app->renderer, textScale, textScale);
+    char buf[8];
+
+    bool usePlayback = app->playbackMode &&
+                       app->playbackFrame >= 0 &&
+                       app->playbackFrame < app->recording.count;
+
+    if (usePlayback) {
+        const RecordingFrame *pf_ = &app->recording.frames[app->playbackFrame];
+        for (int i = 0; i < pf_->tankCount; i++) {
+            const TankSnapshot *ts = &pf_->tanks[i];
+            if (ts->playerNum & TANK_SNAPSHOT_HIDDEN_FLAG) continue; /* stub */
+            if (ts->tankStatus & 0xF0) continue;                    /* dead */
+            int pn = ts->playerNum & TANK_SNAPSHOT_PLAYER_MASK;
+            float tx = ts->worldX / 256.0f;
+            float ty = ts->worldY / 256.0f - 0.5f;
+            float sx, sy;
+            mapTileToScreen(app, tx, ty, screenW, screenH, &sx, &sy);
+            SDL_snprintf(buf, sizeof(buf), "#%d", pn);
+            if (pn == app->followBot) SDL_SetRenderDrawColor(app->renderer,  80, 230, 255, 255);
+            else                      SDL_SetRenderDrawColor(app->renderer, 255, 255, 255, 255);
+            SDL_RenderDebugText(app->renderer, sx / textScale, sy / textScale, buf);
+        }
+    } else {
+        for (int pn = 0; pn < MAX_TANKS; pn++) {
+            WORLD wx = 0, wy = 0;
+            if (!serverSimGetTankState(app->sim, (BYTE)pn, &wx, &wy)) continue;
+            float tx = wx / 256.0f;
+            float ty = wy / 256.0f - 0.5f;
+            float sx, sy;
+            mapTileToScreen(app, tx, ty, screenW, screenH, &sx, &sy);
+            SDL_snprintf(buf, sizeof(buf), "#%d", pn);
+            if (pn == app->followBot) SDL_SetRenderDrawColor(app->renderer,  80, 230, 255, 255);
+            else                      SDL_SetRenderDrawColor(app->renderer, 255, 255, 255, 255);
+            SDL_RenderDebugText(app->renderer, sx / textScale, sy / textScale, buf);
+        }
+    }
+    SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
 }
 
 static void syncDebugPathfinder(BrainTestApp *app);
@@ -1332,7 +1923,7 @@ static void vizToggleSaveCallback(int idx) {
  * X-key suppress flag into every active bot's Lua state. Also
  * pushes _BT_VIZ_IDS (the table viz.lua's vid() reads to learn
  * which integer to stamp on each overlay command). */
-static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive);
+static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive, int followBot);
 
 static int vizRegisterCallback(const char *id, const char *label,
                                 const char *short_desc, const char *long_desc,
@@ -1599,10 +2190,17 @@ static void signalHandler(int sig) {
 /* Command-line parsing                                                */
 /* ------------------------------------------------------------------ */
 
-static char optBrain[512] = "brains/GoalHunter";
+static char optBrain[512] = "brains/GoalHunter_1.5";
 static char optMap[512]   = "";
+static char optLoadSession[1024] = "";  /* -loadsession <dir>: replay a brainrec.btr */
 static int  optNumPlayers = 1;
+static bool optNumPlayersExplicit = false; /* true once -noplayers seen, for -teams reconciliation */
 static int  optNumTeams   = 0;   /* 0 = FFA (no alliances); otherwise round-robin team assignment */
+/* Explicit per-team sizes from `-teams a,b,c`. When optNumTeamSizes > 0 the
+ * bots are assigned to teams contiguously (first a bots -> team 1, next b ->
+ * team 2, ...) instead of round-robin, and the sum overrides -noplayers. */
+static int  optTeamSizes[MAX_TANKS] = { 0 };
+static int  optNumTeamSizes = 0;
 static int  optFollow     = 0;
 /* -victim_ids <comma-sep player ids>: mark each listed bot as a
  * test "victim". The brain reads _BT_VICTIM = true on that bot's
@@ -1629,6 +2227,7 @@ static int  optProfileLog = 0;
  * profile flags — behavior trace is about decisions, not perf. */
 static int  optLogJson    = 0;
 static int  optAutoStart = 0;
+static int  g_playbackAutoplay = 0;  /* --playback-autoplay: drive a -loadsession replay from frame 0 and quit at the end (headless verification) */
 static int  optMaxTicks = 0;   /* 0 = run forever */
 /* Brain-dispatch thread count (workers + producer). 0 = use the default
  * (2). Set via -threads; clamped to [1, cores] at init. */
@@ -1643,6 +2242,8 @@ static void printUsage(const char *prog) {
         "  -noplayers N     Number of bot players (default: 1)\n"
         "  -threads N       Brain dispatch threads incl. producer (default: 2, max: cores)\n"
         "  -teams N         Split bots into N teams via round-robin (default: 0 = FFA)\n"
+        "  -teams a,b,c     Explicit team sizes (e.g. 4,5,6). Sum overrides -noplayers;\n"
+        "                   bots assigned contiguously (first a -> team 1, next b -> team 2).\n"
         "  -map PATH        Map file (default: built-in Everard Island)\n"
         "  -follow N        Follow bot N with camera (default: 0)\n"
         "  -ai TYPE         AI type: none, yes, advantage, full (default: full)\n"
@@ -1678,7 +2279,7 @@ static void printUsage(const char *prog) {
         "  0                All overlays off\n"
         "  +/-/scroll       Zoom in/out\n"
         "  F                Toggle free camera / follow mode\n"
-        "  Left click       Show A* cost + path to tile (magenta)\n"
+        "  Left click       Show A* cost + path to tile (magenta); on a tank's tile, follow it\n"
         "  Right click      Clear click overlay\n",
         prog);
 }
@@ -1691,16 +2292,39 @@ static bool parseArgs(int argc, char **argv) {
             optNumPlayers = atoi(argv[++i]);
             if (optNumPlayers < 1) optNumPlayers = 1;
             if (optNumPlayers > 16) optNumPlayers = 16;
+            optNumPlayersExplicit = true;
         } else if ((strcmp(argv[i], "-threads") == 0 || strcmp(argv[i], "--threads") == 0) && i + 1 < argc) {
             optThreads = atoi(argv[++i]);
             if (optThreads < 1) optThreads = 1;
             if (optThreads > MAX_TANKS) optThreads = MAX_TANKS;
         } else if ((strcmp(argv[i], "-teams") == 0 || strcmp(argv[i], "--teams") == 0) && i + 1 < argc) {
-            optNumTeams = atoi(argv[++i]);
-            if (optNumTeams < 0) optNumTeams = 0;
-            if (optNumTeams > MAX_TANKS) optNumTeams = MAX_TANKS;
+            const char *tv = argv[++i];
+            if (strchr(tv, ',') != NULL) {
+                /* Explicit per-team sizes: "4,5,6" -> team1=4, team2=5, team3=6.
+                 * Sum overrides -noplayers (reconciled after the parse loop). */
+                optNumTeamSizes = 0;
+                const char *p = tv;
+                while (*p && optNumTeamSizes < MAX_TANKS) {
+                    int sz = atoi(p);
+                    if (sz < 1) {
+                        fprintf(stderr, "-teams: each team size must be >= 1 (got '%s')\n", tv);
+                        return FALSE;
+                    }
+                    optTeamSizes[optNumTeamSizes++] = sz;
+                    const char *comma = strchr(p, ',');
+                    if (!comma) break;
+                    p = comma + 1;
+                }
+                optNumTeams = optNumTeamSizes;
+            } else {
+                optNumTeams = atoi(tv);
+                if (optNumTeams < 0) optNumTeams = 0;
+                if (optNumTeams > MAX_TANKS) optNumTeams = MAX_TANKS;
+            }
         } else if ((strcmp(argv[i], "-map") == 0 || strcmp(argv[i], "--map") == 0) && i + 1 < argc) {
             strncpy(optMap, argv[++i], sizeof(optMap) - 1);
+        } else if ((strcmp(argv[i], "-loadsession") == 0 || strcmp(argv[i], "--loadsession") == 0) && i + 1 < argc) {
+            strncpy(optLoadSession, argv[++i], sizeof(optLoadSession) - 1);
         } else if ((strcmp(argv[i], "-follow") == 0 || strcmp(argv[i], "--follow") == 0) && i + 1 < argc) {
             optFollow = atoi(argv[++i]);
         } else if ((strcmp(argv[i], "-ai") == 0 || strcmp(argv[i], "--ai") == 0) && i + 1 < argc) {
@@ -1749,6 +2373,8 @@ static bool parseArgs(int argc, char **argv) {
             optLogJson = 1;
         } else if (strcmp(argv[i], "--auto-start") == 0) {
             optAutoStart = 1;
+        } else if (strcmp(argv[i], "--playback-autoplay") == 0) {
+            g_playbackAutoplay = 1;
         } else if (strcmp(argv[i], "--max-ticks") == 0 && i + 1 < argc) {
             optMaxTicks = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--run-script") == 0 && i + 1 < argc) {
@@ -1780,6 +2406,25 @@ static bool parseArgs(int argc, char **argv) {
             printUsage(argv[0]);
             return FALSE;
         }
+    }
+    /* Reconcile explicit -teams sizes with -noplayers (done after the loop so
+     * argument order doesn't matter). The size sum is authoritative: it sets
+     * the bot count, and we error rather than silently disagree if -noplayers
+     * was also given with a different total. */
+    if (optNumTeamSizes > 0) {
+        int sum = 0;
+        for (int t = 0; t < optNumTeamSizes; t++) sum += optTeamSizes[t];
+        if (sum > MAX_TANKS) {
+            fprintf(stderr, "-teams: sum of team sizes (%d) exceeds MAX_TANKS (%d)\n",
+                    sum, MAX_TANKS);
+            return FALSE;
+        }
+        if (optNumPlayersExplicit && optNumPlayers != sum) {
+            fprintf(stderr, "-teams sizes sum to %d but -noplayers is %d; "
+                    "they must match (or omit -noplayers)\n", sum, optNumPlayers);
+            return FALSE;
+        }
+        optNumPlayers = sum;
     }
     return TRUE;
 }
@@ -2077,8 +2722,14 @@ static void updateOverlayTexture(BrainTestApp *app) {
     uint32_t cacheKey = app->playbackMode
         ? (0x80000000u | (uint32_t)app->playbackFrame)
         : serverSimGetTick(app->sim);
-    if (cacheKey == app->overlayTick && !app->overlayDirty) return;
+    /* Rebuild when the FOLLOWED bot changes (Tab) even if the tick is the
+     * same: influence/danger are read from that bot's pathfinder, and the sign
+     * flips with the focused team — without this the colored texture stayed on
+     * the previous team while the numbers (read live) flipped. */
+    if (cacheKey == app->overlayTick && app->overlayFollowBot == (int)app->followBot
+        && !app->overlayDirty) return;
     app->overlayTick = cacheKey;
+    app->overlayFollowBot = (int)app->followBot;
     app->overlayDirty = false;
 
     /* Lock the 256x256 overlay texture */
@@ -2282,7 +2933,7 @@ static void renderOverlay(BrainTestApp *app, int screenW, int screenH) {
  * the bot's Lua globals: _BT_VIZ_<UPPER_ID> per-id booleans plus
  * _BT_VIZ_IDS = {id=idx, ...} lookup. Pushed every brain frame so
  * a freshly-spawned bot sees current state on its first think. */
-static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive) {
+static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive, int followBot) {
     char buf[16384];
     int  off = 0;
     int  n = vizRegistryCount();
@@ -2327,9 +2978,59 @@ static void pushVizStateToBots(ServerSim *sim, bool vizSuppressActive) {
         if (w > 0 && w < (int)(sizeof(buf) - off)) off += w;
     }
     if (off == 0) return;
+    /* Replay-collection mode (V-window radio): per-bot _BT_VIZ_COLLECT override.
+     *   0 = ON layers, followed tank only   → follow:"on",  others:"off"
+     *   1 = ALL layers, viewed tank only     → follow:"all", others:"off"
+     *   2 = ALL layers, ALL tanks            → every bot:"all"
+     *   3 = ON layers, ALL tanks             → every bot:"on"  */
+    int collectMode = vizWindowCollectMode();
     for (int i = 0; i < MAX_TANKS; i++) {
-        if (serverSimIsBot(sim, (BYTE)i)) serverSimBotExecLua(sim, (BYTE)i, buf);
+        if (!serverSimIsBot(sim, (BYTE)i)) continue;
+        serverSimBotExecLua(sim, (BYTE)i, buf);
+        const char *col;
+        if (collectMode == 2)        col = "all";
+        else if (collectMode == 3)   col = "on";
+        else if (i == followBot)     col = (collectMode == 1) ? "all" : "on";
+        else                         col = "off";
+        char cbuf[64];
+        SDL_snprintf(cbuf, sizeof(cbuf), "_G._BT_VIZ_COLLECT='%s';", col);
+        serverSimBotExecLua(sim, (BYTE)i, cbuf);
     }
+}
+
+/* ── viz-recording diagnostic log ──────────────────────────────────────
+ * Writes to <DEBUG_SESSION_DIR>/vizrec.log (same dir as print2_botN.log)
+ * so the empty-overlay-capture gaps can be inspected after a run without
+ * scraping stderr. Lazily opens on first use by reading DEBUG_SESSION_DIR
+ * from a bot's Lua state. One shared file, unbuffered so lines land even
+ * if the run is interrupted. Remove once the root cause is fixed. */
+static FILE *g_vizrecLog     = NULL;
+static bool  g_vizrecTried   = false;
+static void vizrecLog(BrainTestApp *app, const char *fmt, ...) {
+    if (!g_vizrecLog && !g_vizrecTried) {
+        if (app && app->simValid) {
+            char *dir = serverSimBotEvalLuaString(app->sim, (BYTE)app->followBot,
+                            "return tostring(DEBUG_SESSION_DIR)");
+            if (dir && dir[0] && SDL_strcmp(dir, "nil") != 0) {
+                /* Dir resolved — this is our one and only open attempt. */
+                g_vizrecTried = true;
+                char path[1024];
+                SDL_snprintf(path, sizeof(path), "%s/vizrec.log", dir);
+                g_vizrecLog = fopen(path, "w");
+                if (g_vizrecLog) {
+                    setvbuf(g_vizrecLog, NULL, _IONBF, 0);
+                    fprintf(g_vizrecLog, "=== viz-recording empty-capture log ===\n");
+                }
+            }
+            /* else: bot not running yet — leave g_vizrecTried false to retry. */
+            free(dir);
+        }
+    }
+    if (!g_vizrecLog) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(g_vizrecLog, fmt, ap);
+    va_end(ap);
 }
 
 /* Drop the oldest KEYFRAME_INTERVAL frames so the new head is still a
@@ -2573,8 +3274,25 @@ static void recordingCapture(BrainTestApp *app) {
     /* ── Per-bot overlay command snapshots ── copy each active
      * bot's current OverlayCmdBuffer so Tab switching during
      * playback still shows that bot's overlays for the scrubbed
-     * tick (not whatever they emitted most recently live). */
+     * tick (not whatever they emitted most recently live).
+     *
+     * INHERIT-ON-EMPTY: a completed Brain.think always leaves count>0
+     * (it emits hud_version right after overlay_clear), and a think that
+     * doesn't run leaves the buffer persisted from last tick — so LIVE
+     * always shows the last-good overlays for every bot. A captured
+     * count==0 therefore means we sampled the buffer mid-emit (the brain
+     * cleared but hadn't refilled yet — a capture-vs-bot-worker-thread
+     * race) or a partial emit. Without handling it, that single frame
+     * records NOTHING and playback shows a blank tank for the whole
+     * stretch the race recurs — the "viz vanishes for a few seconds in
+     * rewind but is fine live" symptom. Mirror live behaviour: if this
+     * tick's buffer is empty, inherit the previous frame's snapshot for
+     * that bot so the overlays persist across the gap. */
+    RecordingFrame *prevF = (rb->count > 0) ? &rb->frames[rb->count - 1] : NULL;
+    int emptyBots = 0, emptyInherited = 0, activeBots = 0;
     for (BYTE oi = 0; oi < MAX_TANKS; oi++) {
+        if (!serverSimIsBot(app->sim, oi)) continue;
+        activeBots++;
         OverlayCmdBuffer *ovl = serverSimGetBotOverlayCmds(app->sim, oi);
         if (ovl && ovl->count > 0) {
             f->botOverlayCmdCount[oi] = ovl->count;
@@ -2582,7 +3300,49 @@ static void recordingCapture(BrainTestApp *app) {
                 ovl->count * sizeof(OverlayCmd));
             memcpy(f->botOverlayCmds[oi], ovl->cmds,
                    ovl->count * sizeof(OverlayCmd));
+        } else {
+            emptyBots++;
+            if (prevF && prevF->botOverlayCmds[oi]
+                && prevF->botOverlayCmdCount[oi] > 0) {
+                /* Inherit the previous frame's overlays for this bot. */
+                int n = prevF->botOverlayCmdCount[oi];
+                f->botOverlayCmdCount[oi] = n;
+                f->botOverlayCmds[oi] = (OverlayCmd *)malloc(n * sizeof(OverlayCmd));
+                memcpy(f->botOverlayCmds[oi], prevF->botOverlayCmds[oi],
+                       n * sizeof(OverlayCmd));
+                emptyInherited++;
+                if (oi == (BYTE)app->followBot) f->_vizInheritedFollow = 1;
+            }
         }
+    }
+    /* Diagnostic → <DEBUG_SESSION_DIR>/vizrec.log. Two views:
+     *   1. Per-frame line whenever ANY bot's overlay buffer was empty this
+     *      tick (how widespread the empty-capture is — a thread race would
+     *      hit a random subset each frame).
+     *   2. Edge-triggered followed-bot gap start/end with length, since the
+     *      followed bot is what actually blanks on screen during rewind. */
+    if (emptyBots > 0) {
+        vizrecLog(app, "t=%u EMPTY bots=%d/%d inherited=%d follow=%d%s\n",
+                  (unsigned)f->tick, emptyBots, activeBots, emptyInherited,
+                  (int)app->followBot, f->_vizInheritedFollow ? " [FOLLOW EMPTY]" : "");
+    }
+    {
+        static int s_wasInherit = 0;
+        static unsigned s_gapStartTick = 0;
+        static int s_gapLen = 0;
+        int nowInherit = f->_vizInheritedFollow;
+        if (nowInherit && !s_wasInherit) {
+            s_gapStartTick = (unsigned)f->tick;
+            s_gapLen = 1;
+            vizrecLog(app, "t=%u FOLLOW(%d) gap START\n",
+                      s_gapStartTick, (int)app->followBot);
+        } else if (nowInherit) {
+            s_gapLen++;
+        } else if (s_wasInherit) {
+            vizrecLog(app, "t=%u FOLLOW gap END (lasted %d frames, from t=%u)\n",
+                      (unsigned)f->tick, s_gapLen, s_gapStartTick);
+        }
+        s_wasInherit = nowInherit;
     }
 
     /* ── A* / Dijkstra path (the key-4 green polyline) ── trace
@@ -2791,14 +3551,178 @@ static void mapTileToScreenPrecise(BrainTestApp *app, float tx, float ty,
     *out_sy = (float)scy + (pixelY - (float)centerPY) * (float)zf;
 }
 
+/* ====================================================================== */
+/* HUD overlay layout — drag-to-reposition.                               */
+/*                                                                        */
+/* Press 'L' to unlock: each HUD text overlay gets a border and can be    */
+/* dragged with the left mouse button. Press 'L' again to lock & save;    */
+/* Shift+L resets to defaults. Overrides are OFFSETS from the brain's      */
+/* default (x,y) — so multi-line overlays move together and a cleared      */
+/* offset falls back to the default. Keyed by viz id NAME and persisted to */
+/* hud_layout.txt, reloaded each run. Purely a BrainTest debug-UX feature. */
+/* ====================================================================== */
+#define HUD_MAX_VIZ   256
+#define HUD_MAX_RECT  128
+static const char *HUD_LAYOUT_PATH = "hud_layout.txt";
+static bool  g_hudEdit = false;
+static struct { bool set; float dx, dy; } g_hudOff[HUD_MAX_VIZ];
+static struct { int viz_idx; float x, y, w, h; } g_hudRect[HUD_MAX_RECT];
+static int   g_hudRectN = 0;
+static bool  g_hudLabeled[HUD_MAX_VIZ];   /* per-frame: name drawn once per id */
+static int   g_hudDrag  = -1;   /* viz_idx currently being dragged, -1 = none */
+static float g_hudDragMX0, g_hudDragMY0, g_hudDragDX0, g_hudDragDY0;
+static bool  g_hudLoaded = false;
+
+static void hudLayoutSave(void) {
+    SDL_IOStream *io = SDL_IOFromFile(HUD_LAYOUT_PATH, "w");
+    if (!io) return;
+    for (int i = 0; i < HUD_MAX_VIZ; i++) {
+        if (!g_hudOff[i].set) continue;
+        const VizRegistryEntry *e = vizRegistryGet(i);
+        if (!e || e->id[0] == '\0') continue;
+        char line[128];
+        int n = SDL_snprintf(line, sizeof(line), "%s %.0f %.0f\n",
+                             e->id, (double)g_hudOff[i].dx, (double)g_hudOff[i].dy);
+        if (n > 0) SDL_WriteIO(io, line, (size_t)n);
+    }
+    SDL_CloseIO(io);
+}
+
+static void hudLayoutLoad(void) {
+    g_hudLoaded = true;
+    size_t sz = 0;
+    void *data = SDL_LoadFile(HUD_LAYOUT_PATH, &sz);
+    if (!data) return;
+    char *p = (char *)data, *end = p + sz;
+    while (p < end) {
+        char *nl = p;
+        while (nl < end && *nl != '\n') nl++;
+        if (nl < end) *nl = '\0';
+        char name[VIZ_REG_ID_MAX]; float dx = 0, dy = 0;
+        if (SDL_sscanf(p, "%63s %f %f", name, &dx, &dy) == 3) {
+            int idx = vizRegistryFind(name);
+            if (idx >= 0 && idx < HUD_MAX_VIZ) {
+                g_hudOff[idx].set = true;
+                g_hudOff[idx].dx  = dx;
+                g_hudOff[idx].dy  = dy;
+            }
+        }
+        p = nl + 1;
+    }
+    SDL_free(data);
+}
+
 static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
-    OverlayCmdBuffer *buf = serverSimGetBotOverlayCmds(app->sim, app->followBot);
-    if (!buf || buf->count == 0) return;
+    /* Load the saved layout once the viz registry is populated (the brain
+     * registers its ids on the first think). Reset the per-frame rect list
+     * used for drag hit-testing. */
+    if (!g_hudLoaded && vizRegistryCount() > 0) hudLayoutLoad();
+    g_hudRectN = 0;
+    if (g_hudEdit) SDL_memset(g_hudLabeled, 0, sizeof(g_hudLabeled));
+
+    /* Source the overlay commands. In playback, read the SCRUBBED frame's
+     * recorded snapshot DIRECTLY — not the live bot buffer. The live buffer
+     * (serverSimGetBotOverlayCmds) is NULL whenever the live sim's bot is
+     * momentarily inactive/respawning, which blanked the followed bot's
+     * overlays in replay even though the bot was alive at the scrubbed tick
+     * and the frame holds its commands. (The playback block also pointer-swaps
+     * the live buffer to the recorded cmds, but that swap is skipped when the
+     * live buffer is NULL for the same reason — so reading the frame here is
+     * the real fix and makes the swap moot for the followed bot.) */
+    const OverlayCmd *cmds = NULL;
+    int count = 0;
+    if (app->playbackMode
+        && app->playbackFrame >= 0
+        && app->playbackFrame < app->recording.count) {
+        const RecordingFrame *pf_ = &app->recording.frames[app->playbackFrame];
+        if (g_loadedSession) {
+            /* Loaded-session frames hold PACKED overlay bytes (28..156 B/record),
+             * NOT OverlayCmd structs. Indexing them as cmds[i] strides ~160 B per
+             * record and walks off the packed buffer -> EXCEPTION_ACCESS_VIOLATION
+             * once enough records are present (busy frame). Decode this frame
+             * first, exactly like the playback patch-in path (g_loadedSession
+             * branch near serverSimGetBotOverlayCmds swap). */
+            count = decodeLoadedOverlays((BYTE)app->followBot,
+                        (const uint8_t *)pf_->botOverlayCmds[app->followBot],
+                        pf_->botOverlayCmdCount[app->followBot]);
+            cmds  = g_ovlScratch[app->followBot];
+        } else {
+            cmds  = pf_->botOverlayCmds[app->followBot];
+            count = pf_->botOverlayCmdCount[app->followBot];
+        }
+    } else {
+        OverlayCmdBuffer *buf = serverSimGetBotOverlayCmds(app->sim, app->followBot);
+        if (buf) { cmds = buf->cmds; count = buf->count; }
+    }
+
+    /* DIAG (deduped per frame, capped) → vizrec.log: spell out which viz
+     * LAYERS the followed bot has at the viewed frame, split into render-ON
+     * vs present-but-toggled-OFF, and report the viewing MODE. Fires in
+     * playback AND when paused/stepped in live, so whatever state produces
+     * "no visualizers" gets captured. Distinguishes: a sparse/empty buffer
+     * (capture or live-NULL), vs many layers under OFF (a viewing-toggle). */
+    {
+        bool pb = app->playbackMode && app->playbackFrame >= 0
+                  && app->playbackFrame < app->recording.count;
+        bool live_null = (!pb) && (serverSimGetBotOverlayCmds(app->sim,
+                                       app->followBot) == NULL);
+        static int s_diagLines = 0;
+        if ((pb || app->paused) && s_diagLines < 500) {
+        static unsigned s_t = 0xFFFFFFFFu; static int s_b = -1, s_c = -1, s_pb = -1;
+        unsigned tk = pb ? app->recording.frames[app->playbackFrame].tick
+                         : serverSimGetTick(app->sim);
+        if (tk != s_t || app->followBot != s_b || count != s_c || (pb?1:0) != s_pb) {
+            s_t = tk; s_b = app->followBot; s_c = count; s_pb = pb ? 1 : 0;
+            s_diagLines++;
+            /* Collect DISTINCT layer ids present in the buffer (viz_idx is a
+             * byte, so a 256-slot seen map dedups cheaply). */
+            static unsigned char seen[256];
+            memset(seen, 0, sizeof(seen));
+            char on_list[900]; char off_list[900];
+            int on_n = 0, off_n = 0, on_layers = 0, off_layers = 0, none_cmds = 0;
+            on_list[0] = '\0'; off_list[0] = '\0';
+            for (int i = 0; i < count && cmds; i++) {
+                uint8_t vi = cmds[i].viz_idx;
+                if (vi == OVERLAY_VIZ_IDX_NONE) { none_cmds++; continue; }
+                if (seen[vi]) continue;
+                seen[vi] = 1;
+                const VizRegistryEntry *e = vizRegistryGet(vi);
+                const char *id = (e && e->id[0]) ? e->id : "?";
+                bool drawn = (!e) || e->is_on;
+                if (drawn) {
+                    on_layers++;
+                    int w = SDL_snprintf(on_list + on_n, sizeof(on_list) - on_n,
+                                         "%s%s", on_n ? "," : "", id);
+                    if (w > 0 && on_n + w < (int)sizeof(on_list)) on_n += w;
+                } else {
+                    off_layers++;
+                    int w = SDL_snprintf(off_list + off_n, sizeof(off_list) - off_n,
+                                         "%s%s", off_n ? "," : "", id);
+                    if (w > 0 && off_n + w < (int)sizeof(off_list)) off_n += w;
+                }
+            }
+            vizrecLog(app,
+                "RENDER %s%s focusing on bot %d, tick %u (hud %u), %d cmds, collect=%d%s\n"
+                "  rendering %d layers ON: %s\n"
+                "  present but toggled OFF (%d): %s\n"
+                "  unregistered cmds: %d\n",
+                pb ? "PLAYBACK" : "LIVE",
+                app->paused ? "(paused)" : "",
+                app->followBot, tk, tk / 2, count, vizWindowCollectMode(),
+                live_null ? "  [LIVE BUFFER NULL — bot inactive/not-running]" : "",
+                on_layers, on_n ? on_list : "(none)",
+                off_layers, off_n ? off_list : "(none)",
+                none_cmds);
+        }  /* dedup */
+        }  /* gate: playback || paused */
+    }      /* diag block */
+
+    if (!cmds || count == 0) return;
 
     SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
 
-    for (int i = 0; i < buf->count; i++) {
-        OverlayCmd *cmd = &buf->cmds[i];
+    for (int i = 0; i < count; i++) {
+        const OverlayCmd *cmd = &cmds[i];
 
         /* viz_idx filter — skip if the matching row is off, or if
          * the X-key suppress flag is set (hud_resources stays on
@@ -2846,7 +3770,8 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
             break;
         }
         case OVERLAY_CMD_CIRCLE:
-        case OVERLAY_CMD_CIRCLE_SUBPIXEL: {
+        case OVERLAY_CMD_CIRCLE_SUBPIXEL:
+        case OVERLAY_CMD_CIRCLE_FILL: {
             float cx, cy;
             if (cmd->type == OVERLAY_CMD_CIRCLE_SUBPIXEL) {
                 mapTileToScreenPrecise(app, cmd->x1, cmd->y1, screenW, screenH, &cx, &cy);
@@ -2856,12 +3781,43 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
             float sr = cmd->radius * 16.0f * app->zoomFactor;
             int seg = (int)(sr * 2.0f);
             if (seg < 12) seg = 12;
-            for (int s = 0; s < seg; s++) {
-                float a0 = (float)s / seg * 2.0f * 3.14159265f;
-                float a1 = (float)(s + 1) / seg * 2.0f * 3.14159265f;
-                SDL_RenderLine(app->renderer,
-                    cx + cosf(a0) * sr, cy + sinf(a0) * sr,
-                    cx + cosf(a1) * sr, cy + sinf(a1) * sr);
+            if (cmd->type == OVERLAY_CMD_CIRCLE_FILL) {
+                /* Filled disc: triangle fan (center + perimeter ring). */
+                SDL_FColor fc = { cmd->r / 255.0f, cmd->g / 255.0f,
+                                  cmd->b / 255.0f, cmd->a / 255.0f };
+                int nverts = seg + 2;          /* center + seg+1 ring verts */
+                SDL_Vertex *v = (SDL_Vertex *)SDL_malloc(sizeof(SDL_Vertex) * (size_t)nverts);
+                if (v) {
+                    v[0].position.x = cx; v[0].position.y = cy;
+                    v[0].color = fc; v[0].tex_coord.x = 0; v[0].tex_coord.y = 0;
+                    for (int s = 0; s <= seg; s++) {
+                        float ang = (float)s / seg * 2.0f * 3.14159265f;
+                        v[s + 1].position.x = cx + cosf(ang) * sr;
+                        v[s + 1].position.y = cy + sinf(ang) * sr;
+                        v[s + 1].color = fc;
+                        v[s + 1].tex_coord.x = 0; v[s + 1].tex_coord.y = 0;
+                    }
+                    int nidx = seg * 3;
+                    int *idx = (int *)SDL_malloc(sizeof(int) * (size_t)nidx);
+                    if (idx) {
+                        for (int s = 0; s < seg; s++) {
+                            idx[s * 3 + 0] = 0;
+                            idx[s * 3 + 1] = s + 1;
+                            idx[s * 3 + 2] = s + 2;
+                        }
+                        SDL_RenderGeometry(app->renderer, NULL, v, nverts, idx, nidx);
+                        SDL_free(idx);
+                    }
+                    SDL_free(v);
+                }
+            } else {
+                for (int s = 0; s < seg; s++) {
+                    float a0 = (float)s / seg * 2.0f * 3.14159265f;
+                    float a1 = (float)(s + 1) / seg * 2.0f * 3.14159265f;
+                    SDL_RenderLine(app->renderer,
+                        cx + cosf(a0) * sr, cy + sinf(a0) * sr,
+                        cx + cosf(a1) * sr, cy + sinf(a1) * sr);
+                }
             }
             break;
         }
@@ -2898,9 +3854,72 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
             case OVERLAY_ANCHOR_BOTTOMRIGHT: sx = (float)screenW - sx - tw;
                                               sy = (float)screenH - sy - th; break;
             }
+            /* Apply the persisted drag offset for this overlay (per viz id). */
+            if (cmd->viz_idx != OVERLAY_VIZ_IDX_NONE
+                && cmd->viz_idx < HUD_MAX_VIZ && g_hudOff[cmd->viz_idx].set) {
+                sx += g_hudOff[cmd->viz_idx].dx;
+                sy += g_hudOff[cmd->viz_idx].dy;
+            }
             SDL_SetRenderScale(app->renderer, scale, scale);
             SDL_RenderDebugText(app->renderer, sx / scale, sy / scale, cmd->text);
             SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
+            /* Record this line's rect for drag hit-testing, and (in edit mode)
+             * outline it. Skip unregistered overlays — they can't be saved. */
+            if (cmd->viz_idx != OVERLAY_VIZ_IDX_NONE && g_hudRectN < HUD_MAX_RECT) {
+                g_hudRect[g_hudRectN].viz_idx = cmd->viz_idx;
+                g_hudRect[g_hudRectN].x = sx;  g_hudRect[g_hudRectN].y = sy;
+                g_hudRect[g_hudRectN].w = tw;  g_hudRect[g_hudRectN].h = th;
+                g_hudRectN++;
+                if (g_hudEdit) {
+                    SDL_FRect br = { sx - 2.0f, sy - 2.0f, tw + 4.0f, th + 4.0f };
+                    SDL_SetRenderDrawColor(app->renderer, 0, 220, 255,
+                        (g_hudDrag == cmd->viz_idx) ? 255 : 110);
+                    SDL_RenderRect(app->renderer, &br);
+                    /* Label the overlay with its viz id at the top-right
+                     * corner — once per id (on its first/top line). */
+                    if (cmd->viz_idx < HUD_MAX_VIZ && !g_hudLabeled[cmd->viz_idx]) {
+                        const VizRegistryEntry *ve = vizRegistryGet(cmd->viz_idx);
+                        if (ve && ve->id[0] != '\0') {
+                            g_hudLabeled[cmd->viz_idx] = true;
+                            float ls = 1.0f;   /* smaller than the 1.5x overlay text */
+                            float lw = (float)strlen(ve->id) * 8.0f * ls;
+                            SDL_SetRenderScale(app->renderer, ls, ls);
+                            SDL_SetRenderDrawColor(app->renderer, 0, 220, 255, 235);
+                            SDL_RenderDebugText(app->renderer,
+                                (sx + tw - lw) / ls, (sy - 11.0f) / ls, ve->id);
+                            SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        case OVERLAY_CMD_HUD_RECT:
+        case OVERLAY_CMD_HUD_RECT_FILL: {
+            /* HUD-space rect — same pixel-offset/anchor scheme as HUD_TEXT.
+             * x1/y1 = offset from the corner, x2/y2 = width/height. */
+            float sx = cmd->x1, sy = cmd->y1;
+            float w = cmd->x2, h = cmd->y2;
+            switch (cmd->anchor) {
+            case OVERLAY_ANCHOR_TOPRIGHT:    sx = (float)screenW - sx - w; break;
+            case OVERLAY_ANCHOR_BOTTOMLEFT:  sy = (float)screenH - sy - h; break;
+            case OVERLAY_ANCHOR_BOTTOMRIGHT: sx = (float)screenW - sx - w;
+                                              sy = (float)screenH - sy - h; break;
+            }
+            /* Same per-viz drag offset as the text rows, so bg/border track. */
+            if (cmd->viz_idx != OVERLAY_VIZ_IDX_NONE
+                && cmd->viz_idx < HUD_MAX_VIZ && g_hudOff[cmd->viz_idx].set) {
+                sx += g_hudOff[cmd->viz_idx].dx;
+                sy += g_hudOff[cmd->viz_idx].dy;
+            }
+            SDL_FRect rr = { sx, sy, w, h };
+            SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(app->renderer, cmd->r, cmd->g, cmd->b, cmd->a);
+            if (cmd->type == OVERLAY_CMD_HUD_RECT_FILL) {
+                SDL_RenderFillRect(app->renderer, &rr);
+            } else {
+                SDL_RenderRect(app->renderer, &rr);
+            }
             break;
         }
         case OVERLAY_CMD_CLEAR:
@@ -2908,6 +3927,17 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
              * top of think() to wipe its OWN buffer, not ours. */
             break;
         }
+    }
+
+    /* HUD-edit banner: shown while unlocked so it's obvious the overlays are
+     * draggable and how to lock/reset. */
+    if (g_hudEdit) {
+        float bs = 1.5f;
+        SDL_SetRenderScale(app->renderer, bs, bs);
+        SDL_SetRenderDrawColor(app->renderer, 0, 220, 255, 255);
+        SDL_RenderDebugText(app->renderer, (screenW * 0.5f - 230.0f) / bs, 4.0f / bs,
+            "HUD EDIT: drag overlays  |  L = lock & save  |  Shift+L = reset");
+        SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
     }
 }
 
@@ -3189,7 +4219,7 @@ static void appTickBrain(BrainTestApp *app) {
 
     serverSimGetGameSim(app->sim)->isInMenu = isInMenu;
 
-    pushVizStateToBots(app->sim, app->vizSuppressActive || optProduction);
+    pushVizStateToBots(app->sim, app->vizSuppressActive || optProduction, (int)app->followBot);
 
     /* Clear the viz_detail registry ONCE before any bot's think runs.
      * The registry is global, so if each bot called overlay_detail_clear
@@ -3213,6 +4243,20 @@ static void appTickBrain(BrainTestApp *app) {
         SDL_snprintf(line, sizeof(line),
                      "_G._BT_PCONTRIB_NEEDED=%s",
                      need_pc ? "true" : "false");
+        for (BYTE i = 0; i < MAX_TANKS; i++) {
+            if (serverSimIsBot(app->sim, i)) {
+                serverSimBotExecLua(app->sim, i, line);
+            }
+        }
+    }
+
+    /* Push "is the ShotSim panel open" so the brain forces the full Lua
+     * shield-scan path (which populates _shield_scan.candidates) only while
+     * that panel is actually up — its Shield-candidate POIs read those. */
+    {
+        char line[48];
+        SDL_snprintf(line, sizeof(line), "_G._BT_SHOTSIM_OPEN=%s",
+                     shotSimPanelIsVisible() ? "true" : "false");
         for (BYTE i = 0; i < MAX_TANKS; i++) {
             if (serverSimIsBot(app->sim, i)) {
                 serverSimBotExecLua(app->sim, i, line);
@@ -3748,6 +4792,7 @@ static void appRender(BrainTestApp *app) {
         BrainPathfinder *pbPf = serverSimGetBotBrainPathfinder(app->sim, app->followBot);
         struct basesObj  savedBases;
         struct pillsObj  savedPills;
+        uint32_t         savedAllie[MAX_TANKS];
         /* Temp objects for tanks/lgm/shells. The sim holds POINTERS to
          * these in tanks[] / lgmen[] / shs, so the storage must outlive
          * the render call — keeping them at function scope. Saved
@@ -3832,6 +4877,16 @@ static void appRender(BrainTestApp *app) {
                 gs->pb->item[i].armour = pf_->snapPills[i].armour;
                 gs->pb->item[i].speed  = pf_->snapPills[i].speed;
                 gs->pb->item[i].inTank = pf_->snapPills[i].inTank ? TRUE : FALSE;
+            }
+            /* Per-player alliances (brainrec v5): without these, the renderer's
+             * playersIsAllie(owner, viewPlayer) reads allies as enemies and
+             * draws their pills/bases red. Apply the recorded bitmaps (restored
+             * after render below) so colors match the followed bot's alliances. */
+            if (gs->plyrs) {
+                for (int i = 0; i < MAX_TANKS; i++) {
+                    savedAllie[i] = (uint32_t)gs->plyrs->item[i].allie;
+                    gs->plyrs->item[i].allie = (allience)pf_->allie[i];
+                }
             }
 
             /* ── Tanks ── reconstruct from TankSnapshot wire entries
@@ -3929,8 +4984,16 @@ static void appRender(BrainTestApp *app) {
                 savedOvlBufs[oi]  = ovl;
                 savedOvlCmds[oi]  = ovl->cmds;
                 savedOvlCount[oi] = ovl->count;
-                ovl->cmds  = pf_->botOverlayCmds[oi];
-                ovl->count = pf_->botOverlayCmdCount[oi];
+                if (g_loadedSession) {
+                    /* botOverlayCmds[] holds PACKED bytes — decode this frame. */
+                    int n = decodeLoadedOverlays(oi, (const uint8_t *)pf_->botOverlayCmds[oi],
+                                                 pf_->botOverlayCmdCount[oi]);
+                    ovl->cmds  = g_ovlScratch[oi];
+                    ovl->count = n;
+                } else {
+                    ovl->cmds  = pf_->botOverlayCmds[oi];
+                    ovl->count = pf_->botOverlayCmdCount[oi];
+                }
             }
 
             /* ── viz_detail registry ── point reads at the recorded
@@ -4013,6 +5076,10 @@ static void appRender(BrainTestApp *app) {
          * the brain pushed via the overlay_* Lua API this tick). */
         renderBrainOverlay(app, screenW, screenH);
 
+        /* Tank player-number labels (key 0). Drawn last so the labels
+         * sit on top of sprites and every other overlay. */
+        renderTankIds(app, screenW, screenH);
+
         /* ── PLAYBACK RESTORE ── unwind every patch we made above
          * so the next sim tick / data poll sees live data. */
         if (patched) {
@@ -4029,6 +5096,11 @@ static void appRender(BrainTestApp *app) {
             }
             *gs->bs = savedBases;
             *gs->pb = savedPills;
+            if (gs->plyrs) {
+                for (int i = 0; i < MAX_TANKS; i++) {
+                    gs->plyrs->item[i].allie = (allience)savedAllie[i];
+                }
+            }
             for (int i = 0; i < MAX_TANKS; i++) {
                 gs->tanks[i] = savedTanks[i];
                 gs->lgmen[i] = savedLgmen[i];
@@ -4080,31 +5152,9 @@ static void appRender(BrainTestApp *app) {
         SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
     }
 
-    /* Big, unmissable MANUAL MODE banner. Manual control hijacks the
-     * keyboard — Space becomes Shoot, not pause/resume — so make it
-     * impossible to miss that you're in it. Pulses so it reads as a live
-     * state, not a static label. */
-    if (app->manualControl) {
-        const char *msg = "MANUAL MODE  -  press M to exit";
-        float scale = 3.0f;
-        float tw = (float)strlen(msg) * 8.0f * scale;
-        float th = 8.0f * scale;
-        float x = (screenW - tw) * 0.5f;
-        if (x < 8.0f) x = 8.0f;
-        float y = 14.0f;
-        float pulse = 0.55f + 0.45f * sinf((float)SDL_GetTicks() * 0.006f);
-        Uint8 a = (Uint8)(pulse * 255.0f);
-        SDL_FRect bg = { x - 12.0f, y - 8.0f, tw + 24.0f, th + 16.0f };
-        SDL_SetRenderDrawBlendMode(app->renderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(app->renderer, 170, 0, 0, (Uint8)(a * 0.75f));
-        SDL_RenderFillRect(app->renderer, &bg);
-        SDL_SetRenderDrawColor(app->renderer, 255, 70, 70, 255);
-        SDL_RenderRect(app->renderer, &bg);
-        SDL_SetRenderScale(app->renderer, scale, scale);
-        SDL_SetRenderDrawColor(app->renderer, 255, 235, 235, a);
-        SDL_RenderDebugText(app->renderer, x / scale, y / scale, msg);
-        SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
-    }
+    /* (The big pulsing MANUAL MODE banner was removed — the brain's BOLO HUD
+     * panel shows a steady red "MANUAL" tag, which indicates the mode without
+     * the flashing.) */
 
     /* Shot-sim result on top of the map (under ImGui panels). */
     renderShotSimResult(app, screenW, screenH);
@@ -4297,6 +5347,10 @@ static void appRender(BrainTestApp *app) {
                        (int)app->followBot);
     mainImGuiRenderShortcuts(&app->showShortcuts);
     vizDetailWindowRender((int)app->followBot);
+    {
+        int sel = loadBrowserRender(&g_showLoadBrowser, g_sessionList, g_sessionCount);
+        if (sel >= 0 && sel < g_sessionCount) relaunchWithSession(g_sessionList[sel].dir);
+    }
     mainImGuiEndFrame(app->renderer);
     /* Drop the viz_detail playback override now that the dialog +
      * highlight pass have consumed it. Idempotent — safe to call
@@ -4359,6 +5413,7 @@ int main(int argc, char *argv[]) {
 
     BrainTestApp app;
     memset(&app, 0, sizeof(app));
+    app.overlayFollowBot = -1;  /* force first overlay-texture build */
     app.zoomFactor = 2;
     app.freeCamera = false;
     app.showHUD = false;
@@ -4424,16 +5479,23 @@ int main(int argc, char *argv[]) {
         "Heatmap from brain.get_strategic_place_heatmap(): best tiles to "
         "drop a pill given the current map control situation.",
         "8", false);
+    app.regIdxTankIds = vizRegistryAddNative(
+        "Tank player #s",
+        "Draw each tank's player number above its sprite (god-view)",
+        "Enumerates every tank from the server sim (or the recorded "
+        "frame in playback) and labels it with its player slot. Own "
+        "tank cyan, others white.",
+        "-", true);
     /* If any of these came back negative the registry is full or hit a
      * duplicate-id collision — vizFlag would silently no-op forever.
      * Surface it loudly at startup so it's obvious during dev. */
     {
-        int idxs[9] = { app.regIdxInfluence, app.regIdxDanger,
+        int idxs[10] = { app.regIdxInfluence, app.regIdxDanger,
                         app.regIdxFrontLine, app.regIdxPath,
                         app.regIdxFog, app.regIdxValues,
                         app.regIdxDijkstra, app.regIdxCostTo,
-                        app.regIdxStratPlace };
-        for (int i = 0; i < 9; i++) {
+                        app.regIdxStratPlace, app.regIdxTankIds };
+        for (int i = 0; i < 10; i++) {
             if (idxs[i] < 0) {
                 SDL_Log("WARN: native viz registration %d failed; "
                         "the corresponding hotkey will be inert", i);
@@ -4446,12 +5508,22 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
+    /* Print a symbolized C stack trace on a fatal native exception. The crash
+     * file destination is pointed at the debug-session dir once it's known
+     * (below); until then a crash lands in the cwd. */
+    crashHandlerInstall("BrainTest");
+
     static const char *aiNames[]   = { "none", "yes", "advantage", "full" };
     static const char *gameNames[] = { "?", "open", "tournament", "strict" };
     fprintf(stderr, "BrainTest - Brain Debug Viewer\n");
     fprintf(stderr, "  Brain:   %s\n", optBrain);
     fprintf(stderr, "  Players: %d\n", optNumPlayers);
-    if (optNumTeams >= 2) {
+    if (optNumTeamSizes > 0) {
+        fprintf(stderr, "  Teams:   %d (sizes", optNumTeamSizes);
+        for (int t = 0; t < optNumTeamSizes; t++)
+            fprintf(stderr, "%s%d", t ? "," : " ", optTeamSizes[t]);
+        fprintf(stderr, ")\n");
+    } else if (optNumTeams >= 2) {
         fprintf(stderr, "  Teams:   %d\n", optNumTeams);
     } else {
         fprintf(stderr, "  Teams:   FFA\n");
@@ -4575,6 +5647,28 @@ int main(int argc, char *argv[]) {
     if (app.overlayTex)
         SDL_SetTextureScaleMode(app.overlayTex, SDL_SCALEMODE_NEAREST);
 
+    /* -loadsession: peek the recording's header so the sim is created with the
+     * recorded MAP and bot count (so pill/base counts + per-bot overlay buffers
+     * line up with what we'll patch in during playback). The map name maps to
+     * data/maps/<name>.map unless the user passed an explicit -map. */
+    char loadSessionBtr[1200] = "";
+    if (optLoadSession[0]) {
+        SDL_snprintf(loadSessionBtr, sizeof(loadSessionBtr), "%s/%s",
+                     optLoadSession, BRAINREC_FILENAME);
+        char mapName[64] = ""; int recBots = 1;
+        if (btPeekSession(loadSessionBtr, mapName, &recBots)) {
+            if (!optMap[0] && mapName[0])
+                SDL_snprintf(optMap, sizeof(optMap), "data/maps/%s.map", mapName);
+            if (recBots > 0) optNumPlayers = recBots;
+            fprintf(stderr, "Load session: map '%s', %d bot(s) from %s\n",
+                    mapName, recBots, loadSessionBtr);
+        } else {
+            fprintf(stderr, "Load session: '%s' is not a loadable brainrec.btr "
+                            "(missing / wrong version)\n", loadSessionBtr);
+            loadSessionBtr[0] = '\0';
+        }
+    }
+
     /* Load map */
     SDL_PumpEvents();
     bool mapLoaded = false;
@@ -4680,6 +5774,8 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "  Session dir: %s\n", g_sessionDir);
         }
     }
+    /* Land any later crash trace in the session dir (cwd if none). */
+    crashHandlerSetOutputDir(g_sessionDir[0] ? g_sessionDir : NULL);
     /* When --record-panels is on, per-panel JSON snapshots go in a
      * panels/ subfolder of the session dir. */
     if (g_panelRecordEnabled && g_sessionDir[0]) {
@@ -4718,6 +5814,19 @@ int main(int argc, char *argv[]) {
             if (bl > 0 && (brainName[bl-1] == '/' || brainName[bl-1] == '\\'))
                 brainName[bl-1] = '\0';
         }
+        /* Strip a trailing version suffix ("GoalHunter_1.5" -> "GoalHunter")
+         * so panel-type namespacing ("<brain>:<type>") matches the renderers'
+         * fixed "GoalHunter:" prefix across the versioned brain dirs from the
+         * 1.0/1.5 split. Only strips when the chars after the last '_' are
+         * version-like (start with a digit), so a brain whose real name
+         * contains an underscore is left alone. Also keeps the namespaced type
+         * within PANEL_REG_TYPE_MAX, which was truncating "GoalHunter_1.5:
+         * pool_grid" to "...pool_gri". */
+        {
+            char *us = NULL;
+            for (char *p = brainName; *p; p++) if (*p == '_') us = p;
+            if (us && us[1] >= '0' && us[1] <= '9') *us = '\0';
+        }
         for (int i = 0; i < optNumPlayers; i++) {
             char name[32];
             SDL_snprintf(name, sizeof(name), "Bot %d", i);
@@ -4734,7 +5843,23 @@ int main(int argc, char *argv[]) {
             if (ok) app.numBots++;
         }
         fprintf(stderr, "  Added %d bots\n", app.numBots);
-        if (optNumTeams >= 2) {
+        if (optNumTeamSizes > 0) {
+            /* Explicit per-team sizes: contiguous blocks. First optTeamSizes[0]
+             * bots -> team 1, next optTeamSizes[1] -> team 2, etc. */
+            int bot = 0;
+            for (int t = 0; t < optNumTeamSizes; t++) {
+                for (int k = 0; k < optTeamSizes[t] && bot < optNumPlayers; k++) {
+                    serverSimSetTeamBatch(app.sim, (BYTE)bot, (BYTE)(t + 1));
+                    bot++;
+                }
+            }
+            serverSimReapplyTeamAlliances(app.sim);
+            fprintf(stderr, "  Assigned %d bots to %d teams (sizes",
+                    optNumPlayers, optNumTeamSizes);
+            for (int t = 0; t < optNumTeamSizes; t++)
+                fprintf(stderr, "%s%d", t ? "," : " ", optTeamSizes[t]);
+            fprintf(stderr, ")\n");
+        } else if (optNumTeams >= 2) {
             for (int i = 0; i < optNumPlayers; i++) {
                 serverSimSetTeamBatch(app.sim, (BYTE)i,
                                       (BYTE)((i % optNumTeams) + 1));
@@ -4755,6 +5880,14 @@ int main(int argc, char *argv[]) {
             for (int i = 0; i < optNumPlayers; i++) {
                 if (serverSimIsBot(app.sim, (BYTE)i)) {
                     serverSimBotExecLua(app.sim, (BYTE)i, setSession);
+                    /* Tell the brain the SAME index BrainTest uses for the HUD
+                     * "Bot: N" / Copy reference (= followBot, the tank slot), so
+                     * its print2_bot<N>.log filename matches what you copy.
+                     * (The brain's own player_number can differ in this harness,
+                     * which made the copied "botN" not match the log file.) */
+                    char setIdx[48];
+                    SDL_snprintf(setIdx, sizeof(setIdx), "_G.BT_BOT_INDEX=%d", i);
+                    serverSimBotExecLua(app.sim, (BYTE)i, setIdx);
                 }
             }
         }
@@ -4790,11 +5923,30 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "  Map bounds: (%d,%d)-(%d,%d)\n",
             app.mapMinX, app.mapMinY, app.mapMaxX, app.mapMaxY);
 
+    /* -loadsession: now that the sim, bots (panels + viz registered), and the
+     * recording buffer all exist, read the brainrec.btr into the recording and
+     * jump into paused playback at the last frame. */
+    if (loadSessionBtr[0]) {
+        int n = btLoadSession(&app, loadSessionBtr);
+        if (n > 0) {
+            if (optFollow < 0) app.followBot = 0;
+            fprintf(stderr, "Load session: %d frames loaded — playback ready.\n", n);
+            if (g_playbackAutoplay) {
+                app.playbackFrame = 0;   /* start at the beginning … */
+                app.paused        = false;/* … and play straight through (headless verify) */
+                fprintf(stderr, "Load session: --playback-autoplay — playing from frame 0.\n");
+            }
+        } else {
+            fprintf(stderr, "Load session: failed to load frames from %s\n", loadSessionBtr);
+        }
+    }
+
     /* Main loop */
     Uint64 lastTickTime = SDL_GetTicks();
     const bool *keystate = SDL_GetKeyboardState(NULL);
     bool autoPauseDone = false;
     bool firstBrainSeeded = false;
+    bool prevPaused = false;
 
     while (!appQuit) {
         /* Process events */
@@ -4819,6 +5971,7 @@ int main(int argc, char *argv[]) {
                 if (evWin == app.window) {
                     appQuit = TRUE;
                 } else if (evWin == app.vizWindow) {
+                    vizWindowClearFocus();   /* drop filter focus on close */
                     SDL_HideWindow(app.vizWindow);
                 } else if (evWin == app.panelWindow) {
                     SDL_HideWindow(app.panelWindow);
@@ -4862,6 +6015,27 @@ int main(int argc, char *argv[]) {
                          * brain. */
                         break;
                     }
+                    /* Manual build-type selection: number keys 1-5 pick the
+                     * build the click-to-build uses (Trees/Road/Wall/Pill/Mine),
+                     * matching the Bolo build menu. Forwarded to the brain so the
+                     * HUD highlight + the on_click build stay in sync. */
+                    int bsel = 0;
+                    switch (ev.key.scancode) {
+                    case SDL_SCANCODE_1: bsel = 1; break;
+                    case SDL_SCANCODE_2: bsel = 2; break;
+                    case SDL_SCANCODE_3: bsel = 3; break;
+                    case SDL_SCANCODE_4: bsel = 4; break;
+                    case SDL_SCANCODE_5: bsel = 5; break;
+                    default: break;
+                    }
+                    if (bsel) {
+                        char buf[96];
+                        SDL_snprintf(buf, sizeof(buf),
+                            "if brain and brain.manual_set_build then "
+                            "brain.manual_set_build(%d) end", bsel);
+                        serverSimBotExecLua(app.sim, app.followBot, buf);
+                        break;
+                    }
                 }
                 if (ev.key.repeat) {
                     break;
@@ -4876,17 +6050,19 @@ int main(int argc, char *argv[]) {
                 case SDLK_SPACE:
                     app.paused = !app.paused;
                     break;
-                case SDLK_TAB:
-                    /* Cycle to next active bot. Reset pill-contrib
-                     * selection — the per-bot pill list is different
-                     * for the new bot, so the old cycle index would
-                     * be meaningless (or out of range). */
+                case SDLK_TAB: {
+                    /* Cycle to next active bot (Shift+Tab = previous).
+                     * Reset pill-contrib selection — the per-bot pill list
+                     * is different for the new bot, so the old cycle index
+                     * would be meaningless (or out of range). */
+                    int step = (ev.key.mod & SDL_KMOD_SHIFT) ? (MAX_TANKS - 1) : 1;
                     for (int tries = 0; tries < MAX_TANKS; tries++) {
-                        app.followBot = (app.followBot + 1) % MAX_TANKS;
+                        app.followBot = (app.followBot + step) % MAX_TANKS;
                         if (serverSimIsBot(app.sim, app.followBot)) break;
                     }
                     app.pillContribSel = 0;
                     break;
+                }
                 case SDLK_F:
                     app.freeCamera = !app.freeCamera;
                     break;
@@ -5024,6 +6200,7 @@ int main(int argc, char *argv[]) {
                         SDL_ShowWindow(app.vizWindow);
                         SDL_RaiseWindow(app.vizWindow);
                     } else {
+                        vizWindowClearFocus();   /* drop filter focus on close */
                         SDL_HideWindow(app.vizWindow);
                     }
                     break;
@@ -5070,6 +6247,39 @@ int main(int argc, char *argv[]) {
                 }
                 case SDLK_F1:
                     app.showShortcuts = !app.showShortcuts;
+                    break;
+                case SDLK_O:
+                    /* Load-session browser: pick a winbolods recording to replay
+                     * (relaunches BrainTest). Rescan on open. */
+                    g_showLoadBrowser = !g_showLoadBrowser;
+                    if (g_showLoadBrowser) scanSessions();
+                    break;
+                case SDLK_L:
+                    /* HUD layout edit: L toggles lock/unlock (locking saves);
+                     * Shift+L resets all overrides to the brain defaults. */
+                    if (ev.key.mod & SDL_KMOD_SHIFT) {
+                        /* Destructive — confirm before wiping all overrides. */
+                        const SDL_MessageBoxButtonData btns[] = {
+                            { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT
+                              | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel" },
+                            { 0, 1, "Reset" },
+                        };
+                        const SDL_MessageBoxData mbd = {
+                            SDL_MESSAGEBOX_WARNING, app.window,
+                            "Reset HUD layout",
+                            "Reset all HUD overlay positions back to the brain defaults?",
+                            (int)SDL_arraysize(btns), btns, NULL
+                        };
+                        int btn = -1;
+                        if (SDL_ShowMessageBox(&mbd, &btn) && btn == 1) {
+                            for (int i = 0; i < HUD_MAX_VIZ; i++) g_hudOff[i].set = false;
+                            g_hudDrag = -1;
+                            hudLayoutSave();   /* truncates the file to empty */
+                        }
+                    } else {
+                        g_hudEdit = !g_hudEdit;
+                        if (!g_hudEdit) { hudLayoutSave(); g_hudDrag = -1; }
+                    }
                     break;
                 case SDLK_ESCAPE:
                     appQuit = TRUE;
@@ -5169,6 +6379,14 @@ int main(int argc, char *argv[]) {
                 if (ev.motion.windowID != SDL_GetWindowID(app.window)) break;
                 app.mouseX = ev.motion.x;
                 app.mouseY = ev.motion.y;
+                /* HUD overlay drag: move the grabbed overlay by the mouse delta
+                 * (offset from its default position). */
+                if (g_hudDrag >= 0 && g_hudDrag < HUD_MAX_VIZ) {
+                    g_hudOff[g_hudDrag].set = true;
+                    g_hudOff[g_hudDrag].dx  = g_hudDragDX0 + (ev.motion.x - g_hudDragMX0);
+                    g_hudOff[g_hudDrag].dy  = g_hudDragDY0 + (ev.motion.y - g_hudDragMY0);
+                    break;
+                }
                 {
                     int sw, sh;
                     SDL_GetWindowSize(app.window, &sw, &sh);
@@ -5228,6 +6446,28 @@ int main(int argc, char *argv[]) {
                     app.dragLastY = ev.button.y;
                     app.freeCamera = true;
                 } else if (ev.button.button == SDL_BUTTON_LEFT) {
+                    /* HUD edit mode: grab the topmost overlay under the cursor
+                     * and start dragging it; consume the click so it doesn't
+                     * also trigger a map cost-query. */
+                    if (g_hudEdit) {
+                        int hit = -1;
+                        for (int r = g_hudRectN - 1; r >= 0; r--) {
+                            if (ev.button.x >= g_hudRect[r].x - 2.0f &&
+                                ev.button.x <= g_hudRect[r].x + g_hudRect[r].w + 2.0f &&
+                                ev.button.y >= g_hudRect[r].y - 2.0f &&
+                                ev.button.y <= g_hudRect[r].y + g_hudRect[r].h + 2.0f) {
+                                hit = g_hudRect[r].viz_idx; break;
+                            }
+                        }
+                        if (hit >= 0 && hit < HUD_MAX_VIZ) {
+                            g_hudDrag    = hit;
+                            g_hudDragMX0 = ev.button.x;
+                            g_hudDragMY0 = ev.button.y;
+                            g_hudDragDX0 = g_hudOff[hit].set ? g_hudOff[hit].dx : 0.0f;
+                            g_hudDragDY0 = g_hudOff[hit].set ? g_hudOff[hit].dy : 0.0f;
+                            break;
+                        }
+                    }
                     int sw, sh;
                     SDL_GetWindowSize(app.window, &sw, &sh);
                     /* Bottom-strip click → control bar. Pre-empt the
@@ -5356,6 +6596,21 @@ int main(int argc, char *argv[]) {
                         syncDebugPathfinder(&app);
                         computeClickPath(&app, cmx, cmy);
 
+                        /* Click-to-follow: if the clicked tile holds a tank,
+                         * follow it and drop free-camera so the view tracks. */
+                        for (int pn = 0; pn < MAX_TANKS; pn++) {
+                            WORLD twx = 0, twy = 0;
+                            if (!serverSimGetTankState(app.sim, (BYTE)pn, &twx, &twy)) continue;
+                            if ((twx >> TANK_SHIFT_MAPSIZE) == cmx
+                                && (twy >> TANK_SHIFT_MAPSIZE) == cmy) {
+                                app.followBot    = (BYTE)pn;
+                                app.freeCamera   = false;
+                                app.overlayDirty = true;
+                                fprintf(stderr, "Click-follow: now following bot %d\n", pn);
+                                break;
+                            }
+                        }
+
                         /* Viz-detail hit-test: if the click landed on
                          * a registered primitive, scroll/expand the
                          * matching entry in the viz-detail dialog and
@@ -5405,6 +6660,12 @@ int main(int argc, char *argv[]) {
                 break;
 
             case SDL_EVENT_MOUSE_BUTTON_UP:
+                /* End an HUD overlay drag and persist the new layout. */
+                if (ev.button.button == SDL_BUTTON_LEFT && g_hudDrag >= 0) {
+                    g_hudDrag = -1;
+                    hudLayoutSave();
+                    break;
+                }
                 /* Same gate as BUTTON_DOWN — but always release the
                  * scrubber drag if it was active, regardless of
                  * which window the release happened in (otherwise
@@ -5485,6 +6746,15 @@ int main(int argc, char *argv[]) {
          *    same matched pair (rather than the previous tick's
          *    overlay buffer as it would if capture ran before
          *    brain). */
+        /* On the transition into pause, force the batched brain logs to
+         * disk so the on-screen tick's print2 output is readable while
+         * paused (the per-tick flush path is dormant when not ticking).
+         * Safe here: no brain.think() is in flight between iterations. */
+        if (app.paused && !prevPaused) {
+            botManagerFlushBrainLogs(app.sim);
+        }
+        prevPaused = app.paused;
+
         int tickMs = SPEED_PRESETS[app.speedIndex];
         if (!app.paused) {
             Uint64 now = SDL_GetTicks();
@@ -5502,6 +6772,12 @@ int main(int argc, char *argv[]) {
                 if (app.playbackMode) {
                     if (app.playbackFrame + 1 < app.recording.count) {
                         app.playbackFrame++;
+                    } else if (g_loadedSession) {
+                        /* End of a loaded recording — hold here, paused. There's
+                         * no live game to resume (the sim is a replay shell), and
+                         * resuming would live-capture + evict the recorded start. */
+                        if (g_playbackAutoplay) appQuit = TRUE;  /* headless play-through finished */
+                        app.paused = true;
                     } else {
                         /* Hit the end of recorded history → snap
                          * back to live and resume the live sim. */

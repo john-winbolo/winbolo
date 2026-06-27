@@ -40,7 +40,12 @@ struct ServerSim;
  * each frame by braintest_main.c's panel-render path. */
 struct ServerSim *braintestGetCurrentSim(void);
 
-#define PANEL_REG_MAX           32
+/* GLOBAL registry across ALL bots (not per-bot). Each GoalHunter bot registers
+ * up to 3 panels (Pool breakdown / Queue status / Capacity tiers), so a full
+ * MAX_TANKS(16) lobby needs 48. Was 32, which overflowed after ~bot 10 and
+ * silently dropped every panel for the high-index bots (11-15) — they couldn't
+ * open the P / pool window. Sized to 16 bots × 4 panels with headroom. */
+#define PANEL_REG_MAX           64
 #define PANEL_REG_NAME_MAX      64
 #define PANEL_REG_TYPE_MAX      24
 #define PANEL_REG_EXPR_MAX     256

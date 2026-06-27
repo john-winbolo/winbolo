@@ -641,6 +641,12 @@ bool gameFrontPreferencesExist(void);
 bool gameFrontOnboardingComplete(void);
 void gameFrontSetOnboardingComplete(void);
 
+/* Player's explicitly-chosen bot brain (lobby wrench dropdown). Persisted as
+ * the difficulty preference; overrides the single-player skill guess. Empty
+ * string until the player first chooses one. */
+void gameFrontSetChosenBotBrain(const char *name);
+void gameFrontGetChosenBotBrain(char *out, size_t outLen);
+
 /*********************************************************
 *NAME:          gameFrontSetWinbolonetToken
 *PURPOSE:
