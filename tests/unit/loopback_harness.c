@@ -187,6 +187,14 @@ bool loopbackHarnessStartSpectator(LoopbackHarness *h, const char *playerName,
      * server's spectator-accept path admits the connect. */
     serverSimSetMaxSpectators(h->sim, 4);
 
+    /* serverInstanceStartup creates the spectator ring only when maxSpectators
+     * was already > 0; here the slots are opened just above (after startup), so
+     * create the ring now — it is the production registration call and the seed
+     * a connecting spectator receives comes off this ring. Without it the running
+     * world records nothing and the spectator hangs awaiting a seed.
+     * serverInstanceShutdown (via loopbackHarnessStop) frees it. */
+    serverInstanceCreateSpectatorRing(h->sim);
+
     if (!loopbackConnectClient(h, playerName, /*impairSpec*/ NULL,
                                /*spectator*/ true)) {
         return false;

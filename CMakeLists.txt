@@ -2834,6 +2834,15 @@ set(WINBOLO_UNITTESTS_SOURCES
     # end state), an empty tick is clean, and a keyframe re-syncs + refreshes the
     # control slice.
     tests/unit/test_spec_record_pump.c
+    # Headless spectator seed integration: a running ServerSim with a registered
+    # spectator ring (no logStart) delivers a seed over the loopback transport;
+    # the client captures it and the production decode path loads it
+    # (test_spectator_seed_integration.c).
+    tests/unit/test_spectator_seed_integration.c
+    # specSeedDecodeInfo decode: captures a real ring seed and asserts the
+    # control-snapshot lobby-settings event decodes to the sim's map / settings,
+    # plus the no-event negative path (test_spec_seed_decode_info.c).
+    tests/unit/test_spec_seed_decode_info.c
     # Link-only no-op stubs for the host/render/window/message entry points
     # the decode subset below references but whose real bodies live in the
     # GUI TUs (logviewer.c, draw.c, messages.c) we do not link.
@@ -3107,6 +3116,7 @@ set(_unit_test_names
     spec_seed_load
     spec_seed_load_real
     spec_record_pump
+    spec_seed_decode_info
     log_path_empty_uses_autobase
     log_path_explicit_file_verbatim
     log_path_explicit_file_keeps_single_wbv
@@ -3196,6 +3206,7 @@ set(_unit_test_names
     spectator_config
     spectator_join
     spectator_connect
+    spectator_seed_integration
     spectator_capture
     spectator_seed
     bulk_transfer

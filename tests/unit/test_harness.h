@@ -465,6 +465,20 @@ int run_spec_seed_load_real(void);
  * and refreshes the stashed control slice. */
 int run_spec_record_pump(void);
 
+/* Headless spectator seed integration (test_spectator_seed_integration.c):
+ * stands up a running ServerSim with a registered spectator ring (no logStart,
+ * no .wbv) over the loopback transport, ticks until the connected spectator
+ * client captures a seed, and loads it through the production decode path
+ * (specDrainTakeSeed -> specSeedDecodeInfo -> lv_specSeedLoad), asserting TRUE. */
+int run_spectator_seed_integration(void);
+
+/* specSeedDecodeInfo decode (test_spec_seed_decode_info.c): captures a real ring
+ * keyframe seed from a running sim (map "Everard Island", no logStart) and
+ * asserts specSeedDecodeInfo recovers the map name / game type / hidden-mines /
+ * ai from the control snapshot's lobby-settings event, plus the negative path
+ * (empty control snapshot -> returns false, output zeroed). */
+int run_spec_seed_decode_info(void);
+
 /* Extracts the inner "log.dat" from a .wbv zip into a heap buffer (caller
  * frees). Defined in test_log_roundtrip.c; shared with test_stream_load.c. */
 bool extractLogDat(const char *wbvPath, uint8_t **outBuf, size_t *outLen);

@@ -253,6 +253,8 @@ static const UnitTestEntry s_tests[] = {
     { "spec_seed_load",                          run_spec_seed_load                          },
     { "spec_seed_load_real",                     run_spec_seed_load_real                     },
     { "spec_record_pump",                        run_spec_record_pump                        },
+    { "spectator_seed_integration",              run_spectator_seed_integration              },
+    { "spec_seed_decode_info",                   run_spec_seed_decode_info                   },
     { "log_path_empty_uses_autobase",            run_log_path_empty_uses_autobase            },
     { "log_path_explicit_file_verbatim",         run_log_path_explicit_file_verbatim         },
     { "log_path_explicit_file_keeps_single_wbv", run_log_path_explicit_file_keeps_single_wbv },
