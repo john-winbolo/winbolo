@@ -224,7 +224,9 @@ static void lobbyGearTooltip(ClientSim *cs, int slot, float s) {
         const BrainListEntry *e = &bl->entries[cur];
         const LobbyBrainMeta *m = lobbyBrainMetaFor(e->name);
         ImGui::Separator();
-        ImGui::Text("Currently: %s", e->name);
+        MessageArgs cargs = {};
+        SDL_snprintf(cargs.string1, sizeof(cargs.string1), "%s", e->name);
+        ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_BOTCFG_CURRENTLY, &cargs));
         if (m && m->tagline[0]) lobbyDrawTagline(m->tagline, 320.0f * s);
     }
     ImGui::EndTooltip();
