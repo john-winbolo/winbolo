@@ -6509,8 +6509,14 @@ function Brain.think(info)
   if _G.BRAIN_PROFILE_LOG then
     local body = Brain.get_capacity_state_json and Brain.get_capacity_state_json() or "{}"
     local path = (_G.DEBUG_SESSION_DIR or ".") .. "/performance.ticks.log"
+    -- Key on the GAME tick (server_tick), NOT state.tick (a per-think counter):
+    -- the .btr recorder stores serverSimGetTick, so BrainTest aligns recorded
+    -- tier data to playback frames by game tick. Using state.tick here diverges
+    -- whenever the bot doesn't think every game tick (worker pool / capacity
+    -- tiers), mis-aligning and truncating coverage. Fallback to now if unset.
+    local perf_tick = state.server_tick or now
     local line = string.format('{"tick":%d,"bot":%d,"data":%s}',
-                                now, state.player_number or 0, body)
+                                perf_tick, state.player_number or 0, body)
     if gh_opt_log then
       gh_opt_log.append(path, line)
     else

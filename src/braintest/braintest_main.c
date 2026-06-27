@@ -816,6 +816,100 @@ static bool btDrawLoadProgress(BrainTestApp *app, double pct, int frames) {
     return true;
 }
 
+/* Load winbolods profiling: performance.ticks.log holds, per tick+bot, the
+ * exact get_capacity_state_json() the live "Y" (Capacity tiers) panel renders.
+ * Inject each line's `data` object into the matching frame's recordedPanels slot
+ * for that bot's tier panel, so playback shows the recorded tiers. Heavy debug
+ * to stderr so a failed load is obvious. */
+static void btLoadProfileTicks(BrainTestApp *app, const char *btrPath) {
+    char dir[1024];
+    SDL_strlcpy(dir, btrPath, sizeof dir);
+    char *sl = strrchr(dir, '/');
+    char *bs = strrchr(dir, '\\');
+    if (bs && (!sl || bs > sl)) sl = bs;
+    if (sl) *sl = '\0'; else SDL_strlcpy(dir, ".", sizeof dir);
+    char perfPath[1200];
+    SDL_snprintf(perfPath, sizeof perfPath, "%s/performance.ticks.log", dir);
+
+    int tierPanelForBot[MAX_TANKS];
+    for (int i = 0; i < MAX_TANKS; i++) tierPanelForBot[i] = -1;
+    for (int pi = 0; pi < panelRegistryCount(); pi++) {
+        const PanelRegistryEntry *e = panelRegistryGet(pi);
+        if (e && e->lua_expr[0] && strstr(e->lua_expr, "get_capacity_state_json")
+            && e->bot_owner >= 0 && e->bot_owner < MAX_TANKS) {
+            tierPanelForBot[e->bot_owner] = pi;
+        }
+    }
+
+    FILE *fp = fopen(perfPath, "rb");
+    if (!fp) {
+        fprintf(stderr, "Load session: no tier profiling (performance.ticks.log absent)\n");
+        return;
+    }
+    fseek(fp, 0, SEEK_END);
+    long sz = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (sz <= 0) { fclose(fp); return; }
+    char *buf = (char *)malloc((size_t)sz + 1);
+    if (!buf) { fclose(fp); fprintf(stderr, "Load session: tier profiling skipped (OOM, %ld bytes)\n", sz); return; }
+    size_t rd = fread(buf, 1, (size_t)sz, fp);
+    fclose(fp);
+    buf[rd] = '\0';
+
+    RecordingBuffer *rb = &app->recording;
+    if (rb->count <= 0) { free(buf); return; }
+
+    uint32_t maxTick = rb->frames[rb->count - 1].tick;
+    int *frameForTick = (int *)malloc((size_t)(maxTick + 1) * sizeof(int));
+    for (uint32_t t = 0; t <= maxTick; t++) frameForTick[t] = -1;
+    for (int fi = 0; fi < rb->count; fi++) {
+        uint32_t t = rb->frames[fi].tick;
+        if (t <= maxTick) frameForTick[t] = fi;
+    }
+
+    long lines = 0, assigned = 0;
+    int minT = 0x7fffffff, maxT = -1;
+    char *p = buf;
+    while (*p) {
+        char *eol = strchr(p, '\n');
+        size_t linelen = eol ? (size_t)(eol - p) : strlen(p);
+        int tick = -1, bot = -1;
+        if (linelen > 12 && sscanf(p, "{\"tick\":%d,\"bot\":%d", &tick, &bot) == 2) {
+            lines++;
+            if (tick < minT) minT = tick;
+            if (tick > maxT) maxT = tick;
+            char *d = strstr(p, "\"data\":");
+            if (d && (size_t)(d - p) < linelen) {
+                d += 7;                            /* past "data": */
+                char *e2 = p + linelen - 1;        /* last char of the line */
+                while (e2 > d && (*e2 == '\r' || *e2 == ' ' || *e2 == '\t')) e2--;
+                if (*e2 == '}') {                  /* outer object close brace */
+                    size_t dlen = (size_t)(e2 - d);  /* data = [d, e2) */
+                    if (tick >= 0 && (uint32_t)tick <= maxTick && frameForTick[tick] >= 0
+                        && bot >= 0 && bot < MAX_TANKS && tierPanelForBot[bot] >= 0) {
+                        RecordingFrame *f = &rb->frames[frameForTick[tick]];
+                        int slotIdx = tierPanelForBot[bot];
+                        if (!f->recordedPanels[slotIdx]) {
+                            char *copy = (char *)malloc(dlen + 1);
+                            if (copy) {
+                                memcpy(copy, d, dlen); copy[dlen] = '\0';
+                                f->recordedPanels[slotIdx] = copy;
+                                assigned++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (!eol) break;
+        p = eol + 1;
+    }
+    free(frameForTick);
+    free(buf);
+    fprintf(stderr, "Load session: tier profiling — %ld/%ld entries mapped (ticks %d..%d)\n",
+            assigned, lines, lines ? minT : 0, lines ? maxT : 0);
+}
+
 static int btLoadSession(BrainTestApp *app, const char *path) {
     gzFile g = gzopen(path, "rb");
     if (!g) return -1;
@@ -859,6 +953,7 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
             poolPanelForBot[e->bot_owner] = pi;
         }
     }
+    long poolPjCount = 0;   /* pool JSON blobs present in the .btr */
 
     RecordingBuffer *rb = &app->recording;
     int loaded = 0;
@@ -986,7 +1081,8 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
 
             uint32_t pl = bt_gz_u32(g);
             char *pj = NULL;
-            if (pl) { pj = (char *)malloc(pl + 1); gzread(g, pj, pl); pj[pl] = '\0'; }
+            if (pl) { pj = (char *)malloc(pl + 1); gzread(g, pj, pl); pj[pl] = '\0';
+                      poolPjCount++; }
             if (keepBot && pj && poolPanelForBot[slot] >= 0) {
                 f->recordedPanels[poolPanelForBot[slot]] = pj;
             } else if (pj) {
@@ -1004,6 +1100,12 @@ static int btLoadSession(BrainTestApp *app, const char *path) {
         loaded++;
     }
     gzclose(g);
+
+    if (poolPjCount > 0)
+        fprintf(stderr, "Load session: pool data — %ld blobs from .btr\n", poolPjCount);
+    /* Tier ("Y") data isn't in the .btr — load it from the session's
+     * performance.ticks.log and inject into the tier panel slots. */
+    btLoadProfileTicks(app, path);
 
     if (loaded > 0) {
         g_loadedSession = true;

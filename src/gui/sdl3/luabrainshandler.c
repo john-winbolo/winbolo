@@ -690,8 +690,13 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   lua_setglobal(L, "_JSONL_LOGGER_ENABLED");
 
   /* Pool visualizer strings (desc, loc_reason, etc.) — on in debug mode,
-   * off in --opt production mode to eliminate GC pressure. */
-  lua_pushboolean(L, debug_mode);
+   * off in --opt production mode to eliminate GC pressure. Also force on when
+   * profile-logging: a profiling recording (winbolods -profile-log) wants the
+   * pool breakdown captured into the .btr so BrainTest's "P" window has real
+   * data on replay. The pool-viz code is runtime-gated (not stripped from opt),
+   * so enabling the global is enough; it adds some GC cost, accepted for a
+   * deliberate profiling run. */
+  lua_pushboolean(L, debug_mode || s_profile_log);
   lua_setglobal(L, "BRAIN_POOL_VIZ");
 
   /* Per-category debug log gates. All require BRAIN_DEBUG_MODE to be on
