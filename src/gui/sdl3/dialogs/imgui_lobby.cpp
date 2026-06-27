@@ -57,6 +57,7 @@ extern "C" {
 #include "bolo_rand.h"
 #include "client_sim.h"
 #include "client_net.h"
+#include "../../sound.h"
 #include "server_sim.h"          /* serverSim* T1 wrappers for SP-host paths */
 #include "lobby_bot_pools.h"     /* lobbyBotPool* — public utility */
 #include "playername_validate.h" /* playerNameValidate — client-side bot name gate */
@@ -6441,6 +6442,10 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
      * (e.g. once the host's external address resolves via the tracker). */
     gameFrontSetSteamPresenceLobby(cs);
 
+    /* Seed the countdown tracker with the current value so the first frame
+     * doesn't spuriously tick when entering the lobby mid-countdown. */
+    int prevCountdown = clientSimGetCountdownSeconds(cs);
+
     while (running) {
         Uint64 frameCapStart = dialogFrameCapBegin();
         gameFrontTickSteamPresenceLobby(cs);
@@ -6471,8 +6476,20 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             clientSimClearBalanceProposal(cs);
         }
 
+        /* Countdown tick: one cue per second while the start countdown runs.
+         * clientSimGetCountdownSeconds decrements once per second, so playing
+         * only on a change to a positive value yields one tick per second
+         * (5,4,3,2,1); reaching 0 is the game start, handled below. */
+        int curCountdown = clientSimGetCountdownSeconds(cs);
+        if (clientSimGetNetStatus(cs) == netLobbyCountdown &&
+            curCountdown > 0 && curCountdown != prevCountdown) {
+            soundPlayEffect(lobbyCountdown);
+        }
+        prevCountdown = curCountdown;
+
         /* Check for game start */
         if (clientSimGetNetStatus(cs) == netRunning) {
+            soundPlayEffect(lobbyGameStart);
             result = 1;
             running = false;
             break;
