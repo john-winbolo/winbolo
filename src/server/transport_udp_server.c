@@ -1379,6 +1379,20 @@ static void serverAcceptSpectator(ServerSim *sim,
     serverSendSpectatorAccept(s, sim, fromAddr);
     /* Tell every connected player client a new viewer is on the roster. */
     serverBroadcastSpectatorSlot(s);
+
+    /* Record the viewer's arrival in the .wbv replay log (and any spectator
+     * ring tap). logAddEvent self-gates: a no-op unless a log is recording. */
+    {
+        char pstr[256];
+        int nameLen = (int)strlen(udpServer.spectators[s].playerName);
+        if (nameLen > 255) nameLen = 255;
+        pstr[0] = (char)nameLen;
+        memcpy(pstr + 1, udpServer.spectators[s].playerName, (size_t)nameLen);
+        logAddEvent(log_SpectatorJoined, (BYTE)s,
+                    (BYTE)udpServer.spectators[s].countryCode[0],
+                    (BYTE)udpServer.spectators[s].countryCode[1],
+                    udpServer.spectators[s].wbnFlags, 0, pstr);
+    }
 }
 
 /* Release a spectator slot. A spectator holds no tank, no sim player, and no
@@ -1392,6 +1406,17 @@ static void serverDisconnectSpectator(int s, bool graceful) {
         return;
     }
     mpDiagLog("[srv] SPECTATOR DISCONNECT idx=%d graceful=%d", s, (int)graceful);
+    /* Record the viewer's departure in the .wbv replay log (and any spectator
+     * ring tap) while the slot's name is still valid — teardown below clears
+     * it. logAddEvent self-gates: a no-op unless a log is recording. */
+    {
+        char pstr[256];
+        int nameLen = (int)strlen(udpServer.spectators[s].playerName);
+        if (nameLen > 255) nameLen = 255;
+        pstr[0] = (char)nameLen;
+        memcpy(pstr + 1, udpServer.spectators[s].playerName, (size_t)nameLen);
+        logAddEvent(log_SpectatorLeft, (BYTE)s, 0, 0, 0, 0, pstr);
+    }
     /* Release the WBN spectator session if this viewer was verified. Empty key
      * (anonymous / non-WBN) makes this a no-op. */
     if (udpServer.spectators[s].spectatorKey[0] != '\0') {

@@ -2789,6 +2789,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # feed (record header stripped, order preserved), exercising the ack-emitter
     # gate fix end-to-end.
     tests/unit/test_spectator_capture.c
+    # Spectator replay-log events: serialize round-trip of the Joined/Left/Chat
+    # kinds over the v2 framed .wbv stream, plus loopback emission of Joined on
+    # a spectator join and Left on its timeout.
+    tests/unit/test_spectator_log.c
     # Spectator seed transfer: a connected spectator on a recording-ring server
     # gets the delayed keyframe at head - delay armed as a BULK_KIND_SPEC_SEED
     # transfer whose blob is byte-equal to the ring keyframe at that delay.
@@ -3251,6 +3255,7 @@ set(_unit_test_names
     spectator_command_reject
     spectator_seed_integration
     spectator_capture
+    spectator_log
     spectator_seed
     bulk_transfer
     overflow_guards

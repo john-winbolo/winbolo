@@ -168,6 +168,7 @@ static const UnitTestEntry s_tests[] = {
     { "spectator_connect",                       run_spectator_connect                       },
     { "spectator_command_reject",                run_spectator_command_reject                },
     { "spectator_capture",                       run_spectator_capture                       },
+    { "spectator_log",                           run_spectator_log                           },
     { "spectator_seed",                          run_spectator_seed                          },
     { "bulk_transfer",                           run_bulk_transfer                           },
     { "overflow_guards",                         run_overflow_guards                         },

@@ -635,6 +635,37 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     out[off++] = opt1;
     out[off++] = opt2;
     break;
+  case log_SpectatorJoined:
+    /* spectator slot + country[0] + country[1] + wbnFlags + reserved
+       + pascal-string viewer name. Mirrors log_PlayerJoined's shape. */
+    out[off++] = log_SpectatorJoined;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    out[off++] = (BYTE) short1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_SpectatorLeft:
+    /* spectator slot + pascal-string viewer name so the leaver is named
+       unambiguously even after the slot is reused. */
+    out[off++] = log_SpectatorLeft;
+    out[off++] = opt1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_SpectatorChat:
+    /* Format-reserved (no emitter yet): sender spectator slot + pascal-string
+       message. Mirrors log_MessageAll so the on-disk shape is locked now. */
+    out[off++] = log_SpectatorChat;
+    out[off++] = opt1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
   default:
     return 0;
   }

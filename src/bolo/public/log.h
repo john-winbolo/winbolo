@@ -103,7 +103,10 @@ log_MapSkipApplied,
 log_BalanceApplied,
 log_GameVoteStart,   // opt1=kind, opt2=initiator, opt3=team (0 = global)
 log_GameVoteCast,    // opt1=kind, opt2=player,    opt3=voteYes
-log_GameVoteEnd      // opt1=kind, opt2=result (0=failed,1=passed)
+log_GameVoteEnd,     // opt1=kind, opt2=result (0=failed,1=passed)
+log_SpectatorJoined, // opt1=spectator slot, opt2/opt3=country[0]/[1], opt4=wbnFlags, reserved byte, then name pstr
+log_SpectatorLeft,   // opt1=spectator slot, then name pstr (names the leaver across slot reuse)
+log_SpectatorChat    // format-reserved: opt1=sender spectator slot + message pstr (no emitter yet)
 } logitem;
 
 typedef struct {

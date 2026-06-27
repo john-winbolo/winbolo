@@ -245,6 +245,12 @@ int run_spectator_command_reject(void);
  * also exercising the PACKET_CHANNEL ack-emitter gate fix end-to-end. */
 int run_spectator_capture(void);
 
+/* Spectator replay-log events (test_spectator_log.c): serialize round-trip of
+ * log_SpectatorJoined / log_SpectatorLeft / log_SpectatorChat over the v2
+ * framed .wbv stream, plus loopback emission proving a spectator join/timeout
+ * writes the Joined/Left kinds into a recording log. */
+int run_spectator_log(void);
+
 /* Spectator seed transfer (test_spectator_seed.c): a connected spectator on a
  * server whose ring is recording gets the delayed keyframe at head - delay
  * armed as a BULK_KIND_SPEC_SEED transfer; the armed seed blob is byte-equal to
