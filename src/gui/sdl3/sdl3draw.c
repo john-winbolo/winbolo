@@ -51,6 +51,7 @@
 #include "dialogs/imgui_news.h"
 #endif
 #include "cursor.h"
+#include "input_source.h"
 #include "mapview.h"
 #include "../clientmutex.h"
 #include "../tiles.h"
@@ -647,8 +648,14 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev) {
            cursor).  Only on real movement (skip zero-delta focus/warp events)
            and only while the pointer is in the view (handled by cursorPos) —
            so the pointer leaving the window leaves the gamepad in control.
-           cx/cy are 1-based screen tiles; absolute map tile = offset + tile. */
-        if (ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f) {
+           cx/cy are 1-based screen tiles; absolute map tile = offset + tile.
+           Skip motion that is the echo of a scroll-tracking cursor warp: that
+           synthetic event isn't the player moving the mouse, and re-deriving
+           the tile from the warped pointer would nudge the build cursor off the
+           world tile it is locked to (and jitter it ±1 from warp rounding).
+           Real hand movement (no warp pending) repositions it as before. */
+        if ((ev->motion.xrel != 0.0f || ev->motion.yrel != 0.0f) &&
+            !inputSourceCursorWarpActive()) {
           buildCursorSetTile((BYTE)((int)clientSimGetXOffset(cs) + (int)cx),
                              (BYTE)((int)clientSimGetYOffset(cs) + (int)cy));
         }

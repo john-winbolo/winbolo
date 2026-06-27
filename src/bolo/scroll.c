@@ -339,11 +339,19 @@ void scrollCenterObject(ScrollState *ss, BYTE *xValue, BYTE *yValue, BYTE object
  * Integer-tile, no sub-tile smoothing. */
 #define CLASSIC_AS_FULL_SPEED 16  /* tank top speed (road) */
 #define CLASSIC_AS_MAX_LEAD    5  /* max burst tiles at full speed */
+/* outArmedX/outArmedY (optional) report whether a fresh burst was armed this
+ * tick on each axis — the gunsight-edge "push" event. The v1+threats variant
+ * uses them to decide its lateral lean only at that moment; pass NULL when not
+ * needed. */
 static bool scrollClassicAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue,
                                     BYTE objectX, BYTE objectY,
-                                    BYTE gunsightX, BYTE gunsightY, BYTE speed) {
+                                    BYTE gunsightX, BYTE gunsightY, BYTE speed,
+                                    bool *outArmedX, bool *outArmedY) {
   bool returnValue = FALSE;
   int burst = (CLASSIC_AS_MAX_LEAD * (int)speed) / CLASSIC_AS_FULL_SPEED;
+
+  if (outArmedX) *outArmedX = FALSE;
+  if (outArmedY) *outArmedY = FALSE;
 
   ss->subPosX = 0;
   ss->subPosY = 0;
@@ -352,10 +360,10 @@ static bool scrollClassicAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue,
   if (ss->scrollX == 0 && ss->scrollY == 0 && burst > 0) {
     int gcol = (int)gunsightX - (int)*xValue;  /* gunsight column within view */
     int grow = (int)gunsightY - (int)*yValue;  /* gunsight row within view    */
-    if (gcol >= MAIN_SCREEN_SIZE_X - 1) { ss->scrollX = (BYTE)burst; ss->xPositive = TRUE; }
-    else if (gcol <= 0)                 { ss->scrollX = (BYTE)burst; ss->xPositive = FALSE; }
-    if (grow >= MAIN_SCREEN_SIZE_Y - 1) { ss->scrollY = (BYTE)burst; ss->yPositive = TRUE; }
-    else if (grow <= 0)                 { ss->scrollY = (BYTE)burst; ss->yPositive = FALSE; }
+    if (gcol >= MAIN_SCREEN_SIZE_X - 1) { ss->scrollX = (BYTE)burst; ss->xPositive = TRUE;  if (outArmedX) *outArmedX = TRUE; }
+    else if (gcol <= 0)                 { ss->scrollX = (BYTE)burst; ss->xPositive = FALSE; if (outArmedX) *outArmedX = TRUE; }
+    if (grow >= MAIN_SCREEN_SIZE_Y - 1) { ss->scrollY = (BYTE)burst; ss->yPositive = TRUE;  if (outArmedY) *outArmedY = TRUE; }
+    else if (grow <= 0)                 { ss->scrollY = (BYTE)burst; ss->yPositive = FALSE; if (outArmedY) *outArmedY = TRUE; }
   }
 
   /* Play the burst out, one tile per tick. */
@@ -393,27 +401,36 @@ static bool scrollClassicAutoScroll(ScrollState *ss, BYTE *xValue, BYTE *yValue,
 }
 
 /* v1WithThreats autoscroll — unmodified v1 (scrollClassicAutoScroll) with a
- * single addition that is active ONLY while moving: a view shift toward the
- * threats around you, so threats near your path stay framed instead of being
- * cropped by the forward lead.
+ * single addition: a small lateral lean toward the threat-heavier flank, layered
+ * on top of v1's gunsight-edge push and decided on the SAME cadence as that push.
  *
  * It never alters v1's own framing. Each tick the offset applied last tick is
  * removed, v1 runs on that recovered base exactly as it would standalone, then
  * the offset is re-applied on top and the tank re-clamped on screen. With zero
- * offset (no threats, balanced threats, or parked-and-settled) this is
- * byte-for-byte v1.
+ * offset (no threats or balanced threats) this is byte-for-byte v1.
  *
- * The bias is WORLD-relative, not facing-relative: each threat within the
- * concern radius votes the sign of its world direction (sign-only, the same
- * anti-jitter choice computeTargetOffset uses) and the summed votes pick the
- * offset, normalised to at most V1THREATS_LATERAL_MAX. Because it never
- * projects onto facing, simply steering the tank does not move the camera —
- * the target only changes when a threat actually crosses to your other side.
- * The target is recomputed on the recalc debounce with a one-tile dead-zone.
+ * The lean is recomputed ONLY when v1 arms a fresh gunsight-edge push (the
+ * "push event"), never on a free-running timer — so it cannot wander out and
+ * ease back between pushes, which was the old debounced bias's wobble. At a
+ * push the lean is placed on the axis ACROSS the push direction: a vertical
+ * push (driving/aiming N/S) leans E/W toward the busier flank; a horizontal
+ * push leans N/S; a corner push (both axes) takes no lean. The flank is chosen
+ * by sign-only world-direction votes of the threats within the concern radius
+ * (the same anti-jitter choice computeTargetOffset uses), scaled by agreement
+ * and clamped to V1THREATS_LATERAL_MAX tiles. Between pushes the target holds;
+ * at the next push it is recomputed from scratch, so a cleared flank eases the
+ * lean back to zero exactly then — and only then.
+ *
  * The offset is tracked at sub-tile resolution and eased toward the target at
  * V1THREATS_EASE_SUB_PER_TICK sub-units/tick; its whole part lands in the view
  * tile and the fractional remainder goes to subPos, so the camera glides
- * smoothly rather than lurching or stepping a tile at a time. */
+ * smoothly rather than lurching or stepping a tile at a time.
+ *
+ * Manual freelook (arrow-key pan, signalled by ss->autoScrollOverRide) fully
+ * suppresses autoscroll — no push, no lean — and holds the view where the
+ * player put it until the tank drives within NO_SCROLL_EDGE of a screen edge
+ * (i.e. is about to leave the view), at which point the override releases and
+ * normal following resumes. */
 static bool scrollV1WithThreatsAutoScroll(ScrollState *ss, GameSim *sim,
                                           BYTE *xValue, BYTE *yValue,
                                           BYTE objectX, BYTE objectY,
@@ -427,7 +444,37 @@ static bool scrollV1WithThreatsAutoScroll(ScrollState *ss, GameSim *sim,
   int  latSubX, latSubY;                /* eased sub-tile offset (trace) */
   bool clamped = FALSE;
 
+  bool armedX = FALSE, armedY = FALSE;
+
   g_autoscrollTick++;
+
+  /* Manual freelook hold: while the player has panned with the arrow keys
+   * (autoScrollOverRide), leave the view exactly where they put it — no push,
+   * no lean — until the tank drives within NO_SCROLL_EDGE of an edge and is
+   * about to leave the view. Then release the override, drop any stale lean
+   * tracking so the recovered base is exact, and fall through to normal
+   * following. (manual==TRUE is handled by the dispatcher via scrollManual;
+   * this is the persistent post-pan hold the live default path was missing.) */
+  if (ss->autoScrollOverRide) {
+    bool nearLeft  = ((int)objectX - 1)            <  ((int)*xValue + NO_SCROLL_EDGE);
+    bool nearRight = ((int)objectX - (int)*xValue) >= (MAIN_SCREEN_SIZE_X - NO_SCROLL_EDGE);
+    bool nearTop   = ((int)objectY)                <= ((int)*yValue + NO_SCROLL_EDGE);
+    bool nearBot   = ((int)objectY - (int)*yValue) >= (MAIN_SCREEN_SIZE_Y - NO_SCROLL_EDGE);
+    bool nearEdge  = nearLeft || nearRight || nearTop || nearBot;
+
+    if (speed > 0 && nearEdge) {
+      ss->autoScrollOverRide = FALSE;
+      ss->threatLatX = 0; ss->threatLatY = 0;
+      ss->threatLatDesiredX = 0; ss->threatLatDesiredY = 0;
+      ss->threatLatSubX = 0; ss->threatLatSubY = 0;
+      ss->scrollX = 0; ss->scrollY = 0;
+      /* fall through to normal follow below */
+    } else {
+      ss->subPosX = 0; ss->subPosY = 0;
+      ss->scrollX = 0; ss->scrollY = 0;
+      return FALSE;
+    }
+  }
 
   /* Recover the v1 base view by removing last tick's applied lateral offset. */
   rx = (int)*xValue - (int)ss->threatLatX;
@@ -437,26 +484,21 @@ static bool scrollV1WithThreatsAutoScroll(ScrollState *ss, GameSim *sim,
   *xValue = (BYTE)rx;
   *yValue = (BYTE)ry;
 
-  /* Run v1 unchanged on the recovered base. */
+  /* Run v1 unchanged on the recovered base; learn whether it armed a fresh
+   * gunsight-edge push this tick (and on which axis). */
   scrollClassicAutoScroll(ss, xValue, yValue, objectX, objectY,
-                          gunsightX, gunsightY, speed);
+                          gunsightX, gunsightY, speed, &armedX, &armedY);
   baseX = (int)*xValue;
   baseY = (int)*yValue;
 
-  /* Recompute the desired lateral offset (moving only, debounced). */
-  if (speed == 0) {
-    ss->threatLatDesiredX = 0;
-    ss->threatLatDesiredY = 0;
-  } else if (ss->lastRecalcTick == 0 ||
-             (g_autoscrollTick - ss->lastRecalcTick) >= AUTOSCROLL_RECALC_DEBOUNCE) {
-    /* World-relative threat bias: sum the sign of each threat's world
-     * direction (NOT projected onto facing), so steering the tank never moves
-     * the camera — the target only shifts when a threat genuinely crosses to
-     * your other side. Sign-only is the same anti-jitter choice as
-     * computeTargetOffset. */
+  /* Recompute the lateral lean ONLY at a push event, on the axis across the
+   * push. No push this tick → the target holds (no wobble, no ease-back). */
+  if (armedX || armedY) {
+    /* Sign-only world-direction votes of the threats within the concern radius,
+     * exactly as the old bias counted them. */
     int sumX = 0, sumY = 0;
     int nVote = 0;
-    int candX, candY, i;
+    int candX = 0, candY = 0, i;
 
     for (i = 0; i < MAX_TANKS; i++) {
       int tx, ty, dx, dy;
@@ -480,31 +522,27 @@ static bool scrollV1WithThreatsAutoScroll(ScrollState *ss, GameSim *sim,
       nVote++;
     }
 
-    /* Scale by how many threats agree on a direction, clamped to LATERAL_MAX,
-     * rather than normalising the dominant axis to MAX. The latter sent even a
-     * single far threat to a full ±MAX corner and flipped corners as the tank
-     * drove past it; the clamped gain keeps a lone threat to a gentle nudge. */
-    candX = sumX * V1THREATS_LATERAL_GAIN;
-    candY = sumY * V1THREATS_LATERAL_GAIN;
-    if (candX >  V1THREATS_LATERAL_MAX) candX =  V1THREATS_LATERAL_MAX;
-    if (candX < -V1THREATS_LATERAL_MAX) candX = -V1THREATS_LATERAL_MAX;
-    if (candY >  V1THREATS_LATERAL_MAX) candY =  V1THREATS_LATERAL_MAX;
-    if (candY < -V1THREATS_LATERAL_MAX) candY = -V1THREATS_LATERAL_MAX;
-
-    /* Dead-zone: only commit a target that moved more than a tile, so a
-     * flickering vote (a threat hovering on an axis) doesn't keep restarting a
-     * slide. */
-    if (abs(candX - (int)ss->threatLatDesiredX) > AUTOSCROLL_DEAD_ZONE ||
-        abs(candY - (int)ss->threatLatDesiredY) > AUTOSCROLL_DEAD_ZONE) {
-      ss->threatLatDesiredX = (int8_t)candX;
-      ss->threatLatDesiredY = (int8_t)candY;
+    /* The lean lives on the axis ACROSS the push: a vertical push leans on X, a
+     * horizontal push leans on Y, a corner push (both) takes no lean. Scale by
+     * how many threats agree on that axis, clamped to LATERAL_MAX, so a lone or
+     * far threat is a gentle nudge rather than a full corner. */
+    if (armedX && !armedY) {            /* horizontal lead → lean N/S */
+      candY = sumY * V1THREATS_LATERAL_GAIN;
+      if (candY >  V1THREATS_LATERAL_MAX) candY =  V1THREATS_LATERAL_MAX;
+      if (candY < -V1THREATS_LATERAL_MAX) candY = -V1THREATS_LATERAL_MAX;
+    } else if (armedY && !armedX) {     /* vertical lead → lean E/W */
+      candX = sumX * V1THREATS_LATERAL_GAIN;
+      if (candX >  V1THREATS_LATERAL_MAX) candX =  V1THREATS_LATERAL_MAX;
+      if (candX < -V1THREATS_LATERAL_MAX) candX = -V1THREATS_LATERAL_MAX;
     }
+    /* corner push → candX == candY == 0 (no lean) */
+
+    ss->threatLatDesiredX = (int8_t)candX;
+    ss->threatLatDesiredY = (int8_t)candY;
     ss->lastRecalcTick = g_autoscrollTick;
-    /* What the recompute saw: votes, the summed world direction, the candidate
-     * target, and the (dead-zoned) target the offset will now ease toward. */
-    autoscrollLog("[t=%u] V1THR RECALC ang=%d votes=%d sum=(%d,%d) cand=(%d,%d) -> desired=(%d,%d)\n",
-                  (unsigned)g_autoscrollTick, (int)angle, nVote, sumX, sumY,
-                  candX, candY,
+    autoscrollLog("[t=%u] V1THR PUSH armed=(%d,%d) votes=%d sum=(%d,%d) -> desired=(%d,%d)\n",
+                  (unsigned)g_autoscrollTick, (int)armedX, (int)armedY, nVote,
+                  sumX, sumY,
                   (int)ss->threatLatDesiredX, (int)ss->threatLatDesiredY);
   }
 
@@ -848,7 +886,7 @@ bool scrollUpdate(ScrollState *ss, GameSim *sim, BYTE *xValue, BYTE *yValue, BYT
       returnValue = scrollManual(ss, xValue, yValue, objectX, objectY, angle);
     } else if (speed > 0) {
       returnValue = scrollClassicAutoScroll(ss, xValue, yValue, objectX, objectY,
-                                            gunsightX, gunsightY, speed);
+                                            gunsightX, gunsightY, speed, NULL, NULL);
     } else {
       returnValue = FALSE;
     }
