@@ -3,6 +3,20 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+/* TEMP (hit-circle playtest): tank hit-zone overlay mode, defined in mapview.c
+ * (C linkage). 0 off / 1 square / 2 circle; cycled by the B key below. */
+extern "C" int g_hitboxOverlayMode;
+/* TEMP (pushback playtest): original instant displacement vs current decaying
+ * bump on a surviving shell hit. Defined in tank.c. Toggled by Ctrl/Cmd+U. */
+extern "C" int g_origPushback;
+/* TEMP (playtest): tank<->building collision uses the inscribed-circle footprint
+ * (no corner probes) when set. Driven by the B circle overlay mode. */
+extern "C" int g_circleBuildingCollision;
+/* TEMP (playtest): my-tank invulnerability (no shell damage). Toggled by I;
+ * g_invulnPlayer is set to the local player each frame. */
+extern "C" int g_tankInvuln;
+extern "C" int g_invulnPlayer;
+
 /*********************************************************
 *Name:          SDL3 ImGui Menu Bar
 *Filename:      sdl3imgui.cpp
@@ -3660,6 +3674,37 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
+        /* TEMP (hit-circle playtest): B cycles the tank hit-zone overlay
+         * off -> square (legacy/original AABB) -> circle (PR #54). Plain key,
+         * no modifier; consumed so it can't double as a game action. */
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+            ev.key.windowID == SDL_GetWindowID(s_window) &&
+            (ev.key.mod & KMOD_PRIMARY) == 0 &&
+            ev.key.scancode == SDL_SCANCODE_B) {
+            g_hitboxOverlayMode = (g_hitboxOverlayMode + 1) % 3;
+            /* Circle overlay mode also switches tank↔building collision to the
+             * inscribed-circle footprint, so the hit-circle applies there too. */
+            g_circleBuildingCollision = (g_hitboxOverlayMode == 2) ? 1 : 0;
+            continue;
+        }
+        /* TEMP (pushback playtest): U toggles original instant displacement vs
+         * current decaying bump on a surviving shell hit. Plain key. */
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+            ev.key.windowID == SDL_GetWindowID(s_window) &&
+            (ev.key.mod & KMOD_PRIMARY) == 0 &&
+            ev.key.scancode == SDL_SCANCODE_U) {
+            g_origPushback = !g_origPushback;
+            continue;
+        }
+        /* TEMP (playtest): I toggles my-tank invulnerability (no shell damage). */
+        if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+            ev.key.windowID == SDL_GetWindowID(s_window) &&
+            (ev.key.mod & KMOD_PRIMARY) == 0 &&
+            ev.key.scancode == SDL_SCANCODE_I) {
+            g_tankInvuln = !g_tankInvuln;
+            continue;
+        }
+
         /* Controller-tab binding capture for the in-game Key Setup popup.
          * While a controller row is armed, route a gamepad button-down or a
          * trigger crossing its threshold into the dialog; Escape cancels.
@@ -4188,6 +4233,30 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
 
     ImGui::NewFrame();
     s_closeAllPopups = false;
+
+    /* TEMP (playtest): on-screen status for the hit-zone + pushback toggles. */
+    {
+        const char *hbName = (g_hitboxOverlayMode == 0) ? "off"
+                           : (g_hitboxOverlayMode == 1) ? "SQUARE (legacy/original)"
+                                                        : "CIRCLE (PR #54)";
+        const char *pbName = g_origPushback ? "ORIGINAL (instant)"
+                                            : "current (gradual bump)";
+        const char *bcName = g_circleBuildingCollision ? "CIRCLE (no corners)"
+                                                        : "square (corners)";
+        if (cs) g_invulnPlayer = (int)clientSimGetMyPlayerNum(cs);
+        const char *ivName = g_tankInvuln ? "ON" : "off";
+        char line1[96], line2[96], line3[96], line4[96];
+        SDL_snprintf(line1, sizeof line1, "Hitbox [B]: %s", hbName);
+        SDL_snprintf(line2, sizeof line2, "Pushback [U]: %s", pbName);
+        SDL_snprintf(line3, sizeof line3, "Building collide: %s", bcName);
+        SDL_snprintf(line4, sizeof line4, "Invulnerable [I]: %s", ivName);
+        ImDrawList *fg = ImGui::GetForegroundDrawList();
+        ImU32 col = IM_COL32(255, 90, 90, 255);
+        fg->AddText(ImVec2(10.0f, 30.0f), col, line1);
+        fg->AddText(ImVec2(10.0f, 46.0f), col, line2);
+        fg->AddText(ImVec2(10.0f, 62.0f), col, line3);
+        fg->AddText(ImVec2(10.0f, 78.0f), col, line4);
+    }
 
     /* Clear nav focus when user clicked in the game area last frame,
        so menu close does not restore focus to an ImGui window. */

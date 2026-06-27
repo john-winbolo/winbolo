@@ -165,6 +165,10 @@ void mapViewDrawShells(MapViewCtx *ctx, screenBullets *sBullets,
  * Note: does NOT draw tank labels (labels need fonts
  * which stay in sdl3draw.c).
  *********************************************************/
+/* TEMP (hit-circle playtest): 0 = off, 1 = square AABB, 2 = circle. Toggled
+ * by the B key in the SDL3 event loop. Remove with the playtest. */
+int g_hitboxOverlayMode = 0;
+
 void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
                       int originX, int originY, int tileW, int tileH,
                       int edgeX, int edgeY) {
@@ -294,6 +298,25 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
                          (float)(TILE_SIZE_X * ss) - 2.0f * inset, (float)(TILE_SIZE_Y * ss) - 2.0f * inset };
       SDL_FRect dstR = { sx, sy, (float)tileW, (float)tileH };
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
+      /* TEMP (hit-circle playtest): draw the tank shell-hit zone over each
+       * tank. mode 1 = square AABB (legacy + original Bolo, ±128 WU = one
+       * tile), mode 2 = inscribed circle (radius 128 WU). Toggle with B. */
+      if (g_hitboxOverlayMode != 0) {
+        SDL_SetRenderDrawColor(ctx->renderer, 255, 0, 0, 255);
+        if (g_hitboxOverlayMode == 1) {
+          SDL_RenderRect(ctx->renderer, &dstR);
+        } else {
+          float cx = dstR.x + dstR.w * 0.5f, cy = dstR.y + dstR.h * 0.5f;
+          float r  = dstR.w * 0.5f;
+          SDL_FPoint pts[41];
+          for (int i = 0; i <= 40; i++) {
+            float a = (float)i * (6.2831853f / 40.0f);
+            pts[i].x = cx + r * SDL_cosf(a);
+            pts[i].y = cy + r * SDL_sinf(a);
+          }
+          SDL_RenderLines(ctx->renderer, pts, 41);
+        }
+      }
     }
   }
 }

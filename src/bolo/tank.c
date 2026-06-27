@@ -111,6 +111,12 @@ static const TankBoundingBox tank_bbox_boat[16] = {
  * collides with a solid object (building, pillbox, base).
  * Sets bumptype flags for the type of collision.
  *********************************************************/
+/* TEMP playtest: when nonzero, tank<->building collision skips the 4 diagonal
+ * corner probes, leaving only the 4 cardinal edge midpoints — an inscribed-
+ * circle footprint matching the shell hit-circle. Set by the B key (circle
+ * overlay mode) in the SDL3 client. */
+int g_circleBuildingCollision = 0;
+
 static bool tankBuildingCollision(GameSim *sim, tank *value, WORLD x, WORLD y,
                                   BumpInfo *bumptype, bool isFirstBump) {
   map *mp = &sim->mp;
@@ -207,6 +213,68 @@ static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
 
   WORLD tankX = (*value)->x;
   WORLD tankY = (*value)->y;
+
+  if (g_circleBuildingCollision) {
+    /* From-scratch 2D circle-vs-AABB collision — no Bolo grid snapping. The
+     * tank is a circle of radius TANK_HIT_RADIUS; each solid map tile is a
+     * 256-WU axis-aligned box. Each pass, push the circle out of every
+     * overlapping solid tile along its minimum-translation vector (toward the
+     * closest point on the box). Perpendicular push with the tangential
+     * component untouched = smooth sliding along walls and around corners. */
+    const int R    = TANK_HIT_RADIUS;
+    const int TILE = 1 << TANK_SHIFT_MAPSIZE;
+    int cx = (int)tankX, cy = (int)tankY;
+    int pass;
+    for (pass = 0; pass < maxNudges; pass++) {
+      int cmx = cx >> TANK_SHIFT_MAPSIZE;
+      int cmy = cy >> TANK_SHIFT_MAPSIZE;
+      int moved = 0, gx, gy;
+      for (gy = cmy - 1; gy <= cmy + 1; gy++) {
+        for (gx = cmx - 1; gx <= cmx + 1; gx++) {
+          BumpInfo bt = BumpInfo_None;
+          int minX, maxX, minY, maxY, qx, qy, dx, dy, d2;
+          if (gx < 0 || gy < 0 || gx > 255 || gy > 255) continue;
+          if (!tankBuildingCollision(sim, value,
+                (WORLD)((gx << TANK_SHIFT_MAPSIZE) + TILE / 2),
+                (WORLD)((gy << TANK_SHIFT_MAPSIZE) + TILE / 2), &bt, isFirstBump))
+            continue;                              /* tile not solid */
+          minX = gx << TANK_SHIFT_MAPSIZE; maxX = minX + TILE;
+          minY = gy << TANK_SHIFT_MAPSIZE; maxY = minY + TILE;
+          qx = cx < minX ? minX : (cx > maxX ? maxX : cx);  /* closest point */
+          qy = cy < minY ? minY : (cy > maxY ? maxY : cy);
+          dx = cx - qx; dy = cy - qy;
+          d2 = dx * dx + dy * dy;
+          if (d2 >= R * R) continue;               /* solid but circle clears it */
+          bumptype |= bt;                          /* genuine collision */
+          if (d2 > 0) {
+            float dist = sqrtf((float)d2);
+            float scale = ((float)R - dist) / dist;
+            cx += (int)(dx * scale);
+            cy += (int)(dy * scale);
+          } else {
+            /* center inside the box: eject along the shallowest edge */
+            int pL = cx - minX, pR = maxX - cx, pT = cy - minY, pB = maxY - cy;
+            int m = pL, ax = 0;
+            if (pR < m) { m = pR; ax = 1; }
+            if (pT < m) { m = pT; ax = 2; }
+            if (pB < m) { m = pB; ax = 3; }
+            if      (ax == 0) cx -= (m + R);
+            else if (ax == 1) cx += (m + R);
+            else if (ax == 2) cy -= (m + R);
+            else              cy += (m + R);
+          }
+          moved = 1;
+        }
+      }
+      isFirstBump = FALSE;
+      if (!moved) break;
+    }
+    if (cx < 0) cx = 0; else if (cx > WORLD_MAX) cx = WORLD_MAX;
+    if (cy < 0) cy = 0; else if (cy > WORLD_MAX) cy = WORLD_MAX;
+    (*value)->x = (WORLD)cx;
+    (*value)->y = (WORLD)cy;
+    return bumptype;
+  }
 
   for (i = 0; i < maxNudges; i++) {
     WORLD top    = tankY - topInset;
@@ -330,6 +398,8 @@ void tankCreate(GameSim *sim, tank *value) {
   (*value)->lastTankDeath = 0;
   (*value)->bumpX = 0;
   (*value)->bumpY = 0;
+  (*value)->tankSlideTimer = 0;
+  (*value)->tankSlideAngle = 0;
   (*value)->residualSpeed = 0;
 
   /* Get the start position */
@@ -1106,6 +1176,18 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
 *  angle  - The direction the shell came from
 *  owner  - Shells owner
 *********************************************************/
+/* TEMP (pushback playtest): when nonzero, a surviving shell hit displaces the
+ * tank INSTANTLY (original first-commit feel) instead of the decaying "bump".
+ * Toggled by Ctrl/Cmd+U in the SDL3 client. Remove with the playtest. */
+int g_origPushback = 0;
+
+/* TEMP (playtest): my-tank invulnerability. When g_tankInvuln is set, a shell
+ * hit on the tank whose player == g_invulnPlayer deals no damage/knockback.
+ * The SDL3 client sets g_invulnPlayer to the local player and toggles
+ * g_tankInvuln with the I key. */
+int g_tankInvuln   = 0;
+int g_invulnPlayer = -1;
+
 tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, BYTE owner) {
 	bool isServer = sim->isServer;
 	tankHit returnValue; /* Value to return */
@@ -1128,14 +1210,13 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 
 	returnValue = TH_MISSED;
 
-	/*
-	* TODO: here is where we would call a collision-detection function.  For now, we check to see
-	* if the shell is within 128 WORLD coordinates of a tank's WORLD coordinates.  Since a tank's
-	* WORLD coordinates are from the center, we assume that the tank is basically a circle.
-	*
-	*
-	*/
-	if (abs((*value)->x - x) < 128 && abs((*value)->y - y) < 128  && (*value)->armour <= TANK_FULL_ARMOUR) {
+	/* Hit-circle test — see TANK_HIT_RADIUS in internal/tank.h.
+	 * One-tile-diameter circle centered on the tank's WORLD position. */
+	{
+	int dx = (int)(*value)->x - (int)x;
+	int dy = (int)(*value)->y - (int)y;
+	int distSq = dx*dx + dy*dy;
+	if (distSq < TANK_HIT_RADIUS_SQUARED && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;
 		(*value)->armour -= DAMAGE;
 		if ((*value)->onBoat == TRUE) {
@@ -1165,10 +1246,35 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 			/*      netSendNow = TRUE; */
 			tankDropPills(sim, value);
 		} else { /* if ((*value)->armour <= TANK_FULL_ARMOUR)  */
-			/* Tank was hit and survived — set bump for gradual knockback */
+			/* Tank was hit and survived. */
 			utilCalcDistance(&newX, &newY, angle, TANK_SLIDE);
-			(*value)->bumpX = newX * 512;
-			(*value)->bumpY = newY * 512;
+			if (g_origPushback) {
+				/* EXACT original first-commit pushback: a 7-tick, 16-WU/step
+				 * slide, collision-checked per axis; no decaying bump. This
+				 * immediate step mirrors the per-tick slide applied in
+				 * tankMoveUnified. (The original's CRC-registration and
+				 * screen-scroll calls are obsolete in the current engine.) */
+				map *omp = &sim->mp; pillboxes *opb = &sim->pb; bases *obs = &sim->bs;
+				int oslX, oslY;
+				BYTE obmx, obmy, onbmx, onbmy;
+				(*value)->tankSlideTimer = TANK_SLIDE_TICKS_ORIG;
+				(*value)->tankSlideAngle = (BYTE)angle;
+				(*value)->bumpX = 0;
+				(*value)->bumpY = 0;
+				utilCalcDistance(&oslX, &oslY, angle, TANK_SLIDE_ORIG);
+				obmx  = (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE);
+				obmy  = (BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE);
+				onbmx = (BYTE)(((*value)->x + oslX) >> TANK_SHIFT_MAPSIZE);
+				onbmy = (BYTE)(((*value)->y + oslY) >> TANK_SHIFT_MAPSIZE);
+				if (mapGetSpeed(sim, omp, opb, obs, obmx, onbmy, (*value)->onBoat, gameSimGetTankPlayer(sim, value)) > 0)
+					(*value)->y += oslY;
+				if (mapGetSpeed(sim, omp, opb, obs, onbmx, obmy, (*value)->onBoat, gameSimGetTankPlayer(sim, value)) > 0)
+					(*value)->x += oslX;
+			} else {
+				/* set bump for gradual knockback */
+				(*value)->bumpX = newX * 512;
+				(*value)->bumpY = newY * 512;
+			}
 		}
 		if ((*value)->armour <= TANK_FULL_ARMOUR) {
 			if (!isServer) {
@@ -1179,8 +1285,9 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
 			}
 		}
-	} else if (abs((*value)->x - x) < 128 && abs((*value)->y - y) < 128  && (*value)->armour > TANK_FULL_ARMOUR) {
+	} else if (distSq < TANK_HIT_RADIUS_SQUARED && (*value)->armour > TANK_FULL_ARMOUR) {
 		/* Do crazy shit here */
+	}
 	}
 	return returnValue;
 }
@@ -1465,6 +1572,12 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   pillboxes *pb = &sim->pb;
   bases *bs = &sim->bs;
   bool isServer = sim->isServer;
+  /* TEMP playtest: invulnerability that still HURTS — the hit applies normal
+   * damage + knockback (bump/slide), but we top my tank back to full armour
+   * every tick so it can't die. */
+  if (g_tankInvuln && gameSimGetTankPlayer(sim, value) == g_invulnPlayer) {
+    (*value)->armour = TANK_FULL_ARMOUR;
+  }
   int xAmount = 0;
   int yAmount = 0;
   BYTE ang;
@@ -1509,6 +1622,25 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     (*value)->residualSpeed = 0;
   }
 
+  /* TEMP playtest: EXACT original first-commit per-tick shell-hit slide
+   * (16 WU/step, collision-checked per axis, 7 ticks). Only fires when
+   * g_origPushback armed the slide (tankSlideTimer set in tankIsTankHit);
+   * the decaying bump below is then a no-op since bumpX/bumpY are 0. */
+  if ((*value)->tankSlideTimer > 0) {
+    int xSlide, ySlide;
+    BYTE sbmx, sbmy, snbmx, snbmy;
+    utilCalcDistance(&xSlide, &ySlide, (TURNTYPE)(*value)->tankSlideAngle, TANK_SLIDE_ORIG);
+    (*value)->tankSlideTimer--;
+    sbmx  = (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE);
+    sbmy  = (BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE);
+    snbmx = (BYTE)(((*value)->x + xSlide) >> TANK_SHIFT_MAPSIZE);
+    snbmy = (BYTE)(((*value)->y + ySlide) >> TANK_SHIFT_MAPSIZE);
+    if (mapGetSpeed(sim, mp, pb, bs, sbmx, snbmy, (*value)->onBoat, gameSimGetTankPlayer(sim, value)) > 0)
+      (*value)->y += ySlide;
+    if (mapGetSpeed(sim, mp, pb, bs, snbmx, sbmy, (*value)->onBoat, gameSimGetTankPlayer(sim, value)) > 0)
+      (*value)->x += xSlide;
+  }
+
   /* Step 3 — Apply bump effect (shell knockback with decay) */
   (*value)->x += (*value)->bumpX >> 9;
   (*value)->y += (*value)->bumpY >> 9;
@@ -1520,12 +1652,41 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   /* Step 4 — Building nudge */
   WORLD oldX = (*value)->x & TANK_GRID_MASK;
   WORLD oldY = (*value)->y & TANK_GRID_MASK;
-  BumpInfo bumptype = tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
+  BumpInfo bumptype;
+  if (g_circleBuildingCollision) {
+    /* Circle mode: after resolving the penetration, REDIRECT the movement that
+     * the wall blocked along the wall tangent, so the tank keeps (near) full
+     * speed sliding past walls and corners — slippery wall physics. */
+    int preX = (int)(*value)->x, preY = (int)(*value)->y;
+    bumptype = tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
+    int pushX = (int)(*value)->x - preX, pushY = (int)(*value)->y - preY;
+    if ((pushX || pushY) && (xAmount || yAmount)) {
+      const float SLIP = 1.0f;          /* 0 = plain slide, 1 = frictionless */
+      float nlen = sqrtf((float)(pushX * pushX + pushY * pushY));
+      float nx = pushX / nlen, ny = pushY / nlen;            /* outward normal  */
+      float mdotn = (float)xAmount * nx + (float)yAmount * ny;
+      float tx = (float)xAmount - mdotn * nx;                /* tangential part */
+      float ty = (float)yAmount - mdotn * ny;
+      float tmag = sqrtf(tx * tx + ty * ty);
+      float mmag = sqrtf((float)(xAmount * xAmount + yAmount * yAmount));
+      float add  = (mmag - tmag) * SLIP;     /* glide needed for full wall speed */
+      if (tmag > 0.001f && add > 0.0f) {
+        int gx = (int)(tx / tmag * add), gy = (int)(ty / tmag * add);
+        int nxp = (int)(*value)->x + gx, nyp = (int)(*value)->y + gy;
+        if (nxp < 0) nxp = 0; else if (nxp > WORLD_MAX) nxp = WORLD_MAX;
+        if (nyp < 0) nyp = 0; else if (nyp > WORLD_MAX) nyp = WORLD_MAX;
+        (*value)->x = (WORLD)nxp; (*value)->y = (WORLD)nyp;
+        bumptype |= tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
+      }
+    }
+  } else {
+    bumptype = tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
+  }
 
   /* Step 5 — Slow down from collisions (not shore or boat — shore slowdown
    * is handled by terrain speed limits, and boat tiles should not slow a
    * boat at all; the boat-on-boat destruction is handled in Step 9) */
-  if (movedThisTick) {
+  if (movedThisTick && !g_circleBuildingCollision) {
     bool tankObstructed = (bumptype >= BumpInfo_SolidWall) &&
         (((*value)->x & TANK_GRID_MASK) == oldX) &&
         (((*value)->y & TANK_GRID_MASK) == oldY);
@@ -3261,7 +3422,11 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 
 	returnValue = TH_MISSED;
 
-	if (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128  && (*value)->armour <= TANK_FULL_ARMOUR) {
+	{
+	int dx = (int)tankX - (int)shellX;
+	int dy = (int)tankY - (int)shellY;
+	int distSq = dx*dx + dy*dy;
+	if (distSq < TANK_HIT_RADIUS_SQUARED && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;
 		(*value)->armour -= DAMAGE;
 		if ((*value)->onBoat == TRUE) {
@@ -3285,10 +3450,35 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 
 			tankDropPills(sim, value);
 		} else {
-			/* Tank was hit and survived — set bump for gradual knockback */
+			/* Tank was hit and survived. */
 			utilCalcDistance(&newX, &newY, angle, TANK_SLIDE);
-			(*value)->bumpX = newX * 512;
-			(*value)->bumpY = newY * 512;
+			if (g_origPushback) {
+				/* EXACT original first-commit pushback: a 7-tick, 16-WU/step
+				 * slide, collision-checked per axis; no decaying bump. This
+				 * immediate step mirrors the per-tick slide applied in
+				 * tankMoveUnified. (The original's CRC-registration and
+				 * screen-scroll calls are obsolete in the current engine.) */
+				map *omp = &sim->mp; pillboxes *opb = &sim->pb; bases *obs = &sim->bs;
+				int oslX, oslY;
+				BYTE obmx, obmy, onbmx, onbmy;
+				(*value)->tankSlideTimer = TANK_SLIDE_TICKS_ORIG;
+				(*value)->tankSlideAngle = (BYTE)angle;
+				(*value)->bumpX = 0;
+				(*value)->bumpY = 0;
+				utilCalcDistance(&oslX, &oslY, angle, TANK_SLIDE_ORIG);
+				obmx  = (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE);
+				obmy  = (BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE);
+				onbmx = (BYTE)(((*value)->x + oslX) >> TANK_SHIFT_MAPSIZE);
+				onbmy = (BYTE)(((*value)->y + oslY) >> TANK_SHIFT_MAPSIZE);
+				if (mapGetSpeed(sim, omp, opb, obs, obmx, onbmy, (*value)->onBoat, gameSimGetTankPlayer(sim, value)) > 0)
+					(*value)->y += oslY;
+				if (mapGetSpeed(sim, omp, opb, obs, onbmx, obmy, (*value)->onBoat, gameSimGetTankPlayer(sim, value)) > 0)
+					(*value)->x += oslX;
+			} else {
+				/* set bump for gradual knockback */
+				(*value)->bumpX = newX * 512;
+				(*value)->bumpY = newY * 512;
+			}
 		}
 		if ((*value)->armour <= TANK_FULL_ARMOUR) {
 			if (!isServer) {
@@ -3299,8 +3489,9 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 				frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, 0, (*value)->trees);
 			}
 		}
-	} else if (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128  && (*value)->armour > TANK_FULL_ARMOUR) {
+	} else if (distSq < TANK_HIT_RADIUS_SQUARED && (*value)->armour > TANK_FULL_ARMOUR) {
 		/* Do crazy shit here */
+	}
 	}
 	return returnValue;
 }
