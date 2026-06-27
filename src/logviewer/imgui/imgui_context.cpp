@@ -14,6 +14,7 @@
 #include "../../gui/imgui_theme.h"
 #include "../../gui/imgui_fonts.h"
 #include "../../gui/ui_mode.h"
+#include "../../gui/lang.h"
 #include "../../gui/sdl3/dialogs/imgui_nav_outline.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
@@ -195,9 +196,9 @@ void lv_imgui_spectator_badge(int phase) {
     ImU32 col;
     switch (phase) {
         case SPEC_PHASE_LOBBY:
-        case SPEC_PHASE_COUNTDOWN: label = "Lobby";     col = IM_COL32( 70, 130, 200, 255); break;
-        case SPEC_PHASE_RUNNING:   label = "Live";      col = IM_COL32( 60, 175,  75, 255); break;
-        case SPEC_PHASE_GAMEOVER:  label = "Game Over"; col = IM_COL32(190,  75,  75, 255); break;
+        case SPEC_PHASE_COUNTDOWN: label = langGetText(STR_LV_SPEC_PHASE_LOBBY);    col = IM_COL32( 70, 130, 200, 255); break;
+        case SPEC_PHASE_RUNNING:   label = langGetText(STR_LV_SPEC_PHASE_LIVE);     col = IM_COL32( 60, 175,  75, 255); break;
+        case SPEC_PHASE_GAMEOVER:  label = langGetText(STR_LV_SPEC_PHASE_GAMEOVER); col = IM_COL32(190,  75,  75, 255); break;
         default: return;   /* SPEC_PHASE_UNKNOWN: no badge */
     }
     ImGui::SetCurrentContext(g_context);

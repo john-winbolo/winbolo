@@ -1146,22 +1146,29 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
       lv_utilPtoCString(mem, name);
-      /* Prefix the 2-char country only when it is present and not the "XX"
-         unknown sentinel. */
-      if (opt2 != 0 && opt3 != 0 && !(opt2 == 'X' && opt3 == 'X')) {
-        snprintf(str, sizeof(str), "[%c%c] %s joined as spectator", opt2, opt3, name);
-      } else {
-        snprintf(str, sizeof(str), "%s joined as spectator", name);
+      {
+        /* Prefix the 2-char country into {player} only when present and not
+           the "XX" unknown sentinel; the [%c%c] tag is a raw country code and
+           is not localized. */
+        MessageArgs args = {0};
+        if (opt2 != 0 && opt3 != 0 && !(opt2 == 'X' && opt3 == 'X')) {
+          snprintf(args.playerName, sizeof(args.playerName), "[%c%c] %s", opt2, opt3, name);
+        } else {
+          snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+        }
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_JOINED, &args);
       }
-      lv_windowAddEvent(0, str);
       break;
     case log_SpectatorLeft:
       logReadBytes(&opt1, 1);  /* spectator slot */
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
       lv_utilPtoCString(mem, name);
-      snprintf(str, sizeof(str), "%s left spectating", name);
-      lv_windowAddEvent(0, str);
+      {
+        MessageArgs args = {0};
+        snprintf(args.playerName, sizeof(args.playerName), "%s", name);
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_LEFT, &args);
+      }
       break;
     case log_SpectatorChat:
       /* No emitter yet (format-reserved for Phase 6); decode so the cursor
@@ -1170,8 +1177,12 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       lv_utilPtoCString(mem, str);  /* copies the message out of mem */
-      snprintf(mem, sizeof(mem), "[spectator] %d: %s", opt1, str);
-      lv_windowAddEvent(0, mem);
+      {
+        MessageArgs args = {0};
+        args.number = opt1;
+        snprintf(args.string1, sizeof(args.string1), "%s", str);
+        lv_messageAdd(newsWireMessage, MESSAGE_NEWSWIRE, STR_LV_SPEC_CHAT, &args);
+      }
       break;
     default:
       if (isV2) {

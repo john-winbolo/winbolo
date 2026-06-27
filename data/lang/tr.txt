@@ -1806,3 +1806,19 @@ STR_ALLIANCE_RANKED_DISABLED=İttifaklar ranked oyunlarda devre dışıdır.
 STR_DLGSETTINGS_TAB_DISPLAYSOUND=Ekran & Ses
 STR_DLGSETTINGS_TAB_GAMEHUD=Oyun/HUD
 STR_DLGSETTINGS_TAB_SESSION=Oturum
+
+# Live spectator feed
+STR_DLGLOBBY_SPECTATORS_FMT=Seyirciler ({number}):
+STR_LV_SPEC_LEAVE_CONFIRM=İzlemeyi bırak?
+STR_LV_SPEC_PHASE_LOBBY=Lobi
+STR_LV_SPEC_PHASE_LIVE=Canlı
+STR_LV_SPEC_PHASE_GAMEOVER=Oyun Bitti
+STR_LV_SPEC_WINDOW_TITLE_FMT=WinBolo - İzleniyor {string1}:{number} Harita: {string2}{string3}
+STR_LV_SPEC_JOINED={player} seyirci olarak katıldı
+STR_LV_SPEC_LEFT={player} izlemeyi bıraktı
+STR_LV_SPEC_CHAT=[seyirci] {number}: {string1}
+STR_LV_SPEC_BEGINS_IN_FMT=İzleme {number} içinde başlıyor
+STR_LV_SPEC_CONNECTING=Bağlanıyor...
+STR_LV_SPEC_CONNECTION_LOST=Bağlantı kesildi
+STR_LV_SPEC_BEGINS_NOW=İzleme şimdi başlıyor
+STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - İzleniyor {string1}:{number}{string3}

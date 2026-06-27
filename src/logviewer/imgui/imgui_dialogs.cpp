@@ -391,14 +391,15 @@ static void render_spectator_leave_dialog(void) {
 
     /* No p_open close button: the only exits are Yes/No (or Esc/click-away,
      * which fall through to the else and clear the flag = keep watching).
-     * Title/blurb are English literals — localizing them is a follow-up
-     * (no existing STR_* fits "Leave spectating?"). Yes/No are localized. */
+     * The "###spec_leave" suffix is an ImGui window-id tag and stays
+     * verbatim; only the visible text before it is localized. */
     char title[128];
-    snprintf(title, sizeof(title), "%s###spec_leave", "Leave spectating?");
+    snprintf(title, sizeof(title), "%s###spec_leave",
+             langGetText(STR_LV_SPEC_LEAVE_CONFIRM));
     if (ImGui::BeginPopupModal(title, NULL,
                                ImGuiWindowFlags_NoResize |
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Leave spectating?");
+        ImGui::TextUnformatted(langGetText(STR_LV_SPEC_LEAVE_CONFIRM));
         ImGui::Separator();
 
         if (ImGui::Button(langGetText(STR_YES), ImVec2(80, 0))) {

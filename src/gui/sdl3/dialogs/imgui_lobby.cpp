@@ -4193,11 +4193,12 @@ static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
     }
     if (count == 0) return;
 
-    /* Header in the Unassigned-tray style: disabled text with a count.
-     * Plain literal — the lobby's other labels are STR_*, but that
-     * string table spans lang.h, lang.c, and a generated names file;
-     * localize as a follow-up. */
-    ImGui::TextDisabled("Spectators (%d):", count);
+    /* Header in the Unassigned-tray style: disabled text with a count. */
+    {
+        MessageArgs args = {};
+        args.number = count;
+        ImGui::TextDisabled("%s", langGetTextFmt(STR_DLGLOBBY_SPECTATORS_FMT, &args));
+    }
 
     for (int idx = 0; ; idx++) {
         const ClientSpectatorSlot *sp = clientSimGetSpectatorSlot(cs, (uint8_t)idx);

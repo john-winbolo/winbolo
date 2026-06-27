@@ -1804,3 +1804,19 @@ STR_ALLIANCE_RANKED_DISABLED=V Ranked hrách jsou aliance zakázány.
 STR_DLGSETTINGS_TAB_DISPLAYSOUND=Zobrazení & Zvuk
 STR_DLGSETTINGS_TAB_GAMEHUD=Hra/HUD
 STR_DLGSETTINGS_TAB_SESSION=Relace
+
+# Live spectator feed
+STR_DLGLOBBY_SPECTATORS_FMT=Diváci ({number}):
+STR_LV_SPEC_LEAVE_CONFIRM=Ukončit sledování?
+STR_LV_SPEC_PHASE_LOBBY=Lobby
+STR_LV_SPEC_PHASE_LIVE=Živě
+STR_LV_SPEC_PHASE_GAMEOVER=Konec hry
+STR_LV_SPEC_WINDOW_TITLE_FMT=WinBolo - Sledování {string1}:{number} Mapa: {string2}{string3}
+STR_LV_SPEC_JOINED={player} se připojil jako divák
+STR_LV_SPEC_LEFT={player} ukončil sledování
+STR_LV_SPEC_CHAT=[divák] {number}: {string1}
+STR_LV_SPEC_BEGINS_IN_FMT=Sledování začíná za {number}
+STR_LV_SPEC_CONNECTING=Připojování...
+STR_LV_SPEC_CONNECTION_LOST=Spojení ztraceno
+STR_LV_SPEC_BEGINS_NOW=Sledování začíná nyní
+STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Sledování {string1}:{number}{string3}

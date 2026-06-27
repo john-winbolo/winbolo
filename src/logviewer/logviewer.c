@@ -58,6 +58,7 @@
 #include "platform/platform_dialogs.h"
 #include "../gui/sdl3/macos_pinch.h"
 #include "../gui/ui_mode.h"
+#include "../gui/lang.h"
 #ifdef __APPLE__
 #include "platform/mac_menubar.h"
 #endif
@@ -1313,23 +1314,44 @@ static void lvSpecApplyRoster(const SpecSeedInfo *sgi) {
  * title on return. */
 static void lvSpecApplyTitle(const char *serverHost, uint16_t serverPort) {
     char specTitle[176];
-    const char *phaseTag;
+    char phaseTag[64];
+    /* Localized phase tag: the bracketed badge wraps the already-localized
+       phase string (UNKNOWN keeps an empty tag). */
     switch (g_lv->gamePhase) {
         case SPEC_PHASE_LOBBY:
-        case SPEC_PHASE_COUNTDOWN: phaseTag = " [Lobby]";     break;
-        case SPEC_PHASE_RUNNING:   phaseTag = " [Live]";      break;
-        case SPEC_PHASE_GAMEOVER:  phaseTag = " [Game Over]"; break;
-        default:                   phaseTag = "";             break;
+        case SPEC_PHASE_COUNTDOWN:
+            snprintf(phaseTag, sizeof(phaseTag), " [%s]",
+                     langGetText(STR_LV_SPEC_PHASE_LOBBY));
+            break;
+        case SPEC_PHASE_RUNNING:
+            snprintf(phaseTag, sizeof(phaseTag), " [%s]",
+                     langGetText(STR_LV_SPEC_PHASE_LIVE));
+            break;
+        case SPEC_PHASE_GAMEOVER:
+            snprintf(phaseTag, sizeof(phaseTag), " [%s]",
+                     langGetText(STR_LV_SPEC_PHASE_GAMEOVER));
+            break;
+        default:
+            phaseTag[0] = '\0';
+            break;
     }
     if (g_lv->mapName[0] != '\0') {
-        snprintf(specTitle, sizeof(specTitle),
-                 "WinBolo - Spectating %s:%u Map: %s%s",
-                 serverHost ? serverHost : "", (unsigned)serverPort,
-                 g_lv->mapName, phaseTag);
+        /* phaseTag is the localized " [Lobby]"/" [Live]"/... tag carried in
+           {string3}; the host and map flow through {string1}/{string2}. */
+        MessageArgs args = {0};
+        snprintf(args.string1, sizeof(args.string1), "%s", serverHost ? serverHost : "");
+        args.number = (int)serverPort;
+        snprintf(args.string2, sizeof(args.string2), "%s", g_lv->mapName);
+        snprintf(args.string3, sizeof(args.string3), "%s", phaseTag);
+        snprintf(specTitle, sizeof(specTitle), "%s",
+                 langGetTextFmt(STR_LV_SPEC_WINDOW_TITLE_FMT, &args));
     } else {
-        snprintf(specTitle, sizeof(specTitle),
-                 "WinBolo - Spectating %s:%u%s",
-                 serverHost ? serverHost : "", (unsigned)serverPort, phaseTag);
+        MessageArgs args = {0};
+        snprintf(args.string1, sizeof(args.string1), "%s", serverHost ? serverHost : "");
+        args.number = (int)serverPort;
+        snprintf(args.string3, sizeof(args.string3), "%s", phaseTag);
+        snprintf(specTitle, sizeof(specTitle), "%s",
+                 langGetTextFmt(STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT, &args));
     }
     SDL_SetWindowTitle(g_lv->window, specTitle);
 }
@@ -1406,19 +1428,21 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
         SDL_RenderClear(g_lv->renderer);
         lv_imgui_context_newframe();
         if (connectionLost) {
-            lv_imgui_center_message("Connection lost");
+            lv_imgui_center_message(langGetText(STR_LV_SPEC_CONNECTION_LOST));
         } else if (haveCountdown) {
             /* ~50 ticks/sec; round up so the last second shows "1", not "0". */
             uint32_t secs = (lastCountdown + 49) / 50;
             if (secs == 0) {
-                lv_imgui_center_message("Spectating begins now");
+                lv_imgui_center_message(langGetText(STR_LV_SPEC_BEGINS_NOW));
             } else {
-                snprintf(overlay, sizeof(overlay),
-                         "Spectating begins in %u", (unsigned)secs);
+                MessageArgs args = {0};
+                args.number = (int)secs;
+                snprintf(overlay, sizeof(overlay), "%s",
+                         langGetTextFmt(STR_LV_SPEC_BEGINS_IN_FMT, &args));
                 lv_imgui_center_message(overlay);
             }
         } else {
-            lv_imgui_center_message("Connecting...");
+            lv_imgui_center_message(langGetText(STR_LV_SPEC_CONNECTING));
         }
         lv_imgui_context_render();
         SDL_RenderPresent(g_lv->renderer);
@@ -1715,7 +1739,7 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
          * scrubber + live event feed (the live-mode gate suppresses the
          * viewer's menu bar and game-info / comments panels). A stalled feed
          * overlays "connection lost" on the frozen last frame until exit. */
-        lvHostRenderFrame(connectionLost ? "Connection lost" : NULL);
+        lvHostRenderFrame(connectionLost ? langGetText(STR_LV_SPEC_CONNECTION_LOST) : NULL);
     }
 
     /* Leave live-DVR mode so the stream pump / transport revert to standalone

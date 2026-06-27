@@ -1728,6 +1728,20 @@ static const LangEntry langTable[] = {
     {1845, "Game/HUD"},
     {1846, "Session"},
     {1847, "Currently: {string1}"},
+    {1848, "Spectators ({number}):"},
+    {1849, "Leave spectating?"},
+    {1850, "Lobby"},
+    {1851, "Live"},
+    {1852, "Game Over"},
+    {1853, "WinBolo - Spectating {string1}:{number} Map: {string2}{string3}"},
+    {1854, "{player} joined as spectator"},
+    {1855, "{player} left spectating"},
+    {1856, "[spectator] {number}: {string1}"},
+    {1857, "Spectating begins in {number}"},
+    {1858, "Connecting..."},
+    {1859, "Connection lost"},
+    {1860, "Spectating begins now"},
+    {1861, "WinBolo - Spectating {string1}:{number}{string3}"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

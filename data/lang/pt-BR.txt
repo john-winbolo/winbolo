@@ -1804,3 +1804,19 @@ STR_ALLIANCE_RANKED_DISABLED=Alianças são desativadas em partidas ranqueadas.
 STR_DLGSETTINGS_TAB_DISPLAYSOUND=Tela & Som
 STR_DLGSETTINGS_TAB_GAMEHUD=Jogo/HUD
 STR_DLGSETTINGS_TAB_SESSION=Sessão
+
+# Live spectator feed
+STR_DLGLOBBY_SPECTATORS_FMT=Espectadores ({number}):
+STR_LV_SPEC_LEAVE_CONFIRM=Sair da observação?
+STR_LV_SPEC_PHASE_LOBBY=Lobby
+STR_LV_SPEC_PHASE_LIVE=Ao Vivo
+STR_LV_SPEC_PHASE_GAMEOVER=Fim de Jogo
+STR_LV_SPEC_WINDOW_TITLE_FMT=WinBolo - Observando {string1}:{number} Mapa: {string2}{string3}
+STR_LV_SPEC_JOINED={player} entrou como espectador
+STR_LV_SPEC_LEFT={player} saiu da observação
+STR_LV_SPEC_CHAT=[espectador] {number}: {string1}
+STR_LV_SPEC_BEGINS_IN_FMT=A observação começa em {number}
+STR_LV_SPEC_CONNECTING=Conectando...
+STR_LV_SPEC_CONNECTION_LOST=Conexão perdida
+STR_LV_SPEC_BEGINS_NOW=A observação começa agora
+STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Observando {string1}:{number}{string3}

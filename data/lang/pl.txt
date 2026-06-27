@@ -1800,3 +1800,19 @@ STR_ALLIANCE_RANKED_DISABLED=Sojusze są wyłączone w grach ranked.
 STR_DLGSETTINGS_TAB_DISPLAYSOUND=Wyświetlanie & Dźwięk
 STR_DLGSETTINGS_TAB_GAMEHUD=Gra/HUD
 STR_DLGSETTINGS_TAB_SESSION=Sesja
+
+# Live spectator feed
+STR_DLGLOBBY_SPECTATORS_FMT=Obserwatorzy ({number}):
+STR_LV_SPEC_LEAVE_CONFIRM=Zakończyć obserwowanie?
+STR_LV_SPEC_PHASE_LOBBY=Lobby
+STR_LV_SPEC_PHASE_LIVE=Na żywo
+STR_LV_SPEC_PHASE_GAMEOVER=Koniec gry
+STR_LV_SPEC_WINDOW_TITLE_FMT=WinBolo - Obserwowanie {string1}:{number} Mapa: {string2}{string3}
+STR_LV_SPEC_JOINED={player} dołączył jako obserwator
+STR_LV_SPEC_LEFT={player} opuścił obserwowanie
+STR_LV_SPEC_CHAT=[obserwator] {number}: {string1}
+STR_LV_SPEC_BEGINS_IN_FMT=Obserwowanie rozpoczyna się za {number}
+STR_LV_SPEC_CONNECTING=Łączenie...
+STR_LV_SPEC_CONNECTION_LOST=Utracono połączenie
+STR_LV_SPEC_BEGINS_NOW=Obserwowanie rozpoczyna się teraz
+STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Obserwowanie {string1}:{number}{string3}

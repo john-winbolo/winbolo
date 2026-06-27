@@ -1808,3 +1808,19 @@ STR_ALLIANCE_RANKED_DISABLED=Le alleanze sono disabilitate nelle partite classif
 STR_DLGSETTINGS_TAB_DISPLAYSOUND=Schermo & Audio
 STR_DLGSETTINGS_TAB_GAMEHUD=Partita/HUD
 STR_DLGSETTINGS_TAB_SESSION=Sessione
+
+# Live spectator feed
+STR_DLGLOBBY_SPECTATORS_FMT=Spettatori ({number}):
+STR_LV_SPEC_LEAVE_CONFIRM=Uscire dalla modalità spettatore?
+STR_LV_SPEC_PHASE_LOBBY=Lobby
+STR_LV_SPEC_PHASE_LIVE=Dal vivo
+STR_LV_SPEC_PHASE_GAMEOVER=Fine partita
+STR_LV_SPEC_WINDOW_TITLE_FMT=WinBolo - Spettatore {string1}:{number} Mappa: {string2}{string3}
+STR_LV_SPEC_JOINED={player} è entrato come spettatore
+STR_LV_SPEC_LEFT={player} ha abbandonato la visione
+STR_LV_SPEC_CHAT=[spettatore] {number}: {string1}
+STR_LV_SPEC_BEGINS_IN_FMT=La visione inizia tra {number}
+STR_LV_SPEC_CONNECTING=Connessione in corso...
+STR_LV_SPEC_CONNECTION_LOST=Connessione persa
+STR_LV_SPEC_BEGINS_NOW=La visione inizia ora
+STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Spettatore {string1}:{number}{string3}

@@ -1804,3 +1804,19 @@ STR_ALLIANCE_RANKED_DISABLED=랭크 게임에서는 동맹을 맺을 수 없어�
 STR_DLGSETTINGS_TAB_DISPLAYSOUND=디스플레이 & 사운드
 STR_DLGSETTINGS_TAB_GAMEHUD=게임/HUD
 STR_DLGSETTINGS_TAB_SESSION=세션
+
+# Live spectator feed
+STR_DLGLOBBY_SPECTATORS_FMT=관전자 ({number}):
+STR_LV_SPEC_LEAVE_CONFIRM=관전을 종료하시겠습니까?
+STR_LV_SPEC_PHASE_LOBBY=로비
+STR_LV_SPEC_PHASE_LIVE=라이브
+STR_LV_SPEC_PHASE_GAMEOVER=게임 종료
+STR_LV_SPEC_WINDOW_TITLE_FMT=WinBolo - 관전 {string1}:{number} 맵: {string2}{string3}
+STR_LV_SPEC_JOINED={player}님이 관전자로 참가했습니다
+STR_LV_SPEC_LEFT={player}님이 관전을 종료했습니다
+STR_LV_SPEC_CHAT=[관전자] {number}: {string1}
+STR_LV_SPEC_BEGINS_IN_FMT={number}초 후 관전 시작
+STR_LV_SPEC_CONNECTING=연결 중...
+STR_LV_SPEC_CONNECTION_LOST=연결 끊김
+STR_LV_SPEC_BEGINS_NOW=지금 관전 시작
+STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - 관전 {string1}:{number}{string3}
