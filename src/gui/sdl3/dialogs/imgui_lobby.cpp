@@ -4077,6 +4077,68 @@ static void lobbyTruncateName(const char *src, float maxW, char *out, size_t out
     SDL_strlcat(out, "...", outSz);
 }
 
+/* Connected spectators, rendered as their own names list below the
+ * team groups. Spectators are tankless watchers — no team, ready
+ * state, ping, or host controls — so each row is just the badges a
+ * player gets (country flag + WBN/Steam/platform icons) followed by
+ * the name. Reads the client-side spectator roster mirrored from the
+ * server's per-spectator CTRL_SPECTATOR_SLOT events. Renders nothing
+ * when nobody is watching.
+ *
+ * myPlayerNum is accepted for symmetry with the player renderers; a
+ * spectating viewer occupies no player slot, so there is no "you"
+ * highlight here. The roster is walked by index until the accessor
+ * returns NULL — that NULL is the bound (the roster size constant
+ * lives in an internal transport header the GUI does not include). */
+static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
+    (void)myPlayerNum;
+    (void)s;
+
+    int count = 0;
+    for (int idx = 0; ; idx++) {
+        const ClientSpectatorSlot *sp = clientSimGetSpectatorSlot(cs, (uint8_t)idx);
+        if (sp == NULL) break;
+        if (sp->connected) count++;
+    }
+    if (count == 0) return;
+
+    /* Header in the Unassigned-tray style: disabled text with a count.
+     * Plain literal — the lobby's other labels are STR_*, but that
+     * string table spans lang.h, lang.c, and a generated names file;
+     * localize as a follow-up. */
+    ImGui::TextDisabled("Spectators (%d):", count);
+
+    for (int idx = 0; ; idx++) {
+        const ClientSpectatorSlot *sp = clientSimGetSpectatorSlot(cs, (uint8_t)idx);
+        if (sp == NULL) break;
+        if (!sp->connected) continue;
+
+        ImGui::Bullet();
+
+        /* Country flag, guarded exactly like the player rows: skip the
+         * empty and "XX" unknown sentinels, and only draw when the flag
+         * texture is available. */
+        const char *cc = sp->countryCode;
+        if (cc[0] != '\0' && !(cc[0] == 'X' && cc[1] == 'X') && flagsGetTexture(cc)) {
+            drawCountryFlagWithTip(cc);
+            ImGui::SameLine();
+        }
+
+        /* WBN/Steam/platform badges. Mask the WBN globe in single-player
+         * / LAN-only sessions just like the player rows — those sessions
+         * have no WBN identity to vouch for. renderPlayerName with an
+         * empty name draws only the badge run and leaves the cursor on
+         * the same line, so the name text follows inline. */
+        uint8_t pflags = sp->clientFlags;
+        if (clientSimIsSinglePlayer(cs) || clientSimIsLanOnly(cs)) {
+            pflags &= ~PLAYER_FLAG_WBN_VERIFIED;
+        }
+        renderPlayerName(NULL, pflags, sp->clientType, "", false);
+
+        ImGui::Text("%s", sp->playerName);
+    }
+}
+
 static void renderTeamGroupedPlayers(ClientSim *cs,
                                      int myPlayerNum, float s, bool isHost) {
     /* Lazy-load the badge / bot-cpu icons. Used to be done inside
@@ -5270,6 +5332,9 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
     /* No bottom team picker — Layout A relies on drag-to-assign + the
      * default-team logic on the server. Players who want to switch
      * teams can be dragged by the host (planned) or via context menu. */
+
+    /* Connected spectators, listed below the teams + unassigned tray. */
+    renderSpectatorGroup(cs, myPlayerNum, s);
 
     /* Deferred-open kick-confirm modal. OpenPopup must happen in the
      * same ID scope as BeginPopupModal, so we set a flag inside the
