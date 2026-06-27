@@ -208,6 +208,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             char joinMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(joinMsg, sizeof(joinMsg), "%s has joined.", nameBuf);
             clientSimAppendLobbyChat(cs, "***", joinMsg);
+            if (cs->lobbySyncSettled) frontEndPlaySound(cs, lobbyPlayerJoin);
         }
         break;
     }
@@ -686,6 +687,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         if (text[0] == '\0') break;
         if (cs->inLobby) {
             clientSimAppendLobbyChat(cs, "Server", text);
+            if (cs->lobbySyncSettled) frontEndPlaySound(cs, lobbyChatReceived);
         } else {
             /* In-game: route to newswire only. Server announcements
              * (vote countdown, surrender, etc.) belong on the same
@@ -700,6 +702,14 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     case CTRL_SERVER_SHUTDOWN:
         /* No ClientSim field maps to UDP joinState; that field stays
          * transport-internal per the architectural commitment. */
+        break;
+
+    case CTRL_LOBBY_SYNC_COMPLETE:
+        /* Final event of the join sync replay. The roster burst before it
+         * (CTRL_PLAYER_JOIN / CTRL_LOBBY_SLOT per existing player) arrived
+         * with inLobby already set; this marker tells us the burst is done,
+         * so live lobby events may now play their sounds. */
+        cs->lobbySyncSettled = true;
         break;
 
     case CTRL_CHAT: {
@@ -738,6 +748,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             } else {
                 clientSimIncomingMessage(cs, fromPlayer, msg);
             }
+            /* One play for both lobby sub-branches; in-game chat (not in
+             * lobby) stays silent, and the join replay burst is gated out. */
+            if (clientSimIsInLobby(cs) && cs->lobbySyncSettled) {
+                frontEndPlaySound(cs, lobbyChatReceived);
+            }
         }
         break;
     }
@@ -768,6 +783,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             char leaveMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(leaveMsg, sizeof(leaveMsg), "%s has left.", nameBuf);
             clientSimAppendLobbyChat(cs, "***", leaveMsg);
+            if (cs->lobbySyncSettled) frontEndPlaySound(cs, lobbyPlayerLeave);
         }
         break;
     }

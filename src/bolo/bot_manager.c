@@ -682,6 +682,9 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * the same way snapshots do. Sync runs inside register and uses the
      * dispatcher's self-skip to leave the playersSetSelf record above
      * untouched. */
+    /* Arm the join-replay sound guard: the synchronous sync replay inside
+     * register ends with CTRL_LOBBY_SYNC_COMPLETE, which re-sets it true. */
+    bot->cs->lobbySyncSettled = false;
     bot->controlSub = serverSimRegisterClientSubscriber(sim, bot->cs);
 
     /* Initialize the brain map (fog-of-war) */

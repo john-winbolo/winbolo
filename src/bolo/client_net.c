@@ -197,6 +197,9 @@ static bool clientSimConnectLocalBody(ClientSim *cs, struct ServerSim *sim,
    *     through the bus. The sync-replay walks lobby state on top of
    *     the freshly-installed map. Stash the handle so disconnect /
    *     destroy can unregister cleanly. */
+  /* Arm the join-replay sound guard: the synchronous sync replay below ends
+   * with CTRL_LOBBY_SYNC_COMPLETE, which re-sets it true. */
+  cs->lobbySyncSettled = false;
   cs->autoSubHandle = serverSimRegisterClientSubscriber(sim, cs);
 
   /* 11. Apply the first snapshot synchronously so the ClientSim has

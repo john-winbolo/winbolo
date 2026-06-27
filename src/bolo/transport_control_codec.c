@@ -899,6 +899,31 @@ static EncodeResult encodeServerShutdown(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbySyncCompleteBody(const ControlEvent *evt,
+                                                const struct UdpServerClient *recipient,
+                                                uint8_t *buf, size_t bufCap,
+                                                size_t *outLen) {
+    (void)evt; (void)recipient; (void)buf; (void)bufCap;
+    *outLen = 0;
+    return ENCODE_OK;
+}
+
+static EncodeResult encodeLobbySyncComplete(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_LOBBY_SYNC_COMPLETE, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeLobbySyncCompleteBody(evt, recipient,
+                                                 buf + PACKET_HEADER_SIZE,
+                                                 bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
 /* PACKET_CHAT_BROADCAST wire format (variable length, three subtypes
  * discriminated by fromPlayer):
  *   [header 8] [fromPlayer 1] [destPlayer 1] [body bodyLen]
@@ -1560,6 +1585,14 @@ static bool decodeServerShutdownBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeLobbySyncCompleteBody(const uint8_t *buf, size_t len,
+                                        ControlEvent *outEvt) {
+    (void)buf; (void)len;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_SYNC_COMPLETE;
+    return true;
+}
+
 static bool decodeChatBody(const uint8_t *buf, size_t len,
                            ControlEvent *outEvt) {
     if (len < 2) return false;
@@ -1681,6 +1714,7 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_GAME_PHASE_GAME_OVER]  = encodeGamePhase,
     [CTRL_GAME_OVER]          = encodeGameOver,
     [CTRL_SERVER_SHUTDOWN]    = encodeServerShutdown,
+    [CTRL_LOBBY_SYNC_COMPLETE] = encodeLobbySyncComplete,
     [CTRL_CHAT]               = encodeChat,
     [CTRL_PLAYER_LEAVE]       = encodePlayerLeave,
     [CTRL_LOBBY_TEAM_META]    = encodeLobbyTeamMeta,
@@ -1720,6 +1754,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_GAME_PHASE_GAME_OVER]  = encodeGamePhaseGameOverBody,
     [CTRL_GAME_OVER]             = encodeGameOverBody,
     [CTRL_SERVER_SHUTDOWN]       = encodeServerShutdownBody,
+    [CTRL_LOBBY_SYNC_COMPLETE]   = encodeLobbySyncCompleteBody,
     [CTRL_CHAT]                  = encodeChatBody,
     [CTRL_PLAYER_LEAVE]          = encodePlayerLeaveBody,
     [CTRL_LOBBY_TEAM_META]       = encodeLobbyTeamMetaBody,
@@ -1753,6 +1788,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_GAME_PHASE_GAME_OVER]  = decodeGamePhaseGameOverBody,
     [CTRL_GAME_OVER]             = decodeGameOverBody,
     [CTRL_SERVER_SHUTDOWN]       = decodeServerShutdownBody,
+    [CTRL_LOBBY_SYNC_COMPLETE]   = decodeLobbySyncCompleteBody,
     [CTRL_CHAT]                  = decodeChatBody,
     [CTRL_PLAYER_LEAVE]          = decodePlayerLeaveBody,
     [CTRL_LOBBY_TEAM_META]       = decodeLobbyTeamMetaBody,
@@ -1787,6 +1823,7 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_GAME_START:       return decodeGamePhaseRunningBody;
         case PACKET_GAME_OVER:        return decodeGameOverBody;
         case PACKET_SERVER_SHUTDOWN:  return decodeServerShutdownBody;
+        case PACKET_LOBBY_SYNC_COMPLETE: return decodeLobbySyncCompleteBody;
         case PACKET_CHAT_BROADCAST:   return decodeChatBody;
         case PACKET_PLAYER_LEFT:      return decodePlayerLeaveBody;
         case PACKET_LOBBY_TEAM_META_CHG:  return decodeLobbyTeamMetaBody;

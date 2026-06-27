@@ -232,6 +232,10 @@ struct ClientSim {
     int              countdownSeconds;  /* 0 = not counting down */
     bool             mapDownloadComplete; /* Gate for ready button */
     bool             inLobby;           /* TRUE if server is lobby-enabled */
+    bool             lobbySyncSettled;  /* FALSE during the join sync replay;
+                                         * set TRUE by CTRL_LOBBY_SYNC_COMPLETE.
+                                         * Lobby event sounds play only when set,
+                                         * so the roster replay burst is silent. */
     char             lobbyChatHistory[4096]; /* Lobby chat buffer with player names */
     char             lobbyTeamChatHistory[4096]; /* Team-only lobby chat buffer */
 

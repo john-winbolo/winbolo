@@ -69,6 +69,7 @@ int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
 int run_lobby_brain_list_codec_and_apply(void);
+int run_lobby_sync_complete_codec_roundtrip(void);
 int run_command_codec_roundtrip_variants(void);
 int run_command_codec_lobby_claim_start(void);
 int run_lobby_claim_start_host_swaps_occupied(void);

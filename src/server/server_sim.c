@@ -5623,7 +5623,8 @@ static void serverSimSyncOrderingDeliver(void *ctx,
         check->sawNonPhase = true;
     }
 
-    if (evt->type != CTRL_PLAYER_JOIN) {
+    if (evt->type != CTRL_PLAYER_JOIN &&
+        evt->type != CTRL_LOBBY_SYNC_COMPLETE) {
         assert(!check->sawPlayerJoin &&
                "no non-CTRL_PLAYER_JOIN event may follow "
                "CTRL_PLAYER_JOIN in sync");
@@ -5749,6 +5750,15 @@ static void serverSimSyncSubscriber(
             deliver(ctx, &evt);
         }
     }
+
+    /* Terminal marker: the roster replay above re-announces every existing
+     * player/slot with the subscriber already in the lobby. This final event
+     * lets the subscriber tell the replay burst apart from live events, so it
+     * can suppress per-event lobby sounds until the burst is done. Must be the
+     * last event delivered in the sync. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SYNC_COMPLETE;
+    deliver(ctx, &evt);
     mpDiagLog("[bus] SYNC-REPLAY end");
 }
 

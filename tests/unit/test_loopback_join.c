@@ -17,6 +17,7 @@
 
 #include "global.h"
 #include "client_sim.h"
+#include "client_sim_internal.h"
 #include "client_net.h"
 #include "client_connect_state.h"
 #include "input_packet.h"
@@ -36,6 +37,11 @@ static bool pred_connected(LoopbackHarness *h, void *user) {
     return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
 }
 
+static bool pred_lobby_sync_settled(LoopbackHarness *h, void *user) {
+    (void)user;
+    return h->cs->lobbySyncSettled;
+}
+
 int run_loopback_join(void) {
     LoopbackHarness h;
     UT_ASSERT_MSG(loopbackHarnessStart(&h, "Joiner", /*lobbyMode*/ false,
@@ -49,6 +55,24 @@ int run_loopback_join(void) {
     if (connectedAt < 0) {
         loopbackHarnessStop(&h);
         UT_FAIL("client never reached CONNECTED within %d pumps",
+                CLEAN_CONNECT_MAX);
+    }
+
+    /* The join sync replay ends with CTRL_LOBBY_SYNC_COMPLETE, which the
+     * client funnel turns into lobbySyncSettled = true. The marker arrives
+     * asynchronously on CHANNEL_CONTROL and can land a pump or two after
+     * CONNECTED, so pump until it settles rather than asserting immediately.
+     * Proves the marker survived server-emit -> wire -> udpClientProcessPacket
+     * dispatch -> client-apply; without the UDP dispatch arm it never arrives
+     * and this pump-until times out. */
+    int syncSettledAt = loopbackHarnessPumpUntil(&h, CLEAN_CONNECT_MAX,
+                                                 pred_lobby_sync_settled, NULL);
+    fprintf(stderr, "  loopback join (clean): lobbySyncSettled after %d pump(s) "
+                    "(cap %d)\n", syncSettledAt, CLEAN_CONNECT_MAX);
+    if (syncSettledAt < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("lobbySyncSettled never set within %d pumps — "
+                "CTRL_LOBBY_SYNC_COMPLETE was not delivered/applied",
                 CLEAN_CONNECT_MAX);
     }
 
