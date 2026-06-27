@@ -192,6 +192,13 @@ struct MapChooserState_s {
      * features as separate tabs, so they'd be duplicated here. */
     bool            hideExtras;
 
+    /* Force-shows the "Load from device" button even when hideExtras is
+     * set, without bringing back the "Generate Random Map" button. The
+     * lobby's local/upload tab uses this to offer a single-file picker
+     * at the top of the list while keeping random generation on its own
+     * tab. A device pick applies immediately via provider.onSelect. */
+    bool            showDeviceLoad;
+
     /* When true, the widget runs in "random-only" mode: the back
      * button is hidden, randomMapSelected is treated as always-on,
      * and config changes increment genSeq so external code can

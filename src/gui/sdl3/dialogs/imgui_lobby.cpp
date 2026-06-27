@@ -2184,6 +2184,11 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
          * would duplicate them. */
         s_chooseMapState.hideExtras       = true;
         s_chooseMapUploadState.hideExtras = true;
+        /* ...but the local/upload tab still offers a single-file picker
+         * at the top of its list, so the host can grab a .map straight
+         * off disk. In multiplayer the whole tab is gated on uploads
+         * being enabled, so the button only appears when it can act. */
+        s_chooseMapUploadState.showDeviceLoad = true;
         /* Random tab — third chooser instance, runs in randomTabOnly
          * mode so the widget renders generator controls on the left
          * and the procedural preview on the right. */
