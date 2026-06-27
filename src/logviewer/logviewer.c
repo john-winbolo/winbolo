@@ -1011,7 +1011,19 @@ static void lvHostRenderFrame(const char *overlay) {
                 didSetSelf = TRUE;
             }
             lv_clientMutexWaitFor();
-            lv_drawDirtyScreen();
+            /* Overview repaint is incremental: the per-tile dirty cache
+             * (lv_drawLast) combined with each sprite's lv_drawMarkRedraw
+             * (tanks/shells/LGMs/labels) erases moving overlays, so only
+             * changed tiles repaint into the persistent render target.
+             * Forcing a full-screen dirty every frame instead repaints every
+             * visible tile — at a zoomed-out 255x255 viewport (e.g. fullscreen
+             * on a 4K display) that is ~65k tile blits per frame and stalls the
+             * render. Pan/zoom/resize already dirty the whole screen on demand.
+             * Game view renders directly (no render-target cache) and needs the
+             * full update each frame. */
+            if (g_lv->gameView) {
+                lv_drawDirtyScreen();
+            }
             lv_screenUpdate(redraw);
             lv_clientMutexRelease();
             g_lv->wantScreenUpdate = FALSE;
