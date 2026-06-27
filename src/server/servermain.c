@@ -690,6 +690,8 @@ void printArgs() {
   fprintf(stderr, "                optimize.log + performance.ticks.log into debug_sessions/<TS>_<N>/\n");
   fprintf(stderr, "                alongside brainrec.btr (loadable in BrainTest). Implies recording;\n");
   fprintf(stderr, "                forces the opt/ brain with debug OFF for representative timings.\n");
+  fprintf(stderr, "                Profile data ONLY: no print2 debug logs, no pool-viz capture\n");
+  fprintf(stderr, "                (independent of -braindebug).\n");
 
   fprintf(stderr, "\nNetworking:\n");
   fprintf(stderr, "-port <Port>  - Port to run the server on\n");
@@ -1688,7 +1690,11 @@ int main(int argc, char **argv) {
          * files beside it. Debug stays OFF and we force the opt/ brain so the
          * timings reflect what actually ships (the base brain carries print2/
          * viz overhead). */
-        luaBrainsSetProfile(1, 1);
+        /* pool_viz=0: a dedicated-server profiling run wants profile data
+         * ONLY — no print2 (debug stays off) and no pool-breakdown capture.
+         * Leaving pool-viz off keeps the pool-string GC cost out of the
+         * timings and the pool bytes out of the .btr. */
+        luaBrainsSetProfile(1, 1, 0);
         brainRecordSetEnabled(true);
         {
           char optPath[MAX_PATH];

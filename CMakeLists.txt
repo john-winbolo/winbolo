@@ -3022,6 +3022,7 @@ set(_unit_test_names
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
+    lobby_sync_complete_codec_roundtrip
     command_codec_roundtrip_variants
     command_codec_lobby_claim_start
     lobby_claim_start_host_swaps_occupied

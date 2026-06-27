@@ -291,6 +291,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_GAME_PHASE_GAME_OVER:  return "CTRL_GAME_PHASE";
     case CTRL_GAME_OVER:             return "CTRL_GAME_OVER";
     case CTRL_SERVER_SHUTDOWN:       return "CTRL_SERVER_SHUTDOWN";
+    case CTRL_LOBBY_SYNC_COMPLETE:   return "CTRL_LOBBY_SYNC_COMPLETE";
     case CTRL_CHAT:                  return "CTRL_CHAT";
     case CTRL_LOBBY_TEAM_META:       return "CTRL_LOBBY_TEAM_META";
     case CTRL_LOBBY_BOT_CONFIG:      return "CTRL_LOBBY_BOT_CONFIG";
@@ -430,6 +431,7 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
     case CTRL_MAP_DOWNLOAD_COMPLETE:
     case CTRL_GAME_OVER:
     case CTRL_SERVER_SHUTDOWN:
+    case CTRL_LOBBY_SYNC_COMPLETE:
       /* No payload fields. */
       break;
 

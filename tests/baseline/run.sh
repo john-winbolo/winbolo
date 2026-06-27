@@ -88,7 +88,7 @@ diff_norm() {
     <(sed -E "$NORMALIZE_EVENTS_SED" "$actual")
 }
 
-# Two-client lobby scenarios race at teardown in two ways that are not
+# Two-client lobby scenarios race at teardown in three ways that are not
 # the scenario's regression target (join + rename roster state is):
 #   1. Client disconnect — CTRL_PLAYER_LEAVE and its "<name> has left."
 #      CTRL_SERVER_TEXT. Whether one client logs the other's leave before
@@ -99,9 +99,16 @@ diff_norm() {
 #      Whether it lands in the capture window before teardown is racy;
 #      sort -u can't fold it because it differs from the "ready":true
 #      line only in the ready flag.
-# Drop the leave/has-left lines and fold ready to a constant so the
-# transient collapses, leaving the deterministic join/rename roster.
-LOBBY_TEARDOWN_SED='/"type":"CTRL_PLAYER_LEAVE"/d; /"type":"CTRL_SERVER_TEXT","text":"[^"]*has left/d; s/"ready":(true|false)/"ready":false/g'
+#   3. The game-end lobby-return settings — when a teardown disconnect ends
+#      a running game, the server broadcasts a CTRL_LOBBY_SETTINGS carrying
+#      netStat:3 + inLobby:true (back-to-lobby). Whether it lands in the
+#      capture window is racy; it can't fold because it differs in fields
+#      from the deterministic lobby settings (netStat:0) and the running
+#      settings (inLobby:false).
+# Drop the leave/has-left and game-end-return settings lines and fold ready
+# to a constant so the transients collapse, leaving the deterministic
+# join/rename roster.
+LOBBY_TEARDOWN_SED='/"type":"CTRL_PLAYER_LEAVE"/d; /"type":"CTRL_SERVER_TEXT","text":"[^"]*has left/d; /"type":"CTRL_LOBBY_SETTINGS".*"netStat":3,"inLobby":true/d; s/"ready":(true|false)/"ready":false/g'
 
 diff_sorted_lobby() {
   local expected="$1"

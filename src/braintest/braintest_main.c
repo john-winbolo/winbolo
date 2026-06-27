@@ -5740,7 +5740,10 @@ int main(int argc, char *argv[]) {
     int effProfileLog = optProfileLog;
     /* JSONL behavior trace: dev mode = on, --opt = off unless --log-json. */
     int effLogJson    = (!optProduction) || optLogJson;
-    luaBrainsSetProfile(effProfile, effProfileLog);
+    /* Pool-viz: keep BrainTest's prior behavior — on whenever it profile-logs
+     * (debug-mode dev runs already force it on inside the handler), so the "P"
+     * replay window has pool-breakdown data. */
+    luaBrainsSetProfile(effProfile, effProfileLog, /*pool_viz*/ effProfileLog);
     luaBrainsSetLogJson(effLogJson);
     if (optRunScript[0])
         luaBrainsSetRunScript(optRunScript);

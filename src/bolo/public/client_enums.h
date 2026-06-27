@@ -111,7 +111,15 @@ typedef enum {
   manLayingMineNear,
   mineExplosionNear,
   mineExplosionFar,
-  shootFar
+  shootFar,
+  /* Lobby sounds */
+  lobbyChatReceived,
+  lobbyReady,
+  lobbyUnready,
+  lobbyCountdown,
+  lobbyGameStart,
+  lobbyPlayerJoin,
+  lobbyPlayerLeave
 } sndEffects;
 
 #endif

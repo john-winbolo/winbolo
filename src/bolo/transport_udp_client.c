@@ -2128,6 +2128,18 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         break;
     }
 
+    case PACKET_LOBBY_SYNC_COMPLETE: {
+        ControlDecodeFn dec = transportControlCodecDecoder(pktType);
+        if (dec != NULL) {
+            ControlEvent evt;
+            if (dec(buf + PACKET_HEADER_SIZE,
+                    (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
+                clientSimApplyControl(c->clientSim, &evt);
+            }
+        }
+        break;
+    }
+
     case PACKET_LOBBY_SETTINGS: {
         ControlDecodeFn dec = transportControlCodecDecoder(pktType);
         if (dec == NULL) break;
@@ -2264,6 +2276,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (dec(buf + PACKET_HEADER_SIZE, (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
                 clientSimApplyControl(c->clientSim, &evt);
                 c->joinState = UDP_CLIENT_JOINING;
+                /* Re-arm the lobby-sound guard: the re-join triggers a fresh
+                 * server sync replay terminated by CTRL_LOBBY_SYNC_COMPLETE. */
+                c->clientSim->lobbySyncSettled = false;
                 c->joinAttempts = 0;
                 /* Re-prove the address: a re-join must re-acquire a cookie. */
                 c->haveJoinCookie = false;
@@ -2908,6 +2923,9 @@ static void udpClientTransportObserver(void *ctx, const ControlEvent *evt) {
         if (c->clientSim != NULL && c->clientSim->isUdpTransport &&
             c->mapInstalled) {
             c->joinState = UDP_CLIENT_JOINING;
+            /* Re-arm the lobby-sound guard: the re-join triggers a fresh
+             * server sync replay terminated by CTRL_LOBBY_SYNC_COMPLETE. */
+            c->clientSim->lobbySyncSettled = false;
             c->joinAttempts = 0;
             /* Re-prove the address: a re-join must re-acquire a cookie. */
             c->haveJoinCookie = false;
@@ -3086,6 +3104,11 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c->punchSent   = false;
 
     c->joinState = UDP_CLIENT_JOINING;
+    /* Arm the lobby-sound guard for the initial join: the server's sync replay
+     * ends with CTRL_LOBBY_SYNC_COMPLETE, which re-sets it true. */
+    if (c->clientSim != NULL) {
+        c->clientSim->lobbySyncSettled = false;
+    }
     c->joinAttempts = 0;
     c->haveJoinCookie = false; /* acquire a cookie via PACKET_JOIN_CHALLENGE */
     c->ticksSinceJoinSent = JOIN_RETRY_INTERVAL; /* Send immediately on first tick */

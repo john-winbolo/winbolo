@@ -364,3 +364,19 @@ int run_lobby_brain_list_codec_and_apply(void) {
     clientSimDestroy(cs);
     return 0;
 }
+
+/* ================================================================
+ * CTRL_LOBBY_SYNC_COMPLETE — header-only marker the server delivers
+ * as the final event of the join sync replay. No payload, so the
+ * round-trip just confirms the type survives encode/decode.
+ * ================================================================ */
+int run_lobby_sync_complete_codec_roundtrip(void) {
+    ControlEvent in, out;
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_SYNC_COMPLETE;
+
+    UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SYNC_COMPLETE, &in, &out) == 0,
+                  "codec_roundtrip failed");
+    UT_ASSERT(out.type == CTRL_LOBBY_SYNC_COMPLETE);
+    return 0;
+}

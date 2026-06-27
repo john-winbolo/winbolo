@@ -100,6 +100,13 @@ typedef enum {
      * watching. specIdx is in [0, MAX_SPECTATORS). Mirrors
      * CTRL_LOBBY_SLOT but carries the trimmed spectator fields only. */
     CTRL_SPECTATOR_SLOT,
+    /* CTRL_LOBBY_SYNC_COMPLETE — terminal marker the server delivers as the
+     * final event of a subscriber's join sync replay. The roster replay sets
+     * inLobby before re-announcing every existing player/slot, so the client
+     * cannot otherwise tell a replayed event from a live one. The client arms
+     * lobbySyncSettled on this marker and plays lobby event sounds only once
+     * it is set. No payload — header only. */
+    CTRL_LOBBY_SYNC_COMPLETE,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 

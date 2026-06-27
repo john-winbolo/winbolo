@@ -59,6 +59,11 @@ void inputSourceNoteKeyboard(void);
  * mode and pop the menu bar). */
 void inputSourceNoteCursorWarp(void);
 
+/* True for the couple of frames after a game-initiated cursor warp, while its
+ * echo motion event is still pending. Lets callers (e.g. the build cursor)
+ * ignore that synthetic motion so a scroll-tracking warp doesn't nudge them. */
+bool inputSourceCursorWarpActive(void);
+
 /* Returns the active input source: keyboard when no real controller is
  * present; otherwise the most recently used device (controller at launch
  * before any input). */
