@@ -217,6 +217,12 @@ static char gameFrontLanguageCode[32] = "";
  * settings → tutorial transitions in one menu cycle. */
 static bool gameFrontPlayTutorialRequested = FALSE;
 
+/* One-shot flag set when a Steam "join game" arrives (cold launch, in-game,
+ * or welcome screen). Consumed by the UDP setup dialog, which auto-fires its
+ * Join button after a brief visible dwell so the player sees the pre-filled
+ * server address before the connection starts. */
+static bool gameFrontUdpAutoJoinRequested = FALSE;
+
 /* Pending state-machine transition posted from outside the welcome
  * loop (host-OS menus). Read by the welcome dialog at the top of each
  * poll iteration. Single-threaded: setters and consumers all run on
@@ -1804,6 +1810,16 @@ void gameFrontRequestPlayTutorial(void) {
 bool gameFrontConsumePlayTutorialRequest(void) {
   bool was = gameFrontPlayTutorialRequested;
   gameFrontPlayTutorialRequested = FALSE;
+  return was;
+}
+
+void gameFrontRequestUdpAutoJoin(void) {
+  gameFrontUdpAutoJoinRequested = TRUE;
+}
+
+bool gameFrontConsumeUdpAutoJoinRequest(void) {
+  bool was = gameFrontUdpAutoJoinRequested;
+  gameFrontUdpAutoJoinRequested = FALSE;
   return was;
 }
 
