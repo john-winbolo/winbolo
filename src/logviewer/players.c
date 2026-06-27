@@ -152,6 +152,30 @@ bool lv_playersSetPlayerName(BYTE playerNum, char *playerName) {
 }
 
 /*********************************************************
+*NAME:          lv_playersSetPlayerNameQuiet
+*AUTHOR:        John Morrison
+*CREATION DATE: 27/06/26
+*LAST MODIFIED: 27/06/26
+*PURPOSE:
+* Marks a slot in use and sets its name WITHOUT emitting a
+* MESSAGE_CHANGENAME newswire line. Used by the spectator
+* roster injection, which re-applies the lobby roster on
+* every keyframe and so must not spam the event feed.
+* Touches only inUse + playerName; never any tank position
+* or score, so a slot holding a real positioned tank keeps
+* its forward state (only the name is re-set to itself).
+*
+*ARGUMENTS:
+*  playerNum  - The player number to set
+*  name       - The player name to set
+*********************************************************/
+void lv_playersSetPlayerNameQuiet(BYTE playerNum, const char *name) {
+  plrs.item[playerNum].inUse = TRUE;
+  strncpy(plrs.item[playerNum].playerName, name, PLAYER_NAME_LEN - 1);
+  plrs.item[playerNum].playerName[PLAYER_NAME_LEN - 1] = '\0';
+}
+
+/*********************************************************
 *NAME:          lv_playersSetPlayer
 *AUTHOR:        John Morrison
 *CREATION DATE: 18/2/99
