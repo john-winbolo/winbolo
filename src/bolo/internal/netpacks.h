@@ -379,6 +379,10 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
 #define PACKET_LOBBY_MAP_UPLOAD_ACK 184  /* { status 1 } */
 #define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* server reply to MAP_SEARCH_REQ */
+#define PACKET_LOBBY_SYNC_COMPLETE  180  /* server -> joiner: final event of the
+                                          * join sync replay; marks the roster
+                                          * burst done so live lobby sounds can
+                                          * resume.  No payload. */
 
 /* 187/188 retired: control events ride CHANNEL_CONTROL, acked by the
  * channel-frame trailer.  The former standalone carrier and its ACK are gone. */

@@ -32,7 +32,7 @@
 #include "client_enums.h"  /* sndEffects */
 #include "../sound.h"
 
-#define NUM_SOUNDS 24
+#define NUM_SOUNDS 31
 #define MAX_SOUND_SLOTS 16  /* Maximum simultaneous sounds */
 #define RESERVED_SHOOT_SELF_SLOT 0  /* Slot 0 reserved for player shooting */
 #define SHOOT_SELF_INDEX 6  /* Index of shooting_self.wav in sounds[] */
@@ -101,6 +101,13 @@ static const char *soundFiles[NUM_SOUNDS] = {
     "bubbles.wav",             /* 21 */
     "big_explosion_near.wav",  /* 22 */
     "man_lay_mine_near.wav",   /* 23 */
+    "lobby_chat.wav",          /* 24 */
+    "lobby_ready.wav",         /* 25 */
+    "lobby_unready.wav",       /* 26 */
+    "lobby_countdown.wav",     /* 27 */
+    "lobby_game_start.wav",    /* 28 */
+    "lobby_player_join.wav",   /* 29 */
+    "lobby_player_leave.wav",  /* 30 */
 };
 
 /*********************************************************
@@ -616,6 +623,27 @@ void soundPlayEffect(sndEffects value) {
         break;
     case mineExplosionFar:
         index = 10; /* mine_explosion_far */
+        break;
+    case lobbyChatReceived:
+        index = 24; /* lobby_chat */
+        break;
+    case lobbyReady:
+        index = 25; /* lobby_ready */
+        break;
+    case lobbyUnready:
+        index = 26; /* lobby_unready */
+        break;
+    case lobbyCountdown:
+        index = 27; /* lobby_countdown */
+        break;
+    case lobbyGameStart:
+        index = 28; /* lobby_game_start */
+        break;
+    case lobbyPlayerJoin:
+        index = 29; /* lobby_player_join */
+        break;
+    case lobbyPlayerLeave:
+        index = 30; /* lobby_player_leave */
         break;
     default:
         /* shootFar */

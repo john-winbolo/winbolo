@@ -95,6 +95,13 @@ typedef enum {
      * dispatcher; the client consumes it at the channel-drain site. Per-client:
      * the baselines are this recipient's own channel state, set at enqueue. */
     CTRL_CHANNEL_RESET,
+    /* CTRL_LOBBY_SYNC_COMPLETE — terminal marker the server delivers as the
+     * final event of a subscriber's join sync replay. The roster replay sets
+     * inLobby before re-announcing every existing player/slot, so the client
+     * cannot otherwise tell a replayed event from a live one. The client arms
+     * lobbySyncSettled on this marker and plays lobby event sounds only once
+     * it is set. No payload — header only. */
+    CTRL_LOBBY_SYNC_COMPLETE,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
