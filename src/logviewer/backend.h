@@ -33,7 +33,6 @@
 #include "lv_screenbullet.h"
 #include "lv_pillbox.h"
 #include "lv_screentank.h"
-#include "spec_frame.h"
 
 /* Defines */
 
@@ -595,11 +594,5 @@ void lv_screenSpecResetSegment(void);              /* world reset (new lobby/map
 /* Returns the slot the camera is currently following (cameraSlot), 0 when no
  * log is loaded. */
 BYTE lv_screenGetCameraSlot(void);
-
-/* Snapshots the decoder's current reconstructed world (tanks, LGMs, pills,
- * bases and the followed slot) into a dependency-free SpecFramePOD so the
- * spectator render path can draw it without logviewer headers. Absent slots
- * and empty pill/base indices are left present==0. */
-void specFrameFill(SpecFramePOD *out);
 
 #endif /* _BACKEND_H */

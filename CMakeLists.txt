@@ -1125,7 +1125,6 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/draw.c
     src/logviewer/sound.c
     src/logviewer/players.c
-    src/logviewer/spec_frame_fill.c
     # Logviewer-world spectator seed orchestration (lv_specSeedLoad /
     # lv_specRecordPump): translates captured ring keyframe/forward records
     # into the decoder. Includes spectator_replay.h, now a dep-free public
@@ -2820,9 +2819,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Feeds the same fixture through lv_screenStreamPump a record at a time
     # (with a caught-up pump) and matches a one-shot load to end-of-log.
     tests/unit/test_stream_pump.c
-    # Spectator-frame snapshot: steps the v2 fixture to end-of-log, fills a
-    # SpecFramePOD via specFrameFill and asserts the seeded tanks + camera slot.
-    tests/unit/test_spec_frame_fill.c
     # Spectator seed load: fabricates a ring-shaped seed from the v2 fixture's
     # snapshot body and runs it through lv_specSeedLoad (synthesize header ->
     # translate keyframe -> load), asserting the decode + the stashed control
@@ -2860,7 +2856,6 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/blocks.c
     src/logviewer/snapshot.c
     src/logviewer/players.c
-    src/logviewer/spec_frame_fill.c
     # Logviewer-world spectator seed orchestration: raw ring keyframe seed ->
     # synthesized v2 header + translated snapshot -> lv_screenLoadFromStream.
     # Listed explicitly because this target uses its own decode-subset list
@@ -3116,7 +3111,6 @@ set(_unit_test_names
     blocks_stream
     stream_load
     stream_pump
-    spec_frame_fill
     spec_seed_load
     spec_seed_load_real
     spec_record_pump

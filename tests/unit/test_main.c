@@ -250,7 +250,6 @@ static const UnitTestEntry s_tests[] = {
     { "blocks_stream",                           run_blocks_stream                           },
     { "stream_load",                             run_stream_load                             },
     { "stream_pump",                             run_stream_pump                             },
-    { "spec_frame_fill",                         run_spec_frame_fill                         },
     { "spec_seed_load",                          run_spec_seed_load                          },
     { "spec_seed_load_real",                     run_spec_seed_load_real                     },
     { "spec_record_pump",                        run_spec_record_pump                        },

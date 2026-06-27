@@ -447,11 +447,6 @@ int run_stream_load(void);
  * pump neither advances the cursor nor finishes playback. */
 int run_stream_pump(void);
 
-/* Spectator-frame snapshot (test_spec_frame_fill.c): steps the spectator_v2
- * fixture to end-of-log, fills a SpecFramePOD via specFrameFill and asserts the
- * two seeded tanks (present, names, slot) and a defined followed slot. */
-int run_spec_frame_fill(void);
-
 /* Spectator seed load (test_spec_seed_load.c): fabricates a ring-shaped seed
  * blob from the spectator_v2 fixture's snapshot body, runs it through
  * lv_specSeedLoad (synthesize header -> translate keyframe -> load) and asserts
