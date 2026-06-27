@@ -16,6 +16,17 @@
 #include <string.h>
 
 #include <SDL3/SDL.h>
+#ifdef _WIN32
+/* WIN32_LEAN_AND_MEAN keeps windows.h from pulling the legacy winsock.h, which
+ * would clash with the winsock2.h the transport headers below include. We only
+ * need fileapi.h (GetDiskFreeSpaceEx) for the recording disk-space guard. */
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/statvfs.h>
+#endif
 
 #include "global.h"
 #include "control_event.h"
@@ -24,6 +35,7 @@
 #include "transport_udp.h"
 #include "mdns_advertise.h"
 #include "bot_manager.h"
+#include "brain_record.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../common/mp_diag_log.h"
 #include "../winbolonet/winbolonet_server.h"
@@ -318,6 +330,86 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
   }
 }
 
+/* ── Brain-debug recording session lifecycle (-braindebug) ─────────────────
+ * Recording is split into fixed wall-clock BLOCKS so a long run produces a
+ * sequence of bounded files instead of one giant .btr. Each block is its own
+ * debug_sessions/<baseTS>_<N>/ dir: <baseTS> is the GAME's start time and <N>
+ * is the 1-based 15-minute block, so block N began at baseTS + (N-1)*15 min
+ * (just add 15 min per suffix to read the wall-clock of each). A new game
+ * resets the base timestamp and block counter. */
+#define BRAINDBG_BLOCK_MS         (15u * 60u * 1000u)            /* 15-minute blocks */
+#define BRAINDBG_DISK_FLOOR_BYTES (50ULL * 1024 * 1024 * 1024)  /* stop recording below 50 GB free */
+#define BRAINDBG_DISK_CHECK_MS    5000u                         /* throttle the free-space syscall */
+
+static bool   s_braindbgSessionOpen     = false;  /* a block is currently open */
+static int    s_braindbgBlockNum        = 0;      /* 1-based block index */
+static char   s_braindbgBaseTS[32]      = "";     /* game-start timestamp, shared by all blocks */
+static Uint64 s_braindbgBlockStartMs    = 0;      /* SDL_GetTicks when this block opened */
+static Uint64 s_braindbgLastDiskCheckMs = 0;
+
+/* Free bytes on the volume holding debug_sessions/ (falls back to cwd). Returns
+ * a huge value when it can't be determined, so an unknowable disk never aborts. */
+static unsigned long long serverLifecycleFreeDiskBytes(void) {
+#ifdef _WIN32
+  ULARGE_INTEGER freeAvail;
+  if (GetDiskFreeSpaceExA("debug_sessions", &freeAvail, NULL, NULL)
+      || GetDiskFreeSpaceExA(".", &freeAvail, NULL, NULL)) {
+    return (unsigned long long)freeAvail.QuadPart;
+  }
+#else
+  struct statvfs vfs;
+  if (statvfs(".", &vfs) == 0) {
+    return (unsigned long long)vfs.f_bavail * (unsigned long long)vfs.f_frsize;
+  }
+#endif
+  return ~0ULL;  /* unknown — treat as plenty */
+}
+
+/* Open one recording block: debug_sessions/<baseTS>_<N>/. Finalizes any prior
+ * block, creates the new dir, points the recorder at it, and (re)publishes
+ * DEBUG_SESSION_DIR + resets print2 on every bot so their logs land in the new
+ * block. Stamps the block start time. */
+static void serverLifecycleOpenBraindbgBlock(ServerSim *sim) {
+  brainRecordEndGame();   /* close the prior block's .btr + reset recorder state */
+
+  char dir[FILENAME_MAX];
+  snprintf(dir, sizeof(dir), "debug_sessions/%s_%d", s_braindbgBaseTS, s_braindbgBlockNum);
+  if (!SDL_CreateDirectory(dir)) {
+    fprintf(stderr, "brain_record: couldn't create %s (%s); recording off\n",
+            dir, SDL_GetError());
+    return;
+  }
+  brainRecordSetSessionDir(dir);
+
+  char setSession[FILENAME_MAX + 32];
+  snprintf(setSession, sizeof(setSession), "_G.DEBUG_SESSION_DIR=\"%s\"", dir);
+  for (int i = 0; i < MAX_TANKS; i++) {
+    if (!serverSimIsBot(sim, (BYTE)i)) continue;
+    serverSimBotExecLua(sim, (BYTE)i, setSession);
+    serverSimBotExecLua(sim, (BYTE)i,
+        "local ok,p=pcall(require,'print2'); if ok and p.reset_log then p.reset_log() end");
+  }
+  s_braindbgBlockStartMs = SDL_GetTicks();
+  fprintf(stderr, "brain_record: recording block -> %s\n", dir);
+}
+
+/* Start a new game's recording at block 1: stamp the base timestamp (the game's
+ * wall-clock start) and open debug_sessions/<baseTS>_1/. Called on the first
+ * running tick of each game so lobby time is excluded and the timeline anchors
+ * at tick 0. */
+static void serverLifecycleStartBrainDebugSession(ServerSim *sim) {
+  time_t t = time(NULL);
+  struct tm tmv;
+#ifdef _WIN32
+  localtime_s(&tmv, &t);
+#else
+  localtime_r(&t, &tmv);
+#endif
+  strftime(s_braindbgBaseTS, sizeof(s_braindbgBaseTS), "%Y%m%d_%H%M%S", &tmv);
+  s_braindbgBlockNum = 1;
+  serverLifecycleOpenBraindbgBlock(sim);
+}
+
 void serverInstanceTick(ServerSim *sim) {
   /* Measure the entire tick wall-clock — outside the mutex acquire so
    * the EWMA captures contention wait time too. Single bottom-of-function
@@ -346,6 +438,45 @@ void serverInstanceTick(ServerSim *sim) {
   transportUdpServerDrainPendingRemovals(sim);
 
   if (sim->state == serverStateRunning) {
+    /* First running tick of this game → open a fresh recording session
+     * (deferred from startup so lobby/countdown time is excluded and the
+     * timeline anchors at this game's tick 0). Runs before serverSimBotTick so
+     * DEBUG_SESSION_DIR is set before any bot thinks / brainRecordTick fires. */
+    if (brainRecordIsEnabled() && !s_braindbgSessionOpen) {
+      /* First running tick of this game → open recording block 1, unless the
+       * disk is already below the floor. */
+      if (serverLifecycleFreeDiskBytes() < BRAINDBG_DISK_FLOOR_BYTES) {
+        fprintf(stderr, "brain_record: LOW DISK (<50 GB free) — recording NOT started\n");
+        brainRecordSetEnabled(false);
+      } else {
+        serverLifecycleStartBrainDebugSession(sim);
+        s_braindbgSessionOpen = true;
+      }
+    } else if (s_braindbgSessionOpen) {
+      Uint64 nowMs = SDL_GetTicks();
+      /* Low-disk abort (throttled): stop ALL debug writes so a long run can't
+       * fill the disk. The server keeps running — only recording stops. */
+      if (nowMs - s_braindbgLastDiskCheckMs >= BRAINDBG_DISK_CHECK_MS) {
+        s_braindbgLastDiskCheckMs = nowMs;
+        if (serverLifecycleFreeDiskBytes() < BRAINDBG_DISK_FLOOR_BYTES) {
+          fprintf(stderr, "brain_record: LOW DISK (<50 GB free) — stopping recording\n");
+          brainRecordEndGame();
+          brainRecordSetEnabled(false);
+          s_braindbgSessionOpen = false;
+          for (int i = 0; i < MAX_TANKS; i++) {
+            if (serverSimIsBot(sim, (BYTE)i)) {
+              serverSimBotExecLua(sim, (BYTE)i, "_G._PRINT2_ENABLED=false");
+            }
+          }
+        }
+      }
+      /* 15-minute block roll: finalize the current block and open the next,
+       * seamlessly (no game interruption). */
+      if (s_braindbgSessionOpen && (nowMs - s_braindbgBlockStartMs) >= BRAINDBG_BLOCK_MS) {
+        s_braindbgBlockNum++;
+        serverLifecycleOpenBraindbgBlock(sim);
+      }
+    }
     /* Run brain AI bots — queues two InputPackets per bot (keys + game) */
     if (serverSimGetNumBots(sim) > 0) {
       serverSimBotTick(sim, sim->botAiType);
@@ -361,6 +492,13 @@ void serverInstanceTick(ServerSim *sim) {
     Uint64 simEnd = SDL_GetPerformanceCounter();
     /* If game ended during this tick, publish game-over events */
     if (preTickState == serverStateRunning && sim->state == serverStateGameOver) {
+      /* Game ended → finalize this game's recording so the .btr is complete on
+       * disk; clearing the flag makes the next game open a fresh dir (the
+       * map-rotate restart below re-enters running on a later tick). */
+      if (s_braindbgSessionOpen) {
+        brainRecordEndGame();
+        s_braindbgSessionOpen = false;
+      }
       /* Decide the win/exit message and WBN crediting. The policy lives in
        * the sim core (serverSimResolveGameOver) so the dedicated server and
        * the in-process SP/host both resolve a game over identically. */

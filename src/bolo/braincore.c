@@ -421,6 +421,10 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_setfield(L, -2, "server_tick");
   lua_pushinteger(L, info->assistant_msg);
   lua_setfield(L, -2, "assistant_msg");
+  /* Dead-tick hook: brain runs while the tank is dead so it can reset its own
+   * state for a clean respawn; it should early-return without acting. */
+  lua_pushboolean(L, info->dead);
+  lua_setfield(L, -2, "dead");
 
   /* Game events */
   lua_newtable(L);
@@ -668,9 +672,9 @@ void brc_write_crash_log(lua_State *L,
   char session_dir[512];
   bool has_session = brc_read_session_dir(L, session_dir, sizeof(session_dir));
 
-  /* Debug-mode gate: production hosts (WinBolo / WinBoloDS) run brains
-   * with BRAIN_DEBUG_MODE=false, where we write NO crash files to disk.
-   * The stderr surface below still fires so crashes are never silent. */
+  /* File writes are gated to debug hosts (BRAIN_DEBUG_MODE, set by -braindebug);
+   * production WinBolo / WinBoloDS write NO crash files to disk. The stderr
+   * surface below still fires so a production crash is never silent. */
   bool debug_mode = brc_debug_mode(L);
 
   /* Rate-limit: if this brain crashed within the last
@@ -695,6 +699,9 @@ void brc_write_crash_log(lua_State *L,
                  prefix, ts_utc, pid, (void *)lptr);
   }
 
+  /* Per-crash file: debug hosts only, and rate-limited so a chronically-
+   * crashing brain can't fill the disk. Production (debug off) writes nothing;
+   * the stderr surface below still fires. */
   FILE *f = (suppress_file || !debug_mode) ? NULL : fopen(path, "wb");
   if (f) {
     fprintf(f, "===== BRAIN CRASH =====\n");
@@ -714,6 +721,31 @@ void brc_write_crash_log(lua_State *L,
     fclose(f);
   }
 
+  /* Combined append-only crash log: EVERY Lua crash's full traceback appended
+   * here (ignoring the per-crash-file rate-limit) so one file is the complete
+   * chronological record of a run. Debug hosts only (-braindebug); one growing
+   * file rather than 1500 separate ones, bounded in practice by bot_manager
+   * kicking a brain that crashes every tick. Same prefix as the per-crash files
+   * (session dir if set, else CWD). */
+  if (debug_mode) {
+    char all_path[1024];
+    SDL_snprintf(all_path, sizeof(all_path), "%s/brain_crashes.log", prefix);
+    FILE *af = fopen(all_path, "ab");
+    if (af) {
+      fprintf(af, "===== BRAIN CRASH =====\n");
+      fprintf(af, "[BRAIN_CRASH] method=brain.%s\n", method);
+      fprintf(af, "[BRAIN_CRASH] timestamp_utc=%s\n", ts_utc);
+      fprintf(af, "[BRAIN_CRASH] timestamp_local=%s\n", ts_local);
+      fprintf(af, "[BRAIN_CRASH] pid=%d bot_index=%d state.tick=%d lua_state=%p\n",
+              pid, bot_idx, tick, (void *)lptr);
+      fprintf(af, "[BRAIN_CRASH] ----- error + traceback below -----\n");
+      fprintf(af, "%s\n", err_or_traceback);
+      fprintf(af, "===== END BRAIN CRASH =====\n\n");
+      fflush(af);
+      fclose(af);
+    }
+  }
+
   /* Stderr surface so the failure is visible without grepping. Always
    * fires (even when the file was suppressed) so a chronically-crashing
    * brain stays loud in the console — just with a clear note that the
@@ -724,11 +756,6 @@ void brc_write_crash_log(lua_State *L,
             "— file SUPPRESSED (rate-limit: same brain crashed within %ds)\n",
             method, ts_local, bot_idx, tick, (void *)lptr,
             BRC_CRASH_RATE_LIMIT_SECS);
-  } else if (!debug_mode) {
-    fprintf(stderr,
-            "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) "
-            "— file logging disabled (BRAIN_DEBUG_MODE off)\n",
-            method, ts_local, bot_idx, tick, (void *)lptr);
   } else {
     fprintf(stderr,
             "[BRAIN_CRASH] brain.%s() crashed at %s (bot_index=%d tick=%d L=%p) — see %s\n",
@@ -1323,7 +1350,10 @@ static int l_cpf_dijkstra_lookup_subtract_by_kind(lua_State *L) {
   return 1;
 }
 
-/* cpf_dijkstra_next_step(kind, sx, sy, dx, dy) → nx, ny or nil */
+/* cpf_dijkstra_next_step(kind, sx, sy, dx, dy [, obstacles, penalty]) → nx, ny or nil
+ * obstacles: optional flat array of packed tile keys (y*256+x) to dodge at trace
+ * time; penalty: extra cost added to those tiles (default large). */
+#define CPF_MAX_OBSTACLES 64
 static int l_cpf_dijkstra_next_step(lua_State *L) {
   CPF_GET(L);
   int kind = (int)luaL_checkinteger(L, 1);
@@ -1331,8 +1361,22 @@ static int l_cpf_dijkstra_next_step(lua_State *L) {
   int sy = (int)luaL_checkinteger(L, 3);
   int dx = (int)luaL_checkinteger(L, 4);
   int dy = (int)luaL_checkinteger(L, 5);
+  int obstacles[CPF_MAX_OBSTACLES];
+  int n_obs = 0;
+  float penalty = (float)luaL_optnumber(L, 7, 1.0e6);
+  if (lua_istable(L, 6)) {
+    int len = (int)lua_rawlen(L, 6);
+    if (len > CPF_MAX_OBSTACLES) len = CPF_MAX_OBSTACLES;
+    for (int i = 1; i <= len; i++) {
+      lua_rawgeti(L, 6, i);
+      obstacles[n_obs++] = (int)lua_tointeger(L, -1);
+      lua_pop(L, 1);
+    }
+  }
   int nx = -1, ny = -1;
-  if (brainPathfinderDijkstraNextStep(pf, kind, sx, sy, dx, dy, &nx, &ny)) {
+  if (brainPathfinderDijkstraNextStep(pf, kind, sx, sy, dx, dy,
+                                      n_obs > 0 ? obstacles : NULL, n_obs, penalty,
+                                      &nx, &ny)) {
     lua_pushinteger(L, nx);
     lua_pushinteger(L, ny);
     return 2;
@@ -1517,6 +1561,85 @@ static int l_cpf_simulate_shot_angle(lua_State *L) {
   return 1;
 }
 
+/* cpf_predict_stop(tankx, tanky, angle, speed [, terrain_cap])
+ *   -> stop_wx, stop_wy
+ * Predicts where the tank comes to rest if it begins braking THIS tick,
+ * mirroring the engine's exact decel + residual-move model (tank.c tankAccel
+ * + tankMoveUnified) so the brain can decide whether a stop here lands it in
+ * firing range of a pill:
+ *   - brake = 0.25/tick (TANK_SLOWKEY_RATE); an extra 0.25/tick
+ *     (TANK_TERRAIN_DECEL_RATE) applies WHILE speed > terrain_cap (terrain
+ *     only drags speed down to its cap, never below). Auto-slowdown is the
+ *     same 0.25 and does NOT stack with the brake key, so a brake-to-stop is
+ *     a flat 0.25 ramp on uniform terrain.
+ *   - each tick (decel first, then move): residual += floor(speed); when
+ *     residual >= TANK_MIN_MOVE_SPEED (6) advance `residual` wu along
+ *     utilGet16Dir(angle) (16-dir quantized) via utilCalcDistance, reset.
+ * residualSpeed is assumed 0 at entry (the brain can't observe it → the stop
+ * can be up to one sub-move, <6 wu, short of reality). terrain_cap defaults to
+ * 255 (no terrain term: uniform terrain at/under cap) and is treated as
+ * constant for the short stop — a mid-stop speed-boundary crossing isn't
+ * modeled. */
+static int l_cpf_predict_stop(lua_State *L) {
+  const double BRAKE_RATE   = 0.25;  /* TANK_SLOWKEY_RATE */
+  const double TERRAIN_RATE = 0.25;  /* TANK_TERRAIN_DECEL_RATE */
+  const int    MIN_MOVE     = 6;     /* TANK_MIN_MOVE_SPEED */
+
+  WORLD x  = (WORLD)luaL_checkinteger(L, 1);
+  WORLD y  = (WORLD)luaL_checkinteger(L, 2);
+  float angle  = (float)luaL_checknumber(L, 3);
+  double speed = luaL_checknumber(L, 4);
+  double cap   = luaL_optnumber(L, 5, 255.0);
+  /* min_speed (7th arg): stop the sim once speed drops to/below this instead of
+   * all the way to 0, dropping the slow sub-MIN_MOVE creep tail that the brain
+   * can't really observe anyway. 0 = full ramp to rest (original behaviour). */
+  double min_speed = luaL_optnumber(L, 7, 0.0);
+
+  /* Optional per-step trace (6th arg true): returns a 3rd value, an array of
+   * {speed, decel, dist, after, resid} sub-tables — one per simulation tick —
+   * so the brain can print exactly how the brake ramp + 16-dir residual moves
+   * played out. Off by default (existing callers pass 5 args). */
+  int want_trace = lua_toboolean(L, 6);
+  int trace_idx = 0, n = 0;
+  if (want_trace) { lua_newtable(L); trace_idx = lua_gettop(L); }
+
+  BYTE dir = utilGet16Dir((TURNTYPE)angle);
+  int residual = 0;
+  int guard = 0;
+  while (speed > min_speed && guard++ < 4096) {
+    double s_before = speed;
+    double decel = BRAKE_RATE;
+    if (speed > cap) { speed -= TERRAIN_RATE; decel += TERRAIN_RATE; } /* over-cap terrain drag */
+    speed -= BRAKE_RATE;                       /* brake key (== auto-slow) */
+    if (speed < 0.0) speed = 0.0;
+    residual += (int)speed;                    /* (BYTE)speed → floor */
+    int moved = 0;
+    if (residual >= MIN_MOVE) {
+      int dx = 0, dy = 0;
+      utilCalcDistance(&dx, &dy, (TURNTYPE)dir, residual);
+      x = (WORLD)((int)x + dx);
+      y = (WORLD)((int)y + dy);
+      moved = residual;
+      residual = 0;
+    }
+    if (want_trace) {
+      lua_newtable(L);
+      lua_pushnumber(L, s_before);  lua_setfield(L, -2, "speed");  /* speed entering this tick */
+      lua_pushnumber(L, decel);     lua_setfield(L, -2, "decel");  /* total decel applied */
+      lua_pushinteger(L, moved);    lua_setfield(L, -2, "dist");   /* wu advanced this tick (0 = sub-move held) */
+      lua_pushnumber(L, speed);     lua_setfield(L, -2, "after");  /* speed after decel */
+      lua_pushinteger(L, residual); lua_setfield(L, -2, "resid");  /* residual carried to next tick */
+      lua_pushinteger(L, (lua_Integer)x); lua_setfield(L, -2, "x"); /* tank wu pos after this tick */
+      lua_pushinteger(L, (lua_Integer)y); lua_setfield(L, -2, "y");
+      lua_rawseti(L, trace_idx, ++n);
+    }
+  }
+  lua_pushinteger(L, (lua_Integer)x);
+  lua_pushinteger(L, (lua_Integer)y);
+  if (want_trace) { lua_pushvalue(L, trace_idx); return 3; }  /* x, y, trace */
+  return 2;
+}
+
 /* cpf_simulate_shot_with_tanks(origin_wx, origin_wy, target_wx, target_wy,
  *                              shooter_type, sight_len, tanks_table, owner_player)
  *   -> { {mx=, my=, hit_type=, hit_id=}, ... }
@@ -1617,6 +1740,32 @@ static int l_cpf_lgm_travel_ticks_map(lua_State *L) {
                                                  maxTicks, stuckTicks);
   lua_pushinteger(L, result);
   return 1;
+}
+
+/* cpf_set_lgm_blocked(tiles) — tiles is an array of { mx, my } pairs (each a
+ * 2-element table). Clears the LGM-impassable overlay, then marks each tile so
+ * the LGM travel sim treats it as a wall. The bot's brain map is PURE TERRAIN
+ * (botUpdateBrainMap stamps no pills/bases), so the sim can't see them — the
+ * brain stamps both live pills and enemy bases here each tick to match the
+ * engine's mapGetManSpeed (see brain_pathfinder.c lgmGetBrainManSpeed). */
+static int l_cpf_set_lgm_blocked(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderClearLgmBlock(pf);
+  if (lua_istable(L, 1)) {
+    int n = (int)lua_rawlen(L, 1);
+    int i;
+    for (i = 1; i <= n; i++) {
+      lua_rawgeti(L, 1, i);          /* push tiles[i] */
+      if (lua_istable(L, -1)) {
+        BYTE mx, my;
+        lua_rawgeti(L, -1, 1); mx = (BYTE)luaL_checkinteger(L, -1); lua_pop(L, 1);
+        lua_rawgeti(L, -1, 2); my = (BYTE)luaL_checkinteger(L, -1); lua_pop(L, 1);
+        brainPathfinderSetLgmBlock(pf, mx, my);
+      }
+      lua_pop(L, 1);                 /* pop tiles[i] */
+    }
+  }
+  return 0;
 }
 
 static int l_cpf_estimate_tank_travel_ticks(lua_State *L) {
@@ -1813,10 +1962,12 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_estimate_cost",     l_cpf_estimate_cost },
     { "cpf_simulate_shot",        l_cpf_simulate_shot },
     { "cpf_simulate_shot_angle",  l_cpf_simulate_shot_angle },
+    { "cpf_predict_stop",         l_cpf_predict_stop },
     { "cpf_simulate_shot_with_tanks", l_cpf_simulate_shot_with_tanks },
     { "cpf_danger_at",             l_cpf_danger_at },
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
+    { "cpf_set_lgm_blocked",       l_cpf_set_lgm_blocked },
     { "cpf_estimate_tank_travel_ticks", l_cpf_estimate_tank_travel_ticks },
     { "cpf_dijkstra_shells_at",    l_cpf_dijkstra_shells_at },
     { "cpf_astar_shells_at",       l_cpf_astar_shells_at },
@@ -2086,11 +2237,13 @@ static int l_overlay_rect(lua_State *L) {
   return 0;
 }
 
-/* overlay_circle(cx, cy, radius, r, g, b [, a [, viz_idx [, subpixel]]])
+/* overlay_circle(cx, cy, radius, r, g, b [, a [, viz_idx [, subpixel [, filled]]]])
  * subpixel (optional, default false): if true the circle's center
  * uses 1/256-tile precision instead of being floored to the game-pixel
  * grid. Use for markers that pin to a sub-game-pixel position (e.g.
- * shell hit dot) where the standard 1-gp quantization is visible. */
+ * shell hit dot) where the standard 1-gp quantization is visible.
+ * filled (optional, default false): draw a filled disc instead of an
+ * outline ring. Mutually exclusive with subpixel (filled wins). */
 static int l_overlay_circle(lua_State *L) {
   OVL_GET(L);
   float cx = (float)luaL_checknumber(L, 1);
@@ -2102,9 +2255,14 @@ static int l_overlay_circle(lua_State *L) {
   int a = luaL_optinteger(L, 7, 255);
   int viz_idx  = luaL_optinteger(L, 8, OVERLAY_VIZ_IDX_NONE);
   int subpixel = lua_toboolean(L, 9);
+  int filled   = lua_toboolean(L, 10);
   overlayCmdCircle(buf, cx, cy, radius, r, g, b, a);
-  if (subpixel && buf && buf->count > 0) {
-    buf->cmds[buf->count - 1].type = OVERLAY_CMD_CIRCLE_SUBPIXEL;
+  if (buf && buf->count > 0) {
+    if (filled) {
+      buf->cmds[buf->count - 1].type = OVERLAY_CMD_CIRCLE_FILL;
+    } else if (subpixel) {
+      buf->cmds[buf->count - 1].type = OVERLAY_CMD_CIRCLE_SUBPIXEL;
+    }
   }
   overlayCmdSetLastVizIdx(buf, (uint8_t)viz_idx);
   return 0;
@@ -2166,6 +2324,34 @@ static int l_overlay_hud_text(lua_State *L) {
   return 0;
 }
 
+/* overlay_hud_rect(offset_x, offset_y, w, h, anchor, r, g, b [, a [, filled [, viz_idx]]])
+ * Same anchor scheme / pixel-offset coords as overlay_hud_text. filled != 0
+ * draws a solid fill (background), else a 1px outline (border). */
+static int l_overlay_hud_rect(lua_State *L) {
+  OVL_GET(L);
+  float x = (float)luaL_checknumber(L, 1);
+  float y = (float)luaL_checknumber(L, 2);
+  float w = (float)luaL_checknumber(L, 3);
+  float h = (float)luaL_checknumber(L, 4);
+  const char *anchorStr = luaL_optstring(L, 5, "topleft");
+  int r = luaL_optinteger(L, 6, 255);
+  int g = luaL_optinteger(L, 7, 255);
+  int b = luaL_optinteger(L, 8, 255);
+  int a = luaL_optinteger(L, 9, 255);
+  int filled  = luaL_optinteger(L, 10, 0);
+  int viz_idx = luaL_optinteger(L, 11, OVERLAY_VIZ_IDX_NONE);
+
+  uint8_t anchor = OVERLAY_ANCHOR_TOPLEFT;
+  if (strcmp(anchorStr, "topright") == 0)         anchor = OVERLAY_ANCHOR_TOPRIGHT;
+  else if (strcmp(anchorStr, "bottomleft") == 0)  anchor = OVERLAY_ANCHOR_BOTTOMLEFT;
+  else if (strcmp(anchorStr, "bottomright") == 0) anchor = OVERLAY_ANCHOR_BOTTOMRIGHT;
+  else if (strcmp(anchorStr, "center") == 0)      anchor = OVERLAY_ANCHOR_CENTER;
+
+  overlayCmdHudRect(buf, x, y, w, h, anchor, r, g, b, a, filled);
+  overlayCmdSetLastVizIdx(buf, (uint8_t)viz_idx);
+  return 0;
+}
+
 /* UNUSED ON THIS BRANCH — kept in lockstep with the BrainTest source
  * line so future merges don't conflict. Registers overlay_* Lua
  * globals (debug-shape drawing) backed by a per-brain OverlayCmdBuffer.
@@ -2181,6 +2367,7 @@ void brainCoreRegisterOverlay(lua_State *L, OverlayCmdBuffer **bufPtr) {
     { "overlay_circle",   l_overlay_circle },
     { "overlay_text",     l_overlay_text },
     { "overlay_hud_text", l_overlay_hud_text },
+    { "overlay_hud_rect", l_overlay_hud_rect },
     { NULL, NULL }
   };
   int i;

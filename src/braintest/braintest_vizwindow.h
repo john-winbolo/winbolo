@@ -36,6 +36,14 @@ void vizWindowRender(SDL_Renderer *renderer, int winW, int winH,
  * Main loop uses this to suppress global hotkeys (V/L/T/...). */
 bool vizWindowWantsTextInput(void);
 
+/* Drop keyboard focus from the V window's text inputs (call when hiding it,
+ * so an active filter/label field doesn't keep capturing input / re-focus). */
+void vizWindowClearFocus(void);
+
+/* Replay-collection mode radio (0=on/followed, 1=all/viewed, 2=all/all-tanks).
+ * pushVizStateToBots reads this to set each bot's _BT_VIZ_COLLECT override. */
+int vizWindowCollectMode(void);
+
 #ifdef __cplusplus
 }
 #endif

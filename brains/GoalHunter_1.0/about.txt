@@ -1,0 +1,2 @@
+Easy. Captures pillboxes and bases, coordinates with allied bots, and plays in a steady, predictable way.
+This bot captures enemy pillboxes and bases, defends its own, and shares its plans with allied bots so they avoid chasing the same target, though it plays cautiously and steers clear of big risks. Its steady, easy-to-read behaviour makes it a gentler challenge. Best for newer players, or anyone who wants a more relaxed game.

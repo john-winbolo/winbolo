@@ -387,6 +387,12 @@ void botManagerDeliverInternalMessage(struct ServerSim *sim,
                                       BYTE fromPlayer,
                                       const char *msg);
 
+/* Bot-comms debug logger. Appends to "botmsg_debug.log" in the CWD, but ONLY
+ * when bot debug mode is on (set via -braindebug / SetDefaultDebugMode) — a
+ * no-op otherwise. Used to audit the internal message bus on a dedicated server
+ * where SDL_Log output isn't visible. */
+void botMsgDebugLog(const char *fmt, ...);
+
 /*********************************************************
  *NAME:          botManagerRemoveBot
  *PURPOSE:
@@ -484,6 +490,23 @@ double botManagerGetLastThinkMs(const struct ServerSim *sim, BYTE playerNum);
  *********************************************************/
 double botManagerComputePerBotTargetMs(const struct ServerSim *sim,
                                        int activeBots);
+
+/*********************************************************
+ *NAME:          botManagerFlushBrainLogs
+ *PURPOSE:
+ *  Invokes each active bot brain's _G.__brain_flush_logs()
+ *  Lua hook, which drains the batched print2 log to disk
+ *  immediately. Intended for the host to call when the sim
+ *  is paused so the on-screen tick's log is readable.
+ *
+ *  Producer-thread only, and only safe to call between
+ *  ticks (no brain.think() in flight) — it enters each
+ *  bot's lua_State directly.
+ *
+ *ARGUMENTS:
+ *  sim - The ServerSim whose bots to flush
+ *********************************************************/
+void botManagerFlushBrainLogs(struct ServerSim *sim);
 
 /*********************************************************
  *NAME:          botManagerRecordSerialMs

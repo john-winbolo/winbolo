@@ -1372,6 +1372,8 @@
 #define STR_DLGLOBBY_BOTCFG_DEFENSIVE       1342
 #define STR_DLGLOBBY_BOTCFG_SNIPER          1343
 #define STR_DLGLOBBY_BOTCFG_DONE            1344
+/* Gear-hover tooltip: "Currently: <brain code name>" ({string1} = name). */
+#define STR_DLGLOBBY_BOTCFG_CURRENTLY       1847
 
 /* Lobby — Balance/Reject/Lock/RankedShape */
 /* Balance from WBN */

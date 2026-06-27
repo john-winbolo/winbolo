@@ -50,15 +50,15 @@ BgGame *bgGameGetShared(void) { return sharedBg; }
 #define BG_MAX_BOTS 16
 
 /* Brain script path */
-#define BG_BRAIN_PATH "Brains/GoalHunter/init.lua"
+#define BG_BRAIN_PATH "Brains/GoalHunter_1.5/init.lua"
 
 /* Find the brain script — try several paths.
  * Uses SDL_IOFromFile so it works with Android APK assets. */
 static bool findBrainPath(char *out, size_t outLen) {
     const char *candidates[] = {
-        "Brains/GoalHunter/init.lua",
-        "brains/GoalHunter/init.lua",
-        "data/Brains/GoalHunter/init.lua",
+        "Brains/GoalHunter_1.5/init.lua",
+        "brains/GoalHunter_1.5/init.lua",
+        "data/Brains/GoalHunter_1.5/init.lua",
     };
     for (int i = 0; i < (int)(sizeof(candidates)/sizeof(candidates[0])); i++) {
         SDL_IOStream *io = SDL_IOFromFile(candidates[i], "r");
