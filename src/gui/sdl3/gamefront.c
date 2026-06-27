@@ -135,9 +135,9 @@ extern void sdl3MessageHandler(const char *message, const char *title);
 /* Find the brain script — try several paths */
 static bool findBrainPath(char *out, size_t outLen) {
     const char *candidates[] = {
-        "Brains/GoalHunter/init.lua",
-        "brains/GoalHunter/init.lua",
-        "data/Brains/GoalHunter/init.lua",
+        "Brains/GoalHunter_1.5/init.lua",
+        "brains/GoalHunter_1.5/init.lua",
+        "data/Brains/GoalHunter_1.5/init.lua",
     };
     for (int i = 0; i < 3; i++) {
         FILE *f = fopen(candidates[i], "r");
@@ -148,6 +148,30 @@ static bool findBrainPath(char *out, size_t outLen) {
         }
     }
     return false;
+}
+
+/* Single-player default-bot skill guess. Returns the brain dir name for an
+ * auto-seeded SP bot: the harder "GoalHunter_1.5" only when the player is
+ * signed in to WinBolo.net with more than 5 games on record; otherwise the
+ * gentler "GoalHunter_1.0" (the default for everyone not signed in). */
+static const char *gameFrontGuessSpBotBrain(void) {
+    /* Gospel: if the player has ever explicitly picked a brain from the lobby
+     * wrench dropdown, honour that from then on, ignoring the skill guess. */
+    static char chosen[64];
+    gameFrontGetChosenBotBrain(chosen, sizeof(chosen));
+    if (chosen[0] != '\0') return chosen;
+
+    WbnStats st;
+    gameFrontGetWinbolonetStats(&st);
+    if (st.valid) {
+        int games = 0;
+        const WbnModeStats *modes[3] = { &st.open, &st.tourn, &st.strict };
+        for (int i = 0; i < 3; i++) {
+            if (modes[i]->numGames > 0) games += modes[i]->numGames;
+        }
+        if (games > 5) return "GoalHunter_1.5";
+    }
+    return "GoalHunter_1.0";
 }
 
 /* -------------------------------------------------------
@@ -1547,10 +1571,42 @@ bool gameFrontSetDlgState(openingStates newState) {
                 BYTE slot = (BYTE)(bi + 1);
                 char botName[32];
                 snprintf(botName, sizeof(botName), "Bot %d", slot);
-                /* Use per-bot brain path if set, otherwise fall back to default */
+                /* Use per-bot brain path if set; otherwise pick the default by
+                 * a single-player skill guess (WinBolo.net signed-in with more
+                 * than 5 games → the harder 1.5, else the gentler 1.0). */
                 const char *botBrain = gameFrontBotSetupData.bots[bi].brainPath;
-                if (botBrain[0] == '\0') botBrain = spBrainPath;
+                if (botBrain[0] == '\0') {
+                  botBrain = spBrainPath;  /* fallback if the guess isn't in the catalogue */
+                  const char *guess = gameFrontGuessSpBotBrain();
+                  const BrainList *gbl = serverSimGetBrainList(spServerSim);
+                  if (gbl) {
+                    for (int k = 0; k < gbl->count; k++) {
+                      if (SDL_strcasecmp(gbl->entries[k].name, guess) == 0) {
+                        const char *gp = serverSimGetBrainPathForIdx(spServerSim, (uint8_t)k);
+                        if (gp) botBrain = gp;
+                        break;
+                      }
+                    }
+                  }
+                }
                 serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy, spGameType, hiddenMines);
+                /* serverSimCreateBot loads the brain from the path but leaves
+                 * the lobby brain-INDEX at the 0xFF "default" sentinel, so the
+                 * lobby Bot Code dropdown renders "(none)". Resolve the index
+                 * from the path (case-insensitive exact match, else the
+                 * version-suffixed dir name as a substring) so the dropdown
+                 * shows the actual brain — GoalHunter_1.5 by default. */
+                const BrainList *spbl = serverSimGetBrainList(spServerSim);
+                if (spbl) {
+                  for (int k = 0; k < spbl->count; k++) {
+                    const char *kp = serverSimGetBrainPathForIdx(spServerSim, (uint8_t)k);
+                    if ((kp && SDL_strcasecmp(kp, botBrain) == 0) ||
+                        strstr(botBrain, spbl->entries[k].name) != NULL) {
+                      serverSimSetBotBrainIdxFor(spServerSim, slot, (uint8_t)k);
+                      break;
+                    }
+                  }
+                }
                 /* Apply team number */
                 uint8_t team = gameFrontBotSetupData.bots[bi].teamNumber;
                 if (team > 0) {
@@ -2164,6 +2220,19 @@ bool gameFrontOnboardingComplete(void) {
 
 void gameFrontSetOnboardingComplete(void) {
   prefsSetString("SETTINGS", "Onboarding Complete", "Yes");
+}
+
+/* The bot brain the player last explicitly chose from the lobby wrench
+ * dropdown. This is the player's own difficulty preference and overrides the
+ * automatic single-player skill guess from then on. Empty until first chosen
+ * (the default on a fresh install). */
+void gameFrontSetChosenBotBrain(const char *name) {
+  prefsSetString("BOT", "Chosen Brain", name ? name : "");
+}
+
+void gameFrontGetChosenBotBrain(char *out, size_t outLen) {
+  if (!out || outLen == 0) return;
+  prefsGetString("BOT", "Chosen Brain", "", out, (int)outLen);
 }
 
 

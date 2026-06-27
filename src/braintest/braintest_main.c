@@ -2028,7 +2028,7 @@ static void signalHandler(int sig) {
 /* Command-line parsing                                                */
 /* ------------------------------------------------------------------ */
 
-static char optBrain[512] = "brains/GoalHunter";
+static char optBrain[512] = "brains/GoalHunter_1.5";
 static char optMap[512]   = "";
 static char optLoadSession[1024] = "";  /* -loadsession <dir>: replay a brainrec.btr */
 static int  optNumPlayers = 1;
