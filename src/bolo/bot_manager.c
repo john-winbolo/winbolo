@@ -163,13 +163,8 @@ static void applyPendingThreadResize(ServerSim *sim) {
  * how long it takes — the producer's post-tick overrun telemetry
  * (overrunCount, rate-limited slow-tick warning) still fires, so
  * operators still see overruns, just without the truncation. */
-/* ===== TEMPORARY (debug): budget kill DISABLED =====
- * Set to 0 so brain.think() runs to completion no matter how long a tick
- * takes — lets us sit in plan_position and watch overlays without bots being
- * killed on overruns. The sim just runs slower on heavy ticks; overrun
- * telemetry still fires. RESTORE TO 1 when done debugging. */
 #ifndef BRAIN_BUDGET_ENFORCE
-#define BRAIN_BUDGET_ENFORCE 0
+#define BRAIN_BUDGET_ENFORCE 1
 #endif
 
 /* EWMA smoothing factor — ~10-tick (200 ms) window. */
@@ -241,6 +236,10 @@ static bool botReadSessionDir(lua_State *L, char *out, size_t outsz) {
  * running overrun count, and the tick. Opened in append mode and closed
  * each call so the file is complete even if the run is interrupted. */
 static void botLogKill(ServerSim *sim, int botIndex) {
+    /* Off by default; armed only under -braindebug (same gate as botmsg_debug.log
+     * / brainRecord). Production pays nothing and writes no killbot.log. */
+    if (!sim->botMgr.defaultDebugMode) return;
+
     BotContext *bot = &sim->botMgr.bots[botIndex];
 
     char session_dir[512];
