@@ -684,8 +684,12 @@ const char *bolo_client_type_name(uint8_t type) {
   }
 }
 
+/* Supporter DLC AppID on Steam (the base game is 4672140). A licence check
+ * (BIsSubscribedApp) rather than an install check, since the DLC ships no
+ * depot content — owners would otherwise read as "not installed". */
+#define SUPPORTER_DLC_APPID 4708600u
+
 bool bolo_steam_has_supporter_dlc(void) {
-  /* TODO: SteamApps()->BIsDlcInstalled(SUPPORTER_DLC_APPID) once DLC exists */
-  return false;
+  return steam_owns_dlc(SUPPORTER_DLC_APPID);
 }
 
