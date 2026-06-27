@@ -4900,9 +4900,15 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 /* Gear visibility: always shown for bots when this
                  * client has lobby-edit authority (host / openHost /
                  * admin). Hidden entirely for non-permitted clients
-                 * so they don't see a non-functional control. */
-                if (isBot && effectiveHost && !uiShouldUseControllerMode()) {
-                    if (s_iconSettings) {
+                 * so they don't see a non-functional control.
+                 * Controller mode renders the visible ">"/"v" toggle
+                 * (the SmallButton path below) instead of the invisible
+                 * icon button, so it's reachable by gamepad nav and shows
+                 * a focus ring — A expands the AiConfig sub-row, whose
+                 * widgets (name, Bot Code combo, difficulty) are then
+                 * navigable like any other dialog control. */
+                if (isBot && effectiveHost) {
+                    if (s_iconSettings && !uiShouldUseControllerMode()) {
                         float iconSize = ImGui::GetFontSize();
                         cyAbs(iconSize);
                         /* settings.svg renders 5px above / 2px below
