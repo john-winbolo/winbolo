@@ -672,9 +672,10 @@ void brc_write_crash_log(lua_State *L,
   char session_dir[512];
   bool has_session = brc_read_session_dir(L, session_dir, sizeof(session_dir));
 
-  /* Crash files are now written in BOTH debug and production hosts (WinBolo /
-   * WinBoloDS) so a brain crash always leaves a findable log next to the exe.
-   * The rate-limit (suppress_file) is the only thing that gates the write. */
+  /* File writes are gated to debug hosts (BRAIN_DEBUG_MODE, set by -braindebug);
+   * production WinBolo / WinBoloDS write NO crash files to disk. The stderr
+   * surface below still fires so a production crash is never silent. */
+  bool debug_mode = brc_debug_mode(L);
 
   /* Rate-limit: if this brain crashed within the last
    * BRC_CRASH_RATE_LIMIT_SECS, skip the file write so a perpetually-
@@ -698,11 +699,10 @@ void brc_write_crash_log(lua_State *L,
                  prefix, ts_utc, pid, (void *)lptr);
   }
 
-  /* Write the crash file even in PRODUCTION (BRAIN_DEBUG_MODE off) so a brain
-   * crash in a real WinBolo game leaves a findable log next to the exe (in the
-   * CWD when there's no debug session dir). Still honors the rate-limit so a
-   * chronically-crashing brain can't fill the disk. */
-  FILE *f = suppress_file ? NULL : fopen(path, "wb");
+  /* Per-crash file: debug hosts only, and rate-limited so a chronically-
+   * crashing brain can't fill the disk. Production (debug off) writes nothing;
+   * the stderr surface below still fires. */
+  FILE *f = (suppress_file || !debug_mode) ? NULL : fopen(path, "wb");
   if (f) {
     fprintf(f, "===== BRAIN CRASH =====\n");
     fprintf(f, "[BRAIN_CRASH] method=brain.%s\n", method);
@@ -721,14 +721,13 @@ void brc_write_crash_log(lua_State *L,
     fclose(f);
   }
 
-  /* Combined append-only crash log: EVERY Lua crash gets its full traceback
-   * appended here, regardless of the per-crash-file rate-limit above, so a
-   * single file is a complete chronological record of all crashes across the
-   * run (what you want on a dedicated server — no BRAIN_DEBUG_MODE required).
-   * One growing file rather than 1500 separate files, and bounded in practice
-   * by bot_manager kicking a brain that crashes every tick. Same prefix as the
-   * per-crash files (session dir if set, else CWD). */
-  {
+  /* Combined append-only crash log: EVERY Lua crash's full traceback appended
+   * here (ignoring the per-crash-file rate-limit) so one file is the complete
+   * chronological record of a run. Debug hosts only (-braindebug); one growing
+   * file rather than 1500 separate ones, bounded in practice by bot_manager
+   * kicking a brain that crashes every tick. Same prefix as the per-crash files
+   * (session dir if set, else CWD). */
+  if (debug_mode) {
     char all_path[1024];
     SDL_snprintf(all_path, sizeof(all_path), "%s/brain_crashes.log", prefix);
     FILE *af = fopen(all_path, "ab");
@@ -769,7 +768,7 @@ void brc_write_crash_log(lua_State *L,
    * applicable) for tail-watchers; back-points at the full crash file.
    * Skipped on rate-limit so the index doesn't grow without bound, and
    * skipped entirely in production (BRAIN_DEBUG_MODE off). */
-  if (!suppress_file) {
+  if (!suppress_file && debug_mode) {
     char idx_path[1024];
     SDL_snprintf(idx_path, sizeof(idx_path), "%s/brain_error.log", prefix);
     FILE *idx = fopen(idx_path, "a");
