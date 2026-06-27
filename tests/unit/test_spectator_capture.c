@@ -69,7 +69,7 @@ int run_spectator_capture(void) {
      * already opened by the spectator-start helper). */
     remove(fname);
     logCreate();
-    UT_ASSERT_MSG(logStart(fname, h.sim, 0, MAX_TANKS, FALSE) == TRUE,
+    UT_ASSERT_MSG(logStart((char *)fname, h.sim, 0, MAX_TANKS, FALSE) == TRUE,
                   "logStart failed");
     serverInstanceCreateSpectatorRing(h.sim);
     ring = serverInstanceGetSpectatorRing();
