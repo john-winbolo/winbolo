@@ -1137,6 +1137,42 @@ void lv_screenProcessLog(unsigned short numEvents) {
       lv_messageAdd(networkStatus, MESSAGE_NETSERVER,
                     opt2 ? STR_LV_VOTE_PASSED : STR_LV_VOTE_FAILED, NULL);
       break;
+    case log_SpectatorJoined:
+      logReadBytes(&opt1, 1);  /* spectator slot */
+      logReadBytes(&opt2, 1);  /* country[0] */
+      logReadBytes(&opt3, 1);  /* country[1] */
+      logReadBytes(&opt4, 1);  /* wbnFlags (not displayed) */
+      logReadBytes(&opt5, 1);  /* reserved */
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
+      lv_utilPtoCString(mem, name);
+      /* Prefix the 2-char country only when it is present and not the "XX"
+         unknown sentinel. */
+      if (opt2 != 0 && opt3 != 0 && !(opt2 == 'X' && opt3 == 'X')) {
+        snprintf(str, sizeof(str), "[%c%c] %s joined as spectator", opt2, opt3, name);
+      } else {
+        snprintf(str, sizeof(str), "%s joined as spectator", name);
+      }
+      lv_windowAddEvent(0, str);
+      break;
+    case log_SpectatorLeft:
+      logReadBytes(&opt1, 1);  /* spectator slot */
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)mem+1, (unsigned char)mem[0]);
+      lv_utilPtoCString(mem, name);
+      snprintf(str, sizeof(str), "%s left spectating", name);
+      lv_windowAddEvent(0, str);
+      break;
+    case log_SpectatorChat:
+      /* No emitter yet (format-reserved for Phase 6); decode so the cursor
+         stays aligned and the line is ready when chat ships. */
+      logReadBytes(&opt1, 1);  /* sender spectator slot */
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      lv_utilPtoCString(mem, str);  /* copies the message out of mem */
+      snprintf(mem, sizeof(mem), "[spectator] %d: %s", opt1, str);
+      lv_windowAddEvent(0, mem);
+      break;
     default:
       if (isV2) {
         /* Unknown future event type: skip its framed payload and keep
