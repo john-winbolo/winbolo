@@ -75,9 +75,11 @@ struct GameSim;
 
 #define TANK_DEATH_WAIT 255
 
-/* Hit-circle radius in WORLD units. 128 = MAP_SQUARE_MIDDLE, so the
- * tank's hit zone is a circle one map square (one tile) in diameter
- * centered on the tank's world position. Was previously coded as the
+/* Hit-circle radius in WORLD units. A map square (tile) is 256 wu, so its
+ * mid-radius (MAP_SQUARE_MIDDLE) is 128 — a one-tile-diameter circle. The hit
+ * zone is set ONE GAME UNIT tighter than that: 1 gu = 16 wu (one original-Bolo
+ * pixel), so 128 − 16 = 112 wu, shrinking the tank's shell-hit zone slightly.
+ * Was previously coded as the
  * AABB `abs(dx) < 128 && abs(dy) < 128` — that's the BOUNDING SQUARE
  * of this circle (256×256), so a shell grazing one of the square's
  * corners counted as a hit even though the tank doesn't physically
@@ -87,7 +89,9 @@ struct GameSim;
  * (×2 each), util.c's utilIsTankHit (used by the pillbox AI's
  * shell-prediction), and client_sim.c's predicted-shell tank-hit
  * sweep. Stay in sync. */
-#define TANK_HIT_RADIUS         128
+/* TANK_HIT_RADIUS itself now lives in public/global.h so renderers share the
+ * one value (see the note there); the squared form for the distance test stays
+ * here, next to the collision sites that use it. */
 #define TANK_HIT_RADIUS_SQUARED (TANK_HIT_RADIUS * TANK_HIT_RADIUS)
 
 /*

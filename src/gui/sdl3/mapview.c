@@ -300,14 +300,17 @@ void mapViewDrawTanks(MapViewCtx *ctx, screenTanks *tks,
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &srcR, &dstR);
       /* TEMP (hit-circle playtest): draw the tank shell-hit zone over each
        * tank. mode 1 = square AABB (legacy + original Bolo, ±128 WU = one
-       * tile), mode 2 = inscribed circle (radius 128 WU). Toggle with B. */
+       * tile), mode 2 = the real sim hit-circle (radius TANK_HIT_RADIUS WU,
+       * from global.h — so the overlay tracks the collision). Toggle with B. */
       if (g_hitboxOverlayMode != 0) {
         SDL_SetRenderDrawColor(ctx->renderer, 255, 0, 0, 255);
         if (g_hitboxOverlayMode == 1) {
           SDL_RenderRect(ctx->renderer, &dstR);
         } else {
           float cx = dstR.x + dstR.w * 0.5f, cy = dstR.y + dstR.h * 0.5f;
-          float r  = dstR.w * 0.5f;
+          /* dstR spans one tile (256 wu) on screen, so scale the real hit
+           * radius into screen units instead of assuming the full half-tile. */
+          float r  = dstR.w * (float)TANK_HIT_RADIUS / 256.0f;
           SDL_FPoint pts[41];
           for (int i = 0; i <= 40; i++) {
             float a = (float)i * (6.2831853f / 40.0f);

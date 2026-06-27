@@ -248,6 +248,14 @@ void efree(Generic object);
 #define TANK_SHIFT_RIGHT2    4   /* pixel<<4 = sub-square world units */
 #define TANK_SHIFT_PIXELSIZE 12  /* world>>12 = pixel position */
 
+/* Tank shell-hit-circle radius in WORLD units. Public (lifted from
+ * internal/tank.h) so external renderers — mapview's hit-zone overlay,
+ * braintest — draw the SAME circle the sim collides with, with no second
+ * hardcoded copy to drift. internal/tank.h builds TANK_HIT_RADIUS_SQUARED on
+ * it. A map square is 256 wu; 16 wu = 1 game unit (one original-Bolo pixel),
+ * so 112 = the one-tile mid-radius (128) minus one game unit. */
+#define TANK_HIT_RADIUS  112
+
 /* Sprite-frame offset for shell explosions. Used by external
  * map renderers to compute the exploding-shell frame from a
  * shell's direction. */
