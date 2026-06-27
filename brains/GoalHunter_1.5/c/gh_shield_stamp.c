@@ -365,9 +365,14 @@ static int l_load(lua_State *L) {
      * WSL DrvFs) "Brains/..." and "brains/..." refer to the same file, and
      * we want to accept the second caller rather than hard-erroring. */
     if (SDL_strcasecmp(path, s_loaded_path) != 0) {
-        return luaL_error(L,
-            "gh_shield_stamp.load: already loaded with a different path '%s'; got '%s'",
-            s_loaded_path, path);
+        /* Already loaded from a different brain directory — e.g. GoalHunter_1.0
+         * and GoalHunter_1.5 bots in the same process. The stamp cache is
+         * identical geometry data shared by every GoalHunter version (same
+         * shield_stamp_cache.bin), so reuse the already-loaded table for this
+         * caller instead of hard-erroring. This is what lets one game mix
+         * GoalHunter versions without crashing at brain.open. */
+        SDL_Log("gh_shield_stamp.load: reusing stamps from '%s' for '%s'",
+                s_loaded_path, path);
     }
 
     /* The pill_hit Lua table is per-lua_State (it lives on this state's
