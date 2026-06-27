@@ -70,6 +70,38 @@ struct GameSim;
 
 #define TANK_DEATH_WAIT 255
 
+/* Tank collision/hit-zone model.
+ *
+ * By default the tank is treated as a CIRCLE for both the shell hit-zone
+ * and tank<->building collision:
+ *   - Shell hit-zone: a shell counts as a hit when its centre is within
+ *     TANK_HIT_RADIUS of the tank centre (a true distance test).
+ *   - Building collision: the tank is resolved as a circle of radius
+ *     TANK_HIT_RADIUS against the 256-WU solid tiles (circle-vs-AABB
+ *     push-out + tangential wall slide).
+ *
+ * Define BOLO_LEGACY_SQUARE_COLLISION (compile time only — there is no
+ * runtime toggle) to revert BOTH to the original Bolo behaviour: the
+ * square `abs(dx) < 128 && abs(dy) < 128` hit-zone and the legacy
+ * direction-dependent bounding-box grid-snap building nudge. */
+/* #define BOLO_LEGACY_SQUARE_COLLISION */
+
+/* Hit-circle radius in WORLD units. The map-square mid-radius
+ * (MAP_SQUARE_MIDDLE) is 128 — a one-tile-diameter circle. This is set one
+ * game unit tighter (1 gu = 16 wu, one original-Bolo pixel): 128 − 16 = 112,
+ * shrinking the tank's hit zone slightly. The legacy square check used the
+ * BOUNDING SQUARE of
+ * this circle (256x256), so a shell grazing a corner counted as a hit even
+ * though the tank doesn't physically occupy those corners; the circle rejects
+ * those corner cases.
+ *
+ * Used by tank.c (tankIsTankHit / tankIsTankHitAtPosition and the circle
+ * building resolver), util.c (utilIsTankHit, used by pillbox AI shell
+ * prediction) and client_sim.c (predicted-shell visual-block sweep). Keep
+ * these in sync. */
+#define TANK_HIT_RADIUS         112   /* one-tile mid-radius (128) − 16 wu (1 game unit) */
+#define TANK_HIT_RADIUS_SQUARED (TANK_HIT_RADIUS * TANK_HIT_RADIUS)
+
 /*
 Wharf-Rat explains Acceleration
 

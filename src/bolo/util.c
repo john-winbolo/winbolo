@@ -208,14 +208,24 @@ BYTE utilGet16Dir(TURNTYPE value) {
 *  angle     - The direction the shell came from
 *********************************************************/
 bool utilIsTankHit(WORLD xTank, WORLD yTank, TURNTYPE tankAngle, WORLD x, WORLD y, TURNTYPE angle) {
-  bool returnValue; /* Value to return */
-
-  returnValue = FALSE;
-  if (abs(xTank - x) < 128 && abs(yTank - y) < 128) {
-    returnValue = TRUE;
+  /* Hit-zone test — circle by default (see TANK_HIT_RADIUS in
+   * internal/tank.h). The angle args are part of the legacy signature for a
+   * future per-facing check that isn't wired up yet. */
+  (void)tankAngle;
+  (void)angle;
+#ifdef BOLO_LEGACY_SQUARE_COLLISION
+  return (abs(xTank - x) < 128 && abs(yTank - y) < 128);
+#else
+  {
+    int dx = (int)xTank - (int)x;
+    int dy = (int)yTank - (int)y;
+    /* Bounding-box pre-test bounds dx/dy before squaring; see tankIsTankHit.
+     * Never rejects a real hit, prevents int overflow for far-apart pairs
+     * (pillbox aim prediction steps a shell from far away toward the tank). */
+    return (abs(dx) < TANK_HIT_RADIUS && abs(dy) < TANK_HIT_RADIUS &&
+            (dx * dx + dy * dy) < TANK_HIT_RADIUS_SQUARED);
   }
-
-  return returnValue;
+#endif
 }
 
 /*********************************************************

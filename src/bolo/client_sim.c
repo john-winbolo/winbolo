@@ -784,9 +784,21 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
     if (p == cs->interpCtx.localPlayer) continue;
     if (!interpIsAlive(&cs->interpCtx, p)) continue;
     if (interpGetPosition(&cs->interpCtx, p, 1.0f, &tkX, &tkY, &tkAngle, &tkOnBoat)) {
+      /* Match the authoritative shell hit-zone (circle by default; square
+       * under BOLO_LEGACY_SQUARE_COLLISION). See TANK_HIT_RADIUS. */
+#ifdef BOLO_LEGACY_SQUARE_COLLISION
       if (abs((int)newX - (int)tkX) < 128 && abs((int)newY - (int)tkY) < 128) {
         return true;
       }
+#else
+      int dx = (int)newX - (int)tkX, dy = (int)newY - (int)tkY;
+      /* Bounding-box pre-test bounds dx/dy before squaring; see tankIsTankHit
+       * in tank.c. Never rejects a real hit, prevents int overflow. */
+      if (abs(dx) < TANK_HIT_RADIUS && abs(dy) < TANK_HIT_RADIUS &&
+          dx * dx + dy * dy < TANK_HIT_RADIUS_SQUARED) {
+        return true;
+      }
+#endif
     }
   }
   return false;
