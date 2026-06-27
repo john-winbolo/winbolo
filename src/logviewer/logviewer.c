@@ -1405,6 +1405,19 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
             if (lv_specSeedLoad(infoPtr, seed, seedLen)) {
                 g_lv->isLoaded = TRUE;
                 lv_imgui_events_clear();
+                /* Resolve lobby-chat sender names for players who hold no tank
+                   (and so never appear in the world snapshot): inject the names
+                   the seed's lobby-slot roster carried into the viewer roster.
+                   sgi was zeroed by specSeedDecodeInfo, so absent slots are
+                   simply skipped. */
+                {
+                    BYTE i;
+                    for (i = 0; i < MAX_TANKS; i++) {
+                        if (sgi.lobbyPresent[i]) {
+                            lv_playersSetPlayerName(i, sgi.lobbyName[i]);
+                        }
+                    }
+                }
             }
             free(seed);
         }
@@ -1608,6 +1621,24 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
                     /* A failed re-seed left no decoder; exit to a clean teardown
                        rather than render against a torn-down buffer. */
                     g_lv->isLoaded = FALSE;
+                } else {
+                    /* Match the initial-seed path: drop the previous segment's
+                       cached overview tiles and stale event feed so a lobby map
+                       change fully redraws to the new map instead of lingering
+                       on the old one. */
+                    lv_drawDirtyScreen();
+                    g_lv->wantScreenUpdate = TRUE;
+                    lv_imgui_events_clear();
+                    /* Refresh lobby-chat sender names from the new segment's
+                       roster (same injection as the initial seed). */
+                    {
+                        BYTE i;
+                        for (i = 0; i < MAX_TANKS; i++) {
+                            if (sgi.lobbyPresent[i]) {
+                                lv_playersSetPlayerName(i, sgi.lobbyName[i]);
+                            }
+                        }
+                    }
                 }
             } else {
                 lv_specRecordPump(rec.isKeyframe, rec.payload, rec.payloadLen);

@@ -502,6 +502,18 @@ void lv_playersMakeScreenTanks(screenTanks *value, BYTE leftPos, BYTE rightPos, 
   
   for (count=0;count<MAX_TANKS;count++) {
     if (plrs.item[count].inUse == TRUE) {
+      /* Never draw a tank that sits at the (0,0) map/pixel origin: that is the
+         deep-sea corner where no real on-map tank can be (a positioned tank
+         always carries non-zero coords from log_PlayerLocation / the snapshot).
+         An in-use slot left at all-zero coords is a tankless/unpositioned entry
+         — e.g. a lobby-only player injected for chat-name resolution, or a
+         momentary post-join/pre-location slot — and must not render (the
+         coordinate conversion below would otherwise place it at the (255,255)
+         corner). Mirrors the (0,0) sentinel the LGM path already uses. */
+      if (plrs.item[count].mapX == 0 && plrs.item[count].mapY == 0 &&
+          plrs.item[count].pixelX == 0 && plrs.item[count].pixelY == 0) {
+        continue;
+      }
       playerName[0] = '\0';
       /* Extract fixed map co-ordinates */
 

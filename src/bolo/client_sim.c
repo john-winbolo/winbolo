@@ -2182,7 +2182,9 @@ bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) 
   const BYTE *ctrl = NULL;
   int ctrlLen = 0;
   int keyframeLen;
-  ControlDecodeBodyFn dec;
+  ControlDecodeBodyFn decSettings;
+  ControlDecodeBodyFn decSlot;
+  bool haveSettings = false;
   int pos;
   bool found = false;
 
@@ -2202,20 +2204,25 @@ bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) 
     return false;
   }
 
-  /* Walk the snapshot's [u16 BE type][u16 BE bodyLen][body] records for the
-   * lobby-settings event (the same event a normal joiner receives, embedded in
-   * the sync-replay slice serverSimSerializeControlSnapshot wrote). */
-  dec = transportControlCodecBodyDecoder(CTRL_LOBBY_SETTINGS);
+  /* Walk the snapshot's [u16 BE type][u16 BE bodyLen][body] records (the same
+   * events a normal joiner receives, embedded in the sync-replay slice
+   * serverSimSerializeControlSnapshot wrote). Two events are wanted: the
+   * lobby-settings event (map/settings the synthesized header needs) and the
+   * lobby-slot events (one per connected player — the roster a spectator host
+   * uses to name lobby-chat senders who hold no tank). All records are walked
+   * so the slot events, which follow the settings event, are not missed. */
+  decSettings = transportControlCodecBodyDecoder(CTRL_LOBBY_SETTINGS);
+  decSlot     = transportControlCodecBodyDecoder(CTRL_LOBBY_SLOT);
   pos = 0;
   while (pos + 4 <= ctrlLen) {
     uint16_t type    = (uint16_t)(((uint16_t)ctrl[pos] << 8) | ctrl[pos + 1]);
     uint16_t bodyLen = (uint16_t)(((uint16_t)ctrl[pos + 2] << 8) | ctrl[pos + 3]);
     pos += 4;
     if ((size_t)pos + bodyLen > (size_t)ctrlLen) break;
-    if (type == CTRL_LOBBY_SETTINGS) {
+    if (type == CTRL_LOBBY_SETTINGS && !haveSettings) {
       ControlEvent evt;
       memset(&evt, 0, sizeof(evt));
-      if (dec != NULL && dec(ctrl + pos, bodyLen, &evt)) {
+      if (decSettings != NULL && decSettings(ctrl + pos, bodyLen, &evt)) {
         /* Bound the copy by the source field (<= MAP_STR_SIZE) as well as the
          * destination, so an unterminated wire name can't over-read. */
         size_t nameCap = sizeof(evt.u.lobbySettings.mapName);
@@ -2228,7 +2235,22 @@ bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) 
         out->haveInfo         = true;
         found = true;
       }
-      break;   /* one lobby-settings event per snapshot */
+      haveSettings = true;   /* one lobby-settings event per snapshot */
+    } else if (type == CTRL_LOBBY_SLOT) {
+      ControlEvent evt;
+      memset(&evt, 0, sizeof(evt));
+      if (decSlot != NULL && decSlot(ctrl + pos, bodyLen, &evt)) {
+        BYTE pn = evt.u.lobbySlot.playerNum;
+        if (evt.u.lobbySlot.slot.connected && pn < MAX_TANKS) {
+          out->lobbyPresent[pn] = true;
+          /* Source playerName is PACKET_MAX_PLAYER_NAME (64); lobbyName[pn] is
+           * the same width. Copy bounded by the destination and NUL-terminate
+           * so an unterminated wire name can't over-read. */
+          strncpy(out->lobbyName[pn], evt.u.lobbySlot.slot.playerName,
+                  sizeof(out->lobbyName[pn]) - 1);
+          out->lobbyName[pn][sizeof(out->lobbyName[pn]) - 1] = '\0';
+        }
+      }
     }
     pos += bodyLen;
   }

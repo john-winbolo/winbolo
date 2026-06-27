@@ -93,14 +93,27 @@ typedef struct {
   uint8_t gameType;
   uint8_t allowHiddenMines;
   uint8_t ai;
+
+  /* Per-slot lobby roster recovered from the snapshot's CTRL_LOBBY_SLOT events
+   * (the snapshot carries one per connected player, whether or not that player
+   * holds a tank). lobbyPresent[i] is true when slot i is a connected lobby
+   * player; lobbyName[i] is that player's NUL-terminated name. This lets a
+   * spectator host resolve lobby-chat sender names for tankless players, who
+   * never appear in the world snapshot. Indexed by playerNum. The array widths
+   * are the bolo-side MAX_TANKS (16) and PACKET_MAX_PLAYER_NAME (64); written as
+   * literals to keep this header dependency-free, matching mapName above. */
+  bool    lobbyPresent[16];
+  char    lobbyName[16][64];
 } SpecSeedInfo;
 
 /* Decode the lobby/game-info from a raw spectator seed blob
  * ([u32 bodyLen BE][world body][u32 ctrlLen BE][control snapshot]) into *out.
- * Walks the control snapshot's [u16 type][u16 len][body] records for the
- * lobby-settings event and decodes it. Returns true (and sets out->haveInfo)
- * when that event is found; false (out zeroed) otherwise. Pure byte decode —
- * no ClientSim handle needed. */
+ * Walks the control snapshot's [u16 type][u16 len][body] records: the
+ * lobby-settings event fills the map/settings fields, and every connected
+ * lobby-slot event fills the lobbyPresent/lobbyName roster. Returns true (and
+ * sets out->haveInfo) when a lobby-settings event is found; false (out zeroed)
+ * otherwise. The roster is populated regardless of the return value — read it
+ * from *out directly. Pure byte decode — no ClientSim handle needed. */
 bool     specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out);
 
 #endif /* SPECTATOR_DRAIN_H */
