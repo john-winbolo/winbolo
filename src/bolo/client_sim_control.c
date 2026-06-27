@@ -272,6 +272,18 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                         langGetTextFmt(STR_DLGLOBBY_TEAM_JOINED_FMT, &a));
                 }
             }
+
+            /* Ready toggle by another connected player -> audio cue. Gated on
+             * lobbySyncSettled so the join-replay slot burst is silent, on
+             * pn != myPN so the local player's own toggle doesn't self-sound,
+             * and on both slots being connected so join/leave aren't misread
+             * as a ready change. Runs before the commit below, while oldSlot
+             * still holds the pre-update state. */
+            if (cs->inLobby && pn != myPN && cs->lobbySyncSettled &&
+                oldSlot->connected && newSlot->connected &&
+                oldSlot->ready != newSlot->ready) {
+                frontEndPlaySound(cs, newSlot->ready ? lobbyReady : lobbyUnready);
+            }
         }
         cs->lobbySlots[evt->u.lobbySlot.playerNum] = evt->u.lobbySlot.slot;
         break;
