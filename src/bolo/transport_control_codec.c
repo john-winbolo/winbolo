@@ -394,6 +394,46 @@ static EncodeResult encodeLobbySlot(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* CTRL_SPECTATOR_SLOT body wire format (variable length):
+ *   [specIdx 1] [connected 1]
+ *   If connected:
+ *     [nameLen 1] [name nameLen bytes] [cc0 1] [cc1 1]
+ *     [clientType 1] [clientFlags 1]
+ * Delivered body-only on CHANNEL_CONTROL; there is no full-packet
+ * wrapper or PACKET_* type for this event. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeSpectatorSlotBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    (void)recipient;
+    const ClientSpectatorSlot *slot = &evt->u.spectatorSlot.slot;
+    size_t nameLen = 0;
+    if (slot->connected) {
+        nameLen = strnlen(slot->playerName, PACKET_MAX_PLAYER_NAME - 1);
+    }
+    const size_t needed = 1 + 1
+                          + (slot->connected ? (1 + nameLen + 1 + 1 + 1 + 1) : 0);
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    size_t pos = 0;
+    buf[pos++] = evt->u.spectatorSlot.specIdx;
+    buf[pos++] = slot->connected ? 1 : 0;
+    if (slot->connected) {
+        buf[pos++] = (uint8_t)nameLen;
+        if (nameLen > 0) {
+            memcpy(buf + pos, slot->playerName, nameLen);
+            pos += nameLen;
+        }
+        buf[pos++] = (uint8_t)slot->countryCode[0];
+        buf[pos++] = (uint8_t)slot->countryCode[1];
+        buf[pos++] = slot->clientType;
+        buf[pos++] = slot->clientFlags;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
 /* PACKET_LOBBY_SETTINGS wire format:
  *   [header 8] [mapName MAP_STR_SIZE] [gameType 1] [hiddenMines 1]
  *   [aiType 1] [gameLength 4 BE] [pillCount 1] [baseCount 1]
@@ -1342,6 +1382,36 @@ static bool decodeLobbySlotBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeSpectatorSlotBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    if (len < 2) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SPECTATOR_SLOT;
+    size_t pos = 0;
+    uint8_t specIdx = buf[pos++];
+    if (specIdx >= MAX_SPECTATORS) return false;
+    outEvt->u.spectatorSlot.specIdx = specIdx;
+    ClientSpectatorSlot *slot = &outEvt->u.spectatorSlot.slot;
+    slot->connected = buf[pos++] ? true : false;
+    if (slot->connected) {
+        if (pos + 1 > len) return false;
+        uint8_t nameLen = buf[pos++];
+        if (nameLen > PACKET_MAX_PLAYER_NAME - 1) return false;
+        if (pos + nameLen + 4 > len) return false;
+        if (nameLen > 0) memcpy(slot->playerName, buf + pos, nameLen);
+        slot->playerName[nameLen] = '\0';
+        pos += nameLen;
+        slot->countryCode[0] = (char)buf[pos++];
+        slot->countryCode[1] = (char)buf[pos++];
+        slot->countryCode[2] = '\0';
+        slot->clientType  = buf[pos++];
+        slot->clientFlags = buf[pos++];
+        if (slot->clientType >= CLIENT_TYPE_COUNT)
+            slot->clientType = CLIENT_TYPE_UNKNOWN;
+    }
+    return true;
+}
+
 static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
                                     ControlEvent *outEvt) {
     if (len < LOBBY_SETTINGS_WIRE_PAYLOAD_BASE) return false;
@@ -1733,6 +1803,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BALANCE_FAILED]        = encodeBalanceFailedBody,
     [CTRL_SHELL_DEATH]           = encodeShellDeathBody,
     [CTRL_CHANNEL_RESET]         = encodeChannelResetBody,
+    [CTRL_SPECTATOR_SLOT]        = encodeSpectatorSlotBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -1766,6 +1837,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_BALANCE_FAILED]        = decodeBalanceFailedBody,
     [CTRL_SHELL_DEATH]           = decodeShellDeathBody,
     [CTRL_CHANNEL_RESET]         = decodeChannelResetBody,
+    [CTRL_SPECTATOR_SLOT]        = decodeSpectatorSlotBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

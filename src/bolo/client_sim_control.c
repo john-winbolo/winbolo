@@ -275,6 +275,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbySlots[evt->u.lobbySlot.playerNum] = evt->u.lobbySlot.slot;
         break;
 
+    case CTRL_SPECTATOR_SLOT:
+        if (evt->u.spectatorSlot.specIdx < MAX_SPECTATORS) {
+            cs->spectatorSlots[evt->u.spectatorSlot.specIdx] = evt->u.spectatorSlot.slot;
+        }
+        break;
+
     case CTRL_LOBBY_SETTINGS:
         strncpy(cs->mapName, evt->u.lobbySettings.mapName, MAP_STR_SIZE - 1);
         cs->mapName[MAP_STR_SIZE - 1] = '\0';

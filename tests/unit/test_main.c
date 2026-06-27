@@ -163,6 +163,7 @@ static const UnitTestEntry s_tests[] = {
     { "spectator_replay",                        run_spectator_replay                        },
     { "spectator_config",                        run_spectator_config                        },
     { "spectator_join",                          run_spectator_join                          },
+    { "spectator_slot_codec",                    run_spectator_slot_codec                    },
     { "spectator_connect",                       run_spectator_connect                       },
     { "spectator_command_reject",                run_spectator_command_reject                },
     { "spectator_capture",                       run_spectator_capture                       },

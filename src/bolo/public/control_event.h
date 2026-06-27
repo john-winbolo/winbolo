@@ -95,6 +95,11 @@ typedef enum {
      * dispatcher; the client consumes it at the channel-drain site. Per-client:
      * the baselines are this recipient's own channel state, set at enqueue. */
     CTRL_CHANNEL_RESET,
+    /* CTRL_SPECTATOR_SLOT — one message per spectator roster slot,
+     * transport-published to player clients so they can show who is
+     * watching. specIdx is in [0, MAX_SPECTATORS). Mirrors
+     * CTRL_LOBBY_SLOT but carries the trimmed spectator fields only. */
+    CTRL_SPECTATOR_SLOT,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -164,6 +169,12 @@ typedef struct ControlEvent {
             BYTE             playerNum;
             ClientLobbySlot  slot;
         } lobbySlot;
+
+        /* CTRL_SPECTATOR_SLOT — one message per spectator slot. */
+        struct {
+            uint8_t             specIdx;
+            ClientSpectatorSlot slot;
+        } spectatorSlot;
 
         /* CTRL_LOBBY_SETTINGS */
         struct {

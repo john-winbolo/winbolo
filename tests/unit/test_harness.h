@@ -216,6 +216,11 @@ int run_spectator_config(void);
  * maxSpectators cap / disabled case, and resolves over the cookie handshake. */
 int run_spectator_join(void);
 
+/* CTRL_SPECTATOR_SLOT body-codec round-trip (test_spectator_slot_codec.c):
+ * the per-spectator roster event encodes/decodes through the body tables,
+ * with the disconnected minimum and the out-of-range specIdx rejection. */
+int run_spectator_slot_codec(void);
+
 /* Spectator connect — client side (test_spectator_connect.c): the real client
  * transport connecting with the spectator flag runs the join handshake and
  * lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting seed) with no tank

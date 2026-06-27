@@ -80,6 +80,16 @@ typedef struct {
     uint8_t startIdx;      /* reserved map start, 1-based; 0xFF = none */
 } ClientLobbySlot;
 
+/* Client-side mirror of a server spectator roster slot. Spectators
+ * have no team/ready/bot/ping/start, so this is a trimmed slot. */
+typedef struct {
+    bool    connected;
+    char    playerName[PACKET_MAX_PLAYER_NAME];
+    char    countryCode[3];   /* ISO 3166-1 alpha-2 + NUL; "" if unknown */
+    uint8_t clientType;       /* ClientType enum */
+    uint8_t clientFlags;      /* PLAYER_FLAG_* bits */
+} ClientSpectatorSlot;
+
 /* Callback typedefs for new transport message sending.
  *
  * NetChatSendFunc receives the owning ClientSim so the callback body
@@ -545,6 +555,9 @@ const char *clientSimGetMyLastPlayerName(const ClientSim *cs);
 /* Indexed-array accessors (bounds-checked; out-of-range
  * returns NULL for pointer types, false/0 for scalars). */
 const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n);
+
+/* Spectator roster slot mirror; out-of-range idx returns NULL. */
+const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx);
 
 /* Count of currently-connected lobby slots (humans + bots).
  * Matches what the lobby UI's player table renders. */

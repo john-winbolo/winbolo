@@ -2734,6 +2734,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Spectator JOIN handshake: a JOIN_FLAG_SPECTATOR join registers a tankless
     # viewer (slot 0xFF, no tank slot) under the maxSpectators cap.
     tests/unit/test_spectator_join.c
+    # CTRL_SPECTATOR_SLOT body-codec round-trip: encode/decode the per-spectator
+    # roster event through the body tables, including the out-of-range rejection.
+    tests/unit/test_spectator_slot_codec.c
     # Spectator connect — client side: the real client transport connecting with
     # the spectator flag lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting
     # seed), consuming no tank slot and starting no map download.
@@ -3203,6 +3206,7 @@ set(_unit_test_names
     spectator_replay
     spectator_config
     spectator_join
+    spectator_slot_codec
     spectator_connect
     spectator_command_reject
     spectator_seed_integration

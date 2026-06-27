@@ -34,6 +34,7 @@
 #include "brain_list.h"
 #include "upload_policy.h"
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
+#include "transport_udp.h" /* MAX_SPECTATORS */
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -263,6 +264,7 @@ struct ClientSim {
 
     /* Lobby state (client-side mirror of server lobby) */
     ClientLobbySlot  lobbySlots[16];    /* MAX_TANKS */
+    ClientSpectatorSlot spectatorSlots[MAX_SPECTATORS]; /* spectator roster mirror */
     int              countdownSeconds;  /* 0 = not counting down */
     bool             mapDownloadComplete; /* Gate for ready button */
     bool             inLobby;           /* TRUE if server is lobby-enabled */

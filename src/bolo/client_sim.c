@@ -1533,6 +1533,11 @@ const ClientLobbySlot *clientSimGetLobbySlot(const ClientSim *cs, BYTE n) {
   return &cs->lobbySlots[n];
 }
 
+const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx) {
+  if (idx >= MAX_SPECTATORS) return NULL;
+  return &cs->spectatorSlots[idx];
+}
+
 BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
   if (cs == NULL) return 0;
   BYTE count = 0;
