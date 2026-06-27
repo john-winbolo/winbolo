@@ -2734,6 +2734,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Spectator JOIN handshake: a JOIN_FLAG_SPECTATOR join registers a tankless
     # viewer (slot 0xFF, no tank slot) under the maxSpectators cap.
     tests/unit/test_spectator_join.c
+    # Spectator roster publish: the server broadcasts CTRL_SPECTATOR_SLOT to
+    # player clients on spectator join/leave and catch-up-sends the roster to a
+    # newly-joined player; verified through the real client apply path.
+    tests/unit/test_spectator_roster_publish.c
     # CTRL_SPECTATOR_SLOT body-codec round-trip: encode/decode the per-spectator
     # roster event through the body tables, including the out-of-range rejection.
     tests/unit/test_spectator_slot_codec.c
@@ -3206,6 +3210,7 @@ set(_unit_test_names
     spectator_replay
     spectator_config
     spectator_join
+    spectator_roster_publish
     spectator_slot_codec
     spectator_connect
     spectator_command_reject

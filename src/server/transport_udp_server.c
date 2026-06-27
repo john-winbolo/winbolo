@@ -287,6 +287,8 @@ typedef struct {
     uint16_t pingMs;
     uint8_t  clientType;
     uint8_t  clientHints;
+    /* ISO 3166-1 alpha-2 + NUL; GeoIP-or-wire-fallback, "" if unknown. */
+    char     countryCode[3];
     /* WBN spectator session. spectatorKey is the verify_spectator key kept for
      * the leave teardown ('' when anonymous / unverified, so no leave is sent).
      * wbnFlags carries PLAYER_FLAG_WBN_VERIFIED for a logged-in verified viewer;
@@ -1238,22 +1240,80 @@ static void serverSendSpectatorAccept(int s, ServerSim *sim,
     srvSendTo(acceptBuf, pos, addr);
 }
 
+/* Fill a CTRL_SPECTATOR_SLOT event from spectator slot s. A disconnected slot
+ * emits a connected==false roster row carrying only specIdx; the decoder leaves
+ * the rest zeroed. clientFlags merges the client-supplied hint bits with the
+ * server-determined WBN trust bit (mirrors the player badge derivation). */
+static void serverFillSpectatorSlotEvent(int s, ControlEvent *evt) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SPECTATOR_SLOT;
+    evt->u.spectatorSlot.specIdx = (uint8_t)s;
+    ClientSpectatorSlot *slot = &evt->u.spectatorSlot.slot;
+    slot->connected = udpServer.spectators[s].connected;
+    if (slot->connected) {
+        snprintf(slot->playerName, sizeof(slot->playerName), "%s",
+                 udpServer.spectators[s].playerName);
+        slot->countryCode[0] = udpServer.spectators[s].countryCode[0];
+        slot->countryCode[1] = udpServer.spectators[s].countryCode[1];
+        slot->countryCode[2] = '\0';
+        slot->clientType  = udpServer.spectators[s].clientType;
+        slot->clientFlags = (uint8_t)((udpServer.spectators[s].clientHints
+                                       & PLAYER_CLIENT_HINT_MASK)
+                                      | udpServer.spectators[s].wbnFlags);
+    }
+}
+
+/* Broadcast spectator slot s's current roster row to every connected player
+ * client. Player clients only — spectators are never on this roster and never
+ * receive it. Safe to call from the JOIN/disconnect paths (not the subscriber
+ * bus); the deliver callback skips disconnected slots on its own. */
+static void serverBroadcastSpectatorSlot(int s) {
+    ControlEvent evt;
+    int idx;
+    serverFillSpectatorSlotEvent(s, &evt);
+    for (idx = 0; idx < MAX_TANKS; idx++) {
+        if (udpServer.clients[idx].connected) {
+            udpClientDeliverControl(&udpServer.clients[idx], &evt);
+        }
+    }
+}
+
+/* Store a resolved 2-char ISO country into spectator slot s, empty-safe:
+ * a NULL or empty country stores "". */
+static void serverSetSpectatorCountry(int s, const char *country) {
+    if (country != NULL && country[0] != '\0') {
+        udpServer.spectators[s].countryCode[0] = country[0];
+        udpServer.spectators[s].countryCode[1] = country[1];
+    } else {
+        udpServer.spectators[s].countryCode[0] = '\0';
+        udpServer.spectators[s].countryCode[1] = '\0';
+    }
+    udpServer.spectators[s].countryCode[2] = '\0';
+}
+
 /* Accept a "join as viewer" connection: register it in spectators[] with no
  * tank slot, no sim player, and no control-bus subscription, then send the
  * spectator accept. Caller has already passed every shared JOIN pre-check
- * (cookie, version, name, password). */
+ * (cookie, version, name, password). country is the resolved GeoIP-or-fallback
+ * ISO code stored for the roster broadcast ("" when unknown). */
 static void serverAcceptSpectator(ServerSim *sim,
                                   const struct sockaddr_in *fromAddr,
                                   const char *name,
                                   uint8_t clientType, uint8_t clientHints,
-                                  const char *spectatorKey, uint8_t wbnFlags) {
+                                  const char *spectatorKey, uint8_t wbnFlags,
+                                  const char *country) {
     int effectiveCap;
     int s;
 
-    /* Re-JOIN from a known spectator address: resend the accept, no new slot. */
+    /* Re-JOIN from a known spectator address: resend the accept, no new slot.
+     * Refresh the stored country and re-broadcast the roster row so a player
+     * client that joined after this spectator (or missed the first broadcast)
+     * still learns it — harmless when nothing changed. */
     s = serverFindSpectator(fromAddr);
     if (s >= 0) {
+        serverSetSpectatorCountry(s, country);
         serverSendSpectatorAccept(s, sim, fromAddr);
+        serverBroadcastSpectatorSlot(s);
         return;
     }
 
@@ -1292,6 +1352,7 @@ static void serverAcceptSpectator(ServerSim *sim,
     udpServer.spectators[s].pingMs           = 0;
     udpServer.spectators[s].clientType       = clientType;
     udpServer.spectators[s].clientHints      = clientHints;
+    serverSetSpectatorCountry(s, country);
     if (spectatorKey != NULL) {
         strncpy(udpServer.spectators[s].spectatorKey, spectatorKey,
                 WINBOLONET_KEY_LEN - 1);
@@ -1316,6 +1377,8 @@ static void serverAcceptSpectator(ServerSim *sim,
     udpServer.spectators[s].countdownSentTick  = 0;
 
     serverSendSpectatorAccept(s, sim, fromAddr);
+    /* Tell every connected player client a new viewer is on the roster. */
+    serverBroadcastSpectatorSlot(s);
 }
 
 /* Release a spectator slot. A spectator holds no tank, no sim player, and no
@@ -1357,6 +1420,10 @@ static void serverDisconnectSpectator(int s, bool graceful) {
     udpServer.spectators[s].playerName[0] = '\0';
     udpServer.spectators[s].outSequence = 0;
     udpServer.spectators[s].inboundCmdSeq = 0;
+    /* The slot is now cleared (connected == false), so the fill helper emits a
+     * disconnect roster row. Tell every connected player client the viewer is
+     * gone. */
+    serverBroadcastSpectatorSlot(s);
 }
 
 /* Send PACKET_WBN_REKEY to a single connected client carrying the current
@@ -2098,8 +2165,21 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
                         name, errorMsg[0] ? errorMsg : "(no detail)");
             }
         }
+        /* Resolve the viewer's country the same way the player path does
+         * (:incomingCountry): GeoIP first, then the client-supplied
+         * fallbackCountry, empty when neither resolves. */
+        char specCountry[3];
+        {
+            char ipStr[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &fromAddr->sin_addr, ipStr, sizeof(ipStr));
+            if (!geoLookupCountry(ipStr, specCountry)) {
+                specCountry[0] = wireFallbackCountry[0];
+                specCountry[1] = wireFallbackCountry[1];
+            }
+            specCountry[2] = '\0';
+        }
         serverAcceptSpectator(sim, fromAddr, name, clientType, clientHints,
-                              spectatorKey, wbnFlags);
+                              spectatorKey, wbnFlags, specCountry);
         return;
     }
 
@@ -2409,6 +2489,18 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     fprintf(stderr, "[UDP SERVER] Player '%s' assigned slot %d, mapSize=%u\n",
             name, slot, udpServer.compressedMapSize);
     serverSendJoinAccept(slot, sim, fromAddr);
+    /* Catch-up: this client is connected (clients[slot].connected set above),
+     * so feed it the current spectator roster — one CTRL_SPECTATOR_SLOT per
+     * connected viewer — so its lobby roster matches late-joining the session. */
+    {
+        int sp;
+        for (sp = 0; sp < MAX_SPECTATORS; sp++) {
+            if (!udpServer.spectators[sp].connected) continue;
+            ControlEvent evt;
+            serverFillSpectatorSlotEvent(sp, &evt);
+            udpClientDeliverControl(&udpServer.clients[slot], &evt);
+        }
+    }
     /* Hand the joiner the current WBN server_key so it can mint a
      * player_key and re-auth via the lobby-snapshot path.  Gated inside
      * the send function — no-op on non-WBN servers. */
