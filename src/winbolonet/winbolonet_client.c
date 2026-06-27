@@ -459,3 +459,72 @@ bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, ch
   }
   return ok;
 }
+
+/*********************************************************
+*NAME:          winbolonetClientJoinSpectatorSession
+*PURPOSE:
+* Exchanges a logged-in user's apiToken (bearer) or an
+* anonymous {server_key, player_name} for a server-scoped
+* spectator_key via POST /api/v1/client/join_spectator.
+* Mirrors winbolonetClientJoinSession; the apiToken never
+* leaves the client (it rides only as the Authorization
+* bearer), and only the issued spectator_key is shipped in
+* the JOIN packet.
+*********************************************************/
+bool winbolonetClientJoinSpectatorSession(const char *apiToken, const char *serverKey, const char *playerName, char *spectatorKeyOut, char *errorMsg) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok = FALSE;
+  bool loggedIn = (apiToken != NULL && apiToken[0] != '\0');
+
+  spectatorKeyOut[0] = '\0';
+
+  if (httpCreate() != TRUE) {
+    strcpy(errorMsg, "Could not initialise HTTP");
+    return FALSE;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", serverKey);
+  if (!loggedIn) {
+    /* Anonymous viewer: no bearer; the backend mints an
+     * unattributed spectator_key against the supplied name. */
+    cJSON_AddStringToObject(body, "player_name", playerName ? playerName : "");
+  }
+
+  status = wbn_api_call_bearer("client/join_spectator", body,
+                               loggedIn ? apiToken : NULL, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      cJSON *keyObj = cJSON_GetObjectItem(resp, "spectator_key");
+      if (keyObj && cJSON_IsString(keyObj)) {
+        strncpy(spectatorKeyOut, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
+        spectatorKeyOut[WINBOLONET_KEY_LEN - 1] = '\0';
+        ok = TRUE;
+      } else {
+        strcpy(errorMsg, "WinBolo.net returned no spectator key");
+      }
+    }
+  } else if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      strcpy(errorMsg, "WinBolo.net spectator join failed");
+    }
+  } else {
+    strcpy(errorMsg, "No response from WinBolo.net");
+  }
+
+  cJSON_Delete(resp);
+  if (winboloNetRunning != TRUE) {
+    httpDestroy();
+  }
+  return ok;
+}

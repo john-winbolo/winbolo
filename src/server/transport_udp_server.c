@@ -287,6 +287,12 @@ typedef struct {
     uint16_t pingMs;
     uint8_t  clientType;
     uint8_t  clientHints;
+    /* WBN spectator session. spectatorKey is the verify_spectator key kept for
+     * the leave teardown ('' when anonymous / unverified, so no leave is sent).
+     * wbnFlags carries PLAYER_FLAG_WBN_VERIFIED for a logged-in verified viewer;
+     * Steam-linked / Supporter are not surfaced for spectators. */
+    char     spectatorKey[WINBOLONET_KEY_LEN];
+    uint8_t  wbnFlags;
     ChannelMux channelMux;
     BulkSender bulkSend;
     /* Delayed-keyframe seed transfer (2d-c). seedBlob is a spectator-owned copy
@@ -1239,7 +1245,8 @@ static void serverSendSpectatorAccept(int s, ServerSim *sim,
 static void serverAcceptSpectator(ServerSim *sim,
                                   const struct sockaddr_in *fromAddr,
                                   const char *name,
-                                  uint8_t clientType, uint8_t clientHints) {
+                                  uint8_t clientType, uint8_t clientHints,
+                                  const char *spectatorKey, uint8_t wbnFlags) {
     int effectiveCap;
     int s;
 
@@ -1285,6 +1292,14 @@ static void serverAcceptSpectator(ServerSim *sim,
     udpServer.spectators[s].pingMs           = 0;
     udpServer.spectators[s].clientType       = clientType;
     udpServer.spectators[s].clientHints      = clientHints;
+    if (spectatorKey != NULL) {
+        strncpy(udpServer.spectators[s].spectatorKey, spectatorKey,
+                WINBOLONET_KEY_LEN - 1);
+        udpServer.spectators[s].spectatorKey[WINBOLONET_KEY_LEN - 1] = '\0';
+    } else {
+        udpServer.spectators[s].spectatorKey[0] = '\0';
+    }
+    udpServer.spectators[s].wbnFlags         = wbnFlags;
     channelMuxInit(&udpServer.spectators[s].channelMux);
     bulkSenderInit(&udpServer.spectators[s].bulkSend);
     udpServer.spectators[s].seedBlob     = NULL;
@@ -1314,6 +1329,13 @@ static void serverDisconnectSpectator(int s, bool graceful) {
         return;
     }
     mpDiagLog("[srv] SPECTATOR DISCONNECT idx=%d graceful=%d", s, (int)graceful);
+    /* Release the WBN spectator session if this viewer was verified. Empty key
+     * (anonymous / non-WBN) makes this a no-op. */
+    if (udpServer.spectators[s].spectatorKey[0] != '\0') {
+        winboloNetSpectatorLeaveGame(udpServer.spectators[s].spectatorKey);
+        udpServer.spectators[s].spectatorKey[0] = '\0';
+    }
+    udpServer.spectators[s].wbnFlags = 0;
     udpServer.spectators[s].connected = false;
     channelMuxInit(&udpServer.spectators[s].channelMux);   /* reset in place */
     bulkSenderInit(&udpServer.spectators[s].bulkSend);
@@ -2052,7 +2074,32 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
      * password) have run; the player game-lock below does not gate
      * spectating — a locked or running game stays watchable. */
     if (isSpectator) {
-        serverAcceptSpectator(sim, fromAddr, name, clientType, clientHints);
+        /* Attribute-only WBN check: verify the spectator_key when one was sent
+         * and WBN is running. A failure (or WBN down / empty key) never blocks
+         * spectating — the viewer is admitted anonymously with no badge. */
+        char spectatorKey[WINBOLONET_KEY_LEN];
+        uint8_t wbnFlags = 0;
+        spectatorKey[0] = '\0';
+        if (winbolonetIsRunning() && wbnJoinKey[0] != '\0') {
+            char errorMsg[512];
+            bool loggedIn = false;
+            errorMsg[0] = '\0';
+            if (winboloNetVerifySpectatorKey(wbnJoinKey, name, errorMsg, &loggedIn)) {
+                strncpy(spectatorKey, wbnJoinKey, WINBOLONET_KEY_LEN - 1);
+                spectatorKey[WINBOLONET_KEY_LEN - 1] = '\0';
+                if (loggedIn) wbnFlags |= PLAYER_FLAG_WBN_VERIFIED;
+                fprintf(stderr,
+                        "[UDP SERVER] Spectator '%s' verified with WinBolo.net "
+                        "(logged_in=%d)\n", name, (int)loggedIn);
+            } else {
+                fprintf(stderr,
+                        "[UDP SERVER] Spectator '%s' WBN verify failed: %s. "
+                        "Joining anonymously.\n",
+                        name, errorMsg[0] ? errorMsg : "(no detail)");
+            }
+        }
+        serverAcceptSpectator(sim, fromAddr, name, clientType, clientHints,
+                              spectatorKey, wbnFlags);
         return;
     }
 

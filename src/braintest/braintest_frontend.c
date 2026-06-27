@@ -225,6 +225,14 @@ bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey,
   if (errorMsg)     errorMsg[0]     = '\0';
   return FALSE;
 }
+bool winbolonetClientJoinSpectatorSession(const char *apiToken, const char *serverKey,
+                                          const char *playerName, char *spectatorKeyOut,
+                                          char *errorMsg) {
+  (void)apiToken; (void)serverKey; (void)playerName;
+  if (spectatorKeyOut) spectatorKeyOut[0] = '\0';
+  if (errorMsg)        errorMsg[0]        = '\0';
+  return FALSE;
+}
 
 bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
                                      const uint8_t *botSlots, uint8_t numBotSlots,

@@ -115,6 +115,24 @@ bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, ch
   return FALSE;
 }
 
+bool winbolonetClientJoinSpectatorSession(const char *apiToken, const char *serverKey, const char *playerName, char *spectatorKeyOut, char *errorMsg) {
+  (void)apiToken; (void)serverKey; (void)playerName;
+  if (spectatorKeyOut) spectatorKeyOut[0] = '\0';
+  if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
+  return FALSE;
+}
+
+bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerName, char *errorMsg, bool *isLoggedIn) {
+  (void)spectatorKey; (void)playerName;
+  if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");
+  if (isLoggedIn) *isLoggedIn = FALSE;
+  return FALSE;
+}
+
+void winboloNetSpectatorLeaveGame(const char *spectatorKey) {
+  (void)spectatorKey;
+}
+
 bool winbolonetAuthLogin(const char *username, const char *password, char *tokenOut, char *expiryOut, char *playerNameOut, int *rankOut, int *rankTotalOut, WbnStats *statsOut, char *errorMsg) {
   (void)username; (void)password; (void)tokenOut; (void)expiryOut; (void)playerNameOut; (void)rankOut; (void)rankTotalOut; (void)statsOut;
   if (errorMsg) strcpy(errorMsg, "WinBolo.net not supported in WASM build");

@@ -2638,7 +2638,29 @@ static bool udpClientTick(void *ctx) {
                 int joffset = PACKET_HEADER_SIZE;
                 char playerKey[WBN_JOIN_KEY_WIRE_LEN];
                 memset(playerKey, 0, sizeof(playerKey));
-                if (c->wbnApiToken[0] != '\0' && c->wbnServerKey[0] != '\0') {
+                if (c->spectator) {
+                    /* Spectator: mint a spectator_key instead of a player_key
+                     * (a player_key won't pass verify_spectator). Logged-in
+                     * viewers authenticate with their token; anonymous ones
+                     * supply only a name. The server_key comes from the WBN
+                     * rekey, so a LAN/offline server never sends one and this
+                     * is skipped — the viewer then joins anonymously. */
+                    if (c->wbnServerKey[0] != '\0' &&
+                        (c->wbnApiToken[0] != '\0' || c->playerName[0] != '\0')) {
+                        char errMsg[256];
+                        errMsg[0] = '\0';
+                        if (!winbolonetClientJoinSpectatorSession(c->wbnApiToken,
+                                                                  c->wbnServerKey,
+                                                                  c->playerName,
+                                                                  playerKey, errMsg)) {
+                            WB_LOG_WARN(WB_LOG_CAT_NET,
+                                    "[WBN] spectator join exchange failed: %s",
+                                    errMsg[0] ? errMsg : "(no detail)");
+                            /* Degraded: ship empty key, admitted anonymously. */
+                            playerKey[0] = '\0';
+                        }
+                    }
+                } else if (c->wbnApiToken[0] != '\0' && c->wbnServerKey[0] != '\0') {
                     char errMsg[256];
                     errMsg[0] = '\0';
                     if (!winbolonetClientJoinSession(c->wbnApiToken,

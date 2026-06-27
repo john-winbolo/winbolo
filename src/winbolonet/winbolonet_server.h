@@ -143,6 +143,27 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
 bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter);
 
 /*********************************************************
+*NAME:          winboloNetVerifySpectatorKey
+*PURPOSE:
+* Validates a spectator_key received on the JOIN wire via
+* POST /api/v1/client/verify_spectator. Spectators are not
+* slot-indexed, so unlike winboloNetVerifyClientKey this does
+* NOT touch winboloNetPlayerKey[]; the caller stores the key
+* on the spectator connection for the later leave. Returns
+* TRUE if WBN accepts the key (attribute-only — the caller
+* never rejects a viewer on failure).
+*
+*ARGUMENTS:
+* spectatorKey - spectator_key from the JOIN packet
+* playerName   - Viewer display name from the JOIN packet
+* errorMsg     - Buffer for error message on failure
+* isLoggedIn   - Output: TRUE iff WBN reports the key belongs
+*                to a logged-in account (gates the verified
+*                badge); may be NULL.
+*********************************************************/
+bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerName, char *errorMsg, bool *isLoggedIn);
+
+/*********************************************************
 *NAME:          winbolonetServerSendTeams
 *PURPOSE:
 * Sends the list of teams at the end of the game.
@@ -180,6 +201,20 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
 * freePills  - Number of free pills
 *********************************************************/
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills);
+
+/*********************************************************
+*NAME:          winboloNetSpectatorLeaveGame
+*PURPOSE:
+* Releases a verified spectator's WBN session via POST
+* /api/v1/client/leave with its spectator_key. Spectators
+* hold no slot-keyed state and queue no events, so this is a
+* bare leave keyed only by the spectator_key. No-op when WBN
+* is not running or the key is empty.
+*
+*ARGUMENTS:
+* spectatorKey - spectator_key stored at verify time
+*********************************************************/
+void winboloNetSpectatorLeaveGame(const char *spectatorKey);
 
 /*********************************************************
 *NAME:          winboloNetIsPlayerParticipant
