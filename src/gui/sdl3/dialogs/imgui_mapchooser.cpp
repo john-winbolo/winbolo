@@ -1509,6 +1509,13 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
 
             updatePreview(state, renderer);
             changed = true;
+            /* Apply the picked file the same way a row click does —
+             * the provider loads it (single player) or queues the
+             * upload (multiplayer). selectedPath holds the absolute
+             * on-disk path the dialog returned. */
+            if (state->provider.onSelect) {
+                state->provider.onSelect(state, state->provider.ctx);
+            }
         }
     }
 
@@ -1598,8 +1605,11 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
     } else {
         /* --- Normal map list mode --- */
 
-        if (!state->hideExtras) {
-            /* Load from device button */
+        if (!state->hideExtras || state->showDeviceLoad) {
+            /* Load from device button — shown whenever extras are
+             * enabled, or on demand via showDeviceLoad (lobby's
+             * local/upload tab) so a single-file picker sits above the
+             * list without dragging the Generate Random button along. */
             {
                 bool disabled = state->fileDialogPending;
                 if (disabled) ImGui::BeginDisabled();
@@ -1619,17 +1629,20 @@ bool mapChooserRender(MapChooserState *state, SDL_Renderer *renderer,
             /* Generate Random Map button — gated on the in-flight
              * flag so a reentrant call (e.g. ImGui repeated activation
              * across one frame) can't start a second generate on top
-             * of an already-running one. */
-            if (s_generateInFlight) ImGui::BeginDisabled();
-            bool genClicked = ImGui::Button(langGetText(STR_MAPCHOOSER_GENRANDOM), ImVec2(-1, 0));
-            if (s_generateInFlight) ImGui::EndDisabled();
-            if (genClicked) {
-                state->randomMapSelected = true;
-                state->selectedIdx = MAP_CHOOSER_IDX_RANDOM;
-                SDL_strlcpy(state->selectedName, langGetText(STR_MAPCHOOSER_RANDOMMAP), sizeof(state->selectedName));
-                initGenConfig(state);
-                generateRandomPreview(state, renderer, /*keepCamera=*/false);
-                changed = true;
+             * of an already-running one. Suppressed for showDeviceLoad-
+             * only callers (the lobby keeps generation on its own tab). */
+            if (!state->hideExtras) {
+                if (s_generateInFlight) ImGui::BeginDisabled();
+                bool genClicked = ImGui::Button(langGetText(STR_MAPCHOOSER_GENRANDOM), ImVec2(-1, 0));
+                if (s_generateInFlight) ImGui::EndDisabled();
+                if (genClicked) {
+                    state->randomMapSelected = true;
+                    state->selectedIdx = MAP_CHOOSER_IDX_RANDOM;
+                    SDL_strlcpy(state->selectedName, langGetText(STR_MAPCHOOSER_RANDOMMAP), sizeof(state->selectedName));
+                    initGenConfig(state);
+                    generateRandomPreview(state, renderer, /*keepCamera=*/false);
+                    changed = true;
+                }
             }
 
             ImGui::Separator();

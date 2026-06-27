@@ -682,7 +682,13 @@ static void lobbyServerMapsOnSelect(MapChooserState *state, void *ctx) {
     ClientSim *cs = (ClientSim *)ctx;
     if (!cs) return;
     const char *sel = state->selectedPath;
-    if (!sel || !sel[0]) return;
+    if (!sel) return;
+    /* Empty path is the chooser's inbuilt-Everard marker. Stage the
+     * real on-disk copy so the preview/commit cycle has something to
+     * commit (otherwise "Use This Map" reverts). The MP branch below
+     * strips the "data/maps/" prefix, yielding the server-relative
+     * "Everard Island.map" it expects in SET_MAP. */
+    if (!sel[0]) sel = "data/maps/Everard Island.map";
     WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[MAPPICK] server-maps onSelect sel='%s' sp=%d",
                 sel, (int)clientSimIsSinglePlayer(cs));
@@ -884,7 +890,16 @@ static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
     ClientSim *cs = (ClientSim *)ctx;
     if (!cs) return;
     const char *picked = state->selectedPath;
-    if (!picked || !picked[0]) return;
+    if (!picked) return;
+    /* An empty path is the chooser's canonical "inbuilt Everard"
+     * marker — the embedded map is hidden from the on-disk listing and
+     * pinned as a pathless row. Selecting it must still stage a real
+     * map through the preview/commit cycle; otherwise serverSimReloadMap
+     * is never called, "Use This Map" commits whatever was staged
+     * before, and the pick silently reverts. The inbuilt map is the
+     * same bytes as the on-disk copy the preview falls back to, so
+     * reload that. */
+    if (!picked[0]) picked = "data/maps/Everard Island.map";
     WB_LOG_INFO(WB_LOG_CAT_GUI,
                 "[MAPPICK] upload onSelect picked='%s' sp=%d",
                 picked, (int)clientSimIsSinglePlayer(cs));
@@ -2184,6 +2199,11 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
          * would duplicate them. */
         s_chooseMapState.hideExtras       = true;
         s_chooseMapUploadState.hideExtras = true;
+        /* ...but the local/upload tab still offers a single-file picker
+         * at the top of its list, so the host can grab a .map straight
+         * off disk. In multiplayer the whole tab is gated on uploads
+         * being enabled, so the button only appears when it can act. */
+        s_chooseMapUploadState.showDeviceLoad = true;
         /* Random tab — third chooser instance, runs in randomTabOnly
          * mode so the widget renders generator controls on the left
          * and the procedural preview on the right. */
