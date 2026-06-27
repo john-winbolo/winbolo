@@ -222,6 +222,12 @@ int run_spectator_join(void);
  * slot consumed and no map download started. */
 int run_spectator_connect(void);
 
+/* Spectator command rejection (test_spectator_command_reject.c): a tankless
+ * viewer attempts lobby/gameplay commands the production way and the server
+ * shows no effect (no slot, still a spectator); plus the dispatcher guard
+ * rejects an out-of-range sender slot with CMD_REJECT_INVALID. */
+int run_spectator_command_reject(void);
+
 /* Spectator feed capture — client side (test_spectator_capture.c): a real
  * spectator client over loopback captures the CHANNEL_BULK seed and the ordered
  * forward records into the ClientSim feed (record header stripped, order kept),
