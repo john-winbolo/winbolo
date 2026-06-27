@@ -922,9 +922,21 @@ static void lvHostHandleResize(const SDL_Event *e) {
     if (newTilesX > 255) newTilesX = 255;
     if (newTilesY > 255) newTilesY = 255;
 
-    int snappedW = (int)(newTilesX * tilePxX + 0.5f);
-    int snappedH = (int)(newTilesY * tilePxY + 0.5f);
-    SDL_SetWindowSize(g_lv->window, snappedW, snappedH + menuH);
+    /* A maximized or fullscreen window can't be resized: SDL_SetWindowSize is
+     * a no-op there, so snapping would leave the window at its full size while
+     * the tile counts and render target below shrink to the snapped size. That
+     * window/render-target/tile mismatch desyncs the cursor-anchored zoom
+     * (lv_drawApplyZoomStep clamps the anchor against the render target), which
+     * is why wheel/controller zoom wedges once the window is maximized. In that
+     * state, fit the tile counts to the actual window (the event's data1/data2
+     * are the real maximized dimensions) and leave the window alone. A normal
+     * windowed resize still snaps to a clean tile boundary. */
+    SDL_WindowFlags wflags = SDL_GetWindowFlags(g_lv->window);
+    if (!(wflags & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN))) {
+        int snappedW = (int)(newTilesX * tilePxX + 0.5f);
+        int snappedH = (int)(newTilesY * tilePxY + 0.5f);
+        SDL_SetWindowSize(g_lv->window, snappedW, snappedH + menuH);
+    }
     lv_screenSetSizeX((BYTE)newTilesX);
     lv_screenSetSizeY((BYTE)newTilesY);
     /* Clamp scroll offset so the viewport stays within the 255x255 map, and
