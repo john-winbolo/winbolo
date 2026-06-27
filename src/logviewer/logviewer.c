@@ -891,6 +891,59 @@ static bool lvHostHandleGameViewKey(SDL_Event sdlEvent, bool allowToggle,
 }
 
 /* --------------------------------------------------------------------------
+ * lvHostHandleResize -- Shared SDL_EVENT_WINDOW_RESIZED handler.
+ *
+ * Snaps the window to the nearest zoom-effective tile boundary, updates the
+ * screen tile counts and clamps the scroll offset, then recreates the
+ * render-target texture (without which mouse-to-tile coordinates drift) and
+ * marks the screen dirty. Game view drives a fixed window size, so a resize
+ * there is ignored. Shared by logViewerRun and spectatorRun so the live
+ * spectator reflows its overview exactly like the standalone viewer.
+ * -------------------------------------------------------------------------- */
+static void lvHostHandleResize(const SDL_Event *e) {
+    if (g_lv->gameView) {
+        return;
+    }
+    int w = e->window.data1;
+    int h = e->window.data2;
+    int menuH = (int)lv_imgui_get_menu_bar_height();
+    float zoom = lv_drawGetZoomLevel();
+    if (zoom <= 0.0f) zoom = 1.0f;
+
+    /* Snap to the nearest zoom-effective tile boundary so the blit fills the
+     * window cleanly at the current zoom. */
+    float tilePxX = (float)TILE_SIZE_X * zoom;
+    float tilePxY = (float)TILE_SIZE_Y * zoom;
+    int newTilesX = (int)(((float)w + tilePxX * 0.5f) / tilePxX);
+    int newTilesY = (int)((((float)(h - menuH)) + tilePxY * 0.5f) / tilePxY);
+    if (newTilesX < 1) newTilesX = 1;
+    if (newTilesY < 1) newTilesY = 1;
+    if (newTilesX > 255) newTilesX = 255;
+    if (newTilesY > 255) newTilesY = 255;
+
+    int snappedW = (int)(newTilesX * tilePxX + 0.5f);
+    int snappedH = (int)(newTilesY * tilePxY + 0.5f);
+    SDL_SetWindowSize(g_lv->window, snappedW, snappedH + menuH);
+    lv_screenSetSizeX((BYTE)newTilesX);
+    lv_screenSetSizeY((BYTE)newTilesY);
+    /* Clamp scroll offset so the viewport stays within the 255x255 map, and
+     * reset sub-pixel pan so the resized viewport snaps cleanly to tile
+     * boundaries — there's no in-flight drag state to preserve across a
+     * window resize. */
+    if (g_lv->isLoaded) {
+        BYTE ox, oy;
+        lv_screenGetOffsets(&ox, &oy);
+        if ((int)ox + newTilesX > 255) ox = (BYTE)(255 - newTilesX);
+        if ((int)oy + newTilesY > 255) oy = (BYTE)(255 - newTilesY);
+        lv_screenSetOffset(ox, oy);
+        lv_screenSetSubOffset(0, 0);
+    }
+    lv_drawResizeRenderTarget();
+    lv_drawDirtyScreen();
+    g_lv->wantScreenUpdate = TRUE;
+}
+
+/* --------------------------------------------------------------------------
  * lvHostRenderFrame -- Shared per-frame scene + ImGui render dispatch.
  *
  * Renders the current mode: the block-grid overview when !gameView, the
@@ -1141,51 +1194,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                 g_lv->wantScreenUpdate = TRUE;
             }
             if (sdlEvent.type == SDL_EVENT_WINDOW_RESIZED) {
-                /* Game view drives a fixed window size (515*zf × 325*zf);
-                 * leave it alone here. Phase E swaps in a real zoom
-                 * selector — until then, manual resize is just disabled. */
-                if (g_lv->gameView) {
-                    continue;
-                }
-                int w = sdlEvent.window.data1;
-                int h = sdlEvent.window.data2;
-                int menuH = (int)lv_imgui_get_menu_bar_height();
-                float zoom = lv_drawGetZoomLevel();
-                if (zoom <= 0.0f) zoom = 1.0f;
-
-                /* Snap to the nearest zoom-effective tile boundary so the
-                 * blit fills the window cleanly at the current zoom. */
-                float tilePxX = (float)TILE_SIZE_X * zoom;
-                float tilePxY = (float)TILE_SIZE_Y * zoom;
-                int newTilesX = (int)(((float)w + tilePxX * 0.5f) / tilePxX);
-                int newTilesY = (int)((((float)(h - menuH)) + tilePxY * 0.5f) / tilePxY);
-                if (newTilesX < 1) newTilesX = 1;
-                if (newTilesY < 1) newTilesY = 1;
-                if (newTilesX > 255) newTilesX = 255;
-                if (newTilesY > 255) newTilesY = 255;
-
-                int snappedW = (int)(newTilesX * tilePxX + 0.5f);
-                int snappedH = (int)(newTilesY * tilePxY + 0.5f);
-                SDL_SetWindowSize(g_lv->window, snappedW, snappedH + menuH);
-                {
-                    lv_screenSetSizeX((BYTE)newTilesX);
-                    lv_screenSetSizeY((BYTE)newTilesY);
-                    /* Clamp scroll offset so the viewport stays within the 255x255 map.
-                     * Reset sub-pixel pan so the resized viewport snaps cleanly to
-                     * tile boundaries — there's no "in-flight drag" state to preserve
-                     * across a window resize. */
-                    if (g_lv->isLoaded) {
-                        BYTE ox, oy;
-                        lv_screenGetOffsets(&ox, &oy);
-                        if ((int)ox + newTilesX > 255) ox = (BYTE)(255 - newTilesX);
-                        if ((int)oy + newTilesY > 255) oy = (BYTE)(255 - newTilesY);
-                        lv_screenSetOffset(ox, oy);
-                        lv_screenSetSubOffset(0, 0);
-                    }
-                }
-                lv_drawResizeRenderTarget();
-                lv_drawDirtyScreen();
-                g_lv->wantScreenUpdate = TRUE;
+                lvHostHandleResize(&sdlEvent);
             }
             if (sdlEvent.type == SDL_EVENT_MOUSE_WHEEL) {
                 /* Stepped zoom anchored on the cursor. Skip when ImGui is
@@ -1281,7 +1290,8 @@ void logViewerRunFromMemory(SDL_Window *window, SDL_Renderer *renderer,
  * backend.h). The ClientSim's lifetime is the caller's — spectatorRun does not
  * disconnect or free it.
  * -------------------------------------------------------------------------- */
-void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
+void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
+                  const char *serverHost, uint16_t serverPort) {
     if (lvHostSetup(window, renderer, /* fromMainMenu */ TRUE) == FALSE) {
         return;
     }
@@ -1387,6 +1397,23 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
         }
 
         if (g_lv->isLoaded) {
+            /* Title the borrowed window for the live session: host:port plus
+             * the map name decoded from the seed. Omit the "Map:" suffix when
+             * the seed carried no map name. The caller restores the app title
+             * on return. */
+            char specTitle[160];
+            if (g_lv->mapName[0] != '\0') {
+                snprintf(specTitle, sizeof(specTitle),
+                         "WinBolo - Spectating %s:%u Map: %s",
+                         serverHost ? serverHost : "", (unsigned)serverPort,
+                         g_lv->mapName);
+            } else {
+                snprintf(specTitle, sizeof(specTitle),
+                         "WinBolo - Spectating %s:%u",
+                         serverHost ? serverHost : "", (unsigned)serverPort);
+            }
+            SDL_SetWindowTitle(g_lv->window, specTitle);
+
             lv_drawDirtyScreen();
             g_lv->wantScreenUpdate = TRUE;
             /* A delivered seed means the feed is alive: clear any await-phase
@@ -1436,6 +1463,11 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
                 lv_drawDirtyScreen();
                 g_lv->wantScreenUpdate = TRUE;
             }
+            /* Snap + reflow the overview on a drag-resize/maximize, matching
+             * the standalone viewer (game view is fixed-size and ignored). */
+            if (sdlEvent.type == SDL_EVENT_WINDOW_RESIZED) {
+                lvHostHandleResize(&sdlEvent);
+            }
             /* Mouse-wheel zoom for the block-grid overview, anchored on the
              * cursor — the spectator's menu-bar zoom path is gated off, so the
              * wheel is the overview's only zoom. Skipped while ImGui owns the
@@ -1452,14 +1484,26 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs) {
                     }
                 }
             }
-            /* Esc exits the live feed back to the caller — the game-view key
-             * handler above leaves it unconsumed, so it falls through here. */
-            if (sdlEvent.type == SDL_EVENT_QUIT ||
-                (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
-                 sdlEvent.key.key == SDLK_ESCAPE)) {
+            /* Window-X / OS quit leaves immediately — never trap the OS close.
+             * Esc instead arms the "Leave spectating?" confirm modal (rendered
+             * by lvHostRenderFrame in both overview and game view); the future
+             * controller B-button arms it through the same entry point. The
+             * game-view key handler above leaves Esc unconsumed, so it falls
+             * through here. */
+            if (sdlEvent.type == SDL_EVENT_QUIT) {
                 g_lv->quit = TRUE;
                 break;
             }
+            if (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
+                sdlEvent.key.key == SDLK_ESCAPE) {
+                lv_imgui_spectator_leave_request();
+            }
+        }
+
+        /* The confirm modal resolves on a click: Yes leaves the feed, No keeps
+         * watching (the modal closed itself). */
+        if (lv_imgui_spectator_leave_confirmed()) {
+            g_lv->quit = TRUE;
         }
 
         /* Drain all records queued this frame. In live-DVR mode lv_specRecordPump

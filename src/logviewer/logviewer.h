@@ -187,9 +187,13 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
 /* Modal host for the live delayed spectator feed. Borrows the caller's
  * window/renderer and drives the decoder from records drained off the bolo-world
  * ClientSim (passed opaquely as cs) through the spectator_drain.h seam. The
- * caller owns the ClientSim's lifetime; spectatorRun does not disconnect it. */
+ * caller owns the ClientSim's lifetime; spectatorRun does not disconnect it.
+ *
+ * serverHost/serverPort are the connected server's typed address, used only to
+ * title the borrowed window (logviewer.c cannot reach client_sim.h to read them
+ * off the ClientSim); the caller restores the app title on return. */
 void spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
-                  void *cs);
+                  void *cs, const char *serverHost, uint16_t serverPort);
 
 /* Host-callable decoder lifecycle: create allocates the state, sets its
  * field defaults, and registers it as the active state; destroy closes any

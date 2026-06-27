@@ -1083,7 +1083,11 @@ static bool gameFrontDialogs(void) {
          * feed, and owns the window until the user exits. The handshake to
          * CLIENT_CONNECT_SPECTATING and the seed wait happen inside it via
          * the spectator_drain pump — no pre-run tick loop needed here. */
-        spectatorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), spectatorSim);
+        spectatorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), spectatorSim,
+                     gameFrontUdpAddress, gameFrontTargetUdp);
+        /* spectatorRun retitled the borrowed window for the live session;
+         * restore the normal app title now that it has returned. */
+        SDL_SetWindowTitle(sdl3DrawGetWindow(), WIND_TITLE);
       }
       /* Caller owns the ClientSim lifetime (spectatorRun never disconnects):
        * tear it down so the socket/transport is released before returning. */

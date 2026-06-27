@@ -63,6 +63,11 @@ static const langid colour_name_ids[] = {
 static bool s_show_team_colours = false;
 static bool s_show_about = false;
 
+/* Live-spectator "Leave spectating?" confirm state. s_spec_leave_confirmed
+ * latches on Yes and is consumed by lv_imgui_spectator_leave_confirmed(). */
+static bool s_show_spec_leave = false;
+static bool s_spec_leave_confirmed = false;
+
 /* Team Colours dialog state */
 static int s_team_colours[17] = {0};
 static bool s_team_colours_loaded = false;
@@ -75,6 +80,7 @@ static const char* s_website = "https://github.com/winbolo/logviewer";
 /* Forward declarations */
 static void render_team_colours_dialog(void);
 static void render_about_dialog(void);
+static void render_spectator_leave_dialog(void);
 static void load_team_colours_from_tc(void);
 static void save_team_colours_to_tc(void);
 
@@ -133,12 +139,21 @@ void lv_imgui_dialogs_render(void) {
     }
     was_about_open = s_show_about;
 
+    static bool was_spec_leave_open = false;
+    if (s_show_spec_leave && !was_spec_leave_open) {
+        ImGui::OpenPopup("###spec_leave");
+    }
+    was_spec_leave_open = s_show_spec_leave;
+
     /* Render each dialog */
     if (s_show_team_colours) {
         render_team_colours_dialog();
     }
     if (s_show_about) {
         render_about_dialog();
+    }
+    if (s_show_spec_leave) {
+        render_spectator_leave_dialog();
     }
 }
 
@@ -180,6 +195,24 @@ void lv_imgui_show_team_colours_dialog(void) {
 void lv_imgui_show_about_dialog(void) {
     s_show_about = true;
     /* OpenPopup will be called in render function */
+}
+
+/**
+ * Arm the live-spectator leave-confirm modal.
+ */
+void lv_imgui_spectator_leave_request(void) {
+    s_show_spec_leave = true;
+    s_spec_leave_confirmed = false;
+    /* OpenPopup will be called in render function */
+}
+
+/**
+ * Consume the confirm latch: true once after Yes, false otherwise.
+ */
+bool lv_imgui_spectator_leave_confirmed(void) {
+    bool confirmed = s_spec_leave_confirmed;
+    s_spec_leave_confirmed = false;
+    return confirmed;
 }
 
 /* ============================================================================
@@ -344,5 +377,49 @@ static void render_about_dialog(void) {
         imguiHandOnHover();
 
         ImGui::EndPopup();
+    }
+}
+
+/* ============================================================================
+ * Spectator Leave-Confirm Dialog Implementation
+ * ============================================================================ */
+
+static void render_spectator_leave_dialog(void) {
+    /* Center the modal */
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    /* No p_open close button: the only exits are Yes/No (or Esc/click-away,
+     * which fall through to the else and clear the flag = keep watching).
+     * Title/blurb are English literals — localizing them is a follow-up
+     * (no existing STR_* fits "Leave spectating?"). Yes/No are localized. */
+    char title[128];
+    snprintf(title, sizeof(title), "%s###spec_leave", "Leave spectating?");
+    if (ImGui::BeginPopupModal(title, NULL,
+                               ImGuiWindowFlags_NoResize |
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Leave spectating?");
+        ImGui::Separator();
+
+        if (ImGui::Button(langGetText(STR_YES), ImVec2(80, 0))) {
+            s_spec_leave_confirmed = true;
+            s_show_spec_leave = false;
+            ImGui::CloseCurrentPopup();
+        }
+        imguiHandOnHover();
+
+        ImGui::SameLine();
+
+        if (ImGui::Button(langGetText(STR_NO), ImVec2(80, 0))) {
+            s_show_spec_leave = false;
+            ImGui::CloseCurrentPopup();
+        }
+        imguiHandOnHover();
+
+        ImGui::EndPopup();
+    } else {
+        /* Popup closed by Esc or click-away without a button press: drop the
+         * logical flag so a later request re-opens it. Treated as cancel. */
+        s_show_spec_leave = false;
     }
 }
