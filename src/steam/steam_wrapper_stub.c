@@ -48,6 +48,8 @@ void steam_set_join_callback(SteamJoinCallback cb) {
   (void)cb;
 }
 
+bool steam_owns_dlc(uint32_t dlc_app_id) { (void)dlc_app_id; return false; }
+
 bool steam_is_steam_deck(void) { return false; }
 
 bool steam_is_big_picture(void) { return false; }

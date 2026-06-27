@@ -40,6 +40,13 @@ bool     steam_get_persona_name(char *out, size_t outSize);
  * No-op if no ticket is outstanding or Steam is not initialized. */
 void     steam_cancel_auth_ticket(void);
 
+/* True iff Steam is initialized and the local user owns the given DLC.
+ * A licence check (BIsSubscribedApp), independent of whether any DLC
+ * content is installed — required for a content-less cosmetic DLC, which
+ * BIsDlcInstalled would report as absent even for owners. False in stub
+ * builds and when Steam is not initialized. */
+bool     steam_owns_dlc(uint32_t dlc_app_id);
+
 /* True iff Steam is initialized and currently running on a Steam Deck. */
 bool     steam_is_steam_deck(void);
 
