@@ -2264,6 +2264,36 @@ add_custom_command(TARGET BrainTest POST_BUILD
     COMMENT "Copying BrainTest data files to output directory"
 )
 
+# ---------------------------------------------------------------------------
+# Bundle the dev-tool CLIs inside WinBolo.app (macOS)
+# ---------------------------------------------------------------------------
+# Drop the dedicated server and brain debugger into Contents/MacOS/ next to the
+# WinBolo binary so developers can run them straight from the signed bundle:
+#     WinBolo.app/Contents/MacOS/WinBoloDS
+#     WinBolo.app/Contents/MacOS/BrainTest
+# Because they live in Contents/MacOS/, SDL_GetBasePath() resolves to the
+# bundle's Contents/Resources/ for them too, so they share WinBolo's bundled
+# data/ and Brains/ — no separate asset copies needed. They load the
+# SDL3/SDL3_ttf/onnxruntime dylibs already sitting next to WinBolo via the
+# @executable_path rpath. `prepare.sh` signs them automatically: codesign
+# --deep on the bundle recursively signs every nested Mach-O with the hardened
+# runtime, which is all these terminal-launched tools need to notarize and run.
+# This makes a WinBolo-only build also build the two tools; turn it off with
+# -DWINBOLO_BUNDLE_DEV_TOOLS=OFF for faster WinBolo iteration.
+option(WINBOLO_BUNDLE_DEV_TOOLS
+    "Bundle WinBoloDS and BrainTest inside WinBolo.app (macOS)" ON)
+if(APPLE AND WINBOLO_BUNDLE_DEV_TOOLS)
+    # Guarantee both tools are built before WinBolo's POST_BUILD copy runs.
+    add_dependencies(WinBolo WinBoloDS BrainTest)
+    add_custom_command(TARGET WinBolo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:WinBoloDS>" "$<TARGET_FILE_DIR:WinBolo>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:BrainTest>" "$<TARGET_FILE_DIR:WinBolo>"
+        COMMENT "Bundling WinBoloDS and BrainTest into WinBolo.app/Contents/MacOS"
+    )
+endif()
+
 
 # ---------------------------------------------------------------------------
 # MapEditor (standalone map editor)
