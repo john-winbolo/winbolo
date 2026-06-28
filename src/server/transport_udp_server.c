@@ -332,6 +332,16 @@ typedef struct {
     uint32_t countdownSentTick;
     bool             live;       /* live lobby control-bus subscriber */
     SubscriberHandle controlSub; /* bus handle while live; INVALID otherwise */
+    /* Live-lobby map download. While the viewer watches the live lobby it needs
+     * the current lobby map (for the preview + start positions), delivered over
+     * its own CHANNEL_BULK exactly like a player's join download — but installed
+     * client-side without leaving spectator mode. lobbyMap is a spectator-owned
+     * copy of the compressed map, armed at connect / re-join / map change and
+     * freed once bulkSenderBegin copies it into the sender (or on disconnect).
+     * Distinct from the delayed seed (game-time map): the two never overlap on
+     * the channel because the seed arms only when !live and this only when live. */
+    BYTE    *lobbyMap;
+    uint32_t lobbyMapSize;
 } SpectatorConn;
 
 /* Server-side global state */
@@ -1250,8 +1260,9 @@ static int serverFindSpectator(const struct sockaddr_in *addr) {
 
 /* Spectator-flavoured JOIN_ACCEPT: same PACKET_JOIN_ACCEPT layout as
  * serverSendJoinAccept, but reads spectators[s] and marks the connection a
- * viewer — slot byte = 0xFF (no tank slot) and compressedMapSize = 0 (the
- * map arrives in the ring seed, not the live download path). */
+ * viewer — slot byte = 0xFF (no tank slot). The map size is the real compressed
+ * size in lobby/countdown (the live-lobby map streams for the preview) and 0
+ * while running (the game-time map rides the ring seed instead). */
 static void serverSendSpectatorAccept(int s, ServerSim *sim,
                                       const struct sockaddr_in *addr) {
     uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8 + 1];
@@ -1261,10 +1272,17 @@ static void serverSendSpectatorAccept(int s, ServerSim *sim,
     packHeader(acceptBuf, PACKET_JOIN_ACCEPT,
                udpServer.spectators[s].outSequence++);
     pos = PACKET_HEADER_SIZE;
+    st = serverSimGetState(sim);
     acceptBuf[pos++] = 0xFF;                       /* viewer: no tank slot */
     packU32(acceptBuf + pos, serverSimGetTick(sim));
     pos += 4;
-    packU32(acceptBuf + pos, 0);                   /* no live map download */
+    /* In lobby/countdown the viewer watches the live lobby and needs the current
+     * map for its preview, so carry the real size and stream it (mirrors a
+     * player's join download, on the spectator's own CHANNEL_BULK). Running -> 0:
+     * the delayed seed carries the game-time map instead. */
+    packU32(acceptBuf + pos,
+            (st == serverStateLobby || st == serverStateCountdown)
+                ? udpServer.compressedMapSize : 0u);
     pos += 4;
     packConnId(acceptBuf + pos, udpServer.spectators[s].connId);
     pos += 8;
@@ -1273,11 +1291,56 @@ static void serverSendSpectatorAccept(int s, ServerSim *sim,
      * server is in lobby/countdown (the viewer watches the live lobby), 0 when a
      * game is running (delayed ring). Same predicate serverAcceptSpectator uses
      * to decide live bus registration. */
-    st = serverSimGetState(sim);
     acceptBuf[pos++] =
         (st == serverStateLobby || st == serverStateCountdown) ? 1 : 0;
 
     srvSendTo(acceptBuf, pos, addr);
+}
+
+/* Arm (or re-arm) the live-lobby map download for spectator s: copy the current
+ * compressed map into the spectator's own buffer; serverServiceSpectators begins
+ * the BULK_KIND_DOWNLOAD once its CHANNEL_BULK is idle, then frees the copy.
+ * resetChannel drops any in-flight transfer first — bulkSenderReset + a
+ * CHANNEL_BULK send-window re-base, carried to the viewer as a CTRL_CHANNEL_RESET
+ * so it re-bases its receiver (mirrors the player map-change path) — needed on a
+ * re-join or map change where an older transfer may be mid-flight; false for a
+ * fresh connect whose channel is still empty. No-op when the server holds no map. */
+static void serverArmSpectatorLobbyMap(int s, bool resetChannel) {
+    SpectatorConn *sp = &udpServer.spectators[s];
+
+    if (udpServer.compressedMapSize == 0) return;
+
+    if (resetChannel) {
+        uint32_t b3;
+        ControlEvent resetEvt;
+        ControlEncodeBodyFn enc;
+        uint8_t msg[CHANNEL_CONTROL_SEG];
+        size_t bodyLen = 0;
+
+        bulkSenderReset(&sp->bulkSend);
+        b3 = channelResetSend(&sp->channelMux, CHANNEL_BULK);
+        memset(&resetEvt, 0, sizeof(resetEvt));
+        resetEvt.type = CTRL_CHANNEL_RESET;
+        resetEvt.u.channelReset.channelMask = (uint8_t)(1u << CHANNEL_BULK);
+        resetEvt.u.channelReset.ch3Baseline = b3;
+        enc = transportControlCodecBodyEncoder(CTRL_CHANNEL_RESET);
+        if (enc != NULL &&
+            enc(&resetEvt, NULL, msg + 3, sizeof(msg) - 3, &bodyLen) == ENCODE_OK) {
+            msg[0] = (uint8_t)CTRL_CHANNEL_RESET;
+            packU16(msg + 1, (uint16_t)bodyLen);
+            channelSend(&sp->channelMux, CHANNEL_CONTROL, msg,
+                        (uint16_t)(3 + bodyLen));
+        }
+    }
+
+    if (sp->lobbyMap != NULL) free(sp->lobbyMap);
+    sp->lobbyMap = (BYTE *)malloc(udpServer.compressedMapSize);
+    if (sp->lobbyMap == NULL) {
+        sp->lobbyMapSize = 0;
+        return;
+    }
+    memcpy(sp->lobbyMap, udpServer.compressedMap, udpServer.compressedMapSize);
+    sp->lobbyMapSize = udpServer.compressedMapSize;
 }
 
 /* Per-spectator subscriber deliver callback — the spectator peer of
@@ -1460,6 +1523,20 @@ static void serverAcceptSpectator(ServerSim *sim,
     int effectiveCap;
     int s;
 
+    /* Ensure the compressed map exists for the live-lobby map download. Player
+     * joins populate it (after serverSimAddPlayer), but a spectator-only lobby
+     * may have had no player join yet, leaving it empty — compress the current
+     * map now so the accept carries a real size and the download can stream.
+     * Guarded so a re-JOIN doesn't recompress; map changes refresh it separately. */
+    if (udpServer.compressedMapSize == 0 &&
+        (serverSimGetState(sim) == serverStateLobby ||
+         serverSimGetState(sim) == serverStateCountdown)) {
+        int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+        if (mapLen > 0) {
+            udpServer.compressedMapSize = (uint32_t)mapLen;
+        }
+    }
+
     /* Re-JOIN from a known spectator address: resend the accept, no new slot.
      * Refresh the stored country and re-broadcast the roster row so a player
      * client that joined after this spectator (or missed the first broadcast)
@@ -1468,6 +1545,12 @@ static void serverAcceptSpectator(ServerSim *sim,
     if (s >= 0) {
         serverSetSpectatorCountry(s, country);
         serverSendSpectatorAccept(s, sim, fromAddr);
+        /* The re-accept makes a live viewer re-allocate its map buffer, so
+         * re-arm the lobby-map download (with a channel reset, since an earlier
+         * transfer may be in flight) or it would wait for bytes that never come. */
+        if (udpServer.spectators[s].live) {
+            serverArmSpectatorLobbyMap(s, /*resetChannel=*/true);
+        }
         serverBroadcastSpectatorSlot(s);
         return;
     }
@@ -1532,6 +1615,8 @@ static void serverAcceptSpectator(ServerSim *sim,
     udpServer.spectators[s].countdownSentTick  = 0;
     udpServer.spectators[s].live               = false;
     udpServer.spectators[s].controlSub         = SUBSCRIBER_HANDLE_INVALID;
+    udpServer.spectators[s].lobbyMap           = NULL;
+    udpServer.spectators[s].lobbyMapSize       = 0;
 
     serverSendSpectatorAccept(s, sim, fromAddr);
     /* Tell every connected player client a new viewer is on the roster. */
@@ -1550,6 +1635,9 @@ static void serverAcceptSpectator(ServerSim *sim,
             udpServer.spectators[s].controlSub =
                 serverSimRegisterSubscriber(sim, serverSpectatorDeliverControl,
                                             &udpServer.spectators[s]);
+            /* Fresh connect: the channel is empty, so arm the lobby-map download
+             * without a reset. serverServiceSpectators streams it once idle. */
+            serverArmSpectatorLobbyMap(s, /*resetChannel=*/false);
         }
     }
 
@@ -1610,6 +1698,11 @@ static void serverDisconnectSpectator(ServerSim *sim, int s, bool graceful) {
         free(udpServer.spectators[s].seedBlob);
         udpServer.spectators[s].seedBlob = NULL;
     }
+    if (udpServer.spectators[s].lobbyMap != NULL) {
+        free(udpServer.spectators[s].lobbyMap);
+        udpServer.spectators[s].lobbyMap = NULL;
+    }
+    udpServer.spectators[s].lobbyMapSize = 0;
     udpServer.spectators[s].seedLen = 0;
     udpServer.spectators[s].seedGen = 0;
     udpServer.spectators[s].seedBegun = false;
@@ -2039,12 +2132,48 @@ static void serverServiceSpectators(ServerSim *sim) {
                     sp->live = true;
                     sp->controlSub = serverSimRegisterSubscriber(
                         sim, serverSpectatorDeliverControl, sp);
+                    /* Back in the live lobby (the map may have rotated since the
+                     * game began): re-send the accept so the viewer re-allocates,
+                     * and re-arm the lobby map so its preview refreshes. Mirrors
+                     * the map-change path; does not alter the drain-flip above. */
+                    serverSendSpectatorAccept(i, sim, &sp->addr);
+                    serverArmSpectatorLobbyMap(i, /*resetChannel=*/true);
                     mpDiagLog("[srv] spec idx=%d delayed->live "
                               "(drained, lobby)", i);
                 }
             }
         }
         }   /* end if (!sp->live) — delayed ring path */
+
+        /* Live-lobby map: stream the armed lobby map to the viewer over its own
+         * CHANNEL_BULK (mirrors a player's join download) so its lobby preview and
+         * start positions render. Begun once the bulk channel is idle — the same
+         * gate the seed uses — then the copy is freed (bulkSenderBegin copied it).
+         * Only while sp->live, so it can never overlap the delayed seed (which
+         * arms only when !sp->live); at the live->delayed cutover an in-flight
+         * lobby map simply finishes first, since this same idle gate makes the
+         * seed wait for the channel to drain. */
+        if (sp->live && sp->lobbyMap != NULL) {
+            ChannelState *lbulk = &sp->channelMux.ch[CHANNEL_BULK];
+            if (!bulkSenderBusy(&sp->bulkSend) &&
+                sp->channelMux.streamCount == 0 &&
+                lbulk->ackedSeq == lbulk->nextSeq) {
+                BulkStreamHeader sh;
+                memset(&sh, 0, sizeof(sh));
+                sh.kind = BULK_KIND_DOWNLOAD;
+                sh.gen = 0;
+                sh.totalSize = sp->lobbyMapSize;
+                sh.pathLen = 0;
+                sh.path[0] = '\0';
+                if (bulkSenderBegin(&sp->bulkSend, &sh,
+                                    sp->lobbyMap, sp->lobbyMapSize)) {
+                    free(sp->lobbyMap);
+                    sp->lobbyMap = NULL;
+                    sp->lobbyMapSize = 0;
+                }
+                /* allocation failure: keep lobbyMap, retry next tick */
+            }
+        }
 
         /* Carrier: pump staged bytes into the mux and emit standalone
          * PACKET_CHANNEL frames — carries both the seed and the forward records.
@@ -4130,6 +4259,18 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
         }
         /* Arm a fresh join download from the new blob (re-gates snapshots). */
         serverInitMapDownload(i);
+    }
+
+    /* Live-lobby spectators: mirror the player loop — re-send the accept (new map
+     * size) and re-arm the lobby-map download, which resets the spectator's bulk
+     * sender + re-bases its CHANNEL_BULK (via CTRL_CHANNEL_RESET) so it abandons
+     * the old partial and downloads the new map. Delayed (in-game) viewers are
+     * skipped: their map rides the ring seed, not this path. */
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        SpectatorConn *sp = &udpServer.spectators[i];
+        if (!sp->connected || !sp->live) continue;
+        serverSendSpectatorAccept(i, sim, &sp->addr);
+        serverArmSpectatorLobbyMap(i, /*resetChannel=*/true);
     }
 
     fprintf(stderr, "[UDP SERVER] Map change prep: %u bytes compressed map\n",

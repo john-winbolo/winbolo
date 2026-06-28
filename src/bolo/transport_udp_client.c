@@ -240,6 +240,12 @@ typedef struct {
      * first delayed frame (cold-start countdown or bulk seed/record), true when
      * live lobby control resumes (the server re-subscribed at return-to-lobby). */
     bool specLiveLobby;
+    /* A live-lobby spectator is downloading the current lobby map over
+     * CHANNEL_BULK (BULK_KIND_DOWNLOAD), armed from a spectator JOIN_ACCEPT with a
+     * non-zero map size. Gates the bulk receiver to accept that stream while
+     * staying UDP_CLIENT_SPECTATING (not the player game-start pipeline); cleared
+     * once the map installs. The delayed-ring seed is a separate source. */
+    bool specLobbyMapDownloading;
 
     /* Phase 3 — UDP hole-punching fallback. Empty trackerAddr disables
      * punch entirely (LAN/manual-connect joiners). */
@@ -1156,9 +1162,14 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         return cs->lobbyMapPreviewBytes;
 
     case BULK_KIND_DOWNLOAD:
-        /* Join download: reassemble into the buffer JOIN_ACCEPT sized from the
-         * accept's mapSize. The header's totalSize must match it. */
-        if (c->joinState != UDP_CLIENT_DOWNLOADING_MAP) return NULL;
+        /* Join download (player) OR live-lobby map download (spectator):
+         * reassemble into the buffer JOIN_ACCEPT sized from the accept's mapSize.
+         * The header's totalSize must match it. A spectator stays SPECTATING and
+         * is gated on specLobbyMapDownloading so the seed stream can't be mistaken
+         * for a join download. */
+        if (c->joinState != UDP_CLIENT_DOWNLOADING_MAP &&
+            !(c->joinState == UDP_CLIENT_SPECTATING &&
+              c->specLobbyMapDownloading)) return NULL;
         if (c->mapDownloadBuf == NULL) return NULL;
         if (h->totalSize != c->mapDownloadTotal) return NULL;
         c->mapDownloadReceived = 0;
@@ -1261,11 +1272,27 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         break;
 
     case BULK_KIND_DOWNLOAD:
-        /* Whole map reassembled. Install immediately (lobby or running), flip to
-         * CONNECTED, and publish CTRL_MAP_DOWNLOAD_COMPLETE — the finish the old
-         * final-chunk path drove. Order: length -> state -> install -> flag ->
-         * event (matching the retired handler). */
+        /* Whole map reassembled. Install immediately (lobby or running) and
+         * publish CTRL_MAP_DOWNLOAD_COMPLETE — the finish the old final-chunk path
+         * drove. A live-lobby spectator installs the lobby map for its preview but
+         * STAYS UDP_CLIENT_SPECTATING (it never joined a tank); a player flips to
+         * CONNECTED. Order: length -> state -> install -> flag -> event. */
         c->mapDownloadReceived = h->totalSize;
+        if (c->joinState == UDP_CLIENT_SPECTATING) {
+            installCompressedMap(cs, c->mapDownloadBuf,
+                                 (int)c->mapDownloadTotal, NULL,
+                                 /*initViewport=*/true);
+            c->mapInstalled = true;
+            c->specLobbyMapDownloading = false;
+            {
+                ControlEvent evt = { .type = CTRL_MAP_DOWNLOAD_COMPLETE };
+                clientSimApplyControl(cs, &evt);
+            }
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                "spectator lobby map installed (%u bytes), staying SPECTATING",
+                (unsigned)h->totalSize);
+            break;
+        }
         c->joinState = UDP_CLIENT_CONNECTED;
         installCompressedMap(cs, c->mapDownloadBuf,
                              (int)c->mapDownloadTotal, NULL,
@@ -1354,7 +1381,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             "PACKET_JOIN_ACCEPT received: state=%d len=%d (need>=%d)",
             (int)c->joinState, len, PACKET_HEADER_SIZE + 9);
         if ((c->joinState == UDP_CLIENT_JOINING ||
-             c->joinState == UDP_CLIENT_DOWNLOADING_MAP) &&
+             c->joinState == UDP_CLIENT_DOWNLOADING_MAP ||
+             c->joinState == UDP_CLIENT_SPECTATING) &&
             len >= PACKET_HEADER_SIZE + 9) {
             int pos = PACKET_HEADER_SIZE;
             uint32_t mapSize;
@@ -1362,13 +1390,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
             /* Tankless spectator accept. The server answers a
              * JOIN_FLAG_SPECTATOR join with the SPECTATOR_ACCEPT_NO_SLOT
-             * sentinel and a zero mapSize: no tank slot is claimed and no map
-             * is downloaded (the map arrives later inside the spectator seed).
+             * sentinel: no tank slot is claimed. The map size is real in
+             * lobby/countdown (the live-lobby map is downloaded below for the
+             * preview) and 0 while running (the game-time map rides the seed).
              * Intercept here — before the slot>=MAX_TANKS reject the 0xFF
              * sentinel would otherwise trip — and skip the tank-slot funnel
-             * (clientSimOnAssignedSlot), the map-download buffer, and the live
-             * snapshot-apply pipeline; land in UDP_CLIENT_SPECTATING to await
-             * the seed (consumed in a later slice). Gated on c->spectator so a
+             * (clientSimOnAssignedSlot) and the live snapshot-apply pipeline;
+             * land in UDP_CLIENT_SPECTATING. Gated on c->spectator so a
              * player-join client never takes this path: for it, a 0xFF slot
              * falls through to the out-of-range reject below. */
             if (c->spectator && assignedSlot == SPECTATOR_ACCEPT_NO_SLOT) {
@@ -1376,8 +1404,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                  * round-trip sample — same rationale as the player path). */
                 clientTimingSeedFromJoin(&c->timing, unpackU32(buf + pos), 0);
                 pos += 4;
-                /* mapSize is the zero sentinel for a spectator — step past it;
-                 * no download buffer is allocated. */
+                /* mapSize: 0 while a game runs (the map rides the delayed seed),
+                 * non-zero in lobby/countdown — the current lobby map, downloaded
+                 * below over CHANNEL_BULK for the lobby preview. Read it here
+                 * (the player path's funnel below is skipped for spectators). */
+                uint32_t specMapSize = unpackU32(buf + pos);
                 pos += 4;
                 /* Optional connId trailer, read exactly as the player path so
                  * the server can re-home this spectator after a NAT rebind. */
@@ -1399,9 +1430,35 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     }
                     udpClientSetSpecLiveLobby(c, liveLobby);
                 }
+                /* Live-lobby map download. A non-zero size means the server is
+                 * streaming the current lobby map (BULK_KIND_DOWNLOAD) so the
+                 * lobby preview/starts render. Allocate the receive buffer and arm
+                 * the bulk gate, but stay UDP_CLIENT_SPECTATING — this is NOT the
+                 * player game-start pipeline. A re-accept (mid-lobby map change /
+                 * return-to-lobby) re-allocates for the new size and re-arms; the
+                 * old buffer is freed first so nothing leaks. The server pairs the
+                 * re-accept with a CTRL_CHANNEL_RESET, so the bulk receiver re-bases
+                 * cleanly. mapInstalled goes false until the new map lands, which
+                 * holds the preview on its prior frame (no half-map). */
+                if (specMapSize != 0 && specMapSize <= MAP_DOWNLOAD_MAX_SIZE) {
+                    if (c->mapDownloadBuf != NULL) {
+                        free(c->mapDownloadBuf);
+                        c->mapDownloadBuf = NULL;
+                    }
+                    c->mapDownloadBuf = (BYTE *)malloc(specMapSize);
+                    if (c->mapDownloadBuf != NULL) {
+                        memset(c->mapDownloadBuf, 0, specMapSize);
+                        c->mapDownloadTotal = specMapSize;
+                        c->mapDownloadReceived = 0;
+                        c->mapInstalled = false;
+                        c->specLobbyMapDownloading = true;
+                        bulkReceiverInit(&c->bulkRecv);
+                    }
+                }
                 c->joinState = UDP_CLIENT_SPECTATING;
                 WB_LOG_INFO(WB_LOG_CAT_NET,
-                    "spectator JOIN_ACCEPT: tankless connect, awaiting seed");
+                    "spectator JOIN_ACCEPT: tankless connect, mapSize=%u",
+                    (unsigned)specMapSize);
                 break;
             }
 
@@ -3630,7 +3687,12 @@ const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen) {
     TransportUdpClientCtx *c;
     if (t == NULL || t->ctx == NULL) return NULL;
     c = (TransportUdpClientCtx *)t->ctx;
-    if (c->mapDownloadBuf == NULL || c->joinState != UDP_CLIENT_CONNECTED) {
+    if (c->mapDownloadBuf == NULL) return NULL;
+    /* Connected player, or a live-lobby spectator whose lobby map has finished
+     * installing. Gated on mapInstalled (not merely SPECTATING) so a mid-download
+     * spectator never feeds half a map to the lobby preview. */
+    if (c->joinState != UDP_CLIENT_CONNECTED &&
+        !(c->joinState == UDP_CLIENT_SPECTATING && c->mapInstalled)) {
         return NULL;
     }
     if (outLen != NULL) {
