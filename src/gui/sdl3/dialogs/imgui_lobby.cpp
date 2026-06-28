@@ -5958,12 +5958,12 @@ static void renderLobbyRejectToast(ClientSim *cs, float s) {
     (void)s;
 }
 
-/* ── Layout A — "Last round" panel ────────────────────────────────
+/* ── Layout A — "Last round" recap ────────────────────────────────
  * Between-rounds scoreboard + awards built from the client's stored
- * end-of-round summary (clientSimGetLastRoundStats). Inline and
- * non-modal: renders only when a summary is present — it is set at
- * game over and cleared on the next countdown, so the panel appears
- * and vanishes on its own with no extra client state here. Read-only;
+ * end-of-round summary (clientSimGetLastRoundStats). The summary is
+ * set at game over and cleared on the next countdown; the recap body
+ * below is shown only while it exists — via a button-triggered popup
+ * on the mouse path and a tab in the controller layout. Read-only;
  * never blocks readying up or other lobby controls. */
 
 /* AwardId → localized label id. */
@@ -6033,14 +6033,13 @@ static void lastRoundRenderName(ClientSim *cs, uint8_t slot, bool isBot) {
     }
 }
 
-static void renderLastRoundPanel(ClientSim *cs, float s) {
+/* Container-less recap body: the between-rounds scoreboard table plus a
+ * flat list of every won award. Renders no chrome and decides nothing
+ * about visibility — the caller (mouse popup / controller tab) gates it
+ * on clientSimGetLastRoundStats and supplies the surrounding window. */
+static void renderLastRoundBody(ClientSim *cs, float s) {
     const RoundStatsSummary *st = clientSimGetLastRoundStats(cs);
     if (!st) return;
-
-    if (!ImGui::CollapsingHeader(langGetText(STR_DLGLOBBY_LASTROUND_TITLE),
-                                 ImGuiTreeNodeFlags_DefaultOpen)) {
-        return;
-    }
 
     /* ── Scoreboard ordering ─────────────────────────────────────── */
     /* Display order: kills desc, then fewest deaths, then slot. */
@@ -6064,66 +6063,15 @@ static void renderLastRoundPanel(ClientSim *cs, float s) {
         }
     }
 
-    /* ── Award selection ─────────────────────────────────────────── */
+    /* awardId (1..AWARD_COUNT) → index into awards[], -1 when unwon. */
     int ac = st->awardCount;
     if (ac > AWARD_COUNT) ac = AWARD_COUNT;
-    /* awardId (1..AWARD_COUNT) → index into awards[], -1 when unwon. */
     int awardIdx[AWARD_COUNT + 1];
     for (int i = 0; i <= AWARD_COUNT; i++) awardIdx[i] = -1;
     for (int i = 0; i < ac; i++) {
         uint8_t id = st->awards[i].awardId;
         if (id >= 1 && id <= AWARD_COUNT) awardIdx[id] = i;
     }
-
-    /* Dynamic fun award: the highest-value won award among the
-     * negative/fun set. */
-    static const uint8_t kFunSet[] = {
-        AWARD_FISH_FOOD, AWARD_BIGGEST_FUMBLE, AWARD_WASTEFUL,
-        AWARD_MOST_DEATHS, AWARD_CANNON_FODDER};
-    int funPick = -1;
-    for (size_t i = 0; i < sizeof(kFunSet) / sizeof(kFunSet[0]); i++) {
-        int idx = awardIdx[kFunSet[i]];
-        if (idx >= 0 &&
-            (funPick < 0 || st->awards[idx].value > st->awards[funPick].value)) {
-            funPick = idx;
-        }
-    }
-
-    /* Core set: four fixed awards plus the dynamic fun pick. */
-    uint8_t core[5];
-    int coreN = 0;
-    static const uint8_t kFixed[] = {AWARD_MOST_KILLS, AWARD_BEST_KD,
-                                     AWARD_MOST_BASE_CAPTURES, AWARD_ENGINEER};
-    for (size_t i = 0; i < sizeof(kFixed) / sizeof(kFixed[0]); i++) {
-        core[coreN++] = kFixed[i];
-    }
-    if (funPick >= 0) core[coreN++] = st->awards[funPick].awardId;
-
-    bool shownInCore[AWARD_COUNT + 1] = {false};
-    int coreShown = 0;
-    for (int i = 0; i < coreN; i++) {
-        uint8_t id = core[i];
-        shownInCore[id] = true;
-        if (awardIdx[id] >= 0) coreShown++;
-    }
-    bool haveMore = false;
-    for (int i = 0; i < ac; i++) {
-        uint8_t id = st->awards[i].awardId;
-        if (id >= 1 && id <= AWARD_COUNT && !shownInCore[id]) { haveMore = true; break; }
-    }
-
-    /* ── Bounded body ────────────────────────────────────────────── */
-    /* Cap the recap height so a full scoreboard can never push the
-     * lobby controls (Ready, team buttons) off the fixed-size window;
-     * it scrolls internally instead. NavFlattened keeps controller
-     * focus flowing through to the controls below. */
-    float lineH = ImGui::GetTextLineHeightWithSpacing();
-    int   awardLines = coreShown + (haveMore ? 1 : 0);
-    float neededH = (float)(n + 1) * lineH + (float)awardLines * lineH + 8.0f * s;
-    float capH    = ImMax(120.0f * s, ImGui::GetContentRegionAvail().y * 0.5f);
-    float bodyH   = ImMin(neededH, capH);
-    ImGui::BeginChild("##lastRoundBody", ImVec2(0, bodyH),
-                      ImGuiChildFlags_NavFlattened);
 
     if (n > 0 &&
         ImGui::BeginTable("##lastRoundScore", 7,
@@ -6201,26 +6149,10 @@ static void renderLastRoundPanel(ClientSim *cs, float s) {
         }
     };
 
-    /* Core awards — always shown when won. */
-    for (int i = 0; i < coreN; i++) {
-        uint8_t id = core[i];
+    /* Every won award, listed in award-id order. */
+    for (int id = 1; id <= AWARD_COUNT; id++) {
         if (awardIdx[id] >= 0) renderAward(awardIdx[id]);
     }
-
-    /* Remaining won awards behind an expander. */
-    if (haveMore && ImGui::TreeNode(langGetText(STR_DLGLOBBY_LASTROUND_MORE))) {
-        for (int i = 0; i < ac; i++) {
-            uint8_t id = st->awards[i].awardId;
-            if (id >= 1 && id <= AWARD_COUNT && !shownInCore[id]) renderAward(i);
-        }
-        ImGui::TreePop();
-    }
-
-    ImGui::EndChild(); /* ##lastRoundBody */
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
 }
 
 /* ── Layout A — small inline lock badge ───────────────────────────
@@ -7226,10 +7158,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * when clientSimGetLobbyLastRejectPacket(cs) != 0. */
         renderLobbyRejectToast(cs, s);
 
-        /* Between-rounds recap — only present right after a round ends;
-         * clears itself on the next countdown. */
-        renderLastRoundPanel(cs, s);
-
         /* Layout A — collapsible game settings panel (radios, checkboxes,
          * lock badges). Edits dispatch via PACKET_LOBBY_SET_SETTING.
          * Skipped entirely for non-privileged players — the same
@@ -7289,6 +7217,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * imguiSteamNavConsumeMenuTabShift instead. Suppressed while the
              * Choose Map window is open so the trigger press cycles its source
              * tabs (rendered later this frame) instead of the lobby tabs. */
+            /* The recap tab exists only while a stored end-of-round
+             * summary does (set at game over, cleared on countdown). */
+            const bool haveLastRound = clientSimGetLastRoundStats(cs) != NULL;
             if (!s_chooseMapOpen) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
@@ -7301,13 +7232,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     /* Visible tab indices in render order. The Settings
                      * predicate must match the Settings tab's BeginTabItem
                      * gate (gsEffectiveHost) exactly. */
-                    int vis[5];
+                    int vis[6];
                     int nVis = 0;
                     vis[nVis++] = 0;                       /* Players */
                     vis[nVis++] = 1;                       /* Map */
                     if (gsEffectiveHost) vis[nVis++] = 2;  /* Settings */
                     vis[nVis++] = 3;                       /* Chat */
                     if (onTeam) vis[nVis++] = 4;           /* Team */
+                    if (haveLastRound) vis[nVis++] = 5;    /* Last round */
                     int cur = 0;
                     for (int i = 0; i < nVis; i++) {
                         if (vis[i] == activeTab) { cur = i; break; }
@@ -7741,6 +7673,19 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                             ImGui::PopStyleColor(2);
                         }
                     }
+                }
+
+                /* --- Last round tab (only while a summary exists) --- */
+                if (haveLastRound &&
+                    ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_LASTROUND_BTN), nullptr,
+                        s_lobbyForceTab == 5 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                    activeTab = 5;
+                    float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
+                    ImGui::BeginChild("##LastRoundTab", ImVec2(availW, tabH),
+                                      ImGuiChildFlags_NavFlattened);
+                    renderLastRoundBody(cs, s);
+                    ImGui::EndChild();
+                    ImGui::EndTabItem();
                 }
 
                 ImGui::EndTabBar();
@@ -8411,6 +8356,26 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                  * Ranked checkbox up top, and the server auto-applies
                  * WBN's split immediately on response (no Apply /
                  * Dismiss approval step). */
+
+                /* Between-rounds recap: a button directly above Ready that
+                 * opens the scoreboard + awards in a non-modal popup. Shown
+                 * only while a stored summary exists (set at game over,
+                 * cleared on the next countdown). The popup closes on Escape
+                 * and on a click outside it, and scrolls internally so a full
+                 * scoreboard stays within the window. */
+                if (clientSimGetLastRoundStats(cs) != NULL) {
+                    if (ImGui::Button(langGetText(STR_DLGLOBBY_LASTROUND_BTN),
+                                      ImVec2(-1, 0))) {
+                        ImGui::OpenPopup("##LastRoundPopup");
+                    }
+                    ImGui::SetNextWindowSizeConstraints(
+                        ImVec2(360.0f * s, 0.0f),
+                        ImVec2(560.0f * s, 480.0f * s));
+                    if (ImGui::BeginPopup("##LastRoundPopup")) {
+                        renderLastRoundBody(cs, s);
+                        ImGui::EndPopup();
+                    }
+                }
 
                 if (!canReady) ImGui::BeginDisabled();
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
