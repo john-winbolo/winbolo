@@ -125,6 +125,12 @@ int run_md5_streaming_matches_oneshot(void);
 int run_md5_block_boundaries(void);
 int run_md5_to_hex(void);
 
+/* bolo_rand save/restore (test_rand_save_restore.c): a restored snapshot
+ * rewinds the generator exactly, so draws made between save and restore do not
+ * shift the post-restore sequence — the contract that keeps cosmetic bot
+ * naming from perturbing the deterministic game stream. */
+int run_rand_save_restore(void);
+
 /* Network-optimization wire changes (test_net_opt_wire.c): the pill
  * armour/inTank byte-packing helpers round-trip across the full range, and
  * the split base / packed pill game events have the expected wire sizes and

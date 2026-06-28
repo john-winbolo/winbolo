@@ -2700,6 +2700,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
+    tests/unit/test_rand_save_restore.c
     tests/unit/test_net_opt_wire.c
     src/common/md5.c
     src/common/mp_diag_log.c
@@ -3060,6 +3061,7 @@ set_flat_output(WinBoloUnitTests "${CMAKE_BINARY_DIR}")
 
 set(_unit_test_names
     md5_to_hex
+    rand_save_restore
     pill_armour_intank_roundtrip
     base_event_classification
     transport_local_passive_threads

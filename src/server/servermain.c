@@ -1696,7 +1696,6 @@ int main(int argc, char **argv) {
   {
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
-      char botName[64];
       /* Brains run in the restricted Lua sandbox by default. -allow-unsafe-brains
        * opens the full standard library for trusted brain authors. Set BEFORE the
        * bots are created so each VM constructs with the chosen policy. */
@@ -1802,27 +1801,41 @@ int main(int argc, char **argv) {
         }
       }
       /* Draw themed names from one randomly-chosen pool so a -bots
-       * server gets varied names instead of "Bot 1..N". usedStore
-       * backs the uniqueness list handed to lobbyBotPoolPick. */
-      static char usedStore[MAX_TANKS][64];
-      const char *usedNames[MAX_TANKS];
-      int usedCount = 0;
-      int botPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+       * server gets varied names instead of "Bot 1..N". The name draws are
+       * wrapped in a bolo_rand save/restore so this cosmetic randomness leaves
+       * the deterministic game stream (tank placement, etc.) untouched for a
+       * given -seed — only the game sim should advance the shared PRNG. Names
+       * are picked up front, then the bots are added with them. usedStore
+       * backs the uniqueness list handed to lobbyBotPoolPick. (numBots is
+       * clamped to MAX_TANKS above, so botNames is always in bounds.) */
+      char botNames[MAX_TANKS][64];
+      {
+        static char usedStore[MAX_TANKS][64];
+        const char *usedNames[MAX_TANKS];
+        int usedCount = 0;
+        BoloRandState rngBeforeNaming;
+        int botPool;
+        bolo_rand_save(&rngBeforeNaming);
+        botPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+        for (i = 0; i < numBots; i++) {
+          char picked[64];
+          lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
+          if (picked[0] != '\0') {
+            snprintf(botNames[i], sizeof(botNames[i]), "%s", picked);
+          } else {
+            snprintf(botNames[i], sizeof(botNames[i]), "Bot %d", i + 1);
+          }
+          if (usedCount < MAX_TANKS) {
+            snprintf(usedStore[usedCount], sizeof(usedStore[usedCount]),
+                     "%s", botNames[i]);
+            usedNames[usedCount] = usedStore[usedCount];
+            usedCount++;
+          }
+        }
+        bolo_rand_restore(&rngBeforeNaming);
+      }
       for (i = 0; i < numBots; i++) {
-        char picked[64];
-        lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
-        if (picked[0] != '\0') {
-          snprintf(botName, sizeof(botName), "%s", picked);
-        } else {
-          snprintf(botName, sizeof(botName), "Bot %d", i + 1);
-        }
-        if (usedCount < MAX_TANKS) {
-          snprintf(usedStore[usedCount], sizeof(usedStore[usedCount]),
-                   "%s", botName);
-          usedNames[usedCount] = usedStore[usedCount];
-          usedCount++;
-        }
-        if (!botManagerAddBot(serverSim, (BYTE)i, brainPath, botName, ai, game, hiddenMines)) {
+        if (!botManagerAddBot(serverSim, (BYTE)i, brainPath, botNames[i], ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round
