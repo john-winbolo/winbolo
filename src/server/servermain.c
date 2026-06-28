@@ -1141,9 +1141,19 @@ int main(int argc, char **argv) {
   }
 
 #ifdef USING_SDL
+  /* SDL_Init logs an INFO version/app banner on the SYSTEM category. Treat it
+     as debug detail: suppress it unless SYSTEM logging is at debug/trace. */
+  SDL_LogPriority sysPrio = SDL_GetLogPriority(SDL_LOG_CATEGORY_SYSTEM);
+  bool sysQuieted = (sysPrio > SDL_LOG_PRIORITY_DEBUG);
+  if (sysQuieted) {
+    SDL_SetLogPriority(SDL_LOG_CATEGORY_SYSTEM, SDL_LOG_PRIORITY_WARN);
+  }
   if (!SDL_Init(0)) {
     fprintf(stderr, "Error starting SDL - %s\n", SDL_GetError());
     exit(0);
+  }
+  if (sysQuieted) {
+    SDL_SetLogPriority(SDL_LOG_CATEGORY_SYSTEM, sysPrio);
   }
 #endif
   /* IP-to-country geolocation (DB-IP Lite). Resolve the database relative to
