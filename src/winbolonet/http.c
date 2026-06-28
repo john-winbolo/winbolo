@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <errno.h>
 #include <time.h>
 #include <curl/curl.h>
@@ -160,6 +161,87 @@ static size_t dynWriteCallback(char *ptr, size_t size, size_t nmemb, void *userd
   buf->size += incoming;
   buf->data[buf->size] = '\0';
   return incoming;
+}
+
+/*********************************************************
+*NAME:          wbnLogKeyIsSensitive / wbnLogRedactNode /
+*               wbnLogRedactJson / wbnLogRedactedJsonDebug
+*PURPOSE:
+* Credential-safe debug logging of JSON request/response
+* bodies. Any object member whose key names a secret
+* (token, *_key, password, player_a/player_b, bearer, ...)
+* has its value replaced with "***" before the body is
+* logged. Non-JSON input is never echoed — only its length
+* is logged, since an error body could itself carry a token.
+*
+* The whole redaction path is compiled out unless DEBUG
+* logging is enabled, so there is no parse cost in release.
+*********************************************************/
+static bool wbnLogKeyIsSensitive(const char *name) {
+  char   low[64];
+  size_t i;
+  if (name == NULL) return false;
+  for (i = 0; name[i] != '\0' && i < sizeof(low) - 1; i++) {
+    low[i] = (char)tolower((unsigned char)name[i]);
+  }
+  low[i] = '\0';
+  if (strstr(low, "token"))  return true;
+  if (strstr(low, "key"))    return true;
+  if (strstr(low, "pass"))   return true;
+  if (strstr(low, "secret")) return true;
+  if (strstr(low, "auth"))   return true;
+  if (strstr(low, "bearer")) return true;
+  /* WBN per-player credentials are carried as player_a / player_b */
+  if (strcmp(low, "player_a") == 0 || strcmp(low, "player_b") == 0) return true;
+  return false;
+}
+
+static void wbnLogRedactNode(cJSON *node) {
+  cJSON *child = node->child;
+  while (child != NULL) {
+    cJSON *next = child->next;
+    if (child->string != NULL && wbnLogKeyIsSensitive(child->string)) {
+      cJSON *repl = cJSON_CreateString("***");
+      if (repl != NULL) {
+        cJSON_ReplaceItemViaPointer(node, child, repl);
+      }
+    } else if (cJSON_IsObject(child) || cJSON_IsArray(child)) {
+      wbnLogRedactNode(child);
+    }
+    child = next;
+  }
+}
+
+/* Returns a malloc'd, credential-redacted copy of json (caller frees),
+   or NULL on allocation failure / NULL input. */
+static char *wbnLogRedactJson(const char *json) {
+  cJSON *root;
+  char  *out;
+  if (json == NULL) return NULL;
+  root = cJSON_Parse(json);
+  if (root == NULL) {
+    /* Not parseable as JSON: never echo raw bytes (an error body could
+     * carry a token). Report length only. */
+    out = malloc(48);
+    if (out != NULL) {
+      snprintf(out, 48, "(%lu bytes, non-JSON)", (unsigned long)strlen(json));
+    }
+    return out;
+  }
+  wbnLogRedactNode(root);
+  out = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  return out;
+}
+
+static void wbnLogRedactedJsonDebug(int cat, const char *prefix, const char *json) {
+#if WB_LOG_LEVEL <= WB_LOG_LEVEL_DEBUG
+  char *redacted = wbnLogRedactJson(json);
+  WB_LOG_DEBUG(cat, "%s%s", prefix, redacted ? redacted : "(null)");
+  free(redacted);
+#else
+  (void)cat; (void)prefix; (void)json;
+#endif
 }
 
 /*********************************************************
@@ -322,7 +404,7 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
   }
 
   WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_post: POST %s", url);
-  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_post: body=%s", json_body);
+  wbnLogRedactedJsonDebug(WB_LOG_CAT_NET, "wbn_api_post: body=", json_body);
 
   CURLcode res = curl_easy_perform(curl);
 
@@ -338,8 +420,12 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
     return -1;
   }
 
-  WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_post [%s]: HTTP %ld, response=%s",
-          endpoint, http_code, respBuf.data ? respBuf.data : "(null)");
+  {
+    char respPrefix[FILENAME_MAX + 64];
+    snprintf(respPrefix, sizeof(respPrefix), "wbn_api_post [%s]: HTTP %ld, response=",
+             endpoint, http_code);
+    wbnLogRedactedJsonDebug(WB_LOG_CAT_NET, respPrefix, respBuf.data);
+  }
 
   if (response_out) {
     *response_out = respBuf.data;
@@ -495,7 +581,8 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
   char url[FILENAME_MAX + 64];
   snprintf(url, sizeof(url), "%s/log.php?key=%s", wbnBaseUrl, key);
 
-  WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: POST %s", url);
+  /* Don't log the URL verbatim — the ?key= query is an upload secret. */
+  WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: POST %s/log.php?key=***", wbnBaseUrl);
   WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: file=%s", fileName);
 
   /* Check file exists and log its size */
@@ -573,7 +660,11 @@ bool httpSendLogFile(char *fileName, char *key, bool wantFeedback) {
     return false;
   }
 
-  WB_LOG_DEBUG(WB_LOG_CAT_NET, "httpSendLogFile: HTTP %ld, response=%s", httpCode, respBuf);
+  {
+    char respPrefix[64];
+    snprintf(respPrefix, sizeof(respPrefix), "httpSendLogFile: HTTP %ld, response=", httpCode);
+    wbnLogRedactedJsonDebug(WB_LOG_CAT_NET, respPrefix, respBuf);
+  }
   return true;
 }
 
@@ -615,7 +706,8 @@ static int wbnXferInfoProgress(void *userPtr,
 }
 
 static int wbn_api_get_impl(const char *path, char **response_out,
-                            volatile int *cancel_flag, bool sign) {
+                            volatile int *cancel_flag, bool sign,
+                            const char *bearerToken) {
   if (response_out) *response_out = NULL;
   /* Lazy-init: the WBN map browser uses this API even when the
    * client isn't logged in / WBN subsystem isn't otherwise active.
@@ -654,6 +746,13 @@ static int wbn_api_get_impl(const char *path, char **response_out,
 
     headers = curl_slist_append(headers, sig_header);
     headers = curl_slist_append(headers, ts_header);
+  }
+
+  /* Authenticated GET: attach the user's bearer when supplied. */
+  if (bearerToken != NULL && bearerToken[0] != '\0') {
+    char auth_header[256];
+    snprintf(auth_header, sizeof(auth_header), "Authorization: Bearer %s", bearerToken);
+    headers = curl_slist_append(headers, auth_header);
   }
 
   DynBuf respBuf;
@@ -713,16 +812,23 @@ static int wbn_api_get_impl(const char *path, char **response_out,
 }
 
 int wbn_api_get(const char *path, char **response_out) {
-  return wbn_api_get_impl(path, response_out, NULL, true);
+  return wbn_api_get_impl(path, response_out, NULL, true, NULL);
 }
 
 int wbn_api_get_cancellable(const char *path, char **response_out,
                             volatile int *cancel_flag) {
-  return wbn_api_get_impl(path, response_out, cancel_flag, true);
+  return wbn_api_get_impl(path, response_out, cancel_flag, true, NULL);
 }
 
 int wbn_api_get_public(const char *path, char **response_out) {
-  return wbn_api_get_impl(path, response_out, NULL, false);
+  return wbn_api_get_impl(path, response_out, NULL, false, NULL);
+}
+
+int wbn_api_get_bearer_cancellable(const char *path, const char *bearerToken,
+                                   char **response_out, volatile int *cancel_flag) {
+  if (response_out) *response_out = NULL;
+  if (bearerToken == NULL || bearerToken[0] == '\0') return -1;
+  return wbn_api_get_impl(path, response_out, cancel_flag, true, bearerToken);
 }
 
 /*********************************************************

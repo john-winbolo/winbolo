@@ -47,6 +47,16 @@ void imguiWinbolonetDrawStatusBlock(void);
  * this each frame so the single dialog state is rendered once. */
 void imguiWinbolonetDrawStatsDialog(void);
 
+/* Open the shared sign-in / create-account popup from any surface (e.g.
+ * the WBN log browser's "My Games" tab). The opener must also call
+ * imguiWinbolonetRenderLoginPopup() every frame for the popup to show. */
+void imguiWinbolonetOpenLoginPopup(void);
+
+/* Render the shared sign-in popup for this frame. No-op unless opened;
+ * drives the async login worker. Call once per frame on the surface that
+ * owns the popup. */
+void imguiWinbolonetRenderLoginPopup(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Speicherpfad konnte nicht ermittelt werden
 STR_DLGWBN_FETCHERR=Abruf fehlgeschlagen
 STR_DLGWBN_UNKNOWN_ERR=Unbekannter Fehler
 STR_DLGWBN_FILEFILTER=WinBolo-Logdateien
+STR_DLGWBN_TAB_MYGAMES=Meine Spiele
+STR_DLGWBN_MYGAMES_SIGNIN=Melden Sie sich an oder erstellen Sie ein Konto, um Ihre letzten Spiele zu sehen
+STR_DLGWBN_MYGAMES_NONE=Sie haben noch keine aufgezeichneten Spiele.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Spielernamen festlegen

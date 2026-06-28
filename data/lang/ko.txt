@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=저장 경로를 확인할 수 없어요
 STR_DLGWBN_FETCHERR=가져오기에 실패했어요
 STR_DLGWBN_UNKNOWN_ERR=알 수 없는 오류
 STR_DLGWBN_FILEFILTER=WinBolo 로그 파일
+STR_DLGWBN_TAB_MYGAMES=내 게임
+STR_DLGWBN_MYGAMES_SIGNIN=최근 게임을 보려면 로그인하거나 계정을 만드세요
+STR_DLGWBN_MYGAMES_NONE=아직 기록된 게임이 없어요.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - 플레이어 이름 설정

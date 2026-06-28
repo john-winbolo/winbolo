@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Nelze určit cestu pro uložení
 STR_DLGWBN_FETCHERR=Načítání selhalo
 STR_DLGWBN_UNKNOWN_ERR=Neznámá chyba
 STR_DLGWBN_FILEFILTER=Soubory záznamů WinBolo
+STR_DLGWBN_TAB_MYGAMES=Moje hry
+STR_DLGWBN_MYGAMES_SIGNIN=Přihlaste se nebo si vytvořte účet, abyste viděli své nedávné hry
+STR_DLGWBN_MYGAMES_NONE=Zatím nemáte žádné zaznamenané hry.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Nastavit jméno hráče
