@@ -399,6 +399,26 @@ void luaBrainsSetProfile(int profile, int profile_log, int pool_viz);
 void luaBrainsSetLogJson(int enable);
 
 /*********************************************************
+*NAME:          luaBrainsSetAllowUnsafe
+*PURPOSE:
+*  Opt-out switch for the brain Lua sandbox. When 0 (the
+*  default for the GUI client and dedicated server), each
+*  brain VM is created with a restricted standard library:
+*  no io, no os.execute/remove/rename/exit, no load/loadfile/
+*  dofile, no package.loadlib or native loaders, and only
+*  debug.traceback/getinfo. File access is limited to the
+*  brain's own directory via brain_read()/brain_load_data().
+*  When non-zero, the full luaL_openlibs() surface is opened
+*  (legacy behavior) — for trusted hosts (BrainTest) or users
+*  who pass --allow-unsafe-brains.
+*
+*  Threading: set once at startup, before any brain instance
+*  is created. Captured per-brain at luaBrainInstanceCreate()
+*  time; later modification has no effect on existing brains.
+*********************************************************/
+void luaBrainsSetAllowUnsafe(int enable);
+
+/*********************************************************
 *NAME:          luaBrainInstanceTick
 *PURPOSE:
 *  Runs one brain think cycle: populates BrainInfo from
