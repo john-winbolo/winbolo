@@ -1,5 +1,4 @@
 {
-  "_comment": "Bot naming pools for the WinBolo lobby. Each pool's index travels on the wire (uint8_t), so every peer should ship the same file for dropdown labels to line up; bot names themselves travel as strings. Limits: <=254 themed pools, <=256 names/pool, <=63 bytes/name. Empty/overlong/duplicate names are dropped at load. The generated 'Numbered Bots' pool is always appended automatically.",
   "pools": [
     {
       "label": "Classic AI",
