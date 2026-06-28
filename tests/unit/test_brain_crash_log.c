@@ -94,6 +94,13 @@ static lua_State *new_lua_state_with_globals(int bot_index, int tick,
     if (L == NULL) return NULL;
     luaL_openlibs(L);
 
+    /* Per-crash file writes are gated on BRAIN_DEBUG_MODE (production hosts
+     * write none — only the stderr surface fires). These tests exercise the
+     * file writer, so turn it on; without it brc_write_crash_log writes no
+     * file and the count assertions see 0. */
+    lua_pushboolean(L, 1);
+    lua_setglobal(L, "BRAIN_DEBUG_MODE");
+
     /* state = { bot_index = N, tick = T } */
     lua_newtable(L);
     if (bot_index >= 0) {

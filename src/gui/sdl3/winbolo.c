@@ -343,6 +343,14 @@ int main(int argc, char *argv[]) {
       joinedViaSteam = TRUE;
       break;
     }
+    /* Brains run in the restricted Lua sandbox by default; this flag opens the
+     * full standard library for users who trust the brain they're loading.
+     * Captured per-brain at load time, so setting it here at startup suffices. */
+    if (strcmp(argv[i], "--allow-unsafe-brains") == 0 ||
+        strcmp(argv[i], "-allow-unsafe-brains") == 0) {
+      luaBrainsSetAllowUnsafe(1);
+      continue;
+    }
     if (cmdLine[0] == '\0') {
       cmdLine = argv[i];
     }
