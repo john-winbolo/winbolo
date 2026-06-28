@@ -76,6 +76,7 @@
 #include "bg_game.h"
 
 #include "everard_map.h"
+#include "lobby_bot_pools.h"
 #include "platform_net.h"
 #include "playername_validate.h"
 #include "client_net.h"
@@ -551,6 +552,20 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   langSetup();
 
+  /* Replace the built-in bot naming pools with the shipped
+   * data/bot_names.json so the lobby dropdown and on-add name picks
+   * match what the server (and other clients shipping the same file)
+   * expect.  Falls back silently to the compiled-in defaults if the
+   * file is missing or unreadable. */
+  {
+    LobbyBotPoolLoadStats poolStats;
+    if (lobbyBotPoolsLoadDefault(&poolStats)) {
+      WB_LOG_INFO(WB_LOG_CAT_ASSET,
+                  "bot name pools: loaded %d pool(s) from data/bot_names.json",
+                  poolStats.poolsKept);
+    }
+  }
+
   /* Read preferences */
   gameFrontGetPrefs(keys, &useAutoslow, &useAutohide);
 
@@ -761,6 +776,15 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     clientSimSetLockToggleSendFunc(humanSim, NULL);
     clientSimDisconnect(humanSim);
     udpTransportActive = FALSE;
+  }
+  if (isQuiting != TRUE) {
+    /* Drop any bot-pool catalog a server streamed us this session so the
+     * previous server's themed pools never linger in a later lobby, then
+     * restore our own shipped default. The next server we join re-sends
+     * its catalog during join sync. (Skipped when quitting — nothing
+     * will read the table again.) */
+    lobbyBotPoolsReset();
+    lobbyBotPoolsLoadDefault(NULL);
   }
   /* Don't call windowSaveCurrentPosition() here - we already save the corrected
      position on every resize/move. Calling it here would overwrite the corrected

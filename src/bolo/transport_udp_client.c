@@ -2390,7 +2390,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     /* ── Layout A lobby — server → client broadcasts ─────────────── */
     case PACKET_LOBBY_TEAM_META_CHG:
     case PACKET_LOBBY_BOT_CONFIG_CHG:
-    case PACKET_LOBBY_BRAIN_LIST: {
+    case PACKET_LOBBY_BRAIN_LIST:
+    case PACKET_LOBBY_BOT_POOL_CHUNK: {
         ControlDecodeFn dec = transportControlCodecDecoder(pktType);
         if (dec != NULL) {
             ControlEvent evt;

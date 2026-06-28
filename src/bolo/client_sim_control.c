@@ -419,6 +419,45 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyBrainList = evt->u.lobbyBrainList.list;
         break;
 
+    case CTRL_LOBBY_BOT_POOL_CHUNK: {
+        /* Reassemble in-order fragments of the server's compressed
+         * bot-pool catalog; install on the final fragment so the lobby
+         * dropdown reflects the SERVER's pools. Fragments ride the
+         * reliable, ordered control channel, so seq is monotonic; any
+         * gap/mismatch aborts the in-progress reassembly. */
+        uint8_t  seq   = evt->u.lobbyBotPoolChunk.seq;
+        uint8_t  count = evt->u.lobbyBotPoolChunk.count;
+        uint16_t fl    = evt->u.lobbyBotPoolChunk.fragLen;
+        if (count == 0) break;
+        if (seq == 0) {
+            cs->lobbyPoolChunkExpected = count;
+            cs->lobbyPoolNextSeq = 0;
+            cs->lobbyPoolBlobLen = 0;
+        }
+        if (seq != cs->lobbyPoolNextSeq ||
+            count != cs->lobbyPoolChunkExpected ||
+            cs->lobbyPoolBlobLen + fl > sizeof(cs->lobbyPoolBlob)) {
+            cs->lobbyPoolChunkExpected = 0;   /* abort */
+            cs->lobbyPoolNextSeq = 0;
+            cs->lobbyPoolBlobLen = 0;
+            break;
+        }
+        if (fl > 0) {
+            memcpy(cs->lobbyPoolBlob + cs->lobbyPoolBlobLen,
+                   evt->u.lobbyBotPoolChunk.frag, fl);
+            cs->lobbyPoolBlobLen += fl;
+        }
+        cs->lobbyPoolNextSeq++;
+        if (cs->lobbyPoolNextSeq == count) {
+            lobbyBotPoolsDeserializeInstall(cs->lobbyPoolBlob,
+                                            (int)cs->lobbyPoolBlobLen, NULL);
+            cs->lobbyPoolChunkExpected = 0;
+            cs->lobbyPoolNextSeq = 0;
+            cs->lobbyPoolBlobLen = 0;
+        }
+        break;
+    }
+
     case CTRL_LOBBY_MAP_CHANGE:
         cs->mapDownloadComplete = false;
         memset(cs->mapSkipVotes, 0, sizeof(cs->mapSkipVotes));

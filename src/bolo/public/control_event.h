@@ -64,6 +64,11 @@ typedef enum {
     CTRL_LOBBY_BOT_CONFIG,
     CTRL_LOBBY_BOT_BRAIN,
     CTRL_LOBBY_BRAIN_LIST,
+    /* CTRL_LOBBY_BOT_POOL_CHUNK — one fragment of the server's bot
+     * naming-pool catalog (a zlib-compressed blob), streamed during
+     * join sync so clients render/pick from the SERVER's pools. The
+     * client reassembles fragments seq 0..count-1, then installs. */
+    CTRL_LOBBY_BOT_POOL_CHUNK,
     CTRL_GAME_VOTE_STATE,
     CTRL_SERVER_TEXT,
     CTRL_COMMAND_REJECTED,
@@ -115,6 +120,12 @@ typedef enum {
  * name bytes) = 263 bytes; rounded up for headroom. fromPlayer and
  * destPlayer are separate struct fields, not part of body[]. */
 #define CHAT_BODY_MAX 272
+
+/* Per-fragment payload cap for CTRL_LOBBY_BOT_POOL_CHUNK. Sized so one
+ * fragment plus its header fits a single control datagram (well under
+ * MAX_CONTROL_PACKET). A 64 KiB catalog therefore needs at most
+ * ceil(65536/900) ≈ 73 fragments (< 255, the seq/count cap). */
+#define LOBBY_BOT_POOL_CHUNK_FRAG_MAX 900
 
 typedef struct ControlEvent {
     ControlEventType type;
@@ -294,6 +305,16 @@ typedef struct ControlEvent {
         struct {
             BrainList list;
         } lobbyBrainList;
+
+        /* CTRL_LOBBY_BOT_POOL_CHUNK — fragment `seq` of `count` of the
+         * server's compressed bot-pool catalog blob. fragLen bytes live
+         * in frag[]. Reassembled and installed client-side. */
+        struct {
+            uint8_t  seq;
+            uint8_t  count;
+            uint16_t fragLen;
+            uint8_t  frag[LOBBY_BOT_POOL_CHUNK_FRAG_MAX];
+        } lobbyBotPoolChunk;
 
         /* CTRL_SERVER_TEXT — server-originated chat broadcast.
          * Mirrors what UDP clients receive as

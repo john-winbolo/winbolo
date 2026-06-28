@@ -570,6 +570,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/ios/ios_stubs.c
     src/gui/ios/imgui_ios.cpp
     src/gui/sdl3/gamefront.c
+    src/bolo/lobby_bot_pools_json.c
     src/gui/sdl3/dialog_backend.c
     ${IOS_BOLO_SOURCES}
     ${IOS_SERVER_SOURCES}
@@ -1175,6 +1176,10 @@ set(LOGVIEWER_LIB_SOURCES
 list(APPEND CLIENT_SOURCES ${LOGVIEWER_LIB_SOURCES})
 
 add_executable(WinBolo ${CLIENT_SOURCES})
+# Bot-name pool JSON loader (cJSON). The core pool table + wire codec live
+# in lobby_bot_pools.c inside bolo_static (no cJSON); only this file-loading
+# helper, linked into the binaries that read a pool file, pulls in cJSON.
+target_sources(WinBolo PRIVATE src/bolo/lobby_bot_pools_json.c)
 target_compile_definitions(WinBolo PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -1577,7 +1582,8 @@ set(SERVER_SOURCES
 
 
 add_executable(WinBoloDS ${SERVER_SOURCES})
-target_sources(WinBoloDS PRIVATE src/steam/steam_wrapper_stub.c)
+target_sources(WinBoloDS PRIVATE src/steam/steam_wrapper_stub.c
+    src/bolo/lobby_bot_pools_json.c)
 target_compile_definitions(WinBoloDS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
@@ -1705,6 +1711,14 @@ add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:WinBoloDS>/data/lang"
     COMMENT "Copying WinBoloDS lang files to output directory"
+)
+# Default bot naming pools so a -bots server names its bots from the
+# shipped themes without needing -botnames. (-botnames overrides this.)
+add_custom_command(TARGET WinBoloDS POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/data/bot_names.json"
+        "$<TARGET_FILE_DIR:WinBoloDS>/data/bot_names.json"
+    COMMENT "Copying WinBoloDS default bot_names.json to output directory"
 )
 if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
     add_custom_command(TARGET WinBoloDS POST_BUILD
@@ -2982,7 +2996,9 @@ if(WB_NETDEBUG)
 endif()
 
 add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
-target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c)
+target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
+    src/bolo/lobby_bot_pools_json.c
+    tests/unit/test_bot_name_pools.c)
 target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -3336,6 +3352,16 @@ set(_unit_test_names
     addrparse_port_bounds
     addrparse_bad_port
     addrparse_empty
+    bot_pool_builtin_defaults
+    bot_pool_install_and_clamp
+    bot_pool_install_dedup_and_drop
+    bot_pool_reset_restores_builtin
+    bot_pool_pick_unique_and_overflow
+    bot_pool_json_load_roundtrip
+    bot_pool_json_missing_file_keeps_active
+    bot_pool_wire_roundtrip
+    bot_pool_wire_builtin_roundtrip
+    bot_pool_wire_rejects_garbage
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

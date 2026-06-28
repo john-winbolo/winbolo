@@ -32,6 +32,7 @@
 #include "messages.h"
 #include "scroll.h"
 #include "brain_list.h"
+#include "lobby_bot_pools.h" /* LOBBY_BOT_CATALOG_WIRE_MAX */
 #include "upload_policy.h"
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
 #include "transport_udp.h" /* MAX_SPECTATORS */
@@ -363,6 +364,17 @@ struct ClientSim {
      * PACKET_LOBBY_BRAIN_LIST on join. Used as the option list for the
      * AiConfig "Bot Code" combo. */
     BrainList lobbyBrainList;
+
+    /* Reassembly of the server's bot-pool catalog, streamed as
+     * CTRL_LOBBY_BOT_POOL_CHUNK fragments during join sync. Fragments
+     * arrive in order on the reliable control channel; on the final
+     * fragment the assembled blob is installed via
+     * lobbyBotPoolsDeserializeInstall (replacing the process-global pool
+     * table so the lobby dropdown shows the SERVER's pools). */
+    uint8_t  lobbyPoolChunkExpected;   /* total fragment count; 0 = idle */
+    uint8_t  lobbyPoolNextSeq;         /* next in-order fragment expected */
+    uint32_t lobbyPoolBlobLen;         /* bytes assembled so far */
+    uint8_t  lobbyPoolBlob[LOBBY_BOT_CATALOG_WIRE_MAX];
 
     /* Server-side map directory listing — populated from
      * PACKET_LOBBY_MAP_LIST_RSP. The chooser's listProvider sends a
