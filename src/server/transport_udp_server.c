@@ -346,6 +346,18 @@ static struct {
      * game ends, since game-over ticks are not recorded — so it is the bar a
      * delayed spectator must reach before it has watched the whole game. */
     uint32_t lastRunningSeq;
+    /* recordSeq of the current game's FIRST ring record, captured on the
+     * non-running->running transition (serverSimTick records that record before
+     * this tick's spectator service runs, so the head is it). The ring records
+     * the pre-game lobby continuously, so a freshly cut-over delayed view sits at
+     * head - delay inside that lobby; it must reach gameStartSeq before it is
+     * showing game content rather than replaying the recorded lobby. Refreshed
+     * each new game so a back-to-back round counts down to the latest start. */
+    uint32_t gameStartSeq;
+    /* Tracks whether the previous spectator-service tick saw the game running, so
+     * the transition above is detected once per game (mirrors lastRunningSeq's
+     * every-running-tick capture). */
+    bool     specWasRunning;
 
     /* Compressed map buffer for sending to joining clients */
     BYTE     compressedMap[MAP_DOWNLOAD_MAX_SIZE];
@@ -1765,6 +1777,29 @@ static void serverServiceMapTransfer(int slot) {
  * countdown status no more than once every this many ticks (~2/s at 50 tick/s). */
 #define SPEC_COUNTDOWN_RESEND_TICKS 25u
 
+/* Arm/refresh a spectator's "spectating begins in X" countdown carrying
+ * `remaining` ticks. Updates the state every tick (so a reader sees it track
+ * toward zero) but only puts a SPEC_CTRL_COUNTDOWN on the 64-deep CHANNEL_CONTROL
+ * window on first entry and then once per SPEC_COUNTDOWN_RESEND_TICKS, so a long
+ * wait can't overflow it. Shared by the cutover gate (delayed view not yet at the
+ * game) and the cold-start path (ring not yet holding a full delay of history). */
+static void serverSpectatorArmCountdown(SpectatorConn *sp, uint32_t remaining) {
+    bool firstEntry = !sp->inCountdown;
+    sp->inCountdown        = true;
+    sp->countdownRemaining = remaining;
+    if (firstEntry ||
+        udpServer.tickCount - sp->countdownSentTick >= SPEC_COUNTDOWN_RESEND_TICKS) {
+        uint8_t buf[SPEC_CTRL_COUNTDOWN_LEN];
+        buf[0] = SPEC_CTRL_COUNTDOWN;
+        buf[1] = (uint8_t)(remaining >> 24);
+        buf[2] = (uint8_t)(remaining >> 16);
+        buf[3] = (uint8_t)(remaining >> 8);
+        buf[4] = (uint8_t)remaining;
+        channelSend(&sp->channelMux, CHANNEL_CONTROL, buf, SPEC_CTRL_COUNTDOWN_LEN);
+        sp->countdownSentTick = udpServer.tickCount;
+    }
+}
+
 static void serverServiceSpectators(ServerSim *sim) {
     int i;
 
@@ -1780,8 +1815,19 @@ static void serverServiceSpectators(ServerSim *sim) {
     if (serverSimGetState(sim) == serverStateRunning) {
         SpectatorRing *r = serverInstanceGetSpectatorRing();
         if (r != NULL) {
-            udpServer.lastRunningSeq = spectatorRingHeadSeq(r);
+            uint32_t head = spectatorRingHeadSeq(r);
+            /* First running record of THIS game: on the non-running->running
+             * transition the head is the game segment's opening record. Freeze
+             * it as the bar a delayed view must reach before it is past the
+             * recorded pre-game lobby. */
+            if (!udpServer.specWasRunning) {
+                udpServer.gameStartSeq = head;
+            }
+            udpServer.lastRunningSeq = head;
         }
+        udpServer.specWasRunning = true;
+    } else {
+        udpServer.specWasRunning = false;
     }
 
     for (i = 0; i < MAX_SPECTATORS; i++) {
@@ -1806,8 +1852,25 @@ static void serverServiceSpectators(ServerSim *sim) {
         if (sp->seedBlob == NULL && !sp->seedComplete) {
             SpectatorRing *r = serverInstanceGetSpectatorRing();
             if (r != NULL) {
+                uint32_t delay  = serverSimGetSpecDelayTicks(sim);
+                uint32_t head   = spectatorRingHeadSeq(r);
+                uint32_t target = (head > delay) ? head - delay : 0;
+                /* Cutover gate: the delayed view has not yet reached the current
+                 * game (head - delay is still inside the recorded pre-game lobby
+                 * segment). Seeking here would seed that lobby and replay it — the
+                 * static map a just-cut-over spectator already watched live, which
+                 * reads as broken. Hold on the "spectating begins in X" countdown
+                 * until head - delay reaches gameStartSeq instead; remaining is the
+                 * exact records-to-go. Only game content is gated, never sent
+                 * early, so the spec delay / anti-cheat bound is untouched. When
+                 * gameStartSeq is 0 (no game has started, or the first record ever
+                 * is the game's) target < 0 is impossible, so this no-ops and the
+                 * seek below (and its cold-start countdown) runs unchanged. */
+                if (target < udpServer.gameStartSeq) {
+                    serverSpectatorArmCountdown(sp,
+                                                udpServer.gameStartSeq - target);
+                } else {
                 SpectatorRingCursor cur;
-                uint32_t delay = serverSimGetSpecDelayTicks(sim);
                 SpectatorRingSeekStatus st =
                     spectatorRingSeekDelayed(r, delay, &cur);
                 if (st == SPECTATOR_RING_OK) {
@@ -1826,32 +1889,13 @@ static void serverServiceSpectators(ServerSim *sim) {
                         }
                     }
                 } else if (st == SPECTATOR_RING_COLD_START) {
-                    uint32_t history =
-                        spectatorRingHeadSeq(r) - spectatorRingOldestSeq(r);
-                    uint32_t remaining =
-                        (delay > history) ? delay - history : 0;
-                    bool firstEntry = !sp->inCountdown;
-                    sp->inCountdown        = true;
-                    sp->countdownRemaining = remaining;
-                    /* Throttle: send on first entry, then at most once every
-                     * SPEC_COUNTDOWN_RESEND_TICKS so the control window can't
-                     * overflow across a long wait. */
-                    if (firstEntry ||
-                        udpServer.tickCount - sp->countdownSentTick
-                            >= SPEC_COUNTDOWN_RESEND_TICKS) {
-                        uint8_t buf[SPEC_CTRL_COUNTDOWN_LEN];
-                        buf[0] = SPEC_CTRL_COUNTDOWN;
-                        buf[1] = (uint8_t)(remaining >> 24);
-                        buf[2] = (uint8_t)(remaining >> 16);
-                        buf[3] = (uint8_t)(remaining >> 8);
-                        buf[4] = (uint8_t)remaining;
-                        channelSend(&sp->channelMux, CHANNEL_CONTROL,
-                                    buf, SPEC_CTRL_COUNTDOWN_LEN);
-                        sp->countdownSentTick = udpServer.tickCount;
-                    }
+                    uint32_t history = head - spectatorRingOldestSeq(r);
+                    serverSpectatorArmCountdown(
+                        sp, (delay > history) ? delay - history : 0);
                 }
                 /* AGED_OUT at join should not occur — retention covers the
                  * delay; leave it as a no-op and retry next tick. */
+                }
             }
         }
 
@@ -3998,8 +4042,9 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
      * step and the in-place start), so the unsubscribe is the anti-cheat
      * boundary. No channel reset: a live spectator never ran the delayed
      * seed/feed block, so its seed/feed fields are still at their accept-time
-     * zeros and the next serverServiceSpectators tick seeks → cold start →
-     * arms the countdown cleanly. */
+     * zeros and the next serverServiceSpectators tick finds head - delay still
+     * inside the pre-game lobby (below gameStartSeq) → arms the "spectating
+     * begins in X" countdown cleanly until the delayed view reaches the game. */
     for (i = 0; i < MAX_SPECTATORS; i++) {
         SpectatorConn *sp = &udpServer.spectators[i];
         if (!sp->connected || !sp->live) continue;

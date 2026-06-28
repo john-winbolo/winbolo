@@ -15,12 +15,18 @@
  *                 driven directly on this thread with no pump in between.
  *   delayed_arm — after a real countdown→running cutover with a non-zero delay,
  *                 the spectator is no longer live and is served from the delayed
- *                 ring (it seeds a delayed keyframe and its forward feed
- *                 advances) rather than receiving live state. The ring records
- *                 the lobby/countdown continuously, so head-delay lands in
- *                 retained pre-game history and the spectator seeds the delayed
- *                 feed — it does NOT cold-start (that is a fresh-ring edge,
- *                 covered by the spectator-seed tests). Needs pumped ring time.
+ *                 ring (its forward feed advances) rather than receiving live
+ *                 state. The ring records the lobby/countdown continuously, so
+ *                 head-delay first sits in retained pre-game history (the cutover
+ *                 countdown holds there — see cutover_cd) and once the delayed
+ *                 view reaches the game the spectator seeds and its feed advances.
+ *                 Needs pumped ring time enough to clear the countdown.
+ *   cutover_cd  — with a non-zero delay the cut-over spectator is held on the
+ *                 "spectating begins in X" countdown until head-delay reaches
+ *                 the game's first record (gameStartSeq), so it never replays the
+ *                 recorded pre-game lobby; the remaining tracks toward zero and
+ *                 game content seeds only once the delayed view reaches the game.
+ *                 At delay 0 there is no countdown — the game seeds immediately.
  *   drain_flip  — at -specdelay 0 (which collapses the ring time without
  *                 bypassing the gate — segSpec==segHead && state==lobby is still
  *                 the real path), a spectator that drained the delayed game
@@ -254,6 +260,20 @@ static bool lbTailFlipWatch(LoopbackHarness *h, void *u) {
     return false;
 }
 
+/* The cutover countdown is armed: the spectator is delayed, has seeded NO game
+ * record yet (its feed seq holds at 0), and is in countdown. Captures the
+ * remaining into *user so the caller can watch it track toward zero. */
+static bool lbSpecCountingDown(LoopbackHarness *h, void *u) {
+    uint32_t *rem = (uint32_t *)u;
+    uint32_t seq = 0;
+    (void)h;
+    if (transportUdpServerGetSpectatorLive(0)) return false;
+    if (transportUdpServerGetSpectatorFeedSeq(0, &seq, NULL) && seq != 0) {
+        return false;
+    }
+    return transportUdpServerGetSpectatorCountdown(0, rem);
+}
+
 /* ── Leg 1: anti-cheat boundary (the release gate, deterministic) ──────────── */
 
 static int lbLegBoundary(void) {
@@ -353,12 +373,13 @@ static int lbLegDelayedArm(void) {
     UT_ASSERT_MSG(!transportUdpServerGetSpectatorLive(0),
                   "spectator must be delayed after the live→delayed cutover");
 
-    /* The ring records the lobby/countdown continuously, so head - delay lands
-     * in retained pre-game history: the spectator seeds the delayed feed (it
-     * does not cold-start). Ack its bulk so the seed completes and the forward
-     * feed advances, proving it is served from the delayed ring, not live
-     * state. It stays delayed for the whole running game (the flip gate needs a
-     * lobby/countdown state). */
+    /* The ring records the lobby/countdown continuously, so head - delay first
+     * sits in retained pre-game history; the cutover countdown holds there (see
+     * cutover_cd) until the delayed view reaches the game, then the spectator
+     * seeds. Ack its bulk so the seed completes and the forward feed advances,
+     * proving it is served from the delayed ring, not live state. It stays
+     * delayed for the whole running game (the flip gate needs a lobby/countdown
+     * state). LB_FEED_ITERS covers the countdown window (delay=100) plus seed. */
     UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, LB_FEED_ITERS,
                                            lbSpectatorFeeding, NULL) > 0,
                   "delayed spectator never began its forward feed after cutover");
@@ -529,11 +550,135 @@ static int lbLegTailDrainFlip(void) {
     return 0;
 }
 
+/* ── Leg 5: cutover "spectating begins in X" countdown (delay>0 and delay=0) ── */
+
+static int lbLegCutoverCountdown(void) {
+    LoopbackHarness h;
+    struct sockaddr_in serverAddr;
+    SOCKET spec;
+    const uint32_t delay = 100;
+    uint32_t rem1 = 0, rem2 = 0, seq = 0;
+    int k;
+
+    /* ── delay > 0: a cut-over spectator counts down to the game, then seeds ── */
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "Player", /*lobbyMode*/ true,
+                                       /*impairSpec*/ NULL, /*seed*/ 5u),
+                  "harness start failed");
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, LB_PLAYER_CONNECT,
+                                           lbPlayerConnected, NULL) > 0,
+                  "harness player never reached CONNECTED");
+
+    serverSimSetMaxSpectators(h.sim, 4);
+    serverSimSetSpecDelayTicks(h.sim, delay);
+    serverInstanceCreateSpectatorRing(h.sim);
+
+    lbServerAddr(&serverAddr, h.port);
+    spec = lbOpenSocketOnIp("127.0.0.64");
+    if (spec == INVALID_SOCKET) {
+        SDL_Log("  cutover countdown: skipping — 127.0.0.64 not bindable");
+        loopbackHarnessStop(&h);
+        return 0;
+    }
+    UT_ASSERT_MSG(lbSpectatorJoins(&h, spec, &serverAddr, "SpecCD"),
+                  "spectator JOIN drew no accept");
+    UT_ASSERT_MSG(transportUdpServerGetSpectatorLive(0),
+                  "lobby spectator must be live before game start");
+
+    /* Record a stretch of pre-game lobby so head - delay lands inside it at the
+     * cutover (this is exactly the recorded-lobby segment the spectator must NOT
+     * be made to replay), then drive a real countdown→running. */
+    for (k = 0; k < (int)delay + 20; k++) loopbackHarnessPump(&h);
+    UT_ASSERT_MSG(loopbackHarnessTriggerGameStart(&h),
+                  "trigger game start failed (client has no slot)");
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, LB_RUN_ITERS,
+                                           lbServerRunning, NULL) > 0,
+                  "server never reached running");
+    UT_ASSERT_MSG(!transportUdpServerGetSpectatorLive(0),
+                  "spectator must be delayed after the live→delayed cutover");
+
+    /* It arms the cutover countdown rather than seeding the delayed pre-game
+     * lobby: in countdown, remaining > 0, and zero game content seeded. */
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, LB_FEED_ITERS,
+                                           lbSpecCountingDown, &rem1) > 0,
+                  "cutover spectator never armed the 'begins in X' countdown");
+    UT_ASSERT_MSG(rem1 > 0, "cutover countdown remaining must be > 0");
+    UT_ASSERT_MSG(transportUdpServerGetSpectatorFeedSeq(0, &seq, NULL) && seq == 0,
+                  "cutover spectator must seed no game content while counting down");
+
+    /* Remaining tracks toward zero as the live head advances — no bulk acks are
+     * needed, the countdown rides the spectator's own control channel. */
+    for (k = 0; k < 30; k++) loopbackHarnessPump(&h);
+    UT_ASSERT_MSG(transportUdpServerGetSpectatorCountdown(0, &rem2),
+                  "cutover spectator left the countdown before reaching the game");
+    UT_ASSERT_MSG(rem2 < rem1,
+                  "cutover countdown did not track toward zero (%u -> %u)",
+                  rem1, rem2);
+    UT_ASSERT_MSG(transportUdpServerGetSpectatorFeedSeq(0, &seq, NULL) && seq == 0,
+                  "cutover spectator seeded game content before the countdown ended");
+
+    /* Once head - delay reaches gameStartSeq the countdown ends and the delayed
+     * game seeds. Ack the bulk each pump so the seed completes and the feed
+     * advances; the budget covers the rest of the delay window plus the seed. */
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, LB_RUN_ITERS,
+                                           lbSpectatorFeeding, NULL) > 0,
+                  "cutover spectator never seeded the delayed game after the "
+                  "countdown");
+    UT_ASSERT_MSG(!transportUdpServerGetSpectatorCountdown(0, &rem2),
+                  "countdown must clear once the delayed game seeds");
+
+    closesocket(spec);
+    loopbackHarnessStop(&h);
+
+    /* ── delay == 0: head - delay == head >= gameStartSeq, so no countdown — the
+     * game seeds immediately at cutover (must not regress). ── */
+    UT_ASSERT_MSG(loopbackHarnessStart(&h, "Player", /*lobbyMode*/ true,
+                                       /*impairSpec*/ NULL, /*seed*/ 6u),
+                  "harness start failed");
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, LB_PLAYER_CONNECT,
+                                           lbPlayerConnected, NULL) > 0,
+                  "harness player never reached CONNECTED");
+
+    serverSimSetMaxSpectators(h.sim, 4);
+    serverSimSetSpecDelayTicks(h.sim, 0);
+    serverInstanceCreateSpectatorRing(h.sim);
+
+    lbServerAddr(&serverAddr, h.port);
+    spec = lbOpenSocketOnIp("127.0.0.65");
+    if (spec == INVALID_SOCKET) {
+        SDL_Log("  cutover countdown (delay 0): skipping — 127.0.0.65 not bindable");
+        loopbackHarnessStop(&h);
+        return 0;
+    }
+    UT_ASSERT_MSG(lbSpectatorJoins(&h, spec, &serverAddr, "SpecCD0"),
+                  "spectator JOIN drew no accept");
+    UT_ASSERT_MSG(transportUdpServerGetSpectatorLive(0),
+                  "lobby spectator must be live before game start");
+
+    UT_ASSERT_MSG(loopbackHarnessTriggerGameStart(&h),
+                  "trigger game start failed (client has no slot)");
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, LB_RUN_ITERS,
+                                           lbServerRunning, NULL) > 0,
+                  "server never reached running");
+    UT_ASSERT_MSG(!transportUdpServerGetSpectatorLive(0),
+                  "spectator must be delayed after the live→delayed cutover");
+
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, LB_FEED_ITERS,
+                                           lbSpectatorFeeding, NULL) > 0,
+                  "delay=0 spectator never seeded the game immediately");
+    UT_ASSERT_MSG(!transportUdpServerGetSpectatorCountdown(0, &rem1),
+                  "delay=0 spectator must not enter a cutover countdown");
+
+    closesocket(spec);
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
 int run_spectator_lobby_cutover(void) {
     int rc;
-    if ((rc = lbLegBoundary())      != 0) return rc;
-    if ((rc = lbLegDelayedArm())    != 0) return rc;
-    if ((rc = lbLegDrainFlip())     != 0) return rc;
-    if ((rc = lbLegTailDrainFlip()) != 0) return rc;
+    if ((rc = lbLegBoundary())        != 0) return rc;
+    if ((rc = lbLegDelayedArm())      != 0) return rc;
+    if ((rc = lbLegDrainFlip())       != 0) return rc;
+    if ((rc = lbLegTailDrainFlip())   != 0) return rc;
+    if ((rc = lbLegCutoverCountdown()) != 0) return rc;
     return 0;
 }
