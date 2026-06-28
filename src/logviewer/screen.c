@@ -361,8 +361,11 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
 * value - The update type (Helps in optimisations)
 *********************************************************/
 void lv_screenUpdateView(updateType value) {
-  BYTE count;   /* Looping Variables */
-  BYTE count2;
+  /* int (not BYTE): the loops run to ssx/ssy inclusive, which clamp to 255 at
+   * a fullscreen, zoomed-out viewport. A BYTE counter would wrap 255->0 at
+   * count++ and keep satisfying count <= 255, looping forever (hard lockup). */
+  int count;    /* Looping Variables */
+  int count2;
   int ssx = lv_screenGetSizeX();
   int ssy = lv_screenGetSizeY();
 

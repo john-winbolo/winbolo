@@ -590,7 +590,12 @@ static void drawRenderTexture(SDL_Texture *texture, int srcX, int srcY, int srcW
 
 void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, screenGunsight *gs, screenBullets *sBullets, screenLgm *lgms, BYTE showPillLabels, BYTE showBaseLabels, int32_t srtDelay, BYTE isPillView, int edgeX, int edgeY, BYTE useCursor, BYTE cursorLeft, BYTE cursorTop) {
     bool done, isPill, isBase, shouldDraw;
-    BYTE x, y, pos, zoomFactor, itc, pillHealth;
+    /* x/y must be wider than BYTE: the loop runs to lv_screenGetSizeX()/Y(),
+     * which clamp to 255 at a fullscreen, zoomed-out viewport. A BYTE counter
+     * would wrap 255->0 at the ++x/++y test and never exceed the bound, looping
+     * forever (hard lockup). */
+    int x, y;
+    BYTE pos, zoomFactor, itc, pillHealth;
     int outputX, outputY;
     SDL_FRect dstRect;
     LogViewerState *lv = lv_screenGetState();
