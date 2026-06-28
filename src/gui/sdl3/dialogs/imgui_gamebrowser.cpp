@@ -1221,12 +1221,51 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                                 ImGui::GetColorU32(ImGuiCol_TextDisabled), cc);
                 }
 
-                /* Name line — host name if known, else address:port */
+                /* Ping string + colour FIRST, so the name can be clamped to
+                 * stop before it (a long reverse-DNS otherwise runs under the
+                 * right-aligned ping). */
+                char pingStr[24];
+                ImVec4 pcol;
+                if (e.pingMs >= 0) {
+                    SDL_snprintf(pingStr, sizeof(pingStr), "%dms", e.pingMs);
+                    if (e.pingMs < 50)       pcol = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
+                    else if (e.pingMs < 150) pcol = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
+                    else                     pcol = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+                } else {
+                    SDL_snprintf(pingStr, sizeof(pingStr), "%s",
+                                 e.pingMs == -1 ? "..." : "--");
+                    pcol = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
+                }
+                float pingLeft = textRight - ImGui::CalcTextSize(pingStr).x;
+
+                /* Name line — host name if known, else address:port. Clamp its
+                 * width to (pingLeft − gap) so a long reverse-DNS can't overlap
+                 * the ping; binary-search the longest prefix that fits + "...". */
                 char name[288];
                 if (e.hostName[0] != '\0') {
                     SDL_snprintf(name, sizeof(name), "%s", e.hostName);
                 } else {
                     SDL_snprintf(name, sizeof(name), "%s:%u", e.address, e.port);
+                }
+                float nameMaxW = pingLeft - (8.0f * s) - textX;
+                if (nameMaxW > 0.0f && ImGui::CalcTextSize(name).x > nameMaxW) {
+                    const char *kEll = "...";
+                    float budget = nameMaxW - ImGui::CalcTextSize(kEll).x;
+                    if (budget <= 0.0f) {
+                        name[0] = '\0';
+                    } else {
+                        int lo = 0, hi = (int)SDL_strlen(name), best = 0;
+                        while (lo <= hi) {
+                            int mid = (lo + hi) / 2;
+                            char saved = name[mid]; name[mid] = '\0';
+                            float w = ImGui::CalcTextSize(name).x;
+                            name[mid] = saved;
+                            if (w <= budget) { best = mid; lo = mid + 1; }
+                            else             { hi = mid - 1; }
+                        }
+                        name[best] = '\0';
+                        SDL_strlcat(name, kEll, sizeof(name));
+                    }
                 }
                 dl->AddText(ImVec2(textX, p0.y + pad),
                             ImGui::GetColorU32(ImGuiCol_Text), name);
@@ -1242,24 +1281,11 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
                 dl->AddText(ImVec2(textX, p0.y + pad + lineH),
                             ImGui::GetColorU32(ImGuiCol_TextDisabled), mapLine);
 
-                /* Ping, right-aligned on the first line */
-                {
-                    char pingStr[24];
-                    ImVec4 pcol;
-                    if (e.pingMs >= 0) {
-                        SDL_snprintf(pingStr, sizeof(pingStr), "%dms", e.pingMs);
-                        if (e.pingMs < 50)       pcol = ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
-                        else if (e.pingMs < 150) pcol = ImVec4(1.0f, 1.0f, 0.2f, 1.0f);
-                        else                     pcol = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
-                    } else {
-                        SDL_snprintf(pingStr, sizeof(pingStr), "%s",
-                                     e.pingMs == -1 ? "..." : "--");
-                        pcol = ImGui::GetStyle().Colors[ImGuiCol_TextDisabled];
-                    }
-                    ImVec2 psz = ImGui::CalcTextSize(pingStr);
-                    dl->AddText(ImVec2(textRight - psz.x, p0.y + pad),
-                                ImGui::GetColorU32(pcol), pingStr);
-                }
+                /* Ping, right-aligned on the first line (string/colour/pingLeft
+                 * were computed above so the name could be clamped not to
+                 * overlap it). */
+                dl->AddText(ImVec2(pingLeft, p0.y + pad),
+                            ImGui::GetColorU32(pcol), pingStr);
 
                 /* Players X/cap in the left gutter, under the flag */
                 {
