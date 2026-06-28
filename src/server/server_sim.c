@@ -2108,6 +2108,32 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->statCatchupTicks[playerNum] = 0;
     sim->statLastRewindTicks[playerNum] = 0;
 
+    /* Post-game stats: a mid-round leaver is dropped from the round summary as
+     * if never present. Zero this slot's accumulator row, clear every other
+     * slot's matrix cells that reference this slot (the column), and prune the
+     * notable-event timeline of entries involving this slot. Other players'
+     * aggregate counters are intentionally left as-is — only the leaver's own
+     * stats and direct references to them are removed. mineOwner cells owned by
+     * this slot are cleared with the mine-ownership work. */
+    {
+        BYTE s;
+        memset(&sim->roundStats[playerNum], 0, sizeof(sim->roundStats[playerNum]));
+        for (s = 0; s < MAX_TANKS; s++) {
+            sim->roundStats[s].killsOf[playerNum]  = 0;
+            sim->roundStats[s].killedBy[playerNum] = 0;
+        }
+        {
+            uint16_t r, w = 0;
+            for (r = 0; r < sim->notableEventCount; r++) {
+                const NotableEvent *ne = &sim->notableEvents[r];
+                if (ne->actorA == playerNum || ne->actorB == playerNum) continue;
+                if (w != r) sim->notableEvents[w] = *ne;
+                w++;
+            }
+            sim->notableEventCount = w;
+        }
+    }
+
     /* Record ownership for rejoin before migration changes it */
     {
         char pName[PLAYER_NAME_LEN];

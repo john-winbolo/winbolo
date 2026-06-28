@@ -339,3 +339,64 @@ int run_round_stats_notables_ordered(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* A player removed mid-round vanishes from the round summary: their own
+ * accumulator row is zeroed, the kill matrix loses every reference to them,
+ * and their notable-event entries are pruned — while other players' aggregate
+ * counters that happened to involve them are left untouched. */
+int run_round_stats_leaver_dropped(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    serverSimAddPlayer(sim, 0, "P0", false);
+    serverSimAddPlayer(sim, 1, "P1", false);
+    serverSimAddPlayer(sim, 2, "P2", false);
+
+    const uint8_t kill01[8]  = { 0, 1, LAST_DEATH_BY_SHELL, 0, 0, 0, 0, 0 };
+    const uint8_t kill12[8]  = { 1, 2, LAST_DEATH_BY_SHELL, 0, 0, 0, 0, 0 };
+    const uint8_t capture[8] = { 2, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
+    inject(sim, EVENT_TANK_KILLED, kill01);
+    inject(sim, EVENT_TANK_KILLED, kill12);
+    inject(sim, EVENT_PILL_CAPTURED, capture);
+
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 1)->kills == 1,
+                  "P1 kill recorded, got %u", serverSimGetRoundStats(sim, 1)->kills);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 1)->deaths == 1,
+                  "P1 death recorded, got %u", serverSimGetRoundStats(sim, 1)->deaths);
+    UT_ASSERT_MSG(sim->notableEventCount == 3,
+                  "three notable events recorded, got %u",
+                  (unsigned)sim->notableEventCount);
+
+    serverSimRemovePlayer(sim, 1);
+
+    /* Leaver's own row is zeroed. */
+    PlayerRoundStats zero;
+    memset(&zero, 0, sizeof(zero));
+    UT_ASSERT_MSG(memcmp(serverSimGetRoundStats(sim, 1), &zero, sizeof(zero)) == 0,
+                  "leaver's round stats must be all-zero");
+
+    /* Kill matrix column referencing the leaver is cleared. */
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->killsOf[1] == 0,
+                  "killsOf[leaver] cleared, got %u",
+                  serverSimGetRoundStats(sim, 0)->killsOf[1]);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 2)->killedBy[1] == 0,
+                  "killedBy[leaver] cleared, got %u",
+                  serverSimGetRoundStats(sim, 2)->killedBy[1]);
+
+    /* Other players' aggregates are not unwound. */
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->kills == 1,
+                  "P0's kill of the leaver is retained, got %u",
+                  serverSimGetRoundStats(sim, 0)->kills);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 2)->pillCaptures == 1,
+                  "P2's capture is retained, got %u",
+                  serverSimGetRoundStats(sim, 2)->pillCaptures);
+
+    /* Notable timeline pruned of the leaver's two kills; the capture survives. */
+    UT_ASSERT_MSG(sim->notableEventCount == 1,
+                  "timeline pruned to one entry, got %u",
+                  (unsigned)sim->notableEventCount);
+    UT_ASSERT(sim->notableEvents[0].type == NOTABLE_PILL_CAPTURE);
+
+    serverSimDestroy(sim);
+    return 0;
+}
