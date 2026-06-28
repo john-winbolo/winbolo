@@ -2831,6 +2831,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # serverSpectatorDeliverControl allowlist, subscriber capacity, and the
     # spectator-roster enumerator + fan to live spectators.
     tests/unit/test_spectator_live_bus.c
+    # Live↔delayed cutover for spectators: the anti-cheat boundary at game
+    # start (a live spectator is unsubscribed before any running-state publish,
+    # so it receives zero running control) and the drain-then-flip back to the
+    # live lobby once the delayed game is fully watched.
+    tests/unit/test_spectator_cutover.c
     # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
@@ -3296,6 +3301,7 @@ set(_unit_test_names
     spectator_control_filter
     spectator_subscriber_capacity
     spectator_roster_to_spectators
+    spectator_lobby_cutover
     bulk_transfer
     overflow_guards
     channel_reset_codec_roundtrip

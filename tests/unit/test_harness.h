@@ -269,6 +269,13 @@ int run_spectator_control_filter(void);
 int run_spectator_subscriber_capacity(void);
 int run_spectator_roster_to_spectators(void);
 
+/* Live↔delayed cutover (test_spectator_cutover.c): a live-lobby spectator is
+ * unsubscribed from the control bus at game start before any running-state
+ * publish (so it receives zero running control — the anti-cheat boundary), and
+ * is flipped back to the live lobby only after its delayed read head drains the
+ * game→lobby segment boundary. */
+int run_spectator_lobby_cutover(void);
+
 /* Bulk-transfer framing (test_bulk_transfer.c): the off-socket stream-header
  * round-trip, byte-identical blob reassembly under loss + reorder, header
  * robustness, pipelining and the send-side serializer guard. */

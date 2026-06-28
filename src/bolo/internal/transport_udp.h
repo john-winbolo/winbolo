@@ -786,4 +786,9 @@ void transportUdpServerTestSpectatorAckBulk(int s);
  * an invalid slot. */
 uint32_t transportUdpServerGetSpectatorControlSeq(int s);
 
+/* True when spectator slot s is a live control-bus subscriber (lobby/countdown),
+ * false when it is a delayed-ring reader or the slot is out of range. Lets a
+ * test observe the live↔delayed cutover. */
+bool transportUdpServerGetSpectatorLive(int s);
+
 #endif /* TRANSPORT_UDP_H */

@@ -341,6 +341,11 @@ static struct {
     UdpServerClient clients[MAX_TANKS];
     SpectatorConn   spectators[MAX_SPECTATORS];
     uint32_t tickCount;
+    /* recordSeq of the most recent running-game ring record. Captured every
+     * running tick (below), it freezes at the game's last record X when the
+     * game ends, since game-over ticks are not recorded — so it is the bar a
+     * delayed spectator must reach before it has watched the whole game. */
+    uint32_t lastRunningSeq;
 
     /* Compressed map buffer for sending to joining clients */
     BYTE     compressedMap[MAP_DOWNLOAD_MAX_SIZE];
@@ -1753,6 +1758,22 @@ static void serverServiceMapTransfer(int slot) {
 static void serverServiceSpectators(ServerSim *sim) {
     int i;
 
+    /* While the game runs the ring head is the latest game record, so track it
+     * here every running tick (this runs unconditionally, even with no
+     * spectators connected). When the game ends the head freezes at the last
+     * running record X — game-over ticks are not recorded — and stays there
+     * through the hold and the reset, so lastRunningSeq is exactly the record a
+     * delayed spectator must reach to have watched the whole game, tail
+     * included. All spectators share one ring and one X; a spectator still
+     * draining an older game is held delayed by the lobby/countdown gate below
+     * until it reaches the latest X. */
+    if (serverSimGetState(sim) == serverStateRunning) {
+        SpectatorRing *r = serverInstanceGetSpectatorRing();
+        if (r != NULL) {
+            udpServer.lastRunningSeq = spectatorRingHeadSeq(r);
+        }
+    }
+
     for (i = 0; i < MAX_SPECTATORS; i++) {
         SpectatorConn *sp = &udpServer.spectators[i];
 
@@ -1925,6 +1946,47 @@ static void serverServiceSpectators(ServerSim *sim) {
                     free(blob);   /* bulkSenderBegin copied it into its own buf */
                     sp->lastEmittedSeq = seq;
                     bulkSenderPump(&sp->bulkSend, &sp->channelMux);
+                }
+
+                /* Drain-then-flip: once the spectator has replayed through the
+                 * last running record (lastRunningSeq) it has shown the whole
+                 * game, including the post-gameover tail, so when the live game
+                 * is back in the lobby/countdown return it to the live lobby.
+                 * Re-registering on the bus replays the current lobby in one
+                 * step (the ~delay gap is jumped). A newer running game (live,
+                 * or still unwatched in the ring) advances lastRunningSeq or
+                 * holds the state non-lobby, so the spectator stays delayed.
+                 * The flip may fire while a trailing delayed record is still
+                 * draining on CHANNEL_BULK (no channel reset), which the client
+                 * intake must tolerate. The aged-out path above may have
+                 * cleared seedComplete, so re-check it. */
+                if (sp->seedComplete &&
+                    !bulkSenderBusy(&sp->bulkSend) &&
+                    (serverSimGetState(sim) == serverStateLobby ||
+                     serverSimGetState(sim) == serverStateCountdown) &&
+                    sp->lastEmittedSeq >= udpServer.lastRunningSeq) {
+                    /* Tear down the delayed feed, keeping the slot connected
+                     * and its name; no channel reset. */
+                    if (sp->seedBlob != NULL) {
+                        free(sp->seedBlob);
+                        sp->seedBlob = NULL;
+                    }
+                    sp->seedLen = 0;
+                    sp->seedGen = 0;
+                    sp->seedBegun = false;
+                    sp->seedComplete = false;
+                    sp->xferStartSeq = 0;
+                    sp->xferEndSeq = 0;
+                    sp->seedSeq = 0;
+                    sp->lastEmittedSeq = 0;
+                    sp->inCountdown = false;
+                    sp->countdownRemaining = 0;
+                    sp->countdownSentTick = 0;
+                    sp->live = true;
+                    sp->controlSub = serverSimRegisterSubscriber(
+                        sim, serverSpectatorDeliverControl, sp);
+                    mpDiagLog("[srv] spec idx=%d delayed->live "
+                              "(drained, lobby)", i);
                 }
             }
         }
@@ -3830,7 +3892,6 @@ bool transportUdpServerHasAnyClient(void) {
 
 void transportUdpServerOnGameStart(ServerSim *sim) {
     int i;
-    (void)sim;
     mpDiagLog("[srv] GAME_START BEGIN (rebasing game/map channel send baselines)");
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
@@ -3917,6 +3978,27 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
         }
     }
     WB_LOG_INFO(WB_LOG_CAT_NET, "ctrl queue reset all slots (game start)");
+
+    /* Cut every live-lobby spectator over to the delayed ring as the game
+     * starts. Drop its control-bus subscription so the imminent
+     * CTRL_GAME_PHASE_RUNNING publish (and the forced snapshot after it)
+     * cannot reach it — a live spectator must see zero running-state state,
+     * or the configured spectator delay is undercut. This runs before the
+     * RUNNING publish on both start paths (the lifecycle countdown→running
+     * step and the in-place start), so the unsubscribe is the anti-cheat
+     * boundary. No channel reset: a live spectator never ran the delayed
+     * seed/feed block, so its seed/feed fields are still at their accept-time
+     * zeros and the next serverServiceSpectators tick seeks → cold start →
+     * arms the countdown cleanly. */
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        SpectatorConn *sp = &udpServer.spectators[i];
+        if (!sp->connected || !sp->live) continue;
+        serverSimUnregisterSubscriber(sim, sp->controlSub);
+        sp->controlSub = SUBSCRIBER_HANDLE_INVALID;
+        sp->live = false;
+        mpDiagLog("[srv] GAME_START spec idx=%d live->delayed (unsubscribed)", i);
+    }
+
     mpDiagLog("[srv] GAME_START END (game/map channel send baselines rebased)");
 }
 
@@ -5843,6 +5925,11 @@ void transportUdpServerTestSpectatorAckBulk(int s) {
 uint32_t transportUdpServerGetSpectatorControlSeq(int s) {
     if (s < 0 || s >= MAX_SPECTATORS) return 0;
     return udpServer.spectators[s].channelMux.ch[CHANNEL_CONTROL].nextSeq;
+}
+
+bool transportUdpServerGetSpectatorLive(int s) {
+    if (s < 0 || s >= MAX_SPECTATORS) return false;
+    return udpServer.spectators[s].live;
 }
 
 bool transportUdpServerTestDownloadComplete(int slot) {

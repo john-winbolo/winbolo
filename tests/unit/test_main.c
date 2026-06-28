@@ -175,6 +175,7 @@ static const UnitTestEntry s_tests[] = {
     { "spectator_control_filter",                run_spectator_control_filter                },
     { "spectator_subscriber_capacity",           run_spectator_subscriber_capacity           },
     { "spectator_roster_to_spectators",          run_spectator_roster_to_spectators          },
+    { "spectator_lobby_cutover",                 run_spectator_lobby_cutover                 },
     { "bulk_transfer",                           run_bulk_transfer                           },
     { "overflow_guards",                         run_overflow_guards                         },
     { "channel_reset_codec_roundtrip",           run_channel_reset_codec_roundtrip           },
