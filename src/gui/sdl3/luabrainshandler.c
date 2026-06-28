@@ -537,6 +537,18 @@ static int sdl_lua_searcher(lua_State *L) {
   size_t len = 0;
   char *buf;
 
+  /* When sandboxed, require() must not escape the brain directory. require()
+   * passes the module name to searchers verbatim (the "." -> "/" rewrite is
+   * done inside the stock searchers, not here), so a name containing a path
+   * separator or ".." would let `require("../../etc/foo")` resolve outside the
+   * brain dir. Reject those; brain modules are always flat names. */
+  if (!s_allow_unsafe &&
+      (SDL_strchr(modname, '/')  || SDL_strchr(modname, '\\') ||
+       SDL_strstr(modname, ".."))) {
+    lua_pushfstring(L, "\n\tmodule '%s' rejected (sandboxed)", modname);
+    return 1;
+  }
+
   /* Try brainDir/modname.lua */
   SDL_snprintf(filepath, sizeof(filepath), "%s/%s.lua", brainDir, modname);
   buf = sdl_load_file(filepath, &len);
@@ -550,7 +562,11 @@ static int sdl_lua_searcher(lua_State *L) {
     return 1;
   }
 
-  if (luaL_loadbuffer(L, buf, len, filepath) != LUA_OK) {
+  /* Sandboxed: load as TEXT only so a brain cannot require precompiled
+   * bytecode (Lua does not verify bytecode; crafted .luac escapes the VM).
+   * Unsafe hosts (BrainTest) keep the default "bt" mode for dev tooling. */
+  if (luaL_loadbufferx(L, buf, len, filepath,
+                       s_allow_unsafe ? NULL : "t") != LUA_OK) {
     SDL_free(buf);
     return lua_error(L);
   }
@@ -1170,6 +1186,21 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     lua_pushstring(L, effectiveDir);
     lua_pushcclosure(L, sdl_lua_searcher, 1);
     lua_rawseti(L, -2, 2);
+
+    /* Sandboxed: drop every searcher past the SDL one (slot 2). The stock
+     * Lua searcher would otherwise survive at slot 3 and load modules via
+     * package.path — which still carries the openlibs system defaults and
+     * "./?.lua" (cwd), letting require() read .lua/.luac outside the brain
+     * dir and load bytecode. Leaving only preload (slot 1) + SDL (slot 2)
+     * confines require() to the path-jailed, text-only SDL searcher. The
+     * native C searchers were already removed in brain_apply_sandbox. Cap
+     * the loop generously; the table never holds more than ~5 entries. */
+    if (!s_allow_unsafe) {
+      for (int i = 3; i <= 16; i++) {
+        lua_pushnil(L);
+        lua_rawseti(L, -2, i);
+      }
+    }
     lua_pop(L, 2); /* pop searchers + package */
   }
 
