@@ -374,6 +374,32 @@ static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathC
     logAddEvent(log_PlayerDied, killed, 0, 0, 0, 0, NULL);
 }
 
+static void serverSimCbRecordDamage(void *ctx, BYTE attacker, BYTE targetKind,
+                                    uint16_t dealt, bool destroyed) {
+    ServerSim *sim = (ServerSim *)ctx;
+    if (sim->state != serverStateRunning || attacker >= MAX_TANKS) return;
+    PlayerRoundStats *as = &sim->roundStats[attacker];
+    switch (targetKind) {
+    case DMG_TARGET_TANK: as->dmgToPlayers += dealt; break;
+    case DMG_TARGET_PILL: as->dmgToPills   += dealt; if (destroyed) as->pillKills++; break;
+    case DMG_TARGET_BASE: as->dmgToBases   += dealt; break;
+    default: break;
+    }
+}
+
+static void serverSimCbRecordPlayerAction(void *ctx, BYTE player, BYTE actionKind) {
+    ServerSim *sim = (ServerSim *)ctx;
+    if (sim->state != serverStateRunning || player >= MAX_TANKS) return;
+    PlayerRoundStats *ps = &sim->roundStats[player];
+    switch (actionKind) {
+    case PLAYER_ACTION_FARM:  ps->treesFarmed++; break;
+    case PLAYER_ACTION_BUILD: ps->pillsBuilt++;  break;
+    case PLAYER_ACTION_MINE:  ps->minesLaid++;   break;
+    case PLAYER_ACTION_SHELL: ps->shellsFired++; break;
+    default: break;
+    }
+}
+
 static void serverSimCbCenterTank(void *ctx) {
     (void)ctx;
     /* No-op on server */
@@ -509,6 +535,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.explosion = serverSimCbExplosion;
     sim->sim.callbacks.tkExplosion = serverSimCbTkExplosion;
     sim->sim.callbacks.shellDeath = serverSimCbShellDeath;
+    sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
+    sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {

@@ -261,6 +261,8 @@ bool clientSimCreate(ClientSim *cs) {
   cs->sim.callbacks.mineVisible = csCallbackMineVisible;
   cs->sim.callbacks.explosion = NULL;
   cs->sim.callbacks.tkExplosion = NULL;
+  cs->sim.callbacks.recordDamage = NULL;
+  cs->sim.callbacks.recordPlayerAction = NULL;
   cs->sim.callbacks.ctx = cs;
 
   cs->currentBuildSelect = BsTrees;

@@ -109,6 +109,7 @@ static const UnitTestEntry s_tests[] = {
     { "round_stats_reset_clears_notables",          run_round_stats_reset_clears_notables          },
     { "round_stats_notables_ordered",               run_round_stats_notables_ordered               },
     { "round_stats_leaver_dropped",                 run_round_stats_leaver_dropped                 },
+    { "round_stats_attribution_callbacks",          run_round_stats_attribution_callbacks          },
     { "vote_toggle_standalone_no_does_nothing",            run_vote_toggle_standalone_no_does_nothing            },
     { "vote_toggle_invalid_mode_dropped",                  run_vote_toggle_invalid_mode_dropped                  },
     { "vote_toggle_yes_opens_vote",                        run_vote_toggle_yes_opens_vote                        },

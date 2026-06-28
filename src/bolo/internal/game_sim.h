@@ -61,6 +61,16 @@ typedef struct GameSim GameSim;
 #include "position_history.h"
 #include "../../gui/lang.h"
 
+/* recordDamage targetKind */
+#define DMG_TARGET_TANK 0
+#define DMG_TARGET_PILL 1
+#define DMG_TARGET_BASE 2
+/* recordPlayerAction actionKind */
+#define PLAYER_ACTION_FARM  0
+#define PLAYER_ACTION_BUILD 1
+#define PLAYER_ACTION_MINE  2
+#define PLAYER_ACTION_SHELL 3
+
 typedef struct GameSimCallbacks {
     void (*messageAdd)(void *ctx, messageType msgType,
                        langid topId, langid bodyId,
@@ -82,6 +92,13 @@ typedef struct GameSimCallbacks {
      * shell death). outcome is a SHELL_OUTCOME_* (shells.h). */
     void (*shellDeath)(void *ctx, uint32_t fireTick, BYTE owner,
                        WORLD impactWX, WORLD impactWY, uint8_t outcome);
+    /* Server-only stats attribution; NULL on the client (call sites null-check).
+     * recordDamage: `attacker` dealt `dealt` effective armour damage to a target
+     * of `targetKind`; `destroyed` is true only when this blow dropped a pillbox
+     * to 0 armour. recordPlayerAction: `player` performed a farm/build/mine/shell. */
+    void (*recordDamage)(void *ctx, BYTE attacker, BYTE targetKind,
+                         uint16_t dealt, bool destroyed);
+    void (*recordPlayerAction)(void *ctx, BYTE player, BYTE actionKind);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */
 } GameSimCallbacks;
 

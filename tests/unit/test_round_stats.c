@@ -400,3 +400,56 @@ int run_round_stats_leaver_dropped(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* The recordDamage / recordPlayerAction attribution callbacks bump the
+ * round accumulator directly. Drive them through the installed pointers
+ * (ctx is the ServerSim) and assert the per-slot counters; a NEUTRAL
+ * attacker is ignored. */
+int run_round_stats_attribution_callbacks(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    void *ctx = sim->sim.callbacks.ctx;
+    UT_ASSERT(sim->sim.callbacks.recordDamage != NULL);
+    UT_ASSERT(sim->sim.callbacks.recordPlayerAction != NULL);
+
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 10, false);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == 10,
+                  "tank damage, got %llu",
+                  (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);
+
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_PILL, 5, false);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_PILL, 3, true);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPills == 8,
+                  "pill damage accumulates, got %llu",
+                  (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPills);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->pillKills == 1,
+                  "destroyed blow credits a pill kill, got %u",
+                  serverSimGetRoundStats(sim, 0)->pillKills);
+
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_BASE, 7, false);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToBases == 7,
+                  "base damage, got %llu",
+                  (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToBases);
+
+    /* NEUTRAL attacker (0xFF) is out of range and must be ignored. */
+    sim->sim.callbacks.recordDamage(ctx, 0xFF, DMG_TARGET_TANK, 99, false);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == 10,
+                  "NEUTRAL attacker ignored, got %llu",
+                  (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);
+
+    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_FARM);
+    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_BUILD);
+    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_MINE);
+    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_SHELL);
+
+    const PlayerRoundStats *p1 = serverSimGetRoundStats(sim, 1);
+    UT_ASSERT(p1 != NULL);
+    UT_ASSERT_MSG(p1->treesFarmed == 1, "farm counted, got %u", p1->treesFarmed);
+    UT_ASSERT_MSG(p1->pillsBuilt == 1, "build counted, got %u", p1->pillsBuilt);
+    UT_ASSERT_MSG(p1->minesLaid == 1, "mine counted, got %u", p1->minesLaid);
+    UT_ASSERT_MSG(p1->shellsFired == 1, "shell counted, got %u", p1->shellsFired);
+
+    serverSimDestroy(sim);
+    return 0;
+}
