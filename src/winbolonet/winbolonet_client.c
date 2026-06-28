@@ -528,3 +528,44 @@ bool winbolonetClientJoinSpectatorSession(const char *apiToken, const char *serv
   }
   return ok;
 }
+
+/*********************************************************
+*NAME:          winbolonetFetchMyLogs
+*PURPOSE:
+* Fetches the signed-in player's own game logs via
+* GET /api/v1/logs/mine?page=<page>&limit=<limit>, newest
+* first. The user's WBN token rides only as the
+* Authorization: Bearer header (never a query param, so it
+* can't leak into proxy/access logs). page is clamped to
+* 1..10000 and limit to 1..100 to match the server caps.
+*
+* Returns the HTTP status code (200 on success, 401 when the
+* token is missing/expired), -1 on transport error or when
+* token is NULL/empty, or -2 if cancelled via *cancel_flag.
+* On success *response_out is the heap-allocated JSON body the
+* caller must free and parse ({logs, total, page, limit,
+* total_pages}); on error it may be NULL.
+*
+*ARGUMENTS:
+* token        - User WBN bearer token (must be non-empty)
+* page         - 1-based page number (clamped 1..10000)
+* limit        - Results per page (clamped 1..100)
+* response_out - Receives heap-allocated response string (caller frees)
+* cancel_flag  - Pointer to an int polled during transfer
+*                (NULL = no cancellation)
+*********************************************************/
+int winbolonetFetchMyLogs(const char *token, int page, int limit,
+                          char **response_out, volatile int *cancel_flag) {
+  char path[64];
+
+  if (response_out) *response_out = NULL;
+  if (token == NULL || token[0] == '\0') return -1;
+
+  if (page < 1) page = 1;
+  if (page > 10000) page = 10000;
+  if (limit < 1) limit = 1;
+  if (limit > 100) limit = 100;
+
+  snprintf(path, sizeof(path), "logs/mine?page=%d&limit=%d", page, limit);
+  return wbn_api_get_bearer_cancellable(path, token, response_out, cancel_flag);
+}

@@ -72,6 +72,20 @@ void imguiWinbolonetDrawSection(bool inGame) {
     ImGui::TextWrapped("%s", langGetText(STR_LV_INFO_SIGNIN_TO_COMMENT));
 }
 
+/* The My Games tab's sign-in button calls these. LogViewer has no SRP login
+ * flow of its own (it reads the token the main game wrote to WinBolo.ini), so
+ * opening/rendering the shared popup are no-ops here — the button is inert and
+ * the user signs in from the main game. */
+void imguiWinbolonetOpenLoginPopup(void)   {}
+void imguiWinbolonetRenderLoginPopup(void) {}
+
+/* The My Games tab fetches logs/mine via winbolonetFetchMyLogs() in
+ * winbolonet_client.c. That TU's only reference into winbolonet_core is the
+ * shared winboloNetRunning flag; defining it here resolves that reference so
+ * the linker doesn't drag winbolonet_core.c.o (and its thread/events/allocator
+ * chain) into LogViewer, which runs no WBN session loop. */
+bool winboloNetRunning = false;
+
 /* ---- on-screen keyboard support stubs ---------------------------- */
 /* imgui_keyboard.cpp (the controller text-entry overlay) is shared into
  * LogViewer so the WBN browser's fields are editable, but the main-game

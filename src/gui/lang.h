@@ -672,6 +672,9 @@
 #define STR_DLGWBN_FETCHERR                 754
 #define STR_DLGWBN_UNKNOWN_ERR              755
 #define STR_DLGWBN_FILEFILTER               756
+#define STR_DLGWBN_TAB_MYGAMES              1863
+#define STR_DLGWBN_MYGAMES_SIGNIN           1864
+#define STR_DLGWBN_MYGAMES_NONE             1865
 
 /* SetName dialog additions */
 #define STR_DLGSETNAME_WINTITLE             757

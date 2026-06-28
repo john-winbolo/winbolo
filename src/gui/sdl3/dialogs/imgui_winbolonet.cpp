@@ -1209,3 +1209,20 @@ extern "C" void imguiWinbolonetDrawStatusBlock(void) {
     wbnRenderLoginPopup();
     imguiWinbolonetDrawStatsDialog();
 }
+
+/* Opens the shared sign-in / create-account popup. Lets surfaces that
+ * aren't the settings section or welcome status block (e.g. the WBN log
+ * browser's "My Games" tab) trigger the same dialog. The caller MUST also
+ * pump imguiWinbolonetRenderLoginPopup() every frame so the popup renders
+ * in its own ImGui context/window. */
+extern "C" void imguiWinbolonetOpenLoginPopup(void) {
+    wbnOpenLoginPopup();
+}
+
+/* Renders the shared sign-in popup for the frame. No-op unless the popup
+ * was opened (BeginPopupModal early-outs); also drives the async login
+ * worker's state machine, so call it once per frame on whichever surface
+ * opened the popup. */
+extern "C" void imguiWinbolonetRenderLoginPopup(void) {
+    wbnRenderLoginPopup();
+}

@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Не удалось определить путь сохр
 STR_DLGWBN_FETCHERR=Получение не удалось
 STR_DLGWBN_UNKNOWN_ERR=Неизвестная ошибка
 STR_DLGWBN_FILEFILTER=Файлы логов WinBolo
+STR_DLGWBN_TAB_MYGAMES=Мои игры
+STR_DLGWBN_MYGAMES_SIGNIN=Войдите или создайте аккаунт, чтобы увидеть свои недавние игры
+STR_DLGWBN_MYGAMES_NONE=У вас пока нет записанных игр.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo — Установка имени игрока

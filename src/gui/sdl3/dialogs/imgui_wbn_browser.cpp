@@ -51,6 +51,7 @@ extern "C" {
 #include "../../gamefront.h"
 #include "../../lang.h"
 #include "../../../winbolonet/http.h"
+#include "../../../winbolonet/winbolonet_client.h"
 #include "../../../winbolonet/wbn_comments.h"
 #include "cJSON.h"
 #include "imgui_wbn_browser.h"
@@ -95,7 +96,8 @@ struct LogEntry {
 };
 
 enum BrowserTab {
-    TAB_RECENT = 0,
+    TAB_MYGAMES = 0,
+    TAB_RECENT,
     TAB_TOP_RATED,
     TAB_MOST_DOWNLOADED,
     TAB_SEARCH,
@@ -103,6 +105,7 @@ enum BrowserTab {
 };
 
 static const langid s_tabNameIds[] = {
+    STR_DLGWBN_TAB_MYGAMES,
     STR_DLGWBN_TAB_RECENT,
     STR_DLGWBN_TAB_TOPRATED,
     STR_DLGWBN_TAB_MOSTDOWNLOADED,
@@ -297,6 +300,9 @@ struct FetchRequest {
     /* Search filters */
     char player[64];
     char mapFilter[64];
+    /* User WBN bearer token, captured at request time for the My Games tab
+     * (logs/mine is authenticated); empty for the anonymous tabs. */
+    char token[256];
 };
 
 struct FetchResult {
@@ -394,7 +400,7 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         tabs[i].totalPages = 1;
     }
 
-    BrowserTab currentTab = TAB_RECENT;
+    BrowserTab currentTab = TAB_MYGAMES;
     int selectedItem = -1;
 
     /* Search filters */
@@ -475,6 +481,12 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         req.page = page;
         SDL_strlcpy(req.player, searchPlayer, sizeof(req.player));
         SDL_strlcpy(req.mapFilter, searchMap, sizeof(req.mapFilter));
+        if (tab == TAB_MYGAMES) {
+            /* Capture the bearer here on the UI thread; the worker only ever
+             * touches its copy in req. */
+            char expiry[256];
+            gameFrontGetWinbolonetToken(req.token, expiry);
+        }
 
         fetchThread = std::thread([req, &fetchCancel]() {
             FetchResult res = {};
@@ -482,34 +494,44 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             res.page = req.page;
             res.success = false;
 
-            char path[512];
-            switch (req.tab) {
-            case TAB_RECENT:
-                SDL_snprintf(path, sizeof(path), "logs/recent?limit=20");
-                break;
-            case TAB_TOP_RATED:
-                SDL_snprintf(path, sizeof(path), "logs/top-rated?page=%d&limit=20", req.page);
-                break;
-            case TAB_MOST_DOWNLOADED:
-                SDL_snprintf(path, sizeof(path), "logs/most-downloaded?page=%d&limit=20", req.page);
-                break;
-            case TAB_SEARCH: {
-                char params[256] = {};
-                int off = 0;
-                off += SDL_snprintf(params + off, sizeof(params) - off, "page=%d&limit=20", req.page);
-                if (req.player[0])
-                    off += SDL_snprintf(params + off, sizeof(params) - off, "&player=%s", req.player);
-                if (req.mapFilter[0])
-                    off += SDL_snprintf(params + off, sizeof(params) - off, "&map=%s", req.mapFilter);
-                SDL_snprintf(path, sizeof(path), "logs/search?%s", params);
-                break;
-            }
-            default:
-                break;
-            }
-
             char *response = nullptr;
-            int status = wbn_api_get_cancellable(path, &response, &fetchCancel);
+            int status;
+
+            /* My Games is authenticated (logs/mine, Bearer token) and routed
+             * through the winbolonet client; the other tabs are anonymous
+             * GETs built inline. */
+            if (req.tab == TAB_MYGAMES) {
+                status = winbolonetFetchMyLogs(req.token, req.page, 20,
+                                               &response, &fetchCancel);
+            } else {
+                char path[512];
+                switch (req.tab) {
+                case TAB_RECENT:
+                    SDL_snprintf(path, sizeof(path), "logs/recent?limit=20");
+                    break;
+                case TAB_TOP_RATED:
+                    SDL_snprintf(path, sizeof(path), "logs/top-rated?page=%d&limit=20", req.page);
+                    break;
+                case TAB_MOST_DOWNLOADED:
+                    SDL_snprintf(path, sizeof(path), "logs/most-downloaded?page=%d&limit=20", req.page);
+                    break;
+                case TAB_SEARCH: {
+                    char params[256] = {};
+                    int off = 0;
+                    off += SDL_snprintf(params + off, sizeof(params) - off, "page=%d&limit=20", req.page);
+                    if (req.player[0])
+                        off += SDL_snprintf(params + off, sizeof(params) - off, "&player=%s", req.player);
+                    if (req.mapFilter[0])
+                        off += SDL_snprintf(params + off, sizeof(params) - off, "&map=%s", req.mapFilter);
+                    SDL_snprintf(path, sizeof(path), "logs/search?%s", params);
+                    break;
+                }
+                default:
+                    break;
+                }
+
+                status = wbn_api_get_cancellable(path, &response, &fetchCancel);
+            }
 
             if (status == 200 && response) {
                 cJSON *json = cJSON_Parse(response);
@@ -691,9 +713,17 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
         });
     };
 
-    /* Auto-fetch recent on open */
+    /* Auto-fetch the default tab on open: My Games when signed in, else
+     * pre-load Recent so the signed-out user (who lands on the My Games
+     * sign-in prompt) sees instant results the moment they switch tabs. */
     if (httpOk) {
-        triggerFetch(TAB_RECENT, 1);
+        char openTok[256], openExp[256];
+        gameFrontGetWinbolonetToken(openTok, openExp);
+        if (openTok[0] != '\0') {
+            triggerFetch(TAB_MYGAMES, 1);
+        } else {
+            triggerFetch(TAB_RECENT, 1);
+        }
     }
 
     /* File dialog state */
@@ -892,8 +922,46 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             ImGui::EndTabBar();
         }
 
-        /* ---- Filter bar ---- */
-        {
+        /* ---- My Games: signed-out gate ----
+         * logs/mine needs a WBN token. Signed out, the list is replaced by a
+         * prompt that opens the shared sign-in / create-account dialog;
+         * signed in, the player's own logs are fetched the first time the
+         * tab is shown (covers both initial open and a just-completed
+         * in-dialog login). */
+        bool myGamesSignedOut = false;
+        if (currentTab == TAB_MYGAMES) {
+            char mgTok[256], mgExp[256];
+            gameFrontGetWinbolonetToken(mgTok, mgExp);
+            if (mgTok[0] == '\0') {
+                myGamesSignedOut = true;
+            } else if (httpOk && !tabs[TAB_MYGAMES].fetched &&
+                       !tabs[TAB_MYGAMES].fetching) {
+                triggerFetch(TAB_MYGAMES, 1);
+            }
+        }
+
+        if (myGamesSignedOut) {
+            ImGui::Spacing();
+            ImGui::Spacing();
+            const char *prompt = langGetText(STR_DLGWBN_MYGAMES_SIGNIN);
+            float availW = ImGui::GetContentRegionAvail().x;
+            float btnW = ImGui::CalcTextSize(prompt).x +
+                         ImGui::GetStyle().FramePadding.x * 2.0f;
+            if (availW > btnW)
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - btnW) * 0.5f);
+            if (ImGui::Button(prompt)) {
+                imguiWinbolonetOpenLoginPopup();
+            }
+            imguiHandOnHover();
+            /* Pump the shared sign-in popup so it renders/advances within
+             * this dialog's own ImGui context. Reached only on the My Games
+             * tab while signed out, so it never races the comment-form
+             * sign-in path (which is a separate, logged-out comment flow). */
+            imguiWinbolonetRenderLoginPopup();
+        }
+
+        /* ---- Filter bar (hidden on the My Games sign-in prompt) ---- */
+        if (!myGamesSignedOut) {
             ImGui::TextUnformatted(langGetText(STR_DLGBROWSER_FILTER));
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80 * s);
@@ -936,6 +1004,13 @@ extern "C" WbnBrowserResult imguiWbnBrowserShow(struct SDL_Window *window_in,
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 0.3f, 0.3f, 1));
             ImGui::TextUnformatted(langGetTextFmt(STR_DLGWBN_ERROR, &args));
             ImGui::PopStyleColor();
+        }
+
+        /* ---- My Games: signed-in but no recorded games yet ---- */
+        if (currentTab == TAB_MYGAMES && !myGamesSignedOut && tab.fetched &&
+            !tab.fetching && !tab.error && tab.logs.empty()) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("%s", langGetText(STR_DLGWBN_MYGAMES_NONE));
         }
 
         /* ---- Results table ---- */

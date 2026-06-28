@@ -175,4 +175,30 @@ bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, ch
 *********************************************************/
 bool winbolonetClientJoinSpectatorSession(const char *apiToken, const char *serverKey, const char *playerName, char *spectatorKeyOut, char *errorMsg);
 
+/*********************************************************
+*NAME:          winbolonetFetchMyLogs
+*PURPOSE:
+* Fetches the signed-in player's own game logs via
+* GET /api/v1/logs/mine?page=<page>&limit=<limit> (newest
+* first). The token is sent only as Authorization: Bearer,
+* never as a query param. page is clamped to 1..10000 and
+* limit to 1..100 server-side caps.
+*
+* Returns the HTTP status code (200 ok, 401 missing/expired
+* token), -1 on transport error or empty token, or -2 if
+* cancelled via *cancel_flag. On success *response_out is the
+* heap-allocated JSON body the caller must free and parse
+* ({logs, total, page, limit, total_pages}); may be NULL on
+* error.
+*
+*ARGUMENTS:
+* token        - User WBN bearer token (must be non-empty)
+* page         - 1-based page number (clamped 1..10000)
+* limit        - Results per page (clamped 1..100)
+* response_out - Receives heap-allocated response string (caller frees)
+* cancel_flag  - Pointer to an int polled during transfer
+*                (NULL = no cancellation)
+*********************************************************/
+int winbolonetFetchMyLogs(const char *token, int page, int limit, char **response_out, volatile int *cancel_flag);
+
 #endif /* __WINBOLO_NET_CLIENT_H */

@@ -216,6 +216,30 @@ int wbn_api_get_cancellable(const char *path, char **response_out,
 int wbn_api_get_public(const char *path, char **response_out);
 
 /*********************************************************
+*NAME:          wbn_api_get_bearer_cancellable
+*PURPOSE:
+* Like wbn_api_get_cancellable, but attaches Authorization:
+* Bearer <bearerToken> (the logged-in user's WBN token) in
+* addition to the Ed25519 signature headers. For user-scoped
+* read endpoints such as the per-user game-log list
+* ("logs/mine"). Returns -1 without invoking curl when
+* bearerToken is NULL/empty. On cancellation (via *cancel_flag)
+* the partial response is freed and -2 is returned; pass
+* cancel_flag = NULL for no cancellation. Otherwise returns the
+* HTTP status code, or -1 on transport error; *response_out is a
+* heap-allocated string the caller must free (may be NULL on error).
+*
+*ARGUMENTS:
+* path         - API path after /api/v1/ (e.g. "logs/mine?page=1&limit=20")
+* bearerToken  - User WBN bearer token (must be non-empty)
+* response_out - Receives heap-allocated response string (caller frees)
+* cancel_flag  - Pointer to an int polled during transfer
+*                (NULL = no cancellation)
+*********************************************************/
+int wbn_api_get_bearer_cancellable(const char *path, const char *bearerToken,
+                                   char **response_out, volatile int *cancel_flag);
+
+/*********************************************************
 *NAME:          wbn_prefs_get
 *PURPOSE:
 * GET /api/v1/prefs for the cloud preferences sync. Signs the
