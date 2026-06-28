@@ -38,6 +38,8 @@ extern "C" {
 #include "playername_validate.h"
 #include "../sdl3draw.h"
 #include "../../tiles.h"
+#include "../../ui_mode.h"
+#include "../input_gamepad.h"
 }
 
 /* White-masked Steam logo, tinted at draw time. Used on the
@@ -976,19 +978,36 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
     ImGui::Separator();
     ImGui::Spacing();
 
-    /* Footer: Sign out (left, muted) and Close (right). Esc closes the
-     * dialog rather than signing out. Both buttons share a width and are
-     * centred as a group, mirroring the standard dialog footer. */
+    /* Footer: Sign out (left, muted), My Games (centre) and Close (right).
+     * Esc closes the dialog rather than signing out. The buttons share a
+     * width and are centred as a group, mirroring the standard dialog
+     * footer. My Games opens the WBN log browser, which defaults to its
+     * My Games tab; it is gated to the same desktop, non-controller builds
+     * as the welcome screen's Log Viewer entry. */
     const char *signOutLbl = langGetText(STR_DLGWBN_SIGN_OUT);
     const char *closeLbl    = langGetText(STR_OK);
+#if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
+    const bool showMyGames  =
+        !inputGamepadRealControllerConnected() && !uiModeIsSteamDeck();
+    const char *myGamesLbl  = langGetText(STR_DLGWBN_TAB_MYGAMES);
+#else
+    const bool showMyGames  = false;
+    const char *myGamesLbl  = "";
+#endif
     float pad = ImGui::GetStyle().FramePadding.x * 2.0f;
     float sw = ImGui::CalcTextSize(signOutLbl).x;
     float cw = ImGui::CalcTextSize(closeLbl).x;
-    float btnW = (sw > cw ? sw : cw) + pad;
+    float btnW = (sw > cw ? sw : cw);
+    if (showMyGames) {
+        float mw = ImGui::CalcTextSize(myGamesLbl).x;
+        if (mw > btnW) btnW = mw;
+    }
+    btnW += pad;
     if (btnW < 120.0f) btnW = 120.0f;
     float spacing = ImGui::GetStyle().ItemSpacing.x;
     float availW = ImGui::GetContentRegionAvail().x;
-    float totalW = btnW * 2.0f + spacing;
+    int nBtn = showMyGames ? 3 : 2;
+    float totalW = btnW * nBtn + spacing * (nBtn - 1);
     float startX = ImGui::GetCursorPosX() + (availW - totalW) * 0.5f;
     if (startX > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(startX);
 
@@ -996,12 +1015,23 @@ extern "C" void imguiWinbolonetDrawStatsDialog(void) {
     bool signOut = ImGui::Button(signOutLbl, ImVec2(btnW, 0));
     WBUI::PopCancelStyle();
     imguiHandOnHover();
+    bool myGames = false;
+    if (showMyGames) {
+        ImGui::SameLine(0.0f, spacing);
+        myGames = ImGui::Button(myGamesLbl, ImVec2(btnW, 0));
+        imguiHandOnHover();
+    }
     ImGui::SameLine(0.0f, spacing);
     bool close = ImGui::Button(closeLbl, ImVec2(btnW, 0));
     imguiHandOnHover();
 
     if (signOut) {
         wbnSignOut();
+        ImGui::CloseCurrentPopup();
+    } else if (myGames) {
+        /* Hand off to the welcome loop, which consumes the pending
+         * transition and opens the log browser on its My Games tab. */
+        gameFrontRequestTransition(openLogViewer);
         ImGui::CloseCurrentPopup();
     } else if (close || WBUI::CancelKeyPressed()) {
         ImGui::CloseCurrentPopup();
