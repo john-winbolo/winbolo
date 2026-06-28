@@ -3089,6 +3089,8 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
         p->pillCaptures = (uint16_t)rs->pillCaptures;
         p->dmgDealt     = (uint32_t)(rs->dmgToPlayers + rs->dmgToPills + rs->dmgToBases);
         p->builds       = (uint16_t)(rs->pillsBuilt + rs->treesFarmed);
+        p->lgmKills     = (uint16_t)rs->lgmKills;
+        p->lgmDeaths    = (uint16_t)rs->lgmDeaths;
     }
 
     /* Awards rank over every slot; absent/zeroed slots score 0 and are

@@ -720,9 +720,9 @@ BOLO_STATIC_ASSERT(
 
 /* PACKET_ROUND_STATS wire format:
  *   [header 8] [playerCount 1]
- *   repeat playerCount times (16 bytes each):
+ *   repeat playerCount times (20 bytes each):
  *     [slot 1][isBot 1][kills 2][deaths 2][baseCaptures 2]
- *     [pillCaptures 2][dmgDealt 4][builds 2]
+ *     [pillCaptures 2][dmgDealt 4][builds 2][lgmKills 2][lgmDeaths 2]
  *   [awardCount 1]
  *   repeat awardCount times (8 bytes each):
  *     [awardId 1][winnerSlot 1][subjectSlot 1][winnerIsBot 1][value 4]
@@ -744,7 +744,7 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
     uint8_t keyLen = (uint8_t)strnlen(s->wbnLogKey, ROUND_STATS_LOGKEY_LEN - 1);
 
     /* Pre-compute total size; bail before any write if it can't fit. */
-    size_t needed = 1 + (size_t)pc * 16 + 1 + (size_t)ac * 8 + 1 + keyLen;
+    size_t needed = 1 + (size_t)pc * 20 + 1 + (size_t)ac * 8 + 1 + keyLen;
     if (bufCap < needed) return ENCODE_OVERFLOW;
 
     size_t pos = 0;
@@ -759,6 +759,8 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
         packU16(buf + pos, p->pillCaptures); pos += 2;
         packU32(buf + pos, p->dmgDealt);     pos += 4;
         packU16(buf + pos, p->builds);       pos += 2;
+        packU16(buf + pos, p->lgmKills);     pos += 2;
+        packU16(buf + pos, p->lgmDeaths);    pos += 2;
     }
     buf[pos++] = ac;
     for (uint8_t i = 0; i < ac; i++) {
@@ -800,7 +802,7 @@ static bool decodeRoundStatsBody(const uint8_t *buf, size_t len,
 
     uint8_t pc = buf[pos++];
     if (pc > MAX_TANKS) return false;
-    if (pos + (size_t)pc * 16 > len) return false;
+    if (pos + (size_t)pc * 20 > len) return false;
     for (uint8_t i = 0; i < pc; i++) {
         RoundPlayerSummary *p = &s->players[i];
         p->slot         = buf[pos++];
@@ -811,6 +813,8 @@ static bool decodeRoundStatsBody(const uint8_t *buf, size_t len,
         p->pillCaptures = unpackU16(buf + pos); pos += 2;
         p->dmgDealt     = unpackU32(buf + pos); pos += 4;
         p->builds       = unpackU16(buf + pos); pos += 2;
+        p->lgmKills     = unpackU16(buf + pos); pos += 2;
+        p->lgmDeaths    = unpackU16(buf + pos); pos += 2;
     }
     s->playerCount = pc;
 
@@ -841,7 +845,7 @@ static bool decodeRoundStatsBody(const uint8_t *buf, size_t len,
 /* Compile-time guarantee that the round-stats worst case (every slot
  * present, every award won, a full-length key) fits MAX_CONTROL_PACKET. */
 BOLO_STATIC_ASSERT(
-    PACKET_HEADER_SIZE + 1 + (size_t)MAX_TANKS * 16 + 1 +
+    PACKET_HEADER_SIZE + 1 + (size_t)MAX_TANKS * 20 + 1 +
         (size_t)AWARD_COUNT * 8 + 1 + (ROUND_STATS_LOGKEY_LEN - 1)
         <= MAX_CONTROL_PACKET,
     round_stats_worst_case_fits_MAX_CONTROL_PACKET);

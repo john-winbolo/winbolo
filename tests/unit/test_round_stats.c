@@ -814,15 +814,18 @@ int run_round_stats_codec_roundtrip(void) {
     s->players[0].deaths = 3; s->players[0].baseCaptures = 2;
     s->players[0].pillCaptures = 5; s->players[0].dmgDealt = 123456u;
     s->players[0].builds = 7;
+    s->players[0].lgmKills = 11; s->players[0].lgmDeaths = 4;
     s->players[1].slot = 4;  s->players[1].isBot = 1;  s->players[1].kills = 0;
     s->players[1].deaths = 9; s->players[1].baseCaptures = 0;
     s->players[1].pillCaptures = 1; s->players[1].dmgDealt = 42u;
     s->players[1].builds = 0;
+    s->players[1].lgmKills = 0; s->players[1].lgmDeaths = 2;
     /* Max-ish values to catch byte-order/width bugs. */
     s->players[2].slot = 9;  s->players[2].isBot = 0;  s->players[2].kills = 300;
     s->players[2].deaths = 301; s->players[2].baseCaptures = 65535u;
     s->players[2].pillCaptures = 1000; s->players[2].dmgDealt = 4000000000u;
     s->players[2].builds = 65535u;
+    s->players[2].lgmKills = 65535u; s->players[2].lgmDeaths = 54321u;
 
     s->awardCount = 3;
     s->awards[0].awardId = AWARD_MOST_KILLS; s->awards[0].winnerSlot = 0;
@@ -855,6 +858,8 @@ int run_round_stats_codec_roundtrip(void) {
         UT_ASSERT_MSG(b->dmgDealt == a->dmgDealt,
                       "player %d dmgDealt, got %u", i, b->dmgDealt);
         UT_ASSERT_MSG(b->builds == a->builds, "player %d builds", i);
+        UT_ASSERT_MSG(b->lgmKills == a->lgmKills, "player %d lgmKills", i);
+        UT_ASSERT_MSG(b->lgmDeaths == a->lgmDeaths, "player %d lgmDeaths", i);
     }
 
     UT_ASSERT_MSG(d->awardCount == 3, "awardCount, got %u", d->awardCount);
@@ -928,6 +933,8 @@ int run_round_stats_build_summary(void) {
     sim->roundStats[0].dmgToPills   = 10;
     sim->roundStats[0].pillsBuilt   = 3;
     sim->roundStats[0].treesFarmed  = 4;
+    sim->roundStats[0].lgmKills     = 6;
+    sim->roundStats[0].lgmDeaths    = 2;
     sim->roundStats[1].kills        = 1;
 
     RoundStatsSummary summary;
@@ -939,6 +946,10 @@ int run_round_stats_build_summary(void) {
                   "dmgDealt = players+pills+bases, got %u", summary.players[0].dmgDealt);
     UT_ASSERT_MSG(summary.players[0].builds == 7,
                   "builds = pillsBuilt+treesFarmed, got %u", summary.players[0].builds);
+    UT_ASSERT_MSG(summary.players[0].lgmKills == 6,
+                  "lgmKills carried, got %u", summary.players[0].lgmKills);
+    UT_ASSERT_MSG(summary.players[0].lgmDeaths == 2,
+                  "lgmDeaths carried, got %u", summary.players[0].lgmDeaths);
     UT_ASSERT_MSG(summary.players[1].slot == 1, "row 1 slot, got %u", summary.players[1].slot);
 
     const AwardResult *mk = find_award(summary.awards, summary.awardCount,

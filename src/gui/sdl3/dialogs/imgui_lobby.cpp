@@ -6074,7 +6074,7 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
     }
 
     if (n > 0 &&
-        ImGui::BeginTable("##lastRoundScore", 7,
+        ImGui::BeginTable("##lastRoundScore", 9,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                               ImGuiTableFlags_NoHostExtendX)) {
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_NAME),
@@ -6091,6 +6091,10 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
                                 ImGuiTableColumnFlags_WidthFixed, 52.0f * s);
         ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_BUILDS),
                                 ImGuiTableColumnFlags_WidthFixed, 48.0f * s);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMK),
+                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMD),
+                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
         ImGui::TableHeadersRow();
         for (int r = 0; r < n; r++) {
             const RoundPlayerSummary *p = &st->players[order[r]];
@@ -6103,6 +6107,8 @@ static void renderLastRoundBody(ClientSim *cs, float s) {
             ImGui::TableSetColumnIndex(4); ImGui::Text("%u", (unsigned)p->pillCaptures);
             ImGui::TableSetColumnIndex(5); ImGui::Text("%u", (unsigned)p->dmgDealt);
             ImGui::TableSetColumnIndex(6); ImGui::Text("%u", (unsigned)p->builds);
+            ImGui::TableSetColumnIndex(7); ImGui::Text("%u", (unsigned)p->lgmKills);
+            ImGui::TableSetColumnIndex(8); ImGui::Text("%u", (unsigned)p->lgmDeaths);
         }
         ImGui::EndTable();
     }

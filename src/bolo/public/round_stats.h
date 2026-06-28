@@ -67,6 +67,8 @@ typedef struct {
     uint16_t pillCaptures;
     uint32_t dmgDealt;   /* dmgToPlayers + dmgToPills + dmgToBases */
     uint16_t builds;     /* pillsBuilt + treesFarmed */
+    uint16_t lgmKills;
+    uint16_t lgmDeaths;
 } RoundPlayerSummary;
 
 typedef struct {
