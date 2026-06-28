@@ -5711,6 +5711,41 @@ static void serverSimSyncSubscriber(
         memset(&evt, 0, sizeof(evt));
         serverSimFillLobbyBrainListEvent(sim, &evt);
         deliver(ctx, &evt);
+
+        /* Bot-pool catalog: the server's themed naming pools (loaded from
+         * -botnames / data/bot_names.json), zlib-compressed and streamed
+         * as CTRL_LOBBY_BOT_POOL_CHUNK fragments so the joiner renders and
+         * picks from the SERVER's pools rather than its own shipped file.
+         * Same lobby-only gate as the brain list. */
+        {
+            unsigned char *blob =
+                (unsigned char *)malloc(LOBBY_BOT_CATALOG_WIRE_MAX);
+            if (blob) {
+                int blen = lobbyBotPoolsSerialize(blob,
+                                                  (int)LOBBY_BOT_CATALOG_WIRE_MAX);
+                if (blen > 0) {
+                    int frag = LOBBY_BOT_POOL_CHUNK_FRAG_MAX;
+                    int nChunks = (blen + frag - 1) / frag;
+                    int off = 0, ci;
+                    if (nChunks <= 255) {
+                        for (ci = 0; ci < nChunks; ci++) {
+                            int fl = blen - off;
+                            if (fl > frag) fl = frag;
+                            memset(&evt, 0, sizeof(evt));
+                            evt.type = CTRL_LOBBY_BOT_POOL_CHUNK;
+                            evt.u.lobbyBotPoolChunk.seq     = (uint8_t)ci;
+                            evt.u.lobbyBotPoolChunk.count   = (uint8_t)nChunks;
+                            evt.u.lobbyBotPoolChunk.fragLen = (uint16_t)fl;
+                            memcpy(evt.u.lobbyBotPoolChunk.frag, blob + off,
+                                   (size_t)fl);
+                            deliver(ctx, &evt);
+                            off += fl;
+                        }
+                    }
+                }
+                free(blob);
+            }
+        }
     }
 
     for (i = 0; i < MAX_TANKS; i++) {

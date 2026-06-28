@@ -718,6 +718,49 @@ BOLO_STATIC_ASSERT(
         <= MAX_CONTROL_PACKET,
     brain_list_worst_case_fits_MAX_CONTROL_PACKET);
 
+/* PACKET_LOBBY_BOT_POOL_CHUNK wire format:
+ *   [header 8] [seq 1] [count 1] [fragLen 2 BE] [frag fragLen]
+ * Each fragment is one slice of the server's zlib-compressed bot-pool
+ * catalog; the client reassembles seq 0..count-1 and installs. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyBotPoolChunkBody(const ControlEvent *evt,
+                                                const struct UdpServerClient *recipient,
+                                                uint8_t *buf, size_t bufCap,
+                                                size_t *outLen) {
+    (void)recipient;
+    uint16_t fl = evt->u.lobbyBotPoolChunk.fragLen;
+    size_t pos = 0;
+    if (fl > LOBBY_BOT_POOL_CHUNK_FRAG_MAX) return ENCODE_OVERFLOW;
+    if (bufCap < (size_t)(4 + fl)) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.lobbyBotPoolChunk.seq;
+    buf[pos++] = evt->u.lobbyBotPoolChunk.count;
+    buf[pos++] = (uint8_t)((fl >> 8) & 0xFF);
+    buf[pos++] = (uint8_t)(fl & 0xFF);
+    if (fl > 0) { memcpy(buf + pos, evt->u.lobbyBotPoolChunk.frag, fl); pos += fl; }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static EncodeResult encodeLobbyBotPoolChunk(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_LOBBY_BOT_POOL_CHUNK, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeLobbyBotPoolChunkBody(evt, recipient,
+                                                 buf + PACKET_HEADER_SIZE,
+                                                 bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
+BOLO_STATIC_ASSERT(
+    PACKET_HEADER_SIZE + 4 + LOBBY_BOT_POOL_CHUNK_FRAG_MAX <= MAX_CONTROL_PACKET,
+    bot_pool_chunk_worst_case_fits_MAX_CONTROL_PACKET);
+
 /* PACKET_LOBBY_MAP_CHANGE wire format: header only (no payload).
  * The lobbyMapChange union member carries no fields — receipt of
  * the packet is itself the signal that the server has loaded a new
@@ -1580,6 +1623,24 @@ static bool decodeLobbyBrainListBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeLobbyBotPoolChunkBody(const uint8_t *buf, size_t len,
+                                        ControlEvent *outEvt) {
+    /* Layout: [seq 1][count 1][fragLen 2 BE][frag fragLen]. */
+    if (len < 4) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_BOT_POOL_CHUNK;
+    size_t pos = 0;
+    outEvt->u.lobbyBotPoolChunk.seq   = buf[pos++];
+    outEvt->u.lobbyBotPoolChunk.count = buf[pos++];
+    uint16_t fl = (uint16_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+    pos += 2;
+    if (fl > LOBBY_BOT_POOL_CHUNK_FRAG_MAX) return false;
+    if (pos + fl > len) return false;
+    outEvt->u.lobbyBotPoolChunk.fragLen = fl;
+    if (fl > 0) memcpy(outEvt->u.lobbyBotPoolChunk.frag, buf + pos, fl);
+    return true;
+}
+
 static bool decodeLobbyMapChangeBody(const uint8_t *buf, size_t len,
                                      ControlEvent *outEvt) {
     (void)buf; (void)len;
@@ -1791,6 +1852,7 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BOT_CONFIG]   = encodeLobbyBotConfig,
     [CTRL_LOBBY_BOT_BRAIN]    = encodeLobbyBotBrain,
     [CTRL_LOBBY_BRAIN_LIST]   = encodeLobbyBrainList,
+    [CTRL_LOBBY_BOT_POOL_CHUNK] = encodeLobbyBotPoolChunk,
     [CTRL_GAME_VOTE_STATE]    = encodeGameVoteState,
     [CTRL_SERVER_TEXT]        = encodeServerText,
     [CTRL_COMMAND_REJECTED]   = encodeCommandRejected,
@@ -1831,6 +1893,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BOT_CONFIG]      = encodeLobbyBotConfigBody,
     [CTRL_LOBBY_BOT_BRAIN]       = encodeLobbyBotBrainBody,
     [CTRL_LOBBY_BRAIN_LIST]      = encodeLobbyBrainListBody,
+    [CTRL_LOBBY_BOT_POOL_CHUNK]  = encodeLobbyBotPoolChunkBody,
     [CTRL_GAME_VOTE_STATE]       = encodeGameVoteStateBody,
     [CTRL_SERVER_TEXT]           = encodeServerTextBody,
     [CTRL_COMMAND_REJECTED]      = encodeCommandRejectedBody,
@@ -1866,6 +1929,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BOT_CONFIG]      = decodeLobbyBotConfigBody,
     [CTRL_LOBBY_BOT_BRAIN]       = decodeLobbyBotBrainBody,
     [CTRL_LOBBY_BRAIN_LIST]      = decodeLobbyBrainListBody,
+    [CTRL_LOBBY_BOT_POOL_CHUNK]  = decodeLobbyBotPoolChunkBody,
     [CTRL_GAME_VOTE_STATE]       = decodeGameVoteStateBody,
     [CTRL_SERVER_TEXT]           = decodeServerTextBody,
     [CTRL_COMMAND_REJECTED]      = decodeCommandRejectedBody,
@@ -1902,6 +1966,7 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_LOBBY_BOT_CONFIG_CHG: return decodeLobbyBotConfigBody;
         case PACKET_LOBBY_BOT_BRAIN_CHG:  return decodeLobbyBotBrainBody;
         case PACKET_LOBBY_BRAIN_LIST:     return decodeLobbyBrainListBody;
+        case PACKET_LOBBY_BOT_POOL_CHUNK: return decodeLobbyBotPoolChunkBody;
         case PACKET_GAME_VOTE_STATE:      return decodeGameVoteStateBody;
         case PACKET_COMMAND_REJECTED:     return decodeCommandRejectedBody;
         case PACKET_BALANCE_FAILED:       return decodeBalanceFailedBody;
