@@ -42,12 +42,20 @@ typedef struct {
     uint16_t killsOf[MAX_TANKS];    /* killsOf[v]  = times I killed victim slot v */
 } PlayerRoundStats;
 
+/* NotableEvent.type values — server-internal; consumed by the later reel. */
+typedef enum {
+    NOTABLE_KILL = 0,
+    NOTABLE_PILL_CAPTURE,
+    NOTABLE_BASE_CAPTURE,
+    NOTABLE_LGM_LOST
+} NotableType;
+
 /* Ordered round timeline for the later highlights reel. */
 #define NOTABLE_EVENTS_MAX 512
 typedef struct {
     uint32_t tick;     /* per-round running tick */
     uint8_t  mapX, mapY;
-    uint8_t  type;     /* server-internal NotableType (later pass) */
+    uint8_t  type;     /* server-internal NotableType */
     uint8_t  actorA, actorB;
 } NotableEvent;
 

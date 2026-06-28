@@ -2929,6 +2929,23 @@ static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
     return count;
 }
 
+/* Append one entry to the per-round notable-event timeline (for the later
+ * highlights reel). Bounded; silently drops once full. Location (mapX/mapY)
+ * is recorded as 0 for now — the v1 reel scorer keys on tick/type/actor, not
+ * position; precise per-event location can be sourced in the reel phase if
+ * the scorer needs it. */
+static void serverSimNotableAppend(ServerSim *sim, uint8_t type,
+                                   uint8_t actorA, uint8_t actorB) {
+    if (sim->notableEventCount >= NOTABLE_EVENTS_MAX) return;
+    NotableEvent *ne = &sim->notableEvents[sim->notableEventCount++];
+    ne->tick   = sim->tick;
+    ne->mapX   = 0;
+    ne->mapY   = 0;
+    ne->type   = type;
+    ne->actorA = actorA;
+    ne->actorB = actorB;
+}
+
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     /* Per-round stats funnel. Runs before the snapshot-event buffering below
      * so a full event buffer never drops a stat. Only during a running game,
@@ -2955,6 +2972,7 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
                 vs->treesWasted += d[4];
                 if (d[3] > vs->mostPillsDropped) vs->mostPillsDropped = d[3];
             }
+            serverSimNotableAppend(sim, NOTABLE_KILL, /*killer*/d[0], /*killed*/d[1]);
             break;
         }
         case EVENT_PILL_CAPTURED:
@@ -2966,12 +2984,18 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
                 else                                    os->baseCaptures++;
                 if (cls == CAPTURE_CLASS_ENEMY) os->steals++;
             }
+            /* An ownership change is notable even if it credits nobody. */
+            serverSimNotableAppend(sim,
+                event->type == EVENT_PILL_CAPTURED ? NOTABLE_PILL_CAPTURE
+                                                   : NOTABLE_BASE_CAPTURE,
+                /*newOwner*/d[0], /*prevOwner*/d[1]);
             break;
         }
         case EVENT_LGM_LOST: {
             BYTE victim = d[0], killer = d[1];
             if (victim < MAX_TANKS) sim->roundStats[victim].lgmDeaths++;
             if (killer < MAX_TANKS) sim->roundStats[killer].lgmKills++;
+            serverSimNotableAppend(sim, NOTABLE_LGM_LOST, /*killer*/d[1], /*victim*/d[0]);
             break;
         }
         default: break;
@@ -3648,6 +3672,10 @@ void serverSimConsoleMessage(const char *msg) {
 }
 
 void serverSimEnterGameOver(ServerSim *sim) {
+    /* roundStats and the notable-event timeline are final here: nothing
+     * mutates them until the next serverSimResetGameWorld (the funnel only
+     * runs in serverStateRunning), so they survive the game-over hold intact
+     * for downstream phases to publish from. No snapshot/freeze buffer needed. */
     if (!sim->lobbyEnabled) {
         /* No lobby — game over means server should shut down */
         sim->state = serverStateGameOver;
@@ -3969,6 +3997,13 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
     /* 6. Clear events */
     sim->eventCount = 0;
+
+    /* Post-game stats are round-scoped: clear the accumulator and the notable
+     * timeline so an aborted or finished round never leaks into the next. This
+     * runs on both round start and return-to-lobby, so a round that ends without
+     * reaching game-over is cleared too. */
+    memset(sim->roundStats, 0, sizeof(sim->roundStats));
+    sim->notableEventCount = 0;
 
     /* 7. Reset tick */
     sim->tick = 0;

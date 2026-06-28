@@ -252,3 +252,90 @@ int run_round_stats_lgm(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* Stats are round-scoped: they survive the game-over hold but are cleared
+ * when the next round starts. */
+int run_round_stats_lifecycle_reset(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    const uint8_t d[8] = { 0, 1, LAST_DEATH_BY_SHELL, 0, 0, 0, 0, 0 };
+    inject(sim, EVENT_TANK_KILLED, d);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->kills == 1,
+                  "kill recorded during running, got %u",
+                  serverSimGetRoundStats(sim, 0)->kills);
+
+    serverSimEnterGameOver(sim);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->kills == 1,
+                  "kill must survive the game-over hold, got %u",
+                  serverSimGetRoundStats(sim, 0)->kills);
+
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->kills == 0,
+                  "next round start must clear stats, got %u",
+                  serverSimGetRoundStats(sim, 0)->kills);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The notable-event timeline is reset alongside the counters at round start. */
+int run_round_stats_reset_clears_notables(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    const uint8_t kill[8]    = { 0, 1, LAST_DEATH_BY_SHELL, 0, 0, 0, 0, 0 };
+    const uint8_t capture[8] = { 0, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
+    const uint8_t lgm[8]     = { 5, 0, 0, 0, 0, 0, 0, 0 };
+    inject(sim, EVENT_TANK_KILLED, kill);
+    inject(sim, EVENT_PILL_CAPTURED, capture);
+    inject(sim, EVENT_LGM_LOST, lgm);
+    UT_ASSERT_MSG(sim->notableEventCount == 3,
+                  "three notable events recorded, got %u",
+                  (unsigned)sim->notableEventCount);
+
+    serverSimStartGame(sim);
+    UT_ASSERT_MSG(sim->notableEventCount == 0,
+                  "next round start must clear the notable timeline, got %u",
+                  (unsigned)sim->notableEventCount);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The timeline preserves event order and records doer/target plus the
+ * running round tick for each entry. */
+int run_round_stats_notables_ordered(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    const uint8_t kill[8]    = { 0, 1, LAST_DEATH_BY_SHELL, 0, 0, 0, 0, 0 };
+    const uint8_t pillCap[8] = { 0, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
+    const uint8_t baseCap[8] = { 2, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
+    const uint8_t lgm[8]     = { 5, 3, 0, 0, 0, 0, 0, 0 };  /* victim 5, killer 3 */
+    inject(sim, EVENT_TANK_KILLED, kill);
+    inject(sim, EVENT_PILL_CAPTURED, pillCap);
+    inject(sim, EVENT_BASE_CAPTURED, baseCap);
+    inject(sim, EVENT_LGM_LOST, lgm);
+
+    UT_ASSERT_MSG(sim->notableEventCount == 4,
+                  "four notable events recorded, got %u",
+                  (unsigned)sim->notableEventCount);
+
+    UT_ASSERT(sim->notableEvents[0].type == NOTABLE_KILL);
+    UT_ASSERT(sim->notableEvents[1].type == NOTABLE_PILL_CAPTURE);
+    UT_ASSERT(sim->notableEvents[2].type == NOTABLE_BASE_CAPTURE);
+    UT_ASSERT(sim->notableEvents[3].type == NOTABLE_LGM_LOST);
+
+    /* Kill records doer then target; LGM records killer then victim. */
+    UT_ASSERT(sim->notableEvents[0].actorA == 0 && sim->notableEvents[0].actorB == 1);
+    UT_ASSERT(sim->notableEvents[3].actorA == 3 && sim->notableEvents[3].actorB == 5);
+
+    for (int i = 0; i < sim->notableEventCount; i++) {
+        UT_ASSERT_MSG(sim->notableEvents[i].tick == sim->tick,
+                      "entry %d tick should match the round tick", i);
+    }
+
+    serverSimDestroy(sim);
+    return 0;
+}
