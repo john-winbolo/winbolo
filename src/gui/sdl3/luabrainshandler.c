@@ -1716,6 +1716,24 @@ bool luaBrainLoadBrains(void) {
   scan_onnx_brains_in(LUA_BRAINS_DEV_DIR);
 #endif
 
+  /* User-supplied brains: SDL_GetPrefPath("WinBolo","WinBolo")/Brains —
+     ~/Library/Application Support/WinBolo/WinBolo/Brains on macOS. Writable,
+     survives app reinstall/upgrade (the bundle is read-only/code-signed).
+     These are untrusted (a player drops in arbitrary .lua); they load through
+     luaBrainInstanceCreate like every other brain, so the default sandbox
+     (no --allow-unsafe-brains) jails each one to its own directory. */
+  char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+  if (prefDir) {
+    char userBrains[LUA_BRAINS_PATH_MAX];
+    SDL_snprintf(userBrains, sizeof(userBrains), "%sBrains", prefDir);
+    SDL_CreateDirectory(userBrains);  /* make the drop location discoverable; no-op if it exists */
+    scan_brains_in(userBrains, "[user] ");
+  #if defined(HAVE_ONNXRUNTIME) && !defined(__EMSCRIPTEN__)
+    scan_onnx_brains_in(userBrains);
+  #endif
+    SDL_free(prefDir);
+  }
+
   return true;
 }
 
