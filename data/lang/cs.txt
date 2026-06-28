@@ -1414,6 +1414,7 @@ STR_VOTE_DRAW_TAG= (Remíza)
 STR_VOTE_NEEDS_RUNNING_TIP=Dostupné po spuštění hry.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Před hlasováním o kapitulaci vyberte tým.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Vzdání je dostupné pouze tehdy, kdy zbývají právě dva týmy\ns lidskými hráči.
+STR_VOTE_SHOW=Zobrazit: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Hlasitost

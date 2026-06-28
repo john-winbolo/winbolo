@@ -1404,6 +1404,7 @@ STR_VOTE_DRAW_TAG= (Gelijkspel)
 STR_VOTE_NEEDS_RUNNING_TIP=Beschikbaar zodra het spel bezig is.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Kies een team voordat je stemt om over te geven.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Overgeven is alleen beschikbaar als er precies twee teams\nmet menselijke spelers over zijn.
+STR_VOTE_SHOW=Tonen: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume

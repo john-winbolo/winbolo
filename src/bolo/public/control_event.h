@@ -300,7 +300,10 @@ typedef struct ControlEvent {
          * PACKET_CHAT_BROADCAST(fromPlayer=0xFE). Lets in-process
          * subscribers (SP / host) see the same lines. */
         struct {
-            char text[PACKET_MAX_CHAT_MESSAGE + 1];
+            char    text[PACKET_MAX_CHAT_MESSAGE + 1];
+            uint8_t destTeam;  /* 0 = everyone; 1-16 = deliver only to that team.
+                                  Server-side recipient filter (udpClientDeliver +
+                                  the in-process handler); not sent on the wire. */
         } serverText;
 
         /* CTRL_GAME_VOTE_STATE — mirrors PACKET_GAME_VOTE_STATE. */
