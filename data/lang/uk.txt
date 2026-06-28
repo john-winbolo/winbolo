@@ -1404,6 +1404,7 @@ STR_VOTE_DRAW_TAG= (Нічия)
 STR_VOTE_NEEDS_RUNNING_TIP=Доступно після початку гри.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Оберіть команду перед голосуванням про здачу.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Здача доступна лише коли залишається рівно дві команди\nз живими гравцями.
+STR_VOTE_SHOW=Показати: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Гучність

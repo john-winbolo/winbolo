@@ -3015,7 +3015,11 @@ static void renderMenuBar(ClientSim *cs) {
                 const char *vnm = (vk == GAME_VOTE_KIND_BACK_TO_LOBBY)
                                   ? langGetText(STR_VOTE_BACK_TO_LOBBY)
                                   : langGetText(STR_VOTE_SURRENDER);
-                char lbl[96]; snprintf(lbl, sizeof(lbl), "Show: %s", vnm);
+                MessageArgs vargs = {};
+                SDL_snprintf(vargs.string1, sizeof(vargs.string1), "%s", vnm);
+                char lbl[128];
+                snprintf(lbl, sizeof(lbl), "%s",
+                         langGetTextFmt(STR_VOTE_SHOW, &vargs));
                 if (ImGui::MenuItem(lbl))
                     clientSimSetGameVoteWidgetVisible(cs, vk, true);
             }

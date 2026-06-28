@@ -1414,6 +1414,7 @@ STR_VOTE_DRAW_TAG= (Empate)
 STR_VOTE_NEEDS_RUNNING_TIP=Disponible una vez que la partida esté en curso.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Elige un equipo antes de votar para rendirse.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=La rendición solo está disponible cuando quedan exactamente dos equipos\ncon jugadores humanos.
+STR_VOTE_SHOW=Mostrar: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volumen
