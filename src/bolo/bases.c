@@ -996,7 +996,7 @@ void basesGetStats(bases *value, BYTE baseNum, BYTE *shellsAmount, BYTE *mines, 
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue) {
+void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner) {
   bases *value = &sim->bs;
   bool isServer = sim->isServer;
   bool done;                /* Are we finished searching for the base */
@@ -1005,10 +1005,15 @@ void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue) {
   count = 0;
   done = FALSE;
   while (done == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].armour > 0) { 
+    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].armour > 0) {
+      BYTE before = (*value)->item[count].armour;  /* > 0 here */
       (*value)->item[count].armour -= DAMAGE;
       if ((*value)->item[count].armour > BASE_FULL_ARMOUR) {
         (*value)->item[count].armour = 0;
+      }
+      if (sim->callbacks.recordDamage) {
+        sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_BASE,
+                                    (uint16_t)(before - (*value)->item[count].armour), false);
       }
       if ((*value)->item[count].armour <= BASE_DISPLAY_X) {
         if (isServer == FALSE) {

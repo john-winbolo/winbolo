@@ -1215,7 +1215,12 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 #endif
 	if (inHitZone && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;
+		BYTE armourBefore = (*value)->armour;  /* <= TANK_FULL_ARMOUR here */
 		(*value)->armour -= DAMAGE;
+		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
+			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
+			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK, eff, false);
+		}
 		if ((*value)->onBoat == TRUE) {
 			(*value)->onBoat = FALSE;
 			(*value)->boatState = BoatState_NotOnBoat;
@@ -3397,7 +3402,12 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 #endif
 	if (inHitZone && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;
+		BYTE armourBefore = (*value)->armour;  /* <= TANK_FULL_ARMOUR here */
 		(*value)->armour -= DAMAGE;
+		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
+			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
+			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK, eff, false);
+		}
 		if ((*value)->onBoat == TRUE) {
 			(*value)->onBoat = FALSE;
 			(*value)->boatState = BoatState_NotOnBoat;

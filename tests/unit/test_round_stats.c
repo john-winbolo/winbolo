@@ -453,3 +453,36 @@ int run_round_stats_attribution_callbacks(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* End-to-end: a direct shell hit on a live tank credits effective tank
+ * damage to the shooter through the real combat path. Covers both the
+ * current-position and lag-compensated hit functions. */
+int run_round_stats_direct_damage(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+                                               gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    serverSimSetLobbyEnabled(sim, false);
+    serverSimAddPlayer(sim, 0, "P0", false);
+    serverSimAddPlayer(sim, 1, "P1", false);
+    serverSimStartGame(sim);
+
+    /* If tanks aren't created for connected players, this test can't run. */
+    UT_ASSERT(sim->sim.tanks[1] != NULL);
+
+    WORLD wx = 0, wy = 0;
+    UT_ASSERT(serverSimGetTankState(sim, 1, &wx, &wy));
+
+    tankIsTankHit(&sim->sim, &sim->sim.tanks[1], wx, wy, 0, 0);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == DAMAGE,
+                  "current-position hit credits one DAMAGE, got %llu",
+                  (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);
+
+    tankIsTankHitAtPosition(&sim->sim, &sim->sim.tanks[1], wx, wy, wx, wy, 0, 0);
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == 2 * DAMAGE,
+                  "lag-compensated hit credits a second DAMAGE, got %llu",
+                  (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);
+
+    serverSimDestroy(sim);
+    return 0;
+}

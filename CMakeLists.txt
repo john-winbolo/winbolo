@@ -3095,6 +3095,7 @@ set(_unit_test_names
     round_stats_notables_ordered
     round_stats_leaver_dropped
     round_stats_attribution_callbacks
+    round_stats_direct_damage
     vote_toggle_standalone_no_does_nothing
     vote_toggle_invalid_mode_dropped
     vote_toggle_yes_opens_vote

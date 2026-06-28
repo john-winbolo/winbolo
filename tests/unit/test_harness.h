@@ -125,6 +125,7 @@ int run_round_stats_reset_clears_notables(void);
 int run_round_stats_notables_ordered(void);
 int run_round_stats_leaver_dropped(void);
 int run_round_stats_attribution_callbacks(void);
+int run_round_stats_direct_damage(void);
 int run_vote_toggle_standalone_no_does_nothing(void);
 int run_vote_toggle_invalid_mode_dropped(void);
 int run_vote_toggle_yes_opens_vote(void);

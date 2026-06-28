@@ -437,7 +437,7 @@ void basesGetStats(bases *value, BYTE baseNum, BYTE *shellsAmount, BYTE *mines, 
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-void basesDamagePos(struct GameSim *sim, BYTE xValue, BYTE yValue);
+void basesDamagePos(struct GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner);
 
 /*********************************************************
 *NAME:          basesCanHit
