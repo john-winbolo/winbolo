@@ -2832,6 +2832,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Spectator-chat replay emission: serverSimReceiveSpectatorChat writes a
     # log_SpectatorChat (specIdx + message) into the recording .wbv stream.
     tests/unit/test_spectator_chat_log.c
+    # Lobby-chat catch-up buffer: broadcast + spectator chat captured in
+    # lobby/countdown, cleared at game start, capped, and re-delivered by
+    # serverSimReplayLobbyChat at the spectator drain-flip (fresh joins none).
+    tests/unit/test_spectator_chat_catchup.c
     # Spectator connect — client side: the real client transport connecting with
     # the spectator flag lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting
     # seed), consuming no tank slot and starting no map download.
@@ -3336,6 +3340,7 @@ set(_unit_test_names
     spectator_chat_codec
     spectator_chat_routing
     spectator_chat_log
+    spectator_chat_catchup
     spectator_connect
     spectator_client_lobby_intake
     spectator_command_reject

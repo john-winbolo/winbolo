@@ -1432,6 +1432,81 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     }
 }
 
+/* Worst case for the lobby-chat backlog blob: LOBBY_CHAT_BUFFER_MAX (200)
+ * events, each a [type(1)][bodyLen(2 BE)][body] record whose body is at most a
+ * chat line (PACKET_MAX_CHAT_MESSAGE = 128) plus a few codec header bytes. 32
+ * KiB clears it and stays well under the client's MAP_DOWNLOAD_MAX_SIZE cap. */
+#define LOBBY_CHAT_BACKLOG_WIRE_MAX 32768
+
+/* Sink that serializes the sim's replayed lobby-chat events into one blob, in
+ * the same [type][bodyLen BE][body] framing serverSpectatorDeliverControl puts
+ * on CHANNEL_CONTROL — so the client decodes each record with the existing
+ * control-codec path. On any encode error or capacity overrun it latches
+ * `overflow` and the caller declines to send (the catch-up is best-effort). */
+typedef struct {
+    uint8_t *buf;
+    uint32_t cap;
+    uint32_t len;
+    bool     overflow;
+} LobbyChatBlobSink;
+
+static void serverLobbyChatBlobDeliver(void *ctx, const struct ControlEvent *evt) {
+    LobbyChatBlobSink *s = (LobbyChatBlobSink *)ctx;
+    ControlEncodeBodyFn enc;
+    uint8_t body[MAX_CONTROL_PACKET];
+    size_t bodyLen = 0;
+
+    if (s->overflow) return;
+    enc = transportControlCodecBodyEncoder(evt->type);
+    if (enc == NULL ||
+        enc(evt, NULL, body, sizeof(body), &bodyLen) != ENCODE_OK) {
+        s->overflow = true;
+        return;
+    }
+    if ((uint32_t)(s->len + 3 + bodyLen) > s->cap) {
+        s->overflow = true;
+        return;
+    }
+    s->buf[s->len++] = (uint8_t)evt->type;
+    packU16(s->buf + s->len, (uint16_t)bodyLen);
+    s->len += 2;
+    memcpy(s->buf + s->len, body, bodyLen);
+    s->len += (uint32_t)bodyLen;
+}
+
+/* Drain the sim's current-session lobby-chat backlog to spectator s as a single
+ * BULK_KIND_LOBBY_CHAT_BACKLOG blob on CHANNEL_BULK. Called ONLY at the
+ * delayed->live drain-flip (after the sync re-register sets the lobby phase, and
+ * after serverArmSpectatorLobbyMap has reset/idled the bulk sender) — never on a
+ * fresh accept or player join, so fresh joiners get no backlog. The armed lobby
+ * map streams next, once this blob drains (single-blob-in-flight guard). */
+static void serverSendSpectatorBacklog(int s, ServerSim *sim) {
+    SpectatorConn *sp = &udpServer.spectators[s];
+    LobbyChatBlobSink sink;
+    uint8_t *blob = (uint8_t *)malloc(LOBBY_CHAT_BACKLOG_WIRE_MAX);
+
+    if (blob == NULL) return;
+    sink.buf = blob;
+    sink.cap = LOBBY_CHAT_BACKLOG_WIRE_MAX;
+    sink.len = 0;
+    sink.overflow = false;
+    serverSimReplayLobbyChat(sim, serverLobbyChatBlobDeliver, &sink);
+
+    if (!sink.overflow && sink.len > 0 && !bulkSenderBusy(&sp->bulkSend)) {
+        BulkStreamHeader sh;
+        memset(&sh, 0, sizeof(sh));
+        sh.kind = BULK_KIND_LOBBY_CHAT_BACKLOG;
+        sh.gen = 0;
+        sh.totalSize = sink.len;
+        sh.pathLen = 0;
+        sh.path[0] = '\0';
+        bulkSenderBegin(&sp->bulkSend, &sh, blob, sink.len);
+        mpDiagLog("[srv] spec idx=%d lobby-chat backlog -> bulk (%u bytes)",
+                  s, (unsigned)sink.len);
+    }
+    free(blob);   /* bulkSenderBegin copied it into its own buffer */
+}
+
 /* Fill a CTRL_SPECTATOR_SLOT event from spectator slot s. A disconnected slot
  * emits a connected==false roster row carrying only specIdx; the decoder leaves
  * the rest zeroed. clientFlags merges the client-supplied hint bits with the
@@ -2138,6 +2213,15 @@ static void serverServiceSpectators(ServerSim *sim) {
                      * the map-change path; does not alter the drain-flip above. */
                     serverSendSpectatorAccept(i, sim, &sp->addr);
                     serverArmSpectatorLobbyMap(i, /*resetChannel=*/true);
+                    /* Catch-up: the lobby chat that accumulated while this
+                     * spectator was finishing the delayed game. Delivered as one
+                     * blob on CHANNEL_BULK — NOT on the reliable control window,
+                     * which the same-tick sync re-register already fills (the
+                     * backlog would overflow it and be dropped). Sent here, after
+                     * the map re-arm has left the bulk sender idle and after the
+                     * sync set the lobby phase (so inLobby is true when the client
+                     * applies it); the armed map streams once this blob drains. */
+                    serverSendSpectatorBacklog(i, sim);
                     mpDiagLog("[srv] spec idx=%d delayed->live "
                               "(drained, lobby)", i);
                 }

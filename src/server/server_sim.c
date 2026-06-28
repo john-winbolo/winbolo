@@ -4144,6 +4144,14 @@ void serverSimStartGame(ServerSim *sim) {
     /* Fresh round — drop any vote state from the previous game. */
     serverSimGameVoteResetAll(sim);
 
+    /* Drop the lobby-chat catch-up buffer: it holds only the just-ended
+     * lobby's chat, which must not leak into the next session a returning
+     * spectator catches up on. This countdown->running transition is the
+     * single authoritative game start; the game-over->lobby reset path
+     * (serverSimResetGameWorld's other caller) deliberately keeps the buffer
+     * so post-game lobby chat survives for the drain-flip replay. */
+    sim->lobbyChatCount = 0;
+
     /* Arms the last-human-left return-to-lobby check from a clean slate. */
     sim->roundHadHuman = false;
 
@@ -4841,6 +4849,22 @@ static void publishServerMessageToTeam(ServerSim *sim, const char *message,
     serverSimPublishControl(sim, &evt);
 }
 
+/* serverSimBufferLobbyChat — append a chat event to the current-session
+ * lobby-chat catch-up buffer, dropping the oldest entry when full. Only
+ * called for events that should be replayed to a returning spectator
+ * (broadcast player chat + spectator chat captured during lobby/countdown);
+ * gating is the caller's responsibility. The event is stored verbatim so the
+ * drain-flip replay (serverSimReplayLobbyChat) re-delivers exactly what was
+ * fanned live. */
+static void serverSimBufferLobbyChat(ServerSim *sim, const ControlEvent *evt) {
+    if (sim->lobbyChatCount == LOBBY_CHAT_BUFFER_MAX) {
+        memmove(&sim->lobbyChatBuffer[0], &sim->lobbyChatBuffer[1],
+                (LOBBY_CHAT_BUFFER_MAX - 1) * sizeof(sim->lobbyChatBuffer[0]));
+        sim->lobbyChatCount = LOBBY_CHAT_BUFFER_MAX - 1;
+    }
+    sim->lobbyChatBuffer[sim->lobbyChatCount++] = *evt;
+}
+
 /* serverSimReceiveChat — authoritative entry for any chat the server
  * accepts, regardless of which transport delivered the input.
  *
@@ -4872,6 +4896,9 @@ void serverSimReceiveChat(ServerSim *sim, BYTE fromPlayer, BYTE destPlayer,
     if (bodyLen > 0) {
         memcpy(evt.u.chat.body, body, bodyLen);
     }
+
+    /* The lobby-chat catch-up capture lives in serverSimPublishControl, the one
+     * chokepoint this and the wire CMD_CHAT path both publish through. */
     serverSimPublishControl(sim, &evt);
 }
 
@@ -4895,6 +4922,8 @@ void serverSimReceiveSpectatorChat(ServerSim *sim, uint8_t specIdx,
     if (bodyLen > 0) {
         memcpy(evt.u.spectatorChat.body, body, bodyLen);
     }
+
+    /* Capture for the drain-flip catch-up happens in serverSimPublishControl. */
     serverSimPublishControl(sim, &evt);
 
     {
@@ -5930,6 +5959,24 @@ int serverSimSerializeControlSnapshot(ServerSim *sim, BYTE *out, int cap) {
     return sink.overflow ? -1 : sink.len;
 }
 
+/* serverSimReplayLobbyChat — re-deliver the current-session lobby-chat buffer
+ * oldest->newest through the caller's deliver callback. Mirrors the sync /
+ * roster-enumerator inversion: the sim owns the buffer, the transport supplies
+ * delivery. Invoked only at the spectator drain-flip (after the re-register's
+ * sync replay has set the lobby phase, so the events land in lobbyChatHistory);
+ * never on a fresh accept or player join, which is what makes it
+ * drain-flip-only. */
+void serverSimReplayLobbyChat(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx) {
+    int i;
+    if (sim == NULL || deliver == NULL) return;
+    for (i = 0; i < sim->lobbyChatCount; i++) {
+        deliver(ctx, &sim->lobbyChatBuffer[i]);
+    }
+}
+
 SubscriberHandle serverSimRegisterSubscriber(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
@@ -6118,6 +6165,17 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
 
     if (sim == NULL || evt == NULL) {
         return;
+    }
+
+    /* Spectator lobby-chat catch-up capture. EVERY chat reaches the bus through
+     * here — the wire CMD_CHAT dispatcher and the serverSimReceiveChat funnel
+     * both publish via this one call — so capturing here (not in either caller)
+     * is the single chokepoint that catches both. Broadcast player chat
+     * (destPlayer 0xFF) + spectator chat, lobby/countdown only. */
+    if ((sim->state == serverStateLobby || sim->state == serverStateCountdown) &&
+        ((evt->type == CTRL_CHAT && evt->u.chat.destPlayer == 0xFF) ||
+         evt->type == CTRL_SPECTATOR_CHAT)) {
+        serverSimBufferLobbyChat(sim, evt);
     }
 
     /* Reentrancy guard: a deliver callback that triggers another publish

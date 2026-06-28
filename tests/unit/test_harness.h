@@ -262,6 +262,12 @@ int run_spectator_chat_routing(void);
  * into the recording .wbv, read back from the framed stream. */
 int run_spectator_chat_log(void);
 
+/* Lobby-chat catch-up buffer (test_spectator_chat_catchup.c): broadcast +
+ * spectator chat captured in lobby/countdown, cleared at game start, capped,
+ * and re-delivered by serverSimReplayLobbyChat at the drain-flip; a fresh
+ * subscriber's sync replay carries no backlog. */
+int run_spectator_chat_catchup(void);
+
 /* Spectator connect — client side (test_spectator_connect.c): the real client
  * transport connecting with the spectator flag runs the join handshake and
  * lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting seed) with no tank

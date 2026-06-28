@@ -75,6 +75,17 @@ static bool pred_client_live(LoopbackHarness *h, void *u) {
     return clientSimSpectatorIsLiveLobby(h->cs);
 }
 
+static bool pred_server_lobby(LoopbackHarness *h, void *u) {
+    (void)u;
+    return serverSimGetState(h->sim) == serverStateLobby;
+}
+
+static bool pred_hist_has_newline(LoopbackHarness *h, void *u) {
+    const char *hist = clientSimGetLobbyChatHistory(h->cs);
+    (void)u;
+    return hist != NULL && strstr(hist, "NEWLINE") != NULL;
+}
+
 /* ── Leg 1: the accept mode byte seeds live when the server is in the lobby ── */
 
 static int legConnectModeLobby(void) {
@@ -119,7 +130,8 @@ static int legConnectModeRunning(void) {
 
 static int legLobbyGameLobby(void) {
     LoopbackHarness h;
-    int specAt, runAt, delayedAt, liveAt;
+    int specAt, runAt, delayedAt, liveAt, lobbyAt;
+    const char *hist;
 
     UT_ASSERT_MSG(loopbackHarnessStartSpectatorLobby(&h, "SpecCycle", /*seed*/ 13u),
                   "spectator lobby harness start failed");
@@ -145,6 +157,10 @@ static int legLobbyGameLobby(void) {
      * harness client is the tankless spectator and holds no slot of its own). */
     threadsWaitForMutex();
     serverSimAddPlayer(h.sim, 0, "Player", /*wantRejoin*/ false);
+    /* Pre-game lobby chat: the live-lobby spectator sees it now, but it belongs
+     * to the session that is ending and must NOT survive into the lobby the
+     * spectator returns to (cleared at game start). */
+    serverSimReceiveChat(h.sim, 0, 0xFF, "OLDLINE", 7);
     serverSimSetReady(h.sim, 0, true);
     serverSimLobbyCheckAllReady(h.sim);
     threadsReleaseMutex();
@@ -167,6 +183,18 @@ static int legLobbyGameLobby(void) {
     serverSimEnterGameOver(h.sim);
     threadsReleaseMutex();
 
+    /* Once the live game has returned to the lobby — but while the spectator is
+     * still finishing the delayed game — a live player chats. The spectator is
+     * off the bus, so the server buffers it and replays it on the drain-flip
+     * (and if the flip already landed, fans it live); either way it must reach
+     * the returned spectator's lobby log. This is the catch-up the buffer adds. */
+    lobbyAt = loopbackHarnessPumpUntil(&h, FLIP_MAX, pred_server_lobby, NULL);
+    UT_ASSERT_MSG(lobbyAt > 0,
+                  "live game never returned to the lobby after gameover");
+    threadsWaitForMutex();
+    serverSimReceiveChat(h.sim, 0, 0xFF, "NEWLINE", 7);
+    threadsReleaseMutex();
+
     /* game→lobby: live lobby control reaching the client flips it back into
      * live-lobby mode — the signal spectatorRun returns on. */
     liveAt = loopbackHarnessPumpUntil(&h, FLIP_MAX, pred_client_live, NULL);
@@ -175,6 +203,14 @@ static int legLobbyGameLobby(void) {
                   "delayed game drained back to the lobby");
     UT_ASSERT_MSG(serverSimGetState(h.sim) == serverStateLobby,
                   "live state must be lobby when the spectator returns to live");
+
+    /* The post-game lobby chat lands in the returned spectator's lobby log. */
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, FLIP_MAX, pred_hist_has_newline, NULL) > 0,
+                  "returning spectator never received the post-game lobby chat");
+    /* …and the previous session's pre-game chat does not (cleared at game start). */
+    hist = clientSimGetLobbyChatHistory(h.cs);
+    UT_ASSERT_MSG(hist == NULL || strstr(hist, "OLDLINE") == NULL,
+                  "previous session's lobby chat must be cleared by game start");
 
     fprintf(stderr, "  spectator lobby cycle: spec@%d run@%d delayed@%d live@%d\n",
             specAt, runAt, delayedAt, liveAt);
@@ -306,13 +342,108 @@ static int legCutoverPendingMap(void) {
     return 0;
 }
 
+/* ── Leg 7: a large lobby-chat backlog survives the drain-flip over the wire ──
+ *
+ * The catch-up replayed to a returning spectator rides CHANNEL_BULK, NOT the
+ * reliable control window the same-tick sync re-register already fills. Drive a
+ * backlog far larger than that 64-slot window and prove every line reaches the
+ * spectator's lobby log — and that the pre-game chat was cleared at game start.
+ * (The sim-level test can't see this: it calls the replay with no real channel.) */
+
+#define BACKLOG_LINES 100
+
+static bool pred_hist_has_last_backlog(LoopbackHarness *h, void *u) {
+    const char *hist = clientSimGetLobbyChatHistory(h->cs);
+    (void)u;
+    return hist != NULL && strstr(hist, "bk099") != NULL;
+}
+
+static int legLobbyChatBacklogOverWire(void) {
+    LoopbackHarness h;
+    const char *hist;
+    int k, pumps;
+    bool injected = false;
+
+    UT_ASSERT_MSG(loopbackHarnessStartSpectatorLobby(&h, "SpecBklg", /*seed*/ 41u),
+                  "spectator lobby harness start failed");
+
+    /* A real delay so that, after the game returns to the lobby, the spectator
+     * keeps draining the delayed game for many ticks — a wide, deterministic
+     * window in which to inject post-game lobby chat while it is still off the
+     * live bus (so the chat reaches it only via the drain-flip catch-up). */
+    serverSimSetSpecDelayTicks(h.sim, 40);
+    serverInstanceCreateSpectatorRing(h.sim);
+
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, SPEC_CONNECT_MAX, pred_spectating, NULL) >= 0,
+                  "spectator never reached SPECTATING");
+
+    /* Pre-game lobby chat — must be cleared at game start, absent on return. */
+    threadsWaitForMutex();
+    serverSimAddPlayer(h.sim, 0, "Player", /*wantRejoin*/ false);
+    serverSimReceiveChat(h.sim, 0, 0xFF, "OLDLINE", 7);
+    serverSimSetReady(h.sim, 0, true);
+    serverSimLobbyCheckAllReady(h.sim);
+    threadsReleaseMutex();
+
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, RUN_MAX, pred_server_running, NULL) > 0,
+                  "server never reached running");
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, FEED_MAX, pred_client_delayed, NULL) > 0,
+                  "spectator never entered delayed mode at game start");
+
+    /* Advance the running game so the ring holds a full delay's worth of records,
+     * guaranteeing the post-gameover drain window. */
+    for (k = 0; k < 120; k++) loopbackHarnessPump(&h);
+
+    threadsWaitForMutex();
+    serverSimEnterGameOver(h.sim);
+    threadsReleaseMutex();
+
+    /* Pump toward the return-flip. The first tick the live game is back in the
+     * lobby while the spectator is still finishing the delayed game, inject the
+     * whole backlog — captured (lobby state) and replayed on the flip. */
+    for (pumps = 0; pumps < FLIP_MAX && !clientSimSpectatorIsLiveLobby(h.cs); pumps++) {
+        loopbackHarnessPump(&h);
+        if (!injected &&
+            serverSimGetState(h.sim) == serverStateLobby &&
+            !clientSimSpectatorIsLiveLobby(h.cs)) {
+            char line[16];
+            threadsWaitForMutex();
+            for (k = 0; k < BACKLOG_LINES; k++) {
+                int n = snprintf(line, sizeof(line), "bk%03d", k);
+                serverSimReceiveChat(h.sim, 0, 0xFF, line, (size_t)n);
+            }
+            threadsReleaseMutex();
+            injected = true;
+        }
+    }
+    UT_ASSERT_MSG(injected,
+                  "never hit the lobby-while-delayed window to inject the backlog");
+    UT_ASSERT_MSG(clientSimSpectatorIsLiveLobby(h.cs),
+                  "spectator never returned to live lobby after the backlog");
+
+    /* The whole backlog reaches the returned spectator's lobby log over BULK,
+     * despite far exceeding the 64-slot reliable control window (the old
+     * synchronous control replay dropped the tail here). */
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, FLIP_MAX, pred_hist_has_last_backlog, NULL) > 0,
+                  "backlog never fully reached the returning spectator's lobby log");
+    hist = clientSimGetLobbyChatHistory(h.cs);
+    UT_ASSERT_MSG(strstr(hist, "bk000") != NULL,
+                  "oldest backlog line missing — coverage/order broken");
+    UT_ASSERT_MSG(strstr(hist, "OLDLINE") == NULL,
+                  "pre-game lobby chat must be cleared before the catch-up");
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
 int run_loopback_spectator_lobby(void) {
     int rc;
-    if ((rc = legConnectModeLobby())   != 0) return rc;
-    if ((rc = legConnectModeRunning()) != 0) return rc;
-    if ((rc = legLobbyGameLobby())     != 0) return rc;
-    if ((rc = legLobbyMapDelivered())  != 0) return rc;
-    if ((rc = legLobbyMapChange())     != 0) return rc;
-    if ((rc = legCutoverPendingMap())  != 0) return rc;
+    if ((rc = legConnectModeLobby())        != 0) return rc;
+    if ((rc = legConnectModeRunning())      != 0) return rc;
+    if ((rc = legLobbyGameLobby())          != 0) return rc;
+    if ((rc = legLobbyMapDelivered())       != 0) return rc;
+    if ((rc = legLobbyMapChange())          != 0) return rc;
+    if ((rc = legCutoverPendingMap())       != 0) return rc;
+    if ((rc = legLobbyChatBacklogOverWire()) != 0) return rc;
     return 0;
 }

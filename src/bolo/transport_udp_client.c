@@ -321,6 +321,13 @@ typedef struct {
      * in flight — bulk transfers are serialized on the stream. */
     uint8_t *specRecvBuf;
     uint32_t specRecvTotal;
+
+    /* In-flight lobby-chat backlog blob (BULK_KIND_LOBBY_CHAT_BACKLOG) the
+     * server sends a returning spectator at the drain-flip. onBegin mallocs it;
+     * onComplete walks its [type][bodyLen][body] records and applies each chat
+     * event. Held on the ctx so a teardown mid-transfer frees it. */
+    uint8_t *lobbyChatBacklogBuf;
+    uint32_t lobbyChatBacklogTotal;
 } TransportUdpClientCtx;
 
 #define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
@@ -961,9 +968,19 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
  * the transport owns the bit). The session host reads the mirror via
  * clientSimSpectatorIsLiveLobby / the spectator_drain seam. */
 static void udpClientSetSpecLiveLobby(TransportUdpClientCtx *c, bool live) {
+    bool wasLive = c->specLiveLobby;
     c->specLiveLobby = live;
     if (c->clientSim != NULL) {
         clientSimSpectatorSetLiveLobby(c->clientSim, live);
+        /* Leaving the live lobby for the delayed game is a spectator's
+         * equivalent of game start (it never receives CTRL_GAME_PHASE_RUNNING —
+         * the server unsubscribes it before that publish, so the normal lobby-
+         * history clear never reaches it). Clear the lobby chat here so the
+         * pre-game chat doesn't linger behind the delayed game and mix with the
+         * post-game catch-up the server replays on return. */
+        if (wasLive && !live) {
+            clientSimClearLobbyChatHistory(c->clientSim);
+        }
     }
 }
 
@@ -1210,6 +1227,19 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         c->specRecvTotal = h->totalSize;
         return c->specRecvBuf;
 
+    case BULK_KIND_LOBBY_CHAT_BACKLOG:
+        /* The returning spectator's lobby-chat catch-up. Only meaningful while
+         * SPECTATING; bound the attacker-controlled totalSize by the same cap the
+         * other spectator blobs use. onComplete walks the records and applies the
+         * chat through the normal lobby-chat path. */
+        if (c->joinState != UDP_CLIENT_SPECTATING) return NULL;
+        if (h->totalSize == 0 || h->totalSize > MAP_DOWNLOAD_MAX_SIZE) return NULL;
+        if (c->lobbyChatBacklogBuf != NULL) free(c->lobbyChatBacklogBuf);
+        c->lobbyChatBacklogBuf = (uint8_t *)malloc(h->totalSize);
+        if (c->lobbyChatBacklogBuf == NULL) return NULL;
+        c->lobbyChatBacklogTotal = h->totalSize;
+        return c->lobbyChatBacklogBuf;
+
     default:
         return NULL;
     }
@@ -1348,6 +1378,36 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         /* A delayed-ring frame landed — leave live-lobby mode. */
         udpClientSetSpecLiveLobby(c, false);
         break;
+
+    case BULK_KIND_LOBBY_CHAT_BACKLOG: {
+        /* The whole backlog blob has landed: a run of [type][bodyLen BE][body]
+         * control-event records (oldest first). Decode each with the same codec
+         * the control channel uses and apply the chat through clientSimApplyControl
+         * — broadcast CTRL_CHAT and CTRL_SPECTATOR_CHAT only (what the server
+         * buffered). The sync replay that re-registered this spectator already set
+         * inLobby, so the chat lands in lobbyChatHistory. */
+        const uint8_t *p = c->lobbyChatBacklogBuf;
+        uint32_t remaining = c->lobbyChatBacklogTotal;
+        while (p != NULL && remaining >= 3) {
+            uint8_t  type    = p[0];
+            uint16_t bodyLen = unpackU16(p + 1);
+            uint32_t recLen  = 3u + bodyLen;
+            ControlEvent evt;
+            ControlDecodeBodyFn dec;
+            if (recLen > remaining) break;       /* truncated tail — stop */
+            dec = transportControlCodecBodyDecoder((ControlEventType)type);
+            if (dec != NULL && dec(p + 3, bodyLen, &evt) &&
+                (evt.type == CTRL_CHAT || evt.type == CTRL_SPECTATOR_CHAT)) {
+                clientSimApplyControl(cs, &evt);
+            }
+            p += recLen;
+            remaining -= recLen;
+        }
+        free(c->lobbyChatBacklogBuf);
+        c->lobbyChatBacklogBuf = NULL;
+        c->lobbyChatBacklogTotal = 0;
+        break;
+    }
 
     default:
         break;
@@ -3350,6 +3410,9 @@ void transportUdpClientDestroy(Transport *t) {
     }
     if (c->specRecvBuf != NULL) {
         free(c->specRecvBuf);   /* in-flight spectator blob, if teardown mid-transfer */
+    }
+    if (c->lobbyChatBacklogBuf != NULL) {
+        free(c->lobbyChatBacklogBuf);  /* in-flight backlog blob, if teardown mid-transfer */
     }
     bulkSenderReset(&c->uploadSend);
     free(c);

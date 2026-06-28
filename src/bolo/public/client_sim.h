@@ -373,6 +373,11 @@ void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *messa
 /* Team lobby chat helper — appends "name: message\n" to lobbyTeamChatHistory */
 void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *message);
 
+/* Clear the lobby chat log (broadcast + team). Mirrors the game-start clear the
+ * CTRL_GAME_PHASE_RUNNING handler does; used by the spectator transport at the
+ * live->delayed cutover, which a spectator reaches instead of the running flip. */
+void clientSimClearLobbyChatHistory(ClientSim *cs);
+
 /* Player-to-player chat delivery: routes to lobby chat or in-game inbox
    depending on whether the client is still in the lobby. */
 void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr);

@@ -1182,6 +1182,23 @@ SubscriberHandle serverSimRegisterSubscriber(
     void (*deliver)(void *, const struct ControlEvent *),
     void *ctx);
 
+/*********************************************************
+ *NAME:          serverSimReplayLobbyChat
+ *PURPOSE:
+ *  Re-deliver the current-session lobby-chat catch-up
+ *  buffer (broadcast player chat + spectator chat, oldest
+ *  first) through the caller's deliver callback. Used at
+ *  the spectator delayed->live drain-flip so a returning
+ *  spectator sees the lobby chat sent while it was still
+ *  finishing the delayed game. Call after re-registering
+ *  the subscriber so the lobby phase is set first. Not
+ *  invoked on a fresh accept or player join.
+ *********************************************************/
+void serverSimReplayLobbyChat(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx);
+
 typedef void (*SpectatorRosterEnumFn)(
     void *enumCtx,
     void (*deliver)(void *, const struct ControlEvent *),

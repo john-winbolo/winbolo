@@ -1085,6 +1085,11 @@ void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *messa
   }
 }
 
+void clientSimClearLobbyChatHistory(ClientSim *cs) {
+  cs->lobbyChatHistory[0] = '\0';
+  cs->lobbyTeamChatHistory[0] = '\0';
+}
+
 void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *message) {
   size_t histLen = strlen(cs->lobbyTeamChatHistory);
   size_t needed = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */

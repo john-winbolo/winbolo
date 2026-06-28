@@ -181,6 +181,7 @@ static const UnitTestEntry s_tests[] = {
     { "spectator_chat_codec",                    run_spectator_chat_codec                    },
     { "spectator_chat_routing",                  run_spectator_chat_routing                  },
     { "spectator_chat_log",                      run_spectator_chat_log                      },
+    { "spectator_chat_catchup",                  run_spectator_chat_catchup                  },
     { "spectator_connect",                       run_spectator_connect                       },
     { "spectator_client_lobby_intake",           run_spectator_client_lobby_intake           },
     { "spectator_command_reject",                run_spectator_command_reject                },
