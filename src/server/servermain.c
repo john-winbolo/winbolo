@@ -679,6 +679,10 @@ void printArgs() {
   fprintf(stderr, "                (default: 0 = no limit). Caps lobby \"Add Bot\" requests\n");
   fprintf(stderr, "                and clamps -bots.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
+  fprintf(stderr, "-bot-init <spec> - Per-bot brain paths by player id: 'range=path[arg],...'\n");
+  fprintf(stderr, "                where range is 'a-b' or 'n' and the optional [arg] becomes\n");
+  fprintf(stderr, "                that bot's BRAIN_INIT_ARG Lua global. Ids not listed use\n");
+  fprintf(stderr, "                -brain. E.g. -bot-init 0-3=brains/A/init.lua,4=brains/B/init.lua[llm]\n");
   fprintf(stderr, "-botnames <path> - JSON file of bot name pools (themed name lists) for\n");
   fprintf(stderr, "                naming auto-added bots. Defaults to data/bot_names.json.\n");
   fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
@@ -1865,6 +1869,26 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Warning: -teams overrides -allybots\n");
         allyTeam = 0;
       }
+      /* -bot-init: per-player-id brain/init.lua paths (+ optional [arg]). Every
+       * id defaults to the shared brainPath with no arg; the spec overrides the
+       * ids it names. Shared parser/semantics with BrainTest. */
+      BotInitSlot botInit[MAX_TANKS];
+      for (i = 0; i < MAX_TANKS; i++) {
+        snprintf(botInit[i].path, sizeof(botInit[i].path), "%s", brainPath);
+        botInit[i].arg[0] = '\0';
+        botInit[i].covered = 0;
+      }
+      if (argExist(argc, argv, "bot-init") == TRUE) {
+        int biArg = findArg(argc, argv, "bot-init");
+        if (biArg != ARG_NOT_FOUND && argv[biArg][0] != '-') {
+          if (!luaBrainsParseBotInitSpec((char *)argv[biArg], botInit, MAX_TANKS)) {
+            fprintf(stderr, "Warning: -bot-init spec rejected; using -brain '%s' for all bots\n",
+                    brainPath);
+          }
+        } else {
+          fprintf(stderr, "Warning: -bot-init given with no value; ignoring\n");
+        }
+      }
       /* Draw themed names from one randomly-chosen pool so a -bots
        * server gets varied names instead of "Bot 1..N". usedStore
        * backs the uniqueness list handed to lobbyBotPoolPick. */
@@ -1886,7 +1910,14 @@ int main(int argc, char **argv) {
           usedNames[usedCount] = usedStore[usedCount];
           usedCount++;
         }
-        if (!botManagerAddBot(serverSim, (BYTE)i, brainPath, botName, ai, game, hiddenMines)) {
+        /* Stage this bot's BRAIN_INIT_ARG (consumed by the create below) and
+         * use its resolved brain path. */
+        luaBrainsSetNextInitArg(botInit[i].arg);
+        if (botInit[i].covered) {
+          fprintf(stderr, "Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
+                  botInit[i].arg[0] ? " arg=" : "", botInit[i].arg);
+        }
+        if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botName, ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round
