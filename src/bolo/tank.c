@@ -2553,7 +2553,7 @@ void tankLayMine(GameSim *sim, tank *value) {
 *  mx    - Map X Co-ordinate
 *  my    - Map Y Co-ordinate
 *********************************************************/
-void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my) {
+void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
   bool isServer = sim->isServer;
   WORLD mineX; /* Mine X and Y World Co-ords */
   WORLD mineY;
@@ -2577,7 +2577,12 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my) {
 
 
   if (diffX < 384 && diffY < 384 && (*value)->armour <= TANK_FULL_ARMOUR) {
+    BYTE armourBefore = (*value)->armour;  /* <= TANK_FULL_ARMOUR here */
     (*value)->armour -= MINE_DAMAGE;
+    if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
+      uint16_t eff = (armourBefore >= MINE_DAMAGE) ? MINE_DAMAGE : armourBefore;
+      sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK, eff, false);
+    }
     if ((*value)->armour > TANK_FULL_ARMOUR) {
       BYTE dyingPlayer = gameSimGetTankPlayer(sim, value);
       if (((*value)->shells + (*value)->mines) > TANK_BIG_EXPLOSION_THRESHOLD) {

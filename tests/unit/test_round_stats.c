@@ -486,3 +486,86 @@ int run_round_stats_direct_damage(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* The mine-ownership grid records the layer per cell, releases a cell when
+ * the mine is removed, and clears every cell owned by one player. */
+int run_round_stats_mine_owner_api(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    UT_ASSERT_MSG(minesGetOwner(&sim->sim.mns, 0, 0) == NEUTRAL,
+                  "cells default to NEUTRAL, got %u",
+                  minesGetOwner(&sim->sim.mns, 0, 0));
+
+    minesSetOwner(&sim->sim.mns, 5, 6, 3);
+    minesSetOwner(&sim->sim.mns, 7, 8, 3);
+    minesSetOwner(&sim->sim.mns, 9, 10, 4);
+
+    minesClearOwner(&sim->sim.mns, 3);
+    UT_ASSERT_MSG(minesGetOwner(&sim->sim.mns, 5, 6) == NEUTRAL,
+                  "cleared owner's cell is NEUTRAL, got %u",
+                  minesGetOwner(&sim->sim.mns, 5, 6));
+    UT_ASSERT_MSG(minesGetOwner(&sim->sim.mns, 7, 8) == NEUTRAL,
+                  "cleared owner's other cell is NEUTRAL, got %u",
+                  minesGetOwner(&sim->sim.mns, 7, 8));
+    UT_ASSERT_MSG(minesGetOwner(&sim->sim.mns, 9, 10) == 4,
+                  "another owner's cell is untouched, got %u",
+                  minesGetOwner(&sim->sim.mns, 9, 10));
+
+    minesRemoveItem(&sim->sim.mns, 9, 10);
+    UT_ASSERT_MSG(minesGetOwner(&sim->sim.mns, 9, 10) == NEUTRAL,
+                  "removing a mine releases the cell, got %u",
+                  minesGetOwner(&sim->sim.mns, 9, 10));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A mine detonation credits effective tank damage to the player who laid it. */
+int run_round_stats_mine_damage(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+                                               gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    serverSimSetLobbyEnabled(sim, false);
+    serverSimAddPlayer(sim, 0, "P0", false);
+    serverSimAddPlayer(sim, 1, "P1", false);
+    serverSimStartGame(sim);
+
+    UT_ASSERT(sim->sim.tanks[0] != NULL);
+
+    BYTE mx = tankGetMX(&sim->sim.tanks[0]);
+    BYTE my = tankGetMY(&sim->sim.tanks[0]);
+    minesSetOwner(&sim->sim.mns, mx, my, 1);
+    tankMineDamage(&sim->sim, &sim->sim.tanks[0], mx, my, 1);
+
+    UT_ASSERT_MSG(serverSimGetRoundStats(sim, 1)->dmgToPlayers == MINE_DAMAGE,
+                  "mine credits the layer effective damage, got %llu",
+                  (unsigned long long)serverSimGetRoundStats(sim, 1)->dmgToPlayers);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A player removed mid-round has their mine cells released. */
+int run_round_stats_leaver_clears_mines(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+                                               gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    serverSimSetLobbyEnabled(sim, false);
+    serverSimAddPlayer(sim, 0, "P0", false);
+    serverSimAddPlayer(sim, 1, "P1", false);
+    serverSimStartGame(sim);
+
+    minesSetOwner(&sim->sim.mns, 12, 13, 1);
+    UT_ASSERT(minesGetOwner(&sim->sim.mns, 12, 13) == 1);
+
+    serverSimRemovePlayer(sim, 1);
+    UT_ASSERT_MSG(minesGetOwner(&sim->sim.mns, 12, 13) == NEUTRAL,
+                  "leaver's mine cell is released, got %u",
+                  minesGetOwner(&sim->sim.mns, 12, 13));
+
+    serverSimDestroy(sim);
+    return 0;
+}

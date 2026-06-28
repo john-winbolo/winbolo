@@ -1089,7 +1089,7 @@ void tankLayMine(struct GameSim *sim, tank *value);
 *  mx    - Map X Co-ordinate
 *  my    - Map Y Co-ordinate
 *********************************************************/
-void tankMineDamage(struct GameSim *sim, tank *value, BYTE mx, BYTE my);
+void tankMineDamage(struct GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner);
 
 /*********************************************************
 *NAME:          tankNearMines

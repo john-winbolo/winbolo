@@ -2141,8 +2141,8 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
      * slot's matrix cells that reference this slot (the column), and prune the
      * notable-event timeline of entries involving this slot. Other players'
      * aggregate counters are intentionally left as-is — only the leaver's own
-     * stats and direct references to them are removed. mineOwner cells owned by
-     * this slot are cleared with the mine-ownership work. */
+     * stats and direct references to them are removed. Mine cells laid by this
+     * slot are released so a later detonation isn't credited to a gone player. */
     {
         BYTE s;
         memset(&sim->roundStats[playerNum], 0, sizeof(sim->roundStats[playerNum]));
@@ -2150,6 +2150,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
             sim->roundStats[s].killsOf[playerNum]  = 0;
             sim->roundStats[s].killedBy[playerNum] = 0;
         }
+        minesClearOwner(&sim->sim.mns, playerNum);
         {
             uint16_t r, w = 0;
             for (r = 0; r < sim->notableEventCount; r++) {
