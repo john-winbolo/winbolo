@@ -692,6 +692,9 @@ void printArgs() {
   fprintf(stderr, "                forces the opt/ brain with debug OFF for representative timings.\n");
   fprintf(stderr, "                Profile data ONLY: no print2 debug logs, no pool-viz capture\n");
   fprintf(stderr, "                (independent of -braindebug).\n");
+  fprintf(stderr, "-allow-unsafe-brains - Open the full Lua standard library for bot brains.\n");
+  fprintf(stderr, "                Default OFF: brains are sandboxed (no shell/process/native code,\n");
+  fprintf(stderr, "                file access confined to the brain directory). Only for trusted brains.\n");
 
   fprintf(stderr, "\nNetworking:\n");
   fprintf(stderr, "-port <Port>  - Port to run the server on\n");
@@ -1664,6 +1667,12 @@ int main(int argc, char **argv) {
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
       char botName[64];
+      /* Brains run in the restricted Lua sandbox by default. -allow-unsafe-brains
+       * opens the full standard library for trusted brain authors. Set BEFORE the
+       * bots are created so each VM constructs with the chosen policy. */
+      luaBrainsSetAllowUnsafe(
+          (argExist(argc, argv, "allow-unsafe-brains") == TRUE)
+       || (argExist(argc, argv, "-allow-unsafe-brains") == TRUE));
       /* -braindebug: turn BRAIN_DEBUG_MODE on for every bot (set BEFORE they're
        * created so each brain constructs with debug on → un-stripped brain +
        * print2 logging). Lets you audit bot comms on a dedicated server: each

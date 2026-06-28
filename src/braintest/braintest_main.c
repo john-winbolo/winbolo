@@ -2226,6 +2226,10 @@ static int  optProfileLog = 0;
  * on in dev mode; opt-in under --opt via --log-json. Independent of the
  * profile flags — behavior trace is about decisions, not perf. */
 static int  optLogJson    = 0;
+/* BrainTest runs brains unsandboxed by default — it relies on the dev-only
+ * tooling (debugger.lua, profiler.lua, io.popen, debug.sethook) that the
+ * brain sandbox removes. --safe-brains opts into the cage to exercise it. */
+static int  optSafeBrains = 0;
 static int  optAutoStart = 0;
 static int  g_playbackAutoplay = 0;  /* --playback-autoplay: drive a -loadsession replay from frame 0 and quit at the end (headless verification) */
 static int  optMaxTicks = 0;   /* 0 = run forever */
@@ -2262,6 +2266,8 @@ static void printUsage(const char *prog) {
         "                     Implies --profile. In dev mode (no --opt) both are on by default.\n"
         "  --log-json         (--opt only) Write brain_p<N>.jsonl + goal_player<N>.log behavior\n"
         "                     traces. On by default in dev mode.\n"
+        "  --safe-brains      Run brains in the restricted sandbox (off by default in\n"
+        "                     BrainTest, which needs the dev-only debug tooling).\n"
         "  --auto-start       Skip the auto-pause at tick 4 and run immediately.\n"
         "  --max-ticks N      Exit automatically after N ticks (flushes perf log).\n"
         "  -victim_ids IDS  Comma-sep list of bot ids to flag as test victims\n"
@@ -2371,6 +2377,8 @@ static bool parseArgs(int argc, char **argv) {
             optProfileLog = 1;
         } else if (strcmp(argv[i], "--log-json") == 0) {
             optLogJson = 1;
+        } else if (strcmp(argv[i], "--safe-brains") == 0) {
+            optSafeBrains = 1;
         } else if (strcmp(argv[i], "--auto-start") == 0) {
             optAutoStart = 1;
         } else if (strcmp(argv[i], "--playback-autoplay") == 0) {
@@ -5745,6 +5753,8 @@ int main(int argc, char *argv[]) {
      * replay window has pool-breakdown data. */
     luaBrainsSetProfile(effProfile, effProfileLog, /*pool_viz*/ effProfileLog);
     luaBrainsSetLogJson(effLogJson);
+    /* Dev tool: brains run unsandboxed unless --safe-brains is passed. */
+    luaBrainsSetAllowUnsafe(!optSafeBrains);
     if (optRunScript[0])
         luaBrainsSetRunScript(optRunScript);
     char brainPath[1024];
