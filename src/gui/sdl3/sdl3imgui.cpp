@@ -1634,13 +1634,22 @@ static void renderPlayersPanel(ClientSim *cs) {
             ClientGameVoteSnapshot vs = {};
             if (!clientSimGetGameVote(cs, vkind, &vs)) continue;
             if (vs.active != GAME_VOTE_ACTIVE_RUNNING) continue;
+            /* Surrender votes are private to the surrendering team — non-members
+             * don't see the row at all (back-to-lobby stays visible to all). */
+            if (!localCanAnswerGameVote(cs, &vs)) continue;
             ImGui::Separator();
             const char *vnm = (vkind == GAME_VOTE_KIND_BACK_TO_LOBBY)
                               ? langGetText(STR_VOTE_BACK_TO_LOBBY)
                               : langGetText(STR_VOTE_SURRENDER);
             ImGui::Text("%s: %u / %u", vnm,
                         (unsigned)vs.yesCount, (unsigned)vs.threshold);
-            if (!localCanAnswerGameVote(cs, &vs)) continue;
+            /* Re-open the floating vote widget if it was closed (X'd). */
+            if (!vs.widgetVisible) {
+                ImGui::SameLine();
+                char sLbl[40]; snprintf(sLbl, sizeof(sLbl), "Show##vshow%u", (unsigned)vkind);
+                if (ImGui::SmallButton(sLbl))
+                    clientSimSetGameVoteWidgetVisible(cs, vkind, true);
+            }
             BYTE vme = clientSimGetMyPlayerNum(cs);
             bool vMyYes = (vme < 16) && ((vs.votes >> vme) & 1u);
             char yLbl[40]; snprintf(yLbl, sizeof(yLbl), "%s##vy%u", langGetText(STR_YES), (unsigned)vkind);
@@ -1962,6 +1971,11 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
      * and the user hasn't dismissed. */
     if (snap->active == GAME_VOTE_ACTIVE_NONE) { autoPanelReset(lay); return; }
     if (!snap->widgetVisible)                  { autoPanelReset(lay); return; }
+    /* Surrender votes are private to the surrendering team — don't render the
+     * floating widget for anyone outside that team. */
+    if (kind == GAME_VOTE_KIND_SURRENDER && !localCanAnswerGameVote(cs, snap)) {
+        autoPanelReset(lay); return;
+    }
 
     /* Auto-dismiss 5 seconds after the vote concludes (pass / fail /
      * cancel). Back-to-lobby with the server's return-to-lobby
