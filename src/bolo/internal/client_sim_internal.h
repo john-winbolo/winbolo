@@ -107,6 +107,12 @@ typedef struct {
      * value's validity; remaining is in game ticks (~50/sec). */
     uint32_t              countdownRemaining;
     bool                  countdownReceived;
+    /* Live-lobby mode mirror, copied one-way from the transport's
+     * specLiveLobby (the transport is the source of truth). True while the
+     * spectator is fed the live lobby control bus; false once the delayed ring
+     * feed begins. The spectator session reads it to alternate the read-only
+     * lobby and the delayed game view. */
+    bool                  liveLobby;
 } ClientSpectatorFeed;
 
 struct ClientSim {
@@ -647,6 +653,12 @@ bool clientSimSpectatorPushRecord(ClientSim *cs, bool isKeyframe,
  * sent on CHANNEL_CONTROL. Marks the countdown received so the session can
  * show its pre-seed overlay. */
 void clientSimSpectatorSetCountdown(ClientSim *cs, uint32_t remainingTicks);
+
+/* Mirror the transport's spectator live-lobby mode onto the sim (one-way: the
+ * transport owns the bit). True = fed the live lobby control bus; false = on
+ * the delayed ring feed. The session reads it via clientSimSpectatorIsLiveLobby
+ * (public) to decide which view to host. */
+void clientSimSpectatorSetLiveLobby(ClientSim *cs, bool liveLobby);
 
 /* Free the seed and every queued record, returning the feed to empty. */
 void clientSimSpectatorFeedClear(ClientSim *cs);

@@ -233,6 +233,13 @@ typedef struct {
      * that branch: a player-join client (false) treats the 0xFF slot as an
      * invalid slot and rejects, so the branch can never fire by accident. */
     bool spectator;
+    /* Spectator dual-mode bit (authoritative home; mirrored one-way onto the
+     * ClientSim). True = the server is feeding the live lobby control bus
+     * (lobby/countdown); false = the delayed ring feed. Seeded from the accept
+     * packet's mode byte, then flipped by which source is feeding: false on the
+     * first delayed frame (cold-start countdown or bulk seed/record), true when
+     * live lobby control resumes (the server re-subscribed at return-to-lobby). */
+    bool specLiveLobby;
 
     /* Phase 3 — UDP hole-punching fallback. Empty trackerAddr disables
      * punch entirely (LAN/manual-connect joiners). */
@@ -937,6 +944,16 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
  * the frame was a countdown (the caller skips the envelope decode and consumes
  * the frame). Gated on UDP_CLIENT_SPECTATING so a non-spectator's control decode
  * is untouched. */
+/* Set the spectator dual-mode bit and mirror it onto the ClientSim (one-way:
+ * the transport owns the bit). The session host reads the mirror via
+ * clientSimSpectatorIsLiveLobby / the spectator_drain seam. */
+static void udpClientSetSpecLiveLobby(TransportUdpClientCtx *c, bool live) {
+    c->specLiveLobby = live;
+    if (c->clientSim != NULL) {
+        clientSimSpectatorSetLiveLobby(c->clientSim, live);
+    }
+}
+
 static bool udpClientInterceptSpecCountdown(TransportUdpClientCtx *c,
                                             const uint8_t *frame, uint16_t len) {
     if (c->joinState != UDP_CLIENT_SPECTATING) return FALSE;
@@ -945,6 +962,12 @@ static bool udpClientInterceptSpecCountdown(TransportUdpClientCtx *c,
     }
     if (c->clientSim != NULL) {
         clientSimSpectatorSetCountdown(c->clientSim, unpackU32(frame + 1));
+    }
+    /* The cold-start countdown is the first delayed-ring frame in a short-lobby
+     * game (it precedes the seed), so leaving live-lobby mode here keeps the
+     * stale lobby from freezing on screen during the countdown. */
+    if (c->specLiveLobby) {
+        udpClientSetSpecLiveLobby(c, false);
     }
     return TRUE;
 }
@@ -1267,6 +1290,9 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         clientSimSpectatorPushSeed(cs, c->specRecvBuf, h->totalSize);
         c->specRecvBuf = NULL;
         c->specRecvTotal = 0;
+        /* A delayed-ring frame landed — leave live-lobby mode (covers the
+         * delay=0 path where the seed arrives with no preceding countdown). */
+        udpClientSetSpecLiveLobby(c, false);
         break;
 
     case BULK_KIND_SPEC_RECORD:
@@ -1285,6 +1311,8 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         free(c->specRecvBuf);
         c->specRecvBuf = NULL;
         c->specRecvTotal = 0;
+        /* A delayed-ring frame landed — leave live-lobby mode. */
+        udpClientSetSpecLiveLobby(c, false);
         break;
 
     default:
@@ -1349,6 +1377,20 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 if (len >= PACKET_HEADER_SIZE + 9 + 8) {
                     c->connId = unpackConnId(buf + pos);
                     pos += 8;
+                }
+                /* Initial spectator mode byte, appended after the connId
+                 * trailer: 1 = the server was in lobby/countdown at accept time
+                 * (watch the live lobby), 0 = a running game (delayed ring).
+                 * Length-gated like the connId trailer; a short accept that
+                 * omits it defaults to delayed. Seeds the dual-mode bit so the
+                 * session host picks the right view before any feed arrives. */
+                {
+                    bool liveLobby = false;
+                    if (len >= PACKET_HEADER_SIZE + 9 + 8 + 1) {
+                        liveLobby = (buf[pos] != 0);
+                        pos++;
+                    }
+                    udpClientSetSpecLiveLobby(c, liveLobby);
                 }
                 c->joinState = UDP_CLIENT_SPECTATING;
                 WB_LOG_INFO(WB_LOG_CAT_NET,
@@ -1715,6 +1757,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     clientApplyChannelReset(c, &evt);
                     continue;
                 }
+                /* Live lobby control reaching a spectator that was on the
+                 * delayed feed means the server re-subscribed it at
+                 * return-to-lobby — re-enter live-lobby mode. */
+                if (c->joinState == UDP_CLIENT_SPECTATING && !c->specLiveLobby) {
+                    udpClientSetSpecLiveLobby(c, true);
+                }
                 clientSimApplyControlOrdered(c, &evt, 0);
             }
         }
@@ -1866,6 +1914,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     if (evt.type == CTRL_CHANNEL_RESET) {
                         clientApplyChannelReset(c, &evt);
                         continue;
+                    }
+                    /* Live lobby control reaching a delayed spectator means the
+                     * server re-subscribed it at return-to-lobby — re-enter
+                     * live-lobby mode. */
+                    if (c->joinState == UDP_CLIENT_SPECTATING && !c->specLiveLobby) {
+                        udpClientSetSpecLiveLobby(c, true);
                     }
                     clientSimApplyControlOrdered(c, &evt, 0);
                 }

@@ -2134,6 +2134,15 @@ bool clientSimSpectatorCountdown(const ClientSim *cs, uint32_t *outRemaining) {
   return true;
 }
 
+void clientSimSpectatorSetLiveLobby(ClientSim *cs, bool liveLobby) {
+  if (cs == NULL) return;
+  cs->spectatorFeed.liveLobby = liveLobby;
+}
+
+bool clientSimSpectatorIsLiveLobby(const ClientSim *cs) {
+  return cs != NULL && cs->spectatorFeed.liveLobby;
+}
+
 bool clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out) {
   ClientSpecRecordNode *node;
   if (!cs || out == NULL) return false;
@@ -2188,6 +2197,10 @@ bool specDrainPopRecord(void *handle, SpecDrainRecord *out) {
   out->payload    = rec.payload;       /* ownership passes straight through */
   out->payloadLen = rec.payloadLen;
   return true;
+}
+
+bool specDrainLiveResumed(void *handle) {
+  return clientSimSpectatorIsLiveLobby((const ClientSim *)handle);
 }
 
 bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) {

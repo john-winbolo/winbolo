@@ -293,6 +293,13 @@ int run_spectator_roster_to_spectators(void);
  * game→lobby segment boundary. */
 int run_spectator_lobby_cutover(void);
 
+/* Dual-mode spectator session (test_loopback_spectator_lobby.c): the client's
+ * live-lobby bit is seeded from the accept mode byte (live when the server is in
+ * the lobby, delayed when a game runs), leaves live-lobby mode when the delayed
+ * feed begins at game start, and returns to it when live lobby control resumes
+ * after the delayed game drains back to the lobby. */
+int run_loopback_spectator_lobby(void);
+
 /* Bulk-transfer framing (test_bulk_transfer.c): the off-socket stream-header
  * round-trip, byte-identical blob reassembly under loss + reorder, header
  * robustness, pipelining and the send-side serializer guard. */

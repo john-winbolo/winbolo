@@ -1242,7 +1242,8 @@ static int serverFindSpectator(const struct sockaddr_in *addr) {
  * map arrives in the ring seed, not the live download path). */
 static void serverSendSpectatorAccept(int s, ServerSim *sim,
                                       const struct sockaddr_in *addr) {
-    uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8];
+    uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8 + 1];
+    ServerState st;
     int pos;
 
     packHeader(acceptBuf, PACKET_JOIN_ACCEPT,
@@ -1255,6 +1256,14 @@ static void serverSendSpectatorAccept(int s, ServerSim *sim,
     pos += 4;
     packConnId(acceptBuf + pos, udpServer.spectators[s].connId);
     pos += 8;
+    /* Initial spectator mode byte (appended after the connId trailer so the
+     * connId offset and its client-side length gate are unchanged): 1 when the
+     * server is in lobby/countdown (the viewer watches the live lobby), 0 when a
+     * game is running (delayed ring). Same predicate serverAcceptSpectator uses
+     * to decide live bus registration. */
+    st = serverSimGetState(sim);
+    acceptBuf[pos++] =
+        (st == serverStateLobby || st == serverStateCountdown) ? 1 : 0;
 
     srvSendTo(acceptBuf, pos, addr);
 }

@@ -93,11 +93,12 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
-void spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
+bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
 #include "dialogs/imgui_wbn_browser.h"
 #include "dialogs/imgui_onboarding.h"
+#include "dialogs/imgui_lobby.h"
 
 #ifndef DEFAULT_UDP_PORT
 #define DEFAULT_UDP_PORT 27500
@@ -1081,15 +1082,54 @@ static bool gameFrontDialogs(void) {
                                                 : langGetText(NETERR_SERVERCONNECT),
                           IMGUI_MSG_ERROR, IMGUI_MSG_OK);
       } else {
-        /* Blocking: drives the spectator transport, decodes the delayed
-         * feed, and owns the window until the user exits. The handshake to
-         * CLIENT_CONNECT_SPECTATING and the seed wait happen inside it via
-         * the spectator_drain pump — no pre-run tick loop needed here. */
-        spectatorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), spectatorSim,
-                     gameFrontUdpAddress, gameFrontTargetUdp);
-        /* spectatorRun retitled the borrowed window for the live session;
-         * restore the normal app title now that it has returned. */
-        SDL_SetWindowTitle(sdl3DrawGetWindow(), WIND_TITLE);
+        /* clientSimConnectUdp only fires the JOIN; the spectator accept — which
+         * carries the initial live/delayed mode byte — lands on a later
+         * transport tick. Pump until the handshake reaches SPECTATING (so the
+         * mode bit is known before the first view is chosen) or it fails, the
+         * same wait the join path runs before entering the lobby. */
+        int specWaitTicks = 0;
+        while (specWaitTicks < 1500) {  /* 30 second timeout */
+          ClientConnectState ss = clientSimGetConnectState(spectatorSim);
+          if (ss == CLIENT_CONNECT_SPECTATING) break;
+          if (ss == CLIENT_CONNECT_ERROR ||
+              ss == CLIENT_CONNECT_SERVER_SHUTDOWN ||
+              ss == CLIENT_CONNECT_KICKED) {
+            break;
+          }
+          clientSimNetTick(spectatorSim);
+          SDL_Delay(20);
+          specWaitTicks++;
+        }
+
+        if (clientSimGetConnectState(spectatorSim) != CLIENT_CONNECT_SPECTATING) {
+          const char *reason = clientSimGetConnectErrorReason(spectatorSim);
+          imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                            (reason && reason[0]) ? reason
+                                                  : langGetText(NETERR_SERVERCONNECT),
+                            IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+        } else {
+          /* Dual-mode session: the live read-only lobby while the server is in
+           * lobby/countdown, the delayed game once it starts. The mode follows
+           * which feed is arriving (clientSimSpectatorIsLiveLobby — seeded from
+           * the accept byte, flipped by the feeding channel). imguiLobbyShow
+           * returns 1 when the delayed feed begins at game start (a spectator
+           * never reaches the RUNNING phase the player path keys on, since the
+           * server unsubscribes it before that publish); spectatorRun returns
+           * true when live lobby control resumes after the delayed game drains.
+           * Any other return (user left / lost connection / quit) ends it. */
+          for (;;) {
+            if (clientSimSpectatorIsLiveLobby(spectatorSim)) {
+              if (imguiLobbyShow(spectatorSim) != 1) break;
+            } else if (!spectatorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
+                                     spectatorSim, gameFrontUdpAddress,
+                                     gameFrontTargetUdp)) {
+              break;
+            }
+          }
+          /* spectatorRun retitles the borrowed window for the live session;
+           * restore the normal app title now that the session has ended. */
+          SDL_SetWindowTitle(sdl3DrawGetWindow(), WIND_TITLE);
+        }
       }
       /* Caller owns the ClientSim lifetime (spectatorRun never disconnects):
        * tear it down so the socket/transport is released before returning. */

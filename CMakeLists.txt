@@ -2844,6 +2844,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # so it receives zero running control) and the drain-then-flip back to the
     # live lobby once the delayed game is fully watched.
     tests/unit/test_spectator_cutover.c
+    # Dual-mode spectator session: the client live-lobby bit is seeded from the
+    # accept mode byte, flips to delayed when the feed begins at game start, and
+    # back to live when lobby control resumes after the delayed game drains.
+    tests/unit/test_loopback_spectator_lobby.c
     # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
@@ -3312,6 +3316,7 @@ set(_unit_test_names
     spectator_subscriber_capacity
     spectator_roster_to_spectators
     spectator_lobby_cutover
+    loopback_spectator_lobby
     bulk_transfer
     overflow_guards
     channel_reset_codec_roundtrip

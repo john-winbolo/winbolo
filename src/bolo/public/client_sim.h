@@ -885,6 +885,13 @@ bool     clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out);
  * countdown has been received; false (untouched) before the first one. */
 bool     clientSimSpectatorCountdown(const ClientSim *cs, uint32_t *outRemaining);
 
+/* True while a tankless spectator is in live-lobby mode (fed the live lobby
+ * control bus); false once it has been cut to the delayed ring feed. Mirrored
+ * one-way from the transport's specLiveLobby. Stays false for a non-spectator
+ * sim. The spectator session host reads this to alternate the read-only lobby
+ * and the delayed game view. */
+bool     clientSimSpectatorIsLiveLobby(const ClientSim *cs);
+
 /* Map upload progress reflection. status: 0=idle, 1=announce sent,
  * 2=ack received (chunks in flight), 3=done, 4=rejected. */
 uint8_t     clientSimGetLobbyMapUploadStatus(const ClientSim *cs);

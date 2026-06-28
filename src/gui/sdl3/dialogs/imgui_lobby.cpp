@@ -6597,6 +6597,17 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             break;
         }
 
+        /* A spectator never reaches netRunning: the server unsubscribes it from
+         * the live lobby bus before the running phase is published, so its mode
+         * bit flips out of live-lobby when the delayed feed begins instead.
+         * Treat that flip as the game-start signal so the host loop hands over
+         * to the delayed game view (result 1, same as a player's game start). */
+        if (clientSimIsSpectator(cs) && !clientSimSpectatorIsLiveLobby(cs)) {
+            result = 1;
+            running = false;
+            break;
+        }
+
         /* Check for server disconnect/shutdown */
         if (hasTransport) {
             ClientConnectState js = clientSimGetConnectState(cs);
