@@ -2932,6 +2932,11 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     }
 }
 
+const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot) {
+    if (slot >= MAX_TANKS) return NULL;
+    return &sim->roundStats[slot];
+}
+
 int serverSimGetCompressedMap(ServerSim *sim, BYTE *output) {
     return mapSaveCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, output);
 }

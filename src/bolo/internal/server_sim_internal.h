@@ -28,6 +28,29 @@
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 #include "bot_manager.h"    /* BotManager — embedded by value below */
 
+/* Per-player per-round gameplay stats. Server-internal: never serialized
+ * directly — a curated subset ships to clients in a later phase. */
+typedef struct {
+    uint32_t kills, deaths, drowns, suicides, mineDeaths;
+    uint32_t lgmKills, lgmDeaths;
+    uint32_t pillCaptures, pillKills, baseCaptures, steals;
+    uint32_t treesFarmed, treesWasted, pillsBuilt, minesLaid;
+    uint32_t shellsFired;
+    uint8_t  mostPillsDropped;      /* max pills dumped at a single death */
+    uint64_t dmgToPlayers, dmgToPills, dmgToBases;
+    uint16_t killedBy[MAX_TANKS];   /* killedBy[k] = times killer slot k killed me */
+    uint16_t killsOf[MAX_TANKS];    /* killsOf[v]  = times I killed victim slot v */
+} PlayerRoundStats;
+
+/* Ordered round timeline for the later highlights reel. */
+#define NOTABLE_EVENTS_MAX 512
+typedef struct {
+    uint32_t tick;     /* per-round running tick */
+    uint8_t  mapX, mapY;
+    uint8_t  type;     /* server-internal NotableType (later pass) */
+    uint8_t  actorA, actorB;
+} NotableEvent;
+
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
@@ -367,6 +390,11 @@ struct ServerSim {
     bool         wantLogging;
     char         userLogFileName[512];
 
+    /* Post-game stats accumulator — populated during running, reset per round. */
+    PlayerRoundStats roundStats[MAX_TANKS];
+    NotableEvent     notableEvents[NOTABLE_EVENTS_MAX];
+    uint16_t         notableEventCount;
+
     /* In-process control event subscribers (bot ClientSims, SP humanSim). */
     ControlSubscriber subscribers[MAX_TANKS + 1];
     uint16_t          subscriberGen[MAX_TANKS + 1];
@@ -437,5 +465,9 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
  * test can include and drive it directly. */
 uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
                                      uint16_t pingMs);
+
+/* Test/inspection accessor: pointer to slot's round stats, or NULL if
+ * slot >= MAX_TANKS. */
+const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot);
 
 #endif /* SERVER_SIM_INTERNAL_H */

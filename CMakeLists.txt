@@ -2683,6 +2683,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
+    tests/unit/test_round_stats.c
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
@@ -3080,6 +3081,15 @@ set(_unit_test_names
     vote_surrender_rejects_unassigned_caller
     vote_surrender_starts_for_real_team_caller
     vote_surrender_rejects_three_active_teams
+    round_stats_zeroed_on_fresh_sim
+    round_stats_kill_basic
+    round_stats_drown_not_suicide
+    round_stats_suicide_shell
+    round_stats_mine_death
+    round_stats_trees_wasted_and_pills_dropped
+    round_stats_capture_steal
+    round_stats_base_capture_steal
+    round_stats_lgm
     vote_toggle_standalone_no_does_nothing
     vote_toggle_invalid_mode_dropped
     vote_toggle_yes_opens_vote
