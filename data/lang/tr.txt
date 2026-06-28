@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Kaydetme yolu belirlenemedi
 STR_DLGWBN_FETCHERR=Getirme başarısız
 STR_DLGWBN_UNKNOWN_ERR=Bilinmeyen hata
 STR_DLGWBN_FILEFILTER=WinBolo Günlük Dosyaları
+STR_DLGWBN_TAB_MYGAMES=Oyunlarım
+STR_DLGWBN_MYGAMES_SIGNIN=Son oyunlarınızı görmek için oturum açın veya hesap oluşturun
+STR_DLGWBN_MYGAMES_NONE=Henüz kayıtlı oyununuz yok.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Oyuncu Adı Belirle

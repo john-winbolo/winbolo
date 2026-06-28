@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=No se pudo determinar la ruta de guardado
 STR_DLGWBN_FETCHERR=Error al obtener
 STR_DLGWBN_UNKNOWN_ERR=Error desconocido
 STR_DLGWBN_FILEFILTER=Archivos de registro de WinBolo
+STR_DLGWBN_TAB_MYGAMES=Mis partidas
+STR_DLGWBN_MYGAMES_SIGNIN=Inicia sesión o crea una cuenta para ver tus partidas recientes
+STR_DLGWBN_MYGAMES_NONE=Todavía no tienes ninguna partida registrada.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Definir nombre de jugador

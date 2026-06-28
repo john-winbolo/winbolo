@@ -631,6 +631,9 @@ STR_DLGWBN_NOSAVEPATH=Could not determine save path
 STR_DLGWBN_FETCHERR=Fetch failed
 STR_DLGWBN_UNKNOWN_ERR=Unknown error
 STR_DLGWBN_FILEFILTER=WinBolo Log Files
+STR_DLGWBN_TAB_MYGAMES=My Games
+STR_DLGWBN_MYGAMES_SIGNIN=Login or create an account to view your recent games
+STR_DLGWBN_MYGAMES_NONE=You don't have any recorded games yet.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Set Player Name

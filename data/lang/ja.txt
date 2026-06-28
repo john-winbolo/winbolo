@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=保存パスを確認できませんでした
 STR_DLGWBN_FETCHERR=フェッチに失敗
 STR_DLGWBN_UNKNOWN_ERR=不明なエラー
 STR_DLGWBN_FILEFILTER=WinBolo ログファイル
+STR_DLGWBN_TAB_MYGAMES=マイゲーム
+STR_DLGWBN_MYGAMES_SIGNIN=最近のゲームを確認するにはサインインまたはアカウントを作成してください
+STR_DLGWBN_MYGAMES_NONE=まだ記録されたゲームはありません。
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - プレイヤー名を設定
