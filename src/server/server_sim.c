@@ -363,6 +363,10 @@ static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathC
     ev.data[1] = killed;
     ev.data[2] = deathCause;
     ev.data[3] = carriedPills;
+    /* Server-internal: the dying tank's carried trees, read by the stats
+     * funnel. data[4] is past gameEventDataSize(), so it never goes on the wire. */
+    ev.data[4] = (killed < MAX_TANKS && sim->sim.tanks[killed] != NULL)
+                     ? tankGetTrees(&sim->sim.tanks[killed]) : 0;
     serverSimAddEvent(sim, &ev);
     winbolonetAddEvent(WINBOLO_NET_EVENT_TANK_KILL, TRUE, killer, killed,
                        botManagerIsBot(sim, killer), botManagerIsBot(sim, killed));
@@ -2926,6 +2930,53 @@ static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
 }
 
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
+    /* Per-round stats funnel. Runs before the snapshot-event buffering below
+     * so a full event buffer never drops a stat. Only during a running game,
+     * so any state-load/replay re-emit can't double-count. */
+    if (sim->state == serverStateRunning) {
+        const uint8_t *d = event->data;
+        switch (event->type) {
+        case EVENT_TANK_KILLED: {
+            BYTE killer = d[0], killed = d[1], cause = d[2];
+            if (killed < MAX_TANKS) {
+                PlayerRoundStats *vs = &sim->roundStats[killed];
+                vs->deaths++;
+                if (cause == LAST_DEATH_BY_DEEPSEA)      vs->drowns++;
+                else if (cause == LAST_DEATH_BY_MINES)   vs->mineDeaths++;
+                else if (cause == LAST_DEATH_BY_SHELL) {
+                    if (killer < MAX_TANKS && killer != killed) {
+                        sim->roundStats[killer].kills++;
+                        sim->roundStats[killer].killsOf[killed]++;
+                        vs->killedBy[killer]++;
+                    } else if (killer == killed) {
+                        vs->suicides++;
+                    }
+                }
+                vs->treesWasted += d[4];
+                if (d[3] > vs->mostPillsDropped) vs->mostPillsDropped = d[3];
+            }
+            break;
+        }
+        case EVENT_PILL_CAPTURED:
+        case EVENT_BASE_CAPTURED: {
+            BYTE owner = d[0], cls = d[2];
+            if (owner < MAX_TANKS && cls != CAPTURE_CLASS_ALLY) {
+                PlayerRoundStats *os = &sim->roundStats[owner];
+                if (event->type == EVENT_PILL_CAPTURED) os->pillCaptures++;
+                else                                    os->baseCaptures++;
+                if (cls == CAPTURE_CLASS_ENEMY) os->steals++;
+            }
+            break;
+        }
+        case EVENT_LGM_LOST: {
+            BYTE victim = d[0], killer = d[1];
+            if (victim < MAX_TANKS) sim->roundStats[victim].lgmDeaths++;
+            if (killer < MAX_TANKS) sim->roundStats[killer].lgmKills++;
+            break;
+        }
+        default: break;
+        }
+    }
     if (sim->eventCount < MAX_SNAPSHOT_EVENTS) {
         sim->events[sim->eventCount] = *event;
         sim->eventCount++;

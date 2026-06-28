@@ -24,13 +24,6 @@
 #include "everard_map.h"
 #include "test_harness.h"
 
-/* Capture-classification byte carried in EVENT_PILL_CAPTURED /
- * EVENT_BASE_CAPTURED data[2] (server-internal; never serialized). 1B/1d
- * must use this same encoding at the capture site. */
-#define CAP_FROM_NEUTRAL 0
-#define CAP_FROM_ENEMY   1
-#define CAP_FROM_ALLY    2
-
 static ServerSim *make_sim_running(void) {
     BYTE emap[6000] = E_MAP;
     ServerSim *sim = serverSimCreateCompressed(emap, 5097,
@@ -185,19 +178,19 @@ int run_round_stats_capture_steal(void) {
     UT_ASSERT(s != NULL);
 
     /* Neutral capture. */
-    const uint8_t cap[8] = { 0, 0xFF, CAP_FROM_NEUTRAL, 0, 0, 0, 0, 0 };
+    const uint8_t cap[8] = { 0, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
     inject(sim, EVENT_PILL_CAPTURED, cap);
     UT_ASSERT_MSG(s->pillCaptures == 1, "neutral capture, got %u", s->pillCaptures);
     UT_ASSERT_MSG(s->steals == 0, "neutral capture is no steal, got %u", s->steals);
 
     /* Steal from an enemy — counts as both a capture and a steal. */
-    const uint8_t steal[8] = { 0, 1, CAP_FROM_ENEMY, 0, 0, 0, 0, 0 };
+    const uint8_t steal[8] = { 0, 1, CAPTURE_CLASS_ENEMY, 0, 0, 0, 0, 0 };
     inject(sim, EVENT_PILL_CAPTURED, steal);
     UT_ASSERT_MSG(s->pillCaptures == 2, "steal counts as capture, got %u", s->pillCaptures);
     UT_ASSERT_MSG(s->steals == 1, "steal counted, got %u", s->steals);
 
     /* Allied take — counts for nobody. */
-    const uint8_t ally[8] = { 0, 2, CAP_FROM_ALLY, 0, 0, 0, 0, 0 };
+    const uint8_t ally[8] = { 0, 2, CAPTURE_CLASS_ALLY, 0, 0, 0, 0, 0 };
     inject(sim, EVENT_PILL_CAPTURED, ally);
     UT_ASSERT_MSG(s->pillCaptures == 2, "allied take is no capture, got %u", s->pillCaptures);
     UT_ASSERT_MSG(s->steals == 1, "allied take is no steal, got %u", s->steals);
@@ -213,17 +206,17 @@ int run_round_stats_base_capture_steal(void) {
     const PlayerRoundStats *s = serverSimGetRoundStats(sim, 0);
     UT_ASSERT(s != NULL);
 
-    const uint8_t cap[8] = { 0, 0xFF, CAP_FROM_NEUTRAL, 0, 0, 0, 0, 0 };
+    const uint8_t cap[8] = { 0, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 0, 0, 0, 0 };
     inject(sim, EVENT_BASE_CAPTURED, cap);
     UT_ASSERT_MSG(s->baseCaptures == 1, "neutral base capture, got %u", s->baseCaptures);
     UT_ASSERT_MSG(s->steals == 0, "neutral base capture is no steal, got %u", s->steals);
 
-    const uint8_t steal[8] = { 0, 1, CAP_FROM_ENEMY, 0, 0, 0, 0, 0 };
+    const uint8_t steal[8] = { 0, 1, CAPTURE_CLASS_ENEMY, 0, 0, 0, 0, 0 };
     inject(sim, EVENT_BASE_CAPTURED, steal);
     UT_ASSERT_MSG(s->baseCaptures == 2, "base steal counts as capture, got %u", s->baseCaptures);
     UT_ASSERT_MSG(s->steals == 1, "base steal counted, got %u", s->steals);
 
-    const uint8_t ally[8] = { 0, 2, CAP_FROM_ALLY, 0, 0, 0, 0, 0 };
+    const uint8_t ally[8] = { 0, 2, CAPTURE_CLASS_ALLY, 0, 0, 0, 0, 0 };
     inject(sim, EVENT_BASE_CAPTURED, ally);
     UT_ASSERT_MSG(s->baseCaptures == 2, "allied base take is no capture, got %u", s->baseCaptures);
     UT_ASSERT_MSG(s->steals == 1, "allied base take is no steal, got %u", s->steals);

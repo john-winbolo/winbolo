@@ -684,6 +684,9 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
       memset(ev.data, 0, sizeof(ev.data));
       ev.data[0] = owner;
       ev.data[1] = returnValue;
+      ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
+                 : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
+                 :                                                           CAPTURE_CLASS_ALLY;
       serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
     }
 
@@ -753,6 +756,9 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
           memset(ev.data, 0, sizeof(ev.data));
           ev.data[0] = owner;
           ev.data[1] = returnValue;
+          ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
+                     : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
+                     :                                                           CAPTURE_CLASS_ALLY;
           serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
         }
         done = TRUE;
