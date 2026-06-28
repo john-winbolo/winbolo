@@ -2827,6 +2827,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # gets the delayed keyframe at head - delay armed as a BULK_KIND_SPEC_SEED
     # transfer whose blob is byte-equal to the ring keyframe at that delay.
     tests/unit/test_spectator_seed.c
+    # Live-lobby spectator control bus: lobby subscribe + sync replay,
+    # serverSpectatorDeliverControl allowlist, subscriber capacity, and the
+    # spectator-roster enumerator + fan to live spectators.
+    tests/unit/test_spectator_live_bus.c
     # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
@@ -3288,6 +3292,10 @@ set(_unit_test_names
     spectator_capture
     spectator_log
     spectator_seed
+    spectator_lobby_subscribe
+    spectator_control_filter
+    spectator_subscriber_capacity
+    spectator_roster_to_spectators
     bulk_transfer
     overflow_guards
     channel_reset_codec_roundtrip

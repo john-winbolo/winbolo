@@ -476,6 +476,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;
+    sim->specRosterEnum      = NULL;
+    sim->specRosterEnumCtx   = NULL;
     sim->worldPreLoaded      = TRUE;
 
     /* Mirror gameType + hiddenMines + time fields so the lobby change
@@ -5393,7 +5395,8 @@ void serverSimMapDirDestroy(ServerSim *sim) {
 /* Subscriber registry                                                    */
 /* ---------------------------------------------------------------------- */
 
-#define SUBSCRIBER_SLOT_COUNT (MAX_TANKS + 1)
+/* SUBSCRIBER_SLOT_COUNT is defined in server_sim_internal.h (it sizes the
+ * subscriber arrays on the ServerSim struct). */
 #define SUBSCRIBER_HANDLE_ENCODE(slot, gen) (((int)(slot) << 16) | (uint16_t)(gen))
 #define SUBSCRIBER_HANDLE_SLOT(h)           (((h) >> 16) & 0xFFFF)
 #define SUBSCRIBER_HANDLE_GEN(h)            ((uint16_t)((h) & 0xFFFF))
@@ -5706,6 +5709,15 @@ static void serverSimSyncSubscriber(
         }
     }
 
+    /* Spectator roster — one CTRL_SPECTATOR_SLOT per connected spectator. The
+     * roster lives in the transport layer, so the sim asks the registered
+     * enumerator to emit the rows through this same deliver path. Feeds both the
+     * live sync replay and serverSimSerializeControlSnapshot (the delayed ring
+     * keyframe). */
+    if (sim->specRosterEnum != NULL) {
+        sim->specRosterEnum(sim->specRosterEnumCtx, deliver, ctx);
+    }
+
     /* Team metadata for every team in use (skip team 0 — unassigned). */
     for (i = 1; i < MAX_TANKS; i++) {
         if (sim->teams[i].in_use) {
@@ -5913,6 +5925,14 @@ static void serverSimDeliverToClientSim(void *ctx, const struct ControlEvent *ev
 
 SubscriberHandle serverSimRegisterClientSubscriber(ServerSim *sim, ClientSim *cs) {
     return serverSimRegisterSubscriber(sim, serverSimDeliverToClientSim, cs);
+}
+
+void serverSimSetSpectatorRosterEnumerator(ServerSim *sim,
+                                           SpectatorRosterEnumFn fn,
+                                           void *enumCtx) {
+    if (sim == NULL) return;
+    sim->specRosterEnum    = fn;
+    sim->specRosterEnumCtx = enumCtx;
 }
 
 void serverSimRequestBalanceProposal(ServerSim *sim,

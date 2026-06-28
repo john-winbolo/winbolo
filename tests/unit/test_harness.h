@@ -258,6 +258,17 @@ int run_spectator_log(void);
  * the ring's keyframe at that delay. */
 int run_spectator_seed(void);
 
+/* Live-lobby spectator control bus (test_spectator_live_bus.c): a lobby
+ * spectator is a real-time control-bus subscriber. The sync replay reaches a
+ * lobby subscriber (and a seated spectator); serverSpectatorDeliverControl is a
+ * drop-by-default allowlist; MAX_TANKS+MAX_SPECTATORS subscribers all register
+ * (overflow returns INVALID); the enumerator seeds the spectator roster and a
+ * roster broadcast fans CTRL_SPECTATOR_SLOT to live spectators. */
+int run_spectator_lobby_subscribe(void);
+int run_spectator_control_filter(void);
+int run_spectator_subscriber_capacity(void);
+int run_spectator_roster_to_spectators(void);
+
 /* Bulk-transfer framing (test_bulk_transfer.c): the off-socket stream-header
  * round-trip, byte-identical blob reassembly under loss + reorder, header
  * robustness, pipelining and the send-side serializer guard. */

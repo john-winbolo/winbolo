@@ -27,6 +27,12 @@
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 #include "bot_manager.h"    /* BotManager — embedded by value below */
+#include "transport_udp.h"  /* MAX_SPECTATORS — subscriber capacity */
+
+/* Control-event subscriber capacity: one slot per tank, one for the local
+ * host/SP ClientSim, plus one per possible spectator. Single source of truth
+ * for both the subscriber arrays below and every loop bound in server_sim.c. */
+#define SUBSCRIBER_SLOT_COUNT (MAX_TANKS + 1 + MAX_SPECTATORS)
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -367,11 +373,18 @@ struct ServerSim {
     bool         wantLogging;
     char         userLogFileName[512];
 
-    /* In-process control event subscribers (bot ClientSims, SP humanSim). */
-    ControlSubscriber subscribers[MAX_TANKS + 1];
-    uint16_t          subscriberGen[MAX_TANKS + 1];
+    /* In-process control event subscribers (bot ClientSims, SP humanSim,
+     * and live-lobby spectators). */
+    ControlSubscriber subscribers[SUBSCRIBER_SLOT_COUNT];
+    uint16_t          subscriberGen[SUBSCRIBER_SLOT_COUNT];
     int               numSubscribers;
     bool              publishing;
+
+    /* Spectator roster enumerator (registered by the transport layer). Invoked
+     * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
+     * spectator; NULL when no enumerator is registered. */
+    SpectatorRosterEnumFn specRosterEnum;
+    void                 *specRosterEnumCtx;
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,

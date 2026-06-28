@@ -1182,6 +1182,25 @@ SubscriberHandle serverSimRegisterSubscriber(
     void (*deliver)(void *, const struct ControlEvent *),
     void *ctx);
 
+typedef void (*SpectatorRosterEnumFn)(
+    void *enumCtx,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *deliverCtx);
+
+/*********************************************************
+ *NAME:          serverSimSetSpectatorRosterEnumerator
+ *PURPOSE:
+ *  Register a callback the sim invokes during sync-replay
+ *  to emit one CTRL_SPECTATOR_SLOT per connected spectator.
+ *  The roster lives in the transport layer; this lets the
+ *  sim's replay (and the ring keyframe control snapshot,
+ *  which reuses the same producer) carry it without the sim
+ *  owning spectator state. Pass fn=NULL to clear.
+ *********************************************************/
+void serverSimSetSpectatorRosterEnumerator(ServerSim *sim,
+                                           SpectatorRosterEnumFn fn,
+                                           void *enumCtx);
+
 /*********************************************************
  *NAME:          serverSimRegisterClientSubscriber
  *PURPOSE:

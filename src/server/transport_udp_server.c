@@ -330,6 +330,8 @@ typedef struct {
     bool     inCountdown;
     uint32_t countdownRemaining;
     uint32_t countdownSentTick;
+    bool             live;       /* live lobby control-bus subscriber */
+    SubscriberHandle controlSub; /* bus handle while live; INVALID otherwise */
 } SpectatorConn;
 
 /* Server-side global state */
@@ -1240,6 +1242,94 @@ static void serverSendSpectatorAccept(int s, ServerSim *sim,
     srvSendTo(acceptBuf, pos, addr);
 }
 
+/* Per-spectator subscriber deliver callback — the spectator peer of
+ * udpClientDeliverControl. ctx is the SpectatorConn. A spectator has no
+ * playerNum/team, so this is an explicit drop-by-default ALLOWLIST: only
+ * lobby-visible, non-player-targeted control reaches a viewer, so no future
+ * CTRL_* can leak a player-private event onto a spectator. Passed events are
+ * body-encoded onto the spectator's own CHANNEL_CONTROL; the carrier at the
+ * bottom of serverServiceSpectators flushes it (no explicit flush here). */
+static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
+    SpectatorConn *sp = (SpectatorConn *)ctx;
+    int idx;
+    bool allow;
+
+    if (!sp->connected) {
+        return;
+    }
+    idx = (int)(sp - udpServer.spectators);
+
+    switch (evt->type) {
+    case CTRL_GAME_PHASE_LOBBY:
+    case CTRL_GAME_PHASE_COUNTDOWN:
+    case CTRL_GAME_PHASE_RUNNING:
+    case CTRL_GAME_PHASE_GAME_OVER:
+    case CTRL_LOBBY_SETTINGS:
+    case CTRL_LOBBY_MAP_CHANGE:
+    case CTRL_LOBBY_SLOT:
+    case CTRL_LOBBY_TEAM_META:
+    case CTRL_LOBBY_BOT_CONFIG:
+    case CTRL_LOBBY_BOT_BRAIN:
+    case CTRL_LOBBY_BRAIN_LIST:
+    case CTRL_PLAYER_JOIN:
+    case CTRL_BALANCE_PROPOSAL:
+    case CTRL_MAP_SKIP_STATE:
+    case CTRL_GAME_VOTE_STATE:
+    case CTRL_SPECTATOR_SLOT:
+    case CTRL_LOBBY_SYNC_COMPLETE:
+        allow = true;
+        break;
+    case CTRL_CHAT:
+        /* Broadcast chat only; team (0x81..0x90) and unicast are player-private.
+         * No sender-skip needed — the sender is a player, the spectator has no
+         * playerNum. */
+        allow = (evt->u.chat.destPlayer == 0xFF);
+        break;
+    default:
+        allow = false;
+        break;
+    }
+
+    if (!allow) {
+        return;
+    }
+
+    /* Body-encode and queue on CHANNEL_CONTROL, mirroring udpClientDeliverControl:
+     * [type u8][bodyLen u16 BE][body]. The codec is recipient-agnostic, so the
+     * recipient arg is NULL (matches serverSimControlSnapshotDeliver). */
+    {
+        ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(evt->type);
+        uint8_t msg[CHANNEL_CONTROL_SEG];
+        size_t bodyLen = 0;
+        if (enc == NULL) {
+            mpDiagLog("[srv] spec deliver SKIP idx=%d type=%s reason=no-encoder",
+                      idx, mpDiagCtrlName((int)evt->type));
+            return;
+        }
+        if (enc(evt, NULL, msg + 3, sizeof(msg) - 3, &bodyLen) != ENCODE_OK) {
+            mpDiagLog("[srv] spec deliver SKIP idx=%d type=%s reason=encode",
+                      idx, mpDiagCtrlName((int)evt->type));
+            return;
+        }
+        msg[0] = (uint8_t)evt->type;
+        packU16(msg + 1, (uint16_t)bodyLen);
+        if (!channelSend(&sp->channelMux, CHANNEL_CONTROL,
+                         msg, (uint16_t)(3 + bodyLen))) {
+            /* Full window: drop and warn. Do NOT disconnect from inside the
+             * deliver callback — there is no deferred-removal path for
+             * spectators, and tearing the slot down here risks reentrancy. */
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                        "spectator control channel overflow for slot %d, dropping event",
+                        idx);
+            mpDiagLog("[srv] spec OVERFLOW idx=%d type=%s -> drop",
+                      idx, mpDiagCtrlName((int)evt->type));
+            return;
+        }
+        mpDiagLog("[srv] spec CTRL->ch2 idx=%d type=%s bodyLen=%u",
+                  idx, mpDiagCtrlName((int)evt->type), (unsigned)bodyLen);
+    }
+}
+
 /* Fill a CTRL_SPECTATOR_SLOT event from spectator slot s. A disconnected slot
  * emits a connected==false roster row carrying only specIdx; the decoder leaves
  * the rest zeroed. clientFlags merges the client-supplied hint bits with the
@@ -1263,10 +1353,31 @@ static void serverFillSpectatorSlotEvent(int s, ControlEvent *evt) {
     }
 }
 
+/* Spectator roster enumerator (registered on the sim via
+ * serverSimSetSpectatorRosterEnumerator). The sim invokes this during
+ * sync-replay to emit one CTRL_SPECTATOR_SLOT per connected spectator through
+ * the subscriber's own deliver path, so every new subscriber — players and
+ * spectators alike — is seeded the spectator roster, and the delayed ring
+ * keyframe carries it for free. */
+static void serverEnumSpectatorRoster(
+    void *enumCtx,
+    void (*deliver)(void *, const ControlEvent *),
+    void *deliverCtx) {
+    int sp;
+    (void)enumCtx;
+    for (sp = 0; sp < MAX_SPECTATORS; sp++) {
+        ControlEvent evt;
+        if (!udpServer.spectators[sp].connected) continue;
+        serverFillSpectatorSlotEvent(sp, &evt);
+        deliver(deliverCtx, &evt);
+    }
+}
+
 /* Broadcast spectator slot s's current roster row to every connected player
- * client. Player clients only — spectators are never on this roster and never
- * receive it. Safe to call from the JOIN/disconnect paths (not the subscriber
- * bus); the deliver callback skips disconnected slots on its own. */
+ * client and every live spectator. Safe to call from the JOIN/disconnect paths
+ * (not the subscriber bus); each deliver callback skips disconnected slots on
+ * its own. The subject slot itself is included in the spectator fan, so a
+ * spectator sees both itself and the others on its roster. */
 static void serverBroadcastSpectatorSlot(int s) {
     ControlEvent evt;
     int idx;
@@ -1274,6 +1385,11 @@ static void serverBroadcastSpectatorSlot(int s) {
     for (idx = 0; idx < MAX_TANKS; idx++) {
         if (udpServer.clients[idx].connected) {
             udpClientDeliverControl(&udpServer.clients[idx], &evt);
+        }
+    }
+    for (idx = 0; idx < MAX_SPECTATORS; idx++) {
+        if (udpServer.spectators[idx].live) {
+            serverSpectatorDeliverControl(&udpServer.spectators[idx], &evt);
         }
     }
 }
@@ -1375,10 +1491,28 @@ static void serverAcceptSpectator(ServerSim *sim,
     udpServer.spectators[s].inCountdown        = false;
     udpServer.spectators[s].countdownRemaining = 0;
     udpServer.spectators[s].countdownSentTick  = 0;
+    udpServer.spectators[s].live               = false;
+    udpServer.spectators[s].controlSub         = SUBSCRIBER_HANDLE_INVALID;
 
     serverSendSpectatorAccept(s, sim, fromAddr);
     /* Tell every connected player client a new viewer is on the roster. */
     serverBroadcastSpectatorSlot(s);
+
+    /* Live-lobby spectating: in lobby/countdown the viewer is a real-time
+     * control-bus subscriber, so it tracks roster/ready/chat live. Registration
+     * fires the sync replay through serverSpectatorDeliverControl (allowlist-
+     * filtered) onto this spectator's CHANNEL_CONTROL; the serverServiceSpectators
+     * carrier flushes it, so no explicit flush is needed. In-game viewers stay on
+     * the delayed ring (live stays false). */
+    {
+        ServerState st = serverSimGetState(sim);
+        if (st == serverStateLobby || st == serverStateCountdown) {
+            udpServer.spectators[s].live = true;
+            udpServer.spectators[s].controlSub =
+                serverSimRegisterSubscriber(sim, serverSpectatorDeliverControl,
+                                            &udpServer.spectators[s]);
+        }
+    }
 
     /* Record the viewer's arrival in the .wbv replay log (and any spectator
      * ring tap). logAddEvent self-gates: a no-op unless a log is recording. */
@@ -1401,7 +1535,7 @@ static void serverAcceptSpectator(ServerSim *sim,
  * WBN/chat/subscriber/serverSimRemovePlayer work applies. graceful=false is a
  * timeout; graceful=true is reserved for the explicit leave path (2c) and does
  * the same teardown for now. */
-static void serverDisconnectSpectator(int s, bool graceful) {
+static void serverDisconnectSpectator(ServerSim *sim, int s, bool graceful) {
     if (s < 0 || s >= MAX_SPECTATORS || !udpServer.spectators[s].connected) {
         return;
     }
@@ -1424,6 +1558,12 @@ static void serverDisconnectSpectator(int s, bool graceful) {
         udpServer.spectators[s].spectatorKey[0] = '\0';
     }
     udpServer.spectators[s].wbnFlags = 0;
+    /* Drop the live control-bus subscription (lobby/countdown viewers only). */
+    if (udpServer.spectators[s].controlSub != SUBSCRIBER_HANDLE_INVALID) {
+        serverSimUnregisterSubscriber(sim, udpServer.spectators[s].controlSub);
+        udpServer.spectators[s].controlSub = SUBSCRIBER_HANDLE_INVALID;
+    }
+    udpServer.spectators[s].live = false;
     udpServer.spectators[s].connected = false;
     channelMuxInit(&udpServer.spectators[s].channelMux);   /* reset in place */
     bulkSenderInit(&udpServer.spectators[s].bulkSend);
@@ -1603,9 +1743,15 @@ static void serverServiceSpectators(ServerSim *sim) {
 
     for (i = 0; i < MAX_SPECTATORS; i++) {
         SpectatorConn *sp = &udpServer.spectators[i];
-        ChannelState *bulk;
 
         if (!sp->connected) continue;
+
+        /* Live-lobby spectators read the control bus, not the ring: skip the
+         * entire delayed seed/feed path for them. Only the unconditional carrier
+         * below runs, so their allowlist-filtered bus replay is still delivered.
+         * In-game (delayed) viewers run the full block. */
+        if (!sp->live) {
+        ChannelState *bulk;
 
         /* Seek the delayed keyframe. OK -> copy it into spectator-owned storage
          * and clear any countdown. COLD_START (the ring does not yet hold a full
@@ -1770,6 +1916,7 @@ static void serverServiceSpectators(ServerSim *sim) {
                 }
             }
         }
+        }   /* end if (!sp->live) — delayed ring path */
 
         /* Carrier: pump staged bytes into the mux and emit standalone
          * PACKET_CHANNEL frames — carries both the seed and the forward records.
@@ -2514,18 +2661,6 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     fprintf(stderr, "[UDP SERVER] Player '%s' assigned slot %d, mapSize=%u\n",
             name, slot, udpServer.compressedMapSize);
     serverSendJoinAccept(slot, sim, fromAddr);
-    /* Catch-up: this client is connected (clients[slot].connected set above),
-     * so feed it the current spectator roster — one CTRL_SPECTATOR_SLOT per
-     * connected viewer — so its lobby roster matches late-joining the session. */
-    {
-        int sp;
-        for (sp = 0; sp < MAX_SPECTATORS; sp++) {
-            if (!udpServer.spectators[sp].connected) continue;
-            ControlEvent evt;
-            serverFillSpectatorSlotEvent(sp, &evt);
-            udpClientDeliverControl(&udpServer.clients[slot], &evt);
-        }
-    }
     /* Hand the joiner the current WBN server_key so it can mint a
      * player_key and re-auth via the lobby-snapshot path.  Gated inside
      * the send function — no-op on non-WBN servers. */
@@ -3429,6 +3564,11 @@ bool transportUdpServerCreate(unsigned short port,
 
     serverSimSetPassword(sim, password,
                          password != NULL ? strlen(password) : 0);
+
+    /* The spectator roster lives here in the transport layer; register the
+     * enumerator so the sim's sync-replay (and the ring keyframe control
+     * snapshot) can carry one CTRL_SPECTATOR_SLOT per connected viewer. */
+    serverSimSetSpectatorRosterEnumerator(sim, serverEnumSpectatorRoster, NULL);
 
     udpServer.running = true;
     udpServer.tickCount = 0;
@@ -5590,7 +5730,7 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
                       i,
                       (unsigned)(udpServer.tickCount - udpServer.spectators[i].lastReceivedTick),
                       (int)CLIENT_TIMEOUT_TICKS);
-            serverDisconnectSpectator(i, false);
+            serverDisconnectSpectator(sim, i, false);
         }
     }
 }
@@ -5686,6 +5826,11 @@ void transportUdpServerTestSpectatorAckBulk(int s) {
      * keeps draining — without a real spectator channel endpoint (3b). */
     bulk = &udpServer.spectators[s].channelMux.ch[CHANNEL_BULK];
     bulk->ackedSeq = bulk->nextSeq;
+}
+
+uint32_t transportUdpServerGetSpectatorControlSeq(int s) {
+    if (s < 0 || s >= MAX_SPECTATORS) return 0;
+    return udpServer.spectators[s].channelMux.ch[CHANNEL_CONTROL].nextSeq;
 }
 
 bool transportUdpServerTestDownloadComplete(int slot) {
