@@ -2276,9 +2276,16 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             if (dec(buf + PACKET_HEADER_SIZE, (size_t)(len - PACKET_HEADER_SIZE), &evt)) {
                 clientSimApplyControl(c->clientSim, &evt);
                 c->joinState = UDP_CLIENT_JOINING;
-                /* Re-arm the lobby-sound guard: the re-join triggers a fresh
-                 * server sync replay terminated by CTRL_LOBBY_SYNC_COMPLETE. */
-                c->clientSim->lobbySyncSettled = false;
+                /* Do NOT clear lobbySyncSettled here. A map change is a live
+                 * re-broadcast, not a subscriber attach: the forced re-JOIN
+                 * below hits the server's already-connected branch, which only
+                 * re-sends JOIN_ACCEPT — no roster re-announce, hence no fresh
+                 * sync replay and no terminating CTRL_LOBBY_SYNC_COMPLETE to
+                 * re-arm the guard. Clearing it would strand every lobby event
+                 * cue silent for the rest of the lobby (only the ungated
+                 * countdown cue would still play). There is no roster burst to
+                 * suppress, so the guard correctly stays settled. It is still
+                 * cleared on genuine (re)joins where a real replay follows. */
                 c->joinAttempts = 0;
                 /* Re-prove the address: a re-join must re-acquire a cookie. */
                 c->haveJoinCookie = false;
@@ -2923,9 +2930,16 @@ static void udpClientTransportObserver(void *ctx, const ControlEvent *evt) {
         if (c->clientSim != NULL && c->clientSim->isUdpTransport &&
             c->mapInstalled) {
             c->joinState = UDP_CLIENT_JOINING;
-            /* Re-arm the lobby-sound guard: the re-join triggers a fresh
-             * server sync replay terminated by CTRL_LOBBY_SYNC_COMPLETE. */
-            c->clientSim->lobbySyncSettled = false;
+            /* Do NOT clear lobbySyncSettled here. A map change is a live
+             * re-broadcast, not a subscriber attach: the forced re-JOIN hits
+             * the server's already-connected branch, which only re-sends
+             * JOIN_ACCEPT — no roster re-announce, hence no fresh sync replay
+             * and no terminating CTRL_LOBBY_SYNC_COMPLETE to re-arm the guard.
+             * Clearing it would strand every lobby event cue silent for the
+             * rest of the lobby. There is no roster burst to suppress, so the
+             * guard correctly stays settled. (For UDP clients this observer
+             * also runs off the PACKET_LOBBY_MAP_CHANGE handler's
+             * clientSimApplyControl, so it must not undo that fix either.) */
             c->joinAttempts = 0;
             /* Re-prove the address: a re-join must re-acquire a cookie. */
             c->haveJoinCookie = false;

@@ -138,6 +138,10 @@ static void lobbySendReadyToggle(ClientSim *cs, bool ready) {
      * gameFrontTickSteamPresence* refreshers, so there's nothing to
      * push from here. */
     clientSimNetSendReady(cs, ready);
+    /* Emit the cue locally for our own toggle. The remote echo path
+     * (CTRL_LOBBY_SLOT) is gated on pn != myPN, so self never sounds
+     * from the network — without this the local player hears nothing. */
+    soundPlayEffect(ready ? lobbyReady : lobbyUnready);
 }
 
 /* Sticky "last picked brain" catalogue index. ADD BOT uses this
@@ -6368,6 +6372,10 @@ static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
             clientSimAppendLobbyTeamChat(cs, myName, chatInput);
         else
             clientSimAppendLobbyChat(cs, myName, chatInput);
+        /* Emit the cue locally for our own send. The incoming-chat cue
+         * (CTRL_CHAT / CTRL_SERVER_TEXT) only fires for fromPlayer != myPN,
+         * so self-sends are silent without this. */
+        soundPlayEffect(lobbyChatReceived);
         chatInput[0] = '\0';
         s_chatRefocusFrames = 2;
         s_chatHideNav = true;
@@ -6548,7 +6556,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * (5,4,3,2,1); reaching 0 is the game start, handled below. */
         int curCountdown = clientSimGetCountdownSeconds(cs);
         if (clientSimGetNetStatus(cs) == netLobbyCountdown &&
-            curCountdown > 0 && curCountdown != prevCountdown) {
+            curCountdown > 0 && curCountdown != prevCountdown &&
+            !clientSimIsSinglePlayer(cs)) {
+            /* SP starts instantly: the in-process server runs the real
+             * countdown state but isn't rate-limited to 50 Hz, so it burns
+             * all 250 ticks in ~a frame. The client still receives the
+             * initial CTRL_GAME_PHASE_COUNTDOWN (secs=5) and would play one
+             * stray leading tick before RUNNING arrives. SP has no real-time
+             * countdown to sonify; gate it out. MP keeps 5,4,3,2,1. */
             soundPlayEffect(lobbyCountdown);
         }
         prevCountdown = curCountdown;
