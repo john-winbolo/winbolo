@@ -1807,6 +1807,7 @@ STR_DLGSETTINGS_TAB_SESSION=Sesja
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Obserwatorzy ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Obserwator] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Zakończyć obserwowanie?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=Na żywo
