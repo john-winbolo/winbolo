@@ -1634,13 +1634,15 @@ static void renderPlayersPanel(ClientSim *cs) {
             ClientGameVoteSnapshot vs = {};
             if (!clientSimGetGameVote(cs, vkind, &vs)) continue;
             if (vs.active != GAME_VOTE_ACTIVE_RUNNING) continue;
+            /* Surrender votes are private to the surrendering team — non-members
+             * don't see the row at all (back-to-lobby stays visible to all). */
+            if (!localCanAnswerGameVote(cs, &vs)) continue;
             ImGui::Separator();
             const char *vnm = (vkind == GAME_VOTE_KIND_BACK_TO_LOBBY)
                               ? langGetText(STR_VOTE_BACK_TO_LOBBY)
                               : langGetText(STR_VOTE_SURRENDER);
             ImGui::Text("%s: %u / %u", vnm,
                         (unsigned)vs.yesCount, (unsigned)vs.threshold);
-            if (!localCanAnswerGameVote(cs, &vs)) continue;
             BYTE vme = clientSimGetMyPlayerNum(cs);
             bool vMyYes = (vme < 16) && ((vs.votes >> vme) & 1u);
             char yLbl[40]; snprintf(yLbl, sizeof(yLbl), "%s##vy%u", langGetText(STR_YES), (unsigned)vkind);
@@ -1962,6 +1964,11 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
      * and the user hasn't dismissed. */
     if (snap->active == GAME_VOTE_ACTIVE_NONE) { autoPanelReset(lay); return; }
     if (!snap->widgetVisible)                  { autoPanelReset(lay); return; }
+    /* Surrender votes are private to the surrendering team — don't render the
+     * floating widget for anyone outside that team. */
+    if (kind == GAME_VOTE_KIND_SURRENDER && !localCanAnswerGameVote(cs, snap)) {
+        autoPanelReset(lay); return;
+    }
 
     /* Auto-dismiss 5 seconds after the vote concludes (pass / fail /
      * cancel). Back-to-lobby with the server's return-to-lobby
@@ -2990,6 +2997,31 @@ static void renderMenuBar(ClientSim *cs) {
                 } else {
                     ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP));
                 }
+            }
+
+            /* Re-open the floating widget for an in-flight vote whose popup was
+             * closed (X'd). One entry per such vote, only when the local player
+             * may see it (surrender stays private to the surrendering team). */
+            static const uint8_t showKinds[] = {
+                GAME_VOTE_KIND_BACK_TO_LOBBY, GAME_VOTE_KIND_SURRENDER
+            };
+            for (size_t k = 0; k < sizeof(showKinds) / sizeof(showKinds[0]); k++) {
+                uint8_t vk = showKinds[k];
+                ClientGameVoteSnapshot vs = {};
+                if (!clientSimGetGameVote(cs, vk, &vs)) continue;
+                if (vs.active != GAME_VOTE_ACTIVE_RUNNING) continue;
+                if (vs.widgetVisible) continue;
+                if (!localCanAnswerGameVote(cs, &vs)) continue;
+                const char *vnm = (vk == GAME_VOTE_KIND_BACK_TO_LOBBY)
+                                  ? langGetText(STR_VOTE_BACK_TO_LOBBY)
+                                  : langGetText(STR_VOTE_SURRENDER);
+                MessageArgs vargs = {};
+                SDL_snprintf(vargs.string1, sizeof(vargs.string1), "%s", vnm);
+                char lbl[128];
+                snprintf(lbl, sizeof(lbl), "%s",
+                         langGetTextFmt(STR_VOTE_SHOW, &vargs));
+                if (ImGui::MenuItem(lbl))
+                    clientSimSetGameVoteWidgetVisible(cs, vk, true);
             }
         }
         ImGui::EndMenu();

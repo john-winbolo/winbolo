@@ -1512,6 +1512,9 @@
 #define STR_VOTE_NEEDS_RUNNING_TIP          1393
 #define STR_VOTE_SURRENDER_PICK_TEAM_TIP    1394
 #define STR_VOTE_SURRENDER_TWO_TEAMS_TIP    1395
+/* Menu item to re-open a closed vote widget. {string1} = the vote name
+ * (STR_VOTE_BACK_TO_LOBBY / STR_VOTE_SURRENDER). */
+#define STR_VOTE_SHOW                       1862
 
 /* Logviewer — in-game vote events */
 #define STR_LV_VOTE_START_LOBBY             1396

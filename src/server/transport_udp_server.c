@@ -1063,6 +1063,18 @@ static void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
             }
         }
     }
+    if (evt->type == CTRL_SERVER_TEXT && evt->u.serverText.destTeam != 0) {
+        /* Team-scoped server text (e.g. a private surrender-vote notice):
+         * only members of the addressed team receive it. */
+        const LobbyPlayer *lp =
+            serverSimGetLobbyPlayer(serverSimGetActive(), client->playerNum);
+        if (!lp || lp->teamNumber != evt->u.serverText.destTeam) {
+            mpDiagLog("[srv] deliver FILTER slot=%d type=SERVER_TEXT "
+                      "reason=not-on-team destTeam=%d clientPlayerNum=%d",
+                      idx, (int)evt->u.serverText.destTeam, (int)client->playerNum);
+            return;
+        }
+    }
     if (evt->type == CTRL_COMMAND_REJECTED &&
         evt->u.commandRejected.origSlot != client->playerNum) {
         mpDiagLog("[srv] deliver FILTER slot=%d type=COMMAND_REJECTED "

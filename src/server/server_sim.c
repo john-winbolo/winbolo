@@ -4826,6 +4826,21 @@ static void publishServerMessage(ServerSim *sim, const char *message) {
     serverSimPublishControl(sim, &evt);
 }
 
+/* Like publishServerMessage but delivered ONLY to members of teamId (1-16).
+ * destTeam rides the ControlEvent and is filtered per-recipient in
+ * udpClientDeliverControl + the in-process CTRL_SERVER_TEXT handler — used to
+ * keep surrender-vote notices private to the surrendering team. */
+static void publishServerMessageToTeam(ServerSim *sim, const char *message,
+                                       BYTE teamId) {
+    ControlEvent evt;
+    if (!sim || !message) return;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SERVER_TEXT;
+    SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
+    evt.u.serverText.destTeam = teamId;
+    serverSimPublishControl(sim, &evt);
+}
+
 /* serverSimReceiveChat — authoritative entry for any chat the server
  * accepts, regardless of which transport delivered the input.
  *
@@ -5308,7 +5323,7 @@ void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
             /* Surrender invalidation: team count must remain == 2. */
             if (gv->kind == GAME_VOTE_KIND_SURRENDER &&
                 serverSimCountActiveTeams(sim) != 2) {
-                publishServerMessage(sim, "Surrender vote cancelled — team count changed.");
+                publishServerMessageToTeam(sim, "Surrender vote cancelled — team count changed.", gv->teamId);
                 gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_CANCELLED, nowMs);
                 continue;
             }
@@ -5317,8 +5332,8 @@ void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
              * entirely (everyone disconnected), the vote is moot. */
             if (popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId)) == 0) {
                 if (gv->kind == GAME_VOTE_KIND_SURRENDER) {
-                    publishServerMessage(sim,
-                        "Surrender vote cancelled — surrendering team is empty.");
+                    publishServerMessageToTeam(sim,
+                        "Surrender vote cancelled — surrendering team is empty.", gv->teamId);
                 }
                 gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_CANCELLED, nowMs);
                 continue;

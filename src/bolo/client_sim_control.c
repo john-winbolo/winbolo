@@ -703,6 +703,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     case CTRL_SERVER_TEXT: {
         const char *text = evt->u.serverText.text;
         if (text[0] == '\0') break;
+        /* Team-scoped server text: only members of destTeam see it. */
+        if (evt->u.serverText.destTeam != 0) {
+            BYTE myPN = clientSimGetMyPlayerNum(cs);
+            const ClientLobbySlot *ms = clientSimGetLobbySlot(cs, myPN);
+            if (!ms || ms->teamNumber != evt->u.serverText.destTeam) break;
+        }
         if (cs->inLobby) {
             clientSimAppendLobbyChat(cs, "Server", text);
             if (cs->lobbySyncSettled) frontEndPlaySound(cs, lobbyChatReceived);

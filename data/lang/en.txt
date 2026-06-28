@@ -1439,6 +1439,7 @@ STR_VOTE_DRAW_TAG= (Draw)
 STR_VOTE_NEEDS_RUNNING_TIP=Available once the game is running.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Pick a team before voting to surrender.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Surrender is only available when exactly two teams\nwith human players remain.
+STR_VOTE_SHOW=Show: {string1}
 
 # Logviewer — in-game vote events
 STR_LV_VOTE_START_LOBBY={player} started a vote to return to lobby.
