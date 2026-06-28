@@ -2810,6 +2810,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # the spectator flag lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting
     # seed), consuming no tank slot and starting no map download.
     tests/unit/test_spectator_connect.c
+    # Spectator live-lobby control intake — client side: a tankless spectator
+    # (myPlayerNum 0, aliasing real slot 0) fed the allowlisted lobby control
+    # bus populates its mirror without mis-attributing slot 0 to the viewer.
+    tests/unit/test_spectator_client_lobby_intake.c
     # Spectator command rejection: a tankless viewer's lobby/gameplay commands
     # have no server-state effect (client transport never emits them; the
     # dispatcher guard rejects an out-of-range sender slot).
@@ -3292,6 +3296,7 @@ set(_unit_test_names
     spectator_roster_publish
     spectator_slot_codec
     spectator_connect
+    spectator_client_lobby_intake
     spectator_command_reject
     spectator_seed_integration
     spectator_capture

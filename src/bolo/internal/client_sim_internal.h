@@ -518,6 +518,14 @@ struct ClientSim {
      * Zeroed at create, freed on teardown (clientSimSpectatorFeedClear). */
     ClientSpectatorFeed spectatorFeed;
 
+    /* True when this ClientSim connected as a tankless spectator (the
+     * spectator arg of clientSimConnectUdp). A spectator claims no tank
+     * slot, so myPlayerNum stays at its create-time 0 — an in-bounds value
+     * that aliases real player slot 0. Control handlers that branch on "is
+     * this my slot / from me" consult this flag to treat a spectator as
+     * having no self, so slot 0 is never mistaken for the viewer. */
+    bool isSpectator;
+
     /* In-process server bound by clientSimConnectLocal{,Passive}. NULL
      * for UDP and disconnected clients. Read by the local-transport
      * branch of CTRL_LOBBY_MAP_CHANGE to fetch the freshly-compressed

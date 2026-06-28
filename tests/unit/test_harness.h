@@ -234,6 +234,15 @@ int run_spectator_slot_codec(void);
  * slot consumed and no map download started. */
 int run_spectator_connect(void);
 
+/* Spectator live-lobby control intake — client side
+ * (test_spectator_client_lobby_intake.c): a tankless spectator (myPlayerNum 0,
+ * an alias of real slot 0) is fed the allowlisted lobby control bus and must
+ * populate its mirror without mis-treating slot 0 as the viewer's own self —
+ * the slot-0 name resolves, slot-0 broadcast chat is delivered, the viewer
+ * holds no map-skip vote, and no team-scoped chat is shown to the teamless
+ * viewer. */
+int run_spectator_client_lobby_intake(void);
+
 /* Spectator command rejection (test_spectator_command_reject.c): a tankless
  * viewer attempts lobby/gameplay commands the production way and the server
  * shows no effect (no slot, still a spectator); plus the dispatcher guard

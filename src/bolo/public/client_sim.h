@@ -515,6 +515,11 @@ labelLen     clientSimGetLabelTankLabel(const ClientSim *cs);
 
 /* Scalar (integer) accessors */
 BYTE           clientSimGetMyPlayerNum(const ClientSim *cs);
+/* True when this ClientSim connected as a tankless spectator. Such a sim
+ * holds no tank and never claims a player slot, so its myPlayerNum stays 0
+ * (an alias of real slot 0); callers use this to tell a viewer apart from
+ * the player who actually occupies slot 0. */
+bool           clientSimIsSpectator(const ClientSim *cs);
 BYTE           clientSimGetXOffset(const ClientSim *cs);
 BYTE           clientSimGetYOffset(const ClientSim *cs);
 /* Sub-tile view offset in 1/256-tile units (0..255). Renderer adds this

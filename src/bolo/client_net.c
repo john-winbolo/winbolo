@@ -75,6 +75,7 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                                            spectator);
   cs->hasTransport = true;
   cs->isUdpTransport = true;
+  cs->isSpectator = spectator;
   clientSimSetLocalTransport(cs, false);
   /* Symmetric with the SP path's clientSimSetNetType(cs, netSingle) at
    * the bottom of clientSimConnectLocalBody.  Multiple sim sites branch

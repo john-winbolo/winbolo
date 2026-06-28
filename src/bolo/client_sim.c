@@ -1507,6 +1507,7 @@ labelLen    clientSimGetLabelMessage(const ClientSim *cs)       { return cs->lab
 labelLen    clientSimGetLabelTankLabel(const ClientSim *cs)     { return cs->labelTankLabel; }
 
 BYTE     clientSimGetMyPlayerNum(const ClientSim *cs)       { return cs->myPlayerNum; }
+bool     clientSimIsSpectator(const ClientSim *cs)         { return cs->isSpectator; }
 BYTE     clientSimGetXOffset(const ClientSim *cs)           { return cs->viewport.xOffset; }
 BYTE     clientSimGetYOffset(const ClientSim *cs)           { return cs->viewport.yOffset; }
 int      clientSimGetSubPosX(const ClientSim *cs)           { return (int)cs->scroll.subPosX; }
