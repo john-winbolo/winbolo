@@ -3496,6 +3496,7 @@ void serverSimRefreshWbnLobbyInfo(ServerSim *sim) {
     info.mines           = sim->sim.hiddenMines ? true : false;
     info.ranked          = sim->ranked ? true : false;
     info.allowNewPlayers = sim->allowNewPlayers ? true : false;
+    info.allowSpectators = serverSimGetMaxSpectators(sim) > 0 ? true : false;
     info.autoLock        = sim->autoLockOnGameStart ? true : false;
     info.hasLobby        = serverSimIsLobbyEnabled(sim);
     info.timeLimit       = serverSimGetTimeLimit(sim) ? true : false;

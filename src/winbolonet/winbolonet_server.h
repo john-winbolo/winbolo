@@ -60,6 +60,7 @@ typedef struct {
   bool     mines;                    /* Hidden mines */
   bool     ranked;                   /* Ranked match */
   bool     allowNewPlayers;          /* Lobby join gate */
+  bool     allowSpectators;          /* Spectating enabled (maxSpectators > 0) */
   bool     autoLock;                 /* Auto-lock on game start */
   bool     hasLobby;                 /* Server has a lobby (false for -nolobby/-maprotate) */
   bool     timeLimit;               /* Time limit enabled (false=unlimited) */
