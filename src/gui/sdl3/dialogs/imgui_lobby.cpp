@@ -508,6 +508,10 @@ static bool             s_chooseMapMaximized     = false;
  * Cancel / Keep Picking" prompt instead of silently reverting. */
 static bool             s_chooseMapPreviewPending = false;
 static bool             s_chooseMapWantCloseConfirm = false;
+/* True while the desktop "Last round" recap window is open. The button
+ * above Ready sets it; it is forced false when no stored summary
+ * exists (the next countdown clears the summary). */
+static bool             g_lastRoundWinOpen        = false;
 /* Cached ClientSim pointer for the chooser. Captured by
  * lobbyChooseMapOpen so the listProvider (which only gets a void*
  * ctx) can reach into the cs's lobbyMapList* state without each
@@ -7827,6 +7831,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * vertical space back. */
             float frameH = ImGui::GetFrameHeight();
             float readyAreaH = frameH;
+            /* The between-rounds recap button sits in the footer directly
+             * above Ready when a summary exists, so reserve a second row
+             * (+ inter-button spacing). The MapPanel shrinks to keep Ready
+             * on-screen. */
+            if (clientSimGetLastRoundStats(cs) != NULL) {
+                readyAreaH += frameH + ImGui::GetStyle().ItemSpacing.y;
+            }
 
             /* Split the remaining vertical space between PlayerPanel
              * (top) and ChatBlock (bottom). The chat's bottom edge
@@ -8364,22 +8375,14 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                  * Dismiss approval step). */
 
                 /* Between-rounds recap: a button directly above Ready that
-                 * opens the scoreboard + awards in a non-modal popup. Shown
-                 * only while a stored summary exists (set at game over,
-                 * cleared on the next countdown). The popup closes on Escape
-                 * and on a click outside it, and scrolls internally so a full
-                 * scoreboard stays within the window. */
+                 * opens the scoreboard + awards in a large titled window.
+                 * Shown only while a stored summary exists (set at game
+                 * over, cleared on the next countdown). The window itself
+                 * is rendered later, outside this group. */
                 if (clientSimGetLastRoundStats(cs) != NULL) {
                     if (ImGui::Button(langGetText(STR_DLGLOBBY_LASTROUND_BTN),
                                       ImVec2(-1, 0))) {
-                        ImGui::OpenPopup("##LastRoundPopup");
-                    }
-                    ImGui::SetNextWindowSizeConstraints(
-                        ImVec2(360.0f * s, 0.0f),
-                        ImVec2(560.0f * s, 480.0f * s));
-                    if (ImGui::BeginPopup("##LastRoundPopup")) {
-                        renderLastRoundBody(cs, s);
-                        ImGui::EndPopup();
+                        g_lastRoundWinOpen = true;
                     }
                 }
 
@@ -8409,6 +8412,39 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 }
             }
             ImGui::EndGroup(); /* /right column */
+
+            /* Between-rounds recap window: a large, titled, non-modal
+             * window (matches the Map preview popup's geometry) opened by
+             * the "Last round" button above Ready. Auto-dismisses when the
+             * stored summary clears on the next countdown. */
+            if (clientSimGetLastRoundStats(cs) == NULL) {
+                g_lastRoundWinOpen = false;
+            }
+            if (g_lastRoundWinOpen) {
+                ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+                const float kGutter = 15.0f;
+                float lineH = ImGui::GetTextLineHeightWithSpacing();
+                float winW = displaySize.x - kGutter * 2.0f;
+                float winH = displaySize.y - kGutter * 2.0f - lineH * 3.0f;
+                if (winW < 480.0f) winW = 480.0f;
+                if (winH < 320.0f) winH = 320.0f;
+                if (winH > displaySize.y * 0.85f) winH = displaySize.y * 0.85f;
+                ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowPos(ImVec2(kGutter, kGutter), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 240.0f),
+                                                    ImVec2(FLT_MAX, FLT_MAX));
+                char title[128];
+                SDL_snprintf(title, sizeof(title), "%s###LastRoundWin",
+                             langGetText(STR_DLGLOBBY_LASTROUND_BTN));
+                if (ImGui::Begin(title, &g_lastRoundWinOpen, 0)) {
+                    if (ImGui::IsWindowFocused() &&
+                        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                        g_lastRoundWinOpen = false;
+                    }
+                    renderLastRoundBody(cs, s);
+                }
+                ImGui::End();
+            }
         } /* /desktop layout scope (playerPanelW/mapPanelW) */
 
         /* --- Map preview popup --- */
