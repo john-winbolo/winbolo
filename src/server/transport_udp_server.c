@@ -1302,6 +1302,7 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_MAP_SKIP_STATE:
     case CTRL_GAME_VOTE_STATE:
     case CTRL_SPECTATOR_SLOT:
+    case CTRL_SPECTATOR_CHAT:
     case CTRL_LOBBY_SYNC_COMPLETE:
         allow = true;
         break;
@@ -4588,7 +4589,49 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_COMMAND_TICK: {
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0) break;
+            if (clientIdx < 0) {
+                /* A tankless spectator may send CMD_CHAT — and nothing else,
+                 * and only while the server is in lobby/countdown. This branch
+                 * is the hard isolation boundary: a viewer has no slot or sim
+                 * state to mutate, so a decoded command of any other type is
+                 * dropped here. The cmdSeq dedup mirrors the player path so the
+                 * spectator's reliable carrier acks and retransmits coherently. */
+                int sIdx = serverFindSpectator(fromAddr);
+                if (sIdx < 0) break;
+                SpectatorConn *sp = &udpServer.spectators[sIdx];
+                ServerState st = serverSimGetState(sim);
+                bool lobbyish =
+                    (st == serverStateLobby || st == serverStateCountdown);
+                sp->lastReceivedTick = udpServer.tickCount;
+                if (len < PACKET_HEADER_SIZE + 1) break;
+                uint8_t scount = buf[PACKET_HEADER_SIZE];
+                size_t spos = PACKET_HEADER_SIZE + 1;
+                for (uint8_t i = 0; i < scount; i++) {
+                    if (spos + 2 > (size_t)len) break;
+                    uint16_t entryLen = unpackU16(buf + spos);
+                    spos += 2;
+                    if (spos + entryLen > (size_t)len) break;
+                    ClientCommand cmd;
+                    if (!commandCodecDecode(buf + spos, entryLen, &cmd)) {
+                        spos += entryLen;
+                        continue;
+                    }
+                    spos += entryLen;
+                    if (cmd.cmdSeq <= sp->inboundCmdSeq) continue;
+                    if (cmd.cmdSeq != sp->inboundCmdSeq + 1) continue;
+                    sp->inboundCmdSeq = cmd.cmdSeq;
+                    if (cmd.type == CMD_CHAT && lobbyish) {
+                        serverSimReceiveSpectatorChat(sim, (uint8_t)sIdx,
+                                                      cmd.u.chat.body,
+                                                      cmd.u.chat.bodyLen);
+                    }
+                }
+                uint8_t sackBuf[PACKET_HEADER_SIZE + 4];
+                packHeader(sackBuf, PACKET_COMMAND_ACK, sp->outSequence++);
+                packU32(sackBuf + PACKET_HEADER_SIZE, sp->inboundCmdSeq);
+                srvSendTo(sackBuf, sizeof(sackBuf), &sp->addr);
+                break;
+            }
             UdpServerClient *client = &udpServer.clients[clientIdx];
             if (len < PACKET_HEADER_SIZE + 1) break;
             uint8_t count = buf[PACKET_HEADER_SIZE];

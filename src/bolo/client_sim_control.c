@@ -307,6 +307,35 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
 
+    case CTRL_SPECTATOR_CHAT: {
+        /* A spectator's lobby chat line. Resolve the sender's name from the
+         * mirrored spectator roster and render it [Spectator]-tagged in the
+         * shared lobby chat log. No self-skip: the sending spectator owns no
+         * slot to echo locally, so seeing its own round-trip line is intended. */
+        const ClientSpectatorSlot *sp =
+            clientSimGetSpectatorSlot(cs, evt->u.spectatorChat.specIdx);
+        const char *senderName =
+            (sp && sp->connected && sp->playerName[0]) ? sp->playerName : "?";
+        char msg[PACKET_MAX_CHAT_MESSAGE + 1];
+        uint16_t copyLen = evt->u.spectatorChat.bodyLen;
+        if (copyLen > PACKET_MAX_CHAT_MESSAGE) copyLen = PACKET_MAX_CHAT_MESSAGE;
+        if (copyLen > 0) memcpy(msg, evt->u.spectatorChat.body, copyLen);
+        msg[copyLen] = '\0';
+        {
+            MessageArgs args = {0};
+            char tagged[PACKET_MAX_PLAYER_NAME + 32];
+            snprintf(args.string1, sizeof(args.string1), "%s", senderName);
+            SDL_strlcpy(tagged,
+                        langGetTextFmt(STR_DLGLOBBY_SPECTATOR_TAG, &args),
+                        sizeof(tagged));
+            clientSimAppendLobbyChat(cs, tagged, msg);
+        }
+        if (clientSimIsInLobby(cs) && cs->lobbySyncSettled) {
+            frontEndPlaySound(cs, lobbyChatReceived);
+        }
+        break;
+    }
+
     case CTRL_LOBBY_SETTINGS:
         strncpy(cs->mapName, evt->u.lobbySettings.mapName, MAP_STR_SIZE - 1);
         cs->mapName[MAP_STR_SIZE - 1] = '\0';

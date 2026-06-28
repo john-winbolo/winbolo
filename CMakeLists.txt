@@ -2821,6 +2821,17 @@ set(WINBOLO_UNITTESTS_SOURCES
     # CTRL_SPECTATOR_SLOT body-codec round-trip: encode/decode the per-spectator
     # roster event through the body tables, including the out-of-range rejection.
     tests/unit/test_spectator_slot_codec.c
+    # CTRL_SPECTATOR_CHAT body-codec round-trip: encode/decode the spectator
+    # lobby-chat event through the body tables, including the empty/max-length
+    # messages and the out-of-range specIdx / msgLen-overrun rejections.
+    tests/unit/test_spectator_chat_codec.c
+    # Spectator-chat routing: a published CTRL_SPECTATOR_CHAT reaches a player
+    # bus subscriber and a live spectator (allowlist); broadcast CTRL_CHAT
+    # reaches the spectator; team/unicast CTRL_CHAT does not.
+    tests/unit/test_spectator_chat_routing.c
+    # Spectator-chat replay emission: serverSimReceiveSpectatorChat writes a
+    # log_SpectatorChat (specIdx + message) into the recording .wbv stream.
+    tests/unit/test_spectator_chat_log.c
     # Spectator connect — client side: the real client transport connecting with
     # the spectator flag lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting
     # seed), consuming no tank slot and starting no map download.
@@ -2829,9 +2840,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # (myPlayerNum 0, aliasing real slot 0) fed the allowlisted lobby control
     # bus populates its mirror without mis-attributing slot 0 to the viewer.
     tests/unit/test_spectator_client_lobby_intake.c
-    # Spectator command rejection: a tankless viewer's lobby/gameplay commands
-    # have no server-state effect (client transport never emits them; the
-    # dispatcher guard rejects an out-of-range sender slot).
+    # Spectator command isolation: a tankless viewer's broadcast chat is accepted
+    # and round-trips into its lobby log, while its non-chat lobby/gameplay
+    # commands have no server-state effect (client guards refuse to originate
+    # them; the dispatcher guard rejects an out-of-range sender slot).
     tests/unit/test_spectator_command_reject.c
     # Spectator lobby read-only invariant: a tankless viewer fires every guarded
     # clientSimNetSend* mutation path and the seated lobby is wholly untouched —
@@ -3321,6 +3333,9 @@ set(_unit_test_names
     spectator_join
     spectator_roster_publish
     spectator_slot_codec
+    spectator_chat_codec
+    spectator_chat_routing
+    spectator_chat_log
     spectator_connect
     spectator_client_lobby_intake
     spectator_command_reject

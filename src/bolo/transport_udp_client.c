@@ -534,7 +534,11 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
  * PACKET_COMMAND_TICK and send. Updates each entry's lastSentMs. */
 static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
     if (c->outHeadSeq == c->outTailSeq) return;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    /* A tankless spectator may originate CMD_CHAT; its command carrier runs in
+     * the SPECTATING state as well as CONNECTED. The server's spectator inbound
+     * branch is the gate that rejects anything but chat. */
+    if (c->joinState != UDP_CLIENT_CONNECTED &&
+        c->joinState != UDP_CLIENT_SPECTATING) return;
     uint8_t buf[1400];
     packHeader(buf, PACKET_COMMAND_TICK, c->outSequence++);
     size_t pos = PACKET_HEADER_SIZE + 1;  /* +1 for count placeholder */
@@ -562,7 +566,10 @@ static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
 
 void transportUdpClientSubmitCommand(Transport *t, const ClientCommand *cmd) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    /* SPECTATING is admitted alongside CONNECTED so a spectator's CMD_CHAT
+     * reaches the wire; the server rejects any non-chat spectator command. */
+    if (c->joinState != UDP_CLIENT_CONNECTED &&
+        c->joinState != UDP_CLIENT_SPECTATING) return;
     if (c->outTailSeq - c->outHeadSeq >= OUT_CMD_QUEUE_CAP) {
         SDL_assert(0 && "out command queue full");
         return;
@@ -2860,6 +2867,18 @@ static bool udpClientTick(void *ctx) {
             if (head->lastSentMs != 0 && (now - head->lastSentMs) > 80) {
                 udpClientDrainCommandQueue(c);
             }
+        }
+    }
+
+    /* A spectator runs only the command-queue retransmit (its sole outbound
+     * traffic is CMD_CHAT); the ping/timeout/upload pumps above are player-only.
+     * Without this a spectator's chat would send once and never retry on loss. */
+    if (c->joinState == UDP_CLIENT_SPECTATING &&
+        c->outHeadSeq != c->outTailSeq) {
+        uint32_t now = (uint32_t)SDL_GetTicks();
+        OutCmdEntry *head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
+        if (head->lastSentMs != 0 && (now - head->lastSentMs) > 80) {
+            udpClientDrainCommandQueue(c);
         }
     }
 

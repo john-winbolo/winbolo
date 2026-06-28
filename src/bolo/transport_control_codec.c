@@ -434,6 +434,33 @@ static EncodeResult encodeSpectatorSlotBody(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* CTRL_SPECTATOR_CHAT body wire format (variable length):
+ *   [specIdx 1] [msgLen 1] [msg msgLen bytes]
+ * msgLen is a single byte, so the message is clamped to 255 (well above
+ * PACKET_MAX_CHAT_MESSAGE). Delivered body-only on CHANNEL_CONTROL; there
+ * is no full-packet wrapper or PACKET_* type for this event. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    (void)recipient;
+    size_t msgLen = evt->u.spectatorChat.bodyLen;
+    if (msgLen > PACKET_MAX_CHAT_MESSAGE) msgLen = PACKET_MAX_CHAT_MESSAGE;
+    const size_t needed = 1 + 1 + msgLen;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    size_t pos = 0;
+    buf[pos++] = evt->u.spectatorChat.specIdx;
+    buf[pos++] = (uint8_t)msgLen;
+    if (msgLen > 0) {
+        memcpy(buf + pos, evt->u.spectatorChat.body, msgLen);
+        pos += msgLen;
+    }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
 /* PACKET_LOBBY_SETTINGS wire format:
  *   [header 8] [mapName MAP_STR_SIZE] [gameType 1] [hiddenMines 1]
  *   [aiType 1] [gameLength 4 BE] [pillCount 1] [baseCount 1]
@@ -1480,6 +1507,23 @@ static bool decodeSpectatorSlotBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeSpectatorChatBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    if (len < 2) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SPECTATOR_CHAT;
+    size_t pos = 0;
+    uint8_t specIdx = buf[pos++];
+    if (specIdx >= MAX_SPECTATORS) return false;
+    uint8_t msgLen = buf[pos++];
+    if (pos + msgLen > len) return false;
+    if (msgLen > PACKET_MAX_CHAT_MESSAGE) return false;
+    outEvt->u.spectatorChat.specIdx = specIdx;
+    outEvt->u.spectatorChat.bodyLen = msgLen;
+    if (msgLen > 0) memcpy(outEvt->u.spectatorChat.body, buf + pos, msgLen);
+    return true;
+}
+
 static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
                                     ControlEvent *outEvt) {
     if (len < LOBBY_SETTINGS_WIRE_PAYLOAD_BASE) return false;
@@ -1902,6 +1946,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SHELL_DEATH]           = encodeShellDeathBody,
     [CTRL_CHANNEL_RESET]         = encodeChannelResetBody,
     [CTRL_SPECTATOR_SLOT]        = encodeSpectatorSlotBody,
+    [CTRL_SPECTATOR_CHAT]        = encodeSpectatorChatBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -1938,6 +1983,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SHELL_DEATH]           = decodeShellDeathBody,
     [CTRL_CHANNEL_RESET]         = decodeChannelResetBody,
     [CTRL_SPECTATOR_SLOT]        = decodeSpectatorSlotBody,
+    [CTRL_SPECTATOR_CHAT]        = decodeSpectatorChatBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

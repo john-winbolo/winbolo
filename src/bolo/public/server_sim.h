@@ -1274,6 +1274,26 @@ void serverSimReceiveChat(ServerSim *sim, BYTE fromPlayer, BYTE destPlayer,
                           const void *body, size_t bodyLen);
 
 /*********************************************************
+ *NAME:          serverSimReceiveSpectatorChat
+ *PURPOSE:
+ *  Authoritative entry for a lobby chat line from a
+ *  tankless spectator. A spectator owns no player slot,
+ *  so the message is stamped with its specIdx and
+ *  published as CTRL_SPECTATOR_CHAT, which fans to
+ *  players (bus) and spectators (deliver allowlist), and
+ *  is recorded into the .wbv as log_SpectatorChat.
+ *
+ *ARGUMENTS:
+ *  sim          - The server sim
+ *  specIdx      - Sender spectator slot (< MAX_SPECTATORS)
+ *  body         - Raw chat bytes (no Pascal-length prefix)
+ *  bodyLen      - Length of body (clamped to
+ *                  PACKET_MAX_CHAT_MESSAGE)
+ *********************************************************/
+void serverSimReceiveSpectatorChat(ServerSim *sim, uint8_t specIdx,
+                                   const void *body, size_t bodyLen);
+
+/*********************************************************
  *NAME:          serverSimApplyCommand
  *PURPOSE:
  *  Single apply path for client→server commands. Switches

@@ -245,6 +245,23 @@ int run_spectator_roster_publish(void);
  * with the disconnected minimum and the out-of-range specIdx rejection. */
 int run_spectator_slot_codec(void);
 
+/* CTRL_SPECTATOR_CHAT body-codec round-trip (test_spectator_chat_codec.c):
+ * the spectator lobby-chat event encodes/decodes through the body tables, with
+ * the empty/max-length messages and the out-of-range specIdx / overrun
+ * rejections. */
+int run_spectator_chat_codec(void);
+
+/* Spectator-chat routing (test_spectator_chat_routing.c): a published
+ * CTRL_SPECTATOR_CHAT reaches a player bus subscriber and a live spectator
+ * (allowlist); broadcast CTRL_CHAT reaches the spectator; team/unicast chat
+ * does not. */
+int run_spectator_chat_routing(void);
+
+/* Spectator-chat replay emission (test_spectator_chat_log.c):
+ * serverSimReceiveSpectatorChat writes a log_SpectatorChat (specIdx + message)
+ * into the recording .wbv, read back from the framed stream. */
+int run_spectator_chat_log(void);
+
 /* Spectator connect — client side (test_spectator_connect.c): the real client
  * transport connecting with the spectator flag runs the join handshake and
  * lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting seed) with no tank

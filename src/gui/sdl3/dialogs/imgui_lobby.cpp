@@ -6353,11 +6353,12 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
 static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
                                         BYTE myPlayerNum, bool hasTransport,
                                         float s, BYTE destPlayer) {
-    /* A spectator sees the chat history but cannot send: show the input and
-     * Send button disabled, and never submit on its behalf. */
+    /* A spectator may chat in the live lobby: the input is enabled and Enter/
+     * Send route through the same CMD_CHAT path, which the server re-tags as
+     * spectator chat. The local echo below stays player-only — a spectator owns
+     * no slot to name and relies on the server's round-trip line instead. */
     const bool spectator = clientSimIsSpectator(cs);
     float btnW = 60.0f * s;
-    ImGui::BeginDisabled(spectator);
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
     if (s_chatRefocusFrames > 0) {
         ImGui::SetKeyboardFocusHere(0);
@@ -6376,20 +6377,22 @@ static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
     if (chatEmpty) ImGui::BeginDisabled();
     bool sendClicked = ImGui::Button(langGetText(STR_DLGMSG_BUTTON), ImVec2(btnW, 0));
     if (chatEmpty) ImGui::EndDisabled();
-    ImGui::EndDisabled();  /* close the spectator gate */
-    if ((sendClicked || enterPressed) && !chatEmpty && hasTransport && !spectator) {
+    if ((sendClicked || enterPressed) && !chatEmpty && hasTransport) {
         clientSimNetSendChat(cs, destPlayer, chatInput);
-        const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
-        const char *myName = (mySlot && mySlot->connected)
-            ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
-        if (CHAT_DEST_IS_TEAM(destPlayer))
-            clientSimAppendLobbyTeamChat(cs, myName, chatInput);
-        else
-            clientSimAppendLobbyChat(cs, myName, chatInput);
-        /* Emit the cue locally for our own send. The incoming-chat cue
-         * (CTRL_CHAT / CTRL_SERVER_TEXT) only fires for fromPlayer != myPN,
-         * so self-sends are silent without this. */
-        soundPlayEffect(lobbyChatReceived);
+        if (!spectator) {
+            const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
+            const char *myName = (mySlot && mySlot->connected)
+                ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
+            if (CHAT_DEST_IS_TEAM(destPlayer))
+                clientSimAppendLobbyTeamChat(cs, myName, chatInput);
+            else
+                clientSimAppendLobbyChat(cs, myName, chatInput);
+            /* Emit the cue locally for our own send. The incoming-chat cue
+             * (CTRL_CHAT / CTRL_SERVER_TEXT) only fires for fromPlayer != myPN,
+             * so self-sends are silent without this. A spectator instead gets
+             * its line (and cue) from the server's round-trip CTRL_SPECTATOR_CHAT. */
+            soundPlayEffect(lobbyChatReceived);
+        }
         chatInput[0] = '\0';
         s_chatRefocusFrames = 2;
         s_chatHideNav = true;

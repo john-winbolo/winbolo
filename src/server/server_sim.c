@@ -4875,6 +4875,38 @@ void serverSimReceiveChat(ServerSim *sim, BYTE fromPlayer, BYTE destPlayer,
     serverSimPublishControl(sim, &evt);
 }
 
+/* serverSimReceiveSpectatorChat — authoritative entry for a lobby chat line
+ * typed by a tankless spectator. A spectator has no player slot, so it cannot
+ * route through serverSimReceiveChat; instead the message is stamped with the
+ * sender's specIdx and published as CTRL_SPECTATOR_CHAT, which the bus fans to
+ * players and to spectators (the spectator deliver allowlist passes it). The
+ * line is recorded into the .wbv as log_SpectatorChat so the log viewer can
+ * attribute it. */
+void serverSimReceiveSpectatorChat(ServerSim *sim, uint8_t specIdx,
+                                   const void *body, size_t bodyLen) {
+    ControlEvent evt;
+    if (sim == NULL || body == NULL || specIdx >= MAX_SPECTATORS) return;
+    if (bodyLen > PACKET_MAX_CHAT_MESSAGE) bodyLen = PACKET_MAX_CHAT_MESSAGE;
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SPECTATOR_CHAT;
+    evt.u.spectatorChat.specIdx = specIdx;
+    evt.u.spectatorChat.bodyLen = (uint16_t)bodyLen;
+    if (bodyLen > 0) {
+        memcpy(evt.u.spectatorChat.body, body, bodyLen);
+    }
+    serverSimPublishControl(sim, &evt);
+
+    {
+        char pstr[256];
+        int pLen = (int)bodyLen;
+        if (pLen > 255) pLen = 255;
+        pstr[0] = (char)pLen;
+        if (pLen > 0) memcpy(pstr + 1, body, pLen);
+        logAddEvent(log_SpectatorChat, specIdx, 0, 0, 0, 0, pstr);
+    }
+}
+
 /* Publish current vote state through the control-event dispatcher.
  * In-process subscribers see it directly; remote UDP clients receive
  * the wire-encoded PACKET_GAME_VOTE_STATE via the codec encoder. */
