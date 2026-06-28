@@ -2818,6 +2818,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # have no server-state effect (client transport never emits them; the
     # dispatcher guard rejects an out-of-range sender slot).
     tests/unit/test_spectator_command_reject.c
+    # Spectator lobby read-only invariant: a tankless viewer fires every guarded
+    # clientSimNetSend* mutation path and the seated lobby is wholly untouched —
+    # the client-side send-suppression backstop (dialog rendering is human-tested).
+    tests/unit/test_spectator_lobby_readonly.c
     # Spectator feed capture — client side: a real spectator client over loopback
     # captures the CHANNEL_BULK seed + ordered forward records into the ClientSim
     # feed (record header stripped, order preserved), exercising the ack-emitter
@@ -3298,6 +3302,7 @@ set(_unit_test_names
     spectator_connect
     spectator_client_lobby_intake
     spectator_command_reject
+    spectator_lobby_readonly
     spectator_seed_integration
     spectator_capture
     spectator_log

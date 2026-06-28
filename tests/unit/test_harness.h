@@ -249,6 +249,14 @@ int run_spectator_client_lobby_intake(void);
  * rejects an out-of-range sender slot with CMD_REJECT_INVALID. */
 int run_spectator_command_reject(void);
 
+/* Spectator lobby read-only invariant (test_spectator_lobby_readonly.c): a
+ * tankless viewer fires every guarded clientSimNetSend* mutation path and the
+ * seated lobby is wholly untouched (no player added/removed, slot-0 team/ready/
+ * name unchanged, viewer never promoted) — the client-side send-suppression
+ * backstop. A positive control confirms the mirror still follows real changes.
+ * The dialog's read-only rendering is human-validated; this covers the wire. */
+int run_spectator_lobby_readonly(void);
+
 /* Spectator feed capture — client side (test_spectator_capture.c): a real
  * spectator client over loopback captures the CHANNEL_BULK seed and the ordered
  * forward records into the ClientSim feed (record header stripped, order kept),
