@@ -21,8 +21,20 @@
 #include "server_sim.h"
 #include "server_sim_internal.h" /* PlayerRoundStats, serverSimGetRoundStats — T2 */
 #include "server_sim_lifecycle.h"
+#include "round_stats.h"         /* AwardId, AwardResult, computeAwards */
 #include "everard_map.h"
 #include "test_harness.h"
+
+/* Locate a computed award by id; NULL if it was omitted. Keeps the
+ * award-test assertions terse. */
+static const AwardResult *find_award(const AwardResult *res, int n, int id) {
+    for (int i = 0; i < n; i++) {
+        if (res[i].awardId == id) {
+            return &res[i];
+        }
+    }
+    return NULL;
+}
 
 static ServerSim *make_sim_running(void) {
     BYTE emap[6000] = E_MAP;
@@ -567,5 +579,200 @@ int run_round_stats_leaver_clears_mines(void) {
                   minesGetOwner(&sim->sim.mns, 12, 13));
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* Every award resolves to a single deterministic winner. Stats are laid out
+ * so each of the 18 awards has an unambiguous best slot; the ratio awards
+ * (Best K/D, Sharpshooter, Survivor) carry their ×100 value and Warmonger's
+ * value is the raw player damage, not its (penalised) ranking score. */
+int run_awards_basic_winners(void) {
+    PlayerRoundStats stats[MAX_TANKS];
+    bool isBot[MAX_TANKS];
+    memset(stats, 0, sizeof(stats));
+    memset(isBot, 0, sizeof(isBot));
+
+    /* slot 0 — fighter: kills, K/D, nemesis (owns slot 1), warmonger. */
+    stats[0].kills = 10;
+    stats[0].deaths = 2;            /* K/D = 10*100/2 = 500 */
+    stats[0].killsOf[1] = 4;        /* nemesis victim = 1 */
+    stats[0].killsOf[2] = 1;
+    stats[0].dmgToPlayers = 1000;   /* warmonger key 1000, no captures */
+
+    /* slot 1 — victim: deaths, fish food. */
+    stats[1].kills = 1;
+    stats[1].deaths = 9;
+    stats[1].drowns = 5;
+
+    /* slot 2 — builder/capper: captures, engineer, sapper, lumberjack, survivor. */
+    stats[2].baseCaptures = 3;
+    stats[2].pillCaptures = 5;
+    stats[2].minesLaid = 8;
+    stats[2].pillsBuilt = 4;
+    stats[2].treesFarmed = 6;       /* engineer 10, survivor (6+4+8)*100/1 = 1800 */
+
+    /* slot 3 — gunner: demolition, sharpshooter. */
+    stats[3].dmgToPills = 200;
+    stats[3].dmgToBases = 300;      /* demolition 500 */
+    stats[3].dmgToPlayers = 400;
+    stats[3].shellsFired = 20;      /* sharpshooter 400*100/20 = 2000 */
+
+    /* slot 4 — the rest of the fun awards. */
+    stats[4].lgmKills = 7;
+    stats[4].lgmDeaths = 6;
+    stats[4].treesWasted = 9;
+    stats[4].mostPillsDropped = 3;
+
+    AwardResult out[AWARD_COUNT];
+    int n = 0;
+    computeAwards(stats, 5, true, isBot, out, &n);
+
+    UT_ASSERT_MSG(n == AWARD_COUNT, "all 18 awards won, got %d", n);
+
+    const AwardResult *a;
+    #define EXPECT(id, slot, val)                                         \
+        do {                                                              \
+            a = find_award(out, n, (id));                                 \
+            UT_ASSERT_MSG(a != NULL, #id " should be present");           \
+            UT_ASSERT_MSG(a->winnerSlot == (slot),                       \
+                          #id " winner slot, got %u", a->winnerSlot);     \
+            UT_ASSERT_MSG(a->value == (val),                              \
+                          #id " value, got %u", a->value);                \
+        } while (0)
+
+    EXPECT(AWARD_MOST_KILLS, 0, 10);
+    EXPECT(AWARD_MOST_DEATHS, 1, 9);
+    EXPECT(AWARD_BEST_KD, 0, 500);
+    EXPECT(AWARD_MOST_BASE_CAPTURES, 2, 3);
+    EXPECT(AWARD_MOST_PILL_CAPTURES, 2, 5);
+    EXPECT(AWARD_NEMESIS, 0, 4);
+    EXPECT(AWARD_DEMOLITION, 3, 500);
+    EXPECT(AWARD_SHARPSHOOTER, 3, 2000);
+    EXPECT(AWARD_WARMONGER, 0, 1000);   /* value == dmgToPlayers, not the key */
+    EXPECT(AWARD_SURVIVOR, 2, 1800);
+    EXPECT(AWARD_ENGINEER, 2, 10);
+    EXPECT(AWARD_SAPPER, 2, 8);
+    EXPECT(AWARD_FISH_FOOD, 1, 5);
+    EXPECT(AWARD_LGM_HUNTER, 4, 7);
+    EXPECT(AWARD_CANNON_FODDER, 4, 6);
+    EXPECT(AWARD_LUMBERJACK, 2, 6);
+    EXPECT(AWARD_WASTEFUL, 4, 9);
+    EXPECT(AWARD_BIGGEST_FUMBLE, 4, 3);
+    #undef EXPECT
+
+    /* Nemesis names the victim; everyone else leaves it NEUTRAL. */
+    a = find_award(out, n, AWARD_NEMESIS);
+    UT_ASSERT_MSG(a->subjectSlot == 1, "nemesis victim, got %u", a->subjectSlot);
+    a = find_award(out, n, AWARD_MOST_KILLS);
+    UT_ASSERT_MSG(a->subjectSlot == NEUTRAL,
+                  "non-nemesis subject is NEUTRAL, got %u", a->subjectSlot);
+
+    return 0;
+}
+
+/* On a tie the lowest slot index wins, so output is deterministic. */
+int run_awards_tiebreak(void) {
+    PlayerRoundStats stats[MAX_TANKS];
+    bool isBot[MAX_TANKS];
+    memset(stats, 0, sizeof(stats));
+    memset(isBot, 0, sizeof(isBot));
+
+    stats[2].kills = 5;
+    stats[3].kills = 5;
+
+    AwardResult out[AWARD_COUNT];
+    int n = 0;
+    computeAwards(stats, 5, true, isBot, out, &n);
+
+    const AwardResult *a = find_award(out, n, AWARD_MOST_KILLS);
+    UT_ASSERT_MSG(a != NULL, "most kills present");
+    UT_ASSERT_MSG(a->winnerSlot == 2, "lower slot wins the tie, got %u",
+                  a->winnerSlot);
+
+    return 0;
+}
+
+/* No qualifying player for any award → nothing is emitted. */
+int run_awards_omission(void) {
+    PlayerRoundStats stats[MAX_TANKS];
+    bool isBot[MAX_TANKS];
+    memset(stats, 0, sizeof(stats));
+    memset(isBot, 0, sizeof(isBot));
+
+    AwardResult out[AWARD_COUNT];
+    int n = -1;
+    computeAwards(stats, 5, true, isBot, out, &n);
+
+    UT_ASSERT_MSG(n == 0, "all-zero stats win no awards, got %d", n);
+
+    return 0;
+}
+
+/* Per-award floors gate the ratio/damage awards: a nonzero but sub-floor
+ * stat does not win Best K/D, Sharpshooter, or Warmonger. */
+int run_awards_floors(void) {
+    PlayerRoundStats stats[MAX_TANKS];
+    bool isBot[MAX_TANKS];
+    memset(stats, 0, sizeof(stats));
+    memset(isBot, 0, sizeof(isBot));
+
+    stats[0].kills = 2;             /* < AWARD_MIN_KILLS_KD (3) */
+    stats[0].deaths = 1;
+    stats[0].shellsFired = 10;      /* < AWARD_MIN_SHELLS_ACC (20) */
+    stats[0].dmgToPlayers = 30;     /* < AWARD_MIN_DMG_WARMONGER (40) */
+
+    AwardResult out[AWARD_COUNT];
+    int n = 0;
+    computeAwards(stats, 4, true, isBot, out, &n);
+
+    UT_ASSERT_MSG(find_award(out, n, AWARD_BEST_KD) == NULL,
+                  "sub-floor kills win no Best K/D");
+    UT_ASSERT_MSG(find_award(out, n, AWARD_SHARPSHOOTER) == NULL,
+                  "sub-floor shells win no Sharpshooter");
+    UT_ASSERT_MSG(find_award(out, n, AWARD_WARMONGER) == NULL,
+                  "sub-floor damage wins no Warmonger");
+
+    /* The non-floored kills award is still won. */
+    const AwardResult *a = find_award(out, n, AWARD_MOST_KILLS);
+    UT_ASSERT_MSG(a != NULL && a->winnerSlot == 0 && a->value == 2,
+                  "Most Kills still awarded");
+
+    return 0;
+}
+
+/* includeBots gates eligibility only: with it on a bot can win; with it off
+ * the award falls to the best human, or is omitted when only a bot qualifies. */
+int run_awards_include_bots(void) {
+    PlayerRoundStats stats[MAX_TANKS];
+    bool isBot[MAX_TANKS];
+    memset(stats, 0, sizeof(stats));
+    memset(isBot, 0, sizeof(isBot));
+
+    isBot[0] = true;
+    stats[0].kills = 10;            /* top scorer is a bot */
+    stats[0].drowns = 3;            /* only the bot drowned */
+    stats[1].kills = 5;             /* best human */
+
+    AwardResult out[AWARD_COUNT];
+    int n = 0;
+
+    /* Bots eligible: the bot wins Most Kills. */
+    computeAwards(stats, 2, true, isBot, out, &n);
+    const AwardResult *a = find_award(out, n, AWARD_MOST_KILLS);
+    UT_ASSERT_MSG(a != NULL && a->winnerSlot == 0, "bot wins Most Kills when included");
+    UT_ASSERT_MSG(a->winnerIsBot == 1, "winnerIsBot flagged, got %u", a->winnerIsBot);
+    UT_ASSERT_MSG(a->value == 10, "bot value, got %u", a->value);
+
+    /* Bots excluded: the award falls to the best human. */
+    computeAwards(stats, 2, false, isBot, out, &n);
+    a = find_award(out, n, AWARD_MOST_KILLS);
+    UT_ASSERT_MSG(a != NULL && a->winnerSlot == 1, "human wins Most Kills when bots excluded");
+    UT_ASSERT_MSG(a->winnerIsBot == 0, "human winner not flagged, got %u", a->winnerIsBot);
+    UT_ASSERT_MSG(a->value == 5, "human value, got %u", a->value);
+
+    /* An award only a bot qualifies for is omitted when bots are excluded. */
+    UT_ASSERT_MSG(find_award(out, n, AWARD_FISH_FOOD) == NULL,
+                  "bot-only Fish Food omitted when bots excluded");
+
     return 0;
 }

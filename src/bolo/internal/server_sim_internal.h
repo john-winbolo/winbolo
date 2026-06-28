@@ -27,6 +27,7 @@
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 #include "bot_manager.h"    /* BotManager — embedded by value below */
+#include "round_stats.h"    /* AwardId, AwardResult — computeAwards output */
 
 /* Per-player per-round gameplay stats. Server-internal: never serialized
  * directly — a curated subset ships to clients in a later phase. */
@@ -477,5 +478,11 @@ uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
 /* Test/inspection accessor: pointer to slot's round stats, or NULL if
  * slot >= MAX_TANKS. */
 const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot);
+
+/* Pure award computation over the finalized accumulator. Ranks slots
+ * 0..n-1; includeBots=false skips bot slots. Writes up to AWARD_COUNT
+ * results to out[], sets *outCount. No sim state touched. */
+void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
+                   const bool isBot[], AwardResult out[], int *outCount);
 
 #endif /* SERVER_SIM_INTERNAL_H */
