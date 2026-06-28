@@ -485,4 +485,9 @@ const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot);
 void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
                    const bool isBot[], AwardResult out[], int *outCount);
 
+/* Build the curated end-of-round summary (per-connected-slot scoreboard
+ * rows + computed awards) from the finalized accumulator. wbnLogKey is
+ * left empty. Reads sim->roundStats / playerConnected; touches no state. */
+void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out);
+
 #endif /* SERVER_SIM_INTERNAL_H */

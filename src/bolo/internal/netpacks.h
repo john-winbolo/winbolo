@@ -492,6 +492,9 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
                                               is running (drives the
                                               countdown). */
 
+#define PACKET_ROUND_STATS             208  /* server → all: end-of-round
+                                              scoreboard + awards */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

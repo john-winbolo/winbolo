@@ -3067,6 +3067,40 @@ const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot) 
     return &sim->roundStats[slot];
 }
 
+void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
+    memset(out, 0, sizeof(*out));
+
+    bool isBot[MAX_TANKS];
+    for (int slot = 0; slot < MAX_TANKS; slot++) {
+        isBot[slot] = botManagerIsBot(sim, (BYTE)slot);
+    }
+
+    /* One curated scoreboard row per connected slot. Leavers were zeroed
+     * out of the accumulator already, so only present slots contribute. */
+    for (int slot = 0; slot < MAX_TANKS; slot++) {
+        if (!sim->playerConnected[slot]) continue;
+        const PlayerRoundStats *rs = &sim->roundStats[slot];
+        RoundPlayerSummary *p = &out->players[out->playerCount++];
+        p->slot         = (uint8_t)slot;
+        p->isBot        = isBot[slot] ? 1 : 0;
+        p->kills        = (uint16_t)rs->kills;
+        p->deaths       = (uint16_t)rs->deaths;
+        p->baseCaptures = (uint16_t)rs->baseCaptures;
+        p->pillCaptures = (uint16_t)rs->pillCaptures;
+        p->dmgDealt     = (uint32_t)(rs->dmgToPlayers + rs->dmgToPills + rs->dmgToBases);
+        p->builds       = (uint16_t)(rs->pillsBuilt + rs->treesFarmed);
+    }
+
+    /* Awards rank over every slot; absent/zeroed slots score 0 and are
+     * omitted, so the result already excludes leavers. */
+    int n = 0;
+    computeAwards(sim->roundStats, MAX_TANKS, /*includeBots*/ true, isBot,
+                  out->awards, &n);
+    out->awardCount = (uint8_t)n;
+
+    /* wbnLogKey stays empty here; the finished-round key is filled later. */
+}
+
 int serverSimGetCompressedMap(ServerSim *sim, BYTE *output) {
     return mapSaveCompressedMap(&sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss, output);
 }

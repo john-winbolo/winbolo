@@ -3104,6 +3104,10 @@ set(_unit_test_names
     awards_omission
     awards_floors
     awards_include_bots
+    round_stats_codec_roundtrip
+    round_stats_codec_worstcase
+    round_stats_build_summary
+    round_stats_client_ingest
     vote_toggle_standalone_no_does_nothing
     vote_toggle_invalid_mode_dropped
     vote_toggle_yes_opens_vote

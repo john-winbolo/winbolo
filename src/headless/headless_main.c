@@ -301,6 +301,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_SERVER_TEXT:           return "CTRL_SERVER_TEXT";
     case CTRL_COMMAND_REJECTED:      return "CTRL_COMMAND_REJECTED";
     case CTRL_BALANCE_FAILED:        return "CTRL_BALANCE_FAILED";
+    case CTRL_ROUND_STATS:           return "CTRL_ROUND_STATS";
     default:                         return NULL;
   }
 }
@@ -555,6 +556,12 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
               (unsigned)evt->u.shellDeath.impactWY,
               (unsigned)evt->u.shellDeath.owner,
               (unsigned)evt->u.shellDeath.outcome);
+      break;
+
+    case CTRL_ROUND_STATS:
+      fprintf(f, ",\"playerCount\":%u,\"awardCount\":%u",
+              (unsigned)evt->u.roundStats.playerCount,
+              (unsigned)evt->u.roundStats.awardCount);
       break;
 
     case CTRL_EVENT_TYPE_COUNT:

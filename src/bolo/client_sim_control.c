@@ -406,6 +406,11 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyBrainList = evt->u.lobbyBrainList.list;
         break;
 
+    case CTRL_ROUND_STATS:
+        cs->lastRoundStats = evt->u.roundStats;
+        cs->lastRoundStatsValid = true;
+        break;
+
     case CTRL_LOBBY_MAP_CHANGE:
         cs->mapDownloadComplete = false;
         memset(cs->mapSkipVotes, 0, sizeof(cs->mapSkipVotes));
@@ -562,6 +567,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
     case CTRL_GAME_PHASE_COUNTDOWN:
         cs->netStat = netLobbyCountdown;
         cs->countdownSeconds = evt->u.gamePhase.countdownSeconds;
+        /* Round-only scope: the previous round's stats panel clears when
+         * the next round's countdown starts. */
+        cs->lastRoundStatsValid = false;
         frontEndAudioReturningToLobby(false);
         break;
     case CTRL_GAME_PHASE_RUNNING:

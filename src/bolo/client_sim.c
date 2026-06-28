@@ -1950,6 +1950,10 @@ const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {
   return &cs->lobbyBrainList;
 }
 
+const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs) {
+  return cs->lastRoundStatsValid ? &cs->lastRoundStats : NULL;
+}
+
 const char *clientSimGetLobbyMapListPath(const ClientSim *cs) {
   return cs->lobbyMapListPath;
 }

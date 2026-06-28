@@ -18,10 +18,15 @@
 
 #include "global.h"
 #include "input_packet.h"
+#include "client_sim.h"          /* ClientSim, clientSimApplyControl, accessor */
 #include "server_sim.h"
 #include "server_sim_internal.h" /* PlayerRoundStats, serverSimGetRoundStats — T2 */
 #include "server_sim_lifecycle.h"
 #include "round_stats.h"         /* AwardId, AwardResult, computeAwards */
+#include "control_event.h"       /* ControlEvent, CTRL_ROUND_STATS */
+#include "transport_control_codec.h"
+#include "transport_udp_internal.h" /* PACKET_HEADER_SIZE, MAX_CONTROL_PACKET */
+#include "netpacks.h"            /* PACKET_ROUND_STATS */
 #include "everard_map.h"
 #include "test_harness.h"
 
@@ -774,5 +779,216 @@ int run_awards_include_bots(void) {
     UT_ASSERT_MSG(find_award(out, n, AWARD_FISH_FOOD) == NULL,
                   "bot-only Fish Food omitted when bots excluded");
 
+    return 0;
+}
+
+/* Encode a CTRL_ROUND_STATS event through the full encoder, confirm it
+ * carries PACKET_ROUND_STATS, then decode the body back. Mirrors the
+ * alliance-reset codec helper. */
+static int codec_roundtrip_round_stats(const ControlEvent *in, ControlEvent *out) {
+    uint8_t buf[MAX_CONTROL_PACKET];
+    size_t outLen = 0;
+    ControlEncodeFn enc = transportControlCodecEncoder(CTRL_ROUND_STATS);
+    if (enc == NULL) return -1;
+    EncodeResult r = enc(in, NULL, buf, sizeof(buf), &outLen);
+    if (r != ENCODE_OK) return -2;
+    if (outLen < PACKET_HEADER_SIZE) return -3;
+    uint8_t packetType = buf[2];   /* packHeader writes packet type at byte 2 */
+    if (packetType != PACKET_ROUND_STATS) return -4;
+    ControlDecodeFn dec = transportControlCodecDecoder(packetType);
+    if (dec == NULL) return -5;
+    if (!dec(buf + PACKET_HEADER_SIZE, outLen - PACKET_HEADER_SIZE, out)) return -6;
+    return 0;
+}
+
+/* Every field of a populated RoundStatsSummary survives encode→decode. */
+int run_round_stats_codec_roundtrip(void) {
+    ControlEvent in, out;
+    memset(&in, 0, sizeof(in));
+    memset(&out, 0, sizeof(out));
+    in.type = CTRL_ROUND_STATS;
+    RoundStatsSummary *s = &in.u.roundStats;
+
+    s->playerCount = 3;
+    s->players[0].slot = 0;  s->players[0].isBot = 0;  s->players[0].kills = 12;
+    s->players[0].deaths = 3; s->players[0].baseCaptures = 2;
+    s->players[0].pillCaptures = 5; s->players[0].dmgDealt = 123456u;
+    s->players[0].builds = 7;
+    s->players[1].slot = 4;  s->players[1].isBot = 1;  s->players[1].kills = 0;
+    s->players[1].deaths = 9; s->players[1].baseCaptures = 0;
+    s->players[1].pillCaptures = 1; s->players[1].dmgDealt = 42u;
+    s->players[1].builds = 0;
+    /* Max-ish values to catch byte-order/width bugs. */
+    s->players[2].slot = 9;  s->players[2].isBot = 0;  s->players[2].kills = 300;
+    s->players[2].deaths = 301; s->players[2].baseCaptures = 65535u;
+    s->players[2].pillCaptures = 1000; s->players[2].dmgDealt = 4000000000u;
+    s->players[2].builds = 65535u;
+
+    s->awardCount = 3;
+    s->awards[0].awardId = AWARD_MOST_KILLS; s->awards[0].winnerSlot = 0;
+    s->awards[0].subjectSlot = NEUTRAL; s->awards[0].winnerIsBot = 0;
+    s->awards[0].value = 12;
+    s->awards[1].awardId = AWARD_NEMESIS; s->awards[1].winnerSlot = 9;
+    s->awards[1].subjectSlot = 4;  /* non-NEUTRAL subject */
+    s->awards[1].winnerIsBot = 0; s->awards[1].value = 7;
+    s->awards[2].awardId = AWARD_FISH_FOOD; s->awards[2].winnerSlot = 4;
+    s->awards[2].subjectSlot = NEUTRAL; s->awards[2].winnerIsBot = 1;
+    s->awards[2].value = 9;
+
+    strncpy(s->wbnLogKey, "abc123DEF456", ROUND_STATS_LOGKEY_LEN - 1);
+
+    UT_ASSERT_MSG(codec_roundtrip_round_stats(&in, &out) == 0,
+                  "round-stats codec round-trip failed");
+    UT_ASSERT(out.type == CTRL_ROUND_STATS);
+
+    const RoundStatsSummary *d = &out.u.roundStats;
+    UT_ASSERT_MSG(d->playerCount == 3, "playerCount, got %u", d->playerCount);
+    for (int i = 0; i < 3; i++) {
+        const RoundPlayerSummary *a = &s->players[i];
+        const RoundPlayerSummary *b = &d->players[i];
+        UT_ASSERT_MSG(b->slot == a->slot, "player %d slot", i);
+        UT_ASSERT_MSG(b->isBot == a->isBot, "player %d isBot", i);
+        UT_ASSERT_MSG(b->kills == a->kills, "player %d kills", i);
+        UT_ASSERT_MSG(b->deaths == a->deaths, "player %d deaths", i);
+        UT_ASSERT_MSG(b->baseCaptures == a->baseCaptures, "player %d baseCaptures", i);
+        UT_ASSERT_MSG(b->pillCaptures == a->pillCaptures, "player %d pillCaptures", i);
+        UT_ASSERT_MSG(b->dmgDealt == a->dmgDealt,
+                      "player %d dmgDealt, got %u", i, b->dmgDealt);
+        UT_ASSERT_MSG(b->builds == a->builds, "player %d builds", i);
+    }
+
+    UT_ASSERT_MSG(d->awardCount == 3, "awardCount, got %u", d->awardCount);
+    for (int i = 0; i < 3; i++) {
+        const AwardResult *a = &s->awards[i];
+        const AwardResult *b = &d->awards[i];
+        UT_ASSERT_MSG(b->awardId == a->awardId, "award %d id", i);
+        UT_ASSERT_MSG(b->winnerSlot == a->winnerSlot, "award %d winnerSlot", i);
+        UT_ASSERT_MSG(b->subjectSlot == a->subjectSlot, "award %d subjectSlot", i);
+        UT_ASSERT_MSG(b->winnerIsBot == a->winnerIsBot, "award %d winnerIsBot", i);
+        UT_ASSERT_MSG(b->value == a->value, "award %d value, got %u", i, b->value);
+    }
+
+    UT_ASSERT_MSG(strcmp(d->wbnLogKey, "abc123DEF456") == 0,
+                  "wbnLogKey round-trips, got '%s'", d->wbnLogKey);
+
+    return 0;
+}
+
+/* The worst case — every slot present, every award won, a full-length key —
+ * encodes successfully and stays within one control packet. */
+int run_round_stats_codec_worstcase(void) {
+    ControlEvent in;
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_ROUND_STATS;
+    RoundStatsSummary *s = &in.u.roundStats;
+
+    s->playerCount = MAX_TANKS;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        RoundPlayerSummary *p = &s->players[i];
+        p->slot = (uint8_t)i; p->isBot = 0;
+        p->kills = (uint16_t)i; p->deaths = (uint16_t)i;
+        p->baseCaptures = (uint16_t)i; p->pillCaptures = (uint16_t)i;
+        p->dmgDealt = 0xFFFFFFFFu; p->builds = (uint16_t)i;
+    }
+    s->awardCount = AWARD_COUNT;
+    for (int i = 0; i < AWARD_COUNT; i++) {
+        AwardResult *a = &s->awards[i];
+        a->awardId = (uint8_t)(i + 1); a->winnerSlot = (uint8_t)i;
+        a->subjectSlot = NEUTRAL; a->winnerIsBot = 0; a->value = 0xFFFFFFFFu;
+    }
+    memset(s->wbnLogKey, 'K', ROUND_STATS_LOGKEY_LEN - 1);
+    s->wbnLogKey[ROUND_STATS_LOGKEY_LEN - 1] = '\0';
+
+    uint8_t buf[MAX_CONTROL_PACKET];
+    size_t outLen = 0;
+    ControlEncodeFn enc = transportControlCodecEncoder(CTRL_ROUND_STATS);
+    UT_ASSERT(enc != NULL);
+    EncodeResult r = enc(&in, NULL, buf, sizeof(buf), &outLen);
+    UT_ASSERT_MSG(r == ENCODE_OK, "worst case must encode, got %d", (int)r);
+    UT_ASSERT_MSG(outLen <= MAX_CONTROL_PACKET,
+                  "worst case fits one packet, got %zu", outLen);
+
+    return 0;
+}
+
+/* The server builds the curated summary from the accumulator: one row per
+ * connected slot, the dmgDealt total and builds sum derived, and awards
+ * filled via computeAwards. */
+int run_round_stats_build_summary(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    serverSimAddPlayer(sim, 0, "P0", false);
+    serverSimAddPlayer(sim, 1, "P1", false);
+
+    sim->roundStats[0].kills        = 5;
+    sim->roundStats[0].deaths       = 1;
+    sim->roundStats[0].baseCaptures = 2;
+    sim->roundStats[0].dmgToPlayers = 100;
+    sim->roundStats[0].dmgToPills   = 10;
+    sim->roundStats[0].pillsBuilt   = 3;
+    sim->roundStats[0].treesFarmed  = 4;
+    sim->roundStats[1].kills        = 1;
+
+    RoundStatsSummary summary;
+    serverSimBuildRoundStatsSummary(sim, &summary);
+
+    UT_ASSERT_MSG(summary.playerCount == 2, "playerCount, got %u", summary.playerCount);
+    UT_ASSERT_MSG(summary.players[0].slot == 0, "row 0 slot, got %u", summary.players[0].slot);
+    UT_ASSERT_MSG(summary.players[0].dmgDealt == 110,
+                  "dmgDealt = players+pills+bases, got %u", summary.players[0].dmgDealt);
+    UT_ASSERT_MSG(summary.players[0].builds == 7,
+                  "builds = pillsBuilt+treesFarmed, got %u", summary.players[0].builds);
+    UT_ASSERT_MSG(summary.players[1].slot == 1, "row 1 slot, got %u", summary.players[1].slot);
+
+    const AwardResult *mk = find_award(summary.awards, summary.awardCount,
+                                       AWARD_MOST_KILLS);
+    UT_ASSERT_MSG(mk != NULL, "Most Kills award present");
+    UT_ASSERT_MSG(mk->winnerSlot == 0, "Most Kills winner, got %u", mk->winnerSlot);
+    UT_ASSERT_MSG(mk->value == 5, "Most Kills value, got %u", mk->value);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The client stores a received summary, exposes it via the accessor, and
+ * clears it when the next countdown starts. */
+int run_round_stats_client_ingest(void) {
+    ClientSim *cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, 0);
+
+    UT_ASSERT_MSG(clientSimGetLastRoundStats(cs) == NULL,
+                  "no stats before any are received");
+
+    ControlEvent evt;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_ROUND_STATS;
+    evt.u.roundStats.playerCount = 1;
+    evt.u.roundStats.players[0].slot = 3;
+    evt.u.roundStats.players[0].kills = 9;
+    evt.u.roundStats.awardCount = 1;
+    evt.u.roundStats.awards[0].awardId = AWARD_MOST_KILLS;
+    evt.u.roundStats.awards[0].winnerSlot = 3;
+    evt.u.roundStats.awards[0].value = 9;
+
+    clientSimApplyControl(cs, &evt);
+
+    const RoundStatsSummary *got = clientSimGetLastRoundStats(cs);
+    UT_ASSERT_MSG(got != NULL, "stats stored after ingest");
+    UT_ASSERT_MSG(got->playerCount == 1, "playerCount, got %u", got->playerCount);
+    UT_ASSERT_MSG(got->players[0].kills == 9, "kills field, got %u", got->players[0].kills);
+
+    /* The next countdown clears the previous round's panel (round-only scope). */
+    ControlEvent cd;
+    memset(&cd, 0, sizeof(cd));
+    cd.type = CTRL_GAME_PHASE_COUNTDOWN;
+    clientSimApplyControl(cs, &cd);
+
+    UT_ASSERT_MSG(clientSimGetLastRoundStats(cs) == NULL,
+                  "countdown clears the stored stats");
+
+    clientSimDestroy(cs);
     return 0;
 }

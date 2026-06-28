@@ -53,6 +53,30 @@ typedef struct {
     uint32_t value;       /* headline number; ratio awards ×100; see notes */
 } AwardResult;
 
+/* End-of-round summary shipped to clients: a curated per-player scoreboard
+ * row plus the won awards. The full PlayerRoundStats accumulator stays
+ * server-side; only this subset crosses the wire. */
+#define ROUND_STATS_LOGKEY_LEN 33   /* mirrors WINBOLONET_KEY_LEN */
+
+typedef struct {
+    uint8_t  slot;
+    uint8_t  isBot;
+    uint16_t kills;
+    uint16_t deaths;
+    uint16_t baseCaptures;
+    uint16_t pillCaptures;
+    uint32_t dmgDealt;   /* dmgToPlayers + dmgToPills + dmgToBases */
+    uint16_t builds;     /* pillsBuilt + treesFarmed */
+} RoundPlayerSummary;
+
+typedef struct {
+    uint8_t  playerCount;                    /* present slots, <= MAX_TANKS */
+    RoundPlayerSummary players[MAX_TANKS];
+    uint8_t  awardCount;                     /* <= AWARD_COUNT */
+    AwardResult awards[AWARD_COUNT];
+    char     wbnLogKey[ROUND_STATS_LOGKEY_LEN]; /* finished round's WBN log key; "" if none */
+} RoundStatsSummary;
+
 /* Awards tuning (tunable). */
 #define DMG_PER_CAPTURE        TANK_FULL_ARMOUR  /* 40 */
 #define AWARD_MIN_KILLS_KD     3

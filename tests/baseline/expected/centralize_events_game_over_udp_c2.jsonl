@@ -13,4 +13,5 @@
 {"tick":0,"type":"CTRL_MAP_DOWNLOAD_COMPLETE"}
 {"tick":198,"type":"CTRL_GAME_PHASE","phase":"GAME_OVER","countdownSeconds":0}
 {"tick":198,"type":"CTRL_GAME_OVER"}
+{"tick":198,"type":"CTRL_ROUND_STATS","playerCount":2,"awardCount":0}
 {"tick":198,"type":"CTRL_SERVER_SHUTDOWN"}
