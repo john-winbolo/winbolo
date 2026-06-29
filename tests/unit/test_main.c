@@ -100,6 +100,8 @@ static const UnitTestEntry s_tests[] = {
     { "vote_toggle_invalid_mode_dropped",                  run_vote_toggle_invalid_mode_dropped                  },
     { "vote_toggle_yes_opens_vote",                        run_vote_toggle_yes_opens_vote                        },
     { "vote_toggle_no_during_running_records_answered",    run_vote_toggle_no_during_running_records_answered    },
+    { "vote_back_to_lobby_blocked_without_lobby",          run_vote_back_to_lobby_blocked_without_lobby          },
+    { "vote_surrender_blocked_without_lobby",              run_vote_surrender_blocked_without_lobby              },
     { "lobby_set_team_clamps_max_tanks",            run_lobby_set_team_clamps_max_tanks            },
     { "lobby_set_team_accepts_max_legal",           run_lobby_set_team_accepts_max_legal           },
     { "lobby_set_team_accepts_unassigned",          run_lobby_set_team_accepts_unassigned          },
