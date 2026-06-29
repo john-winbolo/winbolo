@@ -2700,6 +2700,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
+    tests/unit/test_rand_save_restore.c
     tests/unit/test_net_opt_wire.c
     src/common/md5.c
     src/common/mp_diag_log.c
@@ -2820,14 +2821,38 @@ set(WINBOLO_UNITTESTS_SOURCES
     # CTRL_SPECTATOR_SLOT body-codec round-trip: encode/decode the per-spectator
     # roster event through the body tables, including the out-of-range rejection.
     tests/unit/test_spectator_slot_codec.c
+    # CTRL_SPECTATOR_CHAT body-codec round-trip: encode/decode the spectator
+    # lobby-chat event through the body tables, including the empty/max-length
+    # messages and the out-of-range specIdx / msgLen-overrun rejections.
+    tests/unit/test_spectator_chat_codec.c
+    # Spectator-chat routing: a published CTRL_SPECTATOR_CHAT reaches a player
+    # bus subscriber and a live spectator (allowlist); broadcast CTRL_CHAT
+    # reaches the spectator; team/unicast CTRL_CHAT does not.
+    tests/unit/test_spectator_chat_routing.c
+    # Spectator-chat replay emission: serverSimReceiveSpectatorChat writes a
+    # log_SpectatorChat (specIdx + message) into the recording .wbv stream.
+    tests/unit/test_spectator_chat_log.c
+    # Lobby-chat catch-up buffer: broadcast + spectator chat captured in
+    # lobby/countdown, cleared at game start, capped, and re-delivered by
+    # serverSimReplayLobbyChat at the spectator drain-flip (fresh joins none).
+    tests/unit/test_spectator_chat_catchup.c
     # Spectator connect — client side: the real client transport connecting with
     # the spectator flag lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting
     # seed), consuming no tank slot and starting no map download.
     tests/unit/test_spectator_connect.c
-    # Spectator command rejection: a tankless viewer's lobby/gameplay commands
-    # have no server-state effect (client transport never emits them; the
-    # dispatcher guard rejects an out-of-range sender slot).
+    # Spectator live-lobby control intake — client side: a tankless spectator
+    # (myPlayerNum 0, aliasing real slot 0) fed the allowlisted lobby control
+    # bus populates its mirror without mis-attributing slot 0 to the viewer.
+    tests/unit/test_spectator_client_lobby_intake.c
+    # Spectator command isolation: a tankless viewer's broadcast chat is accepted
+    # and round-trips into its lobby log, while its non-chat lobby/gameplay
+    # commands have no server-state effect (client guards refuse to originate
+    # them; the dispatcher guard rejects an out-of-range sender slot).
     tests/unit/test_spectator_command_reject.c
+    # Spectator lobby read-only invariant: a tankless viewer fires every guarded
+    # clientSimNetSend* mutation path and the seated lobby is wholly untouched —
+    # the client-side send-suppression backstop (dialog rendering is human-tested).
+    tests/unit/test_spectator_lobby_readonly.c
     # Spectator feed capture — client side: a real spectator client over loopback
     # captures the CHANNEL_BULK seed + ordered forward records into the ClientSim
     # feed (record header stripped, order preserved), exercising the ack-emitter
@@ -2841,6 +2866,19 @@ set(WINBOLO_UNITTESTS_SOURCES
     # gets the delayed keyframe at head - delay armed as a BULK_KIND_SPEC_SEED
     # transfer whose blob is byte-equal to the ring keyframe at that delay.
     tests/unit/test_spectator_seed.c
+    # Live-lobby spectator control bus: lobby subscribe + sync replay,
+    # serverSpectatorDeliverControl allowlist, subscriber capacity, and the
+    # spectator-roster enumerator + fan to live spectators.
+    tests/unit/test_spectator_live_bus.c
+    # Live↔delayed cutover for spectators: the anti-cheat boundary at game
+    # start (a live spectator is unsubscribed before any running-state publish,
+    # so it receives zero running control) and the drain-then-flip back to the
+    # live lobby once the delayed game is fully watched.
+    tests/unit/test_spectator_cutover.c
+    # Dual-mode spectator session: the client live-lobby bit is seeded from the
+    # accept mode byte, flips to delayed when the feed begins at game start, and
+    # back to live when lobby control resumes after the delayed game drains.
+    tests/unit/test_loopback_spectator_lobby.c
     # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
@@ -3039,6 +3077,7 @@ set_flat_output(WinBoloUnitTests "${CMAKE_BINARY_DIR}")
 
 set(_unit_test_names
     md5_to_hex
+    rand_save_restore
     pill_armour_intank_roundtrip
     base_event_classification
     transport_local_passive_threads
@@ -3298,12 +3337,24 @@ set(_unit_test_names
     spectator_join
     spectator_roster_publish
     spectator_slot_codec
+    spectator_chat_codec
+    spectator_chat_routing
+    spectator_chat_log
+    spectator_chat_catchup
     spectator_connect
+    spectator_client_lobby_intake
     spectator_command_reject
+    spectator_lobby_readonly
     spectator_seed_integration
     spectator_capture
     spectator_log
     spectator_seed
+    spectator_lobby_subscribe
+    spectator_control_filter
+    spectator_subscriber_capacity
+    spectator_roster_to_spectators
+    spectator_lobby_cutover
+    loopback_spectator_lobby
     bulk_transfer
     overflow_guards
     channel_reset_codec_roundtrip

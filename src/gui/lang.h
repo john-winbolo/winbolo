@@ -482,6 +482,8 @@
 #define STR_DLGLOBBY_TEAM_LEFT_FMT          1511
 /* Lobby roster header above the spectator list ({number} = live count) */
 #define STR_DLGLOBBY_SPECTATORS_FMT         1848
+/* Sender-name tag prepended to a spectator's lobby chat line */
+#define STR_DLGLOBBY_SPECTATOR_TAG          1866
 /* Map-preview start-picker tooltips and the assign-to-someone menu */
 #define STR_STARTPICK_TIP_FREE_HOST         1512
 #define STR_STARTPICK_TIP_FREE              1513

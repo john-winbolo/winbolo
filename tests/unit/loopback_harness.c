@@ -204,6 +204,31 @@ bool loopbackHarnessStartSpectator(LoopbackHarness *h, const char *playerName,
     return true;
 }
 
+bool loopbackHarnessStartSpectatorLobby(LoopbackHarness *h,
+                                        const char *playerName, uint64_t seed) {
+    if (h == NULL) return false;
+    memset(h, 0, sizeof(*h));
+
+    /* Lobby (not running) server: a spectator that connects while the server
+     * is in lobby/countdown is registered as a live control-bus subscriber and
+     * fed allowlisted lobby control directly — no spectator ring is consulted
+     * on this path, so (unlike loopbackHarnessStartSpectator) none is created. */
+    if (!loopbackBringUpServer(h, /*lobbyMode*/ true)) {
+        return false;
+    }
+    /* Spectating is operator-gated and off by default; open viewer slots so the
+     * server's spectator-accept path admits the connect. */
+    serverSimSetMaxSpectators(h->sim, 4);
+
+    if (!loopbackConnectClient(h, playerName, /*impairSpec*/ NULL,
+                               /*spectator*/ true)) {
+        return false;
+    }
+
+    bolo_srand(seed);
+    return true;
+}
+
 void loopbackHarnessPump(LoopbackHarness *h) {
     if (h == NULL) return;
     if (h->clientUp) clientSimNetTick(h->cs);

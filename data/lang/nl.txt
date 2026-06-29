@@ -1813,6 +1813,7 @@ STR_DLGSETTINGS_TAB_SESSION=Sessie
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Toeschouwers ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Toeschouwer] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Stoppen met kijken?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=Live

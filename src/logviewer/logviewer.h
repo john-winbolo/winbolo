@@ -195,8 +195,12 @@ void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *rend
  *
  * serverHost/serverPort are the connected server's typed address, used only to
  * title the borrowed window (logviewer.c cannot reach client_sim.h to read them
- * off the ClientSim); the caller restores the app title on return. */
-void spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
+ * off the ClientSim); the caller restores the app title on return.
+ *
+ * Returns true when it exits because the server put the spectator back into
+ * live-lobby mode (the delayed game drained to the lobby) — the caller re-enters
+ * the live lobby; false when the user left or the feed never loaded. */
+bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
 /* Host-callable decoder lifecycle: create allocates the state, sets its

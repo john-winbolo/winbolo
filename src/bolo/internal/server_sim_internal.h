@@ -21,12 +21,22 @@
 #include <stddef.h>
 #include <time.h>
 #include "server_sim.h"
+#include "control_event.h"  /* ControlEvent — stored by value in the lobby-chat buffer */
 #include "game_sim.h"        /* GameSim layout — used by the sim field below */
 #include "position_history.h" /* PosHistory — used by posHistory / lgmPosHistory */
 #include "mapgen.h" /* MapGenConfig — embedded by value in randomMapConfig */
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 #include "bot_manager.h"    /* BotManager — embedded by value below */
+#include "transport_udp.h"  /* MAX_SPECTATORS — subscriber capacity */
+
+/* Control-event subscriber capacity: one slot per tank, one for the local
+ * host/SP ClientSim, plus one per possible spectator. Single source of truth
+ * for both the subscriber arrays below and every loop bound in server_sim.c. */
+#define SUBSCRIBER_SLOT_COUNT (MAX_TANKS + 1 + MAX_SPECTATORS)
+
+/* Cap on the current-session lobby-chat catch-up buffer (oldest dropped). */
+#define LOBBY_CHAT_BUFFER_MAX 200
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -367,11 +377,27 @@ struct ServerSim {
     bool         wantLogging;
     char         userLogFileName[512];
 
-    /* In-process control event subscribers (bot ClientSims, SP humanSim). */
-    ControlSubscriber subscribers[MAX_TANKS + 1];
-    uint16_t          subscriberGen[MAX_TANKS + 1];
+    /* In-process control event subscribers (bot ClientSims, SP humanSim,
+     * and live-lobby spectators). */
+    ControlSubscriber subscribers[SUBSCRIBER_SLOT_COUNT];
+    uint16_t          subscriberGen[SUBSCRIBER_SLOT_COUNT];
     int               numSubscribers;
     bool              publishing;
+
+    /* Spectator roster enumerator (registered by the transport layer). Invoked
+     * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
+     * spectator; NULL when no enumerator is registered. */
+    SpectatorRosterEnumFn specRosterEnum;
+    void                 *specRosterEnumCtx;
+
+    /* Current-session lobby-chat catch-up buffer. Broadcast player chat
+     * (CTRL_CHAT, destPlayer 0xFF) and spectator chat (CTRL_SPECTATOR_CHAT)
+     * captured while the server is in lobby/countdown, cleared at game start,
+     * capped at LOBBY_CHAT_BUFFER_MAX (oldest dropped). Replayed to a spectator
+     * on its delayed->live drain-flip so it sees the lobby chat sent while it
+     * was still finishing the delayed game; fresh joins get nothing. */
+    ControlEvent lobbyChatBuffer[LOBBY_CHAT_BUFFER_MAX];
+    int          lobbyChatCount;
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ServerSim, sim) == 0,

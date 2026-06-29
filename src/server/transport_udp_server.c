@@ -330,6 +330,18 @@ typedef struct {
     bool     inCountdown;
     uint32_t countdownRemaining;
     uint32_t countdownSentTick;
+    bool             live;       /* live lobby control-bus subscriber */
+    SubscriberHandle controlSub; /* bus handle while live; INVALID otherwise */
+    /* Live-lobby map download. While the viewer watches the live lobby it needs
+     * the current lobby map (for the preview + start positions), delivered over
+     * its own CHANNEL_BULK exactly like a player's join download — but installed
+     * client-side without leaving spectator mode. lobbyMap is a spectator-owned
+     * copy of the compressed map, armed at connect / re-join / map change and
+     * freed once bulkSenderBegin copies it into the sender (or on disconnect).
+     * Distinct from the delayed seed (game-time map): the two never overlap on
+     * the channel because the seed arms only when !live and this only when live. */
+    BYTE    *lobbyMap;
+    uint32_t lobbyMapSize;
 } SpectatorConn;
 
 /* Server-side global state */
@@ -339,6 +351,23 @@ static struct {
     UdpServerClient clients[MAX_TANKS];
     SpectatorConn   spectators[MAX_SPECTATORS];
     uint32_t tickCount;
+    /* recordSeq of the most recent running-game ring record. Captured every
+     * running tick (below), it freezes at the game's last record X when the
+     * game ends, since game-over ticks are not recorded — so it is the bar a
+     * delayed spectator must reach before it has watched the whole game. */
+    uint32_t lastRunningSeq;
+    /* recordSeq of the current game's FIRST ring record, captured on the
+     * non-running->running transition (serverSimTick records that record before
+     * this tick's spectator service runs, so the head is it). The ring records
+     * the pre-game lobby continuously, so a freshly cut-over delayed view sits at
+     * head - delay inside that lobby; it must reach gameStartSeq before it is
+     * showing game content rather than replaying the recorded lobby. Refreshed
+     * each new game so a back-to-back round counts down to the latest start. */
+    uint32_t gameStartSeq;
+    /* Tracks whether the previous spectator-service tick saw the game running, so
+     * the transition above is detected once per game (mirrors lastRunningSeq's
+     * every-running-tick capture). */
+    bool     specWasRunning;
 
     /* Compressed map buffer for sending to joining clients */
     BYTE     compressedMap[MAP_DOWNLOAD_MAX_SIZE];
@@ -1231,25 +1260,265 @@ static int serverFindSpectator(const struct sockaddr_in *addr) {
 
 /* Spectator-flavoured JOIN_ACCEPT: same PACKET_JOIN_ACCEPT layout as
  * serverSendJoinAccept, but reads spectators[s] and marks the connection a
- * viewer — slot byte = 0xFF (no tank slot) and compressedMapSize = 0 (the
- * map arrives in the ring seed, not the live download path). */
+ * viewer — slot byte = 0xFF (no tank slot). The map size is the real compressed
+ * size in lobby/countdown (the live-lobby map streams for the preview) and 0
+ * while running (the game-time map rides the ring seed instead). */
 static void serverSendSpectatorAccept(int s, ServerSim *sim,
                                       const struct sockaddr_in *addr) {
-    uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8];
+    uint8_t acceptBuf[PACKET_HEADER_SIZE + 9 + 8 + 1];
+    ServerState st;
     int pos;
 
     packHeader(acceptBuf, PACKET_JOIN_ACCEPT,
                udpServer.spectators[s].outSequence++);
     pos = PACKET_HEADER_SIZE;
+    st = serverSimGetState(sim);
     acceptBuf[pos++] = 0xFF;                       /* viewer: no tank slot */
     packU32(acceptBuf + pos, serverSimGetTick(sim));
     pos += 4;
-    packU32(acceptBuf + pos, 0);                   /* no live map download */
+    /* In lobby/countdown the viewer watches the live lobby and needs the current
+     * map for its preview, so carry the real size and stream it (mirrors a
+     * player's join download, on the spectator's own CHANNEL_BULK). Running -> 0:
+     * the delayed seed carries the game-time map instead. */
+    packU32(acceptBuf + pos,
+            (st == serverStateLobby || st == serverStateCountdown)
+                ? udpServer.compressedMapSize : 0u);
     pos += 4;
     packConnId(acceptBuf + pos, udpServer.spectators[s].connId);
     pos += 8;
+    /* Initial spectator mode byte (appended after the connId trailer so the
+     * connId offset and its client-side length gate are unchanged): 1 when the
+     * server is in lobby/countdown (the viewer watches the live lobby), 0 when a
+     * game is running (delayed ring). Same predicate serverAcceptSpectator uses
+     * to decide live bus registration. */
+    acceptBuf[pos++] =
+        (st == serverStateLobby || st == serverStateCountdown) ? 1 : 0;
 
     srvSendTo(acceptBuf, pos, addr);
+}
+
+/* Arm (or re-arm) the live-lobby map download for spectator s: copy the current
+ * compressed map into the spectator's own buffer; serverServiceSpectators begins
+ * the BULK_KIND_DOWNLOAD once its CHANNEL_BULK is idle, then frees the copy.
+ * resetChannel drops any in-flight transfer first — bulkSenderReset + a
+ * CHANNEL_BULK send-window re-base, carried to the viewer as a CTRL_CHANNEL_RESET
+ * so it re-bases its receiver (mirrors the player map-change path) — needed on a
+ * re-join or map change where an older transfer may be mid-flight; false for a
+ * fresh connect whose channel is still empty. No-op when the server holds no map. */
+static void serverArmSpectatorLobbyMap(int s, bool resetChannel) {
+    SpectatorConn *sp = &udpServer.spectators[s];
+
+    if (udpServer.compressedMapSize == 0) return;
+
+    if (resetChannel) {
+        uint32_t b3;
+        ControlEvent resetEvt;
+        ControlEncodeBodyFn enc;
+        uint8_t msg[CHANNEL_CONTROL_SEG];
+        size_t bodyLen = 0;
+
+        bulkSenderReset(&sp->bulkSend);
+        b3 = channelResetSend(&sp->channelMux, CHANNEL_BULK);
+        memset(&resetEvt, 0, sizeof(resetEvt));
+        resetEvt.type = CTRL_CHANNEL_RESET;
+        resetEvt.u.channelReset.channelMask = (uint8_t)(1u << CHANNEL_BULK);
+        resetEvt.u.channelReset.ch3Baseline = b3;
+        enc = transportControlCodecBodyEncoder(CTRL_CHANNEL_RESET);
+        if (enc != NULL &&
+            enc(&resetEvt, NULL, msg + 3, sizeof(msg) - 3, &bodyLen) == ENCODE_OK) {
+            msg[0] = (uint8_t)CTRL_CHANNEL_RESET;
+            packU16(msg + 1, (uint16_t)bodyLen);
+            channelSend(&sp->channelMux, CHANNEL_CONTROL, msg,
+                        (uint16_t)(3 + bodyLen));
+        }
+    }
+
+    if (sp->lobbyMap != NULL) free(sp->lobbyMap);
+    sp->lobbyMap = (BYTE *)malloc(udpServer.compressedMapSize);
+    if (sp->lobbyMap == NULL) {
+        sp->lobbyMapSize = 0;
+        return;
+    }
+    memcpy(sp->lobbyMap, udpServer.compressedMap, udpServer.compressedMapSize);
+    sp->lobbyMapSize = udpServer.compressedMapSize;
+}
+
+/* Per-spectator subscriber deliver callback — the spectator peer of
+ * udpClientDeliverControl. ctx is the SpectatorConn. A spectator has no
+ * playerNum/team, so this is an explicit drop-by-default ALLOWLIST: only
+ * lobby-visible, non-player-targeted control reaches a viewer, so no future
+ * CTRL_* can leak a player-private event onto a spectator. Passed events are
+ * body-encoded onto the spectator's own CHANNEL_CONTROL; the carrier at the
+ * bottom of serverServiceSpectators flushes it (no explicit flush here). */
+static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
+    SpectatorConn *sp = (SpectatorConn *)ctx;
+    int idx;
+    bool allow;
+
+    if (!sp->connected) {
+        return;
+    }
+    idx = (int)(sp - udpServer.spectators);
+
+    switch (evt->type) {
+    case CTRL_GAME_PHASE_LOBBY:
+    case CTRL_GAME_PHASE_COUNTDOWN:
+    case CTRL_GAME_PHASE_RUNNING:
+    case CTRL_GAME_PHASE_GAME_OVER:
+    case CTRL_LOBBY_SETTINGS:
+    case CTRL_LOBBY_MAP_CHANGE:
+    case CTRL_LOBBY_SLOT:
+    case CTRL_LOBBY_TEAM_META:
+    case CTRL_LOBBY_BOT_CONFIG:
+    case CTRL_LOBBY_BOT_BRAIN:
+    case CTRL_LOBBY_BRAIN_LIST:
+    case CTRL_PLAYER_JOIN:
+    case CTRL_BALANCE_PROPOSAL:
+    case CTRL_MAP_SKIP_STATE:
+    case CTRL_GAME_VOTE_STATE:
+    case CTRL_SPECTATOR_SLOT:
+    case CTRL_SPECTATOR_CHAT:
+    case CTRL_LOBBY_SYNC_COMPLETE:
+        allow = true;
+        break;
+    case CTRL_CHAT:
+        /* Broadcast chat only; team (0x81..0x90) and unicast are player-private.
+         * No sender-skip needed — the sender is a player, the spectator has no
+         * playerNum. */
+        allow = (evt->u.chat.destPlayer == 0xFF);
+        break;
+    default:
+        allow = false;
+        break;
+    }
+
+    if (!allow) {
+        return;
+    }
+
+    /* Body-encode and queue on CHANNEL_CONTROL, mirroring udpClientDeliverControl:
+     * [type u8][bodyLen u16 BE][body]. The codec is recipient-agnostic, so the
+     * recipient arg is NULL (matches serverSimControlSnapshotDeliver). */
+    {
+        ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(evt->type);
+        uint8_t msg[CHANNEL_CONTROL_SEG];
+        size_t bodyLen = 0;
+        if (enc == NULL) {
+            mpDiagLog("[srv] spec deliver SKIP idx=%d type=%s reason=no-encoder",
+                      idx, mpDiagCtrlName((int)evt->type));
+            return;
+        }
+        if (enc(evt, NULL, msg + 3, sizeof(msg) - 3, &bodyLen) != ENCODE_OK) {
+            mpDiagLog("[srv] spec deliver SKIP idx=%d type=%s reason=encode",
+                      idx, mpDiagCtrlName((int)evt->type));
+            return;
+        }
+        msg[0] = (uint8_t)evt->type;
+        packU16(msg + 1, (uint16_t)bodyLen);
+        if (!channelSend(&sp->channelMux, CHANNEL_CONTROL,
+                         msg, (uint16_t)(3 + bodyLen))) {
+            /* Full window: drop and warn. Do NOT disconnect from inside the
+             * deliver callback — there is no deferred-removal path for
+             * spectators, and tearing the slot down here risks reentrancy. */
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                        "spectator control channel overflow for slot %d, dropping event",
+                        idx);
+            mpDiagLog("[srv] spec OVERFLOW idx=%d type=%s -> drop",
+                      idx, mpDiagCtrlName((int)evt->type));
+            return;
+        }
+        mpDiagLog("[srv] spec CTRL->ch2 idx=%d type=%s bodyLen=%u",
+                  idx, mpDiagCtrlName((int)evt->type), (unsigned)bodyLen);
+    }
+}
+
+/* Worst case for the lobby-chat backlog blob. The buffer holds the two event
+ * types serverSimPublishControl captures (CTRL_CHAT broadcasts and
+ * CTRL_SPECTATOR_CHAT). The bigger encoded body is CTRL_CHAT: a localized
+ * server message fills body[] to CHAT_BODY_MAX (272), and the codec frames it
+ * as [fromPlayer 1][destPlayer 1][body] -> 2 + CHAT_BODY_MAX. (CTRL_SPECTATOR_CHAT
+ * is only 2 + PACKET_MAX_CHAT_MESSAGE = 130, so it never dominates.) Each blob
+ * record then adds [type 1][bodyLen 2 BE], and up to LOBBY_CHAT_BUFFER_MAX
+ * records pack back to back. Sizing off the constants keeps this from silently
+ * undersizing if a chat limit moves; a typed-line assumption (128) undersized
+ * it and dropped the whole catch-up on a busy lobby. */
+#define LOBBY_CHAT_BACKLOG_BODY_MAX  (2 + CHAT_BODY_MAX)
+#define LOBBY_CHAT_BACKLOG_REC_MAX   (3 + LOBBY_CHAT_BACKLOG_BODY_MAX)
+#define LOBBY_CHAT_BACKLOG_WIRE_MAX  (LOBBY_CHAT_BUFFER_MAX * LOBBY_CHAT_BACKLOG_REC_MAX)
+
+/* The client reassembles this blob into a buffer bounded by MAP_DOWNLOAD_MAX_SIZE
+ * (transport_udp_client.c). If the worst case ever outgrew that bound the server
+ * could stage a blob the client would refuse, so pin the relationship here. */
+BOLO_STATIC_ASSERT(LOBBY_CHAT_BACKLOG_WIRE_MAX <= MAP_DOWNLOAD_MAX_SIZE,
+                   lobby_chat_backlog_fits_client_reassembly_bound);
+
+/* Sink that serializes the sim's replayed lobby-chat events into one blob, in
+ * the same [type][bodyLen BE][body] framing serverSpectatorDeliverControl puts
+ * on CHANNEL_CONTROL — so the client decodes each record with the existing
+ * control-codec path. On any encode error or capacity overrun it latches
+ * `overflow` and the caller declines to send (the catch-up is best-effort). */
+typedef struct {
+    uint8_t *buf;
+    uint32_t cap;
+    uint32_t len;
+    bool     overflow;
+} LobbyChatBlobSink;
+
+static void serverLobbyChatBlobDeliver(void *ctx, const struct ControlEvent *evt) {
+    LobbyChatBlobSink *s = (LobbyChatBlobSink *)ctx;
+    ControlEncodeBodyFn enc;
+    uint8_t body[MAX_CONTROL_PACKET];
+    size_t bodyLen = 0;
+
+    if (s->overflow) return;
+    enc = transportControlCodecBodyEncoder(evt->type);
+    if (enc == NULL ||
+        enc(evt, NULL, body, sizeof(body), &bodyLen) != ENCODE_OK) {
+        s->overflow = true;
+        return;
+    }
+    if ((uint32_t)(s->len + 3 + bodyLen) > s->cap) {
+        s->overflow = true;
+        return;
+    }
+    s->buf[s->len++] = (uint8_t)evt->type;
+    packU16(s->buf + s->len, (uint16_t)bodyLen);
+    s->len += 2;
+    memcpy(s->buf + s->len, body, bodyLen);
+    s->len += (uint32_t)bodyLen;
+}
+
+/* Drain the sim's current-session lobby-chat backlog to spectator s as a single
+ * BULK_KIND_LOBBY_CHAT_BACKLOG blob on CHANNEL_BULK. Called ONLY at the
+ * delayed->live drain-flip (after the sync re-register sets the lobby phase, and
+ * after serverArmSpectatorLobbyMap has reset/idled the bulk sender) — never on a
+ * fresh accept or player join, so fresh joiners get no backlog. The armed lobby
+ * map streams next, once this blob drains (single-blob-in-flight guard). */
+static void serverSendSpectatorBacklog(int s, ServerSim *sim) {
+    SpectatorConn *sp = &udpServer.spectators[s];
+    LobbyChatBlobSink sink;
+    uint8_t *blob = (uint8_t *)malloc(LOBBY_CHAT_BACKLOG_WIRE_MAX);
+
+    if (blob == NULL) return;
+    sink.buf = blob;
+    sink.cap = LOBBY_CHAT_BACKLOG_WIRE_MAX;
+    sink.len = 0;
+    sink.overflow = false;
+    serverSimReplayLobbyChat(sim, serverLobbyChatBlobDeliver, &sink);
+
+    if (!sink.overflow && sink.len > 0 && !bulkSenderBusy(&sp->bulkSend)) {
+        BulkStreamHeader sh;
+        memset(&sh, 0, sizeof(sh));
+        sh.kind = BULK_KIND_LOBBY_CHAT_BACKLOG;
+        sh.gen = 0;
+        sh.totalSize = sink.len;
+        sh.pathLen = 0;
+        sh.path[0] = '\0';
+        bulkSenderBegin(&sp->bulkSend, &sh, blob, sink.len);
+        mpDiagLog("[srv] spec idx=%d lobby-chat backlog -> bulk (%u bytes)",
+                  s, (unsigned)sink.len);
+    }
+    free(blob);   /* bulkSenderBegin copied it into its own buffer */
 }
 
 /* Fill a CTRL_SPECTATOR_SLOT event from spectator slot s. A disconnected slot
@@ -1275,10 +1544,31 @@ static void serverFillSpectatorSlotEvent(int s, ControlEvent *evt) {
     }
 }
 
+/* Spectator roster enumerator (registered on the sim via
+ * serverSimSetSpectatorRosterEnumerator). The sim invokes this during
+ * sync-replay to emit one CTRL_SPECTATOR_SLOT per connected spectator through
+ * the subscriber's own deliver path, so every new subscriber — players and
+ * spectators alike — is seeded the spectator roster, and the delayed ring
+ * keyframe carries it for free. */
+static void serverEnumSpectatorRoster(
+    void *enumCtx,
+    void (*deliver)(void *, const ControlEvent *),
+    void *deliverCtx) {
+    int sp;
+    (void)enumCtx;
+    for (sp = 0; sp < MAX_SPECTATORS; sp++) {
+        ControlEvent evt;
+        if (!udpServer.spectators[sp].connected) continue;
+        serverFillSpectatorSlotEvent(sp, &evt);
+        deliver(deliverCtx, &evt);
+    }
+}
+
 /* Broadcast spectator slot s's current roster row to every connected player
- * client. Player clients only — spectators are never on this roster and never
- * receive it. Safe to call from the JOIN/disconnect paths (not the subscriber
- * bus); the deliver callback skips disconnected slots on its own. */
+ * client and every live spectator. Safe to call from the JOIN/disconnect paths
+ * (not the subscriber bus); each deliver callback skips disconnected slots on
+ * its own. The subject slot itself is included in the spectator fan, so a
+ * spectator sees both itself and the others on its roster. */
 static void serverBroadcastSpectatorSlot(int s) {
     ControlEvent evt;
     int idx;
@@ -1286,6 +1576,11 @@ static void serverBroadcastSpectatorSlot(int s) {
     for (idx = 0; idx < MAX_TANKS; idx++) {
         if (udpServer.clients[idx].connected) {
             udpClientDeliverControl(&udpServer.clients[idx], &evt);
+        }
+    }
+    for (idx = 0; idx < MAX_SPECTATORS; idx++) {
+        if (udpServer.spectators[idx].live) {
+            serverSpectatorDeliverControl(&udpServer.spectators[idx], &evt);
         }
     }
 }
@@ -1317,6 +1612,20 @@ static void serverAcceptSpectator(ServerSim *sim,
     int effectiveCap;
     int s;
 
+    /* Ensure the compressed map exists for the live-lobby map download. Player
+     * joins populate it (after serverSimAddPlayer), but a spectator-only lobby
+     * may have had no player join yet, leaving it empty — compress the current
+     * map now so the accept carries a real size and the download can stream.
+     * Guarded so a re-JOIN doesn't recompress; map changes refresh it separately. */
+    if (udpServer.compressedMapSize == 0 &&
+        (serverSimGetState(sim) == serverStateLobby ||
+         serverSimGetState(sim) == serverStateCountdown)) {
+        int mapLen = serverSimGetCompressedMap(sim, udpServer.compressedMap);
+        if (mapLen > 0) {
+            udpServer.compressedMapSize = (uint32_t)mapLen;
+        }
+    }
+
     /* Re-JOIN from a known spectator address: resend the accept, no new slot.
      * Refresh the stored country and re-broadcast the roster row so a player
      * client that joined after this spectator (or missed the first broadcast)
@@ -1325,6 +1634,12 @@ static void serverAcceptSpectator(ServerSim *sim,
     if (s >= 0) {
         serverSetSpectatorCountry(s, country);
         serverSendSpectatorAccept(s, sim, fromAddr);
+        /* The re-accept makes a live viewer re-allocate its map buffer, so
+         * re-arm the lobby-map download (with a channel reset, since an earlier
+         * transfer may be in flight) or it would wait for bytes that never come. */
+        if (udpServer.spectators[s].live) {
+            serverArmSpectatorLobbyMap(s, /*resetChannel=*/true);
+        }
         serverBroadcastSpectatorSlot(s);
         return;
     }
@@ -1387,10 +1702,43 @@ static void serverAcceptSpectator(ServerSim *sim,
     udpServer.spectators[s].inCountdown        = false;
     udpServer.spectators[s].countdownRemaining = 0;
     udpServer.spectators[s].countdownSentTick  = 0;
+    udpServer.spectators[s].live               = false;
+    udpServer.spectators[s].controlSub         = SUBSCRIBER_HANDLE_INVALID;
+    udpServer.spectators[s].lobbyMap           = NULL;
+    udpServer.spectators[s].lobbyMapSize       = 0;
 
     serverSendSpectatorAccept(s, sim, fromAddr);
     /* Tell every connected player client a new viewer is on the roster. */
     serverBroadcastSpectatorSlot(s);
+
+    /* Live-lobby spectating: in lobby/countdown the viewer is a real-time
+     * control-bus subscriber, so it tracks roster/ready/chat live. Registration
+     * fires the sync replay through serverSpectatorDeliverControl (allowlist-
+     * filtered) onto this spectator's CHANNEL_CONTROL; the serverServiceSpectators
+     * carrier flushes it, so no explicit flush is needed. In-game viewers stay on
+     * the delayed ring (live stays false). */
+    {
+        ServerState st = serverSimGetState(sim);
+        if (st == serverStateLobby || st == serverStateCountdown) {
+            SubscriberHandle sub =
+                serverSimRegisterSubscriber(sim, serverSpectatorDeliverControl,
+                                            &udpServer.spectators[s]);
+            if (sub == SUBSCRIBER_HANDLE_INVALID) {
+                /* Subscriber budget full (unreachable within the 49-slot budget
+                 * today): stay not-live with no bus handle rather than a live
+                 * state backed by a dead subscription that delivers nothing. */
+                WB_LOG_WARN(WB_LOG_CAT_NET,
+                            "spectator %d: control-bus subscriber budget full; "
+                            "not entering live-lobby", s);
+            } else {
+                udpServer.spectators[s].live       = true;
+                udpServer.spectators[s].controlSub = sub;
+            }
+            /* Fresh connect: the channel is empty, so arm the lobby-map download
+             * without a reset. serverServiceSpectators streams it once idle. */
+            serverArmSpectatorLobbyMap(s, /*resetChannel=*/false);
+        }
+    }
 
     /* Record the viewer's arrival in the .wbv replay log (and any spectator
      * ring tap). logAddEvent self-gates: a no-op unless a log is recording. */
@@ -1413,7 +1761,7 @@ static void serverAcceptSpectator(ServerSim *sim,
  * WBN/chat/subscriber/serverSimRemovePlayer work applies. graceful=false is a
  * timeout; graceful=true is reserved for the explicit leave path (2c) and does
  * the same teardown for now. */
-static void serverDisconnectSpectator(int s, bool graceful) {
+static void serverDisconnectSpectator(ServerSim *sim, int s, bool graceful) {
     if (s < 0 || s >= MAX_SPECTATORS || !udpServer.spectators[s].connected) {
         return;
     }
@@ -1436,6 +1784,12 @@ static void serverDisconnectSpectator(int s, bool graceful) {
         udpServer.spectators[s].spectatorKey[0] = '\0';
     }
     udpServer.spectators[s].wbnFlags = 0;
+    /* Drop the live control-bus subscription (lobby/countdown viewers only). */
+    if (udpServer.spectators[s].controlSub != SUBSCRIBER_HANDLE_INVALID) {
+        serverSimUnregisterSubscriber(sim, udpServer.spectators[s].controlSub);
+        udpServer.spectators[s].controlSub = SUBSCRIBER_HANDLE_INVALID;
+    }
+    udpServer.spectators[s].live = false;
     udpServer.spectators[s].connected = false;
     channelMuxInit(&udpServer.spectators[s].channelMux);   /* reset in place */
     bulkSenderInit(&udpServer.spectators[s].bulkSend);
@@ -1443,6 +1797,11 @@ static void serverDisconnectSpectator(int s, bool graceful) {
         free(udpServer.spectators[s].seedBlob);
         udpServer.spectators[s].seedBlob = NULL;
     }
+    if (udpServer.spectators[s].lobbyMap != NULL) {
+        free(udpServer.spectators[s].lobbyMap);
+        udpServer.spectators[s].lobbyMap = NULL;
+    }
+    udpServer.spectators[s].lobbyMapSize = 0;
     udpServer.spectators[s].seedLen = 0;
     udpServer.spectators[s].seedGen = 0;
     udpServer.spectators[s].seedBegun = false;
@@ -1610,14 +1969,70 @@ static void serverServiceMapTransfer(int slot) {
  * countdown status no more than once every this many ticks (~2/s at 50 tick/s). */
 #define SPEC_COUNTDOWN_RESEND_TICKS 25u
 
+/* Arm/refresh a spectator's "spectating begins in X" countdown carrying
+ * `remaining` ticks. Updates the state every tick (so a reader sees it track
+ * toward zero) but only puts a SPEC_CTRL_COUNTDOWN on the 64-deep CHANNEL_CONTROL
+ * window on first entry and then once per SPEC_COUNTDOWN_RESEND_TICKS, so a long
+ * wait can't overflow it. Shared by the cutover gate (delayed view not yet at the
+ * game) and the cold-start path (ring not yet holding a full delay of history). */
+static void serverSpectatorArmCountdown(SpectatorConn *sp, uint32_t remaining) {
+    bool firstEntry = !sp->inCountdown;
+    sp->inCountdown        = true;
+    sp->countdownRemaining = remaining;
+    if (firstEntry ||
+        udpServer.tickCount - sp->countdownSentTick >= SPEC_COUNTDOWN_RESEND_TICKS) {
+        uint8_t buf[SPEC_CTRL_COUNTDOWN_LEN];
+        buf[0] = SPEC_CTRL_COUNTDOWN;
+        buf[1] = (uint8_t)(remaining >> 24);
+        buf[2] = (uint8_t)(remaining >> 16);
+        buf[3] = (uint8_t)(remaining >> 8);
+        buf[4] = (uint8_t)remaining;
+        channelSend(&sp->channelMux, CHANNEL_CONTROL, buf, SPEC_CTRL_COUNTDOWN_LEN);
+        sp->countdownSentTick = udpServer.tickCount;
+    }
+}
+
 static void serverServiceSpectators(ServerSim *sim) {
     int i;
 
+    /* While the game runs the ring head is the latest game record, so track it
+     * here every running tick (this runs unconditionally, even with no
+     * spectators connected). When the game ends the head freezes at the last
+     * running record X — game-over ticks are not recorded — and stays there
+     * through the hold and the reset, so lastRunningSeq is exactly the record a
+     * delayed spectator must reach to have watched the whole game, tail
+     * included. All spectators share one ring and one X; a spectator still
+     * draining an older game is held delayed by the lobby/countdown gate below
+     * until it reaches the latest X. */
+    if (serverSimGetState(sim) == serverStateRunning) {
+        SpectatorRing *r = serverInstanceGetSpectatorRing();
+        if (r != NULL) {
+            uint32_t head = spectatorRingHeadSeq(r);
+            /* First running record of THIS game: on the non-running->running
+             * transition the head is the game segment's opening record. Freeze
+             * it as the bar a delayed view must reach before it is past the
+             * recorded pre-game lobby. */
+            if (!udpServer.specWasRunning) {
+                udpServer.gameStartSeq = head;
+            }
+            udpServer.lastRunningSeq = head;
+        }
+        udpServer.specWasRunning = true;
+    } else {
+        udpServer.specWasRunning = false;
+    }
+
     for (i = 0; i < MAX_SPECTATORS; i++) {
         SpectatorConn *sp = &udpServer.spectators[i];
-        ChannelState *bulk;
 
         if (!sp->connected) continue;
+
+        /* Live-lobby spectators read the control bus, not the ring: skip the
+         * entire delayed seed/feed path for them. Only the unconditional carrier
+         * below runs, so their allowlist-filtered bus replay is still delivered.
+         * In-game (delayed) viewers run the full block. */
+        if (!sp->live) {
+        ChannelState *bulk;
 
         /* Seek the delayed keyframe. OK -> copy it into spectator-owned storage
          * and clear any countdown. COLD_START (the ring does not yet hold a full
@@ -1629,8 +2044,25 @@ static void serverServiceSpectators(ServerSim *sim) {
         if (sp->seedBlob == NULL && !sp->seedComplete) {
             SpectatorRing *r = serverInstanceGetSpectatorRing();
             if (r != NULL) {
+                uint32_t delay  = serverSimGetSpecDelayTicks(sim);
+                uint32_t head   = spectatorRingHeadSeq(r);
+                uint32_t target = (head > delay) ? head - delay : 0;
+                /* Cutover gate: the delayed view has not yet reached the current
+                 * game (head - delay is still inside the recorded pre-game lobby
+                 * segment). Seeking here would seed that lobby and replay it — the
+                 * static map a just-cut-over spectator already watched live, which
+                 * reads as broken. Hold on the "spectating begins in X" countdown
+                 * until head - delay reaches gameStartSeq instead; remaining is the
+                 * exact records-to-go. Only game content is gated, never sent
+                 * early, so the spec delay / anti-cheat bound is untouched. When
+                 * gameStartSeq is 0 (no game has started, or the first record ever
+                 * is the game's) target < 0 is impossible, so this no-ops and the
+                 * seek below (and its cold-start countdown) runs unchanged. */
+                if (target < udpServer.gameStartSeq) {
+                    serverSpectatorArmCountdown(sp,
+                                                udpServer.gameStartSeq - target);
+                } else {
                 SpectatorRingCursor cur;
-                uint32_t delay = serverSimGetSpecDelayTicks(sim);
                 SpectatorRingSeekStatus st =
                     spectatorRingSeekDelayed(r, delay, &cur);
                 if (st == SPECTATOR_RING_OK) {
@@ -1649,32 +2081,13 @@ static void serverServiceSpectators(ServerSim *sim) {
                         }
                     }
                 } else if (st == SPECTATOR_RING_COLD_START) {
-                    uint32_t history =
-                        spectatorRingHeadSeq(r) - spectatorRingOldestSeq(r);
-                    uint32_t remaining =
-                        (delay > history) ? delay - history : 0;
-                    bool firstEntry = !sp->inCountdown;
-                    sp->inCountdown        = true;
-                    sp->countdownRemaining = remaining;
-                    /* Throttle: send on first entry, then at most once every
-                     * SPEC_COUNTDOWN_RESEND_TICKS so the control window can't
-                     * overflow across a long wait. */
-                    if (firstEntry ||
-                        udpServer.tickCount - sp->countdownSentTick
-                            >= SPEC_COUNTDOWN_RESEND_TICKS) {
-                        uint8_t buf[SPEC_CTRL_COUNTDOWN_LEN];
-                        buf[0] = SPEC_CTRL_COUNTDOWN;
-                        buf[1] = (uint8_t)(remaining >> 24);
-                        buf[2] = (uint8_t)(remaining >> 16);
-                        buf[3] = (uint8_t)(remaining >> 8);
-                        buf[4] = (uint8_t)remaining;
-                        channelSend(&sp->channelMux, CHANNEL_CONTROL,
-                                    buf, SPEC_CTRL_COUNTDOWN_LEN);
-                        sp->countdownSentTick = udpServer.tickCount;
-                    }
+                    uint32_t history = head - spectatorRingOldestSeq(r);
+                    serverSpectatorArmCountdown(
+                        sp, (delay > history) ? delay - history : 0);
                 }
                 /* AGED_OUT at join should not occur — retention covers the
                  * delay; leave it as a no-op and retry next tick. */
+                }
             }
         }
 
@@ -1780,6 +2193,107 @@ static void serverServiceSpectators(ServerSim *sim) {
                     sp->lastEmittedSeq = seq;
                     bulkSenderPump(&sp->bulkSend, &sp->channelMux);
                 }
+
+                /* Drain-then-flip: once the spectator has replayed through the
+                 * last running record (lastRunningSeq) it has shown the whole
+                 * game, including the post-gameover tail, so when the live game
+                 * is back in the lobby/countdown return it to the live lobby.
+                 * Re-registering on the bus replays the current lobby in one
+                 * step (the ~delay gap is jumped). A newer running game (live,
+                 * or still unwatched in the ring) advances lastRunningSeq or
+                 * holds the state non-lobby, so the spectator stays delayed.
+                 * The flip may fire while a trailing delayed record is still
+                 * draining on CHANNEL_BULK (no channel reset), which the client
+                 * intake must tolerate. The aged-out path above may have
+                 * cleared seedComplete, so re-check it. */
+                if (sp->seedComplete &&
+                    !bulkSenderBusy(&sp->bulkSend) &&
+                    (serverSimGetState(sim) == serverStateLobby ||
+                     serverSimGetState(sim) == serverStateCountdown) &&
+                    sp->lastEmittedSeq >= udpServer.lastRunningSeq) {
+                    /* Tear down the delayed feed, keeping the slot connected
+                     * and its name; no channel reset. */
+                    if (sp->seedBlob != NULL) {
+                        free(sp->seedBlob);
+                        sp->seedBlob = NULL;
+                    }
+                    sp->seedLen = 0;
+                    sp->seedGen = 0;
+                    sp->seedBegun = false;
+                    sp->seedComplete = false;
+                    sp->xferStartSeq = 0;
+                    sp->xferEndSeq = 0;
+                    sp->seedSeq = 0;
+                    sp->lastEmittedSeq = 0;
+                    sp->inCountdown = false;
+                    sp->countdownRemaining = 0;
+                    sp->countdownSentTick = 0;
+                    SubscriberHandle sub = serverSimRegisterSubscriber(
+                        sim, serverSpectatorDeliverControl, sp);
+                    if (sub == SUBSCRIBER_HANDLE_INVALID) {
+                        /* Subscriber budget full (unreachable within the 49-slot
+                         * budget today): leave the spectator not-live so it stays
+                         * on the delayed path and re-seeds/retries next service
+                         * tick, rather than flip to a live state with no real
+                         * subscription. Skip the live-lobby payload below —
+                         * re-sending the accept would flip the client live against
+                         * a server that isn't delivering. */
+                        WB_LOG_WARN(WB_LOG_CAT_NET,
+                                    "spectator %d: control-bus subscriber budget "
+                                    "full at return-to-lobby; staying delayed", i);
+                    } else {
+                        sp->live = true;
+                        sp->controlSub = sub;
+                        /* Back in the live lobby (the map may have rotated since the
+                         * game began): re-send the accept so the viewer re-allocates,
+                         * and re-arm the lobby map so its preview refreshes. Mirrors
+                         * the map-change path; does not alter the drain-flip above. */
+                        serverSendSpectatorAccept(i, sim, &sp->addr);
+                        serverArmSpectatorLobbyMap(i, /*resetChannel=*/true);
+                        /* Catch-up: the lobby chat that accumulated while this
+                         * spectator was finishing the delayed game. Delivered as one
+                         * blob on CHANNEL_BULK — NOT on the reliable control window,
+                         * which the same-tick sync re-register already fills (the
+                         * backlog would overflow it and be dropped). Sent here, after
+                         * the map re-arm has left the bulk sender idle and after the
+                         * sync set the lobby phase (so inLobby is true when the client
+                         * applies it); the armed map streams once this blob drains. */
+                        serverSendSpectatorBacklog(i, sim);
+                        mpDiagLog("[srv] spec idx=%d delayed->live "
+                                  "(drained, lobby)", i);
+                    }
+                }
+            }
+        }
+        }   /* end if (!sp->live) — delayed ring path */
+
+        /* Live-lobby map: stream the armed lobby map to the viewer over its own
+         * CHANNEL_BULK (mirrors a player's join download) so its lobby preview and
+         * start positions render. Begun once the bulk channel is idle — the same
+         * gate the seed uses — then the copy is freed (bulkSenderBegin copied it).
+         * Only while sp->live, so it can never overlap the delayed seed (which
+         * arms only when !sp->live); at the live->delayed cutover an in-flight
+         * lobby map simply finishes first, since this same idle gate makes the
+         * seed wait for the channel to drain. */
+        if (sp->live && sp->lobbyMap != NULL) {
+            ChannelState *lbulk = &sp->channelMux.ch[CHANNEL_BULK];
+            if (!bulkSenderBusy(&sp->bulkSend) &&
+                sp->channelMux.streamCount == 0 &&
+                lbulk->ackedSeq == lbulk->nextSeq) {
+                BulkStreamHeader sh;
+                memset(&sh, 0, sizeof(sh));
+                sh.kind = BULK_KIND_DOWNLOAD;
+                sh.gen = 0;
+                sh.totalSize = sp->lobbyMapSize;
+                sh.pathLen = 0;
+                sh.path[0] = '\0';
+                if (bulkSenderBegin(&sp->bulkSend, &sh,
+                                    sp->lobbyMap, sp->lobbyMapSize)) {
+                    free(sp->lobbyMap);
+                    sp->lobbyMap = NULL;
+                    sp->lobbyMapSize = 0;
+                }
+                /* allocation failure: keep lobbyMap, retry next tick */
             }
         }
 
@@ -2526,18 +3040,6 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
     fprintf(stderr, "[UDP SERVER] Player '%s' assigned slot %d, mapSize=%u\n",
             name, slot, udpServer.compressedMapSize);
     serverSendJoinAccept(slot, sim, fromAddr);
-    /* Catch-up: this client is connected (clients[slot].connected set above),
-     * so feed it the current spectator roster — one CTRL_SPECTATOR_SLOT per
-     * connected viewer — so its lobby roster matches late-joining the session. */
-    {
-        int sp;
-        for (sp = 0; sp < MAX_SPECTATORS; sp++) {
-            if (!udpServer.spectators[sp].connected) continue;
-            ControlEvent evt;
-            serverFillSpectatorSlotEvent(sp, &evt);
-            udpClientDeliverControl(&udpServer.clients[slot], &evt);
-        }
-    }
     /* Hand the joiner the current WBN server_key so it can mint a
      * player_key and re-auth via the lobby-snapshot path.  Gated inside
      * the send function — no-op on non-WBN servers. */
@@ -3442,6 +3944,11 @@ bool transportUdpServerCreate(unsigned short port,
     serverSimSetPassword(sim, password,
                          password != NULL ? strlen(password) : 0);
 
+    /* The spectator roster lives here in the transport layer; register the
+     * enumerator so the sim's sync-replay (and the ring keyframe control
+     * snapshot) can carry one CTRL_SPECTATOR_SLOT per connected viewer. */
+    serverSimSetSpectatorRosterEnumerator(sim, serverEnumSpectatorRoster, NULL);
+
     udpServer.running = true;
     udpServer.tickCount = 0;
     udpServer.uploadMaxFiles        = 64;
@@ -3690,7 +4197,6 @@ bool transportUdpServerHasAnyClient(void) {
 
 void transportUdpServerOnGameStart(ServerSim *sim) {
     int i;
-    (void)sim;
     mpDiagLog("[srv] GAME_START BEGIN (rebasing game/map channel send baselines)");
     for (i = 0; i < MAX_TANKS; i++) {
         if (udpServer.clients[i].connected) {
@@ -3777,6 +4283,28 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
         }
     }
     WB_LOG_INFO(WB_LOG_CAT_NET, "ctrl queue reset all slots (game start)");
+
+    /* Cut every live-lobby spectator over to the delayed ring as the game
+     * starts. Drop its control-bus subscription so the imminent
+     * CTRL_GAME_PHASE_RUNNING publish (and the forced snapshot after it)
+     * cannot reach it — a live spectator must see zero running-state state,
+     * or the configured spectator delay is undercut. This runs before the
+     * RUNNING publish on both start paths (the lifecycle countdown→running
+     * step and the in-place start), so the unsubscribe is the anti-cheat
+     * boundary. No channel reset: a live spectator never ran the delayed
+     * seed/feed block, so its seed/feed fields are still at their accept-time
+     * zeros and the next serverServiceSpectators tick finds head - delay still
+     * inside the pre-game lobby (below gameStartSeq) → arms the "spectating
+     * begins in X" countdown cleanly until the delayed view reaches the game. */
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        SpectatorConn *sp = &udpServer.spectators[i];
+        if (!sp->connected || !sp->live) continue;
+        serverSimUnregisterSubscriber(sim, sp->controlSub);
+        sp->controlSub = SUBSCRIBER_HANDLE_INVALID;
+        sp->live = false;
+        mpDiagLog("[srv] GAME_START spec idx=%d live->delayed (unsubscribed)", i);
+    }
+
     mpDiagLog("[srv] GAME_START END (game/map channel send baselines rebased)");
 }
 
@@ -3853,6 +4381,18 @@ void transportUdpServerOnLobbyMapChange(ServerSim *sim) {
         }
         /* Arm a fresh join download from the new blob (re-gates snapshots). */
         serverInitMapDownload(i);
+    }
+
+    /* Live-lobby spectators: mirror the player loop — re-send the accept (new map
+     * size) and re-arm the lobby-map download, which resets the spectator's bulk
+     * sender + re-bases its CHANNEL_BULK (via CTRL_CHANNEL_RESET) so it abandons
+     * the old partial and downloads the new map. Delayed (in-game) viewers are
+     * skipped: their map rides the ring seed, not this path. */
+    for (i = 0; i < MAX_SPECTATORS; i++) {
+        SpectatorConn *sp = &udpServer.spectators[i];
+        if (!sp->connected || !sp->live) continue;
+        serverSendSpectatorAccept(i, sim, &sp->addr);
+        serverArmSpectatorLobbyMap(i, /*resetChannel=*/true);
     }
 
     fprintf(stderr, "[UDP SERVER] Map change prep: %u bytes compressed map\n",
@@ -4357,7 +4897,49 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
         }
         case PACKET_COMMAND_TICK: {
             int clientIdx = serverFindClient(fromAddr);
-            if (clientIdx < 0) break;
+            if (clientIdx < 0) {
+                /* A tankless spectator may send CMD_CHAT — and nothing else,
+                 * and only while the server is in lobby/countdown. This branch
+                 * is the hard isolation boundary: a viewer has no slot or sim
+                 * state to mutate, so a decoded command of any other type is
+                 * dropped here. The cmdSeq dedup mirrors the player path so the
+                 * spectator's reliable carrier acks and retransmits coherently. */
+                int sIdx = serverFindSpectator(fromAddr);
+                if (sIdx < 0) break;
+                SpectatorConn *sp = &udpServer.spectators[sIdx];
+                ServerState st = serverSimGetState(sim);
+                bool lobbyish =
+                    (st == serverStateLobby || st == serverStateCountdown);
+                sp->lastReceivedTick = udpServer.tickCount;
+                if (len < PACKET_HEADER_SIZE + 1) break;
+                uint8_t scount = buf[PACKET_HEADER_SIZE];
+                size_t spos = PACKET_HEADER_SIZE + 1;
+                for (uint8_t i = 0; i < scount; i++) {
+                    if (spos + 2 > (size_t)len) break;
+                    uint16_t entryLen = unpackU16(buf + spos);
+                    spos += 2;
+                    if (spos + entryLen > (size_t)len) break;
+                    ClientCommand cmd;
+                    if (!commandCodecDecode(buf + spos, entryLen, &cmd)) {
+                        spos += entryLen;
+                        continue;
+                    }
+                    spos += entryLen;
+                    if (cmd.cmdSeq <= sp->inboundCmdSeq) continue;
+                    if (cmd.cmdSeq != sp->inboundCmdSeq + 1) continue;
+                    sp->inboundCmdSeq = cmd.cmdSeq;
+                    if (cmd.type == CMD_CHAT && lobbyish) {
+                        serverSimReceiveSpectatorChat(sim, (uint8_t)sIdx,
+                                                      cmd.u.chat.body,
+                                                      cmd.u.chat.bodyLen);
+                    }
+                }
+                uint8_t sackBuf[PACKET_HEADER_SIZE + 4];
+                packHeader(sackBuf, PACKET_COMMAND_ACK, sp->outSequence++);
+                packU32(sackBuf + PACKET_HEADER_SIZE, sp->inboundCmdSeq);
+                srvSendTo(sackBuf, sizeof(sackBuf), &sp->addr);
+                break;
+            }
             UdpServerClient *client = &udpServer.clients[clientIdx];
             if (len < PACKET_HEADER_SIZE + 1) break;
             uint8_t count = buf[PACKET_HEADER_SIZE];
@@ -5602,7 +6184,7 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
                       i,
                       (unsigned)(udpServer.tickCount - udpServer.spectators[i].lastReceivedTick),
                       (int)CLIENT_TIMEOUT_TICKS);
-            serverDisconnectSpectator(i, false);
+            serverDisconnectSpectator(sim, i, false);
         }
     }
 }
@@ -5698,6 +6280,16 @@ void transportUdpServerTestSpectatorAckBulk(int s) {
      * keeps draining — without a real spectator channel endpoint (3b). */
     bulk = &udpServer.spectators[s].channelMux.ch[CHANNEL_BULK];
     bulk->ackedSeq = bulk->nextSeq;
+}
+
+uint32_t transportUdpServerGetSpectatorControlSeq(int s) {
+    if (s < 0 || s >= MAX_SPECTATORS) return 0;
+    return udpServer.spectators[s].channelMux.ch[CHANNEL_CONTROL].nextSeq;
+}
+
+bool transportUdpServerGetSpectatorLive(int s) {
+    if (s < 0 || s >= MAX_SPECTATORS) return false;
+    return udpServer.spectators[s].live;
 }
 
 bool transportUdpServerTestDownloadComplete(int slot) {

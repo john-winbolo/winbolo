@@ -69,6 +69,11 @@ bool specDrainPopRecord(void *handle, SpecDrainRecord *out) {
   return false;
 }
 
+bool specDrainLiveResumed(void *handle) {
+  (void)handle;
+  return false;
+}
+
 bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) {
   (void)seed;
   (void)seedLen;

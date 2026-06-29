@@ -108,6 +108,12 @@ typedef struct {
      * value's validity; remaining is in game ticks (~50/sec). */
     uint32_t              countdownRemaining;
     bool                  countdownReceived;
+    /* Live-lobby mode mirror, copied one-way from the transport's
+     * specLiveLobby (the transport is the source of truth). True while the
+     * spectator is fed the live lobby control bus; false once the delayed ring
+     * feed begins. The spectator session reads it to alternate the read-only
+     * lobby and the delayed game view. */
+    bool                  liveLobby;
 } ClientSpectatorFeed;
 
 struct ClientSim {
@@ -530,6 +536,14 @@ struct ClientSim {
      * Zeroed at create, freed on teardown (clientSimSpectatorFeedClear). */
     ClientSpectatorFeed spectatorFeed;
 
+    /* True when this ClientSim connected as a tankless spectator (the
+     * spectator arg of clientSimConnectUdp). A spectator claims no tank
+     * slot, so myPlayerNum stays at its create-time 0 — an in-bounds value
+     * that aliases real player slot 0. Control handlers that branch on "is
+     * this my slot / from me" consult this flag to treat a spectator as
+     * having no self, so slot 0 is never mistaken for the viewer. */
+    bool isSpectator;
+
     /* In-process server bound by clientSimConnectLocal{,Passive}. NULL
      * for UDP and disconnected clients. Read by the local-transport
      * branch of CTRL_LOBBY_MAP_CHANGE to fetch the freshly-compressed
@@ -651,6 +665,12 @@ bool clientSimSpectatorPushRecord(ClientSim *cs, bool isKeyframe,
  * sent on CHANNEL_CONTROL. Marks the countdown received so the session can
  * show its pre-seed overlay. */
 void clientSimSpectatorSetCountdown(ClientSim *cs, uint32_t remainingTicks);
+
+/* Mirror the transport's spectator live-lobby mode onto the sim (one-way: the
+ * transport owns the bit). True = fed the live lobby control bus; false = on
+ * the delayed ring feed. The session reads it via clientSimSpectatorIsLiveLobby
+ * (public) to decide which view to host. */
+void clientSimSpectatorSetLiveLobby(ClientSim *cs, bool liveLobby);
 
 /* Free the seed and every queued record, returning the feed to empty. */
 void clientSimSpectatorFeedClear(ClientSim *cs);
