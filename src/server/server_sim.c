@@ -3281,28 +3281,50 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
             playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
-            fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Jitter:%d)\n",
-                    name,
-                    pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
-                    basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
-                    sim->playerPing[count],
-                    sim->jitterTarget[count]);
 
-            /* For bot slots, append a 4-space-indented [BOT] line with
-             * the brain's most recent timing. Mute fields suppressed
-             * when zero — see commit message. */
+            /* Ping and the input-buffer depth are in-process artifacts for
+             * bot slots (0ms ping, a buffer that exists but never gates an
+             * in-process input), so they'd only invite a misread. Show them
+             * only for real connections. The field formerly printed as
+             * "Jitter" is the adaptive input jitter-buffer target depth in
+             * ticks, not a measured network statistic — labelled "Buf" so
+             * nobody reads network variance into it. */
             BotInfo bi;
-            if (botManagerGetBotInfo(sim, count, &bi)) {
+            bool isBotSlot = botManagerGetBotInfo(sim, count, &bi);
+            if (isBotSlot) {
+                fprintf(stdout, "%s - (P:%d B:%d)\n",
+                        name,
+                        pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
+                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count));
+            } else {
+                fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Buf:%d)\n",
+                        name,
+                        pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
+                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
+                        sim->playerPing[count],
+                        sim->jitterTarget[count]);
+            }
+
+            /* For bot slots, append a 4-space-indented [BOT] line with the
+             * brain's timing. peak= is the high-water think since session
+             * start (the magnitude behind overruns, which last= and the
+             * EWMA hide); overruns carries its rate against thinkCount so a
+             * cumulative count can't masquerade as "spiking right now". */
+            if (isBotSlot) {
                 if (bi.hasBrain) {
                     if (bi.overrunCount == 0) {
                         fprintf(stdout,
-                                "    [BOT] brain=%s last=%.1fms target=%.1fms\n",
-                                bi.brainName, bi.lastThinkMs, bi.targetMs);
+                                "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms\n",
+                                bi.brainName, bi.lastThinkMs, bi.maxThinkMs,
+                                bi.targetMs);
                     } else {
+                        double rate = bi.thinkCount > 0
+                            ? (double)bi.overrunCount * 100.0 / (double)bi.thinkCount
+                            : 0.0;
                         fprintf(stdout,
-                                "    [BOT] brain=%s last=%.1fms target=%.1fms overruns=%u\n",
-                                bi.brainName, bi.lastThinkMs, bi.targetMs,
-                                bi.overrunCount);
+                                "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms overruns=%u/%u (%.2f%%)\n",
+                                bi.brainName, bi.lastThinkMs, bi.maxThinkMs,
+                                bi.targetMs, bi.overrunCount, bi.thinkCount, rate);
                     }
                 } else {
                     fprintf(stdout, "    [BOT]\n");
@@ -3338,9 +3360,14 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                     "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
                     "Tick:", tickLast, tickEwma);
         }
+        /* peak= is the worst single-bot think across the pool since
+         * session start — the EWMA averages spikes away, so without it a
+         * pool that mostly runs cheap but takes occasional 20ms thinks
+         * looks identical to one that never does. */
         fprintf(stdout,
-                "  %-11s last=%.1fms  EWMA=%.1fms\n",
-                "Brain:", ps.lastBrainPhaseMs, ps.ewmaBrainPhaseMs);
+                "  %-11s last=%.1fms  EWMA=%.1fms  peak=%.1fms\n",
+                "Brain:", ps.lastBrainPhaseMs, ps.ewmaBrainPhaseMs,
+                ps.maxThinkMs);
         if (simLast > 0.0) {
             fprintf(stdout,
                     "  %-11s last=%.1fms  EWMA=%.1fms\n",
@@ -3348,16 +3375,21 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         }
         /* "Bot prep" labels the non-brain serial parts of
          * botManagerTick: snapshot/sync + input send. Distinct from
-         * "Simulation:" above which times the two serverSimTick calls. */
+         * "Simulation:" above which times the two serverSimTick calls.
+         * Overruns carry their rate against total thinks — a cumulative
+         * count alone grows forever and can't tell ongoing from historical. */
         if (ps.totalOverruns == 0) {
             fprintf(stdout,
                     "  %-11s last=%.1fms  EWMA=%.1fms\n",
                     "Bot prep:", ps.lastSerialMs, ps.ewmaSerialMs);
         } else {
+            double poolRate = ps.totalThinks > 0
+                ? (double)ps.totalOverruns * 100.0 / (double)ps.totalThinks
+                : 0.0;
             fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms  total overruns=%u\n",
+                    "  %-11s last=%.1fms  EWMA=%.1fms  total overruns=%u/%u (%.2f%%)\n",
                     "Bot prep:", ps.lastSerialMs, ps.ewmaSerialMs,
-                    ps.totalOverruns);
+                    ps.totalOverruns, ps.totalThinks, poolRate);
         }
     }
 
