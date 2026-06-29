@@ -1485,6 +1485,14 @@ static void udpClientParseProxyMeta(TransportUdpClientCtx *c,
     WB_LOG_INFO(WB_LOG_CAT_NET,
                 "[WASM] proxy metadata: name='%s' wbn=%d country=%.2s prefsLen=%d",
                 c->proxyName, c->proxyWbn ? 1 : 0, c->proxyCountry, prefsLen);
+
+    /* Apply the WBN-synced prefs (keybindings + toggles) the relay forwarded.
+     * The apply lives in the front-end (main_wasm.c), which owns the live keys
+     * and menu globals; the transport just hands it the JSON blob. */
+    if (c->proxyPrefsLen > 0) {
+        extern void wasmApplyJoinPrefs(const char *prefsJson, int len);
+        wasmApplyJoinPrefs(c->proxyPrefs, (int)c->proxyPrefsLen);
+    }
 }
 #endif
 

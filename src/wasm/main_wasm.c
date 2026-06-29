@@ -44,6 +44,7 @@
 #include "../gui/sdl3/dialogs/imgui_tutorial_overlay.h"
 #include "server_sim.h"
 #include "tutorial.h"
+#include "cJSON.h"
 
 #include <sys/stat.h>
 
@@ -471,6 +472,110 @@ void windowApplyMenuChecks(ClientSim *cs) {
   clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
   clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
+}
+
+/* -------------------------------------------------------
+ * C5: apply WinBolo.net synced prefs from the join metadata frame.
+ *
+ * The relay delivers a projected prefs subset (KEYS / MENU / GAME OPTIONS)
+ * as JSON in the 0x01 frame; the transport calls this once when the frame
+ * is consumed (udpClientParseProxyMeta, emscripten only). Values mirror the
+ * desktop INI store: "Yes"/"No" bools, stringified ints, SDL3 keycodes for
+ * KEYS. Native JSON bool/number is tolerated too. Absent keys keep the
+ * current (default) value. This runs after gameFrontStart seeded defaults,
+ * so it overrides exactly what the user has synced.
+ * ------------------------------------------------------- */
+extern bool useAutoslow;   /* defined in gamefront_wasm.c */
+extern bool useAutohide;
+
+static bool prefBool(cJSON *o, const char *k, bool dflt) {
+  cJSON *it = cJSON_GetObjectItemCaseSensitive(o, k);
+  if (it == NULL) return dflt;
+  if (cJSON_IsBool(it))   return cJSON_IsTrue(it);
+  if (cJSON_IsNumber(it)) return it->valuedouble != 0;
+  if (cJSON_IsString(it) && it->valuestring)
+    return (SDL_strcasecmp(it->valuestring, "Yes")  == 0 ||
+            SDL_strcasecmp(it->valuestring, "true") == 0 ||
+            strcmp(it->valuestring, "1") == 0);
+  return dflt;
+}
+
+static int prefInt(cJSON *o, const char *k, int dflt) {
+  cJSON *it = cJSON_GetObjectItemCaseSensitive(o, k);
+  if (it == NULL) return dflt;
+  if (cJSON_IsNumber(it)) return (int)it->valuedouble;
+  if (cJSON_IsString(it) && it->valuestring) return atoi(it->valuestring);
+  return dflt;
+}
+
+void wasmApplyJoinPrefs(const char *prefsJson, int len) {
+  if (prefsJson == NULL || len <= 0) return;
+  cJSON *root = cJSON_ParseWithLength(prefsJson, (size_t)len);
+  if (root == NULL) { printf("[WASM] join prefs: parse failed\n"); return; }
+
+  cJSON *k = cJSON_GetObjectItemCaseSensitive(root, "KEYS");
+  if (cJSON_IsObject(k)) {
+    keys.kiForward      = prefInt(k, "Forward",        keys.kiForward);
+    keys.kiBackward     = prefInt(k, "Backwards",      keys.kiBackward);
+    keys.kiLeft         = prefInt(k, "Left",           keys.kiLeft);
+    keys.kiRight        = prefInt(k, "Right",          keys.kiRight);
+    keys.kiShoot        = prefInt(k, "Shoot",          keys.kiShoot);
+    keys.kiLayMine      = prefInt(k, "Lay Mine",       keys.kiLayMine);
+    keys.kiGunIncrease  = prefInt(k, "Increase Range", keys.kiGunIncrease);
+    keys.kiGunDecrease  = prefInt(k, "Decrease Range", keys.kiGunDecrease);
+    keys.kiTankView     = prefInt(k, "Tank View",      keys.kiTankView);
+    keys.kiPillView     = prefInt(k, "Pill View",      keys.kiPillView);
+    keys.kiAllyView     = prefInt(k, "Ally View",      keys.kiAllyView);
+    keys.kiLGMView      = prefInt(k, "LGM View",       keys.kiLGMView);
+    keys.kiBaseView     = prefInt(k, "Base View",      keys.kiBaseView);
+    keys.kiScrollUp     = prefInt(k, "Scroll Up",      keys.kiScrollUp);
+    keys.kiScrollDown   = prefInt(k, "Scroll Down",    keys.kiScrollDown);
+    keys.kiScrollLeft   = prefInt(k, "Scroll Left",    keys.kiScrollLeft);
+    keys.kiScrollRight  = prefInt(k, "Scroll Right",   keys.kiScrollRight);
+    keys.kiQuickTree    = prefInt(k, "Quick Tree",     keys.kiQuickTree);
+    keys.kiQuickRoad    = prefInt(k, "Quick Road",     keys.kiQuickRoad);
+    keys.kiQuickWall    = prefInt(k, "Quick Wall",     keys.kiQuickWall);
+    keys.kiQuickPillbox = prefInt(k, "Quick Pillbox",  keys.kiQuickPillbox);
+    keys.kiQuickMine    = prefInt(k, "Quick Mine",     keys.kiQuickMine);
+  }
+
+  cJSON *m = cJSON_GetObjectItemCaseSensitive(root, "MENU");
+  if (cJSON_IsObject(m)) {
+    showGunsight              = prefBool(m, "Show Gunsight",                 showGunsight);
+    soundEffects              = prefBool(m, "Sound Effects",                 soundEffects);
+    showNewswireMessages      = prefBool(m, "Show Newswire Messages",        showNewswireMessages);
+    showAssistantMessages     = prefBool(m, "Show Assistant Messages",       showAssistantMessages);
+    showAIMessages            = prefBool(m, "Show AI Messages",              showAIMessages);
+    showNetworkStatusMessages = prefBool(m, "Show Network Status Messages",  showNetworkStatusMessages);
+    showNetworkDebugMessages  = prefBool(m, "Show Network Debug Messages",   showNetworkDebugMessages);
+    autoScrollingEnabled      = prefBool(m, "Autoscroll Enabled",            autoScrollingEnabled);
+    showPillLabels            = prefBool(m, "Show Pill Labels",              showPillLabels);
+    showBaseLabels            = prefBool(m, "Show Base Labels",              showBaseLabels);
+    labelSelf                 = prefBool(m, "Label Own Tank",                labelSelf);
+    labelMsg  = (labelLen)prefInt(m, "Message Label Size", (int)labelMsg);
+    labelTank = (labelLen)prefInt(m, "Tank Label Size",    (int)labelTank);
+    int vol = prefInt(m, "Sound Volume", soundVolume);
+    if (vol < 0) vol = 0;
+    if (vol > 100) vol = 100;
+    windowSetSoundVolume(vol);
+  }
+
+  cJSON *g = cJSON_GetObjectItemCaseSensitive(root, "GAME OPTIONS");
+  if (cJSON_IsObject(g)) {
+    useAutoslow = prefBool(g, "Auto Slowdown",           useAutoslow);
+    useAutohide = prefBool(g, "Auto Show-Hide Gunsight",  useAutohide);
+  }
+
+  cJSON_Delete(root);
+
+  /* Push the toggles into the live client/sim. Keys are read from the global
+   * on the next input tick; pill/base label globals on the next status draw. */
+  if (humanSim) {
+    windowApplyMenuChecks(humanSim);
+    clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
+    clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
+  }
+  printf("[WASM] applied join prefs\n");
 }
 
 int windowGetDrawTime(void) { return (int)dwSysFrameTotal; }
