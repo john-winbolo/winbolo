@@ -1002,7 +1002,9 @@ bool sdl3DrawSetup(int zoomFactor) {
         SDL3_SCREEN_W * bestZoom, SDL3_SCREEN_H * bestZoom, bestZoom, ww, wh);
   }
 
-  /* macOS trackpad pinch-to-zoom */
+  /* macOS: disable the press-and-hold accent picker so held keys repeat,
+     and start trackpad pinch-to-zoom monitoring. */
+  macOSDisablePressAndHold();
   macOSPinchZoomInit();
 
 #ifdef __ANDROID__
