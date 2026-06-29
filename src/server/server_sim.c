@@ -3314,10 +3314,10 @@ void serverSimInformation(ServerSim *sim, bool locked) {
             }
 
             /* For bot slots, append a 4-space-indented [BOT] line with the
-             * brain's timing. peak= is the high-water think since session
-             * start (the magnitude behind overruns, which last= and the
-             * EWMA hide); overruns carries its rate against thinkCount so a
-             * cumulative count can't masquerade as "spiking right now". */
+             * brain's timing. peak= is the high-water think this game (reset
+             * each round start; the magnitude behind overruns, which last=
+             * and the EWMA hide); overruns carries its rate against thinkCount
+             * so a cumulative count can't masquerade as "spiking right now". */
             if (isBotSlot) {
                 if (bi.hasBrain) {
                     if (bi.overrunCount == 0) {
@@ -3368,10 +3368,10 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                     "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
                     "Tick:", tickLast, tickEwma);
         }
-        /* peak= is the worst single-bot think across the pool since
-         * session start — the EWMA averages spikes away, so without it a
-         * pool that mostly runs cheap but takes occasional 20ms thinks
-         * looks identical to one that never does. */
+        /* peak= is the worst single-bot think across the pool this game
+         * (reset each round start) — the EWMA averages spikes away, so
+         * without it a pool that mostly runs cheap but takes occasional 20ms
+         * thinks looks identical to one that never does. */
         fprintf(stdout,
                 "  %-11s last=%.1fms  EWMA=%.1fms  peak=%.1fms\n",
                 "Brain:", ps.lastBrainPhaseMs, ps.ewmaBrainPhaseMs,
