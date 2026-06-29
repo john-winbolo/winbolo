@@ -1432,11 +1432,25 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     }
 }
 
-/* Worst case for the lobby-chat backlog blob: LOBBY_CHAT_BUFFER_MAX (200)
- * events, each a [type(1)][bodyLen(2 BE)][body] record whose body is at most a
- * chat line (PACKET_MAX_CHAT_MESSAGE = 128) plus a few codec header bytes. 32
- * KiB clears it and stays well under the client's MAP_DOWNLOAD_MAX_SIZE cap. */
-#define LOBBY_CHAT_BACKLOG_WIRE_MAX 32768
+/* Worst case for the lobby-chat backlog blob. The buffer holds the two event
+ * types serverSimPublishControl captures (CTRL_CHAT broadcasts and
+ * CTRL_SPECTATOR_CHAT). The bigger encoded body is CTRL_CHAT: a localized
+ * server message fills body[] to CHAT_BODY_MAX (272), and the codec frames it
+ * as [fromPlayer 1][destPlayer 1][body] -> 2 + CHAT_BODY_MAX. (CTRL_SPECTATOR_CHAT
+ * is only 2 + PACKET_MAX_CHAT_MESSAGE = 130, so it never dominates.) Each blob
+ * record then adds [type 1][bodyLen 2 BE], and up to LOBBY_CHAT_BUFFER_MAX
+ * records pack back to back. Sizing off the constants keeps this from silently
+ * undersizing if a chat limit moves; a typed-line assumption (128) undersized
+ * it and dropped the whole catch-up on a busy lobby. */
+#define LOBBY_CHAT_BACKLOG_BODY_MAX  (2 + CHAT_BODY_MAX)
+#define LOBBY_CHAT_BACKLOG_REC_MAX   (3 + LOBBY_CHAT_BACKLOG_BODY_MAX)
+#define LOBBY_CHAT_BACKLOG_WIRE_MAX  (LOBBY_CHAT_BUFFER_MAX * LOBBY_CHAT_BACKLOG_REC_MAX)
+
+/* The client reassembles this blob into a buffer bounded by MAP_DOWNLOAD_MAX_SIZE
+ * (transport_udp_client.c). If the worst case ever outgrew that bound the server
+ * could stage a blob the client would refuse, so pin the relationship here. */
+BOLO_STATIC_ASSERT(LOBBY_CHAT_BACKLOG_WIRE_MAX <= MAP_DOWNLOAD_MAX_SIZE,
+                   lobby_chat_backlog_fits_client_reassembly_bound);
 
 /* Sink that serializes the sim's replayed lobby-chat events into one blob, in
  * the same [type][bodyLen BE][body] framing serverSpectatorDeliverControl puts

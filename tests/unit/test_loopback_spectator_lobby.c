@@ -42,6 +42,7 @@
 #include "client_net.h"             /* clientSimGetConnectState */
 #include "client_connect_state.h"   /* CLIENT_CONNECT_SPECTATING */
 #include "server_sim.h"             /* serverSim*, ServerState */
+#include "control_event.h"          /* ControlEvent, CHAT_BODY_MAX — max-body chat */
 #include "server_sim_lifecycle.h"   /* serverSimSetReady / serverSimEnterGameOver */
 #include "server_lifecycle.h"       /* serverInstanceCreateSpectatorRing */
 #include "transport_udp.h"          /* transportUdpServerOnLobbyMapChange */
@@ -436,6 +437,110 @@ static int legLobbyChatBacklogOverWire(void) {
     return 0;
 }
 
+/* ── Leg 8: a max-size lobby-chat backlog overflows the old 32 KiB blob ───────
+ *
+ * Leg 7 proves coverage with short typed lines, whose serialized blob is a few
+ * KiB. But a broadcast CTRL_CHAT carrying a *localized server message* fills
+ * body[] to CHAT_BODY_MAX (272) — far longer than a typed line — and the catch-up
+ * holds up to LOBBY_CHAT_BUFFER_MAX (200) records. 200 max-size records serialize
+ * to ~54 KiB, well past the old 32 KiB staging buffer; the sink's bound check then
+ * latches overflow and the server declines to send, dropping the WHOLE catch-up.
+ * The server-side buffer is now sized to the true worst case, so it goes through.
+ *
+ * The server-message records (fromPlayer 0xFF) bloat the blob but don't render
+ * (the client chat path only materializes fromPlayer < MAX_TANKS), so the proof
+ * lines are two real player-chat markers bracketing them: the oldest (first
+ * record) and newest (last record) must both reach lobbyChatHistory — the newest
+ * proving the entire ~54 KiB blob reassembled, not a truncated prefix. */
+
+#define BACKLOG_FILLER 198   /* + 2 player markers = the 200-record buffer cap */
+
+static bool pred_hist_has_newmark(LoopbackHarness *h, void *u) {
+    const char *hist = clientSimGetLobbyChatHistory(h->cs);
+    (void)u;
+    return hist != NULL && strstr(hist, "NEWMARK") != NULL;
+}
+
+/* Publish one broadcast CTRL_CHAT whose body fills to CHAT_BODY_MAX, mimicking a
+ * localized server message. fromPlayer 0xFF + destPlayer 0xFF is exactly what the
+ * lobby catch-up capture buffers, so this inflates the serialized blob. */
+static void injectMaxServerMessage(LoopbackHarness *h) {
+    ControlEvent ce;
+    memset(&ce, 0, sizeof(ce));
+    ce.type = CTRL_CHAT;
+    ce.u.chat.fromPlayer = 0xFF;          /* localized server message sentinel */
+    ce.u.chat.destPlayer = 0xFF;          /* broadcast — captured for catch-up */
+    ce.u.chat.bodyLen    = CHAT_BODY_MAX; /* the worst-case body the buffer holds */
+    memset(ce.u.chat.body, 'S', CHAT_BODY_MAX);
+    serverSimPublishControl(h->sim, &ce);
+}
+
+static int legLobbyChatBacklogMaxSize(void) {
+    LoopbackHarness h;
+    const char *hist;
+    int k, pumps;
+    bool injected = false;
+
+    UT_ASSERT_MSG(loopbackHarnessStartSpectatorLobby(&h, "SpecMaxBk", /*seed*/ 43u),
+                  "spectator lobby harness start failed");
+
+    serverSimSetSpecDelayTicks(h.sim, 40);
+    serverInstanceCreateSpectatorRing(h.sim);
+
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, SPEC_CONNECT_MAX, pred_spectating, NULL) >= 0,
+                  "spectator never reached SPECTATING");
+
+    threadsWaitForMutex();
+    serverSimAddPlayer(h.sim, 0, "Player", /*wantRejoin*/ false);
+    serverSimSetReady(h.sim, 0, true);
+    serverSimLobbyCheckAllReady(h.sim);
+    threadsReleaseMutex();
+
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, RUN_MAX, pred_server_running, NULL) > 0,
+                  "server never reached running");
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, FEED_MAX, pred_client_delayed, NULL) > 0,
+                  "spectator never entered delayed mode at game start");
+
+    for (k = 0; k < 120; k++) loopbackHarnessPump(&h);
+
+    threadsWaitForMutex();
+    serverSimEnterGameOver(h.sim);
+    threadsReleaseMutex();
+
+    /* In the lobby-while-delayed window, fill the catch-up buffer to its 200-record
+     * cap: a renderable oldest marker, BACKLOG_FILLER max-size server messages, then
+     * a renderable newest marker. Serialized this is ~54 KiB — over the old cap. */
+    for (pumps = 0; pumps < FLIP_MAX && !clientSimSpectatorIsLiveLobby(h.cs); pumps++) {
+        loopbackHarnessPump(&h);
+        if (!injected &&
+            serverSimGetState(h.sim) == serverStateLobby &&
+            !clientSimSpectatorIsLiveLobby(h.cs)) {
+            threadsWaitForMutex();
+            serverSimReceiveChat(h.sim, 0, 0xFF, "OLDMARK", 7);
+            for (k = 0; k < BACKLOG_FILLER; k++) injectMaxServerMessage(&h);
+            serverSimReceiveChat(h.sim, 0, 0xFF, "NEWMARK", 7);
+            threadsReleaseMutex();
+            injected = true;
+        }
+    }
+    UT_ASSERT_MSG(injected,
+                  "never hit the lobby-while-delayed window to inject the backlog");
+    UT_ASSERT_MSG(clientSimSpectatorIsLiveLobby(h.cs),
+                  "spectator never returned to live lobby after the backlog");
+
+    /* Newest marker is the last record in the ~54 KiB blob: its arrival proves the
+     * whole blob reassembled. The old 32 KiB buffer overflowed and sent nothing, so
+     * neither marker would arrive. */
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, FLIP_MAX, pred_hist_has_newmark, NULL) > 0,
+                  "newest backlog line missing — max-size blob was dropped or truncated");
+    hist = clientSimGetLobbyChatHistory(h.cs);
+    UT_ASSERT_MSG(strstr(hist, "OLDMARK") != NULL,
+                  "oldest backlog line missing — max-size blob was dropped or truncated");
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
 int run_loopback_spectator_lobby(void) {
     int rc;
     if ((rc = legConnectModeLobby())        != 0) return rc;
@@ -445,5 +550,6 @@ int run_loopback_spectator_lobby(void) {
     if ((rc = legLobbyMapChange())          != 0) return rc;
     if ((rc = legCutoverPendingMap())       != 0) return rc;
     if ((rc = legLobbyChatBacklogOverWire()) != 0) return rc;
+    if ((rc = legLobbyChatBacklogMaxSize())  != 0) return rc;
     return 0;
 }

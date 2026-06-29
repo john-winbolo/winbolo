@@ -436,8 +436,8 @@ static EncodeResult encodeSpectatorSlotBody(const ControlEvent *evt,
 
 /* CTRL_SPECTATOR_CHAT body wire format (variable length):
  *   [specIdx 1] [msgLen 1] [msg msgLen bytes]
- * msgLen is a single byte, so the message is clamped to 255 (well above
- * PACKET_MAX_CHAT_MESSAGE). Delivered body-only on CHANNEL_CONTROL; there
+ * msgLen is a single byte (room for 255), but the encoder clamps the message
+ * to PACKET_MAX_CHAT_MESSAGE (128). Delivered body-only on CHANNEL_CONTROL; there
  * is no full-packet wrapper or PACKET_* type for this event. */
 
 /* recipient: safe — ignored. */
