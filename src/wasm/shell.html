@@ -70,6 +70,28 @@
 
     <script>
         var Module = {
+            /* WebSocket transport for the emulated UDP socket. emscripten's
+               sockfs uses a full Module.websocket.url verbatim (it only
+               appends host:port to a bare "ws://"/"wss://" prefix), so the
+               game socket's host:port is irrelevant — routing lives in the
+               join_code carried by this URL.
+                 - ?join_code=<code>  : production web play via the relay.
+                 - ?proxyURL=<wsurl>  : dev/LAN escape hatch (explicit URL).
+               Must be set here, in the Module literal, so it is present when
+               the runtime initialises SOCKFS. */
+            websocket: (function() {
+                var params = new URLSearchParams(window.location.search);
+                var joinCode = params.get('join_code');
+                if (joinCode) {
+                    return { url: 'wss://relay.winbolo.net/proxy?joinCode=' +
+                                  encodeURIComponent(joinCode) };
+                }
+                var devProxy = params.get('proxyURL');
+                if (devProxy) {
+                    return { url: devProxy };
+                }
+                return {};
+            })(),
             canvas: (function() { return document.getElementById('canvas'); })(),
             print: (function() {
                 var outputElement = document.getElementById('output');
@@ -114,13 +136,13 @@
         /* Show network mode info based on URL params */
         (function() {
             var params = new URLSearchParams(window.location.search);
-            var netType = params.get('netType') || 'single';
             var el = document.getElementById('netinfo');
             if (!el) return;
-            if (netType === 'udp' || netType === 'netUdp') {
-                var proxy = params.get('proxyURL') ||
-                    'ws://192.168.42.200:8085/proxy?server=192.168.42.14:27500';
-                el.textContent = '\u25cf Network: UDP via proxy \u2014 ' + proxy;
+            if (params.get('join_code')) {
+                el.textContent = '\u25cf Network: web play via relay';
+            } else if (params.get('proxyURL')) {
+                el.textContent = '\u25cf Network: UDP via proxy \u2014 ' +
+                    params.get('proxyURL');
             } else {
                 el.textContent = '\u25cb Network: single-player';
             }

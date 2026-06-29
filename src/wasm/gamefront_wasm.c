@@ -283,38 +283,46 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   guiMessageSetHandler(sdl3MessageHandler);
 
-  /* ---- Determine net mode from URL params ---- */
+  /* ---- Determine net mode from URL params ----
+   * Production web play is selected by ?join_code= (the WBN chooser
+   * redirects to play.winbolo.net/?join_code=<code>). A dev/LAN run may
+   * instead pass an explicit ?proxyURL=. Either selects UDP-over-WebSocket
+   * mode. shell.html points Module.websocket.url at the real relay, so the
+   * host:port handed to the transport here is an ignored sentinel —
+   * routing lives in the join_code (or the dev proxy URL). */
   netType urlNetType = netSingle;
-  {
-    const char *nt = gameFrontGetUrlParam("netType");
-    if (nt[0] != '\0' && (strcmp(nt, "udp") == 0 || strcmp(nt, "netUdp") == 0)) {
-      urlNetType = netUdp;
-    }
+  /* gameFrontGetUrlParam returns a shared static buffer, so capture each
+   * value before the next call overwrites it: join_code only by presence,
+   * proxyURL into a local copy. */
+  bool haveJoinCode = (gameFrontGetUrlParam("join_code")[0] != '\0');
+  char devProxy[1024];
+  strncpy(devProxy, gameFrontGetUrlParam("proxyURL"), sizeof(devProxy) - 1);
+  devProxy[sizeof(devProxy) - 1] = '\0';
+  if (haveJoinCode || devProxy[0] != '\0') {
+    urlNetType = netUdp;
   }
 
   if (urlNetType == netUdp) {
-    /* Read proxy URL — default if not supplied */
-    const char *rawProxy = gameFrontGetUrlParam("proxyURL");
-    char proxyUrl[1024];
-    if (rawProxy[0] != '\0') {
-      strncpy(proxyUrl, rawProxy, sizeof(proxyUrl) - 1);
-      proxyUrl[sizeof(proxyUrl) - 1] = '\0';
+    if (haveJoinCode) {
+      /* Production: routing is in the join_code carried by
+       * Module.websocket.url; the transport target is a sentinel the relay
+       * never sees. Use a loopback literal so no DNS lookup is attempted. */
+      printf("[WASM] netUdp mode: web play via relay (join_code)\n");
+      strncpy(gameFrontUdpAddress, "127.0.0.1", sizeof(gameFrontUdpAddress) - 1);
+      gameFrontUdpAddress[sizeof(gameFrontUdpAddress) - 1] = '\0';
+      gameFrontTargetUdp = 1;
     } else {
-      strncpy(proxyUrl, "ws://192.168.42.200:8085/proxy?server=192.168.42.14:27500",
-              sizeof(proxyUrl) - 1);
-      proxyUrl[sizeof(proxyUrl) - 1] = '\0';
+      /* Dev/LAN: explicit proxyURL. shell.html uses it verbatim as the WS
+       * URL; any server=host:port within it is informational only. */
+      char serverHost[256];
+      unsigned short serverPort = 27500;
+      parseProxyServerParam(devProxy, serverHost, sizeof(serverHost), &serverPort);
+      printf("[WASM] netUdp mode (dev proxy): %s -> %s:%d\n",
+             devProxy, serverHost, serverPort);
+      strncpy(gameFrontUdpAddress, serverHost, sizeof(gameFrontUdpAddress) - 1);
+      gameFrontUdpAddress[sizeof(gameFrontUdpAddress) - 1] = '\0';
+      gameFrontTargetUdp = serverPort;
     }
-    printf("[WASM] netUdp mode, proxy: %s\n", proxyUrl);
-
-    /* Parse server host:port from proxy URL for transport */
-    char serverHost[256];
-    unsigned short serverPort = 27500;
-    parseProxyServerParam(proxyUrl, serverHost, sizeof(serverHost), &serverPort);
-    printf("[WASM] Game server: %s:%d\n", serverHost, serverPort);
-
-    strncpy(gameFrontUdpAddress, serverHost, sizeof(gameFrontUdpAddress) - 1);
-    gameFrontUdpAddress[sizeof(gameFrontUdpAddress) - 1] = '\0';
-    gameFrontTargetUdp = serverPort;
   }
 
   /* Start the game directly — no dialogs */
