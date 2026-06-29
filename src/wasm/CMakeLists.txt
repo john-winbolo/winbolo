@@ -321,3 +321,46 @@ target_link_options(winbolo PRIVATE
 set_target_properties(winbolo PROPERTIES
     SUFFIX ".html"
 )
+
+# ---------------------------------------------------------------------------
+# wasm-dist: precompress the web assets (for Caddy
+# `file_server { precompressed br gzip }`) and pack everything a deploy needs
+# into wasm-dist.zip. Run explicitly — it is NOT part of the normal build, so
+# day-to-day builds don't re-brotli the 212 MB data file:
+#     cmake --build <build-dir> --target wasm-dist
+# Requires `brotli` (apt-get install brotli); gzip is already standard.
+# ---------------------------------------------------------------------------
+find_program(BROTLI_EXE brotli)
+find_program(GZIP_EXE   gzip)
+if(BROTLI_EXE AND GZIP_EXE)
+    # Files served by Caddy. -k keeps the original (Caddy needs it as the
+    # fallback for clients that accept neither encoding); -f overwrites stale
+    # variants. The 212 MB data file uses brotli -q 10 (q 11 takes minutes on
+    # that size for marginal gain); the rest use q 11.
+    set(_wasm_dist_assets winbolo.html winbolo.js winbolo.wasm winbolo.data)
+    set(_wasm_dist_cmds)
+    set(_wasm_dist_zip_files)
+    foreach(_a IN LISTS _wasm_dist_assets)
+        if(_a STREQUAL "winbolo.data")
+            list(APPEND _wasm_dist_cmds COMMAND ${BROTLI_EXE} -f -k -q 10 "${_a}")
+        else()
+            list(APPEND _wasm_dist_cmds COMMAND ${BROTLI_EXE} -f -k -q 11 "${_a}")
+        endif()
+        list(APPEND _wasm_dist_cmds COMMAND ${GZIP_EXE} -f -k -9 "${_a}")
+        list(APPEND _wasm_dist_zip_files "${_a}" "${_a}.br" "${_a}.gz")
+    endforeach()
+
+    add_custom_target(wasm-dist
+        ${_wasm_dist_cmds}
+        COMMAND ${CMAKE_COMMAND} -E tar "cf" wasm-dist.zip --format=zip
+                ${_wasm_dist_zip_files}
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:winbolo>
+        COMMENT "Precompressing web assets (.br + .gz) and packing wasm-dist.zip"
+        VERBATIM
+    )
+    add_dependencies(wasm-dist winbolo)
+else()
+    message(WARNING
+        "wasm-dist: brotli and/or gzip not found "
+        "(apt-get install brotli) — the wasm-dist target is unavailable")
+endif()
