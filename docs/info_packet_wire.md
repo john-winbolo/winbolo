@@ -21,7 +21,7 @@ padding. There is no protocol-version negotiation: a server always emits the ful
 | 6 | 1 | u8 | versionRevision | |
 | 7 | 1 | u8 | type | `14` = INFO_RESPONSE |
 | 8 | 36 | char[36] | mapname | Pascal string (byte 0 = length, then chars) |
-| 44 | 4 | in_addr | gameid.serveraddress | network order; `0` ⇒ use UDP source address |
+| 44 | 4 | in_addr | gameid.serveraddress | network order; `0` ⇒ use UDP source address. Filled with the configured public IP (`inet_addr`) when a public address is set, else `0` |
 | 48 | 2 | u16 | gameid.serverport | host order (written raw, no `htons`) |
 | 50 | 2 | u16 | gameid._padding | explicit padding, `0` |
 | 52 | 4 | u32 | gameid.start_time | big-endian (`htonl`) — the one byte-swapped field |
@@ -82,14 +82,22 @@ during play).
 ## Same data over mDNS
 
 The `_winbolo._udp.local` TXT record set carries the identical information as
-string key/value pairs (see `src/server/mdns_records.h`). The keys that mirror the
-fields here are:
+string key/value pairs (see `src/server/mdns_records.h` for the source struct and
+`src/server/mdns_advertise.c` for the emission). One TXT record is emitted per
+key, in this order:
 
 ```
+map=<name>   ver=<maj.min.rev>   players=<n>   bases=<n>   pills=<n>
+pass=<0|1 password set>   mines=<0|1 mines on>   game=<gameType int>
+ai=<aiType int>   lobby=<0|1 in pre-game lobby>   locked=<0|1 locked>
 md5=<32 hex chars, empty if random/unknown>   newp=<0|1 allow new players>
 spec=<0|1 allow spectators>   nspec=<spectator count>   ranked=<0|1>
-rnd=<0|1 random map>   tlim=<game length in 50ths-tick>   humans=<n>
-bots=<n>   max=<max players>
+rnd=<0|1 random map>   tlim=<game length in 50ths-tick, 0 if none>
+humans=<n>   bots=<n>   max=<max players>
 ```
+
+The `md5 newp spec nspec ranked rnd tlim humans bots max` keys mirror the
+INFO_PACKET fields added alongside `flags`; `map ver players bases pills pass
+mines game ai lobby locked` are the common fields the packet has always carried.
 
 TXT values are text — the md5 is the hex string, never raw bytes.
