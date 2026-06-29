@@ -487,6 +487,7 @@ void windowApplyMenuChecks(ClientSim *cs) {
  * ------------------------------------------------------- */
 extern bool useAutoslow;   /* defined in gamefront_wasm.c */
 extern bool useAutohide;
+void windowSetSoundVolume(int pct);  /* defined below, after this function */
 
 static bool prefBool(cJSON *o, const char *k, bool dflt) {
   cJSON *it = cJSON_GetObjectItemCaseSensitive(o, k);
