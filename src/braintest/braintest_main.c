@@ -873,6 +873,11 @@ static void btLoadProfileTicks(BrainTestApp *app, const char *btrPath) {
     while (*p) {
         char *eol = strchr(p, '\n');
         size_t linelen = eol ? (size_t)(eol - p) : strlen(p);
+        /* Terminate THIS line so the sscanf()/strstr() below stay O(linelen).
+         * Without it they scan to the buffer's trailing NUL — up to the whole
+         * multi-hundred-MB file on every line — making the load O(n^2) and
+         * appear to hang (read as a "crash" on lower-memory machines). */
+        if (eol) *eol = '\0';
         int tick = -1, bot = -1;
         if (linelen > 12 && sscanf(p, "{\"tick\":%d,\"bot\":%d", &tick, &bot) == 2) {
             lines++;
@@ -2191,6 +2196,7 @@ static void signalHandler(int sig) {
 /* ------------------------------------------------------------------ */
 
 static char optBrain[512] = "brains/GoalHunter_1.5";
+static char optBotInit[1024] = ""; /* -bot-init spec; per-bot brain paths + [arg] */
 static char optMap[512]   = "";
 static char optLoadSession[1024] = "";  /* -loadsession <dir>: replay a brainrec.btr */
 static int  optNumPlayers = 1;
@@ -2243,6 +2249,9 @@ static void printUsage(const char *prog) {
         "\n"
         "Options:\n"
         "  -brain PATH      Brain script directory (default: brains/GoalHunter)\n"
+        "  -bot-init SPEC   Per-bot brain paths by id: 'range=path[arg],...' where range\n"
+        "                   is 'a-b' or 'n' and optional [arg] sets that bot's BRAIN_INIT_ARG.\n"
+        "                   Ids not listed use -brain. E.g. 0-3=brains/A/init.lua,4=brains/B/init.lua[llm]\n"
         "  -noplayers N     Number of bot players (default: 1)\n"
         "  -threads N       Brain dispatch threads incl. producer (default: 2, max: cores)\n"
         "  -teams N         Split bots into N teams via round-robin (default: 0 = FFA)\n"
@@ -2294,6 +2303,8 @@ static bool parseArgs(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if ((strcmp(argv[i], "-brain") == 0 || strcmp(argv[i], "--brain") == 0) && i + 1 < argc) {
             strncpy(optBrain, argv[++i], sizeof(optBrain) - 1);
+        } else if ((strcmp(argv[i], "-bot-init") == 0 || strcmp(argv[i], "--bot-init") == 0) && i + 1 < argc) {
+            strncpy(optBotInit, argv[++i], sizeof(optBotInit) - 1);
         } else if ((strcmp(argv[i], "-noplayers") == 0 || strcmp(argv[i], "--noplayers") == 0) && i + 1 < argc) {
             optNumPlayers = atoi(argv[++i]);
             if (optNumPlayers < 1) optNumPlayers = 1;
@@ -5840,6 +5851,20 @@ int main(int argc, char *argv[]) {
             for (char *p = brainName; *p; p++) if (*p == '_') us = p;
             if (us && us[1] >= '0' && us[1] <= '9') *us = '\0';
         }
+        /* -bot-init: per-player-id brain/init.lua paths (+ optional [arg]). Every
+         * id defaults to the resolved brainPath with no arg; the spec overrides
+         * the ids it names. Shared parser/semantics with winbolods. */
+        BotInitSlot botInit[MAX_TANKS];
+        for (int i = 0; i < MAX_TANKS; i++) {
+            SDL_snprintf(botInit[i].path, sizeof(botInit[i].path), "%s", brainPath);
+            botInit[i].arg[0] = '\0';
+            botInit[i].covered = 0;
+        }
+        if (optBotInit[0] &&
+            !luaBrainsParseBotInitSpec(optBotInit, botInit, MAX_TANKS)) {
+            fprintf(stderr, "  WARNING: -bot-init spec rejected; using -brain '%s' for all bots\n",
+                    brainPath);
+        }
         for (int i = 0; i < optNumPlayers; i++) {
             char name[32];
             SDL_snprintf(name, sizeof(name), "Bot %d", i);
@@ -5847,8 +5872,14 @@ int main(int argc, char *argv[]) {
             g_currentInitBot = i;
             SDL_snprintf(g_currentInitBrainName,
                          sizeof(g_currentInitBrainName), "%s", brainName);
+            /* Stage this bot's BRAIN_INIT_ARG (consumed by the create) and use
+             * its resolved brain path. */
+            luaBrainsSetNextInitArg(botInit[i].arg);
+            if (botInit[i].covered)
+                fprintf(stderr, "  Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
+                        botInit[i].arg[0] ? " arg=" : "", botInit[i].arg);
             SDL_PumpEvents(); /* keep window responsive during brain.open() */
-            bool ok = serverSimCreateBot(app.sim, (BYTE)i, brainPath, name,
+            bool ok = serverSimCreateBot(app.sim, (BYTE)i, botInit[i].path, name,
                                        optAI, optGame, false);
             SDL_PumpEvents();
             g_currentInitBot = -1;

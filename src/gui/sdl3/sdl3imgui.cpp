@@ -539,6 +539,10 @@ static void popOutHide(PopOutWindow *pw) {
     if (!pw->window || !pw->open) return;
     pw->open = false;
     SDL_HideWindow(pw->window);
+    /* Hiding the pop-out leaves keyboard focus orphaned (notably on macOS,
+     * where the OS does not auto-return key status to the main window), so
+     * explicitly raise the main game window back to the front/focus. */
+    if (s_window) SDL_RaiseWindow(s_window);
 }
 
 static bool popOutBeginFrame(PopOutWindow *pw) {

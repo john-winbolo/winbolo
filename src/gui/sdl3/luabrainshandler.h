@@ -419,6 +419,57 @@ void luaBrainsSetLogJson(int enable);
 void luaBrainsSetAllowUnsafe(int enable);
 
 /*********************************************************
+*NAME:          luaBrainsSetNextInitArg
+*PURPOSE:
+*  Stages an optional per-bot init argument for the NEXT
+*  brain instance created. When non-empty, the string is
+*  injected as the BRAIN_INIT_ARG Lua global (nil otherwise)
+*  before the brain's init script runs, so a brain can branch
+*  on it "if it supports it". Drives the [..] suffix of the
+*  shared -bot-init CLI flag.
+*
+*  Consume-once: luaBrainInstanceCreate() reads the staged
+*  value, sets BRAIN_INIT_ARG, then clears it — so it applies
+*  only to the immediately-following create and the next brain
+*  defaults back to nil unless re-staged. Set it right before
+*  each botManagerAddBot / serverSimCreateBot call.
+*********************************************************/
+void luaBrainsSetNextInitArg(const char *arg);
+
+/* One resolved bot from a -bot-init spec. Indexed by player id. */
+typedef struct {
+  char path[512];  /* brain/init.lua path for this bot */
+  char arg[128];   /* BRAIN_INIT_ARG text, or "" if none */
+  int  covered;    /* 1 if a -bot-init entry named this id */
+} BotInitSlot;
+
+/*********************************************************
+*NAME:          luaBrainsParseBotInitSpec
+*PURPOSE:
+*  Parses the shared -bot-init CLI spec into a per-player-id
+*  table so winbolods and BrainTest behave identically. Spec
+*  is a comma-separated list of:
+*
+*     <id-range>=<path>[<arg>]
+*
+*  where <id-range> is "a-b" (inclusive) or a single "n",
+*  <path> is a literal brain/init.lua path, and the optional
+*  bracketed [<arg>] becomes that bot's BRAIN_INIT_ARG. E.g.
+*
+*     0-3=brains/GoalHunter_1.5/init.lua,4-5=brains/Foo/init.lua[llm]
+*
+*  The caller pre-fills `slots` for every id with the default
+*  brain path and an empty arg; this overwrites only the ids
+*  named in the spec and sets their `covered` flag. Commas
+*  separate entries, so paths must not contain commas.
+*
+*  Returns true on a well-formed spec; on a malformed entry it
+*  logs to stderr and returns false (leaving slots partially
+*  applied — caller should treat false as fatal).
+*********************************************************/
+bool luaBrainsParseBotInitSpec(const char *spec, BotInitSlot *slots, int maxN);
+
+/*********************************************************
 *NAME:          luaBrainInstanceTick
 *PURPOSE:
 *  Runs one brain think cycle: populates BrainInfo from
