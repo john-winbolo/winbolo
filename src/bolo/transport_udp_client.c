@@ -233,6 +233,19 @@ typedef struct {
      * that branch: a player-join client (false) treats the 0xFF slot as an
      * invalid slot and rejects, so the branch can never fire by accident. */
     bool spectator;
+    /* Spectator dual-mode bit (authoritative home; mirrored one-way onto the
+     * ClientSim). True = the server is feeding the live lobby control bus
+     * (lobby/countdown); false = the delayed ring feed. Seeded from the accept
+     * packet's mode byte, then flipped by which source is feeding: false on the
+     * first delayed frame (cold-start countdown or bulk seed/record), true when
+     * live lobby control resumes (the server re-subscribed at return-to-lobby). */
+    bool specLiveLobby;
+    /* A live-lobby spectator is downloading the current lobby map over
+     * CHANNEL_BULK (BULK_KIND_DOWNLOAD), armed from a spectator JOIN_ACCEPT with a
+     * non-zero map size. Gates the bulk receiver to accept that stream while
+     * staying UDP_CLIENT_SPECTATING (not the player game-start pipeline); cleared
+     * once the map installs. The delayed-ring seed is a separate source. */
+    bool specLobbyMapDownloading;
 
     /* Phase 3 — UDP hole-punching fallback. Empty trackerAddr disables
      * punch entirely (LAN/manual-connect joiners). */
@@ -308,6 +321,13 @@ typedef struct {
      * in flight — bulk transfers are serialized on the stream. */
     uint8_t *specRecvBuf;
     uint32_t specRecvTotal;
+
+    /* In-flight lobby-chat backlog blob (BULK_KIND_LOBBY_CHAT_BACKLOG) the
+     * server sends a returning spectator at the drain-flip. onBegin mallocs it;
+     * onComplete walks its [type][bodyLen][body] records and applies each chat
+     * event. Held on the ctx so a teardown mid-transfer frees it. */
+    uint8_t *lobbyChatBacklogBuf;
+    uint32_t lobbyChatBacklogTotal;
 } TransportUdpClientCtx;
 
 #define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
@@ -527,7 +547,11 @@ static void udpClientSendInput(void *ctx, const InputPacket *input) {
  * PACKET_COMMAND_TICK and send. Updates each entry's lastSentMs. */
 static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
     if (c->outHeadSeq == c->outTailSeq) return;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    /* A tankless spectator may originate CMD_CHAT; its command carrier runs in
+     * the SPECTATING state as well as CONNECTED. The server's spectator inbound
+     * branch is the gate that rejects anything but chat. */
+    if (c->joinState != UDP_CLIENT_CONNECTED &&
+        c->joinState != UDP_CLIENT_SPECTATING) return;
     uint8_t buf[1400];
     packHeader(buf, PACKET_COMMAND_TICK, c->outSequence++);
     size_t pos = PACKET_HEADER_SIZE + 1;  /* +1 for count placeholder */
@@ -555,7 +579,10 @@ static void udpClientDrainCommandQueue(TransportUdpClientCtx *c) {
 
 void transportUdpClientSubmitCommand(Transport *t, const ClientCommand *cmd) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
-    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+    /* SPECTATING is admitted alongside CONNECTED so a spectator's CMD_CHAT
+     * reaches the wire; the server rejects any non-chat spectator command. */
+    if (c->joinState != UDP_CLIENT_CONNECTED &&
+        c->joinState != UDP_CLIENT_SPECTATING) return;
     if (c->outTailSeq - c->outHeadSeq >= OUT_CMD_QUEUE_CAP) {
         SDL_assert(0 && "out command queue full");
         return;
@@ -937,6 +964,26 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
  * the frame was a countdown (the caller skips the envelope decode and consumes
  * the frame). Gated on UDP_CLIENT_SPECTATING so a non-spectator's control decode
  * is untouched. */
+/* Set the spectator dual-mode bit and mirror it onto the ClientSim (one-way:
+ * the transport owns the bit). The session host reads the mirror via
+ * clientSimSpectatorIsLiveLobby / the spectator_drain seam. */
+static void udpClientSetSpecLiveLobby(TransportUdpClientCtx *c, bool live) {
+    bool wasLive = c->specLiveLobby;
+    c->specLiveLobby = live;
+    if (c->clientSim != NULL) {
+        clientSimSpectatorSetLiveLobby(c->clientSim, live);
+        /* Leaving the live lobby for the delayed game is a spectator's
+         * equivalent of game start (it never receives CTRL_GAME_PHASE_RUNNING —
+         * the server unsubscribes it before that publish, so the normal lobby-
+         * history clear never reaches it). Clear the lobby chat here so the
+         * pre-game chat doesn't linger behind the delayed game and mix with the
+         * post-game catch-up the server replays on return. */
+        if (wasLive && !live) {
+            clientSimClearLobbyChatHistory(c->clientSim);
+        }
+    }
+}
+
 static bool udpClientInterceptSpecCountdown(TransportUdpClientCtx *c,
                                             const uint8_t *frame, uint16_t len) {
     if (c->joinState != UDP_CLIENT_SPECTATING) return FALSE;
@@ -945,6 +992,12 @@ static bool udpClientInterceptSpecCountdown(TransportUdpClientCtx *c,
     }
     if (c->clientSim != NULL) {
         clientSimSpectatorSetCountdown(c->clientSim, unpackU32(frame + 1));
+    }
+    /* The cold-start countdown is the first delayed-ring frame in a short-lobby
+     * game (it precedes the seed), so leaving live-lobby mode here keeps the
+     * stale lobby from freezing on screen during the countdown. */
+    if (c->specLiveLobby) {
+        udpClientSetSpecLiveLobby(c, false);
     }
     return TRUE;
 }
@@ -1126,9 +1179,14 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         return cs->lobbyMapPreviewBytes;
 
     case BULK_KIND_DOWNLOAD:
-        /* Join download: reassemble into the buffer JOIN_ACCEPT sized from the
-         * accept's mapSize. The header's totalSize must match it. */
-        if (c->joinState != UDP_CLIENT_DOWNLOADING_MAP) return NULL;
+        /* Join download (player) OR live-lobby map download (spectator):
+         * reassemble into the buffer JOIN_ACCEPT sized from the accept's mapSize.
+         * The header's totalSize must match it. A spectator stays SPECTATING and
+         * is gated on specLobbyMapDownloading so the seed stream can't be mistaken
+         * for a join download. */
+        if (c->joinState != UDP_CLIENT_DOWNLOADING_MAP &&
+            !(c->joinState == UDP_CLIENT_SPECTATING &&
+              c->specLobbyMapDownloading)) return NULL;
         if (c->mapDownloadBuf == NULL) return NULL;
         if (h->totalSize != c->mapDownloadTotal) return NULL;
         c->mapDownloadReceived = 0;
@@ -1168,6 +1226,19 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         if (c->specRecvBuf == NULL) return NULL;
         c->specRecvTotal = h->totalSize;
         return c->specRecvBuf;
+
+    case BULK_KIND_LOBBY_CHAT_BACKLOG:
+        /* The returning spectator's lobby-chat catch-up. Only meaningful while
+         * SPECTATING; bound the attacker-controlled totalSize by the same cap the
+         * other spectator blobs use. onComplete walks the records and applies the
+         * chat through the normal lobby-chat path. */
+        if (c->joinState != UDP_CLIENT_SPECTATING) return NULL;
+        if (h->totalSize == 0 || h->totalSize > MAP_DOWNLOAD_MAX_SIZE) return NULL;
+        if (c->lobbyChatBacklogBuf != NULL) free(c->lobbyChatBacklogBuf);
+        c->lobbyChatBacklogBuf = (uint8_t *)malloc(h->totalSize);
+        if (c->lobbyChatBacklogBuf == NULL) return NULL;
+        c->lobbyChatBacklogTotal = h->totalSize;
+        return c->lobbyChatBacklogBuf;
 
     default:
         return NULL;
@@ -1231,11 +1302,27 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         break;
 
     case BULK_KIND_DOWNLOAD:
-        /* Whole map reassembled. Install immediately (lobby or running), flip to
-         * CONNECTED, and publish CTRL_MAP_DOWNLOAD_COMPLETE — the finish the old
-         * final-chunk path drove. Order: length -> state -> install -> flag ->
-         * event (matching the retired handler). */
+        /* Whole map reassembled. Install immediately (lobby or running) and
+         * publish CTRL_MAP_DOWNLOAD_COMPLETE — the finish the old final-chunk path
+         * drove. A live-lobby spectator installs the lobby map for its preview but
+         * STAYS UDP_CLIENT_SPECTATING (it never joined a tank); a player flips to
+         * CONNECTED. Order: length -> state -> install -> flag -> event. */
         c->mapDownloadReceived = h->totalSize;
+        if (c->joinState == UDP_CLIENT_SPECTATING) {
+            installCompressedMap(cs, c->mapDownloadBuf,
+                                 (int)c->mapDownloadTotal, NULL,
+                                 /*initViewport=*/true);
+            c->mapInstalled = true;
+            c->specLobbyMapDownloading = false;
+            {
+                ControlEvent evt = { .type = CTRL_MAP_DOWNLOAD_COMPLETE };
+                clientSimApplyControl(cs, &evt);
+            }
+            WB_LOG_INFO(WB_LOG_CAT_NET,
+                "spectator lobby map installed (%u bytes), staying SPECTATING",
+                (unsigned)h->totalSize);
+            break;
+        }
         c->joinState = UDP_CLIENT_CONNECTED;
         installCompressedMap(cs, c->mapDownloadBuf,
                              (int)c->mapDownloadTotal, NULL,
@@ -1267,6 +1354,9 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         clientSimSpectatorPushSeed(cs, c->specRecvBuf, h->totalSize);
         c->specRecvBuf = NULL;
         c->specRecvTotal = 0;
+        /* A delayed-ring frame landed — leave live-lobby mode (covers the
+         * delay=0 path where the seed arrives with no preceding countdown). */
+        udpClientSetSpecLiveLobby(c, false);
         break;
 
     case BULK_KIND_SPEC_RECORD:
@@ -1285,7 +1375,39 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         free(c->specRecvBuf);
         c->specRecvBuf = NULL;
         c->specRecvTotal = 0;
+        /* A delayed-ring frame landed — leave live-lobby mode. */
+        udpClientSetSpecLiveLobby(c, false);
         break;
+
+    case BULK_KIND_LOBBY_CHAT_BACKLOG: {
+        /* The whole backlog blob has landed: a run of [type][bodyLen BE][body]
+         * control-event records (oldest first). Decode each with the same codec
+         * the control channel uses and apply the chat through clientSimApplyControl
+         * — broadcast CTRL_CHAT and CTRL_SPECTATOR_CHAT only (what the server
+         * buffered). The sync replay that re-registered this spectator already set
+         * inLobby, so the chat lands in lobbyChatHistory. */
+        const uint8_t *p = c->lobbyChatBacklogBuf;
+        uint32_t remaining = c->lobbyChatBacklogTotal;
+        while (p != NULL && remaining >= 3) {
+            uint8_t  type    = p[0];
+            uint16_t bodyLen = unpackU16(p + 1);
+            uint32_t recLen  = 3u + bodyLen;
+            ControlEvent evt;
+            ControlDecodeBodyFn dec;
+            if (recLen > remaining) break;       /* truncated tail — stop */
+            dec = transportControlCodecBodyDecoder((ControlEventType)type);
+            if (dec != NULL && dec(p + 3, bodyLen, &evt) &&
+                (evt.type == CTRL_CHAT || evt.type == CTRL_SPECTATOR_CHAT)) {
+                clientSimApplyControl(cs, &evt);
+            }
+            p += recLen;
+            remaining -= recLen;
+        }
+        free(c->lobbyChatBacklogBuf);
+        c->lobbyChatBacklogBuf = NULL;
+        c->lobbyChatBacklogTotal = 0;
+        break;
+    }
 
     default:
         break;
@@ -1319,7 +1441,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             "PACKET_JOIN_ACCEPT received: state=%d len=%d (need>=%d)",
             (int)c->joinState, len, PACKET_HEADER_SIZE + 9);
         if ((c->joinState == UDP_CLIENT_JOINING ||
-             c->joinState == UDP_CLIENT_DOWNLOADING_MAP) &&
+             c->joinState == UDP_CLIENT_DOWNLOADING_MAP ||
+             c->joinState == UDP_CLIENT_SPECTATING) &&
             len >= PACKET_HEADER_SIZE + 9) {
             int pos = PACKET_HEADER_SIZE;
             uint32_t mapSize;
@@ -1327,13 +1450,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
 
             /* Tankless spectator accept. The server answers a
              * JOIN_FLAG_SPECTATOR join with the SPECTATOR_ACCEPT_NO_SLOT
-             * sentinel and a zero mapSize: no tank slot is claimed and no map
-             * is downloaded (the map arrives later inside the spectator seed).
+             * sentinel: no tank slot is claimed. The map size is real in
+             * lobby/countdown (the live-lobby map is downloaded below for the
+             * preview) and 0 while running (the game-time map rides the seed).
              * Intercept here — before the slot>=MAX_TANKS reject the 0xFF
              * sentinel would otherwise trip — and skip the tank-slot funnel
-             * (clientSimOnAssignedSlot), the map-download buffer, and the live
-             * snapshot-apply pipeline; land in UDP_CLIENT_SPECTATING to await
-             * the seed (consumed in a later slice). Gated on c->spectator so a
+             * (clientSimOnAssignedSlot) and the live snapshot-apply pipeline;
+             * land in UDP_CLIENT_SPECTATING. Gated on c->spectator so a
              * player-join client never takes this path: for it, a 0xFF slot
              * falls through to the out-of-range reject below. */
             if (c->spectator && assignedSlot == SPECTATOR_ACCEPT_NO_SLOT) {
@@ -1341,8 +1464,11 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                  * round-trip sample — same rationale as the player path). */
                 clientTimingSeedFromJoin(&c->timing, unpackU32(buf + pos), 0);
                 pos += 4;
-                /* mapSize is the zero sentinel for a spectator — step past it;
-                 * no download buffer is allocated. */
+                /* mapSize: 0 while a game runs (the map rides the delayed seed),
+                 * non-zero in lobby/countdown — the current lobby map, downloaded
+                 * below over CHANNEL_BULK for the lobby preview. Read it here
+                 * (the player path's funnel below is skipped for spectators). */
+                uint32_t specMapSize = unpackU32(buf + pos);
                 pos += 4;
                 /* Optional connId trailer, read exactly as the player path so
                  * the server can re-home this spectator after a NAT rebind. */
@@ -1350,9 +1476,49 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     c->connId = unpackConnId(buf + pos);
                     pos += 8;
                 }
+                /* Initial spectator mode byte, appended after the connId
+                 * trailer: 1 = the server was in lobby/countdown at accept time
+                 * (watch the live lobby), 0 = a running game (delayed ring).
+                 * Length-gated like the connId trailer; a short accept that
+                 * omits it defaults to delayed. Seeds the dual-mode bit so the
+                 * session host picks the right view before any feed arrives. */
+                {
+                    bool liveLobby = false;
+                    if (len >= PACKET_HEADER_SIZE + 9 + 8 + 1) {
+                        liveLobby = (buf[pos] != 0);
+                        pos++;
+                    }
+                    udpClientSetSpecLiveLobby(c, liveLobby);
+                }
+                /* Live-lobby map download. A non-zero size means the server is
+                 * streaming the current lobby map (BULK_KIND_DOWNLOAD) so the
+                 * lobby preview/starts render. Allocate the receive buffer and arm
+                 * the bulk gate, but stay UDP_CLIENT_SPECTATING — this is NOT the
+                 * player game-start pipeline. A re-accept (mid-lobby map change /
+                 * return-to-lobby) re-allocates for the new size and re-arms; the
+                 * old buffer is freed first so nothing leaks. The server pairs the
+                 * re-accept with a CTRL_CHANNEL_RESET, so the bulk receiver re-bases
+                 * cleanly. mapInstalled goes false until the new map lands, which
+                 * holds the preview on its prior frame (no half-map). */
+                if (specMapSize != 0 && specMapSize <= MAP_DOWNLOAD_MAX_SIZE) {
+                    if (c->mapDownloadBuf != NULL) {
+                        free(c->mapDownloadBuf);
+                        c->mapDownloadBuf = NULL;
+                    }
+                    c->mapDownloadBuf = (BYTE *)malloc(specMapSize);
+                    if (c->mapDownloadBuf != NULL) {
+                        memset(c->mapDownloadBuf, 0, specMapSize);
+                        c->mapDownloadTotal = specMapSize;
+                        c->mapDownloadReceived = 0;
+                        c->mapInstalled = false;
+                        c->specLobbyMapDownloading = true;
+                        bulkReceiverInit(&c->bulkRecv);
+                    }
+                }
                 c->joinState = UDP_CLIENT_SPECTATING;
                 WB_LOG_INFO(WB_LOG_CAT_NET,
-                    "spectator JOIN_ACCEPT: tankless connect, awaiting seed");
+                    "spectator JOIN_ACCEPT: tankless connect, mapSize=%u",
+                    (unsigned)specMapSize);
                 break;
             }
 
@@ -1715,6 +1881,19 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     clientApplyChannelReset(c, &evt);
                     continue;
                 }
+                /* Live lobby control reaching a spectator that was on the
+                 * delayed feed means the server re-subscribed it at
+                 * return-to-lobby — re-enter live-lobby mode. Flip only on the
+                 * actual live-lobby markers the re-subscribe sync replay carries
+                 * (a phase event opens the burst, CTRL_LOBBY_SYNC_COMPLETE closes
+                 * it), not on any control frame, so a stray/late frame can't trip
+                 * the flip early. */
+                if (c->joinState == UDP_CLIENT_SPECTATING && !c->specLiveLobby
+                    && (evt.type == CTRL_GAME_PHASE_LOBBY
+                        || evt.type == CTRL_GAME_PHASE_COUNTDOWN
+                        || evt.type == CTRL_LOBBY_SYNC_COMPLETE)) {
+                    udpClientSetSpecLiveLobby(c, true);
+                }
                 clientSimApplyControlOrdered(c, &evt, 0);
             }
         }
@@ -1866,6 +2045,18 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     if (evt.type == CTRL_CHANNEL_RESET) {
                         clientApplyChannelReset(c, &evt);
                         continue;
+                    }
+                    /* Live lobby control reaching a delayed spectator means the
+                     * server re-subscribed it at return-to-lobby — re-enter
+                     * live-lobby mode. Flip only on the actual live-lobby markers
+                     * the re-subscribe sync replay carries (a phase event opens
+                     * the burst, CTRL_LOBBY_SYNC_COMPLETE closes it), not on any
+                     * control frame, so a stray/late frame can't trip it early. */
+                    if (c->joinState == UDP_CLIENT_SPECTATING && !c->specLiveLobby
+                        && (evt.type == CTRL_GAME_PHASE_LOBBY
+                            || evt.type == CTRL_GAME_PHASE_COUNTDOWN
+                            || evt.type == CTRL_LOBBY_SYNC_COMPLETE)) {
+                        udpClientSetSpecLiveLobby(c, true);
                     }
                     clientSimApplyControlOrdered(c, &evt, 0);
                 }
@@ -2336,7 +2527,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     /* ── Layout A lobby — server → client broadcasts ─────────────── */
     case PACKET_LOBBY_TEAM_META_CHG:
     case PACKET_LOBBY_BOT_CONFIG_CHG:
-    case PACKET_LOBBY_BRAIN_LIST: {
+    case PACKET_LOBBY_BRAIN_LIST:
+    case PACKET_LOBBY_BOT_POOL_CHUNK: {
         ControlDecodeFn dec = transportControlCodecDecoder(pktType);
         if (dec != NULL) {
             ControlEvent evt;
@@ -2808,6 +3000,18 @@ static bool udpClientTick(void *ctx) {
         }
     }
 
+    /* A spectator runs only the command-queue retransmit (its sole outbound
+     * traffic is CMD_CHAT); the ping/timeout/upload pumps above are player-only.
+     * Without this a spectator's chat would send once and never retry on loss. */
+    if (c->joinState == UDP_CLIENT_SPECTATING &&
+        c->outHeadSeq != c->outTailSeq) {
+        uint32_t now = (uint32_t)SDL_GetTicks();
+        OutCmdEntry *head = &c->outCmdQueue[c->outHeadSeq % OUT_CMD_QUEUE_CAP];
+        if (head->lastSentMs != 0 && (now - head->lastSentMs) > 80) {
+            udpClientDrainCommandQueue(c);
+        }
+    }
+
     return true;
 }
 
@@ -3220,6 +3424,9 @@ void transportUdpClientDestroy(Transport *t) {
     if (c->specRecvBuf != NULL) {
         free(c->specRecvBuf);   /* in-flight spectator blob, if teardown mid-transfer */
     }
+    if (c->lobbyChatBacklogBuf != NULL) {
+        free(c->lobbyChatBacklogBuf);  /* in-flight backlog blob, if teardown mid-transfer */
+    }
     bulkSenderReset(&c->uploadSend);
     free(c);
     t->ctx = NULL;
@@ -3556,7 +3763,12 @@ const BYTE *transportUdpClientGetMapData(Transport *t, int *outLen) {
     TransportUdpClientCtx *c;
     if (t == NULL || t->ctx == NULL) return NULL;
     c = (TransportUdpClientCtx *)t->ctx;
-    if (c->mapDownloadBuf == NULL || c->joinState != UDP_CLIENT_CONNECTED) {
+    if (c->mapDownloadBuf == NULL) return NULL;
+    /* Connected player, or a live-lobby spectator whose lobby map has finished
+     * installing. Gated on mapInstalled (not merely SPECTATING) so a mid-download
+     * spectator never feeds half a map to the lobby preview. */
+    if (c->joinState != UDP_CLIENT_CONNECTED &&
+        !(c->joinState == UDP_CLIENT_SPECTATING && c->mapInstalled)) {
         return NULL;
     }
     if (outLen != NULL) {

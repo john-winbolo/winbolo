@@ -65,6 +65,11 @@ typedef enum {
     CTRL_LOBBY_BOT_CONFIG,
     CTRL_LOBBY_BOT_BRAIN,
     CTRL_LOBBY_BRAIN_LIST,
+    /* CTRL_LOBBY_BOT_POOL_CHUNK — one fragment of the server's bot
+     * naming-pool catalog (a zlib-compressed blob), streamed during
+     * join sync so clients render/pick from the SERVER's pools. The
+     * client reassembles fragments seq 0..count-1, then installs. */
+    CTRL_LOBBY_BOT_POOL_CHUNK,
     CTRL_GAME_VOTE_STATE,
     CTRL_SERVER_TEXT,
     CTRL_COMMAND_REJECTED,
@@ -101,6 +106,11 @@ typedef enum {
      * watching. specIdx is in [0, MAX_SPECTATORS). Mirrors
      * CTRL_LOBBY_SLOT but carries the trimmed spectator fields only. */
     CTRL_SPECTATOR_SLOT,
+    /* CTRL_SPECTATOR_CHAT — a lobby chat line typed by a spectator. The
+     * server stamps the sender's specIdx; clients resolve the name via
+     * clientSimGetSpectatorSlot and render it [Spectator]-tagged in the
+     * shared lobby chat log. Body carries the raw message text. */
+    CTRL_SPECTATOR_CHAT,
     /* CTRL_LOBBY_SYNC_COMPLETE — terminal marker the server delivers as the
      * final event of a subscriber's join sync replay. The roster replay sets
      * inLobby before re-announcing every existing player/slot, so the client
@@ -119,6 +129,12 @@ typedef enum {
  * name bytes) = 263 bytes; rounded up for headroom. fromPlayer and
  * destPlayer are separate struct fields, not part of body[]. */
 #define CHAT_BODY_MAX 272
+
+/* Per-fragment payload cap for CTRL_LOBBY_BOT_POOL_CHUNK. Sized so one
+ * fragment plus its header fits a single control datagram (well under
+ * MAX_CONTROL_PACKET). A 64 KiB catalog therefore needs at most
+ * ceil(65536/900) ≈ 73 fragments (< 255, the seq/count cap). */
+#define LOBBY_BOT_POOL_CHUNK_FRAG_MAX 900
 
 typedef struct ControlEvent {
     ControlEventType type;
@@ -186,6 +202,15 @@ typedef struct ControlEvent {
             uint8_t             specIdx;
             ClientSpectatorSlot slot;
         } spectatorSlot;
+
+        /* CTRL_SPECTATOR_CHAT — a spectator's lobby chat line. specIdx is
+         * the sender's spectator slot; body/bodyLen is the raw message
+         * text (no length prefix, bodyLen <= PACKET_MAX_CHAT_MESSAGE). */
+        struct {
+            uint8_t  specIdx;
+            uint16_t bodyLen;
+            uint8_t  body[PACKET_MAX_CHAT_MESSAGE];
+        } spectatorChat;
 
         /* CTRL_LOBBY_SETTINGS */
         struct {
@@ -298,6 +323,16 @@ typedef struct ControlEvent {
         struct {
             BrainList list;
         } lobbyBrainList;
+
+        /* CTRL_LOBBY_BOT_POOL_CHUNK — fragment `seq` of `count` of the
+         * server's compressed bot-pool catalog blob. fragLen bytes live
+         * in frag[]. Reassembled and installed client-side. */
+        struct {
+            uint8_t  seq;
+            uint8_t  count;
+            uint16_t fragLen;
+            uint8_t  frag[LOBBY_BOT_POOL_CHUNK_FRAG_MAX];
+        } lobbyBotPoolChunk;
 
         /* CTRL_SERVER_TEXT — server-originated chat broadcast.
          * Mirrors what UDP clients receive as

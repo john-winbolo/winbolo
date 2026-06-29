@@ -36,10 +36,27 @@
 #ifndef LOBBY_BOT_POOLS_H
 #define LOBBY_BOT_POOLS_H
 
+#include <stdbool.h>
+
 #include "global.h"
 
-/* Number of available pools. Must match the s_pools[] array
- * length in lobby_bot_pools.c. */
+/* ── Hard limits ─────────────────────────────────────────────────
+ * The per-team pool selection travels on the wire as a single
+ * uint8_t (TeamMetadata.namingPool), so a pool index must fit in
+ * 0..255.  The generated "Numbered Bots" pool is always appended as
+ * the last index, so the themed-pool cap leaves one slot for it.
+ *
+ * Names themselves travel as strings (not indices), so there is no
+ * wire limit on names-per-pool — but lobbyBotPoolPick's scratch
+ * buffer caps how many a single pool can pick from, and each name
+ * must fit the player-name wire cap once validated. */
+#define LOBBY_BOT_POOL_MAX_POOLS       254  /* + 1 numbered = 255 */
+#define LOBBY_BOT_POOL_MAX_NAMES       256  /* per pool (picker cap) */
+#define LOBBY_BOT_POOL_MAX_NAME_BYTES   63  /* PACKET_MAX_PLAYER_NAME-1 */
+#define LOBBY_BOT_POOL_MAX_LABEL_BYTES  48
+
+/* Number of available pools. This is the count of themed pools plus
+ * one for the always-present generated "Numbered Bots" pool. */
 int  lobbyBotPoolCount(void);
 
 /* Display label for the pool dropdown (e.g. "Famous Painters").
@@ -68,5 +85,112 @@ const char *lobbyBotPoolName(int poolIdx, int nameIdx);
 char *lobbyBotPoolPick(int poolIdx,
                        const char **used, int usedCount,
                        char *outBuf, int outBufLen);
+
+/* ── Runtime-loadable pools ──────────────────────────────────────
+ *
+ * By default the pools come from the built-in tables compiled into
+ * lobby_bot_pools.c.  They can be replaced at runtime (e.g. from a
+ * data/bot_names.json file) so hosts can ship their own themed name
+ * sets.  Pool *indices* travel on the wire, so every peer must load
+ * the same set for the dropdown labels to line up — the shipped
+ * default file does this; a custom -botnames file only matches peers
+ * that load the same file.  Bot names themselves always travel as
+ * strings, so a mismatch only mislabels the dropdown, never breaks a
+ * game. */
+
+/* A single themed pool's source data, handed to lobbyBotPoolsInstall.
+ * The strings are copied by the installer; the caller keeps ownership
+ * of its own buffers. */
+typedef struct {
+    const char        *label;     /* dropdown label */
+    const char *const *names;     /* nameCount entries */
+    int                nameCount;
+} LobbyBotPoolDef;
+
+/* Outcome of an install/load, for logging and tests. Any field
+ * pointer may be NULL if the caller doesn't care. */
+typedef struct {
+    int poolsIn;       /* themed pools offered */
+    int poolsKept;     /* themed pools installed */
+    int poolsDropped;  /* offered minus kept (empty / over cap) */
+    int namesIn;       /* names offered across all kept pools */
+    int namesKept;     /* names installed */
+    int namesDropped;  /* empty / overlong / duplicate */
+} LobbyBotPoolLoadStats;
+
+/* Replace the active themed pools with a copied, safety-clamped copy
+ * of `defs`.  Clamping: at most LOBBY_BOT_POOL_MAX_POOLS pools and
+ * LOBBY_BOT_POOL_MAX_NAMES names/pool; names longer than
+ * LOBBY_BOT_POOL_MAX_NAME_BYTES, empty names, and case-insensitive
+ * duplicates within a pool are skipped; pools left with no names are
+ * dropped; a missing label is replaced with "Pool N".
+ *
+ * The generated "Numbered Bots" pool is unaffected and stays the last
+ * index.  If nothing usable survives, the built-in defaults are left
+ * active and the function returns 0.  Returns the number of themed
+ * pools installed.  `stats` (nullable) is filled in either way. */
+int  lobbyBotPoolsInstall(const LobbyBotPoolDef *defs, int defCount,
+                          LobbyBotPoolLoadStats *stats);
+
+/* Revert to the built-in compiled-in pools, freeing any installed
+ * custom set. */
+void lobbyBotPoolsReset(void);
+
+/* Parse a bot-names JSON file and install it (replacing the active
+ * pools).  Format:
+ *   { "pools": [ { "label": "Classic AI", "names": ["HAL-9000", ...] }, ... ] }
+ * Returns true if at least one themed pool was installed; on any
+ * error (missing file, bad JSON, no usable pools) returns false and
+ * leaves the previously-active pools untouched.  `stats` is nullable.
+ *
+ * Lives in lobby_bot_pools_json.c (cJSON); only linked into targets
+ * that need runtime loading. */
+bool lobbyBotPoolsLoadFromFile(const char *path,
+                               LobbyBotPoolLoadStats *stats);
+
+/* Load the shipped default file (data/bot_names.json) relative to the
+ * executable's base path, then the CWD as a fallback.  Returns true
+ * on success; on failure the built-in defaults remain active. */
+bool lobbyBotPoolsLoadDefault(LobbyBotPoolLoadStats *stats);
+
+/* ── Wire catalog (server → client) ──────────────────────────────
+ *
+ * So clients render and pick from the *server's* pools (not their own
+ * shipped file), the server serialises its active themed pools into a
+ * compact, zlib-compressed blob and streams it to each client during
+ * the lobby join sync.  The generated "Numbered Bots" pool is NOT
+ * serialised — both ends append it locally, so indices line up.
+ *
+ * Blob layout: [u32 rawLen BE][zlib-deflated payload], where the
+ * payload is:
+ *   u8  poolCount
+ *   per pool: u8 labelLen, label bytes,
+ *             u16 nameCount BE,
+ *               per name: u8 nameLen, name bytes
+ */
+
+/* Cap on the *uncompressed* serialized payload. */
+#define LOBBY_BOT_CATALOG_MAX_BYTES (64u * 1024u)
+
+/* Upper bound on the compressed wire blob (zlib compressBound(64KiB) +
+ * the 4-byte rawLen prefix, rounded up). Sizes the server serialize
+ * buffer and the client reassembly buffer. */
+#define LOBBY_BOT_CATALOG_WIRE_MAX (68u * 1024u)
+
+/* Serialize the active themed pools into `out` (compressed). Returns
+ * the number of bytes written, or -1 if `outCap` is too small or the
+ * uncompressed payload would exceed LOBBY_BOT_CATALOG_MAX_BYTES (in
+ * which case trailing pools are dropped to fit rather than failing —
+ * see the .c). Writes nothing and returns 0 if there are no themed
+ * pools. */
+int  lobbyBotPoolsSerialize(unsigned char *out, int outCap);
+
+/* Decompress + parse a catalog blob produced by lobbyBotPoolsSerialize
+ * and install it (replacing the active pools, same clamping as
+ * lobbyBotPoolsInstall). Returns themed pools installed, or -1 on a
+ * malformed/oversize blob (active pools left untouched on -1).
+ * `stats` is nullable. */
+int  lobbyBotPoolsDeserializeInstall(const unsigned char *blob, int len,
+                                     LobbyBotPoolLoadStats *stats);
 
 #endif /* LOBBY_BOT_POOLS_H */

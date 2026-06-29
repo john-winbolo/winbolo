@@ -313,6 +313,13 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
 
   if (f == NULL || evt == NULL) return;
 
+  /* The server streams its bot-name pool catalog to every joiner as
+   * CTRL_LOBBY_BOT_POOL_CHUNK fragments during lobby sync. That is cosmetic
+   * lobby data, not a game/control event these baselines assert, and its
+   * fragment count tracks data/bot_names.json — so drop it from the captured
+   * stream to keep the baselines stable and content-independent. */
+  if (evt->type == CTRL_LOBBY_BOT_POOL_CHUNK) return;
+
   /* Tick numbers come from the ClientSim's last-server-tick counter,
    * which both modes agree on (set by snapshot ingestion in --fast
    * and --server alike). Pre-snapshot events log tick 0. */

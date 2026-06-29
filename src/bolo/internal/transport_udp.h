@@ -779,5 +779,16 @@ bool transportUdpServerGetSpectatorCountdown(int s, uint32_t *outRemaining);
  * simulating a peer that keeps up so the seed completes and the forward feed's
  * window keeps draining without a real spectator channel endpoint. */
 void transportUdpServerTestSpectatorAckBulk(int s);
+/* Read a spectator's CHANNEL_CONTROL send sequence (nextSeq). The deliver
+ * allowlist (serverSpectatorDeliverControl) is the only writer of that channel
+ * for a live spectator, so a test can publish one control event and check
+ * whether this advanced (event passed) or held (event dropped). Returns 0 for
+ * an invalid slot. */
+uint32_t transportUdpServerGetSpectatorControlSeq(int s);
+
+/* True when spectator slot s is a live control-bus subscriber (lobby/countdown),
+ * false when it is a delayed-ring reader or the slot is out of range. Lets a
+ * test observe the live↔delayed cutover. */
+bool transportUdpServerGetSpectatorLive(int s);
 
 #endif /* TRANSPORT_UDP_H */

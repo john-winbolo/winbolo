@@ -53,6 +53,7 @@
 #include "net_impair.h"   /* WB_ENABLE_NETIMPAIR master switch */
 #include "bot_manager.h"
 #include "bot_worker_pool.h"
+#include "lobby_bot_pools.h"
 #include "brain_record.h"
 #include "../gui/sdl3/luabrainshandler.h"  /* luaBrainsSetProfile — shared with BrainTest */
 #include "server_dedicated_log.h"
@@ -678,6 +679,8 @@ void printArgs() {
   fprintf(stderr, "                (default: 0 = no limit). Caps lobby \"Add Bot\" requests\n");
   fprintf(stderr, "                and clamps -bots.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
+  fprintf(stderr, "-botnames <path> - JSON file of bot name pools (themed name lists) for\n");
+  fprintf(stderr, "                naming auto-added bots. Defaults to data/bot_names.json.\n");
   fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
   fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
   fprintf(stderr, "                them, or a different one to fight against them.\n");
@@ -1138,9 +1141,19 @@ int main(int argc, char **argv) {
   }
 
 #ifdef USING_SDL
+  /* SDL_Init logs an INFO version/app banner on the SYSTEM category. Treat it
+     as debug detail: suppress it unless SYSTEM logging is at debug/trace. */
+  SDL_LogPriority sysPrio = SDL_GetLogPriority(SDL_LOG_CATEGORY_SYSTEM);
+  bool sysQuieted = (sysPrio > SDL_LOG_PRIORITY_DEBUG);
+  if (sysQuieted) {
+    SDL_SetLogPriority(SDL_LOG_CATEGORY_SYSTEM, SDL_LOG_PRIORITY_WARN);
+  }
   if (!SDL_Init(0)) {
     fprintf(stderr, "Error starting SDL - %s\n", SDL_GetError());
     exit(0);
+  }
+  if (sysQuieted) {
+    SDL_SetLogPriority(SDL_LOG_CATEGORY_SYSTEM, sysPrio);
   }
 #endif
   /* IP-to-country geolocation (DB-IP Lite). Resolve the database relative to
@@ -1498,6 +1511,33 @@ int main(int argc, char **argv) {
       strncpy(brainPath, (char *)argv[argNum], MAX_PATH - 1);
       brainPath[MAX_PATH - 1] = '\0';
     }
+
+    /* Bot naming pools: a custom file via -botnames, otherwise the
+     * shipped data/bot_names.json. These supply the themed names for
+     * the auto-add loop below. Bot names travel on the wire as
+     * strings, so a server's choice of pool is always rendered
+     * correctly on every client regardless of which file the client
+     * has. Silent fallback to the built-in names on any failure. */
+    {
+      int bnArg = findArg(argc, argv, "botnames");
+      LobbyBotPoolLoadStats poolStats;
+      bool poolsLoaded = false;
+      if (bnArg != ARG_NOT_FOUND) {
+        poolsLoaded =
+            lobbyBotPoolsLoadFromFile((char *)argv[bnArg], &poolStats);
+        if (!poolsLoaded) {
+          fprintf(stderr,
+                  "Warning: -botnames '%s' could not be loaded; "
+                  "using built-in bot names\n",
+                  (char *)argv[bnArg]);
+        }
+      } else {
+        poolsLoaded = lobbyBotPoolsLoadDefault(&poolStats);
+      }
+      if (poolsLoaded) {
+        fprintf(stderr, "Loaded %d bot name pool(s)\n", poolStats.poolsKept);
+      }
+    }
     /* If no -brain specified but AI is enabled, auto-discover a brain path
      * so that lobby "Add Bot" requests have a brain to use. */
     if (brainPath[0] == '\0' && ai != aiNone) {
@@ -1666,7 +1706,6 @@ int main(int argc, char **argv) {
   {
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
-      char botName[64];
       /* Brains run in the restricted Lua sandbox by default. -allow-unsafe-brains
        * opens the full standard library for trusted brain authors. Set BEFORE the
        * bots are created so each VM constructs with the chosen policy. */
@@ -1771,9 +1810,42 @@ int main(int argc, char **argv) {
           }
         }
       }
+      /* Draw themed names from one randomly-chosen pool so a -bots
+       * server gets varied names instead of "Bot 1..N". The name draws are
+       * wrapped in a bolo_rand save/restore so this cosmetic randomness leaves
+       * the deterministic game stream (tank placement, etc.) untouched for a
+       * given -seed — only the game sim should advance the shared PRNG. Names
+       * are picked up front, then the bots are added with them. usedStore
+       * backs the uniqueness list handed to lobbyBotPoolPick. (numBots is
+       * clamped to MAX_TANKS above, so botNames is always in bounds.) */
+      char botNames[MAX_TANKS][64];
+      {
+        static char usedStore[MAX_TANKS][64];
+        const char *usedNames[MAX_TANKS];
+        int usedCount = 0;
+        BoloRandState rngBeforeNaming;
+        int botPool;
+        bolo_rand_save(&rngBeforeNaming);
+        botPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+        for (i = 0; i < numBots; i++) {
+          char picked[64];
+          lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
+          if (picked[0] != '\0') {
+            snprintf(botNames[i], sizeof(botNames[i]), "%s", picked);
+          } else {
+            snprintf(botNames[i], sizeof(botNames[i]), "Bot %d", i + 1);
+          }
+          if (usedCount < MAX_TANKS) {
+            snprintf(usedStore[usedCount], sizeof(usedStore[usedCount]),
+                     "%s", botNames[i]);
+            usedNames[usedCount] = usedStore[usedCount];
+            usedCount++;
+          }
+        }
+        bolo_rand_restore(&rngBeforeNaming);
+      }
       for (i = 0; i < numBots; i++) {
-        snprintf(botName, sizeof(botName), "Bot %d", i + 1);
-        if (!botManagerAddBot(serverSim, (BYTE)i, brainPath, botName, ai, game, hiddenMines)) {
+        if (!botManagerAddBot(serverSim, (BYTE)i, brainPath, botNames[i], ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round

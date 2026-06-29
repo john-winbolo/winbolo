@@ -1813,6 +1813,7 @@ STR_DLGSETTINGS_TAB_SESSION=Сесія
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Глядачі ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Глядач] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Припинити перегляд?
 STR_LV_SPEC_PHASE_LOBBY=Лобі
 STR_LV_SPEC_PHASE_LIVE=В ефірі

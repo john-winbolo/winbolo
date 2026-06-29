@@ -1765,6 +1765,7 @@ static const LangEntry langTable[] = {
     {1846, "Session"},
     {1847, "Currently: {string1}"},
     {1848, "Spectators ({number}):"},
+    {1866, "[Spectator] {string1}"},
     {1849, "Leave spectating?"},
     {1850, "Lobby"},
     {1851, "Live"},

@@ -152,6 +152,12 @@ int run_md5_streaming_matches_oneshot(void);
 int run_md5_block_boundaries(void);
 int run_md5_to_hex(void);
 
+/* bolo_rand save/restore (test_rand_save_restore.c): a restored snapshot
+ * rewinds the generator exactly, so draws made between save and restore do not
+ * shift the post-restore sequence — the contract that keeps cosmetic bot
+ * naming from perturbing the deterministic game stream. */
+int run_rand_save_restore(void);
+
 /* Network-optimization wire changes (test_net_opt_wire.c): the pill
  * armour/inTank byte-packing helpers round-trip across the full range, and
  * the split base / packed pill game events have the expected wire sizes and
@@ -188,6 +194,17 @@ int run_lobby_bot_name_skip_does_not_bypass_validator_prefix(void);
 int run_lobby_bot_name_skip_does_not_bypass_validator_control(void);
 int run_lobby_bot_name_skip_excludes_self_from_uniqueness(void);
 int run_lobby_bot_name_accepts_clean_unique(void);
+int run_bot_pool_builtin_defaults(void);
+int run_bot_pool_install_and_clamp(void);
+int run_bot_pool_install_dedup_and_drop(void);
+int run_bot_pool_reset_restores_builtin(void);
+int run_bot_pool_pick_unique_and_overflow(void);
+int run_bot_pool_json_load_roundtrip(void);
+int run_bot_pool_json_missing_file_keeps_active(void);
+int run_bot_pool_wire_roundtrip(void);
+int run_bot_pool_wire_builtin_roundtrip(void);
+int run_bot_pool_wire_rejects_garbage(void);
+int run_bot_pool_wire_chunk_transport(void);
 int run_lobby_map_list_chunked(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
@@ -255,17 +272,57 @@ int run_spectator_roster_publish(void);
  * with the disconnected minimum and the out-of-range specIdx rejection. */
 int run_spectator_slot_codec(void);
 
+/* CTRL_SPECTATOR_CHAT body-codec round-trip (test_spectator_chat_codec.c):
+ * the spectator lobby-chat event encodes/decodes through the body tables, with
+ * the empty/max-length messages and the out-of-range specIdx / overrun
+ * rejections. */
+int run_spectator_chat_codec(void);
+
+/* Spectator-chat routing (test_spectator_chat_routing.c): a published
+ * CTRL_SPECTATOR_CHAT reaches a player bus subscriber and a live spectator
+ * (allowlist); broadcast CTRL_CHAT reaches the spectator; team/unicast chat
+ * does not. */
+int run_spectator_chat_routing(void);
+
+/* Spectator-chat replay emission (test_spectator_chat_log.c):
+ * serverSimReceiveSpectatorChat writes a log_SpectatorChat (specIdx + message)
+ * into the recording .wbv, read back from the framed stream. */
+int run_spectator_chat_log(void);
+
+/* Lobby-chat catch-up buffer (test_spectator_chat_catchup.c): broadcast +
+ * spectator chat captured in lobby/countdown, cleared at game start, capped,
+ * and re-delivered by serverSimReplayLobbyChat at the drain-flip; a fresh
+ * subscriber's sync replay carries no backlog. */
+int run_spectator_chat_catchup(void);
+
 /* Spectator connect — client side (test_spectator_connect.c): the real client
  * transport connecting with the spectator flag runs the join handshake and
  * lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting seed) with no tank
  * slot consumed and no map download started. */
 int run_spectator_connect(void);
 
+/* Spectator live-lobby control intake — client side
+ * (test_spectator_client_lobby_intake.c): a tankless spectator (myPlayerNum 0,
+ * an alias of real slot 0) is fed the allowlisted lobby control bus and must
+ * populate its mirror without mis-treating slot 0 as the viewer's own self —
+ * the slot-0 name resolves, slot-0 broadcast chat is delivered, the viewer
+ * holds no map-skip vote, and no team-scoped chat is shown to the teamless
+ * viewer. */
+int run_spectator_client_lobby_intake(void);
+
 /* Spectator command rejection (test_spectator_command_reject.c): a tankless
  * viewer attempts lobby/gameplay commands the production way and the server
  * shows no effect (no slot, still a spectator); plus the dispatcher guard
  * rejects an out-of-range sender slot with CMD_REJECT_INVALID. */
 int run_spectator_command_reject(void);
+
+/* Spectator lobby read-only invariant (test_spectator_lobby_readonly.c): a
+ * tankless viewer fires every guarded clientSimNetSend* mutation path and the
+ * seated lobby is wholly untouched (no player added/removed, slot-0 team/ready/
+ * name unchanged, viewer never promoted) — the client-side send-suppression
+ * backstop. A positive control confirms the mirror still follows real changes.
+ * The dialog's read-only rendering is human-validated; this covers the wire. */
+int run_spectator_lobby_readonly(void);
 
 /* Spectator feed capture — client side (test_spectator_capture.c): a real
  * spectator client over loopback captures the CHANNEL_BULK seed and the ordered
@@ -284,6 +341,31 @@ int run_spectator_log(void);
  * armed as a BULK_KIND_SPEC_SEED transfer; the armed seed blob is byte-equal to
  * the ring's keyframe at that delay. */
 int run_spectator_seed(void);
+
+/* Live-lobby spectator control bus (test_spectator_live_bus.c): a lobby
+ * spectator is a real-time control-bus subscriber. The sync replay reaches a
+ * lobby subscriber (and a seated spectator); serverSpectatorDeliverControl is a
+ * drop-by-default allowlist; MAX_TANKS+MAX_SPECTATORS subscribers all register
+ * (overflow returns INVALID); the enumerator seeds the spectator roster and a
+ * roster broadcast fans CTRL_SPECTATOR_SLOT to live spectators. */
+int run_spectator_lobby_subscribe(void);
+int run_spectator_control_filter(void);
+int run_spectator_subscriber_capacity(void);
+int run_spectator_roster_to_spectators(void);
+
+/* Live↔delayed cutover (test_spectator_cutover.c): a live-lobby spectator is
+ * unsubscribed from the control bus at game start before any running-state
+ * publish (so it receives zero running control — the anti-cheat boundary), and
+ * is flipped back to the live lobby only after its delayed read head drains the
+ * game→lobby segment boundary. */
+int run_spectator_lobby_cutover(void);
+
+/* Dual-mode spectator session (test_loopback_spectator_lobby.c): the client's
+ * live-lobby bit is seeded from the accept mode byte (live when the server is in
+ * the lobby, delayed when a game runs), leaves live-lobby mode when the delayed
+ * feed begins at game start, and returns to it when live lobby control resumes
+ * after the delayed game drains back to the lobby. */
+int run_loopback_spectator_lobby(void);
 
 /* Bulk-transfer framing (test_bulk_transfer.c): the off-socket stream-header
  * round-trip, byte-identical blob reassembly under loss + reorder, header

@@ -1384,10 +1384,16 @@ static void lvSpecApplyTitle(const char *serverHost, uint16_t serverPort) {
  * backend.h). The ClientSim's lifetime is the caller's — spectatorRun does not
  * disconnect or free it.
  * -------------------------------------------------------------------------- */
-void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
+bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
                   const char *serverHost, uint16_t serverPort) {
+    /* True when the loop exits because the server put the spectator back into
+     * live-lobby mode (its delayed game drained to the lobby); false when the
+     * user left or the feed never loaded. The caller's dual-mode loop re-enters
+     * the live lobby on true and exits on false. */
+    bool liveResumed = false;
+
     if (lvHostSetup(window, renderer, /* fromMainMenu */ TRUE) == FALSE) {
-        return;
+        return false;
     }
 
     /* Stalled-feed watchdog. A spectator sends no input, so the transport's
@@ -1527,6 +1533,17 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
         SDL_Event sdlEvent;
         SpecDrainRecord rec;
         bool drainedAny = false;
+
+        /* The server re-subscribed this spectator to the live lobby control bus
+         * (its delayed game drained back across the game→lobby boundary), so
+         * live lobby control has begun arriving — return to the caller, which
+         * re-enters the live read-only lobby against the now-live ClientSim.
+         * This is distinct from the in-stream new-game keyframe handled below,
+         * which keeps playing delayed and must not return. */
+        if (specDrainLiveResumed(cs)) {
+            liveResumed = true;
+            break;
+        }
 
         /* Controller input is gated on the leave-confirm modal. While it is
          * open ImGui owns the gamepad (A confirms / B cancels the prompt), so
@@ -1773,4 +1790,5 @@ void spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
     }
     lvHostTeardown();
     lv_specSeedControlClear();
+    return liveResumed;
 }

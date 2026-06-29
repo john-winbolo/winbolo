@@ -92,6 +92,16 @@ bool loopbackHarnessStart(LoopbackHarness *h, const char *playerName,
 bool loopbackHarnessStartSpectator(LoopbackHarness *h, const char *playerName,
                                    uint64_t seed);
 
+/* Bring up server + a tankless SPECTATOR client against a server in the LOBBY
+ * (lobbyMode=true) rather than a running game. Viewer slots are opened so the
+ * accept path admits the connect; in lobby/countdown the server registers the
+ * viewer as a live control-bus subscriber, so allowlisted lobby control flows
+ * to the spectator's ClientSim over CHANNEL_CONTROL with no delayed ring. seed
+ * seeds bolo_srand. Returns false (and leaves the harness safe to Stop) on
+ * failure. */
+bool loopbackHarnessStartSpectatorLobby(LoopbackHarness *h,
+                                        const char *playerName, uint64_t seed);
+
 /* Advance both endpoints by exactly one tick: client tick (sends queued
  * input/commands, receives + impairs inbound, applies control/snapshots),
  * then server tick (drains recv queue, ticks the sim, sends snapshots /
