@@ -16,8 +16,14 @@ This is a SPIKE. Read this before assuming any of it is production-ready.
   fails `luac -p` in the *original* too (a giant generated data table — the
   transpiler makes 0 edits to it), so it's pre-existing, not a transpiler bug.
 - A small C-API shim is still needed (`lua_getextraspace`, `lua_isinteger`).
-- LuaJIT itself still has to be built (MSVC) and wired in behind a CMake option.
-- **Hard blockers remain** (below). This is not a drop-in.
+- LuaJIT 2.1 **builds cleanly** (MSVC `msvcbuild.bat`); the transpiled brains
+  parse under the real LuaJIT (49/50, same pre-existing exception). Proven, not
+  theoretical.
+- A representative pure-Lua kernel runs **~5.4× faster** on LuaJIT (identical
+  checksum) — but that's an UPPER BOUND; the in-game gain is lower because the
+  hot paths are already in C (see Benchmark results).
+- Still NOT done: the C-API shim, wiring LuaJIT into the CMake build, and
+  re-validating determinism. **Hard blockers remain** (below) — not a drop-in.
 
 ## What the brains actually use (measured, GoalHunter_1.5)
 
@@ -80,7 +86,38 @@ Used by `luabrainshandler.c` / `bot_manager.c`, absent in LuaJIT 5.1:
 - [ ] Re-validate determinism against `brainrec.btr` + baselines.
 - [ ] Benchmark vs `main` (below).
 
-## Benchmark plan (vs `main`)
+## Benchmark results (pure-Lua kernel)
+
+A representative self-contained kernel (`tools/luajit_bench.lua`: binary-heap
+Dijkstra over a packed grid, exercising the exact `// >> << & ~` ops the
+transpiler handles) run under both VMs, both built `/O2`:
+
+| VM | 60k iters (best of 3) | checksum |
+|---|---|---|
+| PUC-Lua 5.4.7 (`lua54.exe`) | **55.22 s** | 36000000 |
+| LuaJIT 2.1 (`luajit.exe`, transpiled) | **10.27 s** | 36000000 |
+
+**≈ 5.4× faster**, identical checksums (correctness gate passed — the
+transpiled bit/floor-div code computes the same result on LuaJIT).
+
+How it was produced (both interpreters built from the repo's pinned sources):
+- LuaJIT: `git clone --depth 1 LuaJIT/LuaJIT`, then `msvcbuild.bat` in a VS x64
+  dev shell → `luajit.exe` + `lua51.lib` + `lua51.dll`.
+- PUC 5.4: `cl /O2` over `build/_deps/lua-src/lua-5.4.7/src/*.c`
+  (`-I include -I src`, drop `luac.obj`) → `lua54.exe`.
+- `python tools/lua54to51.py --out <dir> tools/luajit_bench.lua` for the LuaJIT
+  side; run `lua54 luajit_bench.lua 60000` vs `luajit bench51.lua 60000`.
+
+### Big caveat — this is an UPPER BOUND, not the in-game number
+
+This kernel is 100% Lua. The real brain's heaviest work (pathfinder, world-sim)
+is already in **C** (`cpf_*` / `wsim_*`), so only a fraction of a real frame is
+spent in Lua. The end-to-end in-game speedup will be **materially lower** than
+5.4× — by how much depends on the Lua/C time split, which needs the full VM
+integration + `-brain-profile-log` to measure. Treat 5.4× as "what LuaJIT does
+to the Lua portion," not "what the game gets."
+
+## Benchmark plan for the real workload (vs `main`)
 
 Same scenario on both VMs, compare brain think-time:
 
