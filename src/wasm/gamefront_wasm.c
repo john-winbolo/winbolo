@@ -293,13 +293,15 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
    * host:port handed to the transport here is an ignored sentinel —
    * routing lives in the join_code (or the dev proxy URL). */
   netType urlNetType = netSingle;
-  /* gameFrontGetUrlParam returns a shared static buffer, so capture each
-   * value before the next call overwrites it: join_code only by presence,
-   * proxyURL into a local copy. */
-  bool haveJoinCode = (gameFrontGetUrlParam("join_code")[0] != '\0');
+  /* gameFrontGetUrlParam returns a shared static buffer, so copy each value
+   * out before the next call overwrites it. */
+  char joinCode[128];
+  strncpy(joinCode, gameFrontGetUrlParam("join_code"), sizeof(joinCode) - 1);
+  joinCode[sizeof(joinCode) - 1] = '\0';
   char devProxy[1024];
   strncpy(devProxy, gameFrontGetUrlParam("proxyURL"), sizeof(devProxy) - 1);
   devProxy[sizeof(devProxy) - 1] = '\0';
+  bool haveJoinCode = (joinCode[0] != '\0');
   if (haveJoinCode || devProxy[0] != '\0') {
     urlNetType = netUdp;
   }
@@ -336,12 +338,19 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   if (urlNetType == netUdp) {
     /* ---- UDP multiplayer via new transport ---- */
     printf("[WASM] Connecting via UDP transport...\n");
+    /* For web play the join_code rides the WBN-token argument: the client
+     * has no libcurl to mint a player_key, so it presents the join_code raw
+     * at PACKET_WBN_REAUTH (see udpClientSendWbnReauth). A non-empty token
+     * also sets JOIN_FLAG_WILL_AUTHENTICATE, which the server needs to send
+     * the first REKEY. Dev/LAN proxy runs keep the normal WBN token. */
+    const char *wbnArg = haveJoinCode ? joinCode
+                       : (gameFrontWbnUse ? gameFrontWbnToken : "");
     clientSimConnectUdp(humanSim, gameFrontUdpAddress,
                         gameFrontTargetUdp,
                         gameFrontName,
                         winbolonetGetCountryCode(),
                         password,
-                        gameFrontWbnUse ? gameFrontWbnToken : "",
+                        wbnArg,
                         "",
                         wantRejoin,
                         "", 0, /*spectator*/ false);

@@ -401,11 +401,20 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
  * decides *when* to re-auth, so there is no retry here). */
 static void udpClientSendWbnReauth(TransportUdpClientCtx *c) {
     char playerKey[WBN_JOIN_KEY_WIRE_LEN];
-    char errMsg[256];
 
     if (c->wbnApiToken[0] == '\0' || c->wbnServerKey[0] == '\0') return;
 
     memset(playerKey, 0, sizeof(playerKey));
+#ifdef __EMSCRIPTEN__
+    /* WASM has no libcurl, so it cannot mint a player_key
+     * (winbolonetClientJoinSession is a stub). Instead it presents its
+     * join_code — carried in wbnApiToken for the web build — raw in the
+     * reauth token slot. The server's CLIENT_TYPE_WEB branch verifies the
+     * join_code read-only. The token rides raw through the command codec (no
+     * wbnKeyEncode), matching the server's raw read of the slot. */
+    strncpy(playerKey, c->wbnApiToken, sizeof(playerKey) - 1);
+#else
+    char errMsg[256];
     errMsg[0] = '\0';
     if (!winbolonetClientJoinSession(c->wbnApiToken, c->wbnServerKey,
                                      playerKey, errMsg)) {
@@ -413,6 +422,7 @@ static void udpClientSendWbnReauth(TransportUdpClientCtx *c) {
                     errMsg[0] ? errMsg : "(no detail)");
         return;
     }
+#endif
 
     ClientCommand cmd = { .type = CMD_WBN_REAUTH };
     memcpy(cmd.u.wbnReauth.token, playerKey, WBN_JOIN_KEY_WIRE_LEN);
