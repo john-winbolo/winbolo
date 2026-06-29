@@ -1883,8 +1883,15 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                 }
                 /* Live lobby control reaching a spectator that was on the
                  * delayed feed means the server re-subscribed it at
-                 * return-to-lobby — re-enter live-lobby mode. */
-                if (c->joinState == UDP_CLIENT_SPECTATING && !c->specLiveLobby) {
+                 * return-to-lobby — re-enter live-lobby mode. Flip only on the
+                 * actual live-lobby markers the re-subscribe sync replay carries
+                 * (a phase event opens the burst, CTRL_LOBBY_SYNC_COMPLETE closes
+                 * it), not on any control frame, so a stray/late frame can't trip
+                 * the flip early. */
+                if (c->joinState == UDP_CLIENT_SPECTATING && !c->specLiveLobby
+                    && (evt.type == CTRL_GAME_PHASE_LOBBY
+                        || evt.type == CTRL_GAME_PHASE_COUNTDOWN
+                        || evt.type == CTRL_LOBBY_SYNC_COMPLETE)) {
                     udpClientSetSpecLiveLobby(c, true);
                 }
                 clientSimApplyControlOrdered(c, &evt, 0);
@@ -2041,8 +2048,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     }
                     /* Live lobby control reaching a delayed spectator means the
                      * server re-subscribed it at return-to-lobby — re-enter
-                     * live-lobby mode. */
-                    if (c->joinState == UDP_CLIENT_SPECTATING && !c->specLiveLobby) {
+                     * live-lobby mode. Flip only on the actual live-lobby markers
+                     * the re-subscribe sync replay carries (a phase event opens
+                     * the burst, CTRL_LOBBY_SYNC_COMPLETE closes it), not on any
+                     * control frame, so a stray/late frame can't trip it early. */
+                    if (c->joinState == UDP_CLIENT_SPECTATING && !c->specLiveLobby
+                        && (evt.type == CTRL_GAME_PHASE_LOBBY
+                            || evt.type == CTRL_GAME_PHASE_COUNTDOWN
+                            || evt.type == CTRL_LOBBY_SYNC_COMPLETE)) {
                         udpClientSetSpecLiveLobby(c, true);
                     }
                     clientSimApplyControlOrdered(c, &evt, 0);

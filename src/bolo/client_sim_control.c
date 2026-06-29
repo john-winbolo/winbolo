@@ -837,10 +837,15 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * Team-addressed chat reaches me when it carries my (non-zero)
          * team. Self-sends still surface in the sender's chat_log via
          * the Lua side (init.lua's outbound capture), so we don't need
-         * a self-echo here. */
-        bool for_me = (destPlayer == 0xFF) || (destPlayer == myPN)
-            || (CHAT_DEST_IS_TEAM(destPlayer) && myTeam != 0
-                && CHAT_DEST_TEAM_OF(destPlayer) == myTeam);
+         * a self-echo here. A spectator has no slot, so its myPN==0 would
+         * spuriously match a unicast (destPlayer==0) or slot-0 team chat;
+         * the server only forwards broadcast chat to spectators, so enforce
+         * broadcast-only here too rather than rely on that alone. */
+        bool for_me = cs->isSpectator
+            ? (destPlayer == 0xFF)
+            : ((destPlayer == 0xFF) || (destPlayer == myPN)
+               || (CHAT_DEST_IS_TEAM(destPlayer) && myTeam != 0
+                   && CHAT_DEST_TEAM_OF(destPlayer) == myTeam));
         if (for_me && fromPlayer < MAX_TANKS && bodyLen > 0
             && (cs->isSpectator || fromPlayer != myPN)) {
             char msg[PACKET_MAX_CHAT_MESSAGE + 1];

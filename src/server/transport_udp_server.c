@@ -1720,10 +1720,20 @@ static void serverAcceptSpectator(ServerSim *sim,
     {
         ServerState st = serverSimGetState(sim);
         if (st == serverStateLobby || st == serverStateCountdown) {
-            udpServer.spectators[s].live = true;
-            udpServer.spectators[s].controlSub =
+            SubscriberHandle sub =
                 serverSimRegisterSubscriber(sim, serverSpectatorDeliverControl,
                                             &udpServer.spectators[s]);
+            if (sub == SUBSCRIBER_HANDLE_INVALID) {
+                /* Subscriber budget full (unreachable within the 49-slot budget
+                 * today): stay not-live with no bus handle rather than a live
+                 * state backed by a dead subscription that delivers nothing. */
+                WB_LOG_WARN(WB_LOG_CAT_NET,
+                            "spectator %d: control-bus subscriber budget full; "
+                            "not entering live-lobby", s);
+            } else {
+                udpServer.spectators[s].live       = true;
+                udpServer.spectators[s].controlSub = sub;
+            }
             /* Fresh connect: the channel is empty, so arm the lobby-map download
              * without a reset. serverServiceSpectators streams it once idle. */
             serverArmSpectatorLobbyMap(s, /*resetChannel=*/false);
@@ -2218,26 +2228,40 @@ static void serverServiceSpectators(ServerSim *sim) {
                     sp->inCountdown = false;
                     sp->countdownRemaining = 0;
                     sp->countdownSentTick = 0;
-                    sp->live = true;
-                    sp->controlSub = serverSimRegisterSubscriber(
+                    SubscriberHandle sub = serverSimRegisterSubscriber(
                         sim, serverSpectatorDeliverControl, sp);
-                    /* Back in the live lobby (the map may have rotated since the
-                     * game began): re-send the accept so the viewer re-allocates,
-                     * and re-arm the lobby map so its preview refreshes. Mirrors
-                     * the map-change path; does not alter the drain-flip above. */
-                    serverSendSpectatorAccept(i, sim, &sp->addr);
-                    serverArmSpectatorLobbyMap(i, /*resetChannel=*/true);
-                    /* Catch-up: the lobby chat that accumulated while this
-                     * spectator was finishing the delayed game. Delivered as one
-                     * blob on CHANNEL_BULK — NOT on the reliable control window,
-                     * which the same-tick sync re-register already fills (the
-                     * backlog would overflow it and be dropped). Sent here, after
-                     * the map re-arm has left the bulk sender idle and after the
-                     * sync set the lobby phase (so inLobby is true when the client
-                     * applies it); the armed map streams once this blob drains. */
-                    serverSendSpectatorBacklog(i, sim);
-                    mpDiagLog("[srv] spec idx=%d delayed->live "
-                              "(drained, lobby)", i);
+                    if (sub == SUBSCRIBER_HANDLE_INVALID) {
+                        /* Subscriber budget full (unreachable within the 49-slot
+                         * budget today): leave the spectator not-live so it stays
+                         * on the delayed path and re-seeds/retries next service
+                         * tick, rather than flip to a live state with no real
+                         * subscription. Skip the live-lobby payload below —
+                         * re-sending the accept would flip the client live against
+                         * a server that isn't delivering. */
+                        WB_LOG_WARN(WB_LOG_CAT_NET,
+                                    "spectator %d: control-bus subscriber budget "
+                                    "full at return-to-lobby; staying delayed", i);
+                    } else {
+                        sp->live = true;
+                        sp->controlSub = sub;
+                        /* Back in the live lobby (the map may have rotated since the
+                         * game began): re-send the accept so the viewer re-allocates,
+                         * and re-arm the lobby map so its preview refreshes. Mirrors
+                         * the map-change path; does not alter the drain-flip above. */
+                        serverSendSpectatorAccept(i, sim, &sp->addr);
+                        serverArmSpectatorLobbyMap(i, /*resetChannel=*/true);
+                        /* Catch-up: the lobby chat that accumulated while this
+                         * spectator was finishing the delayed game. Delivered as one
+                         * blob on CHANNEL_BULK — NOT on the reliable control window,
+                         * which the same-tick sync re-register already fills (the
+                         * backlog would overflow it and be dropped). Sent here, after
+                         * the map re-arm has left the bulk sender idle and after the
+                         * sync set the lobby phase (so inLobby is true when the client
+                         * applies it); the armed map streams once this blob drains. */
+                        serverSendSpectatorBacklog(i, sim);
+                        mpDiagLog("[srv] spec idx=%d delayed->live "
+                                  "(drained, lobby)", i);
+                    }
                 }
             }
         }
