@@ -3005,6 +3005,11 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
          * definitively here (true for a WBN joiner, false otherwise) so a
          * non-WBN client reusing a slot can't inherit a stale true. */
         udpServer.clients[slot].wbnWasVerified = incomingIsWBN;
+        udpServer.clients[slot].wbnWebIdentityCached = false;
+        udpServer.clients[slot].wbnWebIsLoggedIn = false;
+        udpServer.clients[slot].wbnWebName[0] = '\0';
+        udpServer.clients[slot].wbnWebCountry[0] = '\0';
+        udpServer.clients[slot].wbnWebUserId = -1;
         addPlayerInternal(sim, (BYTE)slot,
                           udpServer.clients[slot].playerName,
                           udpServer.clients[slot].wantRejoin);
@@ -3643,6 +3648,11 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     wbnJoinClear(&udpServer.clients[idx].wbnJoin);
     /* Slot is free; a fresh occupant re-establishes WBN status at its join. */
     udpServer.clients[idx].wbnWasVerified = false;
+    udpServer.clients[idx].wbnWebIdentityCached = false;
+    udpServer.clients[idx].wbnWebIsLoggedIn = false;
+    udpServer.clients[idx].wbnWebName[0] = '\0';
+    udpServer.clients[idx].wbnWebCountry[0] = '\0';
+    udpServer.clients[idx].wbnWebUserId = -1;
 
     /* Reset control-sync state so a re-using slot starts fresh. */
     udpServer.controlSyncInProgress[idx] = false;
@@ -4470,6 +4480,47 @@ bool transportUdpServerStartBalanceRequest(ServerSim *sim,
     return true;
 }
 
+/* Resolve a WEB (CLIENT_TYPE_WEB) slot's WBN identity from its join_code.
+ * Verifies once per connection via the read-only join-code route and caches
+ * the result on the slot; later reauths re-stamp from cache with no network
+ * call (the code expires at TTL and the server_key rotates between rounds, so
+ * a re-verify would fail).  Returns true iff the slot holds a logged-in WBN
+ * identity.  WEB joiners are never Steam/supporter-bearing. */
+static bool udpServerResolveWebIdentity(BYTE slot, const char *joinCode,
+                                        bool *isLoggedInOut, bool *hasSteamOut,
+                                        bool *isSupporterOut) {
+    if (hasSteamOut)    *hasSteamOut = FALSE;
+    if (isSupporterOut) *isSupporterOut = FALSE;
+    if (!udpServer.clients[slot].wbnWebIdentityCached) {
+        char nameBuf[PACKET_MAX_PLAYER_NAME];
+        char countryBuf[3];
+        char errorMsg[512];
+        bool isLoggedIn = FALSE;
+        int  userId = -1;
+        nameBuf[0] = '\0';
+        countryBuf[0] = '\0';
+        errorMsg[0] = '\0';
+        if (!winboloNetVerifyJoinCode(joinCode, nameBuf, &isLoggedIn,
+                                      countryBuf, &userId, errorMsg)) {
+            /* Invalid/expired/wrong-server code: fall back to anonymous,
+             * exactly like an empty wbnJoinKey.  Not cached, so a later
+             * reauth with a still-valid code can still succeed. */
+            if (isLoggedInOut) *isLoggedInOut = FALSE;
+            return false;
+        }
+        udpServer.clients[slot].wbnWebIdentityCached = true;
+        udpServer.clients[slot].wbnWebIsLoggedIn = isLoggedIn;
+        snprintf(udpServer.clients[slot].wbnWebName,
+                 PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
+        udpServer.clients[slot].wbnWebCountry[0] = countryBuf[0];
+        udpServer.clients[slot].wbnWebCountry[1] = countryBuf[1];
+        udpServer.clients[slot].wbnWebCountry[2] = '\0';
+        udpServer.clients[slot].wbnWebUserId = userId;
+    }
+    if (isLoggedInOut) *isLoggedInOut = udpServer.clients[slot].wbnWebIsLoggedIn;
+    return udpServer.clients[slot].wbnWebIsLoggedIn;
+}
+
 void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
                                        const char *token) {
     if (!winbolonetIsRunning() || token == NULL || token[0] == '\0') {
@@ -4495,10 +4546,17 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
         ? udpServer.clients[slot].claimDesiredName
         : udpServer.clients[slot].playerName;
     errorMsg[0] = '\0';
-    if (winboloNetVerifyClientKey(token,
-                                  verifyName,
-                                  slot, errorMsg,
-                                  &hasSteam, &wbnIsSupporter)) {
+    bool verifyOk;
+    if (udpServer.clients[slot].clientType == CLIENT_TYPE_WEB) {
+        /* WEB clients present a join_code (not a minted player_key); verify it
+         * read-only and cache the identity for the connection's lifetime. */
+        verifyOk = udpServerResolveWebIdentity(slot, token, NULL,
+                                               &hasSteam, &wbnIsSupporter);
+    } else {
+        verifyOk = winboloNetVerifyClientKey(token, verifyName, slot, errorMsg,
+                                             &hasSteam, &wbnIsSupporter);
+    }
+    if (verifyOk) {
         /* Re-merge using the clientHints captured at JOIN_REQUEST (the
          * client doesn't re-send them on REAUTH; we re-verify against
          * WBN, not the network). */
