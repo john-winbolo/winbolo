@@ -56,7 +56,7 @@ bool isTutorial = FALSE;
 int frameRate = FRAME_RATE_30;
 static int frameRateTime = (int)(MILLISECONDS / FRAME_RATE_30) - 1;
 
-bool showGunsight = FALSE;
+bool showGunsight = TRUE;  /* WASM default: gunsight on unless synced prefs override */
 bool soundEffects = TRUE;
 bool backgroundSound = TRUE;
 bool useSoundKeepalive = FALSE;
@@ -69,7 +69,7 @@ bool showAIMessages = FALSE;
 bool showNetworkStatusMessages = TRUE;
 bool showNetworkDebugMessages = FALSE;
 
-bool autoScrollingEnabled = FALSE;
+bool autoScrollingEnabled = TRUE;  /* WASM default: autoscroll on unless synced prefs override */
 bool smoothScrollingEnabled = FALSE;  /* WASM: arrow-key smooth scroll inactive */
 bool letterboxBarsGray = FALSE;       /* gray vs black letterbox bars (sdl3draw) */
 BYTE zoomFactor = ZOOM_FACTOR_DOUBLE;
