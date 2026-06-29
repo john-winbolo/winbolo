@@ -1579,8 +1579,9 @@ static void renderPlayersPanel(ClientSim *cs) {
     }
 
     /* In-game vote actions — siblings of Request Alliance, only during
-     * the running game phase. */
-    if (clientSimGetNetStatus(cs) == netRunning) {
+     * the running game phase and only on lobby-enabled servers (votes
+     * return to the lobby; the server rejects them when there is none). */
+    if (clientSimGetNetStatus(cs) == netRunning && clientSimIsLobbyAvailable(cs)) {
         /* Count active teams (distinct teamNumber across connected
          * humans) for the surrender precondition. */
         bool teamSeen[17] = {0};
@@ -2960,8 +2961,10 @@ static void renderMenuBar(ClientSim *cs) {
                 if (!canRequest || inCooldown) ImGui::EndDisabled();
             }
         }
-        ImGui::Separator();
-        {
+        /* In-game vote menu — only on lobby-enabled servers (the server
+         * rejects votes without a lobby to return to). */
+        if (clientSimIsLobbyAvailable(cs)) {
+            ImGui::Separator();
             bool running = clientSimGetNetStatus(cs) == netRunning;
             int activeTeams = 0;
             bool teamSeen[17] = {0};
@@ -4077,7 +4080,10 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
      * NULL cs leaves both predicates false, matching the alliance block. */
     bool voteRunning = false, voteCanSurrender = false;
     if (cs) {
-        voteRunning = (clientSimGetNetStatus(cs) == netRunning);
+        /* Votes return to the lobby; on a lobby-less server the server
+         * rejects them, so disable the native Vote: items there too. */
+        voteRunning = (clientSimGetNetStatus(cs) == netRunning) &&
+                      clientSimIsLobbyAvailable(cs);
         if (voteRunning) {
             int activeTeams = 0;
             bool teamSeen[17] = {0};

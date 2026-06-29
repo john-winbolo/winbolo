@@ -497,6 +497,7 @@ bool         clientSimIsMapDownloadComplete(const ClientSim *cs);
  * mapDownloadReceived/Total from the transport. */
 uint8_t      clientSimGetMapDownloadPercent(const ClientSim *cs);
 bool         clientSimIsMapSkipAvailable(const ClientSim *cs);
+bool         clientSimIsLobbyAvailable(const ClientSim *cs);
 bool         clientSimIsMapSkipMyVote(const ClientSim *cs);
 bool         clientSimIsLobbyHiddenMines(const ClientSim *cs);
 bool         clientSimIsBalanceProposalActive(const ClientSim *cs);

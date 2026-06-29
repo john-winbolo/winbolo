@@ -226,7 +226,7 @@ int run_lobby_settings_clears_balance_proposal(void) {
     evt.type = CTRL_LOBBY_SETTINGS;
     strncpy(evt.u.lobbySettings.mapName, "TestMap",
             sizeof(evt.u.lobbySettings.mapName) - 1);
-    evt.u.lobbySettings.inLobby = true;
+    evt.u.lobbySettings.hasLobby = true;
     clientSimApplyControl(cs, &evt);
 
     UT_ASSERT_MSG(!cs->balanceProposalActive,

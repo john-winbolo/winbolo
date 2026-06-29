@@ -2698,6 +2698,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
     tests/unit/test_vote_toggle_modes.c
+    tests/unit/test_vote_nolobby_disabled.c
     tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
     tests/unit/test_rand_save_restore.c

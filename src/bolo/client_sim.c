@@ -323,6 +323,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->countdownSeconds = 0;
   cs->mapDownloadComplete = false;
   cs->inLobby = false;
+  cs->lobbyAvailable = false;
 
   /* 0 is a valid brain-catalogue index, so the bulk memset above can't
    * be the "no brain assigned" marker — use 0xFF, matching the sentinel
@@ -1492,6 +1493,7 @@ uint8_t clientSimGetMapDownloadPercent(const ClientSim *cs) {
     return transportUdpClientGetMapDownloadPercent((Transport *)&cs->transport);
 }
 bool clientSimIsMapSkipAvailable(const ClientSim *cs)     { return cs->mapSkipAvailable; }
+bool clientSimIsLobbyAvailable(const ClientSim *cs)       { return cs->lobbyAvailable; }
 bool clientSimIsMapSkipMyVote(const ClientSim *cs)        { return cs->mapSkipMyVote; }
 bool clientSimIsLobbyHiddenMines(const ClientSim *cs)     { return cs->lobbyHiddenMines; }
 bool clientSimIsBalanceProposalActive(const ClientSim *cs){ return cs->balanceProposalActive; }

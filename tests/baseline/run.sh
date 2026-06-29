@@ -101,14 +101,14 @@ diff_norm() {
 #      line only in the ready flag.
 #   3. The game-end lobby-return settings — when a teardown disconnect ends
 #      a running game, the server broadcasts a CTRL_LOBBY_SETTINGS carrying
-#      netStat:3 + inLobby:true (back-to-lobby). Whether it lands in the
+#      netStat:3 + hasLobby:true (back-to-lobby). Whether it lands in the
 #      capture window is racy; it can't fold because it differs in fields
 #      from the deterministic lobby settings (netStat:0) and the running
-#      settings (inLobby:false).
+#      settings (hasLobby:false).
 # Drop the leave/has-left and game-end-return settings lines and fold ready
 # to a constant so the transients collapse, leaving the deterministic
 # join/rename roster.
-LOBBY_TEARDOWN_SED='/"type":"CTRL_PLAYER_LEAVE"/d; /"type":"CTRL_SERVER_TEXT","text":"[^"]*has left/d; /"type":"CTRL_LOBBY_SETTINGS".*"netStat":3,"inLobby":true/d; s/"ready":(true|false)/"ready":false/g'
+LOBBY_TEARDOWN_SED='/"type":"CTRL_PLAYER_LEAVE"/d; /"type":"CTRL_SERVER_TEXT","text":"[^"]*has left/d; /"type":"CTRL_LOBBY_SETTINGS".*"netStat":3,"hasLobby":true/d; s/"ready":(true|false)/"ready":false/g'
 
 diff_sorted_lobby() {
   local expected="$1"

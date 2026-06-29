@@ -5179,6 +5179,10 @@ static void gameVotePruneVotes(const ServerSim *sim, struct ServerGameVote *gv) 
 
 void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
                              uint8_t kind, uint8_t toggleMode) {
+    /* No lobby means no place to return to: a passed back-to-lobby /
+     * surrender vote would only terminate (or, under map rotation,
+     * blindly rotate) the server. Disable voting entirely in that mode. */
+    if (!sim->lobbyEnabled) return;
     if (playerNum >= MAX_TANKS) return;
     if (!sim->playerConnected[playerNum]) return;
     if (sim->lobbyPlayers[playerNum].isBot) return;
@@ -5374,6 +5378,11 @@ static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
 }
 
 void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
+    /* Voting only exists on lobby-enabled servers (see
+     * serverSimGameVoteToggle). Skip the whole vote machinery — including
+     * the base-monopoly auto-vote — when there is no lobby. */
+    if (!sim->lobbyEnabled) return;
+
     sim->gameVoteWallMs = nowMs;
 
     /* Auto-trigger checks before per-slot servicing. */
@@ -5531,7 +5540,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.mapSkipAvailable =
         (sim->mapDirCount > 1 || sim->randomMapEnabled) ? true : false;
     evt->u.lobbySettings.netStat          = serverPhaseToNetStat(sim->state);
-    evt->u.lobbySettings.inLobby          = sim->lobbyEnabled ? true : false;
+    evt->u.lobbySettings.hasLobby         = sim->lobbyEnabled ? true : false;
     evt->u.lobbySettings.lobbyOpenHost            = sim->openHost;
     evt->u.lobbySettings.hostSlot                 = sim->hostSlot;
     evt->u.lobbySettings.lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;

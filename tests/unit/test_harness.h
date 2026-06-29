@@ -115,6 +115,8 @@ int run_vote_toggle_standalone_no_does_nothing(void);
 int run_vote_toggle_invalid_mode_dropped(void);
 int run_vote_toggle_yes_opens_vote(void);
 int run_vote_toggle_no_during_running_records_answered(void);
+int run_vote_back_to_lobby_blocked_without_lobby(void);
+int run_vote_surrender_blocked_without_lobby(void);
 int run_lobby_set_team_clamps_max_tanks(void);
 int run_lobby_set_team_accepts_max_legal(void);
 int run_lobby_set_team_accepts_unassigned(void);

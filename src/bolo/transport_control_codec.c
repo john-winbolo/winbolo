@@ -464,7 +464,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
 /* PACKET_LOBBY_SETTINGS wire format:
  *   [header 8] [mapName MAP_STR_SIZE] [gameType 1] [hiddenMines 1]
  *   [aiType 1] [gameLength 4 BE] [pillCount 1] [baseCount 1]
- *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [inLobby 1]
+ *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [hasLobby 1]
  *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 2 BE]
  *   [ranked 1] [allowNewPlayers 1] [wbnAvailable 1] [uploadPolicy 1]
  *   [lobbyStartDelay 4 BE] [hostSlot 1]
@@ -506,7 +506,7 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.lobbyStartCount;
     buf[pos++] = evt->u.lobbySettings.mapSkipAvailable ? 1 : 0;
     buf[pos++] = (uint8_t)evt->u.lobbySettings.netStat;
-    buf[pos++] = evt->u.lobbySettings.inLobby ? 1 : 0;
+    buf[pos++] = evt->u.lobbySettings.hasLobby ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyOpenHost ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyAutoLockOnGameStart ? 1 : 0;
     packU16(buf + pos, evt->u.lobbySettings.lobbyServerLocks);
@@ -1544,7 +1544,7 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     outEvt->u.lobbySettings.lobbyStartCount  = buf[pos++];
     outEvt->u.lobbySettings.mapSkipAvailable = buf[pos++] ? true : false;
     outEvt->u.lobbySettings.netStat          = (netStatus)buf[pos++];
-    outEvt->u.lobbySettings.inLobby          = buf[pos++] ? true : false;
+    outEvt->u.lobbySettings.hasLobby         = buf[pos++] ? true : false;
     outEvt->u.lobbySettings.lobbyOpenHost            = buf[pos++] ? true : false;
     outEvt->u.lobbySettings.lobbyAutoLockOnGameStart = buf[pos++] ? true : false;
     outEvt->u.lobbySettings.lobbyServerLocks         = unpackU16(buf + pos);

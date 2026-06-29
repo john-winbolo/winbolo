@@ -292,6 +292,9 @@ struct ClientSim {
     uint8_t          lobbyStartCount;
     UploadPolicy     uploadPolicy;      /* server map-upload policy; ALLOW until first event */
     bool             mapSkipAvailable;  /* Server has map rotation with >1 map */
+    bool             lobbyAvailable;    /* Server runs a lobby (CTRL_LOBBY_SETTINGS
+                                         * inLobby). False on -nolobby/-maprotate;
+                                         * gates the in-game vote UI. */
     bool             mapSkipVotes[16];  /* Mirror of server vote state */
     bool             mapSkipMyVote;     /* Local tracking of own vote */
 
