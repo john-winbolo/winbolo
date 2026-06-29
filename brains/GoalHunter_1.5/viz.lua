@@ -38,6 +38,11 @@ local M = {}
 -- typo'd id at a call site is caught with a clear list of valid
 -- ids in the error message.
 M.IDS = {
+  -- Ammo-deprivation indicator: marker over the tank when ammo_deprived (or a
+  -- countdown while the low-ammo clock runs toward it).
+  ammo_deprived  = { short = "Ammo deprived",
+                     long  = "Red marker + HUD when ammo_deprived; low-ammo countdown otherwise",
+                     default_on = false },
   -- Existing (Phase 1).
   shot_tile_grid = { short = "Shot tile grid",
                      long  = "Per-shell 1/16 sub-grid lines" },

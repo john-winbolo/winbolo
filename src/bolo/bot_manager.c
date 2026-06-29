@@ -179,6 +179,15 @@ static const double kReservedSimMs = 6.0;
 /* Headroom subtracted from the per-tick budget. */
 static const double kSafetyMs = 2.0;
 
+/* BrainTest slow-motion debug mode (see bot_manager.h). Process-global; the
+ * real game never sets it, so production timing is unchanged. When on, every
+ * brain is handed BOT_SLOWMO_BUDGET_MS instead of its computed share — far above
+ * any real tier cost, so the budget hook never truncates and the brain
+ * auto-selects its top tier — and the consecutive-crash kick is suppressed.
+ * (1 s is still finite, so a genuinely hung think is still aborted.) */
+static int s_slowMoDebug = 0;
+#define BOT_SLOWMO_BUDGET_MS 1000.0
+
 void botManagerSetPreThinkHook(ServerSim *sim,
                                void (*hook)(int playerNum)) {
     if (sim == NULL) return;
@@ -370,7 +379,17 @@ static bool botLoadMapFromServer(BotContext *bot, ServerSim *sim) {
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
+void botManagerSetSlowMoDebug(int on) { s_slowMoDebug = on ? 1 : 0; }
+int  botManagerGetSlowMoDebug(void)   { return s_slowMoDebug; }
+
 double botManagerComputePerBotTargetMs(const ServerSim *sim, int activeBots) {
+    /* Slow-motion debug: hand out an oversized budget so the brain runs its
+     * full tier and is never budget-killed. The same value drives the deadline
+     * (no truncation) and the brain's targetMs (top tier). BrainTest paces the
+     * wall-clock slowdown separately. */
+    if (s_slowMoDebug) {
+        return BOT_SLOWMO_BUDGET_MS;
+    }
     if (sim == NULL || activeBots <= 0) {
         return kTickMs;
     }
@@ -829,10 +848,12 @@ static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
             j->wasKilled = true;
         } else {
             bot->consecutiveCrashes++;
-            if (bot->consecutiveCrashes >= BOT_CRASH_KICK_THRESHOLD) {
+            if (!s_slowMoDebug &&
+                bot->consecutiveCrashes >= BOT_CRASH_KICK_THRESHOLD) {
                 /* Producer broadcasts + removes — never call
                  * botManagerRemoveBot or serverSimPublishControl
-                 * from a worker thread. */
+                 * from a worker thread. Suppressed in slow-mo debug so a
+                 * crashing bot stays put for inspection. */
                 j->needRemove = true;
             }
         }

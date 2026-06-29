@@ -21,7 +21,10 @@ local function _heap_push(h, v)
   local i = n
   while i > 1 do
     local p = i >> 1
-    if h[p] <= h[i] then break end
+    local hp = h[p]
+    -- nil parent = the heap is out of sync (a hole below n). Stop sifting rather
+    -- than crash on `nil <= number`; best_frontier heals the heap on next read.
+    if hp == nil or hp <= h[i] then break end
     h[i], h[p] = h[p], h[i]
     i = p
   end
@@ -82,8 +85,20 @@ end
 -- Returns the closest unvisited frontier tile, or nil, nil.
 function M.best_frontier(state)
   local h = state.frontier
+  if not h then return nil, nil end
   while h.n > 0 do
     local top = h[1]
+    if top == nil then
+      -- Heap desync: h.n is out of step with the backing array (h[1] missing
+      -- while n>0). The push/pop logic can't produce this on its own, but a
+      -- snapshot restore / replay can hand back a frontier whose count and
+      -- array disagree. Rather than crash the whole think with arithmetic-on-nil,
+      -- drop the corrupt heap to empty — M.update rebuilds the frontier next
+      -- tick, and goals.pick_goal falls back to its nearest-unvisited scan
+      -- (which re-pushes) for this one.
+      h.n = 0
+      break
+    end
     local nx  = top % 256
     local ny  = math.floor(top / 256) % 256
     local nk  = U.mkey(nx, ny)

@@ -9,6 +9,7 @@
 local C   = require("constants")
 local cpf = require("cpathfinder")
 local log = require("logger")
+local print2 = require("print2")
 
 local M = {}
 
@@ -226,6 +227,23 @@ function M.update(state, world, info)
   -- Strength ratios (used by goal weighting in Phase 4)
   state.strength = friendly_ratio       -- 0.0 = losing, 1.0 = dominating
   state.base_strength = base_ratio
+
+  -- Ammo deprivation: shells held below AMMO_DEPRIVED_SHELLS for
+  -- AMMO_DEPRIVED_TICKS of normal (non-opening) play, with no recovery. We do
+  -- NOT care WHY it can't refuel (no base / chose not to) — pure time-below-the-
+  -- line. The clock clears the instant shells recover to the line, or in
+  -- opening (low ammo is expected during the land-grab). state.ammo_deprived
+  -- is read by the squad/attack layer to allow joining any blitz in suicide mode.
+  local sh = (info and info.shells) or 0
+  if sh >= C.AMMO_DEPRIVED_SHELLS or state.phase == "opening" then
+    state.ammo_low_since = nil
+  else
+    state.ammo_low_since = state.ammo_low_since or state.tick
+  end
+  local was_deprived = state.ammo_deprived
+  state.ammo_deprived = state.ammo_low_since ~= nil
+                    and (state.tick - state.ammo_low_since) >= C.AMMO_DEPRIVED_TICKS
+  if BRAIN_DEBUG_MODE and state.ammo_deprived ~= was_deprived then print2(string.format("[ammo] t=%d ammo_deprived=%s shells=%d low_for=%d", state.tick, tostring(state.ammo_deprived), sh, state.ammo_low_since and (state.tick - state.ammo_low_since) or 0)) end
 
   -- Front line computation (every N ticks, not every tick)
   if not state.front_line_tick or (state.tick - state.front_line_tick) >= C.FRONT_LINE_INTERVAL then

@@ -492,6 +492,27 @@ double botManagerComputePerBotTargetMs(const struct ServerSim *sim,
                                        int activeBots);
 
 /*********************************************************
+ *NAME:          botManagerSetSlowMoDebug / botManagerGetSlowMoDebug
+ *PURPOSE:
+ *  BrainTest "slow-motion" debug mode. When enabled, every
+ *  brain.think() is handed an oversized per-tick budget, so it
+ *  runs its full capacity tier and is never truncated by the
+ *  budget hook, and the consecutive-crash kick is suppressed so
+ *  a crashing / over-budget bot stays in the game for
+ *  inspection instead of being removed.
+ *
+ *  Default OFF. The real game / WinBoloDS never enables it, so
+ *  production timing and behaviour are unchanged — this only
+ *  affects a host that explicitly turns it on (BrainTest). The
+ *  matching wall-clock slowdown is paced by the host's tick
+ *  scheduler, not here.
+ *
+ *  Process-global (a debug toggle, not per-sim game state).
+ *********************************************************/
+void botManagerSetSlowMoDebug(int on);
+int  botManagerGetSlowMoDebug(void);
+
+/*********************************************************
  *NAME:          botManagerFlushBrainLogs
  *PURPOSE:
  *  Invokes each active bot brain's _G.__brain_flush_logs()

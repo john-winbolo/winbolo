@@ -158,6 +158,14 @@ M.ARMOUR_LOW       = 15   -- seek resupply
 M.ARMOUR_MODERATE  = 25   -- conditionally force PPT when standoff is hot
 M.SHELLS_LOW       = 20   -- seek resupply (~15 to kill a pill/base)
 
+-- Ammo-deprivation: if a tank sits below AMMO_DEPRIVED_SHELLS for this long
+-- during normal (non-opening) play it's flagged state.ammo_deprived — a lost
+-- cause for resupply, so it goes all-in (joins any blitz, suicide-charges the
+-- pill instead of holding at standoff). Cleared the moment shells recover to
+-- AMMO_DEPRIVED_SHELLS. 50 ticks/sec, so 6000 = 120 s.
+M.AMMO_DEPRIVED_SHELLS = M.SHELLS_LOW   -- "min ammo" line for deprivation
+M.AMMO_DEPRIVED_TICKS  = 6000           -- 120 s continuously below it
+
 -- PPT-force thresholds. PPT (Protected Pill Take) is normally only
 -- chosen for high-HP pills (>= PPT_HEALTH_THRESHOLD). These knobs let
 -- low-armour situations force PPT even on a soft pill, because the
@@ -398,6 +406,7 @@ M.PPT_CHARGE_BRAKE_DIST = 32   -- start braking inside this many wu of standoff
 -- shot on the pill, fixing a standoff that rounded just outside shell range.
 -- This floor only bounds the creep so we never drive onto the pill.
 M.CHARGE_MIN_STANDOFF   = 5.0  -- never creep closer than this many tiles from the pill
+M.CHARGE_SUICIDE_STANDOFF = 1.5  -- ammo_deprived suicide charge: drive this close to the pill instead (≈ adjacent; the pill tile is solid so can't go onto it)
 -- Max ticks to wait at the approach point for the LGM to gather enough
 -- trees for the shield walls before giving up and degrading to a
 -- no-shield (legacy aim/charge) attack. 1500 = 30 s @ 50 Hz.
@@ -1493,6 +1502,7 @@ M.SQUAD_BLITZ_JOIN_FULL_TILES  = 20    -- path tiles at which the join discount 
 M.SQUAD_BLITZ_JOIN_REF_COST    = 120
 M.SQUAD_BLITZ_INRANGE_TILES    = 9    -- euclidean tiles: if an OPEN, not-full blitz pill (or the blitzing commander's tank) is within this shooting distance of our tank, stack an extra flat discount on its attack_pill (we could already help kill it). ~tank gun range + slack.
 M.SQUAD_BLITZ_INRANGE_MULT     = 0.5  -- the extra in-shooting-range multiplier (0.5 = another -50% on top of the distance-curve join discount)
+M.AMMO_DEPRIVED_BLITZ_MULT     = 0.6  -- ammo_deprived bots: flat overall multiplier on the blitz-join factor (40% off, near AND far — a far call at factor 1.0 becomes 0.6, joinable) so a useless-for-shooting tank throws itself into blitzes more readily; distance shape unchanged
 -- If blitz_negotiate can't find an appropriate standoff for a blitz pill, reject
 -- that pill (no re-discount / no re-pick) for this many ticks (~30s @ 50 tps).
 M.SQUAD_BLITZ_NOSPOT_REJECT_TICKS = 1500

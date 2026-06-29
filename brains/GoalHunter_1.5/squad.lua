@@ -569,6 +569,15 @@ function M.update(state, info, now, world)
          and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then
         role = M.ROLE_SOLDIER
       end
+      -- Ammo-deprived: a tank starved of ammo can't finish a pill, so it must
+      -- NEVER open or hold a blitz — it can still JOIN one as a soldier (suicide
+      -- body), just never lead. Unlike the armour gate this has no is_leading
+      -- exemption: deprivation means any take it's "leading" has stalled, so it
+      -- hands command off (the latch clears below since role lands soldier).
+      if state.ammo_deprived and role == M.ROLE_COMMANDER then
+        role = M.ROLE_SOLDIER
+        if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_NO_CMD t=%d ammo_deprived -> soldier (pill=%s)", state.tick or 0, g and tostring(g.target_id) or "?")) end
+      end
       -- Don't elect a SECOND commander of a pill an ally is already blitzing:
       -- FIRST TO THE TAKE WINS. If a live blitz call on OUR target has been open
       -- LONGER than ours (the ally committed first), defer to it and become a
