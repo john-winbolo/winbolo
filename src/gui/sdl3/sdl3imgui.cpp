@@ -2656,7 +2656,9 @@ static void renderMenuBar(ClientSim *cs) {
 
     /* ---- File ---------------------------------------- */
     if (ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
+#ifndef __EMSCRIPTEN__
         if (ImGui::MenuItem(langGetText(STR_MENU_NEW)))                       windowNewGame();
+#endif
         if (ImGui::MenuItem(langGetText(STR_MENU_SAVE_MAP), KMOD_PRIMARY_LABEL "S"))        windowSaveMap(cs);
         ImGui::Separator();
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
@@ -2672,8 +2674,10 @@ static void renderMenuBar(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
+#ifndef __EMSCRIPTEN__
         ImGui::Separator();
         if (ImGui::MenuItem(langGetText(STR_MENU_EXIT)))                     windowSetQuitting();
+#endif
         ImGui::EndMenu();
     }
 
@@ -3090,7 +3094,9 @@ static void renderMenuBar(ClientSim *cs) {
 
     /* ---- Help ---------------------------------------- */
     if (ImGui::BeginMenu(langGetText(STR_MENU_HELP))) {
+#ifndef __EMSCRIPTEN__
         if (ImGui::MenuItem(langGetText(STR_MENU_HELP)))  { /* TODO: open help file */ }
+#endif
         if (ImGui::MenuItem(langGetText(STR_MENU_ABOUT))) aboutPopupOpen();
         ImGui::EndMenu();
     }
