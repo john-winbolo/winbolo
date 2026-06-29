@@ -29,14 +29,15 @@
 #define LUA_EXTRASPACE (sizeof(void *))
 #endif
 
-/* Fixed registry key (its address) under which each state stores its box. */
-static char wbn_lj_extraspace_key__;
+/* Registry key for the per-state extraspace box. MUST be a string (interned, so
+ * the same identity across every TU) — a per-TU static-address key would make
+ * each TU read/write a DIFFERENT registry slot and corrupt cross-TU access. */
+#define WBN_LJ_EXTRA_KEY "__wbn_luajit_extraspace_box"
 
 static inline void *lua_getextraspace(lua_State *L) {
   void **box;
-  lua_pushlightuserdata(L, (void *)&wbn_lj_extraspace_key__);
-  lua_rawget(L, LUA_REGISTRYINDEX);                 /* registry[key] */
-  if (lua_islightuserdata(L, -1) || lua_isuserdata(L, -1)) {
+  lua_getfield(L, LUA_REGISTRYINDEX, WBN_LJ_EXTRA_KEY); /* registry[key] */
+  if (lua_isuserdata(L, -1)) {
     box = (void **)lua_touserdata(L, -1);
     lua_pop(L, 1);
     return box;
@@ -44,11 +45,8 @@ static inline void *lua_getextraspace(lua_State *L) {
   lua_pop(L, 1);                                     /* nil */
   box = (void **)lua_newuserdata(L, sizeof(void *)); /* GC-managed box */
   *box = NULL;
-  lua_pushlightuserdata(L, (void *)&wbn_lj_extraspace_key__);
-  lua_pushvalue(L, -2);                              /* the userdata */
-  lua_rawset(L, LUA_REGISTRYINDEX);                  /* registry[key] = box */
-  lua_pop(L, 1);                                     /* leave nothing extra */
-  return box;
+  lua_setfield(L, LUA_REGISTRYINDEX, WBN_LJ_EXTRA_KEY); /* registry[key] = box (pops it) */
+  return box;                                        /* payload pinned by registry */
 }
 
 /* 5.3 integer-subtype probe. LuaJIT 2.1 has a dual number model but no API
