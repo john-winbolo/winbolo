@@ -71,6 +71,7 @@ bool showNetworkDebugMessages = FALSE;
 
 bool autoScrollingEnabled = FALSE;
 bool smoothScrollingEnabled = FALSE;  /* WASM: arrow-key smooth scroll inactive */
+bool letterboxBarsGray = FALSE;       /* gray vs black letterbox bars (sdl3draw) */
 BYTE zoomFactor = ZOOM_FACTOR_DOUBLE;
 
 bool showPillLabels = FALSE;
@@ -618,6 +619,10 @@ void windowStartTutorial(void) { doingTutorial = TRUE; }
 /* Desktop-only window helpers — wasm has no native window position/size to
  * persist or aspect-correct, so these are no-ops. */
 void windowSmoothScrolling_toggle(void) { smoothScrollingEnabled = !smoothScrollingEnabled; }
+void windowLetterboxBarsGray_toggle(void) {
+  letterboxBarsGray = !letterboxBarsGray;
+  gameFrontSaveCurrentPrefs();
+}
 void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
                                     int *saveW, int *saveH, int *saveX, int *saveY) {
   if (saveW) *saveW = actualW;
@@ -631,6 +636,17 @@ void windowGetCustomSize(int *w, int *h) { if (w) *w = 0; if (h) *h = 0; }
 void windowSetCustomSize(int w, int h) { (void)w; (void)h; }
 void windowSaveCurrentPosition(void) {}
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
+
+/* Suspend/resume and pause hooks.  The desktop build freezes the local
+ * (and solo-server) sim and mutes audio while backgrounded, while a
+ * controller is lost, or while the Deck/tutorial pause menus are up.  The
+ * browser build has no OS-level background/foreground or controller hot-plug
+ * lifecycle to drive these, so they are no-ops. */
+void windowSuspendBackground(ClientSim *cs) { (void)cs; }
+void windowResumeForeground(ClientSim *cs) { (void)cs; }
+void windowControllerLostPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+void windowDeckPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+void windowTutorialPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
 
 /* -------------------------------------------------------
  * Frontend callbacks — called by backend (bolo engine)

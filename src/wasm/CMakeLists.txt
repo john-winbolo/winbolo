@@ -220,6 +220,7 @@ set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/clientmutex_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/dns_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/gui_stubs_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sound_wasm.c
     ${SRC_ROOT}/steam/steam_wrapper_stub.c
     ${SRC_ROOT}/common/sentry_integration.c

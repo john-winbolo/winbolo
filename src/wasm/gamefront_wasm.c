@@ -678,6 +678,10 @@ void gameFrontPutPrefs(keyItems *keys) {
   (void)keys;
 }
 
+/* No prefs file in the browser — settings live only for the session. */
+void gameFrontSaveCurrentPrefs(void) {
+}
+
 void gameFrontHandleUrlOpen(char *url) {
   (void)url;
 }
