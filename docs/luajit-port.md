@@ -20,10 +20,15 @@ This is a SPIKE. Read this before assuming any of it is production-ready.
   parse under the real LuaJIT (49/50, same pre-existing exception). Proven, not
   theoretical.
 - A representative pure-Lua kernel runs **~5.4× faster** on LuaJIT (identical
-  checksum) — but that's an UPPER BOUND; the in-game gain is lower because the
-  hot paths are already in C (see Benchmark results).
-- Still NOT done: the C-API shim, wiring LuaJIT into the CMake build, and
-  re-validating determinism. **Hard blockers remain** (below) — not a drop-in.
+  checksum) — but that's an UPPER BOUND.
+- **The full integration now works**: `WinBoloDS` builds against LuaJIT
+  (`WINBOLO_LUAJIT` option), the transpiled brains load and think with zero
+  crashes, and the **real in-game brain speedup is ~1.3×** (per-tick think time,
+  see In-game benchmark results) — far below 5.4× because the hot paths are
+  already in C, exactly as predicted.
+- Still NOT done / **hard blockers remain** (below): determinism is NOT
+  validated (games diverge), no WASM backend, iOS JIT-off, `ffi` sandbox. Not a
+  drop-in or production-ready — an experimental opt-in spike.
 
 ## What the brains actually use (measured, GoalHunter_1.5)
 
@@ -117,7 +122,54 @@ spent in Lua. The end-to-end in-game speedup will be **materially lower** than
 integration + `-brain-profile-log` to measure. Treat 5.4× as "what LuaJIT does
 to the Lua portion," not "what the game gets."
 
-## Benchmark plan for the real workload (vs `main`)
+## In-game benchmark results (REAL workload, vs `main`)
+
+The full integration now works: `WinBoloDS` builds against LuaJIT (`WINBOLO_LUAJIT`
+option), the transpiled GoalHunter brains load, open, and think with zero
+crashes, and `-profile-log` records per-tick brain think time on both VMs.
+
+Same scenario both VMs (`-nolobby -bots 6 -threads 1 -profile-log
+-allow-unsafe-brains`, Crankcase, tournament), `think_total_ms` = the brain's
+own profiler timing the same Lua, post-warmup:
+
+| VM | median think/tick | mean | (across seeds) |
+|---|---|---|---|
+| PUC-Lua 5.4.7 | **0.935 ms** | 1.00 ms | 0.928 / 0.944 / 0.935 (s7/s13/s99) — stable |
+| LuaJIT 2.1 | **0.712 ms** | 0.78 ms | s7 |
+
+**≈ 1.3× faster brain think time in-game.**
+
+This is the number that matters — and it's far below the 5.4× pure-Lua kernel,
+**exactly as predicted**: the brain's hot paths (pathfinder, world-sim, threat)
+already run in C (`cpf_*` / `wsim_*`), so a per-tick think is only partly Lua.
+LuaJIT speeds up the Lua part ~5×, which nets ~1.3× on the whole think.
+
+Caveats on the 1.3×:
+- **Not a determinism-controlled comparison.** LuaJIT's number model differs, so
+  the two games diverge; the brains do *similar* but not *identical* work. A
+  replay-based (same brainrec.btr) or fixed-tier benchmark would be tighter.
+- The brain **self-throttles** its tier to a ~2 ms target, so it adapts workload
+  to the VM — 1.3× is a conservative floor; a fixed-tier run could show more.
+- Sample-count "throughput" is NOT a reliable proxy here (it swung 1574→5599 by
+  seed) because per-bot logging frequency is tier-dependent.
+
+### Integration notes (what it took)
+
+- `WINBOLO_LUAJIT` CMake option + IMPORTED `lua_static`/`lua_internal` from a
+  prebuilt static LuaJIT (`-DWINBOLO_LUAJIT_DIR`); force-includes the shim.
+- C-API shim (`luajit_compat.h`): `lua_getextraspace` (registry **string** key —
+  a per-TU static-address key corrupts cross-TU access → segfault),
+  `lua_isinteger`, `lua_rawlen`, `luaL_tolstring`.
+- Runtime fixes in `luabrainshandler.c`: `package.searchers`→`loaders` fallback
+  (5.1 name; unguarded `rawseti` on nil was a segfault), and a 5.4→5.1 Lua
+  prelude (swallow `collectgarbage('generational'/'incremental')`; backfill
+  `math.type`, `table.move/unpack`, `math.max/mininteger`).
+- Brains transpiled with `tools/lua54to51.py` into `build/Brains-lj/...` (base +
+  `opt/`); `-profile-log` needs `-allow-unsafe-brains` because the brain writes
+  `performance.ticks.log` via `io.open` into `debug_sessions/`, which the sandbox
+  jails.
+
+## Original benchmark plan (superseded by the results above)
 
 Same scenario on both VMs, compare brain think-time:
 
