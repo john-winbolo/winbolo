@@ -2615,9 +2615,36 @@ function M.steer(state, world, info, goal)
     -- fallback at line 1630-1640 covers the no-standoff_mx case.)
     end
 
-    -- Follow the A* next-step waypoint, with path lookahead to reduce wiggle
+    -- Follow the next-step waypoint, with path lookahead to reduce wiggle
     local _t_pre_path = BRAIN_PROFILE and clock_us() or 0
-    local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
+    local nx, ny
+    -- rescue_lgm chases the LIVE (moving) LGM tile, so dest changes nearly
+    -- every tick — that defeats cpf_path_to's src/dest A* cache and forces a
+    -- full A* search every tick (the bot's single biggest steering cost, and
+    -- the worst-case route since the goal only exists because the LGM is
+    -- stranded). The tank-rooted KIND_NORMAL Dijkstra slate already floods the
+    -- whole map (LGM tile included) and is recomputed on an interval, so read
+    -- the next step straight off it (a parent-pointer walk, ~free). Fall back
+    -- to A* only when the slate hasn't reached that tile yet.
+    if goal.kind == "rescue_lgm" then
+      local rtmx, rtmy = info.tankx >> 8, info.tanky >> 8
+      local dnx, dny = cpf.dijkstra_next_step(cpf.KIND_NORMAL, rtmx, rtmy, nav_mx, nav_my)
+      if dnx and not (dnx == rtmx and dny == rtmy) then
+        nx, ny = dnx, dny
+        -- Mirror the bookkeeping cpf_path_to does so path_lookahead and the
+        -- steering overlays stay coherent (chain in the same flat format).
+        local pf = state.pf
+        pf.status  = "done"
+        pf.src_mx,  pf.src_my  = rtmx, rtmy
+        pf.dest_mx, pf.dest_my = nav_mx, nav_my
+        pf.next_mx, pf.next_my = nx, ny
+        pf.age = 0
+        pf.path_chain = cpf.dijkstra_trace_path(cpf.KIND_NORMAL, nav_mx, nav_my)
+      end
+    end
+    if not nx then
+      nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
+    end
     local _t_post_path = BRAIN_PROFILE and clock_us() or 0
     if BRAIN_PROFILE_LOG and (_t_post_path - _t_pre_path > 3000 or _t_after_stuck - _t_steer_start > 3000) then
       opt.append("optimize.log", string.format(
