@@ -107,6 +107,7 @@ extern "C" {
 #include "dialogs/imgui_settings.h"
 #include "dialogs/imgui_about.h"
 #include "dialogs/imgui_nav_outline.h"
+#include "dialogs/imgui_lobby.h"
 #include "platform/mac_menubar.h"
 
 extern "C" void windowSetQuitting(void);
@@ -4270,6 +4271,42 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        arrives as SDL events (inputSourceUpdate in the event pump); Steam
        Input controller input does not, so poll it here. */
     inputSourceTick();
+
+    /* In-game lobby (non-blocking host, e.g. the WASM client).
+     *
+     * On desktop the lobby is a separate BLOCKING modal (imguiLobbyShow)
+     * with its own ImGui context, and this per-frame pump never runs while
+     * it is up — so clientSimIsInLobby(cs) is ALWAYS false here on desktop
+     * and every branch below is a no-op for it. On the WASM client this is
+     * the only loop, so build the lobby into the shared frame and skip the
+     * in-game HUD / menu bar / panels, then close out the frame the same way
+     * the normal tail does.
+     *
+     * Release the per-frame lobby state on the edge out of the lobby (game
+     * start, or a confirmed Leave) so its map-preview texture / popup
+     * buffers don't leak and a later return to lobby starts clean. */
+    {
+        static bool s_wasInLobby = false;
+        bool nowInLobby = (cs && clientSimIsInLobby(cs));
+        if (s_wasInLobby && !nowInLobby) {
+            imguiLobbyFrameReset();
+        }
+        s_wasInLobby = nowInLobby;
+
+        if (nowInLobby) {
+            if (imguiLobbyRenderFrame(cs) == LOBBY_FRAME_LEFT) {
+                /* Confirmed Leave: drop the connection. The lobby stops
+                   rendering next frame (clientSimIsInLobby flips false),
+                   which also triggers imguiLobbyFrameReset above. */
+                clientSimDisconnect(cs);
+            }
+            keyboardUpdate();
+            dialogDrawNavOutline();
+            ImGui::Render();
+            ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), s_renderer);
+            return;
+        }
+    }
 
     /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
        Pause action, default Start). Opens whenever a controller is connected
