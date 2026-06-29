@@ -373,6 +373,11 @@ void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *messa
 /* Team lobby chat helper — appends "name: message\n" to lobbyTeamChatHistory */
 void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *message);
 
+/* Clear the lobby chat log (broadcast + team). Mirrors the game-start clear the
+ * CTRL_GAME_PHASE_RUNNING handler does; used by the spectator transport at the
+ * live->delayed cutover, which a spectator reaches instead of the running flip. */
+void clientSimClearLobbyChatHistory(ClientSim *cs);
+
 /* Player-to-player chat delivery: routes to lobby chat or in-game inbox
    depending on whether the client is still in the lobby. */
 void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr);
@@ -515,6 +520,11 @@ labelLen     clientSimGetLabelTankLabel(const ClientSim *cs);
 
 /* Scalar (integer) accessors */
 BYTE           clientSimGetMyPlayerNum(const ClientSim *cs);
+/* True when this ClientSim connected as a tankless spectator. Such a sim
+ * holds no tank and never claims a player slot, so its myPlayerNum stays 0
+ * (an alias of real slot 0); callers use this to tell a viewer apart from
+ * the player who actually occupies slot 0. */
+bool           clientSimIsSpectator(const ClientSim *cs);
 BYTE           clientSimGetXOffset(const ClientSim *cs);
 BYTE           clientSimGetYOffset(const ClientSim *cs);
 /* Sub-tile view offset in 1/256-tile units (0..255). Renderer adds this
@@ -879,6 +889,13 @@ bool     clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out);
  * Returns true and writes *outRemaining (remaining game ticks, ~50/sec) once a
  * countdown has been received; false (untouched) before the first one. */
 bool     clientSimSpectatorCountdown(const ClientSim *cs, uint32_t *outRemaining);
+
+/* True while a tankless spectator is in live-lobby mode (fed the live lobby
+ * control bus); false once it has been cut to the delayed ring feed. Mirrored
+ * one-way from the transport's specLiveLobby. Stays false for a non-spectator
+ * sim. The spectator session host reads this to alternate the read-only lobby
+ * and the delayed game view. */
+bool     clientSimSpectatorIsLiveLobby(const ClientSim *cs);
 
 /* Map upload progress reflection. status: 0=idle, 1=announce sent,
  * 2=ack received (chunks in flight), 3=done, 4=rejected. */

@@ -1150,9 +1150,19 @@ int main(int argc, char **argv) {
   }
 
 #ifdef USING_SDL
+  /* SDL_Init logs an INFO version/app banner on the SYSTEM category. Treat it
+     as debug detail: suppress it unless SYSTEM logging is at debug/trace. */
+  SDL_LogPriority sysPrio = SDL_GetLogPriority(SDL_LOG_CATEGORY_SYSTEM);
+  bool sysQuieted = (sysPrio > SDL_LOG_PRIORITY_DEBUG);
+  if (sysQuieted) {
+    SDL_SetLogPriority(SDL_LOG_CATEGORY_SYSTEM, SDL_LOG_PRIORITY_WARN);
+  }
   if (!SDL_Init(0)) {
     fprintf(stderr, "Error starting SDL - %s\n", SDL_GetError());
     exit(0);
+  }
+  if (sysQuieted) {
+    SDL_SetLogPriority(SDL_LOG_CATEGORY_SYSTEM, sysPrio);
   }
 #endif
   /* IP-to-country geolocation (DB-IP Lite). Resolve the database relative to
@@ -1705,7 +1715,6 @@ int main(int argc, char **argv) {
   {
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
-      char botName[64];
       /* Brain debug / profiling flags. Canonical names are -brain-debug and
        * -brain-profile-log; -braindebug and -profile-log are kept as legacy
        * aliases. Computed up front because both imply the unsafe sandbox
@@ -1730,11 +1739,19 @@ int main(int argc, char **argv) {
        * jails io.open to — without the opt-out those writes are rejected and the
        * logs never appear. Set BEFORE the bots are created so each VM constructs
        * with the chosen policy. */
-      luaBrainsSetAllowUnsafe(
-          (argExist(argc, argv, "allow-unsafe-brains") == TRUE)
-       || (argExist(argc, argv, "-allow-unsafe-brains") == TRUE)
-       || profileLog
-       || brainDebug);
+      bool allowUnsafeExplicit = (argExist(argc, argv, "allow-unsafe-brains") == TRUE)
+                              || (argExist(argc, argv, "-allow-unsafe-brains") == TRUE);
+      luaBrainsSetAllowUnsafe(allowUnsafeExplicit || profileLog || brainDebug);
+      /* Make the implied sandbox opt-out loud: an operator who passed only a
+       * debug/profile flag (not -allow-unsafe-brains itself) has just had the
+       * brain sandbox turned OFF as a side effect, so say so explicitly. */
+      if (!allowUnsafeExplicit && (profileLog || brainDebug)) {
+        fprintf(stderr,
+                "Note: %s implies -allow-unsafe-brains — the Lua brain sandbox "
+                "is now OFF (brains get the full standard library, needed to "
+                "write logs into debug_sessions/). Only run trusted brains.\n",
+                profileLog ? "-brain-profile-log" : "-brain-debug");
+      }
       /* -brain-debug: turn BRAIN_DEBUG_MODE on for every bot (set BEFORE they're
        * created so each brain constructs with debug on → un-stripped brain +
        * print2 logging). Lets you audit bot comms on a dedicated server: each
@@ -1890,34 +1907,49 @@ int main(int argc, char **argv) {
         }
       }
       /* Draw themed names from one randomly-chosen pool so a -bots
-       * server gets varied names instead of "Bot 1..N". usedStore
-       * backs the uniqueness list handed to lobbyBotPoolPick. */
-      static char usedStore[MAX_TANKS][64];
-      const char *usedNames[MAX_TANKS];
-      int usedCount = 0;
-      int botPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+       * server gets varied names instead of "Bot 1..N". The name draws are
+       * wrapped in a bolo_rand save/restore so this cosmetic randomness leaves
+       * the deterministic game stream (tank placement, etc.) untouched for a
+       * given -seed — only the game sim should advance the shared PRNG. Names
+       * are picked up front, then the bots are added with them. usedStore
+       * backs the uniqueness list handed to lobbyBotPoolPick. (numBots is
+       * clamped to MAX_TANKS above, so botNames is always in bounds.) */
+      char botNames[MAX_TANKS][64];
+      {
+        static char usedStore[MAX_TANKS][64];
+        const char *usedNames[MAX_TANKS];
+        int usedCount = 0;
+        BoloRandState rngBeforeNaming;
+        int botPool;
+        bolo_rand_save(&rngBeforeNaming);
+        botPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+        for (i = 0; i < numBots; i++) {
+          char picked[64];
+          lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
+          if (picked[0] != '\0') {
+            snprintf(botNames[i], sizeof(botNames[i]), "%s", picked);
+          } else {
+            snprintf(botNames[i], sizeof(botNames[i]), "Bot %d", i + 1);
+          }
+          if (usedCount < MAX_TANKS) {
+            snprintf(usedStore[usedCount], sizeof(usedStore[usedCount]),
+                     "%s", botNames[i]);
+            usedNames[usedCount] = usedStore[usedCount];
+            usedCount++;
+          }
+        }
+        bolo_rand_restore(&rngBeforeNaming);
+      }
       for (i = 0; i < numBots; i++) {
-        char picked[64];
-        lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
-        if (picked[0] != '\0') {
-          snprintf(botName, sizeof(botName), "%s", picked);
-        } else {
-          snprintf(botName, sizeof(botName), "Bot %d", i + 1);
-        }
-        if (usedCount < MAX_TANKS) {
-          snprintf(usedStore[usedCount], sizeof(usedStore[usedCount]),
-                   "%s", botName);
-          usedNames[usedCount] = usedStore[usedCount];
-          usedCount++;
-        }
         /* Stage this bot's BRAIN_INIT_ARG (consumed by the create below) and
-         * use its resolved brain path. */
+         * use its resolved brain path. The name was pre-picked into botNames[i]
+         * above (under a bolo_rand save/restore so it stays off the sim PRNG). */
         luaBrainsSetNextInitArg(botInit[i].arg);
         if (botInit[i].covered) {
           fprintf(stderr, "Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
                   botInit[i].arg[0] ? " arg=" : "", botInit[i].arg);
         }
-        if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botName, ai, game, hiddenMines)) {
+        if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round

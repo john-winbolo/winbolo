@@ -80,6 +80,13 @@ bool     specDrainCountdown(void *handle, uint32_t *outRemaining);
  * queue is empty. */
 bool     specDrainPopRecord(void *handle, SpecDrainRecord *out);
 
+/* True once the spectator has been put back into live-lobby mode — the server
+ * re-subscribed it to the live lobby control bus after its delayed game
+ * drained. The logviewer-world host watches this to return from the delayed
+ * game view and hand back to the live lobby. Wraps clientSimSpectatorIsLiveLobby
+ * across the seam so the host needs no client_sim.h. */
+bool     specDrainLiveResumed(void *handle);
+
 /* Game-info decoded from a spectator seed's control snapshot. A spectator
  * never receives the lobby-settings control packet on the wire, but the seed's
  * sync-replay control slice carries the same lobby-settings event, so the host

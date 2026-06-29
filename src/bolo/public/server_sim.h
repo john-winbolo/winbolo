@@ -1183,6 +1183,42 @@ SubscriberHandle serverSimRegisterSubscriber(
     void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimReplayLobbyChat
+ *PURPOSE:
+ *  Re-deliver the current-session lobby-chat catch-up
+ *  buffer (broadcast player chat + spectator chat, oldest
+ *  first) through the caller's deliver callback. Used at
+ *  the spectator delayed->live drain-flip so a returning
+ *  spectator sees the lobby chat sent while it was still
+ *  finishing the delayed game. Call after re-registering
+ *  the subscriber so the lobby phase is set first. Not
+ *  invoked on a fresh accept or player join.
+ *********************************************************/
+void serverSimReplayLobbyChat(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx);
+
+typedef void (*SpectatorRosterEnumFn)(
+    void *enumCtx,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *deliverCtx);
+
+/*********************************************************
+ *NAME:          serverSimSetSpectatorRosterEnumerator
+ *PURPOSE:
+ *  Register a callback the sim invokes during sync-replay
+ *  to emit one CTRL_SPECTATOR_SLOT per connected spectator.
+ *  The roster lives in the transport layer; this lets the
+ *  sim's replay (and the ring keyframe control snapshot,
+ *  which reuses the same producer) carry it without the sim
+ *  owning spectator state. Pass fn=NULL to clear.
+ *********************************************************/
+void serverSimSetSpectatorRosterEnumerator(ServerSim *sim,
+                                           SpectatorRosterEnumFn fn,
+                                           void *enumCtx);
+
+/*********************************************************
  *NAME:          serverSimRegisterClientSubscriber
  *PURPOSE:
  *  Convenience over serverSimRegisterSubscriber for the
@@ -1253,6 +1289,26 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt);
  *********************************************************/
 void serverSimReceiveChat(ServerSim *sim, BYTE fromPlayer, BYTE destPlayer,
                           const void *body, size_t bodyLen);
+
+/*********************************************************
+ *NAME:          serverSimReceiveSpectatorChat
+ *PURPOSE:
+ *  Authoritative entry for a lobby chat line from a
+ *  tankless spectator. A spectator owns no player slot,
+ *  so the message is stamped with its specIdx and
+ *  published as CTRL_SPECTATOR_CHAT, which fans to
+ *  players (bus) and spectators (deliver allowlist), and
+ *  is recorded into the .wbv as log_SpectatorChat.
+ *
+ *ARGUMENTS:
+ *  sim          - The server sim
+ *  specIdx      - Sender spectator slot (< MAX_SPECTATORS)
+ *  body         - Raw chat bytes (no Pascal-length prefix)
+ *  bodyLen      - Length of body (clamped to
+ *                  PACKET_MAX_CHAT_MESSAGE)
+ *********************************************************/
+void serverSimReceiveSpectatorChat(ServerSim *sim, uint8_t specIdx,
+                                   const void *body, size_t bodyLen);
 
 /*********************************************************
  *NAME:          serverSimApplyCommand

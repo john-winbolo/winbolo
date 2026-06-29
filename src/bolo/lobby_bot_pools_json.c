@@ -159,7 +159,7 @@ bool lobbyBotPoolsLoadFromFile(const char *path,
     cJSON_Delete(root);
 
     if (installed > 0) {
-        WB_LOG_INFO(WB_LOG_CAT_ASSET,
+        WB_LOG_DEBUG(WB_LOG_CAT_ASSET,
                     "lobbyBotPoolsLoadFromFile: loaded %d pool(s) from '%s'",
                     installed, path);
         return true;

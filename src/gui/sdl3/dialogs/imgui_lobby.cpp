@@ -3358,6 +3358,7 @@ static int lobbyPreviewStartAtScreen(ImVec2 imgMin, float previewSize,
 static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
                                          ImVec2 imgMin, float previewSize,
                                          int bx0, int by0, int bx1, int by1) {
+    const bool spectator = clientSimIsSpectator(cs);
     if (s_startCount == 0) return;
     float spanX = (float)((bx1 + 1) - bx0);
     float spanY = (float)((by1 + 1) - by0);
@@ -3437,7 +3438,8 @@ static void drawLobbyPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
          * red, unclaimed white. */
         ImU32 txtCol = IM_COL32(255, 255, 255, 255);
         if (nameListIdx[i] >= 0) {
-            LobbyStartOwner o = lobbyStartClassify(cs, holderOf[i], myPlayerNum);
+            LobbyStartOwner o = lobbyStartClassify(cs, holderOf[i],
+                                                   spectator ? -1 : myPlayerNum);
             if (o == LSO_ENEMY) txtCol = IM_COL32(235, 90, 90, 255);
             else                txtCol = IM_COL32(80, 255, 170, 255);
         }
@@ -3476,6 +3478,9 @@ static bool lobbyPreviewInteract(ClientSim *cs, int myPlayerNum, bool effHostMap
                                  int bx0, int by0, int bx1, int by1) {
     static int s_miniDragHolder = -1;   /* lobby slot being dragged, or -1 */
     bool consumed = false;
+    /* A spectator owns no slot: it can neither claim a free start nor drag a
+     * claimed one. Bail before any click is interpreted as an action. */
+    if (clientSimIsSpectator(cs)) return consumed;
     ImDrawList *dl = ImGui::GetWindowDrawList();
     ImVec2 mp = ImGui::GetMousePos();
     bool hov = ImGui::IsItemHovered();   /* the map Image (last item) */
@@ -3842,11 +3847,12 @@ static bool isLobbyHost(ClientSim *cs, int myPlayerNum) {
  * the PlayerPanel and MapPanel top edges stay aligned. */
 static void renderAllowNewPlayersRow(ClientSim *cs,
                                      int myPlayerNum, float s) {
+    const bool spectator = clientSimIsSpectator(cs);
     bool isHost = isLobbyHost(cs, myPlayerNum);
     bool isLocalAdmin = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                         (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                          & PLAYER_FLAG_ADMIN));
-    bool effectiveHost = isHost || clientSimGetLobbyOpenHost(cs) || isLocalAdmin;
+    bool effectiveHost = !spectator && (isHost || clientSimGetLobbyOpenHost(cs) || isLocalAdmin);
     /* Diagnostic: log entry state on every call, throttled to changes
      * only. Fires BEFORE the early-return so we can see whether the
      * function is reached at all and which condition trips the
@@ -4238,6 +4244,7 @@ static void renderSpectatorGroup(ClientSim *cs, int myPlayerNum, float s) {
 
 static void renderTeamGroupedPlayers(ClientSim *cs,
                                      int myPlayerNum, float s, bool isHost) {
+    const bool spectator = clientSimIsSpectator(cs);
     /* Lazy-load the badge / bot-cpu icons. Used to be done inside
      * renderConnectivityBadge, but we now skip that in SP / LAN-only
      * mode where the badge has nothing to report — the bot-cpu PNGs
@@ -4267,7 +4274,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
     bool isLocalAdmin = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                          (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
                           & PLAYER_FLAG_ADMIN));
-    bool effectiveHost = isHost || clientSimGetLobbyOpenHost(cs) || isLocalAdmin;
+    bool effectiveHost = !spectator && (isHost || clientSimGetLobbyOpenHost(cs) || isLocalAdmin);
 
     /* "Allow new players" row is rendered by the caller above the panels
      * so the PlayerPanel and MapPanel top edges stay aligned in Y.
@@ -4383,7 +4390,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
          * to every client regardless of permissions (you can always
          * move yourself) and only rendered when you're not already on
          * this team. */
-        if (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
+        if (!spectator && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
             clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber != teamId) {
             ImGui::SameLine();
             char joinId[64];
@@ -4514,7 +4521,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
             }
             /* Green for "your team" buttons, red for the others —
              * matches the bot-cpu glyph rendered per row. */
-            uint8_t myTeamHdr = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS)
+            uint8_t myTeamHdr = (!spectator && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS)
                                 ? clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber : 0;
             SDL_Texture *addBtnIcon = (myTeamHdr != 0 && teamId == myTeamHdr)
                                       ? s_iconBotCpuGreen
@@ -4619,7 +4626,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
          *
          * Column layout: [tank | name+icons | ping | ready | X]. */
         SDL_Renderer *r = sdl3DrawGetRenderer();
-        uint8_t myTeam = (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS)
+        uint8_t myTeam = (!spectator && myPlayerNum >= 0 && myPlayerNum < MAX_TANKS)
                          ? clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->teamNumber : 0;
         char tableId[32];
         SDL_snprintf(tableId, sizeof(tableId), "##members%d", teamId);
@@ -4670,7 +4677,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
                 if (!clientSimGetLobbySlot(cs, (BYTE)(i))->connected) continue;
                 if (clientSimGetLobbySlot(cs, (BYTE)(i))->teamNumber != teamId) continue;
 
-                bool isMe   = (i == myPlayerNum);
+                bool isMe   = (!spectator && i == myPlayerNum);
                 bool isBot  = clientSimGetLobbySlot(cs, (BYTE)(i))->isBot;
                 bool isSelf = isMe;
                 bool isAlly = (myTeam != 0 && clientSimGetLobbySlot(cs, (BYTE)(i))->teamNumber == myTeam);
@@ -5328,7 +5335,7 @@ static void renderTeamGroupedPlayers(ClientSim *cs,
          * BeginDragDropSource elsewhere can drop a slot index here
          * to move that player onto this team. While a drag is over
          * the team, paint a translucent highlight along its border. */
-        if (ImGui::BeginDragDropTarget()) {
+        if (!spectator && ImGui::BeginDragDropTarget()) {
             ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptBeforeDelivery;
             const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(
                 "WB_LOBBY_PLAYER", flags);
@@ -5990,10 +5997,11 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s);
 
 static void renderGameSettingsPanel(ClientSim *cs,
                                     int myPlayerNum, float s) {
-    bool effectiveHost = isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
+    const bool spectator = clientSimIsSpectator(cs);
+    bool effectiveHost = !spectator && (isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
                          (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                           (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
-                           & PLAYER_FLAG_ADMIN));
+                           & PLAYER_FLAG_ADMIN)));
 
     /* Non-privileged players get nothing — neither the form nor the
      * CollapsingHeader. The same map / game-type / pill-count /
@@ -6067,13 +6075,14 @@ static void renderGameSettingsPanel(ClientSim *cs,
  * controller Settings tab can render it flat, without the desktop
  * collapsing-header chrome. Host-gated by every caller. */
 static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
+    const bool spectator = clientSimIsSpectator(cs);
     /* Same effective-host test the panel computes, recomputed here so the
      * per-control disabled state is identical whether the body renders in
      * the desktop collapsing header or the controller Settings tab. */
-    bool effectiveHost = isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
+    bool effectiveHost = !spectator && (isLobbyHost(cs, myPlayerNum) || clientSimGetLobbyOpenHost(cs) ||
                          (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                           (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
-                           & PLAYER_FLAG_ADMIN));
+                           & PLAYER_FLAG_ADMIN)));
 
     /* Settings body uses a smaller font than the rest of the lobby so
      * the 3-column form doesn't dominate the visual hierarchy. */
@@ -6344,6 +6353,11 @@ static void renderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
 static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
                                         BYTE myPlayerNum, bool hasTransport,
                                         float s, BYTE destPlayer) {
+    /* A spectator may chat in the live lobby: the input is enabled and Enter/
+     * Send route through the same CMD_CHAT path, which the server re-tags as
+     * spectator chat. The local echo below stays player-only — a spectator owns
+     * no slot to name and relies on the server's round-trip line instead. */
+    const bool spectator = clientSimIsSpectator(cs);
     float btnW = 60.0f * s;
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - btnW - 8.0f);
     if (s_chatRefocusFrames > 0) {
@@ -6365,17 +6379,20 @@ static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
     if (chatEmpty) ImGui::EndDisabled();
     if ((sendClicked || enterPressed) && !chatEmpty && hasTransport) {
         clientSimNetSendChat(cs, destPlayer, chatInput);
-        const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
-        const char *myName = (mySlot && mySlot->connected)
-            ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
-        if (CHAT_DEST_IS_TEAM(destPlayer))
-            clientSimAppendLobbyTeamChat(cs, myName, chatInput);
-        else
-            clientSimAppendLobbyChat(cs, myName, chatInput);
-        /* Emit the cue locally for our own send. The incoming-chat cue
-         * (CTRL_CHAT / CTRL_SERVER_TEXT) only fires for fromPlayer != myPN,
-         * so self-sends are silent without this. */
-        soundPlayEffect(lobbyChatReceived);
+        if (!spectator) {
+            const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
+            const char *myName = (mySlot && mySlot->connected)
+                ? mySlot->playerName : langGetText(STR_DLGLOBBY_ME);
+            if (CHAT_DEST_IS_TEAM(destPlayer))
+                clientSimAppendLobbyTeamChat(cs, myName, chatInput);
+            else
+                clientSimAppendLobbyChat(cs, myName, chatInput);
+            /* Emit the cue locally for our own send. The incoming-chat cue
+             * (CTRL_CHAT / CTRL_SERVER_TEXT) only fires for fromPlayer != myPN,
+             * so self-sends are silent without this. A spectator instead gets
+             * its line (and cue) from the server's round-trip CTRL_SPECTATOR_CHAT. */
+            soundPlayEffect(lobbyChatReceived);
+        }
         chatInput[0] = '\0';
         s_chatRefocusFrames = 2;
         s_chatHideNav = true;
@@ -6389,6 +6406,13 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     SDL_Window *window = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
     if (!window || !renderer) return 0;
+
+    /* A tankless spectator views the live lobby read-only: it owns no
+     * player slot (its myPlayerNum stays 0, aliasing real slot 0), so every
+     * "is this me / am I host" branch below is forced off and every
+     * mutating control is hidden or disabled. Detected from the sim, not a
+     * parameter, so the dual-mode caller hands over the same ClientSim. */
+    const bool spectator = clientSimIsSpectator(cs);
 
     /* Save logical presentation */
     int savedLogW = 0, savedLogH = 0;
@@ -6576,6 +6600,17 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             break;
         }
 
+        /* A spectator never reaches netRunning: the server unsubscribes it from
+         * the live lobby bus before the running phase is published, so its mode
+         * bit flips out of live-lobby when the delayed feed begins instead.
+         * Treat that flip as the game-start signal so the host loop hands over
+         * to the delayed game view (result 1, same as a player's game start). */
+        if (clientSimIsSpectator(cs) && !clientSimSpectatorIsLiveLobby(cs)) {
+            result = 1;
+            running = false;
+            break;
+        }
+
         /* Check for server disconnect/shutdown */
         if (hasTransport) {
             ClientConnectState js = clientSimGetConnectState(cs);
@@ -6732,7 +6767,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 SDL_Texture *prev = mapPreviewTex;
                 uint8_t owners0[MAX_STARTS];
                 uint32_t sig0 = 0;
-                int nOwn0 = lobbyComputeStartOwners(cs, (int)gameFrontGetPlayerNum(),
+                int nOwn0 = lobbyComputeStartOwners(cs, spectator ? -1 : (int)gameFrontGetPlayerNum(),
                                                     owners0, MAX_STARTS, &sig0);
                 mapPreviewTex = buildMapPreview(renderer, mapData, mapLen, &mapBounds,
                                                 nOwn0 ? owners0 : NULL, nOwn0);
@@ -6774,7 +6809,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         if (mapPreviewTex && popupCompressedData && popupCompressedLen > 0) {
             uint8_t owners[MAX_STARTS];
             uint32_t sig = 0;
-            int nOwn = lobbyComputeStartOwners(cs, (int)gameFrontGetPlayerNum(),
+            int nOwn = lobbyComputeStartOwners(cs, spectator ? -1 : (int)gameFrontGetPlayerNum(),
                                                owners, MAX_STARTS, &sig);
             /* Debounce: wait until ownership has held steady for a few frames
              * before the (heavy) texture rebuild, so a burst of changes can't
@@ -6855,7 +6890,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             static bool s_hideServerIpFromJoiners = false;
             bool serverIsPrivate =
                 s_hideServerIpFromJoiners &&
-                (myPlayerNum != 0) &&
+                (myPlayerNum != 0 || spectator) &&
                 !clientSimIsSinglePlayer(cs) && !clientSimIsLanOnly(cs);
             bool showServerLink = haveServerAddr && !serverIsPrivate;
 
@@ -6966,11 +7001,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * Skipped entirely for non-privileged players — the same
          * info already lives in the top status bar, and the panel
          * is read-only anyway. */
-        bool gsEffectiveHost = isLobbyHost(cs, myPlayerNum)
+        bool gsEffectiveHost = !spectator && (isLobbyHost(cs, myPlayerNum)
             || clientSimGetLobbyOpenHost(cs)
             || (myPlayerNum >= 0 && myPlayerNum < MAX_TANKS &&
                 (clientSimGetLobbySlot(cs, (BYTE)(myPlayerNum))->clientFlags
-                 & PLAYER_FLAG_ADMIN));
+                 & PLAYER_FLAG_ADMIN)));
         /* Tabbed (controller) vs two-column (mouse) layout. Computed here so
          * the shared settings panel below renders only on the mouse path —
          * the tabbed layout shows settings in its own Settings tab instead. */
@@ -7023,7 +7058,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             if (!s_chooseMapOpen) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
-                bool onTeam = myTabSlot && myTabSlot->teamNumber != 0;
+                bool onTeam = !spectator && myTabSlot && myTabSlot->teamNumber != 0;
                 int shift = (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ? 1 : 0)
                           - (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ? 1 : 0);
                 if (shift == 0)
@@ -7220,8 +7255,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
                         (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                          & PLAYER_FLAG_ADMIN));
-                    bool effHostMap = isHostLocal || isAdminLocal ||
-                                      clientSimGetLobbyOpenHost(cs);
+                    bool effHostMap = !spectator && (isHostLocal || isAdminLocal ||
+                                      clientSimGetLobbyOpenHost(cs));
                     if (effHostMap &&
                         !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
                         if (ImGui::Button(langGetText(STR_DLGLOBBY_CHOOSE_MAP_BTN))) {
@@ -7333,7 +7368,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
                     /* Skip-map vote is gated by LOBBY_LOCK_MAP — locking
                      * the map blocks both manual change and skip-vote. */
-                    if (clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
+                    if (!spectator && clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
                         !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
                         ImGui::Spacing();
                         bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
@@ -7433,7 +7468,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 /* --- Team tab (only when on a team; own unread state) --- */
                 {
                     const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
-                    BYTE myTeam = mySlot ? mySlot->teamNumber : 0;
+                    BYTE myTeam = (!spectator && mySlot) ? mySlot->teamNumber : 0;
                     if (myTeam != 0) {
                         bool teamTabColorPushed = false;
                         if (teamChatUnread) {
@@ -7486,7 +7521,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Spacing();
             {
                 const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
-                bool myReady = (mySlot && mySlot->connected) ? mySlot->ready : false;
+                bool myReady = (!spectator && mySlot && mySlot->connected) ? mySlot->ready : false;
                 /* Block Ready when the lobby is flagged Ranked but the
                  * shape doesn't qualify. Ranked-ineligibility doesn't
                  * matter in SP / LAN where Ranked isn't shown at all. */
@@ -7515,6 +7550,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     }
                 };
 
+                /* The viewer holds no slot to ready up — hide the Ready
+                 * button (Leave below stays available). */
+                if (!spectator) {
                 if (!canReady) ImGui::BeginDisabled();
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
                 if (myReady) {
@@ -7543,6 +7581,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     rankedShapeTooltip(readyRe);
                 }
+                }  /* close !spectator: Ready button */
 
                 /* Legacy Balance Teams + Apply / Dismiss removed — the
                  * Balance-from-WBN affordance up top is the only entry
@@ -7819,7 +7858,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::BeginChild("##ChatBlock", ImVec2(playerPanelW, bottomH), ImGuiChildFlags_None);
             {
                 const ClientLobbySlot *myChatSlot = clientSimGetLobbySlot(cs, myPlayerNum);
-                BYTE myTeam = myChatSlot ? myChatSlot->teamNumber : 0;
+                BYTE myTeam = (!spectator && myChatSlot) ? myChatSlot->teamNumber : 0;
 
                 /* Detect new chat messages for the unread indicator. A buffer
                  * that grew while its tab is not the active one flags that tab
@@ -7969,8 +8008,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 bool isAdminLocal = (myPlayerNum < MAX_TANKS &&
                     (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                      & PLAYER_FLAG_ADMIN));
-                bool effHostMap = isHostLocal || isAdminLocal ||
-                                  clientSimGetLobbyOpenHost(cs);
+                bool effHostMap = !spectator && (isHostLocal || isAdminLocal ||
+                                  clientSimGetLobbyOpenHost(cs));
                 bool skipAvail = clientSimIsMapSkipAvailable(cs)
                               && clientSimIsInLobby(cs);
 
@@ -8070,7 +8109,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
             ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
 
-            if (clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
+            if (!spectator && clientSimIsMapSkipAvailable(cs) && clientSimIsInLobby(cs) &&
                 !(clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP)) {
                 ImGui::Spacing();
                 bool countdownActive = clientSimGetCountdownSeconds(cs) > 0;
@@ -8125,7 +8164,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
              * with the top of the Ready button. */
             {
                 const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPlayerNum);
-                bool myReady = (mySlot && mySlot->connected) ? mySlot->ready : false;
+                bool myReady = (!spectator && mySlot && mySlot->connected) ? mySlot->ready : false;
                 /* Block Ready when the lobby is flagged Ranked but the
                  * shape doesn't qualify. Ranked-ineligibility doesn't
                  * matter in SP / LAN where Ranked isn't shown at all. */
@@ -8143,6 +8182,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                  * WBN's split immediately on response (no Apply /
                  * Dismiss approval step). */
 
+                /* The viewer holds no slot to ready up — hide the Ready button. */
+                if (!spectator) {
                 if (!canReady) ImGui::BeginDisabled();
                 const char *readyLabel = myReady ? langGetText(STR_DLGLOBBY_UNREADY) : langGetText(STR_DLGLOBBY_READY);
                 if (myReady) {
@@ -8167,6 +8208,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                     ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                     rankedShapeTooltip(readyRe);
                 }
+                }  /* close !spectator: Ready button */
             }
             ImGui::EndGroup(); /* /right column */
         } /* /desktop layout scope (playerPanelW/mapPanelW) */
@@ -8182,15 +8224,15 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
             bool isAdminLocal = (cs && myPlayerNum < MAX_TANKS &&
                 (clientSimGetLobbySlot(cs, (BYTE)myPlayerNum)->clientFlags
                  & PLAYER_FLAG_ADMIN));
-            bool effHostMap = isHostLocal || isAdminLocal ||
-                              (cs && clientSimGetLobbyOpenHost(cs));
+            bool effHostMap = !spectator && (isHostLocal || isAdminLocal ||
+                              (cs && clientSimGetLobbyOpenHost(cs)));
             /* Only offer "Choose map" in the popup when the user may
              * actually change it — same gate as the inline Choose Map
              * button (hidden when the server pins the map). */
             bool mapChangeAllowed = effHostMap &&
                 !(cs && (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_MAP));
             mapPreviewPopupSetShowChange(mapChangeAllowed);
-            mapPreviewPopupSetStartPicker(cs, myPlayerNum, effHostMap);
+            mapPreviewPopupSetStartPicker(cs, spectator ? -1 : myPlayerNum, effHostMap);
             mapPreviewPopupRenderModal(renderer);
             if (mapPreviewPopupConsumeChangeRequest() && mapChangeAllowed) {
                 lobbyChooseMapOpen(cs, renderer);
