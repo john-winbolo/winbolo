@@ -309,6 +309,19 @@ void brainListScan(BrainList *out, char (*paths)[BRAIN_LIST_PATH_LEN]) {
         brainListScanParent(out, paths, p);
     }
 
+    /* SDL_GetPrefPath("WinBolo","WinBolo")/Brains —
+     * ~/Library/Application Support/WinBolo/WinBolo/Brains on macOS. The app
+     * bundle is read-only/code-signed, so this is the writable location where
+     * players drop their own brains. Mirrors luaBrainLoadBrains() in the GUI
+     * client so user brains appear in the lobby bot list too. */
+    char *pref = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (pref) {
+        char p[1024];
+        SDL_snprintf(p, sizeof(p), "%sBrains", pref);
+        brainListScanParent(out, paths, p);
+        SDL_free(pref);
+    }
+
     if (out->count > 1) {
         /* Permutation sort: index[i] starts at i, comparator orders by
          * entries[index[i]].name. After qsort, apply the permutation
