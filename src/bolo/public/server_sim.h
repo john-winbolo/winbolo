@@ -388,8 +388,11 @@ typedef struct {
                                  * name (e.g. "GoalHunter" for
                                  * brains/GoalHunter/init.lua) */
     double   lastThinkMs;       /* most recent brain tick */
+    double   maxThinkMs;        /* peak brain tick this game */
     double   targetMs;          /* target the next tick will use */
-    uint32_t overrunCount;      /* cumulative since session start */
+    uint32_t overrunCount;      /* overruns this game */
+    uint32_t thinkCount;        /* total thinks this game
+                                 * (overrun-rate denominator) */
 } BotInfo;
 
 /* Bot pool snapshot populated by serverSimGetBotPoolStats. POD;
@@ -402,7 +405,11 @@ typedef struct {
     double   lastBrainPhaseMs;  /* wall-clock of last brain dispatch */
     double   ewmaBrainPhaseMs;  /* EWMA of brain dispatch wall-clock */
     double   lastSerialMs;      /* last serial-stage cost (ms) */
-    uint32_t totalOverruns;     /* sum of overrunCount across bots */
+    double   maxThinkMs;        /* peak per-bot think across the pool this
+                                 * game (ms) */
+    uint32_t totalOverruns;     /* sum of overrunCount across bots (this game) */
+    uint32_t totalThinks;       /* sum of thinkCount across bots this game
+                                 * (overrun-rate denominator) */
 } BotPoolStats;
 
 /* Max candidate count for BrainGoalInfo. */

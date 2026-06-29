@@ -3787,6 +3787,33 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
             return;
         }
     }
+
+    /* No human matched. Bots have no UDP client, so the connected check
+     * above skipped them — but their display name is stored in the same
+     * playerName slot via transportUdpServerSetBotName, so match on that
+     * and fall back to bot removal. serverSimRemoveBot runs the same
+     * teardown the crash-streak kick uses (botManagerRemoveBot ->
+     * serverSimRemovePlayer, the human-leave path) and publishes the freed
+     * lobby slot. It is safe mid-game: the caller already holds the sim
+     * mutex, exactly as a human kick does. There is no client to hand a
+     * PACKET_KICKED, so that step is simply absent. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsBot(sim, (BYTE)i)) continue;
+        if (playerNameCompare(udpServer.clients[i].playerName, playerName) == 0) {
+            const char *kickArgs[1];
+            snprintf(msg, sizeof(msg), "%s has been server kicked.",
+                     udpServer.clients[i].playerName);
+            WB_LOG_WARN(WB_LOG_CAT_NET, "admin kick bot slot=%d name='%s'",
+                        i, udpServer.clients[i].playerName);
+            fprintf(stderr, "[UDP SERVER] %s\n", msg);
+            serverSimConsoleMessage(msg);
+            kickArgs[0] = udpServer.clients[i].playerName;
+            serverSendServerMessage(sim, STR_KICK_ANNOUNCE, 1, kickArgs);
+            serverSimRemoveBot(sim, (BYTE)i);
+            return;
+        }
+    }
+
     serverSimConsoleMessage("Player not found.");
 }
 
@@ -6212,6 +6239,19 @@ uint16_t transportUdpServerGetClientPing(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return 0;
     if (!udpServer.clients[playerNum].connected) return 0;
     return udpServer.clients[playerNum].pingMs;
+}
+
+bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen) {
+    if (out == NULL || outLen == 0) return false;
+    out[0] = '\0';
+    if (playerNum >= MAX_TANKS || !udpServer.clients[playerNum].connected) {
+        return false;
+    }
+    const struct sockaddr_in *a = &udpServer.clients[playerNum].addr;
+    char ip[INET_ADDRSTRLEN] = "?";
+    inet_ntop(AF_INET, &a->sin_addr, ip, sizeof(ip));
+    snprintf(out, outLen, "%s:%u", ip, (unsigned)ntohs(a->sin_port));
+    return true;
 }
 
 /* ── Test-only channel-mux scaffolding ───────────────────────────────────

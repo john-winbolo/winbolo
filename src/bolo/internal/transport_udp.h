@@ -520,6 +520,11 @@ int transportUdpServerGetSpectatorCount(void);
 /* Returns ping for a given player (0 if not connected). */
 uint16_t transportUdpServerGetClientPing(BYTE playerNum);
 
+/* Writes "ip:port" for a connected player into out; returns false (and an
+ * empty string) for an out-of-range slot or one with no UDP client (bots,
+ * the in-process host). out must be non-NULL with outLen > 0. */
+bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen);
+
 /* Check all connected clients and warn/kick for sustained high ping. */
 void transportUdpServerEnforcePing(struct ServerSim *sim);
 
