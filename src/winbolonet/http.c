@@ -31,6 +31,15 @@
 *    https://wbn.winbolo.net  -> https://wbn.winbolo.net
 *********************************************************/
 
+/* This file embeds the WBN Ed25519 signing key (via wbn_signing_key.h) and
+ * depends on libcurl. It must NEVER be compiled into the WASM/browser build —
+ * that build replaces all of winbolonet/*.c with the no-op winbolonet_wasm.c
+ * stub. If this fires, someone added http.c back to the WASM source list and
+ * would otherwise ship the private signing key to every browser client. */
+#ifdef __EMSCRIPTEN__
+#error "http.c (embeds WBN_SIGNING_KEY) must never be compiled for the WASM build"
+#endif
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
