@@ -3297,12 +3297,20 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                         pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
                         basesGetNumberOwnedByPlayer(&sim->sim.bs, count));
             } else {
-                fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Buf:%d)\n",
+                /* Remote players carry their source ip:port; the in-process
+                 * host has no UDP client, so the getter reports false and we
+                 * print "local" instead. */
+                char addr[48];  /* "255.255.255.255:65535" + slack */
+                const char *addrStr =
+                    transportUdpServerGetClientAddrStr(count, addr, sizeof(addr))
+                        ? addr : "local";
+                fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Buf:%d Addr:%s)\n",
                         name,
                         pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
                         basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
                         sim->playerPing[count],
-                        sim->jitterTarget[count]);
+                        sim->jitterTarget[count],
+                        addrStr);
             }
 
             /* For bot slots, append a 4-space-indented [BOT] line with the

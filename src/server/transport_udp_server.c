@@ -6214,6 +6214,19 @@ uint16_t transportUdpServerGetClientPing(BYTE playerNum) {
     return udpServer.clients[playerNum].pingMs;
 }
 
+bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen) {
+    if (out == NULL || outLen == 0) return false;
+    out[0] = '\0';
+    if (playerNum >= MAX_TANKS || !udpServer.clients[playerNum].connected) {
+        return false;
+    }
+    const struct sockaddr_in *a = &udpServer.clients[playerNum].addr;
+    char ip[INET_ADDRSTRLEN] = "?";
+    inet_ntop(AF_INET, &a->sin_addr, ip, sizeof(ip));
+    snprintf(out, outLen, "%s:%u", ip, (unsigned)ntohs(a->sin_port));
+    return true;
+}
+
 /* ── Test-only channel-mux scaffolding ───────────────────────────────────
  * Honest test access to the otherwise-silent parallel channel layer: queue a
  * message on a slot's channel, and read back its send-side ack / receive-side
