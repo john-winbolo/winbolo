@@ -379,20 +379,15 @@ int main(int argc, char *argv[]) {
       printf("[WASM] network play: placeholder name=%s (WBN name set by server)\n",
              placeholder);
     } else {
+      /* Single player: a validated ?name= wins; otherwise default to "Me".
+       * The WASM build re-seeds gameFrontName on every launch, so there is
+       * no persisted user name to preserve here. */
       const char *urlName = getUrlParam("name");
-      char persisted[PLAYER_NAME_LEN];
       char validated[PLAYER_NAME_LEN];
-      persisted[0] = '\0';
-      gameFrontGetPlayerName(persisted);
-
       if (urlName[0] != '\0' &&
           playerNameValidate(urlName, validated, PLAYER_NAME_LEN, NULL)) {
         gameFrontSetPlayerName(validated);
         printf("[WASM] single player: name=%s (from URL)\n", validated);
-      } else if (persisted[0] != '\0' &&
-                 strcmp(persisted,
-                        langGetText(STR_DLGGAMESETUP_DEFAULTNAME)) != 0) {
-        printf("[WASM] single player: keeping stored name %s\n", persisted);
       } else {
         gameFrontSetPlayerName((char *)"Me");
         printf("[WASM] single player: default name=Me\n");

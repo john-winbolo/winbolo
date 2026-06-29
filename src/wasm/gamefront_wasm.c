@@ -218,8 +218,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   password[0] = '\0';
   wantRejoin = FALSE;
 
-  /* Set defaults */
-  strcpy(gameFrontName, "WASM Player");
+  /* Set defaults. The real player name is chosen in main_wasm.c after this
+   * returns (web<rand> for join-code play, ?name= or "Me" for single player);
+   * this seed only matters to any path that reads the name before then. */
+  strcpy(gameFrontName, "Me");
   gameFrontUdpAddress[0] = '\0';
   gameFrontMyUdp = 27500;
   gameFrontTargetUdp = 27500;
