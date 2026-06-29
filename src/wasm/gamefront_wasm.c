@@ -707,6 +707,15 @@ void gameFrontShutdownServer(void)            { }
 bool gameFrontPreferencesExist(void)          { return FALSE; }
 bool gameFrontSetupServer(void)               { return FALSE; }
 
+/* Lobby/host helpers the in-game lobby pulls in now that it renders in the
+ * web build (C6). Host-only / Steam / persistence features that are inert in
+ * the browser. The SP server sim is the same handle gameFrontGetServerSim
+ * returns (NULL for a netUdp lobby — the player is not the host). */
+ServerSim *gameFrontGetSinglePlayerServerSim(void) { return wasmServerSim; }
+void gameFrontTickSteamPresenceLobby(ClientSim *cs)  { (void)cs; }
+void gameFrontGetChosenBotBrain(char *out, size_t outLen) { if (out && outLen) out[0] = '\0'; }
+void gameFrontSetChosenBotBrain(const char *name)    { (void)name; }
+
 
 ServerSim *gameFrontGetServerSim(void) {
   return wasmServerSim;

@@ -487,8 +487,12 @@ static MapChooserState  s_chooseMapRandomState   = {};
 static uint32_t         s_chooseMapRandomLastSeq = 0;
 /* Fourth chooser instance for the Winbolo.net Maps tab — same widget
  * the Upload / Server Maps tabs use, with a listProvider that fetches
- * folders from /api/v1/maps/{id} instead of from a local directory. */
+ * folders from /api/v1/maps/{id} instead of from a local directory.
+ * The WASM build has no libcurl/WBN HTTP backend, so the whole tab —
+ * state, providers, async fetch threads — is compiled out there. */
+#ifndef __EMSCRIPTEN__
 static MapChooserState  s_chooseMapWbnState      = {};
+#endif
 static bool             s_chooseMapStateInited   = false;
 static char             s_chooseMapPrevName[128] = "";
 static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=random 3=wbn */
@@ -1111,6 +1115,13 @@ static void lobbyUploadOnFolderJump(MapChooserState *state,
 }
 
 /* ── Winbolo.net Maps tab — state and async folder fetch ─────────
+ * The entire WBN tab depends on the libcurl-backed WBN HTTP API
+ * (httpGetBaseUrl / wbn_api_get / wbn_api_download_to_memory*), which
+ * the WASM build does not link. The tab is already runtime-gated on
+ * winbolonetIsRunning() (false in WASM), so it is dead-but-linked
+ * there; compile it out entirely to keep wasm-ld's undefined-symbol
+ * set clean.
+ *
  * The tab browses the WBN REST catalogue. Folder listings and
  * search results are fetched on a detached std::thread; the UI
  * thread renders from a mutex-guarded parsed snapshot. Picking a
@@ -1118,6 +1129,7 @@ static void lobbyUploadOnFolderJump(MapChooserState *state,
  * server-side (see transport_udp_server.c's wbnDownloadWorker).
  * The preview itself rolls in over the normal MAP_CHANGE flow —
  * no client-side download or local file write here. */
+#ifndef __EMSCRIPTEN__
 
 struct WbnMapsCrumb { int id; std::string name; };
 /* Forward declare so WbnMapsEntry can carry the parent folder id. */
@@ -2142,6 +2154,7 @@ static void lobbyWbnMapsTooltipPrefix(MapChooserState *state, void *ctx) {
                 (wbnHost && *wbnHost) ? wbnHost : "winbolo.net",
                 sizeof(state->pathTooltipPrefix));
 }
+#endif /* __EMSCRIPTEN__ — WBN Maps tab support code */
 
 /* Shared per-tab render helper. Manages the chooser-area size,
  * refreshes the tooltip prefix, runs a per-frame enumerate when the
@@ -2318,7 +2331,9 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapRandomState.leftPanelMaxW  = 360.0f;
         /* WBN provider — walks the WBN HTTP catalogue. refreshEveryFrame
          * because the listing lands asynchronously on a worker thread;
-         * the tab needs to surface cache updates without user action. */
+         * the tab needs to surface cache updates without user action.
+         * Absent in the WASM build (no WBN HTTP backend). */
+#ifndef __EMSCRIPTEN__
         mapChooserInit(&s_chooseMapWbnState, renderer);
         s_chooseMapWbnState.maximizePtr      = &s_chooseMapMaximized;
         s_chooseMapWbnState.hideExtras       = true;
@@ -2333,6 +2348,7 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapWbnState.provider.refreshEveryFrame    = true;
         SDL_strlcpy(s_chooseMapWbnState.crumbsRootLabel, "Maps",
                     sizeof(s_chooseMapWbnState.crumbsRootLabel));
+#endif /* __EMSCRIPTEN__ */
         /* Force an initial discover for each provider — mapChooserInit
          * ran discoverMaps before the providers were wired, so the
          * states landed empty. */
@@ -2364,7 +2380,9 @@ static void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
      * All three providers use cs as ctx in their onSelect path. */
     s_chooseMapState.provider.ctx        = cs;
     s_chooseMapUploadState.provider.ctx  = cs;
+#ifndef __EMSCRIPTEN__
     s_chooseMapWbnState.provider.ctx     = cs;
+#endif
     /* Snapshot the currently active map so Cancel can restore it
      * once an undo packet exists. */
     const char *cur = cs ? clientSimGetMapName(cs) : "";
@@ -2454,7 +2472,9 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
     MapChooserState *activeChooser = &s_chooseMapState;
     if (s_chooseMapActiveTab == 1)      activeChooser = &s_chooseMapUploadState;
     else if (s_chooseMapActiveTab == 2) activeChooser = &s_chooseMapRandomState;
+#ifndef __EMSCRIPTEN__
     else if (s_chooseMapActiveTab == 3) activeChooser = &s_chooseMapWbnState;
+#endif
 
     if (activeChooser->previewView &&
         mapPreviewViewIsReady(activeChooser->previewView)) {
@@ -2667,7 +2687,9 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                 clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF)
                 vis[nVis++] = 1;                                    /* Local/Upload */
             vis[nVis++] = 2;                                        /* Generate */
+#ifndef __EMSCRIPTEN__
             vis[nVis++] = 3;                                        /* WBN */
+#endif
             int cur = 0;
             for (int i = 0; i < nVis; i++) {
                 if (vis[i] == s_chooseMapActiveTab) { cur = i; break; }
@@ -2742,6 +2764,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             }
             ImGui::EndTabItem();
         }
+#ifndef __EMSCRIPTEN__
         if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS), nullptr,
                 s_chooseMapForceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_chooseMapActiveTab = 3;
@@ -2752,6 +2775,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
 
             ImGui::EndTabItem();
         }
+#endif /* __EMSCRIPTEN__ — WBN Maps source tab */
         ImGui::EndTabBar();
     }
     /* One-shot: the forced selection has been applied (or the bar wasn't

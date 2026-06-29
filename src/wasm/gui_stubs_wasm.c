@@ -22,6 +22,31 @@
 #include "input_source.h"
 #include "dialogs/imgui_tutorial_overlay.h"
 #include "dialogs/imgui_controller_disconnect.h"
+#include "map_stars.h"
+
+/* ----- Map favourites + thumbnail cache -------------------------------
+ * Pulled in by the lobby's map chooser now that the lobby renders in the
+ * web build (C6). Both persist to disk on desktop; the browser FS is
+ * ephemeral, so favourites are inert and the thumbnail write is a no-op. */
+void   mapStarsInit(void) { }
+bool   mapStarsIsStarred(const char *scope, const char *path) {
+  (void)scope; (void)path; return false;
+}
+void   mapStarsToggle(const char *scope, const char *path,
+                      const char *name, bool isFolder) {
+  (void)scope; (void)path; (void)name; (void)isFolder;
+}
+size_t mapStarsVisitScope(const char *scope, MapStarsVisitor cb, void *ctx) {
+  (void)scope; (void)cb; (void)ctx; return 0;
+}
+
+/* stb_image_write — the map chooser caches PNG thumbnails to disk; pointless
+ * in the ephemeral browser FS, so report the write as failed and move on. */
+int stbi_write_png(char const *filename, int w, int h, int comp,
+                   const void *data, int stride_in_bytes) {
+  (void)filename; (void)w; (void)h; (void)comp; (void)data; (void)stride_in_bytes;
+  return 0;
+}
 
 /* ----- Input source ---------------------------------------------------
  * The browser build always reports keyboard input — there is no
