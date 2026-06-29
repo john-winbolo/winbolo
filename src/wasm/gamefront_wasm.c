@@ -301,6 +301,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   char devProxy[1024];
   strncpy(devProxy, gameFrontGetUrlParam("proxyURL"), sizeof(devProxy) - 1);
   devProxy[sizeof(devProxy) - 1] = '\0';
+  bool wantTutorial = (gameFrontGetUrlParam("tutorial")[0] != '\0');
   bool haveJoinCode = (joinCode[0] != '\0');
   if (haveJoinCode || devProxy[0] != '\0') {
     urlNetType = netUdp;
@@ -411,6 +412,22 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     /* ---- Single-player via ServerSim + local transport ---- */
     printf("[WASM] Setting up single-player ServerSim...\n");
 
+    if (wantTutorial) {
+      /* Guided tutorial (?tutorial=): load the inbuilt tutorial map with
+       * tournament rules and no bots, mirroring the desktop openTutorial
+       * path. The step driver + overlay (main_wasm.c) take it from here. */
+      strncpy(fileName, "data/maps/Inbuilt Tutorial.map", FILENAME_MAX - 1);
+      fileName[FILENAME_MAX - 1] = '\0';
+      gametype = gameStrictTournament;
+      hiddenMines = FALSE;
+      startDelay = 0;
+      timeLen = UNLIMITED_GAME_TIME;
+      compTanks = aiNone;
+      frontEndTutorialReset();
+      isTutorial = TRUE;
+      printf("[WASM] starting guided tutorial\n");
+    }
+
     {
       if (fileName[0] != '\0') {
         wasmServerSim = serverSimCreate(fileName, gametype, hiddenMines, startDelay, timeLen);
@@ -427,6 +444,19 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
         clientSimDestroy(humanSim);
         return FALSE;
       }
+    }
+
+    if (wantTutorial) {
+      /* Enter tutorial mode BEFORE the tank spawns (serverInstanceStartup +
+       * clientSimConnectLocal below). startsGetStart reads sim->isTutorial and
+       * sim->tutorialStartIdx at spawn time, so the initial placement at start
+       * 0 (held until the boat-building step) depends on these being set
+       * first. Seed start idx 0 explicitly; the driver bumps it to 1 after the
+       * boat step. Mark both sims so tank.c's stop logic fires and the client
+       * predicts consistently. */
+      serverSimSetTutorial(wasmServerSim, true);
+      serverSimSetTutorialStartIdx(wasmServerSim, 0);
+      clientSimSetTutorial(humanSim, true);
     }
 
     /* WASM single-player: no lobby, run immediately. acceptRemoteClients

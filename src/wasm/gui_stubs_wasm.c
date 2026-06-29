@@ -36,16 +36,8 @@ void inputSourceNoteCursorWarp(void) {}
 bool inputSourceCursorWarpActive(void) { return false; }
 InputSource inputSourceCurrent(void) { return INPUT_SOURCE_KEYBOARD; }
 
-/* ----- Tutorial overlay -----------------------------------------------
- * The wasm client does not render the in-loop tutorial overlay; the
- * overlay never opens, so the render and query paths are no-ops. */
-void tutorialOverlayShow(const uint16_t *ids, int count, void (*onComplete)(void)) {
-  (void)ids;
-  (void)count;
-  (void)onComplete;
-}
-bool tutorialOverlayIsOpen(void) { return false; }
-void tutorialOverlayRender(struct ClientSim *cs) { (void)cs; }
+/* The tutorial overlay is now real in the wasm build — see
+ * imgui_tutorial_overlay.cpp (compiled in) and the driver in main_wasm.c. */
 
 /* ----- Controller-lost prompt -----------------------------------------
  * Controller hot-plug handling is desktop/Deck only; the browser build

@@ -182,6 +182,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_trackersetup.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_winbolonet.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_messagebox.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keycap.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_nav_outline.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_lobby.cpp
