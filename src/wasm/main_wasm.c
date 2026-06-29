@@ -357,35 +357,45 @@ int main(int argc, char *argv[]) {
   fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p\n", (void*)humanSim);
   fflush(stderr);
 
-  /* Apply player name from URL after gameFrontStart sets defaults.
-   * Gated like the Phase 7.1 Steam-persona seed: only honour ?name=
-   * when there is no persisted name and no stored WBN token (which
-   * would overwrite us authoritatively), and run the URL value
-   * through the Phase 2 validator before applying it. */
+  /* Pick the player name by URL mode, after gameFrontStart sets defaults.
+   *
+   * Network play (?join_code= present): identity is WinBolo.net-authoritative
+   * and the server stamps the real account name at re-auth, so the JOIN only
+   * needs a throwaway placeholder. Use web<rand>, overriding any stored name
+   * so a stale local name can't ride the JOIN.
+   *
+   * Single player: a validated ?name= wins; then a genuinely chosen stored
+   * name; otherwise default to "Me" (the generic default-name seed counts as
+   * "no name"). */
   {
-    const char *urlName = getUrlParam("name");
-    if (urlName[0] != '\0') {
+    const char *joinCode = getUrlParam("join_code");
+    if (joinCode[0] != '\0') {
+      char placeholder[PLAYER_NAME_LEN];
+      unsigned suffix =
+          ((unsigned)time(NULL) ^ (unsigned)(emscripten_get_now() * 1000.0))
+          % 1000000u;
+      snprintf(placeholder, sizeof(placeholder), "web%u", suffix);
+      gameFrontSetPlayerName(placeholder);
+      printf("[WASM] network play: placeholder name=%s (WBN name set by server)\n",
+             placeholder);
+    } else {
+      const char *urlName = getUrlParam("name");
       char persisted[PLAYER_NAME_LEN];
-      char token[256], expiry[256];
+      char validated[PLAYER_NAME_LEN];
       persisted[0] = '\0';
-      token[0] = '\0';
-      expiry[0] = '\0';
       gameFrontGetPlayerName(persisted);
-      gameFrontGetWinbolonetToken(token, expiry);
 
-      if (persisted[0] != '\0') {
-        printf("[WASM] URL name ignored (already have %s)\n", persisted);
-      } else if (token[0] != '\0') {
-        printf("[WASM] URL name ignored (WBN token present)\n");
+      if (urlName[0] != '\0' &&
+          playerNameValidate(urlName, validated, PLAYER_NAME_LEN, NULL)) {
+        gameFrontSetPlayerName(validated);
+        printf("[WASM] single player: name=%s (from URL)\n", validated);
+      } else if (persisted[0] != '\0' &&
+                 strcmp(persisted,
+                        langGetText(STR_DLGGAMESETUP_DEFAULTNAME)) != 0) {
+        printf("[WASM] single player: keeping stored name %s\n", persisted);
       } else {
-        char validated[PLAYER_NAME_LEN];
-        if (playerNameValidate(urlName, validated, PLAYER_NAME_LEN, NULL)) {
-          gameFrontSetPlayerName(validated);
-          printf("[WASM] URL name=%s\n", validated);
-        } else {
-          gameFrontSetPlayerName((char *)langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
-          printf("[WASM] URL name rejected, using default\n");
-        }
+        gameFrontSetPlayerName((char *)"Me");
+        printf("[WASM] single player: default name=Me\n");
       }
     }
   }
