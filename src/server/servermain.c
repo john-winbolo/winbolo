@@ -1801,6 +1801,18 @@ int main(int argc, char **argv) {
           }
         }
       }
+      /* -teams N: round-robin bots into N teams (e.g. -teams 2 with -bots 4 =
+       * 2v2). Overrides -allybots. Minimal port for benchmarking. */
+      int numTeams = 0;
+      if (argExist(argc, argv, "teams") == TRUE) {
+        int tArg = findArg(argc, argv, "teams");
+        if (tArg != ARG_NOT_FOUND && argv[tArg][0] != '-') {
+          numTeams = atoi((char *)argv[tArg]);
+          if (numTeams < 0) numTeams = 0;
+          if (numTeams > 16) numTeams = 16;
+        }
+        if (numTeams >= 2) allyTeam = 0;
+      }
       /* Draw themed names from one randomly-chosen pool so a -bots
        * server gets varied names instead of "Bot 1..N". usedStore
        * backs the uniqueness list handed to lobbyBotPoolPick. */
@@ -1824,6 +1836,8 @@ int main(int argc, char **argv) {
         }
         if (!botManagerAddBot(serverSim, (BYTE)i, brainPath, botName, ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
+        } else if (numTeams >= 2) {
+          serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)((i % numTeams) + 1));
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round
            * pass converts matching teamNumber into alliances, and the lobby
@@ -1832,7 +1846,11 @@ int main(int argc, char **argv) {
           serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)allyTeam);
         }
       }
-      if (allyTeam > 0) {
+      if (numTeams >= 2) {
+        serverSimReapplyTeamAlliances(serverSim);
+        fprintf(stderr, "Added %d bot(s) with brain '%s' (%d teams, round-robin)\n",
+                numBots, brainPath, numTeams);
+      } else if (allyTeam > 0) {
         serverSimReapplyTeamAlliances(serverSim);
         fprintf(stderr, "Added %d bot(s) with brain '%s' (allied on team %d)\n",
                 numBots, brainPath, allyTeam);
