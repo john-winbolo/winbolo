@@ -873,6 +873,11 @@ static void btLoadProfileTicks(BrainTestApp *app, const char *btrPath) {
     while (*p) {
         char *eol = strchr(p, '\n');
         size_t linelen = eol ? (size_t)(eol - p) : strlen(p);
+        /* Terminate THIS line so the sscanf()/strstr() below stay O(linelen).
+         * Without it they scan to the buffer's trailing NUL — up to the whole
+         * multi-hundred-MB file on every line — making the load O(n^2) and
+         * appear to hang (read as a "crash" on lower-memory machines). */
+        if (eol) *eol = '\0';
         int tick = -1, bot = -1;
         if (linelen > 12 && sscanf(p, "{\"tick\":%d,\"bot\":%d", &tick, &bot) == 2) {
             lines++;
