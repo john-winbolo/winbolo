@@ -628,7 +628,9 @@ bool winboloNetVerifyJoinCode(const char *joinCode,
     } else {
       cJSON *errObj = cJSON_GetObjectItem(resp, "error");
       if (errObj && cJSON_IsString(errObj)) {
-        strcpy(errorMsg, errObj->valuestring);
+        /* Backend-controlled string into a fixed (>=256) buffer: bound it. */
+        strncpy(errorMsg, errObj->valuestring, 255);
+        errorMsg[255] = '\0';
       } else {
         strcpy(errorMsg, "WinBolo.net join code verification rejected");
       }
