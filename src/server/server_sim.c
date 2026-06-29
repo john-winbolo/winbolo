@@ -4061,6 +4061,17 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     sim->eventCount = 0;
     sim->mapEventCount = 0;
 
+    /* Drop the lobby-chat catch-up buffer: this is an authoritative game start
+     * just like serverSimStartGame's countdown->running path, and the just-ended
+     * lobby's chat must not leak into the next session a returning spectator
+     * catches up on. The full-reset path clears this via serverSimStartGame; this
+     * in-place path bypasses that reset, so it must clear the buffer itself —
+     * otherwise pre-game chat survives in lobbyChatBuffer and the drain-flip
+     * replay (serverSendSpectatorBacklog) re-delivers it on return. A spectator
+     * connects over the wire while the only player sits directly in the sim, so
+     * transportUdpServerHasAnyClient() is false and the ready check routes here. */
+    sim->lobbyChatCount = 0;
+
     /* Wire any bots in the roster into the running game (idempotent on
      * a fresh sim with zero bots). */
     botManagerOnGameStart(sim);
@@ -4146,8 +4157,9 @@ void serverSimStartGame(ServerSim *sim) {
 
     /* Drop the lobby-chat catch-up buffer: it holds only the just-ended
      * lobby's chat, which must not leak into the next session a returning
-     * spectator catches up on. This countdown->running transition is the
-     * single authoritative game start; the game-over->lobby reset path
+     * spectator catches up on. This countdown->running transition is one of the
+     * two authoritative game starts (serverSimStartGameInPlace, the no-countdown
+     * SP/no-wire-client path, clears it too); the game-over->lobby reset path
      * (serverSimResetGameWorld's other caller) deliberately keeps the buffer
      * so post-game lobby chat survives for the drain-flip replay. */
     sim->lobbyChatCount = 0;
