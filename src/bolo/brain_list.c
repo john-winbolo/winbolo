@@ -169,16 +169,31 @@ static void brainListMaybeAdd(BrainList *out,
         e->version[0] = '\0';
     }
     if (paths) {
+        /* Store the directory the brain was actually found in — NOT a
+         * hardcoded "Brains/<name>". Brains discovered under the prefs dir
+         * (or SDL_GetBasePath) live outside the cwd, and the host chdir's to
+         * SDL_GetBasePath at startup, so a relative "Brains/..." path would
+         * resolve against the bundle Resources dir and fail to load. brainDir
+         * already carries the real (absolute, for prefs/base) path the
+         * scanner walked, so the lobby can load exactly what it listed. */
         SDL_snprintf(paths[out->count], BRAIN_LIST_PATH_LEN,
-                     "Brains/%s/init.lua", name);
+                     "%s%cinit.lua", brainDir,
+#if defined(_WIN32)
+                     '\\'
+#else
+                     '/'
+#endif
+                     );
     }
     out->count++;
 }
 
-/* Scan one parent directory (looking for child dirs that hold a brain). */
-static void brainListScanParent(BrainList *out,
-                                char (*paths)[BRAIN_LIST_PATH_LEN],
-                                const char *parent) {
+/* Scan one parent directory (looking for child dirs that hold a brain).
+ * Declared in brain_list_internal.h (non-static) so the unit test can drive
+ * it against an arbitrary directory. */
+void brainListScanParent(BrainList *out,
+                         char (*paths)[BRAIN_LIST_PATH_LEN],
+                         const char *parent) {
 #if defined(_WIN32)
     char pattern[1024];
     SDL_snprintf(pattern, sizeof(pattern), "%s\\*", parent);
