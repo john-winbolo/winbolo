@@ -8330,12 +8330,16 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         if (s_chooseMapOpen &&
             s_chatBlockMax.x > s_chatBlockMin.x &&
             s_chatBlockMax.y > s_chatBlockMin.y) {
-            /* No NoBringToFrontOnFocus / NoFocusOnAppearing here — the
-             * scrim has to rise above the lobby's ##LobbyBg full-screen
-             * window for its dark fill to actually show. The chooser
-             * window is Begun right after this block and the user
-             * interacts there, so ImGui's natural focus-follows-input
-             * keeps the chooser on top of the scrim from frame two on. */
+            /* NoBringToFrontOnFocus / NoFocusOnAppearing keep the z-order
+             * DETERMINISTIC by creation order rather than focus: ##LobbyBg
+             * (also flagged NoBringToFrontOnFocus) is begun first, then these
+             * scrims, then the chooser — so LobbyBg < scrims < chooser holds
+             * every frame. Without this it relied on focus-follows-input,
+             * which is reliable only in the desktop lobby's private ImGui
+             * context; in the WASM shared context a scrim could rise above the
+             * chooser and its ##scrimHit absorbed every click (the chooser
+             * looked open but was dead). The scrim still draws above the
+             * background because it is created after ##LobbyBg. */
             const ImGuiWindowFlags scrimFlags =
                 ImGuiWindowFlags_NoTitleBar |
                 ImGuiWindowFlags_NoResize |
@@ -8344,7 +8348,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGuiWindowFlags_NoScrollbar |
                 ImGuiWindowFlags_NoSavedSettings |
                 ImGuiWindowFlags_NoNav |
-                ImGuiWindowFlags_NoDocking;
+                ImGuiWindowFlags_NoDocking |
+                ImGuiWindowFlags_NoBringToFrontOnFocus |
+                ImGuiWindowFlags_NoFocusOnAppearing;
             ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 140));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);

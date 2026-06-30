@@ -176,7 +176,13 @@
     window.WB_PREFS_AUTH = true;
     window.__wbMe = fetch('/api/v1/me', { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
         .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (me) { window.WB_PREFS_AUTH = !!(me && me.logged_in); return me; })
+        .then(function (me) {
+            window.WB_PREFS_AUTH = !!(me && me.logged_in);
+            /* Expose the account name so the WASM client can use it as the JOIN
+               name (read synchronously from C before connecting). */
+            window.WB_PREFS_NAME = (me && me.logged_in && me.username) ? me.username : '';
+            return me;
+        })
         .catch(function () { return me_unknown(); });
 
     // On probe failure leave the flag optimistic rather than forcing it off.
@@ -185,10 +191,10 @@
 </head>
 <body>
     <header class="topbar">
-        <a class="brand" href="/" title="WinBolo lobby"><img class="logo" src="/img/wb2-logo.png" alt="WinBolo"></a>
+        <a class="brand" href="/" title="Back to games"><img class="logo" src="/img/wb2-logo.png" alt="WinBolo"></a>
         <div class="topright">
             <span id="netinfo"></span>
-            <a class="chip" href="/">↩ Lobby</a>
+            <a class="chip" href="/">← Leave game</a>
             <span id="account" class="account"></span>
         </div>
     </header>

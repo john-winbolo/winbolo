@@ -210,6 +210,27 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiQuickMine    = DEFAULT_QUICKMINE;
 }
 
+/* Outbound control-event callbacks. Desktop wires these in gamefront.c; the
+ * web client previously wired none, so accepting/requesting/leaving an
+ * alliance, the lock toggle, and name change were all silent no-ops (the send
+ * path itself works fine over the relay transport — only the callback was
+ * unset). Each mirrors its desktop counterpart. */
+static void wasmNameChangeSendCallback(const char *newName) {
+  clientSimNetSendNameChange(humanSim, newName);
+}
+static void wasmAllianceRequestCallback(uint8_t toPlayer) {
+  clientSimNetSendAllianceRequest(humanSim, toPlayer);
+}
+static void wasmAllianceAcceptCallback(uint8_t toPlayer) {
+  clientSimNetSendAllianceAccept(humanSim, toPlayer);
+}
+static void wasmAllianceLeaveCallback(void) {
+  clientSimNetSendAllianceLeave(humanSim);
+}
+static void wasmLockToggleCallback(bool allow) {
+  clientSimNetSendLockToggle(humanSim, allow);
+}
+
 /* -------------------------------------------------------
  * gameFrontStart — skip all dialogs, start practice game
  * ------------------------------------------------------- */
@@ -346,6 +367,28 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
      * at PACKET_WBN_REAUTH (see udpClientSendWbnReauth). A non-empty token
      * also sets JOIN_FLAG_WILL_AUTHENTICATE, which the server needs to send
      * the first REKEY. Dev/LAN proxy runs keep the normal WBN token. */
+    /* Network identity. Prefer the logged-in WinBolo.net account name that
+     * shell.html probed from /api/v1/me (window.WB_PREFS_NAME); fall back to a
+     * throwaway web<rand> placeholder so a stale name can't ride the JOIN. This
+     * MUST run before clientSimConnectUdp so the real name rides the first JOIN
+     * instead of the "Me" default. The server re-verifies the join_code at
+     * re-auth and stays authoritative. */
+    {
+      const char *jsName =
+          emscripten_run_script_string("(window.WB_PREFS_NAME||'')");
+      if (jsName != NULL && jsName[0] != '\0') {
+        strncpy(gameFrontName, jsName, sizeof(gameFrontName) - 1);
+        gameFrontName[sizeof(gameFrontName) - 1] = '\0';
+      } else {
+        unsigned suffix = (unsigned)(emscripten_get_now() * 1000.0) % 1000000u;
+        snprintf(gameFrontName, sizeof(gameFrontName), "web%u", suffix);
+      }
+      /* Assert the name locally so the player panel shows it immediately,
+       * before the server's re-auth rename lands. */
+      clientSimSetMyLastPlayerName(humanSim, gameFrontName);
+      printf("[WASM] network play: join name=%s\n", gameFrontName);
+    }
+
     const char *wbnArg = haveJoinCode ? joinCode
                        : (gameFrontWbnUse ? gameFrontWbnToken : "");
     clientSimConnectUdp(humanSim, gameFrontUdpAddress,
@@ -398,6 +441,15 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       clientSimSetServerAddress(humanSim, saddr.sin_addr);
       clientSimSetServerPort(humanSim, gameFrontTargetUdp);
     }
+
+    /* Wire the outbound control-event send callbacks (desktop does this in
+     * gamefront.c). Without these, alliance accept/request/leave, lock toggle,
+     * and name change silently do nothing in web play. */
+    clientSimSetNameChangeSendFunc(humanSim, wasmNameChangeSendCallback);
+    clientSimSetAllianceRequestFunc(humanSim, wasmAllianceRequestCallback);
+    clientSimSetAllianceAcceptFunc(humanSim, wasmAllianceAcceptCallback);
+    clientSimSetAllianceLeaveFunc(humanSim, wasmAllianceLeaveCallback);
+    clientSimSetLockToggleSendFunc(humanSim, wasmLockToggleCallback);
 
     /* Map install + snapshot apply happen inside the UDP transport
      * (MAP_DOWNLOAD inline install + CTRL_GAME_PHASE LOBBY→RUNNING

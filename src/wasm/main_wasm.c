@@ -393,27 +393,17 @@ int main(int argc, char *argv[]) {
    * relay's join-prefs frame uses. */
   wbPrefsSyncNow();
 
-  /* Pick the player name by URL mode, after gameFrontStart sets defaults.
+  /* Single-player name selection. Network play (?join_code=) already set its
+   * join name inside gameFrontStart, before the JOIN went out (the account
+   * name from /api/v1/me, or a web<rand> fallback) — so there's nothing to do
+   * for the network case here. Setting it now would be too late (the JOIN has
+   * already been sent) and would only clobber the local copy.
    *
-   * Network play (?join_code= present): identity is WinBolo.net-authoritative
-   * and the server stamps the real account name at re-auth, so the JOIN only
-   * needs a throwaway placeholder. Use web<rand>, overriding any stored name
-   * so a stale local name can't ride the JOIN.
-   *
-   * Single player: a validated ?name= wins; then a genuinely chosen stored
-   * name; otherwise default to "Me" (the generic default-name seed counts as
-   * "no name"). */
+   * Single player: a validated ?name= wins; otherwise default to "Me". */
   {
     const char *joinCode = getUrlParam("join_code");
     if (joinCode[0] != '\0') {
-      char placeholder[PLAYER_NAME_LEN];
-      unsigned suffix =
-          ((unsigned)time(NULL) ^ (unsigned)(emscripten_get_now() * 1000.0))
-          % 1000000u;
-      snprintf(placeholder, sizeof(placeholder), "web%u", suffix);
-      gameFrontSetPlayerName(placeholder);
-      printf("[WASM] network play: placeholder name=%s (WBN name set by server)\n",
-             placeholder);
+      /* network play: name handled in gameFrontStart before JOIN */
     } else {
       /* Single player: a validated ?name= wins; otherwise default to "Me".
        * The WASM build re-seeds gameFrontName on every launch, so there is
@@ -885,8 +875,13 @@ void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping)
   sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
 
+/* Tracks which ClientSim owns the on-screen player panel, so stale callbacks
+ * from a previous game can't write into the live UI (mirrors winbolo.c). */
+static struct ClientSim *s_activeUiCs = NULL;
+
 void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value, uint8_t clientType, uint8_t clientFlags) {
-  (void)cs; (void)value; (void)clientType; (void)clientFlags;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  sdl3ImguiUpdatePlayerFlags((unsigned char)value, clientType, clientFlags);
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
@@ -938,11 +933,49 @@ void frontEndGameOver(ClientSim *cs) {
   finishedLoop = TRUE;
 }
 
-void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) { (void)cs; (void)value; }
-void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) { (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags; }
-void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) { (void)cs; (void)value; (void)isChecked; }
-void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
-void frontEndSetActiveClientSim(struct ClientSim *cs) { (void)cs; }
+void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  sdl3ImguiClearPlayer((unsigned char)value);
+}
+
+void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
+  char cc[3];
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientSimIsRunning(cs)) {
+    cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
+    sdl3ImguiSetPlayer((unsigned char)value, str, cc);
+    return;
+  }
+  /* Country code may arrive as "" when unknown; substitute 'X' so we never
+   * read past the end (matches winbolo.c). */
+  cc[0] = countryCode[0] ? countryCode[0] : 'X';
+  cc[1] = (countryCode[0] && countryCode[1]) ? countryCode[1] : 'X';
+  cc[2] = '\0';
+  sdl3ImguiSetPlayer((unsigned char)value, str, cc);
+  sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
+}
+
+void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
+}
+
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) {
+  if (cs == NULL) return;
+  clientSimSetTankAutoSlowdown(cs, useAutoslow);
+  clientSimSetTankAutoHideGunsight(cs, useAutohide);
+}
+
+void frontEndSetActiveClientSim(struct ClientSim *cs) {
+  if (cs != s_activeUiCs) {
+    for (BYTE i = 0; i < MAX_TANKS; i++) {
+      sdl3ImguiClearPlayer(i);
+    }
+    /* Drop the previous game's newswire/kills text so it doesn't linger. */
+    sdl3DrawResetCachedText();
+  }
+  s_activeUiCs = cs;
+}
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }
 
