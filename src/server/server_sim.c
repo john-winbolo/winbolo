@@ -3341,6 +3341,31 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         }
     }
 
+    /* Server-loop timing (Tick / Simulation) is recorded every server tick
+     * regardless of bots, so show it whenever there's data — operators of
+     * a bot-free server still want to see the loop stays inside budget.
+     * The bot pool block below stays gated on actual bots. */
+    {
+        double tickLast = 0.0, tickEwma = 0.0;
+        serverLifecycleGetTickStats(&tickLast, &tickEwma);
+        double simLast = 0.0, simEwma = 0.0;
+        serverLifecycleGetSimStats(&simLast, &simEwma);
+
+        if (tickLast > 0.0 || simLast > 0.0) {
+            fprintf(stdout, "Server timing:\n");
+        }
+        if (tickLast > 0.0) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
+                    "Tick:", tickLast, tickEwma);
+        }
+        if (simLast > 0.0) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms\n",
+                    "Simulation:", simLast, simEwma);
+        }
+    }
+
     /* Bot pool summary block — only when at least one bot slot is
      * active. Shows the per-bot budget against the 20ms server tick
      * plus per-stage last + EWMA wall-clock so operators can spot
@@ -3358,16 +3383,6 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                     ps.workerCount, ps.activeBots, ps.currentTargetMs);
         }
 
-        double tickLast = 0.0, tickEwma = 0.0;
-        serverLifecycleGetTickStats(&tickLast, &tickEwma);
-        double simLast = 0.0, simEwma = 0.0;
-        serverLifecycleGetSimStats(&simLast, &simEwma);
-
-        if (tickLast > 0.0) {
-            fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
-                    "Tick:", tickLast, tickEwma);
-        }
         /* peak= is the worst single-bot think across the pool this game
          * (reset each round start) — the EWMA averages spikes away, so
          * without it a pool that mostly runs cheap but takes occasional 20ms
@@ -3376,11 +3391,6 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                 "  %-11s last=%.1fms  EWMA=%.1fms  peak=%.1fms\n",
                 "Brain:", ps.lastBrainPhaseMs, ps.ewmaBrainPhaseMs,
                 ps.maxThinkMs);
-        if (simLast > 0.0) {
-            fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms\n",
-                    "Simulation:", simLast, simEwma);
-        }
         /* "Bot prep" labels the non-brain serial parts of
          * botManagerTick: snapshot/sync + input send. Distinct from
          * "Simulation:" above which times the two serverSimTick calls.
