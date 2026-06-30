@@ -122,7 +122,30 @@ spent in Lua. The end-to-end in-game speedup will be **materially lower** than
 integration + `-brain-profile-log` to measure. Treat 5.4× as "what LuaJIT does
 to the Lua portion," not "what the game gets."
 
-## In-game benchmark results (REAL workload, vs `main`)
+## In-game benchmark — 10-min 2v2 in BrainTest (canonical)
+
+The cleanest real-workload number: a 2v2 GoalHunter game (Slugfest VII,
+tournament, `-noplayers 4 -teams 2 --opt --profile-log --auto-start --threads 4`)
+run to a fixed **50,000 ticks** under each VM (~8.4 min each), `think_total_ms`
+post-warmup (first 2000 samples dropped):
+
+| | median | mean | p95 | p99 | n |
+|---|---|---|---|---|---|
+| PUC-Lua 5.4.7 | 0.945 ms | 0.998 ms | 1.427 ms | 1.856 ms | 95906 |
+| LuaJIT 2.1 | 0.674 ms | 0.738 ms | 1.262 ms | 1.676 ms | 89035 |
+| **speedup** | **1.40×** | 1.35× | 1.13× | 1.11× | |
+
+**≈ 1.4× faster brain think time.** Both runs took ~502 s wall — *identical*,
+because BrainTest paces the sim, so wall-clock is NOT a speed metric here; the
+per-tick `think_total_ms` is.
+
+Note the shape: **1.40× at the median but only ~1.1× at p95/p99.** The C-hot-path
+thesis showing up directly — the expensive ticks are dominated by the C kernels
+(pathfinder, world-sim) that LuaJIT can't touch, so the JIT helps most on the
+cheaper, more-Lua-heavy ticks. (Determinism caveat still applies: the two games
+diverge, so this is matched-config, not byte-identical, work.)
+
+## Earlier in-game benchmark (WinBoloDS quick run)
 
 The full integration now works: `WinBoloDS` builds against LuaJIT (`WINBOLO_LUAJIT`
 option), the transpiled GoalHunter brains load, open, and think with zero
