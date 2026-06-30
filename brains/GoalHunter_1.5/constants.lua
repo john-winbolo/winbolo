@@ -1430,6 +1430,15 @@ M.CAPACITY_FORCED_TARGET_MS = nil
 
 -- ── Squad coordination (Phase 1: pill blitz) ──────────────────────────────
 M.HARASSER_FRAC       = 0.20   -- fraction of the protocol-bot set that are harassers (floor)
+-- Dynamic harasser ramp: once we hold a clear BASE advantage (base_strength past
+-- HARASSER_BASE_THRESHOLD) AND aren't bleeding pills (pill strength at/above
+-- HARASSER_PILL_FLOOR), raise the harasser fraction from HARASSER_FRAC up toward
+-- HARASSER_FRAC_MAX — dominating bases while holding pills means we can spare more
+-- bots to harass. Below the base threshold, or while losing a lot of pills, it
+-- stays at the HARASSER_FRAC floor.
+M.HARASSER_FRAC_MAX       = 0.50  -- harasser fraction ceiling at full base dominance
+M.HARASSER_BASE_THRESHOLD = 0.60  -- base_strength (friendly/contested) where the ramp starts
+M.HARASSER_PILL_FLOOR     = 0.40  -- min pill strength to allow ramping ("at least not losing a lot")
 M.BASELINE_SQUAD_SIZE = 3      -- commanders = ceil(non-harasser count / this)
 M.SQUAD_ALLY_MAX_AGE  = 1750   -- ticks; allies staler than this drop out of the protocol set
 
