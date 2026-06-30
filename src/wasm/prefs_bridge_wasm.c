@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <emscripten.h>
 
@@ -34,11 +35,11 @@
 #include "../winbolonet/http.h"
 #include "../winbolonet/wbn_prefs_sync.h"
 
-/* Re-apply the live key bindings from the prefs document after a download
- * adopts new server settings mid-session (defined in gamefront_wasm.c). At
- * bootstrap this path is unused: the sync runs before gameFrontStart reads
- * keys, so the fresh read already sees the adopted document. */
-extern void gameFrontReapplyKeysFromPrefs(void);
+/* Apply a downloaded prefs document to the live game — keys, menu toggles,
+ * game options, gamepad sensitivities and build options (defined in
+ * main_wasm.c). Takes the inner prefs JSON object (the same shape the relay's
+ * join-prefs frame carries), which is exactly what the adopt outcome hands us. */
+extern void wasmApplyJoinPrefs(const char *prefsJson, int len);
 
 /* ---- Async transport primitives (EM_ASYNC_JS defines C-callable JS) -------
  * Each awaits the Module.wbPrefs* fetch helper in shell.html and writes a
@@ -130,7 +131,7 @@ void wbPrefsSyncNow(void) {
             if (o.serverPrefs != NULL &&
                 prefsAdoptServerDocument(o.serverPrefs) == PREFS_ADOPT_OK) {
                 prefsMarkSynced(o.token);
-                gameFrontReapplyKeysFromPrefs();
+                wasmApplyJoinPrefs(o.serverPrefs, (int)strlen(o.serverPrefs));
             }
             free(o.serverPrefs);
             break;

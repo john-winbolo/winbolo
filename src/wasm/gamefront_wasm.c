@@ -33,7 +33,6 @@
 #include "../gui/brainsHandler.h"
 #include "../gui/clientmutex.h"
 #include "../gui/gamefront.h"
-#include "../common/prefs.h"
 #include "../gui/input.h"
 #include "../gui/lang.h"
 #include "../gui/sound.h"
@@ -211,60 +210,6 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiQuickMine    = DEFAULT_QUICKMINE;
 }
 
-/* Load the key bindings from the prefs document, falling back to the hardcoded
- * defaults for any binding the document does not carry. Section/key names match
- * the desktop loader (gamefront.c) exactly, so a binding configured on desktop
- * and synced to the account applies verbatim in the browser and vice versa.
- * Called in place of gameFrontSetDefaultKeys once prefs are initialised; on a
- * fresh account with no stored keys every prefsGetString returns its default,
- * so behaviour is identical to the old hardcoded path. */
-void gameFrontLoadKeys(keyItems *keys) {
-  gameFrontSetDefaultKeys(keys); /* seed every field with its default first */
-
-  char def[32];
-  char buff[FILENAME_MAX];
-  /* Each binding: format the seeded default as the prefs default, then read
-   * the stored value (which is that default when absent). */
-#define WB_KEY_FROM_PREFS(field, name)                                  \
-  snprintf(def, sizeof(def), "%d", keys->field);                        \
-  prefsGetString("KEYS", name, def, buff, sizeof(buff));                \
-  keys->field = atoi(buff)
-
-  WB_KEY_FROM_PREFS(kiForward,      "Forward");
-  WB_KEY_FROM_PREFS(kiBackward,     "Backwards");
-  WB_KEY_FROM_PREFS(kiLeft,         "Left");
-  WB_KEY_FROM_PREFS(kiRight,        "Right");
-  WB_KEY_FROM_PREFS(kiShoot,        "Shoot");
-  WB_KEY_FROM_PREFS(kiLayMine,      "Lay Mine");
-  WB_KEY_FROM_PREFS(kiGunIncrease,  "Increase Range");
-  WB_KEY_FROM_PREFS(kiGunDecrease,  "Decrease Range");
-  WB_KEY_FROM_PREFS(kiTankView,     "Tank View");
-  WB_KEY_FROM_PREFS(kiPillView,     "Pill View");
-  WB_KEY_FROM_PREFS(kiAllyView,     "Ally View");
-  WB_KEY_FROM_PREFS(kiLGMView,      "LGM View");
-  WB_KEY_FROM_PREFS(kiBaseView,     "Base View");
-  WB_KEY_FROM_PREFS(kiScrollUp,     "Scroll Up");
-  WB_KEY_FROM_PREFS(kiScrollDown,   "Scroll Down");
-  WB_KEY_FROM_PREFS(kiScrollLeft,   "Scroll Left");
-  WB_KEY_FROM_PREFS(kiScrollRight,  "Scroll Right");
-  WB_KEY_FROM_PREFS(kiQuickTree,    "Quick Tree");
-  WB_KEY_FROM_PREFS(kiQuickRoad,    "Quick Road");
-  WB_KEY_FROM_PREFS(kiQuickWall,    "Quick Wall");
-  WB_KEY_FROM_PREFS(kiQuickPillbox, "Quick Pillbox");
-  WB_KEY_FROM_PREFS(kiQuickMine,    "Quick Mine");
-#undef WB_KEY_FROM_PREFS
-}
-
-/* Re-read the bindings into the live key set after a mid-session prefs adopt
- * (called by the cloud-sync bridge when a download replaces the document).
- * windowGetKeys/windowSetKeys (winbolo.h) own the active keyItems. */
-void gameFrontReapplyKeysFromPrefs(void) {
-  keyItems live;
-  windowGetKeys(&live);
-  gameFrontLoadKeys(&live);
-  windowSetKeys(&live);
-}
-
 /* -------------------------------------------------------
  * gameFrontStart — skip all dialogs, start practice game
  * ------------------------------------------------------- */
@@ -297,10 +242,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   useAutoslow = FALSE;
   useAutohide = FALSE;
 
-  /* Load keys from prefs (defaults when absent). prefsInit + cloud sync run
-   * in main() before this, so an account's stored bindings are already
-   * adopted by the time we read them here. */
-  gameFrontLoadKeys(keys);
+  /* Seed default keys. A logged-in player's stored bindings (and the rest of
+   * their synced settings) are applied afterwards by wasmApplyJoinPrefs, which
+   * runs after gameFrontStart so it overrides exactly what the user synced. */
+  gameFrontSetDefaultKeys(keys);
 
   langSetup();
 

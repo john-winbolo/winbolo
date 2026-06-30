@@ -40,6 +40,8 @@
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
+#include "../gui/sdl3/input_gamepad.h"
+#include "../gui/sdl3/build_cursor.h"
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
 #include "../gui/sdl3/dialogs/imgui_tutorial_overlay.h"
@@ -368,14 +370,10 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  /* Preferences: initialise the in-memory document, then pull the account's
-   * cloud prefs BEFORE gameFrontStart reads the key bindings, so a logged-in
-   * player's stored keys/settings apply on the first frame. The MEMFS path is
-   * a scratch backing only — persistence is the WinBolo.net API
-   * (prefs_bridge_wasm.c), not the browser filesystem. wbPrefsSyncNow is a
-   * no-op for single-player (not signed in). */
+  /* Initialise the in-memory preferences document. The MEMFS path is a scratch
+   * backing only — persistence is the WinBolo.net API (prefs_bridge_wasm.c),
+   * not the browser filesystem. */
   prefsInit("/WinBolo.json");
-  wbPrefsSyncNow();
 
   printf("[WASM] Starting gameFrontStart...\n");
   if (gameFrontStart(cmdLine, &keys, FALSE, NULL) == FALSE) {
@@ -386,6 +384,14 @@ int main(int argc, char *argv[]) {
   }
   fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p\n", (void*)humanSim);
   fflush(stderr);
+
+  /* Pull the account's cloud prefs and apply them. This runs AFTER
+   * gameFrontStart (which seeds defaults and creates humanSim) so
+   * wasmApplyJoinPrefs overrides exactly what the player synced — keys, menu
+   * toggles, game options, gamepad sensitivities and build options — on the
+   * first frame. No-op for single-player (not signed in). Same apply path the
+   * relay's join-prefs frame uses. */
+  wbPrefsSyncNow();
 
   /* Pick the player name by URL mode, after gameFrontStart sets defaults.
    *
@@ -495,9 +501,10 @@ void windowApplyMenuChecks(ClientSim *cs) {
 /* -------------------------------------------------------
  * C5: apply WinBolo.net synced prefs from the join metadata frame.
  *
- * The relay delivers a projected prefs subset (KEYS / MENU / GAME OPTIONS)
- * as JSON in the 0x01 frame; the transport calls this once when the frame
- * is consumed (udpClientParseProxyMeta, emscripten only). Values mirror the
+ * Applies a projected prefs subset (KEYS / MENU / GAME OPTIONS / SETTINGS)
+ * from JSON. Two callers feed it: the relay's join-prefs 0x01 frame
+ * (udpClientParseProxyMeta, emscripten only) and the WinBolo.net cloud-prefs
+ * GET (prefs_bridge_wasm.c, on adopt). Values mirror the
  * desktop INI store: "Yes"/"No" bools, stringified ints, SDL3 keycodes for
  * KEYS. Native JSON bool/number is tolerated too. Absent keys keep the
  * current (default) value. This runs after gameFrontStart seeded defaults,
@@ -524,6 +531,14 @@ static int prefInt(cJSON *o, const char *k, int dflt) {
   if (it == NULL) return dflt;
   if (cJSON_IsNumber(it)) return (int)it->valuedouble;
   if (cJSON_IsString(it) && it->valuestring) return atoi(it->valuestring);
+  return dflt;
+}
+
+static float prefFloat(cJSON *o, const char *k, float dflt) {
+  cJSON *it = cJSON_GetObjectItemCaseSensitive(o, k);
+  if (it == NULL) return dflt;
+  if (cJSON_IsNumber(it)) return (float)it->valuedouble;
+  if (cJSON_IsString(it) && it->valuestring) return (float)atof(it->valuestring);
   return dflt;
 }
 
@@ -583,6 +598,27 @@ void wasmApplyJoinPrefs(const char *prefsJson, int len) {
   if (cJSON_IsObject(g)) {
     useAutoslow = prefBool(g, "Auto Slowdown",           useAutoslow);
     useAutohide = prefBool(g, "Auto Show-Hide Gunsight",  useAutohide);
+  }
+
+  /* SETTINGS: gamepad sensitivities (clamped to the same ranges as desktop
+   * gamefront.c) and build-cursor options. The globals live in input_gamepad.c
+   * and build_cursor.c (both compiled into the wasm build) and are read by the
+   * shared input code each tick. */
+  cJSON *s = cJSON_GetObjectItemCaseSensitive(root, "SETTINGS");
+  if (cJSON_IsObject(s)) {
+    float gs = prefFloat(s, "Gamepad Scroll Sens", g_gamepadScrollSensitivity);
+    if (gs >= 0.25f && gs <= 4.0f) g_gamepadScrollSensitivity = gs;
+    float ts = prefFloat(s, "Gamepad Tank Sens", g_gamepadTankSensitivity);
+    if (ts >= 0.10f && ts <= 1.0f) g_gamepadTankSensitivity = ts;
+    float bs = prefFloat(s, "Gamepad Build Cursor Sens", g_gamepadBuildCursorSensitivity);
+    if (bs >= 0.25f && bs <= 2.0f) g_gamepadBuildCursorSensitivity = bs;
+
+    g_buildExitExecutes = prefBool(s, "Build Exit Executes", g_buildExitExecutes);
+    g_buildExitExecutesMomentaryOnly =
+        prefBool(s, "Build Exit Executes Momentary Only", g_buildExitExecutesMomentaryOnly);
+    g_buildDoubleTapRoad = prefBool(s, "Build Double Tap Road", g_buildDoubleTapRoad);
+    g_buildHoldMomentary = prefBool(s, "Build Hold Momentary", g_buildHoldMomentary);
+    g_buildAutoCloseOnExecute = prefBool(s, "Build Auto Close On Execute", g_buildAutoCloseOnExecute);
   }
 
   cJSON_Delete(root);
