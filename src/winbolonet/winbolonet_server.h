@@ -144,6 +144,31 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
 bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter);
 
 /*********************************************************
+*NAME:          winboloNetVerifyJoinCode
+*PURPOSE:
+* Resolves a join_code via POST
+* /api/v1/client/verify_join_code. Read-only: it does NOT
+* consume the code and writes nothing to winboloNetPlayerKey[]
+* or any slot state — the request is scoped to (server_key,
+* join_code) only. Returns TRUE only on HTTP 200 with an
+* accepted response (ok==true, or ok absent); FALSE otherwise
+* with errorMsg populated.
+*
+*ARGUMENTS:
+* joinCode      - join_code string to resolve
+* playerNameOut - Output: resolved player name, buffer must be
+*                 >= PACKET_MAX_PLAYER_NAME; set to "" on entry
+* isLoggedInOut - Output: TRUE iff the code belongs to a
+*                 logged-in account; FALSE on entry; may be NULL
+* countryOut    - Output: ISO-2 country code, buffer must be
+*                 >= 3 (2 chars + NUL); set to "" on entry
+* userIdOut     - Output: WBN user id, or -1 when the response
+*                 user_id is null/absent/non-numeric; may be NULL
+* errorMsg      - Buffer (>= 256) for error message on failure
+*********************************************************/
+bool winboloNetVerifyJoinCode(const char *joinCode, char *playerNameOut, bool *isLoggedInOut, char *countryOut, int *userIdOut, char *errorMsg);
+
+/*********************************************************
 *NAME:          winboloNetVerifySpectatorKey
 *PURPOSE:
 * Validates a spectator_key received on the JOIN wire via

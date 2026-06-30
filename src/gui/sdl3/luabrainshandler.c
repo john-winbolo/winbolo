@@ -138,6 +138,86 @@ void luaBrainsSetRunScript(const char *path) {
         s_run_script_path[0] = '\0';
 }
 
+/* Staged per-bot init arg from -bot-init's [..] suffix. Consumed (cleared)
+ * by the next luaBrainInstanceCreate, which injects BRAIN_INIT_ARG. */
+static char s_next_init_arg[128] = "";
+
+void luaBrainsSetNextInitArg(const char *arg) {
+    if (arg && arg[0])
+        SDL_strlcpy(s_next_init_arg, arg, sizeof(s_next_init_arg));
+    else
+        s_next_init_arg[0] = '\0';
+}
+
+bool luaBrainsParseBotInitSpec(const char *spec, BotInitSlot *slots, int maxN) {
+    const char *p = spec;
+    while (*p) {
+        while (*p == ',' || *p == ' ') p++;   /* skip separators */
+        if (!*p) break;
+
+        /* Range: "a" or "a-b", terminated by '='. */
+        char *endp = NULL;
+        long lo = strtol(p, &endp, 10);
+        if (endp == p) {
+            fprintf(stderr, "-bot-init: expected a player id near '%s'\n", p);
+            return false;
+        }
+        long hi = lo;
+        if (*endp == '-') {
+            const char *q = endp + 1;
+            hi = strtol(q, &endp, 10);
+            if (endp == q) {
+                fprintf(stderr, "-bot-init: expected end of id range near '%s'\n", q);
+                return false;
+            }
+        }
+        while (*endp == ' ') endp++;
+        if (*endp != '=') {
+            fprintf(stderr, "-bot-init: expected '=' after id range near '%s'\n", p);
+            return false;
+        }
+
+        /* Value: <path>[<arg>], up to the next comma (paths can't contain ','). */
+        const char *val = endp + 1;
+        const char *end = strchr(val, ',');
+        if (!end) end = val + strlen(val);
+
+        char vbuf[512 + 128];
+        size_t vlen = (size_t)(end - val);
+        if (vlen >= sizeof(vbuf)) vlen = sizeof(vbuf) - 1;
+        memcpy(vbuf, val, vlen);
+        vbuf[vlen] = '\0';
+
+        char argbuf[128] = "";
+        char *lb = strchr(vbuf, '[');
+        if (lb) {
+            *lb = '\0';                       /* path ends at '[' */
+            char *rb = strchr(lb + 1, ']');
+            if (rb) *rb = '\0';
+            SDL_strlcpy(argbuf, lb + 1, sizeof(argbuf));
+        }
+        if (vbuf[0] == '\0') {
+            fprintf(stderr, "-bot-init: empty path for id range %ld-%ld\n", lo, hi);
+            return false;
+        }
+
+        if (lo > hi) { long t = lo; lo = hi; hi = t; }
+        for (long id = lo; id <= hi; id++) {
+            if (id < 0 || id >= maxN) {
+                fprintf(stderr, "-bot-init: id %ld out of range (0-%d), ignoring\n",
+                        id, maxN - 1);
+                continue;
+            }
+            SDL_strlcpy(slots[id].path, vbuf, sizeof(slots[id].path));
+            SDL_strlcpy(slots[id].arg, argbuf, sizeof(slots[id].arg));
+            slots[id].covered = 1;
+        }
+
+        p = (*end == ',') ? end + 1 : end;
+    }
+    return true;
+}
+
 static LuaBrainInstance singletonInst;           /* The GUI client's brain  */
 static int        brainsNum          = 0;        /* Discovered brain count  */
 static int        brainsRunningIdx   = -1;       /* Index of active brain   */
@@ -1035,6 +1115,17 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     lua_pushnil(L);
   }
   lua_setglobal(L, "RUN_SCRIPT_PATH");
+
+  /* BRAIN_INIT_ARG: optional per-bot text from -bot-init's [..] suffix; string
+   * when staged, nil otherwise. Consume-once so it applies only to this brain —
+   * the next create defaults back to nil unless luaBrainsSetNextInitArg re-stages. */
+  if (s_next_init_arg[0]) {
+    lua_pushstring(L, s_next_init_arg);
+  } else {
+    lua_pushnil(L);
+  }
+  lua_setglobal(L, "BRAIN_INIT_ARG");
+  s_next_init_arg[0] = '\0';
 
   brainCoreRegisterGetTerrain(L, &inst->worldPtr);
 

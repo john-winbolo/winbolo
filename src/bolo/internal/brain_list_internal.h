@@ -43,4 +43,12 @@
  * paths-mirror fill. */
 void brainListScan(BrainList *out, char (*paths)[BRAIN_LIST_PATH_LEN]);
 
+/* Scan a single parent directory for child dirs that hold a brain (a
+ * sub-dir with an init.lua) and append them to `out`/`paths`.
+ * brainListScan calls this once per candidate root. Exposed so the unit
+ * test can pin the stored path to the directory actually scanned. */
+void brainListScanParent(BrainList *out,
+                         char (*paths)[BRAIN_LIST_PATH_LEN],
+                         const char *parent);
+
 #endif /* BRAIN_LIST_INTERNAL_H */

@@ -1815,6 +1815,7 @@ STR_DLGSETTINGS_TAB_SESSION=Sessione
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Spettatori ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Spettatore] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Uscire dalla modalità spettatore?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=Dal vivo

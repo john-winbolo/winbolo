@@ -105,6 +105,11 @@ typedef enum {
      * watching. specIdx is in [0, MAX_SPECTATORS). Mirrors
      * CTRL_LOBBY_SLOT but carries the trimmed spectator fields only. */
     CTRL_SPECTATOR_SLOT,
+    /* CTRL_SPECTATOR_CHAT — a lobby chat line typed by a spectator. The
+     * server stamps the sender's specIdx; clients resolve the name via
+     * clientSimGetSpectatorSlot and render it [Spectator]-tagged in the
+     * shared lobby chat log. Body carries the raw message text. */
+    CTRL_SPECTATOR_CHAT,
     /* CTRL_LOBBY_SYNC_COMPLETE — terminal marker the server delivers as the
      * final event of a subscriber's join sync replay. The roster replay sets
      * inLobby before re-announcing every existing player/slot, so the client
@@ -194,6 +199,15 @@ typedef struct ControlEvent {
             ClientSpectatorSlot slot;
         } spectatorSlot;
 
+        /* CTRL_SPECTATOR_CHAT — a spectator's lobby chat line. specIdx is
+         * the sender's spectator slot; body/bodyLen is the raw message
+         * text (no length prefix, bodyLen <= PACKET_MAX_CHAT_MESSAGE). */
+        struct {
+            uint8_t  specIdx;
+            uint16_t bodyLen;
+            uint8_t  body[PACKET_MAX_CHAT_MESSAGE];
+        } spectatorChat;
+
         /* CTRL_LOBBY_SETTINGS */
         struct {
             char     mapName[MAP_STR_SIZE];
@@ -206,8 +220,11 @@ typedef struct ControlEvent {
             uint8_t  lobbyBaseCount;
             uint8_t  lobbyStartCount;
             bool     mapSkipAvailable;
-            netStatus netStat;
-            bool     inLobby;
+            netStatus netStat;          /* current phase (lobby/running/...) */
+            bool     hasLobby;          /* server capability: runs a lobby at all
+                                         * (= sim->lobbyEnabled). True even mid-game;
+                                         * distinct from netStat/the client's inLobby
+                                         * phase flag. */
             /* Layout A flags */
             bool     lobbyOpenHost;
             bool     lobbyAutoLockOnGameStart;

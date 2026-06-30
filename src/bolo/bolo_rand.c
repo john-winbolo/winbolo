@@ -32,6 +32,7 @@
 *  no implementation-defined behaviour.
 *********************************************************/
 
+#include <stddef.h>   /* NULL */
 #include <stdint.h>
 
 #include "bolo_rand.h"
@@ -89,4 +90,20 @@ uint32_t bolo_rand_below(uint32_t n) {
     uint32_t r;
     do { r = bolo_rand(); } while (r >= limit);
     return r % n;
+}
+
+void bolo_rand_save(BoloRandState *out) {
+    if (out == NULL) return;
+    out->s[0] = s_state[0];
+    out->s[1] = s_state[1];
+    out->s[2] = s_state[2];
+    out->s[3] = s_state[3];
+}
+
+void bolo_rand_restore(const BoloRandState *in) {
+    if (in == NULL) return;
+    s_state[0] = in->s[0];
+    s_state[1] = in->s[1];
+    s_state[2] = in->s[2];
+    s_state[3] = in->s[3];
 }

@@ -323,6 +323,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->countdownSeconds = 0;
   cs->mapDownloadComplete = false;
   cs->inLobby = false;
+  cs->lobbyAvailable = false;
 
   /* 0 is a valid brain-catalogue index, so the bulk memset above can't
    * be the "no brain assigned" marker — use 0xFF, matching the sentinel
@@ -1085,6 +1086,11 @@ void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *messa
   }
 }
 
+void clientSimClearLobbyChatHistory(ClientSim *cs) {
+  cs->lobbyChatHistory[0] = '\0';
+  cs->lobbyTeamChatHistory[0] = '\0';
+}
+
 void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *message) {
   size_t histLen = strlen(cs->lobbyTeamChatHistory);
   size_t needed = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */
@@ -1487,6 +1493,7 @@ uint8_t clientSimGetMapDownloadPercent(const ClientSim *cs) {
     return transportUdpClientGetMapDownloadPercent((Transport *)&cs->transport);
 }
 bool clientSimIsMapSkipAvailable(const ClientSim *cs)     { return cs->mapSkipAvailable; }
+bool clientSimIsLobbyAvailable(const ClientSim *cs)       { return cs->lobbyAvailable; }
 bool clientSimIsMapSkipMyVote(const ClientSim *cs)        { return cs->mapSkipMyVote; }
 bool clientSimIsLobbyHiddenMines(const ClientSim *cs)     { return cs->lobbyHiddenMines; }
 bool clientSimIsBalanceProposalActive(const ClientSim *cs){ return cs->balanceProposalActive; }
@@ -1507,6 +1514,7 @@ labelLen    clientSimGetLabelMessage(const ClientSim *cs)       { return cs->lab
 labelLen    clientSimGetLabelTankLabel(const ClientSim *cs)     { return cs->labelTankLabel; }
 
 BYTE     clientSimGetMyPlayerNum(const ClientSim *cs)       { return cs->myPlayerNum; }
+bool     clientSimIsSpectator(const ClientSim *cs)         { return cs->isSpectator; }
 BYTE     clientSimGetXOffset(const ClientSim *cs)           { return cs->viewport.xOffset; }
 BYTE     clientSimGetYOffset(const ClientSim *cs)           { return cs->viewport.yOffset; }
 int      clientSimGetSubPosX(const ClientSim *cs)           { return (int)cs->scroll.subPosX; }
@@ -2133,6 +2141,15 @@ bool clientSimSpectatorCountdown(const ClientSim *cs, uint32_t *outRemaining) {
   return true;
 }
 
+void clientSimSpectatorSetLiveLobby(ClientSim *cs, bool liveLobby) {
+  if (cs == NULL) return;
+  cs->spectatorFeed.liveLobby = liveLobby;
+}
+
+bool clientSimSpectatorIsLiveLobby(const ClientSim *cs) {
+  return cs != NULL && cs->spectatorFeed.liveLobby;
+}
+
 bool clientSimSpectatorPopRecord(ClientSim *cs, ClientSpectatorRecord *out) {
   ClientSpecRecordNode *node;
   if (!cs || out == NULL) return false;
@@ -2187,6 +2204,10 @@ bool specDrainPopRecord(void *handle, SpecDrainRecord *out) {
   out->payload    = rec.payload;       /* ownership passes straight through */
   out->payloadLen = rec.payloadLen;
   return true;
+}
+
+bool specDrainLiveResumed(void *handle) {
+  return clientSimSpectatorIsLiveLobby((const ClientSim *)handle);
 }
 
 bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) {

@@ -441,6 +441,9 @@ STR_DLGLOBBY_TEAM_LEFT_FMT={player} left {string1}.
 # Lobby roster header above the spectator list ({number} = live count)
 STR_DLGLOBBY_SPECTATORS_FMT=Spectators ({number}):
 
+# Sender-name tag prepended to a spectator's lobby chat line
+STR_DLGLOBBY_SPECTATOR_TAG=[Spectator] {string1}
+
 # Map-preview start-picker tooltips and the assign-to-someone menu
 STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nClick to choose; right-click to assign to someone else
 STR_STARTPICK_TIP_FREE=Start #{number}\nClick to choose this start

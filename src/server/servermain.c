@@ -679,22 +679,31 @@ void printArgs() {
   fprintf(stderr, "                (default: 0 = no limit). Caps lobby \"Add Bot\" requests\n");
   fprintf(stderr, "                and clamps -bots.\n");
   fprintf(stderr, "-brain <path> - Path to the Lua brain script for bots\n");
+  fprintf(stderr, "-bot-init <spec> - Per-bot brain paths by player id: 'range=path[arg],...'\n");
+  fprintf(stderr, "                where range is 'a-b' or 'n' and the optional [arg] becomes\n");
+  fprintf(stderr, "                that bot's BRAIN_INIT_ARG Lua global. Ids not listed use\n");
+  fprintf(stderr, "                -brain. E.g. -bot-init 0-3=brains/A/init.lua,4=brains/B/init.lua[llm]\n");
   fprintf(stderr, "-botnames <path> - JSON file of bot name pools (themed name lists) for\n");
   fprintf(stderr, "                naming auto-added bots. Defaults to data/bot_names.json.\n");
   fprintf(stderr, "-allybots [N] - Place all -bots on the same team (1-16, default 1) so\n");
   fprintf(stderr, "                they start allied. Pick the same team in the lobby to join\n");
   fprintf(stderr, "                them, or a different one to fight against them.\n");
+  fprintf(stderr, "-teams <spec> - Split -bots into teams. 'N' = round-robin into N teams;\n");
+  fprintf(stderr, "                'a,b,c' = contiguous blocks of those sizes (first a bots ->\n");
+  fprintf(stderr, "                team 1, next b -> team 2, ...). Overrides -allybots.\n");
   fprintf(stderr, "-threads <N>  - Total concurrent bot-think runners including the main\n");
   fprintf(stderr, "                thread. 1 disables the worker pool. Default: logical cores.\n");
-  fprintf(stderr, "-braindebug   - Enable BRAIN_DEBUG_MODE for bots: per-bot print2_bot<N>.log\n");
+  fprintf(stderr, "-brain-debug  - Enable BRAIN_DEBUG_MODE for bots: per-bot print2_bot<N>.log\n");
   fprintf(stderr, "                (grep MSG_TX / SYNC_P6 to audit bot comms). Use a base -brain\n");
-  fprintf(stderr, "                path (not opt/) so print2 calls aren't stripped.\n");
-  fprintf(stderr, "-profile-log  - Profile the PRODUCTION (opt/) brain: BRAIN_PROFILE on, writes\n");
+  fprintf(stderr, "                path (not opt/) so print2 calls aren't stripped. Implies\n");
+  fprintf(stderr, "                -allow-unsafe-brains (needs file writes into debug_sessions/).\n");
+  fprintf(stderr, "-brain-profile-log - Profile the PRODUCTION (opt/) brain: BRAIN_PROFILE on, writes\n");
   fprintf(stderr, "                optimize.log + performance.ticks.log into debug_sessions/<TS>_<N>/\n");
-  fprintf(stderr, "                alongside brainrec.btr (loadable in BrainTest). Implies recording;\n");
+  fprintf(stderr, "                alongside brainrec.btr (loadable in BrainTest). Implies recording\n");
+  fprintf(stderr, "                and -allow-unsafe-brains (needs file writes into debug_sessions/);\n");
   fprintf(stderr, "                forces the opt/ brain with debug OFF for representative timings.\n");
   fprintf(stderr, "                Profile data ONLY: no print2 debug logs, no pool-viz capture\n");
-  fprintf(stderr, "                (independent of -braindebug).\n");
+  fprintf(stderr, "                (independent of -brain-debug).\n");
   fprintf(stderr, "-allow-unsafe-brains - Open the full Lua standard library for bot brains.\n");
   fprintf(stderr, "                Default OFF: brains are sandboxed (no shell/process/native code,\n");
   fprintf(stderr, "                file access confined to the brain directory). Only for trusted brains.\n");
@@ -1141,9 +1150,19 @@ int main(int argc, char **argv) {
   }
 
 #ifdef USING_SDL
+  /* SDL_Init logs an INFO version/app banner on the SYSTEM category. Treat it
+     as debug detail: suppress it unless SYSTEM logging is at debug/trace. */
+  SDL_LogPriority sysPrio = SDL_GetLogPriority(SDL_LOG_CATEGORY_SYSTEM);
+  bool sysQuieted = (sysPrio > SDL_LOG_PRIORITY_DEBUG);
+  if (sysQuieted) {
+    SDL_SetLogPriority(SDL_LOG_CATEGORY_SYSTEM, SDL_LOG_PRIORITY_WARN);
+  }
   if (!SDL_Init(0)) {
     fprintf(stderr, "Error starting SDL - %s\n", SDL_GetError());
     exit(0);
+  }
+  if (sysQuieted) {
+    SDL_SetLogPriority(SDL_LOG_CATEGORY_SYSTEM, sysPrio);
   }
 #endif
   /* IP-to-country geolocation (DB-IP Lite). Resolve the database relative to
@@ -1696,14 +1715,44 @@ int main(int argc, char **argv) {
   {
     if (numBots > 0 && brainPath[0] != '\0') {
       int i;
-      char botName[64];
+      /* Brain debug / profiling flags. Canonical names are -brain-debug and
+       * -brain-profile-log; -braindebug and -profile-log are kept as legacy
+       * aliases. Computed up front because both imply the unsafe sandbox
+       * opt-out below.
+       *
+       * Headless server: only -brain-profile-log (file output) is meaningful.
+       * There's no -profile flag here — the in-memory Y-panel it drives is a
+       * BrainTest windowed feature, not something a dedicated server uses. */
+      bool profileLog = (argExist(argc, argv, "brain-profile-log") == TRUE)
+                     || (argExist(argc, argv, "-brain-profile-log") == TRUE)
+                     || (argExist(argc, argv, "profile-log") == TRUE)
+                     || (argExist(argc, argv, "-profile-log") == TRUE);
+      bool brainDebug = (argExist(argc, argv, "brain-debug") == TRUE)
+                     || (argExist(argc, argv, "-brain-debug") == TRUE)
+                     || (argExist(argc, argv, "braindebug") == TRUE)
+                     || (argExist(argc, argv, "-braindebug") == TRUE);
       /* Brains run in the restricted Lua sandbox by default. -allow-unsafe-brains
-       * opens the full standard library for trusted brain authors. Set BEFORE the
-       * bots are created so each VM constructs with the chosen policy. */
-      luaBrainsSetAllowUnsafe(
-          (argExist(argc, argv, "allow-unsafe-brains") == TRUE)
-       || (argExist(argc, argv, "-allow-unsafe-brains") == TRUE));
-      /* -braindebug: turn BRAIN_DEBUG_MODE on for every bot (set BEFORE they're
+       * opens the full standard library for trusted brain authors. -brain-debug
+       * and -brain-profile-log also need it: they direct the brain to write its
+       * print2_bot<N>.log / optimize.log / performance.ticks.log into
+       * debug_sessions/, which lives outside the brain directory the sandbox
+       * jails io.open to — without the opt-out those writes are rejected and the
+       * logs never appear. Set BEFORE the bots are created so each VM constructs
+       * with the chosen policy. */
+      bool allowUnsafeExplicit = (argExist(argc, argv, "allow-unsafe-brains") == TRUE)
+                              || (argExist(argc, argv, "-allow-unsafe-brains") == TRUE);
+      luaBrainsSetAllowUnsafe(allowUnsafeExplicit || profileLog || brainDebug);
+      /* Make the implied sandbox opt-out loud: an operator who passed only a
+       * debug/profile flag (not -allow-unsafe-brains itself) has just had the
+       * brain sandbox turned OFF as a side effect, so say so explicitly. */
+      if (!allowUnsafeExplicit && (profileLog || brainDebug)) {
+        fprintf(stderr,
+                "Note: %s implies -allow-unsafe-brains — the Lua brain sandbox "
+                "is now OFF (brains get the full standard library, needed to "
+                "write logs into debug_sessions/). Only run trusted brains.\n",
+                profileLog ? "-brain-profile-log" : "-brain-debug");
+      }
+      /* -brain-debug: turn BRAIN_DEBUG_MODE on for every bot (set BEFORE they're
        * created so each brain constructs with debug on → un-stripped brain +
        * print2 logging). Lets you audit bot comms on a dedicated server: each
        * bot writes print2_bot<N>.log (grep MSG_TX for outbound /info traffic,
@@ -1714,11 +1763,6 @@ int main(int argc, char **argv) {
        * running tick (server_lifecycle.c) — so lobby time never enters the
        * timeline and every game gets its own fresh, tick-0-anchored dir.
        * BrainTest detects a loadable winbolods session by brainrec.btr. */
-      /* Headless server: only -profile-log (file output) is meaningful. There's
-       * no -profile flag here — the in-memory Y-panel it drives is a BrainTest
-       * windowed feature, not something a dedicated server has any use for. */
-      bool profileLog = (argExist(argc, argv, "profile-log") == TRUE)
-                     || (argExist(argc, argv, "-profile-log") == TRUE);
       if (profileLog) {
         /* Profile the PRODUCTION brain. luaBrainsSetProfile is the SAME shared
          * setter BrainTest uses (luabrainshandler.c, reached via bot_manager),
@@ -1754,9 +1798,9 @@ int main(int argc, char **argv) {
             fclose(tf);
             strncpy(brainPath, optPath, MAX_PATH - 1);
             brainPath[MAX_PATH - 1] = '\0';
-            fprintf(stderr, "-profile-log: profiling opt/ brain '%s'\n", brainPath);
+            fprintf(stderr, "-brain-profile-log: profiling opt/ brain '%s'\n", brainPath);
           } else {
-            fprintf(stderr, "-profile-log: opt brain '%s' not found — profiling "
+            fprintf(stderr, "-brain-profile-log: opt brain '%s' not found — profiling "
                             "base brain '%s' (timings include debug/print2 "
                             "overhead)\n", optPath, brainPath);
           }
@@ -1764,7 +1808,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Profiling ON: BRAIN_PROFILE + optimize.log/"
                         "performance.ticks.log in debug_sessions/<TS>_<N>/; "
                         "brainrec.btr recorded for BrainTest.\n");
-      } else if (argExist(argc, argv, "braindebug") == TRUE) {
+      } else if (brainDebug) {
         serverSimSetBotDefaultDebugMode(serverSim, true);
         /* print2 is stripped from the opt/ brain SOURCE, so running an opt/
          * -brain path under -braindebug yields brainrec.btr but zero
@@ -1778,7 +1822,7 @@ int main(int argc, char **argv) {
                          optSeg[-1] == '/' || optSeg[-1] == '\\')) {
             /* Splice out the 4-char "opt/" (or "opt\") segment in place. */
             memmove(optSeg, optSeg + 4, strlen(optSeg + 4) + 1);
-            fprintf(stderr, "-braindebug: redirected opt/ brain to base path "
+            fprintf(stderr, "-brain-debug: redirected opt/ brain to base path "
                             "'%s' (print2 is stripped from opt/)\n", brainPath);
           }
         }
@@ -1801,43 +1845,112 @@ int main(int argc, char **argv) {
           }
         }
       }
-      /* -teams N: round-robin bots into N teams (e.g. -teams 2 with -bots 4 =
-       * 2v2). Overrides -allybots. Minimal port for benchmarking. */
+      /* -teams (copied from BrainTest): "-teams 4,5,6" assigns bots to teams of
+       * those sizes in contiguous blocks (first 4 bots -> team 1, next 5 -> team
+       * 2, next 6 -> team 3); "-teams N" (no comma) splits bots round-robin into
+       * N teams. Bots beyond the listed sizes stay FFA. Takes precedence over
+       * -allybots when both are given. Assignment + alliance reapply happen after
+       * the bot-add loop below. */
+      int teamSizes[MAX_TANKS] = { 0 };
+      int numTeamSizes = 0;
       int numTeams = 0;
       if (argExist(argc, argv, "teams") == TRUE) {
         int tArg = findArg(argc, argv, "teams");
         if (tArg != ARG_NOT_FOUND && argv[tArg][0] != '-') {
-          numTeams = atoi((char *)argv[tArg]);
-          if (numTeams < 0) numTeams = 0;
-          if (numTeams > 16) numTeams = 16;
+          const char *tv = (const char *)argv[tArg];
+          if (strchr(tv, ',') != NULL) {
+            const char *p = tv;
+            while (*p && numTeamSizes < MAX_TANKS) {
+              int sz = atoi(p);
+              if (sz < 1) {
+                fprintf(stderr, "Warning: -teams: each team size must be >= 1 (got '%s'); ignoring -teams\n", tv);
+                numTeamSizes = 0;
+                break;
+              }
+              teamSizes[numTeamSizes++] = sz;
+              const char *comma = strchr(p, ',');
+              if (!comma) break;
+              p = comma + 1;
+            }
+            numTeams = numTeamSizes;
+          } else {
+            numTeams = atoi(tv);
+            if (numTeams < 0) numTeams = 0;
+            if (numTeams > MAX_TANKS) numTeams = MAX_TANKS;
+          }
+        } else {
+          fprintf(stderr, "Warning: -teams given with no value; ignoring\n");
         }
-        if (numTeams >= 2) allyTeam = 0;
+      }
+      if (numTeams > 0 && allyTeam > 0) {
+        fprintf(stderr, "Warning: -teams overrides -allybots\n");
+        allyTeam = 0;
+      }
+      /* -bot-init: per-player-id brain/init.lua paths (+ optional [arg]). Every
+       * id defaults to the shared brainPath with no arg; the spec overrides the
+       * ids it names. Shared parser/semantics with BrainTest. */
+      BotInitSlot botInit[MAX_TANKS];
+      for (i = 0; i < MAX_TANKS; i++) {
+        snprintf(botInit[i].path, sizeof(botInit[i].path), "%s", brainPath);
+        botInit[i].arg[0] = '\0';
+        botInit[i].covered = 0;
+      }
+      if (argExist(argc, argv, "bot-init") == TRUE) {
+        int biArg = findArg(argc, argv, "bot-init");
+        if (biArg != ARG_NOT_FOUND && argv[biArg][0] != '-') {
+          if (!luaBrainsParseBotInitSpec((char *)argv[biArg], botInit, MAX_TANKS)) {
+            fprintf(stderr, "Warning: -bot-init spec rejected; using -brain '%s' for all bots\n",
+                    brainPath);
+          }
+        } else {
+          fprintf(stderr, "Warning: -bot-init given with no value; ignoring\n");
+        }
       }
       /* Draw themed names from one randomly-chosen pool so a -bots
-       * server gets varied names instead of "Bot 1..N". usedStore
-       * backs the uniqueness list handed to lobbyBotPoolPick. */
-      static char usedStore[MAX_TANKS][64];
-      const char *usedNames[MAX_TANKS];
-      int usedCount = 0;
-      int botPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+       * server gets varied names instead of "Bot 1..N". The name draws are
+       * wrapped in a bolo_rand save/restore so this cosmetic randomness leaves
+       * the deterministic game stream (tank placement, etc.) untouched for a
+       * given -seed — only the game sim should advance the shared PRNG. Names
+       * are picked up front, then the bots are added with them. usedStore
+       * backs the uniqueness list handed to lobbyBotPoolPick. (numBots is
+       * clamped to MAX_TANKS above, so botNames is always in bounds.) */
+      char botNames[MAX_TANKS][64];
+      {
+        static char usedStore[MAX_TANKS][64];
+        const char *usedNames[MAX_TANKS];
+        int usedCount = 0;
+        BoloRandState rngBeforeNaming;
+        int botPool;
+        bolo_rand_save(&rngBeforeNaming);
+        botPool = (int)bolo_rand_below((uint32_t)lobbyBotPoolCount());
+        for (i = 0; i < numBots; i++) {
+          char picked[64];
+          lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
+          if (picked[0] != '\0') {
+            snprintf(botNames[i], sizeof(botNames[i]), "%s", picked);
+          } else {
+            snprintf(botNames[i], sizeof(botNames[i]), "Bot %d", i + 1);
+          }
+          if (usedCount < MAX_TANKS) {
+            snprintf(usedStore[usedCount], sizeof(usedStore[usedCount]),
+                     "%s", botNames[i]);
+            usedNames[usedCount] = usedStore[usedCount];
+            usedCount++;
+          }
+        }
+        bolo_rand_restore(&rngBeforeNaming);
+      }
       for (i = 0; i < numBots; i++) {
-        char picked[64];
-        lobbyBotPoolPick(botPool, usedNames, usedCount, picked, sizeof(picked));
-        if (picked[0] != '\0') {
-          snprintf(botName, sizeof(botName), "%s", picked);
-        } else {
-          snprintf(botName, sizeof(botName), "Bot %d", i + 1);
+        /* Stage this bot's BRAIN_INIT_ARG (consumed by the create below) and
+         * use its resolved brain path. The name was pre-picked into botNames[i]
+         * above (under a bolo_rand save/restore so it stays off the sim PRNG). */
+        luaBrainsSetNextInitArg(botInit[i].arg);
+        if (botInit[i].covered) {
+          fprintf(stderr, "Bot %d: -bot-init brain '%s'%s%s\n", i, botInit[i].path,
+                  botInit[i].arg[0] ? " arg=" : "", botInit[i].arg);
         }
-        if (usedCount < MAX_TANKS) {
-          snprintf(usedStore[usedCount], sizeof(usedStore[usedCount]),
-                   "%s", botName);
-          usedNames[usedCount] = usedStore[usedCount];
-          usedCount++;
-        }
-        if (!botManagerAddBot(serverSim, (BYTE)i, brainPath, botName, ai, game, hiddenMines)) {
+        if (!botManagerAddBot(serverSim, (BYTE)i, botInit[i].path, botNames[i], ai, game, hiddenMines)) {
           fprintf(stderr, "Warning: failed to add bot %d\n", i);
-        } else if (numTeams >= 2) {
-          serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)((i % numTeams) + 1));
         } else if (allyTeam > 0) {
           /* Shared non-zero team for every bot — server_sim's start-of-round
            * pass converts matching teamNumber into alliances, and the lobby
@@ -1846,7 +1959,27 @@ int main(int argc, char **argv) {
           serverSimSetTeamBatch(serverSim, (BYTE)i, (uint8_t)allyTeam);
         }
       }
-      if (numTeams >= 2) {
+      if (numTeamSizes > 0) {
+        /* Explicit per-team sizes: contiguous blocks. First teamSizes[0] bots
+         * -> team 1, next teamSizes[1] -> team 2, etc. Bots past the listed
+         * total stay on team 0 (FFA). */
+        int bot = 0;
+        for (int t = 0; t < numTeamSizes; t++) {
+          for (int k = 0; k < teamSizes[t] && bot < numBots; k++) {
+            serverSimSetTeamBatch(serverSim, (BYTE)bot, (BYTE)(t + 1));
+            bot++;
+          }
+        }
+        serverSimReapplyTeamAlliances(serverSim);
+        fprintf(stderr, "Added %d bot(s) with brain '%s' (teams, sizes",
+                numBots, brainPath);
+        for (int t = 0; t < numTeamSizes; t++)
+          fprintf(stderr, "%s%d", t ? "," : " ", teamSizes[t]);
+        fprintf(stderr, ")\n");
+      } else if (numTeams >= 2) {
+        for (i = 0; i < numBots; i++) {
+          serverSimSetTeamBatch(serverSim, (BYTE)i, (BYTE)((i % numTeams) + 1));
+        }
         serverSimReapplyTeamAlliances(serverSim);
         fprintf(stderr, "Added %d bot(s) with brain '%s' (%d teams, round-robin)\n",
                 numBots, brainPath, numTeams);

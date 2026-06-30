@@ -44,11 +44,11 @@
 #define DEFAULT_SHOOT        44   /* SDL_SCANCODE_SPACE */
 #define DEFAULT_LAY_MINE     225  /* SDL_SCANCODE_LSHIFT */
 
-/* Scroll — numpad arrow cluster */
-#define DEFAULT_SCROLLLEFT   92   /* SDL_SCANCODE_KP_4 */
-#define DEFAULT_SCROLLUP     96   /* SDL_SCANCODE_KP_8 */
-#define DEFAULT_SCROLLRIGHT  94   /* SDL_SCANCODE_KP_6 */
-#define DEFAULT_SCROLLDOWN   93   /* SDL_SCANCODE_KP_5 */
+/* Scroll — arrow keys (not everyone has a numeric keypad) */
+#define DEFAULT_SCROLLLEFT   80   /* SDL_SCANCODE_LEFT */
+#define DEFAULT_SCROLLUP     82   /* SDL_SCANCODE_UP */
+#define DEFAULT_SCROLLRIGHT  79   /* SDL_SCANCODE_RIGHT */
+#define DEFAULT_SCROLLDOWN   81   /* SDL_SCANCODE_DOWN */
 
 /* View keys */
 #define DEFAULT_TANKVIEW     23   /* SDL_SCANCODE_T */

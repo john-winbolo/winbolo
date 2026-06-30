@@ -200,11 +200,17 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         playersSetClientType(&cs->sim.plyrs, pNum, evt->u.playerJoin.clientType);
         playersSetClientFlags(&cs->sim.plyrs, pNum, evt->u.playerJoin.clientFlags);
-        playersSetPlayer(cs, &cs->sim.plyrs, cs->myPlayerNum, pNum,
+        /* A spectator has no self: pass a selfPlayer that matches no real
+         * slot so playersSetPlayer's self-branch (which would skip the
+         * name/alliance refresh) can never swallow a real slot-0 join.
+         * 0xFF is compare-only there — playersScreenAllience guards its
+         * one index with selfPlayer < MAX_TANKS. */
+        playersSetPlayer(cs, &cs->sim.plyrs,
+                         cs->isSpectator ? (BYTE)0xFF : cs->myPlayerNum, pNum,
                          nameBuf, ccBuf,
                          0, 0, 0, 0, 0, FALSE,
                          numAllies, numAllies > 0 ? allies : NULL, FALSE);
-        if (pNum != cs->myPlayerNum && cs->inLobby) {
+        if ((cs->isSpectator || pNum != cs->myPlayerNum) && cs->inLobby) {
             char joinMsg[PACKET_MAX_PLAYER_NAME + 16];
             snprintf(joinMsg, sizeof(joinMsg), "%s has joined.", nameBuf);
             clientSimAppendLobbyChat(cs, "***", joinMsg);
@@ -250,7 +256,13 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             const ClientLobbySlot *mySlot = clientSimGetLobbySlot(cs, myPN);
             BYTE myTeam  = (mySlot != NULL) ? mySlot->teamNumber : 0;
 
-            if (cs->inLobby && pn != myPN && oldTeam != newTeam) {
+            /* A tankless spectator belongs to no team, and its myPN/myTeam
+             * alias real slot 0, so every oldTeam/newTeam == myTeam test
+             * below is meaningless for it (and would emit team-scoped lines
+             * a viewer must never see). Skip the team-membership chatter
+             * entirely for a spectator. */
+            if (cs->inLobby && !cs->isSpectator && pn != myPN &&
+                oldTeam != newTeam) {
                 if (oldTeam != 0 && oldTeam == myTeam) {
                     MessageArgs a;
                     memset(&a, 0, sizeof(a));
@@ -279,7 +291,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
              * and on both slots being connected so join/leave aren't misread
              * as a ready change. Runs before the commit below, while oldSlot
              * still holds the pre-update state. */
-            if (cs->inLobby && pn != myPN && cs->lobbySyncSettled &&
+            if (cs->inLobby && (cs->isSpectator || pn != myPN) &&
+                cs->lobbySyncSettled &&
                 oldSlot->connected && newSlot->connected &&
                 oldSlot->ready != newSlot->ready) {
                 frontEndPlaySound(cs, newSlot->ready ? lobbyReady : lobbyUnready);
@@ -294,6 +307,35 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         }
         break;
 
+    case CTRL_SPECTATOR_CHAT: {
+        /* A spectator's lobby chat line. Resolve the sender's name from the
+         * mirrored spectator roster and render it [Spectator]-tagged in the
+         * shared lobby chat log. No self-skip: the sending spectator owns no
+         * slot to echo locally, so seeing its own round-trip line is intended. */
+        const ClientSpectatorSlot *sp =
+            clientSimGetSpectatorSlot(cs, evt->u.spectatorChat.specIdx);
+        const char *senderName =
+            (sp && sp->connected && sp->playerName[0]) ? sp->playerName : "?";
+        char msg[PACKET_MAX_CHAT_MESSAGE + 1];
+        uint16_t copyLen = evt->u.spectatorChat.bodyLen;
+        if (copyLen > PACKET_MAX_CHAT_MESSAGE) copyLen = PACKET_MAX_CHAT_MESSAGE;
+        if (copyLen > 0) memcpy(msg, evt->u.spectatorChat.body, copyLen);
+        msg[copyLen] = '\0';
+        {
+            MessageArgs args = {0};
+            char tagged[PACKET_MAX_PLAYER_NAME + 32];
+            snprintf(args.string1, sizeof(args.string1), "%s", senderName);
+            SDL_strlcpy(tagged,
+                        langGetTextFmt(STR_DLGLOBBY_SPECTATOR_TAG, &args),
+                        sizeof(tagged));
+            clientSimAppendLobbyChat(cs, tagged, msg);
+        }
+        if (clientSimIsInLobby(cs) && cs->lobbySyncSettled) {
+            frontEndPlaySound(cs, lobbyChatReceived);
+        }
+        break;
+    }
+
     case CTRL_LOBBY_SETTINGS:
         strncpy(cs->mapName, evt->u.lobbySettings.mapName, MAP_STR_SIZE - 1);
         cs->mapName[MAP_STR_SIZE - 1] = '\0';
@@ -305,6 +347,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyBaseCount   = evt->u.lobbySettings.lobbyBaseCount;
         cs->lobbyStartCount  = evt->u.lobbySettings.lobbyStartCount;
         cs->mapSkipAvailable = evt->u.lobbySettings.mapSkipAvailable;
+        /* Server lobby capability ("does this server run a lobby"), distinct
+         * from cs->inLobby (the current phase). Carried by the hasLobby wire
+         * field but stored separately so it survives phase changes and can
+         * gate the in-game vote UI — votes are meaningless without a lobby
+         * and the server rejects them there. */
+        cs->lobbyAvailable = evt->u.lobbySettings.hasLobby;
         /* netStat and inLobby are owned by the CTRL_GAME_PHASE_* events,
          * which fire on every live transition and which the join sync
          * replay always delivers before this settings snapshot. Adopting
@@ -507,7 +555,8 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         for (i = 0; i < MAX_TANKS; i++) {
             cs->mapSkipVotes[i] = evt->u.mapSkipState.votes[i] ? true : false;
         }
-        cs->mapSkipMyVote = cs->mapSkipVotes[cs->myPlayerNum];
+        cs->mapSkipMyVote =
+            cs->isSpectator ? false : cs->mapSkipVotes[cs->myPlayerNum];
         break;
     }
 
@@ -794,12 +843,17 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * Team-addressed chat reaches me when it carries my (non-zero)
          * team. Self-sends still surface in the sender's chat_log via
          * the Lua side (init.lua's outbound capture), so we don't need
-         * a self-echo here. */
-        bool for_me = (destPlayer == 0xFF) || (destPlayer == myPN)
-            || (CHAT_DEST_IS_TEAM(destPlayer) && myTeam != 0
-                && CHAT_DEST_TEAM_OF(destPlayer) == myTeam);
+         * a self-echo here. A spectator has no slot, so its myPN==0 would
+         * spuriously match a unicast (destPlayer==0) or slot-0 team chat;
+         * the server only forwards broadcast chat to spectators, so enforce
+         * broadcast-only here too rather than rely on that alone. */
+        bool for_me = cs->isSpectator
+            ? (destPlayer == 0xFF)
+            : ((destPlayer == 0xFF) || (destPlayer == myPN)
+               || (CHAT_DEST_IS_TEAM(destPlayer) && myTeam != 0
+                   && CHAT_DEST_TEAM_OF(destPlayer) == myTeam));
         if (for_me && fromPlayer < MAX_TANKS && bodyLen > 0
-            && fromPlayer != myPN) {
+            && (cs->isSpectator || fromPlayer != myPN)) {
             char msg[PACKET_MAX_CHAT_MESSAGE + 1];
             uint16_t copyLen = bodyLen;
             if (copyLen > PACKET_MAX_CHAT_MESSAGE) copyLen = PACKET_MAX_CHAT_MESSAGE;
