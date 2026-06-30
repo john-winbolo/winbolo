@@ -5085,7 +5085,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                          * infrequent; the cost is acceptable for the diagnosis. */
                         {
                             map *live = &serverSimGetGameSim(sim)->mp;
-                            uint16_t liveSum = mapCalcChecksum(live);
+                            uint16_t liveSum = mapCalcChecksum(live,
+                                                   &serverSimGetGameSim(sim)->bs,
+                                                   &serverSimGetGameSim(sim)->pb);
                             map rtMap; pillboxes rtPb; bases rtBs; starts rtSs;
                             mapCreate(&rtMap);
                             pillsCreate(&rtPb);
@@ -5093,7 +5095,7 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             startsCreate(&rtSs);
                             if (mapLoadCompressedMap(&rtMap, &rtPb, &rtBs, &rtSs,
                                                      udpServer.compressedMap, mapLen)) {
-                                uint16_t rtSum = mapCalcChecksum(&rtMap);
+                                uint16_t rtSum = mapCalcChecksum(&rtMap, &rtBs, &rtPb);
                                 if (rtSum != liveSum) {
                                     int diffs = 0, shown = 0, xx, yy;
                                     for (yy = 0; yy < MAP_ARRAY_SIZE; yy++) {

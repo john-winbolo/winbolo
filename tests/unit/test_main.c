@@ -363,6 +363,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_compress_roundtrip_stock",            run_map_compress_roundtrip_stock            },
     { "map_compress_roundtrip_mutated",          run_map_compress_roundtrip_mutated          },
     { "map_checksum_ignores_mines",              run_map_checksum_ignores_mines              },
+    { "map_resync_base_crater_converges",        run_map_resync_base_crater_converges        },
     { "resync_finalize_corrupt_keeps_gen",       run_resync_finalize_corrupt_keeps_gen       },
     { "resync_finalize_valid_advances_gen",      run_resync_finalize_valid_advances_gen      },
     { "install_compressed_map_rejects_garbage",  run_install_compressed_map_rejects_garbage  },

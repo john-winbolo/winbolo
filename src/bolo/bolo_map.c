@@ -1770,7 +1770,7 @@ void mapCenter(map *value, pillboxes *pb, bases *bs, starts *ss) {
   }
 }
 
-uint16_t mapCalcChecksum(map *value) {
+uint16_t mapCalcChecksum(map *value, bases *bs, pillboxes *pb) {
   const BYTE *src = (const BYTE *)(*value)->mapItem;
   size_t n = (size_t)MAP_ARRAY_SIZE * MAP_ARRAY_SIZE;
   BYTE *masked;
@@ -1795,6 +1795,36 @@ uint16_t mapCalcChecksum(map *value) {
     BYTE t = src[i];
     masked[i] = (t >= MINE_START && t <= MINE_END) ? (BYTE)(t - MINE_SUBTRACT) : t;
   }
+
+  /* Terrain under bases and pillboxes is not authoritative in a resync blob:
+   * mapLoadCompressedMap forces every base tile to ROAD and every pill tile on
+   * impassable terrain (RIVER/DEEP_SEA/BUILDING/HALFBUILDING) to ROAD after
+   * decode. The live map can legitimately hold CRATER or RIVER under a base —
+   * a tank exploding on the tile craters it, and the flood can then turn that
+   * crater into RIVER. CRCing the raw live terrain there would never match any
+   * round-tripped copy, driving an endless resync loop. Fold those tiles to
+   * ROAD here so the checksum covers only terrain both ends can agree on,
+   * exactly mirroring the decode fixup. mapItem is [x][y] row-major, so index
+   * the flat buffer as x*MAP_ARRAY_SIZE + y. bs/pb may be NULL (skip). */
+  if (bs != NULL) {
+    BYTE numBases = basesGetNumBases(bs);
+    BYTE bi;
+    for (bi = 0; bi < numBases; bi++) {
+      masked[(size_t)(*bs)->item[bi].x * MAP_ARRAY_SIZE + (*bs)->item[bi].y] = ROAD;
+    }
+  }
+  if (pb != NULL) {
+    BYTE numPills = pillsGetNumPills(pb);
+    BYTE pi;
+    for (pi = 0; pi < numPills; pi++) {
+      size_t idx = (size_t)(*pb)->item[pi].x * MAP_ARRAY_SIZE + (*pb)->item[pi].y;
+      BYTE t = masked[idx];
+      if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
+        masked[idx] = ROAD;
+      }
+    }
+  }
+
   crc = (uint16_t)CRCCalc(masked, (int)n);
   free(masked);
   return crc;

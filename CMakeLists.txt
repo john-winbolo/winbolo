@@ -3321,6 +3321,7 @@ set(_unit_test_names
     map_compress_roundtrip_stock
     map_compress_roundtrip_mutated
     map_checksum_ignores_mines
+    map_resync_base_crater_converges
     resync_finalize_corrupt_keeps_gen
     resync_finalize_valid_advances_gen
     install_compressed_map_rejects_garbage
