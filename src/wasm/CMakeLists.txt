@@ -301,9 +301,84 @@ file(RENAME "${PRELOAD_DIR}/Everard Island.map" "${PRELOAD_DIR}/EverardIsland.ma
 file(COPY "${REPO_ROOT}/data/maps/Inbuilt Tutorial.map" DESTINATION "${PRELOAD_DIR}")
 file(RENAME "${PRELOAD_DIR}/Inbuilt Tutorial.map" "${PRELOAD_DIR}/InbuiltTutorial.map")
 
+# ---------------------------------------------------------------------------
+# CJK font subsetting. The bundled Noto Sans CJK + Sarasa Mono Slab fonts are
+# ~163 MB uncompressed and dominate the preload. Subset them to the glyph
+# ranges WinBolo can actually display — parsed straight out of imgui_draw.cpp
+# so they track the FetchContent'd ImGui version — cutting that to ~19 MB.
+#   * Noto (ImGui dialog font) is range-pinned: the atlas only bakes the
+#     requested ranges, so subsetting it is lossless.
+#   * Sarasa (in-game text, FreeType) renders arbitrary codepoints; we subset
+#     it to the union of the three ranges, which only narrows in-game CJK
+#     coverage to match what the lobby dialogs already cover.
+# Needs Python 3 + fonttools. If either is missing we warn and fall back to
+# preloading the full fonts, so the build still works.
+# ---------------------------------------------------------------------------
+find_package(Python3 COMPONENTS Interpreter QUIET)
+set(_have_fonttools FALSE)
+if(Python3_FOUND)
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -c "import fontTools"
+        RESULT_VARIABLE _ft_rv OUTPUT_QUIET ERROR_QUIET)
+    if(_ft_rv EQUAL 0)
+        set(_have_fonttools TRUE)
+    endif()
+endif()
+
+set(_cjk_fonts
+    NotoSansCJKjp-Regular.otf   NotoSansCJKkr-Regular.otf
+    NotoSansCJKsc-Regular.otf   NotoSansCJKtc-Regular.otf
+    SarasaMonoSlabJ-Regular.ttf SarasaMonoSlabK-Regular.ttf
+    SarasaMonoSlabSC-Regular.ttf SarasaMonoSlabTC-Regular.ttf)
+
+if(_have_fonttools)
+    set(SUBSET_FONTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/fonts_subset")
+    set(SUBSET_STAMP     "${CMAKE_CURRENT_BINARY_DIR}/fonts_subset.stamp")
+    set(SUBSET_SCRIPT    "${REPO_ROOT}/cmake/subset_cjk_fonts.py")
+
+    set(_cjk_font_srcs)
+    foreach(_f IN LISTS _cjk_fonts)
+        list(APPEND _cjk_font_srcs "${DATA_DIR}/fonts/${_f}")
+    endforeach()
+
+    add_custom_command(
+        OUTPUT ${SUBSET_STAMP}
+        COMMAND ${Python3_EXECUTABLE} ${SUBSET_SCRIPT}
+                --imgui-draw ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                --src-fonts ${DATA_DIR}/fonts
+                --out ${SUBSET_FONTS_DIR}
+        COMMAND ${CMAKE_COMMAND} -E touch ${SUBSET_STAMP}
+        DEPENDS ${SUBSET_SCRIPT} ${imgui_SOURCE_DIR}/imgui_draw.cpp ${_cjk_font_srcs}
+        COMMENT "Subsetting CJK fonts to ImGui glyph ranges (~163MB -> ~19MB)"
+        VERBATIM)
+    add_custom_target(subset_fonts DEPENDS ${SUBSET_STAMP})
+    add_dependencies(winbolo subset_fonts)
+    # Force a relink (which regenerates the preloaded .data) when the subset
+    # fonts change but no object file did — e.g. a source font or ImGui bump.
+    set_target_properties(winbolo PROPERTIES LINK_DEPENDS "${SUBSET_STAMP}")
+
+    # Preload all of data/ EXCEPT the full CJK fonts, then layer the subset
+    # versions over /data/fonts. --exclude-file matches the file's source path,
+    # so listing the originals' exact paths strips only them; the subset dir
+    # (a different path) is preloaded intact. Exact paths — no wildcards — so
+    # the link command's shell can't glob them.
+    set(WASM_DATA_PRELOAD "SHELL:--preload-file ${DATA_DIR}@/data")
+    foreach(_f IN LISTS _cjk_fonts)
+        list(APPEND WASM_DATA_PRELOAD
+             "SHELL:--exclude-file ${DATA_DIR}/fonts/${_f}")
+    endforeach()
+    list(APPEND WASM_DATA_PRELOAD
+         "SHELL:--preload-file ${SUBSET_FONTS_DIR}@/data/fonts")
+else()
+    message(WARNING
+        "CJK font subsetting disabled (need Python 3 + fonttools: "
+        "`pip install fonttools brotli`) — preloading the full ~163 MB fonts")
+    set(WASM_DATA_PRELOAD "SHELL:--preload-file ${DATA_DIR}@/data")
+endif()
+
 # Preload data files into the virtual filesystem
 target_link_options(winbolo PRIVATE
-    "SHELL:--preload-file ${DATA_DIR}@/data"
+    ${WASM_DATA_PRELOAD}
     "SHELL:--preload-file ${PRELOAD_DIR}/EverardIsland.map@/data/EverardIsland.map"
     "SHELL:--preload-file ${PRELOAD_DIR}/InbuiltTutorial.map@/data/InbuiltTutorial.map"
     "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter_1.5@/Brains/GoalHunter_1.5"
@@ -326,7 +401,7 @@ set_target_properties(winbolo PROPERTIES
 # wasm-dist: precompress the web assets (for Caddy
 # `file_server { precompressed br gzip }`) and pack everything a deploy needs
 # into wasm-dist.zip. Run explicitly — it is NOT part of the normal build, so
-# day-to-day builds don't re-brotli the 212 MB data file:
+# day-to-day builds don't re-brotli the data file:
 #     cmake --build <build-dir> --target wasm-dist
 # Requires `brotli` (apt-get install brotli); gzip is already standard.
 # ---------------------------------------------------------------------------
@@ -335,17 +410,13 @@ find_program(GZIP_EXE   gzip)
 if(BROTLI_EXE AND GZIP_EXE)
     # Files served by Caddy. -k keeps the original (Caddy needs it as the
     # fallback for clients that accept neither encoding); -f overwrites stale
-    # variants. The 212 MB data file uses brotli -q 10 (q 11 takes minutes on
-    # that size for marginal gain); the rest use q 11.
+    # variants. CJK font subsetting brings the data file down to ~68 MB, small
+    # enough to brotli every asset at -q 11.
     set(_wasm_dist_assets winbolo.html winbolo.js winbolo.wasm winbolo.data)
     set(_wasm_dist_cmds)
     set(_wasm_dist_zip_files)
     foreach(_a IN LISTS _wasm_dist_assets)
-        if(_a STREQUAL "winbolo.data")
-            list(APPEND _wasm_dist_cmds COMMAND ${BROTLI_EXE} -f -k -q 10 "${_a}")
-        else()
-            list(APPEND _wasm_dist_cmds COMMAND ${BROTLI_EXE} -f -k -q 11 "${_a}")
-        endif()
+        list(APPEND _wasm_dist_cmds COMMAND ${BROTLI_EXE} -f -k -q 11 "${_a}")
         list(APPEND _wasm_dist_cmds COMMAND ${GZIP_EXE} -f -k -9 "${_a}")
         list(APPEND _wasm_dist_zip_files "${_a}" "${_a}.br" "${_a}.gz")
     endforeach()

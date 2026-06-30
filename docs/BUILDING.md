@@ -198,6 +198,9 @@ There are two WASM builds: the game client and the log viewer. Each has its own 
 ### Requirements
 
 - Emscripten SDK
+- Python 3 + `fonttools` — for CJK font subsetting (see below). Optional but
+  strongly recommended; without it the data file is ~3× larger.
+- `brotli` — only for the `wasm-dist` precompression target.
 
 ```bash
 git clone https://github.com/emscripten-core/emsdk.git
@@ -206,6 +209,34 @@ cd emsdk
 ./emsdk activate latest
 source ./emsdk_env.sh
 ```
+
+```bash
+# Debian / Ubuntu: font subsetting + dist precompression tools
+sudo apt install fonttools brotli
+```
+
+The Debian package is `fonttools` (lowercase); it provides the `fontTools`
+module to the system `python3`, which is what the build invokes. The Python
+`brotli` module is **not** needed — the subset fonts stay as `.otf`/`.ttf`, and
+the `brotli` apt package above supplies the CLI used by `wasm-dist`.
+
+### CJK font subsetting
+
+The bundled Noto Sans CJK and Sarasa Mono Slab fonts are ~163 MB uncompressed
+and dominate the preloaded `.data` file. At configure time both WASM builds
+subset them to the glyph ranges WinBolo can actually display — parsed straight
+out of the FetchContent'd `imgui_draw.cpp`, so they track the ImGui version —
+via `cmake/subset_cjk_fonts.py`. This cuts the fonts to ~18 MB (`.data` ~212 MB
+→ ~68 MB; brotli download ~62 MB → ~20 MB).
+
+- **Noto** (ImGui dialog font) is range-pinned, so its subset is lossless.
+- **Sarasa** (in-game text) is narrowed to the union of the JP/SC/KR ranges. A
+  rare ideograph in a player name will tofu in-game, but it already does so in
+  the lobby dialogs, so coverage is merely made consistent.
+
+If Python 3 + `fonttools` are missing, CMake prints a warning and preloads the
+full fonts — the build still succeeds, just larger. The subset re-runs only
+when a source font, the script, or `imgui_draw.cpp` changes.
 
 ### Build (game client)
 
@@ -232,6 +263,19 @@ cmake --build build-wasm-logviewer -j$(nproc)
 python3 -m http.server -d build-wasm-game 8080
 # Open http://localhost:8080/winbolo.html
 ```
+
+### Packaging for deployment
+
+The game build has a `wasm-dist` target that brotli- and gzip-precompresses the
+web assets (for a static server with `precompressed br gzip`) and packs them
+into `wasm-dist.zip`. It is not part of the normal build — run it explicitly:
+
+```bash
+cmake --build build-wasm-game --target wasm-dist
+```
+
+Requires the `brotli` CLI (see Requirements). Everyday builds skip it, so they
+don't re-compress the data file.
 
 Note: The WASM builds do not use libcurl (network features use platform stubs).
 
