@@ -4,6 +4,9 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WinBolo</title>
+    <!-- Clean URLs (/tutorial, /join/<token>) are served by rewriting this
+         shell at a sub-path, so relative assets must resolve from the root. -->
+    <base href="/">
     <style>
         :root {
             --bg:#13150e; --surface:#1e221a; --surface2:#262b1f; --border:#39402e;
@@ -108,6 +111,41 @@
             padding: 0 1rem .6rem; white-space: pre-wrap;
         }
     </style>
+    <script>
+    /* Clean-URL support. The game reads its mode from window.location.search,
+       both here and from compiled C (emscripten_run_script_string runs
+       "new URLSearchParams(window.location.search).get(...)"). When this shell
+       is served at a clean path — /tutorial or /join/<token>, which Caddy
+       rewrites to the shell with no query string — derive the equivalent
+       params from the path and make URLSearchParams surface them. Every
+       existing reader then works unchanged and the address bar stays clean.
+       Accessing /winbolo.html?... directly still works (injected stays empty,
+       so the override is skipped and the real query string is used). */
+    (function () {
+        var path = decodeURIComponent(window.location.pathname);
+        var injected = {}, m;
+        if (path === '/tutorial') {
+            injected.tutorial = '1';
+        } else if ((m = path.match(/^\/join\/(.+)$/))) {
+            injected.join_code = m[1];
+        }
+        // /practise and / fall through to single-player (no params).
+        if (Object.keys(injected).length === 0) return;
+
+        var Native = window.URLSearchParams;
+        function Patched(init) {
+            var sp = new Native(init);
+            var nativeGet = sp.get.bind(sp);
+            sp.get = function (key) {
+                var v = nativeGet(key);
+                return (v === null || v === '') && (key in injected) ? injected[key] : v;
+            };
+            return sp;
+        }
+        Patched.prototype = Native.prototype;
+        window.URLSearchParams = Patched;
+    })();
+    </script>
 </head>
 <body>
     <header class="topbar">
