@@ -170,6 +170,7 @@ static const UnitTestEntry s_tests[] = {
     { "brain_inbox_overflow_drops_oldest",       run_brain_inbox_overflow_drops_oldest       },
     { "brain_inbox_legacy_drain_fifo",           run_brain_inbox_legacy_drain_fifo           },
     { "brain_inbox_clear_resets",                run_brain_inbox_clear_resets                },
+    { "brain_list_scan_path_resolves",           run_brain_list_scan_path_resolves           },
     { "bolo_rand_golden_sequence",               run_bolo_rand_golden_sequence               },
     { "net_impair",                              run_net_impair                              },
     { "channel_mux",                             run_channel_mux                             },
