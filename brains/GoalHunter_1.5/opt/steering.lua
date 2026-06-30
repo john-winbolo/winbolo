@@ -1223,8 +1223,16 @@ local function attack_pill_steer(state, world, info, goal)
     -- trust the aim ("hopefully you aimed right; if not, go with it"). stop_hits
     -- is kept only for the green/red stop-prediction overlay.
     local pred_stop_to_pill = U.wdist(psx, psy, pill_wx, pill_wy)
-    local stop_at_engage    = pred_stop_to_pill <= standoff_to_pill
-    local at_floor = tank_to_pill <= (C.CHARGE_MIN_STANDOFF or 5.0) * 256
+    -- Ammo-deprived SUICIDE charge: a starved bot can't fight from standoff, so
+    -- it drives in as close as possible — brake only when the predicted stop is
+    -- within the suicide floor (≈ adjacent; the pill tile is solid so it can't go
+    -- onto it) and lower the never-closer floor to match. Normal standoff engage
+    -- otherwise. Aim/heading already track the pill, so only the stop point moves.
+    local suicide        = state.ammo_deprived == true
+    local engage_dist    = suicide and ((C.CHARGE_SUICIDE_STANDOFF or 1.5) * 256) or standoff_to_pill
+    local floor_tiles    = suicide and (C.CHARGE_SUICIDE_STANDOFF or 1.5) or (C.CHARGE_MIN_STANDOFF or 5.0)
+    local stop_at_engage = pred_stop_to_pill <= engage_dist
+    local at_floor = tank_to_pill <= floor_tiles * 256
 
     -- Visualize the predicted brake-now stop: line tank->stop + marker, green
     -- if a shot from there hits the pill, red if short. (charge_stop_pred toggle)
