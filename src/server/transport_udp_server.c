@@ -81,9 +81,14 @@
 /* ---- Server dedicated recv thread ----
  * A background thread continuously polls the server socket and queues
  * packets into an SPSC ring buffer.  The timer callback drains the
- * queue each tick, keeping packet processing on the main thread. */
+ * queue each tick, keeping packet processing on the main thread.
+ *
+ * The ring is drained once per 20ms server tick, so it must hold a full
+ * tick's worth of inbound bursts (many clients plus join/info-request and
+ * resync traffic) or packets are dropped. Each entry is ~1.4 KB, so 1024
+ * slots cost ~1.4 MB — cheap insurance against burst-driven drops. */
 
-#define RECV_QUEUE_SIZE 128
+#define RECV_QUEUE_SIZE 1024
 
 typedef struct {
     uint8_t data[UDP_MAX_PAYLOAD];
