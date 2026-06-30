@@ -221,6 +221,14 @@ void floodCheckFill(GameSim *sim, BYTE mx, BYTE my) {
   BYTE leftPos;
   BYTE rightPos;
 
+  /* Never flood the tile under a base or pillbox. Its terrain is forced to
+   * ROAD on map load and on every resync decode, so turning it into RIVER here
+   * would permanently diverge the live map from every round-tripped copy and
+   * stall resync. */
+  if (basesExistPos(bs, mx, my) == TRUE || pillsExistPos(pb, mx, my) == TRUE) {
+    return;
+  }
+
   above = mapGetPos(mp, mx, (BYTE) (my-1));
   below = mapGetPos(mp, mx, (BYTE) (my+1));
   leftPos = mapGetPos(mp, (BYTE) (mx-1), my);
@@ -247,7 +255,7 @@ void floodCheckFill(GameSim *sim, BYTE mx, BYTE my) {
 
   if (pillsExistPos(pb, (BYTE) (mx+1), my) == TRUE) {
     rightPos = ROAD;
-  } else if (basesExistPos(bs, (BYTE) (mx-1),  my) == TRUE) {
+  } else if (basesExistPos(bs, (BYTE) (mx+1),  my) == TRUE) {
     rightPos = ROAD;
   }
 

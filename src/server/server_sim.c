@@ -3129,7 +3129,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             }
         }
         hdr->pillCount = (uint8_t)serverSimGetPills(sim, pillsOut, maxPills);
-        hdr->mapChecksum = mapCalcChecksum(&sim->sim.mp);
+        hdr->mapChecksum = mapCalcChecksum(&sim->sim.mp, &sim->sim.bs, &sim->sim.pb);
         sim->lastFullSyncTick[clientIdx] = sim->tick;
     } else {
         hdr->baseCount = 0;

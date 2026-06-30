@@ -35,6 +35,8 @@
 #include "frontend.h"
 #include "../gui/lang.h"
 #include "building.h"
+#include "bases.h"
+#include "pillbox.h"
 #include "grass.h"
 #include "rubble.h"
 #include "swamp.h"
@@ -300,7 +302,9 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
       if (position->explodeType == TK_SMALL_EXPLOSION) {
         explosionsAddItem(&sim->expl, mx, my, 0, 0 ,EXPLOSION_START);
         currentPos = mapGetPos(mp, mx, my);
-        if (currentPos != RIVER && currentPos != DEEP_SEA) {
+        if (currentPos != RIVER && currentPos != DEEP_SEA &&
+            basesExistPos(&sim->bs, mx, my) == FALSE &&
+            pillsExistPos(&sim->pb, mx, my) == FALSE) {
             mapSetPos(sim, mp, mx, my, CRATER, FALSE, FALSE);
             floodAddItem(&sim->ff, mx, my);
             if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
@@ -495,6 +499,7 @@ void tkExplosionCheckRemove(GameSim *sim, BYTE terrain, BYTE mx, BYTE my) {
 void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int moveY, lgm **lgms, BYTE numLgm, tank *tanks, starts *sts) {
   map *mp = &sim->mp;
   pillboxes *pb = &sim->pb;
+  bases *bs = &sim->bs;
   BYTE currentPos; /* Current position */
   BYTE count;      /* Looping variable */
 
@@ -513,7 +518,9 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my + moveY))) {
     pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), (BYTE) (my+moveY), TK_DAMAGE);
-  } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
+  } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
+             basesExistPos(bs, (BYTE) (mx+moveX), (BYTE) (my+moveY)) == FALSE &&
+             pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my+moveY)) == FALSE) {
       mapSetPos(sim, mp,(BYTE) (mx+moveX), (BYTE) (my+moveY), CRATER, FALSE, FALSE);
       floodAddItem(&sim->ff, (BYTE) (mx+moveX), (BYTE) (my+moveY));
   }
@@ -531,7 +538,9 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), my);
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), my)) {
     pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), my, TK_DAMAGE);
-  } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
+  } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
+             basesExistPos(bs, (BYTE) (mx+moveX), my) == FALSE &&
+             pillsExistPos(pb, (BYTE) (mx+moveX), my) == FALSE) {
       mapSetPos(sim, mp,(BYTE) (mx+moveX), my, CRATER, FALSE, FALSE);
     floodAddItem(&sim->ff, (BYTE) (mx+moveX), my);
   }
@@ -548,7 +557,9 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   tkExplosionCheckRemove(sim, currentPos, mx, (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, mx, (BYTE) (my + moveY))) {
     pillsGetDamagePos(sim, pb, mx, (BYTE) (my + moveY), TK_DAMAGE);
-  } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
+  } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
+             basesExistPos(bs, mx, (BYTE) (my+moveY)) == FALSE &&
+             pillsExistPos(pb, mx, (BYTE) (my+moveY)) == FALSE) {
       mapSetPos(sim, mp, mx, (BYTE) (my+moveY), CRATER, FALSE, FALSE);
     floodAddItem(&sim->ff, mx, (BYTE) (my+moveY));
   }
@@ -574,7 +585,9 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   tkExplosionCheckRemove(sim, currentPos, mx, my);
   if (sim->isServer && pillsExistPos(pb, mx, my)) {
     pillsGetDamagePos(sim, pb, mx, my, TK_DAMAGE);
-  } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA) {
+  } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
+             basesExistPos(bs, mx, my) == FALSE &&
+             pillsExistPos(pb, mx, my) == FALSE) {
       mapSetPos(sim, mp, mx, my, CRATER, FALSE, FALSE);
     floodAddItem(&sim->ff, mx, my);
   }
