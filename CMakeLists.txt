@@ -2725,6 +2725,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
+    tests/unit/test_brain_list_scan.c
     tests/unit/test_bolo_rand.c
     tests/unit/test_net_impair.c
     tests/unit/test_lobby_runtime_fixes.c
@@ -3188,6 +3189,7 @@ set(_unit_test_names
     brain_inbox_overflow_drops_oldest
     brain_inbox_legacy_drain_fifo
     brain_inbox_clear_resets
+    brain_list_scan_path_resolves
     bolo_rand_golden_sequence
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
@@ -3321,6 +3323,7 @@ set(_unit_test_names
     map_compress_roundtrip_stock
     map_compress_roundtrip_mutated
     map_checksum_ignores_mines
+    map_resync_base_crater_converges
     resync_finalize_corrupt_keeps_gen
     resync_finalize_valid_advances_gen
     install_compressed_map_rejects_garbage

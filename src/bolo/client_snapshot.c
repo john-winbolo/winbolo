@@ -1133,7 +1133,7 @@ void clientApplySnapshot(ClientSim *csPtr,
   /* Check map checksum on full sync ticks — must be after EVENT_MAP_CHANGE
    * processing so the client map includes changes from this snapshot */
   if (hdr->mapChecksum != 0) {
-    uint16_t clientChecksum = mapCalcChecksum(&csPtr->sim.mp);
+    uint16_t clientChecksum = mapCalcChecksum(&csPtr->sim.mp, &csPtr->sim.bs, &csPtr->sim.pb);
     bool mapMatched = (clientChecksum == hdr->mapChecksum);
     if (!mapMatched) {
       WB_LOG_WARN(WB_LOG_CAT_CLIENT, "Map checksum mismatch: server=%04x client=%04x",

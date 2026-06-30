@@ -201,6 +201,7 @@ int run_brain_inbox_push_peek_fifo(void);
 int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
+int run_brain_list_scan_path_resolves(void);
 int run_bolo_rand_golden_sequence(void);
 int run_net_impair(void);
 
@@ -753,6 +754,7 @@ int run_map_resync_stale_gen_rejected(void);
 int run_map_compress_roundtrip_stock(void);
 int run_map_compress_roundtrip_mutated(void);
 int run_map_checksum_ignores_mines(void);
+int run_map_resync_base_crater_converges(void);
 
 /* Client resync finalize (test_resync_finalize.c): a corrupt/truncated blob
  * must not advance installedMapGen/mapResyncCount (and re-arms the resync); a

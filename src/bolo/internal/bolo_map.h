@@ -567,7 +567,9 @@ void mapCenter(map *value, pillboxes *pb, bases *bs, starts *ss);
 *
 *ARGUMENTS:
 *  value - Pointer to the map structure
+*  bs    - Bases list, so tiles under bases are folded to ROAD (may be NULL)
+*  pb    - Pillbox list, so tiles under pills are folded to ROAD (may be NULL)
 *********************************************************/
-uint16_t mapCalcChecksum(map *value);
+uint16_t mapCalcChecksum(map *value, bases *bs, pillboxes *pb);
 
 #endif /* MAP_H */
