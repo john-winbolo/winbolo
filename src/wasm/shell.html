@@ -7,6 +7,7 @@
     <!-- Clean URLs (/tutorial, /join/<token>) are served by rewriting this
          shell at a sub-path, so relative assets must resolve from the root. -->
     <base href="/">
+    <link rel="icon" type="image/png" href="/img/favicon.png">
     <style>
         :root {
             --bg:#13150e; --surface:#1e221a; --surface2:#262b1f; --border:#39402e;
@@ -23,24 +24,35 @@
             flex-direction: column;
             min-height: 100vh;
         }
+        a { color: var(--link); text-decoration: none; }
+        a:hover { text-decoration: underline; }
 
         /* Top bar */
         .topbar {
             display: flex; align-items: center; justify-content: space-between;
-            gap: 1rem; padding: .6rem 1rem;
+            gap: 1rem; padding: .5rem 1rem;
             background: var(--chrome); border-bottom: 1px solid var(--border);
         }
-        .brand { display: flex; align-items: baseline; gap: .5rem; }
-        .brand .mark {
-            font-weight: 800; letter-spacing: .04em; font-size: 1.15rem;
-            color: var(--gold); text-transform: uppercase;
-        }
-        .brand .by { font-size: .72rem; color: var(--muted); }
+        .brand { display: inline-flex; align-items: center; }
+        .brand:hover { text-decoration: none; }
+        .brand .logo { height: 34px; display: block; }
+        .topright { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; justify-content: flex-end; }
         #netinfo {
             font-size: .76rem; color: var(--muted);
             border: 1px solid var(--border); border-radius: 999px;
-            padding: .25rem .7rem; white-space: nowrap; min-height: 1em;
+            padding: .2rem .65rem; white-space: nowrap; min-height: 1em;
         }
+        .account { display: inline-flex; align-items: center; gap: .6rem; font-size: .82rem; color: var(--muted); }
+        .account .who strong { color: var(--text); }
+        .chip {
+            display: inline-flex; align-items: center; gap: .35rem;
+            font-size: .8rem; font-weight: 600; line-height: 1;
+            padding: .4rem .7rem; border-radius: 7px;
+            border: 1px solid var(--border); color: var(--text); background: transparent;
+        }
+        .chip:hover { background: rgba(255,255,255,.08); text-decoration: none; }
+        .chip-accent { background: var(--accent); color: #23271a; border-color: transparent; }
+        .chip-accent:hover { filter: brightness(1.08); background: var(--accent); }
 
         /* Stage holds the canvas + loading overlay */
         .stage {
@@ -67,11 +79,7 @@
             transition: opacity .5s ease, visibility .5s ease;
         }
         .loading.hidden { opacity: 0; visibility: hidden; }
-        .loading .mark {
-            font-weight: 800; letter-spacing: .06em; font-size: 2.4rem;
-            color: var(--gold); text-transform: uppercase;
-            text-shadow: 0 4px 24px rgba(0,0,0,.6);
-        }
+        .loading .logo { height: 96px; filter: drop-shadow(0 4px 24px rgba(0,0,0,.6)); }
         #status { font-size: .9rem; color: var(--muted); min-height: 1.2em; }
         .bar {
             width: min(360px, 70vw); height: 8px;
@@ -94,21 +102,31 @@
             100% { margin-left: 100%; }
         }
 
-        /* Collapsible log */
-        .log {
-            border-top: 1px solid var(--border);
-            background: var(--chrome);
-            font-size: .75rem;
+        /* Footer */
+        .footer {
+            background: var(--chrome); border-top: 1px solid var(--border);
+            padding: .7rem 1rem; font-size: .8rem; color: var(--muted);
+            display: flex; flex-direction: column; gap: .5rem;
         }
-        .log summary {
-            cursor: pointer; padding: .4rem 1rem; color: var(--muted);
+        .beta summary {
+            cursor: pointer; color: var(--gold); font-weight: 700;
             list-style: none; user-select: none;
         }
+        .beta summary::-webkit-details-marker { display: none; }
+        .beta ul { margin: .5rem 0 .25rem 1.1rem; }
+        .beta li { margin-bottom: .35rem; }
+        .footlinks {
+            display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; align-items: center;
+        }
+        .footlinks a { color: var(--muted); }
+        .footlinks a:hover { color: var(--text); }
+        .footlinks .sep { opacity: .4; }
+        .log summary { cursor: pointer; color: var(--muted); list-style: none; user-select: none; }
         .log summary::-webkit-details-marker { display: none; }
         #output {
             max-height: 140px; overflow-y: auto;
             font-family: "Courier New", monospace; color: var(--muted);
-            padding: 0 1rem .6rem; white-space: pre-wrap;
+            padding: .4rem 0 0; white-space: pre-wrap;
         }
     </style>
     <script>
@@ -146,14 +164,33 @@
         window.URLSearchParams = Patched;
     })();
     </script>
+    <script>
+    /* Probe login state as early as possible. wbPrefsHasAuth() reads
+       WB_PREFS_AUTH when the WASM bootstrap prefs sync runs in main(). Start
+       optimistic (true): normally this fetch resolves long before main() and
+       sets the real value, but if the 203 MB asset bundle is cached, main()
+       can run first — staying optimistic means a logged-in player's saved prefs
+       still download (the server is the source of truth), while an anonymous
+       visitor just gets one harmless 401 that flips the flag off via
+       wbPrefsOnReauth. The result also populates the account chip. */
+    window.WB_PREFS_AUTH = true;
+    window.__wbMe = fetch('/api/v1/me', { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (me) { window.WB_PREFS_AUTH = !!(me && me.logged_in); return me; })
+        .catch(function () { return me_unknown(); });
+
+    // On probe failure leave the flag optimistic rather than forcing it off.
+    function me_unknown() { return null; }
+    </script>
 </head>
 <body>
     <header class="topbar">
-        <div class="brand">
-            <span class="mark">WinBolo</span>
-            <span class="by">the classic multiplayer tank game</span>
+        <a class="brand" href="/" title="WinBolo lobby"><img class="logo" src="/img/wb2-logo.png" alt="WinBolo"></a>
+        <div class="topright">
+            <span id="netinfo"></span>
+            <a class="chip" href="/">↩ Lobby</a>
+            <span id="account" class="account"></span>
         </div>
-        <div id="netinfo"></div>
     </header>
 
     <main class="stage">
@@ -162,16 +199,32 @@
                 tabindex="0"></canvas>
 
         <div id="loading" class="loading">
-            <div class="mark">WinBolo</div>
+            <img class="logo" src="/img/wb2-logo.png" alt="WinBolo">
             <div id="status">Loading…</div>
             <div class="bar"><div id="bar-fill" class="indeterminate"></div></div>
         </div>
     </main>
 
-    <details class="log">
-        <summary>Show log</summary>
-        <div id="output"></div>
-    </details>
+    <footer class="footer">
+        <details class="beta">
+            <summary>⚠ Beta — known issues</summary>
+            <ul>
+                <li><strong>Don't background the tab.</strong> Switching to another tab or minimizing the window can disconnect you: browsers throttle and sleep background tabs, which drops the live game connection. Keep the game tab focused and in front while playing.</li>
+                <li>The web client has no in-game settings/keybinding screen yet. Bindings saved on your account (desktop client) are applied on load.</li>
+            </ul>
+            <p>Found a problem? Let us know on <a href="https://discord.gg/znGR3VMaqd" target="_blank" rel="noopener">Discord</a>.</p>
+        </details>
+        <div class="footlinks">
+            <span>WinBolo &copy; 1998&ndash;<span id="year"></span> John Morrison</span>
+            <span class="sep">&middot;</span>
+            <a href="https://www.winbolo.com/" target="_blank" rel="noopener">winbolo.com</a>
+            <a href="https://www.winbolo.net/" target="_blank" rel="noopener">winbolo.net</a>
+        </div>
+        <details class="log">
+            <summary>Show log</summary>
+            <div id="output"></div>
+        </details>
+    </footer>
 
     <script>
         var Module = {
@@ -248,6 +301,39 @@
                 if (loading) loading.classList.add('hidden');
                 var c = document.getElementById('canvas');
                 console.log('[WASM] Canvas after init:', c.width, 'x', c.height);
+            },
+
+            /* ---- WinBolo.net preferences bridge -----------------------------
+               Called from prefs_bridge_wasm.c via EM_ASYNC_JS. The API lives at
+               the same origin (Caddy proxies /api/* on play.winbolo.net), so
+               these are plain same-origin fetches that carry the session cookie
+               — no CORS, no bearer token. Each HTTP helper resolves to
+               { status, body } where body is the raw response text. */
+            wbPrefsHasAuth: function() {
+                return window.WB_PREFS_AUTH === true;
+            },
+            wbPrefsHttpGet: function() {
+                return fetch('/api/v1/prefs', {
+                    credentials: 'same-origin',
+                    headers: { 'Accept': 'application/json' }
+                }).then(function(r) {
+                    return r.text().then(function(b) { return { status: r.status, body: b }; });
+                });
+            },
+            wbPrefsHttpPut: function(reqBody) {
+                return fetch('/api/v1/prefs', {
+                    method: 'PUT',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: reqBody
+                }).then(function(r) {
+                    return r.text().then(function(b) { return { status: r.status, body: b }; });
+                });
+            },
+            wbPrefsOnReauth: function() {
+                // Session expired mid-game: stop syncing and reflect it in the chip.
+                window.WB_PREFS_AUTH = false;
+                if (window.__wbRenderAccount) { window.__wbRenderAccount({ logged_in: false }); }
             }
         };
 
@@ -289,6 +375,48 @@
         window.addEventListener('load', function() {
             document.getElementById('canvas').focus();
         });
+    </script>
+
+    <script>
+    /* Account chip + footer year. Driven by the /api/v1/me probe started in
+       <head>. wbPrefsOnReauth re-renders this if the session drops mid-game. */
+    (function () {
+        var MAIN = 'https://www.winbolo.net';
+        function loginHref() { return MAIN + '/login?return=' + encodeURIComponent(window.location.href); }
+
+        var y = document.getElementById('year');
+        if (y) { y.textContent = new Date().getFullYear(); }
+
+        function renderAccount(me) {
+            var el = document.getElementById('account');
+            if (!el) { return; }
+            el.innerHTML = '';
+            if (me && me.logged_in) {
+                var who = document.createElement('span');
+                who.className = 'who';
+                who.appendChild(document.createTextNode('Signed in as '));
+                var strong = document.createElement('strong');
+                strong.textContent = me.username || 'player';
+                who.appendChild(strong);
+                el.appendChild(who);
+
+                var out = document.createElement('a');
+                out.className = 'chip';
+                out.href = MAIN + '/logout';
+                out.textContent = 'Log out';
+                el.appendChild(out);
+            } else {
+                var login = document.createElement('a');
+                login.className = 'chip chip-accent';
+                login.href = loginHref();
+                login.textContent = 'Log in';
+                el.appendChild(login);
+            }
+        }
+
+        window.__wbRenderAccount = renderAccount;
+        window.__wbMe.then(renderAccount);
+    })();
     </script>
 
     {{{ SCRIPT }}}

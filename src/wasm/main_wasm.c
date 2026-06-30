@@ -32,6 +32,7 @@
 #include "../gui/clientmutex.h"
 #include "../gui/draw.h"
 #include "../gui/gamefront.h"
+#include "../common/prefs.h"
 #include "../gui/input.h"
 #include "../gui/lang.h"
 #include "../gui/sound.h"
@@ -223,6 +224,10 @@ static void windowRunGameTick(ClientSim *cs) {
 void frontEndTutorialNotePresentedFrame(void);
 static void tutorialRespawnPoll(void);
 
+/* Cloud-prefs bridge (prefs_bridge_wasm.c). */
+void wbPrefsSyncNow(void);
+void wbPrefsPumpUpload(uint64_t nowMs);
+
 static void main_loop_iteration(void) {
   DWORD tick;
   ClientSim *cs = humanSim;
@@ -293,6 +298,10 @@ static void main_loop_iteration(void) {
   frontEndTutorialNotePresentedFrame();
   tutorialRespawnPoll();
 
+  /* Cloud prefs: push any setting changed this session, debounced. No-op when
+   * not signed in or when nothing is sync-dirty. */
+  wbPrefsPumpUpload(SDL_GetTicks());
+
   if (finishedLoop) {
     emscripten_cancel_main_loop();
   }
@@ -358,6 +367,15 @@ int main(int argc, char *argv[]) {
     printf("[WASM] Failed to create client mutex\n");
     return 1;
   }
+
+  /* Preferences: initialise the in-memory document, then pull the account's
+   * cloud prefs BEFORE gameFrontStart reads the key bindings, so a logged-in
+   * player's stored keys/settings apply on the first frame. The MEMFS path is
+   * a scratch backing only — persistence is the WinBolo.net API
+   * (prefs_bridge_wasm.c), not the browser filesystem. wbPrefsSyncNow is a
+   * no-op for single-player (not signed in). */
+  prefsInit("/WinBolo.json");
+  wbPrefsSyncNow();
 
   printf("[WASM] Starting gameFrontStart...\n");
   if (gameFrontStart(cmdLine, &keys, FALSE, NULL) == FALSE) {

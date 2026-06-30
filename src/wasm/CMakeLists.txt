@@ -223,11 +223,18 @@ set(WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/server_stubs_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/gui_stubs_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sound_wasm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/prefs_bridge_wasm.c
     ${SRC_ROOT}/steam/steam_wrapper_stub.c
     ${SRC_ROOT}/common/sentry_integration.c
     ${SRC_ROOT}/common/wb_log.c
     ${SRC_ROOT}/common/md5.c
     ${SRC_ROOT}/common/mp_diag_log.c
+    # Cloud-prefs sync: the document store and the pure decision/PUT-body
+    # logic. http.c (libcurl + signing key) stays excluded — prefs_bridge_wasm.c
+    # supplies the fetch()-backed transport instead.
+    ${SRC_ROOT}/common/prefs.c
+    ${SRC_ROOT}/common/prefs_doc.c
+    ${SRC_ROOT}/winbolonet/wbn_prefs_sync.c
 )
 
 ###
@@ -248,6 +255,7 @@ target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/gui
     ${SRC_ROOT}/server
     ${SRC_ROOT}/mapeditor
+    ${SRC_ROOT}/winbolonet
     ${cjson_SOURCE_DIR}
     ${SRC_ROOT}/third_party/imgui_markdown
 )
@@ -382,8 +390,10 @@ target_link_options(winbolo PRIVATE
     "SHELL:--preload-file ${PRELOAD_DIR}/EverardIsland.map@/data/EverardIsland.map"
     "SHELL:--preload-file ${PRELOAD_DIR}/InbuiltTutorial.map@/data/InbuiltTutorial.map"
     "SHELL:--preload-file ${REPO_ROOT}/brains/GoalHunter_1.5@/Brains/GoalHunter_1.5"
-    "SHELL:-sEXPORTED_FUNCTIONS=['_main']"
-    "SHELL:-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap']"
+    # _malloc/_free + the string/value helpers are used by prefs_bridge_wasm.c's
+    # EM_ASYNC_JS fetch transport to hand response bodies back to C.
+    "SHELL:-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']"
+    "SHELL:-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','lengthBytesUTF8','stringToUTF8','UTF8ToString','setValue']"
     -sALLOW_MEMORY_GROWTH=1
     "-sINITIAL_MEMORY=67108864"
     "-sSTACK_SIZE=1048576"
