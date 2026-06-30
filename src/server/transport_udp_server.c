@@ -25,6 +25,7 @@
  *********************************************************/
 
 #include "transport_udp_internal.h"
+#include "global.h"
 #include "bases.h"
 #include "pillbox.h"
 #include "starts.h"
@@ -77,6 +78,31 @@
 #else
 #  include <stdlib.h>      /* arc4random_buf (macOS/BSD) */
 #endif
+
+/* Human-readable terrain name for map-resync diagnostics. Covers the terrain
+ * byte stored in mapItem, including the mine range (10-15). */
+static const char *resyncTerrainName(BYTE t) {
+    switch (t) {
+        case DEEP_SEA:     return "DEEP_SEA";
+        case BUILDING:     return "BUILDING";
+        case RIVER:        return "RIVER";
+        case SWAMP:        return "SWAMP";
+        case CRATER:       return "CRATER";
+        case ROAD:         return "ROAD";
+        case FOREST:       return "FOREST";
+        case RUBBLE:       return "RUBBLE";
+        case GRASS:        return "GRASS";
+        case HALFBUILDING: return "HALFBUILDING";
+        case BOAT:         return "BOAT";
+        case MINE_SWAMP:   return "MINE_SWAMP";
+        case MINE_CRATER:  return "MINE_CRATER";
+        case MINE_ROAD:    return "MINE_ROAD";
+        case MINE_FOREST:  return "MINE_FOREST";
+        case MINE_RUBBLE:  return "MINE_RUBBLE";
+        case MINE_GRASS:   return "MINE_GRASS";
+        default:           return "?";
+    }
+}
 
 /* ---- Server dedicated recv thread ----
  * A background thread continuously polls the server socket and queues
@@ -5234,26 +5260,63 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                                                      udpServer.compressedMap, mapLen)) {
                                 uint16_t rtSum = mapCalcChecksum(&rtMap, &rtBs, &rtPb);
                                 if (rtSum != liveSum) {
-                                    int diffs = 0, shown = 0, xx, yy;
-                                    for (yy = 0; yy < MAP_ARRAY_SIZE; yy++) {
-                                        for (xx = 0; xx < MAP_ARRAY_SIZE; xx++) {
-                                            BYTE lv = mapGetPos(live, (BYTE)xx, (BYTE)yy);
-                                            BYTE rv = mapGetPos(&rtMap, (BYTE)xx, (BYTE)yy);
-                                            if (lv != rv) {
-                                                diffs++;
-                                                if (shown < 8) {
-                                                    WB_LOG_WARN(WB_LOG_CAT_NET,
-                                                        "map resync blob diff @(%d,%d) live=%u roundtrip=%u",
-                                                        xx, yy, (unsigned)lv, (unsigned)rv);
-                                                    shown++;
+                                    /* Dedupe: an unconverged divergence repeats on every
+                                     * resync request and floods the log. Dump full per-tile
+                                     * detail only when the (live,blob) checksum pair changes;
+                                     * identical repeats get one concise line. The state is
+                                     * process-wide and this runs on the single drain thread. */
+                                    static uint32_t s_lastResyncDiffSig = 0xFFFFFFFFu;
+                                    uint32_t sig = ((uint32_t)liveSum << 16) | (uint32_t)rtSum;
+                                    const char *mapName = serverSimGetMapName(sim);
+                                    if (sig == s_lastResyncDiffSig) {
+                                        WB_LOG_WARN(WB_LOG_CAT_NET,
+                                            "map resync still not converging on '%s' "
+                                            "(live sum=%u blob sum=%u, client %d gen=%u) - detail suppressed",
+                                            mapName, (unsigned)liveSum, (unsigned)rtSum,
+                                            clientIdx, (unsigned)reqGen);
+                                    } else {
+                                        bases *liveBs = &serverSimGetGameSim(sim)->bs;
+                                        pillboxes *livePb = &serverSimGetGameSim(sim)->pb;
+                                        int diffs = 0, realDiffs = 0, shown = 0, xx, yy;
+                                        s_lastResyncDiffSig = sig;
+                                        for (yy = 0; yy < MAP_ARRAY_SIZE; yy++) {
+                                            for (xx = 0; xx < MAP_ARRAY_SIZE; xx++) {
+                                                BYTE lv = mapGetPos(live, (BYTE)xx, (BYTE)yy);
+                                                BYTE rv = mapGetPos(&rtMap, (BYTE)xx, (BYTE)yy);
+                                                if (lv != rv) {
+                                                    /* Terrain under a base/pill is folded to ROAD
+                                                     * by the checksum (it is not authoritative), so
+                                                     * such a tile can never be the real cause of
+                                                     * non-convergence — flag it benign. */
+                                                    bool onBase = (basesExistPos(liveBs, (BYTE)xx, (BYTE)yy) ||
+                                                                   basesExistPos(&rtBs, (BYTE)xx, (BYTE)yy));
+                                                    bool onPill = (pillsExistPos(livePb, (BYTE)xx, (BYTE)yy) ||
+                                                                   pillsExistPos(&rtPb, (BYTE)xx, (BYTE)yy));
+                                                    diffs++;
+                                                    if (!onBase && !onPill) { realDiffs++; }
+                                                    if (shown < 8) {
+                                                        WB_LOG_WARN(WB_LOG_CAT_NET,
+                                                            "map resync blob diff @(%d,%d) "
+                                                            "live=%s(%u) roundtrip=%s(%u) [%s] map='%s'",
+                                                            xx, yy,
+                                                            resyncTerrainName(lv), (unsigned)lv,
+                                                            resyncTerrainName(rv), (unsigned)rv,
+                                                            onBase ? "base" : (onPill ? "pill" : "REAL"),
+                                                            mapName);
+                                                        shown++;
+                                                    }
                                                 }
                                             }
                                         }
+                                        WB_LOG_WARN(WB_LOG_CAT_NET,
+                                            "map resync blob does NOT round-trip on '%s': "
+                                            "%d differing tile(s) (%d genuine, %d under base/pill fixup) "
+                                            "(live sum=%u blob sum=%u) - %s",
+                                            mapName, diffs, realDiffs, diffs - realDiffs,
+                                            (unsigned)liveSum, (unsigned)rtSum,
+                                            realDiffs ? "client cannot converge"
+                                                      : "benign structure fixup only");
                                     }
-                                    WB_LOG_WARN(WB_LOG_CAT_NET,
-                                        "map resync blob does NOT round-trip: %d differing tile(s) "
-                                        "(live sum=%u blob sum=%u) - client cannot converge",
-                                        diffs, (unsigned)liveSum, (unsigned)rtSum);
                                 }
                             } else {
                                 WB_LOG_WARN(WB_LOG_CAT_NET,
