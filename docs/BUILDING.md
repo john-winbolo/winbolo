@@ -397,6 +397,12 @@ cd android
 
 Ensure `SENTRY_AUTH_TOKEN` is set in the environment or in `~/.sentryclirc` so the plugin can authenticate.
 
+The runtime crash-reporting DSN is not committed. Supply it via the `SENTRY_DSN`
+environment variable or a `sentry.dsn=` line in `android/local.properties` (both
+untracked); Gradle injects it into the manifest's `io.sentry.dsn` meta-data and
+passes it to the native build as `-DSENTRY_DSN`. When unset it resolves to empty
+and the Sentry SDK stays disabled.
+
 ## Signing and notarization (macOS)
 
 For a build that runs on machines other than the one that built it, the three macOS app bundles (`WinBolo.app`, `MapEditor.app`, `Log Viewer.app`) and the `WinBoloDS` dedicated-server CLI binary all need to be code-signed with a Developer ID Application certificate, notarized by Apple, and stapled so Gatekeeper accepts them offline. The `sign_macos` target handles all signing; the `package_macos` target builds a single notarized DMG containing everything.

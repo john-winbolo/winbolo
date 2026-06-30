@@ -7,7 +7,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:hasCode="true">
-        <meta-data android:name="io.sentry.dsn" android:value="https://162395541f614bfc69eedd26851a9d6b@o4511151074574336.ingest.us.sentry.io/4511151082897408" />
+        <meta-data android:name="io.sentry.dsn" android:value="${sentryDsn}" />
         <meta-data android:name="io.sentry.release" android:value="WinBolo-Android@1.18" />
         <meta-data android:name="io.sentry.tags.executable" android:value="WinBolo-Android" />
         <activity
