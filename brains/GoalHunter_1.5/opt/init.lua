@@ -1869,6 +1869,18 @@ function Brain.think(info)
     local SLATE_LONG_MAIN    = 2
     local SLATE_LONG_BACKUP  = 3
 
+    -- Predicted goal-replan tick (same predicate as timer_fire, computed here
+    -- because the dij scheduler runs BEFORE state.replan_this_tick is set).
+    -- GOAL_REPLAN_INTERVAL (50) is a multiple of DIJKSTRA_SHORT_INTERVAL (10),
+    -- so a short-slate restart ALWAYS coincides with a replan tick — stacking
+    -- the ~0.13ms copy+restart on finalize_pools/pick_goal every cycle. We slip
+    -- the discrete restart off predicted-replan ticks (bounded by MAX_DEFER so
+    -- it can't starve). The amortized dijkstra_step still runs every tick; only
+    -- the copy+start moves, and lookups fall back to the backup meanwhile.
+    local predicted_replan =
+      (now + (state.replan_offset or 0)) % C.GOAL_REPLAN_INTERVAL == 0
+    local DIJ_RESTART_MAX_DEFER = 4
+
     local tmx = info.tankx >> 8
     local tmy = info.tanky >> 8
     local in_boat = info.inboat and 1 or 0
@@ -1948,6 +1960,14 @@ function Brain.think(info)
       if wait_for_done and schedule_hit and not s.done then
         -- Holding off: keep stepping the current main until it
         -- finishes, then snapshot + restart on the next pass.
+        return
+      end
+      -- Yield the discrete copy+restart off predicted goal-replan ticks so the
+      -- snapshot doesn't stack on the goals block. Only when the slate is active
+      -- (backup has coverage) and not overdue past MAX_DEFER; an inactive slate
+      -- must start now since there's no backup to serve lookups.
+      if schedule_hit and s.active and predicted_replan
+         and age < interval + DIJ_RESTART_MAX_DEFER then
         return
       end
       if not s.active or schedule_hit then
