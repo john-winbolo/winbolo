@@ -1,3 +1,4 @@
+local function __idiv(a,b) return math.floor(a/b) end
 local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/init.lua — Brain entry point (open/think/close/settings)
