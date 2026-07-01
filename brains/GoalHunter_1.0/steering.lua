@@ -1,3 +1,5 @@
+local function __idiv(a,b) return math.floor(a/b) end
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/steering.lua — translate goal + pathfinder into holdkeys/tapkeys
 -- =========================================================================
@@ -75,8 +77,8 @@ local function shot_path_clear(info, world, target_wx, target_wy, target_mx, tar
                               cpf.SHOT_TANK, 0)
   end
   if not tiles then return true end
-  local origin_mx = info.tankx >> 8
-  local origin_my = info.tanky >> 8
+  local origin_mx = bit.rshift(info.tankx, 8)
+  local origin_my = bit.rshift(info.tanky, 8)
   local do_viz = BRAIN_DEBUG_MODE and viz.is_on("shell_hit_dot")
   local blocked = false
   local block_reason = nil
@@ -316,8 +318,8 @@ local function stuck_recovery(state, info, goal)
   if (now - sp.since) < STUCK_TICKS then return end
 
   -- No progress for STUCK_TICKS toward the same next-step tile: penalize it.
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local k = U.mkey(pf.next_mx, pf.next_my)
   if bl[k] == nil then
     cpf.set_overlay(pf.next_mx, pf.next_my, STUCK_PENALTY)
@@ -379,8 +381,8 @@ end
 -- stuck detection, debug logging, and other consumers of state.pf.
 local function cpf_path_to(state, info, dest_mx, dest_my)
   local pf  = state.pf
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local in_boat = info.inboat and 1 or 0
   local shells  = info.shells or 0
   local trees   = info.trees or 0
@@ -444,7 +446,7 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
       -- the next point as the waypoint.
       local best_i = nil
       local best_d = math.huge
-      local nwp = #pf.path_chain // 2
+      local nwp = __idiv(#pf.path_chain, 2)
       for i = 1, nwp do
         local dx = pf.path_chain[2*i-1] - tmx
         local dy = pf.path_chain[2*i] - tmy
@@ -587,10 +589,10 @@ local function path_lookahead(state, info, nx, ny)
     return nx, ny
   end
 
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
 
-  sdbg("lookahead: tank=(%d,%d) nx=(%d,%d) chain#=%d", tmx, tmy, nx, ny, #chain // 2)
+  sdbg("lookahead: tank=(%d,%d) nx=(%d,%d) chain#=%d", tmx, tmy, nx, ny, __idiv(#chain, 2))
 
   if info.inboat then
     sdbg("lookahead: in boat, return nx=%d ny=%d", nx, ny)
@@ -642,7 +644,7 @@ local function path_lookahead(state, info, nx, ny)
 
   -- Find nx,ny in the chain
   local start_idx = nil
-  for i = 1, #chain // 2 do
+  for i = 1, __idiv(#chain, 2) do
     if chain[2*i-1] == nx and chain[2*i] == ny then
       start_idx = i
       break
@@ -687,7 +689,7 @@ local function path_lookahead(state, info, nx, ny)
   local on_path_chain = pf._on_path_cache
   if pf._on_path_chain ~= chain or not on_path_chain then
     on_path_chain = {}
-    for i = 1, #chain // 2 do
+    for i = 1, __idiv(#chain, 2) do
       on_path_chain[U.mkey(chain[2*i-1], chain[2*i])] = true
     end
     pf._on_path_cache = on_path_chain
@@ -698,7 +700,7 @@ local function path_lookahead(state, info, nx, ny)
     return on_path_chain[key] or key == tank_key
   end
 
-  local chain_nwp = #chain // 2
+  local chain_nwp = __idiv(#chain, 2)
   local best_x, best_y = nx, ny
   for i = start_idx + 1, chain_nwp do
     local cx, cy = chain[2*i-1], chain[2*i]
@@ -766,12 +768,12 @@ local function pill_place_steer(state, world, info, goal)
   if goal.kind ~= "pill_place" then return nil end
   local keys = 0
   local taps = 0
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
 
   -- Gunsight at max range for all substates
   if info.gunrange < C.GUNSIGHT_MAX then
-    keys = keys | KEY_MORERANGE
+    keys = bit.bor(keys, KEY_MORERANGE)
   end
 
   -- ── pickup: navigate to dead friendly pill ────────────────────────
@@ -783,10 +785,10 @@ local function pill_place_steer(state, world, info, goal)
       local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny))
       local corr = U.adiff(info.direction, move_dir)
       local k, t = nav_turn_speed(corr, info.speed)
-      keys = keys | k
-      taps = taps | t
+      keys = bit.bor(keys, k)
+      taps = bit.bor(taps, t)
     else
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     end
     return keys, taps
   end
@@ -800,8 +802,8 @@ local function pill_place_steer(state, world, info, goal)
       local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny))
       local corr = U.adiff(info.direction, move_dir)
       local k, t = nav_turn_speed(corr, info.speed)
-      keys = keys | k
-      taps = taps | t
+      keys = bit.bor(keys, k)
+      taps = bit.bor(taps, t)
     else
       -- On the deploy tile but possibly not centered. The LGM has to
       -- pathfind out of the tank's exact tile center, so creep toward
@@ -813,10 +815,10 @@ local function pill_place_steer(state, world, info, goal)
         local corr = U.adiff(info.direction, move_dir)
         -- Use a low max speed (4) so we don't overshoot the center.
         local k, t = nav_turn_speed(corr, info.speed, 4, 1)
-        keys = keys | k
-        taps = taps | t
+        keys = bit.bor(keys, k)
+        taps = bit.bor(taps, t)
       else
-        if info.speed > 0 then keys = keys | KEY_SLOWER end
+        if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
       end
     end
     return keys, taps
@@ -825,14 +827,14 @@ local function pill_place_steer(state, world, info, goal)
   -- ── dispatch / wait_place: hold position or move to engage ────────
   if goal.substate == "dispatch" then
     -- Hold position while LGM goes to place pill
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
   end
 
   if goal.substate == "wait_place" or goal.substate == "prewait" then
     -- Hold position at deploy spot while LGM builds/returns.
     -- Moving toward engage now would put us inside pill range unshielded.
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
   end
 
@@ -845,7 +847,7 @@ local function pill_place_steer(state, world, info, goal)
   end
 
   -- ── select_pill / disengage / other: brake ────────────────────────
-  if info.speed > 0 then keys = keys | KEY_SLOWER end
+  if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
   return keys, taps
 end
 
@@ -889,16 +891,16 @@ local function reposition_steer(state, world, info, goal)
   state._demolish_my   = goal.my
   state._demolish_tick = state.tick
   local keys, taps = 0, 0
-  if info.gunrange < C.GUNSIGHT_MAX then keys = keys | KEY_MORERANGE end
-  if info.speed > 0 then keys = keys | KEY_SLOWER end
+  if info.gunrange < C.GUNSIGHT_MAX then keys = bit.bor(keys, KEY_MORERANGE) end
+  if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
   local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
                              goal.mx + 0.5, goal.my + 0.5)
   local corr    = U.adiff(info.direction, aim_dir)
   local h, t = U.aim_turn_bits(corr, 6, 1)
-  keys = keys | h; taps = taps | t
+  keys = bit.bor(keys, h); taps = bit.bor(taps, t)
   -- Friendly pill won't shoot back, so fire down to the last shell.
   if math.abs(corr) <= 1 and (info.shells or 0) > 0 then
-    keys = keys | KEY_SHOOT
+    keys = bit.bor(keys, KEY_SHOOT)
   end
   if BRAIN_DEBUG_MODE and viz.is_on("hud_attack_status") then
     viz.hud_text("hud_attack_status", 10, 44,
@@ -923,18 +925,18 @@ local function attack_pill_steer(state, world, info, goal)
 
     do
       local h, t = U.aim_turn_bits(corr, 6, 1)
-      keys = keys | h; taps = taps | t
+      keys = bit.bor(keys, h); taps = bit.bor(taps, t)
     end
 
     if math.abs(corr) <= 1 and info.shells > C.SHELL_RESERVE then
-      keys = keys | KEY_SHOOT
+      keys = bit.bor(keys, KEY_SHOOT)
     end
 
     if info.gunrange < C.GUNSIGHT_MAX then
-      keys = keys | KEY_MORERANGE
+      keys = bit.bor(keys, KEY_MORERANGE)
     end
 
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
   end
 
@@ -949,7 +951,7 @@ local function attack_pill_steer(state, world, info, goal)
     local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
 
     if info.gunrange < C.GUNSIGHT_MAX then
-      keys = keys | KEY_MORERANGE
+      keys = bit.bor(keys, KEY_MORERANGE)
     end
 
     -- Turn so crosshairs align with the purple aim dot (not standoff center).
@@ -968,7 +970,7 @@ local function attack_pill_steer(state, world, info, goal)
       goal.substate = "aim"
       goal.aim_tick = state.tick
       goal._aim_locked = nil
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
       if BRAIN_DEBUG_MODE then
         charge_phase = "REARM corr=" .. math.floor(corr)
         viz.hud_text("charge_status", 10, 56, "CHARGE: " .. charge_phase, "topleft", 255, 100, 100)
@@ -977,8 +979,8 @@ local function attack_pill_steer(state, world, info, goal)
     end
 
     -- Fine turn toward aim point
-    if     corr >  1 then taps = taps | KEY_TURNRIGHT
-    elseif corr < -1 then taps = taps | KEY_TURNLEFT
+    if     corr >  1 then taps = bit.bor(taps, KEY_TURNRIGHT)
+    elseif corr < -1 then taps = bit.bor(taps, KEY_TURNLEFT)
     end
 
     -- Arrived — brake to full stop, then engage
@@ -1013,7 +1015,7 @@ local function attack_pill_steer(state, world, info, goal)
         end
       end
       if hits_pill then
-        keys = keys | KEY_SHOOT
+        keys = bit.bor(keys, KEY_SHOOT)
         -- Pre-fire predictive swerve: if this on-target shot would be
         -- the one that brings in-flight count up to remaining pill HP,
         -- enter swerve right now (same tick as the shot fires) instead
@@ -1037,7 +1039,7 @@ local function attack_pill_steer(state, world, info, goal)
         goal.substate = "engage"
         goal.engage_tick = state.tick
       else
-        keys = keys | KEY_SLOWER
+        keys = bit.bor(keys, KEY_SLOWER)
       end
       if BRAIN_DEBUG_MODE then
         if info.speed <= 1 then
@@ -1063,14 +1065,14 @@ local function attack_pill_steer(state, world, info, goal)
       local cap   = C.PPT_CHARGE_MAX_SPEED  or 4
       local brake = C.PPT_CHARGE_BRAKE_DIST or 32
       if sdist <= brake then
-        if info.speed > 0 then keys = keys | KEY_SLOWER end
+        if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
       elseif info.speed >= cap then
         -- Hold at cap by pulsing the slower key; KEY_FASTER would push
         -- us past it. The natural drag won't drop us below cap quickly
         -- so we stay close to it.
-        keys = keys | KEY_SLOWER
+        keys = bit.bor(keys, KEY_SLOWER)
       else
-        keys = keys | KEY_FASTER
+        keys = bit.bor(keys, KEY_FASTER)
       end
       if BRAIN_DEBUG_MODE then
         if sdist <= brake then
@@ -1096,9 +1098,9 @@ local function attack_pill_steer(state, world, info, goal)
     local _deceling = stop_dist >= sdist or goal._charge_braking
     if _deceling then
       goal._charge_braking = true
-      keys = keys | KEY_SLOWER
+      keys = bit.bor(keys, KEY_SLOWER)
     else
-      keys = keys | KEY_FASTER
+      keys = bit.bor(keys, KEY_FASTER)
     end
 
     if BRAIN_DEBUG_MODE then
@@ -1120,10 +1122,10 @@ local function attack_pill_steer(state, world, info, goal)
     local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0, aim_tx, aim_ty)
     local corr = U.adiff(info.direction, aim_dir)
 
-    if     corr >  6 then keys = keys | KEY_TURNRIGHT
-    elseif corr < -6 then keys = keys | KEY_TURNLEFT
-    elseif corr >  1 then taps = taps | KEY_TURNRIGHT
-    elseif corr < -1 then taps = taps | KEY_TURNLEFT
+    if     corr >  6 then keys = bit.bor(keys, KEY_TURNRIGHT)
+    elseif corr < -6 then keys = bit.bor(keys, KEY_TURNLEFT)
+    elseif corr >  1 then taps = bit.bor(taps, KEY_TURNRIGHT)
+    elseif corr < -1 then taps = bit.bor(taps, KEY_TURNLEFT)
     end
 
     if math.abs(corr) <= 1 then
@@ -1131,10 +1133,10 @@ local function attack_pill_steer(state, world, info, goal)
     end
 
     if info.gunrange < C.GUNSIGHT_MAX then
-      keys = keys | KEY_MORERANGE
+      keys = bit.bor(keys, KEY_MORERANGE)
     end
 
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
   end
 
@@ -1147,21 +1149,21 @@ local function attack_pill_steer(state, world, info, goal)
 
     do
       local h, t = U.aim_turn_bits(corr, 6, 1)
-      keys = keys | h; taps = taps | t
+      keys = bit.bor(keys, h); taps = bit.bor(taps, t)
     end
 
     if math.abs(corr) <= 1 and info.shells > C.SHELL_RESERVE then
-      keys = keys | KEY_SHOOT
+      keys = bit.bor(keys, KEY_SHOOT)
       goal._engage_aimed = true
       -- Pre-fire predictive swerve (same rationale as charge).
       predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
     end
 
     if info.gunrange < C.GUNSIGHT_MAX then
-      keys = keys | KEY_MORERANGE
+      keys = bit.bor(keys, KEY_MORERANGE)
     end
 
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
   end
 
@@ -1172,10 +1174,10 @@ local function attack_pill_steer(state, world, info, goal)
       local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny))
       local corr = U.adiff(info.direction, move_dir)
       local k, t = nav_turn_speed(corr, info.speed, 64)
-      keys = keys | k
-      taps = taps | t
+      keys = bit.bor(keys, k)
+      taps = bit.bor(taps, t)
     else
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     end
     return keys, taps
   end
@@ -1185,30 +1187,30 @@ local function attack_pill_steer(state, world, info, goal)
     if (goal._swerve_turn_ticks_left or 0) > 0 then
       local dir = goal._swerve_dir or 1
       if dir > 0 then
-        keys = keys | KEY_TURNRIGHT
+        keys = bit.bor(keys, KEY_TURNRIGHT)
       else
-        keys = keys | KEY_TURNLEFT
+        keys = bit.bor(keys, KEY_TURNLEFT)
       end
     end
-    keys = keys | KEY_FASTER
+    keys = bit.bor(keys, KEY_FASTER)
     return keys, taps
   end
 
   -- ── post_engage: brake while deciding ─────────────────────────────
   if goal.substate == "post_engage" then
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
   end
 
   -- ── loiter: hold position, wait for pill to cool ───────────────────
   if goal.substate == "loiter" then
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
   end
 
   -- ── plan_position: brake while planning ───────────────────────────
   if goal.substate == "plan_position" then
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
   end
 
@@ -1217,20 +1219,20 @@ local function attack_pill_steer(state, world, info, goal)
   -- already lined up by the time the wall queue is exhausted. Same
   -- turn logic as the aim substate; movement keys are never set.
   if goal.substate == "build_walls" then
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     local aim_tx = goal.aim_mx or (goal.mx + 0.5)
     local aim_ty = goal.aim_my or (goal.my + 0.5)
     local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
                                aim_tx, aim_ty)
     local corr = U.adiff(info.direction, aim_dir)
-    if     corr >  6 then keys = keys | KEY_TURNRIGHT
-    elseif corr < -6 then keys = keys | KEY_TURNLEFT
-    elseif corr >  1 then taps = taps | KEY_TURNRIGHT
-    elseif corr < -1 then taps = taps | KEY_TURNLEFT
+    if     corr >  6 then keys = bit.bor(keys, KEY_TURNRIGHT)
+    elseif corr < -6 then keys = bit.bor(keys, KEY_TURNLEFT)
+    elseif corr >  1 then taps = bit.bor(taps, KEY_TURNRIGHT)
+    elseif corr < -1 then taps = bit.bor(taps, KEY_TURNLEFT)
     end
     -- Stretch the gunsight to max while we wait, like aim does.
     if info.gunrange < C.GUNSIGHT_MAX then
-      keys = keys | KEY_MORERANGE
+      keys = bit.bor(keys, KEY_MORERANGE)
     end
     return keys, taps
   end
@@ -1252,7 +1254,7 @@ local function attack_pill_steer(state, world, info, goal)
     local swy = math.floor(sfy * 256 + 0.5)
     local sdist = U.wdist(info.tankx, info.tanky, swx, swy)
     if info.gunrange < C.GUNSIGHT_MAX then
-      keys = keys | KEY_MORERANGE
+      keys = bit.bor(keys, KEY_MORERANGE)
     end
     -- Wider window so we accelerate sooner (was 1 tile / 256 wu).
     if sdist <= 512 then
@@ -1300,7 +1302,7 @@ local function attack_pill_steer(state, world, info, goal)
       local branch  -- which decision tier fired this tick (for viz)
       if at_spot then
         branch = "AT_SPOT"
-        if info.speed > 0 then keys = keys | KEY_SLOWER end
+        if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
       elseif friction_stuck then
         -- Wheels spinning, tank not moving. Force forward instead of
         -- braking — the brake key would only confirm what the friction
@@ -1310,21 +1312,21 @@ local function attack_pill_steer(state, world, info, goal)
         local move_dir = U.aim_at(info.tankx, info.tanky, swx, swy)
         local corr = U.adiff(info.direction, move_dir)
         local k, t = nav_turn_speed(corr, 0, target_speed, 2)
-        keys = keys | k
-        taps = taps | t
+        keys = bit.bor(keys, k)
+        taps = bit.bor(taps, t)
       elseif would_overshoot and info.speed > 2 then
         -- Coasting tail will land us in the window — brake. Speed gate
         -- (>2) prevents a permanent brake-pin when we're already nearly
         -- stopped but the brake-distance heuristic keeps re-arming.
         branch = "BRAKE"
-        keys = keys | KEY_SLOWER
+        keys = bit.bor(keys, KEY_SLOWER)
       else
         branch = "CREEP"
         local move_dir = U.aim_at(info.tankx, info.tanky, swx, swy)
         local corr = U.adiff(info.direction, move_dir)
         local k, t = nav_turn_speed(corr, info.speed, target_speed, 2)
-        keys = keys | k
-        taps = taps | t
+        keys = bit.bor(keys, k)
+        taps = bit.bor(taps, t)
       end
 
       -- Visualization: state machine status near the tank.
@@ -1373,7 +1375,7 @@ local function attack_pill_steer(state, world, info, goal)
   -- That way the canonical aim corner stays in goal.aim_mx/my and
   -- pre-aim doesn't have to mutate it.
   if goal.substate == "in_range_aim_pre" or goal.substate == "in_range_aim" then
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     local aim_tx, aim_ty
     if goal.substate == "in_range_aim_pre" then
       aim_tx = goal.aim_pre_mx or goal.aim_mx or (goal.mx + 0.5)
@@ -1385,10 +1387,10 @@ local function attack_pill_steer(state, world, info, goal)
     local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
                                aim_tx, aim_ty)
     local corr = U.adiff(info.direction, aim_dir)
-    if     corr >  6 then keys = keys | KEY_TURNRIGHT
-    elseif corr < -6 then keys = keys | KEY_TURNLEFT
-    elseif corr >  1 then taps = taps | KEY_TURNRIGHT
-    elseif corr < -1 then taps = taps | KEY_TURNLEFT
+    if     corr >  6 then keys = bit.bor(keys, KEY_TURNRIGHT)
+    elseif corr < -6 then keys = bit.bor(keys, KEY_TURNLEFT)
+    elseif corr >  1 then taps = bit.bor(taps, KEY_TURNRIGHT)
+    elseif corr < -1 then taps = bit.bor(taps, KEY_TURNLEFT)
     end
     if math.abs(corr) <= 1 then
       -- Use distinct flags per substate so pre's "I'm on the right
@@ -1405,7 +1407,7 @@ local function attack_pill_steer(state, world, info, goal)
       end
     end
     if info.gunrange < C.GUNSIGHT_MAX then
-      keys = keys | KEY_MORERANGE
+      keys = bit.bor(keys, KEY_MORERANGE)
     end
     return keys, taps
   end
@@ -1421,7 +1423,7 @@ local function attack_pill_steer(state, world, info, goal)
   -- taps. Counts taps via goal._finetune_taps so attack.lua can
   -- cap and abort if the geometry won't converge.
   if goal.substate == "in_range_aim_finetune" then
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     -- First tick of finetune is always idle: we don't know whether
     -- the previous substate (in_range_aim) was holding a turn key,
     -- so the engine's firstLeft/firstRight counter could be
@@ -1432,7 +1434,7 @@ local function attack_pill_steer(state, world, info, goal)
       goal._finetune_taps = 1
       goal._finetune_burst = 0
       if info.gunrange < C.GUNSIGHT_MAX then
-        keys = keys | KEY_MORERANGE
+        keys = bit.bor(keys, KEY_MORERANGE)
       end
       return keys, taps
     end
@@ -1475,9 +1477,9 @@ local function attack_pill_steer(state, world, info, goal)
         local burst = goal._finetune_burst or 0
         if burst < 3 then
           if math.abs(pcorr) > 2 then
-            keys = keys | turn_key       -- hold (1 brain = 2 engine ticks)
+            keys = bit.bor(keys, turn_key)       -- hold (1 brain = 2 engine ticks)
           else
-            taps = taps | turn_key       -- tap (1 engine tick)
+            taps = bit.bor(taps, turn_key)       -- tap (1 engine tick)
           end
           goal._finetune_burst = burst + 1
         else
@@ -1490,7 +1492,7 @@ local function attack_pill_steer(state, world, info, goal)
       goal._finetune_taps = (goal._finetune_taps or 0) + 1
     end
     if info.gunrange < C.GUNSIGHT_MAX then
-      keys = keys | KEY_MORERANGE
+      keys = bit.bor(keys, KEY_MORERANGE)
     end
     return keys, taps
   end
@@ -1498,14 +1500,14 @@ local function attack_pill_steer(state, world, info, goal)
   -- shoot_pill (PPT): park, hold aim on the corner, fire continuously.
   -- Mirrors engage's tap-correction + fire-while-aimed pattern.
   if goal.substate == "shoot_pill" then
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     -- First-tick idle, same reason as finetune: scrub any leftover
     -- engine-side firstLeft/Right ramp from the previous substate so
     -- the very first emitted tap below starts at /8.
     if goal._shoot_first_steer then
       goal._shoot_first_steer = nil
       if info.gunrange < C.GUNSIGHT_MAX then
-        keys = keys | KEY_MORERANGE
+        keys = bit.bor(keys, KEY_MORERANGE)
       end
       return keys, taps
     end
@@ -1514,18 +1516,18 @@ local function attack_pill_steer(state, world, info, goal)
     local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
                                aim_tx, aim_ty)
     local corr = U.adiff(info.direction, aim_dir)
-    if     corr >  6 then keys = keys | KEY_TURNRIGHT
-    elseif corr < -6 then keys = keys | KEY_TURNLEFT
-    elseif corr >  1 then taps = taps | KEY_TURNRIGHT
-    elseif corr < -1 then taps = taps | KEY_TURNLEFT
+    if     corr >  6 then keys = bit.bor(keys, KEY_TURNRIGHT)
+    elseif corr < -6 then keys = bit.bor(keys, KEY_TURNLEFT)
+    elseif corr >  1 then taps = bit.bor(taps, KEY_TURNRIGHT)
+    elseif corr < -1 then taps = bit.bor(taps, KEY_TURNLEFT)
     end
     if math.abs(corr) <= 5 and info.shells > C.SHELL_RESERVE then
-      keys = keys | KEY_SHOOT
+      keys = bit.bor(keys, KEY_SHOOT)
       -- Pre-fire predictive swerve (same rationale as charge).
       predict_kill_shot_and_swerve(state, world, info, goal, goal.mx, goal.my)
     end
     if info.gunrange < C.GUNSIGHT_MAX then
-      keys = keys | KEY_MORERANGE
+      keys = bit.bor(keys, KEY_MORERANGE)
     end
     return keys, taps
   end
@@ -1534,7 +1536,7 @@ local function attack_pill_steer(state, world, info, goal)
   -- the LGM to nearby forest. Tank stays put — moving would force the
   -- planner to re-pick a standoff after gathering.
   if goal.substate == "gather_trees" then
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
   end
 
@@ -1573,16 +1575,16 @@ local function attack_pill_steer(state, world, info, goal)
           local stuck_ticks = now_t - (goal._approach_stuck_since or now_t)
           if stuck_ticks >= 8 then
             local k, t = nav_turn_speed(corr, 0, 4, 1)
-            keys = keys | k
-            taps = taps | t
-            if info.speed == 0 then keys = keys | KEY_FASTER end
+            keys = bit.bor(keys, k)
+            taps = bit.bor(taps, t)
+            if info.speed == 0 then keys = bit.bor(keys, KEY_FASTER) end
           else
             local k, t = nav_turn_speed(corr, info.speed, 4, 1)
-            keys = keys | k
-            taps = taps | t
+            keys = bit.bor(keys, k)
+            taps = bit.bor(taps, t)
           end
         elseif info.speed > 0 then
-          keys = keys | KEY_SLOWER
+          keys = bit.bor(keys, KEY_SLOWER)
         end
         return keys, taps
       end
@@ -1599,7 +1601,7 @@ local function attack_pill_steer(state, world, info, goal)
     local pmx, pmy = pill.mx, pill.my
     local pill_wx, pill_wy = U.m2w(pmx), U.m2w(pmy)
 
-    local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+    local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
 
     -- Pick a navigable tile beside the pill (nearest the bot first), skipping
     -- any that prior ticks proved unreachable. Stick with the committed tile
@@ -1627,7 +1629,7 @@ local function attack_pill_steer(state, world, info, goal)
       local c = pick_neighbour()
       if not c then
         goal._hardline_abort = "no navigable tile beside pill"
-        if info.speed > 0 then keys = keys | KEY_SLOWER end
+        if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
         return keys, taps
       end
       goal._hardline_mx, goal._hardline_my = c.mx, c.my
@@ -1650,13 +1652,13 @@ local function attack_pill_steer(state, world, info, goal)
       -- Chosen tile is unreachable — blacklist it and re-pick next tick.
       goal._hardline_bad[goal._hardline_my * 256 + goal._hardline_mx] = true
       goal._hardline_mx, goal._hardline_my = nil, nil
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
       return keys, taps
     end
 
     -- trace_last_search returns a FLAT array {x1,y1,x2,y2,...}; waypoint i is
     -- (trace[2*i-1], trace[2*i]) and the count is #trace // 2.
-    local tn = trace and (#trace // 2) or 0
+    local tn = trace and (__idiv(#trace, 2)) or 0
 
     -- Overlay: the path the hardline take is driving (magenta).
     if BRAIN_DEBUG_MODE and viz.is_on("hardline_path") and tn > 1 then
@@ -1676,11 +1678,11 @@ local function attack_pill_steer(state, world, info, goal)
     local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(lookx), U.m2w(looky))
     local mcorr = U.adiff(info.direction, move_dir)
     local k, t = nav_turn_speed(mcorr, info.speed, 48, 4)
-    keys = keys | k
-    taps = taps | t
+    keys = bit.bor(keys, k)
+    taps = bit.bor(taps, t)
 
     -- Extend gunsight to max so the shot reaches.
-    if info.gunrange < C.GUNSIGHT_MAX then keys = keys | KEY_MORERANGE end
+    if info.gunrange < C.GUNSIGHT_MAX then keys = bit.bor(keys, KEY_MORERANGE) end
 
     -- Within (shoot distance + 1) tiles of the pill, fire whenever the shot
     -- will hit the pillbox and NOT a base / other pill / allied tank. Shells
@@ -1691,7 +1693,7 @@ local function attack_pill_steer(state, world, info, goal)
     local dist_to_pill = U.wdist(info.tankx, info.tanky, pill_wx, pill_wy)
     if dist_to_pill <= fire_w and info.shells > C.SHELL_RESERVE
        and shot_path_clear(info, world, pill_wx, pill_wy, pmx, pmy) then
-      keys = keys | KEY_SHOOT
+      keys = bit.bor(keys, KEY_SHOOT)
     end
     return keys, taps
   end
@@ -1713,8 +1715,8 @@ local function tank_combat_steer(state, world, info, goal)
   if goal.kind ~= "attack_tank" then return nil end
   local keys = 0
   local taps = 0
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local now = state.tick
 
   -- Find the current target tank from perception (it moves every tick)
@@ -1750,10 +1752,10 @@ local function tank_combat_steer(state, world, info, goal)
       local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny))
       local corr = U.adiff(info.direction, move_dir)
       local k, t = nav_turn_speed(corr, info.speed)
-      keys = keys | k
-      taps = taps | t
+      keys = bit.bor(keys, k)
+      taps = bit.bor(taps, t)
     else
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     end
     log.reason("steer", { mode = "tank_combat_lost", goal_mx = goal.mx, goal_my = goal.my })
     return keys, taps
@@ -1837,7 +1839,7 @@ local function tank_combat_steer(state, world, info, goal)
 
   -- Gunsight at max range
   if info.gunrange < C.GUNSIGHT_MAX then
-    keys = keys | KEY_MORERANGE
+    keys = bit.bor(keys, KEY_MORERANGE)
   end
 
   -- Pillbox-crossfire disengage (applies in EVERY phase — this is the one
@@ -1848,7 +1850,7 @@ local function tank_combat_steer(state, world, info, goal)
     goal.substate = "disengage"
     log.reason("steer", { mode = "tank_combat_pill_danger",
       danger = _pdanger, thr = C.TANK_COMBAT_DEFENDED_DANGER })
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
   end
 
@@ -1861,7 +1863,7 @@ local function tank_combat_steer(state, world, info, goal)
     -- Will be invalidated next replan
     log.reason("steer", { mode = "tank_combat_disengage",
       arm = info.armour, sh = info.shells })
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     return keys, taps
   end
 
@@ -1923,14 +1925,14 @@ local function tank_combat_steer(state, world, info, goal)
         if wall_dist < 768 then  -- within 3 tiles
           local aim_dir = U.aim_at(info.tankx, info.tanky, wall_wx, wall_wy)
           local corr    = U.adiff(info.direction, aim_dir)
-          if     corr >  10 then keys = keys | KEY_TURNRIGHT
-          elseif corr < -10 then keys = keys | KEY_TURNLEFT
-          elseif corr >   2 then taps = taps | KEY_TURNRIGHT
-          elseif corr <  -2 then taps = taps | KEY_TURNLEFT
+          if     corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+          elseif corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+          elseif corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+          elseif corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
           end
-          if info.speed > 0 then keys = keys | KEY_SLOWER end
+          if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
           if math.abs(corr) < 8 then
-            taps = taps | KEY_SHOOT
+            taps = bit.bor(taps, KEY_SHOOT)
           end
           state.wall_clearing = true
           log.reason("steer", {
@@ -1947,10 +1949,10 @@ local function tank_combat_steer(state, world, info, goal)
       local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny))
       local corr = U.adiff(info.direction, move_dir)
       local k, t = nav_turn_speed(corr, info.speed)
-      keys = keys | k
-      taps = taps | t
+      keys = bit.bor(keys, k)
+      taps = bit.bor(taps, t)
     else
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     end
 
     if BRAIN_DEBUG_MODE and viz.is_on("tank_combat_viz") then
@@ -2014,8 +2016,8 @@ local function tank_combat_steer(state, world, info, goal)
   -- turn-rate and lets the ramp build, swinging onto target fast. The
   -- right call in a chaotic point-blank fight where some overshoot/
   -- oscillation is acceptable.
-  if     aim_corr >  1 then keys = keys | KEY_TURNRIGHT
-  elseif aim_corr < -1 then keys = keys | KEY_TURNLEFT
+  if     aim_corr >  1 then keys = bit.bor(keys, KEY_TURNRIGHT)
+  elseif aim_corr < -1 then keys = bit.bor(keys, KEY_TURNLEFT)
   end
 
   -- Fire when aimed — wider tolerance because lead prediction compensates.
@@ -2036,15 +2038,15 @@ local function tank_combat_steer(state, world, info, goal)
   goal._engage_stuck_my = tmy
   if _aim_ok and _shells_ok then
     local _clear = shot_path_clear(info, world, pred_wx, pred_wy,
-                                   math.floor(pred_wx) >> 8,
-                                   math.floor(pred_wy) >> 8)
+                                   bit.rshift(math.floor(pred_wx), 8),
+                                   bit.rshift(math.floor(pred_wy), 8))
     if _clear then
-      keys = keys | KEY_SHOOT
+      keys = bit.bor(keys, KEY_SHOOT)
       goal._engage_blocked_ticks = 0
     elseif _stuck_in_place then
       goal._engage_blocked_ticks = (goal._engage_blocked_ticks or 0) + 1
       if goal._engage_blocked_ticks >= C.TANK_COMBAT_STUCK_FIRE_TICKS then
-        keys = keys | KEY_SHOOT
+        keys = bit.bor(keys, KEY_SHOOT)
         log.event("tank_combat_stuck_fire",
           string.format("blocked_ticks=%d aim_corr=%.0f dist=%.1f",
                         goal._engage_blocked_ticks, aim_corr, dist_tiles))
@@ -2061,32 +2063,32 @@ local function tank_combat_steer(state, world, info, goal)
   -- Distance control: maintain optimal range with jinking
   if dist_tiles < C.TANK_COMBAT_TOO_CLOSE then
     -- Too close: reverse away
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     -- Jink by turning slightly off-axis — but ONLY when the aim turn above
     -- isn't already holding a turn key. Otherwise the jink tap presses the
     -- opposite turn in the same engine read, the two cancel to a near-zero
     -- net turn, and we're back to slow-motion rotation. Aim wins; jink only
     -- fires when aim is inside the deadband (no hold active).
-    if (keys & (KEY_TURNLEFT | KEY_TURNRIGHT)) == 0 then
+    if (bit.band(keys, (bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT)))) == 0 then
       if jink_offset > 0 then
-        taps = taps | KEY_TURNRIGHT
+        taps = bit.bor(taps, KEY_TURNRIGHT)
       else
-        taps = taps | KEY_TURNLEFT
+        taps = bit.bor(taps, KEY_TURNLEFT)
       end
     end
   elseif dist_tiles <= C.TANK_COMBAT_ENGAGE_RANGE then
     -- In range: hold moderate speed for evasion, use jink
     local desired_speed = 12  -- keep moving to dodge
     if info.speed > desired_speed + 4 then
-      keys = keys | KEY_SLOWER
+      keys = bit.bor(keys, KEY_SLOWER)
     elseif info.speed < desired_speed then
-      keys = keys | KEY_FASTER
+      keys = bit.bor(keys, KEY_FASTER)
     end
   end
 
   -- Combat HUD: always shows current state when tank_combat_viz is on
   if BRAIN_DEBUG_MODE and viz.is_on("tank_combat_viz") then
-    local firing = (keys & KEY_SHOOT) ~= 0
+    local firing = (bit.band(keys, KEY_SHOOT)) ~= 0
     local aim_ok = math.abs(aim_corr) < 8
     local shells_ok = info.shells > C.TANK_COMBAT_FLEE_SHELLS
     local twx_f = info.tankx / 256.0
@@ -2115,7 +2117,7 @@ local function tank_combat_steer(state, world, info, goal)
     spd_wu = target.speed / 4,
     wdist = wdist, shell_t = shell_travel_ticks,
     jink = jink_offset,
-    firing = (keys & KEY_SHOOT) ~= 0,
+    firing = (bit.band(keys, KEY_SHOOT)) ~= 0,
   })
   return keys, taps
 end
@@ -2137,8 +2139,8 @@ function M.steer(state, world, info, goal)
   end
   local keys = 0
   local taps = 0
-  local tmx  = info.tankx >> 8
-  local tmy  = info.tanky >> 8
+  local tmx  = bit.rshift(info.tankx, 8)
+  local tmy  = bit.rshift(info.tanky, 8)
   state._steer_lx = nil
   state._steer_ly = nil
   if goal.kind ~= "kill_lgm" then
@@ -2174,8 +2176,8 @@ function M.steer(state, world, info, goal)
     local twx, twy = info.tankx / 256.0, info.tanky / 256.0
     local trigger_step, trigger_mx, trigger_my
     for i = 1, steps do
-      local amx = (info.tankx + sdir * 2 * i) >> 8
-      local amy = (info.tanky - cdir * 2 * i) >> 8
+      local amx = bit.rshift((info.tankx + sdir * 2 * i), 8)
+      local amy = bit.rshift((info.tanky - cdir * 2 * i), 8)
       if U.ttype(amx, amy) == C.T_DEEPSEA then
         trigger_step, trigger_mx, trigger_my = i, amx, amy
         break
@@ -2238,10 +2240,10 @@ function M.steer(state, world, info, goal)
       if not info.inboat then
         local sdir    = U.bsin(info.direction)
         local cdir    = U.bcos(info.direction)
-        local amx = (info.tankx + sdir * 2) >> 8   -- 1 tile ahead only
-        local amy = (info.tanky - cdir * 2) >> 8
+        local amx = bit.rshift((info.tankx + sdir * 2), 8)   -- 1 tile ahead only
+        local amy = bit.rshift((info.tanky - cdir * 2), 8)
         if U.ttype(amx, amy) == C.T_DEEPSEA then
-          k = (k & ~KEY_FASTER) | KEY_SLOWER
+          k = bit.bor((bit.band(k, bit.bnot(KEY_FASTER))), KEY_SLOWER)
           if BRAIN_DEBUG_MODE then
             viz.rect("cliff_safety", amx + 0.1, amy + 0.1, amx + 0.9, amy + 0.9,
                          255, 140, 0, 180)
@@ -2354,7 +2356,7 @@ function M.steer(state, world, info, goal)
     -- (farming, opportunistic build) before chasing new goals.
     -- Was incorrectly placed inside attack_pill_steer where it was
     -- unreachable; moved here to actually fire.
-    if info.speed > 0 then keys = keys | KEY_SLOWER end
+    if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     if BRAIN_PROFILE then
       local _total_us = clock_us() - _t_nav_dispatch_start
       local _setup_us = _total_us - _t_path_us - _t_los_us
@@ -2563,8 +2565,8 @@ function M.steer(state, world, info, goal)
     -- cached goal.wx/wy from when the goal was created — the LGM moves).
     -- Tile coords still come from goal.mx/my for the A* path target.
     if goal.kind == "rescue_lgm" then
-      nav_mx = info.man_x >> 8
-      nav_my = info.man_y >> 8
+      nav_mx = bit.rshift(info.man_x, 8)
+      nav_my = bit.rshift(info.man_y, 8)
       nav_wx = info.man_x
       nav_wy = info.man_y
     end
@@ -2825,10 +2827,10 @@ function M.steer(state, world, info, goal)
         local corr = U.adiff(info.direction, offset_dir)
         -- Retreat: high max speed, low min speed — escape ASAP
         local k, t = nav_turn_speed(corr, info.speed, 64, 2)
-        keys = keys | k
-        taps = taps | t
+        keys = bit.bor(keys, k)
+        taps = bit.bor(taps, t)
       else
-        if info.speed > 0 then keys = keys | KEY_SLOWER end
+        if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
       end
 
       log.reason("steer", {
@@ -2854,7 +2856,7 @@ function M.steer(state, world, info, goal)
     and U.mdist(tmx, tmy, goal.mx, goal.my) <= 2)
   if move_dir == nil and not attack_in_range and not attack_base_adjacent then
     if info.speed > 0 then
-      keys = keys | KEY_SLOWER
+      keys = bit.bor(keys, KEY_SLOWER)
     end
     if BRAIN_PROFILE then
       local _total_us = _t_nav_apply_start - _t_nav_dispatch_start
@@ -2921,13 +2923,13 @@ function M.steer(state, world, info, goal)
               state.wall_clearing = true
               local aim_dir = U.aim_at(info.tankx, info.tanky, base_wx, base_wy)
               local corr    = U.adiff(info.direction, aim_dir)
-              if     corr >  10 then keys = keys | KEY_TURNRIGHT
-              elseif corr < -10 then keys = keys | KEY_TURNLEFT
-              elseif corr >   2 then taps = taps | KEY_TURNRIGHT
-              elseif corr <  -2 then taps = taps | KEY_TURNLEFT
+              if     corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+              elseif corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+              elseif corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+              elseif corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
               end
-              if info.speed > 0 then keys = keys | KEY_SLOWER end
-              if math.abs(corr) < 8 then taps = taps | KEY_SHOOT end
+              if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+              if math.abs(corr) < 8 then taps = bit.bor(taps, KEY_SHOOT) end
               if state.tick % 10 == 0 then
                 log.reason("steer", {
                   mode = "base_clear",
@@ -2954,20 +2956,20 @@ function M.steer(state, world, info, goal)
             local corr    = U.adiff(info.direction, aim_dir)
 
             -- Turn to face the wall
-            if     corr >  10 then keys = keys | KEY_TURNRIGHT
-            elseif corr < -10 then keys = keys | KEY_TURNLEFT
-            elseif corr >   2 then taps = taps | KEY_TURNRIGHT
-            elseif corr <  -2 then taps = taps | KEY_TURNLEFT
+            if     corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+            elseif corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+            elseif corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+            elseif corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
             end
 
             -- Brake to a stop so we hold position while firing
             if info.speed > 0 then
-              keys = keys | KEY_SLOWER
+              keys = bit.bor(keys, KEY_SLOWER)
             end
 
             -- Fire when roughly aimed
             if math.abs(corr) < 8 then
-              taps = taps | KEY_SHOOT
+              taps = bit.bor(taps, KEY_SHOOT)
             end
 
             if state.tick % 10 == 0 then
@@ -2994,10 +2996,10 @@ function M.steer(state, world, info, goal)
     -- Turn toward move_dir
     local correction = U.adiff(info.direction, move_dir)
 
-    if     correction >  10 then keys = keys | KEY_TURNRIGHT
-    elseif correction < -10 then keys = keys | KEY_TURNLEFT
-    elseif correction >   2 then taps = taps | KEY_TURNRIGHT
-    elseif correction <  -2 then taps = taps | KEY_TURNLEFT
+    if     correction >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+    elseif correction < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+    elseif correction >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+    elseif correction <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
     end
 
     local eff_dist = goal_dist
@@ -3101,8 +3103,8 @@ function M.steer(state, world, info, goal)
       local sdir    = U.bsin(info.direction)
       local cdir    = U.bcos(info.direction)
       for i = 1, steps do
-        local amx = (info.tankx + sdir * 2 * i) >> 8
-        local amy = (info.tanky - cdir * 2 * i) >> 8
+        local amx = bit.rshift((info.tankx + sdir * 2 * i), 8)
+        local amy = bit.rshift((info.tanky - cdir * 2 * i), 8)
         if U.ttype(amx, amy) == C.T_DEEPSEA then
           cliff = true
           cliff_hit_mx, cliff_hit_my, cliff_hit_steps = amx, amy, i
@@ -3124,8 +3126,8 @@ function M.steer(state, world, info, goal)
       local cur_tt = U.ttype(tmx, tmy)
       local on_water = WATER_TT[cur_tt]
       if on_water then
-        local next_mx = (info.tankx + U.bsin(move_dir) * 2) >> 8
-        local next_my = (info.tanky - U.bcos(move_dir) * 2) >> 8
+        local next_mx = bit.rshift((info.tankx + U.bsin(move_dir) * 2), 8)
+        local next_my = bit.rshift((info.tanky - U.bcos(move_dir) * 2), 8)
         if U.in_map(next_mx, next_my) then
           local next_tt = U.ttype(next_mx, next_my)
           if next_tt ~= C.T_RIVER and next_tt ~= C.T_DEEPSEA then
@@ -3248,8 +3250,8 @@ function M.steer(state, world, info, goal)
     if lgm_out and not lgm_is_farming and goal.kind ~= "escape_water"
        and goal.kind ~= "rescue_lgm" then
       -- Estimate LGM speed: use the terrain at the LGM's position
-      local man_mx = info.man_x >> 8
-      local man_my = info.man_y >> 8
+      local man_mx = bit.rshift(info.man_x, 8)
+      local man_my = bit.rshift(info.man_y, 8)
       local man_tt = U.ttype(man_mx, man_my)
       local man_spd = C.MAN_SPEED[man_tt] or 0
       -- If LGM is on his blessed build square, he moves at full speed
@@ -3273,29 +3275,29 @@ function M.steer(state, world, info, goal)
 
     if boat_exit and abs_corr < 24 then
       _throttle_branch = "boat_exit_aligned"
-      keys = (keys & ~KEY_SLOWER) | KEY_FASTER
+      keys = bit.bor((bit.band(keys, bit.bnot(KEY_SLOWER))), KEY_FASTER)
     elseif boat_exit then
       _throttle_branch = "boat_exit_turning"
       if info.speed > turn_max_speed + 4 then
-        keys = keys | KEY_SLOWER
+        keys = bit.bor(keys, KEY_SLOWER)
       elseif info.speed < 8 then
-        keys = keys | KEY_FASTER
+        keys = bit.bor(keys, KEY_FASTER)
       end
     elseif tank_pace and info.speed > tank_pace then
       _throttle_branch = "lgm_pace_brake"
-      keys = keys | KEY_SLOWER
+      keys = bit.bor(keys, KEY_SLOWER)
     elseif tank_pace and tank_pace > 0 and info.speed < tank_pace then
       _throttle_branch = "lgm_pace_accel"
-      keys = keys | KEY_FASTER
+      keys = bit.bor(keys, KEY_FASTER)
     elseif lgm_speed_cap and lgm_speed_cap == 0 then
       _throttle_branch = "lgm_halt"
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     elseif cliff and goal.kind ~= "escape_water" then
       _throttle_branch = "cliff_brake"
-      keys = (keys & ~KEY_FASTER) | KEY_SLOWER
+      keys = bit.bor((bit.band(keys, bit.bnot(KEY_FASTER))), KEY_SLOWER)
     elseif goal.kind == "escape_water" then
       _throttle_branch = "escape_water"
-      keys = keys | KEY_FASTER
+      keys = bit.bor(keys, KEY_FASTER)
     elseif state._kill_lgm_halt then
       _throttle_branch = "kill_lgm_halt"
       -- kill_lgm in shooting range: full stop, only the turn keys
@@ -3303,15 +3305,15 @@ function M.steer(state, world, info, goal)
       -- fire so the tank pivots in place to align the crosshair.
       -- Init.lua's kill_lgm fire block handles the gunrange driver
       -- + fire trigger.
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     elseif _approach_brake_active then
       _throttle_branch = "ap_brake_zone"
       local sdist_wu = _approach_sdist_wu
       local desired = math.max(4, math.floor(sdist_wu * 0.03))
       if info.speed > desired + 4 then
-        keys = keys | KEY_SLOWER
+        keys = bit.bor(keys, KEY_SLOWER)
       elseif info.speed < desired and sdist_wu > 128 then
-        keys = keys | KEY_FASTER
+        keys = bit.bor(keys, KEY_FASTER)
       end
     elseif facing_away and C.FACING_AWAY_BRAKE_ENABLED then
       _throttle_branch = "facing_away"
@@ -3333,13 +3335,13 @@ function M.steer(state, world, info, goal)
       -- than braking and re-accelerating.
       local facing_brake = (under_fire or race_mode) and 16 or 8
       if info.speed > facing_brake then
-        keys = keys | KEY_SLOWER
+        keys = bit.bor(keys, KEY_SLOWER)
       elseif info.speed == 0 then
-        keys = keys | KEY_FASTER
+        keys = bit.bor(keys, KEY_FASTER)
       end
     elseif orbit_brake then
       _throttle_branch = "orbit_brake"
-      if info.speed > 8 then keys = keys | KEY_SLOWER end
+      if info.speed > 8 then keys = bit.bor(keys, KEY_SLOWER) end
     elseif eff_dist < brake_dist and not plow_through then
       _throttle_branch = "approach_brake"
       -- Approach braking: slow proportionally to remaining distance.
@@ -3361,27 +3363,27 @@ function M.steer(state, world, info, goal)
       -- don't coast past the target with leftover momentum.
       local brake_tol = needs_exact_center and 1 or 4
       if info.speed > desired_speed + brake_tol then
-        keys = keys | KEY_SLOWER
+        keys = bit.bor(keys, KEY_SLOWER)
       elseif info.speed < desired_speed and (eff_dist > 128 or needs_exact_center) then
         -- Normally only accelerate when far enough out (> 128 wu) so we
         -- don't overshoot. For exact-center goals always allow nudging
         -- forward as long as we're not yet within tolerance.
-        keys = keys | KEY_FASTER
+        keys = bit.bor(keys, KEY_FASTER)
       end
     elseif plow_through then
       _throttle_branch = "plow_through"
       if info.speed < turn_max_speed then
-        keys = keys | KEY_FASTER
+        keys = bit.bor(keys, KEY_FASTER)
       elseif info.speed > turn_max_speed + 4 then
-        keys = keys | KEY_SLOWER
+        keys = bit.bor(keys, KEY_SLOWER)
       end
     else
       _throttle_branch = "cruise"
       -- (intentionally fall-through — body sets keys below)
       if info.speed > turn_max_speed + 4 then
-        keys = keys | KEY_SLOWER
+        keys = bit.bor(keys, KEY_SLOWER)
       elseif info.speed < turn_max_speed then
-        keys = keys | KEY_FASTER
+        keys = bit.bor(keys, KEY_FASTER)
       end
     end
 
@@ -3392,10 +3394,10 @@ function M.steer(state, world, info, goal)
     -- "tank stuck at speed 0 despite being far from goal" class of bug.
     if BRAIN_DEBUG_MODE and viz.is_on("hud_throttle") and viz.hud_text then
       local _kparts = {}
-      if (keys & KEY_FASTER)    ~= 0 then _kparts[#_kparts+1] = "FAST" end
-      if (keys & KEY_SLOWER)    ~= 0 then _kparts[#_kparts+1] = "SLOW" end
-      if (keys & KEY_TURNLEFT)  ~= 0 then _kparts[#_kparts+1] = "L"    end
-      if (keys & KEY_TURNRIGHT) ~= 0 then _kparts[#_kparts+1] = "R"    end
+      if (bit.band(keys, KEY_FASTER))    ~= 0 then _kparts[#_kparts+1] = "FAST" end
+      if (bit.band(keys, KEY_SLOWER))    ~= 0 then _kparts[#_kparts+1] = "SLOW" end
+      if (bit.band(keys, KEY_TURNLEFT))  ~= 0 then _kparts[#_kparts+1] = "L"    end
+      if (bit.band(keys, KEY_TURNRIGHT)) ~= 0 then _kparts[#_kparts+1] = "R"    end
       local _kstr = #_kparts > 0 and table.concat(_kparts, "+") or "(none)"
       viz.hud_text("hud_throttle", 10, 156,
         string.format("THROTTLE: %s  keys=[%s]", _throttle_branch, _kstr),
@@ -3421,7 +3423,7 @@ function M.steer(state, world, info, goal)
       if pf.next_mx >= 0 then
         local next_tt = U.ttype(pf.next_mx, pf.next_my)
         if next_tt == C.T_BUILDING or next_tt == C.T_HALFBUILD then
-          taps = taps | KEY_SHOOT
+          taps = bit.bor(taps, KEY_SHOOT)
         end
       end
     end
@@ -3444,7 +3446,7 @@ function M.steer(state, world, info, goal)
             local aim = U.aim_at(info.tankx, info.tanky, U.m2w(et.mx), U.m2w(et.my))
             if math.abs(U.adiff(info.direction, aim)) < 8
                and shot_path_clear(info, world, U.m2w(et.mx), U.m2w(et.my), et.mx, et.my) then
-              taps = taps | KEY_SHOOT
+              taps = bit.bor(taps, KEY_SHOOT)
               shot_fired = true
               if BRAIN_DEBUG_MODE then
                 viz.line("tank_combat_viz", info.tankx / 256.0, info.tanky / 256.0,
@@ -3466,7 +3468,7 @@ function M.steer(state, world, info, goal)
             if pd <= 6 then
               local aim = U.aim_at(info.tankx, info.tanky, U.m2w(p.mx), U.m2w(p.my))
               if math.abs(U.adiff(info.direction, aim)) < 6 then
-                taps = taps | KEY_SHOOT
+                taps = bit.bor(taps, KEY_SHOOT)
                 shot_fired = true
                 break
               end
@@ -3480,11 +3482,11 @@ function M.steer(state, world, info, goal)
     -- Allowed in a boat: shell reaches the water-edge wall blocking us.
     if info.tank_obstructed and math.abs(correction) < 10
        and state.stuck_for > 0 then
-      local bx = (info.tankx + U.bsin(info.direction) * 1) >> 8
-      local by = (info.tanky - U.bcos(info.direction) * 1) >> 8
+      local bx = bit.rshift((info.tankx + U.bsin(info.direction) * 1), 8)
+      local by = bit.rshift((info.tanky - U.bcos(info.direction) * 1), 8)
       local bt = U.ttype(bx, by)
       if (bt == C.T_BUILDING or bt == C.T_HALFBUILD) and info.shells > 0 then
-        taps = taps | KEY_SHOOT
+        taps = bit.bor(taps, KEY_SHOOT)
       end
     end
 
@@ -3528,20 +3530,20 @@ function M.steer(state, world, info, goal)
     -- Gunsight at max range: shells travel further, hitting the pill from
     -- the greatest possible distance.
     if info.gunrange < C.GUNSIGHT_MAX then
-      keys = keys | KEY_MORERANGE
+      keys = bit.bor(keys, KEY_MORERANGE)
     end
 
     -- Override navigation turn keys: point at the pill
-    keys = keys & ~(KEY_TURNLEFT | KEY_TURNRIGHT | KEY_FASTER | KEY_SLOWER)
-    taps = taps & ~(KEY_TURNLEFT | KEY_TURNRIGHT)
-    if     corr >  10 then keys = keys | KEY_TURNRIGHT
-    elseif corr < -10 then keys = keys | KEY_TURNLEFT
-    elseif corr >   2 then taps = taps | KEY_TURNRIGHT
-    elseif corr <  -2 then taps = taps | KEY_TURNLEFT
+    keys = bit.band(keys, bit.bnot((bit.bor(bit.bor(bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT), KEY_FASTER), KEY_SLOWER))))
+    taps = bit.band(taps, bit.bnot((bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT))))
+    if     corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+    elseif corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+    elseif corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+    elseif corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
     end
-    local still_correcting = (taps & (KEY_TURNLEFT | KEY_TURNRIGHT)) ~= 0
+    local still_correcting = (bit.band(taps, (bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT)))) ~= 0
     if math.abs(corr) < 3 and not still_correcting then
-      keys = keys | KEY_SHOOT
+      keys = bit.bor(keys, KEY_SHOOT)
     end
 
     -- Movement during engage: stay at max range where pill shots are hardest
@@ -3555,16 +3557,16 @@ function M.steer(state, world, info, goal)
     if wdist_pill > C.ATTACK_PILL_RANGE * 256 then
       -- Knocked out of range: gently push back in
       if info.speed < 4 and math.abs(corr) < 16 then
-        keys = keys | KEY_FASTER
+        keys = bit.bor(keys, KEY_FASTER)
       end
     elseif wdist_pill < too_close_wu then
       -- Way too close: reverse away from pill
-      keys = keys & ~KEY_FASTER
-      keys = keys | KEY_SLOWER
+      keys = bit.band(keys, bit.bnot(KEY_FASTER))
+      keys = bit.bor(keys, KEY_SLOWER)
       sdbg("engage: TOO CLOSE dist=%.0f standoff=%d, reversing", wdist_pill, standoff_wu)
     else
       -- At standoff: stop and shoot
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     end
 
     log.reason("steer", {
@@ -3587,27 +3589,27 @@ function M.steer(state, world, info, goal)
       local corr    = U.adiff(info.direction, aim_dir)
 
       if info.gunrange < C.GUNSIGHT_MAX then
-        keys = keys | KEY_MORERANGE
+        keys = bit.bor(keys, KEY_MORERANGE)
       end
 
       -- Override turn keys: point at the base
-      keys = keys & ~(KEY_TURNLEFT | KEY_TURNRIGHT)
-      taps = taps & ~(KEY_TURNLEFT | KEY_TURNRIGHT)
-      if     corr >  10 then keys = keys | KEY_TURNRIGHT
-      elseif corr < -10 then keys = keys | KEY_TURNLEFT
-      elseif corr >   2 then taps = taps | KEY_TURNRIGHT
-      elseif corr <  -2 then taps = taps | KEY_TURNLEFT
+      keys = bit.band(keys, bit.bnot((bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT))))
+      taps = bit.band(taps, bit.bnot((bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT))))
+      if     corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+      elseif corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+      elseif corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+      elseif corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
       end
-      local still_correcting = (taps & (KEY_TURNLEFT | KEY_TURNRIGHT)) ~= 0
+      local still_correcting = (bit.band(taps, (bit.bor(KEY_TURNLEFT, KEY_TURNRIGHT)))) ~= 0
       if math.abs(corr) < 3 and not still_correcting
          and shot_path_clear(info, world, goal.wx, goal.wy, goal.mx, goal.my) then
-        keys = keys | KEY_SHOOT
+        keys = bit.bor(keys, KEY_SHOOT)
       end
 
       -- Slow down while shooting to maintain range
       if info.speed > 8 then
-        keys = keys & ~KEY_FASTER
-        keys = keys | KEY_SLOWER
+        keys = bit.band(keys, bit.bnot(KEY_FASTER))
+        keys = bit.bor(keys, KEY_SLOWER)
       end
 
       log.reason("steer", {

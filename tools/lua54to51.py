@@ -257,6 +257,26 @@ def _rewrite_unary_tilde(src, toks):
         toks = lex(src)
     return src, toks, bool(report), report
 
+def _rewrite_break_before_label(src, toks):
+    """Lua 5.1/LuaJIT require `break` to be the last statement in its block; 5.4
+    allows `break` followed by a `::label::` (the goto-continue idiom). Wrap such
+    a break as `do break end` — same semantics (break still exits the innermost
+    loop), and legal on both."""
+    report = []
+    while True:
+        idx = None
+        for i, t in enumerate(toks):
+            if t.kind == "kw" and t.val == "break" and i + 1 < len(toks) \
+               and toks[i+1].kind == "op" and toks[i+1].val == "::":
+                idx = i; break
+        if idx is None:
+            break
+        t = toks[idx]
+        src = src[:t.pos] + "do break end" + src[t.pos + len(t.val):]
+        toks = lex(src)
+        report.append((t.line, "break", "do break end"))
+    return src, toks, bool(report), report
+
 def _rewrite_op(src, toks, op, emit):
     """Rewrite all binary `op` occurrences (left-to-right) and re-lex."""
     changed = False; report = []
@@ -281,6 +301,9 @@ def _rewrite_op(src, toks, op, emit):
 def rewrite_source(src, path):
     toks = lex(src)
     report = []
+    # -1) break-before-label (5.4 -> 5.1 statement-position rule).
+    src, toks, _ch_brk, rep = _rewrite_break_before_label(src, toks)
+    report += rep
     # 0) unary bitwise NOT (binds tightest) before anything that captures operands.
     src, toks, need_bit, rep = _rewrite_unary_tilde(src, toks)
     report += rep

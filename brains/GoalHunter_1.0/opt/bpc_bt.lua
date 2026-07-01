@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/bpc_bt.lua — BPC (hardline) technique as a behaviour tree
 --
@@ -57,8 +58,8 @@ end
 local function approach_tick(ctx)
   local goal, state, world, info = ctx.goal, ctx.state, ctx.world, ctx.info
   if not goal.standoff_mx then return "running" end
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local sdist   = U.mdist(tmx, tmy, goal.standoff_mx, goal.standoff_my)
   local pdist_w = U.wdist(info.tankx, info.tanky, goal.wx, goal.wy)
   local in_range  = pdist_w <= (C.BPC_RANGE + 1) * 256
@@ -165,8 +166,8 @@ end
 
 local function rush_tick(ctx)
   local goal, info = ctx.goal, ctx.info
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local pdist = U.mdist(tmx, tmy, goal.mx, goal.my)
   if pdist <= C.BPC_RUSH_ARRIVE then
     print(string.format(TAG .. " BPC: arrived at pill@(%d,%d), pickup", goal.mx, goal.my))
