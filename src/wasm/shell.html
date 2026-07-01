@@ -145,7 +145,7 @@
         if (path === '/tutorial') {
             injected.tutorial = '1';
         } else if ((m = path.match(/^\/join\/(.+)$/))) {
-            injected.join_code = m[1];
+            injected.game_key = m[1];
         }
         // /practise and / fall through to single-player (no params).
         if (Object.keys(injected).length === 0) return;
@@ -187,6 +187,30 @@
 
     // On probe failure leave the flag optimistic rather than forcing it off.
     function me_unknown() { return null; }
+    </script>
+    <script src="/js/relay.js"></script>
+    <script>
+    /* Pick the closest healthy relay as early as possible, so the choice is
+       ready before the game opens its socket. Runs in parallel with the asset
+       download; the winner lands in WB_RELAY and is consumed by wbMintJoinCode
+       when it points the game socket at a relay. Never rejects — an all-down
+       probe resolves to the default. */
+    window.WB_RELAY = null;
+    window.__wbRelayReady = (function () {
+        // Only web play (a /join/<game_key> route) needs a relay; tutorial,
+        // practise, single-player and the dev proxy skip the probe entirely.
+        if (!new URLSearchParams(window.location.search).get('game_key')) {
+            return Promise.resolve(null);
+        }
+        return wbProbeRelays().then(function (region) {
+            window.WB_RELAY = region || WB_DEFAULT;
+            if (window.__wbUpdateNetInfo) { window.__wbUpdateNetInfo(); }
+            return window.WB_RELAY;
+        }).catch(function () {
+            window.WB_RELAY = WB_DEFAULT;
+            return window.WB_RELAY;
+        });
+    })();
     </script>
 </head>
 <body>
@@ -234,27 +258,16 @@
 
     <script>
         var Module = {
-            /* WebSocket transport for the emulated UDP socket. emscripten's
-               sockfs uses a full Module.websocket.url verbatim (it only
-               appends host:port to a bare "ws://"/"wss://" prefix), so the
-               game socket's host:port is irrelevant — routing lives in the
-               join_code carried by this URL.
-                 - ?join_code=<code>  : production web play via the relay.
-                 - ?proxyURL=<wsurl>  : dev/LAN escape hatch (explicit URL).
-               Must be set here, in the Module literal, so it is present when
-               the runtime initialises SOCKFS. */
+            /* WebSocket transport for the emulated UDP socket. sockfs reads
+               Module.websocket.url when the socket opens (inside the C connect,
+               after the mint returns), so the URL can be filled in late:
+                 - production web play: wbMintJoinCode() mints the single-use
+                   code and points this at the probed relay just before connect.
+                 - ?proxyURL=<wsurl>  : dev/LAN escape hatch, used verbatim.
+               Start with the dev proxy (or empty); the mint fills it in. */
             websocket: (function() {
-                var params = new URLSearchParams(window.location.search);
-                var joinCode = params.get('join_code');
-                if (joinCode) {
-                    return { url: 'wss://relay.winbolo.net/proxy?joinCode=' +
-                                  encodeURIComponent(joinCode) };
-                }
-                var devProxy = params.get('proxyURL');
-                if (devProxy) {
-                    return { url: devProxy };
-                }
-                return {};
+                var devProxy = new URLSearchParams(window.location.search).get('proxyURL');
+                return { url: devProxy || '' };
             })(),
             canvas: (function() { return document.getElementById('canvas'); })(),
             print: (function() {
@@ -352,6 +365,63 @@
                 // Session expired mid-game: stop syncing and reflect it in the chip.
                 window.WB_PREFS_AUTH = false;
                 if (window.__wbRenderAccount) { window.__wbRenderAccount({ logged_in: false }); }
+            },
+
+            /* ---- Join-code mint (relay routing + WBN token) -----------------
+               Called from gamefront_wasm.c (wasmMintJoinCode / EM_ASYNC_JS) just
+               before the game opens its socket. Mints a fresh single-use code
+               for game_key via POST /api/join (same-origin, session cookie),
+               points the game socket at the probed relay, and resolves
+               { status, code, error } for the C caller. One mint per connect —
+               a refresh or failover re-runs this and mints anew. */
+            wbMintJoinCode: function(gameKey) {
+                return fetch('/api/join', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify({ game_key: gameKey })
+                }).then(function(r) {
+                    if (r.status === 401) {
+                        // Logged out (e.g. a shared /join link opened cold):
+                        // send to login and come back here to try again.
+                        window.location.href = 'https://www.winbolo.net/login?return=' +
+                            encodeURIComponent(window.location.href);
+                        return { status: 401, code: '', error: 'Sign in to join.' };
+                    }
+                    return r.text().then(function(body) {
+                        var code = '', error = '';
+                        try {
+                            var j = JSON.parse(body);
+                            if (j && j.join_code) { code = j.join_code; }
+                            if (j && j.error) { error = j.error; }
+                        } catch (e) { error = body; }
+                        if (r.status === 200 && code) {
+                            // Route the game socket through the probed relay before
+                            // resolving — the socket opens right after the C caller
+                            // gets the code. Wait for the probe (already resolved in
+                            // practice) so the measured relay wins, not the default.
+                            return Promise.resolve(window.__wbRelayReady).then(function() {
+                                var region = window.WB_RELAY || WB_DEFAULT;
+                                Module.websocket.url = wbRelayWsUrl(region, code);
+                                return { status: 200, code: code, error: '' };
+                            });
+                        }
+                        return { status: r.status, code: code, error: error };
+                    });
+                }).catch(function() {
+                    return { status: -1, code: '', error: 'Could not reach the server to get a join code.' };
+                });
+            },
+
+            /* Called from the transport (transport_udp_client.c) whenever the
+               server rotates its key — on initial join and on each return-to-
+               lobby. Keep the address bar on the live game so a copied link, or a
+               reload after a dropped connection, mints into the current game. No
+               reload; the open connection is untouched. */
+            wbOnGameKey: function(gameKey) {
+                if (!gameKey) { return; }
+                try { history.replaceState(null, '', '/join/' + encodeURIComponent(gameKey)); }
+                catch (e) {}
             }
         };
 
@@ -362,19 +432,28 @@
             Module.setStatus('Error: ' + msg);
         };
 
-        /* Show network mode info based on URL params */
+        /* Show network mode info based on URL params. For web play the relay
+           label lands once the probe resolves (WB_RELAY); the probe calls
+           __wbUpdateNetInfo then. */
         (function() {
             var params = new URLSearchParams(window.location.search);
             var el = document.getElementById('netinfo');
             if (!el) return;
-            if (params.get('join_code')) {
-                el.textContent = '● Network: web play via relay';
-            } else if (params.get('proxyURL')) {
-                el.textContent = '● Network: UDP via proxy — ' +
-                    params.get('proxyURL');
-            } else {
-                el.textContent = '○ Network: single-player';
+            var devProxy = params.get('proxyURL');
+            var isWeb = !!params.get('game_key');
+            function update() {
+                if (isWeb) {
+                    el.textContent = window.WB_RELAY
+                        ? '● Relay: ' + wbRelayLabel(window.WB_RELAY)
+                        : '● Finding closest relay…';
+                } else if (devProxy) {
+                    el.textContent = '● Network: UDP via proxy — ' + devProxy;
+                } else {
+                    el.textContent = '○ Network: single-player';
+                }
             }
+            window.__wbUpdateNetInfo = update;
+            update();
         })();
 
         /* Prevent the browser from intercepting Ctrl+key shortcuts so they

@@ -1906,12 +1906,10 @@ void transportUdpServerBroadcastWbnRekey(ServerSim *sim) {
         if (!wbnRekeyTargetSelected(udpServer.clients[i].connected, wasVerified))
             continue;
         if (udpServer.clients[i].clientType == CLIENT_TYPE_WEB) {
-            /* A web slot can't mint a fresh player_key, and its join_code has
-             * usually expired by now, so a REKEY round-trip would only fail.
-             * Its identity is already known server-side from the cached
-             * join-code result (it survives the sim reset, like wbnWasVerified),
-             * so re-stamp it directly for the new session and re-register with
-             * the tracker instead of sending a REKEY the client can't answer. */
+            /* A web slot can't mint a fresh player_key and won't re-present its
+             * single-use join_code, so its identity is re-stamped directly from
+             * the cached join-code result (it survives the sim reset, like
+             * wbnWasVerified) rather than via a reauth round-trip. */
             if (udpServer.clients[i].wbnWebIdentityCached &&
                 udpServer.clients[i].wbnWebIsLoggedIn) {
                 udpServerApplyWebIdentity(sim, (BYTE)i);
@@ -1922,6 +1920,11 @@ void transportUdpServerBroadcastWbnRekey(ServerSim *sim) {
                 winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
                                    (BYTE)i, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
             }
+            /* Still send the REKEY so the web client learns the rotated
+             * server_key: it adopts the key and notifies JS (to keep the
+             * shareable /join/<key> URL on the live game) but does NOT reauth,
+             * so there is no wbnJoinArm here — identity was just re-stamped. */
+            transportUdpServerSendWbnRekey(&udpServer.clients[i]);
             continue;
         }
         transportUdpServerSendWbnRekey(&udpServer.clients[i]);

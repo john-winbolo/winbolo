@@ -47,6 +47,43 @@
 extern void sdl3MessageHandler(const char *message, const char *title);
 extern void wasmReportConnectFailure(const char *reason);  /* main_wasm.c */
 
+/* Mint a fresh single-use join code from the reusable game_key by awaiting
+ * Module.wbMintJoinCode (POST /api/join, cookie-authed) via ASYNCIFY — mirrors
+ * prefs_bridge_wasm.c's fetch helpers. Writes the code into out (up to outSize)
+ * on HTTP 200; on any other outcome writes a malloc'd reason string through
+ * *errOut (caller frees) when the backend supplied one. Returns the HTTP
+ * status, or -1 on a transport error. */
+EM_ASYNC_JS(int, wasmMintJoinCode,
+            (const char *gameKey, char *out, int outSize, char **errOut), {
+    try {
+        const r = await Module.wbMintJoinCode(UTF8ToString(gameKey));
+        if (r && r.status === 200 && typeof r.code === 'string') {
+            stringToUTF8(r.code, out, outSize);
+        } else if (r && typeof r.error === 'string') {
+            const len = lengthBytesUTF8(r.error) + 1;
+            const p = _malloc(len);
+            stringToUTF8(r.error, p, len);
+            setValue(errOut, p, '*');
+        }
+        return (r && r.status) ? r.status : -1;
+    } catch (e) {
+        console.error('[join] mint failed', e);
+        return -1;
+    }
+});
+
+/* Default user-facing message for a mint failure when the backend gave no
+ * error body of its own. */
+static const char *gameFrontMintFailReason(int status) {
+  switch (status) {
+    case 401: return "You must be signed in to WinBolo.net to join this game.";
+    case 403: return "This game is not accepting new players.";
+    case 404: return "That game link is no longer valid.";
+    case 409: return "This game is full.";
+    default:  return "Could not reach the server to get a join code.";
+  }
+}
+
 
 /* -------------------------------------------------------
  * URL parameter helper (WASM only)
@@ -311,33 +348,34 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   guiMessageSetHandler(sdl3MessageHandler);
 
   /* ---- Determine net mode from URL params ----
-   * Production web play is selected by ?join_code= (the WBN chooser
-   * redirects to play.winbolo.net/?join_code=<code>). A dev/LAN run may
-   * instead pass an explicit ?proxyURL=. Either selects UDP-over-WebSocket
-   * mode. shell.html points Module.websocket.url at the real relay, so the
-   * host:port handed to the transport here is an ignored sentinel —
-   * routing lives in the join_code (or the dev proxy URL). */
+   * Production web play is selected by ?game_key= (the shareable
+   * play.winbolo.net/join/<game_key> link). A dev/LAN run may instead pass an
+   * explicit ?proxyURL=. Either selects UDP-over-WebSocket mode. The single-use
+   * join code is minted from the game_key at connect time (JS POST /api/join),
+   * not carried in the URL. shell.html points Module.websocket.url at the real
+   * relay, so the host:port handed to the transport here is an ignored
+   * sentinel — routing lives in the minted join code (or the dev proxy URL). */
   netType urlNetType = netSingle;
   /* gameFrontGetUrlParam returns a shared static buffer, so copy each value
    * out before the next call overwrites it. */
-  char joinCode[128];
-  strncpy(joinCode, gameFrontGetUrlParam("join_code"), sizeof(joinCode) - 1);
-  joinCode[sizeof(joinCode) - 1] = '\0';
+  char gameKey[128];
+  strncpy(gameKey, gameFrontGetUrlParam("game_key"), sizeof(gameKey) - 1);
+  gameKey[sizeof(gameKey) - 1] = '\0';
   char devProxy[1024];
   strncpy(devProxy, gameFrontGetUrlParam("proxyURL"), sizeof(devProxy) - 1);
   devProxy[sizeof(devProxy) - 1] = '\0';
   bool wantTutorial = (gameFrontGetUrlParam("tutorial")[0] != '\0');
-  bool haveJoinCode = (joinCode[0] != '\0');
-  if (haveJoinCode || devProxy[0] != '\0') {
+  bool haveGameKey = (gameKey[0] != '\0');
+  if (haveGameKey || devProxy[0] != '\0') {
     urlNetType = netUdp;
   }
 
   if (urlNetType == netUdp) {
-    if (haveJoinCode) {
-      /* Production: routing is in the join_code carried by
-       * Module.websocket.url; the transport target is a sentinel the relay
-       * never sees. Use a loopback literal so no DNS lookup is attempted. */
-      printf("[WASM] netUdp mode: web play via relay (join_code)\n");
+    if (haveGameKey) {
+      /* Production: routing rides Module.websocket.url (the join code JS mints
+       * from the game_key); the transport target is a sentinel the relay never
+       * sees. Use a loopback literal so no DNS lookup is attempted. */
+      printf("[WASM] netUdp mode: web play via relay (game_key)\n");
       strncpy(gameFrontUdpAddress, "127.0.0.1", sizeof(gameFrontUdpAddress) - 1);
       gameFrontUdpAddress[sizeof(gameFrontUdpAddress) - 1] = '\0';
       gameFrontTargetUdp = 1;
@@ -391,7 +429,29 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       printf("[WASM] network play: join name=%s\n", gameFrontName);
     }
 
-    const char *wbnArg = haveJoinCode ? joinCode
+    /* Mint the single-use join code from the game_key just before connecting.
+     * A fresh code is minted on every (re)connect: a page refresh or relay
+     * failover re-runs this path and mints again, so a consumed code is never
+     * reused. The mint blocks here via ASYNCIFY; on failure we surface the
+     * reason and bail into the error dialog rather than connecting anonymously. */
+    char joinCode[128] = "";
+    if (haveGameKey) {
+      char *mintErr = NULL;
+      int mintStatus = wasmMintJoinCode(gameKey, joinCode, sizeof(joinCode),
+                                        &mintErr);
+      if (mintStatus != 200 || joinCode[0] == '\0') {
+        const char *reason = (mintErr && mintErr[0] != '\0')
+                           ? mintErr : gameFrontMintFailReason(mintStatus);
+        printf("[WASM] join-code mint failed (status %d): %s\n",
+               mintStatus, reason);
+        wasmReportConnectFailure(reason);
+        free(mintErr);
+        return FALSE;
+      }
+      free(mintErr);
+    }
+
+    const char *wbnArg = haveGameKey ? joinCode
                        : (gameFrontWbnUse ? gameFrontWbnToken : "");
     clientSimConnectUdp(humanSim, gameFrontUdpAddress,
                         gameFrontTargetUdp,

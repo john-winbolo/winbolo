@@ -55,6 +55,18 @@
 #include "../winbolonet/winbolonet_client.h"
 #include "../winbolonet/winbolonet_core.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+/* Notify JS whenever the live WBN server_key is set or rotates, so the web
+ * client can keep its shareable /join/<key> URL pointed at the game this
+ * connection is currently playing (the backend mints join codes against this
+ * key, and it rotates each return-to-lobby). JS uses it purely to
+ * history.replaceState — no reconnect, no re-mint. */
+EM_JS(void, wbOnGameKey, (const char *key), {
+    if (Module.wbOnGameKey) Module.wbOnGameKey(UTF8ToString(key));
+});
+#endif
+
 /* ================================================================
  * CLIENT SIDE
  * ================================================================ */
@@ -2732,9 +2744,24 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * rejection. On failure we simply don't retry — the next genuine
          * rotation will trigger a fresh attempt. */
         keyChanged = (strcmp(newKey, c->wbnServerKey) != 0);
+#ifdef __EMSCRIPTEN__
+        bool wasEmpty = (c->wbnServerKey[0] == '\0');
+#endif
         memcpy(c->wbnServerKey, newKey, sizeof(c->wbnServerKey));
         if (keyChanged) {
+#ifdef __EMSCRIPTEN__
+            /* Web slot: reauth re-presents the single-use join_code, so only do
+             * it for the initial key (the one delivery that verifies the code).
+             * On later return-to-lobby rotations the server re-stamps the web
+             * identity itself, so we just adopt the new key and hand it to JS to
+             * refresh the shareable URL — no reauth, no re-mint. */
+            if (wasEmpty) {
+                udpClientSendWbnReauth(c);
+            }
+            wbOnGameKey(c->wbnServerKey);
+#else
             udpClientSendWbnReauth(c);
+#endif
         }
         break;
     }

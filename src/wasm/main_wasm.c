@@ -437,7 +437,7 @@ int main(int argc, char *argv[]) {
     wbPrefsSyncNow();
   }
 
-  /* Single-player name selection. Network play (?join_code=) already set its
+  /* Single-player name selection. Network play (?game_key=) already set its
    * join name inside gameFrontStart, before the JOIN went out (the account
    * name from /api/v1/me, or a web<rand> fallback) — so there's nothing to do
    * for the network case here. Setting it now would be too late (the JOIN has
@@ -445,8 +445,8 @@ int main(int argc, char *argv[]) {
    *
    * Single player: a validated ?name= wins; otherwise default to "Me". */
   {
-    const char *joinCode = getUrlParam("join_code");
-    if (joinCode[0] != '\0') {
+    const char *gameKey = getUrlParam("game_key");
+    if (gameKey[0] != '\0') {
       /* network play: name handled in gameFrontStart before JOIN */
     } else {
       /* Single player: a validated ?name= wins; otherwise default to "Me".
