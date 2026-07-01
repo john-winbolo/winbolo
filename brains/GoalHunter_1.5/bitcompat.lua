@@ -59,8 +59,15 @@ function M.bxor(a, b)
 end
 
 function M.bnot(a) return tobit(-1 - a) end                 -- ~a == -a-1 (two's complement)
-function M.lshift(a, n) return tobit((a % TWO32) * (2 ^ n)) end
-function M.rshift(a, n) return tobit(floor((a % TWO32) / (2 ^ n))) end
-function M.arshift(a, n) return floor(tobit(a) / (2 ^ n)) end
+
+-- Integer powers of two, so shifts stay integer-typed on PUC 5.4 (matching the
+-- native << / >> the source used before) rather than going float via `2^n`.
+-- Exact as doubles too (<= 2^53), so LuaJIT's fallback path agrees.
+local POW2 = {}
+do local v = 1; for i = 0, 53 do POW2[i] = v; v = v + v end end
+
+function M.lshift(a, n) return tobit((a % TWO32) * POW2[n]) end
+function M.rshift(a, n) return tobit(floor((a % TWO32) / POW2[n])) end
+function M.arshift(a, n) return floor(tobit(a) / POW2[n]) end
 
 return M
