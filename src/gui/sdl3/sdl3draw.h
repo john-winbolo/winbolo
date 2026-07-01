@@ -135,6 +135,15 @@ void sdl3DrawReconfigureZoom(int explicitZoom);
 void sdl3DrawReloadTiles(void);
 
 /*********************************************************
+*NAME:          sdl3DrawSetReconfigureGuard
+*PURPOSE:
+*  Marks the start (true) / end (false) of an in-place
+*  zoom or skin reconfigure so sdl3DrawCleanup can assert
+*  the renderer/window is never torn down during one.
+*********************************************************/
+void sdl3DrawSetReconfigureGuard(bool active);
+
+/*********************************************************
 *NAME:          sdl3DrawCleanup
 *PURPOSE:
 *  Destroys the SDL3 window, renderer and all textures.

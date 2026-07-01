@@ -1441,6 +1441,7 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
     }
   }
 
+  sdl3DrawSetReconfigureGuard(true);
   clientMutexWaitFor();
 
   {
@@ -1487,6 +1488,7 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
   }
 
   clientMutexRelease();
+  sdl3DrawSetReconfigureGuard(false);
   drawBusy = FALSE;
 
   /* Record final state and detect if we landed on a cardinal size */

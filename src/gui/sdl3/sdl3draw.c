@@ -111,6 +111,16 @@ static SDL_Texture  *gCrosshairTex  = NULL;  /* crosshairs_17x17.png — center 
 static bool          gCursorFaint   = false; /* draw the build-mode cursor at 25% alpha (locked target, build mode off) */
 static int           gZoomFactor    = 1;
 
+/* Set true while a zoom/skin change reconfigures assets in place. If
+   sdl3DrawCleanup is entered while this is set, a renderer/window teardown
+   would recreate the Metal layer mid-reconfigure — the exact crash this
+   path was rewritten to avoid. */
+static bool          s_inZoomSkinReconfigure = false;
+
+void sdl3DrawSetReconfigureGuard(bool active) {
+  s_inZoomSkinReconfigure = active;
+}
+
 void sdl3DrawSetCursorFaint(bool faint) {
   gCursorFaint = faint;
 }
@@ -1175,6 +1185,12 @@ bool sdl3DrawSetup(int zoomFactor) {
 }
 
 void sdl3DrawCleanup(void) {
+  if (s_inZoomSkinReconfigure) {
+    WB_LOG_ERROR(WB_LOG_CAT_GUI,
+      "sdl3DrawCleanup entered during a zoom/skin reconfigure — a renderer/window "
+      "teardown here recreates the Metal layer and crashes the Steam overlay");
+    SDL_assert(!s_inZoomSkinReconfigure);
+  }
   tileLoaderCleanup();
   cursorCleanup();
 
