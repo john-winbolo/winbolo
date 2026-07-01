@@ -451,15 +451,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     clientSimSetLockToggleSendFunc(humanSim, wasmLockToggleCallback);
 
     /* Map install + snapshot apply happen inside the UDP transport
-     * (MAP_DOWNLOAD inline install + CTRL_GAME_PHASE LOBBY→RUNNING
-     * watcher), and the first snapshot apply fires the viewport
-     * finalisation. */
-    /* Gate lobby vs running: if we received CTRL_LOBBY_SETTINGS during
-     * join, stay in lobby state; otherwise proceed to running */
-    if (clientSimIsInLobby(humanSim)) {
-      clientSimSetMapDownloadComplete(humanSim, true);
-      clientSimSetNetStatus(humanSim, netLobby);
-    }
+     * (MAP_DOWNLOAD inline install + CTRL_GAME_PHASE LOBBY→RUNNING watcher),
+     * and the first snapshot apply fires the viewport finalisation. The lobby
+     * vs running landing (netLobby) is settled by clientFrontAwaitJoin, and the
+     * mapDownloadComplete flag stays transport-driven, so nothing to do here. */
     printf("[WASM] UDP connected as player %d\n", wasmPlayerNum);
   } else {
     /* ---- Single-player via ServerSim + local transport ---- */

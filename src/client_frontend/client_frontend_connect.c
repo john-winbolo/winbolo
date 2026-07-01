@@ -25,5 +25,18 @@ bool clientFrontAwaitJoin(ClientSim *cs, int timeoutTicks) {
   }
 
   ClientConnectState finalState = clientSimGetConnectState(cs);
-  return finalState == CLIENT_CONNECT_CONNECTED || clientSimIsInLobby(cs);
+  bool inLobby = clientSimIsInLobby(cs);
+
+  /* Settle the landing disposition in one place for every frontend: entering
+   * the lobby means the client renders the in-game lobby rather than the
+   * running game. The transport already flips netStat to netLobby alongside
+   * inLobby (client_sim_control.c CTRL_GAME_PHASE_LOBBY), so this is defensive
+   * — but keeping it here means no caller re-derives it (and can't smuggle in a
+   * premature mapDownloadComplete the way a forked copy once did). Map install
+   * and the mapDownloadComplete flag stay transport-driven. */
+  if (inLobby) {
+    clientSimSetNetStatus(cs, netLobby);
+  }
+
+  return finalState == CLIENT_CONNECT_CONNECTED || inLobby;
 }

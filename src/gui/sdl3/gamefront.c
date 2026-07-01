@@ -1435,17 +1435,13 @@ bool gameFrontSetDlgState(openingStates newState) {
         clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
         clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
 
-        if (clientSimIsInLobby(humanSim)) {
-          /* Lobby path: enter lobby immediately, map downloads in
-           * background. The lobby UI shows a progress bar and gates
-           * the ready button on mapDownloadComplete. Install happens
-           * inside the transport on the CTRL_GAME_PHASE LOBBY→RUNNING
-           * watcher when the host starts the game. */
-          clientSimSetNetStatus(humanSim, netLobby);
-        } else {
-          /* No-lobby path: transport already installed the map inline
-           * on MAP_DOWNLOAD completion; the first snapshot apply will
-           * fire the viewport finalisation. */
+        /* The lobby landing (netLobby — lobby UI, map downloads in the
+         * background, ready button gated on the real mapDownloadComplete) is
+         * settled inside clientFrontAwaitJoin. Only the no-lobby path has extra
+         * work: the transport already installed the map inline on MAP_DOWNLOAD
+         * completion, and the first snapshot apply fires the viewport
+         * finalisation — update Steam presence now that we're in a game. */
+        if (!clientSimIsInLobby(humanSim)) {
           gameFrontUpdateSteamPresence(humanSim);
         }
         dlgState = openFinished;
