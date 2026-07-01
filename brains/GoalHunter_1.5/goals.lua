@@ -1,3 +1,5 @@
+local function __idiv(a,b) return math.floor(a/b) end
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/goals.lua — strategic goal selection + exploration fallback
 -- =========================================================================
@@ -97,8 +99,8 @@ function M.restore_goal_state(s) last_strategic_goal = s end
 local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, spot_my)
   if not C.WSIM_ENABLED then return 0, false, "" end
 
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local gmx, gmy = goal.mx, goal.my
   if tmx == gmx and tmy == gmy then return 0, false, "" end
 
@@ -133,7 +135,7 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
     -- Dijkstra path starts at the Dijkstra source, which may not be
     -- our exact current position. Trim leading waypoints we've already
     -- passed (tiles before or at our current position).
-    local nwp = #path // 2
+    local nwp = __idiv(#path, 2)
     local start_idx = 1
     for i = 1, nwp do
       if path[2*i-1] == tmx and path[2*i] == tmy then
@@ -181,7 +183,7 @@ local function wsim_evaluate_goal(goal, world, info, attack_pill_idx, spot_mx, s
   if BRAIN_PROFILE_LOG and (_tw2 - _tw0) > 200 then
     opt.append("optimize.log", string.format(
       "  [wsim] goal=%s(%d,%d) snap=%.3fms run=%.3fms npath=%d",
-      goal.kind, gmx, gmy, (_tw1-_tw0)/1000, (_tw2-_tw1)/1000, #path//2))
+      goal.kind, gmx, gmy, (_tw1-_tw0)/1000, (_tw2-_tw1)/1000, __idiv(#path, 2)))
   end
 
   local extra_cost = r.damage * C.WSIM_DAMAGE_COST_WEIGHT
@@ -566,12 +568,12 @@ local function refuel_shape(info, state, now)
   if C.REFUEL_SHARE_ENABLED then
     local team = 1                                  -- our team size (self + ally bits)
     local ab = info.allies or 0
-    while ab > 0 do team = team + (ab & 1); ab = ab >> 1 end
+    while ab > 0 do team = team + (bit.band(ab, 1)); ab = bit.rshift(ab, 1) end
     local fbases = (state.perc and state.perc.friendly_base_count) or 0
     local apb = team / math.max(1, fbases)          -- team tanks per friendly base
     local local_near = 0
     if info.tankx and info.tanky then
-      local tx, ty = info.tankx >> 8, info.tanky >> 8
+      local tx, ty = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
       for pn, slot in ally_state.iter_active(now, C.SQUAD_ALLY_MAX_AGE or 1750) do
         local si = slot.info
         if pn ~= info.player_number and si and si.mx and si.my
@@ -1593,7 +1595,7 @@ local function eval_attack_tank(state, world, info, tmx, tmy, boat, ammo)
         local name = info.player_names[pn + 1]
         local active = (type(name) == "string" and name ~= "")
                     or pn < (info.num_players or 0)
-        local allied = (allies & (1 << pn)) ~= 0
+        local allied = (bit.band(allies, (bit.lshift(1, pn)))) ~= 0
         if active and not allied then
           if type(name) ~= "string" or name == "" then name = "player " .. tostring(pn) end
           breakdown[#breakdown + 1] = {
@@ -2358,8 +2360,8 @@ end
 -- =========================================================================
 function M.get_strategic_place_heatmap(state, world, info)
   if not info then return nil end
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
 
   local fbx, fby = nearest_friendly_base_pos(world, tmx, tmy)
   if not fbx then fbx, fby = tmx, tmy end
@@ -3088,7 +3090,7 @@ end
 -- O(pills^2) coverage loop stays off the already-busy replan tick.
 function M.rescan_reposition(state, world, info)
   eval_reposition_pill(state, world, info,
-                       (info.tankx or 0) >> 8, (info.tanky or 0) >> 8,
+                       bit.rshift((info.tankx or 0), 8), bit.rshift((info.tanky or 0), 8),
                        info.inboat, info.shells, true)
 end
 
@@ -3187,8 +3189,8 @@ local function eval_wait_for_lgm(state, info)
       return nil
     end
   end
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local cost = carrying and (C.WAIT_FOR_LGM_COST_CARRYING or 20) or (C.WAIT_FOR_LGM_COST or 50)
   return {
     cost = cost,
@@ -3196,7 +3198,7 @@ local function eval_wait_for_lgm(state, info)
              wx = info.tankx, wy = info.tanky },
     desc = BRAIN_POOL_VIZ and string.format("wait_for_lgm@(%d,%d) lgm=(%d,%d) cost=%d",
                          tmx, tmy,
-                         (info.man_x or 0) >> 8, (info.man_y or 0) >> 8, cost) or "",
+                         bit.rshift((info.man_x or 0), 8), bit.rshift((info.man_y or 0), 8), cost) or "",
     cands = {
       { id = 0, mx = tmx, my = tmy, cost = cost,
         own = "self", hp = 0, stale = 0 },
@@ -3545,8 +3547,8 @@ end
 -- pill is gone/unreachable.
 function M.kill_pickup_score(state, world, info, pill)
   if not pill then return 1e30 end
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local c = compute_pool4_cost(state, world, info, pill, tmx, tmy)
   return c or 1e30
 end
@@ -3569,7 +3571,7 @@ end
 -- =========================================================================
 function M.rescore_nearby_bases(state, world, info, radius)
   if not (world and world.bases and info and state.pool_partial) then return end
-  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
   local boat   = info.inboat and 1 or 0
   local shells = info.shells or 32
   local trees  = info.trees or 0
@@ -3625,8 +3627,8 @@ function M.build_eval_queue(state, world, info)
   state._eval_swept = false
   local queue = {}
   local now = state.tick or 0
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
 
   -- Fresh-kill claim recognition: any dead pill a blitz member is committing
   -- to (broadcast `kg`) is OFF-LIMITS to our normal capture_pill pool — the
@@ -4474,8 +4476,8 @@ function M.step_eval_queue(state, world, info)
     end
   end
 
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local boat_flag = info.inboat and 1 or 0
   local shells = info.shells or 32
   local trees  = info.trees or 0
@@ -5132,7 +5134,7 @@ function M.step_eval_queue(state, world, info)
           if not _path_tiles or #_path_tiles == 0 then
             spot_path_str = "(empty)"
           else
-            local n = #_path_tiles // 2  -- waypoint count
+            local n = __idiv(#_path_tiles, 2)  -- waypoint count
             local parts = {}
             if n <= SPOT_PATH_FRONT + SPOT_PATH_TAIL then
               for i = 1, n do
@@ -5157,7 +5159,7 @@ function M.step_eval_queue(state, world, info)
           goal_spot_slate    = _spot_slate
           goal_spot_tick     = now
           goal_spot_path_str = spot_path_str
-          goal_spot_path_len = _path_tiles and #_path_tiles // 2 or 0
+          goal_spot_path_len = _path_tiles and __idiv(#_path_tiles, 2) or 0
 
           -- (self_dr removed: the offset-aware A* above bakes the
           -- as-if-pill-dead discount directly into spot_cost.)
@@ -6139,8 +6141,8 @@ local function apply_blitz_join_discount(state, info, world)
       tank_pos = {}
       if info.objects then
         for _, ob in ipairs(info.objects) do
-          if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) == 0 then
-            tank_pos[ob.idnum] = { mx = ob.x >> 8, my = ob.y >> 8 }
+          if ob.type == OBJECT_TANK and (bit.band(ob.info, OBJECT_HOSTILE)) == 0 then
+            tank_pos[ob.idnum] = { mx = bit.rshift(ob.x, 8), my = bit.rshift(ob.y, 8) }
           end
         end
       end
@@ -6168,7 +6170,7 @@ local function apply_blitz_join_discount(state, info, world)
           s_mx, s_my = state.squad_blitz_engage_mx, state.squad_blitz_engage_my
         else
           local sr = C.ATTACK_PILL_STANDOFF or 7.4
-          local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+          local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
           local ddx, ddy = tmx - pill.mx, tmy - pill.my
           local dd = math.sqrt(ddx * ddx + ddy * ddy)
           if dd > 0.5 then
@@ -6188,7 +6190,7 @@ local function apply_blitz_join_discount(state, info, world)
         -- distance curve. The not-full guard is already applied above.
         do
           local rng = C.SQUAD_BLITZ_INRANGE_TILES or 7
-          local tmx2, tmy2 = info.tankx >> 8, info.tanky >> 8
+          local tmx2, tmy2 = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
           local function within(ox, oy)
             local dx, dy = tmx2 - ox, tmy2 - oy
             return math.sqrt(dx * dx + dy * dy) <= rng
@@ -6272,8 +6274,8 @@ function M.finalize_pools(state, world, info)
         (_t_sync - _tpre) / 1000, (_t_apply - _t_sync) / 1000))
   end
   local _t0 = clock_us()
-  local tmx  = info.tankx >> 8
-  local tmy  = info.tanky >> 8
+  local tmx  = bit.rshift(info.tankx, 8)
+  local tmy  = bit.rshift(info.tanky, 8)
   local boat = info.inboat
   local ammo = (info.shells or 0) + (info.mines or 0)
   local partial = state.pool_partial or {}
@@ -6786,8 +6788,8 @@ function M.refresh_kill_lgm(state, info, world)
     local NAV_INSET = C.KILL_LGM_NAV_INSET or 3
     local R     = math.max(1, (C.KILL_LGM_SHOOT_RANGE or 8) - NAV_INSET)
     local boat  = (info.inboat and 1) or 0
-    local tmx   = info.tankx >> 8
-    local tmy   = info.tanky >> 8
+    local tmx   = bit.rshift(info.tankx, 8)
+    local tmy   = bit.rshift(info.tanky, 8)
     local perc  = state.perc or {}
     local now_t = state.tick or 0
     local KILL_LGM_BASE_COST = 20  -- kill_lgm priority floor (parallels TANK_COMBAT_BASE_COST=30)
@@ -6970,8 +6972,8 @@ function M.refresh_kill_lgm(state, info, world)
           for s = 1, steps do
             local px = lgm.wx + lgm.v_ema_x * s * 10
             local py = lgm.wy + lgm.v_ema_y * s * 10
-            local pmx = math.floor(px) >> 8
-            local pmy = math.floor(py) >> 8
+            local pmx = bit.rshift(math.floor(px), 8)
+            local pmy = bit.rshift(math.floor(py), 8)
             if not U.in_map(pmx, pmy) then break end
             local plist = world.pill_at and world.pill_at[pmy * 256 + pmx]
             if plist then
@@ -6980,8 +6982,8 @@ function M.refresh_kill_lgm(state, info, world)
                    and e.pill.health < C.PILLS_MAX_HEALTH
                    and (e.pill.owner == "hostile" or e.pill.owner == "neutral") then
                   -- Check if the trajectory aims near the pill center
-                  local pcx = (pmx << 8) | 128
-                  local pcy = (pmy << 8) | 128
+                  local pcx = bit.bor((bit.lshift(pmx, 8)), 128)
+                  local pcy = bit.bor((bit.lshift(pmy, 8)), 128)
                   local err = math.abs(px - pcx) + math.abs(py - pcy)
                   if err < 192 then  -- ~0.75 tile tolerance
                     repair_pill = e.pill
@@ -7080,8 +7082,8 @@ end
 -- when goal=none and the rolling cache may be stale/empty).
 -- =========================================================================
 function M.fill_pool_cache(state, world, info)
-  local tmx  = info.tankx >> 8
-  local tmy  = info.tanky >> 8
+  local tmx  = bit.rshift(info.tankx, 8)
+  local tmy  = bit.rshift(info.tanky, 8)
   local boat = info.inboat
   local ammo = (info.shells or 0) + (info.mines or 0)
   state.pool_cache = {}
@@ -7111,8 +7113,8 @@ local function goal_selection(state, world, info, quiet)
     _tgs_buf[#_tgs_buf + 1] = string.format("      [pick_goal] %s %.2fms", label, (now - _tgs_t) / 1000)
     _tgs_t = now
   end
-  local tmx    = info.tankx >> 8
-  local tmy    = info.tanky >> 8
+  local tmx    = bit.rshift(info.tankx, 8)
+  local tmy    = bit.rshift(info.tanky, 8)
   local boat   = info.inboat
   local ammo   = (info.shells or 0) + (info.mines or 0)
   local result = nil
@@ -7216,8 +7218,8 @@ local function goal_selection(state, world, info, quiet)
   -- (LGM_DEAD means parachuting/dead — unreachable, ignore it)
   -- ════════════════════════════════════════════════════════════════════
   if not result then
-    local lgm_mx = info.man_x >> 8
-    local lgm_my = info.man_y >> 8
+    local lgm_mx = bit.rshift(info.man_x, 8)
+    local lgm_my = bit.rshift(info.man_y, 8)
 
     if info.man_status == C.LGM_MOVING then
       -- Alive but possibly stranded: check every 50 ticks
@@ -7804,7 +7806,7 @@ local function goal_selection(state, world, info, quiet)
           local _fot = C.PHASE_WEIGHT_DIST_FALLOFF
           local _fo  = (type(_fot) == "table" and ((pool_name and _fot[pool_name]) or _fot.default))
                        or (type(_fot) == "number" and _fot) or 40
-          local _gd = U.mdist(info.tankx >> 8, info.tanky >> 8, entry.goal.mx, entry.goal.my)
+          local _gd = U.mdist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8), entry.goal.mx, entry.goal.my)
           local _f  = math.min(1.0, _gd / _fo)
           pw = 1.0 + (pw - 1.0) * (1 - _f)
         end
@@ -8620,7 +8622,7 @@ function M.special_mode_goal(state, world, info)
   if perc and perc.enemy_lgms  and #perc.enemy_lgms  > 0 then return nil end
   if info.carried_pills and info.carried_pills > 0 then return nil end
 
-  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
 
   -- Reinforce: skip anyone mid hard-take (a commander) or already attacking a
   -- pill — only genuinely uncommitted bots get pulled.
@@ -8641,7 +8643,7 @@ function M.pick_goal(state, world, info, quiet)
   -- Cache the few info fields the breakdown viz needs (pool_breakdown has
   -- only `state` in scope).
   state._last_info = {
-    tmx = info.tankx >> 8, tmy = info.tanky >> 8,
+    tmx = bit.rshift(info.tankx, 8), tmy = bit.rshift(info.tanky, 8),
     at_base = (info.base and info.base.id and info.base.id > 0) or false,
     man_status = info.man_status,
     inboat = info.inboat,
@@ -8656,8 +8658,8 @@ function M.pick_goal(state, world, info, quiet)
   -- Command goal overrides everything
   if state.command_goal then
     local cg  = state.command_goal
-    local tmx = info.tankx >> 8
-    local tmy = info.tanky >> 8
+    local tmx = bit.rshift(info.tankx, 8)
+    local tmy = bit.rshift(info.tanky, 8)
 
     -- Arrival condition depends on goal kind
     local arrived = false
@@ -8742,8 +8744,8 @@ function M.pick_goal(state, world, info, quiet)
     return { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
   end
 
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
 
   -- Pop frontier entries that are too close
   local fx, fy = expl.best_frontier(state)
@@ -9234,7 +9236,7 @@ function M.get_pool_breakdown_json(state)
           local name = li.player_names[pn + 1]
           local active = (type(name) == "string" and name ~= "")
                       or pn < (li.num_players or 0)
-          local allied = (allies & (1 << pn)) ~= 0
+          local allied = (bit.band(allies, (bit.lshift(1, pn)))) ~= 0
           if active and not allied then
             if type(name) ~= "string" or name == "" then name = "player " .. tostring(pn) end
             append_row({
@@ -9551,7 +9553,7 @@ function M.get_pool_breakdown_json(state)
       -- Generate a unique synthetic ID for the WINNERS pool to avoid collisions
       -- between different source pools (e.g. attack_pill #0 and attack_base #0).
       -- Use src_pool in the high bits.
-      local synthetic_id = (idx << 16) | (w.id or 0)
+      local synthetic_id = bit.bor((bit.lshift(idx, 16)), (w.id or 0))
 
       winners[#winners + 1] = {
         id = synthetic_id, src_pool = idx,
@@ -9587,7 +9589,7 @@ function M.get_pool_breakdown_json(state)
   for _, idx in ipairs({10, 11, 12, 13}) do
     local sw = pc[idx]
     if sw and sw.goal and sw.cost and sw.cost >= 0 and sw.cost < 1e29 then
-      local synthetic_id = (idx << 16) | (sw.goal.target_id or 0)
+      local synthetic_id = bit.bor((bit.lshift(idx, 16)), (sw.goal.target_id or 0))
       local pname = POOL_NAMES[idx] or ("p"..idx)
       local pw   = (phase_weights and phase_weights[pname]) or 1.0  -- name-keyed, not idx
       local phase_abbrev = ({
@@ -9696,7 +9698,7 @@ function M.draw_wsim_paths(state)
   for _, vp in ipairs(state._wsim_viz_paths) do
     local pr, pg, pb = 255, 100, 0  -- orange = high damage
     if vp.killed then pr, pg, pb = 255, 0, 0 end  -- red = kill reject
-    local nwp = #vp.path // 2
+    local nwp = __idiv(#vp.path, 2)
     for j = 2, nwp do
       local p1x, p1y = vp.path[2*j-3], vp.path[2*j-2]
       local p2x, p2y = vp.path[2*j-1], vp.path[2*j]
@@ -9744,8 +9746,8 @@ function M.draw_attack_tank_viz(state, info)
   local perc = state.perc
   if not perc then return end
 
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local tcx = tmx + 0.5
   local tcy = tmy + 0.5
 

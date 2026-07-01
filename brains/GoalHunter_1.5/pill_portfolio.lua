@@ -1,3 +1,4 @@
+local function __idiv(a,b) return math.floor(a/b) end
 -- GoalHunter/pill_portfolio.lua
 -- Shared friendly-pill positioning model: classify a pill/tile into
 -- back / front / aggressive (+ in-use), and the 35/45/20 target portfolio.
@@ -191,7 +192,7 @@ end
 function M.draw_front_band(viz)
   if not viz.is_on("front_band") or not viz.circle then return end
   local fpts = cpf.find_front_line()
-  local np = fpts and (#fpts // 2) or 0
+  local np = fpts and (__idiv(#fpts, 2)) or 0
   for i = 1, np do
     local mx, my = fpts[2 * i - 1], fpts[2 * i]
     viz.circle("front_band", mx + 0.5, my + 0.5, 0.4, 255, 255, 80, 200)

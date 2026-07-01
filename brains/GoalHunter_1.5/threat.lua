@@ -1,3 +1,5 @@
+local function __idiv(a,b) return math.floor(a/b) end
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/threat.lua — unified spatial threat grid
 --
@@ -128,7 +130,7 @@ end
 -- pill grid rebuild doesn't pollute changes.terrain and cascade rebuilds.
 -- -------------------------------------------------------------------------
 local function raw_tt(mx, my)
-  return get_terrain(mx, my) & TERRAIN_MASK
+  return bit.band(get_terrain(mx, my), TERRAIN_MASK)
 end
 
 -- -------------------------------------------------------------------------
@@ -461,7 +463,7 @@ local function apply_occlusion_to_pill(pm, friendly_pill_set)
   -- previous pills is overwritten in dependency order.
   for i = 1, #order do
     local idx = order[i]
-    local dx = (idx // SIZE) - R
+    local dx = (__idiv(idx, SIZE)) - R
     local dy = (idx %  SIZE) - R
 
     local w_total, t_total, f_total
@@ -612,7 +614,7 @@ local function check_terrain_dirty(world)
   for idx = 1, #tc do
     local key = tc[idx]
     local tx = key % 256
-    local ty = key // 256
+    local ty = __idiv(key, 256)
     for _, pm in pairs(world.pills) do
       if (pm.owner == "hostile" or pm.owner == "neutral") and pm.health > 0 then
         if math.abs(tx - pm.mx) <= R and math.abs(ty - pm.my) <= R then
@@ -780,7 +782,7 @@ function M.update(state, world, info)
   for idx = 1, #tc do
     local key = tc[idx]
     local tx = key % 256
-    local ty = key // 256
+    local ty = __idiv(key, 256)
     gh_threat.terrain_update_around(tx, ty)
   end
   for idx = #tc, 1, -1 do tc[idx] = nil end
@@ -866,9 +868,9 @@ function M.update(state, world, info)
   -- Mutate in place so any cached references stay valid.
   for k in pairs(M.tank_grid) do M.tank_grid[k] = nil end
   for _, ob in ipairs(info.objects) do
-    if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) ~= 0 then
-      local omx = ob.x >> 8
-      local omy = ob.y >> 8
+    if ob.type == OBJECT_TANK and (bit.band(ob.info, OBJECT_HOSTILE)) ~= 0 then
+      local omx = bit.rshift(ob.x, 8)
+      local omy = bit.rshift(ob.y, 8)
       stamp_tank(omx, omy)
     end
   end

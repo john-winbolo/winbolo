@@ -299,7 +299,7 @@ def rewrite_source(src, path):
     if need_idiv:
         header += "local function __idiv(a,b) return math.floor(a/b) end\n"
     if need_bit:
-        header += "local bit = require('bit')\n"
+        header += "local bit = require('bitcompat')\n"
     return (header + src if header else src), report
 
 def main():

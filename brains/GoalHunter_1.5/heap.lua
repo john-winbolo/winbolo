@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/heap.lua — binary min-heap
 -- =========================================================================
@@ -13,7 +14,7 @@ function M.push(h, node)
   h[h.n] = node
   local i = h.n
   while i > 1 do
-    local p = i >> 1
+    local p = bit.rshift(i, 1)
     if h[p].cost <= h[i].cost then break end
     h[i], h[p] = h[p], h[i]
     i = p
