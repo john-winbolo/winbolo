@@ -105,6 +105,32 @@ static bool winboloQuit = FALSE;
 static bool finishedLoop = FALSE;
 static bool showAllianceReq = TRUE;
 
+/* Terminal connection-failure state. Set on any unrecoverable connection
+ * problem (can't reach the relay, version mismatch, used/expired join code,
+ * mid-game disconnect, or an unknown transport error). Once set, the main loop
+ * shows one error dialog and freezes the game — it stops ticking and sending,
+ * so we never re-open the WebSocket (join codes are single-use; there is
+ * nothing to reconnect to) and never present a blank screen. */
+static bool s_connFailed = FALSE;
+static bool s_connErrorShown = FALSE;
+static char s_connReason[256] = "";
+
+/* Record a terminal connection failure. reason may be NULL/empty, in which case
+ * a generic message is used. Called from gamefront_wasm.c (initial connect) and
+ * from the main loop (mid-game disconnect). Idempotent — first reason wins. */
+void wasmReportConnectFailure(const char *reason) {
+  if (s_connFailed) return;
+  if (reason != NULL && reason[0] != '\0') {
+    strncpy(s_connReason, reason, sizeof(s_connReason) - 1);
+    s_connReason[sizeof(s_connReason) - 1] = '\0';
+  } else {
+    strncpy(s_connReason, "Could not connect to the server.",
+            sizeof(s_connReason) - 1);
+    s_connReason[sizeof(s_connReason) - 1] = '\0';
+  }
+  s_connFailed = TRUE;
+}
+
 static DWORD oldTick = 0;
 static DWORD ttick = 0;
 static time_t ticks = 0;
@@ -120,6 +146,25 @@ void sdl3MessageHandler(const char *message, const char *title) {
   imguiMessageBoxEx(title ? title : "WinBolo",
                     message ? message : "",
                     IMGUI_MSG_INFO, IMGUI_MSG_OK);
+}
+
+/* Mouse-wheel bridge. SDL3's emscripten backend registers its wheel callback on
+ * a different target from the pointer-event shim that delivers mouse motion and
+ * clicks, and in the browser build it doesn't fire — so scrolling never reached
+ * the shared gunsight handler. shell.html adds its own canvas 'wheel' listener
+ * and calls this, which injects a native SDL wheel event; sdl3ImguiProcessEvents
+ * then handles it exactly like a real wheel (same in-game + ImGui-capture
+ * gating). deltaY is the browser value (negative = scroll up); SDL uses
+ * positive-up, so flip the sign to a unit step. */
+EMSCRIPTEN_KEEPALIVE
+void wbWasmWheel(double deltaY) {
+  if (deltaY == 0.0) return;
+  SDL_Event e;
+  SDL_zero(e);
+  e.type = SDL_EVENT_MOUSE_WHEEL;
+  e.wheel.windowID = SDL_GetWindowID(sdl3DrawGetWindow());
+  e.wheel.y = (deltaY < 0.0) ? 1.0f : -1.0f;
+  SDL_PushEvent(&e);
 }
 
 /* -------------------------------------------------------
@@ -237,6 +282,27 @@ static void main_loop_iteration(void) {
   /* Process events */
   sdl3ImguiProcessEvents(cs);
 
+  /* Detect a mid-game terminal disconnect (server shutdown / dropped /
+   * unrecoverable error). The initial-connect failure path sets s_connFailed
+   * directly from gameFrontStart, so this only needs to catch failures that
+   * arise while running. */
+  if (!s_connFailed && cs != NULL && clientSimHasTransport(cs) &&
+      gameFrontGetServerSim() == NULL) {  /* UDP only — not local single-player */
+    ClientConnectState st = clientSimGetConnectState(cs);
+    if (st == CLIENT_CONNECT_ERROR || st == CLIENT_CONNECT_SERVER_SHUTDOWN) {
+      clientSimConnectionLost(cs);
+      wasmReportConnectFailure(clientSimGetConnectErrorReason(cs));
+    }
+  }
+
+  /* On the first frame after a terminal failure, raise the error dialog. The
+   * frozen state below keeps rendering it without ticking or sending. */
+  if (s_connFailed && !s_connErrorShown) {
+    imguiMessageBoxEx(DIALOG_BOX_TITLE, s_connReason, IMGUI_MSG_ERROR,
+                      IMGUI_MSG_OK);
+    s_connErrorShown = TRUE;
+  }
+
   /* Game tick accumulation (replaces SDL_AddTimer).
    *
    * Sim ticks owed since the last rendered frame are derived from wall-clock
@@ -256,7 +322,7 @@ static void main_loop_iteration(void) {
    *     declared SERVER_SHUTDOWN, so the owed ticks are dead either way.  In
    *     single-player there is simply nothing to catch up to.  Drop the debt
    *     and resume from real time. */
-  if (clientSimHasTransport(cs)) {
+  if (!s_connFailed && clientSimHasTransport(cs)) {
     const double MAX_ELAPSED_MS  = 200.0;  /* per-frame catch-up bound (ordinary jank) */
     const double STALL_RESET_MS  = 500.0;  /* gap above this = background/suspend → drop */
     const int    MAX_CATCHUP     = 4;      /* at most 4 sim ticks per render frame */
@@ -278,12 +344,21 @@ static void main_loop_iteration(void) {
     /* Leftover `gameTickAccum` (>= GAME_TICK_LENGTH) drains in future frames. */
   }
 
-  /* Render */
+  /* Render (always — even while frozen, so the error dialog draws over the
+   * last frame instead of a blank screen). */
   tick = SDL_GetTicks();
   clientMutexWaitFor();
-  if (finishedLoop == FALSE) {
+  if (finishedLoop == FALSE && !s_connFailed) {
     clientSimRenderPrepare(cs, tick);
     clientRenderFrame(cs, redraw);
+  } else if (s_connFailed) {
+    /* Frozen: don't render the (possibly never-connected) game; clear to black
+     * so the error dialog draws over a clean background, not garbage. */
+    SDL_Renderer *ren = sdl3DrawGetRenderer();
+    if (ren) {
+      SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+      SDL_RenderClear(ren);
+    }
   }
   clientMutexRelease();
   dwSysFrame += (SDL_GetTicks() - tick);
@@ -376,22 +451,30 @@ int main(int argc, char *argv[]) {
   prefsInit("/WinBolo.json");
 
   printf("[WASM] Starting gameFrontStart...\n");
-  if (gameFrontStart(cmdLine, &keys, FALSE, NULL) == FALSE) {
+  bool started = (gameFrontStart(cmdLine, &keys, FALSE, NULL) != FALSE);
+  if (!started && !s_connFailed) {
+    /* A genuine init failure (not a connection problem) — nothing to show. */
     printf("[WASM] gameFrontStart FAILED\n");
     clientMutexDestroy();
     SDL_Quit();
     return 1;
   }
-  fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p\n", (void*)humanSim);
+  /* From here either we connected, or the connection failed but gameFrontStart
+   * kept humanSim alive in its error state — we still set up ImGui and enter
+   * the loop so the error dialog can draw (never a blank screen). */
+  fprintf(stderr, "[WASM] gameFrontStart %s; humanSim=%p\n",
+          started ? "OK" : "CONNECT FAILED", (void*)humanSim);
   fflush(stderr);
 
-  /* Pull the account's cloud prefs and apply them. This runs AFTER
-   * gameFrontStart (which seeds defaults and creates humanSim) so
-   * wasmApplyJoinPrefs overrides exactly what the player synced — keys, menu
-   * toggles, game options, gamepad sensitivities and build options — on the
-   * first frame. No-op for single-player (not signed in). Same apply path the
-   * relay's join-prefs frame uses. */
-  wbPrefsSyncNow();
+  if (started) {
+    /* Pull the account's cloud prefs and apply them. This runs AFTER
+     * gameFrontStart (which seeds defaults and creates humanSim) so
+     * wasmApplyJoinPrefs overrides exactly what the player synced — keys, menu
+     * toggles, game options, gamepad sensitivities and build options — on the
+     * first frame. No-op for single-player (not signed in). Same apply path the
+     * relay's join-prefs frame uses. */
+    wbPrefsSyncNow();
+  }
 
   /* Single-player name selection. Network play (?join_code=) already set its
    * join name inside gameFrontStart, before the JOIN went out (the account

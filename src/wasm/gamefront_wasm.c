@@ -44,6 +44,7 @@
 
 /* Forward declaration */
 extern void sdl3MessageHandler(const char *message, const char *title);
+extern void wasmReportConnectFailure(const char *reason);  /* main_wasm.c */
 
 
 /* -------------------------------------------------------
@@ -403,7 +404,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
       printf("[WASM] UDP connect failed: %s\n", reason ? reason : "unknown");
-      clientSimDestroy(humanSim);
+      /* Keep humanSim alive in its error state; main() falls through to the
+       * loop which shows the error dialog (never a blank screen). */
+      wasmReportConnectFailure(reason ? reason
+                                      : "Could not connect to the server.");
       return FALSE;
     }
 
@@ -422,7 +426,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     if (clientSimGetConnectState(humanSim) != CLIENT_CONNECT_CONNECTED) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
       printf("[WASM] Join failed: %s\n", reason ? reason : "timeout");
-      clientSimDestroy(humanSim);
+      wasmReportConnectFailure(
+          reason ? reason
+                 : "Could not join the game (the server did not respond, or "
+                   "your invite link has already been used or expired).");
       return FALSE;
     }
 

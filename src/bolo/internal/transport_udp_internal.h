@@ -111,8 +111,16 @@ uint16_t pingEwmaUpdate(PingEwma *e, uint16_t sample);
 /* Join retry interval in ticks (1 second) */
 #define JOIN_RETRY_INTERVAL 50
 
-/* Max join attempts before giving up */
+/* Max join attempts before giving up. The browser client reaches the server
+ * over a reliable WebSocket (so a lost JOIN is rare) and its join codes are
+ * single-use, so repeatedly re-sending a JOIN that the relay rejects only
+ * re-opens the WebSocket and trips rate-limiting — cap it low there. A
+ * JOIN_CHALLENGE resets joinAttempts, so the cookie handshake is unaffected. */
+#ifdef __EMSCRIPTEN__
+#define JOIN_MAX_RETRIES 2
+#else
 #define JOIN_MAX_RETRIES 10
+#endif
 
 /* PACKET_HEADER_SIZE lives in netpacks.h next to the rest of the
  * wire constants — clients that need to build a wire packet from
