@@ -541,6 +541,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     }
     wasmTransportActive = TRUE;
     wasmPlayerNum = 0;
+    /* Single-player runs an active local transport whose tick() advances the
+     * server itself; the shared tick core reads this to skip the keys-half
+     * transport pump so the sim isn't stepped twice per frame. */
+    clientSimSetIsSinglePlayer(humanSim, true);
     /* Phase 2: connect registers the auto-subscriber. Clear the
      * legacy handle so the teardown path's unregister is a no-op. */
     wasmControlSub = SUBSCRIBER_HANDLE_INVALID;

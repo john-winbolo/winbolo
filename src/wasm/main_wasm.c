@@ -23,6 +23,7 @@
 
 #include "bolo_rand.h"
 #include "client_render.h"
+#include "client_frontend_tick.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "playername_validate.h"
@@ -176,85 +177,30 @@ void wbWasmWheel(double deltaY) {
  * ------------------------------------------------------- */
 static void windowRunGameTick(ClientSim *cs) {
   static bool inBrain = FALSE;
-  static bool justKeys = FALSE;
   static BYTE t2 = 0;
   static int trackerTime = 11500;
-  static uint32_t simTickCounter = 0;
-  tankButton tb;
-  bool isShoot;
-  bool isMine = FALSE;
   bool used = FALSE;
   bool brainRunning;
 
   brainRunning = brainHandlerIsBrainRunning();
-  isShoot = FALSE;
-  tb = 0;
 
   if (!clientSimHasTransport(cs) || doingTutorial) {
     return;
   }
 
-  {
-    BYTE myPlayerNum = gameFrontGetPlayerNum();
-    if (justKeys == TRUE) {
-      /* Keys tick */
-      if (brainRunning == FALSE) {
-        tb = inputGetKeys(cs, &keys, isInMenu);
-      } else {
-        inputScroll(cs, &keys, isInMenu);
-      }
-      InputPacket pkt;
-      clientBuildInputPacket(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
-      if (!brainRunning) {
-        uint8_t gsAdj = inputConsumeGunsightAdj();
-        if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
-      }
-      clientMutexWaitFor();
-      clientSimKeysTick(cs, &pkt);
-      clientMutexRelease();
-      /* Deliver the keys-half input but do NOT advance the server here.
-       * The active local transport's tick runs serverSimTick, which is a
-       * full 20ms frame (both keys+game half-steps internally). Ticking it
-       * in both branches would advance the sim every 10ms — 2x too fast.
-       * Only the game-tick branch below advances it, so the server runs at
-       * the 20ms SERVER_TICK_LENGTH cadence, matching the desktop build. */
-      clientSimNetRecordInput(cs, &pkt);
-      simTickCounter++;
-      justKeys = FALSE;
-    } else {
-      /* Game tick */
-      t2++;
-      trackerTime++;
-      if (brainRunning == FALSE) {
-        tb = inputGetKeys(cs, &keys, isInMenu);
-        isShoot = inputIsFireKeyPressed(&keys, isInMenu);
-        isMine = inputIsMineKeyPressed(&keys, isInMenu);
-      } else {
-        inputScroll(cs, &keys, isInMenu);
-      }
-      InputPacket pkt;
-      clientBuildInputPacket(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
-      if (!brainRunning) {
-        uint8_t gsAdj = inputConsumeGunsightAdj();
-        if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
-      }
-      clientMutexWaitFor();
-      clientSimGameTick(cs, &pkt, brainRunning);
-      clientMutexRelease();
-      clientSimNetSendInput(cs, &pkt);
-      clientSimNetTick(cs);
-      clientMutexWaitFor();
-      clientSimDisplayTick(cs, brainRunning);
-      clientMutexRelease();
-      simTickCounter++;
-      ticks++;
-      justKeys = TRUE;
-      used = TRUE;
-    }
+  /* One keys/game/lobby half-step lives in the shared client-frontend tick
+   * core (both desktop and web call it); the brain and per-second stat
+   * rollover below stay here in the single-threaded driver. */
+  if (clientFrontRunTickStep(cs)) {
+    t2++;
+    trackerTime++;
+    ticks++;
+    used = TRUE;
   }
 
   /* AI */
-  if (used == TRUE && inBrain == FALSE && brainRunning == TRUE) {
+  if (used == TRUE && inBrain == FALSE && brainRunning == TRUE &&
+      clientSimGetNetStatus(cs) != netFailed) {
     clientMutexWaitFor();
     inBrain = TRUE;
     clientMutexRelease();
@@ -479,6 +425,9 @@ int main(int argc, char *argv[]) {
   fflush(stderr);
 
   if (started) {
+    /* Start the shared tick cadence from a known state (first step is a keys
+     * step with a zeroed sub-tick counter), mirroring the desktop run-start. */
+    clientFrontTickReset();
     /* Pull the account's cloud prefs and apply them. This runs AFTER
      * gameFrontStart (which seeds defaults and creates humanSim) so
      * wasmApplyJoinPrefs overrides exactly what the player synced — keys, menu

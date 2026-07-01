@@ -236,8 +236,10 @@ set(WASM_SOURCES
     ${SRC_ROOT}/common/prefs_doc.c
     ${SRC_ROOT}/winbolonet/wbn_prefs_sync.c
     # Shared client-frontend cores called by both desktop and web (the
-    # connect/landing contract lives here so it cannot drift per platform).
+    # connect/landing contract and the per-tick step live here so they cannot
+    # drift per platform).
     ${SRC_ROOT}/client_frontend/client_frontend_connect.c
+    ${SRC_ROOT}/client_frontend/client_frontend_tick.c
 )
 
 ###
