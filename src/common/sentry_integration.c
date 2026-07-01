@@ -38,8 +38,15 @@ int sentryInit(const char *executable_name, int argc, char *argv[]) {
     snprintf(release, sizeof(release), "%s@%s", executable_name, WINBOLO_VERSION);
     sentry_options_set_release(options, release);
 
-    /* Build an absolute path for the sentry database next to the executable. */
-    const char *base = SDL_GetBasePath();
+    /* Build an absolute path for the sentry database in the per-user
+     * writable pref directory, NOT next to the executable. On macOS
+     * SDL_GetBasePath() resolves inside the signed .app bundle
+     * (Contents/Resources/), so writing the sentry DB there adds files
+     * under the sealed bundle and invalidates the code signature at
+     * runtime ("a sealed resource is missing or invalid"), making the
+     * app fail Gatekeeper on subsequent launches. SDL_GetPrefPath is the
+     * convention used everywhere else in the project for writable data. */
+    char *base = SDL_GetPrefPath("WinBolo", "WinBolo");
     if (base) {
         size_t len = strlen(base) + sizeof(".sentry-native");
         char *db = (char *)malloc(len);
@@ -48,6 +55,7 @@ int sentryInit(const char *executable_name, int argc, char *argv[]) {
             sentry_options_set_database_path(options, db);
             free(db);
         }
+        SDL_free(base);
     }
 
     int rv = sentry_init(options);
