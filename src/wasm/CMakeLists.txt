@@ -240,6 +240,7 @@ set(WASM_SOURCES
     # drift per platform).
     ${SRC_ROOT}/client_frontend/client_frontend_connect.c
     ${SRC_ROOT}/client_frontend/client_frontend_tick.c
+    ${SRC_ROOT}/client_frontend/client_frontend_common.c
 )
 
 ###

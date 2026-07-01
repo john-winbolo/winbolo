@@ -1458,20 +1458,8 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
  * instead of posting WM_COMMAND. No HWND/HMENU needed.
  * ------------------------------------------------------- */
 
-void windowShowGunsight_toggle(ClientSim *cs) {
-  showGunsight = !showGunsight;
-  if (cs) clientSimSetGunsight(cs, showGunsight);
-  gameFrontSaveCurrentPrefs();
-}
-
 void windowLetterboxBarsGray_toggle(void) {
   letterboxBarsGray = !letterboxBarsGray;
-  gameFrontSaveCurrentPrefs();
-}
-
-void windowAutomaticScrolling_toggle(ClientSim *cs) {
-  autoScrollingEnabled = !autoScrollingEnabled;
-  if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
   gameFrontSaveCurrentPrefs();
 }
 
@@ -1482,42 +1470,6 @@ void windowSmoothScrolling_toggle(void) {
   if (!smoothScrollingEnabled) {
     sdl3DrawSetDragOffset(0, 0);
   }
-}
-
-void windowShowPillLabels_toggle(ClientSim *cs) {
-  BYTE count, total;
-
-  showPillLabels = !showPillLabels;
-  /* cs is NULL from the pre-game Settings dialog (no live sim). The pref is
-     flipped above; the status-label refresh below needs the sim, so skip it. */
-  if (cs == NULL) {
-    return;
-  }
-  sdl3DrawSetPillsStatusClear();
-  total = clientSimGetPillCount(cs);
-  for (count = 1; count <= total; count++) {
-    BYTE pillStat = clientSimGetPillAlliance(cs, count);
-    sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
-  }
-  sdl3DrawCopyPillsStatus(0, 0);
-}
-
-void windowShowBaseLabels_toggle(ClientSim *cs) {
-  BYTE count, total;
-
-  showBaseLabels = !showBaseLabels;
-  /* cs is NULL from the pre-game Settings dialog (no live sim). The pref is
-     flipped above; the status-label refresh below needs the sim, so skip it. */
-  if (cs == NULL) {
-    return;
-  }
-  sdl3DrawSetBasesStatusClear();
-  total = clientSimGetBaseCount(cs);
-  for (count = 1; count <= total; count++) {
-    BYTE baseStat = clientSimGetBaseAlliance(cs, count);
-    sdl3DrawStatusBase(count, baseStat, showBaseLabels);
-  }
-  sdl3DrawCopyBasesStatus(0, 0);
 }
 
 void windowSoundEffects_toggle(void) {
@@ -1740,15 +1692,6 @@ void windowSaveMap(ClientSim *cs) {
                         IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     }
   }
-}
-
-void windowKeyPressed(ClientSim *cs, int keyCode) {
-  if (keyCode == keys.kiTankView) {
-    clientSimTankView(cs);
-  }
-  /* Pill view (enter + hold-to-cycle) is handled by polling in
-   * pillViewInputStep so holding the key auto-repeats through pills;
-   * dispatching it here too would double-step on the entering press. */
 }
 
 void windowButtonAdd(int keyCode) {
@@ -2109,20 +2052,6 @@ void frontEndEnableRequestAllyMenu(bool enabled) {
 
 void frontEndEnableLeaveAllyMenu(bool enabled) {
   (void)enabled;
-}
-
-/* -------------------------------------------------------
- * frontEndRedrawAll — called by backend to force redraw
- * ------------------------------------------------------- */
-void frontEndRedrawAll(ClientSim *cs) {
-  if (!clientSimIsRunning(cs)) return;
-  /* In lobby state the in-game renderer hasn't taken over yet — the
-   * lobby ImGui is the active view. Skip the game-frame blit so a
-   * subscriber-side playersSetPlayer triggered by a CTRL_PLAYER_JOIN
-   * mid-lobby (e.g. another remote adding a bot) doesn't stomp the
-   * lobby render. */
-  if (clientSimIsInLobby(cs)) return;
-  windowRedrawAll(cs);
 }
 
 /* -------------------------------------------------------

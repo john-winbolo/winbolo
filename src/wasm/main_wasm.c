@@ -724,36 +724,6 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 }
 
 /* Menu toggles — called by sdl3imgui.cpp */
-void windowShowGunsight_toggle(ClientSim *cs) {
-  showGunsight = !showGunsight;
-  clientSimSetGunsight(cs, showGunsight);
-}
-void windowAutomaticScrolling_toggle(ClientSim *cs) {
-  autoScrollingEnabled = !autoScrollingEnabled;
-  if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
-}
-void windowShowPillLabels_toggle(ClientSim *cs) {
-  BYTE count, total;
-  showPillLabels = !showPillLabels;
-  sdl3DrawSetPillsStatusClear();
-  total = clientSimGetPillCount(cs);
-  for (count = 1; count <= total; count++) {
-    BYTE pillStat = clientSimGetPillAlliance(cs, count);
-    sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
-  }
-  sdl3DrawCopyPillsStatus(0, 0);
-}
-void windowShowBaseLabels_toggle(ClientSim *cs) {
-  BYTE count, total;
-  showBaseLabels = !showBaseLabels;
-  sdl3DrawSetBasesStatusClear();
-  total = clientSimGetBaseCount(cs);
-  for (count = 1; count <= total; count++) {
-    BYTE baseStat = clientSimGetBaseAlliance(cs, count);
-    sdl3DrawStatusBase(count, baseStat, showBaseLabels);
-  }
-  sdl3DrawCopyBasesStatus(0, 0);
-}
 void windowSoundEffects_toggle(void)          { soundEffects = !soundEffects; }
 void windowBackgroundSoundChange_toggle(void) {
   backgroundSound = !backgroundSound;
@@ -815,10 +785,6 @@ void windowSaveMap(ClientSim *cs) {
                     IMGUI_MSG_INFO, IMGUI_MSG_OK);
 }
 
-void windowKeyPressed(ClientSim *cs, int keyCode) {
-  if (keyCode == keys.kiTankView) clientSimTankView(cs);
-  else if (keyCode == keys.kiPillView) clientSimPillView(cs, 0, 0);
-}
 void windowButtonAdd(int keyCode)    { (void)keyCode; }
 void windowButtonRemove(int keyCode) { (void)keyCode; }
 void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
@@ -1022,8 +988,6 @@ void frontEndSetActiveClientSim(struct ClientSim *cs) {
 }
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }
-
-void frontEndRedrawAll(ClientSim *cs) { windowRedrawAll(cs); }
 
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
   showGunsight = !isShown;
