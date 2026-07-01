@@ -28,7 +28,7 @@ document is the stable reference for the rules themselves.
 | `brains/` | T1 + T2 + T3 + T4 | Builds `bot_brains_static` (bot brain implementations — GoalHunter, ONNX backends). Compiles under the `sim_owner` profile because brain evaluation reads sim state directly. Not a frontend; every binary that ships bots links the same `bot_brains_static`, so the asymmetric-runtime bug class doesn't apply. |
 | `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via three libraries: `server_sim_static` (sim core: `server_sim.c`, `servermessages.c`); `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `geolookup.c`, plus `threads_static` PUBLIC-linked); and `threads_static` (the SDL-mutex thread manager — `threads.c` on every platform except Emscripten, where `threads_wasm.c` substitutes single-threaded no-ops with the same symbol surface). `threads_static` is consumed by every binary that ticks a sim, not only the dedicated server: in-process single-player builds (WinBoloIOS, android main, wasm winbolo, WinBoloUnitTests) link it directly; the four dedicated-server binaries get it transitively through `server_static`. Three more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals), `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI), and `server_dedicated_log.c` (the dedicated-server's replay-log subscriber, registered against the ServerSim bus from `servermain.c`). See "Per-file T2 grants" below for the mechanism. |
 | `src/headless/` | T1 + T3 + T4 | Same as server. |
-| `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client. |
+| `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client — shares the `src/gui/sdl3/` ImGui UI and the shared sim-driving cores, forking only the single-threaded driver (emscripten main loop in place of the SDL timer thread). See "Platform variants: share the logic, fork only the driver". |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/ios/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. |
@@ -265,6 +265,69 @@ clientSimDestroy(cs);   /* frees the ClientSim allocation itself */
 ```
 
 `clientSimDestroy` is safe on NULL.
+
+### Platform variants: share the logic, fork only the driver
+
+The same client ships on several platforms — desktop (`src/gui/sdl3/`),
+web (`src/wasm/`), and mobile (`src/android/`, `src/ios/`). They differ
+only in the *driver*: the mechanism that decides **when** to tick and
+how to block or pump. Desktop ticks from an SDL timer thread; web ticks
+from the emscripten `requestAnimationFrame` loop with a wall-clock
+accumulator (no threads, no `SDL_AddTimer`); mobile ticks from the
+platform's frame callback. Everything else — the sim-driving *logic* —
+is identical across platforms and must be **shared and called, never
+copied per platform.**
+
+**The rule.** A platform variant supplies its driver and its
+genuinely platform-specific rendering. It does **not** re-implement the
+tick cadence, the connect/landing sequence, or the sim-state-guarded
+`frontEnd*` bodies. Those are the contract, and the contract has one
+implementation that every platform calls. This is the same discipline
+as `threads_static`: `threads.c` on every platform, `threads_wasm.c`
+substituted under Emscripten, one symbol surface, callers unchanged
+(`src/server/CMakeLists.txt`).
+
+**The hazard this prevents.** When a new platform is brought up by
+copying a peer frontend's tick loop or connect body wholesale and then
+trimming the platform-specific parts, the copy is correct *the day it
+is made* — and silently drifts every time the original gains a step.
+The dropped step is not greppable (the function still exists, still
+compiles, still mostly works), so category audits — "is every callback
+registered?", "is any body an empty stub?" — miss it. Only a
+line-by-line diff against the source of truth finds a body that dropped
+a step mid-logic. Sharing the body removes the diff target entirely.
+
+**The shared cores — call them, do not re-derive them:**
+
+- **The tick cadence.** The alternating keys/game step, plus the
+  lobby/countdown branch (tick the transport only — do not run a game
+  tick in lobby), the gunsight-adjust consume into `pkt.flags`, and the
+  per-second bookkeeping. Canonical shape: the tick block under
+  "Ticking" above (`src/headless/headless_main.c`). A frontend that owns
+  a human at the wheel adds the lobby branch and gunsight consume the
+  headless example omits; those additions belong in the shared core, not
+  in each platform's copy.
+- **The connect/landing sequence.** After `clientSimConnectUdp` the
+  state is asynchronous: poll `clientSimNetTick` while
+  `clientSimGetConnectState` is `JOINING`/`DOWNLOADING_MAP`, **break as
+  soon as `clientSimIsInLobby`** (lobby-enabled servers deliver
+  `CTRL_LOBBY_SETTINGS` before the map, so `inLobby` latches true while
+  the connect state is still `DOWNLOADING_MAP`), and accept the join
+  when `state == CLIENT_CONNECT_CONNECTED` **or** `clientSimIsInLobby`.
+  A landing check that only accepts `CONNECTED` hangs every lobby join
+  until timeout. See the connect post-conditions above.
+- **The sim-state-guarded `frontEnd*` bodies.** Several callbacks carry
+  guard logic that is part of the contract, not cosmetics:
+  `frontEndRedrawAll` skips the game-frame blit when `!clientSimIsRunning`
+  or `clientSimIsInLobby` (so a mid-lobby roster update does not stomp
+  the lobby UI); the status/draw callbacks drop stale-sim events via the
+  active-`ClientSim` guard; the settings toggles persist through
+  `gameFrontSaveCurrentPrefs`. These guards belong in shared code so a
+  platform cannot silently omit one.
+
+When adding or maintaining a platform variant, the review question is
+not "does it compile and mostly run?" but "does it call the shared core,
+or does it hold its own copy that can drift?" A copy is a latent bug.
 
 ### Server
 
