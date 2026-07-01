@@ -111,6 +111,16 @@ static SDL_Texture  *gCrosshairTex  = NULL;  /* crosshairs_17x17.png — center 
 static bool          gCursorFaint   = false; /* draw the build-mode cursor at 25% alpha (locked target, build mode off) */
 static int           gZoomFactor    = 1;
 
+/* Set true while a zoom/skin change reconfigures assets in place. If
+   sdl3DrawCleanup is entered while this is set, a renderer/window teardown
+   would recreate the Metal layer mid-reconfigure — the exact crash this
+   path was rewritten to avoid. */
+static bool          s_inZoomSkinReconfigure = false;
+
+void sdl3DrawSetReconfigureGuard(bool active) {
+  s_inZoomSkinReconfigure = active;
+}
+
 void sdl3DrawSetCursorFaint(bool faint) {
   gCursorFaint = faint;
 }
@@ -336,6 +346,15 @@ static bool sdl3LoadTiles(void) {
   SDL_SetTextureScaleMode(gTilesTex, SDL_SCALEMODE_NEAREST);
   sdl3DrawStatusSetAtlas(gTilesTex, gSheetScale);
   return TRUE;
+}
+
+/* Rebuilds only the tile atlas in place (for a skin change) by re-reading
+ * the skin assets from disk.  Does not touch the renderer, window, fonts,
+ * or zoom. */
+void sdl3DrawReloadTiles(void) {
+  if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
+  sdl3DrawStatusSetAtlas(NULL, 1);
+  sdl3LoadTiles();
 }
 
 /* Loads data/background.bmp as gBackgroundTex. */
@@ -1166,6 +1185,12 @@ bool sdl3DrawSetup(int zoomFactor) {
 }
 
 void sdl3DrawCleanup(void) {
+  if (s_inZoomSkinReconfigure) {
+    WB_LOG_ERROR(WB_LOG_CAT_GUI,
+      "sdl3DrawCleanup entered during a zoom/skin reconfigure — a renderer/window "
+      "teardown here recreates the Metal layer and crashes the Steam overlay");
+    SDL_assert(!s_inZoomSkinReconfigure);
+  }
   tileLoaderCleanup();
   cursorCleanup();
 
@@ -1242,16 +1267,17 @@ static void sdl3DrawTankLabels(screenTanks *tks) {
 }
 
 /* -------------------------------------------------------
- * sdl3DrawAdaptRenderTarget — dynamically resize the game
- * render target when the window size changes in Custom zoom
- * mode.  Computes the ceiling integer zoom so the render
- * target is always >= the window size, then downscales the
- * blit for crisp output at any window size.
+ * sdl3DrawReconfigureZoom — rebuild all zoom-dependent
+ * assets in place against the live renderer.  explicitZoom
+ * >= 1 uses that integer render zoom directly; explicitZoom
+ * == 0 (Custom mode) derives the ceiling integer zoom from
+ * the current window size so the render target is always
+ * >= the window size, then downscales the blit for crisp
+ * output.  Does not touch the renderer or window.
  * ------------------------------------------------------- */
-static void sdl3DrawAdaptRenderTarget(void) {
+void sdl3DrawReconfigureZoom(int explicitZoom) {
+  (void)explicitZoom;
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__IPHONEOS__)
-  extern BYTE zoomFactor;
-  if (zoomFactor != ZOOM_FACTOR_CUSTOM) return;
   if (!gRenderer || !gWindow) return;
   if (uiModeIsTablet()) return;
   /* Deck is fullscreen 1280x800 with logical presentation already set in
@@ -1260,20 +1286,27 @@ static void sdl3DrawAdaptRenderTarget(void) {
      branch picked. */
   if (uiModeIsSteamDeck()) return;
 
-  int winW, winH;
-  SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
+  int needZoom;
+  if (explicitZoom >= 1) {
+    /* Caller supplied an explicit integer render zoom (cardinal/menu zoom) */
+    needZoom = explicitZoom;
+  } else {
+    /* Derive the ceiling integer zoom from the current window size */
+    int winW, winH;
+    SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
 
-  /* Ceiling integer zoom: smallest integer where zoom * gameSize >= windowSize */
-  int zoomForW = (winW + SDL3_SCREEN_W - 1) / SDL3_SCREEN_W;
-  int zoomForH = (winH + SDL3_SCREEN_H - 1) / SDL3_SCREEN_H;
-  int needZoom = (zoomForW > zoomForH) ? zoomForW : zoomForH;
-  if (needZoom < 1) needZoom = 1;
+    /* Ceiling integer zoom: smallest integer where zoom * gameSize >= windowSize */
+    int zoomForW = (winW + SDL3_SCREEN_W - 1) / SDL3_SCREEN_W;
+    int zoomForH = (winH + SDL3_SCREEN_H - 1) / SDL3_SCREEN_H;
+    needZoom = (zoomForW > zoomForH) ? zoomForW : zoomForH;
+    if (needZoom < 1) needZoom = 1;
+  }
 
   /* Nothing to do if already at the right zoom */
   if (needZoom == gZoomFactor && gGameRenderTarget != NULL) return;
 
-  WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawAdaptRenderTarget: window %dx%d -> zoom %d (was %d)",
-          winW, winH, needZoom, gZoomFactor);
+  WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawReconfigureZoom: -> zoom %d (was %d)",
+          needZoom, gZoomFactor);
 
   /* Destroy old resources that are zoom-dependent */
   if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
@@ -1330,6 +1363,14 @@ static void sdl3DrawAdaptRenderTarget(void) {
     WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawAdaptRenderTarget: created render target %dx%d", gGameRTWidth, gGameRTHeight);
   }
 #endif
+}
+
+/* Per-frame entry: only rebuilds in Custom zoom mode, deriving the
+ * integer render zoom from the current window size. */
+static void sdl3DrawAdaptRenderTarget(void) {
+  extern BYTE zoomFactor;
+  if (zoomFactor != ZOOM_FACTOR_CUSTOM) return;   /* mode gate — CUSTOM only */
+  sdl3DrawReconfigureZoom(0);                       /* derive from window */
 }
 
 void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
