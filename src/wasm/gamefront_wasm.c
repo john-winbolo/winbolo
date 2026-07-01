@@ -20,6 +20,7 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
+#include "client_frontend_connect.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "global.h"
@@ -411,19 +412,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       return FALSE;
     }
 
-    /* Wait for join + map download */
-    {
-      int joinWaitTicks = 0;
-      while ((clientSimGetConnectState(humanSim) == CLIENT_CONNECT_JOINING ||
-              clientSimGetConnectState(humanSim) == CLIENT_CONNECT_DOWNLOADING_MAP) &&
-             joinWaitTicks < 1500) {
-        clientSimNetTick(humanSim);
-        SDL_Delay(20);
-        joinWaitTicks++;
-      }
-    }
-
-    if (clientSimGetConnectState(humanSim) != CLIENT_CONNECT_CONNECTED) {
+    /* Wait for the join handshake (30s timeout). Landing accepts either a
+     * running game or entry into the server lobby (the production join_code
+     * path lands in the in-game lobby) — see clientFrontAwaitJoin. */
+    if (!clientFrontAwaitJoin(humanSim, 1500)) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
       printf("[WASM] Join failed: %s\n", reason ? reason : "timeout");
       wasmReportConnectFailure(

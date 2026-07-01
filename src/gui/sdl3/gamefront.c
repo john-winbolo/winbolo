@@ -49,6 +49,7 @@
 #include "../../common/wb_log.h"
 #include "../../common/prefs.h"
 #include "bolo_rand.h"
+#include "client_frontend_connect.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "discovery.h"
@@ -1408,22 +1409,9 @@ bool gameFrontSetDlgState(openingStates newState) {
       s_joinAttemptFailed = TRUE;
       returnValue = FALSE;
     } else {
-      /* Wait for join handshake. Break early if we enter the lobby
-       * (lobby-enabled servers deliver CTRL_LOBBY_SETTINGS via sync
-       * replay before map chunks, so inLobby may become true while
-       * the map is still downloading). */
-      int joinWaitTicks = 0;
-      while (joinWaitTicks < 1500) {  /* 30 second timeout */
-        ClientConnectState js = clientSimGetConnectState(humanSim);
-        if (js != CLIENT_CONNECT_JOINING && js != CLIENT_CONNECT_DOWNLOADING_MAP) break;
-        if (clientSimIsInLobby(humanSim)) break;  /* Enter lobby immediately */
-        clientSimNetTick(humanSim);
-        SDL_Delay(20);
-        joinWaitTicks++;
-      }
-
-      ClientConnectState finalState = clientSimGetConnectState(humanSim);
-      if (finalState == CLIENT_CONNECT_CONNECTED || clientSimIsInLobby(humanSim)) {
+      /* Wait for the join handshake (30s timeout). Landing accepts either a
+       * running game or entry into the server lobby — see clientFrontAwaitJoin. */
+      if (clientFrontAwaitJoin(humanSim, 1500)) {
         udpPlayerNum = clientSimGetServerPlayerNum(humanSim);
         udpTransportActive = TRUE;
 

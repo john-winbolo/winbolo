@@ -235,6 +235,9 @@ set(WASM_SOURCES
     ${SRC_ROOT}/common/prefs.c
     ${SRC_ROOT}/common/prefs_doc.c
     ${SRC_ROOT}/winbolonet/wbn_prefs_sync.c
+    # Shared client-frontend cores called by both desktop and web (the
+    # connect/landing contract lives here so it cannot drift per platform).
+    ${SRC_ROOT}/client_frontend/client_frontend_connect.c
 )
 
 ###
@@ -256,6 +259,7 @@ target_include_directories(winbolo PRIVATE
     ${SRC_ROOT}/server
     ${SRC_ROOT}/mapeditor
     ${SRC_ROOT}/winbolonet
+    ${SRC_ROOT}/client_frontend
     ${cjson_SOURCE_DIR}
     ${SRC_ROOT}/third_party/imgui_markdown
 )
