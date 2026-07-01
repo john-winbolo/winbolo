@@ -126,6 +126,15 @@ bool sdl3DrawSetup(int zoomFactor);
 void sdl3DrawReconfigureZoom(int explicitZoom);
 
 /*********************************************************
+*NAME:          sdl3DrawReloadTiles
+*PURPOSE:
+*  Rebuilds only the tile atlas in place for a skin
+*  change, re-reading the skin assets from disk.  Does
+*  not touch the renderer, window, fonts, or zoom.
+*********************************************************/
+void sdl3DrawReloadTiles(void);
+
+/*********************************************************
 *NAME:          sdl3DrawCleanup
 *PURPOSE:
 *  Destroys the SDL3 window, renderer and all textures.

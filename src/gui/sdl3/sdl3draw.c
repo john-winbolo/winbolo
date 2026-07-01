@@ -338,6 +338,15 @@ static bool sdl3LoadTiles(void) {
   return TRUE;
 }
 
+/* Rebuilds only the tile atlas in place (for a skin change) by re-reading
+ * the skin assets from disk.  Does not touch the renderer, window, fonts,
+ * or zoom. */
+void sdl3DrawReloadTiles(void) {
+  if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
+  sdl3DrawStatusSetAtlas(NULL, 1);
+  sdl3LoadTiles();
+}
+
 /* Loads data/background.bmp as gBackgroundTex. */
 static bool sdl3LoadBackground(void) {
   if (gBackgroundTex != NULL) {

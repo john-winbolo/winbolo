@@ -2295,9 +2295,8 @@ void gameFrontHandleUrlOpen(char *url) {
 }
 
 void gameFrontReloadSkins(void) {
-  sdl3DrawCleanup();
+  sdl3DrawReloadTiles();
   soundCleanup();
-  sdl3DrawSetup(1);
   if (soundSetup() == FALSE) {
     /* Non-fatal */
   }
