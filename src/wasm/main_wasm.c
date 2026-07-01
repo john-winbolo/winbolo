@@ -156,15 +156,19 @@ void sdl3MessageHandler(const char *message, const char *title) {
  * then handles it exactly like a real wheel (same in-game + ImGui-capture
  * gating). deltaY is the browser value (negative = scroll up); SDL uses
  * positive-up, so flip the sign to a unit step. */
+extern void inputBumpGunsight(int direction);       /* gui/sdl3/input.h */
+extern uint8_t inputConsumeGunsightAdj(void);       /* gui/sdl3/input.h */
+extern bool sdl3ImguiWantCaptureMouse(void);        /* sdl3imgui.cpp */
+
 EMSCRIPTEN_KEEPALIVE
 void wbWasmWheel(double deltaY) {
   if (deltaY == 0.0) return;
-  SDL_Event e;
-  SDL_zero(e);
-  e.type = SDL_EVENT_MOUSE_WHEEL;
-  e.wheel.windowID = SDL_GetWindowID(sdl3DrawGetWindow());
-  e.wheel.y = (deltaY < 0.0) ? 1.0f : -1.0f;
-  SDL_PushEvent(&e);
+  /* Only adjust the gunsight in a running game, and not while the wheel is over
+   * an ImGui panel/dialog (mirrors the shared desktop handler's gating). Browser
+   * deltaY is negative when scrolling up; the gunsight increases on scroll-up. */
+  if (!humanSim || clientSimGetNetStatus(humanSim) != netRunning) return;
+  if (sdl3ImguiWantCaptureMouse()) return;
+  inputBumpGunsight(deltaY < 0.0 ? +1 : -1);
 }
 
 /* -------------------------------------------------------
@@ -201,6 +205,10 @@ static void windowRunGameTick(ClientSim *cs) {
       }
       InputPacket pkt;
       clientBuildInputPacket(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
+      if (!brainRunning) {
+        uint8_t gsAdj = inputConsumeGunsightAdj();
+        if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
+      }
       clientMutexWaitFor();
       clientSimKeysTick(cs, &pkt);
       clientMutexRelease();
@@ -226,6 +234,10 @@ static void windowRunGameTick(ClientSim *cs) {
       }
       InputPacket pkt;
       clientBuildInputPacket(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
+      if (!brainRunning) {
+        uint8_t gsAdj = inputConsumeGunsightAdj();
+        if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
+      }
       clientMutexWaitFor();
       clientSimGameTick(cs, &pkt, brainRunning);
       clientMutexRelease();
