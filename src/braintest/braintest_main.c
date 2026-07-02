@@ -2228,6 +2228,9 @@ static char optRunScript[1024] = "";
  * --profile-log to enable file writes too (which implies --profile). */
 static int  optProfile    = 0;
 static int  optProfileLog = 0;
+/* --instr-profile: arm GoalHunter's Lua instruction-sampling profiler
+ * (per-bot p<N>_profile.tsv). Benchmark diagnostics only — see below. */
+static int  optInstrProfile = 0;
 /* JSONL behavior log (brain_p<N>.jsonl, goal_player%d.log, etc.). Always
  * on in dev mode; opt-in under --opt via --log-json. Independent of the
  * profile flags — behavior trace is about decisions, not perf. */
@@ -2276,6 +2279,8 @@ static void printUsage(const char *prog) {
         "  --profile          (--opt only) In-memory timing → Y panel time bar. No file writes.\n"
         "  --profile-log      (--opt only) Profiling + write optimize.log/performance.ticks.log.\n"
         "                     Implies --profile. In dev mode (no --opt) both are on by default.\n"
+        "  --instr-profile    Write per-bot Lua instruction-sampling profile (p<bot>_profile.tsv);\n"
+        "                     benchmark diagnostics — disables tick-budget kills while sampling.\n"
         "  --log-json         (--opt only) Write brain_p<N>.jsonl + goal_player<N>.log behavior\n"
         "                     traces. On by default in dev mode.\n"
         "  --safe-brains      Run brains in the restricted sandbox (off by default in\n"
@@ -2390,6 +2395,8 @@ static bool parseArgs(int argc, char **argv) {
              * measurement makes no sense — buffer would be empty). */
             optProfile    = 1;
             optProfileLog = 1;
+        } else if (strcmp(argv[i], "--instr-profile") == 0) {
+            optInstrProfile = 1;
         } else if (strcmp(argv[i], "--log-json") == 0) {
             optLogJson = 1;
         } else if (strcmp(argv[i], "--safe-brains") == 0) {
@@ -5785,6 +5792,7 @@ int main(int argc, char *argv[]) {
      * (debug-mode dev runs already force it on inside the handler), so the "P"
      * replay window has pool-breakdown data. */
     luaBrainsSetProfile(effProfile, effProfileLog, /*pool_viz*/ effProfileLog);
+    luaBrainsSetInstrProfile(optInstrProfile);
     luaBrainsSetLogJson(effLogJson);
     /* Dev tool: brains run unsandboxed unless --safe-brains is passed. */
     luaBrainsSetAllowUnsafe(!optSafeBrains);

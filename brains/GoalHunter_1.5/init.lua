@@ -47,6 +47,7 @@ local threat   = require("threat")
 local hearing  = require("hearing")
 local print2   = require("print2")
 local opt      = require("optimize")
+local prof     = require("profiler")
 local shot_tracker = require("shot_tracker")
 local viz      = require("viz")
 local ally_state = require("ally_state")
@@ -1456,7 +1457,25 @@ function Brain.think(info)
     return { holdkeys = manual_keys, tapkeys = 0, build = mbuild, wantallies = info.allies, messagedest = 0, sendmessage = "" }
   end
 
-
+  -- Instruction-sampling profiler arm/start. Placed here, after the dead,
+  -- startup, and manual-control early-out returns above, for two reasons:
+  --   1. Every armed tick reaches a paired prof.stop() — either at the tail
+  --      return or at the paused early-out below — so start/stop never desync.
+  --      The dead/startup/manual returns exit before arming and are
+  --      deliberately unprofiled (no cognition worth attributing).
+  --   2. prof.start() installs a debug.sethook that replaces the host's
+  --      per-think budget count hook (bot_manager installs one around think;
+  --      a Lua state holds only one hook), so tick-budget enforcement is off
+  --      while --instr-profile is active. This is a benchmark-only diagnostic.
+  -- Arm lazily/once: bot number and DEBUG_SESSION_DIR are only reliable here.
+  if _G.BRAIN_INSTR_PROFILE and not state._instr_prof_on then
+    state._instr_prof_on = true
+    prof.configure({
+      dir    = _G.DEBUG_SESSION_DIR or ".",
+      prefix = "p" .. tostring(info.player_number or 0),
+    })
+  end
+  if state._instr_prof_on then prof.start() end
 
   -- Debug overlay
   if BRAIN_DEBUG_MODE then
@@ -2818,6 +2837,7 @@ function Brain.think(info)
   -- Paused: accept commands but do nothing else
   if state.paused then
     log.log_tick(state, info, state.goal, 0, 0, nil)
+    if state._instr_prof_on then prof.stop(state.server_tick or state.tick or 0) end
     return {
       holdkeys    = 0,
       tapkeys     = 0,
@@ -7337,6 +7357,10 @@ function Brain.think(info)
   -- captures the /info broadcast block above (blitz TX diagnostics included).
   if BRAIN_DEBUG_MODE then print2.flush() end
 
+  -- Paired stop for the sampling profiler armed after the early-out gates.
+  -- Every armed tick reaches here, keeping start/stop balanced.
+  if state._instr_prof_on then prof.stop(state.server_tick or state.tick or 0) end
+
   -- Output
   return {
     holdkeys    = keys,
@@ -7512,6 +7536,8 @@ end
 
 function Brain.close(info)
   print(TAG .. " closed after " .. state.tick .. " ticks")
+  -- Flush and close the sampling profiler's per-bot TSV if it was armed.
+  if state._instr_prof_on then prof.shutdown() end
   log.dump_world(world)
   log.close()
   opt.close()

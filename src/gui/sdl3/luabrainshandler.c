@@ -118,6 +118,12 @@ void luaBrainsSetProfile(int profile, int profile_log, int pool_viz) {
     s_pool_viz    = pool_viz    ? 1 : 0;
 }
 
+/* Set by --instr-profile. Captured as the BRAIN_INSTR_PROFILE Lua global at
+ * brain init; when set, GoalHunter arms its sampling profiler around think. */
+static int s_instr_profile = 0;
+
+void luaBrainsSetInstrProfile(int enabled) { s_instr_profile = enabled ? 1 : 0; }
+
 /* Set by --log-json (or always-on in dev mode). Captured as
  * BRAIN_LOG_JSON Lua global at brain init. */
 static int s_log_json = 0;
@@ -1074,6 +1080,9 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
 
   lua_pushboolean(L, s_profile_log);
   lua_setglobal(L, "BRAIN_PROFILE_LOG");
+
+  lua_pushboolean(L, s_instr_profile);
+  lua_setglobal(L, "BRAIN_INSTR_PROFILE");
 
   /* BRAIN_LOG_JSON drives the brain's JSONL behavior log. Force it on
    * whenever debug mode is on — there's no scenario where you'd want
