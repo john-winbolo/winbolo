@@ -258,12 +258,19 @@ function Brain.get_capacity_state_json()
       (state._think_end_us - state._think_start_us) / 1000)
   end
 
+  -- Per-think heap churn from the host's counting allocator. Absent on
+  -- hosts that don't install it (WinBolo client, headless server); emit
+  -- zeros there so the JSON shape stays stable for downstream readers.
+  local alloc_n, alloc_bytes = 0, 0
+  if brain_alloc_stats then alloc_n, alloc_bytes = brain_alloc_stats() end
+
   return string.format(
-    '{"tier":%d,"override":%s,"last_ms":%.2f,"target_ms":%.2f,"ratio_ewma":%.2f,"think_total_ms":%s,"levels":[%s],"sections":[%s]}',
+    '{"tier":%d,"override":%s,"last_ms":%.2f,"target_ms":%.2f,"ratio_ewma":%.2f,"think_total_ms":%s,"alloc_n":%d,"alloc_kb":%.1f,"levels":[%s],"sections":[%s]}',
     tier,
     (type(ovr) == "number") and tostring(math.floor(ovr)) or "null",
     last_ms, tgt_ms, sm,
     think_total_ms_str,
+    alloc_n, alloc_bytes / 1024,
     table.concat(rows, ","),
     table.concat(sec_parts, ","))
 end

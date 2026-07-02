@@ -79,6 +79,28 @@ void brainCoreRegisterGetTerrain(lua_State *L, const BYTE **worldPtr);
 const BYTE **brainCoreGetWorldPtrPtr(lua_State *L);
 
 /*********************************************************
+ *NAME:          brainCoreInstallAllocCounter
+ *PURPOSE:
+ *  Wraps the state's lua_Alloc with a counting allocator and
+ *  registers the brain_alloc_stats() Lua global, which returns
+ *  (allocN, allocBytes) — fresh allocations and net new bytes
+ *  tallied since the last reset (reset happens at each
+ *  brainCoreCallThink entry). Used to profile per-think heap
+ *  churn. mallocs a context that brainCoreUninstallAllocCounter
+ *  frees; install only on states you will later uninstall.
+ *********************************************************/
+void brainCoreInstallAllocCounter(lua_State *L);
+
+/*********************************************************
+ *NAME:          brainCoreUninstallAllocCounter
+ *PURPOSE:
+ *  If the state's current allocf is the counting wrapper,
+ *  restores the original allocf/ud and frees the context.
+ *  No-op on states that never had the wrapper installed.
+ *********************************************************/
+void brainCoreUninstallAllocCounter(lua_State *L);
+
+/*********************************************************
  *NAME:          brainCorePushInfo
  *PURPOSE:
  *  Marshals a BrainInfo struct into a Lua table and pushes

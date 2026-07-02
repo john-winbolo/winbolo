@@ -23,6 +23,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -230,6 +231,76 @@ const BYTE **brainCoreGetWorldPtrPtr(lua_State *L) {
   const BYTE **p = (const BYTE **)lua_touserdata(L, -1);
   lua_pop(L, 1);
   return p;
+}
+
+/* ------------------------------------------------------------------ */
+/* Counting allocator wrapper (per-think allocation profiling)         */
+/* ------------------------------------------------------------------ */
+
+/* Context threaded as the ud of the wrapping lua_Alloc. Delegates every
+ * request to the original allocator and tallies fresh allocations and
+ * growths so a benchmark can read per-think heap churn. */
+typedef struct BrcAllocCounter {
+  lua_Alloc   origAlloc;   /* allocator this wrapper delegates to */
+  void       *origUd;      /* ud the original allocator expects */
+  lua_Integer allocN;      /* fresh + grow events since last reset */
+  lua_Integer allocBytes;  /* net new bytes since last reset */
+} BrcAllocCounter;
+
+/* lua_Alloc wrapper: delegate faithfully, then count. Only successful
+ * fresh allocations and growths are tallied; shrinks and frees are not.
+ * In Lua 5.4 osize carries the object type tag (not a byte size) when
+ * ptr is NULL, so a fresh alloc counts the whole nsize. */
+static void *brc_counting_alloc(void *ud, void *ptr, size_t osize,
+                                size_t nsize) {
+  BrcAllocCounter *ctx = (BrcAllocCounter *)ud;
+  void *res = ctx->origAlloc(ctx->origUd, ptr, osize, nsize);
+  if (nsize == 0) {
+    return res; /* free — not counted */
+  }
+  if (res != NULL) {
+    if (ptr == NULL) {
+      ctx->allocN++;
+      ctx->allocBytes += (lua_Integer)nsize;
+    } else if (nsize > osize) {
+      ctx->allocN++;
+      ctx->allocBytes += (lua_Integer)(nsize - osize);
+    }
+    /* shrink (nsize <= osize): counted as neither */
+  }
+  return res;
+}
+
+/* brain_alloc_stats() Lua global — returns (allocN, allocBytes) tallied
+ * since the last reset. The counter context rides as a light-userdata
+ * upvalue so this closure needs no globals. */
+static int brc_alloc_stats(lua_State *L) {
+  BrcAllocCounter *ctx =
+      (BrcAllocCounter *)lua_touserdata(L, lua_upvalueindex(1));
+  lua_pushinteger(L, ctx->allocN);
+  lua_pushinteger(L, ctx->allocBytes);
+  return 2;
+}
+
+void brainCoreInstallAllocCounter(lua_State *L) {
+  BrcAllocCounter *ctx = (BrcAllocCounter *)malloc(sizeof(BrcAllocCounter));
+  if (ctx == NULL) return;
+  ctx->origAlloc = lua_getallocf(L, &ctx->origUd);
+  ctx->allocN = 0;
+  ctx->allocBytes = 0;
+  lua_setallocf(L, brc_counting_alloc, ctx);
+  lua_pushlightuserdata(L, ctx);
+  lua_pushcclosure(L, brc_alloc_stats, 1);
+  lua_setglobal(L, "brain_alloc_stats");
+}
+
+void brainCoreUninstallAllocCounter(lua_State *L) {
+  void *ud = NULL;
+  lua_Alloc cur = lua_getallocf(L, &ud);
+  if (cur != brc_counting_alloc) return; /* wrapper not installed */
+  BrcAllocCounter *ctx = (BrcAllocCounter *)ud;
+  lua_setallocf(L, ctx->origAlloc, ctx->origUd);
+  free(ctx);
 }
 
 /* ------------------------------------------------------------------ */
@@ -789,6 +860,18 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
   int top = lua_gettop(L);
 
   if (out_killed) *out_killed = false;
+
+  /* Reset the per-think allocation counters, but only on states that
+   * actually carry the counting wrapper — identity-checked so states
+   * without it (e.g. the lua_strip tool) are untouched. */
+  {
+    void *allocUd = NULL;
+    if (lua_getallocf(L, &allocUd) == brc_counting_alloc && allocUd) {
+      BrcAllocCounter *ctx = (BrcAllocCounter *)allocUd;
+      ctx->allocN = 0;
+      ctx->allocBytes = 0;
+    }
+  }
 
   lua_getglobal(L, "brain");
   if (!lua_istable(L, -1)) {

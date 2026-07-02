@@ -1374,6 +1374,12 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   }
   brainDataExtractInfo(cs, &inst->bInfo);
 
+  /* Install the per-think allocation counter now that every early-exit
+   * lua_close path is behind us, so a failed create can't leak the
+   * counter context. Deliberately after brain.open — script load and
+   * open-time allocations are not part of the per-think churn we measure. */
+  brainCoreInstallAllocCounter(L);
+
   inst->L = L;
   inst->running = true;
   return true;
@@ -1464,6 +1470,11 @@ void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
 
   overlayCmdBufferDestroy(&inst->overlay);
   inst->overlayPtr = NULL;
+
+  /* Restore the original allocator and free the counter context before
+   * tearing down the state, so the wrapper isn't left pointing at freed
+   * memory during lua_close's final sweep. */
+  brainCoreUninstallAllocCounter(inst->L);
 
   lua_close(inst->L);
   inst->L = NULL;
