@@ -117,6 +117,16 @@ void sdl3DrawStatusBaseBars(int x, int y,
                             BYTE shells, BYTE mines, BYTE armour, bool redraw);
 void sdl3DrawCopyBasesStatusBars(int x, int y);
 
+/* Render-thread-only rebuilds of the resource-bar textures from the cached
+ * values set by sdl3DrawStatus{Tank,Base}Bars. Called each frame from
+ * sdl3RenderStatusPanels so the sim-tick thread never touches the GPU. */
+void sdl3RenderTankBarsTex(void);
+void sdl3RenderBaseBarsTex(void);
+
+/* TRUE if the caller is on the thread that created the renderer. All GPU
+ * work must run there; drawing helpers assert on it. */
+bool sdl3DrawOnRenderThread(void);
+
 void sdl3DrawResetCachedText(void);
 void sdl3DrawMessages(int x, int y, char *top, char *bottom);
 void sdl3DrawGetCachedMessages(const char **top, const char **bottom);

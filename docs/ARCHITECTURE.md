@@ -142,6 +142,51 @@ zoom or skin change. As a guard, `sdl3DrawCleanup` asserts (via
 `sdl3DrawSetReconfigureGuard`) that it is never entered while an in-place
 zoom/skin reconfigure is in progress.
 
+## Renderer thread ownership (SDL3 desktop)
+
+The SDL renderer — and the Metal/GL command queue behind it — is **not**
+safe to touch from two threads at once. All GPU work must run on the thread
+that created the renderer (the main/render thread). This matters because the
+hosted server tick does **not** run on the main thread: `serverInstanceTick`
+fires from SDL's timer thread (`hostedServerTimerCb`), and the sim, while
+applying that tick, calls back into `frontEnd*` callbacks. If one of those
+callbacks draws, it races the main thread's `SDL_RenderPresent` and segfaults
+inside the GPU driver — a real, historically-shipped crash.
+
+**Rule: a `frontEnd*` callback reachable from the sim must never issue
+renderer calls directly.** It caches the state it was handed; the main
+thread's per-frame render pass repaints from that cache (or straight from sim
+state). Concretely:
+
+- **Icon panels** (bases/pills/tanks) — the callback does nothing; the
+  per-frame `sdl3DrawMainScreen` repaints every icon from `clientSimGet*Alliance`.
+- **Resource bars, man-status, kills/deaths, newswire text** — the callback
+  is *cache-only* (`sdl3DrawStatus*Bars`, `sdl3DrawSetManStatus`,
+  `sdl3DrawKillsDeaths`, `sdl3DrawMessages` all just store values). The
+  render-thread pass rebuilds the textures / draws the text from cache each
+  frame (`sdl3RenderTankBarsTex`/`BaseBarsTex`, `sdl3RenderManStatusTex` inside
+  `sdl3RenderStatusPanels`; `sdl3RenderCachedText`).
+- **Full redraw** (`frontEndRedrawAll`) — reachable from the tick via
+  `playersSetPlayer`; it early-returns off the render thread since the main
+  loop already repaints every frame. Legacy WM_PAINT relic, not needed under
+  the SDL3 per-frame loop.
+
+The lock order in `clientmutex.c` (threads mutex outer, client mutex inner)
+serializes the tick against `clientRenderFrame`, but **`SDL_RenderPresent`
+runs outside the lock** (it must, or every tick would stall on vsync), so
+serialization alone does not make off-thread draws safe — they must not
+happen at all.
+
+**Guard / regression net:** `sdl3DrawOnRenderThread()` records the renderer's
+creating thread and is `SDL_assert`ed at every GPU choke point
+(`sdl3RenderStatusPanels`, `sdl3RenderCachedText`, the texture rebuilds). Any
+future callback that draws off-thread trips the assert immediately in dev
+builds. When adding a new `frontEnd*` callback that needs to show something,
+cache + let the per-frame pass draw it; do not call `sdl3Draw*`/`SDL_Render*`
+from the callback. (ImGui-panel data written from callbacks — e.g. the player
+list — is read on the main thread and must likewise treat its shared state as
+cross-thread.)
+
 ## Writing a new frontend
 
 A frontend is any binary outside `src/bolo/` that drives a `ClientSim`
