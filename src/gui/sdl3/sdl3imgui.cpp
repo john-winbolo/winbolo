@@ -111,6 +111,9 @@ extern "C" {
 #include "platform/mac_menubar.h"
 
 extern "C" void windowSetQuitting(void);
+#ifdef __EMSCRIPTEN__
+extern "C" void windowLeaveGame(void);
+#endif
 
 /* Network type enum values come from client_enums.h via client_sim.h */
 
@@ -2675,9 +2678,11 @@ static void renderMenuBar(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
-#ifndef __EMSCRIPTEN__
         ImGui::Separator();
+#ifndef __EMSCRIPTEN__
         if (ImGui::MenuItem(langGetText(STR_MENU_EXIT)))                     windowSetQuitting();
+#else
+        if (ImGui::MenuItem(langGetText(STR_MENU_LEAVE_GAME)))               windowLeaveGame();
 #endif
         ImGui::EndMenu();
     }

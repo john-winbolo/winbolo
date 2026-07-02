@@ -518,6 +518,9 @@ int main(int argc, char *argv[]) {
 void windowReCreate(void)  { }
 void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
 
+/* Leave the game: navigate the hosting page back to the lobby landing. */
+void windowLeaveGame(void) { emscripten_run_script("window.location.href='/'"); }
+
 void windowApplyMenuChecks(ClientSim *cs) {
   clientSimSetGunsight(cs, showGunsight);
   clientSimSetAutoScroll(cs, autoScrollingEnabled);
