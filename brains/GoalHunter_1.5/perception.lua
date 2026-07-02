@@ -109,12 +109,25 @@ function M.update(state, world, info)
   -- ----- Hostile tanks from info.objects (speed from C ObjectInfo) -----
   -- Velocity tracking: match tanks frame-to-frame by proximity to compute
   -- true velocity (WU per tick) for lead-time aiming.
-  local prev_tanks = state._prev_enemy_tanks or {}
+  -- Double-buffered: the list filled last tick is this tick's matcher input;
+  -- refill the other. Entries are fresh per tick, so a consumer may hold an
+  -- entry across ticks — but never the LIST, which is recycled every 2 ticks.
+  state._et_buf_a = state._et_buf_a or {}
+  state._et_buf_b = state._et_buf_b or {}
+  local prev_tanks = state._prev_enemy_tanks or state._et_buf_b
+  local enemy_tanks = (prev_tanks == state._et_buf_a) and state._et_buf_b
+                                                       or state._et_buf_a
+  -- A respawn nils _prev_enemy_tanks to force a clean matcher start (init.lua);
+  -- the fallback buffer above may still hold entries from two ticks ago, so
+  -- blank it whenever there was no real previous list.
+  if state._prev_enemy_tanks == nil then
+    for i = 1, #prev_tanks do prev_tanks[i] = nil end
+  end
+  local n_et = 0
   local nearest_hostile_tank = nil
   local nearest_hostile_tank_dist = math.huge
   local enemy_tank_count = 0
   local allied_tank_count = 0
-  local enemy_tanks = {}  -- all visible hostile tanks
 
   for _, ob in ipairs(info.objects) do
     if ob.type == OBJECT_TANK and (ob.info & OBJECT_HOSTILE) == 0 then
@@ -181,7 +194,8 @@ function M.update(state, world, info)
                        speed = ob.speed or 0,
                        wx = ob.x, wy = ob.y, vx = vx, vy = vy,
                        svx = svx, svy = svy, hist = hist }
-      enemy_tanks[#enemy_tanks + 1] = entry
+      n_et = n_et + 1
+      enemy_tanks[n_et] = entry
 
       if d < nearest_hostile_tank_dist then
         nearest_hostile_tank_dist = d
@@ -190,18 +204,13 @@ function M.update(state, world, info)
     end
   end
 
-  -- Save current positions + velocity + position history for next tick's
-  -- computation. hist is the rolling 3-tick lookback used to smooth
-  -- velocity against engine-tick position quantization.
-  state._prev_enemy_tanks = {}
-  for _, et in ipairs(enemy_tanks) do
-    state._prev_enemy_tanks[#state._prev_enemy_tanks + 1] = {
-      wx = et.wx, wy = et.wy,
-      vx = et.vx, vy = et.vy,
-      svx = et.svx, svy = et.svy,
-      hist = et.hist,
-    }
-  end
+  -- Trim any entries left in the buffer by a longer previous tick, then hand
+  -- this tick's list to next tick's velocity matcher as its "previous" input.
+  -- The entries carry every field the matcher reads (wx/wy, vx/vy, hist), so no
+  -- snapshot copy is needed — the buffer pair keeps this list intact until it's
+  -- recycled two ticks from now.
+  for i = n_et + 1, #enemy_tanks do enemy_tanks[i] = nil end
+  state._prev_enemy_tanks = enemy_tanks
 
   -- ── Ghost tank tracking ──────────────────────────────────────────────────
   -- Persist the last GHOST_TANK_HIST sightings (position + tick) per tank so
@@ -444,8 +453,14 @@ function M.update(state, world, info)
   -- by idnum on first sighting — useful both for "this LGM came out
   -- of tank K" attribution and for predicting where it's heading.
   local allied_lgm_positions = {}
-  local enemy_lgms = {}
-  local prev_enemy_lgms = state._prev_enemy_lgms or {}
+  -- Double-buffered like enemy_tanks: last tick's list is this tick's matcher
+  -- input; refill the other. Only the LIST is reused — entries stay fresh.
+  state._elgm_buf_a = state._elgm_buf_a or {}
+  state._elgm_buf_b = state._elgm_buf_b or {}
+  local prev_enemy_lgms = state._prev_enemy_lgms or state._elgm_buf_b
+  local enemy_lgms = (prev_enemy_lgms == state._elgm_buf_a) and state._elgm_buf_b
+                                                             or state._elgm_buf_a
+  local n_lgm = 0
   for _, ob in ipairs(info.objects) do
     if ob.type == OBJECT_BUILDMAN then
       local lmx = ob.x >> 8
@@ -521,10 +536,14 @@ function M.update(state, world, info)
         _ent.flight_ticks     = ft
         _ent.predicted_dist_wu = d_wu
         _ent.predict_tier     = tier
-        enemy_lgms[#enemy_lgms + 1] = _ent
+        n_lgm = n_lgm + 1
+        enemy_lgms[n_lgm] = _ent
       end
     end
   end
+  -- Trim entries left by a longer previous tick, then hand this list to next
+  -- tick's matcher as its "previous" input (the buffer pair keeps it intact).
+  for i = n_lgm + 1, #enemy_lgms do enemy_lgms[i] = nil end
   state._prev_enemy_lgms = enemy_lgms
   perc.allied_lgm_positions = allied_lgm_positions
   perc.enemy_lgms = enemy_lgms
