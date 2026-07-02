@@ -201,6 +201,7 @@ bool clientSimCreate(ClientSim *cs) {
   Transport savedTransport = cs->transport;
   bool savedHasTransport   = cs->hasTransport;
   bool savedIsUdpTransport = cs->isUdpTransport;
+  bool savedTransportTicksServer = cs->transportTicksServer;
   struct ServerSim *savedBoundServerSim = cs->boundServerSim;
   SubscriberHandle savedAutoSubHandle = cs->autoSubHandle;
   BrainList savedBrainList = cs->lobbyBrainList;
@@ -215,6 +216,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->transport          = savedTransport;
   cs->hasTransport       = savedHasTransport;
   cs->isUdpTransport     = savedIsUdpTransport;
+  cs->transportTicksServer = savedTransportTicksServer;
   cs->boundServerSim     = savedBoundServerSim;
   cs->autoSubHandle      = savedAutoSubHandle;
   cs->lobbyBrainList     = savedBrainList;
@@ -1909,6 +1911,7 @@ void clientSimSetIsBot(ClientSim *cs, bool v)                   { cs->isBot = v;
 
 bool clientSimIsSinglePlayer(const ClientSim *cs)               { return cs->isSinglePlayer; }
 bool clientSimIsUdpTransport(const ClientSim *cs)               { return cs && cs->isUdpTransport; }
+bool clientSimTransportTicksServer(const ClientSim *cs)         { return cs && cs->hasTransport && cs->transportTicksServer; }
 bool clientSimIsLanOnly(const ClientSim *cs)                    { return cs->isLanOnly; }
 void clientSimSetIsSinglePlayer(ClientSim *cs, bool v)          { cs->isSinglePlayer = v; }
 void clientSimSetIsLanOnly(ClientSim *cs, bool v)               { cs->isLanOnly = v; }

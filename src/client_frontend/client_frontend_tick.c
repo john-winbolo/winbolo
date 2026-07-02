@@ -55,10 +55,14 @@ bool clientFrontRunTickStep(ClientSim *cs) {
     clientMutexRelease();
     clientSimNetRecordInput(cs, &pkt);
     /* Pump the transport on the keys half only when it does not advance the
-     * server itself. An active local single-player transport runs serverSimTick
-     * inside tick(), so a second pump here would step the sim twice per frame;
-     * networked and passive-local clients are unaffected. */
-    if (!clientSimIsSinglePlayer(cs)) {
+     * server itself. An active local transport (wasm SP) runs serverSimTick
+     * inside tick(), so a second pump here would step the sim twice per
+     * frame. Passive-local (desktop SP — host timer thread ticks the server)
+     * and UDP clients keep the pump: for them tick() only pulls/applies a
+     * snapshot, and sampling at ~10ms against the server's ~20ms tick is
+     * what guarantees no per-tick snapshot events are missed (see the dedup
+     * note in transport_local.c). */
+    if (!clientSimTransportTicksServer(cs)) {
       clientSimNetTick(cs);
     }
     simTickCounter++;

@@ -54,6 +54,7 @@ static void clientSimTeardownTransport(ClientSim *cs) {
     transportLocalDestroy(&cs->transport);
   }
   cs->hasTransport = false;
+  cs->transportTicksServer = false;
 }
 
 bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
@@ -75,6 +76,7 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                                            spectator);
   cs->hasTransport = true;
   cs->isUdpTransport = true;
+  cs->transportTicksServer = false;
   cs->isSpectator = spectator;
   clientSimSetLocalTransport(cs, false);
   /* Symmetric with the SP path's clientSimSetNetType(cs, netSingle) at
@@ -192,6 +194,7 @@ static bool clientSimConnectLocalBody(ClientSim *cs, struct ServerSim *sim,
   cs->transport          = tr;
   cs->hasTransport       = true;
   cs->isUdpTransport     = false;
+  cs->transportTicksServer = !passive;
   clientSimSetBoundServerSim(cs, sim);
   clientSimSetLocalTransport(cs, true);
   clientSimSetNetType(cs, netSingle);
