@@ -653,6 +653,13 @@ int main(int argc, char *argv[]) {
             (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
           returnToLobby = TRUE;
           done = TRUE;
+          /* Skip this iteration's render: inLobby is already true, so
+           * sdl3ImguiPumpAndRender's in-game-lobby seam (there for the
+           * WASM client) would flash one lobby frame in the in-game
+           * context and seed the lobby frame state that the blocking
+           * imguiLobbyShow re-inits. The lobby dialog we're about to
+           * re-enter owns all rendering from here. */
+          continue;
         }
 
         /* Redraw every frame — vsync throttles the present rate.

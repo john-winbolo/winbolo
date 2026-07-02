@@ -8456,6 +8456,11 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
     float countdownFontSize = (s <= 1.05f) ? 54.0f : 60.0f * s;
     ImFont *countdownFont = imguiLoadBoloFontSized(countdownFontSize);
 
+    /* Release anything a stray in-game-lobby seam frame left behind
+     * (lobbyFrameInitState below NULLs mapPreviewTex without destroying
+     * it, so an undisposed texture would leak). Idempotent when clean. */
+    imguiLobbyFrameReset();
+
     /* Seed per-frame state, then override the chrome with this private
      * context's computed scale / loaded font / window insets. */
     lobbyFrameInitState(cs);
