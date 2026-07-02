@@ -1377,13 +1377,11 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
     }
   }
 
+  sdl3DrawSetReconfigureGuard(true);
   clientMutexWaitFor();
-  sdl3DrawCleanup();
-  sdl3DrawSetup(internalZoom);
 
   {
-    SDL_Window   *win = sdl3DrawGetWindow();
-    SDL_Renderer *ren = sdl3DrawGetRenderer();
+    SDL_Window *win = sdl3DrawGetWindow();
 
     if (win) {
       /* All modes are resizable - resizing in fixed mode auto-switches to Custom */
@@ -1413,11 +1411,20 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
       }
       SDL_ShowWindow(win);
     }
-    if (win && ren) {
-      sdl3ImguiSetup(win, ren);
+
+    /* Rebuild zoom-dependent assets against the live renderer (no window /
+       renderer teardown). Cardinal passes the explicit integer zoom; Custom
+       passes 0 so the rebuild derives the zoom from the just-applied window
+       size, matching the per-frame adapt path. */
+    if (amount == ZOOM_FACTOR_CUSTOM) {
+      sdl3DrawReconfigureZoom(0);
+    } else {
+      sdl3DrawReconfigureZoom(internalZoom);
     }
   }
+
   clientMutexRelease();
+  sdl3DrawSetReconfigureGuard(false);
   drawBusy = FALSE;
 
   /* Record final state and detect if we landed on a cardinal size */

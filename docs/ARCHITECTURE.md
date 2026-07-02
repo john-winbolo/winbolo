@@ -116,6 +116,32 @@ because the broken client did not run the same code path.
    physically block a stray T3 include from a server TU. Catch it
    in code review.
 
+## Renderer / window lifetime
+
+The SDL3 desktop client creates its window and renderer exactly once, at
+startup (`sdl3DrawSetup`), and keeps both for the process lifetime. The
+Steam overlay installs its Metal-layer hook against that renderer when it
+is created, so the renderer must not be destroyed and recreated at
+runtime — doing so invalidates the overlay's hook and crashes on some
+macOS versions.
+
+Zoom changes and skin changes therefore reconfigure the existing renderer
+in place rather than recreating it:
+
+- **Zoom** — `sdl3DrawReconfigureZoom` rebuilds every zoom-dependent
+  resource (tile atlas, fonts, status caches, man-status render target,
+  and game render target) against the live renderer.
+- **Skin** — `sdl3DrawReloadTiles` rebuilds only the tile atlas from the
+  on-disk skin assets.
+
+Neither path may call `sdl3DrawCleanup` + `sdl3DrawSetup`, which destroy
+and recreate the window/renderer. Those two remain the building blocks for
+process start/shutdown and for any future OS-driven surface or device-loss
+recovery — which would key off a device-lost event, never a user-initiated
+zoom or skin change. As a guard, `sdl3DrawCleanup` asserts (via
+`sdl3DrawSetReconfigureGuard`) that it is never entered while an in-place
+zoom/skin reconfigure is in progress.
+
 ## Writing a new frontend
 
 A frontend is any binary outside `src/bolo/` that drives a `ClientSim`

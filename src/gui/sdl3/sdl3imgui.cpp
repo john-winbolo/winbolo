@@ -259,9 +259,9 @@ static bool s_showGameInfo = false;
 static bool s_showSendMsg  = false;
 static bool s_showPlayersPanel = false;
 
-/* Deferred zoom change — windowZoomChange destroys the ImGui context, so we
-   must not call it mid-frame.  Store the requested value and apply it after
-   the frame ends. 255 = no pending change. */
+/* Deferred zoom change — the reconfigure mutates the live renderer, so it must
+   not run mid-frame; store the requested value and apply it after the frame
+   ends. 255 = no pending change. */
 static BYTE s_pendingZoom = 255;
 static bool s_pendingZoomFromResize = false;  /* True if zoom change came from resize snap */
 
@@ -4640,7 +4640,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     }
 
     /* Apply deferred zoom change after the frame is fully rendered.
-       windowZoomChange destroys and recreates the ImGui context, so it
+       windowZoomChange reconfigures the live renderer in place, so it
        must not run while we are mid-frame. */
     if (s_pendingZoom != 255) {
         BYTE zoom = s_pendingZoom;

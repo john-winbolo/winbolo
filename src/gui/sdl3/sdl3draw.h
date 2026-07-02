@@ -114,6 +114,36 @@ void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev);
 bool sdl3DrawSetup(int zoomFactor);
 
 /*********************************************************
+*NAME:          sdl3DrawReconfigureZoom
+*PURPOSE:
+*  Reconfigures all zoom-dependent assets (tiles, fonts,
+*  status panel, man-status and game render targets) in
+*  place against the live renderer.  explicitZoom >= 1
+*  uses that integer render zoom; 0 (Custom mode) derives
+*  it from the current window size.  Does not touch the
+*  renderer or window.
+*********************************************************/
+void sdl3DrawReconfigureZoom(int explicitZoom);
+
+/*********************************************************
+*NAME:          sdl3DrawReloadTiles
+*PURPOSE:
+*  Rebuilds only the tile atlas in place for a skin
+*  change, re-reading the skin assets from disk.  Does
+*  not touch the renderer, window, fonts, or zoom.
+*********************************************************/
+void sdl3DrawReloadTiles(void);
+
+/*********************************************************
+*NAME:          sdl3DrawSetReconfigureGuard
+*PURPOSE:
+*  Marks the start (true) / end (false) of an in-place
+*  zoom or skin reconfigure so sdl3DrawCleanup can assert
+*  the renderer/window is never torn down during one.
+*********************************************************/
+void sdl3DrawSetReconfigureGuard(bool active);
+
+/*********************************************************
 *NAME:          sdl3DrawCleanup
 *PURPOSE:
 *  Destroys the SDL3 window, renderer and all textures.

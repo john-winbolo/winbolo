@@ -2279,9 +2279,10 @@ void gameFrontHandleUrlOpen(char *url) {
 }
 
 void gameFrontReloadSkins(void) {
-  sdl3DrawCleanup();
+  sdl3DrawSetReconfigureGuard(true);
+  sdl3DrawReloadTiles();
+  sdl3DrawSetReconfigureGuard(false);
   soundCleanup();
-  sdl3DrawSetup(1);
   if (soundSetup() == FALSE) {
     /* Non-fatal */
   }
