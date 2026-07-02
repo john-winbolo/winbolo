@@ -577,7 +577,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       cfg.skipLobby = true;
       if (!serverInstanceStartup(wasmServerSim, &cfg)) {
         printf("[WASM] serverInstanceStartup failed\n");
-        free(wasmServerSim);
+        serverSimDestroy(wasmServerSim);
         wasmServerSim = NULL;
         clientSimDestroy(humanSim);
         return FALSE;
@@ -589,16 +589,17 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
                                gameFrontName, "", 0, 0)) {
       printf("[WASM] clientSimConnectLocal failed: %s\n",
              clientSimGetConnectErrorReason(humanSim));
-      free(wasmServerSim);
+      serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
       clientSimDestroy(humanSim);
       return FALSE;
     }
     wasmTransportActive = TRUE;
     wasmPlayerNum = 0;
-    /* Single-player runs an active local transport whose tick() advances the
-     * server itself; the shared tick core reads this to skip the keys-half
-     * transport pump so the sim isn't stepped twice per frame. */
+    /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
+     * The shared tick core's keys-half pump skip keys off
+     * clientSimTransportTicksServer, which clientSimConnectLocal (active)
+     * set above — not off this flag. */
     clientSimSetIsSinglePlayer(humanSim, true);
     /* Phase 2: connect registers the auto-subscriber. Clear the
      * legacy handle so the teardown path's unregister is a no-op. */
