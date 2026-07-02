@@ -31,6 +31,7 @@ document is the stable reference for the rules themselves.
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client — shares the `src/gui/sdl3/` ImGui UI and the shared sim-driving cores, forking only the single-threaded driver (emscripten main loop in place of the SDL timer thread). See "Platform variants: share the logic, fork only the driver". |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/ios/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
+| `src/client_frontend/` | T1 + T3 + T4 | The shared sim-driving cores every client platform calls instead of keeping its own copy: `client_frontend_tick.c` (the alternating keys/game tick step), `client_frontend_connect.c` (the post-connect join/landing wait), `client_frontend_common.c` (the sim-state-guarded `frontEnd*` bodies). Not a library — the sources compile directly inside each frontend target (WinBolo, WinBoloIOS, android `main`, wasm `winbolo`) under that target's `gui` profile, so they see only `public/`. See "Platform variants: share the logic, fork only the driver". |
 | `src/logviewer/` | T1 + T3 + T4 | Replays recorded games; uses T3 for the playback render path. |
 | `src/winbolonet/winbolonet_core/` | T1 + T4 | Shared HTTP, async event queue, WBN key storage. Includes `server_sim.h` (T1) only. Linked by every WBN-aware binary. |
 | `src/winbolonet/winbolonet_server/` | T1 + T4 | Server tracker calls (`server/register`, `server/update`, lobby/map/teams/balance). Linked by binaries that run a server: WinBoloDS, WinBoloHeadless, SDL3 client (SP host). |
@@ -368,17 +369,25 @@ registered?", "is any body an empty stub?" — miss it. Only a
 line-by-line diff against the source of truth finds a body that dropped
 a step mid-logic. Sharing the body removes the diff target entirely.
 
-**The shared cores — call them, do not re-derive them:**
+**The shared cores — call them, do not re-derive them.** They live in
+`src/client_frontend/` (see its row in the directory table) and compile
+into each frontend target rather than as a separate library:
 
-- **The tick cadence.** The alternating keys/game step, plus the
+- **The tick cadence** — `client_frontend_tick.c`
+  (`clientFrontRunTickStep`). The alternating keys/game step, plus the
   lobby/countdown branch (tick the transport only — do not run a game
   tick in lobby), the gunsight-adjust consume into `pkt.flags`, and the
-  per-second bookkeeping. Canonical shape: the tick block under
-  "Ticking" above (`src/headless/headless_main.c`). A frontend that owns
-  a human at the wheel adds the lobby branch and gunsight consume the
-  headless example omits; those additions belong in the shared core, not
-  in each platform's copy.
-- **The connect/landing sequence.** After `clientSimConnectUdp` the
+  keys-half transport pump gated on `clientSimTransportTicksServer` (an
+  active local transport advances the server inside `tick()`, so a
+  second pump would double-step the sim; passive-local and UDP clients
+  keep the pump for snapshot-latency and event-sampling reasons).
+  Canonical shape: the tick block under "Ticking" above
+  (`src/headless/headless_main.c`). A frontend that owns a human at the
+  wheel adds the lobby branch and gunsight consume the headless example
+  omits; those additions belong in the shared core, not in each
+  platform's copy.
+- **The connect/landing sequence** — `client_frontend_connect.c`
+  (`clientFrontAwaitJoin`). After `clientSimConnectUdp` the
   state is asynchronous: poll `clientSimNetTick` while
   `clientSimGetConnectState` is `JOINING`/`DOWNLOADING_MAP`, **break as
   soon as `clientSimIsInLobby`** (lobby-enabled servers deliver
@@ -387,7 +396,8 @@ a step mid-logic. Sharing the body removes the diff target entirely.
   when `state == CLIENT_CONNECT_CONNECTED` **or** `clientSimIsInLobby`.
   A landing check that only accepts `CONNECTED` hangs every lobby join
   until timeout. See the connect post-conditions above.
-- **The sim-state-guarded `frontEnd*` bodies.** Several callbacks carry
+- **The sim-state-guarded `frontEnd*` bodies** —
+  `client_frontend_common.c`. Several callbacks carry
   guard logic that is part of the contract, not cosmetics:
   `frontEndRedrawAll` skips the game-frame blit when `!clientSimIsRunning`
   or `clientSimIsInLobby` (so a mid-lobby roster update does not stomp
