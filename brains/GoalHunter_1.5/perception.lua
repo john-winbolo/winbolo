@@ -17,6 +17,14 @@ local print2   = require("print2")
 
 local M = {}
 
+-- k-th newest sighting in a tank-track ring (k = 1 is the newest, k = tr.h_n
+-- the oldest retained). Caller guarantees 1 <= k <= tr.h_n. Lets the ghost
+-- velocity averaging read the oldest slot without the per-tick front-insert +
+-- trim a plain list needs.
+local function track_hist_at(tr, k)
+  return tr.ring[((tr.h_head - k) % tr.cap) + 1]
+end
+
 -- -------------------------------------------------------------------------
 -- M.update(state, world, info)
 -- Call once per tick, before goal selection / builder / steering.
@@ -146,9 +154,8 @@ function M.update(state, world, info)
       -- wu/tick reports per-tick deltas like (8,0), (0,-8), (8,-8) —
       -- prediction flips between N / E / NE every tick and lead even
       -- toggles off at the magnitude≤8 stationary cutoff. Averaging over
-      -- 3 ticks smooths the quantization and keeps magnitude consistent
-      -- without the EMA trail-off of past direction changes.
-      local HIST_LEN = 3
+      -- up to 3 ticks smooths the quantization and keeps magnitude
+      -- consistent without the EMA trail-off of past direction changes.
       local vx, vy = 0, 0
       local svx, svy = 0, 0
       local best_match_d = 5 * 256
@@ -162,23 +169,28 @@ function M.update(state, world, info)
           matched_pt = pt
         end
       end
-      -- Build new history newest-first, capped at HIST_LEN. Index 1 is
-      -- the CURRENT tick's position; index N is N-1 ticks back.
-      local hist = { { wx = ob.x, wy = ob.y } }
-      if matched_pt and matched_pt.hist then
-        for i = 1, math.min(HIST_LEN - 1, #matched_pt.hist) do
-          hist[#hist + 1] = matched_pt.hist[i]
-        end
+      -- Position chain carried as scalars rather than a list: p1 is the matched
+      -- tank's position last tick, p2 its position the tick before (nil when
+      -- unavailable). Chained forward from the matched entry each tick, this
+      -- looks back up to 2 ticks (3 positions including the current one).
+      local p1x, p1y, p2x, p2y
+      if matched_pt then
+        p1x, p1y = matched_pt.wx, matched_pt.wy
+        p2x, p2y = matched_pt.p1x, matched_pt.p1y
       end
-      -- Velocity from the oldest entry in the buffer back to current,
-      -- divided by the number of ticks the span actually covers. Falls
-      -- back to single-tick when only 2 entries are available (target
-      -- just appeared / re-acquired).
-      if #hist >= 2 then
-        local oldest = hist[#hist]
-        local n_ticks = #hist - 1
-        vx = (ob.x - oldest.wx) / n_ticks
-        vy = (ob.y - oldest.wy) / n_ticks
+      -- Velocity from the oldest available position back to current, divided by
+      -- the number of ticks that span covers. Falls back to a single-tick delta
+      -- when only one prior position is known (target just appeared /
+      -- re-acquired).
+      local ox, oy, n_ticks
+      if p2x then
+        ox, oy, n_ticks = p2x, p2y, 2
+      elseif p1x then
+        ox, oy, n_ticks = p1x, p1y, 1
+      end
+      if ox then
+        vx = (ob.x - ox) / n_ticks
+        vy = (ob.y - oy) / n_ticks
         -- Sanity-cap: a real tank can't exceed ~16 wu/tick. > 40 wu/tick
         -- means the matcher snapped to a different tank; reuse last
         -- tick's velocity instead of feeding garbage to lead-prediction.
@@ -193,7 +205,8 @@ function M.update(state, world, info)
                        id = ob.idnum,
                        speed = ob.speed or 0,
                        wx = ob.x, wy = ob.y, vx = vx, vy = vy,
-                       svx = svx, svy = svy, hist = hist }
+                       svx = svx, svy = svy,
+                       p1x = p1x, p1y = p1y, p2x = p2x, p2y = p2y }
       n_et = n_et + 1
       enemy_tanks[n_et] = entry
 
@@ -206,8 +219,8 @@ function M.update(state, world, info)
 
   -- Trim any entries left in the buffer by a longer previous tick, then hand
   -- this tick's list to next tick's velocity matcher as its "previous" input.
-  -- The entries carry every field the matcher reads (wx/wy, vx/vy, hist), so no
-  -- snapshot copy is needed — the buffer pair keeps this list intact until it's
+  -- The entries carry every field the matcher reads (wx/wy, vx/vy, p1/p2), so
+  -- no snapshot copy is needed — the buffer pair keeps this list intact until
   -- recycled two ticks from now.
   for i = n_et + 1, #enemy_tanks do enemy_tanks[i] = nil end
   state._prev_enemy_tanks = enemy_tanks
@@ -230,17 +243,28 @@ function M.update(state, world, info)
     if et.id ~= nil then
       visible_ids[et.id] = true
       local tr = track[et.id]
-      if not tr then tr = { hist = {} }; track[et.id] = tr end
+      if not tr then
+        tr = { ring = {}, h_head = 0, h_n = 0, cap = C.GHOST_TANK_HIST or 10 }
+        track[et.id] = tr
+      end
       tr.last_tick = now
       tr.wx, tr.wy = et.wx, et.wy
       tr.speed = et.speed
       tr.dir = et.obj and et.obj.direction or tr.dir
-      table.insert(tr.hist, 1, { wx = et.wx, wy = et.wy, tick = now })
-      while #tr.hist > (C.GHOST_TANK_HIST or 10) do tr.hist[#tr.hist] = nil end
+      -- Push this sighting into the fixed ring: advance the head (wrapping),
+      -- reuse the slot table already there or create it once, and grow the
+      -- valid count up to capacity. No front-insert shift, no trim loop, no
+      -- per-tick table once the ring has filled.
+      local head = (tr.h_head % tr.cap) + 1
+      tr.h_head = head
+      local slot = tr.ring[head]
+      if not slot then slot = {}; tr.ring[head] = slot end
+      slot.wx = et.wx; slot.wy = et.wy; slot.tick = now
+      if tr.h_n < tr.cap then tr.h_n = tr.h_n + 1 end
       -- Average velocity (wu/tick) over the buffered span = "last known speed
       -- + rotation averaged over the last N ticks".
-      if #tr.hist >= 2 then
-        local oldest = tr.hist[#tr.hist]
+      if tr.h_n >= 2 then
+        local oldest = track_hist_at(tr, tr.h_n)
         local span = now - oldest.tick
         if span > 0 then
           tr.vx = (et.wx - oldest.wx) / span
@@ -306,7 +330,7 @@ function M.update(state, world, info)
           mx = gmx, my = gmy, dist = U.mdist(tmx, tmy, gmx, gmy),
           obj = nil, id = id, speed = tr.speed or 0,
           wx = gwx, wy = gwy, vx = tr.vx or 0, vy = tr.vy or 0,
-          svx = tr.vx or 0, svy = tr.vy or 0, hist = nil,
+          svx = tr.vx or 0, svy = tr.vy or 0,
           ghost = true, ghost_age = age, ghost_ttl_left = ghost_ttl - age,
           dir = tr.dir,
         }
