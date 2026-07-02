@@ -1827,3 +1827,12 @@ STR_LV_SPEC_CONNECTING=Verbinden...
 STR_LV_SPEC_CONNECTION_LOST=Verbinding verbroken
 STR_LV_SPEC_BEGINS_NOW=Toeschouwen begint nu
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Toeschouwen {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Je moet ingelogd zijn bij WinBolo.net om aan dit spel deel te nemen.
+STR_WEB_JOIN_NOT_ACCEPTING=Dit spel accepteert geen nieuwe spelers.
+STR_WEB_JOIN_LINK_INVALID=Deze spellink is niet meer geldig.
+STR_WEB_JOIN_GAME_FULL=Dit spel is vol.
+STR_WEB_JOIN_CODE_UNREACHABLE=Kon de server niet bereiken om een joincode op te halen.
+STR_WEB_CONNECT_FAILED=Kon geen verbinding maken met de server.
+STR_WEB_JOIN_NO_RESPONSE=Kon niet deelnemen aan het spel (de server reageerde niet, of je uitnodigingslink is al gebruikt of verlopen).

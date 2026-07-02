@@ -1827,3 +1827,12 @@ STR_LV_SPEC_CONNECTING=Bağlanıyor...
 STR_LV_SPEC_CONNECTION_LOST=Bağlantı kesildi
 STR_LV_SPEC_BEGINS_NOW=İzleme şimdi başlıyor
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - İzleniyor {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Bu oyuna katılmak için WinBolo.net'te oturum açmış olmalısınız.
+STR_WEB_JOIN_NOT_ACCEPTING=Bu oyun yeni oyuncu kabul etmiyor.
+STR_WEB_JOIN_LINK_INVALID=Bu oyun bağlantısı artık geçerli değil.
+STR_WEB_JOIN_GAME_FULL=Bu oyun dolu.
+STR_WEB_JOIN_CODE_UNREACHABLE=Katılım kodu alınamadı; sunucuya ulaşılamadı.
+STR_WEB_CONNECT_FAILED=Sunucuya bağlanılamadı.
+STR_WEB_JOIN_NO_RESPONSE=Oyuna katılınamadı (sunucu yanıt vermedi ya da davet bağlantınız zaten kullanılmış veya süresi dolmuş).

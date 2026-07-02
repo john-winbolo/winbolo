@@ -1817,3 +1817,12 @@ STR_DLGABOUT_THIRD_PARTY=Third Party Notices
 STR_DLGABOUT_AUTHORS=Authors
 STR_DLGABOUT_FORUMS=Forums
 
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=You must be signed in to WinBolo.net to join this game.
+STR_WEB_JOIN_NOT_ACCEPTING=This game is not accepting new players.
+STR_WEB_JOIN_LINK_INVALID=That game link is no longer valid.
+STR_WEB_JOIN_GAME_FULL=This game is full.
+STR_WEB_JOIN_CODE_UNREACHABLE=Could not reach the server to get a join code.
+STR_WEB_CONNECT_FAILED=Could not connect to the server.
+STR_WEB_JOIN_NO_RESPONSE=Could not join the game (the server did not respond, or your invite link has already been used or expired).
+

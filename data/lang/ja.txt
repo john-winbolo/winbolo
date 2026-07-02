@@ -1827,3 +1827,12 @@ STR_LV_SPEC_CONNECTING=接続中...
 STR_LV_SPEC_CONNECTION_LOST=接続が切断されました
 STR_LV_SPEC_BEGINS_NOW=観戦開始
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - 観戦中 {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=このゲームに参加するには WinBolo.net にサインインする必要があります。
+STR_WEB_JOIN_NOT_ACCEPTING=このゲームは新しいプレイヤーを受け付けていません。
+STR_WEB_JOIN_LINK_INVALID=このゲームリンクは無効になっています。
+STR_WEB_JOIN_GAME_FULL=このゲームは満員です。
+STR_WEB_JOIN_CODE_UNREACHABLE=参加コードを取得するためにサーバーへ接続できませんでした。
+STR_WEB_CONNECT_FAILED=サーバーに接続できませんでした。
+STR_WEB_JOIN_NO_RESPONSE=ゲームに参加できませんでした（サーバーが応答しなかったか、招待リンクがすでに使用済みか期限切れの可能性があります）。

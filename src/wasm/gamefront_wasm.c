@@ -76,11 +76,11 @@ EM_ASYNC_JS(int, wasmMintJoinCode,
  * error body of its own. */
 static const char *gameFrontMintFailReason(int status) {
   switch (status) {
-    case 401: return "You must be signed in to WinBolo.net to join this game.";
-    case 403: return "This game is not accepting new players.";
-    case 404: return "That game link is no longer valid.";
-    case 409: return "This game is full.";
-    default:  return "Could not reach the server to get a join code.";
+    case 401: return langGetText(STR_WEB_JOIN_NEED_SIGNIN);
+    case 403: return langGetText(STR_WEB_JOIN_NOT_ACCEPTING);
+    case 404: return langGetText(STR_WEB_JOIN_LINK_INVALID);
+    case 409: return langGetText(STR_WEB_JOIN_GAME_FULL);
+    default:  return langGetText(STR_WEB_JOIN_CODE_UNREACHABLE);
   }
 }
 
@@ -467,8 +467,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       printf("[WASM] UDP connect failed: %s\n", reason ? reason : "unknown");
       /* Keep humanSim alive in its error state; main() falls through to the
        * loop which shows the error dialog (never a blank screen). */
-      wasmReportConnectFailure(reason ? reason
-                                      : "Could not connect to the server.");
+      wasmReportConnectFailure(reason && reason[0]
+                                   ? reason
+                                   : langGetText(STR_WEB_CONNECT_FAILED));
       return FALSE;
     }
 
@@ -479,9 +480,8 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       const char *reason = clientSimGetConnectErrorReason(humanSim);
       printf("[WASM] Join failed: %s\n", reason ? reason : "timeout");
       wasmReportConnectFailure(
-          reason ? reason
-                 : "Could not join the game (the server did not respond, or "
-                   "your invite link has already been used or expired).");
+          reason && reason[0] ? reason
+                              : langGetText(STR_WEB_JOIN_NO_RESPONSE));
       return FALSE;
     }
 

@@ -1749,6 +1749,15 @@ static const LangEntry langTable[] = {
 
     /* Menu item to re-open a closed in-game vote widget. */
     {1862, "Show: {string1}"},
+
+    /* Web client — join code / connect error dialogs */
+    {1867, "You must be signed in to WinBolo.net to join this game."},
+    {1868, "This game is not accepting new players."},
+    {1869, "That game link is no longer valid."},
+    {1870, "This game is full."},
+    {1871, "Could not reach the server to get a join code."},
+    {1872, "Could not connect to the server."},
+    {1873, "Could not join the game (the server did not respond, or your invite link has already been used or expired)."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

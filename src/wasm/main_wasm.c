@@ -125,7 +125,7 @@ void wasmReportConnectFailure(const char *reason) {
     strncpy(s_connReason, reason, sizeof(s_connReason) - 1);
     s_connReason[sizeof(s_connReason) - 1] = '\0';
   } else {
-    strncpy(s_connReason, "Could not connect to the server.",
+    strncpy(s_connReason, langGetText(STR_WEB_CONNECT_FAILED),
             sizeof(s_connReason) - 1);
     s_connReason[sizeof(s_connReason) - 1] = '\0';
   }
