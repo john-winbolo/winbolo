@@ -343,16 +343,12 @@ typedef struct {
 
 #ifdef __EMSCRIPTEN__
     /* WS↔UDP relay metadata frame (type 0x01). The relay sends exactly one
-     * as the first datagram, before any game traffic, carrying the
-     * WBN-resolved identity and a projected prefs blob. Consumed once at the
-     * top of udpClientProcessPacket while JOINING; C5 applies these. Zeroed
-     * with the rest of the ctx on connect (memset in the connect path). */
+     * as the first datagram, before any game traffic. Consumed once at the
+     * top of udpClientProcessPacket while JOINING; only the prefs blob it
+     * carries is acted on (handed to the frontend), so nothing is stashed
+     * beyond this consumed-once latch. Zeroed with the rest of the ctx on
+     * connect (memset in the connect path). */
     bool     proxyMetaConsumed;
-    char     proxyName[PACKET_MAX_PLAYER_NAME];  /* WBN-resolved display name */
-    char     proxyCountry[3];                    /* ISO-2 + NUL */
-    bool     proxyWbn;                           /* is_logged_in flag */
-    char     proxyPrefs[1024];                   /* raw prefs JSON, NUL-terminated */
-    uint16_t proxyPrefsLen;
 #endif
 } TransportUdpClientCtx;
 
@@ -1453,8 +1449,7 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
 /* Process a single incoming packet (used by both direct and delayed paths) */
 #ifdef __EMSCRIPTEN__
 #define PROXY_META_FRAME_TYPE 0x01
-/* Parse the WS↔UDP relay's 0x01 metadata frame and stash it on the ctx for
- * C5 to apply. Layout (Phase 0):
+/* Parse the WS↔UDP relay's 0x01 metadata frame. Layout (Phase 0):
  *   [0]      0x01
  *   [1]      N           name length
  *   [2..]    name        N bytes, UTF-8, not NUL-terminated
@@ -1463,47 +1458,59 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
  *   [4+N]    country1    ASCII / ' ' / '?'
  *   [5+N]    prefsLen    uint16 big-endian (L)
  *   [7+N]    prefs       L bytes, raw JSON
- * Tolerant of a short/garbled frame: parses as far as the length allows and
- * leaves the unfilled fields at their zeroed defaults. */
-static void udpClientParseProxyMeta(TransportUdpClientCtx *c,
-                                    const uint8_t *buf, int len) {
+ * The identity fields (name / wbn flag / country) are parsed only to walk
+ * the frame and for the diagnostic log — the server stamps web identity
+ * itself from the join-code verify (udpServerApplyWebIdentity), so nothing
+ * client-side consumes them. Only the prefs JSON is acted on, handed to the
+ * frontend. Tolerant of a short/garbled frame: parses as far as the length
+ * allows. */
+static void udpClientParseProxyMeta(const uint8_t *buf, int len) {
+    char name[PACKET_MAX_PLAYER_NAME] = "";
+    char country[3] = "";
+    bool wbn = false;
+    char prefs[1024];
+
     int pos = 1;  /* past the 0x01 type byte */
     if (pos >= len) return;
     int nameLen = buf[pos++];
-    if (nameLen > (int)sizeof(c->proxyName) - 1) nameLen = sizeof(c->proxyName) - 1;
     if (pos + nameLen > len) return;  /* truncated */
-    memcpy(c->proxyName, buf + pos, (size_t)nameLen);
-    c->proxyName[nameLen] = '\0';
+    {
+        /* Clamp only the copy; pos advances by the wire length so the
+         * fields after an oversized name stay correctly framed. */
+        int copyLen = nameLen;
+        if (copyLen > (int)sizeof(name) - 1) copyLen = (int)sizeof(name) - 1;
+        memcpy(name, buf + pos, (size_t)copyLen);
+        name[copyLen] = '\0';
+    }
     pos += nameLen;
 
     if (pos >= len) return;
-    c->proxyWbn = (buf[pos++] != 0);
+    wbn = (buf[pos++] != 0);
 
     if (pos + 2 > len) return;
-    c->proxyCountry[0] = (char)buf[pos++];
-    c->proxyCountry[1] = (char)buf[pos++];
-    c->proxyCountry[2] = '\0';
+    country[0] = (char)buf[pos++];
+    country[1] = (char)buf[pos++];
+    country[2] = '\0';
 
     if (pos + 2 > len) return;
     int prefsLen = (buf[pos] << 8) | buf[pos + 1];  /* big-endian */
     pos += 2;
-    if (prefsLen > (int)sizeof(c->proxyPrefs) - 1) prefsLen = sizeof(c->proxyPrefs) - 1;
+    if (prefsLen > (int)sizeof(prefs) - 1) prefsLen = (int)sizeof(prefs) - 1;
     if (pos + prefsLen > len) prefsLen = len - pos;  /* clamp to available */
     if (prefsLen < 0) prefsLen = 0;
-    memcpy(c->proxyPrefs, buf + pos, (size_t)prefsLen);
-    c->proxyPrefs[prefsLen] = '\0';
-    c->proxyPrefsLen = (uint16_t)prefsLen;
+    memcpy(prefs, buf + pos, (size_t)prefsLen);
+    prefs[prefsLen] = '\0';
 
     WB_LOG_INFO(WB_LOG_CAT_NET,
                 "[WASM] proxy metadata: name='%s' wbn=%d country=%.2s prefsLen=%d",
-                c->proxyName, c->proxyWbn ? 1 : 0, c->proxyCountry, prefsLen);
+                name, wbn ? 1 : 0, country, prefsLen);
 
     /* Apply the WBN-synced prefs (keybindings + toggles) the relay forwarded.
      * The apply lives in the front-end (main_wasm.c), which owns the live keys
      * and menu globals; the transport just hands it the JSON blob. */
-    if (c->proxyPrefsLen > 0) {
+    if (prefsLen > 0) {
         extern void wasmApplyJoinPrefs(const char *prefsJson, int len);
-        wasmApplyJoinPrefs(c->proxyPrefs, (int)c->proxyPrefsLen);
+        wasmApplyJoinPrefs(prefs, prefsLen);
     }
 }
 #endif
@@ -1514,13 +1521,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     /* The WS↔UDP relay sends one 0x01 metadata frame as the first datagram,
      * before any game traffic. Real game packets always begin with the 'W''B'
      * magic (getPacketType), so a 0x01 first byte unambiguously marks the
-     * frame — no game packet can collide. Consume it once while JOINING,
-     * stash the WBN identity + prefs (C5 applies them), and never hand it to
-     * the game-packet path. */
+     * frame — no game packet can collide. Consume it once while JOINING —
+     * applying the forwarded prefs blob to the frontend — and never hand it
+     * to the game-packet path. */
     if (c->joinState == UDP_CLIENT_JOINING && !c->proxyMetaConsumed &&
         len >= 1 && buf[0] == PROXY_META_FRAME_TYPE) {
         c->proxyMetaConsumed = true;
-        udpClientParseProxyMeta(c, buf, len);
+        udpClientParseProxyMeta(buf, len);
         return;
     }
 #endif
