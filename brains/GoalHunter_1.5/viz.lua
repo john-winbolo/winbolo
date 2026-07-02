@@ -293,6 +293,8 @@ M.IDS = {
                             long  = "Map overlay: top evaluated placement spots for a BACK pill, as bold filled orange squares (most opaque = best). Pairs with the '3' influence view. Fed by the place_pill_strategic candidate scan." },
   pill_best_spots_aggro = { short = "Best AGGRO pill spots",
                             long  = "Map overlay: top evaluated placement spots for an AGGRESSIVE pill, as bold filled red squares (most opaque = best). Pairs with the '3' influence view." },
+  spike_pills = { short = "Spiking pills (base denial)",
+                  long  = "Map overlay: hostile/neutral pills within PILL_FIRE_RANGE of a friendly base ('spiking' — they shoot us while we refuel, denying the base). Magenta square on the pill, line + tint to each denied base, 'SPIKE n=N' label. These pills get SPIKE_PILL_DISCOUNT on attack_pill combat cost; while any exists, every other pill pays SPIKE_OTHER_PENALTY. Same table the pool-6 cost reads." },
   panic_build = { short = "Panic build (emergency)",
                   long  = "Shown whenever a non-rejected enemy tank is present (attack_tank viable): the emergency def_build candidate spots (green=chosen, yellow=valid, red=rejected with reason), the threat tank (red), a line from us to it, and a 'PANIC BUILD' label. If a tank is present but we have no pill to drop, just a 'PANIC (no pill)' marker on the threat." },
   ally_avoid_overlay = { short = "Ally avoid zones",

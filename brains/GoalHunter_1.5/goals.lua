@@ -973,6 +973,42 @@ local function harass_dist_mult(state)
   return state.is_harasser and (C.HARASSER_TRAVEL_MULT or 1.0) or 1.0
 end
 
+-- Spiking-pill detection. A "spike" is a hostile/neutral pill parked within
+-- PILL_FIRE_RANGE of a friendly base — it shoots us while we sit refueling,
+-- denying the base until it's cleared. Shared by the live pool-6 cost in
+-- step_eval_queue, the attack_pill_adjustments mirror, and the spike_pills
+-- map overlay. Recomputed at most once per tick (pills × bases mdist scan).
+-- Populates:
+--   state._spike_pills[my*256+mx] = { pmx, pmy, bmx, bmy, n, bases }
+--     (bmx/bmy = first denied base, n = count, bases = {{mx,my},...})
+--   state._spike_present = true while any spike exists
+local function refresh_spike_detection(state, world)
+  if state._spike_tick == state.tick then return end
+  state._spike_tick = state.tick
+  local spikes, present = nil, false
+  for _, p in pairs(world.pills) do
+    if (p.owner == "hostile" or p.owner == "neutral") and p.health > 0 then
+      local n, bx, by, blist = 0, nil, nil, nil
+      for _, b in pairs(world.bases) do
+        if b.owner == "friendly"
+           and U.mdist(p.mx, p.my, b.mx, b.my) <= C.PILL_FIRE_RANGE then
+          n = n + 1
+          if not bx then bx, by = b.mx, b.my end
+          blist = blist or {}
+          blist[#blist + 1] = { mx = b.mx, my = b.my }
+        end
+      end
+      if n > 0 then
+        spikes = spikes or {}
+        spikes[p.my * 256 + p.mx] = { pmx = p.mx, pmy = p.my, bmx = bx, bmy = by, n = n, bases = blist }
+        present = true
+      end
+    end
+  end
+  state._spike_pills = spikes
+  state._spike_present = present
+end
+
 -- Compute attack_pill cost adjustments for a given pill/path-cost.
 -- Returns adjusted_cost, description_suffix.
 local function attack_pill_adjustments(pill, pcost, state, world)
@@ -1082,21 +1118,22 @@ local function attack_pill_adjustments(pill, pcost, state, world)
     if BRAIN_POOL_VIZ then antic_desc = antic_desc .. " *bkiller" end
   end
 
-  -- Base under threat: an enemy/neutral pill within firing range of one of
-  -- our bases is shelling (or about to shell) it — clearing it is urgent, so
-  -- knock 50% off the combat cost.
+  -- Spike shaping (MIRROR of the live copy in step_eval_queue's pool-6
+  -- assembly — this evaluator is only reachable via fill_pool_cache, which
+  -- currently has no callers): a spiking pill (within firing range of a
+  -- friendly base, denying refuel) gets a small combat discount; while ANY
+  -- spike exists, every non-spiking pill pays a small flat penalty instead
+  -- (added to `final` below). Replaces the old flat *baseThreat 0.5.
+  local spike_pen = 0
   do
-    local threatens_base = false
-    for _, b in pairs(world.bases) do
-      if b.owner == "friendly"
-         and U.mdist(pill.mx, pill.my, b.mx, b.my) <= C.PILL_FIRE_RANGE then
-        threatens_base = true
-        break
-      end
-    end
-    if threatens_base then
-      combat_cost = combat_cost * (C.BASE_THREAT_PILL_DISCOUNT or 0.5)
-      if BRAIN_POOL_VIZ then antic_desc = antic_desc .. " *baseThreat" end
+    refresh_spike_detection(state, world)
+    local sp = state._spike_pills and state._spike_pills[pill.my * 256 + pill.mx]
+    if sp then
+      combat_cost = combat_cost * (C.SPIKE_PILL_DISCOUNT or 0.8)
+      if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *spike(x%.2f n=%d)", C.SPIKE_PILL_DISCOUNT or 0.8, sp.n or 1) end
+    elseif state._spike_present then
+      spike_pen = C.SPIKE_OTHER_PENALTY or 40
+      if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" +spike_pen=%d", spike_pen) end
     end
   end
 
@@ -1107,11 +1144,11 @@ local function attack_pill_adjustments(pill, pcost, state, world)
     -- Harasser: discount the path/travel term, 2× the engage portion (flat base
     -- + combat). Mirrors the split in update_pool_cache's pool-6 assembly.
     final = pcost * harass_dist_mult(state)
-          + ((C.ATTACK_PILL_BASE_COST or 0) + combat_cost) * (C.HARASSER_PILL_COST_MULT or 1.0)
+          + ((C.ATTACK_PILL_BASE_COST or 0) + combat_cost + spike_pen) * (C.HARASSER_PILL_COST_MULT or 1.0)
     if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *harass(travel x%.1f, engage x%.1f)",
       C.HARASSER_TRAVEL_MULT or 1.0, C.HARASSER_PILL_COST_MULT or 1.0) end
   else
-    final = (C.ATTACK_PILL_BASE_COST or 0) + pcost + combat_cost
+    final = (C.ATTACK_PILL_BASE_COST or 0) + pcost + combat_cost + spike_pen
   end
   return final, antic_desc
 end
@@ -2300,6 +2337,25 @@ function M.draw_pill_spots(viz, state)
   end
   draw("pill_best_spots_back",  state._place_spots_back,  255, 150,  0)  -- orange = back
   draw("pill_best_spots_aggro", state._place_spots_aggro, 255,  70,  70) -- red = aggro
+
+  -- Spiking pills: hostile/neutral pill within firing range of a friendly
+  -- base (denies refuel). Magenta square on the pill, a line to EACH denied
+  -- base, and a "SPIKE n=N" label. Data from refresh_spike_detection (goal
+  -- scoring shares the same table, so what you see is what the cost used).
+  if viz.is_on("spike_pills") and state._spike_pills then
+    for _, sp in pairs(state._spike_pills) do
+      viz.rect("spike_pills", sp.pmx, sp.pmy, sp.pmx + 1, sp.pmy + 1, 255, 40, 200, 150, true)
+      if viz.line and sp.bases then
+        for _, b in ipairs(sp.bases) do
+          viz.line("spike_pills", sp.pmx + 0.5, sp.pmy + 0.5, b.mx + 0.5, b.my + 0.5, 255, 40, 200, 200)
+          viz.rect("spike_pills", b.mx, b.my, b.mx + 1, b.my + 1, 255, 40, 200, 80, true)
+        end
+      end
+      if viz.text then
+        viz.text("spike_pills", sp.pmx + 0.5, sp.pmy - 0.6, string.format("SPIKE n=%d", sp.n or 1), "center", 255, 120, 230, 255)
+      end
+    end
+  end
 
   -- Panic (emergency def_build) overlay: shown whenever a non-rejected enemy
   -- tank is present (attack_tank viable). Draws the emergency build candidate
@@ -4226,17 +4282,33 @@ local function get_formula_inner(e)
     local _d_atk_tank = e._atk_tank_pen
       and string.format("a non-rejected enemy tank is present this eval → flat +%d on every attack_pill (prefer fighting the tank over chipping pills)", e._atk_tank_pen)
       or "no live enemy tank → no cross-penalty"
+    -- Spike shaping terms: multiplier on the combat block when THIS pill is
+    -- spiking a friendly base, or the flat cross-penalty when a spike exists
+    -- elsewhere. Detail row is always present (matches the intcpt pattern —
+    -- an absent row read as "not part of the cost").
+    local _spike_mult_term = e._spike_mult and string.format(" * spike{%.2f}", e._spike_mult) or ""
+    local _spike_pen_term  = e._spike_pen and string.format(" + spike_pen{%d}", e._spike_pen) or ""
+    local _d_spike = e._spike_mult
+      and string.format(
+        "SPIKING: this pill sits within PILL_FIRE_RANGE=%d of %d friendly base(s) (first @(%d,%d)) — denies refuel there → combat × %.2f [SPIKE_PILL_DISCOUNT]",
+        C.PILL_FIRE_RANGE, e._spike_n or 1, e._spike_bmx or -1, e._spike_bmy or -1, e._spike_mult)
+      or "this pill is not in firing range of any friendly base → no spike discount"
+    local _d_spike_pen = e._spike_pen
+      and string.format(
+        "a spiking pill exists elsewhere (@(%d,%d), in range of a friendly base) → flat +%d on every non-spiking pill [SPIKE_OTHER_PENALTY] (clear the spike first)",
+        e._spike_ex_mx or -1, e._spike_ex_my or -1, e._spike_pen)
+      or "no spiking pill elsewhere (or this IS the spike) → no cross-penalty"
     f = string.format(
-      "(spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s + ammo{%s}%s)%s"..
+      "(spot{%.0f}@(%d,%d) + pickup{%.0f}@(%d,%d)→(%d,%d)*wound_x2{%.2f} + (stale{%.0f} + diff{%.0f} + anger{%.0f} + xfire{%.0f} + intcpt{%.0f}) * hp{%.2f}%s%s + ammo{%s}%s%s)%s"..
       "||spot cost is offset-aware (target pill's danger contribution subtracted via load_danger_offset before A*); NOT scaled by hp or wound"..
-      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s|danger_nearby:%s|atk_tank:%s",
+      "|pickup:%s|hp:%s|anger:%s|stale:%s|finish_other:%s|ammo:%s|spot:%s|danger_nearby:%s|atk_tank:%s|spike:%s|spike_pen:%s",
       e._spot, e._spot_mx or 0, e._spot_my or 0,
       e._travel,
       e._spot_mx or 0, e._spot_my or 0, e._mx or 0, e._my or 0,
       _tw,
       e._stale, e._diff, e._anger, e._xfire, e._intcpt,
-      e._hp, _wound_detail, _ammo_str, _atk_tank_term, _danger_term,
-      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot, _d_danger, _d_atk_tank)
+      e._hp, _wound_detail, _spike_mult_term, _ammo_str, _atk_tank_term, _spike_pen_term, _danger_term,
+      _d_pickup, _d_hp, _d_anger, _d_stale, _d_finish_other, _d_ammo, _d_spot, _d_danger, _d_atk_tank, _d_spike, _d_spike_pen)
   elseif p == 7 then
     local _lgm_mult_b = e._lgm_mult or 1
     local _d_threat
@@ -5273,7 +5345,30 @@ function M.step_eval_queue(state, world, info)
       -- ammo_cost (pool 6 only) is the shells-budget penalty; goes to
       -- COST_INF when we lack the shells to finish the pill at all.
       local travel_wound = (pool_idx == 6) and math.min(1.0, wound_mult * 2) or 1.0
-      local combat = (stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult
+      -- Spike shaping (pool 6 only): a pill within firing range of a friendly
+      -- base is "spiking" (denies refuel while it stands) → small combat
+      -- discount. While ANY spike exists, every NON-spiking pill instead pays
+      -- a small flat penalty — once, not per spike. Both mild by design: the
+      -- tilt is within the pool, so attack_tank / kill_lgm / refuel compete
+      -- unchanged. Mirrored in attack_pill_adjustments (dead path).
+      local spike_mult, spike_pen = 1.0, 0
+      local _spike_n, _spike_bmx, _spike_bmy = 0, nil, nil
+      local _spike_ex_mx, _spike_ex_my = nil, nil
+      if pool_idx == 6 then
+        refresh_spike_detection(state, world)
+        local sp = state._spike_pills and state._spike_pills[obj.my * 256 + obj.mx]
+        if sp then
+          spike_mult = C.SPIKE_PILL_DISCOUNT or 0.8
+          _spike_n, _spike_bmx, _spike_bmy = sp.n or 1, sp.bmx, sp.bmy
+        elseif state._spike_present then
+          spike_pen = C.SPIKE_OTHER_PENALTY or 40
+          for _, esp in pairs(state._spike_pills) do
+            _spike_ex_mx, _spike_ex_my = esp.pmx, esp.pmy
+            break
+          end
+        end
+      end
+      local combat = (stale_cost + diff_cost + anger_cost + xfire_cost + intcpt_cost) * hp_mult * wound_mult * spike_mult
       -- attack_tank cross-penalty (pool 6 only): when a non-rejected enemy tank
       -- exists this eval (state._attack_tank_present, set by eval_attack_tank), add
       -- a flat penalty to EVERY attack_pill so the bot prefers dealing with the
@@ -5296,11 +5391,11 @@ function M.step_eval_queue(state, world, info)
       local _travel_term = travel * travel_wound
       local c
       if pool_idx == 6 and state.is_harasser then
-        local _engage_term = spot_cost + combat * capture_mult + base_extra + threat_cost + ammo_cost + atk_tank_pen + risky_armour_pen
+        local _engage_term = spot_cost + combat * capture_mult + base_extra + threat_cost + ammo_cost + atk_tank_pen + spike_pen + risky_armour_pen
         c = _travel_term * (C.HARASSER_TRAVEL_MULT or 1.0)
           + _engage_term * (C.HARASSER_PILL_COST_MULT or 1.0)
       else
-        c = spot_cost + _travel_term + combat * capture_mult + base_extra + threat_cost + ammo_cost + atk_tank_pen + risky_armour_pen
+        c = spot_cost + _travel_term + combat * capture_mult + base_extra + threat_cost + ammo_cost + atk_tank_pen + spike_pen + risky_armour_pen
       end
 
       -- danger_nearby multiplier (pool 6 only): if this pill was recently
@@ -5448,6 +5543,13 @@ function M.step_eval_queue(state, world, info)
         entry._fin_wpid=_finish_other_wp_id
         entry._commit_mult=_commit_mult
         entry._atk_tank_pen = (atk_tank_pen > 0) and atk_tank_pen or nil
+        entry._spike_mult = (spike_mult ~= 1.0) and spike_mult or nil
+        entry._spike_n    = (_spike_n > 0) and _spike_n or nil
+        entry._spike_bmx  = _spike_bmx
+        entry._spike_bmy  = _spike_bmy
+        entry._spike_pen  = (spike_pen > 0) and spike_pen or nil
+        entry._spike_ex_mx = _spike_ex_mx
+        entry._spike_ex_my = _spike_ex_my
         entry._danger_mult = (_danger_nearby_mult ~= 1.0) and _danger_nearby_mult or nil
         entry._danger_left = (_danger_nearby_left > 0) and _danger_nearby_left or nil
       elseif pool_idx == 7 then

@@ -1207,7 +1207,17 @@ M.EMERGENCY_DROP_SEARCH_DIRS    = 8     -- directions to search for safe drop ti
 M.BASE_KILLER_TEAM_ADVANTAGE    = 2     -- activate when team has this many more players
 M.BASE_KILLER_ATTACK_DISCOUNT   = 0.3   -- multiply attack_base cost (makes bases top priority)
 M.BASE_KILLER_PILL_PENALTY      = 2.0   -- multiply attack_pill cost (deprioritize pills)
-M.BASE_THREAT_PILL_DISCOUNT     = 0.5   -- multiply attack_pill combat cost when the pill is in firing range of a friendly base (clear base threats fast)
+-- Spiking pills: a hostile/neutral pill within firing range of a friendly
+-- base denies us refuel there ("spiking"). Clearing spikes is prioritized
+-- with a SMALL discount on the spike itself plus a SMALL flat penalty on
+-- every other attack_pill candidate while ANY spike exists (applied once,
+-- not per spike). Deliberately mild: the tilt is within pool 6 only, so
+-- attack_tank / kill_lgm / refuel keep their normal cross-pool balance.
+-- (Replaces BASE_THREAT_PILL_DISCOUNT=0.5, which multiplied the spike's
+-- combat cost — that lived only in the dead eval_attack_pill path and never
+-- affected live selection.)
+M.SPIKE_PILL_DISCOUNT           = 0.8   -- multiply attack_pill combat cost of a spiking pill
+M.SPIKE_OTHER_PENALTY           = 40    -- flat cost on every NON-spiking attack_pill candidate while a spike exists
 
 -- Friendly pill as barrier bonus (aIndy: use friendly pills as shields)
 M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is between us and target
