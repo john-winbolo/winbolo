@@ -247,9 +247,17 @@ static void main_loop_iteration(void) {
   if (!s_connFailed && cs != NULL && clientSimHasTransport(cs) &&
       gameFrontGetServerSim() == NULL) {  /* UDP only — not local single-player */
     ClientConnectState st = clientSimGetConnectState(cs);
-    if (st == CLIENT_CONNECT_ERROR || st == CLIENT_CONNECT_SERVER_SHUTDOWN) {
+    if (st == CLIENT_CONNECT_ERROR || st == CLIENT_CONNECT_SERVER_SHUTDOWN ||
+        st == CLIENT_CONNECT_KICKED) {
       clientSimConnectionLost(cs);
-      wasmReportConnectFailure(clientSimGetConnectErrorReason(cs));
+      /* A kick sets no connectErrorReason; show the same message the
+       * desktop lobby loop does (STR_DLGLOBBY_KICKED) instead of the
+       * generic could-not-connect fallback. */
+      if (st == CLIENT_CONNECT_KICKED) {
+        wasmReportConnectFailure(langGetText(STR_DLGLOBBY_KICKED));
+      } else {
+        wasmReportConnectFailure(clientSimGetConnectErrorReason(cs));
+      }
     }
   }
 
