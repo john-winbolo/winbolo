@@ -58,6 +58,7 @@ extern "C" {
 #include "wire_limits.h" /* PACKET_MAX_CHAT_MESSAGE */
 #include "../gamefront.h"
 #include "../lang.h"
+#include "../sound.h"  /* soundPlayEffect — lobby game-start jingle (wasm seam) */
 }
 
 /* Maps an uppercased alpha-2 code to its localized STR_COUNTRY_* name id
@@ -4295,6 +4296,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
         bool nowInLobby = (cs && clientSimIsInLobby(cs));
         if (s_wasInLobby && !nowInLobby) {
             imguiLobbyFrameReset();
+            /* Lobby → running edge: play the game-start jingle, mirroring
+               the desktop blocking loop's netRunning break. A Leave or a
+               dropped connection exits the lobby too, but not into
+               netRunning, so those stay silent. (Desktop never takes this
+               edge — the blocking lobby owns the frame while inLobby.) */
+            if (cs && clientSimGetNetStatus(cs) == netRunning) {
+                soundPlayEffect(lobbyGameStart);
+            }
         }
         s_wasInLobby = nowInLobby;
 
