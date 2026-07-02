@@ -32,6 +32,18 @@ M.MAX_TANKS = MAX_TANKS
 
 M.slots = {}
 
+-- Count of slots currently flagged .active == true. Maintained at every
+-- .active flip below: set_info / merge_info / set_handshake increment on a
+-- false→true edge, clear decrements on a true→false edge. init() needs no
+-- maintenance — it only ever sets slots inactive, and runs once before any
+-- activation, so the counter stays 0. Lets iter_active skip the 16-slot
+-- scan (and its per-call closure) when nothing is active.
+local n_active = 0
+
+-- Shared no-op iterator returned by iter_active when n_active == 0, so the
+-- empty case yields nothing without allocating a fresh closure per call.
+local function iter_none() return nil end
+
 -- Initialization
 -- Allocates the 16 slots up-front.  Idempotent: a second call resets every
 -- slot to empty without re-allocating the slot or info table.
@@ -104,6 +116,7 @@ function M.set_info(player_num, now, new_hash)
   -- last_tick — otherwise a stream of /info extra heartbeats makes a stale goal
   -- look fresh (saw a live blitz call wrongly pruned this way).
   slot.state_tick = now
+  if not slot.active then n_active = n_active + 1 end
   slot.active     = true
 end
 
@@ -139,6 +152,7 @@ function M.merge_info(player_num, now, new_hash)
     extra[k] = true
   end
   slot.last_tick = now
+  if not slot.active then n_active = n_active + 1 end
   slot.active    = true
 end
 
@@ -161,6 +175,7 @@ function M.set_handshake(player_num, now, key, value)
     extra[key]     = true
   end
   slot.last_tick = now
+  if not slot.active then n_active = n_active + 1 end
   slot.active    = true
 end
 
@@ -170,11 +185,16 @@ function M.clear(player_num)
   for k in pairs(slot.info) do slot.info[k] = nil end
   if slot.extra then for k in pairs(slot.extra) do slot.extra[k] = nil end end
   slot.last_tick = 0
+  if slot.active then n_active = n_active - 1 end
   slot.active    = false
 end
 
 -- Iteration helper.  Yields (player_num, slot) for active+fresh slots.
 function M.iter_active(now, max_age)
+  -- Fast path: with no slot active the scan would walk all 16 slots and
+  -- yield nothing, so hand back the shared no-op iterator instead — no
+  -- closure allocated, no scan run.
+  if n_active == 0 then return iter_none end
   local pn = -1
   return function()
     while pn < MAX_TANKS - 1 do
