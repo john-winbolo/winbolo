@@ -30,6 +30,15 @@ void frontEndRedrawAll(ClientSim *cs) {
    * playersSetPlayer triggered by a CTRL_PLAYER_JOIN mid-lobby (e.g. another
    * remote adding a bot) doesn't stomp the lobby render. */
   if (clientSimIsInLobby(cs)) return;
+  /* windowRedrawAll issues a full-screen redraw (SetRenderTarget, blits,
+     status panels). It is only safe on the render thread — but this callback
+     is reached from the server-tick thread via playersSetPlayer during
+     serverInstanceTick (see clientmutex.c), where it would race the
+     main-thread present. The main loop already repaints the whole frame from
+     sim state every frame, so an off-thread redraw here is redundant; skip
+     it and let the next frame refresh. (On the single-threaded wasm build
+     every call site is the render thread, so this never skips there.) */
+  if (!sdl3DrawOnRenderThread()) return;
   windowRedrawAll(cs);
 }
 

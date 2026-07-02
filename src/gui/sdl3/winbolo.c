@@ -1856,19 +1856,23 @@ void windowPlaySound(sndEffects value) {
 }
 
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
-  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* Redundant with the per-frame render pass, which repaints every pill icon
+     from sim state on the render thread (sdl3DrawMainScreen). This callback
+     also fires on the server-tick thread, where touching the renderer races
+     the main-thread present, so defer to the next frame when off it. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
   sdl3DrawCopyPillsStatus(0, 0);
-  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* See frontEndStatusPillbox — repainted every frame from sim state; skip
+     the direct draw when off the render thread. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusTank(tankNum, ts);
   sdl3DrawCopyTanksStatus(0, 0);
-  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
@@ -1890,11 +1894,15 @@ void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
-  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* Redundant with the per-frame render pass, which repaints every base icon
+     from sim state on the render thread (sdl3DrawMainScreen). This callback
+     also fires on the server-tick thread (e.g. base capture / alliance change
+     applied during serverInstanceTick) where touching the renderer races the
+     main-thread present — the crash in issue. Defer to the next frame. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
   sdl3DrawCopyBasesStatus(0, 0);
-  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {

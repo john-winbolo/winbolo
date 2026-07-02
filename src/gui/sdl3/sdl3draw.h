@@ -78,6 +78,12 @@ SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
 
+/* TRUE if the caller is on the thread that created the renderer. The SDL
+ * renderer / Metal command queue must only be touched from that thread, so
+ * sim-tick front-end callbacks that would otherwise draw defer to the
+ * per-frame render pass and use this to gate any direct GPU work. */
+bool sdl3DrawOnRenderThread(void);
+
 /* Live game-render destination rect + scale, used by UI overlays to
  * pin themselves to the actual on-screen game viewport (which can be
  * letterboxed / pillarboxed / non-integer scaled in custom zoom). Any

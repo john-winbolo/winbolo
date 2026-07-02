@@ -188,6 +188,7 @@ static void sdl3UpdateTextCache(TTF_Font *font, const char *text,
 *  SDL_RenderPresent so text is composited in one pass.
 *********************************************************/
 void sdl3RenderCachedText(void) {
+  SDL_assert(sdl3DrawOnRenderThread());
   if (!gRenderer) return;
   int zf = gZoomFactor;
   SDL_Color white = {200, 200, 200, 255};
@@ -527,13 +528,29 @@ void sdl3DrawCopyTanksStatus(int x, int y) {
 }
 
 void sdl3DrawStatusTankBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, BYTE trees) {
+  /* Cache-only — may run on the server-tick thread. The texture is rebuilt
+     from this cache on the render thread by sdl3RenderTankBarsTex(), called
+     each frame from sdl3RenderStatusPanels(). */
   (void)x; (void)y;
   gCachedTankShells = shells;
   gCachedTankMines = mines;
   gCachedTankArmour = armour;
   gCachedTankTrees = trees;
+}
+
+/* Render thread only: rebuild the tank resource-bar texture from cache. */
+void sdl3RenderTankBarsTex(void) {
+  BYTE shells = gCachedTankShells;
+  BYTE mines  = gCachedTankMines;
+  BYTE armour = gCachedTankArmour;
+  BYTE trees  = gCachedTankTrees;
+  SDL_assert(sdl3DrawOnRenderThread());
   if (!gRenderer || !gTankBarsTex) return;
 
+  /* Save/restore the caller's target: this runs mid-frame from
+     sdl3RenderStatusPanels, where the active target may be the game
+     render-to-texture (gGameRenderTarget), not the screen. */
+  SDL_Texture *prevTarget = SDL_GetRenderTarget(gRenderer);
   SDL_SetRenderTarget(gRenderer, gTankBarsTex);
   SDL_SetTextureBlendMode(gTankBarsTex, SDL_BLENDMODE_NONE);
 
@@ -568,7 +585,7 @@ void sdl3DrawStatusTankBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, 
   if (armour > 0) SDL_RenderFillRect(gRenderer, &rArmour);
   if (trees  > 0) SDL_RenderFillRect(gRenderer, &rTrees);
 
-  SDL_SetRenderTarget(gRenderer, NULL);
+  SDL_SetRenderTarget(gRenderer, prevTarget);
 }
 
 void sdl3DrawCopyTankStatusBars(int x, int y) {
@@ -577,13 +594,26 @@ void sdl3DrawCopyTankStatusBars(int x, int y) {
 }
 
 void sdl3DrawStatusBaseBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, bool redraw) {
+  /* Cache-only — may run on the server-tick thread. The texture is rebuilt
+     from this cache on the render thread by sdl3RenderBaseBarsTex(), called
+     each frame from sdl3RenderStatusPanels(). */
   (void)x; (void)y; (void)redraw;
   gCachedBaseShells = shells;
   gCachedBaseMines = mines;
   gCachedBaseArmour = armour;
   gCachedBaseValid = (shells > 0 || mines > 0 || armour > 0);
+}
+
+/* Render thread only: rebuild the base resource-bar texture from cache. */
+void sdl3RenderBaseBarsTex(void) {
+  BYTE shells = gCachedBaseShells;
+  BYTE mines  = gCachedBaseMines;
+  BYTE armour = gCachedBaseArmour;
+  SDL_assert(sdl3DrawOnRenderThread());
   if (!gRenderer || !gBaseBarsTex) return;
 
+  /* Save/restore the caller's target (see sdl3RenderTankBarsTex). */
+  SDL_Texture *prevTarget = SDL_GetRenderTarget(gRenderer);
   SDL_SetRenderTarget(gRenderer, gBaseBarsTex);
   SDL_SetTextureBlendMode(gBaseBarsTex, SDL_BLENDMODE_NONE);
 
@@ -608,7 +638,7 @@ void sdl3DrawStatusBaseBars(int x, int y, BYTE shells, BYTE mines, BYTE armour, 
     if (armour > 0) SDL_RenderFillRect(gRenderer, &rArmour);
   }
 
-  SDL_SetRenderTarget(gRenderer, NULL);
+  SDL_SetRenderTarget(gRenderer, prevTarget);
 }
 
 void sdl3DrawCopyBasesStatusBars(int x, int y) {

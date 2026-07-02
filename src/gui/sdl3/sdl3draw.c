@@ -189,12 +189,30 @@ static uint32_t getRandomStaticNoiseSeed(void) {
   return gStaticSeed;
 }
 
-/* Guard: only blit gManStatusTex after sdl3DrawSetManStatus has drawn into it.
-   Prevents a one-frame artifact where the LGM arrow points top-left before
-   the first real angle is computed. */
+/* Guard: only blit gManStatusTex after the man-status texture has been
+   rebuilt from cache on the render thread. Prevents a one-frame artifact
+   where the LGM arrow points top-left before the first real angle is
+   computed. gManStatusValid tracks whether there is a live man-status to
+   show (set by the cache-only setter, cleared by the clear setter);
+   gManStatusReady tracks whether the texture has actually been drawn this
+   session (set by the render-thread rebuild). */
 static bool         gManStatusReady = false;
+static bool         gManStatusValid = false;
 static bool         gManStatusDead  = false;
 static TURNTYPE     gManStatusAngle = 0;
+
+/* Renderer thread ownership. SDL's renderer (and the Metal command queue
+   behind it) is not safe to touch from two threads at once. All GPU work
+   must run on the thread that created the renderer (the main/render thread).
+   We record that thread here at creation time and assert on it in the
+   drawing choke points; sim-tick callbacks that used to draw directly now
+   only update caches, and the per-frame render pass repaints from them. */
+static SDL_ThreadID gRenderThread = 0;
+
+bool sdl3DrawOnRenderThread(void) {
+  /* Before the renderer exists (startup) there is no wrong thread yet. */
+  return gRenderThread == 0 || SDL_GetCurrentThreadID() == gRenderThread;
+}
 
 /* Tablet viewport bounds — set each frame by sdl3DrawMainScreen(),
    read by sdl3DrawGetTabletViewport(). */
@@ -398,6 +416,10 @@ static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
   return tex;
 }
 
+/* Render-thread-only rebuild of the man-status texture from cache; defined
+   later in this file. */
+static void sdl3RenderManStatusTex(void);
+
 /*********************************************************
 *NAME:          sdl3RenderStatusPanels
 *PURPOSE:
@@ -406,16 +428,21 @@ static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
 *  then draws the current build-select indent overlay.
 *********************************************************/
 static void sdl3RenderStatusPanels(void) {
+  SDL_assert(sdl3DrawOnRenderThread());
   /* In tablet mode the ImGui overlay draws its own resource bars,
      build-select bar, and man-status — skip the desktop versions. */
   if (uiModeIsTablet()) return;
 
   int zf = gZoomFactor;
 
-  /* Status icon panels (bases/pills/tanks) are drawn directly to the
-     framebuffer by sdl3DrawSet*StatusClear / sdl3DrawStatus* calls that
-     occur before sdl3RenderStatusPanels in each frame.  Only the
-     man-status circle and resource bars still use render-target textures. */
+  /* Rebuild the render-target textures from cache on this (render) thread.
+     The sim-tick callbacks only cache values now; the actual GPU drawing of
+     these textures happens here so it can never race the main-thread present.
+     Icon panels (bases/pills/tanks) are repainted directly to the framebuffer
+     from sim state by the sdl3DrawStatus* calls that run just before this. */
+  sdl3RenderTankBarsTex();
+  sdl3RenderBaseBarsTex();
+  if (gManStatusValid) sdl3RenderManStatusTex();
 
   if (gManStatusTex && gManStatusReady) {
     SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_BLEND);
@@ -995,6 +1022,9 @@ bool sdl3DrawSetup(int zoomFactor) {
     gWindow = NULL;
     return FALSE;
   }
+  /* Pin renderer ownership to this thread; every later GPU call is
+     asserted against it (see sdl3DrawOnRenderThread). */
+  gRenderThread = SDL_GetCurrentThreadID();
 
   SDL_SetRenderVSync(gRenderer, 1);
 
@@ -2295,20 +2325,37 @@ void sdl3DrawGetCachedBaseStats(BYTE *shells, BYTE *mines, BYTE *armour, bool *h
 }
 
 void sdl3DrawSetManClear(void) {
+  /* Cache-only: may run on the server-tick thread. Marks that there is no
+     live man-status to show; the per-frame render pass will skip the
+     rebuild and the blit is gated on gManStatusReady. */
+  gManStatusValid = false;
   gManStatusReady = false;
-  if (!gRenderer || !gManStatusTex) return;
-  SDL_SetRenderTarget(gRenderer, gManStatusTex);
-  SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_NONE);
-  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
-  SDL_SetRenderTarget(gRenderer, NULL);
 }
 
 void sdl3DrawSetManStatus(int x, int y, bool isDead, TURNTYPE angle) {
+  /* Cache-only — may run on the server-tick thread, so it must not touch
+     the renderer. sdl3RenderManStatusTex() rebuilds the texture from this
+     cache on the render thread, once per frame via sdl3RenderStatusPanels. */
   (void)x; (void)y;
   gManStatusDead  = isDead;
   gManStatusAngle = angle;
+  gManStatusValid = true;
+}
+
+/* Render thread only: rebuild the man-status texture from the cached
+   (dead, angle) values. Extracted verbatim from the old sdl3DrawSetManStatus
+   drawing body so behaviour is unchanged; only the thread it runs on moved. */
+static void sdl3RenderManStatusTex(void) {
+  bool isDead = gManStatusDead;
+  TURNTYPE angle = gManStatusAngle;
+  SDL_Texture *prevTarget;
+  SDL_assert(sdl3DrawOnRenderThread());
   if (!gRenderer || !gManStatusTex) return;
+
+  /* Save/restore the caller's target: this runs mid-frame from
+     sdl3RenderStatusPanels, where the active target may be the game
+     render-to-texture, not the screen. */
+  prevTarget = SDL_GetRenderTarget(gRenderer);
 
   /* Compute endpoint of direction arrow (same math as Win32 draw.c) */
   double dbAngle, dbTemp;
@@ -2390,7 +2437,7 @@ void sdl3DrawSetManStatus(int x, int y, bool isDead, TURNTYPE angle) {
     SDL_RenderLine(gRenderer, (float)scx, (float)scy, (float)sAddX, (float)sAddY);
   }
 
-  SDL_SetRenderTarget(gRenderer, NULL);
+  SDL_SetRenderTarget(gRenderer, prevTarget);
   gManStatusReady = true;
 }
 

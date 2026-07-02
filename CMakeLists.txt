@@ -51,7 +51,12 @@ include(cmake/bolo_version.cmake)
 # (WinBolo, Log Viewer, Map Editor) picks up matching version/copyright keys
 # in its Info.plist, and so the deployment target applies to all of them.
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+    # FORCE for the same reason as CMAKE_OSX_ARCHITECTURES above: CLion / some
+    # IDE configures write an EMPTY cache entry for CMAKE_OSX_DEPLOYMENT_TARGET,
+    # which without FORCE would win and leave the target unset. An unset target
+    # makes clang default to the host SDK version (e.g. 26.x), baking minos 26.0
+    # into the Mach-O load command so dyld refuses to launch on older macOS.
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
     string(TIMESTAMP _WB_CURRENT_YEAR "%Y")
     set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_VERSION}")
     set(MACOSX_BUNDLE_BUNDLE_VERSION       "${WINBOLO_VERSION}")
@@ -90,7 +95,7 @@ include(FetchContent)
 FetchContent_Declare(
     sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        release-3.4.8
+    GIT_TAG        release-3.4.10
     GIT_SHALLOW    TRUE
     SYSTEM
     EXCLUDE_FROM_ALL
