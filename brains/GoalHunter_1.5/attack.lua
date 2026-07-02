@@ -5701,33 +5701,40 @@ function M.update_attack_substate(goal, state, world, info)
 
       if sdist <= DIST_TOL and
          effectively_stopped(state, info, now, SPEED_TOL, 5, "in_range_position") then
-        -- Compute the pre-aim point: ONE GAME-PIXEL OUTSIDE the
-        -- pillbox tile on the same side as the chosen aim corner.
-        -- For a center aim there's no offset, the pre-aim IS the
-        -- center. The idea: settle the gun on a slightly-overshot
-        -- direction first, then refine to the corner inside the
-        -- tile. Splits the rotation cleanly so steering doesn't
-        -- have to slow down across the lock threshold while the
-        -- finetune sim is also sampling the trajectory.
-        local PIX = 3.0 / 16.0    -- 3 game-pixels = 48 wu = 3/16 tile
-        local fx, fy = goal.aim_mx - pmx, goal.aim_my - pmy
-        local pre_dx, pre_dy
-        if fx < 0.5 - 1e-3 then
-          pre_dx = -PIX                -- corner on left side → outside is further left
-        elseif fx > 0.5 + 1e-3 then
-          pre_dx = 1.0 + PIX           -- right side → outside is past the right edge
-        else
-          pre_dx = 0.5                 -- centered: no x offset
+        -- Compute the pre-aim point: the chosen corner overshot LATERALLY —
+        -- perpendicular to our line of sight, on the side away from the pill
+        -- center — by PRE_OVERSHOOT_BRADS of arc at the actual distance.
+        -- The idea: settle the gun slightly PAST the corner first, then
+        -- refine inward, so the final approach always turns the same
+        -- direction and never has to creep across the lock threshold while
+        -- the finetune sim samples trajectories.
+        --
+        -- Angle-space on purpose. The old form offset the corner 3 game-px
+        -- "outside the tile" per AXIS, which fails both ways: the component
+        -- along the line of sight (depth) barely moves the BEARING, and the
+        -- lateral 3px is smaller than the 1-brad lock tolerance (~2.8px at a
+        -- 7-tile standoff) — so the settled gunsight never visibly left the
+        -- pill and the overshoot was a no-op. Sizing the offset in brads
+        -- keeps it meaningful at any range. Center aims stay un-offset.
+        local PRE_OVERSHOOT_BRADS = 2.5   -- > the 1-brad lock tolerance
+        local tfx, tfy = info.tankx / 256.0, info.tanky / 256.0
+        local cxp, cyp = goal.aim_mx, goal.aim_my       -- chosen corner (float)
+        local ddx, ddy = cxp - tfx, cyp - tfy
+        local dlen = math.sqrt(ddx * ddx + ddy * ddy)
+        goal.aim_pre_mx = cxp
+        goal.aim_pre_my = cyp
+        if dlen > 0.01 then
+          local perp_x, perp_y = -ddy / dlen, ddx / dlen  -- perpendicular to LOS
+          -- Side: away from the pill center (sign of the corner's lateral
+          -- displacement). ~0 = center aim / corner dead ahead: no offset.
+          local side = (cxp - (pmx + 0.5)) * perp_x + (cyp - (pmy + 0.5)) * perp_y
+          if math.abs(side) > 1e-6 then
+            if side < 0 then perp_x, perp_y = -perp_x, -perp_y end
+            local overshoot = dlen * (PRE_OVERSHOOT_BRADS * 2.0 * math.pi / 256.0)
+            goal.aim_pre_mx = cxp + perp_x * overshoot
+            goal.aim_pre_my = cyp + perp_y * overshoot
+          end
         end
-        if fy < 0.5 - 1e-3 then
-          pre_dy = -PIX
-        elseif fy > 0.5 + 1e-3 then
-          pre_dy = 1.0 + PIX
-        else
-          pre_dy = 0.5
-        end
-        goal.aim_pre_mx = pmx + pre_dx
-        goal.aim_pre_my = pmy + pre_dy
 
         goal.substate        = "in_range_aim_pre"
         goal.aim_tick        = now
@@ -5744,9 +5751,9 @@ function M.update_attack_substate(goal, state, world, info)
   end
 
   -- ══════════════════════════════════════════════════════════════════
-  -- in_range_aim_pre (PPT): turn to a coarse pre-aim point one game-
-  -- pixel OUTSIDE the pillbox tile on the same side as the chosen
-  -- corner (or the center, if the chosen aim was already center).
+  -- in_range_aim_pre (PPT): turn to a coarse pre-aim point — the chosen
+  -- corner overshot ~2.5 brads LATERALLY past the pill's side (or the
+  -- center itself, if the chosen aim was center; no offset then).
   -- Same lock condition as in_range_aim — once corr <= 1, hand off
   -- to in_range_aim for the final corner aim. No trajectory check
   -- here; that lives in in_range_aim_finetune.
@@ -6592,6 +6599,19 @@ function M.update_attack_substate(goal, state, world, info)
       viz.line("pill_take_target", ax,         ay - 0.18, ax,         ay + 0.18, 255, 0, 255, 255)
       viz.text("pill_take_target", ax + 0.12, ay - 0.18, "TARGET",
                    "topleft", 255, 100, 255, 255, 0.35)
+      -- Pre-aim point (in_range_aim_pre only): what steering actually aims
+      -- at during that substate — 3 game-px OUTSIDE the tile edge on the
+      -- chosen-corner side (center aims: the center, no marker offset).
+      -- Without this, the magenta crosshair (the FINAL corner, deliberately
+      -- INSIDE the tile) makes pre-aim look like it never leaves the pill.
+      if goal.substate == "in_range_aim_pre" and goal.aim_pre_mx and goal.aim_pre_my then
+        local px, py = goal.aim_pre_mx, goal.aim_pre_my
+        viz.circle("pill_take_target", px, py, 0.10, 255, 160, 40, 230)
+        viz.line("pill_take_target", px - 0.14, py, px + 0.14, py, 255, 160, 40, 255)
+        viz.line("pill_take_target", px, py - 0.14, px, py + 0.14, 255, 160, 40, 255)
+        viz.text("pill_take_target", px + 0.10, py + 0.08, "PRE",
+                     "topleft", 255, 180, 60, 255, 0.35)
+      end
       -- Live aim accuracy: how many bradians the tank's current
       -- direction is off from a perfect aim at (ax, ay), and the
       -- finetune verdict (does cpf.simulate_shot say the trajectory
