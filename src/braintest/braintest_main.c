@@ -2228,6 +2228,9 @@ static char optRunScript[1024] = "";
  * --profile-log to enable file writes too (which implies --profile). */
 static int  optProfile    = 0;
 static int  optProfileLog = 0;
+/* --instr-profile: arm GoalHunter's Lua instruction-sampling profiler
+ * (per-bot p<N>_profile.tsv). Benchmark diagnostics only — see below. */
+static int  optInstrProfile = 0;
 /* JSONL behavior log (brain_p<N>.jsonl, goal_player%d.log, etc.). Always
  * on in dev mode; opt-in under --opt via --log-json. Independent of the
  * profile flags — behavior trace is about decisions, not perf. */
@@ -2239,6 +2242,9 @@ static int  optSafeBrains = 0;
 static int  optAutoStart = 0;
 static int  g_playbackAutoplay = 0;  /* --playback-autoplay: drive a -loadsession replay from frame 0 and quit at the end (headless verification) */
 static int  optMaxTicks = 0;   /* 0 = run forever */
+/* Tick cadence in ms requested via --speed-ms; snapped to the nearest
+ * SPEED_PRESETS entry at startup. 0 = unset (use DEFAULT_SPEED_INDEX). */
+static int  optSpeedMs = 0;
 /* Brain-dispatch thread count (workers + producer). 0 = use the default
  * (2). Set via -threads; clamped to [1, cores] at init. */
 static int  optThreads = 0;
@@ -2273,12 +2279,15 @@ static void printUsage(const char *prog) {
         "  --profile          (--opt only) In-memory timing → Y panel time bar. No file writes.\n"
         "  --profile-log      (--opt only) Profiling + write optimize.log/performance.ticks.log.\n"
         "                     Implies --profile. In dev mode (no --opt) both are on by default.\n"
+        "  --instr-profile    Write per-bot Lua instruction-sampling profile (p<bot>_profile.tsv);\n"
+        "                     benchmark diagnostics — disables tick-budget kills while sampling.\n"
         "  --log-json         (--opt only) Write brain_p<N>.jsonl + goal_player<N>.log behavior\n"
         "                     traces. On by default in dev mode.\n"
         "  --safe-brains      Run brains in the restricted sandbox (off by default in\n"
         "                     BrainTest, which needs the dev-only debug tooling).\n"
         "  --auto-start       Skip the auto-pause at tick 4 and run immediately.\n"
         "  --max-ticks N      Exit automatically after N ticks (flushes perf log).\n"
+        "  --speed-ms N       Tick cadence in ms (snapped to nearest preset; 1 = 20x realtime).\n"
         "  -victim_ids IDS  Comma-sep list of bot ids to flag as test victims\n"
         "                   (e.g. -victim_ids 0,2). The brain reads _BT_VICTIM=true\n"
         "                   on each marked bot, which can be wired up to perform\n"
@@ -2386,6 +2395,8 @@ static bool parseArgs(int argc, char **argv) {
              * measurement makes no sense — buffer would be empty). */
             optProfile    = 1;
             optProfileLog = 1;
+        } else if (strcmp(argv[i], "--instr-profile") == 0) {
+            optInstrProfile = 1;
         } else if (strcmp(argv[i], "--log-json") == 0) {
             optLogJson = 1;
         } else if (strcmp(argv[i], "--safe-brains") == 0) {
@@ -2396,6 +2407,8 @@ static bool parseArgs(int argc, char **argv) {
             g_playbackAutoplay = 1;
         } else if (strcmp(argv[i], "--max-ticks") == 0 && i + 1 < argc) {
             optMaxTicks = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--speed-ms") == 0 && i + 1 < argc) {
+            optSpeedMs = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--run-script") == 0 && i + 1 < argc) {
             strncpy(optRunScript, argv[++i], sizeof(optRunScript) - 1);
         } else if ((strcmp(argv[i], "-victim_ids") == 0
@@ -5437,6 +5450,22 @@ int main(int argc, char *argv[]) {
     app.freeCamera = false;
     app.showHUD = false;
     app.speedIndex = DEFAULT_SPEED_INDEX;
+    if (optSpeedMs > 0) {
+        /* Snap the requested cadence to the closest preset. On a tie between
+         * two presets pick the faster one (fewer ms), matching the intent of
+         * a benchmark flag that asks to run as fast as the requested value. */
+        int best = 0;
+        int bestDiff = abs(SPEED_PRESETS[0] - optSpeedMs);
+        for (int s = 1; s < NUM_SPEED_PRESETS; s++) {
+            int diff = abs(SPEED_PRESETS[s] - optSpeedMs);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                best = s;
+            }
+        }
+        app.speedIndex = best;
+        printf("speed-ms: using %d ms/tick preset\n", SPEED_PRESETS[best]);
+    }
     /* Pre-allocate the recording buffers (delta scratchpads etc.) up
      * front; per-frame storage grows on demand inside recordingCapture. */
     recordingInit(&app.recording);
@@ -5763,6 +5792,7 @@ int main(int argc, char *argv[]) {
      * (debug-mode dev runs already force it on inside the handler), so the "P"
      * replay window has pool-breakdown data. */
     luaBrainsSetProfile(effProfile, effProfileLog, /*pool_viz*/ effProfileLog);
+    luaBrainsSetInstrProfile(optInstrProfile);
     luaBrainsSetLogJson(effLogJson);
     /* Dev tool: brains run unsandboxed unless --safe-brains is passed. */
     luaBrainsSetAllowUnsafe(!optSafeBrains);

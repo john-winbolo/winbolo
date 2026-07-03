@@ -23,6 +23,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -233,13 +234,139 @@ const BYTE **brainCoreGetWorldPtrPtr(lua_State *L) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Counting allocator wrapper (per-think allocation profiling)         */
+/* ------------------------------------------------------------------ */
+
+/* Context threaded as the ud of the wrapping lua_Alloc. Delegates every
+ * request to the original allocator and tallies fresh allocations and
+ * growths so a benchmark can read per-think heap churn. */
+typedef struct BrcAllocCounter {
+  lua_Alloc   origAlloc;   /* allocator this wrapper delegates to */
+  void       *origUd;      /* ud the original allocator expects */
+  lua_Integer allocN;      /* fresh + grow events since last reset */
+  lua_Integer allocBytes;  /* net new bytes since last reset */
+} BrcAllocCounter;
+
+/* lua_Alloc wrapper: delegate faithfully, then count. Only successful
+ * fresh allocations and growths are tallied; shrinks and frees are not.
+ * In Lua 5.4 osize carries the object type tag (not a byte size) when
+ * ptr is NULL, so a fresh alloc counts the whole nsize. */
+static void *brc_counting_alloc(void *ud, void *ptr, size_t osize,
+                                size_t nsize) {
+  BrcAllocCounter *ctx = (BrcAllocCounter *)ud;
+  void *res = ctx->origAlloc(ctx->origUd, ptr, osize, nsize);
+  if (nsize == 0) {
+    return res; /* free — not counted */
+  }
+  if (res != NULL) {
+    if (ptr == NULL) {
+      ctx->allocN++;
+      ctx->allocBytes += (lua_Integer)nsize;
+    } else if (nsize > osize) {
+      ctx->allocN++;
+      ctx->allocBytes += (lua_Integer)(nsize - osize);
+    }
+    /* shrink (nsize <= osize): counted as neither */
+  }
+  return res;
+}
+
+/* brain_alloc_stats() Lua global — returns (allocN, allocBytes) tallied
+ * since the last reset. The counter context rides as a light-userdata
+ * upvalue so this closure needs no globals. */
+static int brc_alloc_stats(lua_State *L) {
+  BrcAllocCounter *ctx =
+      (BrcAllocCounter *)lua_touserdata(L, lua_upvalueindex(1));
+  lua_pushinteger(L, ctx->allocN);
+  lua_pushinteger(L, ctx->allocBytes);
+  return 2;
+}
+
+void brainCoreInstallAllocCounter(lua_State *L) {
+  BrcAllocCounter *ctx = (BrcAllocCounter *)malloc(sizeof(BrcAllocCounter));
+  if (ctx == NULL) return;
+  ctx->origAlloc = lua_getallocf(L, &ctx->origUd);
+  ctx->allocN = 0;
+  ctx->allocBytes = 0;
+  lua_setallocf(L, brc_counting_alloc, ctx);
+  lua_pushlightuserdata(L, ctx);
+  lua_pushcclosure(L, brc_alloc_stats, 1);
+  lua_setglobal(L, "brain_alloc_stats");
+}
+
+void brainCoreUninstallAllocCounter(lua_State *L) {
+  void *ud = NULL;
+  lua_Alloc cur = lua_getallocf(L, &ud);
+  if (cur != brc_counting_alloc) return; /* wrapper not installed */
+  BrcAllocCounter *ctx = (BrcAllocCounter *)ud;
+  lua_setallocf(L, ctx->origAlloc, ctx->origUd);
+  free(ctx);
+}
+
+/* ------------------------------------------------------------------ */
 /* BrainInfo marshaling                                                */
 /* ------------------------------------------------------------------ */
 
+/* Per-state scratch pool for brainCorePushInfo.
+ *
+ * brainCorePushInfo runs once per think for every brain, and the info tree it
+ * marshals is entirely transient — nothing survives to the next push. Building
+ * the whole tree fresh each call (outer table, player_names, one table per
+ * visible object, per-message and per-event tables with a nested data array
+ * each, gameinfo, base, singular message) turned every push into a wave of
+ * short-lived tables charged to that brain's Lua GC.
+ *
+ * Instead each lua_State keeps one scratch table T in its registry, keyed by
+ * the address of the file-static below. The registry is per-State and each
+ * brain has its own State, so T is naturally per-brain. T holds:
+ *   T.info    — the pooled info table left on the stack for the caller. Its
+ *               array/table fields (player_names, gameinfo, objects, messages,
+ *               events, and each event's nested data array) are themselves
+ *               persistent and reused.
+ *   T.base    — pooled table for info.base (a nil-or-table field). Anchored in
+ *               T so it survives while info.base is toggled to nil.
+ *   T.message — pooled table for info.message (singular; nil-or-table),
+ *               likewise anchored in T.
+ * The first call per State builds everything; later calls fetch T and overwrite
+ * in place — lua_setfield on an existing key allocates nothing, so the only
+ * per-call allocations are viewdata and any genuinely new (non-interned)
+ * strings.
+ *
+ * Contract preserved: this function still leaves exactly one value on the stack
+ * — the info table — with the same field names, types and nil semantics a
+ * freshly built tree produced, so callers are unchanged.
+ *
+ * Hazard: because the tables are overwritten in place on the next push, a brain
+ * must not retain a reference to an info sub-table (info.objects, info.messages,
+ * info.events, info.base, info.message, info.player_names, info.gameinfo, ...)
+ * across thinks and expect it to keep that think's snapshot — the next push
+ * mutates it. Reading fields and copying scalars/strings out remains safe.
+ */
+static const char brc_info_pool_key;
+
 void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   int i;
+  int t_idx;
 
-  lua_newtable(L);
+  /* Fetch (or lazily build) this State's scratch pool, leaving T on top. */
+  lua_rawgetp(L, LUA_REGISTRYINDEX, (void *)&brc_info_pool_key);
+  if (!lua_istable(L, -1)) {
+    lua_pop(L, 1);
+    lua_newtable(L);                                  /* T */
+    lua_newtable(L);                                  /* T.info */
+    lua_newtable(L); lua_setfield(L, -2, "player_names");
+    lua_newtable(L); lua_setfield(L, -2, "gameinfo");
+    lua_newtable(L); lua_setfield(L, -2, "objects");
+    lua_newtable(L); lua_setfield(L, -2, "messages");
+    lua_newtable(L); lua_setfield(L, -2, "events");
+    lua_setfield(L, -2, "info");                      /* T.info = info */
+    lua_newtable(L); lua_setfield(L, -2, "base");     /* T.base */
+    lua_newtable(L); lua_setfield(L, -2, "message");  /* T.message */
+    lua_pushvalue(L, -1);
+    lua_rawsetp(L, LUA_REGISTRYINDEX, (void *)&brc_info_pool_key);
+  }
+  t_idx = lua_gettop(L);                 /* T */
+  lua_getfield(L, t_idx, "info");        /* info — kept on the stack top below */
 
   /* Version */
   lua_pushinteger(L, info->BoloVersion);    lua_setfield(L, -2, "bolo_version");
@@ -252,22 +379,32 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_pushinteger(L, info->max_pillboxes);  lua_setfield(L, -2, "max_pillboxes");
   lua_pushinteger(L, info->max_refbases);   lua_setfield(L, -2, "max_refbases");
 
-  /* Player names */
-  lua_newtable(L);
-  if (info->playernames != NULL) {
-    const u_char *base = (const u_char *)info->playernames;
-    for (i = 0; i < info->max_players; i++) {
-      const u_char *ps  = base + (size_t)i * PLAYER_NAME_LEN;
-      int           len = (int)ps[0];
-      if (len > 0 && len < PLAYER_NAME_LEN) {
-        lua_pushlstring(L, (const char *)(ps + 1), (size_t)len);
-      } else {
-        lua_pushstring(L, "");
+  /* Player names — persistent array; overwrite 1..max_players and nil any tail
+   * left by a previous, larger roster (max_players is stable in practice). */
+  {
+    int old_n, count = 0;
+    lua_getfield(L, -1, "player_names");
+    old_n = (int)lua_rawlen(L, -1);
+    if (info->playernames != NULL) {
+      const u_char *base = (const u_char *)info->playernames;
+      for (i = 0; i < info->max_players; i++) {
+        const u_char *ps  = base + (size_t)i * PLAYER_NAME_LEN;
+        int           len = (int)ps[0];
+        if (len > 0 && len < PLAYER_NAME_LEN) {
+          lua_pushlstring(L, (const char *)(ps + 1), (size_t)len);
+        } else {
+          lua_pushstring(L, "");
+        }
+        lua_rawseti(L, -2, i + 1);
       }
+      count = info->max_players;
+    }
+    for (i = count; i < old_n; i++) {
+      lua_pushnil(L);
       lua_rawseti(L, -2, i + 1);
     }
+    lua_pop(L, 1);
   }
-  lua_setfield(L, -2, "player_names");
 
   /* Alliance bitmask */
   lua_pushinteger(L, info->allies ? *(info->allies) : 0);
@@ -299,19 +436,20 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_pushboolean(L, info->newtank != 0);   lua_setfield(L, -2, "newtank");
   lua_pushboolean(L, info->tankobstructed != 0); lua_setfield(L, -2, "tank_obstructed");
 
-  /* Nearest friendly base, or nil */
+  /* Nearest friendly base, or nil — toggle the pooled T.base in/out of info. */
   if (info->base != NULL) {
-    lua_newtable(L);
+    lua_getfield(L, t_idx, "base");
     lua_pushinteger(L, info->base->x >> 8); lua_setfield(L, -2, "x");
     lua_pushinteger(L, info->base->y >> 8); lua_setfield(L, -2, "y");
     lua_pushinteger(L, info->base->idnum);  lua_setfield(L, -2, "idnum");
     lua_pushinteger(L, info->base_shells);  lua_setfield(L, -2, "shells");
     lua_pushinteger(L, info->base_mines);   lua_setfield(L, -2, "mines");
     lua_pushinteger(L, info->base_armour);  lua_setfield(L, -2, "armour");
+    lua_setfield(L, -2, "base");            /* info.base = T.base */
   } else {
     lua_pushnil(L);
+    lua_setfield(L, -2, "base");
   }
-  lua_setfield(L, -2, "base");
 
   /* Builder man (LGM) state */
   lua_pushinteger(L, info->man_status);     lua_setfield(L, -2, "man_status");
@@ -330,7 +468,7 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_pushinteger(L, info->pillview ? *(info->pillview) : 0x8000);
   lua_setfield(L, -2, "pillview");
 
-  /* viewdata */
+  /* viewdata — a fresh per-tick string (accepted allocation) */
   if (info->viewdata != NULL) {
     lua_pushlstring(L, (const char *)info->viewdata,
                     (size_t)(info->view_width * info->view_height));
@@ -339,31 +477,55 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   }
   lua_setfield(L, -2, "viewdata");
 
-  /* Visible objects */
-  lua_newtable(L);
-  for (i = 0; i < info->num_objects; i++) {
-    lua_newtable(L);
-    lua_pushinteger(L, info->objects[i].object);    lua_setfield(L, -2, "type");
-    lua_pushinteger(L, info->objects[i].x);         lua_setfield(L, -2, "x");
-    lua_pushinteger(L, info->objects[i].y);         lua_setfield(L, -2, "y");
-    lua_pushinteger(L, info->objects[i].idnum);     lua_setfield(L, -2, "idnum");
-    lua_pushinteger(L, info->objects[i].direction); lua_setfield(L, -2, "direction");
-    lua_pushinteger(L, info->objects[i].info);      lua_setfield(L, -2, "info");
-    lua_pushinteger(L, info->objects[i].speed);     lua_setfield(L, -2, "speed");
-    lua_rawseti(L, -2, i + 1);
+  /* Visible objects — persistent array of per-object tables. Overwrite each
+   * element's fields in place, creating an element table only when the array
+   * grows; nil any slots beyond this tick's count. */
+  {
+    int old_n, n = info->num_objects;
+    lua_getfield(L, -1, "objects");
+    old_n = (int)lua_rawlen(L, -1);
+    for (i = 0; i < n; i++) {
+      lua_rawgeti(L, -1, i + 1);
+      if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_rawseti(L, -3, i + 1);
+      }
+      lua_pushinteger(L, info->objects[i].object);    lua_setfield(L, -2, "type");
+      lua_pushinteger(L, info->objects[i].x);         lua_setfield(L, -2, "x");
+      lua_pushinteger(L, info->objects[i].y);         lua_setfield(L, -2, "y");
+      lua_pushinteger(L, info->objects[i].idnum);     lua_setfield(L, -2, "idnum");
+      lua_pushinteger(L, info->objects[i].direction); lua_setfield(L, -2, "direction");
+      lua_pushinteger(L, info->objects[i].info);      lua_setfield(L, -2, "info");
+      lua_pushinteger(L, info->objects[i].speed);     lua_setfield(L, -2, "speed");
+      lua_pop(L, 1);
+    }
+    for (i = n; i < old_n; i++) {
+      lua_pushnil(L);
+      lua_rawseti(L, -2, i + 1);
+    }
+    lua_pop(L, 1);
   }
-  lua_setfield(L, -2, "objects");
 
-  /* Received messages — full per-tick inbox, pushed as an array of
-   * {sender=N, receivers=N, text="..."} tables. info.message (singular)
-   * stays as a nil-or-table alias to messages[1] for legacy brains
-   * that haven't been ported to iterate info.messages yet. */
+  /* Received messages — full per-tick inbox, a persistent array of
+   * {sender=N, receivers=N, text="..."} tables (same overwrite/nil-tail scheme
+   * as objects). info.message (singular) below is a separate nil-or-table field
+   * for legacy brains not yet ported to iterate info.messages. */
   {
     char msgBuf[256];
-    lua_newtable(L);  /* info.messages = {} */
-    for (u_short mi = 0; mi < info->num_messages; mi++) {
-      const MessageInfo *m = &info->messages[mi];
-      lua_newtable(L);
+    int old_n, n = (int)info->num_messages;
+    lua_getfield(L, -1, "messages");
+    old_n = (int)lua_rawlen(L, -1);
+    for (i = 0; i < n; i++) {
+      const MessageInfo *m = &info->messages[i];
+      lua_rawgeti(L, -1, i + 1);
+      if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_rawseti(L, -3, i + 1);
+      }
       lua_pushinteger(L, m->sender);
       lua_setfield(L, -2, "sender");
       lua_pushinteger(L, m->receivers ? *(m->receivers) : 0);
@@ -375,13 +537,19 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
         lua_pushstring(L, "");
       }
       lua_setfield(L, -2, "text");
-      lua_rawseti(L, -2, mi + 1);
+      lua_pop(L, 1);
     }
-    lua_setfield(L, -2, "messages");
+    for (i = n; i < old_n; i++) {
+      lua_pushnil(L);
+      lua_rawseti(L, -2, i + 1);
+    }
+    lua_pop(L, 1);
   }
+  /* info.message (singular) — toggle the separate pooled T.message in/out,
+   * matching the freshly built tree (never aliased to messages[1]). */
   if (info->message != NULL) {
     char msgBuf[256];
-    lua_newtable(L);
+    lua_getfield(L, t_idx, "message");
     lua_pushinteger(L, info->message->sender);
     lua_setfield(L, -2, "sender");
     lua_pushinteger(L, info->message->receivers ? *(info->message->receivers) : 0);
@@ -393,22 +561,25 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
       lua_pushstring(L, "");
     }
     lua_setfield(L, -2, "text");
+    lua_setfield(L, -2, "message");         /* info.message = T.message */
   } else {
     lua_pushnil(L);
+    lua_setfield(L, -2, "message");
   }
-  lua_setfield(L, -2, "message");
 
-  /* Game info */
-  lua_newtable(L);
-  lua_pushstring(L, (const char *)info->gameinfo.mapname.c);
-  lua_setfield(L, -2, "mapname");
-  lua_pushinteger(L, info->gameinfo.gametype);          lua_setfield(L, -2, "gametype");
-  lua_pushinteger(L, info->gameinfo.hidden_mines);      lua_setfield(L, -2, "hidden_mines");
-  lua_pushboolean(L, info->gameinfo.allow_AI);          lua_setfield(L, -2, "allow_ai");
-  lua_pushboolean(L, info->gameinfo.assist_AI);         lua_setfield(L, -2, "assist_ai");
-  lua_pushinteger(L, info->gameinfo.start_delay);       lua_setfield(L, -2, "start_delay");
-  lua_pushinteger(L, info->gameinfo.time_limit);        lua_setfield(L, -2, "time_limit");
-  lua_setfield(L, -2, "gameinfo");
+  /* Game info — persistent table, overwrite its fields. */
+  {
+    lua_getfield(L, -1, "gameinfo");
+    lua_pushstring(L, (const char *)info->gameinfo.mapname.c);
+    lua_setfield(L, -2, "mapname");
+    lua_pushinteger(L, info->gameinfo.gametype);          lua_setfield(L, -2, "gametype");
+    lua_pushinteger(L, info->gameinfo.hidden_mines);      lua_setfield(L, -2, "hidden_mines");
+    lua_pushboolean(L, info->gameinfo.allow_AI);          lua_setfield(L, -2, "allow_ai");
+    lua_pushboolean(L, info->gameinfo.assist_AI);         lua_setfield(L, -2, "assist_ai");
+    lua_pushinteger(L, info->gameinfo.start_delay);       lua_setfield(L, -2, "start_delay");
+    lua_pushinteger(L, info->gameinfo.time_limit);        lua_setfield(L, -2, "time_limit");
+    lua_pop(L, 1);
+  }
 
   /* Current key state */
   lua_pushinteger(L, info->holdkeys ? *(info->holdkeys) : 0);
@@ -426,25 +597,49 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
   lua_pushboolean(L, info->dead);
   lua_setfield(L, -2, "dead");
 
-  /* Game events */
-  lua_newtable(L);
-  for (i = 0; i < info->num_events; i++) {
-    lua_newtable(L);
-    lua_pushinteger(L, info->events[i].type);
-    lua_setfield(L, -2, "type");
-    lua_newtable(L);
-    {
-      int dlen = gameEventDataSize(info->events[i].type);
-      int j;
+  /* Game events — persistent array; each element holds a persistent nested
+   * data array. Overwrite type and data[1..dlen] in place, nil each data tail
+   * (dlen varies by event type) and the events tail. */
+  {
+    int old_n, n = info->num_events;
+    lua_getfield(L, -1, "events");
+    old_n = (int)lua_rawlen(L, -1);
+    for (i = 0; i < n; i++) {
+      int dlen, old_d, j;
+      lua_rawgeti(L, -1, i + 1);
+      if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);                    /* event table */
+        lua_newtable(L);                    /* its data array */
+        lua_setfield(L, -2, "data");
+        lua_pushvalue(L, -1);
+        lua_rawseti(L, -3, i + 1);
+      }
+      lua_pushinteger(L, info->events[i].type);
+      lua_setfield(L, -2, "type");
+      lua_getfield(L, -1, "data");
+      dlen  = gameEventDataSize(info->events[i].type);
+      old_d = (int)lua_rawlen(L, -1);
       for (j = 0; j < dlen; j++) {
         lua_pushinteger(L, info->events[i].data[j]);
         lua_rawseti(L, -2, j + 1);
       }
+      for (j = dlen; j < old_d; j++) {
+        lua_pushnil(L);
+        lua_rawseti(L, -2, j + 1);
+      }
+      lua_pop(L, 1);                         /* drop data */
+      lua_pop(L, 1);                         /* drop event table */
     }
-    lua_setfield(L, -2, "data");
-    lua_rawseti(L, -2, i + 1);
+    for (i = n; i < old_n; i++) {
+      lua_pushnil(L);
+      lua_rawseti(L, -2, i + 1);
+    }
+    lua_pop(L, 1);
   }
-  lua_setfield(L, -2, "events");
+
+  /* Drop the scratch pool T, leaving exactly the info table on the stack top. */
+  lua_remove(L, t_idx);
 }
 
 /* ------------------------------------------------------------------ */
@@ -789,6 +984,18 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
   int top = lua_gettop(L);
 
   if (out_killed) *out_killed = false;
+
+  /* Reset the per-think allocation counters, but only on states that
+   * actually carry the counting wrapper — identity-checked so states
+   * without it (e.g. the lua_strip tool) are untouched. */
+  {
+    void *allocUd = NULL;
+    if (lua_getallocf(L, &allocUd) == brc_counting_alloc && allocUd) {
+      BrcAllocCounter *ctx = (BrcAllocCounter *)allocUd;
+      ctx->allocN = 0;
+      ctx->allocBytes = 0;
+    }
+  }
 
   lua_getglobal(L, "brain");
   if (!lua_istable(L, -1)) {

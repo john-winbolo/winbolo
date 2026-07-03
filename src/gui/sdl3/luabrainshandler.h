@@ -387,6 +387,11 @@ void luaBrainsSetRunScript(const char *path);
 *********************************************************/
 void luaBrainsSetProfile(int profile, int profile_log, int pool_viz);
 
+/* Drives the BRAIN_INSTR_PROFILE Lua global. When set, GoalHunter runs its
+ * sampling profiler around each think and writes per-bot p<N>_profile.tsv.
+ * Set once at startup before any brain instance is created. */
+void luaBrainsSetInstrProfile(int enabled);
+
 /*********************************************************
 *NAME:          luaBrainsSetLogJson
 *PURPOSE:
