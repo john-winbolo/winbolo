@@ -1752,6 +1752,16 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         closest_et = nil
       end
     end
+    -- Cover dedup (shared with builder's in-combat drop): a healthy friendly
+    -- pill already within fire range of the tank is the guard this build would
+    -- provide — don't drop a second pill beside it. Nearly-dead cover
+    -- (<= PANIC_COVER_MIN_HP) doesn't count; build its replacement.
+    if closest_et then
+      local _cov = builder.panic_cover_pill(world, tmx, tmy)
+      if _cov then
+        closest_et = nil
+      end
+    end
     if closest_et then
       -- Shared panic guard-spot search (the SAME code builder.lua's in-combat
       -- guard drop uses, so they can't drift): nearest-first ±45° from the threat,

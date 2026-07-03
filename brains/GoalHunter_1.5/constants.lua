@@ -1048,6 +1048,12 @@ M.DEFENSIVE_BUILD_MIN_DIST     = 1    -- tiles from tank (inner bound, tried FIR
 M.DEFENSIVE_BUILD_MAX_DIST     = 5    -- tiles from tank (outer bound)
 M.DEF_BUILD_THREAT_RANGE       = 8    -- tiles (euclidean): nearest enemy tank must be within this to trigger a panic/defensive build. Past it the tank can't shoot us, so no need to panic-drop a guard pill mid-carry. ~tank gun range + 1 slack.
 M.DEFENSIVE_BUILD_ANGLE_OFFSET = 32   -- ±45° in WinBolo 256-unit circle
+-- Panic-build cover dedup: a healthy friendly/allied pill within this radius
+-- of the tank IS the guard a panic build would drop — skip building another
+-- beside it. A cover pill at or below MIN_HP is nearly dead and doesn't
+-- count (build the replacement while it still soaks a few shots).
+M.PANIC_COVER_RADIUS           = 8    -- tiles: pill fire range — it engages anything shooting us
+M.PANIC_COVER_MIN_HP           = 4    -- cover pill hp <= this => doesn't count as cover
 -- Emergency def_build dispatches the LGM to run to the spot from wherever the
 -- tank is (no within-1-tile gate). Cap how far we'll send the LGM: spots are
 -- picked at <= DEFENSIVE_BUILD_MAX_DIST, +1 slack for tank drift between
@@ -1209,9 +1215,10 @@ M.BASE_KILLER_ATTACK_DISCOUNT   = 0.3   -- multiply attack_base cost (makes base
 M.BASE_KILLER_PILL_PENALTY      = 2.0   -- multiply attack_pill cost (deprioritize pills)
 -- Spiking pills: a hostile/neutral pill within firing range of a friendly
 -- base denies us refuel there ("spiking"). Clearing spikes is prioritized
--- with a SMALL discount on the spike itself plus a SMALL flat penalty on
--- every other attack_pill candidate while ANY spike exists (applied once,
--- not per spike). BOTH effects scale with the spike's DECISIVENESS
+-- with a SMALL discount on the spike itself plus a SMALL whole-cost
+-- multiplier on every other attack_pill candidate while ANY spike exists
+-- (applied once, not per spike). BOTH effects scale with the spike's
+-- DECISIVENESS
 -- (1/cover, where cover = spikes sitting on its least-contested base):
 -- a lone spike whose removal fully frees a base gets the full values; one
 -- of 4 pills co-spiking an area barely registers (that area is lost —
@@ -1220,8 +1227,10 @@ M.BASE_KILLER_PILL_PENALTY      = 2.0   -- multiply attack_pill cost (deprioriti
 -- cross-pool balance. (Replaces BASE_THREAT_PILL_DISCOUNT=0.5, which
 -- lived only in the dead eval_attack_pill path and never affected live
 -- selection.)
-M.SPIKE_PILL_DISCOUNT           = 0.8   -- combat-cost multiplier at FULL decisiveness (lerps toward 1.0 as cover grows: cover 2 → 0.9, 4 → 0.95)
-M.SPIKE_OTHER_PENALTY           = 40    -- flat cost on every NON-spiking attack_pill candidate, × the best spike's decisiveness (cover 2 → +20, 4 → +10)
+M.SPIKE_PILL_DISCOUNT           = 0.7   -- combat-cost multiplier at FULL decisiveness (lerps toward 1.0 as cover grows: cover 2 → 0.85, 4 → 0.925)
+M.SPIKE_OTHER_PENALTY_MULT      = 1.2   -- whole-cost multiplier on every NON-spiking attack_pill candidate at full decisiveness (lerps toward 1.0: cover 2 → 1.10, 4 → 1.05)
+-- Net tilt toward a spike ≈ (0.3 + 0.2)/cover = 50%/cover (lone spike 50%,
+-- pair 25%, quad 12.5%).
 
 -- Friendly pill as barrier bonus (aIndy: use friendly pills as shields)
 M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is between us and target

@@ -1039,6 +1039,12 @@ M.DEFENSIVE_BUILD_MIN_DIST     = 1    -- tiles from tank (inner bound, tried FIR
 M.DEFENSIVE_BUILD_MAX_DIST     = 5    -- tiles from tank (outer bound)
 M.DEF_BUILD_THREAT_RANGE       = 8    -- tiles (euclidean): nearest enemy tank must be within this to trigger a panic/defensive build. Past it the tank can't shoot us, so no need to panic-drop a guard pill mid-carry. ~tank gun range + 1 slack.
 M.DEFENSIVE_BUILD_ANGLE_OFFSET = 32   -- ±45° in WinBolo 256-unit circle
+-- Panic-build cover dedup: a healthy friendly/allied pill within this radius
+-- of the tank IS the guard a panic build would drop — skip building another
+-- beside it. A cover pill at or below MIN_HP is nearly dead and doesn't
+-- count (build the replacement while it still soaks a few shots).
+M.PANIC_COVER_RADIUS           = 8    -- tiles: pill fire range — it engages anything shooting us
+M.PANIC_COVER_MIN_HP           = 4    -- cover pill hp <= this => doesn't count as cover
 -- Emergency def_build dispatches the LGM to run to the spot from wherever the
 -- tank is (no within-1-tile gate). Cap how far we'll send the LGM: spots are
 -- picked at <= DEFENSIVE_BUILD_MAX_DIST, +1 slack for tank drift between

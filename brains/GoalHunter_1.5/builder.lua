@@ -83,6 +83,27 @@ function M.panic_build_spot(world, info, tmx, tmy, threat_mx, threat_my)
   return best_cx, best_cy, best_tier, cands
 end
 
+-- Panic-build cover dedup (shared by builder's in-combat guard drop AND
+-- goals.lua's def_build, same pairing as panic_build_spot): a live
+-- friendly/allied pill within PANIC_COVER_RADIUS of the tank already does the
+-- guard-pill job — placing another right beside it wastes a carried pill.
+-- Only a reasonably healthy pill counts (> PANIC_COVER_MIN_HP); a nearly-dead
+-- one is about to pop, so the panic build proceeds as its replacement.
+-- Returns the covering pill (or nil).
+function M.panic_cover_pill(world, tmx, tmy)
+  local r = C.PANIC_COVER_RADIUS or 8
+  local r2 = r * r
+  local min_hp = C.PANIC_COVER_MIN_HP or 4
+  for _, p in pairs(world.pills or {}) do
+    if (p.owner == "friendly" or p.owner == "allied") and not p.in_tank
+       and (p.health or 0) > min_hp then
+      local dx, dy = p.mx - tmx, p.my - tmy
+      if dx * dx + dy * dy <= r2 then return p end
+    end
+  end
+  return nil
+end
+
 -- Hoisted: was reallocated inside the wall-build threat-blocker
 -- inner loop (per pill_threat × per direction = up to ~30 allocs/tick
 -- when in build mode). Module-scope constant.
@@ -225,6 +246,16 @@ function M.set_mode(state, world, info, goal)
         local _ex, _ey = closest_et.mx - tmx, closest_et.my - tmy
         if math.sqrt(_ex * _ex + _ey * _ey) > (C.DEF_BUILD_THREAT_RANGE or 8) then closest_et = nil end
       end
+      -- Cover dedup: a healthy friendly pill already in range of the tank IS
+      -- the guard we'd be dropping — don't build a second one beside it.
+      if closest_et then
+        local _cov = M.panic_cover_pill(world, tmx, tmy)
+        if _cov then
+          b.defensive_debug = { found = false,
+            reason = string.format("covered by pill@(%d,%d) hp=%d", _cov.mx, _cov.my, _cov.health or 0) }
+          closest_et = nil
+        end
+      end
       if closest_et then
         -- Shared NEAREST-first ±45° guard-spot search (same code goals.lua's
         -- def_build uses — no more farthest-first drift). Returns the spot + all
@@ -245,7 +276,8 @@ function M.set_mode(state, world, info, goal)
           b.defensive_debug = { found = false, reason = "no valid spot" }
         end
       else
-        b.defensive_debug = { found = false, reason = "no enemy" }
+        -- Keep the cover-dedup reason if that's what nilled closest_et.
+        b.defensive_debug = b.defensive_debug or { found = false, reason = "no enemy" }
       end
     else
       b.defensive_debug = { found = false, reason = "no enemy tanks" }
