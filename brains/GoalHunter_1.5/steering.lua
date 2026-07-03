@@ -1012,7 +1012,19 @@ local function reposition_steer(state, world, info, goal)
     return nil
   end
 
-  -- In range: stop, face the pill, fire until dead / dry.
+  -- In range but the shot is blocked (another pillbox, wall, base... between
+  -- us and OUR pill): do NOT park here — that strands the goal at a spot it
+  -- can never fire from. Keep driving toward the pill instead: we must end up
+  -- beside it for the post-kill pickup anyway, and closing distance is what
+  -- clears the obstruction (adjacent = nothing left in between).
+  local los_clear = shot_path_clear(info, world, pill_wx, pill_wy, goal.mx, goal.my)
+  if not los_clear then
+    goal.substate = "approach"
+    print2(string.format("REPOS_NOFIRE t=%d pill#%d@(%d,%d) in-range but blocked-LOS -> keep closing in", state.tick or 0, goal.target_id or 0, goal.mx, goal.my))
+    return nil
+  end
+
+  -- In range with a clear line: stop, face the pill, fire until dead / dry.
   goal.substate = "reposition_shoot"
   -- Mark this pill "being demolished" so repair_pill won't try to heal the
   -- very pill we're tearing down (a damaged pill is CHEAPER to repair, which
@@ -1029,18 +1041,15 @@ local function reposition_steer(state, world, info, goal)
   local corr    = U.adiff(info.direction, aim_dir)
   local h, t = U.aim_turn_bits(corr, 6, 1)
   keys = keys | h; taps = taps | t
-  -- Only fire when the shell actually has a clear line to OUR pill. Without
-  -- this the bot would happily shell whatever sits between us and the pill —
-  -- an enemy base (waking it), another pillbox, a wall, or a friendly tank.
-  -- shot_path_clear is the shared tank-aware sim (blocks on walls/half-walls,
-  -- any live pillbox, allied tanks, and bases of any owner) and excludes the
-  -- target tile, so the trajectory reaching our pill counts as clear.
-  local los_clear = shot_path_clear(info, world, pill_wx, pill_wy, goal.mx, goal.my)
-  -- Friendly pill won't shoot back, so once aligned + clear, fire to the last shell.
+  -- los_clear was verified above (blocked → we kept approaching instead of
+  -- entering this phase), so once aligned, fire to the last shell — a
+  -- friendly pill won't shoot back. shot_path_clear is the shared tank-aware
+  -- sim (blocks on walls/half-walls, any live pillbox, allied tanks, and
+  -- bases of any owner) and excludes the target tile, so the trajectory
+  -- reaching our pill counts as clear.
   if math.abs(corr) <= 1 and (info.shells or 0) > 0 and los_clear then
     keys = keys | KEY_SHOOT
   end
-  if BRAIN_DEBUG_MODE and not los_clear then print2(string.format("REPOS_NOFIRE t=%d pill#%d@(%d,%d) corr=%.1f blocked-LOS (holding fire)", state.tick or 0, goal.target_id or 0, goal.mx, goal.my, corr)) end
   if BRAIN_DEBUG_MODE and viz.is_on("hud_attack_status") then
     viz.hud_text("hud_attack_status", 10, 44,
       string.format("Reposition shoot: pill#%d hp=%d shells=%d los=%s",
