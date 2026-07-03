@@ -2240,6 +2240,7 @@ static int  optLogJson    = 0;
  * brain sandbox removes. --safe-brains opts into the cage to exercise it. */
 static int  optSafeBrains = 0;
 static int  optAutoStart = 0;
+static int  optNoBotKill = 0;   /* --no-bot-kill: uncapped think budget; bots never deadline-killed / throttled */
 static int  g_playbackAutoplay = 0;  /* --playback-autoplay: drive a -loadsession replay from frame 0 and quit at the end (headless verification) */
 static int  optMaxTicks = 0;   /* 0 = run forever */
 /* Tick cadence in ms requested via --speed-ms; snapped to the nearest
@@ -2286,6 +2287,9 @@ static void printUsage(const char *prog) {
         "  --safe-brains      Run brains in the restricted sandbox (off by default in\n"
         "                     BrainTest, which needs the dev-only debug tooling).\n"
         "  --auto-start       Skip the auto-pause at tick 4 and run immediately.\n"
+        "  --no-bot-kill      Never budget-kill bots. Each bot runs its full tier every\n"
+        "                     tick (ticks just take longer) instead of being aborted mid-\n"
+        "                     think and throttled to a lower tier. For debugging brains.\n"
         "  --max-ticks N      Exit automatically after N ticks (flushes perf log).\n"
         "  --speed-ms N       Tick cadence in ms (snapped to nearest preset; 1 = 20x realtime).\n"
         "  -victim_ids IDS  Comma-sep list of bot ids to flag as test victims\n"
@@ -2403,6 +2407,8 @@ static bool parseArgs(int argc, char **argv) {
             optSafeBrains = 1;
         } else if (strcmp(argv[i], "--auto-start") == 0) {
             optAutoStart = 1;
+        } else if (strcmp(argv[i], "--no-bot-kill") == 0) {
+            optNoBotKill = 1;
         } else if (strcmp(argv[i], "--playback-autoplay") == 0) {
             g_playbackAutoplay = 1;
         } else if (strcmp(argv[i], "--max-ticks") == 0 && i + 1 < argc) {
@@ -5765,6 +5771,10 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         serverSimRequestBotThreads(app.sim, desired_threads);
+        /* --no-bot-kill: hand bots an uncapped think budget so the deadline
+         * count hook never fires — each runs its full tier every tick (the tick
+         * just takes longer) instead of being aborted mid-think and throttled. */
+        if (optNoBotKill) botManagerSetSlowMoDebug(1);
     }
     /* Pre-think hook needs the per-sim BotManager; install it now that
      * app.sim exists. Bots have not been added yet, so no tick can fire
