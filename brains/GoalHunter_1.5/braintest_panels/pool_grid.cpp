@@ -56,7 +56,7 @@ static const TermDoc kTermDocs[] = {
     {"anger",   "Anger wait cost — pill is riled up; penalty reflects waiting for it to calm"},
     {"xfire",   "Crossfire penalty from other pills that can fire on your engage spot. attack_tank/kill_lgm: escalating per NEW pill whose range covers the engage spot but NOT your current tile (40, 90, 150, ...) — pills already covering you don't count (A* already prices the travel). attack_pill: per-pill proximity at the standoff."},
     {"intcpt",  "Intercept risk — enemy tank may reach this pill before you do"},
-    {"spike",   "Spiking-pill discount (MULTIPLIER on the combat block, SPIKE_PILL_DISCOUNT) — this pill sits within PILL_FIRE_RANGE of a friendly base, denying us refuel there until cleared. Small on purpose: the pool tilts toward the spike without beating attack_tank/kill_lgm/refuel cross-pool."},
+    {"spike",   "Spiking-pill discount (MULTIPLIER on the combat block, SPIKE_PILL_DISCOUNT) — this pill sits within PILL_FIRE_RANGE of a friendly base, denying us refuel there until cleared. Scaled by decisiveness (1/cover of its least-contested base) AND breadth (each EXTRA denied base strengthens the pull by SPIKE_BASES_BONUS; floored at SPIKE_DISCOUNT_FLOOR). Small on purpose: the pool tilts toward the spike without beating attack_tank/kill_lgm/refuel cross-pool."},
     {"spike_pen", "Spike cross-penalty (ADDITIVE, SPIKE_OTHER_PENALTY) — a spiking pill exists elsewhere, so every NON-spiking pill pays this flat surcharge (applied once, regardless of spike count) to steer the pool toward clearing the spike first."},
     {"hp",      "Health multiplier — lower pill HP = lower cost (easier kill)"},
     {"wound",   "Wounded discount — heavily damaged pill is a very high-value target"},

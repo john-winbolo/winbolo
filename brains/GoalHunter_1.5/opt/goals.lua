@@ -1025,6 +1025,22 @@ local function refresh_spike_detection(state, world)
   state._spike_pen_scale = pen_scale
 end
 
+-- Combat-cost multiplier for a spiking pill. Base pull: SPIKE_PILL_DISCOUNT
+-- at full decisiveness, fading toward x1.0 as the pill's least-contested base
+-- gets co-spiked (dec = 1/cover — clearing one of many frees nothing). On top
+-- of that, BREADTH: each ADDITIONAL base the pill denies strengthens the pull
+-- by SPIKE_BASES_BONUS (a pill spiking 3 bases matters more than a 1-base
+-- spike at equal decisiveness). Floored at SPIKE_DISCOUNT_FLOOR so a decisive
+-- wide spike can't drive the combat block below half cost.
+local function spike_discount_mult(sp)
+  local effect = (1.0 - (C.SPIKE_PILL_DISCOUNT or 0.8)) * (sp.dec or 1.0)
+                 * (1.0 + (C.SPIKE_BASES_BONUS or 0.35) * math.max(0, (sp.n or 1) - 1))
+  local sm = 1.0 - effect
+  local floor = C.SPIKE_DISCOUNT_FLOOR or 0.5
+  if sm < floor then sm = floor end
+  return sm
+end
+
 -- Compute attack_pill cost adjustments for a given pill/path-cost.
 -- Returns adjusted_cost, description_suffix.
 local function attack_pill_adjustments(pill, pcost, state, world)
@@ -1146,7 +1162,7 @@ local function attack_pill_adjustments(pill, pcost, state, world)
     refresh_spike_detection(state, world)
     local sp = state._spike_pills and state._spike_pills[pill.my * 256 + pill.mx]
     if sp then
-      local sm = 1.0 - (1.0 - (C.SPIKE_PILL_DISCOUNT or 0.8)) * (sp.dec or 1.0)
+      local sm = spike_discount_mult(sp)
       combat_cost = combat_cost * sm
       if BRAIN_POOL_VIZ then antic_desc = antic_desc .. string.format(" *spike(x%.2f n=%d cover=%d)", sm, sp.n or 1, sp.cover or 1) end
     elseif state._spike_present then
@@ -4221,7 +4237,7 @@ local function get_formula_inner(e)
     local _spike_pen_term  = e._spike_pen and string.format(" * spike_pen{%.3f}", e._spike_pen) or ""
     local _d_spike = e._spike_mult
       and string.format(
-        "SPIKING: this pill sits within PILL_FIRE_RANGE=%d of %d friendly base(s) (first @(%d,%d)); its least-contested base is covered by %d spike(s) → decisiveness 1/%d → combat × %.2f (SPIKE_PILL_DISCOUNT=%.2f at full decisiveness; a co-spiked area is 'kinda lost' so clearing one of many pulls weakly)",
+        "SPIKING: this pill sits within PILL_FIRE_RANGE=%d of %d friendly base(s) (first @(%d,%d)); its least-contested base is covered by %d spike(s) → decisiveness 1/%d → combat × %.2f (SPIKE_PILL_DISCOUNT=%.2f at full decisiveness; each EXTRA denied base strengthens the pull by SPIKE_BASES_BONUS, floored at SPIKE_DISCOUNT_FLOOR; a co-spiked area is 'kinda lost' so clearing one of many pulls weakly)",
         C.PILL_FIRE_RANGE, e._spike_n or 1, e._spike_bmx or -1, e._spike_bmy or -1,
         e._spike_cover or 1, e._spike_cover or 1, e._spike_mult, C.SPIKE_PILL_DISCOUNT or 0.8)
       or "this pill is not in firing range of any friendly base → no spike discount"
@@ -5247,7 +5263,7 @@ function M.step_eval_queue(state, world, info)
         refresh_spike_detection(state, world)
         local sp = state._spike_pills and state._spike_pills[obj.my * 256 + obj.mx]
         if sp then
-          spike_mult = 1.0 - (1.0 - (C.SPIKE_PILL_DISCOUNT or 0.8)) * (sp.dec or 1.0)
+          spike_mult = spike_discount_mult(sp)
           _spike_n, _spike_cover = sp.n or 1, sp.cover or 1
           _spike_bmx, _spike_bmy = sp.bmx, sp.bmy
         elseif state._spike_present then

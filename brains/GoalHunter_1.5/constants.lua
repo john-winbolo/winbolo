@@ -1229,6 +1229,13 @@ M.BASE_KILLER_PILL_PENALTY      = 2.0   -- multiply attack_pill cost (deprioriti
 -- selection.)
 M.SPIKE_PILL_DISCOUNT           = 0.7   -- combat-cost multiplier at FULL decisiveness (lerps toward 1.0 as cover grows: cover 2 → 0.85, 4 → 0.925)
 M.SPIKE_OTHER_PENALTY_MULT      = 1.2   -- whole-cost multiplier on every NON-spiking attack_pill candidate at full decisiveness (lerps toward 1.0: cover 2 → 1.10, 4 → 1.05)
+-- Breadth scaling: each base a spike denies BEYOND the first strengthens the
+-- discount pull by this fraction (decisive 3-base spike: effect x1.7 →
+-- 1-0.3*1.7 = 0.49 → floored at SPIKE_DISCOUNT_FLOOR). Applied on top of
+-- decisiveness, so a co-spiked wide pill still pulls weakly (dec scales the
+-- whole effect first: dec 0.5 + 3 bases → x0.745).
+M.SPIKE_BASES_BONUS             = 0.35
+M.SPIKE_DISCOUNT_FLOOR          = 0.5   -- combat multiplier never drops below this
 -- Net tilt toward a spike ≈ (0.3 + 0.2)/cover = 50%/cover (lone spike 50%,
 -- pair 25%, quad 12.5%).
 
