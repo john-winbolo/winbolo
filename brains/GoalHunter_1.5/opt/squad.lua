@@ -156,14 +156,31 @@ function M.role_for(pns, self_pn)
   return M.ROLE_SOLDIER
 end
 
+-- Dynamic harasser fraction: baseline HARASSER_FRAC, ramping toward
+-- HARASSER_FRAC_MAX as our base advantage (base_strength) climbs past
+-- HARASSER_BASE_THRESHOLD — but only while pill strength is at/above
+-- HARASSER_PILL_FLOOR ("at least not losing a lot"). Dominating bases while
+-- holding pills frees more bots to harass. Falls back to the floor without state.
+local function harasser_frac(state)
+  local frac = C.HARASSER_FRAC or 0.20
+  if not state then return frac end
+  if (state.strength or 0.5) < (C.HARASSER_PILL_FLOOR or 0.40) then return frac end
+  local thr  = C.HARASSER_BASE_THRESHOLD or 0.60
+  local base = state.base_strength or 0.5
+  if base <= thr then return frac end
+  local t = math.min(1.0, (base - thr) / math.max(0.01, 1.0 - thr))
+  return frac + t * ((C.HARASSER_FRAC_MAX or frac) - frac)
+end
+
 -- Harasser designation, INDEPENDENT of squad role: the highest floor(frac*N)
 -- player numbers in the protocol set. A harasser is a normal squad member (it
 -- commands/joins blitzes like anyone); the flag only drives its goal-cost biases
 -- (pill cost ×HARASSER_PILL_COST_MULT, distance ×HARASSER_TRAVEL_MULT — see
--- goals.lua). Deterministic + stable so every bot agrees on the set.
-function M.is_harasser(pns, self_pn)
+-- goals.lua). frac is dynamic (harasser_frac), but base/pill strength are nearly
+-- identical across the team, so the set stays effectively agreed.
+function M.is_harasser(pns, self_pn, state)
   local n = #pns
-  local n_har = math.floor((C.HARASSER_FRAC or 0.20) * n)
+  local n_har = math.floor(harasser_frac(state) * n)
   if n_har <= 0 then return false end
   local self_idx
   for i = 1, n do if pns[i] == self_pn then self_idx = i break end end
@@ -519,7 +536,8 @@ function M.update(state, info, now, world)
   -- Harasser is an independent flag now (not a role), so it does NOT gate squad
   -- membership — a harasser commands/joins blitzes like any other bot. It only
   -- biases goal costs (see goals.lua is_harasser checks).
-  state.is_harasser = M.is_harasser(pns, self_pn)
+  state._harasser_frac = harasser_frac(state)
+  state.is_harasser = M.is_harasser(pns, self_pn, state)
   -- R0 (dynamic commanders, flag-gated): commander status is EMERGENT — you are a
   -- commander only while leading a HARD pill take (your attack_pill target has HP
   -- >= HARD_TAKE_MIN_HP); otherwise you are a soldier. Reverts automatically when
@@ -562,6 +580,14 @@ function M.update(state, info, now, world)
       -- keep command even if their armour later drops — don't abandon mid-take.
       if role == M.ROLE_COMMANDER and not is_leading
          and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then
+        role = M.ROLE_SOLDIER
+      end
+      -- Ammo-deprived: a tank starved of ammo can't finish a pill, so it must
+      -- NEVER open or hold a blitz — it can still JOIN one as a soldier (suicide
+      -- body), just never lead. Unlike the armour gate this has no is_leading
+      -- exemption: deprivation means any take it's "leading" has stalled, so it
+      -- hands command off (the latch clears below since role lands soldier).
+      if state.ammo_deprived and role == M.ROLE_COMMANDER then
         role = M.ROLE_SOLDIER
       end
       -- Don't elect a SECOND commander of a pill an ally is already blitzing:

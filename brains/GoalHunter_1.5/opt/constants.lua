@@ -158,6 +158,14 @@ M.ARMOUR_LOW       = 15   -- seek resupply
 M.ARMOUR_MODERATE  = 25   -- conditionally force PPT when standoff is hot
 M.SHELLS_LOW       = 20   -- seek resupply (~15 to kill a pill/base)
 
+-- Ammo-deprivation: if a tank sits below AMMO_DEPRIVED_SHELLS for this long
+-- during normal (non-opening) play it's flagged state.ammo_deprived — a lost
+-- cause for resupply, so it goes all-in (joins any blitz, suicide-charges the
+-- pill instead of holding at standoff). Cleared the moment shells recover to
+-- AMMO_DEPRIVED_SHELLS. 50 ticks/sec, so 6000 = 120 s.
+M.AMMO_DEPRIVED_SHELLS = M.SHELLS_LOW   -- "min ammo" line for deprivation
+M.AMMO_DEPRIVED_TICKS  = 6000           -- 120 s continuously below it
+
 -- PPT-force thresholds. PPT (Protected Pill Take) is normally only
 -- chosen for high-HP pills (>= PPT_HEALTH_THRESHOLD). These knobs let
 -- low-armour situations force PPT even on a soft pill, because the
@@ -398,6 +406,7 @@ M.PPT_CHARGE_BRAKE_DIST = 32   -- start braking inside this many wu of standoff
 -- shot on the pill, fixing a standoff that rounded just outside shell range.
 -- This floor only bounds the creep so we never drive onto the pill.
 M.CHARGE_MIN_STANDOFF   = 5.0  -- never creep closer than this many tiles from the pill
+M.CHARGE_SUICIDE_STANDOFF = 1.5  -- ammo_deprived suicide charge: drive this close to the pill instead (≈ adjacent; the pill tile is solid so can't go onto it)
 -- Max ticks to wait at the approach point for the LGM to gather enough
 -- trees for the shield walls before giving up and degrading to a
 -- no-shield (legacy aim/charge) attack. 1500 = 30 s @ 50 Hz.
@@ -1204,7 +1213,24 @@ M.EMERGENCY_DROP_SEARCH_DIRS    = 8     -- directions to search for safe drop ti
 M.BASE_KILLER_TEAM_ADVANTAGE    = 2     -- activate when team has this many more players
 M.BASE_KILLER_ATTACK_DISCOUNT   = 0.3   -- multiply attack_base cost (makes bases top priority)
 M.BASE_KILLER_PILL_PENALTY      = 2.0   -- multiply attack_pill cost (deprioritize pills)
-M.BASE_THREAT_PILL_DISCOUNT     = 0.5   -- multiply attack_pill combat cost when the pill is in firing range of a friendly base (clear base threats fast)
+-- Spiking pills: a hostile/neutral pill within firing range of a friendly
+-- base denies us refuel there ("spiking"). Clearing spikes is prioritized
+-- with a SMALL discount on the spike itself plus a SMALL whole-cost
+-- multiplier on every other attack_pill candidate while ANY spike exists
+-- (applied once, not per spike). BOTH effects scale with the spike's
+-- DECISIVENESS
+-- (1/cover, where cover = spikes sitting on its least-contested base):
+-- a lone spike whose removal fully frees a base gets the full values; one
+-- of 4 pills co-spiking an area barely registers (that area is lost —
+-- killing one changes nothing). Deliberately mild: the tilt is within
+-- pool 6 only, so attack_tank / kill_lgm / refuel keep their normal
+-- cross-pool balance. (Replaces BASE_THREAT_PILL_DISCOUNT=0.5, which
+-- lived only in the dead eval_attack_pill path and never affected live
+-- selection.)
+M.SPIKE_PILL_DISCOUNT           = 0.7   -- combat-cost multiplier at FULL decisiveness (lerps toward 1.0 as cover grows: cover 2 → 0.85, 4 → 0.925)
+M.SPIKE_OTHER_PENALTY_MULT      = 1.2   -- whole-cost multiplier on every NON-spiking attack_pill candidate at full decisiveness (lerps toward 1.0: cover 2 → 1.10, 4 → 1.05)
+-- Net tilt toward a spike ≈ (0.3 + 0.2)/cover = 50%/cover (lone spike 50%,
+-- pair 25%, quad 12.5%).
 
 -- Friendly pill as barrier bonus (aIndy: use friendly pills as shields)
 M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is between us and target
@@ -1427,6 +1453,15 @@ M.CAPACITY_FORCED_TARGET_MS = nil
 
 -- ── Squad coordination (Phase 1: pill blitz) ──────────────────────────────
 M.HARASSER_FRAC       = 0.20   -- fraction of the protocol-bot set that are harassers (floor)
+-- Dynamic harasser ramp: once we hold a clear BASE advantage (base_strength past
+-- HARASSER_BASE_THRESHOLD) AND aren't bleeding pills (pill strength at/above
+-- HARASSER_PILL_FLOOR), raise the harasser fraction from HARASSER_FRAC up toward
+-- HARASSER_FRAC_MAX — dominating bases while holding pills means we can spare more
+-- bots to harass. Below the base threshold, or while losing a lot of pills, it
+-- stays at the HARASSER_FRAC floor.
+M.HARASSER_FRAC_MAX       = 0.50  -- harasser fraction ceiling at full base dominance
+M.HARASSER_BASE_THRESHOLD = 0.60  -- base_strength (friendly/contested) where the ramp starts
+M.HARASSER_PILL_FLOOR     = 0.40  -- min pill strength to allow ramping ("at least not losing a lot")
 M.BASELINE_SQUAD_SIZE = 3      -- commanders = ceil(non-harasser count / this)
 M.SQUAD_ALLY_MAX_AGE  = 1750   -- ticks; allies staler than this drop out of the protocol set
 
@@ -1499,6 +1534,7 @@ M.SQUAD_BLITZ_JOIN_FULL_TILES  = 20    -- path tiles at which the join discount 
 M.SQUAD_BLITZ_JOIN_REF_COST    = 120
 M.SQUAD_BLITZ_INRANGE_TILES    = 9    -- euclidean tiles: if an OPEN, not-full blitz pill (or the blitzing commander's tank) is within this shooting distance of our tank, stack an extra flat discount on its attack_pill (we could already help kill it). ~tank gun range + slack.
 M.SQUAD_BLITZ_INRANGE_MULT     = 0.5  -- the extra in-shooting-range multiplier (0.5 = another -50% on top of the distance-curve join discount)
+M.AMMO_DEPRIVED_BLITZ_MULT     = 0.6  -- ammo_deprived bots: flat overall multiplier on the blitz-join factor (40% off, near AND far — a far call at factor 1.0 becomes 0.6, joinable) so a useless-for-shooting tank throws itself into blitzes more readily; distance shape unchanged
 -- If blitz_negotiate can't find an appropriate standoff for a blitz pill, reject
 -- that pill (no re-discount / no re-pick) for this many ticks (~30s @ 50 tps).
 M.SQUAD_BLITZ_NOSPOT_REJECT_TICKS = 1500
