@@ -7553,21 +7553,41 @@ local function goal_selection(state, world, info, quiet)
       end
 
       if state.lgm_stranded and (lgm_mx > 0 or lgm_my > 0) then
-        -- Use the LGM's actual world position (sub-tile precision)
-        -- as the steering target instead of snapping to the tile
-        -- center. The LGM is somewhere within the tile, not always
-        -- dead-center; chasing the precise spot lets the tank meet
-        -- it without overshoot.
-        result = {
-          kind = "rescue_lgm", mx = lgm_mx, my = lgm_my,
-          wx = info.man_x, wy = info.man_y,
-        }
-        desc = string.format("rescue_lgm@(%d,%d) wpos=(%d,%d) [stranded]",
-                             lgm_mx, lgm_my, info.man_x, info.man_y)
-        log.reason("goal", {
-          pick = "rescue_lgm", why = "LGM stranded (cannot reach tank)",
-          mx = lgm_mx, my = lgm_my, wx = info.man_x, wy = info.man_y,
-        })
+        -- Don't drive off to fetch the LGM while a hostile tank or
+        -- pill is actively shooting at us: under_fire (shell trajectory
+        -- over our tile / angry pill in range) or _shot_by_tank (took
+        -- tank damage with no predicted shell — point-blank etc.). The
+        -- stranded flag stays set, so the rescue fires as soon as the
+        -- shooting stops; until then the normal pools deal with the
+        -- attacker.
+        local fire_suppress = ((state.perc and state.perc.under_fire)
+                               or state._shot_by_tank) or false
+        if state._lgm_stranded_factors then
+          state._lgm_stranded_factors.fire_suppress = fire_suppress
+        end
+        if fire_suppress then
+          log.reason("goal", {
+            pick = "rescue_lgm-suppressed",
+            why = "under fire (hostile tank/pill shooting at us)",
+            mx = lgm_mx, my = lgm_my,
+          })
+        else
+          -- Use the LGM's actual world position (sub-tile precision)
+          -- as the steering target instead of snapping to the tile
+          -- center. The LGM is somewhere within the tile, not always
+          -- dead-center; chasing the precise spot lets the tank meet
+          -- it without overshoot.
+          result = {
+            kind = "rescue_lgm", mx = lgm_mx, my = lgm_my,
+            wx = info.man_x, wy = info.man_y,
+          }
+          desc = string.format("rescue_lgm@(%d,%d) wpos=(%d,%d) [stranded]",
+                               lgm_mx, lgm_my, info.man_x, info.man_y)
+          log.reason("goal", {
+            pick = "rescue_lgm", why = "LGM stranded (cannot reach tank)",
+            mx = lgm_mx, my = lgm_my, wx = info.man_x, wy = info.man_y,
+          })
+        end
       end
     else
       state.builder.lgm_nearby = false

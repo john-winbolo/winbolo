@@ -1668,8 +1668,9 @@ function Brain.think(info)
           row(0, pf_label, f.path_fail)
           row(1, "BUILD_SUPPRESS",   f.build_suppress)
           row(2, "NEARBY_CARVE",     f.nearby_carve)
-          row(3, "STRANDED",         state.lgm_stranded == true)
-          row(4, string.format("dist=%d", f.lgm_dist or -1), false)
+          row(3, "FIRE_SUPPRESS",    f.fire_suppress)
+          row(4, "STRANDED",         state.lgm_stranded == true)
+          row(5, string.format("dist=%d", f.lgm_dist or -1), false)
         else
           -- No factor record yet — the rescue check hasn't run for
           -- this LGM trip. Render a placeholder so the user sees the
