@@ -2761,6 +2761,21 @@ function Brain.think(info)
           print(string.format(TAG .. " t=%d BASE CAPTURED: (%d,%d) — replanning", now, gmx, gmy))
         end
         goal_valid = false
+      elseif b.owner == "hostile" and (b.health or 0) > 0 then
+        -- Hostile base no longer capturable. Bases restock over time, so a base
+        -- we knocked down can climb back over MIN_ARMOUR_CAPTURE while we drive
+        -- in — and the engine then BLOCKS the drive-over (observed: tank pinned
+        -- beside the base at full throttle, spinning in place). Brain-visible
+        -- base health is the engine's collapsed capturable flag (0 = capturable,
+        -- 1 = not), so health > 0 is exactly "the drive-over will not work".
+        -- Flip back to attack_base: its nav parks on the cheapest ADJACENT tile
+        -- (usually where we already are — no new nav goal), faces the base and
+        -- shoots; the CAPTURABLE switch below flips us back to capture_base for
+        -- the drive-over once armour is down again.
+        log.event("base_restocked", string.format("(%d,%d) hp=%d", gmx, gmy, b.health or 0))
+        state.goal.kind = "attack_base"
+        state.goal.race_mode = nil
+        state.pf.status = "idle"
       end
     elseif gk == "attack_base" then
       local b = W.base_at(world, gmx, gmy)

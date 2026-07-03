@@ -2671,6 +2671,16 @@ function M.steer(state, world, info, goal)
       local bmx, bmy = goal.mx, goal.my
       local bf = info.inboat and 1 or 0
       local best_amx, best_amy, best_c = nil, nil, math.huge
+      -- Already in the base's 8-neighbourhood? STAY: any adjacent tile is
+      -- point-blank, so hold this one, face the base and shoot. Without this
+      -- the lowest-cost pick below can prefer a DIFFERENT adjacent tile and
+      -- the tank crawls around the base instead of firing (seen when a
+      -- capture_base drive-over degrades to attack_base after the base
+      -- restocked above capturable armour).
+      if math.abs(tmx - bmx) <= 1 and math.abs(tmy - bmy) <= 1
+         and not (tmx == bmx and tmy == bmy) then
+        best_amx, best_amy = tmx, tmy
+      else
       for dy = -1, 1 do
         for dx = -1, 1 do
           if dx ~= 0 or dy ~= 0 then
@@ -2681,6 +2691,7 @@ function M.steer(state, world, info, goal)
             end
           end
         end
+      end
       end
       if not best_amx then
         -- Nothing reachable via the slate → closest non-water adjacent tile.
@@ -2693,7 +2704,12 @@ function M.steer(state, world, info, goal)
           end
         end
       end
-      if best_amx then
+      if best_amx == tmx and best_amy == tmy then
+        -- Staying put (already beside the base): nav to our own tile — no
+        -- engage-point reroute either, just aim and fire from here.
+        nav_mx, nav_my = tmx, tmy
+        nav_wx, nav_wy = info.tankx, info.tanky
+      elseif best_amx then
         -- Crossfire-aware standoff: stop short at the closest path tile we can
         -- still shell the base from while staying out of enemy/neutral pill fire.
         -- Falls back to best_amx (rush right up) when no such tile exists.
