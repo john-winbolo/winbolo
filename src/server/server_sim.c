@@ -6585,6 +6585,32 @@ bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out) {
     return true;
 }
 
+bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
+    tank *t;
+    if (sim == NULL || out == NULL || i >= MAX_TANKS) return false;
+    if (!serverSimIsPlayerConnected(sim, i)) return false;
+
+    memset(out, 0, sizeof(*out));
+    /* isServer=TRUE: read the server-side player table directly. */
+    playersGetPlayerName(&sim->sim.plyrs, i, out->name, TRUE);
+    out->name[sizeof(out->name) - 1] = '\0';
+
+    t = &sim->sim.tanks[i];
+    if (*t == NULL) {
+        /* Connected but no live tank (countdown / death-wait). */
+        out->has_tank = false;
+        out->alive    = false;
+        return true;
+    }
+    out->has_tank = true;
+    tankGetWorld(t, &out->world_x, &out->world_y);
+    out->dir     = tankGetDir(t);
+    out->on_boat = tankIsOnBoat(t);
+    out->alive   = (tankGetDeathWait(t) == 0);
+    tankGetKillsDeaths(t, &out->kills, &out->deaths);
+    return true;
+}
+
 tankAlliance serverSimGetTankAllianceFor(ServerSim *sim,
                                          BYTE selfPlayer,
                                          BYTE tankNum) {

@@ -1216,6 +1216,121 @@ def test_resource_tracking(runner, ticks=200):
     return True
 
 
+def test_finaljson(runner, ticks=200):
+    """Test 3.1: -finaljson emits a global end-of-game snapshot on tick limit.
+
+    Runs a self-contained WinBoloDS (no separate client): -nolobby with bots,
+    -ticks to force a terminal game-over, and -finaljson to dump the final
+    global state. Validates structure (not exact positions, which drift with
+    bot behaviour): the snapshot exists, reason is "tick_limit", and the
+    pillbox/base/tank arrays carry the expected fields.
+    """
+    print("Test 3.1: -finaljson end-of-game snapshot...")
+
+    if not TEST_ARENA_MAP.exists():
+        print(f"  FAIL: test map not found: {TEST_ARENA_MAP}")
+        return False
+
+    brain_path = SCRIPT_DIR / "brains" / "idle.lua"
+    out_path = runner.build_dir / "test_finaljson.json"
+    if out_path.exists():
+        out_path.unlink()
+
+    cmd = [
+        runner.server_bin,
+        "-map", str(TEST_ARENA_MAP),
+        "-port", str(runner.port),
+        "-gametype", "open",
+        "-nolobby",
+        "-bots", "2",
+        "-brain", str(brain_path),
+        "-ticks", str(ticks),
+        "-finaljson", str(out_path),
+        "-quiet", "-noinput", "-nowinbolonet",
+    ]
+    if runner.verbose:
+        print(f"  Server cmd: {' '.join(cmd)}")
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(runner.build_dir),
+            env=runner.env,
+            stdout=subprocess.DEVNULL if not runner.verbose else None,
+            stderr=subprocess.DEVNULL if not runner.verbose else None,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        print("  FAIL: server did not exit on tick limit within timeout")
+        return False
+
+    # -ticks exits the process cleanly (returncode 0).
+    if proc.returncode != 0:
+        print(f"  FAIL: server returncode={proc.returncode}")
+        return False
+
+    if not out_path.exists():
+        print(f"  FAIL: no -finaljson output at {out_path}")
+        return False
+
+    try:
+        data = json.loads(out_path.read_text())
+    except json.JSONDecodeError as e:
+        print(f"  FAIL: -finaljson output is not valid JSON: {e}")
+        return False
+
+    # Top-level shape.
+    for key in ("tick", "reason", "winner", "tanks", "pillboxes", "bases"):
+        if key not in data:
+            print(f"  FAIL: missing top-level key '{key}'")
+            return False
+    if data["reason"] != "tick_limit":
+        print(f"  FAIL: reason={data['reason']!r}, expected 'tick_limit'")
+        return False
+    if not isinstance(data["tick"], int) or data["tick"] < 1:
+        print(f"  FAIL: bad tick value {data['tick']!r}")
+        return False
+    for key in ("tanks", "pillboxes", "bases"):
+        if not isinstance(data[key], list):
+            print(f"  FAIL: '{key}' is not an array")
+            return False
+
+    # The arena map has pillboxes and bases — the snapshot must carry them
+    # with the expected fields.
+    if not data["pillboxes"]:
+        print("  FAIL: no pillboxes in snapshot")
+        return False
+    pill_fields = {"tx", "ty", "owner", "armor", "in_tank"}
+    for p in data["pillboxes"]:
+        missing = pill_fields - p.keys()
+        if missing:
+            print(f"  FAIL: pillbox missing fields {missing}")
+            return False
+    if not data["bases"]:
+        print("  FAIL: no bases in snapshot")
+        return False
+    base_fields = {"tx", "ty", "owner", "armor", "shells", "mines"}
+    for b in data["bases"]:
+        missing = base_fields - b.keys()
+        if missing:
+            print(f"  FAIL: base missing fields {missing}")
+            return False
+
+    # Two bots were requested; connected tanks should carry identity + score.
+    tank_fields = {"player", "name", "alive", "kills", "deaths"}
+    for t in data["tanks"]:
+        missing = tank_fields - t.keys()
+        if missing:
+            print(f"  FAIL: tank entry missing fields {missing}: {t}")
+            return False
+
+    print(f"  Snapshot: tick={data['tick']} tanks={len(data['tanks'])} "
+          f"pills={len(data['pillboxes'])} bases={len(data['bases'])} "
+          f"winner={data['winner']!r}")
+    print("  PASS: -finaljson emitted a well-formed end-of-game snapshot")
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="WinBolo Phase 0 Test Runner")
     parser.add_argument("--build-dir", default="build-linux",
@@ -1230,13 +1345,15 @@ def main():
                         choices=["all", "0.1", "0.2", "0.3", "0.4", "0.5", "0.6",
                                  "1.1", "1.2", "1.6",
                                  "2.1", "2.3", "2.8", "2.10", "2.11",
+                                 "3.1",
                                  "connect", "movement", "two_players",
                                  "terrain_agreement", "tank_visibility",
                                  "position_agreement",
                                  "normal_movement", "terrain_speed",
                                  "consistent_validated",
                                  "shell_fire", "tank_damage", "resource_tracking",
-                                 "client_disconnect", "late_join"],
+                                 "client_disconnect", "late_join",
+                                 "finaljson"],
                         help="Run specific test")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Show server/client output")
@@ -1263,6 +1380,7 @@ def main():
         "2.8": ("resource_tracking", test_resource_tracking),
         "2.10": ("client_disconnect", test_client_disconnect),
         "2.11": ("late_join", test_late_join),
+        "3.1": ("finaljson", test_finaljson),
     }
 
     # Map name aliases to test IDs

@@ -63,6 +63,7 @@
 #include "../common/prefs.h"
 #include "../headless/cmd_stdin.h"
 #include "wire_limits.h"
+#include "cJSON.h"
 
 /* Constants previously from backend.h */
 #define GAME_TICK_LENGTH 10
@@ -106,6 +107,11 @@ bool statusFile = FALSE;
 time_t ticks = 0;
 
 static ServerSim *serverSim = NULL;
+
+/* -finaljson destination: "" = disabled, "-" = stdout, else a file path.
+ * When set, a single global game-state snapshot is written once the game
+ * reaches a terminal game-over (as -ticks produces). See serverEmitFinalJson. */
+static char optFinalJson[512] = "";
 
 /* Shutdown handshake for the game-tick timer.
  *
@@ -740,6 +746,9 @@ void printArgs() {
   fprintf(stderr, "-ticklimit <N> - End the current game (transition to GAME_OVER) after N\n");
   fprintf(stderr, "                game-ticks of running play. Unlike -ticks, the server is\n");
   fprintf(stderr, "                not asked to exit; in lobby mode the round returns to lobby.\n");
+  fprintf(stderr, "-finaljson <F> - On terminal game-over (as -ticks produces), write a single\n");
+  fprintf(stderr, "                JSON snapshot of the final global game state (all tanks,\n");
+  fprintf(stderr, "                pillboxes, bases, winner). \"-\" writes to stdout, else a file.\n");
 
   fprintf(stderr, "\nLogging & diagnostics:\n");
   fprintf(stderr, "-log [name]   - Create game log file. Optional [name] is a filename, or a\n");
@@ -1026,6 +1035,147 @@ bool processArgs(int numArgs, char **argv, char *mapName, unsigned short *port, 
 }
 
 #include <time.h>
+
+/*********************************************************
+*NAME:          serverEmitFinalJson
+*PURPOSE:
+*  Write a single JSON snapshot of the authoritative global
+*  game state to `dest` ("-" = stdout, else a file path).
+*
+*  Unlike the headless client's per-tick --log-state (which is
+*  player-centric: fog-of-war viewport around "self"), the
+*  dedicated server has no ClientSim/brain view, so this is a
+*  global snapshot: every connected tank, every pillbox, every
+*  base, plus the winner (if any). Emitted once at end-of-game.
+*
+*ARGUMENTS:
+*  sim    - The server sim (must still hold final state).
+*  dest   - "-" for stdout, otherwise a file path (truncated).
+*  reason - Short machine tag for why the game ended.
+*********************************************************/
+static void serverEmitFinalJson(ServerSim *sim, const char *dest,
+                                const char *reason) {
+  cJSON *root;
+  cJSON *tanks;
+  cJSON *pills;
+  cJSON *bases;
+  char winMsg[512];
+  BYTE i;
+  BYTE count;
+  char *out;
+  FILE *f;
+
+  if (sim == NULL || dest == NULL || dest[0] == '\0') {
+    return;
+  }
+
+  root = cJSON_CreateObject();
+  if (root == NULL) {
+    return;
+  }
+
+  cJSON_AddNumberToObject(root, "tick", (double)serverSimGetTick(sim));
+  cJSON_AddStringToObject(root, "reason", reason);
+
+  /* Winner: serverSimBuildWinMessage populates winMsg and returns TRUE only
+   * when a single alliance won. A tick/time-limit end has no winner. */
+  if (serverSimBuildWinMessage(sim, winMsg, sizeof(winMsg))) {
+    cJSON_AddStringToObject(root, "winner", winMsg);
+  } else {
+    cJSON_AddNullToObject(root, "winner");
+  }
+
+  /* Tanks — one entry per connected player slot. owner/alliance is not
+   * meaningful without a "self", so we report raw player index + identity,
+   * score and (when a live tank exists) position. */
+  tanks = cJSON_AddArrayToObject(root, "tanks");
+  for (i = 0; i < MAX_TANKS; i++) {
+    TankInfo ti;
+    cJSON *t;
+    if (!serverSimGetTankInfo(sim, i, &ti)) {
+      continue;
+    }
+    t = cJSON_CreateObject();
+    cJSON_AddNumberToObject(t, "player", (double)i);
+    cJSON_AddStringToObject(t, "name", ti.name);
+    cJSON_AddBoolToObject(t, "alive", ti.alive);
+    cJSON_AddNumberToObject(t, "kills", (double)ti.kills);
+    cJSON_AddNumberToObject(t, "deaths", (double)ti.deaths);
+    if (ti.has_tank) {
+      cJSON_AddNumberToObject(t, "x", (double)ti.world_x / 256.0);
+      cJSON_AddNumberToObject(t, "y", (double)ti.world_y / 256.0);
+      cJSON_AddNumberToObject(t, "tx", (double)(ti.world_x >> 8));
+      cJSON_AddNumberToObject(t, "ty", (double)(ti.world_y >> 8));
+      cJSON_AddNumberToObject(t, "dir", (double)ti.dir);
+      cJSON_AddBoolToObject(t, "on_boat", ti.on_boat);
+    }
+    cJSON_AddItemToArray(tanks, t);
+  }
+
+  /* Pillboxes — 255 owner means neutral. */
+  pills = cJSON_AddArrayToObject(root, "pillboxes");
+  count = serverSimGetPillCount(sim);
+  for (i = 1; i <= count; i++) {
+    BYTE px, py, powner, parmour;
+    bool pinTank;
+    cJSON *p;
+    if (!serverSimGetPill(sim, i, &px, &py, &powner, &parmour, &pinTank)) {
+      continue;
+    }
+    p = cJSON_CreateObject();
+    cJSON_AddNumberToObject(p, "tx", (double)px);
+    cJSON_AddNumberToObject(p, "ty", (double)py);
+    cJSON_AddNumberToObject(p, "owner", (double)powner);
+    cJSON_AddNumberToObject(p, "armor", (double)parmour);
+    cJSON_AddBoolToObject(p, "in_tank", pinTank);
+    cJSON_AddItemToArray(pills, p);
+  }
+
+  /* Bases — 255 owner means neutral. */
+  bases = cJSON_AddArrayToObject(root, "bases");
+  count = serverSimGetBaseCount(sim);
+  for (i = 1; i <= count; i++) {
+    BYTE bx, by, bowner;
+    BYTE bshells, bmines, barmour;
+    cJSON *b;
+    if (!serverSimGetBase(sim, i, &bx, &by, &bowner)) {
+      continue;
+    }
+    serverSimGetBaseStats(sim, i, &bshells, &bmines, &barmour);
+    b = cJSON_CreateObject();
+    cJSON_AddNumberToObject(b, "tx", (double)bx);
+    cJSON_AddNumberToObject(b, "ty", (double)by);
+    cJSON_AddNumberToObject(b, "owner", (double)bowner);
+    cJSON_AddNumberToObject(b, "armor", (double)barmour);
+    cJSON_AddNumberToObject(b, "shells", (double)bshells);
+    cJSON_AddNumberToObject(b, "mines", (double)bmines);
+    cJSON_AddItemToArray(bases, b);
+  }
+
+  out = cJSON_PrintUnformatted(root);
+  cJSON_Delete(root);
+  if (out == NULL) {
+    return;
+  }
+
+  if (strcmp(dest, "-") == 0) {
+    f = stdout;
+  } else {
+    f = fopen(dest, "w");
+    if (f == NULL) {
+      fprintf(stderr, "Error: cannot open -finaljson file '%s'\n", dest);
+      cJSON_free(out);
+      return;
+    }
+  }
+
+  fprintf(f, "%s\n", out);
+  fflush(f);
+  if (f != stdout) {
+    fclose(f);
+  }
+  cJSON_free(out);
+}
 
 int main(int argc, char **argv) {
   bolo_srand((uint64_t)time(NULL) ^ (uint64_t)getpid());
@@ -1368,6 +1518,13 @@ int main(int argc, char **argv) {
     int argNum = findArg(argc, argv, "ticklimit");
     if (argNum != ARG_NOT_FOUND) {
       serverSimSetGameTickLimit(serverSim, (int32_t)strtoul((char *)argv[argNum], NULL, 0));
+    }
+  }
+  {
+    int argNum = findArg(argc, argv, "finaljson");
+    if (argNum != ARG_NOT_FOUND) {
+      strncpy(optFinalJson, (char *)argv[argNum], sizeof(optFinalJson) - 1);
+      optFinalJson[sizeof(optFinalJson) - 1] = '\0';
     }
   }
 
@@ -2049,6 +2206,15 @@ int main(int argc, char **argv) {
    * anything they touch is freed. Then tear the worker pool down before the
    * lua_States it dispatches into are closed (defence in depth). */
   serverQuiesceGameTimer();
+
+  /* -finaljson: dump the final global game state once the game ended by
+   * reaching a terminal game-over (what -ticks produces). Gated on the
+   * terminal state so a plain SIGINT / operator quit stays silent. The
+   * timer is drained above, so the sim is quiescent and still fully
+   * populated here (destroy happens further down). */
+  if (optFinalJson[0] != '\0' && serverSimIsTerminalGameOver(serverSim)) {
+    serverEmitFinalJson(serverSim, optFinalJson, "tick_limit");
+  }
   botWorkerPoolDestroy();
   brainRecordShutdown();   /* flush + close brainrec.btr (no-op if not recording) */
   threadsDestroy();
