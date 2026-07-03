@@ -182,6 +182,34 @@ int unpackBaseSnapshot(const uint8_t *buf, size_t avail, BaseSnapshot *bs);
 int packPillSnapshot(uint8_t *buf, const PillSnapshot *ps);
 int unpackPillSnapshot(const uint8_t *buf, size_t avail, PillSnapshot *ps);
 
+/* ---- WS↔UDP relay metadata frame (browser client) ---- */
+
+/* First byte of the relay's one-shot metadata frame. Real game packets
+ * always begin with the 'W''B' magic (getPacketType), so a 0x01 first byte
+ * unambiguously marks the frame. */
+#define PROXY_META_FRAME_TYPE 0x01
+
+/* Decoded 0x01 frame. The identity fields (name / wbn / country) exist for
+ * diagnostics only — the server stamps web identity itself from the
+ * join-code verify (udpServerApplyWebIdentity); only the prefs JSON is acted
+ * on (handed to the wasm frontend). */
+typedef struct {
+    char name[PACKET_MAX_PLAYER_NAME]; /* WBN-resolved display name */
+    char country[3];                   /* ISO-2 + NUL */
+    bool wbn;                          /* is_logged_in flag */
+    char prefs[1024];                  /* raw prefs JSON, NUL-terminated */
+    int  prefsLen;
+} ProxyMetaFrame;
+
+/* Parse a 0x01 metadata frame into *out. Tolerant of a short/garbled frame:
+ * parses as far as the length allows and leaves the unreached fields at
+ * their zeroed defaults; an oversized name is truncated into out->name but
+ * skipped at its full wire length so the fields after it stay framed. The
+ * consume site is emscripten-only, but the parser compiles everywhere so it
+ * stays unit-testable off-browser. */
+void transportUdpParseProxyMeta(const uint8_t *buf, int len,
+                                ProxyMetaFrame *out);
+
 /* ---- Socket helpers ---- */
 
 SOCKET createUdpSocket(bool exclusive);

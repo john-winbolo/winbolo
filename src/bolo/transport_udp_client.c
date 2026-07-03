@@ -1446,9 +1446,6 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
     }
 }
 
-/* Process a single incoming packet (used by both direct and delayed paths) */
-#ifdef __EMSCRIPTEN__
-#define PROXY_META_FRAME_TYPE 0x01
 /* Parse the WS↔UDP relay's 0x01 metadata frame. Layout (Phase 0):
  *   [0]      0x01
  *   [1]      N           name length
@@ -1458,17 +1455,12 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
  *   [4+N]    country1    ASCII / ' ' / '?'
  *   [5+N]    prefsLen    uint16 big-endian (L)
  *   [7+N]    prefs       L bytes, raw JSON
- * The identity fields (name / wbn flag / country) are parsed only to walk
- * the frame and for the diagnostic log — the server stamps web identity
- * itself from the join-code verify (udpServerApplyWebIdentity), so nothing
- * client-side consumes them. Only the prefs JSON is acted on, handed to the
- * frontend. Tolerant of a short/garbled frame: parses as far as the length
- * allows. */
-static void udpClientParseProxyMeta(const uint8_t *buf, int len) {
-    char name[PACKET_MAX_PLAYER_NAME] = "";
-    char country[3] = "";
-    bool wbn = false;
-    char prefs[1024];
+ * Compiled on every platform (only the consume site below is
+ * emscripten-gated) so tests/unit/test_proxy_meta_parse.c can drive it.
+ * See transport_udp_internal.h for the tolerance contract. */
+void transportUdpParseProxyMeta(const uint8_t *buf, int len,
+                                ProxyMetaFrame *out) {
+    memset(out, 0, sizeof(*out));
 
     int pos = 1;  /* past the 0x01 type byte */
     if (pos >= len) return;
@@ -1478,39 +1470,47 @@ static void udpClientParseProxyMeta(const uint8_t *buf, int len) {
         /* Clamp only the copy; pos advances by the wire length so the
          * fields after an oversized name stay correctly framed. */
         int copyLen = nameLen;
-        if (copyLen > (int)sizeof(name) - 1) copyLen = (int)sizeof(name) - 1;
-        memcpy(name, buf + pos, (size_t)copyLen);
-        name[copyLen] = '\0';
+        if (copyLen > (int)sizeof(out->name) - 1) copyLen = (int)sizeof(out->name) - 1;
+        memcpy(out->name, buf + pos, (size_t)copyLen);
+        out->name[copyLen] = '\0';
     }
     pos += nameLen;
 
     if (pos >= len) return;
-    wbn = (buf[pos++] != 0);
+    out->wbn = (buf[pos++] != 0);
 
     if (pos + 2 > len) return;
-    country[0] = (char)buf[pos++];
-    country[1] = (char)buf[pos++];
-    country[2] = '\0';
+    out->country[0] = (char)buf[pos++];
+    out->country[1] = (char)buf[pos++];
+    out->country[2] = '\0';
 
     if (pos + 2 > len) return;
     int prefsLen = (buf[pos] << 8) | buf[pos + 1];  /* big-endian */
     pos += 2;
-    if (prefsLen > (int)sizeof(prefs) - 1) prefsLen = (int)sizeof(prefs) - 1;
+    if (prefsLen > (int)sizeof(out->prefs) - 1) prefsLen = (int)sizeof(out->prefs) - 1;
     if (pos + prefsLen > len) prefsLen = len - pos;  /* clamp to available */
     if (prefsLen < 0) prefsLen = 0;
-    memcpy(prefs, buf + pos, (size_t)prefsLen);
-    prefs[prefsLen] = '\0';
+    memcpy(out->prefs, buf + pos, (size_t)prefsLen);
+    out->prefs[prefsLen] = '\0';
+    out->prefsLen = prefsLen;
+}
+
+/* Process a single incoming packet (used by both direct and delayed paths) */
+#ifdef __EMSCRIPTEN__
+/* Consume the relay's one-shot metadata frame: log it and hand the prefs
+ * blob to the front-end (main_wasm.c), which owns the live keys and menu
+ * globals; the transport just forwards the JSON. */
+static void udpClientConsumeProxyMeta(const uint8_t *buf, int len) {
+    ProxyMetaFrame m;
+    transportUdpParseProxyMeta(buf, len, &m);
 
     WB_LOG_INFO(WB_LOG_CAT_NET,
                 "[WASM] proxy metadata: name='%s' wbn=%d country=%.2s prefsLen=%d",
-                name, wbn ? 1 : 0, country, prefsLen);
+                m.name, m.wbn ? 1 : 0, m.country, m.prefsLen);
 
-    /* Apply the WBN-synced prefs (keybindings + toggles) the relay forwarded.
-     * The apply lives in the front-end (main_wasm.c), which owns the live keys
-     * and menu globals; the transport just hands it the JSON blob. */
-    if (prefsLen > 0) {
+    if (m.prefsLen > 0) {
         extern void wasmApplyJoinPrefs(const char *prefsJson, int len);
-        wasmApplyJoinPrefs(prefs, prefsLen);
+        wasmApplyJoinPrefs(m.prefs, m.prefsLen);
     }
 }
 #endif
@@ -1527,7 +1527,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     if (c->joinState == UDP_CLIENT_JOINING && !c->proxyMetaConsumed &&
         len >= 1 && buf[0] == PROXY_META_FRAME_TYPE) {
         c->proxyMetaConsumed = true;
-        udpClientParseProxyMeta(buf, len);
+        udpClientConsumeProxyMeta(buf, len);
         return;
     }
 #endif

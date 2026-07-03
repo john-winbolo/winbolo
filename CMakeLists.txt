@@ -2742,6 +2742,17 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
     tests/unit/test_bolo_rand.c
+    # Relay 0x01 metadata-frame parser (platform-neutral; the consume site
+    # is emscripten-only but the parse compiles everywhere).
+    tests/unit/test_proxy_meta_parse.c
+    # Shared client-frontend cores: the tick cadence (keys-half pump gated
+    # on clientSimTransportTicksServer) and the connect/landing wait. The
+    # core sources compile here against the stubs in the test files;
+    # client_frontend_common.c stays out (it drags the sdl3 draw layer).
+    src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_connect.c
+    tests/unit/test_client_frontend_tick.c
+    tests/unit/test_await_join.c
     tests/unit/test_net_impair.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
@@ -3062,6 +3073,10 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
 target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
     src/gui/sdl3/dialogs
+    # gamefront.h / brainsHandler.h / clientmutex.h for the shared
+    # client-frontend cores compiled into this target.
+    src/gui
+    src/client_frontend
     src/server
     src
     src/winbolonet
@@ -3403,6 +3418,17 @@ set(_unit_test_names
     bot_pool_wire_roundtrip
     bot_pool_wire_builtin_roundtrip
     bot_pool_wire_rejects_garbage
+    proxy_meta_parse_roundtrip
+    proxy_meta_parse_truncation_safe
+    proxy_meta_parse_oversized_name
+    proxy_meta_parse_prefs_clamps
+    tick_core_active_local_no_double_step
+    tick_core_passive_local_pumps_keys_half
+    tick_core_lobby_flips_cadence
+    transport_ticks_server_lifecycle
+    await_join_connected_immediate
+    await_join_lobby_latch
+    await_join_timeout_and_error
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
