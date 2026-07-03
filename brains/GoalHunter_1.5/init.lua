@@ -34,6 +34,7 @@ local attack  = require("attack")
 local shield  = require("attack_shield")
 local steer   = require("steering")
 local kill_lgm = require("kill_lgm")
+local demine  = require("demine")
 -- local bpc  = require("bpc")  -- removed: unified into attack_pill
 local log     = require("logger")
 local danger  = require("danger")
@@ -4552,6 +4553,12 @@ function Brain.think(info)
         new_goal = state.goal  -- re-affirmed current goal: no switch
       elseif swerving then
         new_goal = state.goal  -- swerve is never interrupted, not even by flee
+      elseif state.goal.kind == "kill_mine" and new_goal.kind ~= "flee_to_base" then
+        -- De-mine interrupt in progress (demine.lua pushed it over the real
+        -- goal, which is stashed on state._demine_saved). Hold: the clear
+        -- takes a couple of shell flights and demine.update pops the moment
+        -- the mine is gone (timeout backstops). Only survival preempts.
+        new_goal = state.goal
       elseif engage_locked and new_goal.kind ~= "flee_to_base"
                              and new_goal.kind ~= "attack_tank"
                              and new_goal.kind ~= "kill_lgm"
@@ -4842,6 +4849,13 @@ function Brain.think(info)
   t_goal1 = clock_us()
   metrics.set("us_goals", t_goal1 - t_goal0)
   opt(string.format("goals done %.2f ms", (t_goal1 - t_goal0) / 1000))
+
+  -- Automatic de-mine interrupt: when a known mine is in crosshair range
+  -- and the goal is interruptible, push a kill_mine goal over it (the real
+  -- goal object is stashed with all context and restored on pop the moment
+  -- the mine is cleared). See demine.lua; the arbitration chain above holds
+  -- a pushed kill_mine against replans.
+  demine.update(state, world, info)
 
   -- Goal lookahead: when close to a capture goal, pre-compute the next
   -- goal.  If the next goal isn't "stay here and refuel", pass it to

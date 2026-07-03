@@ -1059,6 +1059,53 @@ local function reposition_steer(state, world, info, goal)
   return keys, taps
 end
 
+-- =========================================================================
+-- Kill-mine steering (demine.lua interrupt): stop, drive the crosshair —
+-- heading AND gunsight length — RIGHT ONTO the mine tile, then fire. A
+-- shell only detonates a mine when it ENDS on the mined square (engine
+-- fires minesExpAddItem at shell death: collision or range-expiry), so the
+-- fire gate mirrors kill_lgm's: the actual explosion point (tank +
+-- 128*gunrange wu along the heading) must land within DEMINE_LAND_WU of
+-- the mine tile center before the trigger is pulled.
+-- =========================================================================
+local KL = require("kill_lgm")
+
+local function demine_steer(state, world, info, goal)
+  local keys, taps = 0, 0
+  if info.speed > 0 then keys = keys | KEY_SLOWER end
+  local wx, wy = goal.wx, goal.wy
+  local dist = U.wdist(info.tankx, info.tanky, wx, wy)
+  -- Heading: rotate in place toward the mine center.
+  local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
+                             goal.mx + 0.5, goal.my + 0.5)
+  local corr = U.adiff(info.direction, aim_dir)
+  local h, t = U.aim_turn_bits(corr, 6, 1)
+  keys = keys | h; taps = taps | t
+  -- Gunsight length: pull the shell's end-of-life onto the mine's distance.
+  local target_sl = KL.sightlen_for(dist)
+  keys = keys | KL.gunrange_key(info.gunrange, target_sl)
+  -- Fire only when the ACTUAL explosion point lands on the mine tile and
+  -- nothing (wall / pill / base / ally) eats the shell on the way.
+  local cur_sl = info.gunrange or 14
+  local travel = 128 * cur_sl
+  local rad    = (info.direction or 0) * C.TWO_PI / 256
+  local ex_wx  = info.tankx + math.sin(rad) * travel
+  local ex_wy  = info.tanky - math.cos(rad) * travel
+  local off_dx, off_dy = ex_wx - wx, ex_wy - wy
+  local land_off = math.sqrt(off_dx * off_dx + off_dy * off_dy)
+  if land_off <= (C.DEMINE_LAND_WU or 100) and (info.shells or 0) > 0
+     and shot_path_clear(info, world, wx, wy, goal.mx, goal.my) then
+    keys = keys | KEY_SHOOT
+  end
+  if BRAIN_DEBUG_MODE and viz.is_on("hud_attack_status") then
+    viz.hud_text("hud_attack_status", 10, 44,
+      string.format("De-mine: (%d,%d) dist=%.1ft corr=%.0f sl=%d/%d land=%.0fwu",
+        goal.mx, goal.my, dist / 256.0, corr, cur_sl, target_sl, land_off),
+      "topleft", 255, 120, 120)
+  end
+  return keys, taps
+end
+
 local function attack_pill_steer(state, world, info, goal)
   if goal.kind ~= "attack_pill" then return nil end
   local keys = 0
@@ -2726,6 +2773,18 @@ function M.steer(state, world, info, goal)
       end
       return k, t
     end
+  end
+
+  -- De-mine interrupt (demine.lua pushed a kill_mine goal): stop, put the
+  -- crosshair on the mine, fire. Always self-contained — never falls
+  -- through to generic navigation (the mine is a shot, not a destination).
+  if goal.kind == "kill_mine" then
+    local k, t = demine_steer(state, world, info, goal)
+    if BRAIN_PROFILE then
+      opt(string.format("  steer/demine done %.2f ms",
+                        (clock_us() - _t_phase) / 1000))
+    end
+    return k or 0, t or 0
   end
 
   -- Sub-anchor for steer/nav-* breakdowns. _t_phase is the fall-through

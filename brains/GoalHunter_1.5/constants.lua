@@ -1239,6 +1239,18 @@ M.SPIKE_DISCOUNT_FLOOR          = 0.5   -- combat multiplier never drops below t
 -- Net tilt toward a spike ≈ (0.3 + 0.2)/cover = 50%/cover (lone spike 50%,
 -- pair 25%, quad 12.5%).
 
+-- Automatic de-mine interrupt (demine.lua): shoot known mines in crosshair
+-- range, pushing a kill_mine goal over the current one and popping back
+-- when cleared. Cost per mine = dist * (1 + BEHIND_MULT * angoff/128) —
+-- mines near the current heading are strongly preferred over ones behind.
+M.DEMINE_ENABLE       = true
+M.DEMINE_MIN_SHELLS   = 3     -- don't start a clear with fewer shells than this
+M.DEMINE_MIN_DIST_WU  = 512   -- >= 2 tiles: never detonate a mine at our own feet
+M.DEMINE_BEHIND_MULT  = 2.0   -- directly-behind mine costs 3x its distance
+M.DEMINE_SCAN_PERIOD  = 5     -- ticks between eligibility scans
+M.DEMINE_MAX_TICKS    = 150   -- give up (pop + tile cooldown) after ~3s
+M.DEMINE_LAND_WU      = 100   -- shell end-of-life must land this close to the mine tile center
+
 -- Friendly pill as barrier bonus (aIndy: use friendly pills as shields)
 M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is between us and target
 

@@ -133,6 +133,7 @@ local GOAL_TO_MODE = {
   place_pill_strategic = "place_pill_strategic",
   none                 = "repair_nearby",
   wait_for_lgm         = "suppressed",  -- whole point is to NOT dispatch the LGM
+  kill_mine            = "suppressed",  -- de-mine interrupt: LGM stays in (blast!)
 }
 
 -- -------------------------------------------------------------------------
