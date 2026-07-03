@@ -51,7 +51,12 @@ include(cmake/bolo_version.cmake)
 # (WinBolo, Log Viewer, Map Editor) picks up matching version/copyright keys
 # in its Info.plist, and so the deployment target applies to all of them.
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+    # FORCE for the same reason as CMAKE_OSX_ARCHITECTURES above: CLion / some
+    # IDE configures write an EMPTY cache entry for CMAKE_OSX_DEPLOYMENT_TARGET,
+    # which without FORCE would win and leave the target unset. An unset target
+    # makes clang default to the host SDK version (e.g. 26.x), baking minos 26.0
+    # into the Mach-O load command so dyld refuses to launch on older macOS.
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
     string(TIMESTAMP _WB_CURRENT_YEAR "%Y")
     set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_VERSION}")
     set(MACOSX_BUNDLE_BUNDLE_VERSION       "${WINBOLO_VERSION}")
@@ -90,7 +95,7 @@ include(FetchContent)
 FetchContent_Declare(
     sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        release-3.4.8
+    GIT_TAG        release-3.4.10
     GIT_SHALLOW    TRUE
     SYSTEM
     EXCLUDE_FROM_ALL
@@ -570,6 +575,8 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/ios/ios_stubs.c
     src/gui/ios/imgui_ios.cpp
     src/gui/sdl3/gamefront.c
+    src/client_frontend/client_frontend_connect.c
+    src/bolo/lobby_bot_pools_json.c
     src/gui/sdl3/dialog_backend.c
     ${IOS_BOLO_SOURCES}
     ${IOS_SERVER_SOURCES}
@@ -663,6 +670,7 @@ target_include_directories(WinBoloIOS PRIVATE
     src/gui/mobile
     src/server
     src/mapeditor
+    src/client_frontend
     src/third_party/imgui_markdown
     ${cjson_SOURCE_DIR}
 )
@@ -1089,6 +1097,9 @@ set(CLIENT_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
+    src/client_frontend/client_frontend_connect.c
+    src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_common.c
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -1175,6 +1186,10 @@ set(LOGVIEWER_LIB_SOURCES
 list(APPEND CLIENT_SOURCES ${LOGVIEWER_LIB_SOURCES})
 
 add_executable(WinBolo ${CLIENT_SOURCES})
+# Bot-name pool JSON loader (cJSON). The core pool table + wire codec live
+# in lobby_bot_pools.c inside bolo_static (no cJSON); only this file-loading
+# helper, linked into the binaries that read a pool file, pulls in cJSON.
+target_sources(WinBolo PRIVATE src/bolo/lobby_bot_pools_json.c)
 target_compile_definitions(WinBolo PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -1228,6 +1243,7 @@ target_include_directories(WinBolo PRIVATE
     src/server
     src/mapeditor
     src
+    src/client_frontend
     src/logviewer
     src/logviewer/imgui
     src/logviewer/platform
@@ -1577,7 +1593,8 @@ set(SERVER_SOURCES
 
 
 add_executable(WinBoloDS ${SERVER_SOURCES})
-target_sources(WinBoloDS PRIVATE src/steam/steam_wrapper_stub.c)
+target_sources(WinBoloDS PRIVATE src/steam/steam_wrapper_stub.c
+    src/bolo/lobby_bot_pools_json.c)
 target_compile_definitions(WinBoloDS PRIVATE
     WINBOLO_VERSION="${WINBOLO_VERSION}"
     WINBOLO_GIT_HASH="${WINBOLO_GIT_HASH}"
@@ -1705,6 +1722,14 @@ add_custom_command(TARGET WinBoloDS POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/data/lang" "$<TARGET_FILE_DIR:WinBoloDS>/data/lang"
     COMMENT "Copying WinBoloDS lang files to output directory"
+)
+# Default bot naming pools so a -bots server names its bots from the
+# shipped themes without needing -botnames. (-botnames overrides this.)
+add_custom_command(TARGET WinBoloDS POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/data/bot_names.json"
+        "$<TARGET_FILE_DIR:WinBoloDS>/data/bot_names.json"
+    COMMENT "Copying WinBoloDS default bot_names.json to output directory"
 )
 if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.21")
     add_custom_command(TARGET WinBoloDS POST_BUILD
@@ -2267,10 +2292,12 @@ add_custom_command(TARGET BrainTest POST_BUILD
 # ---------------------------------------------------------------------------
 # Bundle the dev-tool CLIs inside WinBolo.app (macOS)
 # ---------------------------------------------------------------------------
-# Drop the dedicated server and brain debugger into Contents/MacOS/ next to the
-# WinBolo binary so developers can run them straight from the signed bundle:
+# Drop the dedicated server, brain debugger, and headless client into
+# Contents/MacOS/ next to the WinBolo binary so developers can run them
+# straight from the signed bundle:
 #     WinBolo.app/Contents/MacOS/WinBoloDS
 #     WinBolo.app/Contents/MacOS/BrainTest
+#     WinBolo.app/Contents/MacOS/WinBoloHeadless
 # Because they live in Contents/MacOS/, SDL_GetBasePath() resolves to the
 # bundle's Contents/Resources/ for them too, so they share WinBolo's bundled
 # data/ and Brains/ — no separate asset copies needed. They load the
@@ -2278,19 +2305,21 @@ add_custom_command(TARGET BrainTest POST_BUILD
 # @executable_path rpath. `prepare.sh` signs them automatically: codesign
 # --deep on the bundle recursively signs every nested Mach-O with the hardened
 # runtime, which is all these terminal-launched tools need to notarize and run.
-# This makes a WinBolo-only build also build the two tools; turn it off with
+# This makes a WinBolo-only build also build the tools; turn it off with
 # -DWINBOLO_BUNDLE_DEV_TOOLS=OFF for faster WinBolo iteration.
 option(WINBOLO_BUNDLE_DEV_TOOLS
-    "Bundle WinBoloDS and BrainTest inside WinBolo.app (macOS)" ON)
+    "Bundle WinBoloDS, BrainTest, and WinBoloHeadless inside WinBolo.app (macOS)" ON)
 if(APPLE AND WINBOLO_BUNDLE_DEV_TOOLS)
-    # Guarantee both tools are built before WinBolo's POST_BUILD copy runs.
-    add_dependencies(WinBolo WinBoloDS BrainTest)
+    # Guarantee all tools are built before WinBolo's POST_BUILD copy runs.
+    add_dependencies(WinBolo WinBoloDS BrainTest WinBoloHeadless)
     add_custom_command(TARGET WinBolo POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:WinBoloDS>" "$<TARGET_FILE_DIR:WinBolo>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:BrainTest>" "$<TARGET_FILE_DIR:WinBolo>"
-        COMMENT "Bundling WinBoloDS and BrainTest into WinBolo.app/Contents/MacOS"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:WinBoloHeadless>" "$<TARGET_FILE_DIR:WinBolo>"
+        COMMENT "Bundling WinBoloDS, BrainTest, and WinBoloHeadless into WinBolo.app/Contents/MacOS"
     )
 endif()
 
@@ -2684,8 +2713,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
     tests/unit/test_vote_toggle_modes.c
+    tests/unit/test_vote_nolobby_disabled.c
     tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
+    tests/unit/test_rand_save_restore.c
     tests/unit/test_net_opt_wire.c
     src/common/md5.c
     src/common/mp_diag_log.c
@@ -2709,7 +2740,19 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
+    tests/unit/test_brain_list_scan.c
     tests/unit/test_bolo_rand.c
+    # Relay 0x01 metadata-frame parser (platform-neutral; the consume site
+    # is emscripten-only but the parse compiles everywhere).
+    tests/unit/test_proxy_meta_parse.c
+    # Shared client-frontend cores: the tick cadence (keys-half pump gated
+    # on clientSimTransportTicksServer) and the connect/landing wait. The
+    # core sources compile here against the stubs in the test files;
+    # client_frontend_common.c stays out (it drags the sdl3 draw layer).
+    src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_connect.c
+    tests/unit/test_client_frontend_tick.c
+    tests/unit/test_await_join.c
     tests/unit/test_net_impair.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
@@ -2806,14 +2849,38 @@ set(WINBOLO_UNITTESTS_SOURCES
     # CTRL_SPECTATOR_SLOT body-codec round-trip: encode/decode the per-spectator
     # roster event through the body tables, including the out-of-range rejection.
     tests/unit/test_spectator_slot_codec.c
+    # CTRL_SPECTATOR_CHAT body-codec round-trip: encode/decode the spectator
+    # lobby-chat event through the body tables, including the empty/max-length
+    # messages and the out-of-range specIdx / msgLen-overrun rejections.
+    tests/unit/test_spectator_chat_codec.c
+    # Spectator-chat routing: a published CTRL_SPECTATOR_CHAT reaches a player
+    # bus subscriber and a live spectator (allowlist); broadcast CTRL_CHAT
+    # reaches the spectator; team/unicast CTRL_CHAT does not.
+    tests/unit/test_spectator_chat_routing.c
+    # Spectator-chat replay emission: serverSimReceiveSpectatorChat writes a
+    # log_SpectatorChat (specIdx + message) into the recording .wbv stream.
+    tests/unit/test_spectator_chat_log.c
+    # Lobby-chat catch-up buffer: broadcast + spectator chat captured in
+    # lobby/countdown, cleared at game start, capped, and re-delivered by
+    # serverSimReplayLobbyChat at the spectator drain-flip (fresh joins none).
+    tests/unit/test_spectator_chat_catchup.c
     # Spectator connect — client side: the real client transport connecting with
     # the spectator flag lands in CLIENT_CONNECT_SPECTATING (tankless, awaiting
     # seed), consuming no tank slot and starting no map download.
     tests/unit/test_spectator_connect.c
-    # Spectator command rejection: a tankless viewer's lobby/gameplay commands
-    # have no server-state effect (client transport never emits them; the
-    # dispatcher guard rejects an out-of-range sender slot).
+    # Spectator live-lobby control intake — client side: a tankless spectator
+    # (myPlayerNum 0, aliasing real slot 0) fed the allowlisted lobby control
+    # bus populates its mirror without mis-attributing slot 0 to the viewer.
+    tests/unit/test_spectator_client_lobby_intake.c
+    # Spectator command isolation: a tankless viewer's broadcast chat is accepted
+    # and round-trips into its lobby log, while its non-chat lobby/gameplay
+    # commands have no server-state effect (client guards refuse to originate
+    # them; the dispatcher guard rejects an out-of-range sender slot).
     tests/unit/test_spectator_command_reject.c
+    # Spectator lobby read-only invariant: a tankless viewer fires every guarded
+    # clientSimNetSend* mutation path and the seated lobby is wholly untouched —
+    # the client-side send-suppression backstop (dialog rendering is human-tested).
+    tests/unit/test_spectator_lobby_readonly.c
     # Spectator feed capture — client side: a real spectator client over loopback
     # captures the CHANNEL_BULK seed + ordered forward records into the ClientSim
     # feed (record header stripped, order preserved), exercising the ack-emitter
@@ -2827,6 +2894,19 @@ set(WINBOLO_UNITTESTS_SOURCES
     # gets the delayed keyframe at head - delay armed as a BULK_KIND_SPEC_SEED
     # transfer whose blob is byte-equal to the ring keyframe at that delay.
     tests/unit/test_spectator_seed.c
+    # Live-lobby spectator control bus: lobby subscribe + sync replay,
+    # serverSpectatorDeliverControl allowlist, subscriber capacity, and the
+    # spectator-roster enumerator + fan to live spectators.
+    tests/unit/test_spectator_live_bus.c
+    # Live↔delayed cutover for spectators: the anti-cheat boundary at game
+    # start (a live spectator is unsubscribed before any running-state publish,
+    # so it receives zero running control) and the drain-then-flip back to the
+    # live lobby once the delayed game is fully watched.
+    tests/unit/test_spectator_cutover.c
+    # Dual-mode spectator session: the client live-lobby bit is seeded from the
+    # accept mode byte, flips to delayed when the feed begins at game start, and
+    # back to live when lobby control resumes after the delayed game drains.
+    tests/unit/test_loopback_spectator_lobby.c
     # Bulk-transfer framing on CHANNEL_BULK: stream-header round-trip,
     # byte-identical blob reassembly under loss, header robustness,
     # pipelining and the send-side serializer guard.
@@ -2961,7 +3041,9 @@ if(WB_NETDEBUG)
 endif()
 
 add_executable(WinBoloUnitTests ${WINBOLO_UNITTESTS_SOURCES})
-target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c)
+target_sources(WinBoloUnitTests PRIVATE src/steam/steam_wrapper_stub.c
+    src/bolo/lobby_bot_pools_json.c
+    tests/unit/test_bot_name_pools.c)
 target_compile_definitions(WinBoloUnitTests PRIVATE
     HAVE_SCREEN_C=1
     WINBOLO_VERSION="${WINBOLO_VERSION}"
@@ -2991,6 +3073,10 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
 target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
     src/gui/sdl3/dialogs
+    # gamefront.h / brainsHandler.h / clientmutex.h for the shared
+    # client-frontend cores compiled into this target.
+    src/gui
+    src/client_frontend
     src/server
     src
     src/winbolonet
@@ -3023,6 +3109,7 @@ set_flat_output(WinBoloUnitTests "${CMAKE_BINARY_DIR}")
 
 set(_unit_test_names
     md5_to_hex
+    rand_save_restore
     pill_armour_intank_roundtrip
     base_event_classification
     transport_local_passive_threads
@@ -3132,6 +3219,7 @@ set(_unit_test_names
     brain_inbox_overflow_drops_oldest
     brain_inbox_legacy_drain_fifo
     brain_inbox_clear_resets
+    brain_list_scan_path_resolves
     bolo_rand_golden_sequence
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
@@ -3265,6 +3353,7 @@ set(_unit_test_names
     map_compress_roundtrip_stock
     map_compress_roundtrip_mutated
     map_checksum_ignores_mines
+    map_resync_base_crater_converges
     resync_finalize_corrupt_keeps_gen
     resync_finalize_valid_advances_gen
     install_compressed_map_rejects_garbage
@@ -3282,12 +3371,24 @@ set(_unit_test_names
     spectator_join
     spectator_roster_publish
     spectator_slot_codec
+    spectator_chat_codec
+    spectator_chat_routing
+    spectator_chat_log
+    spectator_chat_catchup
     spectator_connect
+    spectator_client_lobby_intake
     spectator_command_reject
+    spectator_lobby_readonly
     spectator_seed_integration
     spectator_capture
     spectator_log
     spectator_seed
+    spectator_lobby_subscribe
+    spectator_control_filter
+    spectator_subscriber_capacity
+    spectator_roster_to_spectators
+    spectator_lobby_cutover
+    loopback_spectator_lobby
     bulk_transfer
     overflow_guards
     channel_reset_codec_roundtrip
@@ -3307,6 +3408,27 @@ set(_unit_test_names
     addrparse_port_bounds
     addrparse_bad_port
     addrparse_empty
+    bot_pool_builtin_defaults
+    bot_pool_install_and_clamp
+    bot_pool_install_dedup_and_drop
+    bot_pool_reset_restores_builtin
+    bot_pool_pick_unique_and_overflow
+    bot_pool_json_load_roundtrip
+    bot_pool_json_missing_file_keeps_active
+    bot_pool_wire_roundtrip
+    bot_pool_wire_builtin_roundtrip
+    bot_pool_wire_rejects_garbage
+    proxy_meta_parse_roundtrip
+    proxy_meta_parse_truncation_safe
+    proxy_meta_parse_oversized_name
+    proxy_meta_parse_prefs_clamps
+    tick_core_active_local_no_double_step
+    tick_core_passive_local_pumps_keys_half
+    tick_core_lobby_flips_cadence
+    transport_ticks_server_lifecycle
+    await_join_connected_immediate
+    await_join_lobby_latch
+    await_join_timeout_and_error
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

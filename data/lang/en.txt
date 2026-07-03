@@ -441,6 +441,9 @@ STR_DLGLOBBY_TEAM_LEFT_FMT={player} left {string1}.
 # Lobby roster header above the spectator list ({number} = live count)
 STR_DLGLOBBY_SPECTATORS_FMT=Spectators ({number}):
 
+# Sender-name tag prepended to a spectator's lobby chat line
+STR_DLGLOBBY_SPECTATOR_TAG=[Spectator] {string1}
+
 # Map-preview start-picker tooltips and the assign-to-someone menu
 STR_STARTPICK_TIP_FREE_HOST=Start #{number}\nClick to choose; right-click to assign to someone else
 STR_STARTPICK_TIP_FREE=Start #{number}\nClick to choose this start
@@ -631,6 +634,9 @@ STR_DLGWBN_NOSAVEPATH=Could not determine save path
 STR_DLGWBN_FETCHERR=Fetch failed
 STR_DLGWBN_UNKNOWN_ERR=Unknown error
 STR_DLGWBN_FILEFILTER=WinBolo Log Files
+STR_DLGWBN_TAB_MYGAMES=My Games
+STR_DLGWBN_MYGAMES_SIGNIN=Login or create an account to view your recent games
+STR_DLGWBN_MYGAMES_NONE=You don't have any recorded games yet.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Set Player Name
@@ -1439,6 +1445,7 @@ STR_VOTE_DRAW_TAG= (Draw)
 STR_VOTE_NEEDS_RUNNING_TIP=Available once the game is running.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Pick a team before voting to surrender.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Surrender is only available when exactly two teams\nwith human players remain.
+STR_VOTE_SHOW=Show: {string1}
 
 # Logviewer — in-game vote events
 STR_LV_VOTE_START_LOBBY={player} started a vote to return to lobby.
@@ -1809,4 +1816,13 @@ STR_DLGABOUT_ADDITIONAL_PROG=Additional 2.0 programming by Andrew Roth
 STR_DLGABOUT_THIRD_PARTY=Third Party Notices
 STR_DLGABOUT_AUTHORS=Authors
 STR_DLGABOUT_FORUMS=Forums
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=You must be signed in to WinBolo.net to join this game.
+STR_WEB_JOIN_NOT_ACCEPTING=This game is not accepting new players.
+STR_WEB_JOIN_LINK_INVALID=That game link is no longer valid.
+STR_WEB_JOIN_GAME_FULL=This game is full.
+STR_WEB_JOIN_CODE_UNREACHABLE=Could not reach the server to get a join code.
+STR_WEB_CONNECT_FAILED=Could not connect to the server.
+STR_WEB_JOIN_NO_RESPONSE=Could not join the game (the server did not respond, or your invite link has already been used or expired).
 

@@ -29,6 +29,38 @@ extern "C" {
 struct ClientSim;
 int imguiLobbyShow(struct ClientSim *cs);
 
+/* Per-frame lobby renderer for hosts that drive a single shared ImGui
+ * context from a non-blocking main loop (the WASM/emscripten client).
+ *
+ * Builds the lobby UI into the CURRENTLY-ACTIVE ImGui frame: the caller
+ * must have already pumped SDL events and called ImGui::NewFrame(), and
+ * is responsible for ImGui::Render()/present afterwards. This function
+ * does NOT create/destroy an ImGui context, init SDL backends, pump
+ * events, tick the transport, or resize/retitle the window.
+ *
+ * All per-frame UI state (chat input, scroll/tab selection, map-preview
+ * texture, countdown tracker, ...) is kept in file-static storage that
+ * persists across calls and is (re)initialised on the first call after a
+ * fresh lobby is entered. Call imguiLobbyFrameReset() when leaving the
+ * lobby to release that state (the blocking imguiLobbyShow does this on
+ * teardown automatically).
+ *
+ * Returns LOBBY_FRAME_LEFT once the player confirms leaving (the host
+ * should then disconnect/quit), otherwise LOBBY_FRAME_CONTINUE. Game
+ * start is NOT signalled here: the host detects it from the sim leaving
+ * the lobby state (clientSimIsInLobby flips false). */
+typedef enum {
+    LOBBY_FRAME_CONTINUE = 0,
+    LOBBY_FRAME_LEFT     = 1
+} LobbyFrameStatus;
+
+LobbyFrameStatus imguiLobbyRenderFrame(struct ClientSim *cs);
+
+/* Release per-frame lobby state (map-preview texture, popup buffers, and
+ * every transient visibility/pending flag). Safe to call when not in a
+ * lobby. */
+void imguiLobbyFrameReset(void);
+
 #ifdef __cplusplus
 }
 #endif

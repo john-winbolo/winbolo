@@ -388,8 +388,11 @@ typedef struct {
                                  * name (e.g. "GoalHunter" for
                                  * brains/GoalHunter/init.lua) */
     double   lastThinkMs;       /* most recent brain tick */
+    double   maxThinkMs;        /* peak brain tick this game */
     double   targetMs;          /* target the next tick will use */
-    uint32_t overrunCount;      /* cumulative since session start */
+    uint32_t overrunCount;      /* overruns this game */
+    uint32_t thinkCount;        /* total thinks this game
+                                 * (overrun-rate denominator) */
 } BotInfo;
 
 /* Bot pool snapshot populated by serverSimGetBotPoolStats. POD;
@@ -402,7 +405,11 @@ typedef struct {
     double   lastBrainPhaseMs;  /* wall-clock of last brain dispatch */
     double   ewmaBrainPhaseMs;  /* EWMA of brain dispatch wall-clock */
     double   lastSerialMs;      /* last serial-stage cost (ms) */
-    uint32_t totalOverruns;     /* sum of overrunCount across bots */
+    double   maxThinkMs;        /* peak per-bot think across the pool this
+                                 * game (ms) */
+    uint32_t totalOverruns;     /* sum of overrunCount across bots (this game) */
+    uint32_t totalThinks;       /* sum of thinkCount across bots this game
+                                 * (overrun-rate denominator) */
 } BotPoolStats;
 
 /* Max candidate count for BrainGoalInfo. */
@@ -1183,6 +1190,42 @@ SubscriberHandle serverSimRegisterSubscriber(
     void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimReplayLobbyChat
+ *PURPOSE:
+ *  Re-deliver the current-session lobby-chat catch-up
+ *  buffer (broadcast player chat + spectator chat, oldest
+ *  first) through the caller's deliver callback. Used at
+ *  the spectator delayed->live drain-flip so a returning
+ *  spectator sees the lobby chat sent while it was still
+ *  finishing the delayed game. Call after re-registering
+ *  the subscriber so the lobby phase is set first. Not
+ *  invoked on a fresh accept or player join.
+ *********************************************************/
+void serverSimReplayLobbyChat(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx);
+
+typedef void (*SpectatorRosterEnumFn)(
+    void *enumCtx,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *deliverCtx);
+
+/*********************************************************
+ *NAME:          serverSimSetSpectatorRosterEnumerator
+ *PURPOSE:
+ *  Register a callback the sim invokes during sync-replay
+ *  to emit one CTRL_SPECTATOR_SLOT per connected spectator.
+ *  The roster lives in the transport layer; this lets the
+ *  sim's replay (and the ring keyframe control snapshot,
+ *  which reuses the same producer) carry it without the sim
+ *  owning spectator state. Pass fn=NULL to clear.
+ *********************************************************/
+void serverSimSetSpectatorRosterEnumerator(ServerSim *sim,
+                                           SpectatorRosterEnumFn fn,
+                                           void *enumCtx);
+
+/*********************************************************
  *NAME:          serverSimRegisterClientSubscriber
  *PURPOSE:
  *  Convenience over serverSimRegisterSubscriber for the
@@ -1253,6 +1296,26 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt);
  *********************************************************/
 void serverSimReceiveChat(ServerSim *sim, BYTE fromPlayer, BYTE destPlayer,
                           const void *body, size_t bodyLen);
+
+/*********************************************************
+ *NAME:          serverSimReceiveSpectatorChat
+ *PURPOSE:
+ *  Authoritative entry for a lobby chat line from a
+ *  tankless spectator. A spectator owns no player slot,
+ *  so the message is stamped with its specIdx and
+ *  published as CTRL_SPECTATOR_CHAT, which fans to
+ *  players (bus) and spectators (deliver allowlist), and
+ *  is recorded into the .wbv as log_SpectatorChat.
+ *
+ *ARGUMENTS:
+ *  sim          - The server sim
+ *  specIdx      - Sender spectator slot (< MAX_SPECTATORS)
+ *  body         - Raw chat bytes (no Pascal-length prefix)
+ *  bodyLen      - Length of body (clamped to
+ *                  PACKET_MAX_CHAT_MESSAGE)
+ *********************************************************/
+void serverSimReceiveSpectatorChat(ServerSim *sim, uint8_t specIdx,
+                                   const void *body, size_t bodyLen);
 
 /*********************************************************
  *NAME:          serverSimApplyCommand
@@ -1649,6 +1712,29 @@ typedef struct TankRenderInfo {
  * occupied but the tank is in death-wait, returns true with
  * out->alive = false. */
 bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out);
+
+/* Fuller per-slot snapshot for scoreboard / end-of-game readers:
+ * identity (name) and score (kills/deaths) alongside render state.
+ * Unlike TankRenderInfo this is keyed on a *connected player slot*
+ * rather than a live tank object. */
+typedef struct TankInfo {
+    char  name[PLAYER_NAME_LEN]; /* NUL-terminated player name */
+    WORLD world_x;
+    WORLD world_y;
+    BYTE  dir;       /* 0-15, already converted from TURNTYPE */
+    bool  on_boat;
+    bool  alive;     /* false in death-wait or before the tank spawns */
+    bool  has_tank;  /* false if connected but no live tank object yet */
+    int   kills;
+    int   deaths;
+} TankInfo;
+
+/* Populate *out for connected player slot i. Returns false (without
+ * touching *out) if i >= MAX_TANKS or the slot is not connected. When
+ * connected but the tank object is absent (countdown / death-wait),
+ * has_tank = false, alive = false, and the position/score fields are 0;
+ * name is always filled. */
+bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out);
 
 /* Tank alliance from selfPlayer's perspective. Independent of
  * sim->sim.viewPlayer so callers don't need to mutate that global

@@ -23,6 +23,7 @@
 
 #include "bolo_rand.h"
 #include "client_render.h"
+#include "client_frontend_tick.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "playername_validate.h"
@@ -32,6 +33,7 @@
 #include "../gui/clientmutex.h"
 #include "../gui/draw.h"
 #include "../gui/gamefront.h"
+#include "../common/prefs.h"
 #include "../gui/input.h"
 #include "../gui/lang.h"
 #include "../gui/sound.h"
@@ -39,8 +41,14 @@
 #include "../gui/winbolo.h"
 #include "../gui/sdl3/sdl3draw.h"
 #include "../gui/sdl3/sdl3imgui.h"
+#include "../gui/sdl3/input_gamepad.h"
+#include "../gui/sdl3/build_cursor.h"
 #include "../gui/sdl3/luabrainshandler.h"
 #include "../gui/sdl3/dialogs/imgui_messagebox.h"
+#include "../gui/sdl3/dialogs/imgui_tutorial_overlay.h"
+#include "server_sim.h"
+#include "tutorial.h"
+#include "cJSON.h"
 
 #include <sys/stat.h>
 
@@ -56,7 +64,7 @@ bool isTutorial = FALSE;
 int frameRate = FRAME_RATE_30;
 static int frameRateTime = (int)(MILLISECONDS / FRAME_RATE_30) - 1;
 
-bool showGunsight = FALSE;
+bool showGunsight = TRUE;  /* WASM default: gunsight on unless synced prefs override */
 bool soundEffects = TRUE;
 bool backgroundSound = TRUE;
 bool useSoundKeepalive = FALSE;
@@ -69,8 +77,9 @@ bool showAIMessages = FALSE;
 bool showNetworkStatusMessages = TRUE;
 bool showNetworkDebugMessages = FALSE;
 
-bool autoScrollingEnabled = FALSE;
+bool autoScrollingEnabled = TRUE;  /* WASM default: autoscroll on unless synced prefs override */
 bool smoothScrollingEnabled = FALSE;  /* WASM: arrow-key smooth scroll inactive */
+bool letterboxBarsGray = FALSE;       /* gray vs black letterbox bars (sdl3draw) */
 BYTE zoomFactor = ZOOM_FACTOR_DOUBLE;
 
 bool showPillLabels = FALSE;
@@ -97,6 +106,32 @@ static bool winboloQuit = FALSE;
 static bool finishedLoop = FALSE;
 static bool showAllianceReq = TRUE;
 
+/* Terminal connection-failure state. Set on any unrecoverable connection
+ * problem (can't reach the relay, version mismatch, used/expired join code,
+ * mid-game disconnect, or an unknown transport error). Once set, the main loop
+ * shows one error dialog and freezes the game — it stops ticking and sending,
+ * so we never re-open the WebSocket (join codes are single-use; there is
+ * nothing to reconnect to) and never present a blank screen. */
+static bool s_connFailed = FALSE;
+static bool s_connErrorShown = FALSE;
+static char s_connReason[256] = "";
+
+/* Record a terminal connection failure. reason may be NULL/empty, in which case
+ * a generic message is used. Called from gamefront_wasm.c (initial connect) and
+ * from the main loop (mid-game disconnect). Idempotent — first reason wins. */
+void wasmReportConnectFailure(const char *reason) {
+  if (s_connFailed) return;
+  if (reason != NULL && reason[0] != '\0') {
+    strncpy(s_connReason, reason, sizeof(s_connReason) - 1);
+    s_connReason[sizeof(s_connReason) - 1] = '\0';
+  } else {
+    strncpy(s_connReason, langGetText(STR_WEB_CONNECT_FAILED),
+            sizeof(s_connReason) - 1);
+    s_connReason[sizeof(s_connReason) - 1] = '\0';
+  }
+  s_connFailed = TRUE;
+}
+
 static DWORD oldTick = 0;
 static DWORD ttick = 0;
 static time_t ticks = 0;
@@ -114,82 +149,58 @@ void sdl3MessageHandler(const char *message, const char *title) {
                     IMGUI_MSG_INFO, IMGUI_MSG_OK);
 }
 
+/* Mouse-wheel bridge. SDL3's emscripten backend registers its wheel callback on
+ * a different target from the pointer-event shim that delivers mouse motion and
+ * clicks, and in the browser build it doesn't fire — so scrolling never reached
+ * the shared gunsight handler. shell.html adds its own canvas 'wheel' listener
+ * and calls this, which injects a native SDL wheel event; sdl3ImguiProcessEvents
+ * then handles it exactly like a real wheel (same in-game + ImGui-capture
+ * gating). deltaY is the browser value (negative = scroll up); SDL uses
+ * positive-up, so flip the sign to a unit step. */
+extern void inputBumpGunsight(int direction);       /* gui/sdl3/input.h */
+extern uint8_t inputConsumeGunsightAdj(void);       /* gui/sdl3/input.h */
+extern bool sdl3ImguiWantCaptureMouse(void);        /* sdl3imgui.cpp */
+
+EMSCRIPTEN_KEEPALIVE
+void wbWasmWheel(double deltaY) {
+  if (deltaY == 0.0) return;
+  /* Only adjust the gunsight in a running game, and not while the wheel is over
+   * an ImGui panel/dialog (mirrors the shared desktop handler's gating). Browser
+   * deltaY is negative when scrolling up; the gunsight increases on scroll-up. */
+  if (!humanSim || clientSimGetNetStatus(humanSim) != netRunning) return;
+  if (sdl3ImguiWantCaptureMouse()) return;
+  inputBumpGunsight(deltaY < 0.0 ? +1 : -1);
+}
+
 /* -------------------------------------------------------
  * windowRunGameTick — game logic using transport
  * ------------------------------------------------------- */
 static void windowRunGameTick(ClientSim *cs) {
   static bool inBrain = FALSE;
-  static bool justKeys = FALSE;
   static BYTE t2 = 0;
   static int trackerTime = 11500;
-  static uint32_t simTickCounter = 0;
-  tankButton tb;
-  bool isShoot;
-  bool isMine = FALSE;
   bool used = FALSE;
   bool brainRunning;
 
   brainRunning = brainHandlerIsBrainRunning();
-  isShoot = FALSE;
-  tb = 0;
 
   if (!clientSimHasTransport(cs) || doingTutorial) {
     return;
   }
 
-  {
-    BYTE myPlayerNum = gameFrontGetPlayerNum();
-    if (justKeys == TRUE) {
-      /* Keys tick */
-      if (brainRunning == FALSE) {
-        tb = inputGetKeys(cs, &keys, isInMenu);
-      } else {
-        inputScroll(cs, &keys, isInMenu);
-      }
-      InputPacket pkt;
-      clientBuildInputPacket(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
-      clientMutexWaitFor();
-      clientSimKeysTick(cs, &pkt);
-      clientMutexRelease();
-      /* Deliver the keys-half input but do NOT advance the server here.
-       * The active local transport's tick runs serverSimTick, which is a
-       * full 20ms frame (both keys+game half-steps internally). Ticking it
-       * in both branches would advance the sim every 10ms — 2x too fast.
-       * Only the game-tick branch below advances it, so the server runs at
-       * the 20ms SERVER_TICK_LENGTH cadence, matching the desktop build. */
-      clientSimNetRecordInput(cs, &pkt);
-      simTickCounter++;
-      justKeys = FALSE;
-    } else {
-      /* Game tick */
-      t2++;
-      trackerTime++;
-      if (brainRunning == FALSE) {
-        tb = inputGetKeys(cs, &keys, isInMenu);
-        isShoot = inputIsFireKeyPressed(&keys, isInMenu);
-        isMine = inputIsMineKeyPressed(&keys, isInMenu);
-      } else {
-        inputScroll(cs, &keys, isInMenu);
-      }
-      InputPacket pkt;
-      clientBuildInputPacket(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
-      clientMutexWaitFor();
-      clientSimGameTick(cs, &pkt, brainRunning);
-      clientMutexRelease();
-      clientSimNetSendInput(cs, &pkt);
-      clientSimNetTick(cs);
-      clientMutexWaitFor();
-      clientSimDisplayTick(cs, brainRunning);
-      clientMutexRelease();
-      simTickCounter++;
-      ticks++;
-      justKeys = TRUE;
-      used = TRUE;
-    }
+  /* One keys/game/lobby half-step lives in the shared client-frontend tick
+   * core (both desktop and web call it); the brain and per-second stat
+   * rollover below stay here in the single-threaded driver. */
+  if (clientFrontRunTickStep(cs)) {
+    t2++;
+    trackerTime++;
+    ticks++;
+    used = TRUE;
   }
 
   /* AI */
-  if (used == TRUE && inBrain == FALSE && brainRunning == TRUE) {
+  if (used == TRUE && inBrain == FALSE && brainRunning == TRUE &&
+      clientSimGetNetStatus(cs) != netFailed) {
     clientMutexWaitFor();
     inBrain = TRUE;
     clientMutexRelease();
@@ -215,12 +226,48 @@ static void windowRunGameTick(ClientSim *cs) {
 /* -------------------------------------------------------
  * main_loop_iteration — called by emscripten_set_main_loop
  * ------------------------------------------------------- */
+void frontEndTutorialNotePresentedFrame(void);
+static void tutorialRespawnPoll(void);
+
+/* Cloud-prefs bridge (prefs_bridge_wasm.c). */
+void wbPrefsSyncNow(void);
+void wbPrefsPumpUpload(uint64_t nowMs);
+
 static void main_loop_iteration(void) {
   DWORD tick;
   ClientSim *cs = humanSim;
 
   /* Process events */
   sdl3ImguiProcessEvents(cs);
+
+  /* Detect a mid-game terminal disconnect (server shutdown / dropped /
+   * unrecoverable error). The initial-connect failure path sets s_connFailed
+   * directly from gameFrontStart, so this only needs to catch failures that
+   * arise while running. */
+  if (!s_connFailed && cs != NULL && clientSimHasTransport(cs) &&
+      gameFrontGetServerSim() == NULL) {  /* UDP only — not local single-player */
+    ClientConnectState st = clientSimGetConnectState(cs);
+    if (st == CLIENT_CONNECT_ERROR || st == CLIENT_CONNECT_SERVER_SHUTDOWN ||
+        st == CLIENT_CONNECT_KICKED) {
+      clientSimConnectionLost(cs);
+      /* A kick sets no connectErrorReason; show the same message the
+       * desktop lobby loop does (STR_DLGLOBBY_KICKED) instead of the
+       * generic could-not-connect fallback. */
+      if (st == CLIENT_CONNECT_KICKED) {
+        wasmReportConnectFailure(langGetText(STR_DLGLOBBY_KICKED));
+      } else {
+        wasmReportConnectFailure(clientSimGetConnectErrorReason(cs));
+      }
+    }
+  }
+
+  /* On the first frame after a terminal failure, raise the error dialog. The
+   * frozen state below keeps rendering it without ticking or sending. */
+  if (s_connFailed && !s_connErrorShown) {
+    imguiMessageBoxEx(DIALOG_BOX_TITLE, s_connReason, IMGUI_MSG_ERROR,
+                      IMGUI_MSG_OK);
+    s_connErrorShown = TRUE;
+  }
 
   /* Game tick accumulation (replaces SDL_AddTimer).
    *
@@ -241,7 +288,7 @@ static void main_loop_iteration(void) {
    *     declared SERVER_SHUTDOWN, so the owed ticks are dead either way.  In
    *     single-player there is simply nothing to catch up to.  Drop the debt
    *     and resume from real time. */
-  if (clientSimHasTransport(cs)) {
+  if (!s_connFailed && clientSimHasTransport(cs)) {
     const double MAX_ELAPSED_MS  = 200.0;  /* per-frame catch-up bound (ordinary jank) */
     const double STALL_RESET_MS  = 500.0;  /* gap above this = background/suspend → drop */
     const int    MAX_CATCHUP     = 4;      /* at most 4 sim ticks per render frame */
@@ -263,12 +310,21 @@ static void main_loop_iteration(void) {
     /* Leftover `gameTickAccum` (>= GAME_TICK_LENGTH) drains in future frames. */
   }
 
-  /* Render */
+  /* Render (always — even while frozen, so the error dialog draws over the
+   * last frame instead of a blank screen). */
   tick = SDL_GetTicks();
   clientMutexWaitFor();
-  if (finishedLoop == FALSE) {
+  if (finishedLoop == FALSE && !s_connFailed) {
     clientSimRenderPrepare(cs, tick);
     clientRenderFrame(cs, redraw);
+  } else if (s_connFailed) {
+    /* Frozen: don't render the (possibly never-connected) game; clear to black
+     * so the error dialog draws over a clean background, not garbage. */
+    SDL_Renderer *ren = sdl3DrawGetRenderer();
+    if (ren) {
+      SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+      SDL_RenderClear(ren);
+    }
   }
   clientMutexRelease();
   dwSysFrame += (SDL_GetTicks() - tick);
@@ -279,6 +335,15 @@ static void main_loop_iteration(void) {
     SDL_Renderer *ren = sdl3DrawGetRenderer();
     if (ren) SDL_RenderPresent(ren);
   }
+
+  /* Tutorial: count presented frames (gates the intro overlay) and poll the
+   * server's once-per-run respawn message. No-ops outside tutorial mode. */
+  frontEndTutorialNotePresentedFrame();
+  tutorialRespawnPoll();
+
+  /* Cloud prefs: push any setting changed this session, debounced. No-op when
+   * not signed in or when nothing is sync-dirty. */
+  wbPrefsPumpUpload(SDL_GetTicks());
 
   if (finishedLoop) {
     emscripten_cancel_main_loop();
@@ -346,45 +411,64 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
+  /* Initialise the in-memory preferences document. The MEMFS path is a scratch
+   * backing only — persistence is the WinBolo.net API (prefs_bridge_wasm.c),
+   * not the browser filesystem. */
+  prefsInit("/WinBolo.json");
+
   printf("[WASM] Starting gameFrontStart...\n");
-  if (gameFrontStart(cmdLine, &keys, FALSE, NULL) == FALSE) {
+  bool started = (gameFrontStart(cmdLine, &keys, FALSE, NULL) != FALSE);
+  if (!started && !s_connFailed) {
+    /* A genuine init failure (not a connection problem) — nothing to show. */
     printf("[WASM] gameFrontStart FAILED\n");
     clientMutexDestroy();
     SDL_Quit();
     return 1;
   }
-  fprintf(stderr, "[WASM] gameFrontStart OK; humanSim=%p\n", (void*)humanSim);
+  /* From here either we connected, or the connection failed but gameFrontStart
+   * kept humanSim alive in its error state — we still set up ImGui and enter
+   * the loop so the error dialog can draw (never a blank screen). */
+  fprintf(stderr, "[WASM] gameFrontStart %s; humanSim=%p\n",
+          started ? "OK" : "CONNECT FAILED", (void*)humanSim);
   fflush(stderr);
 
-  /* Apply player name from URL after gameFrontStart sets defaults.
-   * Gated like the Phase 7.1 Steam-persona seed: only honour ?name=
-   * when there is no persisted name and no stored WBN token (which
-   * would overwrite us authoritatively), and run the URL value
-   * through the Phase 2 validator before applying it. */
-  {
-    const char *urlName = getUrlParam("name");
-    if (urlName[0] != '\0') {
-      char persisted[PLAYER_NAME_LEN];
-      char token[256], expiry[256];
-      persisted[0] = '\0';
-      token[0] = '\0';
-      expiry[0] = '\0';
-      gameFrontGetPlayerName(persisted);
-      gameFrontGetWinbolonetToken(token, expiry);
+  if (started) {
+    /* Start the shared tick cadence from a known state (first step is a keys
+     * step with a zeroed sub-tick counter), mirroring the desktop run-start. */
+    clientFrontTickReset();
+    /* Pull the account's cloud prefs and apply them. This runs AFTER
+     * gameFrontStart (which seeds defaults and creates humanSim) so
+     * wasmApplyJoinPrefs overrides exactly what the player synced — keys, menu
+     * toggles, game options, gamepad sensitivities and build options — on the
+     * first frame. No-op for single-player (not signed in). Same apply path the
+     * relay's join-prefs frame uses. */
+    wbPrefsSyncNow();
+  }
 
-      if (persisted[0] != '\0') {
-        printf("[WASM] URL name ignored (already have %s)\n", persisted);
-      } else if (token[0] != '\0') {
-        printf("[WASM] URL name ignored (WBN token present)\n");
+  /* Single-player name selection. Network play (?game_key=) already set its
+   * join name inside gameFrontStart, before the JOIN went out (the account
+   * name from /api/v1/me, or a web<rand> fallback) — so there's nothing to do
+   * for the network case here. Setting it now would be too late (the JOIN has
+   * already been sent) and would only clobber the local copy.
+   *
+   * Single player: a validated ?name= wins; otherwise default to "Me". */
+  {
+    const char *gameKey = getUrlParam("game_key");
+    if (gameKey[0] != '\0') {
+      /* network play: name handled in gameFrontStart before JOIN */
+    } else {
+      /* Single player: a validated ?name= wins; otherwise default to "Me".
+       * The WASM build re-seeds gameFrontName on every launch, so there is
+       * no persisted user name to preserve here. */
+      const char *urlName = getUrlParam("name");
+      char validated[PLAYER_NAME_LEN];
+      if (urlName[0] != '\0' &&
+          playerNameValidate(urlName, validated, PLAYER_NAME_LEN, NULL)) {
+        gameFrontSetPlayerName(validated);
+        printf("[WASM] single player: name=%s (from URL)\n", validated);
       } else {
-        char validated[PLAYER_NAME_LEN];
-        if (playerNameValidate(urlName, validated, PLAYER_NAME_LEN, NULL)) {
-          gameFrontSetPlayerName(validated);
-          printf("[WASM] URL name=%s\n", validated);
-        } else {
-          gameFrontSetPlayerName((char *)langGetText(STR_DLGGAMESETUP_DEFAULTNAME));
-          printf("[WASM] URL name rejected, using default\n");
-        }
+        gameFrontSetPlayerName((char *)"Me");
+        printf("[WASM] single player: default name=Me\n");
       }
     }
   }
@@ -442,6 +526,9 @@ int main(int argc, char *argv[]) {
 void windowReCreate(void)  { }
 void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
 
+/* Leave the game: navigate the hosting page back to the lobby landing. */
+void windowLeaveGame(void) { emscripten_run_script("window.location.href='/'"); }
+
 void windowApplyMenuChecks(ClientSim *cs) {
   clientSimSetGunsight(cs, showGunsight);
   clientSimSetAutoScroll(cs, autoScrollingEnabled);
@@ -454,6 +541,141 @@ void windowApplyMenuChecks(ClientSim *cs) {
   clientSimShowMessages(cs, MSG_NETSTATUS, showNetworkStatusMessages);
   clientSimShowMessages(cs, MSG_NETWORK, showNetworkDebugMessages);
   clientSimSetAllowNewPlayers(cs, allowNewPlayers);
+}
+
+/* -------------------------------------------------------
+ * C5: apply WinBolo.net synced prefs from the join metadata frame.
+ *
+ * Applies a projected prefs subset (KEYS / MENU / GAME OPTIONS / SETTINGS)
+ * from JSON. Two callers feed it: the relay's join-prefs 0x01 frame
+ * (udpClientParseProxyMeta, emscripten only) and the WinBolo.net cloud-prefs
+ * GET (prefs_bridge_wasm.c, on adopt). Values mirror the
+ * desktop INI store: "Yes"/"No" bools, stringified ints, SDL3 keycodes for
+ * KEYS. Native JSON bool/number is tolerated too. Absent keys keep the
+ * current (default) value. This runs after gameFrontStart seeded defaults,
+ * so it overrides exactly what the user has synced.
+ * ------------------------------------------------------- */
+extern bool useAutoslow;   /* defined in gamefront_wasm.c */
+extern bool useAutohide;
+void windowSetSoundVolume(int pct);  /* defined below, after this function */
+
+static bool prefBool(cJSON *o, const char *k, bool dflt) {
+  cJSON *it = cJSON_GetObjectItemCaseSensitive(o, k);
+  if (it == NULL) return dflt;
+  if (cJSON_IsBool(it))   return cJSON_IsTrue(it);
+  if (cJSON_IsNumber(it)) return it->valuedouble != 0;
+  if (cJSON_IsString(it) && it->valuestring)
+    return (SDL_strcasecmp(it->valuestring, "Yes")  == 0 ||
+            SDL_strcasecmp(it->valuestring, "true") == 0 ||
+            strcmp(it->valuestring, "1") == 0);
+  return dflt;
+}
+
+static int prefInt(cJSON *o, const char *k, int dflt) {
+  cJSON *it = cJSON_GetObjectItemCaseSensitive(o, k);
+  if (it == NULL) return dflt;
+  if (cJSON_IsNumber(it)) return (int)it->valuedouble;
+  if (cJSON_IsString(it) && it->valuestring) return atoi(it->valuestring);
+  return dflt;
+}
+
+static float prefFloat(cJSON *o, const char *k, float dflt) {
+  cJSON *it = cJSON_GetObjectItemCaseSensitive(o, k);
+  if (it == NULL) return dflt;
+  if (cJSON_IsNumber(it)) return (float)it->valuedouble;
+  if (cJSON_IsString(it) && it->valuestring) return (float)atof(it->valuestring);
+  return dflt;
+}
+
+void wasmApplyJoinPrefs(const char *prefsJson, int len) {
+  if (prefsJson == NULL || len <= 0) return;
+  cJSON *root = cJSON_ParseWithLength(prefsJson, (size_t)len);
+  if (root == NULL) { printf("[WASM] join prefs: parse failed\n"); return; }
+
+  cJSON *k = cJSON_GetObjectItemCaseSensitive(root, "KEYS");
+  if (cJSON_IsObject(k)) {
+    keys.kiForward      = prefInt(k, "Forward",        keys.kiForward);
+    keys.kiBackward     = prefInt(k, "Backwards",      keys.kiBackward);
+    keys.kiLeft         = prefInt(k, "Left",           keys.kiLeft);
+    keys.kiRight        = prefInt(k, "Right",          keys.kiRight);
+    keys.kiShoot        = prefInt(k, "Shoot",          keys.kiShoot);
+    keys.kiLayMine      = prefInt(k, "Lay Mine",       keys.kiLayMine);
+    keys.kiGunIncrease  = prefInt(k, "Increase Range", keys.kiGunIncrease);
+    keys.kiGunDecrease  = prefInt(k, "Decrease Range", keys.kiGunDecrease);
+    keys.kiTankView     = prefInt(k, "Tank View",      keys.kiTankView);
+    keys.kiPillView     = prefInt(k, "Pill View",      keys.kiPillView);
+    keys.kiAllyView     = prefInt(k, "Ally View",      keys.kiAllyView);
+    keys.kiLGMView      = prefInt(k, "LGM View",       keys.kiLGMView);
+    keys.kiBaseView     = prefInt(k, "Base View",      keys.kiBaseView);
+    keys.kiScrollUp     = prefInt(k, "Scroll Up",      keys.kiScrollUp);
+    keys.kiScrollDown   = prefInt(k, "Scroll Down",    keys.kiScrollDown);
+    keys.kiScrollLeft   = prefInt(k, "Scroll Left",    keys.kiScrollLeft);
+    keys.kiScrollRight  = prefInt(k, "Scroll Right",   keys.kiScrollRight);
+    keys.kiQuickTree    = prefInt(k, "Quick Tree",     keys.kiQuickTree);
+    keys.kiQuickRoad    = prefInt(k, "Quick Road",     keys.kiQuickRoad);
+    keys.kiQuickWall    = prefInt(k, "Quick Wall",     keys.kiQuickWall);
+    keys.kiQuickPillbox = prefInt(k, "Quick Pillbox",  keys.kiQuickPillbox);
+    keys.kiQuickMine    = prefInt(k, "Quick Mine",     keys.kiQuickMine);
+  }
+
+  cJSON *m = cJSON_GetObjectItemCaseSensitive(root, "MENU");
+  if (cJSON_IsObject(m)) {
+    showGunsight              = prefBool(m, "Show Gunsight",                 showGunsight);
+    soundEffects              = prefBool(m, "Sound Effects",                 soundEffects);
+    showNewswireMessages      = prefBool(m, "Show Newswire Messages",        showNewswireMessages);
+    showAssistantMessages     = prefBool(m, "Show Assistant Messages",       showAssistantMessages);
+    showAIMessages            = prefBool(m, "Show AI Messages",              showAIMessages);
+    showNetworkStatusMessages = prefBool(m, "Show Network Status Messages",  showNetworkStatusMessages);
+    showNetworkDebugMessages  = prefBool(m, "Show Network Debug Messages",   showNetworkDebugMessages);
+    autoScrollingEnabled      = prefBool(m, "Autoscroll Enabled",            autoScrollingEnabled);
+    showPillLabels            = prefBool(m, "Show Pill Labels",              showPillLabels);
+    showBaseLabels            = prefBool(m, "Show Base Labels",              showBaseLabels);
+    labelSelf                 = prefBool(m, "Label Own Tank",                labelSelf);
+    labelMsg  = (labelLen)prefInt(m, "Message Label Size", (int)labelMsg);
+    labelTank = (labelLen)prefInt(m, "Tank Label Size",    (int)labelTank);
+    int vol = prefInt(m, "Sound Volume", soundVolume);
+    if (vol < 0) vol = 0;
+    if (vol > 100) vol = 100;
+    windowSetSoundVolume(vol);
+  }
+
+  cJSON *g = cJSON_GetObjectItemCaseSensitive(root, "GAME OPTIONS");
+  if (cJSON_IsObject(g)) {
+    useAutoslow = prefBool(g, "Auto Slowdown",           useAutoslow);
+    useAutohide = prefBool(g, "Auto Show-Hide Gunsight",  useAutohide);
+  }
+
+  /* SETTINGS: gamepad sensitivities (clamped to the same ranges as desktop
+   * gamefront.c) and build-cursor options. The globals live in input_gamepad.c
+   * and build_cursor.c (both compiled into the wasm build) and are read by the
+   * shared input code each tick. */
+  cJSON *s = cJSON_GetObjectItemCaseSensitive(root, "SETTINGS");
+  if (cJSON_IsObject(s)) {
+    float gs = prefFloat(s, "Gamepad Scroll Sens", g_gamepadScrollSensitivity);
+    if (gs >= 0.25f && gs <= 4.0f) g_gamepadScrollSensitivity = gs;
+    float ts = prefFloat(s, "Gamepad Tank Sens", g_gamepadTankSensitivity);
+    if (ts >= 0.10f && ts <= 1.0f) g_gamepadTankSensitivity = ts;
+    float bs = prefFloat(s, "Gamepad Build Cursor Sens", g_gamepadBuildCursorSensitivity);
+    if (bs >= 0.25f && bs <= 2.0f) g_gamepadBuildCursorSensitivity = bs;
+
+    g_buildExitExecutes = prefBool(s, "Build Exit Executes", g_buildExitExecutes);
+    g_buildExitExecutesMomentaryOnly =
+        prefBool(s, "Build Exit Executes Momentary Only", g_buildExitExecutesMomentaryOnly);
+    g_buildDoubleTapRoad = prefBool(s, "Build Double Tap Road", g_buildDoubleTapRoad);
+    g_buildHoldMomentary = prefBool(s, "Build Hold Momentary", g_buildHoldMomentary);
+    g_buildAutoCloseOnExecute = prefBool(s, "Build Auto Close On Execute", g_buildAutoCloseOnExecute);
+  }
+
+  cJSON_Delete(root);
+
+  /* Push the toggles into the live client/sim. Keys are read from the global
+   * on the next input tick; pill/base label globals on the next status draw. */
+  if (humanSim) {
+    windowApplyMenuChecks(humanSim);
+    clientSimSetTankAutoSlowdown(humanSim, useAutoslow);
+    clientSimSetTankAutoHideGunsight(humanSim, useAutohide);
+  }
+  printf("[WASM] applied join prefs\n");
 }
 
 int windowGetDrawTime(void) { return (int)dwSysFrameTotal; }
@@ -513,36 +735,6 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
 }
 
 /* Menu toggles — called by sdl3imgui.cpp */
-void windowShowGunsight_toggle(ClientSim *cs) {
-  showGunsight = !showGunsight;
-  clientSimSetGunsight(cs, showGunsight);
-}
-void windowAutomaticScrolling_toggle(ClientSim *cs) {
-  autoScrollingEnabled = !autoScrollingEnabled;
-  if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
-}
-void windowShowPillLabels_toggle(ClientSim *cs) {
-  BYTE count, total;
-  showPillLabels = !showPillLabels;
-  sdl3DrawSetPillsStatusClear();
-  total = clientSimGetPillCount(cs);
-  for (count = 1; count <= total; count++) {
-    BYTE pillStat = clientSimGetPillAlliance(cs, count);
-    sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
-  }
-  sdl3DrawCopyPillsStatus(0, 0);
-}
-void windowShowBaseLabels_toggle(ClientSim *cs) {
-  BYTE count, total;
-  showBaseLabels = !showBaseLabels;
-  sdl3DrawSetBasesStatusClear();
-  total = clientSimGetBaseCount(cs);
-  for (count = 1; count <= total; count++) {
-    BYTE baseStat = clientSimGetBaseAlliance(cs, count);
-    sdl3DrawStatusBase(count, baseStat, showBaseLabels);
-  }
-  sdl3DrawCopyBasesStatus(0, 0);
-}
 void windowSoundEffects_toggle(void)          { soundEffects = !soundEffects; }
 void windowBackgroundSoundChange_toggle(void) {
   backgroundSound = !backgroundSound;
@@ -604,10 +796,6 @@ void windowSaveMap(ClientSim *cs) {
                     IMGUI_MSG_INFO, IMGUI_MSG_OK);
 }
 
-void windowKeyPressed(ClientSim *cs, int keyCode) {
-  if (keyCode == keys.kiTankView) clientSimTankView(cs);
-  else if (keyCode == keys.kiPillView) clientSimPillView(cs, 0, 0);
-}
 void windowButtonAdd(int keyCode)    { (void)keyCode; }
 void windowButtonRemove(int keyCode) { (void)keyCode; }
 void windowMouseClick(int xWin, int yWin, int xPos, int yPos) {
@@ -618,6 +806,10 @@ void windowStartTutorial(void) { doingTutorial = TRUE; }
 /* Desktop-only window helpers — wasm has no native window position/size to
  * persist or aspect-correct, so these are no-ops. */
 void windowSmoothScrolling_toggle(void) { smoothScrollingEnabled = !smoothScrollingEnabled; }
+void windowLetterboxBarsGray_toggle(void) {
+  letterboxBarsGray = !letterboxBarsGray;
+  gameFrontSaveCurrentPrefs();
+}
 void windowComputeAspectCorrectSize(int actualW, int actualH, int actualX, int actualY,
                                     int *saveW, int *saveH, int *saveX, int *saveY) {
   if (saveW) *saveW = actualW;
@@ -631,6 +823,17 @@ void windowGetCustomSize(int *w, int *h) { if (w) *w = 0; if (h) *h = 0; }
 void windowSetCustomSize(int w, int h) { (void)w; (void)h; }
 void windowSaveCurrentPosition(void) {}
 void windowAllowPlayerNameChange(bool allow) { (void)allow; }
+
+/* Suspend/resume and pause hooks.  The desktop build freezes the local
+ * (and solo-server) sim and mutes audio while backgrounded, while a
+ * controller is lost, or while the Deck/tutorial pause menus are up.  The
+ * browser build has no OS-level background/foreground or controller hot-plug
+ * lifecycle to drive these, so they are no-ops. */
+void windowSuspendBackground(ClientSim *cs) { (void)cs; }
+void windowResumeForeground(ClientSim *cs) { (void)cs; }
+void windowControllerLostPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+void windowDeckPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
+void windowTutorialPause(ClientSim *cs, bool active) { (void)cs; (void)active; }
 
 /* -------------------------------------------------------
  * Frontend callbacks — called by backend (bolo engine)
@@ -693,8 +896,13 @@ void frontEndUpdatePlayerPing(ClientSim *cs, playerNumbers value, uint16_t ping)
   sdl3ImguiUpdatePlayerPing((unsigned char)value, ping);
 }
 
+/* Tracks which ClientSim owns the on-screen player panel, so stale callbacks
+ * from a previous game can't write into the live UI (mirrors winbolo.c). */
+static struct ClientSim *s_activeUiCs = NULL;
+
 void frontEndUpdatePlayerFlags(ClientSim *cs, playerNumbers value, uint8_t clientType, uint8_t clientFlags) {
-  (void)cs; (void)value; (void)clientType; (void)clientFlags;
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  sdl3ImguiUpdatePlayerFlags((unsigned char)value, clientType, clientFlags);
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
@@ -746,15 +954,51 @@ void frontEndGameOver(ClientSim *cs) {
   finishedLoop = TRUE;
 }
 
-void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) { (void)cs; (void)value; }
-void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) { (void)cs; (void)value; (void)str; (void)countryCode; (void)ping; (void)clientType; (void)clientFlags; }
-void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) { (void)cs; (void)value; (void)isChecked; }
-void frontEndApplyLocalTankPrefs(struct ClientSim *cs) { (void)cs; }
-void frontEndSetActiveClientSim(struct ClientSim *cs) { (void)cs; }
+void frontEndClearPlayer(struct ClientSim *cs, playerNumbers value) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  sdl3ImguiClearPlayer((unsigned char)value);
+}
+
+void frontEndSetPlayer(ClientSim *cs, playerNumbers value, char *str, const char *countryCode, uint16_t ping, uint8_t clientType, uint8_t clientFlags) {
+  char cc[3];
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  if (!clientSimIsRunning(cs)) {
+    cc[0] = 'X'; cc[1] = 'X'; cc[2] = '\0';
+    sdl3ImguiSetPlayer((unsigned char)value, str, cc);
+    return;
+  }
+  /* Country code may arrive as "" when unknown; substitute 'X' so we never
+   * read past the end (matches winbolo.c). */
+  cc[0] = countryCode[0] ? countryCode[0] : 'X';
+  cc[1] = (countryCode[0] && countryCode[1]) ? countryCode[1] : 'X';
+  cc[2] = '\0';
+  sdl3ImguiSetPlayer((unsigned char)value, str, cc);
+  sdl3ImguiUpdatePlayerMeta((unsigned char)value, ping, clientType, clientFlags);
+}
+
+void frontEndSetPlayerCheckState(struct ClientSim *cs, playerNumbers value, bool isChecked) {
+  if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  sdl3ImguiSetPlayerCheckState((unsigned char)value, isChecked);
+}
+
+void frontEndApplyLocalTankPrefs(struct ClientSim *cs) {
+  if (cs == NULL) return;
+  clientSimSetTankAutoSlowdown(cs, useAutoslow);
+  clientSimSetTankAutoHideGunsight(cs, useAutohide);
+}
+
+void frontEndSetActiveClientSim(struct ClientSim *cs) {
+  if (cs != s_activeUiCs) {
+    for (BYTE i = 0; i < MAX_TANKS; i++) {
+      sdl3ImguiClearPlayer(i);
+    }
+    /* Drop the previous game's newswire/kills text so it doesn't linger. */
+    sdl3DrawResetCachedText();
+  }
+  s_activeUiCs = cs;
+}
 void frontEndEnableRequestAllyMenu(bool enabled) { (void)enabled; }
 void frontEndEnableLeaveAllyMenu(bool enabled)   { (void)enabled; }
-
-void frontEndRedrawAll(ClientSim *cs) { windowRedrawAll(cs); }
 
 void frontEndShowGunsight(ClientSim *cs, bool isShown) {
   showGunsight = !isShown;
@@ -767,12 +1011,114 @@ void frontEndShowAllianceRequest(char *playerName, BYTE playerNum) {
   }
 }
 
-bool frontEndTutorial(BYTE pos) {
-  (void)pos;
-  return FALSE;  /* Tutorial not supported in WASM build */
+/* -------------------------------------------------------
+ * Tutorial step driver. Ported from gui/sdl3/winbolo.c — the WASM build
+ * replaces that event loop with this file. The step DATA lives in
+ * bolo/tutorial.c (tutorialSteps[]), the trigger is tank.c calling
+ * frontEndTutorial(pos), and the overlay is imgui_tutorial_overlay.cpp drawn
+ * from sdl3imgui.cpp. This drives the step sequence and intro gating.
+ * Single-threaded under emscripten, so no client-mutex dance is needed.
+ * ------------------------------------------------------- */
+#define TUTORIAL_INTRO_MIN_FRAMES 3
+static int  tutorialStepIdx = 0;
+static int  tutorialFramesPresented = 0;
+static bool respawn1Shown = false;
+
+void frontEndTutorialReset(void) {
+  tutorialStepIdx = 0;
+  tutorialFramesPresented = 0;
+  respawn1Shown = false;
 }
 
-void frontEndTutorialReset(void) { }
+/* Called once per frame after present so the intro defers until a real game
+ * frame is on screen (the modal dims over the map, not a grey backbuffer). */
+void frontEndTutorialNotePresentedFrame(void) {
+  if (tutorialFramesPresented < TUTORIAL_INTRO_MIN_FRAMES) {
+    tutorialFramesPresented++;
+  }
+}
+
+/* Shows the respawn message once per run when the server flags a death. */
+static void tutorialRespawnPoll(void) {
+  if (isTutorial != TRUE || respawn1Shown) return;
+  if (tutorialOverlayIsOpen()) return;  /* don't stack on a step message */
+  ServerSim *srv = gameFrontGetServerSim();
+  if (!srv) return;
+  if (!serverSimTakeTutorialRespawn1(srv)) return;
+  respawn1Shown = true;
+  {
+    uint16_t ids[1];
+    ids[0] = STR_TUTORIAL_RESPAWN1;
+    tutorialOverlayShow(ids, 1, NULL);
+  }
+}
+
+/* Runs when the player dismisses the last message of the current step.
+ * Advances the sequencer; on the final step, leaves tutorial mode so the
+ * player can keep driving. */
+static void tutorialStepComplete(void) {
+  bool finalStep = (tutorialStepIdx == tutorialStepCount - 1);
+  if (finalStep) {
+    isTutorial = FALSE;
+    if (humanSim) clientSimSetTutorial(humanSim, false);
+    {
+      ServerSim *srv = gameFrontGetServerSim();
+      if (srv) serverSimSetTutorial(srv, false);
+    }
+    gameFrontSetShowTutorialButton(false);
+  }
+  doingTutorial = FALSE;
+  tutorialStepIdx++;
+
+  /* After the boat-building step (the row with pos == 66), respawn at start 1
+   * (the far bank) instead of start 0 (at sea). Scan for the row so it
+   * survives step-table edits. */
+  {
+    int boatStep = -1;
+    int s;
+    for (s = 0; s < tutorialStepCount; s++) {
+      if (tutorialSteps[s].pos == 66) { boatStep = s; break; }
+    }
+    ServerSim *srv = gameFrontGetServerSim();
+    if (srv && boatStep >= 0) {
+      serverSimSetTutorialStartIdx(srv, (tutorialStepIdx > boatStep) ? 1 : 0);
+    }
+  }
+}
+
+bool frontEndTutorial(BYTE pos) {
+  int i;
+  int count;
+
+  if (isTutorial != TRUE) {
+    tutorialStepIdx = 0;  /* reset for the next run */
+    return FALSE;
+  }
+  if (tutorialStepIdx >= tutorialStepCount) return FALSE;
+  /* A message is up (or pending this frame): hold the tank, don't re-trigger. */
+  if (tutorialOverlayIsOpen()) return TRUE;
+
+  {
+    BYTE stepPos = tutorialSteps[tutorialStepIdx].pos;
+    if (stepPos != TUTORIAL_POS_ANY && stepPos != pos) return FALSE;
+  }
+  /* Intro step: defer until a frame has rendered so the modal opens over the
+   * map rather than a grey backbuffer. */
+  if (tutorialSteps[tutorialStepIdx].pos == TUTORIAL_POS_ANY &&
+      tutorialFramesPresented < TUTORIAL_INTRO_MIN_FRAMES) {
+    return FALSE;
+  }
+
+  doingTutorial = TRUE;
+  count = 0;
+  for (i = 0; i < TUTORIAL_MAX_MSGS; i++) {
+    if (tutorialSteps[tutorialStepIdx].msgs[i] == 0) break;
+    count++;
+  }
+  tutorialOverlayShow(tutorialSteps[tutorialStepIdx].msgs, count,
+                      tutorialStepComplete);
+  return TRUE;
+}
 
 /* -------------------------------------------------------
  * Misc required symbols

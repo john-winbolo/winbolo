@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Не вдалося визначити шлях для з�
 STR_DLGWBN_FETCHERR=Помилка отримання даних
 STR_DLGWBN_UNKNOWN_ERR=Невідома помилка
 STR_DLGWBN_FILEFILTER=Файли журналів WinBolo
+STR_DLGWBN_TAB_MYGAMES=Мої ігри
+STR_DLGWBN_MYGAMES_SIGNIN=Увійдіть або створіть обліковий запис, щоб переглянути свої останні ігри
+STR_DLGWBN_MYGAMES_NONE=У вас ще немає жодної записаної гри.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo — Вказати ім'я гравця
@@ -1404,6 +1407,7 @@ STR_VOTE_DRAW_TAG= (Нічия)
 STR_VOTE_NEEDS_RUNNING_TIP=Доступно після початку гри.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Оберіть команду перед голосуванням про здачу.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Здача доступна лише коли залишається рівно дві команди\nз живими гравцями.
+STR_VOTE_SHOW=Показати: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Гучність
@@ -1809,6 +1813,7 @@ STR_DLGSETTINGS_TAB_SESSION=Сесія
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Глядачі ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Глядач] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Припинити перегляд?
 STR_LV_SPEC_PHASE_LOBBY=Лобі
 STR_LV_SPEC_PHASE_LIVE=В ефірі
@@ -1822,3 +1827,12 @@ STR_LV_SPEC_CONNECTING=Підключення...
 STR_LV_SPEC_CONNECTION_LOST=З'єднання втрачено
 STR_LV_SPEC_BEGINS_NOW=Перегляд починається
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Спостереження {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Щоб приєднатися до цієї гри, потрібно увійти в обліковий запис WinBolo.net.
+STR_WEB_JOIN_NOT_ACCEPTING=Ця гра не приймає нових гравців.
+STR_WEB_JOIN_LINK_INVALID=Це ігрове посилання більше не дійсне.
+STR_WEB_JOIN_GAME_FULL=Ця гра заповнена.
+STR_WEB_JOIN_CODE_UNREACHABLE=Не вдалося отримати код приєднання — сервер недоступний.
+STR_WEB_CONNECT_FAILED=Не вдалося підключитися до сервера.
+STR_WEB_JOIN_NO_RESPONSE=Не вдалося приєднатися до гри (сервер не відповів, або запрошення вже використано чи термін його дії минув).

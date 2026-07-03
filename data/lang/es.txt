@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=No se pudo determinar la ruta de guardado
 STR_DLGWBN_FETCHERR=Error al obtener
 STR_DLGWBN_UNKNOWN_ERR=Error desconocido
 STR_DLGWBN_FILEFILTER=Archivos de registro de WinBolo
+STR_DLGWBN_TAB_MYGAMES=Mis partidas
+STR_DLGWBN_MYGAMES_SIGNIN=Inicia sesión o crea una cuenta para ver tus partidas recientes
+STR_DLGWBN_MYGAMES_NONE=Todavía no tienes ninguna partida registrada.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Definir nombre de jugador
@@ -1414,6 +1417,7 @@ STR_VOTE_DRAW_TAG= (Empate)
 STR_VOTE_NEEDS_RUNNING_TIP=Disponible una vez que la partida esté en curso.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Elige un equipo antes de votar para rendirse.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=La rendición solo está disponible cuando quedan exactamente dos equipos\ncon jugadores humanos.
+STR_VOTE_SHOW=Mostrar: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volumen
@@ -1809,6 +1813,7 @@ STR_DLGSETTINGS_TAB_SESSION=Sesión
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Espectadores ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Espectador] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=¿Salir del modo espectador?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=En vivo
@@ -1822,3 +1827,12 @@ STR_LV_SPEC_CONNECTING=Conectando...
 STR_LV_SPEC_CONNECTION_LOST=Conexión perdida
 STR_LV_SPEC_BEGINS_NOW=La observación comienza ahora
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Espectando {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Debes iniciar sesión en WinBolo.net para unirte a esta partida.
+STR_WEB_JOIN_NOT_ACCEPTING=Esta partida ya no admite nuevos jugadores.
+STR_WEB_JOIN_LINK_INVALID=Ese enlace de partida ya no es válido.
+STR_WEB_JOIN_GAME_FULL=Esta partida está llena.
+STR_WEB_JOIN_CODE_UNREACHABLE=No se pudo contactar con el servidor para obtener un código de unión.
+STR_WEB_CONNECT_FAILED=No se pudo conectar con el servidor.
+STR_WEB_JOIN_NO_RESPONSE=No se pudo unir a la partida (el servidor no respondió, o tu enlace de invitación ya se ha usado o ha caducado).

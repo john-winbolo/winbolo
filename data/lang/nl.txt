@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Kan opslagpad niet bepalen
 STR_DLGWBN_FETCHERR=Ophalen mislukt
 STR_DLGWBN_UNKNOWN_ERR=Onbekende fout
 STR_DLGWBN_FILEFILTER=WinBolo-logbestanden
+STR_DLGWBN_TAB_MYGAMES=Mijn spellen
+STR_DLGWBN_MYGAMES_SIGNIN=Meld je aan of maak een account aan om je recente spellen te bekijken
+STR_DLGWBN_MYGAMES_NONE=Je hebt nog geen opgenomen spellen.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Spelernaam instellen
@@ -1404,6 +1407,7 @@ STR_VOTE_DRAW_TAG= (Gelijkspel)
 STR_VOTE_NEEDS_RUNNING_TIP=Beschikbaar zodra het spel bezig is.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Kies een team voordat je stemt om over te geven.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Overgeven is alleen beschikbaar als er precies twee teams\nmet menselijke spelers over zijn.
+STR_VOTE_SHOW=Tonen: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume
@@ -1809,6 +1813,7 @@ STR_DLGSETTINGS_TAB_SESSION=Sessie
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Toeschouwers ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Toeschouwer] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Stoppen met kijken?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=Live
@@ -1822,3 +1827,12 @@ STR_LV_SPEC_CONNECTING=Verbinden...
 STR_LV_SPEC_CONNECTION_LOST=Verbinding verbroken
 STR_LV_SPEC_BEGINS_NOW=Toeschouwen begint nu
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Toeschouwen {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Je moet ingelogd zijn bij WinBolo.net om aan dit spel deel te nemen.
+STR_WEB_JOIN_NOT_ACCEPTING=Dit spel accepteert geen nieuwe spelers.
+STR_WEB_JOIN_LINK_INVALID=Deze spellink is niet meer geldig.
+STR_WEB_JOIN_GAME_FULL=Dit spel is vol.
+STR_WEB_JOIN_CODE_UNREACHABLE=Kon de server niet bereiken om een joincode op te halen.
+STR_WEB_CONNECT_FAILED=Kon geen verbinding maken met de server.
+STR_WEB_JOIN_NO_RESPONSE=Kon niet deelnemen aan het spel (de server reageerde niet, of je uitnodigingslink is al gebruikt of verlopen).

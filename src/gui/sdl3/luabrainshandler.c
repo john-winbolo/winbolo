@@ -124,11 +124,98 @@ static int s_log_json = 0;
 
 void luaBrainsSetLogJson(int enable) { s_log_json = enable ? 1 : 0; }
 
+/* Opt-out for the brain Lua sandbox. 0 = sandboxed (restricted stdlib +
+ * path-jailed file access), 1 = full luaL_openlibs (legacy/trusted). The
+ * GUI client and dedicated server default to 0; BrainTest sets 1. */
+static int s_allow_unsafe = 0;
+
+void luaBrainsSetAllowUnsafe(int enable) { s_allow_unsafe = enable ? 1 : 0; }
+
 void luaBrainsSetRunScript(const char *path) {
     if (path && path[0])
         SDL_strlcpy(s_run_script_path, path, sizeof(s_run_script_path));
     else
         s_run_script_path[0] = '\0';
+}
+
+/* Staged per-bot init arg from -bot-init's [..] suffix. Consumed (cleared)
+ * by the next luaBrainInstanceCreate, which injects BRAIN_INIT_ARG. */
+static char s_next_init_arg[128] = "";
+
+void luaBrainsSetNextInitArg(const char *arg) {
+    if (arg && arg[0])
+        SDL_strlcpy(s_next_init_arg, arg, sizeof(s_next_init_arg));
+    else
+        s_next_init_arg[0] = '\0';
+}
+
+bool luaBrainsParseBotInitSpec(const char *spec, BotInitSlot *slots, int maxN) {
+    const char *p = spec;
+    while (*p) {
+        while (*p == ',' || *p == ' ') p++;   /* skip separators */
+        if (!*p) break;
+
+        /* Range: "a" or "a-b", terminated by '='. */
+        char *endp = NULL;
+        long lo = strtol(p, &endp, 10);
+        if (endp == p) {
+            fprintf(stderr, "-bot-init: expected a player id near '%s'\n", p);
+            return false;
+        }
+        long hi = lo;
+        if (*endp == '-') {
+            const char *q = endp + 1;
+            hi = strtol(q, &endp, 10);
+            if (endp == q) {
+                fprintf(stderr, "-bot-init: expected end of id range near '%s'\n", q);
+                return false;
+            }
+        }
+        while (*endp == ' ') endp++;
+        if (*endp != '=') {
+            fprintf(stderr, "-bot-init: expected '=' after id range near '%s'\n", p);
+            return false;
+        }
+
+        /* Value: <path>[<arg>], up to the next comma (paths can't contain ','). */
+        const char *val = endp + 1;
+        const char *end = strchr(val, ',');
+        if (!end) end = val + strlen(val);
+
+        char vbuf[512 + 128];
+        size_t vlen = (size_t)(end - val);
+        if (vlen >= sizeof(vbuf)) vlen = sizeof(vbuf) - 1;
+        memcpy(vbuf, val, vlen);
+        vbuf[vlen] = '\0';
+
+        char argbuf[128] = "";
+        char *lb = strchr(vbuf, '[');
+        if (lb) {
+            *lb = '\0';                       /* path ends at '[' */
+            char *rb = strchr(lb + 1, ']');
+            if (rb) *rb = '\0';
+            SDL_strlcpy(argbuf, lb + 1, sizeof(argbuf));
+        }
+        if (vbuf[0] == '\0') {
+            fprintf(stderr, "-bot-init: empty path for id range %ld-%ld\n", lo, hi);
+            return false;
+        }
+
+        if (lo > hi) { long t = lo; lo = hi; hi = t; }
+        for (long id = lo; id <= hi; id++) {
+            if (id < 0 || id >= maxN) {
+                fprintf(stderr, "-bot-init: id %ld out of range (0-%d), ignoring\n",
+                        id, maxN - 1);
+                continue;
+            }
+            SDL_strlcpy(slots[id].path, vbuf, sizeof(slots[id].path));
+            SDL_strlcpy(slots[id].arg, argbuf, sizeof(slots[id].arg));
+            slots[id].covered = 1;
+        }
+
+        p = (*end == ',') ? end + 1 : end;
+    }
+    return true;
 }
 
 static LuaBrainInstance singletonInst;           /* The GUI client's brain  */
@@ -530,6 +617,18 @@ static int sdl_lua_searcher(lua_State *L) {
   size_t len = 0;
   char *buf;
 
+  /* When sandboxed, require() must not escape the brain directory. require()
+   * passes the module name to searchers verbatim (the "." -> "/" rewrite is
+   * done inside the stock searchers, not here), so a name containing a path
+   * separator or ".." would let `require("../../etc/foo")` resolve outside the
+   * brain dir. Reject those; brain modules are always flat names. */
+  if (!s_allow_unsafe &&
+      (SDL_strchr(modname, '/')  || SDL_strchr(modname, '\\') ||
+       SDL_strstr(modname, ".."))) {
+    lua_pushfstring(L, "\n\tmodule '%s' rejected (sandboxed)", modname);
+    return 1;
+  }
+
   /* Try brainDir/modname.lua */
   SDL_snprintf(filepath, sizeof(filepath), "%s/%s.lua", brainDir, modname);
   buf = sdl_load_file(filepath, &len);
@@ -543,7 +642,11 @@ static int sdl_lua_searcher(lua_State *L) {
     return 1;
   }
 
-  if (luaL_loadbuffer(L, buf, len, filepath) != LUA_OK) {
+  /* Sandboxed: load as TEXT only so a brain cannot require precompiled
+   * bytecode (Lua does not verify bytecode; crafted .luac escapes the VM).
+   * Unsafe hosts (BrainTest) keep the default "bt" mode for dev tooling. */
+  if (luaL_loadbufferx(L, buf, len, filepath,
+                       s_allow_unsafe ? NULL : "t") != LUA_OK) {
     SDL_free(buf);
     return lua_error(L);
   }
@@ -627,6 +730,293 @@ static int l_brain_log_print(lua_State *L) {
   WB_LOG_DEBUG(WB_LOG_CAT_LUA, "%s", buf);
   return 0;
 }
+
+
+/* ================================================================== */
+/* Brain Lua sandbox                                                   */
+/*                                                                     */
+/* When s_allow_unsafe is 0 (the default for the GUI client and        */
+/* dedicated server), brain_apply_sandbox() locks the freshly-opened   */
+/* standard libraries down so an untrusted brain .lua cannot run        */
+/* programs, load native code, escape the VM, or touch the filesystem   */
+/* outside its own directory:                                          */
+/*   - io.open / loadfile / os.remove are replaced with wrappers that  */
+/*     confine every path to the brain directory (read AND write).     */
+/*   - io.popen / io.lines / io.input / io.output / io.tmpfile,        */
+/*     os.execute / os.exit / os.rename / os.getenv / os.tmpname /      */
+/*     os.setlocale, load / dofile, package.loadlib and the native      */
+/*     package loaders, and the debug-library introspection set are     */
+/*     removed outright.                                               */
+/* The shipped GoalHunter brain needs no changes: its loadfile() of    */
+/* los_stamp_cache.lua and its io.open() cache paths all resolve under  */
+/* the brain directory, and everything it actually removes is dev-only */
+/* tooling that only runs under BrainTest (which sets s_allow_unsafe).  */
+/* ================================================================== */
+
+/* True if canonPath is canonRoot itself or a path beneath it. The
+ * separator check stops "/a/brainX" from matching root "/a/brain". */
+static bool brain_under_root(const char *canonRoot, const char *canonPath) {
+  size_t rl = SDL_strlen(canonRoot);
+  if (rl == 0) return false;
+#ifdef _WIN32
+  if (SDL_strncasecmp(canonPath, canonRoot, rl) != 0) return false;
+#else
+  if (SDL_strncmp(canonPath, canonRoot, rl) != 0) return false;
+#endif
+  char sep = canonPath[rl];
+  return sep == '\0' || sep == '/' || sep == '\\';
+}
+
+/* Canonicalize `path` (resolving .., symlinks, and relative-to-cwd) and
+ * verify it lands inside `root`. Writes the resolved absolute path into
+ * `out` and returns true on success. For a not-yet-existing file (write
+ * mode) the parent directory is canonicalized instead, so new files under
+ * the root are allowed while escapes are still rejected. */
+static bool brain_resolve_in_root(const char *root, const char *path,
+                                  char *out, size_t outlen) {
+  if (!path || !path[0]) return false;
+#ifdef _WIN32
+  char  rootCanon[LUA_BRAINS_PATH_MAX];
+  char  canon[LUA_BRAINS_PATH_MAX * 2];
+  DWORD rn = GetFullPathNameA(root, sizeof(rootCanon), rootCanon, NULL);
+  DWORD cn = GetFullPathNameA(path, sizeof(canon), canon, NULL);
+  if (rn == 0 || rn >= sizeof(rootCanon)) return false;
+  if (cn == 0 || cn >= sizeof(canon)) return false;
+  if (!brain_under_root(rootCanon, canon)) return false;
+  SDL_strlcpy(out, canon, outlen);
+  return true;
+#else
+  char *rootCanon = realpath(root, NULL);
+  if (!rootCanon) return false;
+
+  bool  ok    = false;
+  char *canon = realpath(path, NULL);     /* full resolve if it exists */
+  if (canon) {
+    ok = brain_under_root(rootCanon, canon);
+    if (ok) SDL_strlcpy(out, canon, outlen);
+    free(canon);
+  } else {
+    /* New file: canonicalize the parent dir and re-append the basename. */
+    char  tmp[LUA_BRAINS_PATH_MAX * 2];
+    char *parent;
+    const char *base;
+    char *slash;
+    SDL_strlcpy(tmp, path, sizeof(tmp));
+    slash = SDL_strrchr(tmp, '/');
+    if (slash) { *slash = '\0'; base = slash + 1; parent = realpath(tmp[0] ? tmp : ".", NULL); }
+    else       { base = tmp;    parent = realpath(".", NULL); }
+    if (parent) {
+      char full[LUA_BRAINS_PATH_MAX * 2];
+      SDL_snprintf(full, sizeof(full), "%s/%s", parent, base);
+      ok = brain_under_root(rootCanon, full);
+      if (ok) SDL_strlcpy(out, full, outlen);
+      free(parent);
+    }
+  }
+  free(rootCanon);
+  return ok;
+#endif
+}
+
+/* Jailed io.open(filename [, mode]): path-check, then delegate to the real
+ * io.open (upvalue 1) with the resolved path. upvalue 2 is the brain root. */
+static int l_jailed_io_open(lua_State *L) {
+  const char *fname = luaL_checkstring(L, 1);
+  const char *mode  = luaL_optstring(L, 2, "r");
+  const char *root  = lua_tostring(L, lua_upvalueindex(2));
+  char resolved[LUA_BRAINS_PATH_MAX * 2];
+  int  base;
+
+  if (!brain_resolve_in_root(root, fname, resolved, sizeof(resolved))) {
+    lua_pushnil(L);
+    lua_pushfstring(L, "io.open: '%s' is outside the brain directory", fname);
+    return 2;
+  }
+  base = lua_gettop(L);
+  lua_pushvalue(L, lua_upvalueindex(1)); /* the real io.open */
+  lua_pushstring(L, resolved);
+  lua_pushstring(L, mode);
+  lua_call(L, 2, LUA_MULTRET);
+  return lua_gettop(L) - base;
+}
+
+/* Jailed loadfile(filename): path-check, then load as TEXT only (rejects
+ * bytecode) with the normal sandboxed _ENV. upvalue 1 is the brain root. */
+static int l_jailed_loadfile(lua_State *L) {
+  const char *fname = luaL_checkstring(L, 1);
+  const char *root  = lua_tostring(L, lua_upvalueindex(1));
+  char   resolved[LUA_BRAINS_PATH_MAX * 2];
+  size_t len = 0;
+  char  *src;
+
+  if (!brain_resolve_in_root(root, fname, resolved, sizeof(resolved))) {
+    lua_pushnil(L);
+    lua_pushfstring(L, "loadfile: '%s' is outside the brain directory", fname);
+    return 2;
+  }
+  src = sdl_load_file(resolved, &len);
+  if (!src) {
+    lua_pushnil(L);
+    lua_pushfstring(L, "loadfile: cannot open '%s'", fname);
+    return 2;
+  }
+  if (luaL_loadbufferx(L, src, len, resolved, "t") != LUA_OK) {
+    SDL_free(src);
+    lua_pushnil(L);
+    lua_insert(L, -2); /* nil, errmsg */
+    return 2;
+  }
+  SDL_free(src);
+  return 1; /* the loaded chunk */
+}
+
+/* Jailed os.remove(filename): path-check, then remove. upvalue 1 = root. */
+static int l_jailed_os_remove(lua_State *L) {
+  const char *fname = luaL_checkstring(L, 1);
+  const char *root  = lua_tostring(L, lua_upvalueindex(1));
+  char resolved[LUA_BRAINS_PATH_MAX * 2];
+
+  if (!brain_resolve_in_root(root, fname, resolved, sizeof(resolved))) {
+    lua_pushnil(L);
+    lua_pushfstring(L, "os.remove: '%s' is outside the brain directory", fname);
+    return 2;
+  }
+  if (remove(resolved) != 0) {
+    lua_pushnil(L);
+    lua_pushfstring(L, "os.remove: cannot remove '%s'", fname);
+    return 2;
+  }
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+/* Generic jail for a C binding whose first argument is a filesystem path
+ * (e.g. gh_opt_log.open / gh_opt_log.append / gh_shield.load). Validates the
+ * path against the brain root, then forwards the call to the original function
+ * (upvalue 1) with the sanitized path substituted for arg 1 and the remaining
+ * arguments unchanged. upvalue 2 is the brain root. */
+static int l_jailed_path_arg1(lua_State *L) {
+  const char *p    = lua_tostring(L, 1);
+  const char *root = lua_tostring(L, lua_upvalueindex(2));
+  char resolved[LUA_BRAINS_PATH_MAX * 2];
+  int  n, i;
+
+  if (p == NULL || !brain_resolve_in_root(root, p, resolved, sizeof(resolved))) {
+    lua_pushnil(L);
+    lua_pushfstring(L, "blocked: path '%s' is outside the brain directory",
+                    p ? p : "(nil)");
+    return 2;
+  }
+  n = lua_gettop(L);
+  lua_pushvalue(L, lua_upvalueindex(1));        /* original function */
+  lua_pushstring(L, resolved);                  /* sanitized arg 1 */
+  for (i = 2; i <= n; i++) lua_pushvalue(L, i); /* original args 2..n */
+  lua_call(L, n, LUA_MULTRET);
+  return lua_gettop(L) - n;
+}
+
+/* Replace tbl[method] with l_jailed_path_arg1 wrapping the original, if the
+ * global `tbl` exists and `method` is a function. No-op otherwise (brains that
+ * don't register the binding are unaffected). */
+static void brain_jail_table_method(lua_State *L, const char *tbl,
+                                     const char *method, const char *root) {
+  lua_getglobal(L, tbl);
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, method);
+    if (lua_isfunction(L, -1)) {
+      lua_pushstring(L, root);
+      lua_pushcclosure(L, l_jailed_path_arg1, 2); /* upvalues: original, root */
+      lua_setfield(L, -2, method);
+    } else {
+      lua_pop(L, 1);
+    }
+  }
+  lua_pop(L, 1);
+}
+
+/* Lock down the standard libraries of a freshly-opened brain VM. `root`
+ * is the brain's own directory: the only place file access is permitted. */
+static void brain_apply_sandbox(lua_State *L, const char *root) {
+  static const char *kill_io[]    = { "popen", "lines", "input", "output",
+                                      "tmpfile", NULL };
+  static const char *kill_os[]    = { "execute", "exit", "rename", "getenv",
+                                      "tmpname", "setlocale", NULL };
+  static const char *kill_debug[] = { "sethook", "gethook", "getupvalue",
+                                      "setupvalue", "upvalueid", "upvaluejoin",
+                                      "getlocal", "setlocal", "getregistry",
+                                      "setmetatable", "debug", NULL };
+  int i;
+
+  /* io: jail io.open, drop the arbitrary-path / shell members. */
+  lua_getglobal(L, "io");
+  if (lua_istable(L, -1)) {
+    lua_getfield(L, -1, "open");           /* real io.open */
+    lua_pushstring(L, root);
+    lua_pushcclosure(L, l_jailed_io_open, 2);
+    lua_setfield(L, -2, "open");
+    for (i = 0; kill_io[i]; i++) {
+      lua_pushnil(L);
+      lua_setfield(L, -2, kill_io[i]);
+    }
+  }
+  lua_pop(L, 1);
+
+  /* base loaders: jail loadfile (text-only), remove load/dofile. */
+  lua_pushstring(L, root);
+  lua_pushcclosure(L, l_jailed_loadfile, 1);
+  lua_setglobal(L, "loadfile");
+  lua_pushnil(L); lua_setglobal(L, "load");
+  lua_pushnil(L); lua_setglobal(L, "dofile");
+
+  /* os: jail os.remove, drop process/env mutators; keep time/clock/date. */
+  lua_getglobal(L, "os");
+  if (lua_istable(L, -1)) {
+    lua_pushstring(L, root);
+    lua_pushcclosure(L, l_jailed_os_remove, 1);
+    lua_setfield(L, -2, "remove");
+    for (i = 0; kill_os[i]; i++) {
+      lua_pushnil(L);
+      lua_setfield(L, -2, kill_os[i]);
+    }
+  }
+  lua_pop(L, 1);
+
+  /* debug: keep only traceback + getinfo; drop the introspection that
+   * could reach the originals we just replaced or hook the VM. */
+  lua_getglobal(L, "debug");
+  if (lua_istable(L, -1)) {
+    for (i = 0; kill_debug[i]; i++) {
+      lua_pushnil(L);
+      lua_setfield(L, -2, kill_debug[i]);
+    }
+  }
+  lua_pop(L, 1);
+
+  /* package: no native code. Drop loadlib + cpath and the two C loader
+   * searchers (slots 3 and 4 of the freshly-opened searchers table). The
+   * Lua + SDL source searchers remain, so require() of brain modules works. */
+  lua_getglobal(L, "package");
+  if (lua_istable(L, -1)) {
+    lua_pushnil(L); lua_setfield(L, -2, "loadlib");
+    lua_pushnil(L); lua_setfield(L, -2, "cpath");
+    lua_getfield(L, -1, "searchers");
+    if (lua_istable(L, -1)) {
+      lua_pushnil(L); lua_rawseti(L, -2, 4);
+      lua_pushnil(L); lua_rawseti(L, -2, 3);
+    }
+    lua_pop(L, 1);
+  }
+  lua_pop(L, 1);
+
+  /* C brain bindings that fopen() a brain-supplied path are a parallel file
+   * API; jail them to the brain directory too. These globals exist only for
+   * brains that register them (e.g. GoalHunter); the wrapper is a no-op
+   * otherwise. */
+  brain_jail_table_method(L, "gh_opt_log", "open",   root);
+  brain_jail_table_method(L, "gh_opt_log", "append", root);
+  brain_jail_table_method(L, "gh_shield",  "load",   root);
+}
+
 
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, ClientSim *cs,
@@ -724,6 +1114,17 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     lua_pushnil(L);
   }
   lua_setglobal(L, "RUN_SCRIPT_PATH");
+
+  /* BRAIN_INIT_ARG: optional per-bot text from -bot-init's [..] suffix; string
+   * when staged, nil otherwise. Consume-once so it applies only to this brain —
+   * the next create defaults back to nil unless luaBrainsSetNextInitArg re-stages. */
+  if (s_next_init_arg[0]) {
+    lua_pushstring(L, s_next_init_arg);
+  } else {
+    lua_pushnil(L);
+  }
+  lua_setglobal(L, "BRAIN_INIT_ARG");
+  s_next_init_arg[0] = '\0';
 
   brainCoreRegisterGetTerrain(L, &inst->worldPtr);
 
@@ -827,6 +1228,25 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     }
   }
 
+  /* Lock the VM down unless the host opted out (--allow-unsafe-brains /
+   * BrainTest). The jail root is the brain's own directory with any trailing
+   * /opt stripped, so both the base and opt/ trees — and the committed
+   * los_stamp_cache.lua, which lives in the non-opt dir — resolve under it.
+   * Run before the searcher shuffle below so dropping the native package
+   * searchers composes with inserting the SDL source searcher. */
+  if (!s_allow_unsafe) {
+    char brainRoot[LUA_BRAINS_PATH_MAX];
+    size_t rl;
+    SDL_strlcpy(brainRoot, brainDir, sizeof(brainRoot));
+    rl = SDL_strlen(brainRoot);
+    if (rl >= 4 &&
+        (SDL_strcasecmp(brainRoot + rl - 4, "/opt") == 0 ||
+         SDL_strcasecmp(brainRoot + rl - 4, "\\opt") == 0)) {
+      brainRoot[rl - 4] = '\0';
+    }
+    brain_apply_sandbox(L, brainRoot);
+  }
+
   setup_brain_package_path(L, path);
 
   /* Override package.path to load from effectiveDir first. */
@@ -857,6 +1277,21 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     lua_pushstring(L, effectiveDir);
     lua_pushcclosure(L, sdl_lua_searcher, 1);
     lua_rawseti(L, -2, 2);
+
+    /* Sandboxed: drop every searcher past the SDL one (slot 2). The stock
+     * Lua searcher would otherwise survive at slot 3 and load modules via
+     * package.path — which still carries the openlibs system defaults and
+     * "./?.lua" (cwd), letting require() read .lua/.luac outside the brain
+     * dir and load bytecode. Leaving only preload (slot 1) + SDL (slot 2)
+     * confines require() to the path-jailed, text-only SDL searcher. The
+     * native C searchers were already removed in brain_apply_sandbox. Cap
+     * the loop generously; the table never holds more than ~5 entries. */
+    if (!s_allow_unsafe) {
+      for (int i = 3; i <= 16; i++) {
+        lua_pushnil(L);
+        lua_rawseti(L, -2, i);
+      }
+    }
     lua_pop(L, 2); /* pop searchers + package */
   }
 
@@ -1371,6 +1806,24 @@ bool luaBrainLoadBrains(void) {
   scan_onnx_brains_in(LUA_BRAINS_DIR);
   scan_onnx_brains_in(LUA_BRAINS_DEV_DIR);
 #endif
+
+  /* User-supplied brains: SDL_GetPrefPath("WinBolo","WinBolo")/Brains —
+     ~/Library/Application Support/WinBolo/WinBolo/Brains on macOS. Writable,
+     survives app reinstall/upgrade (the bundle is read-only/code-signed).
+     These are untrusted (a player drops in arbitrary .lua); they load through
+     luaBrainInstanceCreate like every other brain, so the default sandbox
+     (no --allow-unsafe-brains) jails each one to its own directory. */
+  char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+  if (prefDir) {
+    char userBrains[LUA_BRAINS_PATH_MAX];
+    SDL_snprintf(userBrains, sizeof(userBrains), "%sBrains", prefDir);
+    SDL_CreateDirectory(userBrains);  /* make the drop location discoverable; no-op if it exists */
+    scan_brains_in(userBrains, "[user] ");
+  #if defined(HAVE_ONNXRUNTIME) && !defined(__EMSCRIPTEN__)
+    scan_onnx_brains_in(userBrains);
+  #endif
+    SDL_free(prefDir);
+  }
 
   return true;
 }

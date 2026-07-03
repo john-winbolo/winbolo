@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=無法確定儲存路徑
 STR_DLGWBN_FETCHERR=擷取失敗
 STR_DLGWBN_UNKNOWN_ERR=未知錯誤
 STR_DLGWBN_FILEFILTER=WinBolo 日誌檔案
+STR_DLGWBN_TAB_MYGAMES=我的遊戲
+STR_DLGWBN_MYGAMES_SIGNIN=登入或建立帳號以查看您的近期遊戲記錄
+STR_DLGWBN_MYGAMES_NONE=您目前沒有任何遊戲記錄。
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo — 設定玩家名稱
@@ -1407,6 +1410,7 @@ STR_VOTE_DRAW_TAG= （平局）
 STR_VOTE_NEEDS_RUNNING_TIP=遊戲開始後可使用。
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=投票投降前請先選擇隊伍。
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=僅當恰好剩餘兩支有人類玩家的隊伍時\n才可投票投降。
+STR_VOTE_SHOW=顯示：{string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=音量
@@ -1807,6 +1811,7 @@ STR_DLGSETTINGS_TAB_SESSION=會話
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=觀戰者 ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[觀戰者] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=退出觀戰？
 STR_LV_SPEC_PHASE_LOBBY=大廳
 STR_LV_SPEC_PHASE_LIVE=直播
@@ -1820,3 +1825,12 @@ STR_LV_SPEC_CONNECTING=連線中...
 STR_LV_SPEC_CONNECTION_LOST=連線中斷
 STR_LV_SPEC_BEGINS_NOW=觀戰開始
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - 觀戰 {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=您必須登入 WinBolo.net 才能加入此遊戲。
+STR_WEB_JOIN_NOT_ACCEPTING=此遊戲目前不接受新玩家加入。
+STR_WEB_JOIN_LINK_INVALID=此遊戲連結已失效。
+STR_WEB_JOIN_GAME_FULL=此遊戲人數已滿。
+STR_WEB_JOIN_CODE_UNREACHABLE=無法連線至伺服器以取得加入碼。
+STR_WEB_CONNECT_FAILED=無法連線至伺服器。
+STR_WEB_JOIN_NO_RESPONSE=無法加入遊戲（伺服器未回應，或您的邀請連結已被使用或已過期）。

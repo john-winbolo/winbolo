@@ -39,7 +39,7 @@
 
 /* Order matches gui/sdl3/sound.c so existing soundPlayEffect() index
  * mappings still resolve to the right WAV file. */
-#define WB_NUM_SOUNDS 24
+#define WB_NUM_SOUNDS 31
 
 static const char *kSoundFiles[WB_NUM_SOUNDS] = {
     "tank_sinking_near.wav",   /*  0 */
@@ -66,6 +66,13 @@ static const char *kSoundFiles[WB_NUM_SOUNDS] = {
     "bubbles.wav",             /* 21 */
     "big_explosion_near.wav",  /* 22 */
     "man_lay_mine_near.wav",   /* 23 */
+    "lobby_chat.wav",          /* 24 */
+    "lobby_ready.wav",         /* 25 */
+    "lobby_unready.wav",       /* 26 */
+    "lobby_countdown.wav",     /* 27 */
+    "lobby_game_start.wav",    /* 28 */
+    "lobby_player_join.wav",   /* 29 */
+    "lobby_player_leave.wav",  /* 30 */
 };
 
 static bool s_isPlayable = FALSE;
@@ -229,6 +236,13 @@ void soundPlayEffect(sndEffects value) {
   case manLayingMineNear: index = 23; break;
   case mineExplosionNear: index = 9;  break;
   case mineExplosionFar:  index = 10; break;
+  case lobbyChatReceived: index = 24; break;
+  case lobbyReady:        index = 25; break;
+  case lobbyUnready:      index = 26; break;
+  case lobbyCountdown:    index = 27; break;
+  case lobbyGameStart:    index = 28; break;
+  case lobbyPlayerJoin:   index = 29; break;
+  case lobbyPlayerLeave:  index = 30; break;
   default:                index = 8;  break;  /* shootFar */
   }
 

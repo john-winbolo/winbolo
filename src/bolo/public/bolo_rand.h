@@ -31,4 +31,12 @@ void     bolo_srand(uint64_t seed);
 uint32_t bolo_rand(void);                /* full 32-bit value */
 uint32_t bolo_rand_below(uint32_t n);    /* unbiased [0, n); n > 0 */
 
+/* Snapshot of the generator state, for save/restore around draws that must not
+ * perturb the deterministic stream — e.g. cosmetic bot naming, which should
+ * not shift tank placement for a given seed. Save before the draws, restore
+ * after, and the shared sequence resumes exactly where it was left. */
+typedef struct { uint32_t s[4]; } BoloRandState;
+void     bolo_rand_save(BoloRandState *out);
+void     bolo_rand_restore(const BoloRandState *in);
+
 #endif /* BOLO_RAND_H */

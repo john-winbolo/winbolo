@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Det gick inte att fastställa sökväg för sparande
 STR_DLGWBN_FETCHERR=Hämtning misslyckades
 STR_DLGWBN_UNKNOWN_ERR=Okänt fel
 STR_DLGWBN_FILEFILTER=WinBolo-loggfiler
+STR_DLGWBN_TAB_MYGAMES=Mina spel
+STR_DLGWBN_MYGAMES_SIGNIN=Logga in eller skapa ett konto för att se dina senaste spel
+STR_DLGWBN_MYGAMES_NONE=Du har inga inspelade spel ännu.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo – ange spelarnamn
@@ -1404,6 +1407,7 @@ STR_VOTE_DRAW_TAG= (Oavgjort)
 STR_VOTE_NEEDS_RUNNING_TIP=Tillgängligt när spelet har startat.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Välj ett lag innan du röstar för att ge upp.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Ge upp är bara tillgängligt när exakt två lag\nmed mänskliga spelare återstår.
+STR_VOTE_SHOW=Visa: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volym
@@ -1809,6 +1813,7 @@ STR_DLGSETTINGS_TAB_SESSION=Session
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Åskådare ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Åskådare] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Lämna åskådarläge?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=Live
@@ -1822,3 +1827,12 @@ STR_LV_SPEC_CONNECTING=Ansluter...
 STR_LV_SPEC_CONNECTION_LOST=Anslutning förlorad
 STR_LV_SPEC_BEGINS_NOW=Åskådarläge börjar nu
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Tittar på {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Du måste vara inloggad på WinBolo.net för att gå med i det här spelet.
+STR_WEB_JOIN_NOT_ACCEPTING=Det här spelet tar inte emot nya spelare.
+STR_WEB_JOIN_LINK_INVALID=Den spellänken är inte längre giltig.
+STR_WEB_JOIN_GAME_FULL=Det här spelet är fullt.
+STR_WEB_JOIN_CODE_UNREACHABLE=Det gick inte att nå servern för att hämta en anslutningskod.
+STR_WEB_CONNECT_FAILED=Det gick inte att ansluta till servern.
+STR_WEB_JOIN_NO_RESPONSE=Det gick inte att gå med i spelet (servern svarade inte, eller så har din inbjudningslänk redan använts eller gått ut).

@@ -1,11 +1,22 @@
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Properties
 import java.util.zip.ZipInputStream
 
 plugins {
     id("com.android.application")
     id("io.sentry.android.gradle") version "4.14.0"
 }
+
+// Sentry DSN is not committed. Supply it via the SENTRY_DSN environment
+// variable or a `sentry.dsn=` line in local.properties (both untracked).
+// When unset, the DSN resolves to "" and the Sentry SDK stays disabled.
+val sentryDsn: String = providers.environmentVariable("SENTRY_DSN").orNull
+    ?: rootProject.file("local.properties").let { f ->
+        if (f.exists()) Properties().apply { f.inputStream().use { load(it) } }
+            .getProperty("sentry.dsn", "")
+        else ""
+    }
 
 // ---------------------------------------------------------------------------
 // Download SDL3 Java sources (SDLActivity etc.) for the Android build
@@ -80,6 +91,9 @@ android {
         versionCode = 1
         versionName = "1.0"
 
+        // Inject the DSN into AndroidManifest's io.sentry.dsn meta-data.
+        manifestPlaceholders["sentryDsn"] = sentryDsn
+
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -91,6 +105,8 @@ android {
                     "-DCMAKE_POLICY_VERSION_MINIMUM=3.10",
                     "-Wno-deprecated"
                 )
+                // Share the same DSN with the native (sentry-android-ndk) build.
+                if (sentryDsn.isNotEmpty()) arguments += "-DSENTRY_DSN=$sentryDsn"
             }
         }
     }

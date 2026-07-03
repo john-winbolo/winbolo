@@ -476,6 +476,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;
+    sim->specRosterEnum      = NULL;
+    sim->specRosterEnumCtx   = NULL;
     sim->worldPreLoaded      = TRUE;
 
     /* Mirror gameType + hiddenMines + time fields so the lobby change
@@ -3127,7 +3129,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             }
         }
         hdr->pillCount = (uint8_t)serverSimGetPills(sim, pillsOut, maxPills);
-        hdr->mapChecksum = mapCalcChecksum(&sim->sim.mp);
+        hdr->mapChecksum = mapCalcChecksum(&sim->sim.mp, &sim->sim.bs, &sim->sim.pb);
         sim->lastFullSyncTick[clientIdx] = sim->tick;
     } else {
         hdr->baseCount = 0;
@@ -3279,33 +3281,88 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
             playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
-            fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Jitter:%d)\n",
-                    name,
-                    pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
-                    basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
-                    sim->playerPing[count],
-                    sim->jitterTarget[count]);
 
-            /* For bot slots, append a 4-space-indented [BOT] line with
-             * the brain's most recent timing. Mute fields suppressed
-             * when zero — see commit message. */
+            /* Ping and the input-buffer depth are in-process artifacts for
+             * bot slots (0ms ping, a buffer that exists but never gates an
+             * in-process input), so they'd only invite a misread. Show them
+             * only for real connections. The field formerly printed as
+             * "Jitter" is the adaptive input jitter-buffer target depth in
+             * ticks, not a measured network statistic — labelled "Buf" so
+             * nobody reads network variance into it. */
             BotInfo bi;
-            if (botManagerGetBotInfo(sim, count, &bi)) {
+            bool isBotSlot = botManagerGetBotInfo(sim, count, &bi);
+            if (isBotSlot) {
+                fprintf(stdout, "%s - (P:%d B:%d)\n",
+                        name,
+                        pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
+                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count));
+            } else {
+                /* Remote players carry their source ip:port; the in-process
+                 * host has no UDP client, so the getter reports false and we
+                 * print "local" instead. */
+                char addr[48];  /* "255.255.255.255:65535" + slack */
+                const char *addrStr =
+                    transportUdpServerGetClientAddrStr(count, addr, sizeof(addr))
+                        ? addr : "local";
+                fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Buf:%d Addr:%s)\n",
+                        name,
+                        pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
+                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
+                        sim->playerPing[count],
+                        sim->jitterTarget[count],
+                        addrStr);
+            }
+
+            /* For bot slots, append a 4-space-indented [BOT] line with the
+             * brain's timing. peak= is the high-water think this game (reset
+             * each round start; the magnitude behind overruns, which last=
+             * and the EWMA hide); overruns carries its rate against thinkCount
+             * so a cumulative count can't masquerade as "spiking right now". */
+            if (isBotSlot) {
                 if (bi.hasBrain) {
                     if (bi.overrunCount == 0) {
                         fprintf(stdout,
-                                "    [BOT] brain=%s last=%.1fms target=%.1fms\n",
-                                bi.brainName, bi.lastThinkMs, bi.targetMs);
+                                "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms\n",
+                                bi.brainName, bi.lastThinkMs, bi.maxThinkMs,
+                                bi.targetMs);
                     } else {
+                        double rate = bi.thinkCount > 0
+                            ? (double)bi.overrunCount * 100.0 / (double)bi.thinkCount
+                            : 0.0;
                         fprintf(stdout,
-                                "    [BOT] brain=%s last=%.1fms target=%.1fms overruns=%u\n",
-                                bi.brainName, bi.lastThinkMs, bi.targetMs,
-                                bi.overrunCount);
+                                "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms overruns=%u/%u (%.2f%%)\n",
+                                bi.brainName, bi.lastThinkMs, bi.maxThinkMs,
+                                bi.targetMs, bi.overrunCount, bi.thinkCount, rate);
                     }
                 } else {
                     fprintf(stdout, "    [BOT]\n");
                 }
             }
+        }
+    }
+
+    /* Server-loop timing (Tick / Simulation) is recorded every server tick
+     * regardless of bots, so show it whenever there's data — operators of
+     * a bot-free server still want to see the loop stays inside budget.
+     * The bot pool block below stays gated on actual bots. */
+    {
+        double tickLast = 0.0, tickEwma = 0.0;
+        serverLifecycleGetTickStats(&tickLast, &tickEwma);
+        double simLast = 0.0, simEwma = 0.0;
+        serverLifecycleGetSimStats(&simLast, &simEwma);
+
+        if (tickLast > 0.0 || simLast > 0.0) {
+            fprintf(stdout, "Server timing:\n");
+        }
+        if (tickLast > 0.0) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
+                    "Tick:", tickLast, tickEwma);
+        }
+        if (simLast > 0.0) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms\n",
+                    "Simulation:", simLast, simEwma);
         }
     }
 
@@ -3326,36 +3383,31 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                     ps.workerCount, ps.activeBots, ps.currentTargetMs);
         }
 
-        double tickLast = 0.0, tickEwma = 0.0;
-        serverLifecycleGetTickStats(&tickLast, &tickEwma);
-        double simLast = 0.0, simEwma = 0.0;
-        serverLifecycleGetSimStats(&simLast, &simEwma);
-
-        if (tickLast > 0.0) {
-            fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
-                    "Tick:", tickLast, tickEwma);
-        }
+        /* peak= is the worst single-bot think across the pool this game
+         * (reset each round start) — the EWMA averages spikes away, so
+         * without it a pool that mostly runs cheap but takes occasional 20ms
+         * thinks looks identical to one that never does. */
         fprintf(stdout,
-                "  %-11s last=%.1fms  EWMA=%.1fms\n",
-                "Brain:", ps.lastBrainPhaseMs, ps.ewmaBrainPhaseMs);
-        if (simLast > 0.0) {
-            fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms\n",
-                    "Simulation:", simLast, simEwma);
-        }
+                "  %-11s last=%.1fms  EWMA=%.1fms  peak=%.1fms\n",
+                "Brain:", ps.lastBrainPhaseMs, ps.ewmaBrainPhaseMs,
+                ps.maxThinkMs);
         /* "Bot prep" labels the non-brain serial parts of
          * botManagerTick: snapshot/sync + input send. Distinct from
-         * "Simulation:" above which times the two serverSimTick calls. */
+         * "Simulation:" above which times the two serverSimTick calls.
+         * Overruns carry their rate against total thinks — a cumulative
+         * count alone grows forever and can't tell ongoing from historical. */
         if (ps.totalOverruns == 0) {
             fprintf(stdout,
                     "  %-11s last=%.1fms  EWMA=%.1fms\n",
                     "Bot prep:", ps.lastSerialMs, ps.ewmaSerialMs);
         } else {
+            double poolRate = ps.totalThinks > 0
+                ? (double)ps.totalOverruns * 100.0 / (double)ps.totalThinks
+                : 0.0;
             fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms  total overruns=%u\n",
+                    "  %-11s last=%.1fms  EWMA=%.1fms  total overruns=%u/%u (%.2f%%)\n",
                     "Bot prep:", ps.lastSerialMs, ps.ewmaSerialMs,
-                    ps.totalOverruns);
+                    ps.totalOverruns, ps.totalThinks, poolRate);
         }
     }
 
@@ -4059,6 +4111,17 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     sim->eventCount = 0;
     sim->mapEventCount = 0;
 
+    /* Drop the lobby-chat catch-up buffer: this is an authoritative game start
+     * just like serverSimStartGame's countdown->running path, and the just-ended
+     * lobby's chat must not leak into the next session a returning spectator
+     * catches up on. The full-reset path clears this via serverSimStartGame; this
+     * in-place path bypasses that reset, so it must clear the buffer itself —
+     * otherwise pre-game chat survives in lobbyChatBuffer and the drain-flip
+     * replay (serverSendSpectatorBacklog) re-delivers it on return. A spectator
+     * connects over the wire while the only player sits directly in the sim, so
+     * transportUdpServerHasAnyClient() is false and the ready check routes here. */
+    sim->lobbyChatCount = 0;
+
     /* Wire any bots in the roster into the running game (idempotent on
      * a fresh sim with zero bots). */
     botManagerOnGameStart(sim);
@@ -4141,6 +4204,15 @@ void serverSimStartGame(ServerSim *sim) {
 
     /* Fresh round — drop any vote state from the previous game. */
     serverSimGameVoteResetAll(sim);
+
+    /* Drop the lobby-chat catch-up buffer: it holds only the just-ended
+     * lobby's chat, which must not leak into the next session a returning
+     * spectator catches up on. This countdown->running transition is one of the
+     * two authoritative game starts (serverSimStartGameInPlace, the no-countdown
+     * SP/no-wire-client path, clears it too); the game-over->lobby reset path
+     * (serverSimResetGameWorld's other caller) deliberately keeps the buffer
+     * so post-game lobby chat survives for the drain-flip replay. */
+    sim->lobbyChatCount = 0;
 
     /* Arms the last-human-left return-to-lobby check from a clean slate. */
     sim->roundHadHuman = false;
@@ -4824,6 +4896,37 @@ static void publishServerMessage(ServerSim *sim, const char *message) {
     serverSimPublishControl(sim, &evt);
 }
 
+/* Like publishServerMessage but delivered ONLY to members of teamId (1-16).
+ * destTeam rides the ControlEvent and is filtered per-recipient in
+ * udpClientDeliverControl + the in-process CTRL_SERVER_TEXT handler — used to
+ * keep surrender-vote notices private to the surrendering team. */
+static void publishServerMessageToTeam(ServerSim *sim, const char *message,
+                                       BYTE teamId) {
+    ControlEvent evt;
+    if (!sim || !message) return;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SERVER_TEXT;
+    SDL_strlcpy(evt.u.serverText.text, message, sizeof(evt.u.serverText.text));
+    evt.u.serverText.destTeam = teamId;
+    serverSimPublishControl(sim, &evt);
+}
+
+/* serverSimBufferLobbyChat — append a chat event to the current-session
+ * lobby-chat catch-up buffer, dropping the oldest entry when full. Only
+ * called for events that should be replayed to a returning spectator
+ * (broadcast player chat + spectator chat captured during lobby/countdown);
+ * gating is the caller's responsibility. The event is stored verbatim so the
+ * drain-flip replay (serverSimReplayLobbyChat) re-delivers exactly what was
+ * fanned live. */
+static void serverSimBufferLobbyChat(ServerSim *sim, const ControlEvent *evt) {
+    if (sim->lobbyChatCount == LOBBY_CHAT_BUFFER_MAX) {
+        memmove(&sim->lobbyChatBuffer[0], &sim->lobbyChatBuffer[1],
+                (LOBBY_CHAT_BUFFER_MAX - 1) * sizeof(sim->lobbyChatBuffer[0]));
+        sim->lobbyChatCount = LOBBY_CHAT_BUFFER_MAX - 1;
+    }
+    sim->lobbyChatBuffer[sim->lobbyChatCount++] = *evt;
+}
+
 /* serverSimReceiveChat — authoritative entry for any chat the server
  * accepts, regardless of which transport delivered the input.
  *
@@ -4855,7 +4958,44 @@ void serverSimReceiveChat(ServerSim *sim, BYTE fromPlayer, BYTE destPlayer,
     if (bodyLen > 0) {
         memcpy(evt.u.chat.body, body, bodyLen);
     }
+
+    /* The lobby-chat catch-up capture lives in serverSimPublishControl, the one
+     * chokepoint this and the wire CMD_CHAT path both publish through. */
     serverSimPublishControl(sim, &evt);
+}
+
+/* serverSimReceiveSpectatorChat — authoritative entry for a lobby chat line
+ * typed by a tankless spectator. A spectator has no player slot, so it cannot
+ * route through serverSimReceiveChat; instead the message is stamped with the
+ * sender's specIdx and published as CTRL_SPECTATOR_CHAT, which the bus fans to
+ * players and to spectators (the spectator deliver allowlist passes it). The
+ * line is recorded into the .wbv as log_SpectatorChat so the log viewer can
+ * attribute it. */
+void serverSimReceiveSpectatorChat(ServerSim *sim, uint8_t specIdx,
+                                   const void *body, size_t bodyLen) {
+    ControlEvent evt;
+    if (sim == NULL || body == NULL || specIdx >= MAX_SPECTATORS) return;
+    if (bodyLen > PACKET_MAX_CHAT_MESSAGE) bodyLen = PACKET_MAX_CHAT_MESSAGE;
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SPECTATOR_CHAT;
+    evt.u.spectatorChat.specIdx = specIdx;
+    evt.u.spectatorChat.bodyLen = (uint16_t)bodyLen;
+    if (bodyLen > 0) {
+        memcpy(evt.u.spectatorChat.body, body, bodyLen);
+    }
+
+    /* Capture for the drain-flip catch-up happens in serverSimPublishControl. */
+    serverSimPublishControl(sim, &evt);
+
+    {
+        char pstr[256];
+        int pLen = (int)bodyLen;
+        if (pLen > 255) pLen = 255;
+        pstr[0] = (char)pLen;
+        if (pLen > 0) memcpy(pstr + 1, body, pLen);
+        logAddEvent(log_SpectatorChat, specIdx, 0, 0, 0, 0, pstr);
+    }
 }
 
 /* Publish current vote state through the control-event dispatcher.
@@ -5089,6 +5229,10 @@ static void gameVotePruneVotes(const ServerSim *sim, struct ServerGameVote *gv) 
 
 void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
                              uint8_t kind, uint8_t toggleMode) {
+    /* No lobby means no place to return to: a passed back-to-lobby /
+     * surrender vote would only terminate (or, under map rotation,
+     * blindly rotate) the server. Disable voting entirely in that mode. */
+    if (!sim->lobbyEnabled) return;
     if (playerNum >= MAX_TANKS) return;
     if (!sim->playerConnected[playerNum]) return;
     if (sim->lobbyPlayers[playerNum].isBot) return;
@@ -5284,6 +5428,11 @@ static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
 }
 
 void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
+    /* Voting only exists on lobby-enabled servers (see
+     * serverSimGameVoteToggle). Skip the whole vote machinery — including
+     * the base-monopoly auto-vote — when there is no lobby. */
+    if (!sim->lobbyEnabled) return;
+
     sim->gameVoteWallMs = nowMs;
 
     /* Auto-trigger checks before per-slot servicing. */
@@ -5306,7 +5455,7 @@ void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
             /* Surrender invalidation: team count must remain == 2. */
             if (gv->kind == GAME_VOTE_KIND_SURRENDER &&
                 serverSimCountActiveTeams(sim) != 2) {
-                publishServerMessage(sim, "Surrender vote cancelled — team count changed.");
+                publishServerMessageToTeam(sim, "Surrender vote cancelled — team count changed.", gv->teamId);
                 gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_CANCELLED, nowMs);
                 continue;
             }
@@ -5315,8 +5464,8 @@ void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
              * entirely (everyone disconnected), the vote is moot. */
             if (popcount16(gameVoteEligibleMask(sim, gv->kind, gv->teamId)) == 0) {
                 if (gv->kind == GAME_VOTE_KIND_SURRENDER) {
-                    publishServerMessage(sim,
-                        "Surrender vote cancelled — surrendering team is empty.");
+                    publishServerMessageToTeam(sim,
+                        "Surrender vote cancelled — surrendering team is empty.", gv->teamId);
                 }
                 gameVoteConclude(sim, gv, GAME_VOTE_ACTIVE_CANCELLED, nowMs);
                 continue;
@@ -5393,7 +5542,8 @@ void serverSimMapDirDestroy(ServerSim *sim) {
 /* Subscriber registry                                                    */
 /* ---------------------------------------------------------------------- */
 
-#define SUBSCRIBER_SLOT_COUNT (MAX_TANKS + 1)
+/* SUBSCRIBER_SLOT_COUNT is defined in server_sim_internal.h (it sizes the
+ * subscriber arrays on the ServerSim struct). */
 #define SUBSCRIBER_HANDLE_ENCODE(slot, gen) (((int)(slot) << 16) | (uint16_t)(gen))
 #define SUBSCRIBER_HANDLE_SLOT(h)           (((h) >> 16) & 0xFFFF)
 #define SUBSCRIBER_HANDLE_GEN(h)            ((uint16_t)((h) & 0xFFFF))
@@ -5440,7 +5590,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.mapSkipAvailable =
         (sim->mapDirCount > 1 || sim->randomMapEnabled) ? true : false;
     evt->u.lobbySettings.netStat          = serverPhaseToNetStat(sim->state);
-    evt->u.lobbySettings.inLobby          = sim->lobbyEnabled ? true : false;
+    evt->u.lobbySettings.hasLobby         = sim->lobbyEnabled ? true : false;
     evt->u.lobbySettings.lobbyOpenHost            = sim->openHost;
     evt->u.lobbySettings.hostSlot                 = sim->hostSlot;
     evt->u.lobbySettings.lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;
@@ -5696,6 +5846,41 @@ static void serverSimSyncSubscriber(
         memset(&evt, 0, sizeof(evt));
         serverSimFillLobbyBrainListEvent(sim, &evt);
         deliver(ctx, &evt);
+
+        /* Bot-pool catalog: the server's themed naming pools (loaded from
+         * -botnames / data/bot_names.json), zlib-compressed and streamed
+         * as CTRL_LOBBY_BOT_POOL_CHUNK fragments so the joiner renders and
+         * picks from the SERVER's pools rather than its own shipped file.
+         * Same lobby-only gate as the brain list. */
+        {
+            unsigned char *blob =
+                (unsigned char *)malloc(LOBBY_BOT_CATALOG_WIRE_MAX);
+            if (blob) {
+                int blen = lobbyBotPoolsSerialize(blob,
+                                                  (int)LOBBY_BOT_CATALOG_WIRE_MAX);
+                if (blen > 0) {
+                    int frag = LOBBY_BOT_POOL_CHUNK_FRAG_MAX;
+                    int nChunks = (blen + frag - 1) / frag;
+                    int off = 0, ci;
+                    if (nChunks <= 255) {
+                        for (ci = 0; ci < nChunks; ci++) {
+                            int fl = blen - off;
+                            if (fl > frag) fl = frag;
+                            memset(&evt, 0, sizeof(evt));
+                            evt.type = CTRL_LOBBY_BOT_POOL_CHUNK;
+                            evt.u.lobbyBotPoolChunk.seq     = (uint8_t)ci;
+                            evt.u.lobbyBotPoolChunk.count   = (uint8_t)nChunks;
+                            evt.u.lobbyBotPoolChunk.fragLen = (uint16_t)fl;
+                            memcpy(evt.u.lobbyBotPoolChunk.frag, blob + off,
+                                   (size_t)fl);
+                            deliver(ctx, &evt);
+                            off += fl;
+                        }
+                    }
+                }
+                free(blob);
+            }
+        }
     }
 
     for (i = 0; i < MAX_TANKS; i++) {
@@ -5704,6 +5889,15 @@ static void serverSimSyncSubscriber(
             serverSimFillLobbySlotEvent(sim, i, &evt);
             deliver(ctx, &evt);
         }
+    }
+
+    /* Spectator roster — one CTRL_SPECTATOR_SLOT per connected spectator. The
+     * roster lives in the transport layer, so the sim asks the registered
+     * enumerator to emit the rows through this same deliver path. Feeds both the
+     * live sync replay and serverSimSerializeControlSnapshot (the delayed ring
+     * keyframe). */
+    if (sim->specRosterEnum != NULL) {
+        sim->specRosterEnum(sim->specRosterEnumCtx, deliver, ctx);
     }
 
     /* Team metadata for every team in use (skip team 0 — unassigned). */
@@ -5836,6 +6030,24 @@ int serverSimSerializeControlSnapshot(ServerSim *sim, BYTE *out, int cap) {
     return sink.overflow ? -1 : sink.len;
 }
 
+/* serverSimReplayLobbyChat — re-deliver the current-session lobby-chat buffer
+ * oldest->newest through the caller's deliver callback. Mirrors the sync /
+ * roster-enumerator inversion: the sim owns the buffer, the transport supplies
+ * delivery. Invoked only at the spectator drain-flip (after the re-register's
+ * sync replay has set the lobby phase, so the events land in lobbyChatHistory);
+ * never on a fresh accept or player join, which is what makes it
+ * drain-flip-only. */
+void serverSimReplayLobbyChat(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx) {
+    int i;
+    if (sim == NULL || deliver == NULL) return;
+    for (i = 0; i < sim->lobbyChatCount; i++) {
+        deliver(ctx, &sim->lobbyChatBuffer[i]);
+    }
+}
+
 SubscriberHandle serverSimRegisterSubscriber(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
@@ -5913,6 +6125,14 @@ static void serverSimDeliverToClientSim(void *ctx, const struct ControlEvent *ev
 
 SubscriberHandle serverSimRegisterClientSubscriber(ServerSim *sim, ClientSim *cs) {
     return serverSimRegisterSubscriber(sim, serverSimDeliverToClientSim, cs);
+}
+
+void serverSimSetSpectatorRosterEnumerator(ServerSim *sim,
+                                           SpectatorRosterEnumFn fn,
+                                           void *enumCtx) {
+    if (sim == NULL) return;
+    sim->specRosterEnum    = fn;
+    sim->specRosterEnumCtx = enumCtx;
 }
 
 void serverSimRequestBalanceProposal(ServerSim *sim,
@@ -6016,6 +6236,17 @@ void serverSimPublishControl(ServerSim *sim, const struct ControlEvent *evt) {
 
     if (sim == NULL || evt == NULL) {
         return;
+    }
+
+    /* Spectator lobby-chat catch-up capture. EVERY chat reaches the bus through
+     * here — the wire CMD_CHAT dispatcher and the serverSimReceiveChat funnel
+     * both publish via this one call — so capturing here (not in either caller)
+     * is the single chokepoint that catches both. Broadcast player chat
+     * (destPlayer 0xFF) + spectator chat, lobby/countdown only. */
+    if ((sim->state == serverStateLobby || sim->state == serverStateCountdown) &&
+        ((evt->type == CTRL_CHAT && evt->u.chat.destPlayer == 0xFF) ||
+         evt->type == CTRL_SPECTATOR_CHAT)) {
+        serverSimBufferLobbyChat(sim, evt);
     }
 
     /* Reentrancy guard: a deliver callback that triggers another publish
@@ -6351,6 +6582,32 @@ bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out) {
     out->dir     = tankGetDir(t);
     out->on_boat = tankIsOnBoat(t);
     out->alive   = (tankGetDeathWait(t) == 0);
+    return true;
+}
+
+bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
+    tank *t;
+    if (sim == NULL || out == NULL || i >= MAX_TANKS) return false;
+    if (!serverSimIsPlayerConnected(sim, i)) return false;
+
+    memset(out, 0, sizeof(*out));
+    /* isServer=TRUE: read the server-side player table directly. */
+    playersGetPlayerName(&sim->sim.plyrs, i, out->name, TRUE);
+    out->name[sizeof(out->name) - 1] = '\0';
+
+    t = &sim->sim.tanks[i];
+    if (*t == NULL) {
+        /* Connected but no live tank (countdown / death-wait). */
+        out->has_tank = false;
+        out->alive    = false;
+        return true;
+    }
+    out->has_tank = true;
+    tankGetWorld(t, &out->world_x, &out->world_y);
+    out->dir     = tankGetDir(t);
+    out->on_boat = tankIsOnBoat(t);
+    out->alive   = (tankGetDeathWait(t) == 0);
+    tankGetKillsDeaths(t, &out->kills, &out->deaths);
     return true;
 }
 

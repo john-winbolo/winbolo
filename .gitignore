@@ -10,13 +10,13 @@ build
 build-ios
 
 #Android build directories
-  android/.gradle/
-  android/.idea/
-  android/build/
-  android/app/build/
-  android/app/.cxx/
-  android/local.properties
-  android/app/src/main/assets/
+android/.gradle/
+android/.idea/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+android/app/src/main/assets/
 
 # Ed25519 signing key — do not commit.
 src/winbolonet/wbn_signing_key.h

@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Impossible de déterminer le chemin d'enregistrement
 STR_DLGWBN_FETCHERR=Échec de la récupération
 STR_DLGWBN_UNKNOWN_ERR=Erreur inconnue
 STR_DLGWBN_FILEFILTER=Fichiers de log WinBolo
+STR_DLGWBN_TAB_MYGAMES=Mes parties
+STR_DLGWBN_MYGAMES_SIGNIN=Connectez-vous ou créez un compte pour voir vos parties récentes
+STR_DLGWBN_MYGAMES_NONE=Vous n'avez pas encore de parties enregistrées.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Définir le nom du joueur
@@ -1404,6 +1407,7 @@ STR_VOTE_DRAW_TAG= (Nul)
 STR_VOTE_NEEDS_RUNNING_TIP=Disponible une fois la partie lancée.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Choisissez une équipe avant de voter pour l'abandon.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=L'abandon n'est disponible que lorsqu'il reste exactement deux équipes\navec des joueurs humains.
+STR_VOTE_SHOW=Afficher : {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume
@@ -1809,6 +1813,7 @@ STR_DLGSETTINGS_TAB_SESSION=Session
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Spectateurs ({number}) :
+STR_DLGLOBBY_SPECTATOR_TAG=[Spectateur] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Quitter le mode spectateur ?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=En direct
@@ -1822,3 +1827,12 @@ STR_LV_SPEC_CONNECTING=Connexion en cours...
 STR_LV_SPEC_CONNECTION_LOST=Connexion perdue
 STR_LV_SPEC_BEGINS_NOW=Le visionnage commence maintenant
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Spectateur {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Vous devez être connecté à WinBolo.net pour rejoindre cette partie.
+STR_WEB_JOIN_NOT_ACCEPTING=Cette partie n'accepte plus de nouveaux joueurs.
+STR_WEB_JOIN_LINK_INVALID=Ce lien de partie n'est plus valide.
+STR_WEB_JOIN_GAME_FULL=Cette partie est complète.
+STR_WEB_JOIN_CODE_UNREACHABLE=Impossible de contacter le serveur pour obtenir un code de connexion.
+STR_WEB_CONNECT_FAILED=Impossible de se connecter au serveur.
+STR_WEB_JOIN_NO_RESPONSE=Impossible de rejoindre la partie (le serveur n'a pas répondu, ou votre lien d'invitation a déjà été utilisé ou a expiré).

@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Não foi possível determinar o caminho de salvamento
 STR_DLGWBN_FETCHERR=Falha ao obter
 STR_DLGWBN_UNKNOWN_ERR=Erro desconhecido
 STR_DLGWBN_FILEFILTER=Arquivos de log do WinBolo
+STR_DLGWBN_TAB_MYGAMES=Minhas partidas
+STR_DLGWBN_MYGAMES_SIGNIN=Entre ou crie uma conta para ver suas partidas recentes
+STR_DLGWBN_MYGAMES_NONE=Você ainda não tem nenhuma partida gravada.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Definir nome do jogador
@@ -1404,6 +1407,7 @@ STR_VOTE_DRAW_TAG= (Empate)
 STR_VOTE_NEEDS_RUNNING_TIP=Disponível quando a partida estiver em andamento.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Escolha um time antes de votar para se render.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=A rendição só está disponível quando restar exatamente dois times\ncom jogadores humanos.
+STR_VOTE_SHOW=Mostrar: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume
@@ -1807,6 +1811,7 @@ STR_DLGSETTINGS_TAB_SESSION=Sessão
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Espectadores ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Espectador] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Sair da observação?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=Ao Vivo
@@ -1820,3 +1825,12 @@ STR_LV_SPEC_CONNECTING=Conectando...
 STR_LV_SPEC_CONNECTION_LOST=Conexão perdida
 STR_LV_SPEC_BEGINS_NOW=A observação começa agora
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Observando {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Você precisa fazer login no WinBolo.net para entrar nesta partida.
+STR_WEB_JOIN_NOT_ACCEPTING=Esta partida não está aceitando novos jogadores.
+STR_WEB_JOIN_LINK_INVALID=Esse link de partida não é mais válido.
+STR_WEB_JOIN_GAME_FULL=Esta partida está cheia.
+STR_WEB_JOIN_CODE_UNREACHABLE=Não foi possível conectar ao servidor para obter um código de entrada.
+STR_WEB_CONNECT_FAILED=Não foi possível conectar ao servidor.
+STR_WEB_JOIN_NO_RESPONSE=Não foi possível entrar na partida (o servidor não respondeu, ou seu link de convite já foi usado ou expirou).

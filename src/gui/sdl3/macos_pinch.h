@@ -31,6 +31,12 @@ extern "C" {
 #endif
 #if defined(__APPLE__) && !TARGET_OS_IPHONE
 
+/* Disable the macOS "press and hold" accent-character picker for this app
+ * so that holding a key down repeats the key (as games expect) instead of
+ * popping up the à/á/â… accent menu.  Writes ApplePressAndHoldEnabled=NO into
+ * the app's own user-defaults domain.  Call once early during startup. */
+void macOSDisablePressAndHold(void);
+
 /* Start monitoring trackpad magnification (pinch) gestures.
  * Call once after the SDL window is created. */
 void macOSPinchZoomInit(void);
@@ -45,6 +51,7 @@ void macOSPinchZoomDestroy(void);
 
 #else
 
+static inline void  macOSDisablePressAndHold(void) {}
 static inline void  macOSPinchZoomInit(void)    {}
 static inline float macOSPinchZoomConsume(void)  { return 0.0f; }
 static inline void  macOSPinchZoomDestroy(void)  {}

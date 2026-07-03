@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Impossibile determinare il percorso di salvataggio
 STR_DLGWBN_FETCHERR=Recupero non riuscito
 STR_DLGWBN_UNKNOWN_ERR=Errore sconosciuto
 STR_DLGWBN_FILEFILTER=File log WinBolo
+STR_DLGWBN_TAB_MYGAMES=Le mie partite
+STR_DLGWBN_MYGAMES_SIGNIN=Accedi o crea un account per vedere le tue partite recenti
+STR_DLGWBN_MYGAMES_NONE=Non hai ancora partite registrate.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Imposta nome giocatore
@@ -1404,6 +1407,7 @@ STR_VOTE_DRAW_TAG= (Pareggio)
 STR_VOTE_NEEDS_RUNNING_TIP=Disponibile quando la partita è in corso.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Scegli una squadra prima di votare la resa.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=La resa è disponibile solo quando rimangono esattamente due squadre\ncon giocatori umani.
+STR_VOTE_SHOW=Mostra: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Volume
@@ -1811,6 +1815,7 @@ STR_DLGSETTINGS_TAB_SESSION=Sessione
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Spettatori ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Spettatore] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Uscire dalla modalità spettatore?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=Dal vivo
@@ -1824,3 +1829,12 @@ STR_LV_SPEC_CONNECTING=Connessione in corso...
 STR_LV_SPEC_CONNECTION_LOST=Connessione persa
 STR_LV_SPEC_BEGINS_NOW=La visione inizia ora
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Spettatore {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Devi aver effettuato l'accesso a WinBolo.net per unirti a questa partita.
+STR_WEB_JOIN_NOT_ACCEPTING=Questa partita non accetta nuovi giocatori.
+STR_WEB_JOIN_LINK_INVALID=Questo link della partita non è più valido.
+STR_WEB_JOIN_GAME_FULL=Questa partita è al completo.
+STR_WEB_JOIN_CODE_UNREACHABLE=Impossibile contattare il server per ottenere un codice di partecipazione.
+STR_WEB_CONNECT_FAILED=Impossibile connettersi al server.
+STR_WEB_JOIN_NO_RESPONSE=Impossibile unirsi alla partita (il server non ha risposto, oppure il link di invito è già stato usato o è scaduto).

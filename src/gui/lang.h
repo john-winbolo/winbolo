@@ -482,6 +482,8 @@
 #define STR_DLGLOBBY_TEAM_LEFT_FMT          1511
 /* Lobby roster header above the spectator list ({number} = live count) */
 #define STR_DLGLOBBY_SPECTATORS_FMT         1848
+/* Sender-name tag prepended to a spectator's lobby chat line */
+#define STR_DLGLOBBY_SPECTATOR_TAG          1866
 /* Map-preview start-picker tooltips and the assign-to-someone menu */
 #define STR_STARTPICK_TIP_FREE_HOST         1512
 #define STR_STARTPICK_TIP_FREE              1513
@@ -672,6 +674,9 @@
 #define STR_DLGWBN_FETCHERR                 754
 #define STR_DLGWBN_UNKNOWN_ERR              755
 #define STR_DLGWBN_FILEFILTER               756
+#define STR_DLGWBN_TAB_MYGAMES              1863
+#define STR_DLGWBN_MYGAMES_SIGNIN           1864
+#define STR_DLGWBN_MYGAMES_NONE             1865
 
 /* SetName dialog additions */
 #define STR_DLGSETNAME_WINTITLE             757
@@ -1512,6 +1517,9 @@
 #define STR_VOTE_NEEDS_RUNNING_TIP          1393
 #define STR_VOTE_SURRENDER_PICK_TEAM_TIP    1394
 #define STR_VOTE_SURRENDER_TWO_TEAMS_TIP    1395
+/* Menu item to re-open a closed vote widget. {string1} = the vote name
+ * (STR_VOTE_BACK_TO_LOBBY / STR_VOTE_SURRENDER). */
+#define STR_VOTE_SHOW                       1862
 
 /* Logviewer — in-game vote events */
 #define STR_LV_VOTE_START_LOBBY             1396
@@ -1915,6 +1923,15 @@
 #define STR_DLGABOUT_THIRD_PARTY            1790
 #define STR_DLGABOUT_AUTHORS                1791
 #define STR_DLGABOUT_FORUMS                 1792
+
+/* Web client — join code / connect error dialogs */
+#define STR_WEB_JOIN_NEED_SIGNIN            1867
+#define STR_WEB_JOIN_NOT_ACCEPTING          1868
+#define STR_WEB_JOIN_LINK_INVALID           1869
+#define STR_WEB_JOIN_GAME_FULL              1870
+#define STR_WEB_JOIN_CODE_UNREACHABLE       1871
+#define STR_WEB_CONNECT_FAILED              1872
+#define STR_WEB_JOIN_NO_RESPONSE            1873
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

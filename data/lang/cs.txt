@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Nelze určit cestu pro uložení
 STR_DLGWBN_FETCHERR=Načítání selhalo
 STR_DLGWBN_UNKNOWN_ERR=Neznámá chyba
 STR_DLGWBN_FILEFILTER=Soubory záznamů WinBolo
+STR_DLGWBN_TAB_MYGAMES=Moje hry
+STR_DLGWBN_MYGAMES_SIGNIN=Přihlaste se nebo si vytvořte účet, abyste viděli své nedávné hry
+STR_DLGWBN_MYGAMES_NONE=Zatím nemáte žádné zaznamenané hry.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Nastavit jméno hráče
@@ -1414,6 +1417,7 @@ STR_VOTE_DRAW_TAG= (Remíza)
 STR_VOTE_NEEDS_RUNNING_TIP=Dostupné po spuštění hry.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Před hlasováním o kapitulaci vyberte tým.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Vzdání je dostupné pouze tehdy, kdy zbývají právě dva týmy\ns lidskými hráči.
+STR_VOTE_SHOW=Zobrazit: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Hlasitost
@@ -1807,6 +1811,7 @@ STR_DLGSETTINGS_TAB_SESSION=Relace
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Diváci ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Divák] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Ukončit sledování?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=Živě
@@ -1820,3 +1825,12 @@ STR_LV_SPEC_CONNECTING=Připojování...
 STR_LV_SPEC_CONNECTION_LOST=Spojení ztraceno
 STR_LV_SPEC_BEGINS_NOW=Sledování začíná nyní
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Sledování {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Pro připojení k této hře musíš být přihlášen/a k WinBolo.net.
+STR_WEB_JOIN_NOT_ACCEPTING=Tato hra už nepřijímá nové hráče.
+STR_WEB_JOIN_LINK_INVALID=Tento herní odkaz už není platný.
+STR_WEB_JOIN_GAME_FULL=Tato hra je plná.
+STR_WEB_JOIN_CODE_UNREACHABLE=Nepodařilo se spojit se serverem a získat kód pro připojení.
+STR_WEB_CONNECT_FAILED=Nepodařilo se připojit k serveru.
+STR_WEB_JOIN_NO_RESPONSE=Nepodařilo se připojit ke hře (server neodpověděl, nebo už byl pozvánkový odkaz použit či vypršel).

@@ -78,6 +78,12 @@ SDL_Window *sdl3DrawGetWindow(void);
 SDL_Renderer *sdl3DrawGetRenderer(void);
 SDL_Texture *sdl3DrawGetTilesTexture(void);
 
+/* TRUE if the caller is on the thread that created the renderer. The SDL
+ * renderer / Metal command queue must only be touched from that thread, so
+ * sim-tick front-end callbacks that would otherwise draw defer to the
+ * per-frame render pass and use this to gate any direct GPU work. */
+bool sdl3DrawOnRenderThread(void);
+
 /* Live game-render destination rect + scale, used by UI overlays to
  * pin themselves to the actual on-screen game viewport (which can be
  * letterboxed / pillarboxed / non-integer scaled in custom zoom). Any
@@ -112,6 +118,36 @@ void sdl3DrawRestoreLogicalPresentation(void);
 void sdl3DrawHandleEvent(ClientSim *cs, SDL_Event *ev);
 
 bool sdl3DrawSetup(int zoomFactor);
+
+/*********************************************************
+*NAME:          sdl3DrawReconfigureZoom
+*PURPOSE:
+*  Reconfigures all zoom-dependent assets (tiles, fonts,
+*  status panel, man-status and game render targets) in
+*  place against the live renderer.  explicitZoom >= 1
+*  uses that integer render zoom; 0 (Custom mode) derives
+*  it from the current window size.  Does not touch the
+*  renderer or window.
+*********************************************************/
+void sdl3DrawReconfigureZoom(int explicitZoom);
+
+/*********************************************************
+*NAME:          sdl3DrawReloadTiles
+*PURPOSE:
+*  Rebuilds only the tile atlas in place for a skin
+*  change, re-reading the skin assets from disk.  Does
+*  not touch the renderer, window, fonts, or zoom.
+*********************************************************/
+void sdl3DrawReloadTiles(void);
+
+/*********************************************************
+*NAME:          sdl3DrawSetReconfigureGuard
+*PURPOSE:
+*  Marks the start (true) / end (false) of an in-place
+*  zoom or skin reconfigure so sdl3DrawCleanup can assert
+*  the renderer/window is never torn down during one.
+*********************************************************/
+void sdl3DrawSetReconfigureGuard(bool active);
 
 /*********************************************************
 *NAME:          sdl3DrawCleanup

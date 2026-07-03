@@ -59,7 +59,13 @@ enum {
     BULK_KIND_PREVIEW     = 3,
     BULK_KIND_RESYNC      = 4,
     BULK_KIND_SPEC_SEED   = 5,
-    BULK_KIND_SPEC_RECORD = 6
+    BULK_KIND_SPEC_RECORD = 6,
+    /* Server->spectator one-shot at the delayed->live drain-flip: the
+     * current-session lobby-chat backlog, serialized as a run of
+     * [type u8][bodyLen u16 BE][body] control-event records. Sent on
+     * CHANNEL_BULK so the ≤200-event burst never pressures the reliable
+     * control window (which the same-tick sync replay already fills). */
+    BULK_KIND_LOBBY_CHAT_BACKLOG = 7
 };
 
 /* App-level stream header that precedes a blob on CHANNEL_BULK. Big-endian on

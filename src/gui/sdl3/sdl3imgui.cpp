@@ -58,6 +58,7 @@ extern "C" {
 #include "wire_limits.h" /* PACKET_MAX_CHAT_MESSAGE */
 #include "../gamefront.h"
 #include "../lang.h"
+#include "../sound.h"  /* soundPlayEffect — lobby game-start jingle (wasm seam) */
 }
 
 /* Maps an uppercased alpha-2 code to its localized STR_COUNTRY_* name id
@@ -107,9 +108,13 @@ extern "C" {
 #include "dialogs/imgui_settings.h"
 #include "dialogs/imgui_about.h"
 #include "dialogs/imgui_nav_outline.h"
+#include "dialogs/imgui_lobby.h"
 #include "platform/mac_menubar.h"
 
 extern "C" void windowSetQuitting(void);
+#ifdef __EMSCRIPTEN__
+extern "C" void windowLeaveGame(void);
+#endif
 
 /* Network type enum values come from client_enums.h via client_sim.h */
 
@@ -255,9 +260,9 @@ static bool s_showGameInfo = false;
 static bool s_showSendMsg  = false;
 static bool s_showPlayersPanel = false;
 
-/* Deferred zoom change — windowZoomChange destroys the ImGui context, so we
-   must not call it mid-frame.  Store the requested value and apply it after
-   the frame ends. 255 = no pending change. */
+/* Deferred zoom change — the reconfigure mutates the live renderer, so it must
+   not run mid-frame; store the requested value and apply it after the frame
+   ends. 255 = no pending change. */
 static BYTE s_pendingZoom = 255;
 static bool s_pendingZoomFromResize = false;  /* True if zoom change came from resize snap */
 
@@ -539,6 +544,10 @@ static void popOutHide(PopOutWindow *pw) {
     if (!pw->window || !pw->open) return;
     pw->open = false;
     SDL_HideWindow(pw->window);
+    /* Hiding the pop-out leaves keyboard focus orphaned (notably on macOS,
+     * where the OS does not auto-return key status to the main window), so
+     * explicitly raise the main game window back to the front/focus. */
+    if (s_window) SDL_RaiseWindow(s_window);
 }
 
 static bool popOutBeginFrame(PopOutWindow *pw) {
@@ -1575,8 +1584,9 @@ static void renderPlayersPanel(ClientSim *cs) {
     }
 
     /* In-game vote actions — siblings of Request Alliance, only during
-     * the running game phase. */
-    if (clientSimGetNetStatus(cs) == netRunning) {
+     * the running game phase and only on lobby-enabled servers (votes
+     * return to the lobby; the server rejects them when there is none). */
+    if (clientSimGetNetStatus(cs) == netRunning && clientSimIsLobbyAvailable(cs)) {
         /* Count active teams (distinct teamNumber across connected
          * humans) for the surrender precondition. */
         bool teamSeen[17] = {0};
@@ -1634,13 +1644,15 @@ static void renderPlayersPanel(ClientSim *cs) {
             ClientGameVoteSnapshot vs = {};
             if (!clientSimGetGameVote(cs, vkind, &vs)) continue;
             if (vs.active != GAME_VOTE_ACTIVE_RUNNING) continue;
+            /* Surrender votes are private to the surrendering team — non-members
+             * don't see the row at all (back-to-lobby stays visible to all). */
+            if (!localCanAnswerGameVote(cs, &vs)) continue;
             ImGui::Separator();
             const char *vnm = (vkind == GAME_VOTE_KIND_BACK_TO_LOBBY)
                               ? langGetText(STR_VOTE_BACK_TO_LOBBY)
                               : langGetText(STR_VOTE_SURRENDER);
             ImGui::Text("%s: %u / %u", vnm,
                         (unsigned)vs.yesCount, (unsigned)vs.threshold);
-            if (!localCanAnswerGameVote(cs, &vs)) continue;
             BYTE vme = clientSimGetMyPlayerNum(cs);
             bool vMyYes = (vme < 16) && ((vs.votes >> vme) & 1u);
             char yLbl[40]; snprintf(yLbl, sizeof(yLbl), "%s##vy%u", langGetText(STR_YES), (unsigned)vkind);
@@ -1962,6 +1974,11 @@ static void renderOneGameVoteWidget(ClientSim *cs, uint8_t kind,
      * and the user hasn't dismissed. */
     if (snap->active == GAME_VOTE_ACTIVE_NONE) { autoPanelReset(lay); return; }
     if (!snap->widgetVisible)                  { autoPanelReset(lay); return; }
+    /* Surrender votes are private to the surrendering team — don't render the
+     * floating widget for anyone outside that team. */
+    if (kind == GAME_VOTE_KIND_SURRENDER && !localCanAnswerGameVote(cs, snap)) {
+        autoPanelReset(lay); return;
+    }
 
     /* Auto-dismiss 5 seconds after the vote concludes (pass / fail /
      * cancel). Back-to-lobby with the server's return-to-lobby
@@ -2644,7 +2661,9 @@ static void renderMenuBar(ClientSim *cs) {
 
     /* ---- File ---------------------------------------- */
     if (ImGui::BeginMenu(langGetText(STR_MENU_FILE))) {
+#ifndef __EMSCRIPTEN__
         if (ImGui::MenuItem(langGetText(STR_MENU_NEW)))                       windowNewGame();
+#endif
         if (ImGui::MenuItem(langGetText(STR_MENU_SAVE_MAP), KMOD_PRIMARY_LABEL "S"))        windowSaveMap(cs);
         ImGui::Separator();
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
@@ -2661,7 +2680,11 @@ static void renderMenuBar(ClientSim *cs) {
         }
 #endif
         ImGui::Separator();
+#ifndef __EMSCRIPTEN__
         if (ImGui::MenuItem(langGetText(STR_MENU_EXIT)))                     windowSetQuitting();
+#else
+        if (ImGui::MenuItem(langGetText(STR_MENU_LEAVE_GAME)))               windowLeaveGame();
+#endif
         ImGui::EndMenu();
     }
 
@@ -2949,8 +2972,10 @@ static void renderMenuBar(ClientSim *cs) {
                 if (!canRequest || inCooldown) ImGui::EndDisabled();
             }
         }
-        ImGui::Separator();
-        {
+        /* In-game vote menu — only on lobby-enabled servers (the server
+         * rejects votes without a lobby to return to). */
+        if (clientSimIsLobbyAvailable(cs)) {
+            ImGui::Separator();
             bool running = clientSimGetNetStatus(cs) == netRunning;
             int activeTeams = 0;
             bool teamSeen[17] = {0};
@@ -2990,6 +3015,31 @@ static void renderMenuBar(ClientSim *cs) {
                 } else {
                     ImGui::SetTooltip("%s", langGetText(STR_VOTE_SURRENDER_TWO_TEAMS_TIP));
                 }
+            }
+
+            /* Re-open the floating widget for an in-flight vote whose popup was
+             * closed (X'd). One entry per such vote, only when the local player
+             * may see it (surrender stays private to the surrendering team). */
+            static const uint8_t showKinds[] = {
+                GAME_VOTE_KIND_BACK_TO_LOBBY, GAME_VOTE_KIND_SURRENDER
+            };
+            for (size_t k = 0; k < sizeof(showKinds) / sizeof(showKinds[0]); k++) {
+                uint8_t vk = showKinds[k];
+                ClientGameVoteSnapshot vs = {};
+                if (!clientSimGetGameVote(cs, vk, &vs)) continue;
+                if (vs.active != GAME_VOTE_ACTIVE_RUNNING) continue;
+                if (vs.widgetVisible) continue;
+                if (!localCanAnswerGameVote(cs, &vs)) continue;
+                const char *vnm = (vk == GAME_VOTE_KIND_BACK_TO_LOBBY)
+                                  ? langGetText(STR_VOTE_BACK_TO_LOBBY)
+                                  : langGetText(STR_VOTE_SURRENDER);
+                MessageArgs vargs = {};
+                SDL_snprintf(vargs.string1, sizeof(vargs.string1), "%s", vnm);
+                char lbl[128];
+                snprintf(lbl, sizeof(lbl), "%s",
+                         langGetTextFmt(STR_VOTE_SHOW, &vargs));
+                if (ImGui::MenuItem(lbl))
+                    clientSimSetGameVoteWidgetVisible(cs, vk, true);
             }
         }
         ImGui::EndMenu();
@@ -3051,7 +3101,9 @@ static void renderMenuBar(ClientSim *cs) {
 
     /* ---- Help ---------------------------------------- */
     if (ImGui::BeginMenu(langGetText(STR_MENU_HELP))) {
+#ifndef __EMSCRIPTEN__
         if (ImGui::MenuItem(langGetText(STR_MENU_HELP)))  { /* TODO: open help file */ }
+#endif
         if (ImGui::MenuItem(langGetText(STR_MENU_ABOUT))) aboutPopupOpen();
         ImGui::EndMenu();
     }
@@ -4041,7 +4093,10 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
      * NULL cs leaves both predicates false, matching the alliance block. */
     bool voteRunning = false, voteCanSurrender = false;
     if (cs) {
-        voteRunning = (clientSimGetNetStatus(cs) == netRunning);
+        /* Votes return to the lobby; on a lobby-less server the server
+         * rejects them, so disable the native Vote: items there too. */
+        voteRunning = (clientSimGetNetStatus(cs) == netRunning) &&
+                      clientSimIsLobbyAvailable(cs);
         if (voteRunning) {
             int activeTeams = 0;
             bool teamSeen[17] = {0};
@@ -4222,6 +4277,50 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
        arrives as SDL events (inputSourceUpdate in the event pump); Steam
        Input controller input does not, so poll it here. */
     inputSourceTick();
+
+    /* In-game lobby (non-blocking host, e.g. the WASM client).
+     *
+     * On desktop the lobby is a separate BLOCKING modal (imguiLobbyShow)
+     * with its own ImGui context, and this per-frame pump never runs while
+     * it is up — so clientSimIsInLobby(cs) is ALWAYS false here on desktop
+     * and every branch below is a no-op for it. On the WASM client this is
+     * the only loop, so build the lobby into the shared frame and skip the
+     * in-game HUD / menu bar / panels, then close out the frame the same way
+     * the normal tail does.
+     *
+     * Release the per-frame lobby state on the edge out of the lobby (game
+     * start, or a confirmed Leave) so its map-preview texture / popup
+     * buffers don't leak and a later return to lobby starts clean. */
+    {
+        static bool s_wasInLobby = false;
+        bool nowInLobby = (cs && clientSimIsInLobby(cs));
+        if (s_wasInLobby && !nowInLobby) {
+            imguiLobbyFrameReset();
+            /* Lobby → running edge: play the game-start jingle, mirroring
+               the desktop blocking loop's netRunning break. A Leave or a
+               dropped connection exits the lobby too, but not into
+               netRunning, so those stay silent. (Desktop never takes this
+               edge — the blocking lobby owns the frame while inLobby.) */
+            if (cs && clientSimGetNetStatus(cs) == netRunning) {
+                soundPlayEffect(lobbyGameStart);
+            }
+        }
+        s_wasInLobby = nowInLobby;
+
+        if (nowInLobby) {
+            if (imguiLobbyRenderFrame(cs) == LOBBY_FRAME_LEFT) {
+                /* Confirmed Leave: drop the connection. The lobby stops
+                   rendering next frame (clientSimIsInLobby flips false),
+                   which also triggers imguiLobbyFrameReset above. */
+                clientSimDisconnect(cs);
+            }
+            keyboardUpdate();
+            dialogDrawNavOutline();
+            ImGui::Render();
+            ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), s_renderer);
+            return;
+        }
+    }
 
     /* Pause-overlay open trigger: the controller's Menu/☰ button (the bound
        Pause action, default Start). Opens whenever a controller is connected
@@ -4550,7 +4649,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     }
 
     /* Apply deferred zoom change after the frame is fully rendered.
-       windowZoomChange destroys and recreates the ImGui context, so it
+       windowZoomChange reconfigures the live renderer in place, so it
        must not run while we are mid-frame. */
     if (s_pendingZoom != 255) {
         BYTE zoom = s_pendingZoom;

@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Speicherpfad konnte nicht ermittelt werden
 STR_DLGWBN_FETCHERR=Abruf fehlgeschlagen
 STR_DLGWBN_UNKNOWN_ERR=Unbekannter Fehler
 STR_DLGWBN_FILEFILTER=WinBolo-Logdateien
+STR_DLGWBN_TAB_MYGAMES=Meine Spiele
+STR_DLGWBN_MYGAMES_SIGNIN=Melden Sie sich an oder erstellen Sie ein Konto, um Ihre letzten Spiele zu sehen
+STR_DLGWBN_MYGAMES_NONE=Sie haben noch keine aufgezeichneten Spiele.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Spielernamen festlegen
@@ -1404,6 +1407,7 @@ STR_VOTE_DRAW_TAG= (Unentschieden)
 STR_VOTE_NEEDS_RUNNING_TIP=Verfügbar, sobald das Spiel läuft.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Wähle ein Team, bevor du über die Aufgabe abstimmst.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Aufgeben ist nur verfügbar, wenn genau zwei Teams\nmit menschlichen Spielern verbleiben.
+STR_VOTE_SHOW=Anzeigen: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Lautstärke
@@ -1809,6 +1813,7 @@ STR_DLGSETTINGS_TAB_SESSION=Sitzung
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Zuschauer ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Zuschauer] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Zuschauen beenden?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=Live
@@ -1822,3 +1827,12 @@ STR_LV_SPEC_CONNECTING=Verbinde...
 STR_LV_SPEC_CONNECTION_LOST=Verbindung getrennt
 STR_LV_SPEC_BEGINS_NOW=Zuschauen beginnt jetzt
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Zuschauen {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Sie müssen bei WinBolo.net angemeldet sein, um diesem Spiel beizutreten.
+STR_WEB_JOIN_NOT_ACCEPTING=Dieses Spiel nimmt keine neuen Spieler mehr an.
+STR_WEB_JOIN_LINK_INVALID=Dieser Spiellink ist nicht mehr gültig.
+STR_WEB_JOIN_GAME_FULL=Dieses Spiel ist voll.
+STR_WEB_JOIN_CODE_UNREACHABLE=Der Server konnte nicht erreicht werden, um einen Beitrittscode zu erhalten.
+STR_WEB_CONNECT_FAILED=Verbindung zum Server konnte nicht hergestellt werden.
+STR_WEB_JOIN_NO_RESPONSE=Beitritt zum Spiel nicht möglich (der Server hat nicht geantwortet, oder Ihr Einladungslink wurde bereits verwendet oder ist abgelaufen).

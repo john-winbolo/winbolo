@@ -217,6 +217,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/flags.c
     ${PROJ_ROOT}/src/gui/sdl3/dns_lookups.c
     ${PROJ_ROOT}/src/gui/sdl3/gamefront.c
+    ${PROJ_ROOT}/src/client_frontend/client_frontend_connect.c
     ${PROJ_ROOT}/src/gui/sdl3/bg_game.c
     ${PROJ_ROOT}/src/gui/sdl3/mapview.c
     ${PROJ_ROOT}/src/gui/sdl3/sprite_positions.c
@@ -258,6 +259,7 @@ target_include_directories(main PRIVATE
     ${PROJ_ROOT}/src/gui/sdl3/dialogs
     ${PROJ_ROOT}/src/gui
     ${PROJ_ROOT}/src/server
+    ${PROJ_ROOT}/src/client_frontend
 )
 bolo_apply_include_rules(main gui)
 bolo_grant_internal_source_access(main

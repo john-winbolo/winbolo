@@ -49,6 +49,7 @@
 #include "../../common/wb_log.h"
 #include "../../common/prefs.h"
 #include "bolo_rand.h"
+#include "client_frontend_connect.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "discovery.h"
@@ -76,6 +77,7 @@
 #include "bg_game.h"
 
 #include "everard_map.h"
+#include "lobby_bot_pools.h"
 #include "platform_net.h"
 #include "playername_validate.h"
 #include "client_net.h"
@@ -93,11 +95,12 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
-void spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
+bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
 #include "dialogs/imgui_wbn_browser.h"
 #include "dialogs/imgui_onboarding.h"
+#include "dialogs/imgui_lobby.h"
 
 #ifndef DEFAULT_UDP_PORT
 #define DEFAULT_UDP_PORT 27500
@@ -550,6 +553,20 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   langSetup();
 
+  /* Replace the built-in bot naming pools with the shipped
+   * data/bot_names.json so the lobby dropdown and on-add name picks
+   * match what the server (and other clients shipping the same file)
+   * expect.  Falls back silently to the compiled-in defaults if the
+   * file is missing or unreadable. */
+  {
+    LobbyBotPoolLoadStats poolStats;
+    if (lobbyBotPoolsLoadDefault(&poolStats)) {
+      WB_LOG_INFO(WB_LOG_CAT_ASSET,
+                  "bot name pools: loaded %d pool(s) from data/bot_names.json",
+                  poolStats.poolsKept);
+    }
+  }
+
   /* Read preferences */
   gameFrontGetPrefs(keys, &useAutoslow, &useAutohide);
 
@@ -760,6 +777,15 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
     clientSimSetLockToggleSendFunc(humanSim, NULL);
     clientSimDisconnect(humanSim);
     udpTransportActive = FALSE;
+  }
+  if (isQuiting != TRUE) {
+    /* Drop any bot-pool catalog a server streamed us this session so the
+     * previous server's themed pools never linger in a later lobby, then
+     * restore our own shipped default. The next server we join re-sends
+     * its catalog during join sync. (Skipped when quitting — nothing
+     * will read the table again.) */
+    lobbyBotPoolsReset();
+    lobbyBotPoolsLoadDefault(NULL);
   }
   /* Don't call windowSaveCurrentPosition() here - we already save the corrected
      position on every resize/move. Calling it here would overwrite the corrected
@@ -1081,15 +1107,54 @@ static bool gameFrontDialogs(void) {
                                                 : langGetText(NETERR_SERVERCONNECT),
                           IMGUI_MSG_ERROR, IMGUI_MSG_OK);
       } else {
-        /* Blocking: drives the spectator transport, decodes the delayed
-         * feed, and owns the window until the user exits. The handshake to
-         * CLIENT_CONNECT_SPECTATING and the seed wait happen inside it via
-         * the spectator_drain pump — no pre-run tick loop needed here. */
-        spectatorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), spectatorSim,
-                     gameFrontUdpAddress, gameFrontTargetUdp);
-        /* spectatorRun retitled the borrowed window for the live session;
-         * restore the normal app title now that it has returned. */
-        SDL_SetWindowTitle(sdl3DrawGetWindow(), WIND_TITLE);
+        /* clientSimConnectUdp only fires the JOIN; the spectator accept — which
+         * carries the initial live/delayed mode byte — lands on a later
+         * transport tick. Pump until the handshake reaches SPECTATING (so the
+         * mode bit is known before the first view is chosen) or it fails, the
+         * same wait the join path runs before entering the lobby. */
+        int specWaitTicks = 0;
+        while (specWaitTicks < 1500) {  /* 30 second timeout */
+          ClientConnectState ss = clientSimGetConnectState(spectatorSim);
+          if (ss == CLIENT_CONNECT_SPECTATING) break;
+          if (ss == CLIENT_CONNECT_ERROR ||
+              ss == CLIENT_CONNECT_SERVER_SHUTDOWN ||
+              ss == CLIENT_CONNECT_KICKED) {
+            break;
+          }
+          clientSimNetTick(spectatorSim);
+          SDL_Delay(20);
+          specWaitTicks++;
+        }
+
+        if (clientSimGetConnectState(spectatorSim) != CLIENT_CONNECT_SPECTATING) {
+          const char *reason = clientSimGetConnectErrorReason(spectatorSim);
+          imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                            (reason && reason[0]) ? reason
+                                                  : langGetText(NETERR_SERVERCONNECT),
+                            IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+        } else {
+          /* Dual-mode session: the live read-only lobby while the server is in
+           * lobby/countdown, the delayed game once it starts. The mode follows
+           * which feed is arriving (clientSimSpectatorIsLiveLobby — seeded from
+           * the accept byte, flipped by the feeding channel). imguiLobbyShow
+           * returns 1 when the delayed feed begins at game start (a spectator
+           * never reaches the RUNNING phase the player path keys on, since the
+           * server unsubscribes it before that publish); spectatorRun returns
+           * true when live lobby control resumes after the delayed game drains.
+           * Any other return (user left / lost connection / quit) ends it. */
+          for (;;) {
+            if (clientSimSpectatorIsLiveLobby(spectatorSim)) {
+              if (imguiLobbyShow(spectatorSim) != 1) break;
+            } else if (!spectatorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
+                                     spectatorSim, gameFrontUdpAddress,
+                                     gameFrontTargetUdp)) {
+              break;
+            }
+          }
+          /* spectatorRun retitles the borrowed window for the live session;
+           * restore the normal app title now that the session has ended. */
+          SDL_SetWindowTitle(sdl3DrawGetWindow(), WIND_TITLE);
+        }
       }
       /* Caller owns the ClientSim lifetime (spectatorRun never disconnects):
        * tear it down so the socket/transport is released before returning. */
@@ -1344,22 +1409,9 @@ bool gameFrontSetDlgState(openingStates newState) {
       s_joinAttemptFailed = TRUE;
       returnValue = FALSE;
     } else {
-      /* Wait for join handshake. Break early if we enter the lobby
-       * (lobby-enabled servers deliver CTRL_LOBBY_SETTINGS via sync
-       * replay before map chunks, so inLobby may become true while
-       * the map is still downloading). */
-      int joinWaitTicks = 0;
-      while (joinWaitTicks < 1500) {  /* 30 second timeout */
-        ClientConnectState js = clientSimGetConnectState(humanSim);
-        if (js != CLIENT_CONNECT_JOINING && js != CLIENT_CONNECT_DOWNLOADING_MAP) break;
-        if (clientSimIsInLobby(humanSim)) break;  /* Enter lobby immediately */
-        clientSimNetTick(humanSim);
-        SDL_Delay(20);
-        joinWaitTicks++;
-      }
-
-      ClientConnectState finalState = clientSimGetConnectState(humanSim);
-      if (finalState == CLIENT_CONNECT_CONNECTED || clientSimIsInLobby(humanSim)) {
+      /* Wait for the join handshake (30s timeout). Landing accepts either a
+       * running game or entry into the server lobby — see clientFrontAwaitJoin. */
+      if (clientFrontAwaitJoin(humanSim, 1500)) {
         udpPlayerNum = clientSimGetServerPlayerNum(humanSim);
         udpTransportActive = TRUE;
 
@@ -1383,17 +1435,13 @@ bool gameFrontSetDlgState(openingStates newState) {
         clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
         clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
 
-        if (clientSimIsInLobby(humanSim)) {
-          /* Lobby path: enter lobby immediately, map downloads in
-           * background. The lobby UI shows a progress bar and gates
-           * the ready button on mapDownloadComplete. Install happens
-           * inside the transport on the CTRL_GAME_PHASE LOBBY→RUNNING
-           * watcher when the host starts the game. */
-          clientSimSetNetStatus(humanSim, netLobby);
-        } else {
-          /* No-lobby path: transport already installed the map inline
-           * on MAP_DOWNLOAD completion; the first snapshot apply will
-           * fire the viewport finalisation. */
+        /* The lobby landing (netLobby — lobby UI, map downloads in the
+         * background, ready button gated on the real mapDownloadComplete) is
+         * settled inside clientFrontAwaitJoin. Only the no-lobby path has extra
+         * work: the transport already installed the map inline on MAP_DOWNLOAD
+         * completion, and the first snapshot apply fires the viewport
+         * finalisation — update Steam presence now that we're in a game. */
+        if (!clientSimIsInLobby(humanSim)) {
           gameFrontUpdateSteamPresence(humanSim);
         }
         dlgState = openFinished;
@@ -2231,9 +2279,10 @@ void gameFrontHandleUrlOpen(char *url) {
 }
 
 void gameFrontReloadSkins(void) {
-  sdl3DrawCleanup();
+  sdl3DrawSetReconfigureGuard(true);
+  sdl3DrawReloadTiles();
+  sdl3DrawSetReconfigureGuard(false);
   soundCleanup();
-  sdl3DrawSetup(1);
   if (soundSetup() == FALSE) {
     /* Non-fatal */
   }

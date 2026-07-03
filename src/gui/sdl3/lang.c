@@ -535,6 +535,9 @@ static const LangEntry langTable[] = {
     {754,  "Fetch failed"},
     {755,  "Unknown error"},
     {756,  "WinBolo Log Files"},
+    {1863, "My Games"},
+    {1864, "Login or create an account to view your recent games"},
+    {1865, "You don't have any recorded games yet."},
     {757,  "WinBolo - Set Player Name"},
     {758,  "Your player name is set by WinBolo.net."},
     {759,  "Please enter your player name."},
@@ -1729,6 +1732,7 @@ static const LangEntry langTable[] = {
     {1846, "Session"},
     {1847, "Currently: {string1}"},
     {1848, "Spectators ({number}):"},
+    {1866, "[Spectator] {string1}"},
     {1849, "Leave spectating?"},
     {1850, "Lobby"},
     {1851, "Live"},
@@ -1742,6 +1746,18 @@ static const LangEntry langTable[] = {
     {1859, "Connection lost"},
     {1860, "Spectating begins now"},
     {1861, "WinBolo - Spectating {string1}:{number}{string3}"},
+
+    /* Menu item to re-open a closed in-game vote widget. */
+    {1862, "Show: {string1}"},
+
+    /* Web client — join code / connect error dialogs */
+    {1867, "You must be signed in to WinBolo.net to join this game."},
+    {1868, "This game is not accepting new players."},
+    {1869, "That game link is no longer valid."},
+    {1870, "This game is full."},
+    {1871, "Could not reach the server to get a join code."},
+    {1872, "Could not connect to the server."},
+    {1873, "Could not join the game (the server did not respond, or your invite link has already been used or expired)."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

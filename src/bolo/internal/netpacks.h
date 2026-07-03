@@ -478,6 +478,12 @@ BOLO_STATIC_ASSERT(sizeof(INFO_PACKET) == 111, INFO_PACKET_must_be_111_bytes);
                                               appended as a trailer on the
                                               snapshot / input datagram. */
 
+#define PACKET_LOBBY_BOT_POOL_CHUNK    208  /* server → joiner: one fragment of
+                                              the compressed bot-pool catalog.
+                                              { seq 1, count 1, fragLen 2 BE,
+                                                frag N }. Reassembled seq
+                                                0..count-1 then installed. */
+
 #define PACKET_GAME_VOTE_STATE         195  /* server → all clients
                                               { kind 1, active 1,
                                                 triggerSrc 1, teamId 1,

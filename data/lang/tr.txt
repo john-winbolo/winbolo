@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Kaydetme yolu belirlenemedi
 STR_DLGWBN_FETCHERR=Getirme başarısız
 STR_DLGWBN_UNKNOWN_ERR=Bilinmeyen hata
 STR_DLGWBN_FILEFILTER=WinBolo Günlük Dosyaları
+STR_DLGWBN_TAB_MYGAMES=Oyunlarım
+STR_DLGWBN_MYGAMES_SIGNIN=Son oyunlarınızı görmek için oturum açın veya hesap oluşturun
+STR_DLGWBN_MYGAMES_NONE=Henüz kayıtlı oyununuz yok.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Oyuncu Adı Belirle
@@ -1404,6 +1407,7 @@ STR_VOTE_DRAW_TAG= (Beraberlik)
 STR_VOTE_NEEDS_RUNNING_TIP=Oyun başladıktan sonra kullanılabilir.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Teslim olmak için oy kullanmadan önce bir takım seçin.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Teslim olma yalnızca insan oyunculu tam olarak iki takım\nkaldığında kullanılabilir.
+STR_VOTE_SHOW=Göster: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Ses düzeyi
@@ -1809,6 +1813,7 @@ STR_DLGSETTINGS_TAB_SESSION=Oturum
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Seyirciler ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Seyirci] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=İzlemeyi bırak?
 STR_LV_SPEC_PHASE_LOBBY=Lobi
 STR_LV_SPEC_PHASE_LIVE=Canlı
@@ -1822,3 +1827,12 @@ STR_LV_SPEC_CONNECTING=Bağlanıyor...
 STR_LV_SPEC_CONNECTION_LOST=Bağlantı kesildi
 STR_LV_SPEC_BEGINS_NOW=İzleme şimdi başlıyor
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - İzleniyor {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Bu oyuna katılmak için WinBolo.net'te oturum açmış olmalısınız.
+STR_WEB_JOIN_NOT_ACCEPTING=Bu oyun yeni oyuncu kabul etmiyor.
+STR_WEB_JOIN_LINK_INVALID=Bu oyun bağlantısı artık geçerli değil.
+STR_WEB_JOIN_GAME_FULL=Bu oyun dolu.
+STR_WEB_JOIN_CODE_UNREACHABLE=Katılım kodu alınamadı; sunucuya ulaşılamadı.
+STR_WEB_CONNECT_FAILED=Sunucuya bağlanılamadı.
+STR_WEB_JOIN_NO_RESPONSE=Oyuna katılınamadı (sunucu yanıt vermedi ya da davet bağlantınız zaten kullanılmış veya süresi dolmuş).

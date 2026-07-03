@@ -54,6 +54,7 @@ static void clientSimTeardownTransport(ClientSim *cs) {
     transportLocalDestroy(&cs->transport);
   }
   cs->hasTransport = false;
+  cs->transportTicksServer = false;
 }
 
 bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
@@ -75,6 +76,8 @@ bool clientSimConnectUdp(ClientSim *cs, const char *serverAddr,
                                            spectator);
   cs->hasTransport = true;
   cs->isUdpTransport = true;
+  cs->transportTicksServer = false;
+  cs->isSpectator = spectator;
   clientSimSetLocalTransport(cs, false);
   /* Symmetric with the SP path's clientSimSetNetType(cs, netSingle) at
    * the bottom of clientSimConnectLocalBody.  Multiple sim sites branch
@@ -191,6 +194,7 @@ static bool clientSimConnectLocalBody(ClientSim *cs, struct ServerSim *sim,
   cs->transport          = tr;
   cs->hasTransport       = true;
   cs->isUdpTransport     = false;
+  cs->transportTicksServer = !passive;
   clientSimSetBoundServerSim(cs, sim);
   clientSimSetLocalTransport(cs, true);
   clientSimSetNetType(cs, netSingle);
@@ -282,6 +286,7 @@ void clientSimNetTick(ClientSim *cs) {
 
 void clientSimNetSendInput(ClientSim *cs, const InputPacket *pkt) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer drives no tank */
   cs->transport.sendInput(cs->transport.ctx, pkt);
 }
 
@@ -394,7 +399,19 @@ uint32_t clientSimGetViewTick(const ClientSim *cs) {
  * it to clientSimSubmitCommand, which routes through the reliable
  * carrier on UDP or serverSimApplyCommand under the mutex on local. A
  * few bespoke-channel helpers (snapshot input, map list/search, map
- * upload, MapUseLocal, WbnReauth) keep their own UDP-only paths. */
+ * upload, MapUseLocal, WbnReauth) keep their own UDP-only paths.
+ *
+ * A tankless spectator connection is read-only: it renders live lobby
+ * and game state but must never originate a lobby or gameplay command.
+ * Every mutating helper below early-returns when clientSimIsSpectator(cs)
+ * is set, so a missed UI guard — or any non-UI caller — still cannot put
+ * a viewer command on the wire. Exceptions, by design:
+ *   - clientSimNetSendChat: the lobby UI currently disables a spectator's
+ *     chat input; the send path is left open for the spectator chat channel.
+ *   - the read-only map-browser queries (map list / preview / search):
+ *     they fetch data and mutate nothing.
+ *   - clientSimNetSendWbnReauth: connection-auth maintenance, not a game
+ *     mutation; a viewer with a WBN identity may still need to re-auth. */
 
 void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message) {
   if (cs == NULL || !cs->hasTransport) return;
@@ -410,6 +427,7 @@ void clientSimNetSendChat(ClientSim *cs, BYTE destPlayer, const char *message) {
 
 void clientSimNetSendNameChange(ClientSim *cs, const char *newName) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   if (newName == NULL || newName[0] == '\0') return;
   ClientCommand cmd = { .type = CMD_NAME_CHANGE };
   size_t nl = strlen(newName);
@@ -421,6 +439,7 @@ void clientSimNetSendNameChange(ClientSim *cs, const char *newName) {
 
 void clientSimNetSendAllianceRequest(ClientSim *cs, BYTE toPlayer) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_ALLIANCE_REQUEST };
   cmd.u.allianceRequest.toPlayer = toPlayer;
   clientSimSubmitCommand(cs, &cmd);
@@ -428,6 +447,7 @@ void clientSimNetSendAllianceRequest(ClientSim *cs, BYTE toPlayer) {
 
 void clientSimNetSendAllianceAccept(ClientSim *cs, BYTE toPlayer) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_ALLIANCE_ACCEPT };
   cmd.u.allianceAccept.newMember = toPlayer;
   clientSimSubmitCommand(cs, &cmd);
@@ -435,12 +455,14 @@ void clientSimNetSendAllianceAccept(ClientSim *cs, BYTE toPlayer) {
 
 void clientSimNetSendAllianceLeave(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer holds no alliance */
   ClientCommand cmd = { .type = CMD_ALLIANCE_LEAVE };
   clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLockToggle(ClientSim *cs, bool allow) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOCK_TOGGLE };
   cmd.u.lockToggle.allow = allow;
   clientSimSubmitCommand(cs, &cmd);
@@ -461,6 +483,7 @@ void clientSimSubmitCommand(ClientSim *cs, const ClientCommand *cmd) {
 
 void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_TEAM_SET };
   cmd.u.teamSet.slot = slot;
   cmd.u.teamSet.team = teamNumber;
@@ -470,6 +493,7 @@ void clientSimNetSendTeamSet(ClientSim *cs, BYTE slot, BYTE teamNumber) {
 void clientSimNetSendLobbyClaimStart(ClientSim *cs, BYTE targetSlot,
                                      BYTE startIdx) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_CLAIM_START };
   cmd.u.lobbyClaimStart.targetSlot = targetSlot;
   cmd.u.lobbyClaimStart.startIdx   = startIdx;
@@ -478,6 +502,7 @@ void clientSimNetSendLobbyClaimStart(ClientSim *cs, BYTE targetSlot,
 
 void clientSimNetSendReady(ClientSim *cs, bool ready) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer holds no slot to ready */
   ClientCommand cmd = { .type = CMD_READY };
   cmd.u.ready.ready = ready;
   clientSimSubmitCommand(cs, &cmd);
@@ -485,6 +510,7 @@ void clientSimNetSendReady(ClientSim *cs, bool ready) {
 
 void clientSimNetSendAddBot(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_ADD_BOT };
   clientSimSubmitCommand(cs, &cmd);
 }
@@ -493,6 +519,7 @@ void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
                                       uint8_t brainIdx,
                                       const char *botName) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   /* brainIdx accepted for API symmetry; the server applies the default
    * brain on add. Use clientSimNetSendLobbySetBotBrain to change it. */
   (void)brainIdx;
@@ -509,6 +536,7 @@ void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
 
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_REMOVE_BOT };
   cmd.u.lobbyRemoveBot.slot = playerNum;
   clientSimSubmitCommand(cs, &cmd);
@@ -519,6 +547,7 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
                                     uint8_t personality,
                                     const char *name) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_BOT_CONFIG };
   cmd.u.lobbyBotConfig.slot        = slot;
   cmd.u.lobbyBotConfig.difficulty  = difficulty;
@@ -535,6 +564,7 @@ void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
 void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
                                       uint8_t brainIdx) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_SET_BOT_BRAIN };
   cmd.u.lobbySetBotBrain.slot     = slot;
   cmd.u.lobbySetBotBrain.brainIdx = brainIdx;
@@ -543,6 +573,7 @@ void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
 
 void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   if (mapRelPath == NULL) return;
   size_t pl = strlen(mapRelPath);
   if (pl == 0 || pl > 255) return;
@@ -554,18 +585,21 @@ void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {
 
 void clientSimNetSendLobbyPreviewCancel(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_CANCEL };
   clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyPreviewCommit(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_PREVIEW_COMMIT };
   clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   if (seedStr == NULL) return;
   size_t sl = strlen(seedStr);
   if (sl == 0 || sl > 63) return;
@@ -597,6 +631,7 @@ void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
 
 bool clientSimNetSendLobbyMapUpload(ClientSim *cs, const char *localFilePath) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  if (clientSimIsSpectator(cs)) return false;  /* viewer is read-only */
   return transportUdpClientStartLobbyMapUploadFromPath(&cs->transport,
                                                        localFilePath);
 }
@@ -605,6 +640,7 @@ bool clientSimNetSendLobbyMapUploadBytes(ClientSim *cs,
                                          const uint8_t *buf, size_t len,
                                          const char *mapName) {
   if (cs == NULL || !cs->hasTransport) return false;
+  if (clientSimIsSpectator(cs)) return false;  /* viewer is read-only */
   if (cs->isUdpTransport) {
     return transportUdpClientStartLobbyMapUploadFromBytes(&cs->transport,
                                                           buf, len, mapName);
@@ -641,6 +677,7 @@ void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,
                                       const char *relPath,
                                       const char md5Hex[32]) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   transportUdpClientSendLobbyMapUseLocal(&cs->transport, totalLen, name,
                                           relPath, md5Hex);
 }
@@ -649,6 +686,7 @@ void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
                                    uint8_t color, uint8_t namingPool,
                                    const char *name) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_TEAM_META };
   cmd.u.lobbyTeamMeta.teamId     = teamId;
   cmd.u.lobbyTeamMeta.color      = color;
@@ -664,6 +702,7 @@ void clientSimNetSendLobbyTeamMeta(ClientSim *cs, BYTE teamId,
 
 void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_TEAM_CLEAR };
   cmd.u.lobbyTeamClear.teamId = teamId;
   clientSimSubmitCommand(cs, &cmd);
@@ -672,6 +711,7 @@ void clientSimNetSendLobbyTeamClear(ClientSim *cs, BYTE teamId) {
 void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
                                   const uint8_t *value, uint8_t valueLen) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   if (valueLen > 32) return;
   ClientCommand cmd = { .type = CMD_LOBBY_SETTING };
   cmd.u.lobbySetting.settingType = settingType;
@@ -684,6 +724,7 @@ void clientSimNetSendLobbySetting(ClientSim *cs, uint8_t settingType,
 
 void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_SET_PASSWORD };
   if (pw != NULL && pw[0] != '\0') {
     size_t pl = strlen(pw);
@@ -696,6 +737,7 @@ void clientSimNetSendLobbySetPassword(ClientSim *cs, const char *pw) {
 
 void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_OPEN_HOST };
   cmd.u.lobbyOpenHost.openHost = openHost;
   clientSimSubmitCommand(cs, &cmd);
@@ -703,6 +745,7 @@ void clientSimNetSendLobbyOpenHost(ClientSim *cs, bool openHost) {
 
 void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_KICK };
   cmd.u.lobbyKick.slot = slot;
   clientSimSubmitCommand(cs, &cmd);
@@ -710,6 +753,7 @@ void clientSimNetSendLobbyKick(ClientSim *cs, uint8_t slot) {
 
 void clientSimNetSendLobbyTransferHost(ClientSim *cs, uint8_t slot) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_LOBBY_TRANSFER_HOST };
   cmd.u.lobbyTransferHost.slot = slot;
   clientSimSubmitCommand(cs, &cmd);
@@ -717,6 +761,7 @@ void clientSimNetSendLobbyTransferHost(ClientSim *cs, uint8_t slot) {
 
 void clientSimNetSendMapSkipVote(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_MAP_SKIP_VOTE };
   clientSimSubmitCommand(cs, &cmd);
 }
@@ -724,6 +769,7 @@ void clientSimNetSendMapSkipVote(ClientSim *cs) {
 void clientSimNetSendGameVoteToggle(ClientSim *cs,
                                     uint8_t kind, uint8_t toggleMode) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_GAME_VOTE_TOGGLE };
   cmd.u.gameVoteToggle.kind       = kind;
   cmd.u.gameVoteToggle.toggleMode = toggleMode;
@@ -733,6 +779,7 @@ void clientSimNetSendGameVoteToggle(ClientSim *cs,
 void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,
                                     bool includeBots) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_BALANCE_REQUEST };
   cmd.u.balanceRequest.teamSize    = teamSize;
   cmd.u.balanceRequest.includeBots = includeBots;
@@ -741,12 +788,14 @@ void clientSimNetSendBalanceRequest(ClientSim *cs, BYTE teamSize,
 
 void clientSimNetSendBalanceApply(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_BALANCE_APPLY };
   clientSimSubmitCommand(cs, &cmd);
 }
 
 void clientSimNetSendBalanceDismiss(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
   ClientCommand cmd = { .type = CMD_BALANCE_DISMISS };
   clientSimSubmitCommand(cs, &cmd);
 }

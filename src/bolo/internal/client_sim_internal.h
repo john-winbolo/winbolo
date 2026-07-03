@@ -32,6 +32,7 @@
 #include "messages.h"
 #include "scroll.h"
 #include "brain_list.h"
+#include "lobby_bot_pools.h" /* LOBBY_BOT_CATALOG_WIRE_MAX */
 #include "upload_policy.h"
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
 #include "transport_udp.h" /* MAX_SPECTATORS */
@@ -107,6 +108,12 @@ typedef struct {
      * value's validity; remaining is in game ticks (~50/sec). */
     uint32_t              countdownRemaining;
     bool                  countdownReceived;
+    /* Live-lobby mode mirror, copied one-way from the transport's
+     * specLiveLobby (the transport is the source of truth). True while the
+     * spectator is fed the live lobby control bus; false once the delayed ring
+     * feed begins. The spectator session reads it to alternate the read-only
+     * lobby and the delayed game view. */
+    bool                  liveLobby;
 } ClientSpectatorFeed;
 
 struct ClientSim {
@@ -285,6 +292,9 @@ struct ClientSim {
     uint8_t          lobbyStartCount;
     UploadPolicy     uploadPolicy;      /* server map-upload policy; ALLOW until first event */
     bool             mapSkipAvailable;  /* Server has map rotation with >1 map */
+    bool             lobbyAvailable;    /* Server runs a lobby (CTRL_LOBBY_SETTINGS
+                                         * inLobby). False on -nolobby/-maprotate;
+                                         * gates the in-game vote UI. */
     bool             mapSkipVotes[16];  /* Mirror of server vote state */
     bool             mapSkipMyVote;     /* Local tracking of own vote */
 
@@ -357,6 +367,17 @@ struct ClientSim {
      * PACKET_LOBBY_BRAIN_LIST on join. Used as the option list for the
      * AiConfig "Bot Code" combo. */
     BrainList lobbyBrainList;
+
+    /* Reassembly of the server's bot-pool catalog, streamed as
+     * CTRL_LOBBY_BOT_POOL_CHUNK fragments during join sync. Fragments
+     * arrive in order on the reliable control channel; on the final
+     * fragment the assembled blob is installed via
+     * lobbyBotPoolsDeserializeInstall (replacing the process-global pool
+     * table so the lobby dropdown shows the SERVER's pools). */
+    uint8_t  lobbyPoolChunkExpected;   /* total fragment count; 0 = idle */
+    uint8_t  lobbyPoolNextSeq;         /* next in-order fragment expected */
+    uint32_t lobbyPoolBlobLen;         /* bytes assembled so far */
+    uint8_t  lobbyPoolBlob[LOBBY_BOT_CATALOG_WIRE_MAX];
 
     /* Server-side map directory listing — populated from
      * PACKET_LOBBY_MAP_LIST_RSP. The chooser's listProvider sends a
@@ -507,16 +528,31 @@ struct ClientSim {
      * clientSimDisconnect). Embedded by value because the underlying
      * transport constructors return Transport by value.
      *
-     * clientSimCreate preserves these three fields across its memset
+     * clientSimCreate preserves these four fields across its memset
      * (save/restore in the function body). */
     Transport transport;
     bool      hasTransport;
     bool      isUdpTransport;
+    /* True when the bound transport advances the server itself — i.e. its
+     * tick() runs serverSimTick (the active local transport). False for the
+     * passive local transport (host timer thread ticks the server) and for
+     * UDP (the remote server ticks itself). Frontend tick loops gate their
+     * extra keys-half transport pump on this via
+     * clientSimTransportTicksServer. */
+    bool      transportTicksServer;
 
     /* Spectator feed — populated by the UDP transport's bulk sink while
      * connected as a tankless spectator; drained by the spectator session.
      * Zeroed at create, freed on teardown (clientSimSpectatorFeedClear). */
     ClientSpectatorFeed spectatorFeed;
+
+    /* True when this ClientSim connected as a tankless spectator (the
+     * spectator arg of clientSimConnectUdp). A spectator claims no tank
+     * slot, so myPlayerNum stays at its create-time 0 — an in-bounds value
+     * that aliases real player slot 0. Control handlers that branch on "is
+     * this my slot / from me" consult this flag to treat a spectator as
+     * having no self, so slot 0 is never mistaken for the viewer. */
+    bool isSpectator;
 
     /* In-process server bound by clientSimConnectLocal{,Passive}. NULL
      * for UDP and disconnected clients. Read by the local-transport
@@ -639,6 +675,12 @@ bool clientSimSpectatorPushRecord(ClientSim *cs, bool isKeyframe,
  * sent on CHANNEL_CONTROL. Marks the countdown received so the session can
  * show its pre-seed overlay. */
 void clientSimSpectatorSetCountdown(ClientSim *cs, uint32_t remainingTicks);
+
+/* Mirror the transport's spectator live-lobby mode onto the sim (one-way: the
+ * transport owns the bit). True = fed the live lobby control bus; false = on
+ * the delayed ring feed. The session reads it via clientSimSpectatorIsLiveLobby
+ * (public) to decide which view to host. */
+void clientSimSpectatorSetLiveLobby(ClientSim *cs, bool liveLobby);
 
 /* Free the seed and every queued record, returning the feed to empty. */
 void clientSimSpectatorFeedClear(ClientSim *cs);

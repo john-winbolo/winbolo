@@ -111,6 +111,16 @@ static SDL_Texture  *gCrosshairTex  = NULL;  /* crosshairs_17x17.png — center 
 static bool          gCursorFaint   = false; /* draw the build-mode cursor at 25% alpha (locked target, build mode off) */
 static int           gZoomFactor    = 1;
 
+/* Set true while a zoom/skin change reconfigures assets in place. If
+   sdl3DrawCleanup is entered while this is set, a renderer/window teardown
+   would recreate the Metal layer mid-reconfigure — the exact crash this
+   path was rewritten to avoid. */
+static bool          s_inZoomSkinReconfigure = false;
+
+void sdl3DrawSetReconfigureGuard(bool active) {
+  s_inZoomSkinReconfigure = active;
+}
+
 void sdl3DrawSetCursorFaint(bool faint) {
   gCursorFaint = faint;
 }
@@ -179,12 +189,30 @@ static uint32_t getRandomStaticNoiseSeed(void) {
   return gStaticSeed;
 }
 
-/* Guard: only blit gManStatusTex after sdl3DrawSetManStatus has drawn into it.
-   Prevents a one-frame artifact where the LGM arrow points top-left before
-   the first real angle is computed. */
+/* Guard: only blit gManStatusTex after the man-status texture has been
+   rebuilt from cache on the render thread. Prevents a one-frame artifact
+   where the LGM arrow points top-left before the first real angle is
+   computed. gManStatusValid tracks whether there is a live man-status to
+   show (set by the cache-only setter, cleared by the clear setter);
+   gManStatusReady tracks whether the texture has actually been drawn this
+   session (set by the render-thread rebuild). */
 static bool         gManStatusReady = false;
+static bool         gManStatusValid = false;
 static bool         gManStatusDead  = false;
 static TURNTYPE     gManStatusAngle = 0;
+
+/* Renderer thread ownership. SDL's renderer (and the Metal command queue
+   behind it) is not safe to touch from two threads at once. All GPU work
+   must run on the thread that created the renderer (the main/render thread).
+   We record that thread here at creation time and assert on it in the
+   drawing choke points; sim-tick callbacks that used to draw directly now
+   only update caches, and the per-frame render pass repaints from them. */
+static SDL_ThreadID gRenderThread = 0;
+
+bool sdl3DrawOnRenderThread(void) {
+  /* Before the renderer exists (startup) there is no wrong thread yet. */
+  return gRenderThread == 0 || SDL_GetCurrentThreadID() == gRenderThread;
+}
 
 /* Tablet viewport bounds — set each frame by sdl3DrawMainScreen(),
    read by sdl3DrawGetTabletViewport(). */
@@ -338,6 +366,15 @@ static bool sdl3LoadTiles(void) {
   return TRUE;
 }
 
+/* Rebuilds only the tile atlas in place (for a skin change) by re-reading
+ * the skin assets from disk.  Does not touch the renderer, window, fonts,
+ * or zoom. */
+void sdl3DrawReloadTiles(void) {
+  if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
+  sdl3DrawStatusSetAtlas(NULL, 1);
+  sdl3LoadTiles();
+}
+
 /* Loads data/background.bmp as gBackgroundTex. */
 static bool sdl3LoadBackground(void) {
   if (gBackgroundTex != NULL) {
@@ -379,6 +416,10 @@ static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
   return tex;
 }
 
+/* Render-thread-only rebuild of the man-status texture from cache; defined
+   later in this file. */
+static void sdl3RenderManStatusTex(void);
+
 /*********************************************************
 *NAME:          sdl3RenderStatusPanels
 *PURPOSE:
@@ -387,16 +428,21 @@ static SDL_Texture *sdl3CreateRenderTarget(int w, int h) {
 *  then draws the current build-select indent overlay.
 *********************************************************/
 static void sdl3RenderStatusPanels(void) {
+  SDL_assert(sdl3DrawOnRenderThread());
   /* In tablet mode the ImGui overlay draws its own resource bars,
      build-select bar, and man-status — skip the desktop versions. */
   if (uiModeIsTablet()) return;
 
   int zf = gZoomFactor;
 
-  /* Status icon panels (bases/pills/tanks) are drawn directly to the
-     framebuffer by sdl3DrawSet*StatusClear / sdl3DrawStatus* calls that
-     occur before sdl3RenderStatusPanels in each frame.  Only the
-     man-status circle and resource bars still use render-target textures. */
+  /* Rebuild the render-target textures from cache on this (render) thread.
+     The sim-tick callbacks only cache values now; the actual GPU drawing of
+     these textures happens here so it can never race the main-thread present.
+     Icon panels (bases/pills/tanks) are repainted directly to the framebuffer
+     from sim state by the sdl3DrawStatus* calls that run just before this. */
+  sdl3RenderTankBarsTex();
+  sdl3RenderBaseBarsTex();
+  if (gManStatusValid) sdl3RenderManStatusTex();
 
   if (gManStatusTex && gManStatusReady) {
     SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_BLEND);
@@ -976,6 +1022,9 @@ bool sdl3DrawSetup(int zoomFactor) {
     gWindow = NULL;
     return FALSE;
   }
+  /* Pin renderer ownership to this thread; every later GPU call is
+     asserted against it (see sdl3DrawOnRenderThread). */
+  gRenderThread = SDL_GetCurrentThreadID();
 
   SDL_SetRenderVSync(gRenderer, 1);
 
@@ -1002,7 +1051,9 @@ bool sdl3DrawSetup(int zoomFactor) {
         SDL3_SCREEN_W * bestZoom, SDL3_SCREEN_H * bestZoom, bestZoom, ww, wh);
   }
 
-  /* macOS trackpad pinch-to-zoom */
+  /* macOS: disable the press-and-hold accent picker so held keys repeat,
+     and start trackpad pinch-to-zoom monitoring. */
+  macOSDisablePressAndHold();
   macOSPinchZoomInit();
 
 #ifdef __ANDROID__
@@ -1164,6 +1215,12 @@ bool sdl3DrawSetup(int zoomFactor) {
 }
 
 void sdl3DrawCleanup(void) {
+  if (s_inZoomSkinReconfigure) {
+    WB_LOG_ERROR(WB_LOG_CAT_GUI,
+      "sdl3DrawCleanup entered during a zoom/skin reconfigure — a renderer/window "
+      "teardown here recreates the Metal layer and crashes the Steam overlay");
+    SDL_assert(!s_inZoomSkinReconfigure);
+  }
   tileLoaderCleanup();
   cursorCleanup();
 
@@ -1240,16 +1297,17 @@ static void sdl3DrawTankLabels(screenTanks *tks) {
 }
 
 /* -------------------------------------------------------
- * sdl3DrawAdaptRenderTarget — dynamically resize the game
- * render target when the window size changes in Custom zoom
- * mode.  Computes the ceiling integer zoom so the render
- * target is always >= the window size, then downscales the
- * blit for crisp output at any window size.
+ * sdl3DrawReconfigureZoom — rebuild all zoom-dependent
+ * assets in place against the live renderer.  explicitZoom
+ * >= 1 uses that integer render zoom directly; explicitZoom
+ * == 0 (Custom mode) derives the ceiling integer zoom from
+ * the current window size so the render target is always
+ * >= the window size, then downscales the blit for crisp
+ * output.  Does not touch the renderer or window.
  * ------------------------------------------------------- */
-static void sdl3DrawAdaptRenderTarget(void) {
+void sdl3DrawReconfigureZoom(int explicitZoom) {
+  (void)explicitZoom;
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !defined(__IPHONEOS__)
-  extern BYTE zoomFactor;
-  if (zoomFactor != ZOOM_FACTOR_CUSTOM) return;
   if (!gRenderer || !gWindow) return;
   if (uiModeIsTablet()) return;
   /* Deck is fullscreen 1280x800 with logical presentation already set in
@@ -1258,20 +1316,27 @@ static void sdl3DrawAdaptRenderTarget(void) {
      branch picked. */
   if (uiModeIsSteamDeck()) return;
 
-  int winW, winH;
-  SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
+  int needZoom;
+  if (explicitZoom >= 1) {
+    /* Caller supplied an explicit integer render zoom (cardinal/menu zoom) */
+    needZoom = explicitZoom;
+  } else {
+    /* Derive the ceiling integer zoom from the current window size */
+    int winW, winH;
+    SDL_GetCurrentRenderOutputSize(gRenderer, &winW, &winH);
 
-  /* Ceiling integer zoom: smallest integer where zoom * gameSize >= windowSize */
-  int zoomForW = (winW + SDL3_SCREEN_W - 1) / SDL3_SCREEN_W;
-  int zoomForH = (winH + SDL3_SCREEN_H - 1) / SDL3_SCREEN_H;
-  int needZoom = (zoomForW > zoomForH) ? zoomForW : zoomForH;
-  if (needZoom < 1) needZoom = 1;
+    /* Ceiling integer zoom: smallest integer where zoom * gameSize >= windowSize */
+    int zoomForW = (winW + SDL3_SCREEN_W - 1) / SDL3_SCREEN_W;
+    int zoomForH = (winH + SDL3_SCREEN_H - 1) / SDL3_SCREEN_H;
+    needZoom = (zoomForW > zoomForH) ? zoomForW : zoomForH;
+    if (needZoom < 1) needZoom = 1;
+  }
 
   /* Nothing to do if already at the right zoom */
   if (needZoom == gZoomFactor && gGameRenderTarget != NULL) return;
 
-  WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawAdaptRenderTarget: window %dx%d -> zoom %d (was %d)",
-          winW, winH, needZoom, gZoomFactor);
+  WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawReconfigureZoom: -> zoom %d (was %d)",
+          needZoom, gZoomFactor);
 
   /* Destroy old resources that are zoom-dependent */
   if (gTilesTex) { SDL_DestroyTexture(gTilesTex); gTilesTex = NULL; gSheetScale = 1; }
@@ -1328,6 +1393,14 @@ static void sdl3DrawAdaptRenderTarget(void) {
     WB_LOG_INFO(WB_LOG_CAT_GUI, "sdl3DrawAdaptRenderTarget: created render target %dx%d", gGameRTWidth, gGameRTHeight);
   }
 #endif
+}
+
+/* Per-frame entry: only rebuilds in Custom zoom mode, deriving the
+ * integer render zoom from the current window size. */
+static void sdl3DrawAdaptRenderTarget(void) {
+  extern BYTE zoomFactor;
+  if (zoomFactor != ZOOM_FACTOR_CUSTOM) return;   /* mode gate — CUSTOM only */
+  sdl3DrawReconfigureZoom(0);                       /* derive from window */
 }
 
 void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, screenTanks *tks,
@@ -2252,20 +2325,37 @@ void sdl3DrawGetCachedBaseStats(BYTE *shells, BYTE *mines, BYTE *armour, bool *h
 }
 
 void sdl3DrawSetManClear(void) {
+  /* Cache-only: may run on the server-tick thread. Marks that there is no
+     live man-status to show; the per-frame render pass will skip the
+     rebuild and the blit is gated on gManStatusReady. */
+  gManStatusValid = false;
   gManStatusReady = false;
-  if (!gRenderer || !gManStatusTex) return;
-  SDL_SetRenderTarget(gRenderer, gManStatusTex);
-  SDL_SetTextureBlendMode(gManStatusTex, SDL_BLENDMODE_NONE);
-  SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255);
-  SDL_RenderFillRect(gRenderer, NULL); /* avoid SDL3 Metal sampler bug in SDL_RenderClear */
-  SDL_SetRenderTarget(gRenderer, NULL);
 }
 
 void sdl3DrawSetManStatus(int x, int y, bool isDead, TURNTYPE angle) {
+  /* Cache-only — may run on the server-tick thread, so it must not touch
+     the renderer. sdl3RenderManStatusTex() rebuilds the texture from this
+     cache on the render thread, once per frame via sdl3RenderStatusPanels. */
   (void)x; (void)y;
   gManStatusDead  = isDead;
   gManStatusAngle = angle;
+  gManStatusValid = true;
+}
+
+/* Render thread only: rebuild the man-status texture from the cached
+   (dead, angle) values. Extracted verbatim from the old sdl3DrawSetManStatus
+   drawing body so behaviour is unchanged; only the thread it runs on moved. */
+static void sdl3RenderManStatusTex(void) {
+  bool isDead = gManStatusDead;
+  TURNTYPE angle = gManStatusAngle;
+  SDL_Texture *prevTarget;
+  SDL_assert(sdl3DrawOnRenderThread());
   if (!gRenderer || !gManStatusTex) return;
+
+  /* Save/restore the caller's target: this runs mid-frame from
+     sdl3RenderStatusPanels, where the active target may be the game
+     render-to-texture, not the screen. */
+  prevTarget = SDL_GetRenderTarget(gRenderer);
 
   /* Compute endpoint of direction arrow (same math as Win32 draw.c) */
   double dbAngle, dbTemp;
@@ -2347,7 +2437,7 @@ void sdl3DrawSetManStatus(int x, int y, bool isDead, TURNTYPE angle) {
     SDL_RenderLine(gRenderer, (float)scx, (float)scy, (float)sAddX, (float)sAddY);
   }
 
-  SDL_SetRenderTarget(gRenderer, NULL);
+  SDL_SetRenderTarget(gRenderer, prevTarget);
   gManStatusReady = true;
 }
 

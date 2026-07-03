@@ -599,6 +599,9 @@ STR_DLGWBN_NOSAVEPATH=Nie można ustalić ścieżki zapisu
 STR_DLGWBN_FETCHERR=Pobieranie nie powiodło się
 STR_DLGWBN_UNKNOWN_ERR=Nieznany błąd
 STR_DLGWBN_FILEFILTER=Pliki logów WinBolo
+STR_DLGWBN_TAB_MYGAMES=Moje gry
+STR_DLGWBN_MYGAMES_SIGNIN=Zaloguj się lub utwórz konto, aby zobaczyć swoje ostatnie gry
+STR_DLGWBN_MYGAMES_NONE=Nie masz jeszcze żadnych zapisanych gier.
 
 # SetName dialog additions
 STR_DLGSETNAME_WINTITLE=WinBolo - Ustaw nazwę gracza
@@ -1400,6 +1403,7 @@ STR_VOTE_DRAW_TAG= (Remis)
 STR_VOTE_NEEDS_RUNNING_TIP=Dostępne po rozpoczęciu gry.
 STR_VOTE_SURRENDER_PICK_TEAM_TIP=Wybierz drużynę przed głosowaniem o poddanie.
 STR_VOTE_SURRENDER_TWO_TEAMS_TIP=Poddanie jest dostępne tylko gdy pozostają dokładnie dwie drużyny\nz ludzkimi graczami.
+STR_VOTE_SHOW=Pokaż: {string1}
 
 # Volume — slider label and Mac preset submenu items
 STR_MENU_VOLUME=Głośność
@@ -1803,6 +1807,7 @@ STR_DLGSETTINGS_TAB_SESSION=Sesja
 
 # Live spectator feed
 STR_DLGLOBBY_SPECTATORS_FMT=Obserwatorzy ({number}):
+STR_DLGLOBBY_SPECTATOR_TAG=[Obserwator] {string1}
 STR_LV_SPEC_LEAVE_CONFIRM=Zakończyć obserwowanie?
 STR_LV_SPEC_PHASE_LOBBY=Lobby
 STR_LV_SPEC_PHASE_LIVE=Na żywo
@@ -1816,3 +1821,12 @@ STR_LV_SPEC_CONNECTING=Łączenie...
 STR_LV_SPEC_CONNECTION_LOST=Utracono połączenie
 STR_LV_SPEC_BEGINS_NOW=Obserwowanie rozpoczyna się teraz
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Obserwowanie {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Musisz być zalogowany do WinBolo.net, aby dołączyć do tej gry.
+STR_WEB_JOIN_NOT_ACCEPTING=Ta gra nie przyjmuje nowych graczy.
+STR_WEB_JOIN_LINK_INVALID=Ten link do gry jest już nieważny.
+STR_WEB_JOIN_GAME_FULL=Ta gra jest pełna.
+STR_WEB_JOIN_CODE_UNREACHABLE=Nie udało się połączyć z serwerem, aby pobrać kod dołączenia.
+STR_WEB_CONNECT_FAILED=Nie udało się połączyć z serwerem.
+STR_WEB_JOIN_NO_RESPONSE=Nie udało się dołączyć do gry (serwer nie odpowiedział lub link zaproszenia został już wykorzystany albo wygasł).
