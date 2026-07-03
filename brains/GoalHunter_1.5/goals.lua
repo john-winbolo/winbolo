@@ -2880,6 +2880,15 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
   -- once. (A committed reposition still finishes via the lock-in below.)
   local back_surplus = math.max(0, (counts.back or 0) - (targets.back or 0))
 
+  -- Back-section over-proportion, as a fraction of the back target (0 = at or
+  -- under target). Reposition scales its propose cooldown DOWN by this: the
+  -- more the BACK line is over its allotment, the more eagerly bots roll a
+  -- back pill forward. Cached for reposition_vote's OPEN gate (which runs
+  -- every tick, off the decoupled scan cadence). Back is the only shed
+  -- category, so this is exactly "how out of proportion the section we'd
+  -- move from is."
+  state._repo_imbalance = back_surplus / math.max(1, targets.back or 1)
+
   -- Hard floor: never reposition while the team has few BUILT (deployed) pills.
   -- Below this we can't afford to take one offline at all, regardless of balance.
   local built_count = 0

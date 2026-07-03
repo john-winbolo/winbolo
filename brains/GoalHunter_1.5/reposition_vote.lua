@@ -235,8 +235,19 @@ function M.update(state, world, info, now)
   -- 4. Maybe OPEN a new vote.
   if not state._repo_my_vote and not state._repo_active and not state._repo_approved_pid then
     local cand   = state._repo_candidate
+    -- Propose cooldown scales DOWN with how over-proportion the BACK section
+    -- is (state._repo_imbalance, cached by eval_reposition_pill): a balanced
+    -- back line waits the full cooldown, a badly over-full one down to
+    -- MIN_FRAC of it — so lopsided pools correct faster without raising the
+    -- baseline rate across the board.
+    local imb    = state._repo_imbalance or 0
+    local base_cd = C.REPOSITION_VOTE_INITIATE_COOLDOWN or 3000
+    local scale  = 1.0 - (C.REPOSITION_VOTE_IMBALANCE_K or 0.6) * imb
+    local minf   = C.REPOSITION_VOTE_COOLDOWN_MIN_FRAC or 0.25
+    if scale < minf then scale = minf end
+    local eff_cd = base_cd * scale
     local cd_ok  = not state._repo_initiate_tick
-                   or (now - state._repo_initiate_tick) >= (C.REPOSITION_VOTE_INITIATE_COOLDOWN or 3000)
+                   or (now - state._repo_initiate_tick) >= eff_cd
     local mem_ok = not state._repo_last_seen_tick
                    or (now - state._repo_last_seen_tick) >= (C.REPOSITION_VOTE_RECENT_MEMORY_TICKS or 6000)
     if cand and cand.can_carry and cd_ok and mem_ok then

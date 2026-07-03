@@ -1316,7 +1316,9 @@ M.PILL_REPOSITION_THRESHOLD     = 50
 -- pill would be unsafe or they have a better candidate (see reposition_vote.lua).
 M.REPOSITION_VOTE_ENABLED               = true
 M.REPOSITION_VOTE_WINDOW_TICKS          = 10   -- ticks the initiator waits for NO votes before resolving
-M.REPOSITION_VOTE_INITIATE_COOLDOWN     = 3000 -- ~60s @ 50Hz: after opening a vote, this bot won't open another for this long (pass OR fail)
+M.REPOSITION_VOTE_INITIATE_COOLDOWN     = 3000 -- ~60s @ 50Hz: after opening a vote, this bot won't open another for this long (pass OR fail). SCALED DOWN by back-section over-proportion (see below).
+M.REPOSITION_VOTE_IMBALANCE_K           = 0.6  -- propose cooldown scale = 1 - K*back_over_fraction (0.5 over -> 0.7x cooldown; 1.25+ over -> floor)
+M.REPOSITION_VOTE_COOLDOWN_MIN_FRAC     = 0.25 -- floor: a badly over-full back line still waits at least this fraction of the base cooldown
 M.REPOSITION_VOTE_RECENT_MEMORY_TICKS   = 6000 -- ~120s @ 50Hz: a bot votes NO if it remembers ANY reposition within this window
 M.REPOSITION_VOTE_ENEMY_NEAR_TILES      = 15   -- vote NO if an enemy tank is within this many tiles of the pill AND nothing else covers it
 M.REPOSITION_VOTE_TANK_COVER_TILES      = 10   -- vote NO if the pill IS covered by >=1 other pill but an enemy tank is within this many tiles
