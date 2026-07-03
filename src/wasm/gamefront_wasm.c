@@ -20,6 +20,7 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 
+#include "client_frontend_connect.h"
 #include "client_sim.h"
 #include "control_event.h"
 #include "global.h"
@@ -44,6 +45,44 @@
 
 /* Forward declaration */
 extern void sdl3MessageHandler(const char *message, const char *title);
+extern void wasmReportConnectFailure(const char *reason);  /* main_wasm.c */
+
+/* Mint a fresh single-use join code from the reusable game_key by awaiting
+ * Module.wbMintJoinCode (POST /api/join, cookie-authed) via ASYNCIFY — mirrors
+ * prefs_bridge_wasm.c's fetch helpers. Writes the code into out (up to outSize)
+ * on HTTP 200; on any other outcome writes a malloc'd reason string through
+ * *errOut (caller frees) when the backend supplied one. Returns the HTTP
+ * status, or -1 on a transport error. */
+EM_ASYNC_JS(int, wasmMintJoinCode,
+            (const char *gameKey, char *out, int outSize, char **errOut), {
+    try {
+        const r = await Module.wbMintJoinCode(UTF8ToString(gameKey));
+        if (r && r.status === 200 && typeof r.code === 'string') {
+            stringToUTF8(r.code, out, outSize);
+        } else if (r && typeof r.error === 'string') {
+            const len = lengthBytesUTF8(r.error) + 1;
+            const p = _malloc(len);
+            stringToUTF8(r.error, p, len);
+            setValue(errOut, p, '*');
+        }
+        return (r && r.status) ? r.status : -1;
+    } catch (e) {
+        console.error('[join] mint failed', e);
+        return -1;
+    }
+});
+
+/* Default user-facing message for a mint failure when the backend gave no
+ * error body of its own. */
+static const char *gameFrontMintFailReason(int status) {
+  switch (status) {
+    case 401: return langGetText(STR_WEB_JOIN_NEED_SIGNIN);
+    case 403: return langGetText(STR_WEB_JOIN_NOT_ACCEPTING);
+    case 404: return langGetText(STR_WEB_JOIN_LINK_INVALID);
+    case 409: return langGetText(STR_WEB_JOIN_GAME_FULL);
+    default:  return langGetText(STR_WEB_JOIN_CODE_UNREACHABLE);
+  }
+}
 
 
 /* -------------------------------------------------------
@@ -210,6 +249,27 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiQuickMine    = DEFAULT_QUICKMINE;
 }
 
+/* Outbound control-event callbacks. Desktop wires these in gamefront.c; the
+ * web client previously wired none, so accepting/requesting/leaving an
+ * alliance, the lock toggle, and name change were all silent no-ops (the send
+ * path itself works fine over the relay transport — only the callback was
+ * unset). Each mirrors its desktop counterpart. */
+static void wasmNameChangeSendCallback(const char *newName) {
+  clientSimNetSendNameChange(humanSim, newName);
+}
+static void wasmAllianceRequestCallback(uint8_t toPlayer) {
+  clientSimNetSendAllianceRequest(humanSim, toPlayer);
+}
+static void wasmAllianceAcceptCallback(uint8_t toPlayer) {
+  clientSimNetSendAllianceAccept(humanSim, toPlayer);
+}
+static void wasmAllianceLeaveCallback(void) {
+  clientSimNetSendAllianceLeave(humanSim);
+}
+static void wasmLockToggleCallback(bool allow) {
+  clientSimNetSendLockToggle(humanSim, allow);
+}
+
 /* -------------------------------------------------------
  * gameFrontStart — skip all dialogs, start practice game
  * ------------------------------------------------------- */
@@ -218,8 +278,10 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   password[0] = '\0';
   wantRejoin = FALSE;
 
-  /* Set defaults */
-  strcpy(gameFrontName, "WASM Player");
+  /* Set defaults. The real player name is chosen in main_wasm.c after this
+   * returns (web<rand> for join-code play, ?name= or "Me" for single player);
+   * this seed only matters to any path that reads the name before then. */
+  strcpy(gameFrontName, "Me");
   gameFrontUdpAddress[0] = '\0';
   gameFrontMyUdp = 27500;
   gameFrontTargetUdp = 27500;
@@ -240,7 +302,9 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   useAutoslow = FALSE;
   useAutohide = FALSE;
 
-  /* Default keys */
+  /* Seed default keys. A logged-in player's stored bindings (and the rest of
+   * their synced settings) are applied afterwards by wasmApplyJoinPrefs, which
+   * runs after gameFrontStart so it overrides exactly what the user synced. */
   gameFrontSetDefaultKeys(keys);
 
   langSetup();
@@ -283,38 +347,50 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
 
   guiMessageSetHandler(sdl3MessageHandler);
 
-  /* ---- Determine net mode from URL params ---- */
+  /* ---- Determine net mode from URL params ----
+   * Production web play is selected by ?game_key= (the shareable
+   * play.winbolo.net/join/<game_key> link). A dev/LAN run may instead pass an
+   * explicit ?proxyURL=. Either selects UDP-over-WebSocket mode. The single-use
+   * join code is minted from the game_key at connect time (JS POST /api/join),
+   * not carried in the URL. shell.html points Module.websocket.url at the real
+   * relay, so the host:port handed to the transport here is an ignored
+   * sentinel — routing lives in the minted join code (or the dev proxy URL). */
   netType urlNetType = netSingle;
-  {
-    const char *nt = gameFrontGetUrlParam("netType");
-    if (nt[0] != '\0' && (strcmp(nt, "udp") == 0 || strcmp(nt, "netUdp") == 0)) {
-      urlNetType = netUdp;
-    }
+  /* gameFrontGetUrlParam returns a shared static buffer, so copy each value
+   * out before the next call overwrites it. */
+  char gameKey[128];
+  strncpy(gameKey, gameFrontGetUrlParam("game_key"), sizeof(gameKey) - 1);
+  gameKey[sizeof(gameKey) - 1] = '\0';
+  char devProxy[1024];
+  strncpy(devProxy, gameFrontGetUrlParam("proxyURL"), sizeof(devProxy) - 1);
+  devProxy[sizeof(devProxy) - 1] = '\0';
+  bool wantTutorial = (gameFrontGetUrlParam("tutorial")[0] != '\0');
+  bool haveGameKey = (gameKey[0] != '\0');
+  if (haveGameKey || devProxy[0] != '\0') {
+    urlNetType = netUdp;
   }
 
   if (urlNetType == netUdp) {
-    /* Read proxy URL — default if not supplied */
-    const char *rawProxy = gameFrontGetUrlParam("proxyURL");
-    char proxyUrl[1024];
-    if (rawProxy[0] != '\0') {
-      strncpy(proxyUrl, rawProxy, sizeof(proxyUrl) - 1);
-      proxyUrl[sizeof(proxyUrl) - 1] = '\0';
+    if (haveGameKey) {
+      /* Production: routing rides Module.websocket.url (the join code JS mints
+       * from the game_key); the transport target is a sentinel the relay never
+       * sees. Use a loopback literal so no DNS lookup is attempted. */
+      printf("[WASM] netUdp mode: web play via relay (game_key)\n");
+      strncpy(gameFrontUdpAddress, "127.0.0.1", sizeof(gameFrontUdpAddress) - 1);
+      gameFrontUdpAddress[sizeof(gameFrontUdpAddress) - 1] = '\0';
+      gameFrontTargetUdp = 1;
     } else {
-      strncpy(proxyUrl, "ws://192.168.42.200:8085/proxy?server=192.168.42.14:27500",
-              sizeof(proxyUrl) - 1);
-      proxyUrl[sizeof(proxyUrl) - 1] = '\0';
+      /* Dev/LAN: explicit proxyURL. shell.html uses it verbatim as the WS
+       * URL; any server=host:port within it is informational only. */
+      char serverHost[256];
+      unsigned short serverPort = 27500;
+      parseProxyServerParam(devProxy, serverHost, sizeof(serverHost), &serverPort);
+      printf("[WASM] netUdp mode (dev proxy): %s -> %s:%d\n",
+             devProxy, serverHost, serverPort);
+      strncpy(gameFrontUdpAddress, serverHost, sizeof(gameFrontUdpAddress) - 1);
+      gameFrontUdpAddress[sizeof(gameFrontUdpAddress) - 1] = '\0';
+      gameFrontTargetUdp = serverPort;
     }
-    printf("[WASM] netUdp mode, proxy: %s\n", proxyUrl);
-
-    /* Parse server host:port from proxy URL for transport */
-    char serverHost[256];
-    unsigned short serverPort = 27500;
-    parseProxyServerParam(proxyUrl, serverHost, sizeof(serverHost), &serverPort);
-    printf("[WASM] Game server: %s:%d\n", serverHost, serverPort);
-
-    strncpy(gameFrontUdpAddress, serverHost, sizeof(gameFrontUdpAddress) - 1);
-    gameFrontUdpAddress[sizeof(gameFrontUdpAddress) - 1] = '\0';
-    gameFrontTargetUdp = serverPort;
   }
 
   /* Start the game directly — no dialogs */
@@ -326,38 +402,86 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
   if (urlNetType == netUdp) {
     /* ---- UDP multiplayer via new transport ---- */
     printf("[WASM] Connecting via UDP transport...\n");
+    /* For web play the join_code rides the WBN-token argument: the client
+     * has no libcurl to mint a player_key, so it presents the join_code raw
+     * at PACKET_WBN_REAUTH (see udpClientSendWbnReauth). A non-empty token
+     * also sets JOIN_FLAG_WILL_AUTHENTICATE, which the server needs to send
+     * the first REKEY. Dev/LAN proxy runs keep the normal WBN token. */
+    /* Network identity. Prefer the logged-in WinBolo.net account name that
+     * shell.html probed from /api/v1/me (window.WB_PREFS_NAME); fall back to a
+     * throwaway web<rand> placeholder so a stale name can't ride the JOIN. This
+     * MUST run before clientSimConnectUdp so the real name rides the first JOIN
+     * instead of the "Me" default. The server re-verifies the join_code at
+     * re-auth and stays authoritative. */
+    {
+      const char *jsName =
+          emscripten_run_script_string("(window.WB_PREFS_NAME||'')");
+      if (jsName != NULL && jsName[0] != '\0') {
+        strncpy(gameFrontName, jsName, sizeof(gameFrontName) - 1);
+        gameFrontName[sizeof(gameFrontName) - 1] = '\0';
+      } else {
+        unsigned suffix = (unsigned)(emscripten_get_now() * 1000.0) % 1000000u;
+        snprintf(gameFrontName, sizeof(gameFrontName), "web%u", suffix);
+      }
+      /* Assert the name locally so the player panel shows it immediately,
+       * before the server's re-auth rename lands. */
+      clientSimSetMyLastPlayerName(humanSim, gameFrontName);
+      printf("[WASM] network play: join name=%s\n", gameFrontName);
+    }
+
+    /* Mint the single-use join code from the game_key just before connecting.
+     * A fresh code is minted on every (re)connect: a page refresh or relay
+     * failover re-runs this path and mints again, so a consumed code is never
+     * reused. The mint blocks here via ASYNCIFY; on failure we surface the
+     * reason and bail into the error dialog rather than connecting anonymously. */
+    char joinCode[128] = "";
+    if (haveGameKey) {
+      char *mintErr = NULL;
+      int mintStatus = wasmMintJoinCode(gameKey, joinCode, sizeof(joinCode),
+                                        &mintErr);
+      if (mintStatus != 200 || joinCode[0] == '\0') {
+        const char *reason = (mintErr && mintErr[0] != '\0')
+                           ? mintErr : gameFrontMintFailReason(mintStatus);
+        printf("[WASM] join-code mint failed (status %d): %s\n",
+               mintStatus, reason);
+        wasmReportConnectFailure(reason);
+        free(mintErr);
+        return FALSE;
+      }
+      free(mintErr);
+    }
+
+    const char *wbnArg = haveGameKey ? joinCode
+                       : (gameFrontWbnUse ? gameFrontWbnToken : "");
     clientSimConnectUdp(humanSim, gameFrontUdpAddress,
                         gameFrontTargetUdp,
                         gameFrontName,
                         winbolonetGetCountryCode(),
                         password,
-                        gameFrontWbnUse ? gameFrontWbnToken : "",
+                        wbnArg,
                         "",
                         wantRejoin,
                         "", 0, /*spectator*/ false);
     if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
       printf("[WASM] UDP connect failed: %s\n", reason ? reason : "unknown");
-      clientSimDestroy(humanSim);
+      /* Keep humanSim alive in its error state; main() falls through to the
+       * loop which shows the error dialog (never a blank screen). */
+      wasmReportConnectFailure(reason && reason[0]
+                                   ? reason
+                                   : langGetText(STR_WEB_CONNECT_FAILED));
       return FALSE;
     }
 
-    /* Wait for join + map download */
-    {
-      int joinWaitTicks = 0;
-      while ((clientSimGetConnectState(humanSim) == CLIENT_CONNECT_JOINING ||
-              clientSimGetConnectState(humanSim) == CLIENT_CONNECT_DOWNLOADING_MAP) &&
-             joinWaitTicks < 1500) {
-        clientSimNetTick(humanSim);
-        SDL_Delay(20);
-        joinWaitTicks++;
-      }
-    }
-
-    if (clientSimGetConnectState(humanSim) != CLIENT_CONNECT_CONNECTED) {
+    /* Wait for the join handshake (30s timeout). Landing accepts either a
+     * running game or entry into the server lobby (the production join_code
+     * path lands in the in-game lobby) — see clientFrontAwaitJoin. */
+    if (!clientFrontAwaitJoin(humanSim, 1500)) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
       printf("[WASM] Join failed: %s\n", reason ? reason : "timeout");
-      clientSimDestroy(humanSim);
+      wasmReportConnectFailure(
+          reason && reason[0] ? reason
+                              : langGetText(STR_WEB_JOIN_NO_RESPONSE));
       return FALSE;
     }
 
@@ -377,20 +501,40 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       clientSimSetServerPort(humanSim, gameFrontTargetUdp);
     }
 
+    /* Wire the outbound control-event send callbacks (desktop does this in
+     * gamefront.c). Without these, alliance accept/request/leave, lock toggle,
+     * and name change silently do nothing in web play. */
+    clientSimSetNameChangeSendFunc(humanSim, wasmNameChangeSendCallback);
+    clientSimSetAllianceRequestFunc(humanSim, wasmAllianceRequestCallback);
+    clientSimSetAllianceAcceptFunc(humanSim, wasmAllianceAcceptCallback);
+    clientSimSetAllianceLeaveFunc(humanSim, wasmAllianceLeaveCallback);
+    clientSimSetLockToggleSendFunc(humanSim, wasmLockToggleCallback);
+
     /* Map install + snapshot apply happen inside the UDP transport
-     * (MAP_DOWNLOAD inline install + CTRL_GAME_PHASE LOBBY→RUNNING
-     * watcher), and the first snapshot apply fires the viewport
-     * finalisation. */
-    /* Gate lobby vs running: if we received CTRL_LOBBY_SETTINGS during
-     * join, stay in lobby state; otherwise proceed to running */
-    if (clientSimIsInLobby(humanSim)) {
-      clientSimSetMapDownloadComplete(humanSim, true);
-      clientSimSetNetStatus(humanSim, netLobby);
-    }
+     * (MAP_DOWNLOAD inline install + CTRL_GAME_PHASE LOBBY→RUNNING watcher),
+     * and the first snapshot apply fires the viewport finalisation. The lobby
+     * vs running landing (netLobby) is settled by clientFrontAwaitJoin, and the
+     * mapDownloadComplete flag stays transport-driven, so nothing to do here. */
     printf("[WASM] UDP connected as player %d\n", wasmPlayerNum);
   } else {
     /* ---- Single-player via ServerSim + local transport ---- */
     printf("[WASM] Setting up single-player ServerSim...\n");
+
+    if (wantTutorial) {
+      /* Guided tutorial (?tutorial=): load the inbuilt tutorial map with
+       * tournament rules and no bots, mirroring the desktop openTutorial
+       * path. The step driver + overlay (main_wasm.c) take it from here. */
+      strncpy(fileName, "data/maps/Inbuilt Tutorial.map", FILENAME_MAX - 1);
+      fileName[FILENAME_MAX - 1] = '\0';
+      gametype = gameStrictTournament;
+      hiddenMines = FALSE;
+      startDelay = 0;
+      timeLen = UNLIMITED_GAME_TIME;
+      compTanks = aiNone;
+      frontEndTutorialReset();
+      isTutorial = TRUE;
+      printf("[WASM] starting guided tutorial\n");
+    }
 
     {
       if (fileName[0] != '\0') {
@@ -410,6 +554,19 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       }
     }
 
+    if (wantTutorial) {
+      /* Enter tutorial mode BEFORE the tank spawns (serverInstanceStartup +
+       * clientSimConnectLocal below). startsGetStart reads sim->isTutorial and
+       * sim->tutorialStartIdx at spawn time, so the initial placement at start
+       * 0 (held until the boat-building step) depends on these being set
+       * first. Seed start idx 0 explicitly; the driver bumps it to 1 after the
+       * boat step. Mark both sims so tank.c's stop logic fires and the client
+       * predicts consistently. */
+      serverSimSetTutorial(wasmServerSim, true);
+      serverSimSetTutorialStartIdx(wasmServerSim, 0);
+      clientSimSetTutorial(humanSim, true);
+    }
+
     /* WASM single-player: no lobby, run immediately. acceptRemoteClients
      * is zero-init false so the UDP / WBN / tracker bring-up is
      * skipped; skipLobby drives the StartGameInPlace transition;
@@ -420,7 +577,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       cfg.skipLobby = true;
       if (!serverInstanceStartup(wasmServerSim, &cfg)) {
         printf("[WASM] serverInstanceStartup failed\n");
-        free(wasmServerSim);
+        serverSimDestroy(wasmServerSim);
         wasmServerSim = NULL;
         clientSimDestroy(humanSim);
         return FALSE;
@@ -432,13 +589,18 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
                                gameFrontName, "", 0, 0)) {
       printf("[WASM] clientSimConnectLocal failed: %s\n",
              clientSimGetConnectErrorReason(humanSim));
-      free(wasmServerSim);
+      serverSimDestroy(wasmServerSim);
       wasmServerSim = NULL;
       clientSimDestroy(humanSim);
       return FALSE;
     }
     wasmTransportActive = TRUE;
     wasmPlayerNum = 0;
+    /* Session-type flag for the lobby/UI (hide multiplayer-only controls).
+     * The shared tick core's keys-half pump skip keys off
+     * clientSimTransportTicksServer, which clientSimConnectLocal (active)
+     * set above — not off this flag. */
+    clientSimSetIsSinglePlayer(humanSim, true);
     /* Phase 2: connect registers the auto-subscriber. Clear the
      * legacy handle so the teardown path's unregister is a no-op. */
     wasmControlSub = SUBSCRIBER_HANDLE_INVALID;
@@ -658,6 +820,15 @@ void gameFrontShutdownServer(void)            { }
 bool gameFrontPreferencesExist(void)          { return FALSE; }
 bool gameFrontSetupServer(void)               { return FALSE; }
 
+/* Lobby/host helpers the in-game lobby pulls in now that it renders in the
+ * web build (C6). Host-only / Steam / persistence features that are inert in
+ * the browser. The SP server sim is the same handle gameFrontGetServerSim
+ * returns (NULL for a netUdp lobby — the player is not the host). */
+ServerSim *gameFrontGetSinglePlayerServerSim(void) { return wasmServerSim; }
+void gameFrontTickSteamPresenceLobby(ClientSim *cs)  { (void)cs; }
+void gameFrontGetChosenBotBrain(char *out, size_t outLen) { if (out && outLen) out[0] = '\0'; }
+void gameFrontSetChosenBotBrain(const char *name)    { (void)name; }
+
 
 ServerSim *gameFrontGetServerSim(void) {
   return wasmServerSim;
@@ -676,6 +847,10 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
 
 void gameFrontPutPrefs(keyItems *keys) {
   (void)keys;
+}
+
+/* No prefs file in the browser — settings live only for the session. */
+void gameFrontSaveCurrentPrefs(void) {
 }
 
 void gameFrontHandleUrlOpen(char *url) {

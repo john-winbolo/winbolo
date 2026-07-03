@@ -1825,3 +1825,12 @@ STR_LV_SPEC_CONNECTING=Připojování...
 STR_LV_SPEC_CONNECTION_LOST=Spojení ztraceno
 STR_LV_SPEC_BEGINS_NOW=Sledování začíná nyní
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Sledování {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Pro připojení k této hře musíš být přihlášen/a k WinBolo.net.
+STR_WEB_JOIN_NOT_ACCEPTING=Tato hra už nepřijímá nové hráče.
+STR_WEB_JOIN_LINK_INVALID=Tento herní odkaz už není platný.
+STR_WEB_JOIN_GAME_FULL=Tato hra je plná.
+STR_WEB_JOIN_CODE_UNREACHABLE=Nepodařilo se spojit se serverem a získat kód pro připojení.
+STR_WEB_CONNECT_FAILED=Nepodařilo se připojit k serveru.
+STR_WEB_JOIN_NO_RESPONSE=Nepodařilo se připojit ke hře (server neodpověděl, nebo už byl pozvánkový odkaz použit či vypršel).

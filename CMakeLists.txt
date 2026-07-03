@@ -575,6 +575,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/ios/ios_stubs.c
     src/gui/ios/imgui_ios.cpp
     src/gui/sdl3/gamefront.c
+    src/client_frontend/client_frontend_connect.c
     src/bolo/lobby_bot_pools_json.c
     src/gui/sdl3/dialog_backend.c
     ${IOS_BOLO_SOURCES}
@@ -669,6 +670,7 @@ target_include_directories(WinBoloIOS PRIVATE
     src/gui/mobile
     src/server
     src/mapeditor
+    src/client_frontend
     src/third_party/imgui_markdown
     ${cjson_SOURCE_DIR}
 )
@@ -1095,6 +1097,9 @@ set(CLIENT_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
+    src/client_frontend/client_frontend_connect.c
+    src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_common.c
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -1238,6 +1243,7 @@ target_include_directories(WinBolo PRIVATE
     src/server
     src/mapeditor
     src
+    src/client_frontend
     src/logviewer
     src/logviewer/imgui
     src/logviewer/platform
@@ -2736,6 +2742,17 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
     tests/unit/test_bolo_rand.c
+    # Relay 0x01 metadata-frame parser (platform-neutral; the consume site
+    # is emscripten-only but the parse compiles everywhere).
+    tests/unit/test_proxy_meta_parse.c
+    # Shared client-frontend cores: the tick cadence (keys-half pump gated
+    # on clientSimTransportTicksServer) and the connect/landing wait. The
+    # core sources compile here against the stubs in the test files;
+    # client_frontend_common.c stays out (it drags the sdl3 draw layer).
+    src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_connect.c
+    tests/unit/test_client_frontend_tick.c
+    tests/unit/test_await_join.c
     tests/unit/test_net_impair.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
@@ -3056,6 +3073,10 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
 target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
     src/gui/sdl3/dialogs
+    # gamefront.h / brainsHandler.h / clientmutex.h for the shared
+    # client-frontend cores compiled into this target.
+    src/gui
+    src/client_frontend
     src/server
     src
     src/winbolonet
@@ -3397,6 +3418,17 @@ set(_unit_test_names
     bot_pool_wire_roundtrip
     bot_pool_wire_builtin_roundtrip
     bot_pool_wire_rejects_garbage
+    proxy_meta_parse_roundtrip
+    proxy_meta_parse_truncation_safe
+    proxy_meta_parse_oversized_name
+    proxy_meta_parse_prefs_clamps
+    tick_core_active_local_no_double_step
+    tick_core_passive_local_pumps_keys_half
+    tick_core_lobby_flips_cadence
+    transport_ticks_server_lifecycle
+    await_join_connected_immediate
+    await_join_lobby_latch
+    await_join_timeout_and_error
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

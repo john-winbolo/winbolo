@@ -1924,6 +1924,15 @@
 #define STR_DLGABOUT_AUTHORS                1791
 #define STR_DLGABOUT_FORUMS                 1792
 
+/* Web client — join code / connect error dialogs */
+#define STR_WEB_JOIN_NEED_SIGNIN            1867
+#define STR_WEB_JOIN_NOT_ACCEPTING          1868
+#define STR_WEB_JOIN_LINK_INVALID           1869
+#define STR_WEB_JOIN_GAME_FULL              1870
+#define STR_WEB_JOIN_CODE_UNREACHABLE       1871
+#define STR_WEB_CONNECT_FAILED              1872
+#define STR_WEB_JOIN_NO_RESPONSE            1873
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

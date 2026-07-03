@@ -176,9 +176,69 @@ target_link_libraries(logviewer PRIVATE
 # Emscripten-specific settings
 #
 
+# ---------------------------------------------------------------------------
+# CJK font subsetting — same as the game client (src/wasm/CMakeLists.txt). The
+# bundled Noto Sans CJK + Sarasa Mono Slab fonts are ~163 MB and dominate the
+# preload; subset them to the glyph ranges parsed from imgui_draw.cpp (~19 MB).
+# The logviewer renders replays' player names and chat, so it inherits the same
+# Sarasa coverage trade-off. Needs Python 3 + fonttools; falls back to the full
+# fonts with a warning otherwise.
+# ---------------------------------------------------------------------------
+find_package(Python3 COMPONENTS Interpreter QUIET)
+set(_have_fonttools FALSE)
+if(Python3_FOUND)
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -c "import fontTools"
+        RESULT_VARIABLE _ft_rv OUTPUT_QUIET ERROR_QUIET)
+    if(_ft_rv EQUAL 0)
+        set(_have_fonttools TRUE)
+    endif()
+endif()
+
+set(_cjk_fonts
+    NotoSansCJKjp-Regular.otf   NotoSansCJKkr-Regular.otf
+    NotoSansCJKsc-Regular.otf   NotoSansCJKtc-Regular.otf
+    SarasaMonoSlabJ-Regular.ttf SarasaMonoSlabK-Regular.ttf
+    SarasaMonoSlabSC-Regular.ttf SarasaMonoSlabTC-Regular.ttf)
+
 # Preload data files so they're available in the virtual filesystem
 set(EMSCRIPTEN_LINK_FLAGS "")
 string(APPEND EMSCRIPTEN_LINK_FLAGS " --preload-file ${DATA_DIR}@/data")
+
+if(_have_fonttools)
+    set(SUBSET_FONTS_DIR "${CMAKE_CURRENT_BINARY_DIR}/fonts_subset")
+    set(SUBSET_STAMP     "${CMAKE_CURRENT_BINARY_DIR}/fonts_subset.stamp")
+    set(SUBSET_SCRIPT    "${REPO_ROOT}/cmake/subset_cjk_fonts.py")
+
+    set(_cjk_font_srcs)
+    foreach(_f IN LISTS _cjk_fonts)
+        list(APPEND _cjk_font_srcs "${DATA_DIR}/fonts/${_f}")
+    endforeach()
+
+    add_custom_command(
+        OUTPUT ${SUBSET_STAMP}
+        COMMAND ${Python3_EXECUTABLE} ${SUBSET_SCRIPT}
+                --imgui-draw ${imgui_SOURCE_DIR}/imgui_draw.cpp
+                --src-fonts ${DATA_DIR}/fonts
+                --out ${SUBSET_FONTS_DIR}
+        COMMAND ${CMAKE_COMMAND} -E touch ${SUBSET_STAMP}
+        DEPENDS ${SUBSET_SCRIPT} ${imgui_SOURCE_DIR}/imgui_draw.cpp ${_cjk_font_srcs}
+        COMMENT "Subsetting CJK fonts to ImGui glyph ranges (~163MB -> ~19MB)"
+        VERBATIM)
+    add_custom_target(subset_fonts DEPENDS ${SUBSET_STAMP})
+    add_dependencies(logviewer subset_fonts)
+
+    # Exclude the full CJK fonts (exact source paths, no wildcards) and layer
+    # the subset versions over /data/fonts.
+    foreach(_f IN LISTS _cjk_fonts)
+        string(APPEND EMSCRIPTEN_LINK_FLAGS " --exclude-file ${DATA_DIR}/fonts/${_f}")
+    endforeach()
+    string(APPEND EMSCRIPTEN_LINK_FLAGS " --preload-file ${SUBSET_FONTS_DIR}@/data/fonts")
+else()
+    message(WARNING
+        "CJK font subsetting disabled (need Python 3 + fonttools: "
+        "`pip install fonttools brotli`) — preloading the full ~163 MB fonts")
+endif()
 
 # Export the wasm_open_log_file function so JS can call it
 string(APPEND EMSCRIPTEN_LINK_FLAGS " -sEXPORTED_FUNCTIONS=['_main','_wasm_open_log_file','_malloc','_free']")
@@ -201,3 +261,9 @@ set_target_properties(logviewer PROPERTIES
     SUFFIX ".html"
     LINK_FLAGS "${EMSCRIPTEN_LINK_FLAGS}"
 )
+
+# Force a relink (regenerating the preloaded .data) when the subset fonts
+# change but no object file did — e.g. a source font or ImGui bump.
+if(_have_fonttools)
+    set_property(TARGET logviewer APPEND PROPERTY LINK_DEPENDS "${SUBSET_STAMP}")
+endif()

@@ -528,11 +528,18 @@ struct ClientSim {
      * clientSimDisconnect). Embedded by value because the underlying
      * transport constructors return Transport by value.
      *
-     * clientSimCreate preserves these three fields across its memset
+     * clientSimCreate preserves these four fields across its memset
      * (save/restore in the function body). */
     Transport transport;
     bool      hasTransport;
     bool      isUdpTransport;
+    /* True when the bound transport advances the server itself — i.e. its
+     * tick() runs serverSimTick (the active local transport). False for the
+     * passive local transport (host timer thread ticks the server) and for
+     * UDP (the remote server ticks itself). Frontend tick loops gate their
+     * extra keys-half transport pump on this via
+     * clientSimTransportTicksServer. */
+    bool      transportTicksServer;
 
     /* Spectator feed — populated by the UDP transport's bulk sink while
      * connected as a tankless spectator; drained by the spectator session.

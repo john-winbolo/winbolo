@@ -487,8 +487,12 @@ static MapChooserState  s_chooseMapRandomState   = {};
 static uint32_t         s_chooseMapRandomLastSeq = 0;
 /* Fourth chooser instance for the Winbolo.net Maps tab — same widget
  * the Upload / Server Maps tabs use, with a listProvider that fetches
- * folders from /api/v1/maps/{id} instead of from a local directory. */
+ * folders from /api/v1/maps/{id} instead of from a local directory.
+ * The WASM build has no libcurl/WBN HTTP backend, so the whole tab —
+ * state, providers, async fetch threads — is compiled out there. */
+#ifndef __EMSCRIPTEN__
 static MapChooserState  s_chooseMapWbnState      = {};
+#endif
 static bool             s_chooseMapStateInited   = false;
 static char             s_chooseMapPrevName[128] = "";
 static int              s_chooseMapActiveTab     = 0; /* 0=server 1=upload 2=random 3=wbn */
@@ -1111,6 +1115,13 @@ static void lobbyUploadOnFolderJump(MapChooserState *state,
 }
 
 /* ── Winbolo.net Maps tab — state and async folder fetch ─────────
+ * The entire WBN tab depends on the libcurl-backed WBN HTTP API
+ * (httpGetBaseUrl / wbn_api_get / wbn_api_download_to_memory*), which
+ * the WASM build does not link. The tab is already runtime-gated on
+ * winbolonetIsRunning() (false in WASM), so it is dead-but-linked
+ * there; compile it out entirely to keep wasm-ld's undefined-symbol
+ * set clean.
+ *
  * The tab browses the WBN REST catalogue. Folder listings and
  * search results are fetched on a detached std::thread; the UI
  * thread renders from a mutex-guarded parsed snapshot. Picking a
@@ -1118,6 +1129,7 @@ static void lobbyUploadOnFolderJump(MapChooserState *state,
  * server-side (see transport_udp_server.c's wbnDownloadWorker).
  * The preview itself rolls in over the normal MAP_CHANGE flow —
  * no client-side download or local file write here. */
+#ifndef __EMSCRIPTEN__
 
 struct WbnMapsCrumb { int id; std::string name; };
 /* Forward declare so WbnMapsEntry can carry the parent folder id. */
@@ -2142,6 +2154,7 @@ static void lobbyWbnMapsTooltipPrefix(MapChooserState *state, void *ctx) {
                 (wbnHost && *wbnHost) ? wbnHost : "winbolo.net",
                 sizeof(state->pathTooltipPrefix));
 }
+#endif /* __EMSCRIPTEN__ — WBN Maps tab support code */
 
 /* Shared per-tab render helper. Manages the chooser-area size,
  * refreshes the tooltip prefix, runs a per-frame enumerate when the
@@ -2318,7 +2331,9 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapRandomState.leftPanelMaxW  = 360.0f;
         /* WBN provider — walks the WBN HTTP catalogue. refreshEveryFrame
          * because the listing lands asynchronously on a worker thread;
-         * the tab needs to surface cache updates without user action. */
+         * the tab needs to surface cache updates without user action.
+         * Absent in the WASM build (no WBN HTTP backend). */
+#ifndef __EMSCRIPTEN__
         mapChooserInit(&s_chooseMapWbnState, renderer);
         s_chooseMapWbnState.maximizePtr      = &s_chooseMapMaximized;
         s_chooseMapWbnState.hideExtras       = true;
@@ -2333,6 +2348,7 @@ static void lobbyChooseMapEnsureInit(SDL_Renderer *renderer) {
         s_chooseMapWbnState.provider.refreshEveryFrame    = true;
         SDL_strlcpy(s_chooseMapWbnState.crumbsRootLabel, "Maps",
                     sizeof(s_chooseMapWbnState.crumbsRootLabel));
+#endif /* __EMSCRIPTEN__ */
         /* Force an initial discover for each provider — mapChooserInit
          * ran discoverMaps before the providers were wired, so the
          * states landed empty. */
@@ -2364,7 +2380,9 @@ static void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer) {
      * All three providers use cs as ctx in their onSelect path. */
     s_chooseMapState.provider.ctx        = cs;
     s_chooseMapUploadState.provider.ctx  = cs;
+#ifndef __EMSCRIPTEN__
     s_chooseMapWbnState.provider.ctx     = cs;
+#endif
     /* Snapshot the currently active map so Cancel can restore it
      * once an undo packet exists. */
     const char *cur = cs ? clientSimGetMapName(cs) : "";
@@ -2454,7 +2472,9 @@ static void lobbyChooseMapRenderMaximizedWindow(ClientSim *cs,
     MapChooserState *activeChooser = &s_chooseMapState;
     if (s_chooseMapActiveTab == 1)      activeChooser = &s_chooseMapUploadState;
     else if (s_chooseMapActiveTab == 2) activeChooser = &s_chooseMapRandomState;
+#ifndef __EMSCRIPTEN__
     else if (s_chooseMapActiveTab == 3) activeChooser = &s_chooseMapWbnState;
+#endif
 
     if (activeChooser->previewView &&
         mapPreviewViewIsReady(activeChooser->previewView)) {
@@ -2667,7 +2687,9 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                 clientSimGetUploadPolicy(cs) != UPLOAD_POLICY_OFF)
                 vis[nVis++] = 1;                                    /* Local/Upload */
             vis[nVis++] = 2;                                        /* Generate */
+#ifndef __EMSCRIPTEN__
             vis[nVis++] = 3;                                        /* WBN */
+#endif
             int cur = 0;
             for (int i = 0; i < nVis; i++) {
                 if (vis[i] == s_chooseMapActiveTab) { cur = i; break; }
@@ -2742,6 +2764,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
             }
             ImGui::EndTabItem();
         }
+#ifndef __EMSCRIPTEN__
         if (ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_TAB_WBNMAPS), nullptr,
                 s_chooseMapForceTab == 3 ? ImGuiTabItemFlags_SetSelected : 0)) {
             s_chooseMapActiveTab = 3;
@@ -2752,6 +2775,7 @@ static void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
 
             ImGui::EndTabItem();
         }
+#endif /* __EMSCRIPTEN__ — WBN Maps source tab */
         ImGui::EndTabBar();
     }
     /* One-shot: the forced selection has been applied (or the bar wasn't
@@ -6399,174 +6423,209 @@ static void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
     }
 }
 
-extern "C" int imguiLobbyShow(ClientSim *cs) {
-    WB_LOG_INFO(WB_LOG_CAT_GUI, "[LOBBY] imguiLobbyShow called cs=%p inLobby=%d netStat=%d isSP=%d",
-            (void*)cs, cs ? (int)clientSimIsInLobby(cs) : -1, cs ? (int)clientSimGetNetStatus(cs) : -1,
-            cs ? (int)clientSimIsSinglePlayer(cs) : -1);
+/* ----------------------------------------------------------------------
+ * Per-frame lobby state
+ *
+ * The lobby was historically a self-contained blocking modal: every
+ * piece of per-frame UI state lived in locals of imguiLobbyShow's
+ * while-loop. To let the WASM client drive the same UI from its
+ * non-blocking per-frame main loop (one shared ImGui context, no
+ * blocking loop), that state is hoisted into this file-static struct so
+ * it survives across imguiLobbyRenderFrame() calls. The blocking
+ * imguiLobbyShow() seeds it once up front (and additionally loads a
+ * dedicated countdown font into its private context); the WASM path
+ * lazily seeds it on the first frame after entering the lobby.
+ * ------------------------------------------------------------------- */
+typedef struct LobbyFrameState {
+    bool   active;                 /* seeded for the current lobby session? */
+
+    /* Presentation chrome. On desktop these come from imguiLobbyShow's
+     * private context setup; on WASM they are defaulted (no custom font). */
+    float  s;                      /* UI scale */
+    ImFont *countdownFont;         /* NULL => default font fallback */
+    float  countdownFontSize;
+    DialogSafeInsets safeInsets;
+
+    /* Chat compose buffer + unread tracking. */
+    char   chatInput[CHAT_INPUT_SIZE];
+    bool   chatUnread;
+    int    lastChatLen;
+    bool   teamChatUnread;
+    int    lastTeamChatLen;
+    int    activeTab;
+
+    /* Map-preview texture + its rebuild bookkeeping. */
+    SDL_Texture *mapPreviewTex;
+    bool     mapPreviewBuilt;
+    uint32_t mapPreviewOwnerSig;
+    uint32_t mapPreviewOwnerSeen;
+    int      mapPreviewOwnerStable;
+    bool     prevMapDownloadComplete;
+    MapBounds mapBounds;
+    char     prevMapName[128];
+    bool     awaitingMapChangePacket;
+    int      awaitingFrames;
+    uint32_t lastMapChangeSeq;
+
+    /* Misc per-frame trackers. */
+    bool   focusReadyPending;
+    int    prevCountdown;
+} LobbyFrameState;
+
+static LobbyFrameState s_lf = {};
+
+/* Seed the data + default-chrome fields for a fresh lobby session.
+ * imguiLobbyShow() overrides the chrome (scale / countdown font / insets)
+ * afterwards with values from its private context; the WASM path keeps
+ * the defaults computed here. */
+static void lobbyFrameInitState(ClientSim *cs) {
     SDL_Window *window = sdl3DrawGetWindow();
-    SDL_Renderer *renderer = sdl3DrawGetRenderer();
-    if (!window || !renderer) return 0;
 
-    /* A tankless spectator views the live lobby read-only: it owns no
-     * player slot (its myPlayerNum stays 0, aliasing real slot 0), so every
-     * "is this me / am I host" branch below is forced off and every
-     * mutating control is hidden or disabled. Detected from the sim, not a
-     * parameter, so the dual-mode caller hands over the same ClientSim. */
-    const bool spectator = clientSimIsSpectator(cs);
-
-    /* Save logical presentation */
-    int savedLogW = 0, savedLogH = 0;
-    SDL_RendererLogicalPresentation savedLogMode = SDL_LOGICAL_PRESENTATION_DISABLED;
-    dialogSaveLogicalPresentation(renderer, &savedLogW, &savedLogH, &savedLogMode);
-
-    /* Get screen size and compute UI scale */
-    int screenW, screenH;
-    SDL_GetWindowSize(window, &screenW, &screenH);
-    if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
+    int screenW = 1024, screenH = 768;
+    if (window) {
+        SDL_GetWindowSize(window, &screenW, &screenH);
+        if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
+    }
     float s = dialogComputeScale(screenW, screenH);
 #if !BOLO_MOBILE
-    if (!uiModeIsSteamDeck()) s = 1.0f;   /* lobby + nested map chooser / start picker: desktop scaling deferred to the lobby rework */
+    if (!uiModeIsSteamDeck()) s = 1.0f;
 #endif
+    s_lf.s                 = s;
+    s_lf.countdownFont     = NULL;   /* default font; desktop overrides */
+    s_lf.countdownFontSize = (s <= 1.05f) ? 54.0f : 60.0f * s;
+    s_lf.safeInsets        = dialogGetSafeInsets(window);
 
-#if !BOLO_MOBILE
-    dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
-    dialogSetWindowTitle(window, langGetText(STR_DLGLOBBY_WINTITLE));
-    SDL_SetWindowResizable(window, true);
-#endif
-    dialogRestorePosition(window);
-    SDL_ShowWindow(window);
-    SDL_RaiseWindow(window);
+    s_lf.chatInput[0]   = '\0';
+    s_lf.chatUnread     = false;
+    s_lf.lastChatLen    = 0;
+    s_lf.teamChatUnread = false;
+    s_lf.lastTeamChatLen = 0;
+    s_lf.activeTab      = 0;
 
-    /* Set up ImGui context */
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO &io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
-    io.ConfigNavCursorVisibleAlways = true;
-    io.IniFilename = nullptr;
+    s_lf.mapPreviewTex         = NULL;
+    s_lf.mapPreviewBuilt       = false;
+    s_lf.mapPreviewOwnerSig    = 0xFFFFFFFFu;
+    s_lf.mapPreviewOwnerSeen   = 0xFFFFFFFFu;
+    s_lf.mapPreviewOwnerStable = 0;
+    s_lf.prevMapDownloadComplete = clientSimIsMapDownloadComplete(cs);
+    s_lf.mapBounds.minX = 0;
+    s_lf.mapBounds.minY = 0;
+    s_lf.mapBounds.maxX = MAP_PREVIEW_SIZE - 1;
+    s_lf.mapBounds.maxY = MAP_PREVIEW_SIZE - 1;
+    s_lf.prevMapName[0] = '\0';
+    {
+        const char *curName = clientSimGetMapName(cs);
+        if (curName) SDL_strlcpy(s_lf.prevMapName, curName, sizeof(s_lf.prevMapName));
+    }
+    s_lf.awaitingMapChangePacket = false;
+    s_lf.awaitingFrames          = 0;
+    s_lf.lastMapChangeSeq        = clientSimGetLobbyMapChangeSeq(cs);
 
-    ImGui::StyleColorsDark();
-    imguiApplyBoloTheme();
-    ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
-    ImGui_ImplSDLRenderer3_Init(renderer);
-    dialogApplyScaling(s);
+    s_lf.focusReadyPending = uiShouldUseControllerMode();
+    s_lf.prevCountdown     = clientSimGetCountdownSeconds(cs);
+}
 
-    /* Load a large font for the countdown overlay */
-    float countdownFontSize = (s <= 1.05f) ? 54.0f : 60.0f * s;
-    ImFont *countdownFont = imguiLoadBoloFontSized(countdownFontSize);
+/* Release per-frame lobby state (map-preview texture, popup buffers, and
+ * every transient visibility/pending flag). The blocking imguiLobbyShow()
+ * calls this on teardown; the WASM host calls it when leaving the lobby.
+ * Resets every file-scope flag that could render UI on the next entry if a
+ * disconnect (or any other exit) caught the dialog mid-action. The
+ * MapChooserState caches stay populated (next open re-uses the discovered
+ * map list / preview view); only the visibility / focus / pending-action
+ * flags reset. */
+extern "C" void imguiLobbyFrameReset(void) {
+    if (s_lf.mapPreviewTex) {
+        SDL_DestroyTexture(s_lf.mapPreviewTex);
+        s_lf.mapPreviewTex = NULL;
+    }
+    if (popupCompressedData) {
+        SDL_free(popupCompressedData);
+        popupCompressedData = NULL;
+        popupCompressedLen = 0;
+    }
+    mapPreviewPopupDestroy();
 
-    /* Chat state */
-    char chatInput[CHAT_INPUT_SIZE];
-    chatInput[0] = '\0';
+    s_chooseMapOpen             = false;
+    s_chooseMapFocusedOnce      = false;
+    s_chooseMapMaximized        = false;
+    s_chooseMapWantCloseConfirm = false;
+    s_chooseMapPreviewPending   = false;
+    s_chooseMapCs               = NULL;
+
+    s_kickPendingOpen = false;
+    s_kickPendingSlot = -1;
+    s_kickPendingName[0] = '\0';
+    s_makeHostPendingOpen = false;
+    s_makeHostPendingSlot = -1;
+    s_makeHostPendingName[0] = '\0';
+
+    s_addBotSentMs        = 0;
+    s_addBotExpectedConn  = 0;
+    s_addBotFrame         = -1;
+    memset(s_botNameOverridden, 0, sizeof(s_botNameOverridden));
+
+    s_expandedBotSlot = -1;
+
+    s_lf.active = false;
+}
+
+/* Build the lobby UI into the currently-active ImGui frame. See
+ * imgui_lobby.h for the host contract. Returns LOBBY_FRAME_LEFT once the
+ * player confirms leaving, otherwise LOBBY_FRAME_CONTINUE. */
+extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
+    if (!s_lf.active) { lobbyFrameInitState(cs); s_lf.active = true; }
+
+    SDL_Window   *window   = sdl3DrawGetWindow();
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (!window || !renderer) return LOBBY_FRAME_CONTINUE;
+
+    /* A tankless spectator views the live lobby read-only: it owns no
+     * player slot, so every "is this me / am I host" branch below is
+     * forced off and every mutating control is hidden or disabled. */
+    const bool spectator = clientSimIsSpectator(cs);
+
+    /* Presentation chrome, seeded by the host (desktop) or
+     * lobbyFrameInitState (WASM). */
+    const float s = s_lf.s;
+    ImFont *countdownFont = s_lf.countdownFont;
+    const float countdownFontSize = s_lf.countdownFontSize;
+    DialogSafeInsets &safeInsets = s_lf.safeInsets;
 
     /* Team combo items */
     const char *teamItems[] = {
         langGetText(STR_NONE), "1", "2", "3", "4", "5", "6", "7", "8",
         "9", "10", "11", "12", "13", "14", "15", "16"
     };
-
-    /* Map preview texture state */
-    SDL_Texture *mapPreviewTex = NULL;
-    bool mapPreviewBuilt = false;
-    /* Signature of the start-ownership the current preview texture was built
-     * with; drives in-place recolour when claims/teams change. The "seen"
-     * pair debounces it so a burst of changes (e.g. bots auto-claiming starts
-     * over several frames at SP startup) can't thrash the texture rebuild. */
-    uint32_t mapPreviewOwnerSig = 0xFFFFFFFFu;
-    uint32_t mapPreviewOwnerSeen = 0xFFFFFFFFu;
-    int      mapPreviewOwnerStable = 0;
-    bool prevMapDownloadComplete = clientSimIsMapDownloadComplete(cs);
-    MapBounds mapBounds = {0, 0, MAP_PREVIEW_SIZE - 1, MAP_PREVIEW_SIZE - 1};
-    /* Snapshot of the active map name; used to drop the stale
-     * preview texture as soon as the map identity changes, even
-     * before the UDP MAP_CHANGE re-download cycle arrives. */
-    char prevMapName[128] = {0};
-    {
-        const char *curName = clientSimGetMapName(cs);
-        if (curName) SDL_strlcpy(prevMapName, curName, sizeof(prevMapName));
-    }
-    /* Set when nameChanged fires (the in-process subscriber path,
-     * instantly). Cleared when seqChanged fires (the UDP MAP_CHANGE
-     * packet, a few frames later) — once we have the seq signal we
-     * know the mapDownloadBuf is being reallocated, so the standard
-     * !mapDownloadComplete "Downloading…" gate takes over. While
-     * this is true the preview panel forces the "Downloading…"
-     * placeholder so we don't briefly read "Map unavailable" in the
-     * gap. SP-host never sets this (no transport → can't show a
-     * preview anyway → don't get stuck on "Downloading…"). */
-    bool awaitingMapChangePacket = false;
-    /* Frame counter for the wait safety timeout. If the MAP_CHANGE
-     * packet doesn't arrive within ~1 second of nameChanged firing
-     * (e.g. server-side broadcast missed the host slot), we
-     * force-clear the flag and rebuild from whatever bytes are
-     * currently in the download buffer. */
-    int awaitingFrames = 0;
     const int kAwaitingMaxFrames = 60;
-    /* Last-seen MAP_CHANGE sequence number; bumps every time the
-     * client receives PACKET_LOBBY_MAP_CHANGE. The "the mapDownload
-     * is being replaced" edge — used together with the boolean
-     * complete-transition edge to drive the texture rebuild. */
-    uint32_t lastMapChangeSeq = clientSimGetLobbyMapChangeSeq(cs);
 
-    /* Chat unread state — shared by the mobile tabbed layout and the
-     * desktop chat tab bar so both flag a red tab when the chat tab you
-     * are not viewing receives a new message. */
-    bool chatUnread = false;
-    int lastChatLen = 0;
-    bool teamChatUnread = false;
-    int lastTeamChatLen = 0;
-    /* Active tab index for the tabbed layout (mobile, or desktop controller
-     * mode). 0=Players, 1=Map, 2=Settings(host-only), 3=Chat(General),
-     * 4=Team */
-    int activeTab = 0;
+    /* Aliases onto the persistent per-frame state so the UI body below
+     * reads/writes it by its original local names. */
+    char (&chatInput)[CHAT_INPUT_SIZE]    = s_lf.chatInput;
+    bool &chatUnread                      = s_lf.chatUnread;
+    int  &lastChatLen                     = s_lf.lastChatLen;
+    bool &teamChatUnread                  = s_lf.teamChatUnread;
+    int  &lastTeamChatLen                 = s_lf.lastTeamChatLen;
+    int  &activeTab                       = s_lf.activeTab;
+    SDL_Texture *&mapPreviewTex           = s_lf.mapPreviewTex;
+    bool &mapPreviewBuilt                 = s_lf.mapPreviewBuilt;
+    uint32_t &mapPreviewOwnerSig          = s_lf.mapPreviewOwnerSig;
+    uint32_t &mapPreviewOwnerSeen         = s_lf.mapPreviewOwnerSeen;
+    int  &mapPreviewOwnerStable           = s_lf.mapPreviewOwnerStable;
+    bool &prevMapDownloadComplete         = s_lf.prevMapDownloadComplete;
+    MapBounds &mapBounds                  = s_lf.mapBounds;
+    char (&prevMapName)[128]              = s_lf.prevMapName;
+    bool &awaitingMapChangePacket         = s_lf.awaitingMapChangePacket;
+    int  &awaitingFrames                  = s_lf.awaitingFrames;
+    uint32_t &lastMapChangeSeq            = s_lf.lastMapChangeSeq;
+    bool &focusReadyPending               = s_lf.focusReadyPending;
+    int  &prevCountdown                   = s_lf.prevCountdown;
 
-    /* Query safe area insets for notch avoidance */
-    DialogSafeInsets safeInsets = dialogGetSafeInsets(window);
+    /* Set when the player confirms the Leave dialog; the host disconnects. */
+    bool leftLobby = false;
 
-    int result = 0;
-    bool running = true;
-
-    /* Controller mode: land the initial nav focus on the Ready button — the
-     * action a pad user most wants on entry — instead of leaving focus
-     * unset. Deferred until Ready is actually enabled (the map download may
-     * still be in flight), and consumed once so the player can navigate away
-     * freely afterwards. Armed only in controller mode; keyboard/mouse is
-     * unaffected. */
-    bool focusReadyPending = uiShouldUseControllerMode();
-
-    /* Show the lobby in Steam immediately on entry; the throttled tick at
-     * the top of the loop keeps the player count / connect address current
-     * (e.g. once the host's external address resolves via the tracker). */
-    gameFrontSetSteamPresenceLobby(cs);
-
-    /* Seed the countdown tracker with the current value so the first frame
-     * doesn't spuriously tick when entering the lobby mid-countdown. */
-    int prevCountdown = clientSimGetCountdownSeconds(cs);
-
-    while (running) {
-        Uint64 frameCapStart = dialogFrameCapBegin();
         gameFrontTickSteamPresenceLobby(cs);
-        SDL_Event ev;
-        while (SDL_PollEvent(&ev)) {
-            ImGui_ImplSDL3_ProcessEvent(&ev);
-            dialogHandleGamepadCancelEvent(window, &ev);
-            if (dialogHandleDevicePresetEvent(window, &ev)) continue;
-            dialogHandleWindowMoveResize(window, &ev);
-            if (ev.type == SDL_EVENT_QUIT) {
-                running = false;
-            }
-            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                ev.window.windowID == SDL_GetWindowID(window)) {
-                running = false;
-            }
-        }
 
-        /* Tick transport to receive lobby packets */
         bool hasTransport = clientSimHasTransport(cs);
-        if (hasTransport) {
-            clientSimNetTick(cs);
-        }
 
         /* Clear balance proposal when countdown starts */
         if (clientSimGetCountdownSeconds(cs) > 0 && clientSimIsBalanceProposalActive(cs)) {
@@ -6592,43 +6651,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         }
         prevCountdown = curCountdown;
 
-        /* Check for game start */
-        if (clientSimGetNetStatus(cs) == netRunning) {
-            soundPlayEffect(lobbyGameStart);
-            result = 1;
-            running = false;
-            break;
-        }
-
-        /* A spectator never reaches netRunning: the server unsubscribes it from
-         * the live lobby bus before the running phase is published, so its mode
-         * bit flips out of live-lobby when the delayed feed begins instead.
-         * Treat that flip as the game-start signal so the host loop hands over
-         * to the delayed game view (result 1, same as a player's game start). */
-        if (clientSimIsSpectator(cs) && !clientSimSpectatorIsLiveLobby(cs)) {
-            result = 1;
-            running = false;
-            break;
-        }
-
-        /* Check for server disconnect/shutdown */
-        if (hasTransport) {
-            ClientConnectState js = clientSimGetConnectState(cs);
-            if (js == CLIENT_CONNECT_SERVER_SHUTDOWN ||
-                js == CLIENT_CONNECT_ERROR ||
-                js == CLIENT_CONNECT_KICKED) {
-                bool kicked = (js == CLIENT_CONNECT_KICKED);
-                imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                    langGetText(kicked
-                                ? STR_DLGLOBBY_KICKED
-                                : STR_DLGLOBBY_LOSTCONNECTION),
-                    kicked ? IMGUI_MSG_NONE : IMGUI_MSG_ERROR,
-                    IMGUI_MSG_OK);
-                result = 0;
-                running = false;
-                break;
-            }
-        }
 
         /* Reset preview on either signal:
          *   1. Map download invalidated (server-driven re-download
@@ -6839,14 +6861,6 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         /* Render popup tiles to offscreen texture before ImGui frame */
         mapPreviewPopupRenderOffscreen(renderer, winW, winH);
 
-        ImGui_ImplSDLRenderer3_NewFrame();
-        ImGui_ImplSDL3_NewFrame();
-        dialogResetTextInputArea(window);
-        dialogOverrideFramebufferScale(renderer);
-        ImGui::NewFrame();
-        imguiSteamNavActivateMenuSet();
-        imguiSteamNavFeedCurrentContext();
-        controllerDialogsRenderMenu();
 
         /* Full-screen host window with safe area padding */
         ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -8254,8 +8268,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                                        langGetText(STR_YES));
             if (f == WBUI::FOOTER_CONFIRM) {
                 ImGui::CloseCurrentPopup();
-                result = 0;
-                running = false;
+                leftLobby = true;
             } else if (f == WBUI::FOOTER_CANCEL) {
                 ImGui::CloseCurrentPopup();
             }
@@ -8317,12 +8330,16 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         if (s_chooseMapOpen &&
             s_chatBlockMax.x > s_chatBlockMin.x &&
             s_chatBlockMax.y > s_chatBlockMin.y) {
-            /* No NoBringToFrontOnFocus / NoFocusOnAppearing here — the
-             * scrim has to rise above the lobby's ##LobbyBg full-screen
-             * window for its dark fill to actually show. The chooser
-             * window is Begun right after this block and the user
-             * interacts there, so ImGui's natural focus-follows-input
-             * keeps the chooser on top of the scrim from frame two on. */
+            /* NoBringToFrontOnFocus / NoFocusOnAppearing keep the z-order
+             * DETERMINISTIC by creation order rather than focus: ##LobbyBg
+             * (also flagged NoBringToFrontOnFocus) is begun first, then these
+             * scrims, then the chooser — so LobbyBg < scrims < chooser holds
+             * every frame. Without this it relied on focus-follows-input,
+             * which is reliable only in the desktop lobby's private ImGui
+             * context; in the WASM shared context a scrim could rise above the
+             * chooser and its ##scrimHit absorbed every click (the chooser
+             * looked open but was dead). The scrim still draws above the
+             * background because it is created after ##LobbyBg. */
             const ImGuiWindowFlags scrimFlags =
                 ImGuiWindowFlags_NoTitleBar |
                 ImGuiWindowFlags_NoResize |
@@ -8331,7 +8348,9 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 ImGuiWindowFlags_NoScrollbar |
                 ImGuiWindowFlags_NoSavedSettings |
                 ImGuiWindowFlags_NoNav |
-                ImGuiWindowFlags_NoDocking;
+                ImGuiWindowFlags_NoDocking |
+                ImGuiWindowFlags_NoBringToFrontOnFocus |
+                ImGuiWindowFlags_NoFocusOnAppearing;
             ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 140));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -8381,6 +8400,158 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
          * entry and doesn't track OS-window resizes. */
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
 
+    return leftLobby ? LOBBY_FRAME_LEFT : LOBBY_FRAME_CONTINUE;
+}
+
+/* Blocking desktop modal: owns a private ImGui context + SDL backends and
+ * runs its own event/draw loop, calling imguiLobbyRenderFrame() to build
+ * each frame. Returns 1 if the game started, 0 if the player left. */
+extern "C" int imguiLobbyShow(ClientSim *cs) {
+    WB_LOG_INFO(WB_LOG_CAT_GUI, "[LOBBY] imguiLobbyShow called cs=%p inLobby=%d netStat=%d isSP=%d",
+            (void*)cs, cs ? (int)clientSimIsInLobby(cs) : -1, cs ? (int)clientSimGetNetStatus(cs) : -1,
+            cs ? (int)clientSimIsSinglePlayer(cs) : -1);
+    SDL_Window *window = sdl3DrawGetWindow();
+    SDL_Renderer *renderer = sdl3DrawGetRenderer();
+    if (!window || !renderer) return 0;
+
+    /* Save logical presentation */
+    int savedLogW = 0, savedLogH = 0;
+    SDL_RendererLogicalPresentation savedLogMode = SDL_LOGICAL_PRESENTATION_DISABLED;
+    dialogSaveLogicalPresentation(renderer, &savedLogW, &savedLogH, &savedLogMode);
+
+    /* Get screen size and compute UI scale */
+    int screenW, screenH;
+    SDL_GetWindowSize(window, &screenW, &screenH);
+    if (screenW <= 0 || screenH <= 0) { screenW = 1024; screenH = 768; }
+    float s = dialogComputeScale(screenW, screenH);
+#if !BOLO_MOBILE
+    if (!uiModeIsSteamDeck()) s = 1.0f;   /* lobby + nested map chooser / start picker: desktop scaling deferred to the lobby rework */
+#endif
+
+#if !BOLO_MOBILE
+    dialogSetWindowSize(window, DIALOG_W, DIALOG_H);
+    dialogSetWindowTitle(window, langGetText(STR_DLGLOBBY_WINTITLE));
+    SDL_SetWindowResizable(window, true);
+#endif
+    dialogRestorePosition(window);
+    SDL_ShowWindow(window);
+    SDL_RaiseWindow(window);
+
+    /* Set up ImGui context */
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO &io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    io.ConfigNavCursorVisibleAlways = true;
+    io.IniFilename = nullptr;
+
+    ImGui::StyleColorsDark();
+    imguiApplyBoloTheme();
+    ImGui_ImplSDL3_InitForSDLRenderer(window, renderer);
+    ImGui_ImplSDLRenderer3_Init(renderer);
+    dialogApplyScaling(s);
+
+    /* Load a large font for the countdown overlay */
+    float countdownFontSize = (s <= 1.05f) ? 54.0f : 60.0f * s;
+    ImFont *countdownFont = imguiLoadBoloFontSized(countdownFontSize);
+
+    /* Release anything a stray in-game-lobby seam frame left behind
+     * (lobbyFrameInitState below NULLs mapPreviewTex without destroying
+     * it, so an undisposed texture would leak). Idempotent when clean. */
+    imguiLobbyFrameReset();
+
+    /* Seed per-frame state, then override the chrome with this private
+     * context's computed scale / loaded font / window insets. */
+    lobbyFrameInitState(cs);
+    s_lf.s                 = s;
+    s_lf.countdownFont     = countdownFont;
+    s_lf.countdownFontSize = countdownFontSize;
+    s_lf.safeInsets        = dialogGetSafeInsets(window);
+    s_lf.active            = true;
+
+    int result = 0;
+    bool running = true;
+
+    /* Show the lobby in Steam immediately on entry; the throttled tick
+     * inside imguiLobbyRenderFrame keeps the player count / connect
+     * address current. */
+    gameFrontSetSteamPresenceLobby(cs);
+
+    while (running) {
+        Uint64 frameCapStart = dialogFrameCapBegin();
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            ImGui_ImplSDL3_ProcessEvent(&ev);
+            dialogHandleGamepadCancelEvent(window, &ev);
+            if (dialogHandleDevicePresetEvent(window, &ev)) continue;
+            dialogHandleWindowMoveResize(window, &ev);
+            if (ev.type == SDL_EVENT_QUIT) {
+                running = false;
+            }
+            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+                ev.window.windowID == SDL_GetWindowID(window)) {
+                running = false;
+            }
+        }
+
+        /* Tick transport to receive lobby packets */
+        bool hasTransport = clientSimHasTransport(cs);
+        if (hasTransport) {
+            clientSimNetTick(cs);
+        }
+
+        /* Check for game start */
+        if (clientSimGetNetStatus(cs) == netRunning) {
+            soundPlayEffect(lobbyGameStart);
+            result = 1;
+            running = false;
+            break;
+        }
+
+        /* A spectator never reaches netRunning: the server unsubscribes it
+         * from the live lobby bus before the running phase is published, so
+         * its mode bit flips out of live-lobby. Treat that flip as the
+         * game-start signal (result 1, same as a player's game start). */
+        if (clientSimIsSpectator(cs) && !clientSimSpectatorIsLiveLobby(cs)) {
+            result = 1;
+            running = false;
+            break;
+        }
+
+        /* Check for server disconnect/shutdown */
+        if (hasTransport) {
+            ClientConnectState js = clientSimGetConnectState(cs);
+            if (js == CLIENT_CONNECT_SERVER_SHUTDOWN ||
+                js == CLIENT_CONNECT_ERROR ||
+                js == CLIENT_CONNECT_KICKED) {
+                bool kicked = (js == CLIENT_CONNECT_KICKED);
+                imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                    langGetText(kicked
+                                ? STR_DLGLOBBY_KICKED
+                                : STR_DLGLOBBY_LOSTCONNECTION),
+                    kicked ? IMGUI_MSG_NONE : IMGUI_MSG_ERROR,
+                    IMGUI_MSG_OK);
+                result = 0;
+                running = false;
+                break;
+            }
+        }
+
+        ImGui_ImplSDLRenderer3_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        dialogResetTextInputArea(window);
+        dialogOverrideFramebufferScale(renderer);
+        ImGui::NewFrame();
+        imguiSteamNavActivateMenuSet();
+        imguiSteamNavFeedCurrentContext();
+        controllerDialogsRenderMenu();
+
+        if (imguiLobbyRenderFrame(cs) == LOBBY_FRAME_LEFT) {
+            result = 0;
+            running = false;
+        }
+
         dialogDrawNavOutline();
         keyboardUpdate();   /* controller text entry for this dialog's fields */
         ImGui::Render();
@@ -8392,61 +8563,8 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
         dialogFrameCapEnd(frameCapStart);
     }
 
-    /* Clean up map preview texture */
-    if (mapPreviewTex) {
-        SDL_DestroyTexture(mapPreviewTex);
-    }
-    if (popupCompressedData) {
-        SDL_free(popupCompressedData);
-        popupCompressedData = NULL;
-        popupCompressedLen = 0;
-    }
-    mapPreviewPopupDestroy();
-
-    /* Reset every file-scope flag that could render UI on the next
-     * imguiLobbyShow if a disconnect (or any other exit) caught the
-     * dialog mid-action. The MapChooserState instances themselves
-     * stay populated as caches (next open re-uses the discovered
-     * map list / preview view); the WBN HTTP caches stay too. Only
-     * the visibility / focus / pending-action flags reset. The
-     * cached ClientSim pointer also clears since the lobby that
-     * captured it is being torn down. */
-    s_chooseMapOpen             = false;
-    s_chooseMapFocusedOnce      = false;
-    s_chooseMapMaximized        = false;
-    s_chooseMapWantCloseConfirm = false;
-    s_chooseMapPreviewPending   = false;
-    s_chooseMapCs               = NULL;
-
-    /* Kick-confirmation modal — same bug class as the chooser
-     * modal: a disconnect while the kick popup was up would leave
-     * s_kickPendingOpen=true and the next lobby would render the
-     * dialog over a fresh roster with a stale slot/name. */
-    s_kickPendingOpen = false;
-    s_kickPendingSlot = -1;
-    s_kickPendingName[0] = '\0';
-    s_makeHostPendingOpen = false;
-    s_makeHostPendingSlot = -1;
-    s_makeHostPendingName[0] = '\0';
-
-    /* Add-bot debounce — the in-flight gate that disables the Add Bot
-     * button until lobbyAddBotPending clears. If a click was in
-     * flight at exit, next lobby would briefly disable Add Bot for
-     * up to the debounce window. Plus the per-slot bot-name override
-     * flags, which mark slots whose names were edited mid-session
-     * and should not auto-rename when the team's naming pool
-     * changes; carrying them into a fresh lobby would block legitimate
-     * auto-renames on slots that the user never touched in this
-     * session. */
-    s_addBotSentMs        = 0;
-    s_addBotExpectedConn  = 0;
-    s_addBotFrame         = -1;
-    memset(s_botNameOverridden, 0, sizeof(s_botNameOverridden));
-
-    /* Cosmetic — whichever bot row had its AiConfig sub-row expanded
-     * is meaningless once we're in a different lobby. Reset so the
-     * next lobby starts with all rows collapsed. */
-    s_expandedBotSlot = -1;
+    /* Release per-frame state (texture, popup buffers, transient flags). */
+    imguiLobbyFrameReset();
 
     /* Dismiss soft keyboard and tear down ImGui */
     dialogDismissKeyboard(window);

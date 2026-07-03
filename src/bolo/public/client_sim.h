@@ -755,6 +755,16 @@ bool clientSimIsSinglePlayer(const ClientSim *cs);
  * vs "the server is in-process and there is no packet" should gate
  * on this. */
 bool clientSimIsUdpTransport(const ClientSim *cs);
+
+/* True when the bound transport advances the server itself — its tick()
+ * runs serverSimTick, as the active local transport does
+ * (clientSimConnectLocal). False for the passive local transport
+ * (clientSimConnectLocalPassive — the host's timer thread ticks the
+ * server) and for UDP (the remote server ticks itself). Frontend tick
+ * loops use this to decide whether an extra keys-half clientSimNetTick
+ * would double-step the sim (active local) or is a harmless snapshot
+ * pull that halves apply latency (passive local / UDP). */
+bool clientSimTransportTicksServer(const ClientSim *cs);
 bool clientSimIsLanOnly(const ClientSim *cs);
 void clientSimSetIsSinglePlayer(ClientSim *cs, bool v);
 void clientSimSetIsLanOnly(ClientSim *cs, bool v);

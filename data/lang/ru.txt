@@ -1825,3 +1825,12 @@ STR_LV_SPEC_CONNECTING=Подключение...
 STR_LV_SPEC_CONNECTION_LOST=Соединение потеряно
 STR_LV_SPEC_BEGINS_NOW=Наблюдение начинается
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Наблюдение {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Чтобы присоединиться к этой игре, необходимо войти в WinBolo.net.
+STR_WEB_JOIN_NOT_ACCEPTING=Эта игра не принимает новых игроков.
+STR_WEB_JOIN_LINK_INVALID=Эта ссылка на игру больше не действительна.
+STR_WEB_JOIN_GAME_FULL=Эта игра заполнена.
+STR_WEB_JOIN_CODE_UNREACHABLE=Не удалось подключиться к серверу, чтобы получить код присоединения.
+STR_WEB_CONNECT_FAILED=Не удалось подключиться к серверу.
+STR_WEB_JOIN_NO_RESPONSE=Не удалось присоединиться к игре (сервер не ответил, либо ваша ссылка-приглашение уже использована или истекла).
