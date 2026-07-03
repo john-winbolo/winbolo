@@ -1713,6 +1713,29 @@ typedef struct TankRenderInfo {
  * out->alive = false. */
 bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out);
 
+/* Fuller per-slot snapshot for scoreboard / end-of-game readers:
+ * identity (name) and score (kills/deaths) alongside render state.
+ * Unlike TankRenderInfo this is keyed on a *connected player slot*
+ * rather than a live tank object. */
+typedef struct TankInfo {
+    char  name[PLAYER_NAME_LEN]; /* NUL-terminated player name */
+    WORLD world_x;
+    WORLD world_y;
+    BYTE  dir;       /* 0-15, already converted from TURNTYPE */
+    bool  on_boat;
+    bool  alive;     /* false in death-wait or before the tank spawns */
+    bool  has_tank;  /* false if connected but no live tank object yet */
+    int   kills;
+    int   deaths;
+} TankInfo;
+
+/* Populate *out for connected player slot i. Returns false (without
+ * touching *out) if i >= MAX_TANKS or the slot is not connected. When
+ * connected but the tank object is absent (countdown / death-wait),
+ * has_tank = false, alive = false, and the position/score fields are 0;
+ * name is always filled. */
+bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out);
+
 /* Tank alliance from selfPlayer's perspective. Independent of
  * sim->sim.viewPlayer so callers don't need to mutate that global
  * just to colour tanks for a different camera. */
