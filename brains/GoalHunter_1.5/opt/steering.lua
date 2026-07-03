@@ -2510,6 +2510,15 @@ function M.steer(state, world, info, goal)
     return k or 0, t or 0
   end
 
+  -- Terrain-repair interrupt (demine.lua pushed repair_terrain): the LGM
+  -- does the work — the tank just holds position. Never falls through to
+  -- generic navigation, which would drive us ONTO the crater/water tile.
+  if goal.kind == "repair_terrain" then
+    local k = 0
+    if info.speed > 0 then k = KEY_SLOWER end
+    return k, 0
+  end
+
   -- Sub-anchor for steer/nav-* breakdowns. _t_phase is the fall-through
   -- start (right after cliff_safety completed and the goal-specific
   -- dispatches all returned NIL).

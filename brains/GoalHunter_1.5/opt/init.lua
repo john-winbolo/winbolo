@@ -3703,11 +3703,12 @@ function Brain.think(info)
         new_goal = state.goal  -- re-affirmed current goal: no switch
       elseif swerving then
         new_goal = state.goal  -- swerve is never interrupted, not even by flee
-      elseif state.goal.kind == "kill_mine" and new_goal.kind ~= "flee_to_base" then
-        -- De-mine interrupt in progress (demine.lua pushed it over the real
-        -- goal, which is stashed on state._demine_saved). Hold: the clear
-        -- takes a couple of shell flights and demine.update pops the moment
-        -- the mine is gone (timeout backstops). Only survival preempts.
+      elseif (state.goal.kind == "kill_mine" or state.goal.kind == "repair_terrain")
+             and new_goal.kind ~= "flee_to_base" then
+        -- De-mine / terrain-repair interrupt in progress (demine.lua pushed
+        -- it over the real goal, which is stashed on state._demine_saved).
+        -- Hold: demine.update pops the moment the mine is cleared / tile is
+        -- paved (timeout + enemy-near backstops). Only survival preempts.
         new_goal = state.goal
       elseif engage_locked and new_goal.kind ~= "flee_to_base"
                              and new_goal.kind ~= "attack_tank"

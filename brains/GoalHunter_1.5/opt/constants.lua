@@ -1250,6 +1250,14 @@ M.DEMINE_BEHIND_MULT  = 2.0   -- directly-behind mine costs 3x its distance
 M.DEMINE_SCAN_PERIOD  = 5     -- ticks between eligibility scans
 M.DEMINE_MAX_TICKS    = 150   -- give up (pop + tile cooldown) after ~3s
 M.DEMINE_LAND_WU      = 100   -- shell end-of-life must land this close to the mine tile center
+-- Terrain-repair interrupt (demine.lua, same push/pop mechanic): pave mine
+-- craters / rubble / crater-flood water with roads when the LGM can do it
+-- safely in OUR territory (influence > 0). Tank holds position while the
+-- LGM works; pops when the tile is paved.
+M.TREPAIR_ENABLE      = true
+M.TREPAIR_RADIUS      = 5     -- tiles from the tank a repairable tile may be
+M.TREPAIR_MAX_TICKS   = 400   -- give up (pop + tile cooldown) after ~8s
+M.TREPAIR_ENEMY_RANGE = 10    -- no repairs (and abort) with a hostile tank this close
 
 -- Friendly pill as barrier bonus (aIndy: use friendly pills as shields)
 M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is between us and target

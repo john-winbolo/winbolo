@@ -134,6 +134,7 @@ local GOAL_TO_MODE = {
   none                 = "repair_nearby",
   wait_for_lgm         = "suppressed",  -- whole point is to NOT dispatch the LGM
   kill_mine            = "suppressed",  -- de-mine interrupt: LGM stays in (blast!)
+  repair_terrain       = "suppressed",  -- overridden to "repair_road" below
 }
 
 -- -------------------------------------------------------------------------
@@ -176,6 +177,15 @@ function M.set_mode(state, world, info, goal)
       -- Wall is up / LGM returning / retreating — suppress building
       b.mode = "suppressed"
     end
+  end
+
+  -- Terrain repair interrupt (demine.lua): dispatch the LGM to pave the
+  -- target crater/rubble/flood-water tile with a road. The tank holds
+  -- position (steering) while the LGM works; demine.update pops the goal
+  -- when the tile is paved.
+  if kind == "repair_terrain" and goal.mx then
+    b.mode = "repair_road"
+    b.road_target = { mx = goal.mx, my = goal.my }
   end
 
   -- Pill placement: dispatch LGM to place pill during dispatch substate
@@ -646,6 +656,22 @@ function M.decide(state, world, info, now)
   if b.mode == "suppressed" then
     if state.tick % 50 == 0 then
       log.reason("build", { mode = "suppressed", why = "combat/emergency goal" })
+    end
+    return nil
+  end
+
+  -- Priority 2.2: terrain repair (repair_terrain interrupt) — pave the
+  -- target crater/rubble/flood-water tile. Gates re-checked every tick:
+  -- terrain still needs a road, trees still cover it, walk still safe.
+  -- demine.update owns the pop (paved / timeout / enemy-near).
+  if b.mode == "repair_road" and b.road_target then
+    local rt = b.road_target
+    local tt = U.ttype(rt.mx, rt.my)
+    local cost = C.ROAD_BUILD_TERRAIN[tt]
+    if cost and (info.trees or 0) >= cost + (C.TREE_RESERVE or 0)
+       and danger.lgm_path_safe_enhanced(info, rt.mx, rt.my, C.LGM_DANGER_LOW,
+                                         now, world) then
+      return { x = rt.mx, y = rt.my, action = BUILDMODE_ROAD }
     end
     return nil
   end
