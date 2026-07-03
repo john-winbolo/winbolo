@@ -1037,6 +1037,21 @@ M.STRATEGIC_PLACE_IMBALANCE_MAX_DISCOUNT = 0.60
 -- pile up: surplus 1 → 40% off, 2 → 80% off, 3+ → 85% off (capped).
 M.STRATEGIC_PLACE_UTIL_SURPLUS_DISCOUNT     = 0.40
 M.STRATEGIC_PLACE_UTIL_SURPLUS_MAX_DISCOUNT = 0.85
+-- Per-TANK multi-carry push (vs the team-wide surplus above): each pill THIS
+-- tank holds beyond the first cuts placement cost further — one tank hogging
+-- 3 utility pills is worse than 3 tanks holding 1 each (one death loses the
+-- whole reserve, and carried pills can't block takes). Carrying >= 2 also
+-- BYPASSES the util-reserve hold: the reserve only justifies keeping ONE in
+-- the tank; the extras get placed even while team util is at/below reserve.
+M.STRATEGIC_PLACE_MULTI_CARRY_DISCOUNT     = 0.25  -- per carried pill beyond the first
+M.STRATEGIC_PLACE_MULTI_CARRY_MAX_DISCOUNT = 0.50  -- cap (3+ extras)
+-- Build-urgency range widening: as the urge to place grows (time carried
+-- and/or multiple pills in the tank), the placement scan reaches further for
+-- a good spot of the needed type instead of waiting for one to appear inside
+-- the default radius. urgency = max(carry_time/CARRY_DISCOUNT_MAX cap,
+-- (carried-1)/2 cap 1); extra radius = floor(urgency × this). Applied on top
+-- of the default/aggro radius, still capped by the capacity clamp (place_r).
+M.STRATEGIC_PLACE_URGENCY_RANGE_BONUS = 6
 -- Flat cost multiplier for place_pill_strategic. <1 = preferred. Combined
 -- with the carry discount this makes "I'm holding a pill" a near-overriding
 -- priority compared to attack/capture goals. Trimmed 0.1 → 0.085 to make

@@ -81,12 +81,14 @@ static const TermDoc kTermDocs[] = {
     {"cov",     "Protective coverage — friendly pills + bases this spot covers within fire range; the key 'good back protector' signal."},
     {"grd",     "Base-guardian — big bonus per currently-unguarded friendly base this spot would cover (top placement priority)."},
     {"ctr",     "Strategic-center bias — nudge toward the chosen search center (war zone / base-vs-threat / contested pill)."},
-    // ... and the winner's cost{} = (path + base + carry_pen - carry) x mult x lastpill x bal + tankpen (goal COST, lower competes harder)
-    {"cost",    "Final goal cost for this candidate = (path + base + carry_pen - carry) x mult x lastpill x bal + tankpen, floored at 1. LOWER competes harder against other goals."},
+    // ... and the winner's cost{} = (path + base + carry_pen - carry) x mult x lastpill x bal x surplus x multi + tankpen (goal COST, lower competes harder)
+    {"cost",    "Final goal cost for this candidate = (path + base + carry_pen - carry) x mult x lastpill x bal x surplus x multi + tankpen, floored at 1. LOWER competes harder against other goals."},
     {"path",    "A* travel cost from the tank to the placement spot."},
     {"carry_pen", "Carry-value penalty (added) — raises cost when carrying the pill is currently more useful than placing it: early game, a dead pill to capture nearby, or an active attack opportunity. Zeroed when placement is urgent."},
     {"lastpill", "Last-pill hold multiplier — x1.5 when holding your ONLY pill AND still short on utility pills (don't dump your last blocker); x1.0 otherwise."},
     {"bal",     "Imbalance discount multiplier (<=1) — cheaper to place when a pill category is in deficit; 1.0 when balanced, capped so cost never goes free."},
+    {"surplus", "TEAM util-surplus discount multiplier (<=1) — each util pill the team holds over its utility reserve knocks off STRATEGIC_PLACE_UTIL_SURPLUS_DISCOUNT (capped at _MAX). Actively pushes the team-wide hoard out of tanks."},
+    {"multi",   "Per-TANK multi-carry discount multiplier (<=1) — each pill THIS tank carries beyond the first knocks off STRATEGIC_PLACE_MULTI_CARRY_DISCOUNT (capped). Carrying >=2 also bypasses the util-reserve hold (the reserve justifies keeping ONE) and raises build urgency, which widens the placement search radius (STRATEGIC_PLACE_URGENCY_RANGE_BONUS)."},
     {"cpill",   "Capture pill multiplier — dead pill pickup scales the path cost down"},
     {"aim",     "Aim bonus (negative) — tank is already in your sights; cheaper to engage"},
     {"wall",    "Wall obstruction penalty — blocks between you and target beyond 1; 2 blocks=+100, 5 blocks=+400"},

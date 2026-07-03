@@ -2056,6 +2056,30 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   if pf_need_cat == "aggro" and (C.STRATEGIC_PLACE_AGGRO_SEARCH_RADIUS or 0) > R then
     R = C.STRATEGIC_PLACE_AGGRO_SEARCH_RADIUS
   end
+  -- Build-urgency range widening: the longer we've carried and/or the more
+  -- pills in THIS tank, the further the scan reaches for a good spot of the
+  -- needed type — a desperate builder shouldn't wait for a great tile to
+  -- appear inside the default bubble. urgency 0..1 from time carried (same
+  -- normalization as carry_discount: ticks × PER_TICK / MAX) and multi-carry
+  -- ((carried-1)/2, so 2 pills → 0.5, 3+ → 1.0); extra tiles =
+  -- floor(urgency × URGENCY_RANGE_BONUS). Applied BEFORE the capacity clamp
+  -- so a CPU-constrained tick still bounds the (2R+1)^2 cell count.
+  do
+    local u_time = 0
+    if state.carrying_pill_since then
+      local tc = (state.tick or 0) - state.carrying_pill_since
+      u_time = math.min(1.0, math.max(0, tc * (C.STRATEGIC_PLACE_CARRY_DISCOUNT_PER_TICK or 0.5))
+                             / (C.STRATEGIC_PLACE_CARRY_DISCOUNT_MAX or 300))
+    end
+    local u_carry = math.min(1.0, math.max(0, (info.carried_pills or 0) - 1) / 2)
+    local urgency = math.max(u_time, u_carry)
+    if urgency > 0 then
+      R = R + math.floor(urgency * (C.STRATEGIC_PLACE_URGENCY_RANGE_BONUS or 6))
+      state._place_urgency = urgency  -- viz/debug hint
+    else
+      state._place_urgency = nil
+    end
+  end
   if state._capacity and state._capacity.place_r and state._capacity.place_r < R then
     R = state._capacity.place_r
   end
@@ -2074,7 +2098,12 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   local pf_all       = pf_total + (pf_counts.utility or 0)
   local util_reserve = PP.targets(pf_all).utility
   local util_surplus = (pf_counts.utility or 0) - util_reserve
-  if util_surplus <= 0 then
+  -- Multi-carry bypass: the reserve argument only justifies holding ONE pill
+  -- in this tank — a bot carrying 2+ places its extras even while team util
+  -- is at/below reserve (concentrated in one tank the reserve is fragile:
+  -- one death loses all of it, and carried pills can't block takes). After
+  -- placing down to 1 carried, the normal hold re-engages.
+  if util_surplus <= 0 and (info.carried_pills or 0) < 2 then
     state._place_need_cat = "util_reserve"   -- viz hint
     print2(string.format("PLACE_HOLD_UTIL t=%d util=%d <= reserve=%d — hold carried pill as utility reserve",
       state.tick or 0, pf_counts.utility or 0, util_reserve))
@@ -2322,10 +2351,23 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- cheaper it is to deploy one — actively push the surplus out of tanks instead
   -- of just unlocking placement at normal cost. Each surplus pill knocks off
   -- STRATEGIC_PLACE_UTIL_SURPLUS_DISCOUNT, capped at _MAX_DISCOUNT.
+  local surplus_mult = 1.0
   if util_surplus > 0 then
-    local surplus_mult = 1.0 - math.min(C.STRATEGIC_PLACE_UTIL_SURPLUS_MAX_DISCOUNT or 0.6,
-                                        util_surplus * (C.STRATEGIC_PLACE_UTIL_SURPLUS_DISCOUNT or 0.25))
+    surplus_mult = 1.0 - math.min(C.STRATEGIC_PLACE_UTIL_SURPLUS_MAX_DISCOUNT or 0.6,
+                                  util_surplus * (C.STRATEGIC_PLACE_UTIL_SURPLUS_DISCOUNT or 0.25))
     cost = math.max(1, cost * surplus_mult)
+  end
+  -- Per-TANK multi-carry discount: each pill THIS tank holds beyond the
+  -- first knocks off MULTI_CARRY_DISCOUNT (capped). Separate from the
+  -- team-wide surplus above — a triple-carrier should shed its extras even
+  -- when the team total looks fine (fragile: one death loses them all, and
+  -- carried pills can't block takes).
+  local multi_carry_mult = 1.0
+  local mc_extra = math.max(0, (info.carried_pills or 0) - 1)
+  if mc_extra > 0 then
+    multi_carry_mult = 1.0 - math.min(C.STRATEGIC_PLACE_MULTI_CARRY_MAX_DISCOUNT or 0.5,
+                                      mc_extra * (C.STRATEGIC_PLACE_MULTI_CARRY_DISCOUNT or 0.25))
+    cost = math.max(1, cost * multi_carry_mult)
   end
   -- Combat-zone penalty: enemy tank near the chosen spot (flat add, shown as the
   -- tankpen term). Emergency def_build is exempt — it returns earlier.
@@ -2359,9 +2401,9 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         "score{%.0f} = prx{%.0f} + bdef{%.0f} + inf{%.0f} + spc{%.0f} + los{%.0f} + thr{%.0f} + dst{%.0f} + spk{%.0f} + ep{%.0f} + wz{%.0f} + port{%.0f} + cov{%.0f} + grd{%.0f} + ctr{%.0f}%s",
         c.score, c.sc1, c.sc2, c.sc3, c.sc4, c.sc5, c.sc6, c.sc7, c.sc8, c.sc9, c.sc10,
         c.sc11 or 0, c.sc12 or 0, c.sc13 or 0, c.sc_center or 0,
-        is_win and string.format("  ||  cost{%.0f} = (path{%.0f} + base{%.0f} + carry_pen{%.0f} - carry{%.0f}) x mult{%.2f} x lastpill{%.2f} x bal{%.2f} + tankpen{%.0f}",
+        is_win and string.format("  ||  cost{%.0f} = (path{%.0f} + base{%.0f} + carry_pen{%.0f} - carry{%.0f}) x mult{%.2f} x lastpill{%.2f} x bal{%.2f} x surplus{%.2f} x multi{%.2f} + tankpen{%.0f}",
           cost, path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_value_penalty, carry_discount,
-          C.STRATEGIC_PLACE_COST_MULT, last_pill_mult, imbalance_mult, tank_pen) or "")
+          C.STRATEGIC_PLACE_COST_MULT, last_pill_mult, imbalance_mult, surplus_mult, multi_carry_mult, tank_pen) or "")
       cands[#cands + 1] = {
         id = c.my * 256 + c.mx,
         mx = c.mx, my = c.my,
