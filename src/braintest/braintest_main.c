@@ -4316,12 +4316,157 @@ static void appTickBrain(BrainTestApp *app) {
         serverSimGetBotGoalInfo(app->sim, app->followBot, &app->goalInfo);
 }
 
+/* [ALLY-AUDIT] Durable sink for the alliance audit. The watchdog lines
+ * (below) and players.c's WB_LOG mutation lines historically went only to
+ * the launch console — a windowed run loses them entirely (braintest never
+ * calls wb_log_init, so SDL logs have no file). Tee both into
+ * <sessionDir>/ally_audit.log so a repro is analyzable after the fact. */
+static FILE *g_allyAuditFile = NULL;
+
+static void allyAuditLine(const char *fmt, ...) {
+    char line[512];
+    va_list ap;
+    va_start(ap, fmt);
+    SDL_vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "%s\n", line);
+    if (g_allyAuditFile) {
+        fprintf(g_allyAuditFile, "%s\n", line);
+        fflush(g_allyAuditFile);
+    }
+}
+
+/* SDL log tee: forward everything to stderr (what the default output did)
+ * and mirror [ALLY-AUDIT] lines from players.c into the audit file. */
+static void allyAuditSdlLogTee(void *userdata, int category,
+                               SDL_LogPriority priority, const char *message) {
+    (void)userdata; (void)category; (void)priority;
+    fprintf(stderr, "%s\n", message);
+    if (g_allyAuditFile && strstr(message, "[ALLY-AUDIT]") != NULL) {
+        fprintf(g_allyAuditFile, "%s\n", message);
+        fflush(g_allyAuditFile);
+    }
+}
+
+static void allyAuditOpen(const char *sessionDir) {
+    char path[FILENAME_MAX + 32];
+    if (sessionDir && sessionDir[0]) {
+        SDL_snprintf(path, sizeof(path), "%s/ally_audit.log", sessionDir);
+    } else {
+        SDL_snprintf(path, sizeof(path), "ally_audit.log");
+    }
+    g_allyAuditFile = fopen(path, "w");
+    SDL_SetLogOutputFunction(allyAuditSdlLogTee, NULL);
+}
+
+/* [ALLY-AUDIT] Debug watchdog for the allies-rendered-as-enemies bug.
+ * The tank sprite colour in the live view comes solely from the SERVER
+ * players object: playersScreenAllience(followBot, i) checks bit i of
+ * item[followBot].allie plus item[i].inUse (not-in-use renders as enemy
+ * too). Diff that state every sim tick and log any change with the tick
+ * number. Correlate a hit here with a [ALLY-AUDIT] mutation line from
+ * players.c — a matrix change with NO matching mutation line means a
+ * stray memory write clobbered the row. */
+static void allianceMatrixAudit(BrainTestApp *app) {
+    static uint32_t prevAllie[MAX_TANKS];
+    static uint16_t prevInUse;
+    static bool     havePrev = false;
+    uint32_t cur[MAX_TANKS];
+    uint16_t inUseBits = 0;
+    GameSim *gs = serverSimGetGameSim(app->sim);
+    if (!gs || !gs->plyrs) return;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        cur[i] = (uint32_t)gs->plyrs->item[i].allie;
+        if (gs->plyrs->item[i].inUse) inUseBits |= (uint16_t)(1u << i);
+    }
+    if (!havePrev) {
+        havePrev = true;
+        memcpy(prevAllie, cur, sizeof(prevAllie));
+        prevInUse = inUseBits;
+        allyAuditLine("[ALLY-AUDIT] baseline tick=%u plrs=%p inUse=0x%04X",
+                      (unsigned)serverSimGetTick(app->sim), (void *)gs->plyrs,
+                      (unsigned)inUseBits);
+        for (int i = 0; i < MAX_TANKS; i++) {
+            if (cur[i]) allyAuditLine("[ALLY-AUDIT]   row %d allie=0x%04X",
+                                      i, (unsigned)cur[i]);
+        }
+        return;
+    }
+    if (inUseBits != prevInUse) {
+        allyAuditLine("[ALLY-AUDIT] tick=%u inUse 0x%04X -> 0x%04X",
+                      (unsigned)serverSimGetTick(app->sim),
+                      (unsigned)prevInUse, (unsigned)inUseBits);
+        prevInUse = inUseBits;
+    }
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (cur[i] != prevAllie[i]) {
+            allyAuditLine("[ALLY-AUDIT] tick=%u row %d allie 0x%04X -> 0x%04X (followBot=%d)",
+                          (unsigned)serverSimGetTick(app->sim), i,
+                          (unsigned)prevAllie[i], (unsigned)cur[i], (int)app->followBot);
+            prevAllie[i] = cur[i];
+        }
+    }
+
+    /* ── CLIENT-side matrices ────────────────────────────────────────
+     * The tank sprite colour comes from the FOLLOWED BOT'S ClientSim
+     * players object (client_render → screenTanksPrepare →
+     * playersMakeScreenTanks reads item[count].allie of cs->sim.plyrs),
+     * NOT the server matrix audited above. 20260704_005544 proved the
+     * server matrix perfect while allies still rendered red — so the
+     * divergence must be client-side. Baseline + diff every bot's
+     * client matrix; a client row that never receives its alliance
+     * bits (missed CTRL_ALLIANCE_RESET?) shows up as an all-zero
+     * baseline here. */
+    {
+        static uint32_t prevClient[MAX_TANKS][MAX_TANKS];
+        static bool     haveClientPrev = false;
+        for (int b = 0; b < MAX_TANKS; b++) {
+            bool logged_hdr = false;
+            for (int i = 0; i < MAX_TANKS; i++) {
+                uint32_t v = botManagerGetClientAllieRow(app->sim, (BYTE)b, (BYTE)i);
+                if (!haveClientPrev) {
+                    if (v) {
+                        if (!logged_hdr) {
+                            allyAuditLine("[ALLY-AUDIT] client p%d baseline:", b);
+                            logged_hdr = true;
+                        }
+                        allyAuditLine("[ALLY-AUDIT]   client p%d row %d allie=0x%04X",
+                                      b, i, (unsigned)v);
+                    }
+                } else if (v != prevClient[b][i]) {
+                    allyAuditLine("[ALLY-AUDIT] tick=%u client p%d row %d allie 0x%04X -> 0x%04X",
+                                  (unsigned)serverSimGetTick(app->sim), b, i,
+                                  (unsigned)prevClient[b][i], (unsigned)v);
+                }
+                prevClient[b][i] = v;
+            }
+        }
+        if (!haveClientPrev) {
+            /* An entirely-zero client matrix is the smoking gun for the
+             * red-allies bug — call it out explicitly so it can't be
+             * missed among the baselines. */
+            for (int b = 0; b < MAX_TANKS; b++) {
+                bool any = false;
+                for (int i = 0; i < MAX_TANKS; i++) {
+                    if (botManagerGetClientAllieRow(app->sim, (BYTE)b, (BYTE)i)) { any = true; break; }
+                }
+                if (!any && b < app->numBots) {
+                    allyAuditLine("[ALLY-AUDIT] client p%d matrix ALL-ZERO — renderer will draw every tank evil for this follow view", b);
+                }
+            }
+            haveClientPrev = true;
+        }
+    }
+}
+
 static void appTickSim(BrainTestApp *app) {
     if (!app->simValid || app->numBots == 0) return;
 
     /* serverSimTick internally runs the keys + game half-steps that
      * make up one 20ms frame. */
     serverSimTick(app->sim);
+
+    allianceMatrixAudit(app);
 
     if (!app->freeCamera && app->followBot < MAX_TANKS) {
         WORLD wx, wy;
@@ -5840,6 +5985,13 @@ int main(int argc, char *argv[]) {
     }
     /* Land any later crash trace in the session dir (cwd if none). */
     crashHandlerSetOutputDir(g_sessionDir[0] ? g_sessionDir : NULL);
+    /* [ALLY-AUDIT] durable log — <sessionDir>/ally_audit.log — and the SDL
+     * log tee that mirrors players.c mutation lines into it. */
+    allyAuditOpen(g_sessionDir);
+    if (g_allyAuditFile) {
+        fprintf(stderr, "  Ally audit: %s/ally_audit.log\n",
+                g_sessionDir[0] ? g_sessionDir : ".");
+    }
     /* When --record-panels is on, per-panel JSON snapshots go in a
      * panels/ subfolder of the session dir. */
     if (g_panelRecordEnabled && g_sessionDir[0]) {

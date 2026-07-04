@@ -4057,6 +4057,14 @@ void serverSimReapplyTeamAlliances(ServerSim *sim) {
     }
 
     serverSimPublishControl(sim, &evt);
+
+    /* In-process bot ClientSims: sync their client-side matrices directly.
+     * The renderer colours tanks from the followed bot's CLIENT players
+     * object; when the control event above doesn't land there (startup
+     * timing), allies render as red enemies (20260704_005544: server matrix
+     * perfect, every follow view all-red). Remote clients still rely on the
+     * CTRL_ALLIANCE_RESET published above. */
+    botManagerSyncClientAlliances(sim);
 }
 
 /* At game start, all connected players' restock timers would otherwise

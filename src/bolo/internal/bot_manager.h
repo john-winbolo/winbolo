@@ -589,6 +589,34 @@ bool botManagerGetBotInfo(const struct ServerSim *sim, BYTE playerNum,
                           BotInfo *out);
 
 /*********************************************************
+ *NAME:          botManagerGetClientAllieRow
+ *PURPOSE:
+ *  [ALLY-AUDIT] support: one row of a bot's CLIENT-side alliance
+ *  matrix (cs->sim.plyrs->item[row].allie) — the matrix the tank
+ *  renderer actually reads (client_render → playersMakeScreenTanks),
+ *  as opposed to the server matrix. Returns 0 when the bot/row
+ *  doesn't exist.
+ *
+ *ARGUMENTS:
+ *  botPlayer - Bot slot whose ClientSim to read
+ *  row       - Player row within that client's matrix
+ *********************************************************/
+uint32_t botManagerGetClientAllieRow(const struct ServerSim *sim,
+                                     BYTE botPlayer, BYTE row);
+
+/*********************************************************
+ *NAME:          botManagerSyncClientAlliances
+ *PURPOSE:
+ *  Copies the SERVER alliance matrix into every in-process bot
+ *  ClientSim's players object. The tank renderer colours sprites
+ *  from the followed bot's CLIENT-side matrix; if that copy misses
+ *  the CTRL_ALLIANCE_RESET at startup, allies render as red enemies.
+ *  Called by serverSimReapplyTeamAlliances after publishing the
+ *  control event (which remains the path for remote clients).
+ *********************************************************/
+void botManagerSyncClientAlliances(struct ServerSim *sim);
+
+/*********************************************************
  *NAME:          botManagerGetPoolStats
  *PURPOSE:
  *  Fills `out` with pool-wide telemetry: worker count,
