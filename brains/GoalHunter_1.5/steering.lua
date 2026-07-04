@@ -2480,8 +2480,13 @@ local function tank_combat_steer(state, world, info, goal)
   -- Skip lead prediction if target is barely moving (speed ≤ 4 in swamp/stuck)
   -- to avoid EMA residual noise offsetting the aim point.
   local wdist = U.wdist(info.tankx, info.tanky, twx, twy)
-  local shell_speed_per_tick = C.TANK_COMBAT_SHELL_SPEED * 2
-  local shell_travel_ticks = wdist / shell_speed_per_tick
+  -- Shell speed in WU per BRAIN-tick — the frame the bot samples at, the SAME
+  -- unit as svx (which perception derives per brain-tick). Measured empirically
+  -- (TANK_ENGAGE shell_meas ≈ 33): the shell advances one SHELL_SPEED (~32) per
+  -- brain-tick, NOT two. The old "* 2" assumed 2 sim-steps advanced the shell
+  -- per brain-tick, which under-estimated flight ~2x and left the lead trailing
+  -- by half. Use SHELL_SPEED directly so flight (and the lead) match reality.
+  local shell_speed_per_tick = C.TANK_COMBAT_SHELL_SPEED
   local svx = target.svx or 0
   local svy = target.svy or 0
   -- Skip lead-prediction when target is essentially stationary. Use
@@ -2489,15 +2494,40 @@ local function tank_combat_steer(state, world, info, goal)
   -- which is the engine's SPEEDTYPE in a different scale and isn't
   -- directly comparable. ≤8 wu/tick = ≤0.03 tile/tick = barely moving.
   if (svx * svx + svy * svy) <= 64 then svx = 0; svy = 0 end
+  -- Iterated intercept: the shell's flight time depends on the distance to the
+  -- LEAD point, not the target's current position. A crossing target's intercept
+  -- sits FARTHER out than its current range, so a single-step lead (flight time
+  -- from the current range) under-estimates the time and the shells trail behind
+  -- the target. Fixed-point iterate t = |tank -> (target + v*t)| / shell_speed;
+  -- it converges in a few steps because a shell (64 wu/tick) far outruns a tank
+  -- (<=16 wu/tick). Each pass re-measures the range to the freshly-leaded point.
+  local shell_travel_ticks = wdist / shell_speed_per_tick
   local pred_wx = twx + svx * shell_travel_ticks
   local pred_wy = twy + svy * shell_travel_ticks
+  for _ = 1, 3 do
+    shell_travel_ticks = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy) / shell_speed_per_tick
+    pred_wx = twx + svx * shell_travel_ticks
+    pred_wy = twy + svy * shell_travel_ticks
+  end
 
-  -- Debug: lead prediction overlay (red = target, orange = predicted)
+  -- Lead visualizer ("tank_combat_viz"): shows the shell-travel intercept the
+  -- aim is built on, so the leading can be eyeballed frame-by-frame.
+  --   red dot + arrow = target now + its smoothed velocity (x8 for visibility)
+  --   green dot       = predicted intercept (where the shell and target meet)
+  --   orange line     = lead vector (how far ahead of the target we aim)
+  --   cyan line       = shell flight path (our tank -> intercept)
   if BRAIN_DEBUG_MODE then
-    viz.circle("tank_combat_viz", twx / 256.0, twy / 256.0, 0.3, 255, 50, 50, 180)
-    viz.circle("tank_combat_viz", pred_wx / 256.0, pred_wy / 256.0, 0.3, 255, 165, 0, 200)
-    viz.line("tank_combat_viz", twx / 256.0, twy / 256.0,
-                 pred_wx / 256.0, pred_wy / 256.0, 255, 165, 0, 140)
+    local t_tx, t_ty = twx / 256.0, twy / 256.0
+    local p_tx, p_ty = pred_wx / 256.0, pred_wy / 256.0
+    local g_tx, g_ty = info.tankx / 256.0, info.tanky / 256.0
+    local lead_tiles = U.wdist(twx, twy, pred_wx, pred_wy) / 256.0
+    viz.line("tank_combat_viz", g_tx, g_ty, p_tx, p_ty, 0, 220, 255, 150)
+    viz.line("tank_combat_viz", t_tx, t_ty, p_tx, p_ty, 255, 165, 0, 170)
+    viz.line("tank_combat_viz", t_tx, t_ty, t_tx + svx * 8 / 256.0, t_ty + svy * 8 / 256.0, 255, 60, 60, 210)
+    viz.circle("tank_combat_viz", t_tx, t_ty, 0.3, 255, 50, 50, 180)
+    viz.rect("tank_combat_viz", p_tx - 0.5, p_ty - 0.5, p_tx + 0.5, p_ty + 0.5, 0, 255, 90, 90)
+    viz.circle("tank_combat_viz", p_tx, p_ty, 0.28, 0, 255, 0, 220)
+    viz.text("tank_combat_viz", p_tx - 0.48, p_ty - 0.92, string.format("proj @+%.0ft", shell_travel_ticks), "topleft", 0, 255, 90, 255, 0.4)
   end
 
   local aim_dir = U.aim_at(info.tankx, info.tanky, pred_wx, pred_wy)
@@ -2509,16 +2539,50 @@ local function tank_combat_steer(state, world, info, goal)
   local jink_offset = jink_phase == 0 and C.TANK_COMBAT_JINK_ANGLE
                                        or -C.TANK_COMBAT_JINK_ANGLE
 
-  -- Turn toward predicted target position. Always HOLD the turn key
-  -- beyond a ±1 brad deadband (no tap tier): a tap presses the key for a
-  -- single engine input read, and the engine's firstLeft/firstRight ramp
-  -- means a tap rotates at ~1/8 the held rate — so at small aim errors the
-  -- tank crept onto target in slow motion. Holding gives full engine
-  -- turn-rate and lets the ramp build, swinging onto target fast. The
-  -- right call in a chaotic point-blank fight where some overshoot/
-  -- oscillation is acceptable.
-  if     aim_corr >  1 then keys = keys | KEY_TURNRIGHT
-  elseif aim_corr < -1 then keys = keys | KEY_TURNLEFT
+  -- Turn toward the lead point. Commit to a turn direction and HOLD it so the
+  -- engine's firstLeft/firstRight ramp builds to full rate (a released key
+  -- resets it — that reset at ~1/8 rate is the "tapping" crawl), but choose the
+  -- direction from aim_corr EACH tick so we never coast a stale direction past
+  -- the lead:
+  --   • |aim_corr| > 2  → commit toward the lead (its sign) and hold
+  --   • crossed the lead (sign now opposes the held dir) → REVERSE immediately
+  --   • stationary target, on-aim → stop (no jitter)
+  --   • otherwise (moving, correct side, in-band) → keep holding to sustain ramp
+  -- The previous version latched THROUGH the deadband and drove the stale way
+  -- past the lead — swinging AWAY on every zero-crossing (the t=354 bug). This
+  -- reverses the instant the sign flips, so it always turns toward the lead.
+  local _td = goal._aim_turn_dir or 0
+  local _reason
+  if aim_corr > 2 then _td = 1; _reason = "aimcorr>+2: swing CW to lead"
+  elseif aim_corr < -2 then _td = -1; _reason = "aimcorr<-2: swing CCW to lead"
+  elseif svx == 0 and svy == 0 then _td = 0; _reason = "stationary + on-aim: STOP"
+  elseif _td == 1 and aim_corr < 0 then _td = -1; _reason = "crossed lead: reverse CW->CCW"
+  elseif _td == -1 and aim_corr > 0 then _td = 1; _reason = "crossed lead: reverse CCW->CW"
+  else _reason = "in-band: hold " .. ((_td == 1 and "CW") or (_td == -1 and "CCW") or "stop")
+  end
+  goal._aim_turn_dir = _td
+  goal._aim_turn_reason = _reason
+  if     _td ==  1 then keys = keys | KEY_TURNRIGHT
+  elseif _td == -1 then keys = keys | KEY_TURNLEFT
+  end
+
+  -- Crosshair + turn-decision overlay:
+  --   yellow line  = where the GUN points NOW (info.direction × gunrange)
+  --   cyan line (above) = where it SHOULD point (tank -> lead)
+  --   magenta stub at the crosshair = which way it's rotating (CW/CCW)
+  --   magenta text = the turn-logic branch that decided this tick
+  -- The gap between the yellow (now) and cyan (want) lines IS the aim error.
+  if BRAIN_DEBUG_MODE then
+    local _cr = (info.direction or 0) * C.TWO_PI / 256
+    local _sl = 128 * (info.gunrange or 14)
+    local _gx, _gy = info.tankx / 256.0, info.tanky / 256.0
+    local _cx = (info.tankx + math.sin(_cr) * _sl) / 256.0
+    local _cy = (info.tanky - math.cos(_cr) * _sl) / 256.0
+    viz.line("tank_combat_viz", _gx, _gy, _cx, _cy, 255, 255, 0, 210)
+    viz.circle("tank_combat_viz", _cx, _cy, 0.18, 255, 255, 0, 230)
+    viz.line("tank_combat_viz", _cx, _cy, _cx + math.cos(_cr) * _td * 0.8, _cy + math.sin(_cr) * _td * 0.8, 255, 0, 255, 230)
+    viz.text("tank_combat_viz", _gx + 0.4, _gy + 0.5, string.format("TURN %s  aimcorr=%+.0f", (_td == 1 and "CW") or (_td == -1 and "CCW") or "STOP", aim_corr), "topleft", 255, 0, 255, 255, 0.4)
+    viz.text("tank_combat_viz", _gx + 0.4, _gy + 0.86, _reason or "", "topleft", 255, 0, 255, 220, 0.38)
   end
 
   -- Fire when aimed — wider tolerance because lead prediction compensates.
@@ -2528,7 +2592,12 @@ local function tank_combat_steer(state, world, info, goal)
   -- the LOS gate after TANK_COMBAT_STUCK_FIRE_TICKS so the shells chip
   -- the wall down and eventually open LOS. Without this the bot just
   -- stares at the wall forever, "engaging" but never firing.
-  local _aim_ok    = math.abs(aim_corr) < 8
+  -- Fire only when the gun is genuinely ON the lead point. The lead angle at
+  -- combat range is only ~10 brads, so the old ±8 gate was nearly as wide as the
+  -- whole lead — it loosed shots while the gun was still short of the lead,
+  -- sitting on the tank (aim_corr +6 = ~0.5 tile ahead of the tank). ±3 brads is
+  -- ~0.3-0.4 tile of lateral slop at 5-7 tiles: on the lead, not on the tank.
+  local _aim_ok    = math.abs(aim_corr) < 3
   local _shells_ok = info.shells > C.TANK_COMBAT_FLEE_SHELLS
   -- Stuck only counts when WE are also pinned in place — if the bot is
   -- still moving around looking for a clean angle it isn't stuck yet,
@@ -2562,6 +2631,15 @@ local function tank_combat_steer(state, world, info, goal)
     goal._engage_blocked_ticks = 0
   end
 
+  -- Per-tick engage trace: the lead + aim + fire state each tick. perc = the
+  -- position perception handed us; v = smoothed velocity; flight/lead/pred = the
+  -- iterated shell-travel intercept the aim is built on.
+  if BRAIN_DEBUG_MODE then
+    local _turn = (goal._aim_turn_dir == 1 and "CW") or (goal._aim_turn_dir == -1 and "CCW") or "-"
+    local _lead = U.wdist(twx, twy, pred_wx, pred_wy) / 256.0
+    print2(string.format("TANK_ENGAGE t=%d tgt#%s%s perc=(%d,%d) d=%.1f v=(%.0f,%.0f) flight=%.1f lead=%.1f pred=(%d,%d) aimcorr=%+.0f turn=%s fire=%s", now, tostring(target.id), target.ghost and "G" or "", target.mx, target.my, dist_tiles, svx, svy, shell_travel_ticks, _lead, math.floor(pred_wx) >> 8, math.floor(pred_wy) >> 8, aim_corr, _turn, tostring((keys & KEY_SHOOT) ~= 0)))
+  end
+
   -- Distance control: maintain optimal range with jinking
   if dist_tiles < C.TANK_COMBAT_TOO_CLOSE then
     -- Too close: reverse away
@@ -2588,25 +2666,36 @@ local function tank_combat_steer(state, world, info, goal)
     end
   end
 
-  -- Combat HUD: always shows current state when tank_combat_viz is on
+  -- Real-time combat readout — per-tick LIVE state (distinct from the ~1 s
+  -- d=/c= scoring label). Drawn in WORLD SPACE floating beside the TARGET tank
+  -- so it TRACKS the enemy and scales to multiple tanks (each engaged tank
+  -- carries its own readout) instead of a single fixed screen corner that could
+  -- only ever show one. Shows live range, target velocity, the iterated lead +
+  -- flight time, aim error, the SUSTAINED turn command (hold-vs-tap), and the
+  -- fire-gate outcome. Turns green the tick it actually fires.
   if BRAIN_DEBUG_MODE and viz.is_on("tank_combat_viz") then
     local firing = (keys & KEY_SHOOT) ~= 0
-    local aim_ok = math.abs(aim_corr) < 8
+    local aim_ok = math.abs(aim_corr) < 3
     local shells_ok = info.shells > C.TANK_COMBAT_FLEE_SHELLS
-    local twx_f = info.tankx / 256.0
-    local twy_f = info.tanky / 256.0
+    local _td = goal._aim_turn_dir or 0
+    local turn_s = (_td == 1 and "HOLD-R") or (_td == -1 and "HOLD-L") or "--"
+    local vmag = math.sqrt(svx * svx + svy * svy)
+    local lead_t = U.wdist(twx, twy, pred_wx, pred_wy) / 256.0
+    local fire_s = firing and "SHOOTING"
+                   or (not shells_ok and "hold:low-shells")
+                   or (not aim_ok and "hold:off-aim")
+                   or "hold:LOS"
+    local hx, hy = twx / 256.0 - 4.7, twy / 256.0 - 1.8
     local lines = {
-      string.format("ENGAGE dist=%.1f aim_corr=%.0f", dist_tiles, aim_corr),
-      string.format("aim<%d=%s shells>%d=%s",
-        8, aim_ok and "YES" or "NO",
-        C.TANK_COMBAT_FLEE_SHELLS, shells_ok and "YES" or "NO"),
-      string.format("firing=%s spd=%d", firing and "YES" or "NO", info.speed),
+      string.format("#%s%s  d=%.1ft  |v|=%.0f", tostring(target.id), target.ghost and "G" or "", dist_tiles, vmag),
+      string.format("lead=%.1ft  hit@+%.0ft", lead_t, shell_travel_ticks),
+      string.format("aim=%+.0f  turn=%s", aim_corr, turn_s),
+      "FIRE: " .. fire_s,
     }
     for i, line in ipairs(lines) do
-      local r = firing and 0 or 255
-      local g = firing and 255 or (aim_ok and 255 or 100)
-      viz.text("shell_hit_dot", twx_f - 1.5, twy_f + (i - 1) * 0.35,
-               line, "topright", r, g, 100, 255, 0.45)
+      local r, g, b = 0, 230, 255
+      if firing then r, g, b = 0, 255, 90 end
+      viz.text("tank_combat_viz", hx, hy + (i - 1) * 0.34, line, "topleft", r, g, b, 255, 0.42)
     end
   end
 
