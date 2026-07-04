@@ -391,19 +391,35 @@ local function stuck_recovery(state, info, goal)
     return
   end
 
+  -- Progress = getting CLOSER to the next-step tile, not raw displacement.
+  -- The old test reset the window whenever the tank drifted STUCK_MOVE_WU
+  -- from the window-start position — but a tank corner-grinding at full
+  -- speed slides back and forth along the wall face by more than that, so
+  -- the window reset forever and recovery never fired (20260704_005544
+  -- t≈40200-41009: 800+ ticks wedged at (143,125) at spd=48 against the
+  -- pill/wall pinch, dij next=(142,126) physically unreachable through the
+  -- blocked diagonal). Track the closest approach (Chebyshev, world units)
+  -- to the next tile's center and reset only when the tank beats that best
+  -- by STUCK_MOVE_WU — oscillation can't pump the ratchet, while a genuine
+  -- slow crawl toward the tile keeps resetting every few ticks.
+  local next_wx = pf.next_mx * 256 + 128
+  local next_wy = pf.next_my * 256 + 128
+  local cur_d = math.max(math.abs(info.tankx - next_wx),
+                         math.abs(info.tanky - next_wy))
   local sp = state.stuck_progress
   if sp == nil
      or sp.next_mx ~= pf.next_mx
      or sp.next_my ~= pf.next_my
-     or math.abs(info.tankx - sp.last_tankx) > STUCK_MOVE_WU
-     or math.abs(info.tanky - sp.last_tanky) > STUCK_MOVE_WU then
+     or sp.best_d == nil
+     or (sp.best_d - cur_d) > STUCK_MOVE_WU then
     state.stuck_progress = {
-      last_tankx = info.tankx, last_tanky = info.tanky,
-      next_mx    = pf.next_mx, next_my    = pf.next_my,
-      since      = now,
+      best_d  = cur_d,
+      next_mx = pf.next_mx, next_my = pf.next_my,
+      since   = now,
     }
     return
   end
+  if cur_d < sp.best_d then sp.best_d = cur_d end
 
   if (now - sp.since) < STUCK_TICKS then return end
 
