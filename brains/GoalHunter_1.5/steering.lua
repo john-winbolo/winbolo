@@ -1109,14 +1109,25 @@ local function demine_steer(state, world, info, goal)
   local ex_wy  = info.tanky - math.cos(rad) * travel
   local off_dx, off_dy = ex_wx - wx, ex_wy - wy
   local land_off = math.sqrt(off_dx * off_dx + off_dy * off_dy)
-  if land_off <= (C.DEMINE_LAND_WU or 100) and (info.shells or 0) > 0
+  -- ONE shot per flight: the shell takes dist/SHELL_SPEED (~4 ticks/tile)
+  -- to reach the mine, and only its LANDING detonates it — extra shells
+  -- fired while the first is in flight are pure waste. After firing, hold
+  -- until the shell must have landed (+margin); if the mine is still there
+  -- (missed / detonated by something else first), fire again. The pop in
+  -- demine.update usually ends the goal before a second shot is needed.
+  local now = state.tick or 0
+  local in_flight = goal._shot_eta and now < goal._shot_eta
+  if not in_flight
+     and land_off <= (C.DEMINE_LAND_WU or 100) and (info.shells or 0) > 0
      and shot_path_clear(info, world, wx, wy, goal.mx, goal.my) then
     keys = keys | KEY_SHOOT
+    goal._shot_eta = now + math.ceil(dist / (C.SHELL_SPEED or 32)) + 10
   end
   if BRAIN_DEBUG_MODE and viz.is_on("hud_attack_status") then
     viz.hud_text("hud_attack_status", 10, 44,
-      string.format("De-mine: (%d,%d) dist=%.1ft corr=%.0f sl=%d/%d land=%.0fwu",
-        goal.mx, goal.my, dist / 256.0, corr, cur_sl, target_sl, land_off),
+      string.format("De-mine: (%d,%d) dist=%.1ft corr=%.0f sl=%d/%d land=%.0fwu%s",
+        goal.mx, goal.my, dist / 256.0, corr, cur_sl, target_sl, land_off,
+        in_flight and string.format(" shell-in-flight %dt", goal._shot_eta - now) or ""),
       "topleft", 255, 120, 120)
   end
   return keys, taps
@@ -2803,15 +2814,6 @@ function M.steer(state, world, info, goal)
     return k or 0, t or 0
   end
 
-  -- Terrain-repair interrupt (demine.lua pushed repair_terrain): the LGM
-  -- does the work — the tank just holds position. Never falls through to
-  -- generic navigation, which would drive us ONTO the crater/water tile.
-  if goal.kind == "repair_terrain" then
-    local k = 0
-    if info.speed > 0 then k = KEY_SLOWER end
-    return k, 0
-  end
-
   -- Sub-anchor for steer/nav-* breakdowns. _t_phase is the fall-through
   -- start (right after cliff_safety completed and the goal-specific
   -- dispatches all returned NIL).
@@ -2867,11 +2869,15 @@ function M.steer(state, world, info, goal)
   -- attack_pill: plan_position just visualizes, no steering needed.
   -- Falls through to general navigation for position substate.
 
-  elseif goal.kind == "wait_for_lgm" then
-    -- Stand still and let the LGM finish whatever he's doing
-    -- (farming, opportunistic build) before chasing new goals.
-    -- Was incorrectly placed inside attack_pill_steer where it was
-    -- unreachable; moved here to actually fire.
+  elseif goal.kind == "wait_for_lgm"
+         and goal.mx == (info.tankx >> 8) and goal.my == (info.tanky >> 8) then
+    -- ON the wait spot: stand still and let the LGM finish whatever he's
+    -- doing (farming, opportunistic build) before chasing new goals.
+    -- When goal.mx/my is a danger-aware SAFE SPOT elsewhere (picked by
+    -- pick_wait_spot — parked tile under fire), this branch doesn't match
+    -- and the goal falls through to general navigation, which drives to
+    -- goal.wx/wy like any other destination; once there, this branch takes
+    -- over and parks.
     if info.speed > 0 then keys = keys | KEY_SLOWER end
     if BRAIN_PROFILE then
       local _total_us = clock_us() - _t_nav_dispatch_start
@@ -4242,6 +4248,62 @@ function M.steer(state, world, info, goal)
         keys = keys | KEY_MORERANGE
       end
 
+      -- Stalled-approach promotion: the rush toward the engage point can be
+      -- rebuffed indefinitely by pill knockback — crawling at a few wu/tick,
+      -- never arriving, and with a steady heading offset the opportunistic
+      -- fire below never triggers either (observed: neutral pill held a bot
+      -- at ~4 wu/tick with corr stuck at -23° for hundreds of ticks). If
+      -- we're in range with a clear shot but barely closed any distance over
+      -- the last ATTACK_BASE_STALL_WINDOW ticks, give up on arriving: latch
+      -- engage mode and shell the base from right here. The latch holds until the
+      -- shot degrades (out of range / blocked resets in the else branch
+      -- below) or the goal moves to a different base.
+      local now = state.tick or 0
+      local st = state._ab_stall
+      if not st or st.base_mx ~= goal.mx or st.base_my ~= goal.my
+         or now - (st.t or now) > 3 then
+        st = { base_mx = goal.mx, base_my = goal.my,
+               ref_wdist = wdist_base, ref_t = now, latched = false }
+        state._ab_stall = st
+      end
+      st.t = now
+      if not attack_base_engaging and not st.latched then
+        -- Windowed (not per-tick) so knockback's spiky rhythm — shove back,
+        -- re-accelerate, shove back — averages out instead of resetting a
+        -- consecutive-slow-ticks counter on every brief fast stretch.
+        local W = C.ATTACK_BASE_STALL_WINDOW or 50
+        if now - st.ref_t >= W then
+          local closed = st.ref_wdist - wdist_base
+          if closed < (C.ATTACK_BASE_STALL_WU_PER_TICK or 6) * W then
+            -- Only latch if a shell fired at the AIM heading would actually
+            -- cross the base tile. shot_ok tolerates ATTACK_BASE_MAX_WALLS
+            -- walls in the lane (the rush grinds them down) — stopping
+            -- behind one would aim forever without the fire sim below ever
+            -- passing. Until the lane is truly clear, keep rushing.
+            local pa = cpf.simulate_shot_angle(info.tankx, info.tanky, aim_dir,
+                                               cpf.SHOT_TANK, info.gunrange or 14)
+            if pa then
+              for _, t in ipairs(pa) do
+                if t.mx == goal.mx and t.my == goal.my then st.latched = true; break end
+              end
+            end
+            if BRAIN_DEBUG_MODE and st.latched then
+              print2(string.format(
+                "BASE_STALL_ENGAGE t=%d wdist=%.0f closed=%.0fwu over %d ticks -> stop and shoot from here",
+                now, wdist_base, closed, W))
+            end
+          end
+          st.ref_wdist = wdist_base
+          st.ref_t = now
+        end
+      end
+      if st.latched then
+        -- Stop trying to advance; hold position and aim like the arrived case.
+        keys = keys & ~KEY_FASTER
+        if info.speed > 0 then keys = keys | KEY_SLOWER end
+        attack_base_engaging = true
+      end
+
       -- Heading control depends on whether we've ARRIVED at the engage point:
       --   * arrived (attack_base_engaging — nav block idle this tick): hijack the
       --     heading to point the body straight at the base and hold. Continuous
@@ -4298,13 +4360,15 @@ function M.steer(state, world, info, goal)
 
       log.reason("steer", {
         mode = "attack_base", aim_corr = corr,
-        firing = firing,
+        firing = firing, stalled = st.latched or nil,
         base_dist = wdist_base, shot_ok = true,
       })
     else
       -- Out of range or no valid shot (pill/base/ally/2+ walls in the way):
       -- the nav block above is driving us to the closest adjacent tile for a
-      -- clean point-blank shot. Just log the wait state.
+      -- clean point-blank shot. Just log the wait state. Any stall latch is
+      -- void here — a blocked/out-of-range shot means we MUST keep moving.
+      state._ab_stall = nil
       if BRAIN_DEBUG_MODE then print2(string.format("BASE_NOFIRE t=%d reason=%s wdist=%.0f range=%d shot_ok=%s inboat=%s", state.tick or 0, (wdist_base > C.ATTACK_PILL_RANGE * 256) and "out_of_range" or (not shot_ok and "shot_blocked" or "inboat"), wdist_base, C.ATTACK_PILL_RANGE * 256, tostring(shot_ok), tostring(info.inboat))) end
       log.reason("steer", {
         mode = "attack_base_approach",
@@ -4314,6 +4378,56 @@ function M.steer(state, world, info, goal)
   elseif not attack_in_range then
     if state.tick % 10 == 0 then
       log.reason("steer", { mode = "idle", why = "no goal or at destination" })
+    end
+  end
+
+  -- Forest lane-clear: driving THROUGH forest is slow (speed 6 vs 16). When
+  -- the tank's CURRENT square is forest, fire ONE shot straight ahead — the
+  -- shell turns the forest tile it lands on into grass (shells.c FOREST
+  -- case), opening the lane. Once per forest tile entered (keyed on the
+  -- tank tile), so a long crossing clears as it goes without spamming.
+  -- Applies to capture_pill (racing to a dead pill) and, during the OPENING
+  -- phase, capture_base (the land-grab race — later-game base drives don't
+  -- justify advertising our position with tree shots).
+  if (goal.kind == "capture_pill"
+      or (goal.kind == "capture_base" and state.phase == "opening"))
+     and not info.inboat
+     and (info.shells or 0) > (C.SHELL_RESERVE or 0) then
+    local fmx, fmy = info.tankx >> 8, info.tanky >> 8
+    if U.ttype(fmx, fmy) == C.T_FOREST then
+      local fkey = fmy * 256 + fmx
+      if goal._forest_shot_key ~= fkey then
+        -- Never fire the blind straight-ahead shot with our own or an
+        -- allied LGM anywhere on the shell's path — a shell landing on the
+        -- man kills it. Tile key is only consumed when we actually fire,
+        -- so the shot re-arms once the LGM moves clear.
+        local occ = nil
+        if info.man_status ~= C.LGM_INTANK and info.man_x then
+          occ = { [(info.man_y >> 8) * 256 + (info.man_x >> 8)] = true }
+        end
+        for _, al in ipairs((state.perc and state.perc.allied_lgm_positions) or {}) do
+          occ = occ or {}
+          occ[al.my * 256 + al.mx] = true
+        end
+        local lgm_clear = true
+        if occ then
+          local p = cpf.simulate_shot_angle(info.tankx, info.tanky, info.direction,
+                                            cpf.SHOT_TANK, info.gunrange or 14)
+          if p then
+            for _, t in ipairs(p) do
+              if occ[t.my * 256 + t.mx] then lgm_clear = false; break end
+            end
+          end
+        end
+        if lgm_clear then
+          goal._forest_shot_key = fkey
+          keys = keys | KEY_SHOOT
+          print2(string.format("CAPTURE_FOREST_SHOT t=%d tile=(%d,%d) — clear lane ahead", state.tick or 0, fmx, fmy))
+        elseif goal._forest_hold_key ~= fkey then
+          goal._forest_hold_key = fkey
+          print2(string.format("CAPTURE_FOREST_SHOT t=%d tile=(%d,%d) HELD — friendly LGM on the shot line", state.tick or 0, fmx, fmy))
+        end
+      end
     end
   end
 

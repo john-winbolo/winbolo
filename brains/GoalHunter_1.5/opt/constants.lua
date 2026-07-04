@@ -268,7 +268,8 @@ M.ROAD_BUILD_TERRAIN = {
   [M.T_RIVER]   = 2,   -- LGM can build 1 tile into river from land edge
 }
 M.ROAD_BUILD_COST    = 2    -- A* cost for a tile we plan to pave (= road cost, since it will become road)
-M.TREE_RESERVE       = 4    -- don't plan road builds if it would drop trees below this
+M.TREE_RESERVE       = 4    -- BASE road-build reserve. Non-emergency roads use builder.road_tree_reserve(): this base + PILL_PLACE_TREE_COST per carried pill (uncapped GUARANTEE — always keep enough wood to deploy every carried pill) + ceil(worst nearby friendly pill deficit / PILL_REPAIR_AMOUNT) repair trees (≤4). Roads only get built from genuine surplus. (The drowning-emergency road bypasses all reserves.)
+M.ROAD_RESERVE_REPAIR_RADIUS = 20  -- friendly damaged pill within this many tiles adds its repair cost to the road reserve
 M.ROAD_RIVER_COST    = 2    -- tree cost to build road on river
 
 -- LGM man speeds by terrain type (from bolo_map.h)
@@ -642,7 +643,7 @@ M.ALLY_CLAIMED_STEAL_FRAC      = 0.10
 M.REFUEL_CLAIM_FAR_TILES       = 10
 M.GOAL_COMMITMENT_PER_TICK = 0.5   -- extra switch penalty per tick spent on current goal
 M.GOAL_COMMITMENT_CAP      = 75    -- max commitment penalty (reached after 150 ticks / 3s)
-M.REFUEL_FULL_COST_MULT    = 3.0   -- pool-1 cost multiplier when tank is between low and full thresholds; applied at goal-selection time so stale cache costs scale with current state. At max fullness the entry is skipped entirely.
+M.REFUEL_FULL_COST_MULT    = 8.0   -- pool-1 cost multiplier ceiling when tank is between low and full thresholds; applied at goal-selection time so stale cache costs scale with current state. Ramp is QUADRATIC in fill (see refuel_shape): gentle when genuinely low (fill 0.3 → ~×1.6), punishing when nearly full (fill 0.9 → ~×6.7) so a near-full tank prices refuel out of contention against real goals (20260703_221238 t=24898: old linear ×3 gave a full-armour/60%-shells tank refuel at ~×2.2 — cheap enough to read as top priority). At max fullness the entry is skipped entirely.
 -- Refuel dynamic cost shaping (applied live every tick at competition time so
 -- the bot can peel off to a closer opportunity as armour/shells climb):
 --   final = (cached + BASE_COST - BONUS * deficit_ratio) * full_mult
@@ -655,7 +656,7 @@ M.REFUEL_DEFICIT_BONUS     = 25    -- max discount when fully depleted
 -- leaves near the floor (~20 shells / ~15 armour) to free the base for
 -- teammates, and keep it gentle (fill toward target) when bases are plentiful.
 -- scarcity = 1 + RATIO_K*max(0, team_tanks/friendly_bases - 1) + LOCAL_K*nearby_allies
--- effective top-off mult = 1 + fill*(REFUEL_FULL_COST_MULT-1)*scarcity
+-- effective top-off mult = 1 + fill²*(REFUEL_FULL_COST_MULT-1)*scarcity
 M.REFUEL_SHARE_ENABLED      = true
 M.REFUEL_SHARE_RATIO_K      = 1.5  -- how hard base-scarcity (team tanks per friendly base, over 1.0) steepens the top-off ramp. Losing game (few bases, many tanks) => leave at the floor. 0 disables the ratio term.
 M.REFUEL_SHARE_LOCAL_K      = 0.5  -- extra ramp per teammate currently within REFUEL_SHARE_LOCAL_TILES (more bots crowding this base now => leave sooner)
@@ -716,6 +717,7 @@ M.CAPTURE_BASE_COMMITMENT_BONUS = 250  -- extra commitment when mid-CAPTURE of a
 M.BLITZ_STANDOFF_SCORE_BUCKET   = 50   -- soldier blitz-standoff pick: ellipse spots are bucketed into score bands this wide; all spots in the best spot's band are the "best pool", and the soldier offers the one CLOSEST to its tank (least travel for ~equal shield quality) instead of the globally-top-scored far spot.
 M.EARLY_CAPTURE_BASE_HYST_EXEMPT = true -- opening phase: capture_base skips ALL hysteresis (switch + commit + history), same as capture_pill
 M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
+M.REFUEL_MIN_COST          = 25    -- routine-refuel cost floor: an on-base top-off otherwise collapses to ~4 and outbids free-pill grabs (20260703_210207 t=5747). Bypassed at ARMOUR_CRITICAL — survival refuel may enter the reserved <20 band.
                                    -- (with squared urgency: floor cost at
                                    -- bscore × 0.37; e.g. bscore=60 → ~22)
 M.PILL_HEALTH_WEIGHT       = 5     -- cost per HP of hostile pill (full 15HP pill = +75)
@@ -771,6 +773,15 @@ M.ATTACK_BASE_MAX_WALLS    = 1    -- walls the base shot may cross and still fir
 M.ATTACK_BASE_ENGAGE_AVOID_CROSSFIRE = true  -- master toggle for the standoff-engage-point picker
 M.ATTACK_BASE_ENGAGE_MAX_CROSSFIRE   = 0     -- max # of pills allowed to cover the engage tile (threat.coverage_at). 0 = fully out of pill fire; bump to 1+ to accept light exposure for a closer/faster shot
 M.ATTACK_BASE_ENGAGE_REPLAN          = 40    -- ticks between engage-point recomputes (cached on the goal between)
+-- Stalled-rush promotion: the point-blank rush can be rebuffed indefinitely by
+-- pill knockback (crawl of a few wu/tick, never arrives, heading never sweeps
+-- the base so the opportunistic fire never triggers). When in range with a
+-- clear shot but the tank closed less than STALL_WU_PER_TICK x STALL_WINDOW
+-- world-units over the last STALL_WINDOW ticks, it stops and shells the base
+-- from where it is instead (full speed ~16 wu/tick; observed rebuffed crawl
+-- ~4.5 wu/tick).
+M.ATTACK_BASE_STALL_WU_PER_TICK = 6   -- avg closing speed below this = stalled
+M.ATTACK_BASE_STALL_WINDOW      = 50  -- ~1 s @ 50 Hz measurement window
 -- Commit-to-finish: once we put a shot INTO a hostile base, lock onto finishing
 -- it (init.lua goal-override). Stays committed until ATTACK_BASE_COMMIT_TICKS
 -- after the last shot (refreshed each shot), then releases. Only flee or a tank/
@@ -797,7 +808,11 @@ M.MIN_EXPLORE_DIST = 3  -- don't target frontier squares within this range
 --   No sense over-farming when the tank has no specific tree-consuming plan.
 -- LGM_DEPLOY_DIST: max map-tile distance from tank to dispatch LGM for a farm/build.
 --   Beyond this the pacing slowdown outweighs the benefit.
--- PILL_REPAIR_COST: trees consumed per HP when repairing a pill (1:1 in Bolo).
+-- PILL_REPAIR_AMOUNT: armour restored PER TREE when repairing a pill.
+--   Engine (pillbox.c pillsRepairPos): repairAmount = trees × PILL_REPAIR_AMOUNT(4);
+--   the LGM takes ceil(deficit/4) trees per trip (lgm.c armour tiers), so a FULL
+--   repair from any HP costs at most 4 trees. (Was M.PILL_REPAIR_COST=1/HP —
+--   a 4× overestimate that made the gather target farm 15 trees for a dead pill.)
 M.FARM_GATHER_RADIUS       = 3
 M.FARM_OPPORTUNISTIC_RADIUS = 2
 M.FARM_REFUEL_RADIUS       = 4   -- wider farm radius when stationary at refuel base
@@ -809,7 +824,7 @@ M.LGM_DEPLOY_DIST_REFUEL   = 5   -- max deploy distance when stationary at base
 -- threat closes. Only farm within AVOID_DIST tiles of an enemy if trees < MIN.
 M.FARM_ENEMY_AVOID_DIST    = 10  -- tiles (mdist) to nearest hostile tank
 M.FARM_ENEMY_MIN_TREES     = 4   -- below this, farm anyway (need trees to build)
-M.PILL_REPAIR_COST         = 1
+M.PILL_REPAIR_AMOUNT       = 4   -- armour per tree (engine PILL_REPAIR_AMOUNT)
 M.LGM_ETA_DEPART_BUFFER    = 10  -- ticks: leave base this many ticks before LGM returns
 M.LGM_NEARBY_TILES         = 3   -- tiles: consider LGM "nearby" within this range
 M.LGM_NEARBY_ARRIVAL_TICKS = 60  -- ticks: if LGM arrives within this, skip rescue
@@ -825,6 +840,15 @@ M.WAIT_FOR_LGM_COST        = 50     -- (only meaningful while ENABLED is true)
 -- (low cost) and NOT suppressed during combat/flee/refuel — when holding a pill,
 -- getting the LGM home to build takes precedence (per design intent).
 M.WAIT_FOR_LGM_COST_CARRYING = 20
+-- Danger-aware wait spot (pick_wait_spot in goals.lua): when the tank's own
+-- tile has danger (or it's under fire), wait_for_lgm parks on a chosen SAFE
+-- tile instead — scored ring of 8 bearings × radii {3,6,9} + the LGM's tile,
+-- minimizing danger-weighted travel + BETA × the LGM's extra walk. Slides
+-- toward the LGM when that side is safe, away from the pill when it isn't.
+M.WAIT_LGM_DANGER_OK          = 0    -- threat.at at/below this counts as a safe tile
+M.WAIT_LGM_BETA_COST          = 6    -- cost per tile of extra LGM walk (~1/3 of tank per-tile travel: prefer sliding toward the LGM when safe)
+M.WAIT_LGM_DANGER_W           = 25   -- fallback weight per danger point when NO fully safe tile exists (pick least-bad)
+M.WAIT_LGM_HOLD_ARRIVAL_TICKS = 150  -- ~3s: LGM arriving sooner → hold despite danger (moving drags the pickup point) — unless low armour AND under fire
 M.ENEMY_LGM_RETURN_TICKS   = 3000     -- estimated ticks for enemy LGM to respawn (~60 sec)
 M.RESPAWN_CACHE_WIPE_DIST  = 12       -- tiles; if respawn point is farther than this from death point, wipe all distance-dependent caches
 M.ENEMY_LGM_DEAD_ATTACK_DISCOUNT = 0.5  -- multiply attack pill cost when enemy LGM is dead
@@ -1081,21 +1105,32 @@ M.PLACE_EMERGENCY_MAX_DIST     = 6    -- tiles: max tank->spot for emergency LGM
 M.CAPTURE_PILL_BASE_COST     = 20     -- flat floor so capture_pill never beats a trivially cheap goal
 M.CAPTURE_PILL_DIST_SCALE    = 0.05   -- coefficient on path_cost^1.5
 M.CAPTURE_PILL_DANGER_SCALE  = 0.10   -- coefficient on danger (linear, wsim handles lethality)
--- "Free pill" discount: a dead pill that's close and safe is an easy grab — pull
--- it under a competing attack_pill so we snatch it first. NOT binary: the
--- discount scales between FREE_PILL_DISCOUNT (best, at zero danger / point-blank)
--- and 1.0 (no discount) by a "badness" = max(distance-over, danger). Both ramp
--- to full price quickly once past their thresholds.
---   distance: free within our shooting reach × RANGE_MULT; beyond that, badness
---     climbs to 1.0 over DIST_FALLOFF tiles.
+-- "Free pill" value bonus: a dead pill that's close and safe is an easy grab —
+-- worth a flat VALUE subtracted from its cost (floored at MIN_COST), so a
+-- pristine grab lands near MIN_COST and outranks routine goals INCLUDING a
+-- near-zero-cost on-base refuel top-off. (The old ×0.5 multiplier could never
+-- get under refuel's floor: 20260703_210207 t=5747, top-off cost 4.5 beat
+-- capture 31.6×0.5=15.8 while two free corpses sat uncontested — the enemy
+-- took them. Free pills are transient; base stock isn't.) NOT binary: the
+-- bonus scales from VALUE (best, at zero danger / point-blank) to 0 (none) by
+-- a "badness" = max(distance-over, danger). Both ramp to full price quickly
+-- once past their thresholds.
+--   distance: full bonus within our shooting reach × RANGE_MULT; beyond that,
+--     badness climbs to 1.0 over DIST_FALLOFF tiles.
 --   danger: threat.at at the pill tile (folds in pillbox crossfire AND enemy-tank
 --     radius, already reduced by LOS/blockers/distance). One covering pill
---     (~PILL_DANGER_BASE) still keeps a strong discount; DANGER_FALLOFF ≈ two
---     calm pills, where the discount has faded to ~none.
-M.CAPTURE_FREE_PILL_DISCOUNT   = 0.5   -- strongest multiplier (danger 0, in range)
+--     (~PILL_DANGER_BASE) still keeps a strong bonus; DANGER_FALLOFF ≈ two
+--     calm pills, where the bonus has faded to ~none.
+-- Cost-scale contract: routine goals live at ≥ ~20; the band below 20 is
+-- reserved for survival-critical work (flee-level refuel bypasses
+-- REFUEL_MIN_COST; urgent defends go negative). A pristine free-pill grab
+-- floors at MIN_COST = 20 — the cheapest ROUTINE goal, under routine
+-- refuel's 25 floor but never into the reserved band.
+M.CAPTURE_FREE_PILL_VALUE      = 30    -- flat cost bonus for a pristine grab (danger 0, in range)
+M.CAPTURE_FREE_PILL_MIN_COST   = 20    -- floor after the bonus — cheapest routine goal, above the reserved <20 band
 M.CAPTURE_FREE_PILL_RANGE_MULT = 1.5   -- × TANK_COMBAT_ENGAGE_RANGE = free-grab distance
-M.CAPTURE_FREE_PILL_DIST_FALLOFF   = 5  -- tiles past grab range → discount gone
-M.CAPTURE_FREE_PILL_DANGER_FALLOFF = 16 -- danger (≈ 2 calm pills) → discount gone
+M.CAPTURE_FREE_PILL_DIST_FALLOFF   = 5  -- tiles past grab range → bonus gone
+M.CAPTURE_FREE_PILL_DANGER_FALLOFF = 16 -- danger (≈ 2 calm pills) → bonus gone
 
 -- Race-mode capture: bias capture pathfinding toward direct routes and relax
 -- steering speed caps so we don't lose races to opponents driving straight.
@@ -1265,14 +1300,16 @@ M.DEMINE_BEHIND_MULT  = 2.0   -- directly-behind mine costs 3x its distance
 M.DEMINE_SCAN_PERIOD  = 5     -- ticks between eligibility scans
 M.DEMINE_MAX_TICKS    = 150   -- give up (pop + tile cooldown) after ~3s
 M.DEMINE_LAND_WU      = 100   -- shell end-of-life must land this close to the mine tile center
--- Terrain-repair interrupt (demine.lua, same push/pop mechanic): pave mine
--- craters / rubble / crater-flood water with roads when the LGM can do it
--- safely in OUR territory (influence > 0). Tank holds position while the
--- LGM works; pops when the tile is paved.
-M.TREPAIR_ENABLE      = true
-M.TREPAIR_RADIUS      = 5     -- tiles from the tank a repairable tile may be
-M.TREPAIR_MAX_TICKS   = 400   -- give up (pop + tile cooldown) after ~8s
-M.TREPAIR_ENEMY_RANGE = 10    -- no repairs (and abort) with a hostile tank this close
+-- Terrain repair (demine.lua): pave mine craters / rubble / crater-flood
+-- water with roads when the LGM can do it safely in OUR territory
+-- (influence > 0). A parallel LGM job like farming — the tank carries on
+-- with its goal while the LGM walks out and paves; the job retires when the
+-- tile is paved (timeout / enemy-near / tank-left-it-behind backstops).
+M.TREPAIR_ENABLE       = true
+M.TREPAIR_RADIUS       = 3   -- tiles from the tank a repairable tile may be (was 5; halved — full radius fired too often)
+M.TREPAIR_MAX_TICKS    = 400 -- give up (drop job + tile cooldown) after ~8s
+M.TREPAIR_ENEMY_RANGE  = 10  -- no repairs (and abort) with a hostile tank this close
+M.TREPAIR_ABANDON_DIST = 6   -- drop the job if the tank is this many tiles past it and the LGM never left
 
 -- Friendly pill as barrier bonus (aIndy: use friendly pills as shields)
 M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is between us and target
@@ -1319,12 +1356,14 @@ M.REPOSITION_VOTE_WINDOW_TICKS          = 10   -- ticks the initiator waits for 
 M.REPOSITION_VOTE_INITIATE_COOLDOWN     = 3000 -- ~60s @ 50Hz: after opening a vote, this bot won't open another for this long (pass OR fail). SCALED DOWN by back-section over-proportion (see below).
 M.REPOSITION_VOTE_IMBALANCE_K           = 0.6  -- propose cooldown scale = 1 - K*back_over_fraction (0.5 over -> 0.7x cooldown; 1.25+ over -> floor)
 M.REPOSITION_VOTE_COOLDOWN_MIN_FRAC     = 0.25 -- floor: a badly over-full back line still waits at least this fraction of the base cooldown
-M.REPOSITION_VOTE_RECENT_MEMORY_TICKS   = 6000 -- ~120s @ 50Hz: a bot votes NO if it remembers ANY reposition within this window
+M.REPOSITION_VOTE_RECENT_MEMORY_TICKS   = 6000 -- ~120s @ 50Hz: a bot votes NO (and won't propose) if it remembers a reposition EXECUTING within this window. Timed from CONSUMPTION (pill actually taken) or an observed ally repos-goal broadcast — NOT from a vote merely passing (an unconsumed approval no longer blacks out the team)
+M.REPOSITION_URGENT_SCORE               = 0    -- candidates scoring below this are URGENT (actively harmful position): the proposer bypasses the recent-memory blackout and voters skip the recent_repo NO. Safety NOs (blocker / enemy near / better candidate) and the initiate cooldown still apply.
 M.REPOSITION_VOTE_ENEMY_NEAR_TILES      = 15   -- vote NO if an enemy tank is within this many tiles of the pill AND nothing else covers it
 M.REPOSITION_VOTE_TANK_COVER_TILES      = 10   -- vote NO if the pill IS covered by >=1 other pill but an enemy tank is within this many tiles
-M.REPOSITION_VOTE_APPROVAL_TTL          = 1500 -- ~30s @ 50Hz: an approved PASS stays valid this long; the initiator's reposition runs at REPOSITION_APPROVED_COST for the whole window (long enough to travel + pick up + re-drop)
+M.REPOSITION_VOTE_APPROVAL_TTL          = 1500 -- ~30s @ 50Hz of ACTIONABLE time: the TTL burns only on ticks the initiator can actually act (can_carry_now — LGM in tank, hands free, shells); busy stretches pause it, with a hard wall-clock cap at 3× TTL. While an approval is held, luxury LGM dispatches (opportunistic farm / road_ahead / trepair) are suppressed so the window isn't wasted
 M.REPOSITION_APPROVED_COST              = 80   -- fixed reposition cost for the initiator on the pill its team vote APPROVED; beats routine goals (capture/base/place) so the move actually wins the pool, while sub-80 survival/refuel goals can still preempt
 M.REPOSITION_VOTE_RESULT_LATCH_TICKS    = 120  -- keep the vote-result panel on screen this long after resolve so it's readable
+M.REPOS_GUARD_TTL                       = 1500 -- ~30s: reposition-target tiles stay repair/defend/rebuild-proof this long past the last refresh (refreshed every tick while the move runs, so this is the tail AFTER the vote pass / goal broadcast stops — generous so slow pickups and comms gaps can't let a rebuild slip in)
 -- Exponential "redundant pill" discount: the MORE friendly pills already cover a
 -- pill, the exponentially cheaper it is to move (a redundant back pill is the
 -- best thing to relocate). disc = min(CAP, W * (BASE^covering_pills - 1)),

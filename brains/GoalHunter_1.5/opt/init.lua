@@ -2595,9 +2595,12 @@ function Brain.think(info)
                   or (state.pf.status == "done" and state.pf.next_mx >= 0)
 
   if in_water then
-    -- Always try to build a road under ourselves when drowning in river
+    -- Always try to build a road under ourselves when drowning in river.
+    -- NO tree reserve here — this is survival, not a luxury road; spend the
+    -- last trees rather than sink (was + TREE_RESERVE, which would refuse a
+    -- life-saving build at <6 trees).
     if info.man_status == C.LGM_INTANK and tank_tt == C.T_RIVER
-       and info.trees >= C.ROAD_RIVER_COST + C.TREE_RESERVE then
+       and info.trees >= C.ROAD_RIVER_COST then
       state.water_build = { x = cur_mx, y = cur_my }
       if not state.water_build_logged then
         state.water_build_logged = true
@@ -2634,7 +2637,7 @@ function Brain.think(info)
     -- the LGM triggers pacing that slows the tank below disembark speed.
     local slow_tt = not info.inboat and C.ROAD_BUILD_TERRAIN[tank_tt] or nil
     if slow_tt and info.man_status == C.LGM_INTANK
-       and info.trees >= slow_tt + C.TREE_RESERVE then
+       and info.trees >= slow_tt + builder.road_tree_reserve(state, world, info) then
       state.slow_build = { x = cur_mx, y = cur_my }
     else
       state.slow_build = nil
@@ -3595,24 +3598,29 @@ function Brain.think(info)
       -- fill_pool_cache.  The rolling queue refines over ~14 ticks.
       -- At tick 0 the cache is empty so pick_goal returns nil and
       -- the bot idles until the queue fills (~0.3s).
-      local t_fp0 = clock_us()
-      goals.finalize_pools(state, world, info)
-      opt(string.format("  finalize_pools done %.2f ms", (clock_us() - t_fp0) / 1000))
-      -- Kick off next cycle's queue. Normally inline here so it has ~49
-      -- ticks to process. With C.INCREMENTAL_REPLAN on, defer it to the
-      -- next tick's update_pool_cache instead, so the replan tick pays
-      -- only finalize_pools + pick_goal (the decision) and build_eval_queue
-      -- (the SYNC sweep + sort) lands on the following tick — splitting the
-      -- per-replan spike across two ticks. pick_goal doesn't depend on the
-      -- new queue (it reads pool_cache from finalize_pools), so this is safe.
+      --
+      -- Queue build runs BEFORE finalize_pools: build_eval_queue sync-scores
+      -- brand-new pool-4 corpses into cost_cache at add time, and finalize's
+      -- backfill loop reconstitutes pool_partial from the (fresh) queue +
+      -- cost_cache, so a pill that died since the last replan is visible to
+      -- THIS tick's pick_goal. With the old finalize-first order the fresh
+      -- corpse missed the decision by a full replan cycle (~50 ticks) —
+      -- 20260703_210207 t=6997: bot stood 2 tiles from its freshly-dead
+      -- capture target, replanned, and repair_pill won because pool 4 was
+      -- empty; the LGM rebuilt the corpse and the free pill was lost.
       if now <= 3 then print(TAG .. " tick=" .. now .. " calling build_eval_queue") end
       if C.INCREMENTAL_REPLAN then
+        -- Deferred mode still pays the one-cycle blindness for brand-new
+        -- corpses; the spike-splitting tradeoff is explicit here.
         state._deferred_build_eval = true
       else
         local t_be0 = clock_us()
         goals.build_eval_queue(state, world, info)
         opt(string.format("  build_eval_queue done %.2f ms", (clock_us() - t_be0) / 1000))
       end
+      local t_fp0 = clock_us()
+      goals.finalize_pools(state, world, info)
+      opt(string.format("  finalize_pools done %.2f ms", (clock_us() - t_fp0) / 1000))
       if now <= 3 then print(TAG .. " tick=" .. now .. " build_eval_queue done, calling pick_goal") end
       metrics.inc("goal_replan")
       local t_pg0 = clock_us()
@@ -3703,12 +3711,12 @@ function Brain.think(info)
         new_goal = state.goal  -- re-affirmed current goal: no switch
       elseif swerving then
         new_goal = state.goal  -- swerve is never interrupted, not even by flee
-      elseif (state.goal.kind == "kill_mine" or state.goal.kind == "repair_terrain")
+      elseif state.goal.kind == "kill_mine"
              and new_goal.kind ~= "flee_to_base" then
-        -- De-mine / terrain-repair interrupt in progress (demine.lua pushed
-        -- it over the real goal, which is stashed on state._demine_saved).
-        -- Hold: demine.update pops the moment the mine is cleared / tile is
-        -- paved (timeout + enemy-near backstops). Only survival preempts.
+        -- De-mine interrupt in progress (demine.lua pushed it over the real
+        -- goal, which is stashed on state._demine_saved). Hold: demine.update
+        -- pops the moment the mine is cleared (timeout + out-of-shells
+        -- backstops). Only survival preempts.
         new_goal = state.goal
       elseif engage_locked and new_goal.kind ~= "flee_to_base"
                              and new_goal.kind ~= "attack_tank"

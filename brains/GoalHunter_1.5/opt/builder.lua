@@ -134,7 +134,6 @@ local GOAL_TO_MODE = {
   none                 = "repair_nearby",
   wait_for_lgm         = "suppressed",  -- whole point is to NOT dispatch the LGM
   kill_mine            = "suppressed",  -- de-mine interrupt: LGM stays in (blast!)
-  repair_terrain       = "suppressed",  -- overridden to "repair_road" below
 }
 
 -- -------------------------------------------------------------------------
@@ -177,15 +176,6 @@ function M.set_mode(state, world, info, goal)
       -- Wall is up / LGM returning / retreating — suppress building
       b.mode = "suppressed"
     end
-  end
-
-  -- Terrain repair interrupt (demine.lua): dispatch the LGM to pave the
-  -- target crater/rubble/flood-water tile with a road. The tank holds
-  -- position (steering) while the LGM works; demine.update pops the goal
-  -- when the tile is paved.
-  if kind == "repair_terrain" and goal.mx then
-    b.mode = "repair_road"
-    b.road_target = { mx = goal.mx, my = goal.my }
   end
 
   -- Pill placement: dispatch LGM to place pill during dispatch substate
@@ -292,11 +282,14 @@ function M.set_mode(state, world, info, goal)
   end
 
   if kind == "repair_pill" then
-    -- Find the pill at this destination to calculate how many trees we need
+    -- Find the pill at this destination to calculate how many trees we need.
+    -- Engine: 1 tree restores PILL_REPAIR_AMOUNT(4) armour; the LGM takes
+    -- ceil(deficit/4) trees in one trip, so a full repair is at most 4 trees.
     local entries = world.pill_at[goal.my * 256 + goal.mx]
     if entries then
       for _, e in ipairs(entries) do
-        b.need_trees = math.max(0, C.PILLS_MAX_HEALTH - e.pill.health) * C.PILL_REPAIR_COST
+        b.need_trees = math.ceil(math.max(0, C.PILLS_MAX_HEALTH - e.pill.health)
+                                 / (C.PILL_REPAIR_AMOUNT or 4))
         break
       end
     end
@@ -438,12 +431,48 @@ local function nearest_onpath_forest(state, info, radius)
 end
 
 -- -------------------------------------------------------------------------
+-- Dynamic tree reserve for NON-emergency road building. Roads are a luxury
+-- (speed-up); never pave with trees that imminent needs will want:
+--   TREE_RESERVE base
+-- + PILL_PLACE_TREE_COST per carried pill (placing costs 4 wood each —
+--   this component is a GUARANTEE: roads must never eat the wood needed to
+--   deploy every pill in the tank, so it is never capped)
+-- + trees to repair the worst-damaged nearby friendly pill
+--   (1 tree = PILL_REPAIR_AMOUNT(4) armour → at most 4 trees,
+--   ROAD_RESERVE_REPAIR_RADIUS)
+-- The drowning-emergency road bypasses this.
+-- -------------------------------------------------------------------------
+function M.road_tree_reserve(state, world, info)
+  local reserve = C.TREE_RESERVE or 4
+  reserve = reserve + (info.carried_pills or 0) * (C.PILL_PLACE_TREE_COST or 4)
+  if world and world.pills then
+    local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+    local radius = C.ROAD_RESERVE_REPAIR_RADIUS or 20
+    local maxhp  = C.PILLS_MAX_HEALTH or 15
+    local worst  = 0
+    for _, p in pairs(world.pills) do
+      if p.owner == "friendly" and (p.health or maxhp) < maxhp
+         and U.mdist(tmx, tmy, p.mx, p.my) <= radius then
+        local d = maxhp - (p.health or 0)
+        if d > worst then worst = d end
+      end
+    end
+    reserve = reserve + math.ceil(worst / (C.PILL_REPAIR_AMOUNT or 4))
+  end
+  return reserve
+end
+
+-- -------------------------------------------------------------------------
 -- road_ahead: pave the next A* waypoint if it's slow terrain and we have
 -- enough trees.  Extracted from the old init.lua inline block.
 -- -------------------------------------------------------------------------
 local function road_ahead(state, info, now, world)
   if state.pf.next_mx < 0 then return nil end
   if info.inboat then return nil end  -- boat doesn't need roads; LGM dispatch triggers pacing slowdown
+  -- Approved reposition pending: keep the LGM IN THE TANK. A luxury road
+  -- dispatch here is exactly what wasted the approval window in
+  -- 20260703_202213 (lgm_busy on every replan until the approval expired).
+  if state._repo_approved_pid then return nil end
   local cur_mx = info.tankx >> 8
   local cur_my = info.tanky >> 8
   local nmx, nmy = state.pf.next_mx, state.pf.next_my
@@ -451,7 +480,7 @@ local function road_ahead(state, info, now, world)
   local next_tt  = U.ttype(nmx, nmy)
   local tree_cost = C.ROAD_BUILD_TERRAIN[next_tt]
   if not tree_cost then return nil end
-  if info.trees < tree_cost + C.TREE_RESERVE then return nil end
+  if info.trees < tree_cost + M.road_tree_reserve(state, world, info) then return nil end
   -- Quick reject: if threat_at_tank > 0, the LGM path starting at the tank
   -- tile already exceeds LGM_DANGER_LOW (0), so lgm_path_safe will fail.
   if state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then return nil end
@@ -656,22 +685,6 @@ function M.decide(state, world, info, now)
   if b.mode == "suppressed" then
     if state.tick % 50 == 0 then
       log.reason("build", { mode = "suppressed", why = "combat/emergency goal" })
-    end
-    return nil
-  end
-
-  -- Priority 2.2: terrain repair (repair_terrain interrupt) — pave the
-  -- target crater/rubble/flood-water tile. Gates re-checked every tick:
-  -- terrain still needs a road, trees still cover it, walk still safe.
-  -- demine.update owns the pop (paved / timeout / enemy-near).
-  if b.mode == "repair_road" and b.road_target then
-    local rt = b.road_target
-    local tt = U.ttype(rt.mx, rt.my)
-    local cost = C.ROAD_BUILD_TERRAIN[tt]
-    if cost and (info.trees or 0) >= cost + (C.TREE_RESERVE or 0)
-       and danger.lgm_path_safe_enhanced(info, rt.mx, rt.my, C.LGM_DANGER_LOW,
-                                         now, world) then
-      return { x = rt.mx, y = rt.my, action = BUILDMODE_ROAD }
     end
     return nil
   end
@@ -931,6 +944,28 @@ function M.decide(state, world, info, now)
     return nil
   end
 
+  -- Priority 3.5: parallel terrain-repair job (demine.lua) — pave the target
+  -- crater/rubble/flood-water tile while the tank carries on with its goal,
+  -- same fire-and-forget shape as farming. Sits below plan-driven dispatches
+  -- (wall shield, pill place, gather-for-plan) and above the opportunistic
+  -- farm so an active job wins the LGM slot over topping up trees. Gates
+  -- re-checked every tick: terrain still needs a road, trees still cover it,
+  -- walk still safe. demine.lua owns the job lifecycle (paved / timeout /
+  -- enemy-near / left-behind).
+  local tj = state._trepair_job
+  if tj and not state._repo_approved_pid  -- hold LGM for an approved reposition
+     and not (state.goal and state.goal.kind == "capture_base") then  -- no tile repairs mid base-race
+    local ttt  = U.ttype(tj.mx, tj.my)
+    local tcost = C.ROAD_BUILD_TERRAIN[ttt]
+    if tcost and (info.trees or 0) >= tcost + M.road_tree_reserve(state, world, info)
+       and danger.lgm_path_safe_enhanced(info, tj.mx, tj.my, C.LGM_DANGER_LOW,
+                                         now, world) then
+      return { x = tj.mx, y = tj.my, action = BUILDMODE_ROAD }
+    end
+    -- Job blocked this tick (trees/safety): fall through to farming etc.;
+    -- demine.lua times the job out if it never becomes dispatchable.
+  end
+
   -- Priority 4: opportunistic on-path farm
   -- Applies in "gather" (already stocked) and "opportunistic" modes.
   -- Only fills to TREE_OPPORTUNISTIC_MAX so we don't over-farm.
@@ -944,6 +979,13 @@ function M.decide(state, world, info, now)
   if (b.mode == "gather" or b.mode == "opportunistic")
      and info.trees < C.TREE_OPPORTUNISTIC_MAX
      and not info.inboat
+     -- Approved reposition pending: no opportunistic farm top-ups — the LGM
+     -- must stay in the tank so the move can actually start (mission gathers
+     -- for wall shields etc. dispatch elsewhere and are unaffected).
+     and not state._repo_approved_pid
+     -- capture_base is a RACE: LGM farm dispatches pace the tank down and
+     -- delay the grab. No auto farming while driving to take a base.
+     and not (state.goal and state.goal.kind == "capture_base")
      and not (_enemy_near and (info.trees or 0) >= (C.FARM_ENEMY_MIN_TREES or 4)) then
     -- Quick reject: any threat at tank tile means lgm_path_safe(LOW) will fail
     if state.perc and state.perc.threat_at_tank > C.LGM_DANGER_LOW then

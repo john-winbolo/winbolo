@@ -37,7 +37,13 @@ end
 -- rejects in goals.eval_reposition_pill, but evaluated fresh every tick (the
 -- position scan that built the candidate only runs ~every 50t on a quiet tick).
 local function can_carry_now(state, info)
-  if (info.carried_pills or 0) >= 1 then return false end
+  -- One carried pill (the PLACE_HOLD_UTIL utility reserve) must NOT lock the
+  -- bot out of repositioning: the engine multi-carries fine and the swap
+  -- returns to one carried after the re-drop. Requiring 0 made any bot
+  -- holding a reserve permanently unable to propose OR execute — with the
+  -- whole team holding reserves the system went silent while negative-score
+  -- pills sat unmoved (20260703_233224 t~73257). Two+ carried = hands full.
+  if (info.carried_pills or 0) >= 2 then return false end
   if info.man_status ~= C.LGM_INTANK then return false end
   if info.inboat then return false end
   if (info.shells or 0) < (C.PILL_REPOSITION_MIN_SHELLS or 15) then return false end
@@ -86,7 +92,13 @@ local function evaluate_vote(state, world, info, now, prop)
 
   if p and p._in_use then return true, "blocker" end
 
-  if state._repo_last_seen_tick
+  -- Pacing NO — but never against an URGENT proposal: a negative score means
+  -- the pill's position is actively harmful (deep surplus / redundancy /
+  -- orphaned). The recent-memory pacing exists to stop marginal churn, not
+  -- to ration urgent corrections — one move per 2 minutes team-wide is far
+  -- too slow to fix a badly lopsided back line.
+  if (prop.score or 0) >= (C.REPOSITION_URGENT_SCORE or 0)
+     and state._repo_last_seen_tick
      and (now - state._repo_last_seen_tick) < (C.REPOSITION_VOTE_RECENT_MEMORY_TICKS or 6000) then
     return true, "recent_repo"
   end
@@ -137,14 +149,72 @@ function M.update(state, world, info, now)
   end
 
   -- 1. Inbound RESULT from another initiator.
+  -- NOTE: a PASS no longer sets _repo_last_seen_tick — the memory (which
+  -- suppresses proposals AND drives the recent_repo NO-vote) must track
+  -- repositions that actually HAPPEN, not votes that merely passed. An
+  -- approval that expires unconsumed used to blackout the whole team for
+  -- ~2 min for nothing (seen in 20260703_202213: both initiators too busy,
+  -- approval wasted, team silent until the session ended). Execution is
+  -- observed via the ally repos-goal broadcast below / our own consumption.
   local res = state._repo_rx_result
   if res then
-    if res.pass then state._repo_last_seen_tick = now end
+    -- Guard the pill immediately on a PASSED vote: the initiator will shoot
+    -- it down shortly, and its repos=1 goal broadcast takes a heartbeat to
+    -- arrive — without this an ally could dispatch a repair onto the pill in
+    -- that window (topping it up as the initiator starts demolishing it).
+    -- Refreshed by the repos-goal observation below once the move runs.
+    if res.pass and world.pills and world.pills[res.pid] then
+      local ap = world.pills[res.pid]
+      state._repos_guard = state._repos_guard or {}
+      state._repos_guard[ap.my * 256 + ap.mx] = now + (C.REPOS_GUARD_TTL or 300)
+    end
     state._repo_active = nil
     state._repo_vote_panel = { pid = res.pid, from = res.from, pass = res.pass,
                                until_tick = now + (C.REPOSITION_VOTE_RESULT_LATCH_TICKS or 120) }
     state._repo_rx_result = nil
   end
+
+  -- 1b. Observe EXECUTING ally repositions: an ally broadcasting an active
+  -- reposition goal (capture_pill + repos=1 in ally_state) IS a reposition
+  -- happening — that's what the recent-memory should time from. Refreshes
+  -- every tick the move runs, so the ~2 min window starts at its END.
+  --
+  -- Same pass maintains state._repos_guard: a tile-keyed TTL map of pills
+  -- that are mid-reposition (ally targets here; our own goal/approval below).
+  -- goals.filter_repair_pill refuses to repair/rebuild guarded tiles — the
+  -- repair pool once resurrected a reposition corpse during the one-tick
+  -- handoff between shoot-down and pickup (20260703_210207 t=6997).
+  local guard = state._repos_guard
+  local guard_ttl = C.REPOS_GUARD_TTL or 300
+  local function guard_mark(gmx, gmy)
+    if not gmx then return end
+    guard = guard or {}
+    guard[gmy * 256 + gmx] = now + guard_ttl
+  end
+  if ally_state.iter_active then
+    for apn, slot in ally_state.iter_active(now, 1750) do
+      if apn ~= self_pn and slot.info and slot.info.repos == "1" then
+        state._repo_last_seen_tick = now
+        guard_mark(tonumber(slot.info.mx), tonumber(slot.info.my))
+      end
+    end
+  end
+  -- Our own reposition target: the committed goal's tile, and the approved
+  -- pill's tile while the approval is held.
+  if state.goal and state.goal.kind == "capture_pill" and state.goal.reposition then
+    guard_mark(state.goal.mx, state.goal.my)
+  end
+  if state._repo_approved_pid and world.pills then
+    local ap = world.pills[state._repo_approved_pid]
+    if ap then guard_mark(ap.mx, ap.my) end
+  end
+  -- Lazy prune so the table can't grow unbounded across a long game.
+  if guard and (now % 250) == 0 then
+    for k, untl in pairs(guard) do
+      if untl <= now then guard[k] = nil end
+    end
+  end
+  state._repos_guard = guard
 
   -- 2. Inbound PROPOSALS: record the active vote, cast our ballot once each.
   --    The queue may hold several proposals opened in the same tick — handle
@@ -155,6 +225,16 @@ function M.update(state, world, info, now)
       local op = opq[i]
       state._repo_active = { pid = op.pid, from = op.from, tick = op.tick }
       if op.from ~= self_pn then
+        -- Double-open tiebreak: if WE also have an open vote for this SAME
+        -- pill (both bots proposed it in the same tick — seen in
+        -- 20260703_202213 where p0 and p1 both passed and both held an
+        -- approval), the LOWER player number keeps its proposal; the higher
+        -- one cancels its own and just ballots on the survivor. Prevents two
+        -- simultaneous approvals for one pill.
+        if state._repo_my_vote and state._repo_my_vote.pid == op.pid
+           and (op.from or 99) < (self_pn or 0) then
+          state._repo_my_vote = nil
+        end
         local is_no, reason = evaluate_vote(state, world, info, now, op)
         tx(is_no and ("/info rvn " .. op.pid) or ("/info rvy " .. op.pid))
         -- Remember our own ballot + WHY (we never receive our own vote back, so the
@@ -192,8 +272,10 @@ function M.update(state, world, info, now)
       if pass then
         state._repo_approved_pid    = mv.pid
         state._repo_approved_tick   = now
-        state._repo_last_seen_tick  = now
-        state.last_team_reposition_tick = now   -- feed the existing team time-discount
+        state._repo_approved_used   = 0   -- TTL burned only while we can act (see watch below)
+        -- _repo_last_seen_tick / last_team_reposition_tick are NOT set here
+        -- any more — they now mark CONSUMPTION (the pill actually taken),
+        -- so an unusable approval doesn't blackout the team's proposals.
       end
       state._repo_vote_panel = { pid = mv.pid, from = self_pn, pass = pass,
                                  yes = mv.yes_set, no = mv.no_set,
@@ -208,6 +290,12 @@ function M.update(state, world, info, now)
   -- initiator's reposition keeps its fixed cost-80 priority for the WHOLE ~30s
   -- window — long enough to travel to, pick up, move and re-drop the pill.
   -- goals.lua's APPROVED branch reads state._repo_approved_pid every tick.
+  --
+  -- The TTL burns only on ticks the bot could actually act (can_carry_now:
+  -- LGM in tank, hands free, shells, no cooldown) — a busy stretch (LGM out
+  -- farming, mid-refuel) PAUSES the countdown instead of silently eating the
+  -- window (the 20260703_202213 failure mode). A wall-clock cap at 3× TTL
+  -- still bounds a permanently-blocked approval.
   if state._repo_approved_pid then
     local ap = world.pills and world.pills[state._repo_approved_pid]
     local consumed = (not ap) or (ap.health or 0) <= 0 or ap.in_tank
@@ -216,13 +304,25 @@ function M.update(state, world, info, now)
       -- move is underway and held by the reposition lock from here. Drop the
       -- approval so we don't re-target this same pill again inside the window
       -- (e.g. reposition it a second time right after it was just re-built).
-      state._repo_approved_pid = nil
-    elseif (now - (state._repo_approved_tick or now)) > (C.REPOSITION_VOTE_APPROVAL_TTL or 1500) then
-      local committed = state.goal and state.goal.kind == "capture_pill"
-                        and state.goal.reposition and state.goal.target_id == state._repo_approved_pid
-      if not committed then
+      -- THIS is when the recent-reposition memory starts: a move happened.
+      state._repo_last_seen_tick      = now
+      state.last_team_reposition_tick = now   -- feed the existing team time-discount
+      state._repo_approved_pid  = nil
+      state._repo_approved_used = nil
+    else
+      if carry then
+        state._repo_approved_used = (state._repo_approved_used or 0) + 1
       end
-      state._repo_approved_pid = nil
+      local ttl  = C.REPOSITION_VOTE_APPROVAL_TTL or 1500
+      local wall = now - (state._repo_approved_tick or now)
+      if (state._repo_approved_used or 0) > ttl or wall > 3 * ttl then
+        local committed = state.goal and state.goal.kind == "capture_pill"
+                          and state.goal.reposition and state.goal.target_id == state._repo_approved_pid
+        if not committed then
+        end
+        state._repo_approved_pid  = nil
+        state._repo_approved_used = nil
+      end
     end
   end
 
@@ -244,7 +344,11 @@ function M.update(state, world, info, now)
                    or (now - state._repo_initiate_tick) >= eff_cd
     local mem_ok = not state._repo_last_seen_tick
                    or (now - state._repo_last_seen_tick) >= (C.REPOSITION_VOTE_RECENT_MEMORY_TICKS or 6000)
-    if cand and cand.can_carry and cd_ok and mem_ok then
+    -- URGENT bypass: a negative-score candidate is an actively harmful
+    -- position — skip the recent-memory blackout (the scaled initiate
+    -- cooldown still paces this bot's proposals).
+    local urgent = cand and (cand.score or 0) < (C.REPOSITION_URGENT_SCORE or 0)
+    if cand and cand.can_carry and cd_ok and (mem_ok or urgent) then
       tx(string.format("/info rvo %d %d %d %d", cand.pid, cand.mx, cand.my, math.floor(cand.score or 0)))
       state._repo_my_vote = { pid = cand.pid, mx = cand.mx, my = cand.my, score = cand.score,
                               open_tick = now, no = 0 }

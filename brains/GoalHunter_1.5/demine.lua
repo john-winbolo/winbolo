@@ -1,11 +1,16 @@
 -- =========================================================================
--- demine.lua — automatic battle-damage interrupts: mine clearing + terrain
--- repair. Both use the same push/pop mechanic (one at a time, never
--- nested; mines take priority):
+-- demine.lua — automatic battle-damage handling: mine clearing + terrain
+-- repair (mines take priority when both exist):
 --
 --   kill_mine      — shoot a known mine off OUR territory (tank's gun).
---   repair_terrain — pave a mine crater / rubble / crater-flood water tile
---                    with a road (LGM does the work, tank holds position).
+--                    Push/pop goal interrupt: the tank stops and aims.
+--   terrain repair — pave a mine crater / rubble / crater-flood water tile
+--                    with a road. NOT a goal: a parallel LGM job
+--                    (state._trepair_job), fire-and-forget like farming —
+--                    the tank carries on with its current goal while the
+--                    LGM walks out and paves. builder.lua dispatches from
+--                    the job; this module owns the job lifecycle (paved /
+--                    timeout / enemy-near / tank-left-it-behind).
 --
 -- When a KNOWN mine (TERRAIN_MINE_FLAG set on the brain map) sits within
 -- crosshair range of the tank and the current goal is interruptible, PUSH a
@@ -37,13 +42,14 @@ local print2 = require("print2")
 
 local M = {}
 
--- Goal kinds that must never be interrupted for a mine.
+-- Goal kinds that must never be interrupted for a mine, and during which a
+-- terrain-repair job must not START (combat/urgency — the LGM stays home;
+-- an already-running job just keeps going, builder priorities gate it).
 local DENY_KINDS = {
   kill_lgm = true, attack_tank = true, kill_mine = true,
   escape_water = true, flee_pill = true, flee_to_base = true,
   rescue_lgm = true, wait_for_lgm = true,
   pill_place = true, place_pill_strategic = true,
-  repair_terrain = true,   -- interrupts never nest
 }
 -- Terrain the repair interrupt paves: mine craters, rubble, and the water
 -- a crater floods into. NOT swamp — the opportunistic road-ahead already
@@ -58,11 +64,11 @@ end
 -- attack_pill: only the get-into-position phases may be interrupted.
 local PILL_OK_SUB = { plan_position = true, approach = true }
 
+-- Shared push/start eligibility (goal-shape only — the mine push adds its
+-- own DEMINE_ENABLE + shells gates; the repair job needs neither).
 local function eligible(state, info)
-  if C.DEMINE_ENABLE == false then return false end
   if state.command_goal then return false end
   if info.inboat then return false end
-  if (info.shells or 0) < (C.DEMINE_MIN_SHELLS or 3) then return false end
   local g = state.goal
   if not g or DENY_KINDS[g.kind] then return false end
   if g.kind == "attack_pill" and not PILL_OK_SUB[g.substate or ""] then
@@ -149,9 +155,10 @@ local function find_target(state, world, info)
 end
 
 -- ── Terrain repair (mine craters / rubble / crater-flood water) ───────────
--- Same push/pop pattern as the mine clear, but the LGM does the work:
--- push repair_terrain, the builder dispatches the LGM to pave the tile
--- with a road, the tank holds position, pop when the tile is paved.
+-- Parallel LGM job, NOT a goal: state._trepair_job is set here, builder.lua
+-- dispatches the LGM to pave the tile with a road while the tank carries on
+-- with its goal, and the job retires when the tile is paved (backstops in
+-- M.update).
 
 -- A hostile tank nearby makes an LGM walk a gift to the enemy.
 local function repair_threatened(state, info)
@@ -203,7 +210,10 @@ local function find_repair_target(state, world, info)
           elseif cd and cd[k] and cd[k] > now then rej = "cooldown"
           elseif not ok then rej = "open water"
           elseif mx2 == tmx and my2 == tmy then rej = "under tank"
-          elseif (info.trees or 0) < cost + (C.TREE_RESERVE or 0) then rej = "low trees"
+          -- Dynamic reserve (lazy require; builder never requires demine, so
+          -- no cycle): terrain repair is a luxury road too — don't pave with
+          -- trees an imminent pill place/repair needs.
+          elseif (info.trees or 0) < cost + require("builder").road_tree_reserve(state, world, info) then rej = "low trees"
           else
             if not best_d2 or d2 < best_d2 then
               best_d2, best_mx, best_my, best_cost = d2, mx2, my2, cost
@@ -238,11 +248,40 @@ local function find_repair_target(state, world, info)
 end
 
 -- Per-tick update. Call AFTER goal selection (init.lua think loop):
--- pops a finished/stale kill_mine back to the saved goal, or pushes a
--- fresh one over an interruptible goal when a shootable mine exists.
+-- retires a finished/stale terrain-repair job, pops a finished/stale
+-- kill_mine back to the saved goal, or — when a shootable mine / repairable
+-- tile exists over an interruptible goal — pushes a kill_mine goal (mines
+-- first) or starts a parallel repair job.
 function M.update(state, world, info)
   local now = state.tick or 0
   local g = state.goal
+
+  -- ── Parallel terrain-repair job lifecycle (independent of the goal) ──
+  -- The job is fire-and-forget: builder.lua dispatches the LGM from it
+  -- while the tank carries on. Here we just retire it — paved, timed out,
+  -- an enemy tank got close, or the tank drove off while the LGM never
+  -- managed to start (unsafe walk / no trees / builder never had a slot).
+  local job = state._trepair_job
+  if job then
+    local paved      = not repair_tt()[U.ttype(job.mx, job.my)]
+    local timeout    = (now - (job.start or now)) > (C.TREPAIR_MAX_TICKS or 400)
+    local threatened = repair_threatened(state, info)
+    local left_behind = info.man_status == C.LGM_INTANK
+      and U.mdist(info.tankx >> 8, info.tanky >> 8, job.mx, job.my)
+          > (C.TREPAIR_ABANDON_DIST or 6)
+    if paved or timeout or threatened or left_behind then
+      if not paved then
+        state._trepair_cooldown = state._trepair_cooldown or {}
+        state._trepair_cooldown[job.my * 256 + job.mx] = now + 500
+      end
+      state._trepair_job = nil
+      print2(string.format("TREPAIR_DONE t=%d tile@(%d,%d) %s age=%d",
+        now, job.mx, job.my,
+        paved and "PAVED" or (threatened and "enemy-near"
+          or (left_behind and "left-behind" or "timeout")),
+        now - (job.start or now)))
+    end
+  end
 
   -- ── Active kill_mine: pop when cleared / stale / dry ──────────────
   if g and g.kind == "kill_mine" then
@@ -269,59 +308,41 @@ function M.update(state, world, info)
     return
   end
 
-  -- ── Active repair_terrain: pop when paved / stale / threatened ─────
-  if g and g.kind == "repair_terrain" then
-    local paved      = not repair_tt()[U.ttype(g.mx, g.my)]
-    local timeout    = (now - (g._push_tick or now)) > (C.TREPAIR_MAX_TICKS or 400)
-    local threatened = repair_threatened(state, info)
-    if paved or timeout or threatened then
-      if not paved then
-        state._trepair_cooldown = state._trepair_cooldown or {}
-        state._trepair_cooldown[g.my * 256 + g.mx] = now + 500
-      end
-      local saved = state._demine_saved
-      state._demine_saved = nil
-      state.goal = saved or { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
-      state.pf.status = "idle"
-      print2(string.format("TREPAIR_POP t=%d tile@(%d,%d) %s -> resume %s%s",
-        now, g.mx, g.my,
-        paved and "PAVED" or (threatened and "enemy-near" or "timeout"),
-        state.goal.kind,
-        state.goal.substate and ("/" .. tostring(state.goal.substate)) or ""))
-    end
-    return
-  end
-
-  -- ── No interrupt active: consider a push (mines first) ─────────────
+  -- ── No interrupt active: consider a mine push / repair job start ────
   if not eligible(state, info) then return end
   if (now - (state._demine_scan_tick or -1e9)) < (C.DEMINE_SCAN_PERIOD or 5) then
     return
   end
   state._demine_scan_tick = now
-  local mx, my, cost = find_target(state, world, info)
-  if mx then
-    state._demine_saved = state.goal
-    state.goal = { kind = "kill_mine", mx = mx, my = my,
-                   wx = (mx << 8) | 128, wy = (my << 8) | 128,
-                   _push_tick = now }
-    print2(string.format("DEMINE_PUSH t=%d mine@(%d,%d) cost=%.0f over %s%s shells=%d",
-      now, mx, my, cost or -1, state._demine_saved.kind,
-      state._demine_saved.substate and ("/" .. tostring(state._demine_saved.substate)) or "",
-      info.shells or 0))
-    return
+  if C.DEMINE_ENABLE ~= false
+     and (info.shells or 0) >= (C.DEMINE_MIN_SHELLS or 3) then
+    local mx, my, cost = find_target(state, world, info)
+    if mx then
+      state._demine_saved = state.goal
+      state.goal = { kind = "kill_mine", mx = mx, my = my,
+                     wx = (mx << 8) | 128, wy = (my << 8) | 128,
+                     _push_tick = now }
+      print2(string.format("DEMINE_PUSH t=%d mine@(%d,%d) cost=%.0f over %s%s shells=%d",
+        now, mx, my, cost or -1, state._demine_saved.kind,
+        state._demine_saved.substate and ("/" .. tostring(state._demine_saved.substate)) or "",
+        info.shells or 0))
+      return
+    end
   end
 
-  -- No mine: consider paving battle damage (crater/rubble/flood water).
-  if C.TREPAIR_ENABLE == false then return end
+  -- No mine to shoot: consider a parallel repair job for battle damage
+  -- (crater/rubble/flood water). NOT a goal — the tank carries on with
+  -- what it's doing; builder.lua dispatches the LGM from the job.
+  -- capture_base is a RACE: no tile repairs while driving to take a base
+  -- (the LGM dispatch paces the tank down and delays the grab).
+  if C.TREPAIR_ENABLE == false or state._trepair_job then return end
+  if state.goal and state.goal.kind == "capture_base" then return end
   local rx, ry, rcost = find_repair_target(state, world, info)
   if not rx then return end
-  state._demine_saved = state.goal
-  state.goal = { kind = "repair_terrain", mx = rx, my = ry,
-                 wx = (rx << 8) | 128, wy = (ry << 8) | 128,
-                 _push_tick = now, _tree_cost = rcost }
-  print2(string.format("TREPAIR_PUSH t=%d tile@(%d,%d) tt=%d cost=%d over %s%s trees=%d",
-    now, rx, ry, U.ttype(rx, ry), rcost or -1, state._demine_saved.kind,
-    state._demine_saved.substate and ("/" .. tostring(state._demine_saved.substate)) or "",
+  state._trepair_job = { mx = rx, my = ry, start = now, tree_cost = rcost }
+  print2(string.format("TREPAIR_JOB t=%d tile@(%d,%d) tt=%d cost=%d during %s%s trees=%d",
+    now, rx, ry, U.ttype(rx, ry), rcost or -1, g.kind,
+    g.substate and ("/" .. tostring(g.substate)) or "",
     info.trees or 0))
 end
 
@@ -387,9 +408,9 @@ function M.draw_overlay(state, world, info)
         viz.text("trepair_scan", c.mx + 0.5, c.my + 0.5, lbl, "center", 255, 255, 255, 210, 0.4)
       end
     end
-    local g = state.goal
-    if g and g.kind == "repair_terrain" then
-      local rcx, rcy = g.mx + 0.5, g.my + 0.5
+    local j = state._trepair_job
+    if j then
+      local rcx, rcy = j.mx + 0.5, j.my + 0.5
       viz.circle("trepair_scan", rcx, rcy, 0.55, 60, 230, 120, 255, false, false)
       viz.line("trepair_scan", info.tankx / 256.0, info.tanky / 256.0, rcx, rcy, 80, 230, 120, 200)
       -- LGM link if it's out working.
@@ -397,8 +418,8 @@ function M.draw_overlay(state, world, info)
         viz.line("trepair_scan", info.man_x / 256.0, info.man_y / 256.0, rcx, rcy, 120, 255, 160, 220)
       end
       viz.text("trepair_scan", rcx, rcy - 0.75,
-        string.format("REPAIR tt=%d cost=%d age=%d", U.ttype(g.mx, g.my),
-                      g._tree_cost or 0, now - (g._push_tick or now)),
+        string.format("REPAIR tt=%d cost=%d age=%d", U.ttype(j.mx, j.my),
+                      j.tree_cost or 0, now - (j.start or now)),
         "center", 120, 255, 160, 255)
     end
   end
