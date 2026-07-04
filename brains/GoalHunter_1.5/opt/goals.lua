@@ -1843,7 +1843,13 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- Enemy tank visible + we're carrying: drop a pill at ±45° from the threat
   -- direction, 2–5 tiles out.
   local _db_et = (state.perc and state.perc.enemy_tanks) and #state.perc.enemy_tanks or 0
-  if _db_et > 0 then
+  -- Defensive build DROPS a carried pill — so it must only fire when we actually
+  -- hold one. Without it the goal wins the pool on a cheap score, then dead-ends
+  -- at PLACE_PILL_SETMODE "no-dispatch" (carried=0, man=0), stealing a goal cycle
+  -- from attack_tank and flip-flopping the aim. Gate on carried_pills > 0.
+  local _db_carrying = (info.carried_pills or 0) > 0
+  local _db_skip = (_db_et == 0 and " -> SKIP(no visible enemy tank)") or ((not _db_carrying) and " -> SKIP(not carrying a pill)") or ""
+  if _db_et > 0 and _db_carrying then
     local closest_et, closest_dist = nil, math.huge
     for _, et in ipairs(state.perc.enemy_tanks) do
       if et.dist < closest_dist then closest_dist = et.dist; closest_et = et end
