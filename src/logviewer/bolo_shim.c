@@ -345,3 +345,10 @@ bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
   (void)playerNum;
   return false;
 }
+
+/* Render-thread guard, defined in the main client's sdl3draw.c but referenced
+ * by the shared sdl3draw_status.c renderers. The standalone LogViewer does all
+ * its drawing on the main thread, so the guard is always satisfied here. */
+bool sdl3DrawOnRenderThread(void) {
+  return true;
+}
