@@ -3299,6 +3299,18 @@ static void recordingCapture(BrainTestApp *app) {
         f->snapPills[i].inTank = gs->pb->item[i].inTank ? 1 : 0;
     }
 
+    /* ── Per-player alliance bitmaps ── the playback pre-render patch
+     * writes f->allie[] over gs->plyrs->item[].allie, so a frame that
+     * never captured them (this was ONLY filled by the .btr loader)
+     * zeroes every alliance during scrubbing and all allied tanks
+     * render red (20260704_071939 t=3501: 2v2 playback showed all 3
+     * other tanks as enemies). Capture live values at record time. */
+    if (gs->plyrs) {
+        for (int i = 0; i < MAX_TANKS; i++) {
+            f->allie[i] = (uint32_t)gs->plyrs->item[i].allie;
+        }
+    }
+
     /* ── Camera + brain perf for HUD ── */
     f->viewCenterX = app->viewCenterX;
     f->viewCenterY = app->viewCenterY;
