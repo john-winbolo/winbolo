@@ -4933,6 +4933,19 @@ function Brain.think(info)
     keys, taps, build_cmd = 0, 0, -1
   end
 
+  -- TEST AID: global bot freeze (BOT_TEST_GLOBAL_HOLD_TICKS, 0 = off).
+  -- Outputs zeroed while brains keep ticking, so the human can capture the
+  -- map before the bots go live. Bot 0 prints a console countdown every 10s.
+  if now <= (C.BOT_TEST_GLOBAL_HOLD_TICKS or 0) then
+    keys, taps, build_cmd = 0, 0, -1
+    if now % 500 == 0 and (info.player_number or 0) == 0 then
+      print(string.format("[BOT-HOLD] bots frozen — live in %ds", math.floor((C.BOT_TEST_GLOBAL_HOLD_TICKS - now) / 50)))
+    end
+  elseif now == (C.BOT_TEST_GLOBAL_HOLD_TICKS or 0) + 1
+         and (info.player_number or 0) == 0 then
+    print("[BOT-HOLD] bots are LIVE")
+  end
+
   -- Tick-info HUD (top-left, just below BrainTest's tick/think box).
   -- C-side already renders tick + think_ms; keep this line tight
   -- with the brain-only bits: replan countdown, phase, current goal.

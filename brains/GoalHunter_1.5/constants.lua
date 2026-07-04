@@ -174,7 +174,13 @@ M.SHELLS_LOW       = 20   -- seek resupply (~15 to kill a pill/base)
 -- pill instead of holding at standoff). Cleared the moment shells recover to
 -- AMMO_DEPRIVED_SHELLS. 50 ticks/sec, so 6000 = 120 s.
 M.AMMO_DEPRIVED_SHELLS = M.SHELLS_LOW   -- "min ammo" line for deprivation
-M.AMMO_DEPRIVED_TICKS  = 6000           -- 120 s continuously below it
+M.AMMO_DEPRIVED_TICKS  = 3000           -- 60 s continuously below it (was 120 s — bots moped too long before going decoy)
+
+-- TEST AID (set 0 before merging to a release): freeze EVERY bot for this
+-- many ticks at game start — outputs zeroed, brains still tick — so a human
+-- can grab most of the map first and then watch ammo-deprivation/decoy
+-- behavior kick in. Countdown printed to the console every 10 s by bot 0.
+M.BOT_TEST_GLOBAL_HOLD_TICKS = 6000     -- 120 s hold, then bots go live
 
 -- PPT-force thresholds. PPT (Protected Pill Take) is normally only
 -- chosen for high-HP pills (>= PPT_HEALTH_THRESHOLD). These knobs let
