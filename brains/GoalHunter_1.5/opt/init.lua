@@ -4967,6 +4967,7 @@ function Brain.think(info)
   -- refuel candidates rejected). Loud red so nobody mistakes a test run
   -- for real behavior.
   if state.test_never_refuel then
+    -- y=70: clear of hud_replan at (10,56) and hud_tick_info at (8,32/44).
   end
 
   -- Tick-info HUD (top-left, just below BrainTest's tick/think box).
