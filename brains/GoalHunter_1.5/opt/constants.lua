@@ -115,7 +115,17 @@ M.PILL_DANGER_ANGER = 200  -- additional penalty when fully angry (anger=1.0, qu
 M.PILL_DANGER_EDGE_FALLOFF = 0.5
 M.PILL_RANGE_MAP    = 9    -- danger stamp radius (1 beyond actual fire range of 8)
 M.PILL_FIRE_RANGE   = 8    -- actual pillbox firing range: PILLBOX_RANGE(2048) / 256 = 8 tiles
-M.FRONT_NEAR_RADIUS = 2    -- tiles (euclidean) a front-line tile must be within for a pill to count "front" (was PILL_FIRE_RANGE=8; narrowed so only pills hugging the line are front, not whole-fire-range neighbours)
+-- Front classification is ASYMMETRIC by purpose:
+--   IDENTIFYING existing pills (role_of / counts / reposition eligibility)
+--     uses FRONT_NEAR_RADIUS — a pill hugging the line still does front duty.
+--   PLACING (what category a candidate TILE would fill: the strategic scan,
+--     its heatmap, trail-drop, building-intent viz) uses the strict
+--     FRONT_NEAR_RADIUS_PLACE=0 — a new pill only counts as filling the
+--     front role if it stands ON a front-band tile (the yellow-circle "3"
+--     overlay). The 2-tile halo let a repositioned pill's OLD spot pass as
+--     a "front" cell and dodge the back-surplus skip → rebuild-in-place.
+M.FRONT_NEAR_RADIUS       = 2  -- identify: existing pill counts front within this of the band
+M.FRONT_NEAR_RADIUS_PLACE = 0  -- place: candidate tile must be ON the band to fill "front"
 M.MIN_TREEHIDE_DIST_MAP = 3  -- MIN_TREEHIDE_DIST (768) in map tiles
 M.CROSSFIRE_MULTIPLIER_ENABLED = false  -- multiply danger by number of pills covering each tile
 
@@ -635,6 +645,11 @@ M.ALLY_CLAIMED_STEAL_THRESHOLD = 100   -- (legacy additive band; superseded by t
 -- behaves the same for cheap pill captures (~20-40) and expensive base
 -- captures (~1000s). 0.10 = "must be >=10% cheaper to steal".
 M.ALLY_CLAIMED_STEAL_FRAC      = 0.10
+-- capture_pill override: a drive-over grab has no sunk investment (no shells,
+-- no setup), so essentially ANY cost edge should win the pickup — the closer
+-- bot grabs it, the other re-routes for free. 0.01 = ">=1% cheaper steals".
+-- (The killer-priority window and reposition guards still trump this.)
+M.ALLY_CLAIMED_STEAL_FRAC_CAPTURE = 0.01
 -- DEPRECATED / unused: the refuel ally-claim FCFS reject (and its
 -- far-claimer override) was replaced by the SOFT per-ally cost penalty
 -- (ALLY_CLAIMED_REFUEL_PENALTY). Refuel is no longer in _REJECT_POOLS, so
@@ -1353,17 +1368,22 @@ M.PILL_REPOSITION_THRESHOLD     = 50
 -- pill would be unsafe or they have a better candidate (see reposition_vote.lua).
 M.REPOSITION_VOTE_ENABLED               = true
 M.REPOSITION_VOTE_WINDOW_TICKS          = 10   -- ticks the initiator waits for NO votes before resolving
-M.REPOSITION_VOTE_INITIATE_COOLDOWN     = 3000 -- ~60s @ 50Hz: after opening a vote, this bot won't open another for this long (pass OR fail). SCALED DOWN by back-section over-proportion (see below).
-M.REPOSITION_VOTE_IMBALANCE_K           = 0.6  -- propose cooldown scale = 1 - K*back_over_fraction (0.5 over -> 0.7x cooldown; 1.25+ over -> floor)
-M.REPOSITION_VOTE_COOLDOWN_MIN_FRAC     = 0.25 -- floor: a badly over-full back line still waits at least this fraction of the base cooldown
-M.REPOSITION_VOTE_RECENT_MEMORY_TICKS   = 6000 -- ~120s @ 50Hz: a bot votes NO (and won't propose) if it remembers a reposition EXECUTING within this window. Timed from CONSUMPTION (pill actually taken) or an observed ally repos-goal broadcast — NOT from a vote merely passing (an unconsumed approval no longer blacks out the team)
-M.REPOSITION_URGENT_SCORE               = 0    -- candidates scoring below this are URGENT (actively harmful position): the proposer bypasses the recent-memory blackout and voters skip the recent_repo NO. Safety NOs (blocker / enemy near / better candidate) and the initiate cooldown still apply.
+-- Pacing model (simple 30/30): the team may MOVE one pill every ~30s
+-- (RECENT_MEMORY, timed from consumption / observed execution — never from
+-- a vote merely passing), and a FAILED vote costs the whole team a flat
+-- ~30s before anyone proposes again (FAIL_COOLDOWN — retrying a just-vetoed
+-- move via a different proposer is spam; the NO reasons haven't changed).
+-- (Replaces the imbalance-scaled INITIATE_COOLDOWN model.)
+M.REPOSITION_VOTE_FAIL_COOLDOWN         = 1500 -- ~30s @ 50Hz: team-wide proposal hold after ANY failed vote (own or observed)
+M.REPOSITION_VOTE_RECENT_MEMORY_TICKS   = 1500 -- ~30s @ 50Hz: a bot votes NO (and won't propose) if it remembers a reposition EXECUTING within this window
+M.REPOSITION_URGENT_SCORE               = 0    -- candidates scoring below this are URGENT (actively harmful position): the proposer bypasses the recent-memory blackout and voters skip the recent_repo NO. Safety NOs (blocker / enemy near / better candidate) and the fail cooldown still apply.
 M.REPOSITION_VOTE_ENEMY_NEAR_TILES      = 15   -- vote NO if an enemy tank is within this many tiles of the pill AND nothing else covers it
 M.REPOSITION_VOTE_TANK_COVER_TILES      = 10   -- vote NO if the pill IS covered by >=1 other pill but an enemy tank is within this many tiles
 M.REPOSITION_VOTE_APPROVAL_TTL          = 1500 -- ~30s @ 50Hz of ACTIONABLE time: the TTL burns only on ticks the initiator can actually act (can_carry_now — LGM in tank, hands free, shells); busy stretches pause it, with a hard wall-clock cap at 3× TTL. While an approval is held, luxury LGM dispatches (opportunistic farm / road_ahead / trepair) are suppressed so the window isn't wasted
 M.REPOSITION_APPROVED_COST              = 80   -- fixed reposition cost for the initiator on the pill its team vote APPROVED; beats routine goals (capture/base/place) so the move actually wins the pool, while sub-80 survival/refuel goals can still preempt
 M.REPOSITION_VOTE_RESULT_LATCH_TICKS    = 120  -- keep the vote-result panel on screen this long after resolve so it's readable
 M.REPOS_GUARD_TTL                       = 1500 -- ~30s: reposition-target tiles stay repair/defend/rebuild-proof this long past the last refresh (refreshed every tick while the move runs, so this is the tail AFTER the vote pass / goal broadcast stops — generous so slow pickups and comms gaps can't let a rebuild slip in)
+M.REPOS_PLACE_EXCLUDE_RADIUS            = 5    -- tiles: place_pill_strategic refuses candidate tiles within this of a live _repos_guard entry — the pickup CREATED the coverage hole the scorer wants to fill, so without this the vacated tile re-wins and the pill is rebuilt where it stood (20260704_022107 t=5625)
 -- Exponential "redundant pill" discount: the MORE friendly pills already cover a
 -- pill, the exponentially cheaper it is to move (a redundant back pill is the
 -- best thing to relocate). disc = min(CAP, W * (BASE^covering_pills - 1)),

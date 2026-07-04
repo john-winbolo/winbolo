@@ -45,8 +45,8 @@ function M.on_front_line(tx, ty)
   return n > 0 or s > 0 or w > 0 or e > 0
 end
 
-function M.near_front(mx, my)
-  local r  = FRONT_NEAR_RADIUS
+function M.near_front(mx, my, r)
+  r = r or FRONT_NEAR_RADIUS
   local r2 = r * r
   for dy = -r, r do
     for dx = -r, r do
@@ -60,11 +60,17 @@ end
 
 -- Precise classification of a pill/tile (front-line aware). Returns
 -- (category, influence). `in_use` flags a pill reserved for a pill take.
-function M.classify(mx, my, in_use)
+-- `placing` = classifying a CANDIDATE TILE for a new placement (strategic
+-- scan / heatmap / trail-drop / building-intent): uses the strict
+-- FRONT_NEAR_RADIUS_PLACE (0 = must stand ON the front band) so a new pill
+-- only counts as filling "front" when it's genuinely on the line. Existing
+-- pills (identify) keep the looser FRONT_NEAR_RADIUS halo.
+function M.classify(mx, my, in_use, placing)
   local inf = cpf.influence_at(mx, my)
   if in_use then return "utility", inf end
-  -- front: on/near the front line (the FRONT_NEAR_RADIUS box scan).
-  if M.near_front(mx, my) then return "front", inf end
+  -- front: on/near the front line (radius by purpose — see above).
+  local r = placing and (C.FRONT_NEAR_RADIUS_PLACE or 0) or FRONT_NEAR_RADIUS
+  if M.near_front(mx, my, r) then return "front", inf end
   -- aggro: own tile in enemy influence, OR surrounded by it (>= AGGRO_NEG_NEIGHBORS
   -- of the 8 adjacent tiles negative — catches a positive tile boxed in by enemy).
   if inf < 0 then return "aggro", inf end

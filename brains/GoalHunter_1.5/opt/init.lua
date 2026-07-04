@@ -2663,7 +2663,7 @@ function Brain.think(info)
         _pf_dc = PP.counts(world, now)
         _pf_dt = PP.targets(_pf_dc.back + _pf_dc.front + _pf_dc.aggro + 1)
       end
-      local cat = PP.classify(mx, my, false)
+      local cat = PP.classify(mx, my, false, true)
       local t = _pf_dt[cat]
       return (t ~= nil and (_pf_dc[cat] or 0) >= t), cat
     end

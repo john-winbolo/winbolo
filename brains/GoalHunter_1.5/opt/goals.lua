@@ -2084,11 +2084,35 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     end
   end
 
+  -- Reposition-origin exclusion: never place near the hole a reposition just
+  -- made. Picking the pill up CREATES the coverage gap (unguarded base, role
+  -- deficit) that this scorer then top-ranks a fix for — without this the
+  -- vacated tile re-wins and the pill gets rebuilt exactly where it stood
+  -- (20260704_022107 t=5625, pill#3 @(137,117)). _repos_guard carries every
+  -- in-flight/recent reposition tile (ours AND allies'), ~30s past the move.
+  local function near_repos_origin(cx, cy)
+    local g = state._repos_guard
+    if not g then return false end
+    local RG    = C.REPOS_PLACE_EXCLUDE_RADIUS or 5
+    local now_t = state.tick or 0
+    for gk, untl in pairs(g) do
+      if untl > now_t then
+        local gmx = gk % 256
+        local gmy = (gk - gmx) / 256
+        if math.abs(cx - gmx) <= RG and math.abs(cy - gmy) <= RG then
+          return true
+        end
+      end
+    end
+    return false
+  end
+
   for dy = -R, R do
     for dx = -R, R do
       local cx = U.mclamp(tmx + dx)   -- TANK-centric: scan around our position
       local cy = U.mclamp(tmy + dy)
       if U.is_placeable(cx, cy, world) then
+        if near_repos_origin(cx, cy) then goto skip_cell end
         -- Surplus skip: never overfill a category already at/over its projected
         -- target (e.g. another BACK pill when back is 2/1). Unlike the old hard
         -- "only the most-needed type" gate, any category with room is allowed;
@@ -2096,7 +2120,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         -- one. If every placeable spot is a surplus category, best_mx stays nil
         -- and we keep carrying — there is no fallback.
         local cell_inf = cpf.influence_at(cx, cy)
-        local cell_cat = PP.classify(cx, cy, false)
+        local cell_cat = PP.classify(cx, cy, false, true)
         local _ctgt = pf_targets[cell_cat]
         if _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then goto skip_cell end
         local score = 0
@@ -2529,7 +2553,7 @@ function M.get_strategic_place_heatmap(state, world, info)
       local cy = U.mclamp(tmy + dy)
       if U.is_placeable(cx, cy, world) then
         -- Skip a category already at/over its projected target (no room).
-        local cell_cat = PP.classify(cx, cy, false)
+        local cell_cat = PP.classify(cx, cy, false, true)
         local _ctgt = pf_targets[cell_cat]
         if _ctgt and (pf_counts[cell_cat] or 0) >= _ctgt then goto skip_hm end
         local score = 0
@@ -4642,7 +4666,10 @@ local function get_formula(e)
     -- the cost equation.
     local our   = e.cost or 0
     local their = e._ally_score
-    local frac  = C.ALLY_CLAIMED_STEAL_FRAC or 0.25
+    -- capture_pill uses the near-zero steal threshold (any cost edge wins
+    -- a drive-over grab); other pools the conservative default.
+    local frac  = (e._p == 4) and (C.ALLY_CLAIMED_STEAL_FRAC_CAPTURE or 0.01)
+                  or (C.ALLY_CLAIMED_STEAL_FRAC or 0.25)
     local rel
     if our < their * (1 - frac) then
       rel = string.format("we cheaper by %.0f%%", (1 - our / math.max(1, their)) * 100)
@@ -6051,6 +6078,11 @@ local function sync_ally_claimed_rejects(state, info)
 
       if match_pn then
         local our_cost = e.cost
+        -- Per-pool steal threshold: capture_pill grabs are cheap to re-route
+        -- (drive-over, no shells invested), so essentially ANY cost edge wins
+        -- the pickup (1%); other pools keep the conservative 25% band.
+        local pool_steal_frac = (pool_idx == 4)
+          and (C.ALLY_CLAIMED_STEAL_FRAC_CAPTURE or 0.01) or steal_frac
         local we_keep
         -- "First to claim it, keeps it" rule.  Within the steal band
         -- (neither side meaningfully cheaper), the current holder
@@ -6085,9 +6117,9 @@ local function sync_ally_claimed_rejects(state, info)
           -- Ally hasn't broadcast a cost yet (first frame post-pick) — no costs
           -- to compare. Settle deterministically by player id (see steal band).
           we_keep = (self_pn < match_pn)
-        elseif our_cost < match_cost * (1 - steal_frac) then
+        elseif our_cost < match_cost * (1 - pool_steal_frac) then
           we_keep = true  -- we're meaningfully cheaper (>=frac), keep
-        elseif match_cost < our_cost * (1 - steal_frac) then
+        elseif match_cost < our_cost * (1 - pool_steal_frac) then
           we_keep = false -- they're meaningfully cheaper, yield
         else
           -- Steal band (neither meaningfully cheaper): settle the tie by a
@@ -6114,7 +6146,7 @@ local function sync_ally_claimed_rejects(state, info)
           -- by being meaningfully cheaper (not just first-claim hysteresis).
           -- Surfaced as a chip in the pool visualizer.
           e._stealing = (match_cost ~= nil)
-            and (our_cost < match_cost * (1 - steal_frac)) or false
+            and (our_cost < match_cost * (1 - pool_steal_frac)) or false
         else
           e._reject           = "ally_claimed"
           e._reject_remaining = match_heartbeat

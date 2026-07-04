@@ -12,7 +12,9 @@
 --
 -- Allies vote NO when (any of):
 --   * the pill is in use as a take blocker (_in_use)
---   * they remember ANY reposition within the last ~120s (one move at a time)
+--   * they remember a reposition EXECUTING within the last ~30s (one move
+--     per RECENT_MEMORY window; urgent negative-score proposals exempt);
+--     any FAILED vote additionally holds all proposals ~30s (FAIL_COOLDOWN)
 --   * an enemy tank is within 15 tiles AND nothing else covers the pill
 --   * the pill IS covered by >=1 pill but an enemy tank is within 10 tiles
 --   * they have a strictly better (lower-cost) reposition candidate of their own
@@ -168,6 +170,12 @@ function M.update(state, world, info, now)
       state._repos_guard = state._repos_guard or {}
       state._repos_guard[ap.my * 256 + ap.mx] = now + (C.REPOS_GUARD_TTL or 300)
     end
+    -- 30/30 pacing: a FAILED vote (anyone's) holds ALL proposals for
+    -- FAIL_COOLDOWN — retrying a just-vetoed move via a different proposer
+    -- is spam; the NO reasons haven't changed.
+    if not res.pass then state._repo_fail_tick = now end
+    print2(string.format("REPO_VOTE_TBL t=%d ev=result pid=%d from=p%s pass=%s",
+           now, res.pid, tostring(res.from), tostring(res.pass)))
     state._repo_active = nil
     state._repo_vote_panel = { pid = res.pid, from = res.from, pass = res.pass,
                                until_tick = now + (C.REPOSITION_VOTE_RESULT_LATCH_TICKS or 120) }
@@ -244,6 +252,9 @@ function M.update(state, world, info, now)
         state._repo_my_ballot = { pid = op.pid, no = is_no, reason = reason, tick = now }
         print2(string.format("REPO_VOTE t=%d cast %s on pill#%d (from p%s) reason=%s",
                now, is_no and "NO" or "YES", op.pid, tostring(op.from), reason))
+        print2(string.format("REPO_VOTE_TBL t=%d ev=ballot pid=%d from=p%s by=p%s vote=%s reason=%s",
+               now, op.pid, tostring(op.from), tostring(self_pn),
+               is_no and "NO" or "YES", reason))
       end
     end
     state._repo_rx_open = nil
@@ -280,7 +291,13 @@ function M.update(state, world, info, now)
         -- _repo_last_seen_tick / last_team_reposition_tick are NOT set here
         -- any more — they now mark CONSUMPTION (the pill actually taken),
         -- so an unusable approval doesn't blackout the team's proposals.
+      else
+        -- 30/30 pacing: our own fail also starts the team-wide hold (the
+        -- receivers start theirs from the rvr result broadcast).
+        state._repo_fail_tick = now
       end
+      print2(string.format("REPO_VOTE_TBL t=%d ev=resolve pid=%d from=p%s pass=%s no=%d score=%d",
+             now, mv.pid, tostring(self_pn), tostring(pass), no_n, math.floor(mv.score or 0)))
       state._repo_vote_panel = { pid = mv.pid, from = self_pn, pass = pass,
                                  yes = mv.yes_set, no = mv.no_set,
                                  until_tick = now + (C.REPOSITION_VOTE_RESULT_LATCH_TICKS or 120) }
@@ -312,6 +329,7 @@ function M.update(state, world, info, now)
       -- (e.g. reposition it a second time right after it was just re-built).
       -- THIS is when the recent-reposition memory starts: a move happened.
       print2(string.format("REPO_VOTE t=%d approval pill#%d consumed (taken/built) — cleared, recent-memory starts", now, state._repo_approved_pid))
+      print2(string.format("REPO_VOTE_TBL t=%d ev=consumed pid=%d by=p%s", now, state._repo_approved_pid, tostring(info.player_number)))
       state._repo_last_seen_tick      = now
       state.last_team_reposition_tick = now   -- feed the existing team time-discount
       state._repo_approved_pid  = nil
@@ -328,6 +346,9 @@ function M.update(state, world, info, now)
         if not committed then
           print2(string.format("REPO_VOTE t=%d approval pill#%d expired unconsumed (used=%d wall=%d)",
                  now, state._repo_approved_pid, state._repo_approved_used or 0, wall))
+          print2(string.format("REPO_VOTE_TBL t=%d ev=expired pid=%d by=p%s used=%d wall=%d",
+                 now, state._repo_approved_pid, tostring(info.player_number),
+                 state._repo_approved_used or 0, wall))
         end
         state._repo_approved_pid  = nil
         state._repo_approved_used = nil
@@ -335,35 +356,30 @@ function M.update(state, world, info, now)
     end
   end
 
-  -- 4. Maybe OPEN a new vote.
+  -- 4. Maybe OPEN a new vote. 30/30 pacing:
+  --   * one MOVE per RECENT_MEMORY (~30s), timed from consumption/observed
+  --     execution — URGENT (negative-score) candidates bypass this;
+  --   * any FAILED vote (ours or observed) holds ALL proposals for
+  --     FAIL_COOLDOWN (~30s) — no bypass; the NO reasons haven't changed.
+  --   * never propose a pill that's guard-marked (someone's move in flight).
   if not state._repo_my_vote and not state._repo_active and not state._repo_approved_pid then
-    local cand   = state._repo_candidate
-    -- Propose cooldown scales DOWN with how over-proportion the BACK section
-    -- is (state._repo_imbalance, cached by eval_reposition_pill): a balanced
-    -- back line waits the full cooldown, a badly over-full one down to
-    -- MIN_FRAC of it — so lopsided pools correct faster without raising the
-    -- baseline rate across the board.
-    local imb    = state._repo_imbalance or 0
-    local base_cd = C.REPOSITION_VOTE_INITIATE_COOLDOWN or 3000
-    local scale  = 1.0 - (C.REPOSITION_VOTE_IMBALANCE_K or 0.6) * imb
-    local minf   = C.REPOSITION_VOTE_COOLDOWN_MIN_FRAC or 0.25
-    if scale < minf then scale = minf end
-    local eff_cd = base_cd * scale
-    local cd_ok  = not state._repo_initiate_tick
-                   or (now - state._repo_initiate_tick) >= eff_cd
-    local mem_ok = not state._repo_last_seen_tick
-                   or (now - state._repo_last_seen_tick) >= (C.REPOSITION_VOTE_RECENT_MEMORY_TICKS or 6000)
-    -- URGENT bypass: a negative-score candidate is an actively harmful
-    -- position — skip the recent-memory blackout (the scaled initiate
-    -- cooldown still paces this bot's proposals).
-    local urgent = cand and (cand.score or 0) < (C.REPOSITION_URGENT_SCORE or 0)
-    if cand and cand.can_carry and cd_ok and (mem_ok or urgent) then
+    local cand    = state._repo_candidate
+    local fail_ok = not state._repo_fail_tick
+                    or (now - state._repo_fail_tick) >= (C.REPOSITION_VOTE_FAIL_COOLDOWN or 1500)
+    local mem_ok  = not state._repo_last_seen_tick
+                    or (now - state._repo_last_seen_tick) >= (C.REPOSITION_VOTE_RECENT_MEMORY_TICKS or 1500)
+    local urgent  = cand and (cand.score or 0) < (C.REPOSITION_URGENT_SCORE or 0)
+    local guarded = cand and state._repos_guard
+                    and (state._repos_guard[cand.my * 256 + cand.mx] or 0) > now
+    if cand and cand.can_carry and fail_ok and (mem_ok or urgent) and not guarded then
       tx(string.format("/info rvo %d %d %d %d", cand.pid, cand.mx, cand.my, math.floor(cand.score or 0)))
       state._repo_my_vote = { pid = cand.pid, mx = cand.mx, my = cand.my, score = cand.score,
                               open_tick = now, no = 0 }
-      state._repo_initiate_tick = now
       print2(string.format("REPO_VOTE t=%d OPEN pill#%d @(%d,%d) score=%d",
              now, cand.pid, cand.mx, cand.my, math.floor(cand.score or 0)))
+      print2(string.format("REPO_VOTE_TBL t=%d ev=open pid=%d from=p%s mx=%d my=%d score=%d urgent=%s",
+             now, cand.pid, tostring(self_pn), cand.mx, cand.my,
+             math.floor(cand.score or 0), tostring(urgent or false)))
     end
   end
 
