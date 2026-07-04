@@ -3473,6 +3473,13 @@ local FINALIZE_POOLS = { 2, 8, 9, 10 }  -- defend_pill, place_pill, attack_tank,
 -- The only HARD reject (drop from queue entirely) is "hostile" — we
 -- never refuel at an enemy base.
 local function filter_refuel(obj, state, info)
+  -- TEST AID: a never-refuel bot (state.test_never_refuel, rolled per bot
+  -- from TEST_NEVER_REFUEL_CHANCE) rejects EVERY refuel candidate so the
+  -- ammo-deprivation/decoy path can be exercised without engineering a
+  -- base-starved map. Shows as reject "test_no_refuel" in the pool grid.
+  if state and state.test_never_refuel then
+    return { reason = "test_no_refuel" }
+  end
   if not (obj.owner == "friendly" or obj.owner == "neutral") then
     return { reason = "hostile" }
   end

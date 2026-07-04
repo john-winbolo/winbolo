@@ -180,7 +180,15 @@ M.AMMO_DEPRIVED_TICKS  = 3000           -- 60 s continuously below it (was 120 s
 -- many ticks at game start — outputs zeroed, brains still tick — so a human
 -- can grab most of the map first and then watch ammo-deprivation/decoy
 -- behavior kick in. Countdown printed to the console every 10 s by bot 0.
-M.BOT_TEST_GLOBAL_HOLD_TICKS = 6000     -- 120 s hold, then bots go live
+M.BOT_TEST_GLOBAL_HOLD_TICKS = 0        -- off (superseded by TEST_NEVER_REFUEL_CHANCE)
+
+-- TEST AID (set 0 before merging to a release): each bot rolls this chance
+-- at first think to become a NEVER-REFUEL bot — every refuel candidate is
+-- rejected ("test_no_refuel" in the pool grid), so it burns its shells and
+-- hits ammo-deprivation naturally, exercising the decoy path on any map.
+-- Console prints "[TEST] bot N NEVER-REFUEL" at roll time; the followed
+-- bot shows a red "TEST: NEVER-REFUEL" HUD banner (viz id test_no_refuel).
+M.TEST_NEVER_REFUEL_CHANCE = 0.5
 
 -- PPT-force thresholds. PPT (Protected Pill Take) is normally only
 -- chosen for high-HP pills (>= PPT_HEALTH_THRESHOLD). These knobs let

@@ -824,6 +824,23 @@ function Brain.think(info)
   state._last_info = info
   local now  = state.tick
 
+  -- TEST AID: roll the never-refuel flag once per bot (see
+  -- TEST_NEVER_REFUEL_CHANCE in constants.lua — 0 disables). Seeded per
+  -- player so the four bots don't all roll the same value.
+  if state.test_never_refuel == nil then
+    local chance = C.TEST_NEVER_REFUEL_CHANCE or 0
+    if chance > 0 then
+      math.randomseed(os.time() + (info.player_number or 0) * 7919)
+      state.test_never_refuel = math.random() < chance
+      if state.test_never_refuel then
+        print(string.format("[TEST] bot %d is NEVER-REFUEL (all refuel goals blocked)",
+                            info.player_number or -1))
+      end
+    else
+      state.test_never_refuel = false
+    end
+  end
+
   -- Cautious mode: per-tick boolean.  When true, danger / threat
   -- terms across cost formulas get multiplied by
   -- C.CAUTIOUS_MODE_MULT (5×) so the bot biases hard toward
@@ -6666,6 +6683,13 @@ function Brain.think(info)
   elseif now == (C.BOT_TEST_GLOBAL_HOLD_TICKS or 0) + 1
          and (info.player_number or 0) == 0 then
     print("[BOT-HOLD] bots are LIVE")
+  end
+
+  -- TEST AID banner: the followed bot is a never-refuel test bot (all
+  -- refuel candidates rejected). Loud red so nobody mistakes a test run
+  -- for real behavior.
+  if state.test_never_refuel then
+    viz.hud_text("test_no_refuel", 10, 58, "TEST: NEVER-REFUEL BOT", "topleft", 255, 60, 60)
   end
 
   -- Tick-info HUD (top-left, just below BrainTest's tick/think box).
