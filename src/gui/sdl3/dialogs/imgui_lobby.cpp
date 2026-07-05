@@ -7235,6 +7235,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 #else
         const bool useTabbedLobby = uiShouldUseControllerMode();
 #endif
+#if POSTGAME_STATS_ENABLED
+        const bool lobbyShowLastRound = clientSimGetLastRoundStats(cs) != NULL;
+#else
+        const bool lobbyShowLastRound = false;  /* post-game recap withheld this release */
+#endif
 
         /* Settings above the layout is the two-column (mouse) path only; the
          * tabbed layout renders the same form in a dedicated tab, so skip it
@@ -7278,7 +7283,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * tabs (rendered later this frame) instead of the lobby tabs. */
             /* The recap tab exists only while a stored end-of-round
              * summary does (set at game over, cleared on countdown). */
-            const bool haveLastRound = clientSimGetLastRoundStats(cs) != NULL;
+            const bool haveLastRound = lobbyShowLastRound;
             if (!s_chooseMapOpen) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
@@ -7888,7 +7893,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * above Ready when a summary exists, so reserve a second row
              * (+ inter-button spacing). The MapPanel shrinks to keep Ready
              * on-screen. */
-            if (clientSimGetLastRoundStats(cs) != NULL) {
+            if (lobbyShowLastRound) {
                 readyAreaH += frameH + ImGui::GetStyle().ItemSpacing.y;
             }
 
@@ -8432,7 +8437,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                  * Shown only while a stored summary exists (set at game
                  * over, cleared on the next countdown). The window itself
                  * is rendered later, outside this group. */
-                if (clientSimGetLastRoundStats(cs) != NULL) {
+                if (lobbyShowLastRound) {
                     if (ImGui::Button(langGetText(STR_DLGLOBBY_LASTROUND_BTN),
                                       ImVec2(-1, 0))) {
                         g_lastRoundWinOpen = true;
@@ -8473,7 +8478,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * window (matches the Map preview popup's geometry) opened by
              * the "Last round" button above Ready. Auto-dismisses when the
              * stored summary clears on the next countdown. */
-            if (clientSimGetLastRoundStats(cs) == NULL) {
+            if (!lobbyShowLastRound) {
                 g_lastRoundWinOpen = false;
             }
             if (g_lastRoundWinOpen) {

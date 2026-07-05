@@ -29,6 +29,11 @@
 #ifndef ROUND_STATS_H
 #define ROUND_STATS_H
 
+/* Post-game stats/awards: the wire publish (server) and the lobby recap
+ * UI (client) are built but withheld from this release. Set to 1 to
+ * surface them. */
+#define POSTGAME_STATS_ENABLED 0
+
 #include <stdint.h>
 #include "global.h"    /* MAX_TANKS, NEUTRAL */
 #include "gametype.h"  /* TANK_FULL_ARMOUR — backs DMG_PER_CAPTURE */

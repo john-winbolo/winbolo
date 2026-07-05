@@ -574,12 +574,14 @@ void serverInstanceTick(ServerSim *sim) {
       /* Ship the round's scoreboard + awards while the accumulator is still
        * intact (returnToLobby clears it later). This path runs only for a
        * round that actually reached game-over. */
+#if POSTGAME_STATS_ENABLED
       {
         ControlEvent rsEvt;
         rsEvt.type = CTRL_ROUND_STATS;
         serverSimBuildRoundStatsSummary(sim, &rsEvt.u.roundStats);
         serverSimPublishControl(sim, &rsEvt);
       }
+#endif
       /* No-lobby map rotation: a win boots everyone and restarts a fresh
        * round here, inside the tick, so sim->state leaves gameOver before
        * the main loop's exit check observes it — the server never quits. */
