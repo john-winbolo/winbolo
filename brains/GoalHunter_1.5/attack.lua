@@ -5494,7 +5494,12 @@ function M.update_attack_substate(goal, state, world, info)
     -- remaining HP). The pill-dead case is handled by the block above. Honors the
     -- one-time soak decision: don't peel off the last HP of a calm pill we chose
     -- to buck in and finish. The straight no-dodge rush lives in kill_hardline.
-    if C.CHARGE_SWERVE_ENABLED and pill and (pill.health or 0) > 0 then
+    -- An ammo-deprived decoy never peels off to dodge return fire: its whole
+    -- job is to STAY on the pill drawing fire for the captain, so it keeps
+    -- charging through the hits instead of defensive-swerving. The pill-dead
+    -- swerve above (kill mode) still fires the moment the pill dies, so the
+    -- dead-pill handoff (rush / capture / exit) runs exactly as normal.
+    if C.CHARGE_SWERVE_ENABLED and pill and (pill.health or 0) > 0 and not state.ammo_deprived then
       local _soak_ok = commit_soak_finish(goal, state, info)
       local _tank_finish = _soak_ok and (pill.health or 0) <= (C.TANK_FINISH_MAX_HP or 3)
                            and (pill.anger or 0) <= (C.TANK_FINISH_MAX_ANGER or 0.25)
