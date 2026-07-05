@@ -188,7 +188,7 @@ M.BOT_TEST_GLOBAL_HOLD_TICKS = 0        -- off (superseded by TEST_NEVER_REFUEL_
 -- hits ammo-deprivation naturally, exercising the decoy path on any map.
 -- Console prints "[TEST] bot N NEVER-REFUEL" at roll time; the followed
 -- bot shows a red "TEST: NEVER-REFUEL" HUD banner (viz id test_no_refuel).
-M.TEST_NEVER_REFUEL_CHANCE = 0.5
+M.TEST_NEVER_REFUEL_CHANCE = 0        -- off (use -bot-init [ammoless] to target a specific bot)
 
 -- PPT-force thresholds. PPT (Protected Pill Take) is normally only
 -- chosen for high-HP pills (>= PPT_HEALTH_THRESHOLD). These knobs let
