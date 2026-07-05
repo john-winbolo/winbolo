@@ -5625,10 +5625,16 @@ function M.step_eval_queue(state, world, info)
         -- takes). The pool stays populated; weak-shell takes naturally
         -- score themselves out of contention.
         local pill_hp_now = obj.health or 0
-        if info.shells < pill_hp_now then
+        -- Ammo-deprived helper: score the take as if it held a normal load
+        -- (~20 shells), not its real 0. A decoy's job is to CHARGE and draw fire,
+        -- not finish the pill, so it must not be priced out at COST_INF — with a
+        -- normal finite cost attack_pill competes with explore (500) and wins when
+        -- it should go help, no fragile join-discount needed.
+        local _shells_for_cost = state.ammo_deprived and (C.AMMO_DEPRIVED_PHANTOM_SHELLS or 20) or info.shells
+        if _shells_for_cost < pill_hp_now then
           ammo_cost = 1e30
         else
-          local ending = info.shells - pill_hp_now
+          local ending = _shells_for_cost - pill_hp_now
           if ending < C.SHELLS_LOW then
             ammo_cost = (C.SHELLS_LOW - ending) * 5
           end
@@ -6032,6 +6038,13 @@ local function sync_ally_claimed_rejects(state, info)
   -- right armour on every tick, not just when the pool grid is open.
   local cur_armour = (info and info.armour)
                      or (state._last_info and state._last_info.armour) or 0
+  -- Ammoless helpers (out of shells, or ammo-deprived) are DECOY bodies: their
+  -- whole job in a blitz is to soak the pill's fire so the shooters get free
+  -- shots. Low armour is the POINT, not a disqualifier — so they skip the
+  -- armour_too_low pill precondition below (a normal tank still respects it).
+  local _hshells = (info and info.shells)
+                   or (state._last_info and state._last_info.shells) or 0
+  local ammoless_helper = state.ammo_deprived or _hshells == 0
 
   local priority_ticks = C.ALLY_PILL_TAKE_PRIORITY_TICKS or 100
   -- Per-pill snapshot keyed by pill_id: { until_t, by }.  Set ONCE the
@@ -6157,7 +6170,8 @@ local function sync_ally_claimed_rejects(state, info)
     if pool_idx == 6 and e._hpv then
       local pill_hp = e._hpv
       if pill_hp >= C.ATTACK_PILL_UNSAFE_HP_THRESHOLD
-         and cur_armour < C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR then
+         and cur_armour < C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR
+         and not ammoless_helper then
         if e._reject ~= "armour_too_low" then
           e._reject = "armour_too_low"
           e._reject_remaining = 0
@@ -8433,7 +8447,12 @@ local function goal_selection(state, world, info, quiet)
       -- from both additive SW+CM penalty AND the multiplicative ratio
       -- gate (the gate only fires for entries with c.hysteresis set,
       -- which we leave nil here).
-      if HYST_EXEMPT[c.goal.kind] or c.goal._place_emergency or c._engage_break_lock then
+      if HYST_EXEMPT[c.goal.kind] or c.goal._place_emergency or c._engage_break_lock
+         or (state.ammo_deprived and c.goal.kind == "attack_pill") then
+        -- Ammo-deprived decoy: charging the pill to draw fire is a "drop
+        -- everything and go" action like attack_tank, so switching TO it is
+        -- free (skip the type-switch hysteresis that would otherwise price
+        -- the finite base ~68 up past explore's ~500 and trap it exploring).
         -- Exempt goals skip the type-switch penalty (switching from
         -- another group is free). But within the same group, the
         -- target-switch penalty still applies to prevent spinning
@@ -8826,6 +8845,59 @@ local function goal_selection(state, world, info, quiet)
       table.sort(pool, function(a, b) return a.cost < b.cost end)
     end
 
+    -- ── Ammoless: reject attack_pill #N unless #N is an ongoing blitz ──
+    -- A tank with ZERO shells can't fire a single shot, so it must not pursue
+    -- ANY attack_pill take #N — force it to COST_INF so the reject / explore
+    -- fallback below drops it. The ONLY exception is a pill that already has an
+    -- ONGOING blitz (our own committed target, or a live ally call on it): a
+    -- real squad take it can HELP as a decoy body is kept. This stops a dry bot
+    -- re-picking impossible SOLO takes every tick without breaking blitzes we
+    -- want to keep (the pill's blitz pricing keeps its cost cheap either way).
+    if (info.shells or 0) == 0 then
+      for _, c in ipairs(pool) do
+        if c.goal and c.goal.kind == "attack_pill" and (c.cost or 0) < 1e29 then
+          local pid = c._pill_id or (c.goal and c.goal.target_id)
+          local ongoing_blitz = false
+          if pid then
+            if state.squad_blitz_target == pid then
+              ongoing_blitz = true
+            elseif state.blitz_calls then
+              for _, bc in pairs(state.blitz_calls) do
+                if bc.pill == pid then ongoing_blitz = true; break end
+              end
+            end
+          end
+          if not ongoing_blitz then
+            c.cost = 1e30
+          end
+        end
+      end
+    end
+
+    -- ── Reject COST_INF winners (>= 1e29) ──
+    -- A goal at/above the COST_INF sentinel is unreachable/unaffordable
+    -- (attack_pill when shells < pill HP → 1e30, no standoff, etc.). It must
+    -- never be SELECTED: goal-type hysteresis can otherwise glue the bot to it
+    -- (it was promoted to pool[1] just above), and it then burns full planning
+    -- — e.g. a ~50ms PPT shield scan — on a take it can't execute. Blitz
+    -- commit/join already price their pill finite (apply_blitz_target ~30 /
+    -- apply_blitz_join_discount's finite ref base), so a real helper's blitz
+    -- survives here; only the futile solo take is dropped. Drop the leading
+    -- sentinel entries so pool[1] becomes the cheapest AFFORDABLE goal
+    -- (reposition/capture/explore). If NOTHING is affordable, leave the pool
+    -- untouched so there's still a least-bad, non-nil winner.
+    do
+      local first_ok
+      for i = 1, #pool do
+        if (pool[i].cost or math.huge) < 1e29 then first_ok = i; break end
+      end
+      if first_ok and first_ok > 1 then
+        if BRAIN_DEBUG_MODE then print2(string.format("  COST_INF reject: dropped %d leading sentinel goal(s); winner now %s cost=%.0f",
+          first_ok - 1, pool[first_ok].goal.kind, pool[first_ok].cost)) end
+        for _ = 1, first_ok - 1 do table.remove(pool, 1) end
+      end
+    end
+
     local _tgs_post_wsim = clock_us()
     _tgs_log("wsim")
     if BRAIN_PROFILE_LOG and (_tgs_post_wsim - _tgs0) > 500 then
@@ -8990,8 +9062,20 @@ local function goal_selection(state, world, info, quiet)
       })
       end -- BRAIN_DEBUG_MODE
 
+      -- No AFFORDABLE goal: the winner is at/above the COST_INF sentinel
+      -- (>= 1e29) — e.g. a dry bot whose only surviving pool entry is an
+      -- unaffordable attack_pill (reposition/capture got filtered out by
+      -- cooldown/blocked, so the reject had nothing cheaper to fall to). Don't
+      -- commit to the sentinel — leave result nil so M.pick_goal drops through
+      -- to the explore fallback, which picks a real frontier target. This is the
+      -- guaranteed sub-1e29 escape hatch: without it the bot is glued to a take
+      -- it can never complete (it just parks in plan_position re-planning).
+      if (winner.cost or 0) >= 1e29 then
+        result = nil
+        desc = "no affordable goal (winner >=1e29) -> explore fallback"
+        if BRAIN_DEBUG_MODE then print2(string.format("  COST_INF: winner %s cost=%.0f is unaffordable, no cheaper alt -> explore", winner.goal and winner.goal.kind or "?", winner.cost or 0)) end
       -- If attack pill won, resolve technique (standoff, wall-shield, etc.)
-      if winner._pill then
+      elseif winner._pill then
         local resolved, technique = resolve_attack_goal(winner._pill, winner._pill_id, world, info, state)
         result = resolved
         desc = winner.desc .. " tech=" .. (technique or "?")

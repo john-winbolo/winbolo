@@ -3924,30 +3924,54 @@ function M.update_attack_substate(goal, state, world, info)
       -- in for a 3-wall shield and the planner won't over-build walls.
       local _num_pill_blockers = math.min(info.carried_pills or 0,
                                           C.PPT_PILL_BLOCKERS_MAX or 2)
-      local _ok, sscan_or_err = xpcall(function()
-        return shield.scan(pill, world,
-                           goal.standoff_mx, goal.standoff_my,
-                           goal._chosen_deg or 0,
-                           goal.standoff_fx, goal.standoff_fy,
-                           scan_radius, no_builder, info.armour,
-                           _sb_pos, _sb_step, _num_pill_blockers)
-      end, debug.traceback)
+      -- Shield-scan cache: shield.scan is ~20ms. A stuck / re-planning bot can
+      -- re-enter plan_position every tick (the goal is re-adopted each replan,
+      -- which re-sets _shield_scan_pending), recomputing the SAME plan and
+      -- burning full CPU every tick — dry bots that can't finish a take sat
+      -- here 200-1100 ticks at 34-70ms. Reuse a recent result keyed on the
+      -- scan's stable inputs; the key includes pill health + our armour +
+      -- standoff, so it busts the instant the situation actually changes
+      -- (pill damaged, we moved/took damage, switched pills). Cost is then paid
+      -- at most once per SHIELD_SCAN_CACHE_TICKS instead of every tick.
+      local _now = state.tick or 0
+      local _scan_key = string.format("%d,%d,%d|%s,%s,%s|%s,%s|%s,%s,%s|%d",
+        pill.mx, pill.my, pill.health or 0,
+        tostring(goal.standoff_mx), tostring(goal.standoff_my),
+        tostring(goal._chosen_deg or 0),
+        tostring(goal.standoff_fx), tostring(goal.standoff_fy),
+        tostring(scan_radius), tostring(no_builder), tostring(info.armour),
+        _num_pill_blockers)
       local sscan
-      if _ok then
-        sscan = sscan_or_err
+      local _sc = state._shield_scan_cache
+      if _sc and _sc.key == _scan_key
+         and (_now - (_sc.tick or -1000000)) < (C.SHIELD_SCAN_CACHE_TICKS or 25) then
+        sscan = _sc.result
       else
-        local msg = tostring(sscan_or_err)
-        -- Re-raise budget abort so the brain runtime sees its own signal
-        -- and aborts the tick properly. Only catch genuine shield-scan
-        -- bugs (everything else).
-        if msg:find("tick_budget_exceeded", 1, true) then
-          error(sscan_or_err)
+        local _ok, sscan_or_err = xpcall(function()
+          return shield.scan(pill, world,
+                             goal.standoff_mx, goal.standoff_my,
+                             goal._chosen_deg or 0,
+                             goal.standoff_fx, goal.standoff_fy,
+                             scan_radius, no_builder, info.armour,
+                             _sb_pos, _sb_step, _num_pill_blockers)
+        end, debug.traceback)
+        if _ok then
+          sscan = sscan_or_err
+          state._shield_scan_cache = { key = _scan_key, result = sscan, tick = _now }
+        else
+          local msg = tostring(sscan_or_err)
+          -- Re-raise budget abort so the brain runtime sees its own signal
+          -- and aborts the tick properly. Only catch genuine shield-scan
+          -- bugs (everything else).
+          if msg:find("tick_budget_exceeded", 1, true) then
+            error(sscan_or_err)
+          end
+          if BRAIN_DEBUG_MODE and state._plan_trace then
+            state._plan_trace.shield_err = msg
+          end
+          print(TAG .. " SHIELD SCAN CRASH:\n" .. msg)
+          sscan = nil
         end
-        if BRAIN_DEBUG_MODE and state._plan_trace then
-          state._plan_trace.shield_err = msg
-        end
-        print(TAG .. " SHIELD SCAN CRASH:\n" .. msg)
-        sscan = nil
       end
       if BRAIN_DEBUG_MODE and state._plan_trace then
         local _t = state._plan_trace

@@ -300,6 +300,8 @@ M.IDS = {
   test_no_refuel = { short = "HUD: TEST never-refuel bot",
                      long  = "TEST AID: red banner when the followed bot rolled the never-refuel flag (TEST_NEVER_REFUEL_CHANCE) — all its refuel candidates are rejected so it hits ammo-deprivation naturally. Roll results also print to the console at startup.",
                      default_on = true },
+  ammo_deprive_countdown = { short = "HUD: Ammoless-helper countdown",
+                     long  = "Followed bot's countdown to state.ammo_deprived — the 'ammoless helper' mode where a shell-starved tank stops trying to fight solo and instead joins any blitz / suicide-charges (AMMO_DEPRIVED_BLITZ_MULT). Mirrors strategy.lua exactly: the clock starts the tick shells fall below AMMO_DEPRIVED_SHELLS outside the opening phase (state.ammo_low_since), clears the instant shells recover to that line, and fires after AMMO_DEPRIVED_TICKS (~60s). States: grey=idle (ammo ok), BLUE=GATED (dry but suppressed by the opening land-grab phase — clock can't start yet), amber=counting down, red=ACTIVE. Shows seconds+ticks remaining and a fill bar." },
   wait_spot = { short = "Wait-for-LGM safe spot",
                 long  = "Danger-aware wait_for_lgm: when the parked tile is under fire, shows the scored candidate ring (yellow=safe candidate, red=dangerous, grey=unreachable, green=chosen), the chosen wait tile (green ring), a line to the returning LGM, and the danger value that triggered the move. Data from pick_wait_spot — the same scores the goal used." },
   spike_pills = { short = "Spiking pills (base denial)",

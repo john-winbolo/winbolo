@@ -242,7 +242,7 @@ function M.update(state, world, info)
   end
   local was_deprived = state.ammo_deprived
   state.ammo_deprived = state.ammo_low_since ~= nil
-                    and (state.tick - state.ammo_low_since) >= C.AMMO_DEPRIVED_TICKS
+                    and (state.tick - state.ammo_low_since) >= (state.test_deprive_ticks or C.AMMO_DEPRIVED_TICKS)
   if BRAIN_DEBUG_MODE and state.ammo_deprived ~= was_deprived then print2(string.format("[ammo] t=%d ammo_deprived=%s shells=%d low_for=%d", state.tick, tostring(state.ammo_deprived), sh, state.ammo_low_since and (state.tick - state.ammo_low_since) or 0)) end
 
   -- Front line computation (every N ticks, not every tick)

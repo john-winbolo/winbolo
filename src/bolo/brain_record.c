@@ -87,6 +87,24 @@ static int firstBotSlot(ServerSim *sim) {
     return -1;
 }
 
+/* First bot slot whose brain exposes a non-empty viz legend. A bot running a
+ * non-visualizer brain (e.g. a scripted test victim) returns nothing, so the
+ * legend + skip-set are taken from the first bot that ACTUALLY has visualizers
+ * rather than whichever brain happens to occupy the lowest slot. On success
+ * returns the slot and hands the evaluated legend back via *outLegend (caller
+ * frees); returns -1 (and *outLegend = NULL) if no bot has a legend. */
+static int firstVizBotSlot(ServerSim *sim, char **outLegend) {
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsBot(sim, (BYTE)i)) continue;
+        char *legend = serverSimBotEvalLuaString(sim, (BYTE)i,
+                                                 "return brain.viz_legend_json()");
+        if (legend && legend[0]) { *outLegend = legend; return i; }
+        if (legend) free(legend);
+    }
+    *outLegend = NULL;
+    return -1;
+}
+
 /* Lazily open <sessionDir>/brainrec.btr. The session dir normally comes
  * straight from brainRecordSetSessionDir() (winbolods creates it under
  * -braindebug). As a fallback, if it wasn't set we read DEBUG_SESSION_DIR off
@@ -139,13 +157,11 @@ static bool ensureOpen(ServerSim *sim) {
     gzwrite(g_gz, &hdr, (unsigned)sizeof hdr);
 
     /* One-time legend: overlay viz_idx -> category name, so the loader can
-     * label/filter recorded overlays. Evaluated off any bot (all share it). */
+     * label/filter recorded overlays. Taken from the first bot that has a
+     * legend (visualizer brains share the same one), so a non-viz bot in a
+     * lower slot (e.g. a scripted test victim) doesn't blank it out. */
     char *legend = NULL;
-    int lslot = firstBotSlot(sim);
-    if (lslot >= 0) {
-        legend = serverSimBotEvalLuaString(sim, (BYTE)lslot,
-                                           "return brain.viz_legend_json()");
-    }
+    int lslot = firstVizBotSlot(sim, &legend);
     uint32_t llen = legend ? (uint32_t)strlen(legend) : 0u;
     gzwrite(g_gz, &llen, (unsigned)sizeof llen);
     if (llen) gzwrite(g_gz, legend, llen);

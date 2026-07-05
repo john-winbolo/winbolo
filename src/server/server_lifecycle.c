@@ -13,6 +13,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <SDL3/SDL.h>
@@ -402,6 +403,7 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
 static bool   s_braindbgSessionOpen     = false;  /* a block is currently open */
 static int    s_braindbgBlockNum        = 0;      /* 1-based block index */
 static char   s_braindbgBaseTS[32]      = "";     /* game-start timestamp, shared by all blocks */
+static char   s_braindbgLabel[24]       = "";     /* optional session-name suffix (e.g. "autotest") */
 static Uint64 s_braindbgBlockStartMs    = 0;      /* SDL_GetTicks when this block opened */
 static Uint64 s_braindbgLastDiskCheckMs = 0;
 
@@ -431,7 +433,15 @@ static void serverLifecycleOpenBraindbgBlock(ServerSim *sim) {
   brainRecordEndGame();   /* close the prior block's .btr + reset recorder state */
 
   char dir[FILENAME_MAX];
-  snprintf(dir, sizeof(dir), "debug_sessions/%s_%d", s_braindbgBaseTS, s_braindbgBlockNum);
+  /* Optional label is appended AFTER the block number so the leading
+   * "<baseTS>" stays intact for BrainTest's btParseDirTime() (duration) while
+   * still tagging the dir — e.g. debug_sessions/20260704_153000_1_autotest/. */
+  if (s_braindbgLabel[0]) {
+    snprintf(dir, sizeof(dir), "debug_sessions/%s_%d_%s",
+             s_braindbgBaseTS, s_braindbgBlockNum, s_braindbgLabel);
+  } else {
+    snprintf(dir, sizeof(dir), "debug_sessions/%s_%d", s_braindbgBaseTS, s_braindbgBlockNum);
+  }
   if (!SDL_CreateDirectory(dir)) {
     fprintf(stderr, "brain_record: couldn't create %s (%s); recording off\n",
             dir, SDL_GetError());
@@ -464,6 +474,24 @@ static void serverLifecycleStartBrainDebugSession(ServerSim *sim) {
   localtime_r(&t, &tmv);
 #endif
   strftime(s_braindbgBaseTS, sizeof(s_braindbgBaseTS), "%Y%m%d_%H%M%S", &tmv);
+
+  /* Optional session label (e.g. "autotest") from WINBOLO_BRAINDBG_LABEL, so an
+   * automated-test recording is self-identifying in the debug_sessions/ dir name
+   * and in BrainTest's Load Session browser. Sanitized to [A-Za-z0-9_-]. */
+  s_braindbgLabel[0] = '\0';
+  const char *lbl = getenv("WINBOLO_BRAINDBG_LABEL");
+  if (lbl && *lbl) {
+    size_t j = 0;
+    for (size_t i = 0; lbl[i] && j + 1 < sizeof(s_braindbgLabel); i++) {
+      char c = lbl[i];
+      if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+          (c >= '0' && c <= '9') || c == '_' || c == '-') {
+        s_braindbgLabel[j++] = c;
+      }
+    }
+    s_braindbgLabel[j] = '\0';
+  }
+
   s_braindbgBlockNum = 1;
   serverLifecycleOpenBraindbgBlock(sim);
 }

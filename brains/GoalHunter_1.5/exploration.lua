@@ -83,9 +83,20 @@ function M.update(state, info)
 end
 
 -- Returns the closest unvisited frontier tile, or nil, nil.
+-- Soft danger avoidance: prefer a frontier tile that's OUT of pill/shell danger
+-- (cpf_danger_at) so exploration doesn't march a tank into a pillbox's fire
+-- range while it's between other goals. Dangerous tiles are set ASIDE (not
+-- discarded — they're re-pushed before we return, so the frontier is intact) and
+-- only used as a fallback if everything reachable is dangerous, so exploration
+-- never stalls. Search is bounded by SKIP_LIMIT so a big danger field is cheap.
 function M.best_frontier(state)
   local h = state.frontier
   if not h then return nil, nil end
+  local thresh   = C.EXPLORE_DANGER_AVOID or 5
+  local measure  = (cpf_danger_at ~= nil)
+  local fb_x, fb_y                      -- nearest unvisited, danger notwithstanding
+  local aside, n_aside = nil, 0         -- dangerous tiles popped this call
+  local skipped, SKIP_LIMIT = 0, 48
   while h.n > 0 do
     local top = h[1]
     if top == nil then
@@ -106,10 +117,24 @@ function M.best_frontier(state)
       _heap_pop(h)
       state.frontier_set[nk] = nil
     else
-      return nx, ny
+      -- Accept the first unvisited tile that's out of danger; otherwise set it
+      -- aside (remembering the nearest as a fallback) and keep looking.
+      local dng = measure and cpf_danger_at(nx, ny) or 0
+      if dng <= thresh then
+        if aside then for i = 1, n_aside do _heap_push(h, aside[i]) end end
+        return nx, ny
+      end
+      if not fb_x then fb_x, fb_y = nx, ny end
+      _heap_pop(h)                       -- frontier_set kept -> re-pushed below
+      aside = aside or {}
+      n_aside = n_aside + 1
+      aside[n_aside] = top
+      skipped = skipped + 1
+      if skipped >= SKIP_LIMIT then break end
     end
   end
-  return nil, nil
+  if aside then for i = 1, n_aside do _heap_push(h, aside[i]) end end
+  return fb_x, fb_y                       -- nearest (dangerous) fallback, or nil
 end
 
 return M

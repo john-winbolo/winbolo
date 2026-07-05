@@ -208,14 +208,26 @@ function M.availability(state, info, help_target_id)
   -- Joining a blitz has NO armour floor (a 2+ tank take shares the incoming
   -- fire) — EXCEPT while carrying a pillbox: cautious mode, so a joiner needs
   -- commander-level armour before diving in and risking the pill it's holding.
+  local ok, reason
   if (info.carried_pills or 0) >= 1
-     and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then return false, "lh" end
-  if (info.shells or 0) < (C.SQUAD_MIN_HELP_SHELLS or 3)  then return false, "na" end
-  local g    = state.goal
-  if g and g.kind == "attack_pill" and help_target_id and g.target_id == help_target_id then
-    return true, nil
+     and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then
+    ok, reason = false, "lh"
+  elseif (info.shells or 0) < (C.SQUAD_MIN_HELP_SHELLS or 3) and not state.ammo_deprived then
+    -- Normal low-ammo tanks can't help shoot, so they don't join. But an
+    -- ammo-DEPRIVED tank is the designated suicide decoy — it joins WITHOUT ammo
+    -- specifically to charge the pill and draw fire for the captain, so it must
+    -- bypass the no-ammo gate (the "suicide/decoy body" the blitz code expects).
+    ok, reason = false, "na"
+  else
+    local g = state.goal
+    if g and g.kind == "attack_pill" and help_target_id and g.target_id == help_target_id then
+      ok, reason = true, nil
+    else
+      ok, reason = false, "bz"
+    end
   end
-  return false, "bz"
+  if BRAIN_DEBUG_MODE then print2(string.format("SQUAD_AVAIL t=%d help_pill=%s -> ok=%s reason=%s (shells=%d deprived=%s goal=%s tgt=%s)", state.tick or 0, tostring(help_target_id), tostring(ok), tostring(reason), info.shells or 0, tostring(state.ammo_deprived), state.goal and state.goal.kind or "?", state.goal and tostring(state.goal.target_id) or "?")) end
+  return ok, reason
 end
 
 -- Commander standoff arbiter: gather every soldier answering THIS commander
@@ -558,9 +570,13 @@ function M.update(state, info, now, world)
     else
       local g = state.goal
       local is_hard_take = false
+      local pill_hp = 0
       if g and g.kind == "attack_pill" and g.target_id and world and world.pills then
         local p = world.pills[g.target_id]
-        if p and (p.health or 0) >= (C.HARD_TAKE_MIN_HP or 12) then is_hard_take = true end
+        if p then
+          pill_hp = p.health or 0
+          if pill_hp >= (C.HARD_TAKE_MIN_HP or 12) then is_hard_take = true end
+        end
       end
       -- An established leader stays commander even after the pill's HP falls
       -- below the hard-take threshold: if we already hold an open blitz call on
@@ -596,6 +612,19 @@ function M.update(state, info, now, world)
       if state.ammo_deprived and role == M.ROLE_COMMANDER then
         role = M.ROLE_SOLDIER
         if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_NO_CMD t=%d ammo_deprived -> soldier (pill=%s)", state.tick or 0, g and tostring(g.target_id) or "?")) end
+      end
+      -- Ammo gate on FRESH command (INITIATION): a tank that can't finish the
+      -- pill by itself (shells <= pill HP) must not OPEN/lead a blitz — a dry /
+      -- low-ammo would-be commander can't shoot the pill down, so it just parks
+      -- in plan_position re-planning a take it can never complete. It can still
+      -- JOIN one as a soldier (decoy body). Fires immediately on current ammo
+      -- (unlike the 60s ammo_deprived flag above). Established leaders
+      -- (is_leading) are exempt — don't collapse a working multi-tank take
+      -- mid-fight; a leader that then stays starved is caught by the gate above.
+      if role == M.ROLE_COMMANDER and not is_leading
+         and (info.shells or 0) <= pill_hp then
+        role = M.ROLE_SOLDIER
+        if BRAIN_DEBUG_MODE then print2(string.format("BLITZ_NO_CMD t=%d low_ammo(sh=%d<=hp=%d) -> soldier (pill=%s)", state.tick or 0, info.shells or 0, pill_hp, g and tostring(g.target_id) or "?")) end
       end
       -- Don't elect a SECOND commander of a pill an ally is already blitzing:
       -- FIRST TO THE TAKE WINS. If a live blitz call on OUR target has been open

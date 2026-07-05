@@ -242,7 +242,7 @@ function M.update(state, world, info)
   end
   local was_deprived = state.ammo_deprived
   state.ammo_deprived = state.ammo_low_since ~= nil
-                    and (state.tick - state.ammo_low_since) >= C.AMMO_DEPRIVED_TICKS
+                    and (state.tick - state.ammo_low_since) >= (state.test_deprive_ticks or C.AMMO_DEPRIVED_TICKS)
 
   -- Front line computation (every N ticks, not every tick)
   if not state.front_line_tick or (state.tick - state.front_line_tick) >= C.FRONT_LINE_INTERVAL then

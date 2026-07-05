@@ -803,6 +803,33 @@ function Brain.think(info)
   state._last_info = info
   local now  = state.tick
 
+  -- TEST AID: per-bot config from -bot-init [arg] (the BRAIN_INIT_ARG Lua
+  -- global), parsed once. Comma-separated tokens:
+  --   "ammoless"/"noammo" -> force never-refuel ON (deterministic; overrides
+  --                          the random TEST_NEVER_REFUEL_CHANCE roll below)
+  --   "normal"            -> force never-refuel OFF (a plain captain)
+  --   "deprive=N"         -> this bot's ammo-deprivation delay = N ticks, so the
+  --                          ammoless-helper/decoy kicks in sooner (100 ~= 2 s)
+  if state._test_arg_parsed == nil then
+    state._test_arg_parsed = true
+    local a = rawget(_G, "BRAIN_INIT_ARG")
+    if type(a) == "string" and a ~= "" then
+      -- ';' or ',' separated. -bot-init splits its spec on ',' so the [arg]
+      -- passed on the command line must use ';' (e.g. [ammoless;deprive=100]).
+      for tok in a:gmatch("[^,;]+") do
+        tok = tok:gsub("%s", "")
+        if tok == "ammoless" or tok == "noammo" then
+          state.test_never_refuel = true
+        elseif tok == "normal" then
+          state.test_never_refuel = false
+        else
+          local n = tok:match("^deprive=(%d+)$")
+          if n then state.test_deprive_ticks = tonumber(n) end
+        end
+      end
+    end
+  end
+
   -- TEST AID: roll the never-refuel flag once per bot (see
   -- TEST_NEVER_REFUEL_CHANCE in constants.lua — 0 disables). Seeded per
   -- player so the four bots don't all roll the same value.
@@ -815,6 +842,10 @@ function Brain.think(info)
         print(string.format("[TEST] bot %d is NEVER-REFUEL (all refuel goals blocked)",
                             info.player_number or -1))
       end
+      -- NOTE: the print2 "TEST_ROLE" line is emitted LATER (after
+      -- print2.set_bot/set_tick binds this bot's log file, ~line 1055).
+      -- Calling print2 HERE — before the per-bot file is bound — silently
+      -- drops the line, so don't.
     else
       state.test_never_refuel = false
     end
@@ -2929,8 +2960,27 @@ function Brain.think(info)
           -- Out of ammo: we can't damage the pill, so don't sit on it.
           -- Drop and replan (refuel is urgent at 0 shells). Clear pool 6
           -- so we don't immediately re-select it from stale cache.
-          goal_valid = false
-          if state.pool_cache then state.pool_cache[6] = nil end
+          -- EXCEPT an ammo-deprived decoy that is IN A BLITZ for this pill: it
+          -- charges the pill WITHOUT ammo by design (draw fire for the captain),
+          -- so while the blitz is live 0 shells must NOT invalidate the take.
+          -- Once the blitz closes (no accepted role / no open call for this
+          -- pill) the exemption lapses and it drops the pill like anyone dry —
+          -- a lone deprived tank must never sit on a pill solo.
+          local decoy_in_blitz = false
+          if state.ammo_deprived then
+            local pid = state.goal.target_id
+            if state.squad_blitz_accepted or (pid and state.squad_blitz_target == pid) then
+              decoy_in_blitz = true
+            elseif pid and state.blitz_calls then
+              for _, bc in pairs(state.blitz_calls) do
+                if bc.pill == pid then decoy_in_blitz = true; break end
+              end
+            end
+          end
+          if not decoy_in_blitz then
+            goal_valid = false
+            if state.pool_cache then state.pool_cache[6] = nil end
+          end
         end
       end
     elseif gk == "pill_place" and not state.capture_objective then
@@ -4840,6 +4890,10 @@ function Brain.think(info)
   -- state slate) runs ~300 lines below this point, so flushing here would drop
   -- every print2 emitted after it (they'd sit in the buffer and get cleared by
   -- next tick's set_tick). The flush lives just before `return` instead.
+  -- DECOY WATCH: an ammo-deprived decoy must attack a pill ONLY as part of a
+  -- blitz (joining the captain's call). A solo attack_pill (no blitz) is a
+  -- test failure — flag it with its full blitz-membership state so we can see
+  -- WHY it went solo (no call open? not accepted? _blitz not set?).
   -- Sub-section breakdown of (tail). Indented sub-section emits MUST
   -- come before the (tail) main emit so rebuild_sections attaches them
   -- as subs.
@@ -4968,6 +5022,47 @@ function Brain.think(info)
   -- for real behavior.
   if state.test_never_refuel then
     -- y=70: clear of hud_replan at (10,56) and hud_tick_info at (8,32/44).
+  end
+
+  -- Ammoless-helper countdown: ticks until this bot flips to
+  -- state.ammo_deprived. Mirrors strategy.lua's clock — starts at
+  -- state.ammo_low_since (shells below AMMO_DEPRIVED_SHELLS, non-opening),
+  -- fires at AMMO_DEPRIVED_TICKS elapsed (50 ticks/s). hud_text/hud_rect
+  -- self-gate on the toggle, but wrap in is_on to skip the string.format
+  -- when the overlay is off.
+  if viz.is_on("ammo_deprive_countdown") then
+    local full = state.test_deprive_ticks or C.AMMO_DEPRIVED_TICKS or 3000
+    local txt, r, g, b, frac
+    if state.ammo_deprived then
+      txt = "AMMOLESS HELPER: ACTIVE"
+      r, g, b, frac = 255, 60, 60, 1.0
+    elseif state.ammo_low_since then
+      local elapsed = state.tick - state.ammo_low_since
+      local remain = full - elapsed
+      if remain < 0 then remain = 0 end
+      frac = elapsed / full
+      if frac > 1 then frac = 1 end
+      txt = string.format("Ammoless helper in %.1fs (%dt, shells<%d)",
+                          remain / 50, remain, C.AMMO_DEPRIVED_SHELLS or 0)
+      r, g, b = 255, 180, 40
+    else
+      -- Clock is nil. Per strategy.lua it's pinned to nil when EITHER shells
+      -- recovered to the line OR we're in the opening phase. Distinguish them:
+      -- a dry tank in opening is NOT "ammo ok" — the clock is gated, so say so.
+      local sh = (info and info.shells) or 0
+      if sh < (C.AMMO_DEPRIVED_SHELLS or 0) then
+        txt = string.format("Helper clock GATED — %s phase (shells=%d)",
+                            state.phase or "?", sh)
+        r, g, b, frac = 90, 170, 255, 0.0    -- blue: low ammo, but suppressed
+      else
+        txt = string.format("Helper clock idle — ammo ok (shells=%d)", sh)
+        r, g, b, frac = 130, 130, 130, 0.0   -- grey: genuinely not depriving
+      end
+    end
+    -- Fill bar under the text: grey track + coloured elapsed/total fill.
+    local bx, by, bw, bh = 10, 98, 160, 6
+    if frac and frac > 0 then
+    end
   end
 
   -- Tick-info HUD (top-left, just below BrainTest's tick/think box).
