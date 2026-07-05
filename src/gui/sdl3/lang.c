@@ -539,13 +539,13 @@ static const LangEntry langTable[] = {
     {1864, "Login or create an account to view your recent games"},
     {1865, "You don't have any recorded games yet."},
     /* Lobby "Last round" panel — between-rounds scoreboard + awards. */
-    {1867, "Last round"},
-    {1868, "Name"},
-    {1869, "K"},
-    {1870, "D"},
-    {1871, "Base"},
-    {1872, "Pill"},
-    {1873, "Dmg"},
+    {1899, "Last round"},
+    {1900, "Name"},
+    {1901, "K"},
+    {1902, "D"},
+    {1903, "Base"},
+    {1904, "Pill"},
+    {1905, "Dmg"},
     {1874, "Builds"},
     {1875, "More awards"},
     {1876, "(empty)"},
@@ -1782,6 +1782,15 @@ static const LangEntry langTable[] = {
 
     /* Menu item to re-open a closed in-game vote widget. */
     {1862, "Show: {string1}"},
+
+    /* Web client — join code / connect error dialogs */
+    {1867, "You must be signed in to WinBolo.net to join this game."},
+    {1868, "This game is not accepting new players."},
+    {1869, "That game link is no longer valid."},
+    {1870, "This game is full."},
+    {1871, "Could not reach the server to get a join code."},
+    {1872, "Could not connect to the server."},
+    {1873, "Could not join the game (the server did not respond, or your invite link has already been used or expired)."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

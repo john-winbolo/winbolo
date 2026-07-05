@@ -1829,3 +1829,12 @@ STR_LV_SPEC_CONNECTING=Connessione in corso...
 STR_LV_SPEC_CONNECTION_LOST=Connessione persa
 STR_LV_SPEC_BEGINS_NOW=La visione inizia ora
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - Spettatore {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=Devi aver effettuato l'accesso a WinBolo.net per unirti a questa partita.
+STR_WEB_JOIN_NOT_ACCEPTING=Questa partita non accetta nuovi giocatori.
+STR_WEB_JOIN_LINK_INVALID=Questo link della partita non è più valido.
+STR_WEB_JOIN_GAME_FULL=Questa partita è al completo.
+STR_WEB_JOIN_CODE_UNREACHABLE=Impossibile contattare il server per ottenere un codice di partecipazione.
+STR_WEB_CONNECT_FAILED=Impossibile connettersi al server.
+STR_WEB_JOIN_NO_RESPONSE=Impossibile unirsi alla partita (il server non ha risposto, oppure il link di invito è già stato usato o è scaduto).

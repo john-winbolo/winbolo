@@ -1825,3 +1825,12 @@ STR_LV_SPEC_CONNECTING=연결 중...
 STR_LV_SPEC_CONNECTION_LOST=연결 끊김
 STR_LV_SPEC_BEGINS_NOW=지금 관전 시작
 STR_LV_SPEC_WINDOW_TITLE_NOMAP_FMT=WinBolo - 관전 {string1}:{number}{string3}
+
+# Web client — join code / connect error dialogs
+STR_WEB_JOIN_NEED_SIGNIN=이 게임에 참여하려면 WinBolo.net에 로그인해야 해요.
+STR_WEB_JOIN_NOT_ACCEPTING=이 게임은 새 플레이어를 받지 않아요.
+STR_WEB_JOIN_LINK_INVALID=이 게임 링크는 더 이상 유효하지 않아요.
+STR_WEB_JOIN_GAME_FULL=이 게임은 가득 찼어요.
+STR_WEB_JOIN_CODE_UNREACHABLE=참가 코드를 받아오려고 서버에 연결하지 못했어요.
+STR_WEB_CONNECT_FAILED=서버에 연결하지 못했어요.
+STR_WEB_JOIN_NO_RESPONSE=게임에 참여하지 못했어요 (서버가 응답하지 않았거나, 초대 링크가 이미 사용됐거나 만료됐어요).

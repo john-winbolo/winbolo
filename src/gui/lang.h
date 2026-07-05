@@ -680,13 +680,13 @@
 
 /* Lobby "Last round" panel — between-rounds scoreboard + awards.
  * 1866 reserved for STR_DLGLOBBY_SPECTATOR_TAG (merges from main). */
-#define STR_DLGLOBBY_LASTROUND_TITLE        1867
-#define STR_DLGLOBBY_LASTROUND_COL_NAME     1868
-#define STR_DLGLOBBY_LASTROUND_COL_KILLS    1869
-#define STR_DLGLOBBY_LASTROUND_COL_DEATHS   1870
-#define STR_DLGLOBBY_LASTROUND_COL_BASE     1871
-#define STR_DLGLOBBY_LASTROUND_COL_PILL     1872
-#define STR_DLGLOBBY_LASTROUND_COL_DMG      1873
+#define STR_DLGLOBBY_LASTROUND_TITLE        1899
+#define STR_DLGLOBBY_LASTROUND_COL_NAME     1900
+#define STR_DLGLOBBY_LASTROUND_COL_KILLS    1901
+#define STR_DLGLOBBY_LASTROUND_COL_DEATHS   1902
+#define STR_DLGLOBBY_LASTROUND_COL_BASE     1903
+#define STR_DLGLOBBY_LASTROUND_COL_PILL     1904
+#define STR_DLGLOBBY_LASTROUND_COL_DMG      1905
 #define STR_DLGLOBBY_LASTROUND_COL_BUILDS   1874
 #define STR_DLGLOBBY_LASTROUND_MORE         1875
 #define STR_DLGLOBBY_LASTROUND_NOPLAYER     1876
@@ -1958,6 +1958,15 @@
 #define STR_DLGABOUT_THIRD_PARTY            1790
 #define STR_DLGABOUT_AUTHORS                1791
 #define STR_DLGABOUT_FORUMS                 1792
+
+/* Web client — join code / connect error dialogs */
+#define STR_WEB_JOIN_NEED_SIGNIN            1867
+#define STR_WEB_JOIN_NOT_ACCEPTING          1868
+#define STR_WEB_JOIN_LINK_INVALID           1869
+#define STR_WEB_JOIN_GAME_FULL              1870
+#define STR_WEB_JOIN_CODE_UNREACHABLE       1871
+#define STR_WEB_CONNECT_FAILED              1872
+#define STR_WEB_JOIN_NO_RESPONSE            1873
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

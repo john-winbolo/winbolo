@@ -142,6 +142,8 @@ int run_vote_toggle_standalone_no_does_nothing(void);
 int run_vote_toggle_invalid_mode_dropped(void);
 int run_vote_toggle_yes_opens_vote(void);
 int run_vote_toggle_no_during_running_records_answered(void);
+int run_vote_back_to_lobby_blocked_without_lobby(void);
+int run_vote_surrender_blocked_without_lobby(void);
 int run_lobby_set_team_clamps_max_tanks(void);
 int run_lobby_set_team_accepts_max_legal(void);
 int run_lobby_set_team_accepts_unassigned(void);
@@ -204,6 +206,17 @@ int run_bot_pool_json_missing_file_keeps_active(void);
 int run_bot_pool_wire_roundtrip(void);
 int run_bot_pool_wire_builtin_roundtrip(void);
 int run_bot_pool_wire_rejects_garbage(void);
+int run_proxy_meta_parse_roundtrip(void);
+int run_proxy_meta_parse_truncation_safe(void);
+int run_proxy_meta_parse_oversized_name(void);
+int run_proxy_meta_parse_prefs_clamps(void);
+int run_tick_core_active_local_no_double_step(void);
+int run_tick_core_passive_local_pumps_keys_half(void);
+int run_tick_core_lobby_flips_cadence(void);
+int run_transport_ticks_server_lifecycle(void);
+int run_await_join_connected_immediate(void);
+int run_await_join_lobby_latch(void);
+int run_await_join_timeout_and_error(void);
 int run_bot_pool_wire_chunk_transport(void);
 int run_lobby_map_list_chunked(void);
 int run_lobby_map_search_chunked(void);
@@ -226,6 +239,7 @@ int run_brain_inbox_push_peek_fifo(void);
 int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
+int run_brain_list_scan_path_resolves(void);
 int run_bolo_rand_golden_sequence(void);
 int run_net_impair(void);
 
@@ -778,6 +792,7 @@ int run_map_resync_stale_gen_rejected(void);
 int run_map_compress_roundtrip_stock(void);
 int run_map_compress_roundtrip_mutated(void);
 int run_map_checksum_ignores_mines(void);
+int run_map_resync_base_crater_converges(void);
 
 /* Client resync finalize (test_resync_finalize.c): a corrupt/truncated blob
  * must not advance installedMapGen/mapResyncCount (and re-arms the resync); a

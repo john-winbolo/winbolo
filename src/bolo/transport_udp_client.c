@@ -55,6 +55,18 @@
 #include "../winbolonet/winbolonet_client.h"
 #include "../winbolonet/winbolonet_core.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+/* Notify JS whenever the live WBN server_key is set or rotates, so the web
+ * client can keep its shareable /join/<key> URL pointed at the game this
+ * connection is currently playing (the backend mints join codes against this
+ * key, and it rotates each return-to-lobby). JS uses it purely to
+ * history.replaceState — no reconnect, no re-mint. */
+EM_JS(void, wbOnGameKey, (const char *key), {
+    if (Module.wbOnGameKey) Module.wbOnGameKey(UTF8ToString(key));
+});
+#endif
+
 /* ================================================================
  * CLIENT SIDE
  * ================================================================ */
@@ -328,6 +340,16 @@ typedef struct {
      * event. Held on the ctx so a teardown mid-transfer frees it. */
     uint8_t *lobbyChatBacklogBuf;
     uint32_t lobbyChatBacklogTotal;
+
+#ifdef __EMSCRIPTEN__
+    /* WS↔UDP relay metadata frame (type 0x01). The relay sends exactly one
+     * as the first datagram, before any game traffic. Consumed once at the
+     * top of udpClientProcessPacket while JOINING; only the prefs blob it
+     * carries is acted on (handed to the frontend), so nothing is stashed
+     * beyond this consumed-once latch. Zeroed with the rest of the ctx on
+     * connect (memset in the connect path). */
+    bool     proxyMetaConsumed;
+#endif
 } TransportUdpClientCtx;
 
 #define UPLOAD_ACK_TIMEOUT_MS   5000   /* BEGIN/USE_LOCAL → ACK */
@@ -387,11 +409,20 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
  * decides *when* to re-auth, so there is no retry here). */
 static void udpClientSendWbnReauth(TransportUdpClientCtx *c) {
     char playerKey[WBN_JOIN_KEY_WIRE_LEN];
-    char errMsg[256];
 
     if (c->wbnApiToken[0] == '\0' || c->wbnServerKey[0] == '\0') return;
 
     memset(playerKey, 0, sizeof(playerKey));
+#ifdef __EMSCRIPTEN__
+    /* WASM has no libcurl, so it cannot mint a player_key
+     * (winbolonetClientJoinSession is a stub). Instead it presents its
+     * join_code — carried in wbnApiToken for the web build — raw in the
+     * reauth token slot. The server's CLIENT_TYPE_WEB branch verifies the
+     * join_code read-only. The token rides raw through the command codec (no
+     * wbnKeyEncode), matching the server's raw read of the slot. */
+    strncpy(playerKey, c->wbnApiToken, sizeof(playerKey) - 1);
+#else
+    char errMsg[256];
     errMsg[0] = '\0';
     if (!winbolonetClientJoinSession(c->wbnApiToken, c->wbnServerKey,
                                      playerKey, errMsg)) {
@@ -399,6 +430,7 @@ static void udpClientSendWbnReauth(TransportUdpClientCtx *c) {
                     errMsg[0] ? errMsg : "(no detail)");
         return;
     }
+#endif
 
     ClientCommand cmd = { .type = CMD_WBN_REAUTH };
     memcpy(cmd.u.wbnReauth.token, playerKey, WBN_JOIN_KEY_WIRE_LEN);
@@ -1414,9 +1446,91 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
     }
 }
 
+/* Parse the WS↔UDP relay's 0x01 metadata frame. Layout (Phase 0):
+ *   [0]      0x01
+ *   [1]      N           name length
+ *   [2..]    name        N bytes, UTF-8, not NUL-terminated
+ *   [2+N]    wbnFlag     0x00 / 0x01  (is_logged_in)
+ *   [3+N]    country0    ASCII / '?'
+ *   [4+N]    country1    ASCII / ' ' / '?'
+ *   [5+N]    prefsLen    uint16 big-endian (L)
+ *   [7+N]    prefs       L bytes, raw JSON
+ * Compiled on every platform (only the consume site below is
+ * emscripten-gated) so tests/unit/test_proxy_meta_parse.c can drive it.
+ * See transport_udp_internal.h for the tolerance contract. */
+void transportUdpParseProxyMeta(const uint8_t *buf, int len,
+                                ProxyMetaFrame *out) {
+    memset(out, 0, sizeof(*out));
+
+    int pos = 1;  /* past the 0x01 type byte */
+    if (pos >= len) return;
+    int nameLen = buf[pos++];
+    if (pos + nameLen > len) return;  /* truncated */
+    {
+        /* Clamp only the copy; pos advances by the wire length so the
+         * fields after an oversized name stay correctly framed. */
+        int copyLen = nameLen;
+        if (copyLen > (int)sizeof(out->name) - 1) copyLen = (int)sizeof(out->name) - 1;
+        memcpy(out->name, buf + pos, (size_t)copyLen);
+        out->name[copyLen] = '\0';
+    }
+    pos += nameLen;
+
+    if (pos >= len) return;
+    out->wbn = (buf[pos++] != 0);
+
+    if (pos + 2 > len) return;
+    out->country[0] = (char)buf[pos++];
+    out->country[1] = (char)buf[pos++];
+    out->country[2] = '\0';
+
+    if (pos + 2 > len) return;
+    int prefsLen = (buf[pos] << 8) | buf[pos + 1];  /* big-endian */
+    pos += 2;
+    if (prefsLen > (int)sizeof(out->prefs) - 1) prefsLen = (int)sizeof(out->prefs) - 1;
+    if (pos + prefsLen > len) prefsLen = len - pos;  /* clamp to available */
+    if (prefsLen < 0) prefsLen = 0;
+    memcpy(out->prefs, buf + pos, (size_t)prefsLen);
+    out->prefs[prefsLen] = '\0';
+    out->prefsLen = prefsLen;
+}
+
 /* Process a single incoming packet (used by both direct and delayed paths) */
+#ifdef __EMSCRIPTEN__
+/* Consume the relay's one-shot metadata frame: log it and hand the prefs
+ * blob to the front-end (main_wasm.c), which owns the live keys and menu
+ * globals; the transport just forwards the JSON. */
+static void udpClientConsumeProxyMeta(const uint8_t *buf, int len) {
+    ProxyMetaFrame m;
+    transportUdpParseProxyMeta(buf, len, &m);
+
+    WB_LOG_INFO(WB_LOG_CAT_NET,
+                "[WASM] proxy metadata: name='%s' wbn=%d country=%.2s prefsLen=%d",
+                m.name, m.wbn ? 1 : 0, m.country, m.prefsLen);
+
+    if (m.prefsLen > 0) {
+        extern void wasmApplyJoinPrefs(const char *prefsJson, int len);
+        wasmApplyJoinPrefs(m.prefs, m.prefsLen);
+    }
+}
+#endif
+
 static void udpClientProcessPacket(TransportUdpClientCtx *c,
                                    const uint8_t *buf, int len) {
+#ifdef __EMSCRIPTEN__
+    /* The WS↔UDP relay sends one 0x01 metadata frame as the first datagram,
+     * before any game traffic. Real game packets always begin with the 'W''B'
+     * magic (getPacketType), so a 0x01 first byte unambiguously marks the
+     * frame — no game packet can collide. Consume it once while JOINING —
+     * applying the forwarded prefs blob to the frontend — and never hand it
+     * to the game-packet path. */
+    if (c->joinState == UDP_CLIENT_JOINING && !c->proxyMetaConsumed &&
+        len >= 1 && buf[0] == PROXY_META_FRAME_TYPE) {
+        c->proxyMetaConsumed = true;
+        udpClientConsumeProxyMeta(buf, len);
+        return;
+    }
+#endif
     uint8_t pktType = getPacketType(buf, len);
 
     c->packetsRecvThisSec++;
@@ -2637,9 +2751,24 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * rejection. On failure we simply don't retry — the next genuine
          * rotation will trigger a fresh attempt. */
         keyChanged = (strcmp(newKey, c->wbnServerKey) != 0);
+#ifdef __EMSCRIPTEN__
+        bool wasEmpty = (c->wbnServerKey[0] == '\0');
+#endif
         memcpy(c->wbnServerKey, newKey, sizeof(c->wbnServerKey));
         if (keyChanged) {
+#ifdef __EMSCRIPTEN__
+            /* Web slot: reauth re-presents the single-use join_code, so only do
+             * it for the initial key (the one delivery that verifies the code).
+             * On later return-to-lobby rotations the server re-stamps the web
+             * identity itself, so we just adopt the new key and hand it to JS to
+             * refresh the shareable URL — no reauth, no re-mint. */
+            if (wasEmpty) {
+                udpClientSendWbnReauth(c);
+            }
+            wbOnGameKey(c->wbnServerKey);
+#else
             udpClientSendWbnReauth(c);
+#endif
         }
         break;
     }

@@ -293,6 +293,17 @@ bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName,
   if (isSupporter) *isSupporter = FALSE;
   return FALSE;
 }
+bool winboloNetVerifyJoinCode(const char *joinCode, char *playerNameOut,
+                              bool *isLoggedInOut, char *countryOut,
+                              int *userIdOut, char *errorMsg) {
+  (void)joinCode;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (isLoggedInOut) *isLoggedInOut   = FALSE;
+  if (countryOut)    countryOut[0]    = '\0';
+  if (userIdOut)    *userIdOut        = -1;
+  if (errorMsg)      errorMsg[0]      = '\0';
+  return FALSE;
+}
 bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerName,
                                   char *errorMsg, bool *isLoggedIn) {
   (void)spectatorKey; (void)playerName;

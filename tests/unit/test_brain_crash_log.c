@@ -73,16 +73,17 @@ static SDL_EnumerationResult delete_dir_entry(void *userdata,
 }
 
 /* Tempdir helper. Path is relative to CWD so the test runner doesn't
- * need to know where the binary lives. Caller must call cleanup_tempdir
- * even on failure paths (the asserts below take care of this via gotos
- * where applicable, but the test bodies just leak the dir on FAIL
- * because UT_ASSERT returns from the function — acceptable for unit
- * tests, the dir is small and named distinctively). */
-static const char *TEMPDIR = "test_brain_crash_tmp";
-
-static void cleanup_tempdir(void) {
-    SDL_EnumerateDirectory(TEMPDIR, delete_dir_entry, NULL);
-    SDL_RemovePath(TEMPDIR);
+ * need to know where the binary lives. Each test uses its OWN dir name —
+ * under `ctest -j` the two tests run concurrently in the same CWD, and a
+ * shared dir let one test's cleanup delete the other's crash file
+ * mid-assert (an intermittent parallel-run failure). Caller must call
+ * cleanup_tempdir even on failure paths (the asserts below take care of
+ * this via gotos where applicable, but the test bodies just leak the dir
+ * on FAIL because UT_ASSERT returns from the function — acceptable for
+ * unit tests, the dirs are small and named distinctively). */
+static void cleanup_tempdir(const char *dir) {
+    SDL_EnumerateDirectory(dir, delete_dir_entry, NULL);
+    SDL_RemovePath(dir);
 }
 
 /* Build a minimal lua_State with the globals brc_write_crash_log
@@ -184,7 +185,8 @@ static int assert_crash_file_content(const char *body,
 }
 
 int run_brain_crash_log_writes_file(void) {
-    cleanup_tempdir();
+    static const char *TEMPDIR = "test_brain_crash_tmp_writes";
+    cleanup_tempdir(TEMPDIR);
     UT_ASSERT_MSG(SDL_CreateDirectory(TEMPDIR),
                   "failed to create tempdir: %s", SDL_GetError());
 
@@ -218,12 +220,13 @@ int run_brain_crash_log_writes_file(void) {
                                        7, 12345);
     free(body);
     lua_close(L);
-    cleanup_tempdir();
+    cleanup_tempdir(TEMPDIR);
     return rc;
 }
 
 int run_brain_crash_log_falls_back_to_luaptr(void) {
-    cleanup_tempdir();
+    static const char *TEMPDIR = "test_brain_crash_tmp_luaptr";
+    cleanup_tempdir(TEMPDIR);
     UT_ASSERT_MSG(SDL_CreateDirectory(TEMPDIR),
                   "failed to create tempdir: %s", SDL_GetError());
 
@@ -258,6 +261,6 @@ int run_brain_crash_log_falls_back_to_luaptr(void) {
                                        -1, 99);
     free(body);
     lua_close(L);
-    cleanup_tempdir();
+    cleanup_tempdir(TEMPDIR);
     return rc;
 }

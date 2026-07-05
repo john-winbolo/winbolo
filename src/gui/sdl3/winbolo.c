@@ -51,6 +51,7 @@
 #include "bolo_rand.h"
 #include "platform_net.h"
 #include "client_render.h"
+#include "client_frontend_tick.h"
 #include "client_sim.h"
 #include "frontend.h"
 #include "tutorial.h"
@@ -224,8 +225,6 @@ static bool s_tutorialPrevMuted       = FALSE;
 static DWORD oldTick = 0;
 static DWORD ttick = 0;
 static DWORD oldFrameTick = 0;
-static uint32_t simTickCounter = 0;
-static bool justKeysFlag = FALSE;
 static time_t ticks = 0;
 
 /* Show alliance request flag */
@@ -477,8 +476,7 @@ int main(int argc, char *argv[]) {
        * transport's localTick path), so the main loop just flips the
        * net status and falls into the per-frame game tick. */
       clientSimSetNetStatus(cs, netRunning);
-      simTickCounter = 0;
-      justKeysFlag = FALSE;
+      clientFrontTickReset();
       /* Set Steam rich presence now that the game is running */
       gameFrontUpdateSteamPresence(cs);
     }
@@ -655,6 +653,13 @@ int main(int argc, char *argv[]) {
             (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown)) {
           returnToLobby = TRUE;
           done = TRUE;
+          /* Skip this iteration's render: inLobby is already true, so
+           * sdl3ImguiPumpAndRender's in-game-lobby seam (there for the
+           * WASM client) would flash one lobby frame in the in-game
+           * context and seed the lobby frame state that the blocking
+           * imguiLobbyShow re-inits. The lobby dialog we're about to
+           * re-enter owns all rendering from here. */
+          continue;
         }
 
         /* Redraw every frame — vsync throttles the present rate.
@@ -805,9 +810,6 @@ static Uint32 SDLCALL windowGameTimer(void *userdata, SDL_TimerID timerID, Uint3
 static void windowRunGameTick(ClientSim *cs) {
   static bool inBrain = FALSE;
   static BYTE t2 = 0;
-  tankButton tb;
-  bool isShoot;
-  bool isMine = FALSE;
   bool used = FALSE;
   bool brainRunning;
 
@@ -822,8 +824,6 @@ static void windowRunGameTick(ClientSim *cs) {
     return;
 
   brainRunning = brainHandlerIsBrainRunning();
-  isShoot = FALSE;
-  tb = 0;
 
   /* Check if the UDP server has disconnected or timed out.
    * Only check for UDP transports (serverSim == NULL means not local). */
@@ -857,75 +857,18 @@ static void windowRunGameTick(ClientSim *cs) {
          cleared doingTutorial before returning, but the in-loop overlay leaves
          it set across frames, and oldTick only advances in the branch below. */
       if (doingTutorial == TRUE) break;
-      {
-        BYTE myPlayerNum = gameFrontGetPlayerNum();
-        if (clientSimGetNetStatus(cs) == netLobby || clientSimGetNetStatus(cs) == netLobbyCountdown) {
-          /* Lobby/countdown: just tick the transport to receive packets */
-          clientSimNetTick(cs);
-          justKeysFlag = !justKeysFlag; /* Alternate to maintain tick cadence */
-        } else if (justKeysFlag == TRUE) {
-          /* Keys tick */
-          if (brainRunning == FALSE) {
-            tb = inputGetKeys(cs, &keys, isInMenu);
-          } else {
-            inputScroll(cs, &keys, isInMenu);
-          }
-          InputPacket pkt;
-          clientBuildInputPacket(cs, &pkt, tb, FALSE, FALSE, brainRunning, FALSE, myPlayerNum, simTickCounter);
-          if (!brainRunning) {
-            uint8_t gsAdj = inputConsumeGunsightAdj();
-            if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
-          }
-          clientMutexWaitFor();
-          clientSimKeysTick(cs, &pkt);
-          clientMutexRelease();
-          clientSimNetRecordInput(cs, &pkt);
-          clientSimNetTick(cs);
-          simTickCounter++;
-          justKeysFlag = FALSE;
-        } else {
-          /* Game tick */
-          t2++;
-          isShoot = FALSE;
-          isMine = FALSE;
-          if (brainRunning == FALSE) {
-            tb = inputGetKeys(cs, &keys, isInMenu);
-            isShoot = inputIsFireKeyPressed(&keys, isInMenu);
-            isMine = inputIsMineKeyPressed(&keys, isInMenu);
-          } else {
-            isMine = FALSE;
-            inputScroll(cs, &keys, isInMenu);
-          }
-          InputPacket pkt;
-          clientBuildInputPacket(cs, &pkt, tb, isShoot, isMine, brainRunning, TRUE, myPlayerNum, simTickCounter);
-          if (!brainRunning) {
-            uint8_t gsAdj = inputConsumeGunsightAdj();
-            if (gsAdj) pkt.flags |= ((gsAdj & 0x3) << INPUT_FLAG_GUNSIGHT_SHIFT);
-          }
-          clientMutexWaitFor();
-          clientSimGameTick(cs, &pkt, brainRunning);
-          clientMutexRelease();
-          clientSimNetSendInput(cs, &pkt);
-          /* Bot brains tick on the server timer thread (hostedServerTimerCb
-           * -> serverInstanceTick -> botManagerTick) for both single-player
-           * and listen-server, under threadsMutex. The System Info "AI
-           * Tanks" line reads wall-clock bot cost from
-           * serverSimGetBotPoolStats().lastBrainPhaseMs (see sdl3imgui.cpp)
-           * rather than dwSysBrain, so there is no main-thread accounting
-           * to do here. */
-          clientSimNetTick(cs);
-          clientMutexWaitFor();
-          clientSimDisplayTick(cs, brainRunning);
-          clientMutexRelease();
-          simTickCounter++;
-          ticks++;
-          justKeysFlag = TRUE;
-          used = TRUE;
-        }
-        oldTick += GAME_TICK_LENGTH;
-        if (oldTick > ttick) {
-          oldTick = ttick;
-        }
+      /* One keys/game/lobby half-step lives in the shared client-frontend tick
+       * core (both desktop and web call it); the brain and per-second stat
+       * rollover below stay here in the driver. Bot brains tick on the server
+       * timer thread, so a game step needs no main-thread brain accounting. */
+      if (clientFrontRunTickStep(cs)) {
+        t2++;
+        ticks++;
+        used = TRUE;
+      }
+      oldTick += GAME_TICK_LENGTH;
+      if (oldTick > ttick) {
+        oldTick = ttick;
       }
     }
   }
@@ -1441,13 +1384,11 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
     }
   }
 
+  sdl3DrawSetReconfigureGuard(true);
   clientMutexWaitFor();
-  sdl3DrawCleanup();
-  sdl3DrawSetup(internalZoom);
 
   {
-    SDL_Window   *win = sdl3DrawGetWindow();
-    SDL_Renderer *ren = sdl3DrawGetRenderer();
+    SDL_Window *win = sdl3DrawGetWindow();
 
     if (win) {
       /* All modes are resizable - resizing in fixed mode auto-switches to Custom */
@@ -1477,11 +1418,20 @@ void windowZoomChange(BYTE amount, bool fromDragResize) {
       }
       SDL_ShowWindow(win);
     }
-    if (win && ren) {
-      sdl3ImguiSetup(win, ren);
+
+    /* Rebuild zoom-dependent assets against the live renderer (no window /
+       renderer teardown). Cardinal passes the explicit integer zoom; Custom
+       passes 0 so the rebuild derives the zoom from the just-applied window
+       size, matching the per-frame adapt path. */
+    if (amount == ZOOM_FACTOR_CUSTOM) {
+      sdl3DrawReconfigureZoom(0);
+    } else {
+      sdl3DrawReconfigureZoom(internalZoom);
     }
   }
+
   clientMutexRelease();
+  sdl3DrawSetReconfigureGuard(false);
   drawBusy = FALSE;
 
   /* Record final state and detect if we landed on a cardinal size */
@@ -1522,20 +1472,8 @@ void windowSetFrameRate(int newFrameRate, bool setTimer) {
  * instead of posting WM_COMMAND. No HWND/HMENU needed.
  * ------------------------------------------------------- */
 
-void windowShowGunsight_toggle(ClientSim *cs) {
-  showGunsight = !showGunsight;
-  if (cs) clientSimSetGunsight(cs, showGunsight);
-  gameFrontSaveCurrentPrefs();
-}
-
 void windowLetterboxBarsGray_toggle(void) {
   letterboxBarsGray = !letterboxBarsGray;
-  gameFrontSaveCurrentPrefs();
-}
-
-void windowAutomaticScrolling_toggle(ClientSim *cs) {
-  autoScrollingEnabled = !autoScrollingEnabled;
-  if (cs) clientSimSetAutoScroll(cs, autoScrollingEnabled);
   gameFrontSaveCurrentPrefs();
 }
 
@@ -1546,42 +1484,6 @@ void windowSmoothScrolling_toggle(void) {
   if (!smoothScrollingEnabled) {
     sdl3DrawSetDragOffset(0, 0);
   }
-}
-
-void windowShowPillLabels_toggle(ClientSim *cs) {
-  BYTE count, total;
-
-  showPillLabels = !showPillLabels;
-  /* cs is NULL from the pre-game Settings dialog (no live sim). The pref is
-     flipped above; the status-label refresh below needs the sim, so skip it. */
-  if (cs == NULL) {
-    return;
-  }
-  sdl3DrawSetPillsStatusClear();
-  total = clientSimGetPillCount(cs);
-  for (count = 1; count <= total; count++) {
-    BYTE pillStat = clientSimGetPillAlliance(cs, count);
-    sdl3DrawStatusPillbox(count, pillStat, showPillLabels);
-  }
-  sdl3DrawCopyPillsStatus(0, 0);
-}
-
-void windowShowBaseLabels_toggle(ClientSim *cs) {
-  BYTE count, total;
-
-  showBaseLabels = !showBaseLabels;
-  /* cs is NULL from the pre-game Settings dialog (no live sim). The pref is
-     flipped above; the status-label refresh below needs the sim, so skip it. */
-  if (cs == NULL) {
-    return;
-  }
-  sdl3DrawSetBasesStatusClear();
-  total = clientSimGetBaseCount(cs);
-  for (count = 1; count <= total; count++) {
-    BYTE baseStat = clientSimGetBaseAlliance(cs, count);
-    sdl3DrawStatusBase(count, baseStat, showBaseLabels);
-  }
-  sdl3DrawCopyBasesStatus(0, 0);
 }
 
 void windowSoundEffects_toggle(void) {
@@ -1806,15 +1708,6 @@ void windowSaveMap(ClientSim *cs) {
   }
 }
 
-void windowKeyPressed(ClientSim *cs, int keyCode) {
-  if (keyCode == keys.kiTankView) {
-    clientSimTankView(cs);
-  }
-  /* Pill view (enter + hold-to-cycle) is handled by polling in
-   * pillViewInputStep so holding the key auto-repeats through pills;
-   * dispatching it here too would double-step on the entering press. */
-}
-
 void windowButtonAdd(int keyCode) {
   (void)keyCode;
 }
@@ -1970,19 +1863,23 @@ void windowPlaySound(sndEffects value) {
 }
 
 void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
-  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* Redundant with the per-frame render pass, which repaints every pill icon
+     from sim state on the render thread (sdl3DrawMainScreen). This callback
+     also fires on the server-tick thread, where touching the renderer races
+     the main-thread present, so defer to the next frame when off it. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusPillbox(pillNum, pb, showPillLabels);
   sdl3DrawCopyPillsStatus(0, 0);
-  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* See frontEndStatusPillbox — repainted every frame from sim state; skip
+     the direct draw when off the render thread. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusTank(tankNum, ts);
   sdl3DrawCopyTanksStatus(0, 0);
-  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndMessages(ClientSim *cs, char *top, char *bottom) {
@@ -2004,11 +1901,15 @@ void frontEndKillsDeaths(ClientSim *cs, int kills, int deaths) {
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {
-  DWORD tick = SDL_GetTicks();
   if (s_activeUiCs != NULL && cs != s_activeUiCs) return;
+  /* Redundant with the per-frame render pass, which repaints every base icon
+     from sim state on the render thread (sdl3DrawMainScreen). This callback
+     also fires on the server-tick thread (e.g. base capture / alliance change
+     applied during serverInstanceTick) where touching the renderer races the
+     main-thread present — the crash in issue. Defer to the next frame. */
+  if (!sdl3DrawOnRenderThread()) return;
   sdl3DrawStatusBase(baseNum, bs, showBaseLabels);
   sdl3DrawCopyBasesStatus(0, 0);
-  dwSysFrame += (SDL_GetTicks() - tick);
 }
 
 void frontEndUpdateBaseStatusBars(ClientSim *cs, BYTE shells, BYTE mines, BYTE armour) {
@@ -2173,20 +2074,6 @@ void frontEndEnableRequestAllyMenu(bool enabled) {
 
 void frontEndEnableLeaveAllyMenu(bool enabled) {
   (void)enabled;
-}
-
-/* -------------------------------------------------------
- * frontEndRedrawAll — called by backend to force redraw
- * ------------------------------------------------------- */
-void frontEndRedrawAll(ClientSim *cs) {
-  if (!clientSimIsRunning(cs)) return;
-  /* In lobby state the in-game renderer hasn't taken over yet — the
-   * lobby ImGui is the active view. Skip the game-frame blit so a
-   * subscriber-side playersSetPlayer triggered by a CTRL_PLAYER_JOIN
-   * mid-lobby (e.g. another remote adding a bot) doesn't stomp the
-   * lobby render. */
-  if (clientSimIsInLobby(cs)) return;
-  windowRedrawAll(cs);
 }
 
 /* -------------------------------------------------------

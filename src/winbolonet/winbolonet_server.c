@@ -563,6 +563,94 @@ bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BY
 }
 
 /*********************************************************
+*NAME:          winboloNetVerifyJoinCode
+*PURPOSE:
+* Resolves a join_code via POST
+* /api/v1/client/verify_join_code. Read-only: it does not
+* consume the code and stores nothing in the slot-keyed
+* winboloNetPlayerKey[] array. On acceptance it reports the
+* resolved player name, login state, country and user id.
+*********************************************************/
+bool winboloNetVerifyJoinCode(const char *joinCode,
+                              char  *playerNameOut,   /* >= PACKET_MAX_PLAYER_NAME */
+                              bool  *isLoggedInOut,
+                              char  *countryOut,      /* >= 3 (ISO-2 + NUL) */
+                              int   *userIdOut,       /* -1 when null */
+                              char  *errorMsg) {      /* >= 256 */
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok = FALSE;
+
+  if (isLoggedInOut) *isLoggedInOut = FALSE;
+  if (userIdOut) *userIdOut = -1;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (countryOut) countryOut[0] = '\0';
+
+  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
+    strcpy(errorMsg, "WinBolo.net not running");
+    return FALSE;
+  }
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "join_code", joinCode);
+
+  status = wbn_api_call("client/verify_join_code", body, &resp);
+  cJSON_Delete(body);
+
+  if (status == 200 && resp) {
+    /* "ok" gates acceptance; treat its absence as success so a lean
+     * backend response still verifies, mirroring the spectator verify. */
+    cJSON *okObj = cJSON_GetObjectItem(resp, "ok");
+    bool accepted = (okObj == NULL) || cJSON_IsTrue(okObj);
+    if (accepted) {
+      cJSON *liObj = cJSON_GetObjectItem(resp, "is_logged_in");
+      cJSON *nameObj = cJSON_GetObjectItem(resp, "player_name");
+      cJSON *ccObj = cJSON_GetObjectItem(resp, "country_code");
+      cJSON *uidObj = cJSON_GetObjectItem(resp, "user_id");
+
+      if (isLoggedInOut && liObj && cJSON_IsBool(liObj)) {
+        *isLoggedInOut = cJSON_IsTrue(liObj) ? TRUE : FALSE;
+      }
+      if (playerNameOut && nameObj && cJSON_IsString(nameObj)) {
+        strncpy(playerNameOut, nameObj->valuestring, PACKET_MAX_PLAYER_NAME - 1);
+        playerNameOut[PACKET_MAX_PLAYER_NAME - 1] = '\0';
+      }
+      if (countryOut && ccObj && cJSON_IsString(ccObj)) {
+        strncpy(countryOut, ccObj->valuestring, 2);
+        countryOut[2] = '\0';
+      }
+      if (userIdOut && uidObj && cJSON_IsNumber(uidObj)) {
+        *userIdOut = uidObj->valueint;
+      }
+      ok = TRUE;
+    } else {
+      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+      if (errObj && cJSON_IsString(errObj)) {
+        /* Backend-controlled string into a fixed (>=256) buffer: bound it. */
+        strncpy(errorMsg, errObj->valuestring, 255);
+        errorMsg[255] = '\0';
+      } else {
+        strcpy(errorMsg, "WinBolo.net join code verification rejected");
+      }
+    }
+  } else if (resp) {
+    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+    if (errObj && cJSON_IsString(errObj)) {
+      strcpy(errorMsg, errObj->valuestring);
+    } else {
+      strcpy(errorMsg, "WinBolo.net join code verification failed");
+    }
+  } else {
+    strcpy(errorMsg, "No response from WinBolo.net");
+  }
+
+  cJSON_Delete(resp);
+  return ok;
+}
+
+/*********************************************************
 *NAME:          winboloNetVerifySpectatorKey
 *PURPOSE:
 * Validates a spectator_key via POST

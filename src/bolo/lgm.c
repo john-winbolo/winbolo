@@ -1368,7 +1368,15 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
         (*lgman)->numPills = LGM_NO_PILL;
         if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
       }
-      tankGetWorld(tnk, &((*lgman)->destX), &((*lgman)->destY));
+      if (tnk != NULL && *tnk != NULL) {
+        tankGetWorld(tnk, &((*lgman)->destX), &((*lgman)->destY));
+      } else {
+        /* Owner has no live tank (e.g. the player left while their man was
+           out of the tank). Fall back to the man's current position rather
+           than dereferencing a destroyed tank. */
+        (*lgman)->destX = (*lgman)->x;
+        (*lgman)->destY = (*lgman)->y;
+      }
 
       /* Check for tank in mines (i.e. dead) send builder back to spoke it died*/
       if ((*lgman)->destX <= ((MAP_MINE_EDGE_LEFT+1) << 8) || (*lgman)->destX >= ((MAP_MINE_EDGE_RIGHT-1) << 8) || (*lgman)->destY <= ((MAP_MINE_EDGE_TOP+1) << 8) || (*lgman)->destY >= ((MAP_MINE_EDGE_BOTTOM-1) << 8)) {

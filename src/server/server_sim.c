@@ -3300,7 +3300,7 @@ void serverSimBuildSnapshot(ServerSim *sim, BYTE clientIdx,
             }
         }
         hdr->pillCount = (uint8_t)serverSimGetPills(sim, pillsOut, maxPills);
-        hdr->mapChecksum = mapCalcChecksum(&sim->sim.mp);
+        hdr->mapChecksum = mapCalcChecksum(&sim->sim.mp, &sim->sim.bs, &sim->sim.pb);
         sim->lastFullSyncTick[clientIdx] = sim->tick;
     } else {
         hdr->baseCount = 0;
@@ -3452,33 +3452,88 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         for (count = 0; count < MAX_TANKS; count++) {
             if (!sim->playerConnected[count]) continue;
             playersGetPlayerName(&sim->sim.plyrs, count, name, TRUE);
-            fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Jitter:%d)\n",
-                    name,
-                    pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
-                    basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
-                    sim->playerPing[count],
-                    sim->jitterTarget[count]);
 
-            /* For bot slots, append a 4-space-indented [BOT] line with
-             * the brain's most recent timing. Mute fields suppressed
-             * when zero — see commit message. */
+            /* Ping and the input-buffer depth are in-process artifacts for
+             * bot slots (0ms ping, a buffer that exists but never gates an
+             * in-process input), so they'd only invite a misread. Show them
+             * only for real connections. The field formerly printed as
+             * "Jitter" is the adaptive input jitter-buffer target depth in
+             * ticks, not a measured network statistic — labelled "Buf" so
+             * nobody reads network variance into it. */
             BotInfo bi;
-            if (botManagerGetBotInfo(sim, count, &bi)) {
+            bool isBotSlot = botManagerGetBotInfo(sim, count, &bi);
+            if (isBotSlot) {
+                fprintf(stdout, "%s - (P:%d B:%d)\n",
+                        name,
+                        pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
+                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count));
+            } else {
+                /* Remote players carry their source ip:port; the in-process
+                 * host has no UDP client, so the getter reports false and we
+                 * print "local" instead. */
+                char addr[48];  /* "255.255.255.255:65535" + slack */
+                const char *addrStr =
+                    transportUdpServerGetClientAddrStr(count, addr, sizeof(addr))
+                        ? addr : "local";
+                fprintf(stdout, "%s - (P:%d B:%d Ping:%dms Buf:%d Addr:%s)\n",
+                        name,
+                        pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
+                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
+                        sim->playerPing[count],
+                        sim->jitterTarget[count],
+                        addrStr);
+            }
+
+            /* For bot slots, append a 4-space-indented [BOT] line with the
+             * brain's timing. peak= is the high-water think this game (reset
+             * each round start; the magnitude behind overruns, which last=
+             * and the EWMA hide); overruns carries its rate against thinkCount
+             * so a cumulative count can't masquerade as "spiking right now". */
+            if (isBotSlot) {
                 if (bi.hasBrain) {
                     if (bi.overrunCount == 0) {
                         fprintf(stdout,
-                                "    [BOT] brain=%s last=%.1fms target=%.1fms\n",
-                                bi.brainName, bi.lastThinkMs, bi.targetMs);
+                                "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms\n",
+                                bi.brainName, bi.lastThinkMs, bi.maxThinkMs,
+                                bi.targetMs);
                     } else {
+                        double rate = bi.thinkCount > 0
+                            ? (double)bi.overrunCount * 100.0 / (double)bi.thinkCount
+                            : 0.0;
                         fprintf(stdout,
-                                "    [BOT] brain=%s last=%.1fms target=%.1fms overruns=%u\n",
-                                bi.brainName, bi.lastThinkMs, bi.targetMs,
-                                bi.overrunCount);
+                                "    [BOT] brain=%s last=%.1fms peak=%.1fms target=%.1fms overruns=%u/%u (%.2f%%)\n",
+                                bi.brainName, bi.lastThinkMs, bi.maxThinkMs,
+                                bi.targetMs, bi.overrunCount, bi.thinkCount, rate);
                     }
                 } else {
                     fprintf(stdout, "    [BOT]\n");
                 }
             }
+        }
+    }
+
+    /* Server-loop timing (Tick / Simulation) is recorded every server tick
+     * regardless of bots, so show it whenever there's data — operators of
+     * a bot-free server still want to see the loop stays inside budget.
+     * The bot pool block below stays gated on actual bots. */
+    {
+        double tickLast = 0.0, tickEwma = 0.0;
+        serverLifecycleGetTickStats(&tickLast, &tickEwma);
+        double simLast = 0.0, simEwma = 0.0;
+        serverLifecycleGetSimStats(&simLast, &simEwma);
+
+        if (tickLast > 0.0 || simLast > 0.0) {
+            fprintf(stdout, "Server timing:\n");
+        }
+        if (tickLast > 0.0) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
+                    "Tick:", tickLast, tickEwma);
+        }
+        if (simLast > 0.0) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms\n",
+                    "Simulation:", simLast, simEwma);
         }
     }
 
@@ -3499,36 +3554,31 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                     ps.workerCount, ps.activeBots, ps.currentTargetMs);
         }
 
-        double tickLast = 0.0, tickEwma = 0.0;
-        serverLifecycleGetTickStats(&tickLast, &tickEwma);
-        double simLast = 0.0, simEwma = 0.0;
-        serverLifecycleGetSimStats(&simLast, &simEwma);
-
-        if (tickLast > 0.0) {
-            fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
-                    "Tick:", tickLast, tickEwma);
-        }
+        /* peak= is the worst single-bot think across the pool this game
+         * (reset each round start) — the EWMA averages spikes away, so
+         * without it a pool that mostly runs cheap but takes occasional 20ms
+         * thinks looks identical to one that never does. */
         fprintf(stdout,
-                "  %-11s last=%.1fms  EWMA=%.1fms\n",
-                "Brain:", ps.lastBrainPhaseMs, ps.ewmaBrainPhaseMs);
-        if (simLast > 0.0) {
-            fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms\n",
-                    "Simulation:", simLast, simEwma);
-        }
+                "  %-11s last=%.1fms  EWMA=%.1fms  peak=%.1fms\n",
+                "Brain:", ps.lastBrainPhaseMs, ps.ewmaBrainPhaseMs,
+                ps.maxThinkMs);
         /* "Bot prep" labels the non-brain serial parts of
          * botManagerTick: snapshot/sync + input send. Distinct from
-         * "Simulation:" above which times the two serverSimTick calls. */
+         * "Simulation:" above which times the two serverSimTick calls.
+         * Overruns carry their rate against total thinks — a cumulative
+         * count alone grows forever and can't tell ongoing from historical. */
         if (ps.totalOverruns == 0) {
             fprintf(stdout,
                     "  %-11s last=%.1fms  EWMA=%.1fms\n",
                     "Bot prep:", ps.lastSerialMs, ps.ewmaSerialMs);
         } else {
+            double poolRate = ps.totalThinks > 0
+                ? (double)ps.totalOverruns * 100.0 / (double)ps.totalThinks
+                : 0.0;
             fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms  total overruns=%u\n",
+                    "  %-11s last=%.1fms  EWMA=%.1fms  total overruns=%u/%u (%.2f%%)\n",
                     "Bot prep:", ps.lastSerialMs, ps.ewmaSerialMs,
-                    ps.totalOverruns);
+                    ps.totalOverruns, ps.totalThinks, poolRate);
         }
     }
 
@@ -5361,6 +5411,10 @@ static void gameVotePruneVotes(const ServerSim *sim, struct ServerGameVote *gv) 
 
 void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
                              uint8_t kind, uint8_t toggleMode) {
+    /* No lobby means no place to return to: a passed back-to-lobby /
+     * surrender vote would only terminate (or, under map rotation,
+     * blindly rotate) the server. Disable voting entirely in that mode. */
+    if (!sim->lobbyEnabled) return;
     if (playerNum >= MAX_TANKS) return;
     if (!sim->playerConnected[playerNum]) return;
     if (sim->lobbyPlayers[playerNum].isBot) return;
@@ -5556,6 +5610,11 @@ static void gameVoteCheckBaseMonopoly(ServerSim *sim, uint64_t nowMs) {
 }
 
 void serverSimGameVoteTick(ServerSim *sim, uint64_t nowMs) {
+    /* Voting only exists on lobby-enabled servers (see
+     * serverSimGameVoteToggle). Skip the whole vote machinery — including
+     * the base-monopoly auto-vote — when there is no lobby. */
+    if (!sim->lobbyEnabled) return;
+
     sim->gameVoteWallMs = nowMs;
 
     /* Auto-trigger checks before per-slot servicing. */
@@ -5713,7 +5772,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.mapSkipAvailable =
         (sim->mapDirCount > 1 || sim->randomMapEnabled) ? true : false;
     evt->u.lobbySettings.netStat          = serverPhaseToNetStat(sim->state);
-    evt->u.lobbySettings.inLobby          = sim->lobbyEnabled ? true : false;
+    evt->u.lobbySettings.hasLobby         = sim->lobbyEnabled ? true : false;
     evt->u.lobbySettings.lobbyOpenHost            = sim->openHost;
     evt->u.lobbySettings.hostSlot                 = sim->hostSlot;
     evt->u.lobbySettings.lobbyAutoLockOnGameStart = sim->autoLockOnGameStart;
@@ -6705,6 +6764,32 @@ bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out) {
     out->dir     = tankGetDir(t);
     out->on_boat = tankIsOnBoat(t);
     out->alive   = (tankGetDeathWait(t) == 0);
+    return true;
+}
+
+bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out) {
+    tank *t;
+    if (sim == NULL || out == NULL || i >= MAX_TANKS) return false;
+    if (!serverSimIsPlayerConnected(sim, i)) return false;
+
+    memset(out, 0, sizeof(*out));
+    /* isServer=TRUE: read the server-side player table directly. */
+    playersGetPlayerName(&sim->sim.plyrs, i, out->name, TRUE);
+    out->name[sizeof(out->name) - 1] = '\0';
+
+    t = &sim->sim.tanks[i];
+    if (*t == NULL) {
+        /* Connected but no live tank (countdown / death-wait). */
+        out->has_tank = false;
+        out->alive    = false;
+        return true;
+    }
+    out->has_tank = true;
+    tankGetWorld(t, &out->world_x, &out->world_y);
+    out->dir     = tankGetDir(t);
+    out->on_boat = tankIsOnBoat(t);
+    out->alive   = (tankGetDeathWait(t) == 0);
+    tankGetKillsDeaths(t, &out->kills, &out->deaths);
     return true;
 }
 

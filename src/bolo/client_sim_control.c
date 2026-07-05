@@ -347,6 +347,12 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->lobbyBaseCount   = evt->u.lobbySettings.lobbyBaseCount;
         cs->lobbyStartCount  = evt->u.lobbySettings.lobbyStartCount;
         cs->mapSkipAvailable = evt->u.lobbySettings.mapSkipAvailable;
+        /* Server lobby capability ("does this server run a lobby"), distinct
+         * from cs->inLobby (the current phase). Carried by the hasLobby wire
+         * field but stored separately so it survives phase changes and can
+         * gate the in-game vote UI — votes are meaningless without a lobby
+         * and the server rejects them there. */
+        cs->lobbyAvailable = evt->u.lobbySettings.hasLobby;
         /* netStat and inLobby are owned by the CTRL_GAME_PHASE_* events,
          * which fire on every live transition and which the join sync
          * replay always delivers before this settings snapshot. Adopting

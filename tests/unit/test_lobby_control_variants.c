@@ -86,7 +86,7 @@ int run_lobby_settings_codec_and_apply(void) {
     in.u.lobbySettings.lobbyStartCount          = 16;
     in.u.lobbySettings.mapSkipAvailable         = true;
     in.u.lobbySettings.netStat                  = netRunning;
-    in.u.lobbySettings.inLobby                  = false;
+    in.u.lobbySettings.hasLobby                  = false;
     in.u.lobbySettings.lobbyOpenHost            = true;
     in.u.lobbySettings.lobbyAutoLockOnGameStart = true;
     in.u.lobbySettings.lobbyServerLocks         = 0xABCD;
@@ -108,7 +108,7 @@ int run_lobby_settings_codec_and_apply(void) {
     UT_ASSERT(out.u.lobbySettings.lobbyStartCount          == 16);
     UT_ASSERT(out.u.lobbySettings.mapSkipAvailable         == true);
     UT_ASSERT(out.u.lobbySettings.netStat                  == netRunning);
-    UT_ASSERT(out.u.lobbySettings.inLobby                  == false);
+    UT_ASSERT(out.u.lobbySettings.hasLobby                  == false);
     UT_ASSERT(out.u.lobbySettings.lobbyOpenHost            == true);
     UT_ASSERT(out.u.lobbySettings.lobbyAutoLockOnGameStart == true);
     UT_ASSERT_MSG(out.u.lobbySettings.lobbyServerLocks == 0xABCD,

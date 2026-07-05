@@ -25,6 +25,7 @@
  *********************************************************/
 
 #include "transport_udp_internal.h"
+#include "global.h"
 #include "bases.h"
 #include "pillbox.h"
 #include "starts.h"
@@ -78,12 +79,42 @@
 #  include <stdlib.h>      /* arc4random_buf (macOS/BSD) */
 #endif
 
+/* Human-readable terrain name for map-resync diagnostics. Covers the terrain
+ * byte stored in mapItem, including the mine range (10-15). */
+static const char *resyncTerrainName(BYTE t) {
+    switch (t) {
+        case DEEP_SEA:     return "DEEP_SEA";
+        case BUILDING:     return "BUILDING";
+        case RIVER:        return "RIVER";
+        case SWAMP:        return "SWAMP";
+        case CRATER:       return "CRATER";
+        case ROAD:         return "ROAD";
+        case FOREST:       return "FOREST";
+        case RUBBLE:       return "RUBBLE";
+        case GRASS:        return "GRASS";
+        case HALFBUILDING: return "HALFBUILDING";
+        case BOAT:         return "BOAT";
+        case MINE_SWAMP:   return "MINE_SWAMP";
+        case MINE_CRATER:  return "MINE_CRATER";
+        case MINE_ROAD:    return "MINE_ROAD";
+        case MINE_FOREST:  return "MINE_FOREST";
+        case MINE_RUBBLE:  return "MINE_RUBBLE";
+        case MINE_GRASS:   return "MINE_GRASS";
+        default:           return "?";
+    }
+}
+
 /* ---- Server dedicated recv thread ----
  * A background thread continuously polls the server socket and queues
  * packets into an SPSC ring buffer.  The timer callback drains the
- * queue each tick, keeping packet processing on the main thread. */
+ * queue each tick, keeping packet processing on the main thread.
+ *
+ * The ring is drained once per 20ms server tick, so it must hold a full
+ * tick's worth of inbound bursts (many clients plus join/info-request and
+ * resync traffic) or packets are dropped. Each entry is ~1.4 KB, so 1024
+ * slots cost ~1.4 MB — cheap insurance against burst-driven drops. */
 
-#define RECV_QUEUE_SIZE 128
+#define RECV_QUEUE_SIZE 1024
 
 typedef struct {
     uint8_t data[UDP_MAX_PAYLOAD];
@@ -1845,6 +1876,10 @@ static void transportUdpServerSendWbnRekey(UdpServerClient *c) {
     srvSendTo(buf, sizeof(buf), &c->addr);
 }
 
+/* Defined below near the reauth handler; used here for the web lobby-return
+ * path that re-stamps identity instead of sending a REKEY. */
+static void udpServerApplyWebIdentity(ServerSim *sim, BYTE slot);
+
 /* Broadcast PACKET_WBN_REKEY to every connected client that was
  * WBN-verified last round, after the server rotates its server_key
  * (post-returnToLobby).  Each client mints a fresh player_key against
@@ -1870,6 +1905,28 @@ void transportUdpServerBroadcastWbnRekey(ServerSim *sim) {
         bool wasVerified = udpServer.clients[i].wbnWasVerified;
         if (!wbnRekeyTargetSelected(udpServer.clients[i].connected, wasVerified))
             continue;
+        if (udpServer.clients[i].clientType == CLIENT_TYPE_WEB) {
+            /* A web slot can't mint a fresh player_key and won't re-present its
+             * single-use join_code, so its identity is re-stamped directly from
+             * the cached join-code result (it survives the sim reset, like
+             * wbnWasVerified) rather than via a reauth round-trip. */
+            if (udpServer.clients[i].wbnWebIdentityCached &&
+                udpServer.clients[i].wbnWebIsLoggedIn) {
+                udpServerApplyWebIdentity(sim, (BYTE)i);
+                if (serverSimGetState(sim) == serverStateLobby ||
+                    serverSimGetState(sim) == serverStateCountdown) {
+                    serverSimPublishLobbySlot(sim, (BYTE)i);
+                }
+                winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
+                                   (BYTE)i, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
+            }
+            /* Still send the REKEY so the web client learns the rotated
+             * server_key: it adopts the key and notifies JS (to keep the
+             * shareable /join/<key> URL on the live game) but does NOT reauth,
+             * so there is no wbnJoinArm here — identity was just re-stamped. */
+            transportUdpServerSendWbnRekey(&udpServer.clients[i]);
+            continue;
+        }
         transportUdpServerSendWbnRekey(&udpServer.clients[i]);
         wbnJoinArm(&udpServer.clients[i].wbnJoin,
                    udpServer.tickCount, WBN_JOIN_REGISTER_GRACE_TICKS);
@@ -3005,6 +3062,11 @@ static void serverHandleJoinRequest(const uint8_t *buf, int len,
          * definitively here (true for a WBN joiner, false otherwise) so a
          * non-WBN client reusing a slot can't inherit a stale true. */
         udpServer.clients[slot].wbnWasVerified = incomingIsWBN;
+        udpServer.clients[slot].wbnWebIdentityCached = false;
+        udpServer.clients[slot].wbnWebIsLoggedIn = false;
+        udpServer.clients[slot].wbnWebName[0] = '\0';
+        udpServer.clients[slot].wbnWebCountry[0] = '\0';
+        udpServer.clients[slot].wbnWebUserId = -1;
         addPlayerInternal(sim, (BYTE)slot,
                           udpServer.clients[slot].playerName,
                           udpServer.clients[slot].wantRejoin);
@@ -3643,6 +3705,11 @@ static void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     wbnJoinClear(&udpServer.clients[idx].wbnJoin);
     /* Slot is free; a fresh occupant re-establishes WBN status at its join. */
     udpServer.clients[idx].wbnWasVerified = false;
+    udpServer.clients[idx].wbnWebIdentityCached = false;
+    udpServer.clients[idx].wbnWebIsLoggedIn = false;
+    udpServer.clients[idx].wbnWebName[0] = '\0';
+    udpServer.clients[idx].wbnWebCountry[0] = '\0';
+    udpServer.clients[idx].wbnWebUserId = -1;
 
     /* Reset control-sync state so a re-using slot starts fresh. */
     udpServer.controlSyncInProgress[idx] = false;
@@ -3787,6 +3854,33 @@ void transportUdpServerKickPlayer(ServerSim *sim, const char *playerName) {
             return;
         }
     }
+
+    /* No human matched. Bots have no UDP client, so the connected check
+     * above skipped them — but their display name is stored in the same
+     * playerName slot via transportUdpServerSetBotName, so match on that
+     * and fall back to bot removal. serverSimRemoveBot runs the same
+     * teardown the crash-streak kick uses (botManagerRemoveBot ->
+     * serverSimRemovePlayer, the human-leave path) and publishes the freed
+     * lobby slot. It is safe mid-game: the caller already holds the sim
+     * mutex, exactly as a human kick does. There is no client to hand a
+     * PACKET_KICKED, so that step is simply absent. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsBot(sim, (BYTE)i)) continue;
+        if (playerNameCompare(udpServer.clients[i].playerName, playerName) == 0) {
+            const char *kickArgs[1];
+            snprintf(msg, sizeof(msg), "%s has been server kicked.",
+                     udpServer.clients[i].playerName);
+            WB_LOG_WARN(WB_LOG_CAT_NET, "admin kick bot slot=%d name='%s'",
+                        i, udpServer.clients[i].playerName);
+            fprintf(stderr, "[UDP SERVER] %s\n", msg);
+            serverSimConsoleMessage(msg);
+            kickArgs[0] = udpServer.clients[i].playerName;
+            serverSendServerMessage(sim, STR_KICK_ANNOUNCE, 1, kickArgs);
+            serverSimRemoveBot(sim, (BYTE)i);
+            return;
+        }
+    }
+
     serverSimConsoleMessage("Player not found.");
 }
 
@@ -4443,6 +4537,81 @@ bool transportUdpServerStartBalanceRequest(ServerSim *sim,
     return true;
 }
 
+/* Resolve a WEB (CLIENT_TYPE_WEB) slot's WBN identity from its join_code.
+ * Verifies once per connection via the read-only join-code route and caches
+ * the result on the slot; later reauths re-stamp from cache with no network
+ * call (the code expires at TTL and the server_key rotates between rounds, so
+ * a re-verify would fail).  Returns true iff the slot holds a logged-in WBN
+ * identity.  WEB joiners are never Steam/supporter-bearing. */
+static bool udpServerResolveWebIdentity(BYTE slot, const char *joinCode,
+                                        bool *isLoggedInOut, bool *hasSteamOut,
+                                        bool *isSupporterOut) {
+    if (hasSteamOut)    *hasSteamOut = FALSE;
+    if (isSupporterOut) *isSupporterOut = FALSE;
+    if (!udpServer.clients[slot].wbnWebIdentityCached) {
+        char nameBuf[PACKET_MAX_PLAYER_NAME];
+        char countryBuf[3];
+        char errorMsg[512];
+        bool isLoggedIn = FALSE;
+        int  userId = -1;
+        nameBuf[0] = '\0';
+        countryBuf[0] = '\0';
+        errorMsg[0] = '\0';
+        if (!winboloNetVerifyJoinCode(joinCode, nameBuf, &isLoggedIn,
+                                      countryBuf, &userId, errorMsg)) {
+            /* Invalid/expired/wrong-server code: fall back to anonymous,
+             * exactly like an empty wbnJoinKey.  Not cached, so a later
+             * reauth with a still-valid code can still succeed. */
+            if (isLoggedInOut) *isLoggedInOut = FALSE;
+            return false;
+        }
+        udpServer.clients[slot].wbnWebIdentityCached = true;
+        udpServer.clients[slot].wbnWebIsLoggedIn = isLoggedIn;
+        snprintf(udpServer.clients[slot].wbnWebName,
+                 PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
+        udpServer.clients[slot].wbnWebCountry[0] = countryBuf[0];
+        udpServer.clients[slot].wbnWebCountry[1] = countryBuf[1];
+        udpServer.clients[slot].wbnWebCountry[2] = '\0';
+        udpServer.clients[slot].wbnWebUserId = userId;
+    }
+    if (isLoggedInOut) *isLoggedInOut = udpServer.clients[slot].wbnWebIsLoggedIn;
+    return udpServer.clients[slot].wbnWebIsLoggedIn;
+}
+
+/* Stamp a logged-in WEB slot's verified identity onto the sim + transport slot
+ * from its cached join-code result.  The WBN-resolved name and country are
+ * AUTHORITATIVE: a web client presents only a join_code, and the verify call
+ * (unlike the native player_key route) never sends a name for the backend to
+ * bind against — so the server, not the client, decides the verified display
+ * name.  Without this a valid code could be paired with any spoofed name under
+ * PLAYER_FLAG_WBN_VERIFIED.  serverSimSetPlayerName / serverSimSetPlayerCountry
+ * publish CTRL_PLAYER_NAME / PLAYER_JOIN so the change fans out to every client.
+ * Caller must hold a cached, logged-in identity. */
+static void udpServerApplyWebIdentity(ServerSim *sim, BYTE slot) {
+    uint8_t flags = udpServer.clients[slot].clientHints & PLAYER_CLIENT_HINT_MASK;
+    flags |= PLAYER_FLAG_WBN_VERIFIED;  /* WEB joiners carry no Steam/supporter */
+    playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, slot, flags);
+    udpServer.clients[slot].wbnWasVerified = true;
+    playersSetClientType(&serverSimGetGameSim(sim)->plyrs, slot,
+                         udpServer.clients[slot].clientType);
+
+    if (udpServer.clients[slot].wbnWebName[0] != '\0') {
+        serverSimSetPlayerName(sim, slot, udpServer.clients[slot].wbnWebName);
+        snprintf(udpServer.clients[slot].playerName, PACKET_MAX_PLAYER_NAME,
+                 "%s", udpServer.clients[slot].wbnWebName);
+        udpServer.clients[slot].nameStickySuffix = false;
+    }
+    if (udpServer.clients[slot].wbnWebCountry[0] != '\0') {
+        serverSimSetPlayerCountry(sim, slot,
+                                  udpServer.clients[slot].wbnWebCountry);
+        udpServer.clients[slot].countryCode[0] =
+            udpServer.clients[slot].wbnWebCountry[0];
+        udpServer.clients[slot].countryCode[1] =
+            udpServer.clients[slot].wbnWebCountry[1];
+        udpServer.clients[slot].countryCode[2] = '\0';
+    }
+}
+
 void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
                                        const char *token) {
     if (!winbolonetIsRunning() || token == NULL || token[0] == '\0') {
@@ -4463,28 +4632,45 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
      * -unverified[-N] handed out at join; WBN must verify and attribute
      * under the real account display name, which is the stored desired bare
      * name.  Non-claim reauths verify under the slot's own name as before. */
-    bool isPendingClaim = udpServer.clients[slot].claimPending;
+    bool isWeb = (udpServer.clients[slot].clientType == CLIENT_TYPE_WEB);
+    /* Web slots take their verified name from WBN, not the wire, so the native
+     * provisional-claim dance (temp -unverified[-N] names, squatter preemption)
+     * does not apply to them. */
+    bool isPendingClaim = !isWeb && udpServer.clients[slot].claimPending;
     const char *verifyName = isPendingClaim
         ? udpServer.clients[slot].claimDesiredName
         : udpServer.clients[slot].playerName;
     errorMsg[0] = '\0';
-    if (winboloNetVerifyClientKey(token,
-                                  verifyName,
-                                  slot, errorMsg,
-                                  &hasSteam, &wbnIsSupporter)) {
-        /* Re-merge using the clientHints captured at JOIN_REQUEST (the
-         * client doesn't re-send them on REAUTH; we re-verify against
-         * WBN, not the network). */
-        uint8_t storedHints = udpServer.clients[slot].clientHints;
-        uint8_t flags = storedHints & PLAYER_CLIENT_HINT_MASK;
-        flags |= PLAYER_FLAG_WBN_VERIFIED;
-        if (hasSteam) flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
-        if (wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
-        playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, slot, flags);
-        /* Keep the durable rekey-gate bit in step with the session flag. */
-        udpServer.clients[slot].wbnWasVerified = true;
-        playersSetClientType (&serverSimGetGameSim(sim)->plyrs, slot,
-                              udpServer.clients[slot].clientType);
+    bool verifyOk;
+    if (isWeb) {
+        /* WEB clients present a join_code (not a minted player_key); verify it
+         * read-only and cache the identity for the connection's lifetime. */
+        verifyOk = udpServerResolveWebIdentity(slot, token, NULL,
+                                               &hasSteam, &wbnIsSupporter);
+    } else {
+        verifyOk = winboloNetVerifyClientKey(token, verifyName, slot, errorMsg,
+                                             &hasSteam, &wbnIsSupporter);
+    }
+    if (verifyOk) {
+        if (isWeb) {
+            /* Web slot: stamp the WBN-authoritative identity (name, country,
+             * flags) from the cached join-code result. */
+            udpServerApplyWebIdentity(sim, slot);
+        } else {
+            /* Re-merge using the clientHints captured at JOIN_REQUEST (the
+             * client doesn't re-send them on REAUTH; we re-verify against
+             * WBN, not the network). */
+            uint8_t storedHints = udpServer.clients[slot].clientHints;
+            uint8_t flags = storedHints & PLAYER_CLIENT_HINT_MASK;
+            flags |= PLAYER_FLAG_WBN_VERIFIED;
+            if (hasSteam) flags |= PLAYER_FLAG_WBN_STEAM_LINKED;
+            if (wbnIsSupporter) flags |= PLAYER_FLAG_SUPPORTER;
+            playersSetClientFlags(&serverSimGetGameSim(sim)->plyrs, slot, flags);
+            /* Keep the durable rekey-gate bit in step with the session flag. */
+            udpServer.clients[slot].wbnWasVerified = true;
+            playersSetClientType (&serverSimGetGameSim(sim)->plyrs, slot,
+                                  udpServer.clients[slot].clientType);
+        }
         WB_LOG_INFO(WB_LOG_CAT_NET,
                     "[WBN] Player %d re-authenticated (steam=%d)",
                     (int)slot, hasSteam ? 1 : 0);
@@ -4573,6 +4759,13 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
             udpServer.clients[slot].claimPending = false;
             udpServer.clients[slot].claimDesiredName[0] = '\0';
         }
+    } else if (isWeb && udpServer.clients[slot].wbnWebIdentityCached) {
+        /* A web slot whose code verified but resolved to a guest (not logged
+         * in) returns false here — that is the expected anonymous case, not a
+         * failure, so log it at info and don't emit a scary warning. */
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "[WBN] Player %d web slot resolved as guest (anonymous)",
+                    (int)slot);
     } else {
         WB_LOG_WARN(WB_LOG_CAT_NET,
                     "[WBN] Player %d re-auth failed: %s", (int)slot, errorMsg);
@@ -5058,7 +5251,9 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                          * infrequent; the cost is acceptable for the diagnosis. */
                         {
                             map *live = &serverSimGetGameSim(sim)->mp;
-                            uint16_t liveSum = mapCalcChecksum(live);
+                            uint16_t liveSum = mapCalcChecksum(live,
+                                                   &serverSimGetGameSim(sim)->bs,
+                                                   &serverSimGetGameSim(sim)->pb);
                             map rtMap; pillboxes rtPb; bases rtBs; starts rtSs;
                             mapCreate(&rtMap);
                             pillsCreate(&rtPb);
@@ -5066,28 +5261,65 @@ static void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
                             startsCreate(&rtSs);
                             if (mapLoadCompressedMap(&rtMap, &rtPb, &rtBs, &rtSs,
                                                      udpServer.compressedMap, mapLen)) {
-                                uint16_t rtSum = mapCalcChecksum(&rtMap);
+                                uint16_t rtSum = mapCalcChecksum(&rtMap, &rtBs, &rtPb);
                                 if (rtSum != liveSum) {
-                                    int diffs = 0, shown = 0, xx, yy;
-                                    for (yy = 0; yy < MAP_ARRAY_SIZE; yy++) {
-                                        for (xx = 0; xx < MAP_ARRAY_SIZE; xx++) {
-                                            BYTE lv = mapGetPos(live, (BYTE)xx, (BYTE)yy);
-                                            BYTE rv = mapGetPos(&rtMap, (BYTE)xx, (BYTE)yy);
-                                            if (lv != rv) {
-                                                diffs++;
-                                                if (shown < 8) {
-                                                    WB_LOG_WARN(WB_LOG_CAT_NET,
-                                                        "map resync blob diff @(%d,%d) live=%u roundtrip=%u",
-                                                        xx, yy, (unsigned)lv, (unsigned)rv);
-                                                    shown++;
+                                    /* Dedupe: an unconverged divergence repeats on every
+                                     * resync request and floods the log. Dump full per-tile
+                                     * detail only when the (live,blob) checksum pair changes;
+                                     * identical repeats get one concise line. The state is
+                                     * process-wide and this runs on the single drain thread. */
+                                    static uint32_t s_lastResyncDiffSig = 0xFFFFFFFFu;
+                                    uint32_t sig = ((uint32_t)liveSum << 16) | (uint32_t)rtSum;
+                                    const char *mapName = serverSimGetMapName(sim);
+                                    if (sig == s_lastResyncDiffSig) {
+                                        WB_LOG_WARN(WB_LOG_CAT_NET,
+                                            "map resync still not converging on '%s' "
+                                            "(live sum=%u blob sum=%u, client %d gen=%u) - detail suppressed",
+                                            mapName, (unsigned)liveSum, (unsigned)rtSum,
+                                            clientIdx, (unsigned)reqGen);
+                                    } else {
+                                        bases *liveBs = &serverSimGetGameSim(sim)->bs;
+                                        pillboxes *livePb = &serverSimGetGameSim(sim)->pb;
+                                        int diffs = 0, realDiffs = 0, shown = 0, xx, yy;
+                                        s_lastResyncDiffSig = sig;
+                                        for (yy = 0; yy < MAP_ARRAY_SIZE; yy++) {
+                                            for (xx = 0; xx < MAP_ARRAY_SIZE; xx++) {
+                                                BYTE lv = mapGetPos(live, (BYTE)xx, (BYTE)yy);
+                                                BYTE rv = mapGetPos(&rtMap, (BYTE)xx, (BYTE)yy);
+                                                if (lv != rv) {
+                                                    /* Terrain under a base/pill is folded to ROAD
+                                                     * by the checksum (it is not authoritative), so
+                                                     * such a tile can never be the real cause of
+                                                     * non-convergence — flag it benign. */
+                                                    bool onBase = (basesExistPos(liveBs, (BYTE)xx, (BYTE)yy) ||
+                                                                   basesExistPos(&rtBs, (BYTE)xx, (BYTE)yy));
+                                                    bool onPill = (pillsExistPos(livePb, (BYTE)xx, (BYTE)yy) ||
+                                                                   pillsExistPos(&rtPb, (BYTE)xx, (BYTE)yy));
+                                                    diffs++;
+                                                    if (!onBase && !onPill) { realDiffs++; }
+                                                    if (shown < 8) {
+                                                        WB_LOG_WARN(WB_LOG_CAT_NET,
+                                                            "map resync blob diff @(%d,%d) "
+                                                            "live=%s(%u) roundtrip=%s(%u) [%s] map='%s'",
+                                                            xx, yy,
+                                                            resyncTerrainName(lv), (unsigned)lv,
+                                                            resyncTerrainName(rv), (unsigned)rv,
+                                                            onBase ? "base" : (onPill ? "pill" : "REAL"),
+                                                            mapName);
+                                                        shown++;
+                                                    }
                                                 }
                                             }
                                         }
+                                        WB_LOG_WARN(WB_LOG_CAT_NET,
+                                            "map resync blob does NOT round-trip on '%s': "
+                                            "%d differing tile(s) (%d genuine, %d under base/pill fixup) "
+                                            "(live sum=%u blob sum=%u) - %s",
+                                            mapName, diffs, realDiffs, diffs - realDiffs,
+                                            (unsigned)liveSum, (unsigned)rtSum,
+                                            realDiffs ? "client cannot converge"
+                                                      : "benign structure fixup only");
                                     }
-                                    WB_LOG_WARN(WB_LOG_CAT_NET,
-                                        "map resync blob does NOT round-trip: %d differing tile(s) "
-                                        "(live sum=%u blob sum=%u) - client cannot converge",
-                                        diffs, (unsigned)liveSum, (unsigned)rtSum);
                                 }
                             } else {
                                 WB_LOG_WARN(WB_LOG_CAT_NET,
@@ -6212,6 +6444,19 @@ uint16_t transportUdpServerGetClientPing(BYTE playerNum) {
     if (playerNum >= MAX_TANKS) return 0;
     if (!udpServer.clients[playerNum].connected) return 0;
     return udpServer.clients[playerNum].pingMs;
+}
+
+bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen) {
+    if (out == NULL || outLen == 0) return false;
+    out[0] = '\0';
+    if (playerNum >= MAX_TANKS || !udpServer.clients[playerNum].connected) {
+        return false;
+    }
+    const struct sockaddr_in *a = &udpServer.clients[playerNum].addr;
+    char ip[INET_ADDRSTRLEN] = "?";
+    inet_ntop(AF_INET, &a->sin_addr, ip, sizeof(ip));
+    snprintf(out, outLen, "%s:%u", ip, (unsigned)ntohs(a->sin_port));
+    return true;
 }
 
 /* ── Test-only channel-mux scaffolding ───────────────────────────────────

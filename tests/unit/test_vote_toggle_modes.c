@@ -30,7 +30,10 @@ static ServerSim *make_sim_running(void) {
                                                "Everard Island",
                                                gameOpen, false, 0, -1);
     if (sim == NULL) return NULL;
-    serverSimSetLobbyEnabled(sim, false);
+    /* Voting only exists on lobby-enabled servers; enable the lobby, then
+     * StartGame forces the running phase regardless, giving us a running
+     * lobby-enabled server — the only configuration where votes are live. */
+    serverSimSetLobbyEnabled(sim, true);
     serverSimStartGame(sim);
     return sim;
 }

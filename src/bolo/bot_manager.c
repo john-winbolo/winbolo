@@ -805,6 +805,15 @@ static void runBotThinkJobImpl(BotJobCtx *j, BotContext *bot, Uint64 t0) {
 
     bot->lastThinkMs = (double)(t1 - t0) * 1000.0
                        / (double)SDL_GetPerformanceFrequency();
+    /* Per-think telemetry, recorded for every think (including the abort
+     * path below — lastThinkMs is the real wall-clock spent either way).
+     * This bot's worker is the sole writer of these fields; the producer
+     * reads them at /info time under the pool's done-semaphore acquire,
+     * the same visibility model as lastThinkMs. */
+    bot->thinkCount++;
+    if (bot->lastThinkMs > bot->maxThinkMs) {
+        bot->maxThinkMs = bot->lastThinkMs;
+    }
 
     if (!ok) {
         /* Two failure modes:
@@ -1133,6 +1142,15 @@ void botManagerOnGameStart(ServerSim *sim) {
         BotContext *bot = &sim->botMgr.bots[i];
         if (!bot->active) continue;
 
+        /* Per-game timing telemetry resets at each round start so peak and
+         * the overrun rate describe the current game, not an accumulation
+         * across map rotations. Reset together to keep the rate coherent
+         * (overruns/thinks must share one window). Placed before the
+         * map-reload bail-out below so it always runs for active bots. */
+        bot->overrunCount = 0;
+        bot->thinkCount   = 0;
+        bot->maxThinkMs   = 0.0;
+
         /* Reload the bot's ClientSim map from the server (map was reset) */
         if (!botLoadMapFromServer(bot, sim)) {
             WB_LOG_WARN(WB_LOG_CAT_SIM, "botManager: failed to reload map for bot %d on game start", i);
@@ -1317,8 +1335,10 @@ bool botManagerGetBotInfo(const ServerSim *sim, BYTE playerNum, BotInfo *out) {
     out->isBot        = true;
     out->hasBrain     = (bot->ai == aiFull) && bot->brain.running;
     out->lastThinkMs  = bot->lastThinkMs;
+    out->maxThinkMs   = bot->maxThinkMs;
     out->targetMs     = botManagerComputePerBotTargetMs(sim, active);
     out->overrunCount = bot->overrunCount;
+    out->thinkCount   = bot->thinkCount;
 
     /* Brain identity: basename of the brain script path (multiple bots
      * commonly share one brain, so the player display name is the wrong
@@ -1371,10 +1391,16 @@ void botManagerGetPoolStats(const ServerSim *sim, BotPoolStats *out) {
 
     int      active        = 0;
     uint32_t totalOverruns = 0;
+    uint32_t totalThinks   = 0;
+    double   maxThinkMs    = 0.0;
     for (int i = 0; i < MAX_TANKS; i++) {
         if (sim->botMgr.bots[i].active) {
             active++;
             totalOverruns += sim->botMgr.bots[i].overrunCount;
+            totalThinks   += sim->botMgr.bots[i].thinkCount;
+            if (sim->botMgr.bots[i].maxThinkMs > maxThinkMs) {
+                maxThinkMs = sim->botMgr.bots[i].maxThinkMs;
+            }
         }
     }
 
@@ -1385,7 +1411,9 @@ void botManagerGetPoolStats(const ServerSim *sim, BotPoolStats *out) {
     out->lastBrainPhaseMs = sim->botMgr.lastBrainPhaseMs;
     out->ewmaBrainPhaseMs = sim->botMgr.brainPhaseMsEwma;
     out->lastSerialMs     = sim->botMgr.lastSerialMs;
+    out->maxThinkMs       = maxThinkMs;
     out->totalOverruns    = totalOverruns;
+    out->totalThinks      = totalThinks;
 }
 
 int botManagerGetActiveBotCount(const ServerSim *sim) {

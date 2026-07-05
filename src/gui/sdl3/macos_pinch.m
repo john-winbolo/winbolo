@@ -26,6 +26,15 @@
 static id  pinchMonitor = nil;
 static float pinchAccum = 0.0f;
 
+void macOSDisablePressAndHold(void) {
+    /* Stop macOS from showing the accent-character picker when a key is held
+     * down; games rely on key repeat from a held key instead.  This writes
+     * into the running app's own defaults domain, so it only affects WinBolo
+     * and leaves accent input untouched in every other app. */
+    [[NSUserDefaults standardUserDefaults]
+        setBool:NO forKey:@"ApplePressAndHoldEnabled"];
+}
+
 void macOSPinchZoomInit(void) {
     if (pinchMonitor) return; /* already initialised */
     pinchMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMagnify

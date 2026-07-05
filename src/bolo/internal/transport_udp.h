@@ -459,6 +459,16 @@ typedef struct UdpServerClient {
                                   * serverSimReturnToLobby clears that flag
                                   * just before the rekey broadcast runs.
                                   * Cleared on disconnect/slot-reset. */
+    /* WEB (CLIENT_TYPE_WEB) join-code identity, verified ONCE per connection
+     * and re-stamped from here on later reauths.  The join_code expires at TTL
+     * (~300s, shorter than a round) and the server_key rotates between rounds,
+     * so re-verifying would fail; caching sidesteps both.  Zeroed at JOIN and
+     * on disconnect/slot-clear. */
+    bool wbnWebIdentityCached;                  /* first WEB verify has succeeded */
+    bool wbnWebIsLoggedIn;                      /* cached is_logged_in */
+    char wbnWebName[PACKET_MAX_PLAYER_NAME];    /* cached WBN player_name */
+    char wbnWebCountry[3];                      /* cached ISO-2 + NUL */
+    int  wbnWebUserId;                          /* cached user_id, -1 when null */
     SubscriberHandle controlSub; /* per-client subscription on the server's
                                   * control-event bus; the deliver callback
                                   * encodes via the codec table and unicasts
@@ -519,6 +529,11 @@ int transportUdpServerGetSpectatorCount(void);
 
 /* Returns ping for a given player (0 if not connected). */
 uint16_t transportUdpServerGetClientPing(BYTE playerNum);
+
+/* Writes "ip:port" for a connected player into out; returns false (and an
+ * empty string) for an out-of-range slot or one with no UDP client (bots,
+ * the in-process host). out must be non-NULL with outLen > 0. */
+bool transportUdpServerGetClientAddrStr(BYTE playerNum, char *out, size_t outLen);
 
 /* Check all connected clients and warn/kick for sustained high ping. */
 void transportUdpServerEnforcePing(struct ServerSim *sim);

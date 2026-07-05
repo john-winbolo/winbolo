@@ -71,7 +71,7 @@ static int roundtrip_and_check(map *mp, pillboxes *pb, bases *bs, starts *ss,
     starts ss2;
     int rc;
 
-    preSum = mapCalcChecksum(mp);
+    preSum = mapCalcChecksum(mp, bs, pb);
     n = mapSaveCompressedMap(mp, pb, bs, ss, blob);
     UT_ASSERT_MSG(n > 0, "%s: mapSaveCompressedMap returned %d", what, n);
 
@@ -87,7 +87,7 @@ static int roundtrip_and_check(map *mp, pillboxes *pb, bases *bs, starts *ss,
         UT_FAIL("%s: mapLoadCompressedMap rejected the codec's own output", what);
     }
 
-    postSum = mapCalcChecksum(&mp2);
+    postSum = mapCalcChecksum(&mp2, &bs2, &pb2);
     if (postSum != preSum) {
         rc = assert_maps_equal(mp, &mp2, what); /* names the differing tile */
         mapDestroy(&mp2);
@@ -250,12 +250,12 @@ int run_map_checksum_ignores_mines(void) {
     for (i = 0; i < 3; i++) {
         mapSetPos(gs, &gs->mp, tx[i], ty[i], mined[i], false, false);
     }
-    sumMined = mapCalcChecksum(&gs->mp);
+    sumMined = mapCalcChecksum(&gs->mp, &gs->bs, &gs->pb);
 
     for (i = 0; i < 3; i++) {
         mapSetPos(gs, &gs->mp, tx[i], ty[i], base[i], false, false);
     }
-    sumBase = mapCalcChecksum(&gs->mp);
+    sumBase = mapCalcChecksum(&gs->mp, &gs->bs, &gs->pb);
 
     UT_ASSERT_MSG(sumMined == sumBase,
                   "mined tiles changed the checksum: mined=%u base=%u",
@@ -264,12 +264,112 @@ int run_map_checksum_ignores_mines(void) {
     /* Control: a normal terrain change (GRASS -> ROAD, neither in the mine
      * range) must still move the checksum, proving the mask isn't over-broad. */
     mapSetPos(gs, &gs->mp, tx[0], ty[0], GRASS, false, false);
-    sumA = mapCalcChecksum(&gs->mp);
+    sumA = mapCalcChecksum(&gs->mp, &gs->bs, &gs->pb);
     mapSetPos(gs, &gs->mp, tx[0], ty[0], ROAD, false, false);
-    sumB = mapCalcChecksum(&gs->mp);
+    sumB = mapCalcChecksum(&gs->mp, &gs->bs, &gs->pb);
     UT_ASSERT_MSG(sumA != sumB,
                   "a non-mine terrain change did not move the checksum (%u)",
                   (unsigned)sumA);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* Stamp liveTerrain onto the base tile (bx,by) in gs's live map (mapSetPos
+ * writes unconditionally, modelling a tank-explosion crater or a flood that
+ * slipped under a base), round-trip the map through the compressed codec, then
+ * assert (a) the decoded tile is forced back to ROAD and (b) the live and
+ * round-tripped checksums converge. Returns 0 on success. */
+static int assert_base_tile_converges(GameSim *gs, BYTE bx, BYTE by,
+                                      BYTE liveTerrain, const char *what) {
+    static BYTE blob[131072];
+    int n;
+    uint16_t liveSum, rtSum;
+    BYTE decoded;
+    map mp2;
+    pillboxes pb2;
+    bases bs2;
+    starts ss2;
+
+    mapSetPos(gs, &gs->mp, bx, by, liveTerrain, false, false);
+    UT_ASSERT_MSG(mapGetPos(&gs->mp, bx, by) == liveTerrain,
+                  "%s: failed to stamp live terrain under base", what);
+
+    n = mapSaveCompressedMap(&gs->mp, &gs->pb, &gs->bs, &gs->ss, blob);
+    UT_ASSERT_MSG(n > 0, "%s: mapSaveCompressedMap returned %d", what, n);
+
+    mapCreate(&mp2);
+    pillsCreate(&pb2);
+    basesCreate(&bs2);
+    startsCreate(&ss2);
+    if (!mapLoadCompressedMap(&mp2, &pb2, &bs2, &ss2, blob, n)) {
+        mapDestroy(&mp2);
+        pillsDestroy(&pb2);
+        basesDestroy(&bs2);
+        startsDestroy(&ss2);
+        UT_FAIL("%s: mapLoadCompressedMap rejected the codec's own output", what);
+    }
+
+    /* The decode fixup forces every base tile back to ROAD. */
+    decoded = mapGetPos(&mp2, bx, by);
+    /* The checksum must fold base tiles to ROAD on both ends so the live map
+     * (non-ROAD under the base) matches the round-tripped map (ROAD). Without
+     * the fold these differ forever and the client resyncs endlessly. */
+    liveSum = mapCalcChecksum(&gs->mp, &gs->bs, &gs->pb);
+    rtSum   = mapCalcChecksum(&mp2, &bs2, &pb2);
+
+    mapDestroy(&mp2);
+    pillsDestroy(&pb2);
+    basesDestroy(&bs2);
+    startsDestroy(&ss2);
+
+    UT_ASSERT_MSG(decoded == ROAD,
+                  "%s: decoded base tile = %u, expected ROAD(%u)",
+                  what, (unsigned)decoded, (unsigned)ROAD);
+    UT_ASSERT_MSG(liveSum == rtSum,
+                  "%s: live CRC %04x != round-trip CRC %04x — client cannot converge",
+                  what, (unsigned)liveSum, (unsigned)rtSum);
+    return 0;
+}
+
+/* Regression for the cratered-base resync loop. A tank exploding on (or next
+ * to) a base craters the tile under it — CRATER, or RIVER once the flood
+ * degrades a water-adjacent crater — but mapLoadCompressedMap forces base
+ * tiles back to ROAD on decode. The terrain checksum must fold base/pill tiles
+ * to ROAD too, otherwise the live map's CRC never matches any round-tripped
+ * copy and clients request a fresh map forever (observed in-game on the west
+ * column of bases on "Chewy somthin' or other"). */
+int run_map_resync_base_crater_converges(void) {
+    static BYTE emap[6000] = E_MAP;
+    ServerSim *sim;
+    GameSim *gs;
+    BYTE bx = 0, by = 0;
+    bool found = false;
+    int x, y;
+
+    sim = serverSimCreateCompressed(emap, EMAP_LEN, "Everard Island",
+                                    gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+
+    /* Find a base tile by scanning (avoids depending on the bases struct
+     * internals). Everard always has bases. */
+    for (y = 0; y < MAP_ARRAY_SIZE && !found; y++) {
+        for (x = 0; x < MAP_ARRAY_SIZE && !found; x++) {
+            if (basesExistPos(&gs->bs, (BYTE)x, (BYTE)y)) {
+                bx = (BYTE)x;
+                by = (BYTE)y;
+                found = true;
+            }
+        }
+    }
+    UT_ASSERT_MSG(found, "Everard map exposed no base tile to test");
+
+    /* CRATER: the direct tank-explosion outcome. */
+    UT_ASSERT(assert_base_tile_converges(gs, bx, by, CRATER, "base+crater") == 0);
+    /* RIVER: the flood turns a water-adjacent cratered base into RIVER. */
+    UT_ASSERT(assert_base_tile_converges(gs, bx, by, RIVER, "base+river") == 0);
 
     serverSimDestroy(sim);
     return 0;

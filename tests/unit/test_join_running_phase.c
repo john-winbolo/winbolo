@@ -37,7 +37,7 @@ static void fill_running_settings(ControlEvent *evt) {
     memset(evt, 0, sizeof(*evt));
     evt->type = CTRL_LOBBY_SETTINGS;
     evt->u.lobbySettings.netStat = netRunning;
-    evt->u.lobbySettings.inLobby = true;
+    evt->u.lobbySettings.hasLobby = true;
 }
 
 int run_join_running_phase_not_lobby(void) {

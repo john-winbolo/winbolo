@@ -388,8 +388,11 @@ typedef struct {
                                  * name (e.g. "GoalHunter" for
                                  * brains/GoalHunter/init.lua) */
     double   lastThinkMs;       /* most recent brain tick */
+    double   maxThinkMs;        /* peak brain tick this game */
     double   targetMs;          /* target the next tick will use */
-    uint32_t overrunCount;      /* cumulative since session start */
+    uint32_t overrunCount;      /* overruns this game */
+    uint32_t thinkCount;        /* total thinks this game
+                                 * (overrun-rate denominator) */
 } BotInfo;
 
 /* Bot pool snapshot populated by serverSimGetBotPoolStats. POD;
@@ -402,7 +405,11 @@ typedef struct {
     double   lastBrainPhaseMs;  /* wall-clock of last brain dispatch */
     double   ewmaBrainPhaseMs;  /* EWMA of brain dispatch wall-clock */
     double   lastSerialMs;      /* last serial-stage cost (ms) */
-    uint32_t totalOverruns;     /* sum of overrunCount across bots */
+    double   maxThinkMs;        /* peak per-bot think across the pool this
+                                 * game (ms) */
+    uint32_t totalOverruns;     /* sum of overrunCount across bots (this game) */
+    uint32_t totalThinks;       /* sum of thinkCount across bots this game
+                                 * (overrun-rate denominator) */
 } BotPoolStats;
 
 /* Max candidate count for BrainGoalInfo. */
@@ -1705,6 +1712,29 @@ typedef struct TankRenderInfo {
  * occupied but the tank is in death-wait, returns true with
  * out->alive = false. */
 bool serverSimGetTankRender(ServerSim *sim, BYTE i, TankRenderInfo *out);
+
+/* Fuller per-slot snapshot for scoreboard / end-of-game readers:
+ * identity (name) and score (kills/deaths) alongside render state.
+ * Unlike TankRenderInfo this is keyed on a *connected player slot*
+ * rather than a live tank object. */
+typedef struct TankInfo {
+    char  name[PLAYER_NAME_LEN]; /* NUL-terminated player name */
+    WORLD world_x;
+    WORLD world_y;
+    BYTE  dir;       /* 0-15, already converted from TURNTYPE */
+    bool  on_boat;
+    bool  alive;     /* false in death-wait or before the tank spawns */
+    bool  has_tank;  /* false if connected but no live tank object yet */
+    int   kills;
+    int   deaths;
+} TankInfo;
+
+/* Populate *out for connected player slot i. Returns false (without
+ * touching *out) if i >= MAX_TANKS or the slot is not connected. When
+ * connected but the tank object is absent (countdown / death-wait),
+ * has_tank = false, alive = false, and the position/score fields are 0;
+ * name is always filled. */
+bool serverSimGetTankInfo(ServerSim *sim, BYTE i, TankInfo *out);
 
 /* Tank alliance from selfPlayer's perspective. Independent of
  * sim->sim.viewPlayer so callers don't need to mutate that global

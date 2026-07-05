@@ -68,6 +68,16 @@ bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BY
   return FALSE;
 }
 
+bool winboloNetVerifyJoinCode(const char *joinCode, char *playerNameOut, bool *isLoggedInOut, char *countryOut, int *userIdOut, char *errorMsg) {
+  (void)joinCode;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (isLoggedInOut) *isLoggedInOut   = FALSE;
+  if (countryOut)    countryOut[0]    = '\0';
+  if (userIdOut)     *userIdOut       = -1;
+  if (errorMsg)      errorMsg[0]      = '\0';
+  return FALSE;
+}
+
 bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg) {
   (void)apiToken; (void)serverKey; (void)errorMsg;
   if (playerKeyOut) playerKeyOut[0] = '\0';

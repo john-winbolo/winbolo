@@ -51,7 +51,12 @@ include(cmake/bolo_version.cmake)
 # (WinBolo, Log Viewer, Map Editor) picks up matching version/copyright keys
 # in its Info.plist, and so the deployment target applies to all of them.
 if(APPLE AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+    # FORCE for the same reason as CMAKE_OSX_ARCHITECTURES above: CLion / some
+    # IDE configures write an EMPTY cache entry for CMAKE_OSX_DEPLOYMENT_TARGET,
+    # which without FORCE would win and leave the target unset. An unset target
+    # makes clang default to the host SDK version (e.g. 26.x), baking minos 26.0
+    # into the Mach-O load command so dyld refuses to launch on older macOS.
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
     string(TIMESTAMP _WB_CURRENT_YEAR "%Y")
     set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${WINBOLO_VERSION}")
     set(MACOSX_BUNDLE_BUNDLE_VERSION       "${WINBOLO_VERSION}")
@@ -90,7 +95,7 @@ include(FetchContent)
 FetchContent_Declare(
     sdl3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        release-3.4.8
+    GIT_TAG        release-3.4.10
     GIT_SHALLOW    TRUE
     SYSTEM
     EXCLUDE_FROM_ALL
@@ -570,6 +575,7 @@ add_executable(WinBoloIOS MACOSX_BUNDLE
     src/gui/ios/ios_stubs.c
     src/gui/ios/imgui_ios.cpp
     src/gui/sdl3/gamefront.c
+    src/client_frontend/client_frontend_connect.c
     src/bolo/lobby_bot_pools_json.c
     src/gui/sdl3/dialog_backend.c
     ${IOS_BOLO_SOURCES}
@@ -664,6 +670,7 @@ target_include_directories(WinBoloIOS PRIVATE
     src/gui/mobile
     src/server
     src/mapeditor
+    src/client_frontend
     src/third_party/imgui_markdown
     ${cjson_SOURCE_DIR}
 )
@@ -1090,6 +1097,9 @@ set(CLIENT_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
+    src/client_frontend/client_frontend_connect.c
+    src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_common.c
     src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_skins.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -1233,6 +1243,7 @@ target_include_directories(WinBolo PRIVATE
     src/server
     src/mapeditor
     src
+    src/client_frontend
     src/logviewer
     src/logviewer/imgui
     src/logviewer/platform
@@ -2281,10 +2292,12 @@ add_custom_command(TARGET BrainTest POST_BUILD
 # ---------------------------------------------------------------------------
 # Bundle the dev-tool CLIs inside WinBolo.app (macOS)
 # ---------------------------------------------------------------------------
-# Drop the dedicated server and brain debugger into Contents/MacOS/ next to the
-# WinBolo binary so developers can run them straight from the signed bundle:
+# Drop the dedicated server, brain debugger, and headless client into
+# Contents/MacOS/ next to the WinBolo binary so developers can run them
+# straight from the signed bundle:
 #     WinBolo.app/Contents/MacOS/WinBoloDS
 #     WinBolo.app/Contents/MacOS/BrainTest
+#     WinBolo.app/Contents/MacOS/WinBoloHeadless
 # Because they live in Contents/MacOS/, SDL_GetBasePath() resolves to the
 # bundle's Contents/Resources/ for them too, so they share WinBolo's bundled
 # data/ and Brains/ — no separate asset copies needed. They load the
@@ -2292,19 +2305,21 @@ add_custom_command(TARGET BrainTest POST_BUILD
 # @executable_path rpath. `prepare.sh` signs them automatically: codesign
 # --deep on the bundle recursively signs every nested Mach-O with the hardened
 # runtime, which is all these terminal-launched tools need to notarize and run.
-# This makes a WinBolo-only build also build the two tools; turn it off with
+# This makes a WinBolo-only build also build the tools; turn it off with
 # -DWINBOLO_BUNDLE_DEV_TOOLS=OFF for faster WinBolo iteration.
 option(WINBOLO_BUNDLE_DEV_TOOLS
-    "Bundle WinBoloDS and BrainTest inside WinBolo.app (macOS)" ON)
+    "Bundle WinBoloDS, BrainTest, and WinBoloHeadless inside WinBolo.app (macOS)" ON)
 if(APPLE AND WINBOLO_BUNDLE_DEV_TOOLS)
-    # Guarantee both tools are built before WinBolo's POST_BUILD copy runs.
-    add_dependencies(WinBolo WinBoloDS BrainTest)
+    # Guarantee all tools are built before WinBolo's POST_BUILD copy runs.
+    add_dependencies(WinBolo WinBoloDS BrainTest WinBoloHeadless)
     add_custom_command(TARGET WinBolo POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:WinBoloDS>" "$<TARGET_FILE_DIR:WinBolo>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:BrainTest>" "$<TARGET_FILE_DIR:WinBolo>"
-        COMMENT "Bundling WinBoloDS and BrainTest into WinBolo.app/Contents/MacOS"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:WinBoloHeadless>" "$<TARGET_FILE_DIR:WinBolo>"
+        COMMENT "Bundling WinBoloDS, BrainTest, and WinBoloHeadless into WinBolo.app/Contents/MacOS"
     )
 endif()
 
@@ -2699,6 +2714,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_vote_surrender.c
     tests/unit/test_round_stats.c
     tests/unit/test_vote_toggle_modes.c
+    tests/unit/test_vote_nolobby_disabled.c
     tests/unit/test_lobby_set_team_clamps.c
     tests/unit/test_md5.c
     tests/unit/test_rand_save_restore.c
@@ -2725,7 +2741,19 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_map.c
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
+    tests/unit/test_brain_list_scan.c
     tests/unit/test_bolo_rand.c
+    # Relay 0x01 metadata-frame parser (platform-neutral; the consume site
+    # is emscripten-only but the parse compiles everywhere).
+    tests/unit/test_proxy_meta_parse.c
+    # Shared client-frontend cores: the tick cadence (keys-half pump gated
+    # on clientSimTransportTicksServer) and the connect/landing wait. The
+    # core sources compile here against the stubs in the test files;
+    # client_frontend_common.c stays out (it drags the sdl3 draw layer).
+    src/client_frontend/client_frontend_tick.c
+    src/client_frontend/client_frontend_connect.c
+    tests/unit/test_client_frontend_tick.c
+    tests/unit/test_await_join.c
     tests/unit/test_net_impair.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
@@ -3046,6 +3074,10 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
 target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
     src/gui/sdl3/dialogs
+    # gamefront.h / brainsHandler.h / clientmutex.h for the shared
+    # client-frontend cores compiled into this target.
+    src/gui
+    src/client_frontend
     src/server
     src
     src/winbolonet
@@ -3215,6 +3247,7 @@ set(_unit_test_names
     brain_inbox_overflow_drops_oldest
     brain_inbox_legacy_drain_fifo
     brain_inbox_clear_resets
+    brain_list_scan_path_resolves
     bolo_rand_golden_sequence
     countdown_abort_publishes_phase
     lobby_auto_unready_clears_humans_keeps_bots
@@ -3348,6 +3381,7 @@ set(_unit_test_names
     map_compress_roundtrip_stock
     map_compress_roundtrip_mutated
     map_checksum_ignores_mines
+    map_resync_base_crater_converges
     resync_finalize_corrupt_keeps_gen
     resync_finalize_valid_advances_gen
     install_compressed_map_rejects_garbage
@@ -3412,6 +3446,17 @@ set(_unit_test_names
     bot_pool_wire_roundtrip
     bot_pool_wire_builtin_roundtrip
     bot_pool_wire_rejects_garbage
+    proxy_meta_parse_roundtrip
+    proxy_meta_parse_truncation_safe
+    proxy_meta_parse_oversized_name
+    proxy_meta_parse_prefs_clamps
+    tick_core_active_local_no_double_step
+    tick_core_passive_local_pumps_keys_half
+    tick_core_lobby_flips_cadence
+    transport_ticks_server_lifecycle
+    await_join_connected_immediate
+    await_join_lobby_latch
+    await_join_timeout_and_error
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

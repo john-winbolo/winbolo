@@ -224,8 +224,11 @@ typedef struct ControlEvent {
             uint8_t  lobbyBaseCount;
             uint8_t  lobbyStartCount;
             bool     mapSkipAvailable;
-            netStatus netStat;
-            bool     inLobby;
+            netStatus netStat;          /* current phase (lobby/running/...) */
+            bool     hasLobby;          /* server capability: runs a lobby at all
+                                         * (= sim->lobbyEnabled). True even mid-game;
+                                         * distinct from netStat/the client's inLobby
+                                         * phase flag. */
             /* Layout A flags */
             bool     lobbyOpenHost;
             bool     lobbyAutoLockOnGameStart;
