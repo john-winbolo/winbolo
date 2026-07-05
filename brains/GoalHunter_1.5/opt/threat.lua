@@ -671,16 +671,10 @@ function M.check_overlay_dirty(world)
     end
   end
 
-  -- Hostile bases: membership = owner "hostile" AND alive (health > 0).
-  -- For hostile bases `health` is the engine's fogged capturable flag
-  -- (1 = alive, 0 = drive-over capturable at armour <= MIN_ARMOUR_CAPTURE).
-  -- A capturable base must NOT keep its overlay stamp — the 15×WALL_SHOOT
-  -- cost made a 1-tile drive-over read as ~451 (20260704_073149 t=7447),
-  -- pricing the capture out of the imminent floor. Including health in
-  -- membership makes the alive→capturable flip dirty the overlay too.
+  -- Hostile bases: membership = owner "hostile".
   local seen_hb = {}
   for id, b in pairs(world.bases) do
-    if b.owner == "hostile" and (b.health or 0) > 0 then
+    if b.owner == "hostile" then
       seen_hb[id] = true
       local prev = M.prev_hostile_bases[id]
       if prev == nil or prev.mx ~= b.mx or prev.my ~= b.my then
@@ -711,11 +705,7 @@ function M.rebuild_overlay(world)
     end
   end
   for _, b in pairs(world.bases) do
-    -- Only ALIVE hostile bases are expensive to stand on. health==0 is the
-    -- engine's capturable flag (armour <= MIN_ARMOUR_CAPTURE): the tile is
-    -- then a legitimate drive-over destination and must cost its terrain,
-    -- or the capture path reads ~451 for a 1-tile grab and never wins.
-    if b.owner == "hostile" and (b.health or 0) > 0 then
+    if b.owner == "hostile" then
       cpf.set_overlay(b.mx, b.my, 15 * C.WALL_SHOOT_COST)
     end
   end
@@ -735,7 +725,7 @@ function M.snapshot_overlay(world)
     end
   end
   for id, b in pairs(world.bases) do
-    if b.owner == "hostile" and (b.health or 0) > 0 then  -- matches dirty-check membership
+    if b.owner == "hostile" then
       M.prev_hostile_bases[id] = { mx = b.mx, my = b.my }
     end
   end

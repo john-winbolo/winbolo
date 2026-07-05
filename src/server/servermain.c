@@ -1708,9 +1708,9 @@ int main(int argc, char **argv) {
      * so that lobby "Add Bot" requests have a brain to use. */
     if (brainPath[0] == '\0' && ai != aiNone) {
       static const char *candidates[] = {
-        "Brains/GoalHunter_1.5/init.lua",
-        "brains/GoalHunter_1.5/init.lua",
-        "data/Brains/GoalHunter_1.5/init.lua",
+        "Brains/GoalHunter_1.6/init.lua",
+        "brains/GoalHunter_1.6/init.lua",
+        "data/Brains/GoalHunter_1.6/init.lua",
       };
       int c;
       for (c = 0; c < 3; c++) {

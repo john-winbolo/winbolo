@@ -391,35 +391,19 @@ local function stuck_recovery(state, info, goal)
     return
   end
 
-  -- Progress = getting CLOSER to the next-step tile, not raw displacement.
-  -- The old test reset the window whenever the tank drifted STUCK_MOVE_WU
-  -- from the window-start position — but a tank corner-grinding at full
-  -- speed slides back and forth along the wall face by more than that, so
-  -- the window reset forever and recovery never fired (20260704_005544
-  -- t≈40200-41009: 800+ ticks wedged at (143,125) at spd=48 against the
-  -- pill/wall pinch, dij next=(142,126) physically unreachable through the
-  -- blocked diagonal). Track the closest approach (Chebyshev, world units)
-  -- to the next tile's center and reset only when the tank beats that best
-  -- by STUCK_MOVE_WU — oscillation can't pump the ratchet, while a genuine
-  -- slow crawl toward the tile keeps resetting every few ticks.
-  local next_wx = pf.next_mx * 256 + 128
-  local next_wy = pf.next_my * 256 + 128
-  local cur_d = math.max(math.abs(info.tankx - next_wx),
-                         math.abs(info.tanky - next_wy))
   local sp = state.stuck_progress
   if sp == nil
      or sp.next_mx ~= pf.next_mx
      or sp.next_my ~= pf.next_my
-     or sp.best_d == nil
-     or (sp.best_d - cur_d) > STUCK_MOVE_WU then
+     or math.abs(info.tankx - sp.last_tankx) > STUCK_MOVE_WU
+     or math.abs(info.tanky - sp.last_tanky) > STUCK_MOVE_WU then
     state.stuck_progress = {
-      best_d  = cur_d,
-      next_mx = pf.next_mx, next_my = pf.next_my,
-      since   = now,
+      last_tankx = info.tankx, last_tanky = info.tanky,
+      next_mx    = pf.next_mx, next_my    = pf.next_my,
+      since      = now,
     }
     return
   end
-  if cur_d < sp.best_d then sp.best_d = cur_d end
 
   if (now - sp.since) < STUCK_TICKS then return end
 
@@ -1028,19 +1012,7 @@ local function reposition_steer(state, world, info, goal)
     return nil
   end
 
-  -- In range but the shot is blocked (another pillbox, wall, base... between
-  -- us and OUR pill): do NOT park here — that strands the goal at a spot it
-  -- can never fire from. Keep driving toward the pill instead: we must end up
-  -- beside it for the post-kill pickup anyway, and closing distance is what
-  -- clears the obstruction (adjacent = nothing left in between).
-  local los_clear = shot_path_clear(info, world, pill_wx, pill_wy, goal.mx, goal.my)
-  if not los_clear then
-    goal.substate = "approach"
-    print2(string.format("REPOS_NOFIRE t=%d pill#%d@(%d,%d) in-range but blocked-LOS -> keep closing in", state.tick or 0, goal.target_id or 0, goal.mx, goal.my))
-    return nil
-  end
-
-  -- In range with a clear line: stop, face the pill, fire until dead / dry.
+  -- In range: stop, face the pill, fire until dead / dry.
   goal.substate = "reposition_shoot"
   -- Mark this pill "being demolished" so repair_pill won't try to heal the
   -- very pill we're tearing down (a damaged pill is CHEAPER to repair, which
@@ -1057,78 +1029,23 @@ local function reposition_steer(state, world, info, goal)
   local corr    = U.adiff(info.direction, aim_dir)
   local h, t = U.aim_turn_bits(corr, 6, 1)
   keys = keys | h; taps = taps | t
-  -- los_clear was verified above (blocked → we kept approaching instead of
-  -- entering this phase), so once aligned, fire to the last shell — a
-  -- friendly pill won't shoot back. shot_path_clear is the shared tank-aware
-  -- sim (blocks on walls/half-walls, any live pillbox, allied tanks, and
-  -- bases of any owner) and excludes the target tile, so the trajectory
-  -- reaching our pill counts as clear.
+  -- Only fire when the shell actually has a clear line to OUR pill. Without
+  -- this the bot would happily shell whatever sits between us and the pill —
+  -- an enemy base (waking it), another pillbox, a wall, or a friendly tank.
+  -- shot_path_clear is the shared tank-aware sim (blocks on walls/half-walls,
+  -- any live pillbox, allied tanks, and bases of any owner) and excludes the
+  -- target tile, so the trajectory reaching our pill counts as clear.
+  local los_clear = shot_path_clear(info, world, pill_wx, pill_wy, goal.mx, goal.my)
+  -- Friendly pill won't shoot back, so once aligned + clear, fire to the last shell.
   if math.abs(corr) <= 1 and (info.shells or 0) > 0 and los_clear then
     keys = keys | KEY_SHOOT
   end
+  if BRAIN_DEBUG_MODE and not los_clear then print2(string.format("REPOS_NOFIRE t=%d pill#%d@(%d,%d) corr=%.1f blocked-LOS (holding fire)", state.tick or 0, goal.target_id or 0, goal.mx, goal.my, corr)) end
   if BRAIN_DEBUG_MODE and viz.is_on("hud_attack_status") then
     viz.hud_text("hud_attack_status", 10, 44,
       string.format("Reposition shoot: pill#%d hp=%d shells=%d los=%s",
                     goal.target_id or 0, pill.health or 0, info.shells or 0, tostring(los_clear)),
       "topleft", 255, 180, 80)
-  end
-  return keys, taps
-end
-
--- =========================================================================
--- Kill-mine steering (demine.lua interrupt): stop, drive the crosshair —
--- heading AND gunsight length — RIGHT ONTO the mine tile, then fire. A
--- shell only detonates a mine when it ENDS on the mined square (engine
--- fires minesExpAddItem at shell death: collision or range-expiry), so the
--- fire gate mirrors kill_lgm's: the actual explosion point (tank +
--- 128*gunrange wu along the heading) must land within DEMINE_LAND_WU of
--- the mine tile center before the trigger is pulled.
--- =========================================================================
-local KL = require("kill_lgm")
-
-local function demine_steer(state, world, info, goal)
-  local keys, taps = 0, 0
-  if info.speed > 0 then keys = keys | KEY_SLOWER end
-  local wx, wy = goal.wx, goal.wy
-  local dist = U.wdist(info.tankx, info.tanky, wx, wy)
-  -- Heading: rotate in place toward the mine center.
-  local aim_dir = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
-                             goal.mx + 0.5, goal.my + 0.5)
-  local corr = U.adiff(info.direction, aim_dir)
-  local h, t = U.aim_turn_bits(corr, 6, 1)
-  keys = keys | h; taps = taps | t
-  -- Gunsight length: pull the shell's end-of-life onto the mine's distance.
-  local target_sl = KL.sightlen_for(dist)
-  keys = keys | KL.gunrange_key(info.gunrange, target_sl)
-  -- Fire only when the ACTUAL explosion point lands on the mine tile and
-  -- nothing (wall / pill / base / ally) eats the shell on the way.
-  local cur_sl = info.gunrange or 14
-  local travel = 128 * cur_sl
-  local rad    = (info.direction or 0) * C.TWO_PI / 256
-  local ex_wx  = info.tankx + math.sin(rad) * travel
-  local ex_wy  = info.tanky - math.cos(rad) * travel
-  local off_dx, off_dy = ex_wx - wx, ex_wy - wy
-  local land_off = math.sqrt(off_dx * off_dx + off_dy * off_dy)
-  -- ONE shot per flight: the shell takes dist/SHELL_SPEED (~4 ticks/tile)
-  -- to reach the mine, and only its LANDING detonates it — extra shells
-  -- fired while the first is in flight are pure waste. After firing, hold
-  -- until the shell must have landed (+margin); if the mine is still there
-  -- (missed / detonated by something else first), fire again. The pop in
-  -- demine.update usually ends the goal before a second shot is needed.
-  local now = state.tick or 0
-  local in_flight = goal._shot_eta and now < goal._shot_eta
-  if not in_flight
-     and land_off <= (C.DEMINE_LAND_WU or 100) and (info.shells or 0) > 0
-     and shot_path_clear(info, world, wx, wy, goal.mx, goal.my) then
-    keys = keys | KEY_SHOOT
-    goal._shot_eta = now + math.ceil(dist / (C.SHELL_SPEED or 32)) + 10
-  end
-  if BRAIN_DEBUG_MODE and viz.is_on("hud_attack_status") then
-    viz.hud_text("hud_attack_status", 10, 44,
-      string.format("De-mine: (%d,%d) dist=%.1ft corr=%.0f sl=%d/%d land=%.0fwu%s",
-        goal.mx, goal.my, dist / 256.0, corr, cur_sl, target_sl, land_off,
-        in_flight and string.format(" shell-in-flight %dt", goal._shot_eta - now) or ""),
-      "topleft", 255, 120, 120)
   end
   return keys, taps
 end
@@ -1397,16 +1314,8 @@ local function attack_pill_steer(state, world, info, goal)
     -- trust the aim ("hopefully you aimed right; if not, go with it"). stop_hits
     -- is kept only for the green/red stop-prediction overlay.
     local pred_stop_to_pill = U.wdist(psx, psy, pill_wx, pill_wy)
-    -- Ammo-deprived SUICIDE charge: a starved bot can't fight from standoff, so
-    -- it drives in as close as possible — brake only when the predicted stop is
-    -- within the suicide floor (≈ adjacent; the pill tile is solid so it can't go
-    -- onto it) and lower the never-closer floor to match. Normal standoff engage
-    -- otherwise. Aim/heading already track the pill, so only the stop point moves.
-    local suicide        = state.ammo_deprived == true
-    local engage_dist    = suicide and ((C.CHARGE_SUICIDE_STANDOFF or 1.5) * 256) or standoff_to_pill
-    local floor_tiles    = suicide and (C.CHARGE_SUICIDE_STANDOFF or 1.5) or (C.CHARGE_MIN_STANDOFF or 5.0)
-    local stop_at_engage = pred_stop_to_pill <= engage_dist
-    local at_floor = tank_to_pill <= floor_tiles * 256
+    local stop_at_engage    = pred_stop_to_pill <= standoff_to_pill
+    local at_floor = tank_to_pill <= (C.CHARGE_MIN_STANDOFF or 5.0) * 256
 
     -- Visualize the predicted brake-now stop: line tank->stop + marker, green
     -- if a shot from there hits the pill, red if short. (charge_stop_pred toggle)
@@ -1445,11 +1354,11 @@ local function attack_pill_steer(state, world, info, goal)
       else
         keys = keys | KEY_SLOWER
       end
-      if BRAIN_DEBUG_MODE then viz.hud_text("charge_status", 10, 56, string.format("CHARGE: %s d2p=%d%s%s", (info.speed <= 1) and "ENGAGE" or "BRAKE", tank_to_pill, at_floor and " floor" or "", suicide and " SUICIDE" or ""), "topleft", 255, 255, 0) end
+      if BRAIN_DEBUG_MODE then viz.hud_text("charge_status", 10, 56, string.format("CHARGE: %s d2p=%d%s", (info.speed <= 1) and "ENGAGE" or "BRAKE", tank_to_pill, at_floor and " floor" or ""), "topleft", 255, 255, 0) end
     else
       -- Stopping here wouldn't reach the pill yet → keep closing on it.
       keys = keys | KEY_FASTER
-      if BRAIN_DEBUG_MODE then viz.hud_text("charge_status", 10, 56, string.format("CHARGE: %s d2p=%d stop=(%d,%d)", suicide and "SUICIDE-CLOSE" or "CLOSE", tank_to_pill, psx >> 8, psy >> 8), "topleft", 255, 200, 80) end
+      if BRAIN_DEBUG_MODE then viz.hud_text("charge_status", 10, 56, string.format("CHARGE: CLOSE d2p=%d stop=(%d,%d)", tank_to_pill, psx >> 8, psy >> 8), "topleft", 255, 200, 80) end
     end
 
     return keys, taps
@@ -2480,13 +2389,8 @@ local function tank_combat_steer(state, world, info, goal)
   -- Skip lead prediction if target is barely moving (speed ≤ 4 in swamp/stuck)
   -- to avoid EMA residual noise offsetting the aim point.
   local wdist = U.wdist(info.tankx, info.tanky, twx, twy)
-  -- Shell speed in WU per BRAIN-tick — the frame the bot samples at, the SAME
-  -- unit as svx (which perception derives per brain-tick). Measured empirically
-  -- (TANK_ENGAGE shell_meas ≈ 33): the shell advances one SHELL_SPEED (~32) per
-  -- brain-tick, NOT two. The old "* 2" assumed 2 sim-steps advanced the shell
-  -- per brain-tick, which under-estimated flight ~2x and left the lead trailing
-  -- by half. Use SHELL_SPEED directly so flight (and the lead) match reality.
-  local shell_speed_per_tick = C.TANK_COMBAT_SHELL_SPEED
+  local shell_speed_per_tick = C.TANK_COMBAT_SHELL_SPEED * 2
+  local shell_travel_ticks = wdist / shell_speed_per_tick
   local svx = target.svx or 0
   local svy = target.svy or 0
   -- Skip lead-prediction when target is essentially stationary. Use
@@ -2494,40 +2398,15 @@ local function tank_combat_steer(state, world, info, goal)
   -- which is the engine's SPEEDTYPE in a different scale and isn't
   -- directly comparable. ≤8 wu/tick = ≤0.03 tile/tick = barely moving.
   if (svx * svx + svy * svy) <= 64 then svx = 0; svy = 0 end
-  -- Iterated intercept: the shell's flight time depends on the distance to the
-  -- LEAD point, not the target's current position. A crossing target's intercept
-  -- sits FARTHER out than its current range, so a single-step lead (flight time
-  -- from the current range) under-estimates the time and the shells trail behind
-  -- the target. Fixed-point iterate t = |tank -> (target + v*t)| / shell_speed;
-  -- it converges in a few steps because a shell (64 wu/tick) far outruns a tank
-  -- (<=16 wu/tick). Each pass re-measures the range to the freshly-leaded point.
-  local shell_travel_ticks = wdist / shell_speed_per_tick
   local pred_wx = twx + svx * shell_travel_ticks
   local pred_wy = twy + svy * shell_travel_ticks
-  for _ = 1, 3 do
-    shell_travel_ticks = U.wdist(info.tankx, info.tanky, pred_wx, pred_wy) / shell_speed_per_tick
-    pred_wx = twx + svx * shell_travel_ticks
-    pred_wy = twy + svy * shell_travel_ticks
-  end
 
-  -- Lead visualizer ("tank_combat_viz"): shows the shell-travel intercept the
-  -- aim is built on, so the leading can be eyeballed frame-by-frame.
-  --   red dot + arrow = target now + its smoothed velocity (x8 for visibility)
-  --   green dot       = predicted intercept (where the shell and target meet)
-  --   orange line     = lead vector (how far ahead of the target we aim)
-  --   cyan line       = shell flight path (our tank -> intercept)
+  -- Debug: lead prediction overlay (red = target, orange = predicted)
   if BRAIN_DEBUG_MODE then
-    local t_tx, t_ty = twx / 256.0, twy / 256.0
-    local p_tx, p_ty = pred_wx / 256.0, pred_wy / 256.0
-    local g_tx, g_ty = info.tankx / 256.0, info.tanky / 256.0
-    local lead_tiles = U.wdist(twx, twy, pred_wx, pred_wy) / 256.0
-    viz.line("tank_combat_viz", g_tx, g_ty, p_tx, p_ty, 0, 220, 255, 150)
-    viz.line("tank_combat_viz", t_tx, t_ty, p_tx, p_ty, 255, 165, 0, 170)
-    viz.line("tank_combat_viz", t_tx, t_ty, t_tx + svx * 8 / 256.0, t_ty + svy * 8 / 256.0, 255, 60, 60, 210)
-    viz.circle("tank_combat_viz", t_tx, t_ty, 0.3, 255, 50, 50, 180)
-    viz.rect("tank_combat_viz", p_tx - 0.5, p_ty - 0.5, p_tx + 0.5, p_ty + 0.5, 0, 255, 90, 90)
-    viz.circle("tank_combat_viz", p_tx, p_ty, 0.28, 0, 255, 0, 220)
-    viz.text("tank_combat_viz", p_tx - 0.48, p_ty - 0.92, string.format("proj @+%.0ft", shell_travel_ticks), "topleft", 0, 255, 90, 255, 0.4)
+    viz.circle("tank_combat_viz", twx / 256.0, twy / 256.0, 0.3, 255, 50, 50, 180)
+    viz.circle("tank_combat_viz", pred_wx / 256.0, pred_wy / 256.0, 0.3, 255, 165, 0, 200)
+    viz.line("tank_combat_viz", twx / 256.0, twy / 256.0,
+                 pred_wx / 256.0, pred_wy / 256.0, 255, 165, 0, 140)
   end
 
   local aim_dir = U.aim_at(info.tankx, info.tanky, pred_wx, pred_wy)
@@ -2539,50 +2418,16 @@ local function tank_combat_steer(state, world, info, goal)
   local jink_offset = jink_phase == 0 and C.TANK_COMBAT_JINK_ANGLE
                                        or -C.TANK_COMBAT_JINK_ANGLE
 
-  -- Turn toward the lead point. Commit to a turn direction and HOLD it so the
-  -- engine's firstLeft/firstRight ramp builds to full rate (a released key
-  -- resets it — that reset at ~1/8 rate is the "tapping" crawl), but choose the
-  -- direction from aim_corr EACH tick so we never coast a stale direction past
-  -- the lead:
-  --   • |aim_corr| > 2  → commit toward the lead (its sign) and hold
-  --   • crossed the lead (sign now opposes the held dir) → REVERSE immediately
-  --   • stationary target, on-aim → stop (no jitter)
-  --   • otherwise (moving, correct side, in-band) → keep holding to sustain ramp
-  -- The previous version latched THROUGH the deadband and drove the stale way
-  -- past the lead — swinging AWAY on every zero-crossing (the t=354 bug). This
-  -- reverses the instant the sign flips, so it always turns toward the lead.
-  local _td = goal._aim_turn_dir or 0
-  local _reason
-  if aim_corr > 2 then _td = 1; _reason = "aimcorr>+2: swing CW to lead"
-  elseif aim_corr < -2 then _td = -1; _reason = "aimcorr<-2: swing CCW to lead"
-  elseif svx == 0 and svy == 0 then _td = 0; _reason = "stationary + on-aim: STOP"
-  elseif _td == 1 and aim_corr < 0 then _td = -1; _reason = "crossed lead: reverse CW->CCW"
-  elseif _td == -1 and aim_corr > 0 then _td = 1; _reason = "crossed lead: reverse CCW->CW"
-  else _reason = "in-band: hold " .. ((_td == 1 and "CW") or (_td == -1 and "CCW") or "stop")
-  end
-  goal._aim_turn_dir = _td
-  goal._aim_turn_reason = _reason
-  if     _td ==  1 then keys = keys | KEY_TURNRIGHT
-  elseif _td == -1 then keys = keys | KEY_TURNLEFT
-  end
-
-  -- Crosshair + turn-decision overlay:
-  --   yellow line  = where the GUN points NOW (info.direction × gunrange)
-  --   cyan line (above) = where it SHOULD point (tank -> lead)
-  --   magenta stub at the crosshair = which way it's rotating (CW/CCW)
-  --   magenta text = the turn-logic branch that decided this tick
-  -- The gap between the yellow (now) and cyan (want) lines IS the aim error.
-  if BRAIN_DEBUG_MODE then
-    local _cr = (info.direction or 0) * C.TWO_PI / 256
-    local _sl = 128 * (info.gunrange or 14)
-    local _gx, _gy = info.tankx / 256.0, info.tanky / 256.0
-    local _cx = (info.tankx + math.sin(_cr) * _sl) / 256.0
-    local _cy = (info.tanky - math.cos(_cr) * _sl) / 256.0
-    viz.line("tank_combat_viz", _gx, _gy, _cx, _cy, 255, 255, 0, 210)
-    viz.circle("tank_combat_viz", _cx, _cy, 0.18, 255, 255, 0, 230)
-    viz.line("tank_combat_viz", _cx, _cy, _cx + math.cos(_cr) * _td * 0.8, _cy + math.sin(_cr) * _td * 0.8, 255, 0, 255, 230)
-    viz.text("tank_combat_viz", _gx + 0.4, _gy + 0.5, string.format("TURN %s  aimcorr=%+.0f", (_td == 1 and "CW") or (_td == -1 and "CCW") or "STOP", aim_corr), "topleft", 255, 0, 255, 255, 0.4)
-    viz.text("tank_combat_viz", _gx + 0.4, _gy + 0.86, _reason or "", "topleft", 255, 0, 255, 220, 0.38)
+  -- Turn toward predicted target position. Always HOLD the turn key
+  -- beyond a ±1 brad deadband (no tap tier): a tap presses the key for a
+  -- single engine input read, and the engine's firstLeft/firstRight ramp
+  -- means a tap rotates at ~1/8 the held rate — so at small aim errors the
+  -- tank crept onto target in slow motion. Holding gives full engine
+  -- turn-rate and lets the ramp build, swinging onto target fast. The
+  -- right call in a chaotic point-blank fight where some overshoot/
+  -- oscillation is acceptable.
+  if     aim_corr >  1 then keys = keys | KEY_TURNRIGHT
+  elseif aim_corr < -1 then keys = keys | KEY_TURNLEFT
   end
 
   -- Fire when aimed — wider tolerance because lead prediction compensates.
@@ -2592,12 +2437,7 @@ local function tank_combat_steer(state, world, info, goal)
   -- the LOS gate after TANK_COMBAT_STUCK_FIRE_TICKS so the shells chip
   -- the wall down and eventually open LOS. Without this the bot just
   -- stares at the wall forever, "engaging" but never firing.
-  -- Fire only when the gun is genuinely ON the lead point. The lead angle at
-  -- combat range is only ~10 brads, so the old ±8 gate was nearly as wide as the
-  -- whole lead — it loosed shots while the gun was still short of the lead,
-  -- sitting on the tank (aim_corr +6 = ~0.5 tile ahead of the tank). ±3 brads is
-  -- ~0.3-0.4 tile of lateral slop at 5-7 tiles: on the lead, not on the tank.
-  local _aim_ok    = math.abs(aim_corr) < 3
+  local _aim_ok    = math.abs(aim_corr) < 8
   local _shells_ok = info.shells > C.TANK_COMBAT_FLEE_SHELLS
   -- Stuck only counts when WE are also pinned in place — if the bot is
   -- still moving around looking for a clean angle it isn't stuck yet,
@@ -2631,15 +2471,6 @@ local function tank_combat_steer(state, world, info, goal)
     goal._engage_blocked_ticks = 0
   end
 
-  -- Per-tick engage trace: the lead + aim + fire state each tick. perc = the
-  -- position perception handed us; v = smoothed velocity; flight/lead/pred = the
-  -- iterated shell-travel intercept the aim is built on.
-  if BRAIN_DEBUG_MODE then
-    local _turn = (goal._aim_turn_dir == 1 and "CW") or (goal._aim_turn_dir == -1 and "CCW") or "-"
-    local _lead = U.wdist(twx, twy, pred_wx, pred_wy) / 256.0
-    print2(string.format("TANK_ENGAGE t=%d tgt#%s%s perc=(%d,%d) d=%.1f v=(%.0f,%.0f) flight=%.1f lead=%.1f pred=(%d,%d) aimcorr=%+.0f turn=%s fire=%s", now, tostring(target.id), target.ghost and "G" or "", target.mx, target.my, dist_tiles, svx, svy, shell_travel_ticks, _lead, math.floor(pred_wx) >> 8, math.floor(pred_wy) >> 8, aim_corr, _turn, tostring((keys & KEY_SHOOT) ~= 0)))
-  end
-
   -- Distance control: maintain optimal range with jinking
   if dist_tiles < C.TANK_COMBAT_TOO_CLOSE then
     -- Too close: reverse away
@@ -2666,36 +2497,25 @@ local function tank_combat_steer(state, world, info, goal)
     end
   end
 
-  -- Real-time combat readout — per-tick LIVE state (distinct from the ~1 s
-  -- d=/c= scoring label). Drawn in WORLD SPACE floating beside the TARGET tank
-  -- so it TRACKS the enemy and scales to multiple tanks (each engaged tank
-  -- carries its own readout) instead of a single fixed screen corner that could
-  -- only ever show one. Shows live range, target velocity, the iterated lead +
-  -- flight time, aim error, the SUSTAINED turn command (hold-vs-tap), and the
-  -- fire-gate outcome. Turns green the tick it actually fires.
+  -- Combat HUD: always shows current state when tank_combat_viz is on
   if BRAIN_DEBUG_MODE and viz.is_on("tank_combat_viz") then
     local firing = (keys & KEY_SHOOT) ~= 0
-    local aim_ok = math.abs(aim_corr) < 3
+    local aim_ok = math.abs(aim_corr) < 8
     local shells_ok = info.shells > C.TANK_COMBAT_FLEE_SHELLS
-    local _td = goal._aim_turn_dir or 0
-    local turn_s = (_td == 1 and "HOLD-R") or (_td == -1 and "HOLD-L") or "--"
-    local vmag = math.sqrt(svx * svx + svy * svy)
-    local lead_t = U.wdist(twx, twy, pred_wx, pred_wy) / 256.0
-    local fire_s = firing and "SHOOTING"
-                   or (not shells_ok and "hold:low-shells")
-                   or (not aim_ok and "hold:off-aim")
-                   or "hold:LOS"
-    local hx, hy = twx / 256.0 - 4.7, twy / 256.0 - 1.8
+    local twx_f = info.tankx / 256.0
+    local twy_f = info.tanky / 256.0
     local lines = {
-      string.format("#%s%s  d=%.1ft  |v|=%.0f", tostring(target.id), target.ghost and "G" or "", dist_tiles, vmag),
-      string.format("lead=%.1ft  hit@+%.0ft", lead_t, shell_travel_ticks),
-      string.format("aim=%+.0f  turn=%s", aim_corr, turn_s),
-      "FIRE: " .. fire_s,
+      string.format("ENGAGE dist=%.1f aim_corr=%.0f", dist_tiles, aim_corr),
+      string.format("aim<%d=%s shells>%d=%s",
+        8, aim_ok and "YES" or "NO",
+        C.TANK_COMBAT_FLEE_SHELLS, shells_ok and "YES" or "NO"),
+      string.format("firing=%s spd=%d", firing and "YES" or "NO", info.speed),
     }
     for i, line in ipairs(lines) do
-      local r, g, b = 0, 230, 255
-      if firing then r, g, b = 0, 255, 90 end
-      viz.text("tank_combat_viz", hx, hy + (i - 1) * 0.34, line, "topleft", r, g, b, 255, 0.42)
+      local r = firing and 0 or 255
+      local g = firing and 255 or (aim_ok and 255 or 100)
+      viz.text("shell_hit_dot", twx_f - 1.5, twy_f + (i - 1) * 0.35,
+               line, "topright", r, g, 100, 255, 0.45)
     end
   end
 
@@ -2891,18 +2711,6 @@ function M.steer(state, world, info, goal)
     end
   end
 
-  -- De-mine interrupt (demine.lua pushed a kill_mine goal): stop, put the
-  -- crosshair on the mine, fire. Always self-contained — never falls
-  -- through to generic navigation (the mine is a shot, not a destination).
-  if goal.kind == "kill_mine" then
-    local k, t = demine_steer(state, world, info, goal)
-    if BRAIN_PROFILE then
-      opt(string.format("  steer/demine done %.2f ms",
-                        (clock_us() - _t_phase) / 1000))
-    end
-    return k or 0, t or 0
-  end
-
   -- Sub-anchor for steer/nav-* breakdowns. _t_phase is the fall-through
   -- start (right after cliff_safety completed and the goal-specific
   -- dispatches all returned NIL).
@@ -2958,15 +2766,11 @@ function M.steer(state, world, info, goal)
   -- attack_pill: plan_position just visualizes, no steering needed.
   -- Falls through to general navigation for position substate.
 
-  elseif goal.kind == "wait_for_lgm"
-         and goal.mx == (info.tankx >> 8) and goal.my == (info.tanky >> 8) then
-    -- ON the wait spot: stand still and let the LGM finish whatever he's
-    -- doing (farming, opportunistic build) before chasing new goals.
-    -- When goal.mx/my is a danger-aware SAFE SPOT elsewhere (picked by
-    -- pick_wait_spot — parked tile under fire), this branch doesn't match
-    -- and the goal falls through to general navigation, which drives to
-    -- goal.wx/wy like any other destination; once there, this branch takes
-    -- over and parks.
+  elseif goal.kind == "wait_for_lgm" then
+    -- Stand still and let the LGM finish whatever he's doing
+    -- (farming, opportunistic build) before chasing new goals.
+    -- Was incorrectly placed inside attack_pill_steer where it was
+    -- unreachable; moved here to actually fire.
     if info.speed > 0 then keys = keys | KEY_SLOWER end
     if BRAIN_PROFILE then
       local _total_us = clock_us() - _t_nav_dispatch_start
@@ -3160,16 +2964,6 @@ function M.steer(state, world, info, goal)
       local bmx, bmy = goal.mx, goal.my
       local bf = info.inboat and 1 or 0
       local best_amx, best_amy, best_c = nil, nil, math.huge
-      -- Already in the base's 8-neighbourhood? STAY: any adjacent tile is
-      -- point-blank, so hold this one, face the base and shoot. Without this
-      -- the lowest-cost pick below can prefer a DIFFERENT adjacent tile and
-      -- the tank crawls around the base instead of firing (seen when a
-      -- capture_base drive-over degrades to attack_base after the base
-      -- restocked above capturable armour).
-      if math.abs(tmx - bmx) <= 1 and math.abs(tmy - bmy) <= 1
-         and not (tmx == bmx and tmy == bmy) then
-        best_amx, best_amy = tmx, tmy
-      else
       for dy = -1, 1 do
         for dx = -1, 1 do
           if dx ~= 0 or dy ~= 0 then
@@ -3180,7 +2974,6 @@ function M.steer(state, world, info, goal)
             end
           end
         end
-      end
       end
       if not best_amx then
         -- Nothing reachable via the slate → closest non-water adjacent tile.
@@ -3193,12 +2986,7 @@ function M.steer(state, world, info, goal)
           end
         end
       end
-      if best_amx == tmx and best_amy == tmy then
-        -- Staying put (already beside the base): nav to our own tile — no
-        -- engage-point reroute either, just aim and fire from here.
-        nav_mx, nav_my = tmx, tmy
-        nav_wx, nav_wy = info.tankx, info.tanky
-      elseif best_amx then
+      if best_amx then
         -- Crossfire-aware standoff: stop short at the closest path tile we can
         -- still shell the base from while staying out of enemy/neutral pill fire.
         -- Falls back to best_amx (rush right up) when no such tile exists.
@@ -3276,37 +3064,9 @@ function M.steer(state, world, info, goal)
       end
     end
 
-    -- Follow the next-step waypoint, with path lookahead to reduce wiggle
+    -- Follow the A* next-step waypoint, with path lookahead to reduce wiggle
     local _t_pre_path = BRAIN_PROFILE and clock_us() or 0
-    local nx, ny
-    -- rescue_lgm chases the LIVE (moving) LGM tile, so dest changes nearly
-    -- every tick — that defeats cpf_path_to's src/dest A* cache and forces a
-    -- full A* search every tick (the bot's single biggest steering cost, and
-    -- the worst-case route since the goal only exists because the LGM is
-    -- stranded). The tank-rooted KIND_NORMAL Dijkstra slate already floods the
-    -- whole map (LGM tile included) and is recomputed on an interval, so read
-    -- the next step straight off it (a parent-pointer walk, ~free). Fall back
-    -- to A* only when the slate hasn't reached that tile yet.
-    if goal.kind == "rescue_lgm" then
-      local rtmx, rtmy = info.tankx >> 8, info.tanky >> 8
-      local dnx, dny = cpf.dijkstra_next_step(cpf.KIND_NORMAL, rtmx, rtmy,
-                         nav_mx, nav_my, state._nav_avoid_tiles, C.NAV_AVOID_PENALTY)
-      if dnx and not (dnx == rtmx and dny == rtmy) then
-        nx, ny = dnx, dny
-        -- Mirror the bookkeeping cpf_path_to does so path_lookahead and the
-        -- steering overlays stay coherent (chain in the same flat format).
-        local pf = state.pf
-        pf.status  = "done"
-        pf.src_mx,  pf.src_my  = rtmx, rtmy
-        pf.dest_mx, pf.dest_my = nav_mx, nav_my
-        pf.next_mx, pf.next_my = nx, ny
-        pf.age = 0
-        pf.path_chain = cpf.dijkstra_trace_path(cpf.KIND_NORMAL, nav_mx, nav_my)
-      end
-    end
-    if not nx then
-      nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
-    end
+    local nx, ny = cpf_path_to(state, info, nav_mx, nav_my)
     local _t_post_path = BRAIN_PROFILE and clock_us() or 0
     if BRAIN_PROFILE_LOG and (_t_post_path - _t_pre_path > 3000 or _t_after_stuck - _t_steer_start > 3000) then
       opt.append("optimize.log", string.format(
@@ -4337,62 +4097,6 @@ function M.steer(state, world, info, goal)
         keys = keys | KEY_MORERANGE
       end
 
-      -- Stalled-approach promotion: the rush toward the engage point can be
-      -- rebuffed indefinitely by pill knockback — crawling at a few wu/tick,
-      -- never arriving, and with a steady heading offset the opportunistic
-      -- fire below never triggers either (observed: neutral pill held a bot
-      -- at ~4 wu/tick with corr stuck at -23° for hundreds of ticks). If
-      -- we're in range with a clear shot but barely closed any distance over
-      -- the last ATTACK_BASE_STALL_WINDOW ticks, give up on arriving: latch
-      -- engage mode and shell the base from right here. The latch holds until the
-      -- shot degrades (out of range / blocked resets in the else branch
-      -- below) or the goal moves to a different base.
-      local now = state.tick or 0
-      local st = state._ab_stall
-      if not st or st.base_mx ~= goal.mx or st.base_my ~= goal.my
-         or now - (st.t or now) > 3 then
-        st = { base_mx = goal.mx, base_my = goal.my,
-               ref_wdist = wdist_base, ref_t = now, latched = false }
-        state._ab_stall = st
-      end
-      st.t = now
-      if not attack_base_engaging and not st.latched then
-        -- Windowed (not per-tick) so knockback's spiky rhythm — shove back,
-        -- re-accelerate, shove back — averages out instead of resetting a
-        -- consecutive-slow-ticks counter on every brief fast stretch.
-        local W = C.ATTACK_BASE_STALL_WINDOW or 50
-        if now - st.ref_t >= W then
-          local closed = st.ref_wdist - wdist_base
-          if closed < (C.ATTACK_BASE_STALL_WU_PER_TICK or 6) * W then
-            -- Only latch if a shell fired at the AIM heading would actually
-            -- cross the base tile. shot_ok tolerates ATTACK_BASE_MAX_WALLS
-            -- walls in the lane (the rush grinds them down) — stopping
-            -- behind one would aim forever without the fire sim below ever
-            -- passing. Until the lane is truly clear, keep rushing.
-            local pa = cpf.simulate_shot_angle(info.tankx, info.tanky, aim_dir,
-                                               cpf.SHOT_TANK, info.gunrange or 14)
-            if pa then
-              for _, t in ipairs(pa) do
-                if t.mx == goal.mx and t.my == goal.my then st.latched = true; break end
-              end
-            end
-            if BRAIN_DEBUG_MODE and st.latched then
-              print2(string.format(
-                "BASE_STALL_ENGAGE t=%d wdist=%.0f closed=%.0fwu over %d ticks -> stop and shoot from here",
-                now, wdist_base, closed, W))
-            end
-          end
-          st.ref_wdist = wdist_base
-          st.ref_t = now
-        end
-      end
-      if st.latched then
-        -- Stop trying to advance; hold position and aim like the arrived case.
-        keys = keys & ~KEY_FASTER
-        if info.speed > 0 then keys = keys | KEY_SLOWER end
-        attack_base_engaging = true
-      end
-
       -- Heading control depends on whether we've ARRIVED at the engage point:
       --   * arrived (attack_base_engaging — nav block idle this tick): hijack the
       --     heading to point the body straight at the base and hold. Continuous
@@ -4449,15 +4153,13 @@ function M.steer(state, world, info, goal)
 
       log.reason("steer", {
         mode = "attack_base", aim_corr = corr,
-        firing = firing, stalled = st.latched or nil,
+        firing = firing,
         base_dist = wdist_base, shot_ok = true,
       })
     else
       -- Out of range or no valid shot (pill/base/ally/2+ walls in the way):
       -- the nav block above is driving us to the closest adjacent tile for a
-      -- clean point-blank shot. Just log the wait state. Any stall latch is
-      -- void here — a blocked/out-of-range shot means we MUST keep moving.
-      state._ab_stall = nil
+      -- clean point-blank shot. Just log the wait state.
       if BRAIN_DEBUG_MODE then print2(string.format("BASE_NOFIRE t=%d reason=%s wdist=%.0f range=%d shot_ok=%s inboat=%s", state.tick or 0, (wdist_base > C.ATTACK_PILL_RANGE * 256) and "out_of_range" or (not shot_ok and "shot_blocked" or "inboat"), wdist_base, C.ATTACK_PILL_RANGE * 256, tostring(shot_ok), tostring(info.inboat))) end
       log.reason("steer", {
         mode = "attack_base_approach",
@@ -4467,56 +4169,6 @@ function M.steer(state, world, info, goal)
   elseif not attack_in_range then
     if state.tick % 10 == 0 then
       log.reason("steer", { mode = "idle", why = "no goal or at destination" })
-    end
-  end
-
-  -- Forest lane-clear: driving THROUGH forest is slow (speed 6 vs 16). When
-  -- the tank's CURRENT square is forest, fire ONE shot straight ahead — the
-  -- shell turns the forest tile it lands on into grass (shells.c FOREST
-  -- case), opening the lane. Once per forest tile entered (keyed on the
-  -- tank tile), so a long crossing clears as it goes without spamming.
-  -- Applies to capture_pill (racing to a dead pill) and, during the OPENING
-  -- phase, capture_base (the land-grab race — later-game base drives don't
-  -- justify advertising our position with tree shots).
-  if (goal.kind == "capture_pill"
-      or (goal.kind == "capture_base" and state.phase == "opening"))
-     and not info.inboat
-     and (info.shells or 0) > (C.SHELL_RESERVE or 0) then
-    local fmx, fmy = info.tankx >> 8, info.tanky >> 8
-    if U.ttype(fmx, fmy) == C.T_FOREST then
-      local fkey = fmy * 256 + fmx
-      if goal._forest_shot_key ~= fkey then
-        -- Never fire the blind straight-ahead shot with our own or an
-        -- allied LGM anywhere on the shell's path — a shell landing on the
-        -- man kills it. Tile key is only consumed when we actually fire,
-        -- so the shot re-arms once the LGM moves clear.
-        local occ = nil
-        if info.man_status ~= C.LGM_INTANK and info.man_x then
-          occ = { [(info.man_y >> 8) * 256 + (info.man_x >> 8)] = true }
-        end
-        for _, al in ipairs((state.perc and state.perc.allied_lgm_positions) or {}) do
-          occ = occ or {}
-          occ[al.my * 256 + al.mx] = true
-        end
-        local lgm_clear = true
-        if occ then
-          local p = cpf.simulate_shot_angle(info.tankx, info.tanky, info.direction,
-                                            cpf.SHOT_TANK, info.gunrange or 14)
-          if p then
-            for _, t in ipairs(p) do
-              if occ[t.my * 256 + t.mx] then lgm_clear = false; break end
-            end
-          end
-        end
-        if lgm_clear then
-          goal._forest_shot_key = fkey
-          keys = keys | KEY_SHOOT
-          print2(string.format("CAPTURE_FOREST_SHOT t=%d tile=(%d,%d) — clear lane ahead", state.tick or 0, fmx, fmy))
-        elseif goal._forest_hold_key ~= fkey then
-          goal._forest_hold_key = fkey
-          print2(string.format("CAPTURE_FOREST_SHOT t=%d tile=(%d,%d) HELD — friendly LGM on the shot line", state.tick or 0, fmx, fmy))
-        end
-      end
     end
   end
 

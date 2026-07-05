@@ -1,15 +1,15 @@
-# GoalHunter 1.5 — bot-specific rules
+# GoalHunter 1.6 — bot-specific rules
 
 ## Two-copy base/opt system (READ FIRST)
 Every Lua file exists TWICE:
-- `brains/GoalHunter_1.5/*.lua` — **base** (dev) version with debug code:
+- `brains/GoalHunter_1.6/*.lua` — **base** (dev) version with debug code:
   `BRAIN_DEBUG_MODE` branches, `print2`, `viz.*`, `overlay_*` calls, etc.
-- `brains/GoalHunter_1.5/opt/*.lua` — **stripped** production version with the
+- `brains/GoalHunter_1.6/opt/*.lua` — **stripped** production version with the
   debug constructs removed. Used by `--opt` runs AND by the WinBolo
   splash-screen background game (`bg_game.c`).
 
 Rules:
-- **Only edit the BASE files** (`brains/GoalHunter_1.5/*.lua`). NEVER hand-edit
+- **Only edit the BASE files** (`brains/GoalHunter_1.6/*.lua`). NEVER hand-edit
   anything under `opt/` — it is GENERATED. A hand-added `print2`/`viz.`/
   `overlay_` line in `opt/` is a base/opt divergence a regen will silently
   undo (opt/ should contain zero `print2(`/`viz.`/`overlay_` call statements;
@@ -19,8 +19,8 @@ Rules:
   then copy BOTH trees into the build so the running BrainTest/WinBolo picks
   them up (`--opt`/splash game read from `opt/`):
   ```powershell
-  Copy-Item "brains/GoalHunter_1.5/*.lua"     "build/Brains/GoalHunter_1.5/"     -Force
-  Copy-Item "brains/GoalHunter_1.5/opt/*.lua" "build/Brains/GoalHunter_1.5/opt/" -Force
+  Copy-Item "brains/GoalHunter_1.6/*.lua"     "build/Brains/GoalHunter_1.6/"     -Force
+  Copy-Item "brains/GoalHunter_1.6/opt/*.lua" "build/Brains/GoalHunter_1.6/opt/" -Force
   ```
   Lua under `build/Brains/` is loaded fresh each BrainTest run (no rebuild
   needed for Lua-only edits); C changes still need a rebuild.
@@ -31,7 +31,7 @@ plus single-line `if BRAIN_DEBUG_MODE ... end` blocks. Run `strip.bat` from the
 brain dir (it invokes `../../build/Release/lua_strip.exe`, excludes
 `los_stamp_cache.lua`/`shield_stamp_cache.lua`, and writes into `opt/`):
 ```
-brains/GoalHunter_1.5/strip.bat
+brains/GoalHunter_1.6/strip.bat
 ```
 If `lua_strip.exe` is missing, build it once:
 `MSBuild.exe build/lua_strip.vcxproj /p:Configuration=Release /p:Platform=x64`.

@@ -156,31 +156,14 @@ function M.role_for(pns, self_pn)
   return M.ROLE_SOLDIER
 end
 
--- Dynamic harasser fraction: baseline HARASSER_FRAC, ramping toward
--- HARASSER_FRAC_MAX as our base advantage (base_strength) climbs past
--- HARASSER_BASE_THRESHOLD — but only while pill strength is at/above
--- HARASSER_PILL_FLOOR ("at least not losing a lot"). Dominating bases while
--- holding pills frees more bots to harass. Falls back to the floor without state.
-local function harasser_frac(state)
-  local frac = C.HARASSER_FRAC or 0.20
-  if not state then return frac end
-  if (state.strength or 0.5) < (C.HARASSER_PILL_FLOOR or 0.40) then return frac end
-  local thr  = C.HARASSER_BASE_THRESHOLD or 0.60
-  local base = state.base_strength or 0.5
-  if base <= thr then return frac end
-  local t = math.min(1.0, (base - thr) / math.max(0.01, 1.0 - thr))
-  return frac + t * ((C.HARASSER_FRAC_MAX or frac) - frac)
-end
-
 -- Harasser designation, INDEPENDENT of squad role: the highest floor(frac*N)
 -- player numbers in the protocol set. A harasser is a normal squad member (it
 -- commands/joins blitzes like anyone); the flag only drives its goal-cost biases
 -- (pill cost ×HARASSER_PILL_COST_MULT, distance ×HARASSER_TRAVEL_MULT — see
--- goals.lua). frac is dynamic (harasser_frac), but base/pill strength are nearly
--- identical across the team, so the set stays effectively agreed.
-function M.is_harasser(pns, self_pn, state)
+-- goals.lua). Deterministic + stable so every bot agrees on the set.
+function M.is_harasser(pns, self_pn)
   local n = #pns
-  local n_har = math.floor(harasser_frac(state) * n)
+  local n_har = math.floor((C.HARASSER_FRAC or 0.20) * n)
   if n_har <= 0 then return false end
   local self_idx
   for i = 1, n do if pns[i] == self_pn then self_idx = i break end end
@@ -208,25 +191,14 @@ function M.availability(state, info, help_target_id)
   -- Joining a blitz has NO armour floor (a 2+ tank take shares the incoming
   -- fire) — EXCEPT while carrying a pillbox: cautious mode, so a joiner needs
   -- commander-level armour before diving in and risking the pill it's holding.
-  local ok, reason
   if (info.carried_pills or 0) >= 1
-     and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then
-    ok, reason = false, "lh"
-  elseif (info.shells or 0) < (C.SQUAD_MIN_HELP_SHELLS or 3) and not state.ammo_deprived then
-    -- Normal low-ammo tanks can't help shoot, so they don't join. But an
-    -- ammo-DEPRIVED tank is the designated suicide decoy — it joins WITHOUT ammo
-    -- specifically to charge the pill and draw fire for the captain, so it must
-    -- bypass the no-ammo gate (the "suicide/decoy body" the blitz code expects).
-    ok, reason = false, "na"
-  else
-    local g = state.goal
-    if g and g.kind == "attack_pill" and help_target_id and g.target_id == help_target_id then
-      ok, reason = true, nil
-    else
-      ok, reason = false, "bz"
-    end
+     and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then return false, "lh" end
+  if (info.shells or 0) < (C.SQUAD_MIN_HELP_SHELLS or 3)  then return false, "na" end
+  local g    = state.goal
+  if g and g.kind == "attack_pill" and help_target_id and g.target_id == help_target_id then
+    return true, nil
   end
-  return ok, reason
+  return false, "bz"
 end
 
 -- Commander standoff arbiter: gather every soldier answering THIS commander
@@ -547,8 +519,7 @@ function M.update(state, info, now, world)
   -- Harasser is an independent flag now (not a role), so it does NOT gate squad
   -- membership — a harasser commands/joins blitzes like any other bot. It only
   -- biases goal costs (see goals.lua is_harasser checks).
-  state._harasser_frac = harasser_frac(state)
-  state.is_harasser = M.is_harasser(pns, self_pn, state)
+  state.is_harasser = M.is_harasser(pns, self_pn)
   -- R0 (dynamic commanders, flag-gated): commander status is EMERGENT — you are a
   -- commander only while leading a HARD pill take (your attack_pill target has HP
   -- >= HARD_TAKE_MIN_HP); otherwise you are a soldier. Reverts automatically when
@@ -563,13 +534,9 @@ function M.update(state, info, now, world)
     else
       local g = state.goal
       local is_hard_take = false
-      local pill_hp = 0
       if g and g.kind == "attack_pill" and g.target_id and world and world.pills then
         local p = world.pills[g.target_id]
-        if p then
-          pill_hp = p.health or 0
-          if pill_hp >= (C.HARD_TAKE_MIN_HP or 12) then is_hard_take = true end
-        end
+        if p and (p.health or 0) >= (C.HARD_TAKE_MIN_HP or 12) then is_hard_take = true end
       end
       -- An established leader stays commander even after the pill's HP falls
       -- below the hard-take threshold: if we already hold an open blitz call on
@@ -595,26 +562,6 @@ function M.update(state, info, now, world)
       -- keep command even if their armour later drops — don't abandon mid-take.
       if role == M.ROLE_COMMANDER and not is_leading
          and (info.armour or 0) < (C.SQUAD_COMMANDER_MIN_ARMOUR or 30) then
-        role = M.ROLE_SOLDIER
-      end
-      -- Ammo-deprived: a tank starved of ammo can't finish a pill, so it must
-      -- NEVER open or hold a blitz — it can still JOIN one as a soldier (suicide
-      -- body), just never lead. Unlike the armour gate this has no is_leading
-      -- exemption: deprivation means any take it's "leading" has stalled, so it
-      -- hands command off (the latch clears below since role lands soldier).
-      if state.ammo_deprived and role == M.ROLE_COMMANDER then
-        role = M.ROLE_SOLDIER
-      end
-      -- Ammo gate on FRESH command (INITIATION): a tank that can't finish the
-      -- pill by itself (shells <= pill HP) must not OPEN/lead a blitz — a dry /
-      -- low-ammo would-be commander can't shoot the pill down, so it just parks
-      -- in plan_position re-planning a take it can never complete. It can still
-      -- JOIN one as a soldier (decoy body). Fires immediately on current ammo
-      -- (unlike the 60s ammo_deprived flag above). Established leaders
-      -- (is_leading) are exempt — don't collapse a working multi-tank take
-      -- mid-fight; a leader that then stays starved is caught by the gate above.
-      if role == M.ROLE_COMMANDER and not is_leading
-         and (info.shells or 0) <= pill_hp then
         role = M.ROLE_SOLDIER
       end
       -- Don't elect a SECOND commander of a pill an ally is already blitzing:

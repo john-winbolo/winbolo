@@ -33,7 +33,7 @@ local function building_intent(state, info)
   if not state or not state.goal then return nil end
   local g = state.goal
   if g.kind ~= "place_pill_strategic" or not g.mx then return nil end
-  local cat = PP.classify(g.mx, g.my, false, true)
+  local cat = PP.classify(g.mx, g.my)
   return cat, g.mx, g.my
 end
 

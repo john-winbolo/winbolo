@@ -34,7 +34,6 @@ local attack  = require("attack")
 local shield  = require("attack_shield")
 local steer   = require("steering")
 local kill_lgm = require("kill_lgm")
-local demine  = require("demine")
 -- local bpc  = require("bpc")  -- removed: unified into attack_pill
 local log     = require("logger")
 local danger  = require("danger")
@@ -48,7 +47,6 @@ local threat   = require("threat")
 local hearing  = require("hearing")
 local print2   = require("print2")
 local opt      = require("optimize")
-local prof     = require("profiler")
 local shot_tracker = require("shot_tracker")
 local viz      = require("viz")
 local ally_state = require("ally_state")
@@ -260,19 +258,12 @@ function Brain.get_capacity_state_json()
       (state._think_end_us - state._think_start_us) / 1000)
   end
 
-  -- Per-think heap churn from the host's counting allocator. Absent on
-  -- hosts that don't install it (WinBolo client, headless server); emit
-  -- zeros there so the JSON shape stays stable for downstream readers.
-  local alloc_n, alloc_bytes = 0, 0
-  if brain_alloc_stats then alloc_n, alloc_bytes = brain_alloc_stats() end
-
   return string.format(
-    '{"tier":%d,"override":%s,"last_ms":%.2f,"target_ms":%.2f,"ratio_ewma":%.2f,"think_total_ms":%s,"alloc_n":%d,"alloc_kb":%.1f,"levels":[%s],"sections":[%s]}',
+    '{"tier":%d,"override":%s,"last_ms":%.2f,"target_ms":%.2f,"ratio_ewma":%.2f,"think_total_ms":%s,"levels":[%s],"sections":[%s]}',
     tier,
     (type(ovr) == "number") and tostring(math.floor(ovr)) or "null",
     last_ms, tgt_ms, sm,
     think_total_ms_str,
-    alloc_n, alloc_bytes / 1024,
     table.concat(rows, ","),
     table.concat(sec_parts, ","))
 end
@@ -824,54 +815,6 @@ function Brain.think(info)
   state._last_info = info
   local now  = state.tick
 
-  -- TEST AID: per-bot config from -bot-init [arg] (the BRAIN_INIT_ARG Lua
-  -- global), parsed once. Comma-separated tokens:
-  --   "ammoless"/"noammo" -> force never-refuel ON (deterministic; overrides
-  --                          the random TEST_NEVER_REFUEL_CHANCE roll below)
-  --   "normal"            -> force never-refuel OFF (a plain captain)
-  --   "deprive=N"         -> this bot's ammo-deprivation delay = N ticks, so the
-  --                          ammoless-helper/decoy kicks in sooner (100 ~= 2 s)
-  if state._test_arg_parsed == nil then
-    state._test_arg_parsed = true
-    local a = rawget(_G, "BRAIN_INIT_ARG")
-    if type(a) == "string" and a ~= "" then
-      -- ';' or ',' separated. -bot-init splits its spec on ',' so the [arg]
-      -- passed on the command line must use ';' (e.g. [ammoless;deprive=100]).
-      for tok in a:gmatch("[^,;]+") do
-        tok = tok:gsub("%s", "")
-        if tok == "ammoless" or tok == "noammo" then
-          state.test_never_refuel = true
-        elseif tok == "normal" then
-          state.test_never_refuel = false
-        else
-          local n = tok:match("^deprive=(%d+)$")
-          if n then state.test_deprive_ticks = tonumber(n) end
-        end
-      end
-    end
-  end
-
-  -- TEST AID: roll the never-refuel flag once per bot (see
-  -- TEST_NEVER_REFUEL_CHANCE in constants.lua — 0 disables). Seeded per
-  -- player so the four bots don't all roll the same value.
-  if state.test_never_refuel == nil then
-    local chance = C.TEST_NEVER_REFUEL_CHANCE or 0
-    if chance > 0 then
-      math.randomseed(os.time() + (info.player_number or 0) * 7919)
-      state.test_never_refuel = math.random() < chance
-      if state.test_never_refuel then
-        print(string.format("[TEST] bot %d is NEVER-REFUEL (all refuel goals blocked)",
-                            info.player_number or -1))
-      end
-      -- NOTE: the print2 "TEST_ROLE" line is emitted LATER (after
-      -- print2.set_bot/set_tick binds this bot's log file, ~line 1055).
-      -- Calling print2 HERE — before the per-bot file is bound — silently
-      -- drops the line, so don't.
-    else
-      state.test_never_refuel = false
-    end
-  end
-
   -- Cautious mode: per-tick boolean.  When true, danger / threat
   -- terms across cost formulas get multiplied by
   -- C.CAUTIOUS_MODE_MULT (5×) so the bot biases hard toward
@@ -1077,23 +1020,6 @@ function Brain.think(info)
     print2.set_bot(_G.BT_BOT_INDEX or info.player_number or 0)
     print2.set_tick(now)
     print2("BEGIN bot tick=", now, " state.goal.kind = ", state.goal.kind, ", state.goal.substate = ", tostring(state.goal.substate))
-    -- TEST AID: log the never-refuel roll once, HERE — the roll runs far
-    -- earlier (first think, ~line 830) but print2.set_bot only binds this bot's
-    -- file just above, so logging up there drops the line. Gate the latch on
-    -- _PRINT2_ENABLED so a print2-DISABLED warmup game (autotest runs one
-    -- first) can't silently consume the latch before the real, logged game.
-    -- TEST AID: log the never-refuel roll in the captured tick window. Bots
-    -- think during pre-game ticks (~1-10) whose print2 never reaches this
-    -- session's file, so a once-latch that fires there is silently consumed;
-    -- and a once-latch firing at a single tick is racy — a bot budget-killed
-    -- mid-think (or that skips that exact tick) misses its only shot. So just
-    -- emit every captured tick in a short window (11..40); any completed think
-    -- in the window records it, and the reader dedupes (grep | sort -u). The
-    -- roll value is stable after first think, so all lines agree.
-    if now >= 11 and now <= 40 then
-      print2(string.format("TEST_ROLE bot=%d never_refuel=%s",
-                           info.player_number or -1, tostring(state.test_never_refuel)))
-    end
     -- Raw engine-object dump: EXACTLY what the engine handed the brain this tick
     -- (info.objects — type/id/tile/host/speed). Tanks hidden in trees beyond
     -- MIN_TREEHIDE_DIST are filtered C-side (playersGetBrainTanksInRect), so if a
@@ -1523,25 +1449,7 @@ function Brain.think(info)
     return { holdkeys = manual_keys, tapkeys = 0, build = mbuild, wantallies = info.allies, messagedest = 0, sendmessage = "" }
   end
 
-  -- Instruction-sampling profiler arm/start. Placed here, after the dead,
-  -- startup, and manual-control early-out returns above, for two reasons:
-  --   1. Every armed tick reaches a paired prof.stop() — either at the tail
-  --      return or at the paused early-out below — so start/stop never desync.
-  --      The dead/startup/manual returns exit before arming and are
-  --      deliberately unprofiled (no cognition worth attributing).
-  --   2. prof.start() installs a debug.sethook that replaces the host's
-  --      per-think budget count hook (bot_manager installs one around think;
-  --      a Lua state holds only one hook), so tick-budget enforcement is off
-  --      while --instr-profile is active. This is a benchmark-only diagnostic.
-  -- Arm lazily/once: bot number and DEBUG_SESSION_DIR are only reliable here.
-  if _G.BRAIN_INSTR_PROFILE and not state._instr_prof_on then
-    state._instr_prof_on = true
-    prof.configure({
-      dir    = _G.DEBUG_SESSION_DIR or ".",
-      prefix = "p" .. tostring(info.player_number or 0),
-    })
-  end
-  if state._instr_prof_on then prof.start() end
+
 
   -- Debug overlay
   if BRAIN_DEBUG_MODE then
@@ -1733,9 +1641,8 @@ function Brain.think(info)
           row(0, pf_label, f.path_fail)
           row(1, "BUILD_SUPPRESS",   f.build_suppress)
           row(2, "NEARBY_CARVE",     f.nearby_carve)
-          row(3, "FIRE_SUPPRESS",    f.fire_suppress)
-          row(4, "STRANDED",         state.lgm_stranded == true)
-          row(5, string.format("dist=%d", f.lgm_dist or -1), false)
+          row(3, "STRANDED",         state.lgm_stranded == true)
+          row(4, string.format("dist=%d", f.lgm_dist or -1), false)
         else
           -- No factor record yet — the rescue check hasn't run for
           -- this LGM trip. Render a placeholder so the user sees the
@@ -2616,18 +2523,6 @@ function Brain.think(info)
     local SLATE_LONG_MAIN    = 2
     local SLATE_LONG_BACKUP  = 3
 
-    -- Predicted goal-replan tick (same predicate as timer_fire, computed here
-    -- because the dij scheduler runs BEFORE state.replan_this_tick is set).
-    -- GOAL_REPLAN_INTERVAL (50) is a multiple of DIJKSTRA_SHORT_INTERVAL (10),
-    -- so a short-slate restart ALWAYS coincides with a replan tick — stacking
-    -- the ~0.13ms copy+restart on finalize_pools/pick_goal every cycle. We slip
-    -- the discrete restart off predicted-replan ticks (bounded by MAX_DEFER so
-    -- it can't starve). The amortized dijkstra_step still runs every tick; only
-    -- the copy+start moves, and lookups fall back to the backup meanwhile.
-    local predicted_replan =
-      (now + (state.replan_offset or 0)) % C.GOAL_REPLAN_INTERVAL == 0
-    local DIJ_RESTART_MAX_DEFER = 4
-
     local tmx = info.tankx >> 8
     local tmy = info.tanky >> 8
     local in_boat = info.inboat and 1 or 0
@@ -2710,15 +2605,6 @@ function Brain.think(info)
       if wait_for_done and schedule_hit and not s.done then
         -- Holding off: keep stepping the current main until it
         -- finishes, then snapshot + restart on the next pass.
-        return
-      end
-      -- Yield the discrete copy+restart off predicted goal-replan ticks so the
-      -- snapshot doesn't stack on the goals block. Only when the slate is active
-      -- (backup has coverage) and not overdue past MAX_DEFER; an inactive slate
-      -- must start now since there's no backup to serve lookups.
-      if schedule_hit and s.active and predicted_replan
-         and age < interval + DIJ_RESTART_MAX_DEFER then
-        if BRAIN_DEBUG_MODE then print2(string.format("dij RESTART yield slate=%d age=%d (replan tick) t=%d", main_idx, age, now)) end
         return
       end
       if not s.active or schedule_hit then
@@ -2925,7 +2811,6 @@ function Brain.think(info)
   -- Paused: accept commands but do nothing else
   if state.paused then
     log.log_tick(state, info, state.goal, 0, 0, nil)
-    if state._instr_prof_on then prof.stop(state.server_tick or state.tick or 0) end
     return {
       holdkeys    = 0,
       tapkeys     = 0,
@@ -3380,12 +3265,9 @@ function Brain.think(info)
                   or (state.pf.status == "done" and state.pf.next_mx >= 0)
 
   if in_water then
-    -- Always try to build a road under ourselves when drowning in river.
-    -- NO tree reserve here — this is survival, not a luxury road; spend the
-    -- last trees rather than sink (was + TREE_RESERVE, which would refuse a
-    -- life-saving build at <6 trees).
+    -- Always try to build a road under ourselves when drowning in river
     if info.man_status == C.LGM_INTANK and tank_tt == C.T_RIVER
-       and info.trees >= C.ROAD_RIVER_COST then
+       and info.trees >= C.ROAD_RIVER_COST + C.TREE_RESERVE then
       state.water_build = { x = cur_mx, y = cur_my }
       if not state.water_build_logged then
         state.water_build_logged = true
@@ -3434,7 +3316,7 @@ function Brain.think(info)
     -- the LGM triggers pacing that slows the tank below disembark speed.
     local slow_tt = not info.inboat and C.ROAD_BUILD_TERRAIN[tank_tt] or nil
     if slow_tt and info.man_status == C.LGM_INTANK
-       and info.trees >= slow_tt + builder.road_tree_reserve(state, world, info) then
+       and info.trees >= slow_tt + C.TREE_RESERVE then
       state.slow_build = { x = cur_mx, y = cur_my }
     else
       state.slow_build = nil
@@ -3460,7 +3342,7 @@ function Brain.think(info)
         _pf_dc = PP.counts(world, now)
         _pf_dt = PP.targets(_pf_dc.back + _pf_dc.front + _pf_dc.aggro + 1)
       end
-      local cat = PP.classify(mx, my, false, true)
+      local cat = PP.classify(mx, my, false)
       local t = _pf_dt[cat]
       return (t ~= nil and (_pf_dc[cat] or 0) >= t), cat
     end
@@ -3602,24 +3484,6 @@ function Brain.think(info)
           print(string.format(TAG .. " t=%d BASE CAPTURED: (%d,%d) — replanning", now, gmx, gmy))
         end
         goal_valid = false
-      elseif b.owner == "hostile" and (b.health or 0) > 0 then
-        -- Hostile base no longer capturable. Bases restock over time, so a base
-        -- we knocked down can climb back over MIN_ARMOUR_CAPTURE while we drive
-        -- in — and the engine then BLOCKS the drive-over (observed: tank pinned
-        -- beside the base at full throttle, spinning in place). Brain-visible
-        -- base health is the engine's collapsed capturable flag (0 = capturable,
-        -- 1 = not), so health > 0 is exactly "the drive-over will not work".
-        -- Flip back to attack_base: its nav parks on the cheapest ADJACENT tile
-        -- (usually where we already are — no new nav goal), faces the base and
-        -- shoots; the CAPTURABLE switch below flips us back to capture_base for
-        -- the drive-over once armour is down again.
-        if BRAIN_DEBUG_MODE then
-          print(string.format(TAG .. " t=%d BASE RESTOCKED: (%d,%d) hp=%d not capturable — switching back to attack_base", now, gmx, gmy, b.health or 0))
-        end
-        log.event("base_restocked", string.format("(%d,%d) hp=%d", gmx, gmy, b.health or 0))
-        state.goal.kind = "attack_base"
-        state.goal.race_mode = nil
-        state.pf.status = "idle"
       end
     elseif gk == "attack_base" then
       local b = W.base_at(world, gmx, gmy)
@@ -3729,27 +3593,8 @@ function Brain.think(info)
           -- Out of ammo: we can't damage the pill, so don't sit on it.
           -- Drop and replan (refuel is urgent at 0 shells). Clear pool 6
           -- so we don't immediately re-select it from stale cache.
-          -- EXCEPT an ammo-deprived decoy that is IN A BLITZ for this pill: it
-          -- charges the pill WITHOUT ammo by design (draw fire for the captain),
-          -- so while the blitz is live 0 shells must NOT invalidate the take.
-          -- Once the blitz closes (no accepted role / no open call for this
-          -- pill) the exemption lapses and it drops the pill like anyone dry —
-          -- a lone deprived tank must never sit on a pill solo.
-          local decoy_in_blitz = false
-          if state.ammo_deprived then
-            local pid = state.goal.target_id
-            if state.squad_blitz_accepted or (pid and state.squad_blitz_target == pid) then
-              decoy_in_blitz = true
-            elseif pid and state.blitz_calls then
-              for _, bc in pairs(state.blitz_calls) do
-                if bc.pill == pid then decoy_in_blitz = true; break end
-              end
-            end
-          end
-          if not decoy_in_blitz then
-            goal_valid = false
-            if state.pool_cache then state.pool_cache[6] = nil end
-          end
+          goal_valid = false
+          if state.pool_cache then state.pool_cache[6] = nil end
         end
       end
     elseif gk == "pill_place" and not state.capture_objective then
@@ -4515,29 +4360,24 @@ function Brain.think(info)
       -- fill_pool_cache.  The rolling queue refines over ~14 ticks.
       -- At tick 0 the cache is empty so pick_goal returns nil and
       -- the bot idles until the queue fills (~0.3s).
-      --
-      -- Queue build runs BEFORE finalize_pools: build_eval_queue sync-scores
-      -- brand-new pool-4 corpses into cost_cache at add time, and finalize's
-      -- backfill loop reconstitutes pool_partial from the (fresh) queue +
-      -- cost_cache, so a pill that died since the last replan is visible to
-      -- THIS tick's pick_goal. With the old finalize-first order the fresh
-      -- corpse missed the decision by a full replan cycle (~50 ticks) —
-      -- 20260703_210207 t=6997: bot stood 2 tiles from its freshly-dead
-      -- capture target, replanned, and repair_pill won because pool 4 was
-      -- empty; the LGM rebuilt the corpse and the free pill was lost.
+      local t_fp0 = clock_us()
+      goals.finalize_pools(state, world, info)
+      opt(string.format("  finalize_pools done %.2f ms", (clock_us() - t_fp0) / 1000))
+      -- Kick off next cycle's queue. Normally inline here so it has ~49
+      -- ticks to process. With C.INCREMENTAL_REPLAN on, defer it to the
+      -- next tick's update_pool_cache instead, so the replan tick pays
+      -- only finalize_pools + pick_goal (the decision) and build_eval_queue
+      -- (the SYNC sweep + sort) lands on the following tick — splitting the
+      -- per-replan spike across two ticks. pick_goal doesn't depend on the
+      -- new queue (it reads pool_cache from finalize_pools), so this is safe.
       if now <= 3 then print(TAG .. " tick=" .. now .. " calling build_eval_queue") end
       if C.INCREMENTAL_REPLAN then
-        -- Deferred mode still pays the one-cycle blindness for brand-new
-        -- corpses; the spike-splitting tradeoff is explicit here.
         state._deferred_build_eval = true
       else
         local t_be0 = clock_us()
         goals.build_eval_queue(state, world, info)
         opt(string.format("  build_eval_queue done %.2f ms", (clock_us() - t_be0) / 1000))
       end
-      local t_fp0 = clock_us()
-      goals.finalize_pools(state, world, info)
-      opt(string.format("  finalize_pools done %.2f ms", (clock_us() - t_fp0) / 1000))
       if now <= 3 then print(TAG .. " tick=" .. now .. " build_eval_queue done, calling pick_goal") end
       metrics.inc("goal_replan")
       local t_pg0 = clock_us()
@@ -4646,13 +4486,6 @@ function Brain.think(info)
         new_goal = state.goal  -- re-affirmed current goal: no switch
       elseif swerving then
         new_goal = state.goal  -- swerve is never interrupted, not even by flee
-      elseif state.goal.kind == "kill_mine"
-             and new_goal.kind ~= "flee_to_base" then
-        -- De-mine interrupt in progress (demine.lua pushed it over the real
-        -- goal, which is stashed on state._demine_saved). Hold: demine.update
-        -- pops the moment the mine is cleared (timeout + out-of-shells
-        -- backstops). Only survival preempts.
-        new_goal = state.goal
       elseif engage_locked and new_goal.kind ~= "flee_to_base"
                              and new_goal.kind ~= "attack_tank"
                              and new_goal.kind ~= "kill_lgm"
@@ -4943,14 +4776,6 @@ function Brain.think(info)
   t_goal1 = clock_us()
   metrics.set("us_goals", t_goal1 - t_goal0)
   opt(string.format("goals done %.2f ms", (t_goal1 - t_goal0) / 1000))
-
-  -- Automatic de-mine interrupt: when a known mine is in crosshair range
-  -- and the goal is interruptible, push a kill_mine goal over it (the real
-  -- goal object is stashed with all context and restored on pop the moment
-  -- the mine is cleared). See demine.lua; the arbitration chain above holds
-  -- a pushed kill_mine against replans.
-  demine.update(state, world, info)
-  if BRAIN_DEBUG_MODE then demine.draw_overlay(state, world, info) end
 
   -- Goal lookahead: when close to a capture goal, pre-compute the next
   -- goal.  If the next goal isn't "stay here and refuel", pass it to
@@ -6629,19 +6454,6 @@ function Brain.think(info)
   if BRAIN_DEBUG_MODE then
     print2("END state.goal.kind = ", state.goal.kind, ", state.goal.substate = ", tostring(state.goal.substate))
   end
-  -- DECOY WATCH: an ammo-deprived decoy must attack a pill ONLY as part of a
-  -- blitz (joining the captain's call). A solo attack_pill (no blitz) is a
-  -- test failure — flag it with its full blitz-membership state so we can see
-  -- WHY it went solo (no call open? not accepted? _blitz not set?).
-  if BRAIN_DEBUG_MODE and state.ammo_deprived and state.goal and state.goal.kind == "attack_pill" then
-    local g = state.goal
-    local pid = g.target_id
-    local call_for_pill, ncalls = false, 0
-    if state.blitz_calls then for _, bc in pairs(state.blitz_calls) do ncalls = ncalls + 1; if bc.pill == pid then call_for_pill = true end end end
-    local joining = (state.squad_blitz_accepted and true) or (g._blitz and true) or (state.squad_blitz_target == pid) or call_for_pill
-    print2(string.format("DECOY_ATTACK t=%d pill#%s sub=%s joining=%s | accepted=%s _blitz=%s sqbt=%s call4pill=%s ncalls=%d role=%s", state.tick or 0, tostring(pid), tostring(g.substate), tostring(joining), tostring(state.squad_blitz_accepted), tostring(g._blitz), tostring(state.squad_blitz_target), tostring(call_for_pill), ncalls, tostring(state.squad_role)))
-    if not joining then print2(string.format("DECOY_SOLO_FAIL t=%d pill#%s sub=%s — attacking pill with NO blitz", state.tick or 0, tostring(pid), tostring(g.substate))) end
-  end
   -- Sub-section breakdown of (tail). Indented sub-section emits MUST
   -- come before the (tail) main emit so rebuild_sections attaches them
   -- as subs.
@@ -6750,72 +6562,6 @@ function Brain.think(info)
   -- later once better candidates finish evaluating.
   if now <= C.STARTUP_HOLD_TICKS then
     keys, taps, build_cmd = 0, 0, -1
-  end
-
-  -- TEST AID: global bot freeze (BOT_TEST_GLOBAL_HOLD_TICKS, 0 = off).
-  -- Outputs zeroed while brains keep ticking, so the human can capture the
-  -- map before the bots go live. Bot 0 prints a console countdown every 10s.
-  if now <= (C.BOT_TEST_GLOBAL_HOLD_TICKS or 0) then
-    keys, taps, build_cmd = 0, 0, -1
-    if now % 500 == 0 and (info.player_number or 0) == 0 then
-      print(string.format("[BOT-HOLD] bots frozen — live in %ds", math.floor((C.BOT_TEST_GLOBAL_HOLD_TICKS - now) / 50)))
-    end
-  elseif now == (C.BOT_TEST_GLOBAL_HOLD_TICKS or 0) + 1
-         and (info.player_number or 0) == 0 then
-    print("[BOT-HOLD] bots are LIVE")
-  end
-
-  -- TEST AID banner: the followed bot is a never-refuel test bot (all
-  -- refuel candidates rejected). Loud red so nobody mistakes a test run
-  -- for real behavior.
-  if state.test_never_refuel then
-    -- y=70: clear of hud_replan at (10,56) and hud_tick_info at (8,32/44).
-    viz.hud_text("test_no_refuel", 10, 70, "TEST: NEVER-REFUEL BOT", "topleft", 255, 60, 60)
-  end
-
-  -- Ammoless-helper countdown: ticks until this bot flips to
-  -- state.ammo_deprived. Mirrors strategy.lua's clock — starts at
-  -- state.ammo_low_since (shells below AMMO_DEPRIVED_SHELLS, non-opening),
-  -- fires at AMMO_DEPRIVED_TICKS elapsed (50 ticks/s). hud_text/hud_rect
-  -- self-gate on the toggle, but wrap in is_on to skip the string.format
-  -- when the overlay is off.
-  if viz.is_on("ammo_deprive_countdown") then
-    local full = state.test_deprive_ticks or C.AMMO_DEPRIVED_TICKS or 3000
-    local txt, r, g, b, frac
-    if state.ammo_deprived then
-      txt = "AMMOLESS HELPER: ACTIVE"
-      r, g, b, frac = 255, 60, 60, 1.0
-    elseif state.ammo_low_since then
-      local elapsed = state.tick - state.ammo_low_since
-      local remain = full - elapsed
-      if remain < 0 then remain = 0 end
-      frac = elapsed / full
-      if frac > 1 then frac = 1 end
-      txt = string.format("Ammoless helper in %.1fs (%dt, shells<%d)",
-                          remain / 50, remain, C.AMMO_DEPRIVED_SHELLS or 0)
-      r, g, b = 255, 180, 40
-    else
-      -- Clock is nil. Per strategy.lua it's pinned to nil when EITHER shells
-      -- recovered to the line OR we're in the opening phase. Distinguish them:
-      -- a dry tank in opening is NOT "ammo ok" — the clock is gated, so say so.
-      local sh = (info and info.shells) or 0
-      if sh < (C.AMMO_DEPRIVED_SHELLS or 0) then
-        txt = string.format("Helper clock GATED — %s phase (shells=%d)",
-                            state.phase or "?", sh)
-        r, g, b, frac = 90, 170, 255, 0.0    -- blue: low ammo, but suppressed
-      else
-        txt = string.format("Helper clock idle — ammo ok (shells=%d)", sh)
-        r, g, b, frac = 130, 130, 130, 0.0   -- grey: genuinely not depriving
-      end
-    end
-    viz.hud_text("ammo_deprive_countdown", 10, 84, txt, "topleft", r, g, b)
-    -- Fill bar under the text: grey track + coloured elapsed/total fill.
-    local bx, by, bw, bh = 10, 98, 160, 6
-    viz.hud_rect("ammo_deprive_countdown", bx, by, bw, bh, "topleft", 60, 60, 60, 255, true)
-    if frac and frac > 0 then
-      viz.hud_rect("ammo_deprive_countdown", bx, by,
-                   math.floor(bw * frac + 0.5), bh, "topleft", r, g, b, 255, true)
-    end
   end
 
   -- Tick-info HUD (top-left, just below BrainTest's tick/think box).
@@ -7584,10 +7330,6 @@ function Brain.think(info)
   -- captures the /info broadcast block above (blitz TX diagnostics included).
   if BRAIN_DEBUG_MODE then print2.flush() end
 
-  -- Paired stop for the sampling profiler armed after the early-out gates.
-  -- Every armed tick reaches here, keeping start/stop balanced.
-  if state._instr_prof_on then prof.stop(state.server_tick or state.tick or 0) end
-
   -- Output
   return {
     holdkeys    = keys,
@@ -7763,8 +7505,6 @@ end
 
 function Brain.close(info)
   print(TAG .. " closed after " .. state.tick .. " ticks")
-  -- Flush and close the sampling profiler's per-bot TSV if it was armed.
-  if state._instr_prof_on then prof.shutdown() end
   log.dump_world(world)
   log.close()
   opt.close()

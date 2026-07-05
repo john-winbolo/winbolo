@@ -461,7 +461,7 @@ typedef struct {
 *  <path> is a literal brain/init.lua path, and the optional
 *  bracketed [<arg>] becomes that bot's BRAIN_INIT_ARG. E.g.
 *
-*     0-3=brains/GoalHunter_1.5/init.lua,4-5=brains/Foo/init.lua[llm]
+*     0-3=brains/GoalHunter_1.6/init.lua,4-5=brains/Foo/init.lua[llm]
 *
 *  The caller pre-fills `slots` for every id with the default
 *  brain path and an empty arg; this overwrites only the ids

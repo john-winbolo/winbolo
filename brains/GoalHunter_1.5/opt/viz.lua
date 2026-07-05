@@ -38,11 +38,6 @@ local M = {}
 -- typo'd id at a call site is caught with a clear list of valid
 -- ids in the error message.
 M.IDS = {
-  -- Ammo-deprivation indicator: marker over the tank when ammo_deprived (or a
-  -- countdown while the low-ammo clock runs toward it).
-  ammo_deprived  = { short = "Ammo deprived",
-                     long  = "Red marker + HUD when ammo_deprived; low-ammo countdown otherwise",
-                     default_on = false },
   -- Existing (Phase 1).
   shot_tile_grid = { short = "Shot tile grid",
                      long  = "Per-shell 1/16 sub-grid lines" },
@@ -293,19 +288,6 @@ M.IDS = {
                             long  = "Map overlay: top evaluated placement spots for a BACK pill, as bold filled orange squares (most opaque = best). Pairs with the '3' influence view. Fed by the place_pill_strategic candidate scan." },
   pill_best_spots_aggro = { short = "Best AGGRO pill spots",
                             long  = "Map overlay: top evaluated placement spots for an AGGRESSIVE pill, as bold filled red squares (most opaque = best). Pairs with the '3' influence view." },
-  demine_scan = { short = "De-mine scan",
-                  long  = "Auto mine-clear (demine.lua): the crosshair-reach ring the scan searches, a red inner 'no-blast' ring (min distance), and every considered mine tile — GREEN chosen, YELLOW candidate with its cost number, RED rejected with the reason (not our ground / cooldown / too close / out of reach / our LGM near / shot blocked). Cost = dist x (1 + BEHIND_MULT x angleoff/128), so mines near the heading win. While a kill_mine goal is active: a red target ring, a line from the tank, and live 'KILL MINE d=Nt sl=N age=N' (gunsight length + ticks since push)." },
-  trepair_scan = { short = "Terrain-repair scan",
-                   long  = "Auto battle-damage repair (demine.lua): the LGM-radius ring, and every crater/rubble/crater-flood-water tile in OUR territory — GREEN chosen, YELLOW valid ('road c=N' tree cost), RED rejected (not our ground / cooldown / open water / under tank / low trees / LGM unreachable / unsafe walk). While a repair job is active (parallel — the tank carries on with its goal): the target ring, a tank->tile line and (if the LGM is out) an LGM->tile line, and 'REPAIR tt=N cost=N age=N'." },
-  test_no_refuel = { short = "HUD: TEST never-refuel bot",
-                     long  = "TEST AID: red banner when the followed bot rolled the never-refuel flag (TEST_NEVER_REFUEL_CHANCE) — all its refuel candidates are rejected so it hits ammo-deprivation naturally. Roll results also print to the console at startup.",
-                     default_on = true },
-  ammo_deprive_countdown = { short = "HUD: Ammoless-helper countdown",
-                     long  = "Followed bot's countdown to state.ammo_deprived — the 'ammoless helper' mode where a shell-starved tank stops trying to fight solo and instead joins any blitz / suicide-charges (AMMO_DEPRIVED_BLITZ_MULT). Mirrors strategy.lua exactly: the clock starts the tick shells fall below AMMO_DEPRIVED_SHELLS outside the opening phase (state.ammo_low_since), clears the instant shells recover to that line, and fires after AMMO_DEPRIVED_TICKS (~60s). States: grey=idle (ammo ok), BLUE=GATED (dry but suppressed by the opening land-grab phase — clock can't start yet), amber=counting down, red=ACTIVE. Shows seconds+ticks remaining and a fill bar." },
-  wait_spot = { short = "Wait-for-LGM safe spot",
-                long  = "Danger-aware wait_for_lgm: when the parked tile is under fire, shows the scored candidate ring (yellow=safe candidate, red=dangerous, grey=unreachable, green=chosen), the chosen wait tile (green ring), a line to the returning LGM, and the danger value that triggered the move. Data from pick_wait_spot — the same scores the goal used." },
-  spike_pills = { short = "Spiking pills (base denial)",
-                  long  = "Map overlay: hostile/neutral pills within PILL_FIRE_RANGE of a friendly base ('spiking' — they shoot us while we refuel, denying the base). Magenta square on the pill, line + tint to each denied base, 'SPIKE n=N' label. These pills get SPIKE_PILL_DISCOUNT on attack_pill combat cost; while any exists, every other pill pays SPIKE_OTHER_PENALTY. Same table the pool-6 cost reads." },
   panic_build = { short = "Panic build (emergency)",
                   long  = "Shown whenever a non-rejected enemy tank is present (attack_tank viable): the emergency def_build candidate spots (green=chosen, yellow=valid, red=rejected with reason), the threat tank (red), a line from us to it, and a 'PANIC BUILD' label. If a tank is present but we have no pill to drop, just a 'PANIC (no pill)' marker on the threat." },
   ally_avoid_overlay = { short = "Ally avoid zones",
