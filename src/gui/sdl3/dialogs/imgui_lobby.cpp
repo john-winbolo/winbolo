@@ -8503,7 +8503,12 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
 
         /* Check for game start */
         if (clientSimGetNetStatus(cs) == netRunning) {
-            soundPlayEffect(lobbyGameStart);
+            /* SP jumps straight to running with no real-time countdown, so it
+             * gets no countdown cues (gated above); suppress the start noise
+             * too for a silent SP entry. MP still plays it. */
+            if (!clientSimIsSinglePlayer(cs)) {
+                soundPlayEffect(lobbyGameStart);
+            }
             result = 1;
             running = false;
             break;
