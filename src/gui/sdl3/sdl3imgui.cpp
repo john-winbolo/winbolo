@@ -4300,8 +4300,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                the desktop blocking loop's netRunning break. A Leave or a
                dropped connection exits the lobby too, but not into
                netRunning, so those stay silent. (Desktop never takes this
-               edge — the blocking lobby owns the frame while inLobby.) */
-            if (cs && clientSimGetNetStatus(cs) == netRunning) {
+               edge — the blocking lobby owns the frame while inLobby.)
+               SP jumps straight to running with no real-time countdown and
+               gets no countdown cues, so suppress the start noise too for a
+               silent SP entry (matches imguiLobbyShow). MP still plays it. */
+            if (cs && clientSimGetNetStatus(cs) == netRunning &&
+                !clientSimIsSinglePlayer(cs)) {
                 soundPlayEffect(lobbyGameStart);
             }
         }
