@@ -4426,9 +4426,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
            controller hides it again (the pause overlay is the pad's way in).
            Kept hidden while the controller-disconnected dialog is up so the
            strip doesn't flash behind the modal.  macOS routes the menu
-           through native NSMenu so the in-window bar is never drawn there. */
+           through native NSMenu so the in-window bar is never drawn there.
+           Never draw it in controller-first mode (the Steam Deck) — the
+           Deck's virtual pad reports as keyboard input, which would
+           otherwise let the bar show; this also matches sdl3draw.c
+           reserving zero menu-bar height under uiShouldUseControllerMode(). */
         if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD &&
-            !controllerDisconnectIsOpen()) {
+            !controllerDisconnectIsOpen() &&
+            !uiShouldUseControllerMode()) {
             renderMenuBar(cs);
         }
 #endif
