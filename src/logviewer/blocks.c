@@ -18,6 +18,7 @@
 #include <string.h>
 #include "lv_global.h"
 #include "blocks.h"
+#include "lv_attribution.h"
 #include "unzip.h"
 #include "ioapi.h"
 
@@ -69,6 +70,43 @@ static void decompressUpTo(size_t target) {
   }
 }
 
+/* Locate and parse the optional attribution-track member into memory. The
+ * member is optional: an old .wbv without it simply leaves the parsed track
+ * absent. Reads the whole member into a heap buffer with the same chunked
+ * grow-and-read loop used for log.dat, then hands it to the parser (which
+ * takes its own copy). Any failure clears the track and returns without
+ * disturbing the log load. Must be called with no zip current-file open, and
+ * leaves none open. */
+static void lv_blocksLoadAttributionTrack(unzFile zf) {
+  lvAttributionClear();
+  if (zf == NULL) return;
+  if (unzLocateFile(zf, ATTRIBUTION_TRACK_MEMBER, 0) != UNZ_OK) return;  /* old .wbv: no track */
+  if (unzOpenCurrentFile(zf) != UNZ_OK) return;
+
+  uint8_t *buf = NULL;
+  size_t   size = 0, cap = 0;
+  bool     ok = TRUE;
+  for (;;) {
+    if (size + LOG_DECOMPRESS_CHUNK > cap) {
+      size_t newCap = cap ? cap * 2 : LOG_DECOMPRESS_CHUNK;
+      while (newCap < size + LOG_DECOMPRESS_CHUNK) newCap *= 2;
+      uint8_t *nb = (uint8_t *)realloc(buf, newCap);
+      if (nb == NULL) { ok = FALSE; break; }
+      buf = nb;
+      cap = newCap;
+    }
+    int got = unzReadCurrentFile(zf, buf + size, LOG_DECOMPRESS_CHUNK);
+    if (got < 0) { ok = FALSE; break; }
+    if (got == 0) break;
+    size += (size_t)got;
+  }
+  unzCloseCurrentFile(zf);
+  if (ok && buf != NULL && size > 0) {
+    lvAttributionParseMember(buf, size);  /* parser takes its own copy */
+  }
+  free(buf);
+}
+
 /* Size parameter is ignored -- we buffer the whole file. */
 bool lv_blocksCreate(char *fileName, int size) {
   (void)size;
@@ -84,6 +122,17 @@ bool lv_blocksCreate(char *fileName, int size) {
 
   logFile = unzOpen(fileName);
   if (logFile == NULL) return FALSE;
+
+  if (unzLocateFile(logFile, "log.dat", 0) != UNZ_OK) {
+    unzClose(logFile);
+    logFile = NULL;
+    return FALSE;
+  }
+
+  /* Optional attribution-track member. Load it before opening log.dat's
+   * stream: locating another member moves the zip cursor, so re-locate
+   * log.dat afterward and open it last for the lazy streaming reader. */
+  lv_blocksLoadAttributionTrack(logFile);
 
   if (unzLocateFile(logFile, "log.dat", 0) != UNZ_OK) {
     unzClose(logFile);
@@ -201,6 +250,17 @@ bool lv_blocksCreateFromMemory(uint8_t *zipData, size_t zipLen) {
     return FALSE;
   }
 
+  /* Optional attribution-track member. Load it before opening log.dat's
+   * stream: locating another member moves the zip cursor, so re-locate
+   * log.dat afterward and open it last for the lazy streaming reader. */
+  lv_blocksLoadAttributionTrack(logFile);
+
+  if (unzLocateFile(logFile, "log.dat", 0) != UNZ_OK) {
+    unzClose(logFile);
+    logFile = NULL;
+    return FALSE;
+  }
+
   if (unzOpenCurrentFile(logFile) != UNZ_OK) {
     unzClose(logFile);
     logFile = NULL;
@@ -254,6 +314,7 @@ void lv_blocksSetStreamEOF(void) {
 }
 
 void lv_blocksDestroy() {
+  lvAttributionClear();  /* drop this log's parsed track so a later load can't see it */
   if (logFile != NULL) {
     unzCloseCurrentFile(logFile);
     unzClose(logFile);

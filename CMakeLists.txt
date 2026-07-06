@@ -1147,6 +1147,7 @@ set(LOGVIEWER_LIB_SOURCES
     # seam, so it builds into the client like any other decode TU.
     src/logviewer/spec_seed_load.c
     src/logviewer/blocks.c
+    src/logviewer/lv_attribution.c
     src/logviewer/shells.c
     src/logviewer/snapshot.c
     src/logviewer/allience.c
@@ -2964,6 +2965,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # writer-drive that (re)generates the v2 fixture (test_wbv_v2_capture.c).
     tests/unit/test_wbv_reader.c
     tests/unit/test_wbv_v2_capture.c
+    tests/unit/test_attribution_reader.c
     # On-demand generator for the committed real ring-seed fixture
     # (spectator_seed.bin): captures a ServerSim ring keyframe with no trailing
     # data for test_spec_seed_load_real (test_spectator_seed_capture.c).
@@ -3012,6 +3014,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # NOT linked — their referenced entry points are stubbed above.
     src/logviewer/screen.c
     src/logviewer/blocks.c
+    src/logviewer/lv_attribution.c
     src/logviewer/snapshot.c
     src/logviewer/players.c
     # Logviewer-world spectator seed orchestration: raw ring keyframe seed ->
@@ -3305,6 +3308,9 @@ set(_unit_test_names
     log_roundtrip_lobby_mode_drops_world_events
     wbv_reader_v1
     wbv_reader_v2
+    attribution_reader_roundtrip
+    attribution_reader_rejects_bad
+    attribution_reader_old_wbv
     blocks_stream
     stream_load
     stream_pump
