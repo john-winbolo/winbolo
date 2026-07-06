@@ -3139,6 +3139,18 @@ const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot) 
     return &sim->roundStats[slot];
 }
 
+const uint8_t *serverSimGetTrackBuffer(const ServerSim *sim, size_t *outLen,
+                                       uint32_t *outRecordCount, bool *outTruncated) {
+    if (outLen != NULL)         *outLen = sim->trackLen;
+    if (outRecordCount != NULL) *outRecordCount = sim->trackRecordCount;
+    if (outTruncated != NULL)   *outTruncated = sim->trackTruncated;
+    return sim->trackBuf;
+}
+
+const AttrSlotIdentity *serverSimGetTrackIdentity(const ServerSim *sim) {
+    return sim->trackIdentity;
+}
+
 void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
     memset(out, 0, sizeof(*out));
 

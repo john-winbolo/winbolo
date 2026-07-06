@@ -40,8 +40,10 @@
 #include "netpacks.h"
 #include "zip.h"
 #include "server_sim.h"
+#include "attribution_track.h"
 #include "log_internal.h"
 #include "../winbolonet/winbolonet_core.h"
+#include "../common/wb_log.h"
 
 zipFile logFile;               /* File to log to */
 unsigned short logLastEvent; /* Last event logged. Increments each time there are no events */
@@ -124,6 +126,10 @@ void logSetLobbyMode(bool enabled) {
  * bytes). All off by default — NULL ring means the tap costs nothing. */
 static SpectatorRing *logSpectatorRing = NULL;
 static ServerSim *logSpectatorSim = NULL;
+
+/* The sim whose per-round attribution track logStop serializes into the .wbv.
+ * Captured in logStart; NULL means no track member is written. */
+static ServerSim *logSsim = NULL;
 static BYTE logSpectatorAcc[LOG_MEMORY_BUFFER_SIZE]; /* this tick's plaintext events */
 static int logSpectatorAccLen = 0;
 
@@ -358,7 +364,37 @@ void logStop() {
     data[0] = LOG_QUIT;
     data[1] = LOG_QUIT;
     zipWriteInFileInZip(logFile, data, 2);
-    zipCloseFileInZip(logFile);
+    zipCloseFileInZip(logFile);            /* closes log.dat */
+    if (logSsim != NULL) {
+      /* Second member: the round's attribution track (header + record stream),
+       * DEFLATE-compressed alongside log.dat. Written even when the record
+       * stream is empty so every logged round carries a track member. */
+      size_t tlen = 0; uint32_t trec = 0; bool ttrunc = false;
+      const uint8_t *tbuf = serverSimGetTrackBuffer(logSsim, &tlen, &trec, &ttrunc);
+      const AttrSlotIdentity *tids = serverSimGetTrackIdentity(logSsim);
+      AttrTrackHeader hdr;
+      memset(&hdr, 0, sizeof hdr);
+      memcpy(hdr.magic, ATTRIBUTION_TRACK_MAGIC, 4);   /* 4 bytes, no NUL */
+      hdr.version     = ATTRIBUTION_TRACK_VERSION;
+      hdr.truncated   = ttrunc ? 1 : 0;
+      hdr.slotCount   = MAX_TANKS;
+      memcpy(hdr.slots, tids, sizeof hdr.slots);
+      hdr.recordCount = trec;
+      zip_fileinfo zi;
+      memset(&zi, 0, sizeof zi);
+      if (zipOpenNewFileInZip(logFile, ATTRIBUTION_TRACK_MEMBER, &zi,
+                              NULL, 0, NULL, 0, "",
+                              Z_DEFLATED, Z_DEFAULT_COMPRESSION) == Z_OK) {
+        zipWriteInFileInZip(logFile, &hdr, (unsigned)sizeof hdr);
+        if (tbuf != NULL && tlen > 0) {
+          zipWriteInFileInZip(logFile, tbuf, (unsigned)tlen);
+        }
+        zipCloseFileInZip(logFile);
+        WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                    "attribution track: recordCount=%u bytes=%zu truncated=%d",
+                    trec, (size_t)(sizeof hdr + tlen), (int)ttrunc);
+      }
+    }
     zipClose(logFile, "WinBolo Log File");
   }
   logIsRunning = FALSE;
@@ -986,6 +1022,7 @@ bool logStart(char *fileName, ServerSim *ssim, BYTE ai, BYTE maxPlayers, bool us
 
   returnValue = TRUE;
   logStop(); /* Stop the current log if it is running */
+  logSsim = ssim; /* sim whose attribution track logStop serializes at round end */
   logLastEmpty = FALSE;
   /* Reset owner-thread capture so the next logWriteTick re-pins it.
    * Necessary across round boundaries: handleLobbyEnter for a new round

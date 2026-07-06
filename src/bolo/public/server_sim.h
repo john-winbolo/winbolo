@@ -32,6 +32,7 @@
 #include "screentank.h"        /* tankAlliance */
 #include "brain_list.h"        /* BrainList — returned by serverSimGetBrainList */
 #include "client_command.h"    /* ClientCommand / CmdResult — serverSimApplyCommand */
+#include "attribution_track.h" /* AttrSlotIdentity — track accessors below */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -1438,6 +1439,12 @@ unsigned short serverSimGetServerPort(const ServerSim *sim);
 int            serverSimGetMapDirCount(const ServerSim *sim);
 uint8_t        serverSimGetEventCount(const ServerSim *sim);
 uint16_t       serverSimGetMapEventCount(const ServerSim *sim);
+
+/* Per-round attribution track (see attribution_track.h). Valid from the first
+ * appended record until the next serverSimResetGameWorld. */
+const uint8_t *serverSimGetTrackBuffer(const ServerSim *sim, size_t *outLen,
+                                       uint32_t *outRecordCount, bool *outTruncated);
+const AttrSlotIdentity *serverSimGetTrackIdentity(const ServerSim *sim); /* [MAX_TANKS] */
 
 /* String (char[]) accessors */
 const char *serverSimGetMapName(const ServerSim *sim);
