@@ -18,7 +18,8 @@
 
 #include "global.h"
 #include "input_packet.h"
-#include "client_sim.h"          /* ClientSim, clientSimApplyControl, accessor */
+#include "client_sim.h"          /* ClientSim, clientSimGetLastRoundStats accessor */
+#include "client_sim_control.h"  /* clientSimApplyControl */
 #include "server_sim.h"
 #include "server_sim_internal.h" /* PlayerRoundStats, serverSimGetRoundStats — T2 */
 #include "server_sim_lifecycle.h"
