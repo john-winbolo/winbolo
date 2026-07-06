@@ -2518,8 +2518,15 @@ void tankLayMine(GameSim *sim, tank *value) {
     if (terrain != BUILDING && terrain != HALFBUILDING && terrain != BOAT && terrain != RIVER && terrain < MINE_START && (*value)->mines > 0 && (*value)->onBoat == FALSE && pillsExistPos(pb, bmx, bmy) == FALSE && basesExistPos(bs, bmx, bmy) == FALSE && (*value)->armour <= TANK_FULL_ARMOUR) {
       (*value)->mines--;
       mapSetPos(sim, mp, bmx, bmy, (BYTE) (terrain + MINE_SUBTRACT), FALSE, FALSE);
+      /* Record the layer so a later detonation credits its owner (mirrors the
+       * LGM mine-lay path). minesSetOwner is unconditional; recordPlayerAction
+       * is server-only (NULL on the client). */
+      BYTE pn = gameSimGetTankPlayer(sim, value);
+      minesSetOwner(&sim->mns, bmx, bmy, pn);
+      if (sim->callbacks.recordPlayerAction) {
+        sim->callbacks.recordPlayerAction(sim->callbacks.ctx, pn, PLAYER_ACTION_MINE);
+      }
       if (isServer && sim->hiddenMines) {
-        BYTE pn = gameSimGetTankPlayer(sim, value);
         sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, pn | 0x80);
       }
       sim->callbacks.soundDist(sim->callbacks.ctx, manLayingMineNear, bmx, bmy);
