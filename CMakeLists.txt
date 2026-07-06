@@ -2737,6 +2737,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
+    tests/unit/test_wbn_news_fetch.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
     tests/unit/test_wbn_serverlist.c
@@ -2934,6 +2935,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
+    # The threaded news fetcher itself (not just the pure parser): the
+    # free-during-fetch lifetime test drives its real worker thread. Its
+    # network GET is reached through a test seam, so no libcurl is pulled in
+    # (test_stubs.c owns the wbn_api_get link-time default).
+    src/winbolonet/wbn_news.cpp
     src/winbolonet/wbn_prefs_sync.c
     src/winbolonet/wbn_serverlist.c
     src/winbolonet/wbn_map.c
@@ -3238,6 +3244,7 @@ set(_unit_test_names
     wbn_bearer_state
     wbn_rekey_codec
     wbn_news_parse
+    wbn_news_free_during_fetch
     wbn_country_cache
     wbn_prefs_parse_get
     wbn_prefs_parse_updatedat

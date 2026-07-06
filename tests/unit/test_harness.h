@@ -226,6 +226,15 @@ int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
 int run_wbn_news_parse(void);
+
+/* News fetch lifetime regression (test_wbn_news_fetch.cpp): freeing the
+ * fetch handle while the worker thread is still parked in the network GET
+ * must be safe. Reproduces the field crash where newsPopupShutdown deleted
+ * the fetch out from under the worker's terminal lock (a use-after-free that
+ * crashed in mtx_do_lock). Deterministically flagged under -DENABLE_ASAN=ON
+ * on the pre-fix code; clean once the state is shared-owned. */
+int run_wbn_news_free_during_fetch(void);
+
 int run_wbn_country_cache(void);
 int run_wbn_prefs_parse_get(void);
 int run_wbn_prefs_parse_updatedat(void);

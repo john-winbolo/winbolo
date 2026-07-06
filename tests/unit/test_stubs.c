@@ -423,3 +423,13 @@ int wbn_api_post(const char *endpoint, const char *json_body, char **response_ou
   if (response_out) *response_out = NULL;
   return -1;
 }
+
+/* GET transport lives in http.c; stubbed to keep curl out of the link. The
+ * wbn_news worker routes through a test seam (wbn_news_set_api_get_for_test),
+ * so test_wbn_news_fetch never calls this — it is only the link-time default
+ * the seam's function pointer is initialised to. */
+int wbn_api_get(const char *path, char **response_out) {
+  (void)path;
+  if (response_out) *response_out = NULL;
+  return -1;
+}

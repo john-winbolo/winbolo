@@ -195,6 +195,7 @@ static const UnitTestEntry s_tests[] = {
     { "wbn_bearer_state",                        run_wbn_bearer_state                        },
     { "wbn_rekey_codec",                         run_wbn_rekey_codec                         },
     { "wbn_news_parse",                          run_wbn_news_parse                          },
+    { "wbn_news_free_during_fetch",              run_wbn_news_free_during_fetch              },
     { "wbn_country_cache",                       run_wbn_country_cache                       },
     { "wbn_prefs_parse_get",                     run_wbn_prefs_parse_get                     },
     { "wbn_prefs_parse_updatedat",               run_wbn_prefs_parse_updatedat               },
