@@ -2713,6 +2713,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
     tests/unit/test_round_stats.c
+    tests/unit/test_attribution_track.c
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_vote_nolobby_disabled.c
     tests/unit/test_lobby_set_team_clamps.c
@@ -3195,6 +3196,7 @@ set(_unit_test_names
     round_stats_codec_worstcase
     round_stats_build_summary
     round_stats_client_ingest
+    attribution_track_schema
     vote_toggle_standalone_no_does_nothing
     vote_toggle_invalid_mode_dropped
     vote_toggle_yes_opens_vote

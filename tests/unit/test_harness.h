@@ -138,6 +138,7 @@ int run_round_stats_codec_roundtrip(void);
 int run_round_stats_codec_worstcase(void);
 int run_round_stats_build_summary(void);
 int run_round_stats_client_ingest(void);
+int run_attribution_track_schema(void);
 int run_vote_toggle_standalone_no_does_nothing(void);
 int run_vote_toggle_invalid_mode_dropped(void);
 int run_vote_toggle_yes_opens_vote(void);
