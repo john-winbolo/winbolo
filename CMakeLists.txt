@@ -3196,6 +3196,8 @@ set(_unit_test_names
     round_stats_codec_worstcase
     round_stats_build_summary
     round_stats_client_ingest
+    round_stats_track_records
+    round_stats_track_cap
     attribution_track_schema
     vote_toggle_standalone_no_does_nothing
     vote_toggle_invalid_mode_dropped

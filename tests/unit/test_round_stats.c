@@ -1003,3 +1003,90 @@ int run_round_stats_client_ingest(void) {
     clientSimDestroy(cs);
     return 0;
 }
+
+/* The attribution hooks append a packed record to the per-round track buffer
+ * in append order. Drive one damage, one action, and one kill event, then
+ * parse the raw buffer back and check the tags, tick, and payload of each. */
+int run_round_stats_track_records(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    void *ctx = sim->sim.callbacks.ctx;
+
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 3, DMG_SRC_SHELL, 10, false);
+    sim->sim.callbacks.recordPlayerAction(ctx, 0, PLAYER_ACTION_FARM);
+
+    const uint8_t kd[8] = { 2, 5, LAST_DEATH_BY_SHELL, 4, 7, 0, 0, 0 };
+    inject(sim, EVENT_TANK_KILLED, kd);
+
+    size_t expectLen = sizeof(AttrDamageRecord) + sizeof(AttrActionRecord) +
+                       sizeof(AttrKillRecord);
+    UT_ASSERT_MSG(sim->trackRecordCount == 3, "record count, got %u",
+                  sim->trackRecordCount);
+    UT_ASSERT_MSG(sim->trackLen == expectLen, "track length, got %zu",
+                  sim->trackLen);
+    UT_ASSERT(sim->trackBuf != NULL);
+
+    size_t off = 0;
+
+    AttrDamageRecord dr;
+    memcpy(&dr, sim->trackBuf + off, sizeof dr);
+    off += sizeof dr;
+    UT_ASSERT_MSG(dr.type == ATTR_REC_DAMAGE, "damage tag, got %u", dr.type);
+    UT_ASSERT(dr.tick == sim->tick);
+    UT_ASSERT(dr.target == DMG_TARGET_TANK);
+    UT_ASSERT(dr.source == DMG_SRC_SHELL);
+    UT_ASSERT(dr.targetIndex == 3);
+    UT_ASSERT(dr.attacker == 0);
+    UT_ASSERT_MSG(dr.amount == 10, "damage amount, got %u", dr.amount);
+    UT_ASSERT(dr.destroyed == 0);
+
+    AttrActionRecord ar;
+    memcpy(&ar, sim->trackBuf + off, sizeof ar);
+    off += sizeof ar;
+    UT_ASSERT_MSG(ar.type == ATTR_REC_ACTION, "action tag, got %u", ar.type);
+    UT_ASSERT(ar.tick == sim->tick);
+    UT_ASSERT(ar.player == 0);
+    UT_ASSERT(ar.action == PLAYER_ACTION_FARM);
+
+    AttrKillRecord kr;
+    memcpy(&kr, sim->trackBuf + off, sizeof kr);
+    UT_ASSERT_MSG(kr.type == ATTR_REC_KILL, "kill tag, got %u", kr.type);
+    UT_ASSERT(kr.tick == sim->tick);
+    UT_ASSERT(kr.killer == 2);
+    UT_ASSERT(kr.killed == 5);
+    UT_ASSERT(kr.deathCause == LAST_DEATH_BY_SHELL);
+    UT_ASSERT_MSG(kr.carriedPills == 4, "carried pills, got %u", kr.carriedPills);
+    UT_ASSERT_MSG(kr.treesWasted == 7, "trees wasted, got %u", kr.treesWasted);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* When the per-round cap is (near) reached, an append that would overflow it
+ * latches trackTruncated and is refused before any allocation, leaving the
+ * length untouched; further appends stay refused. Poking trackLen up to the
+ * cap exercises this without a 64 MB allocation. */
+int run_round_stats_track_cap(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    void *ctx = sim->sim.callbacks.ctx;
+
+    sim->trackLen = ATTRIBUTION_TRACK_CAP_BYTES - 2;   /* a 12-byte record won't fit */
+    size_t before = sim->trackLen;
+
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 10, false);
+    UT_ASSERT_MSG(sim->trackTruncated, "overflowing append must truncate");
+    UT_ASSERT_MSG(sim->trackLen == before,
+                  "refused append must not grow the buffer, got %zu", sim->trackLen);
+    UT_ASSERT(sim->trackBuf == NULL);   /* refused before any allocation */
+
+    /* A subsequent append is also refused. */
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 10, false);
+    UT_ASSERT_MSG(sim->trackLen == before, "still refused, got %zu", sim->trackLen);
+    UT_ASSERT(sim->trackTruncated);
+
+    serverSimDestroy(sim);
+    return 0;
+}

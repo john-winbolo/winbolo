@@ -29,6 +29,7 @@
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 #include "bot_manager.h"    /* BotManager — embedded by value below */
 #include "round_stats.h"    /* AwardId, AwardResult — computeAwards output */
+#include "attribution_track.h" /* AttrSlotIdentity — per-slot identity snapshot */
 #include "transport_udp.h"  /* MAX_SPECTATORS — subscriber capacity */
 
 /* Per-player per-round gameplay stats. Server-internal: never serialized
@@ -413,6 +414,15 @@ struct ServerSim {
     PlayerRoundStats roundStats[MAX_TANKS];
     NotableEvent     notableEvents[NOTABLE_EVENTS_MAX];
     uint16_t         notableEventCount;
+
+    /* Per-round attribution record stream (packed attribution_track.h records),
+     * appended during a running round and reset each round. */
+    uint8_t         *trackBuf;         /* growable per-round attribution record stream */
+    size_t           trackLen;         /* bytes used */
+    size_t           trackCap;         /* bytes allocated */
+    uint32_t         trackRecordCount; /* records appended this round */
+    bool             trackTruncated;   /* set once ATTRIBUTION_TRACK_CAP_BYTES is hit */
+    AttrSlotIdentity trackIdentity[MAX_TANKS]; /* snapshot at game-over freeze */
 
     /* In-process control event subscribers (bot ClientSims, SP humanSim,
      * and live-lobby spectators). */

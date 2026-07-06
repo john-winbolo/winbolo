@@ -123,6 +123,8 @@ static const UnitTestEntry s_tests[] = {
     { "round_stats_codec_worstcase",                run_round_stats_codec_worstcase                },
     { "round_stats_build_summary",                  run_round_stats_build_summary                  },
     { "round_stats_client_ingest",                  run_round_stats_client_ingest                  },
+    { "round_stats_track_records",                  run_round_stats_track_records                  },
+    { "round_stats_track_cap",                      run_round_stats_track_cap                      },
     { "attribution_track_schema",                   run_attribution_track_schema                   },
     { "vote_toggle_standalone_no_does_nothing",            run_vote_toggle_standalone_no_does_nothing            },
     { "vote_toggle_invalid_mode_dropped",                  run_vote_toggle_invalid_mode_dropped                  },
