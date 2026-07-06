@@ -734,11 +734,10 @@ bool inputGamepadGetScrollDirection(float *dx, float *dy) {
     x = 0.0f;
     y = 0.0f;
     steam_input_get_analog_action(SI_ANALOG_MAP_SCROLL, &x, &y);
-    /* Steam Input joystick_camera convention: +Y = up.  Path B (and
-       the smooth-scroll consumers downstream) use +Y = down.  Negate
-       to match.  Flip if scroll direction is inverted on first Deck
-       test. */
-    y = -y;
+    /* Steam Input reports +Y = down for this stick on the Deck, which
+       already matches Path B and the smooth-scroll consumers downstream
+       (+Y = down).  No negation — flipping here inverts both map scroll
+       and the build cursor. */
   } else {
     if (!s_activeGamepad) return false;
     x = (float)SDL_GetGamepadAxis(s_activeGamepad, SDL_GAMEPAD_AXIS_RIGHTX) * AXIS_NORM;
