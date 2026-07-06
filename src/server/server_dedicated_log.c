@@ -22,6 +22,8 @@
 #include <string.h>
 #include <stdio.h>
 
+#include <SDL3/SDL.h>   /* SDL_RenamePath for the end-of-round map rename */
+
 #include "global.h"
 #include "log.h"
 #include "messages.h"
@@ -51,7 +53,17 @@ static ServerSim *s_logSim = NULL;
  * pending. */
 static char s_pendingUploadFile[512];
 
+/* Timestamp prefix ("YYYYMMDDtHHMMSS") of the current log's auto-generated
+ * name, captured when the file is first named. The map suffix can go stale
+ * if the host changes map in the lobby after the file is opened, so the
+ * end-of-round rename rebuilds the name from this prefix plus the played
+ * map — preserving the recording-start time rather than the game-end time.
+ * Empty when the log was named from an explicit -log <file> path. */
+static char s_logStamp[16];
+
 void makeLogFileName(char *outFileName, const char *mapName);
+
+static void serverDedicatedLogRenameForMap(ServerSim *sim);
 
 void serverDedicatedLogStashCurrentRound(void) {
     if (!isLogging) {
@@ -59,6 +71,10 @@ void serverDedicatedLogStashCurrentRound(void) {
     }
     logStop();
     isLogging = FALSE;
+    /* File handle is now closed — safe to rename it to the map that was
+     * actually played (the lobby-entry name can be stale if the host
+     * switched maps before the countdown). */
+    serverDedicatedLogRenameForMap(s_logSim);
     if (!dontSendLog) {
         strncpy(s_pendingUploadFile, fileName, sizeof(s_pendingUploadFile) - 1);
         s_pendingUploadFile[sizeof(s_pendingUploadFile) - 1] = '\0';
@@ -99,8 +115,53 @@ static void handleGameOver(ServerSim *sim) {
  * server_dedicated_log_path.c). */
 static void serverDedicatedLogResolveFileName(ServerSim *sim) {
     char autoBase[512];
+    const char *sep;
     makeLogFileName(autoBase, sim->mapName);
+    /* Remember the timestamp prefix so serverDedicatedLogRenameForMap can
+     * rebuild the name later without shifting the time. makeLogFileName emits
+     * "<stamp>_<map>"; the stamp is pure digits + 't', so the first '_' is the
+     * separator. */
+    sep = strchr(autoBase, '_');
+    if (sep != NULL && (size_t)(sep - autoBase) < sizeof(s_logStamp)) {
+        size_t stampLen = (size_t)(sep - autoBase);
+        memcpy(s_logStamp, autoBase, stampLen);
+        s_logStamp[stampLen] = '\0';
+    } else {
+        s_logStamp[0] = '\0';
+    }
     serverDedicatedLogComposePath(sim->userLogFileName, autoBase, fileName, 512);
+}
+
+/* Rebuild the closed log's on-disk name from the captured timestamp and the
+ * map that was actually played, then rename the file so an in-lobby map change
+ * is reflected before upload. A no-op when the timestamp wasn't captured, when
+ * the name is unchanged (including any explicit -log <file>, whose recomposed
+ * path matches verbatim), or when the rename fails. Call only after logStop(),
+ * so no write handle is open when the rename runs. */
+static void serverDedicatedLogRenameForMap(ServerSim *sim) {
+    char autoBase[512];
+    char newFileName[512];
+    char *p;
+
+    if (sim == NULL || s_logStamp[0] == '\0') {
+        return;
+    }
+    snprintf(autoBase, sizeof(autoBase), "%s_%s", s_logStamp, sim->mapName);
+    for (p = autoBase; *p != '\0'; p++) {
+        if (*p == ' ') {
+            *p = '_';
+        }
+    }
+    serverDedicatedLogComposePath(sim->userLogFileName, autoBase,
+                                  newFileName, sizeof(newFileName));
+    if (strcmp(newFileName, fileName) == 0) {
+        return;
+    }
+    if (SDL_RenamePath(fileName, newFileName)) {
+        strncpy(fileName, newFileName, 512 - 1);
+        fileName[512 - 1] = '\0';
+        fprintf(stderr, "Renamed log to %s (played map)\n", fileName);
+    }
 }
 
 static void handleLobbyEnter(ServerSim *sim) {
