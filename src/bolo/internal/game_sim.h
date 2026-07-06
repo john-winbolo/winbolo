@@ -65,6 +65,10 @@ typedef struct GameSim GameSim;
 #define DMG_TARGET_TANK 0
 #define DMG_TARGET_PILL 1
 #define DMG_TARGET_BASE 2
+/* recordDamage source — what inflicted the hit. Mirrors ATTR_SRC_* on-disk. */
+#define DMG_SRC_UNKNOWN 0
+#define DMG_SRC_SHELL   1
+#define DMG_SRC_MINE    2
 /* recordPlayerAction actionKind */
 #define PLAYER_ACTION_FARM  0
 #define PLAYER_ACTION_BUILD 1
@@ -94,9 +98,12 @@ typedef struct GameSimCallbacks {
                        WORLD impactWX, WORLD impactWY, uint8_t outcome);
     /* Server-only stats attribution; NULL on the client (call sites null-check).
      * recordDamage: `attacker` dealt `dealt` effective armour damage to a target
-     * of `targetKind`; `destroyed` is true only when this blow dropped a pillbox
-     * to 0 armour. recordPlayerAction: `player` performed a farm/build/mine/shell. */
+     * of `targetKind` identified by `targetIndex` (the tank slot, or pill/base
+     * index that was hit); `source` is a DMG_SRC_* value naming what inflicted
+     * the hit; `destroyed` is true only when this blow dropped a pillbox to 0
+     * armour. recordPlayerAction: `player` performed a farm/build/mine/shell. */
     void (*recordDamage)(void *ctx, BYTE attacker, BYTE targetKind,
+                         BYTE targetIndex, BYTE source,
                          uint16_t dealt, bool destroyed);
     void (*recordPlayerAction)(void *ctx, BYTE player, BYTE actionKind);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */

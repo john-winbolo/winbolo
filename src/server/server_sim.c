@@ -375,8 +375,13 @@ static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathC
 }
 
 static void serverSimCbRecordDamage(void *ctx, BYTE attacker, BYTE targetKind,
+                                    BYTE targetIndex, BYTE source,
                                     uint16_t dealt, bool destroyed) {
     ServerSim *sim = (ServerSim *)ctx;
+    /* targetIndex/source feed the attribution track; the live aggregates below
+     * don't use them. */
+    (void)targetIndex;
+    (void)source;
     if (sim->state != serverStateRunning || attacker >= MAX_TANKS) return;
     PlayerRoundStats *as = &sim->roundStats[attacker];
     switch (targetKind) {

@@ -490,6 +490,7 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
         BYTE after = (*value)->item[count].armour;
         bool destroyed = (after == 0);
         sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_PILL,
+                                    count, DMG_SRC_SHELL,
                                     (uint16_t)(before - after), destroyed);
       }
       logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);

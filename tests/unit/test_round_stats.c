@@ -430,13 +430,13 @@ int run_round_stats_attribution_callbacks(void) {
     UT_ASSERT(sim->sim.callbacks.recordDamage != NULL);
     UT_ASSERT(sim->sim.callbacks.recordPlayerAction != NULL);
 
-    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 10, false);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 10, false);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == 10,
                   "tank damage, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);
 
-    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_PILL, 5, false);
-    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_PILL, 3, true);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_PILL, 0, DMG_SRC_SHELL, 5, false);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_PILL, 0, DMG_SRC_SHELL, 3, true);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPills == 8,
                   "pill damage accumulates, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPills);
@@ -444,13 +444,13 @@ int run_round_stats_attribution_callbacks(void) {
                   "destroyed blow credits a pill kill, got %u",
                   serverSimGetRoundStats(sim, 0)->pillKills);
 
-    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_BASE, 7, false);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_BASE, 0, DMG_SRC_SHELL, 7, false);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToBases == 7,
                   "base damage, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToBases);
 
     /* NEUTRAL attacker (0xFF) is out of range and must be ignored. */
-    sim->sim.callbacks.recordDamage(ctx, 0xFF, DMG_TARGET_TANK, 99, false);
+    sim->sim.callbacks.recordDamage(ctx, 0xFF, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 99, false);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == 10,
                   "NEUTRAL attacker ignored, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);

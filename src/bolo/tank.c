@@ -1219,7 +1219,8 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 		(*value)->armour -= DAMAGE;
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
 			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
-			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK, eff, false);
+			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
+			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false);
 		}
 		if ((*value)->onBoat == TRUE) {
 			(*value)->onBoat = FALSE;
@@ -2581,7 +2582,8 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
     (*value)->armour -= MINE_DAMAGE;
     if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
       uint16_t eff = (armourBefore >= MINE_DAMAGE) ? MINE_DAMAGE : armourBefore;
-      sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK, eff, false);
+      sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
+                                  gameSimGetTankPlayer(sim, value), DMG_SRC_MINE, eff, false);
     }
     if ((*value)->armour > TANK_FULL_ARMOUR) {
       BYTE dyingPlayer = gameSimGetTankPlayer(sim, value);
@@ -3411,7 +3413,8 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 		(*value)->armour -= DAMAGE;
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
 			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
-			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK, eff, false);
+			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
+			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false);
 		}
 		if ((*value)->onBoat == TRUE) {
 			(*value)->onBoat = FALSE;

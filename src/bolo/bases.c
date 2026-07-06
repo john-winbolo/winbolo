@@ -1013,6 +1013,7 @@ void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner) {
       }
       if (sim->callbacks.recordDamage) {
         sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_BASE,
+                                    count, DMG_SRC_SHELL,
                                     (uint16_t)(before - (*value)->item[count].armour), false);
       }
       if ((*value)->item[count].armour <= BASE_DISPLAY_X) {
