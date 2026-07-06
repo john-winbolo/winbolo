@@ -68,6 +68,7 @@
 #include "../winbolonet/winbolonet_server.h"
 #include "../winbolonet/http.h"
 #include "server_sim_internal.h"
+#include "attribution_track.h"
 #include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
@@ -363,11 +364,80 @@ static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathC
     ev.data[1] = killed;
     ev.data[2] = deathCause;
     ev.data[3] = carriedPills;
+    /* Server-internal: the dying tank's carried trees, read by the stats
+     * funnel. data[4] is past gameEventDataSize(), so it never goes on the wire. */
+    ev.data[4] = (killed < MAX_TANKS && sim->sim.tanks[killed] != NULL)
+                     ? tankGetTrees(&sim->sim.tanks[killed]) : 0;
     serverSimAddEvent(sim, &ev);
     winbolonetAddEvent(WINBOLO_NET_EVENT_TANK_KILL, TRUE, killer, killed,
                        botManagerIsBot(sim, killer), botManagerIsBot(sim, killed));
     logAddEvent(log_KillPlayer, killed, killer, 0, 0, 0, NULL);
     logAddEvent(log_PlayerDied, killed, 0, 0, 0, 0, NULL);
+}
+
+/* Append a packed attribution record to the per-round buffer. No-op unless a
+ * round is running. Grows the buffer geometrically up to a hard cap; once the
+ * cap (or an allocation failure) is hit, trackTruncated latches and further
+ * records are dropped rather than crashing. */
+static void serverSimTrackAppend(ServerSim *sim, const void *rec, size_t n) {
+    if (sim->state != serverStateRunning) return;
+    if (sim->trackTruncated) return;
+    if (sim->trackLen + n > ATTRIBUTION_TRACK_CAP_BYTES) { sim->trackTruncated = true; return; }
+    if (sim->trackLen + n > sim->trackCap) {
+        size_t newCap = sim->trackCap ? sim->trackCap * 2 : 4096;
+        while (newCap < sim->trackLen + n) newCap *= 2;
+        if (newCap > ATTRIBUTION_TRACK_CAP_BYTES) newCap = ATTRIBUTION_TRACK_CAP_BYTES;
+        uint8_t *nb = (uint8_t *)realloc(sim->trackBuf, newCap);
+        if (nb == NULL) { sim->trackTruncated = true; return; }  /* OOM: truncate, never crash */
+        sim->trackBuf = nb; sim->trackCap = newCap;
+    }
+    memcpy(sim->trackBuf + sim->trackLen, rec, n);
+    sim->trackLen += n;
+    sim->trackRecordCount++;
+}
+
+static void serverSimCbRecordDamage(void *ctx, BYTE attacker, BYTE targetKind,
+                                    BYTE targetIndex, BYTE source,
+                                    uint16_t dealt, bool destroyed) {
+    ServerSim *sim = (ServerSim *)ctx;
+    if (sim->state != serverStateRunning) return;
+    {
+        /* Record every hit, including owner-less/NEUTRAL splash — the offline
+         * derivation filters. The DMG_ and ATTR_ constants share numeric
+         * values, so the target/source bytes copy across directly. */
+        AttrDamageRecord r;
+        r.type = ATTR_REC_DAMAGE; r.tick = sim->tick;
+        r.source = source; r.target = targetKind; r.targetIndex = targetIndex;
+        r.attacker = attacker; r.amount = dealt; r.destroyed = destroyed ? 1 : 0;
+        serverSimTrackAppend(sim, &r, sizeof r);
+    }
+    if (attacker >= MAX_TANKS) return;   /* aggregates skip owner-less/NEUTRAL, as before */
+    PlayerRoundStats *as = &sim->roundStats[attacker];
+    switch (targetKind) {
+    case DMG_TARGET_TANK: as->dmgToPlayers += dealt; break;
+    case DMG_TARGET_PILL: as->dmgToPills   += dealt; if (destroyed) as->pillKills++; break;
+    case DMG_TARGET_BASE: as->dmgToBases   += dealt; break;
+    default: break;
+    }
+}
+
+static void serverSimCbRecordPlayerAction(void *ctx, BYTE player, BYTE actionKind) {
+    ServerSim *sim = (ServerSim *)ctx;
+    if (sim->state != serverStateRunning || player >= MAX_TANKS) return;
+    {
+        AttrActionRecord r;
+        r.type = ATTR_REC_ACTION; r.tick = sim->tick;
+        r.player = player; r.action = actionKind;
+        serverSimTrackAppend(sim, &r, sizeof r);
+    }
+    PlayerRoundStats *ps = &sim->roundStats[player];
+    switch (actionKind) {
+    case PLAYER_ACTION_FARM:  ps->treesFarmed++; break;
+    case PLAYER_ACTION_BUILD: ps->pillsBuilt++;  break;
+    case PLAYER_ACTION_MINE:  ps->minesLaid++;   break;
+    case PLAYER_ACTION_SHELL: ps->shellsFired++; break;
+    default: break;
+    }
 }
 
 static void serverSimCbCenterTank(void *ctx) {
@@ -507,6 +577,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.explosion = serverSimCbExplosion;
     sim->sim.callbacks.tkExplosion = serverSimCbTkExplosion;
     sim->sim.callbacks.shellDeath = serverSimCbShellDeath;
+    sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
+    sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -858,6 +930,14 @@ void serverSimDestroy(ServerSim *sim) {
     logDestroy();
 
     sim->state = serverStateGameOver;
+
+    /* Free the per-round attribution track buffer */
+    if (sim->trackBuf != NULL) {
+        free(sim->trackBuf);
+        sim->trackBuf = NULL;
+        sim->trackCap = 0;
+        sim->trackLen = 0;
+    }
 
     /* Free cached map data */
     if (sim->cachedMapData != NULL) {
@@ -2106,6 +2186,33 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->statCatchupTicks[playerNum] = 0;
     sim->statLastRewindTicks[playerNum] = 0;
 
+    /* Post-game stats: a mid-round leaver is dropped from the round summary as
+     * if never present. Zero this slot's accumulator row, clear every other
+     * slot's matrix cells that reference this slot (the column), and prune the
+     * notable-event timeline of entries involving this slot. Other players'
+     * aggregate counters are intentionally left as-is — only the leaver's own
+     * stats and direct references to them are removed. Mine cells laid by this
+     * slot are released so a later detonation isn't credited to a gone player. */
+    {
+        BYTE s;
+        memset(&sim->roundStats[playerNum], 0, sizeof(sim->roundStats[playerNum]));
+        for (s = 0; s < MAX_TANKS; s++) {
+            sim->roundStats[s].killsOf[playerNum]  = 0;
+            sim->roundStats[s].killedBy[playerNum] = 0;
+        }
+        minesClearOwner(&sim->sim.mns, playerNum);
+        {
+            uint16_t r, w = 0;
+            for (r = 0; r < sim->notableEventCount; r++) {
+                const NotableEvent *ne = &sim->notableEvents[r];
+                if (ne->actorA == playerNum || ne->actorB == playerNum) continue;
+                if (w != r) sim->notableEvents[w] = *ne;
+                w++;
+            }
+            sim->notableEventCount = w;
+        }
+    }
+
     /* Record ownership for rejoin before migration changes it */
     {
         char pName[PLAYER_NAME_LEN];
@@ -2927,11 +3034,157 @@ static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
     return count;
 }
 
+/* Append one entry to the per-round notable-event timeline (for the later
+ * highlights reel). Bounded; silently drops once full. Location (mapX/mapY)
+ * is recorded as 0 for now — the v1 reel scorer keys on tick/type/actor, not
+ * position; precise per-event location can be sourced in the reel phase if
+ * the scorer needs it. */
+static void serverSimNotableAppend(ServerSim *sim, uint8_t type,
+                                   uint8_t actorA, uint8_t actorB) {
+    if (sim->notableEventCount >= NOTABLE_EVENTS_MAX) return;
+    NotableEvent *ne = &sim->notableEvents[sim->notableEventCount++];
+    ne->tick   = sim->tick;
+    ne->mapX   = 0;
+    ne->mapY   = 0;
+    ne->type   = type;
+    ne->actorA = actorA;
+    ne->actorB = actorB;
+}
+
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
+    /* Per-round stats funnel. Runs before the snapshot-event buffering below
+     * so a full event buffer never drops a stat. Only during a running game,
+     * so any state-load/replay re-emit can't double-count. */
+    if (sim->state == serverStateRunning) {
+        const uint8_t *d = event->data;
+        switch (event->type) {
+        case EVENT_TANK_KILLED: {
+            BYTE killer = d[0], killed = d[1], cause = d[2];
+            {
+                AttrKillRecord r;
+                r.type = ATTR_REC_KILL; r.tick = sim->tick;
+                r.killer = d[0]; r.killed = d[1]; r.deathCause = d[2];
+                r.carriedPills = d[3]; r.treesWasted = d[4];
+                serverSimTrackAppend(sim, &r, sizeof r);
+            }
+            if (killed < MAX_TANKS) {
+                PlayerRoundStats *vs = &sim->roundStats[killed];
+                vs->deaths++;
+                if (cause == LAST_DEATH_BY_DEEPSEA)      vs->drowns++;
+                else if (cause == LAST_DEATH_BY_MINES)   vs->mineDeaths++;
+                else if (cause == LAST_DEATH_BY_SHELL) {
+                    if (killer < MAX_TANKS && killer != killed) {
+                        sim->roundStats[killer].kills++;
+                        sim->roundStats[killer].killsOf[killed]++;
+                        vs->killedBy[killer]++;
+                    } else if (killer == killed) {
+                        vs->suicides++;
+                    }
+                }
+                vs->treesWasted += d[4];
+                if (d[3] > vs->mostPillsDropped) vs->mostPillsDropped = d[3];
+            }
+            serverSimNotableAppend(sim, NOTABLE_KILL, /*killer*/d[0], /*killed*/d[1]);
+            break;
+        }
+        case EVENT_PILL_CAPTURED:
+        case EVENT_BASE_CAPTURED: {
+            BYTE owner = d[0], cls = d[2];
+            {
+                AttrCaptureRecord r;
+                r.type = ATTR_REC_CAPTURE; r.tick = sim->tick;
+                r.target = (event->type == EVENT_PILL_CAPTURED)
+                               ? ATTR_CAP_TGT_PILL : ATTR_CAP_TGT_BASE;
+                r.targetIndex = 0;   /* event carries no pill/base index yet */
+                r.newOwner = d[0]; r.prevOwner = d[1]; r.captureClass = d[2];
+                serverSimTrackAppend(sim, &r, sizeof r);
+            }
+            if (owner < MAX_TANKS && cls != CAPTURE_CLASS_ALLY) {
+                PlayerRoundStats *os = &sim->roundStats[owner];
+                if (event->type == EVENT_PILL_CAPTURED) os->pillCaptures++;
+                else                                    os->baseCaptures++;
+                if (cls == CAPTURE_CLASS_ENEMY) os->steals++;
+            }
+            /* An ownership change is notable even if it credits nobody. */
+            serverSimNotableAppend(sim,
+                event->type == EVENT_PILL_CAPTURED ? NOTABLE_PILL_CAPTURE
+                                                   : NOTABLE_BASE_CAPTURE,
+                /*newOwner*/d[0], /*prevOwner*/d[1]);
+            break;
+        }
+        case EVENT_LGM_LOST: {
+            BYTE victim = d[0], killer = d[1];
+            {
+                AttrLgmRecord r;
+                r.type = ATTR_REC_LGM; r.tick = sim->tick;
+                r.victim = d[0]; r.killer = d[1];
+                serverSimTrackAppend(sim, &r, sizeof r);
+            }
+            if (victim < MAX_TANKS) sim->roundStats[victim].lgmDeaths++;
+            if (killer < MAX_TANKS) sim->roundStats[killer].lgmKills++;
+            serverSimNotableAppend(sim, NOTABLE_LGM_LOST, /*killer*/d[1], /*victim*/d[0]);
+            break;
+        }
+        default: break;
+        }
+    }
     if (sim->eventCount < MAX_SNAPSHOT_EVENTS) {
         sim->events[sim->eventCount] = *event;
         sim->eventCount++;
     }
+}
+
+const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot) {
+    if (slot >= MAX_TANKS) return NULL;
+    return &sim->roundStats[slot];
+}
+
+const uint8_t *serverSimGetTrackBuffer(const ServerSim *sim, size_t *outLen,
+                                       uint32_t *outRecordCount, bool *outTruncated) {
+    if (outLen != NULL)         *outLen = sim->trackLen;
+    if (outRecordCount != NULL) *outRecordCount = sim->trackRecordCount;
+    if (outTruncated != NULL)   *outTruncated = sim->trackTruncated;
+    return sim->trackBuf;
+}
+
+const AttrSlotIdentity *serverSimGetTrackIdentity(const ServerSim *sim) {
+    return sim->trackIdentity;
+}
+
+void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
+    memset(out, 0, sizeof(*out));
+
+    bool isBot[MAX_TANKS];
+    for (int slot = 0; slot < MAX_TANKS; slot++) {
+        isBot[slot] = botManagerIsBot(sim, (BYTE)slot);
+    }
+
+    /* One curated scoreboard row per connected slot. Leavers were zeroed
+     * out of the accumulator already, so only present slots contribute. */
+    for (int slot = 0; slot < MAX_TANKS; slot++) {
+        if (!sim->playerConnected[slot]) continue;
+        const PlayerRoundStats *rs = &sim->roundStats[slot];
+        RoundPlayerSummary *p = &out->players[out->playerCount++];
+        p->slot         = (uint8_t)slot;
+        p->isBot        = isBot[slot] ? 1 : 0;
+        p->kills        = (uint16_t)rs->kills;
+        p->deaths       = (uint16_t)rs->deaths;
+        p->baseCaptures = (uint16_t)rs->baseCaptures;
+        p->pillCaptures = (uint16_t)rs->pillCaptures;
+        p->dmgDealt     = (uint32_t)(rs->dmgToPlayers + rs->dmgToPills + rs->dmgToBases);
+        p->builds       = (uint16_t)(rs->pillsBuilt + rs->treesFarmed);
+        p->lgmKills     = (uint16_t)rs->lgmKills;
+        p->lgmDeaths    = (uint16_t)rs->lgmDeaths;
+    }
+
+    /* Awards rank over every slot; absent/zeroed slots score 0 and are
+     * omitted, so the result already excludes leavers. */
+    int n = 0;
+    computeAwards(sim->roundStats, MAX_TANKS, /*includeBots*/ true, isBot,
+                  out->awards, &n);
+    out->awardCount = (uint8_t)n;
+
+    /* wbnLogKey stays empty here; the finished-round key is filled later. */
 }
 
 int serverSimGetCompressedMap(ServerSim *sim, BYTE *output) {
@@ -3644,6 +3897,24 @@ void serverSimConsoleMessage(const char *msg) {
 }
 
 void serverSimEnterGameOver(ServerSim *sim) {
+    /* roundStats and the notable-event timeline are final here: nothing
+     * mutates them until the next serverSimResetGameWorld (the funnel only
+     * runs in serverStateRunning), so they survive the game-over hold intact
+     * for downstream phases to publish from. No snapshot/freeze buffer needed. */
+
+    /* Freeze per-slot identity (bot flag, team, name) for the just-finished
+     * round while the roster is still intact, so the attribution track can be
+     * read back offline without a live server. */
+    for (int slot = 0; slot < MAX_TANKS; slot++) {
+        AttrSlotIdentity *id = &sim->trackIdentity[slot];
+        memset(id, 0, sizeof(*id));
+        if (!sim->playerConnected[slot]) continue;
+        id->isBot = botManagerIsBot(sim, (BYTE)slot) ? 1 : 0;
+        id->team  = sim->lobbyPlayers[slot].teamNumber;
+        playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, id->name, TRUE);
+        id->name[sizeof(id->name) - 1] = '\0';
+    }
+
     if (!sim->lobbyEnabled) {
         /* No lobby — game over means server should shut down */
         sim->state = serverStateGameOver;
@@ -3965,6 +4236,20 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
     /* 6. Clear events */
     sim->eventCount = 0;
+
+    /* Post-game stats are round-scoped: clear the accumulator and the notable
+     * timeline so an aborted or finished round never leaks into the next. This
+     * runs on both round start and return-to-lobby, so a round that ends without
+     * reaching game-over is cleared too. */
+    memset(sim->roundStats, 0, sizeof(sim->roundStats));
+    sim->notableEventCount = 0;
+
+    /* Reset the attribution track for the new round; keep trackBuf/trackCap
+     * allocated for reuse across rounds. */
+    sim->trackLen = 0;
+    sim->trackRecordCount = 0;
+    sim->trackTruncated = false;
+    memset(sim->trackIdentity, 0, sizeof(sim->trackIdentity));
 
     /* 7. Reset tick */
     sim->tick = 0;

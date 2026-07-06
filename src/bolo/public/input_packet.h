@@ -214,6 +214,14 @@ typedef struct {
 #define EVENT_PILL_CAPTURED 4  /* data: [newOwner, prevOwner] */
 #define EVENT_BASE_CAPTURED 5  /* data: [newOwner, prevOwner] */
 #define EVENT_TANK_KILLED   6  /* data: [killer, killed, deathCause, carriedPills] */
+
+/* Capture classification carried in EVENT_PILL_CAPTURED / EVENT_BASE_CAPTURED
+ * data[2]. Server-internal: data[2] is past gameEventDataSize() for these
+ * events, so it is never serialized — used only by the server stats funnel. */
+#define CAPTURE_CLASS_NEUTRAL 0  /* from neutral — a capture */
+#define CAPTURE_CLASS_ENEMY   1  /* from an enemy — a steal (also a capture) */
+#define CAPTURE_CLASS_ALLY    2  /* from an ally — tracked for nobody */
+
 #define EVENT_MAP_CHANGE    7  /* data: [mx, my, newTerrain] */
 #define EVENT_SOUND         8  /* data: [soundId, mx, my, sourcePlayer] */
 #define EVENT_SERVER_MSG    9  /* data: [msgId] — server status message */

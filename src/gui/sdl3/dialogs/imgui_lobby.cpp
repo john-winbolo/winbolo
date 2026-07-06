@@ -512,6 +512,10 @@ static bool             s_chooseMapMaximized     = false;
  * Cancel / Keep Picking" prompt instead of silently reverting. */
 static bool             s_chooseMapPreviewPending = false;
 static bool             s_chooseMapWantCloseConfirm = false;
+/* True while the desktop "Last round" recap window is open. The button
+ * above Ready sets it; it is forced false when no stored summary
+ * exists (the next countdown clears the summary). */
+static bool             g_lastRoundWinOpen        = false;
 /* Cached ClientSim pointer for the chooser. Captured by
  * lobbyChooseMapOpen so the listProvider (which only gets a void*
  * ctx) can reach into the cs's lobbyMapList* state without each
@@ -5989,6 +5993,209 @@ static void renderLobbyRejectToast(ClientSim *cs, float s) {
     (void)s;
 }
 
+/* ── Layout A — "Last round" recap ────────────────────────────────
+ * Between-rounds scoreboard + awards built from the client's stored
+ * end-of-round summary (clientSimGetLastRoundStats). The summary is
+ * set at game over and cleared on the next countdown; the recap body
+ * below is shown only while it exists — via a button-triggered popup
+ * on the mouse path and a tab in the controller layout. Read-only;
+ * never blocks readying up or other lobby controls. */
+
+/* AwardId → localized label id. */
+static langid lastRoundAwardLabel(uint8_t awardId) {
+    switch (awardId) {
+        case AWARD_MOST_KILLS:         return STR_DLGLOBBY_AWARD_MOST_KILLS;
+        case AWARD_MOST_DEATHS:        return STR_DLGLOBBY_AWARD_MOST_DEATHS;
+        case AWARD_BEST_KD:            return STR_DLGLOBBY_AWARD_BEST_KD;
+        case AWARD_MOST_BASE_CAPTURES: return STR_DLGLOBBY_AWARD_MOST_BASE;
+        case AWARD_MOST_PILL_CAPTURES: return STR_DLGLOBBY_AWARD_MOST_PILL;
+        case AWARD_NEMESIS:            return STR_DLGLOBBY_AWARD_NEMESIS;
+        case AWARD_DEMOLITION:         return STR_DLGLOBBY_AWARD_DEMOLITION;
+        case AWARD_SHARPSHOOTER:       return STR_DLGLOBBY_AWARD_SHARPSHOOTER;
+        case AWARD_WARMONGER:          return STR_DLGLOBBY_AWARD_WARMONGER;
+        case AWARD_SURVIVOR:           return STR_DLGLOBBY_AWARD_SURVIVOR;
+        case AWARD_ENGINEER:           return STR_DLGLOBBY_AWARD_ENGINEER;
+        case AWARD_SAPPER:             return STR_DLGLOBBY_AWARD_SAPPER;
+        case AWARD_FISH_FOOD:          return STR_DLGLOBBY_AWARD_FISH_FOOD;
+        case AWARD_LGM_HUNTER:         return STR_DLGLOBBY_AWARD_LGM_HUNTER;
+        case AWARD_CANNON_FODDER:      return STR_DLGLOBBY_AWARD_CANNON_FODDER;
+        case AWARD_LUMBERJACK:         return STR_DLGLOBBY_AWARD_LUMBERJACK;
+        case AWARD_WASTEFUL:           return STR_DLGLOBBY_AWARD_WASTEFUL;
+        case AWARD_BIGGEST_FUMBLE:     return STR_DLGLOBBY_AWARD_BIGGEST_FUMBLE;
+        default:                       return STR_DLGLOBBY_AWARD_MOST_KILLS;
+    }
+}
+
+/* Ratio awards carry value ×100 on the wire (see round_stats.h). */
+static bool lastRoundAwardIsRatio(uint8_t awardId) {
+    return awardId == AWARD_BEST_KD ||
+           awardId == AWARD_SHARPSHOOTER ||
+           awardId == AWARD_SURVIVOR;
+}
+
+/* A slot's team tint, mirroring the roster's team-color resolution
+ * (clientSimGetLobbyTeamColor + theme palette). Unassigned/invalid
+ * teams fall back to the default text color. */
+static ImU32 lastRoundTeamTint(ClientSim *cs, uint8_t teamNumber) {
+    if (teamNumber >= 1 && teamNumber <= 16) {
+        uint8_t colorIdx = clientSimGetLobbyTeamColor(cs, (BYTE)teamNumber);
+        if (clientSimGetLobbyTeamInUse(cs, (BYTE)teamNumber) && colorIdx < 8) {
+            return g_theme->teamColors[colorIdx];
+        }
+        return g_theme->teamColors[(teamNumber - 1) & 7];
+    }
+    return ImGui::GetColorU32(ImGuiCol_Text);
+}
+
+/* Resolve and render a slot's name inline: bots use the bot-badge tint
+ * plus the BOT tag (as in the roster); humans are tinted by team color.
+ * Falls back to a placeholder when the slot has no name. */
+static void lastRoundRenderName(ClientSim *cs, uint8_t slot, bool isBot) {
+    const ClientLobbySlot *ls =
+        (slot < MAX_TANKS) ? clientSimGetLobbySlot(cs, (BYTE)slot) : nullptr;
+    const char *name = (ls && ls->playerName[0])
+                           ? ls->playerName
+                           : langGetText(STR_DLGLOBBY_LASTROUND_NOPLAYER);
+    if (isBot) {
+        ImGui::TextColored(wbThemeColor(g_theme->botBadge), "%s", name);
+        ImGui::SameLine(0, 4.0f);
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_TAG_BOT));
+    } else {
+        ImGui::TextColored(
+            ImGui::ColorConvertU32ToFloat4(
+                lastRoundTeamTint(cs, ls ? ls->teamNumber : 0)),
+            "%s", name);
+    }
+}
+
+/* Container-less recap body: the between-rounds scoreboard table plus a
+ * flat list of every won award. Renders no chrome and decides nothing
+ * about visibility — the caller (mouse popup / controller tab) gates it
+ * on clientSimGetLastRoundStats and supplies the surrounding window. */
+static void renderLastRoundBody(ClientSim *cs, float s) {
+    const RoundStatsSummary *st = clientSimGetLastRoundStats(cs);
+    if (!st) return;
+
+    /* ── Scoreboard ordering ─────────────────────────────────────── */
+    /* Display order: kills desc, then fewest deaths, then slot. */
+    int n = st->playerCount;
+    if (n > MAX_TANKS) n = MAX_TANKS;
+    int order[MAX_TANKS];
+    for (int i = 0; i < n; i++) order[i] = i;
+    for (int i = 1; i < n; i++) {
+        int j = i;
+        while (j > 0) {
+            const RoundPlayerSummary *a = &st->players[order[j - 1]];
+            const RoundPlayerSummary *b = &st->players[order[j]];
+            bool swap =
+                (b->kills > a->kills) ||
+                (b->kills == a->kills && b->deaths < a->deaths) ||
+                (b->kills == a->kills && b->deaths == a->deaths &&
+                 b->slot < a->slot);
+            if (!swap) break;
+            int t = order[j - 1]; order[j - 1] = order[j]; order[j] = t;
+            j--;
+        }
+    }
+
+    /* awardId (1..AWARD_COUNT) → index into awards[], -1 when unwon. */
+    int ac = st->awardCount;
+    if (ac > AWARD_COUNT) ac = AWARD_COUNT;
+    int awardIdx[AWARD_COUNT + 1];
+    for (int i = 0; i <= AWARD_COUNT; i++) awardIdx[i] = -1;
+    for (int i = 0; i < ac; i++) {
+        uint8_t id = st->awards[i].awardId;
+        if (id >= 1 && id <= AWARD_COUNT) awardIdx[id] = i;
+    }
+
+    if (n > 0 &&
+        ImGui::BeginTable("##lastRoundScore", 9,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+                              ImGuiTableFlags_NoHostExtendX)) {
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_NAME),
+                                ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_KILLS),
+                                ImGuiTableColumnFlags_WidthFixed, 28.0f * s);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_DEATHS),
+                                ImGuiTableColumnFlags_WidthFixed, 28.0f * s);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_BASE),
+                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_PILL),
+                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_DMG),
+                                ImGuiTableColumnFlags_WidthFixed, 52.0f * s);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_BUILDS),
+                                ImGuiTableColumnFlags_WidthFixed, 48.0f * s);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMK),
+                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_LASTROUND_COL_LGMD),
+                                ImGuiTableColumnFlags_WidthFixed, 40.0f * s);
+        ImGui::TableHeadersRow();
+        for (int r = 0; r < n; r++) {
+            const RoundPlayerSummary *p = &st->players[order[r]];
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            lastRoundRenderName(cs, p->slot, p->isBot != 0);
+            ImGui::TableSetColumnIndex(1); ImGui::Text("%u", (unsigned)p->kills);
+            ImGui::TableSetColumnIndex(2); ImGui::Text("%u", (unsigned)p->deaths);
+            ImGui::TableSetColumnIndex(3); ImGui::Text("%u", (unsigned)p->baseCaptures);
+            ImGui::TableSetColumnIndex(4); ImGui::Text("%u", (unsigned)p->pillCaptures);
+            ImGui::TableSetColumnIndex(5); ImGui::Text("%u", (unsigned)p->dmgDealt);
+            ImGui::TableSetColumnIndex(6); ImGui::Text("%u", (unsigned)p->builds);
+            ImGui::TableSetColumnIndex(7); ImGui::Text("%u", (unsigned)p->lgmKills);
+            ImGui::TableSetColumnIndex(8); ImGui::Text("%u", (unsigned)p->lgmDeaths);
+        }
+        ImGui::EndTable();
+    }
+
+    /* ── Awards ribbon ───────────────────────────────────────────── */
+    /* Renders one award line: label — winner [owned subject] (value). */
+    auto renderAward = [&](int idx) {
+        const AwardResult *aw = &st->awards[idx];
+        ImGui::Bullet();
+        ImGui::TextUnformatted(langGetText(lastRoundAwardLabel(aw->awardId)));
+        ImGui::SameLine();
+        ImGui::TextDisabled("-");
+        ImGui::SameLine();
+        if (aw->awardId == AWARD_NEMESIS && aw->subjectSlot < MAX_TANKS) {
+            /* "X owned Y": names rendered plain so the relationship reads
+             * as one phrase. */
+            const ClientLobbySlot *w =
+                (aw->winnerSlot < MAX_TANKS)
+                    ? clientSimGetLobbySlot(cs, (BYTE)aw->winnerSlot)
+                    : nullptr;
+            const ClientLobbySlot *v =
+                clientSimGetLobbySlot(cs, (BYTE)aw->subjectSlot);
+            MessageArgs args = {};
+            SDL_strlcpy(args.string1,
+                        (w && w->playerName[0])
+                            ? w->playerName
+                            : langGetText(STR_DLGLOBBY_LASTROUND_NOPLAYER),
+                        sizeof(args.string1));
+            SDL_strlcpy(args.string2,
+                        (v && v->playerName[0])
+                            ? v->playerName
+                            : langGetText(STR_DLGLOBBY_LASTROUND_NOPLAYER),
+                        sizeof(args.string2));
+            ImGui::TextUnformatted(
+                langGetTextFmt(STR_DLGLOBBY_LASTROUND_NEMESIS_FMT, &args));
+        } else {
+            lastRoundRenderName(cs, aw->winnerSlot, aw->winnerIsBot != 0);
+        }
+        ImGui::SameLine();
+        if (lastRoundAwardIsRatio(aw->awardId)) {
+            ImGui::TextDisabled("(%.2f)", aw->value / 100.0);
+        } else {
+            ImGui::TextDisabled("(%u)", (unsigned)aw->value);
+        }
+    };
+
+    /* Every won award, listed in award-id order. */
+    for (int id = 1; id <= AWARD_COUNT; id++) {
+        if (awardIdx[id] >= 0) renderAward(awardIdx[id]);
+    }
+}
+
 /* ── Layout A — small inline lock badge ───────────────────────────
  * Renders an inline orange "[locked]" pill next to a setting name
  * when the server has flagged it in serverLocks. Cosmetic + tooltip. */
@@ -7028,6 +7235,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 #else
         const bool useTabbedLobby = uiShouldUseControllerMode();
 #endif
+#if POSTGAME_STATS_ENABLED
+        const bool lobbyShowLastRound = clientSimGetLastRoundStats(cs) != NULL;
+#else
+        const bool lobbyShowLastRound = false;  /* post-game recap withheld this release */
+#endif
 
         /* Settings above the layout is the two-column (mouse) path only; the
          * tabbed layout renders the same form in a dedicated tab, so skip it
@@ -7069,6 +7281,9 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * imguiSteamNavConsumeMenuTabShift instead. Suppressed while the
              * Choose Map window is open so the trigger press cycles its source
              * tabs (rendered later this frame) instead of the lobby tabs. */
+            /* The recap tab exists only while a stored end-of-round
+             * summary does (set at game over, cleared on countdown). */
+            const bool haveLastRound = lobbyShowLastRound;
             if (!s_chooseMapOpen) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
@@ -7081,13 +7296,14 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     /* Visible tab indices in render order. The Settings
                      * predicate must match the Settings tab's BeginTabItem
                      * gate (gsEffectiveHost) exactly. */
-                    int vis[5];
+                    int vis[6];
                     int nVis = 0;
                     vis[nVis++] = 0;                       /* Players */
                     vis[nVis++] = 1;                       /* Map */
                     if (gsEffectiveHost) vis[nVis++] = 2;  /* Settings */
                     vis[nVis++] = 3;                       /* Chat */
                     if (onTeam) vis[nVis++] = 4;           /* Team */
+                    if (haveLastRound) vis[nVis++] = 5;    /* Last round */
                     int cur = 0;
                     for (int i = 0; i < nVis; i++) {
                         if (vis[i] == activeTab) { cur = i; break; }
@@ -7523,6 +7739,19 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     }
                 }
 
+                /* --- Last round tab (only while a summary exists) --- */
+                if (haveLastRound &&
+                    ImGui::BeginTabItem(langGetText(STR_DLGLOBBY_LASTROUND_BTN), nullptr,
+                        s_lobbyForceTab == 5 ? ImGuiTabItemFlags_SetSelected : 0)) {
+                    activeTab = 5;
+                    float tabH = ImGui::GetContentRegionAvail().y - btnAreaH;
+                    ImGui::BeginChild("##LastRoundTab", ImVec2(availW, tabH),
+                                      ImGuiChildFlags_NavFlattened);
+                    renderLastRoundBody(cs, s);
+                    ImGui::EndChild();
+                    ImGui::EndTabItem();
+                }
+
                 ImGui::EndTabBar();
             }
             /* One-shot: the forced selection has been applied (or the bar
@@ -7660,6 +7889,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
              * vertical space back. */
             float frameH = ImGui::GetFrameHeight();
             float readyAreaH = frameH;
+            /* The between-rounds recap button sits in the footer directly
+             * above Ready when a summary exists, so reserve a second row
+             * (+ inter-button spacing). The MapPanel shrinks to keep Ready
+             * on-screen. */
+            if (lobbyShowLastRound) {
+                readyAreaH += frameH + ImGui::GetStyle().ItemSpacing.y;
+            }
 
             /* Split the remaining vertical space between PlayerPanel
              * (top) and ChatBlock (bottom). The chat's bottom edge
@@ -8196,6 +8432,18 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                  * WBN's split immediately on response (no Apply /
                  * Dismiss approval step). */
 
+                /* Between-rounds recap: a button directly above Ready that
+                 * opens the scoreboard + awards in a large titled window.
+                 * Shown only while a stored summary exists (set at game
+                 * over, cleared on the next countdown). The window itself
+                 * is rendered later, outside this group. */
+                if (lobbyShowLastRound) {
+                    if (ImGui::Button(langGetText(STR_DLGLOBBY_LASTROUND_BTN),
+                                      ImVec2(-1, 0))) {
+                        g_lastRoundWinOpen = true;
+                    }
+                }
+
                 /* The viewer holds no slot to ready up — hide the Ready button. */
                 if (!spectator) {
                 if (!canReady) ImGui::BeginDisabled();
@@ -8225,6 +8473,39 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 }  /* close !spectator: Ready button */
             }
             ImGui::EndGroup(); /* /right column */
+
+            /* Between-rounds recap window: a large, titled, non-modal
+             * window (matches the Map preview popup's geometry) opened by
+             * the "Last round" button above Ready. Auto-dismisses when the
+             * stored summary clears on the next countdown. */
+            if (!lobbyShowLastRound) {
+                g_lastRoundWinOpen = false;
+            }
+            if (g_lastRoundWinOpen) {
+                ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+                const float kGutter = 15.0f;
+                float lineH = ImGui::GetTextLineHeightWithSpacing();
+                float winW = displaySize.x - kGutter * 2.0f;
+                float winH = displaySize.y - kGutter * 2.0f - lineH * 3.0f;
+                if (winW < 480.0f) winW = 480.0f;
+                if (winH < 320.0f) winH = 320.0f;
+                if (winH > displaySize.y * 0.85f) winH = displaySize.y * 0.85f;
+                ImGui::SetNextWindowSize(ImVec2(winW, winH), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowPos(ImVec2(kGutter, kGutter), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 240.0f),
+                                                    ImVec2(FLT_MAX, FLT_MAX));
+                char title[128];
+                SDL_snprintf(title, sizeof(title), "%s###LastRoundWin",
+                             langGetText(STR_DLGLOBBY_LASTROUND_BTN));
+                if (ImGui::Begin(title, &g_lastRoundWinOpen, 0)) {
+                    if (ImGui::IsWindowFocused() &&
+                        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                        g_lastRoundWinOpen = false;
+                    }
+                    renderLastRoundBody(cs, s);
+                }
+                ImGui::End();
+            }
         } /* /desktop layout scope (playerPanelW/mapPanelW) */
 
         /* --- Map preview popup --- */

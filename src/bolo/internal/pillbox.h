@@ -260,7 +260,7 @@ bool pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue);
 *  wantDamage - TRUE if we just want to do damage to it
 *  wantAngry  - TRUE if we just want to make it angry
 *********************************************************/
-bool pillsDamagePos(struct GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry);
+bool pillsDamagePos(struct GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry, BYTE owner);
 
 /*********************************************************
 *NAME:          pillsGetScreenHealth

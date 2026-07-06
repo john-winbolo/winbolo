@@ -263,6 +263,8 @@ bool clientSimCreate(ClientSim *cs) {
   cs->sim.callbacks.mineVisible = csCallbackMineVisible;
   cs->sim.callbacks.explosion = NULL;
   cs->sim.callbacks.tkExplosion = NULL;
+  cs->sim.callbacks.recordDamage = NULL;
+  cs->sim.callbacks.recordPlayerAction = NULL;
   cs->sim.callbacks.ctx = cs;
 
   cs->currentBuildSelect = BsTrees;
@@ -1957,6 +1959,10 @@ uint8_t clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot) {
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {
   return &cs->lobbyBrainList;
+}
+
+const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs) {
+  return cs->lastRoundStatsValid ? &cs->lastRoundStats : NULL;
 }
 
 const char *clientSimGetLobbyMapListPath(const ClientSim *cs) {

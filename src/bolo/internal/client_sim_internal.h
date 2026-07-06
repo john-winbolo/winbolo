@@ -32,6 +32,7 @@
 #include "messages.h"
 #include "scroll.h"
 #include "brain_list.h"
+#include "round_stats.h"   /* RoundStatsSummary — lastRoundStats store */
 #include "lobby_bot_pools.h" /* LOBBY_BOT_CATALOG_WIRE_MAX */
 #include "upload_policy.h"
 #include "wire_limits.h"   /* LOBBY_MAP_UPLOAD_MAX_BYTES */
@@ -367,6 +368,12 @@ struct ClientSim {
      * PACKET_LOBBY_BRAIN_LIST on join. Used as the option list for the
      * AiConfig "Bot Code" combo. */
     BrainList lobbyBrainList;
+
+    /* Last finished round's scoreboard + awards, received via
+     * CTRL_ROUND_STATS at game over. Round-only: cleared when the next
+     * countdown starts. lastRoundStatsValid gates whether the panel shows. */
+    RoundStatsSummary lastRoundStats;
+    bool              lastRoundStatsValid;
 
     /* Reassembly of the server's bot-pool catalog, streamed as
      * CTRL_LOBBY_BOT_POOL_CHUNK fragments during join sync. Fragments

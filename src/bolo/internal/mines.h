@@ -40,6 +40,7 @@ typedef struct minesObj *mines;
 
 struct minesObj {
   bool pos[MINES_ARRAY_SIZE][MINES_ARRAY_SIZE];
+  BYTE owner[MINES_ARRAY_SIZE][MINES_ARRAY_SIZE];  /* layer slot per cell; NEUTRAL = unowned */
   bool minesHiddenMines; /* Are hidden mines allowed */
 };
 
@@ -112,6 +113,17 @@ bool minesAddItem(mines *visMines, BYTE xValue, BYTE yValue);
 *  yValue   - Y Map Coordinate
 *********************************************************/
 void minesRemoveItem(mines *visMines, BYTE xValue, BYTE yValue);
+
+/*********************************************************
+*NAME:          minesSetOwner / minesGetOwner / minesClearOwner
+*PURPOSE:
+* Track which player laid the mine at a cell so detonation
+* damage can be attributed. NEUTRAL marks an unowned cell.
+* minesClearOwner releases every cell laid by a player.
+*********************************************************/
+void minesSetOwner(mines *visMines, BYTE x, BYTE y, BYTE owner);
+BYTE minesGetOwner(mines *visMines, BYTE x, BYTE y);
+void minesClearOwner(mines *visMines, BYTE owner);
 
 /*********************************************************
 *NAME:          minesExistPos

@@ -468,7 +468,7 @@ bool pillsIsPillHit(pillboxes *value, BYTE xValue, BYTE yValue) {
 *  wantDamage - TRUE if we just want to do damage to it
 *  wantAngry  - TRUE if we just want to make it angry
 *********************************************************/
-bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry) {
+bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, bool wantAngry, BYTE owner) {
   pillboxes *value = &sim->pb;
   bool isServer = sim->isServer;
   bool returnValue;  /* Value to return */
@@ -482,8 +482,16 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
     if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && ((*value)->item[count].armour >0) && (*value)->item[count].inTank == FALSE) {
       /* Pillbox has been Hit */
       done = TRUE;
+      BYTE before = (*value)->item[count].armour;  /* > 0 here */
       if (wantDamage == TRUE && (*value)->item[count].armour > 0) {
         (*value)->item[count].armour--;
+      }
+      if (wantDamage == TRUE && sim->callbacks.recordDamage) {
+        BYTE after = (*value)->item[count].armour;
+        bool destroyed = (after == 0);
+        sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_PILL,
+                                    count, DMG_SRC_SHELL,
+                                    (uint16_t)(before - after), destroyed);
       }
       logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
       if ((*value)->item[count].armour == 0) {
@@ -998,6 +1006,9 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
       memset(ev.data, 0, sizeof(ev.data));
       ev.data[0] = owner;
       ev.data[1] = returnValue;
+      ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
+                 : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
+                 :                                                           CAPTURE_CLASS_ALLY;
       serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
     }
     (*value)->item[pillNum].owner = owner;

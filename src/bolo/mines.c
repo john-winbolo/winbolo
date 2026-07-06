@@ -50,6 +50,7 @@ void minesCreate(mines *visMines, bool allowHiddenMines) {
   for (count1=0;count1<MINES_ARRAY_SIZE;count1++) {
     for (count2=0;count2<MINES_ARRAY_SIZE;count2++) {
       (*visMines)->pos[count1][count2] = FALSE;
+      (*visMines)->owner[count1][count2] = NEUTRAL;
     }
   }
   (*visMines)->minesHiddenMines = allowHiddenMines;
@@ -120,6 +121,45 @@ bool minesAddItem(mines *visMines, BYTE xValue, BYTE yValue) {
 *********************************************************/
 void minesRemoveItem(mines *visMines, BYTE xValue, BYTE yValue) {
   (*visMines)->pos[xValue][yValue] = FALSE;
+  (*visMines)->owner[xValue][yValue] = NEUTRAL;
+}
+
+/*********************************************************
+*NAME:          minesSetOwner
+*PURPOSE:
+* Records the player slot that laid the mine at (x, y).
+*********************************************************/
+void minesSetOwner(mines *visMines, BYTE x, BYTE y, BYTE owner) {
+  (*visMines)->owner[x][y] = owner;
+}
+
+/*********************************************************
+*NAME:          minesGetOwner
+*PURPOSE:
+* Returns the player slot that laid the mine at (x, y),
+* or NEUTRAL if the cell is unowned.
+*********************************************************/
+BYTE minesGetOwner(mines *visMines, BYTE x, BYTE y) {
+  return (*visMines)->owner[x][y];
+}
+
+/*********************************************************
+*NAME:          minesClearOwner
+*PURPOSE:
+* Releases every cell laid by the given player, setting it
+* back to NEUTRAL.
+*********************************************************/
+void minesClearOwner(mines *visMines, BYTE owner) {
+  int count1; /* Looping Variables */
+  int count2;
+
+  for (count1=0;count1<MINES_ARRAY_SIZE;count1++) {
+    for (count2=0;count2<MINES_ARRAY_SIZE;count2++) {
+      if ((*visMines)->owner[count1][count2] == owner) {
+        (*visMines)->owner[count1][count2] = NEUTRAL;
+      }
+    }
+  }
 }
 
 

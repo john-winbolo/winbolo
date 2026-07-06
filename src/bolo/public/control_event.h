@@ -32,6 +32,7 @@
 #include "client_enums.h" /* netStatus, gameType */
 #include "client_sim.h"   /* ClientLobbySlot */
 #include "brain_list.h"   /* BrainList for CTRL_LOBBY_BRAIN_LIST */
+#include "round_stats.h"  /* RoundStatsSummary for CTRL_ROUND_STATS */
 #include "upload_policy.h" /* UploadPolicy in lobbySettings */
 
 #ifndef LOBBY_TEAM_NAME_LEN
@@ -117,6 +118,9 @@ typedef enum {
      * lobbySyncSettled on this marker and plays lobby event sounds only once
      * it is set. No payload — header only. */
     CTRL_LOBBY_SYNC_COMPLETE,
+    /* CTRL_ROUND_STATS — end-of-round scoreboard + awards, broadcast to all
+     * connected clients at game over. Carries a RoundStatsSummary by value. */
+    CTRL_ROUND_STATS,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -415,6 +419,9 @@ typedef struct ControlEvent {
             uint32_t ch1Baseline;   /* CHANNEL_MAP   floor (bit 1)             */
             uint32_t ch3Baseline;   /* CHANNEL_BULK  floor (bit 3)             */
         } channelReset;
+
+        /* CTRL_ROUND_STATS — end-of-round scoreboard + awards, broadcast to all. */
+        RoundStatsSummary roundStats;
     } u;
 } ControlEvent;
 

@@ -1215,7 +1215,13 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 #endif
 	if (inHitZone && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;
+		BYTE armourBefore = (*value)->armour;  /* <= TANK_FULL_ARMOUR here */
 		(*value)->armour -= DAMAGE;
+		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
+			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
+			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
+			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false);
+		}
 		if ((*value)->onBoat == TRUE) {
 			(*value)->onBoat = FALSE;
 			(*value)->boatState = BoatState_NotOnBoat;
@@ -2512,8 +2518,15 @@ void tankLayMine(GameSim *sim, tank *value) {
     if (terrain != BUILDING && terrain != HALFBUILDING && terrain != BOAT && terrain != RIVER && terrain < MINE_START && (*value)->mines > 0 && (*value)->onBoat == FALSE && pillsExistPos(pb, bmx, bmy) == FALSE && basesExistPos(bs, bmx, bmy) == FALSE && (*value)->armour <= TANK_FULL_ARMOUR) {
       (*value)->mines--;
       mapSetPos(sim, mp, bmx, bmy, (BYTE) (terrain + MINE_SUBTRACT), FALSE, FALSE);
+      /* Record the layer so a later detonation credits its owner (mirrors the
+       * LGM mine-lay path). minesSetOwner is unconditional; recordPlayerAction
+       * is server-only (NULL on the client). */
+      BYTE pn = gameSimGetTankPlayer(sim, value);
+      minesSetOwner(&sim->mns, bmx, bmy, pn);
+      if (sim->callbacks.recordPlayerAction) {
+        sim->callbacks.recordPlayerAction(sim->callbacks.ctx, pn, PLAYER_ACTION_MINE);
+      }
       if (isServer && sim->hiddenMines) {
-        BYTE pn = gameSimGetTankPlayer(sim, value);
         sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, pn | 0x80);
       }
       sim->callbacks.soundDist(sim->callbacks.ctx, manLayingMineNear, bmx, bmy);
@@ -2548,7 +2561,7 @@ void tankLayMine(GameSim *sim, tank *value) {
 *  mx    - Map X Co-ordinate
 *  my    - Map Y Co-ordinate
 *********************************************************/
-void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my) {
+void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
   bool isServer = sim->isServer;
   WORLD mineX; /* Mine X and Y World Co-ords */
   WORLD mineY;
@@ -2572,7 +2585,13 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my) {
 
 
   if (diffX < 384 && diffY < 384 && (*value)->armour <= TANK_FULL_ARMOUR) {
+    BYTE armourBefore = (*value)->armour;  /* <= TANK_FULL_ARMOUR here */
     (*value)->armour -= MINE_DAMAGE;
+    if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
+      uint16_t eff = (armourBefore >= MINE_DAMAGE) ? MINE_DAMAGE : armourBefore;
+      sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
+                                  gameSimGetTankPlayer(sim, value), DMG_SRC_MINE, eff, false);
+    }
     if ((*value)->armour > TANK_FULL_ARMOUR) {
       BYTE dyingPlayer = gameSimGetTankPlayer(sim, value);
       if (((*value)->shells + (*value)->mines) > TANK_BIG_EXPLOSION_THRESHOLD) {
@@ -3397,7 +3416,13 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 #endif
 	if (inHitZone && (*value)->armour <= TANK_FULL_ARMOUR) {
 		returnValue = TH_HIT;
+		BYTE armourBefore = (*value)->armour;  /* <= TANK_FULL_ARMOUR here */
 		(*value)->armour -= DAMAGE;
+		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
+			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
+			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
+			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false);
+		}
 		if ((*value)->onBoat == TRUE) {
 			(*value)->onBoat = FALSE;
 			(*value)->boatState = BoatState_NotOnBoat;
