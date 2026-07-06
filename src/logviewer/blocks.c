@@ -83,22 +83,34 @@ static void lv_blocksLoadAttributionTrack(unzFile zf) {
   if (unzLocateFile(zf, ATTRIBUTION_TRACK_MEMBER, 0) != UNZ_OK) return;  /* old .wbv: no track */
   if (unzOpenCurrentFile(zf) != UNZ_OK) return;
 
+  /* A legitimate member is at most the header plus the writer's per-round
+   * record cap. Bound the read so a crafted/oversized (e.g. zip-bomb) member
+   * can't drive an unbounded allocation, and reject anything larger than the
+   * writer could ever have produced. */
+  const size_t maxLen = sizeof(AttrTrackHeader) + ATTRIBUTION_TRACK_CAP_BYTES;
+
   uint8_t *buf = NULL;
   size_t   size = 0, cap = 0;
   bool     ok = TRUE;
   for (;;) {
-    if (size + LOG_DECOMPRESS_CHUNK > cap) {
+    /* Read at most one byte past the cap so an over-long member is detected
+     * rather than silently truncated into a valid-looking track. */
+    size_t want = (maxLen + 1) - size;
+    if (want > LOG_DECOMPRESS_CHUNK) want = LOG_DECOMPRESS_CHUNK;
+    if (size + want > cap) {
       size_t newCap = cap ? cap * 2 : LOG_DECOMPRESS_CHUNK;
-      while (newCap < size + LOG_DECOMPRESS_CHUNK) newCap *= 2;
+      while (newCap < size + want) newCap *= 2;
+      if (newCap > maxLen + 1) newCap = maxLen + 1;
       uint8_t *nb = (uint8_t *)realloc(buf, newCap);
       if (nb == NULL) { ok = FALSE; break; }
       buf = nb;
       cap = newCap;
     }
-    int got = unzReadCurrentFile(zf, buf + size, LOG_DECOMPRESS_CHUNK);
+    int got = unzReadCurrentFile(zf, buf + size, (unsigned)want);
     if (got < 0) { ok = FALSE; break; }
     if (got == 0) break;
     size += (size_t)got;
+    if (size > maxLen) { ok = FALSE; break; }  /* larger than the writer's cap */
   }
   unzCloseCurrentFile(zf);
   if (ok && buf != NULL && size > 0) {
