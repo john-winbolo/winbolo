@@ -491,7 +491,8 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
         bool destroyed = (after == 0);
         sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_PILL,
                                     count, DMG_SRC_SHELL,
-                                    (uint16_t)(before - after), destroyed);
+                                    (uint16_t)(before - after), destroyed,
+                                    (*value)->item[count].x, (*value)->item[count].y);
       }
       logAddEvent(log_PillSetHealth, utilPutNibble(count, (*value)->item[count].armour), 0, 0, 0, 0, NULL);
       if ((*value)->item[count].armour == 0) {
@@ -1009,6 +1010,9 @@ BYTE pillsSetPillOwner(GameSim *sim, pillboxes *value, BYTE pillNum, BYTE owner,
       ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
                  : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
                  :                                                           CAPTURE_CLASS_ALLY;
+      ev.data[3] = pillNum;
+      ev.data[4] = (*value)->item[pillNum].x;
+      ev.data[5] = (*value)->item[pillNum].y;
       serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
     }
     (*value)->item[pillNum].owner = owner;

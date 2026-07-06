@@ -266,7 +266,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   sim->callbacks.soundDistShoot(sim->callbacks.ctx, soundMX, soundMY, owner);
 
   if (sim->callbacks.recordPlayerAction) {
-    sim->callbacks.recordPlayerAction(sim->callbacks.ctx, owner, PLAYER_ACTION_SHELL);
+    sim->callbacks.recordPlayerAction(sim->callbacks.ctx, owner, PLAYER_ACTION_SHELL, soundMX, soundMY);
   }
 }
 

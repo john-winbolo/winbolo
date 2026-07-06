@@ -101,11 +101,16 @@ typedef struct GameSimCallbacks {
      * of `targetKind` identified by `targetIndex` (the tank slot, or pill/base
      * index that was hit); `source` is a DMG_SRC_* value naming what inflicted
      * the hit; `destroyed` is true only when this blow dropped a pillbox to 0
-     * armour. recordPlayerAction: `player` performed a farm/build/mine/shell. */
+     * armour. recordPlayerAction: `player` performed a farm/build/mine/shell.
+     * recordPillPickup: `picker` scooped dead pillbox `pillIndex` into its tank.
+     * mapX/mapY are the event's map cell (0 if unknown), for offline highlights. */
     void (*recordDamage)(void *ctx, BYTE attacker, BYTE targetKind,
                          BYTE targetIndex, BYTE source,
-                         uint16_t dealt, bool destroyed);
-    void (*recordPlayerAction)(void *ctx, BYTE player, BYTE actionKind);
+                         uint16_t dealt, bool destroyed, BYTE mapX, BYTE mapY);
+    void (*recordPlayerAction)(void *ctx, BYTE player, BYTE actionKind,
+                               BYTE mapX, BYTE mapY);
+    void (*recordPillPickup)(void *ctx, BYTE picker, BYTE pillIndex,
+                             BYTE mapX, BYTE mapY);
     void *ctx;  /* opaque pointer: ClientSim* or ServerSim* */
 } GameSimCallbacks;
 

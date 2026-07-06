@@ -687,6 +687,9 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
       ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
                  : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
                  :                                                           CAPTURE_CLASS_ALLY;
+      ev.data[3] = baseNum;
+      ev.data[4] = (*value)->item[baseNum].x;
+      ev.data[5] = (*value)->item[baseNum].y;
       serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
     }
 
@@ -759,6 +762,9 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
           ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
                      : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
                      :                                                           CAPTURE_CLASS_ALLY;
+          ev.data[3] = count;
+          ev.data[4] = (*value)->item[count].x;
+          ev.data[5] = (*value)->item[count].y;
           serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
         }
         done = TRUE;
@@ -1014,7 +1020,8 @@ void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner) {
       if (sim->callbacks.recordDamage) {
         sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_BASE,
                                     count, DMG_SRC_SHELL,
-                                    (uint16_t)(before - (*value)->item[count].armour), false);
+                                    (uint16_t)(before - (*value)->item[count].armour), false,
+                                    (*value)->item[count].x, (*value)->item[count].y);
       }
       if ((*value)->item[count].armour <= BASE_DISPLAY_X) {
         if (isServer == FALSE) {

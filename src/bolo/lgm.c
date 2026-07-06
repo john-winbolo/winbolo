@@ -998,7 +998,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
       }
       (*lgman)->numTrees = LGM_GATHER_TREE;
       sim->callbacks.soundDist(sim->callbacks.ctx, farmingTreeNear, bmx, bmy);
-      if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_FARM);
+      if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_FARM, bmx, bmy);
     }
     if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
     break;
@@ -1045,7 +1045,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
         mapSetPos(sim, mp, bmx, bmy, (BYTE) (terrain + MINE_SUBTRACT), FALSE, FALSE);
         minesAddItem(&sim->mns, bmx, bmy);
         minesSetOwner(&sim->mns, bmx, bmy, (*lgman)->playerNum);
-        if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_MINE);
+        if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_MINE, bmx, bmy);
         (*lgman)->numMines = 0;
         if (sim->isServer && sim->hiddenMines) {
           sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, (*lgman)->playerNum);
@@ -1087,7 +1087,7 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
             frontEndStatusPillbox(clientSimFromSim(sim), (*lgman)->numPills, (pillsGetAllianceNum(sim, pb, (*lgman)->numPills)));
           }
           (*lgman)->numPills = LGM_NO_PILL;
-          if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_BUILD);
+          if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_BUILD, bmx, bmy);
         }
       }
     }
@@ -1420,6 +1420,10 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
         memset(ev.data, 0, sizeof(ev.data));
         ev.data[0] = (*lgman)->playerNum;
         ev.data[1] = owner;
+        /* Server-internal: LGM map cell (data[2]/data[3], past gameEventDataSize())
+         * read by the stats funnel for the LGM record's mapX/mapY. */
+        ev.data[2] = (BYTE)((*lgman)->x >> M_W_SHIFT_SIZE);
+        ev.data[3] = (BYTE)((*lgman)->y >> M_W_SHIFT_SIZE);
         serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
       }
     }

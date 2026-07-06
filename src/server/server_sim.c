@@ -368,6 +368,14 @@ static void serverSimCbTankKill(void *ctx, BYTE killer, BYTE killed, BYTE deathC
      * funnel. data[4] is past gameEventDataSize(), so it never goes on the wire. */
     ev.data[4] = (killed < MAX_TANKS && sim->sim.tanks[killed] != NULL)
                      ? tankGetTrees(&sim->sim.tanks[killed]) : 0;
+    /* Server-internal: the dying tank's map cell (data[5]/data[6], also past
+     * gameEventDataSize()), read by the funnel for the KILL record's mapX/mapY. */
+    if (killed < MAX_TANKS && sim->sim.tanks[killed] != NULL) {
+        WORLD kwx, kwy;
+        tankGetWorld(&sim->sim.tanks[killed], &kwx, &kwy);
+        ev.data[5] = (uint8_t)(kwx >> TANK_SHIFT_MAPSIZE);
+        ev.data[6] = (uint8_t)(kwy >> TANK_SHIFT_MAPSIZE);
+    }
     serverSimAddEvent(sim, &ev);
     winbolonetAddEvent(WINBOLO_NET_EVENT_TANK_KILL, TRUE, killer, killed,
                        botManagerIsBot(sim, killer), botManagerIsBot(sim, killed));
@@ -398,7 +406,8 @@ static void serverSimTrackAppend(ServerSim *sim, const void *rec, size_t n) {
 
 static void serverSimCbRecordDamage(void *ctx, BYTE attacker, BYTE targetKind,
                                     BYTE targetIndex, BYTE source,
-                                    uint16_t dealt, bool destroyed) {
+                                    uint16_t dealt, bool destroyed,
+                                    BYTE mapX, BYTE mapY) {
     ServerSim *sim = (ServerSim *)ctx;
     if (sim->state != serverStateRunning) return;
     {
@@ -409,6 +418,7 @@ static void serverSimCbRecordDamage(void *ctx, BYTE attacker, BYTE targetKind,
         r.type = ATTR_REC_DAMAGE; r.tick = sim->tick;
         r.source = source; r.target = targetKind; r.targetIndex = targetIndex;
         r.attacker = attacker; r.amount = dealt; r.destroyed = destroyed ? 1 : 0;
+        r.mapX = mapX; r.mapY = mapY;
         serverSimTrackAppend(sim, &r, sizeof r);
     }
     if (attacker >= MAX_TANKS) return;   /* aggregates skip owner-less/NEUTRAL, as before */
@@ -421,13 +431,15 @@ static void serverSimCbRecordDamage(void *ctx, BYTE attacker, BYTE targetKind,
     }
 }
 
-static void serverSimCbRecordPlayerAction(void *ctx, BYTE player, BYTE actionKind) {
+static void serverSimCbRecordPlayerAction(void *ctx, BYTE player, BYTE actionKind,
+                                          BYTE mapX, BYTE mapY) {
     ServerSim *sim = (ServerSim *)ctx;
     if (sim->state != serverStateRunning || player >= MAX_TANKS) return;
     {
         AttrActionRecord r;
         r.type = ATTR_REC_ACTION; r.tick = sim->tick;
         r.player = player; r.action = actionKind;
+        r.mapX = mapX; r.mapY = mapY;
         serverSimTrackAppend(sim, &r, sizeof r);
     }
     PlayerRoundStats *ps = &sim->roundStats[player];
@@ -438,6 +450,20 @@ static void serverSimCbRecordPlayerAction(void *ctx, BYTE player, BYTE actionKin
     case PLAYER_ACTION_SHELL: ps->shellsFired++; break;
     default: break;
     }
+}
+
+/* A tank scooped a dead (0-armour) pillbox into its inventory. Recorded to the
+ * attribution track only (no aggregate counter); backs the pickup-spree
+ * highlight. Server-only; NULL on the client. */
+static void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
+                                        BYTE mapX, BYTE mapY) {
+    ServerSim *sim = (ServerSim *)ctx;
+    if (sim->state != serverStateRunning) return;
+    AttrPickupRecord r;
+    r.type = ATTR_REC_PICKUP; r.tick = sim->tick;
+    r.picker = picker; r.pillIndex = pillIndex;
+    r.mapX = mapX; r.mapY = mapY;
+    serverSimTrackAppend(sim, &r, sizeof r);
 }
 
 static void serverSimCbCenterTank(void *ctx) {
@@ -579,6 +605,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.shellDeath = serverSimCbShellDeath;
     sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
     sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
+    sim->sim.callbacks.recordPillPickup = serverSimCbRecordPillPickup;
     sim->sim.callbacks.ctx = sim;
 
     for (count = 0; count < MAX_TANKS; count++) {
@@ -3065,6 +3092,7 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
                 r.type = ATTR_REC_KILL; r.tick = sim->tick;
                 r.killer = d[0]; r.killed = d[1]; r.deathCause = d[2];
                 r.carriedPills = d[3]; r.treesWasted = d[4];
+                r.mapX = d[5]; r.mapY = d[6];   /* stashed in serverSimCbTankKill */
                 serverSimTrackAppend(sim, &r, sizeof r);
             }
             if (killed < MAX_TANKS) {
@@ -3095,8 +3123,9 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
                 r.type = ATTR_REC_CAPTURE; r.tick = sim->tick;
                 r.target = (event->type == EVENT_PILL_CAPTURED)
                                ? ATTR_CAP_TGT_PILL : ATTR_CAP_TGT_BASE;
-                r.targetIndex = 0;   /* event carries no pill/base index yet */
+                r.targetIndex = d[3];   /* pill/base array index (server-internal, past wire size) */
                 r.newOwner = d[0]; r.prevOwner = d[1]; r.captureClass = d[2];
+                r.mapX = d[4]; r.mapY = d[5];   /* pill/base map cell, stashed at emit */
                 serverSimTrackAppend(sim, &r, sizeof r);
             }
             if (owner < MAX_TANKS && cls != CAPTURE_CLASS_ALLY) {
@@ -3118,6 +3147,7 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
                 AttrLgmRecord r;
                 r.type = ATTR_REC_LGM; r.tick = sim->tick;
                 r.victim = d[0]; r.killer = d[1];
+                r.mapX = d[2]; r.mapY = d[3];   /* LGM map cell, stashed at emit */
                 serverSimTrackAppend(sim, &r, sizeof r);
             }
             if (victim < MAX_TANKS) sim->roundStats[victim].lgmDeaths++;

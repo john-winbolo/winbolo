@@ -21,16 +21,17 @@
 #include "test_harness.h"
 
 int run_attribution_track_schema(void) {
-    UT_ASSERT(sizeof(AttrDamageRecord) == 12);
-    UT_ASSERT(sizeof(AttrKillRecord) == 10);
-    UT_ASSERT(sizeof(AttrCaptureRecord) == 10);
-    UT_ASSERT(sizeof(AttrLgmRecord) == 7);
-    UT_ASSERT(sizeof(AttrActionRecord) == 7);
+    UT_ASSERT(sizeof(AttrDamageRecord) == 14);
+    UT_ASSERT(sizeof(AttrKillRecord) == 12);
+    UT_ASSERT(sizeof(AttrCaptureRecord) == 12);
+    UT_ASSERT(sizeof(AttrLgmRecord) == 9);
+    UT_ASSERT(sizeof(AttrActionRecord) == 9);
+    UT_ASSERT(sizeof(AttrPickupRecord) == 9);
     UT_ASSERT(sizeof(AttrSlotIdentity) == (size_t)(2 + PACKET_MAX_PLAYER_NAME));
     UT_ASSERT(sizeof(AttrTrackHeader) ==
               (size_t)(12 + MAX_TANKS * sizeof(AttrSlotIdentity)));
 
-    UT_ASSERT(ATTRIBUTION_TRACK_VERSION == 1);
+    UT_ASSERT(ATTRIBUTION_TRACK_VERSION == 2);
     UT_ASSERT(strcmp(ATTRIBUTION_TRACK_MEMBER, "attribution.trk") == 0);
     UT_ASSERT(memcmp(ATTRIBUTION_TRACK_MAGIC, "WBAT", 4) == 0);
 
@@ -39,6 +40,7 @@ int run_attribution_track_schema(void) {
     UT_ASSERT(ATTR_REC_CAPTURE == 3);
     UT_ASSERT(ATTR_REC_LGM == 4);
     UT_ASSERT(ATTR_REC_ACTION == 5);
+    UT_ASSERT(ATTR_REC_PICKUP == 6);
 
     return 0;
 }

@@ -45,15 +45,18 @@ int run_attribution_reader_roundtrip(void) {
     dr.type = ATTR_REC_DAMAGE; dr.tick = 100;
     dr.source = ATTR_SRC_SHELL; dr.target = ATTR_TGT_TANK;
     dr.targetIndex = 3; dr.attacker = 0; dr.amount = 10; dr.destroyed = 0;
+    dr.mapX = 40; dr.mapY = 41;
 
     AttrActionRecord ar;
     memset(&ar, 0, sizeof ar);
     ar.type = ATTR_REC_ACTION; ar.tick = 101; ar.player = 0; ar.action = ATTR_ACT_FARM;
+    ar.mapX = 42; ar.mapY = 43;
 
     AttrKillRecord kr;
     memset(&kr, 0, sizeof kr);
     kr.type = ATTR_REC_KILL; kr.tick = 102; kr.killer = 2; kr.killed = 5;
     kr.deathCause = 1; kr.carriedPills = 4; kr.treesWasted = 7;
+    kr.mapX = 44; kr.mapY = 45;
 
     size_t recBytes = sizeof dr + sizeof ar + sizeof kr;
     size_t total = sizeof hdr + recBytes;
@@ -91,15 +94,18 @@ int run_attribution_reader_roundtrip(void) {
     AttrDamageRecord gdr; memcpy(&gdr, recs + off, sizeof gdr); off += sizeof gdr;
     UT_ASSERT(gdr.tick == 100 && gdr.source == ATTR_SRC_SHELL && gdr.target == ATTR_TGT_TANK);
     UT_ASSERT(gdr.targetIndex == 3 && gdr.attacker == 0 && gdr.amount == 10 && gdr.destroyed == 0);
+    UT_ASSERT(gdr.mapX == 40 && gdr.mapY == 41);
 
     UT_ASSERT(recs[off] == ATTR_REC_ACTION);
     AttrActionRecord gar; memcpy(&gar, recs + off, sizeof gar); off += sizeof gar;
     UT_ASSERT(gar.tick == 101 && gar.player == 0 && gar.action == ATTR_ACT_FARM);
+    UT_ASSERT(gar.mapX == 42 && gar.mapY == 43);
 
     UT_ASSERT(recs[off] == ATTR_REC_KILL);
     AttrKillRecord gkr; memcpy(&gkr, recs + off, sizeof gkr); off += sizeof gkr;
     UT_ASSERT(gkr.tick == 102 && gkr.killer == 2 && gkr.killed == 5);
     UT_ASSERT(gkr.deathCause == 1 && gkr.carriedPills == 4 && gkr.treesWasted == 7);
+    UT_ASSERT(gkr.mapX == 44 && gkr.mapY == 45);
     UT_ASSERT(off == recBytes);
 
     lvAttributionClear();

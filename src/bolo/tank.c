@@ -1220,7 +1220,9 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
 			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
 			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
-			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false);
+			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false,
+			                            (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
+			                            (BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE));
 		}
 		if ((*value)->onBoat == TRUE) {
 			(*value)->onBoat = FALSE;
@@ -2078,6 +2080,9 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 				pillNum = pillsGetPillNum(pb, bmx, bmy, TRUE, FALSE);
 				while (pillNum != PILL_NOT_FOUND) {
 					pillsSetPillInTank(pb,pillNum, TRUE);
+					if (sim->callbacks.recordPillPickup) {
+						sim->callbacks.recordPillPickup(sim->callbacks.ctx, gameSimGetTankPlayer(sim, value), pillNum, bmx, bmy);
+					}
 					/* We are a client.. which should only happen in a single player game */
 					if (!isServer) {
 						frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));
@@ -2524,7 +2529,7 @@ void tankLayMine(GameSim *sim, tank *value) {
       BYTE pn = gameSimGetTankPlayer(sim, value);
       minesSetOwner(&sim->mns, bmx, bmy, pn);
       if (sim->callbacks.recordPlayerAction) {
-        sim->callbacks.recordPlayerAction(sim->callbacks.ctx, pn, PLAYER_ACTION_MINE);
+        sim->callbacks.recordPlayerAction(sim->callbacks.ctx, pn, PLAYER_ACTION_MINE, bmx, bmy);
       }
       if (isServer && sim->hiddenMines) {
         sim->callbacks.mineVisible(sim->callbacks.ctx, bmx, bmy, pn | 0x80);
@@ -2590,7 +2595,9 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
     if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
       uint16_t eff = (armourBefore >= MINE_DAMAGE) ? MINE_DAMAGE : armourBefore;
       sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
-                                  gameSimGetTankPlayer(sim, value), DMG_SRC_MINE, eff, false);
+                                  gameSimGetTankPlayer(sim, value), DMG_SRC_MINE, eff, false,
+                                  (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
+                                  (BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE));
     }
     if ((*value)->armour > TANK_FULL_ARMOUR) {
       BYTE dyingPlayer = gameSimGetTankPlayer(sim, value);
@@ -3421,7 +3428,9 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 		if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
 			uint16_t eff = (armourBefore >= DAMAGE) ? DAMAGE : armourBefore;
 			sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_TANK,
-			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false);
+			                            gameSimGetTankPlayer(sim, value), DMG_SRC_SHELL, eff, false,
+			                            (BYTE)((*value)->x >> TANK_SHIFT_MAPSIZE),
+			                            (BYTE)((*value)->y >> TANK_SHIFT_MAPSIZE));
 		}
 		if ((*value)->onBoat == TRUE) {
 			(*value)->onBoat = FALSE;

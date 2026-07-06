@@ -431,13 +431,13 @@ int run_round_stats_attribution_callbacks(void) {
     UT_ASSERT(sim->sim.callbacks.recordDamage != NULL);
     UT_ASSERT(sim->sim.callbacks.recordPlayerAction != NULL);
 
-    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 10, false);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 10, false, 0, 0);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == 10,
                   "tank damage, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);
 
-    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_PILL, 0, DMG_SRC_SHELL, 5, false);
-    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_PILL, 0, DMG_SRC_SHELL, 3, true);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_PILL, 0, DMG_SRC_SHELL, 5, false, 0, 0);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_PILL, 0, DMG_SRC_SHELL, 3, true, 0, 0);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPills == 8,
                   "pill damage accumulates, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPills);
@@ -445,21 +445,21 @@ int run_round_stats_attribution_callbacks(void) {
                   "destroyed blow credits a pill kill, got %u",
                   serverSimGetRoundStats(sim, 0)->pillKills);
 
-    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_BASE, 0, DMG_SRC_SHELL, 7, false);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_BASE, 0, DMG_SRC_SHELL, 7, false, 0, 0);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToBases == 7,
                   "base damage, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToBases);
 
     /* NEUTRAL attacker (0xFF) is out of range and must be ignored. */
-    sim->sim.callbacks.recordDamage(ctx, 0xFF, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 99, false);
+    sim->sim.callbacks.recordDamage(ctx, 0xFF, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 99, false, 0, 0);
     UT_ASSERT_MSG(serverSimGetRoundStats(sim, 0)->dmgToPlayers == 10,
                   "NEUTRAL attacker ignored, got %llu",
                   (unsigned long long)serverSimGetRoundStats(sim, 0)->dmgToPlayers);
 
-    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_FARM);
-    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_BUILD);
-    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_MINE);
-    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_SHELL);
+    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_FARM, 0, 0);
+    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_BUILD, 0, 0);
+    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_MINE, 0, 0);
+    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_SHELL, 0, 0);
 
     const PlayerRoundStats *p1 = serverSimGetRoundStats(sim, 1);
     UT_ASSERT(p1 != NULL);
@@ -1014,15 +1014,24 @@ int run_round_stats_track_records(void) {
 
     void *ctx = sim->sim.callbacks.ctx;
 
-    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 3, DMG_SRC_SHELL, 10, false);
-    sim->sim.callbacks.recordPlayerAction(ctx, 0, PLAYER_ACTION_FARM);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 3, DMG_SRC_SHELL, 10, false, 8, 9);
+    sim->sim.callbacks.recordPlayerAction(ctx, 0, PLAYER_ACTION_FARM, 6, 7);
 
-    const uint8_t kd[8] = { 2, 5, LAST_DEATH_BY_SHELL, 4, 7, 0, 0, 0 };
+    /* Kill event: data[5]/data[6] carry the dying tank's map cell (stashed by
+     * serverSimCbTankKill; the funnel copies them to the record's mapX/mapY). */
+    const uint8_t kd[8] = { 2, 5, LAST_DEATH_BY_SHELL, 4, 7, 11, 22, 0 };
     inject(sim, EVENT_TANK_KILLED, kd);
 
+    /* Capture event: data = [newOwner, prevOwner, class, index, mapX, mapY]. */
+    const uint8_t cd[8] = { 1, NEUTRAL, CAPTURE_CLASS_NEUTRAL, 3, 33, 44, 0, 0 };
+    inject(sim, EVENT_PILL_CAPTURED, cd);
+
+    sim->sim.callbacks.recordPillPickup(ctx, 2, 5, 55, 66);
+
     size_t expectLen = sizeof(AttrDamageRecord) + sizeof(AttrActionRecord) +
-                       sizeof(AttrKillRecord);
-    UT_ASSERT_MSG(sim->trackRecordCount == 3, "record count, got %u",
+                       sizeof(AttrKillRecord) + sizeof(AttrCaptureRecord) +
+                       sizeof(AttrPickupRecord);
+    UT_ASSERT_MSG(sim->trackRecordCount == 5, "record count, got %u",
                   sim->trackRecordCount);
     UT_ASSERT_MSG(sim->trackLen == expectLen, "track length, got %zu",
                   sim->trackLen);
@@ -1041,6 +1050,7 @@ int run_round_stats_track_records(void) {
     UT_ASSERT(dr.attacker == 0);
     UT_ASSERT_MSG(dr.amount == 10, "damage amount, got %u", dr.amount);
     UT_ASSERT(dr.destroyed == 0);
+    UT_ASSERT_MSG(dr.mapX == 8 && dr.mapY == 9, "damage cell, got %u,%u", dr.mapX, dr.mapY);
 
     AttrActionRecord ar;
     memcpy(&ar, sim->trackBuf + off, sizeof ar);
@@ -1049,9 +1059,11 @@ int run_round_stats_track_records(void) {
     UT_ASSERT(ar.tick == sim->tick);
     UT_ASSERT(ar.player == 0);
     UT_ASSERT(ar.action == PLAYER_ACTION_FARM);
+    UT_ASSERT_MSG(ar.mapX == 6 && ar.mapY == 7, "action cell, got %u,%u", ar.mapX, ar.mapY);
 
     AttrKillRecord kr;
     memcpy(&kr, sim->trackBuf + off, sizeof kr);
+    off += sizeof kr;
     UT_ASSERT_MSG(kr.type == ATTR_REC_KILL, "kill tag, got %u", kr.type);
     UT_ASSERT(kr.tick == sim->tick);
     UT_ASSERT(kr.killer == 2);
@@ -1059,6 +1071,26 @@ int run_round_stats_track_records(void) {
     UT_ASSERT(kr.deathCause == LAST_DEATH_BY_SHELL);
     UT_ASSERT_MSG(kr.carriedPills == 4, "carried pills, got %u", kr.carriedPills);
     UT_ASSERT_MSG(kr.treesWasted == 7, "trees wasted, got %u", kr.treesWasted);
+    UT_ASSERT_MSG(kr.mapX == 11 && kr.mapY == 22, "kill cell, got %u,%u", kr.mapX, kr.mapY);
+
+    AttrCaptureRecord cr;
+    memcpy(&cr, sim->trackBuf + off, sizeof cr);
+    off += sizeof cr;
+    UT_ASSERT_MSG(cr.type == ATTR_REC_CAPTURE, "capture tag, got %u", cr.type);
+    UT_ASSERT(cr.tick == sim->tick);
+    UT_ASSERT(cr.target == ATTR_CAP_TGT_PILL);
+    UT_ASSERT_MSG(cr.targetIndex == 3, "capture index, got %u", cr.targetIndex);
+    UT_ASSERT(cr.newOwner == 1);
+    UT_ASSERT(cr.captureClass == CAPTURE_CLASS_NEUTRAL);
+    UT_ASSERT_MSG(cr.mapX == 33 && cr.mapY == 44, "capture cell, got %u,%u", cr.mapX, cr.mapY);
+
+    AttrPickupRecord pr;
+    memcpy(&pr, sim->trackBuf + off, sizeof pr);
+    UT_ASSERT_MSG(pr.type == ATTR_REC_PICKUP, "pickup tag, got %u", pr.type);
+    UT_ASSERT(pr.tick == sim->tick);
+    UT_ASSERT(pr.picker == 2);
+    UT_ASSERT(pr.pillIndex == 5);
+    UT_ASSERT_MSG(pr.mapX == 55 && pr.mapY == 66, "pickup cell, got %u,%u", pr.mapX, pr.mapY);
 
     serverSimDestroy(sim);
     return 0;
@@ -1077,14 +1109,14 @@ int run_round_stats_track_cap(void) {
     sim->trackLen = ATTRIBUTION_TRACK_CAP_BYTES - 2;   /* a 12-byte record won't fit */
     size_t before = sim->trackLen;
 
-    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 10, false);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 10, false, 0, 0);
     UT_ASSERT_MSG(sim->trackTruncated, "overflowing append must truncate");
     UT_ASSERT_MSG(sim->trackLen == before,
                   "refused append must not grow the buffer, got %zu", sim->trackLen);
     UT_ASSERT(sim->trackBuf == NULL);   /* refused before any allocation */
 
     /* A subsequent append is also refused. */
-    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 10, false);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 10, false, 0, 0);
     UT_ASSERT_MSG(sim->trackLen == before, "still refused, got %zu", sim->trackLen);
     UT_ASSERT(sim->trackTruncated);
 

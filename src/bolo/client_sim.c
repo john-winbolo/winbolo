@@ -265,6 +265,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->sim.callbacks.tkExplosion = NULL;
   cs->sim.callbacks.recordDamage = NULL;
   cs->sim.callbacks.recordPlayerAction = NULL;
+  cs->sim.callbacks.recordPillPickup = NULL;
   cs->sim.callbacks.ctx = cs;
 
   cs->currentBuildSelect = BsTrees;

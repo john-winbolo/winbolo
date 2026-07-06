@@ -57,8 +57,10 @@
 #define ATTRIBUTION_TRACK_MEMBER   "attribution.trk"
 /* File magic at the front of the member — 4 bytes, no trailing NUL stored. */
 #define ATTRIBUTION_TRACK_MAGIC    "WBAT"
-/* On-disk format version. Bump on any record-layout change. */
-#define ATTRIBUTION_TRACK_VERSION  1
+/* On-disk format version. Bump on any record-layout change.
+ * v2: every event record carries map-cell mapX/mapY, and ATTR_REC_PICKUP
+ *     records dead-pillbox scoops. */
+#define ATTRIBUTION_TRACK_VERSION  2
 /* Per-round size cap the writer enforces; a round that would exceed this is
  * truncated and flagged in the header. */
 #define ATTRIBUTION_TRACK_CAP_BYTES (64u * 1024u * 1024u)
@@ -70,7 +72,8 @@ typedef enum {
     ATTR_REC_KILL    = 2,
     ATTR_REC_CAPTURE = 3,
     ATTR_REC_LGM     = 4,
-    ATTR_REC_ACTION  = 5
+    ATTR_REC_ACTION  = 5,
+    ATTR_REC_PICKUP  = 6
 } AttrRecordType;
 
 /* What inflicted a damage hit. The writer supplies this at the call site;
@@ -125,6 +128,8 @@ typedef struct BOLO_PACK_ATTR {
     uint8_t  attacker;      /* owner slot; NEUTRAL for splash/owner-less */
     uint16_t amount;        /* effective armour removed this hit */
     uint8_t  destroyed;     /* 1 if this hit destroyed the target (pill->0) */
+    uint8_t  mapX;          /* map cell of the event; 0 if unknown (v2+) */
+    uint8_t  mapY;
 } AttrDamageRecord;
 
 /* Tank death, from the serverSimAddEvent EVENT_TANK_KILLED tap. deathCause,
@@ -138,6 +143,8 @@ typedef struct BOLO_PACK_ATTR {
     uint8_t  deathCause;
     uint8_t  carriedPills;
     uint8_t  treesWasted;
+    uint8_t  mapX;          /* map cell of the death (v2+) */
+    uint8_t  mapY;
 } AttrKillRecord;
 
 /* Pill/base ownership gain, with the neutral/enemy/ally classification byte. */
@@ -149,6 +156,8 @@ typedef struct BOLO_PACK_ATTR {
     uint8_t  newOwner;
     uint8_t  prevOwner;
     uint8_t  captureClass;  /* AttrCaptureClass */
+    uint8_t  mapX;          /* map cell of the pill/base (v2+) */
+    uint8_t  mapY;
 } AttrCaptureRecord;
 
 /* LGM lost, from EVENT_LGM_LOST [victim, killer]. */
@@ -157,6 +166,8 @@ typedef struct BOLO_PACK_ATTR {
     uint32_t tick;
     uint8_t  victim;
     uint8_t  killer;
+    uint8_t  mapX;          /* map cell of the LGM loss (v2+) */
+    uint8_t  mapY;
 } AttrLgmRecord;
 
 /* Builder / shells-fired action, from recordPlayerAction. */
@@ -165,7 +176,20 @@ typedef struct BOLO_PACK_ATTR {
     uint32_t tick;
     uint8_t  player;
     uint8_t  action;        /* AttrActionKind */
+    uint8_t  mapX;          /* map cell of the action (v2+) */
+    uint8_t  mapY;
 } AttrActionRecord;
+
+/* Dead (0-armour) pillbox scooped into a tank's inventory. Backs the
+ * dead-pill pickup-spree highlight signal. (v2+) */
+typedef struct BOLO_PACK_ATTR {
+    uint8_t  type;          /* ATTR_REC_PICKUP */
+    uint32_t tick;
+    uint8_t  picker;        /* tank slot that grabbed it */
+    uint8_t  pillIndex;
+    uint8_t  mapX;
+    uint8_t  mapY;
+} AttrPickupRecord;
 
 /* Per-slot identity, captured once in the header so offline rebuild can name
  * and team-group each slot without a live roster. */
@@ -188,11 +212,12 @@ typedef struct BOLO_PACK_ATTR {
 
 #pragma pack(pop)
 
-BOLO_STATIC_ASSERT(sizeof(AttrDamageRecord)  == 12, attr_damage_size);
-BOLO_STATIC_ASSERT(sizeof(AttrKillRecord)    == 10, attr_kill_size);
-BOLO_STATIC_ASSERT(sizeof(AttrCaptureRecord) == 10, attr_capture_size);
-BOLO_STATIC_ASSERT(sizeof(AttrLgmRecord)     ==  7, attr_lgm_size);
-BOLO_STATIC_ASSERT(sizeof(AttrActionRecord)  ==  7, attr_action_size);
+BOLO_STATIC_ASSERT(sizeof(AttrDamageRecord)  == 14, attr_damage_size);
+BOLO_STATIC_ASSERT(sizeof(AttrKillRecord)    == 12, attr_kill_size);
+BOLO_STATIC_ASSERT(sizeof(AttrCaptureRecord) == 12, attr_capture_size);
+BOLO_STATIC_ASSERT(sizeof(AttrLgmRecord)     ==  9, attr_lgm_size);
+BOLO_STATIC_ASSERT(sizeof(AttrActionRecord)  ==  9, attr_action_size);
+BOLO_STATIC_ASSERT(sizeof(AttrPickupRecord)  ==  9, attr_pickup_size);
 BOLO_STATIC_ASSERT(sizeof(AttrSlotIdentity)  == 2 + PACKET_MAX_PLAYER_NAME, attr_slot_size);
 BOLO_STATIC_ASSERT(sizeof(AttrTrackHeader)   == 12 + MAX_TANKS * sizeof(AttrSlotIdentity), attr_header_size);
 
