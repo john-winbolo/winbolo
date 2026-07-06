@@ -33,9 +33,6 @@ local KIND_NORMAL = cpf.KIND_NORMAL
 local KIND_PILL   = cpf.KIND_PILL
 
 local last_strategic_goal = nil  -- track to avoid spamming logs
--- Technique selection: which attack method to use against hostile pills.
--- Priority: pill placement > wall-shield > hardline (bpc)
--- Returns "pill_place", "wall_shield", or "hardline"
 -- TTK-vs-TTI intercept penalty: looks at every enemy tank, computes
 -- their time-to-arrive at (target_mx, target_my) and compares to our
 -- time-to-kill (= target_hp * TTK_TICKS_PER_HIT). If they can intercept
@@ -60,30 +57,6 @@ local function intercept_penalty_ttk(target_mx, target_my, target_hp, enemy_tank
     end
   end
   return worst
-end
-
-local function pick_attack_technique(world, info, state)
-  -- Pill placement is always preferred when pills are available
-  if (info.carried_pills or 0) > 0 then
-    return "pill_place"
-  end
-  -- Check for dead friendly pills on the map we could pick up
-  for _, p in pairs(world.pills) do
-    if p.owner == "friendly" and p.health == 0 then
-      return "pill_place"
-    end
-  end
-  -- Opening phase: prefer hardline for speed (skip wall-shield)
-  if state.phase == "opening" then
-    return "hardline"
-  end
-  -- No friendly pills: check for wall-shield (need trees and LGM)
-  if C.WALL_SHIELD_ENABLED and (info.trees or 0) >= C.WALL_SHIELD_MIN_TREES
-     and info.man_status == C.LGM_INTANK and not info.inboat then
-    return "wall_shield"
-  end
-  -- Fallback: hardline (bpc)
-  return "hardline"
 end
 
 -- Save/restore last_strategic_goal around lookahead calls so the nested
@@ -519,10 +492,10 @@ local function goal_group(kind)
 end
 
 -- =========================================================================
--- Resolve an attack pill winner into a concrete goal with technique,
--- standoff positions, and wall-shield planning.
--- Reuses the existing pick_attack_technique, attack.get_standoff,
--- attack.pick_standoff infrastructure.
+-- Resolve an attack pill winner into a concrete goal: always the unified
+-- plan_position (PPT) take with standoff positioning. Wall-shield vs. hardline
+-- vs. pillbox-as-blocker is decided later inside the attack_pill substate
+-- machine, not here. Uses attack.get_standoff to seed the standoff tile.
 -- =========================================================================
 local function resolve_attack_goal(pill, pid, world, info, state)
   local pk = U.mkey(pill.mx, pill.my)
@@ -2224,13 +2197,18 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
           sc3 = score - s0
         end
 
-        -- 4. Pill spacing
+        -- 4. Pill spacing: exponential clustering penalty inside the target gap,
+        --    small bonus for a well-spaced-but-still-supporting spot. Aims for a
+        --    >= PILL_SPACING-tile gap between friendly pills (see constants).
         do
           local s0 = score
           local pill_dist = nearest_friendly_pill_dist(world, cx, cy)
           if pill_dist < C.STRATEGIC_PLACE_PILL_SPACING then
-            score = score - C.STRATEGIC_PLACE_PILL_PENALTY
-          elseif pill_dist >= 2 and pill_dist <= 4 then
+            local deficit = C.STRATEGIC_PLACE_PILL_SPACING - pill_dist
+            local pen = C.STRATEGIC_PLACE_PILL_PENALTY_W
+                      * (C.STRATEGIC_PLACE_PILL_PENALTY_BASE ^ deficit - 1)
+            score = score - math.min(C.STRATEGIC_PLACE_PILL_PENALTY_CAP, pen)
+          elseif pill_dist <= C.STRATEGIC_PLACE_SPACING_BONUS_MAX then
             score = score + C.STRATEGIC_PLACE_SPACING_BONUS
           end
           sc4 = score - s0
@@ -2704,8 +2682,14 @@ function M.get_strategic_place_heatmap(state, world, info)
 
         do
           local pd = nearest_friendly_pill_dist(world, cx, cy)
-          if pd < C.STRATEGIC_PLACE_PILL_SPACING then score = score - C.STRATEGIC_PLACE_PILL_PENALTY
-          elseif pd >= 2 and pd <= 4 then score = score + C.STRATEGIC_PLACE_SPACING_BONUS end
+          if pd < C.STRATEGIC_PLACE_PILL_SPACING then
+            local deficit = C.STRATEGIC_PLACE_PILL_SPACING - pd
+            local pen = C.STRATEGIC_PLACE_PILL_PENALTY_W
+                      * (C.STRATEGIC_PLACE_PILL_PENALTY_BASE ^ deficit - 1)
+            score = score - math.min(C.STRATEGIC_PLACE_PILL_PENALTY_CAP, pen)
+          elseif pd <= C.STRATEGIC_PLACE_SPACING_BONUS_MAX then
+            score = score + C.STRATEGIC_PLACE_SPACING_BONUS
+          end
         end
 
         do
@@ -2974,196 +2958,138 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
   -- Team-pill floor removed: reposition regardless of how many pills are built.
   local built_block = false
 
-  local best_pill, best_pid, best_pcost
-  local bCat, bCov, bAdj, bSurp, bOver, bLeg, bTank = nil, 0, 0, 0, 0, 0, 0
-  local cands = {}   -- all eligible candidates this replan (for the top-N score viz)
+  local cands = {}   -- EVERY live friendly/allied pill, scored, for the score board
+  local enemy_act = state._repo_enemy_activity or {}
+  -- List EVERY live friendly/allied pill. Only BACK-role pills are ELIGIBLE to
+  -- win + be moved (front/aggro/util are shown in the board but never picked).
+  -- Position score only here (travel added fresh per-replan in the read path so
+  -- distance-to-us influences WHICH pill wins). Lower = more worth moving.
   for pid, p in pairs(world.pills) do
-    -- R1: only BACK pills are repositioned ("roll forward" into the front);
-    -- front and aggro pills are NEVER moved. util (in-use) is excluded too.
-    -- And only when back is in surplus (see back_surplus above). built_block
-    -- hard-floors it: no candidate at all while too few pills are built.
-    if not built_block
-       and back_surplus > 0
-       and p.owner == "friendly" and p.health > 0 and not p._in_use
-       -- Cheap cached pre-filter, THEN a forced fresh reclassify before we'll
-       -- commit to moving it. The cached "back" can be up to 60s stale; the
-       -- front line may have advanced over the pill since, in which case our
-       -- allies already see it as "front" and would never move it. The fresh
-       -- check (only reached for cached-back pills, thanks to short-circuit)
-       -- makes our reposition decision agree with the current influence field.
-       and PP.role_of(p, state.tick) == "back"
-       and PP.role_of(p, state.tick, true) == "back"
-       and not (ally_repos and (ally_repos[pid]
-                                or ally_repos["t:" .. p.mx .. "," .. p.my])) then
-      local cat = PP.role_of(p, state.tick)   -- fresh role (just refreshed above)
-      local inf = cpf.influence_at(p.mx, p.my)
+    if (p.owner == "friendly" or p.owner == "allied")
+       and (p.health or 0) > 0 and not p.in_tank and not p._in_use then
+      local cat = PP.role_of(p, state.tick)
+      -- Fresh reclassify (cached "back" can be ~60s stale) + ally-claim skip
+      -- (a pill an ally is already repositioning is off-limits) gate eligibility.
+      local eligible = (cat == "back")
+                       and PP.role_of(p, state.tick, true) == "back"
+                       and not (ally_repos and (ally_repos[pid]
+                                or ally_repos["t:" .. p.mx .. "," .. p.my]))
 
-      -- Coverage within fire range (exclude self from the pill count).
-      local pills_cov = count_pills_near(world, p.mx, p.my, C.PILL_FIRE_RANGE, "friendly") - 1
-      if pills_cov < 0 then pills_cov = 0 end
-      local bases_cov = count_friendly_bases_near(world, p.mx, p.my, C.PILL_FIRE_RANGE)
-      -- Base coverage is always a KEEP (raise cost) — a pill guarding a friendly
-      -- base has a real job. Pill coverage is graded: exactly ONE nearby friendly
-      -- pill is good mutual support (keep, raise cost), but every pill BEYOND the
-      -- first means this back spot is over-covered/redundant, so each extra one
-      -- DISCOUNTS (roll the surplus pill forward). cov may go negative = discount.
-      local cov = bases_cov * C.PILL_REPOSITION_COVERAGE_BASE_W
-      if pills_cov >= 1 then
-        cov = cov + C.PILL_REPOSITION_COVERAGE_PILL_W
-            - (pills_cov - 1) * C.PILL_REPOSITION_EXCESS_PILL_W
-      end
+      -- imbalance discount: how far THIS pill's category is over its allotment.
+      local surplus   = math.max(0, (counts[cat] or 0) - (targets[cat] or 0))
+      local surp_disc = surplus * (C.PILL_REPOSITION_SURPLUS_W or 100)
 
-      -- Adjacency: friendly pills in the 8 surrounding tiles (double-take risk).
-      local adj = 0
+      -- cardinal-adjacency discount: a FRIENDLY pill 1 tile N/S/E/W (redundant
+      -- clustering worth thinning). Cardinal only — diagonals don't count.
+      local card = 0
       if world.pill_at then
-        for dy = -1, 1 do
-          for dx = -1, 1 do
-            if not (dx == 0 and dy == 0) then
-              local entries = world.pill_at[(p.my + dy) * 256 + (p.mx + dx)]
-              if entries then
-                for _, e in ipairs(entries) do
-                  local op = e.pill
-                  if op and op.owner == "friendly" and (op.health or 0) > 0 then
-                    adj = adj + 1
-                  end
-                end
-              end
+        local COFF = { -256, 256, -1, 1 }   -- N, S, W, E in my*256+mx keyspace
+        for _, off in ipairs(COFF) do
+          local entries = world.pill_at[p.my * 256 + p.mx + off]
+          if entries then
+            for _, e in ipairs(entries) do
+              local op = e.pill
+              if op and (op.owner == "friendly" or op.owner == "allied")
+                 and (op.health or 0) > 0 then card = card + 1 end
             end
           end
         end
       end
+      local card_disc = card * (C.PILL_REPOSITION_CARDINAL_ADJ_W or 40)
 
-      local surplus   = math.max(0, (counts[cat] or 0) - (targets[cat] or 0))
-      local surp_disc = surplus * C.PILL_REPOSITION_SURPLUS_W
-      local adj_pen   = adj * C.PILL_REPOSITION_ADJACENCY_W
-      local over_disc = (cat == "aggro" and inf < -50) and C.PILL_REPOSITION_OVEREXTEND_W or 0
+      -- base-protection penalty: friendly bases the pill covers (x W). A pill
+      -- guarding bases has a real job — more bases = more penalty to move it.
+      local bases_cov = count_friendly_bases_near(world, p.mx, p.my, C.PILL_FIRE_RANGE)
+      local base_pen  = bases_cov * (C.PILL_REPOSITION_BASE_PROTECT_W or 80)
 
-      -- Legacy "bad spot" score (aIndy: orphaned from bases + crossfire from
-      -- enemy pills + bad terrain). It genuinely measured spot quality, so keep
-      -- it as a normalized SECONDARY signal: a one-directional badness that only
-      -- discounts a bad spot toward repositioning, capped so it can't override
-      -- the balance-driven surplus term.
-      local legacy = 0
-      local nearest_base = math.huge
-      for _, b in pairs(world.bases) do
-        if b.owner == "friendly" then
-          local bd = U.mdist(p.mx, p.my, b.mx, b.my)
-          if bd < nearest_base then nearest_base = bd end
-        end
+      -- enemy-activity penalty (decaying): stamped per-tick by reposition_vote
+      -- when a hostile pill/LGM was seen near this pill. Repositioning kills the
+      -- pill temporarily — dangerous while enemies are (or recently were) near.
+      local act_pen = 0
+      local seen = enemy_act[pid]
+      if seen then
+        local decay = C.PILL_REPOSITION_ENEMY_ACTIVITY_DECAY_TICKS or 1500
+        act_pen = (C.PILL_REPOSITION_ENEMY_ACTIVITY_W or 250)
+                  * math.max(0, 1 - ((state.tick or 0) - seen) / decay)
       end
-      if nearest_base > C.PILL_REPOSITION_ORPHAN_DIST then
-        legacy = legacy + (nearest_base - C.PILL_REPOSITION_ORPHAN_DIST) * 5
-      end
-      local hostile_near = 0
-      for _, op in pairs(world.pills) do
-        if (op.owner == "hostile" or op.owner == "neutral") and (op.health or 0) > 0
-           and U.mdist(p.mx, p.my, op.mx, op.my) <= C.PILL_FIRE_RANGE then
-          hostile_near = hostile_near + 1
-        end
-      end
-      legacy = legacy + hostile_near * 30
-      local ptt = U.ttype(p.mx, p.my)
-      if ptt == C.T_SWAMP or ptt == C.T_RUBBLE or ptt == C.T_CRATER then
-        legacy = legacy + 20
-      end
-      local legacy_disc = math.min(legacy, C.PILL_REPOSITION_LEGACY_CAP or 75)
 
-      -- Enemy-tank penalty: +W per hostile tank within (fire range + pad),
-      -- plus an extra UNPROTECTED penalty when tanks are near AND no other
-      -- friendly pill covers this one (pills_cov, already self-excluded).
-      -- Per-pill, so it both deprioritizes a threatened pill as the move
-      -- target and raises the final cost.
+      -- enemy-tank penalty (safety): hostile tanks loitering within range.
       local tanks_near = 0
       for _, et in ipairs(enemy_tanks) do
-        if U.mdist(p.mx, p.my, et.mx, et.my) <= tank_radius then
-          tanks_near = tanks_near + 1
-        end
+        if U.mdist(p.mx, p.my, et.mx, et.my) <= tank_radius then tanks_near = tanks_near + 1 end
       end
       local tank_pen = tanks_near * (C.PILL_REPOSITION_ENEMY_TANK_W or 150)
-      if tanks_near > 0 and pills_cov == 0 then
-        tank_pen = tank_pen + (C.PILL_REPOSITION_UNPROTECTED_PENALTY or 100)
-      end
 
-      -- Exponential redundancy discount: each friendly pill already covering this
-      -- one makes it exponentially cheaper to relocate (a redundant back pill is
-      -- the ideal thing to move). pills_cov is self-excluded above.
-      local exp_disc = 0
-      if pills_cov > 0 then
-        exp_disc = math.min(C.REPOSITION_COVERAGE_EXP_CAP or 400,
-                            (C.REPOSITION_COVERAGE_EXP_W or 60)
-                            * ((C.REPOSITION_COVERAGE_EXP_BASE or 1.7) ^ pills_cov - 1))
-      end
+      local pos = (C.PILL_REPOSITION_BASE_COST or 500)
+                  + base_pen + act_pen + tank_pen - surp_disc - card_disc
 
-      -- Lower = more worth repositioning.
-      local pcost_pos = C.PILL_REPOSITION_BASE_COST + cov + tank_pen
-                        - surp_disc - adj_pen - over_disc - legacy_disc - exp_disc
-
-      cands[#cands + 1] = { pid = pid, mx = p.mx, my = p.my, score = pcost_pos }
-
-      if not best_pcost or pcost_pos < best_pcost then
-        best_pcost = pcost_pos; best_pill = p; best_pid = pid
-        bCat, bCov, bAdj, bSurp, bOver, bLeg, bTank = cat, cov, adj_pen, surp_disc, over_disc, legacy_disc, tank_pen
-      end
+      cands[#cands + 1] = { pid = pid, mx = p.mx, my = p.my, pos = pos,
+                            cat = cat, eligible = eligible,
+                            surp = surp_disc, card = card_disc, base = base_pen,
+                            act = act_pen, tank = tank_pen }
     end
   end
 
-  -- Top-N candidates (lowest cost = most worth moving) for the score visualizer.
-  if #cands > 0 then
-    table.sort(cands, function(a, b) return a.score < b.score end)
-    local topn = C.REPOSITION_VOTE_SCORE_TOPN or 3
-    for i = #cands, topn + 1, -1 do cands[i] = nil end
-    state._repo_topN = cands
+  -- Cache the travel-free position scan (survives across ticks). The read path
+  -- below adds fresh per-replan travel to each candidate, re-ranks, and picks
+  -- the winner — so distance-to-us influences WHICH pill is chosen. _repo_topN /
+  -- _repo_candidate are (re)built there each replan.
+  state._repo_score = {
+    tick = state.tick, cands = cands,
+    counts = counts, targets = targets, back_surplus = back_surplus, built_count = built_count,
+  }
+  if score_only then return nil end
+  end   -- end decoupled position-scan block (run on a quiet tick via M.rescan_reposition)
+
+  -- ── Read path (every replan): add fresh travel to each cached candidate,
+  --    re-rank, pick the winner among BACK-eligible pills, then decide cost. ──
+  local sc = state._repo_score
+  local counts, targets = sc.counts, sc.targets
+  local back_surplus = sc.back_surplus
+  local now_tick = state.tick or 0
+  local DIST_W = C.PILL_REPOSITION_DISTANCE_W or 1.0
+
+  -- Total = position score + Dijkstra travel (tank -> pill). Unreachable = huge.
+  -- Winner = lowest-total BACK-eligible pill; every pill keeps its total for the
+  -- score board (ineligible ones shown but never selected).
+  local best_pill, best_pid, best_total, best_cand
+  for _, c in ipairs(sc.cands or {}) do
+    local tv = travel_cost_to_pill(c.mx, c.my, boat)
+    c.travel = (tv == math.huge) and 1e7 or (tv * DIST_W)
+    c.score  = c.pos + c.travel
+    local lp = world.pills[c.pid]
+    if c.eligible and lp and (lp.health or 0) > 0
+       and (not best_total or c.score < best_total) then
+      best_total = c.score; best_pid = c.pid; best_pill = lp; best_cand = c
+    end
+  end
+
+  -- Score board: EVERY pill, sorted by total (ineligible kept, tagged in viz).
+  if sc.cands and #sc.cands > 0 then
+    table.sort(sc.cands, function(a, b) return (a.score or 0) < (b.score or 0) end)
+    state._repo_topN = sc.cands
   else
     state._repo_topN = nil
   end
-
-  -- Cache the scan for the cheap cache-read path below + the vote module.
-  state._repo_score = {
-    tick = state.tick, best_pid = best_pid, best_pcost = best_pcost,
-    bCat = bCat, bCov = bCov, bAdj = bAdj, bSurp = bSurp, bOver = bOver, bLeg = bLeg, bTank = bTank,
-    counts = counts, targets = targets, back_surplus = back_surplus, built_count = built_count,
-  }
   if best_pill then
     local cand = state._repo_candidate or {}
     cand.pid = best_pid; cand.mx = best_pill.mx; cand.my = best_pill.my
-    cand.score = best_pcost or 0; cand.tick = state.tick
+    cand.score = best_total or 0; cand.tick = now_tick
     state._repo_candidate = cand   -- can_carry refreshed each tick by reposition_vote
   else
     state._repo_candidate = nil
   end
-  if score_only then return nil end
-  end   -- end decoupled position-scan block (run on a quiet tick via M.rescan_reposition)
 
-  -- Cheap cache-read path: scan results from state._repo_score + the fresh,
-  -- per-tick terms (few-pills penalty, travel, team time-discount) below.
-  local sc = state._repo_score
-  local counts, targets = sc.counts, sc.targets
-  local back_surplus = sc.back_surplus
-  local best_pid     = sc.best_pid
-  local best_pill    = best_pid and world.pills[best_pid] or nil
-  local best_pcost   = sc.best_pcost
-  local bCat, bCov, bAdj, bSurp, bOver, bLeg, bTank =
-        sc.bCat, sc.bCov, sc.bAdj, sc.bSurp, sc.bOver, sc.bLeg, sc.bTank
-  -- Few-pills penalty stays FRESH each replan (cheap perc lookup): with the team
-  -- down to a handful of pills, taking one offline to reposition is too risky.
-  local perc = state.perc
-  local total = (counts.back or 0) + (counts.front or 0) + (counts.aggro or 0) + (counts.utility or 0)
-  local team_pill_total = perc
-        and ((perc.friendly_pill_count or 0) + (perc.allied_pill_count or 0))
-        or (total + (info.carried_pills or 0))
-  local few_pill_pen = (team_pill_total <= (C.PILL_REPOSITION_FEW_PILLS_THRESHOLD or 3))
-                       and (C.PILL_REPOSITION_FEW_PILLS_PENALTY or 200) or 0
-
-  -- ── Reposition lock-in ────────────────────────────────────────────────
-  -- Once committed to repositioning a pill, hold that choice at a low fixed
-  -- cost so the goal doesn't churn between candidates or get out-competed by
-  -- routine goals. Released when the target pill is demolished (dies / gone)
-  -- or after PILL_REPOSITION_LOCK_TICKS (~15s). The lock cost is only 30, so
-  -- genuinely cheaper survival goals (flee/refuel) can still preempt.
+  -- ── Reposition lock-in (gated on APPROVAL) ──────────────────────────────
+  -- In win-then-vote the goal becomes state.goal at its honest BID cost BEFORE
+  -- any vote, so the lock must NOT engage merely on "this is the current goal"
+  -- (that would freeze the bid at lock cost and skip the vote). It engages only
+  -- once the team vote APPROVED this pill for us, then holds the move at the
+  -- fixed lock cost through the drive+shoot phase so nothing steals it mid-swap.
+  -- Released when the pill is gone/dead (pickup handoff) or LOCK_TICKS elapses.
   local repos_locked = false
-  local now_tick = state.tick or 0
   if state.goal and state.goal.kind == "capture_pill" and state.goal.reposition
-     and state.goal.target_id then
+     and state.goal.target_id and state._repo_approved_pid == state.goal.target_id then
     local lp = world.pills[state.goal.target_id]
     if lp and lp.owner == "friendly" and (lp.health or 0) > 0 then
       if not state._reposition_lock_tick then state._reposition_lock_tick = now_tick end
@@ -3171,14 +3097,18 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
         best_pill, best_pid = lp, state.goal.target_id   -- force the committed pill
         repos_locked = true
       else
-        state._reposition_lock_tick = nil   -- 15s elapsed: release the lock
+        state._reposition_lock_tick = nil
       end
     else
-      state._reposition_lock_tick = nil     -- pill demolished / gone: release
+      state._reposition_lock_tick = nil
     end
   else
-    state._reposition_lock_tick = nil       -- no longer on a reposition goal
+    state._reposition_lock_tick = nil
   end
+
+  local approved  = (state._repo_approved_pid ~= nil) and (best_pid ~= nil)
+                    and (state._repo_approved_pid == best_pid)
+  local my_voting = state._repo_my_vote and best_pid and state._repo_my_vote.pid == best_pid
 
   -- Finishing a swap: if our committed reposition pill is already DEAD (we shot
   -- it down), the reposition is EARNED and we're in the pickup/place phase —
@@ -3226,16 +3156,18 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
     reject = "inboat"
   elseif state.phase == "opening" then
     reject = "opening"   -- need pills in place during the opening
-  end
-
-  -- VOTE GATE (fully replace): a reposition never fires off raw cost. The move
-  -- only becomes actionable once a team vote APPROVED this pill for us
-  -- (state._repo_approved_pid) — unless we're already committed (repos_locked /
-  -- finishing the swap, which set reject above). Until approval the pool yields
-  -- "awaiting_vote" so nothing commits. reposition_vote.lua runs the protocol.
-  if C.REPOSITION_VOTE_ENABLED ~= false and not reject and not repos_locked
-     and state._repo_approved_pid ~= best_pid then
-    reject = "awaiting_vote"
+  elseif not repos_locked and not approved and not my_voting then
+    -- Win-then-vote pacing: a just-failed team vote or a very recently executed
+    -- move blacks out fresh proposals. If we can't open a vote, don't win the
+    -- pool (else we'd sit on the pill unable to act). Mirrors reposition_vote's
+    -- OPEN pacing gates.
+    if state._repo_fail_tick
+       and (now_tick - state._repo_fail_tick) < (C.REPOSITION_VOTE_FAIL_COOLDOWN or 1500) then
+      reject = "vote_cooldown"
+    elseif state._repo_last_seen_tick
+       and (now_tick - state._repo_last_seen_tick) < (C.REPOSITION_VOTE_RECENT_MEMORY_TICKS or 1500) then
+      reject = "recent_move"
+    end
   end
 
   if reject then
@@ -3254,85 +3186,38 @@ local function eval_reposition_pill(state, world, info, tmx, tmy, boat, ammo, sc
     }
   end
 
-  -- APPROVED MOVE: a passed team vote granted THIS bot (the initiator) this
-  -- exact pill. Drop the cost to a fixed, routine-goal-beating 80 for the whole
-  -- approval window so the move actually wins the pool and gets executed —
-  -- before this, an approved reposition only exposed its raw ~900 path cost and
-  -- never beat the bot's everyday goals, so no approved move was ever consumed.
-  -- Only sub-80 survival/refuel goals preempt. reposition_vote.lua keeps the
-  -- approval live for ~30s (REPOSITION_VOTE_APPROVAL_TTL). Once locked the cost
-  -- chain below holds it at the cheaper PILL_REPOSITION_LOCK_COST.
-  if not repos_locked and state._repo_approved_pid == best_pid then
-    return {
-      cost = C.REPOSITION_APPROVED_COST or 80,
-      goal = { kind = "capture_pill", mx = best_pill.mx, my = best_pill.my,
-               wx = U.m2w(best_pill.mx), wy = U.m2w(best_pill.my),
-               target_id = best_pid, reposition = true },
-      desc = BRAIN_POOL_VIZ and string.format(
-             "APPROVED{%d} reposition pill#%d@(%d,%d) — won team vote, ~%ds window left",
-             C.REPOSITION_APPROVED_COST or 80, best_pid, best_pill.mx, best_pill.my,
-             math.floor(((C.REPOSITION_VOTE_APPROVAL_TTL or 1500)
-                         - ((state.tick or 0) - (state._repo_approved_tick or 0))) / 50)) or "",
-    }
-  end
-
-  -- Actionable: travel (to a passable neighbour of the pill, not its
-  -- impassable tile) + balance-driven position cost.
-  local pcost = travel_cost_to_pill(best_pill.mx, best_pill.my, boat)
-  -- Team time discount: -5 per 30s since anyone last repositioned, capped at
-  -- -50. Resets to 0 the moment any teammate repositions (state.last_team_
-  -- reposition_tick is bumped to now in the tick loop). Makes the team slowly
-  -- more willing to reposition, but one move at a time. Kept gentle so
-  -- repositioning stays a slow background tidy-up, not a frequent pull.
-  local team_disc = 0
-  if state.last_team_reposition_tick then
-    local elapsed = (state.tick or 0) - state.last_team_reposition_tick
-    team_disc = math.min(50, math.floor(elapsed / 1500) * 5)
-  end
-  -- Locked reposition is held at the fixed lock cost; otherwise the all-plus
-  -- formula with the new few-pills and enemy-tank penalties folded in.
+  -- Win-then-vote cost:
+  --   * locked / vote-APPROVED → fixed LOCK cost so the committed swap wins and
+  --     completes without churn (only sub-lock survival goals preempt);
+  --   * otherwise (a BID)      → the HONEST total (position + travel). It
+  --     competes in the pool on merit; only if it WINS does reposition_vote open
+  --     a team vote. The destructive shoot is separately gated on approval.
   local cost
-  if repos_locked then
+  if repos_locked or approved then
     cost = C.PILL_REPOSITION_LOCK_COST or 30
   else
-    cost = math.max(1, pcost + best_pcost - team_disc + few_pill_pen)
+    cost = math.max(1, best_total)
   end
 
+  local bc = best_cand or {}
   return {
     cost = cost,
-    -- Reposition = capture_pill on our OWN pill: drive right up to it, then
-    -- the reposition shoot_pill substate turns to face it and fires until it's
-    -- dead, after which the normal capture pickup + place_pill re-drop runs.
+    -- Reposition = capture_pill on our OWN pill: drive up to it, the reposition
+    -- shoot substate fires until it's dead, then the normal dead-pill capture
+    -- pickup + place re-drop runs. awaiting_vote is true on a BID (not yet
+    -- approved) — the destructive shoot is gated on approval in steering.lua.
     goal = { kind = "capture_pill", mx = best_pill.mx, my = best_pill.my,
              wx = U.m2w(best_pill.mx), wy = U.m2w(best_pill.my),
-             target_id = best_pid, reposition = true },
-    -- All-plus formula; discount terms carry their own minus sign so a
-    -- negative value in the table reads clearly as a discount. Penalty terms
-    -- (tank, few) are positive. When locked, show the lock + ticks remaining.
-    desc = BRAIN_POOL_VIZ and (repos_locked and string.format(
-           "LOCK{%.0f}"..
-           "||committed reposition held at the fixed PILL_REPOSITION_LOCK_COST until the lock expires (~%ds left) or the pill is gone — prevents flapping mid-swap. pill#%d@(%d,%d)"..
-           "|LOCK:fixed hold cost while a reposition is committed (PILL_REPOSITION_LOCK_TICKS window); the live all-plus formula is suspended until release",
-           cost,
-           math.floor(((C.PILL_REPOSITION_LOCK_TICKS or 750)
-                       - (now_tick - (state._reposition_lock_tick or now_tick))) / 50),
-           best_pid, best_pill.mx, best_pill.my)
-         or string.format(
-           "A*{%.0f} + base{%.0f} + cov{%.0f} + surplus{%.0f} + adj{%.0f} + over{%.0f} + legacy{%.0f} + tank{%.0f} + few{%.0f} + team{%.0f}"..
-           "||reposition = capture our OWN pill then re-drop it where the portfolio needs it; lower cost = more worth moving. cat=%s pill#%d@(%d,%d)  balance back %d/%d front %d/%d aggro %d/%d"..
-           "|A*:dijkstra travel cost to a passable neighbour of the pill"..
-           "|base:flat PILL_REPOSITION_BASE_COST"..
-           "|cov:coverage need at the pill's category (higher = more needed there → costlier to remove)"..
-           "|surplus:discount — surplus pills in this category x SURPLUS_W (more spares → cheaper to move one)"..
-           "|adj:discount — friendly pills adjacent to it x ADJACENCY_W (well-clustered → less worth moving)"..
-           "|over:discount — aggro pill overextended (influence < -50) → OVEREXTEND_W"..
-           "|legacy:discount — aIndy 'bad spot' badness (orphaned from bases + hostile-pill crossfire + bad terrain), capped at LEGACY_CAP"..
-           "|tank:penalty — hostile tanks within range of the pill x ENEMY_TANK_W (+UNPROTECTED when uncovered)"..
-           "|few:penalty — too few friendly pills on the map (don't thin the line further)"..
-           "|team:discount — time since any teammate last repositioned (gentle, one move at a time)",
-           pcost, C.PILL_REPOSITION_BASE_COST, bCov, -bSurp, -bAdj, -bOver, -bLeg, bTank, few_pill_pen, -team_disc,
-           tostring(bCat), best_pid, best_pill.mx, best_pill.my,
-           counts.back, targets.back, counts.front, targets.front, counts.aggro, targets.aggro)) or "",
+             target_id = best_pid, reposition = true,
+             awaiting_vote = not (repos_locked or approved) },
+    desc = BRAIN_POOL_VIZ and string.format(
+           "%s{%.0f} reposition pill#%d@(%d,%d) cat=%s | base%.0f -surp%.0f -card%.0f +basep%.0f +act%.0f +tank%.0f +trav%.0f"..
+           "||list EVERY friendly pill, only BACK eligible; lower=more worth moving. if this BID wins the pool a team vote opens; the shoot is gated on approval. balance back %d/%d front %d/%d aggro %d/%d",
+           (repos_locked and "LOCK" or (approved and "APPROVED" or "BID")),
+           cost, best_pid, best_pill.mx, best_pill.my, tostring(bc.cat),
+           C.PILL_REPOSITION_BASE_COST or 500, -(bc.surp or 0), -(bc.card or 0),
+           (bc.base or 0), (bc.act or 0), (bc.tank or 0), (bc.travel or 0),
+           counts.back, targets.back, counts.front, targets.front, counts.aggro, targets.aggro) or "",
   }
 end
 

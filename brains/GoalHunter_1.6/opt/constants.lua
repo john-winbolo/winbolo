@@ -124,7 +124,7 @@ M.PILL_FIRE_RANGE   = 8    -- actual pillbox firing range: PILLBOX_RANGE(2048) /
 --     front role if it stands ON a front-band tile (the yellow-circle "3"
 --     overlay). The 2-tile halo let a repositioned pill's OLD spot pass as
 --     a "front" cell and dodge the back-surplus skip → rebuild-in-place.
-M.FRONT_NEAR_RADIUS       = 2  -- identify: existing pill counts front within this of the band
+M.FRONT_NEAR_RADIUS       = 3  -- identify: existing pill counts front within this of the band
 M.FRONT_NEAR_RADIUS_PLACE = 0  -- place: candidate tile must be ON the band to fill "front"
 M.MIN_TREEHIDE_DIST_MAP = 3  -- MIN_TREEHIDE_DIST (768) in map tiles
 M.CROSSFIRE_MULTIPLIER_ENABLED = false  -- multiply danger by number of pills covering each tile
@@ -173,7 +173,7 @@ M.SHELLS_LOW       = 20   -- seek resupply (~15 to kill a pill/base)
 -- cause for resupply, so it goes all-in (joins any blitz, suicide-charges the
 -- pill instead of holding at standoff). Cleared the moment shells recover to
 -- AMMO_DEPRIVED_SHELLS. 50 ticks/sec, so 6000 = 120 s.
-M.AMMO_DEPRIVED_SHELLS = M.SHELLS_LOW   -- "min ammo" line for deprivation
+M.AMMO_DEPRIVED_SHELLS = 10             -- "min ammo" line for deprivation: the clock runs only while shells are BELOW this and resets the instant they recover to it. Lowered 20->10 so a tank isn't tracked toward decoy until genuinely low (<10) and sheds decoy status as soon as it's back to 10 (was: clock ran below 20 and only reset once shells climbed all the way back to 20)
 M.AMMO_DEPRIVED_TICKS  = 3000           -- 60 s continuously below it (was 120 s — bots moped too long before going decoy)
 
 -- TEST AID (set 0 before merging to a release): freeze EVERY bot for this
@@ -1003,8 +1003,15 @@ M.STRATEGIC_PLACE_AGGRO_SEARCH_RADIUS = 14  -- wider scan when filling the AGGRO
 M.STRATEGIC_PLACE_FRONT_WEIGHT  = 3.0   -- bonus per tile of proximity to front line
 M.STRATEGIC_PLACE_BASE_WEIGHT   = 2.0   -- bonus per tile of proximity to nearest friendly base
 M.STRATEGIC_PLACE_THREAT_WEIGHT = 1.5   -- penalty per unit of threat.at(pos)
-M.STRATEGIC_PLACE_PILL_SPACING  = 4     -- minimum tile distance from existing friendly pills
-M.STRATEGIC_PLACE_PILL_PENALTY  = 50    -- penalty for being within PILL_SPACING of existing pill
+M.STRATEGIC_PLACE_PILL_SPACING  = 5     -- target minimum tile gap from existing friendly pills
+-- Clustering penalty grows exponentially as a spot crowds an existing friendly
+-- pill: pen = W * (BASE ^ (SPACING - dist) - 1), clamped to CAP. With W=25,
+-- BASE=2, SPACING=5: dist 4→25, 3→75, 2→175, 1→375 (capped 400). Past the
+-- ~150 MIN_SCORE floor by dist 2, so placement effectively refuses < ~3 tiles
+-- and is nudged toward the full 5-tile gap.
+M.STRATEGIC_PLACE_PILL_PENALTY_W    = 25    -- exponential penalty scale
+M.STRATEGIC_PLACE_PILL_PENALTY_BASE = 2.0   -- exponential growth base (per tile closer)
+M.STRATEGIC_PLACE_PILL_PENALTY_CAP  = 400   -- clamp on the clustering penalty
 M.STRATEGIC_PLACE_LOS_WEIGHT    = 0.5   -- bonus per tile of LOS coverage
 M.STRATEGIC_PLACE_LOS_DIRS      = 8     -- number of directions to sample for LOS
 M.STRATEGIC_PLACE_LOS_MAX_RANGE = 8     -- max tiles to trace per LOS ray
@@ -1022,7 +1029,8 @@ M.STRATEGIC_PLACE_UNDERDEFENDED_BONUS = 50    -- bonus per missing defender (tar
 M.STRATEGIC_PLACE_BEYOND_FRONT_PENALTY = 100  -- penalty for placing in enemy territory
 M.STRATEGIC_PLACE_FRONT_PROX_CAP      = 80    -- influence cap for front proximity bonus
 M.STRATEGIC_PLACE_FRONT_PROX_WEIGHT   = 0.5   -- weight for front proximity score
-M.STRATEGIC_PLACE_SPACING_BONUS       = 15    -- bonus for 2-4 tile spacing
+M.STRATEGIC_PLACE_SPACING_BONUS       = 15    -- bonus for a well-spaced spot (>= SPACING, <= BONUS_MAX)
+M.STRATEGIC_PLACE_SPACING_BONUS_MAX   = 8     -- upper tile bound for the spacing bonus (still in mutual fire support)
 M.STRATEGIC_PLACE_OFFENSIVE_THRESHOLD = 0.6   -- strength ratio to switch to offensive
 M.STRATEGIC_PLACE_SPIKE_BONUS         = 80    -- bonus for placing adjacent to hostile base
 -- Carry-time urgency: every tick a pill sits in the tank, place_pill cost
@@ -1348,8 +1356,15 @@ M.FPILL_BARRIER_BONUS           = 80    -- cost reduction when friendly pill is 
 -- portfolio (see pill_portfolio.lua / PILL_REPOSITION_PLAN.md): cost is driven
 -- primarily by category balance (35/45/20 back/front/aggressive).
 M.PILL_REPOSITION_ENABLED       = true
-M.PILL_REPOSITION_BASE_COST     = 500   -- flat floor so reposition isn't trivially cheap (raised 350->500: reposition was firing too often)
-M.PILL_REPOSITION_SURPLUS_W     = 100   -- PRIMARY: discount per pill over its category allotment (trimmed 150->100 to keep cost nearer the floor)
+-- BASE_COST: the honest BID floor. Win-then-vote means this cost must actually
+-- WIN the goal pool for a vote to open, so it is tuned to sit just above routine
+-- combat goals (attack_pill ~88) and above dead-pill capture (~20): a genuinely
+-- worthwhile back pill (surplus + close + safe) dips below the field and wins;
+-- a base-guard / threatened / far pill stays well above and never does. FIRST-
+-- PASS magnitudes — tune SURPLUS/BASE_PROTECT/ACTIVITY/DISTANCE against play.
+-- (Was 500 in the old flat-80-approval flow, where the raw cost never won.)
+M.PILL_REPOSITION_BASE_COST     = 150   -- honest BID floor (must beat the field to trigger a vote)
+M.PILL_REPOSITION_SURPLUS_W     = 50    -- PRIMARY discount per pill over its category allotment (imbalance)
 M.PILL_REPOSITION_COVERAGE_PILL_W = 25  -- cost added for ONE friendly pill covered in fire range (good mutual support: keep)
 M.PILL_REPOSITION_EXCESS_PILL_W   = 35  -- discount per friendly pill BEYOND the first in fire range (over-covered: roll surplus forward)
 M.PILL_REPOSITION_COVERAGE_BASE_W = 20  -- cost added per friendly base covered in fire range
@@ -1368,6 +1383,23 @@ M.PILL_REPOSITION_FEW_PILLS_PENALTY   = 400 -- cost added when the team has few 
 M.PILL_REPOSITION_ENEMY_TANK_PAD      = 5   -- tiles beyond PILL_FIRE_RANGE within which an enemy tank counts as "around" the pill
 M.PILL_REPOSITION_ENEMY_TANK_W        = 150 -- cost added per enemy tank within (PILL_FIRE_RANGE + pad) of the pill
 M.PILL_REPOSITION_UNPROTECTED_PENALTY = 100 -- extra cost when enemy tanks are near AND no friendly pill covers this one (no support)
+-- ── Reposition score v2 (win-then-vote) factors ─────────────────────────────
+-- The reposition score lists EVERY live friendly pill (own + ally); only BACK
+-- pills are eligible to win + be moved. Score (a COST, lower = more worth
+-- moving) = BASE + travel*DIST_W + base_protect + enemy_activity + enemy_tank
+--           - surplus_disc - cardinal_adj_disc. The best eligible pill competes
+-- in the pool at this honest cost; only if it WINS does a team vote open.
+M.PILL_REPOSITION_DISTANCE_W          = 1.0  -- weight on Dijkstra travel cost tank->pill (closer = cheaper)
+M.PILL_REPOSITION_CARDINAL_ADJ_W      = 40   -- discount per FRIENDLY pill 1 tile away in a cardinal dir (N/S/E/W) — thin redundant clusters
+M.PILL_REPOSITION_BASE_PROTECT_W      = 120  -- penalty per friendly base the pill covers (within PILL_FIRE_RANGE) — a base-guard has a real job; more bases = more penalty (strong: one base pushes it out of winning range)
+-- Enemy-activity penalty: decays over DECAY_TICKS. Stamped per-tick whenever a
+-- hostile pill is within PILL_RANGE or a hostile LGM within LGM_RANGE of the
+-- pill (state._repo_enemy_activity[pid] = tick). Repositioning kills the pill
+-- temporarily, so it's dangerous while enemies are (or recently were) near.
+M.PILL_REPOSITION_ENEMY_ACTIVITY_W          = 250  -- penalty at full strength (just-seen)
+M.PILL_REPOSITION_ENEMY_ACTIVITY_PILL_RANGE = 10   -- tiles: hostile PILL within this of the pill = activity
+M.PILL_REPOSITION_ENEMY_ACTIVITY_LGM_RANGE  = 6    -- tiles: hostile LGM within this of the pill = activity
+M.PILL_REPOSITION_ENEMY_ACTIVITY_DECAY_TICKS = 1500 -- ~30s @ 50Hz: penalty decays linearly to 0 over this
 M.PILL_REPOSITION_COOLDOWN_TICKS      = 1500 -- ~30s @ 50Hz: after THIS bot finishes (or abandons) a reposition, it won't START another for this long. Per-bot rate limit so a single tank doesn't churn reposition after reposition. A committed/locked reposition is never blocked by this (it's allowed to finish). 0 disables.
 M.PILL_REPOSITION_LOCK_TICKS          = 750 -- ~15s @ 50Hz: hold a committed reposition until the pill is demolished or this elapses
 M.PILL_REPOSITION_LOCK_COST           = 30  -- locked-in reposition cost (beats routine goal churn; sub-30 survival goals still preempt)
@@ -1381,7 +1413,7 @@ M.PILL_REPOSITION_THRESHOLD     = 50
 -- passes (silence = abstain = yes; any NO blocks). Allies vote NO when moving the
 -- pill would be unsafe or they have a better candidate (see reposition_vote.lua).
 M.REPOSITION_VOTE_ENABLED               = true
-M.REPOSITION_VOTE_WINDOW_TICKS          = 10   -- ticks the initiator waits for NO votes before resolving
+M.REPOSITION_VOTE_WINDOW_TICKS          = 25   -- HARD timeout cap (~0.5s @ 50Hz): the vote resolves EARLY the moment every active ally has cast a ballot (usually a few ticks); this only bounds the wait when an ally stays silent
 -- Pacing model (simple 30/30): the team may MOVE one pill every ~30s
 -- (RECENT_MEMORY, timed from consumption / observed execution — never from
 -- a vote merely passing), and a FAILED vote costs the whole team a flat

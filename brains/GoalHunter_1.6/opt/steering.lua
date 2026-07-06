@@ -991,6 +991,15 @@ local function reposition_steer(state, world, info, goal)
     return nil
   end
 
+  -- Win-then-vote gate: never DEMOLISH the pill until the team vote APPROVED it.
+  -- The bid may drive right up to the pill while the ~10-tick ballot runs
+  -- (harmless), but firing must not start until state._repo_approved_pid grants
+  -- this exact pill. On a failed vote the goal drops before we ever fire.
+  if state._repo_approved_pid ~= goal.target_id then
+    goal.substate = "approach"
+    return nil
+  end
+
   -- In range with a clear line: stop, face the pill, fire until dead / dry.
   goal.substate = "reposition_shoot"
   -- Mark this pill "being demolished" so repair_pill won't try to heal the

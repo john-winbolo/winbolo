@@ -85,6 +85,44 @@ local function nearest_enemy_tank(state, mx, my)
   return best
 end
 
+-- Per-tick: stamp state._repo_enemy_activity[pid] = now whenever a hostile pill
+-- is within PILL_RANGE, or a hostile LGM within LGM_RANGE, of a friendly pill.
+-- goals.eval_reposition_pill reads this as a DECAYING penalty — repositioning
+-- kills the pill temporarily, so it's dangerous while enemies are (or recently
+-- were) near. The stamp must run every tick (LGM sightings are transient); the
+-- decay window means the penalty lingers ~30s after the enemy leaves.
+local function stamp_enemy_activity(state, world, now)
+  if not world or not world.pills then return end
+  local act = state._repo_enemy_activity or {}
+  local PR  = C.PILL_REPOSITION_ENEMY_ACTIVITY_PILL_RANGE or 10
+  local LR  = C.PILL_REPOSITION_ENEMY_ACTIVITY_LGM_RANGE or 6
+  local elgms = (state.perc and state.perc.enemy_lgms) or {}
+  for pid, p in pairs(world.pills) do
+    if (p.owner == "friendly" or p.owner == "allied")
+       and (p.health or 0) > 0 and not p.in_tank then
+      local hot = false
+      for _, op in pairs(world.pills) do
+        if op.owner == "hostile" and (op.health or 0) > 0
+           and tdist(p.mx, p.my, op.mx, op.my) <= PR then hot = true; break end
+      end
+      if not hot then
+        for _, lg in ipairs(elgms) do
+          if lg.mx and tdist(p.mx, p.my, lg.mx, lg.my) <= LR then hot = true; break end
+        end
+      end
+      if hot then act[pid] = now end
+    end
+  end
+  -- Prune stale entries (pill went quiet / died) once its penalty has decayed.
+  if (now % 250) == 0 then
+    local decay = C.PILL_REPOSITION_ENEMY_ACTIVITY_DECAY_TICKS or 1500
+    for pid, t in pairs(act) do
+      if now - t > decay then act[pid] = nil end
+    end
+  end
+  state._repo_enemy_activity = act
+end
+
 -- Decide THIS bot's vote on a proposed reposition. prop = {pid,mx,my,score}.
 -- Returns is_no(bool), reason(string).
 local function evaluate_vote(state, world, info, now, prop)
@@ -130,6 +168,9 @@ end
 -- state._repo_outbox (init.lua's send section drains them via try_send).
 -- -------------------------------------------------------------------------
 function M.update(state, world, info, now)
+  -- Enemy-activity decay feeds the reposition score every replan, so stamp it
+  -- each tick regardless of whether voting itself is enabled.
+  stamp_enemy_activity(state, world, now)
   if C.REPOSITION_VOTE_ENABLED == false then return end
   -- _repo_outbox PERSISTS across ticks: the send section removes only the
   -- messages that fit the batch this tick, so an overflowed ballot/result is
@@ -281,7 +322,20 @@ function M.update(state, world, info, now)
     local no_n = 0
     if mv.no_set then for _ in pairs(mv.no_set) do no_n = no_n + 1 end end
     mv.no = no_n
-    if (now - mv.open_tick) >= WINDOW then
+    -- Resolve as soon as EVERY currently-active ally has cast a ballot — no need
+    -- to sit out the whole window once the responses are all in. WINDOW is just a
+    -- hard timeout cap (~1s) so a silent ally can't stall the vote.
+    local n_allies, n_resp, seen_resp = 0, 0, {}
+    if ally_state.iter_active then
+      for apn in ally_state.iter_active(now, 1750) do
+        if apn ~= self_pn then n_allies = n_allies + 1 end
+      end
+    end
+    if mv.yes_set then for pn in pairs(mv.yes_set) do seen_resp[pn] = true end end
+    if mv.no_set  then for pn in pairs(mv.no_set)  do seen_resp[pn] = true end end
+    for _ in pairs(seen_resp) do n_resp = n_resp + 1 end
+    local all_in = (n_resp >= n_allies)
+    if all_in or (now - mv.open_tick) >= WINDOW then
       local pass = (no_n == 0)   -- silence = abstain = yes; any NO blocks
       tx(string.format("/info rvr %d %d", mv.pid, pass and 1 or 0))
       if pass then
@@ -371,7 +425,13 @@ function M.update(state, world, info, now)
     local urgent  = cand and (cand.score or 0) < (C.REPOSITION_URGENT_SCORE or 0)
     local guarded = cand and state._repos_guard
                     and (state._repos_guard[cand.my * 256 + cand.mx] or 0) > now
-    if cand and cand.can_carry and fail_ok and (mem_ok or urgent) and not guarded then
+    -- Win-then-vote: only open a vote once reposition has actually WON the pool
+    -- (its honest BID beat every other goal, so it's state.goal for this pill).
+    -- Before that the bid just competes; nothing is proposed. This replaces the
+    -- old "open whenever a candidate exists" trigger.
+    local won_pool = cand and state.goal and state.goal.kind == "capture_pill"
+                     and state.goal.reposition and state.goal.target_id == cand.pid
+    if cand and won_pool and cand.can_carry and fail_ok and (mem_ok or urgent) and not guarded then
       tx(string.format("/info rvo %d %d %d %d", cand.pid, cand.mx, cand.my, math.floor(cand.score or 0)))
       state._repo_my_vote = { pid = cand.pid, mx = cand.mx, my = cand.my, score = cand.score,
                               open_tick = now, no = 0 }
@@ -413,15 +473,25 @@ function M.draw(state, world, info, now)
   -- (a) reposition_scores: the local bot's top-N scored reposition candidates.
   if viz.is_on and viz.is_on("reposition_scores") and state._repo_topN then
     local twx, twy = info.tankx / 256.0, info.tanky / 256.0
-    for i, c in ipairs(state._repo_topN) do
+    -- EVERY friendly pill is shown with its "initiate-a-vote-to-reposition"
+    -- score. Only BACK-role pills are eligible to win; the first eligible one
+    -- (lowest total) is the current BID (gold + line to us). Ineligible pills
+    -- (front/aggro/util) are dimmed gray and tagged with their category.
+    local shown_winner = false
+    for _, c in ipairs(state._repo_topN) do
       local px, py = c.mx + 0.5, c.my + 0.5
-      local top = (i == 1)
-      local r, g, b = top and 255 or 150, top and 200 or 150, top and 60 or 120
-      viz.line("reposition_scores", twx, twy, px, py, r, g, b, top and 180 or 120)
+      local is_winner = c.eligible and not shown_winner
+      if is_winner then shown_winner = true end
+      local r, g, b
+      if not c.eligible   then r, g, b = 110, 110, 120
+      elseif is_winner    then r, g, b = 255, 200, 60
+      else                     r, g, b = 150, 170, 120 end
+      if is_winner then viz.line("reposition_scores", twx, twy, px, py, r, g, b, 180) end
       viz.circle("reposition_scores", px, py, 0.45, r, g, b, 210)
       viz.text("reposition_scores", px, py - 0.7,
-               string.format("#%d pill%s s=%d%s", i, tostring(c.pid),
-                             math.floor(c.score or 0), c.can_carry and "" or " (x)"),
+               string.format("pill%s s=%d%s%s", tostring(c.pid), math.floor(c.score or 0),
+                             c.eligible and "" or (" " .. tostring(c.cat)),
+                             (c.eligible and not c.can_carry) and " (x)" or ""),
                "center", r, g, b, 235, 0.35)
     end
   end
@@ -480,25 +550,32 @@ function M.draw(state, world, info, now)
   -- (c) reposition_scores_hud: the same candidates as (a) but a top-5 TABLE.
   if viz.is_on and viz.is_on("reposition_scores_hud") and viz.hud_text then
     local x, y, dy = 470, 300, 14
-    viz.hud_text("reposition_scores_hud", x, y, "move-pill candidates (top 5)", "topleft", 200, 200, 200, 225)
+    viz.hud_text("reposition_scores_hud", x, y, "reposition-vote scores (EVERY friendly pill)", "topleft", 200, 200, 200, 225)
     y = y + dy
     viz.hud_text("reposition_scores_hud", x, y,
-      string.format("%-2s %-5s %-7s %-10s %-3s", "#", "pill", "score", "tile", "go"),
+      string.format("%-5s %-7s %-10s %-5s %-3s", "pill", "score", "tile", "cat", "go"),
       "topleft", 175, 175, 175, 215)
     local tn = state._repo_topN
     if tn and #tn > 0 then
-      for i = 1, math.min(5, #tn) do
+      local shown_winner = false
+      for i = 1, #tn do
         local c = tn[i]
         y = y + dy
-        local top = (i == 1)
+        local is_winner = c.eligible and not shown_winner
+        if is_winner then shown_winner = true end
+        local r, g, b
+        if not c.eligible then r, g, b = 140, 140, 150
+        elseif is_winner  then r, g, b = 255, 220, 120
+        else                   r, g, b = 190, 210, 180 end
         viz.hud_text("reposition_scores_hud", x, y,
-          string.format("%-2d p%-4s %-7d (%d,%d) %-3s", i, tostring(c.pid),
-                        math.floor(c.score or 0), c.mx, c.my, c.can_carry and "yes" or "-"),
-          "topleft", top and 255 or 200, top and 220 or 200, top and 120 or 200, 235)
+          string.format("p%-4s %-7d (%d,%d) %-5s %-3s", tostring(c.pid),
+                        math.floor(c.score or 0), c.mx, c.my, tostring(c.cat),
+                        c.eligible and (c.can_carry and "yes" or "-") or "n/a"),
+          "topleft", r, g, b, 235)
       end
     else
       y = y + dy
-      viz.hud_text("reposition_scores_hud", x, y, "(none — no surplus / too few built)",
+      viz.hud_text("reposition_scores_hud", x, y, "(none — no friendly pills)",
         "topleft", 150, 150, 150, 200)
     end
   end

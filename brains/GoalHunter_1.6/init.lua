@@ -5081,6 +5081,33 @@ function Brain.think(info)
       if BRAIN_DEBUG_MODE and viz.is_on("cautious_nav_around_ally_take") then viz.text("cautious_nav_around_ally_take", cmx + 0.5, cmy - 0.5, "CRAWL:" .. state._take_crawl_active, "center", 255, 220, 120, 230, 0.4) end
     end
   end
+
+  -- Log the ACTUAL committed nav path every ~50t (cheap) so log review / playback
+  -- can see the exact route the bot chose — the host's key-4 slate re-trace is
+  -- unreliable for a blitz soldier (traces from a stale/foreign slate origin).
+  if BRAIN_DEBUG_MODE and (state.tick or 0) % 50 == 0 and state.pf then
+    local pc = state.pf.path_chain
+    local parts = {}
+    if pc then for i = 1, #pc // 2 do parts[#parts + 1] = string.format("(%d,%d)", pc[2*i-1], pc[2*i]) end end
+    print2(string.format("PF_PATH t=%d status=%s dest=(%s,%s) next=(%s,%s) n=%d %s", state.tick or 0, tostring(state.pf.status), tostring(state.pf.dest_mx), tostring(state.pf.dest_my), tostring(state.pf.next_mx), tostring(state.pf.next_my), #parts, (#parts > 0) and table.concat(parts, "->") or "EMPTY"))
+  end
+
+  -- pf_path_lines overlay: draw the ACTUAL committed path (state.pf.path_chain) as
+  -- a green polyline + next-step box + dest ring. Drawn during think() so it lands
+  -- in the per-frame overlay buffer and REPLAYS in playback (BrainTest swaps the
+  -- recorded overlay cmds in). Revives the previously-dead pf_path_lines id so
+  -- playback finally shows the route the bot really chose (not a slate re-trace).
+  if BRAIN_DEBUG_MODE and viz.is_on("pf_path_lines") and state.pf and state.pf.path_chain and #state.pf.path_chain >= 4 then
+    local pc = state.pf.path_chain
+    for i = 1, (#pc // 2) - 1 do
+      viz.line("pf_path_lines", pc[2*i-1] + 0.5, pc[2*i] + 0.5, pc[2*i+1] + 0.5, pc[2*i+2] + 0.5, 0, 255, 90, 235)
+    end
+    local nmx, nmy = state.pf.next_mx or 0, state.pf.next_my or 0
+    local dmx, dmy = state.pf.dest_mx or 0, state.pf.dest_my or 0
+    viz.rect("pf_path_lines", nmx + 0.15, nmy + 0.15, nmx + 0.85, nmy + 0.85, 140, 255, 170, 210, true)
+    viz.circle("pf_path_lines", dmx + 0.5, dmy + 0.5, 0.45, 0, 255, 90, 220)
+  end
+
   local t_steer1 = clock_us()
   metrics.set("us_steer", t_steer1 - t_steer0)
   opt(string.format("steer done %.2f ms", (t_steer1 - t_steer0) / 1000))

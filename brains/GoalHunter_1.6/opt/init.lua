@@ -4176,6 +4176,17 @@ function Brain.think(info)
       state._take_crawl_active = on_cur and "on" or "next"   -- for the viz overlay
     end
   end
+
+  -- Log the ACTUAL committed nav path every ~50t (cheap) so log review / playback
+  -- can see the exact route the bot chose — the host's key-4 slate re-trace is
+  -- unreliable for a blitz soldier (traces from a stale/foreign slate origin).
+
+  -- pf_path_lines overlay: draw the ACTUAL committed path (state.pf.path_chain) as
+  -- a green polyline + next-step box + dest ring. Drawn during think() so it lands
+  -- in the per-frame overlay buffer and REPLAYS in playback (BrainTest swaps the
+  -- recorded overlay cmds in). Revives the previously-dead pf_path_lines id so
+  -- playback finally shows the route the bot really chose (not a slate re-trace).
+
   local t_steer1 = clock_us()
   metrics.set("us_steer", t_steer1 - t_steer0)
   opt(string.format("steer done %.2f ms", (t_steer1 - t_steer0) / 1000))
