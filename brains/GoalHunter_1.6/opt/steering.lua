@@ -3506,7 +3506,50 @@ function M.steer(state, world, info, goal)
     -- Slightly slower than the LGM so he can catch up
     local tank_pace = lgm_speed_cap and math.max(1, math.floor(lgm_speed_cap * 0.7))
 
-    if boat_exit and abs_corr < 24 then
+    -- Boat shoreline forward-alignment throttle: afloat while threading a
+    -- shoreline (a deep-sea AND a land neighbour), only commit speed once the
+    -- CURRENT heading would cross into the SAME next tile the steering wants
+    -- (move_dir points at the magenta lookahead target). If the heading would
+    -- cross into a different tile — a corner-cut — decelerate so the turn
+    -- (handled as usual by the keys above) can bring the nose around first;
+    -- otherwise accelerate. NO deep-sea test: deep sea is fine in a boat, and
+    -- testing it is exactly what stalled disembarks before.
+    local boat_align  -- nil = inactive
+    if C.BOAT_ALIGN ~= false and info.inboat and goal.kind ~= "escape_water" and move_dir then
+      local near_deep, near_land = false, false
+      for dy = -1, 1 do
+        for dx = -1, 1 do
+          if not (dx == 0 and dy == 0) and U.in_map(tmx + dx, tmy + dy) then
+            local tt = U.ttype(tmx + dx, tmy + dy)
+            if tt == C.T_DEEPSEA then near_deep = true
+            elseif tt ~= C.T_RIVER and tt ~= C.T_BOAT then near_land = true end
+          end
+        end
+      end
+      if near_deep and near_land then
+        -- Aligned when the body heading is close enough to the steering direction
+        -- (which points at the magenta target) that driving forward follows the
+        -- intended path into the next tile rather than cutting a corner. Angle,
+        -- not exact tile-crossing: the tile test jitters at boundaries even when
+        -- the heading is basically right, which starved the sprint signal.
+        local err = math.abs(U.adiff(info.direction, move_dir))
+        boat_align = err <= (C.BOAT_ALIGN_BRAD or 16)
+      end
+    end
+
+    if boat_align ~= nil then
+      _throttle_branch = "boat_align"
+      if boat_align then
+        keys = (keys & ~KEY_SLOWER) | KEY_FASTER
+      else
+        -- Misaligned: hold a careful crawl (never a dead stop — that stalls a
+        -- boat that can only re-align by moving) while the turn swings the nose
+        -- onto the intended tile; the branch then flips to sprint.
+        local crawl = C.BOAT_ALIGN_CRAWL or 8
+        if info.speed > crawl then keys = (keys & ~KEY_FASTER) | KEY_SLOWER
+        elseif info.speed < crawl then keys = (keys & ~KEY_SLOWER) | KEY_FASTER end
+      end
+    elseif boat_exit and abs_corr < 24 then
       _throttle_branch = "boat_exit_aligned"
       keys = (keys & ~KEY_SLOWER) | KEY_FASTER
     elseif boat_exit then
@@ -3873,6 +3916,15 @@ function M.steer(state, world, info, goal)
                 if t.mx == goal.mx and t.my == goal.my then st.latched = true; break end
               end
             end
+            -- Point-blank orbit escape: at close range the discrete trace above
+            -- can skip the exact base tile even though the engine's base hitbox
+            -- would connect, so it never latches and the tank orbits forever.
+            -- We're already in-range, shot_ok, and provably not closing over the
+            -- window — stop and pivot-aim regardless; the point-blank fire
+            -- fallback below connects once we swing onto the base.
+            if not st.latched and wdist_base <= (C.ATTACK_BASE_POINTBLANK_WU or 900) then
+              st.latched = true
+            end
           end
           st.ref_wdist = wdist_base
           st.ref_t = now
@@ -3914,6 +3966,7 @@ function M.steer(state, world, info, goal)
       -- reject an ALLIED tank sitting in the lane (friendly fire). This kills the
       -- old corr<3 deadband that left the tank lined-up-enough but never firing.
       local firing = false
+      local ally_in_lane = false
       do
         local p = cpf.simulate_shot_angle(info.tankx, info.tanky, info.direction,
                                           cpf.SHOT_TANK, info.gunrange or 14)
@@ -3929,10 +3982,19 @@ function M.steer(state, world, info, goal)
             end
           end
           for _, t in ipairs(p) do
-            if ally_tiles and ally_tiles[t.my * 256 + t.mx] then break end  -- friendly in the lane → hold
+            if ally_tiles and ally_tiles[t.my * 256 + t.mx] then ally_in_lane = true; break end  -- friendly in the lane → hold
             if t.mx == goal.mx and t.my == goal.my then firing = true; break end
           end
         end
+      end
+      -- Point-blank fire fallback: the exact-tile trace above can miss at close
+      -- range even though the engine's base hitbox would connect, which is what
+      -- lets the tank orbit hunting a heading. If we're aligned and point-blank
+      -- with no ally in the lane, fire — the lane is already shot_ok-clear here.
+      if not firing and not ally_in_lane
+         and wdist_base <= (C.ATTACK_BASE_POINTBLANK_WU or 900)
+         and math.abs(corr) <= (C.ATTACK_BASE_POINTBLANK_CORR or 12) then
+        firing = true
       end
       if firing then
         keys = keys | KEY_SHOOT

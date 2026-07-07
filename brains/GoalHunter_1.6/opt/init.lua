@@ -1062,6 +1062,12 @@ function Brain.think(info)
     -- join. reset_blitz_state() also sets _blitz_query_send so commanders resend
     -- bco and every call's distance is recomputed fresh from the new spawn.
     squad.reset_blitz_state(state)
+    -- Reset ammo-deprivation on death: a fresh respawn should refuel normally
+    -- again, not carry the suicide-decoy flag across a life. (It also time-boxes
+    -- itself to AMMO_DEPRIVED_MAX_TICKS in strategy.lua.)
+    state.ammo_low_since       = nil
+    state.ammo_deprived        = false
+    state._ammo_deprived_since = nil
     -- Drop all enemy-tank tracking so we don't respawn carrying stale ghosts.
     -- A bot killed mid-fight keeps a frozen ghost of its killer at the spot it
     -- died (last_tick = death tick); after respawn it sits there firing at the

@@ -201,7 +201,13 @@ function M.set_mode(state, world, info, goal)
   -- the LGM to run to the spot from wherever the tank is. Either way decide()'s
   -- place_pill handler still gates on lgm_can_reach + lgm_path_safe, so it only
   -- actually fires when the LGM can walk there.
-  if kind == "place_pill_strategic" then
+  if kind == "place_pill_strategic" and goal.substate == "seek_trees" then
+    -- Seek-trees: goal target is a SAFE forest (not a drop spot). Harvest there
+    -- until we have enough wood to place our carried pills, then eval flips the
+    -- goal back to a real placement. need_trees stops the gather at "enough".
+    b.mode       = "gather"
+    b.need_trees = (info.carried_pills or 0) * (C.PILL_PLACE_TREE_COST or 4)
+  elseif kind == "place_pill_strategic" then
     local tmx = info.tankx >> 8
     local tmy = info.tanky >> 8
     local pdist = U.mdist(tmx, tmy, goal.mx, goal.my)
@@ -785,11 +791,16 @@ function M.decide(state, world, info, now)
     local px, py = b.pill_target.mx, b.pill_target.my
     -- Evaluate each gate into a local (preserving short-circuit) so the
     -- diagnostic can show WHICH gate blocked the build.
-    local have_pill = (info.carried_pills or 0) > 0
-    local can_reach = have_pill and lgm_can_reach(info, px, py)
-    local path_safe = can_reach and danger.lgm_path_safe_enhanced(info, px, py, C.LGM_DANGER_HIGH, now, world)
-    print2(string.format("PLACE_PILL_GATE t=%d target=(%d,%d) carried=%d reach=%s safe=%s", now, px, py, info.carried_pills or 0, tostring(can_reach), tostring(path_safe)))
-    if have_pill and can_reach and path_safe then
+    local have_pill  = (info.carried_pills or 0) > 0
+    -- Placing a pill costs PILL_PLACE_TREE_COST wood — without it the engine
+    -- can't build and re-issuing the order just deadlocks (20260707_044217
+    -- t=127262: carry=6, tr=0, frozen 764 ticks). Gate on trees; when short, the
+    -- seek-trees redirect in goals sends the tank to harvest instead.
+    local have_trees = (info.trees or 0) >= (C.PILL_PLACE_TREE_COST or 4)
+    local can_reach  = have_pill and have_trees and lgm_can_reach(info, px, py)
+    local path_safe  = can_reach and danger.lgm_path_safe_enhanced(info, px, py, C.LGM_DANGER_HIGH, now, world)
+    print2(string.format("PLACE_PILL_GATE t=%d target=(%d,%d) carried=%d trees=%d/%d reach=%s safe=%s", now, px, py, info.carried_pills or 0, info.trees or 0, C.PILL_PLACE_TREE_COST or 4, tostring(can_reach), tostring(path_safe)))
+    if have_pill and have_trees and can_reach and path_safe then
       log.reason("build", { mode = "place_pill", why = "placing pill",
                              pill_mx = px, pill_my = py })
       return { x = px, y = py, action = BUILDMODE_PBOX }

@@ -139,7 +139,7 @@ local function evaluate_vote(state, world, info, now, prop)
   -- too slow to fix a badly lopsided back line.
   if (prop.score or 0) >= (C.REPOSITION_URGENT_SCORE or 0)
      and state._repo_last_seen_tick
-     and (now - state._repo_last_seen_tick) < (C.REPOSITION_VOTE_RECENT_MEMORY_TICKS or 6000) then
+     and (now - state._repo_last_seen_tick) < (C.REPOSITION_VOTE_RECENT_MEMORY_TICKS or 1500) then
     return true, "recent_repo"
   end
 
@@ -221,6 +221,26 @@ function M.update(state, world, info, now)
     state._repo_rx_result = nil
   end
 
+  -- 1a. Observed ally reposition EXECUTION (rvx): a one-shot, batcher-reliable
+  -- stamp fired the moment an ally consumes its approval (the move actually
+  -- happened). This is the authoritative shared "last reposition" clock. The
+  -- repos=1 heartbeat below still refreshes during a move, but an initiator can
+  -- miss it between broadcasts and then open a vote the executing ally vetoes as
+  -- recent_repo; rvx closes that gap so mem_ok self-gating matches the voters.
+  -- Take the max (exec_tick is server-synced) so a retried/out-of-order packet
+  -- never rewinds the memory.
+  local rx_exec = state._repo_rx_exec
+  if rx_exec then
+    local et = rx_exec.exec_tick or now
+    if not state._repo_last_seen_tick or et > state._repo_last_seen_tick then
+      state._repo_last_seen_tick = et
+    end
+    if not state.last_team_reposition_tick or et > state.last_team_reposition_tick then
+      state.last_team_reposition_tick = et
+    end
+    state._repo_rx_exec = nil
+  end
+
   -- 1b. Observe EXECUTING ally repositions: an ally broadcasting an active
   -- reposition goal (capture_pill + repos=1 in ally_state) IS a reposition
   -- happening — that's what the recent-memory should time from. Refreshes
@@ -246,9 +266,15 @@ function M.update(state, world, info, now)
       end
     end
   end
-  -- Our own reposition target: the committed goal's tile, and the approved
-  -- pill's tile while the approval is held.
-  if state.goal and state.goal.kind == "capture_pill" and state.goal.reposition then
+  -- Our own reposition target: guard it ONLY once the move is APPROVED / in-flight
+  -- (or being carried below), NOT for a pre-approval BID. In win-then-vote the goal
+  -- becomes a reposition at BID time BEFORE the vote opens; guarding it then would
+  -- self-block the OPEN gate below (which refuses guarded pills), so the vote could
+  -- never open for the very pill the goal just committed to — reposition stalled
+  -- forever (0 votes, 0 reposition_shoot). Guard only from approval onward; the
+  -- REPOS_GUARD_TTL tail then covers the shoot-down -> pickup handoff.
+  if state.goal and state.goal.kind == "capture_pill" and state.goal.reposition
+     and state._repo_approved_pid == state.goal.target_id then
     guard_mark(state.goal.mx, state.goal.my)
   end
   if state._repo_approved_pid and world.pills then
@@ -371,6 +397,11 @@ function M.update(state, world, info, now)
       -- THIS is when the recent-reposition memory starts: a move happened.
       state._repo_last_seen_tick      = now
       state.last_team_reposition_tick = now   -- feed the existing team time-discount
+      -- Broadcast the completion so every ally stamps the SAME recent-memory tick
+      -- (rvx: reposition executed). Reliable via the retrying batcher — closes the
+      -- window where an ally that missed our repos=1 heartbeats opens a doomed
+      -- vote we then veto with recent_repo. Sent before we clear the pid below.
+      tx(string.format("/info rvx %d %d", state._repo_approved_pid, now))
       state._repo_approved_pid  = nil
       state._repo_approved_used = nil
     else
@@ -462,6 +493,9 @@ function M.draw(state, world, info, now)
       elseif is_winner    then r, g, b = 255, 200, 60
       else                     r, g, b = 150, 170, 120 end
       if is_winner then viz.line("reposition_scores", twx, twy, px, py, r, g, b, 180) end
+      -- %.0f, NOT %d: ineligible pills carry a large (or inf) sentinel score,
+      -- and "%d" throws "no integer representation" on any float outside integer
+      -- range. %.0f renders every finite/inf score without crashing the board.
     end
   end
 

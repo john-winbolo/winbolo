@@ -243,6 +243,18 @@ function M.update(state, world, info)
   local was_deprived = state.ammo_deprived
   state.ammo_deprived = state.ammo_low_since ~= nil
                     and (state.tick - state.ammo_low_since) >= (state.test_deprive_ticks or C.AMMO_DEPRIVED_TICKS)
+  -- Latch when the flag first turned on so we can time-box it.
+  if state.ammo_deprived and not was_deprived then state._ammo_deprived_since = state.tick end
+  -- 5-min cap: a deprived (suicide) bot periodically drops the flag so it gets a
+  -- window to refuel/flee normally again; if it's still starved it re-earns
+  -- deprivation ~60 s later. (Death also resets it, in init.lua.) We clear
+  -- ammo_low_since so the deprivation clock restarts from scratch.
+  if state.ammo_deprived and state._ammo_deprived_since
+     and (state.tick - state._ammo_deprived_since) >= (C.AMMO_DEPRIVED_MAX_TICKS or 15000) then
+    state.ammo_low_since       = nil
+    state.ammo_deprived        = false
+    state._ammo_deprived_since = nil
+  end
 
   -- Front line computation (every N ticks, not every tick)
   if not state.front_line_tick or (state.tick - state.front_line_tick) >= C.FRONT_LINE_INTERVAL then

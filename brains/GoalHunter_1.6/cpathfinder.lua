@@ -103,7 +103,10 @@ local DEFAULT_CONFIG = {
   shell_reserve     = 0,    -- let tank use all shells to break walls
   road_build_cost   = 12,
   tree_reserve      = 4,
-  mine_penalty      = 40,
+  mine_penalty      = 300,   -- a visible mine does ~10 armour/hit (4 = dead), so
+                             -- route STRONGLY around it; 40 was too weak and the
+                             -- Dijkstra happily cut mined-land corners as shortcuts.
+
   estimate_samples  = 60,
   water_drain_rate  = 6,
   shell_loss_cost   = 3,

@@ -273,15 +273,22 @@ end
 -- Iterates all live pills (<=16); the LOS check runs last (priciest) so it only
 -- fires once the cheap range gates pass. Shared by the engage-spot crossfire
 -- (new_pill_crossfire) and the per-base pill-cover penalty.
-local function count_new_exposure_pills(world, spot_mx, spot_my, tmx, tmy)
+local function count_new_exposure_pills(world, spot_mx, spot_my, tmx, tmy, neutral_needs_hot)
   if not (spot_mx and spot_my) then return 0 end
   local fr = C.PILL_FIRE_RANGE or 8
   local n = 0
   for _, pm in pairs(world.pills) do
-    -- Only pills that can actually fire on us: enemy-aligned (hostile/neutral —
-    -- ally pills never shoot us), ALIVE (health>0; a dead pillbox is rubble), and
-    -- DEPLOYED (not carried in a tank). Then the range + new-exposure + LOS gates.
-    if (pm.owner == "hostile" or pm.owner == "neutral") and (pm.health or 0) > 0
+    -- HOSTILE pills always count: they fire at any enemy in range, and shooting/
+    -- stealing an enemy base heats them further, so even a calm hostile opens up.
+    -- NEUTRAL pills also count by default (a slow neutral shot still matters when
+    -- you're parked shooting a different pill — the crossfire caller), BUT when
+    -- neutral_needs_hot is set (base capture/attack callers) a CALM neutral is
+    -- ignored — it won't fire during a quick base grab, so it must not penalize
+    -- the steal. (Ally pills never shoot us and never count.) Plus ALIVE (health>0),
+    -- DEPLOYED (not in a tank), and the range/new-exposure/LOS gates.
+    local neutral_ok = (pm.owner == "neutral")
+                       and (not neutral_needs_hot or (pm.anger or 0) > (C.PPT_ANGER_THRESHOLD or 0.34))
+    if (pm.owner == "hostile" or neutral_ok) and (pm.health or 0) > 0
        and not pm.in_tank
        and U.mdist(spot_mx, spot_my, pm.mx, pm.my) <= fr
        and U.mdist(tmx, tmy, pm.mx, pm.my) > fr
@@ -612,6 +619,14 @@ local function eval_refuel(state, world, info, tmx, tmy, boat, ammo)
   if (info.armour or 0) > C.ARMOUR_CRITICAL then
     cost = math.max(cost, C.REFUEL_MIN_COST)
   end
+  -- Ammo-deprived SUICIDE decoy: it has written off resupply (shells AND armour),
+  -- so heavily deprioritise refuel/flee so attack_pill/blitz out-bids it. Applied
+  -- last (even over the critical-armour band) — it's meant to die charging, and the
+  -- ammo_deprived flag resets on death / after AMMO_DEPRIVED_MAX_TICKS so it does
+  -- get periodic windows to refuel normally again.
+  if state.ammo_deprived then
+    cost = cost * (C.AMMO_DEPRIVED_REFUEL_MULT or 3)
+  end
   -- Surface the hysteresis state in the desc so the user can see when
   -- the current refuel target's score is being discounted to keep us
   -- committed to it. Find the chosen candidate's hyst flag.
@@ -640,7 +655,7 @@ local function eval_capture_base(state, world, info, tmx, tmy, boat, ammo)
     boat, ammo, state, info, KIND_NORMAL, C.CAPTURE_THREAT_WEIGHT,
     -- +BASE_PILL_COVER_PEN per enemy pill whose fire covers this base but not our
     -- current tile (new exposure only) — biases toward capturing safer bases.
-    function(b) return (C.BASE_PILL_COVER_PEN or 3) * count_new_exposure_pills(world, b.mx, b.my, tmx, tmy) end)
+    function(b) return (C.BASE_PILL_COVER_PEN or 3) * count_new_exposure_pills(world, b.mx, b.my, tmx, tmy, true) end)
   if not base then return nil end
 
   local raw_cost = bcost
@@ -1215,15 +1230,22 @@ end
 
 local function eval_attack_base(state, world, info, tmx, tmy, boat, ammo)
   local has_hbases = not state.perc or (state.perc.hostile_base_count > 0)
-  if not (has_hbases and info.shells > C.SHELLS_LOW) then return nil end
+  if not has_hbases then return nil end
   -- Only attack hostile bases that are still alive (health > 0).
   -- health=0 means capturable — eval_capture_base handles those.
   local base, bid, bcost, bcands = nearest_where(world.bases, world, tmx, tmy,
     function(b) return b.owner == "hostile" and b.health > 0 end, boat, ammo, state, info, KIND_NORMAL, nil,
     -- +BASE_PILL_COVER_PEN per enemy pill whose fire covers this base but not our
     -- current tile (new exposure only) — biases toward attacking less-covered bases.
-    function(b) return (C.BASE_PILL_COVER_PEN or 3) * count_new_exposure_pills(world, b.mx, b.my, tmx, tmy) end)
+    function(b) return (C.BASE_PILL_COVER_PEN or 3) * count_new_exposure_pills(world, b.mx, b.my, tmx, tmy, true) end)
   if not base then return nil end
+  -- Shells gate — with a CLOSE-OUT exception. A nearly-dead base (health =
+  -- armour/5) can be finished with any ammo, so don't apply the SHELLS_LOW gate
+  -- that would peel us off to refuel one shot short (20260706_231404 t=17961:
+  -- base#3 at armour 5, bot had 8 shells, refuel won and the base healed back).
+  local closeout = (base.health or 99) <= (C.ATTACK_BASE_CLOSEOUT_HEALTH or 3)
+  local min_shells = closeout and (C.SHELL_RESERVE or 0) or C.SHELLS_LOW
+  if info.shells <= min_shells then return nil end
   local shells_on_arrival = cpf.dijkstra_shells_at(KIND_NORMAL, base.mx, base.my)
                          or cpf.astar_shells_at(base.mx, base.my)
   -- Penalise bases covered by enemy pills/tanks (like aIndy's cover penalty).
@@ -1234,9 +1256,13 @@ local function eval_attack_base(state, world, info, tmx, tmy, boat, ammo)
   if state.perc and state.perc.base_killer_mode then
     adj_cost = adj_cost * C.BASE_KILLER_ATTACK_DISCOUNT
   end
+  -- Close-out priority: a few shots from neutralizing an enemy base and we have
+  -- ammo — crush the cost so nothing routine (esp. refuel) outbids finishing it.
+  if closeout then adj_cost = math.min(adj_cost, C.ATTACK_BASE_CLOSEOUT_COST or 8) end
   return {
     cost = adj_cost,
     _shells_on_arrival = shells_on_arrival,
+    _closeout = closeout or nil,
     goal = { kind = "attack_base", mx = base.mx, my = base.my,
              wx = U.m2w(base.mx), wy = U.m2w(base.my), target_id = bid },
     desc = BRAIN_POOL_VIZ and string.format("attack_base#%d@(%d,%d) cost=%.0f (path=%.0f +base=%d +threat=%.0f×%d)",
@@ -1752,8 +1778,93 @@ end
 -- portfolio-aware search in eval_place_pill_strategic. When that finds no
 -- placeable non-surplus spot, the bot keeps carrying — there is no fallback.)
 
+-- find_safe_forest: best forest tile to harvest, searched in expanding rings out
+-- to SEEK_TREES_MAX_RADIUS (map-wide — late game we travel far). Scoring per tile:
+-- distance (ring r) + threat penalty − influence bonus, so it (1) skips enemy
+-- territory (threat.at high OR hostile influence), (2) FAVORS our own influence
+-- areas, then (3) prefers nearest. Once any acceptable forest is found it scans
+-- RING_SLACK more rings so a slightly-farther safer/friendlier one can win, then
+-- stops. Returns fx, fy or nil.
+local function find_safe_forest(tmx, tmy)
+  local max_r      = C.SEEK_TREES_MAX_RADIUS or 120
+  local max_threat = C.SEEK_TREES_MAX_THREAT or 8
+  local tw         = C.SEEK_TREES_THREAT_WEIGHT or 6
+  local iw         = C.SEEK_TREES_INFLUENCE_WEIGHT or 8
+  local min_infl   = C.SEEK_TREES_MIN_INFLUENCE or 3
+  local best_x, best_y, best_score, found_r = nil, nil, math.huge, nil
+  local function consider(fx, fy, r)
+    if U.in_map(fx, fy) and U.ttype(fx, fy) == C.T_FOREST then
+      local thr  = threat.at(fx, fy) or 0
+      local infl = cpf.influence_at(fx, fy) or 0
+      -- Skip enemy territory: heavy fire OR clearly-hostile influence.
+      if thr <= max_threat and infl >= -min_infl then
+        local score = r + thr * tw - infl * iw   -- our influence (positive) lowers score
+        if score < best_score then best_score = score; best_x = fx; best_y = fy; found_r = found_r or r end
+      end
+    end
+  end
+  for r = 1, max_r do
+    for i = -r, r do
+      consider(tmx + i, tmy - r, r)   -- top edge
+      consider(tmx + i, tmy + r, r)   -- bottom edge
+      if i > -r and i < r then
+        consider(tmx - r, tmy + i, r) -- left edge
+        consider(tmx + r, tmy + i, r) -- right edge
+      end
+    end
+    if found_r and r >= found_r + (C.SEEK_TREES_RING_SLACK or 16) then break end
+  end
+  return best_x, best_y
+end
+
 local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, ammo)
   if not C.STRATEGIC_PLACE_ENABLED then return nil end
+
+  -- Seek-trees redirect (BEFORE the LGM-in-tank actionable gate below, so it
+  -- persists while the LGM is out harvesting): carrying pills we can't afford to
+  -- place (each needs PILL_PLACE_TREE_COST wood) and out of trees -> travel to a
+  -- SAFE forest and gather rather than deadlocking on an unpayable build
+  -- (20260707_044217 t=127262: carry=6, tr=0, frozen 764 ticks re-issuing
+  -- BUILDMODE_PBOX). Pressure scales with pills carried; distance barely dents it.
+  if (info.carried_pills or 0) >= 1 and not info.inboat
+     and (info.trees or 0) < (C.PILL_PLACE_TREE_COST or 4) then
+    -- Cache the chosen forest (static terrain) so the expensive map-wide ring
+    -- scan runs rarely — not on every pool re-eval (it was spiking pool_cache to
+    -- ~9ms). Re-search when the cache is stale or the tile got harvested to grass.
+    local now = state.tick or 0
+    local sf  = state._seek_forest
+    local fresh = sf and (now - (sf.tick or 0)) < (C.SEEK_TREES_CACHE_TICKS or 150)
+    local ok    = fresh and sf.mx and U.in_map(sf.mx, sf.my)
+                        and U.ttype(sf.mx, sf.my) == C.T_FOREST
+    local fx, fy
+    if fresh and (ok or not sf.mx) then
+      fx, fy = sf.mx, sf.my                       -- reuse (valid forest, or cached "none")
+    else
+      fx, fy = find_safe_forest(tmx, tmy)
+      state._seek_forest = { mx = fx, my = fy, tick = now }
+    end
+    if fx then
+      local d    = U.mdist(tmx, tmy, fx, fy)
+      local cost = math.max(
+        (C.SEEK_TREES_BASE_COST or 40)
+          - (info.carried_pills or 0) * (C.SEEK_TREES_CARRY_DISCOUNT or 6)
+          + d * (C.SEEK_TREES_DIST_WEIGHT or 0.4),
+        C.SEEK_TREES_MIN_COST or 4)
+      return {
+        cost = cost,
+        -- seek_trees is a SUBSTATE of place_pill_strategic (goal.substate) so it's
+        -- visible in the debug/goal trace, and the builder routes it to gather.
+        goal = { kind = "place_pill_strategic", substate = "seek_trees",
+                 mx = fx, my = fy, wx = U.m2w(fx), wy = U.m2w(fy) },
+        desc = BRAIN_POOL_VIZ and string.format(
+               "seek_trees@(%d,%d) cost=%.0f d=%d carry=%d tr=%d", fx, fy, cost, d,
+               info.carried_pills or 0, info.trees or 0) or "",
+      }
+    end
+    -- No safe forest anywhere in range — fall through; normal path returns nil
+    -- (can't place either), so the bot keeps its pills until forest is reachable.
+  end
+
   -- Can we actually place right now?
   local actionable = (info.carried_pills or 0) >= 1
                      and info.man_status == C.LGM_INTANK
@@ -1838,15 +1949,30 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
         closest_et = nil
       end
     end
+    -- Desperate ("about to die") override: low armour AND actively taking hits
+    -- (a hit within DEATH_BUILD_HIT_WINDOW ticks), with a threat in shoot range.
+    -- A tank that dies carrying pills DROPS them for anyone to grab — so plant
+    -- them as our guard NOW rather than losing them on death. Bypasses the cover
+    -- dedup below (that cover clearly isn't keeping us alive) and forces a
+    -- rock-bottom cost so the build decisively wins the pool. Placement geometry
+    -- is unchanged. Re-fires each cycle while carried>0, so it plants BOTH pills.
+    local _tick = state.tick or 0
+    local _desperate = (closest_et ~= nil)
+      and (info.armour or 99) <= (C.DEATH_BUILD_ARMOUR or 30)
+      and state._last_damage_tick ~= nil
+      and (_tick - state._last_damage_tick) <= (C.DEATH_BUILD_HIT_WINDOW or 50)
+
     -- Cover dedup (shared with builder's in-combat drop): a healthy friendly
     -- pill already within fire range of the tank is the guard this build would
     -- provide — don't drop a second pill beside it. Nearly-dead cover
-    -- (<= PANIC_COVER_MIN_HP) doesn't count; build its replacement.
-    if closest_et then
+    -- (<= PANIC_COVER_MIN_HP) doesn't count; build its replacement. Skipped
+    -- when desperate — we plant regardless of existing cover.
+    if closest_et and not _desperate then
       local _cov = builder.panic_cover_pill(world, tmx, tmy)
       if _cov then
         closest_et = nil
       end
+    elseif closest_et and _desperate then
     end
     if closest_et then
       -- Shared panic guard-spot search (the SAME code builder.lua's in-combat
@@ -1861,6 +1987,8 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
                            info.shells or 32, info.trees or 0, info.mines or 0, info.armour or 40)
         local raw_cost = path_cost + C.STRATEGIC_PLACE_BASE_COST - carry_discount
         local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT)
+        -- Desperate: floor the cost so the plant decisively wins over attack_tank.
+        if _desperate then cost = 1 end
         local cands = {}
         return {
           cost = cost,
@@ -4010,7 +4138,12 @@ function M.build_eval_queue(state, world, info)
     for id, obj in pairs(world.bases) do
       if filter_attack_base(obj, state) then
         local is_current = (cur_mx and obj.mx == cur_mx and obj.my == cur_my)
-        if has_shells or is_current then
+        -- Close-out: keep a nearly-dead hostile base in the queue even when shells
+        -- are below SHELLS_LOW (as long as we have any ammo), so eval_attack_base
+        -- runs and can finish it instead of the bot peeling off to refuel.
+        local closeout = (obj.health or 99) <= (C.ATTACK_BASE_CLOSEOUT_HEALTH or 3)
+                         and info.shells > (C.SHELL_RESERVE or 0)
+        if has_shells or is_current or closeout then
           queue[#queue + 1] = { pool = 7, id = id, obj = obj }
         end
       end
@@ -7092,10 +7225,12 @@ function M.refresh_kill_lgm(state, info, world)
               local repair_penalty = 500
               cost = cost + repair_penalty
               formula_str = formula_str ..
-                string.format(" +REPAIR_FUTILE{%d}(pill@(%d,%d) hp=%d lgm_arr=%dt our=%dt)",
+                -- our_ticks is math.huge when our_cost is nil; %.0f (not %d) so
+                -- inf formats as "inf" instead of crashing "no integer representation".
+                string.format(" +REPAIR_FUTILE{%d}(pill@(%d,%d) hp=%d lgm_arr=%dt our=%.0ft)",
                   repair_penalty, pill_mx, pill_my,
                   repair_pill.health, lgm_arrive_ticks,
-                  math.floor(our_ticks))
+                  our_ticks)
             end
           end
         end

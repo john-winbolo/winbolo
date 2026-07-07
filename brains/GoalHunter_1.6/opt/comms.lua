@@ -193,6 +193,10 @@ function M.process_message(sender, text, tick, state)
   --      sent too so the vote visualizer can show explicit support.
   -- rvr: the initiator's RESULT for <pid> (<pass> 1/0). On pass, everyone stamps
   --      "a reposition just happened" for the 120s recent-memory NO rule.
+  -- rvx: a bot CONSUMED its approval (reposition executed) for <pid> at <exec_tick>.
+  --      One-shot, batcher-reliable — every ally stamps the SAME recent-memory tick
+  --      instead of hoping to catch the mover's repos=1 heartbeat, so self-gating
+  --      before OPEN matches what voters decide (kills doomed proposals).
   do
     local pid, mx, my, score = text:match("^/info rvo (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)$")
     if pid then
@@ -227,6 +231,15 @@ function M.process_message(sender, text, tick, state)
     if pid then
       if state then
         state._repo_rx_result = { pid = tonumber(pid), pass = (pass == "1"), from = sender, tick = tick }
+      end
+      return
+    end
+  end
+  do
+    local pid, exec_tick = text:match("^/info rvx (%-?%d+) (%-?%d+)$")
+    if pid then
+      if state then
+        state._repo_rx_exec = { pid = tonumber(pid), exec_tick = tonumber(exec_tick), from = sender, tick = tick }
       end
       return
     end

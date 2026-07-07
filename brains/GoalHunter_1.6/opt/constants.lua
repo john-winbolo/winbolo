@@ -175,6 +175,13 @@ M.SHELLS_LOW       = 20   -- seek resupply (~15 to kill a pill/base)
 -- AMMO_DEPRIVED_SHELLS. 50 ticks/sec, so 6000 = 120 s.
 M.AMMO_DEPRIVED_SHELLS = 10             -- "min ammo" line for deprivation: the clock runs only while shells are BELOW this and resets the instant they recover to it. Lowered 20->10 so a tank isn't tracked toward decoy until genuinely low (<10) and sheds decoy status as soon as it's back to 10 (was: clock ran below 20 and only reset once shells climbed all the way back to 20)
 M.AMMO_DEPRIVED_TICKS  = 3000           -- 60 s continuously below it (was 120 s — bots moped too long before going decoy)
+-- A deprived bot is a SUICIDE decoy — it doesn't care about shells OR armour, so
+-- refuel is heavily deprioritised (x this) instead of special-cased per-resource.
+M.AMMO_DEPRIVED_REFUEL_MULT = 3         -- multiply refuel/flee cost while ammo_deprived (so attack_pill/blitz out-bids it)
+-- Max time a bot stays deprived before the flag auto-resets: gives it a window to
+-- actually refuel again; if still starved it re-earns deprivation ~60 s later.
+-- Also reset on death (init.lua).
+M.AMMO_DEPRIVED_MAX_TICKS   = 15000     -- ~5 min @ 50Hz
 
 -- TEST AID (set 0 before merging to a release): freeze EVERY bot for this
 -- many ticks at game start — outputs zeroed, brains still tick — so a human
@@ -622,6 +629,25 @@ M.PILL_CHAIN_MIN_HP     = 5     -- don't place a pill with less than this HP (di
 M.PILL_VS_MULTI_PENALTY = 1.5   -- expected attrition multiplier vs 2+ hostiles
 M.PILL_PLACE_TREE_COST  = 4     -- trees consumed to place a pill (LGM_COST_PILLNEW)
 M.PILL_PLACE_TIMEOUT    = 400   -- ticks to wait for LGM to place pill before giving up
+
+-- Seek-trees: when carrying pills we can't afford to place (each needs
+-- PILL_PLACE_TREE_COST wood) and we're out of trees, travel to a SAFE forest and
+-- harvest instead of deadlocking on a build we can't pay for. The search is
+-- map-wide (expanding rings) and prefers the nearest LOW-THREAT forest —
+-- harvesting in enemy territory gets the LGM killed. Late game forest is scarce,
+-- so radius is large and distance barely dents the priority: getting wood to
+-- deploy carried pills is non-optional.
+M.SEEK_TREES_MAX_RADIUS   = 120  -- expanding-ring search cap (near full map) — travel far if we must
+M.SEEK_TREES_MAX_THREAT   = 8    -- threat.at above this = enemy territory, skip that forest
+M.SEEK_TREES_THREAT_WEIGHT = 6   -- ring-score penalty per unit threat (bias to safer trees within a band)
+M.SEEK_TREES_INFLUENCE_WEIGHT = 8 -- ring-score BONUS per unit of our influence (favor own-territory forest)
+M.SEEK_TREES_MIN_INFLUENCE = 3   -- skip forest whose influence is below -this (clearly enemy territory)
+M.SEEK_TREES_RING_SLACK   = 6    -- after finding a forest, scan this many more rings so a safer/friendlier (our-influence) one can still win (kept small — the ring scan is O(r^2))
+M.SEEK_TREES_CACHE_TICKS  = 150  -- reuse the chosen forest for this many ticks (forest is static) so the map-wide scan runs rarely, not every pool re-eval
+M.SEEK_TREES_BASE_COST    = 40   -- base pool cost of the seek-trees goal
+M.SEEK_TREES_CARRY_DISCOUNT = 6  -- cost reduction per carried pill (6 pills = strong pressure)
+M.SEEK_TREES_DIST_WEIGHT  = 0.4  -- token per-tile distance term (kept small so far forest still wins)
+M.SEEK_TREES_MIN_COST     = 4    -- cost floor
 M.PILL_PLACE_ENGAGE_AIM = 4     -- aim correction threshold for firing during engage
 
 -- Gunsight
@@ -793,6 +819,15 @@ M.REPAIR_FRIENDLY_FIRE_REJECT_TICKS = 400  -- 8 s @ 50 Hz: after a friendly shot
 M.ATTACK_PILL_BASE_COST    = 30    -- flat cost added to every attack_pill (like ATTACK_BASE_EXTRA_COST for bases) so a pill take isn't free vs other goals
 M.ATTACK_BASE_EXTRA_COST   = 80    -- flat cost added to hostile base attacks
 M.ATTACK_BASE_THREAT_WEIGHT = 3    -- multiplier for threat at base location (penalise bases behind enemy pills/tanks)
+-- Close-out: a hostile base whose health (= real armour / 5) is at/below
+-- CLOSEOUT_HEALTH is a few shots from neutral. Don't let the normal
+-- SHELLS_LOW gate abandon it to refuel — finish it with ANY ammo (shells >
+-- SHELL_RESERVE), and force the cost low so nothing routine outbids the kill.
+-- (Once it neutralizes, attack_base's health>0 filter drops out and
+-- capture_base's IMMINENT_CAPTURE_FLOOR=5 takes over to claim it.) A survival
+-- refuel at ARMOUR_CRITICAL still prices below this, so we don't suicide.
+M.ATTACK_BASE_CLOSEOUT_HEALTH = 3   -- health<=this (armour<=15, ~3 shots) = close it out
+M.ATTACK_BASE_CLOSEOUT_COST   = 8   -- forced cost when closing out with ammo (beats refuel's 25 floor, sits above capture's 5)
 M.ATTACK_BASE_MAX_WALLS    = 1    -- walls the base shot may cross and still fire (we grind them down). Pillboxes (any owner), other bases, and allied tanks ALWAYS block — if the shot isn't valid we drive in for a point-blank shot instead.
 -- Crossfire-aware base engage point: instead of always driving point-blank to the
 -- base (into any pill crossfire around it), trace the approach path and stop at the
@@ -811,6 +846,24 @@ M.ATTACK_BASE_ENGAGE_REPLAN          = 40    -- ticks between engage-point recom
 -- ~4.5 wu/tick).
 M.ATTACK_BASE_STALL_WU_PER_TICK = 6   -- avg closing speed below this = stalled
 M.ATTACK_BASE_STALL_WINDOW      = 50  -- ~1 s @ 50 Hz measurement window
+-- Point-blank orbit escape. At close range the discrete shot-trace can skip the
+-- exact base tile even though the engine's base hitbox (wider than one tile,
+-- pillbox.c) would register the hit, so the aim-shot latch test never fires and
+-- the tank circles hunting a heading that never comes (observed: 600+ ticks of
+-- BASE_NOFIRE heading_misses at corr~-95, spd 8, orbiting 2.7 tiles out). When
+-- we're this close and the stall window shows no progress, latch to stop+pivot
+-- regardless of the trace, and let the fire fallback shoot once we face the base.
+M.ATTACK_BASE_POINTBLANK_WU   = 900   -- <= this (wu) = point-blank; ~3.5 tiles
+M.ATTACK_BASE_POINTBLANK_CORR = 12    -- brad; fire fallback once body within this of aim
+
+-- Boat shoreline forward-alignment: while threading a shoreline afloat, sprint
+-- only when the heading will cross into the same next tile the steering wants;
+-- when it wouldn't (a corner-cut), decelerate toward this CRAWL rather than a
+-- dead stop, so the tank keeps creeping + turning until it lines up (a full stop
+-- stalls — it can't re-align a boat without some motion). engine speed ×4.
+M.BOAT_ALIGN       = true -- master enable for the boat shoreline forward-alignment throttle
+M.BOAT_ALIGN_CRAWL = 8   -- ~2 real wu/tick — slow enough that a turn can't corner-cut
+M.BOAT_ALIGN_BRAD  = 16  -- heading within this of move_dir (~22°) counts as aligned -> sprint
 -- Commit-to-finish: once we put a shot INTO a hostile base, lock onto finishing
 -- it (init.lua goal-override). Stays committed until ATTACK_BASE_COMMIT_TICKS
 -- after the last shot (refreshed each shot), then releases. Only flee or a tank/
@@ -1130,6 +1183,15 @@ M.DEFENSIVE_BUILD_ANGLE_OFFSET = 32   -- ±45° in WinBolo 256-unit circle
 -- count (build the replacement while it still soaks a few shots).
 M.PANIC_COVER_RADIUS           = 8    -- tiles: pill fire range — it engages anything shooting us
 M.PANIC_COVER_MIN_HP           = 4    -- cover pill hp <= this => doesn't count as cover
+-- Desperate ("about to die") build override. When armour <= DEATH_BUILD_ARMOUR
+-- AND we've taken a hit within the last DEATH_BUILD_HIT_WINDOW ticks AND an
+-- enemy tank is in shoot range while carrying, the def_build fires even if a
+-- cover pill already exists (that pill clearly isn't keeping us alive) and at a
+-- rock-bottom cost so it decisively wins the pool. Rationale: a tank that dies
+-- carrying pills drops them for anyone to grab — plant them (as our guard) NOW
+-- rather than losing them on death. Placement geometry is unchanged (±45°).
+M.DEATH_BUILD_ARMOUR           = 30   -- armour <= this AND taking hits => desperate build (bypass cover dedup, force win)
+M.DEATH_BUILD_HIT_WINDOW       = 50   -- ticks since last damage to still count as "actively taking hits" (~1s @ 50Hz)
 -- Emergency def_build dispatches the LGM to run to the spot from wherever the
 -- tank is (no within-1-tile gate). Cap how far we'll send the LGM: spots are
 -- picked at <= DEFENSIVE_BUILD_MAX_DIST, +1 slack for tank drift between
