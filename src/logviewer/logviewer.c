@@ -36,6 +36,7 @@
 #include "positions.h"
 #include "tiles.h"
 #include "logviewer.h"
+#include "lv_stats.h"
 
 #include <SDL3/SDL.h>
 
@@ -392,6 +393,7 @@ void lv_windowOpenFile(char *cmdLine) {
         } else {
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
+            lvStatsEmitAwards();
             lv_windowNeedRedraw();
         }
     }
@@ -1188,6 +1190,7 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
         } else {
             g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
+            lvStatsEmitAwards();
             lv_windowNeedRedraw();
         }
         s_pendingZipData = NULL;
