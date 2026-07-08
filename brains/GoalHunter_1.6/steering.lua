@@ -474,9 +474,19 @@ local function stuck_recovery(state, info, goal)
           now, tmx, tmy, goal.kind, state._stuck_escape_count))
       end
     end
-    -- Block the goal destination so pick_goal doesn't re-select it.
-    local gk = U.mkey(goal.mx or 0, goal.my or 0)
-    U.set_blocked(state, gk, now + 600, "steer_stuck_dest")
+    -- Block the goal destination so pick_goal doesn't re-select it — EXCEPT for
+    -- base goals. capture_base / attack_base are high-value objectives, and a
+    -- transient wedge on the final approach must not blacklist the base for 600
+    -- ticks (that hands a free neutral/contested base back). The soft
+    -- STUCK_RECOVERY overlay above already penalizes the wedge tile so A*
+    -- reroutes on the retry, and capture/attack_base's own reachability cost
+    -- drops it naturally if it's genuinely unreachable. Still clear the goal so a
+    -- fresh replan re-routes (or picks a reachable alternative) this tick.
+    local _base_goal = (goal.kind == "capture_base" or goal.kind == "attack_base")
+    if not _base_goal then
+      local gk = U.mkey(goal.mx or 0, goal.my or 0)
+      U.set_blocked(state, gk, now + 600, "steer_stuck_dest")
+    end
     goal.kind = "none"
     goal.substate = nil
     state.pf.status = "idle"
