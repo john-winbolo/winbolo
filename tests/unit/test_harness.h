@@ -140,6 +140,7 @@ int run_round_stats_build_summary(void);
 int run_round_stats_client_ingest(void);
 int run_round_stats_track_records(void);
 int run_round_stats_track_cap(void);
+int run_round_stats_derive_equivalence(void);
 int run_attribution_track_schema(void);
 int run_vote_toggle_standalone_no_does_nothing(void);
 int run_vote_toggle_invalid_mode_dropped(void);

@@ -69,6 +69,7 @@
 #include "../winbolonet/http.h"
 #include "server_sim_internal.h"
 #include "attribution_track.h"
+#include "round_stats_derive.h"   /* roundStatsApplyRecord, computeAwards */
 #include "server_sim_lifecycle.h"
 #include "server_lifecycle.h"
 #include "control_event.h"
@@ -410,51 +411,35 @@ static void serverSimCbRecordDamage(void *ctx, BYTE attacker, BYTE targetKind,
                                     BYTE mapX, BYTE mapY) {
     ServerSim *sim = (ServerSim *)ctx;
     if (sim->state != serverStateRunning) return;
-    {
-        /* Record every hit, including owner-less/NEUTRAL splash — the offline
-         * derivation filters. The DMG_ and ATTR_ constants share numeric
-         * values, so the target/source bytes copy across directly. */
-        AttrDamageRecord r;
-        r.type = ATTR_REC_DAMAGE; r.tick = sim->tick;
-        r.source = source; r.target = targetKind; r.targetIndex = targetIndex;
-        r.attacker = attacker; r.amount = dealt; r.destroyed = destroyed ? 1 : 0;
-        r.mapX = mapX; r.mapY = mapY;
-        serverSimTrackAppend(sim, &r, sizeof r);
-    }
-    if (attacker >= MAX_TANKS) return;   /* aggregates skip owner-less/NEUTRAL, as before */
-    PlayerRoundStats *as = &sim->roundStats[attacker];
-    switch (targetKind) {
-    case DMG_TARGET_TANK: as->dmgToPlayers += dealt; break;
-    case DMG_TARGET_PILL: as->dmgToPills   += dealt; if (destroyed) as->pillKills++; break;
-    case DMG_TARGET_BASE: as->dmgToBases   += dealt; break;
-    default: break;
-    }
+    /* Record every hit, including owner-less/NEUTRAL splash — the shared
+     * derivation filters. The DMG_ and ATTR_ constants share numeric values,
+     * so the target/source bytes copy across directly. */
+    AttrDamageRecord r;
+    r.type = ATTR_REC_DAMAGE; r.tick = sim->tick;
+    r.source = source; r.target = targetKind; r.targetIndex = targetIndex;
+    r.attacker = attacker; r.amount = dealt; r.destroyed = destroyed ? 1 : 0;
+    r.mapX = mapX; r.mapY = mapY;
+    serverSimTrackAppend(sim, &r, sizeof r);
+    roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                          &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
 }
 
 static void serverSimCbRecordPlayerAction(void *ctx, BYTE player, BYTE actionKind,
                                           BYTE mapX, BYTE mapY) {
     ServerSim *sim = (ServerSim *)ctx;
     if (sim->state != serverStateRunning || player >= MAX_TANKS) return;
-    {
-        AttrActionRecord r;
-        r.type = ATTR_REC_ACTION; r.tick = sim->tick;
-        r.player = player; r.action = actionKind;
-        r.mapX = mapX; r.mapY = mapY;
-        serverSimTrackAppend(sim, &r, sizeof r);
-    }
-    PlayerRoundStats *ps = &sim->roundStats[player];
-    switch (actionKind) {
-    case PLAYER_ACTION_FARM:  ps->treesFarmed++; break;
-    case PLAYER_ACTION_BUILD: ps->pillsBuilt++;  break;
-    case PLAYER_ACTION_MINE:  ps->minesLaid++;   break;
-    case PLAYER_ACTION_SHELL: ps->shellsFired++; break;
-    default: break;
-    }
+    AttrActionRecord r;
+    r.type = ATTR_REC_ACTION; r.tick = sim->tick;
+    r.player = player; r.action = actionKind;
+    r.mapX = mapX; r.mapY = mapY;
+    serverSimTrackAppend(sim, &r, sizeof r);
+    roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                          &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
 }
 
-/* A tank scooped a dead (0-armour) pillbox into its inventory. Recorded to the
- * attribution track only (no aggregate counter); backs the pickup-spree
- * highlight. Server-only; NULL on the client. */
+/* A tank scooped a dead (0-armour) pillbox into its inventory. Persisted to the
+ * attribution track and appended to the notable timeline (no aggregate
+ * counter); backs the pickup-spree highlight. Server-only; NULL on the client. */
 static void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
                                         BYTE mapX, BYTE mapY) {
     ServerSim *sim = (ServerSim *)ctx;
@@ -464,6 +449,8 @@ static void serverSimCbRecordPillPickup(void *ctx, BYTE picker, BYTE pillIndex,
     r.picker = picker; r.pillIndex = pillIndex;
     r.mapX = mapX; r.mapY = mapY;
     serverSimTrackAppend(sim, &r, sizeof r);
+    roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                          &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
 }
 
 static void serverSimCbCenterTank(void *ctx) {
@@ -3061,23 +3048,6 @@ static int serverSimGetPills(ServerSim *sim, PillSnapshot *out, int maxOut) {
     return count;
 }
 
-/* Append one entry to the per-round notable-event timeline (for the later
- * highlights reel). Bounded; silently drops once full. Location (mapX/mapY)
- * is recorded as 0 for now — the v1 reel scorer keys on tick/type/actor, not
- * position; precise per-event location can be sourced in the reel phase if
- * the scorer needs it. */
-static void serverSimNotableAppend(ServerSim *sim, uint8_t type,
-                                   uint8_t actorA, uint8_t actorB) {
-    if (sim->notableEventCount >= NOTABLE_EVENTS_MAX) return;
-    NotableEvent *ne = &sim->notableEvents[sim->notableEventCount++];
-    ne->tick   = sim->tick;
-    ne->mapX   = 0;
-    ne->mapY   = 0;
-    ne->type   = type;
-    ne->actorA = actorA;
-    ne->actorB = actorB;
-}
-
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     /* Per-round stats funnel. Runs before the snapshot-event buffering below
      * so a full event buffer never drops a stat. Only during a running game,
@@ -3086,73 +3056,38 @@ void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
         const uint8_t *d = event->data;
         switch (event->type) {
         case EVENT_TANK_KILLED: {
-            BYTE killer = d[0], killed = d[1], cause = d[2];
-            {
-                AttrKillRecord r;
-                r.type = ATTR_REC_KILL; r.tick = sim->tick;
-                r.killer = d[0]; r.killed = d[1]; r.deathCause = d[2];
-                r.carriedPills = d[3]; r.treesWasted = d[4];
-                r.mapX = d[5]; r.mapY = d[6];   /* stashed in serverSimCbTankKill */
-                serverSimTrackAppend(sim, &r, sizeof r);
-            }
-            if (killed < MAX_TANKS) {
-                PlayerRoundStats *vs = &sim->roundStats[killed];
-                vs->deaths++;
-                if (cause == LAST_DEATH_BY_DEEPSEA)      vs->drowns++;
-                else if (cause == LAST_DEATH_BY_MINES)   vs->mineDeaths++;
-                else if (cause == LAST_DEATH_BY_SHELL) {
-                    if (killer < MAX_TANKS && killer != killed) {
-                        sim->roundStats[killer].kills++;
-                        sim->roundStats[killer].killsOf[killed]++;
-                        vs->killedBy[killer]++;
-                    } else if (killer == killed) {
-                        vs->suicides++;
-                    }
-                }
-                vs->treesWasted += d[4];
-                if (d[3] > vs->mostPillsDropped) vs->mostPillsDropped = d[3];
-            }
-            serverSimNotableAppend(sim, NOTABLE_KILL, /*killer*/d[0], /*killed*/d[1]);
+            AttrKillRecord r;
+            r.type = ATTR_REC_KILL; r.tick = sim->tick;
+            r.killer = d[0]; r.killed = d[1]; r.deathCause = d[2];
+            r.carriedPills = d[3]; r.treesWasted = d[4];
+            r.mapX = d[5]; r.mapY = d[6];   /* stashed in serverSimCbTankKill */
+            serverSimTrackAppend(sim, &r, sizeof r);
+            roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                                  &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
             break;
         }
         case EVENT_PILL_CAPTURED:
         case EVENT_BASE_CAPTURED: {
-            BYTE owner = d[0], cls = d[2];
-            {
-                AttrCaptureRecord r;
-                r.type = ATTR_REC_CAPTURE; r.tick = sim->tick;
-                r.target = (event->type == EVENT_PILL_CAPTURED)
-                               ? ATTR_CAP_TGT_PILL : ATTR_CAP_TGT_BASE;
-                r.targetIndex = d[3];   /* pill/base array index (server-internal, past wire size) */
-                r.newOwner = d[0]; r.prevOwner = d[1]; r.captureClass = d[2];
-                r.mapX = d[4]; r.mapY = d[5];   /* pill/base map cell, stashed at emit */
-                serverSimTrackAppend(sim, &r, sizeof r);
-            }
-            if (owner < MAX_TANKS && cls != CAPTURE_CLASS_ALLY) {
-                PlayerRoundStats *os = &sim->roundStats[owner];
-                if (event->type == EVENT_PILL_CAPTURED) os->pillCaptures++;
-                else                                    os->baseCaptures++;
-                if (cls == CAPTURE_CLASS_ENEMY) os->steals++;
-            }
-            /* An ownership change is notable even if it credits nobody. */
-            serverSimNotableAppend(sim,
-                event->type == EVENT_PILL_CAPTURED ? NOTABLE_PILL_CAPTURE
-                                                   : NOTABLE_BASE_CAPTURE,
-                /*newOwner*/d[0], /*prevOwner*/d[1]);
+            AttrCaptureRecord r;
+            r.type = ATTR_REC_CAPTURE; r.tick = sim->tick;
+            r.target = (event->type == EVENT_PILL_CAPTURED)
+                           ? ATTR_CAP_TGT_PILL : ATTR_CAP_TGT_BASE;
+            r.targetIndex = d[3];   /* pill/base array index (server-internal, past wire size) */
+            r.newOwner = d[0]; r.prevOwner = d[1]; r.captureClass = d[2];
+            r.mapX = d[4]; r.mapY = d[5];   /* pill/base map cell, stashed at emit */
+            serverSimTrackAppend(sim, &r, sizeof r);
+            roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                                  &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
             break;
         }
         case EVENT_LGM_LOST: {
-            BYTE victim = d[0], killer = d[1];
-            {
-                AttrLgmRecord r;
-                r.type = ATTR_REC_LGM; r.tick = sim->tick;
-                r.victim = d[0]; r.killer = d[1];
-                r.mapX = d[2]; r.mapY = d[3];   /* LGM map cell, stashed at emit */
-                serverSimTrackAppend(sim, &r, sizeof r);
-            }
-            if (victim < MAX_TANKS) sim->roundStats[victim].lgmDeaths++;
-            if (killer < MAX_TANKS) sim->roundStats[killer].lgmKills++;
-            serverSimNotableAppend(sim, NOTABLE_LGM_LOST, /*killer*/d[1], /*victim*/d[0]);
+            AttrLgmRecord r;
+            r.type = ATTR_REC_LGM; r.tick = sim->tick;
+            r.victim = d[0]; r.killer = d[1];
+            r.mapX = d[2]; r.mapY = d[3];   /* LGM map cell, stashed at emit */
+            serverSimTrackAppend(sim, &r, sizeof r);
+            roundStatsApplyRecord(sim->roundStats, sim->notableEvents,
+                                  &sim->notableEventCount, NOTABLE_EVENTS_MAX, &r);
             break;
         }
         default: break;

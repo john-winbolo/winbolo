@@ -1844,6 +1844,12 @@ add_executable(LogViewer
     # pulls only public bolo headers (spectator_replay.h / log.h / platform_net.h)
     # and no backend.h-conflicting type, so it builds under the runtime_only rules.
     src/bolo/spectator_replay.c
+    # Shared round-stats derivation: roundStatsApplyRecord / computeAwards
+    # rebuild a round's stats, awards, and notable timeline from the parsed
+    # attribution track. Pure C over the public record/stats types (only
+    # round_stats.h / attribution_track.h), so it compiles in directly like
+    # spectator_replay.c — the standalone links no bolo sim.
+    src/bolo/round_stats_derive.c
     # No-op stubs for the spectator_drain.h seam: logviewer.c carries
     # spectatorRun, but the standalone links no bolo sim (the real wrappers
     # live in client_sim.c / bolo_static for the WinBolo client) and never
@@ -3207,6 +3213,7 @@ set(_unit_test_names
     round_stats_client_ingest
     round_stats_track_records
     round_stats_track_cap
+    round_stats_derive_equivalence
     attribution_track_schema
     vote_toggle_standalone_no_does_nothing
     vote_toggle_invalid_mode_dropped

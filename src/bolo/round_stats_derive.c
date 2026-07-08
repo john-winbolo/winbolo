@@ -13,21 +13,163 @@
  */
 
 /*********************************************************
- *Name:          Round Stats / Awards
- *Filename:      round_stats_awards.c
+ *Name:          Round Stats Derivation
+ *Filename:      round_stats_derive.c
  *Author:        John Morrison
  *Purpose:
- *  Pure award computation over the per-round accumulator.
- *  No sim state, no globals — given the finalized
- *  PlayerRoundStats[] it ranks slots and emits one winner
- *  per award. Deterministic: ties resolve to the lowest
- *  slot index so the output is stable for tests and clients.
+ *  The one shared derivation path. roundStatsApplyRecord folds a
+ *  single attribution record into the per-round accumulator and,
+ *  for combat/objective/pickup records, appends an enriched notable
+ *  event. The live server (feeding records as it builds them) and
+ *  the offline log viewer (replaying the parsed track) both call it,
+ *  so their stats and timelines cannot diverge. computeAwards ranks
+ *  the finalized accumulator into one winner per award.
+ *
+ *  Pure C over the public record/stats types — no sim state, no
+ *  globals — so it links into the standalone log viewer, which does
+ *  not link the bolo sim. The <MAX_TANKS bounds checks live here
+ *  because the viewer may replay a hand-crafted file.
  *********************************************************/
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
-#include "server_sim_internal.h" /* PlayerRoundStats */
-#include "round_stats.h"         /* AwardId, AwardResult, tuning constants */
+#include "round_stats.h"
+#include "round_stats_derive.h"
+#include "global.h"            /* LAST_DEATH_BY_* death causes */
+
+/* Append one enriched entry to the timeline, honouring the cap. A NULL
+ * timeline (or count) means "stats only" — nothing is appended. */
+static void notableAppend(NotableEvent *timeline, int *timelineCount,
+                          int timelineCap, uint32_t tick, uint8_t mapX,
+                          uint8_t mapY, uint8_t type, uint8_t actorA,
+                          uint8_t actorB, uint8_t captureClass,
+                          uint8_t deathCause, uint8_t carriedPills) {
+    NotableEvent *ne;
+    if (timeline == NULL || timelineCount == NULL) return;
+    if (*timelineCount >= timelineCap) return;   /* full: drop silently */
+    ne = &timeline[(*timelineCount)++];
+    ne->tick = tick;
+    ne->mapX = mapX;
+    ne->mapY = mapY;
+    ne->type = type;
+    ne->actorA = actorA;
+    ne->actorB = actorB;
+    ne->captureClass = captureClass;
+    ne->deathCause = deathCause;
+    ne->carriedPills = carriedPills;
+}
+
+void roundStatsApplyRecord(PlayerRoundStats stats[MAX_TANKS],
+                           NotableEvent *timeline, int *timelineCount,
+                           int timelineCap, const void *record) {
+    uint8_t recordType = *(const uint8_t *)record;
+
+    switch (recordType) {
+    case ATTR_REC_DAMAGE: {
+        const AttrDamageRecord *r = (const AttrDamageRecord *)record;
+        if (r->attacker >= MAX_TANKS) break;   /* owner-less/NEUTRAL splash */
+        PlayerRoundStats *as = &stats[r->attacker];
+        switch (r->target) {
+        case ATTR_TGT_TANK: as->dmgToPlayers += r->amount; break;
+        case ATTR_TGT_PILL:
+            as->dmgToPills += r->amount;
+            if (r->destroyed) as->pillKills++;
+            break;
+        case ATTR_TGT_BASE: as->dmgToBases += r->amount; break;
+        default: break;
+        }
+        break;
+    }
+    case ATTR_REC_ACTION: {
+        const AttrActionRecord *r = (const AttrActionRecord *)record;
+        if (r->player >= MAX_TANKS) break;
+        PlayerRoundStats *ps = &stats[r->player];
+        switch (r->action) {
+        case ATTR_ACT_FARM:  ps->treesFarmed++; break;
+        case ATTR_ACT_BUILD: ps->pillsBuilt++;  break;
+        case ATTR_ACT_MINE:  ps->minesLaid++;   break;
+        case ATTR_ACT_SHELL: ps->shellsFired++; break;
+        default: break;
+        }
+        break;
+    }
+    case ATTR_REC_KILL: {
+        const AttrKillRecord *r = (const AttrKillRecord *)record;
+        if (r->killed < MAX_TANKS) {
+            PlayerRoundStats *vs = &stats[r->killed];
+            vs->deaths++;
+            if (r->deathCause == LAST_DEATH_BY_DEEPSEA) {
+                vs->drowns++;
+            } else if (r->deathCause == LAST_DEATH_BY_MINES) {
+                vs->mineDeaths++;
+            } else if (r->deathCause == LAST_DEATH_BY_SHELL) {
+                if (r->killer < MAX_TANKS && r->killer != r->killed) {
+                    stats[r->killer].kills++;
+                    stats[r->killer].killsOf[r->killed]++;
+                    vs->killedBy[r->killer]++;
+                } else if (r->killer == r->killed) {
+                    vs->suicides++;
+                }
+            }
+            vs->treesWasted += r->treesWasted;
+            if (r->carriedPills > vs->mostPillsDropped) {
+                vs->mostPillsDropped = r->carriedPills;
+            }
+        }
+        notableAppend(timeline, timelineCount, timelineCap, r->tick,
+                      r->mapX, r->mapY, NOTABLE_KILL, r->killer, r->killed,
+                      0, r->deathCause, r->carriedPills);
+        break;
+    }
+    case ATTR_REC_CAPTURE: {
+        const AttrCaptureRecord *r = (const AttrCaptureRecord *)record;
+        if (r->newOwner < MAX_TANKS && r->captureClass != ATTR_CAP_ALLY) {
+            PlayerRoundStats *os = &stats[r->newOwner];
+            if (r->target == ATTR_CAP_TGT_PILL) os->pillCaptures++;
+            else                                os->baseCaptures++;
+            if (r->captureClass == ATTR_CAP_ENEMY) os->steals++;
+        }
+        /* An ownership change is notable even if it credits nobody. */
+        notableAppend(timeline, timelineCount, timelineCap, r->tick,
+                      r->mapX, r->mapY,
+                      r->target == ATTR_CAP_TGT_PILL ? NOTABLE_PILL_CAPTURE
+                                                     : NOTABLE_BASE_CAPTURE,
+                      r->newOwner, r->prevOwner, r->captureClass, 0, 0);
+        break;
+    }
+    case ATTR_REC_LGM: {
+        const AttrLgmRecord *r = (const AttrLgmRecord *)record;
+        if (r->victim < MAX_TANKS) stats[r->victim].lgmDeaths++;
+        if (r->killer < MAX_TANKS) stats[r->killer].lgmKills++;
+        notableAppend(timeline, timelineCount, timelineCap, r->tick,
+                      r->mapX, r->mapY, NOTABLE_LGM_LOST, r->killer, r->victim,
+                      0, 0, 0);
+        break;
+    }
+    case ATTR_REC_PICKUP: {
+        const AttrPickupRecord *r = (const AttrPickupRecord *)record;
+        notableAppend(timeline, timelineCount, timelineCap, r->tick,
+                      r->mapX, r->mapY, NOTABLE_PICKUP, r->picker, NEUTRAL,
+                      0, 0, 0);
+        break;
+    }
+    default:
+        break;   /* unknown tag: ignore */
+    }
+}
+
+size_t roundStatsRecordSize(uint8_t recordType) {
+    switch (recordType) {
+    case ATTR_REC_DAMAGE:  return sizeof(AttrDamageRecord);
+    case ATTR_REC_KILL:    return sizeof(AttrKillRecord);
+    case ATTR_REC_CAPTURE: return sizeof(AttrCaptureRecord);
+    case ATTR_REC_LGM:     return sizeof(AttrLgmRecord);
+    case ATTR_REC_ACTION:  return sizeof(AttrActionRecord);
+    case ATTR_REC_PICKUP:  return sizeof(AttrPickupRecord);
+    default:               return 0;   /* unknown tag: caller stops */
+    }
+}
 
 /* A single slot's standing for one award. `key` is the (possibly signed,
  * possibly >32-bit) ranking value; `value` is the headline number emitted;

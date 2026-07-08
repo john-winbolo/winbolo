@@ -23,7 +23,8 @@
 #include "server_sim.h"
 #include "server_sim_internal.h" /* PlayerRoundStats, serverSimGetRoundStats — T2 */
 #include "server_sim_lifecycle.h"
-#include "round_stats.h"         /* AwardId, AwardResult, computeAwards */
+#include "round_stats.h"         /* AwardId, AwardResult, PlayerRoundStats */
+#include "round_stats_derive.h"  /* computeAwards, roundStatsApplyRecord, roundStatsRecordSize */
 #include "control_event.h"       /* ControlEvent, CTRL_ROUND_STATS */
 #include "transport_control_codec.h"
 #include "transport_udp_internal.h" /* PACKET_HEADER_SIZE, MAX_CONTROL_PACKET */
@@ -1119,6 +1120,85 @@ int run_round_stats_track_cap(void) {
     sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 0, DMG_SRC_SHELL, 10, false, 0, 0);
     UT_ASSERT_MSG(sim->trackLen == before, "still refused, got %zu", sim->trackLen);
     UT_ASSERT(sim->trackTruncated);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The shared-derivation guarantee: the live accumulator and the accumulator
+ * rebuilt by replaying the serialized attribution track through
+ * roundStatsApplyRecord are byte-identical. Both paths call the same function
+ * over the same records, so they can only differ if record *production* drops
+ * something — exactly what this pins. Drives a mixed round (damage, builder
+ * actions, kills incl. drown/suicide, capture/steal/ally, an LGM loss, and a
+ * pickup) with no leaver, so the track is a complete input for the replay. */
+int run_round_stats_derive_equivalence(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    void *ctx = sim->sim.callbacks.ctx;
+
+    /* Damage: tank, a pill-destroying blow, a base, and a NEUTRAL splash. */
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_TANK, 1, DMG_SRC_SHELL, 12, false, 4, 5);
+    sim->sim.callbacks.recordDamage(ctx, 0, DMG_TARGET_PILL, 2, DMG_SRC_SHELL, 8, true, 6, 7);
+    sim->sim.callbacks.recordDamage(ctx, 2, DMG_TARGET_BASE, 0, DMG_SRC_SHELL, 5, false, 1, 2);
+    sim->sim.callbacks.recordDamage(ctx, 0xFF, DMG_TARGET_TANK, 3, DMG_SRC_MINE, 9, false, 0, 0);
+
+    /* Builder / shell actions. */
+    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_FARM, 3, 3);
+    sim->sim.callbacks.recordPlayerAction(ctx, 1, PLAYER_ACTION_BUILD, 3, 4);
+    sim->sim.callbacks.recordPlayerAction(ctx, 2, PLAYER_ACTION_MINE, 5, 6);
+    sim->sim.callbacks.recordPlayerAction(ctx, 0, PLAYER_ACTION_SHELL, 7, 8);
+
+    /* Kills: a shell kill (0->1) carrying pills/trees, a drown, a suicide. */
+    const uint8_t kill[8]    = { 0, 1, LAST_DEATH_BY_SHELL, 2, 3, 9, 9, 0 };
+    const uint8_t drown[8]   = { 3, 3, LAST_DEATH_BY_DEEPSEA, 1, 0, 0, 0, 0 };
+    const uint8_t suicide[8] = { 4, 4, LAST_DEATH_BY_SHELL, 0, 0, 0, 0, 0 };
+    inject(sim, EVENT_TANK_KILLED, kill);
+    inject(sim, EVENT_TANK_KILLED, drown);
+    inject(sim, EVENT_TANK_KILLED, suicide);
+
+    /* Captures: neutral pill, enemy steal, neutral base. */
+    const uint8_t pillCap[8] = { 0, 0xFF, CAPTURE_CLASS_NEUTRAL, 1, 10, 11, 0, 0 };
+    const uint8_t steal[8]   = { 2, 5, CAPTURE_CLASS_ENEMY, 2, 12, 13, 0, 0 };
+    const uint8_t baseCap[8] = { 2, 0xFF, CAPTURE_CLASS_NEUTRAL, 0, 14, 15, 0, 0 };
+    inject(sim, EVENT_PILL_CAPTURED, pillCap);
+    inject(sim, EVENT_PILL_CAPTURED, steal);
+    inject(sim, EVENT_BASE_CAPTURED, baseCap);
+
+    const uint8_t lgm[8] = { 6, 3, 0, 0, 0, 0, 0, 0 };  /* victim 6, killer 3 */
+    inject(sim, EVENT_LGM_LOST, lgm);
+
+    sim->sim.callbacks.recordPillPickup(ctx, 2, 7, 20, 21);
+
+    /* Walk the serialized track record-by-record into a fresh accumulator. */
+    size_t len = 0;
+    const uint8_t *buf = serverSimGetTrackBuffer(sim, &len, NULL, NULL);
+    UT_ASSERT(buf != NULL);
+    UT_ASSERT(len > 0);
+
+    PlayerRoundStats replay[MAX_TANKS];
+    memset(replay, 0, sizeof(replay));
+
+    size_t off = 0;
+    while (off < len) {
+        size_t sz = roundStatsRecordSize(buf[off]);
+        UT_ASSERT_MSG(sz > 0, "unknown record tag %u at offset %zu",
+                      buf[off], off);
+        UT_ASSERT_MSG(off + sz <= len, "record at %zu overruns the track", off);
+        roundStatsApplyRecord(replay, NULL, NULL, 0, buf + off);
+        off += sz;
+    }
+    UT_ASSERT_MSG(off == len, "walk consumed the whole track, %zu of %zu",
+                  off, len);
+
+    /* Every slot's replayed stats must equal the live accumulator, byte-for-byte. */
+    for (int slot = 0; slot < MAX_TANKS; slot++) {
+        const PlayerRoundStats *live = serverSimGetRoundStats(sim, (BYTE)slot);
+        UT_ASSERT(live != NULL);
+        UT_ASSERT_MSG(memcmp(live, &replay[slot], sizeof(PlayerRoundStats)) == 0,
+                      "slot %d: live and track-replayed stats differ", slot);
+    }
 
     serverSimDestroy(sim);
     return 0;

@@ -18,10 +18,12 @@
  *Author:        John Morrison
  *Purpose:
  *  Shared award identifiers and the per-award result record
- *  shipped to clients and to WinBolo.net at round end. The
- *  per-player accumulator (PlayerRoundStats) stays server-side;
- *  this header is the public surface that the wire codec, the
- *  client, and WBN serialization all agree on.
+ *  shipped to clients and to WinBolo.net at round end, plus the
+ *  per-player accumulator (PlayerRoundStats) and the notable-event
+ *  timeline both the live server and the offline log viewer rebuild
+ *  from the attribution records. This header is the public surface
+ *  that the wire codec, the client, the shared derivation, and WBN
+ *  serialization all agree on.
  *
  *  Public leaf: includes only T4 headers (global.h, gametype.h).
  *  No sim internals here.
@@ -37,6 +39,48 @@
 #include <stdint.h>
 #include "global.h"    /* MAX_TANKS, NEUTRAL */
 #include "gametype.h"  /* TANK_FULL_ARMOUR — backs DMG_PER_CAPTURE */
+
+/* Per-player per-round gameplay stats. A projection of the attribution
+ * records: both the live server and the offline log viewer build this by
+ * feeding records through roundStatsApplyRecord (round_stats_derive.h). A
+ * curated subset ships to clients (RoundPlayerSummary); the full struct also
+ * backs the WBN round summary. */
+typedef struct {
+    uint32_t kills, deaths, drowns, suicides, mineDeaths;
+    uint32_t lgmKills, lgmDeaths;
+    uint32_t pillCaptures, pillKills, baseCaptures, steals;
+    uint32_t treesFarmed, treesWasted, pillsBuilt, minesLaid;
+    uint32_t shellsFired;
+    uint8_t  mostPillsDropped;      /* max pills dumped at a single death */
+    uint64_t dmgToPlayers, dmgToPills, dmgToBases;
+    uint16_t killedBy[MAX_TANKS];   /* killedBy[k] = times killer slot k killed me */
+    uint16_t killsOf[MAX_TANKS];    /* killsOf[v]  = times I killed victim slot v */
+} PlayerRoundStats;
+
+/* NotableEvent.type values — the ordered round timeline consumed by the
+ * highlights reel and the log viewer. */
+typedef enum {
+    NOTABLE_KILL = 0,
+    NOTABLE_PILL_CAPTURE,
+    NOTABLE_BASE_CAPTURE,
+    NOTABLE_LGM_LOST,
+    NOTABLE_PICKUP            /* dead-pill scoop; actorA = picker */
+} NotableType;
+
+/* One entry in the per-round notable timeline. Enrichment fields are sourced
+ * from the attribution records and stored as plain bytes (not the Attr* enum
+ * types, to keep this a public leaf); each is 0 when it does not apply to the
+ * event type. */
+#define NOTABLE_EVENTS_MAX 512
+typedef struct {
+    uint32_t tick;           /* per-round running tick */
+    uint8_t  mapX, mapY;     /* map cell of the event */
+    uint8_t  type;           /* NotableType */
+    uint8_t  actorA, actorB;
+    uint8_t  captureClass;   /* captures: AttrCaptureClass value; 0 otherwise */
+    uint8_t  deathCause;     /* kills: GameEvent deathCause; 0 otherwise      */
+    uint8_t  carriedPills;   /* kills: pills dumped at death; 0 otherwise     */
+} NotableEvent;
 
 /* Award identifiers. Append-only — never renumber; ids travel on the wire
  * and to WinBolo.net. */
