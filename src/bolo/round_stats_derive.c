@@ -33,6 +33,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "round_stats.h"
 #include "round_stats_derive.h"
@@ -347,4 +349,343 @@ void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
     }
 
     *outCount = count;
+}
+
+/* ---- Highlight scorer ---------------------------------------------------- */
+
+/* Tunable weights and window sizes. Ticks are per-round at 50 ticks/s. */
+#define HL_WIPE_MIN_DEATHS       3
+#define HL_WIPE_TICK_WINDOW      150   /* ~3 s span for a cluster of deaths */
+#define HL_WIPE_TILE_RADIUS      6     /* Chebyshev radius from the first death */
+#define HL_WIPE_WEIGHT           100   /* per death in the cluster */
+#define HL_WIPE_TEAM_BONUS       50    /* added when all the dead share a team */
+#define HL_STEAL_WEIGHT          60
+#define HL_STEAL_ENDGAME_BONUS   60    /* scaled by how late in the round it lands */
+#define HL_AWARD_WEIGHT          120   /* award anchors are highest-confidence */
+#define HL_LEADIN_TILE_RADIUS    6
+#define HL_LEADIN_MAX_GAP        60    /* stop the lead-in on a gap this big */
+#define HL_LEADIN_MAX_TICKS      250   /* cap on how far a lead-in reaches back */
+#define HL_CLIP_TICKS            250   /* window duration around a single anchor */
+
+/* Upper bound on candidate windows collected before selection. Bounded by the
+ * timeline length (one steal / wipe start per event) plus the awards. */
+#define HL_CAND_MAX              (NOTABLE_EVENTS_MAX * 2 + AWARD_COUNT)
+
+/* A scored candidate window before selection. `endTick` is the selection span
+ * end (the last clustered event for a wipe, else the anchor tick); lead-in and
+ * the display duration are derived from `anchorIdx` at finalize time. */
+typedef struct {
+    uint32_t startTick;
+    uint32_t endTick;
+    int      anchorIdx;
+    uint8_t  mapX, mapY;
+    uint8_t  type;
+    uint8_t  awardId;
+    uint8_t  actorA, actorB;
+    uint32_t value;
+    uint32_t score;
+} HlCand;
+
+/* Chebyshev tile distance, so a square radius reads as one threshold. */
+static int hlTileDist(uint8_t ax, uint8_t ay, uint8_t bx, uint8_t by) {
+    int dx = (int)ax - (int)bx; if (dx < 0) dx = -dx;
+    int dy = (int)ay - (int)by; if (dy < 0) dy = -dy;
+    return dx > dy ? dx : dy;
+}
+
+static void hlAppend(HlCand *cands, int *n, const HlCand *c) {
+    if (*n >= HL_CAND_MAX) return;   /* full: drop silently */
+    cands[(*n)++] = *c;
+}
+
+/* Timeline index of the event that best represents an award, or -1 when the
+ * award has no moment to anchor (builder/aggregate stats leave no timeline
+ * event). Kill-count and capture awards prefer the winner's last such moment. */
+static int hlFindAwardAnchor(const NotableEvent *tl, int n, const AwardResult *aw) {
+    int best = -1;
+    switch (aw->awardId) {
+    case AWARD_NEMESIS:
+        for (int i = 0; i < n; i++)
+            if (tl[i].type == NOTABLE_KILL &&
+                tl[i].actorA == aw->winnerSlot && tl[i].actorB == aw->subjectSlot)
+                best = i;   /* last kill of the nemesis victim */
+        break;
+    case AWARD_BIGGEST_FUMBLE: {
+        int most = -1;
+        for (int i = 0; i < n; i++)
+            if (tl[i].type == NOTABLE_KILL && tl[i].actorB == aw->winnerSlot &&
+                (int)tl[i].carriedPills > most) {
+                most = tl[i].carriedPills;   /* the biggest pill dump they died on */
+                best = i;
+            }
+        break;
+    }
+    case AWARD_FISH_FOOD:
+        for (int i = 0; i < n; i++)
+            if (tl[i].type == NOTABLE_KILL && tl[i].actorB == aw->winnerSlot &&
+                tl[i].deathCause == LAST_DEATH_BY_DEEPSEA)
+                best = i;   /* last drowning */
+        break;
+    case AWARD_MOST_KILLS:
+    case AWARD_BEST_KD:
+        /* The winner's last kill of someone else — actorB!=winner skips their
+         * own suicide/drown, which would otherwise mislocate the clip. */
+        for (int i = 0; i < n; i++)
+            if (tl[i].type == NOTABLE_KILL &&
+                tl[i].actorA == aw->winnerSlot && tl[i].actorB != aw->winnerSlot)
+                best = i;
+        break;
+    case AWARD_LGM_HUNTER:
+        for (int i = 0; i < n; i++)
+            if (tl[i].type == NOTABLE_LGM_LOST && tl[i].actorA == aw->winnerSlot)
+                best = i;
+        break;
+    case AWARD_CANNON_FODDER:
+        for (int i = 0; i < n; i++)
+            if (tl[i].type == NOTABLE_LGM_LOST && tl[i].actorB == aw->winnerSlot)
+                best = i;
+        break;
+    case AWARD_MOST_BASE_CAPTURES:
+        for (int i = 0; i < n; i++)
+            if (tl[i].type == NOTABLE_BASE_CAPTURE && tl[i].actorA == aw->winnerSlot)
+                best = i;
+        break;
+    case AWARD_MOST_PILL_CAPTURES:
+        for (int i = 0; i < n; i++)
+            if (tl[i].type == NOTABLE_PILL_CAPTURE && tl[i].actorA == aw->winnerSlot)
+                best = i;
+        break;
+    default:
+        break;   /* builder/aggregate awards: nothing in the timeline to point at */
+    }
+    return best;
+}
+
+/* Order candidates for greedy selection: strongest score first, then a fixed
+ * tie-break so the result is identical every run. */
+static int hlCandCmp(const void *pa, const void *pb) {
+    const HlCand *a = (const HlCand *)pa;
+    const HlCand *b = (const HlCand *)pb;
+    if (a->score != b->score)         return a->score < b->score ? 1 : -1;  /* desc */
+    if (a->startTick != b->startTick) return a->startTick < b->startTick ? -1 : 1;
+    if (a->type != b->type)           return a->type < b->type ? -1 : 1;
+    if (a->actorA != b->actorA)       return a->actorA < b->actorA ? -1 : 1;
+    if (a->awardId != b->awardId)     return a->awardId < b->awardId ? -1 : 1;
+    return 0;
+}
+
+/* Chronological order for the finished reel. */
+static int hlWindowCmpByStart(const void *pa, const void *pb) {
+    const HighlightWindow *a = (const HighlightWindow *)pa;
+    const HighlightWindow *b = (const HighlightWindow *)pb;
+    if (a->startTick != b->startTick) return a->startTick < b->startTick ? -1 : 1;
+    if (a->type != b->type)           return a->type < b->type ? -1 : 1;
+    if (a->actorA != b->actorA)       return a->actorA < b->actorA ? -1 : 1;
+    if (a->awardId != b->awardId)     return a->awardId < b->awardId ? -1 : 1;
+    return 0;
+}
+
+/* Walk earlier events contiguous to the anchor — same locale, small tick gaps —
+ * to widen the window's start, bounded by the max lead-in. Also settles the end
+ * tick: a wipe keeps its last clustered death, a point anchor gets a fixed clip. */
+static void hlLeadIn(const NotableEvent *tl, const HlCand *c,
+                     uint32_t *outStart, uint32_t *outEnd) {
+    uint32_t anchorTick = tl[c->anchorIdx].tick;
+    uint32_t start = c->startTick;
+    uint32_t prevTick = anchorTick;
+
+    for (int j = c->anchorIdx - 1; j >= 0; j--) {
+        if (hlTileDist(c->mapX, c->mapY, tl[j].mapX, tl[j].mapY) > HL_LEADIN_TILE_RADIUS)
+            break;
+        if (tl[j].tick > prevTick) break;                     /* not an earlier event */
+        if (prevTick - tl[j].tick >= HL_LEADIN_MAX_GAP) break; /* gap too large */
+        if (anchorTick - tl[j].tick > HL_LEADIN_MAX_TICKS) break; /* lead-in capped */
+        start = tl[j].tick;
+        prevTick = tl[j].tick;
+    }
+
+    *outStart = start;
+    uint32_t end = (c->type == HL_CLUSTER_WIPE) ? c->endTick
+                                                : anchorTick + HL_CLIP_TICKS;
+    if (end < start) end = start;
+    *outEnd = end;
+}
+
+void computeHighlights(const NotableEvent *timeline, int timelineCount,
+                       const PlayerRoundStats stats[MAX_TANKS],
+                       const uint8_t team[MAX_TANKS],
+                       const AwardResult *awards, int awardCount,
+                       HighlightWindow *out, int *outCount, int maxOut) {
+    HlCand *cands;
+    int candCount = 0;
+    int accepted[HIGHLIGHTS_MAX];
+    int acceptCount = 0;
+    uint32_t firstTick, lastTick;
+    HighlightWindow tmp[HIGHLIGHTS_MAX];
+
+    (void)stats;   /* reserved for later signal passes */
+
+    if (outCount != NULL) *outCount = 0;
+    if (out == NULL || outCount == NULL) return;
+    if (maxOut > HIGHLIGHTS_MAX) maxOut = HIGHLIGHTS_MAX;
+    if (maxOut <= 0) return;
+    if (timeline == NULL || timelineCount <= 0) return;
+
+    cands = (HlCand *)malloc(sizeof(HlCand) * HL_CAND_MAX);
+    if (cands == NULL) return;
+
+    /* Tick bounds — scanned, not assumed, so the endgame weighting holds even
+     * if a hand-crafted timeline is out of order. */
+    firstTick = lastTick = timeline[0].tick;
+    for (int i = 1; i < timelineCount; i++) {
+        if (timeline[i].tick < firstTick) firstTick = timeline[i].tick;
+        if (timeline[i].tick > lastTick)  lastTick = timeline[i].tick;
+    }
+
+    /* Award anchors. */
+    for (int a = 0; awards != NULL && a < awardCount; a++) {
+        int idx = hlFindAwardAnchor(timeline, timelineCount, &awards[a]);
+        HlCand c;
+        if (idx < 0) continue;   /* no moment to point at: skip, not an error */
+        c.anchorIdx = idx;
+        c.startTick = timeline[idx].tick;
+        c.endTick   = timeline[idx].tick;
+        c.mapX = timeline[idx].mapX;
+        c.mapY = timeline[idx].mapY;
+        c.type = HL_AWARD;
+        c.awardId = awards[a].awardId;
+        c.actorA = awards[a].winnerSlot;
+        c.actorB = (awards[a].awardId == AWARD_NEMESIS) ? awards[a].subjectSlot
+                                                        : timeline[idx].actorB;
+        c.value = awards[a].value;
+        c.score = HL_AWARD_WEIGHT;
+        hlAppend(cands, &candCount, &c);
+    }
+
+    /* Cluster wipes: for each kill that starts a fresh cluster, gather the kills
+     * near it in time and space. Greedy — the next start jumps past the cluster
+     * just emitted, so one dense fight yields one window, not one per death. */
+    {
+        uint32_t clusterEnd = 0;
+        bool haveCluster = false;
+        for (int i = 0; i < timelineCount; i++) {
+            if (timeline[i].type != NOTABLE_KILL) continue;
+            if (haveCluster && timeline[i].tick <= clusterEnd) continue;
+
+            uint32_t winEnd = timeline[i].tick + HL_WIPE_TICK_WINDOW;
+            uint32_t lastEvTick = timeline[i].tick;
+            uint16_t killerFreq[MAX_TANKS];
+            int teamOfFirst = -1;
+            bool sameTeam = (team != NULL);
+            int count = 0;
+            HlCand c;
+
+            memset(killerFreq, 0, sizeof(killerFreq));
+            for (int j = i; j < timelineCount; j++) {
+                if (timeline[j].type != NOTABLE_KILL) continue;
+                if (timeline[j].tick < timeline[i].tick ||
+                    timeline[j].tick > winEnd) continue;
+                if (hlTileDist(timeline[i].mapX, timeline[i].mapY,
+                               timeline[j].mapX, timeline[j].mapY) > HL_WIPE_TILE_RADIUS)
+                    continue;
+                count++;
+                if (timeline[j].tick > lastEvTick) lastEvTick = timeline[j].tick;
+                if (timeline[j].actorA < MAX_TANKS) killerFreq[timeline[j].actorA]++;
+                if (team != NULL) {
+                    if (timeline[j].actorB < MAX_TANKS) {
+                        int t = team[timeline[j].actorB];
+                        if (teamOfFirst < 0) teamOfFirst = t;
+                        else if (t != teamOfFirst) sameTeam = false;
+                    } else {
+                        sameTeam = false;
+                    }
+                }
+            }
+            if (count < HL_WIPE_MIN_DEATHS) continue;
+
+            /* Most frequent killer in the cluster; ties keep the lowest slot. */
+            int topKiller = timeline[i].actorA;
+            int topFreq = -1;
+            for (int s = 0; s < MAX_TANKS; s++)
+                if ((int)killerFreq[s] > topFreq) { topFreq = killerFreq[s]; topKiller = s; }
+
+            c.anchorIdx = i;
+            c.startTick = timeline[i].tick;
+            c.endTick   = lastEvTick;
+            c.mapX = timeline[i].mapX;
+            c.mapY = timeline[i].mapY;
+            c.type = HL_CLUSTER_WIPE;
+            c.awardId = 0;
+            c.actorA = (uint8_t)topKiller;
+            c.actorB = NEUTRAL;
+            c.value = (uint32_t)count;
+            c.score = (uint32_t)(HL_WIPE_WEIGHT * count +
+                                 (sameTeam ? HL_WIPE_TEAM_BONUS : 0));
+            hlAppend(cands, &candCount, &c);
+            clusterEnd = lastEvTick;
+            haveCluster = true;
+        }
+    }
+
+    /* Objective steals: an enemy-owned pill/base changing hands. Weight rises
+     * toward the final tick, where a steal is more likely to decide the game. */
+    {
+        uint32_t span = lastTick > firstTick ? (lastTick - firstTick) : 1;
+        for (int i = 0; i < timelineCount; i++) {
+            HlCand c;
+            if (timeline[i].type != NOTABLE_PILL_CAPTURE &&
+                timeline[i].type != NOTABLE_BASE_CAPTURE) continue;
+            if (timeline[i].captureClass != ATTR_CAP_ENEMY) continue;
+            uint32_t bonus = (uint32_t)((uint64_t)HL_STEAL_ENDGAME_BONUS *
+                                        (timeline[i].tick - firstTick) / span);
+            c.anchorIdx = i;
+            c.startTick = timeline[i].tick;
+            c.endTick   = timeline[i].tick;
+            c.mapX = timeline[i].mapX;
+            c.mapY = timeline[i].mapY;
+            c.type = HL_OBJECTIVE_STEAL;
+            c.awardId = 0;
+            c.actorA = timeline[i].actorA;
+            c.actorB = timeline[i].actorB;
+            c.value = 1;
+            c.score = (uint32_t)HL_STEAL_WEIGHT + bonus;
+            hlAppend(cands, &candCount, &c);
+        }
+    }
+
+    /* Selection: strongest first, greedily keeping windows whose tick spans do
+     * not overlap an accepted one. This both de-dups and spreads the picks. */
+    qsort(cands, candCount, sizeof(HlCand), hlCandCmp);
+    for (int i = 0; i < candCount && acceptCount < maxOut; i++) {
+        bool overlap = false;
+        for (int k = 0; k < acceptCount; k++) {
+            const HlCand *acc = &cands[accepted[k]];
+            if (cands[i].startTick <= acc->endTick &&
+                acc->startTick <= cands[i].endTick) { overlap = true; break; }
+        }
+        if (!overlap) accepted[acceptCount++] = i;
+    }
+
+    /* Widen each pick with its lead-in, then order the reel chronologically. */
+    for (int k = 0; k < acceptCount; k++) {
+        const HlCand *c = &cands[accepted[k]];
+        HighlightWindow *w = &tmp[k];
+        uint32_t s, e;
+        hlLeadIn(timeline, c, &s, &e);
+        w->startTick = s;
+        w->durationTicks = e - s;
+        w->mapX = c->mapX;
+        w->mapY = c->mapY;
+        w->type = c->type;
+        w->awardId = c->awardId;
+        w->actorA = c->actorA;
+        w->actorB = c->actorB;
+        w->value = c->value;
+        w->score = c->score;
+    }
+    qsort(tmp, acceptCount, sizeof(HighlightWindow), hlWindowCmpByStart);
+    for (int k = 0; k < acceptCount; k++) out[k] = tmp[k];
+    *outCount = acceptCount;
+
+    free(cands);
 }

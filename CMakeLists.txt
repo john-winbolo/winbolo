@@ -3215,6 +3215,13 @@ set(_unit_test_names
     round_stats_track_records
     round_stats_track_cap
     round_stats_derive_equivalence
+    highlights_cluster_wipe
+    highlights_wipe_team_bonus
+    highlights_objective_steal
+    highlights_award_anchor
+    highlights_selection
+    highlights_lead_in
+    highlights_empty
     attribution_track_schema
     vote_toggle_standalone_no_does_nothing
     vote_toggle_invalid_mode_dropped

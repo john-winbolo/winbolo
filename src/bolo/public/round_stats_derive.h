@@ -56,4 +56,14 @@ size_t roundStatsRecordSize(uint8_t recordType);
 void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
                    const bool isBot[], AwardResult out[], int *outCount);
 
+/* Score a round's notable timeline into a ranked, non-overlapping top-N set of
+ * highlight windows. Pure: no sim, no globals. `team[s]` is slot s's team (for
+ * wipe weighting). Writes up to maxOut (<= HIGHLIGHTS_MAX) windows to out[], sets
+ * *outCount. Deterministic for a given input. */
+void computeHighlights(const NotableEvent *timeline, int timelineCount,
+                       const PlayerRoundStats stats[MAX_TANKS],
+                       const uint8_t team[MAX_TANKS],
+                       const AwardResult *awards, int awardCount,
+                       HighlightWindow *out, int *outCount, int maxOut);
+
 #endif /* ROUND_STATS_DERIVE_H */

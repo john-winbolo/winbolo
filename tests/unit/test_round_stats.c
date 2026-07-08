@@ -1203,3 +1203,233 @@ int run_round_stats_derive_equivalence(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* Build one synthetic timeline entry, so the highlight tests read as data. */
+static NotableEvent mkEvent(uint32_t tick, uint8_t mapX, uint8_t mapY, uint8_t type,
+                            uint8_t actorA, uint8_t actorB, uint8_t captureClass,
+                            uint8_t deathCause, uint8_t carriedPills) {
+    NotableEvent e;
+    e.tick = tick;
+    e.mapX = mapX;
+    e.mapY = mapY;
+    e.type = type;
+    e.actorA = actorA;
+    e.actorB = actorB;
+    e.captureClass = captureClass;
+    e.deathCause = deathCause;
+    e.carriedPills = carriedPills;
+    return e;
+}
+
+/* A tight cluster of kills close in tick and space collapses to one wipe whose
+ * value is the death count; scattering those same kills past the window and
+ * radius yields no wipe at all. */
+int run_highlights_cluster_wipe(void) {
+    NotableEvent tl[3];
+    tl[0] = mkEvent(100, 20, 20, NOTABLE_KILL, 0, 3, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[1] = mkEvent(110, 21, 20, NOTABLE_KILL, 0, 4, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[2] = mkEvent(120, 20, 21, NOTABLE_KILL, 1, 5, 0, LAST_DEATH_BY_SHELL, 0);
+
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    computeHighlights(tl, 3, NULL, NULL, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+
+    UT_ASSERT_MSG(n == 1, "one wipe window, got %d", n);
+    UT_ASSERT_MSG(out[0].type == HL_CLUSTER_WIPE, "type wipe, got %u", out[0].type);
+    UT_ASSERT_MSG(out[0].value == 3, "wipe counts three deaths, got %u", out[0].value);
+    /* killer 0 kills twice, killer 1 once -> most frequent killer is slot 0 */
+    UT_ASSERT_MSG(out[0].actorA == 0, "most frequent killer, got %u", out[0].actorA);
+
+    NotableEvent spread[3];
+    spread[0] = mkEvent(100, 20, 20, NOTABLE_KILL, 0, 3, 0, LAST_DEATH_BY_SHELL, 0);
+    spread[1] = mkEvent(400, 40, 40, NOTABLE_KILL, 0, 4, 0, LAST_DEATH_BY_SHELL, 0);
+    spread[2] = mkEvent(800, 60, 60, NOTABLE_KILL, 1, 5, 0, LAST_DEATH_BY_SHELL, 0);
+    n = -1;
+    computeHighlights(spread, 3, NULL, NULL, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(n == 0, "scattered deaths form no wipe, got %d", n);
+
+    return 0;
+}
+
+/* A wipe whose dead all share a team scores strictly higher than an otherwise
+ * identical wipe with a mixed-team casualty list. */
+int run_highlights_wipe_team_bonus(void) {
+    NotableEvent tl[3];
+    tl[0] = mkEvent(100, 20, 20, NOTABLE_KILL, 0, 3, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[1] = mkEvent(110, 20, 20, NOTABLE_KILL, 0, 4, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[2] = mkEvent(120, 20, 20, NOTABLE_KILL, 0, 5, 0, LAST_DEATH_BY_SHELL, 0);
+
+    uint8_t teamSame[MAX_TANKS], teamMixed[MAX_TANKS];
+    memset(teamSame, 0, sizeof(teamSame));
+    memset(teamMixed, 0, sizeof(teamMixed));
+    teamSame[3] = teamSame[4] = teamSame[5] = 1;      /* all dead on one team  */
+    teamMixed[3] = teamMixed[4] = 1; teamMixed[5] = 2; /* one on another team  */
+
+    HighlightWindow shared[HIGHLIGHTS_MAX], mixed[HIGHLIGHTS_MAX];
+    int ns = -1, nm = -1;
+    computeHighlights(tl, 3, NULL, teamSame, NULL, 0, shared, &ns, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 3, NULL, teamMixed, NULL, 0, mixed, &nm, HIGHLIGHTS_MAX);
+
+    UT_ASSERT_MSG(ns == 1 && nm == 1, "one wipe each, got %d and %d", ns, nm);
+    UT_ASSERT_MSG(shared[0].value == 3 && mixed[0].value == 3,
+                  "both count three deaths");
+    UT_ASSERT_MSG(shared[0].score > mixed[0].score,
+                  "team-shared wipe scores higher: %u vs %u",
+                  shared[0].score, mixed[0].score);
+
+    return 0;
+}
+
+/* An enemy-owned capture is a steal; a neutral land-grab is not; and a steal
+ * closer to the final tick scores higher than an earlier identical one. */
+int run_highlights_objective_steal(void) {
+    NotableEvent tl[3];
+    tl[0] = mkEvent(100, 10, 10, NOTABLE_PILL_CAPTURE, 2, NEUTRAL, ATTR_CAP_NEUTRAL, 0, 0);
+    tl[1] = mkEvent(300, 12, 12, NOTABLE_PILL_CAPTURE, 2, 5, ATTR_CAP_ENEMY, 0, 0);
+    tl[2] = mkEvent(900, 14, 14, NOTABLE_BASE_CAPTURE, 3, 6, ATTR_CAP_ENEMY, 0, 0);
+
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    computeHighlights(tl, 3, NULL, NULL, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+
+    UT_ASSERT_MSG(n == 2, "two steals, neutral capture excluded, got %d", n);
+    for (int i = 0; i < n; i++)
+        UT_ASSERT_MSG(out[i].type == HL_OBJECTIVE_STEAL, "type steal, got %u", out[i].type);
+    UT_ASSERT_MSG(out[0].startTick == 300 && out[1].startTick == 900,
+                  "chronological steals, got %u then %u",
+                  out[0].startTick, out[1].startTick);
+    UT_ASSERT_MSG(out[0].actorA == 2 && out[0].actorB == 5, "steal names new/prev owner");
+    UT_ASSERT_MSG(out[0].value == 1 && out[1].value == 1, "steal value is one");
+    UT_ASSERT_MSG(out[1].score > out[0].score,
+                  "later steal scores higher: %u vs %u", out[1].score, out[0].score);
+
+    return 0;
+}
+
+/* A Nemesis award anchors on the winner's last kill of the victim; a builder
+ * award (Sapper) has no timeline moment and produces no window. */
+int run_highlights_award_anchor(void) {
+    NotableEvent tl[3];
+    tl[0] = mkEvent(100, 5, 5, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[1] = mkEvent(200, 7, 7, NOTABLE_KILL, 0, 2, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[2] = mkEvent(300, 9, 9, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
+
+    AwardResult aw[2];
+    aw[0].awardId = AWARD_NEMESIS; aw[0].winnerSlot = 0; aw[0].subjectSlot = 1;
+    aw[0].winnerIsBot = 0; aw[0].value = 2;
+    aw[1].awardId = AWARD_SAPPER;  aw[1].winnerSlot = 0; aw[1].subjectSlot = NEUTRAL;
+    aw[1].winnerIsBot = 0; aw[1].value = 8;
+
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    computeHighlights(tl, 3, NULL, NULL, aw, 2, out, &n, HIGHLIGHTS_MAX);
+
+    UT_ASSERT_MSG(n == 1, "only the nemesis award anchors, got %d", n);
+    UT_ASSERT_MSG(out[0].type == HL_AWARD, "type award, got %u", out[0].type);
+    UT_ASSERT_MSG(out[0].awardId == AWARD_NEMESIS, "award id, got %u", out[0].awardId);
+    UT_ASSERT_MSG(out[0].actorA == 0 && out[0].actorB == 1, "winner then victim");
+    /* anchored on the LAST winner->victim kill (tick 300, cell 9,9) */
+    UT_ASSERT_MSG(out[0].startTick == 300, "anchor at the last kill, got %u",
+                  out[0].startTick);
+    UT_ASSERT_MSG(out[0].mapX == 9 && out[0].mapY == 9, "anchor cell, got %u,%u",
+                  out[0].mapX, out[0].mapY);
+
+    return 0;
+}
+
+/* Overlapping candidates collapse to a non-overlapping set; maxOut caps the
+ * reel; output is chronological and deterministic across runs. */
+int run_highlights_selection(void) {
+    NotableEvent tl[5];
+    tl[0] = mkEvent(100, 20, 20, NOTABLE_KILL, 1, 3, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[1] = mkEvent(150, 20, 20, NOTABLE_KILL, 0, 3, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[2] = mkEvent(200, 20, 20, NOTABLE_KILL, 0, 4, 0, LAST_DEATH_BY_SHELL, 0);
+    tl[3] = mkEvent(900, 40, 40, NOTABLE_BASE_CAPTURE, 5, 6, ATTR_CAP_ENEMY, 0, 0);
+    tl[4] = mkEvent(950, 41, 41, NOTABLE_KILL, 2, 7, 0, LAST_DEATH_BY_SHELL, 0);
+
+    AwardResult aw[1];
+    aw[0].awardId = AWARD_NEMESIS; aw[0].winnerSlot = 0; aw[0].subjectSlot = 3;
+    aw[0].winnerIsBot = 0; aw[0].value = 1;
+
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    computeHighlights(tl, 5, NULL, NULL, aw, 1, out, &n, HIGHLIGHTS_MAX);
+
+    /* The wipe (tick 100-200) wins its span; the nemesis kill at tick 150 falls
+     * inside it and is dropped; the far-off steal survives. */
+    UT_ASSERT_MSG(n == 2, "wipe + steal accepted, award collapsed, got %d", n);
+    UT_ASSERT_MSG(out[0].type == HL_CLUSTER_WIPE, "first is the wipe, got %u", out[0].type);
+    UT_ASSERT_MSG(out[1].type == HL_OBJECTIVE_STEAL, "second is the steal, got %u",
+                  out[1].type);
+    UT_ASSERT_MSG(out[0].startTick + out[0].durationTicks < out[1].startTick,
+                  "accepted windows do not overlap");
+    UT_ASSERT_MSG(out[0].startTick <= out[1].startTick, "chronological output");
+
+    int capped = -1;
+    computeHighlights(tl, 5, NULL, NULL, aw, 1, out, &capped, 1);
+    UT_ASSERT_MSG(capped == 1, "maxOut caps the reel to one, got %d", capped);
+    UT_ASSERT_MSG(out[0].type == HL_CLUSTER_WIPE, "kept window is the strongest");
+
+    HighlightWindow a[HIGHLIGHTS_MAX], b[HIGHLIGHTS_MAX];
+    int na = -1, nb = -1;
+    computeHighlights(tl, 5, NULL, NULL, aw, 1, a, &na, HIGHLIGHTS_MAX);
+    computeHighlights(tl, 5, NULL, NULL, aw, 1, b, &nb, HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(na == nb && na == 2, "same count across runs, got %d and %d", na, nb);
+    UT_ASSERT_MSG(memcmp(a, b, sizeof(HighlightWindow) * na) == 0,
+                  "identical output across runs");
+
+    return 0;
+}
+
+/* Lead-in extends a window's start back over a contiguous earlier event, but
+ * stops at one beyond the gap bound or outside the tile radius. */
+int run_highlights_lead_in(void) {
+    NotableEvent tl[3];
+    tl[0] = mkEvent(400, 11, 11, NOTABLE_PICKUP, 0, NEUTRAL, 0, 0, 0);
+    tl[1] = mkEvent(470, 11, 11, NOTABLE_PICKUP, 0, NEUTRAL, 0, 0, 0);
+    tl[2] = mkEvent(500, 10, 10, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
+
+    AwardResult aw[1];
+    aw[0].awardId = AWARD_NEMESIS; aw[0].winnerSlot = 0; aw[0].subjectSlot = 1;
+    aw[0].winnerIsBot = 0; aw[0].value = 1;
+
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    computeHighlights(tl, 3, NULL, NULL, aw, 1, out, &n, HIGHLIGHTS_MAX);
+
+    const HighlightWindow *w = NULL;
+    for (int i = 0; i < n; i++) if (out[i].type == HL_AWARD) w = &out[i];
+    UT_ASSERT_MSG(w != NULL, "nemesis award present");
+    /* reaches the tick-470 event (gap 30) but stops before tick 400 (gap 70) */
+    UT_ASSERT_MSG(w->startTick == 470, "lead-in extends to tick 470, got %u",
+                  w->startTick);
+
+    NotableEvent far[2];
+    far[0] = mkEvent(470, 40, 40, NOTABLE_PICKUP, 0, NEUTRAL, 0, 0, 0);
+    far[1] = mkEvent(500, 10, 10, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
+    n = -1;
+    computeHighlights(far, 2, NULL, NULL, aw, 1, out, &n, HIGHLIGHTS_MAX);
+    w = NULL;
+    for (int i = 0; i < n; i++) if (out[i].type == HL_AWARD) w = &out[i];
+    UT_ASSERT_MSG(w != NULL, "nemesis award present in radius case");
+    UT_ASSERT_MSG(w->startTick == 500,
+                  "out-of-radius earlier event yields no lead-in, got %u", w->startTick);
+
+    return 0;
+}
+
+/* An empty or zero-length timeline produces no highlights. */
+int run_highlights_empty(void) {
+    HighlightWindow out[HIGHLIGHTS_MAX];
+    int n = -1;
+    computeHighlights(NULL, 0, NULL, NULL, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(n == 0, "null timeline yields no highlights, got %d", n);
+
+    NotableEvent tl[1];
+    tl[0] = mkEvent(100, 5, 5, NOTABLE_KILL, 0, 1, 0, LAST_DEATH_BY_SHELL, 0);
+    n = -1;
+    computeHighlights(tl, 0, NULL, NULL, NULL, 0, out, &n, HIGHLIGHTS_MAX);
+    UT_ASSERT_MSG(n == 0, "zero count yields no highlights, got %d", n);
+
+    return 0;
+}

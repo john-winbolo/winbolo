@@ -102,6 +102,40 @@ typedef struct {
     uint32_t value;       /* headline number; ratio awards ×100; see notes */
 } AwardResult;
 
+/* Highlight clip category. Append-only — ids are frozen; never renumber. Some
+ * values are produced by later scorer passes (multi-LGM, fumble, …, breakthrough)
+ * but are defined now so the enum never renumbers. */
+typedef enum {
+    HL_AWARD = 1,        /* anchored on an award-winning moment; awardId set */
+    HL_CLUSTER_WIPE,     /* multiple deaths close in time and space           */
+    HL_OBJECTIVE_STEAL,  /* enemy-owned pill/base captured (a steal)          */
+    HL_MULTI_LGM,        /* (later scorer pass) */
+    HL_FUMBLE,           /* (later scorer pass) */
+    HL_RARE_DEATH,       /* (later scorer pass) */
+    HL_PICKUP_SPREE,     /* (later scorer pass) */
+    HL_MULTI_CAPTURE,    /* (later scorer pass) */
+    HL_ACTION_DENSITY,   /* (later scorer pass) */
+    HL_REVENGE,          /* (later scorer pass) */
+    HL_BREAKTHROUGH      /* (later scorer pass) */
+} HighlightType;
+
+/* One selected highlight window. tick fields are per-round (log-relative). value
+ * is signal-specific (deaths in a wipe, award value for an anchor, …); score is
+ * the internal ranking magnitude (not shipped on the wire). awardId is the AwardId
+ * when type==HL_AWARD, else 0. */
+typedef struct {
+    uint32_t startTick;
+    uint32_t durationTicks;
+    uint8_t  mapX, mapY;
+    uint8_t  type;          /* HighlightType */
+    uint8_t  awardId;       /* AwardId when HL_AWARD, else 0 */
+    uint8_t  actorA, actorB;
+    uint32_t value;
+    uint32_t score;
+} HighlightWindow;
+
+#define HIGHLIGHTS_MAX 32
+
 /* End-of-round summary shipped to clients: a curated per-player scoreboard
  * row plus the won awards. The full PlayerRoundStats accumulator stays
  * server-side; only this subset crosses the wire. */
