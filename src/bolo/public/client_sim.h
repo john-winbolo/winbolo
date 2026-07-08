@@ -36,6 +36,7 @@
 #include "screentank.h"     /* For tankAlliance */
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
+#include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
 #include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
 
 #ifndef GAMESIM_TYPEDEF
@@ -814,6 +815,10 @@ uint8_t     clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot);
 uint8_t     clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
+
+/* Last finished round's scoreboard + awards, or NULL if none has been
+ * received since the last countdown (round-only scope). */
+const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs);
 
 /* Server-supplied map directory listing — populated asynchronously
  * by PACKET_LOBBY_MAP_LIST_RSP after the client sends a

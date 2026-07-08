@@ -745,6 +745,65 @@ BOLO_STATIC_ASSERT(
         <= MAX_CONTROL_PACKET,
     brain_list_worst_case_fits_MAX_CONTROL_PACKET);
 
+/* PACKET_ROUND_STATS wire format:
+ *   [header 8] [playerCount 1]
+ *   repeat playerCount times (20 bytes each):
+ *     [slot 1][isBot 1][kills 2][deaths 2][baseCaptures 2]
+ *     [pillCaptures 2][dmgDealt 4][builds 2][lgmKills 2][lgmDeaths 2]
+ *   [awardCount 1]
+ *   repeat awardCount times (8 bytes each):
+ *     [awardId 1][winnerSlot 1][subjectSlot 1][winnerIsBot 1][value 4]
+ *   [keyLen 1] [wbnLogKey keyLen]
+ * Multi-byte fields are big-endian via packU16/packU32, matching every
+ * other body encoder. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
+                                         const struct UdpServerClient *recipient,
+                                         uint8_t *buf, size_t bufCap,
+                                         size_t *outLen) {
+    (void)recipient;
+    const RoundStatsSummary *s = &evt->u.roundStats;
+    uint8_t pc = s->playerCount;
+    if (pc > MAX_TANKS) pc = MAX_TANKS;
+    uint8_t ac = s->awardCount;
+    if (ac > AWARD_COUNT) ac = AWARD_COUNT;
+    uint8_t keyLen = (uint8_t)strnlen(s->wbnLogKey, ROUND_STATS_LOGKEY_LEN - 1);
+
+    /* Pre-compute total size; bail before any write if it can't fit. */
+    size_t needed = 1 + (size_t)pc * 20 + 1 + (size_t)ac * 8 + 1 + keyLen;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+
+    size_t pos = 0;
+    buf[pos++] = pc;
+    for (uint8_t i = 0; i < pc; i++) {
+        const RoundPlayerSummary *p = &s->players[i];
+        buf[pos++] = p->slot;
+        buf[pos++] = p->isBot;
+        packU16(buf + pos, p->kills);        pos += 2;
+        packU16(buf + pos, p->deaths);       pos += 2;
+        packU16(buf + pos, p->baseCaptures); pos += 2;
+        packU16(buf + pos, p->pillCaptures); pos += 2;
+        packU32(buf + pos, p->dmgDealt);     pos += 4;
+        packU16(buf + pos, p->builds);       pos += 2;
+        packU16(buf + pos, p->lgmKills);     pos += 2;
+        packU16(buf + pos, p->lgmDeaths);    pos += 2;
+    }
+    buf[pos++] = ac;
+    for (uint8_t i = 0; i < ac; i++) {
+        const AwardResult *a = &s->awards[i];
+        buf[pos++] = a->awardId;
+        buf[pos++] = a->winnerSlot;
+        buf[pos++] = a->subjectSlot;
+        buf[pos++] = a->winnerIsBot;
+        packU32(buf + pos, a->value);        pos += 4;
+    }
+    buf[pos++] = keyLen;
+    if (keyLen > 0) { memcpy(buf + pos, s->wbnLogKey, keyLen); pos += keyLen; }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
 /* PACKET_LOBBY_BOT_POOL_CHUNK wire format:
  *   [header 8] [seq 1] [count 1] [fragLen 2 BE] [frag fragLen]
  * Each fragment is one slice of the server's zlib-compressed bot-pool
@@ -769,6 +828,21 @@ static EncodeResult encodeLobbyBotPoolChunkBody(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+static EncodeResult encodeRoundStats(const ControlEvent *evt,
+                                     const struct UdpServerClient *recipient,
+                                     uint8_t *buf, size_t bufCap,
+                                     size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_ROUND_STATS, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeRoundStatsBody(evt, recipient,
+                                          buf + PACKET_HEADER_SIZE,
+                                          bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
 static EncodeResult encodeLobbyBotPoolChunk(const ControlEvent *evt,
                                             const struct UdpServerClient *recipient,
                                             uint8_t *buf, size_t bufCap,
@@ -783,6 +857,64 @@ static EncodeResult encodeLobbyBotPoolChunk(const ControlEvent *evt,
     *outLen = PACKET_HEADER_SIZE + bodyLen;
     return ENCODE_OK;
 }
+
+static bool decodeRoundStatsBody(const uint8_t *buf, size_t len,
+                                 ControlEvent *outEvt) {
+    if (len < 1) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_ROUND_STATS;
+    RoundStatsSummary *s = &outEvt->u.roundStats;
+    size_t pos = 0;
+
+    uint8_t pc = buf[pos++];
+    if (pc > MAX_TANKS) return false;
+    if (pos + (size_t)pc * 20 > len) return false;
+    for (uint8_t i = 0; i < pc; i++) {
+        RoundPlayerSummary *p = &s->players[i];
+        p->slot         = buf[pos++];
+        p->isBot        = buf[pos++];
+        p->kills        = unpackU16(buf + pos); pos += 2;
+        p->deaths       = unpackU16(buf + pos); pos += 2;
+        p->baseCaptures = unpackU16(buf + pos); pos += 2;
+        p->pillCaptures = unpackU16(buf + pos); pos += 2;
+        p->dmgDealt     = unpackU32(buf + pos); pos += 4;
+        p->builds       = unpackU16(buf + pos); pos += 2;
+        p->lgmKills     = unpackU16(buf + pos); pos += 2;
+        p->lgmDeaths    = unpackU16(buf + pos); pos += 2;
+    }
+    s->playerCount = pc;
+
+    if (pos + 1 > len) return false;
+    uint8_t ac = buf[pos++];
+    if (ac > AWARD_COUNT) return false;
+    if (pos + (size_t)ac * 8 > len) return false;
+    for (uint8_t i = 0; i < ac; i++) {
+        AwardResult *a = &s->awards[i];
+        a->awardId     = buf[pos++];
+        a->winnerSlot  = buf[pos++];
+        a->subjectSlot = buf[pos++];
+        a->winnerIsBot = buf[pos++];
+        a->value       = unpackU32(buf + pos); pos += 4;
+    }
+    s->awardCount = ac;
+
+    if (pos + 1 > len) return false;
+    uint8_t keyLen = buf[pos++];
+    if (keyLen > ROUND_STATS_LOGKEY_LEN - 1) return false;
+    if (pos + keyLen > len) return false;
+    if (keyLen > 0) memcpy(s->wbnLogKey, buf + pos, keyLen);
+    s->wbnLogKey[keyLen] = '\0';
+    pos += keyLen;
+    return true;
+}
+
+/* Compile-time guarantee that the round-stats worst case (every slot
+ * present, every award won, a full-length key) fits MAX_CONTROL_PACKET. */
+BOLO_STATIC_ASSERT(
+    PACKET_HEADER_SIZE + 1 + (size_t)MAX_TANKS * 20 + 1 +
+        (size_t)AWARD_COUNT * 8 + 1 + (ROUND_STATS_LOGKEY_LEN - 1)
+        <= MAX_CONTROL_PACKET,
+    round_stats_worst_case_fits_MAX_CONTROL_PACKET);
 
 BOLO_STATIC_ASSERT(
     PACKET_HEADER_SIZE + 4 + LOBBY_BOT_POOL_CHUNK_FRAG_MAX <= MAX_CONTROL_PACKET,
@@ -1903,6 +2035,7 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ALLIANCE_RESET]     = encodeAllianceReset,
     [CTRL_BALANCE_FAILED]     = encodeBalanceFailed,
     [CTRL_SHELL_DEATH]        = encodeShellDeath,
+    [CTRL_ROUND_STATS]        = encodeRoundStats,
 };
 
 /* ================================================================
@@ -1946,6 +2079,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SHELL_DEATH]           = encodeShellDeathBody,
     [CTRL_CHANNEL_RESET]         = encodeChannelResetBody,
     [CTRL_SPECTATOR_SLOT]        = encodeSpectatorSlotBody,
+    [CTRL_ROUND_STATS]           = encodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = encodeSpectatorChatBody,
 };
 
@@ -1983,6 +2117,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SHELL_DEATH]           = decodeShellDeathBody,
     [CTRL_CHANNEL_RESET]         = decodeChannelResetBody,
     [CTRL_SPECTATOR_SLOT]        = decodeSpectatorSlotBody,
+    [CTRL_ROUND_STATS]           = decodeRoundStatsBody,
     [CTRL_SPECTATOR_CHAT]        = decodeSpectatorChatBody,
 };
 
@@ -2017,6 +2152,7 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_COMMAND_REJECTED:     return decodeCommandRejectedBody;
         case PACKET_BALANCE_FAILED:       return decodeBalanceFailedBody;
         case PACKET_SHELL_DEATH:          return decodeShellDeathBody;
+        case PACKET_ROUND_STATS:          return decodeRoundStatsBody;
         default:                      return NULL;
     }
 }

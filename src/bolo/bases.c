@@ -684,6 +684,12 @@ BYTE basesSetBaseOwner(GameSim *sim, BYTE baseNum, BYTE owner, BYTE migrate) {
       memset(ev.data, 0, sizeof(ev.data));
       ev.data[0] = owner;
       ev.data[1] = returnValue;
+      ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
+                 : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
+                 :                                                           CAPTURE_CLASS_ALLY;
+      ev.data[3] = baseNum;
+      ev.data[4] = (*value)->item[baseNum].x;
+      ev.data[5] = (*value)->item[baseNum].y;
       serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
     }
 
@@ -753,6 +759,12 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
           memset(ev.data, 0, sizeof(ev.data));
           ev.data[0] = owner;
           ev.data[1] = returnValue;
+          ev.data[2] = (returnValue == NEUTRAL)                                ? CAPTURE_CLASS_NEUTRAL
+                     : (playersIsAllie(&sim->plyrs, owner, returnValue) == FALSE) ? CAPTURE_CLASS_ENEMY
+                     :                                                           CAPTURE_CLASS_ALLY;
+          ev.data[3] = count;
+          ev.data[4] = (*value)->item[count].x;
+          ev.data[5] = (*value)->item[count].y;
           serverSimAddEvent((ServerSim *)sim->callbacks.ctx, &ev);
         }
         done = TRUE;
@@ -990,7 +1002,7 @@ void basesGetStats(bases *value, BYTE baseNum, BYTE *shellsAmount, BYTE *mines, 
 *  xValue - X Location
 *  yValue - Y Location
 *********************************************************/
-void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue) {
+void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner) {
   bases *value = &sim->bs;
   bool isServer = sim->isServer;
   bool done;                /* Are we finished searching for the base */
@@ -999,10 +1011,17 @@ void basesDamagePos(GameSim *sim, BYTE xValue, BYTE yValue) {
   count = 0;
   done = FALSE;
   while (done == FALSE && count < ((*value)->numBases)) {
-    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].armour > 0) { 
+    if (((*value)->item[count].x) == xValue && ((*value)->item[count].y) == yValue && (*value)->item[count].armour > 0) {
+      BYTE before = (*value)->item[count].armour;  /* > 0 here */
       (*value)->item[count].armour -= DAMAGE;
       if ((*value)->item[count].armour > BASE_FULL_ARMOUR) {
         (*value)->item[count].armour = 0;
+      }
+      if (sim->callbacks.recordDamage) {
+        sim->callbacks.recordDamage(sim->callbacks.ctx, owner, DMG_TARGET_BASE,
+                                    count, DMG_SRC_SHELL,
+                                    (uint16_t)(before - (*value)->item[count].armour), false,
+                                    (*value)->item[count].x, (*value)->item[count].y);
       }
       if ((*value)->item[count].armour <= BASE_DISPLAY_X) {
         if (isServer == FALSE) {

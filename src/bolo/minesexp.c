@@ -238,6 +238,7 @@ void minesExpCheckFill(GameSim *sim, lgm **lgms, BYTE numLgm, BYTE mx, BYTE my, 
   leftPos = FALSE;
   rightPos = FALSE;
   pos = mapGetPos(mp, mx, my);
+  BYTE mineLayer = minesGetOwner(&sim->mns, mx, my);  /* before the remove below clears it */
   minesRemoveItem(&sim->mns, mx, my);
   if (pos >= MINE_START && pos <= MINE_END) {
     mapSetPos(sim, mp, mx, my, CRATER, FALSE, FALSE);
@@ -251,7 +252,7 @@ void minesExpCheckFill(GameSim *sim, lgm **lgms, BYTE numLgm, BYTE mx, BYTE my, 
     {
       BYTE ti;
       for (ti = 0; ti < numLgm; ti++) {
-        tankMineDamage(sim, &tanks[ti], mx, my);
+        tankMineDamage(sim, &tanks[ti], mx, my, mineLayer);
       }
     }
     explosionsAddItem(&sim->expl, mx, my, 0, 0, EXPLOSION_START);

@@ -1147,6 +1147,7 @@ set(LOGVIEWER_LIB_SOURCES
     # seam, so it builds into the client like any other decode TU.
     src/logviewer/spec_seed_load.c
     src/logviewer/blocks.c
+    src/logviewer/lv_attribution.c
     src/logviewer/shells.c
     src/logviewer/snapshot.c
     src/logviewer/allience.c
@@ -2712,6 +2713,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_command_queue_drain.c
     tests/unit/test_game_vote_control.c
     tests/unit/test_vote_surrender.c
+    tests/unit/test_round_stats.c
+    tests/unit/test_attribution_track.c
     tests/unit/test_vote_toggle_modes.c
     tests/unit/test_vote_nolobby_disabled.c
     tests/unit/test_lobby_set_team_clamps.c
@@ -2734,6 +2737,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
+    tests/unit/test_wbn_news_fetch.cpp
     tests/unit/test_wbn_country_cache.c
     tests/unit/test_wbn_prefs_sync.c
     tests/unit/test_wbn_serverlist.c
@@ -2931,6 +2935,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/winbolonet/wbn_bearer.c
     src/winbolonet/wbn_country_cache.c
     src/winbolonet/wbn_news_parser.cpp
+    # The threaded news fetcher itself (not just the pure parser): the
+    # free-during-fetch lifetime test drives its real worker thread. Its
+    # network GET is reached through a test seam, so no libcurl is pulled in
+    # (test_stubs.c owns the wbn_api_get link-time default).
+    src/winbolonet/wbn_news.cpp
     src/winbolonet/wbn_prefs_sync.c
     src/winbolonet/wbn_serverlist.c
     src/winbolonet/wbn_map.c
@@ -2962,6 +2971,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # writer-drive that (re)generates the v2 fixture (test_wbv_v2_capture.c).
     tests/unit/test_wbv_reader.c
     tests/unit/test_wbv_v2_capture.c
+    tests/unit/test_attribution_reader.c
     # On-demand generator for the committed real ring-seed fixture
     # (spectator_seed.bin): captures a ServerSim ring keyframe with no trailing
     # data for test_spec_seed_load_real (test_spectator_seed_capture.c).
@@ -3010,6 +3020,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # NOT linked — their referenced entry points are stubbed above.
     src/logviewer/screen.c
     src/logviewer/blocks.c
+    src/logviewer/lv_attribution.c
     src/logviewer/snapshot.c
     src/logviewer/players.c
     # Logviewer-world spectator seed orchestration: raw ring keyframe seed ->
@@ -3167,6 +3178,36 @@ set(_unit_test_names
     vote_surrender_rejects_unassigned_caller
     vote_surrender_starts_for_real_team_caller
     vote_surrender_rejects_three_active_teams
+    round_stats_zeroed_on_fresh_sim
+    round_stats_kill_basic
+    round_stats_drown_not_suicide
+    round_stats_suicide_shell
+    round_stats_mine_death
+    round_stats_trees_wasted_and_pills_dropped
+    round_stats_capture_steal
+    round_stats_base_capture_steal
+    round_stats_lgm
+    round_stats_lifecycle_reset
+    round_stats_reset_clears_notables
+    round_stats_notables_ordered
+    round_stats_leaver_dropped
+    round_stats_attribution_callbacks
+    round_stats_direct_damage
+    round_stats_mine_owner_api
+    round_stats_mine_damage
+    round_stats_leaver_clears_mines
+    awards_basic_winners
+    awards_tiebreak
+    awards_omission
+    awards_floors
+    awards_include_bots
+    round_stats_codec_roundtrip
+    round_stats_codec_worstcase
+    round_stats_build_summary
+    round_stats_client_ingest
+    round_stats_track_records
+    round_stats_track_cap
+    attribution_track_schema
     vote_toggle_standalone_no_does_nothing
     vote_toggle_invalid_mode_dropped
     vote_toggle_yes_opens_vote
@@ -3203,6 +3244,7 @@ set(_unit_test_names
     wbn_bearer_state
     wbn_rekey_codec
     wbn_news_parse
+    wbn_news_free_during_fetch
     wbn_country_cache
     wbn_prefs_parse_get
     wbn_prefs_parse_updatedat
@@ -3273,6 +3315,9 @@ set(_unit_test_names
     log_roundtrip_lobby_mode_drops_world_events
     wbv_reader_v1
     wbv_reader_v2
+    attribution_reader_roundtrip
+    attribution_reader_rejects_bad
+    attribution_reader_old_wbv
     blocks_stream
     stream_load
     stream_pump

@@ -13,7 +13,8 @@
 #                        wasm winbolo, WinBoloUnitTests) link it directly.
 #
 #   server_sim_static  — the server-side sim core (server_sim.c,
-#                        servermessages.c, and server_command_dispatch.c).
+#                        servermessages.c, server_command_dispatch.c, and
+#                        round_stats_awards.c).
 #                        Linked by every binary that hosts a sim, including
 #                        the in-process single-player builds (WinBoloIOS,
 #                        BrainTest, MapEditor, android main, wasm
@@ -75,6 +76,7 @@ add_library(server_sim_static STATIC
     server_sim.c
     server_command_dispatch.c
     servermessages.c
+    round_stats_awards.c
 )
 
 bolo_apply_include_rules(server_sim_static sim_owner)

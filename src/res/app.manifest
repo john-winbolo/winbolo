@@ -6,10 +6,11 @@
 	<!-- DO NOT specify <asmv3:requestedExecutionLevel>; this will cause WritePrivateProfileString to fail,
 	     breaking WinBolo.INI access via file virtualization. -->
 	<asmv3:application>
-		<!-- System (Enhanced) == DPI-unaware + GDI scaling -->
+		<!-- The UI is GPU-rendered (SDL_Renderer + ImGui), so GDI scaling does not
+		     apply to it; declaring the process per-monitor DPI aware lets SDL create a
+		     true physical-resolution window and the UI scales itself from the window size. -->
 		<asmv3:windowsSettings>
-			<dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">unaware</dpiAwareness>
-			<gdiScaling xmlns="http://schemas.microsoft.com/SMI/2017/WindowsSettings">true</gdiScaling>
+			<dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
 		</asmv3:windowsSettings>
 	</asmv3:application>
 </assembly>

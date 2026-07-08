@@ -4300,8 +4300,12 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
                the desktop blocking loop's netRunning break. A Leave or a
                dropped connection exits the lobby too, but not into
                netRunning, so those stay silent. (Desktop never takes this
-               edge — the blocking lobby owns the frame while inLobby.) */
-            if (cs && clientSimGetNetStatus(cs) == netRunning) {
+               edge — the blocking lobby owns the frame while inLobby.)
+               SP jumps straight to running with no real-time countdown and
+               gets no countdown cues, so suppress the start noise too for a
+               silent SP entry (matches imguiLobbyShow). MP still plays it. */
+            if (cs && clientSimGetNetStatus(cs) == netRunning &&
+                !clientSimIsSinglePlayer(cs)) {
                 soundPlayEffect(lobbyGameStart);
             }
         }
@@ -4422,9 +4426,14 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
            controller hides it again (the pause overlay is the pad's way in).
            Kept hidden while the controller-disconnected dialog is up so the
            strip doesn't flash behind the modal.  macOS routes the menu
-           through native NSMenu so the in-window bar is never drawn there. */
+           through native NSMenu so the in-window bar is never drawn there.
+           Never draw it in controller-first mode (the Steam Deck) — the
+           Deck's virtual pad reports as keyboard input, which would
+           otherwise let the bar show; this also matches sdl3draw.c
+           reserving zero menu-bar height under uiShouldUseControllerMode(). */
         if (inputSourceCurrent() == INPUT_SOURCE_KEYBOARD &&
-            !controllerDisconnectIsOpen()) {
+            !controllerDisconnectIsOpen() &&
+            !uiShouldUseControllerMode()) {
             renderMenuBar(cs);
         }
 #endif

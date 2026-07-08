@@ -28,7 +28,40 @@
 #include "brain_list_internal.h" /* BRAIN_LIST_PATH_LEN — brainPaths mirror */
 #include "upload_policy.h"  /* UploadPolicy — broadcast in lobby-settings event */
 #include "bot_manager.h"    /* BotManager — embedded by value below */
+#include "round_stats.h"    /* AwardId, AwardResult — computeAwards output */
+#include "attribution_track.h" /* AttrSlotIdentity — per-slot identity snapshot */
 #include "transport_udp.h"  /* MAX_SPECTATORS — subscriber capacity */
+
+/* Per-player per-round gameplay stats. Server-internal: never serialized
+ * directly — a curated subset ships to clients in a later phase. */
+typedef struct {
+    uint32_t kills, deaths, drowns, suicides, mineDeaths;
+    uint32_t lgmKills, lgmDeaths;
+    uint32_t pillCaptures, pillKills, baseCaptures, steals;
+    uint32_t treesFarmed, treesWasted, pillsBuilt, minesLaid;
+    uint32_t shellsFired;
+    uint8_t  mostPillsDropped;      /* max pills dumped at a single death */
+    uint64_t dmgToPlayers, dmgToPills, dmgToBases;
+    uint16_t killedBy[MAX_TANKS];   /* killedBy[k] = times killer slot k killed me */
+    uint16_t killsOf[MAX_TANKS];    /* killsOf[v]  = times I killed victim slot v */
+} PlayerRoundStats;
+
+/* NotableEvent.type values — server-internal; consumed by the later reel. */
+typedef enum {
+    NOTABLE_KILL = 0,
+    NOTABLE_PILL_CAPTURE,
+    NOTABLE_BASE_CAPTURE,
+    NOTABLE_LGM_LOST
+} NotableType;
+
+/* Ordered round timeline for the later highlights reel. */
+#define NOTABLE_EVENTS_MAX 512
+typedef struct {
+    uint32_t tick;     /* per-round running tick */
+    uint8_t  mapX, mapY;
+    uint8_t  type;     /* server-internal NotableType */
+    uint8_t  actorA, actorB;
+} NotableEvent;
 
 /* Control-event subscriber capacity: one slot per tank, one for the local
  * host/SP ClientSim, plus one per possible spectator. Single source of truth
@@ -377,6 +410,20 @@ struct ServerSim {
     bool         wantLogging;
     char         userLogFileName[512];
 
+    /* Post-game stats accumulator — populated during running, reset per round. */
+    PlayerRoundStats roundStats[MAX_TANKS];
+    NotableEvent     notableEvents[NOTABLE_EVENTS_MAX];
+    uint16_t         notableEventCount;
+
+    /* Per-round attribution record stream (packed attribution_track.h records),
+     * appended during a running round and reset each round. */
+    uint8_t         *trackBuf;         /* growable per-round attribution record stream */
+    size_t           trackLen;         /* bytes used */
+    size_t           trackCap;         /* bytes allocated */
+    uint32_t         trackRecordCount; /* records appended this round */
+    bool             trackTruncated;   /* set once ATTRIBUTION_TRACK_CAP_BYTES is hit */
+    AttrSlotIdentity trackIdentity[MAX_TANKS]; /* snapshot at game-over freeze */
+
     /* In-process control event subscribers (bot ClientSims, SP humanSim,
      * and live-lobby spectators). */
     ControlSubscriber subscribers[SUBSCRIBER_SLOT_COUNT];
@@ -463,5 +510,20 @@ void serverSimGameVoteToggle(ServerSim *sim, uint8_t playerNum,
  * test can include and drive it directly. */
 uint8_t serverSimComputeLagCompTicks(uint32_t simTick, uint32_t viewTick,
                                      uint16_t pingMs);
+
+/* Test/inspection accessor: pointer to slot's round stats, or NULL if
+ * slot >= MAX_TANKS. */
+const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot);
+
+/* Pure award computation over the finalized accumulator. Ranks slots
+ * 0..n-1; includeBots=false skips bot slots. Writes up to AWARD_COUNT
+ * results to out[], sets *outCount. No sim state touched. */
+void computeAwards(const PlayerRoundStats stats[], int n, bool includeBots,
+                   const bool isBot[], AwardResult out[], int *outCount);
+
+/* Build the curated end-of-round summary (per-connected-slot scoreboard
+ * rows + computed awards) from the finalized accumulator. wbnLogKey is
+ * left empty. Reads sim->roundStats / playerConnected; touches no state. */
+void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out);
 
 #endif /* SERVER_SIM_INTERNAL_H */

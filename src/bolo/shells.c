@@ -264,6 +264,10 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
 
   /* Play shoot sound at tank position (not offset shell position) */
   sim->callbacks.soundDistShoot(sim->callbacks.ctx, soundMX, soundMY, owner);
+
+  if (sim->callbacks.recordPlayerAction) {
+    sim->callbacks.recordPlayerAction(sim->callbacks.ctx, owner, PLAYER_ACTION_SHELL, soundMX, soundMY);
+  }
 }
 
 /*********************************************************
@@ -644,9 +648,9 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 		/* We are the server or are in a single player game */
 		if (sim->isServer == TRUE) {
 			/* The pill has died */
-			pillsDamagePos(sim, mapX, mapY, TRUE, TRUE);
+			pillsDamagePos(sim, mapX, mapY, TRUE, TRUE, owner);
 		} else if (owner == gameSimGetTankPlayer(sim, tk)) {
-			pillsDamagePos(sim, mapX, mapY, FALSE, TRUE);
+			pillsDamagePos(sim, mapX, mapY, FALSE, TRUE, owner);
 		}
 		sim->callbacks.soundDist(sim->callbacks.ctx, shotBuildingNear, mapX, mapY);
 	}
@@ -731,7 +735,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 				/* Play sound */
 				if ((basesCanHit(sim, mapX, mapY, owner)) == TRUE) {
 					if (sim->isServer == TRUE) {
-						basesDamagePos(sim, mapX, mapY);
+						basesDamagePos(sim, mapX, mapY, owner);
 		}
 					pillsBaseHit(sim, pb, mapX, mapY, (basesGetOwnerPos(bs, mapX, mapY)));
 				}
@@ -746,7 +750,7 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 				*yValue += MAP_SQUARE_MIDDLE;
 				/* Do damage to base */
 				if (sim->isServer == TRUE) {
-					basesDamagePos(sim, mapX, mapY);
+					basesDamagePos(sim, mapX, mapY, owner);
 }
 				pillsBaseHit(sim, pb, mapX, mapY, (basesGetOwnerPos(bs, mapX, mapY)));
 				/* Play sound */
