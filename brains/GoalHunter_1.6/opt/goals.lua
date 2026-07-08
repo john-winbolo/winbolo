@@ -3303,6 +3303,25 @@ local WS_SUBS = {
   in_range_aim_finetune=true, shoot_pill=true,
 }
 
+-- defend_pill-vs-attack_pill hysteresis tiers (see the hysteresis block in
+-- finalize goal_selection). defend_pill is a reactive defense — a friendly pill
+-- is being destroyed NOW — so it should only be held back from preempting an
+-- attack_pill by the take's REAL invested loss.
+--   ATK_SHOOTING_SUBS → at the standoff aiming or firing: shells + position at
+--     risk → FULL hysteresis (don't abandon a live shot).
+--   ATK_BUILD_SUBS → only building the shield (LGM/trees, no shells, recoverable)
+--     → MODERATE hysteresis.
+--   anything else (approach / plan_position / disengage / swerve …) → FREE.
+local ATK_SHOOTING_SUBS = {
+  charge=true, engage=true, ws_engage=true, aim=true, rush=true,
+  in_range_position=true, in_range_aim_pre=true, in_range_aim=true,
+  in_range_aim_finetune=true, shoot_pill=true,
+}
+local ATK_BUILD_SUBS = {
+  build_walls=true, gather_trees=true,
+  ws_prebuild=true, ws_prewait=true, ws_advance=true, ws_retreat=true, ws_rebuild=true,
+}
+
 -- HP multiplier lookup for attack_pill cost shaping.  Indexed by remaining
 -- pill HP (1..15); applied to the entire combat_cost block, so wounded
 -- pills get scaled down.  Hand-tuned: aggressive discount on near-dead
@@ -6507,6 +6526,31 @@ function M.finalize_pools(state, world, info)
   local tmy  = info.tanky >> 8
   local boat = info.inboat
   local ammo = (info.shells or 0) + (info.mines or 0)
+
+  -- ── Fresh-kill "sweep the pill you killed" stamp ──
+  -- Attribution: a pill that was OUR attack_pill target and just went dead is
+  -- our kill. Stamp it (id/pos/tick) so its capture gets a windowed wsim-danger
+  -- damp below — go grab the pill you killed even if a neighbour will tag you.
+  do
+    local prev_id = state._attack_pill_target_id
+    if prev_id then
+      local p = world.pills and world.pills[prev_id]
+      if p and (p.health or 0) == 0 and not p.in_tank then
+        state._swept_kill = { id = prev_id, mx = p.mx, my = p.my, tick = state.tick }
+        state._attack_pill_target_id = nil   -- stamped once; don't keep refreshing the window
+      elseif (not p) or p.in_tank then
+        state._attack_pill_target_id = nil   -- captured/gone — nothing to sweep
+      end
+    end
+    -- Remember the target only while it's still ALIVE, so its death is what
+    -- triggers the stamp exactly once (above).
+    if state.goal and state.goal.kind == "attack_pill" and state.goal.target_id then
+      local tp = world.pills and world.pills[state.goal.target_id]
+      if tp and (tp.health or 0) > 0 then
+        state._attack_pill_target_id = state.goal.target_id
+      end
+    end
+  end
   local partial = state.pool_partial or {}
   local now = state.tick or 0
   local cache = state.cost_cache or {}
@@ -7584,8 +7628,43 @@ local function goal_selection(state, world, info, quiet)
   -- candidate competes via its usual shaping (REFUEL_DEFICIT_BONUS already
   -- pushes cost very low at critical armour).
   -- ════════════════════════════════════════════════════════════════════
-  if critical and C.CRITICAL_FLEE_ENABLED then
-    if info.base then
+  -- CRITICAL_FLEE_ENABLED modes (see constants.lua): the carrying-pills mode
+  -- scales flee eagerness by a haul-protection level — FULL when the builder is
+  -- DEAD or out on a mission (pills can't be placed, pure liability), and a
+  -- weaker, pill-count-scaled level when the builder is still in the tank.
+  local _flee_mode = C.CRITICAL_FLEE_ENABLED
+  local _do_flee = false
+  if _flee_mode == "no_builder_and_carrying_only" then
+    local _carry = info.carried_pills or 0
+    local _man   = info.man_status
+    -- Haul-protection LEVEL (0..1): how hard to bail to save the pills we carry.
+    --   No builder (DEAD) or builder committed OUT on a mission → pills can't be
+    --     placed soon and are pure liability → FULL protection at carry >= 1.
+    --   Builder still in tank → we can place them ourselves, so protect only a
+    --     STACK (carry >= 2), slightly weaker, ramping to full by FLEE_HAUL_FULL_PILLS.
+    local _level = 0
+    if _carry >= 1 and (_man == C.LGM_DEAD or _man == C.LGM_MOVING) then
+      _level = 1.0
+    elseif _carry >= 2 and _man == C.LGM_INTANK then
+      local _full = (C.FLEE_HAUL_FULL_PILLS or 4)
+      _level = math.min(1.0, 0.5 + 0.5 * (_carry - 2) / math.max(1, _full - 2))
+    end
+    if _level > 0 then
+      -- Triggers scale with level: a stronger level reaches further for a
+      -- threatening tank and bails at higher armour; only full strength (level 1)
+      -- also bails on mere hostile-pill coverage. Critical armour always bails.
+      local _range = (C.FLEE_HAUL_TANK_RANGE or 12) * _level
+      local _tank_engaging = state.perc and state.perc.nearest_hostile_tank
+                             and (state.perc.nearest_hostile_tank.dist or math.huge) <= _range
+      local _pill_shooting = _level >= 1.0 and threat.pill_at(tmx, tmy) > 0
+      local _arm_low = info.armour <= (C.ARMOUR_LOW * _level)
+      _do_flee = _tank_engaging or _pill_shooting or _arm_low or critical
+    end
+  elseif _flee_mode then
+    _do_flee = critical
+  end
+  if _do_flee then
+    if critical and info.base then
       local base_useless = true
       if info.armour < C.TANK_FULL_ARMOUR and (info.base.armour or 0) > 0 then base_useless = false end
       if info.shells < C.TANK_FULL_SHELLS and (info.base.shells or 0) > 0 then base_useless = false end
@@ -8122,13 +8201,25 @@ local function goal_selection(state, world, info, quiet)
     local cur_is_attack_base = (state.goal.kind == "attack_base")
     local cur_is_capture_base = (state.goal.kind == "capture_base")
     for _, c in ipairs(pool) do
+      -- defend_pill vs an in-progress attack_pill: tier the resistance by the
+      -- take's real investment (see ATK_SHOOTING_SUBS / ATK_BUILD_SUBS).
+      --   free     → skip hysteresis entirely (approach/planning — nothing lost)
+      --   moderate → a small flat commitment (building the shield)
+      --   full/nil → normal hysteresis (actually shooting)
+      local _defend_tier = nil
+      if cur_is_attack_pill and c.goal.kind == "defend_pill" then
+        if ATK_SHOOTING_SUBS[cur_sub] then _defend_tier = "full"
+        elseif ATK_BUILD_SUBS[cur_sub] then _defend_tier = "moderate"
+        else _defend_tier = "free" end
+      end
       -- Engage-break: an attack_tank goal that detected a mid-take
       -- threat (tank in range, further from pill than us) is exempt
       -- from both additive SW+CM penalty AND the multiplicative ratio
       -- gate (the gate only fires for entries with c.hysteresis set,
       -- which we leave nil here).
       if HYST_EXEMPT[c.goal.kind] or c.goal._place_emergency or c._engage_break_lock
-         or (state.ammo_deprived and c.goal.kind == "attack_pill") then
+         or (state.ammo_deprived and c.goal.kind == "attack_pill")
+         or _defend_tier == "free" then
         -- Ammo-deprived decoy: charging the pill to draw fire is a "drop
         -- everything and go" action like attack_tank, so switching TO it is
         -- free (skip the type-switch hysteresis that would otherwise price
@@ -8172,6 +8263,12 @@ local function goal_selection(state, world, info, quiet)
       -- preempts via init.lua's urgent goal-override (separate from this).
       if cur_is_capture_base then
         effective_commit = effective_commit + C.CAPTURE_BASE_COMMITMENT_BONUS
+      end
+      -- defend_pill interrupting a wall-BUILDING attack: replace the full
+      -- attack-pill commitment stack with a modest flat so a clearly cheaper
+      -- defense can preempt without thrashing a recoverable build.
+      if _defend_tier == "moderate" then
+        effective_commit = C.DEFEND_ATTACK_BUILD_COMMITMENT or 40
       end
       if cg ~= cur_group then
         c.cost = c.cost + C.GOAL_SWITCH_PENALTY + effective_commit
@@ -8406,6 +8503,15 @@ local function goal_selection(state, world, info, quiet)
             end
           end
           local extra, killed, sdesc, wsim_path, wsim_result = wsim_evaluate_goal(c.goal, world, info, attack_id, spot_x, spot_y)
+          -- Fresh-kill sweep: damp the wsim DANGER penalty (not the KILL reject)
+          -- for capturing a pill WE just killed, within SWEEP_KILL_WINDOW, so a
+          -- neighbouring pill's predicted fire doesn't scare us off the sweep.
+          if extra > 0 and c.goal.kind == "capture_pill" and state._swept_kill
+             and c.goal.target_id == state._swept_kill.id
+             and (state.tick - (state._swept_kill.tick or 0)) <= (C.SWEEP_KILL_WINDOW or 300) then
+            local _raw = extra
+            extra = extra * (C.SWEEP_KILL_WSIM_MULT or 0.3)
+          end
           -- Debug print: every wsim run, even 0-damage survivors.
           c.wsim_add = (c.wsim_add or 0) + extra
           c.cost = c.cost + extra

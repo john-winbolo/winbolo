@@ -732,7 +732,23 @@ M.ANGRY_PILL_AT_BASE_PENALTY = 200 -- added to pool-1 cost when an angry hostile
 -- pushes its cost very low at critical armour, so refuel_at_base usually
 -- wins naturally without a dedicated flee path. Flip on if you see the bot
 -- fighting instead of retreating when almost dead.
-M.CRITICAL_FLEE_ENABLED      = false
+--   false  = off (normal refuel handles it)
+--   true   = flee whenever armour <= the flee threshold (critical)
+--   "no_builder_and_carrying_only" = flee to PROTECT CARRIED PILLS, scaled by a
+--     haul-protection LEVEL (0..1) that reflects how badly we need to bail:
+--       • builder DEAD, or committed OUT on a mission (LGM_MOVING) → the pills
+--         can't be placed soon and are pure liability → FULL protection (1.0) at
+--         carry >= 1.
+--       • builder still in tank → we can place them ourselves, so protect only a
+--         STACK (carry >= 2), slightly weaker, ramping to full by
+--         FLEE_HAUL_FULL_PILLS.
+--     Triggers scale with level: a higher level reaches further for a threatening
+--     tank (FLEE_HAUL_TANK_RANGE × level) and bails at higher armour (ARMOUR_LOW ×
+--     level); only full strength also bails on mere hostile-pill coverage.
+--     Critical armour always bails.
+M.CRITICAL_FLEE_ENABLED      = "no_builder_and_carrying_only"
+M.FLEE_HAUL_TANK_RANGE       = 12   -- tiles: an enemy tank within (× level) counts as "engaging" for the haul flee
+M.FLEE_HAUL_FULL_PILLS       = 4    -- have-builder haul protection ramps from carry=2 (weak) to full strength at this count
 -- facing_away brake: when true, tank brakes to speed 8 (or 16 under
 -- fire/race) if |heading_err| > 64 brad (~90°). Safer for U-turns but
 -- sometimes over-brakes when plow + lookahead swing move_dir 132°.
@@ -767,6 +783,12 @@ M.GOAL_ABANDON_COOLDOWN    = 0     -- ticks before an abandoned goal can be pick
 M.WALL_SHIELD_COMMITMENT        = 200  -- extra switch penalty when wall-shield attack is in progress
 M.ATTACK_TANK_COMMITMENT_BONUS  = 50   -- extra commitment when currently fighting a tank (see it through)
 M.ATTACK_PILL_COMMITMENT_BONUS  = 80   -- extra commitment when mid-attack on a pill; also revokes hysteresis exemption for attack_tank/capture_pill so they can't interrupt for free
+-- defend_pill (reactive: a friendly pill is being destroyed NOW) vs an in-progress
+-- attack_pill. How hard it is to pull us off the take scales with the take's real
+-- investment: FULL hysteresis only while actually shooting/aiming (shells + position
+-- at risk), MODERATE while merely building the shield (LGM/trees, recoverable), and
+-- FREE otherwise (approach / planning — nothing invested yet).
+M.DEFEND_ATTACK_BUILD_COMMITMENT = 40  -- moderate commitment defend_pill pays to interrupt a wall-building attack_pill
 M.ATTACK_BASE_COMMITMENT_BONUS  = 250  -- extra commitment when mid-attack on a base — applied while we still have >=1 shell. Once you start a base, follow through; the ONLY non-urgent reason to break off is literally running out of shells (0). Critical-armour flee still preempts via the urgent goal-override path.
 M.CAPTURE_BASE_COMMITMENT_BONUS = 250  -- extra commitment when mid-CAPTURE of a base (driving onto a neutral/ground-down base). Comparable to ATTACK_BASE: if you did the work to grind a base down, follow through and actually take it — don't let a normal-cost goal (another base/pill, non-critical refuel) steal it. No shell gate (capturing needs no ammo). Critical-armour flee still preempts via the urgent goal-override path.
 M.BLITZ_STANDOFF_SCORE_BUCKET   = 50   -- soldier blitz-standoff pick: ellipse spots are bucketed into score bands this wide; all spots in the best spot's band are the "best pool", and the soldier offers the one CLOSEST to its tank (least travel for ~equal shield quality) instead of the globally-top-scored far spot.
@@ -1606,6 +1628,15 @@ M.WSIM_DAMAGE_COST_WEIGHT  = 10     -- cost per point of predicted armor damage
 M.WSIM_KILL_REJECT         = true   -- hard-reject goals where sim predicts death
 M.WSIM_KILL_PERSIST_TICKS  = 50     -- ~1s: keep a KILL verdict on a goal (kind@tile) for this long so it stays rejected on ticks where wsim is capped/disabled — stops the bot flapping back onto a lethal goal before refuel/hysteresis take over
 M.WSIM_KILL_REJECT_OPENING = false  -- enforce the death-reject in the opening phase too. Default false: opening is the critical land-grab window — dying to grab a base is an acceptable trade, so we don't let wsim veto an attempt.
+
+-- Fresh-kill "sweep the pill you killed" incentive. When WE kill a pill
+-- (our attack_pill target dies), keep its capture attractive for a window by
+-- DAMPING the world-sim pill-fire danger penalty on that capture — so a
+-- neighbouring pill's predicted shots don't scare us off finishing the sweep
+-- and handing the enemy a free rebuild. The wsim KILL (predicted-death) reject
+-- is NOT damped, so it still won't suicide into the fire.
+M.SWEEP_KILL_WINDOW        = 300    -- ticks (~6s) the sweep incentive lasts after our kill
+M.SWEEP_KILL_WSIM_MULT     = 0.3    -- damp the wsim danger penalty to this fraction during the window
 M.WSIM_OPENING_ENABLED     = false  -- run wsim AT ALL during the opening phase. Default false: same reasoning — taking bases early is so important that we'd rather be reckless and risk dying than have wsim's damage-cost shaping pull us off an opportunity.
 M.WSIM_LGM_DEATH_PENALTY   = 200    -- extra cost if sim predicts LGM will die
 
