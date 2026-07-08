@@ -1959,9 +1959,17 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
   -- at PLACE_PILL_SETMODE "no-dispatch" (carried=0, man=0), stealing a goal cycle
   -- from attack_tank and flip-flopping the aim. Gate on carried_pills > 0.
   local _db_carrying = (info.carried_pills or 0) > 0
-  local _db_skip = (_db_et == 0 and " -> SKIP(no visible enemy tank)") or ((not _db_carrying) and " -> SKIP(not carrying a pill)") or ""
-  print2(string.format("DEF_BUILD t=%d gate carried=%d man=%s inboat=%s enemy_tanks=%d%s", state.tick or 0, info.carried_pills or 0, tostring(info.man_status), tostring(info.inboat), _db_et, _db_skip))
-  if _db_et > 0 and _db_carrying then
+  -- Panic build: at PANIC_BUILD_ARMOUR or below while carrying (and the LGM is in
+  -- the tank to place it), DUMP a pill into the ground NOW — no matter who's
+  -- around (or not). At rock-bottom health we can't count on reaching a base, so
+  -- bank the carried pill (and gain a guard) before dying and gifting it to the
+  -- enemy. A DEAD/out builder can't place — the haul-protection flee covers that.
+  local _panic = _db_carrying and info.man_status == C.LGM_INTANK
+                 and (info.armour or 99) <= (C.PANIC_BUILD_ARMOUR or 10)
+  local _db_skip = ((not _db_carrying) and " -> SKIP(not carrying a pill)")
+                or ((_db_et == 0 and not _panic) and " -> SKIP(no visible enemy tank, armour ok)") or ""
+  print2(string.format("DEF_BUILD t=%d gate carried=%d man=%s inboat=%s enemy_tanks=%d panic=%s arm=%d%s", state.tick or 0, info.carried_pills or 0, tostring(info.man_status), tostring(info.inboat), _db_et, tostring(_panic), info.armour or -1, _db_skip))
+  if (_db_et > 0 or _panic) and _db_carrying then
     local closest_et, closest_dist = nil, math.huge
     for _, et in ipairs(state.perc.enemy_tanks) do
       if et.dist < closest_dist then closest_dist = et.dist; closest_et = et end
@@ -1970,7 +1978,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     -- out of SHOOTING range — it can't actually hit us, so dropping a guard pill
     -- mid-carry is wasted. Euclidean (like the attack_tank pill-take guard);
     -- et.dist is mdist, so recompute. Past the range, drop the trigger.
-    if closest_et then
+    if closest_et and not _panic then
       local _ex, _ey = closest_et.mx - tmx, closest_et.my - tmy
       local _ed = math.sqrt(_ex * _ex + _ey * _ey)
       if _ed > (C.DEF_BUILD_THREAT_RANGE or 8) then
@@ -1996,7 +2004,7 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     -- provide — don't drop a second pill beside it. Nearly-dead cover
     -- (<= PANIC_COVER_MIN_HP) doesn't count; build its replacement. Skipped
     -- when desperate — we plant regardless of existing cover.
-    if closest_et and not _desperate then
+    if closest_et and not _desperate and not _panic then
       local _cov = builder.panic_cover_pill(world, tmx, tmy)
       if _cov then
         print2(string.format("DEF_BUILD t=%d SKIP — covered by friendly pill @(%d,%d) hp=%d", state.tick or 0, _cov.mx, _cov.my, _cov.health or 0))
@@ -2005,22 +2013,33 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
     elseif closest_et and _desperate then
       print2(string.format("DEF_BUILD t=%d DESPERATE — arm=%d <= %d, hit %d ticks ago; ignoring cover dedup, forcing win", state.tick or 0, info.armour or 0, C.DEATH_BUILD_ARMOUR or 30, _tick - (state._last_damage_tick or _tick)))
     end
-    if closest_et then
+    if closest_et or _panic then
+      -- Guard-spot DIRECTION: the nearest enemy tank if we have one, else (panic
+      -- with nobody around) the nearest hostile pill, else a default offset so we
+      -- still plant SOMEWHERE valid. Placement direction barely matters for a pure
+      -- bank-the-pill panic; when a threat exists it makes the drop a real guard.
+      local _thr_mx, _thr_my
+      if closest_et then
+        _thr_mx, _thr_my = closest_et.mx, closest_et.my
+      else
+        local _hpx, _hpy = nearest_hostile_pill_pos(world, tmx, tmy)
+        if _hpx then _thr_mx, _thr_my = _hpx, _hpy else _thr_mx, _thr_my = tmx, tmy - 4 end
+      end
       -- Shared panic guard-spot search (the SAME code builder.lua's in-combat
       -- guard drop uses, so they can't drift): nearest-first ±45° from the threat,
       -- grass/road preferred over swamp/rubble/crater, placeable + wall-free +
       -- LGM-reachable, nearest tier-2 fallback. Returns the spot + all considered
       -- tiles (dcands) for the panic_build overlay.
       local best_cx, best_cy, best_tier, dcands =
-        builder.panic_build_spot(world, info, tmx, tmy, closest_et.mx, closest_et.my)
-      if BRAIN_DEBUG_MODE then state._panic_build_viz = { tick = state.tick or 0, spots = dcands, best_cx = best_cx, best_cy = best_cy, threat_mx = closest_et.mx, threat_my = closest_et.my, tank_mx = tmx, tank_my = tmy } end
+        builder.panic_build_spot(world, info, tmx, tmy, _thr_mx, _thr_my)
+      if BRAIN_DEBUG_MODE then state._panic_build_viz = { tick = state.tick or 0, spots = dcands, best_cx = best_cx, best_cy = best_cy, threat_mx = _thr_mx, threat_my = _thr_my, tank_mx = tmx, tank_my = tmy } end
       if best_cx then
         local path_cost = smart_cost(KIND_NORMAL, tmx, tmy, best_cx, best_cy, 0,
                            info.shells or 32, info.trees or 0, info.mines or 0, info.armour or 40)
         local raw_cost = path_cost + C.STRATEGIC_PLACE_BASE_COST - carry_discount
         local cost = math.max(1, raw_cost * C.STRATEGIC_PLACE_COST_MULT)
-        -- Desperate: floor the cost so the plant decisively wins over attack_tank.
-        if _desperate then cost = 1 end
+        -- Desperate or panic: floor the cost so the plant decisively wins.
+        if _desperate or _panic then cost = 1 end
         local cands = {}
         if BRAIN_DEBUG_MODE then
           for _, c in ipairs(dcands) do
@@ -2038,20 +2057,20 @@ local function eval_place_pill_strategic(state, world, info, tmx, tmy, boat, amm
             }
           end
         end
-        print2(string.format("DEF_BUILD t=%d FIRE spot=(%d,%d) tier=%d cost=%.0f threat=(%d,%d) d=%.1f", state.tick or 0, best_cx, best_cy, best_tier, cost, closest_et.mx, closest_et.my, closest_dist))
+        print2(string.format("DEF_BUILD t=%d FIRE%s spot=(%d,%d) tier=%d cost=%.0f threat=(%d,%d) d=%.1f", state.tick or 0, _panic and "(PANIC)" or "", best_cx, best_cy, best_tier, cost, _thr_mx, _thr_my, (closest_et and closest_dist or -1)))
         return {
           cost = cost,
           -- _place_emergency: this is the threat-reactive "build while fighting"
           -- drop — exempt from the "place must lose to attack_tank" rule.
           goal = { kind = "place_pill_strategic", mx = best_cx, my = best_cy,
                    wx = U.m2w(best_cx), wy = U.m2w(best_cy), _place_emergency = true },
-          desc = BRAIN_POOL_VIZ and string.format("def_build@(%d,%d) cost=%.0f tank@(%d,%d) (A*{%.0f}+base{%.0f}-carry{%.0f})*%.2f",
-                 best_cx, best_cy, cost, closest_et.mx, closest_et.my,
+          desc = BRAIN_POOL_VIZ and string.format("def_build@(%d,%d) cost=%.0f thr@(%d,%d) (A*{%.0f}+base{%.0f}-carry{%.0f})*%.2f",
+                 best_cx, best_cy, cost, _thr_mx, _thr_my,
                  path_cost, C.STRATEGIC_PLACE_BASE_COST, carry_discount, C.STRATEGIC_PLACE_COST_MULT) or "",
           cands = cands,
         }
       end
-      print2(string.format("DEF_BUILD t=%d NO SPOT — all candidates rejected (forest/water/wall/unplaceable) threat=(%d,%d) d=%.1f", state.tick or 0, closest_et.mx, closest_et.my, closest_dist))
+      print2(string.format("DEF_BUILD t=%d NO SPOT%s — all candidates rejected (forest/water/wall/unplaceable) threat=(%d,%d) d=%.1f", state.tick or 0, _panic and "(PANIC)" or "", _thr_mx, _thr_my, (closest_et and closest_dist or -1)))
     end
   end
 

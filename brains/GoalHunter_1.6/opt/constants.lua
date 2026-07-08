@@ -1214,6 +1214,14 @@ M.PANIC_COVER_MIN_HP           = 4    -- cover pill hp <= this => doesn't count 
 -- rather than losing them on death. Placement geometry is unchanged (±45°).
 M.DEATH_BUILD_ARMOUR           = 30   -- armour <= this AND taking hits => desperate build (bypass cover dedup, force win)
 M.DEATH_BUILD_HIT_WINDOW       = 50   -- ticks since last damage to still count as "actively taking hits" (~1s @ 50Hz)
+-- Panic build: an even harder floor than DESPERATE. At PANIC_BUILD_ARMOUR or below
+-- while carrying (and the LGM is in the tank to place it), DUMP a pill into the
+-- ground NOW — no enemy required, no recent-hit required, no cover dedup. At this
+-- health we can't count on reaching a base, so bank the carried pill (and gain a
+-- guard) before dying and gifting it to the enemy. With a DEAD/out builder the
+-- pill can't be placed, so the haul-protection flee (CRITICAL_FLEE_ENABLED) covers
+-- that case instead. Complements DESPERATE (which needs an enemy in shoot range).
+M.PANIC_BUILD_ARMOUR           = 10   -- armour <= this AND carrying AND LGM in tank => build immediately, no matter who's around
 -- Emergency def_build dispatches the LGM to run to the spot from wherever the
 -- tank is (no within-1-tile gate). Cap how far we'll send the LGM: spots are
 -- picked at <= DEFENSIVE_BUILD_MAX_DIST, +1 slack for tank drift between
