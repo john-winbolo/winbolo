@@ -52,6 +52,7 @@
 #include "dns.h"
 #include "logviewer.h"
 #include "lv_messages.h"
+#include "lv_stats.h"
 #include "../gui/lang.h"
 
 /* File-scope pointer to the central LogViewerState */
@@ -1908,6 +1909,7 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
+    lvStatsEmitAwards();
   }
   return returnValue;
 }
@@ -2040,6 +2042,7 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
+    lvStatsEmitAwards();
   }
   return returnValue;
 }

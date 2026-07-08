@@ -1148,6 +1148,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/spec_seed_load.c
     src/logviewer/blocks.c
     src/logviewer/lv_attribution.c
+    src/logviewer/lv_stats.c
     src/logviewer/shells.c
     src/logviewer/snapshot.c
     src/logviewer/allience.c
@@ -3027,6 +3028,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/logviewer/screen.c
     src/logviewer/blocks.c
     src/logviewer/lv_attribution.c
+    src/logviewer/lv_stats.c
     src/logviewer/snapshot.c
     src/logviewer/players.c
     # Logviewer-world spectator seed orchestration: raw ring keyframe seed ->
