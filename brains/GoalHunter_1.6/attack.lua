@@ -5826,6 +5826,7 @@ function M.update_attack_substate(goal, state, world, info)
       goal.substate        = "in_range_aim_finetune"
       goal._finetune_start = now
       goal._finetune_taps  = 0
+      goal._finetune_reached_tap = nil  -- tap# when the shot first reaches the pill
       print(TAG .. " ATTACK: aim locked, entering in_range_aim_finetune (sim-verify)")
     elseif goal.aim_tick and (now - goal.aim_tick) > 150 then
       print(TAG .. " ATTACK: shielded in_range_aim timeout, aborting")
@@ -5864,10 +5865,27 @@ function M.update_attack_substate(goal, state, world, info)
         if t.mx == pmx and t.my == pmy then on_pill = true; break end
       end
     end
+    -- Reaching the pill isn't sufficient: if the SAME path crosses a live
+    -- pillbox/base BEFORE the pill, shoot_pill's obstacle check just hard-aborts
+    -- the take (e.g. friendly pill #6 one tile off the lane). So don't fire on
+    -- the first reaching angle — keep tapping toward center until the shot BOTH
+    -- reaches the pill AND is clear of a hard blocker (same math.huge test
+    -- shoot_pill uses), letting a couple more brad of turn-in thread past it.
+    local _fine_obs = shot_path_obstacle_count(info, goal, world)
+    local _fine_clear = (_fine_obs ~= math.huge)
     goal._finetune_path    = path        -- viz reads these
     goal._finetune_on_pill = on_pill
+    -- Bound the "turn in for clearance" search: once the shot first REACHES the
+    -- pill, allow only CLEAR_TURN_IN_TAPS more taps (a few brad of extra turn-in)
+    -- to also clear a grazed blocker. If it can't clear in that small window the
+    -- lane is genuinely pinched — give up rather than turning arbitrarily far off
+    -- the corner chasing a lane that isn't there.
+    local CLEAR_TURN_IN_TAPS = 4
+    if on_pill and not goal._finetune_reached_tap then
+      goal._finetune_reached_tap = goal._finetune_taps or 0
+    end
 
-    if on_pill then
+    if on_pill and _fine_clear then
       -- Lock the verified angle as the new aim point so shoot_pill's
       -- corner-correction tap (steering.lua's shoot_pill block) doesn't
       -- pull the angle back toward the original shield-scan corner —
@@ -5895,6 +5913,18 @@ function M.update_attack_substate(goal, state, world, info)
       print(string.format(TAG ..
         " ATTACK: finetune verified (angle %.2f, %d taps) — opening fire",
         angle_f, goal._finetune_taps or 0))
+    elseif on_pill and goal._finetune_reached_tap
+       and ((goal._finetune_taps or 0) - goal._finetune_reached_tap) >= CLEAR_TURN_IN_TAPS then
+      -- Reached the pill but the blocker is still on the lane after a few more
+      -- brad of turn-in — the lane is pinched (e.g. friendly pill + own walls
+      -- straddle it). Give up here rather than firing a blocked shot.
+      local extra = (goal._finetune_taps or 0) - goal._finetune_reached_tap
+      print(string.format(TAG ..
+        " ATTACK: reached pill but blocker won't clear after +%d turn-in taps (angle %.2f, pill@(%d,%d)) — aborting",
+        extra, angle_f, pmx, pmy))
+      clear_attack_goal(state, string.format(
+        "turn-in clear failed: +%d/%d taps angle=%.2f pill@(%d,%d)",
+        extra, CLEAR_TURN_IN_TAPS, angle_f, pmx, pmy))
     elseif (goal._finetune_taps or 0) >= FINETUNE_MAX_TAPS
        or (now - (goal._finetune_start or now)) > FINETUNE_TIMEOUT then
       local n_taps = goal._finetune_taps or 0
