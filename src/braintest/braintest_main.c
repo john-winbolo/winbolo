@@ -3986,7 +3986,7 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
         SDL_SetRenderScale(app->renderer, bs, bs);
         SDL_SetRenderDrawColor(app->renderer, 0, 220, 255, 255);
         SDL_RenderDebugText(app->renderer, (screenW * 0.5f - 230.0f) / bs, 4.0f / bs,
-            "HUD EDIT: drag overlays  |  L = lock & save  |  Shift+L = reset");
+            "HUD EDIT: drag overlays  |  L = lock & save  |  Shift+R = reset");
         SDL_SetRenderScale(app->renderer, 1.0f, 1.0f);
     }
 }
@@ -6503,10 +6503,23 @@ int main(int argc, char *argv[]) {
                     if (g_showLoadBrowser) scanSessions();
                     break;
                 case SDLK_L:
-                    /* HUD layout edit: L toggles lock/unlock (locking saves);
-                     * Shift+L resets all overrides to the brain defaults. */
+                    /* L: HUD layout edit toggle (locking saves) — edit mode also
+                     *    labels every HUD overlay with its viz id.
+                     * Shift+L: toggle labelling of ALL map-based (non-HUD)
+                     *    overlays (the label_overlays viz layer). */
                     if (ev.key.mod & SDL_KMOD_SHIFT) {
-                        /* Destructive — confirm before wiping all overrides. */
+                        int idx = vizRegistryFind("label_overlays");
+                        if (idx >= 0) { vizFlagFlip(idx); app.overlayDirty = true; }
+                    } else {
+                        g_hudEdit = !g_hudEdit;
+                        if (!g_hudEdit) { hudLayoutSave(); g_hudDrag = -1; }
+                    }
+                    break;
+                case SDLK_R:
+                    /* Shift+R: reset all HUD overlay positions back to the brain
+                     * defaults (destructive — confirm first). Moved off Shift+L,
+                     * which now toggles map-overlay labels. */
+                    if (ev.key.mod & SDL_KMOD_SHIFT) {
                         const SDL_MessageBoxButtonData btns[] = {
                             { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT
                               | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel" },
@@ -6524,9 +6537,6 @@ int main(int argc, char *argv[]) {
                             g_hudDrag = -1;
                             hudLayoutSave();   /* truncates the file to empty */
                         }
-                    } else {
-                        g_hudEdit = !g_hudEdit;
-                        if (!g_hudEdit) { hudLayoutSave(); g_hudDrag = -1; }
                     }
                     break;
                 case SDLK_ESCAPE:
