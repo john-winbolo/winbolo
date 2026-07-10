@@ -1006,6 +1006,7 @@ static void brain_apply_sandbox(lua_State *L, const char *root) {
     lua_pushnil(L); lua_setfield(L, -2, "loadlib");
     lua_pushnil(L); lua_setfield(L, -2, "cpath");
     lua_getfield(L, -1, "searchers");
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); lua_getfield(L, -1, "loaders"); } /* LuaJIT/5.1 name */
     if (lua_istable(L, -1)) {
       lua_pushnil(L); lua_rawseti(L, -2, 4);
       lua_pushnil(L); lua_rawseti(L, -2, 3);
@@ -1277,6 +1278,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   {
     lua_getglobal(L, "package");
     lua_getfield(L, -1, "searchers");
+    if (lua_isnil(L, -1)) { lua_pop(L, 1); lua_getfield(L, -1, "loaders"); } /* LuaJIT/5.1 name */
     int nSearchers = (int)lua_rawlen(L, -1);
     /* Shift existing entries up to make room at index 2 */
     for (int i = nSearchers; i >= 2; i--) {
@@ -1303,6 +1305,21 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
     }
     lua_pop(L, 2); /* pop searchers + package */
   }
+
+#ifdef WINBOLO_LUAJIT
+  /* Runtime 5.4->5.1 compatibility for brains on LuaJIT: swallow the GC modes
+   * LuaJIT lacks (generational/incremental) and backfill stdlib functions the
+   * 5.4 brains may call. Runs after the sandbox/searcher setup, just before the
+   * brain loads, so nothing clobbers it. */
+  (void)luaL_dostring(L,
+    "local _cg=collectgarbage\n"
+    "collectgarbage=function(o,...) if o=='generational' or o=='incremental' then return 0 end return _cg(o,...) end\n"
+    "if not math.type then math.type=function(x) if type(x)~='number' then return nil end return (x%1==0) and 'integer' or 'float' end end\n"
+    "table.unpack=table.unpack or unpack\n"
+    "if not table.move then table.move=function(a1,f,e,t,a2) a2=a2 or a1 for i=0,e-f do a2[t+i]=a1[f+i] end return a2 end end\n"
+    "math.maxinteger=math.maxinteger or 9223372036854775807\n"
+    "math.mininteger=math.mininteger or -9223372036854775808\n");
+#endif
 
   /* Load and execute the brain script.
    * Try SDL_IOFromFile first (works on Android assets), then fall back

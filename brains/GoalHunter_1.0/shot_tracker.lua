@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/shot_tracker.lua — track our own fired shots until impact
 --
@@ -140,7 +141,7 @@ local function verify_alive(shot, info)
   for _, ob in ipairs(info.objects or {}) do
     if ob.type == OBJECT_SHOT then
       seen_any_shot = true
-      local hostile = (ob.info or 0) & OBJECT_HOSTILE
+      local hostile = bit.band((ob.info or 0), OBJECT_HOSTILE)
       if hostile == 0 then
         local dx = ob.x - shot.cur_fx
         local dy = ob.y - shot.cur_fy

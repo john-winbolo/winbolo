@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/bpc.lua — basic pill capture, self-contained
 --
@@ -24,8 +25,8 @@ local bpc_bt -- lazy-loaded to avoid circular requires
 -- C pathfinder wrapper (mirrors steering.lua cpf_path_to)
 local function cpf_path_to(state, info, dest_mx, dest_my)
   local pf  = state.pf
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local in_boat = info.inboat and 1 or 0
   local shells  = info.shells or 0
   local trees   = info.trees or 0
@@ -82,14 +83,14 @@ function M.steer(state, world, info, goal)
   local keys = 0
   local taps = 0
   local pwx, pwy = goal.wx, goal.wy
-  local tmx, tmy = info.tankx >> 8, info.tanky >> 8
+  local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
   local pdist_w = U.wdist(info.tankx, info.tanky, pwx, pwy)
   local aim_dir  = U.aim_at(info.tankx, info.tanky, pwx, pwy)
   local aim_corr = U.adiff(info.direction, aim_dir)
 
   -- Gunsight at max range
   if info.gunrange < C.GUNSIGHT_MAX then
-    keys = keys | KEY_MORERANGE
+    keys = bit.bor(keys, KEY_MORERANGE)
   end
 
   -- ── approach: A* toward the pill, full speed ──────────────────────
@@ -104,11 +105,11 @@ function M.steer(state, world, info, goal)
       local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny))
       local corr = U.adiff(info.direction, move_dir)
       local k, t = U.nav_turn_speed(corr, info.speed)
-      keys = keys | k
-      taps = taps | t
+      keys = bit.bor(keys, k)
+      taps = bit.bor(taps, t)
     else
       -- Already on or adjacent to target tile
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     end
     return keys, taps
 
@@ -120,36 +121,36 @@ function M.steer(state, world, info, goal)
 
     if too_far then
       -- Nudge toward the pill: turn to face it and creep forward
-      if     aim_corr >  10 then keys = keys | KEY_TURNRIGHT
-      elseif aim_corr < -10 then keys = keys | KEY_TURNLEFT
-      elseif aim_corr >   2 then taps = taps | KEY_TURNRIGHT
-      elseif aim_corr <  -2 then taps = taps | KEY_TURNLEFT
+      if     aim_corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+      elseif aim_corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+      elseif aim_corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+      elseif aim_corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
       end
       if math.abs(aim_corr) < 20 then
-        if info.speed < 16 then keys = keys | KEY_FASTER end
+        if info.speed < 16 then keys = bit.bor(keys, KEY_FASTER) end
       end
     elseif too_close then
       -- Drift backward: face pill but slow down / let pushback do the work
-      if     aim_corr >  10 then keys = keys | KEY_TURNRIGHT
-      elseif aim_corr < -10 then keys = keys | KEY_TURNLEFT
-      elseif aim_corr >   2 then taps = taps | KEY_TURNRIGHT
-      elseif aim_corr <  -2 then taps = taps | KEY_TURNLEFT
+      if     aim_corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+      elseif aim_corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+      elseif aim_corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+      elseif aim_corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
       end
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     else
       -- In the sweet spot: stop and aim
-      if     aim_corr >  10 then keys = keys | KEY_TURNRIGHT
-      elseif aim_corr < -10 then keys = keys | KEY_TURNLEFT
-      elseif aim_corr >   2 then taps = taps | KEY_TURNRIGHT
-      elseif aim_corr <  -2 then taps = taps | KEY_TURNLEFT
+      if     aim_corr >  10 then keys = bit.bor(keys, KEY_TURNRIGHT)
+      elseif aim_corr < -10 then keys = bit.bor(keys, KEY_TURNLEFT)
+      elseif aim_corr >   2 then taps = bit.bor(taps, KEY_TURNRIGHT)
+      elseif aim_corr <  -2 then taps = bit.bor(taps, KEY_TURNLEFT)
       end
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     end
     -- Fire when aimed and in range
     local firing = false
     if math.abs(aim_corr) < 4 and info.shells > C.SHELL_RESERVE
        and dist_tiles <= C.BPC_RANGE then
-      keys = keys | KEY_SHOOT
+      keys = bit.bor(keys, KEY_SHOOT)
       firing = true
     end
     log.reason("steer", {
@@ -162,15 +163,15 @@ function M.steer(state, world, info, goal)
   -- ── curve_away: hard turn + full speed to dodge pill fire ─────────
   elseif goal.substate == "curve_away" then
     if (goal.curve_dir or 1) > 0 then
-      keys = keys | KEY_TURNRIGHT
+      keys = bit.bor(keys, KEY_TURNRIGHT)
     else
-      keys = keys | KEY_TURNLEFT
+      keys = bit.bor(keys, KEY_TURNLEFT)
     end
-    keys = keys | KEY_FASTER
+    keys = bit.bor(keys, KEY_FASTER)
     -- Fire if we sweep past the pill during the curve
     local firing = false
     if math.abs(aim_corr) < 6 and info.shells > C.SHELL_RESERVE then
-      keys = keys | KEY_SHOOT
+      keys = bit.bor(keys, KEY_SHOOT)
       firing = true
     end
     log.reason("steer", {
@@ -190,10 +191,10 @@ function M.steer(state, world, info, goal)
       local corr = U.adiff(info.direction, move_dir)
       -- Rush: higher max speed to capture fast
       local k, t = U.nav_turn_speed(corr, info.speed, 64)
-      keys = keys | k
-      taps = taps | t
+      keys = bit.bor(keys, k)
+      taps = bit.bor(taps, t)
     else
-      if info.speed > 0 then keys = keys | KEY_SLOWER end
+      if info.speed > 0 then keys = bit.bor(keys, KEY_SLOWER) end
     end
     return keys, taps
   end
@@ -215,8 +216,8 @@ function M.update(goal, state, world, info)
   end
 
   -- ── Legacy FSM (kept as fallback) ─────────────────────────────────
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local now = state.tick
 
   if not goal.substate then

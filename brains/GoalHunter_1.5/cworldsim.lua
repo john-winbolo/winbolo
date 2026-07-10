@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- cworldsim.lua -- C-accelerated forward world state simulator
 --
@@ -86,7 +87,7 @@ function M.snapshot(world, info, path, attack_pill_idx)
   -- Add visible enemy tanks (hostile only)
   if info.objects then
     for _, obj in ipairs(info.objects) do
-      if obj.type == OBJECT_TANK and (obj.info & OBJECT_HOSTILE) ~= 0 then
+      if obj.type == OBJECT_TANK and (bit.band(obj.info, OBJECT_HOSTILE)) ~= 0 then
         -- Use default 40 armor for unknown enemy tanks
         wsim_add_tank(obj.x, obj.y, obj.direction or 0, obj.speed or 0,
                       false, 0xFE, 40)

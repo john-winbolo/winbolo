@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/hearing.lua — sound awareness / combat heat map
 --
@@ -115,8 +116,8 @@ function M.nearest_combat(mx, my)
   local best_i = nil
   for k, intensity in pairs(M.heat_intensity) do
     if intensity > 0.1 then
-      local hx = k & 255
-      local hy = k >> 8
+      local hx = bit.band(k, 255)
+      local hy = bit.rshift(k, 8)
       local d = U.mdist(mx, my, hx, hy)
       if d < best_d then
         best_d = d
@@ -126,8 +127,8 @@ function M.nearest_combat(mx, my)
     end
   end
   if not best_k then return nil end
-  local hx = best_k & 255
-  local hy = best_k >> 8
+  local hx = bit.band(best_k, 255)
+  local hy = bit.rshift(best_k, 8)
   return {
     mx = hx, my = hy,
     dx = hx - mx, dy = hy - my,

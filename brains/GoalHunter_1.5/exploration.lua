@@ -1,3 +1,4 @@
+local bit = require('bitcompat')
 -- =========================================================================
 -- GoalHunter/exploration.lua — frontier-based map coverage
 -- =========================================================================
@@ -20,7 +21,7 @@ local function _heap_push(h, v)
   h[n] = v
   local i = n
   while i > 1 do
-    local p = i >> 1
+    local p = bit.rshift(i, 1)
     if h[p] <= h[i] then break end
     h[i], h[p] = h[p], h[i]
     i = p
@@ -54,8 +55,8 @@ function M.frontier_pop(h)            return _heap_pop(h) end
 function M.frontier_push(h, cost, mx, my) _heap_push(h, math.floor(cost) * 65536 + my * 256 + mx) end
 
 function M.update(state, info)
-  local tmx = info.tankx >> 8
-  local tmy = info.tanky >> 8
+  local tmx = bit.rshift(info.tankx, 8)
+  local tmy = bit.rshift(info.tanky, 8)
   local k   = U.mkey(tmx, tmy)
 
   if not state.visited[k] then

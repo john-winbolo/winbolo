@@ -184,15 +184,45 @@ endif()
 # Fetch SDL first (needed by everything)
 FetchContent_MakeAvailable(sdl3)
 
-# Lua — only build the static library, skip interpreter/compiler/tests
-set(LUA_BUILD_BINARY OFF CACHE BOOL "" FORCE)
-set(LUA_BUILD_COMPILER OFF CACHE BOOL "" FORCE)
-set(LUA_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(lua)
-# lua_static must be built with -fPIC on Linux so it can link into shared libs (winbolo_gym)
-set_target_properties(lua_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    target_compile_definitions(lua_internal INTERFACE LUA_USE_IOS)
+# Lua backend. Default: PUC-Lua 5.4 (static lib from FetchContent). Experimental:
+# WINBOLO_LUAJIT swaps in a prebuilt LuaJIT (Lua 5.1) for the bot brains so the
+# brain Lua runs JIT-compiled. See docs/luajit-port.md. Native desktop only —
+# LuaJIT has no WASM backend and the brains must be down-transpiled first
+# (tools/lua54to51.py). lua_static / lua_internal are redefined as IMPORTED so
+# every existing `target_link_libraries(... lua_static ...)` inherits LuaJIT,
+# plus the C-API compat shim is force-included into all Lua-touching TUs.
+option(WINBOLO_LUAJIT "Use LuaJIT (Lua 5.1) for bot brains instead of PUC-Lua 5.4 (experimental)" OFF)
+if(WINBOLO_LUAJIT)
+    if(NOT WINBOLO_LUAJIT_DIR)
+        message(FATAL_ERROR "WINBOLO_LUAJIT=ON requires -DWINBOLO_LUAJIT_DIR=<dir with lua51.lib + LuaJIT headers>. Build LuaJIT first (see docs/luajit-port.md).")
+    endif()
+    if(NOT EXISTS "${WINBOLO_LUAJIT_DIR}/lua51.lib")
+        message(FATAL_ERROR "WINBOLO_LUAJIT_DIR='${WINBOLO_LUAJIT_DIR}' has no lua51.lib")
+    endif()
+    message(STATUS "WINBOLO_LUAJIT: brains run on LuaJIT from ${WINBOLO_LUAJIT_DIR}")
+    set(_wbn_ljshim "${CMAKE_SOURCE_DIR}/src/gui/sdl3/luajit_compat.h")
+    add_library(lua_static STATIC IMPORTED GLOBAL)
+    set_target_properties(lua_static PROPERTIES
+        IMPORTED_LOCATION "${WINBOLO_LUAJIT_DIR}/lua51.lib"
+        INTERFACE_INCLUDE_DIRECTORIES "${WINBOLO_LUAJIT_DIR}"
+        INTERFACE_COMPILE_DEFINITIONS "WINBOLO_LUAJIT"
+        INTERFACE_COMPILE_OPTIONS "/FI${_wbn_ljshim}")
+    add_library(lua_internal INTERFACE IMPORTED GLOBAL)
+    set_target_properties(lua_internal PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${WINBOLO_LUAJIT_DIR}"
+        INTERFACE_COMPILE_DEFINITIONS "WINBOLO_LUAJIT"
+        INTERFACE_COMPILE_OPTIONS "/FI${_wbn_ljshim}")
+else()
+    # Lua — only build the static library, skip interpreter/compiler/tests
+    set(LUA_BUILD_BINARY OFF CACHE BOOL "" FORCE)
+    set(LUA_BUILD_COMPILER OFF CACHE BOOL "" FORCE)
+    set(LUA_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(lua)
+    # lua_static must be built with -fPIC on Linux so it can link into shared libs (winbolo_gym)
+    set_target_properties(lua_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        target_compile_definitions(lua_internal INTERFACE LUA_USE_IOS)
+    endif()
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
